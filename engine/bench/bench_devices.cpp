@@ -24,6 +24,12 @@ namespace {
 constexpr double kRate = 48000.0;
 constexpr uint32_t kBlock = 256;
 const std::vector<float> kCompressor = {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};
+// saine_core::builtin::character_compressor / multiband_compressor defaults.
+const std::vector<float> kCharacter = {0.f,  -18.f, 4.f, 6.f,  10.f, 200.f, 0.f, 0.f,   24.f, 1.f,    100.f, 0.f, 0.f, 0.f,    0.f, 100.f,
+                                       0.f,  0.f,   0.f, 80.f, 1000.f, 0.f, 1.f, 0.f,   0.f,  0.f,    50.f,  8.f, 0.f, 0.f,    150.f, 1.f,
+                                       0.f,  0.f,   600.f, 1.f, 0.f,  0.f,  2500.f, 1.f, 0.f,  0.f,    8000.f, 1.f, 0.f, 0.f};
+const std::vector<float> kMultiband = {120.f, 2500.f, -18.f, 2.5f, 30.f, 200.f, 0.f, -20.f, 2.f, 15.f, 120.f, 0.f, -22.f, 2.f, 5.f, 80.f, 0.f,
+                                       100.f, 0.f,    0.f,   -60.f, 1.f, 0.f,   -60.f, 1.f, 0.f, -60.f, 1.f, 0.f, 100.f, 100.f, 100.f, 100.f};
 
 std::vector<uint8_t> blob(const std::vector<float>& v, uint64_t sc = 0) {
     se_builtin_state h{SE_BUILTIN_STATE_MAGIC, static_cast<uint32_t>(v.size()), sc};
@@ -130,6 +136,32 @@ int main(int argc, char** argv) {
         row(name, bench_kernel("compressor", v, blocks, 0));
     }
     row("compressor (Clean, 16 auto events)", bench_kernel("compressor", kCompressor, blocks, 16));
+
+    const char* models[] = {"Clean", "Vari-Mu", "Bus VCA", "FET", "Opto", "RMS VCA"};
+    for (int m = 0; m < 6; ++m) {
+        std::vector<float> v = kCharacter;
+        v[0] = static_cast<float>(m);
+        char name[64];
+        std::snprintf(name, sizeof name, "character-compressor (%s)", models[m]);
+        row(name, bench_kernel("character-compressor", v, blocks, 0));
+    }
+    {
+        std::vector<float> v = kCharacter;
+        v[0] = 3.f;  // FET
+        v[14] = 1.f; // 4x
+        row("character-compressor (FET, 4x)", bench_kernel("character-compressor", v, blocks, 0));
+        v = kCharacter;
+        v[13] = 5.f;                                    // lookahead
+        v[18] = 1.f, v[21] = 3.f;                       // SC HPF + EQ
+        v[25] = 1.f, v[29] = 1.f, v[33] = 1.f, v[32] = -12.f, v[36] = -12.f; // level rider, two weights
+        row("character-compressor (Clean, all on)", bench_kernel("character-compressor", v, blocks, 0));
+    }
+    row("multiband-compressor (defaults)", bench_kernel("multiband-compressor", kMultiband, blocks, 0));
+    {
+        std::vector<float> v = kMultiband;
+        for (int b = 0; b < 3; ++b) v[static_cast<std::size_t>(20 + 3 * b)] = -40.f, v[static_cast<std::size_t>(21 + 3 * b)] = 4.f; // upward on
+        row("multiband-compressor (up + down)", bench_kernel("multiband-compressor", v, blocks, 16));
+    }
 
     // Parameter update paths and session cost: 32 tracks, one clip and two
     // compressors each.

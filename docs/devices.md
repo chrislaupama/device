@@ -46,7 +46,10 @@ flowchart LR
   clusters) and `ui/device_panel.slint` draws it. Lengths are the reference's
   100%-zoom card measurements times `device_panel::Z` (0.85, the zoom the rest
   of the UI is built at). Card width follows the reference rule:
-  knobs × 62 + inner gaps × 10 + cluster gaps × 21 + 16.
+  knobs × 62 + inner gaps × 10 + cluster gaps × 21 + 16, taken from the
+  widest `shown_when` state so the card never resizes when a mode changes.
+  The knob cells are then spread evenly across the dial row (the clusters
+  only size the card).
 
 ## Adding a device
 
@@ -63,6 +66,19 @@ flowchart LR
      sidechain picker and what follows align right), `view`
      (`DynamicsStrip` or `Custom`), `sliders`, `clusters` of knobs,
      `faces` (drawings inside a knob), `shown_when` (mode-dependent controls).
+     `View::Strip(Strip::new("threshold").range(top, floor))` is the
+     dynamics strip with its own dB range. A menu with more than four
+     choices is drawn as a menu pill, otherwise as segments. Value arcs and
+     slider fills start at 0 when the range spans it (−12..24 dB starts at
+     0 dB).
+   - `Format::Custom(fn)` gives device-specific text; parsing still reads
+     the unit ("1.2 s" → 1200 ms, "2k" → 2000 Hz).
+   - **Behaviour** (optional, `builtin::behavior`): a `Behavior` with
+     state-dependent detents (drags snap within 0.025 of the range, arrow
+     keys step between them, ticks drawn on the ring), value text, linked
+     writes (several parameters in one undo step), latches (a knob that
+     becomes a two-state pill in some modes) and the curve of a
+     `Face::Transfer` knob. Start from `Behavior::NONE`.
 2. **DSP kernel.** Add `engine/src/devices/<id>.cpp`: a `BuiltinProcessor`
    (`prepare` may allocate; `reset` / `process` are real-time: no
    allocation, locks, I/O or exceptions) and a `BuiltinDescriptor` whose
@@ -80,7 +96,11 @@ flowchart LR
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a
    Slint component in `ui/device_panel.slint` chosen by that data. Reuse
-   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures.
+   `ParamDrag` / `ParamDragX`, `KnobCell` and `SliderCol` for the gestures.
+   View-local state (a selected band, meter ballistics) goes through
+   `Studio.panel-view(device, action, value)`; `src/panel_multiband.rs` is
+   the worked example (band selector, field with threshold / floor and
+   crossover handles, dial row following the selected band).
 4. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),
@@ -96,8 +116,9 @@ flowchart LR
      parsing of any new display format.
 5. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
    (`saine_device_bench`, Release build) and put the numbers in the PR.
-6. **Render.** Add a `--state` that shows the device at its defaults (see
-   `reference-compressor` in `crates/saine-app/src/main.rs`), render it with
+6. **Render.** Add the device's `reference-<id>` name to the built-in
+   `--state` arm in `crates/saine-app/src/main.rs` (it adds the device at
+   its defaults), render it with
    `--screenshot` and compare it with the reference capture.
 
 ## Commands

@@ -16,6 +16,14 @@ namespace {
 // device-specific defaults table gives (devices must clamp anything).
 std::vector<float> defaults_for(const saine::BuiltinDescriptor& d) {
     if (std::string(d.id) == "compressor") return {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};
+    if (std::string(d.id) == "character-compressor") {
+        std::vector<float> v(d.params.size(), 0.0f);
+        v[1] = -18.f, v[2] = 4.f, v[3] = 6.f, v[4] = 10.f, v[5] = 200.f, v[8] = 24.f, v[9] = 1.f, v[10] = 100.f, v[15] = 100.f;
+        return v;
+    }
+    if (std::string(d.id) == "multiband-compressor")
+        return {120.f, 2500.f, -18.f, 2.5f, 30.f, 200.f, 0.f, -20.f, 2.f, 15.f, 120.f, 0.f, -22.f, 2.f, 5.f, 80.f, 0.f,
+                100.f, 0.f,  0.f,   -60.f, 1.f, 0.f, -60.f, 1.f, 0.f, -60.f, 1.f, 0.f, 100.f, 100.f, 100.f, 100.f};
     return std::vector<float>(d.params.size(), 0.0f);
 }
 
