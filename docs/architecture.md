@@ -26,8 +26,8 @@ Status: milestone 1 (functional audio vertical slice). Decisions marked **ADR** 
 │ Audio engine (C++23)                           engine/ (static library)  │
 │  • non-RT side: asset decode + resample, graph build, retire queue       │
 │  • RT side: audio callback → render graph, transport, meters, stats      │
-│  • platform devices: Core Audio (done) │ WASAPI/ASIO │ PipeWire/JACK      │
-│  • (next) plugin hosting: VST3 / CLAP / AU / LV2, out-of-process scanner │
+│  • platform devices: Core Audio │ WASAPI (ASIO: future) │ PipeWire       │
+│  • plugin hosting: VST3 / CLAP (all OSes), AU (macOS), OOP scanner       │
 └──────────────────────────────────────────────────────────────────────────┘
  Optional services (AI, cloud catalog) sit beside the core and talk to it only through Commands.
 ```
@@ -92,15 +92,38 @@ the AI assistant:
 
 ## Cross-platform strategy
 
+Status per platform, what CI covers and what is untested on real hardware:
+`engine/README.md` › Platforms.
+
 - Shared code (core, engine DSP and graph, UI) has no OS-specific dependencies. Platform code is
-  isolated in `engine/src/platform/*` and winit/Slint backends.
-- Audio: Core Audio (macOS), WASAPI + ASIO (Windows), PipeWire + JACK (Linux), behind one
-  `AudioDevice` interface.
-- Plugin editors need native child windows (NSView / HWND / X11; Wayland only via XWayland or
-  floating windows for most plugins). Planned as top-level plugin windows owned by the app,
-  matching the reference "Plugin windows" settings.
-- CI: GitHub Actions matrix (macos-arm64, windows-x64, ubuntu-x64) builds the engine with CMake/Ninja
-  and the workspace with Cargo, and runs the engine ctest suite + `cargo test`.
+  isolated in `engine/src/platform/*` (C++) and behind `#[cfg]` in Rust (the macOS
+  transparent-titlebar winit hook in `saine-app`, per-OS folders in `prefs.rs`/`devices.rs`,
+  link libraries in `saine-engine/build.rs`).
+- OS layer: `engine/src/platform/os.{hpp,cpp}`: UTF-8 everywhere at the interface (wide Win32
+  APIs underneath: `_wfopen`, `CreateProcessW`, `GetModuleFileNameW`, `CommandLineToArgvW`),
+  environment, and a `ChildProcess` abstraction (CreateProcessW / posix_spawn) used by the
+  out-of-process plugin scanner and its tests.
+- Audio, behind one `AudioDevice` interface:
+  - macOS: Core Audio (AUHAL; private aggregate device for duplex).
+  - Windows: WASAPI shared mode, event-driven, float32, converted to the engine rate by
+    `AUTOCONVERTPCM`; duplex through a separate capture client and a drift-tolerant
+    `FrameRing`. ASIO is future work (separately licensed SDK, not added).
+  - Linux: PipeWire playback/capture streams (same `FrameRing` duplex). JACK is future work for
+    jackd-only systems (PipeWire already serves JACK clients).
+  - Real-time thread priority: Core Audio's IO thread; MMCSS "Pro Audio" on the WASAPI thread;
+    PipeWire's data thread (RTKit / rt module).
+- Plugins: AU (macOS only), VST3 and CLAP everywhere; libraries loaded with CFBundle /
+  `LoadLibraryExW` / `dlopen`, standard per-OS folders, VST3 class ids stored in the canonical
+  text form on every OS. Editors: NSWindow (macOS), a top-level HWND hosting the plugin's child
+  window (Windows); Linux X11 embedding is not implemented yet (`SE_ERR_UNSUPPORTED_FORMAT`;
+  Wayland would go through XWayland for most plugins).
+- App: Slint (winit backend) + wgpu 30 build on all three; Linux needs the X11/Wayland,
+  xkbcommon, fontconfig, udev and PipeWire development packages (see the CI workflow).
+- CI (`.github/workflows/ci.yml`): macos-15 (arm64), windows-2025 (x64, MSVC), ubuntu-24.04
+  (x64, GCC). Each job configures and builds the engine with warnings as errors (`-Werror` /
+  `/W4 /WX`), runs the full ctest suite (device and AU tests skip themselves where they do not
+  apply), then `cargo build --workspace` and `cargo test --workspace`. SDK downloads and the
+  cargo registry/target are cached; all actions run on Node 24.
 
 ## Technology adjustments (documented deviations)
 

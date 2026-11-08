@@ -2029,13 +2029,29 @@ fn automation_steps() -> Vec<Step> {
     ]
 }
 
+/// The devices section drives Apple's Audio Units (AULowpass, AUDelay,
+/// DLSMusicDevice). Elsewhere its actions are not performed and its checks
+/// are reported as skipped (counted like the other guarded skips).
+fn platform_device_steps() -> Vec<Step> {
+    if cfg!(target_os = "macos") {
+        return device_steps();
+    }
+    device_steps()
+        .into_iter()
+        .filter_map(|s| match s {
+            Step::Check(name, _) => Some(Step::Check(name, Box::new(|_, _| Err("SKIP: Audio Units are macOS-only (this section uses Apple's AUs)".into())))),
+            Step::Do(..) | Step::DoC(..) => None,
+        })
+        .collect()
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
     all.extend(synth_steps());
     all.extend(midi_steps());
     all.extend(recording_steps());
-    all.extend(device_steps());
+    all.extend(platform_device_steps());
     all.extend(automation_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
