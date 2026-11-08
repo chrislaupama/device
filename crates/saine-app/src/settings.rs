@@ -404,6 +404,8 @@ impl Controller {
                 monitor: false,
                 input: None,
                 synth: None,
+                devices: vec![],
+                instrument_plugin: None,
             }],
             master_gain: 1.0,
         };

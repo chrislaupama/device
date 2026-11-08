@@ -635,6 +635,75 @@ fn nul_error() -> EngineError {
     EngineError { code: ffi::SE_ERR_INVALID_ARG, kind: "invalid argument", message: "string contains NUL".into() }
 }
 
+// ---------------------------------------------------------------- plugins
+
+fn unsupported(what: &str) -> EngineError {
+    EngineError { code: ffi::SE_ERR_UNSUPPORTED_FORMAT, kind: "unsupported", message: format!("{what} is not implemented yet") }
+}
+//
+// Contract for plugin hosting (docs/adr/0003-plugins.md). The app codes
+// against these signatures. Bodies marked STUB are replaced by the engine
+// implementation; until then they return `unsupported()`.
+
+/// One scanned plugin.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PluginInfo {
+    pub plugin: saine_core::PluginRef,
+    pub has_editor: bool,
+    pub audio_inputs: u32,
+    pub audio_outputs: u32,
+}
+
+/// Result of a scan. `failed` lists plugins that crashed, timed out or
+/// failed validation in the out-of-process scanner (they are blocklisted
+/// until a forced rescan).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ScanReport {
+    pub plugins: Vec<PluginInfo>,
+    pub failed: Vec<(String, String)>,
+    pub from_cache: bool,
+}
+
+/// STUB. Scan AU/VST3/CLAP plugins in the standard locations using the
+/// out-of-process scanner, caching results in `cache_path` (JSON). With
+/// `rescan == false` unchanged bundles come from the cache. Blocking: call
+/// from a worker thread. `progress` receives a short status per plugin.
+pub fn scan_plugins(_cache_path: &Path, _rescan: bool, _progress: &mut dyn FnMut(&str)) -> Result<ScanReport, EngineError> {
+    Err(unsupported("plugin scanning"))
+}
+
+impl Engine {
+    /// STUB. Current state blobs (base64) of all live plugin instances, for
+    /// `Document::sync_device_states` before saving.
+    pub fn plugin_states(&self) -> Vec<(saine_core::DeviceId, String)> {
+        Vec::new()
+    }
+
+    /// STUB. Devices whose plugin could not be instantiated (missing, failed
+    /// to load, wrong format) with a reason. They are passed through silently.
+    pub fn plugin_load_errors(&self) -> Vec<(saine_core::DeviceId, String)> {
+        Vec::new()
+    }
+
+    /// STUB. Open the plugin's native editor in its own window. MAIN THREAD ONLY.
+    pub fn open_plugin_editor(&self, _device: saine_core::DeviceId) -> Result<(), EngineError> {
+        Err(unsupported("plugin editors"))
+    }
+
+    /// STUB. Close the editor window if open. MAIN THREAD ONLY.
+    pub fn close_plugin_editor(&self, _device: saine_core::DeviceId) {}
+
+    /// STUB. Whether the device's editor window is open.
+    pub fn plugin_editor_is_open(&self, _device: saine_core::DeviceId) -> bool {
+        false
+    }
+
+    /// STUB. Reported processing latency of a device, in frames (0 if unknown).
+    pub fn plugin_latency(&self, _device: saine_core::DeviceId) -> u32 {
+        0
+    }
+}
+
 impl Drop for Engine {
     fn drop(&mut self) {
         // SAFETY: we own the handle exclusively here.
@@ -713,6 +782,8 @@ mod tests {
                     monitor: false,
                     input: None,
                     synth: Some(p.clone()),
+                    devices: vec![],
+                    instrument_plugin: None,
                 }],
                 master_gain: 1.0,
             };
@@ -735,6 +806,8 @@ mod tests {
                 monitor: false,
                 input: None,
                 synth: Some(bad),
+                devices: vec![],
+                instrument_plugin: None,
             }],
             master_gain: 1.0,
         };

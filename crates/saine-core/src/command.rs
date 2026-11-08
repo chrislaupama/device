@@ -6,6 +6,7 @@
 //! and the AI assistant (they are serde-serialisable, so an LLM tool call can
 //! be deserialised straight into a `Command` and validated before execution).
 
+use crate::device::{Device, DeviceId, PluginKind};
 use crate::instrument::SynthParams;
 use crate::midi::{self, MidiClip, Note};
 use crate::model::*;
@@ -77,6 +78,15 @@ pub enum Command {
     SetTrackArm { track: TrackId, arm: bool },
     SetTrackMonitor { track: TrackId, monitor: bool },
     SetTrackInput { track: TrackId, input: Option<InputSource> },
+    /// Insert an effect plugin into a track's chain (id 0 → allocate).
+    AddDevice { track: TrackId, index: Option<usize>, device: Device },
+    RemoveDevice { device: DeviceId },
+    /// Reorder an insert, possibly onto another track.
+    MoveDevice { device: DeviceId, track: TrackId, index: usize },
+    /// Bypass toggle.
+    SetDeviceEnabled { device: DeviceId, enabled: bool },
+    /// Set or clear an instrument track's instrument plugin (None = built-in synth).
+    SetInstrumentPlugin { track: TrackId, device: Option<Device> },
     /// Several commands applied atomically (all or nothing).
     Batch { label: String, commands: Vec<Command> },
 }
@@ -113,6 +123,14 @@ impl Command {
             Command::SetTrackArm { arm, .. } => (if *arm { "Arm Track" } else { "Disarm Track" }).into(),
             Command::SetTrackMonitor { .. } => "Input Monitoring Change".into(),
             Command::SetTrackInput { .. } => "Input Change".into(),
+            Command::AddDevice { device, .. } => format!("Add {}", device.plugin.name),
+            Command::RemoveDevice { .. } => "Remove Device".into(),
+            Command::MoveDevice { .. } => "Move Device".into(),
+            Command::SetDeviceEnabled { enabled, .. } => (if *enabled { "Enable Device" } else { "Bypass Device" }).into(),
+            Command::SetInstrumentPlugin { device, .. } => match device {
+                Some(d) => format!("Load {}", d.plugin.name),
+                None => "Use Built-in Synth".into(),
+            },
             Command::Batch { label, .. } => label.clone(),
         }
     }
@@ -404,6 +422,85 @@ impl Command {
                 }
                 let old = std::mem::replace(&mut t.input, input);
                 Ok(Command::SetTrackInput { track, input: old })
+            }
+            Command::AddDevice { track, index, mut device } => {
+                let ti = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
+                if device.plugin.kind != PluginKind::Effect {
+                    return Err(invalid("device", "only effect plugins go in the insert chain"));
+                }
+                if device.id.0 == 0 {
+                    device.id = DeviceId(p.alloc_id());
+                } else if p.find_device(device.id).is_some() {
+                    return Err(EditError::DuplicateId(device.id.0));
+                } else {
+                    p.next_id = p.next_id.max(device.id.0 + 1);
+                }
+                let n = p.tracks[ti].devices.len();
+                let idx = index.unwrap_or(n);
+                if idx > n {
+                    return Err(invalid("index", format!("{idx} > {n}")));
+                }
+                let id = device.id;
+                p.tracks[ti].devices.insert(idx, device);
+                Ok(Command::RemoveDevice { device: id })
+            }
+            Command::RemoveDevice { device } => {
+                let (ti, slot) = p.find_device(device).ok_or_else(|| invalid("device", format!("{} not found", device.0)))?;
+                let track = p.tracks[ti].id;
+                match slot {
+                    DeviceSlot::Insert(i) => {
+                        let d = p.tracks[ti].devices.remove(i);
+                        Ok(Command::AddDevice { track, index: Some(i), device: d })
+                    }
+                    DeviceSlot::Instrument => {
+                        let d = p.tracks[ti].instrument_plugin.take();
+                        Ok(Command::SetInstrumentPlugin { track, device: d })
+                    }
+                }
+            }
+            Command::MoveDevice { device, track, index } => {
+                let (ti, slot) = p.find_device(device).ok_or_else(|| invalid("device", format!("{} not found", device.0)))?;
+                let DeviceSlot::Insert(from) = slot else {
+                    return Err(invalid("device", "instrument plugins can't be moved into a chain"));
+                };
+                let dest = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
+                let old_track = p.tracks[ti].id;
+                let d = p.tracks[ti].devices.remove(from);
+                if index > p.tracks[dest].devices.len() {
+                    p.tracks[ti].devices.insert(from, d);
+                    return Err(invalid("index", "out of range"));
+                }
+                p.tracks[dest].devices.insert(index, d);
+                Ok(Command::MoveDevice { device, track: old_track, index: from })
+            }
+            Command::SetDeviceEnabled { device, enabled } => {
+                let (ti, slot) = p.find_device(device).ok_or_else(|| invalid("device", format!("{} not found", device.0)))?;
+                let d = match slot {
+                    DeviceSlot::Insert(i) => &mut p.tracks[ti].devices[i],
+                    DeviceSlot::Instrument => p.tracks[ti].instrument_plugin.as_mut().expect("found"),
+                };
+                let old = std::mem::replace(&mut d.enabled, enabled);
+                Ok(Command::SetDeviceEnabled { device, enabled: old })
+            }
+            Command::SetInstrumentPlugin { track, mut device } => {
+                let ti = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
+                if p.tracks[ti].kind != TrackKind::Instrument {
+                    return Err(invalid("track", "instrument plugins belong on instrument tracks"));
+                }
+                if let Some(d) = device.as_mut() {
+                    if d.plugin.kind != PluginKind::Instrument {
+                        return Err(invalid("device", "not an instrument plugin"));
+                    }
+                    if d.id.0 == 0 {
+                        d.id = DeviceId(p.alloc_id());
+                    } else if p.find_device(d.id).is_some_and(|(t, s)| !(t == ti && s == DeviceSlot::Instrument)) {
+                        return Err(EditError::DuplicateId(d.id.0));
+                    } else {
+                        p.next_id = p.next_id.max(d.id.0 + 1);
+                    }
+                }
+                let old = std::mem::replace(&mut p.tracks[ti].instrument_plugin, device);
+                Ok(Command::SetInstrumentPlugin { track, device: old })
             }
             Command::Batch { label, commands } => {
                 let mut inverses = Vec::with_capacity(commands.len());

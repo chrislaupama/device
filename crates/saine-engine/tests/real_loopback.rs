@@ -40,6 +40,8 @@ fn acoustic_loopback_latency() {
         instrument: false,
         notes: vec![],
         synth: None,
+        devices: vec![],
+        instrument_plugin: None,
         arm: true,
         monitor: false,
         input: Some(InputSource { channel: 0, stereo: false }),

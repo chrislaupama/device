@@ -45,6 +45,10 @@ pub struct TrackSnapshot {
     pub arm: bool,
     pub monitor: bool,
     pub input: Option<crate::model::InputSource>,
+    /// Insert effects in processing order.
+    pub devices: Vec<crate::device::Device>,
+    /// Instrument plugin (replaces the built-in synth when present).
+    pub instrument_plugin: Option<crate::device::Device>,
     /// Built-in instrument parameters (instrument tracks only).
     pub synth: Option<crate::instrument::SynthParams>,
 }
@@ -90,6 +94,8 @@ pub fn build(project: &Project, engine_rate: f64, engine_assets: &HashMap<AssetI
                 .collect(),
             instrument: t.kind == crate::model::TrackKind::Instrument,
             synth: (t.kind == crate::model::TrackKind::Instrument).then(|| t.synth.clone()),
+            devices: t.devices.clone(),
+            instrument_plugin: if t.kind == crate::model::TrackKind::Instrument { t.instrument_plugin.clone() } else { None },
             arm: t.arm,
             monitor: t.monitor,
             input: t.input,

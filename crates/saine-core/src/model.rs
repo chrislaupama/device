@@ -1,6 +1,7 @@
 //! Authoritative project model. Lives on the application thread only; the
 //! audio engine receives derived, immutable snapshots (see `snapshot`).
 
+use crate::device::{Device, DeviceId};
 use crate::instrument::SynthParams;
 use crate::midi::MidiClip;
 use serde::{Deserialize, Serialize};
@@ -77,6 +78,19 @@ pub struct Track {
     /// older files and harmlessly present on audio tracks).
     #[serde(default)]
     pub synth: SynthParams,
+    /// Insert effects, processed in order after the track's source.
+    #[serde(default)]
+    pub devices: Vec<Device>,
+    /// Instrument plugin replacing the built-in synth (instrument tracks).
+    #[serde(default)]
+    pub instrument_plugin: Option<Device>,
+}
+
+/// Where a device sits on its track.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceSlot {
+    Insert(usize),
+    Instrument,
 }
 
 /// An audio clip referencing a media asset.
@@ -162,7 +176,7 @@ impl Default for Project {
 
 impl Track {
     pub fn new(id: TrackId, kind: TrackKind, name: &str, color: ColorIndex) -> Self {
-        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, arm: false, monitor: false, input: None, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default() }
+        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, arm: false, monitor: false, input: None, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default(), devices: Vec::new(), instrument_plugin: None }
     }
 }
 
@@ -208,6 +222,23 @@ impl Project {
 
     pub fn midi_clip(&self, id: ClipId) -> Option<&MidiClip> {
         self.find_midi_clip(id).map(|(t, c)| &self.tracks[t].midi_clips[c])
+    }
+
+    /// Locate a device: (track index, slot).
+    pub fn find_device(&self, id: DeviceId) -> Option<(usize, DeviceSlot)> {
+        self.tracks.iter().enumerate().find_map(|(ti, t)| {
+            if t.instrument_plugin.as_ref().is_some_and(|d| d.id == id) {
+                return Some((ti, DeviceSlot::Instrument));
+            }
+            t.devices.iter().position(|d| d.id == id).map(|i| (ti, DeviceSlot::Insert(i)))
+        })
+    }
+
+    pub fn device(&self, id: DeviceId) -> Option<&Device> {
+        self.find_device(id).map(|(ti, slot)| match slot {
+            DeviceSlot::Insert(i) => &self.tracks[ti].devices[i],
+            DeviceSlot::Instrument => self.tracks[ti].instrument_plugin.as_ref().expect("found"),
+        })
     }
 
     /// True if any clip (audio or MIDI) uses this id.

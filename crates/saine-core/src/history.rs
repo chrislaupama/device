@@ -115,6 +115,20 @@ impl Document {
         }
     }
 
+    /// Store plugin states pulled from the engine (before saving). Not an
+    /// undo step and not a revision change: the engine already has the state.
+    pub fn sync_device_states(&mut self, states: &[(crate::device::DeviceId, String)]) {
+        for (id, st) in states {
+            for t in &mut self.project.tracks {
+                for d in t.devices.iter_mut().chain(t.instrument_plugin.iter_mut()) {
+                    if d.id == *id {
+                        d.state = Some(st.clone());
+                    }
+                }
+            }
+        }
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }
@@ -172,6 +186,8 @@ pub fn assign_ids(cmd: &mut Command, p: &mut Project) {
         }
         Command::AddClip { clip, .. } if clip.id.0 == 0 => clip.id = ClipId(p.alloc_id()),
         Command::AddMidiClip { clip, .. } if clip.id.0 == 0 => clip.id = ClipId(p.alloc_id()),
+        Command::AddDevice { device, .. } if device.id.0 == 0 => device.id = crate::device::DeviceId(p.alloc_id()),
+        Command::SetInstrumentPlugin { device: Some(device), .. } if device.id.0 == 0 => device.id = crate::device::DeviceId(p.alloc_id()),
         Command::AddAsset { asset } if asset.id.0 == 0 => asset.id = AssetId(p.alloc_id()),
         Command::Batch { commands, .. } => commands.iter_mut().for_each(|c| assign_ids(c, p)),
         _ => {}

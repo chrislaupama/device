@@ -1,0 +1,33 @@
+# ADR 0003: Plugin hosting (Audio Unit, VST3, CLAP)
+
+Status: accepted (2026-11-08). Implementation in progress.
+
+## Context
+The reference's "Add device" lists its built-ins, Audio Units, VST3 and Chains. We host AU (macOS), VST3
+and CLAP (CLAP is our addition). This Mac has only Apple's built-in AUs installed; no VST3/CLAP plugins.
+
+## Licensing
+- VST 3 SDK: MIT since VST 3.8 (Steinberg, 2025-10-29). The ASIO SDK is separate (GPLv3/proprietary) and not used here.
+- CLAP: MIT (free-audio/clap).
+- Audio Units: Apple system frameworks.
+SDKs are fetched at a pinned tag at configure time (CMake FetchContent) and never vendored into git.
+
+## Decision
+- **Model (saine-core `device.rs`):** `Track.devices` (insert effects, in order) and `Track.instrument_plugin`
+  (instrument tracks; replaces the built-in synth). `Device { id, plugin: PluginRef, enabled, state (base64) }`.
+  Commands: `AddDevice`, `RemoveDevice`, `MoveDevice`, `SetDeviceEnabled`, `SetInstrumentPlugin`.
+- **Instance lifetime:** the engine keeps plugin instances keyed by `DeviceId` across republishes. `state` is
+  applied only at instantiation (load, undo of a removal). Before saving, the app pulls states with
+  `Engine::plugin_states()` into the model via `Document::sync_device_states` (no undo step).
+- **Scanning** runs out of process (a scanner executable per plugin bundle with a timeout). Crashing or hanging
+  plugins are blocklisted, and results are cached as JSON in the app's support directory.
+- **Real-time:** instantiation, state load/save and editor handling happen on non-RT threads (main thread where
+  the format requires it). The audio thread only calls the plugin's process function with preallocated
+  buffers and parameter/event queues. Bypassed devices are skipped. A plugin that failed to load is a
+  silent pass-through, reported via `plugin_load_errors`.
+- **Editors** are native windows owned by the engine's platform layer (NSWindow + NSView on macOS), opened
+  and closed on the main thread.
+- **Testing:** small test plugins are built with the SDKs (VST3 gain, CLAP gain, CLAP sine instrument). AU is
+  tested with Apple's AULowpass/AUDelay and DLSMusicDevice.
+- **Not in v1:** plugin delay compensation (latency is reported only), sidechains, multi-out instruments,
+  parameter automation and a host-side generic parameter UI.
