@@ -18,6 +18,7 @@
 #pragma once
 
 #include "asset.hpp"
+#include "automation.hpp"
 #include "saine_engine.h"
 #include "synth.hpp"
 
@@ -43,6 +44,28 @@ struct FxSlot {
     // Delay compensation: while bypassed, the slot delays by the plugin's
     // latency instead (0 = nothing to do). See RenderGraph::pdc.
     uint32_t pdc_bypass_delay = 0;
+    // Automation lanes of this device (RenderGraph::lanes), and how late
+    // the audio entering the slot is relative to the timeline (delay
+    // compensation; lanes are evaluated that much earlier).
+    uint32_t lane_begin = 0;
+    uint32_t lane_count = 0;
+    uint32_t auto_delay = 0;
+};
+
+// One automation lane (se_auto_lane_desc) with its points in
+// RenderGraph::auto_points. Plugin lanes are resolved against the instance
+// on the main thread (Engine::publish): native range, or inactive.
+struct AutoLane {
+    uint32_t point_begin = 0;
+    uint32_t point_count = 0; // > 0
+    uint8_t target = 0;       // SE_AUTO_*
+    bool log = false;
+    uint16_t synth_param = 0;
+    uint32_t param_id = 0;
+    uint64_t device_id = 0;
+    bool active = true;        // plugin lanes: the parameter exists
+    double native_min = 0.0;   // plugin lanes: normalized -> native (VST3 0..1, CLAP/AU plain range)
+    double native_max = 1.0;
 };
 
 struct ClipNode {
@@ -58,6 +81,18 @@ struct TrackNode {
     uint64_t track_id = 0;
     float gain_l = 0.0f; // track gain * constant-power pan (left)
     float gain_r = 0.0f; // track gain * constant-power pan (right)
+    float gain = 1.0f;   // static linear gain and pan (automation replaces one or both)
+    float pan = 0.0f;
+    // Automation (RenderGraph::lanes): -1 = none.
+    int32_t vol_lane = -1;
+    int32_t pan_lane = -1;
+    uint32_t synth_lane_begin = 0;
+    uint32_t synth_lane_count = 0;
+    uint32_t iplug_lane_begin = 0; // instrument plugin parameters
+    uint32_t iplug_lane_count = 0;
+    // Delay compensation: how late the audio at the fader is relative to the
+    // timeline (lat_i + pdc_delay while compensation is active, else 0).
+    uint32_t auto_delay = 0;
     bool audible = false;
     bool instrument = false; // render notes through the track's Synth
     uint32_t clip_begin = 0; // index into RenderGraph::clips
@@ -123,6 +158,12 @@ struct RenderGraph {
     std::vector<ClipNode> clips;
     std::vector<NoteEvent> notes;
     std::vector<FxSlot> fx; // insert chains, track after track
+    // Automation: lanes (per track: [volume][pan][synth...][instrument
+    // plugin...][slot 0...][slot 1...]...), their points, master volume.
+    std::vector<AutoLane> lanes;
+    std::vector<AutoPoint> auto_points;
+    int32_t master_vol_lane = -1;
+    bool has_plugin_lanes = false;
     bool has_plugins = false; // any insert or instrument plugin
     // Synth parameters per track, parallel to `tracks` (defaults where the
     // description had none, unused on non-instrument tracks).
@@ -146,6 +187,14 @@ struct RenderGraph {
     std::vector<DelayLine*> lines;
 };
 
+// Lane view for evaluation.
+inline LaneView lane_view(const RenderGraph& g, const AutoLane& l) noexcept {
+    return LaneView{g.auto_points.data() + l.point_begin, l.point_count, l.log};
+}
+
+// Validates one lane description (also used by se_automation_eval).
+const char* validate_lane(const se_auto_lane_desc& d) noexcept;
+
 // Copy of `g` for a new plan (same instances, synths and lines; fresh meters
 // holding the current peak values). Non-RT.
 std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g);
@@ -157,12 +206,14 @@ void constant_power_pan(float pan, float& left, float& right) noexcept;
 
 using AssetLookup = std::function<AssetRef(uint64_t asset_id)>;
 
-// Validates and copies the description. Returns an se_result code. The v1..v4
-// entry points convert to v5 (v1: no instrument, no notes; v1/v2: default
+// Validates and copies the description. Returns an se_result code. The v1..v5
+// entry points convert to v6 (v1..v5: no automation lanes) (v1: no instrument, no notes; v1/v2: default
 // synth parameters; v1..v3: no arm/monitor/input; v1..v4: no devices).
 // Synth states are not assigned here (see RenderGraph::synth_refs); `synths`
 // is sized and null. Plugin slots are created with null instances (the
 // engine resolves them in the same track/device order).
+int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v5& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v4& desc, const AssetLookup& lookup,

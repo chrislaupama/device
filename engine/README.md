@@ -19,9 +19,14 @@ recording `se_track_desc_v4`, `se_session_desc_v4` + `se_session_publish_v4`,
 close/is_open`, `se_plugin_latency`, `se_plugin_idle`, and for plugin delay
 compensation `SE_PDC_MAX_DELAY_FRAMES`, `se_pdc_set_enabled`,
 `se_pdc_is_enabled`, `se_pdc_report` + `se_pdc_track` + `se_pdc_report_get`,
-`se_transport_audible_position`). Plugin hosting (AU, VST3, CLAP) is
+`se_transport_audible_position`, and for automation `se_auto_point`,
+`se_auto_lane_desc`, `se_track_desc_v6`, `se_session_desc_v6` +
+`se_session_publish_v6`, `se_automation_eval`, `se_plugin_params`,
+`se_plugin_param_value`, `se_plugin_param_text`, `se_plugin_param_change` +
+`se_plugin_take_param_changes`). Plugin hosting (AU, VST3, CLAP) is
 described in [Plugins](#plugins), delay compensation in
-[Plugin delay compensation](#plugin-delay-compensation).
+[Plugin delay compensation](#plugin-delay-compensation), automation in
+[Automation](#automation).
 
 ## Build, test, bench
 
@@ -98,6 +103,8 @@ The library is built with `-fPIC`, so it can go into a cdylib as well.
 | `src/resampler.{hpp,cpp}` | Kaiser-windowed sinc resampler (import time) |
 | `src/rt_util.hpp` | Flush-to-zero guard, clock, atomic max |
 | `src/delay_line.hpp` | Delay line for plugin delay compensation (memcpy ring, lazy flush) |
+| `src/automation.hpp` | Automation: lane evaluation (the core contract), ramp fill, timeline history (PDC alignment), synth parameter map |
+| `src/plugins/param_bus.hpp` | Lock-free MPMC queue of plugin editor parameter changes |
 | `src/platform/` | `AudioDevice` interface + backends (Core Audio real; WASAPI/ASIO, PipeWire/JACK stubs) |
 | `tests/` | Self-contained harness (`test_harness.hpp`), tests, allocation-tracking `operator new` |
 | `bench/bench_render.cpp` | Offline render benchmark |
@@ -1031,6 +1038,191 @@ loopback test above opens the microphone and was not run), third-party
 plugins that change latency at runtime, AU latency changes (polled, but no
 test AU changes latency).
 
+## Automation
+
+Decision and model: [ADR 0005](../docs/adr/0005-automation.md). The core
+(`saine_core::automation`) owns the lanes and the evaluation contract; the
+snapshot sends enabled, non-empty lanes with points converted to frames
+(`TrackSnapshot::automation`, `SessionSnapshot::master_automation`), and
+`Engine::publish` passes them through `se_session_publish_v6`.
+
+### ABI (`se_session_publish_v6`)
+
+`se_track_desc_v6` = `se_track_desc_v5` (same offsets, copied with `memcpy`
+from v5) + `lanes` / `lane_count`; `se_session_desc_v6` adds `master_lanes` /
+`master_lane_count` (only `SE_AUTO_VOLUME` is used there). A lane
+(`se_auto_lane_desc`, 32 bytes) has `target` (`SE_AUTO_VOLUME/PAN/SYNTH/
+PLUGIN`), `logarithmic`, `synth_param` (`SE_SYNTH_P_*` = index in
+`SynthParam::ALL`), `device_id` + `param_id` (plugin) and `points`
+(`se_auto_point {int64 frame, float value, float curve}`, 16 bytes). v1..v5
+publishes are v6 without lanes. Validation: target/synth index in range,
+frames non-decreasing, finite values and curves, curve in −1..1, synth values
+in the parameter's range (else `SE_ERR_INVALID_ARG`); empty lanes are
+ignored; with several lanes for one target the last wins; a plugin lane whose
+device is not on the track, did not load or lacks the parameter is inactive.
+Layouts: `static_assert`s in `c_api.cpp`, Rust
+`abi_layout::automation_layout_matches_c_header`.
+`se_automation_eval` (testing) evaluates a lane with the engine's code.
+
+### Evaluation
+
+`src/automation.hpp` implements `AutomationLane::value_at` over frames
+literally: hold the first value at and before the first point and the last
+value after the last point, the later point at a vertical step, `shape(s, c)`
+= `s^(1+3c)` / `1−(1−s)^(1−3c)` (|c| < 1e-6: linear), `s` computed as
+`(float)(t−a) / (float)(b−a)`, geometric `exp(lerp(log a, log b, s))` for
+logarithmic lanes, all in `float` with FP contraction disabled
+(`#pragma clang fp contract(off)`; Rust never fuses). The cross-language
+test (`crates/saine-engine/tests/automation.rs`) compares 135 522 values of
+200 random lanes (all target kinds, curves incl. ±1 and 1e-7, steps at the
+first and inner points) with `value_at`: all are **bit-identical** (required:
+1e-5 relative).
+
+### Playback and rates
+
+Each lane **replaces** the static value of its target while it is present
+(the static gain/pan/parameter is not multiplied in); removing or disabling
+the lane (a republish) restores the static value.
+
+* **Volume / pan / master volume:** per sample. `auto_fill` evaluates the
+  lane exactly at the start of runs of ≤ 32 samples that never cross a point
+  and ramps the *mapped* gain linearly in between (a run ending on a point
+  ends on its left limit, so vertical steps land exactly on their frame). dB
+  → gain is `10^(dB/20)`, ≤ −60 dB = 0; a run that leaves or enters silence
+  is evaluated per sample (the 0 → 0.001 jump at −60 dB is not smeared).
+  Pan lanes produce left/right constant-power gains the same way; the track
+  then mixes with `kernel_add_mul2` (per-sample gains). Error vs exact: ≤ 3e-6
+  for a −60 → 0 dB ramp; max step between samples equals the exact slope.
+  The meters use the block's peak gain.
+* **Synth parameters:** the track's synth renders in segments ending on the
+  16-frame timeline grid; at each segment start the lane values replace the
+  fields of a copy of the track's `se_synth_params`. `Synth::render` now
+  compares the parameters on every call (memcmp; unchanged → nothing), so a
+  change bumps the parameter generation and the voices approach it through
+  the existing ~10 ms one-pole smoothing at their control ticks (16 samples).
+* **Plugin parameters:** before each `run()` of a slot with lanes,
+  `render_block` builds sample-offset `ParamEvent`s: the value at offset 0 of
+  every processed segment (so seeks / loop wraps / re-enable start right),
+  every 64 timeline frames and at every point (≤ 64 points per lane and
+  segment, beyond that the 64-frame grid only), unchanged values skipped,
+  sorted by offset; normalized → native at publish time (VST3 0..1, CLAP
+  `min + n·(max−min)` from `clap_param_info`, AU from
+  `AudioUnitParameterInfo`). Formats: VST3 — points in `IParamValueQueue`s
+  (queues are allocated at setup for `max_block/64 + 74` points); CLAP —
+  `CLAP_EVENT_PARAM_VALUE` merged by time with the note events; AU —
+  `AudioUnitScheduleParameters` immediate events at their offsets (falls back
+  to `AudioUnitSetParameter` with the offset). Up to 2048 events per slot
+  and segment (`PluginInstance::kMaxParamEvents`).
+* **Stopped / paused:** lanes hold the value at the playhead (tails and
+  insert chains still run).
+* **Export** uses the same `render_block`, so lanes are rendered (linear
+  playback, no history needed).
+
+### Alignment with delay compensation
+
+A lane must act on the audio it belongs to, not on whatever passes a stage
+at that transport frame. With PDC active, audio reaching a stage was read at
+an earlier timeline frame: the fader of every track sees audio read
+`lat_i + (L − lat_i) = L` frames earlier (clamped delays: what is actually
+applied); an insert sees the instrument plugin's latency plus the latencies
+of every earlier slot (bypassed slots are delayed by their latency, so they
+count too), plus `L − lat_i` on monitoring tracks (whose line runs before the
+chain); the built-in synth and the instrument plugin see 0 (they render at
+the transport frame); the master fader sees `L`. `plan_pdc` stores these as
+`TrackNode::auto_delay` / `FxSlot::auto_delay` (0 when PDC is off or `L` = 0:
+then nothing is compensated and lanes run on the transport frame, like the
+rest of the engine).
+
+"d frames earlier" is not `position − d` after a loop wrap or seek: for the
+first d samples after a wrap the stage still receives pre-wrap audio. The RT
+side therefore keeps a `TimeHistory` (64 playback segments, contiguous
+playback merged into one) of which timeline frame each rendered sample was
+read at; `pieces()` maps a block's output offsets, seen d samples late, back
+to timeline pieces, and every lane evaluation goes through it. Seek/stop
+flush the delay lines, so the samples mapped across a seek are silent
+anyway. Test: a vertical volume step at 10000 with L = 1000 lands exactly at
+output 11000 on the latent track and on the compensated one; with a loop
+[8000, 12000) every one of 20000 samples equals `gain(value at the frame its
+audio was read at)`; a gain-plugin step after a 500-frame latency plugin
+lands on the delayed audio.
+
+### Plugin parameters and editor changes
+
+`se_plugin_params` / `_param_value` / `_param_text` (Rust `plugin_params`,
+`plugin_param_value`, `plugin_param_text`; main thread, under the plugin host
+mutex): VST3 `IEditController::getParameterInfo` (hidden ones skipped,
+`kCanAutomate` and not read-only = automatable, group from `IUnitInfo`),
+`getParamNormalized`, `getParamStringByValue`; CLAP `clap.params`
+(`CLAP_PARAM_IS_HIDDEN` skipped, module = group, stepped → steps),
+`get_value`, `value_to_text`; AU `kAudioUnitProperty_ParameterList` /
+`ParameterInfo` (CF names, clump names), `AudioUnitGetParameter`,
+`kAudioUnitProperty_ParameterStringFromValue` or the value with its unit
+("11885 Hz").
+
+`se_plugin_take_param_changes` (Rust `take_plugin_param_changes`) drains one
+engine-wide **lock-free bounded MPMC queue** (`plugins/param_bus.hpp`,
+Vyukov ring, 8192 records, push never blocks or allocates, overflow drops
+and counts) that every format reports into from whatever thread the change
+arrives on:
+
+* **VST3:** our `IComponentHandler` — `beginEdit` (record with
+  `gesture_begin`, value = `getParamNormalized`), `performEdit` (value; also
+  forwarded to the processor as before), `endEdit` (`gesture_end`).
+* **CLAP:** output events of `process()` (audio thread) and of
+  `params.flush()`: `CLAP_EVENT_PARAM_GESTURE_BEGIN/END` (value = the last
+  value seen for that parameter, an atomic per cached parameter) and
+  `CLAP_EVENT_PARAM_VALUE` (normalized with the range cached at creation),
+  stamped `segment position + event time`. `host.params.request_flush` sets a
+  flag; `se_plugin_idle` runs pending flushes with the audio-thread role when
+  it can claim the RT path (no device, no offline render running; a running
+  device processes the plugin instead, which delivers the same events).
+* **AU:** an `AUEventListener` on a private serial dispatch queue, registered
+  for value changes and begin/end gestures of every parameter (what AU views
+  send through `AUParameterSet` / `AUEventListenerNotify`). The listener
+  block holds a shared state whose instance pointer is cleared under a mutex
+  before the instance is disposed.
+
+Frames are the transport position when the change was observed (block
+granularity outside CLAP `process()`). Automation is never reported: VST3
+automation goes to the processor only, CLAP automation is input not output,
+AU automation uses `AudioUnitScheduleParameters` (no notification).
+
+Test hooks: the test gain plugins have hidden, unlisted gesture parameters —
+VST3: `setParamNormalized(1000, v)` on the controller performs
+`beginEdit/performEdit/endEdit` on parameter 0; CLAP: a `PARAM_VALUE` for
+1000 emits the gesture from `process()`, for 1001 from `params.flush()` after
+a `request_callback` → `on_main_thread` → `request_flush` round trip.
+`saine::testing::plugin_simulate_gesture` does an AU view's gesture on an AU.
+Both gain plugins now apply their gain sample-accurately at event offsets.
+
+### Tests
+
+C++ (`tests/test_automation.cpp`, both presets): evaluation contract and
+validation (`se_automation_eval`), publish validation; volume ramp −60 → 0 dB
+over 1 s on a DC clip (max error 3.1e-6, max step 1.44e-4 = the exact slope,
+odd block size) and replacement of the static gain; pan (constant power,
+error 3.5e-6) and master volume with a step (exact on its frame, `master_gain`
+ignored); empty lanes ignored and lane removal restoring the static gain
+bit-exactly; loop wraps (every sample right after the wrap), seeks and pause;
+synth cutoff sweep 150 Hz → 12 kHz brightens 0.0004 → 0.0023 → 0.026 while
+the static patch stays constant; CLAP and VST3 gain lanes reproduced exactly
+(0 of 10000 samples off the event-step model, steps between grid points
+land on their frame), unknown parameter inactive; AULowpass cutoff sweep
+(brightness 0.13 → 1.8 → 2.4); parameter queries for CLAP, VST3, AU;
+editor changes for VST3, CLAP (process and flush paths) and AU with
+order, flags, values and frames, and no records caused by automation; PDC
+alignment (above); export with a latency plugin and a master step (max error
+1.1e-5); zero allocations on the RT path with 26 tracks of dense lanes (a
+point every 7 frames, curves), CLAP/VST3 gain lanes, a synth with two lanes,
+a latency plugin, master lane, loop, seeks, pause and odd block sizes.
+
+Rust (`crates/saine-engine/tests/automation.rs`): the cross-language
+evaluation test; validation parity; a Document `SetAutomationLane` volume
+lane on a DC clip follows `value_at` (worst 4.9e-6), a disabled lane renders
+bit-identically to no lane, undo restores the static output bit-exactly;
+master lane; a CLAP gain lane through the document and the parameter
+queries.
+
 ## Placeholders and known gaps
 
 * **Windows** (`src/platform/wasapi_device.cpp`): stub, `se_device_start` →
@@ -1047,7 +1239,7 @@ test AU changes latency).
   asset release / destroy. With the device running and no edits, the
   previously retired graph (and any released assets it holds) stays alive
   until the next such call.
-* Plugins: no sidechains, multi-out instruments, parameter automation,
+* Plugins: no sidechains, multi-out instruments,
   host-side generic parameter UI, or MIDI CC/pitch bend to instrument
   plugins. Of VST3 `restartComponent` flags only `kLatencyChanged` is handled
   (and CLAP `request_restart`): re-activation for latency changes; layout /
@@ -1056,7 +1248,7 @@ test AU changes latency).
   VST3/CLAP loaders for Windows/Linux are not written). The scanner does not
   look inside `.component` bundles itself (AUs come from the system
   registry) and does not sandbox children beyond process isolation.
-* Multithreaded track rendering, buses/sends, automation, and
+* Multithreaded track rendering, buses/sends, and
   sample-accurate transport commands while the device runs (they apply at
   block boundaries; the loop wrap itself is sample-accurate) are not
   implemented.
@@ -1116,6 +1308,23 @@ of N frames on track 1; same machine and run):
 L = 4096 costs ≈ 2.1 µs/block for 31 delayed tracks (~68 ns per track per
 256-frame block: one stereo memcpy in and out of the ring), 0.04 % of the
 deadline. With L = 0 the plan is empty and the cost is a few branches.
+
+Automation (32 audio tracks × 4 clips + CLAP gain + VST3 gain inserts, 4
+lanes per track: volume, pan, and the gain parameter of each insert, a
+curved point every 100 ms; same machine):
+
+| Lanes | avg µs/block | p99 |
+|---|---|---|
+| none (same session) | 10.46 | 12.58 |
+| 32 × 4 lanes | 41.91 | 50.04 |
+
+≈ 0.24 µs per lane per 256-frame block (0.6 % of the deadline for 128
+lanes): mostly the pan lane's two constant-power evaluations per ≤ 32-sample
+run and the per-sample gain multiply. Without lanes nothing changed: two
+interleaved runs against the pre-automation build (HEAD 4ab2922) gave audio
+1.07 / 3.44 / 12.88 µs vs 1.07 / 3.40 / 12.87 µs, plugins (CLAP + VST3) 10.34
+vs 10.46 µs, PDC N = 4096 off 3.89 vs 3.81 µs, MIDI default patch 8 / 32
+tracks 138.7 / 562 µs vs 138.7 / 557 µs (all within run-to-run noise).
 
 Input (8 armed + monitored tracks, injected 8-channel input, no clips):
 1.33 µs/block with recording off; 5.9 µs/block avg (p99 11 µs, max 32 µs)

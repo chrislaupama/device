@@ -78,8 +78,8 @@ public:
 
     // Renders timeline frames [position, position + frames) into `out`
     // (mono). `notes` are this track's notes sorted by start; `params` the
-    // track's synth parameters (nullptr = defaults), read whenever
-    // `graph_seq` changes. When `playing` is false no events are processed
+    // track's synth parameters (nullptr = defaults), compared with the
+    // current ones on every call (automation changes them per segment). When `playing` is false no events are processed
     // (only tails ring out). Returns false (and leaves `out` untouched) if
     // the synth is silent for the whole segment; otherwise overwrites
     // out[0..frames).

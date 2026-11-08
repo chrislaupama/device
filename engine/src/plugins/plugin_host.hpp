@@ -64,6 +64,13 @@ public:
     bool latency(uint64_t device_id, uint32_t& frames);
     PluginInstance* instance(uint64_t device_id) const;
 
+    // ---- editor parameter changes (lock-free, see ParamBus)
+    ParamBus& bus() noexcept { return bus_; }
+    // CLAP params.request_flush pending on some live instance.
+    bool flush_pending() const;
+    // Runs those flushes (caller holds mutex() and the engine's RT path).
+    void flush_params();
+
     // Test hook: instances created so far.
     uint64_t instantiations() const noexcept { return instantiations_.load(); }
 
@@ -84,6 +91,7 @@ private:
 
     const double sample_rate_;
     const uint32_t max_block_;
+    ParamBus bus_; // outlives every instance (declared before them)
     mutable std::mutex mutex_;
     std::unordered_map<uint64_t, Entry> entries_;
     std::vector<Retired> retired_;

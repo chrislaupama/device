@@ -6,8 +6,9 @@
 
 pub mod ffi;
 
+use saine_core::automation::{AutomationTarget, SynthParam};
 use saine_core::instrument::{FilterMode, SynthParams, Waveform};
-use saine_core::snapshot::SessionSnapshot;
+use saine_core::snapshot::{LaneSnapshot, SessionSnapshot};
 use std::ffi::{CStr, CString};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -157,12 +158,14 @@ impl Engine {
     }
 
     /// Publish an immutable session snapshot to the audio thread
-    /// (`se_session_publish_v5`: audio clips plus, on instrument tracks,
+    /// (`se_session_publish_v6`: audio clips plus, on instrument tracks,
     /// MIDI notes rendered by the engine's built-in synth with the track's
     /// [`SynthParams`] (`synth: None` uses the engine defaults, which equal
     /// `SynthParams::default()`) or by the track's instrument plugin; each
-    /// track's record arm, input monitoring and input routing; and each
-    /// track's insert chain (`devices`).
+    /// track's record arm, input monitoring and input routing; each
+    /// track's insert chain (`devices`); and the automation lanes of every
+    /// track and of the master (`TrackSnapshot::automation`,
+    /// `SessionSnapshot::master_automation`; see docs/adr/0005-automation.md).
     ///
     /// MAIN THREAD: plugin devices seen for the first time are instantiated
     /// during this call (see docs/adr/0003-plugins.md). Saved device state
@@ -203,11 +206,17 @@ impl Engine {
             .collect::<Result<_, _>>()?;
         let dev_descs: Vec<Vec<ffi::se_device_desc>> = dev_store.iter().map(|v| v.iter().map(DeviceStore::desc).collect()).collect();
         let inst_descs: Vec<Option<ffi::se_device_desc>> = inst_store.iter().map(|d| d.as_ref().map(DeviceStore::desc)).collect();
-        let tracks: Vec<ffi::se_track_desc_v5> = s
+        // Automation: points first, then the lane descriptors pointing at them.
+        let track_points: Vec<Vec<Vec<ffi::se_auto_point>>> = s.tracks.iter().map(|t| t.automation.iter().map(lane_points).collect()).collect();
+        let lane_descs: Vec<Vec<ffi::se_auto_lane_desc>> =
+            s.tracks.iter().zip(&track_points).map(|(t, pts)| t.automation.iter().zip(pts).map(|(l, p)| lane_desc(l, p)).collect()).collect();
+        let master_points: Vec<Vec<ffi::se_auto_point>> = s.master_automation.iter().map(lane_points).collect();
+        let master_descs: Vec<ffi::se_auto_lane_desc> = s.master_automation.iter().zip(&master_points).map(|(l, p)| lane_desc(l, p)).collect();
+        let tracks: Vec<ffi::se_track_desc_v6> = s
             .tracks
             .iter()
             .enumerate()
-            .map(|(i, t)| ffi::se_track_desc_v5 {
+            .map(|(i, t)| ffi::se_track_desc_v6 {
                 track_id: t.track_id,
                 gain: t.gain,
                 pan: t.pan,
@@ -232,11 +241,21 @@ impl Engine {
                 _pad2: 0,
                 instrument_plugin: inst_descs[i].as_ref().map_or(std::ptr::null(), |d| d as *const ffi::se_device_desc),
                 track_name: std::ptr::null(),
+                lanes: lane_descs[i].as_ptr(),
+                lane_count: lane_descs[i].len() as u32,
+                _pad3: 0,
             })
             .collect();
-        let desc = ffi::se_session_desc_v5 { tracks: tracks.as_ptr(), track_count: tracks.len() as u32, master_gain: s.master_gain };
+        let desc = ffi::se_session_desc_v6 {
+            tracks: tracks.as_ptr(),
+            track_count: tracks.len() as u32,
+            master_gain: s.master_gain,
+            master_lanes: master_descs.as_ptr(),
+            master_lane_count: master_descs.len() as u32,
+            _pad: 0,
+        };
         // SAFETY: all pointers stay valid for the duration of the call; the engine copies.
-        check(unsafe { ffi::se_session_publish_v5(self.raw, &desc) })
+        check(unsafe { ffi::se_session_publish_v6(self.raw, &desc) })
     }
 
     fn device_store(&self, d: &saine_core::Device) -> Result<DeviceStore, EngineError> {
@@ -369,6 +388,47 @@ impl DeviceStore {
             _pad: [0; 6],
         }
     }
+}
+
+fn lane_points(l: &LaneSnapshot) -> Vec<ffi::se_auto_point> {
+    l.points.iter().map(|&(frame, value, curve)| ffi::se_auto_point { frame, value, curve }).collect()
+}
+
+/// C descriptor of a lane; `points` must outlive its use.
+fn lane_desc(l: &LaneSnapshot, points: &[ffi::se_auto_point]) -> ffi::se_auto_lane_desc {
+    let (target, synth_param, device_id, param_id) = match &l.target {
+        AutomationTarget::Volume => (ffi::SE_AUTO_VOLUME, 0, 0, 0),
+        AutomationTarget::Pan => (ffi::SE_AUTO_PAN, 0, 0, 0),
+        AutomationTarget::Synth { param } => (ffi::SE_AUTO_SYNTH, synth_param_index(*param), 0, 0),
+        AutomationTarget::Plugin { device, param, .. } => (ffi::SE_AUTO_PLUGIN, 0, device.0, *param),
+    };
+    ffi::se_auto_lane_desc {
+        target,
+        logarithmic: l.target.logarithmic() as u8,
+        synth_param,
+        param_id,
+        device_id,
+        points: points.as_ptr(),
+        point_count: points.len() as u32,
+        _pad: 0,
+    }
+}
+
+/// `SE_SYNTH_P_*` index: the position in [`SynthParam::ALL`].
+pub fn synth_param_index(p: SynthParam) -> u16 {
+    SynthParam::ALL.iter().position(|&q| q == p).expect("SynthParam::ALL lists every parameter") as u16
+}
+
+/// Evaluates a lane with the engine's own code (`se_automation_eval`) at
+/// the given timeline frames, for tests of the evaluation contract. Errors
+/// like a publish would (unsorted points, bad curve, out-of-range synth value, no points).
+pub fn engine_eval_lane(lane: &LaneSnapshot, frames: &[i64]) -> Result<Vec<f32>, EngineError> {
+    let pts = lane_points(lane);
+    let d = lane_desc(lane, &pts);
+    let mut out = vec![0f32; frames.len()];
+    // SAFETY: the descriptor's points, `frames` and `out` are valid for the call.
+    check(unsafe { ffi::se_automation_eval(&d, frames.as_ptr(), frames.len(), out.as_mut_ptr()) })?;
+    Ok(out)
 }
 
 fn wave_to_ffi(w: Waveform) -> u8 {
@@ -986,7 +1046,7 @@ impl Engine {
 //
 // Contract for automation (docs/adr/0005-automation.md). Lanes travel in the
 // session snapshot (`TrackSnapshot::automation`, `SessionSnapshot::master_automation`).
-// Bodies marked STUB are replaced by the engine implementation.
+// Lanes are evaluated by the engine exactly like `AutomationLane::value_at`.
 
 /// A plugin parameter that can be automated.
 #[derive(Debug, Clone, PartialEq)]
@@ -1018,25 +1078,80 @@ pub struct PluginParamChange {
 }
 
 impl Engine {
-    /// STUB. Parameters of a live plugin instance (empty if not loaded).
-    pub fn plugin_params(&self, _device: saine_core::DeviceId) -> Vec<PluginParamInfo> {
-        Vec::new()
+    /// Parameters of a live plugin instance (empty if not loaded), in the
+    /// plugin's order, hidden ones left out. MAIN THREAD (the publishing
+    /// thread; VST3/CLAP parameter queries are main-thread APIs).
+    pub fn plugin_params(&self, device: saine_core::DeviceId) -> Vec<PluginParamInfo> {
+        loop {
+            let mut total = 0usize;
+            // SAFETY: capacity 0 only queries the count.
+            if unsafe { ffi::se_plugin_params(self.raw, device.0, std::ptr::null_mut(), 0, &mut total) } != ffi::SE_OK {
+                return Vec::new();
+            }
+            let mut raw = vec![ffi::se_plugin_param_info::default(); total];
+            let mut n = 0usize;
+            // SAFETY: `raw` has `total` elements.
+            if unsafe { ffi::se_plugin_params(self.raw, device.0, raw.as_mut_ptr(), raw.len(), &mut n) } != ffi::SE_OK {
+                return Vec::new();
+            }
+            if n > raw.len() {
+                continue; // changed in between
+            }
+            return raw[..n]
+                .iter()
+                .map(|p| PluginParamInfo {
+                    id: p.id,
+                    name: c_chars_to_string(&p.name),
+                    group: c_chars_to_string(&p.group),
+                    default_normalized: p.default_normalized,
+                    steps: p.steps,
+                    automatable: p.automatable != 0,
+                })
+                .collect();
+        }
     }
 
-    /// STUB. Current normalized value of a plugin parameter.
-    pub fn plugin_param_value(&self, _device: saine_core::DeviceId, _param: u32) -> Option<f32> {
-        None
+    /// Current normalized value of a plugin parameter. MAIN THREAD.
+    pub fn plugin_param_value(&self, device: saine_core::DeviceId, param: u32) -> Option<f32> {
+        let mut v = 0f32;
+        // SAFETY: valid handle and out pointer.
+        (unsafe { ffi::se_plugin_param_value(self.raw, device.0, param, &mut v) } == ffi::SE_OK).then_some(v)
     }
 
-    /// STUB. Display text for a normalized value ("-6.0 dB", "1.2 kHz").
-    pub fn plugin_param_text(&self, _device: saine_core::DeviceId, _param: u32, _normalized: f32) -> Option<String> {
-        None
+    /// Display text for a normalized value ("-6.0 dB", "1.2 kHz"). MAIN THREAD.
+    pub fn plugin_param_text(&self, device: saine_core::DeviceId, param: u32, normalized: f32) -> Option<String> {
+        let mut buf = [0 as std::ffi::c_char; 256];
+        // SAFETY: `buf` is valid for its length; the engine NUL-terminates.
+        (unsafe { ffi::se_plugin_param_text(self.raw, device.0, param, normalized, buf.as_mut_ptr(), buf.len()) } == ffi::SE_OK)
+            .then(|| c_chars_to_string(&buf))
     }
 
-    /// STUB. Drain parameter changes made in plugin editors since the last
-    /// call (main thread; call from the UI poll).
+    /// Drain parameter changes made in plugin editors since the last call
+    /// (main thread; call from the UI poll). A gesture arrives as a record
+    /// with `gesture_begin` (value at that moment), value changes, and a
+    /// record with `gesture_end`; formats without gestures send values only.
+    /// `frame` is the transport position when the change was observed.
     pub fn take_plugin_param_changes(&self) -> Vec<PluginParamChange> {
-        Vec::new()
+        let mut out = Vec::new();
+        let mut buf = [ffi::se_plugin_param_change::default(); 256];
+        loop {
+            let mut n = 0usize;
+            // SAFETY: `buf` is valid for its length.
+            if unsafe { ffi::se_plugin_take_param_changes(self.raw, buf.as_mut_ptr(), buf.len(), &mut n) } != ffi::SE_OK {
+                return out;
+            }
+            out.extend(buf[..n].iter().map(|c| PluginParamChange {
+                device: saine_core::DeviceId(c.device_id),
+                param: c.param_id,
+                normalized: c.normalized,
+                frame: c.frame,
+                gesture_begin: c.gesture_begin != 0,
+                gesture_end: c.gesture_end != 0,
+            }));
+            if n < buf.len() {
+                return out;
+            }
+        }
     }
 }
 

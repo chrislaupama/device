@@ -1,8 +1,17 @@
 // Saine test CLAP plugins (original, minimal; used by the engine tests only).
 //
 //  SAINE_TEST_CLAP_GAIN: "studio.saine.test.gain"  stereo effect, one
-//      parameter "Gain" (id 0, linear 0..1, default 0.5). State = the gain
-//      as a little-endian float32.
+//      parameter "Gain" (id 0, linear 0..1, default 0.5), applied
+//      sample-accurately at each CLAP_EVENT_PARAM_VALUE's time. State = the
+//      gain as a little-endian float32.
+//      Editor-gesture test hooks (hidden, unlisted parameters): a
+//      PARAM_VALUE event for id 1000 with value v acts like a knob drag in
+//      the editor during process(): the gain becomes v and the plugin
+//      outputs GESTURE_BEGIN(0), PARAM_VALUE(0, v), GESTURE_END(0) at that
+//      event's time. Id 1001 does the same outside process(): the plugin
+//      asks for a main-thread callback, requests a parameter flush from
+//      there, and outputs the gesture from params.flush() (or the next
+//      process(), whichever the host calls first).
 //  SAINE_TEST_CLAP_SINE: "studio.saine.test.sine"  instrument: 16 voices of
 //      a cosine at the note's equal-tempered pitch (A4 = 440 Hz), amplitude
 //      0.25 * velocity, starting at full amplitude on the note-on sample and
@@ -50,6 +59,9 @@ struct Plugin {
     clap_plugin_t clap{};
     const clap_host_t* host = nullptr;
     std::atomic<float> gain{0.5f};
+    // Gesture hooks (ids 1000/1001).
+    std::atomic<int> pending{0}; // 0 none, 1 callback requested, 2 flush requested
+    std::atomic<float> pending_value{0.0f};
     double rate = 48000.0;
     Voice voices[16];
 };
@@ -81,18 +93,57 @@ bool params_from_text(const clap_plugin_t*, clap_id, const char* text, double* v
     *v = std::atof(text);
     return true;
 }
-void apply_param_events(Plugin* s, const clap_input_events_t* in) {
-    const uint32_t n = in->size(in);
-    for (uint32_t i = 0; i < n; ++i) {
-        const clap_event_header_t* h = in->get(in, i);
-        if (h->space_id == CLAP_CORE_EVENT_SPACE_ID && h->type == CLAP_EVENT_PARAM_VALUE) {
-            const auto* e = reinterpret_cast<const clap_event_param_value_t*>(h);
-            if (e->param_id == 0) s->gain.store(static_cast<float>(e->value));
-        }
+constexpr clap_id kGestureNow = 1000;
+constexpr clap_id kGestureFlush = 1001;
+
+void emit_gesture(const clap_output_events_t* out, uint32_t time, double value) {
+    if (out == nullptr) return;
+    clap_event_param_gesture_t g{};
+    g.header = {sizeof g, time, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_GESTURE_BEGIN, 0};
+    g.param_id = 0;
+    out->try_push(out, &g.header);
+    clap_event_param_value_t v{};
+    v.header = {sizeof v, time, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_VALUE, 0};
+    v.param_id = 0;
+    v.note_id = -1;
+    v.port_index = -1;
+    v.channel = -1;
+    v.key = -1;
+    v.value = value;
+    out->try_push(out, &v.header);
+    g.header.type = CLAP_EVENT_PARAM_GESTURE_END;
+    out->try_push(out, &g.header);
+}
+
+// One input event (PARAM_VALUE only).
+void apply_param_event(Plugin* s, const clap_event_header_t* h, const clap_output_events_t* out) {
+    if (h->space_id != CLAP_CORE_EVENT_SPACE_ID || h->type != CLAP_EVENT_PARAM_VALUE) return;
+    const auto* e = reinterpret_cast<const clap_event_param_value_t*>(h);
+    if (e->param_id == 0) {
+        s->gain.store(static_cast<float>(e->value));
+    } else if (e->param_id == kGestureNow) {
+        s->gain.store(static_cast<float>(e->value));
+        emit_gesture(out, h->time, e->value);
+    } else if (e->param_id == kGestureFlush) {
+        s->pending_value.store(static_cast<float>(e->value));
+        s->pending.store(1);
+        s->host->request_callback(s->host);
     }
 }
-void params_flush(const clap_plugin_t* p, const clap_input_events_t* in, const clap_output_events_t*) {
-    apply_param_events(self(p), in);
+
+void emit_pending(Plugin* s, const clap_output_events_t* out) {
+    if (s->pending.load() != 2) return;
+    s->pending.store(0);
+    const float v = s->pending_value.load();
+    s->gain.store(v);
+    emit_gesture(out, 0, v);
+}
+
+void params_flush(const clap_plugin_t* p, const clap_input_events_t* in, const clap_output_events_t* out) {
+    Plugin* s = self(p);
+    const uint32_t n = in->size(in);
+    for (uint32_t i = 0; i < n; ++i) apply_param_event(s, in->get(in, i), out);
+    emit_pending(s, out);
 }
 const clap_plugin_params_t kParams = {params_count, params_info, params_value, params_to_text, params_from_text,
                                       params_flush};
@@ -204,13 +255,23 @@ clap_process_status process(const clap_plugin_t* p, const clap_process_t* pr) {
     float* ol = pr->audio_outputs[0].data32[0];
     float* orr = pr->audio_outputs[0].data32[1];
     if (!kInstrument) {
-        apply_param_events(s, pr->in_events);
-        const float g = s->gain.load();
+        // Sample-accurate: each event applies from its time on.
+        emit_pending(s, pr->out_events);
         const float* il = pr->audio_inputs[0].data32[0];
         const float* ir = pr->audio_inputs[0].data32[1];
-        for (uint32_t i = 0; i < n; ++i) {
-            ol[i] = il[i] * g;
-            orr[i] = ir[i] * g;
+        const clap_input_events_t* in = pr->in_events;
+        const uint32_t ne = in->size(in);
+        uint32_t pos = 0;
+        for (uint32_t e = 0; e <= ne; ++e) {
+            const clap_event_header_t* h = e < ne ? in->get(in, e) : nullptr;
+            const uint32_t t = h == nullptr ? n : (h->time < n ? h->time : n);
+            const float g = s->gain.load();
+            for (uint32_t i = pos; i < t; ++i) {
+                ol[i] = il[i] * g;
+                orr[i] = ir[i] * g;
+            }
+            pos = t;
+            if (h != nullptr) apply_param_event(s, h, pr->out_events);
         }
         return CLAP_PROCESS_CONTINUE;
     }
@@ -249,7 +310,13 @@ const void* get_extension(const clap_plugin_t*, const char* id) {
     if (kInstrument && std::strcmp(id, CLAP_EXT_NOTE_PORTS) == 0) return &kNotePorts;
     return nullptr;
 }
-void on_main_thread(const clap_plugin_t*) {}
+void on_main_thread(const clap_plugin_t* p) {
+    Plugin* s = self(p);
+    int expected = 1;
+    if (!s->pending.compare_exchange_strong(expected, 2)) return;
+    const auto* hp = static_cast<const clap_host_params_t*>(s->host->get_extension(s->host, CLAP_EXT_PARAMS));
+    if (hp != nullptr) hp->request_flush(s->host); // from the main thread, as the spec asks
+}
 
 const clap_plugin_t* create(const clap_plugin_factory_t*, const clap_host_t* host, const char* id) {
     if (std::strcmp(id, kId) != 0) return nullptr;

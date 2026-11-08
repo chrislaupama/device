@@ -13,6 +13,7 @@
 
 #include "../spsc_queue.hpp"
 #include "../synth.hpp" // NoteEvent
+#include "param_bus.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -103,6 +104,26 @@ public:
     virtual void bring_to_front() noexcept = 0;
 };
 
+// One automation parameter event inside a processed segment (sorted by
+// offset). `value` is format-native: VST3 normalized, CLAP and AU plain.
+struct ParamEvent {
+    uint32_t offset = 0;
+    uint32_t id = 0;
+    double value = 0.0;
+};
+
+// Parameter description (main thread queries).
+struct ParamInfo {
+    uint32_t id = 0;
+    std::string name;
+    std::string group;
+    float default_normalized = 0.0f;
+    uint32_t steps = 0;
+    bool automatable = true;
+    double min = 0.0; // native range (VST3: 0..1)
+    double max = 1.0;
+};
+
 // Parameter change from the main thread to the processor.
 struct ParamChange {
     uint32_t id = 0;   // format parameter id (AU parameter id, VST3 ParamID, CLAP clap_id)
@@ -112,6 +133,7 @@ struct ParamChange {
 class PluginInstance {
 public:
     static constexpr uint32_t kMaxEvents = 512; // per processed segment
+    static constexpr uint32_t kMaxParamEvents = 2048; // automation events per processed segment
 
     virtual ~PluginInstance() = default;
     PluginInstance(const PluginInstance&) = delete;
@@ -125,10 +147,10 @@ public:
     // pair with suspend(): either this call sees the suspension or
     // suspend() waits until the call has returned.
     void run(float* l, float* r, uint32_t frames, const MidiEvent* events, uint32_t event_count,
-             const RtTransport& transport) noexcept {
+             const RtTransport& transport, const ParamEvent* params = nullptr, uint32_t param_count = 0) noexcept {
         in_process_.store(true, std::memory_order_seq_cst);
         if (!suspended_.load(std::memory_order_seq_cst)) {
-            process(l, r, frames, events, event_count, transport);
+            process(l, r, frames, events, event_count, transport, params, param_count);
         } else if (spec_.instrument) {
             std::memset(l, 0, sizeof(float) * frames);
             std::memset(r, 0, sizeof(float) * frames);
@@ -137,9 +159,10 @@ public:
     }
 
     // RT. Effects process l/r in place. Instruments overwrite l/r with
-    // their output; `events` are this segment's note events.
+    // their output; `events` are this segment's note events, `params` its
+    // automation events (sorted by offset, at most kMaxParamEvents).
     virtual void process(float* l, float* r, uint32_t frames, const MidiEvent* events, uint32_t event_count,
-                         const RtTransport& transport) noexcept = 0;
+                         const RtTransport& transport, const ParamEvent* params, uint32_t param_count) noexcept = 0;
 
     // ---- restarts and latency (main thread)
     // Set from any thread by the format host when the plugin asks to be
@@ -174,6 +197,45 @@ public:
     // CLAP request_callback etc.
     virtual void on_main_thread() noexcept {}
 
+    // ---- parameters (main thread; see se_plugin_params)
+    // Visible parameters in the plugin's order.
+    virtual void params(std::vector<ParamInfo>& out) { out.clear(); }
+    // Native range of an automatable target (false: no such parameter).
+    virtual bool param_range(uint32_t id, double& min, double& max) {
+        (void)id;
+        min = 0.0;
+        max = 1.0;
+        return false;
+    }
+    virtual bool param_value(uint32_t id, float& normalized) {
+        (void)id;
+        normalized = 0.0f;
+        return false;
+    }
+    virtual bool param_text(uint32_t id, float normalized, std::string& out) {
+        (void)id;
+        (void)normalized;
+        out.clear();
+        return false;
+    }
+    // CLAP: the plugin asked for a parameter flush (host params.request_flush).
+    virtual bool wants_flush() const noexcept { return false; }
+    // Runs that flush with the audio-thread role; the caller guarantees
+    // nothing processes meanwhile (the engine holds the RT path).
+    virtual void flush_params() noexcept {}
+
+    // Test hook: perform an editor-style gesture (begin, set, end) through
+    // the format's own notification path, where the host can do that (AU).
+    virtual bool simulate_editor_gesture(uint32_t id, float normalized) {
+        (void)id;
+        (void)normalized;
+        return false;
+    }
+
+    // Editor-originated parameter changes are reported here (set once by the
+    // PluginHost right after creation, before any processing).
+    void attach_bus(ParamBus* bus) noexcept { bus_.store(bus, std::memory_order_release); }
+
     // Main thread: queue a parameter change for the processor (and update
     // the controller side where the format has one). False if the queue is full.
     bool set_parameter(uint32_t id, double value) noexcept;
@@ -189,8 +251,31 @@ protected:
     // RT: next queued parameter change.
     bool pop_param(ParamChange& c) noexcept { return params_.pop(c); }
     bool push_param(const ParamChange& c) noexcept;
+    // Any thread: report an editor change, stamped with the transport
+    // position (report_change_at: with a known frame).
+    void report_change(uint32_t id, float normalized, bool begin, bool end) noexcept {
+        if (ParamBus* b = bus_.load(std::memory_order_acquire)) report_change_at(id, normalized, b->position(), begin, end);
+    }
+    void report_change_at(uint32_t id, float normalized, int64_t frame, bool begin, bool end) noexcept {
+        ParamBus* const b = bus_.load(std::memory_order_acquire);
+        if (b == nullptr) return;
+        ParamChangeRecord r;
+        r.device_id = spec_.device_id;
+        r.frame = frame;
+        r.param_id = id;
+        r.normalized = normalized;
+        r.gesture_begin = begin;
+        r.gesture_end = end;
+        b->push(r);
+    }
+    ParamBus* bus() const noexcept { return bus_.load(std::memory_order_acquire); }
 
     PluginSpec spec_;
+
+private:
+    std::atomic<ParamBus*> bus_{nullptr};
+
+protected:
 
 private:
     std::atomic<bool> in_process_{false};

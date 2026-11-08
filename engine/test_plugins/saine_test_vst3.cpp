@@ -3,7 +3,13 @@
 // Separate processor and controller classes, connected through
 // IConnectionPoint by the host, like most real plugins.
 //   - one stereo in / stereo out audio bus
-//   - parameter 0 "Gain": normalized value == linear gain 0..1, default 0.5
+//   - parameter 0 "Gain": normalized value == linear gain 0..1, default 0.5,
+//     applied sample-accurately at each IParamValueQueue point's offset
+//     (step from that sample on)
+//   - editor-gesture test hook: the controller's setParamNormalized on the
+//     hidden, unlisted parameter 1000 with value v acts like a knob drag in
+//     the editor: beginEdit(0), setParamNormalized(0, v), performEdit(0, v),
+//     endEdit(0) through the host's IComponentHandler
 //   - component state = the gain as a little-endian float32; controller
 //     state is empty
 // process() does not allocate.
@@ -20,6 +26,7 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -107,23 +114,37 @@ public:
     tresult PLUGIN_API setupProcessing(ProcessSetup&) override { return kResultOk; }
     tresult PLUGIN_API setProcessing(TBool) override { return kResultOk; }
     tresult PLUGIN_API process(ProcessData& d) override {
+        IParamValueQueue* gain_queue = nullptr;
         if (IParameterChanges* pc = d.inputParameterChanges) {
             const int32 n = pc->getParameterCount();
             for (int32 i = 0; i < n; ++i) {
                 IParamValueQueue* q = pc->getParameterData(i);
-                if (q == nullptr || q->getParameterId() != 0 || q->getPointCount() <= 0) continue;
-                int32 offset = 0;
-                ParamValue v = 0;
-                if (q->getPoint(q->getPointCount() - 1, offset, v) == kResultOk)
-                    gain_.store(static_cast<float>(v));
+                if (q != nullptr && q->getParameterId() == 0 && q->getPointCount() > 0) gain_queue = q;
             }
         }
-        if (d.numInputs < 1 || d.numOutputs < 1 || d.numSamples <= 0) return kResultOk; // parameter flush
-        const float g = gain_.load();
-        for (int32 c = 0; c < 2; ++c) {
-            const float* in = d.inputs[0].channelBuffers32[c];
-            float* out = d.outputs[0].channelBuffers32[c];
-            for (int32 i = 0; i < d.numSamples; ++i) out[i] = in[i] * g;
+        if (d.numInputs < 1 || d.numOutputs < 1 || d.numSamples <= 0) { // parameter flush
+            int32 offset = 0;
+            ParamValue v = 0;
+            if (gain_queue != nullptr && gain_queue->getPoint(gain_queue->getPointCount() - 1, offset, v) == kResultOk)
+                gain_.store(static_cast<float>(v));
+            return kResultOk;
+        }
+        // Sample-accurate: each point applies from its offset on.
+        const int32 points = gain_queue != nullptr ? gain_queue->getPointCount() : 0;
+        int32 pos = 0;
+        for (int32 k = 0; k <= points; ++k) {
+            int32 offset = d.numSamples;
+            ParamValue v = 0;
+            if (k < points && gain_queue->getPoint(k, offset, v) != kResultOk) continue;
+            const int32 end = std::min(std::max(offset, pos), d.numSamples);
+            const float g = gain_.load();
+            for (int32 c = 0; c < 2; ++c) {
+                const float* in = d.inputs[0].channelBuffers32[c];
+                float* out = d.outputs[0].channelBuffers32[c];
+                for (int32 i = pos; i < end; ++i) out[i] = in[i] * g;
+            }
+            pos = end;
+            if (k < points) gain_.store(static_cast<float>(v));
         }
         d.outputs[0].silenceFlags = 0;
         return kResultOk;
@@ -147,6 +168,7 @@ private:
 
 class Controller : public U::Implements<U::Directly<IEditController, IConnectionPoint>, U::Indirectly<IPluginBase>> {
 public:
+    static constexpr ParamID kGestureParam = 1000;
     ~Controller() override {
         if (handler_ != nullptr) handler_->release();
     }
@@ -187,6 +209,14 @@ public:
     ParamValue PLUGIN_API plainParamToNormalized(ParamID, ParamValue v) override { return v; }
     ParamValue PLUGIN_API getParamNormalized(ParamID id) override { return id == 0 ? norm_ : 0.0; }
     tresult PLUGIN_API setParamNormalized(ParamID id, ParamValue v) override {
+        if (id == kGestureParam) { // test hook: an editor knob drag
+            if (handler_ == nullptr) return kResultFalse;
+            handler_->beginEdit(0);
+            norm_ = v;
+            handler_->performEdit(0, v);
+            handler_->endEdit(0);
+            return kResultOk;
+        }
         if (id != 0) return kInvalidArgument;
         norm_ = v;
         return kResultOk;

@@ -23,6 +23,7 @@
 #include <pluginterfaces/vst/ivstmessage.h>
 #include <pluginterfaces/vst/ivstparameterchanges.h>
 #include <pluginterfaces/vst/ivstprocesscontext.h>
+#include <pluginterfaces/vst/ivstunits.h>
 #include <public.sdk/source/vst/hosting/hostclasses.h>
 
 #include <algorithm>
@@ -102,24 +103,27 @@ private:
 
 class FixedParamQueue final : public U::Implements<U::Directly<IParamValueQueue>> {
 public:
-    static constexpr int32 kCap = 16;
+    void allocate(int32 cap) {
+        offsets_.assign(static_cast<std::size_t>(cap), 0);
+        values_.assign(static_cast<std::size_t>(cap), 0.0);
+    }
     ParamID PLUGIN_API getParameterId() override { return id_; }
     int32 PLUGIN_API getPointCount() override { return count_; }
     tresult PLUGIN_API getPoint(int32 index, int32& offset, ParamValue& value) override {
         if (index < 0 || index >= count_) return kInvalidArgument;
-        offset = offsets_[index];
-        value = values_[index];
+        offset = offsets_[static_cast<std::size_t>(index)];
+        value = values_[static_cast<std::size_t>(index)];
         return kResultOk;
     }
     tresult PLUGIN_API addPoint(int32 offset, ParamValue value, int32& index) override {
-        if (count_ > 0 && offsets_[count_ - 1] == offset) { // same time: replace
-            values_[count_ - 1] = value;
+        if (count_ > 0 && offsets_[static_cast<std::size_t>(count_ - 1)] == offset) { // same time: replace
+            values_[static_cast<std::size_t>(count_ - 1)] = value;
             index = count_ - 1;
             return kResultOk;
         }
-        if (count_ >= kCap) return kResultFalse;
-        offsets_[count_] = offset;
-        values_[count_] = value;
+        if (count_ >= static_cast<int32>(offsets_.size())) return kResultFalse;
+        offsets_[static_cast<std::size_t>(count_)] = offset;
+        values_[static_cast<std::size_t>(count_)] = value;
         index = count_++;
         return kResultOk;
     }
@@ -131,13 +135,21 @@ public:
 private:
     ParamID id_ = 0;
     int32 count_ = 0;
-    int32 offsets_[kCap] = {};
-    ParamValue values_[kCap] = {};
+    std::vector<int32> offsets_;
+    std::vector<ParamValue> values_;
 };
 
+// Parameter changes of one process() call. Queues hold the main-thread
+// changes (offset 0) and the automation points of one parameter (at most
+// one per 64 frames of the largest block plus 64 lane points, see
+// render_block), allocated at setup.
 class FixedParamChanges final : public U::Implements<U::Directly<IParameterChanges>> {
 public:
     static constexpr int32 kCap = 64;
+    void allocate(uint32_t max_block) {
+        const auto cap = static_cast<int32>(max_block / 64 + 2 + 64 + 8);
+        for (auto& q : queues_) q.allocate(cap);
+    }
     int32 PLUGIN_API getParameterCount() override { return count_; }
     IParamValueQueue* PLUGIN_API getParameterData(int32 index) override {
         return index >= 0 && index < count_ ? &queues_[index] : nullptr;
@@ -159,6 +171,34 @@ private:
     FixedParamQueue queues_[kCap];
     int32 count_ = 0;
 };
+
+// UTF-16 (VST3 String128) -> UTF-8.
+std::string utf16_to_utf8(const char16* s, std::size_t max = 128) {
+    std::string out;
+    for (std::size_t i = 0; i < max && s[i] != 0; ++i) {
+        uint32_t c = static_cast<uint16_t>(s[i]);
+        if (c >= 0xD800 && c < 0xDC00 && i + 1 < max && s[i + 1] >= 0xDC00 && s[i + 1] < 0xE000) {
+            c = 0x10000 + ((c - 0xD800) << 10) + (static_cast<uint16_t>(s[i + 1]) - 0xDC00);
+            ++i;
+        }
+        if (c < 0x80) {
+            out.push_back(static_cast<char>(c));
+        } else if (c < 0x800) {
+            out.push_back(static_cast<char>(0xC0 | (c >> 6)));
+            out.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+        } else if (c < 0x10000) {
+            out.push_back(static_cast<char>(0xE0 | (c >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+        } else {
+            out.push_back(static_cast<char>(0xF0 | (c >> 18)));
+            out.push_back(static_cast<char>(0x80 | ((c >> 12) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+        }
+    }
+    return out;
+}
 
 namespace {
 
@@ -190,9 +230,9 @@ class Vst3Instance;
 class ComponentHandler final : public U::Implements<U::Directly<IComponentHandler>> {
 public:
     explicit ComponentHandler(Vst3Instance* owner) : owner_(owner) {}
-    tresult PLUGIN_API beginEdit(ParamID) override { return kResultOk; }
+    tresult PLUGIN_API beginEdit(ParamID id) override;
     tresult PLUGIN_API performEdit(ParamID id, ParamValue value) override;
-    tresult PLUGIN_API endEdit(ParamID) override { return kResultOk; }
+    tresult PLUGIN_API endEdit(ParamID id) override;
     tresult PLUGIN_API restartComponent(int32 flags) override;
     void detach() { owner_ = nullptr; }
 
@@ -286,6 +326,7 @@ public:
         spec_.state.shrink_to_fit();
 
         if (!setup_buses(err)) return false;
+        params_.allocate(max_block_);
 
         ProcessSetup setup{kRealtime, kSample32, static_cast<int32>(max_block_), rate_};
         if (processor_->setupProcessing(setup) != kResultOk) {
@@ -303,7 +344,7 @@ public:
     }
 
     void process(float* l, float* r, uint32_t frames, const MidiEvent* events, uint32_t event_count,
-                 const RtTransport& t) noexcept override {
+                 const RtTransport& t, const ParamEvent* auto_events, uint32_t auto_count) noexcept override {
         if (!active_) { // a re-activation failed: effects pass through, instruments are silent
             if (spec_.instrument) {
                 std::memset(l, 0, sizeof(float) * frames);
@@ -316,6 +357,14 @@ public:
         while (pop_param(pc)) {
             int32 qi = 0, pi = 0;
             if (IParamValueQueue* q = params_.addParameterData(pc.id, qi)) q->addPoint(0, pc.value, pi);
+        }
+        // Automation: sample-offset points (sorted by offset, so every
+        // queue stays sorted).
+        for (uint32_t i = 0; i < auto_count; ++i) {
+            const ParamEvent& ev = auto_events[i];
+            int32 qi = 0, pi = 0;
+            if (IParamValueQueue* q = params_.addParameterData(ev.id, qi))
+                q->addPoint(static_cast<int32>(ev.offset), ev.value, pi);
         }
         events_.clear();
         for (uint32_t i = 0; i < event_count; ++i) {
@@ -455,8 +504,77 @@ public:
         }
     }
 
-    // UI edits from the controller go to the processor (main thread).
-    void ui_edit(ParamID id, ParamValue v) noexcept { push_param(ParamChange{id, v}); }
+    // UI edits from the controller go to the processor (main thread) and
+    // are reported for write automation.
+    void ui_edit(ParamID id, ParamValue v) noexcept {
+        push_param(ParamChange{id, v});
+        report_change(id, static_cast<float>(v), false, false);
+    }
+    void ui_gesture(ParamID id, bool begin) noexcept {
+        const ParamValue v = controller_ != nullptr ? controller_->getParamNormalized(id) : 0.0;
+        report_change(id, static_cast<float>(v), begin, !begin);
+    }
+
+    void params(std::vector<ParamInfo>& out) override {
+        out.clear();
+        if (controller_ == nullptr) return;
+        IUnitInfo* units = nullptr;
+        if (controller_->queryInterface(IUnitInfo::iid, reinterpret_cast<void**>(&units)) != kResultOk) units = nullptr;
+        const int32 n = controller_->getParameterCount();
+        for (int32 i = 0; i < n; ++i) {
+            ParameterInfo pi{};
+            if (controller_->getParameterInfo(i, pi) != kResultOk) continue;
+            if ((pi.flags & ParameterInfo::kIsHidden) != 0) continue;
+            ParamInfo info;
+            info.id = pi.id;
+            info.name = utf16_to_utf8(pi.title);
+            if (units != nullptr && pi.unitId != kRootUnitId) {
+                const int32 uc = units->getUnitCount();
+                for (int32 u = 0; u < uc; ++u) {
+                    UnitInfo ui{};
+                    if (units->getUnitInfo(u, ui) == kResultOk && ui.id == pi.unitId) {
+                        info.group = utf16_to_utf8(ui.name);
+                        break;
+                    }
+                }
+            }
+            info.default_normalized = static_cast<float>(pi.defaultNormalizedValue);
+            info.steps = pi.stepCount > 0 ? static_cast<uint32_t>(pi.stepCount) : 0;
+            info.automatable = (pi.flags & ParameterInfo::kCanAutomate) != 0 && (pi.flags & ParameterInfo::kIsReadOnly) == 0;
+            out.push_back(std::move(info));
+        }
+        if (units != nullptr) units->release();
+    }
+
+    bool param_range(uint32_t id, double& min, double& max) override {
+        min = 0.0;
+        max = 1.0;
+        if (controller_ == nullptr) return true; // no controller: trust the id (normalized values need no info)
+        const int32 n = controller_->getParameterCount();
+        for (int32 i = 0; i < n; ++i) {
+            ParameterInfo pi{};
+            if (controller_->getParameterInfo(i, pi) == kResultOk && pi.id == id) return true;
+        }
+        return false;
+    }
+
+    bool param_value(uint32_t id, float& normalized) override {
+        double mn = 0, mx = 1;
+        if (controller_ == nullptr || !param_range(id, mn, mx)) return false;
+        normalized = static_cast<float>(controller_->getParamNormalized(id));
+        return true;
+    }
+
+    bool param_text(uint32_t id, float normalized, std::string& out) override {
+        double mn = 0, mx = 1;
+        if (controller_ == nullptr || !param_range(id, mn, mx)) return false;
+        String128 str{};
+        if (controller_->getParamStringByValue(id, std::clamp(static_cast<double>(normalized), 0.0, 1.0), str) !=
+            kResultOk)
+            return false;
+        out = utf16_to_utf8(str);
+        return true;
+    }
 
 protected:
     void on_parameter_set(const ParamChange& c) noexcept override {
@@ -600,6 +718,16 @@ tresult PLUGIN_API ComponentHandler::restartComponent(int32 flags) {
 
 tresult PLUGIN_API ComponentHandler::performEdit(ParamID id, ParamValue value) {
     if (owner_ != nullptr) owner_->ui_edit(id, value);
+    return kResultOk;
+}
+
+tresult PLUGIN_API ComponentHandler::beginEdit(ParamID id) {
+    if (owner_ != nullptr) owner_->ui_gesture(id, true);
+    return kResultOk;
+}
+
+tresult PLUGIN_API ComponentHandler::endEdit(ParamID id) {
+    if (owner_ != nullptr) owner_->ui_gesture(id, false);
     return kResultOk;
 }
 

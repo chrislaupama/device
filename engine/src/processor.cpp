@@ -18,7 +18,8 @@ namespace saine {
 
 RenderContext::RenderContext(uint32_t max_block)
     : max_block_(max_block), track_l_(max_block), track_r_(max_block), master_l_(max_block), master_r_(max_block),
-      synth_(max_block), zeros_(max_block, 0.0f), plugin_l_(max_block), plugin_r_(max_block) {}
+      synth_(max_block), zeros_(max_block, 0.0f), plugin_l_(max_block), plugin_r_(max_block), gain_l_(max_block),
+      gain_r_(max_block), auto_a_(max_block), auto_b_(max_block), param_events_(PluginInstance::kMaxParamEvents) {}
 
 void kernel_add_scaled(float* __restrict dst, const float* __restrict src, float gain, uint32_t n) noexcept {
     for (uint32_t i = 0; i < n; ++i) dst[i] += src[i] * gain;
@@ -35,6 +36,38 @@ void kernel_add_scaled2(float* __restrict dst_l, float* __restrict dst_r, const 
 void kernel_scale(float* __restrict buf, float gain, uint32_t n) noexcept {
     for (uint32_t i = 0; i < n; ++i) buf[i] *= gain;
 }
+
+void kernel_add_mul2(float* __restrict dst_l, float* __restrict dst_r, const float* __restrict src_l,
+                     const float* __restrict src_r, const float* __restrict gain_l, const float* __restrict gain_r,
+                     uint32_t n) noexcept {
+    for (uint32_t i = 0; i < n; ++i) {
+        dst_l[i] += src_l[i] * gain_l[i];
+        dst_r[i] += src_r[i] * gain_r[i];
+    }
+}
+
+void kernel_mul(float* __restrict buf, const float* __restrict gain, uint32_t n) noexcept {
+    for (uint32_t i = 0; i < n; ++i) buf[i] *= gain[i];
+}
+
+namespace {
+
+int64_t floor_mod(int64_t a, int64_t m) noexcept {
+    const int64_t r = a % m;
+    return r < 0 ? r + m : r;
+}
+
+int64_t floor_div(int64_t a, int64_t b) noexcept {
+    const int64_t q = a / b;
+    return (a % b != 0 && (a < 0) != (b < 0)) ? q - 1 : q;
+}
+
+// Grid of plugin parameter events (timeline frames) and the most lane
+// points sent per lane and processed segment.
+constexpr int64_t kParamGrid = 64;
+constexpr uint32_t kMaxLanePoints = 64;
+
+} // namespace
 
 float kernel_peak(const float* __restrict buf, uint32_t n) noexcept {
     // Max-abs reduction. Compilers will not auto-vectorise this without
@@ -77,6 +110,76 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
     if (!playing && inst.synths == nullptr && !live_input && !plugins_on && lines == nullptr) return {};
     const auto input_channel = [&](uint32_t c) { return c < input.count ? input.channels[c] : ctx.zeros(); };
     const uint64_t gen = inst.pdc_gen;
+
+    // ---- automation helpers
+    // Output offsets [0, frames) seen `delay` samples late -> timeline pieces.
+    const auto pieces = [&](uint32_t delay, auto&& f) {
+        if (inst.history != nullptr)
+            inst.history->pieces(position, playing, frames, delay, f);
+        else
+            linear_pieces(position, playing, frames, delay, f);
+    };
+    // dst[i] = map(lane value) for the block (ramps, see auto_fill).
+    const auto fill_lane = [&](const AutoLane& lane, uint32_t delay, auto&& map, float* dst) {
+        const LaneView v = lane_view(*graph, lane);
+        pieces(delay, [&](uint32_t i0, uint32_t i1, int64_t tl0, bool moving) {
+            if (moving) {
+                auto_fill(v, tl0, i1 - i0, map, dst + i0);
+            } else {
+                const float g = map(auto_eval(v, tl0));
+                for (uint32_t i = i0; i < i1; ++i) dst[i] = g;
+            }
+        });
+    };
+    // Parameter events of `count` lanes from `begin` (sorted by offset):
+    // the value at the block start (and each timeline piece), every
+    // kParamGrid timeline frames and at every point, unchanged values
+    // skipped. Returns the event count.
+    const auto plugin_events = [&](uint32_t begin, uint32_t count, uint32_t delay) -> uint32_t {
+        ParamEvent* const ev = ctx.param_events();
+        constexpr uint32_t cap = PluginInstance::kMaxParamEvents;
+        uint32_t n = 0;
+        for (uint32_t li = begin; li < begin + count; ++li) {
+            const AutoLane& lane = graph->lanes[li];
+            if (!lane.active) continue;
+            const LaneView v = lane_view(*graph, lane);
+            uint32_t points_left = kMaxLanePoints;
+            bool have_last = false;
+            float last = 0.0f;
+            const auto emit = [&](uint32_t offset, float value) {
+                if (have_last && value == last) return;
+                if (n >= cap) return;
+                have_last = true;
+                last = value;
+                const double nv = std::clamp(static_cast<double>(value), 0.0, 1.0);
+                ev[n++] = ParamEvent{offset, lane.param_id, lane.native_min + nv * (lane.native_max - lane.native_min)};
+            };
+            pieces(delay, [&](uint32_t i0, uint32_t i1, int64_t tl0, bool moving) {
+                emit(i0, auto_eval(v, tl0));
+                if (!moving) return;
+                const int64_t tl_end = tl0 + (i1 - i0);
+                uint32_t idx = auto_upper(v, tl0);
+                int64_t grid = (floor_div(tl0, kParamGrid) + 1) * kParamGrid;
+                for (;;) {
+                    const bool point_next = idx < v.n && v.p[idx].frame <= grid;
+                    const int64_t next = point_next ? v.p[idx].frame : grid;
+                    if (next >= tl_end) break;
+                    const bool on_grid = next == grid;
+                    if (on_grid) grid += kParamGrid;
+                    if (point_next) {
+                        while (idx < v.n && v.p[idx].frame == next) ++idx;
+                        if (!on_grid) {
+                            if (points_left == 0) continue; // point budget spent: grid only
+                            --points_left;
+                        }
+                    }
+                    emit(i0 + static_cast<uint32_t>(next - tl0), auto_eval(v, next));
+                }
+            });
+        }
+        std::sort(ev, ev + n, [](const ParamEvent& a, const ParamEvent& b) { return a.offset < b.offset; });
+        return n;
+    };
 
     float* const tl = ctx.track_l();
     float* const tr = ctx.track_r();
@@ -149,11 +252,34 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         }
         // Clips line up with the instrument plugin's (latent) output.
         if (src_line != nullptr) delay_track(src_line, track.pdc_src_delay);
-        if (synth != nullptr &&
-            synth->render(graph->notes.data() + track.note_begin, track.note_count, &graph->synth_params[t], graph->seq,
-                          inst.transport_gen,
-                          position, frames, playing, sb) &&
-            track.audible) {
+        bool synth_out = false;
+        if (synth != nullptr && track.synth_lane_count == 0) {
+            synth_out = synth->render(graph->notes.data() + track.note_begin, track.note_count,
+                                      &graph->synth_params[t], graph->seq, inst.transport_gen, position, frames,
+                                      playing, sb);
+        } else if (synth != nullptr) {
+            // Automated synth parameters: segments ending on the 16-frame
+            // timeline grid, each with the lane values at its first frame.
+            se_synth_params& sp = ctx.synth_params();
+            sp = graph->synth_params[t];
+            for (uint32_t i = 0; i < frames;) {
+                const int64_t at = playing ? position + i : position;
+                const uint32_t n = playing ? std::min<uint32_t>(frames - i, static_cast<uint32_t>(
+                                                     Synth::kControlFrames - floor_mod(at, Synth::kControlFrames)))
+                                           : frames - i;
+                for (uint32_t li = track.synth_lane_begin; li < track.synth_lane_begin + track.synth_lane_count; ++li) {
+                    const AutoLane& lane = graph->lanes[li];
+                    if (float* f = synth_param_field(sp, lane.synth_param)) *f = auto_eval(lane_view(*graph, lane), at);
+                }
+                if (synth->render(graph->notes.data() + track.note_begin, track.note_count, &sp, graph->seq,
+                                  inst.transport_gen, position + (playing ? i : 0), n, playing, sb + i))
+                    synth_out = true;
+                else
+                    std::memset(sb + i, 0, sizeof(float) * n);
+                i += n;
+            }
+        }
+        if (synth_out && track.audible) {
             if (any) {
                 kernel_add_scaled(tl, sb, 1.0f, frames);
                 kernel_add_scaled(tr, sb, 1.0f, frames);
@@ -171,7 +297,8 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             const uint32_t ne = iplug->feeder().build(graph->notes.data() + track.note_begin, track.note_count,
                                                       graph->seq, inst.transport_gen, position, frames, playing,
                                                       iplug->event_scratch(), PluginInstance::kMaxEvents);
-            iplug->run(pl, pr, frames, iplug->event_scratch(), ne, *inst.transport);
+            const uint32_t np = track.iplug_lane_count > 0 ? plugin_events(track.iplug_lane_begin, track.iplug_lane_count, 0) : 0;
+            iplug->run(pl, pr, frames, iplug->event_scratch(), ne, *inst.transport, ctx.param_events(), np);
             if (track.audible) {
                 if (any) {
                     kernel_add_scaled(tl, pl, 1.0f, frames);
@@ -222,7 +349,11 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                                               ? lines[graph->pdc.slot_index(track_count, track.fx_begin + i)]
                                               : nullptr;
                 if (slot->enabled && slot->inst != nullptr) {
-                    slot->inst->run(tl, tr, frames, nullptr, 0, *inst.transport);
+                    const uint32_t np = slot->lane_count > 0
+                                            ? plugin_events(slot->lane_begin, slot->lane_count,
+                                                            lines != nullptr ? slot->auto_delay : 0)
+                                            : 0;
+                    slot->inst->run(tl, tr, frames, nullptr, 0, *inst.transport, ctx.param_events(), np);
                     if (bypass != nullptr) bypass->discard(frames, gen);
                 } else if (bypass != nullptr) {
                     bypass->process(tl, tr, frames, slot->pdc_bypass_delay, gen); // same timing as the plugin
@@ -232,11 +363,46 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         if (main_line != nullptr && !track.pdc_pre) delay_track(main_line, track.pdc_delay);
         if (!any || !track.audible) continue;
 
-        kernel_add_scaled2(ml, mr, tl, tr, track.gain_l, track.gain_r, frames);
+        float meter_gl = std::fabs(track.gain_l);
+        float meter_gr = std::fabs(track.gain_r);
+        if (track.vol_lane < 0 && track.pan_lane < 0) {
+            kernel_add_scaled2(ml, mr, tl, tr, track.gain_l, track.gain_r, frames);
+        } else {
+            // Automated fader: the lanes replace the static gain / pan.
+            const uint32_t d = lines != nullptr ? track.auto_delay : 0;
+            float* const gl = ctx.gain_l();
+            float* const gr = ctx.gain_r();
+            if (track.vol_lane >= 0) {
+                fill_lane(graph->lanes[track.vol_lane], d, auto_db_to_gain, gl);
+            } else {
+                for (uint32_t i = 0; i < frames; ++i) gl[i] = track.gain;
+            }
+            if (track.pan_lane >= 0) {
+                float* const pa = ctx.auto_a();
+                float* const pb = ctx.auto_b();
+                const AutoLane& lane = graph->lanes[track.pan_lane];
+                fill_lane(lane, d, [](float p) { float l = 0, r = 0; constant_power_pan(p, l, r); return l; }, pa);
+                fill_lane(lane, d, [](float p) { float l = 0, r = 0; constant_power_pan(p, l, r); return r; }, pb);
+                for (uint32_t i = 0; i < frames; ++i) {
+                    gr[i] = gl[i] * pb[i];
+                    gl[i] *= pa[i];
+                }
+            } else {
+                float pl = 0.0f, pr = 0.0f;
+                constant_power_pan(track.pan, pl, pr);
+                for (uint32_t i = 0; i < frames; ++i) {
+                    gr[i] = gl[i] * pr;
+                    gl[i] *= pl;
+                }
+            }
+            kernel_add_mul2(ml, mr, tl, tr, gl, gr, frames);
+            meter_gl = kernel_peak(gl, frames);
+            meter_gr = kernel_peak(gr, frames);
+        }
         if (update_meters) {
             TrackMeter& m = graph->meters[t];
-            const float pl = kernel_peak(tl, frames) * std::fabs(track.gain_l);
-            const float pr = kernel_peak(tr, frames) * std::fabs(track.gain_r);
+            const float pl = kernel_peak(tl, frames) * meter_gl;
+            const float pr = kernel_peak(tr, frames) * meter_gr;
             atomic_store_max(m.peak_l, pl);
             atomic_store_max(m.peak_r, pr);
             atomic_store_max(m.win_l[peek_slot], pl);
@@ -244,7 +410,12 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         }
     }
 
-    if (graph->master_gain != 1.0f) {
+    if (graph->master_vol_lane >= 0) {
+        float* const gm = ctx.auto_a();
+        fill_lane(graph->lanes[graph->master_vol_lane], lines != nullptr ? graph->pdc.total : 0, auto_db_to_gain, gm);
+        kernel_mul(ml, gm, frames);
+        kernel_mul(mr, gm, frames);
+    } else if (graph->master_gain != 1.0f) {
         kernel_scale(ml, graph->master_gain, frames);
         kernel_scale(mr, graph->master_gain, frames);
     }

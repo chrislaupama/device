@@ -55,6 +55,38 @@ static_assert(offsetof(se_pdc_report, uncapped_frames) == 4 && offsetof(se_pdc_r
               offsetof(se_pdc_report, _pad) == 14);
 static_assert(sizeof(se_pdc_track) == 16 && alignof(se_pdc_track) == 8);
 static_assert(offsetof(se_pdc_track, latency_frames) == 8 && offsetof(se_pdc_track, delay_frames) == 12);
+// Automation additions.
+static_assert(sizeof(se_auto_point) == 16 && alignof(se_auto_point) == 8);
+static_assert(offsetof(se_auto_point, value) == 8 && offsetof(se_auto_point, curve) == 12);
+#if UINTPTR_MAX == 0xffffffffffffffffu
+static_assert(sizeof(se_auto_lane_desc) == 32 && alignof(se_auto_lane_desc) == 8);
+static_assert(offsetof(se_auto_lane_desc, logarithmic) == 1 && offsetof(se_auto_lane_desc, synth_param) == 2 &&
+              offsetof(se_auto_lane_desc, param_id) == 4 && offsetof(se_auto_lane_desc, device_id) == 8 &&
+              offsetof(se_auto_lane_desc, points) == 16 && offsetof(se_auto_lane_desc, point_count) == 24 &&
+              offsetof(se_auto_lane_desc, _pad) == 28);
+static_assert(sizeof(se_track_desc_v6) == 104 && alignof(se_track_desc_v6) == 8);
+static_assert(offsetof(se_track_desc_v6, lanes) == 88 && offsetof(se_track_desc_v6, lane_count) == 96 &&
+              offsetof(se_track_desc_v6, _pad3) == 100);
+static_assert(sizeof(se_session_desc_v6) == 32 && offsetof(se_session_desc_v6, master_lanes) == 16 &&
+              offsetof(se_session_desc_v6, master_lane_count) == 24);
+#endif
+static_assert(sizeof(se_plugin_param_info) == 272 && alignof(se_plugin_param_info) == 4);
+static_assert(offsetof(se_plugin_param_info, default_normalized) == 8 &&
+              offsetof(se_plugin_param_info, automatable) == 12 && offsetof(se_plugin_param_info, name) == 16 &&
+              offsetof(se_plugin_param_info, group) == 144);
+static_assert(sizeof(se_plugin_param_change) == 32 && alignof(se_plugin_param_change) == 8);
+static_assert(offsetof(se_plugin_param_change, frame) == 8 && offsetof(se_plugin_param_change, param_id) == 16 &&
+              offsetof(se_plugin_param_change, normalized) == 20 &&
+              offsetof(se_plugin_param_change, gesture_begin) == 24 &&
+              offsetof(se_plugin_param_change, gesture_end) == 25);
+static_assert(SE_SYNTH_P_COUNT == 20);
+// v6 tracks extend v5 tracks field by field (copied with memcpy).
+static_assert(offsetof(se_track_desc_v6, track_name) == offsetof(se_track_desc_v5, track_name) &&
+              offsetof(se_track_desc_v6, instrument_plugin) == offsetof(se_track_desc_v5, instrument_plugin) &&
+              offsetof(se_track_desc_v6, devices) == offsetof(se_track_desc_v5, devices) &&
+              offsetof(se_track_desc_v6, synth) == offsetof(se_track_desc_v5, synth) &&
+              offsetof(se_track_desc_v6, clips) == offsetof(se_track_desc_v5, clips) &&
+              sizeof(se_track_desc_v5) == offsetof(se_track_desc_v6, lanes));
 // v5 tracks extend v4 tracks field by field (same offsets for the common prefix).
 static_assert(offsetof(se_track_desc_v5, track_id) == offsetof(se_track_desc_v4, track_id) &&
               offsetof(se_track_desc_v5, input_channel) == offsetof(se_track_desc_v4, input_channel) &&
@@ -357,6 +389,27 @@ int32_t se_session_publish_v5(se_engine* engine, const se_session_desc_v5* sessi
     });
 }
 
+int32_t se_session_publish_v6(se_engine* engine, const se_session_desc_v6* session) {
+    SE_REQUIRE_ENGINE(engine);
+    if (session == nullptr) return fail(SE_ERR_INVALID_ARG, "session is NULL");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->publish(*session, err), err);
+    });
+}
+
+int32_t se_automation_eval(const se_auto_lane_desc* lane, const int64_t* frames, size_t count, float* out_values) {
+    if (lane == nullptr || (count > 0 && (frames == nullptr || out_values == nullptr)))
+        return fail(SE_ERR_INVALID_ARG, "NULL argument");
+    if (const char* why = saine::validate_lane(*lane)) return fail(SE_ERR_INVALID_ARG, why);
+    if (lane->point_count == 0) return fail(SE_ERR_INVALID_ARG, "lane has no points");
+    std::vector<saine::AutoPoint> pts(lane->point_count);
+    std::memcpy(pts.data(), lane->points, sizeof(se_auto_point) * lane->point_count);
+    const saine::LaneView v{pts.data(), lane->point_count, lane->logarithmic != 0};
+    for (size_t i = 0; i < count; ++i) out_values[i] = saine::auto_eval(v, frames[i]);
+    return SE_OK;
+}
+
 // ---- plugins
 
 int32_t se_plugin_is_live(se_engine* engine, uint64_t device_id) {
@@ -456,6 +509,72 @@ int32_t se_plugin_idle(se_engine* engine) {
         engine->impl->plugin_idle();
         return SE_OK;
     });
+}
+
+// ---- plugin parameters
+
+namespace {
+void copy_cstr(char* dst, std::size_t cap, const std::string& src) {
+    if (cap == 0) return;
+    std::size_t n = std::min(cap - 1, src.size());
+    while (n > 0 && n < src.size() && (static_cast<unsigned char>(src[n]) & 0xC0) == 0x80) --n; // keep UTF-8 whole
+    std::memcpy(dst, src.data(), n);
+    dst[n] = '\0';
+}
+} // namespace
+
+int32_t se_plugin_params(se_engine* engine, uint64_t device_id, se_plugin_param_info* out, size_t capacity,
+                         size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (capacity > 0 && out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    return guarded([&]() -> int32_t {
+        std::vector<saine::ParamInfo> list;
+        std::string err;
+        if (const int32_t rc = engine->impl->plugin_params(device_id, list, err); rc != SE_OK) return check(rc, err);
+        for (std::size_t i = 0; i < list.size() && i < capacity; ++i) {
+            se_plugin_param_info& o = out[i];
+            o = se_plugin_param_info{};
+            o.id = list[i].id;
+            o.steps = list[i].steps;
+            o.default_normalized = list[i].default_normalized;
+            o.automatable = list[i].automatable ? 1 : 0;
+            copy_cstr(o.name, sizeof o.name, list[i].name);
+            copy_cstr(o.group, sizeof o.group, list[i].group);
+        }
+        if (out_count != nullptr) *out_count = list.size();
+        return SE_OK;
+    });
+}
+
+int32_t se_plugin_param_value(se_engine* engine, uint64_t device_id, uint32_t param_id, float* out_normalized) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out_normalized == nullptr) return fail(SE_ERR_INVALID_ARG, "out_normalized is NULL");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->plugin_param_value(device_id, param_id, *out_normalized, err), err);
+    });
+}
+
+int32_t se_plugin_param_text(se_engine* engine, uint64_t device_id, uint32_t param_id, float normalized, char* out,
+                             size_t capacity) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out == nullptr || capacity == 0) return fail(SE_ERR_INVALID_ARG, "out is NULL or capacity 0");
+    if (!std::isfinite(normalized)) return fail(SE_ERR_INVALID_ARG, "normalized is not finite");
+    return guarded([&] {
+        std::string text, err;
+        const int32_t rc = engine->impl->plugin_param_text(device_id, param_id, normalized, text, err);
+        if (rc == SE_OK) copy_cstr(out, capacity, text);
+        return check(rc, err);
+    });
+}
+
+int32_t se_plugin_take_param_changes(se_engine* engine, se_plugin_param_change* out, size_t capacity,
+                                     size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (capacity > 0 && out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    const std::size_t n = engine->impl->take_param_changes(out, capacity);
+    if (out_count != nullptr) *out_count = n;
+    return SE_OK;
 }
 
 // ---- plugin delay compensation
@@ -638,6 +757,9 @@ void set_record_ring_frames(se_engine* e, std::size_t frames) { e->impl->set_rec
 uint64_t plugin_instantiations(se_engine* e) { return e->impl->plugin_instantiations(); }
 bool plugin_set_parameter(se_engine* e, uint64_t device_id, uint32_t param_id, double value) {
     return e->impl->plugin_set_parameter(device_id, param_id, value);
+}
+bool plugin_simulate_gesture(se_engine* e, uint64_t device_id, uint32_t param_id, float normalized) {
+    return e->impl->plugin_simulate_gesture(device_id, param_id, normalized);
 }
 
 } // namespace saine::testing

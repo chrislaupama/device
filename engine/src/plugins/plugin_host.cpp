@@ -60,7 +60,10 @@ PluginInstance* PluginHost::use(const se_device_desc& d, bool instrument, const 
     }
     instantiations_.fetch_add(1);
     if (!e.inst) e.error = err.empty() ? "could not load the plugin" : err;
-    if (e.inst) e.inst->refresh_latency(); // cached for delay compensation
+    if (e.inst) {
+        e.inst->refresh_latency(); // cached for delay compensation
+        e.inst->attach_bus(&bus_);
+    }
     PluginInstance* raw = e.inst.get();
     entries_.emplace(d.device_id, std::move(e));
     return raw;
@@ -161,6 +164,17 @@ bool PluginHost::saved_state(std::size_t index, uint64_t& id, const uint8_t*& da
     data = saved_[index].second.data();
     len = saved_[index].second.size();
     return true;
+}
+
+bool PluginHost::flush_pending() const {
+    for (const auto& [id, e] : entries_)
+        if (e.inst && e.inst->wants_flush()) return true;
+    return false;
+}
+
+void PluginHost::flush_params() {
+    for (auto& [id, e] : entries_)
+        if (e.inst && e.inst->wants_flush()) e.inst->flush_params();
 }
 
 PluginInstance* PluginHost::instance(uint64_t device_id) const {

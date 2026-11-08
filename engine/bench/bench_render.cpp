@@ -17,6 +17,10 @@
 // SaineTestLatency insert (N frames) on the first track, PDC on and off:
 // N = 0 (L = 0, nothing to compensate) and N = 4096 (31 tracks + the
 // metronome line delayed by 4096 frames).
+// An automation table renders the 32 tracks with the CLAP + VST3 gain
+// inserts and 4 lanes per track (volume, pan, and the gain parameter of each
+// insert), each with a curved point every 100 ms (se_session_publish_v6),
+// against the same session without lanes.
 #include "saine_engine.h"
 
 #include <algorithm>
@@ -24,6 +28,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <numbers>
 #include <string>
@@ -73,7 +78,7 @@ struct Result {
 // SaineTestLatency (N = `latency`) on track 1 only, delay compensation
 // `pdc` on/off.
 Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std::vector<std::string>& files,
-           bool features, int plugins = 0, uint32_t latency = 0, bool pdc = true) {
+           bool features, int plugins = 0, uint32_t latency = 0, bool pdc = true, bool automation = false) {
     se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
     se_engine* e = se_engine_create(&cfg);
     if (!e) {
@@ -156,7 +161,43 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
         d.device_count = static_cast<uint32_t>(devices[t].size());
     }
     se_session_desc_v5 sd5{t5.data(), tracks, 0.5f};
-    if ((plugins == 0 ? se_session_publish(e, &sd) : se_session_publish_v5(e, &sd5)) != SE_OK) {
+    // Automation: volume, pan and one gain lane per insert, a curved point
+    // every 4800 frames.
+    std::vector<std::vector<se_auto_point>> points;
+    std::vector<std::vector<se_auto_lane_desc>> lanes(tracks);
+    std::vector<se_track_desc_v6> t6(tracks);
+    const auto make_points = [&](float lo, float hi, uint32_t seed) {
+        std::vector<se_auto_point> v;
+        for (int64_t f = 0, k = 0; f <= total + 48000; f += 4800, ++k)
+            v.push_back({f, (k + seed) % 2 == 0 ? lo : hi, static_cast<float>((k + seed) % 5) * 0.4f - 0.8f});
+        return v;
+    };
+    if (automation) {
+        points.reserve(static_cast<std::size_t>(tracks) * 4);
+        for (uint32_t t = 0; t < tracks; ++t) {
+            const auto add = [&](uint8_t target, uint64_t device, std::vector<se_auto_point> pts) {
+                points.push_back(std::move(pts));
+                se_auto_lane_desc l{};
+                l.target = target;
+                l.device_id = device;
+                l.points = points.back().data();
+                l.point_count = static_cast<uint32_t>(points.back().size());
+                lanes[t].push_back(l);
+            };
+            add(SE_AUTO_VOLUME, 0, make_points(-24.0f, -6.0f, t));
+            add(SE_AUTO_PAN, 0, make_points(-0.8f, 0.8f, t + 1));
+            for (const se_device_desc& d : devices[t]) add(SE_AUTO_PLUGIN, d.device_id, make_points(0.2f, 0.9f, t + 2));
+            t6[t] = se_track_desc_v6{};
+            std::memcpy(&t6[t], &t5[t], sizeof(se_track_desc_v5));
+            t6[t].lanes = lanes[t].data();
+            t6[t].lane_count = static_cast<uint32_t>(lanes[t].size());
+        }
+    }
+    se_session_desc_v6 sd6{t6.data(), tracks, 0.5f, nullptr, 0, 0};
+    const int32_t published = automation    ? se_session_publish_v6(e, &sd6)
+                              : plugins == 0 ? se_session_publish(e, &sd)
+                                             : se_session_publish_v5(e, &sd5);
+    if (published != SE_OK) {
         std::fprintf(stderr, "publish failed: %s\n", se_last_error());
         std::exit(1);
     }
@@ -397,6 +438,16 @@ int main(int argc, char** argv) {
             std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name, r.us_per_block_avg, r.us_per_block_p99,
                         r.us_per_block_max, r.rt_ratio);
         }
+    std::printf("\nAutomation: 32 audio tracks x %u clips + CLAP gain + VST3 gain, 4 lanes per track "
+                "(volume, pan, 2 plugin params; a point every 100 ms)\n",
+                clips_per_track);
+    std::printf("%22s %14s %14s %14s %16s\n", "lanes", "avg us/block", "p99 us/block", "max us/block",
+                "realtime ratio");
+    for (const bool automation : {false, true}) {
+        const Result r = run(32, clips_per_track, blocks, files, features, 1, 0, true, automation);
+        std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", automation ? "32 x 4 lanes" : "none (same session)",
+                    r.us_per_block_avg, r.us_per_block_p99, r.us_per_block_max, r.rt_ratio);
+    }
     for (const auto& f : files) std::filesystem::remove(f);
 
     // Expensive patch: 4-voice unison, cross FM, sub + noise, resonant

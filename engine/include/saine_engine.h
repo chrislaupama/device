@@ -736,6 +736,183 @@ int32_t se_pdc_report_get(se_engine* engine, se_pdc_report* out, se_pdc_track* t
  * se_transport_get); L is that of the most recently published plan. */
 int32_t se_transport_audible_position(const se_engine* engine, int64_t* out_frame);
 
+/* ---- parameter automation (ABI v1 addition) -----------------------------
+ * See docs/adr/0005-automation.md and engine/README.md ("Automation").
+ *
+ * se_session_publish_v6 is a superset of se_session_publish_v5: every v6
+ * track carries the v5 fields (same meaning, same validation, same main-
+ * thread rule) plus its automation lanes; the session adds master lanes.
+ * v1..v5 publishes are equivalent to v6 without lanes.
+ *
+ * A lane is a list of points (timeline frame, plain value, curve) sorted by
+ * frame. Evaluation (the contract of saine_core::automation, bit-for-bit):
+ *   t <= first.frame        -> first.value
+ *   t >= last.frame         -> last.value (several points at one frame: the
+ *                              later one wins, except at the very first frame)
+ *   a.frame <= t < b.frame  -> lerp(a.value, b.value, shape(s, a.curve)),
+ *       s = (float)(t - a.frame) / (float)(b.frame - a.frame),
+ *       shape(s, c) = c == 0 ? s : c > 0 ? s^(1 + 3c) : 1 - (1 - s)^(1 - 3c),
+ *       lerp geometric (exp of the lerp of logs) when `logarithmic` != 0 and
+ *       both values are > 0, else linear; all in float32.
+ * An enabled lane with points REPLACES the static value of its target:
+ *   SE_AUTO_VOLUME: dB, gain = 10^(dB/20), <= -60 dB is silence; replaces the
+ *                   track's (or master's) linear `gain`. Per sample: exact at
+ *                   every point and at least every 32 samples, linear gain
+ *                   ramps in between.
+ *   SE_AUTO_PAN:    -1..1 (clamped), replaces `pan`; same rate as volume.
+ *   SE_AUTO_SYNTH:  `synth_param` (SE_SYNTH_P_*), value in the se_synth_params
+ *                   unit and range; replaces that field of the track's
+ *                   built-in synth, evaluated every 16 timeline frames and
+ *                   applied through the synth's ~10 ms parameter smoothing.
+ *   SE_AUTO_PLUGIN: `device_id` (an insert or the instrument plugin of the
+ *                   same track) + `param_id` (VST3 ParamID, CLAP clap_id, AU
+ *                   AudioUnitParameterID), value normalized 0..1 (clamped).
+ *                   Sent as sample-offset parameter events (VST3
+ *                   IParameterChanges, CLAP CLAP_EVENT_PARAM_VALUE with
+ *                   plain = min + n * (max - min), AU AudioUnitScheduleParameters)
+ *                   at the start of every processed block, every 64 timeline
+ *                   frames and at every point (at most 64 points per lane and
+ *                   block). A lane whose device or parameter does not exist is
+ *                   inactive.
+ * Lanes run on the timeline frame the audio they act on was read at: with
+ * delay compensation active, a stage that processes audio d frames late (the
+ * track fader: L; an insert: the latency of everything before it) evaluates
+ * its lanes d frames earlier, following loop wraps, so automation stays
+ * aligned with the audio. While stopped, lanes hold the value at the
+ * playhead. se_export_wav renders automation.
+ * Several lanes with the same target on one track: the last one wins. Master
+ * lanes: only SE_AUTO_VOLUME is used (others are ignored).
+ * Validation (else SE_ERR_INVALID_ARG): target <= SE_AUTO_PLUGIN,
+ * synth_param < SE_SYNTH_P_COUNT, points non-NULL when point_count > 0,
+ * frames non-decreasing, values and curves finite, curve in -1..1, synth
+ * values inside the parameter's se_synth_params range. Lanes without points
+ * are ignored. */
+enum { SE_AUTO_VOLUME = 0, SE_AUTO_PAN = 1, SE_AUTO_SYNTH = 2, SE_AUTO_PLUGIN = 3 };
+
+/* Built-in synth parameters, in saine_core::automation::SynthParam::ALL order. */
+enum {
+    SE_SYNTH_P_OSC1_LEVEL = 0, SE_SYNTH_P_OSC1_SHAPE, SE_SYNTH_P_OSC1_FINE, SE_SYNTH_P_OSC2_LEVEL,
+    SE_SYNTH_P_OSC2_SHAPE, SE_SYNTH_P_OSC2_FINE, SE_SYNTH_P_CROSS_FM, SE_SYNTH_P_SUB_LEVEL, SE_SYNTH_P_NOISE_LEVEL,
+    SE_SYNTH_P_FILTER_CUTOFF, SE_SYNTH_P_FILTER_RESONANCE, SE_SYNTH_P_FILTER_KEY_TRACK, SE_SYNTH_P_FILTER_ENV_AMOUNT,
+    SE_SYNTH_P_LFO_RATE, SE_SYNTH_P_LFO_TO_PITCH, SE_SYNTH_P_LFO_TO_CUTOFF, SE_SYNTH_P_LFO_TO_AMP, SE_SYNTH_P_GLIDE,
+    SE_SYNTH_P_UNISON_DETUNE, SE_SYNTH_P_OUTPUT,
+    SE_SYNTH_P_COUNT /* 20 */
+};
+
+typedef struct se_auto_point {
+    int64_t frame; /* timeline frame */
+    float value;   /* plain value in the target's unit */
+    float curve;   /* shape of the segment to the next point, -1..1 (0 = linear) */
+} se_auto_point;   /* 16 bytes, align 8 */
+
+typedef struct se_auto_lane_desc {
+    uint8_t target;       /* SE_AUTO_* */
+    uint8_t logarithmic;  /* != 0: geometric interpolation (frequency-like targets) */
+    uint16_t synth_param; /* SE_AUTO_SYNTH: SE_SYNTH_P_* */
+    uint32_t param_id;    /* SE_AUTO_PLUGIN: format parameter id */
+    uint64_t device_id;   /* SE_AUTO_PLUGIN: the device (same track) */
+    const se_auto_point* points;
+    uint32_t point_count;
+    uint32_t _pad;
+} se_auto_lane_desc; /* 32 bytes, align 8 */
+
+typedef struct se_track_desc_v6 {
+    uint64_t track_id;
+    float gain; /* linear */
+    float pan;  /* -1 .. +1, constant-power */
+    uint8_t mute;
+    uint8_t solo;
+    uint8_t instrument;
+    uint8_t arm;
+    uint8_t monitor;
+    uint8_t input_mode;     /* SE_INPUT_* */
+    uint16_t input_channel;
+    const se_clip_desc* clips;
+    uint32_t clip_count;
+    uint32_t note_count;
+    const se_note_desc* notes;
+    const se_synth_params* synth;           /* NULL = defaults */
+    const se_device_desc* devices;          /* insert chain, processing order */
+    uint32_t device_count;
+    uint32_t _pad2;
+    const se_device_desc* instrument_plugin; /* NULL = built-in synth; used only when instrument != 0 */
+    const char* track_name;                  /* editor window titles; may be NULL */
+    const se_auto_lane_desc* lanes;          /* automation lanes (enabled ones only) */
+    uint32_t lane_count;
+    uint32_t _pad3;
+} se_track_desc_v6; /* 104 bytes, align 8 */
+
+typedef struct se_session_desc_v6 {
+    const se_track_desc_v6* tracks;
+    uint32_t track_count;
+    float master_gain; /* linear */
+    const se_auto_lane_desc* master_lanes; /* master volume automation */
+    uint32_t master_lane_count;
+    uint32_t _pad;
+} se_session_desc_v6; /* 32 bytes, align 8 */
+
+/* MAIN THREAD (like se_session_publish_v5). */
+int32_t se_session_publish_v6(se_engine* engine, const se_session_desc_v6* session);
+
+/* TESTING: evaluates `lane` (validated like a published lane) at `count`
+ * timeline frames with the engine's evaluation code. Any thread. */
+int32_t se_automation_eval(const se_auto_lane_desc* lane, const int64_t* frames, size_t count, float* out_values);
+
+/* ---- plugin parameters ---------------------------------------------------
+ * MAIN THREAD, i.e. the thread that publishes sessions (VST3/CLAP parameter
+ * queries are main-thread APIs; like se_session_publish_v5 this is not
+ * enforced). Unknown device or a device that failed to load ->
+ * SE_ERR_NOT_FOUND; unknown parameter -> SE_ERR_NOT_FOUND. */
+#define SE_PARAM_STRING_MAX 128
+typedef struct se_plugin_param_info {
+    uint32_t id;                /* VST3 ParamID, CLAP clap_id, AU AudioUnitParameterID */
+    uint32_t steps;             /* discrete steps (0 = continuous) */
+    float default_normalized;   /* 0..1 */
+    uint8_t automatable;
+    uint8_t _pad[3];
+    char name[SE_PARAM_STRING_MAX];  /* UTF-8, truncated */
+    char group[SE_PARAM_STRING_MAX]; /* VST3 unit, CLAP module, AU clump; may be "" */
+} se_plugin_param_info; /* 272 bytes, align 4 */
+
+/* Parameters of a live instance (hidden ones are left out), in the plugin's
+ * order. Writes up to `capacity`; *out_count = total. */
+int32_t se_plugin_params(se_engine* engine, uint64_t device_id, se_plugin_param_info* out, size_t capacity,
+                         size_t* out_count);
+/* Current normalized value (VST3: the controller's value; CLAP: get_value;
+ * AU: AudioUnitGetParameter). */
+int32_t se_plugin_param_value(se_engine* engine, uint64_t device_id, uint32_t param_id, float* out_normalized);
+/* Display text of a normalized value ("-6.0 dB"): VST3 getParamStringByValue,
+ * CLAP value_to_text, AU kAudioUnitProperty_ParameterStringFromValue or the
+ * value with its unit. Writes a NUL-terminated, truncated string. */
+int32_t se_plugin_param_text(se_engine* engine, uint64_t device_id, uint32_t param_id, float normalized, char* out,
+                             size_t capacity);
+
+/* Parameter changes made in plugin editors (for "write" automation). Every
+ * format reports into one lock-free queue (any thread, also the audio
+ * thread): VST3 IComponentHandler beginEdit/performEdit/endEdit, CLAP
+ * output events of process() and params.flush() (CLAP_EVENT_PARAM_GESTURE_
+ * BEGIN/END and CLAP_EVENT_PARAM_VALUE; se_plugin_idle flushes when nothing
+ * processes), AU parameter-change and begin/end-gesture events. A gesture
+ * begin and end is its own record (flag set, value = the parameter's value
+ * at that moment); value changes in between have no flag. `frame` = the
+ * transport position when the change was observed (sample-accurate for
+ * CLAP events from process()). Changes made by automation or by
+ * se_session_publish are not reported. The queue holds 8192 records; on
+ * overflow the newest are dropped. se_plugin_take_param_changes drains up to
+ * `capacity` records in order (MAIN THREAD, like the other se_plugin_*). */
+typedef struct se_plugin_param_change {
+    uint64_t device_id;
+    int64_t frame;
+    uint32_t param_id;
+    float normalized;
+    uint8_t gesture_begin;
+    uint8_t gesture_end;
+    uint8_t _pad[6];
+} se_plugin_param_change; /* 32 bytes, align 8 */
+
+int32_t se_plugin_take_param_changes(se_engine* engine, se_plugin_param_change* out, size_t capacity,
+                                     size_t* out_count);
+
 #ifdef __cplusplus
 }
 #endif

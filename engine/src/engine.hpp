@@ -79,6 +79,7 @@ public:
     int32_t publish(const se_session_desc_v3& desc, std::string& err);
     int32_t publish(const se_session_desc_v4& desc, std::string& err);
     int32_t publish(const se_session_desc_v5& desc, std::string& err);
+    int32_t publish(const se_session_desc_v6& desc, std::string& err);
 
     // ---- plugins (see saine_engine.h; main thread where documented)
     bool plugin_is_live(uint64_t device_id);
@@ -90,6 +91,15 @@ public:
     bool plugin_editor_is_open(uint64_t device_id);
     bool plugin_latency(uint64_t device_id, uint32_t& frames);
     void plugin_idle();
+
+    // ---- plugin parameters (main thread; see saine_engine.h)
+    int32_t plugin_params(uint64_t device_id, std::vector<ParamInfo>& out, std::string& err);
+    int32_t plugin_param_value(uint64_t device_id, uint32_t param_id, float& out, std::string& err);
+    int32_t plugin_param_text(uint64_t device_id, uint32_t param_id, float normalized, std::string& out,
+                              std::string& err);
+    std::size_t take_param_changes(se_plugin_param_change* out, std::size_t capacity);
+    // Test hook: an editor-style gesture through the format's notifications (AU).
+    bool plugin_simulate_gesture(uint64_t device_id, uint32_t param_id, float normalized);
 
     // ---- plugin delay compensation (docs/adr/0004)
     void set_pdc_enabled(bool enabled);
@@ -242,6 +252,9 @@ private:
     // while the metronome is disabled; 0 = 120 BPM. RT-owned.
     double rt_tempo_fpb_ = 0.0;
     std::atomic<int64_t> pub_position_{0};
+    // Timeline frames of recently rendered samples (automation under delay
+    // compensation). RT-owned.
+    TimeHistory rt_history_;
     std::atomic<bool> pub_playing_{false};
 
     // -- metronome. Click shapes are computed in the constructor; the RT

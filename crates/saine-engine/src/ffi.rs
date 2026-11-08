@@ -326,6 +326,106 @@ impl Default for se_plugin_message {
     }
 }
 
+// ---- automation (se_session_publish_v6) and plugin parameters
+
+pub const SE_AUTO_VOLUME: u8 = 0;
+pub const SE_AUTO_PAN: u8 = 1;
+pub const SE_AUTO_SYNTH: u8 = 2;
+pub const SE_AUTO_PLUGIN: u8 = 3;
+/// Number of built-in synth parameters (`SE_SYNTH_P_*`, `SynthParam::ALL` order).
+pub const SE_SYNTH_P_COUNT: u16 = 20;
+pub const SE_PARAM_STRING_MAX: usize = 128;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct se_auto_point {
+    pub frame: i64,
+    pub value: f32,
+    pub curve: f32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_auto_lane_desc {
+    pub target: u8,
+    pub logarithmic: u8,
+    pub synth_param: u16,
+    pub param_id: u32,
+    pub device_id: u64,
+    pub points: *const se_auto_point,
+    pub point_count: u32,
+    pub _pad: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_track_desc_v6 {
+    pub track_id: u64,
+    pub gain: f32,
+    pub pan: f32,
+    pub mute: u8,
+    pub solo: u8,
+    pub instrument: u8,
+    pub arm: u8,
+    pub monitor: u8,
+    pub input_mode: u8,
+    pub input_channel: u16,
+    pub clips: *const se_clip_desc,
+    pub clip_count: u32,
+    pub note_count: u32,
+    pub notes: *const se_note_desc,
+    pub synth: *const se_synth_params,
+    pub devices: *const se_device_desc,
+    pub device_count: u32,
+    pub _pad2: u32,
+    pub instrument_plugin: *const se_device_desc,
+    pub track_name: *const std::ffi::c_char,
+    pub lanes: *const se_auto_lane_desc,
+    pub lane_count: u32,
+    pub _pad3: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_session_desc_v6 {
+    pub tracks: *const se_track_desc_v6,
+    pub track_count: u32,
+    pub master_gain: f32,
+    pub master_lanes: *const se_auto_lane_desc,
+    pub master_lane_count: u32,
+    pub _pad: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct se_plugin_param_info {
+    pub id: u32,
+    pub steps: u32,
+    pub default_normalized: f32,
+    pub automatable: u8,
+    pub _pad: [u8; 3],
+    pub name: [std::ffi::c_char; SE_PARAM_STRING_MAX],
+    pub group: [std::ffi::c_char; SE_PARAM_STRING_MAX],
+}
+
+impl Default for se_plugin_param_info {
+    fn default() -> Self {
+        se_plugin_param_info { id: 0, steps: 0, default_normalized: 0.0, automatable: 0, _pad: [0; 3], name: [0; SE_PARAM_STRING_MAX], group: [0; SE_PARAM_STRING_MAX] }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct se_plugin_param_change {
+    pub device_id: u64,
+    pub frame: i64,
+    pub param_id: u32,
+    pub normalized: f32,
+    pub gesture_begin: u8,
+    pub gesture_end: u8,
+    pub _pad: [u8; 6],
+}
+
 /// Plugin delay compensation: largest delay applied (2^17 frames).
 pub const SE_PDC_MAX_DELAY_FRAMES: u32 = 131_072;
 
@@ -521,6 +621,14 @@ unsafe extern "C" {
     pub fn se_pdc_is_enabled(engine: *const se_engine) -> i32;
     pub fn se_pdc_report_get(engine: *mut se_engine, out: *mut se_pdc_report, tracks: *mut se_pdc_track, capacity: usize, out_count: *mut usize) -> i32;
     pub fn se_transport_audible_position(engine: *const se_engine, out_frame: *mut i64) -> i32;
+
+    // automation and plugin parameters
+    pub fn se_session_publish_v6(engine: *mut se_engine, session: *const se_session_desc_v6) -> i32;
+    pub fn se_automation_eval(lane: *const se_auto_lane_desc, frames: *const i64, count: usize, out_values: *mut f32) -> i32;
+    pub fn se_plugin_params(engine: *mut se_engine, device_id: u64, out: *mut se_plugin_param_info, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_plugin_param_value(engine: *mut se_engine, device_id: u64, param_id: u32, out_normalized: *mut f32) -> i32;
+    pub fn se_plugin_param_text(engine: *mut se_engine, device_id: u64, param_id: u32, normalized: f32, out: *mut c_char, capacity: usize) -> i32;
+    pub fn se_plugin_take_param_changes(engine: *mut se_engine, out: *mut se_plugin_param_change, capacity: usize, out_count: *mut usize) -> i32;
 }
 
 /// Guards the hand-written declarations against drift from saine_engine.h.
@@ -803,6 +911,51 @@ mod abi_layout {
         );
         assert_eq!((size_of::<se_pdc_track>(), align_of::<se_pdc_track>()), (16, 8));
         assert_eq!([offset_of!(se_pdc_track, track_id), offset_of!(se_pdc_track, latency_frames), offset_of!(se_pdc_track, delay_frames)], [0, 8, 12]);
+    }
+
+    #[test]
+    fn automation_layout_matches_c_header() {
+        // Also static_asserted in c_api.cpp.
+        assert_eq!((size_of::<se_auto_point>(), align_of::<se_auto_point>()), (16, 8));
+        assert_eq!([offset_of!(se_auto_point, frame), offset_of!(se_auto_point, value), offset_of!(se_auto_point, curve)], [0, 8, 12]);
+        assert_eq!((size_of::<se_auto_lane_desc>(), align_of::<se_auto_lane_desc>()), (32, 8));
+        assert_eq!(
+            [
+                offset_of!(se_auto_lane_desc, target),
+                offset_of!(se_auto_lane_desc, logarithmic),
+                offset_of!(se_auto_lane_desc, synth_param),
+                offset_of!(se_auto_lane_desc, param_id),
+                offset_of!(se_auto_lane_desc, device_id),
+                offset_of!(se_auto_lane_desc, points),
+                offset_of!(se_auto_lane_desc, point_count),
+                offset_of!(se_auto_lane_desc, _pad),
+            ],
+            [0, 1, 2, 4, 8, 16, 24, 28]
+        );
+        assert_eq!((size_of::<se_track_desc_v6>(), align_of::<se_track_desc_v6>()), (104, 8));
+        assert_eq!(
+            [offset_of!(se_track_desc_v6, synth), offset_of!(se_track_desc_v6, track_name), offset_of!(se_track_desc_v6, lanes), offset_of!(se_track_desc_v6, lane_count), offset_of!(se_track_desc_v6, _pad3)],
+            [48, 80, 88, 96, 100]
+        );
+        assert_eq!((size_of::<se_session_desc_v6>(), align_of::<se_session_desc_v6>()), (32, 8));
+        assert_eq!([offset_of!(se_session_desc_v6, master_lanes), offset_of!(se_session_desc_v6, master_lane_count), offset_of!(se_session_desc_v6, _pad)], [16, 24, 28]);
+        assert_eq!((size_of::<se_plugin_param_info>(), align_of::<se_plugin_param_info>()), (272, 4));
+        assert_eq!(
+            [offset_of!(se_plugin_param_info, steps), offset_of!(se_plugin_param_info, default_normalized), offset_of!(se_plugin_param_info, automatable), offset_of!(se_plugin_param_info, name), offset_of!(se_plugin_param_info, group)],
+            [4, 8, 12, 16, 144]
+        );
+        assert_eq!((size_of::<se_plugin_param_change>(), align_of::<se_plugin_param_change>()), (32, 8));
+        assert_eq!(
+            [
+                offset_of!(se_plugin_param_change, frame),
+                offset_of!(se_plugin_param_change, param_id),
+                offset_of!(se_plugin_param_change, normalized),
+                offset_of!(se_plugin_param_change, gesture_begin),
+                offset_of!(se_plugin_param_change, gesture_end),
+                offset_of!(se_plugin_param_change, _pad),
+            ],
+            [8, 16, 20, 24, 25, 26]
+        );
     }
 
     #[test]

@@ -56,6 +56,7 @@ Engine::Engine(double sample_rate, uint32_t max_block, uint32_t channels)
     in_scratch_.assign(static_cast<std::size_t>(kMaxInjectedInputChannels) * max_block, 0.0f);
     click_scratch_.assign(max_block, 0.0f);
     device_factory_ = [] { return create_platform_audio_device(); };
+    plugins_.bus().set_position_source(&pub_position_);
 }
 
 std::unique_ptr<Engine> Engine::create(const se_config& config, std::string& err) {
@@ -377,6 +378,23 @@ int32_t Engine::publish(const se_session_desc_v4& desc, std::string& err) {
 // owned by the retired graph(s) and is freed when they are reclaimed, which
 // happens only on non-RT threads once the RT side can no longer reach them.
 int32_t Engine::publish(const se_session_desc_v5& desc, std::string& err) {
+    if (desc.track_count > 0 && desc.tracks == nullptr) {
+        err = "session has track_count > 0 but tracks == NULL";
+        return SE_ERR_INVALID_ARG;
+    }
+    std::vector<se_track_desc_v6> tracks(desc.track_count);
+    for (uint32_t t = 0; t < desc.track_count; ++t) {
+        tracks[t] = se_track_desc_v6{};
+        std::memcpy(&tracks[t], &desc.tracks[t], sizeof(se_track_desc_v5)); // v6 extends v5 field by field
+    }
+    se_session_desc_v6 d6{};
+    d6.tracks = tracks.data();
+    d6.track_count = desc.track_count;
+    d6.master_gain = desc.master_gain;
+    return publish(d6, err);
+}
+
+int32_t Engine::publish(const se_session_desc_v6& desc, std::string& err) {
     std::unique_ptr<RenderGraph> built;
     const AssetLookup lookup = [this](uint64_t id) -> AssetRef {
         std::lock_guard lock(assets_mutex_);
@@ -390,12 +408,29 @@ int32_t Engine::publish(const se_session_desc_v5& desc, std::string& err) {
     std::lock_guard plock(plugins_.mutex());
     plugins_.begin_publish();
     for (uint32_t t = 0; t < desc.track_count; ++t) {
-        const se_track_desc_v5& td = desc.tracks[t];
+        const se_track_desc_v6& td = desc.tracks[t];
         TrackNode& node = built->tracks[t];
         for (uint32_t i = 0; i < td.device_count; ++i)
             built->fx[node.fx_begin + i].inst = plugins_.use(td.devices[i], false, td.track_name);
         if (node.has_instrument_plugin)
             node.instrument_plugin = plugins_.use(*td.instrument_plugin, true, td.track_name);
+    }
+    // Plugin automation lanes: the parameter's native range, or inactive
+    // (device not loaded, unknown parameter).
+    if (built->has_plugin_lanes) {
+        const auto resolve = [&](PluginInstance* inst, uint32_t begin, uint32_t count) {
+            for (uint32_t i = begin; i < begin + count; ++i) {
+                AutoLane& lane = built->lanes[i];
+                lane.active = inst != nullptr && inst->param_range(lane.param_id, lane.native_min, lane.native_max);
+            }
+        };
+        for (TrackNode& node : built->tracks) {
+            if (node.iplug_lane_count > 0) resolve(node.instrument_plugin, node.iplug_lane_begin, node.iplug_lane_count);
+            for (uint32_t i = 0; i < node.fx_count; ++i) {
+                FxSlot& slot = built->fx[node.fx_begin + i];
+                if (slot.lane_count > 0) resolve(slot.inst, slot.lane_begin, slot.lane_count);
+            }
+        }
     }
     // Delay compensation: pending restarts and fresh latencies (main thread),
     // then the plan for the new graph.
@@ -757,8 +792,9 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
         transport.tempo_bpm = rt_tempo_fpb_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpb_ : 120.0;
         DelayLine* const* const lines = graph != nullptr && !graph->lines.empty() ? graph->lines.data() : nullptr;
         const InstrumentInputs inst{graph != nullptr ? graph->synths.data() : nullptr, rt_synth_gen_, &transport,
-                                    lines, rt_pdc_gen_};
+                                    lines, rt_pdc_gen_, &rt_history_};
         const BlockPeaks p = render_block(graph, rt_position_, rt_playing_, n, live_ctx_, true, slot, inst, iv);
+        rt_history_.append(rt_position_, n, rt_playing_);
         // The performer hears the mix L (delay compensation) + output latency
         // late, so takes are placed that much earlier too.
         const int64_t pdc_total = lines != nullptr ? graph->pdc.total : 0;
@@ -1192,6 +1228,67 @@ void Engine::plugin_idle() {
     std::lock_guard lock(plugins_.mutex());
     plugins_.idle(rt_active_seq_.load(std::memory_order_seq_cst));
     if (plugins_.service_latencies()) replan_pdc_locked();
+    // CLAP parameter flushes requested while nothing processes: run them
+    // here with the RT path held (a running device or offline render
+    // processes the plugin instead, which delivers the same events).
+    if (plugins_.flush_pending() && acquire_rt_owner(kOwnerControl) == kOwnerNone) {
+        plugins_.flush_params();
+        release_rt_owner();
+    }
+}
+
+int32_t Engine::plugin_params(uint64_t device_id, std::vector<ParamInfo>& out, std::string& err) {
+    std::lock_guard lock(plugins_.mutex());
+    PluginInstance* inst = plugins_.instance(device_id);
+    if (inst == nullptr) {
+        err = "no live plugin instance for this device";
+        return SE_ERR_NOT_FOUND;
+    }
+    inst->params(out);
+    return SE_OK;
+}
+
+int32_t Engine::plugin_param_value(uint64_t device_id, uint32_t param_id, float& out, std::string& err) {
+    std::lock_guard lock(plugins_.mutex());
+    PluginInstance* inst = plugins_.instance(device_id);
+    if (inst == nullptr || !inst->param_value(param_id, out)) {
+        err = inst == nullptr ? "no live plugin instance for this device" : "unknown parameter";
+        return SE_ERR_NOT_FOUND;
+    }
+    return SE_OK;
+}
+
+int32_t Engine::plugin_param_text(uint64_t device_id, uint32_t param_id, float normalized, std::string& out,
+                                  std::string& err) {
+    std::lock_guard lock(plugins_.mutex());
+    PluginInstance* inst = plugins_.instance(device_id);
+    if (inst == nullptr || !inst->param_text(param_id, normalized, out)) {
+        err = inst == nullptr ? "no live plugin instance for this device" : "unknown parameter";
+        return SE_ERR_NOT_FOUND;
+    }
+    return SE_OK;
+}
+
+std::size_t Engine::take_param_changes(se_plugin_param_change* out, std::size_t capacity) {
+    std::size_t n = 0;
+    ParamChangeRecord r;
+    while (n < capacity && plugins_.bus().pop(r)) {
+        se_plugin_param_change& c = out[n++];
+        c = se_plugin_param_change{};
+        c.device_id = r.device_id;
+        c.frame = r.frame;
+        c.param_id = r.param_id;
+        c.normalized = r.normalized;
+        c.gesture_begin = r.gesture_begin ? 1 : 0;
+        c.gesture_end = r.gesture_end ? 1 : 0;
+    }
+    return n;
+}
+
+bool Engine::plugin_simulate_gesture(uint64_t device_id, uint32_t param_id, float normalized) {
+    std::lock_guard lock(plugins_.mutex());
+    PluginInstance* inst = plugins_.instance(device_id);
+    return inst != nullptr && inst->simulate_editor_gesture(param_id, normalized);
 }
 
 // ============================================================ delay compensation
@@ -1216,7 +1313,8 @@ void Engine::plan_pdc(RenderGraph& g) const {
         p.track_latency[t] = static_cast<uint32_t>(std::min<uint64_t>(lat, UINT32_MAX));
         total = std::max(total, lat);
     }
-    for (FxSlot& slot : g.fx) slot.pdc_bypass_delay = 0;
+    for (FxSlot& slot : g.fx) slot.pdc_bypass_delay = slot.auto_delay = 0;
+    for (TrackNode& node : g.tracks) node.auto_delay = 0;
     p.uncapped = static_cast<uint32_t>(std::min<uint64_t>(total, UINT32_MAX));
     if (!p.enabled || total == 0) {
         g.pdc = std::move(p);
@@ -1246,6 +1344,18 @@ void Engine::plan_pdc(RenderGraph& g) const {
             slot.pdc_bypass_delay = cap(sl);
             p.need[p.slot_index(track_count, node.fx_begin + i)] = slot.pdc_bypass_delay;
         }
+        // Automation (docs/adr/0005): how late the audio reaching each stage
+        // is relative to the timeline frame it was read at. Inserts see the
+        // instrument plugin's latency plus every earlier slot's (bypassed
+        // ones are delayed by the same amount), plus the track delay when it
+        // runs before the chain (monitoring); the fader sees lat_i + delay.
+        uint64_t before = (node.pdc_pre ? node.pdc_delay : 0) + li;
+        for (uint32_t i = 0; i < node.fx_count; ++i) {
+            FxSlot& slot = g.fx[node.fx_begin + i];
+            slot.auto_delay = cap(before);
+            before += lat_of(slot.inst);
+        }
+        node.auto_delay = cap(static_cast<uint64_t>(std::min(p.track_latency[t], p.total)) + node.pdc_delay);
     }
     p.need[p.metro_index(track_count, fx_count)] = p.total;
     g.pdc = std::move(p);

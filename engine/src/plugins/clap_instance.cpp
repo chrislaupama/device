@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <thread>
 
@@ -40,13 +41,18 @@ union ClapEventStorage {
     clap_event_param_value_t param;
 };
 
+const clap_input_events_t kNoInputEvents{
+    nullptr, [](const clap_input_events*) -> uint32_t { return 0; },
+    [](const clap_input_events*, uint32_t) -> const clap_event_header_t* { return nullptr; }};
+
 class ClapInstance final : public PluginInstance, public std::enable_shared_from_this<ClapInstance> {
 public:
     static constexpr uint32_t kMaxParamEvents = 64;
 
     ClapInstance(PluginSpec spec, double rate, uint32_t max_block)
         : PluginInstance(std::move(spec)), rate_(rate), max_block_(max_block), in_l_(max_block), in_r_(max_block),
-          out_l_(max_block), out_r_(max_block), main_thread_(std::this_thread::get_id()) {
+          out_l_(max_block), out_r_(max_block), main_thread_(std::this_thread::get_id()),
+          event_store_(kMaxEvents + kMaxParamEvents + PluginInstance::kMaxParamEvents) {
         host_.clap_version = CLAP_VERSION;
         host_.host_data = this;
         host_.name = "Saine Studio";
@@ -87,6 +93,7 @@ public:
         state_ = static_cast<const clap_plugin_state_t*>(ext(CLAP_EXT_STATE));
         latency_ = static_cast<const clap_plugin_latency_t*>(ext(CLAP_EXT_LATENCY));
         gui_ = static_cast<const clap_plugin_gui_t*>(ext(CLAP_EXT_GUI));
+        params_ = static_cast<const clap_plugin_params_t*>(ext(CLAP_EXT_PARAMS));
 
         // Audio ports: main input (effects) and main output, stereo or mono.
         in_channels_ = port_channels(true);
@@ -121,6 +128,7 @@ public:
         }
         spec_.state.clear();
         spec_.state.shrink_to_fit();
+        build_param_cache();
 
         if (!plugin_->activate(plugin_, rate_, 1, max_block_)) {
             err = "CLAP plugin activate failed";
@@ -143,12 +151,15 @@ public:
             return i < self->event_count_ ? &self->event_store_[i].header : nullptr;
         };
         out_events_.ctx = this;
-        out_events_.try_push = [](const clap_output_events*, const clap_event_header_t*) { return true; };
+        out_events_.try_push = [](const clap_output_events* o, const clap_event_header_t* h) {
+            static_cast<ClapInstance*>(o->ctx)->on_output_event(h);
+            return true;
+        };
         return true;
     }
 
     void process(float* l, float* r, uint32_t frames, const MidiEvent* events, uint32_t event_count,
-                 const RtTransport& t) noexcept override {
+                 const RtTransport& t, const ParamEvent* auto_events, uint32_t auto_count) noexcept override {
         AudioThreadScope audio;
         if (!activated_ || failed_) return pass(l, r, frames);
         if (!processing_) {
@@ -158,22 +169,17 @@ public:
             }
             processing_ = true;
         }
-        // Events: parameter changes at 0, then notes (already sorted).
+        out_frame_ = t.position;
+        // Events: main-thread parameter changes at 0, then automation and
+        // notes merged by time (both already sorted).
         event_count_ = 0;
         ParamChange pc;
-        while (event_count_ < kMaxParamEvents && pop_param(pc)) {
-            clap_event_param_value_t& e = event_store_[event_count_++].param;
-            e = clap_event_param_value_t{};
-            e.header = {sizeof e, 0, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_VALUE, 0};
-            e.param_id = pc.id;
-            e.note_id = -1;
-            e.port_index = -1;
-            e.channel = -1;
-            e.key = -1;
-            e.value = pc.value;
-        }
+        while (event_count_ < kMaxParamEvents && pop_param(pc)) push_param_event(0, pc.id, pc.value);
+        uint32_t a = 0;
         for (uint32_t i = 0; i < event_count && note_port_; ++i) {
             const MidiEvent& m = events[i];
+            for (; a < auto_count && auto_events[a].offset <= m.offset; ++a)
+                push_param_event(auto_events[a].offset, auto_events[a].id, auto_events[a].value);
             const uint8_t kind = m.status & 0xF0;
             if (use_midi_) {
                 clap_event_midi_t& e = event_store_[event_count_++].midi;
@@ -193,6 +199,7 @@ public:
                 e.velocity = kind == 0x90 ? m.data2 / 127.0 : 0.0;
             }
         }
+        for (; a < auto_count; ++a) push_param_event(auto_events[a].offset, auto_events[a].id, auto_events[a].value);
         transport_ = clap_event_transport_t{};
         transport_.header = {sizeof transport_, 0, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_TRANSPORT, 0};
         transport_.flags = CLAP_TRANSPORT_HAS_TEMPO | CLAP_TRANSPORT_HAS_BEATS_TIMELINE |
@@ -226,6 +233,52 @@ public:
         if (st == CLAP_PROCESS_ERROR) return pass(l, r, frames);
         std::memcpy(l, out_l_.data(), sizeof(float) * frames);
         std::memcpy(r, out_channels_ > 1 ? out_r_.data() : out_l_.data(), sizeof(float) * frames);
+    }
+
+    // ---- parameters (main thread)
+    void params(std::vector<ParamInfo>& out) override {
+        out.clear();
+        if (params_ == nullptr) return;
+        const uint32_t n = params_->count(plugin_);
+        for (uint32_t i = 0; i < n; ++i) {
+            clap_param_info_t pi{};
+            if (!params_->get_info(plugin_, i, &pi) || (pi.flags & CLAP_PARAM_IS_HIDDEN) != 0) continue;
+            out.push_back(to_info(pi));
+        }
+    }
+
+    bool param_range(uint32_t id, double& min, double& max) override {
+        const CachedParam* c = cached(id);
+        if (c == nullptr) return false;
+        min = c->min;
+        max = c->max;
+        return true;
+    }
+
+    bool param_value(uint32_t id, float& normalized) override {
+        const CachedParam* c = cached(id);
+        double v = 0.0;
+        if (c == nullptr || params_ == nullptr || !params_->get_value(plugin_, id, &v)) return false;
+        normalized = c->normalize(v);
+        return true;
+    }
+
+    bool param_text(uint32_t id, float normalized, std::string& out) override {
+        const CachedParam* c = cached(id);
+        if (c == nullptr || params_ == nullptr) return false;
+        char buf[256] = {};
+        if (!params_->value_to_text(plugin_, id, c->plain(normalized), buf, sizeof buf)) return false;
+        out = buf;
+        return true;
+    }
+
+    bool wants_flush() const noexcept override { return flush_requested_.load(std::memory_order_acquire); }
+
+    void flush_params() noexcept override {
+        if (!flush_requested_.exchange(false) || params_ == nullptr || plugin_ == nullptr) return;
+        AudioThreadScope audio; // active plugin: flush is an audio-thread call; nothing processes meanwhile
+        out_frame_ = bus() != nullptr ? bus()->position() : 0;
+        params_->flush(plugin_, &kNoInputEvents, &out_events_);
     }
 
     bool save_state(std::vector<uint8_t>& out, std::string& err) override {
@@ -297,6 +350,89 @@ public:
     }
 
 private:
+    struct CachedParam {
+        clap_id id = 0;
+        double min = 0.0, max = 1.0;
+        float normalize(double v) const noexcept {
+            return max > min ? static_cast<float>(std::clamp((v - min) / (max - min), 0.0, 1.0)) : 0.0f;
+        }
+        double plain(float n) const noexcept { return min + std::clamp(static_cast<double>(n), 0.0, 1.0) * (max - min); }
+    };
+
+    static ParamInfo to_info(const clap_param_info_t& pi) {
+        ParamInfo info;
+        info.id = pi.id;
+        info.name = std::string(pi.name, strnlen(pi.name, sizeof pi.name));
+        info.group = std::string(pi.module, strnlen(pi.module, sizeof pi.module));
+        info.min = pi.min_value;
+        info.max = pi.max_value;
+        const double span = pi.max_value - pi.min_value;
+        info.default_normalized =
+            span > 0.0 ? static_cast<float>(std::clamp((pi.default_value - pi.min_value) / span, 0.0, 1.0)) : 0.0f;
+        info.steps = (pi.flags & CLAP_PARAM_IS_STEPPED) != 0 && span > 0.0 ? static_cast<uint32_t>(std::lround(span)) : 0;
+        info.automatable = (pi.flags & CLAP_PARAM_IS_AUTOMATABLE) != 0 && (pi.flags & CLAP_PARAM_IS_READONLY) == 0;
+        return info;
+    }
+
+    // Ranges by id, read once on the main thread at creation (immutable
+    // afterwards, so the audio thread can normalize output events).
+    void build_param_cache() {
+        if (params_ == nullptr) return;
+        const uint32_t n = params_->count(plugin_);
+        for (uint32_t i = 0; i < n; ++i) {
+            clap_param_info_t pi{};
+            if (!params_->get_info(plugin_, i, &pi)) continue;
+            cache_.push_back(CachedParam{pi.id, pi.min_value, pi.max_value});
+        }
+        std::sort(cache_.begin(), cache_.end(), [](const CachedParam& a, const CachedParam& b) { return a.id < b.id; });
+        last_norm_ = std::make_unique<std::atomic<float>[]>(cache_.size());
+        for (std::size_t i = 0; i < cache_.size(); ++i) {
+            double v = 0.0;
+            last_norm_[i].store(params_->get_value(plugin_, cache_[i].id, &v) ? cache_[i].normalize(v) : 0.0f);
+        }
+    }
+
+    const CachedParam* cached(clap_id id) const noexcept {
+        auto it = std::lower_bound(cache_.begin(), cache_.end(), id,
+                                   [](const CachedParam& c, clap_id v) { return c.id < v; });
+        return it != cache_.end() && it->id == id ? &*it : nullptr;
+    }
+
+    void push_param_event(uint32_t time, uint32_t id, double value) noexcept {
+        if (event_count_ >= event_store_.size()) return;
+        clap_event_param_value_t& e = event_store_[event_count_++].param;
+        e = clap_event_param_value_t{};
+        e.header = {sizeof e, time, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_VALUE, 0};
+        e.param_id = id;
+        e.note_id = -1;
+        e.port_index = -1;
+        e.channel = -1;
+        e.key = -1;
+        e.value = value;
+        if (const CachedParam* c = cached(id)) last_norm_[static_cast<std::size_t>(c - cache_.data())].store(c->normalize(value));
+    }
+
+    // Output events of process() / flush(): editor gestures and values.
+    void on_output_event(const clap_event_header_t* h) noexcept {
+        if (h == nullptr || h->space_id != CLAP_CORE_EVENT_SPACE_ID) return;
+        const int64_t frame = out_frame_ + static_cast<int64_t>(h->time);
+        if (h->type == CLAP_EVENT_PARAM_VALUE) {
+            const auto* e = reinterpret_cast<const clap_event_param_value_t*>(h);
+            const CachedParam* c = cached(e->param_id);
+            if (c == nullptr) return;
+            const float n = c->normalize(e->value);
+            last_norm_[static_cast<std::size_t>(c - cache_.data())].store(n);
+            report_change_at(e->param_id, n, frame, false, false);
+        } else if (h->type == CLAP_EVENT_PARAM_GESTURE_BEGIN || h->type == CLAP_EVENT_PARAM_GESTURE_END) {
+            const auto* e = reinterpret_cast<const clap_event_param_gesture_t*>(h);
+            const CachedParam* c = cached(e->param_id);
+            if (c == nullptr) return;
+            const float n = last_norm_[static_cast<std::size_t>(c - cache_.data())].load();
+            const bool begin = h->type == CLAP_EVENT_PARAM_GESTURE_BEGIN;
+            report_change_at(e->param_id, n, frame, begin, !begin);
+        }
+    }
+
     // Failure path: effects pass audio through, instruments are silent.
     void pass(float* l, float* r, uint32_t frames) noexcept {
         if (!spec_.instrument) return;
@@ -335,9 +471,9 @@ private:
         static const clap_host_log_t log{[](const clap_host*, clap_log_severity, const char*) {}};
         static const clap_host_latency_t latency{[](const clap_host*) {}};
         static const clap_host_state_t state{[](const clap_host*) {}};
-        static const clap_host_params_t params{[](const clap_host*, clap_param_rescan_flags) {},
-                                               [](const clap_host*, clap_id, clap_param_clear_flags) {},
-                                               [](const clap_host*) {}};
+        static const clap_host_params_t params{
+            [](const clap_host*, clap_param_rescan_flags) {}, [](const clap_host*, clap_id, clap_param_clear_flags) {},
+            [](const clap_host* host) { self_of(host)->flush_requested_.store(true, std::memory_order_release); }};
         static const clap_host_gui_t gui{
             [](const clap_host*) {},
             [](const clap_host* host, uint32_t w, uint32_t hgt) {
@@ -392,6 +528,11 @@ private:
     const clap_plugin_state_t* state_ = nullptr;
     const clap_plugin_latency_t* latency_ = nullptr;
     const clap_plugin_gui_t* gui_ = nullptr;
+    const clap_plugin_params_t* params_ = nullptr;
+    std::vector<CachedParam> cache_;
+    std::unique_ptr<std::atomic<float>[]> last_norm_; // per cache_ entry: last value seen (gesture records)
+    std::atomic<bool> flush_requested_{false};
+    int64_t out_frame_ = 0; // transport frame of the current process()/flush() (output event stamps)
     uint32_t in_channels_ = 0, out_channels_ = 0;
     bool use_midi_ = false;
     bool note_port_ = false;
@@ -411,7 +552,7 @@ private:
     int64_t steady_time_ = 0;
     clap_event_transport_t transport_{};
     uint32_t event_count_ = 0;
-    ClapEventStorage event_store_[kMaxEvents + kMaxParamEvents];
+    std::vector<ClapEventStorage> event_store_;
 };
 
 } // namespace

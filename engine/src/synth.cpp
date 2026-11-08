@@ -729,11 +729,13 @@ bool Synth::render(const NoteEvent* notes, uint32_t note_count, const se_synth_p
     // are not retriggered.
     if (seen_gen_ != transport_gen || (playing && have_pos_ && position != expected_pos_)) fade_all();
     seen_gen_ = transport_gen;
+    // Parameters: compared on every call (cheap when unchanged), so
+    // automation can change them between segments of one graph.
+    if (params != nullptr)
+        apply_params(*params);
+    else if (seen_seq_ != graph_seq)
+        apply_params(default_synth_params());
     if (seen_seq_ != graph_seq) {
-        if (params != nullptr)
-            apply_params(*params);
-        else
-            apply_params(default_synth_params());
         rematch(notes, note_count);
         seen_seq_ = graph_seq;
     }

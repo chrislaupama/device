@@ -25,5 +25,10 @@ uint64_t plugin_instantiations(se_engine* e);
 // Queue a parameter change for a live device (AU: parameter id + plain
 // value; VST3: ParamID + normalized value; CLAP: clap_id + plain value).
 bool plugin_set_parameter(se_engine* e, uint64_t device_id, uint32_t param_id, double value);
+// Perform an editor-style gesture (begin, value, end) through the format's
+// own notification path (AU: AUEventListenerNotify + AUParameterSet). False
+// where the format has no host-side path (VST3/CLAP: use the test plugins'
+// hidden gesture parameters instead).
+bool plugin_simulate_gesture(se_engine* e, uint64_t device_id, uint32_t param_id, float normalized);
 
 } // namespace saine::testing

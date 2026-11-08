@@ -226,7 +226,8 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/test_recording.cpp
     tests/test_plugins.cpp
     tests/test_plugin_scan.cpp
-    tests/test_pdc.cpp)
+    tests/test_pdc.cpp
+    tests/test_automation.cpp)
   target_include_directories(saine_engine_tests PRIVATE src tests)
   target_link_libraries(saine_engine_tests PRIVATE saine_engine saine_engine_warnings)
   target_compile_definitions(saine_engine_tests PRIVATE

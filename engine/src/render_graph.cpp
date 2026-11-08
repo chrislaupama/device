@@ -157,6 +157,68 @@ int32_t build_render_graph(const se_session_desc_v5& desc, const AssetLookup& lo
         err = "session has track_count > 0 but tracks == NULL";
         return SE_ERR_INVALID_ARG;
     }
+    std::vector<se_track_desc_v6> tracks(desc.track_count);
+    for (uint32_t t = 0; t < desc.track_count; ++t) {
+        const se_track_desc_v5& a = desc.tracks[t];
+        se_track_desc_v6& b = tracks[t];
+        b = se_track_desc_v6{};
+        std::memcpy(&b, &a, sizeof a); // v6 extends v5 field by field (checked in c_api.cpp)
+        b.lanes = nullptr;
+        b.lane_count = 0;
+    }
+    se_session_desc_v6 d6{};
+    d6.tracks = tracks.data();
+    d6.track_count = desc.track_count;
+    d6.master_gain = desc.master_gain;
+    return build_render_graph(d6, lookup, out, err);
+}
+
+const char* validate_lane(const se_auto_lane_desc& d) noexcept {
+    if (d.target > SE_AUTO_PLUGIN) return "invalid automation target";
+    if (d.target == SE_AUTO_SYNTH && d.synth_param >= SE_SYNTH_P_COUNT) return "invalid synth parameter";
+    if (d.point_count > 0 && d.points == nullptr) return "point_count > 0 but points == NULL";
+    float lo = -std::numeric_limits<float>::infinity(), hi = std::numeric_limits<float>::infinity();
+    if (d.target == SE_AUTO_SYNTH) synth_param_range(d.synth_param, lo, hi);
+    for (uint32_t i = 0; i < d.point_count; ++i) {
+        const se_auto_point& q = d.points[i];
+        if (i > 0 && q.frame < d.points[i - 1].frame) return "automation points must be sorted by frame";
+        if (!std::isfinite(q.value) || !std::isfinite(q.curve)) return "automation point is not finite";
+        if (q.curve < -1.0f || q.curve > 1.0f) return "automation curve must be -1..1";
+        if (q.value < lo || q.value > hi) return "synth automation value outside the parameter's range";
+    }
+    return nullptr;
+}
+
+namespace {
+
+uint32_t add_lane(RenderGraph& g, const se_auto_lane_desc& d) {
+    AutoLane l;
+    l.point_begin = static_cast<uint32_t>(g.auto_points.size());
+    l.point_count = d.point_count;
+    l.target = d.target;
+    l.log = d.logarithmic != 0;
+    l.synth_param = d.synth_param;
+    l.param_id = d.param_id;
+    l.device_id = d.device_id;
+    const std::size_t at = g.auto_points.size();
+    g.auto_points.resize(at + d.point_count);
+    std::memcpy(g.auto_points.data() + at, d.points, sizeof(se_auto_point) * d.point_count);
+    g.lanes.push_back(l);
+    return static_cast<uint32_t>(g.lanes.size() - 1);
+}
+
+} // namespace
+
+int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err) {
+    if (desc.track_count > 0 && desc.tracks == nullptr) {
+        err = "session has track_count > 0 but tracks == NULL";
+        return SE_ERR_INVALID_ARG;
+    }
+    if (desc.master_lane_count > 0 && desc.master_lanes == nullptr) {
+        err = "session has master_lane_count > 0 but master_lanes == NULL";
+        return SE_ERR_INVALID_ARG;
+    }
     if (!std::isfinite(desc.master_gain)) {
         err = "master_gain is not finite";
         return SE_ERR_INVALID_ARG;
@@ -174,7 +236,7 @@ int32_t build_render_graph(const se_session_desc_v5& desc, const AssetLookup& lo
 
     std::unordered_map<uint64_t, uint64_t> device_ids; // device id -> track id
     for (uint32_t t = 0; t < desc.track_count; ++t) {
-        const se_track_desc_v5& td = desc.tracks[t];
+        const se_track_desc_v6& td = desc.tracks[t];
         if (td.device_count > 0 && td.devices == nullptr) {
             err = "track " + std::to_string(td.track_id) + " has device_count > 0 but devices == NULL";
             return SE_ERR_INVALID_ARG;
@@ -222,12 +284,24 @@ int32_t build_render_graph(const se_session_desc_v5& desc, const AssetLookup& lo
             }
         }
 
+        if (td.lane_count > 0 && td.lanes == nullptr) {
+            err = "track " + std::to_string(td.track_id) + " has lane_count > 0 but lanes == NULL";
+            return SE_ERR_INVALID_ARG;
+        }
+        for (uint32_t i = 0; i < td.lane_count; ++i)
+            if (const char* why = validate_lane(td.lanes[i])) {
+                err = "track " + std::to_string(td.track_id) + " automation lane " + std::to_string(i) + ": " + why;
+                return SE_ERR_INVALID_ARG;
+            }
+
         TrackNode node;
         node.track_id = td.track_id;
         float pl = 0.0f, pr = 0.0f;
         constant_power_pan(td.pan, pl, pr);
         node.gain_l = td.gain * pl;
         node.gain_r = td.gain * pr;
+        node.gain = td.gain;
+        node.pan = td.pan;
         // Mute always wins; with any solo active only soloed tracks are audible.
         node.audible = td.mute == 0 && (!any_solo || td.solo != 0);
         node.clip_begin = static_cast<uint32_t>(g->clips.size());
@@ -306,12 +380,67 @@ int32_t build_render_graph(const se_session_desc_v5& desc, const AssetLookup& lo
         node.has_instrument_plugin = node.instrument && td.instrument_plugin != nullptr;
         node.instrument_plugin_enabled = node.has_instrument_plugin && td.instrument_plugin->enabled != 0;
         if (node.fx_count > 0 || node.has_instrument_plugin) g->has_plugins = true;
+
+        // Automation lanes (last lane per target wins; empty lanes ignored).
+        {
+            const auto last_of = [&](auto&& pred) -> const se_auto_lane_desc* {
+                for (uint32_t i = td.lane_count; i-- > 0;)
+                    if (td.lanes[i].point_count > 0 && pred(td.lanes[i])) return &td.lanes[i];
+                return nullptr;
+            };
+            if (const auto* d = last_of([](const se_auto_lane_desc& l) { return l.target == SE_AUTO_VOLUME; }))
+                node.vol_lane = static_cast<int32_t>(add_lane(*g, *d));
+            if (const auto* d = last_of([](const se_auto_lane_desc& l) { return l.target == SE_AUTO_PAN; }))
+                node.pan_lane = static_cast<int32_t>(add_lane(*g, *d));
+            node.synth_lane_begin = static_cast<uint32_t>(g->lanes.size());
+            if (node.instrument && !node.has_instrument_plugin)
+                for (uint16_t sp = 0; sp < SE_SYNTH_P_COUNT; ++sp)
+                    if (const auto* d = last_of([sp](const se_auto_lane_desc& l) {
+                            return l.target == SE_AUTO_SYNTH && l.synth_param == sp;
+                        }))
+                        add_lane(*g, *d);
+            node.synth_lane_count = static_cast<uint32_t>(g->lanes.size()) - node.synth_lane_begin;
+            // Plugin lanes of one device: one per parameter (the last given).
+            const auto device_lanes = [&](uint64_t device_id, uint32_t& begin, uint32_t& count) {
+                begin = static_cast<uint32_t>(g->lanes.size());
+                for (uint32_t i = 0; i < td.lane_count; ++i) {
+                    const se_auto_lane_desc& d = td.lanes[i];
+                    if (d.target != SE_AUTO_PLUGIN || d.device_id != device_id || d.point_count == 0) continue;
+                    bool later = false;
+                    for (uint32_t j = i + 1; j < td.lane_count && !later; ++j)
+                        later = td.lanes[j].target == SE_AUTO_PLUGIN && td.lanes[j].device_id == device_id &&
+                                td.lanes[j].param_id == d.param_id && td.lanes[j].point_count > 0;
+                    if (!later) add_lane(*g, d);
+                }
+                count = static_cast<uint32_t>(g->lanes.size()) - begin;
+                if (count > 0) g->has_plugin_lanes = true;
+            };
+            if (node.has_instrument_plugin)
+                device_lanes(td.instrument_plugin->device_id, node.iplug_lane_begin, node.iplug_lane_count);
+            for (uint32_t i = 0; i < node.fx_count; ++i) {
+                FxSlot& slot = g->fx[node.fx_begin + i];
+                device_lanes(slot.device_id, slot.lane_begin, slot.lane_count);
+            }
+        }
         std::stable_sort(g->notes.begin() + node.note_begin, g->notes.end(), [](const NoteEvent& a, const NoteEvent& b) {
             return a.start != b.start ? a.start < b.start : a.pitch < b.pitch;
         });
         g->tracks.push_back(node);
         g->synth_params.push_back(params);
     }
+
+    for (uint32_t i = desc.master_lane_count; i-- > 0;) {
+        const se_auto_lane_desc& d = desc.master_lanes[i];
+        if (const char* why = validate_lane(d)) {
+            err = std::string("master automation lane ") + std::to_string(i) + ": " + why;
+            return SE_ERR_INVALID_ARG;
+        }
+    }
+    for (uint32_t i = desc.master_lane_count; i-- > 0;)
+        if (desc.master_lanes[i].target == SE_AUTO_VOLUME && desc.master_lanes[i].point_count > 0) {
+            g->master_vol_lane = static_cast<int32_t>(add_lane(*g, desc.master_lanes[i]));
+            break;
+        }
 
     g->assets.reserve(used.size());
     for (auto& [id, ref] : used) g->assets.push_back(std::move(ref));
@@ -336,6 +465,10 @@ std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g) {
     c->notes = g.notes;
     c->fx = g.fx;
     c->has_plugins = g.has_plugins;
+    c->lanes = g.lanes;
+    c->auto_points = g.auto_points;
+    c->master_vol_lane = g.master_vol_lane;
+    c->has_plugin_lanes = g.has_plugin_lanes;
     c->synth_params = g.synth_params;
     c->assets = g.assets;
     c->synth_refs = g.synth_refs;

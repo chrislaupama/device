@@ -2,6 +2,7 @@
 // se_export_wav. Real-time safe: no allocation, no locks, no I/O.
 #pragma once
 
+#include "plugins/plugin_instance.hpp"
 #include "render_graph.hpp"
 
 #include <cstdint>
@@ -24,10 +25,21 @@ public:
     float* plugin_l() noexcept { return plugin_l_.data(); } // instrument plugin output
     float* plugin_r() noexcept { return plugin_r_.data(); }
     const float* zeros() const noexcept { return zeros_.data(); } // max_block zeros (missing input channels)
+    // Automation scratch: per-sample gains and lane values, plugin
+    // parameter events, the automated synth parameters.
+    float* gain_l() noexcept { return gain_l_.data(); }
+    float* gain_r() noexcept { return gain_r_.data(); }
+    float* auto_a() noexcept { return auto_a_.data(); }
+    float* auto_b() noexcept { return auto_b_.data(); }
+    ParamEvent* param_events() noexcept { return param_events_.data(); }
+    se_synth_params& synth_params() noexcept { return synth_params_; }
 
 private:
     uint32_t max_block_;
     std::vector<float> track_l_, track_r_, master_l_, master_r_, synth_, zeros_, plugin_l_, plugin_r_;
+    std::vector<float> gain_l_, gain_r_, auto_a_, auto_b_;
+    std::vector<ParamEvent> param_events_;
+    se_synth_params synth_params_{};
 };
 
 // Instrument inputs of render_block(). `synths` is parallel to
@@ -41,13 +53,16 @@ private:
 // `lines` (non-null only when graph->pdc.need is non-empty): delay lines in
 // the PdcPlan layout (graph->lines live, private copies for export);
 // `pdc_gen` changes whenever they must be flushed (seek / stop).
-struct RtTransport;
+// `history` (live path): where recently rendered samples were read on the
+// timeline, so delay-compensated stages evaluate automation at the frame
+// their audio came from across loop wraps; null = linear playback (export).
 struct InstrumentInputs {
     Synth* const* synths = nullptr;
     uint64_t transport_gen = 0;
     const RtTransport* transport = nullptr;
     DelayLine* const* lines = nullptr;
     uint64_t pdc_gen = 0;
+    const TimeHistory* history = nullptr;
 };
 
 // Device input for one render_block() call: `count` channel pointers, each
@@ -90,6 +105,12 @@ struct BlockPeaks {
 // (pdc_pre), only its playback source before the input is added; bypassed
 // slots delay by their plugin's latency. Lines with pending output keep the
 // track rendering while stopped (tails); muted tracks drop their lines.
+// Automation (graph->lanes, docs/adr/0005): volume/pan lanes replace the
+// static fader values with per-sample gains (ramps of <= kAutoRampFrames,
+// exact at points); synth lanes replace synth parameters every 16 timeline
+// frames; plugin lanes become sample-offset parameter events; the master
+// volume lane replaces master_gain. Each stage evaluates its lanes at the
+// timeline frame its audio was read at (delay compensation, inst.history).
 BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing, uint32_t frames,
                         RenderContext& ctx, bool update_meters, uint32_t peek_slot = 0,
                         const InstrumentInputs& inst = {}, const InputView& input = {}) noexcept;
@@ -101,6 +122,11 @@ void kernel_add_scaled(float* __restrict dst, const float* __restrict src, float
 void kernel_add_scaled2(float* __restrict dst_l, float* __restrict dst_r, const float* __restrict src_l,
                         const float* __restrict src_r, float gain_l, float gain_r, uint32_t n) noexcept;
 void kernel_scale(float* __restrict buf, float gain, uint32_t n) noexcept;
+// dst_l += src_l * gain_l[i], dst_r += src_r * gain_r[i]
+void kernel_add_mul2(float* __restrict dst_l, float* __restrict dst_r, const float* __restrict src_l,
+                     const float* __restrict src_r, const float* __restrict gain_l, const float* __restrict gain_r,
+                     uint32_t n) noexcept;
+void kernel_mul(float* __restrict buf, const float* __restrict gain, uint32_t n) noexcept;
 float kernel_peak(const float* __restrict buf, uint32_t n) noexcept;
 
 } // namespace saine
