@@ -191,6 +191,7 @@ pub fn describe_state(p: &Project) -> Value {
         "tempo_bpm": p.transport.bpm,
         "time_signature": format!("{}/{}", p.transport.time_signature.numerator, p.transport.time_signature.denominator),
         "ppq": PPQ,
+        "note_format": "midi_clips[].notes entries are [id, pitch, start_ticks, length_ticks, velocity]",
         "master_volume_db": round1(gain_to_db(p.master_gain)),
         "tracks": p.tracks.iter().enumerate().map(|(i, t)| json!({
             "id": t.id.0,
@@ -206,6 +207,14 @@ pub fn describe_state(p: &Project) -> Value {
                 "name": c.name,
                 "start_bar": 1.0 + c.start as f64 / p.ticks_per_bar() as f64,
                 "length_seconds": p.asset(c.asset).map(|a| c.source_length as f64 / a.sample_rate),
+            })).collect::<Vec<_>>(),
+            "midi_clips": t.midi_clips.iter().map(|c| json!({
+                "id": c.id.0,
+                "name": c.name,
+                "start_bar": 1.0 + c.start as f64 / p.ticks_per_bar() as f64,
+                "start_ticks": c.start,
+                "length_ticks": c.length,
+                "notes": c.notes.iter().map(|n| json!([n.id, n.pitch, n.start, n.length, n.velocity])).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
     })
@@ -230,7 +239,11 @@ pub fn tool_schema() -> Value {
                      set_track_pan{track,pan(-1..1)}, set_track_mute{track,mute}, set_track_solo{track,solo}, \
                      set_master_gain{gain}, move_clip{clip,track,start(ticks)}, trim_clip{clip,start,source_offset,source_length}, \
                      set_clip_gain{clip,gain}, remove_clip{clip}, set_tempo{bpm 20..999}, \
-                     set_time_signature{numerator,denominator}, set_loop{enabled,start,end}. Positions are ticks (PPQ 960)."}
+                     set_time_signature{numerator,denominator}, set_loop{enabled,start,end}, \
+                     add_midi_clip{track(instrument),clip{id:0,name,start,length,notes:[]}}, remove_midi_clip{clip}, \
+                     move_midi_clip{clip,track,start}, resize_midi_clip{clip,start,length}, \
+                     set_midi_notes{clip,notes:[{id,pitch 0..127 (60=C4),start(ticks, clip-relative),length,velocity 1..127}]} (replaces all notes). \
+                     Positions are ticks (PPQ 960)."}
             }},
             {"type": "object", "required": ["type", "track", "db"], "properties": {
                 "type": {"const": "set_track_volume_db"}, "track": id, "db": {"type": "number", "maximum": 12}}},

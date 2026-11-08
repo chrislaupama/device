@@ -6,6 +6,7 @@
 //! and the AI assistant (they are serde-serialisable, so an LLM tool call can
 //! be deserialised straight into a `Command` and validated before execution).
 
+use crate::midi::{self, MidiClip, Note};
 use crate::model::*;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -59,6 +60,16 @@ pub enum Command {
     SetTempo { bpm: f64 },
     SetTimeSignature { numerator: u8, denominator: u8 },
     SetLoop { enabled: bool, start: Ticks, end: Ticks },
+    /// Insert a MIDI clip on an instrument track (id 0 → allocate).
+    AddMidiClip { track: TrackId, clip: MidiClip },
+    RemoveMidiClip { clip: ClipId },
+    /// Move a MIDI clip in time and/or to another instrument track.
+    MoveMidiClip { clip: ClipId, track: TrackId, start: Ticks },
+    /// Change a MIDI clip's start and length (notes keep clip-relative times).
+    ResizeMidiClip { clip: ClipId, start: Ticks, length: Ticks },
+    /// Replace all notes of a MIDI clip (draw, erase, move, resize, velocity,
+    /// quantize, transpose... each editor gesture is one of these).
+    SetMidiNotes { clip: ClipId, notes: Vec<Note> },
     /// Several commands applied atomically (all or nothing).
     Batch { label: String, commands: Vec<Command> },
 }
@@ -86,6 +97,11 @@ impl Command {
             Command::SetTempo { .. } => "Tempo Change".into(),
             Command::SetTimeSignature { .. } => "Time Signature Change".into(),
             Command::SetLoop { .. } => "Loop Change".into(),
+            Command::AddMidiClip { .. } => "Insert MIDI Clip".into(),
+            Command::RemoveMidiClip { .. } => "Delete Clip".into(),
+            Command::MoveMidiClip { .. } => "Move Clip".into(),
+            Command::ResizeMidiClip { .. } => "Resize Clip".into(),
+            Command::SetMidiNotes { .. } => "Edit Notes".into(),
             Command::Batch { label, .. } => label.clone(),
         }
     }
@@ -197,7 +213,7 @@ impl Command {
                 }
                 if clip.id.0 == 0 {
                     clip.id = ClipId(p.alloc_id());
-                } else if p.find_clip(clip.id).is_some() {
+                } else if p.clip_id_in_use(clip.id) {
                     return Err(EditError::DuplicateId(clip.id.0));
                 } else {
                     p.next_id = p.next_id.max(clip.id.0 + 1);
@@ -277,6 +293,67 @@ impl Command {
                 t.loop_end = end;
                 Ok(old)
             }
+            Command::AddMidiClip { track, mut clip } => {
+                let ti = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
+                if p.tracks[ti].kind != TrackKind::Instrument {
+                    return Err(invalid("track", "MIDI clips belong on instrument tracks"));
+                }
+                if clip.id.0 == 0 {
+                    clip.id = ClipId(p.alloc_id());
+                } else if p.clip_id_in_use(clip.id) {
+                    return Err(EditError::DuplicateId(clip.id.0));
+                } else {
+                    p.next_id = p.next_id.max(clip.id.0 + 1);
+                }
+                validate_midi_clip(&clip)?;
+                midi::sort_notes(&mut clip.notes);
+                let id = clip.id;
+                let t = &mut p.tracks[ti];
+                t.midi_clips.push(clip);
+                t.midi_clips.sort_by_key(|c| (c.start, c.id));
+                Ok(Command::RemoveMidiClip { clip: id })
+            }
+            Command::RemoveMidiClip { clip } => {
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let track = p.tracks[ti].id;
+                let c = p.tracks[ti].midi_clips.remove(ci);
+                Ok(Command::AddMidiClip { track, clip: c })
+            }
+            Command::MoveMidiClip { clip, track, start } => {
+                if start < 0 {
+                    return Err(invalid("start", "must be >= 0"));
+                }
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let dest = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
+                if p.tracks[dest].kind != TrackKind::Instrument {
+                    return Err(invalid("track", "MIDI clips belong on instrument tracks"));
+                }
+                let old_track = p.tracks[ti].id;
+                let mut c = p.tracks[ti].midi_clips.remove(ci);
+                let old_start = std::mem::replace(&mut c.start, start);
+                p.tracks[dest].midi_clips.push(c);
+                p.tracks[dest].midi_clips.sort_by_key(|c| (c.start, c.id));
+                Ok(Command::MoveMidiClip { clip, track: old_track, start: old_start })
+            }
+            Command::ResizeMidiClip { clip, start, length } => {
+                if start < 0 || length <= 0 {
+                    return Err(invalid("clip", "requires start >= 0 and length > 0"));
+                }
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let c = &mut p.tracks[ti].midi_clips[ci];
+                let inv = Command::ResizeMidiClip { clip, start: c.start, length: c.length };
+                c.start = start;
+                c.length = length;
+                p.tracks[ti].midi_clips.sort_by_key(|c| (c.start, c.id));
+                Ok(inv)
+            }
+            Command::SetMidiNotes { clip, mut notes } => {
+                midi::validate_notes(&notes).map_err(|r| invalid("notes", r))?;
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                midi::sort_notes(&mut notes);
+                let old = std::mem::replace(&mut p.tracks[ti].midi_clips[ci].notes, notes);
+                Ok(Command::SetMidiNotes { clip, notes: old })
+            }
             Command::Batch { label, commands } => {
                 let mut inverses = Vec::with_capacity(commands.len());
                 for cmd in commands {
@@ -317,6 +394,13 @@ fn validate_pan(pan: f32) -> Result<(), EditError> {
         return Err(invalid("pan", format!("{pan} outside -1..=1")));
     }
     Ok(())
+}
+
+fn validate_midi_clip(c: &MidiClip) -> Result<(), EditError> {
+    if c.start < 0 || c.length <= 0 {
+        return Err(invalid("clip", "requires start >= 0 and length > 0"));
+    }
+    midi::validate_notes(&c.notes).map_err(|r| invalid("notes", r))
 }
 
 fn validate_clip(p: &Project, c: &Clip) -> Result<(), EditError> {

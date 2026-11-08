@@ -18,6 +18,17 @@ pub struct ClipSnapshot {
     pub gain: f32,
 }
 
+/// A note as absolute engine frames: [start, end) with the clip boundary
+/// already applied (notes crossing the clip end are cut; notes starting at
+/// or after it are dropped).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NoteSnapshot {
+    pub start: i64,
+    pub end: i64,
+    pub pitch: u8,
+    pub velocity: u8,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackSnapshot {
     pub track_id: u64,
@@ -26,6 +37,10 @@ pub struct TrackSnapshot {
     pub mute: bool,
     pub solo: bool,
     pub clips: Vec<ClipSnapshot>,
+    /// True for instrument tracks (render `notes` through the built-in instrument).
+    pub instrument: bool,
+    /// All playable notes of the track's MIDI clips, sorted by start frame.
+    pub notes: Vec<NoteSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -67,6 +82,29 @@ pub fn build(project: &Project, engine_rate: f64, engine_assets: &HashMap<AssetI
                     })
                 })
                 .collect(),
+            instrument: t.kind == crate::model::TrackKind::Instrument,
+            notes: {
+                let mut v: Vec<NoteSnapshot> = t
+                    .midi_clips
+                    .iter()
+                    .flat_map(|c| {
+                        c.notes.iter().filter(|n| n.start < c.length).map(move |n| {
+                            let s = c.start + n.start;
+                            let e = c.start + (n.start + n.length).min(c.length);
+                            (s, e, n.pitch, n.velocity)
+                        })
+                    })
+                    .map(|(s, e, pitch, velocity)| NoteSnapshot {
+                        start: project.ticks_to_frames(s, engine_rate),
+                        end: project.ticks_to_frames(e, engine_rate),
+                        pitch,
+                        velocity,
+                    })
+                    .filter(|n| n.end > n.start)
+                    .collect();
+                v.sort_by_key(|n| (n.start, n.pitch));
+                v
+            },
         })
         .collect();
     (SessionSnapshot { tracks, master_gain: project.master_gain }, skipped)

@@ -163,6 +163,7 @@ pub fn assign_ids(cmd: &mut Command, p: &mut Project) {
             }
         }
         Command::AddClip { clip, .. } if clip.id.0 == 0 => clip.id = ClipId(p.alloc_id()),
+        Command::AddMidiClip { clip, .. } if clip.id.0 == 0 => clip.id = ClipId(p.alloc_id()),
         Command::AddAsset { asset } if asset.id.0 == 0 => asset.id = AssetId(p.alloc_id()),
         Command::Batch { commands, .. } => commands.iter_mut().for_each(|c| assign_ids(c, p)),
         _ => {}

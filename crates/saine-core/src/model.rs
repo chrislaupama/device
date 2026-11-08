@@ -1,6 +1,7 @@
 //! Authoritative project model. Lives on the application thread only; the
 //! audio engine receives derived, immutable snapshots (see `snapshot`).
 
+use crate::midi::MidiClip;
 use serde::{Deserialize, Serialize};
 
 /// Pulses per quarter note for musical positions.
@@ -47,6 +48,10 @@ pub struct Track {
     pub mute: bool,
     pub solo: bool,
     pub clips: Vec<Clip>,
+    /// MIDI clips (instrument tracks only). Defaulted so schema-v1 files
+    /// without the field still load.
+    #[serde(default)]
+    pub midi_clips: Vec<MidiClip>,
 }
 
 /// An audio clip referencing a media asset.
@@ -132,7 +137,7 @@ impl Default for Project {
 
 impl Track {
     pub fn new(id: TrackId, kind: TrackKind, name: &str, color: ColorIndex) -> Self {
-        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, clips: Vec::new() }
+        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, clips: Vec::new(), midi_clips: Vec::new() }
     }
 }
 
@@ -169,6 +174,20 @@ impl Project {
     /// Locate a clip: (track index, clip index).
     pub fn find_clip(&self, id: ClipId) -> Option<(usize, usize)> {
         self.tracks.iter().enumerate().find_map(|(ti, t)| t.clips.iter().position(|c| c.id == id).map(|ci| (ti, ci)))
+    }
+
+    /// Locate a MIDI clip: (track index, clip index).
+    pub fn find_midi_clip(&self, id: ClipId) -> Option<(usize, usize)> {
+        self.tracks.iter().enumerate().find_map(|(ti, t)| t.midi_clips.iter().position(|c| c.id == id).map(|ci| (ti, ci)))
+    }
+
+    pub fn midi_clip(&self, id: ClipId) -> Option<&MidiClip> {
+        self.find_midi_clip(id).map(|(t, c)| &self.tracks[t].midi_clips[c])
+    }
+
+    /// True if any clip (audio or MIDI) uses this id.
+    pub fn clip_id_in_use(&self, id: ClipId) -> bool {
+        self.find_clip(id).is_some() || self.find_midi_clip(id).is_some()
     }
 
     pub fn clip(&self, id: ClipId) -> Option<&Clip> {

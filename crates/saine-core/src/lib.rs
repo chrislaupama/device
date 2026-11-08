@@ -10,10 +10,12 @@ pub mod assistant;
 pub mod command;
 pub mod history;
 pub mod keymap;
+pub mod midi;
 pub mod model;
 pub mod persist;
 pub mod snapshot;
 
 pub use command::{Command, EditError};
 pub use history::{Document, Origin};
+pub use midi::{MidiClip, Note};
 pub use model::*;
