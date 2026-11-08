@@ -1,0 +1,28 @@
+// Fallback for platforms without any audio backend (keeps the engine
+// buildable for offline rendering everywhere).
+#if !defined(__APPLE__) && !defined(_WIN32) && !defined(__linux__)
+
+#include "audio_device.hpp"
+#include "saine_engine.h"
+
+namespace saine {
+namespace {
+
+class NullDevice final : public AudioDevice {
+public:
+    int32_t start(const Config&, Callback*, std::string& err) override {
+        err = "no audio device backend for this platform";
+        return SE_ERR_DEVICE;
+    }
+    int32_t stop() override { return SE_OK; }
+    bool is_running() const override { return false; }
+};
+
+} // namespace
+
+std::unique_ptr<AudioDevice> create_platform_audio_device() { return std::make_unique<NullDevice>(); }
+double query_default_output_sample_rate() { return 0.0; }
+
+} // namespace saine
+
+#endif

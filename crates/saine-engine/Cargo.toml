@@ -1,0 +1,18 @@
+[package]
+name = "saine-engine"
+description = "Safe Rust bindings to the Saine C++23 real-time audio engine (engine/include/saine_engine.h)"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+links = "saine_engine"
+build = "build.rs"
+
+[dependencies]
+saine-core = { path = "../saine-core" }
+thiserror.workspace = true
+
+[build-dependencies]
+cmake = "0.1"
+
+[dev-dependencies]
+tempfile.workspace = true

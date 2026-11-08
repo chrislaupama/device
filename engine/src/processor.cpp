@@ -1,0 +1,118 @@
+#include "processor.hpp"
+
+#include "rt_util.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#elif defined(__SSE2__) || defined(_M_X64)
+#include <emmintrin.h>
+#endif
+
+namespace saine {
+
+RenderContext::RenderContext(uint32_t max_block)
+    : max_block_(max_block), track_l_(max_block), track_r_(max_block), master_l_(max_block), master_r_(max_block) {}
+
+void kernel_add_scaled(float* __restrict dst, const float* __restrict src, float gain, uint32_t n) noexcept {
+    for (uint32_t i = 0; i < n; ++i) dst[i] += src[i] * gain;
+}
+
+void kernel_add_scaled2(float* __restrict dst_l, float* __restrict dst_r, const float* __restrict src_l,
+                        const float* __restrict src_r, float gain_l, float gain_r, uint32_t n) noexcept {
+    for (uint32_t i = 0; i < n; ++i) {
+        dst_l[i] += src_l[i] * gain_l;
+        dst_r[i] += src_r[i] * gain_r;
+    }
+}
+
+void kernel_scale(float* __restrict buf, float gain, uint32_t n) noexcept {
+    for (uint32_t i = 0; i < n; ++i) buf[i] *= gain;
+}
+
+float kernel_peak(const float* __restrict buf, uint32_t n) noexcept {
+    // Max-abs reduction. Compilers will not auto-vectorise this without
+    // -ffast-math (std::max has NaN-ordering semantics), so use intrinsics.
+    uint32_t i = 0;
+    float m = 0.0f;
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+    float32x4_t v0 = vdupq_n_f32(0.0f), v1 = vdupq_n_f32(0.0f);
+    for (; i + 8 <= n; i += 8) {
+        v0 = vmaxq_f32(v0, vabsq_f32(vld1q_f32(buf + i)));
+        v1 = vmaxq_f32(v1, vabsq_f32(vld1q_f32(buf + i + 4)));
+    }
+    m = vmaxvq_f32(vmaxq_f32(v0, v1));
+#elif defined(__SSE2__) || defined(_M_X64)
+    const __m128 abs_mask = _mm_castsi128_ps(_mm_set1_epi32(0x7fffffff));
+    __m128 v0 = _mm_setzero_ps(), v1 = _mm_setzero_ps();
+    for (; i + 8 <= n; i += 8) {
+        v0 = _mm_max_ps(v0, _mm_and_ps(_mm_loadu_ps(buf + i), abs_mask));
+        v1 = _mm_max_ps(v1, _mm_and_ps(_mm_loadu_ps(buf + i + 4), abs_mask));
+    }
+    alignas(16) float lanes[4];
+    _mm_store_ps(lanes, _mm_max_ps(v0, v1));
+    m = std::max(std::max(lanes[0], lanes[1]), std::max(lanes[2], lanes[3]));
+#endif
+    for (; i < n; ++i) m = std::max(m, std::fabs(buf[i]));
+    return m;
+}
+
+BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing, uint32_t frames,
+                        RenderContext& ctx, bool update_meters) noexcept {
+    float* const ml = ctx.master_l();
+    float* const mr = ctx.master_r();
+    std::memset(ml, 0, sizeof(float) * frames);
+    std::memset(mr, 0, sizeof(float) * frames);
+    if (graph == nullptr || !playing || frames == 0) return {};
+
+    float* const tl = ctx.track_l();
+    float* const tr = ctx.track_r();
+    const int64_t block_start = position;
+    const int64_t block_end = position + frames;
+
+    const std::size_t track_count = graph->tracks.size();
+    for (std::size_t t = 0; t < track_count; ++t) {
+        const TrackNode& track = graph->tracks[t];
+        if (!track.audible) continue;
+
+        bool any = false;
+        const ClipNode* clip = graph->clips.data() + track.clip_begin;
+        const ClipNode* const clip_end = clip + track.clip_count;
+        for (; clip != clip_end; ++clip) {
+            if (clip->timeline_start >= block_end) break; // sorted by start
+            if (clip->timeline_end <= block_start) continue;
+            if (!any) {
+                std::memset(tl, 0, sizeof(float) * frames);
+                std::memset(tr, 0, sizeof(float) * frames);
+                any = true;
+            }
+            const int64_t from = std::max(clip->timeline_start, block_start);
+            const int64_t to = std::min(clip->timeline_end, block_end);
+            const auto out_off = static_cast<uint32_t>(from - block_start);
+            const auto n = static_cast<uint32_t>(to - from);
+            const int64_t src = clip->source_offset + (from - clip->timeline_start);
+            kernel_add_scaled(tl + out_off, clip->src_l + src, clip->gain, n);
+            kernel_add_scaled(tr + out_off, clip->src_r + src, clip->gain, n);
+        }
+        if (!any) continue;
+
+        kernel_add_scaled2(ml, mr, tl, tr, track.gain_l, track.gain_r, frames);
+        if (update_meters) {
+            TrackMeter& m = graph->meters[t];
+            atomic_store_max(m.peak_l, kernel_peak(tl, frames) * std::fabs(track.gain_l));
+            atomic_store_max(m.peak_r, kernel_peak(tr, frames) * std::fabs(track.gain_r));
+        }
+    }
+
+    if (graph->master_gain != 1.0f) {
+        kernel_scale(ml, graph->master_gain, frames);
+        kernel_scale(mr, graph->master_gain, frames);
+    }
+    if (!update_meters) return {};
+    return {kernel_peak(ml, frames), kernel_peak(mr, frames)};
+}
+
+} // namespace saine

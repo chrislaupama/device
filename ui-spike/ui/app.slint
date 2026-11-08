@@ -1,0 +1,228 @@
+// Saine Studio UI spike shell.
+// The Slint side owns layout, chrome, text and input. The timeline and the
+// meter bridge are either custom wgpu textures (`wgpu` mode) or pure Slint
+// elements (`path` mode, the baseline).
+
+export struct TrackHeader {
+    name: string,
+    color: color,
+}
+
+// Path-mode clip. `commands` is an SVG path in a viewbox of
+// (0..points) x (-1..1), built once from the peak pyramid.
+export struct PClip {
+    track: int,
+    start: float, // beats
+    len: float,   // beats
+    color: color,
+    commands: string,
+}
+
+export struct RulerLabel {
+    x: length,
+    text: string,
+}
+
+component Panel inherits Rectangle {
+    background: #1a1b1f;
+}
+
+export component AppWindow inherits Window {
+    title: "Saine Studio - UI spike";
+    preferred-width: 1440px;
+    preferred-height: 820px;
+    background: #121316;
+    default-font-size: 12px;
+
+    in property <bool> path-mode: false;
+    in property <image> timeline-image;
+    in property <image> meter-image;
+
+    // View state, owned by Rust, consumed by both modes.
+    in property <float> view-start; // beats at left edge
+    in property <float> px-per-beat: 24;
+    in property <length> scroll-y;
+    in property <length> track-height: 28px;
+    in property <length> ruler-height: 24px;
+    in property <float> playhead-beat;
+
+    in property <[TrackHeader]> tracks;
+    in property <[PClip]> pclips;
+    in property <float> path-points: 128;
+    in property <[float]> meter-levels;
+    in property <[RulerLabel]> ruler-labels;
+    in property <string> stats-text;
+    in property <string> mode-text;
+
+    // Geometry of the custom-rendered regions (logical px), read by Rust each frame.
+    out property <length> timeline-width: timeline-area.width;
+    out property <length> timeline-height: timeline-area.height;
+    out property <length> meters-width: meter-area.width;
+    out property <length> meters-height: meter-area.height;
+
+    // Input routed to the Rust/wgpu side.
+    callback timeline-scroll(/* dx */ float, /* dy */ float, /* x */ float, /* zoom */ bool);
+    callback timeline-click(/* x */ float, /* y */ float);
+    callback pinch-started();
+    callback pinch-updated(/* scale */ float, /* center-x */ float);
+
+    VerticalLayout {
+        // Top bar
+        Rectangle {
+            height: 40px;
+            background: #1a1b1f;
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 18px;
+                Text { text: "SAINE STUDIO"; color: #e6e6e6; font-size: 13px; font-weight: 700; vertical-alignment: center; }
+                Rectangle {
+                    width: 84px; height: 24px; y: 8px;
+                    border-radius: 4px; background: #2f6bff;
+                    Text { text: "PLAY"; color: #ffffff; font-weight: 600; }
+                }
+                Text { text: root.mode-text; color: #8a8d96; vertical-alignment: center; }
+                Rectangle { }
+                Text { text: root.stats-text; color: #e6e6e6; vertical-alignment: center; font-family: "Menlo"; }
+            }
+        }
+        Rectangle { height: 1px; background: #121316; }
+
+        HorizontalLayout {
+            // Left panel: track headers, kept in sync with the timeline's vertical scroll.
+            Panel {
+                width: 200px;
+                clip: true;
+                for t[i] in root.tracks: Rectangle {
+                    x: 0;
+                    y: root.ruler-height + i * root.track-height - root.scroll-y;
+                    width: parent.width;
+                    height: root.track-height;
+                    Rectangle { x: 0; width: 4px; height: parent.height - 2px; y: 1px; background: t.color; }
+                    Text { x: 12px; text: t.name; color: #e6e6e6; vertical-alignment: center; }
+                    Rectangle { y: parent.height - 1px; height: 1px; background: #121316; }
+                }
+                Rectangle {
+                    y: 0; height: root.ruler-height; background: #1a1b1f;
+                    Text { x: 12px; text: "TRACKS"; color: #8a8d96; font-size: 10px; vertical-alignment: center; }
+                }
+            }
+            Rectangle { width: 1px; background: #121316; }
+
+            timeline-area := Rectangle {
+                background: #121316;
+                clip: true;
+
+                // ---------------- wgpu mode ----------------
+                if !root.path-mode: Image {
+                    x: 0; y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    source: root.timeline-image;
+                    image-fit: fill;
+                }
+
+                // ---------------- path mode (baseline) ----------------
+                if root.path-mode: Rectangle {
+                    x: 0; y: 0; width: parent.width; height: parent.height;
+                    clip: true;
+                    for t[i] in root.tracks: Rectangle {
+                        y: root.ruler-height + i * root.track-height - root.scroll-y;
+                        height: root.track-height - 1px;
+                        background: mod(i, 2) == 0 ? #16171b : #141518;
+                    }
+                    // Bar grid (every 4 beats, max ~200 lines).
+                    for b in 200: Rectangle {
+                        property <float> beat: (floor(root.view-start / 4) + b) * 4;
+                        x: (self.beat - root.view-start) * root.px-per-beat * 1px;
+                        visible: self.x >= 0 && self.x < parent.width;
+                        width: 1px;
+                        background: #26282e;
+                    }
+                    for c in root.pclips: Rectangle {
+                        x: (c.start - root.view-start) * root.px-per-beat * 1px;
+                        y: root.ruler-height + c.track * root.track-height - root.scroll-y + 1px;
+                        width: c.len * root.px-per-beat * 1px;
+                        height: root.track-height - 3px;
+                        visible: self.x + self.width > 0 && self.x < parent.width
+                              && self.y + self.height > root.ruler-height && self.y < parent.height;
+                        background: c.color.with-alpha(0.25);
+                        border-radius: 3px;
+                        Path {
+                            width: parent.width;
+                            height: parent.height;
+                            viewbox-x: 0;
+                            viewbox-y: -1;
+                            viewbox-width: root.path-points;
+                            viewbox-height: 2;
+                            commands: c.commands;
+                            fill: c.color;
+                            fit: fill; // default is contain (aspect-preserving)
+                        }
+                    }
+                    Rectangle { y: 0; height: root.ruler-height; background: #1a1b1f; }
+                    Rectangle {
+                        x: (root.playhead-beat - root.view-start) * root.px-per-beat * 1px;
+                        width: 2px;
+                        background: #2f6bff;
+                    }
+                }
+
+                // Ruler labels: Slint text composited over the wgpu texture (both modes).
+                for l in root.ruler-labels: Text {
+                    x: l.x + 3px;
+                    y: 4px;
+                    text: l.text;
+                    color: #8a8d96;
+                    font-size: 10px;
+                }
+
+                // Input: wheel/trackpad scroll + zoom, click to seek, pinch to zoom.
+                ta := TouchArea {
+                    scroll-event(e) => {
+                        root.timeline-scroll(e.delta-x / 1px, e.delta-y / 1px, self.mouse-x / 1px,
+                            e.modifiers.control || e.modifiers.meta || e.modifiers.alt);
+                        accept
+                    }
+                    clicked => { root.timeline-click(self.pressed-x / 1px, self.pressed-y / 1px); }
+                }
+                ScaleRotateGestureHandler {
+                    started => { root.pinch-started(); }
+                    updated => { root.pinch-updated(self.scale, self.center.x / 1px); }
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: #121316; }
+
+        // Bottom panel: meter bridge
+        Panel {
+            height: 150px;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 6px;
+                Text { text: "MIXER  -  64 channel meters"; color: #8a8d96; font-size: 10px; }
+                meter-area := Rectangle {
+                    if !root.path-mode: Image {
+                        width: parent.width; height: parent.height;
+                        source: root.meter-image;
+                        image-fit: fill;
+                    }
+                    if root.path-mode: Rectangle {
+                        for lvl[i] in root.meter-levels: Rectangle {
+                            property <length> w: parent.width / 64;
+                            x: i * self.w;
+                            width: self.w - 3px;
+                            background: #101114;
+                            Rectangle {
+                                y: parent.height * (1 - lvl);
+                                height: parent.height * lvl;
+                                background: @linear-gradient(0deg, #2fbf71 0%, #2fbf71 60%, #e3c53a 85%, #e5484d 100%);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

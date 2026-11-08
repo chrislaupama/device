@@ -1,0 +1,14 @@
+[package]
+name = "saine-core"
+description = "Saine Studio application core: project model, edit commands, undo/redo, persistence"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

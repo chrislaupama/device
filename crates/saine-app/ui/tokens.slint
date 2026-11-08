@@ -1,0 +1,68 @@
+// Design tokens derived from reference/design-system.md (measured from the
+// reference app at 1440x820 pt). Keep both files in sync.
+export global Tokens {
+    // Surfaces
+    out property <color> bg-window: #101114;
+    out property <color> border-window: #28292b;
+    out property <color> bg-panel: #1a1b1e;
+    out property <color> bg-raised: #212227;
+    out property <color> bg-control: #292a2f;
+    out property <color> bg-input: #25262b;
+    out property <color> bg-track-header-selected: #232428;
+    out property <color> bg-lane: #16171a;
+    out property <color> bg-lane-selected: #1d1e21;
+    out property <color> bg-slider-track: #1f2024;
+    out property <color> bg-knob: #131417;
+    out property <color> bg-meter: #19191d;
+    // Lines
+    out property <color> line-separator: #2c2d30;
+    out property <color> line-lane: #292a2c;
+    out property <color> line-grid: #131417;
+    out property <color> line-panel-highlight: #36373a;
+    out property <color> loop-bar: #4d4d4f;
+    // Text
+    out property <color> text-primary: #e5e5e8;
+    out property <color> text-bright: #ffffff;
+    out property <color> text-secondary: #9d9d9f;
+    out property <color> text-tertiary: #767678;
+    out property <color> text-title: #54565c;
+    // Accent / track colours
+    out property <color> accent: #2752f5;
+    out property <color> on-accent: #f2f5fe;
+    out property <color> track-audio: #72b6d7;
+    out property <color> track-instrument: #8092eb;
+    out property <color> track-master: #ffffff;
+    // Typography
+    out property <string> font-ui: "Inter";
+    out property <length> font-size-base: 12.5px;
+    out property <length> font-size-small: 11px;
+    // Geometry
+    out property <length> gutter: 5px;
+    out property <length> header-height: 73px;
+    out property <length> browser-width: 253px;
+    out property <length> timeline-header-height: 27px;
+    out property <length> ruler-height: 39px;
+    out property <length> track-header-width: 191px;
+    out property <length> track-height: 74px;
+    out property <length> master-row-height: 30px;
+    out property <length> bottom-header-height: 26px;
+    out property <length> bottom-height: 306px;
+    out property <length> panel-radius: 8px;
+    out property <length> bar-width-default: 51px;
+    // ---- Additions by the UI agent (measured from 01-main-default.png, see FIDELITY.md) ----
+    out property <color> panel-edge-top: #3c3d40;      // 0.5 pt top highlight of panels
+    out property <color> panel-edge-bottom: #1f2023;
+    out property <color> pill-border: #3e3f43;         // transport pill outline
+    out property <color> separator-dim: #323338;       // transport pill separators
+    out property <color> icon: #8e8f93;                // inactive header icons
+    out property <color> icon-dim: #48494f;            // disabled icons (preview bar)
+    out property <color> small-button: #3a3b3f;        // M/S/R/I backgrounds
+    out property <color> value-blue: #77a6bd;          // knob values, fader fill
+    out property <color> handle: #dddddd;              // slider handles
+    out property <color> mute-on: #e8a33d;             // ORIGINAL choice (reference "on" state not captured)
+    out property <color> solo-on: #e4d65a;             // ORIGINAL choice
+    out property <color> meter-green: #4fc57b;         // ORIGINAL choice
+    out property <length> track-pitch: 74.5px;         // 74 pt lane + 0.5 pt separator
+    out property <length> lane-x: 191px;               // lanes start, timeline-panel relative
+    out property <float> slider-zero-db: 0.85;         // (unitless) slider pos of 0 dB, header + track sliders
+}

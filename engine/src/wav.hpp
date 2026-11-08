@@ -1,0 +1,57 @@
+// Hand-written RIFF/WAVE reader and 32-bit float writer. Non-RT only.
+//
+// Supported input:
+//   - WAVE_FORMAT_PCM (1): 8-bit unsigned, 16/24/32-bit signed integer
+//   - WAVE_FORMAT_IEEE_FLOAT (3): 32-bit and 64-bit float
+//   - WAVE_FORMAT_EXTENSIBLE (0xFFFE) wrapping either of the above
+//     (e.g. 24-bit samples in 32-bit containers)
+//   - 1 or 2 channels. Files with more than 2 channels are REJECTED with
+//     SE_ERR_UNSUPPORTED_FORMAT (no implicit downmix: a correct downmix needs
+//     the channel mask / layout policy, which belongs to a later milestone).
+// Not supported: RF64/BW64 (>4 GiB), compressed formats (ADPCM, mu-law, ...).
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <string>
+#include <vector>
+
+namespace saine {
+
+struct DecodedAudio {
+    uint32_t channels = 0;
+    double sample_rate = 0.0;
+    uint64_t frames = 0;
+    std::vector<float> planar[2];
+};
+
+// Return value is an se_result code; `err` receives a human-readable reason.
+int32_t decode_wav_memory(const uint8_t* data, std::size_t size, DecodedAudio& out, std::string& err);
+int32_t decode_wav_file(const char* utf8_path, DecodedAudio& out, std::string& err);
+
+// Streaming writer for WAVE_FORMAT_IEEE_FLOAT, 32-bit, interleaved.
+class WavFloatWriter {
+public:
+    WavFloatWriter() = default;
+    ~WavFloatWriter();
+    WavFloatWriter(const WavFloatWriter&) = delete;
+    WavFloatWriter& operator=(const WavFloatWriter&) = delete;
+
+    int32_t open(const char* utf8_path, uint32_t channels, uint32_t sample_rate, std::string& err);
+    int32_t write(const float* interleaved, uint64_t frames, std::string& err);
+    // Patches the RIFF/data/fact sizes and closes the file.
+    int32_t finish(std::string& err);
+
+private:
+    std::FILE* file_ = nullptr;
+    uint32_t channels_ = 0;
+    uint32_t sample_rate_ = 0;
+    uint64_t frames_written_ = 0;
+};
+
+// Convenience: write a whole interleaved buffer.
+int32_t write_wav_float32(const char* utf8_path, const float* interleaved, uint64_t frames, uint32_t channels,
+                          uint32_t sample_rate, std::string& err);
+
+} // namespace saine

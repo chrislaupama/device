@@ -1,0 +1,113 @@
+# Saine Studio: architecture specification
+
+Status: milestone 1 (functional audio vertical slice). Decisions marked **ADR** have their own record in `docs/adr/`.
+
+## Layers and ownership
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│ UI (Rust, Slint + custom wgpu surfaces)       crates/saine-app           │
+│  • declarative shell, panels, controls (Slint)                           │
+│  • GPU timeline / waveforms / meters (wgpu)      → ADR 0001              │
+│  • holds NO authoritative state; renders from Document + engine readouts │
+└───────────────▲───────────────────────────────┬──────────────────────────┘
+                │ revision-change notifications │ Command (validated)
+┌───────────────┴───────────────────────────────▼──────────────────────────┐
+│ Application core (Rust)                        crates/saine-core         │
+│  • model: Project / Track / Clip / Asset / Transport (musical time)      │
+│  • command: serialisable, validated, invertible edit commands            │
+│  • history: Document = project + undo/redo + coalescing + revisions      │
+│  • persist: versioned JSON project dir, external media references        │
+│  • snapshot: musical → sample-frame conversion, immutable session desc   │
+│  • (next) keymap with context predicates, AI tool schema, plugin catalog │
+└───────────────┬──────────────────────────────────────────────────────────┘
+                │ SessionSnapshot → C ABI (engine/include/saine_engine.h)
+┌───────────────▼──────────────────────────────────────────────────────────┐
+│ Audio engine (C++23)                           engine/ (static library)  │
+│  • non-RT side: asset decode + resample, graph build, retire queue       │
+│  • RT side: audio callback → render graph, transport, meters, stats      │
+│  • platform devices: Core Audio (done) │ WASAPI/ASIO │ PipeWire/JACK      │
+│  • (next) plugin hosting: VST3 / CLAP / AU / LV2, out-of-process scanner │
+└──────────────────────────────────────────────────────────────────────────┘
+ Optional services (AI, cloud catalog) sit beside the core and talk to it only through Commands.
+```
+
+## Threading and real-time rules
+
+| Thread | Owns | May not |
+|---|---|---|
+| UI / main | `Document`, UI state, event loop | block on audio, touch engine memory |
+| Workers | file decode (`se_asset_load_file`), peak computation, project I/O | mutate `Document` (send results back to main) |
+| Audio callback (engine) | current render graph pointer, transport position | allocate, lock, block, do I/O, log, call Rust |
+
+Hand-off mechanisms:
+1. **Session snapshots.** After every `Document` revision change, the main thread builds a
+   `SessionSnapshot` (pure data, frames at engine rate) and calls `se_session_publish`. The engine
+   copies it, builds an immutable render graph off the audio thread, and swaps it in with an atomic
+   pointer exchange. Retired graphs are reclaimed by the non-RT side (never freed in the callback).
+2. **Transport commands** go through a bounded lock-free queue drained at block start, so they're
+   sample-accurate to the block boundary.
+3. **Readouts** (transport position, meters, callback stats) are atomics written by the callback and
+   polled by the UI each frame.
+
+The audio callback never sees `Project`, tempo or ticks. All musical-time maths happens in
+`saine_core::snapshot`.
+
+## Command system
+
+`saine_core::Command` is the single mutation path for the UI, keyboard shortcuts, scripting, tests and
+the AI assistant:
+
+- **Validation** in `apply` (ranges, existence, kind compatibility, asset bounds). On error the project is
+  unchanged. Batches are atomic and roll back on the first failure.
+- **Undo/redo**: `apply` returns the exact inverse. Ids are assigned *before* execution, so redo
+  reproduces identical ids. Ids are never recycled.
+- **Coalescing**: continuous gestures (fader/pan/tempo drags) merge into one undo step within 750 ms
+  per target.
+- **Labels** for "Undo ⟨action⟩" menu titles (matches the reference Edit menu behaviour).
+- **Serialisation** (`{"op":"set_tempo","bpm":128}`) makes commands usable as AI tool calls and
+  scripts, and replayable in tests.
+
+## Persistence
+
+- Project = directory `Name.saineproj/` containing `project.json`
+  `{format, schema_version, saved_with, project}`. Atomic save (temp + fsync + rename).
+- Media referenced externally by project-relative *and* absolute path. On load the relative path wins
+  (project moved with its media), then the absolute path, and anything missing is reported.
+- Schema migrations: `persist::migrate(from, value)` upgrades step by step. Newer-than-supported files
+  are rejected rather than mis-read.
+- **SQLite** (planned) is for the sample-library index, analysis caches and plugin scan results: data
+  that is large, query-heavy and rebuildable. The project document stays JSON so it diffs well, merges
+  in VCS, and is easy to inspect and repair.
+
+## AI assistant (design)
+
+- Tools exposed to the model = JSON schemas generated from `Command` plus read-only query tools
+  (list tracks, describe selection, transport state).
+- **Assist mode**: model output → `Command` (deserialised) → validation → preview/confirm policy →
+  `Document::execute(cmd, Origin::Assistant)` → one undo step per assistant turn (a `Batch`).
+- **Teach mode** (the reference calls it "Point"): the model may only return *highlight* directives
+  (UI element ids from the design inventory) and explanations. Any `Command` it returns is rejected.
+- Runs out of process or async. The DAW works fully offline. AI never touches engine memory.
+
+## Cross-platform strategy
+
+- Shared code (core, engine DSP and graph, UI) has no OS-specific dependencies. Platform code is
+  isolated in `engine/src/platform/*` and winit/Slint backends.
+- Audio: Core Audio (macOS), WASAPI + ASIO (Windows), PipeWire + JACK (Linux), behind one
+  `AudioDevice` interface.
+- Plugin editors need native child windows (NSView / HWND / X11; Wayland only via XWayland or
+  floating windows for most plugins). Planned as top-level plugin windows owned by the app,
+  matching the reference "Plugin windows" settings.
+- CI: GitHub Actions matrix (macos-arm64, windows-x64, ubuntu-x64) builds the engine with CMake/Ninja
+  and the workspace with Cargo, and runs the engine ctest suite + `cargo test`.
+
+## Technology adjustments (documented deviations)
+
+1. **No JUCE in milestone 1.** The engine uses direct Core Audio plus a hand-written WAV reader/writer
+   and resampler: fewer dependencies, full control of RT behaviour, faster builds. JUCE modules (or
+   direct SDKs: VST3 SDK, CLAP headers, AU via AudioToolbox) will be evaluated when plugin hosting
+   starts. The C ABI keeps this choice invisible to Rust.
+2. **Hand-written FFI** instead of bindgen, to avoid a libclang build dependency. A layout test guards
+   against drift.
+3. UI rendering approach: see ADR 0001 (Slint/wgpu interop spike).
