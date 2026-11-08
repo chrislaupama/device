@@ -37,7 +37,8 @@ namespace saine::os {
 // ---------------------------------------------------------------- strings
 
 #if defined(_WIN32)
-// Converts UTF-8 to UTF-16 for the wide Win32 APIs ("" on invalid input).
+// Converts UTF-8 to UTF-16 for the wide Win32 APIs. Malformed sequences are
+// replaced with U+FFFD, not rejected; "" only for empty input or a failed call.
 std::wstring widen(std::string_view utf8) {
     if (utf8.empty()) return {};
     const int n = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
@@ -47,7 +48,8 @@ std::wstring widen(std::string_view utf8) {
     return w;
 }
 
-// Converts UTF-16 from the wide Win32 APIs back to UTF-8 ("" on invalid input).
+// Converts UTF-16 from the wide Win32 APIs back to UTF-8. Unpaired surrogates
+// are replaced with U+FFFD, not rejected; "" only for empty input or a failed call.
 std::string narrow(std::wstring_view wide) {
     if (wide.empty()) return {};
     const int n =

@@ -55,7 +55,8 @@ int process_id() noexcept;
 std::vector<std::string> utf8_args(int argc, char** argv);
 
 #if defined(_WIN32)
-// UTF-8 <-> UTF-16 for the wide Win32 APIs ("" on invalid input).
+// UTF-8 <-> UTF-16 for the wide Win32 APIs. Invalid sequences are replaced
+// with U+FFFD, not rejected: these are conversions, not input checks.
 std::wstring widen(std::string_view utf8);
 std::string narrow(std::wstring_view wide);
 #endif

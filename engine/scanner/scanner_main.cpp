@@ -324,8 +324,8 @@ void find_bundles(const fs::path& dir, int depth, std::vector<Item>& out) {
 }
 
 // Everything to scan: the Audio Units, then the VST3/CLAP bundles found in
-// the platform's standard folders, $CLAP_PATH and $SAINE_PLUGIN_PATH
-// (de-duplicated).
+// the platform's standard folders, $CLAP_PATH (Windows/Linux only) and
+// $SAINE_PLUGIN_PATH (de-duplicated).
 std::vector<Item> enumerate_items() {
     std::vector<Item> items;
     for (const auto& au : saine::enumerate_audio_units())
