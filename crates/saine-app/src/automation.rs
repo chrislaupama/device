@@ -112,6 +112,10 @@ impl Hue {
             AutomationTarget::Pan => Hue::key("Channel", "Pan"),
             AutomationTarget::Synth { param } => Hue::key("Synth", param.name()),
             AutomationTarget::Plugin { name, .. } => Hue::key(device, name),
+            AutomationTarget::Builtin { .. } => {
+                let (device, param) = target.labels();
+                Hue::key(&device, &param)
+            }
         }
     }
 
@@ -236,6 +240,7 @@ pub fn norm_of(t: &AutomationTarget, v: f32) -> f32 {
             if param.logarithmic() { (v.max(lo) / lo).ln() / (hi / lo).ln() } else { (v - lo) / (hi - lo) }
         }
         AutomationTarget::Plugin { .. } => v,
+        AutomationTarget::Builtin { .. } => t.builtin_param().map_or(v, |p| p.to_normalized(v)),
     };
     n.clamp(0.0, 1.0)
 }
@@ -254,6 +259,7 @@ pub fn value_of(t: &AutomationTarget, n: f32) -> f32 {
             if param.logarithmic() { lo * (hi / lo).powf(n) } else { lo + (hi - lo) * n }
         }
         AutomationTarget::Plugin { .. } => n,
+        AutomationTarget::Builtin { .. } => t.builtin_param().map_or(n, |p| p.snap(p.from_normalized(n))),
     };
     let (lo, hi) = t.range();
     v.clamp(lo, hi)
@@ -473,6 +479,13 @@ impl Controller {
                 .or_else(|| self.engine.plugin_params(*device).iter().find(|i| i.id == *param).map(|i| i.default_normalized))
                 .unwrap_or(0.0)
                 .clamp(0.0, 1.0),
+            AutomationTarget::Builtin { device, param, .. } => t
+                .devices
+                .iter()
+                .find(|d| d.id == *device)
+                .and_then(|d| saine_core::builtin::def_of(d).and_then(|def| def.param(param).map(|q| def.value(d, q))))
+                .or_else(|| target.builtin_param().map(|q| q.default))
+                .unwrap_or(0.0),
         }
     }
 
@@ -524,6 +537,7 @@ impl Controller {
                 let _ = key;
                 self.engine.plugin_param_text(*device, *param, v).unwrap_or_else(|| format!("{:.0}%", v * 100.0))
             }
+            AutomationTarget::Builtin { .. } => target.builtin_param().map_or_else(|| format!("{v:.2}"), |p| p.format(v)),
         }
     }
 
@@ -721,6 +735,16 @@ impl Controller {
             cats.push(("Synth".into(), SynthParam::ALL.iter().map(|p| e(p.name(), AutomationTarget::Synth { param: *p })).collect()));
         }
         for d in t.instrument_plugin.iter().chain(t.devices.iter()) {
+            if let Some(def) = saine_core::builtin::def_of(d) {
+                let items = def
+                    .params
+                    .iter()
+                    .filter(|p| p.automatable)
+                    .map(|p| e(p.name, AutomationTarget::Builtin { device: d.id, device_type: def.id.into(), param: p.id.into() }))
+                    .collect();
+                cats.push((def.name.into(), items));
+                continue;
+            }
             let mut params: Vec<_> = self.engine.plugin_params(d.id).into_iter().filter(|p| p.automatable).collect();
             params.sort_by(|a, b| a.group.cmp(&b.group));
             let mut items = Vec::new();

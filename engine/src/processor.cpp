@@ -1,6 +1,7 @@
 #include "processor.hpp"
 
 #include "delay_line.hpp"
+#include "devices/builtin.hpp"
 #include "plugins/plugin_instance.hpp"
 #include "rt_util.hpp"
 
@@ -19,7 +20,8 @@ namespace saine {
 RenderContext::RenderContext(uint32_t max_block)
     : max_block_(max_block), track_l_(max_block), track_r_(max_block), master_l_(max_block), master_r_(max_block),
       synth_(max_block), zeros_(max_block, 0.0f), plugin_l_(max_block), plugin_r_(max_block), gain_l_(max_block),
-      gain_r_(max_block), auto_a_(max_block), auto_b_(max_block), param_events_(PluginInstance::kMaxParamEvents) {}
+      gain_r_(max_block), auto_a_(max_block), auto_b_(max_block), param_events_(PluginInstance::kMaxParamEvents),
+      sc_(std::size_t{2} * SE_BUILTIN_MAX_SIDECHAINS * max_block, 0.0f) {}
 
 void kernel_add_scaled(float* __restrict dst, const float* __restrict src, float gain, uint32_t n) noexcept {
     for (uint32_t i = 0; i < n; ++i) dst[i] += src[i] * gain;
@@ -152,6 +154,10 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                 if (n >= cap) return;
                 have_last = true;
                 last = value;
+                if (lane.target == SE_AUTO_BUILTIN) { // plain values, no mapping
+                    ev[n++] = ParamEvent{offset, lane.param_id, static_cast<double>(value)};
+                    return;
+                }
                 const double nv = std::clamp(static_cast<double>(value), 0.0, 1.0);
                 ev[n++] = ParamEvent{offset, lane.param_id, lane.native_min + nv * (lane.native_max - lane.native_min)};
             };
@@ -189,7 +195,13 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
     const int64_t block_end = position + frames;
 
     const std::size_t track_count = graph->tracks.size();
-    for (std::size_t t = 0; t < track_count; ++t) {
+    const bool ordered = graph->order.size() == track_count;
+    for (uint32_t k = 0; k < graph->sc_taps; ++k) {
+        std::memset(ctx.sc_l(k), 0, sizeof(float) * frames);
+        std::memset(ctx.sc_r(k), 0, sizeof(float) * frames);
+    }
+    for (std::size_t k = 0; k < track_count; ++k) {
+        const std::size_t t = ordered ? graph->order[k] : k;
         const TrackNode& track = graph->tracks[t];
         Synth* const synth = track.instrument && !track.has_instrument_plugin && inst.synths != nullptr
                                  ? inst.synths[t]
@@ -350,6 +362,12 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                                               ? lines[graph->pdc.slot_index(track_count, track.fx_begin + i)]
                                               : nullptr;
                 if (slot->enabled && slot->inst != nullptr) {
+                    if (slot->sc_wanted)
+                        if (BuiltinInstance* b = slot->inst->as_builtin()) {
+                            const auto k2 = static_cast<uint32_t>(slot->sc_tap);
+                            b->set_sidechain(slot->sc_tap >= 0 ? ctx.sc_l(k2) : ctx.zeros(),
+                                             slot->sc_tap >= 0 ? ctx.sc_r(k2) : ctx.zeros());
+                        }
                     const uint32_t np = slot->lane_count > 0
                                             ? plugin_events(slot->lane_begin, slot->lane_count,
                                                             lines != nullptr ? slot->auto_delay : 0)
@@ -368,6 +386,10 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         float meter_gr = std::fabs(track.gain_r);
         if (track.vol_lane < 0 && track.pan_lane < 0) {
             kernel_add_scaled2(ml, mr, tl, tr, track.gain_l, track.gain_r, frames);
+            if (track.sc_tap >= 0) {
+                const auto k2 = static_cast<uint32_t>(track.sc_tap);
+                kernel_add_scaled2(ctx.sc_l(k2), ctx.sc_r(k2), tl, tr, track.gain_l, track.gain_r, frames);
+            }
         } else {
             // Automated fader: the lanes replace the static gain / pan.
             const uint32_t d = lines != nullptr ? track.auto_delay : 0;
@@ -397,6 +419,10 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                 }
             }
             kernel_add_mul2(ml, mr, tl, tr, gl, gr, frames);
+            if (track.sc_tap >= 0) {
+                const auto k2 = static_cast<uint32_t>(track.sc_tap);
+                kernel_add_mul2(ctx.sc_l(k2), ctx.sc_r(k2), tl, tr, gl, gr, frames);
+            }
             meter_gl = kernel_peak(gl, frames);
             meter_gr = kernel_peak(gr, frames);
         }

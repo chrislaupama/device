@@ -1,0 +1,473 @@
+// Built-in device panel (src/device_panel.rs): one card per built-in device, generated
+// from its definition (saine_core::builtin::DeviceDef). Rust lays the controls out and
+// formats every value; this file only draws them and forwards gestures as
+// Studio.panel-* callbacks (one undo step per gesture, see device_panel.rs).
+//
+// Geometry: the reference app's device cards are specified at 100% zoom (handoffs/device-specs);
+// the rest of our UI follows captures taken at 85%, so every measured length is
+// multiplied by PanelStyle.z. Colours are the measured card colours.
+import { Tokens } from "tokens.slint";
+import { Icon, Icons } from "widgets.slint";
+import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip } from "studio.slint";
+
+export global PanelStyle {
+    out property <float> z: 0.85;
+    out property <color> card: #212227;
+    out property <color> edge: #313236;
+    out property <color> line: #323338;
+    out property <color> caption: #7b7b7f;
+    out property <color> axis: #8f8f93;
+    out property <color> ink: #ffffff;
+    out property <color> text: #e5e5e8;
+    out property <color> seg: #292a2f;
+    out property <color> box: #25262b;
+    out property <color> pill: #222328;
+    out property <color> pill-hot: #292a30;
+    out property <color> thresh: #c8c6bc;
+    out property <color> ring: #1c1d21;
+    out property <color> body: #232426;
+    out property <color> face: #18191d;
+    out property <color> rail: #3e3f43;
+}
+
+// Vertical drag on a parameter: forwards per-event deltas (fine with Shift), Alt-click
+// resets, double-click resets. Rust applies the 3 px start threshold.
+component ParamDrag inherits TouchArea {
+    in property <int> device;
+    in property <int> param;
+    in property <float> rate: 1 / 160;
+    callback grabbed();
+    property <length> last-y;
+    mouse-cursor: ns-resize;
+    pointer-event(e) => {
+        if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+            root.grabbed();
+            if (e.modifiers.alt) { Studio.panel-reset(root.device, root.param); return; }
+            root.last-y = self.mouse-y;
+            Studio.panel-drag(root.device, root.param, 0, 0, root.rate, e.modifiers.shift);
+        }
+        if (e.kind == PointerEventKind.move && self.pressed) {
+            Studio.panel-drag(root.device, root.param, 1, (root.last-y - self.mouse-y) / 1px, root.rate, e.modifiers.shift);
+            root.last-y = self.mouse-y;
+        }
+        if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-drag(root.device, root.param, 2, 0, root.rate, false); }
+        if (e.kind == PointerEventKind.cancel) { Studio.panel-drag(root.device, root.param, 3, 0, root.rate, false); }
+    }
+}
+
+// Keyboard for a focused parameter control: arrows step (Shift fine), Return or Space edits
+// the value, everything else stays a window shortcut (undo, transport, Escape...).
+component ParamKeys inherits FocusScope {
+    in property <int> device;
+    in property <int> param;
+    callback edit();
+    key-pressed(e) => {
+        if (e.text == Key.UpArrow || e.text == Key.RightArrow) { Studio.panel-step(root.device, root.param, 1, e.modifiers.shift); return accept; }
+        if (e.text == Key.DownArrow || e.text == Key.LeftArrow) { Studio.panel-step(root.device, root.param, -1, e.modifiers.shift); return accept; }
+        if (e.text == Key.Return || e.text == " ") { root.edit(); return accept; }
+        if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) { return accept; }
+        reject
+    }
+}
+
+// Inline value editor (double-click on a value): Enter or blur commits, Escape cancels.
+component ValueEditor inherits FocusScope {
+    in property <int> device;
+    in property <int> param;
+    in property <string> initial;
+    in property <length> font-size;
+    callback done();
+    key-pressed(e) => {
+        if (e.text == Key.Escape) { root.done(); return accept; }
+        reject
+    }
+    Rectangle {
+        border-radius: self.height / 2; background: PanelStyle.pill-hot; border-width: 1px; border-color: Tokens.accent;
+        ti := TextInput {
+            x: 4px; width: parent.width - 8px;
+            text: root.initial; color: PanelStyle.ink; font-size: root.font-size; font-weight: 600;
+            horizontal-alignment: center; vertical-alignment: center; single-line: true;
+            init => { self.focus(); self.select-all(); }
+            accepted => { Studio.panel-text(root.device, root.param, self.text); root.done(); }
+            changed has-focus => { if (!self.has-focus) { if (self.text != root.initial) { Studio.panel-text(root.device, root.param, self.text); } root.done(); } }
+        }
+    }
+}
+
+// Knob cell: 32 px ring, value text, name (the reference app "xs" dial at 100%, scaled).
+component KnobCell inherits Rectangle {
+    in property <int> device;
+    in property <PanelKnob> k;
+    in property <color> accent;
+    property <float> zm: PanelStyle.z;
+    property <length> ring: 32px * zm;
+    property <float> rc: root.ring / 1px / 2;
+    property <float> r-arc: root.rc - 1.2 * zm;
+    property <float> angle: -135 + root.k.norm * 270;
+    property <float> from: root.k.bipolar ? 0 : -135;
+    property <bool> editing;
+    width: 62px * zm; height: 76px * zm;
+    accessible-role: slider; accessible-label: root.k.label; accessible-value: root.k.value;
+    fs := ParamKeys { device: root.device; param: root.k.param; edit => { root.editing = true; } }
+    dial := Rectangle {
+        x: (root.width - root.ring) / 2; y: 0; width: root.ring; height: root.ring;
+        if root.k.face == 0: Rectangle {
+            border-radius: self.width / 2;
+            background: @radial-gradient(circle, #1c1d21 70%, #2a2b30 94%, #26272b 100%);
+        }
+        if root.k.face == 0: Rectangle {
+            x: (parent.width - 24px * zm) / 2; y: (parent.height - 24px * zm) / 2; width: 24px * zm; height: 24px * zm;
+            border-radius: self.width / 2; background: PanelStyle.body; border-width: 0.5px; border-color: #2e2f33;
+        }
+        if root.k.face == 0 && abs(root.angle - root.from) > 0.5: Path {
+            width: parent.width; height: parent.height;
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            stroke: root.accent; stroke-width: 1.76px * zm * 1.1; fill: transparent; stroke-line-cap: round;
+            MoveTo { x: root.rc + root.r-arc * sin(root.from * 1deg); y: root.rc - root.r-arc * cos(root.from * 1deg); }
+            ArcTo {
+                x: root.rc + root.r-arc * sin(root.angle * 1deg); y: root.rc - root.r-arc * cos(root.angle * 1deg);
+                radius-x: root.r-arc; radius-y: root.r-arc;
+                large-arc: abs(root.angle - root.from) > 180; sweep: root.angle > root.from;
+            }
+        }
+        if root.k.face == 0: Path {
+            width: parent.width; height: parent.height;
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            stroke: PanelStyle.ink; stroke-width: 1.4px * zm; stroke-line-cap: round;
+            MoveTo { x: root.rc + root.rc * 0.38 * sin(root.angle * 1deg); y: root.rc - root.rc * 0.38 * cos(root.angle * 1deg); }
+            LineTo { x: root.rc + root.rc * 0.7 * sin(root.angle * 1deg); y: root.rc - root.rc * 0.7 * cos(root.angle * 1deg); }
+        }
+        // Transfer face (soft-knee curve of the device's gain computer) instead of the ring.
+        if root.k.face == 1: Rectangle {
+            border-radius: 4px * zm; background: PanelStyle.face; clip: true;
+            Path { viewbox-width: 32; viewbox-height: 32; commands: root.k.face-unity; stroke: #c8c6bc73; stroke-width: 0.85px; fill: transparent; }
+            Path { viewbox-width: 32; viewbox-height: 32; commands: root.k.face-curve; stroke: PanelStyle.ink; stroke-width: 1.5px * zm; fill: transparent; stroke-line-cap: round; stroke-line-join: round; }
+            Path { viewbox-width: 32; viewbox-height: 32; commands: root.k.face-bend; stroke: root.accent; stroke-width: 2.25px * zm; fill: transparent; stroke-line-cap: round; }
+        }
+        ParamDrag {
+            device: root.device; param: root.k.param;
+            grabbed => { fs.focus(); }
+            double-clicked => { Studio.panel-reset(root.device, root.k.param); }
+        }
+    }
+    value := Rectangle {
+        x: 0; y: 40px * zm; width: root.width; height: 14px * zm;
+        if !root.editing: Text {
+            text: root.k.value; color: PanelStyle.ink; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
+            horizontal-alignment: center; vertical-alignment: center; overflow: elide;
+        }
+        if !root.editing: TouchArea { double-clicked => { root.editing = true; } }
+        if root.editing: ValueEditor {
+            x: -6px * zm; width: parent.width + 12px * zm; device: root.device; param: root.k.param; initial: root.k.value; font-size: 11px * zm;
+            done => { root.editing = false; }
+        }
+    }
+    Text {
+        x: 0; y: 58px * zm; width: root.width; height: 14px * zm;
+        text: root.k.label; color: PanelStyle.text; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
+        horizontal-alignment: center; vertical-alignment: center; overflow: elide;
+    }
+}
+
+// Vertical slider column (62 px cell; rail 3 px; handle follows the pointer).
+component SliderCol inherits Rectangle {
+    in property <int> device;
+    in property <PanelSlider> s;
+    in property <color> accent;
+    in property <length> top;
+    in property <length> bottom;
+    property <float> zm: PanelStyle.z;
+    property <length> travel: root.bottom - root.top;
+    property <length> cap-y: root.top + (1 - root.s.norm) * root.travel;
+    property <length> zero-y: root.top + (root.s.bipolar ? 0.5 : 1) * root.travel;
+    property <bool> editing;
+    width: 62px * zm;
+    accessible-role: slider; accessible-label: root.s.label; accessible-value: root.s.value;
+    fs := ParamKeys { device: root.device; param: root.s.param; edit => { root.editing = true; } }
+    Rectangle { x: (root.width - 3px * zm) / 2; y: root.top; width: 3px * zm; height: root.travel; border-radius: 1.5px * zm; background: PanelStyle.rail; }
+    Rectangle {
+        x: (root.width - 3px * zm) / 2; y: min(root.cap-y, root.zero-y); width: 3px * zm; height: abs(root.cap-y - root.zero-y);
+        border-radius: 1.5px * zm; background: root.accent;
+    }
+    Rectangle { x: (root.width - 13px * zm) / 2; y: root.cap-y - 1.5px * zm; width: 13px * zm; height: 3px * zm; border-radius: 1.5px * zm; background: PanelStyle.ink; }
+    ParamDrag {
+        x: 0; y: root.top - 6px; width: root.width; height: root.travel + 12px;
+        device: root.device; param: root.s.param; rate: 1 / max(1, (root.travel / 1px) - 3);
+        grabbed => { fs.focus(); }
+        double-clicked => { Studio.panel-reset(root.device, root.s.param); }
+    }
+    Rectangle {
+        x: 0; y: root.bottom + 9px * zm; width: root.width; height: 14px * zm;
+        if !root.editing: Text {
+            text: root.s.value; color: PanelStyle.ink; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+        if !root.editing: TouchArea { double-clicked => { root.editing = true; } }
+        if root.editing: ValueEditor {
+            x: -6px * zm; width: parent.width + 12px * zm; device: root.device; param: root.s.param; initial: root.s.value; font-size: 11px * zm;
+            done => { root.editing = false; }
+        }
+    }
+    Text {
+        x: 0; y: root.bottom + 26px * zm; width: root.width; height: 14px * zm;
+        text: root.s.label; color: PanelStyle.text; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+}
+
+// Picker row item: caption + control (segmented choice, menu pill, value box) or a flexible gap.
+component PickItem inherits HorizontalLayout {
+    in property <int> device;
+    in property <PanelPick> p;
+    in property <color> accent;
+    property <float> zm: PanelStyle.z;
+    spacing: 6px * zm;
+    horizontal-stretch: root.p.kind == 4 ? 1 : 0;
+    if root.p.kind != 4 && root.p.label != "": Text {
+        text: root.p.label; color: PanelStyle.caption; font-size: 11px * zm; font-weight: 500; letter-spacing: -0.02 * 11px * zm;
+        vertical-alignment: center; opacity: root.p.enabled ? 1 : 0.55;
+    }
+    if root.p.kind == 1: Rectangle {
+        border-radius: self.height / 2; background: PanelStyle.seg;
+        accessible-role: tab-list; accessible-label: root.p.label;
+        HorizontalLayout {
+            padding: 2px * zm;
+            for c[i] in root.p.choices: Rectangle {
+                min-width: seg-text.preferred-width + 18px * zm;
+                border-radius: self.height / 2;
+                background: i == root.p.selected ? root.accent : seg-ta.has-hover ? #ffffff0a : transparent;
+                accessible-role: tab; accessible-label: c; accessible-item-selected: i == root.p.selected;
+                seg-text := Text {
+                    text: c; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
+                    color: i == root.p.selected ? #17181b : seg-ta.has-hover ? #ffffffd9 : #ffffffb3;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+                seg-ta := TouchArea {
+                    property <bool> alt-down;
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down) {
+                            self.alt-down = e.modifiers.alt;
+                            if (e.modifiers.alt) { Studio.panel-reset(root.device, root.p.param); }
+                        }
+                    }
+                    clicked => { if (!self.alt-down) { Studio.panel-choice(root.device, root.p.param, i); } }
+                }
+            }
+        }
+    }
+    if root.p.kind == 2: Rectangle {
+        width: root.p.width; border-radius: self.height / 2; background: menu-ta.has-hover ? PanelStyle.pill-hot : PanelStyle.seg;
+        accessible-role: combobox; accessible-label: root.p.label; accessible-value: root.p.value;
+        Text {
+            x: 10px * zm; width: parent.width - 28px * zm; text: root.p.value; color: PanelStyle.ink;
+            font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm; vertical-alignment: center; overflow: elide;
+        }
+        Icon { x: parent.width - 18px * zm; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: Icons.chevron-down; ink: #a0a0a3; stroke-width: 1.3px; }
+        menu-ta := TouchArea { clicked => { Studio.panel-menu(root.device, root.p.param, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
+    }
+    if root.p.kind == 3: Rectangle {
+        width: root.p.width; border-radius: self.height / 2; background: PanelStyle.box;
+        opacity: root.p.enabled ? 1 : 0.45;
+        accessible-role: slider; accessible-label: root.p.label; accessible-value: root.p.value; accessible-enabled: root.p.enabled;
+        Text {
+            text: root.p.value; color: PanelStyle.ink; font-size: 10.5px * zm; font-weight: 600; letter-spacing: -0.04 * 10.5px * zm;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+        pill-keys := ParamKeys { enabled: root.p.enabled; device: root.device; param: root.p.param; }
+        ParamDrag {
+            enabled: root.p.enabled; device: root.device; param: root.p.param;
+            grabbed => { pill-keys.focus(); }
+            double-clicked => { Studio.panel-reset(root.device, root.p.param); }
+        }
+    }
+}
+
+// Dynamics strip: caption + live readout, then a recessed well with dB rules, the level
+// history (paths from Rust) and the draggable threshold line with its pill.
+component DynamicsStrip inherits Rectangle {
+    in property <int> device;
+    in property <PanelStrip> s;
+    in property <color> accent;
+    property <float> zm: PanelStyle.z;
+    property <length> last-y;
+    property <bool> dragging;
+    property <bool> hot: root.dragging || (well-ta.has-hover && abs(well-ta.mouse-y - root.s.thresh-y) <= 9px * zm);
+    property <bool> editing;
+    HorizontalLayout {
+        x: 0; y: 0; height: 16px * zm; spacing: 5px * zm; alignment: start;
+        Text { text: root.s.caption; color: PanelStyle.caption; font-size: 11.5px * zm; font-weight: 500; letter-spacing: -0.02 * 11.5px * zm; vertical-alignment: center; }
+        Text { text: root.s.readout; color: PanelStyle.ink; font-size: 11.5px * zm; font-weight: 650; letter-spacing: -0.04 * 11.5px * zm; vertical-alignment: center; }
+    }
+    well := Rectangle {
+        y: root.s.well-y; height: root.height - root.s.well-y;
+        border-radius: 4px * zm;
+        background: @linear-gradient(180deg, #212125 0%, #18191d 100%);
+        clip: true;
+        accessible-role: slider; accessible-label: root.s.thresh-label; accessible-value: root.s.thresh-value;
+        for t in root.s.ticks: Rectangle {
+            y: t.y; height: 0.5px; width: parent.width;
+            if t.rule: Rectangle { x: 30px * zm; width: parent.width - 30px * zm; height: 0.5px; background: #ffffff0d; }
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.s.in-fill; stroke-width: 0; fill: @linear-gradient(180deg, #ffffff1c 0%, #ffffff06 100%);
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.s.gr-fill; stroke-width: 0; fill: root.accent.with-alpha(0.5);
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.s.in-line; stroke: #ffffff8c; stroke-width: 1px; fill: transparent;
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.s.out-line; stroke: #0000008c; stroke-width: 2.6px * zm; fill: transparent; stroke-line-join: round;
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.s.out-line; stroke: #ffffffeb; stroke-width: 1.4px * zm; fill: transparent; stroke-line-join: round;
+        }
+        for t in root.s.ticks: Text {
+            x: 6px * zm; y: max(1px, min(parent.height - 13px * zm, t.y - 6.5px * zm)); height: 13px * zm;
+            text: t.text; color: PanelStyle.axis; font-size: 10px * zm; font-weight: 600; vertical-alignment: center;
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.s.thresh-dash; stroke: PanelStyle.thresh.with-alpha(root.hot ? 0.95 : 0.55);
+            stroke-width: (root.hot ? 2px : 1.5px) * zm; fill: transparent;
+        }
+        well-ta := TouchArea {
+            mouse-cursor: abs(self.mouse-y - root.s.thresh-y) <= 9px * zm || root.dragging ? MouseCursor.ns-resize : MouseCursor.default;
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down && abs(self.mouse-y - root.s.thresh-y) <= 9px * zm) {
+                    if (e.modifiers.alt) { Studio.panel-reset(root.device, root.s.thresh-param); return; }
+                    root.dragging = true;
+                    root.last-y = self.mouse-y;
+                    Studio.panel-drag(root.device, root.s.thresh-param, 0, 0, root.s.thresh-rate, e.modifiers.shift);
+                }
+                if (e.kind == PointerEventKind.move && root.dragging) {
+                    Studio.panel-drag(root.device, root.s.thresh-param, 1, (root.last-y - self.mouse-y) / 1px, root.s.thresh-rate, e.modifiers.shift);
+                    root.last-y = self.mouse-y;
+                }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up && root.dragging) {
+                    root.dragging = false;
+                    Studio.panel-drag(root.device, root.s.thresh-param, 2, 0, root.s.thresh-rate, false);
+                }
+                if (e.kind == PointerEventKind.cancel && root.dragging) {
+                    root.dragging = false;
+                    Studio.panel-drag(root.device, root.s.thresh-param, 3, 0, root.s.thresh-rate, false);
+                }
+            }
+            double-clicked => { if (abs(self.mouse-y - root.s.thresh-y) <= 9px * zm) { root.editing = true; } }
+        }
+        // Threshold pill (dot-grid grip, name, value).
+        if !root.editing: Rectangle {
+            x: 30px * zm; y: root.s.thresh-y - 8px * zm; height: 16px * zm; width: pill-row.preferred-width;
+            border-radius: self.height / 2; background: root.hot ? PanelStyle.pill-hot : PanelStyle.pill;
+            drop-shadow-blur: 2px; drop-shadow-offset-y: 1px; drop-shadow-color: #00000073;
+            pill-row := HorizontalLayout {
+                padding-left: 8px * zm; padding-right: 8px * zm; spacing: 5px * zm;
+                Path {
+                    width: 7px * zm; height: 7px * zm; y: (16px * zm - 7px * zm) / 2;
+                    viewbox-width: 7; viewbox-height: 7; fill: #ffffff66; stroke-width: 0;
+                    commands: "M0.6 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0";
+                }
+                Text { text: root.s.thresh-label; color: #ffffff8c; font-size: 11px * zm; font-weight: 500; vertical-alignment: center; }
+                Text { text: root.s.thresh-value; color: PanelStyle.ink; font-size: 11px * zm; font-weight: 650; letter-spacing: -0.04 * 11px * zm; vertical-alignment: center; }
+            }
+        }
+        if root.editing: ValueEditor {
+            x: 30px * zm; y: root.s.thresh-y - 9px * zm; width: 58px * zm; height: 18px * zm;
+            device: root.device; param: root.s.thresh-param; initial: root.s.thresh-value; font-size: 10px * zm;
+            done => { root.editing = false; }
+        }
+    }
+}
+
+export component BuiltinCard inherits Rectangle {
+    in property <DeviceCard> card;
+    property <float> zm: PanelStyle.z;
+    width: root.card.width;
+    height: 265px;
+    border-radius: 6px;
+    background: PanelStyle.card;
+    border-width: root.card.dragging ? 1px : 0.5px;
+    border-color: root.card.dragging ? Tokens.accent : PanelStyle.edge;
+    drop-shadow-blur: root.card.dragging ? 12px : 0px;
+    drop-shadow-color: #00000080;
+    accessible-role: groupbox;
+    accessible-label: root.card.name;
+
+    // ---- header: drag to reorder; power, name, presets, remove ----
+    TouchArea {
+        x: 0; y: 0; width: root.width; height: 26.5px;
+        mouse-cursor: MouseCursor.grab;
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.device-drag(root.card.id, 0, self.absolute-position.x + self.mouse-x); }
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.device-drag(root.card.id, 2, self.absolute-position.x + self.mouse-x); }
+        }
+        moved => { Studio.device-drag(root.card.id, 1, self.absolute-position.x + self.mouse-x); }
+    }
+    Rectangle {
+        x: 8.5px; y: 7.75px; width: 22px; height: 11px; border-radius: 5.5px;
+        background: root.card.enabled ? root.card.accent : #4a4b4f;
+        accessible-role: checkbox; accessible-label: "Bypass effect"; accessible-checked: root.card.enabled;
+        Rectangle { x: root.card.enabled ? parent.width - 10px : 1px; y: 1px; width: 9px; height: 9px; border-radius: 4.5px; background: root.card.enabled ? #17181b : #ffffff; }
+        TouchArea { clicked => { Studio.device-power(root.card.id); } }
+    }
+    Text {
+        x: 37.5px; y: 5px; width: root.width - 37.5px - 140px; height: 16px;
+        text: root.card.name; color: root.card.enabled ? #ffffff : #9d9d9f; font-size: 11px; font-weight: 700;
+        vertical-alignment: center; overflow: elide;
+    }
+    // Presets: name (or "Presets") opens the menu; arrows step through the factory list.
+    Rectangle {
+        x: root.width - 200px * zm; y: 4px; width: 94px * zm; height: 18px;
+        accessible-role: combobox; accessible-label: "Presets"; accessible-value: root.card.preset;
+        Text {
+            width: parent.width; text: root.card.preset == "" ? "Presets" : root.card.preset;
+            color: preset-ta.has-hover ? #c5c5c8 : #9d9d9f; font-size: 11px * zm; font-weight: 600;
+            horizontal-alignment: right; vertical-alignment: center; overflow: elide;
+        }
+        preset-ta := TouchArea { clicked => { Studio.panel-menu(root.card.id, -2, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
+    }
+    for dir[i] in [-1, 1]: Rectangle {
+        x: root.width - (i == 0 ? 102px : 87px) * zm; y: 5px; width: 14px * zm; height: 17px;
+        accessible-role: button; accessible-label: i == 0 ? "Previous preset" : "Next preset";
+        Icon { x: (parent.width - 10px * zm) / 2; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: i == 0 ? Icons.chevron-left : Icons.chevron-right; ink: step-ta.has-hover ? #e5e5e8 : #9d9d9f; stroke-width: 1.3px; }
+        step-ta := TouchArea { clicked => { Studio.panel-preset-step(root.card.id, dir); } }
+    }
+    Rectangle { x: root.width - 67px * zm; y: 6.5px; width: 0.5px; height: 13px; background: PanelStyle.line; }
+    Rectangle {
+        x: root.width - 23px; y: 5px; width: 17px; height: 17px;
+        accessible-role: button; accessible-label: "Remove effect";
+        Icon { x: 3.5px; y: 3.5px; width: 10px; height: 10px; d: Icons.close; ink: #9d9d9f; stroke-width: 1.3px; }
+        TouchArea { clicked => { Studio.device-remove(root.card.id); } }
+    }
+    Rectangle { x: 0; y: 26px; width: root.width; height: 0.5px; background: PanelStyle.line; }
+
+    // ---- body ----
+    Rectangle {
+        x: 0; y: 0; width: root.width; height: root.height;
+        opacity: root.card.enabled ? 1.0 : 0.5;
+        HorizontalLayout {
+            x: 8px * zm; y: 37px * zm; width: root.width - 16px * zm; height: 20px * zm;
+            spacing: 16px * zm;
+            for p in root.card.picks: PickItem { device: root.card.id; p: p; accent: root.card.accent; }
+        }
+        if root.card.strip.visible: DynamicsStrip {
+            x: root.card.strip.x; y: root.card.strip.y; width: root.card.strip.w; height: root.card.strip.h;
+            device: root.card.id; s: root.card.strip; accent: root.card.accent;
+        }
+        for s in root.card.sliders: SliderCol {
+            x: s.x; y: 0; height: root.height;
+            device: root.card.id; s: s; accent: root.card.accent;
+            top: 86px * zm; bottom: 174px * zm;
+        }
+        for k in root.card.knobs: KnobCell {
+            x: k.x; y: 229px * zm;
+            device: root.card.id; k: k; accent: root.card.accent;
+        }
+    }
+}
