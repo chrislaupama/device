@@ -2192,9 +2192,12 @@ fn builtin_device_steps() -> Vec<Step> {
             c.panel_set_sidechain(d, Some(src));
             c.panel_load_preset(d, 1);
         })),
-        Check("builtin: a preset keeps the sidechain source and its enable switch", Box::new(|c, _| {
+        Check("builtin: a preset keeps the sidechain source and its enable switch, and is not marked edited", Box::new(|c, a| {
             let d = builtin_device(c).ok_or("no device")?;
-            (d.sidechain.is_some() && builtin_value(c, "sidechainEnable") == Some(1.0)).then_some(()).ok_or(format!("sidechain {:?} enable {:?}", d.sidechain, builtin_value(c, "sidechainEnable")))
+            let shown = card_named(a, "Compressor").map(|cd| cd.preset.to_string()).unwrap_or_default();
+            (d.sidechain.is_some() && builtin_value(c, "sidechainEnable") == Some(1.0) && !shown.is_empty() && !shown.ends_with('*'))
+                .then_some(())
+                .ok_or(format!("sidechain {:?} enable {:?} header {shown:?}", d.sidechain, builtin_value(c, "sidechainEnable")))
         })),
         DoC("builtin: reset Threshold, then drag it up 40 px as forty 1 px events", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
