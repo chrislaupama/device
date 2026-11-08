@@ -25,7 +25,13 @@
 //! stepped linear parameters snap in the plain domain. Discrete parameters
 //! store the choice index as their plain value (`min` = 0, `max` = choices - 1).
 
+mod auto_filter;
+mod channel_eq;
+mod character_eq;
 mod compressor;
+pub mod eq;
+
+pub use auto_filter::{filter_response, FilterSetting};
 
 use crate::device::{Device, DeviceId, PluginFormat, PluginKind, PluginRef};
 use crate::model::Track;
@@ -50,8 +56,16 @@ pub enum Format {
     Db,
     /// Milliseconds, whole numbers when the range spans 20 ms or more ("10 ms", "1500 ms"), else one decimal.
     Time,
-    /// Hertz below 1 kHz ("440 Hz"), kilohertz above ("2.50 kHz").
+    /// Hertz: "4.0 kHz" from 999.5 Hz, "440 Hz" from 10 Hz, one decimal from 1 Hz, else two.
     Hz,
+    /// Milliseconds: one decimal below 100 ms ("1.0 ms"), whole numbers from 100 ms ("150 ms").
+    MsAuto,
+    /// Rate in hertz: two decimals below 10 Hz ("1.00 Hz"), one from 10 Hz ("12.5 Hz").
+    Rate,
+    /// Whole number with an explicit sign and the unit: "+12 st", "−7 st", "0 st".
+    Signed(u8),
+    /// Whole degrees: "90°".
+    Degrees,
     /// Compression ratio: "4.0:1".
     Ratio,
     /// Percent, at most one decimal: "100%", "12.5%".
@@ -197,7 +211,11 @@ impl ParamDef {
             (Format::Time, "s" | "sec" | "secs" | "second" | "seconds") => v *= 1000.0,
             (Format::Time, "ms" | "msec" | "msecs") => {}
             (Format::Hz, "k" | "khz") => v *= 1000.0,
-            (Format::Hz, "hz") => {}
+            (Format::Hz | Format::Rate, "hz") => {}
+            (Format::MsAuto, "ms" | "msec" | "msecs") => {}
+            (Format::MsAuto, "s" | "sec" | "secs" | "second" | "seconds") => v *= 1000.0,
+            (Format::Degrees, "°" | "deg" | "degrees") => {}
+            (Format::Signed(_), u) if u == self.unit.to_lowercase() => {}
             (Format::Db, "db") | (Format::Percent, "%") => {}
             (Format::Plain(_), u) if u == self.unit.to_lowercase() => {}
             _ => return None,
@@ -225,14 +243,29 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
             format!("{v:.d$} ms")
         }
         Format::Hz => {
-            if v >= 10_000.0 {
+            if v >= 999.5 {
                 format!("{:.1} kHz", v / 1000.0)
-            } else if v >= 1000.0 {
-                format!("{:.2} kHz", v / 1000.0)
-            } else {
+            } else if v >= 10.0 {
                 format!("{v:.0} Hz")
+            } else if v >= 1.0 {
+                format!("{v:.1} Hz")
+            } else {
+                format!("{v:.2} Hz")
             }
         }
+        Format::MsAuto => {
+            if v >= 99.95 { format!("{v:.0} ms") } else { format!("{v:.1} ms") }
+        }
+        Format::Rate => {
+            if v >= 9.995 { format!("{v:.1} Hz") } else { format!("{v:.2} Hz") }
+        }
+        Format::Signed(d) => {
+            let a = format!("{:.*}", d as usize, v.abs());
+            let zero = a.chars().all(|c| c == '0' || c == '.');
+            let sign = if zero { String::new() } else if v < 0.0 { MINUS.to_string() } else { "+".into() };
+            if unit.is_empty() { format!("{sign}{a}") } else { format!("{sign}{a} {unit}") }
+        }
+        Format::Degrees => format!("{:.0}°", v.round() + 0.0),
         Format::Ratio => format!("{v:.1}:1"),
         Format::Percent => {
             let r = (v * 10.0).round() / 10.0;
@@ -266,19 +299,37 @@ pub enum Control {
     Toggle(&'static str),
     /// Sidechain source picker (a track list, not a parameter).
     Sidechain,
+    /// Menu pill (picker row): the chosen choice and a chevron; click opens
+    /// the list of the parameter's choices.
+    Dropdown(&'static str),
+    /// Menu pill over two discrete parameters: the choices of `param`, then
+    /// the non-zero choices of `mode`. Picking a `param` entry writes it and
+    /// sets `mode` to 0; picking a mode entry sets `mode` (one undo step).
+    ModeDropdown { param: &'static str, mode: &'static str },
+    /// One knob cell for two parameters: `.0`, or `.1` while `.0` is hidden
+    /// by `Layout::shown_when` (e.g. a free rate and a synced rate).
+    Swap(&'static str, &'static str),
 }
 
 impl Control {
+    /// The (first) parameter of the control.
     pub fn param(&self) -> Option<&'static str> {
+        self.params()[0]
+    }
+
+    /// Every parameter the control edits.
+    pub fn params(&self) -> [Option<&'static str>; 2] {
         match *self {
-            Control::Knob(p) | Control::Slider(p) | Control::Menu(p) | Control::Pill(p) | Control::Toggle(p) => Some(p),
-            Control::Sidechain => None,
+            Control::Knob(p) | Control::Slider(p) | Control::Menu(p) | Control::Pill(p) | Control::Toggle(p) | Control::Dropdown(p) => [Some(p), None],
+            Control::ModeDropdown { param, mode } => [Some(param), Some(mode)],
+            Control::Swap(a, b) => [Some(a), Some(b)],
+            Control::Sidechain => [None, None],
         }
     }
 }
 
 /// A visualiser or custom view drawn by the panel code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum View {
     /// Scrolling level / gain-reduction strip with a draggable threshold
     /// line bound to `threshold` (reference dynamics strip).
@@ -286,6 +337,9 @@ pub enum View {
     /// A device-specific view implemented in the panel code under this name
     /// (escape hatch for EQ curves, shaper, trance gate grid...).
     Custom(&'static str),
+    /// Parametric EQ body (band tabs, response field with band nodes, type
+    /// picker and value cells), described by an [`eq::EqView`].
+    Eq(&'static eq::EqView),
 }
 
 /// Drawing inside a knob instead of the plain body.
@@ -314,6 +368,9 @@ pub struct Layout {
     /// (param, discrete param, values): `param` is shown only while the
     /// discrete parameter has one of `values` (mode-dependent layouts).
     pub shown_when: &'static [(&'static str, &'static str, &'static [u32])],
+    /// Card width (pt) for bodies that are not sized by the dial row
+    /// (`View::Custom` grids); 0 = derived from `clusters`.
+    pub fixed_width: f32,
 }
 
 /// Reference dial row metrics (pt).
@@ -326,6 +383,9 @@ impl Layout {
     /// Card width from the dial clusters: cells * 62 + inner gaps * 10 +
     /// cluster gaps * 21, plus 16 of padding (reference card sizing rule).
     pub fn width(&self) -> f32 {
+        if self.fixed_width > 0.0 {
+            return self.fixed_width;
+        }
         let cells: usize = self.clusters.iter().map(|c| c.len()).sum();
         let inner: usize = self.clusters.iter().map(|c| c.len().saturating_sub(1)).sum();
         let gaps = self.clusters.len().saturating_sub(1);
@@ -371,7 +431,7 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 1] = [&compressor::COMPRESSOR];
+    static ALL: [&DeviceDef; 4] = [&compressor::COMPRESSOR, &channel_eq::CHANNEL_EQ, &character_eq::CHARACTER_EQ, &auto_filter::AUTO_FILTER];
     &ALL
 }
 
@@ -553,8 +613,13 @@ mod tests {
                 }
             }
             for c in def.layout.controls() {
-                if let Some(id) = c.param() {
+                for id in c.params().into_iter().flatten() {
                     assert!(def.param(id).is_some(), "{}: layout names unknown param {id}", def.id);
+                }
+            }
+            if let Some(View::Eq(v)) = def.layout.view {
+                for id in v.param_ids() {
+                    assert!(def.param(id).is_some(), "{}: EQ view names unknown param {id}", def.id);
                 }
             }
             for f in def.factory {
