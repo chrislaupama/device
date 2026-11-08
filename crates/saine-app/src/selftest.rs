@@ -893,11 +893,316 @@ fn steps() -> Vec<Step> {
     ]
 }
 
+/// Window centre of a track header's R button (track index `i`, current scroll).
+fn header_r(ctl: &Ctl, i: usize) -> (f32, f32) {
+    let sy = ctl.borrow().view.scroll_y as f32;
+    (262.0 + 60.5, TRACK0_Y + i as f32 * PITCH + 47.0 - sy)
+}
+
+/// Inspector (bottom panel 306 pt at y 509 with the Devices tab): R, I and the In field.
+const INSP_R: (f32, f32) = (5.0 + 86.0 + 10.0, 509.0 + 275.0 + 9.0);
+const INSP_I: (f32, f32) = (5.0 + 108.0 + 10.0, 509.0 + 275.0 + 9.0);
+const INSP_IN: (f32, f32) = (5.0 + 80.0, 509.0 + 37.0 + 9.5);
+/// "In" popup (window x 16, y 568): centre of row 0.
+const IN_ROW0: (f32, f32) = (60.0, 568.0 + crate::recording::IN_PAD + crate::recording::IN_ROW / 2.0);
+const RECORD_BTN: (f32, f32) = (423.0 + 14.0, 38.0 + 14.0);
+/// Settings panel at (255, 7): sidebar row centres.
+fn settings_row(i: usize) -> (f32, f32) {
+    (255.0 + 10.0 + 83.0, 7.0 + 94.75 + i as f32 * 27.25 + 12.75)
+}
+
+/// Injected test input: 1 s of a 440 Hz sine at -6 dBFS, mono.
+const INJ_FREQ: f32 = 440.0;
+const INJ_AMP: f32 = 0.5;
+
+/// Arm / monitor / input / record transport / settings (appended last). Never opens a
+/// real input device: the In popup lists only the configured input device (none in the
+/// self-test), and recording uses `Engine::render_offline_with_input` (offline run only).
+fn recording_steps() -> Vec<Step> {
+    use Step::*;
+    let hist = Rc::new(Cell::new(0usize));
+    let rec_n = Rc::new(Cell::new(0usize)); // audio track 1 clip count before recording
+    let h = || hist.clone();
+    // One new undo step with this label since the last record; re-records.
+    fn one(hc: &Rc<Cell<usize>>, c: &Controller, label: &str) -> Result<(), String> {
+        let n = c.doc.history_labels().len();
+        let was = hc.get();
+        hc.set(n);
+        (n == was + 1 && c.doc.undo_label() == Some(label)).then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want {label})", c.doc.undo_label()))
+    }
+    let (h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11) = (h(), h(), h(), h(), h(), h(), h(), h(), h(), h(), h());
+    let (h12, h13, h14) = (h(), h(), h());
+    let (rn1, rn2, rn3) = (rec_n.clone(), rec_n.clone(), rec_n.clone());
+    let pre_hist = Rc::new(Cell::new(0usize)); // history length before the recording pass
+    let (ph1, ph2) = (pre_hist.clone(), pre_hist.clone());
+    fn status(a: &AppWindow) -> String {
+        a.global::<Studio>().get_status_text().to_string()
+    }
+    fn offline(c: &Controller) -> bool {
+        !c.engine.device_running()
+    }
+    vec![
+        Do("Enter; Escape (close menus)", Box::new(|a| {
+            key(a, Key::Return, false, false);
+            key(a, Key::Escape, false, false);
+        })),
+        DoC("rec: select audio track 1 (header), Devices tab", Box::new(|a, ctl| {
+            let sy = ctl.borrow().view.scroll_y as f32;
+            click(a, 300.0, TRACK0_Y + 10.0 - sy);
+            if ctl.borrow().bottom_tab == crate::controller::BottomTab::Clip {
+                click(a, 5.0 + 286.0 + 15.0, 820.0 - 5.0 - 390.0 + 14.0);
+            }
+        })),
+        Check("rec: nothing armed with an input; record history", Box::new(move |c, a| {
+            h1.set(c.doc.history_labels().len());
+            let t = c.project().tracks.first().ok_or("no tracks")?;
+            (c.armed_with_input().is_empty() && c.selected_track == Some(t.id) && t.kind == TrackKind::Audio && a.global::<Studio>().get_bottom_tab() == 0)
+                .then_some(())
+                .ok_or(format!("armed {:?} sel {:?}", c.armed_with_input(), c.selected_track))
+        })),
+        Do("rec: click the header record button with nothing armed", Box::new(|a| click(a, RECORD_BTN.0, RECORD_BTN.1))),
+        Check("rec: record refused with a clear status, not recording, project unchanged", Box::new(move |c, a| {
+            let st = status(a);
+            (!c.rec.recording && !a.global::<Studio>().get_recording() && st.starts_with("Nothing to record") && c.doc.history_labels().len() == h2.get())
+                .then_some(())
+                .ok_or(format!("recording {} status {st:?}", c.rec.recording))
+        })),
+        DoC("rec: click R on track 1's header", Box::new(|a, ctl| {
+            let (x, y) = header_r(ctl, 0);
+            click(a, x, y);
+        })),
+        Check("rec: track 1 armed (SetTrackArm), one undo step, header + inspector R on", Box::new(move |c, a| {
+            one(&h3, c, "Arm Track")?;
+            let s = a.global::<Studio>();
+            let row = slint::Model::row_data(&s.get_tracks(), 0).ok_or("no row")?;
+            (c.project().tracks[0].arm && row.arm && s.get_sel_arm()).then_some(()).ok_or("not armed".into())
+        })),
+        DoC("rec: click R on track 1's header again", Box::new(|a, ctl| {
+            let (x, y) = header_r(ctl, 0);
+            click(a, x, y);
+        })),
+        Check("rec: track 1 disarmed, one undo step", Box::new(move |c, _| {
+            one(&h4, c, "Disarm Track")?;
+            (!c.project().tracks[0].arm).then_some(()).ok_or("still armed".into())
+        })),
+        Do("rec: Shift+R (track.arm)", Box::new(|a| key(a, "R", false, true))),
+        Check("rec: ⇧R armed the selected track, one undo step", Box::new(move |c, _| {
+            one(&h5, c, "Arm Track")?;
+            c.project().tracks[0].arm.then_some(()).ok_or("not armed".into())
+        })),
+        Do("rec: click the inspector R", Box::new(|a| click(a, INSP_R.0, INSP_R.1))),
+        Check("rec: inspector R disarmed, one undo step", Box::new(move |c, a| {
+            one(&h6, c, "Disarm Track")?;
+            (!c.project().tracks[0].arm && !a.global::<Studio>().get_sel_arm()).then_some(()).ok_or("still armed".into())
+        })),
+        Do("rec: click the inspector I", Box::new(|a| click(a, INSP_I.0, INSP_I.1))),
+        Check("rec: I turned input monitoring on (SetTrackMonitor), one undo step, I drawn on", Box::new(move |c, a| {
+            one(&h7, c, "Input Monitoring Change")?;
+            (c.project().tracks[0].monitor && a.global::<Studio>().get_sel_monitor()).then_some(()).ok_or("monitor off".into())
+        })),
+        Do("rec: Shift+I (track.monitor)", Box::new(|a| key(a, "I", false, true))),
+        Check("rec: ⇧I turned monitoring off, one undo step", Box::new(move |c, _| {
+            one(&h8, c, "Input Monitoring Change")?;
+            (!c.project().tracks[0].monitor).then_some(()).ok_or("monitor on".into())
+        })),
+        DoC("rec: click R on the Instrument track's header (placeholder)", Box::new(|a, ctl| {
+            let i = ctl.borrow().project().tracks.iter().position(|t| t.kind == TrackKind::Instrument).unwrap_or(1);
+            let (x, y) = header_r(ctl, i);
+            click(a, x, y);
+        })),
+        Check("rec: instrument R reports MIDI recording not implemented, no undo step", Box::new(move |c, a| {
+            let st = status(a);
+            (st.starts_with("MIDI recording is not implemented") && c.doc.history_labels().len() == h9.get()).then_some(()).ok_or(format!("status {st:?}"))
+        })),
+        DoC("rec: re-select track 1, click the inspector In field", Box::new(|a, ctl| {
+            let sy = ctl.borrow().view.scroll_y as f32;
+            click(a, 300.0, TRACK0_Y + 10.0 - sy);
+            click(a, INSP_IN.0, INSP_IN.1);
+        })),
+        Check("rec: In popup open, \"None\" first and checked, device inputs listed (or the no-device hint)", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let items = s.get_input_menu_items();
+            let rows: Vec<_> = (0..slint::Model::row_count(&items)).filter_map(|i| slint::Model::row_data(&items, i)).collect();
+            let first = rows.first().ok_or("empty popup")?;
+            let want = match c.current_input_device() {
+                Ok(Some(d)) => crate::recording::input_choices(Some(&d)).len(),
+                _ => 1,
+            };
+            let entries = rows.iter().filter(|r| !r.hint).count();
+            let hint_ok = entries > 1 || rows.iter().any(|r| r.hint);
+            (s.get_input_menu_open() && first.label == "None" && first.checked && !first.hint && entries == want && hint_ok)
+                .then_some(())
+                .ok_or(format!("open {} rows {:?}", s.get_input_menu_open(), rows.iter().map(|r| r.label.to_string()).collect::<Vec<_>>()))
+        })),
+        Do("rec: click \"None\" in the popup", Box::new(|a| click(a, IN_ROW0.0, IN_ROW0.1))),
+        Check("rec: popup closed; choosing the current entry made no undo step", Box::new(move |c, a| {
+            (!a.global::<Studio>().get_input_menu_open() && c.doc.history_labels().len() == h10.get() && c.project().tracks[0].input.is_none())
+                .then_some(())
+                .ok_or("popup open or project changed".into())
+        })),
+        DoC("rec: pick a device input in the popup, or (COMMAND PATH: no device inputs are listed in the self-test) SetTrackInput Input 1 (Mono)", Box::new(|a, ctl| {
+            click(a, INSP_IN.0, INSP_IN.1);
+            let real = ctl.borrow().rec.input_menu.as_ref().is_some_and(|m| m.len() > 1);
+            if real {
+                click(a, IN_ROW0.0, IN_ROW0.1 + crate::recording::IN_ROW);
+            } else {
+                key(a, Key::Escape, false, false);
+                let mut c = ctl.borrow_mut();
+                let t = c.project().tracks[0].id;
+                c.set_track_input(t, Some(saine_core::InputSource { channel: 0, stereo: false }));
+            }
+        })),
+        Check("rec: track 1 input = Input 1 (Mono) (SetTrackInput), one undo step, In field shows it", Box::new(move |c, a| {
+            one(&h11, c, "Input Change")?;
+            let s = a.global::<Studio>();
+            (c.project().tracks[0].input == Some(saine_core::InputSource { channel: 0, stereo: false }) && s.get_sel_input_text() == "Input 1 (Mono)" && !s.get_input_menu_open())
+                .then_some(())
+                .ok_or(format!("input {:?} text {}", c.project().tracks[0].input, s.get_sel_input_text()))
+        })),
+        // ---------------- settings ----------------
+        Do("settings: Cmd+, (app.settings)", Box::new(|a| key(a, ",", true, false))),
+        Check("settings: open on Audio with output/input/mute/sample-rate/buffer controls; 9 sidebar pages", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let pages: Vec<String> = (0..slint::Model::row_count(&s.get_settings_pages())).filter_map(|i| slint::Model::row_data(&s.get_settings_pages(), i)).map(|p| p.to_string()).collect();
+            let ok = c.settings.open
+                && s.get_settings_open()
+                && s.get_settings_page() == 1
+                && pages == crate::settings::PAGES
+                && !s.get_set_output_text().is_empty()
+                && s.get_set_input_text() == "None"
+                && s.get_set_rate_text().ends_with("kHz")
+                && !s.get_set_buffer_text().is_empty()
+                && !s.get_set_input_muted();
+            ok.then_some(()).ok_or(format!("open {} page {} out {:?} in {:?} rate {:?}", s.get_settings_open(), s.get_settings_page(), s.get_set_output_text(), s.get_set_input_text(), s.get_set_rate_text()))
+        })),
+        Do("settings: click the Buffer size dropdown", Box::new(|a| click(a, 255.0 + 187.0 + 300.0, 7.0 + 312.0 + 14.0))),
+        Check("settings: buffer list 64..2048 with ms readouts", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            let items = s.get_settings_menu_items();
+            let labels: Vec<String> = (0..slint::Model::row_count(&items)).filter_map(|i| slint::Model::row_data(&items, i)).map(|r| r.label.to_string()).collect();
+            (s.get_settings_menu_open() && labels.len() == 6 && labels[0].starts_with("64 samples (") && labels[5].starts_with("2048 samples (") && labels.iter().all(|l| l.ends_with(" ms)")))
+                .then_some(())
+                .ok_or(format!("{labels:?}"))
+        })),
+        Do("settings: Escape (closes the list), press R (blocked while Settings is open), click General", Box::new(|a| {
+            key(a, Key::Escape, false, false);
+            key(a, "r", false, false);
+            let (x, y) = settings_row(0);
+            click(a, x, y);
+        })),
+        Check("settings: list closed, R did nothing, General is a placeholder page", Box::new(move |c, a| {
+            let s = a.global::<Studio>();
+            (s.get_settings_open() && !s.get_settings_menu_open() && s.get_settings_page() == 0 && !c.rec.recording && c.doc.history_labels().len() == h12.get())
+                .then_some(())
+                .ok_or(format!("open {} menu {} page {}", s.get_settings_open(), s.get_settings_menu_open(), s.get_settings_page()))
+        })),
+        Do("settings: click Audio, then Escape", Box::new(|a| {
+            let (x, y) = settings_row(1);
+            click(a, x, y);
+            key(a, Key::Escape, false, false);
+        })),
+        Check("settings: Escape closed the window", Box::new(|c, a| {
+            (!c.settings.open && !a.global::<Studio>().get_settings_open()).then_some(()).ok_or("still open".into())
+        })),
+        // ---------------- recording with injected input (offline only) ----------------
+        DoC("rec: Shift+R (arm track 1), click the ruler at bar 2", Box::new(|a, ctl| {
+            key(a, "R", false, true);
+            let x = LANE_X + ctl.borrow().view.x_of(4.0);
+            click(a, x, 112.0);
+        })),
+        Check("rec: track 1 armed with Input 1, playhead at beat 4; record history", Box::new(move |c, _| {
+            rn1.set(c.project().tracks[0].clips.len());
+            h13.set(c.doc.history_labels().len());
+            ph1.set(c.doc.history_labels().len());
+            let at = c.playhead_ticks();
+            (c.armed_with_input() == vec![c.project().tracks[0].id] && (at - 4 * PPQ).abs() <= 1).then_some(()).ok_or(format!("armed {:?} playhead {at}", c.armed_with_input()))
+        })),
+        Do("rec: press R (transport.record)", Box::new(|a| key(a, "r", false, false))),
+        Check("rec: recording started (engine.start_recording), record button red [needs the engine recording API]", Box::new(move |c, a| {
+            if !offline(c) {
+                return Ok(()); // --self-test-audio: injected recording runs offline only
+            }
+            let st = c.engine.recording_state();
+            (c.rec.recording && a.global::<Studio>().get_recording() && st.active).then_some(()).ok_or(format!("not recording: {:?} (engine active {})", status(a), st.active))
+        })),
+        Check("rec: rendered 1 s of injected 440 Hz input (render_offline_with_input) [needs the engine recording API]", Box::new(|c, _| {
+            if !offline(c) || !c.rec.recording {
+                return if offline(c) { Err("not recording".into()) } else { Ok(()) };
+            }
+            let n = 48_000usize;
+            let input: Vec<f32> = (0..n).map(|i| INJ_AMP * (std::f32::consts::TAU * INJ_FREQ * i as f32 / 48_000.0).sin()).collect();
+            let mut out = vec![0f32; 2 * n];
+            c.engine.render_offline_with_input(&input, 1, &mut out).map_err(|e| e.to_string())
+        })),
+        DoC("rec: rebuild the live timeline clips", Box::new(|_, ctl| ctl.borrow_mut().rebuild_vis())),
+        Check("rec: live clip on track 1 from recording_state(), ~1 s long, live peaks drawn [needs the engine recording API]", Box::new(|c, _| {
+            if !offline(c) {
+                return Ok(());
+            }
+            let v = c.rec.live_vis.first().ok_or("no live clip")?;
+            let secs = v.len_beats * 60.0 / c.project().transport.bpm;
+            let peak = v.live.as_ref().map(|(p, _)| p.iter().fold(0f32, |m, x| m.max(x[1]))).unwrap_or(0.0);
+            (c.rec.live_vis.len() == 1 && v.track_index == 0 && (secs - 1.0).abs() < 0.05 && (peak - INJ_AMP).abs() < 0.05)
+                .then_some(())
+                .ok_or(format!("{} live clips, {secs:.3} s, peak {peak}", c.rec.live_vis.len()))
+        })),
+        Do("rec: press R (stop; the take loads on a worker)", Box::new(|a| key(a, "r", false, false))),
+        Check("rec: one \"Record\" undo step added a clip at beat 4 on track 1 [needs the engine recording API]", Box::new(move |c, _| {
+            if !offline(c) {
+                return Ok(());
+            }
+            one(&h14, c, "Record")?;
+            let t = &c.project().tracks[0];
+            let clip = t.clips.iter().max_by_key(|cl| cl.id.0).ok_or("no clip")?;
+            // Offline the engine reports no device latency, so the take starts at the playhead (±1 ms).
+            (t.clips.len() == rn2.get() + 1 && (clip.start - 4 * PPQ).abs() <= 2)
+                .then_some(())
+                .ok_or(format!("{} clips (was {}), newest at {} ticks", t.clips.len(), rn2.get(), clip.start))
+        })),
+        Check("rec: the take decodes to the injected signal (440 Hz, -6 dBFS, 1 s) [needs the engine recording API]", Box::new(|c, _| {
+            if !offline(c) {
+                return Ok(());
+            }
+            let dir = std::fs::canonicalize(c.recording_dir()).unwrap_or_else(|_| c.recording_dir());
+            let p = c.project();
+            let (clip, asset) = p.tracks[0]
+                .clips
+                .iter()
+                .filter_map(|cl| p.asset(cl.asset).map(|a| (cl, a)))
+                .find(|(_, a)| std::path::Path::new(&a.absolute_path).starts_with(&dir))
+                .ok_or(format!("no recorded take on track 1 (nothing under {})", dir.display()))?;
+            let (rate, ch, s) = crate::wavgen::read_wav(std::path::Path::new(&asset.absolute_path))?;
+            let mono: Vec<f32> = s.chunks(ch as usize).map(|f| f[0]).skip(clip.source_offset as usize).collect();
+            let secs = mono.len() as f32 / rate as f32;
+            let rms = (mono.iter().map(|x| x * x).sum::<f32>() / mono.len().max(1) as f32).sqrt();
+            let crossings = mono.windows(2).filter(|w| w[0] <= 0.0 && w[1] > 0.0).count() as f32 / secs.max(1e-6);
+            let peak = c.engine.peaks(c.asset_map.get(&asset.id).copied().ok_or("asset not loaded")?, 0, 4800, 10).map_err(|e| e.to_string())?.iter().fold(0f32, |m, p| m.max(p[1]));
+            ((secs - 1.0).abs() < 0.02 && (rms - INJ_AMP / 2f32.sqrt()).abs() < 0.02 && (crossings - INJ_FREQ).abs() < 3.0 && (peak - INJ_AMP).abs() < 0.02)
+                .then_some(())
+                .ok_or(format!("{secs:.3} s, rms {rms:.4}, {crossings:.1} Hz, engine peak {peak:.3}"))
+        })),
+        Do("rec: Cmd+Z, Enter", Box::new(|a| {
+            key(a, "z", true, false);
+            key(a, Key::Return, false, false);
+        })),
+        Check("rec: ⌘Z removed the recorded clip and its asset [needs the engine recording API]", Box::new(move |c, _| {
+            if !offline(c) {
+                return Ok(());
+            }
+            let t = &c.project().tracks[0];
+            (t.clips.len() == rn3.get() && c.doc.history_labels().len() == ph2.get() && c.doc.undo_label() != Some("Record"))
+                .then_some(())
+                .ok_or(format!("{} clips, undo {:?}", t.clips.len(), c.doc.undo_label()))
+        })),
+    ]
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
     all.extend(synth_steps());
     all.extend(midi_steps());
+    all.extend(recording_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));

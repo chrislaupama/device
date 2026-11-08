@@ -20,13 +20,14 @@ import { Panel, Icon, Icons, Pill, IconButton, SmallButton, HSlider, Knob, Switc
 
 export { Tokens }
 
-import { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay } from "studio.slint";
+import { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, ChoiceItem } from "studio.slint";
 import { ClipSidebar, PianoRoll, ClipEmpty, ContextMenu } from "pianoroll.slint";
 import { MixerPanel } from "mixer.slint";
 import { AssistantPanel, HighlightOverlay } from "assistant.slint";
 import { SynthDevice, SynthMenuList } from "synth.slint";
+import { SettingsPanel, ChoiceList } from "settings.slint";
 
-export { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay }
+export { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, ChoiceItem }
 
 // ------------------------------------------------------------------ header
 component Header inherits Rectangle {
@@ -63,8 +64,11 @@ component Header inherits Rectangle {
     IconButton { x: 368px; y: 38px; width: 28px; height: 28px; icon: Icons.rewind; filled: true; icon-size: 15px; tooltip: "Rewind to start (Enter)"; clicked => { Studio.stop-return(); } }
     IconButton { x: 396px; y: 38px; width: 28px; height: 28px; icon: Studio.playing ? Icons.pause : Icons.play; filled: true; icon-size: 15px;
         ink: Studio.playing ? Tokens.text-primary : Tokens.icon; tooltip: "Play (Space)"; clicked => { Studio.play-toggle(); } }
-    // Record: PLACEHOLDER (engine has no recording yet), drawn dim and inert.
-    IconButton { x: 423px; y: 38px; width: 28px; height: 28px; icon: Icons.record; filled: true; icon-size: 13px; ink: #3f4044; tooltip: "Record (not implemented)"; }
+    // Record (R): start/stop recording armed audio tracks. Dim (measured) when nothing is armed,
+    // icon grey when ready, recording red while recording.
+    IconButton { x: 423px; y: 38px; width: 28px; height: 28px; icon: Icons.record; filled: true; icon-size: 13px;
+        ink: Studio.recording ? Tokens.record-red : Studio.record-ready ? Tokens.icon : #3f4044;
+        tooltip: "Record (R)"; active: false; clicked => { Studio.record(); } }
 
     // Transport pill 464.5..1008.5 x 36..69
     Rectangle {
@@ -115,7 +119,8 @@ component Header inherits Rectangle {
         ink: Studio.mixer-open ? #e5e5e8 : Tokens.icon; tooltip: "Toggle mixer panel (⇧⌘X)"; clicked => { Studio.toggle-mixer(); } }
     IconButton { x: root.width - 91px; y: 39px; width: 25px; height: 25px; icon: Icons.panel-bottom; ink: #b4b5b8; tooltip: "Switch between clip editor and devices"; clicked => { Studio.toggle-clip-devices(); } }
     IconButton { x: root.width - 63px; y: 39px; width: 25px; height: 25px; icon: Icons.piano; tooltip: "Musical typing (not implemented)"; }
-    IconButton { x: root.width - 36px; y: 39px; width: 25px; height: 25px; icon: Icons.gear; tooltip: "Settings (not implemented)"; }
+    IconButton { x: root.width - 36px; y: 39px; width: 25px; height: 25px; icon: Icons.gear; tooltip: "Settings (⌘,)";
+        ink: Studio.settings-open ? #e5e5e8 : Tokens.icon; clicked => { Studio.toggle-settings(); } }
 }
 
 // ------------------------------------------------------------------ browser (PLACEHOLDER content)
@@ -190,9 +195,10 @@ component TrackHeaderRow inherits Rectangle {
     Text { x: 43px; y: 21.5px; height: 13px; text: root.t.name; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
     SmallButton { x: 28px; y: 41.5px; width: 11px; height: 11px; text: "M"; on: root.t.mute; on-color: Tokens.mute-on; clicked => { Studio.track-mute(root.t.id); } }
     SmallButton { x: 42px; y: 41.5px; width: 11px; height: 11px; text: "S"; on: root.t.solo; on-color: Tokens.solo-on; clicked => { Studio.track-solo(root.t.id); } }
-    // R (arm) and I (monitoring): PLACEHOLDERS, no recording/input in the engine yet.
-    SmallButton { x: 55px; y: 41.5px; width: 11px; height: 11px; text: "R"; }
-    if root.t.instrument: SmallButton { x: 69px; y: 41.5px; width: 11px; height: 11px; text: "I"; }
+    // R (arm, SetTrackArm) on audio tracks; the reference shows I (monitoring) only on instrument
+    // tracks, where R and I are PLACEHOLDERS (no MIDI recording; the callback reports it).
+    SmallButton { x: 55px; y: 41.5px; width: 11px; height: 11px; text: "R"; on: root.t.arm; on-color: Tokens.record-red; clicked => { Studio.track-arm(root.t.id); } }
+    if root.t.instrument: SmallButton { x: 69px; y: 41.5px; width: 11px; height: 11px; text: "I"; on: root.t.monitor; clicked => { Studio.track-monitor(root.t.id); } }
     Knob {
         x: 84px; y: 33.5px; width: 26px; height: 26px;
         value: root.t.pan; value-angle: root.t.pan * 135;
@@ -336,14 +342,16 @@ component Inspector inherits Rectangle {
     Icon { visible: Studio.has-selection; x: 21px; y: 8px; width: 11px; height: 11px; d: Studio.sel-instrument ? Icons.keys : Icons.wave; ink: #a8a8ab; stroke-width: 1.1px; }
     Label { x: 37px; y: 7px; text: Studio.has-selection ? Studio.sel-name : "No track selected"; color: Tokens.text-bright; font-size: 10px; }
 
-    // In / Out routing: PLACEHOLDERS (fixed routing in milestone 1). Instrument tracks show their
-    // instrument ("Inst Synth"; only the built-in Synth exists, the dropdown is a PLACEHOLDER).
+    // In: audio tracks open the input selector (SetTrackInput; popup drawn by AppWindow). Instrument
+    // tracks show their instrument ("Inst Synth"; only the built-in Synth exists, a PLACEHOLDER).
+    // Out: PLACEHOLDER (fixed routing to Master).
     Rectangle {
         x: 10px; y: 37px; width: 149px; height: 19px; border-radius: 9.5px; background: Tokens.bg-control;
         Text { x: 7.5px; text: Studio.sel-instrument ? "Inst" : "In"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
-        Text { x: Studio.sel-instrument ? 29.5px : 21px; text: Studio.sel-instrument ? "Synth" : "Select audio input"; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+        Text { x: Studio.sel-instrument ? 29.5px : 21px; text: Studio.sel-instrument ? "Synth" : Studio.sel-input-text; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
         Icon { x: 134px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #a0a0a3; }
-        TouchArea { clicked => { if (Studio.sel-instrument) { Studio.synth-placeholder("Instrument selector"); } } }
+        accessible-role: combobox; accessible-label: "In"; accessible-value: Studio.sel-instrument ? "Synth" : Studio.sel-input-text;
+        TouchArea { clicked => { if (Studio.sel-instrument) { Studio.synth-placeholder("Instrument selector"); } else if (Studio.has-selection) { Studio.open-input-menu(); } } }
     }
     Rectangle {
         x: 10px; y: 63px; width: 149px; height: 18px; border-radius: 9px; background: Tokens.bg-control;
@@ -378,8 +386,9 @@ component Inspector inherits Rectangle {
 
     SmallButton { x: 42px; y: 275px; width: 19px; height: 18px; text: "M"; font-size: 8.25px; on: Studio.sel-mute; on-color: Tokens.mute-on; clicked => { Studio.track-mute(Studio.sel-id); } }
     SmallButton { x: 64px; y: 275px; width: 19px; height: 18px; text: "S"; font-size: 8.25px; on: Studio.sel-solo; on-color: Tokens.solo-on; clicked => { Studio.track-solo(Studio.sel-id); } }
-    SmallButton { x: 86px; y: 275px; width: 20px; height: 18px; text: "R"; font-size: 8.25px; }
-    SmallButton { x: 108px; y: 275px; width: 20px; height: 18px; text: "I"; font-size: 8.25px; }
+    // R / I: SetTrackArm / SetTrackMonitor on audio tracks; PLACEHOLDERS on instrument tracks.
+    SmallButton { x: 86px; y: 275px; width: 20px; height: 18px; text: "R"; font-size: 8.25px; on: Studio.sel-arm; on-color: Tokens.record-red; clicked => { Studio.track-arm(Studio.sel-id); } }
+    SmallButton { x: 108px; y: 275px; width: 20px; height: 18px; text: "I"; font-size: 8.25px; on: Studio.sel-monitor; clicked => { Studio.track-monitor(Studio.sel-id); } }
 
     // Fader readout
     Rectangle {
@@ -538,6 +547,17 @@ export component AppWindow inherits Window {
                 picked(i) => { Studio.synth-menu-pick(i); }
             }
         }
+        // Inspector "In" selector (audio tracks): below the In field (bottom panel y + 59, x 5 + 11).
+        if Studio.input-menu-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.input-menu-dismiss(); } } }
+            ChoiceList {
+                x: 16px; y: root.height - 5px - root.bottom-h + 59px;
+                width: Studio.input-menu-w; height: Studio.input-menu-h;
+                items: Studio.input-menu-items;
+                picked(i) => { Studio.input-menu-pick(i); }
+            }
+        }
         // Rename clip popup.
         if Studio.rename-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height; background: #00000040;
@@ -560,6 +580,12 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+        }
+        // Settings window (in-app modal panel at the reference window rect; outside click closes).
+        if Studio.settings-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { clicked => { Studio.close-settings(); fs.focus(); } }
+            SettingsPanel { x: max(0px, min(255px, root.width - 960px)); y: 7px; width: min(960px, root.width); height: root.height - 7px + 12px; }
         }
         // Status line (engine/device/import messages); empty most of the time.
         if Studio.status-text != "": Rectangle {

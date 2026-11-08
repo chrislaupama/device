@@ -12,6 +12,8 @@ export struct TrackRow {
     selected: bool,
     mute: bool,
     solo: bool,
+    arm: bool,
+    monitor: bool,
     volume-pos: float,
     pan: float,
 }
@@ -52,6 +54,9 @@ export struct YLabel { y: length, text: string }
 export struct SynthParam { norm: float, text: string, bipolar: bool }
 // A display: SVG path of the curve and of its filled area (viewbox = element size in points).
 export struct SynthDisplay { line: string, fill: string }
+
+// Checkable popup row ("In" selector, Settings dropdowns). hint: a grey wrapped note row.
+export struct ChoiceItem { label: string, checked: bool, hint: bool, y: length, h: length }
 
 export struct MenuItem { label: string, shortcut: string, enabled: bool, separator: bool, submenu: bool, y: length }
 
@@ -220,6 +225,44 @@ export global Studio {
     callback synth-preset-step(int);
     callback synth-placeholder(string);          // PLACEHOLDER controls report "not implemented"
     callback toggle-clip-devices();              // header "Switch between clip editor and devices"
+
+    // ---- recording (src/recording.rs) ----
+    in property <bool> recording;               // a recording pass is running (record button red)
+    in property <bool> record-ready;            // some audio track is armed with an input
+    in property <bool> sel-arm;
+    in property <bool> sel-monitor;
+    in property <string> sel-input-text: "Select audio input";
+    in property <bool> input-menu-open;
+    in property <[ChoiceItem]> input-menu-items;
+    in property <length> input-menu-h: 48px;
+    in property <length> input-menu-w: 136px;
+    callback track-arm(int);                    // SetTrackArm (audio) / placeholder status (instrument)
+    callback track-monitor(int);                // SetTrackMonitor (audio) / placeholder status (instrument)
+    callback open-input-menu();
+    callback input-menu-pick(int);              // SetTrackInput
+    callback input-menu-dismiss();
+    // ---- settings window (src/settings.rs, ui/settings.slint) ----
+    in property <bool> settings-open;
+    in property <int> settings-page: 1;
+    in property <[string]> settings-pages;
+    in property <string> set-output-text: "System default";
+    in property <string> set-input-text: "None";
+    in property <string> set-rate-text: "48 kHz";
+    in property <string> set-buffer-text: "Device default";
+    in property <bool> set-input-muted;
+    in property <string> settings-note;
+    in property <bool> settings-menu-open;
+    in property <int> settings-menu-field;      // 0 output, 1 input, 2 sample rate, 3 buffer size
+    in property <[ChoiceItem]> settings-menu-items;
+    in property <length> settings-menu-h;
+    callback toggle-settings();
+    callback close-settings();
+    callback settings-page-select(int);
+    callback settings-dropdown(int);
+    callback settings-menu-pick(int);
+    callback settings-menu-dismiss();
+    callback settings-toggle-mute();
+    callback settings-test();
 
     callback report-bug();   // TODO: no-op placeholder
     callback feedback();     // TODO: no-op placeholder

@@ -78,6 +78,10 @@ pub struct ClipVis {
     /// MIDI clip: mini note view as (relative start 0..1, relative length, relative
     /// pitch 0 = top .. 1 = bottom). `None` for audio clips.
     pub midi: Option<Vec<[f32; 3]>>,
+    /// Take being recorded: live min/max peaks from `Engine::recording_peaks`
+    /// (one pair every `.1` logical points from the clip start), drawn with the
+    /// recording tint.
+    pub live: Option<(Vec<[f32; 2]>, f32)>,
 }
 
 impl ClipVis {
@@ -94,6 +98,8 @@ pub struct Scene<'a> {
     pub scale: f32,
     pub tracks: &'a [TrackVis],
     pub clips: &'a [ClipVis],
+    /// Growing clips of takes in progress (not hit-testable).
+    pub live: &'a [ClipVis],
     pub playhead_beats: f64,
     pub loop_beats: (f64, f64),
     pub beats_per_bar: f64,
@@ -284,6 +290,11 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
         }
     }
 
+    // ---- takes being recorded: red-tinted growing clips with a live waveform ----
+    for c in sc.live {
+        live_clip(&mut dl.base, sc, &px, c);
+    }
+
     // ---- ruler (over) ----
     let o = &mut dl.over;
     o.push(px.rect(0.0, 0.0, w, RULER_H, rgba(rgb(0x1a1b1e), 1.0)));
@@ -339,7 +350,11 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
 /// the same selected or not), grid lines inside the body and a mini note view.
 fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &[[f32; 3]], (x, y, cw, ch): (f32, f32, f32, f32)) {
     let r = 3.0;
-    let body = mix(c.color, WHITE, 0.67);
+    // On a track that isn't selected the reference draws the body in the plain track colour
+    // with a darker line under the title and no grid (50-input-selector-open.png); on the
+    // selected track it is the light lavender body with grid lines (33/34-*.png).
+    let track_selected = sc.tracks.get(c.track_index).is_some_and(|t| t.selected);
+    let body = if track_selected { mix(c.color, WHITE, 0.67) } else { c.color };
     // 0.5 pt outline (greyish in the reference), then title strip and body inset by it.
     out.push(px.rounded(x, y, cw, ch, r, rgba(mix(body, rgb(0x4a4c58), 0.45), 1.0)));
     out.push(px.rounded(x + 0.5, y + 0.5, cw - 1.0, ch - 1.0, r - 0.5, rgba(c.color, 1.0)));
@@ -347,6 +362,9 @@ fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &
     out.push(px.rect(x + 0.5, by, cw - 1.0, ch - CLIP_HEADER - 0.5 - r, rgba(body, 1.0)));
     out.push(px.rounded(x + 0.5, y + ch - 2.0 * r, cw - 1.0, 2.0 * r - 0.5, r - 0.5, rgba(body, 1.0)));
     let v = &sc.view;
+    if !track_selected {
+        out.push(px.rect(x + 0.5, by - 0.5, cw - 1.0, 0.5, rgba(mix(c.color, BLACK, 0.4), 1.0)));
+    }
     let mut step = sc.beats_per_bar / 2.0;
     while step * v.px_per_beat < 10.0 {
         step *= 2.0;
@@ -355,7 +373,7 @@ fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &
         step /= 2.0;
     }
     let mut b = (c.start_beats / step).floor() * step + step;
-    while b < c.start_beats + c.len_beats - 1e-6 {
+    while track_selected && b < c.start_beats + c.len_beats - 1e-6 {
         let lx = v.x_of(b);
         if lx > x + 0.5 {
             out.push(px.rect(lx, by, 1.0 / px.s, ch - CLIP_HEADER - 1.0, rgba(mix(body, BLACK, 0.075), 1.0)));
@@ -372,6 +390,41 @@ fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &
             continue;
         }
         out.push(px.rect(nx, by + 2.5 + n[2] * (nh - bar_h), nw, bar_h, ink));
+    }
+}
+
+/// A take in progress: recording-red header strip, dark red body, live peaks.
+fn live_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis) {
+    let v = &sc.view;
+    let w = sc.size.0;
+    let lanes_bottom = sc.size.1 - MASTER_H;
+    let (x, y, cw, ch) = c.rect(v);
+    if x > w || x + cw < 0.0 || y > lanes_bottom || y + ch < RULER_H {
+        return;
+    }
+    let r = 3.0;
+    let body = mix(rgb(0x131417), c.color, 0.28);
+    out.push(px.rounded(x, y, cw, ch, r, rgba(c.color, 1.0)));
+    out.push(px.rect(x, y + CLIP_HEADER, cw, ch - CLIP_HEADER - r, rgba(body, 1.0)));
+    out.push(px.rounded(x, y + ch - 2.0 * r, cw, 2.0 * r, r, rgba(body, 1.0)));
+    let Some((peaks, step)) = &c.live else { return };
+    let wy = y + CLIP_HEADER + 2.0;
+    let wh = ch - CLIP_HEADER - 4.0;
+    let mid = wy + wh / 2.0;
+    let ink = rgba(mix(c.color, WHITE, 0.25), 1.0);
+    let lw = (*step).max(1.0 / px.s);
+    for (i, p) in peaks.iter().enumerate() {
+        let px_x = x + i as f32 * step;
+        if px_x > x + cw || px_x > w {
+            break;
+        }
+        if px_x + lw < 0.0 {
+            continue;
+        }
+        let (lo, hi) = (p[0].clamp(-1.0, 1.0), p[1].clamp(-1.0, 1.0));
+        let top = mid - hi * wh / 2.0;
+        let h = ((hi - lo) * wh / 2.0).max(1.0 / px.s);
+        out.push(px.rect(px_x, top, lw, h, ink));
     }
 }
 
@@ -407,7 +460,7 @@ mod tests {
         assert!((v.beat_at(v.x_of(4.0)) - 4.0).abs() < 1e-4);
         assert_eq!(v.track_at(RULER_H + 1.0), Some(0));
         assert_eq!(v.track_at(RULER_H + TRACK_PITCH + 1.0), Some(1));
-        let clips = vec![ClipVis { track_index: 0, start_beats: 4.0, len_beats: 4.0, color: [1.0; 3], selected: false, name: String::new(), wave: None, midi: None }];
+        let clips = vec![ClipVis { track_index: 0, start_beats: 4.0, len_beats: 4.0, color: [1.0; 3], selected: false, name: String::new(), wave: None, midi: None, live: None }];
         let size = (900.0, 400.0);
         assert_eq!(hit_test(&v, size, 2, &clips, 10.0, 5.0), Hit::Ruler);
         assert_eq!(hit_test(&v, size, 2, &clips, 70.0, 60.0), Hit::Clip { index: 0, zone: Zone::Body });

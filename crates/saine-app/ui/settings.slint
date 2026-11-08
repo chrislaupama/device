@@ -1,0 +1,161 @@
+// Settings window as an in-app modal panel (see src/settings.rs for why), drawn at the
+// reference window rect: x 255, y 7, 960 pt wide, running off the bottom of the main
+// window (14-settings-audio.png). Sidebar 187 pt; only the Audio page is real, the
+// other pages are PLACEHOLDERS ("Not available yet").
+import { Tokens } from "tokens.slint";
+import { Icon, Icons } from "widgets.slint";
+import { Studio, ChoiceItem } from "studio.slint";
+
+// Checkable popup list (Settings dropdowns, the inspector "In" selector).
+export component ChoiceList inherits Rectangle {
+    in property <[ChoiceItem]> items;
+    in property <length> font-size: 10px;
+    in property <length> text-x: 10px;
+    in property <length> check-x: 20.5px; // from the right edge
+    callback picked(int);
+    border-radius: 6px;
+    background: Tokens.bg-raised;
+    border-width: 0.5px;
+    border-color: @linear-gradient(180deg, Tokens.popup-border-top 0%, Tokens.popup-border 8%);
+    drop-shadow-blur: 10px;
+    drop-shadow-color: #00000070;
+    drop-shadow-offset-y: 2px;
+    accessible-role: list;
+    for it[i] in root.items: Rectangle {
+        x: 3px; y: it.y; width: root.width - 6px; height: it.h;
+        accessible-role: button;
+        accessible-label: it.label;
+        accessible-checked: it.checked;
+        if !it.hint: Rectangle { border-radius: 4px; background: ta.has-hover ? Tokens.accent : transparent; }
+        Text {
+            x: root.text-x - 3px; width: parent.width - root.text-x - root.check-x;
+            text: it.label; color: it.hint ? Tokens.text-secondary : #ffffff;
+            font-size: it.hint ? 8.5px : root.font-size; font-weight: it.hint ? 400 : 500;
+            vertical-alignment: center; wrap: it.hint ? word-wrap : no-wrap; overflow: elide;
+        }
+        if it.checked: Icon { x: parent.width - root.check-x + 3px; y: (parent.height - 11px) / 2 + 0.75px; width: 11px; height: 11px; d: Icons.check; ink: #ffffff; stroke-width: 1.6px; }
+        ta := TouchArea { enabled: !it.hint; clicked => { root.picked(i); } }
+    }
+}
+
+component Dropdown inherits Rectangle {
+    in property <string> text;
+    in property <int> field;
+    height: 28.5px;
+    border-radius: 6px;
+    background: #28282b;
+    border-width: 0.5px;
+    border-color: #3d3e40;
+    accessible-role: combobox;
+    accessible-value: root.text;
+    Text { x: 10.5px; text: root.text; color: #ececee; font-size: 11px; font-weight: 400; vertical-alignment: center; letter-spacing: 0.2px; }
+    Icon { x: parent.width - 21.5px; y: (parent.height - 10px) / 2; width: 10px; height: 10px; d: Icons.chevron-down; ink: #b5b5b8; stroke-width: 1.5px; }
+    TouchArea { clicked => { Studio.settings-dropdown(root.field); } }
+}
+
+component FieldLabel inherits Text {
+    color: #ececee;
+    font-size: 10px;
+    font-weight: 600;
+    vertical-alignment: center;
+    height: 14px;
+}
+
+component AudioPage inherits Rectangle {
+    // Content area origin = panel x 187 (content left margin 20.5 pt -> x 207.5 panel-relative).
+    FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Audio"; font-size: 17.25px; font-weight: 700; }
+    FieldLabel { x: 20.5px; y: 78.5px - 7px; text: "Output device"; }
+    Dropdown { x: 20.5px; y: 90px; width: root.width - 20.5px - 76.5px; text: Studio.set-output-text; field: 0; }
+    // Test: plays a 0.5 s, -24 dBFS tone through the engine (src/settings.rs).
+    Rectangle {
+        x: root.width - 69.5px; y: 92px; width: 49px; height: 26px; border-radius: 6px;
+        background: test-ta.has-hover ? #333438 : #28282b; border-width: 0.5px; border-color: #3d3e40;
+        accessible-role: button; accessible-label: "Test";
+        Text { text: "Test"; color: #ececee; font-size: 10.5px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+        test-ta := TouchArea { clicked => { Studio.settings-test(); } }
+    }
+    FieldLabel { x: 20.5px; y: 139.5px - 7px; text: "Input device"; }
+    Dropdown { x: 20.5px; y: 151px; width: root.width - 20.5px - 20.5px; text: Studio.set-input-text; field: 1; }
+    Text { x: 20.5px; y: 206px - 7px; height: 14px; text: "Mute audio input"; color: #d9d9dc; font-size: 10.25px; font-weight: 400; vertical-alignment: center; }
+    Rectangle {
+        x: root.width - 20.5px - 20.5px; y: 201px; width: 20.5px; height: 10px; border-radius: 5px;
+        background: Studio.set-input-muted ? Tokens.accent : #4a4b4f;
+        accessible-role: checkbox; accessible-label: "Mute audio input"; accessible-checked: Studio.set-input-muted;
+        Rectangle { x: Studio.set-input-muted ? parent.width - self.width - 1px : 1px; y: 1px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; }
+        TouchArea { clicked => { Studio.settings-toggle-mute(); } }
+    }
+    FieldLabel { x: 20.5px; y: 239.5px - 7px; text: "Sample rate"; }
+    Dropdown { x: 20.5px; y: 251px; width: root.width - 20.5px - 20.5px; text: Studio.set-rate-text; field: 2; }
+    FieldLabel { x: 20.5px; y: 299.5px - 7px; text: "Buffer size"; }
+    Dropdown { x: 20.5px; y: 312px; width: root.width - 20.5px - 20.5px; text: Studio.set-buffer-text; field: 3; }
+    if Studio.settings-note != "": Text {
+        x: 20.5px; y: 352px; width: root.width - 41px; height: 14px;
+        text: Studio.settings-note; color: Tokens.text-tertiary; font-size: 9px; vertical-alignment: center; overflow: elide;
+    }
+}
+
+export component SettingsPanel inherits Rectangle {
+    border-radius: 10px;
+    background: Tokens.bg-panel;
+    border-width: 0.5px;
+    border-color: #36373a;
+    drop-shadow-blur: 24px;
+    drop-shadow-color: #000000a0;
+    drop-shadow-offset-y: 6px;
+    clip: true;
+    accessible-role: groupbox;
+    accessible-label: "Settings";
+    TouchArea { }   // swallow clicks so they don't reach the main window
+    // ---- sidebar ----
+    Rectangle { x: 0; y: 0; width: 186.5px; height: root.height; background: #1f2023; }
+    Rectangle { x: 186.5px; y: 0; width: 0.5px; height: root.height; background: #313134; }
+    // Traffic lights: red = close (real); minimise/zoom drawn inactive (a panel, not an OS window).
+    Rectangle {
+        x: 19px - 7px; y: 20px - 7px; width: 14px; height: 14px; border-radius: 7px; background: #e15f51;
+        accessible-role: button; accessible-label: "Close settings";
+        TouchArea { clicked => { Studio.close-settings(); } }
+    }
+    Rectangle { x: 42px - 7px; y: 20px - 7px; width: 14px; height: 14px; border-radius: 7px; background: #f3be41; }
+    Rectangle { x: 64.5px - 7px; y: 20px - 7px; width: 14px; height: 14px; border-radius: 7px; background: #55b736; }
+    Text { x: 16.5px; y: 33px; height: 24px; text: "Settings"; color: #ececee; font-size: 17.25px; font-weight: 700; vertical-alignment: center; }
+    // Search (PLACEHOLDER: no settings search yet)
+    Rectangle {
+        x: 10px; y: 64.5px; width: 166.5px; height: 20.5px; border-radius: 10.25px; background: Tokens.bg-control;
+        border-width: 0.5px; border-color: #35363a;
+        Icon { x: 9px; y: 4px; width: 12.5px; height: 12.5px; d: Icons.search; ink: #b0b0b3; }
+        Text { x: 26px; text: "Search settings"; color: #a5a5a8; font-size: 9px; vertical-alignment: center; }
+    }
+    for name[i] in Studio.settings-pages: Rectangle {
+        x: 10px; y: 94.75px + i * 27.25px; width: 166.5px; height: 25.5px; border-radius: 6px;
+        background: Studio.settings-page == i ? #363739 : (row-ta.has-hover ? #27282b : transparent);
+        accessible-role: tab; accessible-label: name; accessible-checked: Studio.settings-page == i;
+        Icon {
+            x: 7px; y: (parent.height - 13px) / 2; width: 13px; height: 13px; ink: Studio.settings-page == i ? #e5e5e8 : #bdbec0; stroke-width: 1.15px;
+            d: i == 0 ? Icons.gear : i == 1 ? Icons.speaker : i == 2 ? Icons.midi-port : i == 3 ? Icons.plugin : i == 4 ? Icons.keyboard
+                : i == 5 ? Icons.download : i == 6 ? Icons.person : i == 7 ? Icons.gauge : Icons.shield;
+        }
+        Text { x: 29px; text: name; color: Studio.settings-page == i ? #e5e5e8 : #bdbec0; font-size: 10px; font-weight: 500; vertical-alignment: center; }
+        row-ta := TouchArea { clicked => { Studio.settings-page-select(i); } }
+    }
+    // ---- content ----
+    if Studio.settings-page == 1: AudioPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
+    if Studio.settings-page != 1: Rectangle {
+        x: 187px; y: 0; width: root.width - 187px; height: root.height;
+        Text { x: 20.5px; y: 33px; height: 24px; text: Studio.settings-pages[Studio.settings-page]; color: #ececee; font-size: 17.25px; font-weight: 700; vertical-alignment: center; }
+        // PLACEHOLDER pages
+        Text { x: 20.5px; y: 72px; height: 14px; text: "Not available yet"; color: Tokens.text-tertiary; font-size: 10px; vertical-alignment: center; }
+    }
+    // Dropdown list (click outside closes).
+    if Studio.settings-menu-open: Rectangle {
+        TouchArea { clicked => { Studio.settings-menu-dismiss(); } }
+        property <length> field-y: Studio.settings-menu-field == 0 ? 90px : Studio.settings-menu-field == 1 ? 151px : Studio.settings-menu-field == 2 ? 251px : 312px;
+        ChoiceList {
+            x: 187px + 20.5px; y: min(parent.field-y + 31px, root.height - 5px - self.height);
+            width: Studio.settings-menu-field == 0 ? root.width - 187px - 20.5px - 76.5px : root.width - 187px - 41px;
+            height: Studio.settings-menu-h;
+            items: Studio.settings-menu-items;
+            font-size: 10.5px; text-x: 11px;
+            picked(i) => { Studio.settings-menu-pick(i); }
+        }
+    }
+}

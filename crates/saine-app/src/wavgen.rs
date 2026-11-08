@@ -56,3 +56,57 @@ pub fn noise(rate: u32) -> Vec<f32> {
     }
     out
 }
+
+/// Minimal WAV reader (PCM 16/24/32-bit, IEEE float 32-bit, incl. WAVE_FORMAT_EXTENSIBLE):
+/// returns (sample rate, channels, interleaved samples). Used by the self-test to
+/// decode recorded takes independently of the engine.
+pub fn read_wav(path: &Path) -> Result<(u32, u16, Vec<f32>), String> {
+    let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
+        return Err("not a RIFF/WAVE file".into());
+    }
+    let u16_at = |i: usize| u16::from_le_bytes([b[i], b[i + 1]]);
+    let u32_at = |i: usize| u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+    let (mut fmt, mut data) = (None, None);
+    let mut i = 12;
+    while i + 8 <= b.len() {
+        let id = &b[i..i + 4];
+        let len = u32_at(i + 4) as usize;
+        let body = i + 8;
+        let end = (body + len).min(b.len());
+        if id == b"fmt " && len >= 16 {
+            let mut tag = u16_at(body);
+            if tag == 0xFFFE && len >= 26 {
+                tag = u16_at(body + 24); // sub-format GUID starts with the format tag
+            }
+            fmt = Some((tag, u16_at(body + 2), u32_at(body + 4), u16_at(body + 14)));
+        } else if id == b"data" {
+            data = Some(&b[body..end]);
+        }
+        i = body + len + (len & 1);
+    }
+    let (tag, ch, rate, bits) = fmt.ok_or("no fmt chunk")?;
+    let d = data.ok_or("no data chunk")?;
+    let s: Vec<f32> = match (tag, bits) {
+        (3, 32) => d.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect(),
+        (1, 16) => d.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).collect(),
+        (1, 24) => d.chunks_exact(3).map(|c| ((i32::from_le_bytes([0, c[0], c[1], c[2]])) >> 8) as f32 / 8_388_608.0).collect(),
+        (1, 32) => d.chunks_exact(4).map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f32 / 2_147_483_648.0).collect(),
+        _ => return Err(format!("unsupported WAV format tag {tag}, {bits} bits")),
+    };
+    Ok((rate, ch.max(1), s))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn write_read_roundtrip() {
+        let p = std::env::temp_dir().join(format!("saine-wav-rt-{}.wav", std::process::id()));
+        let s: Vec<f32> = (0..100).map(|i| (i as f32 / 50.0) - 1.0).collect();
+        super::write_wav(&p, 48_000, 2, &s).unwrap();
+        let (r, ch, back) = super::read_wav(&p).unwrap();
+        assert_eq!((r, ch, back.len()), (48_000, 2, 100));
+        assert!(back.iter().zip(&s).all(|(a, b)| (a - b).abs() < 1e-3));
+        let _ = std::fs::remove_file(p);
+    }
+}

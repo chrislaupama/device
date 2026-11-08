@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! saine-studio [--open <dir>] [--import <wav>...] [--save-to <dir>] [--no-audio]
-//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth]
+//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-settings-audio|review-recording]
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--screenshot <out.png>] [--exit-after-frames N] [--frame-stats] [--self-test]
@@ -21,7 +21,10 @@ mod mixer;
 mod peaks;
 mod pianoroll;
 mod placeholder;
+mod prefs;
+mod recording;
 mod selftest;
+mod settings;
 mod synth;
 mod timeline;
 mod wavgen;
@@ -56,6 +59,13 @@ struct Args {
     synth_state: bool,
     /// --synth-page N: open that category page of the synth device (review screenshots).
     synth_page: Option<usize>,
+    /// reference-input-menu (50): Instrument + Audio tracks, Audio selected, "In" popup open.
+    input_menu_state: bool,
+    /// reference-settings-audio (14): Settings open on the Audio page.
+    settings_state: bool,
+    /// review-recording: a take in progress (injected input, offline engine) for reviewing
+    /// the live recording clip. Not a reference capture (the reference recording UI was not captured).
+    recording_review: bool,
     assistant_fixture: Option<PathBuf>,
     screenshot: Option<PathBuf>,
     exit_after_frames: Option<u64>,
@@ -106,9 +116,22 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.synth_state = true;
                 }
+                "reference-input-menu" => {
+                    a.reference_default = true;
+                    a.input_menu_state = true;
+                }
+                "reference-settings-audio" => {
+                    a.reference_default = true;
+                    a.settings_state = true;
+                }
+                "review-recording" => {
+                    a.reference_default = true;
+                    a.recording_review = true;
+                    a.audio = false;
+                }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio)"
                     ));
                 }
             },
@@ -206,6 +229,13 @@ pub fn app_keymap() -> Keymap {
     for (action, chord) in [("view.toggle_mixer", "primary+shift+x"), ("view.toggle_assistant", "primary+shift+a"), ("view.escape", "escape")] {
         k.bindings.push(Binding { action: action.into(), chords: vec![Chord::parse(chord).expect("valid chord")], when: Condition::Always });
     }
+    // Arm / input monitoring on the selected track (the core preset has no bindings for them;
+    // the reference's chords are unverified, these are ours). Added only if the core lacks them.
+    for (action, chord) in [("track.arm", "shift+r"), ("track.monitor", "shift+i")] {
+        if k.chords_for(action).is_empty() {
+            k.bindings.push(Binding { action: action.into(), chords: vec![Chord::parse(chord).expect("valid chord")], when: Condition::TrackSelected });
+        }
+    }
     // Piano roll (our bindings; the reference documents ↑/↓ transpose, Delete and B/E only).
     for (action, chords) in [
         ("midi.delete_notes", &["delete", "backspace"][..]),
@@ -273,6 +303,12 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
+            if c.settings.menu.is_some() {
+                c.settings_menu_dismiss();
+            } else if c.settings.open {
+                c.close_settings();
+            }
+            c.input_menu_close();
             c.menu_close();
             c.synth_menu_dismiss();
             c.rename = None;
@@ -286,6 +322,20 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             let mut c = ctl.borrow_mut();
             if let Some(t) = c.selected_track {
                 c.toggle_mute(t)
+            }
+        }
+        "transport.record" => ctl.borrow_mut().record_toggle(),
+        "app.settings" => ctl.borrow_mut().toggle_settings(),
+        "track.arm" => {
+            let mut c = ctl.borrow_mut();
+            if let Some(t) = c.selected_track {
+                c.toggle_arm(t)
+            }
+        }
+        "track.monitor" => {
+            let mut c = ctl.borrow_mut();
+            if let Some(t) = c.selected_track {
+                c.toggle_monitor(t)
             }
         }
         "track.solo" => {
@@ -332,8 +382,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ---- engine (48 kHz) ----
     let engine = Arc::new(Engine::new(Config { sample_rate: 48_000.0, ..Config::default() })?);
     let mut device_error = None;
+    // App preferences (Settings › Audio): never read or written by self-tests and
+    // reference/screenshot runs, so those can never open a real input device.
+    let use_prefs = !args.self_test && !args.reference_default && args.screenshot.is_none() && args.exit_after_frames.is_none();
+    let prefs_path = if use_prefs { prefs::default_path() } else { None };
+    let mut saved_prefs = prefs::Preferences::default();
+    let mut prefs_error = None;
+    if let Some(path) = &prefs_path {
+        match prefs::load(path) {
+            Ok(Some(p)) => saved_prefs = p,
+            Ok(None) => {}
+            Err(e) => prefs_error = Some(format!("Preferences ignored: {e}")),
+        }
+    }
     if args.audio {
-        if let Err(e) = engine.start_device() {
+        if let Err(e) = settings::apply_startup_prefs(&engine, &saved_prefs) {
+            prefs_error = Some(e);
+        }
+        if !engine.device_running()
+            && let Err(e) = engine.start_device()
+        {
             device_error = Some(e.to_string());
         }
     }
@@ -369,6 +437,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("assistant: provider {provider:?}{}", if provider.is_fixture() { " (TEST provider, no network)" } else { "" });
         let mut c = ctl.borrow_mut();
         c.provider = Arc::new(provider);
+        c.settings.prefs = saved_prefs;
+        c.settings.prefs_path = prefs_path;
+        if args.self_test {
+            // Recording in the self-test uses injected input only (render_offline_with_input)
+            // into a scratch directory; it never opens or requires a real input device.
+            c.rec.policy = recording::InputPolicy::InjectedOnly;
+            c.rec.dir_override = Some(std::env::temp_dir().join(format!("saine-selftest-rec-{}", std::process::id())));
+        }
         c.mixer_open = args.open_mixer;
         c.assistant_open = args.open_assistant;
         c.ui_dirty = true;
@@ -406,12 +482,68 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.synth_page(args.synth_page.unwrap_or(0));
         c.seek_beats(20.0);
     }
+    if args.input_menu_state || args.settings_state {
+        // SCREENSHOT-ONLY fake device listing (recording::screenshot_fake_devices), never
+        // configured on the engine: "Built-in Speakers" / "Built-in Microphone", 48 kHz, 1024.
+        let mut c = ctl.borrow_mut();
+        c.settings.fake_devices = true;
+        let a = &mut c.settings.prefs.audio;
+        (a.output, a.output_name) = (Some("fake:speakers".into()), Some("Built-in Speakers".into()));
+        (a.input, a.input_name) = (Some("fake:microphone".into()), Some("Built-in Microphone".into()));
+        (a.sample_rate, a.buffer_size) = (48_000.0, 1024);
+    }
+    if args.input_menu_state {
+        // Reference 50: Instrument track 1 (1-bar MIDI clip at bar 6), Audio track 2 selected,
+        // playhead 00:11.000, Devices tab, "In" popup open ("None ✓", "Input 1 (Mono)").
+        let mut p = Project::default();
+        p.tracks.swap(0, 1);
+        let mut c = ctl.borrow_mut();
+        c.replace_project(p);
+        let inst = c.project().tracks[0].id;
+        let audio = c.project().tracks[1].id;
+        c.select_track(inst);
+        c.seek_beats(20.0);
+        c.insert_midi_clip();
+        c.select_track(audio);
+        c.set_bottom_tab(BottomTab::Devices);
+        c.seek_beats(22.0);
+        c.open_input_menu();
+    }
+    if args.settings_state {
+        ctl.borrow_mut().open_settings();
+    }
+    if args.recording_review {
+        // Offline engine + injected input (no input device): track 1 armed on Input 1,
+        // recording from bar 2 with 3 s of a decaying 220 Hz tone rendered so far.
+        let mut c = ctl.borrow_mut();
+        c.rec.policy = recording::InputPolicy::InjectedOnly;
+        c.rec.dir_override = Some(std::env::temp_dir().join(format!("saine-review-rec-{}", std::process::id())));
+        let t = c.project().tracks[0].id;
+        c.execute(saine_core::Command::SetTrackArm { track: t, arm: true });
+        c.set_track_input(t, Some(saine_core::InputSource { channel: 0, stereo: false }));
+        c.seek_beats(4.0);
+        c.start_recording();
+        if c.rec.recording {
+            let n = 3 * 48_000;
+            let input: Vec<f32> = (0..n).map(|i| {
+                let t = i as f32 / 48_000.0;
+                0.8 * (0.25 + 0.75 * (-(t * 2.0).fract() * 4.0).exp()) * (std::f32::consts::TAU * 220.0 * t).sin()
+            }).collect();
+            let mut out = vec![0f32; 2 * n];
+            if let Err(e) = c.engine.render_offline_with_input(&input, 1, &mut out) {
+                c.set_status(format!("review-recording: {e}"), 10);
+            }
+        }
+    }
     // Push view models once before the first frame, so conditional panels are built
     // for the initial state (setting them from inside the first BeforeRendering is
     // too late for that frame's item tree).
     ctl.borrow_mut().update_ui(&app);
     if args.reference_default || args.screenshot.is_some() {
         ctl.borrow_mut().show_status = !args.reference_default;
+    }
+    if let Some(e) = &prefs_error {
+        ctl.borrow_mut().set_status(e.clone(), 8);
     }
     if let Some(e) = &device_error {
         ctl.borrow_mut().set_status(format!("Audio device unavailable ({e}); running offline"), 8);
@@ -441,7 +573,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_stop_return, |c| c.stop_return());
     on!(on_toggle_loop, |c| c.toggle_loop());
     on!(on_toggle_metronome, |c| c.toggle_metronome());
-    on!(on_record, |c| c.set_status("Recording is not implemented yet", 3));
+    on!(on_record, |c| c.record_toggle());
+    on!(on_track_arm, |c, id: i32| c.toggle_arm(TrackId(id as u64)));
+    on!(on_track_monitor, |c, id: i32| c.toggle_monitor(TrackId(id as u64)));
+    on!(on_open_input_menu, |c| c.open_input_menu());
+    on!(on_input_menu_pick, |c, i: i32| c.input_menu_pick(i.max(0) as usize));
+    on!(on_input_menu_dismiss, |c| c.input_menu_close());
+    on!(on_toggle_settings, |c| c.toggle_settings());
+    on!(on_close_settings, |c| c.close_settings());
+    on!(on_settings_page_select, |c, i: i32| c.settings_page(i.max(0) as usize));
+    on!(on_settings_dropdown, |c, f: i32| c.settings_dropdown(f));
+    on!(on_settings_menu_pick, |c, i: i32| c.settings_menu_pick(i.max(0) as usize));
+    on!(on_settings_menu_dismiss, |c| c.settings_menu_dismiss());
+    on!(on_settings_toggle_mute, |c| c.settings_toggle_mute());
+    on!(on_settings_test, |c| c.settings_test());
     on!(on_add_track, |c| c.add_audio_track());
     on!(on_select_track, |c, id: i32| c.select_track(TrackId(id as u64)));
     on!(on_track_mute, |c, id: i32| c.toggle_mute(TrackId(id as u64)));
@@ -551,6 +696,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
             let Some(action) = keymap.resolve(&chord, &cx).map(str::to_owned) else { return false };
+            // Settings is modal: only Escape and ⌘, reach the app while it is open.
+            if ctl.borrow().settings.open && action != "view.escape" && action != "app.settings" {
+                return true;
+            }
             let handled = run_action(&ctl, &action);
             if let Some(a) = aw.upgrade() {
                 if let Ok(mut c) = ctl.try_borrow_mut() {
@@ -591,6 +740,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aw = app.as_weak();
         poll_timer.start(slint::TimerMode::Repeated, Duration::from_millis(30), move || {
             let Ok(mut c) = ctl.try_borrow_mut() else { return };
+            c.poll_test_tone();
             if c.pending_jobs > 0 {
                 c.poll_jobs();
                 if let Some(a) = aw.upgrade() {
@@ -720,7 +870,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         f.slint.0.push((now - t).as_secs_f64() * 1e3);
                     }
                     let (animating, ready) = match ctl.try_borrow() {
-                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || !c.assistant.highlights.is_empty(), c.pending_jobs == 0),
+                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || !c.assistant.highlights.is_empty() || c.rec.recording, c.pending_jobs == 0),
                         Err(_) => (true, false),
                     };
                     if ready {
@@ -865,5 +1015,9 @@ mod tests {
         assert!(k.conflicts().is_empty(), "{:?}", k.conflicts());
         assert_eq!(k.chords_for("view.toggle_mixer").len(), 1);
         assert_eq!(k.chords_for("view.toggle_assistant").len(), 1);
+        assert_eq!(k.chords_for("track.arm").len(), 1);
+        assert_eq!(k.chords_for("track.monitor").len(), 1);
+        assert_eq!(k.chords_for("transport.record").len(), 1);
+        assert_eq!(k.chords_for("app.settings").len(), 1);
     }
 }

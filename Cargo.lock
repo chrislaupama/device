@@ -4004,6 +4004,7 @@ dependencies = [
  "rfd",
  "saine-core",
  "saine-engine",
+ "serde",
  "serde_json",
  "slint",
  "slint-build",

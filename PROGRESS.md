@@ -114,3 +114,14 @@ cargo test --workspace                                                          
 - App: Synth device card at reference geometry (MAE 2.41), preset browser, 6 real pages, live displays derived from
   the engine formulas; self-test 76/76 offline and with Core Audio, incl. a rendered-audio check that a panel cutoff
   change reaches the engine.
+
+### 2026-11-08: session 1, round 6 (recording + input)
+- Core: Track arm/monitor/input + commands; ADR 0002.
+- Engine: device enumeration/config (private aggregate device for separate mic/speaker clocks), per-track input
+  routing + monitoring, disk recording via SPSC rings + writer thread, latency-compensated takes, input-injected
+  offline render. 94/94 ctest (default + ASan). Input opens ONLY when a device is configured by name/default.
+- App: R/I buttons, In popup, record transport, live recording clip, Settings › Audio panel with saved preferences
+  (`~/Library/Application Support/Saine Studio/preferences.json`). Self-test 99/99 both modes (recording checks via
+  injected input). The session rate is fixed at 48 kHz; the Audio page says so when a different device rate is picked.
+- **Not yet verified: recording from a real microphone** (needs the macOS microphone permission). Manual check:
+  `SAINE_TEST_REAL_INPUT=1 engine/build/record_check`, then a loopback click test for latency.

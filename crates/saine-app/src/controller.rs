@@ -13,7 +13,7 @@ use crate::assistant_provider::Provider;
 use crate::mixer::{self, Ballistics, MASTER_METER_ID};
 use crate::pianoroll::{self, PrState};
 use crate::synth::SynthUi;
-use crate::{AppWindow, ChatEntry, ClipLabel, HighlightRect, MenuItem, MixerStrip, RulerLabel, StripMeter, Studio, SynthDisplay, SynthParam, TrackRow, YLabel};
+use crate::{AppWindow, ChatEntry, ChoiceItem, ClipLabel, HighlightRect, MenuItem, MixerStrip, RulerLabel, StripMeter, Studio, SynthDisplay, SynthParam, TrackRow, YLabel};
 use saine_core::{
     Asset, AssetId, Clip, ClipId, ColorIndex, Command, Document, MidiClip, Origin, PPQ, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, gain_to_db, persist, snapshot,
 };
@@ -96,6 +96,10 @@ pub fn track_color(c: ColorIndex) -> [f32; 3] {
     timeline::rgb(PALETTE[c.0 as usize % PALETTE.len()])
 }
 
+/// Record-armed / recording red (ORIGINAL choice; the reference's armed state was not
+/// captured, see ui-inventory.md §11). Mirrors `Tokens.record-red` (#e5484d).
+pub const RECORD_RED: [f32; 3] = [0xe5 as f32 / 255.0, 0x48 as f32 / 255.0, 0x4d as f32 / 255.0];
+
 fn slint_color(c: [f32; 3]) -> slint::Color {
     slint::Color::from_rgb_f32(c[0], c[1], c[2])
 }
@@ -115,6 +119,10 @@ pub enum JobResult {
     Reloaded { asset: AssetId, doc_epoch: u64, result: Result<(AssetInfo, Pyramid), String> },
     /// Assistant provider reply (raw `AssistantTurn` JSON) for a request started at `started`.
     Assistant { started: Instant, mode: saine_core::assistant::Mode, result: Result<String, String> },
+    /// Takes of one finished recording pass, loaded into the engine.
+    Recorded { doc_epoch: u64, takes: Vec<(saine_engine::RecordedTake, Result<(AssetInfo, Pyramid), String>)> },
+    /// Settings › Audio "Test" tone loaded into the engine.
+    TestTone(Result<AssetInfo, String>),
 }
 
 /// Blocking decode + peak analysis. Runs on a worker thread.
@@ -186,7 +194,7 @@ pub struct Controller {
     pub doc: Document,
     pub engine: Arc<Engine>,
     pub rate: f64,
-    asset_map: HashMap<AssetId, u64>,
+    pub(crate) asset_map: HashMap<AssetId, u64>,
     pub peaks: PeakStore,
     pub selected_track: Option<TrackId>,
     pub selected_clip: Option<ClipId>,
@@ -198,7 +206,7 @@ pub struct Controller {
     pub(crate) jobs_tx: Sender<JobResult>,
     jobs_rx: Receiver<JobResult>,
     pub pending_jobs: usize,
-    doc_epoch: u64,
+    pub(crate) doc_epoch: u64,
     published_rev: Option<u64>,
     ui_rev: Option<u64>,
     pub ui_dirty: bool,
@@ -248,6 +256,11 @@ pub struct Controller {
     pub(crate) synth_choices_model: Rc<VecModel<SharedString>>,
     pub(crate) synth_displays_model: Rc<VecModel<SynthDisplay>>,
     pub(crate) synth_menu_model: Rc<VecModel<MenuItem>>,
+    // ---- recording (src/recording.rs) + settings (src/settings.rs) ----
+    pub rec: crate::recording::RecState,
+    pub settings: crate::settings::SettingsState,
+    pub(crate) input_menu_model: Rc<VecModel<ChoiceItem>>,
+    pub(crate) settings_menu_model: Rc<VecModel<ChoiceItem>>,
 }
 
 impl Controller {
@@ -311,6 +324,10 @@ impl Controller {
             synth_choices_model: Rc::new(VecModel::default()),
             synth_displays_model: Rc::new(VecModel::default()),
             synth_menu_model: Rc::new(VecModel::default()),
+            rec: Default::default(),
+            settings: Default::default(),
+            input_menu_model: Rc::new(VecModel::default()),
+            settings_menu_model: Rc::new(VecModel::default()),
         };
         c.selected_track = c.doc.project().tracks.first().map(|t| t.id);
         c.publish();
@@ -334,6 +351,10 @@ impl Controller {
         s.set_synth_choices(ModelRc::from(self.synth_choices_model.clone()));
         s.set_synth_displays(ModelRc::from(self.synth_displays_model.clone()));
         s.set_synth_menu_items(ModelRc::from(self.synth_menu_model.clone()));
+        s.set_input_menu_items(ModelRc::from(self.input_menu_model.clone()));
+        s.set_settings_menu_items(ModelRc::from(self.settings_menu_model.clone()));
+        let pages: Vec<SharedString> = crate::settings::PAGES.iter().map(|p| SharedString::from(*p)).collect();
+        s.set_settings_pages(ModelRc::new(VecModel::from(pages)));
     }
 
     fn clip_ids_model(&self) -> Rc<VecModel<ClipLabel>> {
@@ -473,6 +494,9 @@ impl Controller {
     }
 
     pub fn stop_return(&mut self) {
+        if self.rec.recording {
+            self.stop_recording();
+        }
         let _ = self.engine.stop();
         self.ui_dirty = true;
     }
@@ -627,6 +651,8 @@ impl Controller {
                     Err(e) => self.set_status(format!("Import failed: {e}"), 6),
                 },
                 JobResult::Assistant { started, mode, result } => self.finish_assistant(started, mode, result),
+                JobResult::Recorded { doc_epoch, takes } => self.finish_recorded(doc_epoch, takes),
+                JobResult::TestTone(r) => self.finish_test_tone(r),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
                     if doc_epoch != self.doc_epoch {
                         if let Ok((info, _)) = result {
@@ -702,6 +728,16 @@ impl Controller {
             self.asset_map.remove(&asset_id);
             let _ = self.engine.release_asset(info.asset_id);
         }
+    }
+
+    /// Start over with `project` (no undo history). Used by `--state` setups.
+    pub fn replace_project(&mut self, project: Project) {
+        self.doc_epoch += 1;
+        self.doc = Document::new(project);
+        self.selected_track = self.project().tracks.first().map(|t| t.id);
+        self.selected_clip = None;
+        self.published_rev = None;
+        self.after_change();
     }
 
     pub fn save_to(&mut self, dir: &Path) {
@@ -954,6 +990,7 @@ impl Controller {
                     name: c.name.clone(),
                     wave,
                     midi: None,
+                    live: None,
                 });
                 self.clip_ids.push(c.id);
             }
@@ -979,10 +1016,12 @@ impl Controller {
                     name: c.name.clone(),
                     wave: None,
                     midi: Some(mini_notes(&notes, shift, len)),
+                    live: None,
                 });
                 self.clip_ids.push(c.id);
             }
         }
+        self.rebuild_live();
     }
 
     /// Track that holds a clip (audio or MIDI).
@@ -1016,6 +1055,7 @@ impl Controller {
             scale,
             tracks: &self.track_vis,
             clips: &self.clip_vis,
+            live: &self.rec.live_vis,
             playhead_beats: self.playhead_ticks() as f64 / PPQ as f64,
             loop_beats: (tr.loop_start as f64 / PPQ as f64, tr.loop_end as f64 / PPQ as f64),
             beats_per_bar: self.beats_per_bar(),
@@ -1129,7 +1169,11 @@ impl Controller {
         self.view.clamp_scroll(self.project().tracks.len(), self.lanes_size.1);
         s.set_scroll_y(self.view.scroll_y as f32);
         self.update_labels();
-        tp.playing || metering || highlighting || self.pending_jobs > 0 || self.drag.is_some() || self.pr_animating()
+        // The record button state follows the engine every frame while recording.
+        if s.get_recording() != self.rec.recording {
+            s.set_recording(self.rec.recording);
+        }
+        tp.playing || metering || highlighting || self.pending_jobs > 0 || self.drag.is_some() || self.pr_animating() || self.rec.recording || self.test_tone_active()
     }
 
     fn push_models(&mut self, app: &AppWindow) {
@@ -1149,6 +1193,8 @@ impl Controller {
                 selected: Some(t.id) == self.selected_track,
                 mute: t.mute,
                 solo: t.solo,
+                arm: t.arm,
+                monitor: t.monitor,
                 volume_pos: slider_from_gain(t.gain),
                 pan: t.pan,
             })
@@ -1228,6 +1274,8 @@ impl Controller {
         }
         self.push_clip_editor(&s);
         self.push_synth(&s);
+        self.push_recording(&s);
+        self.push_settings(&s);
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };
         s.set_status_text(status.into());
         self.ruler_key.0 = i64::MIN; // force label refresh
@@ -1246,6 +1294,7 @@ impl Controller {
         let labels: Vec<ClipLabel> = self
             .clip_vis
             .iter()
+            .chain(self.rec.live_vis.iter())
             .filter_map(|c| {
                 let (x, y, cw, _) = c.rect(&v);
                 if x > w || x + cw < 0.0 || y < timeline::RULER_H - 1.0 || y + timeline::CLIP_HEADER > bottom {
