@@ -798,7 +798,10 @@ TEST_CASE(device_output_only_named_device_and_restart) {
     CHECK_EQ(st.input_open, 0);
     CHECK(std::string(st.output_name) == out->name);
     CHECK_EQ(st.buffer_size, 512u);
-    CHECK(st.output_latency_frames >= 512u);
+    // Device + safety offset + stream latency (no IO-buffer term since the
+    // loopback fix): hardware dependent and 0 on virtual devices, so only
+    // plausibility is checked.
+    CHECK(st.output_latency_frames < 48000u);
     CHECK(wait_until([&] {
         se_stats s{};
         se_stats_get(e, &s);
