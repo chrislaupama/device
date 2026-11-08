@@ -65,6 +65,8 @@ struct ParamDrag {
     norm: f32,
     value: f32,
     travel: f32,
+    /// Movement before the start threshold, applied once the drag starts.
+    held: f32,
     active: bool,
     /// Strip Alt+drag: a second line moved by the same amount.
     linked: Option<Linked>,
@@ -428,7 +430,8 @@ impl Controller {
             Some(name) => {
                 let dirty = def.factory.iter().find(|f| f.name == name).is_some_and(|f| {
                     let want = def.factory_values(f);
-                    def.params.iter().any(|p| (def.value(d, p) - want.get(p.id).copied().unwrap_or(p.default)).abs() > 1e-4 * (p.max - p.min))
+                    // The sidechain switch follows the panel's source pick, not the preset.
+                    def.params.iter().filter(|p| p.id != "sidechainEnable").any(|p| (def.value(d, p) - want.get(p.id).copied().unwrap_or(p.default)).abs() > 1e-4 * (p.max - p.min))
                 });
                 if dirty { format!("{name}*") } else { name.clone() }
             }
@@ -629,16 +632,17 @@ impl Controller {
         match phase {
             0 => {
                 let v = def.value(d, p);
-                self.devices.panel.drag = Some(ParamDrag { device, index: index as usize, start: v, norm: p.to_normalized(v), value: v, travel: 0.0, active: false, linked: None });
+                self.devices.panel.drag = Some(ParamDrag { device, index: index as usize, start: v, norm: p.to_normalized(v), value: v, travel: 0.0, held: 0.0, active: false, linked: None });
             }
             1 => {
                 let Some(g) = self.devices.panel.drag.as_mut().filter(|g| g.device == device && g.index == index as usize) else { return };
                 g.travel += dy.abs();
+                g.held += dy;
                 if !g.active && g.travel < DRAG_SLOP {
                     return;
                 }
                 g.active = true;
-                g.norm = (g.norm + dy * rate * if fine { 0.2 } else { 1.0 }).clamp(0.0, 1.0);
+                g.norm = (g.norm + std::mem::take(&mut g.held) * rate * if fine { 0.2 } else { 1.0 }).clamp(0.0, 1.0);
                 let v = if p.is_discrete() { p.from_normalized(g.norm).round() } else { p.from_normalized(g.norm) };
                 if v != g.value {
                     g.value = v;
@@ -656,10 +660,7 @@ impl Controller {
                 }
             }
             _ => {
-                if let Some(g) = self.devices.panel.drag.take() {
-                    let _ = self.engine.builtin_set_param(device.0, index as u32, g.start);
-                    self.ui_dirty = true;
-                }
+                self.panel_cancel_drag();
             }
         }
     }
@@ -674,17 +675,17 @@ impl Controller {
             0 => {
                 let (va, vb) = (def.value(d, pa), def.value(d, pb));
                 let linked = Some(Linked { index: ib, start: vb, value: vb, delta: 0.0 });
-                self.devices.panel.drag = Some(ParamDrag { device, index: ia, start: va, norm: 0.0, value: va, travel: 0.0, active: false, linked });
+                self.devices.panel.drag = Some(ParamDrag { device, index: ia, start: va, norm: 0.0, value: va, travel: 0.0, held: 0.0, active: false, linked });
             }
             1 => {
                 let Some(g) = self.devices.panel.drag.as_mut().filter(|g| g.device == device && g.index == ia) else { return };
                 let Some(l) = g.linked.as_mut() else { return };
                 g.travel += dy.abs();
+                l.delta += dy * rate * if fine { 0.2 } else { 1.0 } * (pa.max - pa.min);
                 if !g.active && g.travel < DRAG_SLOP {
                     return;
                 }
                 g.active = true;
-                l.delta += dy * rate * if fine { 0.2 } else { 1.0 } * (pa.max - pa.min);
                 let delta = l.delta.clamp((pa.min - g.start).max(pb.min - l.start), (pa.max - g.start).min(pb.max - l.start));
                 let (va, vb) = (pa.snap(g.start + delta), pb.snap(l.start + delta));
                 if (va, vb) != (g.value, l.value) {
@@ -708,13 +709,20 @@ impl Controller {
                 }
             }
             _ => {
-                if let Some(ParamDrag { start, linked: Some(l), .. }) = self.devices.panel.drag.take() {
-                    let _ = self.engine.builtin_set_param(device.0, ia as u32, start);
-                    let _ = self.engine.builtin_set_param(device.0, ib as u32, l.start);
-                    self.ui_dirty = true;
-                }
+                self.panel_cancel_drag();
             }
         }
+    }
+
+    /// Escape or a cancelled pointer: restore the value from before the drag, with no undo step.
+    pub fn panel_cancel_drag(&mut self) -> bool {
+        let Some(g) = self.devices.panel.drag.take() else { return false };
+        let _ = self.engine.builtin_set_param(g.device.0, g.index as u32, g.start);
+        if let Some(l) = g.linked {
+            let _ = self.engine.builtin_set_param(g.device.0, l.index as u32, l.start);
+        }
+        self.ui_dirty = true;
+        true
     }
 
     fn panel_set(&mut self, device: DeviceId, index: i32, value: impl FnOnce(&ParamDef, f32) -> Option<f32>) {
@@ -776,8 +784,24 @@ impl Controller {
         let rows = match which {
             -1 => {
                 let own = self.project().find_device(device).map(|(ti, _)| self.project().tracks[ti].id);
+                // A source that already listens to this track (directly or through other sidechains) would form a cycle.
+                let feeds_back = |from: TrackId| {
+                    let mut stack = vec![from];
+                    let mut seen = std::collections::HashSet::new();
+                    while let Some(t) = stack.pop() {
+                        if Some(t) == own {
+                            return true;
+                        }
+                        if seen.insert(t)
+                            && let Some(tr) = self.project().track(t)
+                        {
+                            stack.extend(tr.devices.iter().filter_map(|x| x.sidechain));
+                        }
+                    }
+                    false
+                };
                 let mut rows = vec![("None".to_string(), check(d.sidechain.is_none()), Some(MenuPick::Sidechain(device, None)), false)];
-                for t in self.project().tracks.iter().filter(|t| Some(t.id) != own) {
+                for t in self.project().tracks.iter().filter(|t| Some(t.id) != own && (d.sidechain == Some(t.id) || !feeds_back(t.id))) {
                     rows.push((t.name.clone(), check(d.sidechain == Some(t.id)), Some(MenuPick::Sidechain(device, Some(t.id))), false));
                 }
                 rows
@@ -812,9 +836,13 @@ impl Controller {
     }
 
     pub(crate) fn panel_load_preset(&mut self, device: DeviceId, n: usize) {
-        let Some((_, def)) = self.panel_def(device) else { return };
+        let Some((d, def)) = self.panel_def(device) else { return };
         let Some(f) = def.factory.get(n) else { return };
-        let params = saine_core::builtin::DevicePreset::factory(def, f).load_values(def);
+        let mut params = saine_core::builtin::DevicePreset::factory(def, f).load_values(def);
+        // The sidechain switch follows the source picked in the panel, not the preset.
+        if let Some(p) = def.param("sidechainEnable") {
+            params.insert(p.id.into(), def.value(d, p));
+        }
         self.execute(Command::SetDeviceParams { device, params, preset: Some(f.name.to_string()) });
     }
 

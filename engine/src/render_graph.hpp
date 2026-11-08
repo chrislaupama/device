@@ -51,9 +51,11 @@ struct FxSlot {
     uint32_t lane_count = 0;
     uint32_t auto_delay = 0;
     // Built-in devices with a sidechain: the source track id (0 = none) and
-    // its tap (RenderContext::sc_l/sc_r, -1 = silence).
+    // its tap (RenderContext::sc_l/sc_r, -1 = silence). sc_wanted: a source
+    // was named, so a rejected route reads silence instead of no sidechain.
     uint64_t sc_source = 0;
     int32_t sc_tap = -1;
+    bool sc_wanted = false;
 };
 
 // One automation lane (se_auto_lane_desc) with its points in

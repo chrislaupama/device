@@ -735,6 +735,16 @@ impl Controller {
             cats.push(("Synth".into(), SynthParam::ALL.iter().map(|p| e(p.name(), AutomationTarget::Synth { param: *p })).collect()));
         }
         for d in t.instrument_plugin.iter().chain(t.devices.iter()) {
+            if let Some(def) = saine_core::builtin::def_of(d) {
+                let items = def
+                    .params
+                    .iter()
+                    .filter(|p| p.automatable)
+                    .map(|p| e(p.name, AutomationTarget::Builtin { device: d.id, device_type: def.id.into(), param: p.id.into() }))
+                    .collect();
+                cats.push((def.name.into(), items));
+                continue;
+            }
             let mut params: Vec<_> = self.engine.plugin_params(d.id).into_iter().filter(|p| p.automatable).collect();
             params.sort_by(|a, b| a.group.cmp(&b.group));
             let mut items = Vec::new();

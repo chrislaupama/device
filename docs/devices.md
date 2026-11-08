@@ -87,7 +87,10 @@ flowchart LR
    within one `process` call (the instance splits blocks at automation
    events); smoothing audible steps is the kernel's job (`dsp::Smoother`).
    Readouts (meters, gain reduction) are written per block; give
-   `idle_readouts` for the values before the first block. Report latency for
+   `idle_readouts` for the values before the first block. When automation
+   splits a block, the engine keeps each readout's segment value farthest
+   from its idle value, so readouts must move away from idle as they grow
+   (a peak meter rises from -120 dB, gain reduction falls from 0 dB). Report latency for
    PDC: `latency_for(params)` (the default returns the fixed `latency`), so a
    kernel whose delay depends on a setting (the mastering limiter's
    oversampling) reports the delay of the values it will run with. Shared
