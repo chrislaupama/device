@@ -9,11 +9,15 @@ namespace saine {
 // ---------------------------------------------------------------- registry
 // One line per built-in device; the descriptor lives next to its processor.
 extern const BuiltinDescriptor kCompressorDescriptor;
+extern const BuiltinDescriptor kTranceGateDescriptor;
+extern const BuiltinDescriptor kShaperDescriptor;
 
 namespace {
 
 const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kCompressorDescriptor,
+    &kTranceGateDescriptor,
+    &kShaperDescriptor,
 };
 
 struct CRegistry {
@@ -76,7 +80,8 @@ BuiltinInstance::BuiltinInstance(PluginSpec spec, const BuiltinDescriptor& desc,
     : PluginInstance(std::move(spec)), desc_(desc), proc_(std::move(proc)),
       target_(new std::atomic<float>[std::max<std::size_t>(1, desc.params.size())]), current_(desc.params.size(), 0.0f),
       readout_atomic_(new std::atomic<float>[std::max<std::size_t>(1, desc.readouts.size())]),
-      readout_scratch_(desc.readouts.size(), 0.0f), readout_segment_(desc.readouts.size(), 0.0f) {
+      readout_scratch_(desc.readouts.size(), 0.0f), readout_segment_(desc.readouts.size(), 0.0f),
+      latency_values_(desc.params.size(), 0.0f) {
     for (std::size_t i = 0; i < desc_.params.size(); ++i) target_[i].store(0.0f, std::memory_order_relaxed);
     for (std::size_t i = 0; i < desc_.readouts.size(); ++i)
         readout_atomic_[i].store(i < desc_.idle_readouts.size() ? desc_.idle_readouts[i] : 0.0f, std::memory_order_relaxed);
@@ -135,6 +140,10 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
         }
         const uint32_t end = e < param_count ? std::min(frames, params[e].offset) : frames;
         BuiltinContext seg = ctx;
+        // Tempo-synced devices read the transport at the segment's first frame.
+        RtTransport seg_transport = transport;
+        seg_transport.position += pos;
+        seg.transport = &seg_transport;
         if (seg.sc_l != nullptr) {
             seg.sc_l += pos;
             seg.sc_r += pos;
@@ -153,6 +162,11 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     }
     for (std::size_t i = 0; i < readout_scratch_.size(); ++i) readout_atomic_[i].store(ro[i], std::memory_order_relaxed);
     sc_l_ = sc_r_ = nullptr;
+}
+
+uint32_t BuiltinInstance::latency() {
+    for (std::size_t i = 0; i < latency_values_.size(); ++i) latency_values_[i] = target_[i].load(std::memory_order_relaxed);
+    return proc_->latency_for(latency_values_.data());
 }
 
 bool BuiltinInstance::save_state(std::vector<uint8_t>& out, std::string&) {

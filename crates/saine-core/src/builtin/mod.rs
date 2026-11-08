@@ -26,6 +26,8 @@
 //! store the choice index as their plain value (`min` = 0, `max` = choices - 1).
 
 mod compressor;
+pub mod shaper;
+pub mod trance_gate;
 
 use crate::device::{Device, DeviceId, PluginFormat, PluginKind, PluginRef};
 use crate::model::Track;
@@ -58,7 +60,8 @@ pub enum Format {
     Percent,
     /// Choice name from `ParamDef::choices`.
     Choice,
-    /// Number with this many decimals and the unit appended when not empty.
+    /// Number with this many decimals and the unit appended when not empty
+    /// (a multiplier unit "x" attaches without a space: "8.0x").
     Plain(u8),
 }
 
@@ -244,7 +247,12 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
         }
         Format::Plain(d) => {
             let s = format!("{:.*}", d as usize, v).replace('-', &MINUS.to_string());
-            if unit.is_empty() { s } else { format!("{s} {unit}") }
+            match unit {
+                "" => s,
+                // Multipliers attach to the number ("8.0x").
+                "x" => format!("{s}x"),
+                _ => format!("{s} {unit}"),
+            }
         }
     }
 }
@@ -371,7 +379,7 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 1] = [&compressor::COMPRESSOR];
+    static ALL: [&DeviceDef; 3] = [&compressor::COMPRESSOR, &trance_gate::TRANCE_GATE, &shaper::SHAPER];
     &ALL
 }
 

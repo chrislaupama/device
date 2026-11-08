@@ -119,6 +119,14 @@ public:
     }
     float get(const char* id) const { return values_[param_index(desc(), id)]; }
     void reset() { b_->processor().reset(); }
+    // Transport seen by tempo-synced devices: playing from timeline frame
+    // `start` at `bpm` (run() advances it), or stopped.
+    void play(double bpm = 120.0, int64_t start = 0) {
+        playing_ = true;
+        tempo_ = bpm;
+        start_ = start;
+    }
+    void stop() { playing_ = false; }
 
     // Process l/r (same length) in blocks of block(); `sc` optional sidechain.
     // `events` are automation events at absolute frames (sorted).
@@ -126,6 +134,8 @@ public:
                                   const std::vector<std::pair<std::size_t, std::pair<uint32_t, float>>>& events = {}) {
         saine::RtTransport tr;
         tr.sample_rate = rate_;
+        tr.playing = playing_;
+        tr.tempo_bpm = tempo_;
         std::vector<saine::ParamEvent> ev;
         ev.reserve(saine::PluginInstance::kMaxParamEvents);
         std::size_t ei = 0;
@@ -142,9 +152,10 @@ public:
                 std::memcpy(sc_r_.data(), (sc_r != nullptr ? sc_r : sc_l)->data() + pos, 4 * n);
                 b_->set_sidechain(sc_l_.data(), sc_r_.data());
             }
-            tr.position = static_cast<int64_t>(pos);
+            tr.position = start_ + static_cast<int64_t>(pos);
             b_->run(l.data() + pos, r.data() + pos, n, nullptr, 0, tr, ev.data(), static_cast<uint32_t>(ev.size()));
         }
+        if (playing_) start_ += static_cast<int64_t>(l.size());
         return {std::move(l), std::move(r)};
     }
     Signal run_mono(const Signal& x) { return run(x, x).first; }
@@ -162,6 +173,9 @@ private:
     std::shared_ptr<saine::PluginInstance> inst_;
     saine::BuiltinInstance* b_ = nullptr;
     Signal sc_l_, sc_r_;
+    bool playing_ = false;
+    double tempo_ = 120.0;
+    int64_t start_ = 0;
 };
 
 // v6 session builder for tracks that play a clip through built-in devices.

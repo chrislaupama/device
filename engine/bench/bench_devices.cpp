@@ -3,6 +3,7 @@
 // 32-track session with two compressors per track.
 //
 //   saine_device_bench [blocks]      (Release build; numbers in us per 256-frame block)
+#include "../tests/devices/modulation_defaults.hpp"
 #include "devices/builtin.hpp"
 #include "platform/os.hpp"
 #include "saine_engine.h"
@@ -130,6 +131,28 @@ int main(int argc, char** argv) {
         row(name, bench_kernel("compressor", v, blocks, 0));
     }
     row("compressor (Clean, 16 auto events)", bench_kernel("compressor", kCompressor, blocks, 16));
+
+    row("trance-gate (defaults)", bench_kernel("trance-gate", devtest::trance_gate_defaults(), blocks, 0));
+    row("trance-gate (16 auto events)", bench_kernel("trance-gate", devtest::trance_gate_defaults(), blocks, 16));
+    {
+        using devtest::shaper_lane;
+        const std::vector<float> base = devtest::shaper_defaults();
+        row("shaper (defaults: Volume lane)", bench_kernel("shaper", base, blocks, 0));
+        const char* lanes[] = {"Volume", "Time", "Width", "Pan", "Filter", "Crush", "Pitch"};
+        for (int lane = 1; lane < 7; ++lane) {
+            std::vector<float> v = base;
+            v[shaper_lane(0, 0)] = 0.f;
+            v[shaper_lane(lane, 0)] = 1.f;
+            char name[64];
+            std::snprintf(name, sizeof name, "shaper (%s lane only)", lanes[lane]);
+            row(name, bench_kernel("shaper", v, blocks, 0));
+        }
+        std::vector<float> all = base;
+        for (int lane = 0; lane < 7; ++lane) all[shaper_lane(lane, 0)] = 1.f;
+        row("shaper (all 7 lanes)", bench_kernel("shaper", all, blocks, 0));
+        for (int lane = 0; lane < 7; ++lane) all[shaper_lane(lane, 3)] = 1.f; // Band: Lows
+        row("shaper (all 7 lanes, band split)", bench_kernel("shaper", all, blocks, 0));
+    }
 
     // Parameter update paths and session cost: 32 tracks, one clip and two
     // compressors each.
