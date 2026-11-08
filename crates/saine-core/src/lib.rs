@@ -6,8 +6,10 @@
 //! * [`persist`]: versioned project files with external media references
 //! * [`snapshot`]: derivation of immutable engine session descriptions
 
+pub mod assistant;
 pub mod command;
 pub mod history;
+pub mod keymap;
 pub mod model;
 pub mod persist;
 pub mod snapshot;

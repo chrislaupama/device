@@ -1,0 +1,276 @@
+//! AI assistant command layer (provider-agnostic, offline-safe).
+//!
+//! The language model never touches the project or the engine directly. It
+//! returns an [`AssistantTurn`] (JSON matching [`tool_schema`]); [`plan`]
+//! validates it against the current mode and a dry run on a copy of the
+//! project; [`commit`] executes the result as ONE undo step through the same
+//! [`Document`] the UI uses.
+//!
+//! * **Assist** mode: edits allowed (validated), plus highlights/explanations.
+//! * **Teach** mode: no edits at all; only highlights of real UI targets and
+//!   explanations. The reference app calls this "Point".
+//!
+//! Network access, model choice and prompting live outside this crate, so
+//! the DAW works fully offline.
+
+use crate::command::{Command, EditError};
+use crate::history::{assign_ids, Document, Origin};
+use crate::model::*;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Mode {
+    Assist,
+    Teach,
+}
+
+/// One action proposed by the model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AssistantAction {
+    /// Any validated edit command (see `Command`).
+    Edit { command: Command },
+    /// Convenience for models: volume in decibels instead of linear gain.
+    SetTrackVolumeDb { track: TrackId, db: f32 },
+    /// Point at a UI element (stable target id from [`UI_TARGETS`], or a
+    /// per-track target like `track:<id>:volume`).
+    Highlight { target: String, note: String },
+    /// Plain-language explanation shown in the chat.
+    Explain { text: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssistantTurn {
+    pub actions: Vec<AssistantAction>,
+}
+
+#[derive(Debug, Error, PartialEq)]
+pub enum AssistantError {
+    #[error("teach mode cannot modify the project (action {index})")]
+    EditInTeachMode { index: usize },
+    #[error("unknown UI target {0:?}")]
+    UnknownTarget(String),
+    #[error("action {index} is invalid: {error}")]
+    InvalidEdit { index: usize, error: EditError },
+    #[error("malformed assistant output: {0}")]
+    Malformed(String),
+}
+
+/// Validated, ready-to-commit result of a turn.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Plan {
+    /// All edits as one atomic batch (None when the turn has no edits).
+    pub batch: Option<Command>,
+    pub highlights: Vec<(String, String)>,
+    pub explanations: Vec<String>,
+    /// Plain sentences describing each edit, like the reference's action log
+    /// ("Added an audio track, Drums.").
+    pub summary: Vec<String>,
+}
+
+/// Stable ids for highlightable UI elements (see reference/ui-inventory.md).
+pub const UI_TARGETS: &[&str] = &[
+    "header.sounds_toggle",
+    "transport.rewind",
+    "transport.play",
+    "transport.record",
+    "transport.loop",
+    "transport.automation_arm",
+    "transport.bar",
+    "transport.time",
+    "transport.bpm",
+    "transport.tap",
+    "transport.key",
+    "transport.time_signature",
+    "transport.metronome",
+    "header.master_volume",
+    "header.assistant_toggle",
+    "header.mixer_toggle",
+    "header.editor_toggle",
+    "header.musical_typing",
+    "header.settings",
+    "browser.search",
+    "browser.library",
+    "browser.devices",
+    "browser.files",
+    "timeline.returns",
+    "timeline.master_toggle",
+    "timeline.overview",
+    "timeline.smart_fill",
+    "timeline.automation_toggle",
+    "timeline.draw_mode",
+    "timeline.tool",
+    "timeline.vertical_zoom",
+    "timeline.horizontal_zoom",
+    "timeline.snap",
+    "timeline.add_track",
+    "timeline.ruler",
+    "inspector.input",
+    "inspector.output",
+    "inspector.trim",
+    "inspector.width",
+    "inspector.pan",
+    "inspector.mono",
+    "inspector.fader",
+    "devices.add_device",
+];
+
+const TRACK_TARGET_PARTS: &[&str] = &["header", "mute", "solo", "arm", "pan", "volume", "lane"];
+
+fn valid_target(p: &Project, t: &str) -> bool {
+    if UI_TARGETS.contains(&t) {
+        return true;
+    }
+    // track:<id>:<part>
+    let mut it = t.split(':');
+    match (it.next(), it.next().and_then(|s| s.parse::<u64>().ok()), it.next(), it.next()) {
+        (Some("track"), Some(id), Some(part), None) => p.track(TrackId(id)).is_some() && TRACK_TARGET_PARTS.contains(&part),
+        _ => false,
+    }
+}
+
+/// Parse raw model output (JSON) into a turn.
+pub fn parse_turn(json_text: &str) -> Result<AssistantTurn, AssistantError> {
+    serde_json::from_str(json_text).map_err(|e| AssistantError::Malformed(e.to_string()))
+}
+
+/// Validate a turn for `mode` against the document without changing it.
+pub fn plan(doc: &Document, mode: Mode, turn: &AssistantTurn) -> Result<Plan, AssistantError> {
+    let mut highlights = Vec::new();
+    let mut explanations = Vec::new();
+    let mut edits = Vec::new();
+    for (index, action) in turn.actions.iter().enumerate() {
+        match action {
+            AssistantAction::Highlight { target, note } => {
+                if !valid_target(doc.project(), target) {
+                    return Err(AssistantError::UnknownTarget(target.clone()));
+                }
+                highlights.push((target.clone(), note.clone()));
+            }
+            AssistantAction::Explain { text } => explanations.push(text.clone()),
+            AssistantAction::Edit { .. } | AssistantAction::SetTrackVolumeDb { .. } if mode == Mode::Teach => {
+                return Err(AssistantError::EditInTeachMode { index });
+            }
+            AssistantAction::Edit { command } => edits.push((index, command.clone())),
+            AssistantAction::SetTrackVolumeDb { track, db } => {
+                edits.push((index, Command::SetTrackGain { track: *track, gain: db_to_gain(*db) }));
+            }
+        }
+    }
+
+    // Dry run on a scratch copy: assigns ids, validates every step in
+    // sequence (later edits may depend on earlier ones) and builds summaries.
+    let mut scratch = doc.project().clone();
+    let mut summary = Vec::new();
+    let mut commands = Vec::new();
+    for (index, mut cmd) in edits {
+        assign_ids(&mut cmd, &mut scratch);
+        let before = scratch.clone();
+        cmd.clone().apply(&mut scratch).map_err(|error| AssistantError::InvalidEdit { index, error })?;
+        summary.push(describe(&cmd, &before, &scratch));
+        commands.push(cmd);
+    }
+    let batch = (!commands.is_empty()).then(|| Command::Batch { label: "Assistant Edit".into(), commands });
+    Ok(Plan { batch, highlights, explanations, summary })
+}
+
+/// Execute a validated plan as a single undo step.
+pub fn commit(doc: &mut Document, plan: &Plan) -> Result<(), EditError> {
+    match &plan.batch {
+        Some(batch) => doc.execute(batch.clone(), Origin::Assistant),
+        None => Ok(()),
+    }
+}
+
+/// Compact description of the project for the model's context window.
+pub fn describe_state(p: &Project) -> Value {
+    json!({
+        "tempo_bpm": p.transport.bpm,
+        "time_signature": format!("{}/{}", p.transport.time_signature.numerator, p.transport.time_signature.denominator),
+        "ppq": PPQ,
+        "master_volume_db": round1(gain_to_db(p.master_gain)),
+        "tracks": p.tracks.iter().enumerate().map(|(i, t)| json!({
+            "id": t.id.0,
+            "number": i + 1,
+            "name": t.name,
+            "kind": t.kind,
+            "volume_db": round1(gain_to_db(t.gain)),
+            "pan": t.pan,
+            "mute": t.mute,
+            "solo": t.solo,
+            "clips": t.clips.iter().map(|c| json!({
+                "id": c.id.0,
+                "name": c.name,
+                "start_bar": 1.0 + c.start as f64 / p.ticks_per_bar() as f64,
+                "length_seconds": p.asset(c.asset).map(|a| c.source_length as f64 / a.sample_rate),
+            })).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn round1(v: f32) -> Value {
+    if v.is_finite() { json!((v * 10.0).round() / 10.0) } else { json!("-inf") }
+}
+
+/// JSON Schema for one assistant turn, given to the model as its tool/output schema.
+pub fn tool_schema() -> Value {
+    let id = json!({"type": "integer", "minimum": 1});
+    json!({
+        "type": "object",
+        "required": ["actions"],
+        "properties": { "actions": { "type": "array", "items": { "oneOf": [
+            {"type": "object", "required": ["type", "command"], "properties": {
+                "type": {"const": "edit"},
+                "command": {"type": "object", "required": ["op"], "description":
+                    "Edit command. ops: add_track{index?, track{id:0,kind:audio|instrument,name,color,gain,pan,mute,solo,clips:[]}}, \
+                     remove_track{track}, rename_track{track,name}, set_track_gain{track,gain(linear 0..3.98)}, \
+                     set_track_pan{track,pan(-1..1)}, set_track_mute{track,mute}, set_track_solo{track,solo}, \
+                     set_master_gain{gain}, move_clip{clip,track,start(ticks)}, trim_clip{clip,start,source_offset,source_length}, \
+                     set_clip_gain{clip,gain}, remove_clip{clip}, set_tempo{bpm 20..999}, \
+                     set_time_signature{numerator,denominator}, set_loop{enabled,start,end}. Positions are ticks (PPQ 960)."}
+            }},
+            {"type": "object", "required": ["type", "track", "db"], "properties": {
+                "type": {"const": "set_track_volume_db"}, "track": id, "db": {"type": "number", "maximum": 12}}},
+            {"type": "object", "required": ["type", "target", "note"], "properties": {
+                "type": {"const": "highlight"},
+                "target": {"type": "string", "description": "One of UI_TARGETS or track:<id>:<header|mute|solo|arm|pan|volume|lane>",
+                           "examples": UI_TARGETS},
+                "note": {"type": "string"}}},
+            {"type": "object", "required": ["type", "text"], "properties": {
+                "type": {"const": "explain"}, "text": {"type": "string"}}}
+        ]}}}
+    })
+}
+
+fn track_name(p: &Project, id: TrackId) -> String {
+    p.track(id).map(|t| t.name.clone()).unwrap_or_else(|| format!("track {}", id.0))
+}
+
+/// Plain-language sentence for an applied command.
+fn describe(cmd: &Command, before: &Project, after: &Project) -> String {
+    match cmd {
+        Command::AddTrack { track, .. } => format!("Added an {} track, {}.", match track.kind { TrackKind::Audio => "audio", TrackKind::Instrument => "instrument" }, track.name),
+        Command::RemoveTrack { track } => format!("Deleted {}.", track_name(before, *track)),
+        Command::RenameTrack { track, name } => format!("Renamed {} to {}.", track_name(before, *track), name),
+        Command::SetTrackGain { track, gain } => format!("Set {} volume to {:.1} dB.", track_name(after, *track), gain_to_db(*gain)),
+        Command::SetTrackPan { track, pan } => {
+            let side = if pan.abs() < 0.005 { "centre".to_string() } else { format!("{:.0}% {}", pan.abs() * 100.0, if *pan < 0.0 { "left" } else { "right" }) };
+            format!("Panned {} {}.", track_name(after, *track), side)
+        }
+        Command::SetTrackMute { track, mute } => format!("{} {}.", if *mute { "Muted" } else { "Unmuted" }, track_name(after, *track)),
+        Command::SetTrackSolo { track, solo } => format!("{} {}.", if *solo { "Soloed" } else { "Unsoloed" }, track_name(after, *track)),
+        Command::SetMasterGain { gain } => format!("Set master volume to {:.1} dB.", gain_to_db(*gain)),
+        Command::SetTempo { bpm } => format!("Changed tempo to {bpm} BPM."),
+        Command::SetTimeSignature { numerator, denominator } => format!("Changed time signature to {numerator}/{denominator}."),
+        Command::MoveClip { clip, track, start } => format!(
+            "Moved {} to bar {:.2} on {}.",
+            before.clip(*clip).map(|c| c.name.as_str()).unwrap_or("clip"),
+            1.0 + *start as f64 / after.ticks_per_bar() as f64,
+            track_name(after, *track)
+        ),
+        other => format!("{}.", other.label()),
+    }
+}
