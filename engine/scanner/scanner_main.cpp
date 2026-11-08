@@ -328,11 +328,27 @@ std::vector<Item> enumerate_items() {
                              std::to_string(au.version)});
     std::vector<std::string> dirs;
     std::string home, v;
+    // Path lists split like Rust's std::env::split_paths (what Settings shows):
+    // on Windows a double-quoted section may contain ';' and the quotes are
+    // dropped; elsewhere plain ':' splitting.
     const auto split = [&](const std::string& list) {
-        std::stringstream ss(list);
         std::string part;
-        while (std::getline(ss, part, os::path_list_separator()))
-            if (!part.empty()) dirs.push_back(part);
+        bool quoted = false;
+        for (const char c : list) {
+#if defined(_WIN32)
+            if (c == '"') {
+                quoted = !quoted;
+                continue;
+            }
+#endif
+            if (c == os::path_list_separator() && !quoted) {
+                if (!part.empty()) dirs.push_back(part);
+                part.clear();
+            } else {
+                part += c;
+            }
+        }
+        if (!part.empty()) dirs.push_back(part);
     };
 #if defined(__APPLE__)
     os::get_env("HOME", home);

@@ -232,8 +232,10 @@ running jackd without PipeWire.
   need "a third plugin" use `SaineTestLatency.clap` instead.
 * **Editors.** Windows: `plugin_editor_win.cpp` (top-level window, plugin
   child HWND, `IPlugFrame::resizeView` / `request_resize`, user resizing,
-  close box), covered in CI by `SaineTestGui.clap` +
-  `plugin_editor_window_win32_open_resize_close`; per-monitor DPI scaling is
+  close box), covered by `SaineTestGui.clap` +
+  `plugin_editor_window_win32_open_resize_close`, which passed in the last
+  hosted Windows run (Windows is not built in CI now, see above, so later
+  editor changes are untested there); per-monitor DPI scaling is
   not handled yet. Linux: not implemented (X11 embedding needs an X event
   loop plus the plugins' `posix-fd`/`timer` support for CLAP and
   `IRunLoop` for VST3); opening an editor returns
