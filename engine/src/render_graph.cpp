@@ -467,6 +467,7 @@ int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lo
                 const uint8_t* values = nullptr;
                 uint32_t count = 0;
                 parse_builtin_state(dd.state, dd.state_len, values, count, slot.sc_source); // validated above
+                slot.sc_wanted = slot.sc_source != 0;
                 if (slot.sc_source == td.track_id) slot.sc_source = 0;
             }
             g->fx.push_back(slot);

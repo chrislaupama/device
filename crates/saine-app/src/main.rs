@@ -362,6 +362,9 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
+            if c.panel_cancel_drag() {
+                return true;
+            }
             if c.settings.menu.is_some() {
                 c.settings_menu_dismiss();
             } else if c.settings.open {

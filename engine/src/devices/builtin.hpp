@@ -59,7 +59,8 @@ struct BuiltinDescriptor {
     std::span<const char* const> readouts;
     std::unique_ptr<BuiltinProcessor> (*create)();
     // Readout values before the first processed block (empty = zeros), e.g.
-    // silence for level meters.
+    // silence for level meters. When automation splits a block, each readout
+    // keeps the segment value farthest from its idle value.
     std::span<const float> idle_readouts;
 };
 
@@ -117,6 +118,7 @@ private:
     std::vector<float> current_;                   // RT copy for this block
     std::unique_ptr<std::atomic<float>[]> readout_atomic_;
     std::vector<float> readout_scratch_;
+    std::vector<float> readout_segment_; // later automation segments, merged into readout_scratch_
     const float* sc_l_ = nullptr;
     const float* sc_r_ = nullptr;
 };

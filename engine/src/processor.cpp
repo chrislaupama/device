@@ -362,10 +362,12 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                                               ? lines[graph->pdc.slot_index(track_count, track.fx_begin + i)]
                                               : nullptr;
                 if (slot->enabled && slot->inst != nullptr) {
-                    if (slot->sc_tap >= 0)
-                        if (BuiltinInstance* b = slot->inst->as_builtin())
-                            b->set_sidechain(ctx.sc_l(static_cast<uint32_t>(slot->sc_tap)),
-                                             ctx.sc_r(static_cast<uint32_t>(slot->sc_tap)));
+                    if (slot->sc_wanted)
+                        if (BuiltinInstance* b = slot->inst->as_builtin()) {
+                            const auto k2 = static_cast<uint32_t>(slot->sc_tap);
+                            b->set_sidechain(slot->sc_tap >= 0 ? ctx.sc_l(k2) : ctx.zeros(),
+                                             slot->sc_tap >= 0 ? ctx.sc_r(k2) : ctx.zeros());
+                        }
                     const uint32_t np = slot->lane_count > 0
                                             ? plugin_events(slot->lane_begin, slot->lane_count,
                                                             lines != nullptr ? slot->auto_delay : 0)

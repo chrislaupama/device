@@ -2072,7 +2072,7 @@ fn builtin_device_steps() -> Vec<Step> {
         hc.set(n);
         (n == was + 1 && c.doc.undo_label() == Some(label)).then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want {label})", c.doc.undo_label()))
     }
-    let (h0, h1, h2, h3, h4, h5, h6) = (h(), h(), h(), h(), h(), h(), h());
+    let (h0, h1, h2, h3, h4, h5, h6, h7, h8) = (h(), h(), h(), h(), h(), h(), h(), h(), h());
     vec![
         Do("builtin: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
         DoC("builtin: select the first audio track, Devices tab, Add device › Built-in", Box::new(move |a, ctl| {
@@ -2184,6 +2184,44 @@ fn builtin_device_steps() -> Vec<Step> {
             let d = builtin_device(c).ok_or("no device")?;
             h6.set(c.doc.history_labels().len());
             (d.sidechain.is_none() && builtin_value(c, "sidechainEnable") == Some(0.0)).then_some(()).ok_or(format!("sidechain {:?}", d.sidechain))
+        })),
+        DoC("builtin: pick the Instrument track as sidechain, then load the second factory preset", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let (Some(d), Some(t)) = (builtin_device(&c).map(|d| d.id), track_of(&c, TrackKind::Instrument)) else { return };
+            let src = c.project().tracks[t].id;
+            c.panel_set_sidechain(d, Some(src));
+            c.panel_load_preset(d, 1);
+        })),
+        Check("builtin: a preset keeps the sidechain source and its enable switch", Box::new(|c, _| {
+            let d = builtin_device(c).ok_or("no device")?;
+            (d.sidechain.is_some() && builtin_value(c, "sidechainEnable") == Some(1.0)).then_some(()).ok_or(format!("sidechain {:?} enable {:?}", d.sidechain, builtin_value(c, "sidechainEnable")))
+        })),
+        DoC("builtin: reset Threshold, then drag it up 40 px as forty 1 px events", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let Some(d) = builtin_device(&c).map(|d| d.id) else { return };
+            c.panel_reset(d, 0);
+            c.panel_drag(d, 0, 0, 0.0, 1.0 / 160.0, false);
+            for _ in 0..40 {
+                c.panel_drag(d, 0, 1, 1.0, 1.0 / 160.0, false);
+            }
+            c.panel_drag(d, 0, 2, 0.0, 1.0 / 160.0, false);
+        })),
+        Check("builtin: small drag events add up like one large event (−24 → −9 dB)", Box::new(|c, _| {
+            let v = builtin_value(c, "threshold").unwrap_or(f32::NAN);
+            approx(v, -9.0, 0.05).then_some(()).ok_or(format!("threshold {v}"))
+        })),
+        DoC("builtin: drag Threshold 20 px, press Escape, release", Box::new(move |a, ctl| {
+            h7.set(ctl.borrow().doc.history_labels().len());
+            let Some(d) = builtin_device(&ctl.borrow()).map(|d| d.id) else { return };
+            ctl.borrow_mut().panel_drag(d, 0, 0, 0.0, 1.0 / 160.0, false);
+            ctl.borrow_mut().panel_drag(d, 0, 1, 20.0, 1.0 / 160.0, false);
+            key(a, Key::Escape, false, false);
+            ctl.borrow_mut().panel_drag(d, 0, 2, 0.0, 1.0 / 160.0, false);
+        })),
+        Check("builtin: Escape cancels the drag (Threshold stays −9 dB, no undo step)", Box::new(move |c, _| {
+            let v = builtin_value(c, "threshold").unwrap_or(f32::NAN);
+            let n = c.doc.history_labels().len();
+            (approx(v, -9.0, 0.05) && n == h8.get()).then_some(()).ok_or(format!("threshold {v}, history {} -> {n}", h8.get()))
         })),
     ]
 }
