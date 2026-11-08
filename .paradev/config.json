@@ -1,0 +1,5 @@
+{
+  "setup": ["bash ./.paradev/setup.sh"],
+  "teardown": ["bash ./.paradev/teardown.sh"],
+  "run": ["cargo run --release -p saine-app"]
+}
