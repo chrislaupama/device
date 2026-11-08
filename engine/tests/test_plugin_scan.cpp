@@ -152,12 +152,17 @@ TEST_CASE(plugin_scanner_cache_unicode_escapes) {
     // Valid escape: "\u006Fk" is "ok", so every entry is still served from
     // the cache.
     std::string valid = original;
-    REQUIRE(replace_all(valid, "\"status\":\"ok\"", "\"status\":\"\\u006Fk\"") > 0);
+    const int ok_entries = replace_all(valid, "\"status\":\"ok\"", "\"status\":\"\\u006Fk\"");
+    REQUIRE(ok_entries > 0);
     write_text(cache.path, valid);
     const std::string r2 = run_scan(cache.path, false, &rc);
     REQUIRE(rc == 0);
     CHECK_EQ(scanned(r2), 0L);
     CHECK(has(r2, "\"from_cache\":true"));
+    // The escape decoded to "ok": the scanner rewrites the cache with the same
+    // successful entries (a wrong decode would turn them into failures).
+    std::string rewritten = slurp(cache.path);
+    CHECK_EQ(replace_all(rewritten, "\"status\":\"ok\"", "\"status\":\"ok\""), ok_entries);
 
     // Malformed escapes: the cache is ignored and everything is rescanned.
     for (const char* bad : {"\\uZZZZ", "\\u12G4", "\\u+123", "\\u 123"}) {
