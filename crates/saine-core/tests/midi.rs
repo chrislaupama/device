@@ -93,3 +93,35 @@ fn v1_project_files_without_midi_still_load() {
     let l = persist::load(dir.path()).unwrap();
     assert!(l.project.tracks.iter().all(|t| t.midi_clips.is_empty()));
 }
+
+#[test]
+fn synth_params_command_validates_coalesces_and_snapshots() {
+    use std::time::{Duration, Instant};
+    let mut d = Document::new(Project::default());
+    let (audio, inst) = (d.project().tracks[0].id, d.project().tracks[1].id);
+    let mut p = SynthParams::default();
+    p.filter.cutoff_hz = 800.0;
+    assert!(d.execute(Command::SetSynthParams { track: audio, params: p.clone() }, Origin::User).is_err(), "audio tracks have no synth");
+    let mut bad = p.clone();
+    bad.voice.unison = 9;
+    assert!(d.execute(Command::SetSynthParams { track: inst, params: bad }, Origin::User).is_err());
+
+    // A cutoff knob drag: many updates, one undo step.
+    let t0 = Instant::now();
+    for i in 0..10 {
+        let mut q = SynthParams::default();
+        q.filter.cutoff_hz = 1000.0 + i as f32 * 100.0;
+        d.execute_at(Command::SetSynthParams { track: inst, params: q }, t0 + Duration::from_millis(16 * i)).unwrap();
+    }
+    assert_eq!(d.project().track(inst).unwrap().synth.filter.cutoff_hz, 1900.0);
+    assert_eq!(d.history_labels().iter().filter(|l| *l == "Synth Parameter Change").count(), 1);
+    d.undo().unwrap();
+    assert_eq!(d.project().track(inst).unwrap().synth, SynthParams::default());
+
+    // Preset load is a separate step even right after a drag (different coalesce key).
+    let preset = instrument::factory_presets()[2].clone();
+    d.execute_at(Command::SetSynthParams { track: inst, params: preset.clone() }, t0 + Duration::from_millis(200)).unwrap();
+    let (snap, _) = snapshot::build(d.project(), 48_000.0, &HashMap::new());
+    assert_eq!(snap.tracks[1].synth.as_ref().unwrap().preset, preset.preset);
+    assert!(snap.tracks[0].synth.is_none());
+}

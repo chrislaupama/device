@@ -6,6 +6,7 @@
 //! and the AI assistant (they are serde-serialisable, so an LLM tool call can
 //! be deserialised straight into a `Command` and validated before execution).
 
+use crate::instrument::SynthParams;
 use crate::midi::{self, MidiClip, Note};
 use crate::model::*;
 use serde::{Deserialize, Serialize};
@@ -70,6 +71,9 @@ pub enum Command {
     /// Replace all notes of a MIDI clip (draw, erase, move, resize, velocity,
     /// quantize, transpose... each editor gesture is one of these).
     SetMidiNotes { clip: ClipId, notes: Vec<Note> },
+    /// Replace an instrument track's synth parameters (knob drags coalesce
+    /// per track; loading a preset is one step).
+    SetSynthParams { track: TrackId, params: SynthParams },
     /// Several commands applied atomically (all or nothing).
     Batch { label: String, commands: Vec<Command> },
 }
@@ -102,6 +106,7 @@ impl Command {
             Command::MoveMidiClip { .. } => "Move Clip".into(),
             Command::ResizeMidiClip { .. } => "Resize Clip".into(),
             Command::SetMidiNotes { .. } => "Edit Notes".into(),
+            Command::SetSynthParams { .. } => "Synth Parameter Change".into(),
             Command::Batch { label, .. } => label.clone(),
         }
     }
@@ -115,6 +120,7 @@ impl Command {
             Command::SetMasterGain { .. } => Some("master_gain".into()),
             Command::SetClipGain { clip, .. } => Some(format!("clipgain:{}", clip.0)),
             Command::SetTempo { .. } => Some("tempo".into()),
+            Command::SetSynthParams { track, params } => Some(format!("synth:{}:{}", track.0, params.preset)),
             _ => None,
         }
     }
@@ -353,6 +359,15 @@ impl Command {
                 midi::sort_notes(&mut notes);
                 let old = std::mem::replace(&mut p.tracks[ti].midi_clips[ci].notes, notes);
                 Ok(Command::SetMidiNotes { clip, notes: old })
+            }
+            Command::SetSynthParams { track, params } => {
+                params.validate().map_err(|r| invalid("synth", r))?;
+                let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
+                if t.kind != TrackKind::Instrument {
+                    return Err(invalid("track", "only instrument tracks have a synth"));
+                }
+                let old = std::mem::replace(&mut t.synth, params);
+                Ok(Command::SetSynthParams { track, params: old })
             }
             Command::Batch { label, commands } => {
                 let mut inverses = Vec::with_capacity(commands.len());

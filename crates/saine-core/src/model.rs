@@ -1,6 +1,7 @@
 //! Authoritative project model. Lives on the application thread only; the
 //! audio engine receives derived, immutable snapshots (see `snapshot`).
 
+use crate::instrument::SynthParams;
 use crate::midi::MidiClip;
 use serde::{Deserialize, Serialize};
 
@@ -52,6 +53,10 @@ pub struct Track {
     /// without the field still load.
     #[serde(default)]
     pub midi_clips: Vec<MidiClip>,
+    /// Built-in instrument settings (used by instrument tracks; defaulted for
+    /// older files and harmlessly present on audio tracks).
+    #[serde(default)]
+    pub synth: SynthParams,
 }
 
 /// An audio clip referencing a media asset.
@@ -137,7 +142,7 @@ impl Default for Project {
 
 impl Track {
     pub fn new(id: TrackId, kind: TrackKind, name: &str, color: ColorIndex) -> Self {
-        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, clips: Vec::new(), midi_clips: Vec::new() }
+        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default() }
     }
 }
 

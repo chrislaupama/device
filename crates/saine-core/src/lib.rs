@@ -9,6 +9,7 @@
 pub mod assistant;
 pub mod command;
 pub mod history;
+pub mod instrument;
 pub mod keymap;
 pub mod midi;
 pub mod model;
@@ -17,5 +18,6 @@ pub mod snapshot;
 
 pub use command::{Command, EditError};
 pub use history::{Document, Origin};
+pub use instrument::SynthParams;
 pub use midi::{MidiClip, Note};
 pub use model::*;

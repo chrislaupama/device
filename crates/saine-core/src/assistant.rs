@@ -208,6 +208,7 @@ pub fn describe_state(p: &Project) -> Value {
                 "start_bar": 1.0 + c.start as f64 / p.ticks_per_bar() as f64,
                 "length_seconds": p.asset(c.asset).map(|a| c.source_length as f64 / a.sample_rate),
             })).collect::<Vec<_>>(),
+            "synth": (t.kind == TrackKind::Instrument).then(|| serde_json::to_value(&t.synth).unwrap_or(Value::Null)),
             "midi_clips": t.midi_clips.iter().map(|c| json!({
                 "id": c.id.0,
                 "name": c.name,
@@ -243,6 +244,7 @@ pub fn tool_schema() -> Value {
                      add_midi_clip{track(instrument),clip{id:0,name,start,length,notes:[]}}, remove_midi_clip{clip}, \
                      move_midi_clip{clip,track,start}, resize_midi_clip{clip,start,length}, \
                      set_midi_notes{clip,notes:[{id,pitch 0..127 (60=C4),start(ticks, clip-relative),length,velocity 1..127}]} (replaces all notes). \
+                     set_synth_params{track(instrument),params(full SynthParams object; start from describe_state's synth and change fields)}. \
                      Positions are ticks (PPQ 960)."}
             }},
             {"type": "object", "required": ["type", "track", "db"], "properties": {
