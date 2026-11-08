@@ -103,7 +103,8 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             kernel_add_scaled(tr + out_off, clip->src_r + src, clip->gain, n);
         }
         if (synth != nullptr &&
-            synth->render(graph->notes.data() + track.note_begin, track.note_count, graph->seq, inst.transport_gen,
+            synth->render(graph->notes.data() + track.note_begin, track.note_count, &graph->synth_params[t], graph->seq,
+                          inst.transport_gen,
                           position, frames, playing, sb) &&
             track.audible) {
             if (any) {

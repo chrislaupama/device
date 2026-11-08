@@ -64,6 +64,7 @@ public:
     // ---- session
     int32_t publish(const se_session_desc& desc, std::string& err);
     int32_t publish(const se_session_desc_v2& desc, std::string& err);
+    int32_t publish(const se_session_desc_v3& desc, std::string& err);
     // Frees retired graphs the audio thread can no longer reach. Non-RT.
     void collect_garbage();
     std::size_t retired_graph_count() const;

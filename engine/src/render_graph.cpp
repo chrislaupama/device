@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <numbers>
 #include <unordered_map>
@@ -24,11 +25,11 @@ int32_t build_render_graph(const se_session_desc& desc, const AssetLookup& looku
         err = "session has track_count > 0 but tracks == NULL";
         return SE_ERR_INVALID_ARG;
     }
-    std::vector<se_track_desc_v2> tracks(desc.track_count);
+    std::vector<se_track_desc_v3> tracks(desc.track_count);
     for (uint32_t t = 0; t < desc.track_count; ++t) {
         const se_track_desc& a = desc.tracks[t];
-        se_track_desc_v2& b = tracks[t];
-        b = se_track_desc_v2{};
+        se_track_desc_v3& b = tracks[t];
+        b = se_track_desc_v3{};
         b.track_id = a.track_id;
         b.gain = a.gain;
         b.pan = a.pan;
@@ -37,14 +38,44 @@ int32_t build_render_graph(const se_session_desc& desc, const AssetLookup& looku
         b.clips = a.clips;
         b.clip_count = a.clip_count;
     }
-    se_session_desc_v2 d2{};
-    d2.tracks = tracks.data();
-    d2.track_count = desc.track_count;
-    d2.master_gain = desc.master_gain;
-    return build_render_graph(d2, lookup, out, err);
+    se_session_desc_v3 d3{};
+    d3.tracks = tracks.data();
+    d3.track_count = desc.track_count;
+    d3.master_gain = desc.master_gain;
+    return build_render_graph(d3, lookup, out, err);
 }
 
 int32_t build_render_graph(const se_session_desc_v2& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err) {
+    if (desc.track_count > 0 && desc.tracks == nullptr) {
+        err = "session has track_count > 0 but tracks == NULL";
+        return SE_ERR_INVALID_ARG;
+    }
+    std::vector<se_track_desc_v3> tracks(desc.track_count);
+    for (uint32_t t = 0; t < desc.track_count; ++t) {
+        const se_track_desc_v2& a = desc.tracks[t];
+        se_track_desc_v3& b = tracks[t];
+        b = se_track_desc_v3{};
+        b.track_id = a.track_id;
+        b.gain = a.gain;
+        b.pan = a.pan;
+        b.mute = a.mute;
+        b.solo = a.solo;
+        b.instrument = a.instrument;
+        b.clips = a.clips;
+        b.clip_count = a.clip_count;
+        b.notes = a.notes;
+        b.note_count = a.note_count;
+        b.synth = nullptr;
+    }
+    se_session_desc_v3 d3{};
+    d3.tracks = tracks.data();
+    d3.track_count = desc.track_count;
+    d3.master_gain = desc.master_gain;
+    return build_render_graph(d3, lookup, out, err);
+}
+
+int32_t build_render_graph(const se_session_desc_v3& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err) {
     if (desc.track_count > 0 && desc.tracks == nullptr) {
         err = "session has track_count > 0 but tracks == NULL";
@@ -58,6 +89,7 @@ int32_t build_render_graph(const se_session_desc_v2& desc, const AssetLookup& lo
     auto g = std::make_unique<RenderGraph>();
     g->master_gain = desc.master_gain;
     g->tracks.reserve(desc.track_count);
+    g->synth_params.reserve(desc.track_count);
 
     bool any_solo = false;
     for (uint32_t t = 0; t < desc.track_count; ++t) any_solo |= desc.tracks[t].solo != 0;
@@ -65,7 +97,7 @@ int32_t build_render_graph(const se_session_desc_v2& desc, const AssetLookup& lo
     std::unordered_map<uint64_t, AssetRef> used; // dedupe keep-alive refs
 
     for (uint32_t t = 0; t < desc.track_count; ++t) {
-        const se_track_desc_v2& td = desc.tracks[t];
+        const se_track_desc_v3& td = desc.tracks[t];
         if (td.clip_count > 0 && td.clips == nullptr) {
             err = "track " + std::to_string(td.track_id) + " has clip_count > 0 but clips == NULL";
             return SE_ERR_INVALID_ARG;
@@ -77,6 +109,16 @@ int32_t build_render_graph(const se_session_desc_v2& desc, const AssetLookup& lo
         if (td.note_count > 0 && td.notes == nullptr) {
             err = "track " + std::to_string(td.track_id) + " has note_count > 0 but notes == NULL";
             return SE_ERR_INVALID_ARG;
+        }
+
+        se_synth_params params = default_synth_params();
+        if (td.synth != nullptr) {
+            params = *td.synth;
+            std::memset(params._pad, 0, sizeof params._pad); // reserved bytes are ignored
+            if (const char* why = validate_synth_params(params)) {
+                err = "track " + std::to_string(td.track_id) + ": " + why;
+                return SE_ERR_INVALID_ARG;
+            }
         }
 
         TrackNode node;
@@ -155,6 +197,7 @@ int32_t build_render_graph(const se_session_desc_v2& desc, const AssetLookup& lo
             return a.start != b.start ? a.start < b.start : a.pitch < b.pitch;
         });
         g->tracks.push_back(node);
+        g->synth_params.push_back(params);
     }
 
     g->assets.reserve(used.size());

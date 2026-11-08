@@ -245,6 +245,18 @@ int32_t Engine::publish(const se_session_desc_v2& desc, std::string& err) {
     return install_graph(std::move(built));
 }
 
+int32_t Engine::publish(const se_session_desc_v3& desc, std::string& err) {
+    std::unique_ptr<RenderGraph> built;
+    const AssetLookup lookup = [this](uint64_t id) -> AssetRef {
+        std::lock_guard lock(assets_mutex_);
+        auto it = assets_.find(id);
+        return it == assets_.end() ? nullptr : it->second;
+    };
+    const int32_t rc = build_render_graph(desc, lookup, built, err);
+    if (rc != SE_OK) return rc;
+    return install_graph(std::move(built));
+}
+
 // Synth states outlive graph swaps: an instrument track takes over the Synth
 // of the same track_id in the currently published graph (the RT side keeps
 // mutating that object; we only copy the reference). New instrument tracks

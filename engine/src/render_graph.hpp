@@ -69,6 +69,9 @@ struct RenderGraph {
     std::vector<TrackNode> tracks;
     std::vector<ClipNode> clips;
     std::vector<NoteEvent> notes;
+    // Synth parameters per track, parallel to `tracks` (defaults where the
+    // description had none, unused on non-instrument tracks).
+    std::vector<se_synth_params> synth_params;
     std::vector<AssetRef> assets; // keep-alive references
     // Per-track synth state for live playback, parallel to `tracks` (null for
     // non-instrument tracks). Assigned by Engine::publish: a track keeps the
@@ -89,8 +92,11 @@ void constant_power_pan(float pan, float& left, float& right) noexcept;
 using AssetLookup = std::function<AssetRef(uint64_t asset_id)>;
 
 // Validates and copies the description. Returns an se_result code. The v1
-// entry point converts to v2 (no instrument, no notes). Synth states are not
-// assigned here (see RenderGraph::synth_refs); `synths` is sized and null.
+// and v2 entry points convert to v3 (v1: no instrument, no notes; both:
+// default synth parameters). Synth states are not assigned here (see
+// RenderGraph::synth_refs); `synths` is sized and null.
+int32_t build_render_graph(const se_session_desc_v3& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v2& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc& desc, const AssetLookup& lookup,

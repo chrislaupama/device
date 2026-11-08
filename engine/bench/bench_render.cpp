@@ -142,7 +142,7 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
     return r;
 }
 
-Result run_midi(uint32_t tracks, uint32_t blocks) {
+Result run_midi(uint32_t tracks, uint32_t blocks, const se_synth_params* params) {
     se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
     se_engine* e = se_engine_create(&cfg);
     if (!e) {
@@ -151,7 +151,7 @@ Result run_midi(uint32_t tracks, uint32_t blocks) {
     }
     const int64_t total = static_cast<int64_t>(blocks) * kBlock;
     std::vector<std::vector<se_note_desc>> notes(tracks);
-    std::vector<se_track_desc_v2> tds(tracks);
+    std::vector<se_track_desc_v3> tds(tracks);
     for (uint32_t t = 0; t < tracks; ++t) {
         for (uint32_t v = 0; v < 8; ++v) {
             se_note_desc n{};
@@ -169,17 +169,18 @@ Result run_midi(uint32_t tracks, uint32_t blocks) {
             n.velocity = 90;
             notes[t].push_back(n);
         }
-        se_track_desc_v2& td = tds[t];
-        td = se_track_desc_v2{};
+        se_track_desc_v3& td = tds[t];
+        td = se_track_desc_v3{};
         td.track_id = t + 1;
         td.gain = 0.25f;
         td.pan = std::sin(static_cast<float>(t));
         td.instrument = 1;
         td.notes = notes[t].data();
         td.note_count = static_cast<uint32_t>(notes[t].size());
+        td.synth = params;
     }
-    se_session_desc_v2 sd{tds.data(), tracks, 0.5f};
-    if (se_session_publish_v2(e, &sd) != SE_OK) {
+    se_session_desc_v3 sd{tds.data(), tracks, 0.5f};
+    if (se_session_publish_v3(e, &sd) != SE_OK) {
         std::fprintf(stderr, "publish failed: %s\n", se_last_error());
         std::exit(1);
     }
@@ -243,13 +244,39 @@ int main(int argc, char** argv) {
     }
     for (const auto& f : files) std::filesystem::remove(f);
 
-    std::printf("\nMIDI: instrument tracks x 8 held voices (+1 retriggered note / 100 ms), no clips\n");
-    std::printf("%8s %14s %14s %14s %16s\n", "tracks", "avg us/block", "p99 us/block", "max us/block",
-                "realtime ratio");
-    for (uint32_t tracks : {8u, 32u, 128u}) {
-        const Result r = run_midi(tracks, blocks);
-        std::printf("%8u %14.2f %14.2f %14.2f %15.1fx\n", tracks, r.us_per_block_avg, r.us_per_block_p99,
-                    r.us_per_block_max, r.rt_ratio);
+    // Expensive patch: 4-voice unison, cross FM, sub + noise, resonant
+    // band-pass with filter envelope, LFO on pitch / cutoff / amplitude.
+    se_synth_params heavy{};
+    se_synth_params_default(&heavy);
+    heavy.unison = 4;
+    heavy.unison_detune_cents = 20.0f;
+    heavy.cross_fm = 0.6f;
+    heavy.osc1_wave = SE_WAVE_TRIANGLE;
+    heavy.osc1_shape = 0.4f;
+    heavy.osc2_wave = SE_WAVE_SINE;
+    heavy.osc2_shape = 0.3f;
+    heavy.sub_level = 0.4f;
+    heavy.noise_level = 0.05f;
+    heavy.filter_mode = SE_FILTER_BANDPASS;
+    heavy.filter_resonance = 0.5f;
+    heavy.filter_env_amount = 0.4f;
+    heavy.lfo_to_pitch_cents = 10.0f;
+    heavy.lfo_to_cutoff_oct = 0.5f;
+    heavy.lfo_to_amp = 0.2f;
+    const struct {
+        const char* name;
+        const se_synth_params* params;
+    } patches[] = {{"default params", nullptr}, {"heavy patch: unison 4 + cross FM + sub/noise + LFO", &heavy}};
+    for (const auto& patch : patches) {
+        std::printf("\nMIDI (%s): instrument tracks x 8 held voices (+1 retriggered note / 100 ms), no clips\n",
+                    patch.name);
+        std::printf("%8s %14s %14s %14s %16s\n", "tracks", "avg us/block", "p99 us/block", "max us/block",
+                    "realtime ratio");
+        for (uint32_t tracks : {8u, 32u, 128u}) {
+            const Result r = run_midi(tracks, blocks, patch.params);
+            std::printf("%8u %14.2f %14.2f %14.2f %15.1fx\n", tracks, r.us_per_block_avg, r.us_per_block_p99,
+                        r.us_per_block_max, r.rt_ratio);
+        }
     }
     return 0;
 }

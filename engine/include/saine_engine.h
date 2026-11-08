@@ -256,6 +256,88 @@ typedef struct se_session_desc_v2 {
 
 int32_t se_session_publish_v2(se_engine* engine, const se_session_desc_v2* session);
 
+/* ---- built-in synth parameters (ABI v1 addition) ------------------------
+ * se_session_publish_v3 is a superset of se_session_publish_v2: every v3
+ * track carries the v2 fields (same meaning, same validation) plus a pointer
+ * to the parameters of its built-in synth. NULL (and every v1/v2 publish)
+ * means the defaults, which se_synth_params_default() writes (they equal
+ * saine_core::instrument::SynthParams::default()). Parameters are copied
+ * into the render graph, so they change atomically with the rest of the
+ * session; continuous parameters are smoothed by the engine (~10 ms), so a
+ * knob sweep published as many snapshots does not zipper. Parameters on
+ * non-instrument tracks are validated but unused.
+ *
+ * Validation (else SE_ERR_INVALID_ARG): enums in range, every float finite
+ * and inside the documented range, octave -3..3, semitones -12..12,
+ * polyphony 1..16, unison 1..4. Reserved/padding bytes are ignored.
+ *
+ * Enum values: waveform 0 saw, 1 square, 2 triangle, 3 sine;
+ * filter_mode 0 low-pass, 1 high-pass, 2 band-pass. */
+enum { SE_WAVE_SAW = 0, SE_WAVE_SQUARE = 1, SE_WAVE_TRIANGLE = 2, SE_WAVE_SINE = 3 };
+enum { SE_FILTER_LOWPASS = 0, SE_FILTER_HIGHPASS = 1, SE_FILTER_BANDPASS = 2 };
+
+typedef struct se_synth_params {
+    uint8_t osc1_wave;     /* SE_WAVE_* */
+    int8_t osc1_octave;    /* -3..3 */
+    int8_t osc1_semitones; /* -12..12 */
+    uint8_t osc2_wave;
+    int8_t osc2_octave;
+    int8_t osc2_semitones;
+    uint8_t filter_mode; /* SE_FILTER_* */
+    uint8_t lfo_wave;    /* SE_WAVE_* */
+    uint8_t polyphony;   /* 1..16 (1 = mono, legato) */
+    uint8_t unison;      /* 1..4 oscillator stacks per voice */
+    uint8_t _pad[6];
+    float osc1_shape;      /* 0..1: square pulse width 50%->5%, saw<->triangle morph, sine fold */
+    float osc1_fine_cents; /* -100..100 */
+    float osc1_level;      /* 0..1 */
+    float osc2_shape;
+    float osc2_fine_cents;
+    float osc2_level;
+    float cross_fm;    /* 0..1: osc2 -> osc1 linear FM */
+    float sub_level;   /* 0..1: sine one octave below osc1 */
+    float noise_level; /* 0..1: white noise */
+    float filter_cutoff_hz;  /* 20..20000 (at C4 when key tracking is on) */
+    float filter_resonance;  /* 0..1 */
+    float filter_key_track;  /* 0..1 (1 = one octave per octave around C4) */
+    float filter_env_amount; /* -1..1 (x 6 octaves of the filter envelope) */
+    float amp_attack, amp_decay, amp_sustain, amp_release;         /* s 0.001..10, 0.001..10, 0..1, 0.001..20 */
+    float filter_attack, filter_decay, filter_sustain, filter_release; /* same ranges */
+    float lfo_rate_hz;        /* 0.01..20 */
+    float lfo_to_pitch_cents; /* 0..1200 */
+    float lfo_to_cutoff_oct;  /* 0..6 */
+    float lfo_to_amp;         /* 0..1 tremolo depth */
+    float glide;               /* portamento seconds 0..2 */
+    float unison_detune_cents; /* total spread 0..50 */
+    float output;              /* linear 0..2 */
+} se_synth_params; /* 128 bytes, align 4 */
+
+typedef struct se_track_desc_v3 {
+    uint64_t track_id;
+    float gain; /* linear */
+    float pan;  /* -1 .. +1, constant-power */
+    uint8_t mute;
+    uint8_t solo;
+    uint8_t instrument; /* != 0: render `notes` through the built-in synth */
+    uint8_t _pad[5];
+    const se_clip_desc* clips;
+    uint32_t clip_count;
+    uint32_t note_count;
+    const se_note_desc* notes;
+    const se_synth_params* synth; /* NULL = defaults */
+} se_track_desc_v3; /* 56 bytes, align 8 */
+
+typedef struct se_session_desc_v3 {
+    const se_track_desc_v3* tracks;
+    uint32_t track_count;
+    float master_gain; /* linear */
+} se_session_desc_v3; /* 16 bytes, align 8 */
+
+int32_t se_session_publish_v3(se_engine* engine, const se_session_desc_v3* session);
+
+/* Writes the default synth parameters (no-op for NULL). */
+void se_synth_params_default(se_synth_params* out);
+
 #ifdef __cplusplus
 }
 #endif

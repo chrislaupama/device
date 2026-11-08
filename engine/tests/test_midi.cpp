@@ -246,8 +246,13 @@ TEST_CASE(midi_pitch_accuracy_a4_c4) {
         REQUIRE(se_transport_play(e) == SE_OK);
         const auto l = left(render(e, 60000, 256));
         const double hz = estimate_hz(l, 9600, 24000, c.hz, 10);
-        if (!(std::fabs(hz - c.hz) <= 0.5)) std::fprintf(stderr, "pitch %u: %.4f Hz (want %.4f)\n", c.pitch, hz, c.hz);
-        CHECK_NEAR(hz, c.hz, 0.5);
+        // The default sound is a saw (-5 cents, level 0.6) plus a square (+5
+        // cents, level 0.5): the pair's autocorrelation pitch sits slightly
+        // off centre, so allow 2 cents here. Exact single-oscillator pitch is
+        // checked in synth_pitch_octave_semitone_fine (test_synth.cpp).
+        const double tol = c.hz * (std::exp2(2.0 / 1200.0) - 1.0);
+        if (!(std::fabs(hz - c.hz) <= tol)) std::fprintf(stderr, "pitch %u: %.4f Hz (want %.4f)\n", c.pitch, hz, c.hz);
+        CHECK_NEAR(hz, c.hz, tol);
     }
 }
 
@@ -286,7 +291,7 @@ TEST_CASE(midi_synth_polyphony_limit_and_slots) {
     std::vector<float> buf(64);
     uint32_t max_notes = 0, max_slots = 0;
     for (int64_t pos = 0; pos < 4000; pos += 64) {
-        synth.render(notes.data(), static_cast<uint32_t>(notes.size()), 1, 0, pos, 64, true, buf.data());
+        synth.render(notes.data(), static_cast<uint32_t>(notes.size()), nullptr, 1, 0, pos, 64, true, buf.data());
         max_notes = std::max(max_notes, synth.note_voices());
         max_slots = std::max(max_slots, synth.active_slots());
     }
@@ -299,7 +304,7 @@ TEST_CASE(midi_synth_polyphony_limit_and_slots) {
     saine::Synth burst(kRate);
     std::vector<saine::NoteEvent> chord;
     for (int i = 0; i < 40; ++i) chord.push_back({0, 48000, static_cast<uint8_t>(30 + i), 90});
-    burst.render(chord.data(), 40, 1, 0, 0, 64, true, buf.data());
+    burst.render(chord.data(), 40, nullptr, 1, 0, 0, 64, true, buf.data());
     CHECK_EQ(burst.note_voices(), saine::Synth::kMaxNotes);
     CHECK(burst.active_slots() <= saine::Synth::kSlots);
     for (float v : buf) CHECK(std::isfinite(v));
@@ -684,7 +689,7 @@ TEST_CASE(rt_dense_midi_with_republish_does_not_allocate) {
     std::thread commander([&] {
         int i = 0;
         while (!stop.load()) {
-            if (i % 50 == 0) se_transport_seek(e, 1000 + (i * 37) % 30000);
+            if (i % 50 == 0) se_transport_seek(e, 1000 + (static_cast<int64_t>(i) * 37) % 30000);
             if (i % 120 == 60) se_transport_pause(e);
             if (i % 120 == 61) se_transport_play(e);
             ++i;

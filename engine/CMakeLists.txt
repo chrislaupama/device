@@ -97,7 +97,8 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/test_concurrency.cpp
     tests/test_rt_safety.cpp
     tests/test_features.cpp
-    tests/test_midi.cpp)
+    tests/test_midi.cpp
+    tests/test_synth.cpp)
   target_include_directories(saine_engine_tests PRIVATE src tests)
   target_link_libraries(saine_engine_tests PRIVATE saine_engine saine_engine_warnings)
 

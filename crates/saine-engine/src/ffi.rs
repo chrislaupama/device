@@ -146,6 +146,87 @@ pub struct se_session_desc_v2 {
     pub master_gain: f32,
 }
 
+/// Built-in synth parameters (ABI v1 addition), see `se_synth_params` in
+/// saine_engine.h. Waveforms: 0 saw, 1 square, 2 triangle, 3 sine; filter
+/// mode: 0 low-pass, 1 high-pass, 2 band-pass.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct se_synth_params {
+    pub osc1_wave: u8,
+    pub osc1_octave: i8,
+    pub osc1_semitones: i8,
+    pub osc2_wave: u8,
+    pub osc2_octave: i8,
+    pub osc2_semitones: i8,
+    pub filter_mode: u8,
+    pub lfo_wave: u8,
+    pub polyphony: u8,
+    pub unison: u8,
+    pub _pad: [u8; 6],
+    pub osc1_shape: f32,
+    pub osc1_fine_cents: f32,
+    pub osc1_level: f32,
+    pub osc2_shape: f32,
+    pub osc2_fine_cents: f32,
+    pub osc2_level: f32,
+    pub cross_fm: f32,
+    pub sub_level: f32,
+    pub noise_level: f32,
+    pub filter_cutoff_hz: f32,
+    pub filter_resonance: f32,
+    pub filter_key_track: f32,
+    pub filter_env_amount: f32,
+    pub amp_attack: f32,
+    pub amp_decay: f32,
+    pub amp_sustain: f32,
+    pub amp_release: f32,
+    pub filter_attack: f32,
+    pub filter_decay: f32,
+    pub filter_sustain: f32,
+    pub filter_release: f32,
+    pub lfo_rate_hz: f32,
+    pub lfo_to_pitch_cents: f32,
+    pub lfo_to_cutoff_oct: f32,
+    pub lfo_to_amp: f32,
+    pub glide: f32,
+    pub unison_detune_cents: f32,
+    pub output: f32,
+}
+
+pub const SE_WAVE_SAW: u8 = 0;
+pub const SE_WAVE_SQUARE: u8 = 1;
+pub const SE_WAVE_TRIANGLE: u8 = 2;
+pub const SE_WAVE_SINE: u8 = 3;
+pub const SE_FILTER_LOWPASS: u8 = 0;
+pub const SE_FILTER_HIGHPASS: u8 = 1;
+pub const SE_FILTER_BANDPASS: u8 = 2;
+
+/// v2 track fields plus a pointer to the track's synth parameters (NULL = defaults).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_track_desc_v3 {
+    pub track_id: u64,
+    pub gain: f32,
+    pub pan: f32,
+    pub mute: u8,
+    pub solo: u8,
+    pub instrument: u8,
+    pub _pad: [u8; 5],
+    pub clips: *const se_clip_desc,
+    pub clip_count: u32,
+    pub note_count: u32,
+    pub notes: *const se_note_desc,
+    pub synth: *const se_synth_params,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_session_desc_v3 {
+    pub tracks: *const se_track_desc_v3,
+    pub track_count: u32,
+    pub master_gain: f32,
+}
+
 unsafe extern "C" {
     pub fn se_abi_version() -> u32;
     pub fn se_engine_create(config: *const se_config) -> *mut se_engine;
@@ -190,6 +271,8 @@ unsafe extern "C" {
     pub fn se_transport_set_loop(engine: *mut se_engine, enabled: u8, start_frame: i64, end_frame: i64) -> i32;
     pub fn se_metronome_set(engine: *mut se_engine, desc: *const se_metronome_desc) -> i32;
     pub fn se_session_publish_v2(engine: *mut se_engine, session: *const se_session_desc_v2) -> i32;
+    pub fn se_session_publish_v3(engine: *mut se_engine, session: *const se_session_desc_v3) -> i32;
+    pub fn se_synth_params_default(out: *mut se_synth_params);
 }
 
 /// Guards the hand-written declarations against drift from saine_engine.h.
@@ -253,6 +336,87 @@ mod abi_layout {
         assert_eq!((size_of::<se_session_desc_v2>(), align_of::<se_session_desc_v2>()), (16, 8));
         assert_eq!(
             (offset_of!(se_session_desc_v2, tracks), offset_of!(se_session_desc_v2, track_count), offset_of!(se_session_desc_v2, master_gain)),
+            (0, 8, 12)
+        );
+    }
+
+    #[test]
+    fn synth_params_layout_matches_c_header() {
+        // Verified with clang -Wpadded against saine_engine.h (no implicit
+        // padding): se_synth_params 128/4, se_track_desc_v3 56/8,
+        // se_session_desc_v3 16/8.
+        assert_eq!((size_of::<se_synth_params>(), align_of::<se_synth_params>()), (128, 4));
+        assert_eq!(
+            (
+                offset_of!(se_synth_params, osc1_wave),
+                offset_of!(se_synth_params, osc1_octave),
+                offset_of!(se_synth_params, osc1_semitones),
+                offset_of!(se_synth_params, osc2_wave),
+                offset_of!(se_synth_params, osc2_octave),
+                offset_of!(se_synth_params, osc2_semitones),
+                offset_of!(se_synth_params, filter_mode),
+                offset_of!(se_synth_params, lfo_wave),
+                offset_of!(se_synth_params, polyphony),
+                offset_of!(se_synth_params, unison),
+                offset_of!(se_synth_params, _pad),
+            ),
+            (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+        );
+        assert_eq!(
+            [
+                offset_of!(se_synth_params, osc1_shape),
+                offset_of!(se_synth_params, osc1_fine_cents),
+                offset_of!(se_synth_params, osc1_level),
+                offset_of!(se_synth_params, osc2_shape),
+                offset_of!(se_synth_params, osc2_fine_cents),
+                offset_of!(se_synth_params, osc2_level),
+                offset_of!(se_synth_params, cross_fm),
+                offset_of!(se_synth_params, sub_level),
+                offset_of!(se_synth_params, noise_level),
+                offset_of!(se_synth_params, filter_cutoff_hz),
+                offset_of!(se_synth_params, filter_resonance),
+                offset_of!(se_synth_params, filter_key_track),
+                offset_of!(se_synth_params, filter_env_amount),
+                offset_of!(se_synth_params, amp_attack),
+            ],
+            [16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 68]
+        );
+        assert_eq!(
+            (
+                offset_of!(se_synth_params, amp_release),
+                offset_of!(se_synth_params, filter_attack),
+                offset_of!(se_synth_params, filter_release),
+                offset_of!(se_synth_params, lfo_rate_hz),
+                offset_of!(se_synth_params, lfo_to_pitch_cents),
+                offset_of!(se_synth_params, lfo_to_cutoff_oct),
+                offset_of!(se_synth_params, lfo_to_amp),
+                offset_of!(se_synth_params, glide),
+                offset_of!(se_synth_params, unison_detune_cents),
+                offset_of!(se_synth_params, output),
+            ),
+            (80, 84, 96, 100, 104, 108, 112, 116, 120, 124)
+        );
+        assert_eq!((size_of::<se_track_desc_v3>(), align_of::<se_track_desc_v3>()), (56, 8));
+        assert_eq!(
+            (
+                offset_of!(se_track_desc_v3, track_id),
+                offset_of!(se_track_desc_v3, gain),
+                offset_of!(se_track_desc_v3, pan),
+                offset_of!(se_track_desc_v3, mute),
+                offset_of!(se_track_desc_v3, solo),
+                offset_of!(se_track_desc_v3, instrument),
+                offset_of!(se_track_desc_v3, _pad),
+                offset_of!(se_track_desc_v3, clips),
+                offset_of!(se_track_desc_v3, clip_count),
+                offset_of!(se_track_desc_v3, note_count),
+                offset_of!(se_track_desc_v3, notes),
+                offset_of!(se_track_desc_v3, synth)
+            ),
+            (0, 8, 12, 16, 17, 18, 19, 24, 32, 36, 40, 48)
+        );
+        assert_eq!((size_of::<se_session_desc_v3>(), align_of::<se_session_desc_v3>()), (16, 8));
+        assert_eq!(
+            (offset_of!(se_session_desc_v3, tracks), offset_of!(se_session_desc_v3, track_count), offset_of!(se_session_desc_v3, master_gain)),
             (0, 8, 12)
         );
     }

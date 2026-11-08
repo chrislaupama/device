@@ -5,8 +5,10 @@ The Rust core links the static library `saine_engine`. The header is the
 contract. `SE_ABI_VERSION` is still 1: the first milestone's structs and
 signatures are unchanged, and later features are **appended** at the end of
 the header (`se_meters_peek`, `se_transport_set_loop`, `se_metronome_desc` +
-`se_metronome_set`, and for MIDI `se_note_desc`, `se_track_desc_v2`,
-`se_session_desc_v2` + `se_session_publish_v2`).
+`se_metronome_set`, for MIDI `se_note_desc`, `se_track_desc_v2`,
+`se_session_desc_v2` + `se_session_publish_v2`, and for synth parameters
+`se_synth_params`, `se_track_desc_v3`, `se_session_desc_v3` +
+`se_session_publish_v3`, `se_synth_params_default`).
 
 ## Build, test, bench
 
@@ -78,7 +80,7 @@ The library is built with `-fPIC`, so it can go into a cdylib as well.
 Rust core (non-RT)                                  audio thread (RT)
 ------------------                                  -----------------
 se_asset_load_file ─ decode WAV ─ resample ─► asset registry (shared_ptr<const Asset>)
-se_session_publish(_v2) ─ copy + validate + build ─► RenderGraph ──atomic ptr swap──► process()
+se_session_publish(_v2/_v3) ─ copy + validate + build ─► RenderGraph ──atomic ptr swap──► process()
 se_transport_* / set_loop / metronome_set
                    ─ mutex(producers) ─► SPSC queue ─┬─────────── drained at block start (device/offline render)
                                                      └─ applied inline when nobody owns the RT path
@@ -117,7 +119,14 @@ Semantics:
   `note_count > 0` → else `SE_ERR_INVALID_ARG`), zero-length notes dropped,
   and sorted by (start, pitch). Notes on non-instrument tracks are validated
   but ignored. `se_session_publish` builds the same graph with no
-  instruments (it converts to v2 internally).
+  instruments, `se_session_publish_v2` the same with default synth
+  parameters (both convert to v3 internally).
+* **Synth parameters** (`se_session_publish_v3`): each track may point to an
+  `se_synth_params` (NULL = defaults = `SynthParams::default()` in
+  saine-core). They are copied into the graph (`RenderGraph::synth_params`,
+  reserved bytes zeroed), so they change atomically with notes and mix.
+  Validation: enums in range, every float finite and inside the documented
+  range (same ranges as `SynthParams::validate`) → else `SE_ERR_INVALID_ARG`.
 
 ### Threading model
 
@@ -247,25 +256,75 @@ is mixed into the master **after master gain and after metering**, so it is
 independent of the mix level, does not show on meters, and is never in
 `se_export_wav` (which calls `render_block()` directly).
 
-### Built-in instrument (MIDI)
+### Built-in instrument (MIDI + `se_synth_params`)
 
-An original, deliberately plain subtractive voice (`src/synth.hpp`); it does
-not model any commercial instrument:
+An original subtractive voice (`src/synth.hpp`); it does not model any
+commercial instrument. Every Devices-panel parameter maps onto it:
 
-* 2 oscillators per voice, each an equal blend of a polyBLEP saw and a
-  polyBLEP square, detuned ±5 cents, both starting at phase 0.25 (so the
-  note-on frame itself is non-zero).
-* 12 dB/oct TPT state-variable low-pass, Q 0.707, cutoff key-tracked at
-  8 × the note frequency (clamped to 500 Hz..12 kHz and < 0.45 × rate).
-* ADSR: linear 5 ms attack; exponential decay over 200 ms to sustain 0.6;
-  exponential release falling 60 dB in 250 ms; voice freed at −90 dB
-  (~375 ms after note-off).
-* Linear velocity (`v / 127`) × 0.25 per voice. Equal temperament, A4 = MIDI
-  69 = 440 Hz (C4 = 60).
-* 16 note voices per track. A 17th note steals the oldest voice (note-on
-  order): it fades out linearly over 5 ms in its slot while the new note
-  takes a free slot (24 slots = 16 + 8 for fades; only if all 24 are busy is
-  the quietest fading voice overwritten).
+| Parameter | DSP |
+|---|---|
+| `oscN_wave` | Saw: polyBLEP falling ramp. Square: polyBLEP pulse, DC removed. Triangle: polyBLAMP (sine-aligned; ~13 dB less aliasing than naive). Sine: odd degree-9 polynomial (harmonics < −100 dB). |
+| `oscN_shape` | Square: pulse width 50 % → 5 %. Saw ↔ triangle: linear morph toward the other shape (phases aligned so the fundamental never cancels). Sine: wavefolder `sin(π/2 · 5·shape · sin θ)` normalised to ±1 (continuous to a pure sine at 0; odd harmonics only; not band-limited). |
+| `oscN_octave/semitones/fine_cents` | Offsets added to the note pitch; octave/semitone switch at the next control tick, fine is smoothed. |
+| `oscN_level` | Linear mix gains (smoothed, ramped per sample). |
+| `cross_fm` | Linear FM osc2 → osc1, per sample: `inc1 · (1 + 0.9 · cross_fm · osc2)`, clamped to [0.02·inc1, 0.45]; so the deviation is at most ±90 % of the carrier frequency (not through-zero; band-limiting uses the instantaneous increment). |
+| `sub_level` | Sine one octave below osc1's pitch (incl. glide/LFO, without FM/unison). |
+| `noise_level` | White noise (xorshift32, seeded per note from (start, pitch), so export == live). |
+| `filter_mode` | TPT/ZDF state-variable filter, 12 dB/oct: LP, HP, BP (BP normalised to unity gain at the centre). Stable for any coefficient change. |
+| `filter_cutoff_hz` | Cutoff at C4 when key tracking is on: `fc = cutoff · 2^(key_track·(pitch−60)/12 + 6·env_amount·fenv + lfo·lfo_to_cutoff_oct)`, clamped to 10 Hz .. 0.45 × rate. |
+| `filter_resonance` | Q = 0.707 · (25/0.707)^res: 0 = Butterworth, 0.5 ≈ 4.2 (+12.5 dB), 1 = 25 (+28 dB, below self-oscillation). |
+| `filter_key_track` | Octaves of cutoff per octave of pitch (uses the glided pitch, not the LFO). |
+| `filter_env_amount` | ±1 → ±6 octaves × filter envelope. |
+| `amp_*`, `filter_*` ADSR | Linear attack over `attack`; exponential decay (distance to sustain falls 60 dB over `decay`); sustain; exponential release (−60 dB over `release`). Amp env per sample; filter env per control tick (≤ 0.33 ms late on stage changes). Voice freed at −90 dB in release, or in decay with sustain 0. |
+| `lfo_*` | Sine/triangle/square/saw (all start at 0 or +1 and rise), `rate_hz`, to pitch (cents), cutoff (octaves) and amplitude (tremolo: gain between `1 − depth` and 1). Output de-clicked by a ~1 ms one-pole. **Per voice, phase 0 at each fresh note-on** (deterministic and identical in export); a mono legato note keeps the running LFO. |
+| `polyphony` | 1..16 note voices; see below. |
+| `glide` | Portamento, linear in pitch, covering any interval in `glide` seconds. Works in mono **and** poly: a fresh voice glides from the previous note-on's pitch (cleared by transport jumps, so the first note after a seek/loop wrap doesn't glide). |
+| `unison`, `unison_detune_cents` | 1..4 stacks of (osc1 + osc2) **inside one voice** (they do not use voice slots or count against polyphony), detuned evenly over ±detune/2, start phases spread, level normalised by 1/√n (so RMS stays about the same; mono output, no stereo spread). |
+| `output` | Linear post-filter gain (smoothed). |
+
+Fixed: per-voice gain = velocity/127 × 0.25 (`kVoiceGain`), equal
+temperament, A4 = MIDI 69 = 440 Hz (C4 = 60). The defaults (saw −5 ct
+level 0.6 + square +5 ct level 0.5, LP 2093 Hz at C4 tracked 1:1, amp ADSR
+5 ms / 200 ms / 0.6 / 250 ms) sound close to the previous fixed patch. Both
+oscillators of stack 0 start at a phase where the waveform is non-zero (osc2
+half a cycle after osc1), so the note-on frame itself is non-zero.
+
+**Control rate.** Each voice recomputes pitch increments, filter
+coefficients, LFO, filter envelope, glide and the smoothed parameters every
+16 samples of its own lifetime (a per-voice grid from its note-on), and
+ramps its gains linearly per sample inside the tick (value = start + slope ×
+position-in-tick). So the output is still bit-identical for any block
+partition and does not depend on where in the timeline a note starts
+(tested). Transcendental work (`exp2`, `tan`) is skipped while its inputs
+are unchanged.
+
+**Parameter changes (republish).** A new graph seq makes the RT side apply
+the track's parameters (a `memcmp` skips identical ones). Continuous
+parameters are approached per voice by a one-pole at control rate (time
+constant 10 ms, snapped when within 1e-6), so a knob sweep published as many
+snapshots does not zipper or click (tested: the largest sample step during
+0.2 ↔ 2.0 output and 300 Hz ↔ 8 kHz cutoff jumps every 5 ms equals the
+steady signal's own). New voices start at the target values. Discrete
+parameters (waveforms, filter mode, octave/semitone, unison count, LFO wave)
+switch at each voice's next control tick (a filter mode switch can click).
+A lower `polyphony` releases the oldest held voices (normal release).
+
+**Polyphony and voices.** `polyphony` note voices per track (max 16). A note
+beyond the limit steals the oldest note voice (note-on order): it fades out
+linearly over 5 ms in its slot while the new note takes a free slot (24
+slots = 16 + 8 for fades; only if all 24 are busy is the quietest fading
+voice overwritten).
+
+**Mono (`polyphony` = 1), last-note priority.** A note-on while the voice is
+*held* (notes overlap) is legato: no envelope retrigger, velocity unchanged,
+the pitch glides (or jumps at the note-on frame when `glide` = 0). A
+note-on while the voice is *releasing* (e.g. touching notes: the note-off
+and note-on fall on the same frame) retriggers both envelopes' attacks from
+their current level (no click) and takes the new velocity; the pitch still
+glides from where it is. Otherwise a fresh voice starts. The voice follows
+the newest note's end; there is no return to an earlier still-held note.
+Simultaneous notes collapse to one voice (the highest pitch of a chord,
+since notes are sorted by (start, pitch)).
 
 **State across republishes.** `Synth` objects are allocated on the non-RT
 side, preallocate every voice, and are owned by `shared_ptr`s in each graph
@@ -361,7 +420,13 @@ Inside `Engine::process()` / `render_block()` and the device callback:
    `se_meters_peek`/`se_meters_read` and push loop/metronome/seek commands
    that the render drains; and across 1500 renders of 8 instrument tracks ×
    200 notes with a loop, seeks and pause/play, while another thread
-   republishes four different note sets as fast as it can).
+   republishes four different note sets as fast as it can; and across 1200
+   renders of 8 instrument tracks whose `se_synth_params` (waveforms, filter
+   mode, unison, polyphony incl. mono + glide, FM, LFO, ...) are republished
+   every 3 blocks by the render thread and continuously by another thread).
+   Synth parameter changes are applied on the RT side without allocation
+   (plain struct copy + coefficient math). Also run ad hoc under
+   ThreadSanitizer (MIDI, synth, RT, transport and concurrency tests clean).
 2. No locks, no waiting inside `process()`: only atomics, the SPSC pop, and a
    CAS loop for meter max that only retries if a reader raced it. (The
    `se_render_offline` *wrapper* may yield while a non-RT thread holds the
@@ -429,18 +494,26 @@ the Core Audio output unit's built-in converter resamples.
 * The resampler is scalar; large imports at a different rate take noticeably
   longer than same-rate imports.
 * Output channels: only `output_channels == 2` is accepted.
-* MIDI: the synth has no user parameters yet (no presets, no ABI for them),
-  no sustain pedal / pitch bend / CC, and no per-note pan. Removing a track
-  or switching it from instrument to audio cuts its voices without a fade.
-  A mid-note seek never retriggers the note (no "chase"). Cost is about
-  6 ns per voice-sample on Apple silicon (bench below); muted instrument
-  tracks still cost CPU.
+* MIDI: no sustain pedal / pitch bend / CC / mod wheel, no velocity →
+  filter routing, no per-note pan or stereo unison spread (the synth is
+  mono). Removing a track or switching it from instrument to audio cuts its
+  voices without a fade. A mid-note seek never retriggers the note (no
+  "chase"). The sine wavefolder is not band-limited (aliases at high fold
+  and pitch); the filter has no drive/saturation and does not
+  self-oscillate. Cost is about 9 ns per voice-sample for the default patch
+  and ~50 ns for a 4-voice-unison FM patch on Apple silicon (bench below);
+  muted instrument tracks still cost CPU. Unison stacks are scalar (SIMD
+  across the 4 stacks is the obvious next optimisation).
 
 ## Benchmark (Apple silicon, Release, 256-frame blocks @ 48 kHz, deadline 5333 µs)
 
 | Case | 8 tracks | 32 tracks | 128 tracks |
 |---|---|---|---|
 | Audio, 4 clips/track (avg µs/block) | 1.0 | 3.2 | 12.3 |
-| MIDI, 8 held voices + 1 retriggered note/track (avg µs/block) | 98 | 396 | 1594 |
+| MIDI, 8 held voices + 1 retriggered note/track, previous fixed synth | 98 | 396 | 1594 |
+| MIDI, same notes, `se_synth_params` defaults | 140 | 573 | 2246 |
+| MIDI, same notes, heavy patch (unison 4, cross FM, folded sine, triangle morph, sub, noise, resonant BP + filter env, LFO → pitch/cutoff/amp) | 870 | 3489 | 13782 |
 
-(p99 for 32 MIDI tracks ≈ 420 µs, i.e. ~8 % of the block deadline.)
+(Default patch, 32 tracks: ≈ 1.45× the previous synth, ~11 % of the block
+deadline. The heavy patch runs 8 oscillators per voice: 32 tracks × 8 voices
+fit in ~65 % of the deadline; 128 such tracks do not run in real time.)

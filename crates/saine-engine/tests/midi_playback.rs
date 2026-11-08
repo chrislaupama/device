@@ -133,6 +133,7 @@ fn audio_tracks_ignore_notes_and_v2_keeps_audio_working() {
             clips: vec![],
             instrument: false,
             notes: vec![snapshot::NoteSnapshot { start: 0, end: 10_000, pitch: 60, velocity: 100 }],
+            synth: None,
         }],
         master_gain: 1.0,
     };
