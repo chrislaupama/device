@@ -142,3 +142,21 @@ jobs:
             selftest-*.txt
             shot-*.txt
           if-no-files-found: ignore
+
+  # The self-hosted macOS runner (from main, 30a5ccb): engine and Rust tests
+  # on real hardware, including the real audio device tests.
+  build-test-self-hosted:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+      - name: Engine — configure, build, test
+        run: |
+          cmake -S engine -B engine/build-ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build engine/build-ci
+          ctest --test-dir engine/build-ci --output-on-failure
+      - name: Rust workspace — test
+        run: cargo test --workspace --locked
