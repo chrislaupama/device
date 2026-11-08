@@ -6,6 +6,7 @@
 #include "saine_engine.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 
@@ -19,5 +20,10 @@ void set_device_factory(se_engine* e, std::function<std::unique_ptr<AudioDevice>
 void set_record_writer_stalled(se_engine* e, bool stalled);
 // Ring size (frames per track) for the next se_record_start; 0 = default (2 s).
 void set_record_ring_frames(se_engine* e, std::size_t frames);
+// Plugin instances created so far (successful or not).
+uint64_t plugin_instantiations(se_engine* e);
+// Queue a parameter change for a live device (AU: parameter id + plain
+// value; VST3: ParamID + normalized value; CLAP: clap_id + plain value).
+bool plugin_set_parameter(se_engine* e, uint64_t device_id, uint32_t param_id, double value);
 
 } // namespace saine::testing

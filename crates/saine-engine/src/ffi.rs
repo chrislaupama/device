@@ -261,6 +261,71 @@ pub struct se_session_desc_v4 {
     pub master_gain: f32,
 }
 
+pub const SE_PLUGIN_AU: u8 = 0;
+pub const SE_PLUGIN_VST3: u8 = 1;
+pub const SE_PLUGIN_CLAP: u8 = 2;
+pub const SE_PLUGIN_MESSAGE_MAX: usize = 256;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_device_desc {
+    pub device_id: u64,
+    pub name: *const std::ffi::c_char,
+    pub plugin_id: *const std::ffi::c_char,
+    pub path: *const std::ffi::c_char,
+    pub state: *const u8,
+    pub state_len: usize,
+    pub format: u8,
+    pub enabled: u8,
+    pub _pad: [u8; 6],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_track_desc_v5 {
+    pub track_id: u64,
+    pub gain: f32,
+    pub pan: f32,
+    pub mute: u8,
+    pub solo: u8,
+    pub instrument: u8,
+    pub arm: u8,
+    pub monitor: u8,
+    pub input_mode: u8,
+    pub input_channel: u16,
+    pub clips: *const se_clip_desc,
+    pub clip_count: u32,
+    pub note_count: u32,
+    pub notes: *const se_note_desc,
+    pub synth: *const se_synth_params,
+    pub devices: *const se_device_desc,
+    pub device_count: u32,
+    pub _pad2: u32,
+    pub instrument_plugin: *const se_device_desc,
+    pub track_name: *const std::ffi::c_char,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_session_desc_v5 {
+    pub tracks: *const se_track_desc_v5,
+    pub track_count: u32,
+    pub master_gain: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct se_plugin_message {
+    pub device_id: u64,
+    pub message: [std::ffi::c_char; SE_PLUGIN_MESSAGE_MAX],
+}
+
+impl Default for se_plugin_message {
+    fn default() -> Self {
+        se_plugin_message { device_id: 0, message: [0; SE_PLUGIN_MESSAGE_MAX] }
+    }
+}
+
 pub const SE_DEVICE_STRING_MAX: usize = 256;
 pub const SE_DEVICE_MAX_RATES: usize = 16;
 pub const SE_PATH_MAX: usize = 1024;
@@ -416,6 +481,18 @@ unsafe extern "C" {
     pub fn se_record_peaks(engine: *mut se_engine, track_id: u64, frames_per_peak: u32, out_minmax: *mut f32, capacity: usize, out_count: *mut usize) -> i32;
     pub fn se_record_stats_get(engine: *mut se_engine, out: *mut se_record_stats) -> i32;
     pub fn se_render_offline_with_input(engine: *mut se_engine, input_interleaved: *const f32, input_channels: u32, out_interleaved: *mut f32, frames: u32) -> i32;
+
+    // plugins
+    pub fn se_session_publish_v5(engine: *mut se_engine, session: *const se_session_desc_v5) -> i32;
+    pub fn se_plugin_is_live(engine: *mut se_engine, device_id: u64) -> i32;
+    pub fn se_plugin_load_errors(engine: *mut se_engine, out: *mut se_plugin_message, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_plugin_save_states(engine: *mut se_engine, out_count: *mut usize) -> i32;
+    pub fn se_plugin_saved_state(engine: *mut se_engine, index: usize, out_device_id: *mut u64, out_data: *mut *const u8, out_len: *mut usize) -> i32;
+    pub fn se_plugin_editor_open(engine: *mut se_engine, device_id: u64) -> i32;
+    pub fn se_plugin_editor_close(engine: *mut se_engine, device_id: u64) -> i32;
+    pub fn se_plugin_editor_is_open(engine: *mut se_engine, device_id: u64) -> i32;
+    pub fn se_plugin_latency(engine: *mut se_engine, device_id: u64, out_frames: *mut u32) -> i32;
+    pub fn se_plugin_idle(engine: *mut se_engine) -> i32;
 }
 
 /// Guards the hand-written declarations against drift from saine_engine.h.
@@ -630,6 +707,54 @@ mod abi_layout {
         );
         assert_eq!((size_of::<se_live_take>(), align_of::<se_live_take>()), (24, 8));
         assert_eq!((size_of::<se_record_stats>(), align_of::<se_record_stats>()), (32, 8));
+    }
+
+    #[test]
+    fn plugin_layout_matches_c_header() {
+        assert_eq!((size_of::<se_device_desc>(), align_of::<se_device_desc>()), (56, 8));
+        assert_eq!(
+            [
+                offset_of!(se_device_desc, device_id),
+                offset_of!(se_device_desc, name),
+                offset_of!(se_device_desc, plugin_id),
+                offset_of!(se_device_desc, path),
+                offset_of!(se_device_desc, state),
+                offset_of!(se_device_desc, state_len),
+                offset_of!(se_device_desc, format),
+                offset_of!(se_device_desc, enabled),
+                offset_of!(se_device_desc, _pad),
+            ],
+            [0, 8, 16, 24, 32, 40, 48, 49, 50]
+        );
+        assert_eq!((size_of::<se_track_desc_v5>(), align_of::<se_track_desc_v5>()), (88, 8));
+        assert_eq!(
+            [
+                offset_of!(se_track_desc_v5, track_id),
+                offset_of!(se_track_desc_v5, gain),
+                offset_of!(se_track_desc_v5, pan),
+                offset_of!(se_track_desc_v5, mute),
+                offset_of!(se_track_desc_v5, solo),
+                offset_of!(se_track_desc_v5, instrument),
+                offset_of!(se_track_desc_v5, arm),
+                offset_of!(se_track_desc_v5, monitor),
+                offset_of!(se_track_desc_v5, input_mode),
+                offset_of!(se_track_desc_v5, input_channel),
+                offset_of!(se_track_desc_v5, clips),
+                offset_of!(se_track_desc_v5, clip_count),
+                offset_of!(se_track_desc_v5, note_count),
+                offset_of!(se_track_desc_v5, notes),
+                offset_of!(se_track_desc_v5, synth),
+                offset_of!(se_track_desc_v5, devices),
+                offset_of!(se_track_desc_v5, device_count),
+                offset_of!(se_track_desc_v5, _pad2),
+                offset_of!(se_track_desc_v5, instrument_plugin),
+                offset_of!(se_track_desc_v5, track_name),
+            ],
+            [0, 8, 12, 16, 17, 18, 19, 20, 21, 22, 24, 32, 36, 40, 48, 56, 64, 68, 72, 80]
+        );
+        assert_eq!((size_of::<se_session_desc_v5>(), align_of::<se_session_desc_v5>()), (16, 8));
+        assert_eq!((size_of::<se_plugin_message>(), align_of::<se_plugin_message>()), (264, 8));
+        assert_eq!(offset_of!(se_plugin_message, message), 8);
     }
 
     #[test]

@@ -35,7 +35,24 @@ static_assert(sizeof(se_device_status) == 808 && offsetof(se_device_status, runn
 static_assert(sizeof(se_recorded_take) == 1064 && offsetof(se_recorded_take, sample_rate) == 32 &&
               offsetof(se_recorded_take, path) == 40);
 static_assert(sizeof(se_live_take) == 24 && sizeof(se_record_stats) == 32);
+// Plugin additions.
+static_assert(sizeof(se_device_desc) == 56 && alignof(se_device_desc) == 8);
+static_assert(offsetof(se_device_desc, name) == 8 && offsetof(se_device_desc, plugin_id) == 16 &&
+              offsetof(se_device_desc, path) == 24 && offsetof(se_device_desc, state) == 32 &&
+              offsetof(se_device_desc, state_len) == 40 && offsetof(se_device_desc, format) == 48 &&
+              offsetof(se_device_desc, enabled) == 49 && offsetof(se_device_desc, _pad) == 50);
+static_assert(sizeof(se_track_desc_v5) == 88 && alignof(se_track_desc_v5) == 8);
+static_assert(offsetof(se_track_desc_v5, synth) == 48 && offsetof(se_track_desc_v5, devices) == 56 &&
+              offsetof(se_track_desc_v5, device_count) == 64 && offsetof(se_track_desc_v5, _pad2) == 68 &&
+              offsetof(se_track_desc_v5, instrument_plugin) == 72 && offsetof(se_track_desc_v5, track_name) == 80);
+static_assert(sizeof(se_session_desc_v5) == 16);
+static_assert(sizeof(se_plugin_message) == 264 && offsetof(se_plugin_message, message) == 8);
 #endif
+// v5 tracks extend v4 tracks field by field (same offsets for the common prefix).
+static_assert(offsetof(se_track_desc_v5, track_id) == offsetof(se_track_desc_v4, track_id) &&
+              offsetof(se_track_desc_v5, input_channel) == offsetof(se_track_desc_v4, input_channel) &&
+              offsetof(se_track_desc_v5, clips) == offsetof(se_track_desc_v4, clips) &&
+              offsetof(se_track_desc_v5, synth) == offsetof(se_track_desc_v4, synth));
 
 namespace {
 
@@ -324,6 +341,116 @@ int32_t se_session_publish_v4(se_engine* engine, const se_session_desc_v4* sessi
     });
 }
 
+int32_t se_session_publish_v5(se_engine* engine, const se_session_desc_v5* session) {
+    SE_REQUIRE_ENGINE(engine);
+    if (session == nullptr) return fail(SE_ERR_INVALID_ARG, "session is NULL");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->publish(*session, err), err);
+    });
+}
+
+// ---- plugins
+
+int32_t se_plugin_is_live(se_engine* engine, uint64_t device_id) {
+    if (engine == nullptr || !engine->impl) return 0;
+    try {
+        return engine->impl->plugin_is_live(device_id) ? 1 : 0;
+    } catch (...) {
+        return 0;
+    }
+}
+
+int32_t se_plugin_load_errors(se_engine* engine, se_plugin_message* out, size_t capacity, size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (capacity > 0 && out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    return guarded([&]() -> int32_t {
+        std::vector<std::pair<uint64_t, std::string>> errs;
+        engine->impl->plugin_load_errors(errs);
+        for (std::size_t i = 0; i < errs.size() && i < capacity; ++i) {
+            out[i] = se_plugin_message{};
+            out[i].device_id = errs[i].first;
+            const std::size_t n = std::min(errs[i].second.size(), sizeof out[i].message - 1);
+            std::memcpy(out[i].message, errs[i].second.data(), n);
+        }
+        if (out_count != nullptr) *out_count = errs.size();
+        return SE_OK;
+    });
+}
+
+int32_t se_plugin_save_states(se_engine* engine, size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&]() -> int32_t {
+        const std::size_t n = engine->impl->plugin_save_states();
+        if (out_count != nullptr) *out_count = n;
+        return SE_OK;
+    });
+}
+
+int32_t se_plugin_saved_state(se_engine* engine, size_t index, uint64_t* out_device_id, const uint8_t** out_data,
+                              size_t* out_len) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out_device_id == nullptr || out_data == nullptr || out_len == nullptr)
+        return fail(SE_ERR_INVALID_ARG, "output pointer is NULL");
+    return guarded([&]() -> int32_t {
+        if (!engine->impl->plugin_saved_state(index, *out_device_id, *out_data, *out_len))
+            return fail(SE_ERR_NOT_FOUND, "no saved state at this index");
+        return SE_OK;
+    });
+}
+
+#define SE_REQUIRE_MAIN_THREAD()                                                                                       \
+    do {                                                                                                               \
+        if (!saine::on_platform_main_thread()) return fail(SE_ERR_STATE, "plugin editors are main-thread only");      \
+    } while (0)
+
+int32_t se_plugin_editor_open(se_engine* engine, uint64_t device_id) {
+    SE_REQUIRE_ENGINE(engine);
+    SE_REQUIRE_MAIN_THREAD();
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->plugin_editor_open(device_id, err), err);
+    });
+}
+
+int32_t se_plugin_editor_close(se_engine* engine, uint64_t device_id) {
+    SE_REQUIRE_ENGINE(engine);
+    SE_REQUIRE_MAIN_THREAD();
+    return guarded([&]() -> int32_t {
+        engine->impl->plugin_editor_close(device_id);
+        return SE_OK;
+    });
+}
+
+int32_t se_plugin_editor_is_open(se_engine* engine, uint64_t device_id) {
+    if (engine == nullptr || !engine->impl) return 0;
+    try {
+        return engine->impl->plugin_editor_is_open(device_id) ? 1 : 0;
+    } catch (...) {
+        return 0;
+    }
+}
+
+int32_t se_plugin_latency(se_engine* engine, uint64_t device_id, uint32_t* out_frames) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out_frames == nullptr) return fail(SE_ERR_INVALID_ARG, "out_frames is NULL");
+    return guarded([&]() -> int32_t {
+        if (!engine->impl->plugin_latency(device_id, *out_frames)) {
+            *out_frames = 0;
+            return fail(SE_ERR_NOT_FOUND, "no live plugin instance for this device");
+        }
+        return SE_OK;
+    });
+}
+
+int32_t se_plugin_idle(se_engine* engine) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&]() -> int32_t {
+        engine->impl->plugin_idle();
+        return SE_OK;
+    });
+}
+
 int32_t se_device_list(se_device_info* out, size_t capacity, size_t* out_count) {
     if (capacity > 0 && out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
     return guarded([&]() -> int32_t {
@@ -465,5 +592,9 @@ void set_device_factory(se_engine* e, std::function<std::unique_ptr<AudioDevice>
 }
 void set_record_writer_stalled(se_engine* e, bool stalled) { e->impl->set_record_writer_stalled(stalled); }
 void set_record_ring_frames(se_engine* e, std::size_t frames) { e->impl->set_record_ring_frames(frames); }
+uint64_t plugin_instantiations(se_engine* e) { return e->impl->plugin_instantiations(); }
+bool plugin_set_parameter(se_engine* e, uint64_t device_id, uint32_t param_id, double value) {
+    return e->impl->plugin_set_parameter(device_id, param_id, value);
+}
 
 } // namespace saine::testing

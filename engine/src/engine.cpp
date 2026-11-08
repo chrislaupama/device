@@ -43,7 +43,8 @@ int64_t floor_mod(int64_t a, int64_t m) noexcept {
 // ============================================================ lifecycle
 
 Engine::Engine(double sample_rate, uint32_t max_block, uint32_t channels)
-    : sample_rate_(sample_rate), max_block_(max_block), channels_(channels), live_ctx_(max_block) {
+    : sample_rate_(sample_rate), max_block_(max_block), channels_(channels), plugins_(sample_rate, max_block),
+      live_ctx_(max_block) {
     // Preallocated here so neither se_metronome_set nor the callback allocates.
     const auto len = static_cast<std::size_t>(std::llround(0.015 * sample_rate));
     click_down_ = make_click(sample_rate, 1200.0, len);
@@ -90,6 +91,12 @@ Engine::~Engine() {
         rec_live_.store(nullptr, std::memory_order_seq_cst);
         if (recorder_) recorder_->finish(last_takes_);
         recorder_.reset();
+    }
+    {
+        // Nothing renders any more: destroy plugin instances (and close their
+        // editors) here, on the destroying thread (the app's main thread).
+        std::lock_guard lock(plugins_.mutex());
+        plugins_.shutdown_all();
     }
     // Nothing can be on the RT path any more (contract: no calls race with
     // destroy). Members are destroyed normally on this (non-RT) thread.
@@ -319,7 +326,7 @@ int32_t Engine::publish(const se_session_desc& desc, std::string& err) {
     };
     const int32_t rc = build_render_graph(desc, lookup, built, err);
     if (rc != SE_OK) return rc;
-    return install_graph(std::move(built));
+    return publish_graph(std::move(built));
 }
 
 int32_t Engine::publish(const se_session_desc_v2& desc, std::string& err) {
@@ -331,7 +338,7 @@ int32_t Engine::publish(const se_session_desc_v2& desc, std::string& err) {
     };
     const int32_t rc = build_render_graph(desc, lookup, built, err);
     if (rc != SE_OK) return rc;
-    return install_graph(std::move(built));
+    return publish_graph(std::move(built));
 }
 
 int32_t Engine::publish(const se_session_desc_v3& desc, std::string& err) {
@@ -343,7 +350,7 @@ int32_t Engine::publish(const se_session_desc_v3& desc, std::string& err) {
     };
     const int32_t rc = build_render_graph(desc, lookup, built, err);
     if (rc != SE_OK) return rc;
-    return install_graph(std::move(built));
+    return publish_graph(std::move(built));
 }
 
 int32_t Engine::publish(const se_session_desc_v4& desc, std::string& err) {
@@ -355,7 +362,7 @@ int32_t Engine::publish(const se_session_desc_v4& desc, std::string& err) {
     };
     const int32_t rc = build_render_graph(desc, lookup, built, err);
     if (rc != SE_OK) return rc;
-    return install_graph(std::move(built));
+    return publish_graph(std::move(built));
 }
 
 // Synth states outlive graph swaps: an instrument track takes over the Synth
@@ -364,7 +371,44 @@ int32_t Engine::publish(const se_session_desc_v4& desc, std::string& err) {
 // get a fresh Synth, allocated here. A Synth whose track disappeared stays
 // owned by the retired graph(s) and is freed when they are reclaimed, which
 // happens only on non-RT threads once the RT side can no longer reach them.
-int32_t Engine::install_graph(std::unique_ptr<RenderGraph> built) {
+int32_t Engine::publish(const se_session_desc_v5& desc, std::string& err) {
+    std::unique_ptr<RenderGraph> built;
+    const AssetLookup lookup = [this](uint64_t id) -> AssetRef {
+        std::lock_guard lock(assets_mutex_);
+        auto it = assets_.find(id);
+        return it == assets_.end() ? nullptr : it->second;
+    };
+    const int32_t rc = build_render_graph(desc, lookup, built, err);
+    if (rc != SE_OK) return rc;
+    // Resolve plugin instances (instantiating new device ids on this, the
+    // main, thread), in the order build_render_graph created the slots.
+    std::lock_guard plock(plugins_.mutex());
+    plugins_.begin_publish();
+    for (uint32_t t = 0; t < desc.track_count; ++t) {
+        const se_track_desc_v5& td = desc.tracks[t];
+        TrackNode& node = built->tracks[t];
+        for (uint32_t i = 0; i < td.device_count; ++i)
+            built->fx[node.fx_begin + i].inst = plugins_.use(td.devices[i], false, td.track_name);
+        if (node.has_instrument_plugin)
+            node.instrument_plugin = plugins_.use(*td.instrument_plugin, true, td.track_name);
+    }
+    const uint64_t seq = install_graph(std::move(built));
+    plugins_.end_publish(seq);
+    plugins_.collect(rt_active_seq_.load(std::memory_order_seq_cst));
+    return SE_OK;
+}
+
+// v1..v4: no devices, so every plugin instance is retired.
+int32_t Engine::publish_graph(std::unique_ptr<RenderGraph> built) {
+    const uint64_t seq = install_graph(std::move(built));
+    std::lock_guard plock(plugins_.mutex());
+    plugins_.begin_publish();
+    plugins_.end_publish(seq);
+    plugins_.collect(rt_active_seq_.load(std::memory_order_seq_cst));
+    return SE_OK;
+}
+
+uint64_t Engine::install_graph(std::unique_ptr<RenderGraph> built) {
     std::shared_ptr<RenderGraph> next(std::move(built));
     std::lock_guard lock(control_mutex_);
     std::unordered_map<uint64_t, std::shared_ptr<Synth>> previous;
@@ -384,12 +428,13 @@ int32_t Engine::install_graph(std::unique_ptr<RenderGraph> built) {
         next->synth_refs[i] = std::move(synth);
     }
 
-    next->seq = next_seq_++;
+    const uint64_t seq = next_seq_++;
+    next->seq = seq;
     live_graph_.store(next.get(), std::memory_order_seq_cst);
     if (current_) retired_.push_back(std::move(current_));
     current_ = std::move(next);
     reclaim_locked();
-    return SE_OK;
+    return seq;
 }
 
 // Reclamation protocol (single RT reader, wait-free on the RT side):
@@ -506,6 +551,7 @@ void Engine::apply_command(const TransportCommand& cmd) noexcept {
         }
         break;
     case TransportCommand::Type::SetMetronome:
+        if (std::isfinite(cmd.frames_per_beat) && cmd.frames_per_beat >= 1.0) rt_tempo_fpb_ = cmd.frames_per_beat;
         rt_metro_enabled_ = cmd.enabled;
         if (cmd.enabled) {
             rt_metro_gain_ = cmd.gain;
@@ -653,7 +699,12 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
             }
         }
         const InputView iv{in_ptrs, in_count};
-        const InstrumentInputs inst{graph != nullptr ? graph->synths.data() : nullptr, rt_synth_gen_};
+        RtTransport transport;
+        transport.position = rt_position_;
+        transport.playing = rt_playing_;
+        transport.sample_rate = sample_rate_;
+        transport.tempo_bpm = rt_tempo_fpb_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpb_ : 120.0;
+        const InstrumentInputs inst{graph != nullptr ? graph->synths.data() : nullptr, rt_synth_gen_, &transport};
         const BlockPeaks p = render_block(graph, rt_position_, rt_playing_, n, live_ctx_, true, slot, inst, iv);
         if (rec != nullptr && rt_playing_) rec->capture(in_ptrs, in_count, live_ctx_.zeros(), rt_position_, rec_latency, n);
         peak_l = std::max(peak_l, p.l);
@@ -912,6 +963,10 @@ void Engine::set_record_writer_stalled(bool stalled) {
 
 // Export renders with a private context and transport so it never disturbs
 // live playback, meters or stats. It shares render_block() with the RT path.
+// Plugin instances are live, shared state: a session with plugins is
+// exported with the RT ownership held (device stopped, no offline render),
+// using the live instances; the export marks itself as the RT reader of the
+// graph so retired instances it uses are not destroyed under it.
 int32_t Engine::export_wav(const char* path, int64_t start_frame, int64_t end_frame, std::string& err) {
     if (end_frame <= start_frame) {
         err = "export range is empty";
@@ -926,6 +981,30 @@ int32_t Engine::export_wav(const char* path, int64_t start_frame, int64_t end_fr
         err = "engine sample rate is not representable in a WAV header";
         return SE_ERR_UNSUPPORTED_FORMAT;
     }
+
+    const bool plugins = graph && graph->has_plugins;
+    if (plugins) {
+        const int conflict = acquire_rt_owner(kOwnerOffline);
+        if (conflict != kOwnerNone) {
+            err = conflict == kOwnerDevice ? "stop the audio device to export a session with plugins"
+                                           : "an offline render is in progress";
+            return SE_ERR_STATE;
+        }
+        std::lock_guard lock(control_mutex_);
+        graph = current_; // the newest graph; pinned for the RT protocol below
+        rt_active_seq_.store(graph->seq, std::memory_order_seq_cst);
+        ++rt_synth_gen_; // instrument plugins: all notes off before and after
+    }
+    struct Release {
+        Engine* e;
+        bool on;
+        ~Release() {
+            if (!on) return;
+            ++e->rt_synth_gen_;
+            e->rt_active_seq_.store(kIdle, std::memory_order_seq_cst);
+            e->release_rt_owner();
+        }
+    } release{this, plugins};
 
     WavFloatWriter writer;
     int32_t rc = writer.open(path, 2, static_cast<uint32_t>(sample_rate_), err);
@@ -944,10 +1023,16 @@ int32_t Engine::export_wav(const char* path, int64_t start_frame, int64_t end_fr
                 synth_ptrs[i] = synths.back().get();
             }
     }
-    const InstrumentInputs inst{synth_ptrs.empty() ? nullptr : synth_ptrs.data(), 0};
+    RtTransport transport;
+    transport.sample_rate = sample_rate_;
+    transport.playing = true;
+    transport.tempo_bpm = rt_tempo_fpb_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpb_ : 120.0;
+    InstrumentInputs inst{synth_ptrs.empty() ? nullptr : synth_ptrs.data(), plugins ? rt_synth_gen_ : 0,
+                          plugins ? &transport : nullptr};
     ScopedFlushDenormals ftz;
     for (int64_t pos = start_frame; pos < end_frame;) {
         const auto n = static_cast<uint32_t>(std::min<int64_t>(end_frame - pos, max_block_));
+        transport.position = pos;
         render_block(graph.get(), pos, true, n, ctx, false, 0, inst);
         const float* l = ctx.master_l();
         const float* r = ctx.master_r();
@@ -960,6 +1045,61 @@ int32_t Engine::export_wav(const char* path, int64_t start_frame, int64_t end_fr
         pos += n;
     }
     return writer.finish(err);
+}
+
+// ============================================================ plugins
+
+bool Engine::plugin_is_live(uint64_t device_id) {
+    std::lock_guard lock(plugins_.mutex());
+    return plugins_.is_live(device_id);
+}
+
+void Engine::plugin_load_errors(std::vector<std::pair<uint64_t, std::string>>& out) {
+    std::lock_guard lock(plugins_.mutex());
+    plugins_.load_errors(out);
+}
+
+std::size_t Engine::plugin_save_states() {
+    std::lock_guard lock(plugins_.mutex());
+    plugins_.collect(rt_active_seq_.load(std::memory_order_seq_cst));
+    return plugins_.save_states();
+}
+
+bool Engine::plugin_saved_state(std::size_t index, uint64_t& id, const uint8_t*& data, std::size_t& len) {
+    std::lock_guard lock(plugins_.mutex());
+    return plugins_.saved_state(index, id, data, len);
+}
+
+int32_t Engine::plugin_editor_open(uint64_t device_id, std::string& err) {
+    std::lock_guard lock(plugins_.mutex());
+    plugins_.collect(rt_active_seq_.load(std::memory_order_seq_cst));
+    return plugins_.editor_open(device_id, err);
+}
+
+void Engine::plugin_editor_close(uint64_t device_id) {
+    std::lock_guard lock(plugins_.mutex());
+    plugins_.editor_close(device_id);
+}
+
+bool Engine::plugin_editor_is_open(uint64_t device_id) {
+    std::lock_guard lock(plugins_.mutex());
+    return plugins_.editor_is_open(device_id);
+}
+
+bool Engine::plugin_latency(uint64_t device_id, uint32_t& frames) {
+    std::lock_guard lock(plugins_.mutex());
+    return plugins_.latency(device_id, frames);
+}
+
+void Engine::plugin_idle() {
+    std::lock_guard lock(plugins_.mutex());
+    plugins_.idle(rt_active_seq_.load(std::memory_order_seq_cst));
+}
+
+bool Engine::plugin_set_parameter(uint64_t device_id, uint32_t param_id, double value) {
+    std::lock_guard lock(plugins_.mutex());
+    PluginInstance* inst = plugins_.instance(device_id);
+    return inst != nullptr && inst->set_parameter(param_id, value);
 }
 
 } // namespace saine

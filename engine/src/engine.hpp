@@ -4,6 +4,7 @@
 
 #include "asset.hpp"
 #include "platform/audio_device.hpp"
+#include "plugins/plugin_host.hpp"
 #include "processor.hpp"
 #include "recorder.hpp"
 #include "render_graph.hpp"
@@ -77,6 +78,21 @@ public:
     int32_t publish(const se_session_desc_v2& desc, std::string& err);
     int32_t publish(const se_session_desc_v3& desc, std::string& err);
     int32_t publish(const se_session_desc_v4& desc, std::string& err);
+    int32_t publish(const se_session_desc_v5& desc, std::string& err);
+
+    // ---- plugins (see saine_engine.h; main thread where documented)
+    bool plugin_is_live(uint64_t device_id);
+    void plugin_load_errors(std::vector<std::pair<uint64_t, std::string>>& out);
+    std::size_t plugin_save_states();
+    bool plugin_saved_state(std::size_t index, uint64_t& id, const uint8_t*& data, std::size_t& len);
+    int32_t plugin_editor_open(uint64_t device_id, std::string& err);
+    void plugin_editor_close(uint64_t device_id);
+    bool plugin_editor_is_open(uint64_t device_id);
+    bool plugin_latency(uint64_t device_id, uint32_t& frames);
+    void plugin_idle();
+    // Test hooks.
+    uint64_t plugin_instantiations() const noexcept { return plugins_.instantiations(); }
+    bool plugin_set_parameter(uint64_t device_id, uint32_t param_id, double value);
     // Frees retired graphs the audio thread can no longer reach. Non-RT.
     void collect_garbage();
     std::size_t retired_graph_count() const;
@@ -135,8 +151,10 @@ private:
 
     void reclaim_locked(); // requires control_mutex_
     // Assigns synth states (reusing the previous graph's by track_id) and
-    // publishes the graph to the RT side.
-    int32_t install_graph(std::unique_ptr<RenderGraph> built);
+    // publishes the graph to the RT side. Returns the graph's seq.
+    uint64_t install_graph(std::unique_ptr<RenderGraph> built);
+    // install_graph + retire every plugin instance (v1..v4 publishes).
+    int32_t publish_graph(std::unique_ptr<RenderGraph> built);
 
     // Who currently owns the live render path (RT role). Exactly one owner
     // may touch the rt_* state and pop the command queue. kOwnerControl is a
@@ -203,6 +221,9 @@ private:
     // Bumped on every playback jump (seek, stop, pause, loop wrap); synths
     // fade their voices when it changes. RT-owned.
     uint64_t rt_synth_gen_ = 0;
+    // Tempo for plugins: the metronome grid (frames per beat), kept even
+    // while the metronome is disabled; 0 = 120 BPM. RT-owned.
+    double rt_tempo_fpb_ = 0.0;
     std::atomic<int64_t> pub_position_{0};
     std::atomic<bool> pub_playing_{false};
 
@@ -252,6 +273,9 @@ private:
     std::size_t record_ring_frames_ = 0; // 0 = 2 s at the engine rate
     std::atomic<Recorder*> rec_live_{nullptr};
     std::atomic<bool> rec_in_use_{false};
+
+    // -- plugins (instances shared by every graph that references them)
+    PluginHost plugins_;
 
     // -- RT scratch (used by whoever holds rt_owner_)
     RenderContext live_ctx_;

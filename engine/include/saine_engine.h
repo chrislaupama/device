@@ -541,6 +541,136 @@ int32_t se_record_stats_get(se_engine* engine, se_record_stats* out);
 int32_t se_render_offline_with_input(se_engine* engine, const float* input_interleaved, uint32_t input_channels,
                                      float* out_interleaved, uint32_t frames);
 
+
+/* ---- plugins: device chains (ABI v1 addition) ---------------------------
+ * See docs/adr/0003-plugins.md and engine/README.md ("Plugins").
+ *
+ * se_session_publish_v5 is a superset of se_session_publish_v4: every v5
+ * track carries the v4 fields (same meaning, same validation) plus its insert
+ * chain (`devices`, in processing order) and, on instrument tracks, an
+ * instrument plugin that replaces the built-in synth. v1..v4 publishes are
+ * equivalent to v5 without devices (they retire every plugin instance).
+ *
+ * THREADING: se_session_publish_v5 must be called on the app's main thread:
+ * a device id seen for the first time is instantiated synchronously during
+ * the call (format rules: VST3/CLAP main-thread APIs; AU via the synchronous
+ * AudioComponentInstanceNew), prepared at the engine rate / max block size
+ * with stereo in/out, and given its saved `state`. Instances are kept across
+ * republishes keyed by device_id; `state` is only read when an instance is
+ * created (it may be NULL for a live device, see se_plugin_is_live). A device
+ * id that disappears is retired: its editor closes, and the instance is
+ * destroyed on the main thread (inside a later publish or se_plugin_* call)
+ * once the audio thread can no longer reach it.
+ * A device that cannot be instantiated (missing bundle, unknown id, load or
+ * setup failure, unsupported bus layout) passes audio through unchanged
+ * (an instrument plugin renders silence); the reason is reported by
+ * se_plugin_load_errors. Instantiation is not retried while the device id
+ * stays published with the same plugin.
+ *
+ * Processing per track: clips + (instrument plugin | built-in synth) +
+ * monitored input -> insert chain (enabled devices only) -> gain/pan/
+ * mute/solo -> meters -> master. Insert chains keep running while the
+ * transport is stopped (tails ring out), also on muted tracks (not heard).
+ * Instrument plugins receive the track's notes as sample-accurate note
+ * on/off events; seek, stop, pause and loop wraps send note-offs for every
+ * sounding note (plus MIDI CC 123 to Audio Units).
+ *
+ * Validation (else SE_ERR_INVALID_ARG): device_id != 0 and unique within the
+ * session (inserts and instrument plugins together), format <= SE_PLUGIN_CLAP,
+ * plugin_id non-NULL, state non-NULL when state_len > 0. */
+enum { SE_PLUGIN_AU = 0, SE_PLUGIN_VST3 = 1, SE_PLUGIN_CLAP = 2 };
+
+typedef struct se_device_desc {
+    uint64_t device_id;     /* saine_core DeviceId, != 0 */
+    const char* name;       /* display name (editor window title); may be NULL */
+    const char* plugin_id;  /* AU "type subtype manufacturer" (e.g. "aufx lpas appl"),
+                               VST3 class UID (32 hex chars), CLAP plugin id */
+    const char* path;       /* bundle path (VST3/CLAP, required there); ignored for AU */
+    const uint8_t* state;   /* saved state (format-specific, see README), NULL = none */
+    size_t state_len;
+    uint8_t format;         /* SE_PLUGIN_* */
+    uint8_t enabled;        /* 0 = bypassed (skipped, audio passes unchanged) */
+    uint8_t _pad[6];
+} se_device_desc; /* 56 bytes, align 8 */
+
+typedef struct se_track_desc_v5 {
+    uint64_t track_id;
+    float gain; /* linear */
+    float pan;  /* -1 .. +1, constant-power */
+    uint8_t mute;
+    uint8_t solo;
+    uint8_t instrument;
+    uint8_t arm;
+    uint8_t monitor;
+    uint8_t input_mode;     /* SE_INPUT_* */
+    uint16_t input_channel;
+    const se_clip_desc* clips;
+    uint32_t clip_count;
+    uint32_t note_count;
+    const se_note_desc* notes;
+    const se_synth_params* synth;           /* NULL = defaults */
+    const se_device_desc* devices;          /* insert chain, processing order */
+    uint32_t device_count;
+    uint32_t _pad2;
+    const se_device_desc* instrument_plugin; /* NULL = built-in synth; used only when instrument != 0 */
+    const char* track_name;                  /* editor window titles; may be NULL */
+} se_track_desc_v5; /* 88 bytes, align 8 */
+
+typedef struct se_session_desc_v5 {
+    const se_track_desc_v5* tracks;
+    uint32_t track_count;
+    float master_gain; /* linear */
+} se_session_desc_v5; /* 16 bytes, align 8 */
+
+int32_t se_session_publish_v5(se_engine* engine, const se_session_desc_v5* session);
+
+/* 1 if `device_id` has a live (or failed, not to be retried) instance for
+ * the currently published plugin, else 0. Lets the caller skip decoding
+ * saved state for devices that will not be instantiated. Any thread. */
+int32_t se_plugin_is_live(se_engine* engine, uint64_t device_id);
+
+/* Load errors of currently published devices. Writes up to `capacity`;
+ * *out_count = total. Any non-RT thread. */
+#define SE_PLUGIN_MESSAGE_MAX 256
+typedef struct se_plugin_message {
+    uint64_t device_id;
+    char message[SE_PLUGIN_MESSAGE_MAX]; /* UTF-8, truncated */
+} se_plugin_message; /* 264 bytes, align 8 */
+int32_t se_plugin_load_errors(se_engine* engine, se_plugin_message* out, size_t capacity, size_t* out_count);
+
+/* Plugin state, two steps. MAIN THREAD (VST3/CLAP save state on the main
+ * thread; safe while audio runs). se_plugin_save_states saves the state of
+ * every live instance into an engine-owned buffer and returns how many;
+ * se_plugin_saved_state reads entry `index`. Pointers stay valid until the
+ * next se_plugin_save_states or se_engine_destroy. Instances whose save
+ * fails are left out. Formats (opaque to callers, documented in README):
+ * AU = binary plist of kAudioUnitProperty_ClassInfo; VST3 = "SVS3"
+ * container of component + controller state; CLAP = the clap.state stream. */
+int32_t se_plugin_save_states(se_engine* engine, size_t* out_count);
+int32_t se_plugin_saved_state(se_engine* engine, size_t index, uint64_t* out_device_id, const uint8_t** out_data,
+                              size_t* out_len);
+
+/* Native editor windows (macOS: NSWindow titled "<plugin>: <track>").
+ * MAIN THREAD ONLY (else SE_ERR_STATE). Opening an open editor brings its
+ * window to the front. Unknown/failed device -> SE_ERR_NOT_FOUND; a plugin
+ * without an editor -> SE_ERR_UNSUPPORTED_FORMAT (AUs fall back to the
+ * generic AUGenericView). Closing the window with its close button closes
+ * the editor (se_plugin_editor_is_open then returns 0). Editors of retired
+ * instances close automatically. */
+int32_t se_plugin_editor_open(se_engine* engine, uint64_t device_id);
+int32_t se_plugin_editor_close(se_engine* engine, uint64_t device_id);
+int32_t se_plugin_editor_is_open(se_engine* engine, uint64_t device_id); /* 1 / 0 */
+
+/* Processing latency reported by the plugin, in frames (0 if unknown or not
+ * live). Reported only: no delay compensation yet. Main thread. */
+int32_t se_plugin_latency(se_engine* engine, uint64_t device_id, uint32_t* out_frames);
+
+/* Main-thread housekeeping: destroys retired instances the audio thread can
+ * no longer reach and runs pending CLAP on_main_thread callbacks. Also done
+ * inside se_session_publish_v5 and the other se_plugin_* calls; on macOS
+ * CLAP callbacks are additionally dispatched to the main queue. */
+int32_t se_plugin_idle(se_engine* engine);
+
 #ifdef __cplusplus
 }
 #endif

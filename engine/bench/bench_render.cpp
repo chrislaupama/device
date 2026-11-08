@@ -10,6 +10,9 @@
 // A second table renders MIDI: instrument tracks (no clips) with 8 notes
 // held for the whole run plus one short note retriggered every 100 ms, so
 // 8-9 synth voices sound on every track in every block.
+// A plugin table renders 32 audio tracks (4 clips each) with two test-gain
+// inserts per track (the SaineTestGain CLAP and VST3 bundles built with the
+// engine), i.e. 64 plugin process calls per block.
 #include "saine_engine.h"
 
 #include <algorithm>
@@ -61,8 +64,10 @@ struct Result {
     double rt_ratio;
 };
 
+// plugins: 0 = none (se_session_publish), 1 = CLAP gain + VST3 gain per
+// track, 2 = two CLAP gains per track (se_session_publish_v5).
 Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std::vector<std::string>& files,
-           bool features) {
+           bool features, int plugins = 0) {
     se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
     se_engine* e = se_engine_create(&cfg);
     if (!e) {
@@ -104,9 +109,43 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
         td.clip_count = clips_per_track;
     }
     se_session_desc sd{tds.data(), tracks, 0.5f};
-    if (se_session_publish(e, &sd) != SE_OK) {
+    const std::string clap_gain = std::string(SAINE_TEST_PLUGIN_DIR) + "/SaineTestGain.clap";
+    const std::string vst3_gain = std::string(SAINE_TEST_PLUGIN_DIR) + "/SaineTestGain.vst3";
+    std::vector<std::vector<se_device_desc>> devices(tracks);
+    std::vector<se_track_desc_v5> t5(tracks);
+    for (uint32_t t = 0; t < tracks && plugins != 0; ++t) {
+        for (int k = 0; k < 2; ++k) {
+            se_device_desc d{};
+            d.device_id = 1000 + t * 2 + static_cast<uint32_t>(k);
+            const bool vst3 = plugins == 1 && k == 1;
+            d.format = vst3 ? SE_PLUGIN_VST3 : SE_PLUGIN_CLAP;
+            d.plugin_id = vst3 ? "5A17E5A16E0000018A1E7E576A170001" : "studio.saine.test.gain";
+            d.path = vst3 ? vst3_gain.c_str() : clap_gain.c_str();
+            d.enabled = 1;
+            devices[t].push_back(d);
+        }
+        se_track_desc_v5& d = t5[t];
+        d = se_track_desc_v5{};
+        d.track_id = tds[t].track_id;
+        d.gain = tds[t].gain;
+        d.pan = tds[t].pan;
+        d.clips = tds[t].clips;
+        d.clip_count = tds[t].clip_count;
+        d.devices = devices[t].data();
+        d.device_count = 2;
+    }
+    se_session_desc_v5 sd5{t5.data(), tracks, 0.5f};
+    if ((plugins == 0 ? se_session_publish(e, &sd) : se_session_publish_v5(e, &sd5)) != SE_OK) {
         std::fprintf(stderr, "publish failed: %s\n", se_last_error());
         std::exit(1);
+    }
+    if (plugins != 0) {
+        size_t errors = 0;
+        se_plugin_load_errors(e, nullptr, 0, &errors);
+        if (errors != 0) {
+            std::fprintf(stderr, "test plugins failed to load (built? %s)\n", SAINE_TEST_PLUGIN_DIR);
+            std::exit(1);
+        }
     }
     se_transport_play(e);
     if (features) {
@@ -314,6 +353,15 @@ int main(int argc, char** argv) {
     for (uint32_t tracks : {8u, 32u, 128u}) {
         const Result r = run(tracks, clips_per_track, blocks, files, features);
         std::printf("%8u %14.2f %14.2f %14.2f %15.1fx\n", tracks, r.us_per_block_avg, r.us_per_block_p99,
+                    r.us_per_block_max, r.rt_ratio);
+    }
+    std::printf("\nPlugins: 32 audio tracks x %u clips + 2 test-gain inserts per track\n", clips_per_track);
+    std::printf("%22s %14s %14s %14s %16s\n", "inserts", "avg us/block", "p99 us/block", "max us/block",
+                "realtime ratio");
+    for (int mode : {0, 1, 2}) {
+        const Result r = run(32, clips_per_track, blocks, files, features, mode);
+        const char* name = mode == 0 ? "none (baseline)" : mode == 1 ? "CLAP gain + VST3 gain" : "2 x CLAP gain";
+        std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name, r.us_per_block_avg, r.us_per_block_p99,
                     r.us_per_block_max, r.rt_ratio);
     }
     for (const auto& f : files) std::filesystem::remove(f);

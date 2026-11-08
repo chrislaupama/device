@@ -111,6 +111,52 @@ int32_t build_render_graph(const se_session_desc_v4& desc, const AssetLookup& lo
         err = "session has track_count > 0 but tracks == NULL";
         return SE_ERR_INVALID_ARG;
     }
+    std::vector<se_track_desc_v5> tracks(desc.track_count);
+    for (uint32_t t = 0; t < desc.track_count; ++t) {
+        const se_track_desc_v4& a = desc.tracks[t];
+        se_track_desc_v5& b = tracks[t];
+        b = se_track_desc_v5{};
+        b.track_id = a.track_id;
+        b.gain = a.gain;
+        b.pan = a.pan;
+        b.mute = a.mute;
+        b.solo = a.solo;
+        b.instrument = a.instrument;
+        b.arm = a.arm;
+        b.monitor = a.monitor;
+        b.input_mode = a.input_mode;
+        b.input_channel = a.input_channel;
+        b.clips = a.clips;
+        b.clip_count = a.clip_count;
+        b.notes = a.notes;
+        b.note_count = a.note_count;
+        b.synth = a.synth;
+    }
+    se_session_desc_v5 d5{};
+    d5.tracks = tracks.data();
+    d5.track_count = desc.track_count;
+    d5.master_gain = desc.master_gain;
+    return build_render_graph(d5, lookup, out, err);
+}
+
+namespace {
+
+const char* validate_device(const se_device_desc& d) {
+    if (d.device_id == 0) return "device_id must not be 0";
+    if (d.format > SE_PLUGIN_CLAP) return "invalid plugin format";
+    if (d.plugin_id == nullptr) return "plugin_id is NULL";
+    if (d.state_len > 0 && d.state == nullptr) return "state_len > 0 but state == NULL";
+    return nullptr;
+}
+
+} // namespace
+
+int32_t build_render_graph(const se_session_desc_v5& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err) {
+    if (desc.track_count > 0 && desc.tracks == nullptr) {
+        err = "session has track_count > 0 but tracks == NULL";
+        return SE_ERR_INVALID_ARG;
+    }
     if (!std::isfinite(desc.master_gain)) {
         err = "master_gain is not finite";
         return SE_ERR_INVALID_ARG;
@@ -126,8 +172,28 @@ int32_t build_render_graph(const se_session_desc_v4& desc, const AssetLookup& lo
 
     std::unordered_map<uint64_t, AssetRef> used; // dedupe keep-alive refs
 
+    std::unordered_map<uint64_t, uint64_t> device_ids; // device id -> track id
     for (uint32_t t = 0; t < desc.track_count; ++t) {
-        const se_track_desc_v4& td = desc.tracks[t];
+        const se_track_desc_v5& td = desc.tracks[t];
+        if (td.device_count > 0 && td.devices == nullptr) {
+            err = "track " + std::to_string(td.track_id) + " has device_count > 0 but devices == NULL";
+            return SE_ERR_INVALID_ARG;
+        }
+        const auto check_device = [&](const se_device_desc& d) -> int32_t {
+            if (const char* why = validate_device(d)) {
+                err = "track " + std::to_string(td.track_id) + " device " + std::to_string(d.device_id) + ": " + why;
+                return SE_ERR_INVALID_ARG;
+            }
+            if (!device_ids.emplace(d.device_id, td.track_id).second) {
+                err = "device id " + std::to_string(d.device_id) + " is used more than once";
+                return SE_ERR_INVALID_ARG;
+            }
+            return SE_OK;
+        };
+        for (uint32_t i = 0; i < td.device_count; ++i)
+            if (const int32_t rc = check_device(td.devices[i]); rc != SE_OK) return rc;
+        if (td.instrument_plugin != nullptr && td.instrument != 0)
+            if (const int32_t rc = check_device(*td.instrument_plugin); rc != SE_OK) return rc;
         if (td.clip_count > 0 && td.clips == nullptr) {
             err = "track " + std::to_string(td.track_id) + " has clip_count > 0 but clips == NULL";
             return SE_ERR_INVALID_ARG;
@@ -233,6 +299,12 @@ int32_t build_render_graph(const se_session_desc_v4& desc, const AssetLookup& lo
             g->notes.push_back(NoteEvent{nd.start, nd.end, nd.pitch, nd.velocity});
         }
         node.note_count = static_cast<uint32_t>(g->notes.size()) - node.note_begin;
+        node.fx_begin = static_cast<uint32_t>(g->fx.size());
+        node.fx_count = td.device_count;
+        for (uint32_t i = 0; i < td.device_count; ++i) g->fx.push_back(FxSlot{nullptr, td.devices[i].enabled != 0});
+        node.has_instrument_plugin = node.instrument && td.instrument_plugin != nullptr;
+        node.instrument_plugin_enabled = node.has_instrument_plugin && td.instrument_plugin->enabled != 0;
+        if (node.fx_count > 0 || node.has_instrument_plugin) g->has_plugins = true;
         std::stable_sort(g->notes.begin() + node.note_begin, g->notes.end(), [](const NoteEvent& a, const NoteEvent& b) {
             return a.start != b.start ? a.start < b.start : a.pitch < b.pitch;
         });

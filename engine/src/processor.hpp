@@ -21,11 +21,13 @@ public:
     float* track_l() noexcept { return track_l_.data(); }
     float* track_r() noexcept { return track_r_.data(); }
     float* synth() noexcept { return synth_.data(); } // mono instrument scratch
+    float* plugin_l() noexcept { return plugin_l_.data(); } // instrument plugin output
+    float* plugin_r() noexcept { return plugin_r_.data(); }
     const float* zeros() const noexcept { return zeros_.data(); } // max_block zeros (missing input channels)
 
 private:
     uint32_t max_block_;
-    std::vector<float> track_l_, track_r_, master_l_, master_r_, synth_, zeros_;
+    std::vector<float> track_l_, track_r_, master_l_, master_r_, synth_, zeros_, plugin_l_, plugin_r_;
 };
 
 // Instrument inputs of render_block(). `synths` is parallel to
@@ -33,9 +35,14 @@ private:
 // path passes graph->synths (state shared across republishes); export passes
 // its own private Synth objects. `transport_gen` changes whenever playback
 // jumps (seek / stop / pause / loop wrap) so the synths fade their voices.
+// `transport` non-null enables plugin processing (insert chains and
+// instrument plugins) for this call; its position must equal `position`.
+// Only the RT owner may pass it (plugin instances are shared live state).
+struct RtTransport;
 struct InstrumentInputs {
     Synth* const* synths = nullptr;
     uint64_t transport_gen = 0;
+    const RtTransport* transport = nullptr;
 };
 
 // Device input for one render_block() call: `count` channel pointers, each
@@ -66,6 +73,12 @@ struct BlockPeaks {
 // track's gain/pan/mute/solo; also while not playing). Mono input feeds both
 // sides. An armed track that is not monitoring raises its meters to the raw
 // input peak instead (pre-fader; it is not heard).
+// Plugins (inst.transport set): an instrument plugin replaces the track's
+// synth (fed with the track's notes as MIDI); then the track's insert chain
+// (enabled slots with a loaded instance, in order) processes the summed
+// source in place before gain/pan/meters. Tracks with plugins are processed
+// every call, also when stopped or muted (tails, consistent state), but are
+// only mixed when audible.
 BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing, uint32_t frames,
                         RenderContext& ctx, bool update_meters, uint32_t peek_slot = 0,
                         const InstrumentInputs& inst = {}, const InputView& input = {}) noexcept;

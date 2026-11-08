@@ -157,11 +157,17 @@ impl Engine {
     }
 
     /// Publish an immutable session snapshot to the audio thread
-    /// (`se_session_publish_v4`: audio clips plus, on instrument tracks,
+    /// (`se_session_publish_v5`: audio clips plus, on instrument tracks,
     /// MIDI notes rendered by the engine's built-in synth with the track's
-    /// [`SynthParams`]; `synth: None` uses the engine defaults, which equal
-    /// `SynthParams::default()`; plus each track's record arm, input
-    /// monitoring and input routing).
+    /// [`SynthParams`] (`synth: None` uses the engine defaults, which equal
+    /// `SynthParams::default()`) or by the track's instrument plugin; each
+    /// track's record arm, input monitoring and input routing; and each
+    /// track's insert chain (`devices`).
+    ///
+    /// MAIN THREAD: plugin devices seen for the first time are instantiated
+    /// during this call (see docs/adr/0003-plugins.md). Saved device state
+    /// (base64) is decoded only for devices that need an instance; an
+    /// undecodable state is ignored (the plugin starts with its defaults).
     pub fn publish(&self, s: &SessionSnapshot) -> Result<(), EngineError> {
         let clip_descs: Vec<Vec<ffi::se_clip_desc>> = s
             .tracks
@@ -186,11 +192,22 @@ impl Engine {
         // Parameters only matter on instrument tracks; the engine copies them.
         let synth_descs: Vec<Option<ffi::se_synth_params>> =
             s.tracks.iter().map(|t| if t.instrument { t.synth.as_ref().map(synth_params_to_ffi) } else { None }).collect();
-        let tracks: Vec<ffi::se_track_desc_v4> = s
+        // Plugin devices: owned strings / decoded states first, then the
+        // C descriptors pointing into them (both outlive the call).
+        let dev_store: Vec<Vec<DeviceStore>> =
+            s.tracks.iter().map(|t| t.devices.iter().map(|d| self.device_store(d)).collect::<Result<_, _>>()).collect::<Result<_, _>>()?;
+        let inst_store: Vec<Option<DeviceStore>> = s
             .tracks
             .iter()
-            .zip(clip_descs.iter().zip(note_descs.iter().zip(&synth_descs)))
-            .map(|(t, (clips, (notes, synth)))| ffi::se_track_desc_v4 {
+            .map(|t| if t.instrument { t.instrument_plugin.as_ref().map(|d| self.device_store(d)).transpose() } else { Ok(None) })
+            .collect::<Result<_, _>>()?;
+        let dev_descs: Vec<Vec<ffi::se_device_desc>> = dev_store.iter().map(|v| v.iter().map(DeviceStore::desc).collect()).collect();
+        let inst_descs: Vec<Option<ffi::se_device_desc>> = inst_store.iter().map(|d| d.as_ref().map(DeviceStore::desc)).collect();
+        let tracks: Vec<ffi::se_track_desc_v5> = s
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| ffi::se_track_desc_v5 {
                 track_id: t.track_id,
                 gain: t.gain,
                 pan: t.pan,
@@ -205,16 +222,41 @@ impl Engine {
                     Some(_) => ffi::SE_INPUT_MONO,
                 },
                 input_channel: t.input.map_or(0, |i| i.channel),
-                clips: clips.as_ptr(),
-                clip_count: clips.len() as u32,
-                note_count: notes.len() as u32,
-                notes: notes.as_ptr(),
-                synth: synth.as_ref().map_or(std::ptr::null(), |p| p as *const ffi::se_synth_params),
+                clips: clip_descs[i].as_ptr(),
+                clip_count: clip_descs[i].len() as u32,
+                note_count: note_descs[i].len() as u32,
+                notes: note_descs[i].as_ptr(),
+                synth: synth_descs[i].as_ref().map_or(std::ptr::null(), |p| p as *const ffi::se_synth_params),
+                devices: dev_descs[i].as_ptr(),
+                device_count: dev_descs[i].len() as u32,
+                _pad2: 0,
+                instrument_plugin: inst_descs[i].as_ref().map_or(std::ptr::null(), |d| d as *const ffi::se_device_desc),
+                track_name: std::ptr::null(),
             })
             .collect();
-        let desc = ffi::se_session_desc_v4 { tracks: tracks.as_ptr(), track_count: tracks.len() as u32, master_gain: s.master_gain };
+        let desc = ffi::se_session_desc_v5 { tracks: tracks.as_ptr(), track_count: tracks.len() as u32, master_gain: s.master_gain };
         // SAFETY: all pointers stay valid for the duration of the call; the engine copies.
-        check(unsafe { ffi::se_session_publish_v4(self.raw, &desc) })
+        check(unsafe { ffi::se_session_publish_v5(self.raw, &desc) })
+    }
+
+    fn device_store(&self, d: &saine_core::Device) -> Result<DeviceStore, EngineError> {
+        let cs = |s: &str| CString::new(s).map_err(|_| nul_error());
+        // SAFETY: plain query on a valid handle.
+        let live = unsafe { ffi::se_plugin_is_live(self.raw, d.id.0) } != 0;
+        let state = if live { None } else { d.state.as_deref().and_then(saine_core::device::b64::decode) };
+        Ok(DeviceStore {
+            id: d.id.0,
+            name: cs(&d.plugin.name)?,
+            plugin_id: cs(&d.plugin.id)?,
+            path: d.plugin.path.as_deref().map(cs).transpose()?,
+            state,
+            format: match d.plugin.format {
+                saine_core::PluginFormat::AudioUnit => ffi::SE_PLUGIN_AU,
+                saine_core::PluginFormat::Vst3 => ffi::SE_PLUGIN_VST3,
+                saine_core::PluginFormat::Clap => ffi::SE_PLUGIN_CLAP,
+            },
+            enabled: d.enabled,
+        })
     }
 
     pub fn play(&self) -> Result<(), EngineError> {
@@ -299,6 +341,33 @@ impl Engine {
     pub fn export_wav(&self, path: &Path, start: i64, end: i64) -> Result<(), EngineError> {
         let p = cpath(path)?;
         check(unsafe { ffi::se_export_wav(self.raw, p.as_ptr(), start, end) })
+    }
+}
+
+/// Owned storage behind one `se_device_desc` during a publish.
+struct DeviceStore {
+    id: u64,
+    name: CString,
+    plugin_id: CString,
+    path: Option<CString>,
+    state: Option<Vec<u8>>,
+    format: u8,
+    enabled: bool,
+}
+
+impl DeviceStore {
+    fn desc(&self) -> ffi::se_device_desc {
+        ffi::se_device_desc {
+            device_id: self.id,
+            name: self.name.as_ptr(),
+            plugin_id: self.plugin_id.as_ptr(),
+            path: self.path.as_ref().map_or(std::ptr::null(), |p| p.as_ptr()),
+            state: self.state.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            state_len: self.state.as_ref().map_or(0, |s| s.len()),
+            format: self.format,
+            enabled: self.enabled as u8,
+            _pad: [0; 6],
+        }
     }
 }
 
@@ -636,14 +705,8 @@ fn nul_error() -> EngineError {
 }
 
 // ---------------------------------------------------------------- plugins
-
-fn unsupported(what: &str) -> EngineError {
-    EngineError { code: ffi::SE_ERR_UNSUPPORTED_FORMAT, kind: "unsupported", message: format!("{what} is not implemented yet") }
-}
 //
-// Contract for plugin hosting (docs/adr/0003-plugins.md). The app codes
-// against these signatures. Bodies marked STUB are replaced by the engine
-// implementation; until then they return `unsupported()`.
+// Plugin hosting (docs/adr/0003-plugins.md, engine/README.md "Plugins").
 
 /// One scanned plugin.
 #[derive(Debug, Clone, PartialEq)]
@@ -656,7 +719,7 @@ pub struct PluginInfo {
 
 /// Result of a scan. `failed` lists plugins that crashed, timed out or
 /// failed validation in the out-of-process scanner (they are blocklisted
-/// until a forced rescan).
+/// until a forced rescan), as `(AU id or bundle path, reason)`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ScanReport {
     pub plugins: Vec<PluginInfo>,
@@ -664,43 +727,184 @@ pub struct ScanReport {
     pub from_cache: bool,
 }
 
-/// STUB. Scan AU/VST3/CLAP plugins in the standard locations using the
-/// out-of-process scanner, caching results in `cache_path` (JSON). With
-/// `rescan == false` unchanged bundles come from the cache. Blocking: call
-/// from a worker thread. `progress` receives a short status per plugin.
-pub fn scan_plugins(_cache_path: &Path, _rescan: bool, _progress: &mut dyn FnMut(&str)) -> Result<ScanReport, EngineError> {
-    Err(unsupported("plugin scanning"))
+#[derive(serde::Deserialize)]
+struct RawPlugin {
+    format: saine_core::PluginFormat,
+    id: String,
+    path: String,
+    name: String,
+    vendor: String,
+    version: String,
+    kind: saine_core::PluginKind,
+    has_editor: bool,
+    audio_inputs: u32,
+    audio_outputs: u32,
+}
+
+#[derive(serde::Deserialize)]
+struct RawFailed {
+    target: String,
+    reason: String,
+}
+
+#[derive(serde::Deserialize)]
+struct RawReport {
+    plugins: Vec<RawPlugin>,
+    failed: Vec<RawFailed>,
+    from_cache: bool,
+}
+
+/// Path of the out-of-process scanner: `$SAINE_PLUGIN_SCANNER` if set,
+/// else the executable built next to the engine library by build.rs.
+pub fn plugin_scanner_path() -> PathBuf {
+    match std::env::var_os("SAINE_PLUGIN_SCANNER") {
+        Some(p) if !p.is_empty() => PathBuf::from(p),
+        _ => PathBuf::from(env!("SAINE_PLUGIN_SCANNER_BUILT")),
+    }
+}
+
+/// Directory holding the test plugin bundles built with the engine
+/// (SaineTestGain.clap/.vst3, SaineTestSine.clap, SaineTestCrash.clap).
+/// For tests and diagnostics.
+pub fn test_plugin_dir() -> PathBuf {
+    PathBuf::from(env!("SAINE_TEST_PLUGIN_DIR"))
+}
+
+/// Scan AU/VST3/CLAP plugins in the standard locations (plus
+/// `$SAINE_PLUGIN_PATH`) using the out-of-process scanner, caching results
+/// in `cache_path` (JSON). With `rescan == false` unchanged bundles (and
+/// blocklisted ones) come from the cache. Blocking: call from a worker
+/// thread. `progress` receives a short status per plugin.
+pub fn scan_plugins(cache_path: &Path, rescan: bool, progress: &mut dyn FnMut(&str)) -> Result<ScanReport, EngineError> {
+    use std::io::{BufRead, Read};
+    let exe = plugin_scanner_path();
+    if !exe.is_file() {
+        return Err(EngineError { code: ffi::SE_ERR_NOT_FOUND, kind: "not found", message: format!("plugin scanner not found at {} (set SAINE_PLUGIN_SCANNER)", exe.display()) });
+    }
+    let io_err = |e: std::io::Error| EngineError { code: ffi::SE_ERR_IO, kind: "i/o error", message: format!("plugin scanner: {e}") };
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.arg("--scan").arg("--cache").arg(cache_path);
+    if rescan {
+        cmd.arg("--rescan");
+    }
+    let mut child = cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().map_err(io_err)?;
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let reader = std::thread::spawn(move || {
+        let mut s = String::new();
+        stdout.read_to_string(&mut s).map(|_| s)
+    });
+    let mut errors = String::new();
+    for line in std::io::BufReader::new(child.stderr.take().expect("piped stderr")).lines() {
+        let line = line.map_err(io_err)?;
+        match line.strip_prefix("progress: ") {
+            Some(p) => progress(p),
+            None => {
+                errors.push_str(&line);
+                errors.push('\n');
+            }
+        }
+    }
+    let status = child.wait().map_err(io_err)?;
+    let out = reader.join().map_err(|_| io_err(std::io::Error::other("reader thread panicked")))?.map_err(io_err)?;
+    if !status.success() {
+        return Err(EngineError { code: ffi::SE_ERR_IO, kind: "i/o error", message: format!("plugin scanner failed ({status}): {}", errors.trim()) });
+    }
+    let raw: RawReport = serde_json::from_str(&out).map_err(|e| EngineError { code: ffi::SE_ERR_IO, kind: "i/o error", message: format!("plugin scanner output: {e}") })?;
+    Ok(ScanReport {
+        plugins: raw
+            .plugins
+            .into_iter()
+            .map(|p| PluginInfo {
+                plugin: saine_core::PluginRef { format: p.format, id: p.id, path: (!p.path.is_empty()).then_some(p.path), name: p.name, vendor: p.vendor, version: p.version, kind: p.kind },
+                has_editor: p.has_editor,
+                audio_inputs: p.audio_inputs,
+                audio_outputs: p.audio_outputs,
+            })
+            .collect(),
+        failed: raw.failed.into_iter().map(|f| (f.target, f.reason)).collect(),
+        from_cache: raw.from_cache,
+    })
 }
 
 impl Engine {
-    /// STUB. Current state blobs (base64) of all live plugin instances, for
-    /// `Document::sync_device_states` before saving.
+    /// Current state blobs (base64) of all live plugin instances, for
+    /// `Document::sync_device_states` before saving. MAIN THREAD (VST3 and
+    /// CLAP save state on the main thread; safe while audio runs).
+    /// Instances whose save fails are left out.
     pub fn plugin_states(&self) -> Vec<(saine_core::DeviceId, String)> {
-        Vec::new()
+        let mut n = 0usize;
+        // SAFETY: valid handle and out pointer.
+        if unsafe { ffi::se_plugin_save_states(self.raw, &mut n) } != ffi::SE_OK {
+            return Vec::new();
+        }
+        let mut out = Vec::with_capacity(n);
+        for i in 0..n {
+            let (mut id, mut data, mut len) = (0u64, std::ptr::null::<u8>(), 0usize);
+            // SAFETY: out pointers are valid; the data stays valid until the next save call (we copy it now).
+            if unsafe { ffi::se_plugin_saved_state(self.raw, i, &mut id, &mut data, &mut len) } == ffi::SE_OK {
+                let bytes = if len == 0 { &[][..] } else { unsafe { std::slice::from_raw_parts(data, len) } };
+                out.push((saine_core::DeviceId(id), saine_core::device::b64::encode(bytes)));
+            }
+        }
+        out
     }
 
-    /// STUB. Devices whose plugin could not be instantiated (missing, failed
-    /// to load, wrong format) with a reason. They are passed through silently.
+    /// Devices whose plugin could not be instantiated (missing, failed to
+    /// load, wrong format) with a reason. They are passed through silently.
     pub fn plugin_load_errors(&self) -> Vec<(saine_core::DeviceId, String)> {
-        Vec::new()
+        loop {
+            let mut total = 0usize;
+            // SAFETY: capacity 0 only queries the count.
+            if unsafe { ffi::se_plugin_load_errors(self.raw, std::ptr::null_mut(), 0, &mut total) } != ffi::SE_OK {
+                return Vec::new();
+            }
+            let mut raw = vec![ffi::se_plugin_message::default(); total];
+            let mut n = 0usize;
+            // SAFETY: `raw` has `total` elements.
+            if unsafe { ffi::se_plugin_load_errors(self.raw, raw.as_mut_ptr(), raw.len(), &mut n) } != ffi::SE_OK {
+                return Vec::new();
+            }
+            if n > raw.len() {
+                continue; // changed in between
+            }
+            return raw[..n].iter().map(|m| (saine_core::DeviceId(m.device_id), c_chars_to_string(&m.message))).collect();
+        }
     }
 
-    /// STUB. Open the plugin's native editor in its own window. MAIN THREAD ONLY.
-    pub fn open_plugin_editor(&self, _device: saine_core::DeviceId) -> Result<(), EngineError> {
-        Err(unsupported("plugin editors"))
+    /// Open the plugin's native editor in its own window (or bring it to
+    /// the front). MAIN THREAD ONLY (`SE_ERR_STATE` otherwise).
+    pub fn open_plugin_editor(&self, device: saine_core::DeviceId) -> Result<(), EngineError> {
+        // SAFETY: valid handle.
+        check(unsafe { ffi::se_plugin_editor_open(self.raw, device.0) })
     }
 
-    /// STUB. Close the editor window if open. MAIN THREAD ONLY.
-    pub fn close_plugin_editor(&self, _device: saine_core::DeviceId) {}
-
-    /// STUB. Whether the device's editor window is open.
-    pub fn plugin_editor_is_open(&self, _device: saine_core::DeviceId) -> bool {
-        false
+    /// Close the editor window if open. MAIN THREAD ONLY.
+    pub fn close_plugin_editor(&self, device: saine_core::DeviceId) {
+        // SAFETY: valid handle.
+        unsafe { ffi::se_plugin_editor_close(self.raw, device.0) };
     }
 
-    /// STUB. Reported processing latency of a device, in frames (0 if unknown).
-    pub fn plugin_latency(&self, _device: saine_core::DeviceId) -> u32 {
-        0
+    /// Whether the device's editor window is open (false after the user
+    /// closed it with the window's close button).
+    pub fn plugin_editor_is_open(&self, device: saine_core::DeviceId) -> bool {
+        // SAFETY: valid handle.
+        unsafe { ffi::se_plugin_editor_is_open(self.raw, device.0) != 0 }
+    }
+
+    /// Reported processing latency of a device, in frames (0 if unknown).
+    pub fn plugin_latency(&self, device: saine_core::DeviceId) -> u32 {
+        let mut frames = 0u32;
+        // SAFETY: valid handle and out pointer.
+        unsafe { ffi::se_plugin_latency(self.raw, device.0, &mut frames) };
+        frames
+    }
+
+    /// Main-thread housekeeping (optional; also done by `publish` and the
+    /// other plugin calls): destroys retired instances the audio thread can
+    /// no longer reach and runs pending CLAP main-thread callbacks.
+    pub fn plugin_idle(&self) {
+        // SAFETY: valid handle.
+        unsafe { ffi::se_plugin_idle(self.raw) };
     }
 }
 

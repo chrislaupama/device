@@ -12,7 +12,12 @@ the header (`se_meters_peek`, `se_transport_set_loop`, `se_metronome_desc` +
 recording `se_track_desc_v4`, `se_session_desc_v4` + `se_session_publish_v4`,
 `se_device_list`, `se_device_configure`, `se_device_status_get`,
 `se_input_set_muted`, `se_record_start/stop/get_take/state/peaks`,
-`se_record_stats_get`, `se_render_offline_with_input`).
+`se_record_stats_get`, `se_render_offline_with_input`, and for plugins
+`se_device_desc`, `se_track_desc_v5`, `se_session_desc_v5` +
+`se_session_publish_v5`, `se_plugin_is_live`, `se_plugin_load_errors`,
+`se_plugin_save_states`/`se_plugin_saved_state`, `se_plugin_editor_open/
+close/is_open`, `se_plugin_latency`, `se_plugin_idle`). Plugin hosting (AU,
+VST3, CLAP) is described in [Plugins](#plugins).
 
 ## Build, test, bench
 
@@ -28,19 +33,34 @@ cmake --preset asan               # Debug + -fsanitize=address,undefined -> engi
 cmake --build --preset asan
 ctest --preset asan
 
-./build/saine_engine_bench [blocks=4000] [clips_per_track=4] [features=0]  # 1 = loop + metronome on; also prints a MIDI table
+./build/saine_engine_bench [blocks=4000] [clips_per_track=4] [features=0]  # 1 = loop + metronome on; also prints MIDI and plugin tables
 ./build/play_sine_or_wav [file.wav] [seconds=1.0]   # real default output device, -24 dBFS
 ./build/record_check                                # list devices (enumeration only, opens nothing)
 SAINE_TEST_REAL_INPUT=1 ./build/record_check [s=2]  # MANUAL: opens the real default input (macOS mic prompt!)
+./build/plugin_editor_check [au <id> | clap <bundle> <id> | vst3 <bundle> <uid>]  # MANUAL: opens/closes an editor window
+SAINE_PLUGIN_PATH=build/test_plugins ./build/saine_plugin_scanner --scan --cache /tmp/plugins.json [--rescan]
 ```
 
+The first configure fetches the CLAP headers and the VST 3 SDK (pinned tags,
+network needed once; see `third_party_licenses.md`). Every build also produces
+`build/saine_plugin_scanner` and the test bundles in `build/test_plugins/`.
+
 CMake options: `SAINE_ENGINE_BUILD_TESTS|BENCH|TOOLS` (default ON when top
-level), `SAINE_ENGINE_SANITIZE` (ASan+UBSan), `SAINE_ENGINE_WERROR`.
+level), `SAINE_ENGINE_BUILD_SCANNER` (ON), `SAINE_ENGINE_BUILD_TEST_PLUGINS`
+(ON when top level; build.rs turns it on), `SAINE_ENGINE_SANITIZE`
+(ASan+UBSan), `SAINE_ENGINE_WERROR`. The target `saine_engine_rust` builds
+what the Rust crate needs (library, scanner, test plugins).
 
 ### Linking from Rust (`cmake` crate)
 
-The `cmake` crate builds and runs the `install` target, which produces
-`<out>/lib/libsaine_engine.a` and `<out>/include/saine_engine.h`. In `build.rs`:
+`crates/saine-engine/build.rs` builds the `saine_engine_rust` target and links
+`<out>/build/libsaine_engine.a`; it bakes the scanner path
+(`SAINE_PLUGIN_SCANNER_BUILT`) and the test plugin directory
+(`SAINE_TEST_PLUGIN_DIR`) into the crate, and shares one SDK download between
+cargo profiles (`FETCHCONTENT_BASE_DIR=target/saine-third-party`). macOS
+frameworks: AudioToolbox, AudioUnit, CoreAudio, CoreFoundation, CoreAudioKit,
+AppKit, Foundation (+ libobjc, libc++). The generic recipe with the `cmake`
+crate's `install` target (library + header only) still works:
 
 ```rust
 let dst = cmake::Config::new("../../engine")
@@ -80,6 +100,16 @@ The library is built with `-fPIC`, so it can go into a cdylib as well.
 | `src/test_hooks.hpp` | Test-only hooks (fake device factory, writer stall, ring size); not public ABI |
 | `tools/play_sine_or_wav.cpp` | Manual check through the real default output device |
 | `tools/record_check.cpp` | Device listing; with `SAINE_TEST_REAL_INPUT=1` a 2 s real-input recording (manual only) |
+| `src/plugins/plugin_instance.hpp`, `plugin_common.cpp` | `PluginInstance` interface, `PluginSpec`, `NoteFeeder` (notes → MIDI), parameter queue |
+| `src/plugins/plugin_host.{hpp,cpp}` | Instance registry keyed by device id: creation, retirement, states, load errors, editors |
+| `src/plugins/au_instance.cpp`, `vst3_instance.cpp`, `clap_instance.cpp` | Format hosts |
+| `src/plugins/plugin_modules.{hpp,cpp}` | VST3 / CLAP bundle loading (CFBundle), shared per path |
+| `src/plugins/plugin_scan.{hpp,cpp}` | Inspecting one AU / bundle (used only by the scanner process) |
+| `src/platform/plugin_editor_mac.mm` | Editor windows (NSWindow; AU Cocoa view / AUGenericView, VST3 IPlugView, CLAP gui) |
+| `scanner/scanner_main.cpp` | `saine_plugin_scanner`: out-of-process scan coordinator + per-plugin child |
+| `test_plugins/` | Original test plugins: `SaineTestGain.vst3`, `SaineTestGain.clap`, `SaineTestSine.clap`, `SaineTestCrash.clap` |
+| `tools/plugin_editor_check.mm` | Manual editor-window smoke test |
+| `third_party_licenses.md` | Fetched SDKs: tags, commits, MIT texts |
 
 ## Design
 
@@ -433,7 +463,13 @@ Inside `Engine::process()` / `render_block()` and the device callback:
    republishes four different note sets as fast as it can; and across 1200
    renders of 8 instrument tracks whose `se_synth_params` (waveforms, filter
    mode, unison, polyphony incl. mono + glide, FM, LFO, ...) are republished
-   every 3 blocks by the render thread and continuously by another thread).
+   every 3 blocks by the render thread and continuously by another thread);
+   and across 650 renders of 8 audio tracks × (CLAP gain + VST3 gain) plus an
+   instrument track (CLAP sine, 200 notes, CLAP gain insert) with a loop,
+   seeks, pause/play, queued parameter changes and a republish. This
+   measures **our** code around plugins with our own test plugins, which do
+   not allocate; third-party plugins may allocate or lock in their process
+   call, which is outside the engine's control.
    Synth parameter changes are applied on the RT side without allocation
    (plain struct copy + coefficient math). Also run ad hoc under
    ThreadSanitizer (MIDI, synth, RT, transport and concurrency tests clean).
@@ -648,6 +684,229 @@ reports for a real duplex setup. Run `SAINE_TEST_REAL_INPUT=1
 loopback measurement (play a click, record it) is the next step to confirm
 the compensation is sample-accurate on real devices.
 
+## Plugins
+
+Audio Unit (v2 API, macOS), VST3 and CLAP hosting for track insert chains and
+instrument plugins (docs/adr/0003-plugins.md). SDKs: CLAP `1.2.10` headers and
+VST 3 SDK `v3.8.1_build_84` (`pluginterfaces` + `public.sdk` submodules),
+both MIT, fetched by CMake at configure time and never committed
+(`third_party_licenses.md`).
+
+### ABI (`se_session_publish_v5` and `se_plugin_*`)
+
+`se_track_desc_v5` = `se_track_desc_v4` (same offsets) + `devices` /
+`device_count` (inserts in processing order), `instrument_plugin` (used when
+`instrument != 0`; replaces the built-in synth) and `track_name` (editor
+titles; the Rust side passes NULL because `TrackSnapshot` has no name, so
+titles are just the plugin name). Each `se_device_desc` carries `device_id`
+(saine_core `DeviceId`), `format` (`SE_PLUGIN_AU/VST3/CLAP`), `plugin_id`
+(AU `"aufx lpas appl"`, VST3 class UID as 32 hex chars in TUID byte order,
+CLAP id), `path` (bundle), `name`, `enabled` and the saved `state`
+(pointer + length). Layouts are guarded by `-Wpadded` (no implicit padding),
+`static_assert`s in `c_api.cpp` and the Rust test
+`abi_layout::plugin_layout_matches_c_header`.
+
+Other entry points: `se_plugin_is_live` (lets Rust skip base64-decoding state
+for devices that already have an instance), `se_plugin_load_errors`,
+`se_plugin_save_states` + `se_plugin_saved_state` (snapshot of every live
+instance's state into an engine-owned buffer), `se_plugin_editor_open/close/
+is_open`, `se_plugin_latency`, `se_plugin_idle`. Rust: `Engine::publish`
+(now v5), `plugin_states`, `plugin_load_errors`, `open_plugin_editor`,
+`close_plugin_editor`, `plugin_editor_is_open`, `plugin_latency`,
+`plugin_idle` (new, optional), `scan_plugins`, `plugin_scanner_path`,
+`test_plugin_dir`.
+
+### Threads and lifetime
+
+```
+main thread (publish)                      audio thread (RT owner)
+---------------------                      -----------------------
+build graph (validate, fx slots)
+lock plugin host
+  new device id  -> create instance          render_block():
+  (AU: AudioComponentInstanceNew,              source = clips + instrument plugin
+   VST3: IComponent + IEditController,                  (NoteFeeder -> MIDI) | synth
+         connection points, setState,                + monitored input
+         setupProcessing, setActive,          -> enabled inserts, in order,
+         setProcessing(true);                    process in place
+   CLAP: entry->factory->create->init,       -> gain/pan, meters, master
+         state load, activate)
+  known id       -> reuse instance
+install graph (atomic swap, seq S)
+retire ids not in S: close editor,
+  queue instance with S
+destroy queued instances when
+  rt_active_seq_ is idle or >= S
+```
+
+* **Instantiation** happens in `se_session_publish_v5` on the calling thread,
+  which must be the app's main thread (VST3/CLAP main-thread APIs; AU uses the
+  synchronous `AudioComponentInstanceNew`). Instances are prepared at the
+  engine rate and `max_block_size`, stereo in/out; mono main buses are mapped
+  (L+R)/2 in, mono out to both sides; other layouts are rejected with a load
+  error. The saved state is applied once, at creation. Instances are keyed by
+  `DeviceId` and reused across republishes (also when a device moves to
+  another track or is reordered); the same id with a different plugin or role
+  is re-created.
+* **Load failures** (missing bundle/component, wrong id, init/state/setup
+  failure, unsupported layout) leave a null slot: inserts pass audio through,
+  an instrument plugin renders silence. The reason is kept per device
+  (`se_plugin_load_errors`) and loading is not retried while the device stays
+  published with the same plugin (re-adding it, e.g. undo, retries).
+* **Retirement**: a device id missing from the new snapshot is retired after
+  the graph swap. Its editor closes immediately; the instance is destroyed on
+  the main thread (inside a later publish, `se_plugin_*` call or
+  `se_plugin_idle`) once the audio thread cannot reach a graph that still
+  references it, using the same hazard protocol as graph reclamation
+  (`rt_active_seq_` idle or ≥ the first graph without it). Teardown follows
+  the formats' rules: CLAP `stop_processing` (we take the audio-thread role
+  once; it can no longer overlap with `process`) → `deactivate` → `destroy`
+  → `entry->deinit` when the module's last instance goes; VST3
+  `setProcessing(false)` → `setActive(false)` → disconnect → `terminate` →
+  release → `bundleExit`. Engine destruction tears everything down on the
+  destroying thread (destroy the engine on the main thread). Plugin
+  executables are never unloaded.
+* **RT path**: `render_block` calls `PluginInstance::process` with
+  preallocated buffers (input copies, outputs, VST3 `IEventList` /
+  `IParameterChanges` of fixed capacity, CLAP event storage, AU
+  `AudioBufferList`). Tracks with plugins are processed every block, also
+  while stopped (tails ring out) and when muted (state stays consistent; not
+  mixed). Bypassed devices are skipped. No allocation, lock or I/O on our
+  side.
+* **Instrument plugins**: `NoteFeeder` turns the track's notes into
+  sample-accurate note on/off (AU `MusicDeviceMIDIEvent` with sample offsets
+  before `AudioUnitRender`; VST3 `kNoteOnEvent/kNoteOffEvent`; CLAP
+  `clap_event_note`, or `clap_event_midi` for MIDI-only note ports). Like the
+  built-in synth it re-matches sounding notes by (start, pitch) on republish
+  and sends note-offs for every sounding note on seek, stop, pause and loop
+  wraps (+ CC 123 for AU); notes in progress at a new position are not
+  re-triggered. Up to 128 sounding notes and 512 events per segment are
+  tracked.
+* **Transport info**: tempo = the metronome grid (`se_metronome_set`
+  `frames_per_beat`, remembered even while the metronome is off; 120 BPM if
+  never set), 4/4, playing flag and position: AU host callbacks
+  (`beatAndTempoProc`, `transportStateProc2`), VST3 `ProcessContext`
+  (tempo, project time in samples and quarter notes, playing), CLAP
+  `clap_event_transport`.
+* **Parameters** (no automation yet): VST3 controller edits
+  (`IComponentHandler::performEdit`) are forwarded to the processor through a
+  lock-free queue as `IParameterChanges` at the next block; the same queue
+  backs the test hook `saine::testing::plugin_set_parameter` (AU
+  `AudioUnitSetParameter`, CLAP `CLAP_EVENT_PARAM_VALUE`).
+* **Export** (`se_export_wav`) of a session with plugins uses the live
+  instances: it takes the RT ownership (fails with `SE_ERR_STATE` while the
+  device runs) and pins its graph with the hazard marker; instrument plugins
+  get all-notes-off before and after.
+
+### State
+
+`se_plugin_save_states` runs on the main thread while audio may run: AU reads
+`kAudioUnitProperty_ClassInfo` and serialises it as a **binary plist**; VST3
+uses `IComponent::getState` + `IEditController::getState` in an **"SVS3"
+container** (`"SVS3"`, u32 version 1, u64 length + component bytes, u64
+length + controller bytes; little endian) and restores with
+`setState` → `setComponentState` → controller `setState`; CLAP uses the
+`clap.state` stream as is. Rust base64-encodes for
+`Document::sync_device_states` and decodes (only for devices that will be
+instantiated, `se_plugin_is_live`) on publish.
+
+### Editors (macOS)
+
+`se_plugin_editor_open` (main thread only; checked with `pthread_main_np`,
+else `SE_ERR_STATE`) creates an NSWindow titled `"<plugin>: <track>"` (or the
+plugin name) hosting: the AU's `kAudioUnitProperty_CocoaUI` view
+(`AUCocoaUIBase`), else CoreAudioKit's `AUGenericView`; a VST3 `IPlugView`
+attached to an NSView (`IPlugFrame::resizeView` and user resizing through
+`checkSizeConstraint`/`onSize` when `canResize`); a CLAP `clap.gui` embedded
+cocoa view (`request_resize`, `adjust_size`/`set_size`). The window's close
+button tears the view down and `se_plugin_editor_is_open` returns 0. Editors
+of retired instances close in the publish that retires them. Plugins without
+an editor return `SE_ERR_UNSUPPORTED_FORMAT`.
+
+### Scanning (`saine_plugin_scanner`)
+
+`scan_plugins` (Rust) runs `saine_plugin_scanner --scan --cache <file>
+[--rescan]` and reads progress lines from its stderr and a JSON report from
+its stdout. The scanner is found at `$SAINE_PLUGIN_SCANNER` or the path
+baked in by build.rs (`<cargo out>/build/saine_plugin_scanner`; the app must
+ship it next to its binary and set the variable, or adapt the lookup). The
+coordinator enumerates AUs (types `aufx`, `aumf`, `aumu`; enumeration loads
+no plugin code), VST3/CLAP bundles in `/Library/Audio/Plug-Ins/{VST3,CLAP}`,
+`~/Library/Audio/Plug-Ins/{VST3,CLAP}` and the `:`-separated
+`$SAINE_PLUGIN_PATH` entries (directories searched up to 3 levels, or bundle
+paths). Every AU and every bundle not in the cache with the same stamp (AU
+version; newest mtime of the bundle, its Info.plist and `Contents/MacOS/*`)
+is inspected by its own child process (`--scan-one`, which instantiates the
+plugin to read bus channels and editor support), at most 4 at a time, with a
+timeout (`$SAINE_PLUGIN_SCAN_TIMEOUT_MS`, default 10000). Crashes (signal),
+timeouts (SIGKILL) and failures are recorded in the cache and reported in
+`failed`; they stay blocklisted until `--rescan` or a stamp change. The cache
+(`{"version":1,"entries":[…]}`) is written atomically.
+
+### Test plugins (`build/test_plugins/`, original code)
+
+* `SaineTestGain.vst3`: processor + separate controller (connection points),
+  stereo, parameter 0 "Gain" (normalized = linear 0..1, default 0.5), state =
+  f32 LE.
+* `SaineTestGain.clap` (`studio.saine.test.gain`): same as a CLAP.
+* `SaineTestSine.clap` (`studio.saine.test.sine`): 16-voice instrument, a
+  cosine at the equal-tempered note pitch, amplitude 0.25 × velocity, full
+  amplitude on the note-on sample and silent from the note-off sample (makes
+  onsets/offs exactly measurable).
+* `SaineTestCrash.clap`: `clap_entry.init` raises SIGSEGV.
+
+### Tests
+
+C++ (`tests/test_plugins.cpp`, `tests/test_plugin_scan.cpp`, both presets):
+AULowpass attenuates 15 kHz (< 0.25×) and passes 200 Hz (±5 %); CLAP and VST3
+gain halve the signal (≤ 1e-7); bypass (AU + CLAP + VST3 all disabled) is
+bit-exact; chain order (CLAP gain ↔ AUDistortion) changes the output, and
+CLAP→VST3 gain gives exactly a quarter; instances survive republishes,
+reorders, moves between tracks and bypass/mute toggles (instantiation counter
+test hook), are retired on removal and re-created on re-add or plugin change;
+v5 validation; state round trips for CLAP, VST3 (parameter changed through
+the queue → saved → new engine → identical output) and AU (AULowpass cutoff
+→ ClassInfo plist → identical output); corrupt state → load error +
+pass-through; SaineTestSine onset exactly on the note frame, note-off exact,
+pitch 440 Hz; DLSMusicDevice onset within 20 ms (measured: 7 frames above
+-60 dBFS); seek
+and stop send note-offs (sine: silent from the first sample; DLS: same
+release as a regular note-off); instrument plugin + insert + loop wraps;
+missing AU/CLAP/VST3/wrong ids/missing instrument → 5 load errors, output
+bit-identical to no devices, not retried; latency query; editor calls off
+the main thread rejected; export through the chain; zero allocations in the
+RT path (above). Scanner: Apple AUs + all test plugins found, the crash
+blocklisted while the scan completes, second run 100 % from cache, touching
+a bundle re-scans only it, `--rescan` re-scans all.
+
+Rust (`crates/saine-engine/tests/plugins.rs`): Document `AddDevice` (CLAP test
+gain) + audio clip → publish → offline render is halved; bypass bit-exact;
+model state applied at instantiation; remove + undo restores the same id and
+state; `plugin_states` → `sync_device_states` → `persist::save/load` → new
+engine renders identically; missing plugin → load error; `scan_plugins` finds
+the test plugins and Apple AUs, blocklists the crash, second scan from cache.
+
+### Verification status
+
+* `tools/plugin_editor_check` was run on this Mac (GUI session): AULowpass
+  (Apple's CoreAudioAUUI view) and AUDelay editors, and an installed
+  third-party EQ plugin (VST3 and CLAP) editors (950 × 570) open, show a window,
+  close via `performClose:` (the close button's action), via the API, and on
+  retirement. Window contents were not inspected visually (no screenshot).
+  Opening AU views logs Apple's own "Class RendezvousService is implemented in
+  both CoreAudioKit and CoreAudioAUUI" warning (harmless, Apple-side).
+* An ad-hoc probe loaded a third-party EQ plugin (VST3 and CLAP) and a third-party limiter (VST3)
+  from `/Library/Audio/Plug-Ins`: they instantiate in 15-40 ms, process at
+  unity with default settings, report latency (the limiter: 3115 frames) and
+  round-trip their state into a new engine. Not part of the automated tests
+  (third-party, may not be installed).
+* Not verified: AUv3-only (out-of-process) Audio Units (synchronous
+  instantiation may fail for them; they would show as load/scan errors),
+  plugins that require the real `pthread_main_np` main thread for
+  instantiation when the publishing thread is a different one (cargo tests
+  publish from worker threads; only our test plugins and Apple AUs are used
+  there), and editor resizing by the user.
+
 ## Placeholders and known gaps
 
 * **Windows** (`src/platform/wasapi_device.cpp`): stub, `se_device_start` →
@@ -664,7 +923,16 @@ the compensation is sample-accurate on real devices.
   asset release / destroy. With the device running and no edits, the
   previously retired graph (and any released assets it holds) stays alive
   until the next such call.
-* Multithreaded track rendering, buses/sends, automation, plugins, and
+* Plugins: no delay compensation (latency is reported only), no sidechains,
+  multi-out instruments, parameter automation, host-side generic parameter
+  UI, or MIDI CC/pitch bend to instrument plugins. VST3 `restartComponent`
+  flags and CLAP `request_restart` are ignored (no re-activation on latency
+  or layout changes). Export of a session with plugins needs the device
+  stopped. Plugin hosting is macOS-only (bundle loading uses CFBundle;
+  VST3/CLAP loaders for Windows/Linux are not written). The scanner does not
+  look inside `.component` bundles itself (AUs come from the system
+  registry) and does not sandbox children beyond process isolation.
+* Multithreaded track rendering, buses/sends, automation, and
   sample-accurate transport commands while the device runs (they apply at
   block boundaries; the loop wrap itself is sample-accurate) are not
   implemented.
@@ -695,6 +963,20 @@ the compensation is sample-accurate on real devices.
 | MIDI, 8 held voices + 1 retriggered note/track, previous fixed synth | 98 | 396 | 1594 |
 | MIDI, same notes, `se_synth_params` defaults | 140 | 573 | 2246 |
 | MIDI, same notes, heavy patch (unison 4, cross FM, folded sine, triangle morph, sub, noise, resonant BP + filter env, LFO → pitch/cutoff/amp) | 870 | 3489 | 13782 |
+
+Plugins (32 audio tracks × 4 clips, two test-gain inserts per track = 64
+plugin calls per block; same machine and run):
+
+| Inserts | avg µs/block | p99 |
+|---|---|---|
+| none (baseline) | 3.29 | 3.58 |
+| SaineTestGain CLAP + VST3 | 9.98 | 10.67 |
+| 2 × SaineTestGain CLAP | 10.03 | 10.79 |
+
+≈ 105 ns per plugin call including our input/output copies and event/
+transport setup (~0.2 % of the deadline for 64 inserts). The audio, MIDI and
+input tables were unchanged by the plugin work within run-to-run noise
+(e.g. audio 1.02 / 3.28 / 12.41 µs vs 1.03 / 3.34 / 12.59 µs before).
 
 Input (8 armed + monitored tracks, injected 8-channel input, no clips):
 1.33 µs/block with recording off; 5.9 µs/block avg (p99 11 µs, max 32 µs)

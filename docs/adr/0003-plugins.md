@@ -1,10 +1,11 @@
 # ADR 0003: Plugin hosting (Audio Unit, VST3, CLAP)
 
-Status: accepted (2026-11-08). Implementation in progress.
+Status: accepted (2026-11-08). Implemented in the engine (see "Implementation notes").
 
 ## Context
 The reference's "Add device" lists its built-ins, Audio Units, VST3 and Chains. We host AU (macOS), VST3
-and CLAP (CLAP is our addition). This Mac has only Apple's built-in AUs installed; no VST3/CLAP plugins.
+and CLAP (CLAP is our addition). The development Mac has Apple's built-in AUs plus third-party commercial plugins (AU, VST3
+and CLAP) installed; the automated tests only rely on Apple's AUs and our own test plugins.
 
 ## Licensing
 - VST 3 SDK: MIT since VST 3.8 (Steinberg, 2025-10-29). The ASIO SDK is separate (GPLv3/proprietary) and not used here.
@@ -31,3 +32,23 @@ SDKs are fetched at a pinned tag at configure time (CMake FetchContent) and neve
   tested with Apple's AULowpass/AUDelay and DLSMusicDevice.
 - **Not in v1:** plugin delay compensation (latency is reported only), sidechains, multi-out instruments,
   parameter automation and a host-side generic parameter UI.
+
+## Implementation notes (engine, 2026-11-08)
+Details in engine/README.md "Plugins". Where the implementation refines or deviates from the decision above:
+- **SDK pins:** CLAP `1.2.10`, VST 3 SDK `v3.8.1_build_84` (only the `pluginterfaces` and `public.sdk`
+  submodules). Fetched into the build tree (`engine/build*/_deps`, `target/saine-third-party` for cargo).
+- **ABI:** `se_session_publish_v5` (per-track `devices`, `instrument_plugin`, `track_name`) plus
+  `se_plugin_*` functions; `SE_ABI_VERSION` stays 1 (append-only).
+- **Scanning orchestration lives in the scanner executable,** not in Rust: `saine_plugin_scanner --scan`
+  is a coordinator that enumerates, consults/writes the JSON cache, and spawns itself once per AU / bundle
+  (`--scan-one`) with a timeout. Rust's `scan_plugins` only runs the coordinator and parses its report. This
+  keeps the C++ scan test self-contained and still keeps all plugin code out of the app process.
+- **"Main thread"** for instantiation is the publishing thread (the app's main thread by contract); CLAP's
+  thread-check reports it as main. Editors additionally require the real Cocoa main thread.
+- **Retired instances** are destroyed on the main thread at the next publish / `se_plugin_*` call /
+  `se_plugin_idle` once the audio thread can no longer reach them (no janitor thread).
+- **Editor titles** are just the plugin name for now: `TrackSnapshot` carries no track name (the ABI has a
+  `track_name` field ready for it).
+- **Tempo for plugins** comes from the metronome grid (`se_metronome_set`), 120 BPM until one is set.
+- **Export** with plugins uses the live instances and therefore needs the audio device stopped.
+- **Failed instrument plugins** render silence (they do not fall back to the built-in synth).

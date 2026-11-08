@@ -30,6 +30,16 @@
 
 namespace saine {
 
+class PluginInstance;
+
+// One insert of a track's device chain. `inst` is null while unresolved
+// (between build_render_graph and Engine::publish) or when the plugin failed
+// to load (pass-through). Instances are owned by the PluginHost.
+struct FxSlot {
+    PluginInstance* inst = nullptr;
+    bool enabled = true;
+};
+
 struct ClipNode {
     const float* src_l = nullptr; // asset channel 0
     const float* src_r = nullptr; // asset channel 1, or channel 0 for mono assets
@@ -54,6 +64,12 @@ struct TrackNode {
     bool monitor = false;
     uint8_t input_mode = 0;
     uint16_t input_channel = 0;
+    // Plugins (se_session_publish_v5). fx_begin/fx_count index RenderGraph::fx.
+    uint32_t fx_begin = 0;
+    uint32_t fx_count = 0;
+    bool has_instrument_plugin = false;          // instrument plugin replaces the synth
+    bool instrument_plugin_enabled = true;       // false: bypassed (silent)
+    PluginInstance* instrument_plugin = nullptr; // null: not loaded (silent)
 };
 
 // Number of buckets in the se_meters_peek sliding window (each bucket covers
@@ -77,6 +93,8 @@ struct RenderGraph {
     std::vector<TrackNode> tracks;
     std::vector<ClipNode> clips;
     std::vector<NoteEvent> notes;
+    std::vector<FxSlot> fx; // insert chains, track after track
+    bool has_plugins = false; // any insert or instrument plugin
     // Synth parameters per track, parallel to `tracks` (defaults where the
     // description had none, unused on non-instrument tracks).
     std::vector<se_synth_params> synth_params;
@@ -99,10 +117,14 @@ void constant_power_pan(float pan, float& left, float& right) noexcept;
 
 using AssetLookup = std::function<AssetRef(uint64_t asset_id)>;
 
-// Validates and copies the description. Returns an se_result code. The v1,
-// v2 and v3 entry points convert to v4 (v1: no instrument, no notes; v1/v2:
-// default synth parameters; all: no arm/monitor/input). Synth states are not assigned here (see
-// RenderGraph::synth_refs); `synths` is sized and null.
+// Validates and copies the description. Returns an se_result code. The v1..v4
+// entry points convert to v5 (v1: no instrument, no notes; v1/v2: default
+// synth parameters; v1..v3: no arm/monitor/input; v1..v4: no devices).
+// Synth states are not assigned here (see RenderGraph::synth_refs); `synths`
+// is sized and null. Plugin slots are created with null instances (the
+// engine resolves them in the same track/device order).
+int32_t build_render_graph(const se_session_desc_v5& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v4& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v3& desc, const AssetLookup& lookup,

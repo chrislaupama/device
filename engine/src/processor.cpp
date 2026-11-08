@@ -1,5 +1,6 @@
 #include "processor.hpp"
 
+#include "plugins/plugin_instance.hpp"
 #include "rt_util.hpp"
 
 #include <algorithm>
@@ -16,7 +17,7 @@ namespace saine {
 
 RenderContext::RenderContext(uint32_t max_block)
     : max_block_(max_block), track_l_(max_block), track_r_(max_block), master_l_(max_block), master_r_(max_block),
-      synth_(max_block), zeros_(max_block, 0.0f) {}
+      synth_(max_block), zeros_(max_block, 0.0f), plugin_l_(max_block), plugin_r_(max_block) {}
 
 void kernel_add_scaled(float* __restrict dst, const float* __restrict src, float gain, uint32_t n) noexcept {
     for (uint32_t i = 0; i < n; ++i) dst[i] += src[i] * gain;
@@ -70,7 +71,8 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
     std::memset(mr, 0, sizeof(float) * frames);
     if (graph == nullptr || frames == 0) return {};
     const bool live_input = input.count > 0 && graph->uses_input;
-    if (!playing && inst.synths == nullptr && !live_input) return {};
+    const bool plugins_on = inst.transport != nullptr && graph->has_plugins;
+    if (!playing && inst.synths == nullptr && !live_input && !plugins_on) return {};
     const auto input_channel = [&](uint32_t c) { return c < input.count ? input.channels[c] : ctx.zeros(); };
 
     float* const tl = ctx.track_l();
@@ -82,9 +84,13 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
     const std::size_t track_count = graph->tracks.size();
     for (std::size_t t = 0; t < track_count; ++t) {
         const TrackNode& track = graph->tracks[t];
-        Synth* const synth = track.instrument && inst.synths != nullptr ? inst.synths[t] : nullptr;
+        Synth* const synth = track.instrument && !track.has_instrument_plugin && inst.synths != nullptr
+                                 ? inst.synths[t]
+                                 : nullptr;
+        PluginInstance* const iplug = plugins_on && track.instrument_plugin_enabled ? track.instrument_plugin : nullptr;
+        const bool track_plugins = plugins_on && (track.fx_count > 0 || iplug != nullptr);
         const bool routed = live_input && track.input_mode != SE_INPUT_NONE && (track.monitor || track.arm);
-        if (synth == nullptr && !routed && (!track.audible || !playing)) continue;
+        if (synth == nullptr && !routed && !track_plugins && (!track.audible || !playing)) continue;
 
         bool any = false;
         const ClipNode* clip = graph->clips.data() + track.clip_begin;
@@ -119,6 +125,26 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                 any = true;
             }
         }
+        if (iplug != nullptr) {
+            float* const pl = ctx.plugin_l();
+            float* const pr = ctx.plugin_r();
+            std::memset(pl, 0, sizeof(float) * frames);
+            std::memset(pr, 0, sizeof(float) * frames);
+            const uint32_t ne = iplug->feeder().build(graph->notes.data() + track.note_begin, track.note_count,
+                                                      graph->seq, inst.transport_gen, position, frames, playing,
+                                                      iplug->event_scratch(), PluginInstance::kMaxEvents);
+            iplug->process(pl, pr, frames, iplug->event_scratch(), ne, *inst.transport);
+            if (track.audible) {
+                if (any) {
+                    kernel_add_scaled(tl, pl, 1.0f, frames);
+                    kernel_add_scaled(tr, pr, 1.0f, frames);
+                } else {
+                    std::memcpy(tl, pl, sizeof(float) * frames);
+                    std::memcpy(tr, pr, sizeof(float) * frames);
+                    any = true;
+                }
+            }
+        }
         if (routed) {
             const float* il = input_channel(track.input_channel);
             const float* ir = track.input_mode == SE_INPUT_STEREO ? input_channel(track.input_channel + 1u) : il;
@@ -143,6 +169,16 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                 atomic_store_max(m.win_l[peek_slot], pl);
                 atomic_store_max(m.win_r[peek_slot], pr);
             }
+        }
+        if (plugins_on && track.fx_count > 0) {
+            if (!any) {
+                std::memset(tl, 0, sizeof(float) * frames);
+                std::memset(tr, 0, sizeof(float) * frames);
+                any = true;
+            }
+            const FxSlot* slot = graph->fx.data() + track.fx_begin;
+            for (uint32_t i = 0; i < track.fx_count; ++i, ++slot)
+                if (slot->enabled && slot->inst != nullptr) slot->inst->process(tl, tr, frames, nullptr, 0, *inst.transport);
         }
         if (!any || !track.audible) continue;
 
