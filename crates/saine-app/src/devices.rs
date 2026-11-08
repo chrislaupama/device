@@ -211,6 +211,11 @@ pub fn scan_dirs() -> Vec<PathBuf> {
     v
 }
 
+/// Whether the engine can host plugin editor windows here (macOS, Windows;
+/// Linux has no X11/Wayland embedding yet, see engine/README.md). The scanned
+/// `has_editor` capability is kept as is.
+pub const EDITORS_SUPPORTED: bool = !cfg!(target_os = "linux");
+
 /// Extra folders the scanner searches from the environment, with the variable
 /// that set them: `CLAP_PATH` (Windows, Linux) and `SAINE_PLUGIN_PATH`.
 pub fn configured_scan_dirs() -> Vec<(PathBuf, &'static str)> {
@@ -790,6 +795,7 @@ impl Controller {
             error: error.into(),
             latency: fmt_latency(self.devices.latency.get(&d.id).copied().unwrap_or(0), self.rate).into(),
             has_editor: info.map(|i| i.has_editor).unwrap_or(true),
+            editor_supported: EDITORS_SUPPORTED,
             editor_open: self.devices.editors.contains(&d.id),
             dragging: false,
         }
@@ -838,6 +844,10 @@ impl Controller {
     /// Open or close the plugin's own window (main thread).
     pub fn device_edit(&mut self, id: DeviceId) {
         if self.project().device(id).is_none() {
+            return;
+        }
+        if !EDITORS_SUPPORTED {
+            self.set_status("Plugin windows are not supported on Linux yet", 5);
             return;
         }
         if self.engine.plugin_editor_is_open(id) {

@@ -681,18 +681,26 @@ private:
         const uint32_t stride = static_cast<uint32_t>(sizeof(float)) * ch;
         uint32_t frames = d.maxsize / stride;
         if (b->requested > 0) frames = std::min<uint32_t>(frames, static_cast<uint32_t>(b->requested));
-        frames = std::min(frames, kMaxCycleFrames);
-        const float* in_ptrs[kMaxDeviceInputChannels];
-        uint32_t n_in = 0;
-        if (self->input_live_.load(std::memory_order_acquire)) {
-            self->ring_.read(self->in_ptrs_, self->in_channels_, frames);
-            for (uint32_t c = 0; c < self->in_channels_; ++c) in_ptrs[c] = self->in_ptrs_[c];
-            n_in = self->in_channels_;
-        }
-        self->callback_->render(self->out_ptrs_, ch, n_in > 0 ? in_ptrs : nullptr, n_in, frames);
+        // Render the whole request, in chunks of at most kMaxCycleFrames (the
+        // planar scratch size); input is read from the ring chunk by chunk so
+        // it stays aligned with the output.
         auto* dst = static_cast<float*>(d.data);
-        for (uint32_t i = 0; i < frames; ++i)
-            for (uint32_t c = 0; c < ch; ++c) dst[i * ch + c] = self->out_ptrs_[c][i];
+        const bool input = self->input_live_.load(std::memory_order_acquire);
+        for (uint32_t done = 0; done < frames;) {
+            const uint32_t n = std::min(frames - done, kMaxCycleFrames);
+            const float* in_ptrs[kMaxDeviceInputChannels];
+            uint32_t n_in = 0;
+            if (input) {
+                self->ring_.read(self->in_ptrs_, self->in_channels_, n, frames - done - n);
+                for (uint32_t c = 0; c < self->in_channels_; ++c) in_ptrs[c] = self->in_ptrs_[c];
+                n_in = self->in_channels_;
+            }
+            self->callback_->render(self->out_ptrs_, ch, n_in > 0 ? in_ptrs : nullptr, n_in, n);
+            float* out = dst + static_cast<std::size_t>(done) * ch;
+            for (uint32_t i = 0; i < n; ++i)
+                for (uint32_t c = 0; c < ch; ++c) out[i * ch + c] = self->out_ptrs_[c][i];
+            done += n;
+        }
         d.chunk->offset = 0;
         d.chunk->stride = static_cast<int32_t>(stride);
         d.chunk->size = frames * stride;

@@ -84,19 +84,22 @@ public:
 
     // Consumer: fills dst[0..channels) (planar, `frames` each; channels may
     // be fewer than the ring's) and applies the drift policy. Returns the
-    // frames that came from the input (the rest are zeros).
-    uint32_t read(float* const* dst, uint32_t channels, uint32_t frames) noexcept {
+    // frames that came from the input (the rest are zeros). A device cycle
+    // read in several chunks passes `cycle_remaining`, the frames it will
+    // still read this cycle after this chunk: those count towards priming
+    // and are not treated as excess by the drift policy.
+    uint32_t read(float* const* dst, uint32_t channels, uint32_t frames, uint32_t cycle_remaining = 0) noexcept {
         const uint32_t ch = std::min(channels, channels_);
         uint64_t r = read_pos_.load(std::memory_order_relaxed);
         const uint64_t w = write_pos_.load(std::memory_order_acquire);
         uint32_t avail = static_cast<uint32_t>(w - r);
         if (!primed_) {
-            if (avail < target_ + frames) {
+            if (avail < target_ + frames + cycle_remaining) {
                 zero(dst, channels, 0, frames);
                 return 0;
             }
             // Start `target` frames behind the writer.
-            const uint32_t skip = avail - (target_ + frames);
+            const uint32_t skip = avail - (target_ + frames + cycle_remaining);
             r += skip;
             avail -= skip;
             primed_ = true;
@@ -113,9 +116,10 @@ public:
             zero(dst, channels, n, frames - n);
             underruns_.fetch_add(1, std::memory_order_relaxed);
             primed_ = false;
-        } else if (avail > target_ + slack_) {
-            dropped_.fetch_add(avail - target_, std::memory_order_relaxed);
-            r += avail - target_;
+        } else if (avail > cycle_remaining && avail - cycle_remaining > target_ + slack_) {
+            const uint32_t excess = avail - cycle_remaining - target_;
+            dropped_.fetch_add(excess, std::memory_order_relaxed);
+            r += excess;
         }
         read_pos_.store(r, std::memory_order_release);
         return n;

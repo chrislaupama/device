@@ -149,3 +149,30 @@ TEST_CASE(frame_ring_threads_and_rt_safety) {
     CHECK(got > 0);
     CHECK_EQ(testutil::rt_alloc_count(), allocs_before);
 }
+
+TEST_CASE(frame_ring_chunked_cycle_is_contiguous_and_not_trimmed) {
+    // A 96-frame device cycle read as 3 chunks of 32 (cycle_remaining 64,
+    // 32, 0): primes on the whole cycle, keeps the chunks contiguous and the
+    // frames still to be read this cycle are not dropped as drift excess.
+    FrameRing ring;
+    ring.reset(2, 1024, 32, 16);
+    Planar out(2, 32);
+    uint64_t written = 0, expect = 0;
+    bool primed = false;
+    for (int cycle = 0; cycle < 10; ++cycle) {
+        ring.write(frames_from(written, 96).data(), 96);
+        written += 96;
+        for (uint32_t k = 0; k < 3; ++k) {
+            const uint32_t got = ring.read(out.ptrs.data(), 2, 32, 64 - 32 * k);
+            if (got == 0 && !primed) continue;
+            primed = true;
+            REQUIRE(got == 32u);
+            if (expect == 0) expect = static_cast<uint64_t>(out.data[0][0]);
+            for (uint32_t i = 0; i < 32; ++i) CHECK_EQ(out.data[0][i], static_cast<float>(expect + i));
+            expect += 32;
+        }
+    }
+    CHECK(primed);
+    CHECK_EQ(ring.dropped(), 0u);
+    CHECK_EQ(ring.underruns(), 0u);
+}
