@@ -284,13 +284,32 @@ std::shared_ptr<Vst3Module> load_vst3_module(const std::string& path, std::strin
 #endif
 }
 
+// VST3 class ids as text: the canonical form is the 32 hex digits of the
+// four 32-bit words of INLINE_UID(l1, l2, l3, l4) / DECLARE_UID, which is
+// what FUID::toString prints on every platform. In memory a TUID holds those
+// bytes in order, except where the SDK is COM compatible (Windows): there
+// the first 8 bytes are a GUID's Data1 (32-bit) and Data2/Data3 (16-bit)
+// in little-endian order. Converting here keeps ids saved in projects
+// identical across platforms.
+namespace {
+constexpr int text_index(int memory_index) {
+#if COM_COMPATIBLE
+    constexpr int kComOrder[16] = {3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15};
+    return kComOrder[memory_index];
+#else
+    return memory_index;
+#endif
+}
+} // namespace
+
 std::string vst3_uid_to_string(const char uid[16]) {
     static const char* hex = "0123456789ABCDEF";
     std::string s(32, '0');
     for (int i = 0; i < 16; ++i) {
         const auto b = static_cast<uint8_t>(uid[i]);
-        s[static_cast<std::size_t>(2 * i)] = hex[b >> 4];
-        s[static_cast<std::size_t>(2 * i + 1)] = hex[b & 15];
+        const auto at = static_cast<std::size_t>(2 * text_index(i));
+        s[at] = hex[b >> 4];
+        s[at + 1] = hex[b & 15];
     }
     return s;
 }
@@ -304,7 +323,8 @@ bool vst3_uid_from_string(const std::string& s, char uid[16]) {
         return -1;
     };
     for (int i = 0; i < 16; ++i) {
-        const int hi = nib(s[static_cast<std::size_t>(2 * i)]), lo = nib(s[static_cast<std::size_t>(2 * i + 1)]);
+        const auto at = static_cast<std::size_t>(2 * text_index(i));
+        const int hi = nib(s[at]), lo = nib(s[at + 1]);
         if (hi < 0 || lo < 0) return false;
         uid[i] = static_cast<char>((hi << 4) | lo);
     }

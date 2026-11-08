@@ -175,11 +175,12 @@ std::size_t error_count(se_engine* e) {
     std::size_t n = 0;
     se_plugin_load_errors(e, nullptr, 0, &n);
     if (n > 0) { // diagnostics: say why
-        std::vector<se_plugin_message> msgs(n);
-        se_plugin_load_errors(e, msgs.data(), msgs.size(), &n);
-        for (const auto& m : msgs)
-            std::fprintf(stderr, "  plugin load error (device %llu): %s\n", static_cast<unsigned long long>(m.device_id),
-                         m.message);
+        se_plugin_message msgs[16] = {};
+        std::size_t got = 0;
+        se_plugin_load_errors(e, msgs, 16, &got);
+        for (std::size_t i = 0; i < got && i < 16; ++i)
+            std::fprintf(stderr, "  plugin load error (device %llu): %s\n",
+                         static_cast<unsigned long long>(msgs[i].device_id), msgs[i].message);
     }
     return n;
 }

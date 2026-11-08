@@ -75,7 +75,11 @@ jobs:
       - name: Engine — test
         run: ctest --test-dir engine/build-ci --output-on-failure -j 4
 
+      # The Rust steps run even when the engine tests failed (both results
+      # are reported; the job still fails).
       - name: Rust workspace — build
+        if: ${{ !cancelled() }}
         run: cargo build --workspace --locked
       - name: Rust workspace — test
+        if: ${{ !cancelled() }}
         run: cargo test --workspace --locked
