@@ -1210,13 +1210,22 @@ impl Controller {
                 _ => s,
             }
         };
-        let dirs: Vec<PluginRow> = scan_dirs()
+        let mut dirs: Vec<PluginRow> = scan_dirs()
             .into_iter()
             .map(|d| (d, "Default"))
             .chain(configured_scan_dirs())
             // A configured path may be a folder or a single bundle.
             .map(|(d, badge)| PluginRow { name: tilde(&d).into(), detail: "".into(), badge: badge.into(), warn: !d.exists() || (badge == "Default" && !d.is_dir()) })
             .collect();
+        // The page does not scroll above the scanner controls: past
+        // MAX_SCAN_DIR_ROWS, the remaining (configured) folders collapse
+        // into one summary row.
+        const MAX_SCAN_DIR_ROWS: usize = 8;
+        if dirs.len() > MAX_SCAN_DIR_ROWS {
+            let more = dirs.len() - (MAX_SCAN_DIR_ROWS - 1);
+            dirs.truncate(MAX_SCAN_DIR_ROWS - 1);
+            dirs.push(PluginRow { name: format!("+{more} more configured folders").into(), detail: "".into(), badge: "CLAP_PATH / SAINE_PLUGIN_PATH".into(), warn: false });
+        }
         sync_model(&self.scan_dirs_model, dirs);
         let mut found: Vec<&PluginInfo> = cat.plugins.iter().collect();
         found.sort_by_key(|p| (format_order(p.plugin.format), p.plugin.vendor.to_lowercase(), p.plugin.name.to_lowercase()));
