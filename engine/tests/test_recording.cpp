@@ -774,6 +774,18 @@ TEST_CASE(device_list_reports_uids_and_defaults) {
     CHECK(def_out <= 1);
 }
 
+// CoreAudio applies the requested IO buffer exactly. WASAPI shared mode runs
+// at the endpoint's period (e.g. 480 frames = 10 ms at 48 kHz) and PipeWire
+// at the graph quantum, either of which may differ from the request.
+static void check_reported_buffer(uint32_t reported, uint32_t requested) {
+#if defined(__APPLE__)
+    CHECK_EQ(reported, requested);
+#else
+    (void)requested;
+    CHECK(reported > 0u);
+#endif
+}
+
 TEST_CASE(device_output_only_named_device_and_restart) {
     // Real output device, explicitly named (HALOutput path), no input.
     std::size_t n = 0;
@@ -799,7 +811,7 @@ TEST_CASE(device_output_only_named_device_and_restart) {
     CHECK_EQ(st.running, 1);
     CHECK_EQ(st.input_open, 0);
     CHECK(std::string(st.output_name) == out->name);
-    CHECK_EQ(st.buffer_size, 512u);
+    check_reported_buffer(st.buffer_size, 512u);
     // Device + safety offset + stream latency (no IO-buffer term since the
     // loopback fix): hardware dependent and 0 on virtual devices, so only
     // plausibility is checked.
@@ -813,6 +825,6 @@ TEST_CASE(device_output_only_named_device_and_restart) {
     CHECK_EQ(se_device_configure(e, &dc), SE_OK);
     se_device_status_get(e, &st);
     CHECK_EQ(st.running, 1);
-    CHECK_EQ(st.buffer_size, 256u);
+    check_reported_buffer(st.buffer_size, 256u);
     REQUIRE(se_device_stop(e) == SE_OK);
 }
