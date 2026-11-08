@@ -1,6 +1,7 @@
 # Built-in devices
 
-Saine's own effects (Compressor first; more follow from the device specs) are
+Saine's own effects (Compressor, Limiter, Gate, Glue Compressor, Transient
+Shaper, Mastering Limiter; more follow from the device specs) are
 **declarative**: one definition in Rust describes a device, and the model,
 undo, persistence, automation, engine and panel all derive from it. A device
 is made of up to three parts:
@@ -59,10 +60,24 @@ flowchart LR
      the device spec (`handoffs/device-specs/<device>.md` in the Captain drive).
      Those are facts; write descriptions in your own words. Never copy the
      reference's code, CSS, images, audio or preset files.
-   - `Layout`: `picker` (menus / toggles / `Sidechain` / pills; the
-     sidechain picker and what follows align right), `view`
-     (`DynamicsStrip` or `Custom`), `sliders`, `clusters` of knobs,
-     `faces` (drawings inside a knob), `shown_when` (mode-dependent controls).
+   - `Layout`: `picker` (menus / `Toggle` latches / `Sidechain` / pills; the
+     sidechain picker, a latch and what follows align right; an empty picker
+     moves the view row up), `view`, `sliders`, `clusters` of knobs
+     (a `Toggle` there is a latch in a knob cell; a discrete knob with more
+     than two choices draws detent ticks), `faces` (transfer curves inside a
+     knob: `SoftKneeCurve`, `BrickWall`, `Expander`, `BusVca`, `PushWall`),
+     `shown_when` (mode-dependent controls).
+   - Views: `View::Strip(Strip::new("<line param>").range(top_db, floor_db).second("<param>"))`
+     is the level / gain-reduction strip with a draggable dashed line, an
+     optional solid second line (Alt+drag moves both by the same dB, one undo
+     step) and its own plot range; `DynamicsStrip { threshold }` is shorthand
+     for the 0..-36 dB strip. `View::Custom("gain-scope")` is the transient
+     shaper's scrolling waveform + applied-gain scope.
+   - Parameter extras: `max_text` (the top of the range reads e.g. "Full"),
+     `overlays` (a choice also writes other parameters, in one undo step:
+     `DeviceDef::choice_values`), `Format::Ms(decimals)` and
+     `Format::SignedPercent`. The parameter named in `SIDECHAIN_ENABLE_IDS`
+     (`DeviceDef::sidechain_enable`) follows the sidechain picker.
 2. **DSP kernel.** Add `engine/src/devices/<id>.cpp`: a `BuiltinProcessor`
    (`prepare` may allocate; `reset` / `process` are real-time: no
    allocation, locks, I/O or exceptions) and a `BuiltinDescriptor` whose
@@ -72,7 +87,13 @@ flowchart LR
    within one `process` call (the instance splits blocks at automation
    events); smoothing audible steps is the kernel's job (`dsp::Smoother`).
    Readouts (meters, gain reduction) are written per block; give
-   `idle_readouts` for the values before the first block.
+   `idle_readouts` for the values before the first block. Report latency for
+   PDC: `latency_for(params)` (the default returns the fixed `latency`), so a
+   kernel whose delay depends on a setting (the mastering limiter's
+   oversampling) reports the delay of the values it will run with. Shared
+   dynamics building blocks (biquads, delay lines, sliding minimum, look-ahead
+   gain, polyphase oversampler, 4x true-peak detector, fast log/exp/tanh) are
+   in `dsp_dynamics.hpp`.
 3. **Custom view (optional).** For bodies the template cannot express (EQ
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a
@@ -93,9 +114,11 @@ flowchart LR
      parsing of any new display format.
 5. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
    (`saine_device_bench`, Release build) and put the numbers in the PR.
-6. **Render.** Add a `--state` that shows the device at its defaults (see
-   `reference-compressor` in `crates/saine-app/src/main.rs`), render it with
-   `--screenshot` and compare it with the reference capture.
+6. **Render.** `--state reference-<id>` shows any registered built-in at its
+   defaults; render it with `--screenshot` (add `--offscreen` so no window
+   appears) and compare it with the reference capture. Add the device to the
+   app self-test (`dynamics_device_steps` in `src/selftest.rs` adds each
+   dynamics device through Add device › Built-in).
 
 ## Commands
 
@@ -103,6 +126,6 @@ flowchart LR
 cargo test --workspace                                   # core, engine wrapper, app unit tests
 cd engine && cmake --build build && ./build/saine_engine_tests
 ./build/saine_device_bench                               # per-block cost, param updates, 32-track session
-cargo run -p saine-app -- --state reference-compressor --screenshot /tmp/compressor.png
+cargo run -p saine-app -- --state reference-limiter --offscreen --screenshot /tmp/limiter.png
 cargo run -p saine-app -- --self-test                    # includes the built-in device section
 ~~~

@@ -9,7 +9,7 @@
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
-//!              [--screenshot <out.png>] [--exit-after-frames N] [--frame-stats] [--self-test]
+//!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--self-test]
 //! ```
 
 mod assistant_panel;
@@ -81,7 +81,10 @@ struct Args {
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
     device_chain_review: bool,
-    compressor_state: bool,
+    /// reference-<built-in id> (reference-compressor, reference-limiter...): that device at its defaults.
+    builtin_state: Option<&'static str>,
+    /// Never show the window (renders for --screenshot fall back to offscreen snapshots).
+    offscreen: bool,
     /// review-settings-plugins: Settings open on the Plugins page (no reference comparison).
     plugins_page_review: bool,
     assistant_fixture: Option<PathBuf>,
@@ -163,9 +166,9 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.device_chain_review = true;
                 }
-                "reference-compressor" => {
+                s if s.strip_prefix("reference-").and_then(saine_core::builtin::find).is_some() => {
                     a.reference_default = true;
-                    a.compressor_state = true;
+                    a.builtin_state = s.strip_prefix("reference-").and_then(saine_core::builtin::find).map(|d| d.id);
                 }
                 "review-settings-plugins" => {
                     a.reference_default = true;
@@ -178,7 +181,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, reference-compressor, review-settings-plugins)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, review-settings-plugins, reference-<built-in device id>)"
                     ));
                 }
             },
@@ -186,6 +189,7 @@ fn parse_args() -> Result<Args, String> {
             "--assistant-fixture" => a.assistant_fixture = Some(value(&mut i)?.into()),
             "--plugin-fixture" => a.plugin_fixture = Some(value(&mut i)?.into()),
             "--screenshot" => a.screenshot = Some(value(&mut i)?.into()),
+            "--offscreen" => a.offscreen = true,
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
             "--self-test" | "--self-test-audio" => {
@@ -472,11 +476,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ---- Slint backend: our wgpu device + transparent macOS titlebar ----
     let (cfg, adapter) = gpu::make_wgpu_config()?;
     let selector = slint::BackendSelector::new().backend_name("winit".into()).renderer_name("femtovg-wgpu".into()).require_wgpu_30(cfg);
+    let offscreen = args.offscreen;
     #[cfg(target_os = "macos")]
-    let selector = selector.with_winit_window_attributes_hook(|attrs| {
+    let selector = selector.with_winit_window_attributes_hook(move |attrs| {
         use slint::winit_030::winit::platform::macos::WindowAttributesExtMacOS;
-        attrs.with_titlebar_transparent(true).with_fullsize_content_view(true).with_title_hidden(true)
+        let attrs = attrs.with_titlebar_transparent(true).with_fullsize_content_view(true).with_title_hidden(true);
+        if offscreen { attrs.with_visible(false).with_active(false) } else { attrs }
     });
+    #[cfg(not(target_os = "macos"))]
+    let selector = selector.with_winit_window_attributes_hook(move |attrs| if offscreen { attrs.with_visible(false).with_active(false) } else { attrs });
     selector.select()?;
 
     let app = AppWindow::new()?;
@@ -661,13 +669,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(20.0);
     }
-    if args.compressor_state {
-        // Compare with renders/reference/compressor.png (Captain drive): the built-in Compressor
+    if let Some(id) = args.builtin_state {
+        // Compare with renders/reference/<id>.png (Captain drive): the built-in device
         // at its defaults, alone in an audio track's chain, transport stopped.
         let mut c = ctl.borrow_mut();
         if let Some(t) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Audio).map(|t| t.id) {
             c.select_track(t);
-            let def = saine_core::builtin::find("compressor").expect("compressor is registered");
+            let def = saine_core::builtin::find(id).expect("built-in is registered");
             c.add_item_to_track(&devices::Item::Builtin(def), t, None);
         }
         c.set_bottom_tab(BottomTab::Devices);
@@ -851,6 +859,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_device_use_synth, |c| c.device_use_synth());
     on!(on_device_drag, |c, id: i32, phase: i32, x: f32| c.device_drag(saine_core::DeviceId(id as u64), phase, x));
     on!(on_panel_drag, |c, id: i32, p: i32, phase: i32, dy: f32, rate: f32, fine: bool| c.panel_drag(saine_core::DeviceId(id as u64), p, phase, dy, rate, fine));
+    on!(on_panel_drag_pair, |c, id: i32, p: i32, q: i32, phase: i32, dy: f32, rate: f32, fine: bool| c.panel_drag_pair(saine_core::DeviceId(id as u64), p, q, phase, dy, rate, fine));
     on!(on_panel_reset, |c, id: i32, p: i32| c.panel_reset(saine_core::DeviceId(id as u64), p));
     on!(on_panel_step, |c, id: i32, p: i32, delta: i32, fine: bool| c.panel_step(saine_core::DeviceId(id as u64), p, delta, fine));
     on!(on_panel_choice, |c, id: i32, p: i32, i: i32| c.panel_choice(saine_core::DeviceId(id as u64), p, i));

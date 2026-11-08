@@ -9,11 +9,21 @@ namespace saine {
 // ---------------------------------------------------------------- registry
 // One line per built-in device; the descriptor lives next to its processor.
 extern const BuiltinDescriptor kCompressorDescriptor;
+extern const BuiltinDescriptor kGlueCompressorDescriptor;
+extern const BuiltinDescriptor kLimiterDescriptor;
+extern const BuiltinDescriptor kMasteringLimiterDescriptor;
+extern const BuiltinDescriptor kGateDescriptor;
+extern const BuiltinDescriptor kTransientShaperDescriptor;
 
 namespace {
 
 const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kCompressorDescriptor,
+    &kGlueCompressorDescriptor,
+    &kLimiterDescriptor,
+    &kMasteringLimiterDescriptor,
+    &kGateDescriptor,
+    &kTransientShaperDescriptor,
 };
 
 struct CRegistry {
@@ -142,6 +152,13 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     }
     for (std::size_t i = 0; i < readout_scratch_.size(); ++i) readout_atomic_[i].store(ro[i], std::memory_order_relaxed);
     sc_l_ = sc_r_ = nullptr;
+}
+
+uint32_t BuiltinInstance::latency() {
+    float v[kMaxParams];
+    const uint32_t n = std::min(param_count(), kMaxParams);
+    for (uint32_t i = 0; i < n; ++i) v[i] = target_[i].load(std::memory_order_relaxed);
+    return proc_->latency_for(v);
 }
 
 bool BuiltinInstance::save_state(std::vector<uint8_t>& out, std::string&) {

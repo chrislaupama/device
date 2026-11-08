@@ -1,0 +1,150 @@
+// Transient Shaper: level-independent attack / sustain shaping from the
+// difference of envelope followers, with a parallel mix, output gain and an
+// optional soft clipper at 0 dBFS. Parameters in the order of
+// saine_core::builtin::transient_shaper (checked by a Rust test).
+//
+//   detector  max(|L|, |R|), floored at a level set by Sensitivity
+//   envelope  e: 0.3 ms rise, 40 ms fall (smooth enough for low notes)
+//   attack    e minus a copy of e that rises over Attack Time and falls with
+//             it at once: positive only at the start of a hit, for about
+//             Attack Time (a dB difference, so it does not depend on level)
+//   sustain   a copy of e that rises with it at once and falls over Sustain
+//             Time (Full = 10 s), minus e: grows through the tail of a hit
+//   gain      Sensitivity scales both: attack% * 0.5 * diff + sustain% * 0.6 * diff,
+//             limited to -30..+24 dB, smoothed over 0.5 ms
+//   output    (dry + mix * (shaped - dry)) * output, then (Clip on) a soft
+//             clipper (linear to -1.4 dBFS, bending into 0 dBFS) at 2x
+//             oversampling. The oversampler always runs, so latency is a
+//             fixed 32 samples and toggling Clip never clicks.
+//   readouts  output peak, pre-clip peak and applied gain (largest
+//             magnitude), each held for 1/30 s so the scope's poll never
+//             misses a hit.
+#include "builtin.hpp"
+#include "dsp.hpp"
+#include "dsp_dynamics.hpp"
+
+#include <algorithm>
+#include <cmath>
+
+namespace saine {
+
+namespace {
+
+enum Param : uint32_t { kAttack, kSustain, kSensitivity, kOutput, kMix, kAttackTime, kSustainTime, kClip, kParamCount };
+enum Readout : uint32_t { kOutPeak, kPrePeak, kGainDb, kReadoutCount };
+
+constexpr const char* kParamIds[kParamCount] = {"attack", "sustain", "sensitivity", "output_gain", "mix", "attack_time", "sustain_time", "clip"};
+constexpr const char* kReadoutIds[kReadoutCount] = {"out_peak", "pre_peak", "gain_db"};
+constexpr uint32_t kLatency = dsp::Oversampler::latency(2);
+constexpr float kClipKnee = 0.85f; // -1.4 dBFS
+
+class TransientShaper final : public BuiltinProcessor {
+public:
+    void prepare(double sample_rate, uint32_t) override {
+        sr_ = sample_rate;
+        rise_ = dsp::pole(0.3f, sr_);
+        fall_ = dsp::pole(40.0f, sr_);
+        gain_smooth_ = dsp::pole(0.5f, sr_);
+        hold_ = static_cast<uint32_t>(sr_ / 30.0);
+        for (auto* s : {&mix_, &output_}) s->set_time(20.0f, sr_);
+        reset();
+    }
+
+    void reset() noexcept override {
+        env_ = slow_ = hold_env_ = 0.0f;
+        gain_db_ = 0.0f;
+        for (auto& o : os_) o.reset();
+        out_hold_.reset();
+        pre_hold_.reset();
+        gain_hold_.reset();
+        primed_ = false;
+    }
+
+    uint32_t latency() const noexcept override { return kLatency; }
+
+    void process(float* l, float* r, uint32_t n, const float* p, const BuiltinContext&, float* ro) noexcept override {
+        const float attack = std::clamp(p[kAttack], -100.0f, 100.0f) * 0.01f;
+        const float sustain = std::clamp(p[kSustain], -100.0f, 100.0f) * 0.01f;
+        const float sens = std::clamp(p[kSensitivity], 0.0f, 100.0f) * 0.01f;
+        const float k = std::exp2((sens - 0.5f) * 2.4f);
+        const float floor = dsp::db_to_gain(-50.0f - 40.0f * sens);
+        const float a_att_slow = dsp::pole(std::clamp(p[kAttackTime], 0.5f, 1000.0f), sr_);
+        const float sus_ms = p[kSustainTime] >= 1999.0f ? 10000.0f : std::clamp(p[kSustainTime], 1.0f, 10000.0f);
+        const float fall_sus = dsp::pole(sus_ms, sr_);
+        const float ka = 0.5f * k * attack, ks = 0.6f * k * sustain;
+        const float mix = std::clamp(p[kMix], 0.0f, 100.0f) * 0.01f;
+        const float output = dsp::db_to_gain(std::clamp(p[kOutput], -48.0f, 48.0f));
+        const bool clip = p[kClip] >= 0.5f;
+        if (!primed_) {
+            mix_.snap(mix);
+            output_.snap(output);
+            env_ = slow_ = hold_env_ = floor; // start at rest: no attack burst on the first sample
+            primed_ = true;
+        }
+        const bool shaping = ka != 0.0f || ks != 0.0f;
+
+        float out_peak = 0.0f, pre_peak = 0.0f, gain_max = 0.0f;
+        float env = env_, slow = slow_, tail = hold_env_, gdb = gain_db_;
+        for (uint32_t i = 0; i < n; ++i) {
+            const float xl = l[i], xr = r[i];
+            const float x = std::max(floor, std::max(std::fabs(xl), std::fabs(xr)));
+            env = x + (x > env ? rise_ : fall_) * (env - x);
+            slow = env < slow ? env : env + a_att_slow * (slow - env); // <= env
+            tail = env > tail ? env : env + fall_sus * (tail - env);   // >= env
+            float target = 0.0f;
+            if (shaping) {
+                const float att_diff = std::min(dsp::kDbPerLog2 * dsp::fast_log2(env / slow), 24.0f);
+                const float sus_diff = std::min(dsp::kDbPerLog2 * dsp::fast_log2(tail / env), 30.0f);
+                target = std::clamp(ka * att_diff + ks * sus_diff, -30.0f, 24.0f);
+            }
+            gdb = target + gain_smooth_ * (gdb - target);
+            if (std::fabs(gdb) > std::fabs(gain_max)) gain_max = gdb;
+            const float g = gdb != 0.0f ? dsp::fast_db_to_gain(gdb) : 1.0f;
+            const float m = mix_.next(mix), o = output_.next(output);
+            const float wl = (xl + m * (xl * g - xl)) * o;
+            const float wr = (xr + m * (xr * g - xr)) * o;
+            pre_peak = std::max(pre_peak, std::max(std::fabs(wl), std::fabs(wr)));
+            float ul[2], ur[2];
+            os_[0].up(wl, ul, 2);
+            os_[1].up(wr, ur, 2);
+            if (clip) {
+                for (int j = 0; j < 2; ++j) {
+                    ul[j] = dsp::soft_clip(ul[j], kClipKnee, 1.0f);
+                    ur[j] = dsp::soft_clip(ur[j], kClipKnee, 1.0f);
+                }
+            }
+            const float yl = os_[0].down(ul, 2), yr = os_[1].down(ur, 2);
+            l[i] = yl;
+            r[i] = yr;
+            out_peak = std::max(out_peak, std::max(std::fabs(yl), std::fabs(yr)));
+        }
+        if (std::fabs(gdb) < 1e-6f) gdb = 0.0f;
+        env_ = env, slow_ = slow, hold_env_ = tail, gain_db_ = gdb;
+        ro[kOutPeak] = out_hold_.update(out_peak, n, hold_);
+        ro[kPrePeak] = pre_hold_.update(pre_peak, n, hold_);
+        // Signed: hold the largest magnitude, keep its sign.
+        const float held = gain_hold_.update(std::fabs(gain_max), n, hold_);
+        if (std::fabs(gain_max) >= held) gain_sign_ = gain_max < 0.0f ? -1.0f : 1.0f;
+        ro[kGainDb] = gain_sign_ * held;
+    }
+
+private:
+    double sr_ = 48000.0;
+    float rise_ = 0.0f, fall_ = 0.0f, gain_smooth_ = 0.0f;
+    float env_ = 0.0f, slow_ = 0.0f, hold_env_ = 0.0f, gain_db_ = 0.0f, gain_sign_ = 1.0f;
+    uint32_t hold_ = 1600;
+    dsp::Oversampler os_[2];
+    dsp::Smoother mix_, output_;
+    dsp::HeldPeak out_hold_, pre_hold_, gain_hold_;
+    bool primed_ = false;
+};
+
+std::unique_ptr<BuiltinProcessor> create_transient_shaper() { return std::make_unique<TransientShaper>(); }
+
+} // namespace
+
+extern const BuiltinDescriptor kTransientShaperDescriptor;
+constexpr float kIdleReadouts[] = {0.0f, 0.0f, 0.0f};
+const BuiltinDescriptor kTransientShaperDescriptor{"transient-shaper", kParamIds, kReadoutIds, &create_transient_shaper, kIdleReadouts};
+
+} // namespace saine

@@ -13,15 +13,16 @@
 //! presets are single commands. Escape / pointer cancel restores the value
 //! the drag started from.
 //!
-//! Custom views: View::DynamicsStrip is drawn here (paths built from the
-//! engine's readouts); View::Custom(name) is the escape hatch for device-
-//! specific bodies (EQ curve, shaper, trance-gate grid) and gets its own arm
-//! in [Controller::builtin_card] when such a device lands.
+//! Views: the dynamics strip (View::Strip / View::DynamicsStrip: level history
+//! from the engine's readouts, one or two draggable lines) and the
+//! "gain-scope" custom view are drawn here. View::Custom(name) is the escape
+//! hatch for device-specific bodies (EQ curve, shaper, trance-gate grid) and
+//! gets its own arm in [Controller::builtin_card].
 
 use crate::controller::{slint_color, track_color, Controller};
 use crate::devices::{DevMenu, MenuPick};
 use crate::{DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelTick};
-use saine_core::builtin::{Control, DeviceDef, Face, ParamDef, View, CLUSTER_GAP, KNOB_CELL, KNOB_GAP};
+use saine_core::builtin::{Control, DeviceDef, Face, ParamDef, Strip, View, CLUSTER_GAP, KNOB_CELL, KNOB_GAP};
 use saine_core::{Command, Device, DeviceId, TrackId};
 use slint::{ModelRc, SharedString, VecModel};
 use std::collections::{HashMap, VecDeque};
@@ -36,11 +37,21 @@ const VIEW_GAP: f32 = 10.0;
 /// View row top, caption zone above the well, well bottom (card relative).
 const VIEW_Y: f32 = 63.0;
 const CAPTION_H: f32 = 19.0;
+/// Picker row band above the view row (row top 37 to view top).
+const PICKER_H: f32 = 26.0;
+/// Slider rail top below the view row top.
+const SLIDER_TOP: f32 = 23.0;
 const VIEW_BOTTOM: f32 = 214.0;
 /// Dynamics strip plot range (dB) and history length (slots across the well).
+#[cfg(test)]
 const PLOT_TOP_DB: f32 = 0.0;
 const PLOT_FLOOR_DB: f32 = -36.0;
 const HISTORY: usize = 240;
+/// Custom view: scrolling output waveform with the applied-gain trace (transient shaper).
+const GAIN_SCOPE: &str = "gain-scope";
+/// Gain-scope trace range (+-dB) and the level under which it reads as silence (linear, -48 dB).
+const SCOPE_DB: f32 = 12.0;
+const SCOPE_SILENT: f32 = 0.004;
 /// Pointer travel before a press becomes a drag (px).
 const DRAG_SLOP: f32 = 3.0;
 const MINUS: char = '\u{2212}';
@@ -55,6 +66,17 @@ struct ParamDrag {
     value: f32,
     travel: f32,
     active: bool,
+    /// Strip Alt+drag: a second line moved by the same amount.
+    linked: Option<Linked>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Linked {
+    index: usize,
+    start: f32,
+    value: f32,
+    /// Accumulated move of both lines (plain units, before clamping).
+    delta: f32,
 }
 
 /// Smoothed level history of a dynamics strip (newest last).
@@ -88,6 +110,11 @@ thread_local! {
 
 fn choices_model(def: &DeviceDef, p: &ParamDef) -> ModelRc<SharedString> {
     STATIC_MODELS.with(|m| m.borrow_mut().entry(format!("{}/{}", def.id, p.id)).or_insert_with(|| model(p.choices.iter().map(|c| s(*c)).collect())).clone())
+}
+
+/// Latch labels in the picker row: each choice prefixed with the parameter label.
+fn latch_model(def: &DeviceDef, p: &ParamDef) -> ModelRc<SharedString> {
+    STATIC_MODELS.with(|m| m.borrow_mut().entry(format!("{}/{}/latch", def.id, p.id)).or_insert_with(|| model(p.choices.iter().map(|c| s(format!("{} {c}", p.label))).collect())).clone())
 }
 
 /// Keep a card's row models across refreshes: the Slint repeaters then update
@@ -165,18 +192,46 @@ pub fn soft_knee_gr(x: f32, threshold: f32, ratio: f32, knee: f32) -> f32 {
     }
 }
 
+/// Static transfer curve (output dB for input dB) of a knob face, the input
+/// level the axis is laid out around and the span its knee highlight covers.
+fn face_law(face: Face, num: impl Fn(&str) -> f32) -> (Box<dyn Fn(f32) -> f32>, f32, (f32, f32)) {
+    match face {
+        Face::SoftKneeCurve { threshold, ratio, knee } => {
+            let (t, r, k) = (num(threshold), num(ratio), num(knee).max(0.0));
+            (Box::new(move |x| x + soft_knee_gr(x, t, r, k)), t, (t - k / 2.0, t + k / 2.0))
+        }
+        Face::BrickWall { ceiling } => {
+            let c = num(ceiling);
+            (Box::new(move |x: f32| x.min(c)), c, (c, c))
+        }
+        Face::Expander { threshold, ratio } => {
+            let (t, r) = (num(threshold), num(ratio).max(1.0));
+            (Box::new(move |x| if x < t { t + (x - t) * r } else { x }), t, (t, t))
+        }
+        Face::BusVca { threshold, ratio, range } => {
+            let (t, r, depth) = (num(threshold), num(ratio), num(range).max(0.0));
+            (Box::new(move |x| x + soft_knee_gr(x, t, r, 4.0).max(-depth)), t, (t - 2.0, t + 2.0))
+        }
+        Face::PushWall { threshold, ceiling } => {
+            let (t, c) = (num(threshold), num(ceiling));
+            (Box::new(move |x| (x + c - t).min(c)), t, (t, t))
+        }
+    }
+}
+
 /// Transfer-face paths in a 32 x 32 box: (curve, knee highlight, dashed unity line).
-fn soft_knee_face(threshold: f32, ratio: f32, knee: f32) -> (String, String, String) {
-    let lo = threshold - 12.0;
-    let hi = (threshold + 24.0).max(0.0);
+/// The input axis spans 12 dB below `at` to 24 dB above it (at least to 0 dB).
+fn transfer_face(law: &dyn Fn(f32) -> f32, at: f32, (knee_lo, knee_hi): (f32, f32)) -> (String, String, String) {
+    let lo = at - 12.0;
+    let hi = (at + 24.0).max(0.0);
     let (pad, span) = (3.0, 26.0);
     let px = |db: f32| pad + (db - lo) / (hi - lo) * span;
     let py = |db: f32| 32.0 - pad - ((db - lo) / (hi - lo) * span).clamp(-pad, span + pad);
-    let point = |x: f32| (px(x), py(x + soft_knee_gr(x, threshold, ratio, knee)));
+    let point = |x: f32| (px(x), py(law(x)));
     let n = 48;
     let curve: Vec<(f32, f32)> = (0..=n).map(|i| point(lo + (hi - lo) * i as f32 / n as f32)).collect();
     let margin = 3.0 / span * (hi - lo);
-    let (b0, b1) = ((threshold - knee / 2.0 - margin).max(lo), (threshold + knee / 2.0 + margin).min(hi));
+    let (b0, b1) = ((knee_lo - margin).max(lo), (knee_hi + margin).min(hi));
     let bend: Vec<(f32, f32)> = (0..=16).map(|i| point(b0 + (b1 - b0) * i as f32 / 16.0)).collect();
     let mut unity = String::new();
     let mut t = 0.0;
@@ -190,9 +245,9 @@ fn soft_knee_face(threshold: f32, ratio: f32, knee: f32) -> (String, String, Str
 
 /// Strip paths for a level history in a w x wh well: [input fill, gain-reduction
 /// band (input to input + GR), input line, output line].
-fn strip_paths(slots: &VecDeque<(f32, f32, f32)>, w: f32, wh: f32) -> [String; 4] {
-    let span = PLOT_TOP_DB - PLOT_FLOOR_DB;
-    let y_of = |db: f32| ((PLOT_TOP_DB - db) / span).clamp(0.0, 1.0) * wh;
+fn strip_paths(slots: &VecDeque<(f32, f32, f32)>, w: f32, wh: f32, top_db: f32, floor_db: f32) -> [String; 4] {
+    let span = top_db - floor_db;
+    let y_of = |db: f32| ((top_db - db) / span).clamp(0.0, 1.0) * wh;
     let n = slots.len();
     let x_of = |i: usize| w - (n - 1 - i) as f32 * w / (HISTORY - 1) as f32;
     let input: Vec<(f32, f32)> = slots.iter().enumerate().map(|(i, s)| (x_of(i), y_of(s.0))).collect();
@@ -217,6 +272,15 @@ fn strip_paths(slots: &VecDeque<(f32, f32, f32)>, w: f32, wh: f32) -> [String; 4
     [in_fill, gr_fill, in_line, out_line]
 }
 
+/// The command for one parameter edit: a choice with overlays also writes
+/// its overlay values (one step; the preset name stays, so it reads dirty).
+fn param_command(d: &Device, def: &DeviceDef, p: &ParamDef, v: f32) -> Command {
+    if p.overlays.is_empty() {
+        return Command::SetDeviceParam { device: d.id, param: p.id.to_string(), value: v };
+    }
+    Command::SetDeviceParams { device: d.id, params: def.choice_values(p.id, v), preset: d.preset.clone() }
+}
+
 impl Controller {
     fn panel_def(&self, id: DeviceId) -> Option<(&Device, &'static DeviceDef)> {
         let d = self.project().device(id)?;
@@ -225,8 +289,10 @@ impl Controller {
 
     /// Value shown for a parameter: the live drag value, else the model value.
     fn panel_value(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
+        let is = |i: usize| def.params.get(i).is_some_and(|q| q.id == p.id);
         match self.devices.panel.drag {
-            Some(g) if g.device == d.id && def.params.get(g.index).is_some_and(|q| q.id == p.id) => g.value,
+            Some(g) if g.device == d.id && is(g.index) => g.value,
+            Some(ParamDrag { device, linked: Some(l), .. }) if device == d.id && is(l.index) => l.value,
             _ => def.value(d, p),
         }
     }
@@ -237,14 +303,28 @@ impl Controller {
         let track = self.project().find_device(d.id).map(|(ti, _)| &self.project().tracks[ti]);
         let accent = track.map_or(slint::Color::from_rgb_u8(0x43, 0x9b, 0x94), |t| slint_color(track_color(t.color)));
         let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
-        let value = |id: &str| def.param(id).map(|p| self.panel_value(d, def, p));
+        let number = |id: &str| def.param(id).map_or(0.0, |p| p.number(self.panel_value(d, def, p)));
 
         // Picker row; the sidechain picker and everything after it align right.
         let mut picks = Vec::new();
         for c in def.layout.picker {
             let p = c.param().and_then(|id| def.param(id));
             match (c, p) {
-                (Control::Menu(_) | Control::Toggle(_), Some(p)) if def.is_shown(d, p.id) => picks.push(PanelPick {
+                // Latch pill, right-aligned: "<label> <choice>".
+                (Control::Toggle(_), Some(p)) if def.is_shown(d, p.id) => {
+                    if !picks.iter().any(|q: &PanelPick| q.kind == 4) {
+                        picks.push(PanelPick { kind: 4, ..Default::default() });
+                    }
+                    picks.push(PanelPick {
+                        kind: 5,
+                        param: idx(p.id),
+                        choices: latch_model(def, p),
+                        selected: self.panel_value(d, def, p).round() as i32,
+                        enabled: true,
+                        ..Default::default()
+                    });
+                }
+                (Control::Menu(_), Some(p)) if def.is_shown(d, p.id) => picks.push(PanelPick {
                     kind: 1,
                     param: idx(p.id),
                     label: s(p.label),
@@ -275,6 +355,9 @@ impl Controller {
             }
         }
 
+        // Without a picker row the view row moves up into its place.
+        let view_y = if def.layout.picker.is_empty() { VIEW_Y - PICKER_H } else { VIEW_Y };
+
         // Slider column.
         let slider_x = width - PAD - SLIDER_W;
         let sliders: Vec<PanelSlider> = def
@@ -299,11 +382,16 @@ impl Controller {
 
         // View row.
         let strip = match def.layout.view {
-            Some(View::DynamicsStrip { threshold }) => self.dynamics_strip(d, def, threshold, view_right - PAD),
-            Some(View::Custom(_)) | None => PanelStrip::default(),
+            Some(View::Custom(GAIN_SCOPE)) => self.gain_scope(d, view_right - PAD, view_y),
+            Some(view) => view.strip().map_or_else(PanelStrip::default, |st| self.dynamics_strip(d, def, st, view_right - PAD, view_y)),
+            None => PanelStrip::default(),
         };
 
         // Dial row.
+        let toggles: Vec<&str> = def.layout.clusters.iter().flat_map(|c| c.iter()).filter_map(|c| match c {
+            Control::Toggle(p) => Some(*p),
+            _ => None,
+        }).collect();
         let knobs = knob_xs(def)
             .into_iter()
             .filter(|(id, _)| def.is_shown(d, id))
@@ -317,10 +405,15 @@ impl Controller {
                     value: s(p.format(v)),
                     norm: p.to_normalized(v),
                     bipolar: p.is_bipolar(),
+                    steps: if p.choices.len() > 2 { p.choices.len() as i32 } else { 0 },
                     ..Default::default()
                 };
-                if let Some((_, Face::SoftKneeCurve { threshold, ratio, knee })) = def.layout.faces.iter().find(|(f, _)| *f == id) {
-                    let (curve, bend, unity) = soft_knee_face(value(threshold).unwrap_or(-24.0), value(ratio).unwrap_or(1.0), value(knee).unwrap_or(0.0));
+                if toggles.contains(&id) {
+                    k.face = 2;
+                    k.choices = choices_model(def, p);
+                } else if let Some((_, face)) = def.layout.faces.iter().find(|(f, _)| *f == id) {
+                    let (law, at, knee) = face_law(*face, number);
+                    let (curve, bend, unity) = transfer_face(&law, at, knee);
                     k.face = 1;
                     k.face_curve = s(curve);
                     k.face_bend = s(bend);
@@ -356,42 +449,50 @@ impl Controller {
             picks: model(picks),
             sliders: model(sliders),
             strip,
+            slider_top: (view_y + SLIDER_TOP) * Z,
             ..Default::default()
         }
     }
 
-    fn dynamics_strip(&self, d: &Device, def: &DeviceDef, threshold: &str, w: f32) -> PanelStrip {
-        let (w, h) = (w * Z, (VIEW_BOTTOM - VIEW_Y) * Z);
+    fn dynamics_strip(&self, d: &Device, def: &DeviceDef, st: Strip, w: f32, view_y: f32) -> PanelStrip {
+        let (w, h) = (w * Z, (VIEW_BOTTOM - view_y) * Z);
         let well_y = CAPTION_H * Z;
         let wh = h - well_y;
-        let span = PLOT_TOP_DB - PLOT_FLOOR_DB;
-        let y_of = |db: f32| ((PLOT_TOP_DB - db) / span).clamp(0.0, 1.0) * wh;
+        let (top, floor) = (st.top_db, st.floor_db);
+        let threshold = st.line;
+        let span = top - floor;
+        let y_of = |db: f32| ((top - db) / span).clamp(0.0, 1.0) * wh;
+        // A tick every 12 dB from the top, plus the floor when it is off that grid.
         let ticks: Vec<PanelTick> = (0..=(span / 12.0) as i32)
-            .map(|i| {
-                let db = PLOT_TOP_DB - 12.0 * i as f32;
-                let text = if db == 0.0 { "0".to_string() } else { format!("{MINUS}{}", db.abs() as i32) };
-                PanelTick { y: y_of(db), text: s(text), rule: db < PLOT_TOP_DB && db > PLOT_FLOOR_DB }
+            .map(|i| top - 12.0 * i as f32)
+            .chain((span % 12.0 != 0.0).then_some(floor))
+            .map(|db| {
+                let text = if db == 0.0 { "0".to_string() } else if db > 0.0 { format!("+{}", db as i32) } else { format!("{MINUS}{}", db.abs() as i32) };
+                PanelTick { y: y_of(db), text: s(text), rule: db < top && db > floor }
             })
             .collect();
 
         let empty = MeterHistory::default();
         let hist = self.devices.panel.meters.get(&d.id).unwrap_or(&empty);
-        let [in_fill, gr_fill, in_line, out_line] = strip_paths(&hist.slots, w, wh);
+        let [in_fill, gr_fill, in_line, out_line] = strip_paths(&hist.slots, w, wh, top, floor);
         let gr_now = hist.slots.iter().rev().take(30).map(|s| s.2).fold(0.0f32, f32::min);
 
         let p = def.param(threshold);
-        let t = p.map(|p| self.panel_value(d, def, p)).unwrap_or(PLOT_FLOOR_DB);
+        let t = p.map(|p| self.panel_value(d, def, p)).unwrap_or(floor);
         let ty = y_of(t).min(wh - 1.0);
+        let q = st.second.and_then(|id| def.param(id));
+        let second = q.map(|q| self.panel_value(d, def, q)).unwrap_or(floor);
+        let sy = y_of(second).min(wh - 1.0);
         PanelStrip {
             visible: true,
             x: PAD * Z,
-            y: VIEW_Y * Z,
+            y: view_y * Z,
             w,
             h,
             well_y,
             caption: s("Reduction"),
             readout: s(fmt_db(gr_now)),
-            ticks: TICK_MODELS.with(|m| m.borrow_mut().entry(format!("{}/{wh}", def.id)).or_insert_with(|| model(ticks)).clone()),
+            ticks: TICK_MODELS.with(|m| m.borrow_mut().entry(format!("{}/{wh}/{top}/{floor}", def.id)).or_insert_with(|| model(ticks)).clone()),
             in_fill: s(in_fill),
             gr_fill: s(gr_fill),
             in_line: s(in_line),
@@ -403,6 +504,64 @@ impl Controller {
             thresh_value: s(p.map(|p| p.format(t)).unwrap_or_default()),
             // The line follows the pointer: (dB per px) / (dB per unit of the 0..1 range).
             thresh_rate: p.map_or(0.0, |p| span / wh / (p.max - p.min)),
+            second_param: q.and_then(|q| def.index_of(q.id)).map_or(-1, |i| i as i32),
+            second_y: sy,
+            second_line: s(if q.is_some() { polyline(&[(30.0 * Z, sy), (w, sy)]) } else { String::new() }),
+            second_label: s(q.map_or("", |q| q.label)),
+            second_value: s(q.map(|q| q.format(second)).unwrap_or_default()),
+            second_rate: q.map_or(0.0, |q| span / wh / (q.max - q.min)),
+            ..Default::default()
+        }
+    }
+
+    /// Gain scope (custom view): output waveform as mirrored bars (square-root
+    /// amplitude law), what a clipper removed above them, a dashed 0 dB line and
+    /// the applied-gain trace (+-12 dB). Readouts: output peak, pre-clip peak (linear), gain dB.
+    fn gain_scope(&self, d: &Device, w: f32, view_y: f32) -> PanelStrip {
+        let (w, h) = (w * Z, (VIEW_BOTTOM - view_y) * Z);
+        let well_y = CAPTION_H * Z;
+        let wh = h - well_y;
+        let mid = wh / 2.0;
+        let empty = MeterHistory::default();
+        let slots = &self.devices.panel.meters.get(&d.id).unwrap_or(&empty).slots;
+        let n = slots.len();
+        let x_of = |i: usize| w - (n - 1 - i) as f32 * (w - 6.0 * Z) / (HISTORY - 1) as f32;
+        let r_of = |peak: f32| (peak.abs().min(1.41) / 1.41).sqrt() * mid;
+        let band = |r: &dyn Fn(usize) -> f32, inner: &dyn Fn(usize) -> f32, sign: f32| {
+            let mut pts: Vec<(f32, f32)> = (0..n).map(|i| (x_of(i), mid - sign * r(i))).collect();
+            pts.extend((0..n).rev().map(|i| (x_of(i), mid - sign * inner(i))));
+            format!("{} Z", polyline(&pts))
+        };
+        let out_r = |i: usize| r_of(slots[i].0);
+        let pre_r = |i: usize| r_of(slots[i].1).max(out_r(i));
+        let (mut wave, mut clipped) = (String::new(), String::new());
+        // At rest the gain trace lies flat at 0 dB across the well.
+        let mut gain = polyline(&[(6.0 * Z, mid), (w, mid)]);
+        if n > 1 {
+            wave = format!("{} {}", band(&out_r, &|_| 0.0, 1.0), band(&out_r, &|_| 0.0, -1.0));
+            if slots.iter().any(|s| s.1 > s.0 * 1.005) {
+                clipped = format!("{} {}", band(&pre_r, &out_r, 1.0), band(&pre_r, &out_r, -1.0));
+            }
+            let y_of = |db: f32| 4.0 * Z + (SCOPE_DB - db.clamp(-SCOPE_DB, SCOPE_DB)) / (2.0 * SCOPE_DB) * (wh - 8.0 * Z);
+            gain = polyline(&slots.iter().enumerate().map(|(i, s)| (x_of(i), y_of(s.2))).collect::<Vec<_>>());
+        }
+        PanelStrip {
+            visible: true,
+            kind: 1,
+            x: PAD * Z,
+            y: view_y * Z,
+            w,
+            h,
+            well_y,
+            caption: s("Output"),
+            readout: s("Applied Gain"),
+            in_fill: s(wave),
+            gr_fill: s(clipped),
+            out_line: s(gain),
+            thresh_param: -1,
+            second_param: -1,
+            thresh_dash: s(dashes(6.0 * Z, w, mid, 3.0 * Z, 4.0 * Z)),
+            ..Default::default()
         }
     }
 
@@ -413,12 +572,32 @@ impl Controller {
         let ids: Vec<DeviceId> = t
             .devices
             .iter()
-            .filter(|d| saine_core::builtin::def_of(d).is_some_and(|def| matches!(def.layout.view, Some(View::DynamicsStrip { .. }))))
+            .filter(|d| saine_core::builtin::def_of(d).is_some_and(|def| def.layout.view.is_some_and(|v| v.strip().is_some() || v == View::Custom(GAIN_SCOPE))))
             .map(|d| d.id)
             .collect();
         self.devices.panel.meters.retain(|id, _| ids.contains(id));
         let mut out = Vec::new();
         for id in ids {
+            let scope = self.panel_def(id).is_some_and(|(_, def)| def.layout.view == Some(View::Custom(GAIN_SCOPE)));
+            if scope {
+                // Raw frames (output peak, pre-clip peak, gain dB); parked after silence.
+                let next = match self.engine.builtin_readouts(id.0, &mut out) {
+                    Ok(()) if out.len() >= 3 => (out[0], out[1], out[2]),
+                    _ => (0.0, 0.0, 0.0),
+                };
+                let h = self.devices.panel.meters.entry(id).or_default();
+                let silent = |s: (f32, f32, f32)| s.0 < SCOPE_SILENT && s.1 < SCOPE_SILENT && s.2.abs() < 0.05;
+                if silent(next) && h.slots.iter().all(|s| silent(*s)) {
+                    h.slots.clear();
+                    continue;
+                }
+                if h.slots.len() == HISTORY {
+                    h.slots.pop_front();
+                }
+                h.slots.push_back(next);
+                self.ui_dirty = true;
+                continue;
+            }
             // Readout order of a strip device: input dB, output dB, gain reduction dB.
             let (i, o, g) = match self.engine.builtin_readouts(id.0, &mut out) {
                 Ok(()) if out.len() >= 3 => (out[0], out[1], out[2].min(0.0)),
@@ -450,7 +629,7 @@ impl Controller {
         match phase {
             0 => {
                 let v = def.value(d, p);
-                self.devices.panel.drag = Some(ParamDrag { device, index: index as usize, start: v, norm: p.to_normalized(v), value: v, travel: 0.0, active: false });
+                self.devices.panel.drag = Some(ParamDrag { device, index: index as usize, start: v, norm: p.to_normalized(v), value: v, travel: 0.0, active: false, linked: None });
             }
             1 => {
                 let Some(g) = self.devices.panel.drag.as_mut().filter(|g| g.device == device && g.index == index as usize) else { return };
@@ -468,15 +647,70 @@ impl Controller {
                 }
             }
             2 => {
-                let Some(g) = self.devices.panel.drag.take() else { return };
+                let Some(g) = self.devices.panel.drag else { return };
+                let cmd = (g.active && g.value != g.start).then(|| param_command(d, def, p, g.value));
+                self.devices.panel.drag = None;
                 self.ui_dirty = true;
-                if g.active && g.value != g.start {
-                    self.panel_commit(Command::SetDeviceParam { device, param: p.id.to_string(), value: g.value });
+                if let Some(cmd) = cmd {
+                    self.panel_commit(cmd);
                 }
             }
             _ => {
                 if let Some(g) = self.devices.panel.drag.take() {
                     let _ = self.engine.builtin_set_param(device.0, index as u32, g.start);
+                    self.ui_dirty = true;
+                }
+            }
+        }
+    }
+
+    /// Alt+drag on a two-line strip: both lines move by the same amount, clamped
+    /// so neither leaves its range; one undo step. Alt-click without a move resets `index`.
+    pub fn panel_drag_pair(&mut self, device: DeviceId, index: i32, other: i32, phase: i32, dy: f32, rate: f32, fine: bool) {
+        let Some((d, def)) = self.panel_def(device) else { return };
+        let param = |i: i32| usize::try_from(i).ok().and_then(|i| def.params.get(i).map(|p| (i, p)));
+        let (Some((ia, pa)), Some((ib, pb))) = (param(index), param(other)) else { return };
+        match phase {
+            0 => {
+                let (va, vb) = (def.value(d, pa), def.value(d, pb));
+                let linked = Some(Linked { index: ib, start: vb, value: vb, delta: 0.0 });
+                self.devices.panel.drag = Some(ParamDrag { device, index: ia, start: va, norm: 0.0, value: va, travel: 0.0, active: false, linked });
+            }
+            1 => {
+                let Some(g) = self.devices.panel.drag.as_mut().filter(|g| g.device == device && g.index == ia) else { return };
+                let Some(l) = g.linked.as_mut() else { return };
+                g.travel += dy.abs();
+                if !g.active && g.travel < DRAG_SLOP {
+                    return;
+                }
+                g.active = true;
+                l.delta += dy * rate * if fine { 0.2 } else { 1.0 } * (pa.max - pa.min);
+                let delta = l.delta.clamp((pa.min - g.start).max(pb.min - l.start), (pa.max - g.start).min(pb.max - l.start));
+                let (va, vb) = (pa.snap(g.start + delta), pb.snap(l.start + delta));
+                if (va, vb) != (g.value, l.value) {
+                    (g.value, l.value) = (va, vb);
+                    let _ = self.engine.builtin_set_param(device.0, ia as u32, va);
+                    let _ = self.engine.builtin_set_param(device.0, ib as u32, vb);
+                    self.ui_dirty = true;
+                }
+            }
+            2 => {
+                let Some(g) = self.devices.panel.drag else { return };
+                let Some(l) = g.linked else { return };
+                let params = [(pa.id.to_string(), g.value), (pb.id.to_string(), l.value)].into_iter().collect();
+                let cmd = (g.active && (g.value, l.value) != (g.start, l.start)).then(|| Command::SetDeviceParams { device, params, preset: d.preset.clone() });
+                self.devices.panel.drag = None;
+                self.ui_dirty = true;
+                match cmd {
+                    Some(cmd) => self.panel_commit(cmd),
+                    None if !g.active => self.panel_reset(device, index),
+                    None => {}
+                }
+            }
+            _ => {
+                if let Some(ParamDrag { start, linked: Some(l), .. }) = self.devices.panel.drag.take() {
+                    let _ = self.engine.builtin_set_param(device.0, ia as u32, start);
+                    let _ = self.engine.builtin_set_param(device.0, ib as u32, l.start);
                     self.ui_dirty = true;
                 }
             }
@@ -490,7 +724,8 @@ impl Controller {
         if let Some(v) = value(p, cur).map(|v| p.snap(v))
             && v != cur
         {
-            self.panel_commit(Command::SetDeviceParam { device, param: p.id.to_string(), value: v });
+            let cmd = param_command(d, def, p, v);
+            self.panel_commit(cmd);
         }
     }
 
@@ -590,8 +825,8 @@ impl Controller {
             return;
         }
         let mut commands = vec![Command::SetDeviceSidechain { device, source }];
-        if def.param("sidechainEnable").is_some() {
-            commands.push(Command::SetDeviceParam { device, param: "sidechainEnable".into(), value: if source.is_some() { 1.0 } else { 0.0 } });
+        if let Some(p) = def.sidechain_enable() {
+            commands.push(Command::SetDeviceParam { device, param: p.id.into(), value: if source.is_some() { 1.0 } else { 0.0 } });
         }
         self.execute(Command::Batch { label: "Sidechain Change".into(), commands });
     }
@@ -633,15 +868,31 @@ mod tests {
         let n = 2000;
         let t0 = std::time::Instant::now();
         for _ in 0..n {
-            std::hint::black_box(strip_paths(std::hint::black_box(&slots), 368.0, 112.2));
+            std::hint::black_box(strip_paths(std::hint::black_box(&slots), 368.0, 112.2, PLOT_TOP_DB, PLOT_FLOOR_DB));
         }
         let strip = t0.elapsed().as_secs_f64() * 1e6 / n as f64;
         let t0 = std::time::Instant::now();
         for i in 0..n {
-            std::hint::black_box(soft_knee_face(-24.0 + (i % 7) as f32, 4.0, 6.0));
+            let t = -24.0 + (i % 7) as f32;
+            let (law, at, knee) = face_law(Face::SoftKneeCurve { threshold: "t", ratio: "r", knee: "k" }, |id| match id { "t" => t, "r" => 4.0, _ => 6.0 });
+            std::hint::black_box(transfer_face(&law, at, knee));
         }
         let face = t0.elapsed().as_secs_f64() * 1e6 / n as f64;
         println!("panel model: strip paths (240-slot history) {strip:.2} us, transfer face {face:.2} us per refresh");
+    }
+
+    #[test]
+    fn face_laws() {
+        let num = |id: &str| match id { "t" => -10.0, "c" => -1.0, "r" => 4.0, "range" => 3.0, _ => 0.0 };
+        let law = |f: Face| face_law(f, num).0;
+        let wall = law(Face::BrickWall { ceiling: "c" });
+        assert_eq!((wall(-20.0), wall(5.0)), (-20.0, -1.0));
+        let push = law(Face::PushWall { threshold: "t", ceiling: "c" });
+        assert_eq!((push(-30.0), push(0.0)), (-21.0, -1.0));
+        let gate = law(Face::Expander { threshold: "t", ratio: "r" });
+        assert_eq!((gate(-12.0), gate(-5.0)), (-18.0, -5.0));
+        // Bus VCA reduction stops at the range.
+        assert_eq!(law(Face::BusVca { threshold: "t", ratio: "r", range: "range" })(10.0), 7.0);
     }
 
     #[test]

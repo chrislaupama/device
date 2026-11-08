@@ -1,6 +1,6 @@
 // Built-in device benchmark: per-block DSP cost of every registered device
-// (and every compressor character), the parameter update paths, and a
-// 32-track session with two compressors per track.
+// (and every compressor character and dynamics mode), the parameter update
+// paths, and a 32-track session with two compressors per track.
 //
 //   saine_device_bench [blocks]      (Release build; numbers in us per 256-frame block)
 #include "devices/builtin.hpp"
@@ -24,6 +24,17 @@ namespace {
 constexpr double kRate = 48000.0;
 constexpr uint32_t kBlock = 256;
 const std::vector<float> kCompressor = {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};
+// Defaults of the dynamics devices (registry order), see saine_core::builtin.
+const std::vector<float> kLimiter = {-0.3f, 100.f, 5.f, 1.f, 100.f, 0.f, 0.f};
+const std::vector<float> kGate = {-40.f, 10.f, 0.5f, 50.f, 100.f, 5.f, 80.f, 100.f};
+const std::vector<float> kGlue = {-15.f, 1.f, 5.f, 4.f, 0.f, 100.f, 50.f, 24.f, 0.f, 0.f, 0.f};
+const std::vector<float> kTransient = {0.f, 0.f, 50.f, 0.f, 100.f, 30.f, 2000.f, 0.f};
+const std::vector<float> kMastering = {0.f, -1.f, 150.f, 1.f, 0.f, 2.f, 10.f, 75.f, 100.f, 0.f, 2.f, 1.f, 0.f, 2.f, 0.f, 0.f, 0.f};
+
+std::vector<float> with(std::vector<float> v, std::initializer_list<std::pair<std::size_t, float>> set) {
+    for (auto [i, x] : set) v[i] = x;
+    return v;
+}
 
 std::vector<uint8_t> blob(const std::vector<float>& v, uint64_t sc = 0) {
     se_builtin_state h{SE_BUILTIN_STATE_MAGIC, static_cast<uint32_t>(v.size()), sc};
@@ -130,6 +141,18 @@ int main(int argc, char** argv) {
         row(name, bench_kernel("compressor", v, blocks, 0));
     }
     row("compressor (Clean, 16 auto events)", bench_kernel("compressor", kCompressor, blocks, 16));
+    row("limiter (true peak)", bench_kernel("limiter", with(kLimiter, {{5, 12.f}}), blocks, 0));
+    row("limiter (sample peak)", bench_kernel("limiter", with(kLimiter, {{5, 12.f}, {3, 0.f}}), blocks, 0));
+    row("gate", bench_kernel("gate", with(kGate, {{0, -10.f}}), blocks, 0));
+    row("glue-compressor (color 50%)", bench_kernel("glue-compressor", kGlue, blocks, 0));
+    row("glue-compressor (color 0, auto rel.)", bench_kernel("glue-compressor", with(kGlue, {{6, 0.f}}), blocks, 0));
+    row("transient-shaper (shaping + clip)", bench_kernel("transient-shaper", with(kTransient, {{0, 50.f}, {1, -50.f}, {7, 1.f}}), blocks, 0));
+    for (int os = 0; os < 4; ++os) {
+        char name[64];
+        std::snprintf(name, sizeof name, "mastering-limiter (%dx, -8 dB)", 1 << os);
+        row(name, bench_kernel("mastering-limiter", with(kMastering, {{0, -8.f}, {10, static_cast<float>(os)}}), blocks, 0));
+    }
+    row("mastering-limiter (4x, M/S, dither)", bench_kernel("mastering-limiter", with(kMastering, {{0, -8.f}, {9, 1.f}, {12, 3.f}}), blocks, 0));
 
     // Parameter update paths and session cost: 32 tracks, one clip and two
     // compressors each.

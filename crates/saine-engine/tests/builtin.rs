@@ -39,8 +39,10 @@ fn engine_registry_matches_core_definitions() {
         let ids: Vec<&str> = def.params.iter().map(|q| q.id).collect();
         assert_eq!(p.params, ids, "{}: parameter order differs between saine-core and the engine", def.id);
     }
-    let comp = reg.iter().find(|p| p.id == "compressor").unwrap();
-    assert_eq!(comp.readouts, ["in_db", "out_db", "gr_db"]);
+    for p in reg.iter().filter(|p| builtin::find(&p.id).is_some()) {
+        let want: &[&str] = if p.id == "transient-shaper" { &["out_peak", "pre_peak", "gain_db"] } else { &["in_db", "out_db", "gr_db"] };
+        assert_eq!(p.readouts, want, "{}: readouts", p.id);
+    }
 }
 
 #[test]
@@ -63,12 +65,16 @@ const DEV: u64 = 41;
 
 impl Rig {
     fn new() -> Rig {
+        Rig::with("compressor")
+    }
+
+    fn with(device: &str) -> Rig {
         let dir = tempfile::tempdir().unwrap();
         let wav = dir.path().join("dc.wav");
         write_dc_wav(&wav, 96_000, 16384); // 0.5, about -6 dBFS
         let engine = Engine::new(Config { sample_rate: 48_000.0, max_block_size: 256 }).unwrap();
         let info = engine.load_file(&wav).unwrap();
-        let mut dev = builtin::find("compressor").unwrap().instantiate();
+        let mut dev = builtin::find(device).unwrap().instantiate();
         dev.id = DeviceId(DEV);
         let track = TrackSnapshot {
             track_id: 1,
@@ -110,6 +116,36 @@ impl Rig {
         self.engine.builtin_readouts(DEV, &mut r).unwrap();
         r
     }
+}
+
+#[test]
+fn limiter_in_a_chain_holds_its_ceiling_and_reports_latency() {
+    let mut rig = Rig::with("limiter");
+    rig.snap.tracks[0].devices[0].enabled = false;
+    let pan_law = rig.render() / 0.5; // the 0.5 DC clip through the track, no device
+    rig.snap.tracks[0].devices[0].enabled = true;
+    rig.snap.tracks[0].devices[0].params.insert("input_gain".into(), 12.0);
+    let out = rig.render() / pan_law;
+    let ceiling = 10f32.powf(-0.3 / 20.0);
+    assert!(out <= ceiling + 1e-3 && out > ceiling - 0.02, "level {out} ceiling {ceiling}");
+    assert!(rig.readouts()[2] < -5.0, "gain reduction {:?}", rig.readouts());
+    assert!(rig.engine.plugin_latency(DeviceId(DEV)) > 0);
+}
+
+#[test]
+fn mastering_limiter_latency_follows_oversampling() {
+    let mut rig = Rig::with("mastering-limiter");
+    let mut latency = Vec::new();
+    for os in 0..4 {
+        rig.snap.tracks[0].devices[0].params.insert("oversampling".into(), os as f32);
+        rig.render();
+        latency.push(rig.engine.plugin_latency(DeviceId(DEV)));
+    }
+    assert!(latency.windows(2).all(|w| w[1] != w[0]), "latency per oversampling factor {latency:?}");
+    rig.snap.tracks[0].devices[0].params.insert("threshold".into(), -12.0);
+    let out = rig.render();
+    assert!(out <= 10f32.powf(-1.0 / 20.0) + 1e-3, "level {out} over the -1 dB ceiling");
+    assert!(rig.readouts()[2] < -1.0, "gain reduction {:?}", rig.readouts());
 }
 
 #[test]

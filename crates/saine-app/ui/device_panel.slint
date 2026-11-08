@@ -79,6 +79,40 @@ component ValueEditor inherits FocusScope {
     }
 }
 
+// Latch (two-choice toggle pill): 20 px tall, sized by its widest label so a toggle never
+// moves the layout. Click flips the choice (one undo step); Alt-click resets.
+component Latch inherits Rectangle {
+    in property <int> device;
+    in property <int> param;
+    in property <[string]> labels;
+    in property <int> selected;
+    in property <color> accent;
+    property <float> zm: PanelStyle.z;
+    property <bool> on: root.selected > 0;
+    property <length> widest: max(w0.preferred-width, w1.preferred-width);
+    width: root.widest + 16px * zm;
+    height: 20px * zm;
+    border-radius: self.height / 2;
+    background: root.on ? (ta.has-hover ? root.accent.brighter(0.14) : root.accent) : PanelStyle.seg;
+    border-width: root.on ? 0.5px : 0;
+    border-color: root.accent.darker(0.2);
+    accessible-role: checkbox; accessible-checked: root.on; accessible-label: root.labels[root.selected];
+    w0 := Text { visible: false; text: root.labels[0]; font-size: 10px * zm; font-weight: 600; letter-spacing: -0.04 * 10px * zm; }
+    w1 := Text { visible: false; text: root.labels[1]; font-size: 10px * zm; font-weight: 600; letter-spacing: -0.04 * 10px * zm; }
+    if !root.on && ta.has-hover: Rectangle { border-radius: parent.border-radius; background: #ffffff09; }
+    Text {
+        text: root.labels[root.selected]; font-size: 10px * zm; font-weight: 600; letter-spacing: -0.04 * 10px * zm;
+        color: root.on ? #17181b : ta.has-hover ? #ffffffb3 : #ffffff8c;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+    ta := TouchArea {
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.modifiers.alt) { Studio.panel-reset(root.device, root.param); }
+        }
+        clicked => { Studio.panel-choice(root.device, root.param, root.on ? 0 : 1); }
+    }
+}
+
 // Knob cell: 32 px ring, value text, name (the reference app "xs" dial at 100%, scaled).
 component KnobCell inherits Rectangle {
     in property <int> device;
@@ -124,6 +158,15 @@ component KnobCell inherits Rectangle {
                 large-arc: abs(root.angle - root.from) > 180; sweep: root.angle > root.from;
             }
         }
+        // Detent ticks of a stepped knob, just outside the ring.
+        for i in (root.k.face == 0 ? root.k.steps : 0): Path {
+            property <float> a: -135 + 270 * i / max(1, root.k.steps - 1);
+            width: parent.width; height: parent.height;
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            stroke: #ffffff59; stroke-width: 1px * zm; stroke-line-cap: round;
+            MoveTo { x: root.rc + (root.rc + 1.5 * zm) * sin(parent.a * 1deg); y: root.rc - (root.rc + 1.5 * zm) * cos(parent.a * 1deg); }
+            LineTo { x: root.rc + (root.rc + 3.5 * zm) * sin(parent.a * 1deg); y: root.rc - (root.rc + 3.5 * zm) * cos(parent.a * 1deg); }
+        }
         if root.k.face == 0: Path {
             width: parent.width; height: parent.height;
             viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
@@ -138,13 +181,18 @@ component KnobCell inherits Rectangle {
             Path { viewbox-width: 32; viewbox-height: 32; commands: root.k.face-curve; stroke: PanelStyle.ink; stroke-width: 1.5px * zm; fill: transparent; stroke-line-cap: round; stroke-line-join: round; }
             Path { viewbox-width: 32; viewbox-height: 32; commands: root.k.face-bend; stroke: root.accent; stroke-width: 2.25px * zm; fill: transparent; stroke-line-cap: round; }
         }
-        ParamDrag {
+        if root.k.face != 2: ParamDrag {
             device: root.device; param: root.k.param;
             grabbed => { fs.focus(); }
             double-clicked => { Studio.panel-reset(root.device, root.k.param); }
         }
     }
-    value := Rectangle {
+    // Latch cell: the latch sits in the 53 px dial + value zone, caption below.
+    if root.k.face == 2: Latch {
+        x: (root.width - self.width) / 2; y: (53px - 20px) * zm / 2;
+        device: root.device; param: root.k.param; labels: root.k.choices; selected: root.k.norm > 0.5 ? 1 : 0; accent: root.accent;
+    }
+    if root.k.face != 2: value := Rectangle {
         x: 0; y: 40px * zm; width: root.width; height: 14px * zm;
         if !root.editing: Text {
             text: root.k.value; color: PanelStyle.ink; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
@@ -253,6 +301,9 @@ component PickItem inherits HorizontalLayout {
         Icon { x: parent.width - 18px * zm; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: Icons.chevron-down; ink: #a0a0a3; stroke-width: 1.3px; }
         menu-ta := TouchArea { clicked => { Studio.panel-menu(root.device, root.p.param, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
     }
+    if root.p.kind == 5: Latch {
+        y: 0; device: root.device; param: root.p.param; labels: root.p.choices; selected: root.p.selected; accent: root.accent;
+    }
     if root.p.kind == 3: Rectangle {
         width: root.p.width; border-radius: self.height / 2; background: PanelStyle.box;
         opacity: root.p.enabled ? 1 : 0.45;
@@ -277,12 +328,26 @@ component DynamicsStrip inherits Rectangle {
     property <float> zm: PanelStyle.z;
     property <length> last-y;
     property <bool> dragging;
-    property <bool> hot: root.dragging || (well-ta.has-hover && abs(well-ta.mouse-y - root.s.thresh-y) <= 9px * zm);
-    property <bool> editing;
+    property <bool> pair;
+    property <bool> scope: root.s.kind == 1;
+    property <bool> two: root.s.second-param >= 0;
+    // Line under the pointer: 0 first, 1 second (nearest wins), -1 none.
+    property <int> near: root.scope ? -1
+        : root.two && abs(well-ta.mouse-y - root.s.second-y) < abs(well-ta.mouse-y - root.s.thresh-y) ? (abs(well-ta.mouse-y - root.s.second-y) <= 9px * zm ? 1 : -1)
+        : abs(well-ta.mouse-y - root.s.thresh-y) <= 9px * zm ? 0 : -1;
+    property <int> line: 0;
+    property <int> line-param: root.line == 1 ? root.s.second-param : root.s.thresh-param;
+    property <int> other-param: root.line == 1 ? root.s.thresh-param : root.s.second-param;
+    property <float> line-rate: root.line == 1 ? root.s.second-rate : root.s.thresh-rate;
+    property <bool> hot: (root.dragging && (root.pair || root.line == 0)) || (well-ta.has-hover && !root.dragging && root.near == 0);
+    property <bool> hot2: (root.dragging && (root.pair || root.line == 1)) || (well-ta.has-hover && !root.dragging && root.near == 1);
+    property <int> editing: -1;
+    // 3 x 3 dot-grid grip of the line pills.
+    property <string> grip: "M0.6 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0";
     HorizontalLayout {
         x: 0; y: 0; height: 16px * zm; spacing: 5px * zm; alignment: start;
         Text { text: root.s.caption; color: PanelStyle.caption; font-size: 11.5px * zm; font-weight: 500; letter-spacing: -0.02 * 11.5px * zm; vertical-alignment: center; }
-        Text { text: root.s.readout; color: PanelStyle.ink; font-size: 11.5px * zm; font-weight: 650; letter-spacing: -0.04 * 11.5px * zm; vertical-alignment: center; }
+        Text { text: root.s.readout; color: root.scope ? root.accent : PanelStyle.ink; font-size: 11.5px * zm; font-weight: 650; letter-spacing: -0.04 * 11.5px * zm; vertical-alignment: center; }
     }
     well := Rectangle {
         y: root.s.well-y; height: root.height - root.s.well-y;
@@ -296,59 +361,77 @@ component DynamicsStrip inherits Rectangle {
         }
         Path {
             viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
-            commands: root.s.in-fill; stroke-width: 0; fill: @linear-gradient(180deg, #ffffff1c 0%, #ffffff06 100%);
+            commands: root.s.in-fill; stroke-width: 0; fill: root.scope ? #ffffff4d : @linear-gradient(180deg, #ffffff1c 0%, #ffffff06 100%);
         }
         Path {
             viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
-            commands: root.s.gr-fill; stroke-width: 0; fill: root.accent.with-alpha(0.5);
+            commands: root.s.gr-fill; stroke-width: 0; fill: root.scope ? #ffffff1c : root.accent.with-alpha(0.5);
         }
         Path {
             viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
             commands: root.s.in-line; stroke: #ffffff8c; stroke-width: 1px; fill: transparent;
         }
-        Path {
+        if !root.scope: Path {
             viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
             commands: root.s.out-line; stroke: #0000008c; stroke-width: 2.6px * zm; fill: transparent; stroke-line-join: round;
         }
+        if root.scope: Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.s.thresh-dash; stroke: #ffffff24; stroke-width: 1px; fill: transparent;
+        }
         Path {
             viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
-            commands: root.s.out-line; stroke: #ffffffeb; stroke-width: 1.4px * zm; fill: transparent; stroke-line-join: round;
+            commands: root.s.out-line; stroke: root.scope ? root.accent : #ffffffeb; stroke-width: (root.scope ? 2px : 1.4px) * zm;
+            fill: transparent; stroke-line-join: round; stroke-line-cap: round;
         }
         for t in root.s.ticks: Text {
             x: 6px * zm; y: max(1px, min(parent.height - 13px * zm, t.y - 6.5px * zm)); height: 13px * zm;
             text: t.text; color: PanelStyle.axis; font-size: 10px * zm; font-weight: 600; vertical-alignment: center;
         }
-        Path {
+        if !root.scope: Path {
             viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
             commands: root.s.thresh-dash; stroke: PanelStyle.thresh.with-alpha(root.hot ? 0.95 : 0.55);
             stroke-width: (root.hot ? 2px : 1.5px) * zm; fill: transparent;
         }
+        if root.two: Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.s.second-line; stroke: PanelStyle.thresh.with-alpha(root.hot2 ? 0.95 : 0.55);
+            stroke-width: (root.hot2 ? 2px : 1.5px) * zm; fill: transparent;
+        }
+        // Lines: drag moves the nearest one; on a two-line strip Alt+drag moves both
+        // (Alt-click without a move resets). The scope swallows presses.
         well-ta := TouchArea {
-            mouse-cursor: abs(self.mouse-y - root.s.thresh-y) <= 9px * zm || root.dragging ? MouseCursor.ns-resize : MouseCursor.default;
+            mouse-cursor: root.near >= 0 || root.dragging ? MouseCursor.ns-resize : MouseCursor.default;
             pointer-event(e) => {
-                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down && abs(self.mouse-y - root.s.thresh-y) <= 9px * zm) {
-                    if (e.modifiers.alt) { Studio.panel-reset(root.device, root.s.thresh-param); return; }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down && root.near >= 0) {
+                    root.line = root.near;
+                    root.pair = root.two && e.modifiers.alt;
+                    if (e.modifiers.alt && !root.two) { Studio.panel-reset(root.device, root.line-param); return; }
                     root.dragging = true;
                     root.last-y = self.mouse-y;
-                    Studio.panel-drag(root.device, root.s.thresh-param, 0, 0, root.s.thresh-rate, e.modifiers.shift);
+                    if (root.pair) { Studio.panel-drag-pair(root.device, root.line-param, root.other-param, 0, 0, root.line-rate, e.modifiers.shift); }
+                    else { Studio.panel-drag(root.device, root.line-param, 0, 0, root.line-rate, e.modifiers.shift); }
                 }
                 if (e.kind == PointerEventKind.move && root.dragging) {
-                    Studio.panel-drag(root.device, root.s.thresh-param, 1, (root.last-y - self.mouse-y) / 1px, root.s.thresh-rate, e.modifiers.shift);
+                    if (root.pair) { Studio.panel-drag-pair(root.device, root.line-param, root.other-param, 1, (root.last-y - self.mouse-y) / 1px, root.line-rate, e.modifiers.shift); }
+                    else { Studio.panel-drag(root.device, root.line-param, 1, (root.last-y - self.mouse-y) / 1px, root.line-rate, e.modifiers.shift); }
                     root.last-y = self.mouse-y;
                 }
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up && root.dragging) {
                     root.dragging = false;
-                    Studio.panel-drag(root.device, root.s.thresh-param, 2, 0, root.s.thresh-rate, false);
+                    if (root.pair) { Studio.panel-drag-pair(root.device, root.line-param, root.other-param, 2, 0, root.line-rate, false); }
+                    else { Studio.panel-drag(root.device, root.line-param, 2, 0, root.line-rate, false); }
                 }
                 if (e.kind == PointerEventKind.cancel && root.dragging) {
                     root.dragging = false;
-                    Studio.panel-drag(root.device, root.s.thresh-param, 3, 0, root.s.thresh-rate, false);
+                    if (root.pair) { Studio.panel-drag-pair(root.device, root.line-param, root.other-param, 3, 0, root.line-rate, false); }
+                    else { Studio.panel-drag(root.device, root.line-param, 3, 0, root.line-rate, false); }
                 }
             }
-            double-clicked => { if (abs(self.mouse-y - root.s.thresh-y) <= 9px * zm) { root.editing = true; } }
+            double-clicked => { if (root.near >= 0) { root.editing = root.near; } }
         }
-        // Threshold pill (dot-grid grip, name, value).
-        if !root.editing: Rectangle {
+        // Line pills (dot-grid grip, name, value); the second sits after the first.
+        if !root.scope && root.editing != 0: Rectangle {
             x: 30px * zm; y: root.s.thresh-y - 8px * zm; height: 16px * zm; width: pill-row.preferred-width;
             border-radius: self.height / 2; background: root.hot ? PanelStyle.pill-hot : PanelStyle.pill;
             drop-shadow-blur: 2px; drop-shadow-offset-y: 1px; drop-shadow-color: #00000073;
@@ -357,16 +440,36 @@ component DynamicsStrip inherits Rectangle {
                 Path {
                     width: 7px * zm; height: 7px * zm; y: (16px * zm - 7px * zm) / 2;
                     viewbox-width: 7; viewbox-height: 7; fill: #ffffff66; stroke-width: 0;
-                    commands: "M0.6 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0";
+                    commands: root.grip;
                 }
                 Text { text: root.s.thresh-label; color: #ffffff8c; font-size: 11px * zm; font-weight: 500; vertical-alignment: center; }
                 Text { text: root.s.thresh-value; color: PanelStyle.ink; font-size: 11px * zm; font-weight: 650; letter-spacing: -0.04 * 11px * zm; vertical-alignment: center; }
             }
         }
-        if root.editing: ValueEditor {
-            x: 30px * zm; y: root.s.thresh-y - 9px * zm; width: 58px * zm; height: 18px * zm;
-            device: root.device; param: root.s.thresh-param; initial: root.s.thresh-value; font-size: 10px * zm;
-            done => { root.editing = false; }
+        if root.two && root.editing != 1: Rectangle {
+            x: 30px * zm + pill-w.preferred-width + 6px * zm; y: root.s.second-y - 8px * zm; height: 16px * zm; width: pill2-row.preferred-width;
+            border-radius: self.height / 2; background: root.hot2 ? PanelStyle.pill-hot : PanelStyle.pill;
+            drop-shadow-blur: 2px; drop-shadow-offset-y: 1px; drop-shadow-color: #00000073;
+            pill2-row := HorizontalLayout {
+                padding-left: 8px * zm; padding-right: 8px * zm; spacing: 5px * zm;
+                Path { width: 7px * zm; height: 7px * zm; y: (16px * zm - 7px * zm) / 2; viewbox-width: 7; viewbox-height: 7; fill: #ffffff66; stroke-width: 0; commands: root.grip; }
+                Text { text: root.s.second-label; color: #ffffff8c; font-size: 11px * zm; font-weight: 500; vertical-alignment: center; }
+                Text { text: root.s.second-value; color: PanelStyle.ink; font-size: 11px * zm; font-weight: 650; letter-spacing: -0.04 * 11px * zm; vertical-alignment: center; }
+            }
+        }
+        // Width of the first pill (for placing the second), independent of its editor.
+        pill-w := HorizontalLayout {
+            visible: false; padding-left: 8px * zm; padding-right: 8px * zm; spacing: 5px * zm;
+            Rectangle { width: 7px * zm; }
+            Text { text: root.s.thresh-label; font-size: 11px * zm; font-weight: 500; }
+            Text { text: root.s.thresh-value; font-size: 11px * zm; font-weight: 650; letter-spacing: -0.04 * 11px * zm; }
+        }
+        if root.editing >= 0: ValueEditor {
+            x: root.editing == 1 ? 30px * zm + pill-w.preferred-width + 6px * zm : 30px * zm;
+            y: (root.editing == 1 ? root.s.second-y : root.s.thresh-y) - 9px * zm; width: 58px * zm; height: 18px * zm;
+            device: root.device; param: root.editing == 1 ? root.s.second-param : root.s.thresh-param;
+            initial: root.editing == 1 ? root.s.second-value : root.s.thresh-value; font-size: 10px * zm;
+            done => { root.editing = -1; }
         }
     }
 }
@@ -449,7 +552,7 @@ export component BuiltinCard inherits Rectangle {
         for s in root.card.sliders: SliderCol {
             x: s.x; y: 0; height: root.height;
             device: root.card.id; s: s; accent: root.card.accent;
-            top: 86px * zm; bottom: 174px * zm;
+            top: root.card.slider-top; bottom: 174px * zm;
         }
         for k in root.card.knobs: KnobCell {
             x: k.x; y: 229px * zm;
