@@ -5,6 +5,7 @@
 #include "asset.hpp"
 #include "platform/audio_device.hpp"
 #include "processor.hpp"
+#include "recorder.hpp"
 #include "render_graph.hpp"
 #include "saine_engine.h"
 #include "spsc_queue.hpp"
@@ -13,6 +14,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -39,6 +41,8 @@ class Engine final : private AudioDevice::Callback {
 public:
     static constexpr uint32_t kMaxBlockLimit = 16384;
     static constexpr std::size_t kCommandQueueSize = 256;
+    static constexpr uint32_t kMaxInjectedInputChannels = 32;
+    using DeviceFactory = std::function<std::unique_ptr<AudioDevice>()>;
 
     static std::unique_ptr<Engine> create(const se_config& config, std::string& err);
     ~Engine();
@@ -51,6 +55,13 @@ public:
     bool device_running() const noexcept;
     double sample_rate() const noexcept { return sample_rate_; }
     uint32_t max_block() const noexcept { return max_block_; }
+    // Validates and stores a device setup; restarts the device if running.
+    int32_t device_configure(const AudioDevice::Config& setup, std::string& err);
+    void device_status(se_device_status* out);
+    void set_input_muted(bool muted) noexcept { input_muted_.store(muted, std::memory_order_relaxed); }
+    // Test hook: replaces the platform device (takes effect when no device
+    // object exists yet, i.e. before the first start/configure).
+    void set_device_factory(DeviceFactory f);
 
     // ---- assets
     int32_t asset_load_file(const char* path, se_asset_info* out, std::string& err);
@@ -65,6 +76,7 @@ public:
     int32_t publish(const se_session_desc& desc, std::string& err);
     int32_t publish(const se_session_desc_v2& desc, std::string& err);
     int32_t publish(const se_session_desc_v3& desc, std::string& err);
+    int32_t publish(const se_session_desc_v4& desc, std::string& err);
     // Frees retired graphs the audio thread can no longer reach. Non-RT.
     void collect_garbage();
     std::size_t retired_graph_count() const;
@@ -81,20 +93,45 @@ public:
     void stats_get(se_stats* out) const noexcept;
     void stats_reset() noexcept;
 
+    // ---- recording
+    int32_t record_start(const char* dir, std::string& err);
+    int32_t record_stop(std::size_t* out_count, std::string& err);
+    int32_t record_get_take(std::size_t index, se_recorded_take* out) const;
+    void record_state(bool& active, std::vector<LiveTakeInfo>& takes) const;
+    std::size_t record_peaks(uint64_t track_id, uint32_t frames_per_peak, float* out, std::size_t capacity) const;
+    RecordStats record_stats() const;
+    // Test hooks.
+    void set_record_writer_stalled(bool stalled);
+    void set_record_ring_frames(std::size_t frames) { record_ring_frames_ = frames; }
+
     // ---- offline
     int32_t render_offline(float* out_interleaved, uint32_t frames, std::string& err);
+    int32_t render_offline_with_input(const float* input, uint32_t input_channels, float* out_interleaved,
+                                      uint32_t frames, std::string& err);
     int32_t export_wav(const char* path, int64_t start_frame, int64_t end_frame, std::string& err);
 
 private:
     Engine(double sample_rate, uint32_t max_block, uint32_t channels);
 
     // AudioDevice::Callback (device RT thread).
-    void render(float* const* channels, uint32_t num_channels, uint32_t frames) noexcept override;
+    void render(float* const* out, uint32_t num_out, const float* const* in, uint32_t num_in,
+                uint32_t frames) noexcept override;
+
+    // Input of one process() call: planar device channels or an
+    // interleaved injected buffer (or nothing).
+    struct RtInput {
+        const float* const* planar = nullptr;
+        const float* interleaved = nullptr;
+        uint32_t channels = 0;
+    };
 
     // The single RT entry point used by the device callback and
     // render_offline. `sink(l, r, offset, n)` receives each rendered chunk.
+    // `rec_latency` is subtracted from the start of new recorded takes.
     template <class Sink>
-    void process(uint32_t frames, Sink&& sink) noexcept;
+    void process(uint32_t frames, const RtInput& input, int64_t rec_latency, Sink&& sink) noexcept;
+    int32_t render_offline_impl(const RtInput& input, float* out_interleaved, uint32_t frames, std::string& err);
+    void refresh_device_latency();
 
     void reclaim_locked(); // requires control_mutex_
     // Assigns synth states (reusing the previous graph's by track_id) and
@@ -147,6 +184,12 @@ private:
     // -- device
     std::mutex device_mutex_;
     std::unique_ptr<AudioDevice> device_;
+    DeviceFactory device_factory_;          // guarded by device_mutex_
+    AudioDevice::Config device_setup_;      // guarded by device_mutex_ (se_device_configure)
+    std::string input_error_;               // guarded by device_mutex_
+    std::atomic<int64_t> device_rec_latency_{0}; // engine frames, input + output
+    std::atomic<bool> device_input_open_{false};
+    std::atomic<bool> input_muted_{false};
     std::atomic<int> rt_owner_{kOwnerNone};
 
     // -- transport: commands in, state out
@@ -199,8 +242,20 @@ private:
     std::atomic<uint64_t> stat_total_ns_{0};
     std::atomic<uint64_t> stat_deadline_ns_{0};
 
+    // -- recording. recorder_ is owned on the non-RT side (rec_mutex_); the RT
+    // side sees it through rec_live_ and announces use with rec_in_use_
+    // (Dekker handshake, see record_stop()).
+    mutable std::mutex rec_mutex_;
+    std::unique_ptr<Recorder> recorder_;
+    std::vector<RecordedTakeInfo> last_takes_;
+    RecordStats last_stats_;
+    std::size_t record_ring_frames_ = 0; // 0 = 2 s at the engine rate
+    std::atomic<Recorder*> rec_live_{nullptr};
+    std::atomic<bool> rec_in_use_{false};
+
     // -- RT scratch (used by whoever holds rt_owner_)
     RenderContext live_ctx_;
+    std::vector<float> in_scratch_; // kMaxInjectedInputChannels x max_block (deinterleaved injected input)
 };
 
 } // namespace saine

@@ -46,6 +46,7 @@ add_library(saine_engine STATIC
   src/c_api.cpp
   src/engine.cpp
   src/processor.cpp
+  src/recorder.cpp
   src/render_graph.cpp
   src/resampler.cpp
   src/synth.cpp
@@ -98,7 +99,8 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/test_rt_safety.cpp
     tests/test_features.cpp
     tests/test_midi.cpp
-    tests/test_synth.cpp)
+    tests/test_synth.cpp
+    tests/test_recording.cpp)
   target_include_directories(saine_engine_tests PRIVATE src tests)
   target_link_libraries(saine_engine_tests PRIVATE saine_engine saine_engine_warnings)
 
@@ -126,4 +128,6 @@ endif()
 if(SAINE_ENGINE_BUILD_TOOLS)
   add_executable(play_sine_or_wav tools/play_sine_or_wav.cpp)
   target_link_libraries(play_sine_or_wav PRIVATE saine_engine saine_engine_warnings)
+  add_executable(record_check tools/record_check.cpp)
+  target_link_libraries(record_check PRIVATE saine_engine saine_engine_warnings)
 endif()

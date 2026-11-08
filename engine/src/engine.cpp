@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <chrono>
 #include <numbers>
 #include <thread>
 
@@ -49,6 +50,8 @@ Engine::Engine(double sample_rate, uint32_t max_block, uint32_t channels)
     click_beat_ = make_click(sample_rate, 800.0, len);
     click_len_ = static_cast<uint32_t>(len);
     peek_bucket_frames_ = std::max<uint32_t>(1, static_cast<uint32_t>(std::llround(0.010 * sample_rate)));
+    in_scratch_.assign(static_cast<std::size_t>(kMaxInjectedInputChannels) * max_block, 0.0f);
+    device_factory_ = [] { return create_platform_audio_device(); };
 }
 
 std::unique_ptr<Engine> Engine::create(const se_config& config, std::string& err) {
@@ -81,6 +84,13 @@ std::unique_ptr<Engine> Engine::create(const se_config& config, std::string& err
 
 Engine::~Engine() {
     device_stop();
+    {
+        // Nothing renders any more; finalize a recording still in progress.
+        std::lock_guard lock(rec_mutex_);
+        rec_live_.store(nullptr, std::memory_order_seq_cst);
+        if (recorder_) recorder_->finish(last_takes_);
+        recorder_.reset();
+    }
     // Nothing can be on the RT path any more (contract: no calls race with
     // destroy). Members are destroyed normally on this (non-RT) thread.
 }
@@ -94,23 +104,102 @@ int32_t Engine::device_start(std::string& err) {
         err = conflict == kOwnerDevice ? "device already running" : "offline render in progress";
         return SE_ERR_STATE;
     }
-    if (!device_) device_ = create_platform_audio_device();
-    AudioDevice::Config cfg;
+    if (!device_) device_ = device_factory_();
+    AudioDevice::Config cfg = device_setup_; // defaults: default output, no input
     cfg.sample_rate = sample_rate_;
     cfg.channels = channels_;
     cfg.preferred_block = max_block_;
     const int32_t rc = device_->start(cfg, this, err);
     if (rc != SE_OK) {
+        device_input_open_.store(false);
         release_rt_owner();
         return rc;
     }
+    refresh_device_latency();
+    input_error_ = device_->status().input_error;
     return SE_OK;
+}
+
+// Requires device_mutex_ and a started device.
+void Engine::refresh_device_latency() {
+    const AudioDevice::Status st = device_->status();
+    const double ratio = st.device_rate > 0.0 ? sample_rate_ / st.device_rate : 1.0;
+    const int64_t lat =
+        st.input_open ? std::llround(static_cast<double>(st.input_latency + st.output_latency) * ratio) : 0;
+    device_rec_latency_.store(lat, std::memory_order_relaxed);
+    device_input_open_.store(st.input_open, std::memory_order_release);
+}
+
+int32_t Engine::device_configure(const AudioDevice::Config& setup, std::string& err) {
+    std::lock_guard lock(device_mutex_);
+    if (!device_) device_ = device_factory_();
+    AudioDevice::Config cfg = setup;
+    cfg.sample_rate = sample_rate_;
+    cfg.channels = channels_;
+    cfg.preferred_block = max_block_;
+    int32_t rc = device_->validate(cfg, err); // opens nothing
+    if (rc != SE_OK) return rc;
+    device_setup_ = cfg;
+    input_error_.clear();
+    if (rt_owner_.load() != kOwnerDevice) return SE_OK; // applied by the next se_device_start
+    // Restart in place: we keep the RT ownership across stop/start, so no
+    // offline render can sneak in; queued commands wait for the new stream.
+    device_->stop();
+    rc = device_->start(cfg, this, err);
+    if (rc != SE_OK) {
+        device_input_open_.store(false);
+        release_rt_owner();
+        return rc;
+    }
+    refresh_device_latency();
+    const AudioDevice::Status st = device_->status();
+    input_error_ = st.input_error;
+    if (cfg.input_enabled && !st.input_open) {
+        err = "output restarted, but the input could not be opened: " + st.input_error;
+        return SE_ERR_DEVICE;
+    }
+    return SE_OK;
+}
+
+namespace {
+void copy_str(char* dst, std::size_t cap, const std::string& src) {
+    const std::size_t n = std::min(cap - 1, src.size());
+    std::memcpy(dst, src.data(), n);
+    dst[n] = '\0';
+}
+} // namespace
+
+void Engine::device_status(se_device_status* out) {
+    std::lock_guard lock(device_mutex_);
+    *out = se_device_status{};
+    out->sample_rate = sample_rate_;
+    copy_str(out->input_error, sizeof out->input_error, input_error_);
+    if (!device_ || rt_owner_.load() != kOwnerDevice) return;
+    const AudioDevice::Status st = device_->status();
+    const double ratio = st.device_rate > 0.0 ? sample_rate_ / st.device_rate : 1.0;
+    out->running = 1;
+    out->input_open = st.input_open ? 1 : 0;
+    copy_str(out->output_name, sizeof out->output_name, st.output_name);
+    if (st.input_open) copy_str(out->input_name, sizeof out->input_name, st.input_name);
+    if (st.device_rate > 0.0) out->sample_rate = st.device_rate;
+    out->buffer_size = st.buffer_size;
+    out->input_channels = st.input_channels;
+    out->output_channels = st.output_channels;
+    out->input_latency_frames = static_cast<uint32_t>(std::llround(st.input_latency * ratio));
+    out->output_latency_frames = static_cast<uint32_t>(std::llround(st.output_latency * ratio));
+}
+
+void Engine::set_device_factory(DeviceFactory f) {
+    std::lock_guard lock(device_mutex_);
+    device_factory_ = std::move(f);
+    if (rt_owner_.load() != kOwnerDevice) device_.reset();
 }
 
 int32_t Engine::device_stop() {
     std::lock_guard lock(device_mutex_);
     if (rt_owner_.load() != kOwnerDevice) return SE_OK;
     if (device_) device_->stop(); // returns once the callback can no longer run
+    device_input_open_.store(false);
     // Commands queued but not yet consumed by a callback are applied here.
     release_rt_owner();
     return SE_OK;
@@ -246,6 +335,18 @@ int32_t Engine::publish(const se_session_desc_v2& desc, std::string& err) {
 }
 
 int32_t Engine::publish(const se_session_desc_v3& desc, std::string& err) {
+    std::unique_ptr<RenderGraph> built;
+    const AssetLookup lookup = [this](uint64_t id) -> AssetRef {
+        std::lock_guard lock(assets_mutex_);
+        auto it = assets_.find(id);
+        return it == assets_.end() ? nullptr : it->second;
+    };
+    const int32_t rc = build_render_graph(desc, lookup, built, err);
+    if (rc != SE_OK) return rc;
+    return install_graph(std::move(built));
+}
+
+int32_t Engine::publish(const se_session_desc_v4& desc, std::string& err) {
     std::unique_ptr<RenderGraph> built;
     const AssetLookup lookup = [this](uint64_t id) -> AssetRef {
         std::lock_guard lock(assets_mutex_);
@@ -506,13 +607,21 @@ void Engine::stats_reset() noexcept {
 // ============================================================ RT process path
 
 template <class Sink>
-void Engine::process(uint32_t frames, Sink&& sink) noexcept {
+void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency, Sink&& sink) noexcept {
     const uint64_t t0 = now_ns();
     ScopedFlushDenormals ftz;
 
     // 1. Transport commands, applied at block start.
     drain_commands();
     if (!rt_playing_ || !rt_metro_enabled_) rt_voice_count_ = 0;
+
+    // Recording session for this block (see record_stop() for the handshake).
+    rec_in_use_.store(true, std::memory_order_seq_cst);
+    Recorder* const rec = rec_live_.load(std::memory_order_seq_cst);
+    const bool muted = input_muted_.load(std::memory_order_relaxed);
+    const uint32_t in_count =
+        std::min(input.channels, input.planar != nullptr ? kMaxDeviceInputChannels : kMaxInjectedInputChannels);
+    const float* in_ptrs[kMaxDeviceInputChannels];
 
     // 2. Acquire the published graph (see reclaim_locked()).
     rt_active_seq_.store(kBusy, std::memory_order_seq_cst);
@@ -529,8 +638,24 @@ void Engine::process(uint32_t frames, Sink&& sink) noexcept {
         const bool looping = rt_playing_ && rt_loop_enabled_ && rt_position_ < rt_loop_end_;
         if (looping) n = static_cast<uint32_t>(std::min<int64_t>(n, rt_loop_end_ - rt_position_));
         const uint32_t slot = advance_peek_window(n, graph);
+        // Input channels for this segment: device buffers (offset), injected
+        // input deinterleaved into scratch, or zeros when input is muted.
+        for (uint32_t c = 0; c < in_count; ++c) {
+            if (muted) {
+                in_ptrs[c] = live_ctx_.zeros();
+            } else if (input.planar != nullptr) {
+                in_ptrs[c] = input.planar[c] + done;
+            } else {
+                float* d = in_scratch_.data() + static_cast<std::size_t>(c) * max_block_;
+                const float* s = input.interleaved + static_cast<std::size_t>(done) * input.channels + c;
+                for (uint32_t i = 0; i < n; ++i) d[i] = s[static_cast<std::size_t>(i) * input.channels];
+                in_ptrs[c] = d;
+            }
+        }
+        const InputView iv{in_ptrs, in_count};
         const InstrumentInputs inst{graph != nullptr ? graph->synths.data() : nullptr, rt_synth_gen_};
-        const BlockPeaks p = render_block(graph, rt_position_, rt_playing_, n, live_ctx_, true, slot, inst);
+        const BlockPeaks p = render_block(graph, rt_position_, rt_playing_, n, live_ctx_, true, slot, inst, iv);
+        if (rec != nullptr && rt_playing_) rec->capture(in_ptrs, in_count, live_ctx_.zeros(), rt_position_, rec_latency, n);
         peak_l = std::max(peak_l, p.l);
         peak_r = std::max(peak_r, p.r);
         atomic_store_max(master_win_l_[slot], p.l);
@@ -543,6 +668,7 @@ void Engine::process(uint32_t frames, Sink&& sink) noexcept {
             rt_position_ += n;
             if (looping && rt_position_ == rt_loop_end_) {
                 rt_position_ = rt_loop_start_;
+                if (rec != nullptr) rec->on_loop_wrap(rt_loop_start_); // takes continue linearly
                 ++rt_synth_gen_; // sounding notes fade; notes at loop start retrigger
             }
         }
@@ -551,6 +677,7 @@ void Engine::process(uint32_t frames, Sink&& sink) noexcept {
 
     // 4. Release the graph, publish state.
     rt_active_seq_.store(kIdle, std::memory_order_seq_cst);
+    rec_in_use_.store(false, std::memory_order_release);
     publish_transport();
     atomic_store_max(master_peak_l_, peak_l);
     atomic_store_max(master_peak_r_, peak_r);
@@ -635,8 +762,11 @@ void Engine::mix_metronome(float* l, float* r, int64_t position, uint32_t frames
     }
 }
 
-void Engine::render(float* const* channels, uint32_t num_channels, uint32_t frames) noexcept {
-    process(frames, [&](const float* l, const float* r, uint32_t offset, uint32_t n) {
+void Engine::render(float* const* channels, uint32_t num_channels, const float* const* in, uint32_t num_in,
+                    uint32_t frames) noexcept {
+    const RtInput input{in, nullptr, in != nullptr ? num_in : 0};
+    process(frames, input, device_rec_latency_.load(std::memory_order_relaxed),
+            [&](const float* l, const float* r, uint32_t offset, uint32_t n) {
         if (num_channels == 0) return;
         if (num_channels == 1) {
             float* dst = channels[0] + offset;
@@ -650,6 +780,19 @@ void Engine::render(float* const* channels, uint32_t num_channels, uint32_t fram
 }
 
 int32_t Engine::render_offline(float* out_interleaved, uint32_t frames, std::string& err) {
+    return render_offline_impl(RtInput{}, out_interleaved, frames, err);
+}
+
+int32_t Engine::render_offline_with_input(const float* input, uint32_t input_channels, float* out_interleaved,
+                                          uint32_t frames, std::string& err) {
+    if (input_channels == 0 || input_channels > kMaxInjectedInputChannels) {
+        err = "input_channels must be 1.." + std::to_string(kMaxInjectedInputChannels);
+        return SE_ERR_INVALID_ARG;
+    }
+    return render_offline_impl(RtInput{nullptr, input, input_channels}, out_interleaved, frames, err);
+}
+
+int32_t Engine::render_offline_impl(const RtInput& input, float* out_interleaved, uint32_t frames, std::string& err) {
     if (frames == 0) return SE_OK;
     const int conflict = acquire_rt_owner(kOwnerOffline);
     if (conflict != kOwnerNone) {
@@ -657,7 +800,8 @@ int32_t Engine::render_offline(float* out_interleaved, uint32_t frames, std::str
                                        : "another offline render is in progress";
         return SE_ERR_STATE;
     }
-    process(frames, [out_interleaved](const float* l, const float* r, uint32_t offset, uint32_t n) {
+    // Injected input is not delayed by a device, so takes get 0 compensation.
+    process(frames, input, 0, [out_interleaved](const float* l, const float* r, uint32_t offset, uint32_t n) {
         float* dst = out_interleaved + static_cast<std::size_t>(offset) * 2;
         for (uint32_t i = 0; i < n; ++i) {
             dst[2 * i] = l[i];
@@ -666,6 +810,104 @@ int32_t Engine::render_offline(float* out_interleaved, uint32_t frames, std::str
     });
     release_rt_owner(); // also applies commands queued during the render
     return SE_OK;
+}
+
+// ============================================================ recording
+
+int32_t Engine::record_start(const char* dir, std::string& err) {
+    std::lock_guard lock(rec_mutex_);
+    if (recorder_) {
+        err = "already recording";
+        return SE_ERR_STATE;
+    }
+    std::vector<RecordTrackSpec> specs;
+    {
+        std::lock_guard g(control_mutex_);
+        if (current_)
+            for (const TrackNode& t : current_->tracks)
+                if (t.arm && t.input_mode != SE_INPUT_NONE)
+                    specs.push_back({t.track_id, t.input_channel, t.input_mode == SE_INPUT_STEREO ? 2u : 1u});
+    }
+    if (specs.empty()) {
+        err = "no armed track has an input";
+        return SE_ERR_STATE;
+    }
+    if (device_running() && !device_input_open_.load(std::memory_order_acquire)) {
+        err = "the audio device has no input open (configure an input device first)";
+        return SE_ERR_STATE;
+    }
+    if (sample_rate_ != std::floor(sample_rate_)) {
+        err = "engine sample rate is not representable in a WAV header";
+        return SE_ERR_UNSUPPORTED_FORMAT;
+    }
+    const std::size_t ring = record_ring_frames_ != 0 ? record_ring_frames_
+                                                      : static_cast<std::size_t>(2.0 * sample_rate_);
+    auto rec = Recorder::create(dir, std::move(specs), sample_rate_, ring, err);
+    if (!rec) return SE_ERR_IO;
+    last_takes_.clear();
+    last_stats_ = {};
+    recorder_ = std::move(rec);
+    rec_live_.store(recorder_.get(), std::memory_order_seq_cst); // the next block captures
+    TransportCommand play;
+    play.type = TransportCommand::Type::Play; // no-op if already playing
+    push_command(play);
+    return SE_OK;
+}
+
+// Stop handshake with process(): we clear rec_live_ and then wait until the
+// RT side is not inside a block that loaded the old pointer. Both sides use
+// seq_cst (RT: in_use = true; load ptr / us: store null; load in_use), so
+// either the RT block sees null or we see in_use == true and wait for it.
+// Only this non-RT thread waits; the audio thread never does.
+int32_t Engine::record_stop(std::size_t* out_count, std::string& err) {
+    std::lock_guard lock(rec_mutex_);
+    if (!recorder_) {
+        err = "not recording";
+        return SE_ERR_STATE;
+    }
+    rec_live_.store(nullptr, std::memory_order_seq_cst);
+    while (rec_in_use_.load(std::memory_order_seq_cst)) std::this_thread::sleep_for(std::chrono::microseconds(200));
+    recorder_->finish(last_takes_);
+    last_stats_ = recorder_->stats();
+    recorder_.reset();
+    if (out_count != nullptr) *out_count = last_takes_.size();
+    return SE_OK;
+}
+
+int32_t Engine::record_get_take(std::size_t index, se_recorded_take* out) const {
+    std::lock_guard lock(rec_mutex_);
+    if (index >= last_takes_.size()) return SE_ERR_NOT_FOUND;
+    const RecordedTakeInfo& t = last_takes_[index];
+    *out = se_recorded_take{};
+    out->track_id = t.track_id;
+    out->start_frame = t.start_frame;
+    out->frames = t.frames;
+    out->channels = t.channels;
+    out->sample_rate = t.sample_rate;
+    copy_str(out->path, sizeof out->path, t.path);
+    return SE_OK;
+}
+
+void Engine::record_state(bool& active, std::vector<LiveTakeInfo>& takes) const {
+    std::lock_guard lock(rec_mutex_);
+    active = recorder_ != nullptr;
+    takes.clear();
+    if (recorder_) recorder_->live_takes(takes);
+}
+
+std::size_t Engine::record_peaks(uint64_t track_id, uint32_t frames_per_peak, float* out, std::size_t capacity) const {
+    std::lock_guard lock(rec_mutex_);
+    return recorder_ ? recorder_->peaks(track_id, frames_per_peak, out, capacity) : 0;
+}
+
+RecordStats Engine::record_stats() const {
+    std::lock_guard lock(rec_mutex_);
+    return recorder_ ? recorder_->stats() : last_stats_;
+}
+
+void Engine::set_record_writer_stalled(bool stalled) {
+    std::lock_guard lock(rec_mutex_);
+    if (recorder_) recorder_->set_writer_stalled(stalled);
 }
 
 // Export renders with a private context and transport so it never disturbs

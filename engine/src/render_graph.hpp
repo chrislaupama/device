@@ -49,6 +49,11 @@ struct TrackNode {
     uint32_t clip_count = 0;
     uint32_t note_begin = 0; // index into RenderGraph::notes (instrument tracks only)
     uint32_t note_count = 0; // sorted by start, then pitch
+    // Input (se_session_publish_v4). input_mode: SE_INPUT_NONE/MONO/STEREO.
+    bool arm = false;
+    bool monitor = false;
+    uint8_t input_mode = 0;
+    uint16_t input_channel = 0;
 };
 
 // Number of buckets in the se_meters_peek sliding window (each bucket covers
@@ -66,6 +71,9 @@ struct TrackMeter {
 struct RenderGraph {
     uint64_t seq = 0; // publication sequence number, assigned when published
     float master_gain = 1.0f;
+    // Some track routes device input (input set and armed or monitoring):
+    // render_block() only looks at the input when this is set.
+    bool uses_input = false;
     std::vector<TrackNode> tracks;
     std::vector<ClipNode> clips;
     std::vector<NoteEvent> notes;
@@ -91,10 +99,12 @@ void constant_power_pan(float pan, float& left, float& right) noexcept;
 
 using AssetLookup = std::function<AssetRef(uint64_t asset_id)>;
 
-// Validates and copies the description. Returns an se_result code. The v1
-// and v2 entry points convert to v3 (v1: no instrument, no notes; both:
-// default synth parameters). Synth states are not assigned here (see
+// Validates and copies the description. Returns an se_result code. The v1,
+// v2 and v3 entry points convert to v4 (v1: no instrument, no notes; v1/v2:
+// default synth parameters; all: no arm/monitor/input). Synth states are not assigned here (see
 // RenderGraph::synth_refs); `synths` is sized and null.
+int32_t build_render_graph(const se_session_desc_v4& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v3& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v2& desc, const AssetLookup& lookup,

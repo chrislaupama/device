@@ -81,6 +81,36 @@ int32_t build_render_graph(const se_session_desc_v3& desc, const AssetLookup& lo
         err = "session has track_count > 0 but tracks == NULL";
         return SE_ERR_INVALID_ARG;
     }
+    std::vector<se_track_desc_v4> tracks(desc.track_count);
+    for (uint32_t t = 0; t < desc.track_count; ++t) {
+        const se_track_desc_v3& a = desc.tracks[t];
+        se_track_desc_v4& b = tracks[t];
+        b = se_track_desc_v4{};
+        b.track_id = a.track_id;
+        b.gain = a.gain;
+        b.pan = a.pan;
+        b.mute = a.mute;
+        b.solo = a.solo;
+        b.instrument = a.instrument;
+        b.clips = a.clips;
+        b.clip_count = a.clip_count;
+        b.notes = a.notes;
+        b.note_count = a.note_count;
+        b.synth = a.synth;
+    }
+    se_session_desc_v4 d4{};
+    d4.tracks = tracks.data();
+    d4.track_count = desc.track_count;
+    d4.master_gain = desc.master_gain;
+    return build_render_graph(d4, lookup, out, err);
+}
+
+int32_t build_render_graph(const se_session_desc_v4& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err) {
+    if (desc.track_count > 0 && desc.tracks == nullptr) {
+        err = "session has track_count > 0 but tracks == NULL";
+        return SE_ERR_INVALID_ARG;
+    }
     if (!std::isfinite(desc.master_gain)) {
         err = "master_gain is not finite";
         return SE_ERR_INVALID_ARG;
@@ -97,7 +127,7 @@ int32_t build_render_graph(const se_session_desc_v3& desc, const AssetLookup& lo
     std::unordered_map<uint64_t, AssetRef> used; // dedupe keep-alive refs
 
     for (uint32_t t = 0; t < desc.track_count; ++t) {
-        const se_track_desc_v3& td = desc.tracks[t];
+        const se_track_desc_v4& td = desc.tracks[t];
         if (td.clip_count > 0 && td.clips == nullptr) {
             err = "track " + std::to_string(td.track_id) + " has clip_count > 0 but clips == NULL";
             return SE_ERR_INVALID_ARG;
@@ -108,6 +138,11 @@ int32_t build_render_graph(const se_session_desc_v3& desc, const AssetLookup& lo
         }
         if (td.note_count > 0 && td.notes == nullptr) {
             err = "track " + std::to_string(td.track_id) + " has note_count > 0 but notes == NULL";
+            return SE_ERR_INVALID_ARG;
+        }
+
+        if (td.input_mode > SE_INPUT_STEREO) {
+            err = "track " + std::to_string(td.track_id) + " has an invalid input_mode";
             return SE_ERR_INVALID_ARG;
         }
 
@@ -130,6 +165,11 @@ int32_t build_render_graph(const se_session_desc_v3& desc, const AssetLookup& lo
         // Mute always wins; with any solo active only soloed tracks are audible.
         node.audible = td.mute == 0 && (!any_solo || td.solo != 0);
         node.clip_begin = static_cast<uint32_t>(g->clips.size());
+        node.arm = td.arm != 0;
+        node.monitor = td.monitor != 0;
+        node.input_mode = td.input_mode;
+        node.input_channel = td.input_channel;
+        if (node.input_mode != SE_INPUT_NONE && (node.arm || node.monitor)) g->uses_input = true;
 
         for (uint32_t c = 0; c < td.clip_count; ++c) {
             const se_clip_desc& cd = td.clips[c];

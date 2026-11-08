@@ -157,10 +157,11 @@ impl Engine {
     }
 
     /// Publish an immutable session snapshot to the audio thread
-    /// (`se_session_publish_v3`: audio clips plus, on instrument tracks,
+    /// (`se_session_publish_v4`: audio clips plus, on instrument tracks,
     /// MIDI notes rendered by the engine's built-in synth with the track's
     /// [`SynthParams`]; `synth: None` uses the engine defaults, which equal
-    /// `SynthParams::default()`).
+    /// `SynthParams::default()`; plus each track's record arm, input
+    /// monitoring and input routing).
     pub fn publish(&self, s: &SessionSnapshot) -> Result<(), EngineError> {
         let clip_descs: Vec<Vec<ffi::se_clip_desc>> = s
             .tracks
@@ -185,18 +186,25 @@ impl Engine {
         // Parameters only matter on instrument tracks; the engine copies them.
         let synth_descs: Vec<Option<ffi::se_synth_params>> =
             s.tracks.iter().map(|t| if t.instrument { t.synth.as_ref().map(synth_params_to_ffi) } else { None }).collect();
-        let tracks: Vec<ffi::se_track_desc_v3> = s
+        let tracks: Vec<ffi::se_track_desc_v4> = s
             .tracks
             .iter()
             .zip(clip_descs.iter().zip(note_descs.iter().zip(&synth_descs)))
-            .map(|(t, (clips, (notes, synth)))| ffi::se_track_desc_v3 {
+            .map(|(t, (clips, (notes, synth)))| ffi::se_track_desc_v4 {
                 track_id: t.track_id,
                 gain: t.gain,
                 pan: t.pan,
                 mute: t.mute as u8,
                 solo: t.solo as u8,
                 instrument: t.instrument as u8,
-                _pad: [0; 5],
+                arm: t.arm as u8,
+                monitor: t.monitor as u8,
+                input_mode: match t.input {
+                    None => ffi::SE_INPUT_NONE,
+                    Some(i) if i.stereo => ffi::SE_INPUT_STEREO,
+                    Some(_) => ffi::SE_INPUT_MONO,
+                },
+                input_channel: t.input.map_or(0, |i| i.channel),
                 clips: clips.as_ptr(),
                 clip_count: clips.len() as u32,
                 note_count: notes.len() as u32,
@@ -204,9 +212,9 @@ impl Engine {
                 synth: synth.as_ref().map_or(std::ptr::null(), |p| p as *const ffi::se_synth_params),
             })
             .collect();
-        let desc = ffi::se_session_desc_v3 { tracks: tracks.as_ptr(), track_count: tracks.len() as u32, master_gain: s.master_gain };
+        let desc = ffi::se_session_desc_v4 { tracks: tracks.as_ptr(), track_count: tracks.len() as u32, master_gain: s.master_gain };
         // SAFETY: all pointers stay valid for the duration of the call; the engine copies.
-        check(unsafe { ffi::se_session_publish_v3(self.raw, &desc) })
+        check(unsafe { ffi::se_session_publish_v4(self.raw, &desc) })
     }
 
     pub fn play(&self) -> Result<(), EngineError> {
@@ -357,9 +365,8 @@ pub fn synth_params_to_ffi(p: &SynthParams) -> ffi::se_synth_params {
 
 // ---------------------------------------------------------------- devices & recording
 //
-// Contract for recording/input (docs/adr/0002-recording.md). The app codes
-// against these signatures. Bodies marked STUB are replaced by the engine
-// implementation; until then they return `unsupported()`.
+// Contract for recording/input (docs/adr/0002-recording.md, engine/README.md
+// "Input, monitoring and recording").
 
 /// An audio device as reported by the platform backend.
 #[derive(Debug, Clone, PartialEq)]
@@ -374,13 +381,28 @@ pub struct AudioDeviceInfo {
     pub is_default_output: bool,
 }
 
-/// Requested device setup (Settings › Audio). `None`/0 = system default.
+/// Requested device setup (Settings › Audio). `None`/0 = system default,
+/// except `input`:
+///
+/// `input`: `None` = **no input** (output only; nothing ever opens the
+/// microphone), `Some(id)` = that input device, `Some(DEFAULT_INPUT)` (`""`)
+/// = the system default input. An input is opened only when one is named
+/// here, so a fresh engine or an output-only change never triggers the macOS
+/// microphone prompt. `sample_rate` is the device's nominal rate: with an
+/// input it must be 0 or the engine rate (the input path does not resample);
+/// output-only, 0 leaves the device alone and another rate is converted by
+/// the output unit. The engine rate itself never changes.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DeviceConfig {
     pub output: Option<String>,
     pub input: Option<String>,
     pub sample_rate: f64,
     pub buffer_size: u32,
+}
+
+impl DeviceConfig {
+    /// `input: Some(DEFAULT_INPUT.into())` selects the system default input.
+    pub const DEFAULT_INPUT: &'static str = "";
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -392,7 +414,9 @@ pub struct DeviceStatus {
     pub buffer_size: u32,
     pub input_channels: u32,
     pub output_channels: u32,
-    /// Round-trip compensation applied to recorded takes, in frames.
+    /// Input-side latency in engine frames (device + safety offset + stream
+    /// + one buffer). Recorded takes are compensated by
+    /// `input_latency_frames + output_latency_frames`.
     pub input_latency_frames: u32,
     pub output_latency_frames: u32,
 }
@@ -424,57 +448,191 @@ pub struct RecordingState {
     pub takes: Vec<LiveTake>,
 }
 
-fn unsupported(what: &str) -> EngineError {
-    EngineError { code: ffi::SE_ERR_UNSUPPORTED_FORMAT, kind: "unsupported", message: format!("{what} is not implemented yet") }
+/// Recording health counters ([`Engine::recording_stats`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RecordingStats {
+    /// Audio blocks dropped because a track's ring was full (writer too slow).
+    pub overruns: u64,
+    pub dropped_frames: u64,
+    /// Takes that could not be written completely (left out of the result).
+    pub write_errors: u64,
+    pub takes: u64,
+}
+
+fn c_chars_to_string(chars: &[std::ffi::c_char]) -> String {
+    let bytes: Vec<u8> = chars.iter().take_while(|&&c| c != 0).map(|&c| c as u8).collect();
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 impl Engine {
-    /// STUB. Enumerate audio devices.
+    /// Enumerate audio devices (reads properties only; never opens a device).
     pub fn list_devices(&self) -> Result<Vec<AudioDeviceInfo>, EngineError> {
-        Err(unsupported("device enumeration"))
+        let mut total = 0usize;
+        check(unsafe { ffi::se_device_list(std::ptr::null_mut(), 0, &mut total) })?;
+        loop {
+            let mut raw = vec![ffi::se_device_info::default(); total];
+            let mut n = 0usize;
+            check(unsafe { ffi::se_device_list(raw.as_mut_ptr(), raw.len(), &mut n) })?;
+            if n > raw.len() {
+                total = n; // a device appeared in between: retry
+                continue;
+            }
+            return Ok(raw[..n]
+                .iter()
+                .map(|d| AudioDeviceInfo {
+                    id: c_chars_to_string(&d.uid),
+                    name: c_chars_to_string(&d.name),
+                    input_channels: d.input_channels,
+                    output_channels: d.output_channels,
+                    sample_rates: d.sample_rates[..(d.sample_rate_count as usize).min(ffi::SE_DEVICE_MAX_RATES)].to_vec(),
+                    is_default_input: d.is_default_input != 0,
+                    is_default_output: d.is_default_output != 0,
+                })
+                .collect());
+        }
     }
 
-    /// STUB. Apply a device configuration (restarts the device if running).
-    pub fn configure_device(&self, _cfg: &DeviceConfig) -> Result<(), EngineError> {
-        Err(unsupported("device configuration"))
+    /// Apply a device configuration. Everything is validated first without
+    /// opening anything (unknown id → `SE_ERR_NOT_FOUND`, unsupported
+    /// rate/buffer/combination → `SE_ERR_INVALID_ARG`). If the device is
+    /// stopped the setup is used by the next [`Engine::start_device`]; if it
+    /// runs it is restarted. If the output opens but the input cannot (e.g.
+    /// microphone permission denied), output keeps running, `device_status()
+    /// .input_name` is `None`, [`Engine::input_error`] says why, and a
+    /// running restart returns `SE_ERR_DEVICE` with that message.
+    pub fn configure_device(&self, cfg: &DeviceConfig) -> Result<(), EngineError> {
+        let out = cfg.output.as_deref().map(|s| CString::new(s)).transpose().map_err(|_| nul_error())?;
+        let input_enabled = cfg.input.is_some();
+        let inp = cfg.input.as_deref().filter(|s| !s.is_empty()).map(CString::new).transpose().map_err(|_| nul_error())?;
+        let c = ffi::se_device_config {
+            output_uid: out.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            input_uid: inp.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),
+            sample_rate: cfg.sample_rate,
+            buffer_size: cfg.buffer_size,
+            input_enabled: input_enabled as u8,
+            _pad: [0; 3],
+        };
+        // SAFETY: the strings outlive the call; the engine copies them.
+        check(unsafe { ffi::se_device_configure(self.raw, &c) })
     }
 
-    /// STUB. Current device status.
+    /// Current device status.
     pub fn device_status(&self) -> DeviceStatus {
-        DeviceStatus { running: self.device_running(), sample_rate: self.sample_rate(), ..Default::default() }
+        let mut st = ffi::se_device_status::default();
+        if unsafe { ffi::se_device_status_get(self.raw, &mut st) } != ffi::SE_OK {
+            return DeviceStatus { running: self.device_running(), sample_rate: self.sample_rate(), ..Default::default() };
+        }
+        DeviceStatus {
+            running: st.running != 0,
+            output_name: c_chars_to_string(&st.output_name),
+            input_name: (st.input_open != 0).then(|| c_chars_to_string(&st.input_name)),
+            sample_rate: st.sample_rate,
+            buffer_size: st.buffer_size,
+            input_channels: st.input_channels,
+            output_channels: st.output_channels,
+            input_latency_frames: st.input_latency_frames,
+            output_latency_frames: st.output_latency_frames,
+        }
     }
 
-    /// STUB. Silence all device input (Settings › "Mute audio input").
-    pub fn set_input_muted(&self, _muted: bool) {}
-
-    /// STUB. Start capturing every armed track that has an input, from the
-    /// current transport position (starts the transport if stopped). Takes
-    /// are written to `dir` by a non-real-time writer thread.
-    pub fn start_recording(&self, _dir: &Path) -> Result<(), EngineError> {
-        Err(unsupported("recording"))
+    /// Why the configured input is not open (permission denied, device
+    /// gone, ...), if it is not.
+    pub fn input_error(&self) -> Option<String> {
+        let mut st = ffi::se_device_status::default();
+        unsafe { ffi::se_device_status_get(self.raw, &mut st) };
+        Some(c_chars_to_string(&st.input_error)).filter(|s| !s.is_empty())
     }
 
-    /// STUB. Stop capturing (the transport keeps its state) and return the
-    /// finalized takes.
+    /// Silence all device input (Settings › "Mute audio input"): monitoring,
+    /// input meters and recordings get zeros (recordings keep their timing).
+    pub fn set_input_muted(&self, muted: bool) {
+        unsafe { ffi::se_input_set_muted(self.raw, muted as u8) };
+    }
+
+    /// Start capturing every armed track that has an input (as published),
+    /// from the current transport position at the next audio block; starts
+    /// the transport if stopped. Takes are written to `dir` (created if
+    /// missing) by a non-real-time writer thread. Errors with
+    /// `SE_ERR_STATE` when already recording, when no armed track has an
+    /// input, or when the device runs without an open input.
+    pub fn start_recording(&self, dir: &Path) -> Result<(), EngineError> {
+        let p = cpath(dir)?;
+        check(unsafe { ffi::se_record_start(self.raw, p.as_ptr()) })
+    }
+
+    /// Stop capturing (the transport keeps its state) and return the
+    /// finalized takes. A seek/stop during recording ends a take and starts
+    /// a new one at the new position; looping records linearly (one take).
     pub fn stop_recording(&self) -> Result<Vec<RecordedTake>, EngineError> {
-        Err(unsupported("recording"))
+        let mut n = 0usize;
+        check(unsafe { ffi::se_record_stop(self.raw, &mut n) })?;
+        let mut takes = Vec::with_capacity(n);
+        for i in 0..n {
+            let mut t = ffi::se_recorded_take::default();
+            check(unsafe { ffi::se_record_get_take(self.raw, i, &mut t) })?;
+            takes.push(RecordedTake {
+                track_id: t.track_id,
+                path: PathBuf::from(c_chars_to_string(&t.path)),
+                start_frame: t.start_frame,
+                frames: t.frames,
+                channels: t.channels,
+                sample_rate: t.sample_rate,
+            });
+        }
+        Ok(takes)
     }
 
-    /// STUB. Live recording state for drawing growing clips.
+    /// Live recording state for drawing growing clips (cheap; any thread).
     pub fn recording_state(&self) -> RecordingState {
-        RecordingState::default()
+        let mut active = 0u8;
+        let mut n = 0usize;
+        if unsafe { ffi::se_record_state(self.raw, &mut active, std::ptr::null_mut(), 0, &mut n) } != ffi::SE_OK {
+            return RecordingState::default();
+        }
+        let mut raw = vec![ffi::se_live_take::default(); n + 8]; // slack for takes started in between
+        let mut m = 0usize;
+        unsafe { ffi::se_record_state(self.raw, &mut active, raw.as_mut_ptr(), raw.len(), &mut m) };
+        raw.truncate(m.min(raw.len()));
+        RecordingState {
+            active: active != 0,
+            takes: raw.iter().map(|t| LiveTake { track_id: t.track_id, start_frame: t.start_frame, frames: t.frames }).collect(),
+        }
     }
 
-    /// STUB. Min/max peaks of a take in progress (mono mix), for the live waveform.
-    pub fn recording_peaks(&self, _track_id: u64, _frames_per_peak: u32, _max_pairs: usize) -> Vec<[f32; 2]> {
-        Vec::new()
+    /// Min/max peaks of a take in progress (mono mix), for the live
+    /// waveform: the newest take of `track_id`, from its first frame, at
+    /// 64-frame resolution (`frames_per_peak` is rounded to multiples of 64).
+    pub fn recording_peaks(&self, track_id: u64, frames_per_peak: u32, max_pairs: usize) -> Vec<[f32; 2]> {
+        let mut buf = vec![0f32; max_pairs * 2];
+        let mut n = 0usize;
+        if unsafe { ffi::se_record_peaks(self.raw, track_id, frames_per_peak.max(1), buf.as_mut_ptr(), max_pairs, &mut n) } != ffi::SE_OK {
+            return Vec::new();
+        }
+        buf.truncate(n * 2);
+        buf.chunks_exact(2).map(|c| [c[0], c[1]]).collect()
     }
 
-    /// STUB. Offline render with injected device input (tests): `input` is
+    /// Overrun / error counters of the current recording (or of the last one
+    /// after [`Engine::stop_recording`]).
+    pub fn recording_stats(&self) -> RecordingStats {
+        let mut s = ffi::se_record_stats::default();
+        unsafe { ffi::se_record_stats_get(self.raw, &mut s) };
+        RecordingStats { overruns: s.overruns, dropped_frames: s.dropped_frames, write_errors: s.write_errors, takes: s.takes }
+    }
+
+    /// Offline render with injected device input (tests): `input` is
     /// interleaved with `input_channels` channels and the same frame count as `out`/2.
-    pub fn render_offline_with_input(&self, _input: &[f32], _input_channels: u32, _out: &mut [f32]) -> Result<(), EngineError> {
-        Err(unsupported("input injection"))
+    pub fn render_offline_with_input(&self, input: &[f32], input_channels: u32, out: &mut [f32]) -> Result<(), EngineError> {
+        let frames = out.len() / 2;
+        if input_channels == 0 || input.len() != frames * input_channels as usize {
+            return Err(EngineError { code: ffi::SE_ERR_INVALID_ARG, kind: "invalid argument", message: "input length must be frames * input_channels".into() });
+        }
+        check(unsafe { ffi::se_render_offline_with_input(self.raw, input.as_ptr(), input_channels, out.as_mut_ptr(), frames as u32) })
     }
+}
+
+fn nul_error() -> EngineError {
+    EngineError { code: ffi::SE_ERR_INVALID_ARG, kind: "invalid argument", message: "string contains NUL".into() }
 }
 
 impl Drop for Engine {
@@ -551,6 +709,9 @@ mod tests {
                     clips: vec![],
                     instrument: true,
                     notes: vec![],
+                    arm: false,
+                    monitor: false,
+                    input: None,
                     synth: Some(p.clone()),
                 }],
                 master_gain: 1.0,
@@ -570,6 +731,9 @@ mod tests {
                 clips: vec![],
                 instrument: true,
                 notes: vec![],
+                arm: false,
+                monitor: false,
+                input: None,
                 synth: Some(bad),
             }],
             master_gain: 1.0,

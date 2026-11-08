@@ -338,6 +338,209 @@ int32_t se_session_publish_v3(se_engine* engine, const se_session_desc_v3* sessi
 /* Writes the default synth parameters (no-op for NULL). */
 void se_synth_params_default(se_synth_params* out);
 
+
+/* ---- audio input, monitoring and recording (ABI v1 addition) ------------
+ * See docs/adr/0002-recording.md and engine/README.md ("Input, monitoring
+ * and recording").
+ *
+ * se_session_publish_v4 is a superset of se_session_publish_v3: every v4
+ * track carries the v3 fields (same meaning, same validation) plus its
+ * record-arm / input-monitoring state and its device input routing.
+ * v1/v2/v3 publishes are equivalent to v4 with arm = monitor = 0 and no
+ * input.
+ *
+ * Input routing: input_mode SE_INPUT_MONO feeds device input channel
+ * `input_channel` (0-based) to both sides of the track (then the track's
+ * pan law), SE_INPUT_STEREO feeds channels input_channel / input_channel+1
+ * to left / right (pan acts as balance, like stereo clips). Channels the
+ * device does not have read as silence.
+ *  - monitor != 0: the input is heard through the track (summed with its
+ *    clips/notes, then gain/pan/mute/solo, meters, master), also while the
+ *    transport is stopped.
+ *  - arm != 0 and monitor == 0: the input is NOT heard, but the track meter
+ *    shows the raw input level (pre-fader), so levels can be set before
+ *    recording ("meter input when armed").
+ *  - se_record_start captures every track with arm != 0 and an input.
+ * Validation: input_mode <= SE_INPUT_STEREO, else SE_ERR_INVALID_ARG. */
+enum { SE_INPUT_NONE = 0, SE_INPUT_MONO = 1, SE_INPUT_STEREO = 2 };
+
+typedef struct se_track_desc_v4 {
+    uint64_t track_id;
+    float gain; /* linear */
+    float pan;  /* -1 .. +1, constant-power */
+    uint8_t mute;
+    uint8_t solo;
+    uint8_t instrument;     /* != 0: render `notes` through the built-in synth */
+    uint8_t arm;            /* armed for recording */
+    uint8_t monitor;        /* input monitoring */
+    uint8_t input_mode;     /* SE_INPUT_* */
+    uint16_t input_channel; /* first device input channel, 0-based */
+    const se_clip_desc* clips;
+    uint32_t clip_count;
+    uint32_t note_count;
+    const se_note_desc* notes;
+    const se_synth_params* synth; /* NULL = defaults */
+} se_track_desc_v4; /* 56 bytes, align 8 */
+
+typedef struct se_session_desc_v4 {
+    const se_track_desc_v4* tracks;
+    uint32_t track_count;
+    float master_gain; /* linear */
+} se_session_desc_v4; /* 16 bytes, align 8 */
+
+int32_t se_session_publish_v4(se_engine* engine, const se_session_desc_v4* session);
+
+/* ---- devices ------------------------------------------------------------
+ * Enumeration only reads device properties; it never opens a device (and
+ * so never triggers the microphone-permission prompt). */
+#define SE_DEVICE_STRING_MAX 256
+#define SE_DEVICE_MAX_RATES 16
+
+typedef struct se_device_info {
+    char uid[SE_DEVICE_STRING_MAX];  /* stable id (Core Audio device UID), UTF-8 */
+    char name[SE_DEVICE_STRING_MAX]; /* display name, UTF-8 (truncated) */
+    uint32_t input_channels;
+    uint32_t output_channels;
+    uint8_t is_default_input;
+    uint8_t is_default_output;
+    uint8_t _pad[2];
+    uint32_t sample_rate_count;
+    double sample_rates[SE_DEVICE_MAX_RATES]; /* supported standard nominal rates, ascending */
+} se_device_info; /* 656 bytes, align 8 */
+
+/* Writes up to `capacity` devices; *out_count receives the total number of
+ * devices (which may exceed capacity). */
+int32_t se_device_list(se_device_info* out, size_t capacity, size_t* out_count);
+
+/* Device setup (Settings > Audio). Takes effect at the next se_device_start;
+ * if the device is running it is restarted with the new setup.
+ *  - output_uid: NULL or "" = system default output.
+ *  - input_enabled = 0: output only (no input device is opened, ever).
+ *    input_enabled != 0: open input_uid (NULL or "" = system default
+ *    input). Input is only ever opened by se_device_start / a running
+ *    restart after this was requested; the default engine never opens one.
+ *  - sample_rate: device nominal rate; 0 = leave it (output only) or the
+ *    engine rate (with input). With an input it must equal the engine rate
+ *    (the input path does not resample); output-only it may be any rate the
+ *    output device supports (the output unit converts).
+ *  - buffer_size: device IO buffer in frames, 0 = device default; else
+ *    16..4096 and inside the output device's range.
+ * Validation happens first, without opening anything: unknown uid ->
+ * SE_ERR_NOT_FOUND, a device without the needed channels, an unsupported
+ * rate/buffer or rate/input combination -> SE_ERR_INVALID_ARG.
+ * If the output opens but the input does not (e.g. microphone permission
+ * denied), output keeps running, the status reports no input and
+ * input_error says why; a running restart then returns SE_ERR_DEVICE. */
+typedef struct se_device_config {
+    const char* output_uid;
+    const char* input_uid;
+    double sample_rate;
+    uint32_t buffer_size;
+    uint8_t input_enabled;
+    uint8_t _pad[3];
+} se_device_config; /* 32 bytes, align 8 */
+
+int32_t se_device_configure(se_engine* engine, const se_device_config* config);
+
+typedef struct se_device_status {
+    char output_name[SE_DEVICE_STRING_MAX];
+    char input_name[SE_DEVICE_STRING_MAX];  /* "" when no input is open */
+    char input_error[SE_DEVICE_STRING_MAX]; /* why the configured input is not open, "" if none */
+    uint8_t running;
+    uint8_t input_open;
+    uint8_t _pad[6];
+    double sample_rate;             /* device nominal rate (engine rate when not running) */
+    uint32_t buffer_size;           /* device IO buffer, frames */
+    uint32_t input_channels;
+    uint32_t output_channels;
+    uint32_t input_latency_frames;  /* engine frames: device + safety offset + stream + buffer (input side) */
+    uint32_t output_latency_frames; /* same, output side. Takes are shifted by input + output. */
+    uint32_t _pad2;
+} se_device_status; /* 808 bytes, align 8 */
+
+int32_t se_device_status_get(se_engine* engine, se_device_status* out);
+
+/* Silence all device input (monitoring, input meters and recordings get
+ * zeros; recordings keep their timing). */
+int32_t se_input_set_muted(se_engine* engine, uint8_t muted);
+
+/* ---- recording ----------------------------------------------------------
+ * se_record_start(dir): from the next audio block, captures the raw input
+ * (pre-fader, pre-mute) of every track that is armed and has an input in
+ * the published session, and starts the transport if it is stopped. The
+ * set of tracks is fixed at start. The audio thread copies input into
+ * preallocated per-track lock-free rings; a writer thread drains them into
+ * 32-bit float WAV files in `dir` (created if missing) named
+ * rec-<date>-<time>-<n>-t<track_id>-<take>.wav. A ring overrun (writer too
+ * slow) drops that block for that track and counts it; the take ends there
+ * and a new take starts with the next block that fits, so every take stays
+ * sample-aligned.
+ *
+ * Takes: a take is a run of contiguous playback. A seek or stop ends the
+ * current take; the next captured block starts a new take at its position.
+ * Pause/play at the same position continues the take. A loop wrap does NOT
+ * end the take: recording while looping writes linearly (no take lanes).
+ * start_frame = timeline frame of the block's first sample minus the device
+ * round-trip latency (input + output latency, se_device_status), so the
+ * take lines up with what was heard; 0 compensation for injected input.
+ *
+ * se_record_stop: stops capturing (the transport keeps its state), waits
+ * for the writer, finalizes every file and returns the number of takes,
+ * readable with se_record_get_take until the next se_record_start.
+ * Errors: start while recording / stop while not, no armed track with an
+ * input, or a running device without an open input -> SE_ERR_STATE; dir not
+ * creatable -> SE_ERR_IO; non-integer engine rate -> SE_ERR_UNSUPPORTED_FORMAT. */
+int32_t se_record_start(se_engine* engine, const char* utf8_dir);
+int32_t se_record_stop(se_engine* engine, size_t* out_take_count);
+
+#define SE_PATH_MAX 1024
+typedef struct se_recorded_take {
+    uint64_t track_id;
+    int64_t start_frame; /* timeline frame of the first sample (latency compensated) */
+    uint64_t frames;
+    uint32_t channels;   /* 1 (mono input) or 2 (stereo input) */
+    uint32_t _pad;
+    double sample_rate;  /* engine rate */
+    char path[SE_PATH_MAX]; /* UTF-8 */
+} se_recorded_take; /* 1064 bytes, align 8 */
+
+int32_t se_record_get_take(se_engine* engine, size_t index, se_recorded_take* out);
+
+/* Live view. Cheap, callable from any non-RT thread at UI rate. Every take
+ * of the current recording, in start order (frames lag the audio thread by
+ * at most one writer period, ~5 ms). *out_count = total takes. */
+typedef struct se_live_take {
+    uint64_t track_id;
+    int64_t start_frame;
+    uint64_t frames;
+} se_live_take; /* 24 bytes, align 8 */
+
+int32_t se_record_state(se_engine* engine, uint8_t* out_active, se_live_take* out, size_t capacity, size_t* out_count);
+
+/* Min/max pairs (mono mix) of the newest take of `track_id` while
+ * recording, from its first frame; resolution 64 frames (frames_per_peak
+ * is rounded to whole 64-frame buckets). Count 0 when there is none. */
+int32_t se_record_peaks(se_engine* engine, uint64_t track_id, uint32_t frames_per_peak, float* out_minmax,
+                        size_t capacity, size_t* out_count);
+
+typedef struct se_record_stats {
+    uint64_t overruns;       /* blocks dropped because a ring was full (all tracks) */
+    uint64_t dropped_frames; /* frames lost to overruns (sum over tracks) */
+    uint64_t write_errors;   /* takes that could not be written completely */
+    uint64_t takes;          /* takes started so far */
+} se_record_stats; /* 32 bytes */
+
+/* Counters of the current recording, or of the last one after stop
+ * (reset by se_record_start). */
+int32_t se_record_stats_get(se_engine* engine, se_record_stats* out);
+
+/* se_render_offline with injected device input: `input_interleaved` holds
+ * `frames` frames of `input_channels` (1..32) interleaved channels, used
+ * exactly like device input (routing, monitoring, meters, recording with 0
+ * latency compensation). Same rules as se_render_offline. */
+int32_t se_render_offline_with_input(se_engine* engine, const float* input_interleaved, uint32_t input_channels,
+                                     float* out_interleaved, uint32_t frames);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,6 +1,6 @@
 # ADR 0002: Audio input, monitoring and recording
 
-Status: accepted (2026-11-08). Implementation in progress.
+Status: accepted (2026-11-08). Implemented in the engine (real-input path not yet verified on hardware).
 
 ## Context
 The reference lets you arm audio tracks (R), choose a per-track input ("None", "Input 1 (Mono)", ...),
@@ -28,3 +28,29 @@ buffer size in Settings › Audio (reference/ui-inventory.md §11). Our engine w
 - **Microphone permission:** opening an input device on macOS can show the system microphone-permission
   prompt for the host application. Automated tests use injected input only. A real-input check runs
   only with `SAINE_TEST_REAL_INPUT=1`, after the user agrees.
+
+## Implementation notes (engine, 2026-11-08)
+Details in engine/README.md, "Input, monitoring and recording".
+- **ABI:** additive, `SE_ABI_VERSION` stays 1: `se_track_desc_v4` / `se_session_publish_v4` (arm, monitor,
+  `input_mode` none/mono/stereo, `input_channel`; same 56-byte size as v3, no implicit padding), plus
+  `se_device_list`, `se_device_configure`, `se_device_status_get`, `se_input_set_muted`,
+  `se_record_start/stop/get_take/state/peaks`, `se_record_stats_get`, `se_render_offline_with_input`.
+- **Duplex:** private aggregate device (output = clock, drift compensation on the input sub-device),
+  one HALOutput AUHAL pulling input inside the output callback. With an input the hardware runs at the
+  engine rate (AUHAL does not resample input); other rates are rejected at configure time.
+- **Lazy input:** nothing opens an input unless `configure_device` names one. In the Rust contract,
+  `DeviceConfig.input = None` means **no input** (as the app's preferences use it),
+  `Some(uid)` that device, `Some(DeviceConfig::DEFAULT_INPUT)` (`""`) the system default input.
+  The engine sample rate is fixed at engine creation; `configure_device` never changes it.
+- **Monitoring semantics:** monitored input is summed with the track's clips/notes and goes through the
+  track chain, also while stopped. Armed and not monitored, the input is not heard, but the track meter
+  shows the raw (pre-fader) input level.
+- **Takes:** a seek/stop ends a take and starts a new one at the new position (several takes per
+  track per recording are possible); a loop wrap does not (looping writes linearly, no take lanes).
+  An overrun drops the block and also starts a new take, so takes stay sample-aligned.
+- **Latency:** `start_frame = position − (input + output latency)`, each side = device latency +
+  safety offset + stream latency + one IO buffer; 0 for injected input. `DeviceStatus` reports the two
+  sides separately.
+- **Additive Rust API:** `Engine::recording_stats()` (overruns, dropped frames, write errors, takes),
+  `Engine::input_error()`, `DeviceConfig::DEFAULT_INPUT`.
+- **Not verified on hardware:** the real-input path (prompt) — `SAINE_TEST_REAL_INPUT=1 record_check`.

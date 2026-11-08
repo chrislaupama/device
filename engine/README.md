@@ -8,7 +8,11 @@ the header (`se_meters_peek`, `se_transport_set_loop`, `se_metronome_desc` +
 `se_metronome_set`, for MIDI `se_note_desc`, `se_track_desc_v2`,
 `se_session_desc_v2` + `se_session_publish_v2`, and for synth parameters
 `se_synth_params`, `se_track_desc_v3`, `se_session_desc_v3` +
-`se_session_publish_v3`, `se_synth_params_default`).
+`se_session_publish_v3`, `se_synth_params_default`, and for input and
+recording `se_track_desc_v4`, `se_session_desc_v4` + `se_session_publish_v4`,
+`se_device_list`, `se_device_configure`, `se_device_status_get`,
+`se_input_set_muted`, `se_record_start/stop/get_take/state/peaks`,
+`se_record_stats_get`, `se_render_offline_with_input`).
 
 ## Build, test, bench
 
@@ -26,6 +30,8 @@ ctest --preset asan
 
 ./build/saine_engine_bench [blocks=4000] [clips_per_track=4] [features=0]  # 1 = loop + metronome on; also prints a MIDI table
 ./build/play_sine_or_wav [file.wav] [seconds=1.0]   # real default output device, -24 dBFS
+./build/record_check                                # list devices (enumeration only, opens nothing)
+SAINE_TEST_REAL_INPUT=1 ./build/record_check [s=2]  # MANUAL: opens the real default input (macOS mic prompt!)
 ```
 
 CMake options: `SAINE_ENGINE_BUILD_TESTS|BENCH|TOOLS` (default ON when top
@@ -70,7 +76,10 @@ The library is built with `-fPIC`, so it can go into a cdylib as well.
 | `src/platform/` | `AudioDevice` interface + backends (Core Audio real; WASAPI/ASIO, PipeWire/JACK stubs) |
 | `tests/` | Self-contained harness (`test_harness.hpp`), tests, allocation-tracking `operator new` |
 | `bench/bench_render.cpp` | Offline render benchmark |
+| `src/recorder.{hpp,cpp}` | Recording: RT capture into per-track SPSC rings, WAV writer thread, live takes/peaks |
+| `src/test_hooks.hpp` | Test-only hooks (fake device factory, writer stall, ring size); not public ABI |
 | `tools/play_sine_or_wav.cpp` | Manual check through the real default output device |
+| `tools/record_check.cpp` | Device listing; with `SAINE_TEST_REAL_INPUT=1` a 2 s real-input recording (manual only) |
 
 ## Design
 
@@ -132,7 +141,8 @@ Semantics:
 
 | Thread | What it may do |
 |---|---|
-| Audio thread (Core Audio IO proc) **or** the thread inside `se_render_offline` | `Engine::process()` only |
+| Audio thread (Core Audio IO proc) **or** the thread inside `se_render_offline(_with_input)` | `Engine::process()` only |
+| Recording writer thread (one per recording) | drains the recorder's rings into WAV files |
 | Any non-RT thread | everything else in the ABI |
 
 Exactly one "RT owner" at a time: an atomic owner flag (`rt_owner_`:
@@ -470,6 +480,174 @@ nominal rate" (falls back to 48 kHz). If the hardware runs at another rate,
 the Core Audio output unit's built-in converter resamples.
 `se_engine_sample_rate` reports the engine rate.
 
+## Input, monitoring and recording
+
+(ADR: `docs/adr/0002-recording.md`.)
+
+### Devices (`se_device_list`, `se_device_configure`, `se_device_status_get`)
+
+Enumeration reads Core Audio properties only (UID, name, input/output
+channel counts from the stream configuration, the standard nominal rates
+inside `AvailableNominalSampleRates`, default input/output); it never opens
+a device. `se_device_configure` validates first, again without opening
+anything: unknown UID → `SE_ERR_NOT_FOUND`; a device without the needed
+channels, an unsupported rate, a buffer outside 16..4096 or the device's
+`BufferFrameSizeRange`, or an input combined with a rate other than the
+engine rate → `SE_ERR_INVALID_ARG`. Stopped: the setup is stored for the
+next `se_device_start`. Running: the device is stopped and restarted in
+place (the engine keeps RT ownership across the restart, so no offline
+render can slip in, and queued transport commands wait for the new stream).
+
+**Input is opened lazily.** A fresh engine (and `se_device_start` without a
+prior configure that enabled input) opens the output only, exactly as
+before. An input is opened only after `se_device_configure` with
+`input_enabled` (Rust: `DeviceConfig { input: Some(uid) }`, or
+`Some(DeviceConfig::DEFAULT_INPUT)` = `""` for the system default input;
+`input: None` = output only). If the output opens but the input
+does not (microphone permission denied/restricted, which we read via
+`AVCaptureDevice authorizationStatusForMediaType:` through the ObjC runtime
+without prompting; aggregate creation failure; device gone; rate mismatch),
+the device restarts **output only**, `se_device_status.input_open = 0`,
+`input_error` explains, and a running reconfigure returns `SE_ERR_DEVICE`
+with that message. Output keeps working.
+
+### Duplex on macOS: private aggregate device (and why)
+
+Input and output on different Core Audio devices (MacBook microphone +
+speakers) run on independent clocks. We create a **private, non-persistent
+aggregate device** (`kAudioAggregateDeviceIsPrivateKey = 1`, visible only to
+this process, destroyed on stop and by the system if we crash) whose
+sub-device list is [output, input], main (clock) sub-device = the output,
+and **drift compensation on the input sub-device** (high quality). One
+`HALOutput` AUHAL runs on it with input enabled; inside the output render
+callback we pull input bus 1 with `AudioUnitRender` into preallocated
+buffers, so each IO cycle delivers matching input and output frames. If
+input and output are the same device, the AUHAL runs on it directly (no
+aggregate).
+
+Chosen over a separate input AUHAL + lock-free ring + adaptive resampler
+because: the HAL's drift compensation is what Logic/GarageBand rely on and
+is maintained by Apple; it keeps a single IO thread and a single callback,
+so input and output are inherently sample-aligned per cycle (no ring fill
+level to servo, no extra buffering latency, no second RT thread); and the
+HAL reports the aggregate's latency and safety offsets for compensation.
+Costs: aggregate creation takes up to a few hundred ms, and AUHAL does not
+resample on its input side, so with an input the hardware is switched to the
+engine rate (devices that cannot run at it are rejected by validation).
+Output-only setups keep `DefaultOutput` (follows the system default) or a
+`HALOutput` bound to the named device, with the unit's converter if the
+device rate differs from the engine rate.
+
+### Routing and monitoring (`se_track_desc_v4`)
+
+Per track: `input_mode` (none / mono / stereo) and `input_channel`. Mono
+feeds one device channel to both sides of the track, then the pan law;
+stereo feeds `channel, channel+1` (pan = balance). Missing channels read as
+zeros. `render_block()` looks at input only if the graph has a routed track
+(`RenderGraph::uses_input`), so sessions without input cost one branch.
+
+* `monitor` on: the input is summed with the track's clips/notes and goes
+  through the track's gain, pan, mute, solo, meters and the master, **also
+  while the transport is stopped**.
+* **Armed, not monitored ("meter input when armed")**: the input is not
+  heard, but the track meters (`se_meters_read` and `se_meters_peek`) show
+  the raw input peak per side, **pre-fader**, so levels can be set before
+  and during recording. (Armed and monitored: the normal post-fader meter.)
+* `se_input_set_muted(1)` replaces every input channel with zeros
+  (monitoring, input meters and recordings; recordings keep their timing).
+
+### Recording
+
+```
+audio thread (process, per segment)            writer thread (~every 5 ms)
+-----------------------------------            ---------------------------
+rec = rec_live_ (loaded once per block)        pop markers; read each ring up
+for each armed track:                            to its head; at a marker:
+  new take?  -> push {start, ring index}         finish the WAV, open the next
+             to the track's marker SPSC        write frames, update live takes
+  ring full? -> drop block, count overrun,       and 64-frame min/max peaks
+             end the take                         (mutex, never seen by RT)
+  else       -> interleave into float SPSC
+             ring, publish head (release)
+```
+
+`se_record_start(dir)` takes the armed tracks with an input from the
+published graph (fixed for the take), allocates one ring per track (2 s at
+the engine rate, power of two), starts the writer thread, publishes the
+recorder to the RT side and queues Play (no-op if playing). From the next
+block, every playing segment is copied raw (pre-fader, pre-mute) into the
+rings. **RT argument:** the audio thread only does `memcpy`-style copies into
+preallocated memory, two SPSC pushes with acquire/release atomics, and
+relaxed counter increments: no allocation (tested under the allocation
+tracker with 8 armed+monitored tracks, seeks, loop wraps and input mute), no
+locks, no I/O, no waiting. A full ring drops that block for that track and
+counts it (`se_record_stats`); the take ends and the next block that fits
+starts a new take at its own timeline position, so takes stay sample-aligned
+and the audio thread never blocks on the disk.
+
+**Takes and transport.** A take is a run of contiguous playback. A seek or
+stop (or any jump) ends it; the next captured block starts a new take at
+the new position. Pause + play at the same position continues the take.
+**Recording while looping writes linearly** (no take lanes): the loop wrap
+does not end the take, the file just keeps growing, and the take is placed
+from its start frame (so it extends past the loop end on the timeline).
+`se_record_stop` leaves the transport as it is.
+
+**Stop.** `rec_live_ = null` (seq_cst), then wait while the RT side's
+`rec_in_use_` flag is set (it is set before loading `rec_live_` at block
+start and cleared at block end: a Dekker pair, so either the block sees null
+or the stopping thread waits for that block). Only the non-RT stopping
+thread waits. Then the writer drains everything left (also when stalled),
+patches every WAV header (RIFF/data/fact sizes) and exits. Failed writes are
+counted in `write_errors` and those takes are left out of the result.
+
+**Latency compensation.** In a duplex cycle the input sample delivered with
+output frame P was captured when the listener heard frame P − (input latency
++ output latency). So `start_frame = position − (in + out)`, with each side =
+`kAudioDevicePropertyLatency + kAudioDevicePropertySafetyOffset +` the first
+stream's `kAudioStreamPropertyLatency` + one IO buffer, read from the running
+(aggregate) device; for an aggregate each side is the max of what the
+aggregate and the sub-device report. Converted to engine frames. Injected
+input (`se_render_offline_with_input`) has compensation 0.
+
+**Live view.** `se_record_state` lists every take (track, start, frames as
+written by the writer, so ≤ ~5 ms behind); `se_record_peaks` gives min/max
+pairs of a track's newest take at 64-frame resolution. Both take the
+recorder mutex for a copy and never touch the RT side.
+
+**Files.** `rec-<YYYYmmdd-HHMMSS>-<n>-t<track>-<take>.wav` in `dir`
+(created if missing), 32-bit float at the engine rate, mono or stereo; an
+existing name gets a `_2`, `_3`, ... suffix.
+
+### Tests (no real input is ever opened)
+
+`tests/test_recording.cpp` uses injected input or a fake `AudioDevice`
+(`test_hooks.hpp`): mono/stereo routing through the pan law (bit-exact),
+monitoring while stopped, monitor off, input + clip sum, armed-not-monitored
+meters equal to the raw input peak with silent output, input mute, track
+mute/solo; recording a ramp across odd block sizes (127/1/333/1000/64/255,
+bit-exact file, exact `start_frame`, live state and peaks), two tracks on
+different channels (mono + stereo), seek → new take, loop → one linear take,
+pause/play continuity, error cases, writer-stall overruns (exact counts,
+both takes aligned and valid after stop), zero allocations while recording
+and monitoring 8 tracks, the fake device path (default start never enables
+input, input failure keeps output running and reports the error, take
+`start_frame` compensated by input + output latency), configure validation
+against real Core Audio (no start), and a real output-only named-device
+start + running reconfigure. Rust: `crates/saine-engine/tests/recording.rs`
+(Document → snapshot → injected input → take → `load_file` → "Record" Batch →
+playback renders the same samples).
+
+### Verification status
+
+Not verified on hardware by the engine agent, by design (it would trigger
+the microphone prompt): opening a real input, the aggregate device and its
+drift compensation, AUHAL input pull, and the latency values Core Audio
+reports for a real duplex setup. Run `SAINE_TEST_REAL_INPUT=1
+./build/record_check` by hand to check level and reported latency; a
+loopback measurement (play a click, record it) is the next step to confirm
+the compensation is sample-accurate on real devices.
+
 ## Placeholders and known gaps
 
 * **Windows** (`src/platform/wasapi_device.cpp`): stub, `se_device_start` →
@@ -477,8 +655,11 @@ the Core Audio output unit's built-in converter resamples.
   Windows (needs `_wfopen`).
 * **Linux** (`src/platform/pipewire_device.cpp`): stub, `SE_ERR_DEVICE`
   ("TODO: PipeWire/JACK").
-* Core Audio: default output device only, no device selection, no handling
-  of default-device changes or device rate switching, no input.
+* Core Audio: no handling of default-device changes, device hot-unplug or
+  externally triggered rate changes while running (the stream just keeps
+  whatever Core Audio does). **The duplex/aggregate input path has not been
+  run against real hardware by the engine agent** (see "Input, monitoring and
+  recording" > Verification).
 * No janitor thread: retired graphs are reclaimed on the next publish /
   asset release / destroy. With the device running and no edits, the
   previously retired graph (and any released assets it holds) stays alive
@@ -510,9 +691,18 @@ the Core Audio output unit's built-in converter resamples.
 | Case | 8 tracks | 32 tracks | 128 tracks |
 |---|---|---|---|
 | Audio, 4 clips/track (avg µs/block) | 1.0 | 3.2 | 12.3 |
+| Audio, 4 clips/track, after the input/recording change (same machine, HEAD baseline in parentheses) | 1.06 (1.09) | 3.36 (3.37) | 12.6 (12.7) |
 | MIDI, 8 held voices + 1 retriggered note/track, previous fixed synth | 98 | 396 | 1594 |
 | MIDI, same notes, `se_synth_params` defaults | 140 | 573 | 2246 |
 | MIDI, same notes, heavy patch (unison 4, cross FM, folded sine, triangle morph, sub, noise, resonant BP + filter env, LFO → pitch/cutoff/amp) | 870 | 3489 | 13782 |
+
+Input (8 armed + monitored tracks, injected 8-channel input, no clips):
+1.33 µs/block with recording off; 5.9 µs/block avg (p99 11 µs, max 32 µs)
+with recording on, i.e. ~0.1 % of the deadline for 8 recorded tracks. The
+recording case pauses (untimed) every 256 blocks so the writer keeps up,
+because offline rendering runs ~1000x faster than real time and would
+otherwise only exercise the overrun path. The extra cost is the interleaved
+copy into the 8 rings while the writer thread reads them on another core.
 
 (Default patch, 32 tracks: ≈ 1.45× the previous synth, ~11 % of the block
 deadline. The heavy patch runs 8 oscillators per voice: 32 tracks × 8 voices

@@ -3,6 +3,8 @@
 // Prints measurements only; no pass/fail thresholds.
 //
 // usage: saine_engine_bench [blocks=4000] [clips_per_track=4] [features=0]
+// A last table renders 8 armed + monitored tracks fed by injected input,
+// with recording off and on (the recording writer thread runs concurrently).
 //   features=1: also enable a 48 001-frame loop (odd length, so the wrap
 //   lands mid-block) and the metronome at 120 BPM.
 // A second table renders MIDI: instrument tracks (no clips) with 8 notes
@@ -18,6 +20,7 @@
 #include <filesystem>
 #include <numbers>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -206,6 +209,77 @@ Result run_midi(uint32_t tracks, uint32_t blocks, const se_synth_params* params)
     return r;
 }
 
+// Input: `tracks` armed + monitored audio tracks (mono inputs spread over 8
+// injected channels, every 3rd one stereo), optionally recording to a temp
+// dir, rendered through se_render_offline_with_input.
+Result run_input(uint32_t tracks, uint32_t blocks, bool record) {
+    se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
+    se_engine* e = se_engine_create(&cfg);
+    if (!e) {
+        std::fprintf(stderr, "create failed: %s\n", se_last_error());
+        std::exit(1);
+    }
+    constexpr uint32_t kInCh = 8;
+    std::vector<se_track_desc_v4> tds(tracks);
+    for (uint32_t t = 0; t < tracks; ++t) {
+        se_track_desc_v4& td = tds[t];
+        td = se_track_desc_v4{};
+        td.track_id = t + 1;
+        td.gain = 0.25f;
+        td.pan = std::sin(static_cast<float>(t));
+        td.arm = 1;
+        td.monitor = 1;
+        td.input_mode = t % 3 == 0 ? SE_INPUT_STEREO : SE_INPUT_MONO;
+        td.input_channel = static_cast<uint16_t>(t % (kInCh - 1));
+    }
+    se_session_desc_v4 sd{tds.data(), tracks, 0.5f};
+    if (se_session_publish_v4(e, &sd) != SE_OK) {
+        std::fprintf(stderr, "publish failed: %s\n", se_last_error());
+        std::exit(1);
+    }
+    std::vector<float> in(static_cast<std::size_t>(kBlock) * kInCh);
+    for (std::size_t i = 0; i < in.size(); ++i) in[i] = 0.1f * std::sin(0.01f * static_cast<float>(i));
+    const auto dir = std::filesystem::temp_directory_path() / "saine_bench_record";
+    if (record && se_record_start(e, dir.string().c_str()) != SE_OK) {
+        std::fprintf(stderr, "record failed: %s\n", se_last_error());
+        std::exit(1);
+    }
+    se_transport_play(e);
+    std::vector<float> buf(kBlock * 2);
+    for (int i = 0; i < 50; ++i) se_render_offline_with_input(e, in.data(), kInCh, buf.data(), kBlock); // warm-up
+    // Offline rendering runs thousands of times faster than real time, so
+    // with recording on we pause (untimed) every 256 blocks (~1.4 s of
+    // audio, under the 2 s ring) to let the writer thread catch up, and time
+    // only the render calls. Otherwise every block would hit the (cheaper)
+    // overrun path instead of the copy we want to measure.
+    std::vector<double> times(blocks);
+    double wall_us = 0.0;
+    for (uint32_t b = 0; b < blocks; ++b) {
+        if (record && b % 256 == 255) std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        const auto t0 = std::chrono::steady_clock::now();
+        se_render_offline_with_input(e, in.data(), kInCh, buf.data(), kBlock);
+        times[b] = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+        wall_us += times[b];
+    }
+    if (record) {
+        std::size_t n = 0;
+        se_record_stop(e, &n);
+        se_record_stats st{};
+        se_record_stats_get(e, &st);
+        if (st.overruns != 0) std::printf("   (recording overruns: %llu)\n", static_cast<unsigned long long>(st.overruns));
+        std::filesystem::remove_all(dir);
+    }
+    se_engine_destroy(e);
+    std::vector<double> sorted = times;
+    std::sort(sorted.begin(), sorted.end());
+    Result r{};
+    r.us_per_block_avg = wall_us / blocks;
+    r.us_per_block_p99 = sorted[static_cast<std::size_t>(0.99 * (blocks - 1))];
+    r.us_per_block_max = sorted.back();
+    r.rt_ratio = static_cast<double>(blocks) * kBlock / kRate * 1e6 / wall_us;
+    return r;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -277,6 +351,15 @@ int main(int argc, char** argv) {
             std::printf("%8u %14.2f %14.2f %14.2f %15.1fx\n", tracks, r.us_per_block_avg, r.us_per_block_p99,
                         r.us_per_block_max, r.rt_ratio);
         }
+    }
+
+    std::printf("\nInput: armed + monitored audio tracks, injected 8-channel input (no clips)\n");
+    std::printf("%8s %10s %14s %14s %14s %16s\n", "tracks", "recording", "avg us/block", "p99 us/block",
+                "max us/block", "realtime ratio");
+    for (bool record : {false, true}) {
+        const Result r = run_input(8, blocks, record);
+        std::printf("%8u %10s %14.2f %14.2f %14.2f %15.1fx\n", 8u, record ? "on" : "off", r.us_per_block_avg,
+                    r.us_per_block_p99, r.us_per_block_max, r.rt_ratio);
     }
     return 0;
 }

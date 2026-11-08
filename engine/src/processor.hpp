@@ -21,10 +21,11 @@ public:
     float* track_l() noexcept { return track_l_.data(); }
     float* track_r() noexcept { return track_r_.data(); }
     float* synth() noexcept { return synth_.data(); } // mono instrument scratch
+    const float* zeros() const noexcept { return zeros_.data(); } // max_block zeros (missing input channels)
 
 private:
     uint32_t max_block_;
-    std::vector<float> track_l_, track_r_, master_l_, master_r_, synth_;
+    std::vector<float> track_l_, track_r_, master_l_, master_r_, synth_, zeros_;
 };
 
 // Instrument inputs of render_block(). `synths` is parallel to
@@ -35,6 +36,14 @@ private:
 struct InstrumentInputs {
     Synth* const* synths = nullptr;
     uint64_t transport_gen = 0;
+};
+
+// Device input for one render_block() call: `count` channel pointers, each
+// valid for the block's frames (count 0 = no input). Channels a track asks
+// for beyond `count` read as silence.
+struct InputView {
+    const float* const* channels = nullptr;
+    uint32_t count = 0;
 };
 
 struct BlockPeaks {
@@ -52,9 +61,14 @@ struct BlockPeaks {
 // the track's clips before gain/pan. Synths run even for muted tracks (so an
 // unmuted note continues where it would be) but are only mixed if audible.
 // While not playing, only voice tails (fade-outs after a pause/stop) render.
+// Input (`input`, used only if graph->uses_input): a track whose input is
+// set hears it when `monitor` is on (summed with clips/notes, then the
+// track's gain/pan/mute/solo; also while not playing). Mono input feeds both
+// sides. An armed track that is not monitoring raises its meters to the raw
+// input peak instead (pre-fader; it is not heard).
 BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing, uint32_t frames,
                         RenderContext& ctx, bool update_meters, uint32_t peek_slot = 0,
-                        const InstrumentInputs& inst = {}) noexcept;
+                        const InstrumentInputs& inst = {}, const InputView& input = {}) noexcept;
 
 // ---- kernels (exposed for tests/bench) -------------------------------------
 // Plain loops over restrict pointers so clang/gcc auto-vectorise them

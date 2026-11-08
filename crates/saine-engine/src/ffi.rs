@@ -227,6 +227,137 @@ pub struct se_session_desc_v3 {
     pub master_gain: f32,
 }
 
+// ---- audio input, monitoring, recording, devices (ABI v1 addition)
+
+pub const SE_INPUT_NONE: u8 = 0;
+pub const SE_INPUT_MONO: u8 = 1;
+pub const SE_INPUT_STEREO: u8 = 2;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_track_desc_v4 {
+    pub track_id: u64,
+    pub gain: f32,
+    pub pan: f32,
+    pub mute: u8,
+    pub solo: u8,
+    pub instrument: u8,
+    pub arm: u8,
+    pub monitor: u8,
+    pub input_mode: u8,
+    pub input_channel: u16,
+    pub clips: *const se_clip_desc,
+    pub clip_count: u32,
+    pub note_count: u32,
+    pub notes: *const se_note_desc,
+    pub synth: *const se_synth_params,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_session_desc_v4 {
+    pub tracks: *const se_track_desc_v4,
+    pub track_count: u32,
+    pub master_gain: f32,
+}
+
+pub const SE_DEVICE_STRING_MAX: usize = 256;
+pub const SE_DEVICE_MAX_RATES: usize = 16;
+pub const SE_PATH_MAX: usize = 1024;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct se_device_info {
+    pub uid: [c_char; SE_DEVICE_STRING_MAX],
+    pub name: [c_char; SE_DEVICE_STRING_MAX],
+    pub input_channels: u32,
+    pub output_channels: u32,
+    pub is_default_input: u8,
+    pub is_default_output: u8,
+    pub _pad: [u8; 2],
+    pub sample_rate_count: u32,
+    pub sample_rates: [f64; SE_DEVICE_MAX_RATES],
+}
+
+impl Default for se_device_info {
+    fn default() -> Self {
+        // SAFETY: plain-old-data; all-zero is a valid value.
+        unsafe { std::mem::zeroed() }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_device_config {
+    pub output_uid: *const c_char,
+    pub input_uid: *const c_char,
+    pub sample_rate: f64,
+    pub buffer_size: u32,
+    pub input_enabled: u8,
+    pub _pad: [u8; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct se_device_status {
+    pub output_name: [c_char; SE_DEVICE_STRING_MAX],
+    pub input_name: [c_char; SE_DEVICE_STRING_MAX],
+    pub input_error: [c_char; SE_DEVICE_STRING_MAX],
+    pub running: u8,
+    pub input_open: u8,
+    pub _pad: [u8; 6],
+    pub sample_rate: f64,
+    pub buffer_size: u32,
+    pub input_channels: u32,
+    pub output_channels: u32,
+    pub input_latency_frames: u32,
+    pub output_latency_frames: u32,
+    pub _pad2: u32,
+}
+
+impl Default for se_device_status {
+    fn default() -> Self {
+        // SAFETY: plain-old-data; all-zero is a valid value.
+        unsafe { std::mem::zeroed() }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct se_recorded_take {
+    pub track_id: u64,
+    pub start_frame: i64,
+    pub frames: u64,
+    pub channels: u32,
+    pub _pad: u32,
+    pub sample_rate: f64,
+    pub path: [c_char; SE_PATH_MAX],
+}
+
+impl Default for se_recorded_take {
+    fn default() -> Self {
+        // SAFETY: plain-old-data; all-zero is a valid value.
+        unsafe { std::mem::zeroed() }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct se_live_take {
+    pub track_id: u64,
+    pub start_frame: i64,
+    pub frames: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct se_record_stats {
+    pub overruns: u64,
+    pub dropped_frames: u64,
+    pub write_errors: u64,
+    pub takes: u64,
+}
+
 unsafe extern "C" {
     pub fn se_abi_version() -> u32;
     pub fn se_engine_create(config: *const se_config) -> *mut se_engine;
@@ -273,6 +404,18 @@ unsafe extern "C" {
     pub fn se_session_publish_v2(engine: *mut se_engine, session: *const se_session_desc_v2) -> i32;
     pub fn se_session_publish_v3(engine: *mut se_engine, session: *const se_session_desc_v3) -> i32;
     pub fn se_synth_params_default(out: *mut se_synth_params);
+    pub fn se_session_publish_v4(engine: *mut se_engine, session: *const se_session_desc_v4) -> i32;
+    pub fn se_device_list(out: *mut se_device_info, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_device_configure(engine: *mut se_engine, config: *const se_device_config) -> i32;
+    pub fn se_device_status_get(engine: *mut se_engine, out: *mut se_device_status) -> i32;
+    pub fn se_input_set_muted(engine: *mut se_engine, muted: u8) -> i32;
+    pub fn se_record_start(engine: *mut se_engine, utf8_dir: *const c_char) -> i32;
+    pub fn se_record_stop(engine: *mut se_engine, out_take_count: *mut usize) -> i32;
+    pub fn se_record_get_take(engine: *mut se_engine, index: usize, out: *mut se_recorded_take) -> i32;
+    pub fn se_record_state(engine: *mut se_engine, out_active: *mut u8, out: *mut se_live_take, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_record_peaks(engine: *mut se_engine, track_id: u64, frames_per_peak: u32, out_minmax: *mut f32, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_record_stats_get(engine: *mut se_engine, out: *mut se_record_stats) -> i32;
+    pub fn se_render_offline_with_input(engine: *mut se_engine, input_interleaved: *const f32, input_channels: u32, out_interleaved: *mut f32, frames: u32) -> i32;
 }
 
 /// Guards the hand-written declarations against drift from saine_engine.h.
@@ -419,6 +562,74 @@ mod abi_layout {
             (offset_of!(se_session_desc_v3, tracks), offset_of!(se_session_desc_v3, track_count), offset_of!(se_session_desc_v3, master_gain)),
             (0, 8, 12)
         );
+    }
+
+    #[test]
+    fn recording_layout_matches_c_header() {
+        // Verified with clang -Wpadded against saine_engine.h (no implicit
+        // padding) and by static_asserts in engine/src/c_api.cpp.
+        assert_eq!((size_of::<se_track_desc_v4>(), align_of::<se_track_desc_v4>()), (56, 8));
+        assert_eq!(
+            (
+                offset_of!(se_track_desc_v4, track_id),
+                offset_of!(se_track_desc_v4, gain),
+                offset_of!(se_track_desc_v4, pan),
+                offset_of!(se_track_desc_v4, mute),
+                offset_of!(se_track_desc_v4, solo),
+                offset_of!(se_track_desc_v4, instrument),
+                offset_of!(se_track_desc_v4, arm),
+                offset_of!(se_track_desc_v4, monitor),
+                offset_of!(se_track_desc_v4, input_mode),
+                offset_of!(se_track_desc_v4, input_channel),
+                offset_of!(se_track_desc_v4, clips),
+                offset_of!(se_track_desc_v4, clip_count),
+            ),
+            (0, 8, 12, 16, 17, 18, 19, 20, 21, 22, 24, 32)
+        );
+        assert_eq!((offset_of!(se_track_desc_v4, note_count), offset_of!(se_track_desc_v4, notes), offset_of!(se_track_desc_v4, synth)), (36, 40, 48));
+        assert_eq!((size_of::<se_session_desc_v4>(), align_of::<se_session_desc_v4>()), (16, 8));
+        assert_eq!((size_of::<se_device_info>(), align_of::<se_device_info>()), (656, 8));
+        assert_eq!(
+            (
+                offset_of!(se_device_info, name),
+                offset_of!(se_device_info, input_channels),
+                offset_of!(se_device_info, output_channels),
+                offset_of!(se_device_info, is_default_input),
+                offset_of!(se_device_info, is_default_output),
+                offset_of!(se_device_info, sample_rate_count),
+                offset_of!(se_device_info, sample_rates)
+            ),
+            (256, 512, 516, 520, 521, 524, 528)
+        );
+        assert_eq!((size_of::<se_device_config>(), align_of::<se_device_config>()), (32, 8));
+        assert_eq!(
+            (offset_of!(se_device_config, input_uid), offset_of!(se_device_config, sample_rate), offset_of!(se_device_config, buffer_size), offset_of!(se_device_config, input_enabled)),
+            (8, 16, 24, 28)
+        );
+        assert_eq!((size_of::<se_device_status>(), align_of::<se_device_status>()), (808, 8));
+        assert_eq!(
+            (
+                offset_of!(se_device_status, input_name),
+                offset_of!(se_device_status, input_error),
+                offset_of!(se_device_status, running),
+                offset_of!(se_device_status, input_open),
+                offset_of!(se_device_status, sample_rate),
+                offset_of!(se_device_status, buffer_size),
+                offset_of!(se_device_status, input_channels),
+                offset_of!(se_device_status, output_channels),
+                offset_of!(se_device_status, input_latency_frames),
+                offset_of!(se_device_status, output_latency_frames),
+                offset_of!(se_device_status, _pad2)
+            ),
+            (256, 512, 768, 769, 776, 784, 788, 792, 796, 800, 804)
+        );
+        assert_eq!((size_of::<se_recorded_take>(), align_of::<se_recorded_take>()), (1064, 8));
+        assert_eq!(
+            (offset_of!(se_recorded_take, start_frame), offset_of!(se_recorded_take, frames), offset_of!(se_recorded_take, channels), offset_of!(se_recorded_take, sample_rate), offset_of!(se_recorded_take, path)),
+            (8, 16, 24, 32, 40)
+        );
+        assert_eq!((size_of::<se_live_take>(), align_of::<se_live_take>()), (24, 8));
+        assert_eq!((size_of::<se_record_stats>(), align_of::<se_record_stats>()), (32, 8));
     }
 
     #[test]

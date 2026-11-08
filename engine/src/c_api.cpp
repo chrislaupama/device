@@ -6,14 +6,36 @@
 #include "saine_engine.h"
 
 #include "engine.hpp"
+#include "test_hooks.hpp"
 
 #include <cmath>
+#include <cstddef>
+#include <cstring>
 #include <new>
 #include <string>
 
 struct se_engine {
     std::unique_ptr<saine::Engine> impl;
 };
+
+// ABI layout guards for the recording/device additions (64-bit targets;
+// also checked from Rust in crates/saine-engine/src/ffi.rs).
+#if UINTPTR_MAX == 0xffffffffffffffffu
+static_assert(sizeof(se_track_desc_v4) == 56 && alignof(se_track_desc_v4) == 8);
+static_assert(offsetof(se_track_desc_v4, arm) == 19 && offsetof(se_track_desc_v4, monitor) == 20 &&
+              offsetof(se_track_desc_v4, input_mode) == 21 && offsetof(se_track_desc_v4, input_channel) == 22 &&
+              offsetof(se_track_desc_v4, clips) == 24 && offsetof(se_track_desc_v4, synth) == 48);
+static_assert(sizeof(se_session_desc_v4) == 16);
+static_assert(sizeof(se_device_info) == 656 && offsetof(se_device_info, input_channels) == 512 &&
+              offsetof(se_device_info, sample_rate_count) == 524 && offsetof(se_device_info, sample_rates) == 528);
+static_assert(sizeof(se_device_config) == 32 && offsetof(se_device_config, sample_rate) == 16 &&
+              offsetof(se_device_config, buffer_size) == 24 && offsetof(se_device_config, input_enabled) == 28);
+static_assert(sizeof(se_device_status) == 808 && offsetof(se_device_status, running) == 768 &&
+              offsetof(se_device_status, sample_rate) == 776 && offsetof(se_device_status, _pad2) == 804);
+static_assert(sizeof(se_recorded_take) == 1064 && offsetof(se_recorded_take, sample_rate) == 32 &&
+              offsetof(se_recorded_take, path) == 40);
+static_assert(sizeof(se_live_take) == 24 && sizeof(se_record_stats) == 32);
+#endif
 
 namespace {
 
@@ -291,4 +313,157 @@ int32_t se_export_wav(se_engine* engine, const char* utf8_path, int64_t start_fr
     });
 }
 
+// ---- input, monitoring, recording, devices
+
+int32_t se_session_publish_v4(se_engine* engine, const se_session_desc_v4* session) {
+    SE_REQUIRE_ENGINE(engine);
+    if (session == nullptr) return fail(SE_ERR_INVALID_ARG, "session is NULL");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->publish(*session, err), err);
+    });
+}
+
+int32_t se_device_list(se_device_info* out, size_t capacity, size_t* out_count) {
+    if (capacity > 0 && out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    return guarded([&]() -> int32_t {
+        std::vector<saine::DeviceInfo> list;
+        std::string err;
+        const int32_t rc = saine::list_audio_devices(list, err);
+        if (rc != SE_OK) return fail_from_err(rc, err);
+        for (std::size_t i = 0; i < list.size() && i < capacity; ++i) {
+            const saine::DeviceInfo& d = list[i];
+            se_device_info& o = out[i];
+            o = se_device_info{};
+            std::snprintf(o.uid, sizeof o.uid, "%s", d.uid.c_str());
+            std::snprintf(o.name, sizeof o.name, "%s", d.name.c_str());
+            o.input_channels = d.input_channels;
+            o.output_channels = d.output_channels;
+            o.is_default_input = d.is_default_input ? 1 : 0;
+            o.is_default_output = d.is_default_output ? 1 : 0;
+            for (double r : d.sample_rates)
+                if (o.sample_rate_count < SE_DEVICE_MAX_RATES) o.sample_rates[o.sample_rate_count++] = r;
+        }
+        if (out_count != nullptr) *out_count = list.size();
+        return SE_OK;
+    });
+}
+
+int32_t se_device_configure(se_engine* engine, const se_device_config* config) {
+    SE_REQUIRE_ENGINE(engine);
+    if (config == nullptr) return fail(SE_ERR_INVALID_ARG, "config is NULL");
+    return guarded([&] {
+        saine::AudioDevice::Config c;
+        c.output_uid = config->output_uid != nullptr ? config->output_uid : "";
+        c.input_enabled = config->input_enabled != 0;
+        c.input_uid = c.input_enabled && config->input_uid != nullptr ? config->input_uid : "";
+        c.device_rate = config->sample_rate;
+        c.buffer_size = config->buffer_size;
+        std::string err;
+        return check(engine->impl->device_configure(c, err), err);
+    });
+}
+
+int32_t se_device_status_get(se_engine* engine, se_device_status* out) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    return guarded([&] {
+        engine->impl->device_status(out);
+        return int32_t{SE_OK};
+    });
+}
+
+int32_t se_input_set_muted(se_engine* engine, uint8_t muted) {
+    SE_REQUIRE_ENGINE(engine);
+    engine->impl->set_input_muted(muted != 0);
+    return SE_OK;
+}
+
+int32_t se_record_start(se_engine* engine, const char* utf8_dir) {
+    SE_REQUIRE_ENGINE(engine);
+    if (utf8_dir == nullptr || utf8_dir[0] == '\0') return fail(SE_ERR_INVALID_ARG, "directory is NULL or empty");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->record_start(utf8_dir, err), err);
+    });
+}
+
+int32_t se_record_stop(se_engine* engine, size_t* out_take_count) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->record_stop(out_take_count, err), err);
+    });
+}
+
+int32_t se_record_get_take(se_engine* engine, size_t index, se_recorded_take* out) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    return guarded([&] {
+        const int32_t rc = engine->impl->record_get_take(index, out);
+        return rc == SE_OK ? SE_OK : fail(rc, "no take " + std::to_string(index));
+    });
+}
+
+int32_t se_record_state(se_engine* engine, uint8_t* out_active, se_live_take* out, size_t capacity,
+                        size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (capacity > 0 && out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    return guarded([&] {
+        bool active = false;
+        std::vector<saine::LiveTakeInfo> takes;
+        engine->impl->record_state(active, takes);
+        if (out_active != nullptr) *out_active = active ? 1 : 0;
+        for (std::size_t i = 0; i < takes.size() && i < capacity; ++i)
+            out[i] = se_live_take{takes[i].track_id, takes[i].start_frame, takes[i].frames};
+        if (out_count != nullptr) *out_count = takes.size();
+        return int32_t{SE_OK};
+    });
+}
+
+int32_t se_record_peaks(se_engine* engine, uint64_t track_id, uint32_t frames_per_peak, float* out_minmax,
+                        size_t capacity, size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (frames_per_peak == 0) return fail(SE_ERR_INVALID_ARG, "frames_per_peak must be > 0");
+    if (capacity > 0 && out_minmax == nullptr) return fail(SE_ERR_INVALID_ARG, "out_minmax is NULL");
+    return guarded([&] {
+        const std::size_t n = engine->impl->record_peaks(track_id, frames_per_peak, out_minmax, capacity);
+        if (out_count != nullptr) *out_count = n;
+        return int32_t{SE_OK};
+    });
+}
+
+int32_t se_record_stats_get(se_engine* engine, se_record_stats* out) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    return guarded([&] {
+        const saine::RecordStats s = engine->impl->record_stats();
+        *out = se_record_stats{s.overruns, s.dropped_frames, s.write_errors, s.takes};
+        return int32_t{SE_OK};
+    });
+}
+
+int32_t se_render_offline_with_input(se_engine* engine, const float* input_interleaved, uint32_t input_channels,
+                                     float* out_interleaved, uint32_t frames) {
+    SE_REQUIRE_ENGINE(engine);
+    if (frames > 0 && (out_interleaved == nullptr || input_interleaved == nullptr))
+        return fail(SE_ERR_INVALID_ARG, "input or output buffer is NULL");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->render_offline_with_input(input_interleaved, input_channels, out_interleaved,
+                                                             frames, err),
+                     err);
+    });
+}
+
 } // extern "C"
+
+namespace saine::testing {
+
+void set_device_factory(se_engine* e, std::function<std::unique_ptr<AudioDevice>()> factory) {
+    e->impl->set_device_factory(std::move(factory));
+}
+void set_record_writer_stalled(se_engine* e, bool stalled) { e->impl->set_record_writer_stalled(stalled); }
+void set_record_ring_frames(se_engine* e, std::size_t frames) { e->impl->set_record_ring_frames(frames); }
+
+} // namespace saine::testing

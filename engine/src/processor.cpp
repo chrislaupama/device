@@ -16,7 +16,7 @@ namespace saine {
 
 RenderContext::RenderContext(uint32_t max_block)
     : max_block_(max_block), track_l_(max_block), track_r_(max_block), master_l_(max_block), master_r_(max_block),
-      synth_(max_block) {}
+      synth_(max_block), zeros_(max_block, 0.0f) {}
 
 void kernel_add_scaled(float* __restrict dst, const float* __restrict src, float gain, uint32_t n) noexcept {
     for (uint32_t i = 0; i < n; ++i) dst[i] += src[i] * gain;
@@ -63,13 +63,15 @@ float kernel_peak(const float* __restrict buf, uint32_t n) noexcept {
 
 BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing, uint32_t frames,
                         RenderContext& ctx, bool update_meters, uint32_t peek_slot,
-                        const InstrumentInputs& inst) noexcept {
+                        const InstrumentInputs& inst, const InputView& input) noexcept {
     float* const ml = ctx.master_l();
     float* const mr = ctx.master_r();
     std::memset(ml, 0, sizeof(float) * frames);
     std::memset(mr, 0, sizeof(float) * frames);
     if (graph == nullptr || frames == 0) return {};
-    if (!playing && inst.synths == nullptr) return {};
+    const bool live_input = input.count > 0 && graph->uses_input;
+    if (!playing && inst.synths == nullptr && !live_input) return {};
+    const auto input_channel = [&](uint32_t c) { return c < input.count ? input.channels[c] : ctx.zeros(); };
 
     float* const tl = ctx.track_l();
     float* const tr = ctx.track_r();
@@ -81,7 +83,8 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
     for (std::size_t t = 0; t < track_count; ++t) {
         const TrackNode& track = graph->tracks[t];
         Synth* const synth = track.instrument && inst.synths != nullptr ? inst.synths[t] : nullptr;
-        if (synth == nullptr && (!track.audible || !playing)) continue;
+        const bool routed = live_input && track.input_mode != SE_INPUT_NONE && (track.monitor || track.arm);
+        if (synth == nullptr && !routed && (!track.audible || !playing)) continue;
 
         bool any = false;
         const ClipNode* clip = graph->clips.data() + track.clip_begin;
@@ -114,6 +117,31 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                 std::memcpy(tl, sb, sizeof(float) * frames);
                 std::memcpy(tr, sb, sizeof(float) * frames);
                 any = true;
+            }
+        }
+        if (routed) {
+            const float* il = input_channel(track.input_channel);
+            const float* ir = track.input_mode == SE_INPUT_STEREO ? input_channel(track.input_channel + 1u) : il;
+            if (track.monitor) {
+                if (track.audible) {
+                    if (any) {
+                        kernel_add_scaled(tl, il, 1.0f, frames);
+                        kernel_add_scaled(tr, ir, 1.0f, frames);
+                    } else {
+                        std::memcpy(tl, il, sizeof(float) * frames);
+                        std::memcpy(tr, ir, sizeof(float) * frames);
+                        any = true;
+                    }
+                }
+            } else if (update_meters) {
+                // Armed, not monitoring: the meter shows the raw input level.
+                TrackMeter& m = graph->meters[t];
+                const float pl = kernel_peak(il, frames);
+                const float pr = ir == il ? pl : kernel_peak(ir, frames);
+                atomic_store_max(m.peak_l, pl);
+                atomic_store_max(m.peak_r, pr);
+                atomic_store_max(m.win_l[peek_slot], pl);
+                atomic_store_max(m.win_r[peek_slot], pr);
             }
         }
         if (!any || !track.audible) continue;
