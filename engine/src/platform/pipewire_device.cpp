@@ -51,6 +51,10 @@
 #include <spa/pod/builder.h>
 #include <spa/utils/dict.h>
 
+// The pw_*_add_listener / pw_registry_bind / pw_core_* method macros expand
+// to C casts in this file.
+#pragma GCC diagnostic ignored "-Wold-style-cast"
+
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -391,11 +395,10 @@ public:
             const uint32_t quantum = requested_quantum();
             ring_target_ = 2 * quantum;
             ring_.reset(in_channels_, 8 * kMaxCycleFrames, ring_target_, 4 * quantum);
-            capture_ = make_stream(false, in_node != nullptr ? in_node->name : std::string(), in_channels_,
-                                   input_error);
+            make_stream(false, in_node != nullptr ? in_node->name : std::string(), in_channels_, input_error);
             in_name_ = in_node != nullptr ? in_node->description : std::string("default input");
         }
-        playback_ = make_stream(true, out_node != nullptr ? out_node->name : std::string(), out_channels_, err);
+        make_stream(true, out_node != nullptr ? out_node->name : std::string(), out_channels_, err);
         if (playback_.stream == nullptr) {
             pw_thread_loop_unlock(loop_);
             teardown();

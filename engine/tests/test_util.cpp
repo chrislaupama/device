@@ -35,6 +35,8 @@ void write_float_wav(const std::string& path, const std::vector<std::vector<floa
         throw std::runtime_error("write_float_wav: " + err);
 }
 
+std::FILE* fopen_utf8(const char* path, const char* mode) { return saine::os::fopen_utf8(path, mode); }
+
 void write_bytes(const std::string& path, const std::vector<uint8_t>& bytes) {
     std::FILE* f = saine::os::fopen_utf8(path.c_str(), "wb");
     if (f == nullptr) throw std::runtime_error("cannot write " + path);

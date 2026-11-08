@@ -209,7 +209,7 @@ uint64_t run(const std::string& plugin_dir, bool with_latency, Configure&& confi
     se_transport_stop(e);
     TempFile f("pdc_golden_export.wav");
     if (se_export_wav(e, f.path.c_str(), 1000, 41000) != SE_OK) return 2;
-    if (FILE* fp = std::fopen(f.path.c_str(), "rb")) {
+    if (FILE* fp = testutil::fopen_utf8(f.path.c_str(), "rb")) {
         std::vector<uint8_t> bytes(1 << 20);
         bytes.resize(std::fread(bytes.data(), 1, bytes.size(), fp));
         std::fclose(fp);

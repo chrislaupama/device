@@ -386,7 +386,7 @@ public:
         }
         ctx_ = ProcessContext{};
         ctx_.state = ProcessContext::kTempoValid | ProcessContext::kProjectTimeMusicValid |
-                     ProcessContext::kTimeSigValid | (t.playing ? ProcessContext::kPlaying : 0u);
+                     ProcessContext::kTimeSigValid | (t.playing ? static_cast<uint32_t>(ProcessContext::kPlaying) : 0u);
         ctx_.sampleRate = t.sample_rate;
         ctx_.projectTimeSamples = t.position;
         ctx_.projectTimeMusic = t.beats();

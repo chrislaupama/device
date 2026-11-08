@@ -134,7 +134,7 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
             se_device_desc d{};
             d.device_id = 1000 + t * 2 + static_cast<uint32_t>(k);
             const bool vst3 = plugins == 1 && k == 1;
-            d.format = vst3 ? SE_PLUGIN_VST3 : SE_PLUGIN_CLAP;
+            d.format = static_cast<uint8_t>(vst3 ? SE_PLUGIN_VST3 : SE_PLUGIN_CLAP);
             d.plugin_id = vst3 ? "5A17E5A16E0000018A1E7E576A170001" : "studio.saine.test.gain";
             d.path = vst3 ? vst3_gain.c_str() : clap_gain.c_str();
             d.enabled = 1;
@@ -241,7 +241,7 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
     Result r{};
     r.us_per_block_avg = wall_us / blocks;
     r.us_per_block_p99 = sorted[static_cast<std::size_t>(0.99 * (blocks - 1))];
-    r.us_per_block_max = sorted.back();
+    r.us_per_block_max = sorted.empty() ? 0.0 : sorted.back();
     const double audio_us = static_cast<double>(blocks) * kBlock / kRate * 1e6;
     r.rt_ratio = audio_us / wall_us;
     return r;
@@ -331,7 +331,7 @@ Result run_input(uint32_t tracks, uint32_t blocks, bool record) {
         td.pan = std::sin(static_cast<float>(t));
         td.arm = 1;
         td.monitor = 1;
-        td.input_mode = t % 3 == 0 ? SE_INPUT_STEREO : SE_INPUT_MONO;
+        td.input_mode = static_cast<uint8_t>(t % 3 == 0 ? SE_INPUT_STEREO : SE_INPUT_MONO);
         td.input_channel = static_cast<uint16_t>(t % (kInCh - 1));
     }
     se_session_desc_v4 sd{tds.data(), tracks, 0.5f};

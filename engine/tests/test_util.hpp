@@ -3,6 +3,7 @@
 #include "saine_engine.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,8 @@ struct TempFile {
 
 // Writes a 32-bit float WAV from planar channel data.
 void write_float_wav(const std::string& path, const std::vector<std::vector<float>>& planar, uint32_t rate);
+// fopen() for a UTF-8 path (Windows: _wfopen).
+std::FILE* fopen_utf8(const char* path, const char* mode);
 // Writes raw bytes to a file.
 void write_bytes(const std::string& path, const std::vector<uint8_t>& bytes);
 

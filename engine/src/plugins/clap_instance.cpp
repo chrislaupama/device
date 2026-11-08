@@ -204,7 +204,7 @@ public:
         transport_.header = {sizeof transport_, 0, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_TRANSPORT, 0};
         transport_.flags = CLAP_TRANSPORT_HAS_TEMPO | CLAP_TRANSPORT_HAS_BEATS_TIMELINE |
                            CLAP_TRANSPORT_HAS_SECONDS_TIMELINE | CLAP_TRANSPORT_HAS_TIME_SIGNATURE |
-                           (t.playing ? CLAP_TRANSPORT_IS_PLAYING : 0u);
+                           (t.playing ? static_cast<uint32_t>(CLAP_TRANSPORT_IS_PLAYING) : 0u);
         transport_.tempo = t.tempo_bpm;
         transport_.song_pos_beats = static_cast<clap_beattime>(t.beats() * static_cast<double>(CLAP_BEATTIME_FACTOR));
         transport_.song_pos_seconds = static_cast<clap_sectime>(static_cast<double>(t.position) / t.sample_rate *
