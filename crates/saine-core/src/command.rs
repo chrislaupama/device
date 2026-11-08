@@ -88,6 +88,14 @@ pub enum Command {
     SetDeviceEnabled { device: DeviceId, enabled: bool },
     /// Set or clear an instrument track's instrument plugin (None = built-in synth).
     SetInstrumentPlugin { track: TrackId, device: Option<Device> },
+    /// Set one parameter of a built-in device (plain value in the
+    /// parameter's unit; knob drags coalesce per parameter).
+    SetDeviceParam { device: DeviceId, param: String, value: f32 },
+    /// Set several parameters of a built-in device at once (preset load, one
+    /// undo step). `preset` becomes the name shown in the card header.
+    SetDeviceParams { device: DeviceId, params: std::collections::BTreeMap<String, f32>, preset: Option<String> },
+    /// Pick (or clear) the sidechain source track of a built-in device.
+    SetDeviceSidechain { device: DeviceId, source: Option<TrackId> },
     /// Create, replace (points, enabled) or delete (`lane: None`) the lane for
     /// `target` on a track, or on the master when `track` is None.
     SetAutomationLane { track: Option<TrackId>, target: AutomationTarget, lane: Option<AutomationLane> },
@@ -131,6 +139,10 @@ impl Command {
             Command::RemoveDevice { .. } => "Remove Device".into(),
             Command::MoveDevice { .. } => "Move Device".into(),
             Command::SetDeviceEnabled { enabled, .. } => (if *enabled { "Enable Device" } else { "Bypass Device" }).into(),
+            Command::SetDeviceParam { .. } => "Device Parameter Change".into(),
+            Command::SetDeviceParams { preset: Some(name), .. } => format!("Load Preset {name}"),
+            Command::SetDeviceParams { preset: None, .. } => "Device Parameters Change".into(),
+            Command::SetDeviceSidechain { .. } => "Sidechain Change".into(),
             Command::SetInstrumentPlugin { device, .. } => match device {
                 Some(d) => format!("Load {}", d.plugin.name),
                 None => "Use Built-in Synth".into(),
@@ -153,6 +165,7 @@ impl Command {
             Command::SetClipGain { clip, .. } => Some(format!("clipgain:{}", clip.0)),
             Command::SetTempo { .. } => Some("tempo".into()),
             Command::SetSynthParams { track, params } => Some(format!("synth:{}:{}", track.0, params.preset)),
+            Command::SetDeviceParam { device, param, .. } => Some(format!("devparam:{}:{param}", device.0)),
             _ => None,
         }
     }
@@ -436,6 +449,7 @@ impl Command {
                 if device.plugin.kind != PluginKind::Effect {
                     return Err(invalid("device", "only effect plugins go in the insert chain"));
                 }
+                sanitize_builtin(&mut device)?;
                 if device.id.0 == 0 {
                     device.id = DeviceId(p.alloc_id());
                 } else if p.find_device(device.id).is_some() {
@@ -510,6 +524,41 @@ impl Command {
                 let old = std::mem::replace(&mut p.tracks[ti].instrument_plugin, device);
                 Ok(Command::SetInstrumentPlugin { track, device: old })
             }
+            Command::SetDeviceParam { device, param, value } => {
+                let (d, def) = builtin_mut(p, device)?;
+                let v = crate::builtin::validate_value(def, &param, value).map_err(|r| invalid("value", r))?;
+                let old = d.params.insert(param.clone(), v).unwrap_or_else(|| def.param(&param).map(|q| q.default).unwrap_or(v));
+                Ok(Command::SetDeviceParam { device, param, value: old })
+            }
+            Command::SetDeviceParams { device, params, preset } => {
+                let (d, def) = builtin_mut(p, device)?;
+                let mut checked = std::collections::BTreeMap::new();
+                for (k, v) in &params {
+                    checked.insert(k.clone(), crate::builtin::validate_value(def, k, *v).map_err(|r| invalid("value", r))?);
+                }
+                let mut old = std::collections::BTreeMap::new();
+                for (k, v) in checked {
+                    let prev = d.params.insert(k.clone(), v).unwrap_or_else(|| def.param(&k).map(|q| q.default).unwrap_or(v));
+                    old.insert(k, prev);
+                }
+                let old_preset = std::mem::replace(&mut d.preset, preset);
+                Ok(Command::SetDeviceParams { device, params: old, preset: old_preset })
+            }
+            Command::SetDeviceSidechain { device, source } => {
+                let (ti, _) = p.find_device(device).ok_or_else(|| invalid("device", format!("{} not found", device.0)))?;
+                if let Some(s) = source {
+                    let si = p.track_index(s).ok_or(EditError::TrackNotFound(s))?;
+                    if si == ti {
+                        return Err(invalid("source", "a device can't sidechain from its own track"));
+                    }
+                }
+                let (d, def) = builtin_mut(p, device)?;
+                if !def.sidechain {
+                    return Err(invalid("device", format!("{} has no sidechain input", def.name)));
+                }
+                let old = std::mem::replace(&mut d.sidechain, source);
+                Ok(Command::SetDeviceSidechain { device, source: old })
+            }
             Command::SetAutomationLane { track, target, lane } => {
                 if let Some(l) = &lane {
                     if l.target != target {
@@ -534,6 +583,13 @@ impl Command {
                                 if !p.tracks[ti].devices.iter().chain(p.tracks[ti].instrument_plugin.iter()).any(|d| d.id == *device) =>
                             {
                                 return Err(invalid("target", "plugin automation must target a device on the same track"));
+                            }
+                            AutomationTarget::Builtin { device, device_type, param } => {
+                                let d = p.tracks[ti].devices.iter().find(|d| d.id == *device).ok_or_else(|| invalid("target", "device automation must target a device on the same track"))?;
+                                let def = crate::builtin::def_of(d).filter(|def| def.id == device_type).ok_or_else(|| invalid("target", "device kind mismatch"))?;
+                                if !def.param(param).is_some_and(|q| q.automatable) {
+                                    return Err(invalid("target", format!("{} has no automatable parameter {param:?}", def.name)));
+                                }
                             }
                             _ => {}
                         }
@@ -571,6 +627,38 @@ impl Command {
             }
         }
     }
+}
+
+/// The built-in device `id` and its definition.
+fn builtin_mut(p: &mut Project, id: DeviceId) -> Result<(&mut Device, &'static crate::builtin::DeviceDef), EditError> {
+    let (ti, slot) = p.find_device(id).ok_or_else(|| invalid("device", format!("{} not found", id.0)))?;
+    let d = match slot {
+        DeviceSlot::Insert(i) => &mut p.tracks[ti].devices[i],
+        DeviceSlot::Instrument => p.tracks[ti].instrument_plugin.as_mut().expect("found"),
+    };
+    let def = crate::builtin::def_of(d).ok_or_else(|| invalid("device", "not a built-in device"))?;
+    Ok((d, def))
+}
+
+/// Built-in devices entering the model: the definition must exist; stored
+/// values are snapped into range, unknown ids dropped and missing ids filled
+/// with defaults (so the saved state is always complete).
+fn sanitize_builtin(d: &mut Device) -> Result<(), EditError> {
+    if d.plugin.format != crate::device::PluginFormat::Builtin {
+        return Ok(());
+    }
+    let def = crate::builtin::find(&d.plugin.id).ok_or_else(|| invalid("device", format!("unknown built-in device {:?}", d.plugin.id)))?;
+    let mut values = def.defaults();
+    for (k, v) in std::mem::take(&mut d.params) {
+        if let Some(q) = def.param(&k) {
+            values.insert(k, q.snap(v));
+        }
+    }
+    d.params = values;
+    if !def.sidechain {
+        d.sidechain = None;
+    }
+    Ok(())
 }
 
 fn kind_name(k: TrackKind) -> &'static str {

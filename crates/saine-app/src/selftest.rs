@@ -2041,6 +2041,153 @@ fn automation_steps() -> Vec<Step> {
     ]
 }
 
+// ------------------------------------------------------------------ built-in devices
+
+fn builtin_device(c: &Controller) -> Option<&saine_core::Device> {
+    let t = track_of(c, TrackKind::Audio)?;
+    c.project().tracks[t].devices.iter().find(|d| d.plugin.format == saine_core::PluginFormat::Builtin)
+}
+
+fn builtin_value(c: &Controller, param: &str) -> Option<f32> {
+    let d = builtin_device(c)?;
+    let def = saine_core::builtin::def_of(d)?;
+    Some(def.value(d, def.param(param)?))
+}
+
+/// Window centre of knob `i` of a built-in card (ui/device_panel.slint KnobCell).
+fn panel_knob_xy(cd: &crate::DeviceCard, i: usize) -> Option<(f32, f32)> {
+    let k = slint::Model::row_data(&cd.knobs, i)?;
+    let z = crate::device_panel::Z;
+    Some(card_xy(cd, k.x + 31.0 * z, (229.0 + 16.0) * z))
+}
+
+/// The built-in Compressor driven through its generated panel (no plugins needed).
+fn builtin_device_steps() -> Vec<Step> {
+    use Step::*;
+    let hist = Rc::new(Cell::new(0usize));
+    let h = || hist.clone();
+    fn one(hc: &Rc<Cell<usize>>, c: &Controller, label: &str) -> Result<(), String> {
+        let n = c.doc.history_labels().len();
+        let was = hc.get();
+        hc.set(n);
+        (n == was + 1 && c.doc.undo_label() == Some(label)).then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want {label})", c.doc.undo_label()))
+    }
+    let (h0, h1, h2, h3, h4, h5, h6) = (h(), h(), h(), h(), h(), h(), h());
+    vec![
+        Do("builtin: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("builtin: select the first audio track, Devices tab, Add device › Built-in", Box::new(move |a, ctl| {
+            let i = track_of(&ctl.borrow(), TrackKind::Audio).unwrap_or(0);
+            click_track_header(a, ctl, i);
+            if ctl.borrow().bottom_tab == crate::controller::BottomTab::Clip {
+                click(a, 5.0 + 286.0 + 15.0, 820.0 - 5.0 - 390.0 + 14.0);
+            }
+            h0.set(ctl.borrow().doc.history_labels().len());
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            let add_x = a.global::<Studio>().get_add_device_x();
+            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+        })),
+        Check("builtin: the Built-in list offers Compressor", Box::new(|_, a| {
+            let items = devmenu_labels(a);
+            (a.global::<Studio>().get_devmenu_open() && items.iter().any(|r| r.0 == "Compressor" && r.2)).then_some(()).ok_or(format!("items {items:?}"))
+        })),
+        Do("builtin: pick Compressor", Box::new(|a| {
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == "Compressor") {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })),
+        Check("builtin: Compressor added (AddDevice) at its defaults, one undo step; generated card has 7 knobs, 1 slider, a strip", Box::new(move |c, a| {
+            one(&h1, c, "Add Compressor")?;
+            let cd = card_named(a, "Compressor").ok_or("no card")?;
+            let n = |m: usize| m;
+            let ok = cd.builtin
+                && n(slint::Model::row_count(&cd.knobs)) == 7
+                && slint::Model::row_count(&cd.sliders) == 1
+                && cd.strip.visible
+                && approx(cd.width, 521.0 * crate::device_panel::Z, 0.01)
+                && builtin_value(c, "threshold") == Some(-24.0);
+            ok.then_some(()).ok_or(format!("builtin {} knobs {} width {}", cd.builtin, slint::Model::row_count(&cd.knobs), cd.width))
+        })),
+        Check("engine: the Compressor is live (readouts available, no load error)", Box::new(|c, _| {
+            let id = builtin_device(c).ok_or("no device")?.id;
+            let mut r = Vec::new();
+            c.engine.builtin_readouts(id.0, &mut r).map_err(|e| e.to_string())?;
+            let errors = c.engine.plugin_load_errors();
+            (r.len() == 3 && !errors.iter().any(|(d, _)| *d == id)).then_some(()).ok_or(format!("readouts {r:?} errors {errors:?}"))
+        })),
+        DoC("builtin: drag the Threshold knob up 40 px", Box::new(|a, _| {
+            if let Some((x, y)) = card_named(a, "Compressor").and_then(|cd| panel_knob_xy(&cd, 0)) {
+                drag(a, x, y, x, y - 40.0);
+            }
+        })),
+        Check("builtin: Threshold −24 → −9 dB (40 px at 1/160 per px), ONE undo step for the drag", Box::new(move |c, a| {
+            one(&h2, c, "Device Parameter Change")?;
+            let v = builtin_value(c, "threshold").unwrap_or(f32::NAN);
+            let shown = card_named(a, "Compressor").and_then(|cd| slint::Model::row_data(&cd.knobs, 0)).map(|k| k.value.to_string()).unwrap_or_default();
+            (approx(v, -9.0, 0.05) && shown == "\u{2212}9.0 dB").then_some(()).ok_or(format!("threshold {v}, knob shows {shown:?}"))
+        })),
+        DoC("builtin: double-click the Threshold knob", Box::new(|a, _| {
+            if let Some((x, y)) = card_named(a, "Compressor").and_then(|cd| panel_knob_xy(&cd, 0)) {
+                double_click(a, x, y);
+            }
+        })),
+        Check("builtin: double-click reset Threshold to −24 dB, one undo step", Box::new(move |c, _| {
+            one(&h3, c, "Device Parameter Change")?;
+            let v = builtin_value(c, "threshold").unwrap_or(f32::NAN);
+            (v == -24.0).then_some(()).ok_or(format!("threshold {v}"))
+        })),
+        DoC("builtin: click › (next preset)", Box::new(|a, _| {
+            if let Some(cd) = card_named(a, "Compressor") {
+                let z = crate::device_panel::Z;
+                let (x, y) = card_xy(&cd, cd.width - 87.0 * z + 7.0 * z, 13.5);
+                click(a, x, y);
+            }
+        })),
+        Check("builtin: first factory preset loaded (SetDeviceParams), one undo step, header names it", Box::new(move |c, a| {
+            let def = saine_core::builtin::find("compressor").unwrap();
+            let first = def.factory[0];
+            one(&h4, c, &format!("Load Preset {}", first.name))?;
+            let want = def.factory_values(&first);
+            let d = builtin_device(c).ok_or("no device")?;
+            let shown = card_named(a, "Compressor").map(|cd| cd.preset.to_string()).unwrap_or_default();
+            (def.params.iter().all(|p| def.value(d, p) == want[p.id]) && shown == first.name).then_some(()).ok_or(format!("preset {:?}, header {shown:?}", d.preset))
+        })),
+        DoC("builtin: Sidechain menu, pick the Instrument track", Box::new(|a, ctl| {
+            let (id, name) = {
+                let c = ctl.borrow();
+                let Some(d) = builtin_device(&c) else { return };
+                let Some(t) = track_of(&c, TrackKind::Instrument) else { return };
+                (d.id.0 as i32, c.project().tracks[t].name.clone())
+            };
+            a.global::<Studio>().invoke_panel_menu(id, -1, 600.0, 600.0);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == name) {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })),
+        Check("builtin: sidechain source set and enabled in one undo step; the Gain pill is live", Box::new(move |c, a| {
+            one(&h5, c, "Sidechain Change")?;
+            let d = builtin_device(c).ok_or("no device")?;
+            let inst = track_of(c, TrackKind::Instrument).map(|t| c.project().tracks[t].id);
+            let pill = card_named(a, "Compressor").and_then(|cd| (0..slint::Model::row_count(&cd.picks)).filter_map(|i| slint::Model::row_data(&cd.picks, i)).find(|p| p.kind == 3));
+            (d.sidechain == inst && builtin_value(c, "sidechainEnable") == Some(1.0) && pill.is_some_and(|p| p.enabled))
+                .then_some(())
+                .ok_or(format!("sidechain {:?} enable {:?}", d.sidechain, builtin_value(c, "sidechainEnable")))
+        })),
+        Do("builtin: ⌘Z", Box::new(|a| key(a, "z", true, false))),
+        Check("builtin: undo removes the sidechain (source and enable)", Box::new(move |c, _| {
+            let d = builtin_device(c).ok_or("no device")?;
+            h6.set(c.doc.history_labels().len());
+            (d.sidechain.is_none() && builtin_value(c, "sidechainEnable") == Some(0.0)).then_some(()).ok_or(format!("sidechain {:?}", d.sidechain))
+        })),
+    ]
+}
+
 /// The devices section drives Apple's Audio Units (AULowpass, AUDelay,
 /// DLSMusicDevice). Elsewhere its actions are not performed and its checks
 /// are reported as skipped (counted like the other guarded skips).
@@ -2064,6 +2211,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(midi_steps());
     all.extend(recording_steps());
     all.extend(platform_device_steps());
+    all.extend(builtin_device_steps());
     all.extend(automation_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));

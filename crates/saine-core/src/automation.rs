@@ -149,6 +149,9 @@ pub enum AutomationTarget {
     Synth { param: SynthParam },
     /// Plugin parameter by its format id, normalized 0..1. `name` is for display.
     Plugin { device: DeviceId, param: u32, name: String },
+    /// Built-in device parameter (crate::builtin), plain value in the
+    /// parameter's unit. `device_type` is the definition id.
+    Builtin { device: DeviceId, device_type: String, param: String },
 }
 
 pub const VOLUME_MIN_DB: f32 = -60.0;
@@ -161,11 +164,24 @@ impl AutomationTarget {
             AutomationTarget::Pan => (-1.0, 1.0),
             AutomationTarget::Synth { param } => param.range(),
             AutomationTarget::Plugin { .. } => (0.0, 1.0),
+            AutomationTarget::Builtin { .. } => self.builtin_param().map(|p| (p.min, p.max)).unwrap_or((0.0, 1.0)),
         }
     }
 
     pub fn logarithmic(&self) -> bool {
-        matches!(self, AutomationTarget::Synth { param } if param.logarithmic())
+        match self {
+            AutomationTarget::Synth { param } => param.logarithmic(),
+            AutomationTarget::Builtin { .. } => self.builtin_param().is_some_and(|p| p.taper == crate::builtin::Taper::Log),
+            _ => false,
+        }
+    }
+
+    /// Definition of a built-in device target's parameter.
+    pub fn builtin_param(&self) -> Option<&'static crate::builtin::ParamDef> {
+        match self {
+            AutomationTarget::Builtin { device_type, param, .. } => crate::builtin::find(device_type)?.param(param),
+            _ => None,
+        }
     }
 
     /// Category and parameter label, like the reference pill ("Track", "Volume").
@@ -175,6 +191,10 @@ impl AutomationTarget {
             AutomationTarget::Pan => ("Track".into(), "Pan".into()),
             AutomationTarget::Synth { param } => ("Synth".into(), param.name().into()),
             AutomationTarget::Plugin { name, .. } => ("Plugin".into(), name.clone()),
+            AutomationTarget::Builtin { device_type, param, .. } => match crate::builtin::find(device_type) {
+                Some(def) => (def.name.into(), def.param(param).map(|p| p.name).unwrap_or(param).into()),
+                None => ("Device".into(), param.clone()),
+            },
         }
     }
 }

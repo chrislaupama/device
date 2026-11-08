@@ -264,6 +264,7 @@ pub struct se_session_desc_v4 {
 pub const SE_PLUGIN_AU: u8 = 0;
 pub const SE_PLUGIN_VST3: u8 = 1;
 pub const SE_PLUGIN_CLAP: u8 = 2;
+pub const SE_PLUGIN_BUILTIN: u8 = 3;
 pub const SE_PLUGIN_MESSAGE_MAX: usize = 256;
 
 #[repr(C)]
@@ -332,6 +333,29 @@ pub const SE_AUTO_VOLUME: u8 = 0;
 pub const SE_AUTO_PAN: u8 = 1;
 pub const SE_AUTO_SYNTH: u8 = 2;
 pub const SE_AUTO_PLUGIN: u8 = 3;
+pub const SE_AUTO_BUILTIN: u8 = 4;
+
+// ---- built-in devices (state blob, registry)
+pub const SE_BUILTIN_STATE_MAGIC: u32 = 0x3149_4253;
+pub const SE_BUILTIN_MAX_SIDECHAINS: usize = 8;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct se_builtin_state {
+    pub magic: u32,
+    pub value_count: u32,
+    pub sidechain_track_id: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_builtin_desc {
+    pub id: *const c_char,
+    pub param_ids: *const *const c_char,
+    pub readout_ids: *const *const c_char,
+    pub param_count: u32,
+    pub readout_count: u32,
+}
 /// Number of built-in synth parameters (`SE_SYNTH_P_*`, `SynthParam::ALL` order).
 pub const SE_SYNTH_P_COUNT: u16 = 20;
 pub const SE_PARAM_STRING_MAX: usize = 128;
@@ -629,6 +653,11 @@ unsafe extern "C" {
     pub fn se_plugin_param_value(engine: *mut se_engine, device_id: u64, param_id: u32, out_normalized: *mut f32) -> i32;
     pub fn se_plugin_param_text(engine: *mut se_engine, device_id: u64, param_id: u32, normalized: f32, out: *mut c_char, capacity: usize) -> i32;
     pub fn se_plugin_take_param_changes(engine: *mut se_engine, out: *mut se_plugin_param_change, capacity: usize, out_count: *mut usize) -> i32;
+
+    // built-in devices
+    pub fn se_builtin_registry(out_count: *mut usize) -> *const se_builtin_desc;
+    pub fn se_builtin_set_param(engine: *mut se_engine, device_id: u64, index: u32, value: f32) -> i32;
+    pub fn se_builtin_readouts(engine: *mut se_engine, device_id: u64, out: *mut f32, capacity: usize, out_count: *mut usize) -> i32;
 }
 
 /// Guards the hand-written declarations against drift from saine_engine.h.
@@ -955,6 +984,13 @@ mod abi_layout {
                 offset_of!(se_plugin_param_change, _pad),
             ],
             [8, 16, 20, 24, 25, 26]
+        );
+        assert_eq!((size_of::<se_builtin_state>(), align_of::<se_builtin_state>()), (16, 8));
+        assert_eq!([offset_of!(se_builtin_state, value_count), offset_of!(se_builtin_state, sidechain_track_id)], [4, 8]);
+        assert_eq!((size_of::<se_builtin_desc>(), align_of::<se_builtin_desc>()), (32, 8));
+        assert_eq!(
+            [offset_of!(se_builtin_desc, param_ids), offset_of!(se_builtin_desc, readout_ids), offset_of!(se_builtin_desc, param_count), offset_of!(se_builtin_desc, readout_count)],
+            [8, 16, 24, 28]
         );
     }
 

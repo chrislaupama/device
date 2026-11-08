@@ -110,6 +110,9 @@ public:
     // Test hooks.
     uint64_t plugin_instantiations() const noexcept { return plugins_.instantiations(); }
     bool plugin_set_parameter(uint64_t device_id, uint32_t param_id, double value);
+    // Built-in devices (main thread).
+    int32_t builtin_set_param(uint64_t device_id, uint32_t index, float value);
+    int32_t builtin_readouts(uint64_t device_id, float* out, std::size_t capacity, std::size_t& count);
     // Frees retired graphs the audio thread can no longer reach. Non-RT.
     void collect_garbage();
     std::size_t retired_graph_count() const;

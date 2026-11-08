@@ -6,6 +6,7 @@
 #include "saine_engine.h"
 
 #include "engine.hpp"
+#include "devices/builtin.hpp"
 #include "test_hooks.hpp"
 
 #include <cmath>
@@ -576,6 +577,37 @@ int32_t se_plugin_take_param_changes(se_engine* engine, se_plugin_param_change* 
     const std::size_t n = engine->impl->take_param_changes(out, capacity);
     if (out_count != nullptr) *out_count = n;
     return SE_OK;
+}
+
+// ---- built-in devices
+
+const se_builtin_desc* se_builtin_registry(size_t* out_count) {
+    std::size_t n = 0;
+    const se_builtin_desc* list = saine::builtin_registry_c(n);
+    if (out_count != nullptr) *out_count = n;
+    return list;
+}
+
+int32_t se_builtin_set_param(se_engine* engine, uint64_t device_id, uint32_t index, float value) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&]() -> int32_t {
+        const int32_t rc = engine->impl->builtin_set_param(device_id, index, value);
+        if (rc == SE_ERR_NOT_FOUND) return fail(rc, "no live built-in device with this id");
+        if (rc == SE_ERR_INVALID_ARG) return fail(rc, "parameter index out of range or value not finite");
+        return rc;
+    });
+}
+
+int32_t se_builtin_readouts(se_engine* engine, uint64_t device_id, float* out, size_t capacity, size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (capacity > 0 && out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    return guarded([&]() -> int32_t {
+        std::size_t n = 0;
+        const int32_t rc = engine->impl->builtin_readouts(device_id, out, capacity, n);
+        if (rc != SE_OK) return fail(rc, "no live built-in device with this id");
+        if (out_count != nullptr) *out_count = n;
+        return SE_OK;
+    });
 }
 
 // ---- plugin delay compensation

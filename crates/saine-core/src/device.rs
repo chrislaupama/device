@@ -1,5 +1,10 @@
-//! Track device chains: third-party plugins (Audio Unit, VST3, CLAP) used as
-//! insert effects, plus an optional instrument plugin on instrument tracks.
+//! Track device chains: built-in devices (crate::builtin) and third-party
+//! plugins (Audio Unit, VST3, CLAP) used as insert effects, plus an optional
+//! instrument plugin on instrument tracks.
+//!
+//! Built-in devices keep their parameter values in `Device::params` (plain
+//! values by parameter id, edited with `Command::SetDeviceParam`), so they
+//! have full undo; the rest of this note is about third-party plugins.
 //!
 //! The model only *names* plugins and stores their opaque state; the engine
 //! owns instances. Instances are keyed by `DeviceId` and survive republishes,
@@ -9,7 +14,9 @@
 //! plugin editors have their own internal undo and the host cannot observe
 //! individual edits).
 
+use crate::model::TrackId;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -21,6 +28,8 @@ pub enum PluginFormat {
     AudioUnit,
     Vst3,
     Clap,
+    /// A built-in device; `PluginRef::id` is its definition id (crate::builtin).
+    Builtin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -57,11 +66,21 @@ pub struct Device {
     /// controller state / CLAP state stream, as produced by the engine).
     #[serde(default)]
     pub state: Option<String>,
+    /// Built-in devices: plain parameter values by parameter id (missing ids
+    /// read as the definition's default).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, f32>,
+    /// Built-in devices with a sidechain input: the source track.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidechain: Option<TrackId>,
+    /// Name of the preset last loaded or saved (shown in the card header).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
 }
 
 impl Device {
     pub fn new(plugin: PluginRef) -> Self {
-        Device { id: DeviceId(0), plugin, enabled: true, state: None }
+        Device { id: DeviceId(0), plugin, enabled: true, state: None, params: BTreeMap::new(), sidechain: None, preset: None }
     }
 }
 

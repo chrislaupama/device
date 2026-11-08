@@ -261,8 +261,13 @@ impl Engine {
     fn device_store(&self, d: &saine_core::Device) -> Result<DeviceStore, EngineError> {
         let cs = |s: &str| CString::new(s).map_err(|_| nul_error());
         // SAFETY: plain query on a valid handle.
-        let live = unsafe { ffi::se_plugin_is_live(self.raw, d.id.0) } != 0;
-        let state = if live { None } else { d.state.as_deref().and_then(saine_core::device::b64::decode) };
+        let state = if let Some(def) = saine_core::builtin::def_of(d) {
+            Some(builtin_state(&def.values(d), d.sidechain.map_or(0, |t| t.0)))
+        } else if unsafe { ffi::se_plugin_is_live(self.raw, d.id.0) } != 0 {
+            None
+        } else {
+            d.state.as_deref().and_then(saine_core::device::b64::decode)
+        };
         Ok(DeviceStore {
             id: d.id.0,
             name: cs(&d.plugin.name)?,
@@ -273,6 +278,7 @@ impl Engine {
                 saine_core::PluginFormat::AudioUnit => ffi::SE_PLUGIN_AU,
                 saine_core::PluginFormat::Vst3 => ffi::SE_PLUGIN_VST3,
                 saine_core::PluginFormat::Clap => ffi::SE_PLUGIN_CLAP,
+                saine_core::PluginFormat::Builtin => ffi::SE_PLUGIN_BUILTIN,
             },
             enabled: d.enabled,
         })
@@ -357,6 +363,23 @@ impl Engine {
         check(unsafe { ffi::se_render_offline(self.raw, out.as_mut_ptr(), frames) })
     }
 
+    /// Set one parameter of a live built-in device right away (plain value;
+    /// used while dragging, before the edit is committed and republished).
+    pub fn builtin_set_param(&self, device_id: u64, index: u32, value: f32) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_builtin_set_param(self.raw, device_id, index, value) })
+    }
+
+    /// Latest readouts of a live built-in device (registry order), e.g. the
+    /// compressor's input, output and gain reduction in dB.
+    pub fn builtin_readouts(&self, device_id: u64, out: &mut Vec<f32>) -> Result<(), EngineError> {
+        let mut buf = [0f32; 32];
+        let mut n = 0usize;
+        check(unsafe { ffi::se_builtin_readouts(self.raw, device_id, buf.as_mut_ptr(), buf.len(), &mut n) })?;
+        out.clear();
+        out.extend_from_slice(&buf[..n.min(buf.len())]);
+        Ok(())
+    }
+
     pub fn export_wav(&self, path: &Path, start: i64, end: i64) -> Result<(), EngineError> {
         let p = cpath(path)?;
         check(unsafe { ffi::se_export_wav(self.raw, p.as_ptr(), start, end) })
@@ -390,6 +413,51 @@ impl DeviceStore {
     }
 }
 
+/// The engine state of a built-in device: an `se_builtin_state` header, then
+/// the plain values in definition order.
+pub fn builtin_state(values: &[f32], sidechain_track: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(16 + 4 * values.len());
+    out.extend_from_slice(&ffi::SE_BUILTIN_STATE_MAGIC.to_le_bytes());
+    out.extend_from_slice(&(values.len() as u32).to_le_bytes());
+    out.extend_from_slice(&sidechain_track.to_le_bytes());
+    for v in values {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+/// One processor in the engine's built-in registry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BuiltinProcessor {
+    pub id: String,
+    pub params: Vec<String>,
+    pub readouts: Vec<String>,
+}
+
+/// Every built-in processor the engine was compiled with.
+pub fn builtin_registry() -> Vec<BuiltinProcessor> {
+    let strings = |p: *const *const std::ffi::c_char, n: u32| -> Vec<String> {
+        // SAFETY: the registry is static data with `n` valid C strings at `p`.
+        (0..n as usize).map(|i| unsafe { CStr::from_ptr(*p.add(i)) }.to_string_lossy().into_owned()).collect()
+    };
+    let mut n = 0usize;
+    // SAFETY: returns a pointer to `n` static descriptors.
+    let p = unsafe { ffi::se_builtin_registry(&mut n) };
+    if p.is_null() {
+        return Vec::new();
+    }
+    // SAFETY: see above.
+    unsafe { std::slice::from_raw_parts(p, n) }
+        .iter()
+        .map(|d| BuiltinProcessor {
+            // SAFETY: static C string.
+            id: unsafe { CStr::from_ptr(d.id) }.to_string_lossy().into_owned(),
+            params: strings(d.param_ids, d.param_count),
+            readouts: strings(d.readout_ids, d.readout_count),
+        })
+        .collect()
+}
+
 fn lane_points(l: &LaneSnapshot) -> Vec<ffi::se_auto_point> {
     l.points.iter().map(|&(frame, value, curve)| ffi::se_auto_point { frame, value, curve }).collect()
 }
@@ -401,6 +469,10 @@ fn lane_desc(l: &LaneSnapshot, points: &[ffi::se_auto_point]) -> ffi::se_auto_la
         AutomationTarget::Pan => (ffi::SE_AUTO_PAN, 0, 0, 0),
         AutomationTarget::Synth { param } => (ffi::SE_AUTO_SYNTH, synth_param_index(*param), 0, 0),
         AutomationTarget::Plugin { device, param, .. } => (ffi::SE_AUTO_PLUGIN, 0, device.0, *param),
+        AutomationTarget::Builtin { device, device_type, param } => {
+            let index = saine_core::builtin::find(device_type).and_then(|d| d.index_of(param)).map_or(u32::MAX, |i| i as u32);
+            (ffi::SE_AUTO_BUILTIN, 0, device.0, index)
+        }
     };
     ffi::se_auto_lane_desc {
         target,
