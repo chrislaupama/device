@@ -128,6 +128,39 @@ fn steps() -> Vec<Step> {
         })),
         Do("Enter (stop + return)", Box::new(|a| key(a, Key::Return, false, false))),
         Check("playhead back at 0", Box::new(|c, _| (c.engine.transport().position == 0).then_some(()).ok_or(format!("pos {}", c.engine.transport().position)))),
+        Do("click loop button", Box::new(|a| click(a, 481.0, 52.0))),
+        Check("loop enabled in project + UI, undoable (SetLoop)", Box::new(|c, a| {
+            let on = c.project().transport.loop_enabled;
+            let ui = a.global::<Studio>().get_loop_enabled();
+            (on && ui && c.doc.undo_label() == Some("Loop Change")).then_some(()).ok_or(format!("model {on} ui {ui} undo {:?}", c.doc.undo_label()))
+        })),
+        Do("click loop button again", Box::new(|a| click(a, 481.0, 52.0))),
+        Check("loop disabled", Box::new(|c, _| (!c.project().transport.loop_enabled).then_some(()).ok_or("still on".into()))),
+        Do("click metronome button", Box::new(|a| click(a, 992.0, 52.0))),
+        Check("metronome on in controller + UI", Box::new(|c, a| {
+            (c.metronome_on && a.global::<Studio>().get_metronome_on()).then_some(()).ok_or("metronome off".into())
+        })),
+        Check("engine clicks land on the 120 BPM beat grid (offline render)", Box::new(|c, _| {
+            if c.engine.device_running() {
+                return Ok(()); // offline render is refused while the device owns the audio path
+            }
+            let e = &c.engine;
+            e.seek(0).map_err(|e| e.to_string())?;
+            e.play().map_err(|e| e.to_string())?;
+            let mut buf = vec![0f32; 2 * 48_100];
+            let r = e.render_offline(&mut buf);
+            let _ = e.stop();
+            r.map_err(|e| e.to_string())?;
+            let at = |f: usize| buf[2 * f].abs() + buf[2 * f + 1].abs();
+            let loud = |a: usize, b: usize| (a..b).any(|f| at(f) > 1e-3);
+            // Clips start at beats 9/10, so the first 2 s hold only clicks:
+            // beat 0 at frame 0, beat 1 at 24000, beat 2 at 48000; silence between tails.
+            (loud(0, 50) && !loud(2_000, 23_990) && loud(24_000, 24_050) && !loud(26_000, 47_990) && loud(48_000, 48_050))
+                .then_some(())
+                .ok_or("click positions wrong".into())
+        })),
+        Do("click metronome button again", Box::new(|a| click(a, 992.0, 52.0))),
+        Check("metronome off", Box::new(|c, _| (!c.metronome_on).then_some(()).ok_or("still on".into()))),
         Do("select clip 1 and press Delete", Box::new(move |a| {
             click(a, bx(11.0), TRACK0_Y + 40.0);
             key(a, Key::Delete, false, false)

@@ -10,6 +10,11 @@
 // The UI holds no authoritative state: every value comes from Rust (Studio
 // global), every edit goes out through a Studio callback that becomes a
 // saine_core::Command or an engine transport call.
+// Inter 4.1 (SIL OFL 1.1, ui/fonts/Inter-OFL-LICENSE.txt): the reference UI's typeface.
+import "fonts/Inter-Regular.ttf";
+import "fonts/Inter-Medium.ttf";
+import "fonts/Inter-SemiBold.ttf";
+import "fonts/Inter-Bold.ttf";
 import { Tokens } from "tokens.slint";
 import { Panel, Icon, Icons, Pill, IconButton, SmallButton, HSlider, Knob, Switch, Label } from "widgets.slint";
 
@@ -47,6 +52,11 @@ export global Studio {
     in property <string> sig-text: "4/4";
     in property <float> master-pos: 0.85;
     in-out property <bool> sounds-visible: true;
+    // Loop (project transport) and metronome (app preference), both real engine features.
+    in property <bool> loop-enabled: false;
+    in property <bool> metronome-on: false;
+    callback toggle-loop();
+    callback toggle-metronome();
     // ---- timeline ----
     in property <[TrackRow]> tracks;
     in property <length> scroll-y;
@@ -103,26 +113,26 @@ component Header inherits Rectangle {
     // Title (centred). AX: 695,11,50,18
     Text {
         x: 0; y: 11px; width: root.width; height: 18px;
-        text: Studio.project-name; color: Tokens.text-title; font-size: 11px; font-weight: 600;
+        text: Studio.project-name; color: Tokens.text-title; font-size: 10px; font-weight: 600;
         horizontal-alignment: center; vertical-alignment: center;
         accessible-role: text;
     }
-    Pill { x: root.width - 220px; y: 9px; width: 82px; height: 23px; text: "Report a bug"; weight: 500; text-color: #f0f0f2; font-size: 10.5px; clicked => { Studio.report-bug(); } }
-    Pill { x: root.width - 131px; y: 9px; width: 118px; height: 23px; text: "Share your feedback"; weight: 500; text-color: #f0f0f2; font-size: 10.5px; clicked => { Studio.feedback(); } }
+    Pill { x: root.width - 220px; y: 9px; width: 82px; height: 23px; text: "Report a bug"; weight: 500; text-color: #f0f0f2; font-size: 9.5px; clicked => { Studio.report-bug(); } }
+    Pill { x: root.width - 131px; y: 9px; width: 118px; height: 23px; text: "Share your feedback"; weight: 500; text-color: #f0f0f2; font-size: 9.5px; clicked => { Studio.feedback(); } }
 
     // Logo: ORIGINAL sine-wave mark + "Beta" badge.
     Icon { x: 13px; y: 44px; width: 15px; height: 16px; d: Icons.logo; ink: #ffffff; stroke-width: 2.6px; }
     Rectangle {
         x: 31px; y: 46px; width: 26px; height: 12.5px;
         border-radius: 4px; border-width: 0.75px; border-color: #6a6b6f;
-        Text { text: "Beta"; color: #ffffff; font-size: 7.5px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+        Text { text: "Beta"; color: #ffffff; font-size: 6.75px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
     }
     // Sounds toggle (shows/hides the browser panel). AX 67,39,62,25
     Rectangle {
         x: 67px; y: 39px; width: 62px; height: 25px;
         accessible-role: checkbox; accessible-label: "Sounds"; accessible-checked: Studio.sounds-visible;
         Icon { x: 6px; width: 14px; height: 14px; d: Icons.library; ink: Studio.sounds-visible ? #c9c9cc : Tokens.icon; }
-        Text { x: 22px; y: 1.5px; height: parent.height; text: "Sounds"; font-size: 11px; font-weight: 600; color: Studio.sounds-visible ? #cfd0d3 : Tokens.text-tertiary; vertical-alignment: center; }
+        Text { x: 22px; y: 1.5px; height: parent.height; text: "Sounds"; font-size: 10px; font-weight: 600; color: Studio.sounds-visible ? #cfd0d3 : Tokens.text-tertiary; vertical-alignment: center; }
         TouchArea { clicked => { Studio.sounds-visible = !Studio.sounds-visible; } }
     }
 
@@ -139,33 +149,32 @@ component Header inherits Rectangle {
         border-radius: 16.5px; background: Tokens.bg-raised;
         border-width: 0.5px; border-color: Tokens.pill-border;
     }
-    // PLACEHOLDER toggles (engine ABI has no loop playback / automation yet): visual only.
-    IconButton { x: 470px; y: 41px; width: 22px; height: 22px; icon: Icons.loop; tooltip: "Toggle loop (not implemented)"; }
+    IconButton { x: 470px; y: 41px; width: 22px; height: 22px; icon: Icons.loop; tooltip: "Toggle loop (⌘L)"; active: Studio.loop-enabled; clicked => { Studio.toggle-loop(); } }
+    // PLACEHOLDER: automation arm (no automation in the model/engine yet): visual only.
     IconButton { x: 496px; y: 41px; width: 21px; height: 22px; icon: Icons.automation; tooltip: "Automation arm (not implemented)"; }
-    Label { x: 527px; y: 45px; text: "Bar"; color: #606165; font-size: 11px; }
-    Label { x: 548px; y: 45px; text: Studio.bar-text; color: Tokens.text-bright; font-size: 11px; font-weight: 600; }
+    Label { x: 527px; y: 45px; text: "Bar"; color: #606165; font-size: 10px; }
+    Label { x: 548px; y: 45px; text: Studio.bar-text; color: Tokens.text-bright; font-size: 10px; font-weight: 600; }
     Rectangle { x: 581.5px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
-    Label { x: 595px; y: 45px; text: "Time"; color: #606165; font-size: 11px; }
-    Label { x: 624px; y: 45px; text: Studio.time-text; color: Tokens.text-bright; font-size: 11px; font-weight: 600; }
+    Label { x: 595px; y: 45px; text: "Time"; color: #606165; font-size: 10px; }
+    Label { x: 624px; y: 45px; text: Studio.time-text; color: Tokens.text-bright; font-size: 10px; font-weight: 600; }
     Rectangle { x: 689px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
-    Label { x: 703px; y: 45px; text: "BPM"; color: #606165; font-size: 11px; }
-    Label { x: 733px; y: 45px; text: Studio.bpm-text; color: Tokens.text-bright; font-size: 11px; font-weight: 600; }
+    Label { x: 703px; y: 45px; text: "BPM"; color: #606165; font-size: 10px; }
+    Label { x: 733px; y: 45px; text: Studio.bpm-text; color: Tokens.text-bright; font-size: 10px; font-weight: 600; }
     // TAP: PLACEHOLDER (tap tempo not implemented)
     Rectangle {
         x: 762px; y: 44px; width: 23px; height: 15px; border-radius: 3px; background: #34353a;
-        Text { text: "TAP"; color: #e5e5e8; font-size: 8.5px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+        Text { text: "TAP"; color: #e5e5e8; font-size: 7.75px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
     }
     Rectangle { x: 798px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
-    Label { x: 812px; y: 45px; text: "Key"; color: #606165; font-size: 11px; }
+    Label { x: 812px; y: 45px; text: "Key"; color: #606165; font-size: 10px; }
     // Key selector: PLACEHOLDER (no key/scale in the model yet)
     Rectangle { x: 846px; y: 51.5px; width: 13px; height: 1.2px; background: #7a7b7e; }
     Icon { x: 873px; y: 45px; width: 14px; height: 14px; d: Icons.chevron-down; ink: #7a7b7e; }
     Rectangle { x: 901.5px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
-    Label { x: 916px; y: 45px; text: "Sig"; color: #606165; font-size: 11px; }
-    Label { x: 936.5px; y: 45px; text: Studio.sig-text; color: Tokens.text-bright; font-size: 11px; font-weight: 600; }
+    Label { x: 916px; y: 45px; text: "Sig"; color: #606165; font-size: 10px; }
+    Label { x: 936.5px; y: 45px; text: Studio.sig-text; color: Tokens.text-bright; font-size: 10px; font-weight: 600; }
     Icon { x: 957px; y: 45px; width: 13px; height: 13px; d: Icons.chevron-down; ink: #a0a0a3; }
-    // Metronome: PLACEHOLDER (no click track in the engine)
-    IconButton { x: 981px; y: 41px; width: 22px; height: 22px; icon: Icons.metronome; tooltip: "Metronome (not implemented)"; }
+    IconButton { x: 981px; y: 41px; width: 22px; height: 22px; icon: Icons.metronome; tooltip: "Metronome"; active: Studio.metronome-on; clicked => { Studio.toggle-metronome(); } }
 
     // Master volume (header), real: SetMasterGain
     HSlider {
@@ -187,23 +196,23 @@ component Header inherits Rectangle {
 // ------------------------------------------------------------------ browser (PLACEHOLDER content)
 component Browser inherits Panel {
     // Section tabs (static: only "Devices" content exists, as placeholder data)
-    Label { x: 10px; y: 6px; height: 15px; text: "Search"; color: #5d5e62; font-size: 10.5px; }
-    Label { x: 50px; y: 6px; height: 15px; text: "Library"; color: #5d5e62; font-size: 10.5px; }
-    Label { x: 89px; y: 6px; height: 15px; text: "Devices"; color: Tokens.text-bright; font-size: 10.5px; font-weight: 600; }
-    Label { x: 133px; y: 6px; height: 15px; text: "Files"; color: #5d5e62; font-size: 10.5px; }
+    Label { x: 10px; y: 6px; height: 15px; text: "Search"; color: #5d5e62; font-size: 9.5px; }
+    Label { x: 50px; y: 6px; height: 15px; text: "Library"; color: #5d5e62; font-size: 9.5px; }
+    Label { x: 89px; y: 6px; height: 15px; text: "Devices"; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; }
+    Label { x: 133px; y: 6px; height: 15px; text: "Files"; color: #5d5e62; font-size: 9.5px; }
     Icon { x: 218px; y: 6.5px; width: 13px; height: 13px; d: Icons.chevron-left; ink: Tokens.icon; }
     Icon { x: 234px; y: 6.5px; width: 13px; height: 13px; d: Icons.chevron-right; ink: Tokens.icon; }
     // Search field (inert placeholder)
     Rectangle {
         x: 8.5px; y: 34px; width: 235px; height: 20px; border-radius: 10px; background: Tokens.bg-control;
         Icon { x: 8px; width: 13px; height: 13px; d: Icons.search; ink: #b0b0b3; }
-        Text { x: 27px; text: "Search devices"; color: #a5a5a8; font-size: 10px; vertical-alignment: center; }
+        Text { x: 27px; text: "Search devices"; color: #a5a5a8; font-size: 9px; vertical-alignment: center; }
     }
     // Sub-tabs
-    Label { x: 10px; y: 59px; height: 16px; text: "Instruments"; color: Tokens.text-bright; font-size: 9.5px; }
+    Label { x: 10px; y: 59px; height: 16px; text: "Instruments"; color: Tokens.text-bright; font-size: 8.75px; }
     Rectangle { x: 10px; y: 74.5px; width: 52px; height: 1px; background: #ffffff; }
-    Label { x: 71px; y: 59px; height: 16px; text: "Effects"; color: #55565a; font-size: 9.5px; }
-    Label { x: 112px; y: 59px; height: 16px; text: "Chains"; color: #55565a; font-size: 9.5px; }
+    Label { x: 71px; y: 59px; height: 16px; text: "Effects"; color: #55565a; font-size: 8.75px; }
+    Label { x: 112px; y: 59px; height: 16px; text: "Chains"; color: #55565a; font-size: 8.75px; }
     Rectangle { x: 0; y: 80px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
 
     // Tree (PLACEHOLDER rows supplied by Rust)
@@ -223,8 +232,8 @@ component Browser inherits Panel {
                 x: 24px + parent.indent; width: 14.5px; height: 14.5px;
                 d: row.icon == 1 ? Icons.keys : Icons.folder; ink: #d0d0d3; stroke-width: 1.3px;
             }
-            Text { x: 42.5px + parent.indent; text: row.label; color: Tokens.text-primary; font-size: 10.5px; font-weight: 500; vertical-alignment: center; }
-            Text { x: parent.width - 60px; width: 52px; text: row.count; color: #8a8b8e; font-size: 10px; horizontal-alignment: right; vertical-alignment: center; }
+            Text { x: 42.5px + parent.indent; text: row.label; color: Tokens.text-primary; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+            Text { x: parent.width - 60px; width: 52px; text: row.count; color: #8a8b8e; font-size: 9px; horizontal-alignment: right; vertical-alignment: center; }
         }
     }
     // Preview bar (inert placeholder)
@@ -237,9 +246,9 @@ component Browser inherits Panel {
         Rectangle { x: 94.5px; y: 13px; width: 62.5px; height: 7px; border-radius: 3.5px; background: Tokens.bg-slider-track; border-width: 0.5px; border-color: #2a2b2e; }
         Rectangle { x: 142.5px; y: 13px; width: 7px; height: 7px; border-radius: 3.5px; background: Tokens.handle; }
         Rectangle { x: 164px; y: 11px; width: 11px; height: 11px; border-radius: 2px; background: #2f3032;
-            Text { text: "S"; font-size: 6px; font-weight: 700; color: #acacad; horizontal-alignment: center; vertical-alignment: center; } }
+            Text { text: "S"; font-size: 5.5px; font-weight: 700; color: #acacad; horizontal-alignment: center; vertical-alignment: center; } }
         Rectangle { x: 179px; y: 11px; width: 15px; height: 11px; border-radius: 2px; background: #2f3032;
-            Text { text: "1×"; font-size: 6px; font-weight: 700; color: #acacad; horizontal-alignment: center; vertical-alignment: center; } }
+            Text { text: "1×"; font-size: 5.5px; font-weight: 700; color: #acacad; horizontal-alignment: center; vertical-alignment: center; } }
         Icon { x: 227px; y: 9.5px; width: 16px; height: 15px; d: Icons.link; ink: Tokens.text-tertiary; }
     }
 }
@@ -251,9 +260,9 @@ component TrackHeaderRow inherits Rectangle {
     TouchArea { clicked => { Studio.select-track(root.t.id); } }
     Rectangle { x: 5.5px; width: 185px; background: root.t.selected ? Tokens.bg-track-header-selected : transparent; }
     Rectangle { x: 0.5px; y: 6.5px; width: 5px; height: 61.5px; border-radius: 2.5px; background: root.t.color; }
-    Text { x: 13px; y: 31.5px; height: 12px; text: root.t.number; color: Tokens.text-bright; font-size: 10px; font-weight: 700; vertical-alignment: center; }
+    Text { x: 13px; y: 31.5px; height: 12px; text: root.t.number; color: Tokens.text-bright; font-size: 9px; font-weight: 700; vertical-alignment: center; }
     Icon { x: 28.5px; y: 22.5px; width: 12px; height: 12px; d: root.t.instrument ? Icons.keys : Icons.wave; ink: #a8a8ab; stroke-width: 1.1px; }
-    Text { x: 43px; y: 21.5px; height: 13px; text: root.t.name; color: Tokens.text-bright; font-size: 10.5px; font-weight: 600; vertical-alignment: center; }
+    Text { x: 43px; y: 21.5px; height: 13px; text: root.t.name; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
     SmallButton { x: 28px; y: 41.5px; width: 11px; height: 11px; text: "M"; on: root.t.mute; on-color: Tokens.mute-on; clicked => { Studio.track-mute(root.t.id); } }
     SmallButton { x: 42px; y: 41.5px; width: 11px; height: 11px; text: "S"; on: root.t.solo; on-color: Tokens.solo-on; clicked => { Studio.track-solo(root.t.id); } }
     // R (arm) and I (monitoring): PLACEHOLDERS, no recording/input in the engine yet.
@@ -278,7 +287,7 @@ component TrackHeaderRow inherits Rectangle {
 
 component AddTrackButton inherits Rectangle {
     Icon { x: 6px; width: 12px; height: 12px; d: Icons.plus; ink: Tokens.text-tertiary; stroke-width: 1.5px; }
-    Text { x: 26px; text: "Add track"; color: Tokens.text-tertiary; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+    Text { x: 26px; text: "Add track"; color: Tokens.text-tertiary; font-size: 10px; font-weight: 600; vertical-alignment: center; }
     TouchArea { clicked => { Studio.add-track(); } }
 }
 
@@ -287,17 +296,17 @@ component Timeline inherits Panel {
     out property <length> lanes-height: lanes.height;
 
     // ---- header row (y 0..27) ----
-    Label { x: 7px; y: 7px; text: "Timeline"; color: Tokens.text-bright; font-size: 10.5px; font-weight: 600; }
+    Label { x: 7px; y: 7px; text: "Timeline"; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; }
     // Returns: PLACEHOLDER (no return tracks yet). Master pill: shows the master row (static on).
-    Pill { x: 57px; y: 5px; width: 62px; height: 18px; text: "Returns"; icon: Icons.returns; font-size: 9.5px; text-color: #a0a1a5; }
-    Pill { x: 123px; y: 5px; width: 61px; height: 18px; text: "Master"; icon: Icons.master; active: true; font-size: 9.5px; }
+    Pill { x: 57px; y: 5px; width: 62px; height: 18px; text: "Returns"; icon: Icons.returns; font-size: 8.75px; text-color: #a0a1a5; }
+    Pill { x: 123px; y: 5px; width: 61px; height: 18px; text: "Master"; icon: Icons.master; active: true; font-size: 8.75px; }
     // Overview bar (outline only; PLACEHOLDER for the song overview / scroll-zoom control)
     Rectangle {
         x: 201.5px; y: 5px; width: root.width - 201.5px - 397px; height: 17px;
         border-radius: 4px; border-width: 0.75px; border-color: #6d6e71;
     }
     // Right toolbar: PLACEHOLDERS except where noted
-    Pill { x: root.width - 388px; y: 5px; width: 67px; height: 18px; text: "Smart Fill"; icon: Icons.square; font-size: 9px; text-color: #a0a1a5; }
+    Pill { x: root.width - 388px; y: 5px; width: 67px; height: 18px; text: "Smart Fill"; icon: Icons.square; font-size: 8.25px; text-color: #a0a1a5; }
     Icon { x: root.width - 315px; y: 7px; width: 14px; height: 14px; d: Icons.automation; ink: #6b6c70; }
     Icon { x: root.width - 292px; y: 7px; width: 13px; height: 13px; d: Icons.pencil; ink: #6b6c70; }
     Icon { x: root.width - 270px; y: 7px; width: 13px; height: 13px; d: Icons.cursor; ink: #e5e5e8; filled: true; }
@@ -311,7 +320,7 @@ component Timeline inherits Panel {
     Rectangle { x: root.width - 126px; y: 13px; width: 69px; height: 2px; border-radius: 1px; background: #2f3036; }
     Rectangle { x: root.width - 122px; y: 10px; width: 8px; height: 8px; border-radius: 4px; background: #f2f2f2; }
     // Snap: beat snap is always on in milestone 1 ("Auto" label mirrors that)
-    Text { x: root.width - 54px; y: 7px; height: 14px; text: "Auto"; color: Tokens.text-bright; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+    Text { x: root.width - 54px; y: 7px; height: 14px; text: "Auto"; color: Tokens.text-bright; font-size: 9px; font-weight: 600; vertical-alignment: center; }
     Icon { x: root.width - 25px; y: 8px; width: 11px; height: 11px; d: Icons.chevron-down; ink: #c9c9cc; }
     Rectangle { x: 0; y: 27px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
 
@@ -321,12 +330,12 @@ component Timeline inherits Panel {
         clip: true;
         Image { x: 0; y: 0; width: parent.width; height: parent.height; source: Studio.timeline-image; image-fit: fill; }
         for l in Studio.ruler-labels: Text {
-            x: l.x + 4.5px; y: 0px; height: 11px; text: l.text; color: #bdbdbd; font-size: 8.5px; font-weight: 600; vertical-alignment: center;
+            x: l.x + 4.5px; y: 0px; height: 11px; text: l.text; color: #bdbdbd; font-size: 7.75px; font-weight: 600; vertical-alignment: center;
         }
         Icon { x: 3px; y: 26.5px; width: 11px; height: 11px; d: Icons.plus; ink: Tokens.text-tertiary; }
         for c in Studio.clip-labels: Text {
             x: c.x + 5px; y: c.y; width: max(0px, c.w - 8px); height: 17px;
-            text: c.text; color: #15161a; font-size: 9.5px; font-weight: 600; vertical-alignment: center; overflow: elide;
+            text: c.text; color: #15161a; font-size: 8.75px; font-weight: 600; vertical-alignment: center; overflow: elide;
         }
         TouchArea {
             mouse-cursor: Studio.lane-cursor == 1 ? MouseCursor.ew-resize : Studio.lane-cursor == 2 ? MouseCursor.move : MouseCursor.default;
@@ -393,34 +402,34 @@ component Timeline inherits Panel {
 component Inspector inherits Rectangle {
     // inspector header
     Rectangle { x: 0.5px; y: 15px; width: 3px; height: 15px; border-radius: 1.5px; background: Studio.sel-color; }
-    Text { visible: Studio.has-selection; x: 10.5px; y: 7px; height: 13px; text: Studio.sel-number; color: Tokens.text-bright; font-size: 10px; font-weight: 700; vertical-alignment: center; }
+    Text { visible: Studio.has-selection; x: 10.5px; y: 7px; height: 13px; text: Studio.sel-number; color: Tokens.text-bright; font-size: 9px; font-weight: 700; vertical-alignment: center; }
     Icon { visible: Studio.has-selection; x: 21px; y: 8px; width: 11px; height: 11px; d: Studio.sel-instrument ? Icons.keys : Icons.wave; ink: #a8a8ab; stroke-width: 1.1px; }
-    Label { x: 37px; y: 7px; text: Studio.has-selection ? Studio.sel-name : "No track selected"; color: Tokens.text-bright; font-size: 11px; }
+    Label { x: 37px; y: 7px; text: Studio.has-selection ? Studio.sel-name : "No track selected"; color: Tokens.text-bright; font-size: 10px; }
 
     // In / Out routing: PLACEHOLDERS (fixed routing in milestone 1)
     Rectangle {
         x: 10px; y: 37px; width: 149px; height: 19px; border-radius: 9.5px; background: Tokens.bg-control;
-        Text { x: 7.5px; text: "In"; color: Tokens.text-tertiary; font-size: 10.5px; font-weight: 600; vertical-alignment: center; }
-        Text { x: 21px; text: "Select audio input"; color: Tokens.text-bright; font-size: 10.5px; font-weight: 600; vertical-alignment: center; }
+        Text { x: 7.5px; text: "In"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+        Text { x: 21px; text: "Select audio input"; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
         Icon { x: 134px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #a0a0a3; }
     }
     Rectangle {
         x: 10px; y: 63px; width: 149px; height: 18px; border-radius: 9px; background: Tokens.bg-control;
-        Text { x: 7.5px; text: "Out"; color: Tokens.text-tertiary; font-size: 10.5px; font-weight: 600; vertical-alignment: center; }
-        Text { x: 29.5px; text: "Master"; color: Tokens.text-bright; font-size: 10.5px; font-weight: 600; vertical-alignment: center; }
+        Text { x: 7.5px; text: "Out"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+        Text { x: 29.5px; text: "Master"; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
         Icon { x: 134px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #a0a0a3; }
     }
-    Label { x: 48px; y: 92px; height: 21px; text: "Input"; color: Tokens.text-bright; font-size: 10px; }
-    Label { x: 92px; y: 92px; height: 21px; text: "Sends"; color: Tokens.text-tertiary; font-size: 10px; }
+    Label { x: 48px; y: 92px; height: 21px; text: "Input"; color: Tokens.text-bright; font-size: 9px; }
+    Label { x: 92px; y: 92px; height: 21px; text: "Sends"; color: Tokens.text-tertiary; font-size: 9px; }
     Rectangle { x: 10px; y: 108.5px; width: 150px; height: 0.5px; background: Tokens.line-separator; }
 
     // Trim / Width: PLACEHOLDERS (no per-track trim/width in the model). Pan: real.
     Knob { x: 28px; y: 122px; width: 38px; height: 38px; body: 26px; value-angle: 0; tick-color: #d0d0d3; }
-    Text { x: 10px; y: 158px; width: 74px; height: 13px; text: "0.0 dB"; color: Tokens.value-blue; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    Text { x: 10px; y: 173px; width: 74px; height: 14px; text: "Trim"; color: Tokens.text-primary; font-size: 10.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: 10px; y: 158px; width: 74px; height: 13px; text: "0.0 dB"; color: Tokens.value-blue; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: 10px; y: 173px; width: 74px; height: 14px; text: "Trim"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     Knob { x: 104px; y: 122px; width: 38px; height: 38px; body: 26px; value-angle: 0; show-arc: true; arc-from: -135; tick-color: #d0d0d3; }
-    Text { x: 86px; y: 158px; width: 74px; height: 13px; text: "100%"; color: Tokens.value-blue; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    Text { x: 86px; y: 173px; width: 74px; height: 14px; text: "Width"; color: Tokens.text-primary; font-size: 10.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: 86px; y: 158px; width: 74px; height: 13px; text: "100%"; color: Tokens.value-blue; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: 86px; y: 173px; width: 74px; height: 14px; text: "Width"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     Knob {
         x: 28px; y: 191px; width: 38px; height: 38px; body: 26px;
         value: Studio.sel-pan; value-angle: Studio.sel-pan * 135; tick-color: #d0d0d3;
@@ -428,29 +437,29 @@ component Inspector inherits Rectangle {
         released => { Studio.gesture-end(); }
         reset => { if (Studio.has-selection) { Studio.track-pan(Studio.sel-id, 0); Studio.gesture-end(); } }
     }
-    Text { x: 10px; y: 228px; width: 74px; height: 13px; text: Studio.sel-pan-text; color: Tokens.value-blue; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    Text { x: 10px; y: 243px; width: 74px; height: 13px; text: "Pan"; color: Tokens.text-primary; font-size: 10.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: 10px; y: 228px; width: 74px; height: 13px; text: Studio.sel-pan-text; color: Tokens.value-blue; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: 10px; y: 243px; width: 74px; height: 13px; text: "Pan"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     // Mono fold: PLACEHOLDER
     Switch { x: 112.5px; y: 205px; on: false; }
-    Text { x: 86px; y: 228px; width: 74px; height: 13px; text: "Off"; color: Tokens.value-blue; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    Text { x: 86px; y: 243px; width: 74px; height: 13px; text: "Mono"; color: Tokens.text-primary; font-size: 10.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: 86px; y: 228px; width: 74px; height: 13px; text: "Off"; color: Tokens.value-blue; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: 86px; y: 243px; width: 74px; height: 13px; text: "Mono"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
 
-    SmallButton { x: 42px; y: 275px; width: 19px; height: 18px; text: "M"; font-size: 9px; on: Studio.sel-mute; on-color: Tokens.mute-on; clicked => { Studio.track-mute(Studio.sel-id); } }
-    SmallButton { x: 64px; y: 275px; width: 19px; height: 18px; text: "S"; font-size: 9px; on: Studio.sel-solo; on-color: Tokens.solo-on; clicked => { Studio.track-solo(Studio.sel-id); } }
-    SmallButton { x: 86px; y: 275px; width: 20px; height: 18px; text: "R"; font-size: 9px; }
-    SmallButton { x: 108px; y: 275px; width: 20px; height: 18px; text: "I"; font-size: 9px; }
+    SmallButton { x: 42px; y: 275px; width: 19px; height: 18px; text: "M"; font-size: 8.25px; on: Studio.sel-mute; on-color: Tokens.mute-on; clicked => { Studio.track-mute(Studio.sel-id); } }
+    SmallButton { x: 64px; y: 275px; width: 19px; height: 18px; text: "S"; font-size: 8.25px; on: Studio.sel-solo; on-color: Tokens.solo-on; clicked => { Studio.track-solo(Studio.sel-id); } }
+    SmallButton { x: 86px; y: 275px; width: 20px; height: 18px; text: "R"; font-size: 8.25px; }
+    SmallButton { x: 108px; y: 275px; width: 20px; height: 18px; text: "I"; font-size: 8.25px; }
 
     // Fader readout
     Rectangle {
         x: 185px; y: 37.5px; width: 59px; height: 17px; border-radius: 3px; background: Tokens.bg-raised;
         border-width: 0.5px; border-color: #3a3b3f;
-        Text { text: Studio.sel-db-text; color: Tokens.text-bright; font-size: 9.5px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+        Text { text: Studio.sel-db-text; color: Tokens.text-bright; font-size: 8.75px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
     }
     // dB scale (labels at the reference positions, panel-relative y = window y - 509)
     for m in [ {t: "+6", y: 74.5px}, {t: "0", y: 95.5px}, {t: "−6", y: 113.5px}, {t: "−12", y: 131.5px},
                {t: "−24", y: 166px}, {t: "−36", y: 200px}, {t: "−48", y: 225.5px}, {t: "−∞", y: 258.5px} ]: Rectangle {
         x: 160px; y: m.y - 5px; width: 40px; height: 10px;
-        Text { x: 0; width: 28px; text: m.t; color: #a5a5a8; font-size: 8px; horizontal-alignment: right; vertical-alignment: center; }
+        Text { x: 0; width: 28px; text: m.t; color: #a5a5a8; font-size: 7.25px; horizontal-alignment: right; vertical-alignment: center; }
         Rectangle { x: 32px; width: 6px; height: 0.75px; background: #6d6e71; }
     }
     // Fader slot + fill + handle (real: SetTrackGain)
@@ -490,7 +499,7 @@ component Inspector inherits Rectangle {
     Rectangle {
         x: 184px; y: 275px; width: 61px; height: 18px; border-radius: 3px; background: Tokens.bg-raised;
         border-width: 0.5px; border-color: #3a3b3f;
-        Text { text: Studio.sel-peak-text; color: #9d9d9f; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        Text { text: Studio.sel-peak-text; color: #9d9d9f; font-size: 8.25px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     }
 }
 
@@ -499,24 +508,24 @@ component BottomPanel inherits Panel {
     Rectangle { x: 254.5px; y: 0; width: 0.5px; height: root.height; background: Tokens.line-separator; }
     Rectangle { x: 0; y: 26.5px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
     // Clip / Devices tabs (Devices static)
-    Label { x: 261px; y: 7px; text: "Clip"; color: Tokens.text-tertiary; font-size: 11px; }
-    Label { x: 286px; y: 7px; text: "Devices"; color: Tokens.text-bright; font-size: 11px; font-weight: 600; }
+    Label { x: 261px; y: 7px; text: "Clip"; color: Tokens.text-tertiary; font-size: 10px; }
+    Label { x: 286px; y: 7px; text: "Devices"; color: Tokens.text-bright; font-size: 10px; font-weight: 600; }
     IconButton { x: root.width - 53px; y: 3px; width: 21px; height: 21px; icon: Icons.panel-bottom; ink: #6b6c70; icon-size: 14px; }
     IconButton { x: root.width - 29px; y: 3px; width: 21px; height: 21px; icon: Icons.download; ink: #6b6c70; icon-size: 14px; }
     // Add device card: PLACEHOLDER (no plugin hosting yet)
     Rectangle {
         x: 265px; y: 34.5px; width: 182.5px; height: 264px; border-radius: 6px;
         background: Tokens.bg-raised; border-width: 0.5px; border-color: #313236;
-        Label { x: 11.5px; y: 6.5px; text: "Add device"; color: #a0a0a3; font-size: 11px; }
+        Label { x: 11.5px; y: 6.5px; text: "Add device"; color: #a0a0a3; font-size: 10px; }
         Rectangle { x: 0; y: 26.5px; width: parent.width; height: 0.5px; background: #313236; }
         Rectangle {
             x: 5.5px; y: 31.5px; width: 171px; height: 20px; border-radius: 10px; background: Tokens.bg-control;
             Icon { x: 8.5px; width: 13px; height: 13px; d: Icons.search; ink: #b0b0b3; }
-            Text { x: 26px; text: "Search devices"; color: #a5a5a8; font-size: 10px; vertical-alignment: center; }
+            Text { x: 26px; text: "Search devices"; color: #a5a5a8; font-size: 9px; vertical-alignment: center; }
         }
         for name[i] in ["Splice", "Audio Units", "VST3", "Chains"]: Rectangle {
             x: 0; y: 56.5px + i * 22px; width: parent.width; height: 22px;
-            Text { x: 11.5px; text: name == "Splice" ? "Saine" : name; color: Tokens.text-primary; font-size: 10.5px; font-weight: 600; vertical-alignment: center; }
+            Text { x: 11.5px; text: name == "Splice" ? "Saine" : name; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
             Icon { x: parent.width - 18px; width: 10px; height: 10px; d: Icons.chevron-right; ink: #a0a0a3; }
         }
     }
@@ -530,7 +539,7 @@ export component AppWindow inherits Window {
     min-width: 960px;
     min-height: 600px;
     background: Tokens.bg-window;
-    default-font-size: 10.5px;
+    default-font-size: 9.5px;
     default-font-family: Tokens.font-ui;
 
     out property <length> lanes-width: timeline.lanes-width;
@@ -553,7 +562,7 @@ export component AppWindow inherits Window {
         if Studio.status-text != "": Rectangle {
             x: root.width - self.width - 14px; y: root.height - 34px; height: 20px;
             width: status.preferred-width + 20px; border-radius: 10px; background: #2a2b30ee;
-            status := Text { text: Studio.status-text; color: #e5e5e8; font-size: 9.5px; vertical-alignment: center; horizontal-alignment: center; }
+            status := Text { text: Studio.status-text; color: #e5e5e8; font-size: 8.75px; vertical-alignment: center; horizontal-alignment: center; }
         }
     }
 }

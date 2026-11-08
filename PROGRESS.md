@@ -64,12 +64,20 @@ cargo test --workspace                                                          
   Run: `cargo run --release -p saine-app -- --demo`.
 
 **Known gaps / next steps**
-1. Bundle Inter (OFL) to close most of the remaining text error; build the panel toggles (Rheo, mixer, editor), splitters,
-   track rename/resize, native menu bar. Engine ABI requests: apply transport commands when the device is stopped,
-   non-destructive meter reads, loop playback, metronome, input/recording.
+1. Build the panel toggles (Rheo, mixer, editor), splitters, track rename/resize, native menu bar.
+   Engine: input/recording, loop crossfade, tempo map for the metronome.
 2. Reference capture still missing: audio clip appearance (needs a local WAV dropped onto a track), hover/pressed
    states, animation timings, the rest of the shortcut bindings (scroll the Shortcuts page with mouse wheel events, not keys).
 3. Engine: device selection, input/recording, worker-pool parallel track rendering, WASAPI/ASIO and PipeWire/JACK backends.
 4. MIDI: model + piano roll + built-in instrument; plugin hosting (VST3/CLAP/AU) with an out-of-process scanner.
 5. Assistant: provider adapter (outside core), Rheo-equivalent panel, highlight overlay.
 6. Original branding and icons before any public release; the Söhne display face must not ship.
+
+### 2026-11-08: session 1, round 2 (engine fixes + fonts)
+- Engine ABI v1 additions (append-only): `se_meters_peek` (non-destructive ~50 ms window), `se_transport_set_loop`
+  (sample-accurate wrap), `se_metronome_set` (+ `se_metronome_desc`); transport commands now apply immediately
+  when no device runs (race-free ownership hand-off; see engine/README.md). 46/46 ctest in default and ASan;
+  bench unchanged (128 tracks ≈12.4 µs/block).
+- App: Inter 4.1 bundled (OFL, `crates/saine-app/ui/fonts/`), sizes ×0.91 after a sweep → full-window MAE 1.96 → 1.65.
+  Loop (⌘L, button, `SetLoop` undoable) and metronome wired; offline-seek workaround removed; meters use peek.
+  `--self-test` 26/26 offline and with Core Audio.

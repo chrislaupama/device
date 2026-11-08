@@ -12,7 +12,7 @@ use crate::{AppWindow, ClipLabel, RulerLabel, Studio, TrackRow};
 use saine_core::{
     Asset, AssetId, Clip, ClipId, ColorIndex, Command, Document, Origin, PPQ, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, gain_to_db, persist, snapshot,
 };
-use saine_engine::{AssetInfo, Engine, Meter};
+use saine_engine::{AssetInfo, Engine, Meter, MetronomeConfig};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -152,8 +152,8 @@ pub struct Controller {
     pub ui_dirty: bool,
     meters: Vec<Meter>,
     sel_peak_hold: f32,
-    /// Displayed meter level (engine peaks are reset on every read, so the UI
-    /// applies its own release: hold the max, fall at 24 dB/s).
+    /// Displayed meter level: engine `peek_meters` (non-destructive ~50 ms
+    /// window) with a visual release of 24 dB/s on top.
     meter_disp: (f32, f32),
     meter_t: Option<Instant>,
     // models (kept to update in place)
@@ -166,6 +166,8 @@ pub struct Controller {
     clip_ids: Vec<ClipId>,
     /// Show status messages (disabled for pixel-comparison screenshots).
     pub show_status: bool,
+    /// Metronome on/off (app preference, not saved in the project).
+    pub metronome_on: bool,
 }
 
 impl Controller {
@@ -204,6 +206,7 @@ impl Controller {
             track_vis: Vec::new(),
             clip_ids: Vec::new(),
             show_status: true,
+            metronome_on: false,
         };
         c.selected_track = c.doc.project().tracks.first().map(|t| t.id);
         c.publish();
@@ -272,6 +275,37 @@ impl Controller {
             self.set_status(format!("Engine rejected the session: {e}"), 6);
         }
         self.published_rev = Some(self.doc.revision());
+        self.sync_loop_and_click();
+    }
+
+    /// Push loop region and metronome grid (both derived from the project
+    /// transport) to the engine. Cheap; called after every publish.
+    fn sync_loop_and_click(&mut self) {
+        let p = self.doc.project();
+        let tr = &p.transport;
+        let (start, end) = (p.ticks_to_frames(tr.loop_start, self.rate), p.ticks_to_frames(tr.loop_end, self.rate));
+        let beat_ticks = PPQ * 4 / tr.time_signature.denominator as i64;
+        let frames_per_beat = p.ticks_to_seconds(beat_ticks) * self.rate;
+        let cfg = MetronomeConfig { enabled: self.metronome_on, gain: 0.5, frames_per_beat, beats_per_bar: tr.time_signature.numerator as u32 };
+        let r = self.engine.set_loop(tr.loop_enabled, start, end).and_then(|_| self.engine.set_metronome(cfg));
+        if let Err(e) = r {
+            self.set_status(format!("Engine: {e}"), 4);
+        }
+    }
+
+    pub fn toggle_loop(&mut self) {
+        let tr = self.doc.project().transport.clone();
+        let cmd = Command::SetLoop { enabled: !tr.loop_enabled, start: tr.loop_start, end: tr.loop_end };
+        match self.doc.execute(cmd, Origin::User) {
+            Ok(()) => self.after_change(),
+            Err(e) => self.set_status(format!("Loop: {e}"), 4),
+        }
+    }
+
+    pub fn toggle_metronome(&mut self) {
+        self.metronome_on = !self.metronome_on;
+        self.sync_loop_and_click();
+        self.ui_dirty = true;
     }
 
     pub fn undo(&mut self) {
@@ -306,19 +340,7 @@ impl Controller {
 
     pub fn stop_return(&mut self) {
         let _ = self.engine.stop();
-        self.pump_offline();
         self.ui_dirty = true;
-    }
-
-    /// Transport commands are applied by the audio callback at block start. With
-    /// no device running, render one silent frame offline so seeks/stops still
-    /// take effect (the transport is never playing offline, so the position
-    /// does not advance).
-    fn pump_offline(&self) {
-        if !self.engine.device_running() && !self.engine.transport().playing {
-            let mut one = [0f32; 2];
-            let _ = self.engine.render_offline(&mut one);
-        }
     }
 
     pub fn playhead_ticks(&self) -> Ticks {
@@ -328,8 +350,8 @@ impl Controller {
     pub fn seek_beats(&mut self, beats: f64) {
         let ticks = (beats.max(0.0) * PPQ as f64).round() as Ticks;
         let frame = self.project().ticks_to_frames(ticks, self.rate);
+        // Applied immediately when no device runs (engine ABI), else at the next block.
         let _ = self.engine.seek(frame);
-        self.pump_offline();
     }
 
     // ---------------------------------------------------------------- track edits
@@ -772,9 +794,13 @@ impl Controller {
         if s.get_playing() != tp.playing {
             s.set_playing(tp.playing);
         }
+        // App preference (not a document revision), so synced every frame.
+        if s.get_metronome_on() != self.metronome_on {
+            s.set_metronome_on(self.metronome_on);
+        }
 
         // Meters (master first, then tracks).
-        self.engine.meters(&mut self.meters, 256);
+        self.engine.peek_meters(&mut self.meters, 256);
         let sel_id = self.selected_track.map(|t| t.0).unwrap_or(u64::MAX);
         let (nl, nr) = self.meters.iter().find(|m| m.track_id == sel_id).map(|m| (m.peak_l, m.peak_r)).unwrap_or((0.0, 0.0));
         let now = Instant::now();
@@ -853,6 +879,7 @@ impl Controller {
         }
         s.set_project_name(p.name.clone().into());
         s.set_bpm_text(format!("{}", p.transport.bpm.round() as i64).into());
+        s.set_loop_enabled(p.transport.loop_enabled);
         s.set_sig_text(format!("{}/{}", p.transport.time_signature.numerator, p.transport.time_signature.denominator).into());
         s.set_master_pos(slider_from_gain(p.master_gain));
         let sel = self.selected_track.and_then(|t| p.track(t).map(|tr| (p.track_index(t).unwrap(), tr)));

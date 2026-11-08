@@ -170,6 +170,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
     match action {
         "transport.play_pause" => ctl.borrow_mut().play_toggle(),
         "transport.stop_return" => ctl.borrow_mut().stop_return(),
+        "transport.loop_toggle" => ctl.borrow_mut().toggle_loop(),
         "edit.undo" => ctl.borrow_mut().undo(),
         "edit.redo" => ctl.borrow_mut().redo(),
         "clip.delete" | "track.delete" => ctl.borrow_mut().delete_selection(),
@@ -272,6 +273,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     on!(on_play_toggle, |c| c.play_toggle());
     on!(on_stop_return, |c| c.stop_return());
+    on!(on_toggle_loop, |c| c.toggle_loop());
+    on!(on_toggle_metronome, |c| c.toggle_metronome());
     on!(on_record, |c| c.set_status("Recording is not implemented yet", 3));
     on!(on_add_track, |c| c.add_audio_track());
     on!(on_select_track, |c, id: i32| c.select_track(TrackId(id as u64)));

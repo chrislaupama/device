@@ -78,7 +78,7 @@ export component Pill inherits Rectangle {
     in property <string> icon: "";
     in property <int> weight: 600;
     in property <bool> active: false;
-    in property <length> font-size: 10px;
+    in property <length> font-size: 9px;
     in property <color> text-color: active ? Tokens.on-accent : #c9c9cc;
     callback clicked;
     border-radius: self.height / 2;
@@ -102,10 +102,13 @@ export component IconButton inherits Rectangle {
     in property <length> icon-size: 16px;
     in property <bool> filled: false;
     in property <string> tooltip;
+    /// Toggle state: drawn in the accent colour when on.
+    in property <bool> active: false;
     callback clicked;
     accessible-role: button;
     accessible-label: tooltip;
-    Icon { d: root.icon; width: root.icon-size; height: root.icon-size; ink: ta.has-hover ? Tokens.text-primary : root.ink; filled: root.filled; }
+    accessible-checked: active;
+    Icon { d: root.icon; width: root.icon-size; height: root.icon-size; ink: root.active ? Tokens.accent : (ta.has-hover ? Tokens.text-primary : root.ink); filled: root.filled; }
     ta := TouchArea { clicked => { root.clicked(); } }
 }
 
@@ -114,7 +117,7 @@ export component SmallButton inherits Rectangle {
     in property <string> text;
     in property <bool> on: false;
     in property <color> on-color: Tokens.text-bright;
-    in property <length> font-size: 6px;
+    in property <length> font-size: 5.5px;
     callback clicked;
     border-radius: 2px;
     background: on ? on-color : Tokens.small-button;
@@ -247,7 +250,7 @@ export component Switch inherits Rectangle {
 // A text label positioned at an AX rect (x, y, height) with vertical centring.
 export component Label inherits Text {
     color: Tokens.text-primary;
-    font-size: 10.5px;
+    font-size: 9.5px;
     font-weight: 600;
     vertical-alignment: center;
     height: 14.5px; // fallback system font sits ~0.75 pt higher than Inter when centred in 13 pt
