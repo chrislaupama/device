@@ -158,9 +158,19 @@ private:
                 case 'b': out += '\b'; break;
                 case 'f': out += '\f'; break;
                 case 'u': {
+                    // Exactly four hex digits; anything else is malformed
+                    // (std::stoul would throw, or accept a sign/spaces).
                     if (i_ + 4 > t_.size()) return false;
-                    const unsigned cp = static_cast<unsigned>(std::stoul(t_.substr(i_, 4), nullptr, 16));
-                    i_ += 4;
+                    unsigned cp = 0;
+                    for (int k = 0; k < 4; ++k) {
+                        const char h = t_[i_++];
+                        unsigned d = 0;
+                        if (h >= '0' && h <= '9') d = static_cast<unsigned>(h - '0');
+                        else if (h >= 'a' && h <= 'f') d = static_cast<unsigned>(h - 'a' + 10);
+                        else if (h >= 'A' && h <= 'F') d = static_cast<unsigned>(h - 'A' + 10);
+                        else return false;
+                        cp = (cp << 4) | d;
+                    }
                     if (cp < 0x80) {
                         out += static_cast<char>(cp);
                     } else if (cp < 0x800) {
