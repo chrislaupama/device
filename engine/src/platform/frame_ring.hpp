@@ -132,7 +132,9 @@ public:
         return n;
     }
 
-    // Times the reader ran out of input (and re-primed).
+    // Short reads after the reader was primed: each one zero-fills the rest of
+    // the read and makes the reader prime again before it returns input.
+    // Silence returned while priming is not counted.
     uint64_t underruns() const noexcept { return underruns_.load(std::memory_order_relaxed); }
     // Input frames skipped because the fill exceeded target + slack.
     uint64_t dropped() const noexcept { return dropped_.load(std::memory_order_relaxed); }

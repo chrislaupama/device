@@ -306,9 +306,10 @@ public:
     // Stops the audio thread if it is running.
     ~WasapiDevice() override { stop(); }
 
-    // Checks the output and input endpoints, the requested rate (which must
-    // equal the endpoint's shared-mode rate) and the buffer size, without
-    // opening a stream.
+    // Checks the output and input endpoints, Config::device_rate (when nonzero
+    // it must equal the output endpoint's shared-mode rate; the engine's
+    // sample_rate is converted and not constrained) and the buffer size,
+    // without opening a stream.
     int32_t validate(const Config& c, std::string& err) const override {
         ComScope com;
         if (!com.ok()) {
