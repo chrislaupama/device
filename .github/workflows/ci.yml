@@ -95,6 +95,7 @@ jobs:
         env:
           WGPU_BACKEND: vulkan
           SLINT_WGPU_CPU: "1" # Slint refuses CPU adapters (lavapipe) unless allowed
+          RUST_BACKTRACE: "1"
         run: |
           sudo apt-get install -y --no-install-recommends xvfb mesa-vulkan-drivers
           xvfb-run -a -s "-screen 0 1600x1000x24" target/debug/saine-studio --state reference-default --screenshot app-linux.png
@@ -110,6 +111,7 @@ jobs:
         env:
           WGPU_BACKEND: dx12
           SLINT_WGPU_CPU: "1" # Slint refuses CPU adapters (WARP) unless allowed
+          RUST_BACKTRACE: "1"
         run: |
           target/debug/saine-studio.exe --state reference-default --screenshot app-windows.png
           test -s app-windows.png
