@@ -88,16 +88,18 @@ public:
             // While a band glides, update coefficients every kControl samples; else run the rest at once.
             const uint32_t len = moving ? std::min(kControl, n - pos) : n - pos;
             moving = false;
+            eq::Cascade chain;
             for (eq::BandRunner& br : bands_) {
                 moving |= br.glide(glide_);
                 if (br.dirty) br.redesign(fs_);
+                br.add_to(chain);
             }
             float* bl = l + pos;
             float* bm = r + pos;
             if (listen >= 0) {
                 eq::run(listen_c_, listen_st_, bl, bm, len);
             } else {
-                for (eq::BandRunner& br : bands_) br.run_block(bl, bm, len);
+                chain.run(bl, bm, len);
             }
             for (uint32_t i = 0; i < len; ++i) {
                 const float g = output_.next(out);

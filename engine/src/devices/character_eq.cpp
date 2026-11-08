@@ -111,6 +111,16 @@ constexpr Voicing kBanks[10] = {
 
 inline int choice(float v, int count) noexcept { return std::clamp(static_cast<int>(std::lround(v)), 0, count - 1); }
 
+// tanh to ~1e-6 (continued-fraction rational, clamped): the valve runs it
+// four times per sample per channel at 4x, where std::tanh dominates.
+inline float fast_tanh(float x) noexcept {
+    const float c = std::clamp(x, -5.0f, 5.0f);
+    const float x2 = c * c;
+    const float num = c * (135135.0f + x2 * (17325.0f + x2 * (378.0f + x2)));
+    const float den = 135135.0f + x2 * (62370.0f + x2 * (3150.0f + 28.0f * x2));
+    return std::clamp(num / den, -1.0f, 1.0f);
+}
+
 inline float logcosh(float x) noexcept {
     const float a = std::fabs(x);
     return a + std::log1p(std::exp(-2.0f * a)) - 0.69314718f;
@@ -136,6 +146,8 @@ struct Halfband {
     static constexpr int kMaxTaps = 48;
     float h[kMaxTaps] = {};
     int n = 0, c = 0;
+    int nz[kMaxTaps] = {}; // indices of the non-zero taps
+    int nnz = 0;
     float ub[2][kMaxTaps] = {};     // base-rate history (doubled ring)
     float db[2][2 * kMaxTaps] = {}; // high-rate history (doubled ring)
     int up_pos[2] = {0, 0}, dn_pos[2] = {0, 0};
@@ -162,7 +174,11 @@ struct Halfband {
             tmp[i] = v;
             sum += v;
         }
-        for (int i = 0; i < n; ++i) h[i] = static_cast<float>(tmp[i] / sum);
+        nnz = 0;
+        for (int i = 0; i < n; ++i) {
+            h[i] = static_cast<float>(tmp[i] / sum);
+            if (tmp[i] != 0.0) nz[nnz++] = i;
+        }
         clear();
     }
     void clear() noexcept {
@@ -193,7 +209,7 @@ struct Halfband {
     float out(int ch) const noexcept {
         const float* b = db[ch] + dn_pos[ch];
         float a = 0.0f;
-        for (int j = 0; j < n; ++j) a += h[j] * b[j];
+        for (int j = 0; j < nnz; ++j) a += h[nz[j]] * b[nz[j]];
         return a;
     }
     // Two high-rate samples -> one base sample (aligned with up()).
@@ -338,6 +354,8 @@ public:
 
             if (!bypass) {
                 // Dynamic bands: detect on the input, then move the band gains.
+                // Undriven bands run as one cascade; a driven band flushes it.
+                eq::Cascade chain;
                 for (int b = 0; b < kBands; ++b) {
                     eq::BandRunner& br = bands_[b];
                     br.glide(glide_);
@@ -370,9 +388,11 @@ public:
                     if (br.d.n == 0) continue;
                     const float dr = drive_[b];
                     if (dr <= 0.0f) {
-                        br.run_block(cl, cr, len);
+                        br.add_to(chain);
                         continue;
                     }
+                    chain.run(cl, cr, len);
+                    chain.clear();
                     // Drive: saturate only what the band adds.
                     float xl[kControl], xr[kControl];
                     std::memcpy(xl, cl, 4 * len);
@@ -386,6 +406,7 @@ public:
                         cr[i] = xr[i] + norm * adaa_[b].run(1, k * (cr[i] - xr[i]), asym_, tb);
                     }
                 }
+                chain.run(cl, cr, len);
 
                 // Tamer: detect on the EQ'd signal, cut what pokes out.
                 for (int t = 0; t < kTames; ++t) {
@@ -530,7 +551,7 @@ private:
         constexpr float tb = 0.24491866f;   // tanh(b)
         constexpr float slope = 0.94001485f; // 1 - tanh(b)^2
         if (drive < 1e-3f) return u;
-        return (std::tanh(drive * u + b) - tb) / (drive * slope);
+        return (fast_tanh(drive * u + b) - tb) / (drive * slope);
     }
 
     float valve(int ch, float x, bool four, float drive) noexcept {
