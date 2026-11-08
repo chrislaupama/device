@@ -528,8 +528,15 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    /// Position the user hears: transport position minus plugin delay
+    /// compensation and output latency while playing (equal to the transport
+    /// position when stopped). Used for the playhead and all readouts.
+    pub fn audible_frames(&self) -> i64 {
+        self.engine.audible_position().max(0)
+    }
+
     pub fn playhead_ticks(&self) -> Ticks {
-        self.project().frames_to_ticks(self.engine.transport().position, self.rate)
+        self.project().frames_to_ticks(self.audible_frames(), self.rate)
     }
 
     pub fn seek_beats(&mut self, beats: f64) {
@@ -1113,11 +1120,12 @@ impl Controller {
             }
         }
         let tp = self.engine.transport();
+        let pos = self.audible_frames();
         let p = self.doc.project();
-        // Transport readouts from the engine.
-        let ticks = p.frames_to_ticks(tp.position, self.rate).max(0);
+        // Transport readouts from the engine (audible position, see audible_frames).
+        let ticks = p.frames_to_ticks(pos, self.rate).max(0);
         let bar = ticks / p.ticks_per_bar() + 1;
-        let secs = tp.position.max(0) as f64 / self.rate;
+        let secs = pos as f64 / self.rate;
         let ms_total = (secs * 1000.0).floor() as i64;
         let set_if = |cur: SharedString, new: String, f: &dyn Fn(SharedString)| {
             if cur.as_str() != new {

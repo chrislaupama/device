@@ -138,3 +138,12 @@ cargo test --workspace                                                          
 - App: browser Devices tab from the real catalog, device cards (power, editor, remove, reorder), Add device
   menus, Inst selector, Settings › Plugins with rescan, plugin state synced on save. Self-test 120/120 both modes.
 - Screenshot states only show Apple's built-in AUs; never commit names of the user's installed plugins.
+
+### 2026-11-08: session 1, round 8 (plugin delay compensation)
+- Engine (ADR 0004): per-track alignment delays, whole-mix delay L, bypass keeps timing, monitored input skips the
+  compensation delay, metronome/export/recording compensated, runtime latency changes via plugin_idle, 2^17-frame
+  cap, global toggle (off = bit-identical to before). 125/125 ctest (default + ASan); bench L=0 unchanged.
+- App: playhead and Bar/Time readouts show the audible position; Settings › Audio has a compensation switch
+  (preference `pdc_off`) and a plugin-latency readout. Self-test 125/125 both modes, incl. an offline check that a
+  4800-frame plugin puts the readout 100 ms behind the transport.
+- Not run: acoustic loopback with plugins (`acoustic_loopback_latency_with_pdc`, opens the mic).

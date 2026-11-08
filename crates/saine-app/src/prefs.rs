@@ -28,6 +28,10 @@ pub struct AudioPrefs {
     /// 0 = device default.
     pub buffer_size: u32,
     pub input_muted: bool,
+    /// Plugin delay compensation switched off (stored inverted so files
+    /// written before this field default to compensation ON).
+    #[serde(default)]
+    pub pdc_off: bool,
 }
 
 impl AudioPrefs {

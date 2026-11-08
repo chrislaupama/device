@@ -295,6 +295,8 @@ export global Studio {
     in property <string> set-buffer-text: "Device default";
     in property <bool> set-input-muted;
     in property <string> settings-note;
+    in property <bool> set-pdc-on: true;
+    in property <string> set-latency-text;
     in property <bool> settings-menu-open;
     in property <int> settings-menu-field;      // 0 output, 1 input, 2 sample rate, 3 buffer size
     in property <[ChoiceItem]> settings-menu-items;
@@ -306,6 +308,7 @@ export global Studio {
     callback settings-menu-pick(int);
     callback settings-menu-dismiss();
     callback settings-toggle-mute();
+    callback settings-toggle-pdc();
     callback settings-test();
 
     // ---- device chain (Devices tab; src/devices.rs, ui/devices.slint) ----

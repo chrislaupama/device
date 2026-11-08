@@ -105,6 +105,9 @@ pub fn apply_startup_prefs(engine: &saine_engine::Engine, p: &Preferences) -> Re
     if p.audio.input_muted {
         engine.set_input_muted(true);
     }
+    if p.audio.pdc_off {
+        engine.set_delay_compensation(false);
+    }
     if p.audio.is_custom() {
         engine.configure_device(&p.audio.device_config()).map_err(|e| format!("saved audio settings not applied: {e}"))?;
     }
@@ -335,6 +338,31 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    pub fn settings_toggle_pdc(&mut self) {
+        let off = !self.settings.prefs.audio.pdc_off;
+        self.engine.set_delay_compensation(!off);
+        self.settings.prefs.audio.pdc_off = off;
+        self.save_prefs();
+        self.ui_dirty = true;
+    }
+
+    /// "Plugin latency: 12.3 ms (590 samples)", or "none" when no plugin adds latency.
+    fn latency_text(&self) -> String {
+        let r = self.engine.latency_report();
+        let max_track = r.tracks.iter().map(|(_, l)| *l).max().unwrap_or(0);
+        if max_track == 0 {
+            return "Plugin latency: none".into();
+        }
+        let ms = max_track as f64 * 1000.0 / self.rate;
+        let mut t = format!("Plugin latency: {ms:.1} ms ({max_track} samples)");
+        if !self.engine.delay_compensation_enabled() {
+            t.push_str(", not compensated");
+        } else if r.clamped {
+            t.push_str(&format!(", compensation capped at {} samples", saine_engine::PDC_MAX_DELAY_FRAMES));
+        }
+        t
+    }
+
     // ---------------------------------------------------------------- test tone
 
     /// "Test": a 0.5 s, -24 dBFS sine played through the engine with a temporary
@@ -453,6 +481,8 @@ impl Controller {
         let b = self.current_buffer();
         s.set_set_buffer_text(if b > 0 { fmt_buffer(b, self.current_rate()) } else { "Device default".into() }.into());
         s.set_set_input_muted(self.settings.prefs.audio.input_muted);
+        s.set_set_pdc_on(!self.settings.prefs.audio.pdc_off);
+        s.set_set_latency_text(self.latency_text().into());
         s.set_settings_note(self.settings.note.clone().into());
         match &self.settings.menu {
             Some((f, items)) => {

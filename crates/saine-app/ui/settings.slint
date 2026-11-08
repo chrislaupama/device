@@ -88,8 +88,18 @@ component AudioPage inherits Rectangle {
     Dropdown { x: 20.5px; y: 251px; width: root.width - 20.5px - 20.5px; text: Studio.set-rate-text; field: 2; }
     FieldLabel { x: 20.5px; y: 299.5px - 7px; text: "Buffer size"; }
     Dropdown { x: 20.5px; y: 312px; width: root.width - 20.5px - 20.5px; text: Studio.set-buffer-text; field: 3; }
+    // Plugin delay compensation (engine ADR 0004): aligns tracks whose plugins add latency.
+    Text { x: 20.5px; y: 360px - 7px; height: 14px; text: "Plugin delay compensation"; color: #d9d9dc; font-size: 10.25px; font-weight: 400; vertical-alignment: center; }
+    Rectangle {
+        x: root.width - 20.5px - 20.5px; y: 355px; width: 20.5px; height: 10px; border-radius: 5px;
+        background: Studio.set-pdc-on ? Tokens.accent : #4a4b4f;
+        accessible-role: checkbox; accessible-label: "Plugin delay compensation"; accessible-checked: Studio.set-pdc-on;
+        Rectangle { x: Studio.set-pdc-on ? parent.width - self.width - 1px : 1px; y: 1px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; }
+        TouchArea { clicked => { Studio.settings-toggle-pdc(); } }
+    }
+    Text { x: 20.5px; y: 377px - 7px; height: 14px; text: Studio.set-latency-text; color: Tokens.text-tertiary; font-size: 9.5px; vertical-alignment: center; }
     if Studio.settings-note != "": Text {
-        x: 20.5px; y: 352px; width: root.width - 41px; height: 14px;
+        x: 20.5px; y: 398px; width: root.width - 41px; height: 14px;
         text: Studio.settings-note; color: Tokens.text-tertiary; font-size: 9px; vertical-alignment: center; overflow: elide;
     }
 }

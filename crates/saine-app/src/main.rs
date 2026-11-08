@@ -656,6 +656,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_settings_menu_pick, |c, i: i32| c.settings_menu_pick(i.max(0) as usize));
     on!(on_settings_menu_dismiss, |c| c.settings_menu_dismiss());
     on!(on_settings_toggle_mute, |c| c.settings_toggle_mute());
+    on!(on_settings_toggle_pdc, |c| c.settings_toggle_pdc());
     on!(on_settings_test, |c| c.settings_test());
     on!(on_add_track, |c| c.add_audio_track());
     on!(on_select_track, |c, id: i32| c.select_track(TrackId(id as u64)));

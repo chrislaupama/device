@@ -1104,6 +1104,79 @@ fn recording_steps() -> Vec<Step> {
         Check("settings: Escape closed the window", Box::new(|c, a| {
             (!c.settings.open && !a.global::<Studio>().get_settings_open()).then_some(()).ok_or("still open".into())
         })),
+        Do("settings: Cmd+, again (Audio page)", Box::new(|a| key(a, ",", true, false))),
+        Check("pdc: compensation on by default, latency readout shows the engine report", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let txt = s.get_set_latency_text().to_string();
+            let max = c.engine.latency_report().tracks.iter().map(|(_, l)| *l).max().unwrap_or(0);
+            let ok_txt = if max == 0 { txt == "Plugin latency: none" } else { txt.contains(&format!("({max} samples)")) };
+            (c.engine.delay_compensation_enabled() && s.get_set_pdc_on() && ok_txt).then_some(()).ok_or(format!("enabled {} ui {} text {txt:?} max {max}", c.engine.delay_compensation_enabled(), s.get_set_pdc_on()))
+        })),
+        Do("pdc: click the Plugin delay compensation switch", Box::new(|a| click(a, 255.0 + 187.0 + 773.0 - 41.0 + 10.25, 7.0 + 355.0 + 5.0))),
+        Check("pdc: switched off in the engine, the UI and the (in-memory) preferences", Box::new(|c, a| {
+            (!c.engine.delay_compensation_enabled() && !a.global::<Studio>().get_set_pdc_on() && c.settings.prefs.audio.pdc_off)
+                .then_some(())
+                .ok_or(format!("engine {} ui {} pref_off {}", c.engine.delay_compensation_enabled(), a.global::<Studio>().get_set_pdc_on(), c.settings.prefs.audio.pdc_off))
+        })),
+        Do("pdc: click the switch again, then Escape", Box::new(|a| {
+            click(a, 255.0 + 187.0 + 773.0 - 41.0 + 10.25, 7.0 + 355.0 + 5.0);
+            key(a, Key::Escape, false, false);
+        })),
+        Check("pdc: back on; Settings closed", Box::new(|c, a| {
+            (c.engine.delay_compensation_enabled() && !c.settings.prefs.audio.pdc_off && !a.global::<Studio>().get_settings_open())
+                .then_some(())
+                .ok_or("pdc not restored or settings still open".into())
+        })),
+        DoC("pdc (offline): add the engine's test latency plugin (4800 frames) to track 1, play 1 s offline", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            if c.engine.device_running() {
+                return; // offline render is refused while the device owns the audio path
+            }
+            let track = c.project().tracks[0].id;
+            let plugin = saine_core::PluginRef {
+                format: saine_core::PluginFormat::Clap,
+                id: "studio.saine.test.latency".into(),
+                path: Some(saine_engine::test_plugin_dir().join("SaineTestLatency.clap").to_string_lossy().into_owned()),
+                name: "Saine Test Latency".into(),
+                vendor: "Saine".into(),
+                version: "1.0.0".into(),
+                kind: saine_core::PluginKind::Effect,
+            };
+            let mut dev = saine_core::Device::new(plugin);
+            dev.state = Some(saine_core::device::b64::encode(&4800u32.to_le_bytes()));
+            c.execute(saine_core::Command::AddDevice { track, index: None, device: dev });
+            let e = &c.engine;
+            let _ = e.seek(0);
+            let _ = e.play();
+            let mut buf = vec![0f32; 2 * 48_000];
+            let _ = e.render_offline(&mut buf);
+        })),
+        Check("pdc (offline): L = 4800; audible position and Time readout are 100 ms behind the transport", Box::new(|c, a| {
+            if c.engine.device_running() {
+                return Ok(());
+            }
+            let l = c.engine.latency_report().total_frames;
+            let pos = c.engine.transport().position;
+            let aud = c.engine.audible_position();
+            let t = a.global::<Studio>().get_time_text().to_string();
+            (l == 4800 && pos == 48_000 && aud == 48_000 - 4800 && t == "00:00.900")
+                .then_some(())
+                .ok_or(format!("L {l} pos {pos} audible {aud} time {t:?} load errors {:?}", c.engine.plugin_load_errors()))
+        })),
+        DoC("pdc (offline): Enter (stop), Cmd+Z (remove the plugin)", Box::new(|a, ctl| {
+            if ctl.borrow().engine.device_running() {
+                return; // nothing was added in device mode; an undo here would revert an unrelated edit
+            }
+            key(a, Key::Return, false, false);
+            key(a, "z", true, false);
+        })),
+        Check("pdc (offline): plugin removed by undo, no latency left", Box::new(|c, _| {
+            if c.engine.device_running() {
+                return Ok(());
+            }
+            let ok = c.project().tracks[0].devices.iter().all(|d| d.plugin.id != "studio.saine.test.latency");
+            (ok && c.engine.latency_report().total_frames == 0).then_some(()).ok_or(format!("devices {:?} L {}", c.project().tracks[0].devices.len(), c.engine.latency_report().total_frames))
+        })),
         // ---------------- recording with injected input (offline only) ----------------
         DoC("rec: Shift+R (arm track 1), click the ruler at bar 2", Box::new(|a, ctl| {
             key(a, "R", false, true);
