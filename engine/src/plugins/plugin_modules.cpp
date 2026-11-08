@@ -106,7 +106,11 @@ void* open_library(const std::string& path, std::string& err) {
 #if defined(_WIN32)
     // Altered search path: the plugin's own folder is searched for the DLLs
     // it depends on.
-    HMODULE h = LoadLibraryExW(os::widen(path).c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    // The flag is undefined for relative paths (e.g. relative SAINE_PLUGIN_PATH entries).
+    std::error_code ec;
+    const std::filesystem::path abs = std::filesystem::absolute(os::path_from_utf8(path), ec);
+    const std::wstring wide = ec ? os::widen(path) : abs.wstring();
+    HMODULE h = LoadLibraryExW(wide.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (h == nullptr) {
         err = "could not load " + path + " (error " + std::to_string(GetLastError()) + ")";
         return nullptr;

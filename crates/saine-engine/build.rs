@@ -18,7 +18,13 @@ fn main() {
     println!("cargo:rerun-if-env-changed=SAINE_ENGINE_PIPEWIRE");
     // Linux audio backend: ON unless SAINE_ENGINE_PIPEWIRE=OFF (then the
     // engine renders offline only and libpipewire is not linked).
-    let pipewire = std::env::var("SAINE_ENGINE_PIPEWIRE").map(|v| v != "OFF" && v != "0").unwrap_or(true);
+    // Falsy as CMake reads it: OFF/0/FALSE/NO/N/IGNORE/NOTFOUND/"" or *-NOTFOUND.
+    let pipewire = std::env::var("SAINE_ENGINE_PIPEWIRE")
+        .map(|v| {
+            let v = v.trim().to_ascii_uppercase();
+            !(matches!(v.as_str(), "" | "0" | "OFF" | "FALSE" | "NO" | "N" | "IGNORE" | "NOTFOUND") || v.ends_with("-NOTFOUND"))
+        })
+        .unwrap_or(true);
     let profile = if std::env::var("PROFILE").as_deref() == Ok("release") { "Release" } else { "RelWithDebInfo" };
     let third_party = manifest.join("../../target/saine-third-party");
     let mut cfg = cmake::Config::new(&engine);

@@ -211,6 +211,19 @@ pub fn scan_dirs() -> Vec<PathBuf> {
     v
 }
 
+/// Extra folders the scanner searches from the environment, with the variable
+/// that set them: `CLAP_PATH` (Windows, Linux) and `SAINE_PLUGIN_PATH`.
+pub fn configured_scan_dirs() -> Vec<(PathBuf, &'static str)> {
+    let vars: &[&'static str] = if cfg!(target_os = "macos") { &["SAINE_PLUGIN_PATH"] } else { &["CLAP_PATH", "SAINE_PLUGIN_PATH"] };
+    let mut v = Vec::new();
+    for &var in vars {
+        if let Some(list) = std::env::var_os(var) {
+            v.extend(std::env::split_paths(&list).filter(|p| !p.as_os_str().is_empty()).map(|p| (p, var)));
+        }
+    }
+    v
+}
+
 // ------------------------------------------------------------------ UI state
 
 /// One built browser row, parallel to the `TreeRow` model.
@@ -1197,7 +1210,13 @@ impl Controller {
                 _ => s,
             }
         };
-        let dirs: Vec<PluginRow> = scan_dirs().iter().map(|d| PluginRow { name: tilde(d).into(), detail: "".into(), badge: "Default".into(), warn: !d.is_dir() }).collect();
+        let dirs: Vec<PluginRow> = scan_dirs()
+            .into_iter()
+            .map(|d| (d, "Default"))
+            .chain(configured_scan_dirs())
+            // A configured path may be a folder or a single bundle.
+            .map(|(d, badge)| PluginRow { name: tilde(&d).into(), detail: "".into(), badge: badge.into(), warn: !d.exists() || (badge == "Default" && !d.is_dir()) })
+            .collect();
         sync_model(&self.scan_dirs_model, dirs);
         let mut found: Vec<&PluginInfo> = cat.plugins.iter().collect();
         found.sort_by_key(|p| (format_order(p.plugin.format), p.plugin.vendor.to_lowercase(), p.plugin.name.to_lowercase()));

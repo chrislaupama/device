@@ -15,6 +15,7 @@
 #include <windows.h>
 // After windows.h:
 #include <shellapi.h>
+#include <share.h>
 #else
 #include <cerrno>
 #include <climits>
@@ -62,9 +63,9 @@ std::FILE* fopen_utf8(const char* utf8_path, const char* mode) noexcept {
     if (utf8_path == nullptr || mode == nullptr) return nullptr;
 #if defined(_WIN32)
     try {
-        std::FILE* f = nullptr;
-        if (_wfopen_s(&f, widen(utf8_path).c_str(), widen(mode).c_str()) != 0) return nullptr;
-        return f;
+        // _wfsopen + _SH_DENYNO: share like fopen does on POSIX (_wfopen_s
+        // opens without sharing, so readers would fail on open takes/assets).
+        return _wfsopen(widen(utf8_path).c_str(), widen(mode).c_str(), _SH_DENYNO);
     } catch (...) {
         return nullptr;
     }
