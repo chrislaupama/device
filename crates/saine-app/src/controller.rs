@@ -111,6 +111,11 @@ pub enum ImportTarget {
     /// Selected track if it is an audio track, else the first audio track, else a new one.
     Selected,
     NewTrack,
+    /// A track resolved from `Selected` when the import was requested (an audio
+    /// track, or a new one if it has since been removed). Imports finish on worker
+    /// threads in any order, so `Selected` must not be resolved at completion: an
+    /// earlier import's new track would be selected by then.
+    Track(TrackId),
 }
 
 pub enum JobResult {
@@ -704,6 +709,10 @@ impl Controller {
     /// Import on worker threads; clips land at `at` (default: the playhead).
     pub fn import_files(&mut self, paths: Vec<PathBuf>, target: ImportTarget, at: Option<Ticks>) {
         let at = at.unwrap_or_else(|| self.playhead_ticks());
+        let target = match target {
+            ImportTarget::Selected => self.selected_audio_track().map_or(ImportTarget::NewTrack, ImportTarget::Track),
+            t => t,
+        };
         for (i, path) in paths.into_iter().enumerate() {
             let engine = self.engine.clone();
             let tx = self.jobs_tx.clone();
@@ -719,6 +728,16 @@ impl Controller {
                 .expect("spawn import thread");
         }
         self.set_status("Importing…", 30);
+    }
+
+    /// The selected track if it is an audio track, else the first audio track.
+    fn selected_audio_track(&self) -> Option<TrackId> {
+        let p = self.project();
+        self.selected_track
+            .and_then(|t| p.track(t))
+            .filter(|t| t.kind == TrackKind::Audio)
+            .or_else(|| p.tracks.iter().find(|t| t.kind == TrackKind::Audio))
+            .map(|t| t.id)
     }
 
     /// Drain finished background jobs (called from a UI timer and each frame).
@@ -780,12 +799,8 @@ impl Controller {
         let mut cmds = vec![Command::AddAsset { asset }];
         let existing = match target {
             ImportTarget::NewTrack => None,
-            ImportTarget::Selected => self
-                .selected_track
-                .and_then(|t| p.track(t))
-                .filter(|t| t.kind == TrackKind::Audio)
-                .or_else(|| p.tracks.iter().find(|t| t.kind == TrackKind::Audio))
-                .map(|t| t.id),
+            ImportTarget::Selected => self.selected_audio_track(),
+            ImportTarget::Track(t) => p.track(t).filter(|t| t.kind == TrackKind::Audio).map(|t| t.id),
         };
         let track_id = existing.unwrap_or_else(|| {
             let id = TrackId(alloc());
