@@ -130,6 +130,7 @@ int replace_all(std::string& s, const std::string& from, const std::string& to) 
     return n;
 }
 
+// Overwrites the file at `path` (UTF-8) with `text`.
 void write_text(const std::string& path, const std::string& text) {
     std::ofstream f(os::path_from_utf8(path), std::ios::binary | std::ios::trunc);
     f << text;

@@ -143,6 +143,8 @@ private:
         i_ += n;
         return true;
     }
+    // Parses a JSON string at the cursor into `out`, decoding escapes (\uXXXX
+    // to UTF-8). Returns false on a missing quote or a malformed escape.
     bool string(std::string& out) {
         if (i_ >= t_.size() || t_[i_] != '"') return false;
         ++i_;
