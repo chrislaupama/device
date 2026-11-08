@@ -57,12 +57,16 @@ cargo test --workspace                                                          
 - UI rendering decision: Slint 1.18.1 + wgpu 30.0.1, offscreen texture via `Image::try_from` (ADR 0001):
   ≈0.15 ms CPU/frame for 8,192 clips at a locked 60 fps.
 
-**In progress**
-- `crates/saine-app`: high-fidelity shell + GPU timeline wired to core/engine, with automated screenshot diff
-  (`tools/compare/`). See `crates/saine-app/FIDELITY.md` when present.
+- App (`crates/saine-app`, binary `saine-studio`): reference-geometry shell + wgpu timeline with real waveforms,
+  wired to core/engine (transport, mixer controls, import, clip move/trim, undo/redo, save/open).
+  `--self-test` 21/21; full-window screenshot MAE 1.96/255 vs reference (`crates/saine-app/FIDELITY.md`);
+  60 fps with ≈0.06 ms of our render CPU per frame.
+  Run: `cargo run --release -p saine-app -- --demo`.
 
 **Known gaps / next steps**
-1. Finish and verify the app shell, then iterate fidelity per region (header → browser → timeline → inspector).
+1. Bundle Inter (OFL) to close most of the remaining text error; build the panel toggles (Rheo, mixer, editor), splitters,
+   track rename/resize, native menu bar. Engine ABI requests: apply transport commands when the device is stopped,
+   non-destructive meter reads, loop playback, metronome, input/recording.
 2. Reference capture still missing: audio clip appearance (needs a local WAV dropped onto a track), hover/pressed
    states, animation timings, the rest of the shortcut bindings (scroll the Shortcuts page with mouse wheel events, not keys).
 3. Engine: device selection, input/recording, worker-pool parallel track rendering, WASAPI/ASIO and PipeWire/JACK backends.
