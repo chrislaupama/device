@@ -263,6 +263,10 @@ pub enum MenuPick {
     Sidechain(DeviceId, Option<TrackId>),
     /// Built-in device panel: load factory preset `n`.
     Preset(DeviceId, usize),
+    /// Built-in device panel: parameter (index) set to a choice.
+    Param(DeviceId, usize, f32),
+    /// Built-in device panel: the mode entry of a type menu (type index, mode index).
+    Mode(DeviceId, usize, usize),
 }
 
 #[derive(Debug, Clone)]
@@ -1059,6 +1063,8 @@ impl Controller {
             Some(MenuPick::Add(item)) => item,
             Some(MenuPick::Sidechain(device, source)) => return self.panel_set_sidechain(device, source),
             Some(MenuPick::Preset(device, n)) => return self.panel_load_preset(device, n),
+            Some(MenuPick::Param(device, param, v)) => return self.panel_pick_param(device, param, v),
+            Some(MenuPick::Mode(device, _, mode)) => return self.panel_pick_mode(device, mode),
             None => return,
         };
         let Some(t) = self.selected_track else { return };

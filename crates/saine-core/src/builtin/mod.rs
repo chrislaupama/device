@@ -31,7 +31,7 @@ mod character_eq;
 mod compressor;
 pub mod eq;
 
-pub use auto_filter::{filter_response, FilterSetting};
+pub use auto_filter::{dj_map, filter_response, FilterSetting};
 
 use crate::device::{Device, DeviceId, PluginFormat, PluginKind, PluginRef};
 use crate::model::Track;

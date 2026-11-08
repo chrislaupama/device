@@ -15,7 +15,7 @@ use crate::device::PluginKind;
 use std::f64::consts::PI;
 
 const TYPES: &[&str] = &["LP", "HP", "BP", "Notch"];
-const SLOPES: &[&str] = &["12 dB/oct", "24 dB/oct"];
+const SLOPES: &[&str] = &["12", "24"];
 const DIVISIONS: &[&str] = &["1/1", "1/2", "1/2.", "1/2T", "1/4", "1/4.", "1/4T", "1/8", "1/8.", "1/8T", "1/16", "1/16.", "1/16T", "1/32"];
 const SHAPES: &[&str] = &["Sine", "Triangle", "Saw", "Square", "S&H", "Random"];
 const SYNC: &[&str] = &["Free", "Sync"];

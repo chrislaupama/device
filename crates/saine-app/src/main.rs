@@ -17,6 +17,7 @@ mod assistant_provider;
 mod automation;
 mod clipedit;
 mod controller;
+mod device_field;
 mod device_panel;
 mod devices;
 mod gpu;
@@ -81,7 +82,8 @@ struct Args {
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
     device_chain_review: bool,
-    compressor_state: bool,
+    /// Built-in device (registry id) shown alone in an audio track's chain.
+    builtin_state: Option<String>,
     /// review-settings-plugins: Settings open on the Plugins page (no reference comparison).
     plugins_page_review: bool,
     assistant_fixture: Option<PathBuf>,
@@ -163,9 +165,9 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.device_chain_review = true;
                 }
-                "reference-compressor" => {
+                st @ ("reference-compressor" | "reference-channeleq" | "reference-character-eq" | "reference-auto-filter") => {
                     a.reference_default = true;
-                    a.compressor_state = true;
+                    a.builtin_state = st.strip_prefix("reference-").map(str::to_string);
                 }
                 "review-settings-plugins" => {
                     a.reference_default = true;
@@ -178,7 +180,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, reference-compressor, review-settings-plugins)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, reference-compressor, reference-channeleq, reference-character-eq, reference-auto-filter, review-settings-plugins)"
                     ));
                 }
             },
@@ -362,7 +364,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
-            if c.panel_cancel_drag() {
+            if c.panel_cancel_drag() || c.panel_cancel_field() {
                 return true;
             }
             if c.settings.menu.is_some() {
@@ -664,13 +666,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(20.0);
     }
-    if args.compressor_state {
-        // Compare with renders/reference/compressor.png (Captain drive): the built-in Compressor
+    if let Some(id) = &args.builtin_state {
+        // Compare with renders/reference/<device>.png (Captain drive): the built-in device
         // at its defaults, alone in an audio track's chain, transport stopped.
         let mut c = ctl.borrow_mut();
         if let Some(t) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Audio).map(|t| t.id) {
             c.select_track(t);
-            let def = saine_core::builtin::find("compressor").expect("compressor is registered");
+            let def = saine_core::builtin::find(id).expect("the device is registered");
             c.add_item_to_track(&devices::Item::Builtin(def), t, None);
         }
         c.set_bottom_tab(BottomTab::Devices);
@@ -860,6 +862,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_text, |c, id: i32, p: i32, text: slint::SharedString| c.panel_text(saine_core::DeviceId(id as u64), p, &text));
     on!(on_panel_menu, |c, id: i32, which: i32, x: f32, y: f32| c.panel_menu(saine_core::DeviceId(id as u64), which, x, y));
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(saine_core::DeviceId(id as u64), dir));
+    on!(on_panel_field, |c, id: i32, phase: i32, x: f32, y: f32, alt: bool, shift: bool| c.panel_field(saine_core::DeviceId(id as u64), phase, x, y, alt, shift));
+    on!(on_panel_eq, |c, id: i32, action: i32, value: i32| c.panel_eq(saine_core::DeviceId(id as u64), action, value));
+    {
+        // Field wheel / keys answer whether they used the event, so they cannot go through on!.
+        let (ctl1, aw1) = (ctl.clone(), app.as_weak());
+        studio.on_panel_field_wheel(move |id, x, y, dy| {
+            let used = ctl1.borrow_mut().panel_field_wheel(saine_core::DeviceId(id as u64), x, y, dy);
+            if let Some(a) = aw1.upgrade() {
+                if let Ok(mut c) = ctl1.try_borrow_mut() { c.update_ui(&a); }
+                a.window().request_redraw();
+            }
+            used
+        });
+        let (ctl2, aw2) = (ctl.clone(), app.as_weak());
+        studio.on_panel_field_key(move |id, key, shift, alt| {
+            let used = ctl2.borrow_mut().panel_field_key(saine_core::DeviceId(id as u64), key.as_str(), shift, alt);
+            if let Some(a) = aw2.upgrade() {
+                if let Ok(mut c) = ctl2.try_borrow_mut() { c.update_ui(&a); }
+                a.window().request_redraw();
+            }
+            used
+        });
+    }
     on!(on_chain_scroll_by, |c, d: f32| c.chain_scroll_by(d));
     on!(on_add_category, |c, i: i32, x: f32, y: f32| c.add_category(i.max(0) as usize, x, y));
     on!(on_add_search_edited, |c, t: slint::SharedString| c.add_search(t.as_str()));
