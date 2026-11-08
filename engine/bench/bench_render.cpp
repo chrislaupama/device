@@ -2,7 +2,9 @@
 // (the device-callback process path) at 48 kHz / 256 frames.
 // Prints measurements only; no pass/fail thresholds.
 //
-// usage: saine_engine_bench [blocks=4000] [clips_per_track=4]
+// usage: saine_engine_bench [blocks=4000] [clips_per_track=4] [features=0]
+//   features=1: also enable a 48 001-frame loop (odd length, so the wrap
+//   lands mid-block) and the metronome at 120 BPM.
 #include "saine_engine.h"
 
 #include <algorithm>
@@ -53,7 +55,8 @@ struct Result {
     double rt_ratio;
 };
 
-Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std::vector<std::string>& files) {
+Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std::vector<std::string>& files,
+           bool features) {
     se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
     se_engine* e = se_engine_create(&cfg);
     if (!e) {
@@ -100,6 +103,16 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
         std::exit(1);
     }
     se_transport_play(e);
+    if (features) {
+        // Odd loop length so the wrap lands mid-block; 120 BPM click.
+        se_transport_set_loop(e, 1, 1000, 1000 + 48001);
+        se_metronome_desc m{};
+        m.enabled = 1;
+        m.gain = 0.5f;
+        m.frames_per_beat = 24000.0;
+        m.beats_per_bar = 4;
+        se_metronome_set(e, &m);
+    }
 
     std::vector<float> buf(kBlock * 2);
     for (int i = 0; i < 50; ++i) se_render_offline(e, buf.data(), kBlock); // warm-up
@@ -131,6 +144,7 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
 int main(int argc, char** argv) {
     const uint32_t blocks = argc > 1 ? static_cast<uint32_t>(std::atoi(argv[1])) : 4000;
     const uint32_t clips_per_track = argc > 2 ? static_cast<uint32_t>(std::atoi(argv[2])) : 4;
+    const bool features = argc > 3 && std::atoi(argv[3]) != 0;
 
     // A handful of 20 s stereo assets (decoded once per engine).
     std::vector<std::string> files;
@@ -152,12 +166,12 @@ int main(int argc, char** argv) {
     }
 
     const double deadline_us = kBlock / kRate * 1e6;
-    std::printf("saine_engine_bench: %u blocks x %u frames @ %.0f Hz (deadline %.1f us/block), %u clips/track\n",
-                blocks, kBlock, kRate, deadline_us, clips_per_track);
+    std::printf("saine_engine_bench: %u blocks x %u frames @ %.0f Hz (deadline %.1f us/block), %u clips/track%s\n",
+                blocks, kBlock, kRate, deadline_us, clips_per_track, features ? ", loop + metronome" : "");
     std::printf("%8s %14s %14s %14s %16s\n", "tracks", "avg us/block", "p99 us/block", "max us/block",
                 "realtime ratio");
     for (uint32_t tracks : {8u, 32u, 128u}) {
-        const Result r = run(tracks, clips_per_track, blocks, files);
+        const Result r = run(tracks, clips_per_track, blocks, files, features);
         std::printf("%8u %14.2f %14.2f %14.2f %15.1fx\n", tracks, r.us_per_block_avg, r.us_per_block_p99,
                     r.us_per_block_max, r.rt_ratio);
     }

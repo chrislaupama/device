@@ -2,7 +2,10 @@
 
 C++23 real-time audio engine behind the C ABI in `include/saine_engine.h`.
 The Rust core links the static library `saine_engine`. The header is the
-contract: this milestone implements it **without any ABI changes or additions**.
+contract. `SE_ABI_VERSION` is still 1: the first milestone's structs and
+signatures are unchanged, and later features are **appended** at the end of
+the header (`se_meters_peek`, `se_transport_set_loop`, `se_metronome_desc` +
+`se_metronome_set`).
 
 ## Build, test, bench
 
@@ -18,7 +21,7 @@ cmake --preset asan               # Debug + -fsanitize=address,undefined -> engi
 cmake --build --preset asan
 ctest --preset asan
 
-./build/saine_engine_bench [blocks=4000] [clips_per_track=4]
+./build/saine_engine_bench [blocks=4000] [clips_per_track=4] [features=0]  # 1 = loop + metronome on
 ./build/play_sine_or_wav [file.wav] [seconds=1.0]   # real default output device, -24 dBFS
 ```
 
@@ -51,7 +54,7 @@ The library is built with `-fPIC`, so it can go into a cdylib as well.
 
 | Path | Contents |
 |---|---|
-| `include/saine_engine.h` | C ABI (unchanged) |
+| `include/saine_engine.h` | C ABI (v1; additions appended at the end) |
 | `src/c_api.cpp` | `extern "C"` wrappers, exception barrier, thread-local `se_last_error` |
 | `src/engine.{hpp,cpp}` | `Engine`: assets, graph publication/reclamation, transport, meters, stats, RT `process()` |
 | `src/render_graph.{hpp,cpp}` | Immutable render graph built from a session snapshot; pan law |
@@ -74,8 +77,10 @@ Rust core (non-RT)                                  audio thread (RT)
 ------------------                                  -----------------
 se_asset_load_file ─ decode WAV ─ resample ─► asset registry (shared_ptr<const Asset>)
 se_session_publish ─ copy + validate + build ─► RenderGraph ──atomic ptr swap──► process()
-se_transport_*     ─ mutex(producers) ─► SPSC queue ───────────── drained at block start
-se_meters_read / se_stats_get ◄──────────── atomics ◄──────────── written once per block
+se_transport_* / set_loop / metronome_set
+                   ─ mutex(producers) ─► SPSC queue ─┬─────────── drained at block start (device/offline render)
+                                                     └─ applied inline when nobody owns the RT path
+se_meters_read / se_meters_peek / se_stats_get ◄── atomics ◄───── written per block / segment
 ```
 
 ### Render graph
@@ -111,9 +116,14 @@ Semantics:
 | Audio thread (Core Audio IO proc) **or** the thread inside `se_render_offline` | `Engine::process()` only |
 | Any non-RT thread | everything else in the ABI |
 
-Exactly one "RT owner" at a time: an atomic owner flag makes
-`se_render_offline` fail with `SE_ERR_STATE` while the device runs (and vice
-versa; a second concurrent offline render also gets `SE_ERR_STATE`).
+Exactly one "RT owner" at a time: an atomic owner flag (`rt_owner_`:
+none / device / offline / control) makes `se_render_offline` fail with
+`SE_ERR_STATE` while the device runs (and vice versa; a second concurrent
+offline render also gets `SE_ERR_STATE`). Only the owner touches the RT
+transport state and pops the command queue. The fourth value, *control*, is
+a short claim a non-RT thread takes to apply transport commands inline (see
+Transport); device start and offline render yield until it is released
+instead of failing.
 `se_render_offline` runs the identical `process()` the device callback runs
 (command drain, graph acquire, chunked `render_block`, meters, stats).
 `se_export_wav` uses the same `render_block()` DSP with a private transport,
@@ -151,13 +161,87 @@ playing until the graph using it is replaced and reclaimed.
 
 ### Transport
 
-Commands (`play`, `pause`, `stop` = pause + position 0, `seek`) go through a
-256-entry lock-free SPSC queue (producers serialised by a mutex) and are
-applied, in order, at the start of the next `process()` call. A full queue
-returns `SE_ERR_STATE`. `se_transport_get` returns the state **as of the last
-processed block**: after a seek, the new position becomes visible once the
-device (or an offline render) has processed a block. Positions are `int64`
-frames and may be negative (pre-roll renders silence).
+Commands (`play`, `pause`, `stop` = pause + position 0, `seek`, and
+`se_transport_set_loop` / `se_metronome_set`) all go through one 256-entry
+lock-free SPSC queue (producers serialised by `command_mutex_`). Positions are
+`int64` frames and may be negative (pre-roll renders silence).
+
+* **Device running**: commands are applied, in order, at the start of the
+  next callback (block boundary, not sample-accurate). A full queue returns
+  `SE_ERR_STATE`. `se_transport_get` shows the state as of the last block.
+* **No device running** (and no `se_render_offline` in progress): the
+  command is applied synchronously on the caller's thread before the call
+  returns, so `se_transport_get` reflects it immediately, without rendering.
+* **During a concurrent `se_render_offline`** on another thread: queued;
+  applied at that render's next block start or when it returns.
+
+How it works and why it is race-free (`Engine::push_command`,
+`acquire_rt_owner`, `release_rt_owner`):
+
+1. A producer always pushes onto the queue first, then issues a seq_cst
+   fence and tries to claim the RT path (`CAS none → control`). On success
+   it drains the whole queue (so earlier queued commands keep their order),
+   publishes the transport state and releases. Being the single owner, it is
+   the only consumer of the SPSC queue and the only writer of the RT state.
+2. If the device or an offline render owns the path the CAS fails and the
+   command stays queued for that owner. If another thread holds the brief
+   control claim, the producer yields and retries, so with no device and no
+   offline render the command is always applied before the call returns.
+3. Every owner releases with `store(none); seq_cst fence; if queue not
+   empty → claim and drain` (looping). Producer (`push; fence; CAS`) and
+   releaser (`store none; fence; check empty`) form a store-buffering pair:
+   with both fences seq_cst, at least one of them sees the other's write, so
+   either the producer's CAS succeeds or the releaser sees the command. A
+   command can never be stranded in the queue with no owner left to apply
+   it. `se_device_stop` releases this way after the device has stopped,
+   so commands queued after the last callback are applied by the stop call.
+4. All ownership transitions are seq_cst RMWs/stores on `rt_owner_`, which
+   gives happens-before between successive owners for the plain RT fields
+   (position, loop, metronome, click voices). Device start/stop are still
+   serialised by `device_mutex_`.
+
+Tested by `offline_transport_no_stranded_commands_under_concurrent_render`
+(producer vs. offline renderer), `transport_commands_across_device_start_stop`
+(producer vs. start/stop cycles on the real device; skipped without one),
+under ASan/UBSan and, ad hoc, ThreadSanitizer.
+
+### Loop
+
+`se_transport_set_loop(enabled, start, end)` (requires `start < end` when
+enabling). While playing with the loop on and the playhead before `end`,
+`process()` splits its segments at `end`; when a segment reaches `end` the
+playhead jumps to `start`, so the wrap is sample-accurate anywhere inside a
+device/offline block, and loops shorter than a block wrap repeatedly. A
+playhead before `start` plays into the loop and then wraps; a playhead at or
+after `end` plays linearly. `render_block()` is stateless (clips are
+addressed by timeline frame), so the segment after the wrap renders clip
+offsets for `start` exactly and nothing stale carries over. (The audio jump
+itself is not crossfaded.) Disabling mid-play continues linearly.
+
+### Metronome
+
+`se_metronome_set(&{enabled, gain, frames_per_beat, beats_per_bar})`. The
+two click shapes (15 ms sine, 1.2 kHz downbeat / 800 Hz beat, 3 ms
+exponential decay, 2 ms raised-cosine tail fade, first sample non-zero) are
+computed once in the `Engine` constructor; setting the metronome only queues
+parameters. While playing, beat `k` starts at timeline frame
+`llround(k · frames_per_beat)` (beat 0 at frame 0, negative beats in
+pre-roll); `k mod beats_per_bar == 0` is a downbeat. Onsets come from the
+timeline beat grid of each rendered segment (so they are sample-accurate in
+any block partition and follow the loop: a beat sounds whenever the playhead
+crosses its frame). Up to 8 click *voices* carry tails across segments in
+playback time, so a click that started in the previous block, or just before
+a loop wrap or a seek, rings out instead of being cut (the oldest voice is
+stolen if more overlap). Voices are cleared on pause/stop/disable. The click
+is mixed into the master **after master gain and after metering**, so it is
+independent of the mix level, does not show on meters, and is never in
+`se_export_wav` (which calls `render_block()` directly).
+
+### Export
+
+`se_export_wav` renders `[start, end)` linearly with its private transport:
+it ignores the live loop and metronome (tested by
+`export_ignores_loop_and_metronome`).
 
 ### Blocks, meters, stats
 
@@ -170,6 +254,15 @@ frames and may be negative (pre-roll renders silence).
   tracks in session order, and **resets** each peak it reads (peak-hold since
   last read; decay/ballistics are left to the UI). Track meters belong to the
   current graph, so they restart at 0 when a new snapshot is published.
+* `se_meters_peek` is the non-destructive variant (same ordering): the max
+  peak over a sliding window of 5 buckets × 10 ms of *rendered* frames
+  (preallocated atomic rings, master in the engine, tracks in the graph's
+  `TrackMeter`). Each render segment's peak goes into the bucket it ends in;
+  buckets entered are zeroed by the RT side. So values are stable however
+  fast the UI polls, decay to 0 after 40–50 ms of rendered silence (paused
+  output counts), and hold while nothing renders. One block longer than the
+  window counts as a single bucket. Neither call disturbs the other. Both
+  meter kinds exclude the metronome.
 * Stats are recorded per `process()` call (device callbacks and offline
   renders alike): count, last/avg/max µs, the block deadline
   (`frames / sample_rate`) and the number of calls that exceeded it.
@@ -198,9 +291,14 @@ Inside `Engine::process()` / `render_block()` and the device callback:
 1. No heap allocation or deallocation (enforced by a test that replaces
    global `operator new/delete` and counts calls made inside an RT scope:
    zero allowed across 650 renders with seeks/pauses/stops, chunked blocks,
-   32 tracks × 4 clips, and a graph swap).
-2. No locks, no waiting: only atomics, the SPSC pop, and a CAS loop for
-   meter max that only retries if a reader raced it.
+   32 tracks × 4 clips, and a graph swap; and across 1500 renders with loop
+   wraps, metronome onsets/tails/voice stealing, while other threads call
+   `se_meters_peek`/`se_meters_read` and push loop/metronome/seek commands
+   that the render drains).
+2. No locks, no waiting inside `process()`: only atomics, the SPSC pop, and a
+   CAS loop for meter max that only retries if a reader raced it. (The
+   `se_render_offline` *wrapper* may yield while a non-RT thread holds the
+   brief transport "control" claim; the device callback never waits.)
 3. No I/O, logging, or exceptions; everything is `noexcept`.
 4. Never free a graph or asset; only the non-RT side reclaims.
 5. No first-touch thread-local storage (`se_last_error` is only written on
@@ -254,8 +352,13 @@ the Core Audio output unit's built-in converter resamples.
   previously retired graph (and any released assets it holds) stays alive
   until the next such call.
 * Multithreaded track rendering, buses/sends, automation, plugins, and
-  sample-accurate transport commands (they apply at block boundaries) are
-  not implemented.
+  sample-accurate transport commands while the device runs (they apply at
+  block boundaries; the loop wrap itself is sample-accurate) are not
+  implemented.
+* Loop wraps are hard cuts (no crossfade). Tempo changes are not modelled:
+  the metronome grid is a constant `frames_per_beat` from frame 0.
+* `se_meters_peek` track windows restart at 0 when a snapshot is published
+  (same as `se_meters_read`).
 * The resampler is scalar; large imports at a different rate take noticeably
   longer than same-rate imports.
 * Output channels: only `output_channels == 2` is accepted.

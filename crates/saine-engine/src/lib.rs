@@ -76,6 +76,18 @@ pub struct Meter {
     pub peak_r: f32,
 }
 
+/// Metronome settings for [`Engine::set_metronome`]. Beat `k` clicks at
+/// timeline frame `round(k * frames_per_beat)`; every `beats_per_bar`-th
+/// beat (from beat 0 at frame 0) is a downbeat. `gain` is linear and applied
+/// after master gain. Not included in [`Engine::export_wav`] or the meters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MetronomeConfig {
+    pub enabled: bool,
+    pub gain: f32,
+    pub frames_per_beat: f64,
+    pub beats_per_bar: u32,
+}
+
 pub struct Engine {
     raw: *mut ffi::se_engine,
 }
@@ -204,6 +216,38 @@ impl Engine {
             out.clear();
             out.extend(raw[..n].iter().map(|m| Meter { track_id: m.track_id, peak_l: m.peak_l, peak_r: m.peak_r }));
         }
+    }
+
+    /// Non-destructive meter read: per meter (master first, then tracks in
+    /// session order) the peak over the last ~50 ms of rendered audio.
+    /// Unlike [`Engine::meters`] this resets nothing, so it can be polled at
+    /// any rate.
+    pub fn peek_meters(&self, out: &mut Vec<Meter>, capacity: usize) {
+        let mut raw = vec![ffi::se_meter::default(); capacity];
+        let mut n = 0usize;
+        if unsafe { ffi::se_meters_peek(self.raw, raw.as_mut_ptr(), capacity, &mut n) } == ffi::SE_OK {
+            out.clear();
+            out.extend(raw[..n].iter().map(|m| Meter { track_id: m.track_id, peak_l: m.peak_l, peak_r: m.peak_r }));
+        }
+    }
+
+    /// Loop playback over `[start, end)` frames. Enabling requires
+    /// `start < end`; when disabling, `start`/`end` are ignored.
+    pub fn set_loop(&self, enabled: bool, start: i64, end: i64) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_transport_set_loop(self.raw, enabled as u8, start, end) })
+    }
+
+    pub fn set_metronome(&self, cfg: MetronomeConfig) -> Result<(), EngineError> {
+        let d = ffi::se_metronome_desc {
+            enabled: cfg.enabled as u8,
+            _pad: [0; 3],
+            gain: cfg.gain,
+            frames_per_beat: cfg.frames_per_beat,
+            beats_per_bar: cfg.beats_per_bar,
+            _pad2: 0,
+        };
+        // SAFETY: valid pointer for the duration of the call; the engine copies.
+        check(unsafe { ffi::se_metronome_set(self.raw, &d) })
     }
 
     pub fn stats(&self) -> Stats {

@@ -36,6 +36,11 @@ public:
         return true;
     }
 
+    // True if nothing is queued. Safe from any thread (a snapshot).
+    bool empty() const noexcept {
+        return head_.load(std::memory_order_acquire) == tail_.load(std::memory_order_acquire);
+    }
+
 private:
     std::array<T, Capacity> slots_{};
     alignas(64) std::atomic<std::size_t> head_{0}; // written by producer

@@ -1,3 +1,4 @@
+#include "spsc_queue.hpp"
 #include "test_harness.hpp"
 #include "test_util.hpp"
 
@@ -79,14 +80,27 @@ TEST_CASE(transport_play_pause_seek_stop) {
 }
 
 TEST_CASE(transport_queue_overflow_reports_error) {
+    // With no device running, commands apply synchronously and never pile
+    // up: every one succeeds and is visible immediately, without rendering.
     EngineHandle e;
-    int ok = 0, full = 0;
-    for (int i = 0; i < 1000; ++i) (se_transport_seek(e, i) == SE_OK ? ok : full)++;
-    CHECK(ok >= 255 && ok <= 256);
-    CHECK(full > 0);
-    render(e, 1, 1); // drains: last accepted seek wins
-    CHECK_EQ(get(e).position, ok - 1);
+    for (int i = 0; i < 1000; ++i) REQUIRE(se_transport_seek(e, i) == SE_OK);
+    CHECK_EQ(get(e).position, 999);
     CHECK_EQ(se_transport_play(e), SE_OK);
+    CHECK_EQ(get(e).playing, 1);
+
+    // The bounded queue itself (used while the device owns the path)
+    // refuses pushes once full and keeps FIFO order.
+    saine::SpscQueue<int, 256> q;
+    int ok = 0;
+    for (int i = 0; i < 300; ++i) ok += q.push(i) ? 1 : 0;
+    CHECK_EQ(ok, 256);
+    CHECK(!q.empty());
+    int v = -1;
+    CHECK(q.pop(v) && v == 0);
+    CHECK(q.push(1000));
+    for (int i = 1; i < 256; ++i) CHECK(q.pop(v) && v == i);
+    CHECK(q.pop(v) && v == 1000);
+    CHECK(q.empty());
 }
 
 // The same session rendered with wildly different block partitions

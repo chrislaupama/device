@@ -10,6 +10,7 @@
 #include "spsc_queue.hpp"
 #include "wav.hpp"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -20,10 +21,18 @@
 
 namespace saine {
 
+// Everything that changes RT-owned playback state goes through this one
+// trivially copyable command (queued while the device runs, applied inline
+// otherwise; see Engine::push_command()).
 struct TransportCommand {
-    enum class Type : uint8_t { Play, Pause, Stop, Seek };
+    enum class Type : uint8_t { Play, Pause, Stop, Seek, SetLoop, SetMetronome };
     Type type = Type::Play;
-    int64_t frame = 0;
+    bool enabled = false;   // SetLoop, SetMetronome
+    float gain = 0.0f;      // SetMetronome
+    uint32_t beats_per_bar = 0; // SetMetronome
+    int64_t frame = 0;      // Seek target, SetLoop start
+    int64_t frame2 = 0;     // SetLoop end
+    double frames_per_beat = 0.0; // SetMetronome
 };
 
 class Engine final : private AudioDevice::Callback {
@@ -59,11 +68,14 @@ public:
     std::size_t retired_graph_count() const;
 
     // ---- transport
+    // Validated by the caller (c_api.cpp). Applied immediately when nobody
+    // owns the RT path, otherwise queued for the next block.
     int32_t push_command(const TransportCommand& cmd);
     void transport_get(se_transport_info* out) const noexcept;
 
     // ---- meters / stats
     int32_t meters_read(se_meter* out, std::size_t capacity, std::size_t* out_count);
+    int32_t meters_peek(se_meter* out, std::size_t capacity, std::size_t* out_count) const;
     void stats_get(se_stats* out) const noexcept;
     void stats_reset() noexcept;
 
@@ -84,8 +96,27 @@ private:
 
     void reclaim_locked(); // requires control_mutex_
 
-    // Who currently owns the live render path (RT role).
-    enum : int { kOwnerNone = 0, kOwnerDevice = 1, kOwnerOffline = 2 };
+    // Who currently owns the live render path (RT role). Exactly one owner
+    // may touch the rt_* state and pop the command queue. kOwnerControl is a
+    // short-lived claim taken by a non-RT thread to apply queued commands
+    // synchronously when no device or offline render owns the path.
+    enum : int { kOwnerNone = 0, kOwnerDevice = 1, kOwnerOffline = 2, kOwnerControl = 3 };
+
+    // CAS rt_owner_ None -> `who`, waiting out transient kOwnerControl
+    // claims. Returns the conflicting owner (Device/Offline) or kOwnerNone
+    // on success.
+    int acquire_rt_owner(int who) noexcept;
+    // Store None, then apply any commands that were queued while we owned the
+    // path (Dekker-style handshake with push_command, see engine.cpp).
+    void release_rt_owner() noexcept;
+
+    // ---- RT-owner-only helpers (caller holds rt_owner_)
+    void apply_command(const TransportCommand& cmd) noexcept;
+    void drain_commands() noexcept;
+    void publish_transport() noexcept;
+    uint32_t advance_peek_window(uint32_t frames, const RenderGraph* graph) noexcept;
+    void mix_metronome(float* l, float* r, int64_t position, uint32_t frames) noexcept;
+    void start_click(const float* buf, uint32_t offset, float* l, float* r, uint32_t frames) noexcept;
 
     const double sample_rate_;
     const uint32_t max_block_;
@@ -118,12 +149,39 @@ private:
     SpscQueue<TransportCommand, kCommandQueueSize> commands_;
     int64_t rt_position_ = 0; // RT-owned
     bool rt_playing_ = false; // RT-owned
+    bool rt_loop_enabled_ = false;  // RT-owned
+    int64_t rt_loop_start_ = 0;     // RT-owned
+    int64_t rt_loop_end_ = 0;       // RT-owned
     std::atomic<int64_t> pub_position_{0};
     std::atomic<bool> pub_playing_{false};
+
+    // -- metronome. Click shapes are computed in the constructor; the RT
+    // side keeps a few voices so a click's tail continues across blocks,
+    // loop wraps and seeks.
+    struct ClickVoice {
+        const float* buf = nullptr;
+        uint32_t pos = 0; // next sample index into buf
+    };
+    static constexpr std::size_t kMaxClickVoices = 8;
+    std::vector<float> click_down_; // downbeat (1.2 kHz)
+    std::vector<float> click_beat_; // other beats (800 Hz)
+    uint32_t click_len_ = 0;
+    bool rt_metro_enabled_ = false;     // RT-owned
+    float rt_metro_gain_ = 0.0f;        // RT-owned
+    double rt_metro_fpb_ = 0.0;         // RT-owned
+    uint32_t rt_metro_bpb_ = 1;         // RT-owned
+    std::array<ClickVoice, kMaxClickVoices> rt_voices_{}; // RT-owned
+    std::size_t rt_voice_count_ = 0;    // RT-owned
 
     // -- meters (master; track meters live in the graph)
     std::atomic<float> master_peak_l_{0.0f};
     std::atomic<float> master_peak_r_{0.0f};
+    // se_meters_peek window: kPeekBuckets buckets of peek_bucket_frames_.
+    std::atomic<float> master_win_l_[kPeekBuckets] = {};
+    std::atomic<float> master_win_r_[kPeekBuckets] = {};
+    uint32_t peek_bucket_frames_ = 1;
+    uint32_t rt_peek_slot_ = 0;   // RT-owned
+    uint64_t rt_peek_fill_ = 0;   // RT-owned: frames in the current bucket
 
     // -- stats (written by RT only, except reset)
     std::atomic<uint64_t> stat_callbacks_{0};

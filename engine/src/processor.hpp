@@ -34,10 +34,11 @@ struct BlockPeaks {
 // Renders `frames` (<= ctx.max_block()) frames starting at timeline frame
 // `position` into ctx.master_l()/master_r() (overwritten). `graph` may be
 // null (silence). When `playing` is false the output is silence.
-// If `update_meters` is set, per-track meters in the graph are raised.
-// Returns the master output peaks of the block.
+// If `update_meters` is set, per-track meters in the graph are raised, and
+// so is bucket `peek_slot` (< kPeekBuckets) of each track's peek window.
+// Returns the master output peaks of the block (zero unless update_meters).
 BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing, uint32_t frames,
-                        RenderContext& ctx, bool update_meters) noexcept;
+                        RenderContext& ctx, bool update_meters, uint32_t peek_slot = 0) noexcept;
 
 // ---- kernels (exposed for tests/bench) -------------------------------------
 // Plain loops over restrict pointers so clang/gcc auto-vectorise them

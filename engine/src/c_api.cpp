@@ -7,6 +7,7 @@
 
 #include "engine.hpp"
 
+#include <cmath>
 #include <new>
 #include <string>
 
@@ -163,10 +164,17 @@ int32_t se_session_publish(se_engine* engine, const se_session_desc* session) {
 
 // ---- transport
 
-static int32_t push(se_engine* engine, saine::TransportCommand::Type type, int64_t frame) {
+static int32_t push_cmd(se_engine* engine, const saine::TransportCommand& cmd) {
     SE_REQUIRE_ENGINE(engine);
-    const int32_t rc = engine->impl->push_command({type, frame});
+    const int32_t rc = engine->impl->push_command(cmd);
     return rc == SE_OK ? SE_OK : fail(rc, "transport command queue is full");
+}
+
+static int32_t push(se_engine* engine, saine::TransportCommand::Type type, int64_t frame) {
+    saine::TransportCommand cmd;
+    cmd.type = type;
+    cmd.frame = frame;
+    return push_cmd(engine, cmd);
 }
 
 int32_t se_transport_play(se_engine* engine) { return push(engine, saine::TransportCommand::Type::Play, 0); }
@@ -174,6 +182,37 @@ int32_t se_transport_pause(se_engine* engine) { return push(engine, saine::Trans
 int32_t se_transport_stop(se_engine* engine) { return push(engine, saine::TransportCommand::Type::Stop, 0); }
 int32_t se_transport_seek(se_engine* engine, int64_t frame) {
     return push(engine, saine::TransportCommand::Type::Seek, frame);
+}
+
+int32_t se_transport_set_loop(se_engine* engine, uint8_t enabled, int64_t start_frame, int64_t end_frame) {
+    SE_REQUIRE_ENGINE(engine);
+    if (enabled != 0 && !(start_frame < end_frame))
+        return fail(SE_ERR_INVALID_ARG, "loop start must be before loop end");
+    saine::TransportCommand cmd;
+    cmd.type = saine::TransportCommand::Type::SetLoop;
+    cmd.enabled = enabled != 0;
+    cmd.frame = start_frame;
+    cmd.frame2 = end_frame;
+    return push_cmd(engine, cmd);
+}
+
+int32_t se_metronome_set(se_engine* engine, const se_metronome_desc* desc) {
+    SE_REQUIRE_ENGINE(engine);
+    if (desc == nullptr) return fail(SE_ERR_INVALID_ARG, "desc is NULL");
+    saine::TransportCommand cmd;
+    cmd.type = saine::TransportCommand::Type::SetMetronome;
+    cmd.enabled = desc->enabled != 0;
+    if (cmd.enabled) {
+        if (!std::isfinite(desc->gain) || desc->gain < 0.0f)
+            return fail(SE_ERR_INVALID_ARG, "metronome gain must be finite and >= 0");
+        if (!std::isfinite(desc->frames_per_beat) || desc->frames_per_beat < 1.0)
+            return fail(SE_ERR_INVALID_ARG, "metronome frames_per_beat must be finite and >= 1");
+        if (desc->beats_per_bar == 0) return fail(SE_ERR_INVALID_ARG, "metronome beats_per_bar must be >= 1");
+        cmd.gain = desc->gain;
+        cmd.frames_per_beat = desc->frames_per_beat;
+        cmd.beats_per_bar = desc->beats_per_bar;
+    }
+    return push_cmd(engine, cmd);
 }
 
 int32_t se_transport_get(const se_engine* engine, se_transport_info* out_info) {
@@ -189,6 +228,12 @@ int32_t se_meters_read(se_engine* engine, se_meter* out, size_t capacity, size_t
     SE_REQUIRE_ENGINE(engine);
     if (capacity > 0 && out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
     return guarded([&] { return engine->impl->meters_read(out, capacity, out_count); });
+}
+
+int32_t se_meters_peek(se_engine* engine, se_meter* out, size_t capacity, size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (capacity > 0 && out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    return guarded([&] { return engine->impl->meters_peek(out, capacity, out_count); });
 }
 
 int32_t se_stats_get(const se_engine* engine, se_stats* out) {

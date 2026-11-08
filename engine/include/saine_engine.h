@@ -10,7 +10,8 @@
  *    publishes it to the audio callback with an atomic pointer swap. Retired
  *    graphs are reclaimed on a non-RT thread (never freed in the callback).
  *  - Transport commands are pushed through a lock-free SPSC queue and are
- *    applied at the start of the next audio block.
+ *    applied at the start of the next audio block while the device runs;
+ *    with no device running they apply immediately (see additions below).
  *  - All timeline positions/lengths are in sample frames at the engine sample
  *    rate. Musical time (bars/beats/tempo) is converted by the Rust core.
  *  - Every function is safe to call from any non-RT thread, but calls on a
@@ -153,6 +154,53 @@ int32_t se_render_offline(se_engine* engine, float* out_interleaved, uint32_t fr
 
 /* Render the whole session range to a 32-bit float WAV file. */
 int32_t se_export_wav(se_engine* engine, const char* utf8_path, int64_t start_frame, int64_t end_frame);
+
+/* ---- additions (ABI v1, append-only) ------------------------------------
+ * Added after the first milestone without changing any existing struct or
+ * signature; SE_ABI_VERSION stays 1. Callers that need them can probe with
+ * a link-time check; there is no runtime feature query.
+ *
+ * Transport commands (play/pause/stop/seek and se_transport_set_loop /
+ * se_metronome_set) are applied synchronously on the calling thread when no
+ * device is running and no se_render_offline call is in progress, so
+ * se_transport_get reflects them as soon as the call returns. While the
+ * device runs they are queued and applied at the start of the next block. */
+
+/* Non-destructive meter read. Per meter (master first, then tracks in
+ * session order, same as se_meters_read) the max absolute peak over the last
+ * ~50 ms of rendered audio (a ring of 5 x 10 ms buckets; a single block
+ * longer than that counts as one bucket). Resets nothing and does not
+ * interfere with se_meters_read. The window advances with rendered frames,
+ * so it decays to 0 after ~50 ms of rendered silence (paused output counts),
+ * and holds its value while nothing renders. Excludes the metronome. */
+int32_t se_meters_peek(se_engine* engine, se_meter* out, size_t capacity, size_t* out_count);
+
+/* Loop playback. When enabled and playing, a playhead in [start, end) (or
+ * reaching start from before it) wraps sample-accurately from `end` back to
+ * `start`, also mid-block. A playhead at or past `end` plays linearly.
+ * Enabling requires start_frame < end_frame (else SE_ERR_INVALID_ARG);
+ * when disabling, start/end are ignored. Disabling mid-play continues
+ * linearly. se_export_wav ignores the loop. */
+int32_t se_transport_set_loop(se_engine* engine, uint8_t enabled, int64_t start_frame, int64_t end_frame);
+
+/* Metronome: a ~15 ms decaying sine click (1.2 kHz downbeat, 800 Hz other
+ * beats) mixed into the master output after master gain, while playing.
+ * Beat k sounds at timeline frame llround(k * frames_per_beat) (beat 0 at
+ * frame 0; negative k in pre-roll), beats where k mod beats_per_bar == 0
+ * are downbeats. Clicks ring out across block boundaries, loop wraps and
+ * seeks; they stop on pause/stop/disable. Excluded from se_export_wav and
+ * from the meters. Validation: gain finite and >= 0, frames_per_beat
+ * finite and >= 1, beats_per_bar >= 1 (only checked when enabled). */
+typedef struct se_metronome_desc {
+    uint8_t enabled;
+    uint8_t _pad[3];
+    float gain; /* linear */
+    double frames_per_beat;
+    uint32_t beats_per_bar;
+    uint32_t _pad2;
+} se_metronome_desc;
+
+int32_t se_metronome_set(se_engine* engine, const se_metronome_desc* desc);
 
 #ifdef __cplusplus
 }

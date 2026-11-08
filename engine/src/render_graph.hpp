@@ -47,10 +47,16 @@ struct TrackNode {
     uint32_t clip_count = 0;
 };
 
+// Number of buckets in the se_meters_peek sliding window (each bucket covers
+// ~10 ms of rendered frames, see Engine::advance_peek_window()).
+inline constexpr uint32_t kPeekBuckets = 5;
+
 struct TrackMeter {
     uint64_t track_id = 0;
-    std::atomic<float> peak_l{0.0f};
+    std::atomic<float> peak_l{0.0f}; // peak since last se_meters_read (reset by the reader)
     std::atomic<float> peak_r{0.0f};
+    std::atomic<float> win_l[kPeekBuckets] = {}; // se_meters_peek ring (zeroed by the RT side)
+    std::atomic<float> win_r[kPeekBuckets] = {};
 };
 
 struct RenderGraph {

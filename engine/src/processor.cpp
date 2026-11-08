@@ -61,7 +61,7 @@ float kernel_peak(const float* __restrict buf, uint32_t n) noexcept {
 }
 
 BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing, uint32_t frames,
-                        RenderContext& ctx, bool update_meters) noexcept {
+                        RenderContext& ctx, bool update_meters, uint32_t peek_slot) noexcept {
     float* const ml = ctx.master_l();
     float* const mr = ctx.master_r();
     std::memset(ml, 0, sizeof(float) * frames);
@@ -102,8 +102,12 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         kernel_add_scaled2(ml, mr, tl, tr, track.gain_l, track.gain_r, frames);
         if (update_meters) {
             TrackMeter& m = graph->meters[t];
-            atomic_store_max(m.peak_l, kernel_peak(tl, frames) * std::fabs(track.gain_l));
-            atomic_store_max(m.peak_r, kernel_peak(tr, frames) * std::fabs(track.gain_r));
+            const float pl = kernel_peak(tl, frames) * std::fabs(track.gain_l);
+            const float pr = kernel_peak(tr, frames) * std::fabs(track.gain_r);
+            atomic_store_max(m.peak_l, pl);
+            atomic_store_max(m.peak_r, pr);
+            atomic_store_max(m.win_l[peek_slot], pl);
+            atomic_store_max(m.win_r[peek_slot], pr);
         }
     }
 

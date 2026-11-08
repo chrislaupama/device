@@ -7,7 +7,9 @@
 #include "test_harness.hpp"
 #include "test_util.hpp"
 
+#include <atomic>
 #include <memory>
+#include <thread>
 
 using namespace testutil;
 
@@ -78,4 +80,78 @@ TEST_CASE(rt_render_path_does_not_allocate) {
     }
     CHECK_EQ(rt_alloc_count() - allocs_before, 0);
     CHECK_EQ(rt_free_count() - frees_before, 0);
+}
+
+// Loop wrapping (mid-block, repeatedly), the metronome (onsets, tails across
+// blocks and wraps, voice stealing) and peek-window advancement on the RT
+// path, while another thread hammers se_meters_peek / se_meters_read and a
+// third pushes transport/loop/metronome commands that the render drains.
+TEST_CASE(rt_loop_metronome_peek_do_not_allocate) {
+    EngineHandle e(48000, 256);
+    std::vector<uint64_t> assets;
+    for (int i = 0; i < 4; ++i) assets.push_back(load_asset(e, {sine(48000, 220.0 * (i + 1), 48000.0, 0.2)}));
+    Session s;
+    for (int t = 0; t < 16; ++t) {
+        std::vector<se_clip_desc> clips;
+        for (int c = 0; c < 3; ++c)
+            clips.push_back(clip(static_cast<uint64_t>(c), assets[static_cast<std::size_t>((t + c) % 4)],
+                                 c * 7000 + t, c * 3, 9000, 0.6f));
+        s.add_track(static_cast<uint64_t>(t + 1), std::move(clips), 0.5f, 0.0f);
+    }
+    REQUIRE(s.publish(e) == SE_OK);
+
+    se_metronome_desc m{};
+    m.enabled = 1;
+    m.gain = 0.5f;
+    m.frames_per_beat = 333.7; // dense: overlapping-free but many onsets per block
+    m.beats_per_bar = 3;
+    REQUIRE(se_metronome_set(e, &m) == SE_OK);
+    REQUIRE(se_transport_set_loop(e, 1, 1000, 1777) == SE_OK);
+    REQUIRE(se_transport_play(e) == SE_OK);
+
+    std::vector<float> buf(2 * 8192);
+    REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK); // warm-up
+
+    std::atomic<bool> stop{false};
+    std::thread peeker([&] {
+        se_meter mm[32];
+        std::size_t n = 0;
+        while (!stop.load()) {
+            se_meters_peek(e, mm, 32, &n);
+            if ((n & 1) == 0) se_meters_read(e, mm, 32, &n);
+        }
+    });
+    std::thread commander([&] {
+        int i = 0;
+        while (!stop.load()) {
+            if (i % 4 == 0) se_transport_set_loop(e, 1, 500 + i % 300, 1600 + i % 500);
+            if (i % 7 == 0) se_transport_seek(e, 900 + i % 400);
+            if (i % 11 == 0) {
+                se_metronome_desc d = m;
+                d.frames_per_beat = 100.0 + i % 400; // < click length: overlapping voices + stealing
+                se_metronome_set(e, &d);
+            }
+            ++i;
+            std::this_thread::yield();
+        }
+    });
+
+    const long allocs_before = rt_alloc_count();
+    const long frees_before = rt_free_count();
+    const uint32_t sizes[] = {256, 1, 333, 8192, 64, 255, 77};
+    for (int i = 0; i < 1500; ++i) {
+        RtAllocGuard g;
+        if (se_render_offline(e, buf.data(), sizes[i % 7]) != SE_OK) {
+            CHECK(false);
+            break;
+        }
+    }
+    stop = true;
+    peeker.join();
+    commander.join();
+    CHECK_EQ(rt_alloc_count() - allocs_before, 0);
+    CHECK_EQ(rt_free_count() - frees_before, 0);
+    se_transport_info t{};
+    se_transport_get(e, &t);
+    CHECK(t.playing == 1);
 }

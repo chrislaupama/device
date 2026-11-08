@@ -98,6 +98,18 @@ pub struct se_stats {
     pub block_deadline_us: f64,
 }
 
+/// Appended to ABI v1 (see the "additions" section of saine_engine.h).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct se_metronome_desc {
+    pub enabled: u8,
+    pub _pad: [u8; 3],
+    pub gain: f32,
+    pub frames_per_beat: f64,
+    pub beats_per_bar: u32,
+    pub _pad2: u32,
+}
+
 unsafe extern "C" {
     pub fn se_abi_version() -> u32;
     pub fn se_engine_create(config: *const se_config) -> *mut se_engine;
@@ -136,6 +148,11 @@ unsafe extern "C" {
 
     pub fn se_render_offline(engine: *mut se_engine, out_interleaved: *mut f32, frames: u32) -> i32;
     pub fn se_export_wav(engine: *mut se_engine, path: *const c_char, start_frame: i64, end_frame: i64) -> i32;
+
+    // ---- additions (ABI v1, append-only)
+    pub fn se_meters_peek(engine: *mut se_engine, out: *mut se_meter, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_transport_set_loop(engine: *mut se_engine, enabled: u8, start_frame: i64, end_frame: i64) -> i32;
+    pub fn se_metronome_set(engine: *mut se_engine, desc: *const se_metronome_desc) -> i32;
 }
 
 /// Guards the hand-written declarations against drift from saine_engine.h.
@@ -156,6 +173,19 @@ mod abi_layout {
         assert_eq!(size_of::<se_transport_info>(), 16);
         assert_eq!(size_of::<se_meter>(), 16);
         assert_eq!(size_of::<se_stats>(), 48);
+        // Verified with clang against saine_engine.h: size 24, align 8,
+        // offsets enabled 0, gain 4, frames_per_beat 8, beats_per_bar 16, _pad2 20.
+        assert_eq!((size_of::<se_metronome_desc>(), align_of::<se_metronome_desc>()), (24, 8));
+        assert_eq!(
+            (
+                offset_of!(se_metronome_desc, enabled),
+                offset_of!(se_metronome_desc, gain),
+                offset_of!(se_metronome_desc, frames_per_beat),
+                offset_of!(se_metronome_desc, beats_per_bar),
+                offset_of!(se_metronome_desc, _pad2)
+            ),
+            (0, 4, 8, 16, 20)
+        );
     }
 
     #[test]
