@@ -441,7 +441,8 @@ impl Controller {
             Some(name) => {
                 let dirty = def.factory.iter().find(|f| f.name == name).is_some_and(|f| {
                     let want = def.factory_values(f);
-                    def.params.iter().any(|p| (def.value(d, p) - want.get(p.id).copied().unwrap_or(p.default)).abs() > 1e-4 * (p.max - p.min))
+                    // The sidechain switch follows the panel's source pick, not the preset.
+                    def.params.iter().filter(|p| p.id != "sidechainEnable").any(|p| (def.value(d, p) - want.get(p.id).copied().unwrap_or(p.default)).abs() > 1e-4 * (p.max - p.min))
                 });
                 if dirty { format!("{name}*") } else { name.clone() }
             }
