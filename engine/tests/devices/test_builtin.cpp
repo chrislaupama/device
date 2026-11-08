@@ -237,6 +237,30 @@ TEST_CASE(builtin_sidechain_follows_source_track) {
     DeviceSession::add_device(t2, 12, "compressor", v, true, 1);
     CHECK(cyc.publish(e) == SE_OK);
     render(e, 2048, 256);
+    // A rejected source (unknown track, or the device's own track) reads
+    // silence: the loud track's own audio must not drive the detector.
+    for (uint64_t source : {99u, 2u}) {
+        DeviceSession rej;
+        auto& t = rej.add_track(2, loud, 48000);
+        DeviceSession::add_device(t, 13, "compressor", v, true, source);
+        REQUIRE(rej.publish(e) == SE_OK);
+        REQUIRE(se_transport_seek(e, 0) == SE_OK);
+        REQUIRE(se_transport_play(e) == SE_OK);
+        render(e, 12000, 256);
+        float ro[3] = {};
+        size_t n = 0;
+        REQUIRE(se_builtin_readouts(e, 13, ro, 3, &n) == SE_OK);
+        CHECK(ro[2] > -0.5f);
+    }
+}
+
+TEST_CASE(builtin_readouts_keep_peaks_across_automation_segments) {
+    DeviceRig rig("compressor", kComp, 48000.0, 256);
+    Signal x(256, 0.0f);
+    for (std::size_t i = 0; i < 128; ++i) x[i] = 0.9f;
+    rig.run(x, x, nullptr, nullptr, {{128, {0u, -24.0f}}});
+    const auto ro = rig.readouts();
+    CHECK(ro[0] > -3.0f); // the loud first segment, not the silent last one
 }
 
 TEST_CASE(builtin_engine_path_does_not_allocate) {

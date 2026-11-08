@@ -55,6 +55,21 @@ component ParamDrag inherits TouchArea {
     }
 }
 
+// Keyboard for a focused parameter control: arrows step (Shift fine), Return or Space edits
+// the value, everything else stays a window shortcut (undo, transport, Escape...).
+component ParamKeys inherits FocusScope {
+    in property <int> device;
+    in property <int> param;
+    callback edit();
+    key-pressed(e) => {
+        if (e.text == Key.UpArrow || e.text == Key.RightArrow) { Studio.panel-step(root.device, root.param, 1, e.modifiers.shift); return accept; }
+        if (e.text == Key.DownArrow || e.text == Key.LeftArrow) { Studio.panel-step(root.device, root.param, -1, e.modifiers.shift); return accept; }
+        if (e.text == Key.Return || e.text == " ") { root.edit(); return accept; }
+        if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) { return accept; }
+        reject
+    }
+}
+
 // Inline value editor (double-click on a value): Enter or blur commits, Escape cancels.
 component ValueEditor inherits FocusScope {
     in property <int> device;
@@ -93,16 +108,7 @@ component KnobCell inherits Rectangle {
     property <bool> editing;
     width: 62px * zm; height: 76px * zm;
     accessible-role: slider; accessible-label: root.k.label; accessible-value: root.k.value;
-    fs := FocusScope {
-        key-pressed(e) => {
-            if (e.text == Key.UpArrow || e.text == Key.RightArrow) { Studio.panel-step(root.device, root.k.param, 1, e.modifiers.shift); return accept; }
-            if (e.text == Key.DownArrow || e.text == Key.LeftArrow) { Studio.panel-step(root.device, root.k.param, -1, e.modifiers.shift); return accept; }
-            if (e.text == Key.Return || e.text == " ") { root.editing = true; return accept; }
-            // Everything else stays a window shortcut (undo, transport...).
-            if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) { return accept; }
-            reject
-        }
-    }
+    fs := ParamKeys { device: root.device; param: root.k.param; edit => { root.editing = true; } }
     dial := Rectangle {
         x: (root.width - root.ring) / 2; y: 0; width: root.ring; height: root.ring;
         if root.k.face == 0: Rectangle {
@@ -177,6 +183,7 @@ component SliderCol inherits Rectangle {
     property <bool> editing;
     width: 62px * zm;
     accessible-role: slider; accessible-label: root.s.label; accessible-value: root.s.value;
+    fs := ParamKeys { device: root.device; param: root.s.param; edit => { root.editing = true; } }
     Rectangle { x: (root.width - 3px * zm) / 2; y: root.top; width: 3px * zm; height: root.travel; border-radius: 1.5px * zm; background: PanelStyle.rail; }
     Rectangle {
         x: (root.width - 3px * zm) / 2; y: min(root.cap-y, root.zero-y); width: 3px * zm; height: abs(root.cap-y - root.zero-y);
@@ -186,6 +193,7 @@ component SliderCol inherits Rectangle {
     ParamDrag {
         x: 0; y: root.top - 6px; width: root.width; height: root.travel + 12px;
         device: root.device; param: root.s.param; rate: 1 / max(1, (root.travel / 1px) - 3);
+        grabbed => { fs.focus(); }
         double-clicked => { Studio.panel-reset(root.device, root.s.param); }
     }
     Rectangle {
@@ -237,10 +245,14 @@ component PickItem inherits HorizontalLayout {
                     horizontal-alignment: center; vertical-alignment: center;
                 }
                 seg-ta := TouchArea {
+                    property <bool> alt-down;
                     pointer-event(e) => {
-                        if (e.kind == PointerEventKind.down && e.modifiers.alt) { Studio.panel-reset(root.device, root.p.param); }
+                        if (e.kind == PointerEventKind.down) {
+                            self.alt-down = e.modifiers.alt;
+                            if (e.modifiers.alt) { Studio.panel-reset(root.device, root.p.param); }
+                        }
                     }
-                    clicked => { Studio.panel-choice(root.device, root.p.param, i); }
+                    clicked => { if (!self.alt-down) { Studio.panel-choice(root.device, root.p.param, i); } }
                 }
             }
         }
@@ -263,8 +275,10 @@ component PickItem inherits HorizontalLayout {
             text: root.p.value; color: PanelStyle.ink; font-size: 10.5px * zm; font-weight: 600; letter-spacing: -0.04 * 10.5px * zm;
             horizontal-alignment: center; vertical-alignment: center;
         }
+        pill-keys := ParamKeys { enabled: root.p.enabled; device: root.device; param: root.p.param; }
         ParamDrag {
             enabled: root.p.enabled; device: root.device; param: root.p.param;
+            grabbed => { pill-keys.focus(); }
             double-clicked => { Studio.panel-reset(root.device, root.p.param); }
         }
     }
