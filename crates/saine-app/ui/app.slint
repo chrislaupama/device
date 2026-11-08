@@ -20,90 +20,11 @@ import { Panel, Icon, Icons, Pill, IconButton, SmallButton, HSlider, Knob, Switc
 
 export { Tokens }
 
-export struct TrackRow {
-    id: int,
-    number: int,
-    name: string,
-    instrument: bool,
-    color: color,
-    selected: bool,
-    mute: bool,
-    solo: bool,
-    volume-pos: float,
-    pan: float,
-}
+import { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect } from "studio.slint";
+import { MixerPanel } from "mixer.slint";
+import { AssistantPanel, HighlightOverlay } from "assistant.slint";
 
-export struct RulerLabel { x: length, text: string }
-
-export struct ClipLabel { x: length, y: length, w: length, text: string, selected: bool }
-
-// Browser tree row (PLACEHOLDER catalogue data supplied by Rust, see src/placeholder.rs).
-export struct TreeRow { depth: int, label: string, count: string, icon: int, expander: int }
-
-export global Studio {
-    // ---- project / status ----
-    in property <string> project-name: "Untitled";
-    in property <string> status-text;
-    // ---- transport (driven by engine.transport() every frame) ----
-    in property <bool> playing;
-    in property <string> bar-text: "001";
-    in property <string> time-text: "00:00.000";
-    in property <string> bpm-text: "120";
-    in property <string> sig-text: "4/4";
-    in property <float> master-pos: 0.85;
-    in-out property <bool> sounds-visible: true;
-    // Loop (project transport) and metronome (app preference), both real engine features.
-    in property <bool> loop-enabled: false;
-    in property <bool> metronome-on: false;
-    callback toggle-loop();
-    callback toggle-metronome();
-    // ---- timeline ----
-    in property <[TrackRow]> tracks;
-    in property <length> scroll-y;
-    in property <image> timeline-image;
-    in property <[RulerLabel]> ruler-labels;
-    in property <[ClipLabel]> clip-labels;
-    in property <int> lane-cursor; // 0 default, 1 ew-resize (trim), 2 move (clip body)
-    // ---- inspector (selected track) ----
-    in property <bool> has-selection;
-    in property <int> sel-id;
-    in property <int> sel-number;
-    in property <string> sel-name;
-    in property <bool> sel-instrument;
-    in property <color> sel-color: Tokens.track-audio;
-    in property <bool> sel-mute;
-    in property <bool> sel-solo;
-    in property <float> sel-pan;
-    in property <string> sel-pan-text: "C";
-    in property <float> sel-fader;      // 0 (top, +6 dB) .. 1 (bottom, -inf)
-    in property <string> sel-db-text: "0.00";
-    in property <float> sel-meter-l: 1; // 0 (top) .. 1 (bottom = silent)
-    in property <float> sel-meter-r: 1;
-    in property <string> sel-peak-text: "−∞";
-    // ---- browser (PLACEHOLDER data) ----
-    in property <[TreeRow]> tree;
-
-    // ---- callbacks into Rust ----
-    callback play-toggle();
-    callback stop-return();
-    callback record();
-    callback add-track();
-    callback import-audio();
-    callback select-track(int);
-    callback track-mute(int);
-    callback track-solo(int);
-    callback track-volume(int, float);
-    callback track-pan(int, float);
-    callback gesture-end();
-    callback master-volume(float);
-    callback sel-fader-moved(float);
-    callback lane-pointer(int, length, length, bool, bool); // kind 0=down 1=move 2=up, x, y, shift, cmd
-    callback lane-hover(length, length);
-    callback lane-scroll(float, float, length, bool);      // dx, dy, x, zoom
-    callback key(string, bool, bool, bool, bool) -> bool;   // text, primary (Cmd on macOS), shift, alt, ctrl
-    callback report-bug();   // TODO: no-op placeholder
-    callback feedback();     // TODO: no-op placeholder
-}
+export { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect }
 
 // ------------------------------------------------------------------ header
 component Header inherits Rectangle {
@@ -185,9 +106,11 @@ component Header inherits Rectangle {
         reset => { Studio.master-volume(Tokens.slider-zero-db); Studio.gesture-end(); }
     }
 
-    // Right-side panel toggles: PLACEHOLDERS (Rheo, mixer, musical typing, settings not built)
-    IconButton { x: root.width - 147px; y: 33px; width: 25px; height: 31px; icon: Icons.sparkle; tooltip: "Assistant panel (not implemented)"; }
-    IconButton { x: root.width - 119px; y: 31px; width: 25px; height: 33px; icon: Icons.mixer; tooltip: "Mixer (not implemented)"; }
+    // Right-side panel toggles. Assistant and mixer are real; the rest are PLACEHOLDERS.
+    IconButton { x: root.width - 147px; y: 33px; width: 25px; height: 31px; icon: Icons.assistant; filled: true; icon-size: 15px;
+        ink: Studio.assistant-open ? #e5e5e8 : Tokens.icon; tooltip: "Toggle assistant panel (⇧⌘A)"; clicked => { Studio.toggle-assistant(); } }
+    IconButton { x: root.width - 119px; y: 31px; width: 25px; height: 33px; icon: Icons.mixer;
+        ink: Studio.mixer-open ? #e5e5e8 : Tokens.icon; tooltip: "Toggle mixer panel (⇧⌘X)"; clicked => { Studio.toggle-mixer(); } }
     IconButton { x: root.width - 91px; y: 39px; width: 25px; height: 25px; icon: Icons.panel-bottom; ink: #b4b5b8; tooltip: "Clip editor / devices (not implemented)"; }
     IconButton { x: root.width - 63px; y: 39px; width: 25px; height: 25px; icon: Icons.piano; tooltip: "Musical typing (not implemented)"; }
     IconButton { x: root.width - 36px; y: 39px; width: 25px; height: 25px; icon: Icons.gear; tooltip: "Settings (not implemented)"; }
@@ -544,6 +467,10 @@ export component AppWindow inherits Window {
 
     out property <length> lanes-width: timeline.lanes-width;
     out property <length> lanes-height: timeline.lanes-height;
+    // Panel geometry (mirrored in src/highlight.rs `Layout`).
+    property <length> bottom-h: Studio.mixer-open ? 390px : 306px;
+    property <length> top-h: root.height - 88px - self.bottom-h;
+    property <length> right-w: Studio.assistant-open ? 257.5px : 0px;
 
     fs := FocusScope {
         init => { self.focus(); }
@@ -552,12 +479,20 @@ export component AppWindow inherits Window {
             reject
         }
         Header { x: 0; y: 0; width: root.width; height: 73px; }
-        if Studio.sounds-visible: Browser { x: 5px; y: 78px; width: 253px; height: root.height - 394px; }
+        if Studio.sounds-visible: Browser { x: 5px; y: 78px; width: 253px; height: root.top-h; }
         timeline := Timeline {
             x: Studio.sounds-visible ? 262px : 5px; y: 78px;
-            width: root.width - self.x - 5px; height: root.height - 394px;
+            width: root.width - self.x - 5px - root.right-w; height: root.top-h;
         }
-        BottomPanel { x: 5px; y: root.height - 311px; width: root.width - 10px; height: 306px; }
+        // Assistant panel: right-docked beside the timeline (nothing overlaps).
+        if Studio.assistant-open: AssistantPanel {
+            x: root.width - 5px - 252.5px; y: 78px; width: 252.5px; height: root.top-h;
+            focus-main => { fs.focus(); }
+        }
+        // Bottom panel: inspector + devices, or the mixer (taller; the row above shrinks).
+        if !Studio.mixer-open: BottomPanel { x: 5px; y: root.height - 5px - root.bottom-h; width: root.width - 10px; height: root.bottom-h; }
+        if Studio.mixer-open: MixerPanel { x: 5px; y: root.height - 5px - root.bottom-h; width: root.width - 10px; height: root.bottom-h; }
+        HighlightOverlay { x: 0; y: 0; width: root.width; height: root.height; }
         // Status line (engine/device/import messages); empty most of the time.
         if Studio.status-text != "": Rectangle {
             x: root.width - self.width - 14px; y: root.height - 34px; height: 20px;

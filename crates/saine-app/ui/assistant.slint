@@ -1,0 +1,197 @@
+// Assistant panel (right-docked, 252.5 pt) and the highlight overlay.
+// Geometry: reference/ui-inventory.md §6 and §10 (10-rheo-panel.png, ax-rheo.tsv).
+// Panel-relative coordinates: x = window x - 1182.5, y = window y - 78.
+// Our name, icon and copy are original ("Assistant", four-point star).
+// The transcript, mode, notice and context chip come from Rust; the composer
+// text is transient input (Studio.chat-draft) sent through Studio.chat-send.
+import { Tokens } from "tokens.slint";
+import { Panel, Icon, Icons, IconButton } from "widgets.slint";
+import { Studio, ChatEntry, HighlightRect } from "studio.slint";
+
+component ChatItem inherits Rectangle {
+    in property <ChatEntry> e;
+    in property <int> index;
+    property <length> w: self.width;
+    min-height: lay.preferred-height;
+    lay := VerticalLayout {
+        spacing: 7px;
+        // User prompt: right-aligned bubble.
+        if root.e.kind == 0: HorizontalLayout {
+            alignment: end;
+            Rectangle {
+                width: min(root.w - 50px, user-text.preferred-width + 24px);
+                height: user-text.preferred-height + 14px;
+                border-radius: 9px;
+                background: Tokens.bg-raised;
+                user-text := Text {
+                    x: 12px; y: 7px; width: parent.width - 24px;
+                    text: root.e.text; color: Tokens.text-primary; font-size: 9.5px; font-weight: 500; wrap: word-wrap;
+                }
+            }
+        }
+        // Assistant reply: "Worked for X.Xs" disclosure, explanation, action log.
+        if root.e.kind == 1: Rectangle {
+            height: 16px;
+            Icon { x: 0; y: 3px; width: 10px; height: 10px; d: root.e.expanded ? Icons.chevron-down : Icons.chevron-right; ink: #8e8f93; stroke-width: 1.4px; }
+            Text { x: 13px; text: root.e.worked; color: #8e8f93; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+            TouchArea { clicked => { Studio.chat-toggle-entry(root.index); } }
+        }
+        if root.e.kind == 1 && root.e.expanded: VerticalLayout {
+            padding-left: 3px;
+            spacing: 10px;
+            if root.e.text != "": Text { text: root.e.text; color: Tokens.text-primary; font-size: 9.5px; font-weight: 500; wrap: word-wrap; }
+            for line in root.e.lines: Text { text: line; color: Tokens.text-primary; font-size: 9.5px; font-weight: 500; wrap: word-wrap; }
+        }
+        // Error entry (plan rejected, network error...). Nothing was executed.
+        if root.e.kind == 2: HorizontalLayout {
+            spacing: 6px;
+            padding-left: 3px;
+            Rectangle { width: 3px; border-radius: 1.5px; background: #e5484d; }
+            Text { text: root.e.text; color: #f08a8d; font-size: 9.5px; font-weight: 500; wrap: word-wrap; }
+        }
+        if root.e.kind == 3: Text {
+            text: root.e.text; color: #8e8f93; font-size: 9.5px; font-weight: 500;
+            opacity: 0.55 + 0.45 * sin(animation-tick() / 1ms * 0.006 * 1rad);
+        }
+    }
+}
+
+export component AssistantPanel inherits Panel {
+    callback focus-main();   // give keyboard focus back to the window after sending
+
+    // ---- header ----
+    Icon { x: 7.5px; y: 7.5px; width: 12px; height: 12px; d: Icons.assistant; ink: #ffffff; filled: true; }
+    Text { x: 21.5px; y: 7px; height: 13px; text: "Assistant"; color: Tokens.text-bright; font-size: 9.75px; font-weight: 700; vertical-alignment: center; }
+    IconButton { x: root.width - 53px; y: 3px; width: 21px; height: 21px; icon: Icons.plus-circle; ink: #6b6c70; icon-size: 14px;
+        tooltip: "New chat"; clicked => { Studio.chat-new(); } }
+    // Full height: PLACEHOLDER (the panel always spans the timeline row)
+    IconButton { x: root.width - 29px; y: 3px; width: 21px; height: 21px; icon: Icons.panel-right; ink: #6b6c70; icon-size: 14px;
+        tooltip: "Full height (not implemented)"; clicked => { Studio.chat-placeholder("Full height"); } }
+    Rectangle { x: 0; y: 27px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
+
+    // ---- composer card (bottom-anchored; the notice row folds away when dismissed) ----
+    property <length> notice-h: Studio.chat-notice ? 27px : 0px;
+    property <length> card-h: 92.5px + self.notice-h;
+
+    // ---- transcript ----
+    flick := Flickable {
+        x: 0; y: 27.5px; width: root.width; height: root.height - 27.5px - root.card-h - 12px;
+        content-height: max(self.height, col.preferred-height);
+        changed content-height => { self.content-y = min(0px, self.height - self.content-height); }
+        col := VerticalLayout {
+            width: flick.width;
+            padding-left: 6.5px;
+            padding-right: 6px;
+            padding-top: 20px;
+            padding-bottom: 8px;
+            spacing: 16px;
+            alignment: start;
+            for entry[i] in Studio.chat: ChatItem { e: entry; index: i; }
+        }
+    }
+
+    card := Rectangle {
+        x: 7px; y: root.height - 8px - root.card-h; width: root.width - 14.5px; height: root.card-h;
+        border-radius: 8px; background: Tokens.bg-raised; border-width: 0.5px; border-color: #525356;
+
+        if Studio.chat-notice: Rectangle {
+            x: 0; y: 0; width: parent.width; height: 27px;
+            Text { x: 8px; height: parent.height; text: "The assistant is AI and may make mistakes."; color: #818389; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+            Rectangle {
+                x: parent.width - 25px; y: 3.5px; width: 18px; height: 18px;
+                Icon { width: 10px; height: 10px; d: Icons.close; ink: #c3c3c4; stroke-width: 1.5px; }
+                TouchArea { clicked => { Studio.chat-dismiss-notice(); } }
+            }
+            Rectangle { y: parent.height - 0.5px; height: 0.5px; background: #313236; }
+        }
+        // Context chip: the current selection (track or clip) + scope label.
+        if Studio.chat-context-visible: Rectangle {
+            x: 6.5px; y: root.notice-h + 7px; height: 20px; width: chip-text.preferred-width + 29.5px;
+            border-radius: 10px; border-width: 0.5px; border-color: Studio.chat-context-color.with-alpha(0.45);
+            chip-ta := TouchArea { x: 0; width: 22px; clicked => { Studio.chat-remove-context(); } }
+            Icon {
+                x: 6px; width: 13px; height: 13px;
+                d: chip-ta.has-hover ? Icons.close : (Studio.chat-context-instrument ? Icons.keys : Icons.wave);
+                ink: chip-ta.has-hover ? #e5e5e8 : Studio.chat-context-color; stroke-width: 1.0px;
+            }
+            chip-text := Text { x: 22px; text: Studio.chat-context-name; color: Tokens.text-bright; font-size: 9px; font-weight: 600; vertical-alignment: center; }
+        }
+        if Studio.chat-context-visible: Text {
+            x: parent.width - 64.5px; y: root.notice-h + 7px; width: 52px; height: 20px;
+            text: Studio.chat-context-scope; color: #818389; font-size: 9.5px; font-weight: 500;
+            horizontal-alignment: right; vertical-alignment: center;
+        }
+        // Multi-line input. Enter sends, Shift+Enter inserts a newline.
+        input := TextInput {
+            x: 9.5px; y: root.notice-h + 40px; width: parent.width - 19px; height: 26px;
+            text <=> Studio.chat-draft;
+            enabled: Studio.chat-available;
+            single-line: false; wrap: word-wrap;
+            color: Tokens.text-primary; font-size: 10px; font-weight: 500;
+            changed has-focus => { Studio.chat-focused = self.has-focus; }
+            key-pressed(event) => {
+                if (event.text == Key.Return && !event.modifiers.shift) {
+                    if (Studio.chat-available && !Studio.chat-busy && Studio.chat-draft != "") {
+                        Studio.chat-send(Studio.chat-draft);
+                        Studio.chat-draft = "";
+                        root.focus-main();
+                    }
+                    return accept;
+                }
+                reject
+            }
+        }
+        if Studio.chat-draft == "": Text {
+            x: 10px; y: input.y + 2.5px; height: 13px;
+            text: Studio.chat-available ? "Ask the assistant to do anything…" : "Set ANTHROPIC_API_KEY to enable the assistant"; width: parent.width - 20px; overflow: elide;
+            color: #818389; font-size: 10.5px; font-weight: 500; vertical-alignment: center;
+        }
+        // Mode toggle: Assist (may edit) / Teach (highlight + explain only).
+        Rectangle {
+            x: 6.5px; y: root.notice-h + 66.5px; width: 113px; height: 21px; border-radius: 10.5px; background: #292a2e;
+            Rectangle {
+                x: 2px; y: 2px; width: 53px; height: 17px; border-radius: 8.5px;
+                background: Studio.teach-mode ? transparent : Tokens.accent;
+                Icon { x: 9px; width: 10px; height: 10px; d: Icons.assistant; filled: true; ink: Studio.teach-mode ? #a6a8ac : Tokens.on-accent; }
+                Text { x: 22px; text: "Assist"; color: Studio.teach-mode ? #a6a8ac : Tokens.on-accent; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+                TouchArea { clicked => { Studio.chat-set-mode(false); } }
+            }
+            Rectangle {
+                x: 57px; y: 2px; width: 54px; height: 17px; border-radius: 8.5px;
+                background: Studio.teach-mode ? Tokens.accent : transparent;
+                Icon { x: 8px; width: 11px; height: 11px; d: Icons.teach; ink: Studio.teach-mode ? Tokens.on-accent : #a6a8ac; stroke-width: 1.2px; }
+                Text { x: 22px; text: "Teach"; color: Studio.teach-mode ? Tokens.on-accent : #a6a8ac; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+                TouchArea { clicked => { Studio.chat-set-mode(true); } }
+            }
+        }
+        // Mic: PLACEHOLDER (voice input not implemented)
+        Rectangle {
+            x: parent.width - 51px; y: root.notice-h + 66px; width: 21px; height: 21px; border-radius: 10.5px; background: #292a2f;
+            Icon { width: 12px; height: 12px; d: Icons.mic; ink: #e5e5e8; stroke-width: 1.5px; }
+            TouchArea { clicked => { Studio.chat-placeholder("Voice input"); } }
+        }
+        // Send
+        Rectangle {
+            property <bool> can-send: Studio.chat-available && !Studio.chat-busy && Studio.chat-draft != "";
+            x: parent.width - 27.5px; y: root.notice-h + 66px; width: 21px; height: 21px; border-radius: 10.5px;
+            background: self.can-send ? #3e3f44 : #292a2f;
+            Icon { width: 11px; height: 11px; d: Icons.arrow-up; ink: parent.can-send ? #ffffff : #d0d0d3; stroke-width: 1.5px; }
+            TouchArea {
+                enabled: parent.can-send;
+                clicked => { Studio.chat-send(Studio.chat-draft); Studio.chat-draft = ""; root.focus-main(); }
+            }
+        }
+    }
+}
+
+// Pulsing accent outlines over highlighted controls (window coordinates).
+export component HighlightOverlay inherits Rectangle {
+    for h in Studio.highlights: Rectangle {
+        x: h.x - 3px; y: h.y - 3px; width: h.w + 6px; height: h.h + 6px;
+        border-radius: 5px; border-width: 2px; border-color: Tokens.accent;
+        background: Tokens.accent.with-alpha(0.12);
+        opacity: 0.55 + 0.45 * sin(animation-tick() / 1ms * 0.008 * 1rad);
+        accessible-role: text;
+        accessible-label: h.note;
+    }
+}

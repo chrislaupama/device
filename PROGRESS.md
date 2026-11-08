@@ -64,7 +64,7 @@ cargo test --workspace                                                          
   Run: `cargo run --release -p saine-app -- --demo`.
 
 **Known gaps / next steps**
-1. Build the panel toggles (Rheo, mixer, editor), splitters, track rename/resize, native menu bar.
+1. Build the clip-editor/devices toggle and piano roll, splitters, track rename/resize, native menu bar.
    Engine: input/recording, loop crossfade, tempo map for the metronome.
 2. Reference capture still missing: audio clip appearance (needs a local WAV dropped onto a track), hover/pressed
    states, animation timings, the rest of the shortcut bindings (scroll the Shortcuts page with mouse wheel events, not keys).
@@ -81,3 +81,15 @@ cargo test --workspace                                                          
 - App: Inter 4.1 bundled (OFL, `crates/saine-app/ui/fonts/`), sizes ×0.91 after a sweep → full-window MAE 1.96 → 1.65.
   Loop (⌘L, button, `SetLoop` undoable) and metronome wired; offline-seek workaround removed; meters use peek.
   `--self-test` 26/26 offline and with Core Audio.
+
+### 2026-11-08: session 1, round 3 (mixer + assistant panels)
+- Mixer (header toggle / ⇧⌘X): per-track strips with real fader, pan, stereo `peek_meters`, M/S, peak hold;
+  Master strip; add-track column. Fidelity full MAE 1.46 (`--state reference-mixer`).
+- Assistant panel (header toggle / ⇧⌘A): Assist/Teach over `saine_core::assistant`, one undo step per turn,
+  highlight overlay (`src/highlight.rs`), Anthropic Messages API provider (`src/assistant_provider.rs`, key from
+  `ANTHROPIC_API_KEY` only, model `SAINE_ASSISTANT_MODEL`, default `claude-opus-5-5`). **No live API call has been
+  exercised yet** (no key in the dev environment); the pipeline is covered by the labelled TEST provider
+  `--assistant-fixture`. Fidelity full MAE 1.87 (`--state reference-assistant`, transcript masked).
+- Self-test 42/42 offline and with Core Audio; workspace tests 49 pass; default state unchanged (1.65).
+- Privacy: the reference Rheo AX dump had the owner's chat history; transcript strings are redacted in
+  `reference/data/ax-rheo.tsv`. Never commit reference chat content.

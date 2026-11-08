@@ -30,6 +30,8 @@ bytemuck = { version = "=1.24.0", features = ["derive"] }
 png = "=0.18.1"
 pollster = "=0.4.0"
 rfd = "0.15"
+ureq = { version = "3", features = ["json"] }
+serde_json.workspace = true
 
 [build-dependencies]
 slint-build = "=1.18.1"

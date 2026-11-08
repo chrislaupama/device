@@ -8,7 +8,10 @@
 
 use crate::peaks::{L0_FRAMES, PeakStore, Pyramid};
 use crate::timeline::{self, ClipVis, Hit, TrackVis, View, Zone};
-use crate::{AppWindow, ClipLabel, RulerLabel, Studio, TrackRow};
+use crate::assistant_panel::AssistantState;
+use crate::assistant_provider::Provider;
+use crate::mixer::{self, Ballistics, MASTER_METER_ID};
+use crate::{AppWindow, ChatEntry, ClipLabel, HighlightRect, MixerStrip, RulerLabel, StripMeter, Studio, TrackRow};
 use saine_core::{
     Asset, AssetId, Clip, ClipId, ColorIndex, Command, Document, Origin, PPQ, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, gain_to_db, persist, snapshot,
 };
@@ -72,7 +75,7 @@ pub fn db_from_fader(f: f32) -> f32 {
     f32::NEG_INFINITY
 }
 
-fn fmt_db(db: f32) -> String {
+pub fn fmt_db(db: f32) -> String {
     if !db.is_finite() || db < -99.0 { "−∞".into() } else { format!("{db:.2}").replace('-', "−") }
 }
 
@@ -108,6 +111,8 @@ pub enum JobResult {
     Imported { path: PathBuf, target: ImportTarget, at: Ticks, result: Result<(AssetInfo, Pyramid), String> },
     /// Media of an opened project reloaded into the engine.
     Reloaded { asset: AssetId, doc_epoch: u64, result: Result<(AssetInfo, Pyramid), String> },
+    /// Assistant provider reply (raw `AssistantTurn` JSON) for a request started at `started`.
+    Assistant { started: Instant, mode: saine_core::assistant::Mode, result: Result<String, String> },
 }
 
 /// Blocking decode + peak analysis. Runs on a worker thread.
@@ -143,7 +148,7 @@ pub struct Controller {
     drag: Option<Drag>,
     status: Option<(String, Instant, Duration)>,
     pub project_dir: Option<PathBuf>,
-    jobs_tx: Sender<JobResult>,
+    pub(crate) jobs_tx: Sender<JobResult>,
     jobs_rx: Receiver<JobResult>,
     pub pending_jobs: usize,
     doc_epoch: u64,
@@ -168,6 +173,17 @@ pub struct Controller {
     pub show_status: bool,
     /// Metronome on/off (app preference, not saved in the project).
     pub metronome_on: bool,
+    // ---- panels (view state owned here, mirrored to Slint) ----
+    pub mixer_open: bool,
+    pub assistant_open: bool,
+    pub assistant: AssistantState,
+    pub provider: Arc<Provider>,
+    ballistics: Ballistics,
+    strips_model: Rc<VecModel<MixerStrip>>,
+    strip_meters_model: Rc<VecModel<StripMeter>>,
+    chat_model: Rc<VecModel<ChatEntry>>,
+    chat_rev: Option<u64>,
+    highlights_model: Rc<VecModel<HighlightRect>>,
 }
 
 impl Controller {
@@ -207,6 +223,16 @@ impl Controller {
             clip_ids: Vec::new(),
             show_status: true,
             metronome_on: false,
+            mixer_open: false,
+            assistant_open: false,
+            assistant: AssistantState::default(),
+            provider: Arc::new(Provider::Unavailable),
+            ballistics: Ballistics::default(),
+            strips_model: Rc::new(VecModel::default()),
+            strip_meters_model: Rc::new(VecModel::default()),
+            chat_model: Rc::new(VecModel::default()),
+            chat_rev: None,
+            highlights_model: Rc::new(VecModel::default()),
         };
         c.selected_track = c.doc.project().tracks.first().map(|t| t.id);
         c.publish();
@@ -218,6 +244,10 @@ impl Controller {
         s.set_tracks(ModelRc::from(self.tracks_model.clone()));
         s.set_ruler_labels(ModelRc::from(self.ruler_model.clone()));
         s.set_clip_labels(ModelRc::from(self.clip_ids_model()));
+        s.set_strips(ModelRc::from(self.strips_model.clone()));
+        s.set_strip_meters(ModelRc::from(self.strip_meters_model.clone()));
+        s.set_chat(ModelRc::from(self.chat_model.clone()));
+        s.set_highlights(ModelRc::from(self.highlights_model.clone()));
     }
 
     fn clip_ids_model(&self) -> Rc<VecModel<ClipLabel>> {
@@ -430,6 +460,29 @@ impl Controller {
         }
     }
 
+    // ---------------------------------------------------------------- mixer
+
+    pub fn toggle_mixer(&mut self) {
+        self.mixer_open = !self.mixer_open;
+        self.ballistics.reset_hold();
+        self.ui_dirty = true;
+    }
+
+    /// Mixer strip fader (0 = +6 dB at the top .. 1 = −∞): same coalesced SetTrackGain as the headers.
+    pub fn set_mixer_fader(&mut self, id: TrackId, f: f32) {
+        self.set_track_gain(id, db_to_gain(db_from_fader(f)));
+    }
+
+    /// Master strip fader: SetMasterGain (coalesced).
+    pub fn set_master_fader(&mut self, f: f32) {
+        self.set_master_gain(db_to_gain(db_from_fader(f)).min(saine_core::command::MAX_GAIN));
+    }
+
+    pub fn reset_peaks(&mut self) {
+        self.ballistics.reset_hold();
+        self.sel_peak_hold = 0.0;
+    }
+
     // ---------------------------------------------------------------- import / persistence
 
     /// Import on worker threads; clips land at `at` (default: the playhead).
@@ -461,6 +514,7 @@ impl Controller {
                     Ok((info, pyr)) => self.finish_import(&path, target, at, info, pyr),
                     Err(e) => self.set_status(format!("Import failed: {e}"), 6),
                 },
+                JobResult::Assistant { started, mode, result } => self.finish_assistant(started, mode, result),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
                     if doc_epoch != self.doc_epoch {
                         if let Ok((info, _)) = result {
@@ -823,7 +877,42 @@ impl Controller {
         if s.get_sel_peak_text().as_str() != peak_text {
             s.set_sel_peak_text(peak_text.into());
         }
-        let metering = ml > 1e-5 || mr > 1e-5;
+        let mut metering = ml > 1e-5 || mr > 1e-5;
+
+        // Mixer meters (all strips + master), only while the mixer is visible.
+        if self.mixer_open {
+            metering |= self.ballistics.update(&self.meters);
+            let p = self.doc.project();
+            let rows: Vec<StripMeter> = p
+                .tracks
+                .iter()
+                .map(|t| {
+                    let (l, r, hold) = self.ballistics.get(t.id.0);
+                    StripMeter { l: fader_from_db(gain_to_db(l)), r: fader_from_db(gain_to_db(r)), peak: mixer::fmt_peak(hold).into() }
+                })
+                .collect();
+            sync_model(&self.strip_meters_model, rows);
+            let (l, r, hold) = self.ballistics.get(MASTER_METER_ID);
+            let (fl, fr) = (fader_from_db(gain_to_db(l)), fader_from_db(gain_to_db(r)));
+            if (s.get_master_meter_l() - fl).abs() > 1e-4 || (s.get_master_meter_r() - fr).abs() > 1e-4 {
+                s.set_master_meter_l(fl);
+                s.set_master_meter_r(fr);
+            }
+            let pt = mixer::fmt_peak(hold);
+            if s.get_master_peak_text().as_str() != pt {
+                s.set_master_peak_text(pt.into());
+            }
+        }
+
+        // Assistant highlights (pulse for HIGHLIGHT_SECS, then expire).
+        let highlighting = !self.assistant.highlights.is_empty();
+        if highlighting || self.highlights_model.row_count() > 0 {
+            let scale = app.window().scale_factor();
+            let size = app.window().size();
+            let layout = self.highlight_layout(size.width as f32 / scale, size.height as f32 / scale, s.get_sounds_visible());
+            let rects = self.highlight_rects(&layout);
+            sync_model(&self.highlights_model, rects);
+        }
 
         // Status expiry.
         if let Some((_, t0, d)) = &self.status
@@ -844,7 +933,7 @@ impl Controller {
         self.view.clamp_scroll(self.project().tracks.len(), self.lanes_size.1);
         s.set_scroll_y(self.view.scroll_y as f32);
         self.update_labels();
-        tp.playing || metering || self.pending_jobs > 0 || self.drag.is_some()
+        tp.playing || metering || highlighting || self.pending_jobs > 0 || self.drag.is_some()
     }
 
     fn push_models(&mut self, app: &AppWindow) {
@@ -898,6 +987,49 @@ impl Controller {
             s.set_sel_fader(fader_from_db(db));
             s.set_sel_db_text(fmt_db(db).into());
         }
+        // ---- mixer strips ----
+        s.set_mixer_open(self.mixer_open);
+        let strips: Vec<MixerStrip> = p
+            .tracks
+            .iter()
+            .map(|t| MixerStrip {
+                id: t.id.0 as i32,
+                name: t.name.clone().into(),
+                instrument: t.kind == TrackKind::Instrument,
+                color: slint_color(track_color(t.color)),
+                selected: Some(t.id) == self.selected_track,
+                mute: t.mute,
+                solo: t.solo,
+                pan: t.pan,
+                pan_text: mixer::fmt_strip_pan(t.pan).into(),
+                fader: fader_from_db(gain_to_db(t.gain)),
+            })
+            .collect();
+        sync_model(&self.strips_model, strips);
+        if self.strip_meters_model.row_count() != p.tracks.len() {
+            self.strip_meters_model.set_vec(vec![StripMeter { l: 1.0, r: 1.0, peak: "−∞".into() }; p.tracks.len()]);
+        }
+        s.set_master_fader(fader_from_db(gain_to_db(p.master_gain)));
+        // ---- assistant ----
+        s.set_assistant_open(self.assistant_open);
+        s.set_chat_available(self.provider.available());
+        s.set_chat_busy(self.assistant.busy.is_some());
+        s.set_chat_notice(self.assistant.notice_visible);
+        s.set_teach_mode(self.assistant.mode == saine_core::assistant::Mode::Teach);
+        if self.chat_rev != Some(self.assistant.rev) {
+            self.chat_rev = Some(self.assistant.rev);
+            self.chat_model.set_vec(self.assistant.to_model());
+        }
+        match self.assistant_context() {
+            Some((name, scope, color, instrument)) => {
+                s.set_chat_context_visible(true);
+                s.set_chat_context_name(name.into());
+                s.set_chat_context_scope(scope.into());
+                s.set_chat_context_color(slint_color(track_color(color)));
+                s.set_chat_context_instrument(instrument);
+            }
+            None => s.set_chat_context_visible(false),
+        }
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };
         s.set_status_text(status.into());
         self.ruler_key.0 = i64::MIN; // force label refresh
@@ -929,6 +1061,19 @@ impl Controller {
         if !same {
             self.clips_model.set_vec(labels);
         }
+    }
+}
+
+/// Update a VecModel in place (row-wise) so Slint only re-renders changed rows.
+fn sync_model<T: Clone + PartialEq + 'static>(m: &VecModel<T>, rows: Vec<T>) {
+    if m.row_count() == rows.len() {
+        for (i, r) in rows.into_iter().enumerate() {
+            if m.row_data(i).as_ref() != Some(&r) {
+                m.set_row_data(i, r);
+            }
+        }
+    } else {
+        m.set_vec(rows);
     }
 }
 

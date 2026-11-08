@@ -5,12 +5,17 @@
 //!
 //! ```text
 //! saine-studio [--open <dir>] [--import <wav>...] [--save-to <dir>] [--no-audio]
-//!              [--demo] [--state reference-default]
+//!              [--demo] [--state reference-default|reference-mixer|reference-assistant]
+//!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--screenshot <out.png>] [--exit-after-frames N] [--frame-stats] [--self-test]
 //! ```
 
+mod assistant_panel;
+mod assistant_provider;
 mod controller;
 mod gpu;
+mod highlight;
+mod mixer;
 mod peaks;
 mod placeholder;
 mod selftest;
@@ -38,6 +43,10 @@ struct Args {
     audio: bool,
     demo: bool,
     reference_default: bool,
+    /// Extra panels for the reference states.
+    open_mixer: bool,
+    open_assistant: bool,
+    assistant_fixture: Option<PathBuf>,
     screenshot: Option<PathBuf>,
     exit_after_frames: Option<u64>,
     frame_stats: bool,
@@ -67,8 +76,17 @@ fn parse_args() -> Result<Args, String> {
             "--demo" => a.demo = true,
             "--state" => match value(&mut i)?.as_str() {
                 "reference-default" => a.reference_default = true,
-                s => return Err(format!("unknown state {s} (supported: reference-default)")),
+                "reference-mixer" => {
+                    a.reference_default = true;
+                    a.open_mixer = true;
+                }
+                "reference-assistant" => {
+                    a.reference_default = true;
+                    a.open_assistant = true;
+                }
+                s => return Err(format!("unknown state {s} (supported: reference-default, reference-mixer, reference-assistant)")),
             },
+            "--assistant-fixture" => a.assistant_fixture = Some(value(&mut i)?.into()),
             "--screenshot" => a.screenshot = Some(value(&mut i)?.into()),
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
@@ -79,7 +97,7 @@ fn parse_args() -> Result<Args, String> {
                 a.audio = v[i] == "--self-test-audio";
             }
             "-h" | "--help" => {
-                println!("{}", include_str!("main.rs").lines().skip(6).take(4).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
+                println!("{}", include_str!("main.rs").lines().skip(6).take(5).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
                 std::process::exit(0);
             }
             other => return Err(format!("unknown argument {other}")),
@@ -149,6 +167,21 @@ fn key_name(text: &str) -> Option<String> {
     Some(k.into())
 }
 
+/// The core default preset plus app-level view bindings that `saine_core::keymap`
+/// does not define (the reference's shortcuts for these are unverified; ours).
+pub fn app_keymap() -> Keymap {
+    use saine_core::keymap::{Binding, Condition};
+    let mut k = Keymap::default_preset();
+    for (action, chord) in [("view.toggle_mixer", "primary+shift+x"), ("view.toggle_assistant", "primary+shift+a")] {
+        k.bindings.push(Binding { action: action.into(), chords: vec![Chord::parse(chord).expect("valid chord")], when: Condition::Always });
+    }
+    k
+}
+
+fn app_text_focused(aw: &slint::Weak<AppWindow>) -> bool {
+    aw.upgrade().map(|a| a.global::<Studio>().get_chat_focused()).unwrap_or(false)
+}
+
 fn pick_import() -> Vec<PathBuf> {
     rfd::FileDialog::new().set_title("Import audio").add_filter("WAV audio", &["wav", "WAV"]).pick_files().unwrap_or_default()
 }
@@ -190,6 +223,8 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             }
         }
         "view.zoom_in" => ctl.borrow_mut().view.zoom_at(1.25, 0.0),
+        "view.toggle_mixer" => ctl.borrow_mut().toggle_mixer(),
+        "view.toggle_assistant" => ctl.borrow_mut().toggle_assistant(),
         "file.import_audio" => {
             let files = pick_import();
             if !files.is_empty() {
@@ -249,6 +284,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let ctl: Ctl = Rc::new(RefCell::new(Controller::new(engine.clone(), Project::default())));
     ctl.borrow().bind_models(&app);
+    {
+        // Provider: TEST fixture (flag, or the built-in one for --self-test), else the API key env var.
+        let provider = match (&args.assistant_fixture, args.self_test) {
+            (Some(path), _) => {
+                let text = std::fs::read_to_string(path).map_err(|e| format!("--assistant-fixture {}: {e}", path.display()))?;
+                assistant_provider::Provider::fixture_from_json(&text, &path.display().to_string())?
+            }
+            (None, true) => assistant_provider::Provider::fixture_from_json(include_str!("../fixtures/assistant-selftest.json"), "built-in self-test fixture")?,
+            (None, false) => assistant_provider::Provider::from_env(),
+        };
+        eprintln!("assistant: provider {provider:?}{}", if provider.is_fixture() { " (TEST provider, no network)" } else { "" });
+        let mut c = ctl.borrow_mut();
+        c.provider = Arc::new(provider);
+        c.mixer_open = args.open_mixer;
+        c.assistant_open = args.open_assistant;
+        c.ui_dirty = true;
+    }
     if args.reference_default || args.screenshot.is_some() {
         ctl.borrow_mut().show_status = !args.reference_default;
     }
@@ -289,6 +341,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     on!(on_gesture_end, |c| c.ui_dirty = true);
+    on!(on_toggle_mixer, |c| c.toggle_mixer());
+    on!(on_toggle_assistant, |c| c.toggle_assistant());
+    on!(on_mixer_fader, |c, id: i32, f: f32| c.set_mixer_fader(TrackId(id as u64), f));
+    on!(on_master_fader_moved, |c, f: f32| c.set_master_fader(f));
+    on!(on_reset_peaks, |c| c.reset_peaks());
+    on!(on_chat_send, |c, text: slint::SharedString| {
+        c.assistant_send(text.as_str());
+    });
+    on!(on_chat_new, |c| c.assistant_new_chat());
+    on!(on_chat_set_mode, |c, teach: bool| c.assistant_set_mode(teach));
+    on!(on_chat_dismiss_notice, |c| c.assistant_dismiss_notice());
+    on!(on_chat_toggle_entry, |c, i: i32| c.assistant_toggle_entry(i.max(0) as usize));
+    on!(on_chat_remove_context, |c| c.assistant_remove_context());
+    on!(on_chat_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, _shift: bool, _cmd: bool| c.pointer(kind, x, y));
     on!(on_lane_scroll, |c, dx: f32, dy: f32, x: f32, zoom: bool| c.scroll(dx, dy, x, zoom));
     // TODO(feedback): wire "Report a bug" / "Share your feedback" to a real channel. No-ops for now.
@@ -308,13 +374,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     {
         let ctl = ctl.clone();
         let aw = app.as_weak();
-        let keymap = Keymap::default_preset();
+        let keymap = app_keymap();
         studio.on_key(move |text, primary, shift, alt, ctrl| {
             let Some(key) = key_name(text.as_str()) else { return false };
             let chord = Chord { key, primary, shift, alt, ctrl };
             let cx = {
                 let c = ctl.borrow();
                 Context {
+                    mixer_open: c.mixer_open,
+                    text_input_focused: app_text_focused(&aw),
                     track_selected: c.selected_track.is_some(),
                     track_header_selected: c.selected_track.is_some() && c.selected_clip.is_none(),
                     clips_selected: c.selected_clip.is_some() as usize,
@@ -454,7 +522,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         f.slint.0.push((now - t).as_secs_f64() * 1e3);
                     }
                     let (animating, ready) = match ctl.try_borrow() {
-                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing, c.pending_jobs == 0),
+                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || !c.assistant.highlights.is_empty(), c.pending_jobs == 0),
                         Err(_) => (true, false),
                     };
                     if ready {
@@ -502,6 +570,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.self_test {
         selftest::start(&app, ctl.clone());
+    }
+    // Fallback for --screenshot when the window never presents frames (occluded window
+    // or locked screen: macOS stops redraws). `take_snapshot()` renders offscreen and
+    // runs the rendering notifier, so the wgpu timeline is included. A few warm-up
+    // renders let models/text layout settle before the saved one.
+    if let Some(path) = args.screenshot.clone() {
+        let aw = app.as_weak();
+        let fr = frame.clone();
+        let ctl2 = ctl.clone();
+        slint::Timer::single_shot(Duration::from_secs(4), move || {
+            if fr.borrow().shot_taken {
+                return;
+            }
+            let Some(a) = aw.upgrade() else { return };
+            if ctl2.try_borrow().map(|c| c.pending_jobs > 0).unwrap_or(true) {
+                eprintln!("screenshot: jobs still pending at the offscreen fallback");
+            }
+            eprintln!("screenshot: no frames presented (occluded/locked?), rendering offscreen");
+            fr.borrow_mut().shot_taken = true;
+            for _ in 0..3 {
+                let _ = a.window().take_snapshot();
+            }
+            save_snapshot(&a, &path);
+            let _ = slint::quit_event_loop();
+        });
     }
     app.window().set_size(slint::LogicalSize::new(1440.0, 820.0));
     app.window().set_position(slint::LogicalPosition::new(0.0, 33.0));
@@ -559,5 +652,16 @@ fn save_snapshot(app: &AppWindow, path: &std::path::Path) {
             }
         }
         Err(e) => eprintln!("screenshot: take_snapshot failed: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn app_keymap_adds_panel_toggles_without_conflicts() {
+        let k = super::app_keymap();
+        assert!(k.conflicts().is_empty(), "{:?}", k.conflicts());
+        assert_eq!(k.chords_for("view.toggle_mixer").len(), 1);
+        assert_eq!(k.chords_for("view.toggle_assistant").len(), 1);
     }
 }

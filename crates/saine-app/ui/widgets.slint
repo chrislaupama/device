@@ -70,6 +70,15 @@ export global Icons {
     out property <string> skip-back: "M4 3v10 M13 3v10L6 8z";
     out property <string> skip-fwd: "M12 3v10 M3 3v10l7-5z";
     out property <string> download: "M3 3.5h10v9H3z M8 5.5v4 M6.2 8l1.8 1.8L9.8 8";
+    // Assistant mark: ORIGINAL four-point star (filled), plus a small companion star.
+    out property <string> assistant: "M7 1.5C7.5 5.2 8.8 6.5 12.5 7C8.8 7.5 7.5 8.8 7 12.5C6.5 8.8 5.2 7.5 1.5 7C5.2 6.5 6.5 5.2 7 1.5z M12.5 10.5C12.7 12 13 12.3 14.5 12.5C13 12.7 12.7 13 12.5 14.5C12.3 13 12 12.7 10.5 12.5C12 12.3 12.3 12 12.5 10.5z";
+    out property <string> plus-circle: "M8 2.5a5.5 5.5 0 1 1 0 11a5.5 5.5 0 1 1 0-11z M8 5.5v5 M5.5 8h5";
+    out property <string> panel-right: "M2 3.5h12v9H2z M9.5 3.5v9";
+    out property <string> close: "M4 4l8 8 M12 4l-8 8";
+    out property <string> chevron-up: "M4 10l4-4 4 4";
+    out property <string> mic: "M8 2.5a2 2 0 0 1 2 2v3.5a2 2 0 0 1-4 0V4.5a2 2 0 0 1 2-2z M4.5 7.5a3.5 3.5 0 0 0 7 0 M8 11v2.5";
+    out property <string> arrow-up: "M8 13V3.5 M4 7.5l4-4 4 4";
+    out property <string> teach: "M1.5 6.5L8 3.5l6.5 3L8 9.5z M4.5 8v3c1 1 2.2 1.5 3.5 1.5s2.5-.5 3.5-1.5V8 M14.5 6.5v4";
 }
 
 // Fully rounded pill button (Returns, Master, Smart Fill, Report a bug).
@@ -165,6 +174,8 @@ export component Knob inherits Rectangle {
     in property <bool> show-arc: false;
     in property <float> arc-from: -135;
     in property <length> body: 15.5px;
+    /// Soft dark outer ring (header/inspector knobs); mixer strips use a flat body.
+    in property <bool> ring: true;
     in property <color> tick-color: #b9d3e4;
     in property <float> value;      // current value forwarded to drags
     in property <float> min-value: -1;
@@ -178,7 +189,7 @@ export component Knob inherits Rectangle {
     property <float> cy: self.height / 1px / 2;
     property <float> r: self.body / 1px / 2;
     // soft outer ring
-    Rectangle {
+    if root.ring: Rectangle {
         width: root.body + 7px; height: root.body + 7px;
         border-radius: self.width / 2;
         background: @radial-gradient(circle, #111214 55%, #1c1d20 100%);
@@ -186,9 +197,9 @@ export component Knob inherits Rectangle {
     Rectangle {
         width: root.body; height: root.body;
         border-radius: self.width / 2;
-        background: @linear-gradient(180deg, #202125 0%, Tokens.bg-knob 100%);
-        border-width: 0.5px;
-        border-color: #2e2f33;
+        background: root.ring ? @linear-gradient(180deg, #202125 0%, Tokens.bg-knob 100%) : #222327;
+        border-width: root.ring ? 0.5px : 1px;
+        border-color: root.ring ? #2e2f33 : #1b1c1f;
     }
     if root.show-arc: Path {
         width: root.width; height: root.height;

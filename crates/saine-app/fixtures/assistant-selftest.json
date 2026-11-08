@@ -1,0 +1,16 @@
+[
+  {"actions": [
+    {"type": "edit", "command": {"op": "add_track", "index": null, "track": {"id": 0, "kind": "audio", "name": "Drums", "color": 2, "gain": 1.0, "pan": 0.0, "mute": false, "solo": false, "clips": []}}},
+    {"type": "edit", "command": {"op": "set_tempo", "bpm": 128.0}},
+    {"type": "set_track_volume_db", "track": 1, "db": -6.0},
+    {"type": "explain", "text": "Added a drum track, raised the tempo and turned the first track down."}
+  ]},
+  {"actions": [
+    {"type": "explain", "text": "This turn tries to edit in Teach mode and must be rejected."},
+    {"type": "edit", "command": {"op": "set_tempo", "bpm": 90.0}}
+  ]},
+  {"actions": [
+    {"type": "highlight", "target": "transport.bpm", "note": "Double-click the tempo and type a new value."},
+    {"type": "explain", "text": "The tempo lives in the transport bar."}
+  ]}
+]

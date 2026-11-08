@@ -1,0 +1,148 @@
+// Studio global: the single bridge between Rust and the Slint UI, plus the
+// view-model structs. Everything here is pushed from Rust (no authoritative
+// state in the UI); edits leave through the callbacks.
+import { Tokens } from "tokens.slint";
+
+export struct TrackRow {
+    id: int,
+    number: int,
+    name: string,
+    instrument: bool,
+    color: color,
+    selected: bool,
+    mute: bool,
+    solo: bool,
+    volume-pos: float,
+    pan: float,
+}
+
+export struct RulerLabel { x: length, text: string }
+
+export struct ClipLabel { x: length, y: length, w: length, text: string, selected: bool }
+
+// Browser tree row (PLACEHOLDER catalogue data supplied by Rust, see src/placeholder.rs).
+export struct TreeRow { depth: int, label: string, count: string, icon: int, expander: int }
+
+
+// ---- mixer panel (bottom panel replacement) ----
+export struct MixerStrip {
+    id: int,
+    name: string,
+    instrument: bool,
+    color: color,
+    selected: bool,
+    mute: bool,
+    solo: bool,
+    pan: float,
+    pan-text: string,
+    fader: float,   // 0 (top, +6 dB) .. 1 (bottom, -inf)
+}
+export struct StripMeter { l: float, r: float, peak: string }   // 0 (top) .. 1 (silent)
+
+// ---- assistant panel ----
+// kind: 0 user, 1 assistant reply, 2 error, 3 pending
+export struct ChatEntry { kind: int, text: string, lines: [string], worked: string, expanded: bool }
+export struct HighlightRect { x: length, y: length, w: length, h: length, note: string }
+
+export global Studio {
+    // ---- project / status ----
+    in property <string> project-name: "Untitled";
+    in property <string> status-text;
+    // ---- transport (driven by engine.transport() every frame) ----
+    in property <bool> playing;
+    in property <string> bar-text: "001";
+    in property <string> time-text: "00:00.000";
+    in property <string> bpm-text: "120";
+    in property <string> sig-text: "4/4";
+    in property <float> master-pos: 0.85;
+    in-out property <bool> sounds-visible: true;
+    // Loop (project transport) and metronome (app preference), both real engine features.
+    in property <bool> loop-enabled: false;
+    in property <bool> metronome-on: false;
+    callback toggle-loop();
+    callback toggle-metronome();
+    // ---- timeline ----
+    in property <[TrackRow]> tracks;
+    in property <length> scroll-y;
+    in property <image> timeline-image;
+    in property <[RulerLabel]> ruler-labels;
+    in property <[ClipLabel]> clip-labels;
+    in property <int> lane-cursor; // 0 default, 1 ew-resize (trim), 2 move (clip body)
+    // ---- inspector (selected track) ----
+    in property <bool> has-selection;
+    in property <int> sel-id;
+    in property <int> sel-number;
+    in property <string> sel-name;
+    in property <bool> sel-instrument;
+    in property <color> sel-color: Tokens.track-audio;
+    in property <bool> sel-mute;
+    in property <bool> sel-solo;
+    in property <float> sel-pan;
+    in property <string> sel-pan-text: "C";
+    in property <float> sel-fader;      // 0 (top, +6 dB) .. 1 (bottom, -inf)
+    in property <string> sel-db-text: "0.00";
+    in property <float> sel-meter-l: 1; // 0 (top) .. 1 (bottom = silent)
+    in property <float> sel-meter-r: 1;
+    in property <string> sel-peak-text: "−∞";
+    // ---- browser (PLACEHOLDER data) ----
+    in property <[TreeRow]> tree;
+
+    // ---- callbacks into Rust ----
+    callback play-toggle();
+    callback stop-return();
+    callback record();
+    callback add-track();
+    callback import-audio();
+    callback select-track(int);
+    callback track-mute(int);
+    callback track-solo(int);
+    callback track-volume(int, float);
+    callback track-pan(int, float);
+    callback gesture-end();
+    callback master-volume(float);
+    callback sel-fader-moved(float);
+    callback lane-pointer(int, length, length, bool, bool); // kind 0=down 1=move 2=up, x, y, shift, cmd
+    callback lane-hover(length, length);
+    callback lane-scroll(float, float, length, bool);      // dx, dy, x, zoom
+    callback key(string, bool, bool, bool, bool) -> bool;   // text, primary (Cmd on macOS), shift, alt, ctrl
+    // ---- panels (owned by the controller) ----
+    in property <bool> mixer-open;
+    in property <bool> assistant-open;
+    callback toggle-mixer();
+    callback toggle-assistant();
+    // ---- mixer ----
+    in property <[MixerStrip]> strips;
+    in property <[StripMeter]> strip-meters;
+    in property <float> master-fader: 0.1126;
+    in property <float> master-meter-l: 1;
+    in property <float> master-meter-r: 1;
+    in property <string> master-peak-text: "−∞";
+    callback mixer-fader(int, float);      // track id, fader fraction
+    callback master-fader-moved(float);
+    callback reset-peaks();
+    // ---- assistant ----
+    in property <[ChatEntry]> chat;
+    in property <bool> chat-available;     // provider configured (API key or TEST fixture)
+    in property <bool> chat-busy;
+    in property <bool> chat-notice: true;
+    in property <bool> teach-mode;
+    in property <bool> chat-context-visible;
+    in property <string> chat-context-name;
+    in property <string> chat-context-scope;
+    in property <color> chat-context-color: Tokens.track-audio;
+    in property <bool> chat-context-instrument;
+    in-out property <string> chat-draft;   // composer text (transient input, not project state)
+    in-out property <bool> chat-focused;
+    in property <[HighlightRect]> highlights;
+    callback chat-send(string);
+    callback chat-new();
+    callback chat-set-mode(bool);          // true = Teach
+    callback chat-dismiss-notice();
+    callback chat-toggle-entry(int);
+    callback chat-remove-context();
+    callback chat-placeholder(string);     // PLACEHOLDER controls report "not implemented"
+
+    callback report-bug();   // TODO: no-op placeholder
+    callback feedback();     // TODO: no-op placeholder
+}
+
