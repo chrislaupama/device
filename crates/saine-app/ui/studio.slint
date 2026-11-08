@@ -50,9 +50,27 @@ export struct TreeRow { depth: int, label: string, count: string, icon: int, exp
 // ---- built-in device panel (src/device_panel.rs builds these from the DeviceDef) ----
 // Knob cell (dial row). face 1 = soft-knee transfer curve instead of the ring (paths in a
 // 32 x 32 view box). editing: the value text is being typed (inline field).
-export struct PanelKnob { param: int, x: length, label: string, value: string, norm: float, bipolar: bool, face: int, face-curve: string, face-bend: string, face-unity: string }
-// Picker row item. kind 0 caption, 1 segmented choice, 2 menu pill, 3 value box, 4 flexible gap.
+// latch: a two-state latch cell instead of a knob (value = its text, on = lit); momentary:
+// on only while held. inert: drawn dimmed, no gestures. steps: detent count of a stepped knob.
+export struct PanelKnob { param: int, x: length, label: string, value: string, norm: float, bipolar: bool, face: int, face-curve: string, face-bend: string, face-unity: string, latch: bool, on: bool, momentary: bool, inert: bool }
+// Picker row item. kind 0 caption, 1 segmented choice, 2 menu pill (param -1: sidechain, else a
+// choice menu), 3 value box, 4 flexible gap, 5 latch pill (value = text, selected 1 = on),
+// 6 view switch (choices = view names, selected = shown view; UI state, not a parameter).
 export struct PanelPick { kind: int, param: int, label: string, choices: [string], selected: int, value: string, enabled: bool, width: length }
+// Custom field views (src/panel_fields.rs). The field sits at x, y (card relative) with an
+// optional caption line above a well starting at well-y; paths, texts and pills are in well
+// coordinates (origin = well top-left, already scaled). Paths are SVG commands.
+export struct FieldPath { commands: string, stroke: color, width: length, fill: color }
+// align: 0 left, 1 centre, 2 right of x (w wide).
+export struct FieldText { x: length, y: length, w: length, text: string, color: color, size: length, align: int }
+// Grip pill (name + value) at x (left edge), centred on y. hot: hovered or dragged.
+export struct FieldPill { x: length, y: length, label: string, value: string, hot: bool }
+// cursor: 0 default, 1 both axes (move), 2 horizontal, 3 vertical.
+export struct PanelField {
+    visible: bool, x: length, y: length, w: length, h: length,
+    caption: string, value: string, well-y: length,
+    paths: [FieldPath], texts: [FieldText], pills: [FieldPill], cursor: int,
+}
 // Vertical slider column (x = column left, card relative).
 export struct PanelSlider { param: int, x: length, label: string, value: string, norm: float, bipolar: bool }
 export struct PanelTick { y: length, text: string, rule: bool }
@@ -89,6 +107,7 @@ export struct DeviceCard {
     picks: [PanelPick],
     sliders: [PanelSlider],
     strip: PanelStrip,
+    field: PanelField,
 }
 
 // Settings › Plugins list rows. warn: drawn with the orange "Missing"/failure badge.
@@ -381,6 +400,9 @@ export global Studio {
     callback panel-text(int, int, string);                   // typed value (parsed by the definition)
     callback panel-menu(int, int, length, length);           // -1 sidechain source, -2 presets; window x, y
     callback panel-preset-step(int, int);                    // previous (-1) / next (+1) factory preset
+    callback panel-view(int, int);                           // card view switch (UI state)
+    callback panel-latch(int, int, int);                     // latch: 0 click (toggle) / 1 press / 2 release (momentary)
+    callback panel-field(int, int, length, length, bool, bool); // field pointer: 0 down 1 move 2 up 3 cancel 4 hover 5 double 6 exit; field x, y; shift, alt
     callback add-category(int, length, length); // row (Built-in, AU, VST3, CLAP, Chains), window x, y for the list
     callback add-search-edited(string);
     callback add-result-pick(int);

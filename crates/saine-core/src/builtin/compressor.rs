@@ -40,6 +40,7 @@ pub static COMPRESSOR: DeviceDef = DeviceDef {
         faces: &[("ratio", Face::SoftKneeCurve { threshold: "threshold", ratio: "ratio", knee: "knee" })],
         min_height: 217.0,
         shown_when: &[],
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Gentle Leveler", values: &[("threshold", -18.0), ("ratio", 2.0), ("attack", 20.0), ("release", 250.0), ("knee", 12.0), ("makeup_gain", 3.0), ("style", 3.0)] },
@@ -50,4 +51,5 @@ pub static COMPRESSOR: DeviceDef = DeviceDef {
         FactoryPreset { name: "Bus Glue", values: &[("threshold", -14.0), ("ratio", 1.8), ("attack", 30.0), ("release", 400.0), ("knee", 16.0), ("makeup_gain", 1.5), ("style", 3.0)] },
     ],
     sidechain: true,
+    hooks: Hooks::NONE,
 };

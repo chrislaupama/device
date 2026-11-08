@@ -8,7 +8,7 @@
 // multiplied by PanelStyle.z. Colours are the measured card colours.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
-import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip } from "studio.slint";
+import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField } from "studio.slint";
 
 export global PanelStyle {
     out property <float> z: 0.85;
@@ -107,9 +107,44 @@ component KnobCell inherits Rectangle {
     property <float> from: root.k.bipolar ? 0 : -135;
     property <bool> editing;
     width: 62px * zm; height: 76px * zm;
+    opacity: root.k.inert ? 0.55 : 1;
     accessible-role: slider; accessible-label: root.k.label; accessible-value: root.k.value;
-    fs := ParamKeys { device: root.device; param: root.k.param; edit => { root.editing = true; } }
-    dial := Rectangle {
+    fs := ParamKeys {
+        enabled: !root.k.inert; device: root.device; param: root.k.param;
+        edit => { if (root.k.latch) { Studio.panel-latch(root.device, root.k.param, root.k.momentary ? 1 : 0); } else { root.editing = true; } }
+        key-released(e) => {
+            if (root.k.momentary && (e.text == Key.Return || e.text == " ")) { Studio.panel-latch(root.device, root.k.param, 2); return accept; }
+            reject
+        }
+    }
+    // Latch cell (On/Off parameter in the dial row): a pill where the ring sits, the name below.
+    if root.k.latch: Rectangle {
+        x: (root.width - self.width) / 2; y: (32px - 20px) * zm / 2; height: 20px * zm;
+        width: max(30px * zm, latch-text.preferred-width + 16px * zm);
+        border-radius: self.height / 2;
+        background: root.k.on ? root.accent : latch-ta.has-hover ? #2e2f34 : PanelStyle.seg;
+        border-width: 0.5px; border-color: root.k.on ? root.accent.brighter(0.14) : #ffffff0f;
+        latch-text := Text {
+            text: root.k.value; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
+            color: root.k.on ? #17181b : latch-ta.has-hover ? #ffffffb3 : #ffffff8c;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+        latch-ta := TouchArea {
+            enabled: !root.k.inert;
+            pointer-event(e) => {
+                if (e.button != PointerEventButton.left) { return; }
+                if (e.kind == PointerEventKind.down) {
+                    fs.focus();
+                    if (e.modifiers.alt) { Studio.panel-reset(root.device, root.k.param); return; }
+                    if (root.k.momentary) { Studio.panel-latch(root.device, root.k.param, 1); }
+                }
+                if (e.kind == PointerEventKind.up && root.k.momentary) { Studio.panel-latch(root.device, root.k.param, 2); }
+                if (e.kind == PointerEventKind.cancel && root.k.momentary) { Studio.panel-latch(root.device, root.k.param, 2); }
+            }
+            clicked => { if (!root.k.momentary) { Studio.panel-latch(root.device, root.k.param, 0); } }
+        }
+    }
+    if !root.k.latch: dial := Rectangle {
         x: (root.width - root.ring) / 2; y: 0; width: root.ring; height: root.ring;
         if root.k.face == 0: Rectangle {
             border-radius: self.width / 2;
@@ -145,18 +180,18 @@ component KnobCell inherits Rectangle {
             Path { viewbox-width: 32; viewbox-height: 32; commands: root.k.face-bend; stroke: root.accent; stroke-width: 2.25px * zm; fill: transparent; stroke-line-cap: round; }
         }
         ParamDrag {
-            device: root.device; param: root.k.param;
+            enabled: !root.k.inert; device: root.device; param: root.k.param;
             grabbed => { fs.focus(); }
             double-clicked => { Studio.panel-reset(root.device, root.k.param); }
         }
     }
-    value := Rectangle {
+    if !root.k.latch: Rectangle {
         x: 0; y: 40px * zm; width: root.width; height: 14px * zm;
         if !root.editing: Text {
-            text: root.k.value; color: PanelStyle.ink; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
+            text: root.k.value; color: root.k.inert ? #ffffff80 : PanelStyle.ink; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
             horizontal-alignment: center; vertical-alignment: center; overflow: elide;
         }
-        if !root.editing: TouchArea { double-clicked => { root.editing = true; } }
+        if !root.editing: TouchArea { enabled: !root.k.inert; double-clicked => { root.editing = true; } }
         if root.editing: ValueEditor {
             x: -6px * zm; width: parent.width + 12px * zm; device: root.device; param: root.k.param; initial: root.k.value; font-size: 11px * zm;
             done => { root.editing = false; }
@@ -223,11 +258,13 @@ component PickItem inherits HorizontalLayout {
     property <float> zm: PanelStyle.z;
     spacing: 6px * zm;
     horizontal-stretch: root.p.kind == 4 ? 1 : 0;
+    if root.p.kind == 4: Rectangle { horizontal-stretch: 1; }
     if root.p.kind != 4 && root.p.label != "": Text {
+        horizontal-stretch: 0;
         text: root.p.label; color: PanelStyle.caption; font-size: 11px * zm; font-weight: 500; letter-spacing: -0.02 * 11px * zm;
         vertical-alignment: center; opacity: root.p.enabled ? 1 : 0.55;
     }
-    if root.p.kind == 1: Rectangle {
+    if root.p.kind == 1 || root.p.kind == 6: Rectangle {
         border-radius: self.height / 2; background: PanelStyle.seg;
         accessible-role: tab-list; accessible-label: root.p.label;
         HorizontalLayout {
@@ -247,10 +284,13 @@ component PickItem inherits HorizontalLayout {
                     pointer-event(e) => {
                         if (e.kind == PointerEventKind.down) {
                             self.alt-down = e.modifiers.alt;
-                            if (e.modifiers.alt) { Studio.panel-reset(root.device, root.p.param); }
+                            if (e.modifiers.alt && root.p.kind == 1) { Studio.panel-reset(root.device, root.p.param); }
                         }
                     }
-                    clicked => { if (!self.alt-down) { Studio.panel-choice(root.device, root.p.param, i); } }
+                    clicked => {
+                        if (root.p.kind == 6) { Studio.panel-view(root.device, i); }
+                        else if (!self.alt-down) { Studio.panel-choice(root.device, root.p.param, i); }
+                    }
                 }
             }
         }
@@ -263,7 +303,38 @@ component PickItem inherits HorizontalLayout {
             font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm; vertical-alignment: center; overflow: elide;
         }
         Icon { x: parent.width - 18px * zm; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: Icons.chevron-down; ink: #a0a0a3; stroke-width: 1.3px; }
-        menu-ta := TouchArea { clicked => { Studio.panel-menu(root.device, root.p.param, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
+        menu-ta := TouchArea {
+            pointer-event(e) => {
+                if (e.kind == PointerEventKind.down && e.modifiers.alt && root.p.param >= 0) { Studio.panel-reset(root.device, root.p.param); }
+            }
+            clicked => { Studio.panel-menu(root.device, root.p.param, self.absolute-position.x, self.absolute-position.y + self.height + 2px); }
+        }
+    }
+    // Latch pill (On/Off parameter): sized by the wider label so toggling never moves the row.
+    if root.p.kind == 5: Rectangle {
+        width: max(off-text.preferred-width, on-text.preferred-width) + 16px * zm;
+        border-radius: self.height / 2;
+        background: root.p.selected == 1 ? root.accent : latch-ta.has-hover ? #2e2f34 : PanelStyle.seg;
+        border-width: 0.5px; border-color: root.p.selected == 1 ? root.accent.brighter(0.14) : #ffffff0f;
+        accessible-role: checkbox; accessible-label: root.p.value; accessible-checked: root.p.selected == 1;
+        off-text := Text {
+            text: root.p.choices[0]; visible: root.p.selected != 1; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
+            color: latch-ta.has-hover ? #ffffffb3 : #ffffff8c; horizontal-alignment: center; vertical-alignment: center;
+        }
+        on-text := Text {
+            text: root.p.choices[1]; visible: root.p.selected == 1; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
+            color: #17181b; horizontal-alignment: center; vertical-alignment: center;
+        }
+        latch-ta := TouchArea {
+            property <bool> alt-down;
+            pointer-event(e) => {
+                if (e.kind == PointerEventKind.down) {
+                    self.alt-down = e.modifiers.alt;
+                    if (e.modifiers.alt) { Studio.panel-reset(root.device, root.p.param); }
+                }
+            }
+            clicked => { if (!self.alt-down) { Studio.panel-latch(root.device, root.p.param, 0); } }
+        }
     }
     if root.p.kind == 3: Rectangle {
         width: root.p.width; border-radius: self.height / 2; background: PanelStyle.box;
@@ -385,6 +456,68 @@ component DynamicsStrip inherits Rectangle {
     }
 }
 
+// Custom field (src/panel_fields.rs): optional caption, then a recessed well that draws the
+// paths, texts and grip pills Rust built and forwards every pointer event in well coordinates.
+component FieldView inherits Rectangle {
+    in property <int> device;
+    in property <PanelField> f;
+    property <float> zm: PanelStyle.z;
+    if root.f.caption != "": HorizontalLayout {
+        x: 0; y: 0; height: 16px * zm; spacing: 5px * zm; alignment: start;
+        Text { text: root.f.caption; color: PanelStyle.caption; font-size: 11.5px * zm; font-weight: 500; letter-spacing: -0.02 * 11.5px * zm; vertical-alignment: center; }
+        Text { text: root.f.value; color: PanelStyle.ink; font-size: 11.5px * zm; font-weight: 650; letter-spacing: -0.04 * 11.5px * zm; vertical-alignment: center; }
+    }
+    Rectangle {
+        y: root.f.well-y; height: root.height - root.f.well-y;
+        border-radius: 4px * zm;
+        background: @linear-gradient(180deg, #212125 0%, #18191d 100%);
+        clip: true;
+        for p in root.f.paths: Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: p.commands; stroke: p.stroke; stroke-width: p.width; fill: p.fill;
+        }
+        for t in root.f.texts: Text {
+            x: t.x; y: t.y; width: t.w; height: t.size * 1.3;
+            text: t.text; color: t.color; font-size: t.size; font-weight: 600;
+            horizontal-alignment: t.align == 1 ? TextHorizontalAlignment.center : t.align == 2 ? TextHorizontalAlignment.right : TextHorizontalAlignment.left;
+            vertical-alignment: center;
+        }
+        // Takes focus on press so Escape reaches the window shortcuts (cancels the drag).
+        fs := FocusScope {
+            key-pressed(e) => {
+                if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) { return accept; }
+                reject
+            }
+        }
+        ta := TouchArea {
+            mouse-cursor: root.f.cursor == 1 ? MouseCursor.move : root.f.cursor == 2 ? MouseCursor.ew-resize : root.f.cursor == 3 ? MouseCursor.ns-resize : MouseCursor.default;
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { fs.focus(); Studio.panel-field(root.device, 0, self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.alt); }
+                if (e.kind == PointerEventKind.move) { Studio.panel-field(root.device, self.pressed ? 1 : 4, self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.alt); }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-field(root.device, 2, self.mouse-x, self.mouse-y, false, false); }
+                if (e.kind == PointerEventKind.cancel) { Studio.panel-field(root.device, 3, self.mouse-x, self.mouse-y, false, false); }
+            }
+            double-clicked => { Studio.panel-field(root.device, 5, self.mouse-x, self.mouse-y, false, false); }
+            changed has-hover => { if (!self.has-hover) { Studio.panel-field(root.device, 6, 0, 0, false, false); } }
+        }
+        for p in root.f.pills: Rectangle {
+            x: p.x; y: p.y - 8px * zm; height: 16px * zm; width: pill-row.preferred-width;
+            border-radius: self.height / 2; background: p.hot ? PanelStyle.pill-hot : PanelStyle.pill;
+            drop-shadow-blur: 2px; drop-shadow-offset-y: 1px; drop-shadow-color: #00000073;
+            pill-row := HorizontalLayout {
+                padding-left: 8px * zm; padding-right: 8px * zm; spacing: 5px * zm;
+                Path {
+                    width: 7px * zm; height: 7px * zm; y: (16px * zm - 7px * zm) / 2;
+                    viewbox-width: 7; viewbox-height: 7; fill: #ffffff66; stroke-width: 0;
+                    commands: "M0.6 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0";
+                }
+                Text { text: p.label; color: #ffffff8c; font-size: 11px * zm; font-weight: 500; vertical-alignment: center; }
+                Text { text: p.value; color: PanelStyle.ink; font-size: 11px * zm; font-weight: 650; letter-spacing: -0.04 * 11px * zm; vertical-alignment: center; }
+            }
+        }
+    }
+}
+
 export component BuiltinCard inherits Rectangle {
     in property <DeviceCard> card;
     property <float> zm: PanelStyle.z;
@@ -455,6 +588,10 @@ export component BuiltinCard inherits Rectangle {
             x: 8px * zm; y: 37px * zm; width: root.width - 16px * zm; height: 20px * zm;
             spacing: 16px * zm;
             for p in root.card.picks: PickItem { device: root.card.id; p: p; accent: root.card.accent; }
+        }
+        if root.card.field.visible: FieldView {
+            x: root.card.field.x; y: root.card.field.y; width: root.card.field.w; height: root.card.field.h;
+            device: root.card.id; f: root.card.field;
         }
         if root.card.strip.visible: DynamicsStrip {
             x: root.card.strip.x; y: root.card.strip.y; width: root.card.strip.w; height: root.card.strip.h;

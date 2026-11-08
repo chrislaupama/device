@@ -9,6 +9,8 @@
 using namespace testutil;
 using namespace devtest;
 
+std::vector<float> time_fx_defaults(const std::string& id); // test_time_fx.cpp
+
 namespace {
 
 // Neutral starting values for the generic checks: the middle of nothing is
@@ -16,6 +18,7 @@ namespace {
 // device-specific defaults table gives (devices must clamp anything).
 std::vector<float> defaults_for(const saine::BuiltinDescriptor& d) {
     if (std::string(d.id) == "compressor") return {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};
+    if (auto v = time_fx_defaults(d.id); !v.empty()) return v;
     return std::vector<float>(d.params.size(), 0.0f);
 }
 

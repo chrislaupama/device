@@ -14,9 +14,13 @@
 //! the drag started from.
 //!
 //! Custom views: View::DynamicsStrip is drawn here (paths built from the
-//! engine's readouts); View::Custom(name) is the escape hatch for device-
-//! specific bodies (EQ curve, shaper, trance-gate grid) and gets its own arm
-//! in [Controller::builtin_card] when such a device lands.
+//! engine's readouts); View::Custom(name) bodies live in src/panel_fields.rs.
+//!
+//! Picker row: Menu = segmented choice, Dropdown = menu pill, Toggle = latch
+//! pill, Views = the card's view switch (UI state), Gap = flexible space.
+//! Dial row: a Toggle is a latch cell (momentary while held when the
+//! parameter says so); reversed parameters draw and drag their ring the other
+//! way; inert parameters (Layout::inert_when) are dimmed and ignore gestures.
 
 use crate::controller::{slint_color, track_color, Controller};
 use crate::devices::{DevMenu, MenuPick};
@@ -71,9 +75,12 @@ struct MeterHistory {
 pub struct PanelState {
     drag: Option<ParamDrag>,
     meters: HashMap<DeviceId, MeterHistory>,
+    /// Momentary latch held down: (device, param index).
+    held: Option<(DeviceId, usize)>,
+    pub fields: crate::panel_fields::FieldState,
 }
 
-fn s(v: impl Into<SharedString>) -> SharedString {
+pub(crate) fn s(v: impl Into<SharedString>) -> SharedString {
     v.into()
 }
 
@@ -90,6 +97,28 @@ thread_local! {
 
 fn choices_model(def: &DeviceDef, p: &ParamDef) -> ModelRc<SharedString> {
     STATIC_MODELS.with(|m| m.borrow_mut().entry(format!("{}/{}", def.id, p.id)).or_insert_with(|| model(p.choices.iter().map(|c| s(*c)).collect())).clone())
+}
+
+/// Off / on labels of a latch.
+fn latch_labels(p: &ParamDef) -> (&'static str, &'static str) {
+    p.latch.unwrap_or(("Off", "On"))
+}
+
+fn latch_model(def: &DeviceDef, p: &ParamDef) -> ModelRc<SharedString> {
+    let (off, on) = latch_labels(p);
+    STATIC_MODELS.with(|m| m.borrow_mut().entry(format!("{}/{}/latch", def.id, p.id)).or_insert_with(|| model(vec![s(off), s(on)])).clone())
+}
+
+fn views_model(def: &DeviceDef) -> ModelRc<SharedString> {
+    STATIC_MODELS.with(|m| m.borrow_mut().entry(format!("{}/views", def.id)).or_insert_with(|| model(def.layout.views.iter().map(|c| s(*c)).collect())).clone())
+}
+
+/// Choice text on a menu pill: list numbering ("4 · Heads 2+3") is left to the menu.
+fn pill_text(text: &str) -> &str {
+    match text.split_once(" · ") {
+        Some((n, rest)) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => rest,
+        _ => text,
+    }
 }
 
 /// Keep a card's row models across refreshes: the Slint repeaters then update
@@ -110,18 +139,32 @@ pub(crate) fn reuse_card_models(old: &DeviceCard, new: &mut DeviceCard) {
     keep(&old.sliders, &mut new.sliders);
 }
 
-/// x of each dial-row knob cell (card relative, unscaled), cluster by cluster.
-fn knob_xs(def: &DeviceDef) -> Vec<(&'static str, f32)> {
+/// x of each shown dial-row cell (card relative, unscaled). Hidden dials drop out and
+/// empty clusters disappear; cells pack cluster by cluster, or spread evenly across
+/// the card with Layout::spread_dials.
+fn knob_xs(def: &DeviceDef, d: &Device) -> Vec<(&'static str, f32)> {
+    let clusters: Vec<Vec<&'static str>> = def
+        .layout
+        .clusters
+        .iter()
+        .map(|c| c.iter().filter_map(|c| c.param()).filter(|p| def.is_shown(d, p)).collect::<Vec<_>>())
+        .filter(|c| !c.is_empty())
+        .collect();
+    let n: usize = clusters.iter().map(|c| c.len()).sum();
+    if def.layout.spread_dials {
+        let width = def.layout.width();
+        let step = if n > 1 { (width - 2.0 * PAD - KNOB_CELL) / (n - 1) as f32 } else { 0.0 };
+        let x0 = if n > 1 { PAD } else { (width - KNOB_CELL) / 2.0 };
+        return clusters.into_iter().flatten().enumerate().map(|(i, p)| (p, x0 + i as f32 * step)).collect();
+    }
     let mut x = PAD;
     let mut out = Vec::new();
-    for (ci, cluster) in def.layout.clusters.iter().enumerate() {
+    for (ci, cluster) in clusters.into_iter().enumerate() {
         if ci > 0 {
             x += CLUSTER_GAP - KNOB_GAP;
         }
-        for c in cluster.iter() {
-            if let Some(p) = c.param() {
-                out.push((p, x));
-            }
+        for p in cluster {
+            out.push((p, x));
             x += KNOB_CELL + KNOB_GAP;
         }
     }
@@ -225,36 +268,98 @@ impl Controller {
         Some((d, saine_core::builtin::def_of(d)?))
     }
 
-    /// Value shown for a parameter: the live drag value, else the model value.
-    fn panel_value(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
-        match self.devices.panel.drag {
-            Some(g) if g.device == d.id && def.params.get(g.index).is_some_and(|q| q.id == p.id) => g.value,
-            _ => def.value(d, p),
+    /// Value shown for a parameter: the live drag value (knob, field or held latch), else the model value.
+    pub(crate) fn panel_value(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
+        let index = def.index_of(p.id);
+        if let Some(g) = self.devices.panel.drag
+            && g.device == d.id
+            && Some(g.index) == index
+        {
+            return g.value;
+        }
+        if let Some(g) = self.devices.panel.fields.drag.as_ref().filter(|g| g.device == d.id)
+            && let Some((_, v)) = g.values.iter().find(|(i, _)| Some(*i) == index)
+        {
+            return *v;
+        }
+        if self.devices.panel.held.is_some_and(|(dev, i)| dev == d.id && Some(i) == index) {
+            return p.max;
+        }
+        def.value(d, p)
+    }
+
+    /// Track colour of the card (reference fallback teal).
+    pub(crate) fn card_accent(&self, d: &Device) -> slint::Color {
+        let track = self.project().find_device(d.id).map(|(ti, _)| &self.project().tracks[ti]);
+        track.map_or(slint::Color::from_rgb_u8(0x43, 0x9b, 0x94), |t| slint_color(track_color(t.color)))
+    }
+
+    /// Right edge (card relative, unscaled) of the view row, left of the slider column.
+    pub(crate) fn view_right(&self, def: &DeviceDef) -> f32 {
+        let width = def.layout.width();
+        match def.layout.sliders.len() {
+            0 => width - PAD,
+            n => width - PAD - SLIDER_W - (n - 1) as f32 * (SLIDER_W + VIEW_GAP) - VIEW_GAP,
         }
     }
 
     /// The card of a built-in device (generic panel).
     pub(crate) fn builtin_card(&self, d: &Device, def: &'static DeviceDef) -> DeviceCard {
         let width = def.layout.width();
-        let track = self.project().find_device(d.id).map(|(ti, _)| &self.project().tracks[ti]);
-        let accent = track.map_or(slint::Color::from_rgb_u8(0x43, 0x9b, 0x94), |t| slint_color(track_color(t.color)));
+        let accent = self.card_accent(d);
         let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
         let value = |id: &str| def.param(id).map(|p| self.panel_value(d, def, p));
 
-        // Picker row; the sidechain picker and everything after it align right.
+        // Picker row; a Gap, the sidechain picker and everything after them align right.
         let mut picks = Vec::new();
         for c in def.layout.picker {
             let p = c.param().and_then(|id| def.param(id));
             match (c, p) {
-                (Control::Menu(_) | Control::Toggle(_), Some(p)) if def.is_shown(d, p.id) => picks.push(PanelPick {
+                (_, Some(p)) if !def.is_shown(d, p.id) => {}
+                (Control::Menu(_), Some(p)) => picks.push(PanelPick {
                     kind: 1,
                     param: idx(p.id),
-                    label: s(p.label),
+                    label: s(def.label_of(d, p)),
                     choices: choices_model(def, p),
                     selected: self.panel_value(d, def, p).round() as i32,
                     enabled: true,
                     ..Default::default()
                 }),
+                (Control::Dropdown(_), Some(p)) => {
+                    let widest = p.choices.iter().map(|c| pill_text(c).chars().count()).max().unwrap_or(4);
+                    picks.push(PanelPick {
+                        kind: 2,
+                        param: idx(p.id),
+                        label: s(def.label_of(d, p)),
+                        value: s(pill_text(&def.text_of(d, p, self.panel_value(d, def, p)))),
+                        enabled: true,
+                        width: (widest as f32 * 6.3 + 30.0) * Z,
+                        ..Default::default()
+                    });
+                }
+                (Control::Toggle(_), Some(p)) => {
+                    let on = self.panel_value(d, def, p) >= 0.5;
+                    let (off_label, on_label) = latch_labels(p);
+                    picks.push(PanelPick {
+                        kind: 5,
+                        param: idx(p.id),
+                        choices: latch_model(def, p),
+                        selected: on as i32,
+                        value: s(if on { on_label } else { off_label }),
+                        enabled: true,
+                        ..Default::default()
+                    });
+                }
+                (Control::Views, _) => picks.push(PanelPick {
+                    kind: 6,
+                    param: -1,
+                    label: s("View"),
+                    choices: views_model(def),
+                    selected: self.card_view(d.id) as i32,
+                    enabled: true,
+                    ..Default::default()
+                }),
+                (Control::Gap, _) => picks.push(PanelPick { kind: 4, ..Default::default() }),
                 (Control::Sidechain, _) => {
                     picks.push(PanelPick { kind: 4, ..Default::default() });
                     let source = match d.sidechain {
@@ -263,7 +368,7 @@ impl Controller {
                     };
                     picks.push(PanelPick { kind: 2, param: -1, label: s("Sidechain"), value: s(source), enabled: true, width: 80.0 * Z, ..Default::default() });
                 }
-                (Control::Pill(_), Some(p)) if def.is_shown(d, p.id) => picks.push(PanelPick {
+                (Control::Pill(_), Some(p)) => picks.push(PanelPick {
                     kind: 3,
                     param: idx(p.id),
                     label: s(p.label),
@@ -287,38 +392,46 @@ impl Controller {
             .enumerate()
             .map(|(i, p)| {
                 let v = self.panel_value(d, def, p);
+                let n = p.to_normalized(v);
                 PanelSlider {
                     param: idx(p.id),
                     x: (slider_x - i as f32 * (SLIDER_W + VIEW_GAP)) * Z,
-                    label: s(p.label),
-                    value: s(p.format(v)),
-                    norm: p.to_normalized(v),
+                    label: s(def.label_of(d, p)),
+                    value: s(def.text_of(d, p, v)),
+                    norm: if p.reversed { 1.0 - n } else { n },
                     bipolar: p.is_bipolar(),
                 }
             })
             .collect();
-        let view_right = if sliders.is_empty() { width - PAD } else { slider_x - (sliders.len() - 1) as f32 * (SLIDER_W + VIEW_GAP) - VIEW_GAP };
+        let view_right = self.view_right(def);
 
         // View row.
-        let strip = match def.layout.view {
-            Some(View::DynamicsStrip { threshold }) => self.dynamics_strip(d, def, threshold, view_right - PAD),
-            Some(View::Custom(_)) | None => PanelStrip::default(),
+        let (strip, field) = match def.layout.view {
+            Some(View::DynamicsStrip { threshold }) => (self.dynamics_strip(d, def, threshold, view_right - PAD), Default::default()),
+            Some(View::Custom(_)) => (PanelStrip::default(), self.panel_field(d, def, view_right)),
+            None => Default::default(),
         };
 
-        // Dial row.
-        let knobs = knob_xs(def)
+        // Dial row: knobs, and latch cells for On/Off parameters.
+        let knobs = knob_xs(def, d)
             .into_iter()
-            .filter(|(id, _)| def.is_shown(d, id))
             .filter_map(|(id, x)| {
                 let p = def.param(id)?;
                 let v = self.panel_value(d, def, p);
+                let n = p.to_normalized(v);
+                let latch = def.layout.clusters.iter().flat_map(|c| c.iter()).any(|c| *c == Control::Toggle(id));
+                let (off_label, on_label) = latch_labels(p);
                 let mut k = PanelKnob {
                     param: idx(id),
                     x: x * Z,
-                    label: s(p.label),
-                    value: s(p.format(v)),
-                    norm: p.to_normalized(v),
+                    label: s(def.label_of(d, p)),
+                    value: s(if latch { if v >= 0.5 { on_label } else { off_label }.to_string() } else { def.text_of(d, p, v) }),
+                    norm: if p.reversed { 1.0 - n } else { n },
                     bipolar: p.is_bipolar(),
+                    latch,
+                    on: latch && v >= 0.5,
+                    momentary: p.momentary,
+                    inert: def.is_inert(d, id),
                     ..Default::default()
                 };
                 if let Some((_, Face::SoftKneeCurve { threshold, ratio, knee })) = def.layout.faces.iter().find(|(f, _)| *f == id) {
@@ -358,6 +471,7 @@ impl Controller {
             picks: model(picks),
             sliders: model(sliders),
             strip,
+            field,
             ..Default::default()
         }
     }
@@ -462,7 +576,8 @@ impl Controller {
                     return;
                 }
                 g.active = true;
-                g.norm = (g.norm + std::mem::take(&mut g.held) * rate * if fine { 0.2 } else { 1.0 }).clamp(0.0, 1.0);
+                let dir = if p.reversed { -1.0 } else { 1.0 };
+                g.norm = (g.norm + dir * std::mem::take(&mut g.held) * rate * if fine { 0.2 } else { 1.0 }).clamp(0.0, 1.0);
                 let v = if p.is_discrete() { p.from_normalized(g.norm).round() } else { p.from_normalized(g.norm) };
                 if v != g.value {
                     g.value = v;
@@ -503,7 +618,7 @@ impl Controller {
     }
 
     /// One gesture = one undo step: never merge with the previous edit of the same parameter.
-    fn panel_commit(&mut self, cmd: Command) {
+    pub(crate) fn panel_commit(&mut self, cmd: Command) {
         self.doc.seal_coalescing();
         self.execute(cmd);
         self.doc.seal_coalescing();
@@ -516,16 +631,40 @@ impl Controller {
     /// Arrow keys: discrete parameters move one choice, continuous ones 1% of the range (0.2% fine).
     pub fn panel_step(&mut self, device: DeviceId, index: i32, delta: i32, fine: bool) {
         self.panel_set(device, index, |p, v| {
+            let delta = if p.reversed { -delta } else { delta } as f32;
             Some(if p.is_discrete() {
-                v + delta as f32
+                v + delta
             } else {
-                p.from_normalized(p.to_normalized(v) + delta as f32 * if fine { 0.002 } else { 0.01 })
+                p.from_normalized(p.to_normalized(v) + delta * if fine { 0.002 } else { 0.01 })
             })
         });
     }
 
     pub fn panel_choice(&mut self, device: DeviceId, index: i32, choice: i32) {
         self.panel_set(device, index, |_, _| Some(choice as f32));
+    }
+
+    /// Latch: 0 click toggles (one undo step); a momentary parameter is on from 1 (press) to
+    /// 2 (release / cancel), live in the engine only, with no model change.
+    pub fn panel_latch(&mut self, device: DeviceId, index: i32, phase: i32) {
+        let Some((_, def)) = self.panel_def(device) else { return };
+        let Some(i) = usize::try_from(index).ok().filter(|i| *i < def.params.len()) else { return };
+        let p = &def.params[i];
+        match phase {
+            0 => self.panel_set(device, index, |p, v| Some(if v >= 0.5 { p.min } else { p.max })),
+            1 if p.momentary => {
+                self.devices.panel.held = Some((device, i));
+                let _ = self.engine.builtin_set_param(device.0, i as u32, p.max);
+                self.ui_dirty = true;
+            }
+            2 => {
+                if self.devices.panel.held.take().is_some() {
+                    let _ = self.engine.builtin_set_param(device.0, i as u32, p.min);
+                    self.ui_dirty = true;
+                }
+            }
+            _ => {}
+        }
     }
 
     pub fn panel_text(&mut self, device: DeviceId, index: i32, text: &str) {
@@ -542,7 +681,7 @@ impl Controller {
         }
     }
 
-    /// Sidechain picker (-1) or presets (-2) menu at window x, y.
+    /// Choice menu of parameter `which` (>= 0), sidechain picker (-1) or presets (-2) at window x, y.
     pub fn panel_menu(&mut self, device: DeviceId, which: i32, x: f32, y: f32) {
         let Some((d, def)) = self.panel_def(device) else { return };
         let check = |on: bool| if on { "✓".to_string() } else { String::new() };
@@ -570,6 +709,11 @@ impl Controller {
                     rows.push((t.name.clone(), check(d.sidechain == Some(t.id)), Some(MenuPick::Sidechain(device, Some(t.id))), false));
                 }
                 rows
+            }
+            i if i >= 0 => {
+                let Some(p) = def.params.get(i as usize) else { return };
+                let cur = def.value(d, p).round() as usize;
+                p.choices.iter().enumerate().map(|(n, c)| (c.to_string(), check(n == cur), Some(MenuPick::Choice(device, i, n as i32)), false)).collect()
             }
             -2 => {
                 let mut rows = vec![("Factory presets".to_string(), String::new(), None, false)];
@@ -603,7 +747,7 @@ impl Controller {
     pub(crate) fn panel_load_preset(&mut self, device: DeviceId, n: usize) {
         let Some((d, def)) = self.panel_def(device) else { return };
         let Some(f) = def.factory.get(n) else { return };
-        let mut params = saine_core::builtin::DevicePreset::factory(def, f).load_values(def);
+        let mut params = def.preset_load_values(d, &saine_core::builtin::DevicePreset::factory(def, f));
         // The sidechain switch follows the source picked in the panel, not the preset.
         if let Some(p) = def.param("sidechainEnable") {
             params.insert(p.id.into(), def.value(d, p));
@@ -633,7 +777,7 @@ mod tests {
     fn compressor_card_geometry_matches_the_reference_template() {
         let def = saine_core::builtin::find("compressor").unwrap();
         assert_eq!(def.layout.width(), 521.0);
-        let xs: Vec<f32> = knob_xs(def).iter().map(|(_, x)| *x).collect();
+        let xs: Vec<f32> = knob_xs(def, &def.instantiate()).iter().map(|(_, x)| *x).collect();
         assert_eq!(xs, [8.0, 80.0, 163.0, 235.0, 307.0, 379.0, 451.0]);
         // The last knob cell ends at the card padding.
         assert_eq!(xs[6] + KNOB_CELL + PAD, def.layout.width());

@@ -117,6 +117,12 @@ add_library(saine_engine STATIC
   src/plugins/clap_instance.cpp
   src/devices/builtin.cpp
   src/devices/compressor.cpp
+  src/devices/delay.cpp
+  src/devices/echo.cpp
+  src/devices/grains.cpp
+  src/devices/pitch_shift.cpp
+  src/devices/pitch_shifter.cpp
+  src/devices/reverb.cpp
   $<TARGET_OBJECTS:saine_vst3_host>
   # Platform backends: each file is compile-guarded so exactly one is active.
   src/platform/audio_device.cpp
@@ -326,7 +332,8 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/test_automation.cpp
     tests/test_frame_ring.cpp
     tests/devices/test_builtin.cpp
-    tests/devices/test_compressor.cpp)
+    tests/devices/test_compressor.cpp
+    tests/devices/test_time_fx.cpp)
   target_include_directories(saine_engine_tests PRIVATE src tests)
   target_link_libraries(saine_engine_tests PRIVATE saine_engine saine_engine_warnings)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")

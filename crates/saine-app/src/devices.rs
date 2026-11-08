@@ -263,6 +263,8 @@ pub enum MenuPick {
     Sidechain(DeviceId, Option<TrackId>),
     /// Built-in device panel: load factory preset `n`.
     Preset(DeviceId, usize),
+    /// Built-in device panel: choice `2` of parameter index `1`.
+    Choice(DeviceId, i32, i32),
 }
 
 #[derive(Debug, Clone)]
@@ -523,6 +525,7 @@ impl Controller {
     pub fn device_poll(&mut self) {
         let now = Instant::now();
         self.panel_poll_meters();
+        self.panel_poll_fields();
         // Main-thread plugin housekeeping (retired instances, CLAP main-thread callbacks).
         if !self.devices.editors.is_empty() || self.project().tracks.iter().any(|t| !t.devices.is_empty() || t.instrument_plugin.is_some()) {
             self.engine.plugin_idle();
@@ -1059,6 +1062,7 @@ impl Controller {
             Some(MenuPick::Add(item)) => item,
             Some(MenuPick::Sidechain(device, source)) => return self.panel_set_sidechain(device, source),
             Some(MenuPick::Preset(device, n)) => return self.panel_load_preset(device, n),
+            Some(MenuPick::Choice(device, param, choice)) => return self.panel_choice(device, param, choice),
             None => return,
         };
         let Some(t) = self.selected_track else { return };

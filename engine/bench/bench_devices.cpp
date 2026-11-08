@@ -24,6 +24,25 @@ namespace {
 constexpr double kRate = 48000.0;
 constexpr uint32_t kBlock = 256;
 const std::vector<float> kCompressor = {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};
+// Defaults of the time / pitch devices (Rust definitions, registry order).
+const std::vector<float> kDelay = {120.f, 8.f, 50.f, 0.f, 0.0692f, 0.f, 100.f, 50.f, 0.f,
+                                   20.f, 0.f, 0.71f, 0.f, 150.f, 0.f, 1.f, 1.f, 500.f, 0.f, 1.f, 1.f,
+                                   3000.f, 0.f, 1.f, 1.f, 8000.f, 0.f, 1.f, 1.f, 20000.f, 0.f, 0.71f, 0.f,
+                                   1.f, 1.f, 500.f, 1.f, 8.f, 500.f};
+const std::vector<float> kReverb = {50.f, 2.f, 50.f, 10.f, 30.f, 100.f, 1.f, 12000.f, 20.f, 1.f, 20.f, 1.f, 7.f, 10.f, 60.f, 50.f};
+const std::vector<float> kPitch = {7.f, 0.f, 0.f, 100.f};
+const std::vector<float> kGrains = {0.f, 0.f, 250.f, 3.f, 120.f, 100.f, 24.f, 8.f, 100.f, 40.f, 0.f, 0.f, 4.f,
+                                    0.f, 50.f, 50.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 50.f, 0.f, 0.f};
+std::vector<float> echo_defaults() {
+    std::vector<float> v = {0.f, 3.f, 1.f, 0.f, 11.f, 0.5f, 1.f, 0.f, 10.f, 12.f, 5.f, 35.f, 0.f, 0.f, 0.f, 5.f, 5.f,
+                            0.f, 1.f, 0.f, 0.f, 100.f, 45.f, 0.45f, 0.f, 25.f, 100.f, 100.f, 100.f, 0.f, 100.f, 0.f,
+                            1.f, 20.f, 6200.f, 240.f, 20000.f, 0.f, 60.f, -24.f, 5.f, 180.f, 0.f, 0.f, 0.f, 6.f,
+                            20673.f, 0.f, 0.f, 0.f, 0.f};
+    for (int h = 0; h < 6; ++h)
+        for (float x : {0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f}) v.push_back(x);
+    v.push_back(0.f);
+    return v;
+}
 
 std::vector<uint8_t> blob(const std::vector<float>& v, uint64_t sc = 0) {
     se_builtin_state h{SE_BUILTIN_STATE_MAGIC, static_cast<uint32_t>(v.size()), sc};
@@ -130,6 +149,38 @@ int main(int argc, char** argv) {
         row(name, bench_kernel("compressor", v, blocks, 0));
     }
     row("compressor (Clean, 16 auto events)", bench_kernel("compressor", kCompressor, blocks, 16));
+
+    // Time and pitch devices, one row per mode / machine (value index, value).
+    struct Variant {
+        const char* id;
+        const char* name;
+        std::vector<float> values;
+        int index;
+        float value;
+    };
+    const Variant variants[] = {
+        {"delay", "delay (Tape)", kDelay, 8, 0.f},
+        {"delay", "delay (Digital)", kDelay, 8, 1.f},
+        {"delay", "delay (BBD)", kDelay, 8, 2.f},
+        {"echo", "echo (Tape Loop)", echo_defaults(), 0, 0.f},
+        {"echo", "echo (Drum)", echo_defaults(), 0, 1.f},
+        {"echo", "echo (Cartridge)", echo_defaults(), 0, 2.f},
+        {"reverb", "reverb (Room)", kReverb, 6, 0.f},
+        {"reverb", "reverb (Hall)", kReverb, 6, 1.f},
+        {"reverb", "reverb (Plate)", kReverb, 6, 2.f},
+        {"reverb", "reverb (Spring)", kReverb, 6, 3.f},
+        {"reverb", "reverb (Shimmer)", kReverb, 6, 4.f},
+        {"reverb", "reverb (Haze)", kReverb, 6, 5.f},
+        {"pitch-shifter", "pitch-shifter (+7 st)", kPitch, 2, 0.f},
+        {"pitch-shifter", "pitch-shifter (+7 st, formant)", kPitch, 2, 1.f},
+        {"grains", "grains (Cloud)", kGrains, 0, 0.f},
+        {"grains", "grains (Rhythm)", kGrains, 0, 1.f},
+    };
+    for (const auto& v : variants) {
+        std::vector<float> values = v.values;
+        values[static_cast<std::size_t>(v.index)] = v.value;
+        row(v.name, bench_kernel(v.id, values, blocks, 0));
+    }
 
     // Parameter update paths and session cost: 32 tracks, one clip and two
     // compressors each.

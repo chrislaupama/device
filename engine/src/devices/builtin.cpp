@@ -9,11 +9,21 @@ namespace saine {
 // ---------------------------------------------------------------- registry
 // One line per built-in device; the descriptor lives next to its processor.
 extern const BuiltinDescriptor kCompressorDescriptor;
+extern const BuiltinDescriptor kDelayDescriptor;
+extern const BuiltinDescriptor kEchoDescriptor;
+extern const BuiltinDescriptor kGrainsDescriptor;
+extern const BuiltinDescriptor kReverbDescriptor;
+extern const BuiltinDescriptor kPitchShifterDescriptor;
 
 namespace {
 
 const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kCompressorDescriptor,
+    &kDelayDescriptor,
+    &kEchoDescriptor,
+    &kGrainsDescriptor,
+    &kReverbDescriptor,
+    &kPitchShifterDescriptor,
 };
 
 struct CRegistry {
