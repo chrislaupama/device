@@ -5,11 +5,7 @@ on:
 
 jobs:
   build-test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-14, windows-latest, ubuntu-24.04]
-    runs-on: ${{ matrix.os }}
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
