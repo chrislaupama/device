@@ -263,6 +263,8 @@ pub enum MenuPick {
     Sidechain(DeviceId, Option<TrackId>),
     /// Built-in device panel: load factory preset `n`.
     Preset(DeviceId, usize),
+    /// Built-in device panel: choice `2` of parameter index `1` (menu pills).
+    Choice(DeviceId, i32, i32),
 }
 
 #[derive(Debug, Clone)]
@@ -1059,6 +1061,7 @@ impl Controller {
             Some(MenuPick::Add(item)) => item,
             Some(MenuPick::Sidechain(device, source)) => return self.panel_set_sidechain(device, source),
             Some(MenuPick::Preset(device, n)) => return self.panel_load_preset(device, n),
+            Some(MenuPick::Choice(device, param, choice)) => return self.panel_choice(device, param, choice),
             None => return,
         };
         let Some(t) = self.selected_track else { return };
@@ -1349,19 +1352,22 @@ mod tests {
         let mut open: HashSet<String> = ["e/au", "e/vst3", "e/clap"].iter().map(|s| s.to_string()).collect();
         let (_, rows) = build_tree(&c, 1, "", &open);
         let l = |d: i32, s: &str, n: &str| (d, s.to_string(), n.to_string());
+        // Every built-in effect is listed under Built-in (more arrive with each device family).
+        let n = saine_core::builtin::all().iter().filter(|d| d.kind == PluginKind::Effect).count();
+        let built_in = n.to_string();
         assert_eq!(
             labels(&rows),
-            vec![l(0, "Built-in", "1"), l(0, "Audio Units", "3"), l(1, "Acme", "1"), l(1, "Apple", "2"), l(0, "VST3", "1"), l(1, "Gain", ""), l(0, "CLAP", "0")]
+            vec![l(0, "Built-in", &built_in), l(0, "Audio Units", "3"), l(1, "Acme", "1"), l(1, "Apple", "2"), l(0, "VST3", "1"), l(1, "Gain", ""), l(0, "CLAP", "0")]
         );
         assert_eq!(rows[6].expander, 0, "empty folder has no expander");
         open.insert("e/au/Apple".into());
         open.insert("e/builtin".into());
         let (entries, rows) = build_tree(&c, 1, "", &open);
         assert!(matches!(&entries[1].item, Some(Item::Builtin(d)) if d.id == "compressor"));
-        assert_eq!(rows[5].label, "AUDelay");
-        assert_eq!(rows[6].label, "AULowpass");
-        assert!(rows[6].leaf && rows[6].icon == 2);
-        assert!(matches!(&entries[6].item, Some(Item::Plugin(p)) if p.name == "AULowpass"));
+        assert_eq!(rows[4 + n].label, "AUDelay");
+        assert_eq!(rows[5 + n].label, "AULowpass");
+        assert!(rows[5 + n].leaf && rows[5 + n].icon == 2);
+        assert!(matches!(&entries[5 + n].item, Some(Item::Plugin(p)) if p.name == "AULowpass"));
     }
 
     #[test]
