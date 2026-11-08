@@ -49,7 +49,7 @@ Details in engine/README.md, "Input, monitoring and recording".
   track per recording are possible); a loop wrap does not (looping writes linearly, no take lanes).
   An overrun drops the block and also starts a new take, so takes stay sample-aligned.
 - **Latency:** `start_frame = position − (input + output latency)`, each side = device latency +
-  safety offset + stream latency + one IO buffer; 0 for injected input. `DeviceStatus` reports the two
+  safety offset + stream latency (no IO-buffer term: an acoustic loopback test on a MacBook Air showed the buffer term over-compensated by ~18.5 ms; without it recordings land +2.7..6.2 ms late, consistent with speaker→mic travel and onset detection; see crates/saine-engine/tests/real_loopback.rs); 0 for injected input. `DeviceStatus` reports the two
   sides separately.
 - **Additive Rust API:** `Engine::recording_stats()` (overruns, dropped frames, write errors, takes),
   `Engine::input_error()`, `DeviceConfig::DEFAULT_INPUT`.

@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 // macOS Core Audio backend.
 //
 // Output only (the default, and whenever no input is configured):
@@ -188,8 +190,12 @@ uint32_t buffer_frames(AudioDeviceID id) {
     return get_prop(id, kAudioDevicePropertyBufferFrameSize, kAudioObjectPropertyScopeGlobal, n) ? n : 0;
 }
 
-// Device latency + safety offset + first stream's latency + one IO buffer
-// for one direction (the usual Core Audio round-trip accounting).
+// Device latency + safety offset + first stream's latency for one direction.
+// No IO-buffer term: an acoustic loopback measurement on a MacBook Air
+// (aggregate of built-in mic + speakers, 512-frame buffer; see
+// crates/saine-engine/tests/real_loopback.rs) showed that adding one buffer
+// per side over-compensated by ~2 buffers (clicks landed 18.5 ms early);
+// without it the residual is +2..3 ms (speaker-to-mic travel + onset detection).
 uint32_t side_latency(AudioDeviceID id, AudioObjectPropertyScope scope) {
     UInt32 lat = 0, safety = 0, stream_lat = 0;
     get_prop(id, kAudioDevicePropertyLatency, scope, lat);
@@ -201,7 +207,12 @@ uint32_t side_latency(AudioDeviceID id, AudioObjectPropertyScope scope) {
         if (AudioObjectGetPropertyData(id, &a, 0, nullptr, &size, streams.data()) == noErr && !streams.empty())
             get_prop(streams[0], kAudioStreamPropertyLatency, kAudioObjectPropertyScopeGlobal, stream_lat);
     }
-    return lat + safety + stream_lat + buffer_frames(id);
+    const uint32_t buf = buffer_frames(id);
+    if (std::getenv("SAINE_DEBUG_LATENCY") != nullptr)  // diagnostics only (non-RT path)
+        std::fprintf(stderr, "latency dev=%u %s: device %u safety %u stream %u buffer %u\n", unsigned(id),
+                     scope == kAudioObjectPropertyScopeInput ? "in " : "out", unsigned(lat), unsigned(safety),
+                     unsigned(stream_lat), unsigned(buf));
+    return lat + safety + stream_lat;
 }
 
 // AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio, read

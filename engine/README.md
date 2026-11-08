@@ -605,7 +605,7 @@ counted in `write_errors` and those takes are left out of the result.
 output frame P was captured when the listener heard frame P − (input latency
 + output latency). So `start_frame = position − (in + out)`, with each side =
 `kAudioDevicePropertyLatency + kAudioDevicePropertySafetyOffset +` the first
-stream's `kAudioStreamPropertyLatency` + one IO buffer, read from the running
+stream's `kAudioStreamPropertyLatency` (no IO-buffer term: an acoustic loopback test on a MacBook Air showed the buffer term over-compensated by ~18.5 ms; without it recordings land +2.7..6.2 ms late, consistent with speaker→mic travel and onset detection; see crates/saine-engine/tests/real_loopback.rs), read from the running
 (aggregate) device; for an aggregate each side is the max of what the
 aggregate and the sub-device report. Converted to engine frames. Injected
 input (`se_render_offline_with_input`) has compensation 0.

@@ -123,5 +123,8 @@ cargo test --workspace                                                          
 - App: R/I buttons, In popup, record transport, live recording clip, Settings › Audio panel with saved preferences
   (`~/Library/Application Support/Saine Studio/preferences.json`). Self-test 99/99 both modes (recording checks via
   injected input). The session rate is fixed at 48 kHz; the Audio page says so when a different device rate is picked.
-- **Not yet verified: recording from a real microphone** (needs the macOS microphone permission). Manual check:
-  `SAINE_TEST_REAL_INPUT=1 engine/build/record_check`, then a loopback click test for latency.
+- Real microphone verified (2026-11-08, with the user's permission): MacBook Air mic via the private aggregate
+  device, 3 s take, 0 overruns, real room signal. An acoustic loopback test (metronome → speakers → mic,
+  `SAINE_TEST_REAL_INPUT=1 cargo test -p saine-engine --test real_loopback -- --ignored --nocapture`) found the
+  latency compensation 18.5 ms too early (an extra IO buffer per side); fixed, residual now +2.7..6.2 ms late.
+  Next: per-device manual recording offset (calibration) in Settings › Audio.
