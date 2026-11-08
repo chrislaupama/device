@@ -555,6 +555,26 @@ mod tests {
         assert_eq!(sections(&s, FS).len(), 2);
     }
 
+    /// Reference points shared with the engine's tests
+    /// (engine/tests/devices/test_eq.cpp, eq_design_matches_the_panel_model):
+    /// if these change, the panel and the engine drift apart.
+    #[test]
+    fn engine_contract_points() {
+        let mut a = Band::new(Shape::LowShelf, 200.0, 9.0, 0.7071);
+        a.slope_db = 18.0;
+        a.overshoot = 0.5;
+        let mut b = Band::new(Shape::HighPass, 1000.0, 0.0, 2.0);
+        b.slope_db = 36.0;
+        let mut c = Band::new(Shape::DualLow, 60.0, 8.0, 0.7071);
+        c.low_atten_db = 6.0;
+        let mut d = Band::new(Shape::Bell, 2500.0, -7.5, 1.3);
+        d.prop_q = true;
+        let want = [(a, 100.0, 7.843498), (a, 330.0, -0.675584), (b, 900.0, -0.567544), (b, 400.0, -47.592860), (c, 30.0, 3.508999), (c, 120.0, -0.137253), (d, 2500.0, -7.5), (d, 3500.0, -2.570398)];
+        for (band, f, db) in want {
+            assert!((band_db(&band, f, FS) - db).abs() < 1e-4, "{:?} at {f}", band.shape);
+        }
+    }
+
     #[test]
     fn butterworth_tables() {
         let (q, first) = butterworth_qs(4);
