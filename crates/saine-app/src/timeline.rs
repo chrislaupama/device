@@ -399,7 +399,7 @@ fn automation_row(out: &mut Vec<RectInst>, px: &Px, w: f32, row: &crate::automat
     if row.extra {
         out.push(px.rect(0.0, row.y0 + row.h - 0.5, w, 0.5, rgba(rgb(0x26272a), 1.0)));
     }
-    let color = row.style.line();
+    let color = row.style.line(row.hue);
     // Curve: consecutive samples become one rect per run of equal y (flat lines are one rect).
     let half = 0.5;
     let mut i = 0;

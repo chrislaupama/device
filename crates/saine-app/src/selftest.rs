@@ -1374,6 +1374,13 @@ fn device_steps() -> Vec<Step> {
     }
     let removed = Rc::new(Cell::new(0u64));
     let (rm1, rm2) = (removed.clone(), removed.clone());
+    // A lane of the removed AULowpass keeps its colour; its colour is never asked for before
+    // the removal, so the name must have been recorded when the device was added.
+    let rm3 = removed.clone();
+    /// A plugin-parameter target on device `id` named "Cutoff" (colour key "AULowpass/Cutoff").
+    fn lowpass_cutoff(id: u64) -> saine_core::AutomationTarget {
+        saine_core::AutomationTarget::Plugin { device: saine_core::DeviceId(id), param: 0, name: "Cutoff".into() }
+    }
     let scans = Rc::new(Cell::new(0usize));
     let (sc1, sc2) = (scans.clone(), scans.clone());
     // Editor step result: None = skipped (engine reports no editor), Some((opened, closed, error)).
@@ -1510,6 +1517,11 @@ fn device_steps() -> Vec<Step> {
             one(&h6, c, "Remove Device")?;
             let d = track_devices(c, TrackKind::Audio);
             (d.iter().map(|x| x.1.as_str()).collect::<Vec<_>>() == ["AUDelay"] && card_named(a, "AULowpass").is_none()).then_some(()).ok_or(format!("devices {d:?}"))
+        })),
+        Check("automation: a removed plugin's lane keeps its colour (\"AULowpass/Cutoff\", not \"/Cutoff\") [needs engine plugin scanning]", Box::new(move |c, _| {
+            let now = c.lane_hue(&lowpass_cutoff(rm3.get()));
+            let want = crate::automation::Hue::key("AULowpass", "Cutoff");
+            (rm3.get() != 0 && now == want).then_some(()).ok_or(format!("device {}: {now:?}, want {want:?}", rm3.get()))
         })),
         Do("devices: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
         Check("devices: ⌘Z restored AULowpass with the same device id, after AUDelay [needs engine plugin scanning]", Box::new(move |c, _| {

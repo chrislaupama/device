@@ -52,9 +52,9 @@ pub const OVERLAY: [f32; 4] = [23.5 / 255.0, 24.4 / 255.0, 24.5 / 255.0, 0.672];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineStyle {
-    /// Enabled lane with points: bright gold (ORIGINAL; the reference's hover gold #c9a83d).
+    /// Enabled lane with points: the parameter's bright hue.
     Active,
-    /// No lane / no points yet: the measured dim gold (#62561f line, #655729 label).
+    /// No lane / no points yet: the parameter's dim hue.
     Inactive,
     /// Lane switched off with the power toggle (ORIGINAL grey).
     Disabled,
@@ -65,14 +65,110 @@ fn hex(h: u32, a: f32) -> [f32; 4] {
     [c[0], c[1], c[2], a]
 }
 
-impl LineStyle {
-    pub fn line(self) -> [f32; 4] {
+/// Lane colour of an automated parameter (reference/ui-inventory.md §12, research-findings.md).
+/// The reference keys every parameter as "<device>/<parameter>" (track parameters use the device
+/// "Channel"): a few track keys have fixed colours (Volume gold), everything else takes
+/// `PALETTE[fnv1a32(key) % 8]`. Each hue has a bright form (lane enabled) and a dim form (no
+/// points / power off), both measured from 2x captures of the reference's power-on and
+/// power-off lanes (the reference darkens its base palette on the timeline).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hue {
+    Gold,
+    Blue,
+    Magenta,
+    Green,
+    Purple,
+    Orange,
+    Coral,
+    Teal,
+    Indigo,
+}
+
+impl Hue {
+    /// The hashed palette, in the reference's order (Gold is reserved for Volume).
+    pub const PALETTE: [Hue; 8] = [Hue::Blue, Hue::Magenta, Hue::Green, Hue::Purple, Hue::Orange, Hue::Coral, Hue::Teal, Hue::Indigo];
+
+    /// (bright, dim) as 0xRRGGBB.
+    pub fn hex(self) -> (u32, u32) {
         match self {
-            LineStyle::Active => hex(0xc9a83d, 1.0),
-            LineStyle::Inactive => hex(0x62561f, 1.0),
+            Hue::Gold => (0xebc542, 0x61551f),
+            Hue::Blue => (0x65bce3, 0x30525f),
+            Hue::Magenta => (0xcb62b3, 0x55314e),
+            Hue::Green => (0x7aca8a, 0x395641),
+            Hue::Purple => (0x8f78e4, 0x41395f),
+            Hue::Orange => (0xdd9336, 0x5c431d),
+            Hue::Indigo => (0x6285ec, 0x313f62),
+            Hue::Teal => (0x65c9b8, 0x2f5651),
+            Hue::Coral => (0xd56e5f, 0x593531),
+        }
+    }
+
+    /// Hue of a parameter. `device` is the display name of the plugin that owns a `Plugin`
+    /// target (ignored otherwise); the same device + parameter name is the same colour on every
+    /// track.
+    pub fn of(target: &AutomationTarget, device: &str) -> Hue {
+        match target {
+            AutomationTarget::Volume => Hue::key("Channel", "Volume"),
+            AutomationTarget::Pan => Hue::key("Channel", "Pan"),
+            AutomationTarget::Synth { param } => Hue::key("Synth", param.name()),
+            AutomationTarget::Plugin { name, .. } => Hue::key(device, name),
+        }
+    }
+
+    /// Colour of the key "<device>/<parameter>".
+    pub fn key(device: &str, param: &str) -> Hue {
+        if device == "Channel" {
+            // Fixed track-parameter colours (Polarity: coral, we have no polarity parameter).
+            match param {
+                "Volume" => return Hue::Gold,
+                "Pan" => return Hue::Blue,
+                "Mute" => return Hue::Magenta,
+                "Trim" => return Hue::Green,
+                "Width" => return Hue::Purple,
+                "Mono" => return Hue::Orange,
+                "Polarity" => return Hue::Coral,
+                _ => {}
+            }
+        }
+        // 32-bit FNV-1a over the UTF-16 code units (the reference hashes JavaScript strings).
+        let key = format!("{device}/{param}");
+        let h = key.encode_utf16().fold(0x811c_9dc5u32, |h, u| (h ^ u as u32).wrapping_mul(0x0100_0193));
+        Hue::PALETTE[(h % Hue::PALETTE.len() as u32) as usize]
+    }
+
+    /// Bright form (enabled lane with points) as linear RGBA for the renderer.
+    pub fn bright(self) -> [f32; 4] {
+        hex(self.hex().0, 1.0)
+    }
+
+    /// Dim form (no points yet) as linear RGBA for the renderer.
+    pub fn dim(self) -> [f32; 4] {
+        hex(self.hex().1, 1.0)
+    }
+
+    /// Bright form for Slint (labels, header pill, power icon).
+    pub fn slint_bright(self) -> slint::Color {
+        let h = self.hex().0;
+        slint::Color::from_rgb_u8((h >> 16) as u8, (h >> 8) as u8, h as u8)
+    }
+
+    /// Dim form for Slint (value labels of lanes without points).
+    pub fn slint_dim(self) -> slint::Color {
+        let h = self.hex().1;
+        slint::Color::from_rgb_u8((h >> 16) as u8, (h >> 8) as u8, h as u8)
+    }
+}
+
+impl LineStyle {
+    /// Line colour of a lane in this state with the parameter's hue (grey while disabled).
+    pub fn line(self, hue: Hue) -> [f32; 4] {
+        match self {
+            LineStyle::Active => hue.bright(),
+            LineStyle::Inactive => hue.dim(),
             LineStyle::Disabled => hex(0x55565a, 1.0),
         }
     }
+    /// State code for Slint (`TrackRow.auto-state`: 0 inactive, 1 active, 2 disabled).
     pub fn code(self) -> i32 {
         match self {
             LineStyle::Inactive => 0,
@@ -114,6 +210,7 @@ pub struct RowDraw {
     pub overlay: bool,
     pub extra: bool,
     pub style: LineStyle,
+    pub hue: Hue,
     pub poly: Vec<(f32, f32)>,
     pub handles: Vec<(f32, f32, bool)>,
     pub start_dot: Option<(f32, f32)>,
@@ -305,12 +402,17 @@ pub struct AutoUi {
     last_down: Option<(Instant, LaneKey, AutomationTarget, usize)>,
     /// Write passes committed (counter for tests / diagnostics).
     pub writes_committed: usize,
+    /// Display names of every plugin device the project has had (`remember_device_names`, after
+    /// each change), so a lane whose plugin was removed (its lanes stay in the project) keeps the
+    /// colour it had. Device ids are not reused within a project; cleared with the project.
+    device_names: std::cell::RefCell<HashMap<saine_core::DeviceId, String>>,
 }
 
 impl AutoUi {
     /// A different project: per-track UI state no longer applies.
     pub fn reset_project_state(&mut self) {
         self.targets.clear();
+        self.device_names.borrow_mut().clear();
         self.expanded.clear();
         self.picker = None;
         self.sel = None;
@@ -374,6 +476,27 @@ impl Controller {
         }
     }
 
+    /// Record the display name of every plugin device in the project. Called after every change
+    /// (`Controller::after_change`, which also runs on load), so a device is always recorded
+    /// before any later edit can remove it.
+    pub fn remember_device_names(&self) {
+        let mut names = self.auto.device_names.borrow_mut();
+        for d in self.project().tracks.iter().flat_map(|t| t.instrument_plugin.iter().chain(t.devices.iter())) {
+            names.entry(d.id).or_insert_with(|| d.plugin.name.clone());
+        }
+    }
+
+    /// Lane colour of a target (`Hue::of` with the owning plugin's display name, which outlives
+    /// the plugin's removal, see `remember_device_names`).
+    pub fn lane_hue(&self, target: &AutomationTarget) -> Hue {
+        let AutomationTarget::Plugin { device: id, .. } = target else {
+            return Hue::of(target, "");
+        };
+        let names = self.auto.device_names.borrow();
+        Hue::of(target, names.get(id).map_or("", String::as_str))
+    }
+
+    /// Drawing state of a lane: inactive without points, disabled when switched off, else active.
     pub fn auto_style(&self, key: LaneKey, target: &AutomationTarget) -> LineStyle {
         match self.lane(key, target) {
             Some(l) if l.points.is_empty() => LineStyle::Inactive,
@@ -492,7 +615,7 @@ impl Controller {
             let empty = lane.as_ref().is_none_or(|l| l.points.is_empty());
             let x0 = v.x_of(0.0);
             let start_dot = (empty && x0 > -3.0 && x0 < w).then(|| (x0, row.y_of(norm_of(&row.target, stat))));
-            out.rows.push(RowDraw { y0: row.y0, h: row.h, master: row.master, overlay: !row.master, extra: row.extra, style, poly, handles, start_dot });
+            out.rows.push(RowDraw { y0: row.y0, h: row.h, master: row.master, overlay: !row.master, extra: row.extra, style, hue: self.lane_hue(&row.target), poly, handles, start_dot });
         }
         if let Some(Gesture::Marquee { x0, y0, x1, y1, .. }) = &self.auto.gesture {
             out.marquee = Some([x0.min(*x1), y0.min(*y1), (x1 - x0).abs(), (y1 - y0).abs()]);
@@ -512,7 +635,17 @@ impl Controller {
                 let val = self.lane(r.key, &r.target).and_then(|l| l.value_at(t0)).unwrap_or_else(|| self.static_value(r.key, &r.target));
                 let ly = r.y_of(norm_of(&r.target, val));
                 let y = (ly - 9.5 - 6.5).clamp(r.y0 + 1.0, r.y0 + r.h - 14.0);
-                AutoLabel { x: 1.5, y, text: self.auto_label(r.key, &r.target, val).into(), state: self.auto_style(r.key, &r.target).code() }
+                {
+                    let hue = self.lane_hue(&r.target);
+                    AutoLabel {
+                        x: 1.5,
+                        y,
+                        text: self.auto_label(r.key, &r.target, val).into(),
+                        state: self.auto_style(r.key, &r.target).code(),
+                        accent: hue.slint_bright(),
+                        dim: hue.slint_dim(),
+                    }
+                }
             })
             .collect()
     }
@@ -1180,6 +1313,7 @@ impl Controller {
                     auto_cat: cat.into(),
                     auto_param: param.into(),
                     auto_state: self.auto_style(Some(t.id), &target).code(),
+                    auto_accent: self.lane_hue(&target).slint_bright(),
                     auto_count: self.extra_targets(t.id).len() as i32 + 1,
                     auto_expanded: self.auto.expanded.contains(&t.id),
                     vol_auto: va,
@@ -1215,6 +1349,7 @@ impl Controller {
                         cat: cat.into(),
                         param: param.into(),
                         state: self.auto_style(Some(id), &t).code(),
+                        accent: self.lane_hue(&t).slint_bright(),
                     });
                 }
             }
@@ -1377,5 +1512,32 @@ mod tests {
         let empty = AutomationLane::new(AutomationTarget::Volume);
         let m = touch_merge(&empty, 500, 1500, &[(500, -30.0), (1500, -20.0)]);
         assert_eq!(m.points.len(), 2);
+    }
+
+    #[test]
+    fn lane_hue_follows_the_parameter() {
+        let none = "";
+        assert_eq!(Hue::of(&AutomationTarget::Volume, none), Hue::Gold);
+        assert_eq!(Hue::of(&AutomationTarget::Pan, none), Hue::Blue);
+        assert_eq!(LineStyle::Active.line(Hue::Gold), hex(0xebc542, 1.0));
+        assert_eq!(LineStyle::Inactive.line(Hue::Blue), hex(0x30525f, 1.0));
+        // The hashed rule reproduces colours sampled from the reference (ui-inventory.md §12).
+        for (dev, param, hue) in [
+            ("Synth", "Cutoff", Hue::Indigo),
+            ("Synth", "Osc 1 Level", Hue::Orange),
+            ("Synth", "Osc 2 Octave", Hue::Coral),
+            ("Synth", "Resonance", Hue::Teal),
+            ("Synth", "LFO 1 Rate", Hue::Blue),
+            ("Synth", "Unison Detune", Hue::Magenta),
+            ("Synth", "Noise Level", Hue::Green),
+            ("Synth", "Glide", Hue::Purple),
+            ("Character EQ", "B1 Freq", Hue::Blue),
+        ] {
+            assert_eq!(Hue::key(dev, param), hue, "{dev}/{param}");
+        }
+        assert_eq!(Hue::of(&AutomationTarget::Synth { param: SynthParam::FilterCutoff }, none), Hue::Indigo);
+        // Plugin parameters: same device + parameter name → same hue on every track.
+        let p = |device: u64, param: u32| AutomationTarget::Plugin { device: saine_core::DeviceId(device), param, name: "B1 Freq".into() };
+        assert_eq!(Hue::of(&p(1, 3), "Character EQ"), Hue::of(&p(7, 9), "Character EQ"));
     }
 }

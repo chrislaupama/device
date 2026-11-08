@@ -13,7 +13,8 @@ Living handoff document for future agent sessions. Read this first, then `docs/a
 | `reference/` | Reference audit, UI inventory, design tokens, interactions, parity matrix, research | Reference research |
 | `reference/screenshots/` | Captures of the reference app at 1440×820 (git-ignored: third-party art and personal library data) | Reference research |
 | `reference/data/` | Raw accessibility dumps (geometry source of truth) | Reference research |
-| `tools/reference/` | `ui.sh` (pin/click/snap), `ax_dump.js` (AX tree), `mouse.swift` (CGEvent pointer), `sample.py`/`scan.py`/`montage.py` (pixel tools) | Reference research |
+| `reference/bundle-contents.md` | What is in the reference app (`dist/` web UI, resources), where each feature lives, rules for reading it (understand, never copy) | Reference research |
+| `tools/reference/` | `ui.sh` (pin/click/snap), `ax_dump.js` (AX tree), `mouse.swift` (CGEvent pointer), `sample.py`/`scan.py`/`montage.py` (pixel tools), `dist.py` (search the reference app's `dist/`) | Reference research |
 | `engine/` | C++23 real-time engine, C ABI `engine/include/saine_engine.h` | Audio engineering |
 | `crates/saine-core` | Model, commands, undo/redo, persistence, snapshots | App architecture |
 | `crates/saine-engine` | Safe Rust FFI wrapper + end-to-end tests | App architecture |

@@ -18,22 +18,24 @@ export struct TrackRow {
     pan: float,
     // Automation (src/automation.rs): content y and total height (expanded lanes add rows),
     // the shown parameter (category + name), its lane state (0 none/inactive, 1 active,
-    // 2 disabled), the "Show N automated lanes" count, and controls following automation.
+    // 2 disabled) and colour (the parameter's bright hue, Hue in src/automation.rs),
+    // the "Show N automated lanes" count, and controls following automation.
     y: length,
     h: length,
     auto-cat: string,
     auto-param: string,
     auto-state: int,
+    auto-accent: color,
     auto-count: int,
     auto-expanded: bool,
     vol-auto: bool,
     pan-auto: bool,
 }
 
-// Value label at the left of an automation row (lane-local). state: as TrackRow.auto-state.
-export struct AutoLabel { x: length, y: length, text: string, state: int }
+// Value label at the left of an automation row (lane-local). state, accent, dim: as TrackRow.auto-*.
+export struct AutoLabel { x: length, y: length, text: string, state: int, accent: color, dim: color }
 // Expanded automation row in the track header column (content y).
-export struct AutoExtra { track-id: int, index: int, y: length, cat: string, param: string, state: int }
+export struct AutoExtra { track-id: int, index: int, y: length, cat: string, param: string, state: int, accent: color }
 
 export struct RulerLabel { x: length, text: string }
 

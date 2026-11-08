@@ -434,6 +434,7 @@ impl Controller {
 
     /// Publish a new engine snapshot if the document changed.
     pub fn after_change(&mut self) {
+        self.remember_device_names();
         let p = self.doc.project();
         if let Some(t) = self.selected_track
             && p.track(t).is_none()

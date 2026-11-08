@@ -225,6 +225,7 @@ component AutoPill inherits Rectangle {
     in property <string> cat;
     in property <string> param;
     in property <int> state;          // 0 inactive, 1 active, 2 disabled
+    in property <color> accent: #ebc542;  // parameter hue (src/automation.rs Hue), default Track Volume
     in property <bool> chevron: true;
     callback power();
     callback open(length, length);    // window x, y of the bottom-left corner
@@ -235,7 +236,7 @@ component AutoPill inherits Rectangle {
     ta := TouchArea { clicked => { root.open(self.absolute-position.x, self.absolute-position.y + root.height); } }
     Icon {
         x: 3px; y: 2.75px; width: 11px; height: 11px; d: Icons.power; stroke-width: 1.3px;
-        ink: root.state == 1 ? #c9a83d : root.lit ? #666669 : #424347;
+        ink: root.state == 1 ? root.accent : root.lit ? #666669 : #424347;
         accessible-role: checkbox; accessible-label: "Enable automation"; accessible-checked: root.state == 1;
         TouchArea { x: -2px; y: -2.75px; width: 15px; height: 16.5px; clicked => { root.power(); } }
     }
@@ -246,7 +247,7 @@ component AutoPill inherits Rectangle {
     Text {
         x: cat-text.x + cat-text.preferred-width + 1.75px; width: root.width - self.x - 20px; height: root.height;
         text: root.param; font-size: 9.25px; font-weight: 600; vertical-alignment: center; overflow: elide;
-        color: root.state == 2 ? #6a6b6f : root.lit ? #c9a83d : #7d6c26;
+        color: root.state == 2 ? #6a6b6f : root.lit ? root.accent : root.accent.mix(#212226, 0.47);
     }
     if root.chevron: Icon { x: root.width - 14.5px; y: 2.25px; width: 12px; height: 12px; d: Icons.chevron-down; ink: root.lit ? #6c6d72 : #484a4f; stroke-width: 1.3px; }
 }
@@ -269,11 +270,12 @@ component TrackHeaderRow inherits Rectangle {
     // tracks, where R and I are PLACEHOLDERS (no MIDI recording; the callback reports it).
     SmallButton { x: 55px; y: 41.5px + root.dc; width: 11px; height: 11px; text: "R"; on: root.t.arm; on-color: Tokens.record-red; clicked => { Studio.track-arm(root.t.id); } }
     if root.t.instrument: SmallButton { x: 69px; y: 41.5px + root.dc; width: 11px; height: 11px; text: "I"; on: root.t.monitor; clicked => { Studio.track-monitor(root.t.id); } }
-    // Pan knob and volume slider follow automation (display only) and turn gold while automated.
+    // Pan knob and volume slider follow automation (display only) and take their lane's hue
+    // (Volume gold, Pan blue) while automated.
     Knob {
         x: 84px; y: 33.5px + root.dc; width: 26px; height: 26px;
         value: root.t.pan; value-angle: root.t.pan * 135;
-        tick-color: root.t.pan-auto ? #c9a83d : root.t.selected ? #5aaee0 : #d8d8da;
+        tick-color: root.t.pan-auto ? #65bce3 : root.t.selected ? #5aaee0 : #d8d8da;
         value-changed(v) => { Studio.track-pan(root.t.id, v); }
         released => { Studio.gesture-end(); }
         reset => { Studio.track-pan(root.t.id, 0); Studio.gesture-end(); }
@@ -281,7 +283,7 @@ component TrackHeaderRow inherits Rectangle {
     HSlider {
         x: 116px; y: 44px + root.dc; width: 68px; height: 8px;
         pos: root.t.volume-pos;
-        handle-color: root.t.vol-auto ? #c9a83d : Tokens.handle;
+        handle-color: root.t.vol-auto ? #ebc542 : Tokens.handle;
         moved(p) => { Studio.track-volume(root.t.id, p); }
         released => { Studio.gesture-end(); }
         reset => { Studio.track-volume(root.t.id, Tokens.slider-zero-db); Studio.gesture-end(); }
@@ -293,7 +295,7 @@ component TrackHeaderRow inherits Rectangle {
     }
     if Studio.auto-shown: AutoPill {
         x: 42px; y: 48.5px; width: 141px; height: 17px;
-        cat: root.t.auto-cat; param: root.t.auto-param; state: root.t.auto-state;
+        cat: root.t.auto-cat; param: root.t.auto-param; state: root.t.auto-state; accent: root.t.auto-accent;
         power => { Studio.auto-power(root.t.id, -1); }
         open(x, y) => { Studio.auto-open-picker(root.t.id, x, y); }
     }
@@ -360,10 +362,10 @@ component Timeline inherits Panel {
             x: c.x + 5px; y: c.y; width: max(0px, c.w - 8px); height: 17px;
             text: c.text; color: Studio.auto-shown ? #191b24 : #15161a; font-size: 7.75px; font-weight: 500; vertical-alignment: center; overflow: elide;
         }
-        // Automation value labels (gold; dim while the lane has no points or is off).
+        // Automation value labels in the parameter's hue (dim while the lane has no points, grey while off).
         for l in Studio.auto-labels: Text {
             x: l.x; y: l.y + 0.75px; height: 13px; text: l.text; font-size: 9.25px; font-weight: 600; vertical-alignment: center;
-            color: l.state == 1 ? #c9a83d : l.state == 2 ? #6a6b6f : #655729;
+            color: l.state == 1 ? l.accent : l.state == 2 ? #6a6b6f : l.dim;
         }
         TouchArea {
             mouse-cursor: Studio.lane-cursor == 1 ? MouseCursor.ew-resize : Studio.lane-cursor == 2 ? MouseCursor.move : MouseCursor.default;
@@ -406,7 +408,7 @@ component Timeline inherits Panel {
         for e in Studio.auto-extras: Rectangle {
             x: 0; y: e.y - Studio.scroll-y; width: parent.width; height: 40.5px;
             AutoPill {
-                x: 42px; y: 12px; width: 141px; cat: e.cat; param: e.param; state: e.state; chevron: false;
+                x: 42px; y: 12px; width: 141px; cat: e.cat; param: e.param; state: e.state; accent: e.accent; chevron: false;
                 power => { Studio.auto-power(e.track-id, e.index); }
                 open(x, y) => { Studio.auto-show-extra(e.track-id, e.index); }
             }
@@ -433,7 +435,7 @@ component Timeline inherits Panel {
         HSlider {
             x: 116px; y: 11px + root.mdy; width: 68px; height: 8px;
             pos: Studio.master-pos;
-            handle-color: Studio.master-vol-auto ? #c9a83d : Tokens.handle;
+            handle-color: Studio.master-vol-auto ? #ebc542 : Tokens.handle;
             moved(p) => { Studio.master-volume(p); }
             released => { Studio.gesture-end(); }
             reset => { Studio.master-volume(Tokens.slider-zero-db); Studio.gesture-end(); }
@@ -486,7 +488,7 @@ component Inspector inherits Rectangle {
     Text { x: 86px; y: 173px; width: 74px; height: 14px; text: "Width"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     Knob {
         x: 28px; y: 191px; width: 38px; height: 38px; body: 26px;
-        value: Studio.sel-pan; value-angle: Studio.sel-pan * 135; tick-color: Studio.sel-pan-auto ? #c9a83d : #d0d0d3;
+        value: Studio.sel-pan; value-angle: Studio.sel-pan * 135; tick-color: Studio.sel-pan-auto ? #65bce3 : #d0d0d3;
         value-changed(v) => { if (Studio.has-selection) { Studio.track-pan(Studio.sel-id, v); } }
         released => { Studio.gesture-end(); }
         reset => { if (Studio.has-selection) { Studio.track-pan(Studio.sel-id, 0); Studio.gesture-end(); } }
@@ -524,7 +526,7 @@ component Inspector inherits Rectangle {
         Rectangle {
             x: 4.5px; y: min(parent.height - 4px, 9px + Studio.sel-fader * (parent.height - 18px));
             width: 3.5px; height: max(0px, parent.height - 4px - self.y); border-radius: 1.75px;
-            background: Studio.sel-vol-auto ? #c9a83d : Studio.sel-color;
+            background: Studio.sel-vol-auto ? #ebc542 : Studio.sel-color;
         }
         Rectangle {
             x: 2px; y: Studio.sel-fader * (parent.height - 18px) - 1.5px; width: 8.5px; height: 21px; border-radius: 3px;

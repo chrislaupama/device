@@ -3,7 +3,7 @@
 Status: accepted (2026-11-08). Engine playback, plugin parameters and editor-change capture implemented (see Implementation notes); write (automation arm) is the app's.
 
 ## Reference
-Automation is drawn over each track's lane (gold line, value label). Each track header has an
+Automation is drawn over each track's lane (a line in the parameter's colour, value label; Volume is gold). Each track header has an
 "Enable automation" power toggle and an "Automation parameter" picker ("Track › Volume", device categories),
 and a "Show N automated lanes" disclosure. The transport has "Automation Arm: knob moves write automation while
 playing". A Draw mode (B) pencil exists. See reference/ui-inventory.md §12. Point-editing gestures and the
