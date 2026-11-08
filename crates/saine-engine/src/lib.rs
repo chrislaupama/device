@@ -982,6 +982,64 @@ impl Engine {
     }
 }
 
+// ---------------------------------------------------------------- automation
+//
+// Contract for automation (docs/adr/0005-automation.md). Lanes travel in the
+// session snapshot (`TrackSnapshot::automation`, `SessionSnapshot::master_automation`).
+// Bodies marked STUB are replaced by the engine implementation.
+
+/// A plugin parameter that can be automated.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PluginParamInfo {
+    /// Format parameter id (VST3 ParamID, CLAP clap_id, AU AudioUnitParameterID).
+    pub id: u32,
+    pub name: String,
+    /// Group/module name for menus (may be empty).
+    pub group: String,
+    /// Default as a normalized 0..1 value.
+    pub default_normalized: f32,
+    /// Number of discrete steps (0 = continuous).
+    pub steps: u32,
+    pub automatable: bool,
+}
+
+/// A parameter change made inside a plugin's own editor (for "write"
+/// automation), normalized 0..1, with gesture boundaries where the format
+/// reports them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PluginParamChange {
+    pub device: saine_core::DeviceId,
+    pub param: u32,
+    pub normalized: f32,
+    /// Engine transport frame when the change was observed.
+    pub frame: i64,
+    pub gesture_begin: bool,
+    pub gesture_end: bool,
+}
+
+impl Engine {
+    /// STUB. Parameters of a live plugin instance (empty if not loaded).
+    pub fn plugin_params(&self, _device: saine_core::DeviceId) -> Vec<PluginParamInfo> {
+        Vec::new()
+    }
+
+    /// STUB. Current normalized value of a plugin parameter.
+    pub fn plugin_param_value(&self, _device: saine_core::DeviceId, _param: u32) -> Option<f32> {
+        None
+    }
+
+    /// STUB. Display text for a normalized value ("-6.0 dB", "1.2 kHz").
+    pub fn plugin_param_text(&self, _device: saine_core::DeviceId, _param: u32, _normalized: f32) -> Option<String> {
+        None
+    }
+
+    /// STUB. Drain parameter changes made in plugin editors since the last
+    /// call (main thread; call from the UI poll).
+    pub fn take_plugin_param_changes(&self) -> Vec<PluginParamChange> {
+        Vec::new()
+    }
+}
+
 impl Drop for Engine {
     fn drop(&mut self) {
         // SAFETY: we own the handle exclusively here.
@@ -1062,8 +1120,10 @@ mod tests {
                     synth: Some(p.clone()),
                     devices: vec![],
                     instrument_plugin: None,
+                    automation: vec![],
                 }],
                 master_gain: 1.0,
+                master_automation: vec![],
             };
             e.publish(&snap).unwrap_or_else(|err| panic!("{}: {err}", p.preset));
         }
@@ -1086,8 +1146,10 @@ mod tests {
                 synth: Some(bad),
                 devices: vec![],
                 instrument_plugin: None,
+                automation: vec![],
             }],
             master_gain: 1.0,
+            master_automation: vec![],
         };
         assert_eq!(e.publish(&snap).unwrap_err().code, ffi::SE_ERR_INVALID_ARG);
     }

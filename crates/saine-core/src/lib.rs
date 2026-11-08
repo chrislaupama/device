@@ -7,6 +7,7 @@
 //! * [`snapshot`]: derivation of immutable engine session descriptions
 
 pub mod assistant;
+pub mod automation;
 pub mod command;
 pub mod device;
 pub mod history;
@@ -19,6 +20,7 @@ pub mod snapshot;
 
 pub use command::{Command, EditError};
 pub use history::{Document, Origin};
+pub use automation::{AutoPoint, AutomationLane, AutomationTarget, SynthParam};
 pub use device::{Device, DeviceId, PluginFormat, PluginKind, PluginRef};
 pub use instrument::SynthParams;
 pub use midi::{MidiClip, Note};

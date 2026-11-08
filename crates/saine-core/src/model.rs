@@ -1,6 +1,7 @@
 //! Authoritative project model. Lives on the application thread only; the
 //! audio engine receives derived, immutable snapshots (see `snapshot`).
 
+use crate::automation::AutomationLane;
 use crate::device::{Device, DeviceId};
 use crate::instrument::SynthParams;
 use crate::midi::MidiClip;
@@ -84,6 +85,9 @@ pub struct Track {
     /// Instrument plugin replacing the built-in synth (instrument tracks).
     #[serde(default)]
     pub instrument_plugin: Option<Device>,
+    /// Automation lanes (at most one per target).
+    #[serde(default)]
+    pub automation: Vec<AutomationLane>,
 }
 
 /// Where a device sits on its track.
@@ -146,6 +150,9 @@ pub struct Project {
     pub assets: Vec<Asset>,
     /// Monotonic id allocator shared by tracks, clips and assets.
     pub next_id: u64,
+    /// Master bus automation (volume only).
+    #[serde(default)]
+    pub master_automation: Vec<AutomationLane>,
 }
 
 impl Default for Project {
@@ -165,6 +172,7 @@ impl Default for Project {
             tracks: Vec::new(),
             assets: Vec::new(),
             next_id: 1,
+            master_automation: Vec::new(),
         };
         let a = p.alloc_id();
         p.tracks.push(Track::new(TrackId(a), TrackKind::Audio, "Audio", ColorIndex(0)));
@@ -176,7 +184,7 @@ impl Default for Project {
 
 impl Track {
     pub fn new(id: TrackId, kind: TrackKind, name: &str, color: ColorIndex) -> Self {
-        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, arm: false, monitor: false, input: None, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default(), devices: Vec::new(), instrument_plugin: None }
+        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, arm: false, monitor: false, input: None, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default(), devices: Vec::new(), instrument_plugin: None, automation: Vec::new() }
     }
 }
 

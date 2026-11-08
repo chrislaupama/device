@@ -136,11 +136,13 @@ fn audio_tracks_ignore_notes_and_v2_keeps_audio_working() {
             synth: None,
             devices: vec![],
             instrument_plugin: None,
+            automation: vec![],
             arm: false,
             monitor: false,
             input: None,
         }],
         master_gain: 1.0,
+        master_automation: vec![],
     };
     engine.publish(&snap).unwrap();
     engine.play().unwrap();

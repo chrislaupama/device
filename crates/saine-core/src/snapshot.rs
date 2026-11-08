@@ -29,6 +29,22 @@ pub struct NoteSnapshot {
     pub velocity: u8,
 }
 
+/// An enabled automation lane with points converted to engine frames.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaneSnapshot {
+    pub target: crate::automation::AutomationTarget,
+    /// (frame, plain value, curve), sorted by frame.
+    pub points: Vec<(i64, f32, f32)>,
+}
+
+fn lanes(project: &Project, lanes: &[crate::automation::AutomationLane], rate: f64) -> Vec<LaneSnapshot> {
+    lanes
+        .iter()
+        .filter(|l| l.enabled && !l.points.is_empty())
+        .map(|l| LaneSnapshot { target: l.target.clone(), points: l.points.iter().map(|q| (project.ticks_to_frames(q.time, rate), q.value, q.curve)).collect() })
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackSnapshot {
     pub track_id: u64,
@@ -41,6 +57,8 @@ pub struct TrackSnapshot {
     pub instrument: bool,
     /// All playable notes of the track's MIDI clips, sorted by start frame.
     pub notes: Vec<NoteSnapshot>,
+    /// Enabled, non-empty automation lanes.
+    pub automation: Vec<LaneSnapshot>,
     /// Recording/monitoring state (audio tracks).
     pub arm: bool,
     pub monitor: bool,
@@ -57,6 +75,8 @@ pub struct TrackSnapshot {
 pub struct SessionSnapshot {
     pub tracks: Vec<TrackSnapshot>,
     pub master_gain: f32,
+    /// Master volume automation (enabled, non-empty lanes).
+    pub master_automation: Vec<LaneSnapshot>,
 }
 
 /// Build a snapshot. `engine_assets` maps model assets to loaded engine
@@ -96,6 +116,7 @@ pub fn build(project: &Project, engine_rate: f64, engine_assets: &HashMap<AssetI
             synth: (t.kind == crate::model::TrackKind::Instrument).then(|| t.synth.clone()),
             devices: t.devices.clone(),
             instrument_plugin: if t.kind == crate::model::TrackKind::Instrument { t.instrument_plugin.clone() } else { None },
+            automation: lanes(project, &t.automation, engine_rate),
             arm: t.arm,
             monitor: t.monitor,
             input: t.input,
@@ -123,5 +144,6 @@ pub fn build(project: &Project, engine_rate: f64, engine_assets: &HashMap<AssetI
             },
         })
         .collect();
-    (SessionSnapshot { tracks, master_gain: project.master_gain }, skipped)
+    let master_automation = lanes(project, &project.master_automation, engine_rate);
+    (SessionSnapshot { tracks, master_gain: project.master_gain, master_automation }, skipped)
 }

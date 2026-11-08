@@ -6,6 +6,7 @@
 //! and the AI assistant (they are serde-serialisable, so an LLM tool call can
 //! be deserialised straight into a `Command` and validated before execution).
 
+use crate::automation::{AutomationLane, AutomationTarget};
 use crate::device::{Device, DeviceId, PluginKind};
 use crate::instrument::SynthParams;
 use crate::midi::{self, MidiClip, Note};
@@ -87,6 +88,9 @@ pub enum Command {
     SetDeviceEnabled { device: DeviceId, enabled: bool },
     /// Set or clear an instrument track's instrument plugin (None = built-in synth).
     SetInstrumentPlugin { track: TrackId, device: Option<Device> },
+    /// Create, replace (points, enabled) or delete (`lane: None`) the lane for
+    /// `target` on a track, or on the master when `track` is None.
+    SetAutomationLane { track: Option<TrackId>, target: AutomationTarget, lane: Option<AutomationLane> },
     /// Several commands applied atomically (all or nothing).
     Batch { label: String, commands: Vec<Command> },
 }
@@ -130,6 +134,10 @@ impl Command {
             Command::SetInstrumentPlugin { device, .. } => match device {
                 Some(d) => format!("Load {}", d.plugin.name),
                 None => "Use Built-in Synth".into(),
+            },
+            Command::SetAutomationLane { lane, target, .. } => match lane {
+                None => format!("Delete {} Automation", target.labels().1),
+                Some(_) => format!("Edit {} Automation", target.labels().1),
             },
             Command::Batch { label, .. } => label.clone(),
         }
@@ -501,6 +509,48 @@ impl Command {
                 }
                 let old = std::mem::replace(&mut p.tracks[ti].instrument_plugin, device);
                 Ok(Command::SetInstrumentPlugin { track, device: old })
+            }
+            Command::SetAutomationLane { track, target, lane } => {
+                if let Some(l) = &lane {
+                    if l.target != target {
+                        return Err(invalid("lane", "lane.target must equal target"));
+                    }
+                    l.validate().map_err(|r| invalid("automation", r))?;
+                }
+                let lanes: &mut Vec<AutomationLane> = match track {
+                    None => {
+                        if target != AutomationTarget::Volume {
+                            return Err(invalid("target", "the master only has volume automation"));
+                        }
+                        &mut p.master_automation
+                    }
+                    Some(id) => {
+                        let ti = p.track_index(id).ok_or(EditError::TrackNotFound(id))?;
+                        match &target {
+                            AutomationTarget::Synth { .. } if p.tracks[ti].kind != TrackKind::Instrument => {
+                                return Err(invalid("target", "synth automation needs an instrument track"));
+                            }
+                            AutomationTarget::Plugin { device, .. }
+                                if !p.tracks[ti].devices.iter().chain(p.tracks[ti].instrument_plugin.iter()).any(|d| d.id == *device) =>
+                            {
+                                return Err(invalid("target", "plugin automation must target a device on the same track"));
+                            }
+                            _ => {}
+                        }
+                        &mut p.tracks[ti].automation
+                    }
+                };
+                let pos = lanes.iter().position(|l| l.target == target);
+                let old = match (pos, lane) {
+                    (Some(i), Some(l)) => Some(std::mem::replace(&mut lanes[i], l)),
+                    (Some(i), None) => Some(lanes.remove(i)),
+                    (None, Some(l)) => {
+                        lanes.push(l);
+                        None
+                    }
+                    (None, None) => None,
+                };
+                Ok(Command::SetAutomationLane { track, target, lane: old })
             }
             Command::Batch { label, commands } => {
                 let mut inverses = Vec::with_capacity(commands.len());
