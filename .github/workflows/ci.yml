@@ -3,18 +3,28 @@ on:
   push:
   pull_request:
 
-# CI runs on the self-hosted runner only (main, 30a5ccb): currently one Apple
-# silicon Mac mini, so this is real hardware with a real audio device. The
-# Windows and Linux steps below are kept (gated on runner.os) for when a
-# self-hosted runner on those systems is added; until then Windows and Linux
-# are not built in CI. The last hosted run that built and tested them is
-# documented in engine/README.md › Platforms.
+# macOS runs on the self-hosted runner (one Apple silicon Mac mini, so real
+# hardware with a real audio device). Windows and Linux run on GitHub-hosted
+# runners (windows-latest, ubuntu-latest): no audio endpoint and no GPU there,
+# so the engine's device tests skip and the app smoke tests use a software
+# renderer. Platform-specific steps are gated on runner.os.
 #
 # Every action used here runs on Node 24 (checkout@v5, cache@v5) or is a
 # composite/shell step (rust-toolchain, the MSVC environment step below).
 jobs:
   build-test:
-    runs-on: self-hosted
+    name: build-test (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            runner: self-hosted
+          - name: Windows
+            runner: windows-latest
+          - name: Linux
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     env:
       CARGO_TERM_COLOR: always
     steps:
