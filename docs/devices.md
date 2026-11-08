@@ -59,10 +59,19 @@ flowchart LR
      the device spec (`handoffs/device-specs/<device>.md` in the Captain drive).
      Those are facts; write descriptions in your own words. Never copy the
      reference's code, CSS, images, audio or preset files.
-   - `Layout`: `picker` (menus / toggles / `Sidechain` / pills; the
-     sidechain picker and what follows align right), `view`
-     (`DynamicsStrip` or `Custom`), `sliders`, `clusters` of knobs,
-     `faces` (drawings inside a knob), `shown_when` (mode-dependent controls).
+   - `Layout`: `picker` (segmented `Menu`s / toggles / `Dropdown` menu
+     pills / `ModeDropdown` (a type menu whose last entry switches a mode
+     parameter, e.g. Auto Filter's DJ) / `Sidechain` / pills; the sidechain
+     picker and what follows align right), `view` (`DynamicsStrip`, `Eq`
+     or `Custom`), `sliders`, `clusters` of knobs (`Swap(a, b)` is one
+     cell showing whichever of two parameters `shown_when` shows),
+     `faces` (drawings inside a knob), `shown_when` (mode-dependent
+     controls), `fixed_width` (card width for bodies not sized by the dial
+     row; 0 = derived).
+   - Display formats: besides `Db`, `Time`, `Ratio`, `Percent`, `Hz` (`4.0 kHz`
+     from 999.5 Hz, whole hertz from 10 Hz, then one / two decimals),
+     `Plain(n)` and `Choice`, there are `MsAuto`, `Rate` (LFO rates,
+     `1.00 Hz`), `Signed(n)` (always shows the sign) and `Degrees`.
 2. **DSP kernel.** Add `engine/src/devices/<id>.cpp`: a `BuiltinProcessor`
    (`prepare` may allocate; `reset` / `process` are real-time: no
    allocation, locks, I/O or exceptions) and a `BuiltinDescriptor` whose
@@ -76,12 +85,25 @@ flowchart LR
    splits a block, the engine keeps each readout's segment value farthest
    from its idle value, so readouts must move away from idle as they grow
    (a peak meter rises from -120 dB, gain reduction falls from 0 dB).
-3. **Custom view (optional).** For bodies the template cannot express (EQ
+3. **EQ view.** `View::Eq(&EqView)` (`builtin/eq.rs`) describes an EQ card:
+   its bands (parameter ids per band), the shapes and their picker order,
+   pass slopes, Output, Bank and Auto Gain parameters, the dB window and
+   the node behaviour. `device_field.rs` draws it (band tabs, On latch,
+   Bank menu, response field with nodes and Q wings, type glyphs, value
+   cells, Output slider) and runs its gestures. The panel curve and the
+   engine use the same design (`eq::sections`, `engine/src/devices/eq_sections.hpp`);
+   `engine_contract_points` (Rust) and `eq_design_matches_the_panel_model`
+   (C++) pin the same points, so change both together.
+4. **Custom view (optional).** For bodies the template cannot express (EQ
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a
    Slint component in `ui/device_panel.slint` chosen by that data. Reuse
-   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures.
-4. **Tests.**
+   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. A field view
+   (curve with handles, e.g. Auto Filter's response) fills a `PanelField`
+   (paths, dots, texts, value pills in field px) from `device_field.rs`; the
+   Slint `FieldView` draws it and sends pointer, wheel and key events back,
+   and a field drag that moves several parameters commits them as one batch.
+5. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),
      `DeviceSession` (a published engine session with tracks, devices and
@@ -94,10 +116,10 @@ flowchart LR
      (`crates/saine-engine/tests/builtin.rs`) fails when the definition and
      the kernel disagree on parameter order. Add core tests for formatting and
      parsing of any new display format.
-5. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
+6. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
    (`saine_device_bench`, Release build) and put the numbers in the PR.
-6. **Render.** Add a `--state` that shows the device at its defaults (see
-   `reference-compressor` in `crates/saine-app/src/main.rs`), render it with
+7. **Render.** Add a `--state` that shows the device at its defaults (see
+   `reference-compressor`, `reference-channeleq` … in `crates/saine-app/src/main.rs`), render it with
    `--screenshot` and compare it with the reference capture.
 
 ## Commands
