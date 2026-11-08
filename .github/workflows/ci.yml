@@ -94,6 +94,7 @@ jobs:
         continue-on-error: true
         env:
           WGPU_BACKEND: vulkan
+          SLINT_WGPU_CPU: "1" # Slint refuses CPU adapters (lavapipe) unless allowed
         run: |
           sudo apt-get install -y --no-install-recommends xvfb mesa-vulkan-drivers
           xvfb-run -a -s "-screen 0 1600x1000x24" target/debug/saine-studio --state reference-default --screenshot app-linux.png
@@ -108,6 +109,7 @@ jobs:
         shell: bash
         env:
           WGPU_BACKEND: dx12
+          SLINT_WGPU_CPU: "1" # Slint refuses CPU adapters (WARP) unless allowed
         run: |
           target/debug/saine-studio.exe --state reference-default --screenshot app-windows.png
           test -s app-windows.png
