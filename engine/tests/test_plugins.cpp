@@ -9,6 +9,8 @@
 #include "test_hooks.hpp"
 #include "test_util.hpp"
 
+#include "platform/os.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -591,7 +593,7 @@ TEST_CASE(plugin_export_uses_the_chain) {
     REQUIRE(se_export_wav(e, f.path.c_str(), 0, 4800) == SE_OK);
     std::vector<uint8_t> bytes;
     {
-        FILE* fp = std::fopen(f.path.c_str(), "rb");
+        FILE* fp = saine::os::fopen_utf8(f.path.c_str(), "rb");
         REQUIRE(fp != nullptr);
         bytes.resize(44 + 4800 * 8 + 64);
         bytes.resize(std::fread(bytes.data(), 1, bytes.size(), fp));

@@ -137,7 +137,8 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
     // skipped. Returns the event count.
     const auto plugin_events = [&](uint32_t begin, uint32_t count, uint32_t delay) -> uint32_t {
         ParamEvent* const ev = ctx.param_events();
-        constexpr uint32_t cap = PluginInstance::kMaxParamEvents;
+        // (static: MSVC does not see a constexpr local used in a nested lambda, C4189)
+        static constexpr uint32_t cap = PluginInstance::kMaxParamEvents;
         uint32_t n = 0;
         for (uint32_t li = begin; li < begin + count; ++li) {
             const AutoLane& lane = graph->lanes[li];

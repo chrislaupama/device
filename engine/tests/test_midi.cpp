@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <stdexcept>
 #include <thread>
 
 using namespace testutil;

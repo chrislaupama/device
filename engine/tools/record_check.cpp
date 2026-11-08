@@ -12,6 +12,7 @@
 // Opening a real input shows the macOS microphone-permission prompt for the
 // host application (Terminal, iTerm, ...) the first time. Automated tests
 // never do this; run the real-input mode only by hand.
+#include "platform/os.hpp"
 #include "saine_engine.h"
 
 #include <chrono>
@@ -101,7 +102,7 @@ int real_input(double seconds, const char* input_uid) {
     se_session_publish_v4(e, &sd);
 
     const auto dir = std::filesystem::temp_directory_path() / "saine_record_check";
-    if (se_record_start(e, dir.string().c_str()) != SE_OK) {
+    if (se_record_start(e, saine::os::path_to_utf8(dir).c_str()) != SE_OK) {
         std::fprintf(stderr, "record start failed: %s\n", se_last_error());
         se_engine_destroy(e);
         return 1;
@@ -148,8 +149,8 @@ int real_input(double seconds, const char* input_uid) {
 
 int main(int argc, char** argv) {
     const int rc = list_devices();
-    const char* env = std::getenv("SAINE_TEST_REAL_INPUT");
-    if (env == nullptr || std::strcmp(env, "1") != 0) {
+    std::string env;
+    if (!saine::os::get_env("SAINE_TEST_REAL_INPUT", env) || env != "1") {
         std::printf("\n(set SAINE_TEST_REAL_INPUT=1 to record from the real input; this opens the microphone)\n");
         return rc;
     }

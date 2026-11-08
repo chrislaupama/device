@@ -456,7 +456,7 @@ typedef struct se_device_status {
     uint32_t buffer_size;           /* device IO buffer, frames */
     uint32_t input_channels;
     uint32_t output_channels;
-    uint32_t input_latency_frames;  /* engine frames: device + safety offset + stream + buffer (input side) */
+    uint32_t input_latency_frames;  /* engine frames: device + safety offset + stream latency (input side) */
     uint32_t output_latency_frames; /* same, output side. Takes are shifted by input + output. */
     uint32_t _pad2;
 } se_device_status; /* 808 bytes, align 8 */

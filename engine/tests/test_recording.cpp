@@ -735,8 +735,12 @@ TEST_CASE(device_configure_validation_opens_nothing) {
     dc.buffer_size = 0;
     dc.sample_rate = 12345.0;
     CHECK_EQ(se_device_configure(e, &dc), SE_ERR_INVALID_ARG);
-    // With an input the device must run at the engine rate. Validation only:
-    // the device is never started here, so no input is opened.
+#if defined(__APPLE__)
+    // Core Audio: with an input the device must run at the engine rate (the
+    // AUHAL input side does not resample). WASAPI and PipeWire convert the
+    // input to the engine rate, so this restriction is macOS-only.
+    // Validation only: the device is never started here, so no input is
+    // opened.
     std::vector<se_device_info> devs(ndev);
     se_device_list(devs.data(), devs.size(), &ndev);
     bool has_input = false;
@@ -747,6 +751,7 @@ TEST_CASE(device_configure_validation_opens_nothing) {
         dc.sample_rate = 44100.0;
         CHECK_EQ(se_device_configure(e, &dc), SE_ERR_INVALID_ARG);
     }
+#endif
     se_device_status st{};
     se_device_status_get(e, &st);
     CHECK_EQ(st.running, 0);
@@ -795,7 +800,10 @@ TEST_CASE(device_output_only_named_device_and_restart) {
     CHECK_EQ(st.input_open, 0);
     CHECK(std::string(st.output_name) == out->name);
     CHECK_EQ(st.buffer_size, 512u);
-    CHECK(st.output_latency_frames >= 512u);
+    // Device + safety offset + stream latency (no IO-buffer term since the
+    // loopback fix): hardware dependent and 0 on virtual devices, so only
+    // plausibility is checked.
+    CHECK(st.output_latency_frames < 48000u);
     CHECK(wait_until([&] {
         se_stats s{};
         se_stats_get(e, &s);

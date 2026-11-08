@@ -17,9 +17,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CARGO_TERM_COLOR: always
-      # One SDK download (VST 3 SDK, CLAP) shared by the engine build and
-      # the Rust build script; cached below.
-      FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/.deps
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -72,7 +69,7 @@ jobs:
             cargo-${{ runner.os }}-
 
       - name: Engine — configure
-        run: cmake -S engine -B engine/build-ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSAINE_ENGINE_WERROR=OFF
+        run: cmake -S engine -B engine/build-ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSAINE_ENGINE_WERROR=ON "-DFETCHCONTENT_BASE_DIR=${{ github.workspace }}/.deps"
       - name: Engine — build
         run: cmake --build engine/build-ci
       - name: Engine — test

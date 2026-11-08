@@ -7,6 +7,8 @@
 #include "test_harness.hpp"
 #include "test_util.hpp"
 
+#include "platform/os.hpp"
+
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
@@ -111,7 +113,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (argc >= 4 && std::strcmp(argv[1], "--write-ctest") == 0) {
-        std::FILE* f = std::fopen(argv[2], "w");
+        std::FILE* f = saine::os::fopen_utf8(argv[2], "w");
         if (f == nullptr) return 1;
         for (auto& t : tests) {
             std::fprintf(f, "add_test(\"%s\" \"%s\" --run \"%s\")\n", t.name, argv[3], t.name);

@@ -68,7 +68,9 @@ set_source_files_properties(${SAINE_VST3_HOST_SOURCES} PROPERTIES COMPILE_OPTION
 # ---------------------------------------------------------------- warnings
 add_library(saine_engine_warnings INTERFACE)
 if(MSVC)
-  target_compile_options(saine_engine_warnings INTERFACE /W4 /permissive-)
+  # C4324 "structure was padded due to alignment specifier" is the intended
+  # effect of alignas(64) on the lock-free queues (false-sharing padding).
+  target_compile_options(saine_engine_warnings INTERFACE /W4 /permissive- /wd4324)
   if(SAINE_ENGINE_WERROR)
     target_compile_options(saine_engine_warnings INTERFACE /WX)
   endif()
@@ -151,6 +153,17 @@ if(WIN32)
   target_link_libraries(saine_engine PUBLIC ole32 shell32 avrt)
 elseif(NOT APPLE)
   target_link_libraries(saine_engine PUBLIC ${CMAKE_DL_LIBS})
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  # Audio backend (src/platform/pipewire_device.cpp). OFF builds an engine
+  # without device I/O (offline rendering only).
+  option(SAINE_ENGINE_PIPEWIRE "Build the PipeWire audio backend (needs libpipewire-0.3 development files)" ON)
+  if(SAINE_ENGINE_PIPEWIRE)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
+    target_link_libraries(saine_engine PUBLIC PkgConfig::PIPEWIRE)
+    target_compile_definitions(saine_engine PRIVATE SAINE_HAVE_PIPEWIRE=1)
+  endif()
 endif()
 find_package(Threads REQUIRED)
 target_link_libraries(saine_engine PUBLIC Threads::Threads)
@@ -293,7 +306,8 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/test_plugins.cpp
     tests/test_plugin_scan.cpp
     tests/test_pdc.cpp
-    tests/test_automation.cpp)
+    tests/test_automation.cpp
+    tests/test_frame_ring.cpp)
   target_include_directories(saine_engine_tests PRIVATE src tests)
   target_link_libraries(saine_engine_tests PRIVATE saine_engine saine_engine_warnings)
   target_compile_definitions(saine_engine_tests PRIVATE
@@ -320,6 +334,7 @@ endif()
 # ---------------------------------------------------------------- bench
 if(SAINE_ENGINE_BUILD_BENCH)
   add_executable(saine_engine_bench bench/bench_render.cpp)
+  target_include_directories(saine_engine_bench PRIVATE src)
   target_link_libraries(saine_engine_bench PRIVATE saine_engine saine_engine_warnings)
   target_compile_definitions(saine_engine_bench PRIVATE SAINE_TEST_PLUGIN_DIR="${SAINE_TEST_PLUGIN_DIR}")
   if(TARGET saine_test_plugins)
@@ -330,8 +345,10 @@ endif()
 # ---------------------------------------------------------------- tools
 if(SAINE_ENGINE_BUILD_TOOLS)
   add_executable(play_sine_or_wav tools/play_sine_or_wav.cpp)
+  target_include_directories(play_sine_or_wav PRIVATE src)
   target_link_libraries(play_sine_or_wav PRIVATE saine_engine saine_engine_warnings)
   add_executable(record_check tools/record_check.cpp)
+  target_include_directories(record_check PRIVATE src)
   target_link_libraries(record_check PRIVATE saine_engine saine_engine_warnings)
   if(APPLE)
     # Manual: opens and closes an AU editor window (needs a GUI session).

@@ -15,6 +15,10 @@ fn main() {
     }
     println!("cargo:rerun-if-env-changed=FETCHCONTENT_SOURCE_DIR_SAINE_CLAP");
     println!("cargo:rerun-if-env-changed=FETCHCONTENT_SOURCE_DIR_SAINE_VST3SDK");
+    println!("cargo:rerun-if-env-changed=SAINE_ENGINE_PIPEWIRE");
+    // Linux audio backend: ON unless SAINE_ENGINE_PIPEWIRE=OFF (then the
+    // engine renders offline only and libpipewire is not linked).
+    let pipewire = std::env::var("SAINE_ENGINE_PIPEWIRE").map(|v| v != "OFF" && v != "0").unwrap_or(true);
     let profile = if std::env::var("PROFILE").as_deref() == Ok("release") { "Release" } else { "RelWithDebInfo" };
     let third_party = manifest.join("../../target/saine-third-party");
     let mut cfg = cmake::Config::new(&engine);
@@ -26,6 +30,7 @@ fn main() {
         .define("SAINE_ENGINE_BUILD_SCANNER", "ON")
         .define("SAINE_ENGINE_BUILD_TEST_PLUGINS", "ON")
         .define("FETCHCONTENT_BASE_DIR", third_party.to_string_lossy().as_ref())
+        .define("SAINE_ENGINE_PIPEWIRE", if pipewire { "ON" } else { "OFF" })
         .build_target("saine_engine_rust");
     for var in ["FETCHCONTENT_SOURCE_DIR_SAINE_CLAP", "FETCHCONTENT_SOURCE_DIR_SAINE_VST3SDK"] {
         if let Ok(v) = std::env::var(var) {
@@ -50,6 +55,9 @@ fn main() {
             }
         }
         "linux" => {
+            if pipewire {
+                println!("cargo:rustc-link-lib=pipewire-0.3");
+            }
             println!("cargo:rustc-link-lib=stdc++");
             println!("cargo:rustc-link-lib=dl");
         }
