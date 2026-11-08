@@ -122,8 +122,12 @@ GPU or audio device: on Linux under Xvfb with Mesa lavapipe (software Vulkan;
 `SLINT_WGPU_CPU=1`), a reference-state screenshot and the full `--self-test
 --no-audio` (125 checks pass; the 21 checks of the Audio Unit devices section
 are reported as skipped off macOS), as a required step; on Windows with WARP
-(DX12 software adapter) the same, as an informational step (see open issues
-in the CI log). Screenshots and logs are uploaded as artifacts.
+(DX12 software adapter) the same, as an informational step: the screenshot
+renders and the self-test passes (125, 21 skipped), but the process exits
+with code 0x87A after the run (not yet explained; macOS/Linux exit 0).
+Debug builds of the app abort at exit on every OS (pre-existing: wgpu-core's
+debug-only lock tracing runs in a TLS destructor when Slint's thread-local
+backend drops the wgpu queue), so CI uses a release build. Screenshots and logs are uploaded as artifacts.
 
 What CI cannot cover: the CI runners have no audio devices (Windows: no
 endpoint; Linux: no PipeWire server), so the WASAPI and PipeWire streaming
