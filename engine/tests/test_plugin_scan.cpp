@@ -94,14 +94,21 @@ TEST_CASE(plugin_scanner_finds_plugins_and_blocklists_crashes) {
 
     // Touch the gain bundle: only it is re-scanned.
     // (macOS: the bundle folder; Windows/Linux: the single-file .clap.)
-    const auto bundle = os::path_from_utf8(std::string(SAINE_TEST_PLUGIN_DIR) + "/SaineTestGain.clap");
+    const std::string bundle_utf8 = std::string(SAINE_TEST_PLUGIN_DIR) + "/SaineTestGain.clap";
+    const auto bundle = os::path_from_utf8(bundle_utf8);
+    const int64_t before = os::file_mtime_ns(bundle_utf8);
     std::error_code ec;
     std::filesystem::last_write_time(
         bundle, std::filesystem::file_time_type::clock::now() + std::chrono::seconds(5), ec);
     REQUIRE(!ec);
+    const int64_t after = os::file_mtime_ns(bundle_utf8);
+    std::fprintf(stderr, "  touched %s: mtime %lld -> %lld\n", bundle_utf8.c_str(), static_cast<long long>(before),
+                 static_cast<long long>(after));
+    CHECK(after != before);
     const std::string r3 = run_scan(cache.path, false, &rc);
     REQUIRE(rc == 0);
     CHECK_EQ(scanned(r3), 1L);
+    if (scanned(r3) != 1L) std::fprintf(stderr, "  report after touching:\n%s\n", r3.c_str());
     CHECK(has(r3, "\"id\":\"studio.saine.test.gain\""));
 
     // --rescan scans everything again (the crash is retried and fails again).

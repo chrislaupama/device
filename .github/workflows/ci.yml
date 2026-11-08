@@ -82,4 +82,4 @@ jobs:
         run: cargo build --workspace --locked
       - name: Rust workspace — test
         if: ${{ !cancelled() }}
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --no-fail-fast

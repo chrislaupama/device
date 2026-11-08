@@ -158,9 +158,15 @@ fn relative_to(base: &Path, target: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// An absolute path on this platform ("/a/b" on Unix, "C:/a/b" on Windows,
+    /// where a path without a drive is not absolute).
+    fn abs(p: &str) -> PathBuf {
+        if cfg!(windows) { PathBuf::from(format!("C:{p}")) } else { PathBuf::from(p) }
+    }
+
     #[test]
     fn relative_paths() {
-        assert_eq!(relative_to(Path::new("/a/b/p.saineproj"), Path::new("/a/b/media/x.wav")).as_deref(), Some("../media/x.wav"));
-        assert_eq!(relative_to(Path::new("/a/p"), Path::new("/a/p/x.wav")).as_deref(), Some("x.wav"));
+        assert_eq!(relative_to(&abs("/a/b/p.saineproj"), &abs("/a/b/media/x.wav")).as_deref(), Some("../media/x.wav"));
+        assert_eq!(relative_to(&abs("/a/p"), &abs("/a/p/x.wav")).as_deref(), Some("x.wav"));
     }
 }

@@ -99,7 +99,9 @@ int64_t file_mtime_ns(const std::string& utf8_path) noexcept {
     }
     const uint64_t t100ns = (static_cast<uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32) |
                             data.ftLastWriteTime.dwLowDateTime;
-    return static_cast<int64_t>(t100ns) * 100;
+    // FILETIME counts 100 ns from 1601; rebase to 1970 so ns fit in int64.
+    constexpr uint64_t kUnixEpoch100ns = 116444736000000000ull;
+    return t100ns >= kUnixEpoch100ns ? static_cast<int64_t>(t100ns - kUnixEpoch100ns) * 100 : 0;
 #else
     struct stat st {};
     if (::stat(utf8_path.c_str(), &st) != 0) return 0;

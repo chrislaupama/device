@@ -325,6 +325,11 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/test_frame_ring.cpp)
   target_include_directories(saine_engine_tests PRIVATE src tests)
   target_link_libraries(saine_engine_tests PRIVATE saine_engine saine_engine_warnings)
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # GCC 13 -O2 false positive (free-nonheap-object) on std::vector range
+    # construction in test_plugins.cpp after constant-folding a loop bound.
+    target_compile_options(saine_engine_tests PRIVATE -Wno-free-nonheap-object)
+  endif()
   target_compile_definitions(saine_engine_tests PRIVATE
     SAINE_TEST_PLUGIN_DIR="${SAINE_TEST_PLUGIN_DIR}"
     SAINE_PLUGIN_SCANNER_PATH="$<TARGET_FILE:saine_plugin_scanner>")
