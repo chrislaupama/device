@@ -12,7 +12,8 @@ use crate::assistant_panel::AssistantState;
 use crate::assistant_provider::Provider;
 use crate::mixer::{self, Ballistics, MASTER_METER_ID};
 use crate::pianoroll::{self, PrState};
-use crate::{AppWindow, ChatEntry, ClipLabel, HighlightRect, MenuItem, MixerStrip, RulerLabel, StripMeter, Studio, TrackRow, YLabel};
+use crate::synth::SynthUi;
+use crate::{AppWindow, ChatEntry, ClipLabel, HighlightRect, MenuItem, MixerStrip, RulerLabel, StripMeter, Studio, SynthDisplay, SynthParam, TrackRow, YLabel};
 use saine_core::{
     Asset, AssetId, Clip, ClipId, ColorIndex, Command, Document, MidiClip, Origin, PPQ, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, gain_to_db, persist, snapshot,
 };
@@ -241,6 +242,12 @@ pub struct Controller {
     chat_model: Rc<VecModel<ChatEntry>>,
     chat_rev: Option<u64>,
     highlights_model: Rc<VecModel<HighlightRect>>,
+    // ---- synth device (src/synth.rs) ----
+    pub synth: SynthUi,
+    pub(crate) synth_params_model: Rc<VecModel<SynthParam>>,
+    pub(crate) synth_choices_model: Rc<VecModel<SharedString>>,
+    pub(crate) synth_displays_model: Rc<VecModel<SynthDisplay>>,
+    pub(crate) synth_menu_model: Rc<VecModel<MenuItem>>,
 }
 
 impl Controller {
@@ -299,6 +306,11 @@ impl Controller {
             chat_model: Rc::new(VecModel::default()),
             chat_rev: None,
             highlights_model: Rc::new(VecModel::default()),
+            synth: SynthUi::default(),
+            synth_params_model: Rc::new(VecModel::default()),
+            synth_choices_model: Rc::new(VecModel::default()),
+            synth_displays_model: Rc::new(VecModel::default()),
+            synth_menu_model: Rc::new(VecModel::default()),
         };
         c.selected_track = c.doc.project().tracks.first().map(|t| t.id);
         c.publish();
@@ -318,6 +330,10 @@ impl Controller {
         s.set_pr_key_labels(ModelRc::from(self.pr_key_model.clone()));
         s.set_menu_items(ModelRc::from(self.menu_model.clone()));
         s.set_sub_items(ModelRc::from(self.sub_model.clone()));
+        s.set_synth_params(ModelRc::from(self.synth_params_model.clone()));
+        s.set_synth_choices(ModelRc::from(self.synth_choices_model.clone()));
+        s.set_synth_displays(ModelRc::from(self.synth_displays_model.clone()));
+        s.set_synth_menu_items(ModelRc::from(self.synth_menu_model.clone()));
     }
 
     fn clip_ids_model(&self) -> Rc<VecModel<ClipLabel>> {
@@ -373,8 +389,20 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    /// The session the engine should play right now: the document plus any
+    /// synth control currently being dragged (heard before it becomes a command).
+    pub fn current_snapshot(&self) -> snapshot::SessionSnapshot {
+        let (mut snap, _skipped) = snapshot::build(self.doc.project(), self.rate, &self.asset_map);
+        if let Some((t, sp)) = &self.synth.pending
+            && let Some(ts) = snap.tracks.iter_mut().find(|ts| ts.track_id == t.0 && ts.synth.is_some())
+        {
+            ts.synth = Some(sp.clone());
+        }
+        snap
+    }
+
     pub fn publish(&mut self) {
-        let (snap, _skipped) = snapshot::build(self.doc.project(), self.rate, &self.asset_map);
+        let snap = self.current_snapshot();
         if let Err(e) = self.engine.publish(&snap) {
             self.set_status(format!("Engine rejected the session: {e}"), 6);
         }
@@ -413,6 +441,7 @@ impl Controller {
     }
 
     pub fn undo(&mut self) {
+        self.synth.pending = None;
         match self.doc.undo() {
             Ok(true) => self.after_change(),
             Ok(false) => {}
@@ -421,6 +450,7 @@ impl Controller {
     }
 
     pub fn redo(&mut self) {
+        self.synth.pending = None;
         match self.doc.redo() {
             Ok(true) => self.after_change(),
             Ok(false) => {}
@@ -470,6 +500,13 @@ impl Controller {
             }
             self.sel_peak_hold = 0.0;
             self.meter_disp = (0.0, 0.0);
+            self.synth.pending = None;
+            self.synth.menu = None;
+            // Instrument tracks open their device (Devices tab) unless a clip is selected.
+            if self.selected_clip.is_none() && self.project().track(id).is_some_and(|t| t.kind == TrackKind::Instrument) {
+                self.bottom_tab = BottomTab::Devices;
+                self.pr_sync_clip();
+            }
             self.ui_dirty = true;
         }
     }
@@ -1190,6 +1227,7 @@ impl Controller {
             None => s.set_chat_context_visible(false),
         }
         self.push_clip_editor(&s);
+        self.push_synth(&s);
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };
         s.set_status_text(status.into());
         self.ruler_key.0 = i64::MIN; // force label refresh

@@ -1,0 +1,404 @@
+// Built-in "Synth" device card (bottom panel, Devices tab, instrument tracks).
+//
+// Geometry measured from reference/screenshots/32-real-dblclick-instrument-lane.png:
+// the card sits at window (268.5, 543), 776.5 x 265 pt; all coordinates below are
+// card-relative. Every control maps to a real SynthParams field (src/synth.rs);
+// values, readouts and display paths come from Rust (Studio.synth-*), edits leave
+// through Studio callbacks. Icons are ORIGINAL line drawings.
+import { Tokens } from "tokens.slint";
+import { Icon, Icons, Knob } from "widgets.slint";
+import { Studio, MenuItem } from "studio.slint";
+
+// Continuous parameter ids (src/synth.rs `p`).
+export global SP {
+    out property <int> osc1-shape: 0;
+    out property <int> osc1-fine: 1;
+    out property <int> osc1-level: 2;
+    out property <int> cross-fm: 3;
+    out property <int> osc2-shape: 4;
+    out property <int> osc2-fine: 5;
+    out property <int> osc2-level: 6;
+    out property <int> sub-level: 7;
+    out property <int> noise-level: 8;
+    out property <int> cutoff: 9;
+    out property <int> resonance: 10;
+    out property <int> key-track: 11;
+    out property <int> env-amount: 12;
+    out property <int> amp-a: 13;
+    out property <int> flt-a: 17;
+    out property <int> lfo-rate: 21;
+    out property <int> lfo-pitch: 22;
+    out property <int> lfo-cutoff: 23;
+    out property <int> lfo-amp: 24;
+    out property <int> glide: 25;
+    out property <int> unison-detune: 26;
+    out property <int> output: 27;
+    out property <int> polyphony: 28;
+    out property <int> unison: 29;
+}
+// Dropdown ids (src/synth.rs `ch`).
+export global SC {
+    out property <int> osc1-wave: 0;
+    out property <int> osc1-oct: 1;
+    out property <int> osc1-semi: 2;
+    out property <int> osc2-wave: 3;
+    out property <int> filter-mode: 6;
+    out property <int> lfo-wave: 7;
+}
+// Display ids (src/synth.rs `disp`).
+export global SD {
+    out property <int> osc1: 0;
+    out property <int> sub: 2;
+    out property <int> noise: 3;
+    out property <int> filter: 4;
+    out property <int> amp-env: 5;
+    out property <int> lfo: 7;
+}
+
+global SynthStyle {
+    out property <color> card: #212227;
+    out property <color> card-edge: #313236;
+    out property <color> line: #323338;
+    out property <color> control: #292a2f;
+    out property <color> control-edge: #35363a;
+    out property <color> dim: #818389;          // header icons, preset name, chevrons
+    out property <color> label: #7f8082;        // dropdown prefixes ("Osc 1", "Octave")
+    out property <color> value: #cacacb;        // dropdown values
+    out property <color> category: #63656c;     // unselected category labels
+    out property <color> category-icon: #858588;
+    out property <color> caption: #e5e5e8;      // knob/fader captions
+    out property <length> col: 318px;           // Osc 1 -> Osc 2 column offset
+}
+
+// Pill dropdown ("Osc 1  Triangle ⌄", "0 ⌄"). Opens the Rust-owned popup list.
+component Dropdown inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <int> choice;          // SC.* id; -1 = presets
+    in property <length> value-x: 7.5px;
+    height: 20px;
+    border-radius: 10px;
+    background: SynthStyle.control;
+    drop-shadow-blur: 3px;
+    drop-shadow-color: #00000040;
+    Rectangle { x: 6px; y: 0; width: parent.width - 12px; height: 0.5px; background: SynthStyle.control-edge; }
+    if root.label != "": Text { x: 7.5px; y: 0; height: 17px; text: root.label; color: SynthStyle.label; font-size: 8.25px; font-weight: 500; vertical-alignment: center; }
+    Text { x: root.value-x; y: 0; height: 17px; text: root.value; color: SynthStyle.value; font-size: 8.75px; font-weight: 600; vertical-alignment: center; }
+    Icon { x: root.width - 16px; y: 2.5px; width: 12px; height: 12px; d: Icons.chevron-down; ink: SynthStyle.dim; stroke-width: 1.2px; }
+    TouchArea {
+        clicked => { Studio.synth-dropdown(root.choice, root.absolute-position.x, root.absolute-position.y + root.height + 2px, root.width); }
+    }
+}
+
+// Knob + value readout + caption. Knob centre at local (30, 19).
+component SynthKnob inherits Rectangle {
+    in property <int> idx;
+    in property <string> label;
+    property <float> norm: Studio.synth-params[root.idx].norm;
+    property <bool> bip: Studio.synth-params[root.idx].bipolar;
+    width: 60px; height: 64px;
+    Knob {
+        x: 11px; y: 0; width: 38px; height: 38px; body: 20.5px; arc-gap: 3;
+        body-brush: #232426;
+        ring-brush: @radial-gradient(circle, #1c1d21 78%, #2a2b30 96%, #26272b 100%);
+        value: root.norm; min-value: 0; max-value: 1; sensitivity: 150;
+        value-angle: -135 + root.norm * 270;
+        show-arc: root.bip ? abs(root.norm - 0.5) > 0.004 : root.norm > 0.004;
+        arc-from: root.bip ? 0 : -135;
+        arc-color: Studio.sel-color;
+        tick-color: #f2f2f4;
+        value-changed(v) => { Studio.synth-param(root.idx, v); }
+        released => { Studio.synth-param-end(); }
+        reset => { Studio.synth-param-reset(root.idx); }
+    }
+    Text { x: 0; y: 37px; width: root.width; height: 14px; text: Studio.synth-params[root.idx].text; color: Studio.sel-color; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: 0; y: 53px; width: root.width; height: 14px; text: root.label; color: SynthStyle.caption; font-size: 10.25px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+}
+
+// Vertical level fader (relative drag, double-click resets). Groove 2.5 x 91 pt at local (18.75, 0).
+component SynthFader inherits Rectangle {
+    in property <int> idx;
+    in property <string> label: "Level";
+    property <float> norm: Studio.synth-params[root.idx].norm;
+    property <float> start;
+    property <length> travel: 91px;
+    width: 40px; height: 124px;
+    Rectangle { x: 18.75px; y: 0; width: 2.5px; height: root.travel; border-radius: 1.25px; background: #3e3f43; }
+    Rectangle {
+        x: 18.75px; y: (1 - root.norm) * root.travel; width: 2.5px; height: root.norm * root.travel; border-radius: 1.25px;
+        background: Studio.sel-color;
+    }
+    Rectangle {
+        x: 14px; y: (1 - root.norm) * root.travel - 1.25px; width: 12px; height: 2.5px; border-radius: 1.25px;
+        background: #ffffff;
+    }
+    Text { x: -10px; y: 94.5px; width: root.width + 20px; height: 14px; text: Studio.synth-params[root.idx].text; color: Studio.sel-color; font-size: 10.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: -10px; y: 110px; width: root.width + 20px; height: 14px; text: root.label; color: SynthStyle.caption; font-size: 9.75px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    TouchArea {
+        x: 0; y: -6px; width: root.width; height: root.travel + 12px;
+        mouse-cursor: ns-resize;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) { root.start = root.norm; }
+            if (e.kind == PointerEventKind.up) { Studio.synth-param-end(); }
+        }
+        moved => { Studio.synth-param(root.idx, max(0, min(1, root.start + (self.pressed-y - self.mouse-y) / root.travel))); }
+        double-clicked => { Studio.synth-param-reset(root.idx); }
+    }
+}
+
+// Display: dark gradient, quarter grid, optional zero line, filled curve (paths from Rust).
+component SynthScope inherits Rectangle {
+    in property <int> slot;
+    in property <bool> zero-line: true;
+    in property <int> grid: 4;
+    width: 245px; height: 128px;
+    border-radius: 3px;
+    clip: true;
+    background: @linear-gradient(180deg, #212125 0%, #18191d 100%);
+    for i in root.grid - 1: Rectangle { x: (i + 1) * root.width / root.grid - 0.5px; y: 0; width: 1px; height: root.height; background: #ffffff09; }
+    if root.zero-line: Rectangle { x: 0; y: root.height / 2 - 0.5px; width: root.width; height: 1px; background: #ffffff0f; }
+    Path {
+        width: root.width; height: root.height;
+        viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        commands: Studio.synth-displays[root.slot].fill;
+        fill: Studio.sel-color.transparentize(88%);
+        stroke: transparent;
+    }
+    Path {
+        width: root.width; height: root.height;
+        viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        commands: Studio.synth-displays[root.slot].line;
+        stroke: Studio.sel-color;
+        stroke-width: 1.5px;
+        stroke-line-join: round;
+        fill: transparent;
+    }
+}
+
+component ColumnTitle inherits Text {
+    y: 32px; height: 20px;
+    color: SynthStyle.value; font-size: 9px; font-weight: 600; vertical-alignment: center;
+}
+
+// ---------------------------------------------------------------- pages (content area x 106.5..776.5)
+component OscColumn inherits Rectangle {
+    in property <int> n;     // 0 or 1
+    // Column origin: card x 117.5 (+ 318 for Osc 2), y 0.
+    Dropdown { x: 0; y: 32px; width: 84px + root.n * 1px; label: "Osc " + (root.n + 1); value: Studio.synth-choices[root.n * 3]; value-x: 33.5px; choice: root.n * 3; }
+    Text { x: 98px; y: 32px; height: 17px; text: "Octave"; color: SynthStyle.label; font-size: 8.25px; font-weight: 500; letter-spacing: 0.6px; vertical-alignment: center; }
+    Dropdown { x: 136px; y: 32px; width: 36.5px; value: Studio.synth-choices[root.n * 3 + 1]; choice: root.n * 3 + 1; }
+    Text { x: 186.5px; y: 32px; height: 17px; text: "Semitones"; color: SynthStyle.label; font-size: 8.25px; font-weight: 500; letter-spacing: 0.45px; vertical-alignment: center; }
+    Dropdown { x: 238px; y: 32px; width: 50px; value: Studio.synth-choices[root.n * 3 + 2]; choice: root.n * 3 + 2; }
+    SynthScope { x: 0; y: 57.5px; slot: root.n; }
+    SynthFader { x: 254.75px; y: 61.5px; idx: root.n == 0 ? SP.osc1-level : SP.osc2-level; }
+    SynthKnob { x: 35px - 30px; y: 212px - 19px; idx: root.n == 0 ? SP.osc1-shape : SP.osc2-shape; label: "Shape"; }
+    SynthKnob { x: 110.5px - 30px; y: 212px - 19px; idx: root.n == 0 ? SP.osc1-fine : SP.osc2-fine; label: "Fine"; }
+    if root.n == 0: SynthKnob { x: 186px - 30px; y: 212px - 19px; idx: SP.cross-fm; label: "Cross FM"; }
+}
+
+component OscPage inherits Rectangle {
+    OscColumn { x: 117.5px; y: 0; width: 300px; height: root.height; n: 0; }
+    Rectangle { x: 425px; y: 32px; width: 0.5px; height: 227.5px; background: SynthStyle.line; }
+    OscColumn { x: 117.5px + SynthStyle.col; y: 0; width: 300px; height: root.height; n: 1; }
+}
+
+component SubNoisePage inherits Rectangle {
+    ColumnTitle { x: 117.5px; text: "Sub oscillator  (sine, one octave below Osc 1)"; }
+    SynthScope { x: 117.5px; y: 57.5px; slot: SD.sub; }
+    SynthFader { x: 117.5px + 254.75px; y: 61.5px; idx: SP.sub-level; }
+    Rectangle { x: 425px; y: 32px; width: 0.5px; height: 227.5px; background: SynthStyle.line; }
+    ColumnTitle { x: 117.5px + SynthStyle.col; text: "Noise  (white)"; }
+    SynthScope { x: 117.5px + SynthStyle.col; y: 57.5px; slot: SD.noise; }
+    SynthFader { x: 117.5px + SynthStyle.col + 254.75px; y: 61.5px; idx: SP.noise-level; }
+}
+
+component FilterPage inherits Rectangle {
+    Dropdown { x: 117.5px; y: 32px; width: 110px; label: "Mode"; value: Studio.synth-choices[SC.filter-mode]; value-x: 35px; choice: SC.filter-mode; }
+    SynthScope { x: 117.5px; y: 57.5px; width: 610px; slot: SD.filter; zero-line: false; grid: 1; }
+    // Decade lines at 100 Hz, 1 kHz, 10 kHz (log axis 20 Hz .. 20 kHz) and labels.
+    for f[i] in [{x: 0.233, t: "100"}, {x: 0.567, t: "1k"}, {x: 0.9, t: "10k"}]: Rectangle {
+        x: 117.5px + f.x * 610px; y: 57.5px; width: 1px; height: 128px; background: #ffffff09;
+        Text { x: 3px; y: 114px; height: 12px; text: f.t; color: #55565b; font-size: 7.5px; font-weight: 500; vertical-alignment: center; }
+    }
+    SynthKnob { x: 152.5px - 30px; y: 212px - 19px; idx: SP.cutoff; label: "Cutoff"; }
+    SynthKnob { x: 228px - 30px; y: 212px - 19px; idx: SP.resonance; label: "Resonance"; }
+    SynthKnob { x: 303.5px - 30px; y: 212px - 19px; idx: SP.key-track; label: "Key track"; }
+    SynthKnob { x: 379px - 30px; y: 212px - 19px; idx: SP.env-amount; label: "Env amount"; }
+}
+
+component EnvColumn inherits Rectangle {
+    in property <int> base;   // SP.amp-a or SP.flt-a
+    in property <int> slot;
+    in property <string> title;
+    ColumnTitle { x: 0; text: root.title; }
+    SynthScope { x: 0; y: 57.5px; slot: root.slot; zero-line: false; }
+    for k[i] in ["Attack", "Decay", "Sustain", "Release"]: SynthKnob { x: 35px + i * 75.5px - 30px; y: 212px - 19px; idx: root.base + i; label: k; }
+}
+
+component EnvPage inherits Rectangle {
+    EnvColumn { x: 117.5px; y: 0; width: 300px; height: root.height; base: SP.amp-a; slot: SD.amp-env; title: "Amp envelope"; }
+    Rectangle { x: 425px; y: 32px; width: 0.5px; height: 227.5px; background: SynthStyle.line; }
+    EnvColumn { x: 117.5px + SynthStyle.col; y: 0; width: 300px; height: root.height; base: SP.flt-a; slot: SD.amp-env + 1; title: "Filter envelope"; }
+}
+
+component LfoPage inherits Rectangle {
+    Dropdown { x: 117.5px; y: 32px; width: 110px; label: "LFO"; value: Studio.synth-choices[SC.lfo-wave]; value-x: 30px; choice: SC.lfo-wave; }
+    Text { x: 117.5px + 245px - 40px; y: 32px; width: 40px; height: 17px; text: "1 s"; color: SynthStyle.label; font-size: 8.25px; font-weight: 500; horizontal-alignment: right; vertical-alignment: center; }
+    SynthScope { x: 117.5px; y: 57.5px; slot: SD.lfo; }
+    Rectangle { x: 425px; y: 32px; width: 0.5px; height: 227.5px; background: SynthStyle.line; }
+    ColumnTitle { x: 117.5px + SynthStyle.col; text: "Destinations"; }
+    SynthKnob { x: 152.5px - 30px; y: 212px - 19px; idx: SP.lfo-rate; label: "Rate"; }
+    SynthKnob { x: 152.5px + SynthStyle.col - 30px; y: 100px - 19px; idx: SP.lfo-pitch; label: "To pitch"; }
+    SynthKnob { x: 228px + SynthStyle.col - 30px; y: 100px - 19px; idx: SP.lfo-cutoff; label: "To cutoff"; }
+    SynthKnob { x: 303.5px + SynthStyle.col - 30px; y: 100px - 19px; idx: SP.lfo-amp; label: "To amp"; }
+}
+
+component VoicePage inherits Rectangle {
+    ColumnTitle { x: 117.5px; text: "Voices"; }
+    SynthKnob { x: 152.5px - 30px; y: 100px - 19px; idx: SP.polyphony; label: "Polyphony"; }
+    SynthKnob { x: 228px - 30px; y: 100px - 19px; idx: SP.unison; label: "Unison"; }
+    SynthKnob { x: 303.5px - 30px; y: 100px - 19px; idx: SP.unison-detune; label: "Detune"; }
+    Rectangle { x: 425px; y: 32px; width: 0.5px; height: 227.5px; background: SynthStyle.line; }
+    ColumnTitle { x: 117.5px + SynthStyle.col; text: "Glide & output"; }
+    SynthKnob { x: 152.5px + SynthStyle.col - 30px; y: 100px - 19px; idx: SP.glide; label: "Glide"; }
+    SynthKnob { x: 228px + SynthStyle.col - 30px; y: 100px - 19px; idx: SP.output; label: "Output"; }
+}
+
+// PLACEHOLDER pages (Modulation, Macros, Effects): nothing faked.
+component NotAvailablePage inherits Rectangle {
+    in property <string> title;
+    in property <string> section;
+    Text { x: 107px; y: 120px; width: 638px; height: 16px; text: root.title + ": not available yet"; color: SynthStyle.value; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: 107px; y: 138px; width: 638px; height: 14px; text: "The built-in synth has no " + root.section + " section yet."; color: SynthStyle.category; font-size: 9px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+}
+
+// ---------------------------------------------------------------- the card
+export component SynthDevice inherits Rectangle {
+    width: 776.5px; height: 265px;
+    border-radius: 6px;
+    background: SynthStyle.card;
+    border-width: 0.5px;
+    border-color: SynthStyle.card-edge;
+
+    // ---- header ----
+    // Power toggle: PLACEHOLDER (no bypass in the model; drawn "on").
+    Rectangle {
+        x: 9px; y: 8.25px; width: 20px; height: 10px; border-radius: 5px; background: Studio.sel-color;
+        Rectangle { x: parent.width - 9px; y: 1px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; }
+        TouchArea { clicked => { Studio.synth-placeholder("Device bypass"); } }
+    }
+    Text { x: 37.5px; y: 6px; height: 14px; text: "Synth"; color: #ffffff; font-size: 9.75px; font-weight: 700; vertical-alignment: center; }
+    // Device type menu: PLACEHOLDER (only the built-in Synth exists).
+    Icon {
+        x: 69px; y: 7px; width: 12px; height: 12px; d: Icons.chevron-down; ink: SynthStyle.dim; stroke-width: 1.2px;
+        TouchArea { clicked => { Studio.synth-placeholder("Instrument menu"); } }
+    }
+    // Sparkle: PLACEHOLDER. Sits 7 pt left of the preset name.
+    Icon { x: preset.x - 21px; y: 6px; width: 14px; height: 14px; d: Icons.sparkle; ink: SynthStyle.dim; stroke-width: 1.1px;
+        TouchArea { clicked => { Studio.synth-placeholder("Generate sound"); } } }
+    // Preset browser (real): name opens the list, ‹ › step through factory_presets().
+    preset := Text {
+        x: 704px - self.preferred-width; y: 6px; height: 14px; text: Studio.synth-preset;
+        color: SynthStyle.dim; font-size: 9.5px; font-weight: 600; vertical-alignment: center;
+        TouchArea { clicked => { Studio.synth-dropdown(-1, preset.absolute-position.x + preset.width - 160px, preset.absolute-position.y + 18px, 160px); } }
+    }
+    Rectangle {
+        x: 707px; y: 4px; width: 13px; height: 18px;
+        Icon { x: 1.5px; y: 4px; width: 10px; height: 10px; d: Icons.chevron-left; ink: SynthStyle.dim; stroke-width: 1.3px; }
+        TouchArea { clicked => { Studio.synth-preset-step(-1); } }
+    }
+    Rectangle {
+        x: 720px; y: 4px; width: 13px; height: 18px;
+        Icon { x: 1.5px; y: 4px; width: 10px; height: 10px; d: Icons.chevron-right; ink: SynthStyle.dim; stroke-width: 1.3px; }
+        TouchArea { clicked => { Studio.synth-preset-step(1); } }
+    }
+    Rectangle { x: 737px; y: 7.5px; width: 0.5px; height: 12px; background: SynthStyle.line; }
+    // Minimise / close: PLACEHOLDERS.
+    Icon { x: 740.5px; y: 5px; width: 16px; height: 16px; d: "M5 8h6"; ink: SynthStyle.dim; stroke-width: 1.1px;
+        TouchArea { clicked => { Studio.synth-placeholder("Minimise device"); } } }
+    Icon { x: 759px; y: 8px; width: 10px; height: 10px; d: Icons.close; ink: SynthStyle.dim; stroke-width: 1.3px;
+        TouchArea { clicked => { Studio.synth-placeholder("Remove device"); } } }
+    Rectangle { x: 0; y: 26.5px; width: root.width; height: 0.5px; background: SynthStyle.line; }
+
+    // ---- category list ----
+    Rectangle { x: 106.5px; y: 27px; width: 0.5px; height: root.height - 27px; background: SynthStyle.line; }
+    for cat[i] in [
+        { name: "Oscillators", d: "M1 9 L6 1.5 L11 9 L16 1.5 L21 9" },
+        { name: "Sub & Noise", d: "M1 5 C 4 0, 7 0, 11 5 S 18 10, 21 5" },
+        { name: "Filter", d: "M1 3 H11 C 14 3, 15 4, 16.5 9 H21" },
+        { name: "Envelopes", d: "M1 9 L1 2 C 2.5 7, 4 7, 6 7 H14 L15 9 H21" },
+        { name: "LFOs", d: "M1 7 C 2 1, 4 1, 5 5 S 8 9, 9 5 S 12 1, 13 5 S 16 9, 17 5 S 20 1, 21 3" },
+        { name: "Modulation", d: "M2 3.5 h0.1 M7.5 3.5 h0.1 M13 3.5 h0.1 M18.5 3.5 h0.1 M2 7.5 h0.1 M7.5 7.5 h0.1 M13 7.5 h0.1 M18.5 7.5 h0.1" },
+        { name: "Macros", d: "M5.5 2.5 a3 3 0 1 1 0 6 a3 3 0 1 1 0 -6 z M11 2.5 a3 3 0 1 1 0 6 a3 3 0 1 1 0 -6 z M16.5 2.5 a3 3 0 1 1 0 6 a3 3 0 1 1 0 -6 z" },
+        { name: "Voice", d: "M8.5 1.5 v7.5 M11 1.5 v7.5 M13.5 1.5 v7.5" },
+        { name: "Effects", d: "M1 5 C 3 0, 5 0, 7 5 C 8.5 8, 10 8, 11.5 5 C 13 2.5, 14.5 2.5, 16 5 C 17.5 7, 19 7, 21 5" },
+    ]: Rectangle {
+        x: 0; y: 31.85px + i * 25.3px; width: 106px; height: 25.3px;
+        property <bool> sel: Studio.synth-page == i;
+        Path {
+            x: 10.5px; y: (parent.height - 10px) / 2; width: 21.5px; height: 10px;
+            viewbox-x: 1; viewbox-y: 1; viewbox-width: 20; viewbox-height: 8;
+            commands: cat.d;
+            stroke: parent.sel ? #ffffff : SynthStyle.category-icon;
+            stroke-width: i == 5 ? 2.2px : 1.2px;
+            stroke-line-cap: round; stroke-line-join: round;
+            fill: transparent;
+        }
+        Text { x: 38.5px; y: 0; height: parent.height; text: cat.name; color: parent.sel ? #ffffff : SynthStyle.category; font-size: 10px; font-weight: parent.sel ? 700 : 600; vertical-alignment: center; }
+        TouchArea { clicked => { Studio.synth-page-select(i); } }
+    }
+
+    // ---- page ----
+    if Studio.synth-page == 0: OscPage { x: 0; y: 0; width: root.width; height: root.height; }
+    if Studio.synth-page == 1: SubNoisePage { x: 0; y: 0; width: root.width; height: root.height; }
+    if Studio.synth-page == 2: FilterPage { x: 0; y: 0; width: root.width; height: root.height; }
+    if Studio.synth-page == 3: EnvPage { x: 0; y: 0; width: root.width; height: root.height; }
+    if Studio.synth-page == 4: LfoPage { x: 0; y: 0; width: root.width; height: root.height; }
+    if Studio.synth-page == 5: NotAvailablePage { x: 0; y: 0; width: root.width; height: root.height; title: "Modulation"; section: "modulation"; }
+    if Studio.synth-page == 6: NotAvailablePage { x: 0; y: 0; width: root.width; height: root.height; title: "Macros"; section: "macros"; }
+    if Studio.synth-page == 7: VoicePage { x: 0; y: 0; width: root.width; height: root.height; }
+    if Studio.synth-page == 8: NotAvailablePage { x: 0; y: 0; width: root.width; height: root.height; title: "Effects"; section: "effects"; }
+
+    // ---- Mod column: PLACEHOLDER (modulation sources are not in the model) ----
+    Rectangle {
+        x: 745.5px; y: 31.5px; width: 29px; height: 229.5px; border-radius: 14.5px; background: SynthStyle.control;
+        Rectangle { x: 8px; y: 0; width: parent.width - 16px; height: 0.5px; background: #424347; }
+        Text { x: 0; y: 5.5px; width: parent.width; height: 14px; text: "Mod"; color: #9f9fa2; font-size: 8.25px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        for m[i] in [
+            { d: "M2 9 L5.5 3 L8.5 6.5 L10 5.5 L14 9", c: #a271b3 },
+            { d: "M2 9 L5 3 L8 6 L11 6 L14 9", c: #c9708f },
+            { d: "M2 6 C 4 2, 6 2, 8 6 S 12 10, 14 6", c: #d9c96a },
+            { d: "M2 9 L5 3 L8 9 L11 3 L14 9", c: #5fb5a3 },
+            { d: "M3 10 V7 M6 10 V5 M9 10 V6 M12 10 V3", c: #d8875a },
+            { d: "M2.5 3.5 H13.5 V10 H2.5 Z M5.5 3.5 V7 M8 3.5 V7 M10.5 3.5 V7", c: #9cbf63 },
+            { d: "M4.5 1.5 H11.5 V12 H4.5 Z M4.5 6.5 H11.5", c: #6b98d8 },
+            { d: "M8 2 V9 M5 6.5 L8 9.5 L11 6.5 M3 12 H13", c: #a3a4aa },
+            { d: "M2 9 H5 V4 H8 V9 H11 V4 H14", c: #a3a4aa },
+        ]: Path {
+            x: 7px; y: 32px + i * 22px; width: 15px; height: 13px;
+            viewbox-x: 0; viewbox-y: 0; viewbox-width: 16; viewbox-height: 13;
+            commands: m.d; stroke: m.c; stroke-width: 1.2px; fill: transparent;
+            stroke-line-cap: round; stroke-line-join: round;
+        }
+        TouchArea { clicked => { Studio.synth-placeholder("Modulation sources"); } }
+    }
+}
+
+// Popup list for the dropdowns and the preset browser (state owned by Rust).
+export component SynthMenuList inherits Rectangle {
+    in property <[MenuItem]> items;
+    callback picked(int);
+    border-radius: 7px;
+    background: #222327;
+    border-width: 0.5px;
+    border-color: #3a3b40;
+    drop-shadow-blur: 14px;
+    drop-shadow-color: #00000090;
+    for it[i] in root.items: Rectangle {
+        x: 4px; y: it.y; width: root.width - 8px; height: 20.5px;
+        Rectangle { border-radius: 4px; background: ta.has-hover ? Tokens.accent : transparent; }
+        Text { x: 10px; text: it.label; color: #f0f0f2; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+        Text { x: parent.width - 10px - self.preferred-width; text: it.shortcut; color: #c9c9cc; font-size: 9px; vertical-alignment: center; }
+        ta := TouchArea { clicked => { root.picked(i); } }
+    }
+}

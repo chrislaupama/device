@@ -5,7 +5,8 @@
 //!
 //! ```text
 //! saine-studio [--open <dir>] [--import <wav>...] [--save-to <dir>] [--no-audio]
-//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll]
+//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth]
+//!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--screenshot <out.png>] [--exit-after-frames N] [--frame-stats] [--self-test]
 //! ```
@@ -21,6 +22,7 @@ mod peaks;
 mod pianoroll;
 mod placeholder;
 mod selftest;
+mod synth;
 mod timeline;
 mod wavgen;
 
@@ -50,6 +52,10 @@ struct Args {
     open_assistant: bool,
     /// 1 = reference-midi-clip (33), 2 = reference-pianoroll (34).
     midi_state: u8,
+    /// reference-synth (32): Instrument track selected, Devices tab, test-state synth preset.
+    synth_state: bool,
+    /// --synth-page N: open that category page of the synth device (review screenshots).
+    synth_page: Option<usize>,
     assistant_fixture: Option<PathBuf>,
     screenshot: Option<PathBuf>,
     exit_after_frames: Option<u64>,
@@ -96,12 +102,17 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.midi_state = 2;
                 }
+                "reference-synth" => {
+                    a.reference_default = true;
+                    a.synth_state = true;
+                }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth)"
                     ));
                 }
             },
+            "--synth-page" => a.synth_page = Some(value(&mut i)?.parse().map_err(|e| format!("--synth-page: {e}"))?),
             "--assistant-fixture" => a.assistant_fixture = Some(value(&mut i)?.into()),
             "--screenshot" => a.screenshot = Some(value(&mut i)?.into()),
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
@@ -113,7 +124,7 @@ fn parse_args() -> Result<Args, String> {
                 a.audio = v[i] == "--self-test-audio";
             }
             "-h" | "--help" => {
-                println!("{}", include_str!("main.rs").lines().skip(6).take(5).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
+                println!("{}", include_str!("main.rs").lines().skip(6).take(6).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
                 std::process::exit(0);
             }
             other => return Err(format!("unknown argument {other}")),
@@ -263,6 +274,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "view.escape" => {
             let mut c = ctl.borrow_mut();
             c.menu_close();
+            c.synth_menu_dismiss();
             c.rename = None;
             c.ui_dirty = true;
         }
@@ -375,6 +387,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.seek_beats(22.0); // 00:11.000, as captured
         }
     }
+    if args.synth_state {
+        // Reference 32: default project, Instrument track selected (playhead at bar 6), Devices tab,
+        // Oscillators page. The oscillator values come from a TEST-STATE preset built here (not a
+        // factory preset) so the displays are comparable with the reference capture.
+        let mut c = ctl.borrow_mut();
+        let inst = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id);
+        if let Some(t) = inst {
+            c.select_track(t);
+            let mut p = saine_core::SynthParams { preset: "Test: reference-synth".into(), ..Default::default() };
+            use saine_core::instrument::{Osc, Waveform};
+            p.osc[0] = Osc { wave: Waveform::Triangle, shape: 0.1, octave: 0, semitones: 0, fine_cents: 0.0, level: 0.8 };
+            p.osc[1] = Osc { wave: Waveform::Sine, shape: 0.0, octave: 1, semitones: 0, fine_cents: 7.0, level: 0.3 };
+            p.cross_fm = 0.0;
+            c.execute(saine_core::Command::SetSynthParams { track: t, params: p });
+        }
+        c.set_bottom_tab(BottomTab::Devices);
+        c.synth_page(args.synth_page.unwrap_or(0));
+        c.seek_beats(20.0);
+    }
     // Push view models once before the first frame, so conditional panels are built
     // for the initial state (setting them from inside the first BeforeRendering is
     // too late for that frame's item tree).
@@ -441,6 +472,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, _shift: bool, _cmd: bool| c.pointer(kind, x, y));
     on!(on_lane_scroll, |c, dx: f32, dy: f32, x: f32, zoom: bool| c.scroll(dx, dy, x, zoom));
     on!(on_set_bottom_tab, |c, t: i32| c.set_bottom_tab(if t == 1 { BottomTab::Clip } else { BottomTab::Devices }));
+    on!(on_synth_page_select, |c, i: i32| c.synth_page(i.max(0) as usize));
+    on!(on_synth_param, |c, id: i32, norm: f32| c.synth_param(id.max(0) as usize, norm));
+    on!(on_synth_param_end, |c| c.synth_param_end());
+    on!(on_synth_param_reset, |c, id: i32| c.synth_param_reset(id.max(0) as usize));
+    on!(on_synth_dropdown, |c, id: i32, x: f32, y: f32, w: f32| {
+        let target = if id < 0 { synth::MenuTarget::Presets } else { synth::MenuTarget::Choice(id as usize) };
+        c.synth_open_menu(target, x, y, w)
+    });
+    on!(on_synth_menu_pick, |c, i: i32| c.synth_menu_pick(i.max(0) as usize));
+    on!(on_synth_menu_dismiss, |c| c.synth_menu_dismiss());
+    on!(on_synth_preset_step, |c, dir: i32| c.synth_preset_step(dir));
+    on!(on_synth_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
+    on!(on_toggle_clip_devices, |c| {
+        let tab = if c.bottom_tab == BottomTab::Clip { BottomTab::Devices } else { BottomTab::Clip };
+        c.set_bottom_tab(tab)
+    });
     on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool| c.pr_pointer(kind, x, y, shift, alt));
     on!(on_pr_scroll, |c, dy: f32| c.pr_scroll(dy));
     on!(on_pr_action, |c, a: slint::SharedString| c.pr_action(a.as_str()));

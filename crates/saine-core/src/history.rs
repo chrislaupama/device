@@ -107,6 +107,14 @@ impl Document {
         Ok(())
     }
 
+    /// Mark the end of a gesture: the next command never merges into the
+    /// current last undo entry, whatever its coalesce key or timing.
+    pub fn seal_coalescing(&mut self) {
+        if let Some(last) = self.undo.last_mut() {
+            last.coalesce_key = None;
+        }
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }

@@ -326,6 +326,271 @@ fn midi_steps() -> Vec<Step> {
     ]
 }
 
+/// Synth device card origin in the window (bottom panel 306 pt at y 509; card at panel 263.5, 34).
+const SYNTH: (f32, f32) = (5.0 + 263.5, 509.0 + 34.0);
+
+fn synth_xy(cx: f32, cy: f32) -> (f32, f32) {
+    (SYNTH.0 + cx, SYNTH.1 + cy)
+}
+
+/// Centre of category row `i` in the device's left list.
+fn synth_category(i: usize) -> (f32, f32) {
+    synth_xy(60.0, 31.85 + i as f32 * 25.3 + 12.65)
+}
+
+fn double_click(app: &AppWindow, x: f32, y: f32) {
+    click(app, x, y);
+    click(app, x, y);
+}
+
+/// Centre of row `i` of the open synth popup list (same clamping as ui/app.slint).
+fn synth_menu_row(app: &AppWindow, i: usize) -> (f32, f32) {
+    let s = app.global::<Studio>();
+    let (w, h) = (s.get_synth_menu_w(), s.get_synth_menu_h());
+    let x = s.get_synth_menu_x().min(1440.0 - 5.0 - w);
+    let y = s.get_synth_menu_y().min(820.0 - 5.0 - h).max(5.0);
+    (x + 30.0, y + crate::synth::MENU_PAD + i as f32 * crate::synth::MENU_ROW + crate::synth::MENU_ROW / 2.0)
+}
+
+fn inst_synth(c: &Controller) -> Option<saine_core::SynthParams> {
+    c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument).map(|t| t.synth.clone())
+}
+
+/// Synth device (Devices tab on the Instrument track). Leaves the synth back at its
+/// starting parameters (everything undone).
+fn synth_steps() -> Vec<Step> {
+    let bright_low = Rc::new(Cell::new(-1f32));
+    let bright_low2 = bright_low.clone();
+    use Step::*;
+    use saine_core::instrument::{Waveform, factory_presets};
+    #[derive(Default)]
+    struct Rec {
+        hist: usize,
+        start: Option<saine_core::SynthParams>,
+        before: Option<saine_core::SynthParams>,
+        path: String,
+    }
+    let rec = Rc::new(RefCell::new(Rec::default()));
+    let r = |n: usize| -> Vec<Rc<RefCell<Rec>>> { (0..n).map(|_| rec.clone()).collect() };
+    let rs = r(14);
+    let [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13] = <[Rc<RefCell<Rec>>; 14]>::try_from(rs).ok().unwrap();
+    // One new undo step labelled "Synth Parameter Change" since the last record; re-records.
+    fn one_step(rc: &Rc<RefCell<Rec>>, c: &Controller) -> Result<(), String> {
+        let n = c.doc.history_labels().len();
+        let was = rc.borrow().hist;
+        rc.borrow_mut().hist = n;
+        (n == was + 1 && c.doc.undo_label() == Some("Synth Parameter Change"))
+            .then_some(())
+            .ok_or(format!("history {was} -> {n}, last {:?}", c.doc.undo_label()))
+    }
+    vec![
+        DoC("click the Instrument track header", Box::new(|a, ctl| {
+            let sy = ctl.borrow().view.scroll_y as f32;
+            click(a, 300.0, TRACK0_Y + PITCH + 10.0 - sy);
+        })),
+        Check("synth: Instrument track selected -> Devices tab shows the Synth (Oscillators page)", Box::new(move |c, a| {
+            let s = a.global::<Studio>();
+            let mut r = r0.borrow_mut();
+            r.hist = c.doc.history_labels().len();
+            r.start = inst_synth(c);
+            let ok = s.get_synth_visible() && s.get_bottom_tab() == 0 && s.get_synth_page() == 0 && c.synth_track().is_some() && s.get_synth_preset() == r.start.as_ref().map(|p| p.preset.clone()).unwrap_or_default();
+            ok.then_some(()).ok_or(format!("visible {} tab {} page {}", s.get_synth_visible(), s.get_bottom_tab(), s.get_synth_page()))
+        })),
+        Do("click preset ›", Box::new(|a| {
+            let (x, y) = synth_xy(726.5, 13.0);
+            click(a, x, y);
+        })),
+        Check("synth: preset › loaded factory_presets()[1] in one undo step", Box::new(move |c, a| {
+            one_step(&r1, c)?;
+            let p = inst_synth(c).ok_or("no instrument")?;
+            (p == factory_presets()[1] && a.global::<Studio>().get_synth_preset() == p.preset.as_str()).then_some(()).ok_or(format!("preset {}", p.preset))
+        })),
+        Do("click the preset name, pick the 4th preset in the list", Box::new(|a| {
+            let (x, y) = synth_xy(690.0, 13.0);
+            click(a, x, y);
+            let (x, y) = synth_menu_row(a, 3);
+            click(a, x, y);
+        })),
+        Check("synth: preset list loaded factory_presets()[3] in one undo step, list closed", Box::new(move |c, a| {
+            one_step(&r2, c)?;
+            let p = inst_synth(c).ok_or("no instrument")?;
+            (p == factory_presets()[3] && !a.global::<Studio>().get_synth_menu_open()).then_some(()).ok_or(format!("preset {}", p.preset))
+        })),
+        Do("Cmd+Z, then the Filter page", Box::new(|a| {
+            key(a, "z", true, false);
+            let (x, y) = synth_category(2);
+            click(a, x, y);
+        })),
+        Check("synth: undo back to preset [1]; Filter page shown", Box::new(move |c, a| {
+            let mut r = r3.borrow_mut();
+            r.hist = c.doc.history_labels().len();
+            r.before = inst_synth(c);
+            (r.before.as_ref() == Some(&factory_presets()[1]) && a.global::<Studio>().get_synth_page() == 2).then_some(()).ok_or(format!("page {}", a.global::<Studio>().get_synth_page()))
+        })),
+        Do("drag the Cutoff knob down 60 pt", Box::new(|a| {
+            let (x, y) = synth_xy(152.5, 212.0);
+            drag(a, x, y, x, y + 60.0);
+        })),
+        Check("synth: cutoff decreased (log taper) with exactly one undo step; readout in Hz", Box::new(move |c, a| {
+            one_step(&r4, c)?;
+            let before = r4.borrow().before.clone().ok_or("no record")?;
+            let p = inst_synth(c).ok_or("no instrument")?;
+            let want = crate::synth::from_norm(crate::synth::p::CUTOFF, crate::synth::to_norm(crate::synth::p::CUTOFF, before.filter.cutoff_hz) - 0.4);
+            let text = slint::Model::row_data(&a.global::<Studio>().get_synth_params(), crate::synth::p::CUTOFF).map(|p| p.text.to_string()).unwrap_or_default();
+            let mut rest = p.clone();
+            rest.filter.cutoff_hz = before.filter.cutoff_hz;
+            (p.filter.cutoff_hz < before.filter.cutoff_hz && (p.filter.cutoff_hz - want).abs() < want * 0.03 && rest == before && text.ends_with("Hz"))
+                .then_some(())
+                .ok_or(format!("cutoff {} -> {} (want ≈{want}), readout {text:?}", before.filter.cutoff_hz, p.filter.cutoff_hz))
+        })),
+        Check("audio: rendered output with the lowered cutoff (measured for the next check)", Box::new(move |c, _| {
+            if let Some(b) = rendered_brightness(c)? {
+                bright_low.set(b);
+            }
+            Ok(())
+        })),
+        Do("double-click the Cutoff knob", Box::new(|a| {
+            let (x, y) = synth_xy(152.5, 212.0);
+            double_click(a, x, y);
+        })),
+        Check("synth: double-click reset cutoff to the default (2093 Hz) in one undo step", Box::new(move |c, _| {
+            one_step(&r5, c)?;
+            let p = inst_synth(c).ok_or("no instrument")?;
+            (p.filter.cutoff_hz == saine_core::SynthParams::default().filter.cutoff_hz).then_some(()).ok_or(format!("cutoff {}", p.filter.cutoff_hz))
+        })),
+        Check("audio: panel cutoff reaches the engine (brighter after reset than with the lowered cutoff)", Box::new(move |c, _| {
+            let Some(reset) = rendered_brightness(c)? else { return Ok(()) };
+            let low = bright_low2.get();
+            (low >= 0.0 && reset > low * 1.15).then_some(()).ok_or(format!("brightness low {low} vs reset {reset}"))
+        })),
+        Do("Oscillators page, open the Osc 2 wave dropdown", Box::new(|a| {
+            let (x, y) = synth_category(0);
+            click(a, x, y);
+            let (x, y) = synth_xy(117.5 + 318.0 + 45.0, 42.0);
+            click(a, x, y);
+        })),
+        Check("synth: wave list open with Saw/Square/Triangle/Sine; record the Osc 2 display", Box::new(move |c, a| {
+            let s = a.global::<Studio>();
+            let items: Vec<String> = (0..slint::Model::row_count(&s.get_synth_menu_items())).filter_map(|i| slint::Model::row_data(&s.get_synth_menu_items(), i)).map(|m| m.label.to_string()).collect();
+            r6.borrow_mut().path = slint::Model::row_data(&s.get_synth_displays(), 1).map(|d| d.line.to_string()).unwrap_or_default();
+            r6.borrow_mut().hist = c.doc.history_labels().len();
+            (s.get_synth_page() == 0 && s.get_synth_menu_open() && items == ["Saw", "Square", "Triangle", "Sine"]).then_some(()).ok_or(format!("page {} open {} {items:?}", s.get_synth_page(), s.get_synth_menu_open()))
+        })),
+        Do("pick Square", Box::new(|a| {
+            let (x, y) = synth_menu_row(a, 1);
+            click(a, x, y);
+        })),
+        Check("synth: Osc 2 wave = Square (one undo step), dropdown text and display path updated", Box::new(move |c, a| {
+            one_step(&r7, c)?;
+            let s = a.global::<Studio>();
+            let p = inst_synth(c).ok_or("no instrument")?;
+            let line = slint::Model::row_data(&s.get_synth_displays(), 1).map(|d| d.line.to_string()).unwrap_or_default();
+            let text = slint::Model::row_data(&s.get_synth_choices(), crate::synth::ch::OSC2_WAVE).unwrap_or_default();
+            let changed = line != r7.borrow().path;
+            r7.borrow_mut().path = line;
+            (p.osc[1].wave == Waveform::Square && text == "Square" && changed && !s.get_synth_menu_open()).then_some(()).ok_or(format!("wave {:?} text {text} path changed {changed}", p.osc[1].wave))
+        })),
+        Do("Osc 2 wave dropdown -> Saw", Box::new(|a| {
+            let (x, y) = synth_xy(117.5 + 318.0 + 45.0, 42.0);
+            click(a, x, y);
+            let (x, y) = synth_menu_row(a, 0);
+            click(a, x, y);
+        })),
+        Check("synth: Osc 2 wave = Saw; Saw and Square display paths differ", Box::new(move |c, a| {
+            one_step(&r8, c)?;
+            let p = inst_synth(c).ok_or("no instrument")?;
+            let line = slint::Model::row_data(&a.global::<Studio>().get_synth_displays(), 1).map(|d| d.line.to_string()).unwrap_or_default();
+            (p.osc[1].wave == Waveform::Saw && line != r8.borrow().path && !line.is_empty()).then_some(()).ok_or(format!("wave {:?}", p.osc[1].wave))
+        })),
+        Do("drag the Osc 1 Level fader up 20 pt", Box::new(|a| {
+            let (x, y) = synth_xy(117.5 + 254.75 + 20.0, 61.5 + 45.0);
+            drag(a, x, y, x, y - 20.0);
+        })),
+        Check("synth: Osc 1 level +20/91 in one undo step, readout in %", Box::new(move |c, a| {
+            let before = factory_presets()[1].osc[0].level; // the preset loaded by ›
+            one_step(&r9, c)?;
+            let p = inst_synth(c).ok_or("no instrument")?;
+            let text = slint::Model::row_data(&a.global::<Studio>().get_synth_params(), crate::synth::p::OSC1_LEVEL).map(|p| p.text.to_string()).unwrap_or_default();
+            (approx(p.osc[0].level, before + 20.0 / 91.0, 0.01) && text == format!("{:.0}%", p.osc[0].level * 100.0)).then_some(()).ok_or(format!("level {} text {text}", p.osc[0].level))
+        })),
+        Do("Envelopes page", Box::new(|a| {
+            let (x, y) = synth_category(3);
+            click(a, x, y);
+        })),
+        Check("synth: Envelopes page; record params", Box::new(move |c, a| {
+            r10.borrow_mut().before = inst_synth(c);
+            r10.borrow_mut().hist = c.doc.history_labels().len();
+            (a.global::<Studio>().get_synth_page() == 3).then_some(()).ok_or("page".into())
+        })),
+        Do("drag the Amp Attack knob up 45 pt", Box::new(|a| {
+            let (x, y) = synth_xy(152.5, 212.0);
+            drag(a, x, y, x, y - 45.0);
+        })),
+        Check("synth: amp attack increased (one undo step), filter envelope unchanged, readout in ms/s", Box::new(move |c, a| {
+            one_step(&r11, c)?;
+            let before = r11.borrow().before.clone().ok_or("no record")?;
+            let p = inst_synth(c).ok_or("no instrument")?;
+            let text = slint::Model::row_data(&a.global::<Studio>().get_synth_params(), crate::synth::p::AMP_A).map(|p| p.text.to_string()).unwrap_or_default();
+            (p.amp_env.attack > before.amp_env.attack * 2.0 && p.filter_env == before.filter_env && (text.ends_with(" ms") || text.ends_with(" s")))
+                .then_some(())
+                .ok_or(format!("attack {} -> {} {text}", before.amp_env.attack, p.amp_env.attack))
+        })),
+        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("synth: ⌘Z restored the previous parameters exactly", Box::new(move |c, _| {
+            let before = r12.borrow().before.clone().ok_or("no record")?;
+            (inst_synth(c).as_ref() == Some(&before)).then_some(()).ok_or("params differ after undo".into())
+        })),
+        Do("Cmd+Z x6 (level, Saw, Square, reset, cutoff drag, preset ›)", Box::new(|a| {
+            for _ in 0..6 {
+                key(a, "z", true, false);
+            }
+        })),
+        Check("synth: every synth edit undone -> starting parameters exactly", Box::new(move |c, _| {
+            let start = r13.borrow().start.clone().ok_or("no record")?;
+            (inst_synth(c).as_ref() == Some(&start)).then_some(()).ok_or(format!("preset {:?}", inst_synth(c).map(|p| p.preset)))
+        })),
+    ]
+}
+
+/// Render ~100 ms offline of a test note (C3) on the selected instrument
+/// track, using the controller's current session (so the synth parameters are
+/// exactly what the Devices panel set), then restore the real session.
+/// Returns a brightness measure: RMS of the first difference over RMS of the
+/// signal (higher = more high-frequency energy).
+fn rendered_brightness(c: &Controller) -> Result<Option<f32>, String> {
+    if c.engine.device_running() {
+        return Ok(None); // offline render is refused while the device owns the audio path
+    }
+    let id = c.selected_track.ok_or("no selected track")?;
+    let mut snap = c.current_snapshot();
+    for t in &mut snap.tracks {
+        if t.track_id == id.0 {
+            t.notes = vec![saine_core::snapshot::NoteSnapshot { start: 0, end: 48_000, pitch: 48, velocity: 100 }];
+        } else {
+            t.mute = true; // isolate the instrument under test
+        }
+    }
+    let e = &c.engine;
+    e.publish(&snap).map_err(|e| e.to_string())?;
+    e.seek(0).map_err(|e| e.to_string())?;
+    e.play().map_err(|e| e.to_string())?;
+    let mut buf = vec![0f32; 2 * 4_800];
+    let r = e.render_offline(&mut buf);
+    let _ = e.stop();
+    e.publish(&c.current_snapshot()).map_err(|e| e.to_string())?;
+    r.map_err(|e| e.to_string())?;
+    let l: Vec<f32> = buf.iter().step_by(2).copied().collect();
+    let rms = |v: &mut dyn Iterator<Item = f32>| {
+        let (s, n) = v.fold((0f64, 0usize), |(s, n), x| (s + (x as f64).powi(2), n + 1));
+        (s / n.max(1) as f64).sqrt() as f32
+    };
+    let level = rms(&mut l.iter().copied());
+    if level < 1e-4 {
+        return Err(format!("render is silent (rms {level})"));
+    }
+    Ok(Some(rms(&mut l.windows(2).map(|w| w[1] - w[0])) / level))
+}
+
 fn steps() -> Vec<Step> {
     use Step::*;
     // Values recorded by one check and compared by a later one.
@@ -631,6 +896,7 @@ fn steps() -> Vec<Step> {
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
+    all.extend(synth_steps());
     all.extend(midi_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));

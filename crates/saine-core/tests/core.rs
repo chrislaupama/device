@@ -220,3 +220,14 @@ fn db_conversions() {
     assert!((gain_to_db(0.5) + 6.02).abs() < 1e-2);
     assert_eq!(db_to_gain(-200.0), 0.0);
 }
+
+#[test]
+fn seal_coalescing_starts_a_new_undo_step() {
+    let (mut d, track, _) = doc_with_asset();
+    let t0 = Instant::now();
+    d.execute_at(Command::SetTrackGain { track, gain: 0.5 }, t0).unwrap();
+    d.seal_coalescing();
+    d.execute_at(Command::SetTrackGain { track, gain: 0.25 }, t0 + Duration::from_millis(10)).unwrap();
+    d.undo().unwrap();
+    assert_eq!(d.project().track(track).unwrap().gain, 0.5, "second gesture is its own step");
+}

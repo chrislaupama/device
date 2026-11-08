@@ -174,9 +174,15 @@ export component Knob inherits Rectangle {
     in property <bool> show-arc: false;
     in property <float> arc-from: -135;
     in property <length> body: 15.5px;
+    /// Distance of the value arc outside the body.
+    in property <float> arc-gap: 2.5;
     /// Soft dark outer ring (header/inspector knobs); mixer strips use a flat body.
     in property <bool> ring: true;
     in property <color> tick-color: #b9d3e4;
+    in property <color> arc-color: Tokens.value-blue;
+    in property <brush> ring-brush: @radial-gradient(circle, #111214 55%, #1c1d20 100%);
+    in property <brush> body-brush: root.ring ? @linear-gradient(180deg, #202125 0%, Tokens.bg-knob 100%) : #222327;
+    in property <length> arc-width: 1.5px;
     in property <float> value;      // current value forwarded to drags
     in property <float> min-value: -1;
     in property <float> max-value: 1;
@@ -192,30 +198,30 @@ export component Knob inherits Rectangle {
     if root.ring: Rectangle {
         width: root.body + 7px; height: root.body + 7px;
         border-radius: self.width / 2;
-        background: @radial-gradient(circle, #111214 55%, #1c1d20 100%);
+        background: root.ring-brush;
     }
     Rectangle {
         width: root.body; height: root.body;
         border-radius: self.width / 2;
-        background: root.ring ? @linear-gradient(180deg, #202125 0%, Tokens.bg-knob 100%) : #222327;
+        background: root.body-brush;
         border-width: root.ring ? 0.5px : 1px;
         border-color: root.ring ? #2e2f33 : #1b1c1f;
     }
     if root.show-arc: Path {
         width: root.width; height: root.height;
         viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
-        stroke: Tokens.value-blue;
-        stroke-width: 1.5px;
+        stroke: root.arc-color;
+        stroke-width: root.arc-width;
         fill: transparent;
         MoveTo {
-            x: root.cx + (root.r + 2.5) * sin(root.arc-from * 1deg);
-            y: root.cy - (root.r + 2.5) * cos(root.arc-from * 1deg);
+            x: root.cx + (root.r + root.arc-gap) * sin(root.arc-from * 1deg);
+            y: root.cy - (root.r + root.arc-gap) * cos(root.arc-from * 1deg);
         }
         ArcTo {
-            x: root.cx + (root.r + 2.5) * sin(root.value-angle * 1deg);
-            y: root.cy - (root.r + 2.5) * cos(root.value-angle * 1deg);
-            radius-x: root.r + 2.5;
-            radius-y: root.r + 2.5;
+            x: root.cx + (root.r + root.arc-gap) * sin(root.value-angle * 1deg);
+            y: root.cy - (root.r + root.arc-gap) * cos(root.value-angle * 1deg);
+            radius-x: root.r + root.arc-gap;
+            radius-y: root.r + root.arc-gap;
             large-arc: abs(root.value-angle - root.arc-from) > 180;
             sweep: root.value-angle > root.arc-from;
         }

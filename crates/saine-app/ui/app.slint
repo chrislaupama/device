@@ -20,12 +20,13 @@ import { Panel, Icon, Icons, Pill, IconButton, SmallButton, HSlider, Knob, Switc
 
 export { Tokens }
 
-import { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem } from "studio.slint";
+import { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay } from "studio.slint";
 import { ClipSidebar, PianoRoll, ClipEmpty, ContextMenu } from "pianoroll.slint";
 import { MixerPanel } from "mixer.slint";
 import { AssistantPanel, HighlightOverlay } from "assistant.slint";
+import { SynthDevice, SynthMenuList } from "synth.slint";
 
-export { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem }
+export { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay }
 
 // ------------------------------------------------------------------ header
 component Header inherits Rectangle {
@@ -112,7 +113,7 @@ component Header inherits Rectangle {
         ink: Studio.assistant-open ? #e5e5e8 : Tokens.icon; tooltip: "Toggle assistant panel (⇧⌘A)"; clicked => { Studio.toggle-assistant(); } }
     IconButton { x: root.width - 119px; y: 31px; width: 25px; height: 33px; icon: Icons.mixer;
         ink: Studio.mixer-open ? #e5e5e8 : Tokens.icon; tooltip: "Toggle mixer panel (⇧⌘X)"; clicked => { Studio.toggle-mixer(); } }
-    IconButton { x: root.width - 91px; y: 39px; width: 25px; height: 25px; icon: Icons.panel-bottom; ink: #b4b5b8; tooltip: "Clip editor / devices (not implemented)"; }
+    IconButton { x: root.width - 91px; y: 39px; width: 25px; height: 25px; icon: Icons.panel-bottom; ink: #b4b5b8; tooltip: "Switch between clip editor and devices"; clicked => { Studio.toggle-clip-devices(); } }
     IconButton { x: root.width - 63px; y: 39px; width: 25px; height: 25px; icon: Icons.piano; tooltip: "Musical typing (not implemented)"; }
     IconButton { x: root.width - 36px; y: 39px; width: 25px; height: 25px; icon: Icons.gear; tooltip: "Settings (not implemented)"; }
 }
@@ -327,18 +328,22 @@ component Timeline inherits Panel {
 
 // ------------------------------------------------------------------ bottom panel
 component Inspector inherits Rectangle {
+    // Readouts are a muted track colour: value-blue on audio tracks, value-instrument on instrument tracks.
+    property <color> value-color: Studio.sel-instrument ? Tokens.value-instrument : Tokens.value-blue;
     // inspector header
     Rectangle { x: 0.5px; y: 15px; width: 3px; height: 15px; border-radius: 1.5px; background: Studio.sel-color; }
     Text { visible: Studio.has-selection; x: 10.5px; y: 7px; height: 13px; text: Studio.sel-number; color: Tokens.text-bright; font-size: 9px; font-weight: 700; vertical-alignment: center; }
     Icon { visible: Studio.has-selection; x: 21px; y: 8px; width: 11px; height: 11px; d: Studio.sel-instrument ? Icons.keys : Icons.wave; ink: #a8a8ab; stroke-width: 1.1px; }
     Label { x: 37px; y: 7px; text: Studio.has-selection ? Studio.sel-name : "No track selected"; color: Tokens.text-bright; font-size: 10px; }
 
-    // In / Out routing: PLACEHOLDERS (fixed routing in milestone 1)
+    // In / Out routing: PLACEHOLDERS (fixed routing in milestone 1). Instrument tracks show their
+    // instrument ("Inst Synth"; only the built-in Synth exists, the dropdown is a PLACEHOLDER).
     Rectangle {
         x: 10px; y: 37px; width: 149px; height: 19px; border-radius: 9.5px; background: Tokens.bg-control;
-        Text { x: 7.5px; text: "In"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
-        Text { x: 21px; text: "Select audio input"; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+        Text { x: 7.5px; text: Studio.sel-instrument ? "Inst" : "In"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+        Text { x: Studio.sel-instrument ? 29.5px : 21px; text: Studio.sel-instrument ? "Synth" : "Select audio input"; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
         Icon { x: 134px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #a0a0a3; }
+        TouchArea { clicked => { if (Studio.sel-instrument) { Studio.synth-placeholder("Instrument selector"); } } }
     }
     Rectangle {
         x: 10px; y: 63px; width: 149px; height: 18px; border-radius: 9px; background: Tokens.bg-control;
@@ -352,10 +357,10 @@ component Inspector inherits Rectangle {
 
     // Trim / Width: PLACEHOLDERS (no per-track trim/width in the model). Pan: real.
     Knob { x: 28px; y: 122px; width: 38px; height: 38px; body: 26px; value-angle: 0; tick-color: #d0d0d3; }
-    Text { x: 10px; y: 158px; width: 74px; height: 13px; text: "0.0 dB"; color: Tokens.value-blue; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: 10px; y: 158px; width: 74px; height: 13px; text: "0.0 dB"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     Text { x: 10px; y: 173px; width: 74px; height: 14px; text: "Trim"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    Knob { x: 104px; y: 122px; width: 38px; height: 38px; body: 26px; value-angle: 0; show-arc: true; arc-from: -135; tick-color: #d0d0d3; }
-    Text { x: 86px; y: 158px; width: 74px; height: 13px; text: "100%"; color: Tokens.value-blue; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Knob { x: 104px; y: 122px; width: 38px; height: 38px; body: 26px; value-angle: 0; show-arc: true; arc-from: -135; tick-color: #d0d0d3; arc-color: root.value-color; }
+    Text { x: 86px; y: 158px; width: 74px; height: 13px; text: "100%"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     Text { x: 86px; y: 173px; width: 74px; height: 14px; text: "Width"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     Knob {
         x: 28px; y: 191px; width: 38px; height: 38px; body: 26px;
@@ -364,11 +369,11 @@ component Inspector inherits Rectangle {
         released => { Studio.gesture-end(); }
         reset => { if (Studio.has-selection) { Studio.track-pan(Studio.sel-id, 0); Studio.gesture-end(); } }
     }
-    Text { x: 10px; y: 228px; width: 74px; height: 13px; text: Studio.sel-pan-text; color: Tokens.value-blue; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: 10px; y: 228px; width: 74px; height: 13px; text: Studio.sel-pan-text; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     Text { x: 10px; y: 243px; width: 74px; height: 13px; text: "Pan"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     // Mono fold: PLACEHOLDER
     Switch { x: 112.5px; y: 205px; on: false; }
-    Text { x: 86px; y: 228px; width: 74px; height: 13px; text: "Off"; color: Tokens.value-blue; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: 86px; y: 228px; width: 74px; height: 13px; text: "Off"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     Text { x: 86px; y: 243px; width: 74px; height: 13px; text: "Mono"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
 
     SmallButton { x: 42px; y: 275px; width: 19px; height: 18px; text: "M"; font-size: 8.25px; on: Studio.sel-mute; on-color: Tokens.mute-on; clicked => { Studio.track-mute(Studio.sel-id); } }
@@ -450,9 +455,11 @@ component BottomPanel inherits Panel {
     if Studio.bottom-tab == 1 && !Studio.pr-visible: ClipEmpty { x: 255px; y: 27px; width: root.width - 255px; height: root.height - 27px; }
     IconButton { x: root.width - 53px; y: 3px; width: 21px; height: 21px; icon: Icons.panel-bottom; ink: #6b6c70; icon-size: 14px; }
     IconButton { x: root.width - 29px; y: 3px; width: 21px; height: 21px; icon: Icons.download; ink: #6b6c70; icon-size: 14px; }
-    // Add device card: PLACEHOLDER (no plugin hosting yet)
+    // Built-in Synth device (instrument tracks; src/synth.rs, ui/synth.slint).
+    if Studio.bottom-tab == 0 && Studio.synth-visible: SynthDevice { x: 263.5px; y: 34px; }
+    // Add device card: PLACEHOLDER (no plugin hosting yet). Follows the synth card when shown.
     if Studio.bottom-tab == 0: Rectangle {
-        x: 265px; y: 34.5px; width: 182.5px; height: 264px; border-radius: 6px;
+        x: Studio.synth-visible ? 1056px : 265px; y: 34.5px; width: 182.5px; height: 264px; border-radius: 6px;
         background: Tokens.bg-raised; border-width: 0.5px; border-color: #313236;
         Label { x: 11.5px; y: 6.5px; text: "Add device"; color: #a0a0a3; font-size: 10px; }
         Rectangle { x: 0; y: 26.5px; width: parent.width; height: 0.5px; background: #313236; }
@@ -517,6 +524,18 @@ export component AppWindow inherits Window {
             if Studio.sub-open: ContextMenu {
                 x: Studio.menu-x + 209px - 4px; y: Studio.menu-y + Studio.sub-y; height: Studio.sub-h;
                 items: Studio.sub-items; activated(i) => { Studio.sub-activate(i); }
+            }
+        }
+        // Synth dropdown / preset list (click outside dismisses).
+        if Studio.synth-menu-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.synth-menu-dismiss(); } } }
+            SynthMenuList {
+                x: min(Studio.synth-menu-x, root.width - 5px - Studio.synth-menu-w);
+                y: max(5px, min(Studio.synth-menu-y, root.height - 5px - Studio.synth-menu-h));
+                width: Studio.synth-menu-w; height: Studio.synth-menu-h;
+                items: Studio.synth-menu-items;
+                picked(i) => { Studio.synth-menu-pick(i); }
             }
         }
         // Rename clip popup.

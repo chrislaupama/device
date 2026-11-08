@@ -47,6 +47,12 @@ export struct HighlightRect { x: length, y: length, w: length, h: length, note: 
 // ---- clip editor / piano roll / context menu ----
 export struct YLabel { y: length, text: string }
 // separator: a line is drawn above the item; y: row top inside the menu.
+// ---- synth device (src/synth.rs) ----
+// One continuous parameter: control position 0..1, readout with units.
+export struct SynthParam { norm: float, text: string, bipolar: bool }
+// A display: SVG path of the curve and of its filled area (viewbox = element size in points).
+export struct SynthDisplay { line: string, fill: string }
+
 export struct MenuItem { label: string, shortcut: string, enabled: bool, separator: bool, submenu: bool, y: length }
 
 export global Studio {
@@ -190,6 +196,30 @@ export global Studio {
     in-out property <string> rename-text;
     callback rename-commit(string);
     callback rename-cancel();
+
+    // ---- synth device (Devices tab, instrument track; src/synth.rs) ----
+    in property <bool> synth-visible;
+    in property <int> synth-page;                // index into the category list
+    in property <string> synth-preset: "Init";
+    in property <[SynthParam]> synth-params;     // indexed by SP.* (ui/synth.slint)
+    in property <[string]> synth-choices;        // dropdown value texts, indexed by SC.*
+    in property <[SynthDisplay]> synth-displays; // indexed by SD.*
+    in property <bool> synth-menu-open;
+    in property <length> synth-menu-x;
+    in property <length> synth-menu-y;
+    in property <length> synth-menu-w: 110px;
+    in property <length> synth-menu-h;
+    in property <[MenuItem]> synth-menu-items;
+    callback synth-page-select(int);
+    callback synth-param(int, float);            // param id, control position 0..1 (drag preview)
+    callback synth-param-end();                  // gesture end: commits ONE SetSynthParams
+    callback synth-param-reset(int);             // double-click: default value
+    callback synth-dropdown(int, length, length, length); // choice id (-1 = presets), window x, y, width
+    callback synth-menu-pick(int);
+    callback synth-menu-dismiss();
+    callback synth-preset-step(int);
+    callback synth-placeholder(string);          // PLACEHOLDER controls report "not implemented"
+    callback toggle-clip-devices();              // header "Switch between clip editor and devices"
 
     callback report-bug();   // TODO: no-op placeholder
     callback feedback();     // TODO: no-op placeholder

@@ -64,7 +64,8 @@ cargo test --workspace                                                          
   Run: `cargo run --release -p saine-app -- --demo`.
 
 **Known gaps / next steps**
-1. Synth parameters + Devices panel, note preview, velocity lane, clip loop; splitters, track rename/resize, native menu bar.
+1. Note preview/audition, velocity lane, clip loop, synth bypass + modulation/macros/effects; SIMD unison;
+   splitters, track rename/resize, native menu bar.
    Engine: input/recording, loop crossfade, tempo map for the metronome.
 2. Reference capture still missing: audio clip appearance (needs a local WAV dropped onto a track), hover/pressed
    states, animation timings, the rest of the shortcut bindings (scroll the Shortcuts page with mouse wheel events, not keys).
@@ -103,3 +104,13 @@ cargo test --workspace                                                          
   Self-test 60/60 offline and with Core Audio, incl. a check that notes drawn in the piano roll sound on the
   instrument track. Fidelity: midi-clip 1.45, piano roll 2.16; earlier states unchanged.
 - Requested core API: RenameClip command, clip loop fields; engine: note audition call.
+
+### 2026-11-08: session 1, round 5 (synth Devices panel)
+- Core: `SynthParams` contract + 6 original factory presets, `Command::SetSynthParams`, `Document::seal_coalescing`.
+- Engine: `se_session_publish_v3` with `se_synth_params`; every parameter drives the DSP (polyBLEP/BLAMP oscillators,
+  shape morph/fold, cross-FM, sub/noise, TPT SVF LP/HP/BP, ADSRs, LFO, mono legato/glide, unison) with 10 ms
+  smoothing; 76/76 ctest (default + ASan). Bench 32 tracks: default patch 573 µs/block, heavy patch 3489 µs (65 % of
+  deadline).
+- App: Synth device card at reference geometry (MAE 2.41), preset browser, 6 real pages, live displays derived from
+  the engine formulas; self-test 76/76 offline and with Core Audio, incl. a rendered-audio check that a panel cutoff
+  change reaches the engine.
