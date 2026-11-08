@@ -177,12 +177,36 @@ pub fn load_fixture(path: &Path) -> Result<ScanReport, String> {
     })
 }
 
-/// Standard plugin locations shown in Settings › Plugins (macOS). Apple's
-/// system Audio Units are found through the Audio Component registry.
+/// Standard plugin locations shown in Settings › Plugins: the folders the
+/// out-of-process scanner searches (engine/scanner/scanner_main.cpp), per
+/// platform. macOS: Apple's system Audio Units are found through the Audio
+/// Component registry; the Components folders are listed for reference.
 pub fn scan_dirs() -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = ["Components", "VST3", "CLAP"].iter().map(|d| PathBuf::from("/Library/Audio/Plug-Ins").join(d)).collect();
-    if let Some(home) = std::env::var_os("HOME") {
-        v.extend(["Components", "VST3", "CLAP"].iter().map(|d| PathBuf::from(&home).join("Library/Audio/Plug-Ins").join(d)));
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let mut v: Vec<PathBuf> = Vec::new();
+    if cfg!(target_os = "macos") {
+        v.extend(["Components", "VST3", "CLAP"].iter().map(|d| PathBuf::from("/Library/Audio/Plug-Ins").join(d)));
+        if let Some(home) = &home {
+            v.extend(["Components", "VST3", "CLAP"].iter().map(|d| home.join("Library/Audio/Plug-Ins").join(d)));
+        }
+    } else if cfg!(windows) {
+        for d in ["VST3", "CLAP"] {
+            if let Some(common) = std::env::var_os("COMMONPROGRAMFILES") {
+                v.push(PathBuf::from(common).join(d));
+            }
+            if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+                v.push(PathBuf::from(local).join("Programs").join("Common").join(d));
+            }
+        }
+    } else {
+        if let Some(home) = &home {
+            v.push(home.join(".vst3"));
+        }
+        v.extend(["/usr/lib/vst3", "/usr/local/lib/vst3"].iter().map(PathBuf::from));
+        if let Some(home) = &home {
+            v.push(home.join(".clap"));
+        }
+        v.extend(["/usr/lib/clap", "/usr/local/lib/clap"].iter().map(PathBuf::from));
     }
     v
 }
@@ -1165,7 +1189,7 @@ impl Controller {
         };
         s.set_plugins_status(status.into());
         s.set_plugins_scanning(cat.state == ScanState::Scanning);
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_default();
         let tilde = |d: &Path| {
             let s = d.display().to_string();
             match s.strip_prefix(&home) {

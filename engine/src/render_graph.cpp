@@ -202,7 +202,8 @@ uint32_t add_lane(RenderGraph& g, const se_auto_lane_desc& d) {
     l.device_id = d.device_id;
     const std::size_t at = g.auto_points.size();
     g.auto_points.resize(at + d.point_count);
-    std::memcpy(g.auto_points.data() + at, d.points, sizeof(se_auto_point) * d.point_count);
+    for (uint32_t i = 0; i < d.point_count; ++i)
+        g.auto_points[at + i] = AutoPoint{d.points[i].frame, d.points[i].value, d.points[i].curve};
     g.lanes.push_back(l);
     return static_cast<uint32_t>(g.lanes.size() - 1);
 }

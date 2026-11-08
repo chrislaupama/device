@@ -71,7 +71,7 @@ jobs:
       - name: Engine — configure
         run: cmake -S engine -B engine/build-ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSAINE_ENGINE_WERROR=ON "-DFETCHCONTENT_BASE_DIR=${{ github.workspace }}/.deps"
       - name: Engine — build
-        run: cmake --build engine/build-ci
+        run: cmake --build engine/build-ci -- -k 0
       - name: Engine — test
         run: ctest --test-dir engine/build-ci --output-on-failure -j 4
 

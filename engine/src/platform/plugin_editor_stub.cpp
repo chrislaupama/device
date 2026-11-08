@@ -1,9 +1,10 @@
-// Plugin editor windows on platforms without an implementation yet
-// (Windows: HWND child window; Linux: X11 embedding). Opening an editor fails
-// with SE_ERR_UNSUPPORTED_FORMAT and this message (plugin_host.cpp); audio
-// processing, parameters, state and automation are unaffected.
-// macOS: plugin_editor_mac.mm.
-#if !defined(__APPLE__)
+// Plugin editor windows on platforms without an implementation yet (Linux:
+// X11 embedding, CLAP_WINDOW_API_X11 / kPlatformTypeX11EmbedWindowID, needs
+// an X event loop and the plugins' fd/timer callbacks). Opening an editor
+// fails with SE_ERR_UNSUPPORTED_FORMAT and this message (plugin_host.cpp);
+// audio processing, parameters, state and automation are unaffected.
+// macOS: plugin_editor_mac.mm; Windows: plugin_editor_win.cpp.
+#if !defined(__APPLE__) && !defined(_WIN32)
 
 #include "plugins/plugin_editor.hpp"
 
@@ -13,11 +14,7 @@ namespace saine {
 
 namespace {
 constexpr const char* kUnsupported =
-#if defined(_WIN32)
-    "plugin editor windows are not implemented on Windows yet (HWND hosting is planned)";
-#else
     "plugin editor windows are not implemented on Linux yet (X11 embedding is planned)";
-#endif
 } // namespace
 
 std::unique_ptr<PluginEditor> create_vst3_editor(Steinberg::IPlugView* view, const std::string&, std::string& err) {

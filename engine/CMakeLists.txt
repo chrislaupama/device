@@ -61,9 +61,15 @@ set(SAINE_VST3_HOST_SOURCES
   ${SAINE_VST3SDK_DIR}/public.sdk/source/vst/hosting/pluginterfacesupport.cpp
   ${SAINE_VST3SDK_DIR}/public.sdk/source/vst/utility/stringconvert.cpp
   ${SAINE_VST3SDK_DIR}/public.sdk/source/common/commonstringconvert.cpp)
-# Third-party code is compiled without our warning set.
+# Third-party code is compiled without our warning set: the host helpers
+# in their own object library (no /W4 to override), the IID files of the
+# test plugins with warnings off.
 set_source_files_properties(${SAINE_VST3_HOST_SOURCES} PROPERTIES COMPILE_OPTIONS
   "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>")
+add_library(saine_vst3_host OBJECT ${SAINE_VST3_HOST_SOURCES})
+target_include_directories(saine_vst3_host SYSTEM PRIVATE ${SAINE_VST3SDK_DIR})
+target_compile_features(saine_vst3_host PRIVATE cxx_std_23)
+set_target_properties(saine_vst3_host PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # ---------------------------------------------------------------- warnings
 add_library(saine_engine_warnings INTERFACE)
@@ -109,7 +115,7 @@ add_library(saine_engine STATIC
   src/plugins/au_instance.cpp
   src/plugins/vst3_instance.cpp
   src/plugins/clap_instance.cpp
-  ${SAINE_VST3_HOST_SOURCES}
+  $<TARGET_OBJECTS:saine_vst3_host>
   # Platform backends: each file is compile-guarded so exactly one is active.
   src/platform/audio_device.cpp
   src/platform/coreaudio_device.cpp
@@ -117,7 +123,9 @@ add_library(saine_engine STATIC
   src/platform/wasapi_device.cpp
   src/platform/os.cpp
 )
-if(NOT APPLE)
+if(WIN32)
+  target_sources(saine_engine PRIVATE src/platform/plugin_editor_win.cpp)
+elseif(NOT APPLE)
   target_sources(saine_engine PRIVATE src/platform/plugin_editor_stub.cpp)
 endif()
 if(APPLE)
@@ -149,8 +157,9 @@ if(APPLE)
     "-framework CoreAudioKit" "-framework AppKit" "-framework Foundation")
 endif()
 if(WIN32)
-  # ole32: COM (WASAPI, MMDevice); shell32: CommandLineToArgvW; avrt: MMCSS.
-  target_link_libraries(saine_engine PUBLIC ole32 shell32 avrt)
+  # ole32: COM (WASAPI, MMDevice); shell32: CommandLineToArgvW; avrt: MMCSS;
+  # user32: plugin editor windows.
+  target_link_libraries(saine_engine PUBLIC ole32 shell32 avrt user32)
 elseif(NOT APPLE)
   target_link_libraries(saine_engine PUBLIC ${CMAKE_DL_LIBS})
 endif()

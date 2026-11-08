@@ -404,7 +404,8 @@ int32_t se_automation_eval(const se_auto_lane_desc* lane, const int64_t* frames,
     if (const char* why = saine::validate_lane(*lane)) return fail(SE_ERR_INVALID_ARG, why);
     if (lane->point_count == 0) return fail(SE_ERR_INVALID_ARG, "lane has no points");
     std::vector<saine::AutoPoint> pts(lane->point_count);
-    std::memcpy(pts.data(), lane->points, sizeof(se_auto_point) * lane->point_count);
+    for (size_t i = 0; i < lane->point_count; ++i)
+        pts[i] = saine::AutoPoint{lane->points[i].frame, lane->points[i].value, lane->points[i].curve};
     const saine::LaneView v{pts.data(), lane->point_count, lane->logarithmic != 0};
     for (size_t i = 0; i < count; ++i) out_values[i] = saine::auto_eval(v, frames[i]);
     return SE_OK;

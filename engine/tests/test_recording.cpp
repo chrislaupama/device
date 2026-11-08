@@ -524,7 +524,7 @@ TEST_CASE(record_and_monitor_do_not_allocate_on_the_audio_path) {
         t.id = i + 1u;
         t.arm = true;
         t.monitor = i % 2 == 0;
-        t.mode = i % 3 == 0 ? SE_INPUT_STEREO : SE_INPUT_MONO;
+        t.mode = static_cast<uint8_t>(i % 3 == 0 ? SE_INPUT_STEREO : SE_INPUT_MONO);
         t.channel = static_cast<uint16_t>(i % 4);
         t.clips = {clip(1, a, 0, 0, 48000)};
         tracks.push_back(t);
