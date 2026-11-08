@@ -130,8 +130,15 @@ uint32_t channels_from_props(const spa_dict* props) {
     if (props == nullptr) return 0;
     if (const char* c = spa_dict_lookup(props, "audio.channels")) return static_cast<uint32_t>(std::atoi(c));
     if (const char* p = spa_dict_lookup(props, "audio.position")) {
-        uint32_t n = 1;
-        for (; *p != '\0'; ++p) n += *p == ',' ? 1 : 0;
+        // Count channel names in any of the forms PipeWire uses: "FL,FR",
+        // "[ FL FR ]", "[ \"FL\", \"FR\" ]" (separators: , [ ] quotes, space).
+        uint32_t n = 0;
+        bool in_name = false;
+        for (; *p != '\0'; ++p) {
+            const bool sep = *p == ',' || *p == '[' || *p == ']' || *p == '"' || *p == ' ' || *p == '\t' || *p == '\n';
+            if (!sep && !in_name) ++n;
+            in_name = !sep;
+        }
         return n;
     }
     return 0;
