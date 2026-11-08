@@ -36,6 +36,16 @@ pub enum TrackKind {
 #[serde(transparent)]
 pub struct ColorIndex(pub u8);
 
+/// Which device input feeds a track (reference "In" selector: "None",
+/// "Input 1 (Mono)", ...). Channels are 0-based device input channels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputSource {
+    /// First (left or mono) device input channel, 0-based.
+    pub channel: u16,
+    /// Use `channel` and `channel + 1` as a stereo pair.
+    pub stereo: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Track {
     pub id: TrackId,
@@ -48,6 +58,16 @@ pub struct Track {
     pub pan: f32,
     pub mute: bool,
     pub solo: bool,
+    /// Armed for recording (reference "R").
+    #[serde(default)]
+    pub arm: bool,
+    /// Input monitoring on (reference "I"): the track's input is heard
+    /// through its chain while armed or monitoring.
+    #[serde(default)]
+    pub monitor: bool,
+    /// Input routing; None = "None".
+    #[serde(default)]
+    pub input: Option<InputSource>,
     pub clips: Vec<Clip>,
     /// MIDI clips (instrument tracks only). Defaulted so schema-v1 files
     /// without the field still load.
@@ -142,7 +162,7 @@ impl Default for Project {
 
 impl Track {
     pub fn new(id: TrackId, kind: TrackKind, name: &str, color: ColorIndex) -> Self {
-        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default() }
+        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, arm: false, monitor: false, input: None, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default() }
     }
 }
 

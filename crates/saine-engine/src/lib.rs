@@ -9,7 +9,7 @@ pub mod ffi;
 use saine_core::instrument::{FilterMode, SynthParams, Waveform};
 use saine_core::snapshot::SessionSnapshot;
 use std::ffi::{CStr, CString};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 #[derive(Debug, Error, Clone, PartialEq)]
@@ -352,6 +352,128 @@ pub fn synth_params_to_ffi(p: &SynthParams) -> ffi::se_synth_params {
         glide: p.voice.glide,
         unison_detune_cents: p.voice.unison_detune_cents,
         output: p.output,
+    }
+}
+
+// ---------------------------------------------------------------- devices & recording
+//
+// Contract for recording/input (docs/adr/0002-recording.md). The app codes
+// against these signatures. Bodies marked STUB are replaced by the engine
+// implementation; until then they return `unsupported()`.
+
+/// An audio device as reported by the platform backend.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AudioDeviceInfo {
+    /// Stable identifier (Core Audio device UID on macOS).
+    pub id: String,
+    pub name: String,
+    pub input_channels: u32,
+    pub output_channels: u32,
+    pub sample_rates: Vec<f64>,
+    pub is_default_input: bool,
+    pub is_default_output: bool,
+}
+
+/// Requested device setup (Settings › Audio). `None`/0 = system default.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DeviceConfig {
+    pub output: Option<String>,
+    pub input: Option<String>,
+    pub sample_rate: f64,
+    pub buffer_size: u32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DeviceStatus {
+    pub running: bool,
+    pub output_name: String,
+    pub input_name: Option<String>,
+    pub sample_rate: f64,
+    pub buffer_size: u32,
+    pub input_channels: u32,
+    pub output_channels: u32,
+    /// Round-trip compensation applied to recorded takes, in frames.
+    pub input_latency_frames: u32,
+    pub output_latency_frames: u32,
+}
+
+/// A finished recording on one track.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordedTake {
+    pub track_id: u64,
+    /// 32-bit float WAV at the engine sample rate.
+    pub path: PathBuf,
+    /// Timeline frame of the first sample (latency compensated).
+    pub start_frame: i64,
+    pub frames: u64,
+    pub channels: u32,
+    pub sample_rate: f64,
+}
+
+/// A take still being recorded.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiveTake {
+    pub track_id: u64,
+    pub start_frame: i64,
+    pub frames: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RecordingState {
+    pub active: bool,
+    pub takes: Vec<LiveTake>,
+}
+
+fn unsupported(what: &str) -> EngineError {
+    EngineError { code: ffi::SE_ERR_UNSUPPORTED_FORMAT, kind: "unsupported", message: format!("{what} is not implemented yet") }
+}
+
+impl Engine {
+    /// STUB. Enumerate audio devices.
+    pub fn list_devices(&self) -> Result<Vec<AudioDeviceInfo>, EngineError> {
+        Err(unsupported("device enumeration"))
+    }
+
+    /// STUB. Apply a device configuration (restarts the device if running).
+    pub fn configure_device(&self, _cfg: &DeviceConfig) -> Result<(), EngineError> {
+        Err(unsupported("device configuration"))
+    }
+
+    /// STUB. Current device status.
+    pub fn device_status(&self) -> DeviceStatus {
+        DeviceStatus { running: self.device_running(), sample_rate: self.sample_rate(), ..Default::default() }
+    }
+
+    /// STUB. Silence all device input (Settings › "Mute audio input").
+    pub fn set_input_muted(&self, _muted: bool) {}
+
+    /// STUB. Start capturing every armed track that has an input, from the
+    /// current transport position (starts the transport if stopped). Takes
+    /// are written to `dir` by a non-real-time writer thread.
+    pub fn start_recording(&self, _dir: &Path) -> Result<(), EngineError> {
+        Err(unsupported("recording"))
+    }
+
+    /// STUB. Stop capturing (the transport keeps its state) and return the
+    /// finalized takes.
+    pub fn stop_recording(&self) -> Result<Vec<RecordedTake>, EngineError> {
+        Err(unsupported("recording"))
+    }
+
+    /// STUB. Live recording state for drawing growing clips.
+    pub fn recording_state(&self) -> RecordingState {
+        RecordingState::default()
+    }
+
+    /// STUB. Min/max peaks of a take in progress (mono mix), for the live waveform.
+    pub fn recording_peaks(&self, _track_id: u64, _frames_per_peak: u32, _max_pairs: usize) -> Vec<[f32; 2]> {
+        Vec::new()
+    }
+
+    /// STUB. Offline render with injected device input (tests): `input` is
+    /// interleaved with `input_channels` channels and the same frame count as `out`/2.
+    pub fn render_offline_with_input(&self, _input: &[f32], _input_channels: u32, _out: &mut [f32]) -> Result<(), EngineError> {
+        Err(unsupported("input injection"))
     }
 }
 

@@ -231,3 +231,23 @@ fn seal_coalescing_starts_a_new_undo_step() {
     d.undo().unwrap();
     assert_eq!(d.project().track(track).unwrap().gain, 0.5, "second gesture is its own step");
 }
+
+#[test]
+fn arm_monitor_input_commands() {
+    let mut d = Document::new(Project::default());
+    let (audio, inst) = (d.project().tracks[0].id, d.project().tracks[1].id);
+    let input = InputSource { channel: 0, stereo: false };
+    d.execute(Command::SetTrackInput { track: audio, input: Some(input) }, Origin::User).unwrap();
+    d.execute(Command::SetTrackArm { track: audio, arm: true }, Origin::User).unwrap();
+    d.execute(Command::SetTrackMonitor { track: audio, monitor: true }, Origin::User).unwrap();
+    assert!(d.execute(Command::SetTrackArm { track: inst, arm: true }, Origin::User).is_err());
+    assert!(d.execute(Command::SetTrackInput { track: inst, input: Some(input) }, Origin::User).is_err());
+    let (snap, _) = snapshot::build(d.project(), 48_000.0, &HashMap::new());
+    assert!(snap.tracks[0].arm && snap.tracks[0].monitor && snap.tracks[0].input == Some(input));
+    assert_eq!(d.undo_label(), Some("Input Monitoring Change"));
+    d.undo().unwrap();
+    d.undo().unwrap();
+    d.undo().unwrap();
+    let t = d.project().track(audio).unwrap();
+    assert!(!t.arm && !t.monitor && t.input.is_none());
+}

@@ -41,6 +41,10 @@ pub struct TrackSnapshot {
     pub instrument: bool,
     /// All playable notes of the track's MIDI clips, sorted by start frame.
     pub notes: Vec<NoteSnapshot>,
+    /// Recording/monitoring state (audio tracks).
+    pub arm: bool,
+    pub monitor: bool,
+    pub input: Option<crate::model::InputSource>,
     /// Built-in instrument parameters (instrument tracks only).
     pub synth: Option<crate::instrument::SynthParams>,
 }
@@ -86,6 +90,9 @@ pub fn build(project: &Project, engine_rate: f64, engine_assets: &HashMap<AssetI
                 .collect(),
             instrument: t.kind == crate::model::TrackKind::Instrument,
             synth: (t.kind == crate::model::TrackKind::Instrument).then(|| t.synth.clone()),
+            arm: t.arm,
+            monitor: t.monitor,
+            input: t.input,
             notes: {
                 let mut v: Vec<NoteSnapshot> = t
                     .midi_clips

@@ -74,6 +74,9 @@ pub enum Command {
     /// Replace an instrument track's synth parameters (knob drags coalesce
     /// per track; loading a preset is one step).
     SetSynthParams { track: TrackId, params: SynthParams },
+    SetTrackArm { track: TrackId, arm: bool },
+    SetTrackMonitor { track: TrackId, monitor: bool },
+    SetTrackInput { track: TrackId, input: Option<InputSource> },
     /// Several commands applied atomically (all or nothing).
     Batch { label: String, commands: Vec<Command> },
 }
@@ -107,6 +110,9 @@ impl Command {
             Command::ResizeMidiClip { .. } => "Resize Clip".into(),
             Command::SetMidiNotes { .. } => "Edit Notes".into(),
             Command::SetSynthParams { .. } => "Synth Parameter Change".into(),
+            Command::SetTrackArm { arm, .. } => (if *arm { "Arm Track" } else { "Disarm Track" }).into(),
+            Command::SetTrackMonitor { .. } => "Input Monitoring Change".into(),
+            Command::SetTrackInput { .. } => "Input Change".into(),
             Command::Batch { label, .. } => label.clone(),
         }
     }
@@ -368,6 +374,36 @@ impl Command {
                 }
                 let old = std::mem::replace(&mut t.synth, params);
                 Ok(Command::SetSynthParams { track, params: old })
+            }
+            Command::SetTrackArm { track, arm } => {
+                let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
+                if arm && t.kind != TrackKind::Audio {
+                    return Err(invalid("track", "only audio tracks record audio (MIDI recording is not implemented)"));
+                }
+                let old = std::mem::replace(&mut t.arm, arm);
+                Ok(Command::SetTrackArm { track, arm: old })
+            }
+            Command::SetTrackMonitor { track, monitor } => {
+                let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
+                if monitor && t.kind != TrackKind::Audio {
+                    return Err(invalid("track", "input monitoring is for audio tracks"));
+                }
+                let old = std::mem::replace(&mut t.monitor, monitor);
+                Ok(Command::SetTrackMonitor { track, monitor: old })
+            }
+            Command::SetTrackInput { track, input } => {
+                if let Some(i) = input
+                    && i.stereo
+                    && i.channel == u16::MAX
+                {
+                    return Err(invalid("input", "stereo pair exceeds channel range"));
+                }
+                let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
+                if input.is_some() && t.kind != TrackKind::Audio {
+                    return Err(invalid("track", "only audio tracks take an audio input"));
+                }
+                let old = std::mem::replace(&mut t.input, input);
+                Ok(Command::SetTrackInput { track, input: old })
             }
             Command::Batch { label, commands } => {
                 let mut inverses = Vec::with_capacity(commands.len());
