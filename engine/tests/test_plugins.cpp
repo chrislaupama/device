@@ -174,6 +174,13 @@ std::vector<float> play_render(se_engine* e, uint32_t frames, uint32_t block = 2
 std::size_t error_count(se_engine* e) {
     std::size_t n = 0;
     se_plugin_load_errors(e, nullptr, 0, &n);
+    if (n > 0) { // diagnostics: say why
+        std::vector<se_plugin_message> msgs(n);
+        se_plugin_load_errors(e, msgs.data(), msgs.size(), &n);
+        for (const auto& m : msgs)
+            std::fprintf(stderr, "  plugin load error (device %llu): %s\n", static_cast<unsigned long long>(m.device_id),
+                         m.message);
+    }
     return n;
 }
 
@@ -651,3 +658,74 @@ TEST_CASE(plugin_rt_render_does_not_allocate) {
     }
     CHECK_EQ(rt_alloc_count() - before, 0L);
 }
+
+// ---------------------------------------------------------------- editor windows (Windows)
+// SaineTestGui.clap (Windows-only test plugin) has a Win32 clap.gui; this
+// drives the HWND editor host end to end: open, the plugin's
+// request_resize, bring-to-front, closing with the close box (WM_CLOSE) and
+// closing through the API. macOS editors are exercised manually
+// (tools/plugin_editor_check); Linux has no editor host yet.
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+namespace {
+void pump_messages() {
+    MSG m;
+    while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+}
+} // namespace
+
+TEST_CASE(plugin_editor_window_win32_open_resize_close) {
+    EngineHandle e(48000, 256);
+    const std::string gui_path = kPluginDir + "/SaineTestGui.clap";
+    Session5 s;
+    s.audio(1, {}, {clap(20, gui_path, "studio.saine.test.gui")});
+    REQUIRE(s.publish(e) == SE_OK);
+    REQUIRE(error_count(e) == 0);
+    REQUIRE(se_plugin_editor_open(e, 20) == SE_OK);
+    pump_messages();
+    CHECK(se_plugin_editor_is_open(e, 20) == 1);
+    HWND w = FindWindowW(L"SaineStudioPluginEditor", nullptr);
+    REQUIRE(w != nullptr);
+    RECT rc{};
+    GetClientRect(w, &rc);
+    CHECK_EQ(rc.right - rc.left, 400L); // the plugin's request_resize(400, 250)
+    CHECK_EQ(rc.bottom - rc.top, 250L);
+    CHECK(FindWindowExW(w, nullptr, L"STATIC", nullptr) != nullptr); // the plugin's child window
+    // Opening again brings the same window to the front.
+    CHECK(se_plugin_editor_open(e, 20) == SE_OK);
+    CHECK(FindWindowW(L"SaineStudioPluginEditor", nullptr) == w);
+    // The close box: WM_CLOSE through the message loop.
+    PostMessageW(w, WM_CLOSE, 0, 0);
+    pump_messages();
+    CHECK(se_plugin_editor_is_open(e, 20) == 0);
+    CHECK(!IsWindow(w));
+    // Re-open, then close through the API.
+    REQUIRE(se_plugin_editor_open(e, 20) == SE_OK);
+    CHECK(se_plugin_editor_is_open(e, 20) == 1);
+    REQUIRE(se_plugin_editor_close(e, 20) == SE_OK);
+    CHECK(se_plugin_editor_is_open(e, 20) == 0);
+    CHECK(FindWindowW(L"SaineStudioPluginEditor", nullptr) == nullptr);
+    // Retiring the device with an open editor closes it.
+    REQUIRE(se_plugin_editor_open(e, 20) == SE_OK);
+    Session5 empty;
+    empty.audio(1, {}, {});
+    REQUIRE(empty.publish(e) == SE_OK);
+    REQUIRE(se_plugin_idle(e) == SE_OK);
+    pump_messages();
+    CHECK(FindWindowW(L"SaineStudioPluginEditor", nullptr) == nullptr);
+}
+#else
+TEST_CASE(plugin_editor_window_win32_open_resize_close) {
+    SKIP("Win32 editor host test (SaineTestGui.clap is built on Windows only)");
+}
+#endif

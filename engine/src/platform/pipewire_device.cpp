@@ -52,8 +52,10 @@
 #include <spa/utils/dict.h>
 
 // The pw_*_add_listener / pw_registry_bind / pw_core_* method macros expand
-// to C casts in this file.
+// to C casts (and to calls GCC's path-sensitive null check cannot follow)
+// in this file.
 #pragma GCC diagnostic ignored "-Wold-style-cast"
+#pragma GCC diagnostic ignored "-Wnull-dereference"
 
 #include <algorithm>
 #include <atomic>
@@ -154,6 +156,14 @@ public:
             core_events_.error = &Enumerator::on_error;
             pw_core_add_listener(core_, &core_listener_, &core_events_, this);
             registry_ = pw_core_get_registry(core_, PW_VERSION_REGISTRY, 0);
+            if (registry_ == nullptr) {
+                spa_hook_remove(&core_listener_);
+                pw_core_disconnect(core_);
+                pw_context_destroy(context_);
+                pw_main_loop_destroy(loop_);
+                snap.connected = false;
+                return snap;
+            }
             registry_events_.version = PW_VERSION_REGISTRY_EVENTS;
             registry_events_.global = &Enumerator::on_global;
             pw_registry_add_listener(registry_, &registry_listener_, &registry_events_, this);

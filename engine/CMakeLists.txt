@@ -284,6 +284,12 @@ elseif(SAINE_ENGINE_BUILD_TEST_PLUGINS)
   saine_test_vst3(SaineTestLatencyVst3 SaineTestLatency test_plugins/saine_test_latency_vst3.cpp)
   add_custom_target(saine_test_plugins DEPENDS SaineTestGainClap SaineTestSineClap SaineTestCrashClap SaineTestGainVst3
     SaineTestLatencyClap SaineTestLatencyVst3)
+  if(WIN32)
+    # Win32 clap.gui for the editor host test (plugin_editor_window_win32_*).
+    saine_test_clap(SaineTestGuiClap SaineTestGui test_plugins/saine_test_gui_clap.cpp)
+    target_link_libraries(SaineTestGuiClap PRIVATE user32)
+    add_dependencies(saine_test_plugins SaineTestGuiClap)
+  endif()
 endif()
 
 # What the Rust crate builds (build.rs): library, scanner, CLAP test gain.
