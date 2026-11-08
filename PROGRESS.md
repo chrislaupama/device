@@ -42,4 +42,30 @@ cargo test --workspace                                                          
 
 ## Status log
 
-(see the milestone report at the bottom; updated each session)
+### 2026-11-08: session 1
+
+**Implemented and verified**
+- Reference baseline: the reference app identity, architecture inference (native C++ host + WKWebView UI), AX-measured
+  geometry of the main window, colour tokens, all browser tabs, Rheo panel, mixer, musical typing, 9 Settings pages,
+  menus, shortcut map, piano roll, clip context menu, instrument device panel (`reference/`).
+- Engine (C++23): 34/34 ctest (Release and ASan/UBSan), zero allocations on the audio path, Core Audio playback
+  (manual tool), bench: 128 tracks × 4 clips = 12.4 µs per 256-frame block (≈430× real-time, one thread, M4).
+- Core (Rust): model, validated invertible commands, undo/redo with coalescing, persistence, snapshots,
+  assistant layer (Assist/Teach), context-aware keymap: 28 tests.
+- FFI + end-to-end: 6 tests (ABI layout, multitrack summing with sample-accurate placement, mute/solo/gain/pan,
+  seek/stop/trim, peaks, export).
+- UI rendering decision: Slint 1.18.1 + wgpu 30.0.1, offscreen texture via `Image::try_from` (ADR 0001):
+  ≈0.15 ms CPU/frame for 8,192 clips at a locked 60 fps.
+
+**In progress**
+- `crates/saine-app`: high-fidelity shell + GPU timeline wired to core/engine, with automated screenshot diff
+  (`tools/compare/`). See `crates/saine-app/FIDELITY.md` when present.
+
+**Known gaps / next steps**
+1. Finish and verify the app shell, then iterate fidelity per region (header → browser → timeline → inspector).
+2. Reference capture still missing: audio clip appearance (needs a local WAV dropped onto a track), hover/pressed
+   states, animation timings, the rest of the shortcut bindings (scroll the Shortcuts page with mouse wheel events, not keys).
+3. Engine: device selection, input/recording, worker-pool parallel track rendering, WASAPI/ASIO and PipeWire/JACK backends.
+4. MIDI: model + piano roll + built-in instrument; plugin hosting (VST3/CLAP/AU) with an out-of-process scanner.
+5. Assistant: provider adapter (outside core), Rheo-equivalent panel, highlight overlay.
+6. Original branding and icons before any public release; the Söhne display face must not ship.

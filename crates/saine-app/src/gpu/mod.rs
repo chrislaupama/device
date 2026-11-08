@@ -66,7 +66,6 @@ impl DrawList {
 }
 
 struct Target {
-    texture: wgpu::Texture,
     view: wgpu::TextureView,
     size: (u32, u32),
     globals: wgpu::Buffer,
@@ -231,7 +230,7 @@ impl Renderer {
             contents: bytemuck::bytes_of(&Globals { target_size: [size.0 as f32, size.1 as f32], _pad: [0.0; 2] }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        self.target = Some(Target { texture: texture.clone(), view, size, globals });
+        self.target = Some(Target { view, size, globals });
         self.bind_group = None;
         Some(texture)
     }
@@ -307,5 +306,46 @@ impl Renderer {
             }
         }
         self.queue.submit([enc.finish()]);
+    }
+}
+
+/// Wrap a target texture for Slint (zero-copy import, ADR 0001).
+pub fn to_slint_image(tex: wgpu::Texture) -> Result<slint::Image, String> {
+    slint::Image::try_from(tex).map_err(|e| format!("{e:?}"))
+}
+
+/// Create our own instance/adapter/device and hand them to Slint
+/// (`WGPUConfiguration::Manual`), so we control the limits (Slint's automatic
+/// default is downlevel WebGL2 limits). Returns the config and an adapter description.
+pub fn make_wgpu_config() -> Result<(slint::wgpu_30::WGPUConfiguration, String), String> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        force_fallback_adapter: false,
+        compatible_surface: None,
+        ..Default::default()
+    }))
+    .map_err(|e| format!("no wgpu adapter: {e}"))?;
+    let info = adapter.get_info();
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("saine-ui"),
+        required_features: wgpu::Features::empty(),
+        required_limits: adapter.limits(),
+        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        memory_hints: wgpu::MemoryHints::Performance,
+        trace: wgpu::Trace::Off,
+    }))
+    .map_err(|e| format!("request_device: {e}"))?;
+    Ok((
+        slint::wgpu_30::WGPUConfiguration::Manual { instance, adapter, device, queue },
+        format!("{} ({:?}, {:?})", info.name, info.backend, info.device_type),
+    ))
+}
+
+/// Run `f` with the device/queue if the notifier's graphics API is wgpu 30.
+pub fn with_wgpu<R>(api: &slint::GraphicsAPI<'_>, f: impl FnOnce(&wgpu::Device, &wgpu::Queue) -> R) -> Option<R> {
+    match api {
+        slint::GraphicsAPI::WGPU30 { device, queue, .. } => Some(f(device, queue)),
+        _ => None,
     }
 }

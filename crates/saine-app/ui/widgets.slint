@@ -12,22 +12,27 @@ export component Panel inherits Rectangle {
 }
 
 // Stroked line icon. `d` is an SVG path in a 16x16 box.
-export component Icon inherits Path {
+export component Icon inherits Rectangle {
     in property <string> d;
-    in property <color> color: Tokens.icon;
+    in property <color> ink: Tokens.icon;
     in property <bool> filled: false;
+    in property <length> stroke-width: 1.3px;
     width: 16px;
     height: 16px;
-    commands: d;
-    viewbox-x: 0;
-    viewbox-y: 0;
-    viewbox-width: 16;
-    viewbox-height: 16;
-    stroke: filled ? transparent : color;
-    fill: filled ? color : transparent;
-    stroke-width: 1.3px;
-    stroke-line-cap: round;
-    stroke-line-join: round;
+    Path {
+        width: root.width;
+        height: root.height;
+        commands: root.d;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.filled ? transparent : root.ink;
+        fill: root.filled ? root.ink : transparent;
+        stroke-width: root.stroke-width;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+    }
 }
 
 // Icon path library (ORIGINAL drawings).
@@ -71,8 +76,9 @@ export global Icons {
 export component Pill inherits Rectangle {
     in property <string> text;
     in property <string> icon: "";
+    in property <int> weight: 600;
     in property <bool> active: false;
-    in property <length> font-size: 12px;
+    in property <length> font-size: 10px;
     in property <color> text-color: active ? Tokens.on-accent : #c9c9cc;
     callback clicked;
     border-radius: self.height / 2;
@@ -82,9 +88,9 @@ export component Pill inherits Rectangle {
         spacing: 5px;
         if root.icon != "": Rectangle {
             width: 12px;
-            Icon { d: root.icon; width: 12px; height: 12px; color: root.text-color; }
+            Icon { d: root.icon; width: 12px; height: 12px; ink: root.text-color; }
         }
-        Text { text: root.text; color: root.text-color; font-size: root.font-size; font-weight: 500; vertical-alignment: center; }
+        Text { text: root.text; color: root.text-color; font-size: root.font-size; font-weight: root.weight; vertical-alignment: center; }
     }
     TouchArea { clicked => { root.clicked(); } }
 }
@@ -92,14 +98,14 @@ export component Pill inherits Rectangle {
 // Square icon toggle/button.
 export component IconButton inherits Rectangle {
     in property <string> icon;
-    in property <color> color: Tokens.icon;
+    in property <color> ink: Tokens.icon;
     in property <length> icon-size: 16px;
     in property <bool> filled: false;
     in property <string> tooltip;
     callback clicked;
     accessible-role: button;
     accessible-label: tooltip;
-    Icon { d: root.icon; width: root.icon-size; height: root.icon-size; color: ta.has-hover ? Tokens.text-primary : root.color; filled: root.filled; }
+    Icon { d: root.icon; width: root.icon-size; height: root.icon-size; ink: ta.has-hover ? Tokens.text-primary : root.ink; filled: root.filled; }
     ta := TouchArea { clicked => { root.clicked(); } }
 }
 
@@ -108,7 +114,7 @@ export component SmallButton inherits Rectangle {
     in property <string> text;
     in property <bool> on: false;
     in property <color> on-color: Tokens.text-bright;
-    in property <length> font-size: 7.5px;
+    in property <length> font-size: 6px;
     callback clicked;
     border-radius: 2px;
     background: on ? on-color : Tokens.small-button;
@@ -155,13 +161,13 @@ export component Knob inherits Rectangle {
     in property <float> value-angle: 0;
     in property <bool> show-arc: false;
     in property <float> arc-from: -135;
-    in property <length> body: 17px;
+    in property <length> body: 15.5px;
     in property <color> tick-color: #b9d3e4;
     in property <float> value;      // current value forwarded to drags
     in property <float> min-value: -1;
     in property <float> max-value: 1;
     in property <float> sensitivity: 150; // px for the full range
-    callback changed(float);
+    callback value-changed(float);
     callback released();
     callback reset();
     property <float> start-value;
@@ -170,9 +176,9 @@ export component Knob inherits Rectangle {
     property <float> r: self.body / 1px / 2;
     // soft outer ring
     Rectangle {
-        width: root.body + 6px; height: root.body + 6px;
+        width: root.body + 7px; height: root.body + 7px;
         border-radius: self.width / 2;
-        background: #1c1d20;
+        background: @radial-gradient(circle, #111214 55%, #1c1d20 100%);
     }
     Rectangle {
         width: root.body; height: root.body;
@@ -206,7 +212,7 @@ export component Knob inherits Rectangle {
         stroke: root.tick-color;
         stroke-width: 1.2px;
         stroke-line-cap: round;
-        MoveTo { x: root.cx + root.r * 0.45 * sin(root.value-angle * 1deg); y: root.cy - root.r * 0.45 * cos(root.value-angle * 1deg); }
+        MoveTo { x: root.cx + root.r * 0.5 * sin(root.value-angle * 1deg); y: root.cy - root.r * 0.5 * cos(root.value-angle * 1deg); }
         LineTo { x: root.cx + root.r * 0.95 * sin(root.value-angle * 1deg); y: root.cy - root.r * 0.95 * cos(root.value-angle * 1deg); }
     }
     TouchArea {
@@ -216,7 +222,7 @@ export component Knob inherits Rectangle {
             if (e.kind == PointerEventKind.up) { root.released(); }
         }
         moved => {
-            root.changed(max(root.min-value, min(root.max-value,
+            root.value-changed(max(root.min-value, min(root.max-value,
                 root.start-value + (self.pressed-y - self.mouse-y) / 1px / root.sensitivity * (root.max-value - root.min-value))));
         }
         double-clicked => { root.reset(); }
@@ -241,8 +247,8 @@ export component Switch inherits Rectangle {
 // A text label positioned at an AX rect (x, y, height) with vertical centring.
 export component Label inherits Text {
     color: Tokens.text-primary;
-    font-size: 12.5px;
+    font-size: 10.5px;
     font-weight: 600;
     vertical-alignment: center;
-    height: 13px;
+    height: 14.5px; // fallback system font sits ~0.75 pt higher than Inter when centred in 13 pt
 }

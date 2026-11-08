@@ -1,0 +1,932 @@
+//! Application controller: owns the `Document`, talks to the engine, and
+//! translates UI gestures into `saine_core::Command`s.
+//!
+//! The UI never holds authoritative state. After every change we rebuild the
+//! engine snapshot (`snapshot::build` + `engine.publish`) and push fresh view
+//! models into the `Studio` Slint global. Transient gesture state (a clip being
+//! dragged) lives here only until the gesture ends and becomes one Command.
+
+use crate::peaks::{L0_FRAMES, PeakStore, Pyramid};
+use crate::timeline::{self, ClipVis, Hit, TrackVis, View, Zone};
+use crate::{AppWindow, ClipLabel, RulerLabel, Studio, TrackRow};
+use saine_core::{
+    Asset, AssetId, Clip, ClipId, ColorIndex, Command, Document, Origin, PPQ, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, gain_to_db, persist, snapshot,
+};
+use saine_engine::{AssetInfo, Engine, Meter};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::{Duration, Instant};
+
+// ------------------------------------------------------------------ value mappings
+
+/// Track/header volume slider position (0..1) for a linear gain. 0 dB sits at
+/// 0.85 of the travel (measured handle position in the reference), +6 dB at 1.
+pub const SLIDER_ZERO_DB: f32 = 0.85;
+pub fn slider_from_gain(g: f32) -> f32 {
+    if g <= 0.0 {
+        0.0
+    } else if g <= 1.0 {
+        SLIDER_ZERO_DB * g.cbrt()
+    } else {
+        (SLIDER_ZERO_DB + (1.0 - SLIDER_ZERO_DB) * gain_to_db(g) / 6.0).min(1.0)
+    }
+}
+pub fn gain_from_slider(p: f32) -> f32 {
+    let p = p.clamp(0.0, 1.0);
+    if p <= SLIDER_ZERO_DB { (p / SLIDER_ZERO_DB).powi(3) } else { db_to_gain(6.0 * (p - SLIDER_ZERO_DB) / (1.0 - SLIDER_ZERO_DB)) }
+}
+
+/// Inspector fader/meter scale: (dB, fraction of travel from the top), taken from
+/// the reference scale label positions (+6 … −48, −∞).
+const FADER_SCALE: [(f32, f32); 8] = [(6.0, 0.0), (0.0, 0.1126), (-6.0, 0.2115), (-12.0, 0.3104), (-24.0, 0.5), (-36.0, 0.6868), (-48.0, 0.8269), (-72.0, 1.0)];
+pub fn fader_from_db(db: f32) -> f32 {
+    if !db.is_finite() || db <= -72.0 {
+        return 1.0;
+    }
+    if db >= 6.0 {
+        return 0.0;
+    }
+    for w in FADER_SCALE.windows(2) {
+        let ((d0, f0), (d1, f1)) = (w[0], w[1]);
+        if db <= d0 && db >= d1 {
+            return f0 + (f1 - f0) * (d0 - db) / (d0 - d1);
+        }
+    }
+    1.0
+}
+pub fn db_from_fader(f: f32) -> f32 {
+    let f = f.clamp(0.0, 1.0);
+    if f >= 0.995 {
+        return f32::NEG_INFINITY;
+    }
+    for w in FADER_SCALE.windows(2) {
+        let ((d0, f0), (d1, f1)) = (w[0], w[1]);
+        if f >= f0 && f <= f1 {
+            return d0 + (d1 - d0) * (f - f0) / (f1 - f0);
+        }
+    }
+    f32::NEG_INFINITY
+}
+
+fn fmt_db(db: f32) -> String {
+    if !db.is_finite() || db < -99.0 { "−∞".into() } else { format!("{db:.2}").replace('-', "−") }
+}
+
+fn fmt_pan(p: f32) -> String {
+    let v = (p * 50.0).round() as i32;
+    match v {
+        0 => "C".into(),
+        v if v < 0 => format!("{}L", -v),
+        v => format!("{v}R"),
+    }
+}
+
+pub fn track_color(c: ColorIndex) -> [f32; 3] {
+    // 0 audio and 1 instrument are measured; the rest are ORIGINAL palette choices.
+    const PALETTE: [u32; 8] = [0x72b6d7, 0x8092eb, 0xd78f72, 0x8fd772, 0xd772b9, 0xd7c672, 0x72d7b4, 0xb38fe0];
+    timeline::rgb(PALETTE[c.0 as usize % PALETTE.len()])
+}
+
+fn slint_color(c: [f32; 3]) -> slint::Color {
+    slint::Color::from_rgb_f32(c[0], c[1], c[2])
+}
+
+// ------------------------------------------------------------------ background jobs
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ImportTarget {
+    /// Selected track if it is an audio track, else the first audio track, else a new one.
+    Selected,
+    NewTrack,
+}
+
+pub enum JobResult {
+    Imported { path: PathBuf, target: ImportTarget, at: Ticks, result: Result<(AssetInfo, Pyramid), String> },
+    /// Media of an opened project reloaded into the engine.
+    Reloaded { asset: AssetId, doc_epoch: u64, result: Result<(AssetInfo, Pyramid), String> },
+}
+
+/// Blocking decode + peak analysis. Runs on a worker thread.
+pub fn load_and_analyse(engine: &Engine, path: &Path) -> Result<(AssetInfo, Pyramid), String> {
+    let info = engine.load_file(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let pairs = (info.frames / L0_FRAMES as u64 + 1) as usize;
+    let l0 = engine.peaks(info.asset_id, 0, L0_FRAMES, pairs).map_err(|e| e.to_string())?;
+    Ok((info, Pyramid::from_level0(l0)))
+}
+
+// ------------------------------------------------------------------ gestures
+
+#[derive(Debug, Clone)]
+enum Drag {
+    Scrub,
+    Move { clip: ClipId, grab_beats: f64, orig_track: TrackId, orig_start: Ticks, track: TrackId, start: Ticks },
+    TrimLeft { clip: ClipId, orig: (Ticks, u64, u64), cur: (Ticks, u64, u64) },
+    TrimRight { clip: ClipId, orig: (Ticks, u64, u64), cur: (Ticks, u64, u64) },
+}
+
+// ------------------------------------------------------------------ controller
+
+pub struct Controller {
+    pub doc: Document,
+    pub engine: Arc<Engine>,
+    pub rate: f64,
+    asset_map: HashMap<AssetId, u64>,
+    pub peaks: PeakStore,
+    pub selected_track: Option<TrackId>,
+    pub selected_clip: Option<ClipId>,
+    pub view: View,
+    pub lanes_size: (f32, f32),
+    drag: Option<Drag>,
+    status: Option<(String, Instant, Duration)>,
+    pub project_dir: Option<PathBuf>,
+    jobs_tx: Sender<JobResult>,
+    jobs_rx: Receiver<JobResult>,
+    pub pending_jobs: usize,
+    doc_epoch: u64,
+    published_rev: Option<u64>,
+    ui_rev: Option<u64>,
+    pub ui_dirty: bool,
+    meters: Vec<Meter>,
+    sel_peak_hold: f32,
+    /// Displayed meter level (engine peaks are reset on every read, so the UI
+    /// applies its own release: hold the max, fall at 24 dB/s).
+    meter_disp: (f32, f32),
+    meter_t: Option<Instant>,
+    // models (kept to update in place)
+    tracks_model: Rc<VecModel<TrackRow>>,
+    ruler_model: Rc<VecModel<RulerLabel>>,
+    clips_model: Rc<VecModel<ClipLabel>>,
+    ruler_key: (i64, i64, i64),
+    pub clip_vis: Vec<ClipVis>,
+    pub track_vis: Vec<TrackVis>,
+    clip_ids: Vec<ClipId>,
+    /// Show status messages (disabled for pixel-comparison screenshots).
+    pub show_status: bool,
+}
+
+impl Controller {
+    pub fn new(engine: Arc<Engine>, project: Project) -> Self {
+        let (jobs_tx, jobs_rx) = channel();
+        let rate = engine.sample_rate();
+        let mut c = Controller {
+            doc: Document::new(project),
+            engine,
+            rate,
+            asset_map: HashMap::new(),
+            peaks: PeakStore::default(),
+            selected_track: None,
+            selected_clip: None,
+            view: View::default(),
+            lanes_size: (983.0, 398.5),
+            drag: None,
+            status: None,
+            project_dir: None,
+            jobs_tx,
+            jobs_rx,
+            pending_jobs: 0,
+            doc_epoch: 0,
+            published_rev: None,
+            ui_rev: None,
+            ui_dirty: true,
+            meters: Vec::new(),
+            sel_peak_hold: 0.0,
+            meter_disp: (0.0, 0.0),
+            meter_t: None,
+            tracks_model: Rc::new(VecModel::default()),
+            ruler_model: Rc::new(VecModel::default()),
+            clips_model: Rc::new(VecModel::default()),
+            ruler_key: (i64::MIN, 0, 0),
+            clip_vis: Vec::new(),
+            track_vis: Vec::new(),
+            clip_ids: Vec::new(),
+            show_status: true,
+        };
+        c.selected_track = c.doc.project().tracks.first().map(|t| t.id);
+        c.publish();
+        c
+    }
+
+    pub fn bind_models(&self, app: &AppWindow) {
+        let s = app.global::<Studio>();
+        s.set_tracks(ModelRc::from(self.tracks_model.clone()));
+        s.set_ruler_labels(ModelRc::from(self.ruler_model.clone()));
+        s.set_clip_labels(ModelRc::from(self.clip_ids_model()));
+    }
+
+    fn clip_ids_model(&self) -> Rc<VecModel<ClipLabel>> {
+        self.clips_model.clone()
+    }
+
+    pub fn project(&self) -> &Project {
+        self.doc.project()
+    }
+
+    pub fn set_status(&mut self, msg: impl Into<String>, secs: u64) {
+        let msg = msg.into();
+        eprintln!("[status] {msg}");
+        self.status = Some((msg, Instant::now(), Duration::from_secs(secs)));
+        self.ui_dirty = true;
+    }
+
+    // ---------------------------------------------------------------- core glue
+
+    pub fn execute(&mut self, cmd: Command) -> bool {
+        match self.doc.execute(cmd, Origin::User) {
+            Ok(()) => {
+                self.after_change();
+                true
+            }
+            Err(e) => {
+                self.set_status(format!("Edit rejected: {e}"), 4);
+                false
+            }
+        }
+    }
+
+    /// Publish a new engine snapshot if the document changed.
+    pub fn after_change(&mut self) {
+        let p = self.doc.project();
+        if let Some(t) = self.selected_track
+            && p.track(t).is_none()
+        {
+            self.selected_track = p.tracks.first().map(|t| t.id);
+        }
+        if let Some(c) = self.selected_clip
+            && p.clip(c).is_none()
+        {
+            self.selected_clip = None;
+        }
+        if self.published_rev != Some(self.doc.revision()) {
+            self.publish();
+        }
+        self.ui_dirty = true;
+    }
+
+    pub fn publish(&mut self) {
+        let (snap, _skipped) = snapshot::build(self.doc.project(), self.rate, &self.asset_map);
+        if let Err(e) = self.engine.publish(&snap) {
+            self.set_status(format!("Engine rejected the session: {e}"), 6);
+        }
+        self.published_rev = Some(self.doc.revision());
+    }
+
+    pub fn undo(&mut self) {
+        match self.doc.undo() {
+            Ok(true) => self.after_change(),
+            Ok(false) => {}
+            Err(e) => self.set_status(format!("Undo failed: {e}"), 4),
+        }
+    }
+
+    pub fn redo(&mut self) {
+        match self.doc.redo() {
+            Ok(true) => self.after_change(),
+            Ok(false) => {}
+            Err(e) => self.set_status(format!("Redo failed: {e}"), 4),
+        }
+    }
+
+    // ---------------------------------------------------------------- transport
+
+    pub fn play_toggle(&mut self) {
+        if !self.engine.device_running() {
+            self.set_status("No audio device: playback unavailable (offline mode)", 4);
+            return;
+        }
+        let r = if self.engine.transport().playing { self.engine.pause() } else { self.engine.play() };
+        if let Err(e) = r {
+            self.set_status(format!("Transport: {e}"), 4);
+        }
+        self.ui_dirty = true;
+    }
+
+    pub fn stop_return(&mut self) {
+        let _ = self.engine.stop();
+        self.pump_offline();
+        self.ui_dirty = true;
+    }
+
+    /// Transport commands are applied by the audio callback at block start. With
+    /// no device running, render one silent frame offline so seeks/stops still
+    /// take effect (the transport is never playing offline, so the position
+    /// does not advance).
+    fn pump_offline(&self) {
+        if !self.engine.device_running() && !self.engine.transport().playing {
+            let mut one = [0f32; 2];
+            let _ = self.engine.render_offline(&mut one);
+        }
+    }
+
+    pub fn playhead_ticks(&self) -> Ticks {
+        self.project().frames_to_ticks(self.engine.transport().position, self.rate)
+    }
+
+    pub fn seek_beats(&mut self, beats: f64) {
+        let ticks = (beats.max(0.0) * PPQ as f64).round() as Ticks;
+        let frame = self.project().ticks_to_frames(ticks, self.rate);
+        let _ = self.engine.seek(frame);
+        self.pump_offline();
+    }
+
+    // ---------------------------------------------------------------- track edits
+
+    pub fn select_track(&mut self, id: TrackId) {
+        if self.selected_track != Some(id) {
+            self.selected_track = Some(id);
+            if let Some(c) = self.selected_clip
+                && self.project().find_clip(c).map(|(t, _)| self.project().tracks[t].id) != Some(id)
+            {
+                self.selected_clip = None;
+            }
+            self.sel_peak_hold = 0.0;
+            self.meter_disp = (0.0, 0.0);
+            self.ui_dirty = true;
+        }
+    }
+
+    pub fn add_audio_track(&mut self) -> Option<TrackId> {
+        let track = Track::new(TrackId(0), TrackKind::Audio, "Audio", ColorIndex(0));
+        if self.execute(Command::AddTrack { index: None, track }) {
+            let id = self.project().tracks.last().map(|t| t.id);
+            if let Some(id) = id {
+                self.select_track(id);
+            }
+            return id;
+        }
+        None
+    }
+
+    pub fn delete_selection(&mut self) {
+        if let Some(c) = self.selected_clip.take() {
+            self.execute(Command::RemoveClip { clip: c });
+        } else if let Some(t) = self.selected_track {
+            let idx = self.project().track_index(t).unwrap_or(0);
+            if self.execute(Command::RemoveTrack { track: t }) {
+                let p = self.project();
+                self.selected_track = p.tracks.get(idx.min(p.tracks.len().saturating_sub(1))).map(|t| t.id);
+                self.ui_dirty = true;
+            }
+        }
+    }
+
+    pub fn toggle_mute(&mut self, id: TrackId) {
+        if let Some(t) = self.project().track(id) {
+            let mute = !t.mute;
+            self.execute(Command::SetTrackMute { track: id, mute });
+        }
+    }
+
+    pub fn toggle_solo(&mut self, id: TrackId) {
+        if let Some(t) = self.project().track(id) {
+            let solo = !t.solo;
+            self.execute(Command::SetTrackSolo { track: id, solo });
+        }
+    }
+
+    /// Continuous drags: the core coalesces consecutive SetTrackGain/Pan for one target.
+    pub fn set_track_gain(&mut self, id: TrackId, gain: f32) {
+        let gain = gain.clamp(0.0, saine_core::command::MAX_GAIN);
+        if self.project().track(id).map(|t| (t.gain - gain).abs() > 1e-7).unwrap_or(false) {
+            self.execute(Command::SetTrackGain { track: id, gain });
+        }
+    }
+
+    pub fn set_track_pan(&mut self, id: TrackId, pan: f32) {
+        let pan = (pan.clamp(-1.0, 1.0) * 100.0).round() / 100.0;
+        if self.project().track(id).map(|t| (t.pan - pan).abs() > 1e-7).unwrap_or(false) {
+            self.execute(Command::SetTrackPan { track: id, pan });
+        }
+    }
+
+    pub fn set_master_gain(&mut self, gain: f32) {
+        if (self.project().master_gain - gain).abs() > 1e-7 {
+            self.execute(Command::SetMasterGain { gain });
+        }
+    }
+
+    // ---------------------------------------------------------------- import / persistence
+
+    /// Import on worker threads; clips land at `at` (default: the playhead).
+    pub fn import_files(&mut self, paths: Vec<PathBuf>, target: ImportTarget, at: Option<Ticks>) {
+        let at = at.unwrap_or_else(|| self.playhead_ticks());
+        for (i, path) in paths.into_iter().enumerate() {
+            let engine = self.engine.clone();
+            let tx = self.jobs_tx.clone();
+            // Additional files go to new tracks so they line up at the playhead.
+            let target = if i == 0 { target } else { ImportTarget::NewTrack };
+            self.pending_jobs += 1;
+            std::thread::Builder::new()
+                .name("import".into())
+                .spawn(move || {
+                    let result = load_and_analyse(&engine, &path);
+                    let _ = tx.send(JobResult::Imported { path, target, at, result });
+                })
+                .expect("spawn import thread");
+        }
+        self.set_status("Importing…", 30);
+    }
+
+    /// Drain finished background jobs (called from a UI timer and each frame).
+    pub fn poll_jobs(&mut self) {
+        while let Ok(job) = self.jobs_rx.try_recv() {
+            self.pending_jobs = self.pending_jobs.saturating_sub(1);
+            match job {
+                JobResult::Imported { path, target, at, result } => match result {
+                    Ok((info, pyr)) => self.finish_import(&path, target, at, info, pyr),
+                    Err(e) => self.set_status(format!("Import failed: {e}"), 6),
+                },
+                JobResult::Reloaded { asset, doc_epoch, result } => {
+                    if doc_epoch != self.doc_epoch {
+                        if let Ok((info, _)) = result {
+                            let _ = self.engine.release_asset(info.asset_id);
+                        }
+                        continue;
+                    }
+                    match result {
+                        Ok((info, pyr)) => {
+                            self.peaks.insert(info.asset_id, pyr);
+                            self.asset_map.insert(asset, info.asset_id);
+                            self.publish();
+                            self.ui_dirty = true;
+                        }
+                        Err(e) => self.set_status(format!("Missing media: {e}"), 6),
+                    }
+                }
+            }
+            if self.pending_jobs == 0 && self.status.as_ref().is_some_and(|s| s.0.starts_with("Importing") || s.0.starts_with("Loading")) {
+                self.status = None;
+                self.ui_dirty = true;
+            }
+        }
+    }
+
+    fn finish_import(&mut self, path: &Path, target: ImportTarget, at: Ticks, info: AssetInfo, pyr: Pyramid) {
+        let p = self.project();
+        let mut next = p.next_id;
+        let mut alloc = || {
+            let id = next;
+            next += 1;
+            id
+        };
+        let asset_id = AssetId(alloc());
+        let native_frames = (info.frames as f64 * info.source_sample_rate / self.rate).round().max(1.0) as u64;
+        let asset = Asset {
+            id: asset_id,
+            relative_path: None,
+            absolute_path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()).to_string_lossy().into_owned(),
+            sample_rate: info.source_sample_rate,
+            channels: info.channels,
+            frames: native_frames,
+        };
+        let mut cmds = vec![Command::AddAsset { asset }];
+        let existing = match target {
+            ImportTarget::NewTrack => None,
+            ImportTarget::Selected => self
+                .selected_track
+                .and_then(|t| p.track(t))
+                .filter(|t| t.kind == TrackKind::Audio)
+                .or_else(|| p.tracks.iter().find(|t| t.kind == TrackKind::Audio))
+                .map(|t| t.id),
+        };
+        let track_id = existing.unwrap_or_else(|| {
+            let id = TrackId(alloc());
+            cmds.push(Command::AddTrack { index: None, track: Track::new(id, TrackKind::Audio, "Audio", ColorIndex(0)) });
+            id
+        });
+        let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Audio".into());
+        let clip_id = ClipId(alloc());
+        cmds.push(Command::AddClip {
+            track: track_id,
+            clip: Clip { id: clip_id, asset: asset_id, name, start: at.max(0), source_offset: 0, source_length: native_frames, gain: 1.0 },
+        });
+        // Engine asset must be known before the snapshot is published.
+        self.peaks.insert(info.asset_id, pyr);
+        self.asset_map.insert(asset_id, info.asset_id);
+        if self.execute(Command::Batch { label: "Import Audio".into(), commands: cmds }) {
+            self.selected_track = Some(track_id);
+            self.selected_clip = Some(clip_id);
+            self.ui_dirty = true;
+        } else {
+            self.asset_map.remove(&asset_id);
+            let _ = self.engine.release_asset(info.asset_id);
+        }
+    }
+
+    pub fn save_to(&mut self, dir: &Path) {
+        match persist::save(self.project(), dir) {
+            Ok(()) => {
+                self.doc.mark_saved();
+                self.project_dir = Some(dir.to_path_buf());
+                self.set_status(format!("Saved {}", dir.display()), 3);
+            }
+            Err(e) => self.set_status(format!("Save failed: {e}"), 6),
+        }
+    }
+
+    pub fn open(&mut self, dir: &Path) {
+        let loaded = match persist::load(dir) {
+            Ok(l) => l,
+            Err(e) => {
+                self.set_status(format!("Open failed: {e}"), 6);
+                return;
+            }
+        };
+        self.stop_return();
+        for (_, ea) in self.asset_map.drain() {
+            let _ = self.engine.release_asset(ea);
+        }
+        self.doc_epoch += 1;
+        self.doc = Document::new(loaded.project);
+        self.project_dir = Some(dir.to_path_buf());
+        self.selected_track = self.project().tracks.first().map(|t| t.id);
+        self.selected_clip = None;
+        self.view = View::default();
+        self.published_rev = None;
+        self.after_change();
+        let missing: std::collections::HashSet<String> = loaded.missing_media.into_iter().collect();
+        for a in self.project().assets.clone() {
+            if missing.contains(&a.absolute_path) {
+                continue;
+            }
+            let engine = self.engine.clone();
+            let tx = self.jobs_tx.clone();
+            let epoch = self.doc_epoch;
+            self.pending_jobs += 1;
+            std::thread::spawn(move || {
+                let result = load_and_analyse(&engine, Path::new(&a.absolute_path));
+                let _ = tx.send(JobResult::Reloaded { asset: a.id, doc_epoch: epoch, result });
+            });
+        }
+        if !missing.is_empty() {
+            self.set_status(format!("{} media file(s) missing", missing.len()), 6);
+        } else if self.pending_jobs > 0 {
+            self.set_status("Loading media…", 30);
+        }
+    }
+
+    // ---------------------------------------------------------------- view
+
+    pub fn scroll(&mut self, dx: f32, dy: f32, x: f32, zoom: bool) {
+        if zoom {
+            self.view.zoom_at((dy as f64 * 0.01).exp(), x);
+        } else {
+            self.view.start_beats -= dx as f64 / self.view.px_per_beat;
+            self.view.scroll_y -= dy as f64;
+            self.view.clamp();
+        }
+        let n = self.project().tracks.len();
+        self.view.clamp_scroll(n, self.lanes_size.1);
+    }
+
+    // ---------------------------------------------------------------- lane gestures
+
+    fn beats_per_bar(&self) -> f64 {
+        self.project().ticks_per_bar() as f64 / PPQ as f64
+    }
+
+    pub fn hover(&self, x: f32, y: f32) -> i32 {
+        match timeline::hit_test(&self.view, self.lanes_size, self.project().tracks.len(), &self.clip_vis, x, y) {
+            Hit::Clip { zone: Zone::Left | Zone::Right, .. } => 1,
+            Hit::Clip { zone: Zone::Body, .. } => 2,
+            _ => 0,
+        }
+    }
+
+    fn clip_region(&self, id: ClipId) -> Option<(TrackId, Ticks, u64, u64, f64, u64)> {
+        let p = self.project();
+        let (ti, ci) = p.find_clip(id)?;
+        let c = &p.tracks[ti].clips[ci];
+        let a = p.asset(c.asset)?;
+        Some((p.tracks[ti].id, c.start, c.source_offset, c.source_length, a.sample_rate, a.frames))
+    }
+
+    pub fn pointer(&mut self, kind: i32, x: f32, y: f32) {
+        let beat = self.view.beat_at(x).max(0.0);
+        match kind {
+            0 => {
+                let hit = timeline::hit_test(&self.view, self.lanes_size, self.project().tracks.len(), &self.clip_vis, x, y);
+                match hit {
+                    Hit::Ruler => {
+                        self.seek_beats(beat);
+                        self.drag = Some(Drag::Scrub);
+                    }
+                    Hit::Clip { index, zone } => {
+                        let id = self.clip_ids[index];
+                        let Some((track, start, off, len, _, _)) = self.clip_region(id) else { return };
+                        self.select_track(track);
+                        self.selected_clip = Some(id);
+                        self.drag = Some(match zone {
+                            Zone::Body => Drag::Move { clip: id, grab_beats: beat - start as f64 / PPQ as f64, orig_track: track, orig_start: start, track, start },
+                            Zone::Left => Drag::TrimLeft { clip: id, orig: (start, off, len), cur: (start, off, len) },
+                            Zone::Right => Drag::TrimRight { clip: id, orig: (start, off, len), cur: (start, off, len) },
+                        });
+                    }
+                    Hit::Track(i) => {
+                        let id = self.project().tracks[i].id;
+                        self.select_track(id);
+                        self.selected_clip = None;
+                        self.seek_beats(beat);
+                    }
+                    Hit::Empty => self.selected_clip = None,
+                    Hit::Master => {}
+                }
+                self.ui_dirty = true;
+            }
+            1 => {
+                let Some(drag) = self.drag.clone() else { return };
+                let snap = |b: f64| (b.max(0.0).round() * PPQ as f64) as Ticks; // snap to beat
+                match drag {
+                    Drag::Scrub => self.seek_beats(beat),
+                    Drag::Move { clip, grab_beats, orig_track, orig_start, .. } => {
+                        let start = snap(beat - grab_beats);
+                        let p = self.project();
+                        let kind = p.track(orig_track).map(|t| t.kind);
+                        let track = self
+                            .view
+                            .track_at(y)
+                            .and_then(|i| p.tracks.get(i))
+                            .filter(|t| Some(t.kind) == kind)
+                            .map(|t| t.id)
+                            .unwrap_or(orig_track);
+                        self.drag = Some(Drag::Move { clip, grab_beats, orig_track, orig_start, track, start });
+                    }
+                    Drag::TrimLeft { clip, orig, .. } => {
+                        let Some((_, _, _, _, rate, _)) = self.clip_region(clip) else { return };
+                        let (s0, off0, len0) = orig;
+                        let p = self.project();
+                        let mut start = snap(beat);
+                        // Frames of source material before the current offset.
+                        let min_start = s0 - p.seconds_to_ticks(off0 as f64 / rate);
+                        let max_start = s0 + p.seconds_to_ticks(len0 as f64 / rate) - PPQ / 4;
+                        start = start.clamp(min_start.max(0), max_start.max(s0));
+                        let delta = ((p.ticks_to_seconds(start - s0)) * rate).round() as i64;
+                        let off = (off0 as i64 + delta).max(0) as u64;
+                        let len = (len0 as i64 - (off as i64 - off0 as i64)).max(1) as u64;
+                        self.drag = Some(Drag::TrimLeft { clip, orig, cur: (start, off, len) });
+                    }
+                    Drag::TrimRight { clip, orig, .. } => {
+                        let Some((_, _, _, _, rate, frames)) = self.clip_region(clip) else { return };
+                        let (s0, off0, _) = orig;
+                        let p = self.project();
+                        let end = snap(beat).max(s0 + PPQ / 4);
+                        let len = ((p.ticks_to_seconds(end - s0)) * rate).round() as u64;
+                        let len = len.clamp(1, frames - off0);
+                        self.drag = Some(Drag::TrimRight { clip, orig, cur: (s0, off0, len) });
+                    }
+                }
+                self.ui_dirty = true;
+            }
+            _ => {
+                match self.drag.take() {
+                    Some(Drag::Move { clip, orig_track, orig_start, track, start, .. }) if (track, start) != (orig_track, orig_start) => {
+                        self.execute(Command::MoveClip { clip, track, start });
+                        self.select_track(track);
+                    }
+                    Some(Drag::TrimLeft { clip, orig, cur } | Drag::TrimRight { clip, orig, cur }) if orig != cur => {
+                        self.execute(Command::TrimClip { clip, start: cur.0, source_offset: cur.1, source_length: cur.2 });
+                    }
+                    _ => {}
+                }
+                self.ui_dirty = true;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- per-frame
+
+    /// Rebuild the clip/track visuals (positions include in-progress drag previews).
+    pub fn rebuild_vis(&mut self) {
+        let p = self.doc.project();
+        self.track_vis = p.tracks.iter().map(|t| TrackVis { selected: Some(t.id) == self.selected_track }).collect();
+        self.clip_vis.clear();
+        self.clip_ids.clear();
+        for (ti, t) in p.tracks.iter().enumerate() {
+            for c in &t.clips {
+                let (mut track_index, mut start, mut off, mut len) = (ti, c.start, c.source_offset, c.source_length);
+                match &self.drag {
+                    Some(Drag::Move { clip, track, start: s, .. }) if *clip == c.id => {
+                        track_index = p.track_index(*track).unwrap_or(ti);
+                        start = *s;
+                    }
+                    Some(Drag::TrimLeft { clip, cur, .. } | Drag::TrimRight { clip, cur, .. }) if *clip == c.id => {
+                        (start, off, len) = *cur;
+                    }
+                    _ => {}
+                }
+                let rate = p.asset(c.asset).map(|a| a.sample_rate).unwrap_or(self.rate);
+                let len_beats = p.seconds_to_ticks(len as f64 / rate) as f64 / PPQ as f64;
+                let ratio = self.rate / rate;
+                let wave = self.asset_map.get(&c.asset).and_then(|ea| self.peaks.slot(*ea)).map(|slot| (slot, off as f64 * ratio, len as f64 * ratio));
+                self.clip_vis.push(ClipVis {
+                    track_index,
+                    start_beats: start as f64 / PPQ as f64,
+                    len_beats,
+                    color: track_color(t.color),
+                    selected: Some(c.id) == self.selected_clip,
+                    name: c.name.clone(),
+                    wave,
+                });
+                self.clip_ids.push(c.id);
+            }
+        }
+    }
+
+    pub fn scene<'a>(&'a self, scale: f32) -> timeline::Scene<'a> {
+        let p = self.project();
+        let tr = &p.transport;
+        timeline::Scene {
+            view: self.view,
+            size: self.lanes_size,
+            scale,
+            tracks: &self.track_vis,
+            clips: &self.clip_vis,
+            playhead_beats: self.playhead_ticks() as f64 / PPQ as f64,
+            loop_beats: (tr.loop_start as f64 / PPQ as f64, tr.loop_end as f64 / PPQ as f64),
+            beats_per_bar: self.beats_per_bar(),
+            frames_per_beat: self.rate * 60.0 / tr.bpm,
+        }
+    }
+
+    /// Push transport readouts, meters and (when dirty) models to Slint.
+    /// Returns true while something is animating (playing, meters decaying, jobs).
+    pub fn update_ui(&mut self, app: &AppWindow) -> bool {
+        let s = app.global::<Studio>();
+        let tp = self.engine.transport();
+        let p = self.doc.project();
+        // Transport readouts from the engine.
+        let ticks = p.frames_to_ticks(tp.position, self.rate).max(0);
+        let bar = ticks / p.ticks_per_bar() + 1;
+        let secs = tp.position.max(0) as f64 / self.rate;
+        let ms_total = (secs * 1000.0).floor() as i64;
+        let set_if = |cur: SharedString, new: String, f: &dyn Fn(SharedString)| {
+            if cur.as_str() != new {
+                f(new.into());
+            }
+        };
+        set_if(s.get_bar_text(), format!("{bar:03}"), &|v| s.set_bar_text(v));
+        set_if(s.get_time_text(), format!("{:02}:{:02}.{:03}", ms_total / 60_000, (ms_total / 1000) % 60, ms_total % 1000), &|v| s.set_time_text(v));
+        if s.get_playing() != tp.playing {
+            s.set_playing(tp.playing);
+        }
+
+        // Meters (master first, then tracks).
+        self.engine.meters(&mut self.meters, 256);
+        let sel_id = self.selected_track.map(|t| t.0).unwrap_or(u64::MAX);
+        let (nl, nr) = self.meters.iter().find(|m| m.track_id == sel_id).map(|m| (m.peak_l, m.peak_r)).unwrap_or((0.0, 0.0));
+        let now = Instant::now();
+        let dt = self.meter_t.map(|t| (now - t).as_secs_f32()).unwrap_or(0.0).min(0.25);
+        self.meter_t = Some(now);
+        let fall = db_to_gain(-24.0 * dt);
+        let ml = nl.max(self.meter_disp.0 * fall);
+        let mr = nr.max(self.meter_disp.1 * fall);
+        self.meter_disp = (if ml < 1e-5 { 0.0 } else { ml }, if mr < 1e-5 { 0.0 } else { mr });
+        let (ml, mr) = self.meter_disp;
+        let fl = fader_from_db(gain_to_db(ml));
+        let fr = fader_from_db(gain_to_db(mr));
+        if (s.get_sel_meter_l() - fl).abs() > 1e-4 || (s.get_sel_meter_r() - fr).abs() > 1e-4 {
+            s.set_sel_meter_l(fl);
+            s.set_sel_meter_r(fr);
+        }
+        // Peak hold readout (since selection change), like the reference "−∞" button.
+        self.sel_peak_hold = self.sel_peak_hold.max(ml.max(mr));
+        let peak_text = fmt_db(gain_to_db(self.sel_peak_hold));
+        if s.get_sel_peak_text().as_str() != peak_text {
+            s.set_sel_peak_text(peak_text.into());
+        }
+        let metering = ml > 1e-5 || mr > 1e-5;
+
+        // Status expiry.
+        if let Some((_, t0, d)) = &self.status
+            && t0.elapsed() > *d
+        {
+            self.status = None;
+            self.ui_dirty = true;
+        }
+
+        if self.ui_rev != Some(self.doc.revision()) {
+            self.ui_dirty = true;
+        }
+        if self.ui_dirty {
+            self.ui_dirty = false;
+            self.ui_rev = Some(self.doc.revision());
+            self.push_models(app);
+        }
+        self.view.clamp_scroll(self.project().tracks.len(), self.lanes_size.1);
+        s.set_scroll_y(self.view.scroll_y as f32);
+        self.update_labels();
+        tp.playing || metering || self.pending_jobs > 0 || self.drag.is_some()
+    }
+
+    fn push_models(&mut self, app: &AppWindow) {
+        self.rebuild_vis();
+        let s = app.global::<Studio>();
+        let p = self.doc.project();
+        let rows: Vec<TrackRow> = p
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| TrackRow {
+                id: t.id.0 as i32,
+                number: i as i32 + 1,
+                name: t.name.clone().into(),
+                instrument: t.kind == TrackKind::Instrument,
+                color: slint_color(track_color(t.color)),
+                selected: Some(t.id) == self.selected_track,
+                mute: t.mute,
+                solo: t.solo,
+                volume_pos: slider_from_gain(t.gain),
+                pan: t.pan,
+            })
+            .collect();
+        if self.tracks_model.row_count() == rows.len() {
+            for (i, r) in rows.into_iter().enumerate() {
+                if self.tracks_model.row_data(i).as_ref() != Some(&r) {
+                    self.tracks_model.set_row_data(i, r);
+                }
+            }
+        } else {
+            self.tracks_model.set_vec(rows);
+        }
+        s.set_project_name(p.name.clone().into());
+        s.set_bpm_text(format!("{}", p.transport.bpm.round() as i64).into());
+        s.set_sig_text(format!("{}/{}", p.transport.time_signature.numerator, p.transport.time_signature.denominator).into());
+        s.set_master_pos(slider_from_gain(p.master_gain));
+        let sel = self.selected_track.and_then(|t| p.track(t).map(|tr| (p.track_index(t).unwrap(), tr)));
+        s.set_has_selection(sel.is_some());
+        if let Some((i, t)) = sel {
+            s.set_sel_id(t.id.0 as i32);
+            s.set_sel_number(i as i32 + 1);
+            s.set_sel_name(t.name.clone().into());
+            s.set_sel_instrument(t.kind == TrackKind::Instrument);
+            s.set_sel_color(slint_color(track_color(t.color)));
+            s.set_sel_mute(t.mute);
+            s.set_sel_solo(t.solo);
+            s.set_sel_pan(t.pan);
+            s.set_sel_pan_text(fmt_pan(t.pan).into());
+            let db = gain_to_db(t.gain);
+            s.set_sel_fader(fader_from_db(db));
+            s.set_sel_db_text(fmt_db(db).into());
+        }
+        let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };
+        s.set_status_text(status.into());
+        self.ruler_key.0 = i64::MIN; // force label refresh
+    }
+
+    fn update_labels(&mut self) {
+        let v = self.view;
+        let key = ((v.start_beats * 4096.0) as i64, (v.px_per_beat * 4096.0) as i64, self.lanes_size.0 as i64);
+        if key != self.ruler_key {
+            self.ruler_key = key;
+            let labels = timeline::ruler_labels(&v, self.lanes_size.0, self.beats_per_bar());
+            self.ruler_model.set_vec(labels.into_iter().map(|(x, t)| RulerLabel { x, text: t.into() }).collect::<Vec<_>>());
+        }
+        let w = self.lanes_size.0;
+        let bottom = self.lanes_size.1 - timeline::MASTER_H;
+        let labels: Vec<ClipLabel> = self
+            .clip_vis
+            .iter()
+            .filter_map(|c| {
+                let (x, y, cw, _) = c.rect(&v);
+                if x > w || x + cw < 0.0 || y < timeline::RULER_H - 1.0 || y + timeline::CLIP_HEADER > bottom {
+                    return None;
+                }
+                let x0 = x.max(0.0);
+                Some(ClipLabel { x: x0, y, w: (x + cw).min(w) - x0, text: c.name.clone().into(), selected: c.selected })
+            })
+            .collect();
+        let same = self.clips_model.row_count() == labels.len() && labels.iter().enumerate().all(|(i, l)| self.clips_model.row_data(i).as_ref() == Some(l));
+        if !same {
+            self.clips_model.set_vec(labels);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn slider_mapping_roundtrip() {
+        for g in [0.0f32, 0.1, 0.5, 1.0, 1.5, 1.99] {
+            let p = slider_from_gain(g);
+            assert!((gain_from_slider(p) - g).abs() < 1e-3, "{g} -> {p}");
+        }
+        assert!((slider_from_gain(1.0) - 0.85).abs() < 1e-6);
+    }
+    #[test]
+    fn fader_mapping() {
+        assert!((fader_from_db(0.0) - 0.1126).abs() < 1e-4);
+        assert!((db_from_fader(0.5) + 24.0).abs() < 1e-3);
+        assert_eq!(fader_from_db(f32::NEG_INFINITY), 1.0);
+        assert!(db_from_fader(1.0).is_infinite());
+    }
+    #[test]
+    fn pan_text() {
+        assert_eq!(fmt_pan(0.0), "C");
+        assert_eq!(fmt_pan(-0.5), "25L");
+        assert_eq!(fmt_pan(1.0), "50R");
+    }
+}
