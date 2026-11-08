@@ -13,7 +13,7 @@ use crate::assistant_provider::Provider;
 use crate::mixer::{self, Ballistics, MASTER_METER_ID};
 use crate::pianoroll::{self, PrState};
 use crate::synth::SynthUi;
-use crate::{AppWindow, ChatEntry, ChoiceItem, ClipLabel, HighlightRect, MenuItem, MixerStrip, RulerLabel, StripMeter, Studio, SynthDisplay, SynthParam, TrackRow, YLabel};
+use crate::{AppWindow, ChatEntry, ChoiceItem, ClipLabel, DeviceCard, HighlightRect, MenuItem, MixerStrip, PluginRow, RulerLabel, StripMeter, Studio, SynthDisplay, SynthParam, TrackRow, TreeRow, YLabel};
 use saine_core::{
     Asset, AssetId, Clip, ClipId, ColorIndex, Command, Document, MidiClip, Origin, PPQ, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, gain_to_db, persist, snapshot,
 };
@@ -123,6 +123,8 @@ pub enum JobResult {
     Recorded { doc_epoch: u64, takes: Vec<(saine_engine::RecordedTake, Result<(AssetInfo, Pyramid), String>)> },
     /// Settings › Audio "Test" tone loaded into the engine.
     TestTone(Result<AssetInfo, String>),
+    /// Plugin catalogue scan finished (src/devices.rs).
+    PluginScan(Result<saine_engine::ScanReport, String>),
 }
 
 /// Blocking decode + peak analysis. Runs on a worker thread.
@@ -261,6 +263,15 @@ pub struct Controller {
     pub settings: crate::settings::SettingsState,
     pub(crate) input_menu_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) settings_menu_model: Rc<VecModel<ChoiceItem>>,
+    // ---- plugin devices (src/devices.rs) ----
+    pub devices: crate::devices::DevicesUi,
+    pub(crate) tree_model: Rc<VecModel<TreeRow>>,
+    pub(crate) cards_model: Rc<VecModel<DeviceCard>>,
+    pub(crate) add_results_model: Rc<VecModel<MenuItem>>,
+    pub(crate) devmenu_model: Rc<VecModel<MenuItem>>,
+    pub(crate) scan_dirs_model: Rc<VecModel<PluginRow>>,
+    pub(crate) plugin_rows_model: Rc<VecModel<PluginRow>>,
+    pub(crate) plugin_failed_model: Rc<VecModel<PluginRow>>,
 }
 
 impl Controller {
@@ -328,6 +339,14 @@ impl Controller {
             settings: Default::default(),
             input_menu_model: Rc::new(VecModel::default()),
             settings_menu_model: Rc::new(VecModel::default()),
+            devices: Default::default(),
+            tree_model: Rc::new(VecModel::default()),
+            cards_model: Rc::new(VecModel::default()),
+            add_results_model: Rc::new(VecModel::default()),
+            devmenu_model: Rc::new(VecModel::default()),
+            scan_dirs_model: Rc::new(VecModel::default()),
+            plugin_rows_model: Rc::new(VecModel::default()),
+            plugin_failed_model: Rc::new(VecModel::default()),
         };
         c.selected_track = c.doc.project().tracks.first().map(|t| t.id);
         c.publish();
@@ -353,6 +372,13 @@ impl Controller {
         s.set_synth_menu_items(ModelRc::from(self.synth_menu_model.clone()));
         s.set_input_menu_items(ModelRc::from(self.input_menu_model.clone()));
         s.set_settings_menu_items(ModelRc::from(self.settings_menu_model.clone()));
+        s.set_tree(ModelRc::from(self.tree_model.clone()));
+        s.set_device_cards(ModelRc::from(self.cards_model.clone()));
+        s.set_add_results(ModelRc::from(self.add_results_model.clone()));
+        s.set_devmenu_items(ModelRc::from(self.devmenu_model.clone()));
+        s.set_scan_dirs(ModelRc::from(self.scan_dirs_model.clone()));
+        s.set_plugin_rows(ModelRc::from(self.plugin_rows_model.clone()));
+        s.set_plugin_failed(ModelRc::from(self.plugin_failed_model.clone()));
         let pages: Vec<SharedString> = crate::settings::PAGES.iter().map(|p| SharedString::from(*p)).collect();
         s.set_settings_pages(ModelRc::new(VecModel::from(pages)));
     }
@@ -407,6 +433,7 @@ impl Controller {
         if self.published_rev != Some(self.doc.revision()) {
             self.publish();
         }
+        self.devices_after_change();
         self.ui_dirty = true;
     }
 
@@ -653,6 +680,7 @@ impl Controller {
                 JobResult::Assistant { started, mode, result } => self.finish_assistant(started, mode, result),
                 JobResult::Recorded { doc_epoch, takes } => self.finish_recorded(doc_epoch, takes),
                 JobResult::TestTone(r) => self.finish_test_tone(r),
+                JobResult::PluginScan(r) => self.finish_plugin_scan(r),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
                     if doc_epoch != self.doc_epoch {
                         if let Ok((info, _)) = result {
@@ -732,6 +760,7 @@ impl Controller {
 
     /// Start over with `project` (no undo history). Used by `--state` setups.
     pub fn replace_project(&mut self, project: Project) {
+        self.close_all_editors();
         self.doc_epoch += 1;
         self.doc = Document::new(project);
         self.selected_track = self.project().tracks.first().map(|t| t.id);
@@ -741,6 +770,9 @@ impl Controller {
     }
 
     pub fn save_to(&mut self, dir: &Path) {
+        // Plugin instances own their state: pull it into the model first (no undo step).
+        let states = self.engine.plugin_states();
+        self.doc.sync_device_states(&states);
         match persist::save(self.project(), dir) {
             Ok(()) => {
                 self.doc.mark_saved();
@@ -760,6 +792,7 @@ impl Controller {
             }
         };
         self.stop_return();
+        self.close_all_editors();
         for (_, ea) in self.asset_map.drain() {
             let _ = self.engine.release_asset(ea);
         }
@@ -771,6 +804,7 @@ impl Controller {
         self.view = View::default();
         self.published_rev = None;
         self.after_change();
+        self.devices_after_open();
         let missing: std::collections::HashSet<String> = loaded.missing_media.into_iter().collect();
         for a in self.project().assets.clone() {
             if missing.contains(&a.absolute_path) {
@@ -1067,6 +1101,17 @@ impl Controller {
     /// Returns true while something is animating (playing, meters decaying, jobs).
     pub fn update_ui(&mut self, app: &AppWindow) -> bool {
         let s = app.global::<Studio>();
+        {
+            let scale = app.window().scale_factor();
+            let sz = app.window().size();
+            let win = (sz.width as f32 / scale, sz.height as f32 / scale);
+            let sounds = s.get_sounds_visible();
+            if win != self.devices.win || sounds != self.devices.sounds {
+                self.devices.win = win;
+                self.devices.sounds = sounds;
+                self.ui_dirty = true;
+            }
+        }
         let tp = self.engine.transport();
         let p = self.doc.project();
         // Transport readouts from the engine.
@@ -1276,6 +1321,7 @@ impl Controller {
         self.push_synth(&s);
         self.push_recording(&s);
         self.push_settings(&s);
+        self.push_devices(&s);
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };
         s.set_status_text(status.into());
         self.ruler_key.0 = i64::MIN; // force label refresh

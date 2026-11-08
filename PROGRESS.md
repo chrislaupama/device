@@ -128,3 +128,13 @@ cargo test --workspace                                                          
   `SAINE_TEST_REAL_INPUT=1 cargo test -p saine-engine --test real_loopback -- --ignored --nocapture`) found the
   latency compensation 18.5 ms too early (an extra IO buffer per side); fixed, residual now +2.7..6.2 ms late.
   Next: per-device manual recording offset (calibration) in Settings › Audio.
+
+### 2026-11-08: session 1, round 7 (plugin hosting)
+- Core: device chains (`Track.devices`, `Track.instrument_plugin`), commands, base64 plugin state,
+  `Document::sync_device_states`; ADR 0003.
+- Engine: AU/VST3 (SDK v3.8.1, MIT)/CLAP (1.2.10, MIT) hosting, publish v5, out-of-process scanner with cache and
+  blocklist, sample-accurate instrument plugins, state save/restore, native editor windows; own test plugins
+  (VST3/CLAP gain, CLAP sine, crashing CLAP). 111/111 ctest (default + ASan). Scan on the dev Mac: 68 plugins.
+- App: browser Devices tab from the real catalog, device cards (power, editor, remove, reorder), Add device
+  menus, Inst selector, Settings › Plugins with rescan, plugin state synced on save. Self-test 120/120 both modes.
+- Screenshot states only show Apple's built-in AUs; never commit names of the user's installed plugins.

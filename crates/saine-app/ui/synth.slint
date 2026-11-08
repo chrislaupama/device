@@ -288,10 +288,10 @@ export component SynthDevice inherits Rectangle {
         TouchArea { clicked => { Studio.synth-placeholder("Device bypass"); } }
     }
     Text { x: 37.5px; y: 6px; height: 14px; text: "Synth"; color: #ffffff; font-size: 9.75px; font-weight: 700; vertical-alignment: center; }
-    // Device type menu: PLACEHOLDER (only the built-in Synth exists).
+    // Instrument menu (real): built-in Synth or an instrument plugin (SetInstrumentPlugin).
     Icon {
         x: 69px; y: 7px; width: 12px; height: 12px; d: Icons.chevron-down; ink: SynthStyle.dim; stroke-width: 1.2px;
-        TouchArea { clicked => { Studio.synth-placeholder("Instrument menu"); } }
+        TouchArea { clicked => { Studio.open-inst-menu(root.absolute-position.x + 30px, root.absolute-position.y + 24px); } }
     }
     // Sparkle: PLACEHOLDER. Sits 7 pt left of the preset name.
     Icon { x: preset.x - 21px; y: 6px; width: 14px; height: 14px; d: Icons.sparkle; ink: SynthStyle.dim; stroke-width: 1.1px;

@@ -5,9 +5,10 @@
 //!
 //! ```text
 //! saine-studio [--open <dir>] [--import <wav>...] [--save-to <dir>] [--no-audio]
-//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-settings-audio|review-recording]
+//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-settings-audio|reference-devices-effects|review-recording|review-device-chain|review-settings-plugins]
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
+//!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
 //!              [--screenshot <out.png>] [--exit-after-frames N] [--frame-stats] [--self-test]
 //! ```
 
@@ -15,6 +16,7 @@ mod assistant_panel;
 mod assistant_provider;
 mod clipedit;
 mod controller;
+mod devices;
 mod gpu;
 mod highlight;
 mod mixer;
@@ -66,7 +68,14 @@ struct Args {
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
     /// the live recording clip. Not a reference capture (the reference recording UI was not captured).
     recording_review: bool,
+    /// reference-devices-effects (05): browser Devices › Effects sub-tab.
+    devices_effects_state: bool,
+    /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
+    device_chain_review: bool,
+    /// review-settings-plugins: Settings open on the Plugins page (no reference comparison).
+    plugins_page_review: bool,
     assistant_fixture: Option<PathBuf>,
+    plugin_fixture: Option<PathBuf>,
     screenshot: Option<PathBuf>,
     exit_after_frames: Option<u64>,
     frame_stats: bool,
@@ -124,6 +133,18 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.settings_state = true;
                 }
+                "reference-devices-effects" => {
+                    a.reference_default = true;
+                    a.devices_effects_state = true;
+                }
+                "review-device-chain" => {
+                    a.reference_default = true;
+                    a.device_chain_review = true;
+                }
+                "review-settings-plugins" => {
+                    a.reference_default = true;
+                    a.plugins_page_review = true;
+                }
                 "review-recording" => {
                     a.reference_default = true;
                     a.recording_review = true;
@@ -131,12 +152,13 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, review-recording, review-device-chain, review-settings-plugins)"
                     ));
                 }
             },
             "--synth-page" => a.synth_page = Some(value(&mut i)?.parse().map_err(|e| format!("--synth-page: {e}"))?),
             "--assistant-fixture" => a.assistant_fixture = Some(value(&mut i)?.into()),
+            "--plugin-fixture" => a.plugin_fixture = Some(value(&mut i)?.into()),
             "--screenshot" => a.screenshot = Some(value(&mut i)?.into()),
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
@@ -147,7 +169,7 @@ fn parse_args() -> Result<Args, String> {
                 a.audio = v[i] == "--self-test-audio";
             }
             "-h" | "--help" => {
-                println!("{}", include_str!("main.rs").lines().skip(6).take(6).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
+                println!("{}", include_str!("main.rs").lines().skip(6).take(7).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
                 std::process::exit(0);
             }
             other => return Err(format!("unknown argument {other}")),
@@ -252,7 +274,12 @@ pub fn app_keymap() -> Keymap {
 }
 
 fn app_text_focused(aw: &slint::Weak<AppWindow>) -> bool {
-    aw.upgrade().map(|a| a.global::<Studio>().get_chat_focused() || a.global::<Studio>().get_rename_open()).unwrap_or(false)
+    aw.upgrade()
+        .map(|a| {
+            let s = a.global::<Studio>();
+            s.get_chat_focused() || s.get_rename_open() || s.get_search_focused()
+        })
+        .unwrap_or(false)
 }
 
 fn pick_import() -> Vec<PathBuf> {
@@ -311,6 +338,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.input_menu_close();
             c.menu_close();
             c.synth_menu_dismiss();
+            c.devmenu_dismiss();
             c.rename = None;
             c.ui_dirty = true;
         }
@@ -420,7 +448,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = AppWindow::new()?;
     let studio = app.global::<Studio>();
-    studio.set_tree(slint::ModelRc::new(slint::VecModel::from(placeholder::device_tree())));
 
     let ctl: Ctl = Rc::new(RefCell::new(Controller::new(engine.clone(), Project::default())));
     ctl.borrow().bind_models(&app);
@@ -447,6 +474,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         c.mixer_open = args.open_mixer;
         c.assistant_open = args.open_assistant;
+        // Plugin catalogue: the scan cache in the app support directory (startup reads the cache;
+        // Settings › Plugins can force a rescan). The self-test uses its own cache file and never
+        // touches the user's. --plugin-fixture (TEST seam) replaces the scan entirely.
+        c.devices.catalog.cache_path = if args.self_test {
+            Some(std::env::temp_dir().join("saine-selftest-plugin-cache.json"))
+        } else {
+            prefs::plugin_cache_path()
+        };
+        if let Some(path) = &args.plugin_fixture {
+            c.devices.catalog.fixture = Some(devices::load_fixture(path)?);
+            eprintln!("plugins: catalogue from {} (TEST fixture, no scan)", path.display());
+        }
+        c.devices.catalog.screenshot_apple_only = args.reference_default;
+        c.start_plugin_scan(false);
         c.ui_dirty = true;
     }
     if args.midi_state > 0 {
@@ -511,6 +552,35 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.settings_state {
         ctl.borrow_mut().open_settings();
+    }
+    if args.plugins_page_review {
+        let mut c = ctl.borrow_mut();
+        c.open_settings();
+        c.settings_page(3);
+    }
+    if args.devices_effects_state {
+        // Reference 05: default project, browser Devices › Effects (the catalogue as scanned).
+        ctl.borrow_mut().browser_tab(1);
+    }
+    if args.device_chain_review {
+        // Review only (no reference capture): Instrument track selected, Devices tab, the built-in
+        // Synth followed by one Audio Unit effect (Apple's AULowpass, named by its AU identity).
+        let mut c = ctl.borrow_mut();
+        if let Some(t) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id) {
+            c.select_track(t);
+            let plugin = saine_core::PluginRef {
+                format: saine_core::PluginFormat::AudioUnit,
+                id: "aufx lpas appl".into(),
+                path: None,
+                name: "AULowpass".into(),
+                vendor: "Apple".into(),
+                version: String::new(),
+                kind: saine_core::PluginKind::Effect,
+            };
+            c.add_item_to_track(&devices::Item::Plugin(plugin), t, None);
+        }
+        c.set_bottom_tab(BottomTab::Devices);
+        c.seek_beats(20.0);
     }
     if args.recording_review {
         // Offline engine + injected input (no input device): track 1 armed on Input 1,
@@ -661,6 +731,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             a.window().request_redraw();
         });
     }
+    // ---- plugin devices (src/devices.rs) ----
+    on!(on_browser_tab_select, |c, i: i32| c.browser_tab(i.max(0) as usize));
+    on!(on_browser_search_edited, |c, t: slint::SharedString| c.browser_search(t.as_str()));
+    on!(on_tree_click, |c, i: i32| c.tree_click(i.max(0) as usize));
+    on!(on_tree_activate, |c, i: i32| c.tree_activate(i.max(0) as usize));
+    on!(on_tree_drag, |c, i: i32, phase: i32, x: f32, y: f32| c.tree_drag(i.max(0) as usize, phase, x, y));
+    on!(on_tree_scroll_by, |c, dy: f32| c.tree_scroll_by(dy));
+    on!(on_device_power, |c, id: i32| c.device_power(saine_core::DeviceId(id as u64)));
+    on!(on_device_edit, |c, id: i32| c.device_edit(saine_core::DeviceId(id as u64)));
+    on!(on_device_remove, |c, id: i32| c.device_remove(saine_core::DeviceId(id as u64)));
+    on!(on_device_use_synth, |c| c.device_use_synth());
+    on!(on_device_drag, |c, id: i32, phase: i32, x: f32| c.device_drag(saine_core::DeviceId(id as u64), phase, x));
+    on!(on_chain_scroll_by, |c, d: f32| c.chain_scroll_by(d));
+    on!(on_add_category, |c, i: i32, x: f32, y: f32| c.add_category(i.max(0) as usize, x, y));
+    on!(on_add_search_edited, |c, t: slint::SharedString| c.add_search(t.as_str()));
+    on!(on_add_result_pick, |c, i: i32| c.add_result_pick(i.max(0) as usize));
+    on!(on_open_inst_menu, |c, x: f32, y: f32| c.open_inst_menu(x, y));
+    on!(on_devmenu_pick, |c, i: i32| c.devmenu_pick(i.max(0) as usize));
+    on!(on_devmenu_dismiss, |c| c.devmenu_dismiss());
+    on!(on_plugins_rescan, |c, rescan: bool| c.start_plugin_scan(rescan));
+    on!(on_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
     // TODO(feedback): wire "Report a bug" / "Share your feedback" to a real channel. No-ops for now.
     on!(on_report_bug, |c| c.set_status("Report a bug: not connected yet (TODO)", 3));
     on!(on_feedback, |c| c.set_status("Feedback: not connected yet (TODO)", 3));
@@ -741,6 +832,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         poll_timer.start(slint::TimerMode::Repeated, Duration::from_millis(30), move || {
             let Ok(mut c) = ctl.try_borrow_mut() else { return };
             c.poll_test_tone();
+            c.device_poll();
             if c.pending_jobs > 0 {
                 c.poll_jobs();
                 if let Some(a) = aw.upgrade() {

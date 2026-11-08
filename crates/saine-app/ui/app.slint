@@ -20,14 +20,15 @@ import { Panel, Icon, Icons, Pill, IconButton, SmallButton, HSlider, Knob, Switc
 
 export { Tokens }
 
-import { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, ChoiceItem } from "studio.slint";
+import { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, ChoiceItem, DeviceCard, PluginRow } from "studio.slint";
 import { ClipSidebar, PianoRoll, ClipEmpty, ContextMenu } from "pianoroll.slint";
 import { MixerPanel } from "mixer.slint";
 import { AssistantPanel, HighlightOverlay } from "assistant.slint";
 import { SynthDevice, SynthMenuList } from "synth.slint";
 import { SettingsPanel, ChoiceList } from "settings.slint";
+import { PluginCard, AddDeviceCard, DevMenuList } from "devices.slint";
 
-export { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, ChoiceItem }
+export { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, ChoiceItem, DeviceCard, PluginRow }
 
 // ------------------------------------------------------------------ header
 component Header inherits Rectangle {
@@ -123,47 +124,80 @@ component Header inherits Rectangle {
         ink: Studio.settings-open ? #e5e5e8 : Tokens.icon; clicked => { Studio.toggle-settings(); } }
 }
 
-// ------------------------------------------------------------------ browser (PLACEHOLDER content)
+// ------------------------------------------------------------------ browser
+// Section tabs, back/forward and the preview bar are PLACEHOLDERS (only the Devices section
+// exists). Devices › Instruments / Effects list the scanned plugin catalogue (src/devices.rs);
+// Devices › Chains is PLACEHOLDER data.
 component Browser inherits Panel {
-    // Section tabs (static: only "Devices" content exists, as placeholder data)
+    // Section tabs (static: only "Devices" content exists)
     Label { x: 10px; y: 6px; height: 15px; text: "Search"; color: #5d5e62; font-size: 9.5px; }
     Label { x: 50px; y: 6px; height: 15px; text: "Library"; color: #5d5e62; font-size: 9.5px; }
     Label { x: 89px; y: 6px; height: 15px; text: "Devices"; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; }
     Label { x: 133px; y: 6px; height: 15px; text: "Files"; color: #5d5e62; font-size: 9.5px; }
     Icon { x: 218px; y: 6.5px; width: 13px; height: 13px; d: Icons.chevron-left; ink: Tokens.icon; }
     Icon { x: 234px; y: 6.5px; width: 13px; height: 13px; d: Icons.chevron-right; ink: Tokens.icon; }
-    // Search field (inert placeholder)
+    // Section separator (01/05/06: 0.5 pt at panel y 27).
+    Rectangle { x: 0; y: 27px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
+    // Search field (real: filters the tree)
     Rectangle {
         x: 8.5px; y: 34px; width: 235px; height: 20px; border-radius: 10px; background: Tokens.bg-control;
         Icon { x: 8px; width: 13px; height: 13px; d: Icons.search; ink: #b0b0b3; }
-        Text { x: 27px; text: "Search devices"; color: #a5a5a8; font-size: 9px; vertical-alignment: center; }
+        if Studio.browser-search == "": Text { x: 27px; text: "Search devices"; color: #a5a5a8; font-size: 9px; vertical-alignment: center; }
+        TextInput {
+            x: 27px; width: parent.width - 34px; height: parent.height;
+            text: Studio.browser-search; color: Tokens.text-primary; font-size: 9px; vertical-alignment: center;
+            single-line: true;
+            accessible-label: "Search devices";
+            edited => { Studio.browser-search = self.text; Studio.browser-search-edited(self.text); }
+            changed has-focus => { Studio.search-focused = self.has-focus; }
+        }
     }
-    // Sub-tabs
-    Label { x: 10px; y: 59px; height: 16px; text: "Instruments"; color: Tokens.text-bright; font-size: 8.75px; }
-    Rectangle { x: 10px; y: 74.5px; width: 52px; height: 1px; background: #ffffff; }
-    Label { x: 71px; y: 59px; height: 16px; text: "Effects"; color: #55565a; font-size: 8.75px; }
-    Label { x: 112px; y: 59px; height: 16px; text: "Chains"; color: #55565a; font-size: 8.75px; }
+    // Sub-tabs (real). Underlines measured from 01/05/06 (Instruments 10+52, Effects 72+30, Chains 112.5+30).
+    for st[i] in [{ t: "Instruments", x: 10px, ux: 10px, uw: 52px }, { t: "Effects", x: 71px, ux: 72px, uw: 30px }, { t: "Chains", x: 112px, ux: 112.5px, uw: 30px }]: Rectangle {
+        x: 0; y: 0; width: 0; height: 0;
+        Label {
+            x: st.x; y: 59px; height: 16px; text: st.t; color: Studio.browser-tab == i ? Tokens.text-bright : #55565a; font-size: 8.75px;
+            accessible-role: tab; accessible-checked: Studio.browser-tab == i;
+            TouchArea { clicked => { Studio.browser-tab-select(i); } }
+        }
+        if Studio.browser-tab == i: Rectangle { x: st.ux; y: 74.5px; width: st.uw; height: 1px; background: #ffffff; }
+    }
     Rectangle { x: 0; y: 80px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
 
-    // Tree (PLACEHOLDER rows supplied by Rust)
+    // Tree (rows supplied by Rust; scrolls with the wheel).
     Rectangle {
         x: 0; y: 81px; width: root.width; height: root.height - 81px - 36px;
         clip: true;
-        Rectangle { x: 14px; y: 22px; width: 0.5px; height: 300px; background: Tokens.line-separator; }
-        Rectangle { x: 21px; y: 44px; width: 0.5px; height: 220px; background: Tokens.line-separator; }
+        TouchArea { scroll-event(e) => { Studio.tree-scroll-by(e.delta-y / 1px); accept } }
+        if Studio.tree.length == 0 && Studio.tree-empty != "": Text {
+            x: 14px; y: 12px; width: parent.width - 28px; text: Studio.tree-empty; color: Tokens.text-tertiary; font-size: 9px; wrap: word-wrap;
+        }
         for row[i] in Studio.tree: Rectangle {
-            x: 0; y: 4px + i * 22px; width: parent.width; height: 21px;
+            x: 0; y: 4px + i * 22px - Studio.tree-scroll; width: parent.width; height: 21px;
             property <length> indent: row.depth * 6.75px;
+            accessible-role: list-item;
+            accessible-label: row.label;
+            if row.selected: Rectangle { x: 4px; width: parent.width - 8px; border-radius: 4px; background: #2a2b30; }
+            for k in row.depth: Rectangle { x: 14px + k * 7px; y: -4px; width: 0.5px; height: 22px; background: Tokens.line-separator; }
             if row.expander != 0: Icon {
                 x: 10px + parent.indent; width: 11px; height: 11px;
                 d: row.expander == 2 ? Icons.chevron-down : Icons.chevron-right; ink: #a7a7aa;
             }
             Icon {
                 x: 24px + parent.indent; width: 14.5px; height: 14.5px;
-                d: row.icon == 1 ? Icons.keys : Icons.folder; ink: #d0d0d3; stroke-width: 1.3px;
+                d: row.icon == 1 ? Icons.keys : row.icon == 2 ? Icons.effect : Icons.folder; ink: #d0d0d3; stroke-width: 1.3px;
             }
-            Text { x: 42.5px + parent.indent; text: row.label; color: Tokens.text-primary; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+            Text { x: 42.5px + parent.indent; width: parent.width - 42.5px - parent.indent - 44px; text: row.label; color: Tokens.text-primary; font-size: 9.5px; font-weight: 500; vertical-alignment: center; overflow: elide; }
             Text { x: parent.width - 60px; width: 52px; text: row.count; color: #8a8b8e; font-size: 9px; horizontal-alignment: right; vertical-alignment: center; }
+            TouchArea {
+                clicked => { Studio.tree-click(i); }
+                double-clicked => { Studio.tree-activate(i); }
+                pointer-event(e) => {
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.tree-drag(i, 0, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.tree-drag(i, 2, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+                }
+                moved => { Studio.tree-drag(i, 1, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+            }
         }
     }
     // Preview bar (inert placeholder)
@@ -343,15 +377,15 @@ component Inspector inherits Rectangle {
     Label { x: 37px; y: 7px; text: Studio.has-selection ? Studio.sel-name : "No track selected"; color: Tokens.text-bright; font-size: 10px; }
 
     // In: audio tracks open the input selector (SetTrackInput; popup drawn by AppWindow). Instrument
-    // tracks show their instrument ("Inst Synth"; only the built-in Synth exists, a PLACEHOLDER).
+    // tracks open the instrument selector (built-in Synth or an instrument plugin: SetInstrumentPlugin).
     // Out: PLACEHOLDER (fixed routing to Master).
     Rectangle {
         x: 10px; y: 37px; width: 149px; height: 19px; border-radius: 9.5px; background: Tokens.bg-control;
         Text { x: 7.5px; text: Studio.sel-instrument ? "Inst" : "In"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
-        Text { x: Studio.sel-instrument ? 29.5px : 21px; text: Studio.sel-instrument ? "Synth" : Studio.sel-input-text; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+        Text { x: Studio.sel-instrument ? 29.5px : 21px; width: 134px - self.x - 4px; text: Studio.sel-instrument ? Studio.sel-inst-text : Studio.sel-input-text; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; overflow: elide; }
         Icon { x: 134px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #a0a0a3; }
-        accessible-role: combobox; accessible-label: "In"; accessible-value: Studio.sel-instrument ? "Synth" : Studio.sel-input-text;
-        TouchArea { clicked => { if (Studio.sel-instrument) { Studio.synth-placeholder("Instrument selector"); } else if (Studio.has-selection) { Studio.open-input-menu(); } } }
+        accessible-role: combobox; accessible-label: Studio.sel-instrument ? "Inst" : "In"; accessible-value: Studio.sel-instrument ? Studio.sel-inst-text : Studio.sel-input-text;
+        TouchArea { clicked => { if (Studio.sel-instrument) { Studio.open-inst-menu(parent.absolute-position.x + 1px, parent.absolute-position.y + parent.height + 3px); } else if (Studio.has-selection) { Studio.open-input-menu(); } } }
     }
     Rectangle {
         x: 10px; y: 63px; width: 149px; height: 18px; border-radius: 9px; background: Tokens.bg-control;
@@ -464,24 +498,19 @@ component BottomPanel inherits Panel {
     if Studio.bottom-tab == 1 && !Studio.pr-visible: ClipEmpty { x: 255px; y: 27px; width: root.width - 255px; height: root.height - 27px; }
     IconButton { x: root.width - 53px; y: 3px; width: 21px; height: 21px; icon: Icons.panel-bottom; ink: #6b6c70; icon-size: 14px; }
     IconButton { x: root.width - 29px; y: 3px; width: 21px; height: 21px; icon: Icons.download; ink: #6b6c70; icon-size: 14px; }
-    // Built-in Synth device (instrument tracks; src/synth.rs, ui/synth.slint).
-    if Studio.bottom-tab == 0 && Studio.synth-visible: SynthDevice { x: 263.5px; y: 34px; }
-    // Add device card: PLACEHOLDER (no plugin hosting yet). Follows the synth card when shown.
+    // Device chain (Devices tab): built-in Synth card (instrument tracks without an instrument
+    // plugin; src/synth.rs), plugin cards (src/devices.rs), then "Add device". Positions come
+    // from Rust (bottom-panel relative, scroll included); the area clips at the inspector edge.
     if Studio.bottom-tab == 0: Rectangle {
-        x: Studio.synth-visible ? 1056px : 265px; y: 34.5px; width: 182.5px; height: 264px; border-radius: 6px;
-        background: Tokens.bg-raised; border-width: 0.5px; border-color: #313236;
-        Label { x: 11.5px; y: 6.5px; text: "Add device"; color: #a0a0a3; font-size: 10px; }
-        Rectangle { x: 0; y: 26.5px; width: parent.width; height: 0.5px; background: #313236; }
-        Rectangle {
-            x: 5.5px; y: 31.5px; width: 171px; height: 20px; border-radius: 10px; background: Tokens.bg-control;
-            Icon { x: 8.5px; width: 13px; height: 13px; d: Icons.search; ink: #b0b0b3; }
-            Text { x: 26px; text: "Search devices"; color: #a5a5a8; font-size: 9px; vertical-alignment: center; }
+        x: 255px; y: 27px; width: root.width - 255px; height: root.height - 27px;
+        clip: true;
+        TouchArea {
+            scroll-event(e) => { Studio.chain-scroll-by(e.delta-x != 0 ? e.delta-x / 1px : e.delta-y / 1px); accept }
         }
-        for name[i] in ["Splice", "Audio Units", "VST3", "Chains"]: Rectangle {
-            x: 0; y: 56.5px + i * 22px; width: parent.width; height: 22px;
-            Text { x: 11.5px; text: name == "Splice" ? "Saine" : name; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
-            Icon { x: parent.width - 18px; width: 10px; height: 10px; d: Icons.chevron-right; ink: #a0a0a3; }
-        }
+        if Studio.synth-visible: SynthDevice { x: 263.5px - 255px - Studio.chain-scroll; y: 34px - 27px; }
+        for card in Studio.device-cards: PluginCard { x: card.x - 255px; y: 34px - 27px; card: card; }
+        AddDeviceCard { x: Studio.add-device-x - 255px; y: 34.5px - 27px; }
+        if Studio.chain-marker-visible: Rectangle { x: Studio.chain-marker-x - 255px - 1px; y: 34px - 27px; width: 2px; height: 265px; border-radius: 1px; background: Tokens.accent; }
     }
 }
 
@@ -557,6 +586,28 @@ export component AppWindow inherits Window {
                 items: Studio.input-menu-items;
                 picked(i) => { Studio.input-menu-pick(i); }
             }
+        }
+        // Device popup list: Add device submenus, instrument selector (click outside dismisses).
+        if Studio.devmenu-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.devmenu-dismiss(); } } }
+            DevMenuList {
+                x: max(5px, min(Studio.devmenu-x, root.width - 5px - Studio.devmenu-w));
+                y: max(5px, min(Studio.devmenu-y, root.height - 5px - Studio.devmenu-h));
+                width: Studio.devmenu-w; height: Studio.devmenu-h; content-h: Studio.devmenu-content-h;
+                items: Studio.devmenu-items;
+                picked(i) => { Studio.devmenu-pick(i); }
+            }
+        }
+        // Browser device drag: drop target outline + ghost label at the pointer.
+        if Studio.dnd-active && Studio.dnd-target-visible: Rectangle {
+            x: Studio.dnd-tx; y: Studio.dnd-ty; width: Studio.dnd-tw; height: Studio.dnd-th; border-radius: 4px;
+            background: #2752f522; border-width: 1.5px; border-color: Tokens.accent;
+        }
+        if Studio.dnd-active: Rectangle {
+            x: Studio.dnd-x + 10px; y: Studio.dnd-y + 6px; height: 20px; width: ghost.preferred-width + 18px; border-radius: 10px;
+            background: Studio.dnd-ok ? Tokens.accent : #3a3b40;
+            ghost := Text { text: Studio.dnd-label; color: #ffffff; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
         }
         // Rename clip popup.
         if Studio.rename-open: Rectangle {

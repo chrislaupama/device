@@ -607,7 +607,8 @@ impl Controller {
     /// The instrument track whose synth the Devices tab shows.
     pub fn synth_track(&self) -> Option<TrackId> {
         let t = self.selected_track.and_then(|t| self.project().track(t))?;
-        (t.kind == TrackKind::Instrument && self.bottom_tab == BottomTab::Devices).then_some(t.id)
+        // An instrument plugin replaces the built-in Synth (its card is drawn by src/devices.rs).
+        (t.kind == TrackKind::Instrument && t.instrument_plugin.is_none() && self.bottom_tab == BottomTab::Devices).then_some(t.id)
     }
 
     /// Current parameters (the pending drag preview, else the model).

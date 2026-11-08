@@ -1,5 +1,6 @@
 //! Settings window (in-app modal panel at the reference window geometry) and its
-//! Audio page. Only Audio is real; the other sidebar pages are PLACEHOLDERS.
+//! Audio page. Audio and Plugins (src/devices.rs) are real; the other sidebar pages
+//! are PLACEHOLDERS.
 //!
 //! Why a panel and not a second OS window: the reference Settings is its own
 //! window, but a second Slint window would not be part of `take_snapshot()`
@@ -21,6 +22,7 @@ use std::time::{Duration, Instant};
 
 pub const PAGES: [&str; 9] = ["General", "Audio", "MIDI", "Plugins", "Shortcuts", "Downloads", "Account", "Usage", "Privacy"];
 pub const AUDIO_PAGE: usize = 1;
+pub const PLUGINS_PAGE: usize = 3;
 pub const BUFFER_SIZES: [u32; 6] = [64, 128, 256, 512, 1024, 2048];
 
 /// Dropdowns on the Audio page.

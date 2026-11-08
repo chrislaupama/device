@@ -1,0 +1,1285 @@
+//! Plugin devices (docs/adr/0003-plugins.md): the scanned plugin catalogue,
+//! the browser's Devices tab tree, the bottom-panel device chain (plugin
+//! cards + "Add device"), the instrument selector, drag and drop from the
+//! browser, plugin windows and Settings › Plugins.
+//!
+//! Every edit is a `saine_core::Command` (`AddDevice`, `RemoveDevice`,
+//! `MoveDevice`, `SetDeviceEnabled`, `SetInstrumentPlugin`), one undo step
+//! each. The engine owns plugin instances; this module only asks it for
+//! load errors, latency and editor windows (main thread).
+//!
+//! Scanning (`saine_engine::scan_plugins`) runs on a worker thread at startup
+//! (cache only) and from Settings › Plugins (cache or forced rescan). Its
+//! progress goes to the status line; the UI never waits for it.
+//!
+//! TEST seam: `--plugin-fixture <file.json>` replaces the scan with a fixed
+//! report (no engine call). It exists to exercise the UI flows while the
+//! engine's scanner is unavailable; it is not a feature.
+
+use crate::controller::{BottomTab, Controller, JobResult, sync_model};
+use crate::highlight::Layout;
+use crate::{DeviceCard, MenuItem, PluginRow, Studio, TreeRow};
+use saine_core::{Command, Device, DeviceId, PluginFormat, PluginKind, PluginRef, TrackId, TrackKind};
+use saine_engine::{PluginInfo, ScanReport};
+use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+// ------------------------------------------------------------------ geometry (window / bottom-panel points)
+
+/// Plugin card width (ORIGINAL; the reference has no third-party plugin card).
+pub const CARD_W: f32 = 220.0;
+/// Gap between cards: the Synth card ends at 1040 and "Add device" starts at 1056 (reference 32).
+pub const CARD_GAP: f32 = 16.0;
+/// First card, bottom-panel relative (Synth card at window 268.5).
+pub const CHAIN_X0: f32 = 263.5;
+pub const SYNTH_W: f32 = 776.5;
+/// "Add device" alone (audio track, no devices): reference 01 at window 270.
+pub const ADD_X_ALONE: f32 = 265.0;
+pub const ADD_W: f32 = 182.5;
+/// Bottom panel x (window) and its device area start (after the inspector).
+const PANEL_X: f32 = 5.0;
+const CHAIN_AREA_X: f32 = 255.0;
+/// Browser tree: area top (window) and row pitch.
+pub const TREE_Y: f32 = 78.0 + 81.0;
+pub const TREE_TOP: f32 = 4.0;
+pub const TREE_ROW: f32 = 22.0;
+/// Device popup list rows.
+pub const MENU_ROW: f32 = 22.0;
+pub const MENU_PAD: f32 = 4.0;
+/// Drag threshold (points) before a press becomes a drag.
+const DRAG_SLOP: f32 = 4.0;
+
+// ------------------------------------------------------------------ catalogue
+
+/// Something the browser / Add device card can add.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Item {
+    /// Our built-in Synth (selecting it sets `instrument_plugin` to None).
+    BuiltinSynth,
+    Plugin(PluginRef),
+}
+
+impl Item {
+    pub fn name(&self) -> &str {
+        match self {
+            Item::BuiltinSynth => "Synth",
+            Item::Plugin(p) => &p.name,
+        }
+    }
+    pub fn kind(&self) -> PluginKind {
+        match self {
+            Item::BuiltinSynth => PluginKind::Instrument,
+            Item::Plugin(p) => p.kind,
+        }
+    }
+}
+
+pub fn format_badge(f: PluginFormat) -> &'static str {
+    match f {
+        PluginFormat::AudioUnit => "AU",
+        PluginFormat::Vst3 => "VST3",
+        PluginFormat::Clap => "CLAP",
+    }
+}
+
+fn format_order(f: PluginFormat) -> u8 {
+    match f {
+        PluginFormat::AudioUnit => 0,
+        PluginFormat::Vst3 => 1,
+        PluginFormat::Clap => 2,
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum ScanState {
+    #[default]
+    Idle,
+    Scanning,
+    Done,
+    Failed(String),
+}
+
+#[derive(Debug, Default)]
+pub struct Catalog {
+    pub plugins: Vec<PluginInfo>,
+    pub failed: Vec<(String, String)>,
+    pub from_cache: bool,
+    pub state: ScanState,
+    /// Latest progress line from the scanner thread.
+    pub progress: Arc<Mutex<String>>,
+    shown_progress: String,
+    pub cache_path: Option<PathBuf>,
+    /// TEST seam (`--plugin-fixture`): used instead of `scan_plugins`.
+    pub fixture: Option<ScanReport>,
+    /// SCREENSHOT-ONLY (`--state` runs): keep only Apple's system Audio Units, which every
+    /// Mac has, so committed captures never list the user's installed third-party plugins
+    /// (same policy as `recording::screenshot_fake_devices`).
+    pub screenshot_apple_only: bool,
+    /// Scans started so far and the `rescan` flag of the last one.
+    pub scans: usize,
+    pub last_rescan: bool,
+}
+
+impl Catalog {
+    /// Plugins of one kind, sorted by format, vendor, name.
+    pub fn of_kind(&self, kind: PluginKind) -> Vec<&PluginInfo> {
+        let mut v: Vec<&PluginInfo> = self.plugins.iter().filter(|p| p.plugin.kind == kind).collect();
+        v.sort_by(|a, b| {
+            (format_order(a.plugin.format), a.plugin.vendor.to_lowercase(), a.plugin.name.to_lowercase()).cmp(&(
+                format_order(b.plugin.format),
+                b.plugin.vendor.to_lowercase(),
+                b.plugin.name.to_lowercase(),
+            ))
+        });
+        v
+    }
+
+    pub fn find(&self, p: &PluginRef) -> Option<&PluginInfo> {
+        self.plugins.iter().find(|i| i.plugin.format == p.format && i.plugin.id == p.id)
+    }
+}
+
+/// TEST seam file format for `--plugin-fixture`.
+#[derive(Debug, Deserialize)]
+struct FixtureFile {
+    plugins: Vec<FixturePlugin>,
+    #[serde(default)]
+    failed: Vec<(String, String)>,
+}
+#[derive(Debug, Deserialize)]
+struct FixturePlugin {
+    plugin: PluginRef,
+    #[serde(default = "yes")]
+    has_editor: bool,
+}
+fn yes() -> bool {
+    true
+}
+
+pub fn load_fixture(path: &Path) -> Result<ScanReport, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("--plugin-fixture {}: {e}", path.display()))?;
+    let f: FixtureFile = serde_json::from_str(&text).map_err(|e| format!("--plugin-fixture {}: {e}", path.display()))?;
+    Ok(ScanReport {
+        plugins: f
+            .plugins
+            .into_iter()
+            .map(|p| {
+                let outs = 2;
+                let ins = if p.plugin.kind == PluginKind::Effect { 2 } else { 0 };
+                PluginInfo { plugin: p.plugin, has_editor: p.has_editor, audio_inputs: ins, audio_outputs: outs }
+            })
+            .collect(),
+        failed: f.failed,
+        from_cache: false,
+    })
+}
+
+/// Standard plugin locations shown in Settings › Plugins (macOS). Apple's
+/// system Audio Units are found through the Audio Component registry.
+pub fn scan_dirs() -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = ["Components", "VST3", "CLAP"].iter().map(|d| PathBuf::from("/Library/Audio/Plug-Ins").join(d)).collect();
+    if let Some(home) = std::env::var_os("HOME") {
+        v.extend(["Components", "VST3", "CLAP"].iter().map(|d| PathBuf::from(&home).join("Library/Audio/Plug-Ins").join(d)));
+    }
+    v
+}
+
+// ------------------------------------------------------------------ UI state
+
+/// One built browser row, parallel to the `TreeRow` model.
+#[derive(Debug, Clone)]
+pub struct TreeEntry {
+    pub key: String,
+    pub item: Option<Item>,
+    pub folder: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DevMenu {
+    pub pos: (f32, f32),
+    pub w: f32,
+    /// (label, right-hand text, item; None = header / note row, separator above)
+    pub rows: Vec<(String, String, Option<Item>, bool)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Dnd {
+    pub item: Item,
+    pub start: (f32, f32),
+    pub pos: (f32, f32),
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CardDrag {
+    pub id: DeviceId,
+    pub start_x: f32,
+    pub cur_x: f32,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DropTarget {
+    Track(TrackId),
+    /// Insert position in the selected track's chain (None: instrument slot / end).
+    Chain { track: TrackId, index: Option<usize> },
+}
+
+#[derive(Debug)]
+pub struct DevicesUi {
+    pub catalog: Catalog,
+    /// Browser Devices sub-tab: 0 Instruments, 1 Effects, 2 Chains (PLACEHOLDER).
+    pub tab: usize,
+    pub expanded: HashSet<String>,
+    pub search: String,
+    pub selected: Option<String>,
+    pub tree_scroll: f32,
+    pub entries: Vec<TreeEntry>,
+    pub add_search: String,
+    pub add_results: Vec<Item>,
+    pub menu: Option<DevMenu>,
+    pub dnd: Option<Dnd>,
+    pub card_drag: Option<CardDrag>,
+    pub chain_scroll: f32,
+    /// Last `plugin_load_errors()`, editors we opened that are still open, latencies.
+    pub load_errors: Vec<(DeviceId, String)>,
+    pub editors: HashSet<DeviceId>,
+    pub latency: HashMap<DeviceId, u32>,
+    last_poll: Option<Instant>,
+    /// After opening a project: report load errors that show up in this window.
+    report_until: Option<Instant>,
+    /// Window size and browser visibility, refreshed by `update_ui` (drop hit tests).
+    pub win: (f32, f32),
+    pub sounds: bool,
+}
+
+impl Default for DevicesUi {
+    fn default() -> Self {
+        let expanded = ["i/builtin", "i/au", "i/vst3", "i/clap", "e/au", "e/vst3", "e/clap"].iter().map(|s| s.to_string()).collect();
+        DevicesUi {
+            catalog: Catalog::default(),
+            tab: 0,
+            expanded,
+            search: String::new(),
+            selected: None,
+            tree_scroll: 0.0,
+            entries: Vec::new(),
+            add_search: String::new(),
+            add_results: Vec::new(),
+            menu: None,
+            dnd: None,
+            card_drag: None,
+            chain_scroll: 0.0,
+            load_errors: Vec::new(),
+            editors: HashSet::new(),
+            latency: HashMap::new(),
+            last_poll: None,
+            report_until: None,
+            win: (1440.0, 820.0),
+            sounds: true,
+        }
+    }
+}
+
+fn matches(q: &str, p: &PluginRef) -> bool {
+    q.is_empty() || p.name.to_lowercase().contains(q) || p.vendor.to_lowercase().contains(q)
+}
+
+fn count_text(n: usize) -> String {
+    n.to_string()
+}
+
+fn row(depth: i32, label: &str, count: String, icon: i32, expander: i32, leaf: bool) -> TreeRow {
+    TreeRow { depth, label: label.into(), count: count.into(), icon, expander, selected: false, leaf }
+}
+
+/// Browser tree rows for a tab: (entries, rows). Pure, for tests.
+pub fn build_tree(cat: &Catalog, tab: usize, search: &str, expanded: &HashSet<String>) -> (Vec<TreeEntry>, Vec<TreeRow>) {
+    let q = search.trim().to_lowercase();
+    let mut entries = Vec::new();
+    let mut rows = Vec::new();
+    let mut push = |e: TreeEntry, r: TreeRow| {
+        entries.push(e);
+        rows.push(r);
+    };
+    if tab == 2 {
+        // PLACEHOLDER: no device chains (presets of chains) exist yet. Folder names only.
+        for name in crate::placeholder::CHAIN_FOLDERS {
+            if q.is_empty() || name.to_lowercase().contains(&q) {
+                push(TreeEntry { key: format!("c/{name}"), item: None, folder: true }, row(0, name, String::new(), 0, 0, false));
+            }
+        }
+        return (entries, rows);
+    }
+    let kind = if tab == 0 { PluginKind::Instrument } else { PluginKind::Effect };
+    let tp = if tab == 0 { "i" } else { "e" };
+    let open = |key: &str| !q.is_empty() || expanded.contains(key);
+    let leaf_icon = if kind == PluginKind::Instrument { 1 } else { 2 };
+    // Built-in: our Synth (instruments). There are no built-in effects yet: the folder is omitted.
+    if kind == PluginKind::Instrument && (q.is_empty() || "synth".contains(&q) || "built-in".contains(&q)) {
+        let key = format!("{tp}/builtin");
+        let o = open(&key);
+        push(TreeEntry { key: key.clone(), item: None, folder: true }, row(0, "Built-in", count_text(1), 0, if o { 2 } else { 1 }, false));
+        if o {
+            push(TreeEntry { key: format!("{tp}/b/synth"), item: Some(Item::BuiltinSynth), folder: false }, row(1, "Synth", String::new(), 1, 0, true));
+        }
+    }
+    let all = cat.of_kind(kind);
+    for (fmt, fkey, label) in [(PluginFormat::AudioUnit, "au", "Audio Units"), (PluginFormat::Vst3, "vst3", "VST3"), (PluginFormat::Clap, "clap", "CLAP")] {
+        let ps: Vec<&&PluginInfo> = all.iter().filter(|p| p.plugin.format == fmt && matches(&q, &p.plugin)).collect();
+        if ps.is_empty() && !q.is_empty() {
+            continue;
+        }
+        let key = format!("{tp}/{fkey}");
+        let o = open(&key) && !ps.is_empty();
+        push(TreeEntry { key: key.clone(), item: None, folder: true }, row(0, label, count_text(ps.len()), 0, if ps.is_empty() { 0 } else if o { 2 } else { 1 }, false));
+        if !o {
+            continue;
+        }
+        let leaf = |p: &PluginInfo, depth: i32| {
+            (
+                TreeEntry { key: format!("{tp}/p/{fkey}/{}", p.plugin.id), item: Some(Item::Plugin(p.plugin.clone())), folder: false },
+                row(depth, &p.plugin.name, String::new(), leaf_icon, 0, true),
+            )
+        };
+        if fmt == PluginFormat::AudioUnit {
+            // Vendor subfolders.
+            let mut i = 0;
+            while i < ps.len() {
+                let vendor = ps[i].plugin.vendor.clone();
+                let j = ps[i..].iter().position(|p| p.plugin.vendor != vendor).map(|n| i + n).unwrap_or(ps.len());
+                let vkey = format!("{key}/{vendor}");
+                let vo = open(&vkey);
+                let vlabel = if vendor.is_empty() { "Unknown vendor" } else { vendor.as_str() };
+                push(TreeEntry { key: vkey, item: None, folder: true }, row(1, vlabel, count_text(j - i), 0, if vo { 2 } else { 1 }, false));
+                if vo {
+                    for p in &ps[i..j] {
+                        let (e, r) = leaf(p, 2);
+                        push(e, r);
+                    }
+                }
+                i = j;
+            }
+        } else {
+            for p in &ps {
+                let (e, r) = leaf(p, 1);
+                push(e, r);
+            }
+        }
+    }
+    (entries, rows)
+}
+
+fn fmt_latency(frames: u32, rate: f64) -> String {
+    if frames == 0 {
+        return String::new();
+    }
+    format!("Latency {frames} samples ({:.1} ms)", frames as f64 * 1000.0 / rate.max(1.0))
+}
+
+// ------------------------------------------------------------------ controller glue
+
+impl Controller {
+    // ---------------------------------------------------------------- scanning
+
+    /// Start a catalogue scan on a worker thread (`rescan`: ignore the cache).
+    pub fn start_plugin_scan(&mut self, rescan: bool) {
+        if self.devices.catalog.state == ScanState::Scanning {
+            self.set_status("A plugin scan is already running", 3);
+            return;
+        }
+        self.devices.catalog.state = ScanState::Scanning;
+        self.devices.catalog.scans += 1;
+        self.devices.catalog.last_rescan = rescan;
+        *self.devices.catalog.progress.lock().unwrap() = String::new();
+        self.devices.catalog.shown_progress.clear();
+        self.pending_jobs += 1;
+        let tx = self.jobs_tx.clone();
+        if let Some(report) = self.devices.catalog.fixture.clone() {
+            let _ = tx.send(JobResult::PluginScan(Ok(report)));
+        } else if let Some(cache) = self.devices.catalog.cache_path.clone() {
+            let progress = self.devices.catalog.progress.clone();
+            std::thread::Builder::new()
+                .name("plugin-scan".into())
+                .spawn(move || {
+                    let r = saine_engine::scan_plugins(&cache, rescan, &mut |s: &str| {
+                        if let Ok(mut p) = progress.lock() {
+                            *p = s.to_string();
+                        }
+                    });
+                    let _ = tx.send(JobResult::PluginScan(r.map_err(|e| e.to_string())));
+                })
+                .expect("spawn plugin scan thread");
+        } else {
+            let _ = tx.send(JobResult::PluginScan(Err("no app support directory for the plugin cache".into())));
+        }
+        self.set_status(if rescan { "Rescanning plugins…" } else { "Scanning plugins…" }, 600);
+    }
+
+    pub(crate) fn finish_plugin_scan(&mut self, r: Result<ScanReport, String>) {
+        match r {
+            Ok(mut rep) => {
+                if self.devices.catalog.screenshot_apple_only {
+                    rep.plugins.retain(|p| p.plugin.format == PluginFormat::AudioUnit && p.plugin.vendor == "Apple");
+                    rep.failed.clear();
+                }
+                let n = rep.plugins.len();
+                let nf = rep.failed.len();
+                self.devices.catalog.plugins = rep.plugins;
+                self.devices.catalog.failed = rep.failed;
+                self.devices.catalog.from_cache = rep.from_cache;
+                self.devices.catalog.state = ScanState::Done;
+                let src = if self.devices.catalog.fixture.is_some() { " (TEST fixture)" } else { "" };
+                self.set_status(format!("Plugins: {n} found{}{src}", if nf > 0 { format!(", {nf} failed (see Settings › Plugins)") } else { String::new() }), 4);
+            }
+            Err(e) => {
+                self.set_status(format!("Plugin scan failed: {e}"), 8);
+                self.devices.catalog.state = ScanState::Failed(e);
+            }
+        }
+        self.ui_dirty = true;
+    }
+
+    /// Cheap periodic work (UI timer): scan progress, engine load errors,
+    /// editor windows closed by the user, latency.
+    pub fn device_poll(&mut self) {
+        let now = Instant::now();
+        // Main-thread plugin housekeeping (retired instances, CLAP main-thread callbacks).
+        if !self.devices.editors.is_empty() || self.project().tracks.iter().any(|t| !t.devices.is_empty() || t.instrument_plugin.is_some()) {
+            self.engine.plugin_idle();
+        }
+        if self.devices.last_poll.is_some_and(|t| now - t < Duration::from_millis(250)) {
+            return;
+        }
+        self.devices.last_poll = Some(now);
+        if self.devices.catalog.state == ScanState::Scanning {
+            let p = self.devices.catalog.progress.lock().map(|p| p.clone()).unwrap_or_default();
+            if p != self.devices.catalog.shown_progress {
+                self.devices.catalog.shown_progress = p.clone();
+                self.set_status(format!("Scanning plugins… {p}"), 600);
+            }
+        }
+        let has_devices = self.project().tracks.iter().any(|t| !t.devices.is_empty() || t.instrument_plugin.is_some());
+        if !has_devices && self.devices.editors.is_empty() && self.devices.load_errors.is_empty() {
+            return;
+        }
+        let errors = self.engine.plugin_load_errors();
+        if errors != self.devices.load_errors {
+            if self.devices.report_until.is_some_and(|t| now < t) && !errors.is_empty() {
+                self.report_load_errors(&errors);
+            }
+            self.devices.load_errors = errors;
+            self.ui_dirty = true;
+        }
+        let closed: Vec<DeviceId> = self.devices.editors.iter().copied().filter(|id| !self.engine.plugin_editor_is_open(*id)).collect();
+        if !closed.is_empty() {
+            for id in closed {
+                self.devices.editors.remove(&id);
+            }
+            self.ui_dirty = true;
+        }
+        let ids: Vec<DeviceId> = self.project().tracks.iter().flat_map(|t| t.instrument_plugin.iter().chain(t.devices.iter()).map(|d| d.id)).collect();
+        for id in ids {
+            let l = self.engine.plugin_latency(id);
+            if self.devices.latency.get(&id).copied().unwrap_or(0) != l {
+                self.devices.latency.insert(id, l);
+                self.ui_dirty = true;
+            }
+        }
+    }
+
+    fn report_load_errors(&mut self, errors: &[(DeviceId, String)]) {
+        let p = self.project();
+        let parts: Vec<String> = errors.iter().map(|(id, why)| format!("{} ({why})", p.device(*id).map(|d| d.plugin.name.as_str()).unwrap_or("?"))).collect();
+        let msg = format!("{} plugin(s) could not be loaded: {}", errors.len(), parts.join(", "));
+        self.set_status(msg, 10);
+    }
+
+    /// After a project was opened and published: list plugin load errors.
+    pub(crate) fn devices_after_open(&mut self) {
+        self.devices.chain_scroll = 0.0;
+        self.devices.latency.clear();
+        let errors = self.engine.plugin_load_errors();
+        if !errors.is_empty() {
+            self.report_load_errors(&errors);
+        }
+        self.devices.load_errors = errors;
+        // The engine may instantiate asynchronously: keep reporting for a moment.
+        self.devices.report_until = Some(Instant::now() + Duration::from_secs(3));
+    }
+
+    /// Close every plugin window (before replacing the project).
+    pub(crate) fn close_all_editors(&mut self) {
+        for id in std::mem::take(&mut self.devices.editors) {
+            self.engine.close_plugin_editor(id);
+        }
+    }
+
+    /// After any document change: close windows of devices that no longer exist
+    /// (undo of an add, removal by another path) and drop stale gesture state.
+    pub(crate) fn devices_after_change(&mut self) {
+        let gone: Vec<DeviceId> = self.devices.editors.iter().copied().filter(|id| self.project().device(*id).is_none()).collect();
+        for id in gone {
+            self.engine.close_plugin_editor(id);
+            self.devices.editors.remove(&id);
+        }
+        if self.devices.card_drag.is_some_and(|d| self.project().device(d.id).is_none()) {
+            self.devices.card_drag = None;
+        }
+        self.clamp_chain_scroll();
+    }
+
+    // ---------------------------------------------------------------- adding
+
+    /// Add `item` to `track`: an effect becomes an insert (`AddDevice`, at
+    /// `index` or the end); an instrument replaces the track's instrument
+    /// (`SetInstrumentPlugin`; the built-in Synth sets None). One undo step.
+    pub fn add_item_to_track(&mut self, item: &Item, track: TrackId, index: Option<usize>) -> bool {
+        let Some(t) = self.project().track(track) else { return false };
+        let (kind, has_plugin) = (t.kind, t.instrument_plugin.is_some());
+        let ok = match (item.kind(), item) {
+            (PluginKind::Effect, Item::Plugin(p)) => self.execute(Command::AddDevice { track, index, device: Device::new(p.clone()) }),
+            (PluginKind::Instrument, _) if kind != TrackKind::Instrument => {
+                self.set_status(format!("{} is an instrument: choose an instrument track", item.name()), 4);
+                false
+            }
+            (PluginKind::Instrument, Item::BuiltinSynth) => {
+                if !has_plugin {
+                    self.set_status("The built-in Synth is already this track's instrument", 3);
+                    false
+                } else {
+                    self.close_instrument_editor(track);
+                    self.execute(Command::SetInstrumentPlugin { track, device: None })
+                }
+            }
+            (PluginKind::Instrument, Item::Plugin(p)) => {
+                self.close_instrument_editor(track);
+                self.execute(Command::SetInstrumentPlugin { track, device: Some(Device::new(p.clone())) })
+            }
+            (PluginKind::Effect, Item::BuiltinSynth) => false,
+        };
+        if ok {
+            self.select_track(track);
+            self.select_clip(None);
+            self.set_bottom_tab(BottomTab::Devices);
+            self.reveal_last_change(track, item);
+        }
+        ok
+    }
+
+    /// Scroll the chain so a newly added card is visible.
+    fn reveal_last_change(&mut self, _track: TrackId, item: &Item) {
+        if item.kind() != PluginKind::Effect {
+            self.devices.chain_scroll = 0.0;
+            return;
+        }
+        let (cards, _, _) = self.chain_layout_unscrolled();
+        if let Some((x, _)) = cards.iter().rev().find(|(_, c)| c.name.as_str() == item.name()) {
+            let view_w = self.chain_view_w();
+            if *x + CARD_W > CHAIN_AREA_X + view_w + self.devices.chain_scroll {
+                self.devices.chain_scroll = *x + CARD_W + CARD_GAP + ADD_W + 8.0 - CHAIN_AREA_X - view_w;
+            }
+        }
+        self.clamp_chain_scroll();
+    }
+
+    fn close_instrument_editor(&mut self, track: TrackId) {
+        if let Some(id) = self.project().track(track).and_then(|t| t.instrument_plugin.as_ref()).map(|d| d.id) {
+            self.engine.close_plugin_editor(id);
+            self.devices.editors.remove(&id);
+        }
+    }
+
+    // ---------------------------------------------------------------- browser tree
+
+    pub fn browser_tab(&mut self, i: usize) {
+        self.devices.tab = i.min(2);
+        self.devices.tree_scroll = 0.0;
+        self.devices.selected = None;
+        self.ui_dirty = true;
+    }
+
+    pub fn browser_search(&mut self, text: &str) {
+        self.devices.search = text.to_string();
+        self.devices.tree_scroll = 0.0;
+        self.ui_dirty = true;
+    }
+
+    pub fn tree_click(&mut self, i: usize) {
+        let Some(e) = self.devices.entries.get(i).cloned() else { return };
+        if e.folder {
+            if e.key.starts_with("c/") {
+                self.set_status("Device chains: not implemented yet", 3);
+            } else if self.devices.search.trim().is_empty() && !self.devices.expanded.remove(&e.key) {
+                self.devices.expanded.insert(e.key.clone());
+            }
+        }
+        self.devices.selected = Some(e.key);
+        self.ui_dirty = true;
+    }
+
+    /// Double-click: add the device to the selected track.
+    pub fn tree_activate(&mut self, i: usize) {
+        let Some(item) = self.devices.entries.get(i).and_then(|e| e.item.clone()) else { return };
+        let Some(t) = self.selected_track else {
+            self.set_status("Select a track first", 3);
+            return;
+        };
+        self.add_item_to_track(&item, t, None);
+    }
+
+    pub fn tree_scroll_by(&mut self, dy: f32) {
+        let rows = self.devices.entries.len() as f32;
+        let view = self.devices.win.1 - 88.0 - self.bottom_h() - 81.0 - 36.0;
+        let max = (TREE_TOP + rows * TREE_ROW + 8.0 - view).max(0.0);
+        self.devices.tree_scroll = (self.devices.tree_scroll - dy).clamp(0.0, max);
+        self.ui_dirty = true;
+    }
+
+    fn bottom_h(&self) -> f32 {
+        self.layout().bottom_h()
+    }
+
+    pub fn layout(&self) -> Layout {
+        let (w, h) = self.devices.win;
+        Layout { w, h, sounds: self.devices.sounds, mixer: self.mixer_open, assistant: self.assistant_open, clip_tab: self.bottom_tab == BottomTab::Clip, scroll_y: self.view.scroll_y as f32 }
+    }
+
+    /// Browser row drag: phase 0 press, 1 move, 2 release (window coordinates).
+    pub fn tree_drag(&mut self, i: usize, phase: i32, x: f32, y: f32) {
+        match phase {
+            0 => {
+                self.devices.dnd = self.devices.entries.get(i).and_then(|e| e.item.clone()).map(|item| Dnd { item, start: (x, y), pos: (x, y), active: false });
+            }
+            1 => {
+                if let Some(d) = self.devices.dnd.as_mut() {
+                    d.pos = (x, y);
+                    if !d.active && ((x - d.start.0).abs() > DRAG_SLOP || (y - d.start.1).abs() > DRAG_SLOP) {
+                        d.active = true;
+                    }
+                    if d.active {
+                        self.ui_dirty = true;
+                    }
+                }
+            }
+            _ => {
+                let Some(d) = self.devices.dnd.take() else { return };
+                self.ui_dirty = true;
+                if !d.active {
+                    return;
+                }
+                match self.drop_target(x, y, &d.item) {
+                    Some(DropTarget::Track(t)) => {
+                        self.add_item_to_track(&d.item, t, None);
+                    }
+                    Some(DropTarget::Chain { track, index }) => {
+                        self.add_item_to_track(&d.item, track, index);
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+
+    /// Where a browser item dropped at window (x, y) goes.
+    pub fn drop_target(&self, x: f32, y: f32, item: &Item) -> Option<DropTarget> {
+        let l = self.layout();
+        let (tx, tw) = (l.timeline_x(), l.timeline_w());
+        let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - 30.5);
+        if x >= tx && x < tx + tw && y >= top && y < bottom {
+            let i = ((y - top + l.scroll_y) / 74.5).floor();
+            if i < 0.0 {
+                return None;
+            }
+            return self.project().tracks.get(i as usize).map(|t| DropTarget::Track(t.id));
+        }
+        if !l.mixer && !l.clip_tab {
+            let by = l.bottom_y();
+            if x >= PANEL_X + CHAIN_AREA_X && x < l.w - 5.0 && y >= by + 27.0 && y < by + l.bottom_h() {
+                let track = self.selected_track?;
+                let index = if item.kind() == PluginKind::Effect { Some(self.chain_insert_index(x - PANEL_X, None)) } else { None };
+                return Some(DropTarget::Chain { track, index });
+            }
+        }
+        None
+    }
+
+    fn track_rect(&self, t: TrackId) -> Option<(f32, f32, f32, f32)> {
+        let l = self.layout();
+        let i = self.project().track_index(t)? as f32;
+        let y = 78.0 + 66.5 + i * 74.5 - l.scroll_y;
+        let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - 30.5);
+        let (y0, y1) = (y.max(top), (y + 74.0).min(bottom));
+        (y1 > y0).then_some((l.timeline_x(), y0, l.timeline_w(), y1 - y0))
+    }
+
+    // ---------------------------------------------------------------- chain
+
+    fn chain_view_w(&self) -> f32 {
+        (self.devices.win.0 - 2.0 * PANEL_X - CHAIN_AREA_X).max(100.0)
+    }
+
+    /// Cards of the selected track WITHOUT scroll or drag offsets:
+    /// ((x, card), add_x, synth_visible). x is bottom-panel relative.
+    fn chain_layout_unscrolled(&self) -> (Vec<(f32, DeviceCard)>, f32, bool) {
+        let synth = self.synth_track().is_some();
+        let mut out = Vec::new();
+        let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else { return (out, ADD_X_ALONE, synth) };
+        let mut x = CHAIN_X0 + if synth { SYNTH_W + CARD_GAP } else { 0.0 };
+        let inst = if t.kind == TrackKind::Instrument { t.instrument_plugin.as_ref() } else { None };
+        for (d, instrument) in inst.into_iter().map(|d| (d, true)).chain(t.devices.iter().map(|d| (d, false))) {
+            out.push((x, self.card_for(d, instrument)));
+            x += CARD_W + CARD_GAP;
+        }
+        let add_x = if out.is_empty() && !synth { ADD_X_ALONE } else { x };
+        (out, add_x, synth)
+    }
+
+    fn card_for(&self, d: &Device, instrument: bool) -> DeviceCard {
+        let info = self.devices.catalog.find(&d.plugin);
+        let error = self.devices.load_errors.iter().find(|(id, _)| *id == d.id).map(|(_, e)| e.clone()).unwrap_or_default();
+        DeviceCard {
+            id: d.id.0 as i32,
+            x: 0.0,
+            name: d.plugin.name.clone().into(),
+            vendor: if d.plugin.vendor.is_empty() { "Unknown vendor".into() } else { d.plugin.vendor.clone().into() },
+            format: format_badge(d.plugin.format).into(),
+            kind: if instrument { "Instrument".into() } else { "Audio effect".into() },
+            enabled: d.enabled,
+            instrument,
+            error: error.into(),
+            latency: fmt_latency(self.devices.latency.get(&d.id).copied().unwrap_or(0), self.rate).into(),
+            has_editor: info.map(|i| i.has_editor).unwrap_or(true),
+            editor_open: self.devices.editors.contains(&d.id),
+            dragging: false,
+        }
+    }
+
+    /// Insert index in the selected track's chain for a card centre at bottom-panel x
+    /// (`moving`: the card being dragged, left out of the count).
+    fn chain_insert_index(&self, centre: f32, moving: Option<DeviceId>) -> usize {
+        let (cards, _, _) = self.chain_layout_unscrolled();
+        let cx = centre + self.devices.chain_scroll;
+        cards.iter().filter(|(_, c)| !c.instrument && Some(DeviceId(c.id as u64)) != moving).filter(|(x, _)| x + CARD_W / 2.0 < cx).count()
+    }
+
+    /// Marker x (bottom-panel relative, scrolled) for an insert index.
+    fn chain_marker_x(&self, index: usize, moving: Option<DeviceId>) -> f32 {
+        let (cards, add_x, synth) = self.chain_layout_unscrolled();
+        let inserts: Vec<f32> = cards.iter().filter(|(_, c)| !c.instrument && Some(DeviceId(c.id as u64)) != moving).map(|(x, _)| *x).collect();
+        let first = cards.iter().find(|(_, c)| !c.instrument).map(|(x, _)| *x).unwrap_or(add_x);
+        let x = match inserts.get(index) {
+            Some(x) => x - CARD_GAP / 2.0,
+            None => inserts.last().map(|x| x + CARD_W + CARD_GAP / 2.0).unwrap_or(if synth || !cards.is_empty() { first - CARD_GAP / 2.0 } else { first - 4.0 }),
+        };
+        x - self.devices.chain_scroll
+    }
+
+    pub fn chain_scroll_by(&mut self, d: f32) {
+        self.devices.chain_scroll -= d;
+        self.clamp_chain_scroll();
+        self.ui_dirty = true;
+    }
+
+    fn clamp_chain_scroll(&mut self) {
+        let (_, add_x, _) = self.chain_layout_unscrolled();
+        let content = add_x + ADD_W + 8.0 - CHAIN_AREA_X;
+        let max = (content - self.chain_view_w()).max(0.0);
+        self.devices.chain_scroll = self.devices.chain_scroll.clamp(0.0, max);
+    }
+
+    pub fn device_power(&mut self, id: DeviceId) {
+        if let Some(d) = self.project().device(id) {
+            let enabled = !d.enabled;
+            self.execute(Command::SetDeviceEnabled { device: id, enabled });
+        }
+    }
+
+    /// Open or close the plugin's own window (main thread).
+    pub fn device_edit(&mut self, id: DeviceId) {
+        if self.project().device(id).is_none() {
+            return;
+        }
+        if self.engine.plugin_editor_is_open(id) {
+            self.engine.close_plugin_editor(id);
+            self.devices.editors.remove(&id);
+        } else {
+            match self.engine.open_plugin_editor(id) {
+                Ok(()) => {
+                    self.devices.editors.insert(id);
+                }
+                Err(e) => self.set_status(format!("Plugin window: {e}"), 5),
+            }
+        }
+        self.ui_dirty = true;
+    }
+
+    /// Remove a device (its window is closed first).
+    pub fn device_remove(&mut self, id: DeviceId) {
+        if self.project().device(id).is_none() {
+            return;
+        }
+        self.engine.close_plugin_editor(id);
+        self.devices.editors.remove(&id);
+        self.execute(Command::RemoveDevice { device: id });
+    }
+
+    /// Instrument card "Use built-in Synth".
+    pub fn device_use_synth(&mut self) {
+        let Some(t) = self.selected_track else { return };
+        if self.project().track(t).is_some_and(|t| t.instrument_plugin.is_some()) {
+            self.add_item_to_track(&Item::BuiltinSynth, t, None);
+        }
+    }
+
+    /// Card header drag: phase 0 press, 1 move, 2 release; window x.
+    pub fn device_drag(&mut self, id: DeviceId, phase: i32, x: f32) {
+        let is_insert = self.project().find_device(id).is_some_and(|(_, s)| matches!(s, saine_core::model::DeviceSlot::Insert(_)));
+        match phase {
+            0 => self.devices.card_drag = is_insert.then_some(CardDrag { id, start_x: x, cur_x: x, active: false }),
+            1 => {
+                if let Some(d) = self.devices.card_drag.as_mut() {
+                    d.cur_x = x;
+                    if (x - d.start_x).abs() > DRAG_SLOP {
+                        d.active = true;
+                    }
+                    self.ui_dirty = true;
+                }
+            }
+            _ => {
+                let Some(d) = self.devices.card_drag.take() else { return };
+                self.ui_dirty = true;
+                if !d.active {
+                    return;
+                }
+                let Some((ti, saine_core::model::DeviceSlot::Insert(from))) = self.project().find_device(d.id) else { return };
+                let track = self.project().tracks[ti].id;
+                let (cards, _, _) = self.chain_layout_unscrolled();
+                let Some((x0, _)) = cards.iter().find(|(_, c)| c.id as u64 == d.id.0) else { return };
+                let centre = x0 - self.devices.chain_scroll + (d.cur_x - d.start_x) + CARD_W / 2.0;
+                let index = self.chain_insert_index(centre, Some(d.id));
+                if index != from {
+                    self.execute(Command::MoveDevice { device: d.id, track, index });
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- Add device card + menus
+
+    /// Items offered for the selected track: effects always, instruments on
+    /// instrument tracks.
+    fn offered(&self, fmt: Option<PluginFormat>, q: &str) -> Vec<Item> {
+        let inst_track = self.selected_track.and_then(|t| self.project().track(t)).is_some_and(|t| t.kind == TrackKind::Instrument);
+        let q = q.trim().to_lowercase();
+        let mut v = Vec::new();
+        if inst_track && fmt.is_none() && (q.is_empty() || "synth".contains(&q) || "built-in".contains(&q)) {
+            v.push(Item::BuiltinSynth);
+        }
+        let kinds: &[PluginKind] = if inst_track { &[PluginKind::Instrument, PluginKind::Effect] } else { &[PluginKind::Effect] };
+        for k in kinds {
+            for p in self.devices.catalog.of_kind(*k) {
+                if fmt.is_none_or(|f| f == p.plugin.format) && matches(&q, &p.plugin) {
+                    v.push(Item::Plugin(p.plugin.clone()));
+                }
+            }
+        }
+        v
+    }
+
+    /// "Add device" row: 0 Built-in, 1 Audio Units, 2 VST3, 3 CLAP, 4 Chains (PLACEHOLDER).
+    pub fn add_category(&mut self, row: usize, x: f32, y: f32) {
+        if self.selected_track.is_none() {
+            self.set_status("Select a track first", 3);
+            return;
+        }
+        let (label, items): (&str, Vec<Item>) = match row {
+            0 => ("built-in devices", self.offered(None, "").into_iter().filter(|i| *i == Item::BuiltinSynth).collect()),
+            1 => ("Audio Units", self.offered(Some(PluginFormat::AudioUnit), "")),
+            2 => ("VST3 plugins", self.offered(Some(PluginFormat::Vst3), "")),
+            3 => ("CLAP plugins", self.offered(Some(PluginFormat::Clap), "")),
+            _ => {
+                self.set_status("Device chains: not implemented yet", 3);
+                return;
+            }
+        };
+        let mut rows = Vec::new();
+        let mut kind = None;
+        let both = items.iter().any(|i| i.kind() == PluginKind::Instrument) && items.iter().any(|i| i.kind() == PluginKind::Effect);
+        for it in items {
+            if both && kind != Some(it.kind()) {
+                kind = Some(it.kind());
+                let sep = !rows.is_empty();
+                rows.push((if it.kind() == PluginKind::Instrument { "Instruments" } else { "Audio effects" }.to_string(), String::new(), None, sep));
+            }
+            let right = match &it {
+                Item::BuiltinSynth => "Built-in".to_string(),
+                Item::Plugin(p) => p.vendor.clone(),
+            };
+            rows.push((it.name().to_string(), right, Some(it), false));
+        }
+        if rows.is_empty() {
+            let note = match &self.devices.catalog.state {
+                ScanState::Scanning => "Scanning plugins…".to_string(),
+                ScanState::Failed(_) => "Plugin scan unavailable".to_string(),
+                _ if row == 0 => "No built-in effects yet".to_string(),
+                _ => format!("No {label} found"),
+            };
+            rows.push((note, String::new(), None, false));
+        }
+        self.devices.menu = Some(DevMenu { pos: (x, y), w: 220.0, rows });
+        self.ui_dirty = true;
+    }
+
+    /// Instrument selector (inspector "Inst", Synth header ▾): Synth + instrument plugins.
+    pub fn open_inst_menu(&mut self, x: f32, y: f32) {
+        let Some(t) = self.selected_track.and_then(|t| self.project().track(t)).filter(|t| t.kind == TrackKind::Instrument) else { return };
+        let cur = t.instrument_plugin.as_ref().map(|d| (d.plugin.format, d.plugin.id.clone()));
+        let check = |on: bool, s: &str| if on { "✓".to_string() } else { s.to_string() };
+        let mut rows = vec![("Synth".to_string(), check(cur.is_none(), "Built-in"), Some(Item::BuiltinSynth), false)];
+        let plugins = self.devices.catalog.of_kind(PluginKind::Instrument);
+        if !plugins.is_empty() {
+            rows.push(("Instrument plugins".to_string(), String::new(), None, true));
+        }
+        for p in plugins {
+            let on = cur.as_ref().is_some_and(|(f, id)| *f == p.plugin.format && *id == p.plugin.id);
+            rows.push((p.plugin.name.clone(), check(on, format_badge(p.plugin.format)), Some(Item::Plugin(p.plugin.clone())), false));
+        }
+        if self.devices.catalog.state == ScanState::Scanning {
+            rows.push(("Scanning plugins…".to_string(), String::new(), None, true));
+        }
+        self.devices.menu = Some(DevMenu { pos: (x, y), w: 200.0, rows });
+        self.ui_dirty = true;
+    }
+
+    pub fn devmenu_pick(&mut self, i: usize) {
+        let Some(m) = self.devices.menu.take() else { return };
+        self.ui_dirty = true;
+        let Some(item) = m.rows.get(i).and_then(|r| r.2.clone()) else { return };
+        let Some(t) = self.selected_track else { return };
+        // Picking the current instrument again is a no-op (no undo step).
+        let cur_inst = self.project().track(t).and_then(|t| t.instrument_plugin.as_ref()).map(|d| d.plugin.clone());
+        let same = match (&item, &cur_inst) {
+            (Item::BuiltinSynth, None) => item.kind() == PluginKind::Instrument && self.project().track(t).is_some_and(|t| t.kind == TrackKind::Instrument),
+            (Item::Plugin(p), Some(c)) => p.kind == PluginKind::Instrument && p.format == c.format && p.id == c.id,
+            _ => false,
+        };
+        if !same {
+            self.add_item_to_track(&item, t, None);
+        }
+    }
+
+    pub fn devmenu_dismiss(&mut self) {
+        self.devices.menu = None;
+        self.ui_dirty = true;
+    }
+
+    pub fn add_search(&mut self, text: &str) {
+        self.devices.add_search = text.to_string();
+        self.ui_dirty = true;
+    }
+
+    pub fn add_result_pick(&mut self, i: usize) {
+        let Some(item) = self.devices.add_results.get(i).cloned() else { return };
+        let Some(t) = self.selected_track else { return };
+        self.add_item_to_track(&item, t, None);
+    }
+
+    // ---------------------------------------------------------------- view models
+
+    pub(crate) fn push_devices(&mut self, s: &Studio) {
+        // ---- browser tree ----
+        let (entries, mut rows) = build_tree(&self.devices.catalog, self.devices.tab, &self.devices.search, &self.devices.expanded);
+        for (e, r) in entries.iter().zip(rows.iter_mut()) {
+            r.selected = self.devices.selected.as_deref() == Some(e.key.as_str());
+        }
+        let empty = if !rows.is_empty() {
+            String::new()
+        } else if !self.devices.search.trim().is_empty() {
+            format!("No devices match “{}”", self.devices.search.trim())
+        } else {
+            String::new()
+        };
+        self.devices.entries = entries;
+        sync_model(&self.tree_model, rows);
+        s.set_browser_tab(self.devices.tab as i32);
+        if s.get_browser_search().as_str() != self.devices.search {
+            s.set_browser_search(self.devices.search.clone().into());
+        }
+        s.set_tree_scroll(self.devices.tree_scroll);
+        s.set_tree_empty(empty.into());
+
+        // ---- drag and drop ghost + target ----
+        match self.devices.dnd.clone().filter(|d| d.active) {
+            Some(d) => {
+                s.set_dnd_active(true);
+                s.set_dnd_x(d.pos.0);
+                s.set_dnd_y(d.pos.1);
+                let target = self.drop_target(d.pos.0, d.pos.1, &d.item);
+                let ok_kind = |t: TrackId| d.item.kind() == PluginKind::Effect || self.project().track(t).is_some_and(|t| t.kind == TrackKind::Instrument);
+                let (ok, rect, marker) = match target {
+                    Some(DropTarget::Track(t)) => (ok_kind(t), self.track_rect(t), None),
+                    Some(DropTarget::Chain { track, index }) => {
+                        let l = self.layout();
+                        let r = (PANEL_X + CHAIN_AREA_X, l.bottom_y() + 27.0, l.w - 2.0 * PANEL_X - CHAIN_AREA_X, l.bottom_h() - 27.0);
+                        (ok_kind(track), if index.is_none() { Some(r) } else { None }, index.map(|i| self.chain_marker_x(i, None)))
+                    }
+                    None => (false, None, None),
+                };
+                s.set_dnd_ok(ok);
+                s.set_dnd_label(d.item.name().into());
+                s.set_dnd_target_visible(rect.is_some() && ok);
+                if let Some((x, y, w, h)) = rect {
+                    s.set_dnd_tx(x);
+                    s.set_dnd_ty(y);
+                    s.set_dnd_tw(w);
+                    s.set_dnd_th(h);
+                }
+                s.set_chain_marker_visible(marker.is_some() && ok);
+                if let Some(x) = marker {
+                    s.set_chain_marker_x(x);
+                }
+            }
+            None => {
+                s.set_dnd_active(false);
+                s.set_dnd_target_visible(false);
+                s.set_chain_marker_visible(false);
+            }
+        }
+
+        // ---- device chain ----
+        self.clamp_chain_scroll();
+        let scroll = self.devices.chain_scroll;
+        let (cards, add_x, _) = self.chain_layout_unscrolled();
+        let drag = self.devices.card_drag.filter(|d| d.active);
+        let cards: Vec<DeviceCard> = cards
+            .into_iter()
+            .map(|(x, mut c)| {
+                c.x = x - scroll;
+                if let Some(d) = drag
+                    && d.id.0 == c.id as u64
+                {
+                    c.x += d.cur_x - d.start_x;
+                    c.dragging = true;
+                }
+                c
+            })
+            .collect();
+        // Draw the dragged card last (on top).
+        let mut cards = cards;
+        cards.sort_by_key(|c| c.dragging);
+        sync_model(&self.cards_model, cards);
+        s.set_chain_scroll(scroll);
+        s.set_add_device_x(add_x - scroll);
+        if let Some(d) = drag {
+            let (cards, _, _) = self.chain_layout_unscrolled();
+            if let Some((x0, _)) = cards.iter().find(|(_, c)| c.id as u64 == d.id.0) {
+                let centre = x0 - scroll + (d.cur_x - d.start_x) + CARD_W / 2.0;
+                let idx = self.chain_insert_index(centre, Some(d.id));
+                s.set_chain_marker_visible(true);
+                s.set_chain_marker_x(self.chain_marker_x(idx, Some(d.id)));
+            }
+        }
+        // Inspector instrument name.
+        let sel = self.selected_track.and_then(|t| self.project().track(t));
+        let inst = sel.and_then(|t| t.instrument_plugin.as_ref()).map(|d| d.plugin.name.clone()).unwrap_or_else(|| "Synth".into());
+        s.set_sel_inst_text(inst.into());
+
+        // ---- Add device search ----
+        if s.get_add_search().as_str() != self.devices.add_search {
+            s.set_add_search(self.devices.add_search.clone().into());
+        }
+        self.devices.add_results = if self.devices.add_search.trim().is_empty() { Vec::new() } else { self.offered(None, &self.devices.add_search.clone()) };
+        let mut results: Vec<MenuItem> = self
+            .devices
+            .add_results
+            .iter()
+            .take(9)
+            .enumerate()
+            .map(|(i, it)| MenuItem {
+                label: it.name().into(),
+                shortcut: match it {
+                    Item::BuiltinSynth => "Built-in".into(),
+                    Item::Plugin(p) => format_badge(p.format).into(),
+                },
+                enabled: true,
+                separator: false,
+                submenu: false,
+                y: i as f32 * 22.0,
+            })
+            .collect();
+        if results.is_empty() && !self.devices.add_search.trim().is_empty() {
+            results.push(MenuItem { label: "No matches".into(), shortcut: "".into(), enabled: false, separator: false, submenu: false, y: 0.0 });
+        }
+        sync_model(&self.add_results_model, results);
+
+        // ---- popup ----
+        match &self.devices.menu {
+            Some(m) => {
+                let items: Vec<MenuItem> = m
+                    .rows
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (label, right, item, sep))| MenuItem {
+                        label: label.clone().into(),
+                        shortcut: right.clone().into(),
+                        enabled: item.is_some(),
+                        separator: *sep,
+                        submenu: false,
+                        y: MENU_PAD + i as f32 * MENU_ROW,
+                    })
+                    .collect();
+                let content = MENU_PAD * 2.0 + items.len() as f32 * MENU_ROW;
+                s.set_devmenu_content_h(content);
+                s.set_devmenu_h(content.min(self.devices.win.1 - 10.0));
+                s.set_devmenu_w(m.w);
+                s.set_devmenu_x(m.pos.0);
+                s.set_devmenu_y(m.pos.1);
+                sync_model(&self.devmenu_model, items);
+                s.set_devmenu_open(true);
+            }
+            None => s.set_devmenu_open(false),
+        }
+
+        // ---- Settings › Plugins (only while that page is shown) ----
+        if !(self.settings.open && self.settings.page == crate::settings::PLUGINS_PAGE) {
+            return;
+        }
+        let cat = &self.devices.catalog;
+        let status = match &cat.state {
+            ScanState::Idle => "Not scanned yet".to_string(),
+            ScanState::Scanning => {
+                let p = cat.progress.lock().map(|p| p.clone()).unwrap_or_default();
+                if p.is_empty() { "Scanning…".to_string() } else { format!("Scanning… {p}") }
+            }
+            ScanState::Done => format!(
+                "{} plugins found{}{}",
+                cat.plugins.len(),
+                if cat.from_cache { " (from the scan cache)" } else { "" },
+                if cat.fixture.is_some() { " (TEST fixture)" } else { "" }
+            ),
+            ScanState::Failed(e) => format!("Scan failed: {e}"),
+        };
+        s.set_plugins_status(status.into());
+        s.set_plugins_scanning(cat.state == ScanState::Scanning);
+        let home = std::env::var("HOME").unwrap_or_default();
+        let tilde = |d: &Path| {
+            let s = d.display().to_string();
+            match s.strip_prefix(&home) {
+                Some(rest) if !home.is_empty() => format!("~{rest}"),
+                _ => s,
+            }
+        };
+        let dirs: Vec<PluginRow> = scan_dirs().iter().map(|d| PluginRow { name: tilde(d).into(), detail: "".into(), badge: "Default".into(), warn: !d.is_dir() }).collect();
+        sync_model(&self.scan_dirs_model, dirs);
+        let mut found: Vec<&PluginInfo> = cat.plugins.iter().collect();
+        found.sort_by_key(|p| (format_order(p.plugin.format), p.plugin.vendor.to_lowercase(), p.plugin.name.to_lowercase()));
+        let rows: Vec<PluginRow> = found
+            .iter()
+            .map(|p| PluginRow {
+                name: p.plugin.name.clone().into(),
+                detail: format!(
+                    "{} · {}{}",
+                    if p.plugin.vendor.is_empty() { "Unknown vendor" } else { &p.plugin.vendor },
+                    if p.plugin.kind == PluginKind::Instrument { "Instrument" } else { "Audio effect" },
+                    if p.plugin.version.is_empty() { String::new() } else { format!(" · {}", p.plugin.version) }
+                )
+                .into(),
+                badge: format_badge(p.plugin.format).into(),
+                warn: false,
+            })
+            .collect();
+        sync_model(&self.plugin_rows_model, rows);
+        let failed: Vec<PluginRow> = cat.failed.iter().map(|(what, why)| PluginRow { name: what.clone().into(), detail: why.clone().into(), badge: "".into(), warn: true }).collect();
+        sync_model(&self.plugin_failed_model, failed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn info(name: &str, vendor: &str, fmt: PluginFormat, kind: PluginKind) -> PluginInfo {
+        PluginInfo {
+            plugin: PluginRef { format: fmt, id: format!("id-{name}"), path: None, name: name.into(), vendor: vendor.into(), version: String::new(), kind },
+            has_editor: true,
+            audio_inputs: 2,
+            audio_outputs: 2,
+        }
+    }
+
+    fn catalog() -> Catalog {
+        Catalog {
+            plugins: vec![
+                info("AULowpass", "Apple", PluginFormat::AudioUnit, PluginKind::Effect),
+                info("AUDelay", "Apple", PluginFormat::AudioUnit, PluginKind::Effect),
+                info("Crusher", "Acme", PluginFormat::AudioUnit, PluginKind::Effect),
+                info("DLSMusicDevice", "Apple", PluginFormat::AudioUnit, PluginKind::Instrument),
+                info("Gain", "Saine Test", PluginFormat::Vst3, PluginKind::Effect),
+                info("Sine", "Saine Test", PluginFormat::Clap, PluginKind::Instrument),
+            ],
+            state: ScanState::Done,
+            ..Default::default()
+        }
+    }
+
+    fn labels(rows: &[TreeRow]) -> Vec<(i32, String, String)> {
+        rows.iter().map(|r| (r.depth, r.label.to_string(), r.count.to_string())).collect()
+    }
+
+    #[test]
+    fn effects_tree_groups_by_format_and_au_vendor() {
+        let c = catalog();
+        let mut open: HashSet<String> = ["e/au", "e/vst3", "e/clap"].iter().map(|s| s.to_string()).collect();
+        let (_, rows) = build_tree(&c, 1, "", &open);
+        let l = |d: i32, s: &str, n: &str| (d, s.to_string(), n.to_string());
+        assert_eq!(labels(&rows), vec![l(0, "Audio Units", "3"), l(1, "Acme", "1"), l(1, "Apple", "2"), l(0, "VST3", "1"), l(1, "Gain", ""), l(0, "CLAP", "0")]);
+        assert_eq!(rows[5].expander, 0, "empty folder has no expander");
+        open.insert("e/au/Apple".into());
+        let (entries, rows) = build_tree(&c, 1, "", &open);
+        assert_eq!(rows[3].label, "AUDelay");
+        assert_eq!(rows[4].label, "AULowpass");
+        assert!(rows[4].leaf && rows[4].icon == 2);
+        assert!(matches!(&entries[4].item, Some(Item::Plugin(p)) if p.name == "AULowpass"));
+    }
+
+    #[test]
+    fn instruments_tree_has_builtin_synth_first() {
+        let c = catalog();
+        let open: HashSet<String> = ["i/builtin", "i/au", "i/au/Apple"].iter().map(|s| s.to_string()).collect();
+        let (entries, rows) = build_tree(&c, 0, "", &open);
+        assert_eq!(rows[0].label, "Built-in");
+        assert_eq!(entries[1].item, Some(Item::BuiltinSynth));
+        assert_eq!(rows[2].label, "Audio Units");
+        assert_eq!(rows[4].label, "DLSMusicDevice");
+    }
+
+    #[test]
+    fn search_filters_and_expands() {
+        let c = catalog();
+        let (entries, rows) = build_tree(&c, 1, "lowp", &HashSet::new());
+        assert_eq!(labels(&rows).iter().map(|r| r.1.as_str()).collect::<Vec<_>>(), ["Audio Units", "Apple", "AULowpass"]);
+        assert_eq!(rows[0].count, "1");
+        assert!(entries[2].item.is_some());
+        let (_, rows) = build_tree(&c, 1, "nothing-matches", &HashSet::new());
+        assert!(rows.is_empty());
+        // Vendor matches too.
+        let (_, rows) = build_tree(&c, 1, "acme", &HashSet::new());
+        assert_eq!(rows.last().unwrap().label, "Crusher");
+    }
+
+    #[test]
+    fn chains_tab_is_placeholder_folders() {
+        let (entries, rows) = build_tree(&catalog(), 2, "", &HashSet::new());
+        assert!(!rows.is_empty() && entries.iter().all(|e| e.item.is_none()));
+    }
+
+    #[test]
+    fn latency_text() {
+        assert_eq!(fmt_latency(0, 48_000.0), "");
+        assert_eq!(fmt_latency(480, 48_000.0), "Latency 480 samples (10.0 ms)");
+    }
+}

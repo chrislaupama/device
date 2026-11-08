@@ -1197,15 +1197,431 @@ fn recording_steps() -> Vec<Step> {
     ]
 }
 
+// ------------------------------------------------------------------ plugin devices
+
+/// Index of the first track of `kind`.
+fn track_of(c: &Controller, kind: TrackKind) -> Option<usize> {
+    c.project().tracks.iter().position(|t| t.kind == kind)
+}
+
+/// Scroll the track list (wheel over the headers) so track `i` is fully visible, then click its header.
+fn click_track_header(a: &AppWindow, ctl: &Ctl, i: usize) {
+    let (sy, lanes_h) = {
+        let c = ctl.borrow();
+        (c.view.scroll_y as f32, c.lanes_size.1)
+    };
+    let y = TRACK0_Y + i as f32 * PITCH - sy;
+    let bottom = 78.0 + 27.5 + lanes_h - 30.5;
+    if y < TRACK0_Y || y + 74.0 > bottom {
+        let target = i as f32 * PITCH;
+        a.window().dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(300.0, 300.0) });
+        a.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(300.0, 300.0), delta_x: 0.0, delta_y: sy - target });
+        if let Ok(mut c) = ctl.try_borrow_mut() {
+            c.update_ui(a);
+        }
+    }
+    let sy = ctl.borrow().view.scroll_y as f32;
+    click(a, 300.0, TRACK0_Y + i as f32 * PITCH + 10.0 - sy);
+}
+
+/// Window centre of browser tree row `i`.
+fn tree_row_xy(a: &AppWindow, i: usize) -> (f32, f32) {
+    let sc = a.global::<Studio>().get_tree_scroll();
+    (5.0 + 110.0, crate::devices::TREE_Y + crate::devices::TREE_TOP + i as f32 * crate::devices::TREE_ROW + 10.5 - sc)
+}
+
+fn tree_labels(a: &AppWindow) -> Vec<(i32, String, String, bool)> {
+    let m = a.global::<Studio>().get_tree();
+    (0..slint::Model::row_count(&m)).filter_map(|i| slint::Model::row_data(&m, i)).map(|r| (r.depth, r.label.to_string(), r.count.to_string(), r.leaf)).collect()
+}
+
+fn tree_row_of(a: &AppWindow, label: &str) -> Option<usize> {
+    tree_labels(a).iter().position(|r| r.1 == label && r.3)
+}
+
+fn cards(a: &AppWindow) -> Vec<crate::DeviceCard> {
+    let m = a.global::<Studio>().get_device_cards();
+    (0..slint::Model::row_count(&m)).filter_map(|i| slint::Model::row_data(&m, i)).collect()
+}
+
+fn card_named(a: &AppWindow, name: &str) -> Option<crate::DeviceCard> {
+    cards(a).into_iter().find(|c| c.name == name)
+}
+
+/// Bottom panel (Devices tab, 306 pt) top in the window.
+const BOTTOM_Y: f32 = 509.0;
+/// Card-relative point -> window point.
+fn card_xy(c: &crate::DeviceCard, x: f32, y: f32) -> (f32, f32) {
+    (5.0 + c.x + x, BOTTOM_Y + 34.0 + y)
+}
+
+/// Centre of row `i` of the device popup list (same clamping as ui/app.slint).
+fn devmenu_row(a: &AppWindow, i: usize) -> (f32, f32) {
+    let s = a.global::<Studio>();
+    let (w, h) = (s.get_devmenu_w(), s.get_devmenu_h());
+    let x = s.get_devmenu_x().min(1440.0 - 5.0 - w).max(5.0);
+    let y = s.get_devmenu_y().min(820.0 - 5.0 - h).max(5.0);
+    (x + 40.0, y + crate::devices::MENU_PAD + i as f32 * crate::devices::MENU_ROW + 10.25)
+}
+
+fn devmenu_labels(a: &AppWindow) -> Vec<(String, String, bool)> {
+    let m = a.global::<Studio>().get_devmenu_items();
+    (0..slint::Model::row_count(&m)).filter_map(|i| slint::Model::row_data(&m, i)).map(|r| (r.label.to_string(), r.shortcut.to_string(), r.enabled)).collect()
+}
+
+fn track_devices(c: &Controller, kind: TrackKind) -> Vec<(u64, String, bool)> {
+    track_of(c, kind).map(|i| c.project().tracks[i].devices.iter().map(|d| (d.id.0, d.plugin.name.clone(), d.enabled)).collect()).unwrap_or_default()
+}
+
+/// Replace the text of the focused-on-click search field (End, Backspace x n, type).
+fn retype(a: &AppWindow, field: (f32, f32), text: &str) {
+    click(a, field.0, field.1);
+    key(a, Key::End, false, false);
+    for _ in 0..24 {
+        key(a, Key::Backspace, false, false);
+    }
+    type_text(a, text);
+}
+
+const BROWSER_SEARCH: (f32, f32) = (5.0 + 8.5 + 120.0, 78.0 + 34.0 + 10.0);
+const EFFECTS_TAB: (f32, f32) = (5.0 + 86.0, 78.0 + 67.0);
+
+/// Plugin devices (appended last). Checks marked [needs engine plugin …] depend on the
+/// engine's plugin hosting; with the engine stub they FAIL (the catalogue is empty and no
+/// instance exists), never pass by default.
+fn device_steps() -> Vec<Step> {
+    use Step::*;
+    let hist = Rc::new(Cell::new(0usize));
+    let h = || hist.clone();
+    fn one(hc: &Rc<Cell<usize>>, c: &Controller, label: &str) -> Result<(), String> {
+        let n = c.doc.history_labels().len();
+        let was = hc.get();
+        hc.set(n);
+        (n == was + 1 && c.doc.undo_label() == Some(label)).then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want {label})", c.doc.undo_label()))
+    }
+    let removed = Rc::new(Cell::new(0u64));
+    let (rm1, rm2) = (removed.clone(), removed.clone());
+    let scans = Rc::new(Cell::new(0usize));
+    let (sc1, sc2) = (scans.clone(), scans.clone());
+    // Editor step result: None = skipped (engine reports no editor), Some((opened, closed, error)).
+    let editor: Rc<RefCell<Option<(bool, bool, String)>>> = Rc::new(RefCell::new(None));
+    let (ed1, ed2) = (editor.clone(), editor.clone());
+    let saved: Rc<RefCell<Vec<(u64, String, bool)>>> = Rc::new(RefCell::new(Vec::new()));
+    let (sv1, sv2) = (saved.clone(), saved.clone());
+    let save_dir = std::env::temp_dir().join(format!("saine-selftest-devices-{}.saineproj", std::process::id()));
+    let (sd1, sd2, sd3) = (save_dir.clone(), save_dir.clone(), save_dir);
+    let (h0, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12) = (h(), h(), h(), h(), h(), h(), h(), h(), h(), h(), h(), h(), h());
+    fn scan_state(c: &Controller) -> String {
+        format!("{:?}", c.devices.catalog.state)
+    }
+    vec![
+        Do("devices: Enter; Escape (close menus)", Box::new(|a| {
+            key(a, Key::Return, false, false);
+            key(a, Key::Escape, false, false);
+        })),
+        DoC("devices: select the first audio track, Devices tab, browser Effects sub-tab", Box::new(|a, ctl| {
+            let i = track_of(&ctl.borrow(), TrackKind::Audio).unwrap_or(0);
+            click_track_header(a, ctl, i);
+            if ctl.borrow().bottom_tab == crate::controller::BottomTab::Clip {
+                click(a, 5.0 + 286.0 + 15.0, 820.0 - 5.0 - 390.0 + 14.0);
+            }
+            click(a, EFFECTS_TAB.0, EFFECTS_TAB.1);
+        })),
+        Check("devices: Effects tab lists Audio Units with plugins (catalogue scanned) [needs engine plugin scanning]", Box::new(|c, a| {
+            let rows = tree_labels(a);
+            let au = rows.iter().find(|r| r.0 == 0 && r.1 == "Audio Units").map(|r| r.2.clone());
+            let ok = a.global::<Studio>().get_browser_tab() == 1 && au.as_deref().and_then(|n| n.parse::<usize>().ok()).is_some_and(|n| n > 0);
+            ok.then_some(()).ok_or(format!("tab {} Audio Units count {au:?}; scan {}", a.global::<Studio>().get_browser_tab(), scan_state(c)))
+        })),
+        Do("devices: type “AULowpass” into the browser search", Box::new(|a| retype(a, BROWSER_SEARCH, "AULowpass"))),
+        Check("devices: search shows Audio Units › Apple › AULowpass; record history [needs engine plugin scanning]", Box::new(move |c, a| {
+            h0.set(c.doc.history_labels().len());
+            let rows = tree_labels(a);
+            let names: Vec<&str> = rows.iter().map(|r| r.1.as_str()).collect();
+            (names.first() == Some(&"Audio Units") && tree_row_of(a, "AULowpass").is_some() && a.global::<Studio>().get_browser_search() == "AULowpass")
+                .then_some(())
+                .ok_or(format!("rows {names:?}, search {:?}; scan {}", a.global::<Studio>().get_browser_search(), scan_state(c)))
+        })),
+        Do("devices: double-click AULowpass", Box::new(|a| {
+            if let Some(i) = tree_row_of(a, "AULowpass") {
+                let (x, y) = tree_row_xy(a, i);
+                double_click(a, x, y);
+            }
+        })),
+        Check("devices: AULowpass added to the audio track (AddDevice), one undo step, card shown [needs engine plugin scanning]", Box::new(move |c, a| {
+            one(&h1, c, "Add AULowpass")?;
+            let d = track_devices(c, TrackKind::Audio);
+            (d.iter().map(|x| x.1.as_str()).collect::<Vec<_>>() == ["AULowpass"] && card_named(a, "AULowpass").is_some())
+                .then_some(())
+                .ok_or(format!("devices {d:?}"))
+        })),
+        Check("engine: AULowpass is instantiated (plugin_states lists it, no load error) [needs engine plugin hosting]", Box::new(|c, _| {
+            let id = track_of(c, TrackKind::Audio).and_then(|i| c.project().tracks[i].devices.first().map(|d| d.id)).ok_or("no device")?;
+            let states = c.engine.plugin_states();
+            let errors = c.engine.plugin_load_errors();
+            (states.iter().any(|(d, s)| *d == id && !s.is_empty()) && !errors.iter().any(|(d, _)| *d == id))
+                .then_some(())
+                .ok_or(format!("plugin_states {} entries (none for {}), load errors {errors:?}", states.len(), id.0))
+        })),
+        Do("devices: AULowpass power toggle off", Box::new(|a| {
+            if let Some(cd) = card_named(a, "AULowpass") {
+                let (x, y) = card_xy(&cd, 19.0, 13.25);
+                click(a, x, y);
+            }
+        })),
+        Check("devices: AULowpass bypassed (SetDeviceEnabled false), one undo step, toggle drawn off [needs engine plugin scanning]", Box::new(move |c, a| {
+            one(&h2, c, "Bypass Device")?;
+            let d = track_devices(c, TrackKind::Audio);
+            (d.first().is_some_and(|x| !x.2) && card_named(a, "AULowpass").is_some_and(|cd| !cd.enabled)).then_some(()).ok_or(format!("devices {d:?}"))
+        })),
+        Do("devices: AULowpass power toggle on", Box::new(|a| {
+            if let Some(cd) = card_named(a, "AULowpass") {
+                let (x, y) = card_xy(&cd, 19.0, 13.25);
+                click(a, x, y);
+            }
+        })),
+        Check("devices: AULowpass enabled again, one undo step [needs engine plugin scanning]", Box::new(move |c, _| {
+            one(&h3, c, "Enable Device")?;
+            track_devices(c, TrackKind::Audio).first().is_some_and(|x| x.2).then_some(()).ok_or("still bypassed".into())
+        })),
+        DoC("devices: clear the search; Add device › Audio Units", Box::new(|a, ctl| {
+            retype(a, BROWSER_SEARCH, "");
+            key(a, Key::Escape, false, false);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            let add_x = a.global::<Studio>().get_add_device_x();
+            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 22.0 + 11.0);
+        })),
+        Check("devices: Audio Units list open with AUDelay [needs engine plugin scanning]", Box::new(|c, a| {
+            let items = devmenu_labels(a);
+            (a.global::<Studio>().get_devmenu_open() && items.iter().any(|r| r.0 == "AUDelay" && r.2))
+                .then_some(())
+                .ok_or(format!("open {} items {:?}; scan {}", a.global::<Studio>().get_devmenu_open(), items.iter().take(4).collect::<Vec<_>>(), scan_state(c)))
+        })),
+        Do("devices: pick AUDelay", Box::new(|a| {
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == "AUDelay") {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            } else {
+                key(a, Key::Escape, false, false);
+            }
+        })),
+        Check("devices: chain = AULowpass, AUDelay (AddDevice), one undo step, list closed [needs engine plugin scanning]", Box::new(move |c, a| {
+            one(&h4, c, "Add AUDelay")?;
+            let d = track_devices(c, TrackKind::Audio);
+            (d.iter().map(|x| x.1.as_str()).collect::<Vec<_>>() == ["AULowpass", "AUDelay"] && !a.global::<Studio>().get_devmenu_open())
+                .then_some(())
+                .ok_or(format!("devices {d:?}"))
+        })),
+        Do("devices: drag the AUDelay card (header) before AULowpass", Box::new(|a| {
+            if let (Some(lp), Some(dl)) = (card_named(a, "AULowpass"), card_named(a, "AUDelay")) {
+                let (x0, y0) = card_xy(&dl, 110.0, 13.0);
+                let (x1, _) = card_xy(&lp, 30.0, 13.0);
+                drag(a, x0, y0, x1, y0);
+            }
+        })),
+        Check("devices: reordered to AUDelay, AULowpass in one undo step (MoveDevice) [needs engine plugin scanning]", Box::new(move |c, _| {
+            one(&h5, c, "Move Device")?;
+            let d = track_devices(c, TrackKind::Audio);
+            (d.iter().map(|x| x.1.as_str()).collect::<Vec<_>>() == ["AUDelay", "AULowpass"]).then_some(()).ok_or(format!("devices {d:?}"))
+        })),
+        DoC("devices: ✕ on the AULowpass card", Box::new(move |a, ctl| {
+            rm1.set(track_devices(&ctl.borrow(), TrackKind::Audio).iter().find(|x| x.1 == "AULowpass").map(|x| x.0).unwrap_or(0));
+            if let Some(cd) = card_named(a, "AULowpass") {
+                let (x, y) = card_xy(&cd, crate::devices::CARD_W - 14.5, 13.5);
+                click(a, x, y);
+            }
+        })),
+        Check("devices: AULowpass removed (RemoveDevice), one undo step [needs engine plugin scanning]", Box::new(move |c, a| {
+            one(&h6, c, "Remove Device")?;
+            let d = track_devices(c, TrackKind::Audio);
+            (d.iter().map(|x| x.1.as_str()).collect::<Vec<_>>() == ["AUDelay"] && card_named(a, "AULowpass").is_none()).then_some(()).ok_or(format!("devices {d:?}"))
+        })),
+        Do("devices: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("devices: ⌘Z restored AULowpass with the same device id, after AUDelay [needs engine plugin scanning]", Box::new(move |c, _| {
+            h7.set(c.doc.history_labels().len());
+            let d = track_devices(c, TrackKind::Audio);
+            (d.iter().map(|x| (x.0, x.1.as_str())).collect::<Vec<_>>().get(1) == Some(&(rm2.get(), "AULowpass")) && rm2.get() != 0)
+                .then_some(())
+                .ok_or(format!("devices {d:?}, removed id {}", rm2.get()))
+        })),
+        // Opens a real plugin window for an instant (it can take focus); runs only when the
+        // engine reports the plugin has an editor.
+        DoC("devices: open and close the AULowpass plugin window (only if the engine reports an editor)", Box::new(move |a, ctl| {
+            let has_editor = {
+                let c = ctl.borrow();
+                c.devices.catalog.plugins.iter().any(|p| p.plugin.name == "AULowpass" && p.has_editor) && c.devices.catalog.fixture.is_none()
+            };
+            if !has_editor {
+                *ed1.borrow_mut() = None;
+                return;
+            }
+            let Some(cd) = card_named(a, "AULowpass") else { return };
+            let id = saine_core::DeviceId(cd.id as u64);
+            let (x, y) = card_xy(&cd, crate::devices::CARD_W - 35.5, 13.5);
+            click(a, x, y);
+            let (opened, err) = {
+                let c = ctl.borrow();
+                (c.engine.plugin_editor_is_open(id), a.global::<Studio>().get_status_text().to_string())
+            };
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            if let Some(cd) = card_named(a, "AULowpass") {
+                let (x, y) = card_xy(&cd, crate::devices::CARD_W - 35.5, 13.5);
+                click(a, x, y);
+            }
+            let closed = !ctl.borrow().engine.plugin_editor_is_open(id);
+            *ed1.borrow_mut() = Some((opened, closed, err));
+        })),
+        Check("devices: plugin window opened, then closed (plugin_editor_is_open toggled) [needs engine plugin editors]", Box::new(move |_, _| match &*ed2.borrow() {
+            None => Err("SKIP: the engine reports no editor for AULowpass (no scan, fixture catalogue or has_editor false)".into()),
+            Some((true, true, _)) => Ok(()),
+            Some((o, cl, e)) => Err(format!("opened {o} closed {cl}; status {e:?}")),
+        })),
+        DoC("devices: select the Instrument track; open the Inst selector", Box::new(move |a, ctl| {
+            let i = track_of(&ctl.borrow(), TrackKind::Instrument).unwrap_or(1);
+            click_track_header(a, ctl, i);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            click(a, INSP_IN.0, INSP_IN.1);
+        })),
+        Check("devices: Inst list shows Synth ✓ and DLSMusicDevice; record history [needs engine plugin scanning]", Box::new(move |c, a| {
+            h8.set(c.doc.history_labels().len());
+            let items = devmenu_labels(a);
+            (items.first().is_some_and(|r| r.0 == "Synth" && r.1 == "✓") && items.iter().any(|r| r.0 == "DLSMusicDevice" && r.2))
+                .then_some(())
+                .ok_or(format!("items {:?}; scan {}", items.iter().take(5).collect::<Vec<_>>(), scan_state(c)))
+        })),
+        Do("devices: pick DLSMusicDevice", Box::new(|a| {
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == "DLSMusicDevice") {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            } else {
+                key(a, Key::Escape, false, false);
+            }
+        })),
+        Check("devices: DLSMusicDevice is the instrument (SetInstrumentPlugin), one undo step; its card replaces the Synth card [needs engine plugin scanning]", Box::new(move |c, a| {
+            one(&h9, c, "Load DLSMusicDevice")?;
+            let i = track_of(c, TrackKind::Instrument).ok_or("no instrument track")?;
+            let ip = c.project().tracks[i].instrument_plugin.as_ref().map(|d| d.plugin.name.clone());
+            let s = a.global::<Studio>();
+            (ip.as_deref() == Some("DLSMusicDevice") && !s.get_synth_visible() && card_named(a, "DLSMusicDevice").is_some_and(|cd| cd.instrument) && s.get_sel_inst_text() == "DLSMusicDevice")
+                .then_some(())
+                .ok_or(format!("instrument {ip:?}, synth visible {}, inst text {}", s.get_synth_visible(), s.get_sel_inst_text()))
+        })),
+        Do("devices: Inst selector → Synth", Box::new(|a| {
+            click(a, INSP_IN.0, INSP_IN.1);
+            let (x, y) = devmenu_row(a, 0);
+            click(a, x, y);
+        })),
+        Check("devices: back to the built-in Synth (instrument plugin None), one undo step, Synth card shown [needs engine plugin scanning]", Box::new(move |c, a| {
+            one(&h10, c, "Use Built-in Synth")?;
+            let i = track_of(c, TrackKind::Instrument).ok_or("no instrument track")?;
+            (c.project().tracks[i].instrument_plugin.is_none() && a.global::<Studio>().get_synth_visible()).then_some(()).ok_or("still a plugin instrument".into())
+        })),
+        DoC("devices: search “AUDelay”, drag it from the browser onto the Instrument track lane", Box::new(|a, ctl| {
+            retype(a, BROWSER_SEARCH, "AUDelay");
+            key(a, Key::Escape, false, false);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            let Some(r) = tree_row_of(a, "AUDelay") else { return };
+            let (x0, y0) = tree_row_xy(a, r);
+            let (ti, sy) = {
+                let c = ctl.borrow();
+                (track_of(&c, TrackKind::Instrument).unwrap_or(1), c.view.scroll_y as f32)
+            };
+            drag(a, x0, y0, LANE_X + 300.0, TRACK0_Y + ti as f32 * PITCH + 37.0 - sy);
+        })),
+        Check("devices: AUDelay dropped on the Instrument track (AddDevice), one undo step [needs engine plugin scanning]", Box::new(move |c, a| {
+            one(&h11, c, "Add AUDelay")?;
+            let d = track_devices(c, TrackKind::Instrument);
+            (d.iter().map(|x| x.1.as_str()).collect::<Vec<_>>() == ["AUDelay"] && !a.global::<Studio>().get_dnd_active()).then_some(()).ok_or(format!("instrument devices {d:?}"))
+        })),
+        DoC("devices: search “AULowpass”, drag it into the device chain before AUDelay", Box::new(|a, ctl| {
+            retype(a, BROWSER_SEARCH, "AULowpass");
+            key(a, Key::Escape, false, false);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            let (Some(r), Some(dl)) = (tree_row_of(a, "AULowpass"), card_named(a, "AUDelay")) else { return };
+            let (x0, y0) = tree_row_xy(a, r);
+            let (x1, y1) = card_xy(&dl, 30.0, 120.0);
+            drag(a, x0, y0, x1, y1);
+        })),
+        Check("devices: AULowpass dropped into the chain at index 0 (AddDevice), one undo step [needs engine plugin scanning]", Box::new(move |c, _| {
+            one(&h12, c, "Add AULowpass")?;
+            let d = track_devices(c, TrackKind::Instrument);
+            (d.iter().map(|x| x.1.as_str()).collect::<Vec<_>>() == ["AULowpass", "AUDelay"]).then_some(()).ok_or(format!("instrument devices {d:?}"))
+        })),
+        DoC("devices: ⌘, then Settings › Plugins; record scans", Box::new(move |a, ctl| {
+            sc1.set(ctl.borrow().devices.catalog.scans);
+            key(a, ",", true, false);
+            let (x, y) = settings_row(crate::settings::PLUGINS_PAGE);
+            click(a, x, y);
+        })),
+        Check("settings: Plugins page shows scan directories, scan status and every catalogue entry", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let rows = slint::Model::row_count(&s.get_plugin_rows());
+            let dirs = slint::Model::row_count(&s.get_scan_dirs());
+            (s.get_settings_open() && s.get_settings_page() == crate::settings::PLUGINS_PAGE as i32 && dirs >= 3 && rows == c.devices.catalog.plugins.len() && !s.get_plugins_status().is_empty())
+                .then_some(())
+                .ok_or(format!("page {} dirs {dirs} rows {rows} status {:?}", s.get_settings_page(), s.get_plugins_status()))
+        })),
+        Do("settings: click “Rescan all plugins”", Box::new(|a| {
+            let dirs = slint::Model::row_count(&a.global::<Studio>().get_scan_dirs()) as f32;
+            let content_w = 960.0 - 187.0;
+            let card_x = 20.5 + ((content_w - 41.0) / 2.0 + 4.5);
+            let card_y = 91.0 + dirs * 30.5 + 86.0;
+            click(a, 255.0 + 187.0 + card_x + 10.5 + 30.0, 7.0 + card_y + 31.0 + 13.0);
+        })),
+        Check("settings: a forced rescan ran (scan_plugins with rescan = true) and finished", Box::new(move |c, _| {
+            let st = &c.devices.catalog.state;
+            (c.devices.catalog.scans == sc2.get() + 1 && c.devices.catalog.last_rescan && *st != crate::devices::ScanState::Scanning)
+                .then_some(())
+                .ok_or(format!("scans {} -> {}, rescan {}, state {st:?}", sc2.get(), c.devices.catalog.scans, c.devices.catalog.last_rescan))
+        })),
+        Do("settings: Escape", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("devices: ⌘S into a scratch project folder, then reopen it", Box::new(move |a, ctl| {
+            {
+                let mut c = ctl.borrow_mut();
+                let mut all = track_devices(&c, TrackKind::Audio);
+                all.extend(track_devices(&c, TrackKind::Instrument));
+                *sv1.borrow_mut() = all;
+                c.project_dir = Some(sd1.clone());
+            }
+            key(a, "s", true, false);
+            ctl.borrow_mut().open(&sd1);
+        })),
+        Check("devices: reopened project has the same devices (ids, plugins, order, bypass) [needs engine plugin scanning]", Box::new(move |c, _| {
+            let mut all = track_devices(c, TrackKind::Audio);
+            all.extend(track_devices(c, TrackKind::Instrument));
+            let want = sv2.borrow().clone();
+            (!want.is_empty() && all == want && c.project_dir.as_deref() == Some(sd2.as_path())).then_some(()).ok_or(format!("reopened {all:?}, saved {want:?}"))
+        })),
+        Check("engine: the saved project carries each device's plugin state (plugin_states before save) [needs engine plugin hosting]", Box::new(move |_, _| {
+            let l = saine_core::persist::load(&sd3).map_err(|e| e.to_string())?;
+            let devs: Vec<(String, bool)> = l.project.tracks.iter().flat_map(|t| t.devices.iter()).map(|d| (d.plugin.name.clone(), d.state.as_ref().is_some_and(|s| !s.is_empty()))).collect();
+            let _ = std::fs::remove_dir_all(&sd3);
+            (!devs.is_empty() && devs.iter().all(|d| d.1)).then_some(()).ok_or(format!("devices with state: {devs:?}"))
+        })),
+    ]
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
     all.extend(synth_steps());
     all.extend(midi_steps());
     all.extend(recording_steps());
+    all.extend(device_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));
+    let skips = Rc::new(std::cell::Cell::new(0usize));
     let timer = Rc::new(slint::Timer::default());
     let aw = app.as_weak();
     let t2 = timer.clone();
@@ -1220,8 +1636,11 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
         }
         let i = idx.get();
         if i >= steps.len() {
-            let n = steps.iter().filter(|s| matches!(s, Step::Check(..))).count();
-            println!("self-test: {} / {n} checks passed", n - fails.get());
+            let n = steps.iter().filter(|s| matches!(s, Step::Check(..))).count() - skips.get();
+            let skipped = if skips.get() > 0 { format!(" ({} skipped)", skips.get()) } else { String::new() };
+            let fixture = ctl.try_borrow().map(|c| c.devices.catalog.fixture.is_some()).unwrap_or(false);
+            let note = if fixture { " [plugin catalogue from a TEST fixture: the plugin checks did not exercise the engine scanner]" } else { "" };
+            println!("self-test: {} / {n} checks passed{skipped}{note}", n - fails.get());
             t2.stop();
             let _ = slint::quit_event_loop();
             return;
@@ -1252,6 +1671,11 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
                 let r = f(&ctl.borrow(), &app);
                 match r {
                     Ok(()) => println!("PASS {name}"),
+                    // A guarded check that did not run (e.g. needs a plugin window): not counted.
+                    Err(e) if e.starts_with("SKIP: ") => {
+                        skips.set(skips.get() + 1);
+                        println!("SKIP {name}: {}", &e[6..]);
+                    }
                     Err(e) => {
                         fails.set(fails.get() + 1);
                         println!("FAIL {name}: {e}");

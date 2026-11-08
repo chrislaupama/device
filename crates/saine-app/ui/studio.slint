@@ -22,8 +22,30 @@ export struct RulerLabel { x: length, text: string }
 
 export struct ClipLabel { x: length, y: length, w: length, text: string, selected: bool }
 
-// Browser tree row (PLACEHOLDER catalogue data supplied by Rust, see src/placeholder.rs).
-export struct TreeRow { depth: int, label: string, count: string, icon: int, expander: int }
+// Browser tree row (Devices tab; src/devices.rs). icon: 0 folder, 1 instrument (keys), 2 effect.
+// expander: 0 none, 1 closed, 2 open. leaf: a device (double-click / drag adds it).
+export struct TreeRow { depth: int, label: string, count: string, icon: int, expander: int, selected: bool, leaf: bool }
+
+// One plugin card in the bottom-panel device chain (src/devices.rs). x is bottom-panel relative
+// and already includes the chain scroll and a drag offset.
+export struct DeviceCard {
+    id: int,
+    x: length,
+    name: string,
+    vendor: string,
+    format: string,        // "AU" / "VST3" / "CLAP"
+    kind: string,          // "Audio effect" / "Instrument"
+    enabled: bool,
+    instrument: bool,      // the track's instrument plugin (replaces the built-in Synth)
+    error: string,         // engine load error ("" = loaded / unknown)
+    latency: string,       // "" when 0
+    has-editor: bool,
+    editor-open: bool,
+    dragging: bool,
+}
+
+// Settings › Plugins list rows. warn: drawn with the orange "Missing"/failure badge.
+export struct PluginRow { name: string, detail: string, badge: string, warn: bool }
 
 
 // ---- mixer panel (bottom panel replacement) ----
@@ -100,8 +122,30 @@ export global Studio {
     in property <float> sel-meter-l: 1; // 0 (top) .. 1 (bottom = silent)
     in property <float> sel-meter-r: 1;
     in property <string> sel-peak-text: "−∞";
-    // ---- browser (PLACEHOLDER data) ----
+    // ---- browser Devices tab (src/devices.rs; the Chains sub-tab is PLACEHOLDER data) ----
     in property <[TreeRow]> tree;
+    in property <int> browser-tab;             // 0 Instruments, 1 Effects, 2 Chains
+    in-out property <string> browser-search;   // tree filter (transient input)
+    in-out property <bool> search-focused;     // a device search field has keyboard focus
+    in property <length> tree-scroll;
+    in property <string> tree-empty;           // shown when the tree has no rows
+    callback browser-tab-select(int);
+    callback browser-search-edited(string);
+    callback tree-click(int);
+    callback tree-activate(int);               // double-click: add to the selected track
+    callback tree-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
+    callback tree-scroll-by(float);
+    // Drag and drop of a browser device (ghost + drop target, window coordinates).
+    in property <bool> dnd-active;
+    in property <bool> dnd-ok;
+    in property <length> dnd-x;
+    in property <length> dnd-y;
+    in property <string> dnd-label;
+    in property <bool> dnd-target-visible;
+    in property <length> dnd-tx;
+    in property <length> dnd-ty;
+    in property <length> dnd-tw;
+    in property <length> dnd-th;
 
     // ---- callbacks into Rust ----
     callback play-toggle();
@@ -263,6 +307,44 @@ export global Studio {
     callback settings-menu-dismiss();
     callback settings-toggle-mute();
     callback settings-test();
+
+    // ---- device chain (Devices tab; src/devices.rs, ui/devices.slint) ----
+    in property <[DeviceCard]> device-cards;
+    in property <length> chain-scroll;          // horizontal scroll of the chain (synth card included)
+    in property <length> add-device-x: 265px;   // bottom-panel relative
+    in property <bool> chain-marker-visible;    // insertion marker while dragging a card or a device
+    in property <length> chain-marker-x;
+    in property <string> sel-inst-text: "Synth";
+    in-out property <string> add-search;        // Add device card search (transient input)
+    in property <[MenuItem]> add-results;       // matches while add-search is not empty
+    callback device-power(int);                 // SetDeviceEnabled
+    callback device-edit(int);                  // open / close the plugin window
+    callback device-remove(int);                // RemoveDevice (closes its window first)
+    callback device-use-synth();                // SetInstrumentPlugin(None)
+    callback device-drag(int, int, length);     // card id, phase 0/1/2, window x (MoveDevice on release)
+    callback chain-scroll-by(float);
+    callback add-category(int, length, length); // row (Built-in, AU, VST3, CLAP, Chains), window x, y for the list
+    callback add-search-edited(string);
+    callback add-result-pick(int);
+    callback open-inst-menu(length, length);    // instrument selector list at window x, y
+    // Device popup list (Add device submenus, instrument selector).
+    in property <bool> devmenu-open;
+    in property <length> devmenu-x;
+    in property <length> devmenu-y;
+    in property <length> devmenu-w: 200px;
+    in property <length> devmenu-h;
+    in property <length> devmenu-content-h;
+    in property <[MenuItem]> devmenu-items;
+    callback devmenu-pick(int);
+    callback devmenu-dismiss();
+    // ---- Settings › Plugins ----
+    in property <string> plugins-status;
+    in property <bool> plugins-scanning;
+    in property <[PluginRow]> scan-dirs;
+    in property <[PluginRow]> plugin-rows;
+    in property <[PluginRow]> plugin-failed;
+    callback plugins-rescan(bool);              // false: check for new plugins (cache), true: rescan all
+    callback placeholder(string);               // PLACEHOLDER controls report "not implemented"
 
     callback report-bug();   // TODO: no-op placeholder
     callback feedback();     // TODO: no-op placeholder

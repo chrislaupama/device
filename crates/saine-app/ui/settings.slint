@@ -1,10 +1,10 @@
 // Settings window as an in-app modal panel (see src/settings.rs for why), drawn at the
 // reference window rect: x 255, y 7, 960 pt wide, running off the bottom of the main
-// window (14-settings-audio.png). Sidebar 187 pt; only the Audio page is real, the
+// window (14-settings-audio.png). Sidebar 187 pt; the Audio and Plugins pages are real, the
 // other pages are PLACEHOLDERS ("Not available yet").
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
-import { Studio, ChoiceItem } from "studio.slint";
+import { Studio, ChoiceItem, PluginRow } from "studio.slint";
 
 // Checkable popup list (Settings dropdowns, the inspector "In" selector).
 export component ChoiceList inherits Rectangle {
@@ -94,6 +94,88 @@ component AudioPage inherits Rectangle {
     }
 }
 
+component Badge inherits Rectangle {
+    in property <string> text;
+    in property <bool> warn;
+    height: 16px;
+    width: t.preferred-width + 12px;
+    border-radius: 4px;
+    background: root.warn ? #4a3415 : #2f3034;
+    t := Text { text: root.text; color: root.warn ? #f5a524 : #c9c9cc; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+}
+
+component PageButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 26px;
+    width: t.preferred-width + 28px;
+    border-radius: 6px;
+    background: ta.has-hover && root.enabled ? #333438 : #28282b;
+    border-width: 0.5px;
+    border-color: #3d3e40;
+    accessible-role: button;
+    accessible-label: root.text;
+    t := Text { text: root.text; color: root.enabled ? #ececee : #6a6b6e; font-size: 10px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+    ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
+}
+
+// Settings › Plugins (14-settings-plugins.png): scan directories, plugin scanner buttons, then
+// (ours) the scan result: found plugins and failed / blocklisted ones with reasons.
+component PluginsPage inherits Rectangle {
+    FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Plugins"; font-size: 17.25px; font-weight: 700; }
+    FieldLabel { x: 20.5px; y: 71px; text: "Scan directories"; }
+    for d[i] in Studio.scan-dirs: Rectangle {
+        x: 20.5px; y: 91px + i * 30.5px; width: root.width - 41px; height: 25px; border-radius: 5px; background: #222326;
+        accessible-role: text; accessible-label: d.name + (d.warn ? " (missing)" : "");
+        path := Text { x: 9px; text: d.name; color: d.warn ? #6f7074 : #d9d9dc; font-size: 10px; vertical-alignment: center; }
+        if d.warn: Rectangle { x: 9px; y: parent.height / 2; width: path.preferred-width; height: 0.75px; background: #6f7074; }
+        b1 := Badge { x: 9px + path.preferred-width + 8px; y: 4.5px; text: d.badge; }
+        if d.warn: Badge { x: b1.x + b1.width + 6px; y: 4.5px; text: "Missing"; warn: true; }
+    }
+    property <length> after-dirs: 91px + Studio.scan-dirs.length * 30.5px;
+    // PLACEHOLDER: the engine scans the standard locations only (no custom folders yet).
+    PageButton { x: 20.5px; y: root.after-dirs + 8px; text: "Add folder"; clicked => { Studio.placeholder("Add plugin folder"); } }
+    Rectangle { x: 20.5px; y: root.after-dirs + 50px; width: root.width - 41px; height: 0.5px; background: #313134; }
+    FieldLabel { x: 20.5px; y: root.after-dirs + 66px; text: "Plugin scanner"; }
+    for c[i] in [{ t: "Check for new plugins", rescan: false }, { t: "Rescan all plugins", rescan: true }]: Rectangle {
+        x: 20.5px + i * ((root.width - 41px) / 2 + 4.5px); y: root.after-dirs + 86px;
+        width: (root.width - 41px) / 2 - 4.5px; height: 68px; border-radius: 6px;
+        background: #1f2023; border-width: 0.5px; border-color: #313134;
+        Text { x: 10.5px; y: 9px; height: 14px; text: c.t; color: #ececee; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+        PageButton { x: 10.5px; y: 31px; text: c.t; enabled: !Studio.plugins-scanning; clicked => { Studio.plugins-rescan(c.rescan); } }
+    }
+    property <length> list-y: root.after-dirs + 166px;
+    Text {
+        x: 20.5px; y: root.list-y; width: root.width - 41px; height: 14px;
+        text: Studio.plugins-status; color: Tokens.text-secondary; font-size: 9.5px; vertical-alignment: center; overflow: elide;
+    }
+    Rectangle {
+        x: 20.5px; y: root.list-y + 22px; width: root.width - 41px; height: root.height - self.y - 24px;
+        clip: true;
+        Flickable {
+            content-height: 22px + Studio.plugin-rows.length * 21px + 30px + 22px + Studio.plugin-failed.length * 21px + 10px;
+            Text { x: 0; y: 0; height: 18px; text: "Found plugins (" + Studio.plugin-rows.length + ")"; color: #ececee; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+            for r[i] in Studio.plugin-rows: Rectangle {
+                x: 0; y: 22px + i * 21px; width: parent.width; height: 20px;
+                accessible-role: list-item; accessible-label: r.name;
+                Rectangle { background: Math.mod(i, 2) == 0 ? #1f2023 : transparent; border-radius: 3px; }
+                Text { x: 8px; width: parent.width * 0.38; text: r.name; color: #d9d9dc; font-size: 9.5px; font-weight: 500; vertical-alignment: center; overflow: elide; }
+                Text { x: parent.width * 0.4; width: parent.width * 0.48; text: r.detail; color: Tokens.text-secondary; font-size: 9px; vertical-alignment: center; overflow: elide; }
+                Badge { x: parent.width - self.width - 6px; y: 2px; text: r.badge; }
+            }
+            property <length> failed-y: 22px + Studio.plugin-rows.length * 21px + 18px;
+            Text { x: 0; y: parent.failed-y; height: 18px; text: "Failed or blocklisted (" + Studio.plugin-failed.length + ")"; color: #ececee; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+            for r[i] in Studio.plugin-failed: Rectangle {
+                x: 0; y: parent.failed-y + 22px + i * 21px; width: parent.width; height: 20px;
+                accessible-role: list-item; accessible-label: r.name + ": " + r.detail;
+                Text { x: 8px; width: parent.width * 0.38; text: r.name; color: #d9d9dc; font-size: 9.5px; vertical-alignment: center; overflow: elide; }
+                Text { x: parent.width * 0.4; width: parent.width * 0.58; text: r.detail; color: #f5a524; font-size: 9px; vertical-alignment: center; overflow: elide; }
+            }
+        }
+    }
+}
+
 export component SettingsPanel inherits Rectangle {
     border-radius: 10px;
     background: Tokens.bg-panel;
@@ -139,7 +221,8 @@ export component SettingsPanel inherits Rectangle {
     }
     // ---- content ----
     if Studio.settings-page == 1: AudioPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
-    if Studio.settings-page != 1: Rectangle {
+    if Studio.settings-page == 3: PluginsPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
+    if Studio.settings-page != 1 && Studio.settings-page != 3: Rectangle {
         x: 187px; y: 0; width: root.width - 187px; height: root.height;
         Text { x: 20.5px; y: 33px; height: 24px; text: Studio.settings-pages[Studio.settings-page]; color: #ececee; font-size: 17.25px; font-weight: 700; vertical-alignment: center; }
         // PLACEHOLDER pages

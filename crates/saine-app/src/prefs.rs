@@ -47,20 +47,35 @@ pub struct Preferences {
     pub audio: AudioPrefs,
 }
 
-/// Default preferences file location (see the module docs).
-pub fn default_path() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("SAINE_PREFS_PATH") {
-        return Some(PathBuf::from(p));
-    }
+/// The app's support directory (see the module docs), shared by the preferences
+/// file and the plugin scan cache.
+pub fn support_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let dir = if cfg!(target_os = "macos") {
+    Some(if cfg!(target_os = "macos") {
         home?.join("Library/Application Support/Saine Studio")
     } else if cfg!(windows) {
         PathBuf::from(std::env::var_os("APPDATA")?).join("Saine Studio")
     } else {
         std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| home.map(|h| h.join(".config")))?.join("saine-studio")
-    };
-    Some(dir.join("preferences.json"))
+    })
+}
+
+/// Default preferences file location (see the module docs).
+pub fn default_path() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("SAINE_PREFS_PATH") {
+        return Some(PathBuf::from(p));
+    }
+    Some(support_dir()?.join("preferences.json"))
+}
+
+/// Plugin scan cache (`saine_engine::scan_plugins`), next to the preferences:
+/// `~/Library/Application Support/Saine Studio/plugin-cache.json` on macOS.
+/// `SAINE_PLUGIN_CACHE` overrides the location.
+pub fn plugin_cache_path() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("SAINE_PLUGIN_CACHE") {
+        return Some(PathBuf::from(p));
+    }
+    Some(support_dir()?.join("plugin-cache.json"))
 }
 
 /// Missing file = defaults; a corrupt file is reported and ignored.
