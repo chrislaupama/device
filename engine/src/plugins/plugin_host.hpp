@@ -46,6 +46,10 @@ public:
     // ---- main-thread housekeeping (caller holds mutex())
     void collect(uint64_t rt_active);
     void idle(uint64_t rt_active);
+    // Delay compensation: restarts instances that asked for it (suspended
+    // meanwhile) and re-reads every live instance's latency into its cache.
+    // True if any cached latency changed.
+    bool service_latencies();
     // Engine destruction (RT path stopped): destroy everything now.
     void shutdown_all();
 

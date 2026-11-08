@@ -31,13 +31,18 @@
 namespace saine {
 
 class PluginInstance;
+class DelayLine;
 
 // One insert of a track's device chain. `inst` is null while unresolved
 // (between build_render_graph and Engine::publish) or when the plugin failed
 // to load (pass-through). Instances are owned by the PluginHost.
 struct FxSlot {
     PluginInstance* inst = nullptr;
+    uint64_t device_id = 0;
     bool enabled = true;
+    // Delay compensation: while bypassed, the slot delays by the plugin's
+    // latency instead (0 = nothing to do). See RenderGraph::pdc.
+    uint32_t pdc_bypass_delay = 0;
 };
 
 struct ClipNode {
@@ -70,6 +75,30 @@ struct TrackNode {
     bool has_instrument_plugin = false;          // instrument plugin replaces the synth
     bool instrument_plugin_enabled = true;       // false: bypassed (silent)
     PluginInstance* instrument_plugin = nullptr; // null: not loaded (silent)
+    // Plugin delay compensation (RenderGraph::pdc; all 0 when inactive).
+    uint32_t pdc_delay = 0;     // L - lat_i, applied post-chain (or pre-chain, see pdc_pre)
+    uint32_t pdc_src_delay = 0; // instrument plugin latency, applied to the clips of that track
+    bool pdc_pre = false;       // monitoring input: delay only the playback source, before the chain
+};
+
+// Plugin delay compensation plan of a graph (docs/adr/0004). Computed on the
+// main thread from the plugins' reported latencies; immutable afterwards.
+inline constexpr uint32_t kPdcMaxDelay = SE_PDC_MAX_DELAY_FRAMES;
+struct PdcPlan {
+    bool enabled = false;      // the global switch when the plan was made
+    bool clamped = false;      // some delay exceeded kPdcMaxDelay and was clamped
+    uint32_t total = 0;        // applied L (0 when disabled), also the metronome delay
+    uint32_t uncapped = 0;     // L before clamping
+    std::vector<uint32_t> track_latency; // lat_i per track (reported even when disabled)
+    // Delay line layout (RenderGraph::lines): [main per track][source per
+    // track][bypass per fx slot][metronome]. need[i] = frames line i must
+    // delay (0 = no line). Empty when no delay is needed.
+    std::vector<uint32_t> need;
+    std::size_t src_index(std::size_t track_count, std::size_t t) const noexcept { return track_count + t; }
+    std::size_t slot_index(std::size_t track_count, std::size_t f) const noexcept { return 2 * track_count + f; }
+    std::size_t metro_index(std::size_t track_count, std::size_t fx_count) const noexcept {
+        return 2 * track_count + fx_count;
+    }
 };
 
 // Number of buckets in the se_meters_peek sliding window (each bucket covers
@@ -108,7 +137,18 @@ struct RenderGraph {
     std::vector<Synth*> synths; // raw pointers for the RT path (same order)
     std::unique_ptr<TrackMeter[]> meters; // one per track, same order
     std::size_t meter_count = 0;
+    // Delay compensation: the plan, and the live delay lines it needs (same
+    // layout as PdcPlan::need, null where no line is needed; empty when
+    // the plan needs none). Lines are mutated only by the RT owner and are
+    // carried over to the next graph by key (track / device id), like synths.
+    PdcPlan pdc;
+    std::vector<std::shared_ptr<DelayLine>> line_refs;
+    std::vector<DelayLine*> lines;
 };
+
+// Copy of `g` for a new plan (same instances, synths and lines; fresh meters
+// holding the current peak values). Non-RT.
+std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g);
 
 // Constant-power pan law: theta = (pan + 1) * pi / 4, L = cos, R = sin.
 // Centre is -3 dB on both sides (L^2 + R^2 = 1 for any pan). Applied as a

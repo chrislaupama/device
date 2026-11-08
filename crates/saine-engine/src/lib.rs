@@ -908,6 +908,80 @@ impl Engine {
     }
 }
 
+/// Largest delay plugin delay compensation applies, in frames (2^17,
+/// ~2.7 s at 48 kHz). Larger latencies are clamped and reported.
+pub const PDC_MAX_DELAY_FRAMES: u32 = ffi::SE_PDC_MAX_DELAY_FRAMES;
+
+/// Plugin delay compensation state of the published session
+/// ([`Engine::latency_report`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LatencyReport {
+    /// Applied compensation L in frames: the whole mix (and the metronome)
+    /// is this much late relative to the transport. 0 when disabled.
+    pub total_frames: u32,
+    /// `(track_id, lat_i)` in session order: the summed reported latency of
+    /// the track's devices (bypassed ones included) and instrument plugin.
+    /// Reported even when compensation is disabled.
+    pub tracks: Vec<(u64, u32)>,
+    /// Some latency exceeded [`PDC_MAX_DELAY_FRAMES`] and was clamped (those
+    /// tracks are not fully aligned). Only set while enabled.
+    pub clamped: bool,
+}
+
+impl Engine {
+    /// Global switch for plugin delay compensation (on by default). Off, the
+    /// engine renders exactly as without compensation. Any thread; re-plans
+    /// the published session immediately (from the latencies cached on the
+    /// main thread).
+    pub fn set_delay_compensation(&self, enabled: bool) {
+        // SAFETY: valid handle.
+        unsafe { ffi::se_pdc_set_enabled(self.raw, enabled as u8) };
+    }
+
+    pub fn delay_compensation_enabled(&self) -> bool {
+        // SAFETY: valid handle.
+        unsafe { ffi::se_pdc_is_enabled(self.raw) != 0 }
+    }
+
+    /// Latencies and the applied compensation of the most recently published
+    /// session. Latency changes reported by plugins are picked up by
+    /// [`Engine::plugin_idle`] (call it regularly on the main thread) and by
+    /// `publish`.
+    pub fn latency_report(&self) -> LatencyReport {
+        loop {
+            let mut r = ffi::se_pdc_report::default();
+            let mut total = 0usize;
+            // SAFETY: capacity 0 only queries the count.
+            if unsafe { ffi::se_pdc_report_get(self.raw, &mut r, std::ptr::null_mut(), 0, &mut total) } != ffi::SE_OK {
+                return LatencyReport::default();
+            }
+            let mut tracks = vec![ffi::se_pdc_track::default(); total];
+            let mut n = 0usize;
+            // SAFETY: `tracks` has `total` elements.
+            if unsafe { ffi::se_pdc_report_get(self.raw, &mut r, tracks.as_mut_ptr(), tracks.len(), &mut n) } != ffi::SE_OK {
+                return LatencyReport::default();
+            }
+            if n > tracks.len() {
+                continue; // republished in between
+            }
+            tracks.truncate(n);
+            return LatencyReport { total_frames: r.total_frames, tracks: tracks.iter().map(|t| (t.track_id, t.latency_frames)).collect(), clamped: r.clamped != 0 };
+        }
+    }
+
+    /// The timeline frame being heard: while playing, the transport position
+    /// minus the applied compensation L minus the output device latency
+    /// (`DeviceStatus::output_latency_frames`; 0 offline or with the device
+    /// stopped). While paused/stopped, the transport position. Block
+    /// granularity, like [`Engine::transport`].
+    pub fn audible_position(&self) -> i64 {
+        let mut f = 0i64;
+        // SAFETY: valid handle and out pointer.
+        unsafe { ffi::se_transport_audible_position(self.raw, &mut f) };
+        f
+    }
+}
+
 impl Drop for Engine {
     fn drop(&mut self) {
         // SAFETY: we own the handle exclusively here.

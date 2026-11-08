@@ -54,7 +54,7 @@ public:
         host_.url = "";
         host_.version = "0.1.0";
         host_.get_extension = &ClapInstance::host_get_extension;
-        host_.request_restart = [](const clap_host*) {};
+        host_.request_restart = [](const clap_host* h) { self_of(h)->request_restart(); };
         host_.request_process = [](const clap_host*) {};
         host_.request_callback = &ClapInstance::host_request_callback;
     }
@@ -272,6 +272,24 @@ public:
         plugin_->destroy(plugin_);
         plugin_ = nullptr;
         mod_.reset();
+    }
+
+    // Latency change protocol: the plugin called request_restart (e.g. after
+    // a parameter changed its latency). Called by the PluginHost on the main
+    // thread while the instance is suspended (the RT side cannot be inside
+    // process()): stop_processing (taking the audio-thread role once, as in
+    // shutdown()), deactivate, activate. process() calls start_processing
+    // again on the next block. A failed activate leaves the instance passing
+    // audio through (effects) / silent (instruments).
+    void restart() noexcept override {
+        if (plugin_ == nullptr) return;
+        if (processing_) {
+            AudioThreadScope audio;
+            plugin_->stop_processing(plugin_);
+            processing_ = false;
+        }
+        if (activated_) plugin_->deactivate(plugin_);
+        activated_ = plugin_->activate(plugin_, rate_, 1, max_block_);
     }
 
     void on_main_thread() noexcept override {

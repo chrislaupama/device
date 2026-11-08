@@ -16,8 +16,12 @@ recording `se_track_desc_v4`, `se_session_desc_v4` + `se_session_publish_v4`,
 `se_device_desc`, `se_track_desc_v5`, `se_session_desc_v5` +
 `se_session_publish_v5`, `se_plugin_is_live`, `se_plugin_load_errors`,
 `se_plugin_save_states`/`se_plugin_saved_state`, `se_plugin_editor_open/
-close/is_open`, `se_plugin_latency`, `se_plugin_idle`). Plugin hosting (AU,
-VST3, CLAP) is described in [Plugins](#plugins).
+close/is_open`, `se_plugin_latency`, `se_plugin_idle`, and for plugin delay
+compensation `SE_PDC_MAX_DELAY_FRAMES`, `se_pdc_set_enabled`,
+`se_pdc_is_enabled`, `se_pdc_report` + `se_pdc_track` + `se_pdc_report_get`,
+`se_transport_audible_position`). Plugin hosting (AU, VST3, CLAP) is
+described in [Plugins](#plugins), delay compensation in
+[Plugin delay compensation](#plugin-delay-compensation).
 
 ## Build, test, bench
 
@@ -93,6 +97,7 @@ The library is built with `-fPIC`, so it can go into a cdylib as well.
 | `src/wav.{hpp,cpp}` | Hand-written RIFF/WAVE reader, streaming float32 writer |
 | `src/resampler.{hpp,cpp}` | Kaiser-windowed sinc resampler (import time) |
 | `src/rt_util.hpp` | Flush-to-zero guard, clock, atomic max |
+| `src/delay_line.hpp` | Delay line for plugin delay compensation (memcpy ring, lazy flush) |
 | `src/platform/` | `AudioDevice` interface + backends (Core Audio real; WASAPI/ASIO, PipeWire/JACK stubs) |
 | `tests/` | Self-contained harness (`test_harness.hpp`), tests, allocation-tracking `operator new` |
 | `bench/bench_render.cpp` | Offline render benchmark |
@@ -107,7 +112,7 @@ The library is built with `-fPIC`, so it can go into a cdylib as well.
 | `src/plugins/plugin_scan.{hpp,cpp}` | Inspecting one AU / bundle (used only by the scanner process) |
 | `src/platform/plugin_editor_mac.mm` | Editor windows (NSWindow; AU Cocoa view / AUGenericView, VST3 IPlugView, CLAP gui) |
 | `scanner/scanner_main.cpp` | `saine_plugin_scanner`: out-of-process scan coordinator + per-plugin child |
-| `test_plugins/` | Original test plugins: `SaineTestGain.vst3`, `SaineTestGain.clap`, `SaineTestSine.clap`, `SaineTestCrash.clap` |
+| `test_plugins/` | Original test plugins: `SaineTestGain.vst3`, `SaineTestGain.clap`, `SaineTestSine.clap`, `SaineTestLatency.clap`/`.vst3`, `SaineTestCrash.clap` |
 | `tools/plugin_editor_check.mm` | Manual editor-window smoke test |
 | `third_party_licenses.md` | Fetched SDKs: tags, commits, MIT texts |
 
@@ -294,7 +299,10 @@ a loop wrap or a seek, rings out instead of being cut (the oldest voice is
 stolen if more overlap). Voices are cleared on pause/stop/disable. The click
 is mixed into the master **after master gain and after metering**, so it is
 independent of the mix level, does not show on meters, and is never in
-`se_export_wav` (which calls `render_block()` directly).
+`se_export_wav` (which calls `render_block()` directly). With plugin delay
+compensation (`L > 0`) the clicks go through an `L`-frame mono delay line
+first, so they are heard with the (equally delayed) music; the line rings
+out on pause and is flushed on seek/stop.
 
 ### Built-in instrument (MIDI + `se_synth_params`)
 
@@ -402,7 +410,9 @@ been muted. This costs CPU for muted instrument tracks.
 
 `se_export_wav` renders `[start, end)` linearly with its private transport:
 it ignores the live loop and metronome (tested by
-`export_ignores_loop_and_metronome`). Instrument tracks render through
+`export_ignores_loop_and_metronome`). With plugin delay compensation it
+renders `L` more frames through private delay lines and drops the first `L`,
+so timeline frame `t` is file frame `t - start` (`pdc_export_is_timeline_aligned`). Instrument tracks render through
 private `Synth` objects created for the export, so exporting never touches
 live voices (tested: live output with an export in the middle is identical
 to an uninterrupted render, and the exported file matches it bit for bit).
@@ -644,7 +654,11 @@ output frame P was captured when the listener heard frame P − (input latency
 stream's `kAudioStreamPropertyLatency` (no IO-buffer term: an acoustic loopback test on a MacBook Air showed the buffer term over-compensated by ~18.5 ms; without it recordings land +2.7..6.2 ms late, consistent with speaker→mic travel and onset detection; see crates/saine-engine/tests/real_loopback.rs), read from the running
 (aggregate) device; for an aggregate each side is the max of what the
 aggregate and the sub-device report. Converted to engine frames. Injected
-input (`se_render_offline_with_input`) has compensation 0.
+input (`se_render_offline_with_input`) has device compensation 0. With
+plugin delay compensation the performer hears everything `L` later, so
+takes are additionally placed `L` earlier: `start_frame = position − (in +
+out) − L`; a change of `L` while recording ends the takes like a seek (see
+[Plugin delay compensation](#plugin-delay-compensation)).
 
 **Live view.** `se_record_state` lists every take (track, start, frames as
 written by the writer, so ≤ ~5 ms behind); `se_record_peaks` gives min/max
@@ -853,6 +867,18 @@ timeouts (SIGKILL) and failures are recorded in the cache and reported in
   cosine at the equal-tempered note pitch, amplitude 0.25 × velocity, full
   amplitude on the note-on sample and silent from the note-off sample (makes
   onsets/offs exactly measurable).
+* `SaineTestLatency.clap` (`studio.saine.test.latency`) and
+  `SaineTestLatency.vst3` (class `5A17E5A16E0000038A1E7E576A170003`):
+  stereo effect that delays its input by exactly N frames and reports
+  latency N. N = state (u32 LE; VST3 component state inside the SVS3
+  container), default 0. Parameter 0 "Latency" changes it at runtime through
+  the format's protocol: CLAP plain value = frames → stored, `request_restart`
+  → applied (buffer allocated) in `activate`, `latency.changed`; VST3
+  normalized = N / 2^20 → the controller calls
+  `restartComponent(kLatencyChanged)`, the processor applies the value it
+  received in the next `setActive(true)` (so: set parameter → render a block
+  → `se_plugin_idle`). Used as an instrument plugin it is silent but still
+  reports N.
 * `SaineTestCrash.clap`: `clap_entry.init` raises SIGSEGV.
 
 ### Tests
@@ -907,6 +933,104 @@ the test plugins and Apple AUs, blocklists the crash, second scan from cache.
   publish from worker threads; only our test plugins and Apple AUs are used
   there), and editor resizing by the user.
 
+## Plugin delay compensation
+
+Design and rationale: [ADR 0004](../docs/adr/0004-delay-compensation.md).
+Summary: per track `lat_i` = Σ insert latencies (**bypassed inserts
+included**) + instrument plugin latency; `L = max lat_i` over all tracks
+(**muted / soloed-out included**); each track is delayed by `L − lat_i`, so
+the whole mix (and the metronome) is `L` late. On by default
+(`se_pdc_set_enabled` / Rust `set_delay_compensation`).
+
+```
+per track (render_block), PDC lines only where the plan needs them:
+  clips ─[src line: li, instrument-plugin tracks with clips]─┐
+  built-in synth / instrument plugin (latency li) ───────────┴─ sum ─┐
+                                    monitoring track: [main line: L − lat_i] here
+  monitored input ──────────────────────────────────────────────────┴─ insert chain ─┐
+     (bypassed slot with latency x: x-frame line instead of the plugin)             │
+                                    other tracks:     [main line: L − lat_i] here ──┴─ gain/pan ─ master
+master ─ + [metronome line: L] (after metering, as before)
+```
+
+* **Plan.** `Engine::plan_pdc` (main thread, plugin host mutex) turns the
+  instances' cached latencies into `RenderGraph::pdc` (`PdcPlan`: `L`,
+  clamping, per-track `lat_i`, the delay each line needs) plus per-track
+  `pdc_delay` / `pdc_src_delay` / `pdc_pre` and per-slot `pdc_bypass_delay`.
+  `L = 0` or switched off → empty plan, no lines, and the render path is
+  bit-identical to the engine before PDC (golden-hash test, below).
+* **Re-plan.** Publish computes the plan for the new graph. A latency change
+  or the switch clones the current graph with a new plan and installs it
+  (same instances, synths and lines; meters keep their values). Every graph
+  install (v1..v5 publishes, re-plans) runs under the plugin host mutex.
+* **Latency changes.** CLAP `request_restart` / VST3
+  `restartComponent(kLatencyChanged)` flag the instance. `se_plugin_idle`
+  (and `se_session_publish_v5`) restarts flagged instances on the main
+  thread — `PluginInstance::suspend()` (Dekker pair with `run()`: the RT side
+  bypasses the instance — effects pass through, instruments are silent —
+  and the main thread waits for a `process()` in flight), CLAP
+  `stop_processing`/`deactivate`/`activate`, VST3 `setProcessing(false)`/
+  `setActive(false)`/`setActive(true)`/`setProcessing(true)`, `resume()` —
+  then re-reads every instance's latency (AU changes are picked up by this
+  poll) and re-plans if any changed. **The app has to call `plugin_idle()`
+  regularly on the main thread** (10-60 Hz).
+* **Delay lines** (`src/delay_line.hpp`): power-of-two ring ≥ delay + max
+  block, one memcpy-in / memcpy-out per channel and block. Allocated (zeroed)
+  in `install_graph` on the publishing thread, carried over by track /
+  device id (reused when big enough); a changed delay reinterprets the
+  line's content (one-time jump). Cap `SE_PDC_MAX_DELAY_FRAMES` = 2^17
+  frames per delay (~2.7 s at 48 kHz; ≤ 2 MB per stereo line); beyond it the
+  delay is clamped and `clamped` reported.
+* **Transport.** Seek and stop flush the lines (lazily: a generation counter
+  bumped by the RT owner; a line treats older frames as silence on its next
+  use). Pause rings out the last `L` frames. Loop wraps keep the lines
+  running (the loop end is heard after the wrap, then its start). Plugins'
+  internal buffers are not flushed on seek; their stale tail comes out
+  within `lat_i` frames, before the compensated content. Idle lines only
+  advance an index; muted / soloed-out tracks drop their lines' content.
+* **Monitoring.** A track that monitors input applies its `L − lat_i` to the
+  playback source only, before the chain; the input joins after that delay
+  (heard with `lat_i` + device latency only). Toggling monitoring moves the
+  line (one-time discontinuity on that track).
+* **Recording / export / audible position.** Takes: `start_frame` −= `L`
+  (new takes when `L` changes mid-recording). Export: `L` extra frames
+  rendered, first `L` dropped. `se_transport_audible_position` = position −
+  `L` − output device latency (`se_device_status.output_latency_frames`,
+  0 offline / device stopped) while playing, else the position.
+* **Report.** `se_pdc_report_get`: applied `L` (`total_frames`, 0 when off),
+  `uncapped_frames`, `clamped`, and per track `lat_i` (also when off) and
+  the applied delay. Rust: `latency_report()`, `audible_position()`,
+  `delay_compensation_enabled()`, `PDC_MAX_DELAY_FRAMES`.
+
+Tests (`tests/test_pdc.cpp`, both presets): PDC off bit-identical to the
+pre-PDC library (FNV hashes of a scenario with clips, synth, instrument
+plugin, CLAP/VST3 inserts, bypass, mute, monitoring + recording, metronome,
+loop, seeks, pause/stop, odd blocks and export, produced with the library of
+commit bf473ce in Release and ASan builds; `tests/pdc_golden_scenario.hpp`),
+also with PDC on and `L = 0`; two tracks + N=1000 → one double impulse at
+t + 1000, `audible_position` = position − 1000, off → two impulses 1000
+apart; bypass (also toggled mid-play) keeps timing; CLAP+VST3 chain, bypassed
+slot, unprocessed track and a muted latent track align (muted counts);
+instrument plugin onset aligned; clips on a latent instrument track; clicks
+delayed by exactly L (bit-exact vs. off); export timeline-aligned; monitored
+input undelayed while its clip is delayed; take `start_frame` includes L
+and an input impulse played with the heard impulse lands on its timeline
+frame; L change while recording → two aligned takes; runtime latency
+changes via the parameter hook (CLAP 1000→2500, VST3 0→4000, both → 0) with
+re-alignment; seek/stop flush, pause tail, loop history; cap clamp + report;
+zero allocations while rendering with latency changes, bypass, monitoring,
+metronome, loop, seeks, pause and on/off toggles. Rust
+(`crates/saine-engine/tests/pdc.rs`): Document `AddDevice` (SaineTestLatency,
+N = 1000 from the model state) on one of two tracks with the same clip →
+aligned, report and audible position; toggle off → misaligned by N; bypass
+keeps timing. Manual (not run): `real_loopback.rs`
+`acoustic_loopback_latency_with_pdc` (L = 4800).
+
+**Not verified:** acoustic alignment on a real device with plugins (the
+loopback test above opens the microphone and was not run), third-party
+plugins that change latency at runtime, AU latency changes (polled, but no
+test AU changes latency).
+
 ## Placeholders and known gaps
 
 * **Windows** (`src/platform/wasapi_device.cpp`): stub, `se_device_start` →
@@ -923,11 +1047,11 @@ the test plugins and Apple AUs, blocklists the crash, second scan from cache.
   asset release / destroy. With the device running and no edits, the
   previously retired graph (and any released assets it holds) stays alive
   until the next such call.
-* Plugins: no delay compensation (latency is reported only), no sidechains,
-  multi-out instruments, parameter automation, host-side generic parameter
-  UI, or MIDI CC/pitch bend to instrument plugins. VST3 `restartComponent`
-  flags and CLAP `request_restart` are ignored (no re-activation on latency
-  or layout changes). Export of a session with plugins needs the device
+* Plugins: no sidechains, multi-out instruments, parameter automation,
+  host-side generic parameter UI, or MIDI CC/pitch bend to instrument
+  plugins. Of VST3 `restartComponent` flags only `kLatencyChanged` is handled
+  (and CLAP `request_restart`): re-activation for latency changes; layout /
+  I/O changes are still ignored. Export of a session with plugins needs the device
   stopped. Plugin hosting is macOS-only (bundle loading uses CFBundle;
   VST3/CLAP loaders for Windows/Linux are not written). The scanner does not
   look inside `.component` bundles itself (AUs come from the system
@@ -960,6 +1084,7 @@ the test plugins and Apple AUs, blocklists the crash, second scan from cache.
 |---|---|---|---|
 | Audio, 4 clips/track (avg µs/block) | 1.0 | 3.2 | 12.3 |
 | Audio, 4 clips/track, after the input/recording change (same machine, HEAD baseline in parentheses) | 1.06 (1.09) | 3.36 (3.37) | 12.6 (12.7) |
+| Audio, 4 clips/track, after delay compensation (PDC on, L = 0; mean of 3 runs interleaved with the pre-PDC build in parentheses) | 1.03 (1.02) | 3.34 (3.33) | 12.53 (12.51) |
 | MIDI, 8 held voices + 1 retriggered note/track, previous fixed synth | 98 | 396 | 1594 |
 | MIDI, same notes, `se_synth_params` defaults | 140 | 573 | 2246 |
 | MIDI, same notes, heavy patch (unison 4, cross FM, folded sine, triangle morph, sub, noise, resonant BP + filter env, LFO → pitch/cutoff/amp) | 870 | 3489 | 13782 |
@@ -977,6 +1102,20 @@ plugin calls per block; same machine and run):
 transport setup (~0.2 % of the deadline for 64 inserts). The audio, MIDI and
 input tables were unchanged by the plugin work within run-to-run noise
 (e.g. audio 1.02 / 3.28 / 12.41 µs vs 1.03 / 3.34 / 12.59 µs before).
+
+Delay compensation (32 audio tracks × 4 clips, one SaineTestLatency insert
+of N frames on track 1; same machine and run):
+
+| N / PDC | avg µs/block | p99 |
+|---|---|---|
+| N = 0, off | 3.42 | 4.29 |
+| N = 0, on (L = 0: no lines) | 3.43 | 4.25 |
+| N = 4096, off | 3.78 | 4.58 |
+| N = 4096, on (31 track lines + metronome line, 4096 frames) | 5.87 | 6.96 |
+
+L = 4096 costs ≈ 2.1 µs/block for 31 delayed tracks (~68 ns per track per
+256-frame block: one stereo memcpy in and out of the ring), 0.04 % of the
+deadline. With L = 0 the plan is empty and the cost is a few branches.
 
 Input (8 armed + monitored tracks, injected 8-channel input, no clips):
 1.33 µs/block with recording off; 5.9 µs/block avg (p99 11 µs, max 32 µs)

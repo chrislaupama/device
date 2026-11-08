@@ -113,7 +113,7 @@ Recorder::~Recorder() {
 void Recorder::capture(const float* const* in, uint32_t in_count, const float* zeros, int64_t position,
                        int64_t latency, uint32_t frames) noexcept {
     if (frames == 0) return;
-    const bool contiguous = rt_started_ && position == rt_next_pos_;
+    const bool contiguous = rt_started_ && position == rt_next_pos_ && latency == rt_latency_;
     for (auto& sp : slots_) {
         Slot& s = *sp;
         const uint32_t ch = s.spec.channels;
@@ -146,6 +146,7 @@ void Recorder::capture(const float* const* in, uint32_t in_count, const float* z
     }
     rt_started_ = true;
     rt_next_pos_ = position + frames;
+    rt_latency_ = latency;
 }
 
 void Recorder::on_loop_wrap(int64_t loop_start) noexcept { rt_next_pos_ = loop_start; }

@@ -60,6 +60,7 @@ PluginInstance* PluginHost::use(const se_device_desc& d, bool instrument, const 
     }
     instantiations_.fetch_add(1);
     if (!e.inst) e.error = err.empty() ? "could not load the plugin" : err;
+    if (e.inst) e.inst->refresh_latency(); // cached for delay compensation
     PluginInstance* raw = e.inst.get();
     entries_.emplace(d.device_id, std::move(e));
     return raw;
@@ -104,6 +105,20 @@ void PluginHost::idle(uint64_t rt_active) {
         if (e.inst) e.inst->on_main_thread();
     for (auto it = editors_.begin(); it != editors_.end();)
         it = it->second->is_open() ? std::next(it) : editors_.erase(it);
+}
+
+bool PluginHost::service_latencies() {
+    bool changed = false;
+    for (auto& [id, e] : entries_) {
+        if (!e.inst) continue;
+        if (e.inst->take_restart_request()) {
+            e.inst->suspend();
+            e.inst->restart();
+            e.inst->resume();
+        }
+        changed |= e.inst->refresh_latency();
+    }
+    return changed;
 }
 
 void PluginHost::shutdown_all() {

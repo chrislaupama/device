@@ -326,6 +326,28 @@ impl Default for se_plugin_message {
     }
 }
 
+/// Plugin delay compensation: largest delay applied (2^17 frames).
+pub const SE_PDC_MAX_DELAY_FRAMES: u32 = 131_072;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct se_pdc_report {
+    pub total_frames: u32,
+    pub uncapped_frames: u32,
+    pub track_count: u32,
+    pub enabled: u8,
+    pub clamped: u8,
+    pub _pad: [u8; 2],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct se_pdc_track {
+    pub track_id: u64,
+    pub latency_frames: u32,
+    pub delay_frames: u32,
+}
+
 pub const SE_DEVICE_STRING_MAX: usize = 256;
 pub const SE_DEVICE_MAX_RATES: usize = 16;
 pub const SE_PATH_MAX: usize = 1024;
@@ -493,6 +515,12 @@ unsafe extern "C" {
     pub fn se_plugin_editor_is_open(engine: *mut se_engine, device_id: u64) -> i32;
     pub fn se_plugin_latency(engine: *mut se_engine, device_id: u64, out_frames: *mut u32) -> i32;
     pub fn se_plugin_idle(engine: *mut se_engine) -> i32;
+
+    // plugin delay compensation
+    pub fn se_pdc_set_enabled(engine: *mut se_engine, enabled: u8) -> i32;
+    pub fn se_pdc_is_enabled(engine: *const se_engine) -> i32;
+    pub fn se_pdc_report_get(engine: *mut se_engine, out: *mut se_pdc_report, tracks: *mut se_pdc_track, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_transport_audible_position(engine: *const se_engine, out_frame: *mut i64) -> i32;
 }
 
 /// Guards the hand-written declarations against drift from saine_engine.h.
@@ -755,6 +783,26 @@ mod abi_layout {
         assert_eq!((size_of::<se_session_desc_v5>(), align_of::<se_session_desc_v5>()), (16, 8));
         assert_eq!((size_of::<se_plugin_message>(), align_of::<se_plugin_message>()), (264, 8));
         assert_eq!(offset_of!(se_plugin_message, message), 8);
+    }
+
+    #[test]
+    fn pdc_layout_matches_c_header() {
+        // Verified with clang -Wpadded against saine_engine.h (no implicit
+        // padding); also static_asserted in c_api.cpp.
+        assert_eq!((size_of::<se_pdc_report>(), align_of::<se_pdc_report>()), (16, 4));
+        assert_eq!(
+            [
+                offset_of!(se_pdc_report, total_frames),
+                offset_of!(se_pdc_report, uncapped_frames),
+                offset_of!(se_pdc_report, track_count),
+                offset_of!(se_pdc_report, enabled),
+                offset_of!(se_pdc_report, clamped),
+                offset_of!(se_pdc_report, _pad),
+            ],
+            [0, 4, 8, 12, 13, 14]
+        );
+        assert_eq!((size_of::<se_pdc_track>(), align_of::<se_pdc_track>()), (16, 8));
+        assert_eq!([offset_of!(se_pdc_track, track_id), offset_of!(se_pdc_track, latency_frames), offset_of!(se_pdc_track, delay_frames)], [0, 8, 12]);
     }
 
     #[test]

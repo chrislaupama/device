@@ -1,5 +1,6 @@
 #include "processor.hpp"
 
+#include "delay_line.hpp"
 #include "plugins/plugin_instance.hpp"
 #include "rt_util.hpp"
 
@@ -72,8 +73,10 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
     if (graph == nullptr || frames == 0) return {};
     const bool live_input = input.count > 0 && graph->uses_input;
     const bool plugins_on = inst.transport != nullptr && graph->has_plugins;
-    if (!playing && inst.synths == nullptr && !live_input && !plugins_on) return {};
+    DelayLine* const* const lines = graph->pdc.need.empty() ? nullptr : inst.lines;
+    if (!playing && inst.synths == nullptr && !live_input && !plugins_on && lines == nullptr) return {};
     const auto input_channel = [&](uint32_t c) { return c < input.count ? input.channels[c] : ctx.zeros(); };
+    const uint64_t gen = inst.pdc_gen;
 
     float* const tl = ctx.track_l();
     float* const tr = ctx.track_r();
@@ -90,9 +93,42 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         PluginInstance* const iplug = plugins_on && track.instrument_plugin_enabled ? track.instrument_plugin : nullptr;
         const bool track_plugins = plugins_on && (track.fx_count > 0 || iplug != nullptr);
         const bool routed = live_input && track.input_mode != SE_INPUT_NONE && (track.monitor || track.arm);
-        if (synth == nullptr && !routed && !track_plugins && (!track.audible || !playing)) continue;
-
+        // Delay compensation lines of this track (null when not needed).
+        DelayLine* main_line = nullptr;
+        DelayLine* src_line = nullptr;
+        bool pending = false; // a line still has output to give
+        if (lines != nullptr) {
+            main_line = track.pdc_delay != 0 ? lines[t] : nullptr;
+            src_line = track.pdc_src_delay != 0 ? lines[graph->pdc.src_index(track_count, t)] : nullptr;
+            if (!track.audible) { // not heard: drop what the lines hold (they restart silent)
+                if (main_line != nullptr) main_line->discard(frames, gen);
+                if (src_line != nullptr) src_line->discard(frames, gen);
+                main_line = src_line = nullptr;
+            }
+            pending = (main_line != nullptr && !main_line->idle(track.pdc_delay, gen)) ||
+                      (src_line != nullptr && !src_line->idle(track.pdc_src_delay, gen));
+        }
+        if (synth == nullptr && !routed && !track_plugins && (!track.audible || !playing) && !pending) {
+            if (main_line != nullptr) main_line->discard(frames, gen);
+            if (src_line != nullptr) src_line->discard(frames, gen);
+            continue;
+        }
+        // Runs `line` over the track buffer: the buffer's content if any,
+        // else silence while the line still has a tail, else just advances.
         bool any = false;
+        const auto delay_track = [&](DelayLine* line, uint32_t d) {
+            if (any) {
+                line->process(tl, tr, frames, d, gen);
+            } else if (!line->idle(d, gen)) {
+                std::memset(tl, 0, sizeof(float) * frames);
+                std::memset(tr, 0, sizeof(float) * frames);
+                any = true;
+                line->process(tl, tr, frames, d, gen);
+            } else {
+                line->discard(frames, gen);
+            }
+        };
+
         const ClipNode* clip = graph->clips.data() + track.clip_begin;
         const ClipNode* const clip_end = track.audible && playing ? clip + track.clip_count : clip;
         for (; clip != clip_end; ++clip) {
@@ -111,6 +147,8 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             kernel_add_scaled(tl + out_off, clip->src_l + src, clip->gain, n);
             kernel_add_scaled(tr + out_off, clip->src_r + src, clip->gain, n);
         }
+        // Clips line up with the instrument plugin's (latent) output.
+        if (src_line != nullptr) delay_track(src_line, track.pdc_src_delay);
         if (synth != nullptr &&
             synth->render(graph->notes.data() + track.note_begin, track.note_count, &graph->synth_params[t], graph->seq,
                           inst.transport_gen,
@@ -133,7 +171,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             const uint32_t ne = iplug->feeder().build(graph->notes.data() + track.note_begin, track.note_count,
                                                       graph->seq, inst.transport_gen, position, frames, playing,
                                                       iplug->event_scratch(), PluginInstance::kMaxEvents);
-            iplug->process(pl, pr, frames, iplug->event_scratch(), ne, *inst.transport);
+            iplug->run(pl, pr, frames, iplug->event_scratch(), ne, *inst.transport);
             if (track.audible) {
                 if (any) {
                     kernel_add_scaled(tl, pl, 1.0f, frames);
@@ -145,6 +183,8 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                 }
             }
         }
+        // Monitoring input: only the playback source is compensated.
+        if (main_line != nullptr && track.pdc_pre) delay_track(main_line, track.pdc_delay);
         if (routed) {
             const float* il = input_channel(track.input_channel);
             const float* ir = track.input_mode == SE_INPUT_STEREO ? input_channel(track.input_channel + 1u) : il;
@@ -177,9 +217,19 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                 any = true;
             }
             const FxSlot* slot = graph->fx.data() + track.fx_begin;
-            for (uint32_t i = 0; i < track.fx_count; ++i, ++slot)
-                if (slot->enabled && slot->inst != nullptr) slot->inst->process(tl, tr, frames, nullptr, 0, *inst.transport);
+            for (uint32_t i = 0; i < track.fx_count; ++i, ++slot) {
+                DelayLine* const bypass = lines != nullptr && slot->pdc_bypass_delay != 0
+                                              ? lines[graph->pdc.slot_index(track_count, track.fx_begin + i)]
+                                              : nullptr;
+                if (slot->enabled && slot->inst != nullptr) {
+                    slot->inst->run(tl, tr, frames, nullptr, 0, *inst.transport);
+                    if (bypass != nullptr) bypass->discard(frames, gen);
+                } else if (bypass != nullptr) {
+                    bypass->process(tl, tr, frames, slot->pdc_bypass_delay, gen); // same timing as the plugin
+                }
+            }
         }
+        if (main_line != nullptr && !track.pdc_pre) delay_track(main_line, track.pdc_delay);
         if (!any || !track.audible) continue;
 
         kernel_add_scaled2(ml, mr, tl, tr, track.gain_l, track.gain_r, frames);

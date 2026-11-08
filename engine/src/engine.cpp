@@ -1,5 +1,6 @@
 #include "engine.hpp"
 
+#include "delay_line.hpp"
 #include "resampler.hpp"
 #include "rt_util.hpp"
 #include "wav.hpp"
@@ -9,6 +10,7 @@
 #include <cstring>
 #include <limits>
 #include <chrono>
+#include <map>
 #include <numbers>
 #include <thread>
 
@@ -52,6 +54,7 @@ Engine::Engine(double sample_rate, uint32_t max_block, uint32_t channels)
     click_len_ = static_cast<uint32_t>(len);
     peek_bucket_frames_ = std::max<uint32_t>(1, static_cast<uint32_t>(std::llround(0.010 * sample_rate)));
     in_scratch_.assign(static_cast<std::size_t>(kMaxInjectedInputChannels) * max_block, 0.0f);
+    click_scratch_.assign(max_block, 0.0f);
     device_factory_ = [] { return create_platform_audio_device(); };
 }
 
@@ -134,6 +137,7 @@ void Engine::refresh_device_latency() {
     const int64_t lat =
         st.input_open ? std::llround(static_cast<double>(st.input_latency + st.output_latency) * ratio) : 0;
     device_rec_latency_.store(lat, std::memory_order_relaxed);
+    device_out_latency_.store(std::llround(static_cast<double>(st.output_latency) * ratio), std::memory_order_relaxed);
     device_input_open_.store(st.input_open, std::memory_order_release);
 }
 
@@ -207,6 +211,7 @@ int32_t Engine::device_stop() {
     if (rt_owner_.load() != kOwnerDevice) return SE_OK;
     if (device_) device_->stop(); // returns once the callback can no longer run
     device_input_open_.store(false);
+    device_out_latency_.store(0, std::memory_order_relaxed);
     // Commands queued but not yet consumed by a callback are applied here.
     release_rt_owner();
     return SE_OK;
@@ -392,6 +397,10 @@ int32_t Engine::publish(const se_session_desc_v5& desc, std::string& err) {
         if (node.has_instrument_plugin)
             node.instrument_plugin = plugins_.use(*td.instrument_plugin, true, td.track_name);
     }
+    // Delay compensation: pending restarts and fresh latencies (main thread),
+    // then the plan for the new graph.
+    plugins_.service_latencies();
+    plan_pdc(*built);
     const uint64_t seq = install_graph(std::move(built));
     plugins_.end_publish(seq);
     plugins_.collect(rt_active_seq_.load(std::memory_order_seq_cst));
@@ -400,8 +409,9 @@ int32_t Engine::publish(const se_session_desc_v5& desc, std::string& err) {
 
 // v1..v4: no devices, so every plugin instance is retired.
 int32_t Engine::publish_graph(std::unique_ptr<RenderGraph> built) {
+    std::lock_guard plock(plugins_.mutex()); // every graph install happens under it (see replan_pdc_locked)
+    plan_pdc(*built);
     const uint64_t seq = install_graph(std::move(built));
-    std::lock_guard plock(plugins_.mutex());
     plugins_.begin_publish();
     plugins_.end_publish(seq);
     plugins_.collect(rt_active_seq_.load(std::memory_order_seq_cst));
@@ -427,6 +437,45 @@ uint64_t Engine::install_graph(std::unique_ptr<RenderGraph> built) {
         next->synths[i] = synth.get();
         next->synth_refs[i] = std::move(synth);
     }
+
+    // Delay lines: keep the current graph's line for the same track / device
+    // (so delays continue across republishes) when it is big enough;
+    // allocate the others here, never on the RT side.
+    next->line_refs.clear();
+    next->lines.clear();
+    if (!next->pdc.need.empty()) {
+        using Key = std::pair<int, uint64_t>; // kind (0 main, 1 source, 2 bypass, 3 metronome), id
+        const auto key_of = [](const RenderGraph& g, std::size_t i) -> Key {
+            const std::size_t t = g.tracks.size();
+            if (i < t) return {0, g.tracks[i].track_id};
+            if (i < 2 * t) return {1, g.tracks[i - t].track_id};
+            if (i < 2 * t + g.fx.size()) return {2, g.fx[i - 2 * t].device_id};
+            return {3, 0};
+        };
+        std::map<Key, std::shared_ptr<DelayLine>> previous_lines;
+        if (current_)
+            for (std::size_t i = 0; i < current_->line_refs.size(); ++i)
+                if (current_->line_refs[i]) previous_lines.emplace(key_of(*current_, i), current_->line_refs[i]);
+        const std::size_t metro = next->pdc.metro_index(next->tracks.size(), next->fx.size());
+        next->line_refs.resize(next->pdc.need.size());
+        next->lines.assign(next->pdc.need.size(), nullptr);
+        for (std::size_t i = 0; i < next->pdc.need.size(); ++i) {
+            if (next->pdc.need[i] == 0) continue;
+            const uint32_t channels = i == metro ? 1 : 2;
+            const uint32_t cap = DelayLine::capacity_for(next->pdc.need[i], max_block_);
+            std::shared_ptr<DelayLine> line;
+            if (auto it = previous_lines.find(key_of(*next, i));
+                it != previous_lines.end() && it->second->capacity() >= cap && it->second->channels() == channels) {
+                line = std::move(it->second);
+                previous_lines.erase(it);
+            } else {
+                line = std::make_shared<DelayLine>(cap, channels);
+            }
+            next->lines[i] = line.get();
+            next->line_refs[i] = std::move(line);
+        }
+    }
+    pdc_total_.store(next->pdc.total, std::memory_order_relaxed);
 
     const uint64_t seq = next_seq_++;
     next->seq = seq;
@@ -538,10 +587,12 @@ void Engine::apply_command(const TransportCommand& cmd) noexcept {
         rt_position_ = 0;
         rt_voice_count_ = 0;
         ++rt_synth_gen_;
+        ++rt_pdc_gen_; // delay lines flush (pause lets them ring out)
         break;
     case TransportCommand::Type::Seek: // click tails ring on; synth voices fade
         rt_position_ = cmd.frame;
         ++rt_synth_gen_;
+        ++rt_pdc_gen_;
         break;
     case TransportCommand::Type::SetLoop:
         rt_loop_enabled_ = cmd.enabled;
@@ -704,16 +755,39 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
         transport.playing = rt_playing_;
         transport.sample_rate = sample_rate_;
         transport.tempo_bpm = rt_tempo_fpb_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpb_ : 120.0;
-        const InstrumentInputs inst{graph != nullptr ? graph->synths.data() : nullptr, rt_synth_gen_, &transport};
+        DelayLine* const* const lines = graph != nullptr && !graph->lines.empty() ? graph->lines.data() : nullptr;
+        const InstrumentInputs inst{graph != nullptr ? graph->synths.data() : nullptr, rt_synth_gen_, &transport,
+                                    lines, rt_pdc_gen_};
         const BlockPeaks p = render_block(graph, rt_position_, rt_playing_, n, live_ctx_, true, slot, inst, iv);
-        if (rec != nullptr && rt_playing_) rec->capture(in_ptrs, in_count, live_ctx_.zeros(), rt_position_, rec_latency, n);
+        // The performer hears the mix L (delay compensation) + output latency
+        // late, so takes are placed that much earlier too.
+        const int64_t pdc_total = lines != nullptr ? graph->pdc.total : 0;
+        if (rec != nullptr && rt_playing_)
+            rec->capture(in_ptrs, in_count, live_ctx_.zeros(), rt_position_, rec_latency + pdc_total, n);
         peak_l = std::max(peak_l, p.l);
         peak_r = std::max(peak_r, p.r);
         atomic_store_max(master_win_l_[slot], p.l);
         atomic_store_max(master_win_r_[slot], p.r);
         // Metronome: after master gain and after metering, never in export.
-        if (rt_playing_ && rt_metro_enabled_)
-            mix_metronome(live_ctx_.master_l(), live_ctx_.master_r(), rt_position_, n);
+        // With delay compensation it is delayed by L like the music.
+        if (pdc_total == 0) {
+            if (rt_playing_ && rt_metro_enabled_)
+                mix_metronome(live_ctx_.master_l(), live_ctx_.master_r(), rt_position_, n);
+        } else {
+            DelayLine* const ml = lines[graph->pdc.metro_index(graph->tracks.size(), graph->fx.size())];
+            const auto md = static_cast<uint32_t>(pdc_total);
+            const bool clicking = rt_playing_ && rt_metro_enabled_;
+            if (clicking || !ml->idle(md, rt_pdc_gen_)) {
+                float* const c = click_scratch_.data();
+                std::memset(c, 0, sizeof(float) * n);
+                if (clicking) mix_metronome(c, nullptr, rt_position_, n);
+                ml->process_mono(c, n, md, rt_pdc_gen_);
+                kernel_add_scaled(live_ctx_.master_l(), c, 1.0f, n);
+                kernel_add_scaled(live_ctx_.master_r(), c, 1.0f, n);
+            } else {
+                ml->discard(n, rt_pdc_gen_);
+            }
+        }
         sink(live_ctx_.master_l(), live_ctx_.master_r(), done, n);
         if (rt_playing_) {
             rt_position_ += n;
@@ -771,7 +845,7 @@ uint32_t Engine::advance_peek_window(uint32_t frames, const RenderGraph* graph) 
 void Engine::start_click(const float* buf, uint32_t offset, float* l, float* r, uint32_t frames) noexcept {
     const uint32_t m = std::min(click_len_, frames - offset);
     kernel_add_scaled(l + offset, buf, rt_metro_gain_, m);
-    kernel_add_scaled(r + offset, buf, rt_metro_gain_, m);
+    if (r != nullptr) kernel_add_scaled(r + offset, buf, rt_metro_gain_, m);
     if (m >= click_len_) return;
     std::size_t slot = rt_voice_count_;
     if (slot == kMaxClickVoices) {
@@ -794,7 +868,7 @@ void Engine::mix_metronome(float* l, float* r, int64_t position, uint32_t frames
         ClickVoice& v = rt_voices_[i];
         const uint32_t m = std::min(click_len_ - v.pos, frames);
         kernel_add_scaled(l, v.buf + v.pos, g, m);
-        kernel_add_scaled(r, v.buf + v.pos, g, m);
+        if (r != nullptr) kernel_add_scaled(r, v.buf + v.pos, g, m);
         v.pos += m;
         if (v.pos >= click_len_)
             rt_voices_[i] = rt_voices_[--rt_voice_count_];
@@ -1023,25 +1097,48 @@ int32_t Engine::export_wav(const char* path, int64_t start_frame, int64_t end_fr
                 synth_ptrs[i] = synths.back().get();
             }
     }
+    // Delay compensation: private delay lines (live ones stay untouched); the
+    // mix comes out L late, so render L more frames and drop the first L:
+    // timeline frame t lands on file frame t - start_frame.
+    std::vector<std::unique_ptr<DelayLine>> own_lines;
+    std::vector<DelayLine*> line_ptrs;
+    uint32_t pdc_total = 0;
+    if (graph && !graph->pdc.need.empty()) {
+        pdc_total = graph->pdc.total;
+        const std::size_t metro = graph->pdc.metro_index(graph->tracks.size(), graph->fx.size());
+        line_ptrs.assign(graph->pdc.need.size(), nullptr);
+        for (std::size_t i = 0; i < graph->pdc.need.size(); ++i) {
+            if (graph->pdc.need[i] == 0 || i == metro) continue;
+            own_lines.push_back(std::make_unique<DelayLine>(
+                DelayLine::capacity_for(graph->pdc.need[i], max_block_), 2));
+            line_ptrs[i] = own_lines.back().get();
+        }
+    }
     RtTransport transport;
     transport.sample_rate = sample_rate_;
     transport.playing = true;
     transport.tempo_bpm = rt_tempo_fpb_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpb_ : 120.0;
     InstrumentInputs inst{synth_ptrs.empty() ? nullptr : synth_ptrs.data(), plugins ? rt_synth_gen_ : 0,
-                          plugins ? &transport : nullptr};
+                          plugins ? &transport : nullptr, line_ptrs.empty() ? nullptr : line_ptrs.data(), 0};
     ScopedFlushDenormals ftz;
-    for (int64_t pos = start_frame; pos < end_frame;) {
-        const auto n = static_cast<uint32_t>(std::min<int64_t>(end_frame - pos, max_block_));
+    const int64_t render_end = end_frame + pdc_total;
+    const int64_t first_kept = start_frame + pdc_total;
+    for (int64_t pos = start_frame; pos < render_end;) {
+        const auto n = static_cast<uint32_t>(std::min<int64_t>(render_end - pos, max_block_));
         transport.position = pos;
         render_block(graph.get(), pos, true, n, ctx, false, 0, inst);
-        const float* l = ctx.master_l();
-        const float* r = ctx.master_r();
-        for (uint32_t i = 0; i < n; ++i) {
+        const auto skip = static_cast<uint32_t>(std::clamp<int64_t>(first_kept - pos, 0, n));
+        const float* l = ctx.master_l() + skip;
+        const float* r = ctx.master_r() + skip;
+        const uint32_t keep = n - skip;
+        for (uint32_t i = 0; i < keep; ++i) {
             interleaved[2 * i] = l[i];
             interleaved[2 * i + 1] = r[i];
         }
-        rc = writer.write(interleaved.data(), n, err);
-        if (rc != SE_OK) return rc;
+        if (keep > 0) {
+            rc = writer.write(interleaved.data(), keep, err);
+            if (rc != SE_OK) return rc;
+        }
         pos += n;
     }
     return writer.finish(err);
@@ -1094,6 +1191,105 @@ bool Engine::plugin_latency(uint64_t device_id, uint32_t& frames) {
 void Engine::plugin_idle() {
     std::lock_guard lock(plugins_.mutex());
     plugins_.idle(rt_active_seq_.load(std::memory_order_seq_cst));
+    if (plugins_.service_latencies()) replan_pdc_locked();
+}
+
+// ============================================================ delay compensation
+
+void Engine::plan_pdc(RenderGraph& g) const {
+    PdcPlan p;
+    p.enabled = pdc_enabled_.load(std::memory_order_acquire);
+    const std::size_t track_count = g.tracks.size();
+    const std::size_t fx_count = g.fx.size();
+    const auto lat_of = [](const PluginInstance* inst) -> uint64_t {
+        return inst != nullptr ? inst->cached_latency() : 0;
+    };
+    // lat_i: every insert (bypassed ones too) + the instrument plugin.
+    p.track_latency.assign(track_count, 0);
+    uint64_t total = 0;
+    for (std::size_t t = 0; t < track_count; ++t) {
+        TrackNode& node = g.tracks[t];
+        node.pdc_delay = node.pdc_src_delay = 0;
+        node.pdc_pre = false;
+        uint64_t lat = node.has_instrument_plugin ? lat_of(node.instrument_plugin) : 0;
+        for (uint32_t i = 0; i < node.fx_count; ++i) lat += lat_of(g.fx[node.fx_begin + i].inst);
+        p.track_latency[t] = static_cast<uint32_t>(std::min<uint64_t>(lat, UINT32_MAX));
+        total = std::max(total, lat);
+    }
+    for (FxSlot& slot : g.fx) slot.pdc_bypass_delay = 0;
+    p.uncapped = static_cast<uint32_t>(std::min<uint64_t>(total, UINT32_MAX));
+    if (!p.enabled || total == 0) {
+        g.pdc = std::move(p);
+        return;
+    }
+    p.clamped = total > kPdcMaxDelay;
+    const auto cap = [&](uint64_t v) {
+        if (v > kPdcMaxDelay) p.clamped = true;
+        return static_cast<uint32_t>(std::min<uint64_t>(v, kPdcMaxDelay));
+    };
+    p.total = cap(total);
+    p.need.assign(p.metro_index(track_count, fx_count) + 1, 0);
+    for (std::size_t t = 0; t < track_count; ++t) {
+        TrackNode& node = g.tracks[t];
+        node.pdc_delay = p.total - std::min(p.track_latency[t], p.total);
+        node.pdc_pre = node.monitor && node.input_mode != SE_INPUT_NONE;
+        p.need[t] = node.pdc_delay;
+        const uint64_t li = node.has_instrument_plugin ? lat_of(node.instrument_plugin) : 0;
+        if (li > 0 && node.clip_count > 0) {
+            node.pdc_src_delay = cap(li);
+            p.need[p.src_index(track_count, t)] = node.pdc_src_delay;
+        }
+        for (uint32_t i = 0; i < node.fx_count; ++i) {
+            FxSlot& slot = g.fx[node.fx_begin + i];
+            const uint64_t sl = lat_of(slot.inst);
+            if (sl == 0 || slot.enabled) continue; // only bypassed slots need a line
+            slot.pdc_bypass_delay = cap(sl);
+            p.need[p.slot_index(track_count, node.fx_begin + i)] = slot.pdc_bypass_delay;
+        }
+    }
+    p.need[p.metro_index(track_count, fx_count)] = p.total;
+    g.pdc = std::move(p);
+}
+
+void Engine::replan_pdc_locked() {
+    std::shared_ptr<RenderGraph> current;
+    {
+        std::lock_guard lock(control_mutex_);
+        current = current_;
+    }
+    if (!current) return;
+    auto next = clone_render_graph(*current);
+    plan_pdc(*next);
+    install_graph(std::move(next));
+}
+
+void Engine::set_pdc_enabled(bool enabled) {
+    std::lock_guard lock(plugins_.mutex());
+    if (pdc_enabled_.exchange(enabled, std::memory_order_acq_rel) == enabled) return;
+    replan_pdc_locked();
+}
+
+void Engine::pdc_report(se_pdc_report& out, std::vector<se_pdc_track>& tracks) const {
+    out = se_pdc_report{};
+    tracks.clear();
+    std::lock_guard lock(control_mutex_);
+    out.enabled = pdc_enabled() ? 1 : 0;
+    if (!current_) return;
+    const PdcPlan& p = current_->pdc;
+    out.enabled = p.enabled ? 1 : 0;
+    out.total_frames = p.total;
+    out.uncapped_frames = p.uncapped;
+    out.clamped = p.clamped ? 1 : 0;
+    out.track_count = static_cast<uint32_t>(current_->tracks.size());
+    for (std::size_t t = 0; t < current_->tracks.size(); ++t)
+        tracks.push_back(se_pdc_track{current_->tracks[t].track_id, p.track_latency[t], current_->tracks[t].pdc_delay});
+}
+
+int64_t Engine::audible_position() const noexcept {
+    const int64_t pos = pub_position_.load(std::memory_order_acquire);
+    if (!pub_playing_.load(std::memory_order_acquire)) return pos;
+    return pos - static_cast<int64_t>(pdc_total_.load(std::memory_order_relaxed)) -
+           device_out_latency_.load(std::memory_order_relaxed);
 }
 
 bool Engine::plugin_set_parameter(uint64_t device_id, uint32_t param_id, double value) {

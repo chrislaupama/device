@@ -301,7 +301,8 @@ int32_t build_render_graph(const se_session_desc_v5& desc, const AssetLookup& lo
         node.note_count = static_cast<uint32_t>(g->notes.size()) - node.note_begin;
         node.fx_begin = static_cast<uint32_t>(g->fx.size());
         node.fx_count = td.device_count;
-        for (uint32_t i = 0; i < td.device_count; ++i) g->fx.push_back(FxSlot{nullptr, td.devices[i].enabled != 0});
+        for (uint32_t i = 0; i < td.device_count; ++i)
+            g->fx.push_back(FxSlot{nullptr, td.devices[i].device_id, td.devices[i].enabled != 0, 0});
         node.has_instrument_plugin = node.instrument && td.instrument_plugin != nullptr;
         node.instrument_plugin_enabled = node.has_instrument_plugin && td.instrument_plugin->enabled != 0;
         if (node.fx_count > 0 || node.has_instrument_plugin) g->has_plugins = true;
@@ -324,6 +325,38 @@ int32_t build_render_graph(const se_session_desc_v5& desc, const AssetLookup& lo
 
     out = std::move(g);
     return SE_OK;
+}
+
+std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g) {
+    auto c = std::make_unique<RenderGraph>();
+    c->master_gain = g.master_gain;
+    c->uses_input = g.uses_input;
+    c->tracks = g.tracks;
+    c->clips = g.clips;
+    c->notes = g.notes;
+    c->fx = g.fx;
+    c->has_plugins = g.has_plugins;
+    c->synth_params = g.synth_params;
+    c->assets = g.assets;
+    c->synth_refs = g.synth_refs;
+    c->synths = g.synths;
+    c->meter_count = g.meter_count;
+    c->meters = std::make_unique<TrackMeter[]>(c->meter_count);
+    for (std::size_t i = 0; i < c->meter_count; ++i) {
+        const TrackMeter& from = g.meters[i];
+        TrackMeter& to = c->meters[i];
+        to.track_id = from.track_id;
+        to.peak_l.store(from.peak_l.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        to.peak_r.store(from.peak_r.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        for (uint32_t k = 0; k < kPeekBuckets; ++k) {
+            to.win_l[k].store(from.win_l[k].load(std::memory_order_relaxed), std::memory_order_relaxed);
+            to.win_r[k].store(from.win_r[k].load(std::memory_order_relaxed), std::memory_order_relaxed);
+        }
+    }
+    c->pdc = g.pdc;
+    c->line_refs = g.line_refs;
+    c->lines = g.lines;
+    return c;
 }
 
 } // namespace saine

@@ -14,7 +14,9 @@
 #include "../spsc_queue.hpp"
 #include "../synth.hpp" // NoteEvent
 
+#include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -117,10 +119,50 @@ public:
 
     const PluginSpec& spec() const noexcept { return spec_; }
 
+    // RT entry point used by render_block: process() unless the instance is
+    // suspended for a restart (then effects pass audio through and
+    // instruments are silent). `in_process_` / `suspended_` form a Dekker
+    // pair with suspend(): either this call sees the suspension or
+    // suspend() waits until the call has returned.
+    void run(float* l, float* r, uint32_t frames, const MidiEvent* events, uint32_t event_count,
+             const RtTransport& transport) noexcept {
+        in_process_.store(true, std::memory_order_seq_cst);
+        if (!suspended_.load(std::memory_order_seq_cst)) {
+            process(l, r, frames, events, event_count, transport);
+        } else if (spec_.instrument) {
+            std::memset(l, 0, sizeof(float) * frames);
+            std::memset(r, 0, sizeof(float) * frames);
+        }
+        in_process_.store(false, std::memory_order_release);
+    }
+
     // RT. Effects process l/r in place. Instruments overwrite l/r with
     // their output; `events` are this segment's note events.
     virtual void process(float* l, float* r, uint32_t frames, const MidiEvent* events, uint32_t event_count,
                          const RtTransport& transport) noexcept = 0;
+
+    // ---- restarts and latency (main thread)
+    // Set from any thread by the format host when the plugin asks to be
+    // restarted (CLAP request_restart, VST3 restartComponent(kLatencyChanged)).
+    void request_restart() noexcept { restart_requested_.store(true, std::memory_order_release); }
+    bool take_restart_request() noexcept { return restart_requested_.exchange(false, std::memory_order_acq_rel); }
+    // Keeps the RT side out of process() until resume(); waits (main thread
+    // only) for a process() call in flight to return.
+    void suspend() noexcept;
+    void resume() noexcept { suspended_.store(false, std::memory_order_seq_cst); }
+    // Deactivate + re-activate (format specific), called between suspend()
+    // and resume(). Default: nothing to do.
+    virtual void restart() noexcept {}
+    // Latency as last read with refresh_latency() (what delay compensation
+    // uses; guarded by the PluginHost mutex).
+    uint32_t cached_latency() const noexcept { return cached_latency_; }
+    // Re-reads latency(); true if it changed.
+    bool refresh_latency() {
+        const uint32_t l = latency();
+        const bool changed = l != cached_latency_;
+        cached_latency_ = l;
+        return changed;
+    }
 
     // Main thread.
     virtual bool save_state(std::vector<uint8_t>& out, std::string& err) = 0;
@@ -151,6 +193,10 @@ protected:
     PluginSpec spec_;
 
 private:
+    std::atomic<bool> in_process_{false};
+    std::atomic<bool> suspended_{false};
+    std::atomic<bool> restart_requested_{false};
+    uint32_t cached_latency_ = 0;
     std::mutex param_mutex_; // serialises producers (SPSC producer side)
     SpscQueue<ParamChange, 256> params_;
     NoteFeeder feeder_;

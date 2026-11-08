@@ -193,7 +193,7 @@ public:
     tresult PLUGIN_API beginEdit(ParamID) override { return kResultOk; }
     tresult PLUGIN_API performEdit(ParamID id, ParamValue value) override;
     tresult PLUGIN_API endEdit(ParamID) override { return kResultOk; }
-    tresult PLUGIN_API restartComponent(int32) override { return kResultOk; }
+    tresult PLUGIN_API restartComponent(int32 flags) override;
     void detach() { owner_ = nullptr; }
 
 private:
@@ -304,6 +304,13 @@ public:
 
     void process(float* l, float* r, uint32_t frames, const MidiEvent* events, uint32_t event_count,
                  const RtTransport& t) noexcept override {
+        if (!active_) { // a re-activation failed: effects pass through, instruments are silent
+            if (spec_.instrument) {
+                std::memset(l, 0, sizeof(float) * frames);
+                std::memset(r, 0, sizeof(float) * frames);
+            }
+            return;
+        }
         params_.clear();
         ParamChange pc;
         while (pop_param(pc)) {
@@ -431,6 +438,21 @@ public:
         component_->release();
         component_ = nullptr;
         mod_.reset();
+    }
+
+    // kLatencyChanged: the host must deactivate and re-activate the component
+    // for the new latency to apply. Main thread, instance suspended (the RT
+    // side cannot be inside process()).
+    void restart() noexcept override {
+        if (component_ == nullptr || processor_ == nullptr) return;
+        if (processing_) processor_->setProcessing(false);
+        processing_ = false;
+        if (active_) component_->setActive(false);
+        active_ = component_->setActive(true) == kResultOk;
+        if (active_) {
+            processor_->setProcessing(true);
+            processing_ = true;
+        }
     }
 
     // UI edits from the controller go to the processor (main thread).
@@ -568,6 +590,13 @@ private:
     FixedParamChanges params_;
     ProcessContext ctx_{};
 };
+
+// Only kLatencyChanged is acted on (re-activation on the main thread, see
+// Vst3Instance::restart()); other flags are ignored as before.
+tresult PLUGIN_API ComponentHandler::restartComponent(int32 flags) {
+    if (owner_ != nullptr && (flags & kLatencyChanged) != 0) owner_->request_restart();
+    return kResultOk;
+}
 
 tresult PLUGIN_API ComponentHandler::performEdit(ParamID id, ParamValue value) {
     if (owner_ != nullptr) owner_->ui_edit(id, value);

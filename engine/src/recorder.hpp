@@ -97,7 +97,9 @@ public:
     // ---- RT side (exactly one RT owner at a time)
     // Captures `frames` frames that play at timeline `position`. `in` holds
     // `in_count` input channels for this chunk; missing channels read from
-    // `zeros`. `latency` (frames) is subtracted from new takes' start.
+    // `zeros`. `latency` (frames) is subtracted from new takes' start; a
+    // different latency than the previous call (delay compensation L
+    // changed) ends the takes like a seek, so every take stays aligned.
     void capture(const float* const* in, uint32_t in_count, const float* zeros, int64_t position,
                  int64_t latency, uint32_t frames) noexcept;
     // The transport wrapped from the loop end to `loop_start` right after
@@ -159,6 +161,7 @@ private:
     // RT continuity tracking
     bool rt_started_ = false;
     int64_t rt_next_pos_ = 0;
+    int64_t rt_latency_ = 0; // compensation of the open takes (a change starts new takes)
 
     std::atomic<uint64_t> overruns_{0};
     std::atomic<uint64_t> dropped_frames_{0};

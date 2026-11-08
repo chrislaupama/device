@@ -31,7 +31,7 @@ SDKs are fetched at a pinned tag at configure time (CMake FetchContent) and neve
 - **Testing:** small test plugins are built with the SDKs (VST3 gain, CLAP gain, CLAP sine instrument). AU is
   tested with Apple's AULowpass/AUDelay and DLSMusicDevice.
 - **Not in v1:** plugin delay compensation (latency is reported only), sidechains, multi-out instruments,
-  parameter automation and a host-side generic parameter UI.
+  parameter automation and a host-side generic parameter UI. (Delay compensation was added later: ADR 0004.)
 
 ## Implementation notes (engine, 2026-11-08)
 Details in engine/README.md "Plugins". Where the implementation refines or deviates from the decision above:

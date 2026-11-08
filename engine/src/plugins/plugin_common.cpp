@@ -1,6 +1,7 @@
 #include "plugin_instance.hpp"
 
 #include <algorithm>
+#include <thread>
 
 #if defined(__APPLE__)
 #include <pthread.h>
@@ -23,6 +24,11 @@ bool on_platform_main_thread() noexcept {
 #else
     return true;
 #endif
+}
+
+void PluginInstance::suspend() noexcept {
+    suspended_.store(true, std::memory_order_seq_cst);
+    while (in_process_.load(std::memory_order_seq_cst)) std::this_thread::yield();
 }
 
 bool PluginInstance::push_param(const ParamChange& c) noexcept {

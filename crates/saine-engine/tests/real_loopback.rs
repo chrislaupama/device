@@ -6,17 +6,32 @@
 //! compensation the offset is ~0 (plus a few hundred microseconds of
 //! speaker→mic travel and transducer delay).
 //!
+//! `acoustic_loopback_latency_with_pdc` repeats it with plugin delay
+//! compensation active: a second track carries SaineTestLatency (N = 4800
+//! frames, 100 ms), so the metronome is delayed by L = 4800 and takes are
+//! placed L earlier; the clicks must still land on the beat.
+//!
 //! Opens the REAL microphone (macOS permission prompt) and makes sound, so it
 //! is #[ignore]d and additionally gated on SAINE_TEST_REAL_INPUT=1:
 //!   SAINE_TEST_REAL_INPUT=1 cargo test -p saine-engine --test real_loopback -- --ignored --nocapture
 
 use saine_core::snapshot::{SessionSnapshot, TrackSnapshot};
-use saine_core::InputSource;
+use saine_core::{Device, DeviceId, InputSource, PluginFormat, PluginKind, PluginRef};
 use saine_engine::{Config, DeviceConfig, Engine, MetronomeConfig};
 
 #[test]
 #[ignore]
 fn acoustic_loopback_latency() {
+    loopback(None);
+}
+
+#[test]
+#[ignore]
+fn acoustic_loopback_latency_with_pdc() {
+    loopback(Some(4800));
+}
+
+fn loopback(pdc_latency: Option<u32>) {
     if std::env::var("SAINE_TEST_REAL_INPUT").as_deref() != Ok("1") {
         eprintln!("skipped: set SAINE_TEST_REAL_INPUT=1");
         return;
@@ -46,7 +61,31 @@ fn acoustic_loopback_latency() {
         monitor: false,
         input: Some(InputSource { channel: 0, stereo: false }),
     };
-    engine.publish(&SessionSnapshot { tracks: vec![track], master_gain: 1.0 }).unwrap();
+    let mut tracks = vec![track];
+    if let Some(n) = pdc_latency {
+        // A silent track whose only job is to make L = n.
+        let mut lat = tracks[0].clone();
+        lat.track_id = 2;
+        lat.arm = false;
+        lat.input = None;
+        let mut dev = Device::new(PluginRef {
+            format: PluginFormat::Clap,
+            id: "studio.saine.test.latency".into(),
+            path: Some(saine_engine::test_plugin_dir().join("SaineTestLatency.clap").to_string_lossy().into_owned()),
+            name: "Saine Test Latency".into(),
+            vendor: "Saine".into(),
+            version: "1.0.0".into(),
+            kind: PluginKind::Effect,
+        });
+        dev.id = DeviceId(100);
+        dev.state = Some(saine_core::device::b64::encode(&n.to_le_bytes()));
+        lat.devices = vec![dev];
+        tracks.push(lat);
+    }
+    engine.publish(&SessionSnapshot { tracks, master_gain: 1.0 }).unwrap();
+    let report = engine.latency_report();
+    eprintln!("delay compensation: L = {} frames", report.total_frames);
+    assert_eq!(report.total_frames, pdc_latency.unwrap_or(0));
     let fpb = 24_000.0; // 120 BPM at 48 kHz
     engine.set_metronome(MetronomeConfig { enabled: true, gain: 0.35, frames_per_beat: fpb, beats_per_bar: 4 }).unwrap();
     engine.seek(0).unwrap();

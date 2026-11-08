@@ -108,8 +108,12 @@ TEST_CASE(offline_transport_no_stranded_commands_under_concurrent_render) {
         while (!stop.load()) se_render_offline(e, buf.data(), sizes[k++ % 4]);
     });
     // Transport stays paused, so the final position must be the last seek.
+    // A full queue (the renderer descheduled under CPU load) is the
+    // documented SE_ERR_STATE: retry the same seek until it is accepted.
     for (int round = 0; round < 2000; ++round) {
-        REQUIRE(se_transport_seek(e, round) == SE_OK);
+        int32_t rc = SE_OK;
+        while ((rc = se_transport_seek(e, round)) == SE_ERR_STATE) std::this_thread::yield();
+        REQUIRE(rc == SE_OK);
         if (round % 97 == 0) std::this_thread::yield();
     }
     const int64_t last = 1999;

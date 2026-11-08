@@ -13,6 +13,10 @@
 // A plugin table renders 32 audio tracks (4 clips each) with two test-gain
 // inserts per track (the SaineTestGain CLAP and VST3 bundles built with the
 // engine), i.e. 64 plugin process calls per block.
+// A delay compensation table renders the same 32 audio tracks with one
+// SaineTestLatency insert (N frames) on the first track, PDC on and off:
+// N = 0 (L = 0, nothing to compensate) and N = 4096 (31 tracks + the
+// metronome line delayed by 4096 frames).
 #include "saine_engine.h"
 
 #include <algorithm>
@@ -65,9 +69,11 @@ struct Result {
 };
 
 // plugins: 0 = none (se_session_publish), 1 = CLAP gain + VST3 gain per
-// track, 2 = two CLAP gains per track (se_session_publish_v5).
+// track, 2 = two CLAP gains per track (se_session_publish_v5), 3 = one
+// SaineTestLatency (N = `latency`) on track 1 only, delay compensation
+// `pdc` on/off.
 Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std::vector<std::string>& files,
-           bool features, int plugins = 0) {
+           bool features, int plugins = 0, uint32_t latency = 0, bool pdc = true) {
     se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
     se_engine* e = se_engine_create(&cfg);
     if (!e) {
@@ -111,16 +117,31 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
     se_session_desc sd{tds.data(), tracks, 0.5f};
     const std::string clap_gain = std::string(SAINE_TEST_PLUGIN_DIR) + "/SaineTestGain.clap";
     const std::string vst3_gain = std::string(SAINE_TEST_PLUGIN_DIR) + "/SaineTestGain.vst3";
+    const std::string clap_latency = std::string(SAINE_TEST_PLUGIN_DIR) + "/SaineTestLatency.clap";
+    const uint8_t latency_state[4] = {static_cast<uint8_t>(latency), static_cast<uint8_t>(latency >> 8),
+                                      static_cast<uint8_t>(latency >> 16), static_cast<uint8_t>(latency >> 24)};
+    se_pdc_set_enabled(e, pdc ? 1 : 0);
     std::vector<std::vector<se_device_desc>> devices(tracks);
     std::vector<se_track_desc_v5> t5(tracks);
     for (uint32_t t = 0; t < tracks && plugins != 0; ++t) {
-        for (int k = 0; k < 2; ++k) {
+        for (int k = 0; k < 2 && plugins != 3; ++k) {
             se_device_desc d{};
             d.device_id = 1000 + t * 2 + static_cast<uint32_t>(k);
             const bool vst3 = plugins == 1 && k == 1;
             d.format = vst3 ? SE_PLUGIN_VST3 : SE_PLUGIN_CLAP;
             d.plugin_id = vst3 ? "5A17E5A16E0000018A1E7E576A170001" : "studio.saine.test.gain";
             d.path = vst3 ? vst3_gain.c_str() : clap_gain.c_str();
+            d.enabled = 1;
+            devices[t].push_back(d);
+        }
+        if (plugins == 3 && t == 0) {
+            se_device_desc d{};
+            d.device_id = 1000;
+            d.format = SE_PLUGIN_CLAP;
+            d.plugin_id = "studio.saine.test.latency";
+            d.path = clap_latency.c_str();
+            d.state = latency_state;
+            d.state_len = 4;
             d.enabled = 1;
             devices[t].push_back(d);
         }
@@ -132,7 +153,7 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
         d.clips = tds[t].clips;
         d.clip_count = tds[t].clip_count;
         d.devices = devices[t].data();
-        d.device_count = 2;
+        d.device_count = static_cast<uint32_t>(devices[t].size());
     }
     se_session_desc_v5 sd5{t5.data(), tracks, 0.5f};
     if ((plugins == 0 ? se_session_publish(e, &sd) : se_session_publish_v5(e, &sd5)) != SE_OK) {
@@ -364,6 +385,18 @@ int main(int argc, char** argv) {
         std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name, r.us_per_block_avg, r.us_per_block_p99,
                     r.us_per_block_max, r.rt_ratio);
     }
+    std::printf("\nDelay compensation: 32 audio tracks x %u clips, one SaineTestLatency insert (N frames) on track 1\n",
+                clips_per_track);
+    std::printf("%22s %14s %14s %14s %16s\n", "N / PDC", "avg us/block", "p99 us/block", "max us/block",
+                "realtime ratio");
+    for (const uint32_t n : {0u, 4096u})
+        for (const bool pdc : {false, true}) {
+            const Result r = run(32, clips_per_track, blocks, files, features, 3, n, pdc);
+            char name[32];
+            std::snprintf(name, sizeof name, "N=%u, PDC %s", n, pdc ? "on" : "off");
+            std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name, r.us_per_block_avg, r.us_per_block_p99,
+                        r.us_per_block_max, r.rt_ratio);
+        }
     for (const auto& f : files) std::filesystem::remove(f);
 
     // Expensive patch: 4-voice unison, cross FM, sub + noise, resonant

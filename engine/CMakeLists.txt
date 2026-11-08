@@ -161,7 +161,8 @@ endif()
 
 # ---------------------------------------------------------------- test plugins
 # Minimal original plugins, built as proper bundles into <build>/test_plugins:
-# SaineTestGain.vst3, SaineTestGain.clap, SaineTestSine.clap and
+# SaineTestGain.vst3, SaineTestGain.clap, SaineTestSine.clap,
+# SaineTestLatency.clap/.vst3 (delay by N frames, report latency N) and
 # SaineTestCrash.clap (crashes in clap_entry.init; scanner blocklist test).
 set(SAINE_TEST_PLUGIN_DIR "${CMAKE_CURRENT_BINARY_DIR}/test_plugins")
 if(SAINE_ENGINE_BUILD_TEST_PLUGINS AND APPLE)
@@ -184,12 +185,17 @@ if(SAINE_ENGINE_BUILD_TEST_PLUGINS AND APPLE)
   saine_test_bundle(SaineTestSineClap SaineTestSine clap test_plugins/saine_test_clap.cpp)
   target_compile_definitions(SaineTestSineClap PRIVATE SAINE_TEST_CLAP_SINE=1)
   saine_test_bundle(SaineTestCrashClap SaineTestCrash clap test_plugins/saine_test_crash.cpp)
-  foreach(t SaineTestGainClap SaineTestSineClap SaineTestCrashClap)
+  saine_test_bundle(SaineTestLatencyClap SaineTestLatency clap test_plugins/saine_test_latency_clap.cpp)
+  foreach(t SaineTestGainClap SaineTestSineClap SaineTestCrashClap SaineTestLatencyClap)
     target_include_directories(${t} SYSTEM PRIVATE ${SAINE_CLAP_INCLUDE})
   endforeach()
   saine_test_bundle(SaineTestGainVst3 SaineTestGain vst3 test_plugins/saine_test_vst3.cpp ${SAINE_VST3_IID_SOURCES})
   target_include_directories(SaineTestGainVst3 SYSTEM PRIVATE ${SAINE_VST3SDK_DIR})
-  add_custom_target(saine_test_plugins DEPENDS SaineTestGainClap SaineTestSineClap SaineTestCrashClap SaineTestGainVst3)
+  saine_test_bundle(SaineTestLatencyVst3 SaineTestLatency vst3 test_plugins/saine_test_latency_vst3.cpp
+    ${SAINE_VST3_IID_SOURCES})
+  target_include_directories(SaineTestLatencyVst3 SYSTEM PRIVATE ${SAINE_VST3SDK_DIR})
+  add_custom_target(saine_test_plugins DEPENDS SaineTestGainClap SaineTestSineClap SaineTestCrashClap SaineTestGainVst3
+    SaineTestLatencyClap SaineTestLatencyVst3)
 endif()
 
 # What the Rust crate builds (build.rs): library, scanner, CLAP test gain.
@@ -219,7 +225,8 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/test_synth.cpp
     tests/test_recording.cpp
     tests/test_plugins.cpp
-    tests/test_plugin_scan.cpp)
+    tests/test_plugin_scan.cpp
+    tests/test_pdc.cpp)
   target_include_directories(saine_engine_tests PRIVATE src tests)
   target_link_libraries(saine_engine_tests PRIVATE saine_engine saine_engine_warnings)
   target_compile_definitions(saine_engine_tests PRIVATE

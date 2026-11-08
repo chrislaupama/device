@@ -38,11 +38,16 @@ private:
 // `transport` non-null enables plugin processing (insert chains and
 // instrument plugins) for this call; its position must equal `position`.
 // Only the RT owner may pass it (plugin instances are shared live state).
+// `lines` (non-null only when graph->pdc.need is non-empty): delay lines in
+// the PdcPlan layout (graph->lines live, private copies for export);
+// `pdc_gen` changes whenever they must be flushed (seek / stop).
 struct RtTransport;
 struct InstrumentInputs {
     Synth* const* synths = nullptr;
     uint64_t transport_gen = 0;
     const RtTransport* transport = nullptr;
+    DelayLine* const* lines = nullptr;
+    uint64_t pdc_gen = 0;
 };
 
 // Device input for one render_block() call: `count` channel pointers, each
@@ -79,6 +84,12 @@ struct BlockPeaks {
 // source in place before gain/pan/meters. Tracks with plugins are processed
 // every call, also when stopped or muted (tails, consistent state), but are
 // only mixed when audible.
+// Delay compensation (inst.lines set, docs/adr/0004): the clips of a track
+// with an instrument plugin are delayed by its latency (pdc_src_delay); the
+// track is delayed by pdc_delay after its chain, or, when it monitors input
+// (pdc_pre), only its playback source before the input is added; bypassed
+// slots delay by their plugin's latency. Lines with pending output keep the
+// track rendering while stopped (tails); muted tracks drop their lines.
 BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing, uint32_t frames,
                         RenderContext& ctx, bool update_meters, uint32_t peek_slot = 0,
                         const InstrumentInputs& inst = {}, const InputView& input = {}) noexcept;

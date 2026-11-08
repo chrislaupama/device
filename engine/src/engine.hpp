@@ -90,6 +90,13 @@ public:
     bool plugin_editor_is_open(uint64_t device_id);
     bool plugin_latency(uint64_t device_id, uint32_t& frames);
     void plugin_idle();
+
+    // ---- plugin delay compensation (docs/adr/0004)
+    void set_pdc_enabled(bool enabled);
+    bool pdc_enabled() const noexcept { return pdc_enabled_.load(std::memory_order_acquire); }
+    void pdc_report(se_pdc_report& out, std::vector<se_pdc_track>& tracks) const;
+    int64_t audible_position() const noexcept;
+
     // Test hooks.
     uint64_t plugin_instantiations() const noexcept { return plugins_.instantiations(); }
     bool plugin_set_parameter(uint64_t device_id, uint32_t param_id, double value);
@@ -150,6 +157,11 @@ private:
     void refresh_device_latency();
 
     void reclaim_locked(); // requires control_mutex_
+    // Delay compensation plan of `g` from the instances' cached latencies
+    // (requires plugins_.mutex()).
+    void plan_pdc(RenderGraph& g) const;
+    // Re-plans the current graph (clone + install). Requires plugins_.mutex().
+    void replan_pdc_locked();
     // Assigns synth states (reusing the previous graph's by track_id) and
     // publishes the graph to the RT side. Returns the graph's seq.
     uint64_t install_graph(std::unique_ptr<RenderGraph> built);
@@ -175,6 +187,7 @@ private:
     void drain_commands() noexcept;
     void publish_transport() noexcept;
     uint32_t advance_peek_window(uint32_t frames, const RenderGraph* graph) noexcept;
+    // r == nullptr: mono (l only).
     void mix_metronome(float* l, float* r, int64_t position, uint32_t frames) noexcept;
     void start_click(const float* buf, uint32_t offset, float* l, float* r, uint32_t frames) noexcept;
 
@@ -206,6 +219,7 @@ private:
     AudioDevice::Config device_setup_;      // guarded by device_mutex_ (se_device_configure)
     std::string input_error_;               // guarded by device_mutex_
     std::atomic<int64_t> device_rec_latency_{0}; // engine frames, input + output
+    std::atomic<int64_t> device_out_latency_{0}; // engine frames, output side (audible position)
     std::atomic<bool> device_input_open_{false};
     std::atomic<bool> input_muted_{false};
     std::atomic<int> rt_owner_{kOwnerNone};
@@ -221,6 +235,9 @@ private:
     // Bumped on every playback jump (seek, stop, pause, loop wrap); synths
     // fade their voices when it changes. RT-owned.
     uint64_t rt_synth_gen_ = 0;
+    // Bumped on seek and stop: delay lines flush lazily when it changes.
+    // RT-owned.
+    uint64_t rt_pdc_gen_ = 0;
     // Tempo for plugins: the metronome grid (frames per beat), kept even
     // while the metronome is disabled; 0 = 120 BPM. RT-owned.
     double rt_tempo_fpb_ = 0.0;
@@ -276,10 +293,15 @@ private:
 
     // -- plugins (instances shared by every graph that references them)
     PluginHost plugins_;
+    // -- delay compensation switch (written under plugins_.mutex()) and the
+    // applied L of the current graph (for audible_position()).
+    std::atomic<bool> pdc_enabled_{true};
+    std::atomic<uint32_t> pdc_total_{0};
 
     // -- RT scratch (used by whoever holds rt_owner_)
     RenderContext live_ctx_;
     std::vector<float> in_scratch_; // kMaxInjectedInputChannels x max_block (deinterleaved injected input)
+    std::vector<float> click_scratch_; // max_block, metronome before its delay line
 };
 
 } // namespace saine

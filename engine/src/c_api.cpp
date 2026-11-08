@@ -48,6 +48,13 @@ static_assert(offsetof(se_track_desc_v5, synth) == 48 && offsetof(se_track_desc_
 static_assert(sizeof(se_session_desc_v5) == 16);
 static_assert(sizeof(se_plugin_message) == 264 && offsetof(se_plugin_message, message) == 8);
 #endif
+// Delay compensation additions (same on 32- and 64-bit targets).
+static_assert(sizeof(se_pdc_report) == 16 && alignof(se_pdc_report) == 4);
+static_assert(offsetof(se_pdc_report, uncapped_frames) == 4 && offsetof(se_pdc_report, track_count) == 8 &&
+              offsetof(se_pdc_report, enabled) == 12 && offsetof(se_pdc_report, clamped) == 13 &&
+              offsetof(se_pdc_report, _pad) == 14);
+static_assert(sizeof(se_pdc_track) == 16 && alignof(se_pdc_track) == 8);
+static_assert(offsetof(se_pdc_track, latency_frames) == 8 && offsetof(se_pdc_track, delay_frames) == 12);
 // v5 tracks extend v4 tracks field by field (same offsets for the common prefix).
 static_assert(offsetof(se_track_desc_v5, track_id) == offsetof(se_track_desc_v4, track_id) &&
               offsetof(se_track_desc_v5, input_channel) == offsetof(se_track_desc_v4, input_channel) &&
@@ -449,6 +456,42 @@ int32_t se_plugin_idle(se_engine* engine) {
         engine->impl->plugin_idle();
         return SE_OK;
     });
+}
+
+// ---- plugin delay compensation
+
+int32_t se_pdc_set_enabled(se_engine* engine, uint8_t enabled) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&]() -> int32_t {
+        engine->impl->set_pdc_enabled(enabled != 0);
+        return SE_OK;
+    });
+}
+
+int32_t se_pdc_is_enabled(const se_engine* engine) {
+    if (engine == nullptr || !engine->impl) return 0;
+    return engine->impl->pdc_enabled() ? 1 : 0;
+}
+
+int32_t se_pdc_report_get(se_engine* engine, se_pdc_report* out, se_pdc_track* tracks, size_t capacity,
+                          size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    if (capacity > 0 && tracks == nullptr) return fail(SE_ERR_INVALID_ARG, "tracks is NULL");
+    return guarded([&]() -> int32_t {
+        std::vector<se_pdc_track> list;
+        engine->impl->pdc_report(*out, list);
+        for (std::size_t i = 0; i < list.size() && i < capacity; ++i) tracks[i] = list[i];
+        if (out_count != nullptr) *out_count = list.size();
+        return SE_OK;
+    });
+}
+
+int32_t se_transport_audible_position(const se_engine* engine, int64_t* out_frame) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out_frame == nullptr) return fail(SE_ERR_INVALID_ARG, "out_frame is NULL");
+    *out_frame = engine->impl->audible_position();
+    return SE_OK;
 }
 
 int32_t se_device_list(se_device_info* out, size_t capacity, size_t* out_count) {

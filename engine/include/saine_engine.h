@@ -152,7 +152,9 @@ void se_stats_reset(se_engine* engine);
  * the device callback. Fails with SE_ERR_STATE while the device is running. */
 int32_t se_render_offline(se_engine* engine, float* out_interleaved, uint32_t frames);
 
-/* Render the whole session range to a 32-bit float WAV file. */
+/* Render the whole session range to a 32-bit float WAV file. With plugin
+ * delay compensation active (se_pdc_*), L extra frames are rendered and the
+ * first L dropped, so timeline frame t is file frame t - start_frame. */
 int32_t se_export_wav(se_engine* engine, const char* utf8_path, int64_t start_frame, int64_t end_frame);
 
 /* ---- additions (ABI v1, append-only) ------------------------------------
@@ -188,8 +190,9 @@ int32_t se_transport_set_loop(se_engine* engine, uint8_t enabled, int64_t start_
  * Beat k sounds at timeline frame llround(k * frames_per_beat) (beat 0 at
  * frame 0; negative k in pre-roll), beats where k mod beats_per_bar == 0
  * are downbeats. Clicks ring out across block boundaries, loop wraps and
- * seeks; they stop on pause/stop/disable. Excluded from se_export_wav and
- * from the meters. Validation: gain finite and >= 0, frames_per_beat
+ * seeks; they stop on pause/stop/disable. With plugin delay compensation
+ * the clicks are delayed by L like the music (heard with the beat they
+ * belong to). Excluded from se_export_wav and from the meters. Validation: gain finite and >= 0, frames_per_beat
  * finite and >= 1, beats_per_bar >= 1 (only checked when enabled). */
 typedef struct se_metronome_desc {
     uint8_t enabled;
@@ -481,8 +484,10 @@ int32_t se_input_set_muted(se_engine* engine, uint8_t muted);
  * Pause/play at the same position continues the take. A loop wrap does NOT
  * end the take: recording while looping writes linearly (no take lanes).
  * start_frame = timeline frame of the block's first sample minus the device
- * round-trip latency (input + output latency, se_device_status), so the
- * take lines up with what was heard; 0 compensation for injected input.
+ * round-trip latency (input + output latency, se_device_status) minus the
+ * plugin delay compensation L (se_pdc_report), so the take lines up with
+ * what was heard; injected input has no device part (only L). A change of L
+ * while recording ends the takes like a seek.
  *
  * se_record_stop: stops capturing (the transport keeps its state), waits
  * for the writer, finalizes every file and returns the number of takes,
@@ -662,14 +667,74 @@ int32_t se_plugin_editor_close(se_engine* engine, uint64_t device_id);
 int32_t se_plugin_editor_is_open(se_engine* engine, uint64_t device_id); /* 1 / 0 */
 
 /* Processing latency reported by the plugin, in frames (0 if unknown or not
- * live). Reported only: no delay compensation yet. Main thread. */
+ * live), queried live from the plugin. Delay compensation uses the value
+ * cached at instantiation / the last se_plugin_idle (see se_pdc_*). Main
+ * thread. */
 int32_t se_plugin_latency(se_engine* engine, uint64_t device_id, uint32_t* out_frames);
 
 /* Main-thread housekeeping: destroys retired instances the audio thread can
  * no longer reach and runs pending CLAP on_main_thread callbacks. Also done
  * inside se_session_publish_v5 and the other se_plugin_* calls; on macOS
- * CLAP callbacks are additionally dispatched to the main queue. */
+ * CLAP callbacks are additionally dispatched to the main queue.
+ * Delay compensation: also services plugin restart requests (CLAP
+ * request_restart, VST3 restartComponent(kLatencyChanged)) by
+ * deactivating/re-activating the plugin here (it is bypassed meanwhile),
+ * polls every live instance's latency and, when a latency changed,
+ * re-plans delay compensation. Call it regularly (e.g. 10-60 Hz) from the
+ * main thread so latency changes take effect. */
 int32_t se_plugin_idle(se_engine* engine);
+
+/* ---- plugin delay compensation (ABI v1 addition) -------------------------
+ * See docs/adr/0004-delay-compensation.md and engine/README.md ("Plugin
+ * delay compensation").
+ *
+ * Per track, lat_i = sum of the reported latencies of its insert devices
+ * (bypassed ones included: a bypassed slot delays by its latency instead,
+ * so toggling bypass never shifts timing) + its instrument plugin's latency.
+ * L = max lat_i over all tracks (muted ones included). Each track is delayed
+ * by L - lat_i, so all tracks line up, and the whole mix (and the metronome)
+ * is late by L relative to the transport position. Tracks monitoring input
+ * delay only their playback source (input monitoring stays low latency).
+ * Recorded takes are placed L earlier (on top of the device latency);
+ * se_export_wav renders L extra frames and drops the first L, so exports
+ * are timeline-aligned. Seek and stop flush the delay lines; pause lets
+ * them ring out; loop wraps keep them running.
+ *
+ * Each delay is clamped to SE_PDC_MAX_DELAY_FRAMES (reported as `clamped`).
+ * Enabled by default. Disabled, the engine renders exactly as without PDC
+ * (bit-identical). Any non-RT thread; uses the latencies cached on the main
+ * thread (publish / se_plugin_idle). */
+#define SE_PDC_MAX_DELAY_FRAMES 131072u /* 2^17, ~2.7 s at 48 kHz */
+
+int32_t se_pdc_set_enabled(se_engine* engine, uint8_t enabled);
+int32_t se_pdc_is_enabled(const se_engine* engine); /* 1 / 0 */
+
+typedef struct se_pdc_report {
+    uint32_t total_frames;    /* applied L (0 when disabled) */
+    uint32_t uncapped_frames; /* L before clamping (computed even when disabled) */
+    uint32_t track_count;     /* tracks in the published session */
+    uint8_t enabled;
+    uint8_t clamped;          /* some delay exceeded SE_PDC_MAX_DELAY_FRAMES (only when enabled) */
+    uint8_t _pad[2];
+} se_pdc_report; /* 16 bytes, align 4 */
+
+typedef struct se_pdc_track {
+    uint64_t track_id;
+    uint32_t latency_frames; /* lat_i (reported even when disabled) */
+    uint32_t delay_frames;   /* compensation applied to the track: L - lat_i (0 when disabled) */
+} se_pdc_track; /* 16 bytes, align 8 */
+
+/* Report for the most recently published session (or re-plan). Writes up
+ * to `capacity` tracks in session order; *out_count = track count. */
+int32_t se_pdc_report_get(se_engine* engine, se_pdc_report* out, se_pdc_track* tracks, size_t capacity,
+                          size_t* out_count);
+
+/* What is being heard: the transport position minus the applied L and minus
+ * the output device latency (se_device_status.output_latency_frames; 0
+ * offline / while the device is stopped), while playing. While paused or
+ * stopped this is the transport position. Block granularity (like
+ * se_transport_get); L is that of the most recently published plan. */
+int32_t se_transport_audible_position(const se_engine* engine, int64_t* out_frame);
 
 #ifdef __cplusplus
 }
