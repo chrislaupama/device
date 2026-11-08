@@ -20,7 +20,7 @@ import { Panel, Icon, Icons, Pill, IconButton, SmallButton, HSlider, Knob, Switc
 
 export { Tokens }
 
-import { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, ChoiceItem, DeviceCard, PluginRow } from "studio.slint";
+import { Studio, TrackRow, AutoLabel, AutoExtra, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, ChoiceItem, DeviceCard, PluginRow } from "studio.slint";
 import { ClipSidebar, PianoRoll, ClipEmpty, ContextMenu } from "pianoroll.slint";
 import { MixerPanel } from "mixer.slint";
 import { AssistantPanel, HighlightOverlay } from "assistant.slint";
@@ -28,7 +28,7 @@ import { SynthDevice, SynthMenuList } from "synth.slint";
 import { SettingsPanel, ChoiceList } from "settings.slint";
 import { PluginCard, AddDeviceCard, DevMenuList } from "devices.slint";
 
-export { Studio, TrackRow, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, ChoiceItem, DeviceCard, PluginRow }
+export { Studio, TrackRow, AutoLabel, AutoExtra, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, ChoiceItem, DeviceCard, PluginRow }
 
 // ------------------------------------------------------------------ header
 component Header inherits Rectangle {
@@ -78,8 +78,9 @@ component Header inherits Rectangle {
         border-width: 0.5px; border-color: Tokens.pill-border;
     }
     IconButton { x: 470px; y: 41px; width: 22px; height: 22px; icon: Icons.loop; tooltip: "Toggle loop (⌘L)"; active: Studio.loop-enabled; clicked => { Studio.toggle-loop(); } }
-    // PLACEHOLDER: automation arm (no automation in the model/engine yet): visual only.
-    IconButton { x: 496px; y: 41px; width: 21px; height: 22px; icon: Icons.automation; tooltip: "Automation arm (not implemented)"; }
+    // Automation Arm (src/automation.rs): while armed and playing, control moves write automation.
+    IconButton { x: 496px; y: 41px; width: 21px; height: 22px; icon: Icons.automation; tooltip: "Automation Arm: knob moves write automation while playing";
+        active: Studio.auto-armed; clicked => { Studio.auto-toggle-arm(); } }
     Label { x: 527px; y: 45px; text: "Bar"; color: #606165; font-size: 10px; }
     Label { x: 548px; y: 45px; text: Studio.bar-text; color: Tokens.text-bright; font-size: 10px; font-weight: 600; }
     Rectangle { x: 581.5px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
@@ -218,35 +219,83 @@ component Browser inherits Panel {
 }
 
 // ------------------------------------------------------------------ timeline
+// Automation pill: power ("Enable automation") + "Category Parameter ▾" (60-automation-lanes.png;
+// dim while the lane has no points or is off, brighter on hover / while its picker is open).
+component AutoPill inherits Rectangle {
+    in property <string> cat;
+    in property <string> param;
+    in property <int> state;          // 0 inactive, 1 active, 2 disabled
+    in property <bool> chevron: true;
+    callback power();
+    callback open(length, length);    // window x, y of the bottom-left corner
+    property <bool> lit: ta.has-hover || state == 1;
+    height: 16.5px; border-radius: 8.25px;
+    background: ta.has-hover ? #2c2d31 : #212226;
+    accessible-role: combobox; accessible-label: "Automation parameter: " + root.cat + " " + root.param;
+    ta := TouchArea { clicked => { root.open(self.absolute-position.x, self.absolute-position.y + root.height); } }
+    Icon {
+        x: 3px; y: 2.75px; width: 11px; height: 11px; d: Icons.power; stroke-width: 1.3px;
+        ink: root.state == 1 ? #c9a83d : root.lit ? #666669 : #424347;
+        accessible-role: checkbox; accessible-label: "Enable automation"; accessible-checked: root.state == 1;
+        TouchArea { x: -2px; y: -2.75px; width: 15px; height: 16.5px; clicked => { root.power(); } }
+    }
+    cat-text := Text {
+        x: 17px; height: root.height; text: root.cat; font-size: 9.25px; font-weight: 500; vertical-alignment: center;
+        color: root.lit ? #6d6d70 : #47484b;
+    }
+    Text {
+        x: cat-text.x + cat-text.preferred-width + 1.75px; width: root.width - self.x - 20px; height: root.height;
+        text: root.param; font-size: 9.25px; font-weight: 600; vertical-alignment: center; overflow: elide;
+        color: root.state == 2 ? #6a6b6f : root.lit ? #c9a83d : #7d6c26;
+    }
+    if root.chevron: Icon { x: root.width - 14.5px; y: 2.25px; width: 12px; height: 12px; d: Icons.chevron-down; ink: root.lit ? #6c6d72 : #484a4f; stroke-width: 1.3px; }
+}
+
 component TrackHeaderRow inherits Rectangle {
     in property <TrackRow> t;
+    // With automation lanes shown the name and controls move up and a second row appears (60-*.png).
+    property <length> dn: Studio.auto-shown ? -12.5px : 0px;
+    property <length> dc: Studio.auto-shown ? -13px : 0px;
     height: 74px;
     TouchArea { clicked => { Studio.select-track(root.t.id); } }
     Rectangle { x: 5.5px; width: 185px; background: root.t.selected ? Tokens.bg-track-header-selected : transparent; }
     Rectangle { x: 0.5px; y: 6.5px; width: 5px; height: 61.5px; border-radius: 2.5px; background: root.t.color; }
     Text { x: 13px; y: 31.5px; height: 12px; text: root.t.number; color: Tokens.text-bright; font-size: 9px; font-weight: 700; vertical-alignment: center; }
-    Icon { x: 28.5px; y: 22.5px; width: 12px; height: 12px; d: root.t.instrument ? Icons.keys : Icons.wave; ink: #a8a8ab; stroke-width: 1.1px; }
-    Text { x: 43px; y: 21.5px; height: 13px; text: root.t.name; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
-    SmallButton { x: 28px; y: 41.5px; width: 11px; height: 11px; text: "M"; on: root.t.mute; on-color: Tokens.mute-on; clicked => { Studio.track-mute(root.t.id); } }
-    SmallButton { x: 42px; y: 41.5px; width: 11px; height: 11px; text: "S"; on: root.t.solo; on-color: Tokens.solo-on; clicked => { Studio.track-solo(root.t.id); } }
+    Icon { x: 28.5px; y: 22.5px + root.dn; width: 12px; height: 12px; d: root.t.instrument ? Icons.keys : Icons.wave; ink: #a8a8ab; stroke-width: 1.1px; }
+    Text { x: 43px; y: 21.5px + root.dn; height: 13px; text: root.t.name; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+    SmallButton { x: 28px; y: 41.5px + root.dc; width: 11px; height: 11px; text: "M"; on: root.t.mute; on-color: Tokens.mute-on; clicked => { Studio.track-mute(root.t.id); } }
+    SmallButton { x: 42px; y: 41.5px + root.dc; width: 11px; height: 11px; text: "S"; on: root.t.solo; on-color: Tokens.solo-on; clicked => { Studio.track-solo(root.t.id); } }
     // R (arm, SetTrackArm) on audio tracks; the reference shows I (monitoring) only on instrument
     // tracks, where R and I are PLACEHOLDERS (no MIDI recording; the callback reports it).
-    SmallButton { x: 55px; y: 41.5px; width: 11px; height: 11px; text: "R"; on: root.t.arm; on-color: Tokens.record-red; clicked => { Studio.track-arm(root.t.id); } }
-    if root.t.instrument: SmallButton { x: 69px; y: 41.5px; width: 11px; height: 11px; text: "I"; on: root.t.monitor; clicked => { Studio.track-monitor(root.t.id); } }
+    SmallButton { x: 55px; y: 41.5px + root.dc; width: 11px; height: 11px; text: "R"; on: root.t.arm; on-color: Tokens.record-red; clicked => { Studio.track-arm(root.t.id); } }
+    if root.t.instrument: SmallButton { x: 69px; y: 41.5px + root.dc; width: 11px; height: 11px; text: "I"; on: root.t.monitor; clicked => { Studio.track-monitor(root.t.id); } }
+    // Pan knob and volume slider follow automation (display only) and turn gold while automated.
     Knob {
-        x: 84px; y: 33.5px; width: 26px; height: 26px;
+        x: 84px; y: 33.5px + root.dc; width: 26px; height: 26px;
         value: root.t.pan; value-angle: root.t.pan * 135;
-        tick-color: root.t.selected ? #5aaee0 : #d8d8da;
+        tick-color: root.t.pan-auto ? #c9a83d : root.t.selected ? #5aaee0 : #d8d8da;
         value-changed(v) => { Studio.track-pan(root.t.id, v); }
         released => { Studio.gesture-end(); }
         reset => { Studio.track-pan(root.t.id, 0); Studio.gesture-end(); }
     }
     HSlider {
-        x: 116px; y: 44px; width: 68px; height: 8px;
+        x: 116px; y: 44px + root.dc; width: 68px; height: 8px;
         pos: root.t.volume-pos;
+        handle-color: root.t.vol-auto ? #c9a83d : Tokens.handle;
         moved(p) => { Studio.track-volume(root.t.id, p); }
         released => { Studio.gesture-end(); }
         reset => { Studio.track-volume(root.t.id, Tokens.slider-zero-db); Studio.gesture-end(); }
+    }
+    if Studio.auto-shown: Icon {
+        x: 27px; y: 53px; width: 8px; height: 8px; d: root.t.auto-expanded ? Icons.chevron-down : Icons.chevron-right; ink: #989899; stroke-width: 1.3px;
+        accessible-role: button; accessible-label: (root.t.auto-expanded ? "Hide " : "Show ") + root.t.auto-count + (root.t.auto-count == 1 ? " automated lane" : " automated lanes");
+        TouchArea { x: -2.5px; y: -3px; width: 14px; height: 21px; clicked => { Studio.auto-expand(root.t.id); } }
+    }
+    if Studio.auto-shown: AutoPill {
+        x: 42px; y: 48.5px; width: 141px; height: 17px;
+        cat: root.t.auto-cat; param: root.t.auto-param; state: root.t.auto-state;
+        power => { Studio.auto-power(root.t.id, -1); }
+        open(x, y) => { Studio.auto-open-picker(root.t.id, x, y); }
     }
 }
 
@@ -272,8 +321,17 @@ component Timeline inherits Panel {
     }
     // Right toolbar: PLACEHOLDERS except where noted
     Pill { x: root.width - 388px; y: 5px; width: 67px; height: 18px; text: "Smart Fill"; icon: Icons.square; font-size: 8.25px; text-color: #a0a1a5; }
-    Icon { x: root.width - 315px; y: 7px; width: 14px; height: 14px; d: Icons.automation; ink: #6b6c70; }
-    Icon { x: root.width - 292px; y: 7px; width: 13px; height: 13px; d: Icons.pencil; ink: #6b6c70; }
+    // Show/Hide automation lanes and Draw mode (B) (src/automation.rs).
+    Icon {
+        x: root.width - 315px; y: 7px; width: 14px; height: 14px; d: Icons.automation; ink: Studio.auto-shown ? #e5e5e8 : #6b6c70;
+        accessible-role: checkbox; accessible-label: Studio.auto-shown ? "Hide automation lanes" : "Show automation lanes"; accessible-checked: Studio.auto-shown;
+        TouchArea { x: -3px; y: -2px; width: 20px; height: 18px; clicked => { Studio.auto-toggle-shown(); } }
+    }
+    Icon {
+        x: root.width - 292px; y: 7px; width: 13px; height: 13px; d: Icons.pencil; ink: Studio.auto-draw ? #e5e5e8 : #6b6c70;
+        accessible-role: checkbox; accessible-label: "Draw mode (B)"; accessible-checked: Studio.auto-draw;
+        TouchArea { x: -3px; y: -2px; width: 19px; height: 18px; clicked => { Studio.auto-toggle-draw(); } }
+    }
     Icon { x: root.width - 270px; y: 7px; width: 13px; height: 13px; d: Icons.cursor; ink: #e5e5e8; filled: true; }
     Icon { x: root.width - 256px; y: 8px; width: 11px; height: 11px; d: Icons.chevron-down; ink: #8e8f93; }
     Icon { x: root.width - 240px; y: 7px; width: 13px; height: 13px; d: Icons.v-resize; ink: #8e8f93; }
@@ -300,22 +358,27 @@ component Timeline inherits Panel {
         Icon { x: 3px; y: 26.5px; width: 11px; height: 11px; d: Icons.plus; ink: Tokens.text-tertiary; }
         for c in Studio.clip-labels: Text {
             x: c.x + 5px; y: c.y; width: max(0px, c.w - 8px); height: 17px;
-            text: c.text; color: #15161a; font-size: 7.75px; font-weight: 500; vertical-alignment: center; overflow: elide;
+            text: c.text; color: Studio.auto-shown ? #191b24 : #15161a; font-size: 7.75px; font-weight: 500; vertical-alignment: center; overflow: elide;
+        }
+        // Automation value labels (gold; dim while the lane has no points or is off).
+        for l in Studio.auto-labels: Text {
+            x: l.x; y: l.y + 0.75px; height: 13px; text: l.text; font-size: 9.25px; font-weight: 600; vertical-alignment: center;
+            color: l.state == 1 ? #c9a83d : l.state == 2 ? #6a6b6f : #655729;
         }
         TouchArea {
             mouse-cursor: Studio.lane-cursor == 1 ? MouseCursor.ew-resize : Studio.lane-cursor == 2 ? MouseCursor.move : MouseCursor.default;
             pointer-event(e) => {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
-                    Studio.lane-pointer(0, self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.control);
+                    Studio.lane-pointer(0, self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.control, e.modifiers.alt);
                 }
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) {
-                    Studio.lane-pointer(2, self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.control);
+                    Studio.lane-pointer(2, self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.control, e.modifiers.alt);
                 }
                 if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
                     Studio.lane-context(self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                 }
             }
-            moved => { Studio.lane-pointer(1, self.mouse-x, self.mouse-y, false, false); }
+            moved => { Studio.lane-pointer(1, self.mouse-x, self.mouse-y, false, false, false); }
             changed mouse-x => { if (!self.pressed) { Studio.lane-hover(self.mouse-x, self.mouse-y); } }
             changed mouse-y => { if (!self.pressed) { Studio.lane-hover(self.mouse-x, self.mouse-y); } }
             scroll-event(e) => {
@@ -329,17 +392,27 @@ component Timeline inherits Panel {
     AddTrackButton { x: 0; y: 27.5px; width: 184px; height: 39px; }
     Rectangle { x: 0; y: 66px; width: Tokens.lane-x; height: 0.5px; background: Tokens.line-separator; }
     track-area := Rectangle {
-        x: 0; y: 66.5px; width: Tokens.lane-x - 0.5px; height: root.height - 66.5px - 30.5px;
+        x: 0; y: 66.5px; width: Tokens.lane-x - 0.5px; height: root.height - 66.5px - Studio.master-h - 0.5px;
         clip: true;
         TouchArea {
             scroll-event(e) => { Studio.lane-scroll(0, e.delta-y / 1px, 0, false); accept }
         }
         for t[i] in Studio.tracks: Rectangle {
-            x: 0; y: i * Tokens.track-pitch - Studio.scroll-y; width: parent.width; height: Tokens.track-pitch;
+            x: 0; y: t.y - Studio.scroll-y; width: parent.width; height: t.h;
             TrackHeaderRow { x: 0; y: 0; width: parent.width; t: t; }
             Rectangle { y: 74px; height: 0.5px; background: t.selected ? #343539 : Tokens.line-separator; }
         }
-        property <length> tracks-end: Studio.tracks.length * Tokens.track-pitch - Studio.scroll-y;
+        // Expanded automation rows (src/automation.rs, EXTRA_H 40 + 0.5 separator).
+        for e in Studio.auto-extras: Rectangle {
+            x: 0; y: e.y - Studio.scroll-y; width: parent.width; height: 40.5px;
+            AutoPill {
+                x: 42px; y: 12px; width: 141px; cat: e.cat; param: e.param; state: e.state; chevron: false;
+                power => { Studio.auto-power(e.track-id, e.index); }
+                open(x, y) => { Studio.auto-show-extra(e.track-id, e.index); }
+            }
+            Rectangle { y: 40px; height: 0.5px; background: Tokens.line-separator; }
+        }
+        property <length> tracks-end: Studio.tracks-height - Studio.scroll-y;
         AddTrackButton {
             x: 0; y: parent.tracks-end + max(0px, (parent.height - parent.tracks-end - 39px) / 2);
             width: 184px; height: 39px;
@@ -347,21 +420,28 @@ component Timeline inherits Panel {
     }
     Rectangle { x: Tokens.lane-x - 0.5px; y: 27.5px; width: 0.5px; height: root.height - 27.5px; background: Tokens.line-separator; }
 
-    // ---- master row (bottom 30 pt) ----
-    Rectangle { x: 0; y: root.height - 30.5px; width: Tokens.lane-x - 0.5px; height: 0.5px; background: Tokens.line-separator; }
+    // ---- master row (bottom 30 pt; 64.5 pt with a volume lane while automation is shown) ----
+    property <length> mdy: Studio.auto-shown ? 5.5px : 0px;
+    Rectangle { x: 0; y: root.height - Studio.master-h - 0.5px; width: Tokens.lane-x - 0.5px; height: 0.5px; background: Tokens.line-separator; }
     Rectangle {
-        x: 0; y: root.height - 30px; width: Tokens.lane-x - 0.5px; height: 30px;
-        Rectangle { x: 0.5px; y: 2px; width: 5px; height: 21px; border-radius: 2.5px; background: Tokens.track-master; }
-        Icon { x: 15.5px; y: 9px; width: 12px; height: 12px; d: Icons.master; ink: Tokens.text-tertiary; }
-        Label { x: 36px; y: 8px; text: "Master"; color: Tokens.text-bright; }
+        x: 0; y: root.height - Studio.master-h; width: Tokens.lane-x - 0.5px; height: Studio.master-h;
+        Rectangle { x: 0.5px; y: Studio.auto-shown ? 6px : 2px; width: 5px; height: Studio.auto-shown ? 50px : 21px; border-radius: 2.5px; background: Tokens.track-master; }
+        Icon { x: 15.5px; y: 9px + root.mdy; width: 12px; height: 12px; d: Icons.master; ink: Tokens.text-tertiary; }
+        Label { x: 36px; y: 8px + root.mdy; text: "Master"; color: Tokens.text-bright; }
         // Master pan: PLACEHOLDER (no master pan in the model)
-        Knob { x: 84px; y: 3px; width: 26px; height: 26px; value-angle: 0; tick-color: #d8d8da; }
+        Knob { x: 84px; y: 3px + root.mdy; width: 26px; height: 26px; value-angle: 0; tick-color: #d8d8da; }
         HSlider {
-            x: 116px; y: 11px; width: 68px; height: 8px;
+            x: 116px; y: 11px + root.mdy; width: 68px; height: 8px;
             pos: Studio.master-pos;
+            handle-color: Studio.master-vol-auto ? #c9a83d : Tokens.handle;
             moved(p) => { Studio.master-volume(p); }
             released => { Studio.gesture-end(); }
             reset => { Studio.master-volume(Tokens.slider-zero-db); Studio.gesture-end(); }
+        }
+        if Studio.auto-shown: AutoPill {
+            x: 42px; y: 42.5px; width: 141px; cat: "Track"; param: "Volume"; state: Studio.master-auto-state;
+            power => { Studio.auto-power(-1, -1); }
+            open(x, y) => { Studio.auto-open-picker(-1, x, y); }
         }
     }
 }
@@ -406,7 +486,7 @@ component Inspector inherits Rectangle {
     Text { x: 86px; y: 173px; width: 74px; height: 14px; text: "Width"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     Knob {
         x: 28px; y: 191px; width: 38px; height: 38px; body: 26px;
-        value: Studio.sel-pan; value-angle: Studio.sel-pan * 135; tick-color: #d0d0d3;
+        value: Studio.sel-pan; value-angle: Studio.sel-pan * 135; tick-color: Studio.sel-pan-auto ? #c9a83d : #d0d0d3;
         value-changed(v) => { if (Studio.has-selection) { Studio.track-pan(Studio.sel-id, v); } }
         released => { Studio.gesture-end(); }
         reset => { if (Studio.has-selection) { Studio.track-pan(Studio.sel-id, 0); Studio.gesture-end(); } }
@@ -444,11 +524,11 @@ component Inspector inherits Rectangle {
         Rectangle {
             x: 4.5px; y: min(parent.height - 4px, 9px + Studio.sel-fader * (parent.height - 18px));
             width: 3.5px; height: max(0px, parent.height - 4px - self.y); border-radius: 1.75px;
-            background: Studio.sel-color;
+            background: Studio.sel-vol-auto ? #c9a83d : Studio.sel-color;
         }
         Rectangle {
             x: 2px; y: Studio.sel-fader * (parent.height - 18px) - 1.5px; width: 8.5px; height: 21px; border-radius: 3px;
-            background: #f4f4f4;
+            background: Studio.sel-vol-auto ? #e9d38e : #f4f4f4;
             Rectangle { x: 1.5px; width: parent.width - 3px; height: 0.75px; background: #8a8a8d; }
         }
         TouchArea {
@@ -511,6 +591,38 @@ component BottomPanel inherits Panel {
         for card in Studio.device-cards: PluginCard { x: card.x - 255px; y: 34px - 27px; card: card; }
         AddDeviceCard { x: Studio.add-device-x - 255px; y: 34.5px - 27px; }
         if Studio.chain-marker-visible: Rectangle { x: Studio.chain-marker-x - 255px - 1px; y: 34px - 27px; width: 2px; height: 265px; border-radius: 1px; background: Tokens.accent; }
+    }
+}
+
+// Automation parameter popup: search field + category rows (or search results).
+component AutoPicker inherits Rectangle {
+    callback done();
+    border-radius: 7px; background: #212227; border-width: 0.5px; border-color: #46474b;
+    drop-shadow-blur: 12px; drop-shadow-color: #00000080; drop-shadow-offset-y: 4px;
+    TouchArea { }
+    Rectangle {
+        x: 7.5px; y: 5.5px; width: parent.width - 15px; height: 20.5px; border-radius: 10.25px;
+        background: #292a2f; border-width: 0.5px; border-color: #35363a;
+        Icon { x: 6.5px; y: 4.5px; width: 12px; height: 12px; d: Icons.search; ink: #a6a8ac; stroke-width: 1.5px; }
+        if Studio.picker-query == "": Text { x: 24px; height: parent.height; text: "Search parameters…"; color: #a6a8ac; font-size: 9px; vertical-alignment: center; }
+        TextInput {
+            x: 23.5px; width: parent.width - 30px; height: parent.height;
+            text: Studio.picker-query; color: Tokens.text-primary; font-size: 9px; vertical-alignment: center; single-line: true;
+            accessible-label: "Search parameters";
+            init => { self.focus(); }
+            edited => { Studio.picker-query = self.text; Studio.picker-edited(self.text); }
+            changed has-focus => { Studio.picker-focused = self.has-focus; }
+            accepted => { Studio.picker-pick(0); root.done(); }
+        }
+    }
+    for it[i] in Studio.picker-items: Rectangle {
+        x: 4px; y: it.y; width: parent.width - 8px; height: 21px; border-radius: 4px;
+        background: ta.has-hover && it.enabled ? #2c2d32 : transparent;
+        accessible-role: list-item; accessible-label: it.label;
+        Text { x: 7px; width: parent.width - 30px; height: parent.height; text: it.label; color: it.enabled ? #d3d3d4 : #6a6b6f; font-size: 9.5px; font-weight: 500; vertical-alignment: center; overflow: elide; }
+        if it.submenu: Icon { x: parent.width - 19px; y: 5.5px; width: 10px; height: 10px; d: Icons.chevron-right; ink: #8c8c8f; stroke-width: 1.5px; }
+        if it.shortcut != "": Text { x: parent.width - 20px; width: 14px; height: parent.height; text: it.shortcut; color: #c9a83d; font-size: 9px; vertical-alignment: center; }
+        ta := TouchArea { clicked => { if (it.enabled) { if (Studio.picker-query != "") { root.done(); } Studio.picker-pick(i); } } }
     }
 }
 
@@ -608,6 +720,24 @@ export component AppWindow inherits Window {
             x: Studio.dnd-x + 10px; y: Studio.dnd-y + 6px; height: 20px; width: ghost.preferred-width + 18px; border-radius: 10px;
             background: Studio.dnd-ok ? Tokens.accent : #3a3b40;
             ghost := Text { text: Studio.dnd-label; color: #ffffff; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        // Automation parameter picker (61-automation-param-menu.png: 188 pt wide, search field, 21 pt rows).
+        if Studio.picker-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.picker-dismiss(); fs.focus(); } } }
+            AutoPicker {
+                x: max(5px, min(Studio.picker-x, root.width - 5px - 188px));
+                y: max(5px, min(Studio.picker-y, root.height - 5px - Studio.picker-h));
+                width: 188px; height: Studio.picker-h;
+                done => { fs.focus(); }
+            }
+            if Studio.picker-sub-open: DevMenuList {
+                x: min(Studio.picker-x + 190px, root.width - 5px - 188px);
+                y: max(5px, min(Studio.picker-y + Studio.picker-sub-y, root.height - 5px - Studio.picker-sub-h));
+                width: 188px; height: min(Studio.picker-sub-h, root.height - 10px); content-h: Studio.picker-sub-h;
+                items: Studio.picker-sub-items;
+                picked(i) => { Studio.picker-sub-pick(i); fs.focus(); }
+            }
         }
         // Rename clip popup.
         if Studio.rename-open: Rectangle {

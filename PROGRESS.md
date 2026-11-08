@@ -147,3 +147,14 @@ cargo test --workspace                                                          
   (preference `pdc_off`) and a plugin-latency readout. Self-test 125/125 both modes, incl. an offline check that a
   4800-frame plugin puts the readout 100 ms behind the transport.
 - Not run: acoustic loopback with plugins (`acoustic_loopback_latency_with_pdc`, opens the mic).
+
+### 2026-11-08: session 1, round 9 (automation)
+- Core: automation lanes (Volume dB, Pan, 20 synth params, plugin params; master volume), curve contract,
+  `SetAutomationLane`; ADR 0005.
+- Engine: publish v6 with lanes; evaluation bit-identical to core (135k random samples); volume/pan per ≤32
+  samples (per sample near silence), synth at 16-frame control rate, plugin params as sample-offset events
+  (VST3/CLAP/AU); PDC-aligned per stage incl. loop wraps; editor gesture capture for all formats. 139/139 ctest
+  (default + ASan). Bench: 32 tracks × 4 lanes ≈ 0.6 % of the deadline.
+- App: lanes toggle, header automation row with power + parameter picker, gold overlay lanes with labels,
+  point/curve/marquee/freehand editing, Automation Arm touch-write, controls follow automation. Self-test 146/146
+  offline, 145/145 (+1 offline-only skip) with Core Audio. Fidelity `reference-automation` 1.94.

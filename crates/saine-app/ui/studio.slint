@@ -16,7 +16,24 @@ export struct TrackRow {
     monitor: bool,
     volume-pos: float,
     pan: float,
+    // Automation (src/automation.rs): content y and total height (expanded lanes add rows),
+    // the shown parameter (category + name), its lane state (0 none/inactive, 1 active,
+    // 2 disabled), the "Show N automated lanes" count, and controls following automation.
+    y: length,
+    h: length,
+    auto-cat: string,
+    auto-param: string,
+    auto-state: int,
+    auto-count: int,
+    auto-expanded: bool,
+    vol-auto: bool,
+    pan-auto: bool,
 }
+
+// Value label at the left of an automation row (lane-local). state: as TrackRow.auto-state.
+export struct AutoLabel { x: length, y: length, text: string, state: int }
+// Expanded automation row in the track header column (content y).
+export struct AutoExtra { track-id: int, index: int, y: length, cat: string, param: string, state: int }
 
 export struct RulerLabel { x: length, text: string }
 
@@ -73,7 +90,7 @@ export struct YLabel { y: length, text: string }
 // separator: a line is drawn above the item; y: row top inside the menu.
 // ---- synth device (src/synth.rs) ----
 // One continuous parameter: control position 0..1, readout with units.
-export struct SynthParam { norm: float, text: string, bipolar: bool }
+export struct SynthParam { norm: float, text: string, bipolar: bool, auto: bool }
 // A display: SVG path of the curve and of its filled area (viewbox = element size in points).
 export struct SynthDisplay { line: string, fill: string }
 
@@ -161,7 +178,7 @@ export global Studio {
     callback gesture-end();
     callback master-volume(float);
     callback sel-fader-moved(float);
-    callback lane-pointer(int, length, length, bool, bool); // kind 0=down 1=move 2=up, x, y, shift, cmd
+    callback lane-pointer(int, length, length, bool, bool, bool); // kind 0=down 1=move 2=up, x, y, shift, cmd, alt
     callback lane-hover(length, length);
     callback lane-scroll(float, float, length, bool);      // dx, dy, x, zoom
     callback key(string, bool, bool, bool, bool) -> bool;   // text, primary (Cmd on macOS), shift, alt, ctrl
@@ -348,6 +365,41 @@ export global Studio {
     in property <[PluginRow]> plugin-failed;
     callback plugins-rescan(bool);              // false: check for new plugins (cache), true: rescan all
     callback placeholder(string);               // PLACEHOLDER controls report "not implemented"
+
+    // ---- automation (src/automation.rs) ----
+    in property <bool> auto-shown;              // timeline header "Show/Hide automation lanes"
+    in property <bool> auto-draw;               // "Draw mode (B)"
+    in property <bool> auto-armed;              // transport "Automation Arm"
+    in property <[AutoLabel]> auto-labels;
+    in property <[AutoExtra]> auto-extras;
+    in property <length> tracks-height: 149px;  // content height of all track rows
+    in property <length> master-h: 30px;        // master row (64.5 pt while lanes are shown)
+    in property <int> master-auto-state;
+    in property <bool> master-vol-auto;
+    in property <bool> sel-vol-auto;
+    in property <bool> sel-pan-auto;
+    callback auto-toggle-shown();
+    callback auto-toggle-draw();
+    callback auto-toggle-arm();
+    callback auto-power(int, int);              // track id (-1 master), extra row index (-1 = shown lane)
+    callback auto-expand(int);                  // track id
+    callback auto-show-extra(int, int);         // track id, extra row index
+    callback auto-open-picker(int, length, length); // track id (-1 master), window x, y of the pill's bottom-left
+    in property <bool> picker-open;
+    in property <length> picker-x;
+    in property <length> picker-y;
+    in property <length> picker-h;
+    in-out property <string> picker-query;
+    in-out property <bool> picker-focused;
+    in property <[MenuItem]> picker-items;
+    in property <bool> picker-sub-open;
+    in property <length> picker-sub-y;
+    in property <length> picker-sub-h;
+    in property <[MenuItem]> picker-sub-items;
+    callback picker-edited(string);
+    callback picker-pick(int);
+    callback picker-sub-pick(int);
+    callback picker-dismiss();
 
     callback report-bug();   // TODO: no-op placeholder
     callback feedback();     // TODO: no-op placeholder

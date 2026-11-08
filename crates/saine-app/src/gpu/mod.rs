@@ -50,6 +50,8 @@ pub struct DrawList {
     pub base: Vec<RectInst>,
     /// Waveforms (scissored to `lanes_clip`).
     pub waves: Vec<WaveInst>,
+    /// Over the waveforms, scissored to `lanes_clip` (automation lines over track lanes).
+    pub top: Vec<RectInst>,
     /// Ruler, master lane, separators, playhead (over everything).
     pub over: Vec<RectInst>,
     /// Vertical extent (y0, y1) in px where track content may draw.
@@ -61,6 +63,7 @@ impl DrawList {
     pub fn clear_all(&mut self) {
         self.base.clear();
         self.waves.clear();
+        self.top.clear();
         self.over.clear();
     }
 }
@@ -85,6 +88,8 @@ pub struct Renderer {
     base_cap: usize,
     over_buf: wgpu::Buffer,
     over_cap: usize,
+    top_buf: wgpu::Buffer,
+    top_cap: usize,
     wave_buf: wgpu::Buffer,
     wave_cap: usize,
     pub last_counts: (usize, usize, usize),
@@ -169,6 +174,8 @@ impl Renderer {
             base_cap: 4096,
             over_buf: vbuf(device, "over", 1024 * 48),
             over_cap: 1024,
+            top_buf: vbuf(device, "top", 1024 * 48),
+            top_cap: 1024,
             wave_buf: vbuf(device, "waves", 1024 * 64),
             wave_cap: 1024,
             last_counts: (0, 0, 0),
@@ -264,6 +271,7 @@ impl Renderer {
         }
         Self::upload(&self.device, &self.queue, &mut self.base_buf, &mut self.base_cap, &dl.base, "base");
         Self::upload(&self.device, &self.queue, &mut self.over_buf, &mut self.over_cap, &dl.over, "over");
+        Self::upload(&self.device, &self.queue, &mut self.top_buf, &mut self.top_cap, &dl.top, "top");
         Self::upload(&self.device, &self.queue, &mut self.wave_buf, &mut self.wave_cap, &dl.waves, "waves");
         self.last_counts = (dl.base.len(), dl.waves.len(), dl.over.len());
         let (tw, th) = tl.size;
@@ -297,6 +305,12 @@ impl Renderer {
                 pass.set_pipeline(&self.wave_pipeline);
                 pass.set_vertex_buffer(0, self.wave_buf.slice(..));
                 pass.draw(0..6, 0..dl.waves.len() as u32);
+            }
+            if !dl.top.is_empty() && y1 > y0 {
+                pass.set_pipeline(&self.rect_pipeline);
+                pass.set_scissor_rect(0, y0, tw, y1 - y0);
+                pass.set_vertex_buffer(0, self.top_buf.slice(..));
+                pass.draw(0..6, 0..dl.top.len() as u32);
             }
             pass.set_scissor_rect(0, 0, tw, th);
             if !dl.over.is_empty() {

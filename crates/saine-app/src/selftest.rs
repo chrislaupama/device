@@ -1684,6 +1684,351 @@ fn device_steps() -> Vec<Step> {
     ]
 }
 
+// ------------------------------------------------------------------ automation
+
+/// Lanes surface origin in the window (timeline x 262 + lane-x 191, y 78 + 27.5).
+const LANES_ORIGIN: (f32, f32) = (453.0, 105.5);
+
+fn auto_row(c: &Controller, track: usize, target: &saine_core::AutomationTarget) -> Option<crate::automation::Row> {
+    let key = Some(c.project().tracks.get(track)?.id);
+    c.auto_rows().into_iter().find(|r| r.key == key && r.target == *target)
+}
+
+/// Window point on an automation row at `beat` and lane value `v`.
+fn auto_xy(c: &Controller, track: usize, target: &saine_core::AutomationTarget, beat: f64, v: f32) -> (f32, f32) {
+    let Some(r) = auto_row(c, track, target) else { return (0.0, 0.0) };
+    (LANES_ORIGIN.0 + c.view.x_of(beat), LANES_ORIGIN.1 + r.y_of(crate::automation::norm_of(target, v)))
+}
+
+fn lane_points(c: &Controller, track: usize, target: &saine_core::AutomationTarget) -> Vec<(i64, f32, f32)> {
+    let Some(t) = c.project().tracks.get(track) else { return Vec::new() };
+    c.model_lane(Some(t.id), target).map(|l| l.points.iter().map(|p| (p.time, p.value, p.curve)).collect()).unwrap_or_default()
+}
+
+/// Track header automation pill (track index `i`): window centre of the label and of the power icon.
+fn pill_xy(c: &Controller, i: usize) -> ((f32, f32), (f32, f32)) {
+    let y = TRACK0_Y + c.view.track_offset(i) - c.view.scroll_y as f32 + 49.0 + 8.25;
+    ((262.0 + 42.0 + 70.0, y), (262.0 + 42.0 + 8.5, y))
+}
+
+fn with_shift(a: &AppWindow, f: impl FnOnce()) {
+    a.window().dispatch_event(WindowEvent::KeyPressed { text: Key::Shift.into() });
+    f();
+    a.window().dispatch_event(WindowEvent::KeyReleased { text: Key::Shift.into() });
+}
+
+/// Advance the transport by `secs`: offline render (no device), else wall-clock time.
+fn advance(ctl: &Ctl, secs: f32) {
+    let c = ctl.borrow();
+    if c.engine.device_running() {
+        drop(c);
+        std::thread::sleep(std::time::Duration::from_secs_f32(secs));
+    } else {
+        let mut buf = vec![0f32; 2 * (48_000.0 * secs) as usize];
+        let _ = c.engine.render_offline(&mut buf);
+    }
+}
+
+thread_local! {
+    /// Undo-history length recorded by the automation checks.
+    static AUTO_HIST: Cell<usize> = const { Cell::new(0) };
+}
+fn ah_get() -> usize {
+    AUTO_HIST.with(|h| h.get())
+}
+fn ah_set(n: usize) {
+    AUTO_HIST.with(|h| h.set(n))
+}
+
+fn automation_steps() -> Vec<Step> {
+    use Step::*;
+    use saine_core::AutomationTarget as AT;
+    fn one(c: &Controller, label: &str) -> Result<(), String> {
+        let n = c.doc.history_labels().len();
+        let ok = n == ah_get() + 1 && c.doc.undo_label() == Some(label);
+        let was = ah_get();
+        ah_set(n);
+        ok.then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want one {label:?})", c.doc.undo_label()))
+    }
+    let wav = std::env::temp_dir().join(format!("saine-selftest-auto-{}.wav", std::process::id()));
+    let wav2 = wav.clone();
+    vec![
+        DoC("automation: fresh project, steady 440 Hz clip on Audio track 1 at 0", Box::new(move |a, ctl| {
+            key(a, Key::Escape, false, false);
+            let n = 3 * 48_000;
+            let sine: Vec<f32> = (0..n).map(|i| 0.5 * (std::f32::consts::TAU * 440.0 * i as f32 / 48_000.0).sin()).collect();
+            let _ = crate::wavgen::write_wav(&wav, 48_000, 1, &sine);
+            let mut c = ctl.borrow_mut();
+            let _ = c.engine.stop();
+            c.mixer_open = false;
+            c.assistant_open = false;
+            c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            let mut p = saine_core::Project::default();
+            if c.engine.device_running() {
+                p.master_gain = db_to_gain(-40.0); // the write pass plays through the device
+            }
+            c.replace_project(p);
+            c.view.start_beats = 0.0;
+            c.view.scroll_y = 0.0;
+            let t = c.project().tracks[0].id;
+            c.select_track(t);
+            c.import_files(vec![wav.clone()], crate::controller::ImportTarget::Selected, Some(0));
+        })),
+        Check("automation: clip imported, lanes hidden, timeline at full width", Box::new(|c, a| {
+            let ok = c.project().tracks[0].clips.len() == 1 && !c.auto.shown && !a.global::<Studio>().get_auto_shown() && (a.get_lanes_width() - (1440.0 - 262.0 - 5.0 - 191.0)).abs() < 1.0;
+            ok.then_some(()).ok_or(format!("clips {} shown {}", c.project().tracks[0].clips.len(), c.auto.shown))
+        })),
+        Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, 262.0 + (1440.0 - 262.0 - 5.0) - 315.0 + 7.0, 78.0 + 14.0))),
+        Check("automation: lanes shown; each header has the Track Volume pill and the disclosure; master row 64.5 pt; value labels (tracks +0.0, master at its static level)", Box::new(move |c, a| {
+            ah_set(c.doc.history_labels().len());
+            let s = a.global::<Studio>();
+            let rows = s.get_tracks();
+            let r0 = slint::Model::row_data(&rows, 0).ok_or("no rows")?;
+            let labels: Vec<String> = slint::Model::iter(&s.get_auto_labels()).map(|l| l.text.to_string()).collect();
+            let ok = c.auto.shown && s.get_auto_shown() && r0.auto_cat == "Track" && r0.auto_param == "Volume" && r0.auto_count == 1 && (s.get_master_h() - 64.0).abs() < 1e-3 && labels.len() == 3 && labels[..2] == ["+0.0", "+0.0"] && labels[2] == crate::automation::volume_label(saine_core::gain_to_db(c.project().master_gain));
+            ok.then_some(()).ok_or(format!("shown {} pill {:?} {:?} count {} master {} labels {labels:?}", s.get_auto_shown(), r0.auto_cat, r0.auto_param, r0.auto_count, s.get_master_h()))
+        })),
+        DoC("automation: open the track 1 parameter picker, click “Track ›”, then “Pan”", Box::new(|a, ctl| {
+            let (pill, _) = pill_xy(&ctl.borrow(), 0);
+            click(a, pill.0, pill.1);
+            let top = pill.1 + 8.25 + 1.5;
+            click(a, 304.0 + 50.0, top + 30.5 + 10.5);
+            click(a, 304.0 + 190.0 + 50.0, top + 30.5 - 4.0 + 4.0 + 21.0 + 10.25);
+        })),
+        Check("automation: picker closed, track 1 shows Track › Pan (UI state only, no undo step)", Box::new(move |c, a| {
+            let s = a.global::<Studio>();
+            let r0 = slint::Model::row_data(&s.get_tracks(), 0).ok_or("no rows")?;
+            let ok = c.auto_target(Some(c.project().tracks[0].id)) == AT::Pan && !s.get_picker_open() && r0.auto_param == "Pan" && lane_points(c, 0, &AT::Pan).is_empty();
+            ok.then_some(()).ok_or(format!("target {:?} picker {} pill {:?}", c.auto_target(Some(c.project().tracks[0].id)), s.get_picker_open(), r0.auto_param))
+        })),
+        Check("automation: record history", Box::new(move |c, _| {
+            ah_set(c.doc.history_labels().len());
+            Ok(())
+        })),
+        DoC("automation: click the Pan line at beat 4", Box::new(|a, ctl| {
+            let (x, y) = auto_xy(&ctl.borrow(), 0, &AT::Pan, 4.0, 0.0);
+            click(a, x, y);
+        })),
+        Check("automation: first point (beat 4, C) creates the lane, one undo step", Box::new({
+            move |c, _| {
+                one(c, "Edit Pan Automation")?;
+                let p = lane_points(c, 0, &AT::Pan);
+                (p == vec![(4 * PPQ, 0.0, 0.0)]).then_some(()).ok_or(format!("{p:?}"))
+            }
+        })),
+        DoC("automation: click the Pan line at beat 8", Box::new(|a, ctl| {
+            let (x, y) = auto_xy(&ctl.borrow(), 0, &AT::Pan, 8.0, 0.0);
+            click(a, x, y);
+        })),
+        Check("automation: second point at beat 8, one undo step", Box::new({
+            move |c, _| {
+                one(c, "Edit Pan Automation")?;
+                let p = lane_points(c, 0, &AT::Pan);
+                (p == vec![(4 * PPQ, 0.0, 0.0), (8 * PPQ, 0.0, 0.0)]).then_some(()).ok_or(format!("{p:?}"))
+            }
+        })),
+        DoC("automation: drag the beat-8 point to beat 10 and up 20 pt", Box::new(|a, ctl| {
+            let (x, y) = auto_xy(&ctl.borrow(), 0, &AT::Pan, 8.0, 0.0);
+            let x1 = LANES_ORIGIN.0 + ctl.borrow().view.x_of(10.0);
+            drag(a, x, y, x1 + 3.0, y - 20.0);
+        })),
+        Check("automation: point moved to beat 10 (snapped) with a value right of centre, one undo step", Box::new({
+            move |c, _| {
+                one(c, "Edit Pan Automation")?;
+                let p = lane_points(c, 0, &AT::Pan);
+                (p.len() == 2 && p[1].0 == 10 * PPQ && p[1].1 > 0.4 && p[1].1 < 0.8).then_some(()).ok_or(format!("{p:?}"))
+            }
+        })),
+        DoC("automation: Shift-drag the segment (beat 7) up 20 pt", Box::new(|a, ctl| {
+            let (x, y) = {
+                let c = ctl.borrow();
+                let lane = c.model_lane(Some(c.project().tracks[0].id), &AT::Pan).cloned().unwrap();
+                auto_xy(&c, 0, &AT::Pan, 7.0, lane.value_at(7 * PPQ).unwrap())
+            };
+            with_shift(a, || drag(a, x, y, x, y - 20.0));
+        })),
+        Check("automation: segment curve changed (point 1 curve < 0: faster rise), one undo step", Box::new({
+            move |c, _| {
+                one(c, "Edit Pan Automation")?;
+                let p = lane_points(c, 0, &AT::Pan);
+                (p.len() == 2 && p[0].2 < -0.2 && p[0].0 == 4 * PPQ).then_some(()).ok_or(format!("{p:?}"))
+            }
+        })),
+        DoC("automation: click the beat-4 point (select) and press Delete", Box::new(|a, ctl| {
+            let (x, y) = auto_xy(&ctl.borrow(), 0, &AT::Pan, 4.0, 0.0);
+            click(a, x, y);
+            key(a, "\u{7f}", false, false);
+        })),
+        Check("automation: point deleted (one step), track and clip untouched", Box::new({
+            move |c, _| {
+                one(c, "Edit Pan Automation")?;
+                let p = lane_points(c, 0, &AT::Pan);
+                (p.len() == 1 && p[0].0 == 10 * PPQ && c.project().tracks.len() == 2 && c.project().tracks[0].clips.len() == 1).then_some(()).ok_or(format!("{p:?}, {} tracks", c.project().tracks.len()))
+            }
+        })),
+        Do("automation: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("automation: undo restored the deleted point", Box::new(move |c, _| {
+            ah_set(c.doc.history_labels().len());
+            let p = lane_points(c, 0, &AT::Pan);
+            (p.len() == 2 && p[0].0 == 4 * PPQ && p[0].2 < -0.2).then_some(()).ok_or(format!("{p:?}"))
+        })),
+        DoC("automation: click the pill's power icon", Box::new(|a, ctl| {
+            let (_, power) = pill_xy(&ctl.borrow(), 0);
+            click(a, power.0, power.1);
+        })),
+        Check("automation: lane disabled (enabled = false), points kept, pill state 2, one undo step", Box::new(move |c, a| {
+            let t = c.project().tracks[0].id;
+            let l = c.model_lane(Some(t), &AT::Pan).ok_or("no lane")?;
+            let st = slint::Model::row_data(&a.global::<Studio>().get_tracks(), 0).map(|r| r.auto_state).unwrap_or(-1);
+            let snap = c.current_snapshot();
+            let in_snap = snap.tracks.iter().find(|s| s.track_id == t.0).map(|s| s.automation.len()).unwrap_or(9);
+            one(c, "Edit Pan Automation")?;
+            (!l.enabled && l.points.len() == 2 && st == 2 && in_snap == 0).then_some(()).ok_or(format!("enabled {} points {} state {st} snapshot lanes {in_snap}", l.enabled, l.points.len()))
+        })),
+        DoC("automation: pick Track › Volume for track 1 via the picker", Box::new(|a, ctl| {
+            let (pill, _) = pill_xy(&ctl.borrow(), 0);
+            click(a, pill.0, pill.1);
+            let top = pill.1 + 8.25 + 1.5;
+            click(a, 304.0 + 50.0, top + 30.5 + 10.5);
+            click(a, 304.0 + 190.0 + 50.0, top + 30.5 - 4.0 + 4.0 + 10.25);
+        })),
+        Check("automation: track 1 shows Volume", Box::new(move |c, _| {
+            ah_set(c.doc.history_labels().len());
+            (c.auto_target(Some(c.project().tracks[0].id)) == AT::Volume).then_some(()).ok_or("not Volume".into())
+        })),
+        DoC("automation: Volume points at beats 4 and 12 (0 dB), then drag the second to the bottom (−∞)", Box::new(|a, ctl| {
+            let p4 = auto_xy(&ctl.borrow(), 0, &AT::Volume, 4.0, 0.0);
+            click(a, p4.0, p4.1);
+            let p12 = auto_xy(&ctl.borrow(), 0, &AT::Volume, 12.0, 0.0);
+            click(a, p12.0, p12.1);
+            let bottom = auto_xy(&ctl.borrow(), 0, &AT::Volume, 12.0, -60.0);
+            drag(a, p12.0, p12.1, p12.0, bottom.1 + 6.0);
+        })),
+        Check("automation: Volume value_at: 0 dB before beat 4, −30 dB at beat 8 (linear), −60 dB after beat 12; 3 steps", Box::new(move |c, _| {
+            let t = c.project().tracks[0].id;
+            let l = c.model_lane(Some(t), &AT::Volume).ok_or("no lane")?;
+            let (a0, a8, a16) = (l.value_at(0).unwrap_or(9.0), l.value_at(8 * PPQ).unwrap_or(9.0), l.value_at(16 * PPQ).unwrap_or(9.0));
+            let steps = c.doc.history_labels().len() - ah_get();
+            ah_set(c.doc.history_labels().len());
+            (a0 == 0.0 && (a8 + 30.0).abs() < 0.1 && a16 == -60.0 && steps == 3 && l.points.len() == 2).then_some(()).ok_or(format!("{a0} {a8} {a16}, {steps} steps, {:?}", l.points))
+        })),
+        Check("automation: header slider and inspector fader follow the automated value at the playhead (display only, gold)", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let r0 = slint::Model::row_data(&s.get_tracks(), 0).ok_or("no rows")?;
+            let at = c.project().frames_to_ticks(c.audible_frames(), c.rate);
+            let want = c.model_lane(Some(c.project().tracks[0].id), &AT::Volume).and_then(|l| l.value_at(at)).ok_or("no value")?;
+            let g = if want <= -60.0 { 0.0 } else { db_to_gain(want) };
+            let pos = crate::controller::slider_from_gain(g);
+            (r0.vol_auto && s.get_sel_vol_auto() && (r0.volume_pos - pos).abs() < 1e-3 && (c.project().tracks[0].gain - 1.0).abs() < 1e-6).then_some(()).ok_or(format!("auto {} pos {} want {pos}", r0.vol_auto, r0.volume_pos))
+        })),
+        DoC("automation: move the volume slider while not armed (automation is active)", Box::new(move |a, ctl| {
+            ah_set(ctl.borrow().doc.history_labels().len());
+            let y = TRACK0_Y + 44.0 - 13.0 + 4.0;
+            drag(a, 262.0 + 116.0 + 10.0, y, 262.0 + 116.0 + 30.0, y);
+        })),
+        Check("automation: no edit, status hint “Volume is automated: arm automation to write, or disable the lane”", Box::new(move |c, a| {
+            let st = a.global::<Studio>().get_status_text().to_string();
+            let n = c.doc.history_labels().len();
+            (n == ah_get() && (c.project().tracks[0].gain - 1.0).abs() < 1e-6 && st.contains("Volume is automated: arm automation to write, or disable the lane")).then_some(()).ok_or(format!("gain {} status {st:?}", c.project().tracks[0].gain))
+        })),
+        DoC("automation: double-click the beat-4 Volume point", Box::new(move |a, ctl| {
+            ah_set(ctl.borrow().doc.history_labels().len());
+            let p = auto_xy(&ctl.borrow(), 0, &AT::Volume, 4.0, 0.0);
+            click(a, p.0, p.1);
+            click(a, p.0, p.1);
+        })),
+        Check("automation: double-click removed the point (one step); Cmd+Z next restores it", Box::new(move |c, _| {
+            let p = lane_points(c, 0, &AT::Volume);
+            let n = c.doc.history_labels().len();
+            (p.len() == 1 && n == ah_get() + 1 && c.doc.undo_label() == Some("Edit Volume Automation")).then_some(()).ok_or(format!("{p:?}"))
+        })),
+        Do("automation: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("automation: point back", Box::new(|c, _| {
+            let p = lane_points(c, 0, &AT::Volume);
+            (p.len() == 2).then_some(()).ok_or(format!("{p:?}"))
+        })),
+        DoC("automation: Volume lane −60 → 0 dB over 1 s on track 1 (one SetAutomationLane)", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = c.project().tracks[0].id;
+            let one_s = c.project().seconds_to_ticks(1.0);
+            let lane = saine_core::AutomationLane {
+                target: AT::Volume,
+                enabled: true,
+                points: vec![saine_core::AutoPoint { time: 0, value: -60.0, curve: 0.0 }, saine_core::AutoPoint { time: one_s, value: 0.0, curve: 0.0 }],
+            };
+            c.auto_commit(Some(t), lane);
+        })),
+        Check("automation: offline render of track 1 rises from silence to the clip level over 1 s [needs engine automation playback]", Box::new(|c, _| {
+            if c.engine.device_running() {
+                return Err("SKIP: offline render needs --no-audio".into());
+            }
+            let e = &c.engine;
+            let t1 = c.project().tracks[0].id;
+            let mut snap = c.current_snapshot();
+            for t in &mut snap.tracks {
+                t.mute = t.track_id != t1.0;
+            }
+            e.publish(&snap).map_err(|e| e.to_string())?;
+            e.seek(0).map_err(|e| e.to_string())?;
+            e.play().map_err(|e| e.to_string())?;
+            let mut buf = vec![0f32; 2 * 48_000];
+            let r = e.render_offline(&mut buf);
+            let _ = e.stop();
+            let _ = e.seek(0);
+            e.publish(&c.current_snapshot()).map_err(|e| e.to_string())?;
+            r.map_err(|e| e.to_string())?;
+            let rms = |a: usize, b: usize| ((buf[2 * a..2 * b].iter().map(|x| (*x as f64).powi(2)).sum::<f64>()) / (2 * (b - a)) as f64).sqrt() as f32;
+            let (early, mid, late) = (rms(0, 4_800), rms(21_600, 26_400), rms(43_200, 48_000));
+            (late > 0.05 && early < late * 0.05 && mid > early && late > mid)
+                .then_some(())
+                .ok_or(format!("rms 0–0.1 s {early:.4}, 0.45–0.55 s {mid:.4}, 0.9–1.0 s {late:.4}: the level does not follow the lane; the engine does not apply automation yet (depends on the engine agent's automation playback)"))
+        })),
+        Do("automation: click Automation Arm in the transport", Box::new(|a| click(a, 496.0 + 10.5, 41.0 + 11.0))),
+        Check("automation: armed (transport button on)", Box::new(move |c, a| {
+            ah_set(c.doc.history_labels().len());
+            (c.auto.armed && a.global::<Studio>().get_auto_armed()).then_some(()).ok_or("not armed".into())
+        })),
+        DoC("automation: play from 2 s; while playing, drag the track 1 volume slider (press, 4 moves 0.15 s apart, release)", Box::new(|a, ctl| {
+            {
+                let c = ctl.borrow();
+                let f = c.project().ticks_to_frames(c.project().seconds_to_ticks(2.0), c.rate);
+                let _ = c.engine.seek(f);
+                let _ = c.engine.play();
+            }
+            advance(ctl, 0.1);
+            let y = TRACK0_Y + 44.0 - 13.0 + 4.0;
+            let x0 = 262.0 + 116.0 + 3.5;
+            press(a, x0 + 50.0, y);
+            for k in 1..=4 {
+                advance(ctl, 0.15);
+                a.window().dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x0 + 50.0 - 9.0 * k as f32, y) });
+            }
+            advance(ctl, 0.1);
+            release(a, x0 + 14.0, y);
+            let _ = ctl.borrow().engine.stop();
+        })),
+        Check("automation: ONE “Write Automation” step; the Volume lane got the written points in the touched range, the curve outside kept", Box::new(move |c, _| {
+            one(c, "Write Automation")?;
+            let p = lane_points(c, 0, &AT::Volume);
+            let tps = c.project().seconds_to_ticks(1.0);
+            let inside: Vec<_> = p.iter().filter(|q| q.0 >= 2 * tps && q.0 <= 3 * tps).collect();
+            let falling = inside.windows(2).any(|w| w[1].1 < w[0].1);
+            (p.first().map(|q| (q.0, q.1)) == Some((0, -60.0)) && inside.len() >= 2 && falling && c.auto.writes.is_empty() && c.auto.pending.is_none())
+                .then_some(())
+                .ok_or(format!("points {p:?}"))
+        })),
+        Do("automation: click Automation Arm again (off), hide lanes", Box::new(|a| {
+            click(a, 496.0 + 10.5, 41.0 + 11.0);
+            click(a, 262.0 + (1440.0 - 262.0 - 5.0) - 315.0 + 7.0, 78.0 + 14.0);
+        })),
+        Check("automation: disarmed, lanes hidden, master row back to 30 pt", Box::new(move |c, a| {
+            let _ = &wav2;
+            let s = a.global::<Studio>();
+            (!c.auto.armed && !c.auto.shown && (s.get_master_h() - 30.0).abs() < 1e-3).then_some(()).ok_or(format!("armed {} shown {} master {}", c.auto.armed, c.auto.shown, s.get_master_h()))
+        })),
+    ]
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
@@ -1691,6 +2036,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(midi_steps());
     all.extend(recording_steps());
     all.extend(device_steps());
+    all.extend(automation_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));

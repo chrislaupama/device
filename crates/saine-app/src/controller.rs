@@ -13,7 +13,7 @@ use crate::assistant_provider::Provider;
 use crate::mixer::{self, Ballistics, MASTER_METER_ID};
 use crate::pianoroll::{self, PrState};
 use crate::synth::SynthUi;
-use crate::{AppWindow, ChatEntry, ChoiceItem, ClipLabel, DeviceCard, HighlightRect, MenuItem, MixerStrip, PluginRow, RulerLabel, StripMeter, Studio, SynthDisplay, SynthParam, TrackRow, TreeRow, YLabel};
+use crate::{AppWindow, AutoExtra, AutoLabel, ChatEntry, ChoiceItem, ClipLabel, DeviceCard, HighlightRect, MenuItem, MixerStrip, PluginRow, RulerLabel, StripMeter, Studio, SynthDisplay, SynthParam, TrackRow, TreeRow, YLabel};
 use saine_core::{
     Asset, AssetId, Clip, ClipId, ColorIndex, Command, Document, MidiClip, Origin, PPQ, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, gain_to_db, persist, snapshot,
 };
@@ -81,7 +81,7 @@ pub fn fmt_db(db: f32) -> String {
     if !db.is_finite() || db < -99.0 { "−∞".into() } else { format!("{db:.2}").replace('-', "−") }
 }
 
-fn fmt_pan(p: f32) -> String {
+pub(crate) fn fmt_pan(p: f32) -> String {
     let v = (p * 50.0).round() as i32;
     match v {
         0 => "C".into(),
@@ -100,7 +100,7 @@ pub fn track_color(c: ColorIndex) -> [f32; 3] {
 /// captured, see ui-inventory.md §11). Mirrors `Tokens.record-red` (#e5484d).
 pub const RECORD_RED: [f32; 3] = [0xe5 as f32 / 255.0, 0x48 as f32 / 255.0, 0x4d as f32 / 255.0];
 
-fn slint_color(c: [f32; 3]) -> slint::Color {
+pub(crate) fn slint_color(c: [f32; 3]) -> slint::Color {
     slint::Color::from_rgb_f32(c[0], c[1], c[2])
 }
 
@@ -219,7 +219,7 @@ pub struct Controller {
     meter_disp: (f32, f32),
     meter_t: Option<Instant>,
     // models (kept to update in place)
-    tracks_model: Rc<VecModel<TrackRow>>,
+    pub(crate) tracks_model: Rc<VecModel<TrackRow>>,
     ruler_model: Rc<VecModel<RulerLabel>>,
     clips_model: Rc<VecModel<ClipLabel>>,
     ruler_key: (i64, i64, i64),
@@ -272,6 +272,12 @@ pub struct Controller {
     pub(crate) scan_dirs_model: Rc<VecModel<PluginRow>>,
     pub(crate) plugin_rows_model: Rc<VecModel<PluginRow>>,
     pub(crate) plugin_failed_model: Rc<VecModel<PluginRow>>,
+    // ---- automation (src/automation.rs) ----
+    pub auto: crate::automation::AutoUi,
+    pub(crate) auto_labels_model: Rc<VecModel<AutoLabel>>,
+    pub(crate) auto_extras_model: Rc<VecModel<AutoExtra>>,
+    pub(crate) picker_model: Rc<VecModel<MenuItem>>,
+    pub(crate) picker_sub_model: Rc<VecModel<MenuItem>>,
 }
 
 impl Controller {
@@ -347,6 +353,11 @@ impl Controller {
             scan_dirs_model: Rc::new(VecModel::default()),
             plugin_rows_model: Rc::new(VecModel::default()),
             plugin_failed_model: Rc::new(VecModel::default()),
+            auto: Default::default(),
+            auto_labels_model: Rc::new(VecModel::default()),
+            auto_extras_model: Rc::new(VecModel::default()),
+            picker_model: Rc::new(VecModel::default()),
+            picker_sub_model: Rc::new(VecModel::default()),
         };
         c.selected_track = c.doc.project().tracks.first().map(|t| t.id);
         c.publish();
@@ -379,6 +390,10 @@ impl Controller {
         s.set_scan_dirs(ModelRc::from(self.scan_dirs_model.clone()));
         s.set_plugin_rows(ModelRc::from(self.plugin_rows_model.clone()));
         s.set_plugin_failed(ModelRc::from(self.plugin_failed_model.clone()));
+        s.set_auto_labels(ModelRc::from(self.auto_labels_model.clone()));
+        s.set_auto_extras(ModelRc::from(self.auto_extras_model.clone()));
+        s.set_picker_items(ModelRc::from(self.picker_model.clone()));
+        s.set_picker_sub_items(ModelRc::from(self.picker_sub_model.clone()));
         let pages: Vec<SharedString> = crate::settings::PAGES.iter().map(|p| SharedString::from(*p)).collect();
         s.set_settings_pages(ModelRc::new(VecModel::from(pages)));
     }
@@ -389,6 +404,10 @@ impl Controller {
 
     pub fn project(&self) -> &Project {
         self.doc.project()
+    }
+
+    pub fn status_text(&self) -> Option<&str> {
+        self.status.as_ref().map(|s| s.0.as_str())
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>, secs: u64) {
@@ -446,6 +465,21 @@ impl Controller {
         {
             ts.synth = Some(sp.clone());
         }
+        // Automation drag / write preview: the pending lane replaces the model lane.
+        if let Some((key, lane)) = &self.auto.pending {
+            let p = self.doc.project();
+            let ls = snapshot::LaneSnapshot { target: lane.target.clone(), points: lane.points.iter().map(|q| (p.ticks_to_frames(q.time, self.rate), q.value, q.curve)).collect() };
+            let lanes = match key {
+                None => Some(&mut snap.master_automation),
+                Some(t) => snap.tracks.iter_mut().find(|ts| ts.track_id == t.0).map(|ts| &mut ts.automation),
+            };
+            if let Some(lanes) = lanes {
+                lanes.retain(|l| l.target != lane.target);
+                if lane.enabled && !lane.points.is_empty() {
+                    lanes.push(ls);
+                }
+            }
+        }
         snap
     }
 
@@ -490,6 +524,7 @@ impl Controller {
 
     pub fn undo(&mut self) {
         self.synth.pending = None;
+        self.auto.sel = None;
         match self.doc.undo() {
             Ok(true) => self.after_change(),
             Ok(false) => {}
@@ -499,6 +534,7 @@ impl Controller {
 
     pub fn redo(&mut self) {
         self.synth.pending = None;
+        self.auto.sel = None;
         match self.doc.redo() {
             Ok(true) => self.after_change(),
             Ok(false) => {}
@@ -612,6 +648,9 @@ impl Controller {
     /// Continuous drags: the core coalesces consecutive SetTrackGain/Pan for one target.
     pub fn set_track_gain(&mut self, id: TrackId, gain: f32) {
         let gain = gain.clamp(0.0, saine_core::command::MAX_GAIN);
+        if self.auto_intercept(Some(id), saine_core::AutomationTarget::Volume, gain_to_db(gain)) {
+            return;
+        }
         if self.project().track(id).map(|t| (t.gain - gain).abs() > 1e-7).unwrap_or(false) {
             self.execute(Command::SetTrackGain { track: id, gain });
         }
@@ -619,12 +658,18 @@ impl Controller {
 
     pub fn set_track_pan(&mut self, id: TrackId, pan: f32) {
         let pan = (pan.clamp(-1.0, 1.0) * 100.0).round() / 100.0;
+        if self.auto_intercept(Some(id), saine_core::AutomationTarget::Pan, pan) {
+            return;
+        }
         if self.project().track(id).map(|t| (t.pan - pan).abs() > 1e-7).unwrap_or(false) {
             self.execute(Command::SetTrackPan { track: id, pan });
         }
     }
 
     pub fn set_master_gain(&mut self, gain: f32) {
+        if self.auto_intercept(None, saine_core::AutomationTarget::Volume, gain_to_db(gain)) {
+            return;
+        }
         if (self.project().master_gain - gain).abs() > 1e-7 {
             self.execute(Command::SetMasterGain { gain });
         }
@@ -769,6 +814,7 @@ impl Controller {
     pub fn replace_project(&mut self, project: Project) {
         self.close_all_editors();
         self.doc_epoch += 1;
+        self.auto.reset_project_state();
         self.doc = Document::new(project);
         self.selected_track = self.project().tracks.first().map(|t| t.id);
         self.selected_clip = None;
@@ -804,6 +850,7 @@ impl Controller {
             let _ = self.engine.release_asset(ea);
         }
         self.doc_epoch += 1;
+        self.auto.reset_project_state();
         self.doc = Document::new(loaded.project);
         self.project_dir = Some(dir.to_path_buf());
         self.selected_track = self.project().tracks.first().map(|t| t.id);
@@ -854,6 +901,9 @@ impl Controller {
     }
 
     pub fn hover(&self, x: f32, y: f32) -> i32 {
+        if self.auto.shown && y >= timeline::RULER_H {
+            return 0;
+        }
         match timeline::hit_test(&self.view, self.lanes_size, self.project().tracks.len(), &self.clip_vis, x, y) {
             Hit::Clip { zone: Zone::Left | Zone::Right, .. } => 1,
             Hit::Clip { zone: Zone::Body, .. } => 2,
@@ -869,7 +919,11 @@ impl Controller {
         Some((p.tracks[ti].id, c.start, c.source_offset, c.source_length, a.sample_rate, a.frames))
     }
 
-    pub fn pointer(&mut self, kind: i32, x: f32, y: f32) {
+    /// Lane pointer with modifiers: automation rows take it while lanes are shown.
+    pub fn pointer_mods(&mut self, kind: i32, x: f32, y: f32, shift: bool, alt: bool) {
+        if self.drag.is_none() && self.auto_pointer(kind, x, y, shift, alt) {
+            return;
+        }
         let beat = self.view.beat_at(x).max(0.0);
         match kind {
             0 => {
@@ -1001,6 +1055,7 @@ impl Controller {
 
     /// Rebuild the clip/track visuals (positions include in-progress drag previews).
     pub fn rebuild_vis(&mut self) {
+        self.auto_sync_view();
         let p = self.doc.project();
         self.track_vis = p.tracks.iter().map(|t| TrackVis { selected: Some(t.id) == self.selected_track }).collect();
         self.clip_vis.clear();
@@ -1091,7 +1146,7 @@ impl Controller {
         let p = self.project();
         let tr = &p.transport;
         timeline::Scene {
-            view: self.view,
+            view: self.view.clone(),
             size: self.lanes_size,
             scale,
             tracks: &self.track_vis,
@@ -1101,6 +1156,7 @@ impl Controller {
             loop_beats: (tr.loop_start as f64 / PPQ as f64, tr.loop_end as f64 / PPQ as f64),
             beats_per_bar: self.beats_per_bar(),
             frames_per_beat: self.rate * 60.0 / tr.bpm,
+            auto: None,
         }
     }
 
@@ -1219,9 +1275,14 @@ impl Controller {
             self.ui_rev = Some(self.doc.revision());
             self.push_models(app);
         }
+        self.auto_sync_view();
         self.view.clamp_scroll(self.project().tracks.len(), self.lanes_size.1);
         s.set_scroll_y(self.view.scroll_y as f32);
         self.update_labels();
+        self.update_auto_labels();
+        if self.auto_any_active() {
+            self.push_auto_feedback(&s);
+        }
         // The record button state follows the engine every frame while recording.
         if s.get_recording() != self.rec.recording {
             s.set_recording(self.rec.recording);
@@ -1232,26 +1293,9 @@ impl Controller {
     fn push_models(&mut self, app: &AppWindow) {
         self.rebuild_vis();
         let s = app.global::<Studio>();
+        self.auto_sync_view();
+        let rows = self.track_rows();
         let p = self.doc.project();
-        let rows: Vec<TrackRow> = p
-            .tracks
-            .iter()
-            .enumerate()
-            .map(|(i, t)| TrackRow {
-                id: t.id.0 as i32,
-                number: i as i32 + 1,
-                name: t.name.clone().into(),
-                instrument: t.kind == TrackKind::Instrument,
-                color: slint_color(track_color(t.color)),
-                selected: Some(t.id) == self.selected_track,
-                mute: t.mute,
-                solo: t.solo,
-                arm: t.arm,
-                monitor: t.monitor,
-                volume_pos: slider_from_gain(t.gain),
-                pan: t.pan,
-            })
-            .collect();
         if self.tracks_model.row_count() == rows.len() {
             for (i, r) in rows.into_iter().enumerate() {
                 if self.tracks_model.row_data(i).as_ref() != Some(&r) {
@@ -1330,13 +1374,14 @@ impl Controller {
         self.push_recording(&s);
         self.push_settings(&s);
         self.push_devices(&s);
+        self.push_automation(&s);
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };
         s.set_status_text(status.into());
         self.ruler_key.0 = i64::MIN; // force label refresh
     }
 
     fn update_labels(&mut self) {
-        let v = self.view;
+        let v = self.view.clone();
         let key = ((v.start_beats * 4096.0) as i64, (v.px_per_beat * 4096.0) as i64, self.lanes_size.0 as i64);
         if key != self.ruler_key {
             self.ruler_key = key;
@@ -1344,7 +1389,7 @@ impl Controller {
             self.ruler_model.set_vec(labels.into_iter().map(|(x, t)| RulerLabel { x, text: t.into() }).collect::<Vec<_>>());
         }
         let w = self.lanes_size.0;
-        let bottom = self.lanes_size.1 - timeline::MASTER_H;
+        let bottom = self.lanes_size.1 - v.master_h;
         let labels: Vec<ClipLabel> = self
             .clip_vis
             .iter()

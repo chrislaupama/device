@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! saine-studio [--open <dir>] [--import <wav>...] [--save-to <dir>] [--no-audio]
-//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-settings-audio|reference-devices-effects|review-recording|review-device-chain|review-settings-plugins]
+//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-settings-audio|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-device-chain|review-settings-plugins]
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
@@ -14,6 +14,7 @@
 
 mod assistant_panel;
 mod assistant_provider;
+mod automation;
 mod clipedit;
 mod controller;
 mod devices;
@@ -68,6 +69,13 @@ struct Args {
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
     /// the live recording clip. Not a reference capture (the reference recording UI was not captured).
     recording_review: bool,
+    /// reference-automation (60): Instrument track 1 (MIDI clip at bar 6), Audio track 2 selected,
+    /// playhead at bar 6, automation lanes shown (Track Volume at +0.0).
+    automation_state: bool,
+    /// review-automation / review-automation-picker: lanes with points (active, disabled, curved,
+    /// an expanded extra lane, master) for review; the second also opens the picker with the
+    /// Synth submenu. No reference capture.
+    automation_review: u8,
     /// reference-devices-effects (05): browser Devices › Effects sub-tab.
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
@@ -133,6 +141,18 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.settings_state = true;
                 }
+                "reference-automation" => {
+                    a.reference_default = true;
+                    a.automation_state = true;
+                }
+                "review-automation" => {
+                    a.reference_default = true;
+                    a.automation_review = 1;
+                }
+                "review-automation-picker" => {
+                    a.reference_default = true;
+                    a.automation_review = 2;
+                }
                 "reference-devices-effects" => {
                     a.reference_default = true;
                     a.devices_effects_state = true;
@@ -152,7 +172,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, review-recording, review-device-chain, review-settings-plugins)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, review-settings-plugins)"
                     ));
                 }
             },
@@ -277,7 +297,7 @@ fn app_text_focused(aw: &slint::Weak<AppWindow>) -> bool {
     aw.upgrade()
         .map(|a| {
             let s = a.global::<Studio>();
-            s.get_chat_focused() || s.get_rename_open() || s.get_search_focused()
+            s.get_chat_focused() || s.get_rename_open() || s.get_search_focused() || s.get_picker_focused()
         })
         .unwrap_or(false)
 }
@@ -306,7 +326,13 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "transport.loop_toggle" => ctl.borrow_mut().toggle_loop(),
         "edit.undo" => ctl.borrow_mut().undo(),
         "edit.redo" => ctl.borrow_mut().redo(),
-        "clip.delete" | "track.delete" => ctl.borrow_mut().delete_selection(),
+        "clip.delete" | "track.delete" => {
+            let mut c = ctl.borrow_mut();
+            if !c.auto_delete_selected() {
+                c.delete_selection();
+            }
+        }
+        "draw_mode.toggle" => ctl.borrow_mut().auto_toggle_draw(),
         "clip.insert_midi" => {
             ctl.borrow_mut().insert_midi_clip();
         }
@@ -339,6 +365,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.menu_close();
             c.synth_menu_dismiss();
             c.devmenu_dismiss();
+            c.auto_picker_close();
             c.rename = None;
             c.ui_dirty = true;
         }
@@ -550,6 +577,52 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(22.0);
         c.open_input_menu();
     }
+    if args.automation_state {
+        // Reference 60: same project layout as 50 (Instrument 1 with a MIDI clip at bar 6, Audio 2
+        // selected, playhead 00:11.000, Devices tab) with the automation lanes shown.
+        let mut p = Project::default();
+        p.tracks.swap(0, 1);
+        let mut c = ctl.borrow_mut();
+        c.replace_project(p);
+        let inst = c.project().tracks[0].id;
+        let audio = c.project().tracks[1].id;
+        c.select_track(inst);
+        c.seek_beats(20.0);
+        c.insert_midi_clip();
+        c.select_track(audio);
+        c.set_bottom_tab(BottomTab::Devices);
+        c.seek_beats(22.0);
+        c.auto_toggle_shown();
+    }
+    if args.automation_review > 0 {
+        use saine_core::{AutoPoint, AutomationLane, AutomationTarget, SynthParam};
+        let pt = |beat: i64, value: f32, curve: f32| AutoPoint { time: beat * saine_core::PPQ, value, curve };
+        let mut c = ctl.borrow_mut();
+        let (audio, inst) = (c.project().tracks[0].id, c.project().tracks[1].id);
+        c.select_track(inst);
+        c.seek_beats(20.0);
+        c.insert_midi_clip();
+        let lanes = [
+            (Some(audio), AutomationLane { target: AutomationTarget::Volume, enabled: true, points: vec![pt(0, -24.0, 0.0), pt(8, 0.0, -0.6), pt(16, -12.0, 0.0), pt(24, -6.0, 0.5), pt(32, -60.0, 0.0)] }),
+            (Some(audio), AutomationLane { target: AutomationTarget::Pan, enabled: false, points: vec![pt(4, -0.5, 0.0), pt(20, 0.5, 0.0)] }),
+            (Some(inst), AutomationLane { target: AutomationTarget::Synth { param: SynthParam::FilterCutoff }, enabled: true, points: vec![pt(0, 200.0, 0.0), pt(16, 8000.0, 0.0), pt(20, 800.0, 0.0)] }),
+            (None, AutomationLane { target: AutomationTarget::Volume, enabled: true, points: vec![pt(0, 0.0, 0.0), pt(28, 0.0, 0.0), pt(36, -60.0, 0.4)] }),
+        ];
+        for (key, lane) in lanes {
+            c.auto_commit(key, lane);
+        }
+        c.auto.targets.insert(Some(inst), AutomationTarget::Synth { param: SynthParam::FilterCutoff });
+        c.auto.expanded.insert(audio);
+        c.auto_toggle_shown();
+        c.auto.sel = Some((Some(audio), AutomationTarget::Volume, vec![1]));
+        c.set_bottom_tab(BottomTab::Devices);
+        c.seek_beats(22.0);
+        if args.automation_review == 2 {
+            let y = 78.0 + 66.5 + c.view.track_offset(1) + 48.5 + 17.0;
+            c.auto_open_picker(Some(inst), 262.0 + 42.0, y);
+            c.auto_picker_pick(1);
+        }
+    }
     if args.settings_state {
         ctl.borrow_mut().open_settings();
     }
@@ -670,7 +743,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.set_track_gain(t, db_to_gain(controller::db_from_fader(f)))
         }
     });
-    on!(on_gesture_end, |c| c.ui_dirty = true);
+    on!(on_gesture_end, |c| {
+        // Track / master control gesture end: finish write passes of those controls.
+        c.auto_write_end(|w| matches!(w.target, saine_core::AutomationTarget::Volume | saine_core::AutomationTarget::Pan));
+        c.ui_dirty = true
+    });
+    on!(on_auto_toggle_shown, |c| c.auto_toggle_shown());
+    on!(on_auto_toggle_draw, |c| c.auto_toggle_draw());
+    on!(on_auto_toggle_arm, |c| c.auto_toggle_arm());
+    on!(on_auto_power, |c, id: i32, extra: i32| c.auto_power((id >= 0).then_some(TrackId(id as u64)), (extra >= 0).then_some(extra as usize)));
+    on!(on_auto_expand, |c, id: i32| c.auto_toggle_expanded(TrackId(id as u64)));
+    on!(on_auto_show_extra, |c, id: i32, i: i32| c.auto_show_extra(TrackId(id as u64), i.max(0) as usize));
+    on!(on_auto_open_picker, |c, id: i32, x: f32, y: f32| c.auto_open_picker((id >= 0).then_some(TrackId(id as u64)), x, y));
+    on!(on_picker_edited, |c, t: slint::SharedString| c.auto_picker_query(t.as_str()));
+    on!(on_picker_pick, |c, i: i32| c.auto_picker_pick(i.max(0) as usize));
+    on!(on_picker_sub_pick, |c, i: i32| c.auto_picker_sub_pick(i.max(0) as usize));
+    on!(on_picker_dismiss, |c| c.auto_picker_close());
     on!(on_toggle_mixer, |c| c.toggle_mixer());
     on!(on_toggle_assistant, |c| c.toggle_assistant());
     on!(on_mixer_fader, |c, id: i32, f: f32| c.set_mixer_fader(TrackId(id as u64), f));
@@ -685,7 +773,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_chat_toggle_entry, |c, i: i32| c.assistant_toggle_entry(i.max(0) as usize));
     on!(on_chat_remove_context, |c| c.assistant_remove_context());
     on!(on_chat_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
-    on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, _shift: bool, _cmd: bool| c.pointer(kind, x, y));
+    on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, _cmd: bool, alt: bool| c.pointer_mods(kind, x, y, shift, alt));
     on!(on_lane_scroll, |c, dx: f32, dy: f32, x: f32, zoom: bool| c.scroll(dx, dy, x, zoom));
     on!(on_set_bottom_tab, |c, t: i32| c.set_bottom_tab(if t == 1 { BottomTab::Clip } else { BottomTab::Devices }));
     on!(on_synth_page_select, |c, i: i32| c.synth_page(i.max(0) as usize));
@@ -834,6 +922,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let Ok(mut c) = ctl.try_borrow_mut() else { return };
             c.poll_test_tone();
             c.device_poll();
+            c.auto_poll();
             if c.pending_jobs > 0 {
                 c.poll_jobs();
                 if let Some(a) = aw.upgrade() {
@@ -922,7 +1011,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         f.tex = r.target_size();
                         r.sync_peaks(c.peaks.generation, &c.peaks.data);
-                        timeline::build(&mut f.dl, &c.scene(scale));
+                        let auto = c.auto_scene(scale);
+                        let mut sc = c.scene(scale);
+                        sc.auto = auto.as_ref();
+                        timeline::build(&mut f.dl, &sc);
                         r.render(&f.dl);
                     }
                     // Piano roll texture (only while a MIDI clip is open in the Clip tab).

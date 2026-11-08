@@ -12,21 +12,28 @@ pub const RULER_H: f32 = 39.0;
 pub const TRACK_PITCH: f32 = 74.5;
 pub const TRACK_H: f32 = 74.0;
 pub const MASTER_H: f32 = 30.5;
+/// Master row height while automation lanes are shown (60-automation-lanes.png: separator at
+/// window y 439.5, lanes bottom 504).
+pub const MASTER_H_AUTO: f32 = 64.5;
 pub const CLIP_HEADER: f32 = 17.0;
 pub const EDGE_GRAB: f32 = 5.0;
 /// Default zoom: 51.03 pt per 4/4 bar (measured: bar 20 line at x 1422.5, bar 1 at 453).
 pub const DEFAULT_PX_PER_BEAT: f64 = 969.5 / 76.0;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct View {
     pub start_beats: f64,
     pub px_per_beat: f64,
     pub scroll_y: f64,
+    /// Extra height below each track (expanded automation lanes, src/automation.rs), by track index.
+    pub extra: Vec<f32>,
+    /// Height of the master row pinned to the bottom (taller while automation is shown).
+    pub master_h: f32,
 }
 
 impl Default for View {
     fn default() -> Self {
-        View { start_beats: 0.0, px_per_beat: DEFAULT_PX_PER_BEAT, scroll_y: 0.0 }
+        View { start_beats: 0.0, px_per_beat: DEFAULT_PX_PER_BEAT, scroll_y: 0.0, extra: Vec::new(), master_h: MASTER_H }
     }
 }
 
@@ -37,12 +44,31 @@ impl View {
     pub fn beat_at(&self, x: f32) -> f64 {
         self.start_beats + x as f64 / self.px_per_beat
     }
-    pub fn track_top(&self, i: usize) -> f32 {
-        RULER_H + i as f32 * TRACK_PITCH - self.scroll_y as f32
+    /// Content offset of track `i` (sum of the rows above it, without the ruler or scroll).
+    pub fn track_offset(&self, i: usize) -> f32 {
+        i as f32 * TRACK_PITCH + self.extra.iter().take(i).sum::<f32>()
     }
+    /// Total height of track `i` including its expanded automation rows.
+    pub fn track_span(&self, i: usize) -> f32 {
+        TRACK_PITCH + self.extra.get(i).copied().unwrap_or(0.0)
+    }
+    pub fn track_top(&self, i: usize) -> f32 {
+        RULER_H + self.track_offset(i) - self.scroll_y as f32
+    }
+    /// Track whose row (or expanded automation rows) contains `y`.
     pub fn track_at(&self, y: f32) -> Option<usize> {
-        let r = (y - RULER_H + self.scroll_y as f32) / TRACK_PITCH;
-        (r >= 0.0).then_some(r.floor() as usize)
+        let mut top = RULER_H - self.scroll_y as f32;
+        if y < top {
+            return None;
+        }
+        for (i, e) in self.extra.iter().enumerate() {
+            let h = TRACK_PITCH + e;
+            if y < top + h {
+                return Some(i);
+            }
+            top += h;
+        }
+        Some(self.extra.len() + ((y - top) / TRACK_PITCH).floor() as usize)
     }
     pub fn zoom_at(&mut self, factor: f64, x: f32) {
         let anchor = self.beat_at(x);
@@ -54,8 +80,8 @@ impl View {
         self.start_beats = self.start_beats.max(0.0);
     }
     pub fn clamp_scroll(&mut self, tracks: usize, lanes_h: f32) {
-        let content = tracks as f32 * TRACK_PITCH + 40.0;
-        let visible = lanes_h - RULER_H - MASTER_H;
+        let content = self.track_offset(tracks) + 40.0;
+        let visible = lanes_h - RULER_H - self.master_h;
         self.scroll_y = self.scroll_y.clamp(0.0, (content - visible).max(0.0) as f64);
     }
 }
@@ -104,6 +130,8 @@ pub struct Scene<'a> {
     pub loop_beats: (f64, f64),
     pub beats_per_bar: f64,
     pub frames_per_beat: f64,
+    /// Automation overlay (src/automation.rs) while lanes are shown.
+    pub auto: Option<&'a crate::automation::AutoScene>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -126,7 +154,7 @@ pub fn hit_test(v: &View, size: (f32, f32), tracks: usize, clips: &[ClipVis], x:
     if y < RULER_H {
         return Hit::Ruler;
     }
-    if y >= size.1 - MASTER_H {
+    if y >= size.1 - v.master_h {
         return Hit::Master;
     }
     for (i, c) in clips.iter().enumerate().rev() {
@@ -233,7 +261,7 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     let px = Px { s: sc.scale };
     let (w, h) = sc.size;
     let v = &sc.view;
-    let lanes_bottom = h - MASTER_H;
+    let lanes_bottom = h - v.master_h;
     dl.clear = [0.0745, 0.0784, 0.0902];
     dl.lanes_clip = ((RULER_H * sc.scale).round() as u32, (lanes_bottom * sc.scale).round() as u32);
 
@@ -334,15 +362,73 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     }
 
     // ---- master lane (over, pinned to the bottom) ----
-    o.push(px.rect(0.0, h - MASTER_H, w, 1.0, rgba(rgb(0x26272a), 1.0)));
+    o.push(px.rect(0.0, h - v.master_h, w, 1.0, rgba(rgb(0x26272a), 1.0)));
     let mut tmp = Vec::new();
-    bands_and_grid(&mut tmp, sc, &px, h - MASTER_H + 1.0, h, LANE);
+    bands_and_grid(&mut tmp, sc, &px, h - v.master_h + 1.0, h, LANE);
     o.extend(tmp);
+
+    // ---- automation: track rows over the clips (scissored), master row over its lane ----
+    if let Some(a) = sc.auto {
+        for row in &a.rows {
+            let out = if row.master { &mut dl.over } else { &mut dl.top };
+            automation_row(out, &px, w, row);
+        }
+        if let Some([x, y, mw, mh]) = a.marquee {
+            dl.top.push(px.rect(x, y, mw, mh, [0.79, 0.66, 0.24, 0.12]));
+            for (rx, ry, rw, rh) in [(x, y, mw, 0.5), (x, y + mh - 0.5, mw, 0.5), (x, y, 0.5, mh), (x + mw - 0.5, y, 0.5, mh)] {
+                dl.top.push(px.rect(rx, ry, rw, rh, [0.79, 0.66, 0.24, 0.8]));
+            }
+        }
+    }
 
     // ---- playhead ----
     let phx = v.x_of(sc.playhead_beats);
     if phx >= -1.0 && phx <= w {
-        o.push(px.rect(phx, 0.0, lw, h, rgba(rgb(0x949495), 1.0)));
+        dl.over.push(px.rect(phx, 0.0, lw, h, rgba(rgb(0x949495), 1.0)));
+    }
+}
+
+/// One automation row: the dimming overlay (track lanes: clips and grid are dimmed under the
+/// line, 60-automation-lanes.png), a separator under expanded rows, the curve as merged
+/// per-column rects (1 pt line) and the point handles.
+fn automation_row(out: &mut Vec<RectInst>, px: &Px, w: f32, row: &crate::automation::RowDraw) {
+    use crate::automation::OVERLAY;
+    if row.overlay {
+        out.push(px.rect(0.0, row.y0, w, row.h, OVERLAY));
+    }
+    if row.extra {
+        out.push(px.rect(0.0, row.y0 + row.h - 0.5, w, 0.5, rgba(rgb(0x26272a), 1.0)));
+    }
+    let color = row.style.line();
+    // Curve: consecutive samples become one rect per run of equal y (flat lines are one rect).
+    let half = 0.5;
+    let mut i = 0;
+    let p = &row.poly;
+    while i + 1 < p.len() {
+        let (x0, y0) = p[i];
+        let mut j = i + 1;
+        if (p[j].1 - y0).abs() < 1e-3 {
+            while j + 1 < p.len() && (p[j + 1].1 - y0).abs() < 1e-3 {
+                j += 1;
+            }
+            out.push(px.rect(x0, y0 - half, p[j].0 - x0, 2.0 * half, color));
+        } else {
+            let (lo, hi) = (y0.min(p[j].1), y0.max(p[j].1));
+            out.push(px.rect(x0, lo - half, (p[j].0 - x0).max(1.0 / px.s), hi - lo + 2.0 * half, color));
+        }
+        i = j;
+    }
+    let r = 2.5;
+    if let Some((x, y)) = row.start_dot {
+        out.push(px.rounded(x - r, y - r, 2.0 * r, 2.0 * r, r, color));
+    }
+    for &(x, y, selected) in &row.handles {
+        if selected {
+            out.push(px.rounded(x - r - 1.0, y - r - 1.0, 2.0 * r + 2.0, 2.0 * r + 2.0, r + 1.0, color));
+            out.push(px.rounded(x - r + 0.5, y - r + 0.5, 2.0 * r - 1.0, 2.0 * r - 1.0, r - 0.5, [1.0, 1.0, 1.0, 1.0]));
+        } else {
+            out.push(px.rounded(x - r, y - r, 2.0 * r, 2.0 * r, r, color));
+        }
     }
 }
 
@@ -397,7 +483,7 @@ fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &
 fn live_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis) {
     let v = &sc.view;
     let w = sc.size.0;
-    let lanes_bottom = sc.size.1 - MASTER_H;
+    let lanes_bottom = sc.size.1 - sc.view.master_h;
     let (x, y, cw, ch) = c.rect(v);
     if x > w || x + cw < 0.0 || y > lanes_bottom || y + ch < RULER_H {
         return;

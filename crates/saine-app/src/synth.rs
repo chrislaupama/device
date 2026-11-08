@@ -644,6 +644,12 @@ impl Controller {
         if id >= p::COUNT {
             return;
         }
+        // Automation: armed + playing records the move; an active lane blocks it (display follows).
+        if let Some(param) = crate::automation::synth_param_for_panel(id)
+            && self.auto_intercept(Some(t), saine_core::AutomationTarget::Synth { param }, from_norm(id, norm))
+        {
+            return;
+        }
         set(&mut sp, id, from_norm(id, norm));
         if self.synth.pending.as_ref().is_some_and(|(_, cur)| *cur == sp) {
             return;
@@ -655,6 +661,10 @@ impl Controller {
 
     /// Gesture end: the drag becomes ONE command.
     pub fn synth_param_end(&mut self) {
+        if self.auto_write_end(|w| matches!(w.target, saine_core::AutomationTarget::Synth { .. })) {
+            self.ui_dirty = true;
+            return;
+        }
         if let Some((t, sp)) = self.synth.pending.take() {
             if !self.commit_synth(t, sp) {
                 self.publish(); // drop the preview override
@@ -750,7 +760,7 @@ impl Controller {
         let params: Vec<SynthParam> = (0..p::COUNT)
             .map(|id| {
                 let v = get(&sp, id);
-                SynthParam { norm: to_norm(id, v), text: fmt(id, v).into(), bipolar: bipolar(id) }
+                SynthParam { norm: to_norm(id, v), text: fmt(id, v).into(), bipolar: bipolar(id), auto: false }
             })
             .collect();
         sync_model(&self.synth_params_model, params);

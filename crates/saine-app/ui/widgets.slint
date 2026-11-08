@@ -63,6 +63,7 @@ export global Icons {
     out property <string> search: "M7 2.5a4.5 4.5 0 1 1 0 9a4.5 4.5 0 1 1 0-9z M10.3 10.3L13.5 13.5";
     out property <string> link: "M7 5H5a3 3 0 0 0 0 6h2 M9 5h2a3 3 0 0 1 0 6H9 M5.5 8h5";
     out property <string> square: "M3 4h10v8H3z";
+    out property <string> power: "M8 2.5v5 M4.4 4.6a5 5 0 1 0 7.2 0";
     out property <string> pencil: "M3 13l1-3.5L11 2.5l2.5 2.5L6.5 12z";
     out property <string> cursor: "M4 2.5l8 5-3.5 1 2 4-1.5.7-2-4L4 12z";
     out property <string> v-resize: "M8 2v12 M5.5 4.5L8 2l2.5 2.5 M5.5 11.5L8 14l2.5-2.5 M4 8h8";
@@ -151,6 +152,7 @@ export component SmallButton inherits Rectangle {
 export component HSlider inherits Rectangle {
     in property <float> pos;
     in property <length> handle-size: 7px;
+    in property <color> handle-color: Tokens.handle;
     callback moved(float);
     callback released();
     callback reset();
@@ -167,7 +169,7 @@ export component HSlider inherits Rectangle {
         width: root.handle-size;
         height: root.handle-size;
         border-radius: self.width / 2;
-        background: Tokens.handle;
+        background: root.handle-color;
     }
     TouchArea {
         pointer-event(e) => {
