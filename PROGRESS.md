@@ -181,4 +181,7 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - macOS-visible changes: two hardware-/compiler-dependent tests relaxed (PDC golden hashes only on
   Apple clang/arm64; output latency plausibility instead of `>= 512`), ABI header comment fixed
   (no buffer term in latency), `on_platform_main_thread` unchanged on macOS.
+- CI now runs on the self-hosted Mac mini only (as on main, 30a5ccb); the hosted Windows/Linux matrix
+  was dropped. The Windows/Linux results above are from hosted run 42464468427 (`6cecd4f`); later
+  changes are not compiled on those systems until a self-hosted Windows/Linux runner is added.
 

@@ -119,11 +119,11 @@ Status per platform, what CI covers and what is untested on real hardware:
   Wayland would go through XWayland for most plugins).
 - App: Slint (winit backend) + wgpu 30 build on all three; Linux needs the X11/Wayland,
   xkbcommon, fontconfig, udev and PipeWire development packages (see the CI workflow).
-- CI (`.github/workflows/ci.yml`): macos-15 (arm64), windows-2025 (x64, MSVC), ubuntu-24.04
-  (x64, GCC). Each job configures and builds the engine with warnings as errors (`-Werror` /
-  `/W4 /WX`), runs the full ctest suite (device and AU tests skip themselves where they do not
-  apply), then `cargo build --workspace` and `cargo test --workspace`. SDK downloads and the
-  cargo registry/target are cached; all actions run on Node 24.
+- CI (`.github/workflows/ci.yml`): the self-hosted runner only (an Apple silicon Mac mini):
+  engine with warnings as errors, the full ctest suite on a real audio device, `cargo build` /
+  `cargo test --workspace` and the app self-test. Windows and Linux are not built in CI; their
+  steps are kept, gated on `runner.os`, for a future self-hosted runner. They last built and
+  passed on GitHub-hosted windows-2025 and ubuntu-24.04 runners (`engine/README.md` › Platforms).
 
 ## Technology adjustments (documented deviations)
 

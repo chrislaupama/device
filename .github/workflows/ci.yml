@@ -3,18 +3,18 @@ on:
   push:
   pull_request:
 
+# CI runs on the self-hosted runner only (main, 30a5ccb): currently one Apple
+# silicon Mac mini, so this is real hardware with a real audio device. The
+# Windows and Linux steps below are kept (gated on runner.os) for when a
+# self-hosted runner on those systems is added; until then Windows and Linux
+# are not built in CI. The last hosted run that built and tested them is
+# documented in engine/README.md › Platforms.
+#
 # Every action used here runs on Node 24 (checkout@v5, cache@v5) or is a
 # composite/shell step (rust-toolchain, the MSVC environment step below).
 jobs:
   build-test:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-15 # Apple silicon (arm64)
-          - os: windows-2025 # x64, MSVC
-          - os: ubuntu-24.04 # x64, GCC
-    runs-on: ${{ matrix.os }}
+    runs-on: self-hosted
     env:
       CARGO_TERM_COLOR: always
     steps:
@@ -93,8 +93,21 @@ jobs:
       # in a TLS destructor when Slint's thread-local backend drops the
       # wgpu queue).
       - name: App — release build (smoke tests)
-        if: runner.os != 'macOS' && !cancelled()
+        if: ${{ !cancelled() }}
         run: cargo build --release -p saine-app --locked
+      - name: App — self-test (macOS)
+        if: runner.os == 'macOS' && !cancelled()
+        env:
+          RUST_BACKTRACE: "1"
+        run: |
+          status=0
+          target/release/saine-studio --self-test --no-audio > selftest-macos.txt 2> selftest-macos-stderr.txt || status=$?
+          echo "self-test exit status: $status"
+          grep -E "^(FAIL|SKIP)" selftest-macos.txt || true
+          line=$(grep -E "^self-test: [0-9]+ / [0-9]+ checks passed" selftest-macos.txt) || { tail -30 selftest-macos-stderr.txt; exit 1; }
+          echo "$line"
+          [ "$(echo "$line" | sed -E 's#self-test: ([0-9]+) / ([0-9]+).*#\1#')" = "$(echo "$line" | sed -E 's#self-test: ([0-9]+) / ([0-9]+).*#\2#')" ]
+          if [ "$status" -ne 0 ]; then tail -30 selftest-macos-stderr.txt; exit "$status"; fi
       - name: App — screenshot and self-test (Linux, Xvfb + lavapipe)
         if: runner.os == 'Linux' && !cancelled()
         env:
@@ -137,7 +150,7 @@ jobs:
           $line.Value
           if ($line.Groups[1].Value -ne $line.Groups[2].Value) { throw "self-test failures" }
       - name: Upload app screenshots and self-test logs
-        if: ${{ !cancelled() && runner.os != 'macOS' }}
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: app-${{ runner.os }}
@@ -146,21 +159,3 @@ jobs:
             selftest-*.txt
             shot-*.txt
           if-no-files-found: ignore
-
-  # The self-hosted macOS runner (from main, 30a5ccb): engine and Rust tests
-  # on real hardware, including the real audio device tests.
-  build-test-self-hosted:
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Ninja (macOS)
-        if: runner.os == 'macOS'
-        run: brew install ninja
-      - name: Engine — configure, build, test
-        run: |
-          cmake -S engine -B engine/build-ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
-          cmake --build engine/build-ci
-          ctest --test-dir engine/build-ci --output-on-failure
-      - name: Rust workspace — test
-        run: cargo test --workspace --locked
