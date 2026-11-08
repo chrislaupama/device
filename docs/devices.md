@@ -72,7 +72,10 @@ flowchart LR
    within one `process` call (the instance splits blocks at automation
    events); smoothing audible steps is the kernel's job (`dsp::Smoother`).
    Readouts (meters, gain reduction) are written per block; give
-   `idle_readouts` for the values before the first block.
+   `idle_readouts` for the values before the first block. When automation
+   splits a block, the engine keeps each readout's segment value farthest
+   from its idle value, so readouts must move away from idle as they grow
+   (a peak meter rises from -120 dB, gain reduction falls from 0 dB).
 3. **Custom view (optional).** For bodies the template cannot express (EQ
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a

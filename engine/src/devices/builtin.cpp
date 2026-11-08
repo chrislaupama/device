@@ -88,7 +88,7 @@ BuiltinInstance::BuiltinInstance(PluginSpec spec, const BuiltinDescriptor& desc,
     : PluginInstance(std::move(spec)), desc_(desc), proc_(std::move(proc)),
       target_(new std::atomic<float>[std::max<std::size_t>(1, desc.params.size())]), current_(desc.params.size(), 0.0f),
       readout_atomic_(new std::atomic<float>[std::max<std::size_t>(1, desc.readouts.size())]),
-      readout_scratch_(desc.readouts.size(), 0.0f) {
+      readout_scratch_(desc.readouts.size(), 0.0f), readout_segment_(desc.readouts.size(), 0.0f) {
     for (std::size_t i = 0; i < desc_.params.size(); ++i) target_[i].store(0.0f, std::memory_order_relaxed);
     for (std::size_t i = 0; i < desc_.readouts.size(); ++i)
         readout_atomic_[i].store(i < desc_.idle_readouts.size() ? desc_.idle_readouts[i] : 0.0f, std::memory_order_relaxed);
@@ -136,7 +136,9 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     ctx.transport = &transport;
     float* const ro = readout_scratch_.data();
     // Automation events split the block (sorted by offset): every segment
-    // runs with the values in force at its first frame.
+    // runs with the values in force at its first frame. The block's readouts
+    // keep, per readout, the segment value farthest from its idle value
+    // (highest peak, deepest reduction).
     uint32_t pos = 0, e = 0;
     while (pos < frames) {
         while (e < param_count && params[e].offset <= pos) {
@@ -149,7 +151,16 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
             seg.sc_l += pos;
             seg.sc_r += pos;
         }
-        proc_->process(l + pos, r + pos, end - pos, cur, seg, ro);
+        if (pos == 0) {
+            proc_->process(l, r, end, cur, seg, ro);
+        } else {
+            float* const sr = readout_segment_.data();
+            proc_->process(l + pos, r + pos, end - pos, cur, seg, sr);
+            for (std::size_t i = 0; i < readout_segment_.size(); ++i) {
+                const float idle = i < desc_.idle_readouts.size() ? desc_.idle_readouts[i] : 0.0f;
+                if (std::fabs(sr[i] - idle) > std::fabs(ro[i] - idle)) ro[i] = sr[i];
+            }
+        }
         pos = end;
     }
     for (std::size_t i = 0; i < readout_scratch_.size(); ++i) readout_atomic_[i].store(ro[i], std::memory_order_relaxed);

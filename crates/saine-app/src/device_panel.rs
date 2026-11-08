@@ -65,6 +65,8 @@ struct ParamDrag {
     device: DeviceId,
     axes: [Option<DragAxis>; 2],
     travel: f32,
+    /// Movement before the start threshold, applied once the drag starts.
+    held: [f32; 2],
     active: bool,
 }
 
@@ -368,7 +370,8 @@ impl Controller {
             Some(name) => {
                 let dirty = def.factory.iter().find(|f| f.name == name).is_some_and(|f| {
                     let want = def.factory_values(f);
-                    def.params.iter().any(|p| (def.value(d, p) - want.get(p.id).copied().unwrap_or(p.default)).abs() > 1e-4 * (p.max - p.min))
+                    // The sidechain switch follows the panel's source pick, not the preset.
+                    def.params.iter().filter(|p| p.id != "sidechainEnable").any(|p| (def.value(d, p) - want.get(p.id).copied().unwrap_or(p.default)).abs() > 1e-4 * (p.max - p.min))
                 });
                 if dirty { format!("{name}*") } else { name.clone() }
             }
@@ -499,21 +502,24 @@ impl Controller {
                         DragAxis { index: i, start: v, norm: def.params[i].to_normalized(v), value: v }
                     })
                 };
-                self.devices.panel.drag = Some(ParamDrag { device, axes: [axis(0), axis(1)], travel: 0.0, active: false });
+                self.devices.panel.drag = Some(ParamDrag { device, axes: [axis(0), axis(1)], travel: 0.0, held: [0.0; 2], active: false });
             }
             1 => {
                 let Some(g) = self.devices.panel.drag.as_mut().filter(|g| g.device == device && (0..2).all(|k| g.axes[k].map(|a| a.index) == param(k))) else { return };
                 g.travel += delta[0].abs() + delta[1].abs();
+                g.held[0] += delta[0];
+                g.held[1] += delta[1];
                 if !g.active && g.travel < DRAG_SLOP {
                     return;
                 }
                 g.active = true;
                 let scale = if fine { 0.2 } else { 1.0 };
+                let held = std::mem::take(&mut g.held);
                 let mut live = Vec::new();
                 for (k, slot) in g.axes.iter_mut().enumerate() {
                     let Some(a) = slot else { continue };
                     let p = &def.params[a.index];
-                    a.norm = (a.norm + delta[k] * rate[k] * scale).clamp(0.0, 1.0);
+                    a.norm = (a.norm + held[k] * rate[k] * scale).clamp(0.0, 1.0);
                     let v = if p.is_discrete() { p.from_normalized(a.norm).round() } else { p.from_normalized(a.norm) };
                     if v != a.value {
                         a.value = v;
@@ -545,14 +551,19 @@ impl Controller {
                 }
             }
             _ => {
-                if let Some(g) = self.devices.panel.drag.take() {
-                    for a in g.axes.into_iter().flatten() {
-                        let _ = self.engine.builtin_set_param(device.0, a.index as u32, a.start);
-                    }
-                    self.ui_dirty = true;
-                }
+                self.panel_cancel_drag();
             }
         }
+    }
+
+    /// Escape or a cancelled pointer: restore the value from before the drag, with no undo step.
+    pub fn panel_cancel_drag(&mut self) -> bool {
+        let Some(g) = self.devices.panel.drag.take() else { return false };
+        for a in g.axes.into_iter().flatten() {
+            let _ = self.engine.builtin_set_param(g.device.0, a.index as u32, a.start);
+        }
+        self.ui_dirty = true;
+        true
     }
 
     fn panel_set(&mut self, device: DeviceId, index: i32, value: impl FnOnce(&ParamDef, f32) -> Option<f32>) {
@@ -618,8 +629,24 @@ impl Controller {
             }
             -1 => {
                 let own = self.project().find_device(device).map(|(ti, _)| self.project().tracks[ti].id);
+                // A source that already listens to this track (directly or through other sidechains) would form a cycle.
+                let feeds_back = |from: TrackId| {
+                    let mut stack = vec![from];
+                    let mut seen = std::collections::HashSet::new();
+                    while let Some(t) = stack.pop() {
+                        if Some(t) == own {
+                            return true;
+                        }
+                        if seen.insert(t)
+                            && let Some(tr) = self.project().track(t)
+                        {
+                            stack.extend(tr.devices.iter().filter_map(|x| x.sidechain));
+                        }
+                    }
+                    false
+                };
                 let mut rows = vec![("None".to_string(), check(d.sidechain.is_none()), Some(MenuPick::Sidechain(device, None)), false)];
-                for t in self.project().tracks.iter().filter(|t| Some(t.id) != own) {
+                for t in self.project().tracks.iter().filter(|t| Some(t.id) != own && (d.sidechain == Some(t.id) || !feeds_back(t.id))) {
                     rows.push((t.name.clone(), check(d.sidechain == Some(t.id)), Some(MenuPick::Sidechain(device, Some(t.id))), false));
                 }
                 rows
@@ -654,9 +681,13 @@ impl Controller {
     }
 
     pub(crate) fn panel_load_preset(&mut self, device: DeviceId, n: usize) {
-        let Some((_, def)) = self.panel_def(device) else { return };
+        let Some((d, def)) = self.panel_def(device) else { return };
         let Some(f) = def.factory.get(n) else { return };
-        let params = saine_core::builtin::DevicePreset::factory(def, f).load_values(def);
+        let mut params = saine_core::builtin::DevicePreset::factory(def, f).load_values(def);
+        // The sidechain switch follows the source picked in the panel, not the preset.
+        if let Some(p) = def.param("sidechainEnable") {
+            params.insert(p.id.into(), def.value(d, p));
+        }
         self.execute(Command::SetDeviceParams { device, params, preset: Some(f.name.to_string()) });
     }
 
