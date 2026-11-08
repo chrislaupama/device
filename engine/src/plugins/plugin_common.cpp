@@ -5,6 +5,9 @@
 
 #if defined(__APPLE__)
 #include <pthread.h>
+#elif defined(__linux__)
+#include <sys/syscall.h>
+#include <unistd.h>
 #endif
 
 namespace saine {
@@ -18,11 +21,23 @@ const char* plugin_format_name(PluginFormat f) noexcept {
     return "?";
 }
 
+#if !defined(__APPLE__) && !defined(__linux__)
+namespace {
+// Windows has no "main thread" query: remember the thread that ran the
+// static initialisers, i.e. the process's initial thread (this library is
+// linked statically into the executable).
+const std::thread::id g_initial_thread = std::this_thread::get_id();
+} // namespace
+#endif
+
 bool on_platform_main_thread() noexcept {
 #if defined(__APPLE__)
     return pthread_main_np() != 0;
+#elif defined(__linux__)
+    // The initial thread's tid equals the process id.
+    return static_cast<pid_t>(::syscall(SYS_gettid)) == ::getpid();
 #else
-    return true;
+    return std::this_thread::get_id() == g_initial_thread;
 #endif
 }
 

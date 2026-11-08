@@ -1,5 +1,6 @@
 #include "wav.hpp"
 
+#include "platform/os.hpp"
 #include "saine_engine.h"
 
 #include <bit>
@@ -207,8 +208,7 @@ int32_t decode_wav_memory(const uint8_t* data, std::size_t size, DecodedAudio& o
 }
 
 int32_t decode_wav_file(const char* utf8_path, DecodedAudio& out, std::string& err) {
-    // TODO(windows): fopen() is not UTF-8 aware on Windows; use _wfopen there.
-    std::FILE* f = std::fopen(utf8_path, "rb");
+    std::FILE* f = os::fopen_utf8(utf8_path, "rb"); // _wfopen on Windows
     if (f == nullptr) {
         err = std::string("cannot open file: ") + utf8_path;
         return SE_ERR_IO;
@@ -266,7 +266,7 @@ int32_t WavFloatWriter::open(const char* utf8_path, uint32_t channels, uint32_t 
         err = "invalid WAV writer parameters";
         return SE_ERR_INVALID_ARG;
     }
-    file_ = std::fopen(utf8_path, "wb");
+    file_ = os::fopen_utf8(utf8_path, "wb"); // _wfopen on Windows
     if (file_ == nullptr) {
         err = std::string("cannot create file: ") + utf8_path;
         return SE_ERR_IO;

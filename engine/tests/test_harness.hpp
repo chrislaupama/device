@@ -34,6 +34,14 @@ inline int& failure_count() {
     return n;
 }
 
+// Set by SKIP(): the test does not apply on this platform/configuration.
+// The runner exits with kSkipExitCode, which CTest reports as "Skipped".
+inline bool& skip_requested() {
+    static bool b = false;
+    return b;
+}
+inline constexpr int kSkipExitCode = 77;
+
 inline void report(const char* file, int line, const std::string& what) {
     ++failure_count();
     std::fprintf(stderr, "%s:%d: FAILED: %s\n", file, line, what.c_str());
@@ -48,6 +56,14 @@ inline void report(const char* file, int line, const std::string& what) {
     static void name();                                                                                                \
     static const th::Registrar TH_CONCAT(th_reg_, name){#name, &name};                                                 \
     static void name()
+
+// Ends the current test as skipped (not passed, not failed) with a reason.
+#define SKIP(reason)                                                                                                   \
+    do {                                                                                                               \
+        std::fprintf(stderr, "  SKIPPED: %s\n", reason);                                                              \
+        th::skip_requested() = true;                                                                                   \
+        return;                                                                                                        \
+    } while (0)
 
 #define CHECK(cond)                                                                                                    \
     do {                                                                                                               \

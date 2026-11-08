@@ -10,6 +10,7 @@
 #include "test_harness.hpp"
 #include "test_hooks.hpp"
 #include "test_util.hpp"
+#include "platform/os.hpp"
 #include "wav.hpp"
 
 #include <algorithm>
@@ -17,7 +18,6 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
-#include <unistd.h>
 #include <vector>
 
 using namespace testutil;
@@ -475,7 +475,7 @@ TEST_CASE(pdc_recorded_take_is_placed_L_earlier) {
         s.audio(2, {clip(1, a, 4000, 0, 4000)}, {clap_latency(10, 1000)});
         REQUIRE(s.publish(e) == SE_OK);
         const std::string dir = (std::filesystem::temp_directory_path() /
-                                 ("saine_pdc_rec_" + std::to_string(::getpid()) + (pdc ? "_on" : "_off")))
+                                 ("saine_pdc_rec_" + std::to_string(saine::os::process_id()) + (pdc ? "_on" : "_off")))
                                     .string();
         std::filesystem::remove_all(dir);
         se_transport_seek(e, 0);
@@ -512,7 +512,7 @@ TEST_CASE(pdc_change_of_L_while_recording_starts_a_new_take) {
     s.audio(2, {}, {clap_latency(10, 1000)});
     REQUIRE(s.publish(e) == SE_OK);
     const std::string dir =
-        (std::filesystem::temp_directory_path() / ("saine_pdc_rec_change_" + std::to_string(::getpid()))).string();
+        (std::filesystem::temp_directory_path() / ("saine_pdc_rec_change_" + std::to_string(saine::os::process_id()))).string();
     std::filesystem::remove_all(dir);
     se_transport_seek(e, 0);
     REQUIRE(se_record_start(e, dir.c_str()) == SE_OK);

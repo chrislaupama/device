@@ -6,6 +6,7 @@
 
 #include "platform/audio_device.hpp"
 #include "test_hooks.hpp"
+#include "platform/os.hpp"
 #include "wav.hpp"
 
 #include <chrono>
@@ -16,7 +17,6 @@
 #include <functional>
 #include <numbers>
 #include <thread>
-#include <unistd.h>
 
 using namespace testutil;
 
@@ -127,7 +127,7 @@ struct TempDir {
     TempDir() {
         static int counter = 0;
         path = (std::filesystem::temp_directory_path() /
-                ("saine_rec_test_" + std::to_string(::getpid()) + "_" + std::to_string(++counter)))
+                ("saine_rec_test_" + std::to_string(saine::os::process_id()) + "_" + std::to_string(++counter)))
                    .string();
         std::filesystem::remove_all(path);
     }
@@ -778,18 +778,15 @@ TEST_CASE(device_output_only_named_device_and_restart) {
     const se_device_info* out = nullptr;
     for (const auto& d : devs)
         if (d.is_default_output) out = &d;
-    if (out == nullptr) {
-        std::fprintf(stderr, "  skipped: no output device\n");
-        return;
-    }
+    if (out == nullptr) SKIP("no default audio output device");
     EngineHandle e(48000, 512);
     se_device_config dc{};
     dc.output_uid = out->uid;
     dc.buffer_size = 512;
     REQUIRE(se_device_configure(e, &dc) == SE_OK);
     if (se_device_start(e) != SE_OK) {
-        std::fprintf(stderr, "  skipped: %s\n", se_last_error());
-        return;
+        const std::string why = std::string("the default output device could not be started: ") + se_last_error();
+        SKIP(why.c_str());
     }
     std::fprintf(stderr, "  real output device: %s\n", out->name);
     se_device_status st{};

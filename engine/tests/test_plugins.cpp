@@ -28,6 +28,17 @@ const char* const kVst3GainUid = "5A17E5A16E0000018A1E7E576A170001";
 const char* const kAuLowpass = "aufx lpas appl";
 const char* const kAuDistortion = "aufx dist appl";
 const char* const kAuDls = "aumu dls  appl";
+const std::string kClapLatency = kPluginDir + "/SaineTestLatency.clap";
+
+// Audio Units exist only on macOS. Tests that need an AU's own behaviour
+// skip elsewhere; tests that only need "some third plugin" use a portable
+// stand-in instead (native_effect).
+#if defined(__APPLE__)
+constexpr bool kHaveAu = true;
+#else
+constexpr bool kHaveAu = false;
+#endif
+constexpr const char* kNoAu = "Audio Units are macOS-only";
 
 se_device_desc au(uint64_t id, const char* au_id, bool enabled = true) {
     se_device_desc d{};
@@ -51,6 +62,13 @@ se_device_desc clap(uint64_t id, const std::string& path, const char* plugin_id,
 }
 
 se_device_desc clap_gain(uint64_t id, bool enabled = true) { return clap(id, kClapGain, "studio.saine.test.gain", enabled); }
+
+// A third, format-distinct effect: Apple's AULowpass on macOS, elsewhere
+// SaineTestLatency.clap (latency 0: a pass-through).
+se_device_desc native_effect(uint64_t id, bool enabled = true) {
+    if constexpr (kHaveAu) return au(id, kAuLowpass, enabled);
+    return clap(id, kClapLatency, "studio.saine.test.latency", enabled);
+}
 
 se_device_desc vst3_gain(uint64_t id, bool enabled = true) {
     se_device_desc d{};
@@ -162,6 +180,7 @@ std::size_t error_count(se_engine* e) {
 // ---------------------------------------------------------------- effects
 
 TEST_CASE(plugin_au_lowpass_attenuates_high_and_passes_low) {
+    if (!kHaveAu) SKIP(kNoAu);
     for (const double freq : {200.0, 15000.0}) {
         EngineHandle e(48000, 256);
         const uint64_t a = load_asset(e, {sine(48000, freq, 48000.0, 0.5)});
@@ -205,7 +224,7 @@ TEST_CASE(plugin_bypass_passes_bit_exact) {
     dry.audio(1, {clip(1, a, 0, 0, 9600)}, {});
     dry.tracks[0].d.pan = 0.3f;
     bypassed.audio(1, {clip(1, a, 0, 0, 9600)},
-                   {au(10, kAuLowpass, false), clap_gain(11, false), vst3_gain(12, false)});
+                   {native_effect(10, false), clap_gain(11, false), vst3_gain(12, false)});
     bypassed.tracks[0].d.pan = 0.3f;
     REQUIRE(dry.publish(e) == SE_OK);
     const auto ref = play_render(e, 9600);
@@ -220,17 +239,22 @@ TEST_CASE(plugin_chain_order_matters) {
     EngineHandle e(48000, 256);
     const uint64_t a = load_asset(e, {sine(24000, 220.0, 48000.0, 0.9)});
     Session5 ab, ba, gg;
-    ab.audio(1, {clip(1, a, 0, 0, 24000)}, {clap_gain(10), au(11, kAuDistortion)});
-    ba.audio(1, {clip(1, a, 0, 0, 24000)}, {au(11, kAuDistortion), clap_gain(10)});
-    REQUIRE(ab.publish(e) == SE_OK);
-    const auto out_ab = left(play_render(e, 24000), 4800);
-    REQUIRE(ba.publish(e) == SE_OK); // same device ids, reordered: instances are kept
-    const auto out_ba = left(play_render(e, 24000), 4800);
-    CHECK_EQ(saine::testing::plugin_instantiations(e), uint64_t{2});
-    double diff = 0;
-    for (std::size_t i = 0; i < out_ab.size(); ++i) diff = std::max(diff, static_cast<double>(std::fabs(out_ab[i] - out_ba[i])));
-    CHECK(diff > 0.01);
-    CHECK(rms(out_ab) > 0.01 && rms(out_ba) > 0.01);
+    if (kHaveAu) { // (no portable nonlinear test plugin: this half needs AUDistortion)
+        ab.audio(1, {clip(1, a, 0, 0, 24000)}, {clap_gain(10), au(11, kAuDistortion)});
+        ba.audio(1, {clip(1, a, 0, 0, 24000)}, {au(11, kAuDistortion), clap_gain(10)});
+        REQUIRE(ab.publish(e) == SE_OK);
+        const auto out_ab = left(play_render(e, 24000), 4800);
+        REQUIRE(ba.publish(e) == SE_OK); // same device ids, reordered: instances are kept
+        const auto out_ba = left(play_render(e, 24000), 4800);
+        CHECK_EQ(saine::testing::plugin_instantiations(e), uint64_t{2});
+        double diff = 0;
+        for (std::size_t i = 0; i < out_ab.size(); ++i)
+            diff = std::max(diff, static_cast<double>(std::fabs(out_ab[i] - out_ba[i])));
+        CHECK(diff > 0.01);
+        CHECK(rms(out_ab) > 0.01 && rms(out_ba) > 0.01);
+    } else {
+        std::fprintf(stderr, "  (nonlinear chain-order half skipped: %s)\n", kNoAu);
+    }
     // Linear chain sanity: gain -> gain = quarter.
     gg.audio(1, {clip(1, a, 0, 0, 24000)}, {clap_gain(20), vst3_gain(21)});
     Session5 dry;
@@ -248,7 +272,7 @@ TEST_CASE(plugin_instances_survive_republish) {
     EngineHandle e(48000, 256);
     const uint64_t a = load_asset(e, {constant(4800, 0.5f)});
     Session5 s;
-    s.audio(1, {clip(1, a, 0, 0, 4800)}, {clap_gain(10), vst3_gain(11), au(12, kAuLowpass)});
+    s.audio(1, {clip(1, a, 0, 0, 4800)}, {clap_gain(10), vst3_gain(11), native_effect(12)});
     REQUIRE(s.publish(e) == SE_OK);
     CHECK_EQ(saine::testing::plugin_instantiations(e), uint64_t{3});
     for (int i = 0; i < 6; ++i) {
@@ -353,6 +377,7 @@ TEST_CASE(plugin_state_round_trip_clap_and_vst3) {
 }
 
 TEST_CASE(plugin_state_round_trip_audio_unit) {
+    if (!kHaveAu) SKIP(kNoAu);
     // AULowpass cutoff (parameter 0) changed -> ClassInfo -> new engine.
     const auto run = [](const std::vector<uint8_t>* state, double cutoff, std::vector<uint8_t>* save) {
         EngineHandle e(48000, 256);
@@ -414,6 +439,7 @@ TEST_CASE(plugin_instrument_clap_sine_onset_and_pitch) {
 }
 
 TEST_CASE(plugin_instrument_dls_onset) {
+    if (!kHaveAu) SKIP(kNoAu);
     EngineHandle e(48000, 256);
     const se_device_desc dls = au(31, kAuDls);
     Session5 s;
@@ -434,7 +460,8 @@ TEST_CASE(plugin_instrument_dls_onset) {
 TEST_CASE(plugin_instrument_seek_and_stop_send_all_notes_off) {
     const se_device_desc sine_plug = clap(30, kClapSine, "studio.saine.test.sine");
     const se_device_desc dls = au(31, kAuDls);
-    for (int which = 0; which < 2; ++which) {
+    if (!kHaveAu) std::fprintf(stderr, "  (DLSMusicDevice half skipped: %s)\n", kNoAu);
+    for (int which = 0; which < (kHaveAu ? 2 : 1); ++which) {
         // Controls, rendered straight through, window = note age 300..400 ms:
         // the note held (`held`) and the note ending at 200 ms (`released`,
         // the same note-off the seek/stop should produce).
@@ -535,7 +562,7 @@ TEST_CASE(plugin_missing_is_load_error_and_passes_through) {
 TEST_CASE(plugin_latency_and_editor_thread_check) {
     EngineHandle e(48000, 256);
     Session5 s;
-    s.audio(1, {}, {au(10, kAuLowpass), clap_gain(11), vst3_gain(12)});
+    s.audio(1, {}, {native_effect(10), clap_gain(11), vst3_gain(12)});
     REQUIRE(s.publish(e) == SE_OK);
     for (uint64_t id : {10, 11, 12}) {
         uint32_t lat = 99;

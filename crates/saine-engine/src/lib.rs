@@ -847,6 +847,13 @@ pub fn scan_plugins(cache_path: &Path, rescan: bool, progress: &mut dyn FnMut(&s
     if rescan {
         cmd.arg("--rescan");
     }
+    #[cfg(windows)]
+    {
+        // The scanner is a console program: no console window from a GUI app.
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     let mut child = cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().map_err(io_err)?;
     let mut stdout = child.stdout.take().expect("piped stdout");
     let reader = std::thread::spawn(move || {

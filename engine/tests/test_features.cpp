@@ -131,8 +131,8 @@ TEST_CASE(offline_transport_no_stranded_commands_under_concurrent_render) {
 TEST_CASE(transport_commands_across_device_start_stop) {
     EngineHandle e(48000, 256);
     if (se_device_start(e) != SE_OK) {
-        std::fprintf(stderr, "  (skipped: no audio device: %s)\n", se_last_error());
-        return;
+        const std::string why = std::string("no audio output device could be opened: ") + se_last_error();
+        SKIP(why.c_str());
     }
     // While running, commands are queued for the callback.
     REQUIRE(se_transport_seek(e, 1000) == SE_OK);

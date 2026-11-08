@@ -6,7 +6,12 @@
 
 namespace {
 bool entry_init(const char*) {
+#if defined(_WIN32)
+    // raise(SIGSEGV) on Windows is a clean exit(3), not a crash: fault for real.
+    *static_cast<volatile int*>(nullptr) = 1;
+#else
     std::raise(SIGSEGV);
+#endif
     return false;
 }
 void entry_deinit() {}

@@ -3,11 +3,24 @@
 #include <clap/clap.h>
 #include <pluginterfaces/base/ipluginbase.h>
 
+#include <filesystem>
 #include <map>
 #include <mutex>
 
 #if defined(__APPLE__)
 #include <CoreFoundation/CoreFoundation.h>
+#elif defined(_WIN32)
+#include "platform/os.hpp"
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include "platform/os.hpp"
+#include <dlfcn.h>
 #endif
 
 namespace saine {
@@ -48,6 +61,80 @@ CFBundleRef open_bundle(const std::string& path, std::string& err) {
     }
     return bundle;
 }
+#else // Windows / Linux: plain shared libraries
+
+// Architecture folder of the VST3 bundle layout
+// (<name>.vst3/Contents/<arch>-win/<name>.vst3, .../<arch>-linux/<name>.so).
+constexpr const char* vst3_arch() {
+#if defined(_M_ARM64EC)
+    return "arm64ec";
+#elif defined(_M_ARM64) || defined(__aarch64__)
+#if defined(_WIN32)
+    return "arm64";
+#else
+    return "aarch64";
+#endif
+#elif defined(_M_X64) || defined(__x86_64__)
+    return "x86_64";
+#elif defined(_M_IX86) || defined(__i386__)
+#if defined(_WIN32)
+    return "x86";
+#else
+    return "i386";
+#endif
+#else
+    return "unknown";
+#endif
+}
+
+// A .vst3 bundle directory resolves to the binary for this architecture; a
+// plain file (legacy single-file .vst3 on Windows) is loaded as is.
+std::string vst3_binary_path(const std::string& path) {
+    namespace fs = std::filesystem;
+    const fs::path p = os::path_from_utf8(path);
+    std::error_code ec;
+    if (!fs::is_directory(p, ec)) return path;
+    const fs::path stem = p.stem();
+#if defined(_WIN32)
+    return os::path_to_utf8(p / "Contents" / (std::string(vst3_arch()) + "-win") / (stem.native() + L".vst3"));
+#else
+    return os::path_to_utf8(p / "Contents" / (std::string(vst3_arch()) + "-linux") / (stem.native() + ".so"));
+#endif
+}
+
+void* open_library(const std::string& path, std::string& err) {
+#if defined(_WIN32)
+    // Altered search path: the plugin's own folder is searched for the DLLs
+    // it depends on.
+    HMODULE h = LoadLibraryExW(os::widen(path).c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (h == nullptr) {
+        err = "could not load " + path + " (error " + std::to_string(GetLastError()) + ")";
+        return nullptr;
+    }
+    return static_cast<void*>(h);
+#else
+    void* h = ::dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (h == nullptr) {
+        const char* e = ::dlerror();
+        err = "could not load " + path + (e != nullptr ? std::string(": ") + e : std::string());
+        return nullptr;
+    }
+    return h;
+#endif
+}
+
+void* find_symbol(void* lib, const char* name) {
+#if defined(_WIN32)
+    return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(lib), name));
+#else
+    return ::dlsym(lib, name);
+#endif
+}
+
+template <class Fn> Fn find_function(void* lib, const char* name) {
+    return reinterpret_cast<Fn>(find_symbol(lib, name));
+}
+
 #endif
 
 } // namespace
@@ -94,8 +181,29 @@ std::shared_ptr<ClapModule> load_clap_module(const std::string& path, std::strin
     g_clap_modules[path] = m;
     return m;
 #else
-    err = "CLAP loading is only implemented on macOS";
-    return nullptr;
+    // Windows/Linux: the .clap is a single shared library. The library is
+    // never unloaded (see the header).
+    void* lib = open_library(path, err);
+    if (lib == nullptr) return nullptr;
+    auto m = std::make_shared<ClapModule>();
+    m->path = path;
+    m->bundle = lib;
+    const auto* entry = static_cast<const clap_plugin_entry*>(find_symbol(lib, "clap_entry"));
+    if (entry == nullptr) {
+        err = "no clap_entry symbol in " + path;
+        return nullptr;
+    }
+    if (!clap_version_is_compatible(entry->clap_version)) {
+        err = "incompatible CLAP version in " + path;
+        return nullptr;
+    }
+    if (!entry->init(path.c_str())) {
+        err = "clap_entry.init failed for " + path;
+        return nullptr;
+    }
+    m->entry = entry;
+    g_clap_modules[path] = m;
+    return m;
 #endif
 }
 
@@ -131,8 +239,48 @@ std::shared_ptr<Vst3Module> load_vst3_module(const std::string& path, std::strin
     g_vst3_modules[path] = m;
     return m;
 #else
-    err = "VST3 loading is only implemented on macOS";
-    return nullptr;
+    const std::string binary = vst3_binary_path(path);
+    void* lib = open_library(binary, err);
+    if (lib == nullptr) return nullptr;
+    auto m = std::make_shared<Vst3Module>();
+    m->path = path;
+    m->bundle = lib;
+    using FactoryFn = Steinberg::IPluginFactory* (*)();
+    auto get_factory = find_function<FactoryFn>(lib, "GetPluginFactory");
+    if (get_factory == nullptr) {
+        err = "not a VST3 module (GetPluginFactory missing): " + binary;
+        return nullptr;
+    }
+#if defined(_WIN32)
+    // InitDll/ExitDll are optional on Windows.
+    using InitFn = bool (*)();
+    if (auto init = find_function<InitFn>(lib, "InitDll"); init != nullptr && !init()) {
+        err = "InitDll failed for " + binary;
+        return nullptr;
+    }
+    m->exit = find_function<Vst3Module::ExitFn>(lib, "ExitDll");
+#else
+    // Linux: ModuleEntry(handle) / ModuleExit() are mandatory.
+    using EntryFn = bool (*)(void*);
+    auto entry = find_function<EntryFn>(lib, "ModuleEntry");
+    auto exitfn = find_function<Vst3Module::ExitFn>(lib, "ModuleExit");
+    if (entry == nullptr || exitfn == nullptr) {
+        err = "not a VST3 module (ModuleEntry/ModuleExit missing): " + binary;
+        return nullptr;
+    }
+    if (!entry(lib)) {
+        err = "ModuleEntry failed for " + binary;
+        return nullptr;
+    }
+    m->exit = exitfn;
+#endif
+    m->factory = get_factory();
+    if (m->factory == nullptr) {
+        err = "GetPluginFactory returned NULL for " + binary;
+        return nullptr;
+    }
+    g_vst3_modules[path] = m;
+    return m;
 #endif
 }
 

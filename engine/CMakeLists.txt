@@ -62,7 +62,8 @@ set(SAINE_VST3_HOST_SOURCES
   ${SAINE_VST3SDK_DIR}/public.sdk/source/vst/utility/stringconvert.cpp
   ${SAINE_VST3SDK_DIR}/public.sdk/source/common/commonstringconvert.cpp)
 # Third-party code is compiled without our warning set.
-set_source_files_properties(${SAINE_VST3_HOST_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+set_source_files_properties(${SAINE_VST3_HOST_SOURCES} PROPERTIES COMPILE_OPTIONS
+  "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>")
 
 # ---------------------------------------------------------------- warnings
 add_library(saine_engine_warnings INTERFACE)
@@ -112,7 +113,11 @@ add_library(saine_engine STATIC
   src/platform/coreaudio_device.cpp
   src/platform/pipewire_device.cpp
   src/platform/wasapi_device.cpp
+  src/platform/os.cpp
 )
+if(NOT APPLE)
+  target_sources(saine_engine PRIVATE src/platform/plugin_editor_stub.cpp)
+endif()
 if(APPLE)
   target_sources(saine_engine PRIVATE src/platform/plugin_editor_mac.mm)
   # ARC; bridging casts are C-style by necessity.
@@ -140,6 +145,12 @@ if(APPLE)
   target_link_libraries(saine_engine PUBLIC
     "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreAudio" "-framework CoreFoundation"
     "-framework CoreAudioKit" "-framework AppKit" "-framework Foundation")
+endif()
+if(WIN32)
+  # ole32: COM (WASAPI, MMDevice); shell32: CommandLineToArgvW; avrt: MMCSS.
+  target_link_libraries(saine_engine PUBLIC ole32 shell32 avrt)
+elseif(NOT APPLE)
+  target_link_libraries(saine_engine PUBLIC ${CMAKE_DL_LIBS})
 endif()
 find_package(Threads REQUIRED)
 target_link_libraries(saine_engine PUBLIC Threads::Threads)
@@ -194,6 +205,61 @@ if(SAINE_ENGINE_BUILD_TEST_PLUGINS AND APPLE)
   saine_test_bundle(SaineTestLatencyVst3 SaineTestLatency vst3 test_plugins/saine_test_latency_vst3.cpp
     ${SAINE_VST3_IID_SOURCES})
   target_include_directories(SaineTestLatencyVst3 SYSTEM PRIVATE ${SAINE_VST3SDK_DIR})
+  add_custom_target(saine_test_plugins DEPENDS SaineTestGainClap SaineTestSineClap SaineTestCrashClap SaineTestGainVst3
+    SaineTestLatencyClap SaineTestLatencyVst3)
+elseif(SAINE_ENGINE_BUILD_TEST_PLUGINS)
+  # Windows / Linux: a CLAP is a single shared library named *.clap; a VST3
+  # is a bundle folder <name>.vst3/Contents/<arch>-win/<name>.vst3 (DLL) or
+  # <name>.vst3/Contents/<arch>-linux/<name>.so. "$<1:...>" keeps
+  # multi-config generators from appending a per-config subfolder.
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64|amd64|x64)$")
+    set(_saine_vst3_arch x86_64)
+  elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
+    if(WIN32)
+      set(_saine_vst3_arch arm64)
+    else()
+      set(_saine_vst3_arch aarch64)
+    endif()
+  else()
+    set(_saine_vst3_arch ${CMAKE_SYSTEM_PROCESSOR})
+  endif()
+  function(saine_test_module target output dir suffix)
+    add_library(${target} MODULE ${ARGN})
+    set_target_properties(${target} PROPERTIES
+      PREFIX ""
+      SUFFIX ${suffix}
+      OUTPUT_NAME ${output}
+      LIBRARY_OUTPUT_DIRECTORY "$<1:${dir}>"
+      RUNTIME_OUTPUT_DIRECTORY "$<1:${dir}>"
+      CXX_VISIBILITY_PRESET hidden
+      VISIBILITY_INLINES_HIDDEN ON)
+    if(MSVC)
+      target_link_options(${target} PRIVATE /NOIMPLIB /NOEXP)
+    endif()
+  endfunction()
+  function(saine_test_clap target output)
+    saine_test_module(${target} ${output} "${SAINE_TEST_PLUGIN_DIR}" ".clap" ${ARGN})
+    target_include_directories(${target} SYSTEM PRIVATE ${SAINE_CLAP_INCLUDE})
+  endfunction()
+  function(saine_test_vst3 target output)
+    if(WIN32)
+      set(_dir "${SAINE_TEST_PLUGIN_DIR}/${output}.vst3/Contents/${_saine_vst3_arch}-win")
+      set(_suffix ".vst3")
+    else()
+      set(_dir "${SAINE_TEST_PLUGIN_DIR}/${output}.vst3/Contents/${_saine_vst3_arch}-linux")
+      set(_suffix ".so")
+    endif()
+    saine_test_module(${target} ${output} "${_dir}" "${_suffix}" ${ARGN} ${SAINE_VST3_IID_SOURCES})
+    target_include_directories(${target} SYSTEM PRIVATE ${SAINE_VST3SDK_DIR})
+  endfunction()
+  saine_test_clap(SaineTestGainClap SaineTestGain test_plugins/saine_test_clap.cpp)
+  target_compile_definitions(SaineTestGainClap PRIVATE SAINE_TEST_CLAP_GAIN=1)
+  saine_test_clap(SaineTestSineClap SaineTestSine test_plugins/saine_test_clap.cpp)
+  target_compile_definitions(SaineTestSineClap PRIVATE SAINE_TEST_CLAP_SINE=1)
+  saine_test_clap(SaineTestCrashClap SaineTestCrash test_plugins/saine_test_crash.cpp)
+  saine_test_clap(SaineTestLatencyClap SaineTestLatency test_plugins/saine_test_latency_clap.cpp)
+  saine_test_vst3(SaineTestGainVst3 SaineTestGain test_plugins/saine_test_vst3.cpp)
+  saine_test_vst3(SaineTestLatencyVst3 SaineTestLatency test_plugins/saine_test_latency_vst3.cpp)
   add_custom_target(saine_test_plugins DEPENDS SaineTestGainClap SaineTestSineClap SaineTestCrashClap SaineTestGainVst3
     SaineTestLatencyClap SaineTestLatencyVst3)
 endif()

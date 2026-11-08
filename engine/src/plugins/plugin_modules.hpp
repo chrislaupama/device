@@ -19,14 +19,14 @@ namespace saine {
 struct ClapModule {
     std::string path;
     const clap_plugin_entry* entry = nullptr;
-    void* bundle = nullptr; // CFBundleRef
+    void* bundle = nullptr; // CFBundleRef (macOS) / HMODULE / dlopen handle (never unloaded)
     ~ClapModule();
 };
 
 struct Vst3Module {
     std::string path;
     Steinberg::IPluginFactory* factory = nullptr; // owned reference
-    void* bundle = nullptr;                       // CFBundleRef
+    void* bundle = nullptr;                       // CFBundleRef (macOS) / HMODULE / dlopen handle
     using ExitFn = bool (*)();
     ExitFn exit = nullptr;
     ~Vst3Module();

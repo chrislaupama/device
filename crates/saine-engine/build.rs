@@ -37,9 +37,10 @@ fn main() {
     // The static library lands in the CMake build tree.
     println!("cargo:rustc-link-search=native={}", build.display());
     println!("cargo:rustc-link-lib=static=saine_engine");
-    println!("cargo:rustc-env=SAINE_PLUGIN_SCANNER_BUILT={}", build.join("saine_plugin_scanner").display());
-    println!("cargo:rustc-env=SAINE_TEST_PLUGIN_DIR={}", build.join("test_plugins").display());
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
+    let exe_suffix = if target_os == "windows" { ".exe" } else { "" };
+    println!("cargo:rustc-env=SAINE_PLUGIN_SCANNER_BUILT={}", build.join(format!("saine_plugin_scanner{exe_suffix}")).display());
+    println!("cargo:rustc-env=SAINE_TEST_PLUGIN_DIR={}", build.join("test_plugins").display());
     match target_os.as_str() {
         "macos" => {
             println!("cargo:rustc-link-lib=c++");
@@ -48,7 +49,16 @@ fn main() {
                 println!("cargo:rustc-link-lib=framework={fw}");
             }
         }
-        "linux" => println!("cargo:rustc-link-lib=stdc++"),
+        "linux" => {
+            println!("cargo:rustc-link-lib=stdc++");
+            println!("cargo:rustc-link-lib=dl");
+        }
+        "windows" => {
+            // COM (WASAPI / MMDevice), CommandLineToArgvW, MMCSS.
+            for lib in ["ole32", "shell32", "avrt", "user32"] {
+                println!("cargo:rustc-link-lib={lib}");
+            }
+        }
         _ => {}
     }
 }

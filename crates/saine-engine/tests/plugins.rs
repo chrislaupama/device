@@ -206,9 +206,15 @@ fn scanner_finds_test_plugins_and_blocklists_the_crash() {
     assert_eq!((gain.audio_inputs, gain.audio_outputs), (2, 2));
     assert_eq!(find("studio.saine.test.sine").unwrap().plugin.kind, PluginKind::Instrument);
     assert_eq!(find("5A17E5A16E0000018A1E7E576A170001").unwrap().plugin.format, PluginFormat::Vst3);
-    let lowpass = find("aufx lpas appl").expect("Apple AULowpass");
-    assert_eq!(lowpass.plugin.format, PluginFormat::AudioUnit);
-    assert!(lowpass.plugin.path.is_none());
+    // Audio Units exist only on macOS.
+    #[cfg(target_os = "macos")]
+    {
+        let lowpass = find("aufx lpas appl").expect("Apple AULowpass");
+        assert_eq!(lowpass.plugin.format, PluginFormat::AudioUnit);
+        assert!(lowpass.plugin.path.is_none());
+    }
+    #[cfg(not(target_os = "macos"))]
+    assert!(report.plugins.iter().all(|p| p.plugin.format != PluginFormat::AudioUnit));
     assert!(report.failed.iter().any(|(t, why)| t.ends_with("SaineTestCrash.clap") && why.contains("crashed")), "{:?}", report.failed);
     let again = saine_engine::scan_plugins(&cache, false, &mut |_| {}).unwrap();
     assert!(again.from_cache);

@@ -1,11 +1,17 @@
 // saine_plugin_scanner: out-of-process plugin scanner.
 //
 //   saine_plugin_scanner --scan --cache <file.json> [--rescan]
-//       Coordinator. Enumerates Audio Units (types aufx/aumf/aumu) and the
-//       VST3/CLAP bundles in /Library/Audio/Plug-Ins/{VST3,CLAP},
-//       ~/Library/Audio/Plug-Ins/{VST3,CLAP} and every entry of
-//       $SAINE_PLUGIN_PATH (':'-separated; a directory is searched, a
-//       .vst3/.clap path is taken as a bundle). Each AU / bundle not in the
+//       Coordinator. Enumerates Audio Units (macOS: types aufx/aumf/aumu)
+//       and the VST3/CLAP bundles in the platform's standard folders
+//         macOS:   /Library/Audio/Plug-Ins/{VST3,CLAP},
+//                  ~/Library/Audio/Plug-Ins/{VST3,CLAP}
+//         Windows: %COMMONPROGRAMFILES%\{VST3,CLAP},
+//                  %LOCALAPPDATA%\Programs\Common\{VST3,CLAP}, %CLAP_PATH%
+//         Linux:   ~/.vst3, /usr/lib/vst3, /usr/local/lib/vst3,
+//                  ~/.clap, /usr/lib/clap, /usr/local/lib/clap, $CLAP_PATH
+//       and every entry of $SAINE_PLUGIN_PATH (':'-separated, ';' on
+//       Windows; a directory is searched, a .vst3/.clap path is taken as a
+//       bundle). Each AU / bundle not in the
 //       cache (or whose stamp changed: AU version, bundle modification time)
 //       is inspected by a child process "--scan-one <format> <target>" with
 //       a timeout ($SAINE_PLUGIN_SCAN_TIMEOUT_MS, default 10000; up to 4
@@ -19,10 +25,11 @@
 //   saine_plugin_scanner --scan-one audio_unit|vst3|clap <id-or-bundle>
 //       Child. Prints a JSON array of plugins, exit 0; on failure prints the
 //       reason to stderr and exits 2.
+#include "platform/os.hpp"
 #include "plugins/plugin_scan.hpp"
 
 #include <algorithm>
-#include <cerrno>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -35,20 +42,20 @@
 #include <thread>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <fcntl.h>
-#include <signal.h>
-#include <spawn.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <unistd.h>
-
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
+#include <io.h>
+#include <windows.h>
 #endif
 
-extern char** environ;
-
 namespace fs = std::filesystem;
+namespace os = saine::os;
 using saine::ScannedPlugin;
 
 namespace {
@@ -253,7 +260,7 @@ ScannedPlugin plugin_from_json(const Json& j) {
 }
 
 std::string read_file(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(os::path_from_utf8(path), std::ios::binary);
     std::ostringstream ss;
     ss << f.rdbuf();
     return ss.str();
@@ -276,30 +283,31 @@ struct CacheEntry {
     std::vector<ScannedPlugin> plugins;
 };
 
-int64_t mtime_ns(const std::string& p) {
-    struct stat st {};
-    if (::stat(p.c_str(), &st) != 0) return 0;
-#if defined(__APPLE__)
-    return static_cast<int64_t>(st.st_mtimespec.tv_sec) * 1000000000 + st.st_mtimespec.tv_nsec;
-#else
-    return static_cast<int64_t>(st.st_mtim.tv_sec) * 1000000000 + st.st_mtim.tv_nsec;
-#endif
-}
+// Binary folders inside a bundle's Contents/ (macOS bundles and the VST3
+// bundle layout on Windows/Linux).
+constexpr const char* kBundleBinaryDirs[] = {"MacOS",        "x86_64-win",    "arm64-win",   "arm64ec-win",
+                                             "x86_64-linux", "aarch64-linux", "i386-linux"};
 
-// Newest modification time of the bundle, its Info.plist and its binaries.
-std::string bundle_stamp(const std::string& path) {
-    int64_t m = std::max(mtime_ns(path), mtime_ns(path + "/Contents/Info.plist"));
+// Newest modification time of the bundle, its Info.plist and its binaries
+// (a single-file bundle, e.g. a CLAP on Windows/Linux: the file's own).
+std::string bundle_stamp(const fs::path& path) {
+    const std::string p = os::path_to_utf8(path);
+    int64_t m = std::max(os::file_mtime_ns(p), os::file_mtime_ns(p + "/Contents/Info.plist"));
     std::error_code ec;
-    for (const auto& e : fs::directory_iterator(path + "/Contents/MacOS", ec)) m = std::max(m, mtime_ns(e.path().string()));
+    for (const char* sub : kBundleBinaryDirs)
+        for (const auto& e : fs::directory_iterator(path / "Contents" / sub, ec))
+            m = std::max(m, os::file_mtime_ns(os::path_to_utf8(e.path())));
     return std::to_string(m);
 }
 
 void find_bundles(const fs::path& dir, int depth, std::vector<Item>& out) {
     std::error_code ec;
     const auto add = [&](const fs::path& p) {
-        const std::string ext = p.extension().string();
+        std::string ext = os::path_to_utf8(p.extension());
+        for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         if (ext == ".vst3" || ext == ".clap") {
-            out.push_back(Item{ext == ".vst3" ? "vst3" : "clap", p.string(), p.filename().string(), bundle_stamp(p.string())});
+            out.push_back(Item{ext == ".vst3" ? "vst3" : "clap", os::path_to_utf8(p), os::path_to_utf8(p.filename()),
+                               bundle_stamp(p)});
             return true;
         }
         return false;
@@ -319,19 +327,38 @@ std::vector<Item> enumerate_items() {
         items.push_back(Item{"audio_unit", au.id, au.vendor.empty() ? au.name : au.vendor + ": " + au.name,
                              std::to_string(au.version)});
     std::vector<std::string> dirs;
-    const char* home = std::getenv("HOME");
+    std::string home, v;
+    const auto split = [&](const std::string& list) {
+        std::stringstream ss(list);
+        std::string part;
+        while (std::getline(ss, part, os::path_list_separator()))
+            if (!part.empty()) dirs.push_back(part);
+    };
+#if defined(__APPLE__)
+    os::get_env("HOME", home);
     for (const char* sub : {"VST3", "CLAP"}) {
         dirs.push_back(std::string("/Library/Audio/Plug-Ins/") + sub);
-        if (home != nullptr) dirs.push_back(std::string(home) + "/Library/Audio/Plug-Ins/" + sub);
+        if (!home.empty()) dirs.push_back(home + "/Library/Audio/Plug-Ins/" + sub);
     }
-    if (const char* extra = std::getenv("SAINE_PLUGIN_PATH")) {
-        std::stringstream ss(extra);
-        std::string part;
-        while (std::getline(ss, part, ':'))
-            if (!part.empty()) dirs.push_back(part);
+#elif defined(_WIN32)
+    for (const char* sub : {"VST3", "CLAP"}) {
+        if (os::get_env("COMMONPROGRAMFILES", v) && !v.empty()) dirs.push_back(v + "\\" + sub);
+        if (os::get_env("LOCALAPPDATA", v) && !v.empty()) dirs.push_back(v + "\\Programs\\Common\\" + sub);
     }
+    if (os::get_env("CLAP_PATH", v)) split(v);
+#else
+    os::get_env("HOME", home);
+    if (!home.empty()) dirs.push_back(home + "/.vst3");
+    dirs.push_back("/usr/lib/vst3");
+    dirs.push_back("/usr/local/lib/vst3");
+    if (!home.empty()) dirs.push_back(home + "/.clap");
+    dirs.push_back("/usr/lib/clap");
+    dirs.push_back("/usr/local/lib/clap");
+    if (os::get_env("CLAP_PATH", v)) split(v);
+#endif
+    if (os::get_env("SAINE_PLUGIN_PATH", v)) split(v);
     std::vector<Item> bundles;
-    for (const auto& d : dirs) find_bundles(d, 0, bundles);
+    for (const auto& d : dirs) find_bundles(os::path_from_utf8(d), 0, bundles);
     // De-duplicate (a bundle reachable from several roots).
     std::map<std::string, Item> unique;
     for (auto& b : bundles) unique.emplace(b.key(), std::move(b));
@@ -377,57 +404,47 @@ bool write_cache(const std::string& path, const std::map<std::string, CacheEntry
     }
     o << "\n]}\n";
     std::error_code ec;
-    const fs::path p(path);
+    const fs::path p = os::path_from_utf8(path);
     if (p.has_parent_path()) fs::create_directories(p.parent_path(), ec);
-    const std::string tmp = path + ".tmp" + std::to_string(::getpid());
+    const fs::path tmp = os::path_from_utf8(path + ".tmp" + std::to_string(os::process_id()));
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f) return false;
         f << o.str();
         if (!f) return false;
     }
-    return ::rename(tmp.c_str(), path.c_str()) == 0;
+    fs::rename(tmp, p, ec); // replaces an existing cache atomically (also on Windows)
+    return !ec;
 }
 
 // ---------------------------------------------------------------- children
 
-std::string self_path(const char* argv0) {
-#if defined(__APPLE__)
-    char buf[4096];
-    uint32_t size = sizeof buf;
-    if (_NSGetExecutablePath(buf, &size) == 0) {
-        char real[PATH_MAX];
-        if (::realpath(buf, real) != nullptr) return real;
-        return buf;
-    }
-#endif
-    return argv0;
+std::string self_path(const std::string& argv0) {
+    std::string p = os::executable_path();
+    return p.empty() ? argv0 : p;
 }
 
 struct Child {
     std::size_t item = 0;
-    pid_t pid = -1;
+    os::ChildProcess process;
     std::string out_file, err_file;
     std::chrono::steady_clock::time_point start;
 };
 
 bool spawn_child(const std::string& exe, const Item& item, const std::string& tmpdir, std::size_t index, Child& c) {
     c.item = index;
-    c.out_file = tmpdir + "/scan-" + std::to_string(::getpid()) + "-" + std::to_string(index) + ".out";
-    c.err_file = tmpdir + "/scan-" + std::to_string(::getpid()) + "-" + std::to_string(index) + ".err";
-    posix_spawn_file_actions_t fa;
-    posix_spawn_file_actions_init(&fa);
-    posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
-    posix_spawn_file_actions_addopen(&fa, 1, c.out_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
-    posix_spawn_file_actions_addopen(&fa, 2, c.err_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
-    std::vector<std::string> args = {exe, "--scan-one", item.format, item.target};
-    std::vector<char*> argv;
-    for (auto& a : args) argv.push_back(a.data());
-    argv.push_back(nullptr);
-    const int rc = posix_spawn(&c.pid, exe.c_str(), &fa, nullptr, argv.data(), environ);
-    posix_spawn_file_actions_destroy(&fa);
+    const std::string stem = tmpdir + "/scan-" + std::to_string(os::process_id()) + "-" + std::to_string(index);
+    c.out_file = stem + ".out";
+    c.err_file = stem + ".err";
+    std::string err;
+    const bool ok = c.process.spawn(exe, {"--scan-one", item.format, item.target}, c.out_file, c.err_file, err);
     c.start = std::chrono::steady_clock::now();
-    return rc == 0;
+    return ok;
+}
+
+void remove_file(const std::string& path) {
+    std::error_code ec;
+    fs::remove(os::path_from_utf8(path), ec);
 }
 
 std::string trim(std::string s) {
@@ -438,7 +455,7 @@ std::string trim(std::string s) {
 int run_coordinator(const std::string& exe, const std::string& cache_path, bool rescan) {
     const auto t_start = std::chrono::steady_clock::now();
     long timeout_ms = 10000;
-    if (const char* t = std::getenv("SAINE_PLUGIN_SCAN_TIMEOUT_MS")) timeout_ms = std::max(100L, std::atol(t));
+    if (std::string t; os::get_env("SAINE_PLUGIN_SCAN_TIMEOUT_MS", t)) timeout_ms = std::max(100L, std::atol(t.c_str()));
     std::map<std::string, CacheEntry> cache = rescan ? std::map<std::string, CacheEntry>{} : load_cache(cache_path);
     const std::vector<Item> items = enumerate_items();
 
@@ -456,9 +473,10 @@ int run_coordinator(const std::string& exe, const std::string& cache_path, bool 
     }
     std::fflush(stderr);
 
-    const char* tmp_env = std::getenv("TMPDIR");
-    std::string tmpdir = tmp_env != nullptr && *tmp_env ? tmp_env : "/tmp";
-    while (!tmpdir.empty() && tmpdir.back() == '/') tmpdir.pop_back();
+    std::error_code tec;
+    std::string tmpdir = os::path_to_utf8(fs::temp_directory_path(tec));
+    if (tec || tmpdir.empty()) tmpdir = ".";
+    while (tmpdir.size() > 1 && (tmpdir.back() == '/' || tmpdir.back() == '\\')) tmpdir.pop_back();
     const std::size_t parallel = std::clamp<std::size_t>(std::thread::hardware_concurrency(), 1, 4);
     std::vector<Child> running;
     std::size_t next = 0;
@@ -478,18 +496,17 @@ int run_coordinator(const std::string& exe, const std::string& cache_path, bool 
         }
         for (auto ch = running.begin(); ch != running.end();) {
             const Item& it = items[ch->item];
-            int status = 0;
-            const pid_t r = ::waitpid(ch->pid, &status, WNOHANG);
             const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                                      std::chrono::steady_clock::now() - ch->start)
                                      .count();
             CacheEntry e{it.format, it.target, it.stamp, false, "", {}};
             bool done = false;
-            if (r == ch->pid) {
+            os::ExitStatus status;
+            if (ch->process.poll(status)) {
                 done = true;
-                if (WIFSIGNALED(status)) {
-                    e.reason = "crashed (signal " + std::to_string(WTERMSIG(status)) + ")";
-                } else if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+                if (status.crashed) {
+                    e.reason = status.describe();
+                } else if (status.code == 0) {
                     Json arr;
                     const std::string out = read_file(ch->out_file);
                     if (Parser(out).parse(arr) && arr.type == Json::Arr) {
@@ -500,17 +517,16 @@ int run_coordinator(const std::string& exe, const std::string& cache_path, bool 
                     }
                 } else {
                     e.reason = trim(read_file(ch->err_file));
-                    if (e.reason.empty()) e.reason = "scan failed (exit " + std::to_string(WEXITSTATUS(status)) + ")";
+                    if (e.reason.empty()) e.reason = "scan failed (" + status.describe() + ")";
                 }
             } else if (elapsed > timeout_ms) {
-                ::kill(ch->pid, SIGKILL);
-                ::waitpid(ch->pid, &status, 0);
+                ch->process.kill();
                 done = true;
                 e.reason = "timed out after " + std::to_string(timeout_ms) + " ms";
             }
             if (done) {
-                ::unlink(ch->out_file.c_str());
-                ::unlink(ch->err_file.c_str());
+                remove_file(ch->out_file);
+                remove_file(ch->err_file);
                 if (!e.ok) std::fprintf(stderr, "progress: failed %s: %s\n", it.name.c_str(), e.reason.c_str());
                 result[it.key()] = std::move(e);
                 ch = running.erase(ch);
@@ -549,6 +565,11 @@ int run_coordinator(const std::string& exe, const std::string& cache_path, bool 
 }
 
 int run_child(const std::string& format, const std::string& target) {
+#if defined(_WIN32)
+    // A crashing plugin must not open a Windows Error Reporting dialog: the
+    // coordinator reports the crash itself.
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+#endif
     std::vector<ScannedPlugin> plugins;
     std::string err;
     bool ok = false;
@@ -578,7 +599,11 @@ void usage() {
 } // namespace
 
 int main(int argc, char** argv) {
-    std::vector<std::string> args(argv + 1, argv + argc);
+#if defined(_WIN32)
+    // Byte-exact JSON on stdout (no "\n" -> "\r\n" translation).
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+    const std::vector<std::string> args = os::utf8_args(argc, argv);
     if (args.size() == 3 && args[0] == "--scan-one") return run_child(args[1], args[2]);
     if (!args.empty() && args[0] == "--scan") {
         std::string cache;
@@ -595,7 +620,7 @@ int main(int argc, char** argv) {
             usage();
             return 64;
         }
-        return run_coordinator(self_path(argv[0]), cache, rescan);
+        return run_coordinator(self_path(argc > 0 ? argv[0] : ""), cache, rescan);
     }
     usage();
     return 64;
