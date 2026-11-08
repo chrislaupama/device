@@ -1645,7 +1645,7 @@ fn device_steps() -> Vec<Step> {
                 .ok_or(format!("page {} dirs {dirs} rows {rows} status {:?}", s.get_settings_page(), s.get_plugins_status()))
         })),
         Do("settings: click “Rescan all plugins”", Box::new(|a| {
-            let dirs = slint::Model::row_count(&a.global::<Studio>().get_scan_dirs()) as f32;
+            let dirs = slint::Model::row_count(&a.global::<Studio>().get_scan_dirs()).min(8) as f32; // list is at most 8 rows tall
             let content_w = 960.0 - 187.0;
             let card_x = 20.5 + ((content_w - 41.0) / 2.0 + 4.5);
             let card_y = 91.0 + dirs * 30.5 + 86.0;
