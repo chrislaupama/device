@@ -393,6 +393,10 @@ if(SAINE_ENGINE_BUILD_BENCH)
   add_executable(saine_device_bench bench/bench_devices.cpp)
   target_include_directories(saine_device_bench PRIVATE src)
   target_link_libraries(saine_device_bench PRIVATE saine_engine saine_engine_warnings)
+  # Plugin-cache parse benchmark (the scanner's JSON reader only).
+  add_executable(saine_scan_cache_bench bench/bench_scan_cache.cpp)
+  target_include_directories(saine_scan_cache_bench PRIVATE scanner)
+  target_link_libraries(saine_scan_cache_bench PRIVATE saine_engine_warnings)
 endif()
 
 # ---------------------------------------------------------------- tools
