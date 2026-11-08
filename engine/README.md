@@ -117,6 +117,14 @@ POSIX signal or Windows NTSTATUS exception code).
 | ctest in CI | all tests; real-device tests run against the runner's virtual output | all tests; AU tests and device tests skip (no audio endpoint) | all tests; AU tests and device tests skip (no PipeWire server) |
 | Tested on real audio hardware | yes (Core Audio output + duplex, see below) | **no** | **no** |
 
+The app (`crates/saine-app`) builds on all three. CI also runs it without a
+GPU or audio device: on Linux under Xvfb with Mesa lavapipe (software Vulkan;
+`SLINT_WGPU_CPU=1`), a reference-state screenshot and the full `--self-test
+--no-audio` (125 checks pass; the 21 checks of the Audio Unit devices section
+are reported as skipped off macOS), as a required step; on Windows with WARP
+(DX12 software adapter) the same, as an informational step (see open issues
+in the CI log). Screenshots and logs are uploaded as artifacts.
+
 What CI cannot cover: the CI runners have no audio devices (Windows: no
 endpoint; Linux: no PipeWire server), so the WASAPI and PipeWire streaming
 code (open, callbacks, duplex ring in a live stream, latency values) is
