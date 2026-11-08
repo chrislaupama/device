@@ -48,6 +48,7 @@ add_library(saine_engine STATIC
   src/processor.cpp
   src/render_graph.cpp
   src/resampler.cpp
+  src/synth.cpp
   src/wav.cpp
   # Platform backends: each file is compile-guarded so exactly one is active.
   src/platform/audio_device.cpp
@@ -95,7 +96,8 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/test_resources.cpp
     tests/test_concurrency.cpp
     tests/test_rt_safety.cpp
-    tests/test_features.cpp)
+    tests/test_features.cpp
+    tests/test_midi.cpp)
   target_include_directories(saine_engine_tests PRIVATE src tests)
   target_link_libraries(saine_engine_tests PRIVATE saine_engine saine_engine_warnings)
 

@@ -202,6 +202,60 @@ typedef struct se_metronome_desc {
 
 int32_t se_metronome_set(se_engine* engine, const se_metronome_desc* desc);
 
+/* ---- MIDI notes + built-in instrument (ABI v1 addition) -----------------
+ * se_session_publish_v2 is a superset of se_session_publish: every v2 track
+ * carries the v1 fields (same meaning, same validation) plus `instrument`
+ * and a note list. Tracks with instrument != 0 play their notes through the
+ * engine's built-in polyphonic synthesizer (16 voices per track); the synth
+ * output is summed with the track's audio clips and then goes through the
+ * track's gain/pan/mute/solo and meters like any other track signal.
+ * Notes on tracks with instrument == 0 are ignored. se_session_publish keeps
+ * working and is equivalent to v2 with instrument = 0 and no notes.
+ *
+ * Note semantics: note-on at timeline frame `start`, note-off at `end`
+ * (the release tail continues past it); both are sample-accurate. Notes may
+ * be given in any order (the engine sorts by start). Validation: pitch
+ * 0..127 (60 = C4, A4 = 69 = 440 Hz equal temperament), velocity 1..127,
+ * NULL `notes` with note_count > 0 -> SE_ERR_INVALID_ARG. Notes with
+ * end <= start are dropped.
+ *
+ * Republishing keeps sounding notes: voices are matched to notes by
+ * (track_id, start, pitch); a matched voice keeps playing (its note-off
+ * follows the new `end`), a voice whose note disappeared is released.
+ * Seek, stop, pause and loop wraps release every sounding voice with a
+ * ~5 ms fade; notes starting exactly at the new position are played, notes
+ * already in progress there are not retriggered. se_export_wav renders
+ * notes with its own private synth state. */
+typedef struct se_note_desc {
+    int64_t start;    /* note-on timeline frame */
+    int64_t end;      /* note-off timeline frame (exclusive) */
+    uint8_t pitch;    /* 0..127 */
+    uint8_t velocity; /* 1..127 */
+    uint8_t _pad[6];
+} se_note_desc; /* 24 bytes, align 8 */
+
+typedef struct se_track_desc_v2 {
+    uint64_t track_id;
+    float gain;  /* linear */
+    float pan;   /* -1 .. +1, constant-power */
+    uint8_t mute;
+    uint8_t solo;
+    uint8_t instrument; /* != 0: render `notes` through the built-in synth */
+    uint8_t _pad[5];
+    const se_clip_desc* clips;
+    uint32_t clip_count;
+    uint32_t note_count;
+    const se_note_desc* notes;
+} se_track_desc_v2; /* 48 bytes, align 8 */
+
+typedef struct se_session_desc_v2 {
+    const se_track_desc_v2* tracks;
+    uint32_t track_count;
+    float master_gain; /* linear */
+} se_session_desc_v2; /* 16 bytes, align 8 */
+
+int32_t se_session_publish_v2(se_engine* engine, const se_session_desc_v2* session);
+
 #ifdef __cplusplus
 }
 #endif

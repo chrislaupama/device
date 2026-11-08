@@ -110,6 +110,42 @@ pub struct se_metronome_desc {
     pub _pad2: u32,
 }
 
+/// MIDI note for [`se_track_desc_v2`] (ABI v1 addition).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct se_note_desc {
+    pub start: i64,
+    pub end: i64,
+    pub pitch: u8,
+    pub velocity: u8,
+    pub _pad: [u8; 6],
+}
+
+/// v1 track fields plus the built-in instrument flag and notes.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_track_desc_v2 {
+    pub track_id: u64,
+    pub gain: f32,
+    pub pan: f32,
+    pub mute: u8,
+    pub solo: u8,
+    pub instrument: u8,
+    pub _pad: [u8; 5],
+    pub clips: *const se_clip_desc,
+    pub clip_count: u32,
+    pub note_count: u32,
+    pub notes: *const se_note_desc,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_session_desc_v2 {
+    pub tracks: *const se_track_desc_v2,
+    pub track_count: u32,
+    pub master_gain: f32,
+}
+
 unsafe extern "C" {
     pub fn se_abi_version() -> u32;
     pub fn se_engine_create(config: *const se_config) -> *mut se_engine;
@@ -153,6 +189,7 @@ unsafe extern "C" {
     pub fn se_meters_peek(engine: *mut se_engine, out: *mut se_meter, capacity: usize, out_count: *mut usize) -> i32;
     pub fn se_transport_set_loop(engine: *mut se_engine, enabled: u8, start_frame: i64, end_frame: i64) -> i32;
     pub fn se_metronome_set(engine: *mut se_engine, desc: *const se_metronome_desc) -> i32;
+    pub fn se_session_publish_v2(engine: *mut se_engine, session: *const se_session_desc_v2) -> i32;
 }
 
 /// Guards the hand-written declarations against drift from saine_engine.h.
@@ -185,6 +222,38 @@ mod abi_layout {
                 offset_of!(se_metronome_desc, _pad2)
             ),
             (0, 4, 8, 16, 20)
+        );
+        // MIDI additions, verified with clang (-Wpadded: no implicit padding):
+        // se_note_desc 24/8: start 0, end 8, pitch 16, velocity 17, _pad 18.
+        assert_eq!((size_of::<se_note_desc>(), align_of::<se_note_desc>()), (24, 8));
+        assert_eq!(
+            (offset_of!(se_note_desc, start), offset_of!(se_note_desc, end), offset_of!(se_note_desc, pitch), offset_of!(se_note_desc, velocity), offset_of!(se_note_desc, _pad)),
+            (0, 8, 16, 17, 18)
+        );
+        // se_track_desc_v2 48/8: track_id 0, gain 8, pan 12, mute 16, solo 17,
+        // instrument 18, _pad 19, clips 24, clip_count 32, note_count 36, notes 40.
+        assert_eq!((size_of::<se_track_desc_v2>(), align_of::<se_track_desc_v2>()), (48, 8));
+        assert_eq!(
+            (
+                offset_of!(se_track_desc_v2, track_id),
+                offset_of!(se_track_desc_v2, gain),
+                offset_of!(se_track_desc_v2, pan),
+                offset_of!(se_track_desc_v2, mute),
+                offset_of!(se_track_desc_v2, solo),
+                offset_of!(se_track_desc_v2, instrument),
+                offset_of!(se_track_desc_v2, _pad),
+                offset_of!(se_track_desc_v2, clips),
+                offset_of!(se_track_desc_v2, clip_count),
+                offset_of!(se_track_desc_v2, note_count),
+                offset_of!(se_track_desc_v2, notes)
+            ),
+            (0, 8, 12, 16, 17, 18, 19, 24, 32, 36, 40)
+        );
+        // se_session_desc_v2 16/8: tracks 0, track_count 8, master_gain 12.
+        assert_eq!((size_of::<se_session_desc_v2>(), align_of::<se_session_desc_v2>()), (16, 8));
+        assert_eq!(
+            (offset_of!(se_session_desc_v2, tracks), offset_of!(se_session_desc_v2, track_count), offset_of!(se_session_desc_v2, master_gain)),
+            (0, 8, 12)
         );
     }
 

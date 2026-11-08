@@ -20,10 +20,21 @@ public:
     float* master_r() noexcept { return master_r_.data(); }
     float* track_l() noexcept { return track_l_.data(); }
     float* track_r() noexcept { return track_r_.data(); }
+    float* synth() noexcept { return synth_.data(); } // mono instrument scratch
 
 private:
     uint32_t max_block_;
-    std::vector<float> track_l_, track_r_, master_l_, master_r_;
+    std::vector<float> track_l_, track_r_, master_l_, master_r_, synth_;
+};
+
+// Instrument inputs of render_block(). `synths` is parallel to
+// graph->tracks (null entries, or a null array, render no notes). The live
+// path passes graph->synths (state shared across republishes); export passes
+// its own private Synth objects. `transport_gen` changes whenever playback
+// jumps (seek / stop / pause / loop wrap) so the synths fade their voices.
+struct InstrumentInputs {
+    Synth* const* synths = nullptr;
+    uint64_t transport_gen = 0;
 };
 
 struct BlockPeaks {
@@ -37,8 +48,13 @@ struct BlockPeaks {
 // If `update_meters` is set, per-track meters in the graph are raised, and
 // so is bucket `peek_slot` (< kPeekBuckets) of each track's peek window.
 // Returns the master output peaks of the block (zero unless update_meters).
+// Instrument tracks: notes are rendered through `inst.synths` and summed with
+// the track's clips before gain/pan. Synths run even for muted tracks (so an
+// unmuted note continues where it would be) but are only mixed if audible.
+// While not playing, only voice tails (fade-outs after a pause/stop) render.
 BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing, uint32_t frames,
-                        RenderContext& ctx, bool update_meters, uint32_t peek_slot = 0) noexcept;
+                        RenderContext& ctx, bool update_meters, uint32_t peek_slot = 0,
+                        const InstrumentInputs& inst = {}) noexcept;
 
 // ---- kernels (exposed for tests/bench) -------------------------------------
 // Plain loops over restrict pointers so clang/gcc auto-vectorise them

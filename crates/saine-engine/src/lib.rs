@@ -155,7 +155,9 @@ impl Engine {
         Ok(buf.chunks_exact(2).map(|c| [c[0], c[1]]).collect())
     }
 
-    /// Publish an immutable session snapshot to the audio thread.
+    /// Publish an immutable session snapshot to the audio thread
+    /// (`se_session_publish_v2`: audio clips plus, on instrument tracks,
+    /// MIDI notes rendered by the engine's built-in synth).
     pub fn publish(&self, s: &SessionSnapshot) -> Result<(), EngineError> {
         let clip_descs: Vec<Vec<ffi::se_clip_desc>> = s
             .tracks
@@ -167,24 +169,37 @@ impl Engine {
                     .collect()
             })
             .collect();
-        let tracks: Vec<ffi::se_track_desc> = s
+        let note_descs: Vec<Vec<ffi::se_note_desc>> = s
             .tracks
             .iter()
-            .zip(&clip_descs)
-            .map(|(t, clips)| ffi::se_track_desc {
+            .map(|t| {
+                if !t.instrument {
+                    return Vec::new();
+                }
+                t.notes.iter().map(|n| ffi::se_note_desc { start: n.start, end: n.end, pitch: n.pitch, velocity: n.velocity, _pad: [0; 6] }).collect()
+            })
+            .collect();
+        let tracks: Vec<ffi::se_track_desc_v2> = s
+            .tracks
+            .iter()
+            .zip(clip_descs.iter().zip(&note_descs))
+            .map(|(t, (clips, notes))| ffi::se_track_desc_v2 {
                 track_id: t.track_id,
                 gain: t.gain,
                 pan: t.pan,
                 mute: t.mute as u8,
                 solo: t.solo as u8,
-                _pad: [0; 6],
+                instrument: t.instrument as u8,
+                _pad: [0; 5],
                 clips: clips.as_ptr(),
                 clip_count: clips.len() as u32,
+                note_count: notes.len() as u32,
+                notes: notes.as_ptr(),
             })
             .collect();
-        let desc = ffi::se_session_desc { tracks: tracks.as_ptr(), track_count: tracks.len() as u32, master_gain: s.master_gain };
+        let desc = ffi::se_session_desc_v2 { tracks: tracks.as_ptr(), track_count: tracks.len() as u32, master_gain: s.master_gain };
         // SAFETY: all pointers stay valid for the duration of the call; the engine copies.
-        check(unsafe { ffi::se_session_publish(self.raw, &desc) })
+        check(unsafe { ffi::se_session_publish_v2(self.raw, &desc) })
     }
 
     pub fn play(&self) -> Result<(), EngineError> {

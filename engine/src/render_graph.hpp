@@ -19,6 +19,7 @@
 
 #include "asset.hpp"
 #include "saine_engine.h"
+#include "synth.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -43,8 +44,11 @@ struct TrackNode {
     float gain_l = 0.0f; // track gain * constant-power pan (left)
     float gain_r = 0.0f; // track gain * constant-power pan (right)
     bool audible = false;
+    bool instrument = false; // render notes through the track's Synth
     uint32_t clip_begin = 0; // index into RenderGraph::clips
     uint32_t clip_count = 0;
+    uint32_t note_begin = 0; // index into RenderGraph::notes (instrument tracks only)
+    uint32_t note_count = 0; // sorted by start, then pitch
 };
 
 // Number of buckets in the se_meters_peek sliding window (each bucket covers
@@ -64,7 +68,15 @@ struct RenderGraph {
     float master_gain = 1.0f;
     std::vector<TrackNode> tracks;
     std::vector<ClipNode> clips;
+    std::vector<NoteEvent> notes;
     std::vector<AssetRef> assets; // keep-alive references
+    // Per-track synth state for live playback, parallel to `tracks` (null for
+    // non-instrument tracks). Assigned by Engine::publish: a track keeps the
+    // Synth of the same track_id in the previously published graph, so voices
+    // survive republishes. Owned jointly by every graph that uses it; freed
+    // with the last such graph, i.e. only on non-RT threads.
+    std::vector<std::shared_ptr<Synth>> synth_refs;
+    std::vector<Synth*> synths; // raw pointers for the RT path (same order)
     std::unique_ptr<TrackMeter[]> meters; // one per track, same order
     std::size_t meter_count = 0;
 };
@@ -76,7 +88,11 @@ void constant_power_pan(float pan, float& left, float& right) noexcept;
 
 using AssetLookup = std::function<AssetRef(uint64_t asset_id)>;
 
-// Validates and copies the description. Returns an se_result code.
+// Validates and copies the description. Returns an se_result code. The v1
+// entry point converts to v2 (no instrument, no notes). Synth states are not
+// assigned here (see RenderGraph::synth_refs); `synths` is sized and null.
+int32_t build_render_graph(const se_session_desc_v2& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err);
 

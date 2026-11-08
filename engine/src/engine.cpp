@@ -230,9 +230,47 @@ int32_t Engine::publish(const se_session_desc& desc, std::string& err) {
     };
     const int32_t rc = build_render_graph(desc, lookup, built, err);
     if (rc != SE_OK) return rc;
+    return install_graph(std::move(built));
+}
 
+int32_t Engine::publish(const se_session_desc_v2& desc, std::string& err) {
+    std::unique_ptr<RenderGraph> built;
+    const AssetLookup lookup = [this](uint64_t id) -> AssetRef {
+        std::lock_guard lock(assets_mutex_);
+        auto it = assets_.find(id);
+        return it == assets_.end() ? nullptr : it->second;
+    };
+    const int32_t rc = build_render_graph(desc, lookup, built, err);
+    if (rc != SE_OK) return rc;
+    return install_graph(std::move(built));
+}
+
+// Synth states outlive graph swaps: an instrument track takes over the Synth
+// of the same track_id in the currently published graph (the RT side keeps
+// mutating that object; we only copy the reference). New instrument tracks
+// get a fresh Synth, allocated here. A Synth whose track disappeared stays
+// owned by the retired graph(s) and is freed when they are reclaimed, which
+// happens only on non-RT threads once the RT side can no longer reach them.
+int32_t Engine::install_graph(std::unique_ptr<RenderGraph> built) {
     std::shared_ptr<RenderGraph> next(std::move(built));
     std::lock_guard lock(control_mutex_);
+    std::unordered_map<uint64_t, std::shared_ptr<Synth>> previous;
+    if (current_)
+        for (std::size_t i = 0; i < current_->tracks.size(); ++i)
+            if (current_->synth_refs[i]) previous.emplace(current_->tracks[i].track_id, current_->synth_refs[i]);
+    for (std::size_t i = 0; i < next->tracks.size(); ++i) {
+        if (!next->tracks[i].instrument) continue;
+        std::shared_ptr<Synth> synth;
+        if (auto it = previous.find(next->tracks[i].track_id); it != previous.end()) {
+            synth = std::move(it->second);
+            previous.erase(it); // a duplicated track_id must not share one Synth
+        } else {
+            synth = std::make_shared<Synth>(sample_rate_);
+        }
+        next->synths[i] = synth.get();
+        next->synth_refs[i] = std::move(synth);
+    }
+
     next->seq = next_seq_++;
     live_graph_.store(next.get(), std::memory_order_seq_cst);
     if (current_) retired_.push_back(std::move(current_));
@@ -335,13 +373,18 @@ void Engine::apply_command(const TransportCommand& cmd) noexcept {
     case TransportCommand::Type::Pause:
         rt_playing_ = false;
         rt_voice_count_ = 0;
+        ++rt_synth_gen_;
         break;
     case TransportCommand::Type::Stop:
         rt_playing_ = false;
         rt_position_ = 0;
         rt_voice_count_ = 0;
+        ++rt_synth_gen_;
         break;
-    case TransportCommand::Type::Seek: rt_position_ = cmd.frame; break; // click tails ring on
+    case TransportCommand::Type::Seek: // click tails ring on; synth voices fade
+        rt_position_ = cmd.frame;
+        ++rt_synth_gen_;
+        break;
     case TransportCommand::Type::SetLoop:
         rt_loop_enabled_ = cmd.enabled;
         if (cmd.enabled) {
@@ -474,7 +517,8 @@ void Engine::process(uint32_t frames, Sink&& sink) noexcept {
         const bool looping = rt_playing_ && rt_loop_enabled_ && rt_position_ < rt_loop_end_;
         if (looping) n = static_cast<uint32_t>(std::min<int64_t>(n, rt_loop_end_ - rt_position_));
         const uint32_t slot = advance_peek_window(n, graph);
-        const BlockPeaks p = render_block(graph, rt_position_, rt_playing_, n, live_ctx_, true, slot);
+        const InstrumentInputs inst{graph != nullptr ? graph->synths.data() : nullptr, rt_synth_gen_};
+        const BlockPeaks p = render_block(graph, rt_position_, rt_playing_, n, live_ctx_, true, slot, inst);
         peak_l = std::max(peak_l, p.l);
         peak_r = std::max(peak_r, p.r);
         atomic_store_max(master_win_l_[slot], p.l);
@@ -485,7 +529,10 @@ void Engine::process(uint32_t frames, Sink&& sink) noexcept {
         sink(live_ctx_.master_l(), live_ctx_.master_r(), done, n);
         if (rt_playing_) {
             rt_position_ += n;
-            if (looping && rt_position_ == rt_loop_end_) rt_position_ = rt_loop_start_;
+            if (looping && rt_position_ == rt_loop_end_) {
+                rt_position_ = rt_loop_start_;
+                ++rt_synth_gen_; // sounding notes fade; notes at loop start retrigger
+            }
         }
         done += n;
     }
@@ -632,10 +679,22 @@ int32_t Engine::export_wav(const char* path, int64_t start_frame, int64_t end_fr
 
     RenderContext ctx(max_block_);
     std::vector<float> interleaved(static_cast<std::size_t>(max_block_) * 2);
+    // Private synth state: export never touches the live voices.
+    std::vector<std::unique_ptr<Synth>> synths;
+    std::vector<Synth*> synth_ptrs;
+    if (graph) {
+        synth_ptrs.assign(graph->tracks.size(), nullptr);
+        for (std::size_t i = 0; i < graph->tracks.size(); ++i)
+            if (graph->tracks[i].instrument) {
+                synths.push_back(std::make_unique<Synth>(sample_rate_));
+                synth_ptrs[i] = synths.back().get();
+            }
+    }
+    const InstrumentInputs inst{synth_ptrs.empty() ? nullptr : synth_ptrs.data(), 0};
     ScopedFlushDenormals ftz;
     for (int64_t pos = start_frame; pos < end_frame;) {
         const auto n = static_cast<uint32_t>(std::min<int64_t>(end_frame - pos, max_block_));
-        render_block(graph.get(), pos, true, n, ctx, false);
+        render_block(graph.get(), pos, true, n, ctx, false, 0, inst);
         const float* l = ctx.master_l();
         const float* r = ctx.master_r();
         for (uint32_t i = 0; i < n; ++i) {

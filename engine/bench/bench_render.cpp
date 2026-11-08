@@ -5,6 +5,9 @@
 // usage: saine_engine_bench [blocks=4000] [clips_per_track=4] [features=0]
 //   features=1: also enable a 48 001-frame loop (odd length, so the wrap
 //   lands mid-block) and the metronome at 120 BPM.
+// A second table renders MIDI: instrument tracks (no clips) with 8 notes
+// held for the whole run plus one short note retriggered every 100 ms, so
+// 8-9 synth voices sound on every track in every block.
 #include "saine_engine.h"
 
 #include <algorithm>
@@ -139,6 +142,69 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
     return r;
 }
 
+Result run_midi(uint32_t tracks, uint32_t blocks) {
+    se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
+    se_engine* e = se_engine_create(&cfg);
+    if (!e) {
+        std::fprintf(stderr, "create failed: %s\n", se_last_error());
+        std::exit(1);
+    }
+    const int64_t total = static_cast<int64_t>(blocks) * kBlock;
+    std::vector<std::vector<se_note_desc>> notes(tracks);
+    std::vector<se_track_desc_v2> tds(tracks);
+    for (uint32_t t = 0; t < tracks; ++t) {
+        for (uint32_t v = 0; v < 8; ++v) {
+            se_note_desc n{};
+            n.start = static_cast<int64_t>(v) * 7; // staggered onsets
+            n.end = total + 48000;
+            n.pitch = static_cast<uint8_t>(36 + (t * 5 + v * 7) % 48);
+            n.velocity = static_cast<uint8_t>(60 + v * 8);
+            notes[t].push_back(n);
+        }
+        for (int64_t s = 4800; s < total; s += 4800) { // retriggered short note
+            se_note_desc n{};
+            n.start = s + t;
+            n.end = s + t + 1200;
+            n.pitch = static_cast<uint8_t>(72 + t % 12);
+            n.velocity = 90;
+            notes[t].push_back(n);
+        }
+        se_track_desc_v2& td = tds[t];
+        td = se_track_desc_v2{};
+        td.track_id = t + 1;
+        td.gain = 0.25f;
+        td.pan = std::sin(static_cast<float>(t));
+        td.instrument = 1;
+        td.notes = notes[t].data();
+        td.note_count = static_cast<uint32_t>(notes[t].size());
+    }
+    se_session_desc_v2 sd{tds.data(), tracks, 0.5f};
+    if (se_session_publish_v2(e, &sd) != SE_OK) {
+        std::fprintf(stderr, "publish failed: %s\n", se_last_error());
+        std::exit(1);
+    }
+    se_transport_play(e);
+    std::vector<float> buf(kBlock * 2);
+    // No warm-up seek here: a seek would fade the held voices. Time from 0.
+    std::vector<double> times(blocks);
+    const auto t_all = std::chrono::steady_clock::now();
+    for (uint32_t b = 0; b < blocks; ++b) {
+        const auto t0 = std::chrono::steady_clock::now();
+        se_render_offline(e, buf.data(), kBlock);
+        times[b] = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+    }
+    const double wall_us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t_all).count();
+    se_engine_destroy(e);
+    std::vector<double> sorted = times;
+    std::sort(sorted.begin(), sorted.end());
+    Result r{};
+    r.us_per_block_avg = wall_us / blocks;
+    r.us_per_block_p99 = sorted[static_cast<std::size_t>(0.99 * (blocks - 1))];
+    r.us_per_block_max = sorted.back();
+    r.rt_ratio = static_cast<double>(blocks) * kBlock / kRate * 1e6 / wall_us;
+    return r;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -176,5 +242,14 @@ int main(int argc, char** argv) {
                     r.us_per_block_max, r.rt_ratio);
     }
     for (const auto& f : files) std::filesystem::remove(f);
+
+    std::printf("\nMIDI: instrument tracks x 8 held voices (+1 retriggered note / 100 ms), no clips\n");
+    std::printf("%8s %14s %14s %14s %16s\n", "tracks", "avg us/block", "p99 us/block", "max us/block",
+                "realtime ratio");
+    for (uint32_t tracks : {8u, 32u, 128u}) {
+        const Result r = run_midi(tracks, blocks);
+        std::printf("%8u %14.2f %14.2f %14.2f %15.1fx\n", tracks, r.us_per_block_avg, r.us_per_block_p99,
+                    r.us_per_block_max, r.rt_ratio);
+    }
     return 0;
 }

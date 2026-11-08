@@ -162,6 +162,15 @@ int32_t se_session_publish(se_engine* engine, const se_session_desc* session) {
     });
 }
 
+int32_t se_session_publish_v2(se_engine* engine, const se_session_desc_v2* session) {
+    SE_REQUIRE_ENGINE(engine);
+    if (session == nullptr) return fail(SE_ERR_INVALID_ARG, "session is NULL");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->publish(*session, err), err);
+    });
+}
+
 // ---- transport
 
 static int32_t push_cmd(se_engine* engine, const saine::TransportCommand& cmd) {

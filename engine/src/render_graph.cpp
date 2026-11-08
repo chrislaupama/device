@@ -24,6 +24,32 @@ int32_t build_render_graph(const se_session_desc& desc, const AssetLookup& looku
         err = "session has track_count > 0 but tracks == NULL";
         return SE_ERR_INVALID_ARG;
     }
+    std::vector<se_track_desc_v2> tracks(desc.track_count);
+    for (uint32_t t = 0; t < desc.track_count; ++t) {
+        const se_track_desc& a = desc.tracks[t];
+        se_track_desc_v2& b = tracks[t];
+        b = se_track_desc_v2{};
+        b.track_id = a.track_id;
+        b.gain = a.gain;
+        b.pan = a.pan;
+        b.mute = a.mute;
+        b.solo = a.solo;
+        b.clips = a.clips;
+        b.clip_count = a.clip_count;
+    }
+    se_session_desc_v2 d2{};
+    d2.tracks = tracks.data();
+    d2.track_count = desc.track_count;
+    d2.master_gain = desc.master_gain;
+    return build_render_graph(d2, lookup, out, err);
+}
+
+int32_t build_render_graph(const se_session_desc_v2& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err) {
+    if (desc.track_count > 0 && desc.tracks == nullptr) {
+        err = "session has track_count > 0 but tracks == NULL";
+        return SE_ERR_INVALID_ARG;
+    }
     if (!std::isfinite(desc.master_gain)) {
         err = "master_gain is not finite";
         return SE_ERR_INVALID_ARG;
@@ -39,13 +65,17 @@ int32_t build_render_graph(const se_session_desc& desc, const AssetLookup& looku
     std::unordered_map<uint64_t, AssetRef> used; // dedupe keep-alive refs
 
     for (uint32_t t = 0; t < desc.track_count; ++t) {
-        const se_track_desc& td = desc.tracks[t];
+        const se_track_desc_v2& td = desc.tracks[t];
         if (td.clip_count > 0 && td.clips == nullptr) {
             err = "track " + std::to_string(td.track_id) + " has clip_count > 0 but clips == NULL";
             return SE_ERR_INVALID_ARG;
         }
         if (!std::isfinite(td.gain) || !std::isfinite(td.pan)) {
             err = "track " + std::to_string(td.track_id) + " has a non-finite gain or pan";
+            return SE_ERR_INVALID_ARG;
+        }
+        if (td.note_count > 0 && td.notes == nullptr) {
+            err = "track " + std::to_string(td.track_id) + " has note_count > 0 but notes == NULL";
             return SE_ERR_INVALID_ARG;
         }
 
@@ -106,11 +136,32 @@ int32_t build_render_graph(const se_session_desc& desc, const AssetLookup& looku
         node.clip_count = static_cast<uint32_t>(g->clips.size()) - node.clip_begin;
         std::sort(g->clips.begin() + node.clip_begin, g->clips.end(),
                   [](const ClipNode& a, const ClipNode& b) { return a.timeline_start < b.timeline_start; });
+
+        // Notes: validated always, kept only for instrument tracks.
+        node.instrument = td.instrument != 0;
+        node.note_begin = static_cast<uint32_t>(g->notes.size());
+        for (uint32_t n = 0; n < td.note_count; ++n) {
+            const se_note_desc& nd = td.notes[n];
+            if (nd.pitch > 127 || nd.velocity == 0 || nd.velocity > 127) {
+                err = "track " + std::to_string(td.track_id) + " note " + std::to_string(n) +
+                      ": pitch must be 0..127 and velocity 1..127";
+                return SE_ERR_INVALID_ARG;
+            }
+            if (!node.instrument || nd.end <= nd.start) continue;
+            g->notes.push_back(NoteEvent{nd.start, nd.end, nd.pitch, nd.velocity});
+        }
+        node.note_count = static_cast<uint32_t>(g->notes.size()) - node.note_begin;
+        std::stable_sort(g->notes.begin() + node.note_begin, g->notes.end(), [](const NoteEvent& a, const NoteEvent& b) {
+            return a.start != b.start ? a.start < b.start : a.pitch < b.pitch;
+        });
         g->tracks.push_back(node);
     }
 
     g->assets.reserve(used.size());
     for (auto& [id, ref] : used) g->assets.push_back(std::move(ref));
+
+    g->synth_refs.resize(g->tracks.size());
+    g->synths.assign(g->tracks.size(), nullptr);
 
     g->meter_count = g->tracks.size();
     g->meters = std::make_unique<TrackMeter[]>(g->meter_count);

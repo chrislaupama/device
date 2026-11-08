@@ -15,7 +15,8 @@
 namespace saine {
 
 RenderContext::RenderContext(uint32_t max_block)
-    : max_block_(max_block), track_l_(max_block), track_r_(max_block), master_l_(max_block), master_r_(max_block) {}
+    : max_block_(max_block), track_l_(max_block), track_r_(max_block), master_l_(max_block), master_r_(max_block),
+      synth_(max_block) {}
 
 void kernel_add_scaled(float* __restrict dst, const float* __restrict src, float gain, uint32_t n) noexcept {
     for (uint32_t i = 0; i < n; ++i) dst[i] += src[i] * gain;
@@ -61,26 +62,30 @@ float kernel_peak(const float* __restrict buf, uint32_t n) noexcept {
 }
 
 BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing, uint32_t frames,
-                        RenderContext& ctx, bool update_meters, uint32_t peek_slot) noexcept {
+                        RenderContext& ctx, bool update_meters, uint32_t peek_slot,
+                        const InstrumentInputs& inst) noexcept {
     float* const ml = ctx.master_l();
     float* const mr = ctx.master_r();
     std::memset(ml, 0, sizeof(float) * frames);
     std::memset(mr, 0, sizeof(float) * frames);
-    if (graph == nullptr || !playing || frames == 0) return {};
+    if (graph == nullptr || frames == 0) return {};
+    if (!playing && inst.synths == nullptr) return {};
 
     float* const tl = ctx.track_l();
     float* const tr = ctx.track_r();
+    float* const sb = ctx.synth();
     const int64_t block_start = position;
     const int64_t block_end = position + frames;
 
     const std::size_t track_count = graph->tracks.size();
     for (std::size_t t = 0; t < track_count; ++t) {
         const TrackNode& track = graph->tracks[t];
-        if (!track.audible) continue;
+        Synth* const synth = track.instrument && inst.synths != nullptr ? inst.synths[t] : nullptr;
+        if (synth == nullptr && (!track.audible || !playing)) continue;
 
         bool any = false;
         const ClipNode* clip = graph->clips.data() + track.clip_begin;
-        const ClipNode* const clip_end = clip + track.clip_count;
+        const ClipNode* const clip_end = track.audible && playing ? clip + track.clip_count : clip;
         for (; clip != clip_end; ++clip) {
             if (clip->timeline_start >= block_end) break; // sorted by start
             if (clip->timeline_end <= block_start) continue;
@@ -97,7 +102,20 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             kernel_add_scaled(tl + out_off, clip->src_l + src, clip->gain, n);
             kernel_add_scaled(tr + out_off, clip->src_r + src, clip->gain, n);
         }
-        if (!any) continue;
+        if (synth != nullptr &&
+            synth->render(graph->notes.data() + track.note_begin, track.note_count, graph->seq, inst.transport_gen,
+                          position, frames, playing, sb) &&
+            track.audible) {
+            if (any) {
+                kernel_add_scaled(tl, sb, 1.0f, frames);
+                kernel_add_scaled(tr, sb, 1.0f, frames);
+            } else {
+                std::memcpy(tl, sb, sizeof(float) * frames);
+                std::memcpy(tr, sb, sizeof(float) * frames);
+                any = true;
+            }
+        }
+        if (!any || !track.audible) continue;
 
         kernel_add_scaled2(ml, mr, tl, tr, track.gain_l, track.gain_r, frames);
         if (update_meters) {

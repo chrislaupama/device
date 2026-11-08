@@ -5,7 +5,8 @@ The Rust core links the static library `saine_engine`. The header is the
 contract. `SE_ABI_VERSION` is still 1: the first milestone's structs and
 signatures are unchanged, and later features are **appended** at the end of
 the header (`se_meters_peek`, `se_transport_set_loop`, `se_metronome_desc` +
-`se_metronome_set`).
+`se_metronome_set`, and for MIDI `se_note_desc`, `se_track_desc_v2`,
+`se_session_desc_v2` + `se_session_publish_v2`).
 
 ## Build, test, bench
 
@@ -21,7 +22,7 @@ cmake --preset asan               # Debug + -fsanitize=address,undefined -> engi
 cmake --build --preset asan
 ctest --preset asan
 
-./build/saine_engine_bench [blocks=4000] [clips_per_track=4] [features=0]  # 1 = loop + metronome on
+./build/saine_engine_bench [blocks=4000] [clips_per_track=4] [features=0]  # 1 = loop + metronome on; also prints a MIDI table
 ./build/play_sine_or_wav [file.wav] [seconds=1.0]   # real default output device, -24 dBFS
 ```
 
@@ -59,6 +60,7 @@ The library is built with `-fPIC`, so it can go into a cdylib as well.
 | `src/engine.{hpp,cpp}` | `Engine`: assets, graph publication/reclamation, transport, meters, stats, RT `process()` |
 | `src/render_graph.{hpp,cpp}` | Immutable render graph built from a session snapshot; pan law |
 | `src/processor.{hpp,cpp}` | `render_block()` (the one DSP path) and SIMD-friendly kernels |
+| `src/synth.{hpp,cpp}` | Built-in polyphonic instrument (`Synth`, one per instrument track) |
 | `src/spsc_queue.hpp` | Lock-free SPSC ring for transport commands |
 | `src/wav.{hpp,cpp}` | Hand-written RIFF/WAVE reader, streaming float32 writer |
 | `src/resampler.{hpp,cpp}` | Kaiser-windowed sinc resampler (import time) |
@@ -76,7 +78,7 @@ The library is built with `-fPIC`, so it can go into a cdylib as well.
 Rust core (non-RT)                                  audio thread (RT)
 ------------------                                  -----------------
 se_asset_load_file ─ decode WAV ─ resample ─► asset registry (shared_ptr<const Asset>)
-se_session_publish ─ copy + validate + build ─► RenderGraph ──atomic ptr swap──► process()
+se_session_publish(_v2) ─ copy + validate + build ─► RenderGraph ──atomic ptr swap──► process()
 se_transport_* / set_loop / metronome_set
                    ─ mutex(producers) ─► SPSC queue ─┬─────────── drained at block start (device/offline render)
                                                      └─ applied inline when nobody owns the RT path
@@ -108,6 +110,14 @@ Semantics:
   Mute always wins (a soloed and muted track is silent).
 * **Master**: sum of tracks × `master_gain`. No limiter/clipper — output can
   exceed ±1.0.
+* **Instrument tracks** (`se_session_publish_v2`, `instrument != 0`): the
+  track's notes render through its `Synth` (mono), summed with the track's
+  audio clips, then the same gain/pan/mute/solo/meters as audio. Notes are
+  validated (pitch 0..127, velocity 1..127, `notes` non-NULL when
+  `note_count > 0` → else `SE_ERR_INVALID_ARG`), zero-length notes dropped,
+  and sorted by (start, pitch). Notes on non-instrument tracks are validated
+  but ignored. `se_session_publish` builds the same graph with no
+  instruments (it converts to v2 internally).
 
 ### Threading model
 
@@ -237,11 +247,66 @@ is mixed into the master **after master gain and after metering**, so it is
 independent of the mix level, does not show on meters, and is never in
 `se_export_wav` (which calls `render_block()` directly).
 
+### Built-in instrument (MIDI)
+
+An original, deliberately plain subtractive voice (`src/synth.hpp`); it does
+not model any commercial instrument:
+
+* 2 oscillators per voice, each an equal blend of a polyBLEP saw and a
+  polyBLEP square, detuned ±5 cents, both starting at phase 0.25 (so the
+  note-on frame itself is non-zero).
+* 12 dB/oct TPT state-variable low-pass, Q 0.707, cutoff key-tracked at
+  8 × the note frequency (clamped to 500 Hz..12 kHz and < 0.45 × rate).
+* ADSR: linear 5 ms attack; exponential decay over 200 ms to sustain 0.6;
+  exponential release falling 60 dB in 250 ms; voice freed at −90 dB
+  (~375 ms after note-off).
+* Linear velocity (`v / 127`) × 0.25 per voice. Equal temperament, A4 = MIDI
+  69 = 440 Hz (C4 = 60).
+* 16 note voices per track. A 17th note steals the oldest voice (note-on
+  order): it fades out linearly over 5 ms in its slot while the new note
+  takes a free slot (24 slots = 16 + 8 for fades; only if all 24 are busy is
+  the quietest fading voice overwritten).
+
+**State across republishes.** `Synth` objects are allocated on the non-RT
+side, preallocate every voice, and are owned by `shared_ptr`s in each graph
+(`RenderGraph::synth_refs`, raw pointers in `synths` for the RT path).
+`Engine::install_graph` (under `control_mutex_`) gives each instrument track
+the `Synth` of the same `track_id` in the currently published graph, else a
+new one. The RT side is the only thread that mutates a live `Synth`; a
+`Synth` whose track disappeared is freed together with the last retired
+graph that holds it, i.e. by the existing reclamation protocol, never on the
+audio thread. When the RT side sees a new graph seq, held voices are
+re-matched by `(start, pitch)`: a match keeps sounding and follows the note's
+new `end` (if that is already behind the playhead, it releases at the next
+segment start); no match → normal release. So editing elsewhere, or
+lengthening/shortening a sounding note, never retriggers or cuts it.
+
+**Events.** `Synth::render` splits each render segment at every note-on
+(`start`) and note-off (`end`) frame, so both are sample-accurate and the
+output is bit-identical for any block partition (tested). Note-ons are found
+by binary search for `start ∈ [segment)`, so no cursor has to survive
+seeks.
+
+**Transport jumps.** `rt_synth_gen_` is bumped on seek, stop, pause and every
+loop wrap; a `Synth` that sees a new generation (or a timeline position
+other than where its last segment ended) fades every sounding voice over
+5 ms. Notes that start exactly at the new position play; notes already in
+progress there are **not** retriggered (simple, deterministic). While paused
+or stopped, `render_block` still renders those fade tails (nothing else), so
+pausing mid-note does not click.
+
+**Mute.** Synths of muted / non-soloed tracks keep running (output not
+mixed), so unmuting mid-note continues the note exactly as if it had never
+been muted. This costs CPU for muted instrument tracks.
+
 ### Export
 
 `se_export_wav` renders `[start, end)` linearly with its private transport:
 it ignores the live loop and metronome (tested by
-`export_ignores_loop_and_metronome`).
+`export_ignores_loop_and_metronome`). Instrument tracks render through
+private `Synth` objects created for the export, so exporting never touches
+live voices (tested: live output with an export in the middle is identical
+to an uninterrupted render, and the exported file matches it bit for bit).
 
 ### Blocks, meters, stats
 
@@ -294,7 +359,9 @@ Inside `Engine::process()` / `render_block()` and the device callback:
    32 tracks × 4 clips, and a graph swap; and across 1500 renders with loop
    wraps, metronome onsets/tails/voice stealing, while other threads call
    `se_meters_peek`/`se_meters_read` and push loop/metronome/seek commands
-   that the render drains).
+   that the render drains; and across 1500 renders of 8 instrument tracks ×
+   200 notes with a loop, seeks and pause/play, while another thread
+   republishes four different note sets as fast as it can).
 2. No locks, no waiting inside `process()`: only atomics, the SPSC pop, and a
    CAS loop for meter max that only retries if a reader raced it. (The
    `se_render_offline` *wrapper* may yield while a non-RT thread holds the
@@ -362,3 +429,18 @@ the Core Audio output unit's built-in converter resamples.
 * The resampler is scalar; large imports at a different rate take noticeably
   longer than same-rate imports.
 * Output channels: only `output_channels == 2` is accepted.
+* MIDI: the synth has no user parameters yet (no presets, no ABI for them),
+  no sustain pedal / pitch bend / CC, and no per-note pan. Removing a track
+  or switching it from instrument to audio cuts its voices without a fade.
+  A mid-note seek never retriggers the note (no "chase"). Cost is about
+  6 ns per voice-sample on Apple silicon (bench below); muted instrument
+  tracks still cost CPU.
+
+## Benchmark (Apple silicon, Release, 256-frame blocks @ 48 kHz, deadline 5333 µs)
+
+| Case | 8 tracks | 32 tracks | 128 tracks |
+|---|---|---|---|
+| Audio, 4 clips/track (avg µs/block) | 1.0 | 3.2 | 12.3 |
+| MIDI, 8 held voices + 1 retriggered note/track (avg µs/block) | 98 | 396 | 1594 |
+
+(p99 for 32 MIDI tracks ≈ 420 µs, i.e. ~8 % of the block deadline.)

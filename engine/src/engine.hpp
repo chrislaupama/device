@@ -63,6 +63,7 @@ public:
 
     // ---- session
     int32_t publish(const se_session_desc& desc, std::string& err);
+    int32_t publish(const se_session_desc_v2& desc, std::string& err);
     // Frees retired graphs the audio thread can no longer reach. Non-RT.
     void collect_garbage();
     std::size_t retired_graph_count() const;
@@ -95,6 +96,9 @@ private:
     void process(uint32_t frames, Sink&& sink) noexcept;
 
     void reclaim_locked(); // requires control_mutex_
+    // Assigns synth states (reusing the previous graph's by track_id) and
+    // publishes the graph to the RT side.
+    int32_t install_graph(std::unique_ptr<RenderGraph> built);
 
     // Who currently owns the live render path (RT role). Exactly one owner
     // may touch the rt_* state and pop the command queue. kOwnerControl is a
@@ -152,6 +156,9 @@ private:
     bool rt_loop_enabled_ = false;  // RT-owned
     int64_t rt_loop_start_ = 0;     // RT-owned
     int64_t rt_loop_end_ = 0;       // RT-owned
+    // Bumped on every playback jump (seek, stop, pause, loop wrap); synths
+    // fade their voices when it changes. RT-owned.
+    uint64_t rt_synth_gen_ = 0;
     std::atomic<int64_t> pub_position_{0};
     std::atomic<bool> pub_playing_{false};
 
