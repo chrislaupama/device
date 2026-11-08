@@ -160,6 +160,12 @@ impl Controller {
             let t = &p.tracks[ti];
             return Some((t.clips[ci].name.clone(), "Clip", t.color, t.kind == saine_core::TrackKind::Instrument));
         }
+        if let Some(c) = self.selected_clip
+            && let Some((ti, ci)) = p.find_midi_clip(c)
+        {
+            let t = &p.tracks[ti];
+            return Some((t.midi_clips[ci].name.clone(), "Clip", t.color, true));
+        }
         let t = p.track(self.selected_track?)?;
         Some((t.name.clone(), "Track", t.color, t.kind == saine_core::TrackKind::Instrument))
     }
@@ -172,6 +178,12 @@ impl Controller {
         {
             let t = &p.tracks[ti];
             return Some(format!("clip \"{}\" (id {}) on track {} \"{}\" (id {})", t.clips[ci].name, c.0, ti + 1, t.name, t.id.0));
+        }
+        if let Some(c) = self.selected_clip
+            && let Some((ti, ci)) = p.find_midi_clip(c)
+        {
+            let t = &p.tracks[ti];
+            return Some(format!("MIDI clip \"{}\" (id {}) on track {} \"{}\" (id {})", t.midi_clips[ci].name, c.0, ti + 1, t.name, t.id.0));
         }
         let id = self.selected_track?;
         let i = p.track_index(id)?;
@@ -256,7 +268,7 @@ impl Controller {
     }
 
     pub fn highlight_layout(&self, w: f32, h: f32, sounds: bool) -> Layout {
-        Layout { w, h, sounds, mixer: self.mixer_open, assistant: self.assistant_open, scroll_y: self.view.scroll_y as f32 }
+        Layout { w, h, sounds, mixer: self.mixer_open, assistant: self.assistant_open, clip_tab: self.bottom_tab == crate::controller::BottomTab::Clip, scroll_y: self.view.scroll_y as f32 }
     }
 
     /// Current highlight rects (expired ones dropped). Unknown-to-layout targets are skipped.

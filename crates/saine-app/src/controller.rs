@@ -11,9 +11,10 @@ use crate::timeline::{self, ClipVis, Hit, TrackVis, View, Zone};
 use crate::assistant_panel::AssistantState;
 use crate::assistant_provider::Provider;
 use crate::mixer::{self, Ballistics, MASTER_METER_ID};
-use crate::{AppWindow, ChatEntry, ClipLabel, HighlightRect, MixerStrip, RulerLabel, StripMeter, Studio, TrackRow};
+use crate::pianoroll::{self, PrState};
+use crate::{AppWindow, ChatEntry, ClipLabel, HighlightRect, MenuItem, MixerStrip, RulerLabel, StripMeter, Studio, TrackRow, YLabel};
 use saine_core::{
-    Asset, AssetId, Clip, ClipId, ColorIndex, Command, Document, Origin, PPQ, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, gain_to_db, persist, snapshot,
+    Asset, AssetId, Clip, ClipId, ColorIndex, Command, Document, MidiClip, Origin, PPQ, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, gain_to_db, persist, snapshot,
 };
 use saine_engine::{AssetInfo, Engine, Meter, MetronomeConfig};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
@@ -131,6 +132,51 @@ enum Drag {
     Move { clip: ClipId, grab_beats: f64, orig_track: TrackId, orig_start: Ticks, track: TrackId, start: Ticks },
     TrimLeft { clip: ClipId, orig: (Ticks, u64, u64), cur: (Ticks, u64, u64) },
     TrimRight { clip: ClipId, orig: (Ticks, u64, u64), cur: (Ticks, u64, u64) },
+    /// MIDI clip edges: (start, length) in ticks.
+    MidiLeft { clip: ClipId, orig: (Ticks, Ticks), cur: (Ticks, Ticks) },
+    MidiRight { clip: ClipId, orig: (Ticks, Ticks), cur: (Ticks, Ticks) },
+}
+
+/// Bottom panel tab (reference: "Clip" / "Devices").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BottomTab {
+    Devices,
+    Clip,
+}
+
+/// Internal clipboard (⌘C / ⌘X / ⌘V): one clip with its track kind.
+#[derive(Debug, Clone)]
+pub enum ClipboardItem {
+    Audio { track: TrackId, clip: Clip },
+    Midi { track: TrackId, clip: MidiClip },
+}
+
+/// Clip context menu entries (reference `35-clip-context-menu.png`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuAction {
+    Cut,
+    Copy,
+    Duplicate,
+    Split,
+    Consolidate,
+    Bounce,
+    Delete,
+    Disable,
+    Rename,
+    Export,
+    Transpose,
+    Quantize,
+    Humanize,
+    Ask,
+}
+
+#[derive(Debug, Default)]
+pub struct MenuState {
+    pub open: bool,
+    pub pos: (f32, f32),
+    pub clip: Option<ClipId>,
+    pub items: Vec<(MenuAction, bool)>,
+    pub sub_open: bool,
 }
 
 // ------------------------------------------------------------------ controller
@@ -168,9 +214,20 @@ pub struct Controller {
     ruler_key: (i64, i64, i64),
     pub clip_vis: Vec<ClipVis>,
     pub track_vis: Vec<TrackVis>,
-    clip_ids: Vec<ClipId>,
+    pub(crate) clip_ids: Vec<ClipId>,
     /// Show status messages (disabled for pixel-comparison screenshots).
     pub show_status: bool,
+    // ---- clip editing ----
+    pub bottom_tab: BottomTab,
+    pub pr: PrState,
+    pub menu: MenuState,
+    pub clipboard: Option<ClipboardItem>,
+    /// Rename popup open for this clip.
+    pub rename: Option<ClipId>,
+    pub(crate) pr_bar_model: Rc<VecModel<RulerLabel>>,
+    pub(crate) pr_key_model: Rc<VecModel<YLabel>>,
+    pub(crate) menu_model: Rc<VecModel<MenuItem>>,
+    pub(crate) sub_model: Rc<VecModel<MenuItem>>,
     /// Metronome on/off (app preference, not saved in the project).
     pub metronome_on: bool,
     // ---- panels (view state owned here, mirrored to Slint) ----
@@ -222,6 +279,15 @@ impl Controller {
             track_vis: Vec::new(),
             clip_ids: Vec::new(),
             show_status: true,
+            bottom_tab: BottomTab::Devices,
+            pr: PrState::default(),
+            menu: MenuState::default(),
+            clipboard: None,
+            rename: None,
+            pr_bar_model: Rc::new(VecModel::default()),
+            pr_key_model: Rc::new(VecModel::default()),
+            menu_model: Rc::new(VecModel::default()),
+            sub_model: Rc::new(VecModel::default()),
             metronome_on: false,
             mixer_open: false,
             assistant_open: false,
@@ -248,6 +314,10 @@ impl Controller {
         s.set_strip_meters(ModelRc::from(self.strip_meters_model.clone()));
         s.set_chat(ModelRc::from(self.chat_model.clone()));
         s.set_highlights(ModelRc::from(self.highlights_model.clone()));
+        s.set_pr_bar_labels(ModelRc::from(self.pr_bar_model.clone()));
+        s.set_pr_key_labels(ModelRc::from(self.pr_key_model.clone()));
+        s.set_menu_items(ModelRc::from(self.menu_model.clone()));
+        s.set_sub_items(ModelRc::from(self.sub_model.clone()));
     }
 
     fn clip_ids_model(&self) -> Rc<VecModel<ClipLabel>> {
@@ -289,10 +359,14 @@ impl Controller {
             self.selected_track = p.tracks.first().map(|t| t.id);
         }
         if let Some(c) = self.selected_clip
-            && p.clip(c).is_none()
+            && !p.clip_id_in_use(c)
         {
             self.selected_clip = None;
         }
+        if self.menu.clip.is_some_and(|c| !p.clip_id_in_use(c)) {
+            self.menu_close();
+        }
+        self.pr_sync_clip();
         if self.published_rev != Some(self.doc.revision()) {
             self.publish();
         }
@@ -390,7 +464,7 @@ impl Controller {
         if self.selected_track != Some(id) {
             self.selected_track = Some(id);
             if let Some(c) = self.selected_clip
-                && self.project().find_clip(c).map(|(t, _)| self.project().tracks[t].id) != Some(id)
+                && self.clip_track(c) != Some(id)
             {
                 self.selected_clip = None;
             }
@@ -414,7 +488,8 @@ impl Controller {
 
     pub fn delete_selection(&mut self) {
         if let Some(c) = self.selected_clip.take() {
-            self.execute(Command::RemoveClip { clip: c });
+            let cmd = if self.project().find_midi_clip(c).is_some() { Command::RemoveMidiClip { clip: c } } else { Command::RemoveClip { clip: c } };
+            self.execute(cmd);
         } else if let Some(t) = self.selected_track {
             let idx = self.project().track_index(t).unwrap_or(0);
             if self.execute(Command::RemoveTrack { track: t }) {
@@ -692,9 +767,23 @@ impl Controller {
                     }
                     Hit::Clip { index, zone } => {
                         let id = self.clip_ids[index];
+                        self.pr.focused = false;
+                        if let Some((ti, ci)) = self.project().find_midi_clip(id) {
+                            let (track, c) = (self.project().tracks[ti].id, &self.project().tracks[ti].midi_clips[ci]);
+                            let (start, len) = (c.start, c.length);
+                            self.select_track(track);
+                            self.select_clip(Some(id));
+                            self.drag = Some(match zone {
+                                Zone::Body => Drag::Move { clip: id, grab_beats: beat - start as f64 / PPQ as f64, orig_track: track, orig_start: start, track, start },
+                                Zone::Left => Drag::MidiLeft { clip: id, orig: (start, len), cur: (start, len) },
+                                Zone::Right => Drag::MidiRight { clip: id, orig: (start, len), cur: (start, len) },
+                            });
+                            self.ui_dirty = true;
+                            return;
+                        }
                         let Some((track, start, off, len, _, _)) = self.clip_region(id) else { return };
                         self.select_track(track);
-                        self.selected_clip = Some(id);
+                        self.select_clip(Some(id));
                         self.drag = Some(match zone {
                             Zone::Body => Drag::Move { clip: id, grab_beats: beat - start as f64 / PPQ as f64, orig_track: track, orig_start: start, track, start },
                             Zone::Left => Drag::TrimLeft { clip: id, orig: (start, off, len), cur: (start, off, len) },
@@ -704,10 +793,14 @@ impl Controller {
                     Hit::Track(i) => {
                         let id = self.project().tracks[i].id;
                         self.select_track(id);
-                        self.selected_clip = None;
+                        self.select_clip(None);
+                        self.pr.focused = false;
                         self.seek_beats(beat);
                     }
-                    Hit::Empty => self.selected_clip = None,
+                    Hit::Empty => {
+                        self.select_clip(None);
+                        self.pr.focused = false;
+                    }
                     Hit::Master => {}
                 }
                 self.ui_dirty = true;
@@ -744,6 +837,15 @@ impl Controller {
                         let len = (len0 as i64 - (off as i64 - off0 as i64)).max(1) as u64;
                         self.drag = Some(Drag::TrimLeft { clip, orig, cur: (start, off, len) });
                     }
+                    Drag::MidiLeft { clip, orig, .. } => {
+                        let end = orig.0 + orig.1;
+                        let start = snap(beat).clamp(0, end - PPQ);
+                        self.drag = Some(Drag::MidiLeft { clip, orig, cur: (start, end - start) });
+                    }
+                    Drag::MidiRight { clip, orig, .. } => {
+                        let end = snap(beat).max(orig.0 + PPQ);
+                        self.drag = Some(Drag::MidiRight { clip, orig, cur: (orig.0, end - orig.0) });
+                    }
                     Drag::TrimRight { clip, orig, .. } => {
                         let Some((_, _, _, _, rate, frames)) = self.clip_region(clip) else { return };
                         let (s0, off0, _) = orig;
@@ -759,8 +861,17 @@ impl Controller {
             _ => {
                 match self.drag.take() {
                     Some(Drag::Move { clip, orig_track, orig_start, track, start, .. }) if (track, start) != (orig_track, orig_start) => {
-                        self.execute(Command::MoveClip { clip, track, start });
+                        let midi = self.project().find_midi_clip(clip).is_some();
+                        self.execute(if midi { Command::MoveMidiClip { clip, track, start } } else { Command::MoveClip { clip, track, start } });
                         self.select_track(track);
+                    }
+                    Some(Drag::MidiRight { clip, orig, cur }) if orig != cur => {
+                        self.execute(Command::ResizeMidiClip { clip, start: cur.0, length: cur.1 });
+                    }
+                    Some(Drag::MidiLeft { clip, orig, cur }) if orig != cur => {
+                        if let Some(cmd) = self.project().midi_clip(clip).and_then(|c| pianoroll::midi_left_resize(c, cur.0)) {
+                            self.execute(cmd);
+                        }
                     }
                     Some(Drag::TrimLeft { clip, orig, cur } | Drag::TrimRight { clip, orig, cur }) if orig != cur => {
                         self.execute(Command::TrimClip { clip, start: cur.0, source_offset: cur.1, source_length: cur.2 });
@@ -805,10 +916,58 @@ impl Controller {
                     selected: Some(c.id) == self.selected_clip,
                     name: c.name.clone(),
                     wave,
+                    midi: None,
+                });
+                self.clip_ids.push(c.id);
+            }
+            for c in &t.midi_clips {
+                let (mut track_index, mut start, mut len) = (ti, c.start, c.length);
+                match &self.drag {
+                    Some(Drag::Move { clip, track, start: s, .. }) if *clip == c.id => {
+                        track_index = p.track_index(*track).unwrap_or(ti);
+                        start = *s;
+                    }
+                    Some(Drag::MidiLeft { clip, cur, .. } | Drag::MidiRight { clip, cur, .. }) if *clip == c.id => (start, len) = *cur,
+                    _ => {}
+                }
+                // Notes as displayed: piano-roll gesture preview for the open clip.
+                let notes = if self.pr.clip == Some(c.id) { self.pr_notes() } else { c.notes.clone() };
+                let shift = start - c.start; // left-resize preview keeps notes in place on the timeline
+                self.clip_vis.push(ClipVis {
+                    track_index,
+                    start_beats: start as f64 / PPQ as f64,
+                    len_beats: len as f64 / PPQ as f64,
+                    color: track_color(t.color),
+                    selected: Some(c.id) == self.selected_clip,
+                    name: c.name.clone(),
+                    wave: None,
+                    midi: Some(mini_notes(&notes, shift, len)),
                 });
                 self.clip_ids.push(c.id);
             }
         }
+    }
+
+    /// Track that holds a clip (audio or MIDI).
+    pub fn clip_track(&self, id: ClipId) -> Option<TrackId> {
+        let p = self.project();
+        p.find_clip(id).or_else(|| p.find_midi_clip(id)).map(|(t, _)| p.tracks[t].id)
+    }
+
+    /// Select a clip (or none). Selecting a MIDI clip opens the Clip tab (piano roll).
+    pub fn select_clip(&mut self, id: Option<ClipId>) {
+        self.selected_clip = id;
+        if id.is_some_and(|c| self.project().find_midi_clip(c).is_some()) {
+            self.bottom_tab = BottomTab::Clip;
+        }
+        self.pr_sync_clip();
+        self.ui_dirty = true;
+    }
+
+    pub fn set_bottom_tab(&mut self, tab: BottomTab) {
+        self.bottom_tab = tab;
+        self.pr_sync_clip();
+        self.ui_dirty = true;
     }
 
     pub fn scene<'a>(&'a self, scale: f32) -> timeline::Scene<'a> {
@@ -933,7 +1092,7 @@ impl Controller {
         self.view.clamp_scroll(self.project().tracks.len(), self.lanes_size.1);
         s.set_scroll_y(self.view.scroll_y as f32);
         self.update_labels();
-        tp.playing || metering || highlighting || self.pending_jobs > 0 || self.drag.is_some()
+        tp.playing || metering || highlighting || self.pending_jobs > 0 || self.drag.is_some() || self.pr_animating()
     }
 
     fn push_models(&mut self, app: &AppWindow) {
@@ -1030,6 +1189,7 @@ impl Controller {
             }
             None => s.set_chat_context_visible(false),
         }
+        self.push_clip_editor(&s);
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };
         s.set_status_text(status.into());
         self.ruler_key.0 = i64::MIN; // force label refresh
@@ -1064,8 +1224,30 @@ impl Controller {
     }
 }
 
+/// Mini note view of a MIDI clip: (rel start, rel length, rel pitch 0 top .. 1 bottom).
+/// `shift` = ticks the clip start moved (left-resize preview).
+fn mini_notes(notes: &[saine_core::Note], shift: Ticks, len: Ticks) -> Vec<[f32; 3]> {
+    if notes.is_empty() || len <= 0 {
+        return Vec::new();
+    }
+    let lo = notes.iter().map(|n| n.pitch).min().unwrap_or(60) as f32;
+    let hi = notes.iter().map(|n| n.pitch).max().unwrap_or(60) as f32;
+    let pad = ((12.0 - (hi - lo)) / 2.0).max(0.0);
+    let (lo, hi) = (lo - pad, hi + pad);
+    notes
+        .iter()
+        .filter_map(|n| {
+            let s = n.start - shift;
+            (s < len && s + n.length > 0).then(|| {
+                let s0 = s.max(0);
+                [s0 as f32 / len as f32, ((s + n.length).min(len) - s0) as f32 / len as f32, (hi - n.pitch as f32) / (hi - lo).max(1.0)]
+            })
+        })
+        .collect()
+}
+
 /// Update a VecModel in place (row-wise) so Slint only re-renders changed rows.
-fn sync_model<T: Clone + PartialEq + 'static>(m: &VecModel<T>, rows: Vec<T>) {
+pub(crate) fn sync_model<T: Clone + PartialEq + 'static>(m: &VecModel<T>, rows: Vec<T>) {
     if m.row_count() == rows.len() {
         for (i, r) in rows.into_iter().enumerate() {
             if m.row_data(i).as_ref() != Some(&r) {

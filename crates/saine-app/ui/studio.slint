@@ -44,6 +44,11 @@ export struct StripMeter { l: float, r: float, peak: string }   // 0 (top) .. 1 
 export struct ChatEntry { kind: int, text: string, lines: [string], worked: string, expanded: bool }
 export struct HighlightRect { x: length, y: length, w: length, h: length, note: string }
 
+// ---- clip editor / piano roll / context menu ----
+export struct YLabel { y: length, text: string }
+// separator: a line is drawn above the item; y: row top inside the menu.
+export struct MenuItem { label: string, shortcut: string, enabled: bool, separator: bool, submenu: bool, y: length }
+
 export global Studio {
     // ---- project / status ----
     in property <string> project-name: "Untitled";
@@ -141,6 +146,50 @@ export global Studio {
     callback chat-toggle-entry(int);
     callback chat-remove-context();
     callback chat-placeholder(string);     // PLACEHOLDER controls report "not implemented"
+
+    // ---- bottom panel: Clip / Devices tab, piano roll ----
+    in property <int> bottom-tab;            // 0 Devices, 1 Clip
+    callback set-bottom-tab(int);
+    in property <bool> pr-visible;           // a MIDI clip is open in the piano roll
+    in property <image> pr-image;            // wgpu note grid + keyboard (src/pianoroll.rs)
+    in property <bool> pr-pen;
+    in property <bool> pr-has-notes;
+    in property <[RulerLabel]> pr-bar-labels;
+    in property <[YLabel]> pr-key-labels;
+    in property <string> pr-start-text: "1.1.0";
+    in property <string> pr-end-text: "2.1.0";
+    in property <string> pr-position-text: "1.1.0";
+    in property <string> pr-length-text: "1.0.0";
+    in property <string> pr-grid-text: "1/16";
+    in property <string> pr-quant-text: "100%";
+    in property <string> pr-human-text: "50%";
+    in property <string> pr-vel-text: "100";
+    in property <string> clip-empty-title: "No clip selected";
+    in property <string> clip-empty-text: "Select a clip to edit it.";
+    in property <string> clip-name: "MIDI";
+    in property <color> clip-color: Tokens.track-instrument;
+    callback pr-pointer(int, length, length, bool, bool);   // kind 0 down 1 move 2 up, x, y, shift, alt
+    callback pr-scroll(float);
+    callback pr-action(string);                             // quantize|humanize|reverse|legato|double|pen|smart_quantize|velocity_lane
+    callback pr-value(int, int, float);                     // field, phase 0/1/2, dy since press
+    // ---- clip context menu + rename ----
+    callback lane-context(length, length, length, length);  // lane x, y, window x, y
+    in property <bool> menu-open;
+    in property <length> menu-x;
+    in property <length> menu-y;
+    in property <length> menu-h;
+    in property <[MenuItem]> menu-items;
+    in property <bool> sub-open;
+    in property <length> sub-y;
+    in property <length> sub-h;
+    in property <[MenuItem]> sub-items;
+    callback menu-activate(int);
+    callback sub-activate(int);
+    callback menu-dismiss();
+    in property <bool> rename-open;
+    in-out property <string> rename-text;
+    callback rename-commit(string);
+    callback rename-cancel();
 
     callback report-bug();   // TODO: no-op placeholder
     callback feedback();     // TODO: no-op placeholder

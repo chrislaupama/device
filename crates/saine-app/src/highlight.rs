@@ -13,6 +13,8 @@ pub struct Layout {
     pub sounds: bool,
     pub mixer: bool,
     pub assistant: bool,
+    /// Bottom panel shows the Clip tab (390 pt tall, no inspector).
+    pub clip_tab: bool,
     pub scroll_y: f32,
 }
 
@@ -26,7 +28,7 @@ pub const ASSISTANT_GAP: f32 = 5.0;
 
 impl Layout {
     pub fn bottom_h(&self) -> f32 {
-        if self.mixer { MIXER_BOTTOM_H } else { DEFAULT_BOTTOM_H }
+        if self.mixer || self.clip_tab { MIXER_BOTTOM_H } else { DEFAULT_BOTTOM_H }
     }
     /// Height of the browser/timeline row (y 78 ..).
     pub fn top_h(&self) -> f32 {
@@ -89,14 +91,14 @@ pub fn target_rect(l: &Layout, target: &str, track_index: impl Fn(u64) -> Option
         "timeline.add_track" => (tx, 105.5, 184.0, 39.0),
         "timeline.ruler" => (tx + 191.0, 105.5, tw - 191.0, 39.0),
         // ---- inspector + devices (bottom panel; hidden while the mixer is open) ----
-        "inspector.input" if !l.mixer => (15.0, by + 37.0, 149.0, 19.0),
-        "inspector.output" if !l.mixer => (15.0, by + 63.0, 149.0, 18.0),
-        "inspector.trim" if !l.mixer => (20.0, by + 120.0, 54.0, 68.0),
-        "inspector.width" if !l.mixer => (96.0, by + 120.0, 54.0, 68.0),
-        "inspector.pan" if !l.mixer => (20.0, by + 189.0, 54.0, 68.0),
-        "inspector.mono" if !l.mixer => (96.0, by + 189.0, 54.0, 68.0),
-        "inspector.fader" if !l.mixer => (188.0, by + 35.0, 63.0, 260.0),
-        "devices.add_device" if !l.mixer => (270.0, by + 34.5, 182.5, 264.0),
+        "inspector.input" if !l.mixer && !l.clip_tab => (15.0, by + 37.0, 149.0, 19.0),
+        "inspector.output" if !l.mixer && !l.clip_tab => (15.0, by + 63.0, 149.0, 18.0),
+        "inspector.trim" if !l.mixer && !l.clip_tab => (20.0, by + 120.0, 54.0, 68.0),
+        "inspector.width" if !l.mixer && !l.clip_tab => (96.0, by + 120.0, 54.0, 68.0),
+        "inspector.pan" if !l.mixer && !l.clip_tab => (20.0, by + 189.0, 54.0, 68.0),
+        "inspector.mono" if !l.mixer && !l.clip_tab => (96.0, by + 189.0, 54.0, 68.0),
+        "inspector.fader" if !l.mixer && !l.clip_tab => (188.0, by + 35.0, 63.0, 260.0),
+        "devices.add_device" if !l.mixer && !l.clip_tab => (270.0, by + 34.5, 182.5, 264.0),
         t if t.starts_with("track:") => return track_rect(l, t, track_index),
         _ => return None,
     };
@@ -133,7 +135,7 @@ mod tests {
     use saine_core::assistant::UI_TARGETS;
 
     fn default_layout() -> Layout {
-        Layout { w: 1440.0, h: 820.0, sounds: true, mixer: false, assistant: false, scroll_y: 0.0 }
+        Layout { w: 1440.0, h: 820.0, sounds: true, mixer: false, assistant: false, clip_tab: false, scroll_y: 0.0 }
     }
 
     #[test]

@@ -5,24 +5,26 @@
 //!
 //! ```text
 //! saine-studio [--open <dir>] [--import <wav>...] [--save-to <dir>] [--no-audio]
-//!              [--demo] [--state reference-default|reference-mixer|reference-assistant]
+//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--screenshot <out.png>] [--exit-after-frames N] [--frame-stats] [--self-test]
 //! ```
 
 mod assistant_panel;
 mod assistant_provider;
+mod clipedit;
 mod controller;
 mod gpu;
 mod highlight;
 mod mixer;
 mod peaks;
+mod pianoroll;
 mod placeholder;
 mod selftest;
 mod timeline;
 mod wavgen;
 
-use controller::{Controller, ImportTarget, gain_from_slider};
+use controller::{BottomTab, Controller, ImportTarget, gain_from_slider};
 use saine_core::keymap::{Chord, Context, Keymap};
 use saine_core::{Project, TrackId, db_to_gain};
 use saine_engine::{Config, Engine};
@@ -46,6 +48,8 @@ struct Args {
     /// Extra panels for the reference states.
     open_mixer: bool,
     open_assistant: bool,
+    /// 1 = reference-midi-clip (33), 2 = reference-pianoroll (34).
+    midi_state: u8,
     assistant_fixture: Option<PathBuf>,
     screenshot: Option<PathBuf>,
     exit_after_frames: Option<u64>,
@@ -84,7 +88,19 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.open_assistant = true;
                 }
-                s => return Err(format!("unknown state {s} (supported: reference-default, reference-mixer, reference-assistant)")),
+                "reference-midi-clip" => {
+                    a.reference_default = true;
+                    a.midi_state = 1;
+                }
+                "reference-pianoroll" => {
+                    a.reference_default = true;
+                    a.midi_state = 2;
+                }
+                s => {
+                    return Err(format!(
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll)"
+                    ));
+                }
             },
             "--assistant-fixture" => a.assistant_fixture = Some(value(&mut i)?.into()),
             "--screenshot" => a.screenshot = Some(value(&mut i)?.into()),
@@ -133,6 +149,10 @@ impl Series {
 struct Frame {
     renderer: Option<gpu::Renderer>,
     dl: gpu::DrawList,
+    /// Piano roll: a second offscreen texture with its own renderer instance.
+    pr_renderer: Option<gpu::Renderer>,
+    pr_dl: gpu::DrawList,
+    pr_visible: bool,
     adapter: String,
     interval: Series,
     ours: Series,
@@ -172,14 +192,26 @@ fn key_name(text: &str) -> Option<String> {
 pub fn app_keymap() -> Keymap {
     use saine_core::keymap::{Binding, Condition};
     let mut k = Keymap::default_preset();
-    for (action, chord) in [("view.toggle_mixer", "primary+shift+x"), ("view.toggle_assistant", "primary+shift+a")] {
+    for (action, chord) in [("view.toggle_mixer", "primary+shift+x"), ("view.toggle_assistant", "primary+shift+a"), ("view.escape", "escape")] {
         k.bindings.push(Binding { action: action.into(), chords: vec![Chord::parse(chord).expect("valid chord")], when: Condition::Always });
+    }
+    // Piano roll (our bindings; the reference documents ↑/↓ transpose, Delete and B/E only).
+    for (action, chords) in [
+        ("midi.delete_notes", &["delete", "backspace"][..]),
+        ("midi.transpose_up", &["up"][..]),
+        ("midi.transpose_down", &["down"][..]),
+        ("midi.octave_up", &["shift+up"][..]),
+        ("midi.octave_down", &["shift+down"][..]),
+        ("midi.select_all", &["primary+a"][..]),
+    ] {
+        let chords = chords.iter().map(|c| Chord::parse(c).expect("valid chord")).collect();
+        k.bindings.push(Binding { action: action.into(), chords, when: Condition::MidiEditorFocused });
     }
     k
 }
 
 fn app_text_focused(aw: &slint::Weak<AppWindow>) -> bool {
-    aw.upgrade().map(|a| a.global::<Studio>().get_chat_focused()).unwrap_or(false)
+    aw.upgrade().map(|a| a.global::<Studio>().get_chat_focused() || a.global::<Studio>().get_rename_open()).unwrap_or(false)
 }
 
 fn pick_import() -> Vec<PathBuf> {
@@ -207,6 +239,34 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "edit.undo" => ctl.borrow_mut().undo(),
         "edit.redo" => ctl.borrow_mut().redo(),
         "clip.delete" | "track.delete" => ctl.borrow_mut().delete_selection(),
+        "clip.insert_midi" => {
+            ctl.borrow_mut().insert_midi_clip();
+        }
+        "clip.duplicate" => ctl.borrow_mut().duplicate_clip(),
+        "clip.cut" => ctl.borrow_mut().cut_clip(),
+        "edit.copy" => {
+            ctl.borrow_mut().copy_clip();
+        }
+        "edit.paste" => ctl.borrow_mut().paste_clip(),
+        "midi.paint_pen" => ctl.borrow_mut().pr_action("pen"),
+        "midi.delete_notes" => {
+            let mut c = ctl.borrow_mut();
+            if !c.pr_delete_notes() {
+                c.delete_selection();
+            }
+        }
+        "midi.transpose_up" => ctl.borrow_mut().pr_transpose(1),
+        "midi.transpose_down" => ctl.borrow_mut().pr_transpose(-1),
+        "midi.octave_up" => ctl.borrow_mut().pr_transpose(12),
+        "midi.octave_down" => ctl.borrow_mut().pr_transpose(-12),
+        "midi.select_all" => ctl.borrow_mut().pr_select_all(),
+        "view.escape" => {
+            let mut c = ctl.borrow_mut();
+            c.menu_close();
+            c.rename = None;
+            c.ui_dirty = true;
+        }
+        a if a.starts_with("clip.") || a == "assistant.ask" => ctl.borrow_mut().set_status(format!("{a}: not implemented yet"), 3),
         "track.add_audio" => {
             ctl.borrow_mut().add_audio_track();
         }
@@ -301,6 +361,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.assistant_open = args.open_assistant;
         c.ui_dirty = true;
     }
+    if args.midi_state > 0 {
+        // Reference 33/34: default project, Instrument track selected, 1-bar MIDI clip at bar 6.
+        let mut c = ctl.borrow_mut();
+        let inst = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id);
+        if let Some(t) = inst {
+            c.select_track(t);
+        }
+        c.seek_beats(20.0);
+        let clip = c.insert_midi_clip();
+        if args.midi_state == 2 {
+            c.select_clip(clip);
+            c.seek_beats(22.0); // 00:11.000, as captured
+        }
+    }
+    // Push view models once before the first frame, so conditional panels are built
+    // for the initial state (setting them from inside the first BeforeRendering is
+    // too late for that frame's item tree).
+    ctl.borrow_mut().update_ui(&app);
     if args.reference_default || args.screenshot.is_some() {
         ctl.borrow_mut().show_status = !args.reference_default;
     }
@@ -319,7 +397,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     let $c = &mut *guard;
                     $body;
                 }
-                if let Some(a) = aw.upgrade() { a.window().request_redraw(); }
+                // Push view models now (outside the rendering notifier), so conditional
+                // panels (`if` in Slint) are rebuilt for this state before the next frame.
+                if let Some(a) = aw.upgrade() {
+                    if let Ok(mut c) = ctl.try_borrow_mut() { c.update_ui(&a); }
+                    a.window().request_redraw();
+                }
             });
         }};
     }
@@ -357,6 +440,35 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_chat_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, _shift: bool, _cmd: bool| c.pointer(kind, x, y));
     on!(on_lane_scroll, |c, dx: f32, dy: f32, x: f32, zoom: bool| c.scroll(dx, dy, x, zoom));
+    on!(on_set_bottom_tab, |c, t: i32| c.set_bottom_tab(if t == 1 { BottomTab::Clip } else { BottomTab::Devices }));
+    on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool| c.pr_pointer(kind, x, y, shift, alt));
+    on!(on_pr_scroll, |c, dy: f32| c.pr_scroll(dy));
+    on!(on_pr_action, |c, a: slint::SharedString| c.pr_action(a.as_str()));
+    on!(on_pr_value, |c, f: i32, phase: i32, dy: f32| c.pr_value(f, phase, dy));
+    on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
+    on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
+    on!(on_menu_dismiss, |c| c.menu_close());
+    on!(on_rename_commit, |c, t: slint::SharedString| {
+        if let Some(id) = c.rename {
+            c.rename_clip(id, t.as_str());
+        }
+    });
+    on!(on_rename_cancel, |c| {
+        c.rename = None;
+        c.ui_dirty = true;
+    });
+    {
+        let ctl = ctl.clone();
+        let aw = app.as_weak();
+        studio.on_lane_context(move |x, y, wx, wy| {
+            let Some(a) = aw.upgrade() else { return };
+            let scale = a.window().scale_factor();
+            let sz = a.window().size();
+            ctl.borrow_mut().lane_context(x, y, wx, wy, (sz.width as f32 / scale, sz.height as f32 / scale));
+            ctl.borrow_mut().update_ui(&a);
+            a.window().request_redraw();
+        });
+    }
     // TODO(feedback): wire "Report a bug" / "Share your feedback" to a real channel. No-ops for now.
     on!(on_report_bug, |c| c.set_status("Report a bug: not connected yet (TODO)", 3));
     on!(on_feedback, |c| c.set_status("Feedback: not connected yet (TODO)", 3));
@@ -384,14 +496,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     mixer_open: c.mixer_open,
                     text_input_focused: app_text_focused(&aw),
                     track_selected: c.selected_track.is_some(),
-                    track_header_selected: c.selected_track.is_some() && c.selected_clip.is_none(),
+                    track_header_selected: c.selected_track.is_some() && c.selected_clip.is_none() && !c.pr.focused,
                     clips_selected: c.selected_clip.is_some() as usize,
+                    midi_clip_selected: c.pr_visible(),
+                    midi_editor_focused: c.pr_visible() && c.pr.focused,
                     ..Default::default()
                 }
             };
             let Some(action) = keymap.resolve(&chord, &cx).map(str::to_owned) else { return false };
             let handled = run_action(&ctl, &action);
             if let Some(a) = aw.upgrade() {
+                if let Ok(mut c) = ctl.try_borrow_mut() {
+                    c.update_ui(&a);
+                }
                 a.window().request_redraw();
             }
             handled
@@ -433,6 +550,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     a.window().request_redraw();
                 }
             }
+            // Keep view models current outside the rendering notifier (see the `on!` macro).
+            if c.ui_dirty
+                && let Some(a) = aw.upgrade()
+            {
+                c.update_ui(&a);
+            }
             drop(c);
             if let Some(a) = aw.upgrade() {
                 let cur = LANE_CURSOR.with(|lc| lc.get());
@@ -448,6 +571,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let frame = Rc::new(RefCell::new(Frame {
         renderer: None,
         dl: gpu::DrawList::default(),
+        pr_renderer: None,
+        pr_dl: gpu::DrawList::default(),
+        pr_visible: false,
         adapter,
         interval: Series::default(),
         ours: Series::default(),
@@ -476,7 +602,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     if r.is_none() {
                         eprintln!("RenderingSetup: unexpected graphics API (expected wgpu 30)");
                     }
-                    fr.borrow_mut().renderer = r;
+                    let mut f = fr.borrow_mut();
+                    f.pr_renderer = gpu::with_wgpu(api, gpu::Renderer::new);
+                    f.renderer = r;
                 }
                 slint::RenderingState::BeforeRendering => {
                     let t0 = Instant::now();
@@ -507,6 +635,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         timeline::build(&mut f.dl, &c.scene(scale));
                         r.render(&f.dl);
                     }
+                    // Piano roll texture (only while a MIDI clip is open in the Clip tab).
+                    let pr_vis = c.pr_visible();
+                    if pr_vis {
+                        let win = app.window().size();
+                        let size = ((win.width as f32 / scale) - 10.0 - pianoroll::PANEL_ORIGIN.0 - 0.5, pianoroll::CLIP_PANEL_H - pianoroll::PANEL_ORIGIN.1 - pianoroll::FOOTER_H);
+                        if c.pr.size != size {
+                            c.pr.size = size;
+                            c.ui_dirty = true;
+                        }
+                        let notes = c.pr_notes();
+                        if let (Some(r), Some(sc)) = (f.pr_renderer.as_mut(), c.pr_scene(scale, &notes)) {
+                            let phys = ((size.0 * scale).round() as u32, (size.1 * scale).round() as u32);
+                            if let Some(tex) = r.ensure_target(phys) {
+                                match gpu::to_slint_image(tex) {
+                                    Ok(img) => app.global::<Studio>().set_pr_image(img),
+                                    Err(e) => eprintln!("piano roll texture import failed: {e}"),
+                                }
+                            }
+                            pianoroll::build(&mut f.pr_dl, &sc);
+                            r.render(&f.pr_dl);
+                        }
+                    }
+                    f.pr_visible = pr_vis;
                     let t1 = Instant::now();
                     if f.ready_frames > 2 {
                         f.ours.0.push((t1 - t0).as_secs_f64() * 1e3);
@@ -562,7 +713,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         app.window().request_redraw();
                     }
                 }
-                slint::RenderingState::RenderingTeardown => fr.borrow_mut().renderer = None,
+                slint::RenderingState::RenderingTeardown => {
+                    let mut f = fr.borrow_mut();
+                    f.renderer = None;
+                    f.pr_renderer = None;
+                }
                 _ => {}
             }
         })?;

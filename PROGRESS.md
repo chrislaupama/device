@@ -64,7 +64,7 @@ cargo test --workspace                                                          
   Run: `cargo run --release -p saine-app -- --demo`.
 
 **Known gaps / next steps**
-1. Build the clip-editor/devices toggle and piano roll, splitters, track rename/resize, native menu bar.
+1. Synth parameters + Devices panel, note preview, velocity lane, clip loop; splitters, track rename/resize, native menu bar.
    Engine: input/recording, loop crossfade, tempo map for the metronome.
 2. Reference capture still missing: audio clip appearance (needs a local WAV dropped onto a track), hover/pressed
    states, animation timings, the rest of the shortcut bindings (scroll the Shortcuts page with mouse wheel events, not keys).
@@ -93,3 +93,13 @@ cargo test --workspace                                                          
 - Self-test 42/42 offline and with Core Audio; workspace tests 49 pass; default state unchanged (1.65).
 - Privacy: the reference Rheo AX dump had the owner's chat history; transcript strings are redacted in
   `reference/data/ax-rheo.tsv`. Never commit reference chat content.
+
+### 2026-11-08: session 1, round 4 (MIDI + piano roll)
+- Core: MIDI clips/notes, commands (AddMidiClip/Remove/Move/Resize/SetMidiNotes), seeded note transforms, note
+  snapshots in engine frames. Engine ABI additions `se_session_publish_v2` (+ note/track v2 structs); original
+  16-voice polyBLEP synth with sample-accurate events, republish-safe voices: 60/60 ctest (default + ASan),
+  pitch within ±0.5 Hz. Bench: 32 MIDI tracks × 8 voices ≈ 396 µs per 256-frame block (unoptimised).
+- App: MIDI clips on the timeline, piano roll (wgpu) with editing, toolbar transforms, footer, context menu.
+  Self-test 60/60 offline and with Core Audio, incl. a check that notes drawn in the piano roll sound on the
+  instrument track. Fidelity: midi-clip 1.45, piano roll 2.16; earlier states unchanged.
+- Requested core API: RenameClip command, clip loop fields; engine: note audition call.

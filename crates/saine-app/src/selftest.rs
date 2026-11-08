@@ -18,6 +18,9 @@ type Ctl = Rc<RefCell<Controller>>;
 
 enum Step {
     Do(&'static str, Box<dyn Fn(&AppWindow)>),
+    /// Like `Do`, but computes coordinates from the controller first (the closure must
+    /// release its borrow before dispatching events).
+    DoC(&'static str, Box<dyn Fn(&AppWindow, &Ctl)>),
     Check(&'static str, Box<dyn Fn(&Controller, &AppWindow) -> Result<(), String>>),
 }
 
@@ -80,6 +83,247 @@ const PITCH: f32 = 74.5;
 
 fn clip_start_beats(c: &Controller, track: usize) -> Option<f64> {
     c.project().tracks.get(track)?.clips.first().map(|cl| cl.start as f64 / PPQ as f64)
+}
+
+/// Piano-roll texture origin in the window (bottom panel 390 pt at y 425, x 5 + 255).
+const PR_ORIGIN: (f32, f32) = (260.0, 820.0 - 5.0 - 390.0 + 54.5);
+
+/// Window point at the centre of a piano-roll cell (beat is clip-relative).
+fn pr_xy(ctl: &Ctl, beat: f64, pitch: i32) -> (f32, f32) {
+    let v = ctl.borrow().pr_view();
+    (PR_ORIGIN.0 + v.x_of(beat), PR_ORIGIN.1 + v.y_of(pitch) + crate::pianoroll::ROW_H / 2.0)
+}
+
+fn instrument_clip(c: &Controller) -> Option<&saine_core::MidiClip> {
+    c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument)?.midi_clips.first()
+}
+
+fn notes_of(c: &Controller) -> Vec<saine_core::Note> {
+    instrument_clip(c).map(|m| m.notes.clone()).unwrap_or_default()
+}
+
+/// MIDI clip + piano roll steps (appended to the main script).
+fn midi_steps() -> Vec<Step> {
+    use Step::*;
+    let hist = Rc::new(Cell::new(0usize));
+    let saved: Rc<RefCell<(Vec<saine_core::Note>, i64)>> = Rc::new(RefCell::new((Vec::new(), 0)));
+    let h = |n: usize| -> Vec<Rc<Cell<usize>>> { (0..n).map(|_| hist.clone()).collect() };
+    let hs = h(16);
+    let (sv1, sv2) = (saved.clone(), saved.clone());
+    let lane_xy = |ctl: &Ctl, beat: f64, track: usize| -> (f32, f32) {
+        let c = ctl.borrow();
+        (LANE_X + c.view.x_of(beat), TRACK0_Y + track as f32 * PITCH + 40.0 - c.view.scroll_y as f32)
+    };
+    let record = |hc: Rc<Cell<usize>>| -> Box<dyn Fn(&Controller, &AppWindow) -> Result<(), String>> {
+        Box::new(move |c, _| {
+            hc.set(c.doc.history_labels().len());
+            Ok(())
+        })
+    };
+    // One new undo step since the last record, with this label; re-records.
+    let one_step = |hc: Rc<Cell<usize>>, label: &'static str| {
+        move |c: &Controller| -> Result<(), String> {
+            let n = c.doc.history_labels().len();
+            let ok = n == hc.get() + 1 && c.doc.undo_label() == Some(label);
+            hc.set(n);
+            ok.then_some(()).ok_or(format!("history {} -> {n}, last {:?} (want {label})", hc.get(), c.doc.undo_label()))
+        }
+    };
+    let [h0, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15] = <[Rc<Cell<usize>>; 16]>::try_from(hs).ok().unwrap();
+    vec![
+        Do("Enter (playhead to 0)", Box::new(|a| key(a, Key::Return, false, false))),
+        DoC("wheel back to the start of the timeline", Box::new(|a, _| {
+            let w = a.window();
+            w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(900.0, 300.0) });
+            w.dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(900.0, 300.0), delta_x: 4000.0, delta_y: 0.0 });
+        })),
+        DoC("click the Instrument track header", Box::new(|a, ctl| {
+            let sy = ctl.borrow().view.scroll_y as f32;
+            click(a, 300.0, TRACK0_Y + PITCH + 10.0 - sy);
+        })),
+        Check("record history", record(h0.clone())),
+        Do("Cmd+Shift+M (clip.insert_midi)", Box::new(|a| key(a, "M", true, true))),
+        Check("1-bar MIDI clip at the playhead, Clip tab open, nothing selected, one undo step", Box::new(move |c, a| {
+            let m = instrument_clip(c).ok_or("no MIDI clip")?;
+            let s = a.global::<Studio>();
+            one_step(h0.clone(), "Insert MIDI Clip")(c)?;
+            (m.start == 0 && m.length == 4 * PPQ && m.name == "MIDI" && s.get_bottom_tab() == 1 && !s.get_pr_visible() && c.selected_clip.is_none())
+                .then_some(())
+                .ok_or(format!("start {} len {} tab {} pr {}", m.start, m.length, s.get_bottom_tab(), s.get_pr_visible()))
+        })),
+        DoC("click the MIDI clip in the lane", Box::new(move |a, ctl| {
+            let (x, y) = lane_xy(ctl, 2.0, 1);
+            click(a, x, y);
+        })),
+        Check("clip selected, piano roll open", Box::new(|c, a| {
+            let id = instrument_clip(c).map(|m| m.id);
+            (c.selected_clip == id && a.global::<Studio>().get_pr_visible() && c.pr_visible()).then_some(()).ok_or(format!("sel {:?} vs {id:?}", c.selected_clip))
+        })),
+        DoC("click empty grid (focus) and press B (pen)", Box::new(|a, ctl| {
+            let (x, y) = pr_xy(ctl, 3.5, 50);
+            click(a, x, y);
+            key(a, "b", false, false);
+        })),
+        Check("pen tool on (midi.paint_pen), record history", Box::new(move |c, a| {
+            h1.set(c.doc.history_labels().len());
+            (c.pr.pen && c.pr.focused && a.global::<Studio>().get_pr_pen()).then_some(()).ok_or("pen off".into())
+        })),
+        DoC("draw 3 notes with the pen (E3 at 1.1, G3 at 1.2, B3 at 1.3)", Box::new(|a, ctl| {
+            for (beat, pitch) in [(0.1, 52), (1.1, 55), (2.1, 59)] {
+                let (x, y) = pr_xy(ctl, beat, pitch);
+                click(a, x, y);
+            }
+        })),
+        Check("3 notes: pitches 52/55/59, starts 0/960/1920, length 1/16; 3 undo steps", Box::new(move |c, _| {
+            let n = notes_of(c);
+            let got: Vec<(u8, i64, i64)> = n.iter().map(|n| (n.pitch, n.start, n.length)).collect();
+            let steps = c.doc.history_labels().len() - h2.get();
+            h2.set(c.doc.history_labels().len());
+            (got == vec![(52, 0, 240), (55, 960, 240), (59, 1920, 240)] && steps == 3).then_some(()).ok_or(format!("{got:?}, {steps} steps"))
+        })),
+        Check("drawn notes sound: instrument track meter > 0 in an offline render from the clip start", Box::new(|c, _| {
+            if c.engine.device_running() {
+                return Ok(()); // offline render is refused while the device owns the audio path
+            }
+            let p = c.project();
+            let t = p.tracks.iter().find(|t| !t.midi_clips.is_empty()).ok_or("no MIDI clip")?;
+            let start = p.ticks_to_frames(t.midi_clips[0].start, c.engine.sample_rate());
+            let e = &c.engine;
+            e.seek(start).map_err(|e| e.to_string())?;
+            e.play().map_err(|e| e.to_string())?;
+            let mut buf = vec![0f32; 2 * 4_800]; // first 100 ms: inside the first note (E3, 1/16 = 125 ms)
+            let r = e.render_offline(&mut buf);
+            let mut meters = Vec::new();
+            e.peek_meters(&mut meters, 64);
+            let _ = e.stop();
+            r.map_err(|e| e.to_string())?;
+            let m = meters.iter().find(|m| m.track_id == t.id.0).map(|m| m.peak_l.max(m.peak_r)).unwrap_or(0.0);
+            (m > 0.01).then_some(()).ok_or(format!("instrument meter {m}"))
+        })),
+        DoC("drag the G3 note up 2 semitones", Box::new(|a, ctl| {
+            let (x, y) = pr_xy(ctl, 1.1, 55);
+            drag(a, x, y, x, y - 2.0 * crate::pianoroll::ROW_H);
+        })),
+        Check("note moved to A3 (57), start kept, one undo step", Box::new(move |c, _| {
+            let n = notes_of(c);
+            one_step(h3.clone(), "Edit Notes")(c)?;
+            n.iter().any(|n| n.pitch == 57 && n.start == 960).then_some(()).ok_or(format!("{n:?}"))
+        })),
+        DoC("drag the B3 note's right edge to beat 3", Box::new(|a, ctl| {
+            let (x0, y) = pr_xy(ctl, 2.25, 59);
+            let (x1, _) = pr_xy(ctl, 3.0, 59);
+            drag(a, x0 - 1.5, y, x1 - 1.5, y);
+        })),
+        Check("B3 note resized to one beat (960 ticks), one undo step", Box::new(move |c, _| {
+            let n = notes_of(c);
+            one_step(h4.clone(), "Edit Notes")(c)?;
+            n.iter().any(|n| n.pitch == 59 && n.start == 1920 && n.length == 960).then_some(()).ok_or(format!("{n:?}"))
+        })),
+        DoC("Grid 1/32, draw an off-grid note at beat 3.375, Grid back to 1/16", Box::new(|a, ctl| {
+            let (gx, gy) = (260.0 + 387.0 + 8.0, 452.0 + (390.0 - 27.0) - 54.5 + 30.0 + 7.0);
+            click(a, gx, gy); // 1/16 -> 1/32
+            let (x, y) = pr_xy(ctl, 3.375 + 0.03, 52);
+            click(a, x, y);
+            for _ in 0..3 {
+                click(a, gx, gy); // 1/32 -> 1/4 -> 1/8 -> 1/16
+            }
+        })),
+        Check("off-grid note drawn at 3240 ticks, grid back at 1/16", Box::new(move |c, a| {
+            let n = notes_of(c);
+            h13.set(c.doc.history_labels().len());
+            (n.iter().any(|n| n.start == 3240 && n.pitch == 52) && c.pr.grid == 16 && a.global::<Studio>().get_pr_grid_text() == "1/16")
+                .then_some(())
+                .ok_or(format!("grid {} {n:?}", c.pr.grid))
+        })),
+        Do("click Quantize (selection = the new note)", Box::new(|a| click(a, 267.0 + 15.0, 466.0))),
+        Check("Quantize snapped it to the 1/16 grid (3360), one undo step", Box::new(move |c, _| {
+            let n = notes_of(c);
+            one_step(h5.clone(), "Quantize Notes")(c)?;
+            (n.iter().all(|n| n.start % 240 == 0) && n.iter().any(|n| n.start == 3360 && n.pitch == 52)).then_some(()).ok_or(format!("{n:?}"))
+        })),
+        DoC("click the E3 note at beat 0, press Up", Box::new(|a, ctl| {
+            let (x, y) = pr_xy(ctl, 0.1, 52);
+            click(a, x, y);
+            key(a, Key::UpArrow, false, false);
+        })),
+        Check("↑ transposed only the selected note (52 -> 53), one undo step", Box::new(move |c, _| {
+            let n = notes_of(c);
+            one_step(h6.clone(), "Transpose Notes")(c)?;
+            let first = n.iter().find(|n| n.start == 0).ok_or("no note at 0")?;
+            (first.pitch == 53 && n.iter().filter(|n| n.pitch == 52).count() == 1).then_some(()).ok_or(format!("{n:?}"))
+        })),
+        DoC("Shift+Up (octave), then B (pen off) and click empty grid (deselect)", Box::new(|a, ctl| {
+            key(a, Key::UpArrow, false, true);
+            key(a, "b", false, false);
+            let (x, y) = pr_xy(ctl, 2.9, 50);
+            click(a, x, y);
+        })),
+        Check("⇧↑ moved it an octave (65), pen off, nothing selected; record notes", Box::new(move |c, _| {
+            let n = notes_of(c);
+            *sv1.borrow_mut() = (n.clone(), instrument_clip(c).map(|m| m.length).unwrap_or(0));
+            h14.set(c.doc.history_labels().len());
+            (n.iter().any(|n| n.start == 0 && n.pitch == 65) && !c.pr.pen && c.pr.selected.is_empty()).then_some(()).ok_or(format!("{n:?}"))
+        })),
+        Do("click Double", Box::new(|a| click(a, 260.0 + 270.5 + 10.0, 466.0))),
+        Check("Double: 2x notes and 2x clip length in ONE undo step", Box::new(move |c, _| {
+            let (before, len) = sv2.borrow().clone();
+            let m = instrument_clip(c).ok_or("clip gone")?;
+            one_step(h7.clone(), "Double")(c)?;
+            (m.notes.len() == 2 * before.len() && m.length == 2 * len).then_some(()).ok_or(format!("{} notes, len {}", m.notes.len(), m.length))
+        })),
+        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("undo restored the notes and the clip length exactly", Box::new(move |c, _| {
+            let (before, len) = saved.borrow().clone();
+            let m = instrument_clip(c).ok_or("clip gone")?;
+            h15.set(c.doc.history_labels().len());
+            (m.notes == before && m.length == len).then_some(()).ok_or(format!("{} notes len {}", m.notes.len(), m.length))
+        })),
+        DoC("select the clip in the lane, Cmd+D", Box::new(move |a, ctl| {
+            let (x, y) = lane_xy(ctl, 2.0, 1);
+            click(a, x, y);
+            key(a, "d", true, false);
+        })),
+        Check("⌘D duplicated the clip right after itself (same notes), copy selected", Box::new(move |c, _| {
+            let t = c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument).ok_or("no inst")?;
+            one_step(h8.clone(), "Duplicate Clip")(c)?;
+            let ok = t.midi_clips.len() == 2 && t.midi_clips[1].start == t.midi_clips[0].end() && t.midi_clips[1].notes == t.midi_clips[0].notes && c.selected_clip == Some(t.midi_clips[1].id);
+            ok.then_some(()).ok_or(format!("{} clips", t.midi_clips.len()))
+        })),
+        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        DoC("right-click the clip", Box::new(move |a, ctl| {
+            let (x, y) = lane_xy(ctl, 2.0, 1);
+            let w = a.window();
+            let p = LogicalPosition::new(x, y);
+            w.dispatch_event(WindowEvent::PointerMoved { position: p });
+            w.dispatch_event(WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
+            w.dispatch_event(WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
+        })),
+        Check("context menu open with Cut/Copy/Duplicate enabled and Split disabled", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let items = s.get_menu_items();
+            let get = |i: usize| slint::Model::row_data(&items, i);
+            let ok = s.get_menu_open()
+                && get(0).is_some_and(|m| m.label == "Cut" && m.enabled)
+                && get(2).is_some_and(|m| m.label == "Duplicate" && m.enabled)
+                && get(3).is_some_and(|m| m.label == "Split" && !m.enabled)
+                && instrument_clip(c).map(|m| m.id) == c.selected_clip;
+            ok.then_some(()).ok_or(format!("open {} items {}", s.get_menu_open(), slint::Model::row_count(&items)))
+        })),
+        Do("Escape closes the menu, Delete", Box::new(|a| {
+            key(a, Key::Escape, false, false);
+            key(a, Key::Delete, false, false);
+        })),
+        Check("menu closed, clip deleted (RemoveMidiClip), piano roll closed", Box::new(move |c, a| {
+            let s = a.global::<Studio>();
+            (!s.get_menu_open() && instrument_clip(c).is_none() && !s.get_pr_visible()).then_some(()).ok_or(format!("menu {} clip {:?}", s.get_menu_open(), instrument_clip(c).map(|m| m.id)))
+        })),
+        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("undo restored the clip with its notes", Box::new(move |c, _| {
+            let _ = (&h9, &h10, &h11, &h12);
+            let n = notes_of(c);
+            (instrument_clip(c).is_some() && n.len() == 4).then_some(()).ok_or(format!("{} notes", n.len()))
+        })),
+    ]
 }
 
 fn steps() -> Vec<Step> {
@@ -386,7 +630,9 @@ fn steps() -> Vec<Step> {
 
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
-    let steps = Rc::new(steps());
+    let mut all = steps();
+    all.extend(midi_steps());
+    let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));
     let timer = Rc::new(slint::Timer::default());
@@ -410,6 +656,13 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
             return;
         }
         match &steps[i] {
+            Step::DoC(name, f) => {
+                eprintln!("self-test: > {name}");
+                if let Ok(mut c) = ctl.try_borrow_mut() {
+                    c.update_ui(&app);
+                }
+                f(&app, &ctl);
+            }
             Step::Do(name, f) => {
                 eprintln!("self-test: > {name}");
                 // Push models first, as a rendered frame would: when the window is not

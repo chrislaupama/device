@@ -1,0 +1,229 @@
+// Clip tab of the bottom panel: clip sidebar (Patterns / Shape PLACEHOLDERS), the
+// piano roll (toolbar, wgpu note grid + keyboard from src/pianoroll.rs, footer),
+// the empty state, and the clip context menu.
+//
+// Geometry measured from reference/screenshots/33-*.png and 34-*.png (bottom panel
+// at y 425, 390 pt tall while the Clip tab is open). Panel-relative coordinates.
+import { Tokens } from "tokens.slint";
+import { Icon, Icons, Label } from "widgets.slint";
+import { Studio, MenuItem } from "studio.slint";
+
+// Track title row at the top of the left column ("2 ‖ Instrument").
+export component TrackTitle inherits Rectangle {
+    Rectangle { x: 0.5px; y: 15px; width: 3px; height: 15px; border-radius: 1.5px; background: Studio.sel-color; }
+    Text { visible: Studio.has-selection; x: 10.5px; y: 7px; height: 13px; text: Studio.sel-number; color: Tokens.text-bright; font-size: 9px; font-weight: 700; vertical-alignment: center; }
+    Icon { visible: Studio.has-selection; x: 21px; y: 8px; width: 11px; height: 11px; d: Studio.sel-instrument ? Icons.keys : Icons.wave; ink: #a8a8ab; stroke-width: 1.1px; }
+    Label { x: 37px; y: 7px; text: Studio.has-selection ? Studio.sel-name : "No track selected"; color: Tokens.text-bright; font-size: 10px; }
+}
+
+// Left column of the Clip tab. Patterns / Shape, Type / Genre and "Create chords" are
+// PLACEHOLDERS (static, no pattern generator).
+export component ClipSidebar inherits Rectangle {
+    TrackTitle { x: 0; y: 0; width: root.width; height: 26px; }
+    if !Studio.pr-visible: Rectangle {
+        Text { x: 0; y: 193px; width: root.width; height: 15px; text: "Patterns"; color: #a5a6aa; font-size: 9.75px; horizontal-alignment: center; vertical-alignment: center; }
+        Text { x: 0; y: 210px; width: root.width; height: 14px; text: "Select a clip to generate some patterns."; color: #6c6e74; font-size: 8.75px; horizontal-alignment: center; vertical-alignment: center; }
+    }
+    if Studio.pr-visible: Rectangle {
+        // clip chip + Patterns / Shape card
+        Rectangle {
+            x: 10.5px; y: 38px; width: 234px; height: 60.5px; border-radius: 8px; background: #212227;
+            Rectangle {
+                x: 0; y: 0; width: parent.width; height: 30.5px; border-radius: 8px; background: Studio.clip-color;
+                Rectangle { y: parent.height - 8px; height: 8px; background: Studio.clip-color; }
+                Icon { x: 11px; y: 9px; width: 13px; height: 13px; d: Icons.keys; ink: #1d2142; stroke-width: 1.4px; }
+                Text { x: 42px; text: Studio.clip-name; color: #1d2142; font-size: 10px; font-weight: 500; vertical-alignment: center; }
+            }
+            Rectangle {
+                x: 5px; y: 35.5px; width: 110.5px; height: 20px; border-radius: 10px; background: #484a4f;
+                Text { text: "Patterns"; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+            }
+            Text { x: 120px; y: 35.5px; width: 110px; height: 20px; text: "Shape"; color: #6c6e74; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        Text { x: 17.5px; y: 104px; height: 17px; text: "Type"; color: #6c6e74; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+        Rectangle {
+            x: 46.5px; y: 104px; width: 63px; height: 17px; border-radius: 8.5px; background: #2a2b30;
+            Text { x: 7.5px; text: "Chords"; color: #d6d6d9; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+            Icon { x: parent.width - 14px; y: 4.5px; width: 8px; height: 8px; d: Icons.chevron-down; ink: #9a9ba0; }
+        }
+        Text { x: 117.5px; y: 104px; height: 17px; text: "Genre"; color: #6c6e74; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+        Rectangle {
+            x: 151.5px; y: 104px; width: 89.5px; height: 17px; border-radius: 8.5px; background: #2a2b30;
+            Text { x: 7.5px; text: "Any"; color: #d6d6d9; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+            Icon { x: parent.width - 14px; y: 4.5px; width: 8px; height: 8px; d: Icons.chevron-down; ink: #9a9ba0; }
+        }
+        Text { x: 0; y: 193.5px; width: root.width; height: 15px; text: "No patterns"; color: #a5a6aa; font-size: 9.75px; horizontal-alignment: center; vertical-alignment: center; }
+        Text { x: 0; y: 210.5px; width: root.width; height: 14px; text: "Create some with the button below."; color: #6c6e74; font-size: 8.75px; horizontal-alignment: center; vertical-alignment: center; }
+        Rectangle {
+            x: 10.5px; y: 352.5px; width: 234px; height: 27px; border-radius: 13.5px; background: #8193eb;
+            Text { x: 12px; text: "Create chords"; color: #1d2142; font-size: 10px; font-weight: 500; vertical-alignment: center; }
+            Icon { x: parent.width - 21.5px; y: 7px; width: 13px; height: 13px; d: Icons.sparkle; ink: #1d2142; stroke-width: 1.1px; }
+            TouchArea { clicked => { Studio.chat-placeholder("Create chords"); } }
+        }
+    }
+}
+
+// Toolbar text button (real unless `placeholder`).
+component ToolText inherits Rectangle {
+    in property <string> text;
+    in property <string> action;
+    in property <bool> placeholder: false;
+    height: 14px;
+    width: t.preferred-width;
+    t := Text {
+        x: 0; text: root.text;
+        color: (!root.placeholder && Studio.pr-has-notes) ? (ta.has-hover ? #e5e5e8 : #b4b5ba) : #7f8187;
+        font-size: 9.75px; font-weight: 500; vertical-alignment: center;
+    }
+    ta := TouchArea { clicked => { Studio.pr-action(root.action); } }
+}
+
+// Footer value (lavender). Drag vertically to change it; `cycle` fields change on click.
+component FooterValue inherits Rectangle {
+    in property <string> text;
+    in property <int> field: -1;
+    in property <bool> cycle: false;
+    in property <color> ink: #8a9bf0;
+    height: 14px;
+    width: t.preferred-width;
+    t := Text { x: 0; text: root.text; color: root.ink; font-size: 10px; font-weight: 600; letter-spacing: 0.45px; vertical-alignment: center; }
+    if root.field >= 0: TouchArea {
+        mouse-cursor: root.cycle ? MouseCursor.pointer : MouseCursor.ns-resize;
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down && !root.cycle) { Studio.pr-value(root.field, 0, 0); }
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.pr-value(root.field, 2, (self.mouse-y - self.pressed-y) / 1px); }
+        }
+        moved => { if (!root.cycle) { Studio.pr-value(root.field, 1, (self.mouse-y - self.pressed-y) / 1px); } }
+    }
+}
+component FooterLabel inherits Text {
+    height: 14px; color: #6c6e74; font-size: 9.75px; font-weight: 500; vertical-alignment: center;
+}
+component FooterTitle inherits Text {
+    height: 14px; color: Tokens.text-bright; font-size: 10px; font-weight: 600; vertical-alignment: center;
+}
+component FooterSwitch inherits Rectangle {
+    in property <bool> on;
+    width: 20.5px; height: 10.5px; border-radius: 5.25px;
+    background: on ? #8092eb : #3e3f44;
+    Rectangle { x: root.on ? root.width - self.width - 1px : 1px; y: 1px; width: 8.5px; height: 8.5px; border-radius: 4.25px; background: #ffffff; }
+}
+
+// Piano roll: x 255 / y 27 inside the bottom panel (window 260, 452 at the reference size).
+export component PianoRoll inherits Rectangle {
+    // ---- toolbar (y 0..27) ----
+    ToolText { x: 7px; y: 7px; text: "Quantize"; action: "quantize"; }
+    ToolText { x: 55px; y: 7px; text: "Smart Quantize"; action: "smart_quantize"; placeholder: true; }
+    ToolText { x: 134px; y: 7px; text: "Humanize"; action: "humanize"; }
+    ToolText { x: 187px; y: 7px; text: "Reverse"; action: "reverse"; }
+    ToolText { x: 232px; y: 7px; text: "Legato"; action: "legato"; }
+    ToolText { x: 270.5px; y: 7px; text: "Double"; action: "double"; }
+    // pencil (pen tool B/E) is real; velocity, zoom sliders and snap are PLACEHOLDERS
+    Rectangle {
+        x: root.width - 304px; y: 4px; width: 20px; height: 20px; border-radius: 4px;
+        background: Studio.pr-pen ? #2f3036 : transparent;
+        Icon { x: 3.5px; y: 3.5px; width: 13px; height: 13px; d: Icons.pencil; ink: Studio.pr-pen ? #e5e5e8 : #6b6c70; }
+        TouchArea { clicked => { Studio.pr-action("pen"); } }
+    }
+    Icon { x: root.width - 276.5px; y: 7.5px; width: 13px; height: 13px; d: "M3.5 13V8 M6.5 13V4 M9.5 13V6 M12.5 13V9"; ink: #8e8f93; stroke-width: 1.8px; }
+    Icon { x: root.width - 246.5px; y: 7.5px; width: 13px; height: 13px; d: Icons.v-resize; ink: #8e8f93; }
+    Rectangle { x: root.width - 224px; y: 13px; width: 67.5px; height: 2px; border-radius: 1px; background: #2f3036; }
+    Rectangle { x: root.width - 224px; y: 13px; width: 31.5px; height: 2px; background: #e5e5e8; }
+    Rectangle { x: root.width - 196.5px; y: 10px; width: 8px; height: 8px; border-radius: 4px; background: #f2f2f2; }
+    Icon { x: root.width - 147.5px; y: 7.5px; width: 13px; height: 13px; d: Icons.h-resize; ink: #8e8f93; }
+    Rectangle { x: root.width - 132.5px; y: 13px; width: 74px; height: 2px; border-radius: 1px; background: #2f3036; }
+    Rectangle { x: root.width - 130px; y: 10px; width: 8px; height: 8px; border-radius: 4px; background: #f2f2f2; }
+    Text { x: root.width - 45px; y: 7px; height: 14px; text: "Auto"; color: Tokens.text-bright; font-size: 9px; font-weight: 600; vertical-alignment: center; }
+    Icon { x: root.width - 22.5px; y: 8.5px; width: 11px; height: 11px; d: Icons.chevron-down; ink: #c9c9cc; }
+
+    // ---- note grid + keyboard (wgpu texture) ----
+    grid := Rectangle {
+        x: 0; y: 27.5px; width: root.width - 0.5px; height: root.height - 27.5px - 54.5px;
+        clip: true;
+        Image { x: 0; y: 0; width: parent.width; height: parent.height; source: Studio.pr-image; image-fit: fill; }
+        for l in Studio.pr-bar-labels: Text {
+            x: l.x; y: 0; height: 13.5px; text: l.text; color: #bdbdbd; font-size: 7.75px; font-weight: 600; vertical-alignment: center;
+        }
+        for k in Studio.pr-key-labels: Text {
+            x: 20.5px; y: k.y - 3.35px; width: 27.5px; height: 14.7px; text: k.text; color: #6b6b6d; font-size: 10px; font-weight: 700;
+            horizontal-alignment: right; vertical-alignment: center;
+        }
+        TouchArea {
+            mouse-cursor: Studio.pr-pen ? MouseCursor.crosshair : MouseCursor.default;
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+                    Studio.pr-pointer(0, self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.alt);
+                }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) {
+                    Studio.pr-pointer(2, self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.alt);
+                }
+            }
+            moved => { Studio.pr-pointer(1, self.mouse-x, self.mouse-y, false, false); }
+            scroll-event(e) => { Studio.pr-scroll(e.delta-y / 1px); accept }
+        }
+    }
+
+    // ---- footer (y height-54.5 ..) ----
+    Rectangle { x: 0; y: root.height - 54.5px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
+    property <length> r1: root.height - 54.5px + 13px;   // title row top
+    property <length> r2: root.height - 54.5px + 30px;   // value row top
+    FooterTitle { x: 13.5px; y: root.r1; text: "Clip"; }
+    FooterLabel { x: 13.5px; y: root.r2; text: "Start"; }
+    FooterValue { x: 42.5px; y: root.r2; text: Studio.pr-start-text; }
+    FooterLabel { x: 86px; y: root.r2; text: "End"; }
+    FooterValue { x: 110px; y: root.r2; text: Studio.pr-end-text; ink: #4a4b50; }
+    // Loop toggle + Position: PLACEHOLDER readouts (clip looping is not in the model). Length is real.
+    FooterTitle { x: 173.5px; y: root.r1; text: "Loop"; }
+    FooterSwitch { x: 202px; y: root.r1 + 2px; on: true; }
+    FooterLabel { x: 173.5px; y: root.r2; text: "Position"; }
+    FooterValue { x: 216.5px; y: root.r2; text: Studio.pr-position-text; }
+    FooterLabel { x: 260px; y: root.r2; text: "Length"; }
+    FooterValue { x: 298px; y: root.r2; text: Studio.pr-length-text; field: 4; }
+    FooterTitle { x: 362px; y: root.r1; text: "Quantize"; }
+    FooterLabel { x: 362px; y: root.r2; text: "Grid"; }
+    FooterValue { x: 387px; y: root.r2; text: Studio.pr-grid-text; field: 0; cycle: true; }
+    FooterLabel { x: 429px; y: root.r2; text: "Amount"; }
+    FooterValue { x: 472px; y: root.r2; text: Studio.pr-quant-text; field: 1; }
+    FooterTitle { x: 532px; y: root.r1; text: "Humanize"; }
+    FooterLabel { x: 532px; y: root.r2; text: "Amount"; }
+    FooterValue { x: 574px; y: root.r2; text: Studio.pr-human-text; field: 2; }
+    FooterTitle { x: 635.5px; y: root.r1; text: "Velocity"; }
+    FooterLabel { x: 635.5px; y: root.r2; text: "Value"; }
+    FooterValue { x: 667px; y: root.r2; text: Studio.pr-vel-text; field: 3; }
+    // Scale: PLACEHOLDER (no scale highlighting yet)
+    FooterTitle { x: 720px; y: root.r1; text: "Scale"; }
+    FooterSwitch { x: 751px; y: root.r1 + 2px; on: false; }
+    FooterValue { x: 720px; y: root.r2; text: "C"; }
+    FooterValue { x: 732px; y: root.r2; text: "Major"; }
+}
+
+// Clip tab without an editable clip.
+export component ClipEmpty inherits Rectangle {
+    Text { x: 0; y: 166px; width: root.width; height: 15px; text: Studio.clip-empty-title; color: #a5a6aa; font-size: 9.75px; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: 0; y: 183px; width: root.width; height: 14px; text: Studio.clip-empty-text; color: #6c6e74; font-size: 8.75px; horizontal-alignment: center; vertical-alignment: center; }
+}
+
+// Right-click clip menu (reference 35-clip-context-menu.png): 209 pt wide, 20.5 pt rows.
+export component ContextMenu inherits Rectangle {
+    in property <[MenuItem]> items;
+    callback activated(int);
+    width: 209px;
+    border-radius: 7px;
+    background: #222327;
+    border-width: 0.5px;
+    border-color: #3a3b40;
+    drop-shadow-blur: 14px;
+    drop-shadow-color: #00000090;
+    for it[i] in root.items: Rectangle {
+        x: 4px; y: it.y; width: root.width - 8px; height: 20.5px;
+        if it.separator: Rectangle { x: 6px; y: -5.5px; width: parent.width - 12px; height: 0.5px; background: #3a3b40; }
+        Rectangle {
+            border-radius: 4px;
+            background: ta.has-hover && it.enabled ? Tokens.accent : transparent;
+        }
+        Text { x: 10px; text: it.label; color: it.enabled ? #f0f0f2 : #66676c; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+        Text { x: parent.width - 10px - self.preferred-width; text: it.shortcut; color: it.enabled ? #c9c9cc : #55565b; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+        if it.submenu: Icon { x: parent.width - 18px; y: 5.25px; width: 10px; height: 10px; d: Icons.chevron-right; ink: it.enabled ? #c9c9cc : #55565b; }
+        ta := TouchArea { clicked => { if (it.enabled) { root.activated(i); } } }
+    }
+}

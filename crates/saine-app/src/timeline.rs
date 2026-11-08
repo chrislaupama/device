@@ -75,6 +75,9 @@ pub struct ClipVis {
     pub name: String,
     /// Waveform source: pyramid slot, first frame (engine rate), frame count.
     pub wave: Option<(Slot, f64, f64)>,
+    /// MIDI clip: mini note view as (relative start 0..1, relative length, relative
+    /// pitch 0 = top .. 1 = bottom). `None` for audio clips.
+    pub midi: Option<Vec<[f32; 3]>>,
 }
 
 impl ClipVis {
@@ -157,22 +160,22 @@ const LANE_SEL: [u32; 2] = [0x1a1b1e, 0x1d1e21];
 const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
 const BLACK: [f32; 3] = [0.0, 0.0, 0.0];
 
-struct Px {
-    s: f32,
+pub struct Px {
+    pub s: f32,
 }
 impl Px {
     /// Logical rect -> physical rect, snapped to whole pixels.
-    fn r(&self, x: f32, y: f32, w: f32, h: f32) -> [f32; 4] {
+    pub fn r(&self, x: f32, y: f32, w: f32, h: f32) -> [f32; 4] {
         let x0 = (x * self.s).round();
         let y0 = (y * self.s).round();
         let x1 = ((x + w) * self.s).round();
         let y1 = ((y + h) * self.s).round();
         [x0, y0, (x1 - x0).max(1.0), (y1 - y0).max(1.0)]
     }
-    fn rect(&self, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) -> RectInst {
+    pub fn rect(&self, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) -> RectInst {
         RectInst { rect: self.r(x, y, w, h), color, params: [0.0; 4] }
     }
-    fn rounded(&self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: [f32; 4]) -> RectInst {
+    pub fn rounded(&self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: [f32; 4]) -> RectInst {
         RectInst { rect: [x * self.s, y * self.s, w * self.s, h * self.s], color, params: [radius * self.s, 0.0, 0.0, 0.0] }
     }
 }
@@ -249,6 +252,10 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
             continue;
         }
         let r = 3.0;
+        if let Some(notes) = &c.midi {
+            midi_clip(&mut dl.base, sc, &px, c, notes, (x, y, cw, ch));
+            continue;
+        }
         let (body, wave) = if c.selected {
             (mix(c.color, WHITE, 0.72), rgba(mix(c.color, BLACK, 0.55), 1.0))
         } else {
@@ -328,6 +335,46 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     }
 }
 
+/// MIDI clip: track-colour title strip, light lavender body (the reference draws it
+/// the same selected or not), grid lines inside the body and a mini note view.
+fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &[[f32; 3]], (x, y, cw, ch): (f32, f32, f32, f32)) {
+    let r = 3.0;
+    let body = mix(c.color, WHITE, 0.67);
+    // 0.5 pt outline (greyish in the reference), then title strip and body inset by it.
+    out.push(px.rounded(x, y, cw, ch, r, rgba(mix(body, rgb(0x4a4c58), 0.45), 1.0)));
+    out.push(px.rounded(x + 0.5, y + 0.5, cw - 1.0, ch - 1.0, r - 0.5, rgba(c.color, 1.0)));
+    let by = y + CLIP_HEADER + 0.5;
+    out.push(px.rect(x + 0.5, by, cw - 1.0, ch - CLIP_HEADER - 0.5 - r, rgba(body, 1.0)));
+    out.push(px.rounded(x + 0.5, y + ch - 2.0 * r, cw - 1.0, 2.0 * r - 0.5, r - 0.5, rgba(body, 1.0)));
+    let v = &sc.view;
+    let mut step = sc.beats_per_bar / 2.0;
+    while step * v.px_per_beat < 10.0 {
+        step *= 2.0;
+    }
+    while step * v.px_per_beat > 80.0 && step > 0.25 {
+        step /= 2.0;
+    }
+    let mut b = (c.start_beats / step).floor() * step + step;
+    while b < c.start_beats + c.len_beats - 1e-6 {
+        let lx = v.x_of(b);
+        if lx > x + 0.5 {
+            out.push(px.rect(lx, by, 1.0 / px.s, ch - CLIP_HEADER - 1.0, rgba(mix(body, BLACK, 0.075), 1.0)));
+        }
+        b += step;
+    }
+    let nh = ch - CLIP_HEADER - 6.0;
+    let bar_h = (nh / 24.0).clamp(1.5, 3.0);
+    let ink = rgba(mix(c.color, BLACK, 0.45), 1.0);
+    for n in notes {
+        let nx = x + n[0] * cw;
+        let nw = (n[1] * cw).max(1.0).min(x + cw - nx);
+        if nw <= 0.0 {
+            continue;
+        }
+        out.push(px.rect(nx, by + 2.5 + n[2] * (nh - bar_h), nw, bar_h, ink));
+    }
+}
+
 /// Bar-number labels for the ruler (Slint text over the texture).
 pub fn ruler_labels(v: &View, w: f32, beats_per_bar: f64) -> Vec<(f32, String)> {
     let bar_px = beats_per_bar * v.px_per_beat;
@@ -360,7 +407,7 @@ mod tests {
         assert!((v.beat_at(v.x_of(4.0)) - 4.0).abs() < 1e-4);
         assert_eq!(v.track_at(RULER_H + 1.0), Some(0));
         assert_eq!(v.track_at(RULER_H + TRACK_PITCH + 1.0), Some(1));
-        let clips = vec![ClipVis { track_index: 0, start_beats: 4.0, len_beats: 4.0, color: [1.0; 3], selected: false, name: String::new(), wave: None }];
+        let clips = vec![ClipVis { track_index: 0, start_beats: 4.0, len_beats: 4.0, color: [1.0; 3], selected: false, name: String::new(), wave: None, midi: None }];
         let size = (900.0, 400.0);
         assert_eq!(hit_test(&v, size, 2, &clips, 10.0, 5.0), Hit::Ruler);
         assert_eq!(hit_test(&v, size, 2, &clips, 70.0, 60.0), Hit::Clip { index: 0, zone: Zone::Body });
