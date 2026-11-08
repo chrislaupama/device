@@ -1,5 +1,6 @@
 #include "recorder.hpp"
 
+#include "platform/os.hpp"
 #include "saine_engine.h"
 
 #include <algorithm>
@@ -67,8 +68,9 @@ std::unique_ptr<Recorder> Recorder::create(const std::string& dir, std::vector<R
         return nullptr;
     }
     std::error_code ec;
-    std::filesystem::create_directories(std::filesystem::path(dir), ec);
-    if (!std::filesystem::is_directory(std::filesystem::path(dir), ec)) {
+    const std::filesystem::path dir_path = os::path_from_utf8(dir);
+    std::filesystem::create_directories(dir_path, ec);
+    if (!std::filesystem::is_directory(dir_path, ec)) {
         err = "cannot create recording directory: " + dir;
         return nullptr;
     }
@@ -205,11 +207,11 @@ void Recorder::open_take(Slot& s, const Marker& m) {
     namespace fs = std::filesystem;
     const std::string base =
         name_prefix_ + "-t" + std::to_string(s.spec.track_id) + "-" + std::to_string(s.take_index);
-    fs::path path = fs::path(dir_) / (base + ".wav");
+    const fs::path dir = os::path_from_utf8(dir_);
+    fs::path path = dir / (base + ".wav");
     std::error_code ec;
-    for (int k = 2; fs::exists(path, ec) && k < 1000; ++k)
-        path = fs::path(dir_) / (base + "_" + std::to_string(k) + ".wav");
-    t.info.path = path.string(); // UTF-8 on macOS/Linux (native narrow encoding)
+    for (int k = 2; fs::exists(path, ec) && k < 1000; ++k) path = dir / (base + "_" + std::to_string(k) + ".wav");
+    t.info.path = os::path_to_utf8(path);
     auto wav = std::make_unique<WavFloatWriter>();
     std::string err;
     if (wav->open(t.info.path.c_str(), s.spec.channels, static_cast<uint32_t>(sample_rate_), err) != SE_OK) {

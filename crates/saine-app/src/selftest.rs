@@ -1645,7 +1645,7 @@ fn device_steps() -> Vec<Step> {
                 .ok_or(format!("page {} dirs {dirs} rows {rows} status {:?}", s.get_settings_page(), s.get_plugins_status()))
         })),
         Do("settings: click “Rescan all plugins”", Box::new(|a| {
-            let dirs = slint::Model::row_count(&a.global::<Studio>().get_scan_dirs()) as f32;
+            let dirs = slint::Model::row_count(&a.global::<Studio>().get_scan_dirs()).min(8) as f32; // list is at most 8 rows tall
             let content_w = 960.0 - 187.0;
             let card_x = 20.5 + ((content_w - 41.0) / 2.0 + 4.5);
             let card_y = 91.0 + dirs * 30.5 + 86.0;
@@ -2029,13 +2029,29 @@ fn automation_steps() -> Vec<Step> {
     ]
 }
 
+/// The devices section drives Apple's Audio Units (AULowpass, AUDelay,
+/// DLSMusicDevice). Elsewhere its actions are not performed and its checks
+/// are reported as skipped (counted like the other guarded skips).
+fn platform_device_steps() -> Vec<Step> {
+    if cfg!(target_os = "macos") {
+        return device_steps();
+    }
+    device_steps()
+        .into_iter()
+        .filter_map(|s| match s {
+            Step::Check(name, _) => Some(Step::Check(name, Box::new(|_, _| Err("SKIP: Audio Units are macOS-only (this section uses Apple's AUs)".into())))),
+            Step::Do(..) | Step::DoC(..) => None,
+        })
+        .collect()
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
     all.extend(synth_steps());
     all.extend(midi_steps());
     all.extend(recording_steps());
-    all.extend(device_steps());
+    all.extend(platform_device_steps());
     all.extend(automation_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));

@@ -244,7 +244,14 @@ bool scan_clap_bundle(const std::string& path, std::vector<ScannedPlugin>& out, 
                 p.audio_inputs = main_channels(true);
                 p.audio_outputs = main_channels(false);
                 const auto* gui = static_cast<const clap_plugin_gui_t*>(plug->get_extension(plug, CLAP_EXT_GUI));
-                p.has_editor = gui != nullptr && gui->is_api_supported(plug, CLAP_WINDOW_API_COCOA, false);
+#if defined(__APPLE__)
+                const char* api = CLAP_WINDOW_API_COCOA;
+#elif defined(_WIN32)
+                const char* api = CLAP_WINDOW_API_WIN32;
+#else
+                const char* api = CLAP_WINDOW_API_X11;
+#endif
+                p.has_editor = gui != nullptr && gui->is_api_supported(plug, api, false);
             }
             plug->destroy(plug);
         }

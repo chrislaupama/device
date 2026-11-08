@@ -177,12 +177,54 @@ pub fn load_fixture(path: &Path) -> Result<ScanReport, String> {
     })
 }
 
-/// Standard plugin locations shown in Settings › Plugins (macOS). Apple's
-/// system Audio Units are found through the Audio Component registry.
+/// Standard plugin locations shown in Settings › Plugins: the folders the
+/// out-of-process scanner searches (engine/scanner/scanner_main.cpp), per
+/// platform. macOS: Apple's system Audio Units are found through the Audio
+/// Component registry; the Components folders are listed for reference.
 pub fn scan_dirs() -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = ["Components", "VST3", "CLAP"].iter().map(|d| PathBuf::from("/Library/Audio/Plug-Ins").join(d)).collect();
-    if let Some(home) = std::env::var_os("HOME") {
-        v.extend(["Components", "VST3", "CLAP"].iter().map(|d| PathBuf::from(&home).join("Library/Audio/Plug-Ins").join(d)));
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let mut v: Vec<PathBuf> = Vec::new();
+    if cfg!(target_os = "macos") {
+        v.extend(["Components", "VST3", "CLAP"].iter().map(|d| PathBuf::from("/Library/Audio/Plug-Ins").join(d)));
+        if let Some(home) = &home {
+            v.extend(["Components", "VST3", "CLAP"].iter().map(|d| home.join("Library/Audio/Plug-Ins").join(d)));
+        }
+    } else if cfg!(windows) {
+        for d in ["VST3", "CLAP"] {
+            if let Some(common) = std::env::var_os("COMMONPROGRAMFILES") {
+                v.push(PathBuf::from(common).join(d));
+            }
+            if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+                v.push(PathBuf::from(local).join("Programs").join("Common").join(d));
+            }
+        }
+    } else {
+        if let Some(home) = &home {
+            v.push(home.join(".vst3"));
+        }
+        v.extend(["/usr/lib/vst3", "/usr/local/lib/vst3"].iter().map(PathBuf::from));
+        if let Some(home) = &home {
+            v.push(home.join(".clap"));
+        }
+        v.extend(["/usr/lib/clap", "/usr/local/lib/clap"].iter().map(PathBuf::from));
+    }
+    v
+}
+
+/// Whether the engine can host plugin editor windows here (macOS, Windows;
+/// Linux has no X11/Wayland embedding yet, see engine/README.md). The scanned
+/// `has_editor` capability is kept as is.
+pub const EDITORS_SUPPORTED: bool = !cfg!(target_os = "linux");
+
+/// Extra folders the scanner searches from the environment, with the variable
+/// that set them: `CLAP_PATH` (Windows, Linux) and `SAINE_PLUGIN_PATH`.
+pub fn configured_scan_dirs() -> Vec<(PathBuf, &'static str)> {
+    let vars: &[&'static str] = if cfg!(target_os = "macos") { &["SAINE_PLUGIN_PATH"] } else { &["CLAP_PATH", "SAINE_PLUGIN_PATH"] };
+    let mut v = Vec::new();
+    for &var in vars {
+        if let Some(list) = std::env::var_os(var) {
+            v.extend(std::env::split_paths(&list).filter(|p| !p.as_os_str().is_empty()).map(|p| (p, var)));
+        }
     }
     v
 }
@@ -753,6 +795,7 @@ impl Controller {
             error: error.into(),
             latency: fmt_latency(self.devices.latency.get(&d.id).copied().unwrap_or(0), self.rate).into(),
             has_editor: info.map(|i| i.has_editor).unwrap_or(true),
+            editor_supported: EDITORS_SUPPORTED,
             editor_open: self.devices.editors.contains(&d.id),
             dragging: false,
         }
@@ -801,6 +844,10 @@ impl Controller {
     /// Open or close the plugin's own window (main thread).
     pub fn device_edit(&mut self, id: DeviceId) {
         if self.project().device(id).is_none() {
+            return;
+        }
+        if !EDITORS_SUPPORTED {
+            self.set_status("Plugin windows are not supported on Linux yet", 5);
             return;
         }
         if self.engine.plugin_editor_is_open(id) {
@@ -1165,7 +1212,7 @@ impl Controller {
         };
         s.set_plugins_status(status.into());
         s.set_plugins_scanning(cat.state == ScanState::Scanning);
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_default();
         let tilde = |d: &Path| {
             let s = d.display().to_string();
             match s.strip_prefix(&home) {
@@ -1173,7 +1220,13 @@ impl Controller {
                 _ => s,
             }
         };
-        let dirs: Vec<PluginRow> = scan_dirs().iter().map(|d| PluginRow { name: tilde(d).into(), detail: "".into(), badge: "Default".into(), warn: !d.is_dir() }).collect();
+        let dirs: Vec<PluginRow> = scan_dirs()
+            .into_iter()
+            .map(|d| (d, "Default"))
+            .chain(configured_scan_dirs())
+            // A configured path may be a folder or a single bundle.
+            .map(|(d, badge)| PluginRow { name: tilde(&d).into(), detail: "".into(), badge: badge.into(), warn: !d.exists() || (badge == "Default" && !d.is_dir()) })
+            .collect();
         sync_model(&self.scan_dirs_model, dirs);
         let mut found: Vec<&PluginInfo> = cat.plugins.iter().collect();
         found.sort_by_key(|p| (format_order(p.plugin.format), p.plugin.vendor.to_lowercase(), p.plugin.name.to_lowercase()));

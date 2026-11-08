@@ -6,6 +6,7 @@
 
 #include "platform/audio_device.hpp"
 #include "test_hooks.hpp"
+#include "platform/os.hpp"
 #include "wav.hpp"
 
 #include <chrono>
@@ -16,7 +17,6 @@
 #include <functional>
 #include <numbers>
 #include <thread>
-#include <unistd.h>
 
 using namespace testutil;
 
@@ -127,7 +127,7 @@ struct TempDir {
     TempDir() {
         static int counter = 0;
         path = (std::filesystem::temp_directory_path() /
-                ("saine_rec_test_" + std::to_string(::getpid()) + "_" + std::to_string(++counter)))
+                ("saine_rec_test_" + std::to_string(saine::os::process_id()) + "_" + std::to_string(++counter)))
                    .string();
         std::filesystem::remove_all(path);
     }
@@ -524,7 +524,7 @@ TEST_CASE(record_and_monitor_do_not_allocate_on_the_audio_path) {
         t.id = i + 1u;
         t.arm = true;
         t.monitor = i % 2 == 0;
-        t.mode = i % 3 == 0 ? SE_INPUT_STEREO : SE_INPUT_MONO;
+        t.mode = static_cast<uint8_t>(i % 3 == 0 ? SE_INPUT_STEREO : SE_INPUT_MONO);
         t.channel = static_cast<uint16_t>(i % 4);
         t.clips = {clip(1, a, 0, 0, 48000)};
         tracks.push_back(t);
@@ -735,8 +735,12 @@ TEST_CASE(device_configure_validation_opens_nothing) {
     dc.buffer_size = 0;
     dc.sample_rate = 12345.0;
     CHECK_EQ(se_device_configure(e, &dc), SE_ERR_INVALID_ARG);
-    // With an input the device must run at the engine rate. Validation only:
-    // the device is never started here, so no input is opened.
+#if defined(__APPLE__)
+    // Core Audio: with an input the device must run at the engine rate (the
+    // AUHAL input side does not resample). WASAPI and PipeWire convert the
+    // input to the engine rate, so this restriction is macOS-only.
+    // Validation only: the device is never started here, so no input is
+    // opened.
     std::vector<se_device_info> devs(ndev);
     se_device_list(devs.data(), devs.size(), &ndev);
     bool has_input = false;
@@ -747,6 +751,7 @@ TEST_CASE(device_configure_validation_opens_nothing) {
         dc.sample_rate = 44100.0;
         CHECK_EQ(se_device_configure(e, &dc), SE_ERR_INVALID_ARG);
     }
+#endif
     se_device_status st{};
     se_device_status_get(e, &st);
     CHECK_EQ(st.running, 0);
@@ -769,6 +774,18 @@ TEST_CASE(device_list_reports_uids_and_defaults) {
     CHECK(def_out <= 1);
 }
 
+// CoreAudio applies the requested IO buffer exactly. WASAPI shared mode runs
+// at the endpoint's period (e.g. 480 frames = 10 ms at 48 kHz) and PipeWire
+// at the graph quantum, either of which may differ from the request.
+static void check_reported_buffer(uint32_t reported, uint32_t requested) {
+#if defined(__APPLE__)
+    CHECK_EQ(reported, requested);
+#else
+    (void)requested;
+    CHECK(reported > 0u);
+#endif
+}
+
 TEST_CASE(device_output_only_named_device_and_restart) {
     // Real output device, explicitly named (HALOutput path), no input.
     std::size_t n = 0;
@@ -778,18 +795,15 @@ TEST_CASE(device_output_only_named_device_and_restart) {
     const se_device_info* out = nullptr;
     for (const auto& d : devs)
         if (d.is_default_output) out = &d;
-    if (out == nullptr) {
-        std::fprintf(stderr, "  skipped: no output device\n");
-        return;
-    }
+    if (out == nullptr) SKIP("no default audio output device");
     EngineHandle e(48000, 512);
     se_device_config dc{};
     dc.output_uid = out->uid;
     dc.buffer_size = 512;
     REQUIRE(se_device_configure(e, &dc) == SE_OK);
     if (se_device_start(e) != SE_OK) {
-        std::fprintf(stderr, "  skipped: %s\n", se_last_error());
-        return;
+        const std::string why = std::string("the default output device could not be started: ") + se_last_error();
+        SKIP(why.c_str());
     }
     std::fprintf(stderr, "  real output device: %s\n", out->name);
     se_device_status st{};
@@ -797,7 +811,7 @@ TEST_CASE(device_output_only_named_device_and_restart) {
     CHECK_EQ(st.running, 1);
     CHECK_EQ(st.input_open, 0);
     CHECK(std::string(st.output_name) == out->name);
-    CHECK_EQ(st.buffer_size, 512u);
+    check_reported_buffer(st.buffer_size, 512u);
     // Device + safety offset + stream latency (no IO-buffer term since the
     // loopback fix): hardware dependent and 0 on virtual devices, so only
     // plausibility is checked.
@@ -811,6 +825,6 @@ TEST_CASE(device_output_only_named_device_and_restart) {
     CHECK_EQ(se_device_configure(e, &dc), SE_OK);
     se_device_status_get(e, &st);
     CHECK_EQ(st.running, 1);
-    CHECK_EQ(st.buffer_size, 256u);
+    check_reported_buffer(st.buffer_size, 256u);
     REQUIRE(se_device_stop(e) == SE_OK);
 }

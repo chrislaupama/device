@@ -74,8 +74,10 @@ export component PluginCard inherits Rectangle {
         x: root.width - 44px; y: 5px; width: 17px; height: 17px; border-radius: 4px;
         background: root.card.editor-open ? #34363c : transparent;
         accessible-role: button; accessible-label: root.card.editor-open ? "Close plugin window" : "Open plugin window";
+        accessible-enabled: root.card.editor-supported;
+        opacity: root.card.editor-supported ? 1 : 0.4;
         Icon { x: 2.5px; y: 2.5px; width: 12px; height: 12px; d: Icons.window; ink: root.card.editor-open ? #ffffff : CardStyle.dim; stroke-width: 1.2px; }
-        TouchArea { clicked => { Studio.device-edit(root.card.id); } }
+        TouchArea { enabled: root.card.editor-supported; clicked => { Studio.device-edit(root.card.id); } }
     }
     Rectangle {
         x: root.width - 23px; y: 5px; width: 17px; height: 17px;
@@ -102,13 +104,13 @@ export component PluginCard inherits Rectangle {
         if root.card.latency != "": Text { x: 11px; y: 72px; width: parent.width - 22px; height: 14px; text: root.card.latency; color: CardStyle.dim; font-size: 9px; vertical-alignment: center; }
         Text {
             x: 11px; y: parent.height - (root.card.instrument ? 92px : 64px); width: parent.width - 22px; height: 14px;
-            text: root.card.error != "" ? "Not loaded: the device passes audio through" : root.card.has-editor ? "Open the plugin window to edit" : "This plugin has no editor window";
+            text: root.card.error != "" ? "Not loaded: the device passes audio through" : !root.card.has-editor ? "This plugin has no editor window" : !root.card.editor-supported ? "Plugin windows are not supported on Linux yet" : "Open the plugin window to edit";
             color: Tokens.text-tertiary; font-size: 9px; horizontal-alignment: center; vertical-alignment: center;
         }
         CardButton {
             x: 11px; y: parent.height - (root.card.instrument ? 72px : 44px); width: parent.width - 22px;
             text: root.card.editor-open ? "Close plugin window" : "Open plugin window";
-            enabled: root.card.has-editor && root.card.error == "";
+            enabled: root.card.has-editor && root.card.editor-supported && root.card.error == "";
             clicked => { Studio.device-edit(root.card.id); }
         }
         if root.card.instrument: CardButton {

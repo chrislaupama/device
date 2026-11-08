@@ -30,7 +30,12 @@ described in [Plugins](#plugins), delay compensation in
 
 ## Build, test, bench
 
-Requirements: CMake ≥ 3.25, Ninja, a C++23 compiler (Apple clang 21 tested).
+Requirements: CMake ≥ 3.25, Ninja, a C++23 compiler (Apple clang 21, MSVC
+19.4x from Visual Studio 2022 and GCC 13 have built it with warnings as
+errors; see [Platforms](#platforms)). Linux also needs `pkg-config` and the PipeWire
+development files (`libpipewire-0.3-dev`), or `-DSAINE_ENGINE_PIPEWIRE=OFF`
+for an engine without device I/O. Windows: run CMake from a developer
+command prompt (x64 MSVC environment) with the Ninja generator.
 
 ```sh
 cd engine
@@ -87,6 +92,154 @@ println!("cargo:rustc-link-lib=framework=CoreFoundation");
 ```
 
 The library is built with `-fPIC`, so it can go into a cdylib as well.
+On Windows build.rs also links `ole32 shell32 avrt user32`, on Linux
+`pipewire-0.3 stdc++ dl` (set `SAINE_ENGINE_PIPEWIRE=OFF` in the environment
+to build without PipeWire).
+
+## Platforms
+
+Platform code lives in `src/platform/` only; everything else is portable
+C++23. `platform/os.{hpp,cpp}` is the small OS layer: UTF-8 paths
+(`_wfopen`/wide APIs on Windows), environment, executable path, UTF-8 argv
+and `ChildProcess` (CreateProcessW with an explicit inherited-handle list /
+`posix_spawn`, stdout/stderr to files, poll/wait/kill, crash detection:
+POSIX signal or Windows NTSTATUS exception code).
+
+| | macOS (arm64) | Windows (x64, MSVC) | Linux (x64, GCC) |
+|---|---|---|---|
+| Audio backend | Core Audio (AUHAL; private aggregate for duplex) | WASAPI shared mode, event-driven, float32 (`wasapi_device.cpp`) | PipeWire streams (`pipewire_device.cpp`) |
+| Duplex input | aggregate device, HAL drift compensation | separate capture client → `FrameRing` | capture stream → `FrameRing` |
+| Plugin formats | AU, VST3, CLAP | VST3, CLAP | VST3, CLAP |
+| Plugin editors | NSWindow (AU/VST3/CLAP) | top-level HWND hosting the plugin child window (VST3 `kPlatformTypeHWND`, CLAP `win32`) | not implemented: `SE_ERR_UNSUPPORTED_FORMAT` |
+| Scanner children | `posix_spawn` | `CreateProcessW` (no WER dialogs in the child) | `posix_spawn` |
+| Test plugins | `.clap`/`.vst3` bundles | `.clap` DLL, `.vst3/Contents/x86_64-win/*.vst3`, + `SaineTestGui.clap` | `.clap` .so, `.vst3/Contents/x86_64-linux/*.so` |
+| Built with warnings as errors | yes (clang, `-Werror`), every CI run | yes (`/W4 /WX`), last hosted run | yes (GCC, `-Werror`), last hosted run |
+| ctest | all tests, every CI run, on the self-hosted Mac's real audio device | all tests in the last hosted run; AU tests and device tests skip (no audio endpoint) | all tests in the last hosted run; AU tests and device tests skip (no PipeWire server) |
+| Tested on real audio hardware | yes (Core Audio output + duplex, see below) | **no** | **no** |
+
+**CI runs only on the self-hosted runner** (one Apple silicon Mac mini; see
+`.github/workflows/ci.yml`): engine with `-Werror`, ctest, the Rust workspace
+tests and the app's `--self-test --no-audio`. Windows and Linux are **not
+built in CI**; their workflow steps stay in place, gated on `runner.os`, for
+when a self-hosted runner on those systems is added. The Windows and Linux
+results in this section come from the last run on GitHub-hosted runners
+(macos-15, windows-2025, ubuntu-24.04), run 42464468427 on commit `6cecd4f`,
+before the hosted matrix was dropped; changes after that are not
+compiled on those systems.
+
+The app (`crates/saine-app`) builds on all three. That hosted run also ran
+it without a GPU or audio device: on Linux under Xvfb with Mesa lavapipe (software Vulkan;
+`SLINT_WGPU_CPU=1`), a reference-state screenshot and the full `--self-test
+--no-audio` (125 checks pass; the 21 checks of the Audio Unit devices section
+are reported as skipped off macOS), as a required step; on Windows with WARP
+(DX12 software adapter) the same, as an informational step: the screenshot
+renders and the self-test passes (125, 21 skipped), but the process exits
+with code 0x87A after the run (not yet explained; macOS/Linux exit 0).
+Debug builds of the app abort at exit on every OS (pre-existing: wgpu-core's
+debug-only lock tracing runs in a TLS destructor when Slint's thread-local
+backend drops the wgpu queue), so CI uses a release build. Screenshots and logs are uploaded as artifacts.
+
+What that run could not cover: the hosted runners had no audio devices (Windows: no
+endpoint; Linux: no PipeWire server), so the WASAPI and PipeWire streaming
+code (open, callbacks, duplex ring in a live stream, latency values) is
+compiled and its enumeration/validation "no device" paths run, but it has
+**never been run against real hardware**. Tests that need a device skip
+with `SKIPPED: <reason>` (CTest shows "Skipped"; the harness exits 77 =
+`SKIP_RETURN_CODE`). The duplex FIFO itself (`FrameRing`) is unit-tested on
+every OS. The PDC golden hashes are compared only on Apple clang/arm64
+(float results legitimately differ between compilers/architectures);
+elsewhere that test checks determinism and the on/off identities.
+
+### Windows audio: WASAPI
+
+* **Streams.** Render: shared mode, `AUDCLNT_STREAMFLAGS_EVENTCALLBACK |
+  AUTOCONVERTPCM | SRC_DEFAULT_QUALITY`, float32 at the *engine* rate and the
+  engine's channel count; the Windows audio engine converts rate and channel
+  layout to the endpoint mix format (the AUHAL converter's role on macOS).
+  Input (only with `input_enabled`): a separate capture client converted to
+  the engine rate, with the endpoint's channel count (≤ 64).
+* **Duplex.** Capture packets go into `FrameRing` (`platform/frame_ring.hpp`);
+  the render cycle reads exactly its frame count, so the engine sees equal
+  input/output lengths. The ring primes to `target` = one capture + one
+  render period, trims back to target when the fill exceeds target + slack
+  (input clock fast), and zero-fills + re-primes on underrun (input clock
+  slow). No resampling; the extra input latency (`target`) is reported.
+  If the input cannot be opened the stream runs output-only with
+  `input_error` (as on macOS).
+* **Threads.** `start()` spawns one audio thread (COM MTA, MMCSS "Pro
+  Audio") that opens and starts both clients, reports the result back, then
+  waits on the two event handles. All COM objects of a stream live on that
+  thread. `stop()` signals and joins.
+* **Rates.** In shared mode an endpoint runs at the rate set in the Sound
+  control panel; `device_rate` can only confirm it (else
+  `SE_ERR_INVALID_ARG`). `buffer_size` sets the endpoint buffer duration
+  (WASAPI rounds up to at least the device period). Status: endpoint rate,
+  device period as `buffer_size`, latencies in endpoint frames (render
+  buffer + stream latency; capture period + stream latency + ring target).
+* **Ids.** `uid` = the MMDevice endpoint id; render and capture endpoints are
+  separate devices (a headset lists twice).
+* **Not implemented:** exclusive mode, `IAudioClient3` small shared periods,
+  endpoint change notifications (a removed device ends the stream;
+  `is_running()` turns false). **ASIO is future work**: the Steinberg ASIO
+  SDK has its own licence and is deliberately not added; a backend would sit
+  beside WASAPI behind the same `AudioDevice` interface.
+
+### Linux audio: PipeWire
+
+PipeWire rather than JACK first: it is the default sound server of current
+mainstream distributions, runs JACK clients itself (pipewire-jack), resamples
+and remixes per stream, and lets a client request a small quantum
+(`node.latency`). A native JACK backend is possible future work for systems
+running jackd without PipeWire.
+
+* **Streams.** A playback `pw_stream` (F32 interleaved at the engine rate,
+  `PW_STREAM_FLAG_RT_PROCESS`, `target.object` = the chosen node, or the
+  default sink) and, with `input_enabled`, a capture stream with the
+  source's channel count feeding a `FrameRing` that the playback callback
+  drains (same policy as WASAPI). Both callbacks run on PipeWire's data
+  thread (real-time if RTKit/the rt module allow). `stop()` destroys the
+  streams and the context, which joins that thread.
+* **Ids and enumeration.** `uid` = `node.name` (stable across restarts),
+  name = `node.description`, channels from `audio.channels` /
+  `audio.position` (node info), defaults from the `default` metadata
+  (`default.audio.sink/source`), rates from the `settings` metadata
+  (`clock.rate`, `clock.allowed-rates`). One short-lived connection with two
+  round trips and a 2 s watchdog; no stream is opened. No server → no
+  devices; `start()` → `SE_ERR_DEVICE`.
+* **Rates and buffers.** `device_rate` requests a graph rate (`node.rate`,
+  must be in `clock.allowed-rates`); `buffer_size` (default: the engine
+  block, ≥ 256) requests a quantum (`node.latency`). PipeWire may not honour
+  either; status reports the graph rate, quantum and `pw_time.delay`.
+
+### Plugins on Windows and Linux
+
+* **Loading.** `LoadLibraryExW(LOAD_WITH_ALTERED_SEARCH_PATH)` / `dlopen(RTLD_NOW
+  | RTLD_LOCAL)`; libraries are never unloaded (as on macOS). A CLAP is a
+  single shared library; a `.vst3` bundle folder resolves to
+  `Contents/<arch>-win/<name>.vst3` or `Contents/<arch>-linux/<name>.so`
+  (a single-file `.vst3` is loaded as is). VST3 entry points: `InitDll`/
+  `ExitDll` (optional, Windows), `ModuleEntry`/`ModuleExit` (required,
+  Linux).
+* **Class ids.** VST3 class ids are stored as the canonical 32-digit
+  `INLINE_UID` text on every platform (on Windows the in-memory TUID is
+  COM-ordered and converted), so projects and scan caches are portable.
+* **Folders.** Windows: `%COMMONPROGRAMFILES%\{VST3,CLAP}`,
+  `%LOCALAPPDATA%\Programs\Common\{VST3,CLAP}`, `%CLAP_PATH%`; Linux:
+  `~/.vst3`, `/usr/lib/vst3`, `/usr/local/lib/vst3`, `~/.clap`,
+  `/usr/lib/clap`, `/usr/local/lib/clap`, `$CLAP_PATH`; plus
+  `$SAINE_PLUGIN_PATH` (`;`-separated on Windows).
+* **Audio Units** are macOS-only; AU tests skip elsewhere and tests that only
+  need "a third plugin" use `SaineTestLatency.clap` instead.
+* **Editors.** Windows: `plugin_editor_win.cpp` (top-level window, plugin
+  child HWND, `IPlugFrame::resizeView` / `request_resize`, user resizing,
+  close box), covered by `SaineTestGui.clap` +
+  `plugin_editor_window_win32_open_resize_close`, which passed in the last
+  hosted Windows run (Windows is not built in CI now, see above, so later
+  editor changes are untested there); per-monitor DPI scaling is
+  not handled yet. Linux: not implemented (X11 embedding needs an X event
+  loop plus the plugins' `posix-fd`/`timer` support for CLAP and
+  `IRunLoop` for VST3); opening an editor returns
+  `SE_ERR_UNSUPPORTED_FORMAT` with that explanation.
 
 ## Layout
 
@@ -539,6 +692,8 @@ the Core Audio output unit's built-in converter resamples.
 
 ### Devices (`se_device_list`, `se_device_configure`, `se_device_status_get`)
 
+(Windows: WASAPI, Linux: PipeWire, see [Platforms](#platforms); the rules
+below are the macOS ones, the other backends follow the same contract.)
 Enumeration reads Core Audio properties only (UID, name, input/output
 channel counts from the stream configuration, the standard nominal rates
 inside `AvailableNominalSampleRates`, default input/output); it never opens
@@ -831,10 +986,11 @@ length + controller bytes; little endian) and restores with
 `Document::sync_device_states` and decodes (only for devices that will be
 instantiated, `se_plugin_is_live`) on publish.
 
-### Editors (macOS)
+### Editors (macOS; Windows and Linux: see [Platforms](#platforms))
 
-`se_plugin_editor_open` (main thread only; checked with `pthread_main_np`,
-else `SE_ERR_STATE`) creates an NSWindow titled `"<plugin>: <track>"` (or the
+`se_plugin_editor_open` (main thread only; checked with `pthread_main_np`
+on macOS, tid == pid on Linux, the initial thread on Windows; else
+`SE_ERR_STATE`) creates an NSWindow titled `"<plugin>: <track>"` (or the
 plugin name) hosting: the AU's `kAudioUnitProperty_CocoaUI` view
 (`AUCocoaUIBase`), else CoreAudioKit's `AUGenericView`; a VST3 `IPlugView`
 attached to an NSView (`IPlugFrame::resizeView` and user resizing through
@@ -851,20 +1007,28 @@ an editor return `SE_ERR_UNSUPPORTED_FORMAT`.
 its stdout. The scanner is found at `$SAINE_PLUGIN_SCANNER` or the path
 baked in by build.rs (`<cargo out>/build/saine_plugin_scanner`; the app must
 ship it next to its binary and set the variable, or adapt the lookup). The
-coordinator enumerates AUs (types `aufx`, `aumf`, `aumu`; enumeration loads
-no plugin code), VST3/CLAP bundles in `/Library/Audio/Plug-Ins/{VST3,CLAP}`,
-`~/Library/Audio/Plug-Ins/{VST3,CLAP}` and the `:`-separated
-`$SAINE_PLUGIN_PATH` entries (directories searched up to 3 levels, or bundle
+coordinator enumerates AUs (macOS; types `aufx`, `aumf`, `aumu`; enumeration
+loads no plugin code), VST3/CLAP bundles in `/Library/Audio/Plug-Ins/{VST3,CLAP}`,
+`~/Library/Audio/Plug-Ins/{VST3,CLAP}` (Windows/Linux folders: see
+[Platforms](#platforms)) and the `$SAINE_PLUGIN_PATH` entries (`:`-separated,
+`;` on Windows; directories searched up to 3 levels, or bundle
 paths). Every AU and every bundle not in the cache with the same stamp (AU
-version; newest mtime of the bundle, its Info.plist and `Contents/MacOS/*`)
+version; newest mtime of the bundle, its Info.plist and its binaries in
+`Contents/MacOS`, `Contents/<arch>-win` or `Contents/<arch>-linux`; a
+single-file plugin's own mtime)
 is inspected by its own child process (`--scan-one`, which instantiates the
 plugin to read bus channels and editor support), at most 4 at a time, with a
-timeout (`$SAINE_PLUGIN_SCAN_TIMEOUT_MS`, default 10000). Crashes (signal),
-timeouts (SIGKILL) and failures are recorded in the cache and reported in
+timeout (`$SAINE_PLUGIN_SCAN_TIMEOUT_MS`, default 10000). Crashes (signal;
+Windows: an NTSTATUS exception exit code, with error dialogs suppressed in
+the child), timeouts (SIGKILL / TerminateProcess) and failures are recorded in the cache and reported in
 `failed`; they stay blocklisted until `--rescan` or a stamp change. The cache
 (`{"version":1,"entries":[…]}`) is written atomically.
 
 ### Test plugins (`build/test_plugins/`, original code)
+
+macOS: bundles. Windows/Linux: each `.clap` is a single shared library and
+each `.vst3` a bundle folder with the binary in `Contents/x86_64-win/` or
+`Contents/x86_64-linux/`.
 
 * `SaineTestGain.vst3`: processor + separate controller (connection points),
   stereo, parameter 0 "Gain" (normalized = linear 0..1, default 0.5), state =
@@ -886,11 +1050,17 @@ timeouts (SIGKILL) and failures are recorded in the cache and reported in
   received in the next `setActive(true)` (so: set parameter → render a block
   → `se_plugin_idle`). Used as an instrument plugin it is silent but still
   reports N.
-* `SaineTestCrash.clap`: `clap_entry.init` raises SIGSEGV.
+* `SaineTestCrash.clap`: `clap_entry.init` raises SIGSEGV (Windows: writes
+  through a null pointer, since `raise(SIGSEGV)` there is a clean exit).
+* `SaineTestGui.clap` (`studio.saine.test.gui`, **Windows only**): stereo
+  pass-through with a Win32 `clap.gui` (a child `STATIC` window) that asks the
+  host to resize to 400 × 250 when shown; drives the HWND editor test.
 
 ### Tests
 
-C++ (`tests/test_plugins.cpp`, `tests/test_plugin_scan.cpp`, both presets):
+C++ (`tests/test_plugins.cpp`, `tests/test_plugin_scan.cpp`, both presets;
+off macOS the AU-only tests skip, AU halves of mixed tests are left out and
+the "third plugin" is SaineTestLatency.clap):
 AULowpass attenuates 15 kHz (< 0.25×) and passes 200 Hz (±5 %); CLAP and VST3
 gain halve the signal (≤ 1e-7); bypass (AU + CLAP + VST3 all disabled) is
 bit-exact; chain order (CLAP gain ↔ AUDistortion) changes the output, and
@@ -1225,11 +1395,13 @@ queries.
 
 ## Placeholders and known gaps
 
-* **Windows** (`src/platform/wasapi_device.cpp`): stub, `se_device_start` →
-  `SE_ERR_DEVICE` ("TODO: WASAPI/ASIO"). Also: `fopen` is not UTF-8 aware on
-  Windows (needs `_wfopen`).
-* **Linux** (`src/platform/pipewire_device.cpp`): stub, `SE_ERR_DEVICE`
-  ("TODO: PipeWire/JACK").
+* **Windows / Linux audio** (`wasapi_device.cpp`, `pipewire_device.cpp`):
+  implemented but never run against real audio hardware (CI runners have no
+  devices); no ASIO, no WASAPI exclusive mode or `IAudioClient3` low-latency
+  periods, no native JACK; device-change notifications are not handled on
+  any platform.
+* **Linux plugin editors** are not implemented (`SE_ERR_UNSUPPORTED_FORMAT`);
+  Windows editors ignore per-monitor DPI.
 * Core Audio: no handling of default-device changes, device hot-unplug or
   externally triggered rate changes while running (the stream just keeps
   whatever Core Audio does). **The duplex/aggregate input path has not been
@@ -1244,8 +1416,7 @@ queries.
   plugins. Of VST3 `restartComponent` flags only `kLatencyChanged` is handled
   (and CLAP `request_restart`): re-activation for latency changes; layout /
   I/O changes are still ignored. Export of a session with plugins needs the device
-  stopped. Plugin hosting is macOS-only (bundle loading uses CFBundle;
-  VST3/CLAP loaders for Windows/Linux are not written). The scanner does not
+  stopped. Windows/Linux host VST3 and CLAP only (no AU, no LV2). The scanner does not
   look inside `.component` bundles itself (AUs come from the system
   registry) and does not sandbox children beyond process isolation.
 * Multithreaded track rendering, buses/sends, and

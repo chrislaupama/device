@@ -1,5 +1,6 @@
 #include "test_util.hpp"
 
+#include "platform/os.hpp"
 #include "wav.hpp"
 
 #include <atomic>
@@ -8,20 +9,19 @@
 #include <filesystem>
 #include <numbers>
 #include <stdexcept>
-#include <unistd.h>
 
 namespace testutil {
 
 TempFile::TempFile(const std::string& stem) {
     static std::atomic<int> counter{0};
-    path = (std::filesystem::temp_directory_path() /
-            ("saine_test_" + std::to_string(getpid()) + "_" + std::to_string(counter++) + "_" + stem))
-               .string();
+    path = saine::os::path_to_utf8(std::filesystem::temp_directory_path() /
+                                   ("saine_test_" + std::to_string(saine::os::process_id()) + "_" +
+                                    std::to_string(counter++) + "_" + stem));
 }
 
 TempFile::~TempFile() {
     std::error_code ec;
-    std::filesystem::remove(path, ec);
+    std::filesystem::remove(saine::os::path_from_utf8(path), ec);
 }
 
 void write_float_wav(const std::string& path, const std::vector<std::vector<float>>& planar, uint32_t rate) {
@@ -35,8 +35,10 @@ void write_float_wav(const std::string& path, const std::vector<std::vector<floa
         throw std::runtime_error("write_float_wav: " + err);
 }
 
+std::FILE* fopen_utf8(const char* path, const char* mode) { return saine::os::fopen_utf8(path, mode); }
+
 void write_bytes(const std::string& path, const std::vector<uint8_t>& bytes) {
-    std::FILE* f = std::fopen(path.c_str(), "wb");
+    std::FILE* f = saine::os::fopen_utf8(path.c_str(), "wb");
     if (f == nullptr) throw std::runtime_error("cannot write " + path);
     std::fwrite(bytes.data(), 1, bytes.size(), f);
     std::fclose(f);

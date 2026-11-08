@@ -29,6 +29,10 @@ cmake --preset default -S engine && cmake --build engine/build && ctest --test-d
 cargo test --workspace                                                                          # core + FFI + e2e
 ```
 
+Windows: from an x64 MSVC developer prompt with Ninja; Linux: needs `pkg-config` and
+`libpipewire-0.3-dev` (plus the X11/Wayland/xkbcommon/fontconfig/udev dev packages for the app;
+see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platforms.
+
 ## Reference-inspection rules (learned the hard way)
 
 - Window pinned at (0,33), 1440×820: `tools/reference/ui.sh pin`.
@@ -158,3 +162,26 @@ cargo test --workspace                                                          
 - App: lanes toggle, header automation row with power + parameter picker, gold overlay lanes with labels,
   point/curve/marquee/freehand editing, Automation Arm touch-write, controls follow automation. Self-test 146/146
   offline, 145/145 (+1 offline-only skip) with Core Audio. Fidelity `reference-automation` 1.94.
+
+### 2026-11-08: session 1, round 10 (Windows and Linux port, branch `port/windows-linux`)
+- CI green on macos-15, windows-2025 (MSVC /W4 /WX) and ubuntu-24.04 (GCC -Werror): engine build,
+  145 ctest (139 + 5 FrameRing + 1 Win32 editor test; AU and device tests skip off macOS with a
+  reason, CTest "Skipped"), `cargo build/test --workspace` (120 tests) on all three.
+- Engine: `platform/os.{hpp,cpp}` (UTF-8 paths/_wfopen, env, ChildProcess over
+  CreateProcessW/posix_spawn), scanner ported (per-OS folders, NTSTATUS crash detection), VST3/CLAP
+  loading via LoadLibraryExW/dlopen with the VST3 bundle layout, canonical cross-platform VST3 class
+  id strings, test plugins built as Windows/Linux modules.
+- Audio: WASAPI shared/event/float32 backend (separate capture client + drift-tolerant
+  `FrameRing`, MMCSS) and PipeWire backend (playback/capture streams). **Neither has run on real
+  audio hardware** (CI runners have none); ASIO is future work (licence).
+- Editors: Windows HWND host (tested in CI with `SaineTestGui.clap`); Linux returns
+  `SE_ERR_UNSUPPORTED_FORMAT` (X11 embedding not written).
+- App: builds on all three; macOS-only winit hook stays cfg-gated; per-OS plugin folders. Off macOS
+  the self-test reports its Audio Unit devices section as skipped.
+- macOS-visible changes: two hardware-/compiler-dependent tests relaxed (PDC golden hashes only on
+  Apple clang/arm64; output latency plausibility instead of `>= 512`), ABI header comment fixed
+  (no buffer term in latency), `on_platform_main_thread` unchanged on macOS.
+- CI now runs on the self-hosted Mac mini only (as on main, 30a5ccb); the hosted Windows/Linux matrix
+  was dropped. The Windows/Linux results above are from hosted run 42464468427 (`6cecd4f`); later
+  changes are not compiled on those systems until a self-hosted Windows/Linux runner is added.
+

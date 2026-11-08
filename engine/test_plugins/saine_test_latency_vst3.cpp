@@ -21,7 +21,9 @@
 #include <pluginterfaces/vst/ivstparameterchanges.h>
 #include <pluginterfaces/vst/ivstunits.h>
 
+#if defined(__APPLE__)
 #include <CoreFoundation/CoreFoundation.h>
+#endif
 
 #include <atomic>
 #include <cmath>
@@ -273,6 +275,15 @@ public:
 
 extern "C" {
 SMTG_EXPORT_SYMBOL IPluginFactory* PLUGIN_API GetPluginFactory() { return new Factory(); }
+// Module entry points of the VST 3 module architecture, per platform.
+#if defined(__APPLE__)
 SMTG_EXPORT_SYMBOL bool bundleEntry(CFBundleRef) { return true; }
 SMTG_EXPORT_SYMBOL bool bundleExit() { return true; }
+#elif defined(_WIN32)
+SMTG_EXPORT_SYMBOL bool InitDll() { return true; }
+SMTG_EXPORT_SYMBOL bool ExitDll() { return true; }
+#else
+SMTG_EXPORT_SYMBOL bool ModuleEntry(void*) { return true; }
+SMTG_EXPORT_SYMBOL bool ModuleExit() { return true; }
+#endif
 }

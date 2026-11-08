@@ -21,6 +21,7 @@
 // inserts and 4 lanes per track (volume, pan, and the gain parameter of each
 // insert), each with a curved point every 100 ms (se_session_publish_v6),
 // against the same session without lanes.
+#include "platform/os.hpp"
 #include "saine_engine.h"
 
 #include <algorithm>
@@ -41,7 +42,7 @@ constexpr double kRate = 48000.0;
 constexpr uint32_t kBlock = 256;
 
 bool write_float_wav(const std::string& path, const std::vector<float>& l, const std::vector<float>& r) {
-    std::FILE* f = std::fopen(path.c_str(), "wb");
+    std::FILE* f = saine::os::fopen_utf8(path.c_str(), "wb");
     if (!f) return false;
     const auto frames = static_cast<uint32_t>(l.size());
     const uint32_t data = frames * 8;
@@ -133,7 +134,7 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
             se_device_desc d{};
             d.device_id = 1000 + t * 2 + static_cast<uint32_t>(k);
             const bool vst3 = plugins == 1 && k == 1;
-            d.format = vst3 ? SE_PLUGIN_VST3 : SE_PLUGIN_CLAP;
+            d.format = static_cast<uint8_t>(vst3 ? SE_PLUGIN_VST3 : SE_PLUGIN_CLAP);
             d.plugin_id = vst3 ? "5A17E5A16E0000018A1E7E576A170001" : "studio.saine.test.gain";
             d.path = vst3 ? vst3_gain.c_str() : clap_gain.c_str();
             d.enabled = 1;
@@ -240,7 +241,7 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
     Result r{};
     r.us_per_block_avg = wall_us / blocks;
     r.us_per_block_p99 = sorted[static_cast<std::size_t>(0.99 * (blocks - 1))];
-    r.us_per_block_max = sorted.back();
+    r.us_per_block_max = sorted.empty() ? 0.0 : sorted.back();
     const double audio_us = static_cast<double>(blocks) * kBlock / kRate * 1e6;
     r.rt_ratio = audio_us / wall_us;
     return r;
@@ -330,7 +331,7 @@ Result run_input(uint32_t tracks, uint32_t blocks, bool record) {
         td.pan = std::sin(static_cast<float>(t));
         td.arm = 1;
         td.monitor = 1;
-        td.input_mode = t % 3 == 0 ? SE_INPUT_STEREO : SE_INPUT_MONO;
+        td.input_mode = static_cast<uint8_t>(t % 3 == 0 ? SE_INPUT_STEREO : SE_INPUT_MONO);
         td.input_channel = static_cast<uint16_t>(t % (kInCh - 1));
     }
     se_session_desc_v4 sd{tds.data(), tracks, 0.5f};
@@ -341,7 +342,7 @@ Result run_input(uint32_t tracks, uint32_t blocks, bool record) {
     std::vector<float> in(static_cast<std::size_t>(kBlock) * kInCh);
     for (std::size_t i = 0; i < in.size(); ++i) in[i] = 0.1f * std::sin(0.01f * static_cast<float>(i));
     const auto dir = std::filesystem::temp_directory_path() / "saine_bench_record";
-    if (record && se_record_start(e, dir.string().c_str()) != SE_OK) {
+    if (record && se_record_start(e, saine::os::path_to_utf8(dir).c_str()) != SE_OK) {
         std::fprintf(stderr, "record failed: %s\n", se_last_error());
         std::exit(1);
     }
@@ -399,7 +400,7 @@ int main(int argc, char** argv) {
             l[i] = static_cast<float>(0.3 * std::sin(2 * std::numbers::pi * (110.0 * (a + 1)) * t));
             r[i] = static_cast<float>(0.3 * std::sin(2 * std::numbers::pi * (165.0 * (a + 1)) * t));
         }
-        const std::string path = (dir / ("saine_bench_asset_" + std::to_string(a) + ".wav")).string();
+        const std::string path = saine::os::path_to_utf8(dir / ("saine_bench_asset_" + std::to_string(a) + ".wav"));
         if (!write_float_wav(path, l, r)) {
             std::fprintf(stderr, "cannot write %s\n", path.c_str());
             return 1;

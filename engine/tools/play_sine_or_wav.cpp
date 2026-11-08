@@ -2,6 +2,7 @@
 // default Core Audio output for ~1 s at a quiet level (-24 dBFS).
 //
 // usage: play_sine_or_wav [file.wav] [seconds=1.0]
+#include "platform/os.hpp"
 #include "saine_engine.h"
 
 #include <chrono>
@@ -17,7 +18,7 @@
 namespace {
 
 bool write_sine_wav(const std::string& path, double rate, double seconds, double freq, double amp) {
-    std::FILE* f = std::fopen(path.c_str(), "wb");
+    std::FILE* f = saine::os::fopen_utf8(path.c_str(), "wb");
     if (!f) return false;
     const auto frames = static_cast<uint32_t>(rate * seconds);
     const uint32_t data = frames * 4;
@@ -64,7 +65,7 @@ int main(int argc, char** argv) {
     if (argc > 1) {
         path = argv[1];
     } else {
-        path = (std::filesystem::temp_directory_path() / "saine_play_sine.wav").string();
+        path = saine::os::path_to_utf8(std::filesystem::temp_directory_path() / "saine_play_sine.wav");
         const double amp = std::pow(10.0, -24.0 / 20.0); // -24 dBFS
         if (!write_sine_wav(path, rate, seconds + 0.2, 440.0, amp)) {
             std::fprintf(stderr, "cannot write %s\n", path.c_str());

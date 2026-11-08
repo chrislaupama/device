@@ -302,8 +302,9 @@ std::shared_ptr<PluginInstance> create_vst3_instance(const PluginSpec& spec, dou
 std::shared_ptr<PluginInstance> create_clap_instance(const PluginSpec& spec, double sample_rate, uint32_t max_block,
                                                      std::string& err);
 
-// True on the platform's main thread (macOS: pthread_main_np). Other
-// platforms: always true (not enforced).
+// True on the platform's main thread (macOS: pthread_main_np; Linux: the
+// initial thread, tid == pid; Windows: the thread that ran the static
+// initialisers).
 bool on_platform_main_thread() noexcept;
 
 } // namespace saine

@@ -134,16 +134,24 @@ component PageButton inherits Rectangle {
 // (ours) the scan result: found plugins and failed / blocklisted ones with reasons.
 component PluginsPage inherits Rectangle {
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "Plugins"; font-size: 17.25px; font-weight: 700; }
-    FieldLabel { x: 20.5px; y: 71px; text: "Scan directories"; }
-    for d[i] in Studio.scan-dirs: Rectangle {
-        x: 20.5px; y: 91px + i * 30.5px; width: root.width - 41px; height: 25px; border-radius: 5px; background: #222326;
-        accessible-role: text; accessible-label: d.name + (d.warn ? " (missing)" : "");
-        path := Text { x: 9px; text: d.name; color: d.warn ? #6f7074 : #d9d9dc; font-size: 10px; vertical-alignment: center; }
-        if d.warn: Rectangle { x: 9px; y: parent.height / 2; width: path.preferred-width; height: 0.75px; background: #6f7074; }
-        b1 := Badge { x: 9px + path.preferred-width + 8px; y: 4.5px; text: d.badge; }
-        if d.warn: Badge { x: b1.x + b1.width + 6px; y: 4.5px; text: "Missing"; warn: true; }
+    FieldLabel { x: 20.5px; y: 71px; text: "Scan directories" + (Studio.scan-dirs.length > 8 ? " (" + Studio.scan-dirs.length + ", scroll for more)" : ""); }
+    // At most 8 rows tall (the page itself does not scroll); more folders
+    // (CLAP_PATH / SAINE_PLUGIN_PATH) scroll inside the list.
+    property <int> dir-rows: min(Studio.scan-dirs.length, 8);
+    Flickable {
+        x: 20.5px; y: 91px; width: root.width - 41px; height: root.dir-rows * 30.5px;
+        viewport-height: Studio.scan-dirs.length * 30.5px;
+        interactive: Studio.scan-dirs.length > 8;
+        for d[i] in Studio.scan-dirs: Rectangle {
+            x: 0; y: i * 30.5px; width: parent.width; height: 25px; border-radius: 5px; background: #222326;
+            accessible-role: text; accessible-label: d.name + (d.warn ? " (missing)" : "");
+            path := Text { x: 9px; text: d.name; color: d.warn ? #6f7074 : #d9d9dc; font-size: 10px; vertical-alignment: center; }
+            if d.warn: Rectangle { x: 9px; y: parent.height / 2; width: path.preferred-width; height: 0.75px; background: #6f7074; }
+            b1 := Badge { x: 9px + path.preferred-width + 8px; y: 4.5px; text: d.badge; }
+            if d.warn: Badge { x: b1.x + b1.width + 6px; y: 4.5px; text: "Missing"; warn: true; }
+        }
     }
-    property <length> after-dirs: 91px + Studio.scan-dirs.length * 30.5px;
+    property <length> after-dirs: 91px + root.dir-rows * 30.5px;
     // PLACEHOLDER: the engine scans the standard locations only (no custom folders yet).
     PageButton { x: 20.5px; y: root.after-dirs + 8px; text: "Add folder"; clicked => { Studio.placeholder("Add plugin folder"); } }
     Rectangle { x: 20.5px; y: root.after-dirs + 50px; width: root.width - 41px; height: 0.5px; background: #313134; }

@@ -28,6 +28,11 @@ const std::string kVst3Gain = kPluginDir + "/SaineTestGain.vst3";
 const std::string kClapLatency = kPluginDir + "/SaineTestLatency.clap";
 const char* const kVst3GainUid = "5A17E5A16E0000018A1E7E576A170001";
 const char* const kAuLowpass = "aufx lpas appl";
+#if defined(__APPLE__)
+constexpr bool kHaveAu = true;
+#else
+constexpr bool kHaveAu = false;
+#endif
 
 // ---- reference evaluation (independent of the engine's code)
 struct Pt {
@@ -486,6 +491,7 @@ TEST_CASE(automation_clap_and_vst3_gain_follow_the_lane_sample_accurately) {
 }
 
 TEST_CASE(automation_au_lowpass_cutoff_brightens) {
+    if (!kHaveAu) SKIP("Audio Units are macOS-only");
     EngineHandle e(48000, 512);
     const uint64_t a = load_asset(e, {noise(110000)});
     ASession s;
@@ -507,7 +513,9 @@ TEST_CASE(automation_plugin_param_queries) {
     EngineHandle e(48000, 256);
     const uint64_t a = dc_asset(e, 1000);
     ASession s;
-    s.audio(1, {clip(1, a, 0, 0, 1000)}, {}, {clap_gain(1), vst3_gain(2), au_dev(3, kAuLowpass)});
+    std::vector<se_device_desc> devs = {clap_gain(1), vst3_gain(2)};
+    if (kHaveAu) devs.push_back(au_dev(3, kAuLowpass));
+    s.audio(1, {clip(1, a, 0, 0, 1000)}, {}, devs);
     REQUIRE(s.publish(e) == SE_OK);
     for (uint64_t dev : {1u, 2u}) {
         se_plugin_param_info info[8];
@@ -528,6 +536,11 @@ TEST_CASE(automation_plugin_param_queries) {
         CHECK(se_plugin_param_value(e, dev, 99, &v) == SE_ERR_NOT_FOUND);
     }
     std::size_t n = 0;
+    CHECK(se_plugin_params(e, 77, nullptr, 0, &n) == SE_ERR_NOT_FOUND);
+    if (!kHaveAu) {
+        std::fprintf(stderr, "  (Audio Unit half skipped: Audio Units are macOS-only)\n");
+        return;
+    }
     REQUIRE(se_plugin_params(e, 3, nullptr, 0, &n) == SE_OK);
     REQUIRE(n >= 2);
     std::vector<se_plugin_param_info> au(n);
@@ -538,7 +551,6 @@ TEST_CASE(automation_plugin_param_queries) {
     REQUIRE(se_plugin_param_text(e, 3, au[0].id, 0.5f, text, sizeof text) == SE_OK);
     std::fprintf(stderr, "AU %s at 0.5: '%s'\n", au[0].name, text);
     CHECK(std::string(text).find("Hz") != std::string::npos);
-    CHECK(se_plugin_params(e, 77, nullptr, 0, &n) == SE_ERR_NOT_FOUND);
 }
 
 // ---------------------------------------------------------------- editor changes
@@ -547,7 +559,9 @@ TEST_CASE(automation_take_plugin_param_changes_reports_editor_gestures) {
     EngineHandle e(48000, 256);
     const uint64_t a = dc_asset(e, 20000);
     ASession s;
-    s.audio(1, {clip(1, a, 0, 0, 20000)}, {}, {clap_gain(1), vst3_gain(2), au_dev(3, kAuLowpass)});
+    std::vector<se_device_desc> devs = {clap_gain(1), vst3_gain(2)};
+    if (kHaveAu) devs.push_back(au_dev(3, kAuLowpass));
+    s.audio(1, {clip(1, a, 0, 0, 20000)}, {}, devs);
     REQUIRE(s.publish(e) == SE_OK);
     CHECK(take_changes(e).empty());
     const auto check_gesture = [](const std::vector<se_plugin_param_change>& c, uint64_t dev, uint32_t param,
@@ -592,23 +606,27 @@ TEST_CASE(automation_take_plugin_param_changes_reports_editor_gestures) {
 
     // AU: begin gesture, AUParameterSet, end gesture (what AU views do),
     // delivered on a dispatch queue.
-    REQUIRE(saine::testing::plugin_simulate_gesture(e, 3, 0, 0.5f));
-    std::vector<se_plugin_param_change> au;
-    for (int i = 0; i < 200 && au.size() < 3; ++i) {
-        const auto c = take_changes(e);
-        au.insert(au.end(), c.begin(), c.end());
-        if (au.size() < 3) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    if (kHaveAu) {
+        REQUIRE(saine::testing::plugin_simulate_gesture(e, 3, 0, 0.5f));
+        std::vector<se_plugin_param_change> au;
+        for (int i = 0; i < 200 && au.size() < 3; ++i) {
+            const auto c = take_changes(e);
+            au.insert(au.end(), c.begin(), c.end());
+            if (au.size() < 3) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        check_gesture(au, 3, 0, -1.0f, 0.5f, -1);
+        float v = 0;
+        REQUIRE(se_plugin_param_value(e, 3, 0, &v) == SE_OK);
+        CHECK_NEAR(v, 0.5, 1e-4);
+    } else {
+        std::fprintf(stderr, "  (Audio Unit gesture skipped: Audio Units are macOS-only)\n");
     }
-    check_gesture(au, 3, 0, -1.0f, 0.5f, -1);
-    float v = 0;
-    REQUIRE(se_plugin_param_value(e, 3, 0, &v) == SE_OK);
-    CHECK_NEAR(v, 0.5, 1e-4);
 
     // Automation itself is not reported.
     ASession s2 = s;
     s2.tracks[0].lanes = {lane(SE_AUTO_PLUGIN, {{0, 0.0f, 0.0f}, {5000, 1.0f, 0.0f}}, 1, 0),
-                          lane(SE_AUTO_PLUGIN, {{0, 0.0f, 0.0f}, {5000, 1.0f, 0.0f}}, 2, 0),
-                          lane(SE_AUTO_PLUGIN, {{0, 0.0f, 0.0f}, {5000, 1.0f, 0.0f}}, 3, 0)};
+                          lane(SE_AUTO_PLUGIN, {{0, 0.0f, 0.0f}, {5000, 1.0f, 0.0f}}, 2, 0)};
+    if (kHaveAu) s2.tracks[0].lanes.push_back(lane(SE_AUTO_PLUGIN, {{0, 0.0f, 0.0f}, {5000, 1.0f, 0.0f}}, 3, 0));
     REQUIRE(s2.publish(e) == SE_OK);
     play(e, 6000);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
