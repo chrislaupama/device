@@ -32,9 +32,13 @@
 
 namespace saine {
 
+// Single-producer, single-consumer frame FIFO with drift handling (see the
+// file comment).
 class FrameRing {
 public:
-    // Non-RT. capacity is rounded up to a power of two.
+    // Sizes the ring and clears it and its counters; the reader re-primes.
+    // Non-RT. capacity is rounded up to a power of two; target is capped at
+    // half of it.
     void reset(uint32_t channels, uint32_t capacity_frames, uint32_t target_frames, uint32_t slack_frames) {
         channels_ = std::max<uint32_t>(channels, 1);
         uint32_t cap = 1;
@@ -51,8 +55,11 @@ public:
         overflows_.store(0, std::memory_order_relaxed);
     }
 
+    // Channels per stored frame.
     uint32_t channels() const noexcept { return channels_; }
+    // Fill level the reader aims to keep, in frames.
     uint32_t target() const noexcept { return target_; }
+    // Frames currently buffered.
     uint32_t fill() const noexcept {
         return static_cast<uint32_t>(write_pos_.load(std::memory_order_acquire) -
                                      read_pos_.load(std::memory_order_acquire));
@@ -125,11 +132,15 @@ public:
         return n;
     }
 
+    // Times the reader ran out of input (and re-primed).
     uint64_t underruns() const noexcept { return underruns_.load(std::memory_order_relaxed); }
+    // Input frames skipped because the fill exceeded target + slack.
     uint64_t dropped() const noexcept { return dropped_.load(std::memory_order_relaxed); }
+    // Input frames dropped because the ring was full.
     uint64_t overflows() const noexcept { return overflows_.load(std::memory_order_relaxed); }
 
 private:
+    // Zeroes `frames` samples from `offset` in each of `channels` planar buffers.
     static void zero(float* const* dst, uint32_t channels, uint32_t offset, uint32_t frames) noexcept {
         for (uint32_t c = 0; c < channels; ++c) std::memset(dst[c] + offset, 0, sizeof(float) * frames);
     }

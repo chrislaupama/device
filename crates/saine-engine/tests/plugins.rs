@@ -188,6 +188,8 @@ fn missing_plugin_is_reported_and_passes_through() {
     assert!(rig.engine.open_plugin_editor(id).is_err());
 }
 
+/// The out-of-process scanner finds the test plugins through
+/// `$SAINE_PLUGIN_PATH` and blocklists the bundle that crashes while scanned.
 #[test]
 fn scanner_finds_test_plugins_and_blocklists_the_crash() {
     // SAINE_PLUGIN_PATH is read by the scanner child process.

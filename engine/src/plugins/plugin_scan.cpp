@@ -199,6 +199,8 @@ bool scan_vst3_bundle(const std::string& path, std::vector<ScannedPlugin>& out, 
     return true;
 }
 
+// Loads the CLAP module at `path` and lists its plugins (id, name, vendor,
+// kind, editor and audio ports); false with `err` set on failure.
 bool scan_clap_bundle(const std::string& path, std::vector<ScannedPlugin>& out, std::string& err) {
     auto mod = load_clap_module(path, err);
     if (!mod) return false;

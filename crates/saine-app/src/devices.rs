@@ -780,6 +780,9 @@ impl Controller {
         (out, add_x, synth)
     }
 
+    /// The view model of one device card in the chain: name, format, kind,
+    /// load error, latency and editor state (`editor_supported` is false where
+    /// the engine cannot open plugin windows).
     fn card_for(&self, d: &Device, instrument: bool) -> DeviceCard {
         let info = self.devices.catalog.find(&d.plugin);
         let error = self.devices.load_errors.iter().find(|(id, _)| *id == d.id).map(|(_, e)| e.clone()).unwrap_or_default();
@@ -1037,6 +1040,9 @@ impl Controller {
 
     // ---------------------------------------------------------------- view models
 
+    /// Pushes the device browser, the drag-and-drop ghost, the device chain
+    /// and Settings › Plugins (scan status, the default and configured scan
+    /// folders, the found plugins) to the UI.
     pub(crate) fn push_devices(&mut self, s: &Studio) {
         // ---- browser tree ----
         let (entries, mut rows) = build_tree(&self.devices.catalog, self.devices.tab, &self.devices.search, &self.devices.expanded);

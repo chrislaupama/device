@@ -74,6 +74,8 @@ constexpr PROPERTYKEY kPkeyFriendlyName = {
     {0xa45c254e, 0xdf1c, 0x4efd, {0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0}}, 14};
 constexpr GUID kSubtypeFloat = {0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
 
+// Error message for a failed call: "<what> failed (HRESULT 0x...)", plus a
+// plain-language reason for the common audio-client errors.
 std::string hr_error(const char* what, HRESULT hr) {
     char buf[16];
     std::snprintf(buf, sizeof buf, "0x%08lX", static_cast<unsigned long>(hr));
@@ -91,16 +93,19 @@ std::string hr_error(const char* what, HRESULT hr) {
 // by us.
 class ComScope {
 public:
+    // Joins the multithreaded apartment, or accepts an existing STA.
     ComScope() {
         const HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         owned_ = SUCCEEDED(hr); // S_OK or S_FALSE (already MTA): balance it
         ok_ = owned_ || hr == RPC_E_CHANGED_MODE;
     }
+    // Uninitialises COM only if this scope initialised it.
     ~ComScope() {
         if (owned_) CoUninitialize();
     }
     ComScope(const ComScope&) = delete;
     ComScope& operator=(const ComScope&) = delete;
+    // True when COM is usable on this thread.
     bool ok() const noexcept { return ok_; }
 
 private:
@@ -108,6 +113,7 @@ private:
     bool ok_ = false;
 };
 
+// Creates the endpoint enumerator; null with `err` set on failure.
 ComPtr<IMMDeviceEnumerator> enumerator(std::string& err) {
     ComPtr<IMMDeviceEnumerator> e;
     const HRESULT hr =
@@ -119,6 +125,7 @@ ComPtr<IMMDeviceEnumerator> enumerator(std::string& err) {
     return e;
 }
 
+// An endpoint's id string (our DeviceInfo::uid) as UTF-8; "" if unavailable.
 std::string endpoint_id(IMMDevice* d) {
     LPWSTR id = nullptr;
     if (d == nullptr || FAILED(d->GetId(&id)) || id == nullptr) return {};
@@ -127,6 +134,7 @@ std::string endpoint_id(IMMDevice* d) {
     return s;
 }
 
+// An endpoint's friendly name as UTF-8; "" if unavailable.
 std::string endpoint_name(IMMDevice* d) {
     ComPtr<IPropertyStore> props;
     if (d == nullptr || FAILED(d->OpenPropertyStore(STGM_READ, props.GetAddressOf()))) return {};
@@ -157,6 +165,7 @@ ComPtr<IMMDevice> resolve(IMMDeviceEnumerator* e, const std::string& uid, EDataF
     return d;
 }
 
+// An endpoint's shared-mode mix format.
 struct MixInfo {
     uint32_t channels = 0;
     double rate = 0.0;
@@ -180,6 +189,7 @@ bool mix_info(IMMDevice* d, MixInfo& out) {
     return true;
 }
 
+// A float32 WAVEFORMATEXTENSIBLE with the given channels, rate and speaker mask.
 WAVEFORMATEXTENSIBLE float_format(uint32_t channels, double rate, DWORD mask) {
     WAVEFORMATEXTENSIBLE f{};
     f.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
@@ -195,6 +205,7 @@ WAVEFORMATEXTENSIBLE float_format(uint32_t channels, double rate, DWORD mask) {
     return f;
 }
 
+// Formats a rate for error messages, e.g. "48000 Hz".
 std::string rate_str(double r) { return std::to_string(static_cast<long>(std::lround(r))) + " Hz"; }
 
 // One shared-mode, event-driven stream (render or capture) at the engine
@@ -212,8 +223,11 @@ struct Stream {
     double latency_s = 0.0; // IAudioClient::GetStreamLatency
     bool started = false;
 
+    // Stops and releases the stream.
     ~Stream() { close(); }
 
+    // Stops the client if it was started and releases every COM object and the
+    // event handle. Safe to call twice.
     void close() {
         if (client && started) client->Stop();
         started = false;
@@ -225,6 +239,10 @@ struct Stream {
         event = nullptr;
     }
 
+    // Opens a shared-mode, event-driven float32 client on `dev` at the engine
+    // rate. `want_channels` 0 means the endpoint's own channel count (capped).
+    // `buffer_size` 0 lets WASAPI choose the buffer. On failure returns the
+    // HRESULT with `err` set.
     HRESULT open(IMMDevice* dev, bool is_render, uint32_t want_channels, double engine_rate, uint32_t buffer_size,
                  std::string& err) {
         device = dev;
@@ -281,10 +299,16 @@ struct Stream {
     }
 };
 
+// AudioDevice on WASAPI shared mode: a render stream plus an optional
+// capture stream feeding a FrameRing, all run by one audio thread.
 class WasapiDevice final : public AudioDevice {
 public:
+    // Stops the audio thread if it is running.
     ~WasapiDevice() override { stop(); }
 
+    // Checks the output and input endpoints, the requested rate (which must
+    // equal the endpoint's shared-mode rate) and the buffer size, without
+    // opening a stream.
     int32_t validate(const Config& c, std::string& err) const override {
         ComScope com;
         if (!com.ok()) {
@@ -332,6 +356,9 @@ public:
         return SE_OK;
     }
 
+    // Validates, then starts the audio thread and waits for it to report
+    // whether the streams opened. An input that fails to open leaves the device
+    // running output-only with status().input_error set.
     int32_t start(const Config& config, Callback* callback, std::string& err) override {
         if (thread_.joinable()) {
             err = "device already started";
@@ -366,6 +393,7 @@ public:
         return SE_OK;
     }
 
+    // Signals the audio thread and joins it; the callback is not called afterwards.
     int32_t stop() override {
         if (thread_.joinable()) {
             SetEvent(stop_event_);
@@ -377,11 +405,14 @@ public:
         return SE_OK;
     }
 
+    // True while the audio thread is running its loop.
     bool is_running() const override { return running_.load(std::memory_order_acquire); }
+    // The rates, buffer size, latencies and endpoint names in effect since start().
     Status status() const override { return status_; }
 
 private:
-    // Audio thread: open, report, loop, close.
+    // Audio thread: opens both streams, reports the result to start() through
+    // `opened`, runs the loop under MMCSS "Pro Audio", then closes the streams.
     void run(std::promise<std::pair<int32_t, std::string>>& opened) {
         ComScope com;
         if (!com.ok()) {
@@ -480,6 +511,9 @@ private:
         out.close();
     }
 
+    // Audio-thread loop: waits on the stop, render and capture events, drains
+    // capture packets and renders a cycle on each render event. Returns on
+    // stop() or on a device error (which ends the stream).
     void loop(Stream& out, Stream* in) {
         HANDLE waits[3] = {stop_event_, out.event, in != nullptr ? in->event : nullptr};
         const DWORD count = in != nullptr ? 3 : 2;
@@ -520,6 +554,9 @@ private:
         }
     }
 
+    // Fills the free part of the render buffer: reads the same number of input
+    // frames from the ring, calls the engine and interleaves its output. False on
+    // a device error.
     bool render_cycle(Stream& out, Stream* in) {
         UINT32 padding = 0;
         if (FAILED(out.client->GetCurrentPadding(&padding))) return false;
@@ -556,8 +593,11 @@ private:
 
 } // namespace
 
+// Creates the Windows audio device (WASAPI shared mode).
 std::unique_ptr<AudioDevice> create_platform_audio_device() { return std::make_unique<WasapiDevice>(); }
 
+// Lists every active render and capture endpoint as a device, each with its
+// shared-mode rate. No devices (and no error) without a Windows audio stack.
 int32_t list_audio_devices(std::vector<DeviceInfo>& out, std::string& err) {
     out.clear();
     ComScope com;
@@ -608,6 +648,7 @@ int32_t list_audio_devices(std::vector<DeviceInfo>& out, std::string& err) {
     return SE_OK;
 }
 
+// The default render endpoint's shared-mode rate, or 0 if there is none.
 double query_default_output_sample_rate() {
     ComScope com;
     if (!com.ok()) return 0.0;

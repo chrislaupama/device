@@ -7,6 +7,11 @@
 //! `<target>/saine-third-party` (shared by all profiles; see
 //! engine/third_party_licenses.md). Offline builds: set
 //! FETCHCONTENT_SOURCE_DIR_SAINE_CLAP / FETCHCONTENT_SOURCE_DIR_SAINE_VST3SDK.
+
+/// Configures and builds the engine with CMake, then emits the link lines for
+/// the target OS: system frameworks on macOS, libpipewire (unless
+/// `SAINE_ENGINE_PIPEWIRE` is off), libstdc++ and libdl on Linux, and the COM,
+/// shell, MMCSS and user32 libraries on Windows.
 fn main() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let engine = manifest.join("../../engine");
