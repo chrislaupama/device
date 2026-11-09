@@ -10,6 +10,7 @@
 // Readouts: the last wave position, the depth and the position inside the
 // cycle 0..1 (for the panel's live dot).
 #include "builtin.hpp"
+#include "dsp.hpp"
 #include "lfo.hpp"
 
 #include <algorithm>
@@ -21,6 +22,7 @@ namespace {
 constexpr const char* kParams[] = {"shape", "sync", "rate", "rateSync", "depth", "phase"};
 constexpr const char* kReadouts[] = {"position", "depth", "cycle"};
 constexpr float kIdle[] = {0.5f, 0.0f, 0.0f};
+constexpr float kDefaults[] = {0.0f, 1.0f, 1.0f, 8.0f, 100.0f, 0.0f};
 
 class Lfo final : public BuiltinProcessor {
 public:
@@ -51,7 +53,7 @@ public:
         const bool playing = t != nullptr && t->playing;
         if (playing) beats_ = t->beats(); // the song position, also right after play starts
         was_playing_ = playing;
-        const double x = (sync ? beats_ / lfo::kDivisionQuarters[div] : free_) + phase;
+        const double x = (sync ? beats_ / static_cast<double>(dsp::kDivisionQuarters[div]) : free_) + phase;
         const float pos = 0.5f * (lfo::wave(shape, x) + 1.0f);
         out[0] = pos;
         out[1] = depth;
@@ -79,6 +81,6 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Lfo>(); }
 } // namespace
 
 extern const BuiltinDescriptor kLfoDescriptor;
-const BuiltinDescriptor kLfoDescriptor{"lfo", kParams, kReadouts, &create, kIdle};
+const BuiltinDescriptor kLfoDescriptor{"lfo", kParams, kReadouts, &create, kIdle, kDefaults};
 
 } // namespace saine

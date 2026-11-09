@@ -34,6 +34,9 @@ struct BuiltinContext {
     const float* sc_l = nullptr;
     const float* sc_r = nullptr;
     const RtTransport* transport = nullptr;
+    // Frames from transport->position to the first frame of this call (the
+    // instance splits blocks at automation events).
+    uint32_t offset = 0;
 };
 
 class BuiltinProcessor {
@@ -92,6 +95,9 @@ struct BuiltinDescriptor {
     // silence for level meters. When automation splits a block, each readout
     // keeps the segment value farthest from its idle value.
     std::span<const float> idle_readouts;
+    // Default plain values in parameter order (the Rust definition's
+    // defaults), for the generic tests and the benchmark; empty = unknown.
+    std::span<const float> defaults;
 };
 
 std::span<const BuiltinDescriptor> builtin_registry() noexcept;

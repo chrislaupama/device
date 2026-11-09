@@ -256,7 +256,7 @@ impl Controller {
         let knobs = vec![knob(if sync { "rateSync" } else { "rate" }, 8.0), knob("phase", 80.0)];
         let depth = val("depth");
         let slider_x = LFO_LEFT_W - 8.0 - 62.0;
-        let sliders = vec![PanelSlider { param: idx("depth"), x: slider_x * Z, label: s(p("depth").label), value: s(p("depth").format(depth)), norm: p("depth").to_normalized(depth), bipolar: false }];
+        let sliders = vec![PanelSlider { param: idx("depth"), x: slider_x * Z, label: s(p("depth").label), value: s(p("depth").format(depth)), norm: p("depth").to_normalized(depth), zero: 0.0 }];
         let (w, h) = ((slider_x - 10.0 - WAVE_X) * Z, (WAVE_BOTTOM - WAVE_Y) * Z);
         let phase = val("phase") as f64 / 100.0;
         let (wave, wave_fill) = wave_paths(val("shape").round() as usize, phase, depth / 100.0, w, h);

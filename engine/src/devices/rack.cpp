@@ -11,6 +11,7 @@ namespace saine {
 namespace {
 
 constexpr const char* kParams[] = {"macro1", "macro2", "macro3", "macro4", "macro5", "macro6", "macro7", "macro8"};
+constexpr float kDefaults[] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 constexpr uint32_t kMacros = 8;
 
 class Rack final : public BuiltinProcessor {
@@ -32,6 +33,6 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Rack>(); }
 } // namespace
 
 extern const BuiltinDescriptor kRackDescriptor;
-const BuiltinDescriptor kRackDescriptor{"device-rack", kParams, {}, &create, {}};
+const BuiltinDescriptor kRackDescriptor{"device-rack", kParams, {}, &create, {}, kDefaults};
 
 } // namespace saine

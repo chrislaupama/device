@@ -10,11 +10,6 @@ namespace saine::lfo {
 
 enum Shape : uint32_t { kSine = 0, kTriangle, kSawUp, kSawDown, kSquare, kRandom, kSmoothRandom, kShapeCount };
 
-// Tempo divisions in quarter notes, slowest first (saine_core::builtin::lfo::DIVISIONS).
-inline constexpr double kDivisionQuarters[20] = {32.0,  16.0,  8.0,         4.0,    3.0,  2.0,         4.0 / 3.0,
-                                                 1.5,   1.0,   2.0 / 3.0,   0.75,   0.5,  1.0 / 3.0,   0.375,
-                                                 0.25,  1.0 / 6.0, 0.125,   0.09375, 0.0625, 1.0 / 24.0};
-
 // One value in -1..1 per cycle, repeating every 4096 cycles.
 inline float cycle_random(int64_t cycle) noexcept {
     const auto n = static_cast<uint32_t>(((cycle % 4096) + 4096) % 4096);

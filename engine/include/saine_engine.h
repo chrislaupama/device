@@ -966,7 +966,8 @@ typedef struct se_builtin_desc {
     const char* const* readout_ids; /* readout_count entries */
     uint32_t param_count;
     uint32_t readout_count;
-} se_builtin_desc; /* 32 bytes, align 8 */
+    const float* param_defaults; /* param_count entries: the processor's defaults */
+} se_builtin_desc; /* 40 bytes, align 8 */
 
 /* Every registered built-in processor. Any thread. */
 const se_builtin_desc* se_builtin_registry(size_t* out_count);

@@ -70,7 +70,8 @@ export struct ChainFrame { x: length, w: length, armed: bool, color: color, empt
 // Picker row item. kind 0 caption, 1 segmented choice, 2 menu pill, 3 value box, 4 flexible gap.
 export struct PanelPick { kind: int, param: int, label: string, choices: [string], selected: int, value: string, enabled: bool, width: length }
 // Vertical slider column (x = column left, card relative).
-export struct PanelSlider { param: int, x: length, label: string, value: string, norm: float, bipolar: bool }
+// zero: normalised position the fill starts from (0 = bottom; 0 dB on a range through zero).
+export struct PanelSlider { param: int, x: length, label: string, value: string, norm: float, zero: float }
 export struct PanelTick { y: length, text: string, rule: bool }
 // Dynamics strip: caption + readout above a well; paths are in well coordinates (view box w x well-h).
 export struct PanelStrip {
@@ -78,6 +79,19 @@ export struct PanelStrip {
     caption: string, readout: string, ticks: [PanelTick],
     in-fill: string, gr-fill: string, in-line: string, out-line: string,
     thresh-param: int, thresh-y: length, thresh-dash: string, thresh-label: string, thresh-value: string, thresh-rate: float,
+}
+
+// Plotted field (View::Field): caption + readout above a well; paths in well coordinates.
+// plot-*: the drag area (well relative). band: fill is a min..max band (alpha .16) instead of
+// the area under the first trace (alpha .28). dot: live LFO dot at dot-x / dot-y; live: the
+// live response curve or the dot's trail, in the track colour.
+export struct PanelField {
+    visible: bool, x: length, y: length, w: length, h: length, well-y: length,
+    caption: string, readout: string, ticks: [PanelTick], rest: string,
+    fill: string, band: bool, main: string, main-w: length, main-hot-w: length,
+    alt: string, alt-alpha: float, third: string, third-alpha: float,
+    live: string, dot: bool, dot-x: length, dot-y: length,
+    x-param: int, y-param: int, plot-x: length, plot-y: length, plot-w: length, plot-h: length,
 }
 
 export struct DeviceCard {
@@ -113,6 +127,7 @@ export struct DeviceCard {
     // Plugin card (third-party plugins): shown controls (knobs), pager.
     page: int,
     pages: int,
+    field: PanelField,
 }
 
 // Settings › Plugins list rows. warn: drawn with the orange "Missing"/failure badge.
@@ -403,7 +418,8 @@ export global Studio {
     callback panel-step(int, int, int, bool);                // arrow keys: +1 / -1, fine
     callback panel-choice(int, int, int);                    // choice index
     callback panel-text(int, int, string);                   // typed value (parsed by the definition)
-    callback panel-menu(int, int, length, length);           // -1 sidechain source, -2 presets; window x, y
+    callback panel-menu(int, int, length, length);           // -1 sidechain source, -2 presets, >= 0 a dropdown's choices; window x, y
+    callback panel-field(int, int, float, float, bool);      // field XY drag: device, phase (as panel-drag), dx, dy (px, up +), fine
     callback panel-preset-step(int, int);                    // previous (-1) / next (+1) factory preset
     // ---- modulation and containers (src/device_mod.rs) ----
     in property <[ChainFrame]> chain-frames;
