@@ -39,6 +39,9 @@ pub const GLOBALS: usize = 11;
 pub const LANE_STRIDE: usize = 54;
 /// Curve value (0..1) each lane rests at: the effect is neutral there.
 pub const REST: [f32; 7] = [1.0, 0.0, 0.5, 0.5, 1.0, 0.0, 0.5];
+/// Longest repeat the Time lane can reach (the engine's buffer, seconds):
+/// deeper points of long cycles at slow tempos read this far back.
+pub const TIME_MAX_SECONDS: f64 = 20.0;
 
 macro_rules! shaper_params {
     ($( $lane:ident $name:literal on $on:literal rate $rate:literal points $pts:literal y ($ymin:expr, $ymax:expr, $yunit:literal, $yfmt:expr)
@@ -72,7 +75,14 @@ macro_rules! shaper_params {
     };
 }
 
-static PARAMS: [ParamDef; 389] = shaper_params![
+/// The Pitch lane switch sets the reported latency (PDC), which follows the
+/// stored value only, so it is not automatable.
+const fn pitch_switch_fixed(mut p: [ParamDef; 389]) -> [ParamDef; 389] {
+    p[lane_base(6) + ON].automatable = false;
+    p
+}
+
+static PARAMS: [ParamDef; 389] = pitch_switch_fixed(shaper_params![
     vol "Volume" on 1 rate 8 points 3.0 y (0.0, 100.0, "%", Format::Percent) [
         (1, 0.0, 0.0, 55.0),
         (2, 0.5, 100.0, 0.0),
@@ -199,7 +209,7 @@ static PARAMS: [ParamDef; 389] = shaper_params![
         (15, 1.0, -12.0, 0.0),
         (16, 1.0, -12.0, 0.0)
     ];
-];
+]);
 
 /// Index of a lane's first parameter (`<lane>_on`).
 pub const fn lane_base(lane: usize) -> usize {
@@ -497,6 +507,8 @@ mod tests {
 
     #[test]
     fn parameter_block_layout() {
+        assert!(!SHAPER.param("pitch_on").unwrap().automatable, "pitch_on sets PDC latency");
+        assert!(SHAPER.param("vol_on").unwrap().automatable);
         let d = &SHAPER;
         assert_eq!(d.params.len(), 389);
         for (lane, (id, _)) in LANES.iter().enumerate() {

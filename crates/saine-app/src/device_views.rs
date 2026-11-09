@@ -309,31 +309,31 @@ impl EnvSim {
             self.rel_rate = self.level / e.r.max(0.5);
         }
     }
-    fn step(&mut self, ms: f32, e: &Adsr) {
-        match self.stage {
-            1 => {
-                self.level += ms / e.a.max(0.5);
-                if self.level >= 1.0 {
-                    self.level = 1.0;
-                    self.stage = 2;
-                }
-            }
-            2 => {
-                self.level -= (1.0 - e.s) * ms / e.d.max(1.0);
-                if self.level <= e.s {
+    /// Advance by `ms` exactly: every stage is linear, so each one is consumed
+    /// in one step (cost independent of the time span).
+    fn advance(&mut self, mut ms: f32, e: &Adsr) {
+        while ms > 0.0 {
+            let (rate, end, next) = match self.stage {
+                1 => (1.0 / e.a.max(0.5), 1.0, 2),
+                2 => (-(1.0 - e.s) / e.d.max(1.0), e.s, 3),
+                4 => (-self.rel_rate, 0.0, 0),
+                3 => {
                     self.level = e.s;
-                    self.stage = 3;
+                    return;
                 }
-            }
-            3 => self.level = e.s,
-            4 => {
-                self.level -= self.rel_rate * ms;
-                if self.level <= 0.0 {
+                _ => {
                     self.level = 0.0;
-                    self.stage = 0;
+                    return;
                 }
+            };
+            let need = if rate == 0.0 { 0.0 } else { (end - self.level) / rate };
+            if need > ms {
+                self.level += rate * ms;
+                return;
             }
-            _ => self.level = 0.0,
+            self.level = end;
+            self.stage = next;
+            ms -= need.max(0.0);
         }
     }
 }
@@ -351,30 +351,29 @@ fn step_start(i: usize, swing: f32) -> f32 {
 }
 
 /// Gate level over one pattern cycle (480 samples), simulated three times
-/// around so the first cycle's state is warmed up.
+/// around so the first cycle's state is warmed up. Exact between step
+/// boundaries: O(samples + steps) whatever the tempo and rate.
 fn ring_levels(e: &Adsr, steps: u32, mask: u32, swing: f32, step_ms: f32) -> Vec<f32> {
     const N: usize = 480;
     let steps = steps.max(1) as usize;
     let total = steps as f32 * step_ms;
-    let per = total / N as f32;
-    let sub = (per / 0.25).ceil().max(1.0) as usize;
-    let h = per / sub as f32;
+    let gates: Vec<(f32, bool)> = (0..steps).map(|i| (step_start(i, swing) * step_ms, mask >> i & 1 == 1)).collect();
     let mut sim = EnvSim::default();
-    let mut last = i64::MIN;
     let mut out = vec![0.0; N];
     for pass in 0..3 {
-        for (j, slot) in out.iter_mut().enumerate() {
-            for s in 0..sub {
-                let t = (j * sub + s) as f64 * h as f64;
-                let k = swung_step(t / step_ms as f64, swing as f64);
-                let global = pass as i64 * steps as i64 + k;
-                if global != last {
-                    last = global;
-                    let idx = k.rem_euclid(steps as i64) as u32;
-                    sim.gate(mask >> idx & 1 == 1, e);
-                }
-                sim.step(h, e);
+        let (mut t, mut next) = (0.0f32, 0usize);
+        let run_to = |sim: &mut EnvSim, until: f32, t: &mut f32, next: &mut usize| {
+            while *next < gates.len() && gates[*next].0 <= until {
+                sim.advance(gates[*next].0 - *t, e);
+                *t = gates[*next].0;
+                sim.gate(gates[*next].1, e);
+                *next += 1;
             }
+            sim.advance(until - *t, e);
+            *t = until;
+        };
+        for (j, slot) in out.iter_mut().enumerate() {
+            run_to(&mut sim, total * (j + 1) as f32 / N as f32, &mut t, &mut next);
             if pass == 2 {
                 *slot = sim.level;
             }
@@ -440,14 +439,37 @@ fn sh_y_of(py: f32) -> f32 {
     ((SH_PLOT.3 - py) / (SH_PLOT.3 - SH_PLOT.1)).clamp(0.0, 1.0)
 }
 
+/// The Crush lane's strip controls from the row start x (reference pt):
+/// label and (x, width) of the Bits and Decimate pills. Compact once the band
+/// split pill takes its room, so the row ends inside the curve well (x 493).
+struct CrushRow {
+    bits_label: f32,
+    bits_pill: (f32, f32),
+    dec_label: f32,
+    dec_pill: (f32, f32),
+    font: f32,
+}
+
+fn crush_row(x: f32, compact: bool) -> CrushRow {
+    if compact {
+        CrushRow { bits_label: x, bits_pill: (x + 24.0, 46.0), dec_label: x + 76.0, dec_pill: (x + 124.0, 42.0), font: 11.0 }
+    } else {
+        CrushRow { bits_label: x, bits_pill: (x + 27.0, 62.0), dec_label: x + 101.0, dec_pill: (x + 157.0, 50.0), font: 11.5 }
+    }
+}
+
 /// Lane value text at curve height y (the reference's readouts).
-fn lane_text(lane: usize, y: f32, depth: f32, quarters: f64, low: f32, high: f32) -> String {
+/// `max_beats`: the Time lane's longest repeat at the project tempo
+/// ([sh::TIME_MAX_SECONDS]); a deeper point reads as that limit.
+#[allow(clippy::too_many_arguments)]
+fn lane_text(lane: usize, y: f32, depth: f32, quarters: f64, max_beats: f64, low: f32, high: f32) -> String {
     match lane {
         0 => format!("{}%", (100.0 * (1.0 - depth * (1.0 - y))).round()),
         1 => {
-            let beats = (y * depth) as f64 * quarters;
-            let b = (beats * 100.0).round() / 100.0;
-            if b == 0.0 { "Now".into() } else if (b - 1.0).abs() < 1e-9 { "1 beat".into() } else { format!("{b} beats") }
+            let want = (y * depth) as f64 * quarters;
+            let b = (want.min(max_beats) * 100.0).round() / 100.0;
+            let text = if b == 0.0 { "Now".to_string() } else if (b - 1.0).abs() < 1e-9 { "1 beat".into() } else { format!("{b} beats") };
+            if want > max_beats + 1e-9 { format!("{text} (max)") } else { text }
         }
         2 => format!("{}%", (100.0 * (1.0 + depth * (2.0 * y - 1.0))).round()),
         3 => {
@@ -645,19 +667,17 @@ impl Controller {
         let samples = 240;
         let mut pts = vec![(x0, ly(0.0))];
         let mut gated = true;
-        let h = 0.25f32;
         let mut tt = 0.0f32;
         for k in 1..=samples {
             let target = span * k as f32 / samples as f32;
-            while tt < target {
-                if gated && tt >= gate_ms {
-                    sim.gate(false, &env);
-                    gated = false;
-                }
-                let dt = h.min(target - tt);
-                sim.step(dt, &env);
-                tt += dt;
+            if gated && target >= gate_ms {
+                sim.advance(gate_ms - tt, &env);
+                tt = gate_ms;
+                sim.gate(false, &env);
+                gated = false;
             }
+            sim.advance(target - tt, &env);
+            tt = target;
             pts.push((tx(target), ly(sim.level)));
         }
         let mut area = PathData::default().poly(&pts);
@@ -740,6 +760,11 @@ impl Controller {
         Hit::None
     }
 
+    /// The Time lane's longest repeat in quarter notes at the project tempo.
+    fn time_max_beats(&self) -> f64 {
+        sh::TIME_MAX_SECONDS * self.project().transport.bpm / 60.0
+    }
+
     fn shaper_lane(&self, id: DeviceId) -> usize {
         self.devices.panel.views.lane.get(&id).copied().unwrap_or(0).min(sh::LANE_COUNT - 1)
     }
@@ -799,13 +824,13 @@ impl Controller {
             c.fill(PathData::default().m(x + 79.5, y + 3.0).l(x + 79.5, y + 16.0).l(x + 80.0, y + 16.0).l(x + 80.0, y + 3.0).z(), ink(0.08));
             c.text(x + 80.0, y, 48.0, 19.0, def.params[6].format(values[6]), ink(if hit == Hit::Resonance { 0.95 } else { 0.7 } * dim), 11.0, 600, 1);
         } else if lane == 5 {
-            c.text(x, y, 26.0, 19.0, "Bits", ink(0.4 * dim), 11.5, 500, 0);
-            c.pill(x + 27.0, y, 62.0, 19.0, hit == Hit::Bits);
-            c.text(x + 27.0, y, 62.0, 19.0, def.params[9].format(values[9]), ink(0.9 * dim), 11.0, 600, 1);
-            let x2 = x + 27.0 + 62.0 + 12.0;
-            c.text(x2, y, 56.0, 19.0, "Decimate", ink(0.4 * dim), 11.5, 500, 0);
-            c.pill(x2 + 56.0, y, 50.0, 19.0, hit == Hit::Decimate);
-            c.text(x2 + 56.0, y, 50.0, 19.0, def.params[10].format(values[10]), ink(0.9 * dim), 11.0, 600, 1);
+            let r = crush_row(x, band != 0);
+            c.text(r.bits_label, y, r.bits_pill.0 - r.bits_label, 19.0, "Bits", ink(0.4 * dim), r.font, 500, 0);
+            c.pill(r.bits_pill.0, y, r.bits_pill.1, 19.0, hit == Hit::Bits);
+            c.text(r.bits_pill.0, y, r.bits_pill.1, 19.0, def.params[9].format(values[9]), ink(0.9 * dim), 11.0, 600, 1);
+            c.text(r.dec_label, y, r.dec_pill.0 - r.dec_label, 19.0, "Decimate", ink(0.4 * dim), r.font, 500, 0);
+            c.pill(r.dec_pill.0, y, r.dec_pill.1, 19.0, hit == Hit::Decimate);
+            c.text(r.dec_pill.0, y, r.dec_pill.1, 19.0, def.params[10].format(values[10]), ink(0.9 * dim), 11.0, 600, 1);
         }
 
         // Curve well.
@@ -822,9 +847,10 @@ impl Controller {
         }
         c.stroke(weak, ink(0.05), 1.0);
         c.stroke(strong, ink(0.1), 1.0);
+        let quarters = sh::DIVISION_QUARTERS[(values[base + sh::RATE].round() as usize).min(sh::DIVISIONS.len() - 1)];
         let rulers: Vec<(f32, String)> = match lane {
             0 => vec![(1.0, "100".into()), (0.5, fmt_num(100.0 * (1.0 - depth / 2.0))), (0.0, fmt_num(100.0 * (1.0 - depth)))],
-            1 => vec![(1.0, "Cycle".into()), (0.0, "Now".into())],
+            1 => vec![(1.0, if depth as f64 * quarters > self.time_max_beats() { "Max".into() } else { "Cycle".into() }), (0.0, "Now".into())],
             2 => vec![(1.0, "Wide".into()), (0.5, "As is".into()), (0.0, "Mono".into())],
             3 => vec![(1.0, "R".into()), (0.5, "C".into()), (0.0, "L".into())],
             5 => vec![(1.0, "Full".into()), (0.0, "Clean".into())],
@@ -913,7 +939,6 @@ impl Controller {
             );
         }
         // Readout bubble: the hot point's value, or the curve under the pointer.
-        let quarters = sh::DIVISION_QUARTERS[(values[base + sh::RATE].round() as usize).min(sh::DIVISIONS.len() - 1)];
         let bubble = match (hit, gesture) {
             (_, Some((k, false))) | (Hit::CurvePoint(k), None) => pts.get(k).map(|p| (p.x, p.y)),
             (_, Some((k, true))) | (Hit::Mid(k), None) => pts.get(k + 1).map(|b| {
@@ -927,7 +952,7 @@ impl Controller {
             _ => None,
         };
         if let Some((bx, by)) = bubble {
-            let text = lane_text(lane, by, depth, quarters, values[7], values[8]);
+            let text = lane_text(lane, by, depth, quarters, self.time_max_beats(), values[7], values[8]);
             let w = 10.0 + 6.2 * text.chars().count() as f32;
             let (px, py) = (sh_px(bx), sh_py(by));
             let top = if py - 30.0 < SH_WELL.1 { py + 10.0 } else { py - 28.0 };
@@ -1018,10 +1043,11 @@ impl Controller {
                 return Hit::Resonance;
             }
         } else if lane == 5 {
-            if in_rect(p, x + 27.0, y, 62.0, 19.0) {
+            let r = crush_row(x, band != 0);
+            if in_rect(p, r.bits_pill.0, y, r.bits_pill.1, 19.0) {
                 return Hit::Bits;
             }
-            if in_rect(p, x + 157.0, y, 50.0, 19.0) {
+            if in_rect(p, r.dec_pill.0, y, r.dec_pill.1, 19.0) {
                 return Hit::Decimate;
             }
         }
@@ -1177,12 +1203,18 @@ impl Controller {
             }
             Gesture::Paint { device, on, last } => {
                 let Some((d, _)) = self.panel_def(device) else { return };
-                if let Hit::Step(k) = self.tg_hit(d, def, p)
-                    && k != last
-                {
-                    self.tg_paint(device, def, k, on);
-                    self.devices.panel.views.gesture = Some(Gesture::Paint { device, on, last: k });
+                let (Hit::Step(k), (_, steps, _)) = (self.tg_hit(d, def, p), self.tg_pattern(d, def)) else { return };
+                if k == last {
+                    return;
                 }
+                // Every step crossed since the last event, the short way round the ring.
+                let n = steps as usize;
+                let (fwd, back) = ((k + n - last) % n, (last + n - k) % n);
+                let crossed: Vec<usize> = if fwd <= back { (1..=fwd).map(|s| (last + s) % n).collect() } else { (1..=back).map(|s| (last + n - s) % n).collect() };
+                for s in crossed {
+                    self.tg_paint(device, def, s, on);
+                }
+                self.devices.panel.views.gesture = Some(Gesture::Paint { device, on, last: k });
             }
             Gesture::Env { device, handle, span, gate_ms } => {
                 let (x0, y0, x1, y1) = TG_PLOT;
@@ -1457,7 +1489,7 @@ impl Controller {
                 rows.push(("This track".into(), check(audio && side.is_none()), pick(SH_TRIGGER_SELF), false));
                 let own = self.project().find_device(device).map(|(ti, _)| self.project().tracks[ti].id);
                 let mut first = true;
-                for (ti, t) in self.project().tracks.iter().enumerate().filter(|(_, t)| Some(t.id) != own) {
+                for (ti, t) in self.project().tracks.iter().enumerate().filter(|(_, t)| Some(t.id) != own && (d.sidechain == Some(t.id) || !self.sidechain_feeds_back(device, t.id))) {
                     rows.push((t.name.clone(), check(audio && side == Some(t.id)), pick(SH_TRIGGER_TRACK + ti as i32), std::mem::take(&mut first)));
                 }
                 w = 200.0;
@@ -1522,14 +1554,16 @@ impl Controller {
                 let lane = self.shaper_lane(device);
                 let pts = sh::lane_points(&self.values(d, def), lane);
                 let next: Vec<Point> = match code {
-                    SH_FLIP => pts.iter().map(|p| Point { y: 1.0 - p.y, ..*p }).collect(),
+                    // A segment's bend is signed by its direction (sh::segment), so a
+                    // vertical mirror negates it and a time reversal keeps it.
+                    SH_FLIP => pts.iter().map(|p| Point { y: 1.0 - p.y, tension: -p.tension, ..*p }).collect(),
                     SH_REVERSE => {
                         let n = pts.len();
                         (0..n)
                             .map(|k| {
                                 let p = pts[n - 1 - k];
                                 // A segment's bend belongs to its left point.
-                                let tension = if k + 1 < n { -pts[n - 2 - k].tension } else { 0.0 };
+                                let tension = if k + 1 < n { pts[n - 2 - k].tension } else { 0.0 };
                                 Point { x: 1.0 - p.x, y: p.y, tension }
                             })
                             .collect()

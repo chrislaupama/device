@@ -85,6 +85,13 @@ TEST_CASE(shaper_depth_zero_and_lanes_off_are_transparent) {
     const Signal z = off.run_mono(x);
     CHECK(all_equal(x, z, [](std::size_t i) { return i; }));
     CHECK(off.instance().latency() == 0);
+    // A high-pass Filter lane at Depth 0 rests at the top cutoff, but stays neutral.
+    auto hp = rig();
+    only(hp, kFilter);
+    setp(hp, 5, 2.f); // Filter Type: High-pass
+    lane(hp, kFilter, kDepth, 0.f);
+    const Signal w = hp.run_mono(x);
+    CHECK(all_equal(x, w, [](std::size_t i) { return i; }));
 }
 
 TEST_CASE(shaper_audio_trigger_restarts_the_cycle) {

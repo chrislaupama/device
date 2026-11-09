@@ -272,7 +272,7 @@ public:
         hop_ = std::max<uint32_t>(16, static_cast<uint32_t>(std::lround(kPitchHopMs * 0.001 * sr_)));
         search_ = std::max<uint32_t>(8, static_cast<uint32_t>(std::lround(kPitchSearchMs * 0.001 * sr_)));
         pitch_latency_ = hop_ + search_ + 2;
-        time_buf_.allocate(static_cast<uint32_t>(std::min(kTimeBufferSeconds * sr_, static_cast<double>(1u << 21))) + 8);
+        time_buf_.allocate(static_cast<uint32_t>(std::ceil(kTimeBufferSeconds * sr_)) + 8);
         pitch_buf_.allocate(pitch_latency_ + 3 * hop_ + 2 * search_ + 64);
         pitch_mono_.assign(pitch_buf_.l.size(), 0.0f);
         dry_delay_.allocate(pitch_latency_ + 2);
@@ -599,14 +599,19 @@ private:
             const float g_end = coef(sh.flow * std::pow(sh.fhigh / sh.flow, std::clamp(v1, 0.0f, 1.0f)));
             if (filt_g_ < 0.0f) filt_g_ = coef(sh.flow * std::pow(sh.fhigh / sh.flow, std::clamp(v0, 0.0f, 1.0f)));
             const float dg = (g_end - filt_g_) / static_cast<float>(m);
+            // Depth fades the filter in (as Crush does): at 0 the lane is neutral
+            // whatever the type, since a high-pass at the rest cutoff is not.
+            const float wet = std::min(1.0f, depth * 10.0f);
             float g = filt_g_;
             for (uint32_t i = 0; i < m; ++i) {
                 g += dg;
                 float a, b, c, d, e, f;
                 filt_l_.run(l[i], g, sh.fk, a, b, c);
                 filt_r_.run(r[i], g, sh.fk, d, e, f);
-                l[i] = sh.ftype == 0 ? a : sh.ftype == 1 ? sh.fk * b : c;
-                r[i] = sh.ftype == 0 ? d : sh.ftype == 1 ? sh.fk * e : f;
+                const float fl = sh.ftype == 0 ? a : sh.ftype == 1 ? sh.fk * b : c;
+                const float fr = sh.ftype == 0 ? d : sh.ftype == 1 ? sh.fk * e : f;
+                l[i] += wet * (fl - l[i]);
+                r[i] += wet * (fr - r[i]);
             }
             filt_g_ = g_end;
             break;
@@ -633,7 +638,7 @@ private:
             break;
         }
         case kTime: {
-            const double max_delay = static_cast<double>(time_buf_.mask) - 4.0;
+            const double max_delay = std::min(static_cast<double>(time_buf_.mask) - 4.0, kTimeBufferSeconds * sr_);
             const double cycle_samples = quarters * sh.samples_per_quarter;
             double ph = time_ph0_;
             double sync_ph = time_wrap_;

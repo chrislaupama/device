@@ -565,24 +565,8 @@ impl Controller {
         let rows = match which {
             -1 => {
                 let own = self.project().find_device(device).map(|(ti, _)| self.project().tracks[ti].id);
-                // A source that already listens to this track (directly or through other sidechains) would form a cycle.
-                let feeds_back = |from: TrackId| {
-                    let mut stack = vec![from];
-                    let mut seen = std::collections::HashSet::new();
-                    while let Some(t) = stack.pop() {
-                        if Some(t) == own {
-                            return true;
-                        }
-                        if seen.insert(t)
-                            && let Some(tr) = self.project().track(t)
-                        {
-                            stack.extend(tr.devices.iter().filter_map(|x| x.sidechain));
-                        }
-                    }
-                    false
-                };
                 let mut rows = vec![("None".to_string(), check(d.sidechain.is_none()), Some(MenuPick::Sidechain(device, None)), false)];
-                for t in self.project().tracks.iter().filter(|t| Some(t.id) != own && (d.sidechain == Some(t.id) || !feeds_back(t.id))) {
+                for t in self.project().tracks.iter().filter(|t| Some(t.id) != own && (d.sidechain == Some(t.id) || !self.sidechain_feeds_back(device, t.id))) {
                     rows.push((t.name.clone(), check(d.sidechain == Some(t.id)), Some(MenuPick::Sidechain(device, Some(t.id))), false));
                 }
                 rows
@@ -598,6 +582,25 @@ impl Controller {
         };
         self.devices.menu = Some(DevMenu { pos: (x, y), w: 180.0, rows });
         self.ui_dirty = true;
+    }
+
+    /// True when `from` already listens to the track of `device` (directly or
+    /// through other sidechains): picking it as a source would form a cycle.
+    pub(crate) fn sidechain_feeds_back(&self, device: DeviceId, from: TrackId) -> bool {
+        let own = self.project().find_device(device).map(|(ti, _)| self.project().tracks[ti].id);
+        let mut stack = vec![from];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(t) = stack.pop() {
+            if Some(t) == own {
+                return true;
+            }
+            if seen.insert(t)
+                && let Some(tr) = self.project().track(t)
+            {
+                stack.extend(tr.devices.iter().filter_map(|x| x.sidechain));
+            }
+        }
+        false
     }
 
     /// Previous / next factory preset (wraps; from no preset, next is the first).
