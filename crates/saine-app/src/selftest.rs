@@ -2388,7 +2388,7 @@ fn custom_view_steps() -> Vec<Step> {
             }
             c.update_ui(a);
         })),
-        Check("views: both added (two undo steps); cards are 528 / 501 pt with a field, 6 / 4 knobs; engine loaded them", Box::new(move |c, a| {
+        Check("views: both added (two undo steps); cards are 528 / 501 pt with an interactive canvas, 6 / 4 knobs on the dial row; engine loaded them", Box::new(move |c, a| {
             grew(&h1, c, 2)?;
             let z = crate::device_panel::Z;
             let tg = card_named(a, "Trance Gate").ok_or("no Trance Gate card")?;
@@ -2402,6 +2402,9 @@ fn custom_view_steps() -> Vec<Step> {
                 && slint::Model::row_count(&sh.knobs) == 4
                 && slint::Model::row_count(&tg.canvas.paths) > 10
                 && slint::Model::row_count(&sh.canvas.paths) > 10
+                && tg.canvas.interactive
+                && sh.canvas.interactive
+                && [&tg.knobs, &sh.knobs].iter().all(|k| slint::Model::iter(*k).all(|k| approx(k.y, crate::device_panel::DIAL_Y * z, 0.01)))
                 && ["trance-gate", "shaper"].iter().all(|id| device_of(c, id).is_some_and(|d| !errors.iter().any(|(e, _)| *e == d.id)));
             ok.then_some(()).ok_or(format!("tg {} {} sh {} {} errors {errors:?}", tg.width, tg.canvas.visible, sh.width, sh.canvas.visible))
         })),

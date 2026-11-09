@@ -16,7 +16,7 @@
 //! picks) are single commands.
 
 use crate::controller::Controller;
-use crate::device_panel::Z;
+use crate::device_panel::{DIAL_Y, Z};
 use crate::devices::{DevMenu, MenuPick};
 use crate::{DeviceCard, PanelCanvas, PanelKnob, PanelPath, PanelText};
 use saine_core::builtin::shaper::{self as sh, Point};
@@ -228,7 +228,7 @@ impl Canvas {
         }
     }
     fn fill(&mut self, d: PathData, c: Color) {
-        self.path(d, none(), 0.0, c.into());
+        self.path(d, none(), 0.0, c);
     }
     fn stroke(&mut self, d: PathData, c: Color, w: f32) {
         self.path(d, c, w, none());
@@ -271,6 +271,7 @@ fn knob(def: &DeviceDef, value: f32, index: usize, centre_x: f32) -> PanelKnob {
     PanelKnob {
         param: index as i32,
         x: (centre_x - 31.0) * Z,
+        y: DIAL_Y * Z,
         label: p.label.into(),
         value: p.format(value).into(),
         norm: p.to_normalized(value),

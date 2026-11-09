@@ -43,7 +43,7 @@ pub(crate) const VIEW_Y_NO_PICKER: f32 = 37.0;
 pub(crate) const CAPTION_H: f32 = 19.0;
 pub(crate) const VIEW_BOTTOM: f32 = 214.0;
 /// Dial row top (card relative).
-const DIAL_Y: f32 = 229.0;
+pub(crate) const DIAL_Y: f32 = 229.0;
 /// Dynamics strip plot range (dB) and history length (slots across the well).
 const PLOT_TOP_DB: f32 = 0.0;
 const PLOT_FLOOR_DB: f32 = -36.0;

@@ -531,9 +531,9 @@ mod tests {
     #[test]
     fn default_shapes_match_the_library() {
         let values: Vec<f32> = SHAPER.params.iter().map(|p| p.default).collect();
-        for lane in 0..LANE_COUNT {
+        for (lane, shapes) in SHAPES.iter().enumerate() {
             let pts = lane_points(&values, lane);
-            assert_eq!(matching_shape(lane, &pts), Some(SHAPES[lane][0].name), "lane {lane}");
+            assert_eq!(matching_shape(lane, &pts), Some(shapes[0].name), "lane {lane}");
         }
     }
 
