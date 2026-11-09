@@ -447,7 +447,7 @@ impl Controller {
                 automation: vec![],
             }],
             master_gain: 1.0,
-            master_automation: vec![],
+            master_automation: vec![], device_assets: Default::default(),
         };
         let e = &self.engine;
         let off = saine_engine::MetronomeConfig { enabled: false, gain: 0.0, frames_per_beat: 24_000.0, beats_per_bar: 4 };

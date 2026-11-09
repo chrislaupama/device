@@ -131,6 +131,9 @@ add_library(saine_engine STATIC
   src/devices/phaser.cpp
   src/devices/ring_mod.cpp
   src/devices/tremolo.cpp
+  src/devices/pad_sampler.cpp
+  src/devices/sampler.cpp
+  src/devices/sampler_engine.cpp
   src/devices/synth_v2.cpp
   src/devices/synth_v2_fx.cpp
   src/devices/declipper.cpp
@@ -353,6 +356,8 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/devices/test_imaging.cpp
     tests/devices/test_modulation.cpp
     tests/devices/test_character_mod.cpp
+    tests/devices/test_drum_rack.cpp
+    tests/devices/test_sampler.cpp
     tests/devices/test_synth_v2.cpp
     tests/devices/test_restoration.cpp
     tests/devices/test_shaper.cpp

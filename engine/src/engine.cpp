@@ -58,6 +58,11 @@ Engine::Engine(double sample_rate, uint32_t max_block, uint32_t channels)
     click_scratch_.assign(max_block, 0.0f);
     device_factory_ = [] { return create_platform_audio_device(); };
     plugins_.bus().set_position_source(&pub_position_);
+    plugins_.set_asset_lookup([this](uint64_t id) -> AssetRef {
+        std::lock_guard lock(assets_mutex_);
+        auto it = assets_.find(id);
+        return it == assets_.end() ? nullptr : it->second;
+    });
 }
 
 std::unique_ptr<Engine> Engine::create(const se_config& config, std::string& err) {
@@ -1415,6 +1420,15 @@ int32_t Engine::builtin_set_param(uint64_t device_id, uint32_t index, float valu
     if (index >= b->param_count() || !std::isfinite(value)) return SE_ERR_INVALID_ARG;
     b->set_value(index, value);
     return SE_OK;
+}
+
+int32_t Engine::builtin_note(uint64_t device_id, uint8_t pitch, uint8_t velocity) {
+    if (pitch > 127 || velocity > 127) return SE_ERR_INVALID_ARG;
+    std::lock_guard lock(plugins_.mutex());
+    PluginInstance* inst = plugins_.instance(device_id);
+    BuiltinInstance* b = inst != nullptr ? inst->as_builtin() : nullptr;
+    if (b == nullptr || !b->instrument()) return SE_ERR_NOT_FOUND;
+    return b->push_note(pitch, velocity) ? SE_OK : SE_ERR_STATE;
 }
 
 int32_t Engine::builtin_readouts(uint64_t device_id, float* out, std::size_t capacity, std::size_t& count) {

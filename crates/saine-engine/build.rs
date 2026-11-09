@@ -26,7 +26,11 @@ fn main() {
         })
         .unwrap_or(true);
     let profile = if std::env::var("PROFILE").as_deref() == Ok("release") { "Release" } else { "RelWithDebInfo" };
-    let third_party = manifest.join("../../target/saine-third-party");
+    let third_party = match std::env::var_os("CARGO_TARGET_DIR") {
+        Some(dir) if std::path::Path::new(&dir).is_absolute() => std::path::PathBuf::from(dir),
+        _ => manifest.join("../../target"),
+    }
+    .join("saine-third-party");
     let mut cfg = cmake::Config::new(&engine);
     cfg.generator("Ninja")
         .profile(profile)
