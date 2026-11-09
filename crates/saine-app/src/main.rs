@@ -17,6 +17,7 @@ mod assistant_provider;
 mod automation;
 mod clipedit;
 mod controller;
+mod device_fields;
 mod device_panel;
 mod devices;
 mod gpu;
@@ -81,7 +82,8 @@ struct Args {
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
     device_chain_review: bool,
-    compressor_state: bool,
+    /// reference-<built-in device id>: that device alone in an audio track's chain.
+    device_state: Option<&'static str>,
     /// review-settings-plugins: Settings open on the Plugins page (no reference comparison).
     plugins_page_review: bool,
     assistant_fixture: Option<PathBuf>,
@@ -163,9 +165,9 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.device_chain_review = true;
                 }
-                "reference-compressor" => {
+                s if s.strip_prefix("reference-").and_then(saine_core::builtin::find).is_some() => {
                     a.reference_default = true;
-                    a.compressor_state = true;
+                    a.device_state = s.strip_prefix("reference-").and_then(saine_core::builtin::find).map(|d| d.id);
                 }
                 "review-settings-plugins" => {
                     a.reference_default = true;
@@ -178,7 +180,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, reference-compressor, review-settings-plugins)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, review-settings-plugins)"
                     ));
                 }
             },
@@ -664,13 +666,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(20.0);
     }
-    if args.compressor_state {
-        // Compare with renders/reference/compressor.png (Captain drive): the built-in Compressor
+    if let Some(id) = args.device_state {
+        // Compare with renders/reference/<id>.png (Captain drive): the built-in device
         // at its defaults, alone in an audio track's chain, transport stopped.
         let mut c = ctl.borrow_mut();
         if let Some(t) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Audio).map(|t| t.id) {
             c.select_track(t);
-            let def = saine_core::builtin::find("compressor").expect("compressor is registered");
+            let def = saine_core::builtin::find(id).expect("device is registered");
             c.add_item_to_track(&devices::Item::Builtin(def), t, None);
         }
         c.set_bottom_tab(BottomTab::Devices);
@@ -858,6 +860,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_step, |c, id: i32, p: i32, delta: i32, fine: bool| c.panel_step(saine_core::DeviceId(id as u64), p, delta, fine));
     on!(on_panel_choice, |c, id: i32, p: i32, i: i32| c.panel_choice(saine_core::DeviceId(id as u64), p, i));
     on!(on_panel_text, |c, id: i32, p: i32, text: slint::SharedString| c.panel_text(saine_core::DeviceId(id as u64), p, &text));
+    on!(on_panel_field, |c, id: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.panel_field_drag(saine_core::DeviceId(id as u64), phase, dx, dy, fine));
     on!(on_panel_menu, |c, id: i32, which: i32, x: f32, y: f32| c.panel_menu(saine_core::DeviceId(id as u64), which, x, y));
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(saine_core::DeviceId(id as u64), dir));
     on!(on_chain_scroll_by, |c, d: f32| c.chain_scroll_by(d));
