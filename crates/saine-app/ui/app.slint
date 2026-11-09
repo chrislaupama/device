@@ -141,10 +141,14 @@ component Header inherits Rectangle {
 // Devices › Chains is PLACEHOLDER data.
 component Browser inherits Panel {
     // Section tabs (static: only "Devices" content exists)
-    Label { x: 10px; y: 6px; height: 15px; text: "Search"; color: #5d5e62; font-size: 9.5px; }
-    Label { x: 50px; y: 6px; height: 15px; text: "Library"; color: #5d5e62; font-size: 9.5px; }
-    Label { x: 89px; y: 6px; height: 15px; text: "Devices"; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; }
-    Label { x: 133px; y: 6px; height: 15px; text: "Files"; color: #5d5e62; font-size: 9.5px; }
+    // 12 px weight 700, -0.04 em, 8 px apart from 12 px in; rest #63656d, active white.
+    HorizontalLayout {
+        x: 10.2px; y: 0; width: self.preferred-width; height: 27.2px; spacing: 6.8px;
+        for t in ["Search", "Library", "Devices", "Files"]: Text {
+            text: t; color: t == "Devices" ? #ffffff : #63656d;
+            font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; vertical-alignment: center;
+        }
+    }
     Icon { x: 218px; y: 6.5px; width: 13px; height: 13px; d: Icons.chevron-left; ink: Tokens.icon; }
     Icon { x: 234px; y: 6.5px; width: 13px; height: 13px; d: Icons.chevron-right; ink: Tokens.icon; }
     // Section separator (01/05/06: 0.5 pt at panel y 27).
@@ -163,15 +167,20 @@ component Browser inherits Panel {
             changed has-focus => { Studio.search-focused = self.has-focus; }
         }
     }
-    // Sub-tabs (real). Underlines measured from 01/05/06 (Instruments 10+52, Effects 72+30, Chains 112.5+30).
-    for st[i] in [{ t: "Instruments", x: 10px, ux: 10px, uw: 52px }, { t: "Effects", x: 71px, ux: 72px, uw: 30px }, { t: "Chains", x: 112px, ux: 112.5px, uw: 30px }]: Rectangle {
-        x: 0; y: 0; width: 0; height: 0;
-        Label {
-            x: st.x; y: 59px; height: 16px; text: st.t; color: Studio.browser-tab == i ? Tokens.text-bright : #55565a; font-size: 8.75px;
-            accessible-role: tab; accessible-checked: Studio.browser-tab == i;
+    // Sub-tabs (real): 11 px weight 600, -0.03 em, 12 px apart; rest #63656d, active white with
+    // a 2 px underline.
+    HorizontalLayout {
+        x: 10.2px; y: 59px; width: self.preferred-width; height: 16.7px; spacing: 10.2px;
+        for t[i] in ["Instruments", "Effects", "Chains"]: Rectangle {
+            width: label.preferred-width;
+            accessible-role: tab; accessible-label: t; accessible-checked: Studio.browser-tab == i;
+            label := Text {
+                x: 0; y: 0; height: 15px; text: t; color: Studio.browser-tab == i ? #ffffff : #63656d;
+                font-size: 9.35px; font-weight: 600; letter-spacing: -0.28px; vertical-alignment: center;
+            }
+            if Studio.browser-tab == i: Rectangle { x: 0; y: 15px; width: parent.width; height: 1.7px; background: #ffffff; }
             TouchArea { clicked => { Studio.browser-tab-select(i); } }
         }
-        if Studio.browser-tab == i: Rectangle { x: st.ux; y: 74.5px; width: st.uw; height: 1px; background: #ffffff; }
     }
     Rectangle { x: 0; y: 80px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
 
