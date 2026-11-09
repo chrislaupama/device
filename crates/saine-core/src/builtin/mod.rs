@@ -696,7 +696,7 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 24] = [
+    static ALL: [&DeviceDef; 26] = [
         &compressor::COMPRESSOR,
         &distortion::DISTORTION,
         &tape_saturation::TAPE_SATURATION,
