@@ -67,7 +67,7 @@ through WASAPI shared mode at the rate set in the Sound control panel.
 
 ### Linux
 
-Debian/Ubuntu packages (the same list CI uses):
+Debian/Ubuntu packages (the same list CI uses, on Ubuntu 24.04):
 
 ```sh
 sudo apt-get install -y ninja-build cmake pkg-config \
@@ -81,6 +81,9 @@ cargo test --workspace
 cd engine
 cmake --preset default && cmake --build --preset default && ctest --preset default
 ```
+
+CMake must be 3.25 or newer. Ubuntu 24.04 and Debian 13 ship one; on Ubuntu 22.04 (CMake 3.22) install a newer one
+first, for example `pip install --user cmake` or Kitware's APT repository (apt.kitware.com), and check `cmake --version`.
 
 The X11, Wayland, xkbcommon, fontconfig and udev packages are for the app;
 the engine itself needs only `pkg-config` and `libpipewire-0.3-dev`.

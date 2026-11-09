@@ -104,9 +104,10 @@ behind it. [docs/devices.md](docs/devices.md) explains how they work and how to 
 
 ### Project files
 
-A project is a `Name.saineproj/` folder holding versioned JSON and references to your media, so it's easy to move,
-back up and keep in version control. Plugin state is saved inside the project. The format is versioned, but it isn't
-frozen until the first release.
+A project is a `Name.saineproj/` folder holding a versioned JSON document, so it diffs cleanly and is easy to keep in
+version control. Plugin state is saved inside it. Audio files stay where they are: the project references each one by a
+path relative to the project and by its absolute path, so when you move or back up a project, take its media along (or
+leave the media where it was). The format is versioned, but it isn't frozen until the first release.
 
 ## Under the hood
 
