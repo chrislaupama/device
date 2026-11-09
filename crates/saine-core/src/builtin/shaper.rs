@@ -499,6 +499,7 @@ pub static SHAPER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Beat Grit", values: &P_BEAT_GRIT },
     ],
     sidechain: true,
+    samples: 0,
 };
 
 #[cfg(test)]

@@ -210,6 +210,7 @@ pub static TRANCE_GATE: DeviceDef = DeviceDef {
         },
     ],
     sidechain: false,
+    samples: 0,
 };
 
 #[cfg(test)]
