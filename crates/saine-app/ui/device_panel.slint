@@ -111,6 +111,7 @@ component Latch inherits Rectangle {
     border-width: root.on ? 0.5px : 0;
     border-color: root.accent.darker(0.2);
     accessible-role: checkbox; accessible-label: root.label; accessible-checked: root.on;
+    accessible-action-default => { root.clicked(); }
     if !root.on && latch-ta.has-hover: Rectangle { border-radius: parent.border-radius; background: #ffffff09; }
     latch-text := Text {
         text: root.label; font-size: 10px * zm; font-weight: 600; letter-spacing: -0.04 * 10px * zm;
@@ -143,7 +144,12 @@ component KnobCell inherits Rectangle {
     width: 62px * zm; height: 76px * zm;
     opacity: root.k.dim ? 0.55 : 1.0;
     accessible-role: slider; accessible-label: root.k.label; accessible-value: root.k.value;
-    fs := ParamKeys { device: root.device; param: root.k.param; edit => { root.editing = true; } }
+    fs := ParamKeys {
+        device: root.device; param: root.k.param;
+        edit => {
+            if (root.k.face == 2) { Studio.panel-choice(root.device, root.k.param, root.k.norm > 0.5 ? 0 : 1); } else { root.editing = true; }
+        }
+    }
     dial := Rectangle {
         x: (root.width - root.ring) / 2; y: 0; width: root.ring; height: root.ring;
         if root.k.face == 0: Rectangle {

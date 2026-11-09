@@ -228,7 +228,9 @@ public:
         x_[w_ + kTaps] = x; // mirrored history: a contiguous window, no wrap in the loop
         w_ = (w_ + 1) % kTaps;
         const float* hist = &x_[w_]; // oldest .. newest
-        float m = 0.0f;
+        // The phases sit between the samples 5 and 6 back, so neither sample is
+        // interpolated; include both so the estimate never reads below the sample peak.
+        float m = std::max(std::fabs(hist[kTaps - 1 - kDelay]), std::fabs(hist[kTaps - kDelay]));
         for (const auto& p : h_) {
             float acc = 0.0f;
             for (int k = 0; k < kTaps; ++k) acc += p[kTaps - 1 - k] * hist[k];

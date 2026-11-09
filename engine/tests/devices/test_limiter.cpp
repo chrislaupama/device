@@ -26,6 +26,13 @@ double true_peak(const Signal& s, std::size_t from = 0) {
 
 } // namespace
 
+TEST_CASE(true_peak_never_reads_below_the_sample_peak) {
+    saine::dsp::TruePeak4x tp;
+    float m = 0.0f;
+    for (int i = 0; i < 32; ++i) m = std::max(m, tp.next(i == 3 ? 1.0f : 0.0f));
+    CHECK(m >= 1.0f);
+}
+
 TEST_CASE(limiter_reports_a_fixed_latency_and_passes_quiet_audio_unchanged) {
     auto r = rig();
     const uint32_t lat = r.instance().latency();
