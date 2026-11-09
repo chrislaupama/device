@@ -725,7 +725,7 @@ impl Command {
                 Ok(Command::SetMacroName { device, index, name: old })
             }
             Command::SetDeviceView { device, folded, collapsed } => {
-                let d = insert_mut(p, device)?;
+                let d = insert_or_instrument_mut(p, device)?;
                 let old = (std::mem::replace(&mut d.folded, folded), std::mem::replace(&mut d.collapsed, collapsed));
                 Ok(Command::SetDeviceView { device, folded: old.0, collapsed: old.1 })
             }

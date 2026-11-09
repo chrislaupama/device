@@ -374,6 +374,8 @@ fn factory_values(n: usize) -> Vec<f32> {
 fn synth_steps() -> Vec<Step> {
     let bright_low = Rc::new(Cell::new(-1f32));
     let bright_low2 = bright_low.clone();
+    let fold_hist = Rc::new(Cell::new(0usize));
+    let fold_hist2 = fold_hist.clone();
     use Step::*;
     #[derive(Default)]
     struct Rec {
@@ -619,6 +621,21 @@ fn synth_steps() -> Vec<Step> {
         Check("synth: every synth edit undone -> starting parameters exactly", Box::new(move |c, _| {
             let start = r16.borrow().start.clone().ok_or("no record")?;
             (inst_synth(c).as_ref() == Some(&start)).then_some(()).ok_or(format!("preset {:?}", inst_synth(c).map(|p| p.1)))
+        })),
+        DoC("click the Synth header's fold button", Box::new(move |a, ctl| {
+            fold_hist.set(ctl.borrow().doc.history_labels().len());
+            let (x, y) = synth_xy(crate::devices::SYNTH_W - 27.5, 16.0);
+            click(a, x, y);
+        })),
+        Check("synth: folds to the 30 pt strip in one undo step", Box::new(move |c, a| {
+            let card = a.global::<Studio>().get_synth_card();
+            let n = c.doc.history_labels().len();
+            (n == fold_hist2.get() + 1 && card.folded && card.width == crate::device_mod::FOLDED_W).then_some(()).ok_or(format!("history {} -> {n}, folded {} width {}", fold_hist2.get(), card.folded, card.width))
+        })),
+        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("synth: undo unfolds it to full width", Box::new(move |_, a| {
+            let card = a.global::<Studio>().get_synth_card();
+            (!card.folded && card.width == crate::devices::SYNTH_W).then_some(()).ok_or(format!("folded {} width {}", card.folded, card.width))
         })),
     ]
 }
