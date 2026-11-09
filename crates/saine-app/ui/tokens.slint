@@ -69,4 +69,18 @@ export global Tokens {
     out property <length> track-pitch: 74.5px;         // 74 pt lane + 0.5 pt separator
     out property <length> lane-x: 191px;               // lanes start, timeline-panel relative
     out property <float> slider-zero-db: 0.85;         // (unitless) slider pos of 0 dB, header + track sliders
+    // ---- Depth (soft raised / inset surfaces), measured from the 100 % live capture 2026-11-09 ----
+    // One device pixel at 100 % zoom on a 2x display is 0.425 of our units.
+    out property <length> hairline: 0.45px;
+    out property <color> raised-rim: #3c3d40;          // 1 px top highlight of raised controls
+    out property <color> raised-rim-accent: #436af5;   // same, on accent-filled pills
+    out property <color> raised-shadow: #0000004d;     // soft shadow under raised controls
+    out property <color> field-rim: #35363a;           // even outline of search fields
+    out property <color> box-rim: #3c3d42;             // even outline of value boxes
+    out property <color> inset-top: #0e0f11;           // dark top lip of grooves and wells
+    out property <color> inset-shade: #1b1c20;         // inner shadow just below that lip
+    out property <color> inset-bottom: #424347;        // light bottom lip
+    out property <color> knob-face: #232426;           // inspector knob body
+    out property <color> knob-groove: #242528;         // inspector knob value ring track
+    out property <color> fader-handle: #fcf8f1;        // warm white fader cap
 }

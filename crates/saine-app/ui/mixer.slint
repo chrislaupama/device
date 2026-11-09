@@ -4,7 +4,7 @@
 // Every value comes from Rust (Studio.strips / strip-meters / master-*); every
 // edit goes out through the same Studio callbacks as the track headers.
 import { Tokens } from "tokens.slint";
-import { Panel, Icon, Icons, IconButton, SmallButton, Knob } from "widgets.slint";
+import { Panel, Icon, Icons, IconButton, SmallButton, Knob, Raised } from "widgets.slint";
 import { Studio, MixerStrip, StripMeter } from "studio.slint";
 
 // Fader slot 12x163 with a track-colour fill and a white handle. 0 dB ... -inf
@@ -17,9 +17,11 @@ component StripFader inherits Rectangle {
     width: 12px;
     height: 163px;
     border-radius: 6px;
-    background: #121315;
-    border-width: 1px;
-    border-color: #1c1c1e;
+    // Inset slot (see Inset in widgets.slint): dark top lip, short inner shadow, light bottom lip.
+    background: #262628;
+    Rectangle { width: parent.width; height: parent.height - 1px; border-radius: 6px; background: #0a0a0b; }
+    Rectangle { y: 1px; width: parent.width; height: parent.height - 2px; border-radius: 6px; background: #0f1012; }
+    Rectangle { y: 2px; width: parent.width; height: parent.height - 3px; border-radius: 6px; background: #121315; }
     Rectangle {
         x: 4.25px; y: min(parent.height - 3px, 10.5px + root.fader * 143px);
         width: 3.5px; height: max(0px, parent.height - 3px - self.y);
@@ -28,6 +30,7 @@ component StripFader inherits Rectangle {
     Rectangle {
         x: 1.75px; y: root.fader * 143px + 0.5px; width: 8.5px; height: 20px; border-radius: 3px;
         background: #f6f3ee;
+        drop-shadow-blur: 2px; drop-shadow-color: #000000b3;
         Rectangle { x: 1.5px; width: parent.width - 3px; height: 0.75px; background: #8a8a8d; }
     }
     TouchArea {
@@ -99,9 +102,8 @@ component Strip inherits Rectangle {
         released => { Studio.gesture-end(); }
         reset => { if (!root.master) { Studio.track-pan(root.s.id, 0); Studio.gesture-end(); } }
     }
-    Rectangle {
-        x: 49px; y: 166.5px; width: 33.5px; height: 14.5px; border-radius: 3px;
-        background: #292a2f; border-width: 0.5px; border-color: #3c3d42;
+    Raised {
+        x: 49px; y: 166.5px; width: 33.5px; height: 14.5px; border-radius: 3px; outline: true; rim: Tokens.box-rim;
         Text { text: root.master ? "0.0" : root.s.pan-text; color: #e5e5e8; font-size: 9.75px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     }
     // dB scale
@@ -121,12 +123,12 @@ component Strip inherits Rectangle {
     MeterBar { x: 67.5px; y: 196px; level: root.m.r; }
     // M / S. Master mute is a PLACEHOLDER (no master mute in the model).
     SmallButton {
-        x: 14px; y: 368.5px; width: 15px; height: 14px; text: "M"; font-size: 7.5px;
+        x: 14px; y: 368.5px; width: 15px; height: 14px; soft: true; text: "M"; font-size: 7.5px;
         on: !root.master && root.s.mute; on-color: Tokens.mute-on;
         clicked => { if (root.master) { Studio.chat-placeholder("Master mute"); } else { Studio.track-mute(root.s.id); } }
     }
     if !root.master: SmallButton {
-        x: 32px; y: 368.5px; width: 15.5px; height: 14px; text: "S"; font-size: 7.5px;
+        x: 32px; y: 368.5px; width: 15.5px; height: 14px; soft: true; text: "S"; font-size: 7.5px;
         on: root.s.solo; on-color: Tokens.solo-on;
         clicked => { Studio.track-solo(root.s.id); }
     }
