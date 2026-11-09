@@ -1245,6 +1245,7 @@ impl Controller {
             live: &self.rec.live_vis,
             playhead_beats: self.playhead_ticks() as f64 / PPQ as f64,
             loop_beats: (tr.loop_start as f64 / PPQ as f64, tr.loop_end as f64 / PPQ as f64),
+            loop_on: tr.loop_enabled,
             beats_per_bar: self.beats_per_bar(),
             frames_per_beat: self.rate * 60.0 / tr.bpm,
             auto: None,

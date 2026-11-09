@@ -132,6 +132,7 @@ pub struct Scene<'a> {
     pub live: &'a [ClipVis],
     pub playhead_beats: f64,
     pub loop_beats: (f64, f64),
+    pub loop_on: bool,
     pub beats_per_bar: f64,
     pub frames_per_beat: f64,
     /// Automation overlay (src/automation.rs) while lanes are shown.
@@ -380,7 +381,8 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     let lx0 = v.x_of(sc.loop_beats.0);
     let lx1 = v.x_of(sc.loop_beats.1);
     if lx1 > 0.0 && lx0 < w {
-        o.push(px.rect(lx0.max(0.0), 18.0, lx1.min(w) - lx0.max(0.0), 6.0, rgba(rgb(0x4d4d4f), 1.0)));
+        let color = if sc.loop_on { rgb(0xefb259) } else { rgb(0x4d4d4f) };
+        o.push(px.rect(lx0.max(0.0), 17.6, lx1.min(w) - lx0.max(0.0), 6.8, rgba(color, 1.0)));
     }
 
     // ---- master lane (over, pinned to the bottom) ----
