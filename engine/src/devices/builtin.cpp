@@ -25,6 +25,7 @@ extern const BuiltinDescriptor kPhaserDescriptor;
 extern const BuiltinDescriptor kTremoloDescriptor;
 extern const BuiltinDescriptor kAutopannerDescriptor;
 extern const BuiltinDescriptor kRingModDescriptor;
+extern const BuiltinDescriptor kSynthV2Descriptor;
 
 namespace {
 
@@ -46,6 +47,7 @@ const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kTremoloDescriptor,
     &kAutopannerDescriptor,
     &kRingModDescriptor,
+    &kSynthV2Descriptor,
 };
 
 struct CRegistry {
@@ -108,7 +110,8 @@ BuiltinInstance::BuiltinInstance(PluginSpec spec, const BuiltinDescriptor& desc,
     : PluginInstance(std::move(spec)), desc_(desc), proc_(std::move(proc)),
       target_(new std::atomic<float>[std::max<std::size_t>(1, desc.params.size())]), current_(desc.params.size(), 0.0f),
       readout_atomic_(new std::atomic<float>[std::max<std::size_t>(1, desc.readouts.size())]),
-      readout_scratch_(desc.readouts.size(), 0.0f), readout_segment_(desc.readouts.size(), 0.0f) {
+      readout_scratch_(desc.readouts.size(), 0.0f), readout_segment_(desc.readouts.size(), 0.0f),
+      midi_scratch_(desc.instrument ? kMaxEvents : 0) {
     for (std::size_t i = 0; i < desc_.params.size(); ++i) target_[i].store(0.0f, std::memory_order_relaxed);
     for (std::size_t i = 0; i < desc_.readouts.size(); ++i)
         readout_atomic_[i].store(i < desc_.idle_readouts.size() ? desc_.idle_readouts[i] : 0.0f, std::memory_order_relaxed);
@@ -145,7 +148,8 @@ uint32_t BuiltinInstance::readouts(float* out, uint32_t capacity) const noexcept
     return n;
 }
 
-void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEvent*, uint32_t, const RtTransport& transport,
+void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEvent* events, uint32_t event_count,
+                              const RtTransport& transport,
                               const ParamEvent* params, uint32_t param_count) noexcept {
     const auto n_params = static_cast<uint32_t>(current_.size());
     float* const cur = current_.data();
@@ -158,8 +162,10 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     // Automation events split the block (sorted by offset): every segment
     // runs with the values in force at its first frame. The block's readouts
     // keep, per readout, the segment value farthest from its idle value
-    // (highest peak, deepest reduction).
-    uint32_t pos = 0, e = 0;
+    // (highest peak, deepest reduction). MIDI events go to the segment they
+    // fall in, with segment-relative offsets.
+    MidiEvent* const seg_events = midi_scratch_.data();
+    uint32_t pos = 0, e = 0, m = 0;
     while (pos < frames) {
         while (e < param_count && params[e].offset <= pos) {
             if (params[e].id < n_params) cur[params[e].id] = static_cast<float>(params[e].value);
@@ -172,6 +178,15 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
             seg.sc_l += pos;
             seg.sc_r += pos;
         }
+        uint32_t nm = 0;
+        for (; m < event_count && (events[m].offset < end || end == frames); ++m) {
+            if (nm == midi_scratch_.size()) continue;
+            MidiEvent ev = events[m];
+            ev.offset = ev.offset > pos ? std::min(ev.offset, end - 1) - pos : 0;
+            seg_events[nm++] = ev;
+        }
+        seg.events = nm > 0 ? seg_events : nullptr;
+        seg.event_count = nm;
         if (pos == 0) {
             proc_->process(l, r, end, cur, seg, ro);
         } else {
@@ -230,8 +245,9 @@ std::shared_ptr<PluginInstance> create_builtin_instance(const PluginSpec& spec, 
         err = "unknown built-in device \"" + spec.plugin_id + "\"";
         return nullptr;
     }
-    if (spec.instrument) {
-        err = "built-in effects can't be used as an instrument";
+    if (spec.instrument != d->instrument) {
+        err = d->instrument ? "built-in instruments go in a track's instrument slot"
+                            : "built-in effects can't be used as an instrument";
         return nullptr;
     }
     return std::make_shared<BuiltinInstance>(spec, *d, d->create(), sample_rate, max_block);

@@ -978,19 +978,28 @@ impl Controller {
 
     fn field_double_click(&mut self, device: DeviceId, def: &'static DeviceDef, eqv: Option<&'static EqView>, hit: Hit) {
         self.devices.panel.canvas.drag = None;
-        let reset = |ids: &[&str]| -> Vec<Command> {
-            ids.iter().filter_map(|id| def.param(id)).map(|p| Command::SetDeviceParam { device, param: p.id.into(), value: p.default }).collect()
+        let Some(d) = self.project().device(device) else { return };
+        // Only parameters that actually move: an unchanged batch would add an empty undo step.
+        let set = |ids: &[(&str, Option<f32>)]| -> Vec<Command> {
+            ids.iter()
+                .filter_map(|(id, v)| def.param(id).map(|p| (p, v.unwrap_or(p.default))))
+                .filter(|(p, v)| def.value(d, p) != p.snap(*v))
+                .map(|(p, v)| Command::SetDeviceParam { device, param: p.id.into(), value: v })
+                .collect()
         };
         let cmds = match (eqv, hit) {
-            (Some(v), Hit::Node(i)) if v.double_click == NodeDoubleClick::Park => vec![Command::SetDeviceParam { device, param: v.bands[i].on.into(), value: 0.0 }],
+            (Some(v), Hit::Node(i)) if v.double_click == NodeDoubleClick::Park => set(&[(v.bands[i].on, Some(0.0))]),
             (None, Hit::Corner) => {
-                let dj = self.project().device(device).is_some_and(|d| def.value(d, def.param("mode").unwrap()) >= 0.5);
-                reset(&[if dj { "dj_position" } else { "frequency" }, "resonance"])
+                let dj = def.value(d, def.param("mode").unwrap()) >= 0.5;
+                set(&[(if dj { "dj_position" } else { "frequency" }, None), ("resonance", None)])
             }
-            (None, Hit::Edge(_)) => reset(&["lfo_amount"]),
-            (None, Hit::Env) => reset(&["env_amount"]),
+            (None, Hit::Edge(_)) => set(&[("lfo_amount", None)]),
+            (None, Hit::Env) => set(&[("env_amount", None)]),
             _ => return,
         };
+        if cmds.is_empty() {
+            return;
+        }
         self.doc.seal_coalescing();
         self.execute(Command::Batch { label: "Device Parameter Change".into(), commands: cmds });
         self.doc.seal_coalescing();
@@ -1012,7 +1021,11 @@ impl Controller {
         }
         ui.wheel -= ticks * 24.0;
         ui.selected.insert(device, i);
-        let set_q = Command::SetDeviceParam { device, param: qp.id.into(), value: qp.snap(q * 1.1f32.powf(ticks)) };
+        let new_q = qp.snap(q * 1.1f32.powf(ticks));
+        if !off && new_q == q {
+            return true;
+        }
+        let set_q = Command::SetDeviceParam { device, param: qp.id.into(), value: new_q };
         if off {
             let on = Command::SetDeviceParam { device, param: onp.id.into(), value: 1.0 };
             self.execute(Command::Batch { label: "Device Parameter Change".into(), commands: vec![set_q, on] });
