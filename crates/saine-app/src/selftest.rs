@@ -2556,6 +2556,8 @@ fn custom_view_steps() -> Vec<Step> {
             (name == Some(saine_core::builtin::shaper::SHAPES[4][0].name)).then_some(()).ok_or(format!("shape {name:?}"))
         })),
     ]
+}
+
 /// The restoration devices (De-Clipper, De-Esser, De-Hummer, De-Noiser): each one is added
 /// through Add device › Built-in, checked against its definition and the engine, and its field
 /// is dragged with real pointer events (one undo step), then undone.
