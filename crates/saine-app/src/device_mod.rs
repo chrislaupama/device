@@ -144,9 +144,10 @@ impl Controller {
     pub(crate) fn card_common(&self, d: &Device, card: &mut DeviceCard) {
         let Some(t) = self.track_of(d.id) else { return };
         let at = t.devices.iter().position(|x| x.id == d.id);
-        card.folded = d.folded && at.is_some();
+        card.folded = d.folded;
         card.member = at.and_then(|i| modu::head_of(&t.devices, i)).is_some();
-        card.swappable = at.is_some() && modu::outputs(d) == 0;
+        // Instrument cards swap through the instrument selector.
+        card.swappable = at.is_none() || modu::outputs(d) == 0;
         if d.label.is_some() {
             card.name = s(d.display_name());
         }

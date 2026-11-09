@@ -27,7 +27,7 @@ import { AssistantPanel, HighlightOverlay } from "assistant.slint";
 import { SynthDevice, SynthMenuList } from "synth.slint";
 import { SettingsPanel, ChoiceList } from "settings.slint";
 import { PluginCard, AddDeviceCard, DevMenuList } from "devices.slint";
-import { BuiltinCard } from "device_panel.slint";
+import { BuiltinCard, FoldedStrip } from "device_panel.slint";
 
 export { Studio, TrackRow, AutoLabel, AutoExtra, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow }
 
@@ -607,7 +607,8 @@ component BottomPanel inherits Panel {
         TouchArea {
             scroll-event(e) => { Studio.chain-scroll-by(e.delta-x != 0 ? e.delta-x / 1px : e.delta-y / 1px); accept }
         }
-        if Studio.synth-visible: SynthDevice { x: 263.5px - 255px - Studio.chain-scroll; y: 34px - 27px; }
+        if Studio.synth-visible && !Studio.synth-card.folded: SynthDevice { x: 263.5px - 255px - Studio.chain-scroll; y: 34px - 27px; }
+        if Studio.synth-visible && Studio.synth-card.folded: FoldedStrip { x: 263.5px - 255px - Studio.chain-scroll; y: 34px - 27px; card: Studio.synth-card; }
         // Chain heads frame their members; an empty chain offers "Add effect".
         for f in Studio.chain-frames: Rectangle {
             x: f.x - 255px; y: 34px - 27px - 5px; width: f.w; height: 265px + 10px; border-radius: 9px;

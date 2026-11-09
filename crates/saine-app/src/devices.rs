@@ -860,7 +860,8 @@ impl Controller {
         let synth = self.synth_track().is_some();
         let mut out = Vec::new();
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else { return (out, ADD_X_ALONE, synth) };
-        let mut x = CHAIN_X0 + if synth { SYNTH_W + CARD_GAP } else { 0.0 };
+        let synth_folded = synth && t.instrument_plugin.as_ref().is_some_and(|d| d.folded);
+        let mut x = CHAIN_X0 + if !synth { 0.0 } else if synth_folded { crate::device_mod::FOLDED_W + CARD_GAP } else { SYNTH_W + CARD_GAP };
         // The built-in Synth is drawn by its own card (src/synth.rs).
         let inst = if t.kind == TrackKind::Instrument { t.instrument_plugin.as_ref().filter(|d| !is_builtin_synth(d)) } else { None };
         let inserts = t.devices.iter().enumerate().map(|(i, d)| (Some(i), d, false));

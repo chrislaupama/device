@@ -459,6 +459,7 @@ export global Studio {
     in property <int> synth-page;                // index into the category list
     in property <string> synth-preset: "Init";
     in property <bool> synth-enabled: true;
+    in property <DeviceCard> synth-card;                     // the Synth as a device card (shared header, folded strip)
     in property <[SynthParam]> synth-params;     // indexed like the device definition
     in property <[SynthDisplay]> synth-displays; // indexed by synth::disp
     in property <[SynthLabel]> synth-labels;
