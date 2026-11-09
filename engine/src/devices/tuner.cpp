@@ -161,6 +161,6 @@ std::unique_ptr<BuiltinProcessor> create_tuner() { return std::make_unique<Tuner
 
 extern const BuiltinDescriptor kTunerDescriptor;
 constexpr float kIdleReadouts[] = {0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f};
-const BuiltinDescriptor kTunerDescriptor{"tuner", kParamIds, kReadoutIds, &create_tuner, kIdleReadouts};
+const BuiltinDescriptor kTunerDescriptor{"tuner", kParamIds, kReadoutIds, &create_tuner, kIdleReadouts, true};
 
 } // namespace saine

@@ -185,3 +185,14 @@ TEST_CASE(analysis_channel_hands_over_the_newest_frame) {
     CHECK(ch.read(out, 8, seq) == 1);
     CHECK(out[0] == 99.0f);
 }
+
+TEST_CASE(spectrum_analyses_at_least_every_half_frame) {
+    for (const auto& [size, per_second] : {std::pair{0.f, 187u}, std::pair{1.f, 93u}, std::pair{3.f, 46u}}) {
+        auto r = rig();
+        r.set("fft_size", size);
+        r.run_mono(Signal(48000, 0.0f));
+        uint64_t seq = 0;
+        r.analysis(&seq);
+        CHECK(seq >= per_second && seq <= per_second + 1);
+    }
+}

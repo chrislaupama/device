@@ -23,7 +23,7 @@ pub static PITCH_CORRECTOR: DeviceDef = DeviceDef {
         ParamDef::new("retune_speed_ms", "Retune Speed", 0.0, 400.0, 50.0, LINEAR, "ms", Format::Time).help("Glide time onto the target note; 0 ms jumps at once."),
         ParamDef::new("humanize", "Humanize", 0.0, 100.0, 20.0, LINEAR, "%", Format::Percent).help("Keeps vibrato and natural drift and relaxes the correction on held notes."),
         ParamDef::new("mix", "Mix", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent).help("Blend of corrected and original signal."),
-        ParamDef::choice("key_follow", "Key Follow", FOLLOW, 1).label("Follow").help("Project: use the project's key and scale; Manual: the Key and Scale set here."),
+        ParamDef::choice("key_follow", "Key Follow", FOLLOW, 1).label("Follow").not_automatable().help("Project: use the project's key and scale; Manual: the Key and Scale set here."),
     ],
     layout: Layout {
         picker: &[Control::Menu("key_follow"), Control::Dropdown("key"), Control::Dropdown("scale")],

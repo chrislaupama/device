@@ -94,6 +94,10 @@ struct BuiltinDescriptor {
     // silence for level meters. When automation splits a block, each readout
     // keeps the segment value farthest from its idle value.
     std::span<const float> idle_readouts;
+    // Readouts are one consistent state (a detected note, its cents and
+    // string), not meters: when automation splits a block the last
+    // segment's values are kept together.
+    bool state_readouts = false;
 };
 
 std::span<const BuiltinDescriptor> builtin_registry() noexcept;

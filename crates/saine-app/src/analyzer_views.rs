@@ -318,17 +318,19 @@ impl Controller {
                     if seq != 0 && seq != sv.seq && out.len() >= 2 * BANDS {
                         sv.seq = seq;
                         average_bins(&mut sv.avg, &out[..BANDS], averaging);
-                        sv.peak = out[BANDS..2 * BANDS].to_vec();
                         if out.len() >= 3 * BANDS {
                             average_bins(&mut sv.side, &out[2 * BANDS..3 * BANDS], averaging);
                         } else {
                             sv.side.clear();
                         }
+                        let differs = |a: &[f32], b: &[f32]| a.len() != b.len() || a.iter().zip(b).any(|(x, y)| (x - y).abs() > 0.01);
+                        let peak = out[BANDS..2 * BANDS].to_vec();
                         let shown = blur_bins(&sv.avg, smoothing);
-                        let changed = shown.len() != sv.shown.len() || shown.iter().zip(&sv.shown).any(|(a, b)| (a - b).abs() > 0.01);
+                        let shown_side = blur_bins(&sv.side, smoothing);
+                        dirty |= differs(&shown, &sv.shown) || differs(&shown_side, &sv.shown_side) || differs(&peak, &sv.peak);
+                        sv.peak = peak;
                         sv.shown = shown;
-                        sv.shown_side = blur_bins(&sv.side, smoothing);
-                        dirty |= changed;
+                        sv.shown_side = shown_side;
                     }
                 }
             }

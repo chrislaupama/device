@@ -117,9 +117,11 @@ public:
         const int hold = std::clamp(static_cast<int>(std::lround(p[kPeakHold])), 0, 2);
         const float decay = std::clamp(p[kDecay], 0.0f, 100.0f) * 0.01f;
         const uint32_t mask = kMaxSize - 1;
+        // Analyse at least every half frame, so small FFT sizes leave no input unexamined.
+        cur_hop_ = std::min(hop_, (kMinSize << size_i) / 2);
         uint32_t i = 0;
         while (i < n) {
-            const uint32_t m = std::min(n - i, hop_ - since_);
+            const uint32_t m = since_ >= cur_hop_ ? 0 : std::min(n - i, cur_hop_ - since_);
             for (uint32_t k = 0; k < m; ++k) {
                 ring_l_[(pos_ + k) & mask] = l[i + k];
                 ring_r_[(pos_ + k) & mask] = r[i + k];
@@ -127,7 +129,7 @@ public:
             pos_ = (pos_ + m) & mask;
             since_ += m;
             i += m;
-            if (since_ >= hop_) {
+            if (since_ >= cur_hop_) {
                 since_ = 0;
                 analyse(static_cast<uint32_t>(size_i), wkind, chan, slope, hold, decay, ctx.analysis);
             }
@@ -193,7 +195,7 @@ private:
         // Amplitude 2|X| / (n * coherent gain), squared.
         const float a = 2.0f / (static_cast<float>(n) * gain_);
         const float norm = a * a;
-        const float dt = static_cast<float>(hop_ / sr_);
+        const float dt = static_cast<float>(cur_hop_ / sr_);
         const float fall = decay <= 0.0f ? 0.0f : 3.0f * std::pow(40.0f, 1.0f - decay) * dt;
         if (out == nullptr) return;
         float* const o = out->begin();
@@ -235,7 +237,7 @@ private:
     }
 
     double sr_ = 48000.0;
-    uint32_t hop_ = 1024, since_ = 0, pos_ = 0;
+    uint32_t hop_ = 1024, cur_hop_ = 1024, since_ = 0, pos_ = 0;
     std::vector<float> ring_l_, ring_r_, frame_, win_;
     std::vector<float> re_[2], im_[2], pow_[2];
     dsp::Fft fft_[kSizes];

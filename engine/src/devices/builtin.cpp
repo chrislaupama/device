@@ -159,7 +159,8 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     // Automation events split the block (sorted by offset): every segment
     // runs with the values in force at its first frame. The block's readouts
     // keep, per readout, the segment value farthest from its idle value
-    // (highest peak, deepest reduction).
+    // (highest peak, deepest reduction), or for state readouts the last
+    // segment's values.
     uint32_t pos = 0, e = 0;
     while (pos < frames) {
         while (e < param_count && params[e].offset <= pos) {
@@ -177,6 +178,11 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
         } else {
             float* const sr = readout_segment_.data();
             proc_->process(l + pos, r + pos, end - pos, cur, seg, sr);
+            if (desc_.state_readouts) {
+                std::copy(sr, sr + readout_segment_.size(), ro);
+                pos = end;
+                continue;
+            }
             for (std::size_t i = 0; i < readout_segment_.size(); ++i) {
                 const float idle = i < desc_.idle_readouts.size() ? desc_.idle_readouts[i] : 0.0f;
                 if (std::fabs(sr[i] - idle) > std::fabs(ro[i] - idle)) ro[i] = sr[i];

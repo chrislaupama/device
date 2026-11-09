@@ -107,3 +107,16 @@ TEST_CASE(tuner_passes_audio_or_mutes) {
     auto ro = read(r, 196.0);
     CHECK(ro[kNote] == 55.0f);
 }
+
+TEST_CASE(tuner_readouts_come_from_the_last_automation_segment) {
+    auto r = rig();
+    r.set("tuning", 1.f); // Standard
+    CHECK(read(r, 330.0)[kString] == 5.0f);
+    // Automation switches to Chromatic inside the last block: the readouts are
+    // one state, so the string comes from the last segment, not the first.
+    const std::size_t n = 24000;
+    r.run(tone(n, 330.0, kRate, 0.3), tone(n, 330.0, kRate, 0.3), nullptr, nullptr, {{n - 64, {1u, 0.f}}});
+    const auto ro = r.readouts();
+    CHECK(ro[kString] == -1.0f);
+    CHECK(ro[kNote] == 64.0f);
+}

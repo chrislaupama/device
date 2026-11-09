@@ -221,6 +221,6 @@ std::unique_ptr<BuiltinProcessor> create_pitch_corrector() { return std::make_un
 } // namespace
 
 extern const BuiltinDescriptor kPitchCorrectorDescriptor;
-const BuiltinDescriptor kPitchCorrectorDescriptor{"pitch-corrector", kParamIds, kReadoutIds, &create_pitch_corrector, {}};
+const BuiltinDescriptor kPitchCorrectorDescriptor{"pitch-corrector", kParamIds, kReadoutIds, &create_pitch_corrector, {}, true};
 
 } // namespace saine
