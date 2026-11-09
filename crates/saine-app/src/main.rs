@@ -75,6 +75,7 @@ struct Args {
     assistant_demo: Option<String>,
     /// 1 = reference-midi-clip (33), 2 = reference-pianoroll (34).
     midi_state: u8,
+    audio_clip_state: bool,
     /// reference-synth (32): Instrument track selected, Devices tab, test-state synth preset.
     synth_state: bool,
     /// --synth-page N: open that category page of the synth device (review screenshots).
@@ -168,6 +169,10 @@ fn parse_args() -> Result<Args, String> {
                 "reference-pianoroll" => {
                     a.reference_default = true;
                     a.midi_state = 2;
+                }
+                "reference-audio-clip" => {
+                    a.reference_default = true;
+                    a.audio_clip_state = true;
                 }
                 "reference-synth" => {
                     a.reference_default = true;
@@ -1241,6 +1246,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if !args.import.is_empty() {
         ctl.borrow_mut().import_files(args.import.clone(), ImportTarget::Selected, None);
     }
+    // Reference z100-inspector-audio-clip-tab-warp-off: a 4-bar 220 Hz sine clip at bar 4 on the
+    // Audio track, opened in the Clip tab once the import lands; playhead at bar 6.
+    let audio_clip_timer = slint::Timer::default();
+    if args.audio_clip_state {
+        let dir = std::env::temp_dir().join(format!("saine-ref-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("sine-a220-steady.wav");
+        let samples: Vec<f32> = (0..8 * 44_100).map(|i| (std::f32::consts::TAU * 220.0 * i as f32 / 44_100.0).sin() * 0.5).collect();
+        wavgen::write_wav(&path, 44_100, 1, &samples)?;
+        let mut c = ctl.borrow_mut();
+        c.import_files(vec![path], ImportTarget::Selected, Some(12 * saine_core::PPQ));
+        c.seek_beats(20.0);
+        drop(c);
+        let ctl = ctl.clone();
+        audio_clip_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
+            let Ok(mut c) = ctl.try_borrow_mut() else { return };
+            let clip = c.project().tracks.iter().flat_map(|t| t.clips.iter()).next().map(|cl| cl.id);
+            if clip.is_some() && c.bottom_tab != BottomTab::Clip {
+                c.select_clip(clip);
+                c.set_bottom_tab(BottomTab::Clip);
+            }
+        });
+    }
 
     // ---- job polling (imports finish on worker threads) ----
     let poll_timer = slint::Timer::default();
@@ -1358,8 +1386,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         timeline::build(&mut f.dl, &sc);
                         r.render(&f.dl);
                     }
-                    // Piano roll texture (only while a MIDI clip is open in the Clip tab).
-                    let pr_vis = c.pr_visible();
+                    // Clip editor texture (only while a MIDI or audio clip is open in the Clip tab).
+                    let pr_vis = c.clip_editor_visible();
                     if pr_vis {
                         let win = app.window().size();
                         let size = ((win.width as f32 / scale) - 10.0 - pianoroll::PANEL_ORIGIN.0 - 0.5, pianoroll::CLIP_PANEL_H - pianoroll::PANEL_ORIGIN.1 - pianoroll::FOOTER_H);
