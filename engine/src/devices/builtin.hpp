@@ -34,6 +34,10 @@ struct BuiltinContext {
     const float* sc_l = nullptr;
     const float* sc_r = nullptr;
     const RtTransport* transport = nullptr;
+    // MIDI events of this call (instruments), offsets relative to l/r[0],
+    // sorted by offset.
+    const MidiEvent* events = nullptr;
+    uint32_t event_count = 0;
 };
 
 class BuiltinProcessor {
@@ -43,7 +47,8 @@ public:
     virtual void prepare(double sample_rate, uint32_t max_block) = 0;
     // RT. Clears internal state (envelopes, delay lines) without allocating.
     virtual void reset() noexcept = 0;
-    // RT. Processes l/r in place. `params` holds the current plain values
+    // RT. Processes l/r in place (an instrument gets silence in l/r and
+    // writes its output there; its notes arrive in ctx.events). `params` holds the current plain values
     // (registry order), constant over this call: the instance splits blocks
     // at automation events. Smoothing of audible steps is the processor's job.
     // Write readouts (if any) into `readouts`.
@@ -62,6 +67,9 @@ struct BuiltinDescriptor {
     // silence for level meters. When automation splits a block, each readout
     // keeps the segment value farthest from its idle value.
     std::span<const float> idle_readouts;
+    // An instrument: it takes the track's instrument slot and plays the
+    // track's notes (BuiltinContext::events) instead of processing audio.
+    bool instrument = false;
 };
 
 std::span<const BuiltinDescriptor> builtin_registry() noexcept;
@@ -78,9 +86,6 @@ const char* parse_builtin_state(const uint8_t* data, std::size_t len, const uint
 // Adapter from a BuiltinProcessor to the plugin host.
 class BuiltinInstance final : public PluginInstance {
 public:
-    static constexpr uint32_t kMaxParams = 256;
-    static constexpr uint32_t kMaxReadouts = 32;
-
     BuiltinInstance(PluginSpec spec, const BuiltinDescriptor& desc, std::unique_ptr<BuiltinProcessor> proc,
                     double sample_rate, uint32_t max_block);
 
@@ -119,6 +124,7 @@ private:
     std::unique_ptr<std::atomic<float>[]> readout_atomic_;
     std::vector<float> readout_scratch_;
     std::vector<float> readout_segment_; // later automation segments, merged into readout_scratch_
+    std::vector<MidiEvent> midi_scratch_; // MIDI events of one automation segment
     const float* sc_l_ = nullptr;
     const float* sc_r_ = nullptr;
 };

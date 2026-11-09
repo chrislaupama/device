@@ -1,441 +1,365 @@
-//! Built-in "Synth" device panel (bottom panel, Devices tab, instrument tracks).
+//! Built-in "Synth" instrument panel (bottom panel, Devices tab, instrument
+//! tracks): the synth-v2 device (saine_core::builtin::synth_v2) with its nine
+//! pages, the modulation sources drawer, the modulation matrix, macros and the
+//! four effect slots.
 //!
-//! Every control maps to a real `saine_core::SynthParams` field (contract in
-//! `saine_core::instrument`). Continuous controls (knobs, level faders) preview
-//! while dragging: the edited parameters are held in `SynthUi::pending` and
-//! published to the engine with the snapshot override in `Controller::publish`,
-//! but no command is executed. The gesture end (`synth_param_end`) commits
-//! exactly ONE `SetSynthParams`. Dropdowns, preset loads and double-click
-//! resets commit one `SetSynthParams` each.
+//! Every control is a parameter of the track's Synth device, addressed by its
+//! index in the definition (Studio.synth-params is indexed the same way).
+//! Continuous drags send live values to the engine (se_builtin_set_param, no
+//! model change) and commit ONE Command::SetDeviceParam on release (a
+//! Batch of them when a gesture moves several parameters); switches, resets,
+//! presets and route / mapping edits are single commands, so every gesture is
+//! one undo step.
 //!
-//! The core coalesces `SetSynthParams` per track+preset within 750 ms. That
-//! would merge two separate gestures made in quick succession (or a preset load
-//! followed by a quick tweak) into one undo step, so gesture commits are
-//! executed with the document's coalesce window set to zero (`commit_synth`).
-//!
-//! The displays (oscillator shapes, filter response, envelopes, LFO) are SVG
-//! path strings computed here and drawn with Slint `Path` elements. The
-//! oscillator shapes follow the field docs in `instrument.rs`; the exact DSP is
-//! the engine's (see `osc_sample`).
+//! This file lays the pages out (ui/synth.slint only draws element kinds) and
+//! computes the pictures (oscillator waves, filter response, envelopes, LFOs,
+//! glide, unison field, effect curves) as SVG paths from the current values.
+//! They are drawing models of our own DSP (engine/src/devices/synth_v2.cpp),
+//! not measurements.
 
-use crate::controller::{BottomTab, Controller, sync_model};
-use crate::{MenuItem, Studio, SynthDisplay, SynthParam};
-use saine_core::instrument::{Adsr, FilterMode, Waveform, factory_presets};
-use saine_core::{Command, SynthParams, TrackId, TrackKind};
+use crate::controller::{slint_color, sync_model, track_color, BottomTab, Controller};
+use crate::{MenuItem, Studio, SynthArc, SynthDisplay, SynthFaderItem, SynthKnobItem, SynthLabel, SynthLatchItem, SynthMapRow, SynthParam, SynthPillItem, SynthRouteRow, SynthScopeItem, SynthSegItem, SynthTextItem};
+use saine_core::builtin::synth_v2::{self as sv, SYNTH_V2};
+use saine_core::builtin::{DevicePreset, ParamDef};
+use saine_core::{Command, DeviceId, TrackId, TrackKind};
+use slint::{Color, ModelRc, VecModel};
+use std::collections::{BTreeMap, HashMap};
 use std::f32::consts::PI;
+use std::rc::Rc;
+use std::sync::OnceLock;
 
-// ------------------------------------------------------------------ parameter table
+/// Category list (left column), in reference order.
+pub const PAGES: [&str; 9] = ["Oscillators", "Sub & Noise", "Filter", "Envelopes", "LFOs", "Modulation", "Macros", "Voice", "Effects"];
 
-/// Continuous parameters, indexed like `Studio.synth-params` (mirrored by the
-/// `SP` global in `ui/synth.slint`).
-pub mod p {
-    pub const OSC1_SHAPE: usize = 0;
-    pub const OSC1_FINE: usize = 1;
-    pub const OSC1_LEVEL: usize = 2;
-    pub const CROSS_FM: usize = 3;
-    pub const OSC2_SHAPE: usize = 4;
-    pub const OSC2_FINE: usize = 5;
-    pub const OSC2_LEVEL: usize = 6;
-    pub const SUB_LEVEL: usize = 7;
-    pub const NOISE_LEVEL: usize = 8;
-    pub const CUTOFF: usize = 9;
-    pub const RESONANCE: usize = 10;
-    pub const KEY_TRACK: usize = 11;
-    pub const ENV_AMOUNT: usize = 12;
-    pub const AMP_A: usize = 13;
-    pub const AMP_D: usize = 14;
-    pub const AMP_S: usize = 15;
-    pub const AMP_R: usize = 16;
-    pub const FLT_A: usize = 17;
-    pub const FLT_D: usize = 18;
-    pub const FLT_S: usize = 19;
-    pub const FLT_R: usize = 20;
-    pub const LFO_RATE: usize = 21;
-    pub const LFO_PITCH: usize = 22;
-    pub const LFO_CUTOFF: usize = 23;
-    pub const LFO_AMP: usize = 24;
-    pub const GLIDE: usize = 25;
-    pub const UNISON_DETUNE: usize = 26;
-    pub const OUTPUT: usize = 27;
-    pub const POLYPHONY: usize = 28;
-    pub const UNISON: usize = 29;
-    pub const COUNT: usize = 30;
+pub mod page {
+    pub const OSC: usize = 0;
+    pub const SUB_NOISE: usize = 1;
+    pub const FILTER: usize = 2;
+    pub const ENV: usize = 3;
+    pub const LFO: usize = 4;
+    pub const MODULATION: usize = 5;
+    pub const MACROS: usize = 6;
+    pub const VOICE: usize = 7;
+    pub const EFFECTS: usize = 8;
 }
 
-/// Dropdown (discrete) parameters, indexed like `Studio.synth-choices`.
-pub mod ch {
-    pub const OSC1_WAVE: usize = 0;
-    pub const OSC1_OCT: usize = 1;
-    pub const OSC1_SEMI: usize = 2;
-    pub const OSC2_WAVE: usize = 3;
-    pub const OSC2_OCT: usize = 4;
-    pub const OSC2_SEMI: usize = 5;
-    pub const FILTER_MODE: usize = 6;
-    pub const LFO_WAVE: usize = 7;
-    pub const COUNT: usize = 8;
-}
-
-/// Display slots, indexed like `Studio.synth-displays`.
+/// Picture slots (Studio.synth-displays).
 pub mod disp {
     pub const OSC1: usize = 0;
-    #[allow(dead_code)]
     pub const OSC2: usize = 1;
     pub const SUB: usize = 2;
     pub const NOISE: usize = 3;
     pub const FILTER: usize = 4;
-    pub const AMP_ENV: usize = 5;
-    pub const FLT_ENV: usize = 6;
-    pub const LFO: usize = 7;
-    pub const COUNT: usize = 8;
+    pub const FILTER_MOD: usize = 5;
+    pub const AMP_ENV: usize = 6;
+    pub const ENV2: usize = 7;
+    pub const LFO1: usize = 8;
+    pub const LFO2: usize = 9;
+    pub const GLIDE: usize = 10;
+    pub const UNISON: usize = 11;
+    pub const FX_CURVE: usize = 12;
+    pub const FX_WAVE: usize = 13;
+    pub const COUNT: usize = 14;
 }
 
-/// Display sizes in points (the path viewbox equals the element size).
+/// Picture sizes in points (path viewbox = element size). The card is the
+/// reference capture scaled by 0.844.
 pub const DISP_W: f32 = 245.0;
+pub const WIDE_W: f32 = 295.5;
 pub const DISP_H: f32 = 128.0;
-pub const FILTER_W: f32 = 610.0;
+pub const FX_CURVE_W: f32 = 136.0;
+pub const FX_GAP: f32 = 4.0;
+pub const FX_WAVE_W: f32 = 418.0;
 
-/// Category list (left column), in reference order. Modulation, Macros and Effects are
-/// PLACEHOLDER pages ("not available yet").
-pub const PAGES: [&str; 9] = ["Oscillators", "Sub & Noise", "Filter", "Envelopes", "LFOs", "Modulation", "Macros", "Voice", "Effects"];
+/// Module origins, the separator and the rows of the two-module pages.
+const M1: f32 = 117.5;
+const M2: f32 = 433.0;
+const SPLIT: f32 = 423.5;
+const HEAD_Y: f32 = 32.0;
+const PIC_Y: f32 = 57.5;
+const KNOB_Y: f32 = 212.0;
+const FADER_DX: f32 = 273.3;
+const FADER_Y: f32 = 61.5;
 
-#[derive(Clone, Copy)]
-enum Taper {
-    Lin,
-    /// Logarithmic between positive bounds.
-    Log,
-    /// v = lo + (hi - lo) * n^2 (finer control near the bottom).
-    Sq,
+/// Dial columns: four per module (75.5 pt apart) or five (60 pt apart).
+fn col4(m: f32, i: usize) -> f32 {
+    m + 35.0 + 75.5 * i as f32
+}
+fn col5(m: f32, i: usize) -> f32 {
+    m + 27.5 + 60.0 * i as f32
 }
 
-#[derive(Clone, Copy)]
-enum Fmt {
-    Pct,
-    SignedPct,
-    Cents,
-    PlainCents,
-    Hz,
-    Time,
-    Oct,
-    Db,
-    Voices,
-    Unison,
-    Glide,
+/// Mod drawer colours by source index (None first).
+pub const SOURCE_COLORS: [u32; 10] = [0x6f7075, 0xa271b3, 0xc9708f, 0xd9c96a, 0x5fb5a3, 0xd8875a, 0x9cbf63, 0x6b98d8, 0x7fb0d0, 0xc8c8cc];
+/// Macro colour (knob values, mapping ranges, the selection ring).
+pub const MACRO_COLOR: u32 = 0xe9799a;
+
+pub const MENU_ROW: f32 = 20.5;
+pub const MENU_PAD: f32 = 4.0;
+
+/// Parameter index by id (the definition is static).
+pub fn ix(id: &str) -> usize {
+    static MAP: OnceLock<HashMap<&'static str, usize>> = OnceLock::new();
+    MAP.get_or_init(|| SYNTH_V2.params.iter().enumerate().map(|(i, p)| (p.id, i)).collect()).get(id).copied().unwrap_or_else(|| panic!("synth-v2 has no parameter {id}"))
 }
 
-struct Def {
-    lo: f32,
-    hi: f32,
-    taper: Taper,
-    fmt: Fmt,
-    int: bool,
+fn pdef(i: usize) -> &'static ParamDef {
+    &SYNTH_V2.params[i]
 }
 
-const fn d(lo: f32, hi: f32, taper: Taper, fmt: Fmt) -> Def {
-    Def { lo, hi, taper, fmt, int: false }
+fn rgb(c: u32) -> Color {
+    Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8)
 }
 
-fn def(id: usize) -> Def {
-    use Fmt::*;
-    use Taper::*;
-    match id {
-        p::OSC1_SHAPE | p::OSC2_SHAPE | p::OSC1_LEVEL | p::OSC2_LEVEL | p::CROSS_FM | p::SUB_LEVEL | p::NOISE_LEVEL => d(0.0, 1.0, Lin, Pct),
-        p::OSC1_FINE | p::OSC2_FINE => d(-100.0, 100.0, Lin, Cents),
-        p::CUTOFF => d(20.0, 20_000.0, Log, Hz),
-        p::RESONANCE | p::KEY_TRACK | p::AMP_S | p::FLT_S | p::LFO_AMP => d(0.0, 1.0, Lin, Pct),
-        p::ENV_AMOUNT => d(-1.0, 1.0, Lin, SignedPct),
-        p::AMP_A | p::AMP_D | p::FLT_A | p::FLT_D => d(0.001, 10.0, Log, Time),
-        p::AMP_R | p::FLT_R => d(0.001, 20.0, Log, Time),
-        p::LFO_RATE => d(0.01, 20.0, Log, Hz),
-        p::LFO_PITCH => d(0.0, 1200.0, Sq, PlainCents),
-        p::LFO_CUTOFF => d(0.0, 6.0, Lin, Oct),
-        p::GLIDE => d(0.0, 2.0, Sq, Glide),
-        p::UNISON_DETUNE => d(0.0, 50.0, Lin, PlainCents),
-        p::OUTPUT => d(0.0, 2.0, Lin, Db),
-        p::POLYPHONY => Def { lo: 1.0, hi: 16.0, taper: Lin, fmt: Voices, int: true },
-        p::UNISON => Def { lo: 1.0, hi: 4.0, taper: Lin, fmt: Unison, int: true },
-        _ => d(0.0, 1.0, Lin, Pct),
+/// What an open popup list edits.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MenuTarget {
+    Presets,
+    /// The choices of a parameter.
+    Choice(usize),
+    /// Env 2 / LFO n "Targets" (source index).
+    Targets(usize),
+    /// Free / Sync of a sync parameter.
+    Timebase(usize),
+    AddMapping,
+    MacroName(usize),
+    /// Right click on a control: macros and modulation for one parameter.
+    Knob(usize),
+    RouteSource(usize),
+    RouteTarget(usize),
+    AddRoute,
+    FxType(usize),
+}
+
+#[derive(Debug, Clone)]
+pub struct SynthMenu {
+    pub target: MenuTarget,
+    pub pos: (f32, f32),
+    pub w: f32,
+    /// (label, check / hint, action; None = group heading) rows.
+    rows: Vec<(String, String, Option<MenuAction>)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum MenuAction {
+    Preset(usize),
+    Set(Vec<(usize, f32)>),
+    Page(usize),
+}
+
+/// Values heard by the engine during a gesture, not yet a command:
+/// (parameter, value before the gesture, current value).
+#[derive(Debug, Clone)]
+struct Live {
+    device: DeviceId,
+    vals: Vec<(usize, f32, f32)>,
+}
+
+/// A drag in a picture: the handle and the values it started from.
+#[derive(Debug, Clone)]
+struct ScopeDrag {
+    slot: usize,
+    handle: usize,
+    start: (f32, f32),
+    norms: Vec<(usize, f32)>,
+}
+
+/// A source chip pressed in the drawer: start point, pointer, dragging.
+#[derive(Debug, Clone, Copy)]
+struct RailDrag {
+    src: usize,
+    start: (f32, f32),
+    pos: (f32, f32),
+    dragging: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct SynthUi {
+    pub page: usize,
+    pub menu: Option<SynthMenu>,
+    /// Effects page tab (1..=4).
+    pub fx_slot: usize,
+    pub macro_sel: usize,
+    /// Lit source (its targets get a ring), 0 = none.
+    pub lit: usize,
+    live: Option<Live>,
+    scope: Option<ScopeDrag>,
+    rail: Option<RailDrag>,
+    /// Dial centres of the page last laid out (drop targets for the drawer).
+    knob_pos: Vec<(usize, f32, f32)>,
+    /// What the page models were last built from.
+    pushed: Option<(Vec<f32>, [usize; 4], u32)>,
+    models: Option<Models>,
+}
+
+impl SynthUi {
+    /// Forget a gesture in progress (undo, redo, track change).
+    pub fn drop_gesture(&mut self) {
+        self.live = None;
+        self.scope = None;
+        self.rail = None;
     }
 }
 
-/// Bipolar controls draw their value arc from the top of the knob.
-pub fn bipolar(id: usize) -> bool {
-    matches!(id, p::OSC1_FINE | p::OSC2_FINE | p::ENV_AMOUNT)
+// ------------------------------------------------------------------ modulation facts
+
+/// Routes in use: (slot 1..=32, source, target, amount, on).
+pub fn routes(v: &[f32]) -> Vec<(usize, usize, usize, f32, bool)> {
+    (1..=sv::MOD_SLOTS)
+        .filter_map(|n| {
+            let b = ix("mod1_source") + 4 * (n - 1);
+            let (s, t) = (v[b].round() as usize, v[b + 1].round() as usize);
+            (s != 0 || t != 0).then_some((n, s, t, v[b + 2], v[b + 3] >= 0.5))
+        })
+        .collect()
 }
 
-fn env(sp: &SynthParams, id: usize) -> (&Adsr, usize) {
-    if (p::AMP_A..=p::AMP_R).contains(&id) { (&sp.amp_env, id - p::AMP_A) } else { (&sp.filter_env, id - p::FLT_A) }
+fn fx_types(v: &[f32]) -> [usize; 4] {
+    let t = |s: usize| v[ix(&sv::fx_param(s, "type"))].round() as usize;
+    [t(1), t(2), t(3), t(4)]
 }
 
-pub fn get(sp: &SynthParams, id: usize) -> f32 {
-    match id {
-        p::OSC1_SHAPE => sp.osc[0].shape,
-        p::OSC1_FINE => sp.osc[0].fine_cents,
-        p::OSC1_LEVEL => sp.osc[0].level,
-        p::CROSS_FM => sp.cross_fm,
-        p::OSC2_SHAPE => sp.osc[1].shape,
-        p::OSC2_FINE => sp.osc[1].fine_cents,
-        p::OSC2_LEVEL => sp.osc[1].level,
-        p::SUB_LEVEL => sp.sub_level,
-        p::NOISE_LEVEL => sp.noise_level,
-        p::CUTOFF => sp.filter.cutoff_hz,
-        p::RESONANCE => sp.filter.resonance,
-        p::KEY_TRACK => sp.filter.key_track,
-        p::ENV_AMOUNT => sp.filter.env_amount,
-        p::AMP_A..=p::FLT_R => {
-            let (e, k) = env(sp, id);
-            [e.attack, e.decay, e.sustain, e.release][k]
+/// Parameter a target index moves, if it has a knob.
+pub fn target_index(t: usize, fx: [usize; 4]) -> Option<usize> {
+    if let Some(id) = sv::target_param(t) {
+        return Some(ix(id));
+    }
+    match t {
+        22..=25 => Some(ix(&sv::fx_param(t - 21, "mix"))),
+        26..=29 => Some(ix(&sv::fx_param(t - 25, sv::fx_amount_param(fx[t - 26])))),
+        _ => None,
+    }
+}
+
+/// Modulation target of a parameter index.
+fn target_for(i: usize, fx: [usize; 4]) -> Option<usize> {
+    sv::target_of(pdef(i).id, fx)
+}
+
+/// Macro mappings in use: (slot 1..=16, macro 1..=8, target index, from, to).
+pub fn mappings(v: &[f32]) -> Vec<(usize, usize, usize, f32, f32)> {
+    (1..=sv::MAP_SLOTS)
+        .filter_map(|n| {
+            let b = ix("map1_macro") + 4 * (n - 1);
+            let m = v[b].round() as usize;
+            let late = v[ix("map1_late_param") + n - 1].round() as usize;
+            let t = sv::map_target(v[b + 1].round() as usize, late)?;
+            (m > 0).then_some((n, m, t, v[b + 2], v[b + 3]))
+        })
+        .collect()
+}
+
+/// Normalized ranges a parameter swings over, one per modulator (source
+/// colour, low, high): routes first, then its macro.
+fn mod_ranges(v: &[f32], i: usize, routes: &[(usize, usize, usize, f32, bool)], maps: &[(usize, usize, usize, f32, f32)], fx: [usize; 4]) -> Vec<(u32, f32, f32)> {
+    let p = pdef(i);
+    let base = p.to_normalized(v[i]);
+    let mut out = Vec::new();
+    for &(_, s, t, a, on) in routes {
+        if !on || s == 0 || target_index(t, fx) != Some(i) {
+            continue;
         }
-        p::LFO_RATE => sp.lfo.rate_hz,
-        p::LFO_PITCH => sp.lfo.to_pitch_cents,
-        p::LFO_CUTOFF => sp.lfo.to_cutoff_oct,
-        p::LFO_AMP => sp.lfo.to_amp,
-        p::GLIDE => sp.voice.glide,
-        p::UNISON_DETUNE => sp.voice.unison_detune_cents,
-        p::OUTPUT => sp.output,
-        p::POLYPHONY => sp.voice.polyphony as f32,
-        p::UNISON => sp.voice.unison as f32,
-        _ => 0.0,
-    }
-}
-
-/// Set a parameter (clamped to its documented range, lightly rounded).
-pub fn set(sp: &mut SynthParams, id: usize, v: f32) {
-    let df = def(id);
-    let mut v = if v.is_finite() { v.clamp(df.lo, df.hi) } else { get(sp, id) };
-    v = match df.fmt {
-        _ if df.int => v.round(),
-        Fmt::Hz => (v * 100.0).round() / 100.0,
-        Fmt::Cents | Fmt::PlainCents => (v * 10.0).round() / 10.0,
-        Fmt::Time | Fmt::Glide => (v * 10_000.0).round() / 10_000.0,
-        _ => (v * 1000.0).round() / 1000.0,
-    }
-    .clamp(df.lo, df.hi);
-    match id {
-        p::OSC1_SHAPE => sp.osc[0].shape = v,
-        p::OSC1_FINE => sp.osc[0].fine_cents = v,
-        p::OSC1_LEVEL => sp.osc[0].level = v,
-        p::CROSS_FM => sp.cross_fm = v,
-        p::OSC2_SHAPE => sp.osc[1].shape = v,
-        p::OSC2_FINE => sp.osc[1].fine_cents = v,
-        p::OSC2_LEVEL => sp.osc[1].level = v,
-        p::SUB_LEVEL => sp.sub_level = v,
-        p::NOISE_LEVEL => sp.noise_level = v,
-        p::CUTOFF => sp.filter.cutoff_hz = v,
-        p::RESONANCE => sp.filter.resonance = v,
-        p::KEY_TRACK => sp.filter.key_track = v,
-        p::ENV_AMOUNT => sp.filter.env_amount = v,
-        p::AMP_A..=p::FLT_R => {
-            let e = if id <= p::AMP_R { &mut sp.amp_env } else { &mut sp.filter_env };
-            match (id - p::AMP_A) % 4 {
-                0 => e.attack = v,
-                1 => e.decay = v,
-                2 => e.sustain = v,
-                _ => e.release = v,
-            }
-        }
-        p::LFO_RATE => sp.lfo.rate_hz = v,
-        p::LFO_PITCH => sp.lfo.to_pitch_cents = v,
-        p::LFO_CUTOFF => sp.lfo.to_cutoff_oct = v,
-        p::LFO_AMP => sp.lfo.to_amp = v,
-        p::GLIDE => sp.voice.glide = v,
-        p::UNISON_DETUNE => sp.voice.unison_detune_cents = v,
-        p::OUTPUT => sp.output = v,
-        p::POLYPHONY => sp.voice.polyphony = v as u8,
-        p::UNISON => sp.voice.unison = v as u8,
-        _ => {}
-    }
-}
-
-/// Control position 0..1 for a value.
-pub fn to_norm(id: usize, v: f32) -> f32 {
-    let df = def(id);
-    let n = match df.taper {
-        Taper::Lin => (v - df.lo) / (df.hi - df.lo),
-        Taper::Log => (v / df.lo).ln() / (df.hi / df.lo).ln(),
-        Taper::Sq => ((v - df.lo) / (df.hi - df.lo)).max(0.0).sqrt(),
-    };
-    n.clamp(0.0, 1.0)
-}
-
-/// Value for a control position 0..1.
-pub fn from_norm(id: usize, n: f32) -> f32 {
-    let df = def(id);
-    let n = n.clamp(0.0, 1.0);
-    match df.taper {
-        Taper::Lin => df.lo + (df.hi - df.lo) * n,
-        Taper::Log => df.lo * (df.hi / df.lo).powf(n),
-        Taper::Sq => df.lo + (df.hi - df.lo) * n * n,
-    }
-}
-
-fn signed(v: f32, decimals: usize, unit: &str) -> String {
-    let s = format!("{:.*}", decimals, v.abs());
-    let zero = s.chars().all(|c| c == '0' || c == '.');
-    if zero {
-        format!("{s}{unit}")
-    } else if v < 0.0 {
-        format!("−{s}{unit}")
-    } else {
-        format!("+{s}{unit}")
-    }
-}
-
-fn fmt_time(s: f32) -> String {
-    if s < 0.01 {
-        format!("{:.1} ms", s * 1000.0)
-    } else if s < 1.0 {
-        format!("{:.0} ms", s * 1000.0)
-    } else {
-        format!("{s:.2} s")
-    }
-}
-
-/// Readout text with units.
-pub fn fmt(id: usize, v: f32) -> String {
-    match def(id).fmt {
-        Fmt::Pct => format!("{:.0}%", v * 100.0),
-        Fmt::SignedPct => signed(v * 100.0, 0, "%"),
-        Fmt::Cents => signed(v, 0, " ct"),
-        Fmt::PlainCents => format!("{v:.0} ct"),
-        Fmt::Hz if v >= 10_000.0 => format!("{:.1} kHz", v / 1000.0),
-        Fmt::Hz if v >= 1000.0 => format!("{:.2} kHz", v / 1000.0),
-        Fmt::Hz if v >= 100.0 => format!("{v:.0} Hz"),
-        Fmt::Hz if v >= 1.0 => format!("{v:.1} Hz"),
-        Fmt::Hz => format!("{v:.2} Hz"),
-        Fmt::Time => fmt_time(v),
-        Fmt::Glide if v <= 0.0 => "Off".into(),
-        Fmt::Glide => fmt_time(v),
-        Fmt::Oct => format!("{v:.2} oct"),
-        Fmt::Db if v <= 1e-4 => "−∞ dB".into(),
-        Fmt::Db => signed(20.0 * v.log10(), 1, " dB"),
-        Fmt::Voices if v as u8 == 1 => "Mono".into(),
-        Fmt::Voices => format!("{} voices", v as u8),
-        Fmt::Unison => format!("{}×", v as u8),
-    }
-}
-
-// ------------------------------------------------------------------ dropdowns
-
-const WAVES: [Waveform; 4] = [Waveform::Saw, Waveform::Square, Waveform::Triangle, Waveform::Sine];
-const MODES: [FilterMode; 3] = [FilterMode::LowPass, FilterMode::HighPass, FilterMode::BandPass];
-
-pub fn wave_name(w: Waveform) -> &'static str {
-    match w {
-        Waveform::Saw => "Saw",
-        Waveform::Square => "Square",
-        Waveform::Triangle => "Triangle",
-        Waveform::Sine => "Sine",
-    }
-}
-
-fn mode_name(m: FilterMode) -> &'static str {
-    match m {
-        FilterMode::LowPass => "Low-pass",
-        FilterMode::HighPass => "High-pass",
-        FilterMode::BandPass => "Band-pass",
-    }
-}
-
-fn oct_text(o: i32) -> String {
-    if o == 0 { "0".into() } else { signed(o as f32, 0, "") }
-}
-
-fn semi_text(s: i32) -> String {
-    signed(s as f32, 0, " st")
-}
-
-/// Options of a dropdown and the selected index.
-pub fn choice_options(sp: &SynthParams, id: usize) -> (Vec<String>, usize) {
-    let waves = || WAVES.iter().map(|w| wave_name(*w).to_string()).collect::<Vec<_>>();
-    let pos = |w: Waveform| WAVES.iter().position(|x| *x == w).unwrap_or(0);
-    match id {
-        ch::OSC1_WAVE | ch::OSC2_WAVE => (waves(), pos(sp.osc[(id == ch::OSC2_WAVE) as usize].wave)),
-        ch::OSC1_OCT | ch::OSC2_OCT => ((-3..=3).map(oct_text).collect(), (sp.osc[(id == ch::OSC2_OCT) as usize].octave + 3) as usize),
-        ch::OSC1_SEMI | ch::OSC2_SEMI => ((-12..=12).map(semi_text).collect(), (sp.osc[(id == ch::OSC2_SEMI) as usize].semitones + 12) as usize),
-        ch::FILTER_MODE => (MODES.iter().map(|m| mode_name(*m).to_string()).collect(), MODES.iter().position(|m| *m == sp.filter.mode).unwrap_or(0)),
-        ch::LFO_WAVE => (waves(), pos(sp.lfo.wave)),
-        _ => (Vec::new(), 0),
-    }
-}
-
-pub fn set_choice(sp: &mut SynthParams, id: usize, index: usize) {
-    let k = matches!(id, ch::OSC2_WAVE | ch::OSC2_OCT | ch::OSC2_SEMI) as usize;
-    match id {
-        ch::OSC1_WAVE | ch::OSC2_WAVE => sp.osc[k].wave = WAVES[index.min(3)],
-        ch::OSC1_OCT | ch::OSC2_OCT => sp.osc[k].octave = (index.min(6) as i8) - 3,
-        ch::OSC1_SEMI | ch::OSC2_SEMI => sp.osc[k].semitones = (index.min(24) as i8) - 12,
-        ch::FILTER_MODE => sp.filter.mode = MODES[index.min(2)],
-        ch::LFO_WAVE => sp.lfo.wave = WAVES[index.min(3)],
-        _ => {}
-    }
-}
-
-// ------------------------------------------------------------------ displays
-
-fn saw(t: f32) -> f32 {
-    2.0 * t - 1.0
-}
-
-/// Triangle aligned with the sine (peak at 0.25, trough at 0.75).
-fn tri(t: f32) -> f32 {
-    if t < 0.25 {
-        4.0 * t
-    } else if t < 0.75 {
-        2.0 - 4.0 * t
-    } else {
-        4.0 * t - 4.0
-    }
-}
-
-fn sin_turns(a: f32) -> f32 {
-    (2.0 * PI * a).sin()
-}
-
-/// One oscillator sample for phase `ph` in [0, 1), mirroring the naive
-/// (non-band-limited) shapes of the engine's synth (`engine/src/synth.cpp`,
-/// `osc_sample` / `shape`): Saw and Triangle crossfade toward each other by
-/// `shape`; Square is a pulse of width 50% → 5% (drawn without the engine's DC
-/// correction so it stays inside the display); Sine wavefolds with a fold
-/// gain of 5 × shape.
-pub fn osc_sample(w: Waveform, shape: f32, ph: f32) -> f32 {
-    let t = ph.rem_euclid(1.0);
-    let sh = shape.clamp(0.0, 1.0);
-    match w {
-        Waveform::Saw => saw(t) + sh * (tri(t) - saw(t)),
-        Waveform::Triangle => tri(t) + sh * (saw(t) - tri(t)),
-        Waveform::Square => {
-            if t < 0.5 - 0.45 * sh { 1.0 } else { -1.0 }
-        }
-        Waveform::Sine => {
-            let fold = 5.0 * sh;
-            let y = sin_turns(t);
-            if fold <= 1e-4 {
-                y
+        let depth = sv::TARGET_DEPTH[t];
+        // Offset in the normalized domain: octaves on log targets, the plain range otherwise.
+        let off = |x: f32| -> f32 {
+            if depth == 1.0 || p.min <= 0.0 {
+                let span = if depth == 1.0 { 1.0 } else { depth / (p.max - p.min) };
+                x * span
             } else {
-                let norm = if fold < 1.0 { 1.0 / sin_turns(0.25 * fold) } else { 1.0 };
-                sin_turns(0.25 * fold * y) * norm
+                p.to_normalized((v[i] * 2f32.powf(x * depth)).clamp(p.min, p.max)) - base
             }
+        };
+        let (d0, d1) = if sv::bipolar_source(s) { (off(-a.abs()), off(a.abs())) } else { (0.0, off(a)) };
+        out.push((SOURCE_COLORS[s.min(9)], (base + d0.min(d1)).clamp(0.0, 1.0), (base + d0.max(d1)).clamp(0.0, 1.0)));
+    }
+    for &(_, _, t, from, to) in maps {
+        if t == i {
+            out.push((MACRO_COLOR, from.min(to), from.max(to)));
         }
+    }
+    out.truncate(sv::MAX_SOURCES_PER_TARGET);
+    out
+}
+
+/// Ring of a modulation range around a dial (knob-local coordinates, centre
+/// (30, 19)), radius r.
+fn knob_arc(lo: f32, hi: f32, r: f32) -> String {
+    let pt = |n: f32| {
+        let a = (-135.0 + 270.0 * n).to_radians();
+        (30.0 + r * a.sin(), 19.0 - r * a.cos())
+    };
+    let hi = if hi - lo < 0.01 { lo + 0.01 } else { hi };
+    let (p0, p1) = (pt(lo), pt(hi));
+    let large = (hi - lo) * 270.0 > 180.0;
+    format!("M{:.2} {:.2} A{r} {r} 0 {} 1 {:.2} {:.2}", p0.0, p0.1, large as u8, p1.0, p1.1)
+}
+
+/// Page a parameter is shown on (mapping groups, "show" menu rows).
+fn page_of(id: &str) -> usize {
+    if id.starts_with("osc") || id == "cross_fm" {
+        page::OSC
+    } else if id.starts_with("sub_") || id.starts_with("noise_") {
+        page::SUB_NOISE
+    } else if ["filter_type", "cutoff", "resonance", "filter_drive", "high_pass", "key_track", "filter_env", "filter_velocity"].contains(&id) {
+        page::FILTER
+    } else if id.starts_with("amp_") || id.starts_with("env2_") || id == "volume" {
+        page::ENV
+    } else if id.starts_with("lfo") {
+        page::LFO
+    } else if id.starts_with("fx") {
+        page::EFFECTS
+    } else if id.starts_with("macro") || id.starts_with("map") {
+        page::MACROS
+    } else if id.starts_with("mod") && id != "mod_wheel" {
+        page::MODULATION
+    } else {
+        page::VOICE
     }
 }
 
-/// LFO shapes as in the engine (`lfo_value`): Saw rises through 0 at phase 0.
-pub fn lfo_sample(w: Waveform, ph: f32) -> f32 {
-    let p = ph.rem_euclid(1.0);
-    match w {
-        Waveform::Square => {
-            if p < 0.5 { 1.0 } else { -1.0 }
-        }
-        Waveform::Triangle => tri(p),
-        Waveform::Saw => {
-            if p < 0.5 { 2.0 * p } else { 2.0 * p - 2.0 }
-        }
-        Waveform::Sine => sin_turns(p),
+/// Mapping list group of a parameter: the effect slot for FX settings, else its page.
+fn group_of(id: &str) -> String {
+    match page_of(id) {
+        page::EFFECTS => format!("Effect {}", &id[2..3]),
+        page::SUB_NOISE => if id.starts_with("sub") { "Sub".into() } else { "Noise".into() },
+        page::ENV => if id.starts_with("env2") { "Env 2".into() } else { "Amp Envelope".into() },
+        p => PAGES[p].trim_end_matches('s').to_string(),
     }
 }
+
+/// Target menu groups (MOD_TARGETS indices).
+const TARGET_GROUPS: [(&str, &[usize]); 7] = [
+    ("Pitch", &[1, 2, 3]),
+    ("Oscillators", &[4, 5, 6, 7, 8, 9, 10]),
+    ("Filter", &[11, 12, 13, 14]),
+    ("Amp", &[15, 16]),
+    ("Voice", &[17]),
+    ("LFOs", &[18, 19, 20, 21]),
+    ("Effects", &[22, 23, 24, 25, 26, 27, 28, 29]),
+];
+
+/// Default amount of a new route by target.
+fn default_amount(t: usize) -> f32 {
+    match t {
+        1..=3 => 0.0125,
+        11 | 14 | 18 | 19 => 0.25,
+        _ => 0.3,
+    }
+}
+
+/// Macro name list groups (indices into the name choices; 0 is "Macro n").
+const NAME_GROUPS: [(&str, &[&str]); 5] = [
+    ("Tone", &["Brightness", "Tone", "Color", "Air", "Edge", "Focus", "Warmth", "Body"]),
+    ("Character", &["Bite", "Grit", "Drive", "Dirt", "Fizz", "Growl", "Squelch", "Character", "Texture", "Thickness", "Tension"]),
+    ("Motion", &["Movement", "Wobble", "Sweep", "Motion", "Speed", "Vibrato", "Detune", "Glide", "Pitch"]),
+    ("Space", &["Width", "Space", "Spread", "Shimmer", "Depth", "Wet", "Bloom"]),
+    ("Envelope", &["Swell", "Punch", "Attack", "Release", "Decay"]),
+];
+
+// ------------------------------------------------------------------ pictures
 
 fn path(points: &[(f32, f32)]) -> String {
-    let mut s = String::with_capacity(points.len() * 13);
+    let mut s = String::with_capacity(points.len() * 14);
     for (i, (x, y)) in points.iter().enumerate() {
         s.push_str(if i == 0 { "M" } else { " L" });
         s.push_str(&format!("{x:.2} {y:.2}"));
@@ -443,193 +367,1545 @@ fn path(points: &[(f32, f32)]) -> String {
     if s.is_empty() { "M0 0".into() } else { s }
 }
 
-/// Line plus a fill closed to the horizontal line `base_y`.
-fn line_and_fill(points: Vec<(f32, f32)>, base_y: f32) -> SynthDisplay {
-    let line = path(&points);
-    let mut fill = points.clone();
+/// Small circles (handles) at the given points.
+fn circles(points: &[(f32, f32)], r: f32) -> String {
+    let mut s = String::new();
+    for (x, y) in points {
+        s.push_str(&format!("M{:.2} {y:.2} a{r} {r} 0 1 0 {:.2} 0 a{r} {r} 0 1 0 {:.2} 0 ", x - r, 2.0 * r, -2.0 * r));
+    }
+    if s.is_empty() { "M0 0".into() } else { s }
+}
+
+fn display(points: &[(f32, f32)], base_y: f32) -> SynthDisplay {
+    let mut fill = points.to_vec();
     if let (Some(first), Some(last)) = (points.first(), points.last()) {
         fill.push((last.0, base_y));
         fill.push((first.0, base_y));
     }
     let mut f = path(&fill);
     f.push_str(" Z");
-    SynthDisplay { line: line.into(), fill: f.into() }
+    SynthDisplay { line: path(points).into(), fill: f.into(), ghost: "M0 0".into(), dots: "M0 0".into(), grid: "M0 0".into(), dim: false }
 }
 
-/// `cycles` periods of `f(phase)` (−1..1) at `amp` (fraction of the half height).
-fn wave_display(cycles: f32, amp: f32, f: impl Fn(f32) -> f32) -> SynthDisplay {
-    let (w, h) = (DISP_W, DISP_H);
+fn label(slot: usize, x: f32, y: f32, text: impl Into<String>, align: i32) -> SynthLabel {
+    SynthLabel { slot: slot as i32, x, y, text: text.into().into(), align, accent: false }
+}
+
+fn saw(t: f32) -> f32 {
+    2.0 * t - 1.0
+}
+
+fn sin_t(t: f32) -> f32 {
+    (2.0 * PI * t).sin()
+}
+
+/// One oscillator sample of the drawing model (phase in turns); pm in turns.
+pub fn osc_sample(wave: usize, shape: f32, ph: f32, pm: f32) -> f32 {
+    let t = (ph + pm).rem_euclid(1.0);
+    let sh = shape.clamp(0.0, 1.0);
+    match wave {
+        0 => sin_t(t + 0.18 * sh * sin_t(t)),
+        1 => {
+            let k = 0.5 + 0.47 * sh;
+            let u = (t + 0.25 * k / 0.5).rem_euclid(1.0);
+            if u < k { -1.0 + 2.0 * u / k } else { 1.0 - 2.0 * (u - k) / (1.0 - k) }
+        }
+        2 => {
+            let mix = 0.7 * sh;
+            (saw(t) + mix * (saw((t + 0.37).rem_euclid(1.0)) + saw((t + 0.71).rem_euclid(1.0)))) / (1.0 + 1.1 * mix)
+        }
+        3 => {
+            let w = 0.5 - 0.45 * sh;
+            ((if t < w { 1.0 } else { -1.0 }) - (2.0 * w - 1.0)) / (2.0 - 2.0 * w)
+        }
+        4 => saw((t * 2f32.powf(3.0 * sh)).rem_euclid(1.0)),
+        _ => {
+            let b = 0.35 * sh;
+            let mut y = sin_t(t);
+            for _ in 0..4 {
+                y = sin_t(t + b * y);
+            }
+            y
+        }
+    }
+}
+
+fn wave_points(w: f32, h: f32, cycles: f32, amp: f32, f: impl Fn(f32) -> f32) -> Vec<(f32, f32)> {
     let mid = h / 2.0;
     let n = (w * 2.0) as usize;
-    let pts = (0..=n)
-        .map(|i| {
-            let x = i as f32 / n as f32 * w;
-            (x, mid - f(i as f32 / n as f32 * cycles) * amp * mid * 0.8)
-        })
-        .collect();
-    line_and_fill(pts, mid)
+    (0..=n).map(|i| (i as f32 / n as f32 * w, mid - f(i as f32 / n as f32 * cycles).clamp(-1.2, 1.2) * amp * mid * 0.8)).collect()
 }
 
-/// Analog-prototype magnitude (dB) of the engine's 2-pole state-variable filter
-/// at `f` Hz (Q = 0.707 · (25 / 0.707)^resonance as in `engine/src/synth.cpp`;
-/// band-pass normalised to 0 dB at the cutoff). Key tracking, envelope and LFO
-/// are not drawn (the curve is at C4 with everything at rest).
-pub fn svf_db(mode: FilterMode, cutoff: f32, resonance: f32, f: f32) -> f32 {
-    const BUTTERWORTH_Q: f32 = std::f32::consts::FRAC_1_SQRT_2;
-    let q = BUTTERWORTH_Q * (25.0 / BUTTERWORTH_Q).powf(resonance.clamp(0.0, 1.0));
-    let w = f / cutoff;
-    let den = ((1.0 - w * w).powi(2) + (w / q).powi(2)).sqrt().max(1e-9);
-    let num = match mode {
-        FilterMode::LowPass => 1.0,
-        FilterMode::HighPass => w * w,
-        FilterMode::BandPass => w / q,
+fn osc_display(v: &[f32], k: usize) -> SynthDisplay {
+    let o = |id: &str| v[ix(&format!("osc{}_{id}", k + 1))];
+    let (wave, shape, level) = (o("wave").round() as usize, o("shape"), o("level"));
+    let xfm = if k == 0 { v[ix("cross_fm")] } else { 0.0 };
+    let note = |n: usize| {
+        let p = |id: &str| v[ix(&format!("osc{n}_{id}"))];
+        12.0 * (p("octave") - 2.0) + p("semi") - 12.0 + p("fine") * 0.01
     };
-    20.0 * (num / den).max(1e-9).log10()
+    let ratio = 2f32.powf((note(2) - note(1)) / 12.0);
+    let (w2, s2) = (v[ix("osc2_wave")].round() as usize, v[ix("osc2_shape")]);
+    let mut d = display(
+        &wave_points(DISP_W, DISP_H, 2.0, 1.0, |ph| {
+            let pm = if xfm > 0.0 { xfm * xfm * 0.4 * osc_sample(w2, s2, ph * ratio, 0.0) } else { 0.0 };
+            osc_sample(wave, shape, ph, pm)
+        }),
+        DISP_H / 2.0,
+    );
+    d.dim = level <= 0.001;
+    d
 }
 
-/// Filter display dB range (top, bottom); x is log frequency 20 Hz .. 20 kHz.
-pub const FILTER_DB: (f32, f32) = (-42.0, 24.0);
+fn sub_display(v: &[f32]) -> SynthDisplay {
+    let wave = v[ix("sub_waveform")].round() as usize;
+    let h = v[ix("sub_shape")];
+    let tune = v[ix("sub_tune")] - 24.0;
+    let amp = 0.04 + 0.96 * v[ix("sub_level")];
+    let cycles = 4.0 * 2f32.powf(tune / 12.0);
+    display(
+        &wave_points(DISP_W, DISP_H, cycles, amp, |p| {
+            let t = p.rem_euclid(1.0);
+            let y = match wave {
+                1 => 1.0 - 4.0 * (t - 0.5).abs(),
+                2 => saw(t),
+                3 => if t < 0.5 { 1.0 } else { -1.0 },
+                _ => sin_t(t),
+            };
+            (y + h * (0.7 * sin_t(2.0 * t) + 0.45 * sin_t(3.0 * t))) / (1.0 + 0.6 * h)
+        }),
+        DISP_H / 2.0,
+    )
+}
 
-fn filter_display(sp: &SynthParams) -> SynthDisplay {
-    let n = (FILTER_W * 1.5) as usize;
-    let (lo, hi) = FILTER_DB;
-    let pts = (0..=n)
+/// Noise of a type through the colour tilt (drawing model, fixed seed).
+fn noise_trace(kind: usize, color: f32, seed: u32, n: usize) -> Vec<f32> {
+    let mut s = seed;
+    let mut rnd = || {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        s as f32 / u32::MAX as f32 * 2.0 - 1.0
+    };
+    let (mut b0, mut b1, mut b2, mut br, mut hold, mut crack, mut tone) = (0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    let a = if color <= 0.5 { 1.0 - (-2.0 * PI * 150.0 * 2f32.powf(color * 14.0) / 48_000.0).exp() } else { 1.0 - (-2.0 * PI * 30.0 * 2f32.powf((color - 0.5) * 14.0) / 48_000.0).exp() };
+    (0..n)
         .map(|i| {
-            let x = i as f32 / n as f32 * FILTER_W;
-            let f = 20.0 * 1000.0f32.powf(x / FILTER_W);
-            let db = svf_db(sp.filter.mode, sp.filter.cutoff_hz, sp.filter.resonance, f).clamp(lo - 2.0, hi);
-            (x, (hi - db) / (hi - lo) * DISP_H)
+            let w = rnd();
+            let x = match kind {
+                1 => {
+                    b0 = 0.99765 * b0 + w * 0.099046;
+                    b1 = 0.963 * b1 + w * 0.2965164;
+                    b2 = 0.57 * b2 + w * 1.0526913;
+                    (b0 + b1 + b2 + w * 0.1848) * 0.3
+                }
+                2 => {
+                    br = 0.97 * br + 0.25 * w;
+                    br
+                }
+                3 => w * (0.4 + 0.6 * sin_t(i as f32 / 160.0).abs()),
+                4 => {
+                    let sq = |f: f32| if (i as f32 * f / 4000.0).rem_euclid(1.0) < 0.5 { 1.0 } else { -1.0 };
+                    0.3 * (sq(410.6) * sq(608.8) + sq(739.2) * sq(1045.4) + sq(1080.0) * sq(1600.0))
+                }
+                5 => {
+                    if i % 6 == 0 {
+                        hold = w;
+                    }
+                    hold
+                }
+                6 => {
+                    if rnd() > 0.96 {
+                        crack = 1.4 * w;
+                    }
+                    let y = crack;
+                    crack *= 0.5;
+                    y
+                }
+                _ => w * 0.6,
+            };
+            tone += a * (x - tone);
+            if color <= 0.5 { tone } else { (x - tone) * (1.0 + 2.0 * (color - 0.5)) }
         })
-        .collect();
-    line_and_fill(pts, DISP_H + 2.0)
+        .collect()
 }
 
-/// Envelope display: segment widths grow logarithmically with time, the
-/// sustain plateau has a fixed width.
-fn env_display(e: &Adsr) -> SynthDisplay {
-    let seg = |t: f32| DISP_W * 0.25 * (1.0 + t / 0.001).log10() / (20_001.0f32).log10();
-    let (top, bot) = (DISP_H * 0.1, DISP_H * 0.94);
-    let y = |v: f32| bot - v * (bot - top);
-    let (wa, wd, wr) = (seg(e.attack), seg(e.decay), seg(e.release));
-    let hold = DISP_W * 0.2;
-    let mut pts = vec![(0.0, y(0.0))];
-    let steps = 40;
-    for i in 1..=steps {
-        let u = i as f32 / steps as f32;
-        pts.push((wa * u, y(u)));
-    }
-    let x0 = wa;
-    for i in 1..=steps {
-        let u = i as f32 / steps as f32;
-        let v = e.sustain + (1.0 - e.sustain) * ((-5.0 * u).exp() - (-5.0f32).exp() * u);
-        pts.push((x0 + wd * u, y(v)));
-    }
-    let x1 = x0 + wd + hold;
-    pts.push((x1, y(e.sustain)));
-    for i in 1..=steps {
-        let u = i as f32 / steps as f32;
-        let v = e.sustain * ((-5.0 * u).exp() - (-5.0f32).exp() * u);
-        pts.push((x1 + wr * u, y(v)));
-    }
-    pts.push((DISP_W, y(0.0)));
-    line_and_fill(pts, bot)
-}
-
-/// Deterministic white-noise picture (same every frame), scaled by the level.
-fn noise_display(level: f32) -> SynthDisplay {
-    let mut s: u32 = 0x9e37_79b9;
+fn noise_display(v: &[f32]) -> SynthDisplay {
+    let kind = v[ix("noise_type")].round() as usize;
+    let color = v[ix("noise_color")];
+    let amp = 0.04 + 0.96 * v[ix("noise_level")];
+    let n = WIDE_W as usize;
     let mid = DISP_H / 2.0;
-    let n = (DISP_W / 1.5) as usize;
-    let pts = (0..=n)
+    let to_pts = |tr: Vec<f32>| -> Vec<(f32, f32)> { tr.iter().enumerate().map(|(i, y)| (i as f32 * DISP_W / n as f32, mid - y.clamp(-1.0, 1.0) * amp * mid * 0.8)).collect() };
+    let a = noise_trace(kind, color, 0x9e37_79b9, n);
+    let mut d = display(&to_pts(a.clone()), mid);
+    let width = v[ix("noise_width")];
+    if width > 0.0 {
+        let b = noise_trace(kind, color, 0x2545_f491, n);
+        d.ghost = path(&to_pts(a.iter().zip(&b).map(|(x, y)| x + width * (y - x)).collect())).into();
+    }
+    d
+}
+
+/// Filter magnitude (dB) of the drawing model: LP24 = four one-poles with
+/// resonance feedback, the others second order with damping 2 - 1.94 r;
+/// times the one-pole high-pass.
+pub fn filter_db(kind: usize, cutoff: f32, res: f32, hp: f32, f: f32) -> f32 {
+    use cplx::C;
+    let s = C(0.0, f / cutoff);
+    let one = C(1.0, 0.0);
+    let h = if kind == 0 {
+        let k = 4.0 * res.clamp(0.0, 1.0);
+        let p = (one + s) * (one + s) * (one + s) * (one + s);
+        C(1.0 + k, 0.0) / (p + C(k, 0.0))
+    } else {
+        let d = (2.0 - 1.94 * res.clamp(0.0, 1.0)).max(0.06);
+        let den = s * s + C(d, 0.0) * s + one;
+        let num = match kind {
+            1 => one,
+            2 => C(d, 0.0) * s,
+            3 => s * s,
+            _ => s * s + one,
+        };
+        num / den
+    };
+    let sh = C(0.0, f / hp.max(1.0));
+    let hpf = if hp > 10.5 { sh / (sh + one) } else { one };
+    20.0 * (h * hpf).abs().max(1e-9).log10()
+}
+
+/// Minimal complex arithmetic for the response plots.
+mod cplx {
+    #[derive(Clone, Copy)]
+    pub struct C(pub f32, pub f32);
+    impl std::ops::Add for C {
+        type Output = C;
+        fn add(self, o: C) -> C {
+            C(self.0 + o.0, self.1 + o.1)
+        }
+    }
+    impl std::ops::Mul for C {
+        type Output = C;
+        fn mul(self, o: C) -> C {
+            C(self.0 * o.0 - self.1 * o.1, self.0 * o.1 + self.1 * o.0)
+        }
+    }
+    impl std::ops::Div for C {
+        type Output = C;
+        fn div(self, o: C) -> C {
+            let d = (o.0 * o.0 + o.1 * o.1).max(1e-30);
+            C((self.0 * o.0 + self.1 * o.1) / d, (self.1 * o.0 - self.0 * o.1) / d)
+        }
+    }
+    impl C {
+        pub fn abs(self) -> f32 {
+            (self.0 * self.0 + self.1 * self.1).sqrt()
+        }
+    }
+}
+
+pub const FILTER_DB: (f32, f32) = (-48.0, 24.0);
+
+fn freq_x(f: f32, w: f32) -> f32 {
+    (f / 20.0).log10() / 3.0 * w
+}
+
+fn filter_display(v: &[f32], labels: &mut Vec<SynthLabel>) -> SynthDisplay {
+    let (kind, fc, res, hp) = (v[ix("filter_type")].round() as usize, v[ix("cutoff")], v[ix("resonance")], v[ix("high_pass")]);
+    let (lo, hi) = FILTER_DB;
+    let y = |db: f32| (hi - db.clamp(lo - 4.0, hi)) / (hi - lo) * DISP_H;
+    let n = (WIDE_W * 1.5) as usize;
+    let pts: Vec<(f32, f32)> = (0..=n)
         .map(|i| {
-            s ^= s << 13;
-            s ^= s >> 17;
-            s ^= s << 5;
-            let r = (s as f32 / u32::MAX as f32) * 2.0 - 1.0;
-            (i as f32 * 1.5, mid - r * level * mid * 0.8)
+            let x = i as f32 / n as f32 * WIDE_W;
+            (x, y(filter_db(kind, fc, res, hp, 20.0 * 1000f32.powf(x / WIDE_W))))
         })
         .collect();
-    line_and_fill(pts, mid)
-}
-
-/// All display paths for a parameter set.
-pub fn displays(sp: &SynthParams) -> Vec<SynthDisplay> {
-    let mut v = vec![SynthDisplay::default(); disp::COUNT];
-    for k in 0..2 {
-        let o = sp.osc[k];
-        // Each picture starts at a natural point of the cycle: the triangle at its trough,
-        // the others at phase 0 (saw/pulse edge, sine zero crossing).
-        let start = if o.wave == Waveform::Triangle { 0.75 } else { 0.0 };
-        v[disp::OSC1 + k] = wave_display(2.0, o.level, |ph| osc_sample(o.wave, o.shape, ph + start));
+    let mut d = display(&pts, DISP_H + 2.0);
+    let mut handles = vec![(freq_x(fc, WIDE_W), y(filter_db(kind, fc, res, hp, fc)))];
+    if hp > 10.5 {
+        handles.push((freq_x(hp, WIDE_W), DISP_H - 7.0));
     }
-    v[disp::SUB] = wave_display(1.0, sp.sub_level, |ph| (2.0 * PI * ph).sin());
-    v[disp::NOISE] = noise_display(sp.noise_level);
-    v[disp::FILTER] = filter_display(sp);
-    v[disp::AMP_ENV] = env_display(&sp.amp_env);
-    v[disp::FLT_ENV] = env_display(&sp.filter_env);
-    // LFO: one second of modulation.
-    let l = sp.lfo;
-    v[disp::LFO] = wave_display(l.rate_hz, 1.0, |ph| lfo_sample(l.wave, ph));
-    v
+    d.dots = circles(&handles, 3.0).into();
+    let mut grid = String::new();
+    for db in [12.0, 0.0, -24.0] {
+        grid.push_str(&format!("M0 {:.2} L{WIDE_W} {:.2} ", y(db), y(db)));
+    }
+    for f in [100.0, 1000.0, 10_000.0] {
+        let x = freq_x(f, WIDE_W);
+        grid.push_str(&format!("M{x:.2} 0 L{x:.2} {DISP_H} "));
+    }
+    d.grid = grid.into();
+    let s = disp::FILTER;
+    for (db, t) in [(12.0, "+12"), (0.0, "0"), (-24.0, "−24")] {
+        labels.push(label(s, 4.0, y(db) - 7.0, t, 0));
+    }
+    for (f, t) in [(20.0, "Hz"), (100.0, "100"), (1000.0, "1k"), (10_000.0, "10k")] {
+        labels.push(label(s, freq_x(f, WIDE_W) + 4.0, DISP_H - 14.0, t, 0));
+    }
+    d
 }
 
-// ------------------------------------------------------------------ controller glue
-
-/// What a synth popup list is for.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum MenuTarget {
-    Presets,
-    Choice(usize),
+/// ADSR level at time t (s) with the key released at off (drawing model of
+/// the engine envelope: convex attack, -60 dB decay / release times).
+fn adsr(a: f32, d: f32, s: f32, r: f32, off: f32, t: f32) -> f32 {
+    let att = |t: f32| (1.3 * (1.0 - (-t / (a.max(1e-4) / (1.3f32 / 0.3).ln())).exp())).min(1.0);
+    let held = |t: f32| if t < a { att(t) } else { s + (1.0 - s) * (-(t - a) * 6.9 / d.max(1e-3)).exp() };
+    if t < off { held(t) } else { held(off) * (-(t - off) * 6.9 / r.max(1e-3)).exp() }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct SynthMenu {
-    pub target: MenuTarget,
-    /// Window position of the list's top-left corner and its width.
-    pub pos: (f32, f32),
-    pub w: f32,
+/// Time span of an envelope picture: the smallest of 2, 4, 10, 20, 50 x a
+/// decade in which attack + decay + release fit in 85%.
+fn env_span(total: f32) -> f32 {
+    for decade in [0.01f32, 0.1, 1.0, 10.0] {
+        for m in [2.0f32, 4.0, 10.0, 20.0, 50.0] {
+            if total <= 0.85 * m * decade {
+                return m * decade;
+            }
+        }
+    }
+    500.0
 }
 
-#[derive(Debug, Default)]
-pub struct SynthUi {
-    pub page: usize,
-    /// Parameters being dragged (previewed in the engine, not yet a command).
-    pub pending: Option<(TrackId, SynthParams)>,
-    pub menu: Option<SynthMenu>,
-    /// Last values pushed to Slint (avoid rebuilding the paths every frame).
-    pushed: Option<SynthParams>,
+fn fmt_secs(t: f32) -> String {
+    if t == 0.0 {
+        "0".into()
+    } else if t < 1.0 {
+        format!("{:.0} ms", t * 1000.0)
+    } else if t.fract().abs() < 1e-3 {
+        format!("{t:.0} s")
+    } else {
+        format!("{t:.1} s")
+    }
 }
 
-pub const MENU_ROW: f32 = 20.5;
-pub const MENU_PAD: f32 = 4.0;
+/// Time axis labels (at most 5 ticks); returns the tick grid lines.
+fn time_ticks(slot: usize, span: f32, w: f32, labels: &mut Vec<SynthLabel>, h: f32) -> String {
+    let step = [0.005f32, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0].into_iter().find(|s| span / s <= 5.0).unwrap_or(50.0);
+    let mut grid = String::new();
+    let mut t = 0.0;
+    while t < span * 0.96 {
+        let x = 8.0 + t / span * (w - 16.0);
+        labels.push(label(slot, x, h - 14.0, fmt_secs(t), 0));
+        if t > 0.0 {
+            grid.push_str(&format!("M{x:.2} 0 L{x:.2} {:.2} ", h - 16.0));
+        }
+        t += step;
+    }
+    if grid.is_empty() { "M0 0".into() } else { grid }
+}
+
+fn env_display(v: &[f32], pre: &str, slot: usize, w: f32, labels: &mut Vec<SynthLabel>) -> SynthDisplay {
+    let g = |k: &str| v[ix(&format!("{pre}{k}"))];
+    let (a, d, s, r) = (g("attack"), g("decay"), g("sustain"), g("release"));
+    let span = env_span(a + d + r);
+    let off = a + d + 0.15 * span;
+    let (x0, x1) = (8.0, w - 8.0);
+    let (top, bot) = (8.0, DISP_H - 22.0);
+    let x = |t: f32| x0 + t / span * (x1 - x0);
+    let y = |l: f32| bot - l * (bot - top);
+    let n = 240;
+    let pts: Vec<(f32, f32)> = (0..=n).map(|i| span * i as f32 / n as f32).map(|t| (x(t), y(adsr(a, d, s, r, off, t)))).collect();
+    let mut dsp = display(&pts, bot);
+    dsp.dots = circles(&[(x(a), y(1.0)), (x(a + d), y(adsr(a, d, s, r, off, a + d))), (x((off + r).min(span)), y(0.0))], 3.0).into();
+    dsp.ghost = format!("M{:.2} {top} L{:.2} {bot}", x(off), x(off)).into();
+    dsp.grid = time_ticks(slot, span, w, labels, DISP_H).into();
+    dsp
+}
+
+/// LFO cycle length in seconds (synced: the note value at the project tempo).
+fn lfo_period(v: &[f32], k: usize, bpm: f32) -> f32 {
+    let p = |id: &str| v[ix(&format!("lfo{k}_{id}"))];
+    if p("sync") >= 0.5 {
+        const BEATS: [f32; 17] = [32.0, 16.0, 8.0, 4.0, 3.0, 2.0, 4.0 / 3.0, 1.5, 1.0, 2.0 / 3.0, 0.75, 0.5, 1.0 / 3.0, 0.375, 0.25, 1.0 / 6.0, 0.125];
+        BEATS[(p("note").round() as usize).min(16)] * 60.0 / bpm.max(1.0)
+    } else {
+        1.0 / p("rate").max(1e-3)
+    }
+}
+
+/// LFO shape of the drawing model; random shapes step through a fixed
+/// pseudo-random sequence.
+pub fn lfo_value(shape: usize, ph: f32) -> f32 {
+    let t = ph.rem_euclid(1.0);
+    let rnd = |i: i64| -> f32 {
+        let mut s = (i as u32).wrapping_mul(2_654_435_761).wrapping_add(0x6d2b_79f5);
+        s ^= s >> 15;
+        s = s.wrapping_mul(0x2c1b_3c6d);
+        s ^= s >> 12;
+        s as f32 / u32::MAX as f32 * 2.0 - 1.0
+    };
+    match shape {
+        1 => if t < 0.25 { 4.0 * t } else if t < 0.75 { 2.0 - 4.0 * t } else { 4.0 * t - 4.0 },
+        2 => 2.0 * t - 1.0,
+        3 => 1.0 - 2.0 * t,
+        4 => if t < 0.5 { 1.0 } else { -1.0 },
+        5 => rnd(ph.floor() as i64),
+        6 => {
+            let (a, b) = (rnd(ph.floor() as i64), rnd(ph.floor() as i64 + 1));
+            a + (b - a) * (0.5 - 0.5 * (PI * t).cos())
+        }
+        _ => sin_t(t),
+    }
+}
+
+fn lfo_display(v: &[f32], k: usize, bpm: f32, labels: &mut Vec<SynthLabel>) -> SynthDisplay {
+    let p = |id: &str| v[ix(&format!("lfo{k}_{id}"))];
+    let shape = p("shape").round() as usize;
+    let cycles = if shape >= 5 { 8.0 } else { 2.0 };
+    let span = lfo_period(v, k, bpm) * cycles;
+    let depth = p("depth").max(0.03);
+    let fade = p("fade");
+    let (x0, x1) = (8.0, WIDE_W - 8.0);
+    let mid = (DISP_H - 16.0) / 2.0;
+    let n = 300;
+    let pts: Vec<(f32, f32)> = (0..=n)
+        .map(|i| {
+            let u = i as f32 / n as f32;
+            let ramp = if fade > 0.0 { (u * span / fade).min(1.0) } else { 1.0 };
+            (x0 + u * (x1 - x0), mid - lfo_value(shape, u * cycles) * depth * ramp * (mid - 6.0))
+        })
+        .collect();
+    let slot = if k == 1 { disp::LFO1 } else { disp::LFO2 };
+    labels.push(label(slot, x0, DISP_H - 14.0, "0", 0));
+    labels.push(label(slot, WIDE_W / 2.0, DISP_H - 14.0, fmt_secs(span / 2.0), 1));
+    labels.push(label(slot, x1, DISP_H - 14.0, fmt_secs(span), 2));
+    let mut d = display(&pts, mid);
+    d.grid = format!("M{:.2} 0 L{:.2} {:.2} M0 {mid:.2} L{WIDE_W} {mid:.2}", WIDE_W / 2.0, WIDE_W / 2.0, DISP_H - 18.0).into();
+    d
+}
+
+/// Filter envelope over time: the cutoff (log Hz) of a middle note, with
+/// ghost curves for C2 and C6 (key tracking) and the velocity range.
+fn filter_mod_display(v: &[f32], labels: &mut Vec<SynthLabel>) -> SynthDisplay {
+    let g = |k: &str| v[ix(k)];
+    let (a, d, s, r) = (g("env2_attack"), g("env2_decay"), g("env2_sustain"), g("env2_release"));
+    let (amt, kt, vel, fc) = (g("filter_env"), g("key_track"), g("filter_velocity"), g("cutoff"));
+    let span = 2.0;
+    let off = span * 0.6;
+    // A 6.6 octave window around the cutoff (inside 20 Hz .. 20 kHz).
+    let hi = (fc.max(20.0).log2() + 3.2).clamp(4.33 + 6.6, 14.3);
+    let lo = hi - 6.6;
+    let (x0, x1) = (4.0, WIDE_W - 4.0);
+    let (top, bot) = (8.0, DISP_H - 22.0);
+    let x = |t: f32| x0 + t / span * (x1 - x0);
+    let y = |hz: f32| bot - ((hz.max(1.0).log2() - lo) / (hi - lo)).clamp(-0.02, 1.02) * (bot - top);
+    let curve = |note: f32, velocity: f32| -> Vec<(f32, f32)> {
+        let vs = 1.0 - vel * (1.0 - velocity);
+        (0..=200)
+            .map(|i| span * i as f32 / 200.0)
+            .map(|t| (x(t), y(fc * 2f32.powf(kt * (note - 60.0) / 12.0 + amt * vs * adsr(a, d, s, r, off, t) * 7.0))))
+            .collect()
+    };
+    let mut dsp = display(&curve(60.0, 1.0), bot);
+    let mut ghost = path(&curve(36.0, 1.0));
+    ghost.push(' ');
+    ghost.push_str(&path(&curve(84.0, 1.0)));
+    if vel > 0.0 {
+        ghost.push(' ');
+        ghost.push_str(&path(&curve(60.0, 0.0)));
+    }
+    dsp.ghost = ghost.into();
+    let peak = (x(a), y(fc * 2f32.powf(amt * 7.0)));
+    dsp.dots = circles(&[peak], 3.0).into();
+    let sl = disp::FILTER_MOD;
+    let mut hgrid = String::new();
+    for (hz, t) in [(10_000.0, "10k"), (5_000.0, "5k"), (2_000.0, "2k"), (1_000.0, "1k")] {
+        labels.push(label(sl, 6.0, y(hz) - 7.0, t, 0));
+        hgrid.push_str(&format!("M0 {:.2} L{WIDE_W} {:.2} ", y(hz), y(hz)));
+    }
+    let mut reach = label(sl, peak.0 + 8.0, (peak.1 - 14.0).max(0.0), format!("{}{:.1} oct", if amt < 0.0 { "−" } else { "+" }, (amt * 7.0).abs()), 0);
+    reach.accent = true;
+    labels.push(reach);
+    labels.push(label(sl, x(span * 0.5), y(fc * 2f32.powf(kt * 2.0 + amt * s * 7.0)) - 15.0, "C6", 0));
+    labels.push(label(sl, x(span * 0.5), y(fc * 2f32.powf(-kt * 2.0 + amt * s * 7.0)) + 2.0, "C2", 0));
+    dsp.grid = format!("{hgrid}{}", time_ticks(sl, span, WIDE_W, labels, DISP_H)).into();
+    dsp
+}
+
+fn glide_display(v: &[f32], labels: &mut Vec<SynthLabel>) -> SynthDisplay {
+    let glide = v[ix("glide")];
+    let bend = v[ix("bend_range")];
+    let (x0, x1) = (10.0, WIDE_W - 10.0);
+    let (hi_y, lo_y) = (40.0, 90.0);
+    // First note (grey) held under the second, which glides up from it.
+    let start = x0 + 0.4 * (x1 - x0);
+    let gw = glide / 2.0 * 0.5 * (x1 - x0);
+    let mut pts = Vec::new();
+    if gw > 0.0 {
+        for i in 0..=40 {
+            let u = i as f32 / 40.0;
+            let e = (1.0 - (-3.0 * u).exp()) / (1.0 - (-3.0f32).exp());
+            pts.push((start + u * gw, lo_y + (hi_y - lo_y) * e));
+        }
+    } else {
+        pts.push((start, hi_y));
+    }
+    pts.push((x1, hi_y));
+    let mut d = display(&pts, DISP_H);
+    d.fill = "M0 0".into();
+    let bh = bend / 24.0 * 34.0;
+    d.ghost = format!("M{:.2} {:.2} L{:.2} {:.2}", x1 - 2.0, hi_y - bh, x1 - 2.0, hi_y + bh).into();
+    d.grid = format!("M{x0:.2} {lo_y:.2} L{:.2} {lo_y:.2}", x0 + 0.6 * (x1 - x0)).into();
+    d.dots = circles(&[(start, if gw > 0.0 { lo_y } else { hi_y })], 3.0).into();
+    labels.push(label(disp::GLIDE, 8.0, 6.0, "Pitch", 0));
+    labels.push(label(disp::GLIDE, WIDE_W - 8.0, DISP_H - 16.0, "Time", 2));
+    d
+}
+
+fn unison_display(v: &[f32], labels: &mut Vec<SynthLabel>) -> SynthDisplay {
+    let n = v[ix("unison_voices")].round() as usize + 1;
+    let det = v[ix("unison_detune")];
+    let spread = v[ix("unison_spread")];
+    let (cx, cy) = (WIDE_W / 2.0, DISP_H / 2.0);
+    let mut stems = String::new();
+    let mut dots = Vec::new();
+    for u in 0..n {
+        let x = if n > 1 { 2.0 * u as f32 / (n - 1) as f32 - 1.0 } else { 0.0 };
+        let px = cx + x * det * det * 0.6 * (WIDE_W / 2.0 - 16.0);
+        let py = cy - x * spread * (cy - 18.0);
+        stems.push_str(&format!("M{px:.2} {cy:.2} L{px:.2} {py:.2} "));
+        dots.push((px, py));
+    }
+    let d = SynthDisplay { line: stems.into(), fill: "M0 0".into(), ghost: "M0 0".into(), dots: circles(&dots, 3.0).into(), grid: format!("M8 {cy:.2} L{:.2} {cy:.2} M{cx:.2} 6 L{cx:.2} {:.2}", WIDE_W - 8.0, DISP_H - 6.0).into(), dim: false };
+    let s = disp::UNISON;
+    labels.push(label(s, 10.0, cy - 16.0, "Flat", 0));
+    labels.push(label(s, WIDE_W - 10.0, cy - 16.0, "Sharp", 2));
+    labels.push(label(s, cx + 4.0, 2.0, "L", 0));
+    labels.push(label(s, cx + 4.0, DISP_H - 16.0, "R", 0));
+    d
+}
+
+// ------------------------------------------------------------------ effect pictures
+
+/// Effect setting of slot s (1..=4) by name.
+fn fxv(v: &[f32], s: usize, name: &str) -> f32 {
+    v[ix(&sv::fx_param(s, name))]
+}
+
+fn db_to_amp(db: f32) -> f32 {
+    10f32.powf(db / 20.0)
+}
+
+fn amp_to_db(a: f32) -> f32 {
+    20.0 * a.abs().max(1e-6).log10()
+}
+
+/// Sample shaper of the tape / distortion drawing models (input amplitude
+/// to output amplitude).
+fn shaper(v: &[f32], s: usize, ty: usize, x: f32) -> f32 {
+    if ty == 0 {
+        let g = 1.0 + 7.0 * fxv(v, s, "tape_drive");
+        let soft = (g * x).tanh() / g.tanh().max(1e-3);
+        let warm = fxv(v, s, "tape_warmth");
+        (soft + 0.12 * warm * soft * soft) * db_to_amp(fxv(v, s, "tape_output"))
+    } else {
+        let g = 1.0 + 24.0 * fxv(v, s, "distortion_drive");
+        let b = 0.4 * fxv(v, s, "distortion_bias");
+        let y = match fxv(v, s, "distortion_mode").round() as usize {
+            1 => ((g * x + b).clamp(-1.0, 1.0) * 1.4).tanh() / 1.4f32.tanh(),
+            2 => {
+                let u = g * x + b;
+                if u >= 0.0 { u.tanh() } else { 0.7 * (u / 0.7).tanh() }
+            }
+            3 => (g * x + b).clamp(-1.0, 1.0),
+            _ => (g * x + b).tanh(),
+        } - b.tanh();
+        y * db_to_amp(fxv(v, s, "distortion_level"))
+    }
+}
+
+const FX_DB: (f32, f32) = (-36.0, 12.0);
+
+/// Transfer curve (input dB -> output dB) for tape, distortion and the compressor.
+fn fx_curve(v: &[f32], s: usize, ty: usize, labels: &mut Vec<SynthLabel>) -> SynthDisplay {
+    let (lo, hi) = FX_DB;
+    let (w, h) = (FX_CURVE_W, DISP_H);
+    let (x0, y0, y1) = (22.0, 8.0, h - 8.0);
+    let px = |db: f32| x0 + (db - lo) / (hi - lo) * (w - x0 - 4.0);
+    let py = |db: f32| y1 - (db.clamp(lo, hi) - lo) / (hi - lo) * (y1 - y0);
+    let n = 120;
+    let pts: Vec<(f32, f32)> = (0..=n)
+        .map(|i| {
+            let din = lo + (hi - lo) * i as f32 / n as f32;
+            let dout = if ty == 9 {
+                let (t, r, k, m) = (fxv(v, s, "compressor_threshold"), fxv(v, s, "compressor_ratio"), fxv(v, s, "compressor_knee"), fxv(v, s, "compressor_makeup"));
+                din + crate::device_panel::soft_knee_gr(din, t, r, k) + m
+            } else {
+                amp_to_db(shaper(v, s, ty, db_to_amp(din)))
+            };
+            (px(din), py(dout))
+        })
+        .collect();
+    let mut d = display(&pts, y1);
+    d.ghost = format!("M{:.2} {:.2} L{:.2} {:.2}", px(lo), py(lo), px(hi), py(hi)).into();
+    let mut grid = String::new();
+    for db in [0.0f32, -12.0, -24.0] {
+        grid.push_str(&format!("M{x0} {:.2} L{w} {:.2} M{:.2} {y0} L{:.2} {y1} ", py(db), py(db), px(db), px(db)));
+    }
+    d.grid = grid.into();
+    for db in [12.0f32, 0.0, -12.0, -24.0, -36.0] {
+        let t = if db > 0.0 { format!("+{db:.0}") } else if db < 0.0 { format!("\u{2212}{:.0}", -db) } else { "0".into() };
+        labels.push(label(disp::FX_CURVE, 18.0, py(db) - 6.5, t, 2));
+    }
+    d
+}
+
+/// Wave picture: two cycles of a sine through the effect (dry dashed), or
+/// the effect's own picture (response, echoes, decay, stereo field).
+fn fx_wave(v: &[f32], s: usize, ty: usize, w: f32, bpm: f32, labels: &mut Vec<SynthLabel>) -> SynthDisplay {
+    let h = DISP_H;
+    let mid = h / 2.0;
+    let slot = disp::FX_WAVE;
+    let sine = |n: usize, f: &dyn Fn(f32) -> f32| -> Vec<(f32, f32)> {
+        (0..=n)
+            .map(|i| {
+                let u = i as f32 / n as f32;
+                (8.0 + u * (w - 16.0), mid - f((2.0 * PI * 2.0 * u).sin() * 0.9).clamp(-1.3, 1.3) * (mid - 14.0))
+            })
+            .collect()
+    };
+    let resp = |f: &dyn Fn(f32) -> f32, lo: f32, hi: f32| -> Vec<(f32, f32)> {
+        let n = (w * 1.5) as usize;
+        (0..=n)
+            .map(|i| {
+                let x = i as f32 / n as f32 * w;
+                let hz = 20.0 * 1000f32.powf(x / w);
+                (x, 6.0 + (hi - f(hz).clamp(lo - 3.0, hi)) / (hi - lo) * (h - 22.0))
+            })
+            .collect()
+    };
+    let hz_labels = |labels: &mut Vec<SynthLabel>| {
+        for (f, t) in [(100.0, "100"), (1000.0, "1k"), (10_000.0, "10k")] {
+            labels.push(label(slot, freq_x(f, w) + 4.0, h - 14.0, t, 0));
+        }
+    };
+    let rate_hz = |name: &str| -> f32 {
+        let sync = fxv(v, s, &format!("{name}_sync")) >= 0.5;
+        if sync {
+            const BEATS: [f32; 17] = [32.0, 16.0, 8.0, 4.0, 3.0, 2.0, 4.0 / 3.0, 1.5, 1.0, 2.0 / 3.0, 0.75, 0.5, 1.0 / 3.0, 0.375, 0.25, 1.0 / 6.0, 0.125];
+            bpm / 60.0 / BEATS[(fxv(v, s, &format!("{name}_note")).round() as usize).min(16)]
+        } else {
+            fxv(v, s, &format!("{name}_rate"))
+        }
+    };
+    match ty {
+        0 | 1 | 9 | 2 => {
+            let mut d = if ty == 2 {
+                let bits = fxv(v, s, "bitcrusher_bits");
+                let q = 2f32.powf(bits - 1.0).max(1.0);
+                let hold = (fxv(v, s, "bitcrusher_downsample") * 0.6).max(1.0) as usize;
+                let n = (w * 2.0) as usize;
+                let mut held = 0.0;
+                let pts: Vec<(f32, f32)> = (0..=n)
+                    .map(|i| {
+                        if i % hold == 0 {
+                            let u = i as f32 / n as f32;
+                            held = ((2.0 * PI * 2.0 * u).sin() * 0.9 * q).round() / q;
+                        }
+                        (8.0 + i as f32 / n as f32 * (w - 16.0), mid - held * (mid - 14.0))
+                    })
+                    .collect();
+                display(&pts, mid)
+            } else if ty == 9 {
+                let (t, r, k, m) = (fxv(v, s, "compressor_threshold"), fxv(v, s, "compressor_ratio"), fxv(v, s, "compressor_knee"), fxv(v, s, "compressor_makeup"));
+                display(&sine((w * 2.0) as usize, &|x| x * db_to_amp(crate::device_panel::soft_knee_gr(amp_to_db(0.9), t, r, k) + m)), mid)
+            } else {
+                display(&sine((w * 2.0) as usize, &|x| shaper(v, s, ty, x)), mid)
+            };
+            d.ghost = path(&sine(200, &|x| x)).into();
+            labels.push(label(slot, w - 10.0, 6.0, "Wave", 2));
+            d
+        }
+        3..=5 => {
+            let (name, depth) = match ty {
+                3 => ("chorus", fxv(v, s, "chorus_depth") / 8.0),
+                4 => ("flanger", fxv(v, s, "flanger_depth") / 10.0),
+                _ => ("phaser", fxv(v, s, "phaser_depth")),
+            };
+            let fb = match ty {
+                3 => fxv(v, s, "chorus_feedback"),
+                4 => fxv(v, s, "flanger_feedback"),
+                _ => fxv(v, s, "phaser_feedback"),
+            };
+            let curve = |sweep: f32| -> Vec<(f32, f32)> {
+                if ty == 5 {
+                    let stages = [2.0f32, 4.0, 6.0, 12.0][(fxv(v, s, "phaser_stages").round() as usize).min(3)];
+                    let centre = 200.0 * 2f32.powf(4.0 * (0.5 + 0.5 * sweep * depth));
+                    resp(&|hz| {
+                        let notches = (stages / 2.0).max(1.0);
+                        let mut db = 0.0;
+                        for k in 0..notches as usize {
+                            let fc = centre * 2f32.powf(k as f32 * 1.2);
+                            let x = (hz / fc).log2();
+                            db -= (18.0 + 10.0 * fb.abs()) / (1.0 + 40.0 * x * x);
+                        }
+                        db
+                    }, -30.0, 6.0)
+                } else {
+                    let base_ms = if ty == 3 { 7.0 } else { 0.6 };
+                    let tau = (base_ms + (if ty == 3 { 8.0 } else { 10.0 }) * depth * (0.5 + 0.5 * sweep)) / 1000.0;
+                    resp(&|hz| {
+                        let ph = 2.0 * PI * hz * tau;
+                        let (re, im) = (1.0 + ph.cos() * 0.7, -ph.sin() * 0.7);
+                        let fbm = 1.0 - fb * 0.6 * ph.cos();
+                        amp_to_db((re * re + im * im).sqrt() / 1.7 / fbm.abs().max(0.2))
+                    }, -30.0, 6.0)
+                }
+            };
+            let mut d = display(&curve(1.0), h);
+            d.ghost = path(&curve(-1.0)).into();
+            hz_labels(labels);
+            labels.push(label(slot, w - 10.0, 6.0, format!("{:.2} Hz", rate_hz(name)), 2));
+            d
+        }
+        6 => {
+            let kind = fxv(v, s, "filter_type").round() as usize;
+            let (k, steep) = match kind {
+                0 => (1, false),
+                1 => (0, false),
+                2 => (3, false),
+                3 => (3, true),
+                4 => (2, false),
+                5 => (2, true),
+                6 => (4, false),
+                _ => (4, true),
+            };
+            let fc = fxv(v, s, "filter_cutoff");
+            let res = fxv(v, s, "filter_resonance");
+            let at = |c: f32| -> Vec<(f32, f32)> {
+                resp(&|hz| {
+                    let db = filter_db(k, c, res, 1.0, hz);
+                    if steep && k != 0 { 2.0 * db } else { db }
+                }, -48.0, 24.0)
+            };
+            let mut d = display(&at(fc), h);
+            let reach = (fxv(v, s, "filter_lfo_amount") + fxv(v, s, "filter_env").abs()) / 12.0;
+            if reach > 0.01 {
+                let mut g = path(&at((fc * 2f32.powf(reach)).min(20_000.0)));
+                g.push(' ');
+                g.push_str(&path(&at((fc / 2f32.powf(reach)).max(20.0))));
+                d.ghost = g.into();
+            }
+            d.dots = circles(&[(freq_x(fc, w), 6.0 + (24.0 - filter_db(k, fc, res, 1.0, fc).clamp(-51.0, 24.0)) / 72.0 * (h - 22.0))], 3.0).into();
+            hz_labels(labels);
+            d
+        }
+        7 => {
+            let sync = fxv(v, s, "delay_sync") >= 0.5;
+            const NOTE_BEATS: [f32; 13] = [0.125, 1.0 / 6.0, 0.25, 0.375, 1.0 / 3.0, 0.5, 0.75, 2.0 / 3.0, 1.0, 1.5, 2.0, 3.0, 4.0];
+            let time = |side: &str| -> f32 {
+                let link = fxv(v, s, "delay_link") >= 0.5;
+                let side = if link { "l" } else { side };
+                if sync { NOTE_BEATS[(fxv(v, s, &format!("delay_note_{side}")).round() as usize).min(12)] * 60.0 / bpm.max(1.0) } else { fxv(v, s, &format!("delay_time_{side}")) }
+            };
+            let (tl, tr) = (time("l"), time("r"));
+            let fb = fxv(v, s, "delay_feedback");
+            let span = env_span(tl.max(tr) * 6.0);
+            let x = |t: f32| 8.0 + t / span * (w - 16.0);
+            let mut taps = format!("M{:.2} {mid:.2} L{:.2} 10 ", x(0.0), x(0.0));
+            let mut dots = vec![(x(0.0), 10.0)];
+            for (t, up) in [(tl, true), (tr, false)] {
+                let mut g = 1.0f32;
+                let mut k = 1.0;
+                while t * k < span * 0.98 && g > 0.02 {
+                    let y = if up { mid - g * (mid - 10.0) } else { mid + g * (mid - 24.0) };
+                    taps.push_str(&format!("M{:.2} {mid:.2} L{:.2} {y:.2} ", x(t * k), x(t * k)));
+                    dots.push((x(t * k), y));
+                    g *= fb;
+                    k += 1.0;
+                }
+            }
+            let mut d = SynthDisplay { line: taps.into(), fill: "M0 0".into(), ghost: format!("M8 {mid:.2} L{:.2} {mid:.2}", w - 8.0).into(), dots: circles(&dots, 2.5).into(), grid: "M0 0".into(), dim: false };
+            d.grid = time_ticks(slot, span, w, labels, h).into();
+            labels.push(label(slot, w - 10.0, 6.0, "L", 2));
+            labels.push(label(slot, w - 10.0, h - 30.0, "R", 2));
+            d
+        }
+        8 => {
+            let (size, decay, pre) = (fxv(v, s, "reverb_size"), fxv(v, s, "reverb_decay"), fxv(v, s, "reverb_pre_delay") / 1000.0);
+            let damp = fxv(v, s, "reverb_damping");
+            let span = env_span(pre + decay * 1.1);
+            let x = |t: f32| 8.0 + t / span * (w - 16.0);
+            let (top, bot) = (10.0, h - 22.0);
+            let n = 300;
+            let pts: Vec<(f32, f32)> = (0..=n)
+                .map(|i| {
+                    let t = span * i as f32 / n as f32;
+                    let a = if t < pre { 0.0 } else { (-(t - pre) * 6.9 / decay.max(0.05)).exp() * (1.0 - 0.3 * damp * ((t - pre) / decay.max(0.05)).min(1.0)) };
+                    let build = ((t - pre).max(0.0) / (0.01 + 0.05 * size)).min(1.0);
+                    (x(t), bot - a * build * (bot - top))
+                })
+                .collect();
+            let mut d = display(&pts, bot);
+            let mut early = String::new();
+            for k in 1..8 {
+                let t = pre + k as f32 * (0.004 + 0.012 * size);
+                let a = (0.75 - 0.08 * k as f32).max(0.1);
+                early.push_str(&format!("M{:.2} {bot:.2} L{:.2} {:.2} ", x(t), x(t), bot - a * (bot - top)));
+            }
+            d.ghost = early.into();
+            d.grid = time_ticks(slot, span, w, labels, h).into();
+            d
+        }
+        _ => {
+            let width = fxv(v, s, "widener_width");
+            let side = db_to_amp(fxv(v, s, "widener_side")) * width;
+            let midg = db_to_amp(fxv(v, s, "widener_mid"));
+            let (cx, cy) = (w / 2.0, mid);
+            let r = mid - 12.0;
+            let pts: Vec<(f32, f32)> = (0..=160)
+                .map(|i| {
+                    let a = 2.0 * PI * i as f32 / 160.0;
+                    let (m, sd) = (a.cos() * midg, a.sin() * side * 0.5);
+                    (cx + sd.clamp(-1.0, 1.0) * r * 1.6, cy - m.clamp(-1.2, 1.2) * r * 0.8)
+                })
+                .collect();
+            let mut d = display(&pts, cy);
+            d.fill = format!("{} Z", path(&pts)).into();
+            d.ghost = format!("M{cx:.2} 8 L{cx:.2} {:.2} M{:.2} {cy:.2} L{:.2} {cy:.2}", h - 8.0, cx - r * 1.6, cx + r * 1.6).into();
+            labels.push(label(slot, cx - r * 1.6, cy - 16.0, "L", 0));
+            labels.push(label(slot, cx + r * 1.6, cy - 16.0, "R", 2));
+            d
+        }
+    }
+}
+
+/// Effect types drawn with a transfer curve beside the wave.
+fn fx_has_curve(ty: usize) -> bool {
+    matches!(ty, 0 | 1 | 9)
+}
+
+/// The pictures (and their labels) of one page; the other slots stay empty.
+pub fn displays(v: &[f32], bpm: f32, page_ix: usize, fx_slot: usize) -> (Vec<SynthDisplay>, Vec<SynthLabel>) {
+    let mut labels = Vec::new();
+    let empty = || SynthDisplay { line: "M0 0".into(), fill: "M0 0".into(), ghost: "M0 0".into(), dots: "M0 0".into(), grid: "M0 0".into(), dim: false };
+    let mut d: Vec<SynthDisplay> = (0..disp::COUNT).map(|_| empty()).collect();
+    match page_ix {
+        page::OSC => {
+            d[disp::OSC1] = osc_display(v, 0);
+            d[disp::OSC2] = osc_display(v, 1);
+        }
+        page::SUB_NOISE => {
+            d[disp::SUB] = sub_display(v);
+            d[disp::NOISE] = noise_display(v);
+        }
+        page::FILTER => {
+            d[disp::FILTER] = filter_display(v, &mut labels);
+            d[disp::FILTER_MOD] = filter_mod_display(v, &mut labels);
+        }
+        page::ENV => {
+            d[disp::AMP_ENV] = env_display(v, "amp_", disp::AMP_ENV, DISP_W, &mut labels);
+            d[disp::ENV2] = env_display(v, "env2_", disp::ENV2, WIDE_W, &mut labels);
+        }
+        page::LFO => {
+            d[disp::LFO1] = lfo_display(v, 1, bpm, &mut labels);
+            d[disp::LFO2] = lfo_display(v, 2, bpm, &mut labels);
+        }
+        page::VOICE => {
+            d[disp::GLIDE] = glide_display(v, &mut labels);
+            d[disp::UNISON] = unison_display(v, &mut labels);
+        }
+        page::EFFECTS => {}
+        _ => return (d, labels),
+    }
+    if page_ix != page::EFFECTS {
+        return (d, labels);
+    }
+    let s = fx_slot.clamp(1, 4);
+    let ty = fxv(v, s, "type").round() as usize;
+    if fx_has_curve(ty) {
+        d[disp::FX_CURVE] = fx_curve(v, s, ty, &mut labels);
+        d[disp::FX_WAVE] = fx_wave(v, s, ty, FX_WAVE_W, bpm, &mut labels);
+    } else {
+        d[disp::FX_WAVE] = fx_wave(v, s, ty, FX_CURVE_W + FX_GAP + FX_WAVE_W, bpm, &mut labels);
+    }
+    let off = fxv(v, s, "on") < 0.5;
+    d[disp::FX_CURVE].dim = off;
+    d[disp::FX_WAVE].dim = off;
+    (d, labels)
+}
+
+// ------------------------------------------------------------------ page layout
+
+/// Everything one page shows (card coordinates).
+#[derive(Default)]
+struct Page {
+    knobs: Vec<SynthKnobItem>,
+    faders: Vec<SynthFaderItem>,
+    pills: Vec<SynthPillItem>,
+    texts: Vec<SynthTextItem>,
+    segs: Vec<SynthSegItem>,
+    scopes: Vec<SynthScopeItem>,
+    latches: Vec<SynthLatchItem>,
+    routes: Vec<SynthRouteRow>,
+    maps: Vec<SynthMapRow>,
+    split: f32,
+    add_y: f32,
+    add_show: bool,
+}
+
+/// Values and modulation facts a page is built from.
+struct Ctx<'a> {
+    v: &'a [f32],
+    routes: Vec<(usize, usize, usize, f32, bool)>,
+    maps: Vec<(usize, usize, usize, f32, f32)>,
+    fx: [usize; 4],
+    accent: Color,
+    lit: usize,
+}
+
+/// Pill menu actions (ui/synth.slint Studio.synth-pill).
+pub mod act {
+    pub const CHOICE: i32 = 0;
+    pub const PRESETS: i32 = 1;
+    pub const TARGETS: i32 = 2;
+    pub const TIMEBASE: i32 = 3;
+    pub const MACRO_NAME: i32 = 4;
+    pub const ADD_MAPPING: i32 = 5;
+    pub const ROUTE_SOURCE: i32 = 6;
+    pub const ROUTE_TARGET: i32 = 7;
+    pub const ADD_ROUTE: i32 = 8;
+    pub const FX_TAB: i32 = 9;
+    pub const TOGGLE: i32 = 10;
+}
+
+/// Text styles (ui/synth.slint): module title, header caption.
+const TITLE: i32 = 0;
+const CAPTION: i32 = 1;
+
+impl Page {
+    fn knob_at(&mut self, c: &Ctx, i: usize, x: f32, y: f32, label: &str, accent: Color) {
+        let ranges = mod_ranges(c.v, i, &c.routes, &c.maps, c.fx);
+        let arcs: Vec<SynthArc> = ranges.iter().enumerate().map(|(k, &(col, lo, hi))| SynthArc { d: knob_arc(lo, hi, 16.0 + 2.25 * k as f32).into(), c: rgb(col) }).collect();
+        let dots: Vec<Color> = ranges.iter().map(|r| rgb(r.0)).collect();
+        let lit = c.lit > 0 && c.routes.iter().any(|&(_, s, t, _, _)| s == c.lit && target_index(t, c.fx) == Some(i));
+        self.knobs.push(SynthKnobItem {
+            idx: i as i32,
+            x,
+            y,
+            label: label.into(),
+            accent,
+            dim: false,
+            lit,
+            arcs: ModelRc::new(VecModel::from(arcs)),
+            dots: ModelRc::new(VecModel::from(dots)),
+        });
+    }
+
+    fn knob(&mut self, c: &Ctx, id: &str, x: f32, label: &str) {
+        self.knob_at(c, ix(id), x, KNOB_Y, label, c.accent);
+    }
+
+    fn fader(&mut self, id: &str, x: f32, label: &str) {
+        self.faders.push(SynthFaderItem { idx: ix(id) as i32, x, y: FADER_Y, label: label.into() });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn pill(&mut self, x: f32, y: f32, w: f32, label: &str, value: impl Into<String>, action: i32, arg: usize) {
+        self.pills.push(SynthPillItem { x, y, w, label: label.into(), value: value.into().into(), action, arg: arg as i32, ring: -1, ring_idx: 0, outline: false, chevron: true });
+    }
+
+    fn choice(&mut self, c: &Ctx, id: &str, x: f32, w: f32, label: &str) {
+        let i = ix(id);
+        self.pill(x, HEAD_Y, w, label, pdef(i).format(c.v[i]), act::CHOICE, i);
+    }
+
+    fn text(&mut self, x: f32, y: f32, text: &str, style: i32) {
+        self.texts.push(SynthTextItem { x, y, w: 200.0, text: text.into(), style, align: 0 });
+    }
+
+    fn seg(&mut self, c: &Ctx, id: &str, x: f32, w: f32) {
+        let i = ix(id);
+        let p = pdef(i);
+        let options: Vec<slint::SharedString> = p.choices.iter().map(|s| (*s).into()).collect();
+        self.segs.push(SynthSegItem { idx: i as i32, x, y: HEAD_Y, w, options: ModelRc::new(VecModel::from(options)), sel: (c.v[i] - p.min).round() as i32, first: p.min as i32 });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn scope(&mut self, slot: usize, x: f32, w: f32, grid: i32, zero: bool) {
+        self.scopes.push(SynthScopeItem { slot: slot as i32, x, y: PIC_Y, w, h: DISP_H, grid, hgrid: 1, zero });
+    }
+
+    fn latch(&mut self, c: &Ctx, id: &str, x: f32, label: &str) {
+        let i = ix(id);
+        self.latches.push(SynthLatchItem { idx: i as i32, x, y: KNOB_Y, label: label.into(), on: c.v[i] >= 0.5 });
+    }
+
+    /// "Targets n" pill of a modulation source.
+    fn targets(&mut self, c: &Ctx, x: f32, w: f32, src: usize) {
+        let n = c.routes.iter().filter(|r| r.1 == src && r.2 != 0).count();
+        self.pill(x, HEAD_Y, w, "", format!("Targets {n}"), act::TARGETS, src);
+    }
+
+    /// Free / Sync pill of a sync parameter.
+    fn timebase(&mut self, c: &Ctx, sync: usize, x: f32) {
+        self.pill(x, HEAD_Y, 44.7, "", if c.v[sync] >= 0.5 { "Sync" } else { "Free" }, act::TIMEBASE, sync);
+    }
+}
+
+/// Approximate caption width (8.25 pt semibold) for the effect header row.
+fn caption_w(text: &str) -> f32 {
+    text.chars().count() as f32 * 5.0 + 2.0
+}
+
+/// Mapping row texts: the target's value at a normalized position.
+fn value_at(i: usize, n: f32) -> String {
+    let p = pdef(i);
+    p.format(p.from_normalized(n))
+}
+
+fn layout(c: &Ctx, page_ix: usize, fx_slot: usize, macro_sel: usize) -> Page {
+    let mut g = Page::default();
+    let v = c.v;
+    match page_ix {
+        page::OSC => {
+            g.split = SPLIT;
+            for k in 0..2 {
+                let m = [M1, M2][k];
+                let n = k + 1;
+                let id = |s: &str| format!("osc{n}_{s}");
+                g.choice(c, &id("wave"), m, 80.0, &format!("Osc {n}"));
+                g.text(m + 93.7, HEAD_Y, "Octave", CAPTION);
+                g.choice(c, &id("octave"), m + 131.7, 36.5, "");
+                g.text(m + 181.5, HEAD_Y, "Semitones", CAPTION);
+                g.choice(c, &id("semi"), m + 232.7, 49.0, "");
+                g.scope(disp::OSC1 + k, m, DISP_W, 4, true);
+                g.fader(&id("level"), m + FADER_DX, "Level");
+                g.knob(c, &id("shape"), col4(m, 0), "Shape");
+                g.knob(c, &id("fine"), col4(m, 1), "Fine");
+                if k == 0 {
+                    g.knob(c, "cross_fm", col4(m, 2), "Cross FM");
+                }
+            }
+        }
+        page::SUB_NOISE => {
+            g.split = SPLIT;
+            g.text(M1, HEAD_Y, "Sub", TITLE);
+            g.text(M1 + 32.1, HEAD_Y, "Wave", CAPTION);
+            g.seg(c, "sub_waveform", M1 + 63.3, 178.0);
+            g.scope(disp::SUB, M1, DISP_W, 4, false);
+            g.fader("sub_level", M1 + FADER_DX, "Level");
+            g.knob(c, "sub_tune", col4(M1, 0), "Tune");
+            g.knob(c, "sub_shape", col4(M1, 1), "Shape");
+            g.text(M2, HEAD_Y, "Noise", TITLE);
+            g.text(M2 + 39.6, HEAD_Y, "Type", CAPTION);
+            g.choice(c, "noise_type", M2 + 68.0, 56.0, "");
+            g.scope(disp::NOISE, M2, DISP_W, 1, false);
+            g.fader("noise_level", M2 + FADER_DX, "Level");
+            g.knob(c, "noise_color", col4(M2, 0), "Color");
+            g.knob(c, "noise_width", col4(M2, 1), "Width");
+        }
+        page::FILTER => {
+            g.split = SPLIT;
+            g.choice(c, "filter_type", M1, 98.0, "Filter");
+            g.scope(disp::FILTER, M1, WIDE_W, 1, false);
+            for (k, (id, l)) in [("cutoff", "Cutoff"), ("resonance", "Resonance"), ("filter_drive", "Drive"), ("high_pass", "High-pass")].into_iter().enumerate() {
+                g.knob(c, id, col4(M1, k), l);
+            }
+            g.text(M2, HEAD_Y, "Filter Mods", TITLE);
+            g.scope(disp::FILTER_MOD, M2, WIDE_W, 1, false);
+            for (k, (id, l)) in [("filter_env", "Amount"), ("env2_attack", "Attack"), ("key_track", "Key Track"), ("filter_velocity", "Velocity")].into_iter().enumerate() {
+                g.knob(c, id, col4(M2, k), l);
+            }
+        }
+        page::ENV => {
+            g.split = SPLIT;
+            g.text(M1, HEAD_Y, "Amp Envelope", TITLE);
+            g.scope(disp::AMP_ENV, M1, DISP_W, 1, false);
+            g.fader("volume", M1 + FADER_DX, "Volume");
+            for (k, (id, l)) in [("amp_attack", "Attack"), ("amp_decay", "Decay"), ("amp_sustain", "Sustain"), ("amp_release", "Release"), ("amp_velocity", "Velocity")].into_iter().enumerate() {
+                g.knob(c, id, col5(M1, k), l);
+            }
+            g.text(M2, HEAD_Y, "Env 2", TITLE);
+            g.targets(c, M2 + 38.8, 60.8, sv::source::ENV2);
+            g.scope(disp::ENV2, M2, WIDE_W, 1, false);
+            for (k, (id, l)) in [("env2_attack", "Attack"), ("env2_decay", "Decay"), ("env2_sustain", "Sustain"), ("env2_release", "Release")].into_iter().enumerate() {
+                g.knob(c, id, col5(M2, k), l);
+            }
+        }
+        page::LFO => {
+            g.split = SPLIT;
+            for k in 1..=2 {
+                let m = [M1, M2][k - 1];
+                let id = |s: &str| format!("lfo{k}_{s}");
+                g.choice(c, &id("shape"), m, 113.0, &format!("LFO {k}"));
+                g.targets(c, m + 126.7, 59.0, if k == 1 { sv::source::LFO1 } else { sv::source::LFO2 });
+                g.text(m + 201.7, HEAD_Y, "Timebase", CAPTION);
+                g.timebase(c, ix(&id("sync")), m + 250.7);
+                g.scope(if k == 1 { disp::LFO1 } else { disp::LFO2 }, m, WIDE_W, 1, false);
+                let synced = v[ix(&id("sync"))] >= 0.5;
+                g.knob(c, &id(if synced { "note" } else { "rate" }), col4(m, 0), if synced { "Note" } else { "Rate" });
+                g.knob(c, &id("depth"), col4(m, 1), "Depth");
+                g.knob(c, &id("fade"), col4(m, 2), "Fade In");
+                g.latch(c, &id("retrigger"), col4(m, 3), "Retrigger");
+            }
+        }
+        page::MODULATION => {
+            let rs = &c.routes;
+            for (row, &(n, s, t, a, on)) in rs.iter().enumerate() {
+                let b = ix("mod1_source") + 4 * (n - 1);
+                g.routes.push(SynthRouteRow {
+                    slot: n as i32,
+                    y: 2.5 + row as f32 * 20.25,
+                    on,
+                    on_idx: (b + 3) as i32,
+                    source: s as i32,
+                    source_text: sv::MOD_SOURCES[s.min(9)].into(),
+                    target_text: sv::MOD_TARGETS[t.min(29)].into(),
+                    amount: a,
+                    amount_idx: (b + 2) as i32,
+                    text: pdef(b + 2).format(a).into(),
+                });
+            }
+            g.add_y = 2.5 + rs.len() as f32 * 20.25 + 5.8;
+            g.add_show = rs.len() < sv::MOD_SLOTS;
+        }
+        page::MACROS => {
+            g.split = SPLIT;
+            g.text(M1, HEAD_Y, "Macros", TITLE);
+            for m in 0..sv::MACROS {
+                let i = ix(&format!("macro{}", m + 1));
+                let name = pdef(i + sv::MACROS).format(v[i + sv::MACROS]);
+                g.knob_at(c, i, 151.5 + 75.5 * (m % 4) as f32, 102.5 + 81.0 * (m / 4) as f32, &name, rgb(MACRO_COLOR));
+            }
+            let name_ix = ix("macro1_name") + macro_sel;
+            g.text(M2, HEAD_Y, &pdef(name_ix).format(v[name_ix]), TITLE);
+            let mut rows: Vec<(String, usize, usize, f32, f32)> = c.maps.iter().filter(|m| m.1 == macro_sel + 1).map(|&(n, _, t, f, to)| (group_of(pdef(t).id), n, t, f, to)).collect();
+            rows.sort_by_key(|r| (page_of(pdef(r.2).id), r.0.clone(), r.2));
+            let mut y = 0.4;
+            let mut last = String::new();
+            for (group, n, t, from, to) in rows {
+                if group != last {
+                    g.maps.push(SynthMapRow { heading: true, slot: 0, y, label: group.clone().into(), from: 0.0, to: 0.0, from_idx: 0, to_idx: 0, from_text: "".into(), to_text: "".into() });
+                    y += 16.6;
+                    last = group;
+                }
+                let b = ix("map1_macro") + 4 * (n - 1);
+                g.maps.push(SynthMapRow {
+                    heading: false,
+                    slot: n as i32,
+                    y,
+                    label: short_name(pdef(t)).into(),
+                    from,
+                    to,
+                    from_idx: (b + 2) as i32,
+                    to_idx: (b + 3) as i32,
+                    from_text: value_at(t, from).into(),
+                    to_text: value_at(t, to).into(),
+                });
+                y += 23.6;
+            }
+            g.add_y = y;
+            g.add_show = c.maps.len() < sv::MAP_SLOTS;
+        }
+        page::VOICE => {
+            g.split = SPLIT;
+            g.text(M1, HEAD_Y, "Voices", CAPTION);
+            g.seg(c, "voice_mode", M1 + 35.5, 119.2);
+            g.text(M1 + 167.7, HEAD_Y, "Priority", CAPTION);
+            g.choice(c, "note_priority", M1 + 205.7, 43.0, "");
+            g.scope(disp::GLIDE, M1, WIDE_W, 1, false);
+            for (k, (id, l)) in [("glide", "Glide"), ("bend_range", "Bend"), ("drift", "Drift"), ("mod_wheel", "Mod Wheel")].into_iter().enumerate() {
+                g.knob(c, id, col4(M1, k), l);
+            }
+            g.text(M2, HEAD_Y, "Unison", CAPTION);
+            g.seg(c, "unison_voices", M2 + 36.0, 151.0);
+            g.scope(disp::UNISON, M2, WIDE_W, 1, false);
+            let single = v[ix("unison_voices")] < 0.5;
+            for (k, (id, l)) in [("unison_detune", "Detune"), ("unison_spread", "Spread")].into_iter().enumerate() {
+                g.knob(c, id, col4(M2, k), l);
+                if let Some(last) = g.knobs.last_mut() {
+                    last.dim = single;
+                }
+            }
+        }
+        _ => fx_layout(&mut g, c, fx_slot),
+    }
+    g
+}
+
+/// Name of a parameter inside its module: the effect prefix and slot dropped
+/// ("FX 1 Tape Drive" -> "Tape Drive"), otherwise the full name.
+fn short_name(p: &ParamDef) -> String {
+    p.name.strip_prefix("FX ").and_then(|r| r.get(2..)).map(str::to_string).unwrap_or_else(|| p.name.to_string())
+}
+
+/// Effects page: four slot tabs, the type's header controls, pictures, mix and dials.
+fn fx_layout(g: &mut Page, c: &Ctx, slot: usize) {
+    let v = c.v;
+    let s = slot.clamp(1, 4);
+    let f = |name: &str| ix(&sv::fx_param(s, name));
+    for j in 1..=4 {
+        let on = v[ix(&sv::fx_param(j, "on"))] >= 0.5;
+        let ty = c.fx[j - 1].min(10);
+        g.pills.push(SynthPillItem {
+            x: 118.2 + 93.3 * (j - 1) as f32,
+            y: HEAD_Y,
+            w: 87.0,
+            label: "".into(),
+            value: sv::FX_TYPES[ty].into(),
+            action: act::FX_TAB,
+            arg: j as i32,
+            ring: on as i32,
+            ring_idx: ix(&sv::fx_param(j, "on")) as i32,
+            outline: j == s,
+            chevron: true,
+        });
+    }
+    let ty = c.fx[s - 1].min(10);
+    let mut x = 500.5;
+    let caption = |g: &mut Page, x: &mut f32, t: &str| {
+        g.text(*x, HEAD_Y, t, CAPTION);
+        *x += caption_w(t) + 6.0;
+    };
+    let choice = |g: &mut Page, x: &mut f32, name: &str, w: f32| {
+        let i = f(name);
+        g.pill(*x, HEAD_Y, w, "", pdef(i).format(v[i]), act::CHOICE, i);
+        *x += w + 8.0;
+    };
+    let timebase = |g: &mut Page, x: &mut f32, name: &str| {
+        g.timebase(c, f(name), *x);
+        *x += 52.0;
+    };
+    match ty {
+        0 => {
+            caption(g, &mut x, "Machine");
+            let i = f("tape_mode");
+            let options: Vec<slint::SharedString> = sv::TAPE_MODES.iter().map(|s| (*s).into()).collect();
+            g.segs.push(SynthSegItem { idx: i as i32, x: 544.0, y: HEAD_Y, w: 182.0, options: ModelRc::new(VecModel::from(options)), sel: v[i].round() as i32, first: 0 });
+        }
+        1 => {
+            caption(g, &mut x, "Mode");
+            choice(g, &mut x, "distortion_mode", 76.0);
+        }
+        3 => {
+            caption(g, &mut x, "Voices");
+            choice(g, &mut x, "chorus_voices", 40.0);
+            timebase(g, &mut x, "chorus_sync");
+        }
+        4 => {
+            caption(g, &mut x, "Mode");
+            choice(g, &mut x, "flanger_mode", 74.0);
+            timebase(g, &mut x, "flanger_sync");
+        }
+        5 => {
+            caption(g, &mut x, "Stages");
+            choice(g, &mut x, "phaser_stages", 40.0);
+            timebase(g, &mut x, "phaser_sync");
+        }
+        6 => {
+            caption(g, &mut x, "Type");
+            choice(g, &mut x, "filter_type", 92.0);
+            timebase(g, &mut x, "filter_lfo_sync");
+        }
+        7 => {
+            caption(g, &mut x, "Mode");
+            choice(g, &mut x, "delay_mode", 62.0);
+            let link = f("delay_link");
+            g.pills.push(SynthPillItem { x, y: HEAD_Y, w: 52.0, label: "".into(), value: "Link".into(), action: act::TOGGLE, arg: link as i32, ring: (v[link] >= 0.5) as i32, ring_idx: link as i32, outline: false, chevron: false });
+            x += 60.0;
+            timebase(g, &mut x, "delay_sync");
+        }
+        8 => {
+            caption(g, &mut x, "Space");
+            let i = f("reverb_mode");
+            let options: Vec<slint::SharedString> = sv::REVERB_MODES.iter().map(|s| (*s).into()).collect();
+            g.segs.push(SynthSegItem { idx: i as i32, x, y: HEAD_Y, w: 726.0 - x, options: ModelRc::new(VecModel::from(options)), sel: v[i].round() as i32, first: 0 });
+        }
+        9 => {
+            caption(g, &mut x, "Style");
+            choice(g, &mut x, "compressor_style", 68.0);
+        }
+        _ => {}
+    }
+    if fx_has_curve(ty) {
+        g.scope(disp::FX_CURVE, M1, FX_CURVE_W, 1, false);
+        g.scope(disp::FX_WAVE, M1 + FX_CURVE_W + FX_GAP, FX_WAVE_W, 1, ty != 9);
+    } else {
+        g.scope(disp::FX_WAVE, M1, FX_CURVE_W + FX_GAP + FX_WAVE_W, 1, matches!(ty, 2 | 7));
+    }
+    g.faders.push(SynthFaderItem { idx: f("mix") as i32, x: M2 + FADER_DX, y: FADER_Y, label: "Mix".into() });
+    let sync = |name: &str| v[f(name)] >= 0.5;
+    let rate = |pre: &str| -> (String, &'static str) {
+        if sync(&format!("{pre}_sync")) { (format!("{pre}_note"), "Note") } else { (format!("{pre}_rate"), "Rate") }
+    };
+    let mut dials: Vec<(String, String)> = Vec::new();
+    let mut add = |id: &str, l: &str| dials.push((id.to_string(), l.to_string()));
+    match ty {
+        0 => ["drive", "warmth", "compression", "noise", "output"].iter().zip(["Drive", "Warmth", "Compression", "Noise", "Output"]).for_each(|(i, l)| add(&format!("tape_{i}"), l)),
+        1 => ["drive", "tone", "bias", "level"].iter().zip(["Drive", "Tone", "Bias", "Level"]).for_each(|(i, l)| add(&format!("distortion_{i}"), l)),
+        2 => ["bits", "downsample", "dither", "jitter"].iter().zip(["Bits", "Downsample", "Dither", "Jitter"]).for_each(|(i, l)| add(&format!("bitcrusher_{i}"), l)),
+        3..=5 => {
+            let pre = ["chorus", "flanger", "phaser"][ty - 3];
+            let (r, l) = rate(pre);
+            add(&r, l);
+            add(&format!("{pre}_depth"), "Depth");
+            if ty == 3 {
+                add("chorus_width", "Width");
+                add("chorus_feedback", "Feedback");
+            } else {
+                add(&format!("{pre}_feedback"), "Feedback");
+                add(&format!("{pre}_width"), "Width");
+            }
+        }
+        6 => {
+            add("filter_cutoff", "Cutoff");
+            add("filter_resonance", "Resonance");
+            add("filter_drive", "Drive");
+            add("filter_env", "Envelope");
+            add("filter_lfo_amount", "LFO Amount");
+            if sync("filter_lfo_sync") {
+                add("filter_lfo_note", "LFO Note");
+            } else {
+                add("filter_lfo_rate", "LFO Rate");
+            }
+            add("filter_lfo_shape", "LFO Shape");
+        }
+        7 => {
+            let (synced, linked) = (sync("delay_sync"), sync("delay_link"));
+            let (kind, word) = if synced { ("note", "Note") } else { ("time", "Time") };
+            if linked {
+                add(&format!("delay_{kind}_l"), word);
+            } else {
+                add(&format!("delay_{kind}_l"), &format!("{word} L"));
+                add(&format!("delay_{kind}_r"), &format!("{word} R"));
+            }
+            add("delay_feedback", "Feedback");
+            add("delay_grit", "Grit");
+            add("delay_mod_depth", "Mod Depth");
+            add("delay_width", "Width");
+        }
+        8 => ["size", "decay", "pre_delay", "damping", "width", "low_cut", "high_cut"].iter().zip(["Size", "Decay", "Pre-Delay", "Damping", "Width", "Low Cut", "High Cut"]).for_each(|(i, l)| add(&format!("reverb_{i}"), l)),
+        9 => ["threshold", "ratio", "attack", "release", "knee", "makeup"].iter().zip(["Threshold", "Ratio", "Attack", "Release", "Knee", "Makeup"]).for_each(|(i, l)| add(&format!("compressor_{i}"), l)),
+        _ => ["width", "mid", "side", "low_cut"].iter().zip(["Width", "Mid", "Side", "Low Cut"]).for_each(|(i, l)| add(&format!("widener_{i}"), l)),
+    }
+    for (k, (id, l)) in dials.iter().enumerate() {
+        g.knob_at(c, f(id), 153.6 + 76.8 * k as f32, KNOB_Y, l, c.accent);
+    }
+}
+
+// ------------------------------------------------------------------ edits
+
+/// Changes that clear modulation slot n.
+fn route_clear(n: usize) -> Vec<(usize, f32)> {
+    let b = ix("mod1_source") + 4 * (n - 1);
+    vec![(b, 0.0), (b + 1, 0.0), (b + 2, 0.0), (b + 3, 1.0)]
+}
+
+/// Changes that clear macro mapping n.
+fn map_clear(n: usize) -> Vec<(usize, f32)> {
+    let b = ix("map1_macro") + 4 * (n - 1);
+    vec![(b, 0.0), (b + 1, 0.0), (b + 2, 0.0), (b + 3, 1.0), (ix("map1_late_param") + n - 1, 0.0)]
+}
+
+/// Modulators (routes + macro) on a parameter.
+fn sources_on(v: &[f32], i: usize) -> usize {
+    let fx = fx_types(v);
+    routes(v).iter().filter(|r| r.1 != 0 && target_index(r.2, fx) == Some(i)).count() + mappings(v).iter().filter(|m| m.2 == i).count()
+}
+
+/// A new route source -> target in the first free slot.
+fn route_add(v: &[f32], src: usize, t: usize) -> Result<Vec<(usize, f32)>, &'static str> {
+    let rs = routes(v);
+    if rs.iter().any(|r| r.1 == src && r.2 == t) {
+        return Err("That source already modulates this target");
+    }
+    if let Some(i) = target_index(t, fx_types(v))
+        && sources_on(v, i) >= sv::MAX_SOURCES_PER_TARGET
+    {
+        return Err("A Synth knob takes at most 3 modulation sources");
+    }
+    let n = (1..=sv::MOD_SLOTS).find(|n| !rs.iter().any(|r| r.0 == *n)).ok_or("Slots: Full")?;
+    let b = ix("mod1_source") + 4 * (n - 1);
+    Ok(vec![(b, src as f32), (b + 1, t as f32), (b + 2, default_amount(t)), (b + 3, 1.0)])
+}
+
+/// A new mapping of macro m (1..=8) onto parameter i: from the current value
+/// to a quarter of the range away.
+fn map_add(v: &[f32], m: usize, i: usize) -> Result<Vec<(usize, f32)>, &'static str> {
+    let maps = mappings(v);
+    if maps.iter().any(|x| x.2 == i) {
+        return Err("A Synth knob takes one macro");
+    }
+    if sources_on(v, i) >= sv::MAX_SOURCES_PER_TARGET {
+        return Err("A Synth knob takes at most 3 modulation sources");
+    }
+    let (pc, late) = sv::map_choices_for(i).ok_or("That control can't be mapped")?;
+    let n = (1..=sv::MAP_SLOTS).find(|n| !maps.iter().any(|x| x.0 == *n)).ok_or("Mappings: Full")?;
+    let b = ix("map1_macro") + 4 * (n - 1);
+    let cur = pdef(i).to_normalized(v[i]);
+    let to = if cur + 0.25 <= 1.0 { cur + 0.25 } else { cur - 0.25 };
+    Ok(vec![(b, m as f32), (b + 1, pc as f32), (b + 2, cur), (b + 3, to), (ix("map1_late_param") + n - 1, late as f32)])
+}
+
+/// Effect settings that belong to another type than the slot's.
+fn idle_fx_param(id: &str, fx: [usize; 4]) -> bool {
+    let Some(rest) = id.strip_prefix("fx") else { return false };
+    let Some(slot) = rest.get(..1).and_then(|s| s.parse::<usize>().ok()) else { return false };
+    let name = rest.get(2..).unwrap_or("");
+    let ty = sv::FX_TYPES[fx[(slot - 1).min(3)].min(10)].to_lowercase();
+    !(name == "mix" || name.starts_with(&ty))
+}
+
+type Row = (String, String, Option<MenuAction>);
+
+fn heading(t: impl Into<String>) -> Row {
+    (t.into(), String::new(), None)
+}
+
+fn check(b: bool) -> String {
+    if b { "\u{2713}".into() } else { String::new() }
+}
+
+/// Persistent row models (rows update in place, so a dragged element keeps its state).
+struct Models {
+    labels: Rc<VecModel<SynthLabel>>,
+    knobs: Rc<VecModel<SynthKnobItem>>,
+    faders: Rc<VecModel<SynthFaderItem>>,
+    pills: Rc<VecModel<SynthPillItem>>,
+    texts: Rc<VecModel<SynthTextItem>>,
+    segs: Rc<VecModel<SynthSegItem>>,
+    scopes: Rc<VecModel<SynthScopeItem>>,
+    latches: Rc<VecModel<SynthLatchItem>>,
+    routes: Rc<VecModel<SynthRouteRow>>,
+    maps: Rc<VecModel<SynthMapRow>>,
+}
+
+impl std::fmt::Debug for Models {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Models")
+    }
+}
+
+/// Row models of a window, handed to Slint once.
+fn new_models(s: &Studio) -> Models {
+            let m = Models {
+                labels: Rc::new(VecModel::default()),
+                knobs: Rc::new(VecModel::default()),
+                faders: Rc::new(VecModel::default()),
+                pills: Rc::new(VecModel::default()),
+                texts: Rc::new(VecModel::default()),
+                segs: Rc::new(VecModel::default()),
+                scopes: Rc::new(VecModel::default()),
+                latches: Rc::new(VecModel::default()),
+                routes: Rc::new(VecModel::default()),
+                maps: Rc::new(VecModel::default()),
+            };
+            s.set_synth_labels(ModelRc::from(m.labels.clone()));
+            s.set_synth_knobs(ModelRc::from(m.knobs.clone()));
+            s.set_synth_faders(ModelRc::from(m.faders.clone()));
+            s.set_synth_pills(ModelRc::from(m.pills.clone()));
+            s.set_synth_texts(ModelRc::from(m.texts.clone()));
+            s.set_synth_segs(ModelRc::from(m.segs.clone()));
+            s.set_synth_scopes(ModelRc::from(m.scopes.clone()));
+            s.set_synth_latches(ModelRc::from(m.latches.clone()));
+            s.set_synth_routes(ModelRc::from(m.routes.clone()));
+            s.set_synth_map_rows(ModelRc::from(m.maps.clone()));
+            m
+}
 
 impl Controller {
-    /// The instrument track whose synth the Devices tab shows.
-    pub fn synth_track(&self) -> Option<TrackId> {
+    /// The Synth device the Devices tab shows (selected instrument track).
+    pub fn synth_device(&self) -> Option<DeviceId> {
         let t = self.selected_track.and_then(|t| self.project().track(t))?;
-        // An instrument plugin replaces the built-in Synth (its card is drawn by src/devices.rs).
-        (t.kind == TrackKind::Instrument && t.instrument_plugin.is_none() && self.bottom_tab == BottomTab::Devices).then_some(t.id)
-    }
-
-    /// Current parameters (the pending drag preview, else the model).
-    pub fn synth_params(&self) -> Option<SynthParams> {
-        let t = self.synth_track()?;
-        if let Some((pt, sp)) = &self.synth.pending
-            && *pt == t
-        {
-            return Some(sp.clone());
+        if t.kind != TrackKind::Instrument || self.bottom_tab != BottomTab::Devices {
+            return None;
         }
-        self.project().track(t).map(|t| t.synth.clone())
+        let d = t.instrument_plugin.as_ref()?;
+        (saine_core::builtin::def_of(d).is_some_and(|def| def.id == SYNTH_V2.id)).then_some(d.id)
     }
 
-    /// Execute one `SetSynthParams` as its own undo step (never coalesced
-    /// with the previous entry, see the module docs).
-    fn commit_synth(&mut self, track: TrackId, params: SynthParams) -> bool {
-        if self.project().track(track).is_some_and(|t| t.synth == params) {
+    /// The instrument track whose Synth the Devices tab shows.
+    pub fn synth_track(&self) -> Option<TrackId> {
+        self.synth_device().and(self.selected_track)
+    }
+
+    /// Current values (live gesture values included).
+    pub fn synth_values(&self) -> Option<(DeviceId, Vec<f32>)> {
+        let id = self.synth_device()?;
+        let mut v = SYNTH_V2.values(self.project().device(id)?);
+        if let Some(live) = self.synth.live.as_ref().filter(|l| l.device == id) {
+            for &(i, _, x) in &live.vals {
+                v[i] = x;
+            }
+        }
+        Some((id, v))
+    }
+
+    /// One undo step: SetDeviceParam for one change, a Batch of them for
+    /// several (the preset name stays). Returns false when nothing changed.
+    fn synth_commit(&mut self, device: DeviceId, changes: Vec<(usize, f32)>) -> bool {
+        let Some(d) = self.project().device(device) else { return false };
+        let cur = SYNTH_V2.values(d);
+        let mut params = BTreeMap::new();
+        for (i, x) in changes {
+            let x = pdef(i).snap(x);
+            if x != cur[i] {
+                params.insert(pdef(i).id.to_string(), x);
+            } else {
+                params.remove(pdef(i).id);
+            }
+        }
+        if params.is_empty() {
             return false;
         }
+        let mut commands: Vec<Command> = params.into_iter().map(|(param, value)| Command::SetDeviceParam { device, param, value }).collect();
+        let cmd = if commands.len() == 1 { commands.remove(0) } else { Command::Batch { label: "Device Parameters Change".into(), commands } };
         self.doc.seal_coalescing();
-        self.execute(Command::SetSynthParams { track, params })
+        let ok = self.execute(cmd);
+        self.doc.seal_coalescing();
+        self.ui_dirty = true;
+        ok
+    }
+
+    /// A value heard during a gesture (no model change yet).
+    fn synth_live(&mut self, device: DeviceId, i: usize, x: f32) {
+        let x = pdef(i).snap(x);
+        let start = self.project().device(device).map(|d| SYNTH_V2.value(d, pdef(i))).unwrap_or(x);
+        let live = self.synth.live.get_or_insert_with(|| Live { device, vals: Vec::new() });
+        if live.device != device {
+            *live = Live { device, vals: Vec::new() };
+        }
+        match live.vals.iter_mut().find(|e| e.0 == i) {
+            Some(e) if e.2 == x => return,
+            Some(e) => e.2 = x,
+            None => live.vals.push((i, start, x)),
+        }
+        let _ = self.engine.builtin_set_param(device.0, i as u32, x);
+        self.ui_dirty = true;
+    }
+
+    /// Gesture end: the heard values become one command. False when no gesture was live.
+    fn synth_live_end(&mut self) -> bool {
+        let Some(live) = self.synth.live.take() else { return false };
+        let changes: Vec<(usize, f32)> = live.vals.iter().filter(|e| e.1 != e.2).map(|e| (e.0, e.2)).collect();
+        if !self.synth_commit(live.device, changes) {
+            for (i, start, _) in live.vals {
+                let _ = self.engine.builtin_set_param(live.device.0, i as u32, start);
+            }
+        }
+        self.ui_dirty = true;
+        true
+    }
+
+    /// Escape: drop a drawer drag, a picture drag or the lit source.
+    pub fn synth_cancel(&mut self) -> bool {
+        if self.synth.rail.take().is_some_and(|r| r.dragging) || self.synth.scope.take().is_some() {
+            if let Some(live) = self.synth.live.take() {
+                for (i, start, _) in live.vals {
+                    let _ = self.engine.builtin_set_param(live.device.0, i as u32, start);
+                }
+            }
+            self.ui_dirty = true;
+            return true;
+        }
+        if self.synth.lit != 0 {
+            self.synth.lit = 0;
+            self.ui_dirty = true;
+            return true;
+        }
+        false
     }
 
     pub fn synth_page(&mut self, page: usize) {
@@ -638,95 +1914,285 @@ impl Controller {
         self.ui_dirty = true;
     }
 
-    /// Knob / fader drag (control position 0..1): preview only.
-    pub fn synth_param(&mut self, id: usize, norm: f32) {
-        let (Some(t), Some(mut sp)) = (self.synth_track(), self.synth_params()) else { return };
-        if id >= p::COUNT {
+    pub fn synth_macro_select(&mut self, m: usize) {
+        self.synth.macro_sel = m.min(sv::MACROS - 1);
+        self.ui_dirty = true;
+    }
+
+    /// Dial / fader / bar drag (control position 0..1): heard only.
+    pub fn synth_param(&mut self, i: usize, norm: f32) {
+        let Some(device) = self.synth_device() else { return };
+        let Some(p) = SYNTH_V2.params.get(i) else { return };
+        if let Some(m) = i.checked_sub(ix("macro1")).filter(|m| *m < sv::MACROS) {
+            self.synth.macro_sel = m;
+        }
+        self.synth_live(device, i, p.from_normalized(norm.clamp(0.0, 1.0)));
+    }
+
+    /// Gesture end. A press on a lit control that didn't move detaches the lit source.
+    pub fn synth_param_end(&mut self, i: usize, moved: bool) {
+        if self.synth_live_end() {
             return;
         }
-        // Automation: armed + playing records the move; an active lane blocks it (display follows).
-        if let Some(param) = crate::automation::synth_param_for_panel(id)
-            && self.auto_intercept(Some(t), saine_core::AutomationTarget::Synth { param }, from_norm(id, norm))
+        if let Some(m) = i.checked_sub(ix("macro1")).filter(|m| *m < sv::MACROS) {
+            self.synth.macro_sel = m;
+            self.ui_dirty = true;
+        }
+        let (lit, Some((device, v))) = (self.synth.lit, self.synth_values()) else { return };
+        if moved || lit == 0 {
+            return;
+        }
+        let fx = fx_types(&v);
+        if let Some(r) = routes(&v).into_iter().find(|r| r.1 == lit && target_index(r.2, fx) == Some(i)) {
+            self.synth_commit(device, route_clear(r.0));
+        }
+    }
+
+    /// Double-click: the definition's default (one step).
+    pub fn synth_param_reset(&mut self, i: usize) {
+        self.synth.live = None;
+        let Some(device) = self.synth_device() else { return };
+        if let Some(p) = SYNTH_V2.params.get(i) {
+            self.synth_commit(device, vec![(i, p.default)]);
+        }
+    }
+
+    pub fn synth_set(&mut self, i: usize, x: f32) {
+        let Some(device) = self.synth_device() else { return };
+        if i < SYNTH_V2.params.len() {
+            self.synth_commit(device, vec![(i, x)]);
+        }
+    }
+
+    /// On/off switches. Turning the delay's Link off copies the left time to the right first.
+    pub fn synth_toggle(&mut self, i: usize) {
+        let Some((device, v)) = self.synth_values() else { return };
+        let Some(p) = SYNTH_V2.params.get(i) else { return };
+        let on = v[i] < 0.5;
+        let mut changes = vec![(i, if on { 1.0 } else { 0.0 })];
+        if let Some(pre) = p.id.strip_suffix("_delay_link")
+            && !on
         {
-            return;
-        }
-        set(&mut sp, id, from_norm(id, norm));
-        if self.synth.pending.as_ref().is_some_and(|(_, cur)| *cur == sp) {
-            return;
-        }
-        self.synth.pending = Some((t, sp));
-        self.publish();
-        self.ui_dirty = true;
-    }
-
-    /// Gesture end: the drag becomes ONE command.
-    pub fn synth_param_end(&mut self) {
-        if self.auto_write_end(|w| matches!(w.target, saine_core::AutomationTarget::Synth { .. })) {
-            self.ui_dirty = true;
-            return;
-        }
-        if let Some((t, sp)) = self.synth.pending.take() {
-            if !self.commit_synth(t, sp) {
-                self.publish(); // drop the preview override
+            for k in ["time", "note"] {
+                changes.push((ix(&format!("{pre}_delay_{k}_r")), v[ix(&format!("{pre}_delay_{k}_l"))]));
             }
-            self.ui_dirty = true;
         }
+        self.synth_commit(device, changes);
     }
 
-    /// Double-click: back to the `SynthParams::default()` value (one step).
-    pub fn synth_param_reset(&mut self, id: usize) {
-        self.synth.pending = None;
-        let (Some(t), Some(mut sp)) = (self.synth_track(), self.synth_params()) else { return };
-        set(&mut sp, id, get(&SynthParams::default(), id));
-        self.commit_synth(t, sp);
-    }
-
-    pub fn synth_choice(&mut self, id: usize, index: usize) {
-        let (Some(t), Some(mut sp)) = (self.synth_track(), self.synth_params()) else { return };
-        set_choice(&mut sp, id, index);
-        self.commit_synth(t, sp);
-    }
-
-    /// Index of the current preset in `factory_presets()` (by name).
-    pub fn synth_preset_index(&self) -> Option<usize> {
-        let name = self.synth_params()?.preset;
-        factory_presets().iter().position(|p| p.preset == name)
-    }
-
-    /// Load a factory preset: one `SetSynthParams` with the preset's params.
-    pub fn synth_load_preset(&mut self, index: usize) {
-        let Some(t) = self.synth_track() else { return };
-        let presets = factory_presets();
-        let Some(p) = presets.get(index).cloned() else { return };
-        self.synth.pending = None;
-        self.synth.menu = None;
-        self.commit_synth(t, p);
-    }
-
-    /// ‹ / › in the preset browser (wraps; unknown presets start at the first).
-    pub fn synth_preset_step(&mut self, dir: i32) {
-        let n = factory_presets().len() as i32;
-        let next = match self.synth_preset_index() {
-            Some(i) => (i as i32 + dir).rem_euclid(n),
-            None => {
-                if dir > 0 { 0 } else { n - 1 }
-            }
+    /// Remove button of a route (0) or a mapping (1).
+    pub fn synth_remove(&mut self, kind: i32, slot: usize) {
+        let Some(device) = self.synth_device() else { return };
+        let changes = match kind {
+            0 if (1..=sv::MOD_SLOTS).contains(&slot) => route_clear(slot),
+            1 if (1..=sv::MAP_SLOTS).contains(&slot) => map_clear(slot),
+            _ => return,
         };
-        self.synth_load_preset(next as usize);
+        self.synth_commit(device, changes);
     }
 
-    pub fn synth_open_menu(&mut self, target: MenuTarget, x: f32, y: f32, w: f32) {
-        self.synth.menu = Some(SynthMenu { target, pos: (x, y), w });
+    pub fn synth_bypass(&mut self) {
+        let Some(d) = self.synth_device().and_then(|id| self.project().device(id)) else { return };
+        let (device, enabled) = (d.id, !d.enabled);
+        self.doc.seal_coalescing();
+        self.execute(Command::SetDeviceEnabled { device, enabled });
         self.ui_dirty = true;
     }
 
-    pub fn synth_menu_pick(&mut self, index: usize) {
-        let Some(m) = self.synth.menu.take() else { return };
-        match m.target {
-            MenuTarget::Presets => self.synth_load_preset(index),
-            MenuTarget::Choice(id) => self.synth_choice(id, index),
+    pub fn synth_preset_step(&mut self, dir: i32) {
+        if let Some(d) = self.synth_device() {
+            self.synth.live = None;
+            self.panel_preset_step(d, dir);
         }
+    }
+
+    fn synth_open(&mut self, target: MenuTarget, x: f32, y: f32, w: f32, rows: Vec<Row>) {
+        self.synth.menu = (!rows.is_empty()).then(|| SynthMenu { target, pos: (x, y), w: w.max(110.0), rows });
         self.ui_dirty = true;
+    }
+
+    /// A pill or link: open its menu (or act directly).
+    pub fn synth_pill(&mut self, action: i32, arg: usize, x: f32, y: f32, w: f32) {
+        let Some((device, v)) = self.synth_values() else { return };
+        let fx = fx_types(&v);
+        let rs = routes(&v);
+        let (target, rows): (MenuTarget, Vec<Row>) = match action {
+            act::CHOICE => {
+                let Some(p) = SYNTH_V2.params.get(arg) else { return };
+                let rows = p.choices.iter().enumerate().map(|(k, c)| (c.to_string(), check((v[arg] - p.min).round() as usize == k), Some(MenuAction::Set(vec![(arg, p.min + k as f32)])))).collect();
+                (MenuTarget::Choice(arg), rows)
+            }
+            act::PRESETS => {
+                let cur = self.project().device(device).and_then(|d| d.preset.clone());
+                let mut rows = vec![heading("Factory sounds")];
+                rows.extend(SYNTH_V2.factory.iter().enumerate().map(|(k, f)| (f.name.to_string(), check(cur.as_deref() == Some(f.name)), Some(MenuAction::Preset(k)))));
+                (MenuTarget::Presets, rows)
+            }
+            act::TARGETS => {
+                let src = arg;
+                let mut rows: Vec<Row> = rs.iter().filter(|r| r.1 == src && r.2 != 0).map(|r| (sv::MOD_TARGETS[r.2.min(29)].to_string(), "Show".to_string(), Some(MenuAction::Page(target_index(r.2, fx).map_or(page::MODULATION, |i| page_of(pdef(i).id)))))).collect();
+                for (g, ts) in TARGET_GROUPS {
+                    let add: Vec<Row> = ts.iter().filter(|t| !rs.iter().any(|r| r.1 == src && r.2 == **t)).map(|&t| match route_add(&v, src, t) {
+                        Ok(ch) => (sv::MOD_TARGETS[t].to_string(), String::new(), Some(MenuAction::Set(ch))),
+                        Err(e) => (format!("{}: {e}", sv::MOD_TARGETS[t]), String::new(), None),
+                    }).collect();
+                    if !add.is_empty() {
+                        rows.push(heading(format!("Add target: {g}")));
+                        rows.extend(add);
+                    }
+                }
+                (MenuTarget::Targets(src), rows)
+            }
+            act::TIMEBASE => {
+                let on = v.get(arg).is_some_and(|x| *x >= 0.5);
+                (MenuTarget::Timebase(arg), vec![("Free".into(), check(!on), Some(MenuAction::Set(vec![(arg, 0.0)]))), ("Sync".into(), check(on), Some(MenuAction::Set(vec![(arg, 1.0)])))])
+            }
+            act::MACRO_NAME => {
+                let m = arg.min(sv::MACROS - 1);
+                let i = ix("macro1_name") + m;
+                let p = pdef(i);
+                let cur = v[i].round() as usize;
+                let mut rows = vec![(p.choices[0].to_string(), check(cur == 0), Some(MenuAction::Set(vec![(i, 0.0)])))];
+                for (g, names) in NAME_GROUPS {
+                    rows.push(heading(g));
+                    for n in names {
+                        if let Some(k) = p.choices.iter().position(|c| c == n) {
+                            rows.push((n.to_string(), check(cur == k), Some(MenuAction::Set(vec![(i, k as f32)]))));
+                        }
+                    }
+                }
+                (MenuTarget::MacroName(m), rows)
+            }
+            act::ADD_MAPPING => {
+                let m = self.synth.macro_sel + 1;
+                let mapped: Vec<usize> = mappings(&v).iter().map(|x| x.2).collect();
+                let mut cands: Vec<usize> = (0..SYNTH_V2.params.len()).filter(|&i| sv::macro_mappable(i) && !mapped.contains(&i) && !idle_fx_param(pdef(i).id, fx) && page_of(pdef(i).id) != page::MODULATION).collect();
+                cands.sort_by_key(|&i| (page_of(pdef(i).id), group_of(pdef(i).id), i));
+                let mut rows = Vec::new();
+                let mut last = String::new();
+                for i in cands {
+                    let g = group_of(pdef(i).id);
+                    if g != last {
+                        rows.push(heading(g.clone()));
+                        last = g;
+                    }
+                    rows.push(match map_add(&v, m, i) {
+                        Ok(ch) => (short_name(pdef(i)), String::new(), Some(MenuAction::Set(ch))),
+                        Err(_) => (short_name(pdef(i)), String::new(), None),
+                    });
+                }
+                (MenuTarget::AddMapping, rows)
+            }
+            act::ROUTE_SOURCE | act::ROUTE_TARGET => {
+                let n = arg.clamp(1, sv::MOD_SLOTS);
+                let b = ix("mod1_source") + 4 * (n - 1);
+                let (s, t) = (v[b].round() as usize, v[b + 1].round() as usize);
+                if action == act::ROUTE_SOURCE {
+                    let mut rows: Vec<Row> = (1..sv::MOD_SOURCES.len()).map(|k| (sv::MOD_SOURCES[k].to_string(), check(s == k), Some(MenuAction::Set(vec![(b, k as f32)])))).collect();
+                    rows.push(("Remove".into(), String::new(), Some(MenuAction::Set(route_clear(n)))));
+                    (MenuTarget::RouteSource(n), rows)
+                } else {
+                    let mut rows = Vec::new();
+                    for (g, ts) in TARGET_GROUPS {
+                        rows.push(heading(g));
+                        for &k in ts {
+                            let mut ch = vec![(b + 1, k as f32)];
+                            if t == 0 {
+                                ch.push((b + 2, default_amount(k)));
+                            }
+                            rows.push((sv::MOD_TARGETS[k].to_string(), check(t == k), Some(MenuAction::Set(ch))));
+                        }
+                    }
+                    (MenuTarget::RouteTarget(n), rows)
+                }
+            }
+            act::ADD_ROUTE => {
+                let Some(n) = (1..=sv::MOD_SLOTS).find(|n| !rs.iter().any(|r| r.0 == *n)) else {
+                    self.set_status("Slots: Full".to_string(), 3);
+                    return;
+                };
+                let b = ix("mod1_source") + 4 * (n - 1);
+                let rows = (1..sv::MOD_SOURCES.len()).map(|k| (sv::MOD_SOURCES[k].to_string(), String::new(), Some(MenuAction::Set(vec![(b, k as f32), (b + 2, 0.3), (b + 3, 1.0)])))).collect();
+                (MenuTarget::AddRoute, rows)
+            }
+            act::FX_TAB => {
+                let j = arg.clamp(1, 4);
+                if self.synth.fx_slot != j {
+                    self.synth.fx_slot = j;
+                    self.synth.menu = None;
+                    self.ui_dirty = true;
+                    return;
+                }
+                let (ti, oi) = (ix(&sv::fx_param(j, "type")), ix(&sv::fx_param(j, "on")));
+                let on = v[oi] >= 0.5;
+                let mut rows = vec![("None".to_string(), check(!on), Some(MenuAction::Set(vec![(oi, 0.0)])))];
+                rows.extend(sv::FX_TYPES.iter().enumerate().map(|(k, n)| (n.to_string(), check(on && fx[j - 1] == k), Some(MenuAction::Set(vec![(ti, k as f32), (oi, 1.0)])))));
+                (MenuTarget::FxType(j), rows)
+            }
+            act::TOGGLE => {
+                self.synth_toggle(arg);
+                return;
+            }
+            _ => return,
+        };
+        self.synth_open(target, x, y, w, rows);
+    }
+
+    /// Right click on a control: reset, macro mappings and modulation sources.
+    pub fn synth_knob_menu(&mut self, i: usize, x: f32, y: f32) {
+        let Some((_, v)) = self.synth_values() else { return };
+        let Some(p) = SYNTH_V2.params.get(i) else { return };
+        let fx = fx_types(&v);
+        let mut rows: Vec<Row> = vec![("Reset to default".into(), p.format(p.default), Some(MenuAction::Set(vec![(i, p.default)])))];
+        if sv::macro_mappable(i) {
+            rows.push(heading("Macros"));
+            let mapped = mappings(&v).into_iter().find(|m| m.2 == i);
+            for m in 1..=sv::MACROS {
+                let ni = ix("macro1_name") + m - 1;
+                let name = pdef(ni).format(v[ni]);
+                rows.push(match mapped {
+                    Some(x) if x.1 == m => (format!("Remove from {name}"), check(true), Some(MenuAction::Set(map_clear(x.0)))),
+                    Some(_) => (format!("Map to {name}"), String::new(), None),
+                    None => match map_add(&v, m, i) {
+                        Ok(ch) => (format!("Map to {name}"), String::new(), Some(MenuAction::Set(ch))),
+                        Err(_) => (format!("Map to {name}"), String::new(), None),
+                    },
+                });
+            }
+            rows.push(("Open Macros page".into(), String::new(), Some(MenuAction::Page(page::MACROS))));
+        }
+        if let Some(t) = target_for(i, fx) {
+            rows.push(heading("Mods"));
+            let rs = routes(&v);
+            for s in 1..sv::MOD_SOURCES.len() {
+                let name = sv::MOD_SOURCES[s];
+                rows.push(match rs.iter().find(|r| r.1 == s && r.2 == t) {
+                    Some(r) => (format!("Remove {name}"), check(true), Some(MenuAction::Set(route_clear(r.0)))),
+                    None => match route_add(&v, s, t) {
+                        Ok(ch) => (format!("Add {name}"), String::new(), Some(MenuAction::Set(ch))),
+                        Err(_) => (format!("Add {name}"), String::new(), None),
+                    },
+                });
+            }
+        }
+        self.synth_open(MenuTarget::Knob(i), x, y, 190.0, rows);
+    }
+
+    pub fn synth_menu_pick(&mut self, k: usize) {
+        let Some(m) = self.synth.menu.take() else { return };
+        self.ui_dirty = true;
+        let Some(device) = self.synth_device() else { return };
+        match m.rows.get(k).and_then(|r| r.2.clone()) {
+            Some(MenuAction::Preset(n)) if m.target == MenuTarget::Presets => {
+                self.synth.live = None;
+                self.panel_load_preset(device, n);
+            }
+            Some(MenuAction::Set(changes)) => {
+                self.synth_commit(device, changes);
+            }
+            Some(MenuAction::Page(p)) => self.synth_page(p),
+            _ => {}
+        }
     }
 
     pub fn synth_menu_dismiss(&mut self) {
@@ -734,68 +2200,214 @@ impl Controller {
         self.ui_dirty = true;
     }
 
-    /// Popup items (labels) and the selected row for the open menu.
-    pub fn synth_menu_items(&self) -> (Vec<String>, usize) {
-        let (Some(m), Some(sp)) = (self.synth.menu, self.synth_params()) else { return (Vec::new(), 0) };
-        match m.target {
-            MenuTarget::Presets => {
-                let ps = factory_presets();
-                let sel = ps.iter().position(|p| p.preset == sp.preset).unwrap_or(usize::MAX);
-                (ps.into_iter().map(|p| p.preset).collect(), sel)
+    /// Modulation sources drawer: a click lights the source (and shows its page),
+    /// a drag onto a control adds a route.
+    pub fn synth_rail(&mut self, src: usize, phase: i32, x: f32, y: f32) {
+        if !(1..sv::MOD_SOURCES.len()).contains(&src) {
+            return;
+        }
+        match phase {
+            0 => self.synth.rail = Some(RailDrag { src, start: (x, y), pos: (x, y), dragging: false }),
+            1 => {
+                if let Some(r) = self.synth.rail.as_mut() {
+                    r.pos = (x, y);
+                    if !r.dragging && (x - r.start.0).hypot(y - r.start.1) > 4.0 {
+                        r.dragging = true;
+                    }
+                    self.ui_dirty = true;
+                }
             }
-            MenuTarget::Choice(id) => choice_options(&sp, id),
+            _ => {
+                let Some(r) = self.synth.rail.take() else { return };
+                self.ui_dirty = true;
+                if !r.dragging {
+                    self.synth.lit = if self.synth.lit == src { 0 } else { src };
+                    if self.synth.lit != 0 {
+                        self.synth_page(match src {
+                            sv::source::ENV2 | sv::source::AMP_ENV => page::ENV,
+                            sv::source::LFO1 | sv::source::LFO2 => page::LFO,
+                            _ => page::MODULATION,
+                        });
+                    }
+                    return;
+                }
+                let d2 = |k: &(usize, f32, f32)| (k.1 - x).hypot(k.2 - y);
+                let Some(i) = self.synth.knob_pos.iter().filter(|k| d2(k) <= 24.0).min_by(|a, b| d2(a).total_cmp(&d2(b))).map(|k| k.0) else { return };
+                let Some((device, v)) = self.synth_values() else { return };
+                let Some(t) = target_for(i, fx_types(&v)) else {
+                    self.set_status(format!("{} can't be modulated", pdef(i).name), 3);
+                    return;
+                };
+                match route_add(&v, src, t) {
+                    Ok(ch) => {
+                        self.synth_commit(device, ch);
+                    }
+                    Err(e) => self.set_status(e.to_string(), 3),
+                }
+            }
         }
     }
 
-    /// Synth device view models → Slint.
+    /// Drags in the pictures: filter corner / high-pass, filter envelope
+    /// amount, envelope handles, LFO rate and depth, glide, unison spread.
+    pub fn synth_scope_drag(&mut self, slot: usize, phase: i32, x: f32, y: f32) {
+        let Some((device, v)) = self.synth_values() else { return };
+        let n = |id: &str| (ix(id), pdef(ix(id)).to_normalized(v[ix(id)]));
+        let env_pre = |slot: usize| if slot == disp::AMP_ENV { "amp_" } else { "env2_" };
+        match phase {
+            0 => {
+                let (handle, norms) = match slot {
+                    disp::FILTER => {
+                        let hp = v[ix("high_pass")];
+                        if hp > 10.5 && (x - freq_x(hp, WIDE_W)).abs() < 10.0 && y > DISP_H - 22.0 {
+                            (1, vec![n("high_pass")])
+                        } else {
+                            (0, vec![n("cutoff"), n("resonance")])
+                        }
+                    }
+                    disp::FILTER_MOD => (0, vec![n("filter_env")]),
+                    disp::AMP_ENV | disp::ENV2 => {
+                        let pre = env_pre(slot);
+                        let g = |k: &str| v[ix(&format!("{pre}{k}"))];
+                        let (a, d, r) = (g("attack"), g("decay"), g("release"));
+                        let w = if slot == disp::AMP_ENV { DISP_W } else { WIDE_W };
+                        let span = env_span(a + d + r);
+                        let off = a + d + 0.15 * span;
+                        let px = |t: f32| 8.0 + t / span * (w - 16.0);
+                        let hs = [px(a), px(a + d), px((off + r).min(span))];
+                        let h = (0..3).min_by(|p, q| (hs[*p] - x).abs().total_cmp(&(hs[*q] - x).abs())).unwrap_or(0);
+                        (h, ["attack", "decay", "sustain", "release"].iter().map(|k| n(&format!("{pre}{k}"))).collect())
+                    }
+                    disp::LFO1 | disp::LFO2 => {
+                        let k = if slot == disp::LFO1 { 1 } else { 2 };
+                        let synced = v[ix(&format!("lfo{k}_sync"))] >= 0.5;
+                        (0, vec![n(&format!("lfo{k}_{}", if synced { "note" } else { "rate" })), n(&format!("lfo{k}_depth"))])
+                    }
+                    disp::GLIDE => (0, vec![n("glide")]),
+                    disp::UNISON => (0, vec![n("unison_detune"), n("unison_spread")]),
+                    _ => return,
+                };
+                self.synth.scope = Some(ScopeDrag { slot, handle, start: (x, y), norms });
+            }
+            1 => {
+                let Some(sd) = self.synth.scope.clone().filter(|s| s.slot == slot) else { return };
+                let (dx, dy) = (x - sd.start.0, y - sd.start.1);
+                let w = match slot {
+                    disp::AMP_ENV => DISP_W,
+                    _ => WIDE_W,
+                };
+                let h = DISP_H - 30.0;
+                let set = |k: usize, d: f32| -> (usize, f32) {
+                    let (i, start) = sd.norms[k];
+                    (i, pdef(i).from_normalized((start + d).clamp(0.0, 1.0)))
+                };
+                let changes = match (slot, sd.handle) {
+                    (disp::FILTER, 0) => vec![set(0, dx / w), set(1, -dy / h)],
+                    (disp::FILTER, _) => vec![set(0, dx / (w * 200f32.ln() / 1000f32.ln()))],
+                    (disp::FILTER_MOD, _) => vec![set(0, -dy / h)],
+                    (disp::AMP_ENV | disp::ENV2, 0) => vec![set(0, dx / w)],
+                    (disp::AMP_ENV | disp::ENV2, 1) => vec![set(1, dx / w), set(2, -dy / h)],
+                    (disp::AMP_ENV | disp::ENV2, _) => vec![set(3, dx / w)],
+                    (disp::LFO1 | disp::LFO2, _) => vec![set(0, dx / (w * 1.5)), set(1, -dy / h)],
+                    (disp::GLIDE, _) => vec![set(0, dx / (w * 0.6))],
+                    _ => vec![set(0, dx / (w / 2.0)), set(1, -dy / (DISP_H / 2.0))],
+                };
+                for (i, x) in changes {
+                    self.synth_live(device, i, x);
+                }
+            }
+            _ => {
+                self.synth.scope = None;
+                self.synth_live_end();
+            }
+        }
+    }
+
+    /// Synth device view models -> Slint.
     pub fn push_synth(&mut self, s: &Studio) {
-        let sp = self.synth_params();
-        s.set_synth_visible(sp.is_some());
+        let vals = self.synth_values();
+        s.set_synth_visible(vals.is_some());
         s.set_synth_page(self.synth.page as i32);
-        let Some(sp) = sp else {
+        let Some((device, v)) = vals else {
             s.set_synth_menu_open(false);
+            s.set_synth_ghost_show(false);
             return;
         };
-        s.set_synth_preset(sp.preset.clone().into());
-        let params: Vec<SynthParam> = (0..p::COUNT)
-            .map(|id| {
-                let v = get(&sp, id);
-                SynthParam { norm: to_norm(id, v), text: fmt(id, v).into(), bipolar: bipolar(id), auto: false }
-            })
-            .collect();
-        sync_model(&self.synth_params_model, params);
-        let choices: Vec<slint::SharedString> = (0..ch::COUNT)
-            .map(|id| {
-                let (opts, i) = choice_options(&sp, id);
-                opts.get(i).cloned().unwrap_or_default().into()
-            })
-            .collect();
-        sync_model(&self.synth_choices_model, choices);
-        if self.synth.pushed.as_ref() != Some(&sp) {
-            sync_model(&self.synth_displays_model, displays(&sp));
-            self.synth.pushed = Some(sp);
+        self.synth.fx_slot = self.synth.fx_slot.clamp(1, 4);
+        let Some(d) = self.project().device(device) else { return };
+        let (enabled, preset) = (d.enabled, d.preset.clone());
+        let accent = self.project().find_device(device).map_or(rgb(0x439b94), |(ti, _)| slint_color(track_color(self.project().tracks[ti].color)));
+        let key = (v.clone(), [self.synth.page, self.synth.fx_slot, self.synth.macro_sel, self.synth.lit], accent.as_argb_encoded());
+        if self.synth.pushed.as_ref() != Some(&key) {
+            let modified = preset.as_deref().and_then(|name| SYNTH_V2.factory.iter().find(|f| f.name == name)).is_some_and(|f| {
+                let want = DevicePreset::factory(&SYNTH_V2, f).load_values(&SYNTH_V2);
+                SYNTH_V2.params.iter().enumerate().any(|(i, p)| want.get(p.id).is_some_and(|w| (w - v[i]).abs() > 1e-4 * (1.0 + w.abs())))
+            });
+            s.set_synth_preset(match &preset {
+                Some(n) if modified => format!("{n} (modified)").into(),
+                Some(n) => n.clone().into(),
+                None => "Init".into(),
+            });
+            let params: Vec<SynthParam> = SYNTH_V2.params.iter().zip(&v).map(|(p, &x)| SynthParam { norm: p.to_normalized(x), text: p.format(x).into(), bipolar: p.is_bipolar(), auto: false }).collect();
+            sync_model(&self.synth_params_model, params);
+            let bpm = self.project().transport.bpm as f32;
+            let (pictures, labels) = displays(&v, bpm, self.synth.page, self.synth.fx_slot);
+            sync_model(&self.synth_displays_model, pictures);
+            let c = Ctx { v: &v, routes: routes(&v), maps: mappings(&v), fx: fx_types(&v), accent, lit: self.synth.lit };
+            let g = layout(&c, self.synth.page, self.synth.fx_slot, self.synth.macro_sel);
+            self.synth.knob_pos = g.knobs.iter().map(|k| (k.idx as usize, k.x, k.y)).chain(g.faders.iter().map(|f| (f.idx as usize, f.x, f.y + 45.0))).collect();
+            s.set_synth_split(g.split);
+            s.set_synth_add_y(g.add_y);
+            s.set_synth_add_show(g.add_show);
+            if self.synth.models.is_none() {
+                self.synth.models = Some(new_models(s));
+            }
+            if let Some(m) = &self.synth.models {
+                sync_model(&m.labels, labels);
+                sync_model(&m.knobs, g.knobs);
+                sync_model(&m.faders, g.faders);
+                sync_model(&m.pills, g.pills);
+                sync_model(&m.texts, g.texts);
+                sync_model(&m.segs, g.segs);
+                sync_model(&m.scopes, g.scopes);
+                sync_model(&m.latches, g.latches);
+                sync_model(&m.routes, g.routes);
+                sync_model(&m.maps, g.maps);
+            }
+            self.synth.pushed = Some(key);
         }
-        // Popup list.
-        let (items, sel) = self.synth_menu_items();
-        s.set_synth_menu_open(self.synth.menu.is_some() && !items.is_empty());
-        if let Some(m) = self.synth.menu {
-            let rows: Vec<MenuItem> = items
+        s.set_synth_enabled(enabled);
+        s.set_synth_lit(self.synth.lit as i32);
+        s.set_synth_lit_color(rgb(SOURCE_COLORS[self.synth.lit.min(9)]));
+        s.set_synth_macro_sel(self.synth.macro_sel as i32);
+        let ghost = self.synth.rail.filter(|r| r.dragging);
+        s.set_synth_ghost_show(ghost.is_some());
+        if let Some(r) = ghost {
+            s.set_synth_ghost_x(r.pos.0);
+            s.set_synth_ghost_y(r.pos.1);
+            s.set_synth_ghost_src(r.src as i32);
+        }
+        s.set_synth_menu_open(self.synth.menu.is_some());
+        if let Some(m) = &self.synth.menu {
+            let grouped = m.rows.iter().any(|r| r.2.is_none());
+            let rows: Vec<MenuItem> = m
+                .rows
                 .iter()
                 .enumerate()
-                .map(|(i, l)| MenuItem {
-                    label: l.clone().into(),
-                    shortcut: if i == sel { "✓".into() } else { "".into() },
-                    enabled: true,
-                    separator: false,
-                    submenu: false,
-                    y: MENU_PAD + i as f32 * MENU_ROW,
+                .map(|(k, (label, hint, a))| MenuItem {
+                    label: label.clone().into(),
+                    shortcut: hint.clone().into(),
+                    enabled: a.is_some(),
+                    separator: a.is_none() && k > 0,
+                    submenu: grouped && a.is_some(),
+                    y: MENU_PAD + k as f32 * MENU_ROW,
                 })
                 .collect();
             s.set_synth_menu_h(MENU_PAD * 2.0 + rows.len() as f32 * MENU_ROW);
             sync_model(&self.synth_menu_model, rows);
             s.set_synth_menu_x(m.pos.0);
             s.set_synth_menu_y(m.pos.1);
-            s.set_synth_menu_w(m.w.max(110.0));
+            s.set_synth_menu_w(m.w);
         }
     }
 }
@@ -804,77 +2416,161 @@ impl Controller {
 mod tests {
     use super::*;
 
-    #[test]
-    fn norm_round_trip_and_ranges() {
-        let sp = SynthParams::default();
-        for id in 0..p::COUNT {
-            let v = get(&sp, id);
-            let back = from_norm(id, to_norm(id, v));
-            assert!((back - v).abs() <= v.abs() * 1e-3 + 1e-3, "{id}: {v} -> {back}");
-            let mut q = sp.clone();
-            set(&mut q, id, from_norm(id, 1.0));
-            set(&mut q, id, from_norm(id, 0.0));
-            q.validate().unwrap();
-        }
-        assert!((from_norm(p::CUTOFF, 0.5) - 632.5).abs() < 1.0, "log taper: geometric mean of 20 Hz..20 kHz");
+    fn defaults() -> Vec<f32> {
+        SYNTH_V2.params.iter().map(|p| p.default).collect()
+    }
+
+    fn ctx(v: &[f32]) -> Ctx<'_> {
+        Ctx { v, routes: routes(v), maps: mappings(v), fx: fx_types(v), accent: rgb(0x439b94), lit: 0 }
     }
 
     #[test]
-    fn readouts_have_units() {
-        assert_eq!(fmt(p::OSC1_FINE, 7.0), "+7 ct");
-        assert_eq!(fmt(p::OSC1_FINE, 0.0), "0 ct");
-        assert_eq!(fmt(p::OSC1_FINE, -5.0), "−5 ct");
-        assert_eq!(fmt(p::CUTOFF, 2093.0), "2.09 kHz");
-        assert_eq!(fmt(p::CUTOFF, 600.0), "600 Hz");
-        assert_eq!(fmt(p::AMP_A, 0.005), "5.0 ms");
-        assert_eq!(fmt(p::AMP_D, 0.2), "200 ms");
-        assert_eq!(fmt(p::AMP_R, 2.5), "2.50 s");
-        assert_eq!(fmt(p::OSC1_LEVEL, 0.8), "80%");
-        assert_eq!(fmt(p::OUTPUT, 1.0), "0.0 dB");
-        assert_eq!(fmt(p::ENV_AMOUNT, -0.3), "−30%");
-    }
-
-    #[test]
-    fn choices_round_trip() {
-        let mut sp = SynthParams::default();
-        for id in 0..ch::COUNT {
-            let (opts, _) = choice_options(&sp, id);
-            for i in 0..opts.len() {
-                set_choice(&mut sp, id, i);
-                assert_eq!(choice_options(&sp, id).1, i, "choice {id} index {i}");
-                sp.validate().unwrap();
-            }
-        }
-        set_choice(&mut sp, ch::OSC2_OCT, 4);
-        assert_eq!(sp.osc[1].octave, 1);
-        assert_eq!(choice_options(&sp, ch::OSC2_OCT).0[4], "+1");
-    }
-
-    #[test]
-    fn shapes_differ_and_stay_in_range() {
-        for w in WAVES {
-            for s in [0.0, 0.5, 1.0] {
-                for i in 0..100 {
-                    let v = osc_sample(w, s, i as f32 / 100.0);
-                    assert!((-1.0001..=1.0001).contains(&v), "{w:?} {s} {v}");
+    fn every_page_lays_out_inside_the_card() {
+        let mut v = defaults();
+        for ty in 0..sv::FX_TYPES.len() {
+            v[ix("fx1_type")] = ty as f32;
+            for p in 0..PAGES.len() {
+                let g = layout(&ctx(&v), p, 1, 0);
+                for k in &g.knobs {
+                    assert!(k.x > 107.0 && k.x < 740.0 && k.y > 30.0 && k.y < 250.0, "page {p} type {ty}: knob {} at {} {}", k.idx, k.x, k.y);
+                }
+                for pl in &g.pills {
+                    assert!(pl.x + pl.w < 742.0, "page {p} type {ty}: pill {} ends at {}", pl.value, pl.x + pl.w);
+                }
+                for s in &g.segs {
+                    assert!(s.x + s.w < 742.0, "page {p}: switch ends at {}", s.x + s.w);
+                }
+                if p != page::MODULATION && p != page::MACROS {
+                    assert!(!g.knobs.is_empty() && !g.scopes.is_empty(), "page {p} type {ty} is empty");
                 }
             }
         }
-        let mut sp = SynthParams::default();
-        let saw = displays(&sp)[disp::OSC1].line.clone();
-        sp.osc[0].wave = Waveform::Square;
-        assert_ne!(displays(&sp)[disp::OSC1].line, saw);
-        // Pulse width shrinks with shape.
-        assert_eq!(osc_sample(Waveform::Square, 1.0, 0.1), -1.0);
-        assert_eq!(osc_sample(Waveform::Square, 0.0, 0.1), 1.0);
+    }
+
+    #[test]
+    fn pictures_are_finite_for_every_choice() {
+        let mut v = defaults();
+        for ty in 0..sv::FX_TYPES.len() {
+            for slot in 1..=4 {
+                v[ix(&sv::fx_param(slot, "type"))] = ty as f32;
+                v[ix(&sv::fx_param(slot, "on"))] = 1.0;
+            }
+            for (i, p) in SYNTH_V2.params.iter().enumerate() {
+                if p.is_discrete() && !p.id.starts_with("map") && !p.id.starts_with("mod") {
+                    v[i] = p.max;
+                }
+            }
+            for p in 0..PAGES.len() {
+                let (d, labels) = displays(&v, 120.0, p, 1);
+                for (k, x) in d.iter().enumerate() {
+                    for s in [&x.line, &x.fill, &x.ghost, &x.dots, &x.grid] {
+                        assert!(!s.contains("NaN") && !s.contains("inf"), "slot {k} type {ty}: {}", &s[..s.len().min(80)]);
+                    }
+                }
+                assert!(labels.iter().all(|l| l.x.is_finite() && l.y.is_finite()));
+            }
+        }
+    }
+
+    #[test]
+    fn default_routes_and_limits() {
+        let v = defaults();
+        let rs = routes(&v);
+        assert_eq!(rs.len(), 3, "three default routes");
+        assert_eq!((rs[0].1, rs[0].2), (sv::source::LFO1, 4));
+        // LFO 1 already moves Osc 1 Shape.
+        assert!(route_add(&v, sv::source::LFO1, 4).is_err());
+        let mut w = v.clone();
+        for (i, x) in route_add(&w, sv::source::ENV2, 4).unwrap() {
+            w[i] = x;
+        }
+        for (i, x) in route_add(&w, sv::source::KEY, 4).unwrap() {
+            w[i] = x;
+        }
+        assert_eq!(route_add(&w, sv::source::RANDOM, 4), Err("A Synth knob takes at most 3 modulation sources"));
+        let cut = ix("cutoff");
+        let mut m = v.clone();
+        for (i, x) in map_add(&m, 2, cut).unwrap() {
+            m[i] = x;
+        }
+        let maps = mappings(&m);
+        assert_eq!(maps.len(), 1);
+        assert_eq!((maps[0].1, maps[0].2), (2, cut));
+        assert!((maps[0].4 - maps[0].3 - 0.25).abs() < 1e-6 || (maps[0].3 - maps[0].4 - 0.25).abs() < 1e-6);
+        assert!(map_add(&m, 3, cut).is_err(), "one macro per knob");
+        for (i, x) in map_clear(maps[0].0) {
+            m[i] = x;
+        }
+        assert!(mappings(&m).is_empty());
+        let sub = ix("sub_shape");
+        for (i, x) in map_add(&m, 1, sub).unwrap() {
+            m[i] = x;
+        }
+        assert_eq!(mappings(&m)[0].2, sub, "late parameters map through the late list");
+    }
+
+    #[test]
+    fn modulated_knobs_get_rings_and_dots() {
+        let v = defaults();
+        let g = layout(&ctx(&v), page::OSC, 1, 0);
+        let shape = g.knobs.iter().find(|k| k.idx as usize == ix("osc1_shape")).unwrap();
+        assert_eq!(slint::Model::row_count(&shape.dots), 1);
+        let fine = g.knobs.iter().find(|k| k.idx as usize == ix("osc1_fine")).unwrap();
+        assert_eq!(slint::Model::row_count(&fine.arcs), 0);
+    }
+
+    /// cargo test -p saine-app --release bench_synth_panel -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn bench_synth_panel() {
+        let v = defaults();
+        let n = 300;
+        for p in 0..PAGES.len() {
+            let t0 = std::time::Instant::now();
+            for _ in 0..n {
+                std::hint::black_box(displays(&v, 120.0, p, 1));
+            }
+            let pics = t0.elapsed().as_secs_f64() * 1e6 / n as f64;
+            let t0 = std::time::Instant::now();
+            for _ in 0..n {
+                std::hint::black_box(layout(&ctx(&v), p, 1, 0));
+            }
+            println!("{:<12} pictures {pics:8.1} us  layout {:6.1} us", PAGES[p], t0.elapsed().as_secs_f64() * 1e6 / n as f64);
+        }
+    }
+
+    #[test]
+    fn idle_effect_settings() {
+        assert!(idle_fx_param("fx1_chorus_rate", [0, 3, 7, 8]));
+        assert!(!idle_fx_param("fx2_chorus_rate", [0, 3, 7, 8]));
+        assert!(!idle_fx_param("fx1_mix", [0, 3, 7, 8]));
+        assert!(!idle_fx_param("cutoff", [0; 4]));
     }
 
     #[test]
     fn filter_response_shape() {
-        let lp = |f| svf_db(FilterMode::LowPass, 1000.0, 0.0, f);
+        let lp = |f| filter_db(1, 1000.0, 0.0, 10.0, f);
         assert!(lp(50.0).abs() < 0.5 && lp(10_000.0) < -35.0);
-        let hp = |f| svf_db(FilterMode::HighPass, 1000.0, 0.0, f);
+        let hp = |f| filter_db(3, 1000.0, 0.0, 10.0, f);
         assert!(hp(50.0) < -45.0 && hp(10_000.0).abs() < 0.5);
-        assert!(svf_db(FilterMode::LowPass, 1000.0, 1.0, 1000.0) > 18.0, "resonance peak");
+        assert!(filter_db(0, 1000.0, 0.9, 10.0, 1000.0) > 6.0, "ladder resonance peak");
+        assert!(filter_db(0, 1000.0, 0.0, 10.0, 10_000.0) < -70.0, "24 dB per octave");
+    }
+
+    #[test]
+    fn oscillator_shapes_stay_in_range() {
+        for w in 0..6 {
+            for s in [0.0, 0.5, 1.0] {
+                for i in 0..200 {
+                    let x = osc_sample(w, s, i as f32 / 200.0, 0.0);
+                    assert!((-1.6..=1.6).contains(&x), "wave {w} shape {s}: {x}");
+                }
+            }
+        }
+        for shape in 0..7 {
+            for i in 0..100 {
+                assert!(lfo_value(shape, i as f32 / 25.0).abs() <= 1.0001);
+            }
+        }
     }
 }

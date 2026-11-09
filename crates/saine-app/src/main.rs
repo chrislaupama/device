@@ -9,7 +9,7 @@
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
-//!              [--screenshot <out.png>] [--exit-after-frames N] [--frame-stats] [--self-test]
+//!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--self-test]
 //! ```
 
 mod assistant_panel;
@@ -82,6 +82,8 @@ struct Args {
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
     device_chain_review: bool,
     compressor_state: bool,
+    /// Never show the window (renders for --screenshot fall back to offscreen snapshots).
+    offscreen: bool,
     /// review-settings-plugins: Settings open on the Plugins page (no reference comparison).
     plugins_page_review: bool,
     assistant_fixture: Option<PathBuf>,
@@ -186,6 +188,7 @@ fn parse_args() -> Result<Args, String> {
             "--assistant-fixture" => a.assistant_fixture = Some(value(&mut i)?.into()),
             "--plugin-fixture" => a.plugin_fixture = Some(value(&mut i)?.into()),
             "--screenshot" => a.screenshot = Some(value(&mut i)?.into()),
+            "--offscreen" => a.offscreen = true,
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
             "--self-test" | "--self-test-audio" => {
@@ -362,7 +365,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
-            if c.panel_cancel_drag() {
+            if c.panel_cancel_drag() || (c.synth.menu.is_none() && c.synth_cancel()) {
                 return true;
             }
             if c.settings.menu.is_some() {
@@ -475,11 +478,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ---- Slint backend: our wgpu device + transparent macOS titlebar ----
     let (cfg, adapter) = gpu::make_wgpu_config()?;
     let selector = slint::BackendSelector::new().backend_name("winit".into()).renderer_name("femtovg-wgpu".into()).require_wgpu_30(cfg);
+    let offscreen = args.offscreen;
     #[cfg(target_os = "macos")]
-    let selector = selector.with_winit_window_attributes_hook(|attrs| {
+    let selector = selector.with_winit_window_attributes_hook(move |attrs| {
         use slint::winit_030::winit::platform::macos::WindowAttributesExtMacOS;
-        attrs.with_titlebar_transparent(true).with_fullsize_content_view(true).with_title_hidden(true)
+        let attrs = attrs.with_titlebar_transparent(true).with_fullsize_content_view(true).with_title_hidden(true);
+        if offscreen { attrs.with_visible(false).with_active(false) } else { attrs }
     });
+    #[cfg(not(target_os = "macos"))]
+    let selector = selector.with_winit_window_attributes_hook(move |attrs| if offscreen { attrs.with_visible(false).with_active(false) } else { attrs });
     selector.select()?;
 
     let app = AppWindow::new()?;
@@ -548,12 +555,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let inst = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id);
         if let Some(t) = inst {
             c.select_track(t);
-            let mut p = saine_core::SynthParams { preset: "Test: reference-synth".into(), ..Default::default() };
-            use saine_core::instrument::{Osc, Waveform};
-            p.osc[0] = Osc { wave: Waveform::Triangle, shape: 0.1, octave: 0, semitones: 0, fine_cents: 0.0, level: 0.8 };
-            p.osc[1] = Osc { wave: Waveform::Sine, shape: 0.0, octave: 1, semitones: 0, fine_cents: 7.0, level: 0.3 };
-            p.cross_fm = 0.0;
-            c.execute(saine_core::Command::SetSynthParams { track: t, params: p });
+            // Values read off the reference captures (osc 2 FM, LFO 1 slow, 2 routes,
+            // one macro mapping, Tape off / Chorus / Delay / Reverb); not a factory sound.
+            let device = c.project().track(t).and_then(|t| t.instrument_plugin.as_ref()).map(|d| d.id);
+            if let Some(device) = device {
+                let params: std::collections::BTreeMap<String, f32> = [
+                    ("osc1_wave", 1.0), ("osc1_shape", 0.1), ("osc1_level", 0.8), ("osc2_wave", 5.0), ("osc2_shape", 0.0), ("osc2_octave", 3.0), ("osc2_fine", 7.0), ("osc2_level", 0.3),
+                    ("sub_level", 0.0), ("cutoff", 2400.0), ("resonance", 0.1), ("filter_drive", 0.2), ("filter_env", 0.25), ("filter_velocity", 0.35), ("env2_attack", 0.002),
+                    ("amp_attack", 0.004), ("amp_decay", 0.9 * 1.0), ("amp_sustain", 0.35), ("amp_release", 1.1), ("volume", -0.7), ("env2_decay", 0.9), ("env2_sustain", 0.1),
+                    ("lfo1_rate", 0.18), ("lfo2_rate", 5.0), ("unison_voices", 2.0), ("unison_detune", 0.18), ("unison_spread", 0.8),
+                    ("mod1_source", 3.0), ("mod1_target", 5.0), ("mod1_amount", 0.2), ("mod2_source", 7.0), ("mod2_target", 11.0), ("mod2_amount", 0.35), ("mod3_source", 0.0), ("mod3_target", 0.0), ("mod3_amount", 0.0),
+                    ("macro1_name", 12.0), ("macro2_name", 18.0), ("macro3_name", 7.0), ("macro4_name", 6.0), ("map1_macro", 1.0), ("map1_param", 22.0), ("map1_from", 0.693), ("map1_to", 0.943),
+                    ("fx1_on", 0.0), ("fx3_type", 7.0), ("fx3_on", 1.0), ("fx4_type", 8.0), ("fx4_on", 1.0),
+                ]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+                c.execute(saine_core::Command::SetDeviceParams { device, params, preset: Some("Test: reference-synth".into()) });
+            }
         }
         c.set_bottom_tab(BottomTab::Devices);
         c.synth_page(args.synth_page.unwrap_or(0));
@@ -799,12 +818,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_set_bottom_tab, |c, t: i32| c.set_bottom_tab(if t == 1 { BottomTab::Clip } else { BottomTab::Devices }));
     on!(on_synth_page_select, |c, i: i32| c.synth_page(i.max(0) as usize));
     on!(on_synth_param, |c, id: i32, norm: f32| c.synth_param(id.max(0) as usize, norm));
-    on!(on_synth_param_end, |c| c.synth_param_end());
+    on!(on_synth_param_end, |c, id: i32, moved: bool| c.synth_param_end(id.max(0) as usize, moved));
     on!(on_synth_param_reset, |c, id: i32| c.synth_param_reset(id.max(0) as usize));
-    on!(on_synth_dropdown, |c, id: i32, x: f32, y: f32, w: f32| {
-        let target = if id < 0 { synth::MenuTarget::Presets } else { synth::MenuTarget::Choice(id as usize) };
-        c.synth_open_menu(target, x, y, w)
-    });
+    on!(on_synth_set, |c, id: i32, v: f32| c.synth_set(id.max(0) as usize, v));
+    on!(on_synth_toggle, |c, id: i32| c.synth_toggle(id.max(0) as usize));
+    on!(on_synth_pill, |c, action: i32, arg: i32, x: f32, y: f32, w: f32| c.synth_pill(action, arg.max(0) as usize, x, y, w));
+    on!(on_synth_remove, |c, kind: i32, slot: i32| c.synth_remove(kind, slot.max(0) as usize));
+    on!(on_synth_knob_menu, |c, id: i32, x: f32, y: f32| c.synth_knob_menu(id.max(0) as usize, x, y));
+    on!(on_synth_rail, |c, src: i32, phase: i32, x: f32, y: f32| c.synth_rail(src.max(0) as usize, phase, x, y));
+    on!(on_synth_scope_drag, |c, slot: i32, phase: i32, x: f32, y: f32| c.synth_scope_drag(slot.max(0) as usize, phase, x, y));
+    on!(on_synth_macro_select, |c, m: i32| c.synth_macro_select(m.max(0) as usize));
+    on!(on_synth_bypass, |c| c.synth_bypass());
     on!(on_synth_menu_pick, |c, i: i32| c.synth_menu_pick(i.max(0) as usize));
     on!(on_synth_menu_dismiss, |c| c.synth_menu_dismiss());
     on!(on_synth_preset_step, |c, dir: i32| c.synth_preset_step(dir));
