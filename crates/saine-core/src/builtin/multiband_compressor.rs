@@ -77,8 +77,8 @@ pub static MULTIBAND_COMPRESSOR: DeviceDef = DeviceDef {
     category: "Dynamics",
     purpose: "Splits the sound into low, mid and high bands and compresses each down above its threshold and up below its floor, for density and balance.",
     params: &[
-        ParamDef::new("low_crossover", "Low Crossover", 20.0, 1000.0, 120.0, Taper::Log, "Hz", Format::Hz).help("Split between the low and mid bands."),
-        ParamDef::new("high_crossover", "High Crossover", 1000.0, 20000.0, 2500.0, Taper::Log, "Hz", Format::Hz).help("Split between the mid and high bands."),
+        ParamDef::new("low_crossover", "Low Crossover", 20.0, 1000.0, 120.0, Taper::Log, "Hz", Format::Freq).help("Split between the low and mid bands."),
+        ParamDef::new("high_crossover", "High Crossover", 1000.0, 20000.0, 2500.0, Taper::Log, "Hz", Format::Freq).help("Split between the mid and high bands."),
         LOW[0], LOW[1], LOW[2], LOW[3], LOW[4],
         MID[0], MID[1], MID[2], MID[3], MID[4],
         HIGH[0], HIGH[1], HIGH[2], HIGH[3], HIGH[4],

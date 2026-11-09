@@ -179,6 +179,12 @@ struct Saturator {
     float operator()(float x) const noexcept { return (dsp::soft_tanh(k * (x + bias)) - offset) * norm; }
 };
 
+// Writes x and returns the sample written n calls ago (n = 0: x itself).
+inline float delayed(dsp::DelayLine& line, float x, uint32_t n) noexcept {
+    line.push(x);
+    return line.at(n);
+}
+
 class CharacterCompressor final : public BuiltinProcessor {
 public:
     void prepare(double sample_rate, uint32_t max_block) override {
@@ -430,8 +436,8 @@ public:
                 continue;
             }
             // Delayed audio with the gain applied (still M/S if asked).
-            const float ya = la_delay_[0].process(a, la) * g[0];
-            const float yb = la_delay_[1].process(b, la) * g[1];
+            const float ya = delayed(la_delay_[0], a, la) * g[0];
+            const float yb = delayed(la_delay_[1], b, la) * g[1];
             float wl = ya, wr = yb;
             if (ms_mode) {
                 wl = ya + yb;
@@ -440,8 +446,8 @@ public:
             wet_l_[i] = wl;
             wet_r_[i] = wr;
             // Dry, aligned with the wet path below.
-            pre_l_[i] = dry_delay_[0].process(xl, la + os_lat);
-            pre_r_[i] = dry_delay_[1].process(xr, la + os_lat);
+            pre_l_[i] = delayed(dry_delay_[0], xl, la + os_lat);
+            pre_r_[i] = delayed(dry_delay_[1], xr, la + os_lat);
         }
 
         if (listen) {
@@ -566,7 +572,13 @@ std::unique_ptr<BuiltinProcessor> create_character_compressor() { return std::ma
 
 extern const BuiltinDescriptor kCharacterCompressorDescriptor;
 constexpr float kIdleReadouts[] = {-120.0f, -120.0f, 0.0f, 0.0f}; // silent in / out, no reduction, no rider gain
+// Defaults of saine_core::builtin::character_compressor, registry order.
+constexpr float kDefaults[kParamCount] = {
+    0.f, -18.f, 4.f,  6.f,   10.f,   200.f, 0.f, 0.f, 24.f, 1.f, 100.f, 0.f, 0.f, 0.f, 0.f, 100.f, //
+    0.f, 0.f,   0.f,  80.f,  1000.f, 0.f,   1.f, 0.f, 0.f,  0.f, 50.f,  8.f, 0.f,                   //
+    0.f, 150.f, 1.f,  0.f,   0.f,    600.f, 1.f, 0.f, 0.f,  2500.f, 1.f, 0.f, 0.f, 8000.f, 1.f, 0.f, //
+    0.f};
 const BuiltinDescriptor kCharacterCompressorDescriptor{"character-compressor", kParamIds, kReadoutIds, &create_character_compressor,
-                                                       kIdleReadouts};
+                                                       kIdleReadouts, kDefaults};
 
 } // namespace saine

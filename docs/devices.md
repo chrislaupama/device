@@ -1,6 +1,7 @@
 # Built-in devices
 
-Saine's own effects (Compressor first; more follow from the device specs) are
+Saine's own effects (Compressor, the modulation family: Tremolo, Auto-Panner,
+Chorus, Flanger, Phaser, Ring Mod, Character Mod; more follow from the device specs) are
 **declarative**: one definition in Rust describes a device, and the model,
 undo, persistence, automation, engine and panel all derive from it. A device
 is made of up to three parts:
@@ -49,7 +50,7 @@ flowchart LR
   knobs × 62 + inner gaps × 10 + cluster gaps × 21 + 16, taken from the
   widest `shown_when` state so the card never resizes when a mode changes.
   The knob cells are then spread evenly across the dial row (the clusters
-  only size the card).
+  only size the card); field cards centre their dial row instead.
 
 ## Adding a device
 
@@ -62,31 +63,53 @@ flowchart LR
      the device spec (`handoffs/device-specs/<device>.md` in the Captain drive).
      Those are facts; write descriptions in your own words. Never copy the
      reference's code, CSS, images, audio or preset files.
-   - `Layout`: `picker` (menus / toggles / `Sidechain` / pills; the
-     sidechain picker and what follows align right), `view`
-     (`DynamicsStrip` or `Custom`), `sliders`, `clusters` of knobs,
-     `faces` (drawings inside a knob), `shown_when` (mode-dependent controls).
-     `View::Strip(Strip::new("threshold").range(top, floor))` is the
-     dynamics strip with its own dB range. A menu with more than four
-     choices is drawn as a menu pill, otherwise as segments. Value arcs and
-     slider fills start at 0 when the range spans it (−12..24 dB starts at
-     0 dB).
+   - `Layout`: `picker` (segmented `Menu`s, `Segments` with their own
+     labels, `Dropdown` pills for long lists, toggles, `Sidechain`, pills;
+     `Gap` or the sidechain picker pushes what follows to the right),
+     `view` (`DynamicsStrip`, `Field` or `Custom`), `sliders`,
+     `clusters` of knobs (`Swap` holds alternatives in one cell, such as
+     Rate / Rate Sync), `faces` (drawings inside a knob), `shown_when`
+     (mode-dependent controls: hidden parameters get no control and no
+     automation entry).
+   - `View::Field` is a plotted well (reference motion / response / sweep
+     fields): name a curve model in `crates/saine-app/src/device_fields.rs`
+     (traces, fill or band, ticks, caption value, live overlay), the caption,
+     the parameters dragged on x and y, and the field's width; the card is
+     at least field + sliders + padding wide. Field cards centre their dial
+     row and space its knobs evenly. The live overlay follows the kernel's
+     first readout as an LFO phase (0..1) while the transport plays.
+   - Parameter extras: `preset_locked()` (presets never load or save it,
+     e.g. a random seed), `reset_on_load()`, `Format::Freq` (reference Hz
+     text) and `Format::SignedPercent`. Tempo-synced LFOs use the
+     `DIVISIONS` / `MOD_NOTES` tables and `synced_hz`.
+   - Linked writes: when one edit must move other parameters in the same
+     undo step (Character Mod's circuit switch resets untouched artifacts),
+     add an arm to `builtin::linked_writes`; the panel then commits one
+     labelled `Command::Batch`.
+   - `View::Strip(Strip::new("threshold").range(top, floor))` is the
+     dynamics strip with its own dB range. Value arcs and slider fills start
+     at 0 when the range spans it (−12..24 dB starts at 0 dB). Cards without
+     a field spread their knob cells evenly across the card.
    - `Format::Custom(fn)` gives device-specific text; parsing still reads
      the unit ("1.2 s" → 1200 ms, "2k" → 2000 Hz).
    - **Behaviour** (optional, `builtin::behavior`): a `Behavior` with
      state-dependent detents (drags snap within 0.025 of the range, arrow
-     keys step between them, ticks drawn on the ring), value text, linked
-     writes (several parameters in one undo step), latches (a knob that
-     becomes a two-state pill in some modes) and the curve of a
+     keys step between them, ticks drawn on the ring), value text, latches
+     (a knob that becomes a two-state pill in some modes) and the curve of a
      `Face::Transfer` knob. Start from `Behavior::NONE`.
 2. **DSP kernel.** Add `engine/src/devices/<id>.cpp`: a `BuiltinProcessor`
    (`prepare` may allocate; `reset` / `process` are real-time: no
    allocation, locks, I/O or exceptions) and a `BuiltinDescriptor` whose
    parameter ids are the definition's ids **in the same order**. Register it
-   in `kBuiltinRegistry` (`engine/src/devices/builtin.cpp`) and add the
+   in `kBuiltinRegistry` (`engine/src/devices/builtin.cpp`), give the
+   descriptor its `defaults` (checked against the definition by the Rust
+   registry test through `se_builtin_desc::param_defaults`) and add the
    file to `engine/CMakeLists.txt`. `params` are plain values, constant
    within one `process` call (the instance splits blocks at automation
    events); smoothing audible steps is the kernel's job (`dsp::Smoother`).
+   `engine/src/devices/dsp.hpp` also has `LfoClock` (free or locked to
+   the song position through `BuiltinContext::offset`), `DelayLine`
+   (Hermite) and `Oversampler2x` (report its latency from `latency()`).
    Readouts (meters, gain reduction) are written per block; give
    `idle_readouts` for the values before the first block. When automation
    splits a block, the engine keeps each readout's segment value farthest
@@ -112,14 +135,13 @@ flowchart LR
      automatically.
    - Rust: `engine_registry_matches_core_definitions`
      (`crates/saine-engine/tests/builtin.rs`) fails when the definition and
-     the kernel disagree on parameter order. Add core tests for formatting and
+     the kernel disagree on parameter order or defaults. Add core tests for formatting and
      parsing of any new display format.
 5. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
    (`saine_device_bench`, Release build) and put the numbers in the PR.
-6. **Render.** Add the device's `reference-<id>` name to the built-in
-   `--state` arm in `crates/saine-app/src/main.rs` (it adds the device at
-   its defaults), render it with
-   `--screenshot` and compare it with the reference capture.
+6. **Render.** `--state reference-<id>` shows any built-in device at its
+   defaults; render it with `--screenshot` and compare it with the reference
+   capture.
 
 ## Commands
 

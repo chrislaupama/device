@@ -167,32 +167,6 @@ struct Biquad4 {
     }
 };
 
-// ---------------------------------------------------------------- delay
-
-// Integer delay up to the capacity given to prepare().
-class DelayLine {
-public:
-    void prepare(uint32_t max_delay) {
-        uint32_t n = 1;
-        while (n < max_delay + 1) n <<= 1;
-        buf_.assign(n, 0.0f);
-        mask_ = n - 1;
-        pos_ = 0;
-    }
-    void reset() noexcept { std::fill(buf_.begin(), buf_.end(), 0.0f); }
-    // Writes x and returns the sample written `delay` calls ago (delay <= capacity).
-    float process(float x, uint32_t delay) noexcept {
-        buf_[pos_] = x;
-        const float y = buf_[(pos_ - delay) & mask_];
-        pos_ = (pos_ + 1) & mask_;
-        return y;
-    }
-
-private:
-    std::vector<float> buf_;
-    uint32_t mask_ = 0, pos_ = 0;
-};
-
 // ---------------------------------------------------------------- oversampling
 
 // One 2x stage: Kaiser-windowed linear-phase halfband FIR of `taps` taps

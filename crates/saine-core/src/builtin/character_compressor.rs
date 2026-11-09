@@ -71,7 +71,7 @@ macro_rules! level_band {
     ($n:literal, $freq:literal) => {
         [
             ParamDef::choice(concat!("level", $n, "_enabled"), concat!("Level ", $n, " Enabled"), OFF_ON, 0).help("Turns this weighting band of the level detector on."),
-            ParamDef::new(concat!("level", $n, "_freq"), concat!("Level ", $n, " Freq"), 20.0, 20000.0, $freq, Taper::Linear { skew: 0.25 }, "Hz", Format::Hz).help("Centre of this weighting band."),
+            ParamDef::new(concat!("level", $n, "_freq"), concat!("Level ", $n, " Freq"), 20.0, 20000.0, $freq, Taper::Linear { skew: 0.25 }, "Hz", Format::Freq).help("Centre of this weighting band."),
             ParamDef::new(concat!("level", $n, "_q"), concat!("Level ", $n, " Q"), 0.1, 12.0, 1.0, Taper::Linear { skew: 0.35 }, "", Format::Plain(2)).help("Width of this weighting band."),
             ParamDef::new(concat!("level", $n, "_weight"), concat!("Level ", $n, " Weight"), -24.0, 0.0, 0.0, LINEAR, "dB", Format::Db)
                 .step(0.1)
@@ -111,8 +111,8 @@ pub static CHARACTER_COMPRESSOR: DeviceDef = DeviceDef {
         ParamDef::choice("ms_mode", "M/S Mode", &["Stereo", "Mid-Side"], 0).help("Compress left / right or mid / side."),
         ParamDef::choice("sc_source", "SC Source", &["Internal", "External"], 0).not_automatable().help("Set while a sidechain source is picked."),
         ParamDef::choice("sc_hpf_on", "SC HPF", OFF_ON, 0).help("High-pass filter in the detector path."),
-        ParamDef::new("sc_hpf_freq", "SC HPF Freq", 20.0, 500.0, 80.0, Taper::Linear { skew: 0.5 }, "Hz", Format::Hz).help("Cutoff of the detector high-pass filter."),
-        ParamDef::new("sc_eq_freq", "SC EQ Freq", 100.0, 10000.0, 1000.0, Taper::Linear { skew: 0.3 }, "Hz", Format::Hz).help("Centre of the detector EQ band."),
+        ParamDef::new("sc_hpf_freq", "SC HPF Freq", 20.0, 500.0, 80.0, Taper::Linear { skew: 0.5 }, "Hz", Format::Freq).help("Cutoff of the detector high-pass filter."),
+        ParamDef::new("sc_eq_freq", "SC EQ Freq", 100.0, 10000.0, 1000.0, Taper::Linear { skew: 0.3 }, "Hz", Format::Freq).help("Centre of the detector EQ band."),
         ParamDef::new("sc_eq_gain", "SC EQ Gain", -12.0, 12.0, 0.0, LINEAR, "dB", Format::Db).step(0.1).help("Boost or cut of the detector EQ band."),
         ParamDef::new("sc_eq_q", "SC EQ Q", 0.3, 4.0, 1.0, Taper::Linear { skew: 0.5 }, "", Format::Plain(2)).help("Width of the detector EQ band."),
         ParamDef::choice("sc_listen", "SC Listen", OFF_ON, 0).reset_on_load().help("Play the detector signal instead of the output."),
@@ -128,7 +128,7 @@ pub static CHARACTER_COMPRESSOR: DeviceDef = DeviceDef {
         ParamDef::choice("delta_monitor", "Delta Monitor", OFF_ON, 0).not_automatable().reset_on_load().help("Play only what the compressor removes."),
     ],
     layout: Layout {
-        picker: &[Control::Menu("model"), Control::Sidechain],
+        picker: &[Control::Dropdown("model"), Control::Sidechain],
         view: Some(View::Strip(Strip::new("threshold").range(0.0, -60.0))),
         sliders: &[Control::Slider("makeup")],
         clusters: &[
@@ -227,7 +227,8 @@ fn text(def: &DeviceDef, d: &Device, p: &ParamDef, v: f32) -> Option<String> {
     }
 }
 
-fn linked(def: &DeviceDef, d: &Device, p: &ParamDef, v: f32) -> Vec<(&'static str, f32)> {
+/// Other parameters a panel edit moves along (see `builtin::linked_writes`).
+pub(super) fn linked(def: &DeviceDef, d: &Device, p: &ParamDef, v: f32) -> Vec<(&'static str, f32)> {
     let close = |a: f32, b: f32| (a - b).abs() <= 1e-3 * a.abs().max(1.0);
     match (model_of(def, d), p.id) {
         (_, "model") => overlay(v.round() as u32).to_vec(),
@@ -266,7 +267,7 @@ fn transfer(def: &DeviceDef, d: &Device) -> Option<Transfer> {
     Some(Transfer { lo, hi, points, bend })
 }
 
-pub static BEHAVIOR: Behavior = Behavior { detents, text, linked, latch, transfer };
+pub static BEHAVIOR: Behavior = Behavior { detents, text, latch, transfer };
 
 // ---------------------------------------------------------------- static curves
 

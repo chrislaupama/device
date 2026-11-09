@@ -11,7 +11,7 @@
 
 use crate::controller::Controller;
 use crate::device_panel::{VIEW_SELECT, Z};
-use crate::{PanelBand, PanelField, PanelFreq, PanelPick, PanelTick, PanelXover};
+use crate::{PanelBand, PanelBands, PanelFreq, PanelPick, PanelTick, PanelXover};
 use saine_core::builtin::{multiband_gain, DeviceDef, Transfer, View, MULTIBAND_BANDS};
 use saine_core::{Device, DeviceId};
 use slint::{ModelRc, SharedString, VecModel};
@@ -173,9 +173,9 @@ impl Controller {
     }
 
     /// The multiband field (an empty, invisible field for other devices).
-    pub(crate) fn view_field(&self, d: &Device, def: &DeviceDef, live: &Device) -> PanelField {
+    pub(crate) fn view_field(&self, d: &Device, def: &DeviceDef, live: &Device) -> PanelBands {
         if !is_multiband(def) {
-            return PanelField::default();
+            return PanelBands::default();
         }
         let g = Geo::new(def);
         let st = self.view_state(d.id);
@@ -247,7 +247,7 @@ impl Controller {
             freqs.push(PanelFreq { x: g.x_of(hz), text: s(label), grid: true });
         }
         let span = TOP_DB - FLOOR_DB;
-        PanelField {
+        PanelBands {
             visible: true,
             x: FIELD_X * Z,
             y: FIELD_Y * Z,

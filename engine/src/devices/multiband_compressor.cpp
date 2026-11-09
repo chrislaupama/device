@@ -218,7 +218,10 @@ std::unique_ptr<BuiltinProcessor> create_multiband_compressor() { return std::ma
 
 extern const BuiltinDescriptor kMultibandCompressorDescriptor;
 constexpr float kIdleReadouts[] = {-120.0f, -120.0f, -100.0f, -100.0f, -100.0f, 0.0f, 0.0f, 0.0f};
+// Defaults of saine_core::builtin::multiband_compressor, registry order.
+constexpr float kDefaults[kParamCount] = {120.f, 2500.f, -18.f, 2.5f, 30.f, 200.f, 0.f, -20.f, 2.f, 15.f, 120.f, 0.f, -22.f, 2.f, 5.f, 80.f, 0.f,
+                                          100.f, 0.f,  0.f,   -60.f, 1.f, 0.f, -60.f, 1.f, 0.f, -60.f, 1.f, 0.f, 100.f, 100.f, 100.f, 100.f};
 const BuiltinDescriptor kMultibandCompressorDescriptor{"multiband-compressor", kParamIds, kReadoutIds, &create_multiband_compressor,
-                                                       kIdleReadouts};
+                                                       kIdleReadouts, kDefaults};
 
 } // namespace saine
