@@ -158,6 +158,19 @@ TEST_CASE(multiband_depth_downward_time_mix_and_band_input) {
     CHECK_NEAR(tone_gain(mk, 9000.0, 0.01), 4.0, 0.1);
 }
 
+TEST_CASE(multiband_depth_and_band_gain_edits_glide) {
+    auto r = rig();
+    Signal y = r.run_mono(tone(24000, 100.0, kRate, 0.9));
+    r.set("depth", 0.f);       // removes about 10 dB of reduction
+    r.set("low_makeup", 12.f); // and adds 12 dB
+    y = concat(y, r.run_mono(tone(9600, 100.0, kRate, 0.9)));
+    r.set("low_input", -24.f);
+    y = concat(y, r.run_mono(tone(9600, 100.0, kRate, 0.9)));
+    float step = 0.0f;
+    for (std::size_t i = 12000; i < y.size(); ++i) step = std::max(step, std::fabs(y[i] - y[i - 1]));
+    CHECK(step < 0.1f); // a 100 Hz tone at full makeup moves at most ~0.05 per sample; a gain jump would be ~2
+}
+
 TEST_CASE(multiband_input_gain_never_reaches_the_dry_path) {
     const Signal x = noise(48000, 0.2f, 7);
     auto a = rig();

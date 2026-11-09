@@ -83,7 +83,7 @@ Stats summarize(std::vector<double>& t) {
 
 double us(Clock::duration d) { return std::chrono::duration<double, std::micro>(d).count(); }
 
-Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, uint32_t events_per_block) {
+Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, uint32_t events_per_block, uint32_t event_param = 0) {
     saine::PluginSpec spec;
     spec.device_id = 1;
     spec.format = saine::PluginFormat::Builtin;
@@ -99,7 +99,7 @@ Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, u
     uint32_t seed = 7;
     std::vector<saine::ParamEvent> ev;
     for (uint32_t i = 0; i < events_per_block; ++i)
-        ev.push_back(saine::ParamEvent{i * (kBlock / std::max(1u, events_per_block)), 0, -30.0 + i});
+        ev.push_back(saine::ParamEvent{i * (kBlock / std::max(1u, events_per_block)), event_param, -30.0 + i});
     saine::RtTransport tr;
     std::vector<double> t;
     t.reserve(blocks);
@@ -162,7 +162,7 @@ int main(int argc, char** argv) {
     {
         std::vector<float> v = kMultiband;
         for (int b = 0; b < 3; ++b) v[static_cast<std::size_t>(20 + 3 * b)] = -40.f, v[static_cast<std::size_t>(21 + 3 * b)] = 4.f; // upward on
-        row("multiband-compressor (up + down)", bench_kernel("multiband-compressor", v, blocks, 16));
+        row("multiband-compressor (up + down, 16 auto events)", bench_kernel("multiband-compressor", v, blocks, 16, 2)); // low threshold
     }
     const char* drive_modes[] = {"Overdrive", "Fuzz", "Tube", "Hard Clip"};
     for (int m = 0; m < 4; ++m) {

@@ -430,10 +430,9 @@ public:
                     ol = da + db;
                     orr = da - db;
                 }
-                pre_l_[i] = ol;
-                pre_r_[i] = orr;
-                wet_l_[i] = wet_r_[i] = 0.0f;
-                continue;
+                // The audio paths below keep running, so turning Listen off resumes current audio.
+                l[i] = ol;
+                r[i] = orr;
             }
             // Delayed audio with the gain applied (still M/S if asked).
             const float ya = delayed(la_delay_[0], a, la) * g[0];
@@ -448,15 +447,6 @@ public:
             // Dry, aligned with the wet path below.
             pre_l_[i] = delayed(dry_delay_[0], xl, la + os_lat);
             pre_r_[i] = delayed(dry_delay_[1], xr, la + os_lat);
-        }
-
-        if (listen) {
-            for (uint32_t i = 0; i < n; ++i) {
-                l[i] = pre_l_[i];
-                r[i] = pre_r_[i];
-            }
-            finish(l, r, n, in_peak, gr_min, level_ext, ro);
-            return;
         }
 
         // Saturation, oversampled. Non-Clean models always run this one path (Drive 0 passes
@@ -483,6 +473,10 @@ public:
             }
         }
 
+        if (listen) {
+            finish(l, r, n, in_peak, gr_min, level_ext, ro);
+            return;
+        }
         for (uint32_t i = 0; i < n; ++i) {
             const float dl = pre_l_[i], dr = pre_r_[i];
             float yl, yr;

@@ -289,6 +289,27 @@ TEST_CASE(character_latency_is_known_before_the_first_block) {
     CHECK(r.instance().latency() == 240u + 31u);
 }
 
+TEST_CASE(character_listen_off_resumes_current_audio) {
+    auto r = rig();
+    r.set("threshold", 0.f);
+    r.set("lookahead", 5.f);
+    r.run_mono(dc(4800, 0.5f));
+    r.set("sc_listen", 1.f);
+    r.run_mono(dc(4800, 0.1f));
+    r.set("sc_listen", 0.f);
+    const Signal y = r.run_mono(dc(480, 0.1f));
+    for (const float v : y) CHECK(std::fabs(v - 0.1f) < 1e-3f); // nothing from before Listen
+}
+
+TEST_CASE(character_latency_follows_automated_lookahead) {
+    auto r = rig();
+    const auto la = param_index(r.desc(), "lookahead");
+    r.run(dc(512, 0.1f), dc(512, 0.1f), nullptr, nullptr, {{0, {la, 5.f}}, {256, {la, 5.f}}}); // a lane holding 5 ms
+    CHECK(r.instance().latency() == 240u);
+    r.run_mono(dc(512, 0.1f));
+    CHECK(r.instance().latency() == 0u);
+}
+
 TEST_CASE(character_drive_changes_keep_the_wet_path_continuous) {
     auto r = rig();
     r.set("model", 3.f);

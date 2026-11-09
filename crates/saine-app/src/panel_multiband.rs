@@ -190,11 +190,18 @@ impl Controller {
                 let (x0, x1) = (edges[b], edges[b + 1].max(edges[b]));
                 let (thr, floor) = (v(ids[0]), v(ids[6]));
                 let (ty, fy) = (g.y_of(thr), g.y_of(floor));
-                // Handle strips: 12 px around each line, split midway when the lines are closer.
+                // Handle strips: 12 px around each line, split midway when the lines are closer
+                // (Floor can sit above Threshold, so the split follows their actual order).
                 let half = 6.0 * Z;
                 let mid = 0.5 * (ty + fy);
-                let (t0, t1) = ((ty - half).max(0.0), if fy - ty < 2.0 * half { mid.max(ty) } else { ty + half });
-                let (f0, f1h) = (if fy - ty < 2.0 * half { mid.min(fy) } else { fy - half }, (fy + half).min(g.h));
+                let (t0, t1, f0, f1h) = if (fy - ty).abs() >= 2.0 * half {
+                    (ty - half, ty + half, fy - half, fy + half)
+                } else if fy >= ty {
+                    (ty - half, mid, mid, fy + half)
+                } else {
+                    (mid, ty + half, fy - half, mid)
+                };
+                let (t0, t1, f0, f1h) = (t0.max(0.0), t1.min(g.h), f0.max(0.0), f1h.min(g.h));
                 let level = st.level[b];
                 let gain = st.gain[b];
                 let ly = g.y_of(level);

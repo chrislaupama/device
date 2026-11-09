@@ -141,7 +141,8 @@ uint32_t BuiltinInstance::latency() {
     float v[kMaxParams];
     const uint32_t n = std::min(param_count(), kMaxParams);
     for (uint32_t i = 0; i < n; ++i) v[i] = target_[i].load(std::memory_order_relaxed);
-    return proc_->latency_for(v);
+    // The stored values give the latency before the first block; automation can hold others.
+    return std::max(proc_->latency_for(v), applied_latency_.load(std::memory_order_relaxed));
 }
 
 uint32_t BuiltinInstance::readouts(float* out, uint32_t capacity) const noexcept {
@@ -164,13 +165,14 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     // runs with the values in force at its first frame. The block's readouts
     // keep, per readout, the segment value farthest from its idle value
     // (highest peak, deepest reduction).
-    uint32_t pos = 0, e = 0;
+    uint32_t pos = 0, e = 0, lat = 0;
     while (pos < frames) {
         while (e < param_count && params[e].offset <= pos) {
             if (params[e].id < n_params) cur[params[e].id] = static_cast<float>(params[e].value);
             ++e;
         }
         const uint32_t end = e < param_count ? std::min(frames, params[e].offset) : frames;
+        lat = std::max(lat, proc_->latency_for(cur));
         BuiltinContext seg = ctx;
         seg.offset = pos;
         if (seg.sc_l != nullptr) {
@@ -190,6 +192,7 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
         pos = end;
     }
     for (std::size_t i = 0; i < readout_scratch_.size(); ++i) readout_atomic_[i].store(ro[i], std::memory_order_relaxed);
+    applied_latency_.store(lat, std::memory_order_relaxed);
     sc_l_ = sc_r_ = nullptr;
 }
 

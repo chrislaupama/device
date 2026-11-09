@@ -76,6 +76,7 @@ public:
         input_.set_time(20.0f, sr_);
         output_.set_time(20.0f, sr_);
         mix_.set_time(20.0f, sr_);
+        law_pole_ = dsp::pole(20.0f, sr_);
         f1_ = f2_ = -1.0f;
     }
 
@@ -117,9 +118,14 @@ public:
             input_.snap(in_gain);
             output_.snap(out_gain);
             mix_.snap(mix);
+            down_s_ = down, up_s_ = up, makeup_s_ = makeup, band_in_s_ = band_in;
+            depth_s_ = depth;
             primed_ = true;
         }
-        const F4 lim_lo = F4::all(-40.0f * depth), lim_hi = F4::all(36.0f * depth);
+        // Band law amounts, depth and per-band gains glide (20 ms) so edits and automation never step.
+        const F4 kp = F4::all(law_pole_);
+        F4 down_s = down_s_, up_s = up_s_, makeup_s = makeup_s_, band_in_s = band_in_s_;
+        float depth_s = depth_s_;
         float in_peak = 0.0f;
         F4 level_max = F4::all(kLevelFloorDb), gain_ext{};
         F4 env = env_;
@@ -127,6 +133,11 @@ public:
             const float xl = l[i], xr = r[i];
             in_peak = std::max(in_peak, std::max(std::fabs(xl), std::fabs(xr)));
             const float gi = input_.next(in_gain);
+            down_s = down + kp * (down_s - down);
+            up_s = up + kp * (up_s - up);
+            makeup_s = makeup + kp * (makeup_s - makeup);
+            band_in_s = band_in + kp * (band_in_s - band_in);
+            depth_s = depth + law_pole_ * (depth_s - depth);
             // Crossovers: lanes [L, R, L, R]. The input gain applies after the split so the
             // dry sum (an all-pass of the input) never carries gain changes.
             const F4 a = split_a_.process(F4{{xl, xr, xl, xr}}); // LP1a | HP1a
@@ -136,7 +147,7 @@ public:
             const F4 e = split_e_.process(F4{{dd[2], dd[3], 0.0f, 0.0f}});        // HP2b
             const F4 bl{{c[0], dd[0], e[0], 0.0f}}; // low, mid, high (left)
             const F4 br{{c[1], dd[1], e[1], 0.0f}};
-            const F4 gin = band_in * F4::all(gi);
+            const F4 gin = band_in_s * F4::all(gi);
             const F4 sl = bl * gin, sr = br * gin;
             // Envelopes: stereo-linked peak, attack / release in the linear domain.
             const F4 x = max4(F4{{std::fabs(sl[0]), std::fabs(sl[1]), std::fabs(sl[2]), 0.0f}},
@@ -147,8 +158,8 @@ public:
             F4 lvl;
             for (int b = 0; b < 4; ++b) lvl[b] = dsp::fast_gain_to_db(env[b] + 1e-12f);
             // Band law: downward above the threshold, upward below the floor.
-            F4 g = up * ramp(floor - lvl) - down * ramp(lvl - thr);
-            g = min4(max4(g, lim_lo), lim_hi);
+            F4 g = up_s * ramp(floor - lvl) - down_s * ramp(lvl - thr);
+            g = min4(max4(g, F4::all(-40.0f * depth_s)), F4::all(36.0f * depth_s));
             for (int b = 0; b < 4; ++b) {
                 if (g[b] > 0.0f) g[b] *= std::clamp((lvl[b] - kLevelFloorDb) * 0.05f, 0.0f, 1.0f);
                 if (std::fabs(g[b]) > std::fabs(gain_ext[b])) gain_ext[b] = g[b];
@@ -156,7 +167,7 @@ public:
             level_max = max4(level_max, lvl);
             F4 lin;
             for (int b = 0; b < 4; ++b) lin[b] = dsp::fast_db_to_gain(g[b]);
-            const F4 k = lin * makeup;
+            const F4 k = lin * makeup_s;
             const F4 wl = sl * k, wr = sr * k;
             const float wet_l = wl[0] + wl[1] + wl[2], wet_r = wr[0] + wr[1] + wr[2];
             const float dry_l = bl[0] + bl[1] + bl[2], dry_r = br[0] + br[1] + br[2];
@@ -167,6 +178,8 @@ public:
         for (int b = 0; b < 4; ++b)
             if (env[b] < 1e-20f) env[b] = 0.0f;
         env_ = env;
+        down_s_ = down_s, up_s_ = up_s, makeup_s_ = makeup_s, band_in_s_ = band_in_s;
+        depth_s_ = depth_s;
         split_a_.flush();
         split_b_.flush();
         split_c_.flush();
@@ -208,6 +221,8 @@ private:
     float f1_ = -1.0f, f2_ = -1.0f;
     dsp::Biquad4 split_a_, split_b_, split_c_, split_d_, split_e_;
     F4 env_{};
+    F4 down_s_{}, up_s_{}, makeup_s_{}, band_in_s_{};
+    float depth_s_ = 0.0f, law_pole_ = 0.0f;
     dsp::Smoother input_, output_, mix_;
     bool primed_ = false;
 };

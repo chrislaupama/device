@@ -150,6 +150,8 @@ pub(crate) fn reuse_card_models(old: &DeviceCard, new: &mut DeviceCard) {
     keep(&old.picks, &mut new.picks);
     keep(&old.sliders, &mut new.sliders);
     keep(&old.buttons, &mut new.buttons);
+    keep(&old.bands.bands, &mut new.bands.bands);
+    keep(&old.bands.xovers, &mut new.bands.xovers);
     // Field zones are touch areas: a rebuilt one would drop its drag.
     keep(&old.canvas.zones, &mut new.canvas.zones);
     keep(&old.canvas.paths, &mut new.canvas.paths);

@@ -125,6 +125,7 @@ private:
     std::unique_ptr<BuiltinProcessor> proc_;
     std::unique_ptr<std::atomic<float>[]> target_; // written by the main thread
     std::vector<float> current_;                   // RT copy for this block
+    std::atomic<uint32_t> applied_latency_{0};     // latency of the values the last block ran with
     std::unique_ptr<std::atomic<float>[]> readout_atomic_;
     std::vector<float> readout_scratch_;
     std::vector<float> readout_segment_; // later automation segments, merged into readout_scratch_
