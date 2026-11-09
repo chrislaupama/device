@@ -102,14 +102,14 @@ component GeneralPage inherits Rectangle {
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "General"; font-size: 17.25px; font-weight: 700; }
     for s in [
         { t: "Startup", y: 71.3px }, { t: "Transport", y: 125.8px }, { t: "Sample licensing", y: 185.8px },
-        { t: "Timeline annotations", y: 240.2px }, { t: "Plugin windows", y: 294.7px }, { t: "Rheo", y: 389.6px },
+        { t: "Timeline annotations", y: 240.2px }, { t: "Plugin windows", y: 294.7px }, { t: "Assistant", y: 389.6px },
     ]: FieldLabel { x: 20.5px; y: s.y; text: s.t; }
     for y in [115.7px, 175.6px, 230.1px, 284.6px, 378.8px]: Rectangle { x: 20.5px; y: y; width: root.width - 41px; height: 0.75px; background: #2c2d30; }
     for r in [
         { t: "Always load last session", y: 88.4px, on: false }, { t: "License samples when you use them", y: 202.9px, on: true },
         { t: "Sections move clips", y: 257.4px, on: true }, { t: "Auto-show third-party effect windows", y: 311.8px, on: true },
         { t: "Auto-show built-in effect windows", y: 331.4px, on: false }, { t: "Keep plugin windows on top", y: 351.6px, on: true },
-        { t: "Let Rheo listen to audio", y: 406.7px, on: true }, { t: "Hold talk key to record", y: 474.6px, on: true },
+        { t: "Let the assistant listen to audio", y: 406.7px, on: true }, { t: "Hold talk key to record", y: 474.6px, on: true },
         { t: "Auto-send", y: 494.8px, on: true },
     ]: Rectangle {
         x: 0; y: r.y; width: root.width; height: 14px;
