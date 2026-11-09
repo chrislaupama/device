@@ -28,6 +28,7 @@ slint = { version = "=1.18.1", default-features = false, features = [
 wgpu = { version = "=30.0.1" }
 bytemuck = { version = "=1.24.0", features = ["derive"] }
 png = "=0.18.1"
+ttf-parser = "=0.25.1"
 pollster = "=0.4.0"
 rfd = "0.15"
 ureq = { version = "3", features = ["json"] }
