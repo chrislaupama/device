@@ -89,7 +89,7 @@ wgpu.
 
 ### Built-in devices
 
-Saine Studio comes with 26 devices of its own. Each one is a single declarative definition (parameters, panel layout and
+Saine Studio comes with 29 devices of its own. Each one is a single declarative definition (parameters, panel layout and
 factory presets) that the model, undo, saving, automation, engine and panel all derive from, with a C++ DSP kernel
 behind it. [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
@@ -100,6 +100,7 @@ behind it. [docs/devices.md](docs/devices.md) explains how they work and how to 
 | Saturation | Distortion, Tape Saturation, Soft Clipper, Bit Crusher |
 | Modulation | Chorus, Flanger, Phaser, Tremolo, Auto-Panner, Ring Mod, Character Mod |
 | Restoration | De-Noiser, De-Hummer, De-Clipper, De-Esser |
+| Pitch and analysis | Pitch Corrector, Tuner, Spectrum |
 | Modulators and containers | LFO, Chain |
 
 ### Project files
