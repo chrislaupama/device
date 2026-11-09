@@ -474,7 +474,7 @@ impl Controller {
     }
 
     /// Value of a parameter as the field shows it (live drag value, else the model).
-    fn fv(&self, d: &Device, def: &DeviceDef, id: &str) -> f32 {
+    fn fv_named(&self, d: &Device, def: &DeviceDef, id: &str) -> f32 {
         def.param(id).map_or(0.0, |p| self.panel_value(d, def, p))
     }
 
@@ -491,7 +491,7 @@ impl Controller {
         let empty = Live::default();
         let live = fields.live.get(&d.id).unwrap_or(&empty);
         let accent = self.card_accent(d);
-        let v = |id: &str| self.fv(d, def, id);
+        let v = |id: &str| self.fv_named(d, def, id);
         let (mut caption, mut value) = (String::new(), String::new());
         match name {
             "pitch-shifter" => {
@@ -528,7 +528,7 @@ impl Controller {
 
     #[allow(clippy::too_many_arguments)]
     fn draw_delay_echoes(&self, c: &mut Canvas, d: &Device, def: &DeviceDef, live: &Live, accent: Color, w: f32, h: f32, drag: Option<&FieldDrag>) {
-        let v = |id: &str| self.fv(d, def, id);
+        let v = |id: &str| self.fv_named(d, def, id);
         let (left, right, top, bottom) = (18.0 * Z, w - 8.0 * Z, 8.0 * Z, h - 16.0 * Z);
         let pw = right - left;
         let bpm = self.bpm();
@@ -630,7 +630,7 @@ impl Controller {
 
     #[allow(clippy::too_many_arguments)]
     fn draw_reverb_tail(&self, c: &mut Canvas, d: &Device, def: &DeviceDef, live: &Live, accent: Color, w: f32, h: f32, drag: Option<&FieldDrag>, hot: Option<Grab>) {
-        let v = |id: &str| self.fv(d, def, id);
+        let v = |id: &str| self.fv_named(d, def, id);
         let (left, right, top, bottom) = reverb_box(w, h);
         let (decay, damping, pre) = (v("decay"), v("damping") / 100.0, v("predelay") / 1000.0);
         let mode = (v("mode2").round() as usize).min(5);
@@ -746,7 +746,7 @@ impl Controller {
     /// What a press at (x, y) in the well of device d grabs.
     #[allow(clippy::too_many_arguments)]
     fn field_hit(&self, d: &Device, def: &DeviceDef, name: &str, w: f32, h: f32, x: f32, y: f32) -> Option<Grab> {
-        let v = |id: &str| self.fv(d, def, id);
+        let v = |id: &str| self.fv_named(d, def, id);
         let view = self.card_view(d.id);
         match name {
             "pitch-shifter" => Some(Grab::Pitch),
@@ -819,7 +819,7 @@ impl Controller {
 
     /// Parameters a grab may write, for start values, resets and commits.
     fn grab_params(&self, def: &DeviceDef, d: &Device, grab: Grab) -> Vec<&'static str> {
-        let v = |id: &str| self.fv(d, def, id);
+        let v = |id: &str| self.fv_named(d, def, id);
         let synced = v("sync") >= 0.5;
         match grab {
             Grab::DelayTime { right } => vec![
@@ -944,7 +944,7 @@ impl Controller {
                 }
             }
             Grab::GrainsSpray => {
-                let v = |id: &str| self.fv(d, def, id);
+                let v = |id: &str| self.fv_named(d, def, id);
                 let r = grains_reach(&v, bpm);
                 vec![("spray", ((grains_back(g.x, g.span, w) - r.position) * 1000.0).clamp(0.0, 2000.0))]
             }
@@ -1043,7 +1043,7 @@ impl Controller {
                     }
                     Grab::ReverbDecay | Grab::EchoIntensity | Grab::DelayTime { .. } => return,
                     Grab::EchoHead { .. } => {
-                        let id = if self.fv(&d, def, "machine").round() as u32 == 2 { "motor" } else { "heads" };
+                        let id = if self.fv_named(&d, def, "machine").round() as u32 == 2 { "motor" } else { "heads" };
                         def.param(id).map(|p| (p.id.to_string(), p.default)).into_iter().collect()
                     }
                     g => self.grab_params(def, &d, g).iter().filter_map(|id| def.param(id)).map(|p| (p.id.to_string(), p.default)).collect(),

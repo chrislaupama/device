@@ -97,10 +97,13 @@ export struct PanelCanvas {
     caption: string, readout: string,
     paths: [PanelPath], texts: [PanelText], dots: [PanelDot], grips: [PanelGrip], zones: [PanelZone],
     // pointer: raw pointer, wheel and key events over the well go to Rust (Studio.panel-graph*),
-    // which hit-tests them; cursor: 0 default, 1 move, 2 ew-resize, 3 ns-resize. readout-accent:
-    // the caption value is drawn in the track colour. label / value: the pointer well's
-    // accessible name and value.
-    pointer: bool, cursor: int, readout-accent: bool, label: string, value: string,
+    // which hit-tests them. interactive: every pointer event over the whole canvas (press, drag,
+    // release, hover, right press, double-click, wheel, leave) goes to Rust as
+    // Studio.panel-editor, with window coordinates for menus, for editors with their own
+    // gestures and menus (src/device_editors.rs). cursor: 0 default, 1 move, 2 ew-resize,
+    // 3 ns-resize, 4 pointer, 5 crosshair. readout-accent: the caption value is drawn in the
+    // track colour. label / value: the pointer well's accessible name and value.
+    pointer: bool, interactive: bool, cursor: int, readout-accent: bool, label: string, value: string,
 }
 // Freely placed control (custom card bodies): kind 0 latch (On/Off parameter), 1 menu pill
 // (choice parameter, opens a menu of its choices).
@@ -564,6 +567,9 @@ export global Studio {
     callback panel-field(int, int, float, float, bool);      // field XY drag: device, phase (as panel-drag), dx, dy (px, up +), fine
     callback panel-preset-step(int, int);                    // previous (-1) / next (+1) factory preset
     callback panel-latch(int, int, int);                     // latch: 0 click (toggle) / 1 press / 2 release (momentary)
+    // Custom view canvas: kind 0 press, 1 drag, 2 release, 3 cancel, 4 hover, 5 right press,
+    // 6 double-click, 7 wheel (dy notches, up +), 8 pointer left; canvas x, y; window x, y; shift, alt.
+    callback panel-editor(int, int, length, length, length, length, bool, bool, float);
     callback panel-view(int, int, float);                    // custom view action (0 select band at field x px, 1 select band n, 2 show card view n)
     // ---- modulation and containers (src/device_mod.rs) ----
     in property <[ChainFrame]> chain-frames;

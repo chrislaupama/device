@@ -135,6 +135,7 @@ pub struct PanelState {
     pub(crate) sampler: crate::sampler_panel::SamplerUi,
     /// Field devices while the transport plays: (last LFO phase, elapsed cycles).
     lfo: HashMap<DeviceId, (f32, f64)>,
+    pub(crate) editors: crate::device_editors::ViewState,
     /// Canvas views (EQ, Auto Filter): hover, drag and selection state.
     pub(crate) canvas: crate::device_canvas::CanvasUi,
     /// Field views (src/panel_graph.rs): drag, hover and spectrum state.
@@ -489,7 +490,7 @@ fn param_command(def: &DeviceDef, d: &Device, p: &ParamDef, value: f32) -> Comma
 }
 
 impl Controller {
-    fn panel_def(&self, id: DeviceId) -> Option<(&Device, &'static DeviceDef)> {
+    pub(crate) fn panel_def(&self, id: DeviceId) -> Option<(&Device, &'static DeviceDef)> {
         let d = self.project().device(id)?;
         Some((d, saine_core::builtin::def_of(d)?))
     }
@@ -827,6 +828,9 @@ impl Controller {
             buttons: model(body.buttons),
             ..Default::default()
         };
+        if let Some(View::Custom(name)) = def.layout.view {
+            self.custom_card(name, d, def, &mut card);
+        }
         if crate::sampler_panel::is_sampler(def) {
             return self.sampler_card(d, def, card);
         }
@@ -1157,6 +1161,16 @@ impl Controller {
         }
     }
 
+    /// Parameter index of the running drag.
+    pub(crate) fn panel_drag_index(&self) -> Option<i32> {
+        self.devices.panel.drag.map(|g| g.index as i32)
+    }
+
+    /// True once the running drag has passed the start threshold.
+    pub(crate) fn panel_drag_active(&self) -> bool {
+        self.devices.panel.drag.is_some_and(|g| g.active)
+    }
+
     /// Alt+drag on a two-line strip: both lines move by the same amount, clamped
     /// so neither leaves its range; one undo step. Alt-click without a move resets `index`.
     pub fn panel_drag_pair(&mut self, device: DeviceId, index: i32, other: i32, phase: i32, dy: f32, rate: f32, fine: bool) {
@@ -1458,24 +1472,8 @@ impl Controller {
         let rows = match which {
             -1 => {
                 let own = self.project().find_device(device).map(|(ti, _)| self.project().tracks[ti].id);
-                // A source that already listens to this track (directly or through other sidechains) would form a cycle.
-                let feeds_back = |from: TrackId| {
-                    let mut stack = vec![from];
-                    let mut seen = std::collections::HashSet::new();
-                    while let Some(t) = stack.pop() {
-                        if Some(t) == own {
-                            return true;
-                        }
-                        if seen.insert(t)
-                            && let Some(tr) = self.project().track(t)
-                        {
-                            stack.extend(tr.devices.iter().filter_map(|x| x.sidechain));
-                        }
-                    }
-                    false
-                };
                 let mut rows = vec![("None".to_string(), check(d.sidechain.is_none()), Some(MenuPick::Sidechain(device, None)), false)];
-                for t in self.project().tracks.iter().filter(|t| Some(t.id) != own && (d.sidechain == Some(t.id) || !feeds_back(t.id))) {
+                for t in self.project().tracks.iter().filter(|t| Some(t.id) != own && (d.sidechain == Some(t.id) || !self.sidechain_feeds_back(device, t.id))) {
                     rows.push((t.name.clone(), check(d.sidechain == Some(t.id)), Some(MenuPick::Sidechain(device, Some(t.id))), false));
                 }
                 rows
@@ -1512,6 +1510,25 @@ impl Controller {
         };
         self.devices.menu = Some(DevMenu { pos: (x, y), w: 180.0, rows });
         self.ui_dirty = true;
+    }
+
+    /// True when `from` already listens to the track of `device` (directly or
+    /// through other sidechains): picking it as a source would form a cycle.
+    pub(crate) fn sidechain_feeds_back(&self, device: DeviceId, from: TrackId) -> bool {
+        let own = self.project().find_device(device).map(|(ti, _)| self.project().tracks[ti].id);
+        let mut stack = vec![from];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(t) = stack.pop() {
+            if Some(t) == own {
+                return true;
+            }
+            if seen.insert(t)
+                && let Some(tr) = self.project().track(t)
+            {
+                stack.extend(tr.devices.iter().filter_map(|x| x.sidechain));
+            }
+        }
+        false
     }
 
     /// Previous / next factory preset (wraps; from no preset, next is the first).

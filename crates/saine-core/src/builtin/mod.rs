@@ -59,8 +59,10 @@ mod phaser;
 pub mod pitch_shifter;
 pub mod reverb;
 mod ring_mod;
+pub mod shaper;
 mod soft_clipper;
 mod tape_saturation;
+pub mod trance_gate;
 mod tremolo;
 mod utility;
 mod widener;
@@ -135,7 +137,8 @@ pub enum Format {
     SignedPercent,
     /// Choice name from `ParamDef::choices`.
     Choice,
-    /// Number with this many decimals and the unit appended when not empty.
+    /// Number with this many decimals and the unit appended when not empty
+    /// (a multiplier unit "x" attaches without a space: "8.0x").
     Plain(u8),
     /// Signed number (plain value × `scale`) with the unit: "+0 st", "−12 ct",
     /// "+24 st" for an envelope depth of 0.5 shown in semitones (scale 48).
@@ -531,7 +534,12 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
         }
         Format::Plain(d) => {
             let s = format!("{:.*}", d as usize, v).replace('-', &MINUS.to_string());
-            if unit.is_empty() { s } else { format!("{s} {unit}") }
+            match unit {
+                "" => s,
+                // Multipliers attach to the number ("8.0x").
+                "x" => format!("{s}x"),
+                _ => format!("{s} {unit}"),
+            }
         }
         Format::Signed { decimals, scale } => {
             let x = v * scale.max(1) as f32;
@@ -1018,7 +1026,7 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 39] = [
+    static ALL: [&DeviceDef; 41] = [
         &compressor::COMPRESSOR,
         &distortion::DISTORTION,
         &tape_saturation::TAPE_SATURATION,
@@ -1058,6 +1066,8 @@ pub fn all() -> &'static [&'static DeviceDef] {
         &deesser::DEESSER,
         &dehummer::DEHUMMER,
         &denoiser::DENOISER,
+        &trance_gate::TRANCE_GATE,
+        &shaper::SHAPER,
     ];
     &ALL
 }

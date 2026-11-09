@@ -2838,6 +2838,197 @@ fn modulation_steps() -> Vec<Step> {
     ]
 }
 
+// ------------------------------------------------------------------ custom device views
+
+fn device_of<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
+    let t = track_of(c, TrackKind::Audio)?;
+    c.project().tracks[t].devices.iter().find(|d| saine_core::builtin::def_of(d).is_some_and(|def| def.id == id))
+}
+
+fn value_of(c: &Controller, device: &str, param: &str) -> Option<f32> {
+    let d = device_of(c, device)?;
+    let def = saine_core::builtin::def_of(d)?;
+    Some(def.value(d, def.param(param)?))
+}
+
+/// A pointer event on a custom view at a card-relative reference point (pt at 100%).
+fn field_event(a: &AppWindow, ctl: &Ctl, device: &str, kind: i32, x: f32, y: f32) {
+    let Some(id) = device_of(&ctl.borrow(), device).map(|d| d.id.0 as i32) else { return };
+    let z = crate::device_panel::Z;
+    a.global::<Studio>().invoke_panel_editor(id, kind, x * z, y * z - 27.0, 600.0, 400.0, false, false, 0.0);
+}
+
+/// Window click on the Trance Gate's ring hole (no action): gives its field keyboard focus.
+fn focus_trance_gate(a: &AppWindow) {
+    if let Some(cd) = card_named(a, "Trance Gate") {
+        let z = crate::device_panel::Z;
+        let (x, y) = card_xy(&cd, 98.0 * z, 157.5 * z + 30.0 * z);
+        click(a, x, y);
+    }
+}
+
+/// Trance Gate ring: reference point in the middle of step i of 16.
+fn ring_xy(i: usize) -> (f32, f32) {
+    let a = std::f32::consts::TAU * (i as f32 + 0.5) / 16.0;
+    let r = 0.8 * 83.0;
+    (98.0 + r * a.sin(), 157.5 - r * a.cos())
+}
+
+/// Trance Gate and Shaper: added from the Built-in list, then driven through their custom views.
+fn custom_view_steps() -> Vec<Step> {
+    use Step::*;
+    let hist = Rc::new(Cell::new(0usize));
+    let mask0 = Rc::new(Cell::new(0u32));
+    fn grew(hc: &Rc<Cell<usize>>, c: &Controller, n: usize) -> Result<(), String> {
+        let now = c.doc.history_labels().len();
+        let was = hc.get();
+        hc.set(now);
+        (now == was + n).then_some(()).ok_or(format!("history {was} -> {now} (want +{n}), last {:?}", c.doc.undo_label()))
+    }
+    fn mask(c: &Controller) -> u32 {
+        saine_core::builtin::trance_gate::mask(value_of(c, "trance-gate", "p1_lo").unwrap_or(0.0), value_of(c, "trance-gate", "p1_hi").unwrap_or(0.0))
+    }
+    fn act(ctl: &Ctl, a: &AppWindow, f: impl FnOnce(&AppWindow, &Controller) -> Vec<(i32, f32, f32)>, device: &str) {
+        let events = f(a, &ctl.borrow());
+        for (kind, x, y) in events {
+            field_event(a, ctl, device, kind, x, y);
+        }
+        if let Ok(mut c) = ctl.try_borrow_mut() {
+            c.update_ui(a);
+        }
+    }
+    let (h0, h1, h2, h3, h4, h5, h6, h7) = (hist.clone(), hist.clone(), hist.clone(), hist.clone(), hist.clone(), hist.clone(), hist.clone(), hist.clone());
+    let (m0, m1, m2, m3) = (mask0.clone(), mask0.clone(), mask0.clone(), mask0.clone());
+    vec![
+        Do("views: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("views: select the first audio track, clear its chain, add Trance Gate and Shaper", Box::new(move |a, ctl| {
+            let Some(i) = track_of(&ctl.borrow(), TrackKind::Audio) else { return };
+            click_track_header(a, ctl, i);
+            let mut c = ctl.borrow_mut();
+            let ids: Vec<saine_core::DeviceId> = c.project().tracks[i].devices.iter().map(|d| d.id).collect();
+            for d in ids {
+                c.execute(saine_core::Command::RemoveDevice { device: d });
+            }
+            h0.set(c.doc.history_labels().len());
+            let t = c.project().tracks[i].id;
+            for id in ["trance-gate", "shaper"] {
+                let def = saine_core::builtin::find(id).expect("registered");
+                c.add_item_to_track(&crate::devices::Item::Builtin(def), t, None);
+            }
+            c.update_ui(a);
+        })),
+        Check("views: both added (two undo steps); cards are 528 / 501 pt with an interactive canvas, 6 / 4 knobs on the dial row; engine loaded them", Box::new(move |c, a| {
+            grew(&h1, c, 2)?;
+            let z = crate::device_panel::Z;
+            let tg = card_named(a, "Trance Gate").ok_or("no Trance Gate card")?;
+            let sh = card_named(a, "Shaper").ok_or("no Shaper card")?;
+            let errors = c.engine.plugin_load_errors();
+            let ok = tg.canvas.visible
+                && sh.canvas.visible
+                && approx(tg.width, 528.0 * z, 0.01)
+                && approx(sh.width, 501.0 * z, 0.01)
+                && slint::Model::row_count(&tg.knobs) == 6
+                && slint::Model::row_count(&sh.knobs) == 4
+                && slint::Model::row_count(&tg.canvas.paths) > 10
+                && slint::Model::row_count(&sh.canvas.paths) > 10
+                && tg.canvas.interactive
+                && sh.canvas.interactive
+                && [&tg.knobs, &sh.knobs].iter().all(|k| slint::Model::iter(*k).all(|k| approx(k.y, crate::device_panel::DIAL_Y * z, 0.01)))
+                && ["trance-gate", "shaper"].iter().all(|id| device_of(c, id).is_some_and(|d| !errors.iter().any(|(e, _)| *e == d.id)));
+            ok.then_some(()).ok_or(format!("tg {} {} sh {} {} errors {errors:?}", tg.width, tg.canvas.visible, sh.width, sh.canvas.visible))
+        })),
+        DoC("views: click step 1 on the Trance Gate ring", Box::new(move |a, ctl| {
+            m0.set(mask(&ctl.borrow()));
+            act(ctl, a, |_, _| {
+                let (x, y) = ring_xy(0);
+                vec![(0, x, y), (2, x, y)]
+            }, "trance-gate");
+        })),
+        Check("views: step 1 toggled, one undo step", Box::new(move |c, _| {
+            grew(&h2, c, 1)?;
+            let (was, now) = (m1.get(), mask(c));
+            (now == was ^ 1).then_some(()).ok_or(format!("mask {was:#x} -> {now:#x}"))
+        })),
+        DoC("views: paint steps 2-4 in one drag", Box::new(move |a, ctl| {
+            m2.set(mask(&ctl.borrow()));
+            act(ctl, a, |_, _| {
+                let ((x1, y1), (x2, y2), (x3, y3)) = (ring_xy(1), ring_xy(2), ring_xy(3));
+                vec![(0, x1, y1), (1, x2, y2), (1, x3, y3), (2, x3, y3)]
+            }, "trance-gate");
+        })),
+        Check("views: steps 2-4 all take the first step's new state, ONE undo step", Box::new(move |c, _| {
+            grew(&h3, c, 1)?;
+            let (was, now) = (m3.get(), mask(c));
+            let want = if was >> 1 & 1 == 1 { was & !0b1110 } else { was | 0b1110 };
+            (now == want).then_some(()).ok_or(format!("mask {was:#x} -> {now:#x}, want {want:#x}"))
+        })),
+        DoC("views: paint steps 6-7, press Escape before release", Box::new(move |a, ctl| {
+            focus_trance_gate(a);
+            act(ctl, a, |_, _| {
+                let ((x1, y1), (x2, y2)) = (ring_xy(5), ring_xy(6));
+                vec![(0, x1, y1), (1, x2, y2)]
+            }, "trance-gate");
+            key(a, Key::Escape, false, false);
+            act(ctl, a, |_, _| vec![(2, 0.0, 0.0)], "trance-gate");
+        })),
+        Check("views: Escape cancels the paint (no undo step)", Box::new(move |c, _| grew(&h4, c, 0))),
+        DoC("views: drag the Shaper's middle point down 40 px", Box::new(|a, ctl| {
+            act(ctl, a, |_, _| {
+                let (x, y) = (48.0 + 0.5 * 435.0, 108.0);
+                let d = 40.0 / crate::device_panel::Z;
+                vec![(0, x, y), (1, x, y + d / 2.0), (1, x, y + d), (2, x, y + d)]
+            }, "shaper");
+        })),
+        Check("views: the point follows (Volume 100% -> about 51%), one undo step", Box::new(move |c, _| {
+            grew(&h5, c, 1)?;
+            let v = value_of(c, "shaper", "vol_p2_y").unwrap_or(f32::NAN);
+            approx(v, 51.0, 1.5).then_some(()).ok_or(format!("vol_p2_y {v}"))
+        })),
+        DoC("views: Shaper › Filter tab, switch the lane on, pick the second library shape", Box::new(|a, ctl| {
+            act(ctl, a, |_, _| vec![(0, 291.5 + 30.0, 50.0), (2, 291.5 + 30.0, 50.0), (0, 291.5, 50.0), (2, 291.5, 50.0), (0, 60.0, 81.0)], "shaper");
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == saine_core::builtin::shaper::SHAPES[4][1].name) {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })),
+        Check("views: Filter lane on and shaped (two undo steps); the strip names the shape", Box::new(move |c, _| {
+            grew(&h6, c, 2)?;
+            let d = device_of(c, "shaper").ok_or("no shaper")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            let pts = saine_core::builtin::shaper::lane_points(&def.values(d), 4);
+            let name = saine_core::builtin::shaper::matching_shape(4, &pts);
+            (value_of(c, "shaper", "filter_on") == Some(1.0) && name == Some(saine_core::builtin::shaper::SHAPES[4][1].name))
+                .then_some(())
+                .ok_or(format!("filter_on {:?} shape {name:?}", value_of(c, "shaper", "filter_on")))
+        })),
+        Do("views: click the Trance Gate's ring hole, ⌘Z", Box::new(|a| {
+            focus_trance_gate(a);
+            key(a, "z", true, false);
+        })),
+        Check("views: undo restores the Filter lane's default shape", Box::new(move |c, _| {
+            h7.set(c.doc.history_labels().len());
+            let d = device_of(c, "shaper").ok_or("no shaper")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            let pts = saine_core::builtin::shaper::lane_points(&def.values(d), 4);
+            let name = saine_core::builtin::shaper::matching_shape(4, &pts);
+            (name == Some(saine_core::builtin::shaper::SHAPES[4][0].name)).then_some(()).ok_or(format!("shape {name:?}"))
+        })),
+        DoC("views: remove Trance Gate and Shaper", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            let ids: Vec<saine_core::DeviceId> = ["trance-gate", "shaper"].iter().filter_map(|id| device_of(&c, id).map(|d| d.id)).collect();
+            for d in ids {
+                c.execute(saine_core::Command::RemoveDevice { device: d });
+            }
+            c.update_ui(a);
+        })),
+        Check("views: the audio track's chain is empty again", Box::new(|c, _| {
+            let t = track_of(c, TrackKind::Audio).ok_or("no audio track")?;
+            let n = c.project().tracks[t].devices.len();
+            (n == 0).then_some(()).ok_or(format!("{n} devices left"))
+        })),
+    ]
+}
+
 /// The restoration devices (De-Clipper, De-Esser, De-Hummer, De-Noiser): each one is added
 /// through Add device › Built-in, checked against its definition and the engine, and its field
 /// is dragged with real pointer events (one undo step), then undone.
@@ -2979,17 +3170,6 @@ fn restoration_device_steps() -> Vec<Step> {
             .ok_or(format!("history {} -> {n}, listen {:?}, latch {shown:?}", hl2.get(), value(c, "deesser", "listen")))
     })));
     steps
-}
-
-fn device_of<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
-    let t = track_of(c, TrackKind::Audio)?;
-    c.project().tracks[t].devices.iter().find(|d| saine_core::builtin::def_of(d).is_some_and(|def| def.id == id))
-}
-
-fn value_of(c: &Controller, id: &str, param: &str) -> Option<f32> {
-    let d = device_of(c, id)?;
-    let def = saine_core::builtin::def_of(d)?;
-    Some(def.value(d, def.param(param)?))
 }
 
 fn index_of(id: &str, param: &str) -> i32 {
@@ -3780,6 +3960,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(modulation_steps());
     all.extend(builtin_each_steps());
     all.extend(modulation_device_steps());
+    all.extend(custom_view_steps());
     all.extend(limiter_family_steps());
     all.extend(restoration_device_steps());
     all.extend(sampler_steps());

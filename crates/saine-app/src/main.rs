@@ -24,6 +24,7 @@ mod device_canvas;
 mod device_mod;
 mod device_fields;
 mod device_panel;
+mod device_editors;
 mod panel_graph;
 mod device_views;
 mod devices;
@@ -397,7 +398,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
-            if c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
+            if c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
                 return true;
             }
             if c.settings.menu.is_some() {
@@ -978,6 +979,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_menu, |c, id: i32, which: i32, x: f32, y: f32| c.panel_menu(saine_core::DeviceId(id as u64), which, x, y));
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(saine_core::DeviceId(id as u64), dir));
     on!(on_panel_latch, |c, id: i32, p: i32, phase: i32| c.panel_latch(saine_core::DeviceId(id as u64), p, phase));
+    on!(on_panel_editor, |c, id: i32, kind: i32, x: f32, y: f32, wx: f32, wy: f32, shift: bool, alt: bool, wheel: f32| c.panel_editor(
+        saine_core::DeviceId(id as u64),
+        crate::device_editors::CanvasEvent { kind, x, y, wx, wy, shift, alt, wheel }
+    ));
     on!(on_panel_view, |c, id: i32, action: i32, v: f32| c.panel_view(saine_core::DeviceId(id as u64), action, v));
     {
         use saine_core::DeviceId as Id;
