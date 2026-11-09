@@ -32,13 +32,13 @@ impl Layout {
     }
     /// Height of the browser/timeline row (y 78 ..).
     pub fn top_h(&self) -> f32 {
-        self.h - 88.0 - self.bottom_h()
+        self.h - 88.4 - self.bottom_h()
     }
     pub fn bottom_y(&self) -> f32 {
         self.h - 5.0 - self.bottom_h()
     }
     pub fn timeline_x(&self) -> f32 {
-        if self.sounds { 262.0 } else { 5.0 }
+        if self.sounds { 262.65 } else { 5.0 }
     }
     pub fn timeline_w(&self) -> f32 {
         let right = if self.assistant { ASSISTANT_W + ASSISTANT_GAP } else { 0.0 };
@@ -51,24 +51,26 @@ pub fn target_rect(l: &Layout, target: &str, track_index: impl Fn(u64) -> Option
     let w = l.w;
     let (tx, tw) = (l.timeline_x(), l.timeline_w());
     let by = l.bottom_y();
+    // The transport block stays centred (app.slint `Header`): x for a 1440-wide window + cx.
+    let cx = (w - 1440.0) / 2.0;
     let r = match target {
         // ---- header (x anchored left, toggles anchored right) ----
         "header.sounds_toggle" => (67.0, 39.0, 62.0, 25.0),
-        "transport.rewind" => (368.0, 38.0, 28.0, 28.0),
-        "transport.play" => (396.0, 38.0, 28.0, 28.0),
-        "transport.record" => (423.0, 38.0, 28.0, 28.0),
-        "transport.loop" => (470.0, 41.0, 22.0, 22.0),
-        "transport.automation_arm" => (496.0, 41.0, 21.0, 22.0),
-        "transport.bar" => (524.0, 42.0, 48.0, 20.0),
-        "transport.time" => (592.0, 42.0, 88.0, 20.0),
-        "transport.bpm" => (700.0, 42.0, 57.0, 20.0),
-        "transport.tap" => (762.0, 44.0, 23.0, 15.0),
-        "transport.key" => (809.0, 42.0, 86.0, 20.0),
-        "transport.time_signature" => (913.0, 42.0, 62.0, 20.0),
-        "transport.metronome" => (981.0, 41.0, 22.0, 22.0),
-        "header.master_volume" => (1020.0, 41.0, 100.0, 22.0),
-        "header.assistant_toggle" => (w - 147.0, 33.0, 25.0, 31.0),
-        "header.mixer_toggle" => (w - 119.0, 31.0, 25.0, 33.0),
+        "transport.rewind" => (cx + 368.0, 38.0, 28.0, 28.0),
+        "transport.play" => (cx + 396.0, 38.0, 28.0, 28.0),
+        "transport.record" => (cx + 423.0, 38.0, 28.0, 28.0),
+        "transport.loop" => (cx + 470.0, 41.0, 22.0, 22.0),
+        "transport.automation_arm" => (cx + 496.0, 41.0, 21.0, 22.0),
+        "transport.bar" => (cx + 524.0, 42.0, 48.0, 20.0),
+        "transport.time" => (cx + 592.0, 42.0, 88.0, 20.0),
+        "transport.bpm" => (cx + 700.0, 42.0, 57.0, 20.0),
+        "transport.tap" => (cx + 762.0, 44.0, 23.0, 15.0),
+        "transport.key" => (cx + 809.0, 42.0, 86.0, 20.0),
+        "transport.time_signature" => (cx + 913.0, 42.0, 62.0, 20.0),
+        "transport.metronome" => (cx + 981.0, 41.0, 22.0, 22.0),
+        "header.master_volume" => (cx + 1020.0, 41.0, 100.0, 22.0),
+        "header.assistant_toggle" => (w - 147.0, 39.0, 25.0, 25.0),
+        "header.mixer_toggle" => (w - 119.0, 39.0, 25.0, 25.0),
         "header.editor_toggle" => (w - 91.0, 39.0, 25.0, 25.0),
         "header.musical_typing" => (w - 63.0, 39.0, 25.0, 25.0),
         "header.settings" => (w - 36.0, 39.0, 25.0, 25.0),
@@ -78,16 +80,16 @@ pub fn target_rect(l: &Layout, target: &str, track_index: impl Fn(u64) -> Option
         "browser.devices" if l.sounds => (92.0, 82.0, 42.0, 19.0),
         "browser.files" if l.sounds => (136.0, 82.0, 27.0, 19.0),
         // ---- timeline header (timeline-panel relative) ----
-        "timeline.returns" => (tx + 57.0, 83.0, 62.0, 18.0),
-        "timeline.master_toggle" => (tx + 123.0, 83.0, 61.0, 18.0),
-        "timeline.overview" => (tx + 201.5, 83.0, (tw - 598.5).max(0.0), 17.0),
-        "timeline.smart_fill" => (tx + tw - 388.0, 83.0, 67.0, 18.0),
-        "timeline.automation_toggle" => (tx + tw - 317.0, 83.0, 18.0, 18.0),
-        "timeline.draw_mode" => (tx + tw - 294.0, 83.0, 17.0, 18.0),
-        "timeline.tool" => (tx + tw - 272.0, 83.0, 28.0, 18.0),
+        "timeline.returns" => (tx + 60.35, 83.0, 59.5, 18.0),
+        "timeline.master_toggle" => (tx + 124.1, 83.0, 59.5, 18.0),
+        "timeline.overview" => (tx + 200.6, 83.0, (tw - 595.85).max(0.0), 17.0),
+        "timeline.smart_fill" => (tx + tw - 385.05, 83.0, 63.75, 18.0),
+        "timeline.automation_toggle" => (tx + tw - 314.6, 83.0, 18.0, 18.0),
+        "timeline.draw_mode" => (tx + tw - 292.8, 83.0, 17.0, 18.0),
+        "timeline.tool" => (tx + tw - 268.6, 83.0, 25.5, 18.0),
         "timeline.vertical_zoom" => (tx + tw - 242.0, 83.0, 95.0, 18.0),
         "timeline.horizontal_zoom" => (tx + tw - 149.0, 83.0, 94.0, 18.0),
-        "timeline.snap" => (tx + tw - 56.0, 83.0, 49.0, 18.0),
+        "timeline.snap" => (tx + tw - 54.4, 83.0, 44.2, 18.0),
         "timeline.add_track" => (tx, 105.5, 184.0, 39.0),
         "timeline.ruler" => (tx + 191.0, 105.5, tw - 191.0, 39.0),
         // ---- inspector + devices (bottom panel; hidden while the mixer is open) ----
@@ -156,7 +158,7 @@ mod tests {
         l.assistant = true;
         let ruler = target_rect(&l, "timeline.ruler", |_| None).unwrap();
         assert!((ruler.0 + ruler.2 - (1440.0 - 5.0 - 257.5)).abs() < 1e-3);
-        assert_eq!(target_rect(&l, "track:7:volume", |id| (id == 7).then_some(0)), Some((262.0 + 116.0, 144.5 + 41.0, 68.0, 14.0)));
+        assert_eq!(target_rect(&l, "track:7:volume", |id| (id == 7).then_some(0)), Some((262.65 + 116.0, 144.5 + 41.0, 68.0, 14.0)));
         assert_eq!(target_rect(&l, "track:7:volume", |_| None), None);
         l.scroll_y = 1000.0;
         assert_eq!(target_rect(&l, "track:7:header", |_| Some(0)), None, "scrolled out");

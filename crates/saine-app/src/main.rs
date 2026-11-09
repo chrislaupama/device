@@ -10,6 +10,7 @@
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--self-test]
+//!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
 //! ```
 
 mod assistant_panel;
@@ -35,6 +36,7 @@ mod settings;
 mod synth;
 mod timeline;
 mod wavgen;
+mod zoom;
 
 use controller::{BottomTab, Controller, ImportTarget, gain_from_slider};
 use saine_core::keymap::{Chord, Context, Keymap};
@@ -94,6 +96,7 @@ struct Args {
     plugin_fixture: Option<PathBuf>,
     screenshot: Option<PathBuf>,
     exit_after_frames: Option<u64>,
+    zoom: Option<u32>,
     frame_stats: bool,
     self_test: bool,
 }
@@ -194,6 +197,7 @@ fn parse_args() -> Result<Args, String> {
             "--screenshot" => a.screenshot = Some(value(&mut i)?.into()),
             "--offscreen" => a.offscreen = true,
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
+            "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
             "--self-test" | "--self-test-audio" => {
                 a.self_test = true;
@@ -202,7 +206,7 @@ fn parse_args() -> Result<Args, String> {
                 a.audio = v[i] == "--self-test-audio";
             }
             "-h" | "--help" => {
-                println!("{}", include_str!("main.rs").lines().skip(6).take(7).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
+                println!("{}", include_str!("main.rs").lines().skip(6).take(8).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
                 std::process::exit(0);
             }
             other => return Err(format!("unknown argument {other}")),
@@ -497,6 +501,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let studio = app.global::<Studio>();
 
     let ctl: Ctl = Rc::new(RefCell::new(Controller::new(engine.clone(), Project::default())));
+    // Interface zoom: --zoom, else the saved level, else 100 %. Self-tests keep our
+    // design units (85 %) so their scripted geometry is unchanged.
+    let zoom_percent = args.zoom.unwrap_or(if args.self_test { 85 } else if saved_prefs.interface_zoom > 0 { saved_prefs.interface_zoom } else { zoom::DEFAULT_PERCENT });
+    let zoom = Rc::new(RefCell::new(zoom::Zoom::new(zoom_percent)));
     ctl.borrow().bind_models(&app);
     {
         // Provider: TEST fixture (flag, or the built-in one for --self-test), else the API key env var.
@@ -919,9 +927,34 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let ctl = ctl.clone();
         let aw = app.as_weak();
         let keymap = app_keymap();
+        let zm = zoom.clone();
         studio.on_key(move |text, primary, shift, alt, ctrl| {
             let Some(key) = key_name(text.as_str()) else { return false };
             let chord = Chord { key, primary, shift, alt, ctrl };
+            // View › Zoom In (⌘= / ⌘+), Zoom Out (⌘-), Reset Zoom (⌘0), as in the reference.
+            if primary && !alt && !ctrl {
+                let step = match chord.key.as_str() {
+                    "=" | "+" => Some(1),
+                    "-" | "_" => Some(-1),
+                    "0" if !shift => Some(0),
+                    _ => None,
+                };
+                if let Some(step) = step {
+                    let percent = {
+                        let mut z = zm.borrow_mut();
+                        if step == 0 { z.reset() } else { z.step(step) }
+                        z.percent
+                    };
+                    if let Some(a) = aw.upgrade() {
+                        zm.borrow_mut().sync(a.window());
+                        a.window().request_redraw();
+                    }
+                    if let Ok(mut c) = ctl.try_borrow_mut() {
+                        c.set_interface_zoom(percent);
+                    }
+                    return true;
+                }
+            }
             let cx = {
                 let c = ctl.borrow();
                 Context {
@@ -1033,6 +1066,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aw = app.as_weak();
         let ctl = ctl.clone();
         let fr = frame.clone();
+        let zm = zoom.clone();
         app.window().set_rendering_notifier(move |state, api| {
             let Some(app) = aw.upgrade() else { return };
             match state {
@@ -1046,6 +1080,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     f.renderer = r;
                 }
                 slint::RenderingState::BeforeRendering => {
+                    // Interface zoom: re-apply when the window is new or changed display.
+                    if zm.borrow().needs_sync(app.window().scale_factor()) {
+                        zm.borrow_mut().pending = true;
+                        let (aw, zm) = (app.as_weak(), zm.clone());
+                        slint::Timer::single_shot(Duration::ZERO, move || {
+                            if let Some(a) = aw.upgrade() {
+                                zm.borrow_mut().sync(a.window());
+                                a.window().request_redraw();
+                            }
+                        });
+                    }
                     let t0 = Instant::now();
                     let Ok(mut c) = ctl.try_borrow_mut() else { return };
                     let mut f = fr.borrow_mut();
@@ -1193,8 +1238,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let _ = slint::quit_event_loop();
         });
     }
+    // The OS window is 1440×820 pt like the reference's; interface zoom then sets how much
+    // of our (85 %-unit) layout fits in it, see `zoom.rs`.
     app.window().set_size(slint::LogicalSize::new(1440.0, 820.0));
-    app.window().set_position(slint::LogicalPosition::new(0.0, 33.0));
     app.run()?;
     if args.frame_stats && exit_after.is_none() {
         println!("{}", stats_json(&frame.borrow(), &app));
