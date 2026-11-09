@@ -1,7 +1,9 @@
 # Built-in devices
 
-Saine's own effects (Compressor, the modulation family: Tremolo, Auto-Panner,
-Chorus, Flanger, Phaser, Ring Mod, Character Mod; more follow from the device specs) are
+Saine's own effects (Compressor; the dynamics family: Limiter, Gate, Glue
+Compressor, Transient Shaper, Mastering Limiter; the modulation family:
+Tremolo, Auto-Panner, Chorus, Flanger, Phaser, Ring Mod, Character Mod; more
+follow from the device specs) are
 **declarative**: one definition in Rust describes a device, and the model,
 undo, persistence, automation, engine and panel all derive from it. A device
 is made of up to three parts:
@@ -163,6 +165,24 @@ system. Any built-in device can use them.
      undo step (Character Mod's circuit switch resets untouched artifacts),
      add an arm to `builtin::linked_writes`; the panel then commits one
      labelled `Command::Batch`.
+   - Dynamics additions: `Toggle` latches (a latch in a knob cell in the dial
+     row; a right-aligned "<label> <choice>" pill in the picker row), detent
+     ticks on discrete knobs with more than two choices (drawn like the
+     Behavior detents), transfer faces
+     (`SoftKneeCurve`, `BrickWall`, `Expander`, `BusVca`, `PushWall`), and an
+     empty picker moves the view row up.
+   - Views: `View::Strip(Strip::new("<line param>").range(top_db, floor_db).second("<param>"))`
+     is the level / gain-reduction strip with a draggable dashed line, an
+     optional solid second line (Alt+drag moves both by the same dB, one undo
+     step) and its own plot range; `DynamicsStrip { threshold }` is shorthand
+     for the 0..-36 dB strip. `View::Custom("gain-scope")` is the transient
+     shaper's scrolling waveform + applied-gain scope.
+   - Choice overlays: `ParamDef::overlays` lists, per choice, other
+     parameters that choice writes (the mastering limiter's styles); they go
+     through `linked_writes` like any other linked write. Also `max_text` (the
+     top of the range reads e.g. "Full"), `Format::Ms(decimals)`, and
+     `DeviceDef::sidechain_enable` (the parameter that follows the sidechain
+     picker).
    - `View::Strip(Strip::new("threshold").range(top, floor))` is the
      dynamics strip with its own dB range. Value arcs and slider fills start
      at 0 when the range spans it (−12..24 dB starts at 0 dB). Cards without
@@ -195,36 +215,41 @@ system. Any built-in device can use them.
    A device has at most `kMaxReadouts` (64) readouts. Spectral helpers are in
    `engine/src/devices/spectral.hpp` (`RealFft`, and `SpectrumTap`: 48 log
    bands, 20 Hz–20 kHz, a full-scale sine reads 0 dB); `dsp.hpp` has the
-   state-variable filter (`SvfCoeffs`, including `bandpass`). Report look-ahead or block latency from
-   `latency()` so the engine compensates it.
-3. **Custom view (optional).** For bodies the template cannot express, use
-   `View::Custom("<name>")`. Bodies that only draw and drag parameters
+   state-variable filter (`SvfCoeffs`, including `bandpass`). Report latency for
+   PDC: `latency_for(params)` (the default returns the fixed `latency`), so a
+   kernel whose delay depends on a setting (the mastering limiter's
+   oversampling) reports the delay of the values it will run with. Shared
+   dynamics building blocks (biquads, delay lines, sliding minimum, look-ahead
+   gain, polyphase oversampler, 4x true-peak detector) are in
+   `dsp_dynamics.hpp`.
+3. **Custom view (optional).** For bodies the template cannot express (EQ
+   curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
+   an arm in `Controller::builtin_card` that fills the card's view data, and a
+   Slint component in `ui/device_panel.slint` chosen by that data. Reuse
+   `ParamDrag` / `ParamDragX`, `KnobCell` and `SliderCol` for the gestures. Custom bodies
    return a `PanelCanvas` from `Controller::custom_body` (`device_views.rs`):
-   paths, texts, grip pills and linear drag zones, plus freely placed knobs
-   and buttons. Reuse `ParamDrag` / `ParamDragX`, `KnobCell` and
-   `SliderCol` for the gestures. When handles need non-linear mapping or
-   hit-testing (several handles on one well, a live spectrum), set
-   `pointer: true` and handle `Studio.panel-graph` in Rust, as the
-   restoration devices do (`crates/saine-app/src/panel_graph.rs`: hit zones,
-   spectrum ballistics from the readouts, one undo step per gesture).
+   paths, texts, grip pills and linear drag zones. When handles need
+   non-linear mapping or hit-testing (several handles on one well, a live
+   spectrum), set `pointer: true` and handle `Studio.panel-graph` in Rust,
+   as the restoration devices do (`crates/saine-app/src/panel_graph.rs`: hit
+   zones, spectrum ballistics from the readouts, one undo step per gesture).
    View-local state (a selected band, meter ballistics) goes through
    `Studio.panel-view(device, action, value)`; `src/panel_multiband.rs` is
    an example with its own Slint component (band selector, threshold / floor
-   and crossover handles, dial row following the selected band). Full
-   editors with their own gestures and menus (step grids, curve editors) add
-   an arm to `custom_card` in `crates/saine-app/src/device_editors.rs` and
-   set `interactive: true`: `DeviceCanvas` then sends every press, drag,
-   release, hover, double-click, right-click and wheel over the canvas to
-   `panel_canvas`, with window coordinates for menus. A gesture sends live
-   values to the engine and commits one undo step on release; Escape
-   restores the values from before it. Set `Layout::fixed_width` for a card
-   that the dial row does not size. The Trance Gate and the Shaper are the
-   editor examples.
-   - A kernel whose latency depends on its parameters overrides
-     `BuiltinProcessor::latency_for` (the Shaper reports its pitch-shift
-     latency only while that lane is on) and may return false from
-     `BuiltinProcessor::automatable` for a parameter that only the stored
-     value should drive.
+   and crossover handles, dial row following the selected band).
+   Full editors with their own gestures and menus (step grids, curve
+   editors) add an arm to `custom_card` in
+   `crates/saine-app/src/device_editors.rs` and set `interactive: true`:
+   `DeviceCanvas` then sends every press, drag, release, hover,
+   double-click, right-click and wheel over the canvas to `panel_canvas`,
+   with window coordinates for menus. A gesture sends live values to the
+   engine and commits one undo step on release; Escape restores the values
+   from before it. Set `Layout::fixed_width` for a card that the dial row
+   does not size. The Trance Gate and the Shaper are the editor examples.
+   - A parameter that only the stored value should drive (the Shaper's
+     Pitch switch, which sets its latency) returns false from
+     `BuiltinProcessor::automatable`; the engine then leaves automation
+     lanes on it inactive.
 4. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),
@@ -243,7 +268,9 @@ system. Any built-in device can use them.
 6. **Render.** `--state reference-<id>` shows any built-in device at its
    defaults. Render it with `--offscreen --screenshot <png>` (a hidden
    window, so it does not take over the screen) and compare it with the
-   reference capture.
+   reference capture. Add the device to the app self-test (the dynamics,
+   modulation and restoration sections in `src/selftest.rs` add each device
+   through Add device › Built-in).
 
 ## Commands
 
@@ -251,6 +278,7 @@ system. Any built-in device can use them.
 cargo test --workspace                                   # core, engine wrapper, app unit tests
 cd engine && cmake --build build && ./build/saine_engine_tests
 ./build/saine_device_bench                               # per-block cost, param updates, 32-track session
+cargo run -p saine-app -- --state reference-limiter --offscreen --screenshot /tmp/limiter.png
 cargo run -p saine-app -- --state reference-compressor --screenshot /tmp/compressor.png
 cargo run -p saine-app -- --state reference-lfo --screenshot /tmp/lfo.png      # also reference-chain
 cargo run -p saine-app -- --self-test                    # includes the built-in device section
