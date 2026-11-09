@@ -23,6 +23,7 @@ export { Tokens }
 import { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow } from "studio.slint";
 import { ClipSidebar, PianoRoll, ClipEmpty, ContextMenu } from "pianoroll.slint";
 import { MixerPanel } from "mixer.slint";
+import { StripMetrics, StripCanvas, StripReadout, StripButton } from "channel_strip.slint";
 import { AssistantPanel, HighlightOverlay } from "assistant.slint";
 import { SynthDevice, SynthMenuList } from "synth.slint";
 import { SettingsPanel, ChoiceList } from "settings.slint";
@@ -44,8 +45,8 @@ component Header inherits Rectangle {
         horizontal-alignment: center; vertical-alignment: center;
         accessible-role: text;
     }
-    Pill { x: root.width - 220px; y: 9px; width: 82px; height: 23px; text: "Report a bug"; weight: 500; text-color: #f0f0f2; font-size: 9.5px; clicked => { Studio.report-bug(); } }
-    Pill { x: root.width - 131px; y: 9px; width: 118px; height: 23px; text: "Share your feedback"; weight: 500; text-color: #f0f0f2; font-size: 9.5px; clicked => { Studio.feedback(); } }
+    Pill { x: root.width - 220px; y: 9.45px; width: 82px; height: 22.1px; text: "Report a bug"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.report-bug(); } }
+    Pill { x: root.width - 131px; y: 9.45px; width: 118px; height: 22.1px; text: "Share your feedback"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.feedback(); } }
 
     // Logo: ORIGINAL sine-wave mark + "Beta" badge.
     Icon { x: 13px; y: 44px; width: 15px; height: 16px; d: Icons.logo; ink: #ffffff; stroke-width: 2.6px; }
@@ -59,7 +60,7 @@ component Header inherits Rectangle {
         x: 67px; y: 39px; width: 62px; height: 25px;
         accessible-role: checkbox; accessible-label: "Sounds"; accessible-checked: Studio.sounds-visible;
         Icon { x: 6px; width: 14px; height: 14px; d: Icons.library; ink: Studio.sounds-visible ? #c9c9cc : Tokens.icon; }
-        Text { x: 22px; y: 1.5px; height: parent.height; text: "Sounds"; font-size: 10px; font-weight: 600; color: Studio.sounds-visible ? #cfd0d3 : Tokens.text-tertiary; vertical-alignment: center; }
+        Text { x: 22px; y: 1.5px; height: parent.height; text: "Sounds"; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; color: Studio.sounds-visible ? #cfd0d3 : Tokens.text-tertiary; vertical-alignment: center; }
         TouchArea { clicked => { Studio.sounds-visible = !Studio.sounds-visible; } }
     }
 
@@ -78,40 +79,40 @@ component Header inherits Rectangle {
             ink: Studio.recording ? Tokens.record-red : Studio.record-ready ? #63656c : #303136;
             tooltip: "Record (R)"; active: false; clicked => { Studio.record(); } }
 
-        // Transport pill 464.5..1008.5 x 36..69
+        // Transport capsule 464.5..1008.5 x 34.85..68.85 (40 px high in the reference CSS)
         // Inset well: 2 px dark top lip, short inner shadow, light bottom lip.
         Inset {
-            x: 464.5px; y: 36px; width: 544px; height: 33px;
-            border-radius: 16.5px; fill: Tokens.bg-raised;
+            x: 464.5px; y: 34.85px; width: 544px; height: 34px;
+            border-radius: 17px; fill: Tokens.bg-raised;
             lip: 0.85px; shade: 1.3px; bottom: #4c4d51;
         }
         IconButton { x: 470px; y: 41px; width: 22px; height: 22px; icon: Icons.loop; ink: #63656c; tooltip: "Toggle loop (⌘L)"; active: Studio.loop-enabled; clicked => { Studio.toggle-loop(); } }
         // Automation Arm (src/automation.rs): while armed and playing, control moves write automation.
         IconButton { x: 496px; y: 41px; width: 21px; height: 22px; icon: Icons.automation; ink: #63656c; tooltip: "Automation Arm: knob moves write automation while playing";
             active: Studio.auto-armed; clicked => { Studio.auto-toggle-arm(); } }
-        Label { x: 527px; y: 45px; text: "Bar"; color: #606165; font-size: 10px; }
-        Label { x: 548px; y: 45px; text: Studio.bar-text; color: Tokens.text-bright; font-size: 10px; font-weight: 600; }
+        Label { x: 527px; y: 45px; text: "Bar"; color: #565656; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
+        Label { x: 548px; y: 45px; text: Studio.bar-text; color: #ffffff; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
         Rectangle { x: 581.5px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
-        Label { x: 595px; y: 45px; text: "Time"; color: #606165; font-size: 10px; }
-        Label { x: 624px; y: 45px; text: Studio.time-text; color: Tokens.text-bright; font-size: 10px; font-weight: 600; }
+        Label { x: 595px; y: 45px; text: "Time"; color: #565656; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
+        Label { x: 624px; y: 45px; text: Studio.time-text; color: #ffffff; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
         Rectangle { x: 689px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
-        Label { x: 703px; y: 45px; text: "BPM"; color: #606165; font-size: 10px; }
-        Label { x: 733px; y: 45px; text: Studio.bpm-text; color: Tokens.text-bright; font-size: 10px; font-weight: 600; }
+        Label { x: 703px; y: 45px; text: "BPM"; color: #565656; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
+        Label { x: 733px; y: 45px; text: Studio.bpm-text; color: #ffffff; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
         // TAP: PLACEHOLDER (tap tempo not implemented)
         Rectangle {
             x: 762px; y: 44px; width: 23px; height: 15px; border-radius: 3px; background: #34353a;
             Text { text: "TAP"; color: #e5e5e8; font-size: 7.75px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
         }
         Rectangle { x: 798px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
-        Label { x: 812px; y: 45px; text: "Key"; color: #606165; font-size: 10px; }
+        Label { x: 812px; y: 45px; text: "Key"; color: #565656; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
         // Key selector: PLACEHOLDER (no key/scale in the model yet)
         Rectangle { x: 846px; y: 51.5px; width: 13px; height: 1.2px; background: #7a7b7e; }
         Icon { x: 873px; y: 45px; width: 14px; height: 14px; d: Icons.chevron-down; ink: #7a7b7e; }
         Rectangle { x: 901.5px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
-        Label { x: 916px; y: 45px; text: "Sig"; color: #606165; font-size: 10px; }
-        Label { x: 936.5px; y: 45px; text: Studio.sig-text; color: Tokens.text-bright; font-size: 10px; font-weight: 600; }
+        Label { x: 916px; y: 45px; text: "Sig"; color: #565656; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
+        Label { x: 936.5px; y: 45px; text: Studio.sig-text; color: #ffffff; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
         Icon { x: 957px; y: 45px; width: 13px; height: 13px; d: Icons.chevron-down; ink: #a0a0a3; }
-        IconButton { x: 981px; y: 41px; width: 22px; height: 22px; icon: Icons.metronome; ink: #63656c; tooltip: "Metronome"; active: Studio.metronome-on; clicked => { Studio.toggle-metronome(); } }
+        IconButton { x: 981px; y: 41px; width: 22px; height: 22px; icon: Icons.metronome; filled: true; ink: #63656c; tooltip: "Metronome"; active: Studio.metronome-on; clicked => { Studio.toggle-metronome(); } }
 
         // Master volume (header), real: SetMasterGain
         HSlider {
@@ -429,90 +430,73 @@ component Inspector inherits Rectangle {
         Text { x: 29.5px; text: "Master"; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
         Icon { x: 134px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #a0a0a3; }
     }
-    Label { x: 48px; y: 92px; height: 21px; text: "Input"; color: Tokens.text-bright; font-size: 9px; }
-    Label { x: 92px; y: 92px; height: 21px; text: "Sends"; color: Tokens.text-tertiary; font-size: 9px; }
-    Rectangle { x: 10px; y: 108.5px; width: 150px; height: 0.5px; background: Tokens.line-separator; }
+    // Input / Sends tabs: 24 pt row, 12 pt bold, centred 24 pt apart; the Sends tab adds a "+"
+    // (add a send) after its label. View state only.
+    property <int> tab: 0;
+    for t[i] in [ {label: "Input", x: 56}, {label: "Sends", x: 108} ]: Text {
+        x: t.x * StripMetrics.u; y: 104 * StripMetrics.u; height: 24 * StripMetrics.u;
+        text: t.label; font-size: 12 * StripMetrics.u; font-weight: 700; letter-spacing: -0.48 * StripMetrics.u; vertical-alignment: center;
+        color: root.tab == i ? #ffffff : tab-ta.has-hover ? #ffffffb3 : #63656d;
+        tab-ta := TouchArea { clicked => { root.tab = i; } }
+    }
+    if root.tab == 1: Rectangle {
+        x: 146 * StripMetrics.u; y: 108 * StripMetrics.u; width: 16 * StripMetrics.u; height: 16 * StripMetrics.u;
+        Icon { x: 3 * StripMetrics.u; y: 3 * StripMetrics.u; width: 10 * StripMetrics.u; height: 10 * StripMetrics.u; d: Icons.plus; ink: send-add.has-hover ? #ffffffb3 : #63656d; stroke-width: 1.4px; }
+        send-add := TouchArea { clicked => { Studio.chat-placeholder("Add send"); } }
+    }
+    Rectangle { x: 10px; y: 128 * StripMetrics.u - 0.5px; width: 150px; height: 0.5px; background: #ffffff14; }
 
-    // Trim / Width: PLACEHOLDERS (no per-track trim/width in the model). Pan: real.
-    Knob { x: 28px; y: 122px; width: 38px; height: 38px; body: 20.5px; groove: true; value-angle: 0; tick-color: #ffffff; arc-color: root.value-color; }
-    Text { x: 10px; y: 158px; width: 74px; height: 13px; text: "0.0 dB"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    Text { x: 10px; y: 173px; width: 74px; height: 14px; text: "Trim"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    Knob { x: 104px; y: 122px; width: 38px; height: 38px; body: 20.5px; groove: true; value-angle: 0; show-arc: true; arc-from: -135; tick-color: #ffffff; arc-color: root.value-color; }
-    Text { x: 86px; y: 158px; width: 74px; height: 13px; text: "100%"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    Text { x: 86px; y: 173px; width: 74px; height: 14px; text: "Width"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    Knob {
-        x: 28px; y: 191px; width: 38px; height: 38px; body: 20.5px; groove: true; arc-color: root.value-color;
-        value: Studio.sel-pan; value-angle: Studio.sel-pan * 135; tick-color: Studio.sel-pan-auto ? #65bce3 : #ffffff;
-        value-changed(v) => { if (Studio.has-selection) { Studio.track-pan(Studio.sel-id, v); } }
+    if root.tab == 0: Rectangle {
+        x: 0; y: 0; width: root.width; height: root.height;
+        // Trim / Width: PLACEHOLDERS (no per-track trim/width in the model). Pan: real.
+        Knob { x: 28px; y: 122px; width: 38px; height: 38px; body: 20.5px; groove: true; value-angle: 0; tick-color: #ffffff; arc-color: root.value-color; }
+        Text { x: 10px; y: 158px; width: 74px; height: 13px; text: "0.0 dB"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        Text { x: 10px; y: 173px; width: 74px; height: 14px; text: "Trim"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        Knob { x: 104px; y: 122px; width: 38px; height: 38px; body: 20.5px; groove: true; value-angle: 0; show-arc: true; arc-from: -135; tick-color: #ffffff; arc-color: root.value-color; }
+        Text { x: 86px; y: 158px; width: 74px; height: 13px; text: "100%"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        Text { x: 86px; y: 173px; width: 74px; height: 14px; text: "Width"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        Knob {
+            x: 28px; y: 191px; width: 38px; height: 38px; body: 20.5px; groove: true; arc-color: root.value-color;
+            value: Studio.sel-pan; value-angle: Studio.sel-pan * 135; tick-color: Studio.sel-pan-auto ? #65bce3 : #ffffff;
+            value-changed(v) => { if (Studio.has-selection) { Studio.track-pan(Studio.sel-id, v); } }
+            released => { Studio.gesture-end(); }
+            reset => { if (Studio.has-selection) { Studio.track-pan(Studio.sel-id, 0); Studio.gesture-end(); } }
+        }
+        Text { x: 10px; y: 228px; width: 74px; height: 13px; text: Studio.sel-pan-text; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        Text { x: 10px; y: 243px; width: 74px; height: 13px; text: "Pan"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        // Mono fold: PLACEHOLDER
+        Switch { x: 112.5px; y: 205px; on: false; }
+        Text { x: 86px; y: 228px; width: 74px; height: 13px; text: "Off"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        Text { x: 86px; y: 243px; width: 74px; height: 13px; text: "Mono"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    }
+
+    // M / S / R / I (R / I: SetTrackArm / SetTrackMonitor on audio tracks; PLACEHOLDERS on
+    // instrument tracks). 22 x 20 pt, 4 pt apart, on the peak box's row.
+    for b[i] in [ {t: "M", on: Studio.sel-mute}, {t: "S", on: Studio.sel-solo}, {t: "R", on: Studio.sel-arm}, {t: "I", on: Studio.sel-monitor} ]: StripButton {
+        x: (50 + i * 26) * StripMetrics.u; y: 324 * StripMetrics.u; big: true; text: b.t; kind: i; on: b.on;
+        clicked => {
+            if (i == 0) { Studio.track-mute(Studio.sel-id); }
+            if (i == 1) { Studio.track-solo(Studio.sel-id); }
+            if (i == 2) { Studio.track-arm(Studio.sel-id); }
+            if (i == 3) { Studio.track-monitor(Studio.sel-id); }
+        }
+    }
+
+    // Meter column (92 pt at x 196): gain readout, fader canvas, peak box (6 pt gaps).
+    StripReadout { x: 218 * StripMetrics.u; y: 44.5 * StripMetrics.u; width: 70 * StripMetrics.u; height: 20 * StripMetrics.u; text: Studio.sel-db-text; }
+    StripCanvas {
+        x: 196 * StripMetrics.u; y: 70.5 * StripMetrics.u; height: 248 * StripMetrics.u;
+        enabled: Studio.has-selection;
+        fader: Studio.sel-fader; meter-l: Studio.sel-meter-l; meter-r: Studio.sel-meter-r;
+        fill: Studio.sel-vol-auto ? #ebc542 : Studio.sel-color;
+        cap: Studio.sel-vol-auto ? #e9d38e : #fdf8f0;
+        moved(f) => { Studio.sel-fader-moved(f); }
         released => { Studio.gesture-end(); }
-        reset => { if (Studio.has-selection) { Studio.track-pan(Studio.sel-id, 0); Studio.gesture-end(); } }
+        reset => { Studio.sel-fader-moved(0.2); Studio.gesture-end(); }
     }
-    Text { x: 10px; y: 228px; width: 74px; height: 13px; text: Studio.sel-pan-text; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    Text { x: 10px; y: 243px; width: 74px; height: 13px; text: "Pan"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    // Mono fold: PLACEHOLDER
-    Switch { x: 112.5px; y: 205px; on: false; }
-    Text { x: 86px; y: 228px; width: 74px; height: 13px; text: "Off"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    Text { x: 86px; y: 243px; width: 74px; height: 13px; text: "Mono"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-
-    SmallButton { x: 42px; y: 275.3px; width: 19.55px; height: 17px; soft: true; text: "M"; font-size: 8.25px; on: Studio.sel-mute; on-color: Tokens.mute-on; clicked => { Studio.track-mute(Studio.sel-id); } }
-    SmallButton { x: 64px; y: 275.3px; width: 19.55px; height: 17px; soft: true; text: "S"; font-size: 8.25px; on: Studio.sel-solo; on-color: Tokens.solo-on; clicked => { Studio.track-solo(Studio.sel-id); } }
-    // R / I: SetTrackArm / SetTrackMonitor on audio tracks; PLACEHOLDERS on instrument tracks.
-    SmallButton { x: 86px; y: 275.3px; width: 19.55px; height: 17px; soft: true; text: "R"; font-size: 8.25px; on: Studio.sel-arm; on-color: Tokens.record-red; clicked => { Studio.track-arm(Studio.sel-id); } }
-    SmallButton { x: 108px; y: 275.3px; width: 19.55px; height: 17px; soft: true; text: "I"; font-size: 8.25px; on: Studio.sel-monitor; clicked => { Studio.track-monitor(Studio.sel-id); } }
-
-    // Fader readout
-    Raised {
-        x: 185px; y: 37.5px; width: 59px; height: 17px; border-radius: 3px; outline: true; rim: Tokens.box-rim;
-        Text { text: Studio.sel-db-text; color: Tokens.text-bright; font-size: 8.75px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-    }
-    // dB scale (labels at the reference positions, panel-relative y = window y - 509)
-    for m in [ {t: "+6", y: 74.5px}, {t: "0", y: 95.5px}, {t: "−6", y: 113.5px}, {t: "−12", y: 131.5px},
-               {t: "−24", y: 166px}, {t: "−36", y: 200px}, {t: "−48", y: 225.5px}, {t: "−∞", y: 258.5px} ]: Rectangle {
-        x: 160px; y: m.y - 5px; width: 40px; height: 10px;
-        Text { x: 0; width: 28px; text: m.t; color: #a5a5a8; font-size: 7.25px; horizontal-alignment: right; vertical-alignment: center; }
-        Rectangle { x: 32px; width: 6px; height: 0.75px; background: #6d6e71; }
-    }
-    // Fader slot + fill + handle (real: SetTrackGain)
-    fader := Rectangle {
-        x: 197.5px; y: 66px; width: 12.5px; height: 200px; border-radius: 6.25px;
-        // Inset slot (see Inset in widgets.slint): dark 2 px top lip, short inner shadow.
-        background: #0b0b0c;
-        Rectangle { y: 0.85px; width: parent.width; height: parent.height - 0.85px; border-radius: 6.25px; background: #121214; }
-        Rectangle { y: 1.7px; width: parent.width; height: parent.height - 1.7px; border-radius: 6.25px; background: #161618; }
-        Rectangle {
-            x: 4.5px; y: min(parent.height - 4px, 9px + Studio.sel-fader * (parent.height - 18px));
-            width: 3.5px; height: max(0px, parent.height - 4px - self.y); border-radius: 1.75px;
-            background: Studio.sel-vol-auto ? #ebc542 : Studio.sel-color;
-        }
-        Rectangle {
-            x: 2px; y: Studio.sel-fader * (parent.height - 18px) - 1.5px; width: 8.5px; height: 21px; border-radius: 3px;
-            background: Studio.sel-vol-auto ? #e9d38e : Tokens.fader-handle;
-            drop-shadow-blur: 2px; drop-shadow-color: #000000b3;
-            Rectangle { x: 1.5px; width: parent.width - 3px; height: 0.75px; background: #8a8a8d; }
-        }
-        TouchArea {
-            mouse-cursor: ns-resize;
-            pointer-event(e) => {
-                if (e.kind == PointerEventKind.down && Studio.has-selection) {
-                    Studio.sel-fader-moved(max(0, min(1, (self.mouse-y - 9px) / (parent.height - 18px))));
-                }
-                if (e.kind == PointerEventKind.up) { Studio.gesture-end(); }
-            }
-            moved => { if (Studio.has-selection) { Studio.sel-fader-moved(max(0, min(1, (self.mouse-y - 9px) / (parent.height - 18px)))); } }
-        }
-    }
-    // Stereo meter (engine.meters)
-    for ch[i] in [Studio.sel-meter-l, Studio.sel-meter-r]: Rectangle {
-        x: 220.5px + i * 6px; y: 65px; width: 4px; height: 196px; border-radius: 1px;
-        background: #151517; border-width: 0.5px; border-color: #19191d;
-        Rectangle {
-            y: ch * parent.height; height: parent.height - self.y; width: parent.width;
-            background: @linear-gradient(0deg, Tokens.meter-green 0%, Tokens.meter-green 70%, #e3c53a 88%, #e5484d 100%);
-        }
-    }
-    Raised {
-        x: 184px; y: 275px; width: 61px; height: 18px; border-radius: 3px; outline: true; rim: Tokens.box-rim;
-        Text { text: Studio.sel-peak-text; color: #9d9d9f; font-size: 8.25px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    StripReadout {
+        x: 218 * StripMetrics.u; y: 324.5 * StripMetrics.u; width: 70 * StripMetrics.u; height: 20 * StripMetrics.u;
+        text: Studio.sel-peak-text; ink: Studio.sel-peak-text == "−∞" ? #ffffff4d : #ffffff99;
     }
 }
 
@@ -650,6 +634,34 @@ export component AppWindow inherits Window {
         if !Studio.mixer-open: BottomPanel { x: 5px; y: root.height - 5px - root.bottom-h; width: root.width - 10px; height: root.bottom-h; }
         if Studio.mixer-open: MixerPanel { x: 5px; y: root.height - 5px - root.bottom-h; width: root.width - 10px; height: root.bottom-h; }
         HighlightOverlay { x: 0; y: 0; width: root.width; height: root.height; }
+        // Device windows: a built-in card opened from its header arrow floats above the
+        // arrangement (the card stays in the chain too) and stays up across track changes;
+        // its title strip moves it, the arrow or the strip's x closes it.
+        for card[i] in Studio.device-window-cards: win := Rectangle {
+            property <length> dx: card.win-dx;
+            property <length> dy: card.win-dy;
+            x: max(0px, min(root.width - self.width, (root.width - card.width) / 2 + i * 16px + self.dx));
+            y: max(0px, min(root.height - 22px, 120px + i * 16px + self.dy));
+            width: card.width + 8px; height: 265px + 26px;
+            border-radius: 8px; background: #1a1b1e; border-width: 0.5px; border-color: #ffffff1f;
+            drop-shadow-blur: 24px; drop-shadow-offset-y: 8px; drop-shadow-color: #00000099;
+            Rectangle {
+                TouchArea {
+                    mouse-cursor: MouseCursor.move;
+                    moved => { win.dx += self.mouse-x - self.pressed-x; win.dy += self.mouse-y - self.pressed-y; }
+                    pointer-event(e) => { if (e.kind == PointerEventKind.up) { Studio.device-window-moved(card.id, win.x - (root.width - card.width) / 2 - i * 16px, win.y - 120px - i * 16px); } }
+                }
+                Text { x: 10px; y: 0; height: 22px; text: card.name; color: #81838a; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+                Rectangle {
+                    x: parent.width - 21px; y: 3px; width: 16px; height: 16px; border-radius: 4px;
+                    background: close-ta.has-hover ? #ffffff14 : transparent;
+                    accessible-role: button; accessible-label: "Close device window";
+                    Icon { x: 3px; y: 3px; width: 10px; height: 10px; d: Icons.close; ink: close-ta.has-hover ? #ffffff : #81838a; stroke-width: 1.04px; }
+                    close-ta := TouchArea { clicked => { Studio.device-window(card.id); } }
+                }
+                BuiltinCard { x: 4px; y: 22px; card: card; }
+            }
+        }
         // Clip context menu (click outside dismisses).
         if Studio.menu-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height;

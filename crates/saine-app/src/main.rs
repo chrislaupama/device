@@ -11,8 +11,10 @@
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
 //!              [--load-sample <file.wav>  (into the selected track's sampler, as a file drop)]
 //!              [--sampler-tab <0..4>  (with a sampler state: Sample, Pitch, Filter, Amp or Mod tab)]
-//!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--self-test]
+//!              [--hold-note <0..127>  (with a synth state: hold the note and render 0.75 s offline first)]
+//!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
+//!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
 //! ```
 
 mod analyzer_views;
@@ -106,6 +108,9 @@ struct Args {
     load_sample: Vec<PathBuf>,
     /// --sampler-tab N: with a sampler state, show that tab (review screenshots).
     sampler_tab: Option<i32>,
+    /// Test hook: hold this note on the selected synth and render 0.75 s offline before the
+    /// first frame, so the pictures show a voice's live modulation.
+    hold_note: Option<u8>,
     /// Never show the window (renders for --screenshot fall back to offscreen snapshots).
     offscreen: bool,
     /// review-analyzers: Pitch Corrector, Tuner and Spectrum fed 2 s of a sung-like line (no reference).
@@ -121,6 +126,9 @@ struct Args {
     exit_after_frames: Option<u64>,
     zoom: Option<u32>,
     frame_stats: bool,
+    /// --render-bench N: offscreen, render the state N times and print the mean / median /
+    /// p95 milliseconds per full window render (Slint + wgpu surfaces + readback), then exit.
+    render_bench: u32,
     self_test: bool,
 }
 
@@ -243,11 +251,29 @@ fn parse_args() -> Result<Args, String> {
             "--plugin-fixture" => a.plugin_fixture = Some(value(&mut i)?.into()),
             "--screenshot" => a.screenshot = Some(value(&mut i)?.into()),
             "--offscreen" => a.offscreen = true,
+            "--card-accent" => {
+                let hex = value(&mut i)?;
+                let hex = hex.trim_start_matches('#');
+                if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    return Err(format!("--card-accent: want six hex digits (RRGGBB), got {hex:?}"));
+                }
+                let c = u32::from_str_radix(hex, 16).map_err(|e| format!("--card-accent: {e}"))?;
+                let _ = controller::CARD_ACCENT.set(timeline::rgb(c));
+            }
             "--load-sample" => a.load_sample.push(value(&mut i)?.into()),
+            "--hold-note" => a.hold_note = Some(value(&mut i)?.parse().map_err(|e| format!("--hold-note: {e}"))?),
             "--sampler-tab" => a.sampler_tab = Some(value(&mut i)?.parse().map_err(|e| format!("--sampler-tab: {e}"))?),
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
+            "--render-bench" => {
+                a.render_bench = value(&mut i)?.parse().map_err(|e| format!("--render-bench: {e}"))?;
+                if a.render_bench == 0 {
+                    return Err("--render-bench: the count must be at least 1".into());
+                }
+                a.offscreen = true;
+                a.audio = false;
+            }
             "--self-test" | "--self-test-audio" => {
                 a.self_test = true;
                 a.demo = true;
@@ -1082,6 +1108,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         use saine_core::DeviceId as Id;
         let id = |i: i32| Id(i as u64);
         on!(on_device_fold, |c, d: i32| c.device_fold(id(d)));
+        on!(on_device_ask, |c, d: i32| c.device_ask(id(d)));
+        on!(on_device_window, |c, d: i32| c.device_window(id(d)));
+        on!(on_device_window_moved, |c, d: i32, x: f32, y: f32| c.device_window_moved(id(d), x, y));
         on!(on_device_collapse, |c, d: i32| c.device_collapse(id(d)));
         on!(on_device_swap_menu, |c, d: i32, x: f32, y: f32| c.device_swap_menu(id(d), x, y));
         on!(on_device_rename, |c, d: i32, t: slint::SharedString| c.device_rename(id(d), &t));
@@ -1242,6 +1271,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ---- startup work ----
     if let Some(dir) = &args.open {
         ctl.borrow_mut().open(dir);
+    }
+    // After --open, so the held voice sounds on the project's own Synth.
+    if let Some(pitch) = args.hold_note {
+        let c = ctl.borrow();
+        if let Some(d) = c.synth_device() {
+            let mut out = vec![0f32; 2 * 36_000];
+            if let Err(e) = c.engine.builtin_note(d.0, pitch, 100).and_then(|_| c.engine.render_offline(&mut out)) {
+                eprintln!("--hold-note: {e}");
+            }
+        }
     }
     if args.demo {
         let dir = std::env::temp_dir().join(format!("saine-demo-{}", std::process::id()));
@@ -1476,6 +1515,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aw = app.as_weak();
         let fr = frame.clone();
         let ctl2 = ctl.clone();
+        let zm = zoom.clone();
         slint::Timer::single_shot(Duration::from_secs(4), move || {
             if fr.borrow().shot_taken {
                 return;
@@ -1486,10 +1526,37 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             eprintln!("screenshot: no frames presented (occluded/locked?), rendering offscreen");
             fr.borrow_mut().shot_taken = true;
+            // No frame ran, so the zoom was never applied: apply it before the snapshot.
+            zm.borrow_mut().sync(a.window());
             for _ in 0..3 {
                 let _ = a.window().take_snapshot();
             }
             save_snapshot(&a, &path);
+            let _ = slint::quit_event_loop();
+        });
+    }
+    if args.render_bench > 0 {
+        let aw = app.as_weak();
+        let zm = zoom.clone();
+        let n = args.render_bench as usize;
+        slint::Timer::single_shot(Duration::from_secs(4), move || {
+            let Some(a) = aw.upgrade() else { return };
+            zm.borrow_mut().sync(a.window());
+            let mut ms = Vec::with_capacity(n);
+            for i in 0..n + 5 {
+                let t = Instant::now();
+                if let Err(e) = a.window().take_snapshot() {
+                    eprintln!("--render-bench: snapshot failed: {e}");
+                    std::process::exit(1);
+                }
+                if i >= 5 {
+                    ms.push(t.elapsed().as_secs_f64() * 1e3);
+                }
+            }
+            ms.sort_by(f64::total_cmp);
+            let mean = ms.iter().sum::<f64>() / n as f64;
+            let median = if n % 2 == 0 { (ms[n / 2 - 1] + ms[n / 2]) / 2.0 } else { ms[n / 2] };
+            println!("{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{median:.3},\"p95_ms\":{:.3}}}", ms[(n * 95 / 100).min(n - 1)]);
             let _ = slint::quit_event_loop();
         });
     }

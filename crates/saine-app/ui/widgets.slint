@@ -101,10 +101,10 @@ export global Icons {
     out property <string> rewind: "M3 3h2.2v10H3z M13.5 3v10L6 8z";
     out property <string> play: "M4.5 2.5v11l9-5.5z";
     out property <string> pause: "M4 3h3v10H4z M9 3h3v10H9z";
-    out property <string> record: "M8 3a5 5 0 1 1 0 10a5 5 0 1 1 0-10z";
+    out property <string> record: "M8 3a5 5 0 1 1 0 10a5 5 0 1 1 0-10z M8 6.1a1.9 1.9 0 1 0 0 3.8a1.9 1.9 0 1 0 0-3.8z";
     out property <string> loop: "M3 8V6.5A2 2 0 0 1 5 4.5h7.5 M10.5 2.5l2 2-2 2 M13 8v1.5a2 2 0 0 1-2 2H3.5 M5.5 13.5l-2-2 2-2";
     out property <string> automation: "M2 9h2.5l1.5-5 2 9 1.5-6 1 2H14";
-    out property <string> metronome: "M5 14h6.5L9.6 2.5H6.9z M8 11l4.5-7";
+    out property <string> metronome: "M3.5 14h9L10.3 2.5H5.7z M7.41 10.63L12.21 3.03L13.39 3.77L8.59 11.37z";
     out property <string> sparkle: "M8 1.5v4 M8 10.5v4 M1.5 8h4 M10.5 8h4 M3.4 3.4l2.2 2.2 M10.4 10.4l2.2 2.2 M12.6 3.4l-2.2 2.2 M5.6 10.4l-2.2 2.2";
     out property <string> mixer: "M4 2.5v11 M8 2.5v11 M12 2.5v11 M2.5 10.5h3 M6.5 5.5h3 M10.5 8.5h3";
     out property <string> panel-bottom: "M2 3.5h12v9H2z M2 9h12";
@@ -159,6 +159,8 @@ export global Icons {
     out property <string> window: "M2 3h12v10H2z M2 5.8h12";
     out property <string> effect: "M8 3a5 5 0 1 1 0 10a5 5 0 1 1 0-10z M8 8l2.6-2.6";
     out property <string> grip: "M6 4h.1 M10 4h.1 M6 8h.1 M10 8h.1 M6 12h.1 M10 12h.1";
+    // Presets (ORIGINAL drawing): two slider rods with their caps, filled.
+    out property <string> presets: "M4.5 2h1.5v3.2a2.3 2.3 0 0 1 0 4.4V14H4.5V9.6a2.3 2.3 0 0 1 0-4.4z M10 2h1.5v4.4a2.3 2.3 0 0 1 0 4.4V14H10v-3.2a2.3 2.3 0 0 1 0-4.4z";
     out property <string> teach: "M1.5 6.5L8 3.5l6.5 3L8 9.5z M4.5 8v3c1 1 2.2 1.5 3.5 1.5s2.5-.5 3.5-1.5V8 M14.5 6.5v4";
 }
 
@@ -169,6 +171,7 @@ export component Pill inherits Raised {
     in property <int> weight: 600;
     in property <bool> active: false;
     in property <length> font-size: 9px;
+    in property <length> letter-spacing: 0;
     in property <color> text-color: active ? Tokens.on-accent : #c9c9cc;
     callback clicked;
     border-radius: self.height / 2;
@@ -181,7 +184,7 @@ export component Pill inherits Raised {
             width: 12px;
             Icon { d: root.icon; width: 12px; height: 12px; ink: root.text-color; }
         }
-        Text { text: root.text; color: root.text-color; font-size: root.font-size; font-weight: root.weight; vertical-alignment: center; }
+        Text { text: root.text; color: root.text-color; font-size: root.font-size; font-weight: root.weight; letter-spacing: root.letter-spacing; vertical-alignment: center; }
     }
     TouchArea { clicked => { root.clicked(); } }
 }
@@ -271,6 +274,7 @@ export component Knob inherits Rectangle {
     /// carries the value arc (overrides `ring`). Bipolar knobs get a centre marker.
     in property <bool> groove: false;
     in property <float> groove-radius: 12.5;
+    in property <color> groove-color: Tokens.knob-groove;
     in property <color> tick-color: #b9d3e4;
     in property <color> arc-color: Tokens.value-blue;
     in property <brush> ring-brush: @radial-gradient(circle, #111214 55%, #1c1d20 100%);
@@ -292,7 +296,7 @@ export component Knob inherits Rectangle {
     if root.groove: Path {
         width: root.width; height: root.height;
         viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
-        stroke: Tokens.knob-groove; stroke-width: 1.5px; fill: transparent;
+        stroke: root.groove-color; stroke-width: 1.5px; fill: transparent;
         MoveTo { x: root.cx + root.groove-radius * sin(-135deg); y: root.cy - root.groove-radius * cos(-135deg); }
         ArcTo { x: root.cx + root.groove-radius * sin(135deg); y: root.cy - root.groove-radius * cos(135deg); radius-x: root.groove-radius; radius-y: root.groove-radius; large-arc: true; sweep: true; }
     }
