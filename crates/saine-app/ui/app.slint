@@ -248,44 +248,68 @@ component Timeline inherits Panel {
     out property <length> lanes-height: lanes.height;
 
     // ---- header row (y 0..27) ----
-    Label { x: 7px; y: 7px; text: "Timeline"; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; }
+    // The reference app hides the zoom sliders once the header can no longer give the minimap its 140 px minimum
+    // (research-findings S16); widths are the right group's measured widths in design units.
+    property <bool> zoom-hidden: root.width - 200.6px - 10.2px - 206.3px - 175.4px < 119px;
+    Text { x: 6.8px; y: 0; height: 27.2px; text: "Timeline"; color: Tokens.text-bright; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; vertical-alignment: center; }
     // Returns: PLACEHOLDER (no return tracks yet). Master pill: shows the master row (static on).
-    // Header-row x positions/widths below are the reference's AX boxes at 100 % zoom (ax-main-100.tsv),
-    // panel-relative, right-side items as offsets from the panel's right edge.
+    // Header-row x positions/widths below are the reference's AX boxes at 100 % zoom (ax-main-100.tsv).
     Pill { x: 60.35px; y: 5px; width: 59.5px; height: 18px; text: "Returns"; icon: Icons.returns; font-size: 8.75px; text-color: #a0a1a5; }
     Pill { x: 124.1px; y: 5px; width: 59.5px; height: 18px; text: "Master"; icon: Icons.master; active: true; font-size: 8.75px; }
-    // Overview bar (outline only; PLACEHOLDER for the song overview / scroll-zoom control)
+    // Minimap: fills the space up to the right group (PLACEHOLDER: outline of the whole-song view window only)
     Rectangle {
-        x: 200.6px; y: 5px; width: root.width - 200.6px - 395.25px; height: 17px;
-        border-radius: 4px; border-width: 0.75px; border-color: #6d6e71;
+        x: 200.6px; y: 5.1px; width: rgroup.x - 10.2px - self.x; height: 17px;
+        border-radius: 4.25px; border-width: 0.85px; border-color: #767678;
     }
-    // Right toolbar: PLACEHOLDERS except where noted
-    Pill { x: root.width - 385.05px; y: 5px; width: 63.75px; height: 18px; text: "Smart Fill"; icon: Icons.marquee; font-size: 8.25px; text-color: #a0a1a5; }
-    // Show/Hide automation lanes and Draw mode (B) (src/automation.rs).
-    Icon {
-        x: root.width - 312.6px; y: 7px; width: 14px; height: 14px; d: Icons.automation; ink: Studio.auto-shown ? #e5e5e8 : #6b6c70;
-        accessible-role: checkbox; accessible-label: Studio.auto-shown ? "Hide automation lanes" : "Show automation lanes"; accessible-checked: Studio.auto-shown;
-        TouchArea { x: -3px; y: -2px; width: 20px; height: 18px; clicked => { Studio.auto-toggle-shown(); } }
+    rgroup := HorizontalLayout {
+        x: root.width - self.width - 10.2px; y: 0; width: self.preferred-width; height: 27.2px;
+        spacing: 3.4px;
+        // Smart Fill: PLACEHOLDER
+        Rectangle {
+            width: 63.75px + 6.8px;
+            Pill { x: 0; y: 5px; width: 63.75px; height: 18px; text: "Smart Fill"; icon: Icons.marquee; font-size: 8.25px; text-color: #a0a1a5; }
+        }
+        // Show/Hide automation lanes and Draw mode (B) (src/automation.rs).
+        Rectangle {
+            width: 11.05px + 6.8px;
+            Icon {
+                x: 0; y: 8.1px; width: 11.05px; height: 11.05px; d: Icons.automation; ink: Studio.auto-shown ? #e5e5e8 : #6b6c70;
+                accessible-role: checkbox; accessible-label: Studio.auto-shown ? "Hide automation lanes" : "Show automation lanes"; accessible-checked: Studio.auto-shown;
+                TouchArea { x: -3px; y: -2px; width: 20px; height: 18px; clicked => { Studio.auto-toggle-shown(); } }
+            }
+        }
+        Rectangle {
+            width: 11.05px + 6.8px;
+            Icon {
+                x: 0; y: 8.1px; width: 11.05px; height: 11.05px; d: Icons.pencil; ink: Studio.auto-draw ? #e5e5e8 : #6b6c70;
+                accessible-role: checkbox; accessible-label: "Draw mode (B)"; accessible-checked: Studio.auto-draw;
+                TouchArea { x: -3px; y: -2px; width: 19px; height: 18px; clicked => { Studio.auto-toggle-draw(); } }
+            }
+        }
+        Rectangle {
+            width: 25px + 1.7px;
+            Icon { x: 0; y: 7px; width: 13px; height: 13px; d: Icons.cursor; ink: #e5e5e8; filled: true; }
+            Icon { x: 14px; y: 8px; width: 11px; height: 11px; d: Icons.chevron-down; ink: #8e8f93; }
+        }
+        // vertical zoom (placeholder), horizontal zoom (mirrors the real zoom level)
+        if !root.zoom-hidden: Rectangle {
+            width: 172px;
+            Icon { x: 0; y: 7px; width: 13px; height: 13px; d: Icons.v-resize; ink: #727377; }
+            Rectangle { x: 18.4px; y: 13px; width: 68px; height: 2px; border-radius: 1px; background: #2f3036; }
+            Rectangle { x: 18.4px; y: 13px; width: 8px; height: 2px; background: #e5e5e8; }
+            Rectangle { x: 24.5px; y: 10px; width: 8px; height: 8px; border-radius: 4px; background: #f2f2f2; }
+            Icon { x: 91.4px; y: 7px; width: 13px; height: 13px; d: Icons.h-resize; ink: #727377; }
+            Rectangle { x: 110.2px; y: 13px; width: 68px; height: 2px; border-radius: 1px; background: #2f3036; }
+            Rectangle { x: 110.2px; y: 13px; width: 8px; height: 2px; background: #e5e5e8; }
+            Rectangle { x: 116px; y: 10px; width: 8px; height: 8px; border-radius: 4px; background: #f2f2f2; }
+        }
+        // Snap: beat snap is always on in milestone 1 ("Auto" label mirrors that)
+        Rectangle {
+            width: 44.2px;
+            Text { x: 0; y: 7px; width: 28.9px; height: 14px; text: "Auto"; color: Tokens.text-bright; font-size: 9px; font-weight: 600; vertical-alignment: center; horizontal-alignment: right; }
+            Icon { x: 32.3px; y: 8px; width: 11.9px; height: 11px; d: Icons.chevron-down; ink: #c9c9cc; }
+        }
     }
-    Icon {
-        x: root.width - 290.8px; y: 7px; width: 13px; height: 13px; d: Icons.pencil; ink: Studio.auto-draw ? #e5e5e8 : #6b6c70;
-        accessible-role: checkbox; accessible-label: "Draw mode (B)"; accessible-checked: Studio.auto-draw;
-        TouchArea { x: -3px; y: -2px; width: 19px; height: 18px; clicked => { Studio.auto-toggle-draw(); } }
-    }
-    Icon { x: root.width - 268.6px; y: 7px; width: 13px; height: 13px; d: Icons.cursor; ink: #e5e5e8; filled: true; }
-    Icon { x: root.width - 254.6px; y: 8px; width: 11px; height: 11px; d: Icons.chevron-down; ink: #8e8f93; }
-    Icon { x: root.width - 236px; y: 7px; width: 13px; height: 13px; d: Icons.v-resize; ink: #727377; }
-    // vertical zoom (placeholder), horizontal zoom (mirrors the real zoom level)
-    Rectangle { x: root.width - 217.6px; y: 13px; width: 68px; height: 2px; border-radius: 1px; background: #2f3036; }
-    Rectangle { x: root.width - 217.6px; y: 13px; width: 8px; height: 2px; background: #e5e5e8; }
-    Rectangle { x: root.width - 211.5px; y: 10px; width: 8px; height: 8px; border-radius: 4px; background: #f2f2f2; }
-    Icon { x: root.width - 144.6px; y: 7px; width: 13px; height: 13px; d: Icons.h-resize; ink: #727377; }
-    Rectangle { x: root.width - 125.8px; y: 13px; width: 68px; height: 2px; border-radius: 1px; background: #2f3036; }
-    Rectangle { x: root.width - 125.8px; y: 13px; width: 8px; height: 2px; background: #e5e5e8; }
-    Rectangle { x: root.width - 120px; y: 10px; width: 8px; height: 8px; border-radius: 4px; background: #f2f2f2; }
-    // Snap: beat snap is always on in milestone 1 ("Auto" label mirrors that)
-    Text { x: root.width - 54.4px; y: 7px; width: 28.9px; height: 14px; text: "Auto"; color: Tokens.text-bright; font-size: 9px; font-weight: 600; vertical-alignment: center; horizontal-alignment: right; }
-    Icon { x: root.width - 22.1px; y: 8px; width: 11.9px; height: 11px; d: Icons.chevron-down; ink: #c9c9cc; }
     Rectangle { x: 0; y: 27px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
 
     // ---- lanes: wgpu texture (ruler + lanes + master lane) ----
