@@ -300,7 +300,8 @@ std::unique_ptr<BuiltinProcessor> create_auto_filter() { return std::make_unique
 
 } // namespace
 
+constexpr float kDefaults[kParamCount] = {0.0f, 0.0f, 20000.0f, 0.0f, 0.0f, 0.0f, 1.0f, 100.0f, 0.0f, 1.0f, 4.0f, 0.0f, 0.0f, 0.0f, 100.0f, 0.0f, 0.0f};
 extern const BuiltinDescriptor kAutoFilterDescriptor;
-const BuiltinDescriptor kAutoFilterDescriptor{"auto-filter", kParamIds, kReadoutIds, &create_auto_filter, {}};
+const BuiltinDescriptor kAutoFilterDescriptor{"auto-filter", kParamIds, kReadoutIds, &create_auto_filter, {}, kDefaults};
 
 } // namespace saine

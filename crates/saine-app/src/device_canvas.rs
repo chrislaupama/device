@@ -3,8 +3,8 @@
 //! Filter response field (View::Custom("auto-filter")).
 //!
 //! A field is drawn from paths, dots, texts and value pills built here in
-//! well-local px (crate::PanelField); the Slint side only draws them and
-//! forwards pointer, wheel and key events back (Controller::panel_field...).
+//! well-local px (crate::PanelCanvas); the Slint side only draws them and
+//! forwards pointer, wheel and key events back (Controller::panel_canvas...).
 //! Hit-testing and gestures live here, next to the geometry that drew the
 //! field. A field drag can move several parameters at once (an EQ node moves
 //! frequency and gain): values go live to the engine while dragging
@@ -13,7 +13,7 @@
 
 use crate::controller::Controller;
 use crate::device_panel::Z;
-use crate::{EqCell, EqGlyph, EqTab, FieldDot, FieldPath, FieldPill, FieldText, PanelEq, PanelField};
+use crate::{EqCell, EqGlyph, EqTab, CanvasDot, CanvasPath, CanvasPill, CanvasText, PanelEq, PanelCanvas};
 use saine_core::builtin::eq::{self, EqView, NodeDoubleClick, Shape};
 use saine_core::builtin::{dj_map, DeviceDef, FilterSetting, ParamDef, View};
 use saine_core::{Command, Device, DeviceId};
@@ -102,7 +102,7 @@ struct FieldDrag {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct FieldUi {
+pub(crate) struct CanvasUi {
     hover: Option<(DeviceId, Hit)>,
     drag: Option<FieldDrag>,
     /// Selected EQ band per device (UI state, not saved).
@@ -112,7 +112,7 @@ pub(crate) struct FieldUi {
     pub(crate) readouts: HashMap<DeviceId, Vec<f32>>,
 }
 
-impl FieldUi {
+impl CanvasUi {
     /// Live value of parameter `index` while a field drag moves it.
     pub(crate) fn live(&self, device: DeviceId, index: usize) -> Option<f32> {
         let g = self.drag.as_ref().filter(|g| g.device == device)?;
@@ -171,16 +171,16 @@ fn hline(y: f32, x0: f32, x1: f32) -> String {
     format!("M{x0:.1} {y:.1} L{x1:.1} {y:.1}")
 }
 
-fn stroke(commands: String, color: Color, width: f32) -> FieldPath {
-    FieldPath { commands: s(commands), stroke: color, width, fill: Color::from_argb_u8(0, 0, 0, 0) }
+fn stroke(commands: String, color: Color, width: f32) -> CanvasPath {
+    CanvasPath { commands: s(commands), stroke: color, width, fill: Color::from_argb_u8(0, 0, 0, 0) }
 }
 
-fn fill(commands: String, color: Color) -> FieldPath {
-    FieldPath { commands: s(commands), stroke: Color::from_argb_u8(0, 0, 0, 0), width: 0.0, fill: color }
+fn fill(commands: String, color: Color) -> CanvasPath {
+    CanvasPath { commands: s(commands), stroke: Color::from_argb_u8(0, 0, 0, 0), width: 0.0, fill: color }
 }
 
-fn text(x: f32, y: f32, w: f32, t: impl Into<SharedString>, color: Color, size: f32, align: i32) -> FieldText {
-    FieldText { x, y, w, text: t.into(), color, size, bold: true, align }
+fn text(x: f32, y: f32, w: f32, t: impl Into<SharedString>, color: Color, size: f32, align: i32) -> CanvasText {
+    CanvasText { x, y, w, text: t.into(), color, size, bold: true, align }
 }
 
 fn db_label(db: f32) -> String {
@@ -195,7 +195,7 @@ fn db_label(db: f32) -> String {
 
 /// Grid of a response field: dB rungs (labels in the left gutter) and the
 /// 100 / 1k / 10k rules with their labels along the bottom.
-fn grid(p: &Plot, rungs: &[f32], axis_strip: f32, paths: &mut Vec<FieldPath>, texts: &mut Vec<FieldText>) {
+fn grid(p: &Plot, rungs: &[f32], axis_strip: f32, paths: &mut Vec<CanvasPath>, texts: &mut Vec<CanvasText>) {
     for &db in rungs {
         let y = p.y(db);
         let rule = if db == 0.0 { white(0.13) } else { white(0.05) };
@@ -268,7 +268,7 @@ impl Controller {
     }
 
     pub(crate) fn eq_selected(&self, d: &Device, v: &EqView) -> usize {
-        self.devices.panel.field.selected.get(&d.id).copied().unwrap_or(v.first_band).min(v.bands.len() - 1)
+        self.devices.panel.canvas.selected.get(&d.id).copied().unwrap_or(v.first_band).min(v.bands.len() - 1)
     }
 
     fn eq_band(&self, d: &Device, def: &DeviceDef, v: &EqView, i: usize) -> eq::Band {
@@ -301,7 +301,7 @@ impl Controller {
     }
 
     /// Field, chrome and output slider of an EQ card.
-    pub(crate) fn eq_parts(&self, d: &Device, def: &'static DeviceDef, v: &'static EqView, accent: Color) -> (PanelField, PanelEq) {
+    pub(crate) fn eq_parts(&self, d: &Device, def: &'static DeviceDef, v: &'static EqView, accent: Color) -> (PanelCanvas, PanelEq) {
         let width = def.layout.width();
         let (fx, fy, fh, p) = self.eq_plot(def, v);
         let val = |id: &str| self.field_value(d, def, id);
@@ -353,7 +353,7 @@ impl Controller {
             paths.push(stroke(path(&pts), rgba(accent, 0.3), 1.0 * Z));
         }
         // Live picture (dynamic bands moved by the engine).
-        if let Some(ro) = self.devices.panel.field.readouts.get(&d.id).filter(|r| r.iter().take(v.bands.len()).any(|x| x.abs() > 0.05)) {
+        if let Some(ro) = self.devices.panel.canvas.readouts.get(&d.id).filter(|r| r.iter().take(v.bands.len()).any(|x| x.abs() > 0.05)) {
             let live: Vec<eq::Section> = (0..v.bands.len())
                 .filter(|i| v.band_on(*i, &val))
                 .flat_map(|i| {
@@ -368,7 +368,7 @@ impl Controller {
         paths.push(stroke(path(&total), accent, 1.75 * Z));
 
         // Q wings of the selected band.
-        let field = &self.devices.panel.field;
+        let field = &self.devices.panel.canvas;
         let hot = |h: Hit| field.drag.as_ref().is_some_and(|g| g.device == d.id && g.hit == h) || field.hover == Some((d.id, h));
         if v.band_on(sel, &val) && sel_band.shape != Shape::DualLow {
             let hw = wing_octaves(sel_band.q);
@@ -388,9 +388,9 @@ impl Controller {
             let is_sel = n.band == sel;
             let color = if n.on { accent } else { AXIS };
             if is_sel {
-                dots.push(FieldDot { x: n.x, y: n.y, r: n.r + 3.5 * Z, fill: white(0.12), ring: 1.5 * Z, ring_color: color });
+                dots.push(CanvasDot { x: n.x, y: n.y, r: n.r + 3.5 * Z, fill: white(0.12), ring: 1.5 * Z, ring_color: color });
             }
-            dots.push(FieldDot { x: n.x, y: n.y, r: n.r, fill: color, ring: 0.0, ring_color: color });
+            dots.push(CanvasDot { x: n.x, y: n.y, r: n.r, fill: color, ring: 0.0, ring_color: color });
         }
 
         // Value pill: dragged, else hovered, else selected band.
@@ -418,7 +418,7 @@ impl Controller {
             let above = n.y - (n.r + 13.0 * Z);
             let y = if above < 9.0 * Z { n.y + n.r + 13.0 * Z } else { above };
             let x = n.x.clamp(45.0 * Z, p.w - 45.0 * Z);
-            pills.push(FieldPill { x, y, anchor: 1, label: s(format!("Band {}", n.band + 1)), value: s(value), hot: pill_band.1, grip: false });
+            pills.push(CanvasPill { x, y, anchor: 1, label: s(format!("Band {}", n.band + 1)), value: s(value), hot: pill_band.1, grip: false });
         }
 
         let cursor = match field.drag.as_ref().filter(|g| g.device == d.id).map(|g| g.hit).or(field.hover.filter(|h| h.0 == d.id).map(|h| h.1)) {
@@ -427,7 +427,7 @@ impl Controller {
             _ => 0,
         };
         let freq_text = def.param(v.bands[sel].freq).map(|fp| fp.format(sel_band.freq)).unwrap_or_default();
-        let field_out = PanelField {
+        let field_out = PanelCanvas {
             visible: true,
             x: fx,
             y: fy,
@@ -587,7 +587,7 @@ impl Controller {
         (x0, y - 8.0 * Z, w, 16.0 * Z)
     }
 
-    pub(crate) fn auto_filter_field(&self, d: &Device, def: &'static DeviceDef, accent: Color) -> PanelField {
+    pub(crate) fn auto_filter_field(&self, d: &Device, def: &'static DeviceDef, accent: Color) -> PanelCanvas {
         let (fx, fy, fh, p) = self.af_plot(def);
         let val = |id: &str| self.field_value(d, def, id);
         let st = self.af_setting(d, def);
@@ -597,7 +597,7 @@ impl Controller {
         let rungs: Vec<f32> = [12.0, 0.0, -12.0, -24.0].into_iter().filter(|db| p.y(*db) > 9.0 * Z && p.y(*db) < p.h - AF_AXIS * Z).collect();
         grid(&p, &rungs, AF_AXIS * Z, &mut paths, &mut texts);
 
-        let field = &self.devices.panel.field;
+        let field = &self.devices.panel.canvas;
         let hot = |h: Hit| field.drag.as_ref().is_some_and(|g| g.device == d.id && g.hit == h) || field.hover == Some((d.id, h));
         let (corner, (lo_x, hi_x, sweep), env_x) = self.af_parts(d, def, &p);
 
@@ -631,7 +631,7 @@ impl Controller {
             paths.push(stroke(vline(x, 0.0, p.h - AF_AXIS * Z), rgba(accent, 0.5), 1.0));
             let live_st = FilterSetting { cutoff: live, ..st };
             let y = p.y((saine_core::builtin::filter_response(&live_st, live as f64, fs) as f32).clamp(AF_BOTTOM_DB, AF_TOP_DB));
-            dots.push(FieldDot { x, y, r: 2.75 * Z, fill: accent, ring: 0.0, ring_color: accent });
+            dots.push(CanvasDot { x, y, r: 2.75 * Z, fill: accent, ring: 0.0, ring_color: accent });
         }
 
         // Env pill (and its tie to the base cutoff), LFO pill beside a hot edge.
@@ -643,26 +643,26 @@ impl Controller {
             if (env_x - base_x).abs() > 1.0 {
                 paths.push(stroke(hline(ey + eh / 2.0, base_x.min(ex + ew / 2.0), base_x.max(ex + ew / 2.0)), rgba(accent, 0.3), 1.0));
             }
-            pills.push(FieldPill { x: ex, y: ey + eh / 2.0, anchor: 0, label: s("Env"), value: s(env_p.map(|e| e.format(val("env_amount"))).unwrap_or_default()), hot: hot(Hit::Env), grip: true });
+            pills.push(CanvasPill { x: ex, y: ey + eh / 2.0, anchor: 0, label: s("Env"), value: s(env_p.map(|e| e.format(val("env_amount"))).unwrap_or_default()), hot: hot(Hit::Env), grip: true });
         }
         for (x, high) in [(lo_x, false), (hi_x, true)] {
             if sweep && hot(Hit::Edge(high)) {
                 let lfo = def.param("lfo_amount").map(|l| l.format(val("lfo_amount"))).unwrap_or_default();
                 let right = x + 4.0 * Z + 60.0 * Z < p.w;
-                pills.push(FieldPill { x: if right { x + 4.0 * Z } else { x - 4.0 * Z }, y: ey + eh / 2.0 + 20.0 * Z, anchor: if right { 0 } else { 2 }, label: s("LFO"), value: s(lfo), hot: true, grip: false });
+                pills.push(CanvasPill { x: if right { x + 4.0 * Z } else { x - 4.0 * Z }, y: ey + eh / 2.0 + 20.0 * Z, anchor: if right { 0 } else { 2 }, label: s("LFO"), value: s(lfo), hot: true, grip: false });
             }
         }
 
         // Corner handle and its value pill.
         let corner_hot = hot(Hit::Corner);
         if corner_hot {
-            dots.push(FieldDot { x: corner.0, y: corner.1, r: 8.0 * Z, fill: Color::from_argb_u8(0, 0, 0, 0), ring: 1.25 * Z, ring_color: rgba(accent, 0.5) });
+            dots.push(CanvasDot { x: corner.0, y: corner.1, r: 8.0 * Z, fill: Color::from_argb_u8(0, 0, 0, 0), ring: 1.25 * Z, ring_color: rgba(accent, 0.5) });
         }
-        dots.push(FieldDot { x: corner.0, y: corner.1, r: 5.0 * Z, fill: rgba(accent, 0.95), ring: 0.0, ring_color: accent });
+        dots.push(CanvasDot { x: corner.0, y: corner.1, r: 5.0 * Z, fill: rgba(accent, 0.95), ring: 0.0, ring_color: accent });
         let (name, value) = self.af_corner_text(d, def);
         if corner_hot {
             let right = corner.0 + 14.0 * Z + 80.0 * Z < p.w;
-            pills.push(FieldPill { x: if right { corner.0 + 14.0 * Z } else { corner.0 - 14.0 * Z }, y: corner.1, anchor: if right { 0 } else { 2 }, label: s(name.clone()), value: s(value.clone()), hot: true, grip: true });
+            pills.push(CanvasPill { x: if right { corner.0 + 14.0 * Z } else { corner.0 - 14.0 * Z }, y: corner.1, anchor: if right { 0 } else { 2 }, label: s(name.clone()), value: s(value.clone()), hot: true, grip: true });
         }
 
         let cursor = match field.drag.as_ref().filter(|g| g.device == d.id).map(|g| g.hit).or(field.hover.filter(|h| h.0 == d.id).map(|h| h.1)) {
@@ -670,7 +670,7 @@ impl Controller {
             Some(Hit::Corner) => 3,
             _ => 0,
         };
-        PanelField {
+        PanelCanvas {
             visible: true,
             x: fx,
             y: fy,
@@ -691,7 +691,7 @@ impl Controller {
 
     fn af_corner_text(&self, d: &Device, def: &DeviceDef) -> (String, String) {
         let st = self.af_setting(d, def);
-        let hz = |f: f32| saine_core::builtin::format_value(saine_core::builtin::Format::Hz, f, "Hz", &[], 0.0);
+        let hz = |f: f32| saine_core::builtin::format_value(saine_core::builtin::Format::Freq, f, "Hz", &[], 0.0);
         match st.dj {
             Some(pos) => {
                 let (kind, fc, scale, _) = dj_map(pos);
@@ -738,8 +738,8 @@ impl Controller {
         }
     }
 
-    /// Pointer events of a field view (see ui/device_panel.slint FieldView).
-    pub fn panel_field(&mut self, device: DeviceId, phase: i32, x: f32, y: f32, alt: bool, shift: bool) {
+    /// Pointer events of a field view (see ui/device_panel.slint CanvasView).
+    pub fn panel_canvas(&mut self, device: DeviceId, phase: i32, x: f32, y: f32, alt: bool, shift: bool) {
         let Some((d, def, eqv)) = self.field_kind(device) else { return };
         let hit = match eqv {
             Some(v) => self.eq_hit(d, def, v, x, y),
@@ -750,18 +750,18 @@ impl Controller {
             1 => self.field_move(device, x, y, alt, shift),
             2 => self.field_release(),
             3 => {
-                self.panel_cancel_field();
+                self.panel_cancel_canvas();
             }
             4 => {
                 let h = (hit != Hit::None && hit != Hit::Empty).then_some((device, hit));
-                if self.devices.panel.field.hover != h {
-                    self.devices.panel.field.hover = h;
+                if self.devices.panel.canvas.hover != h {
+                    self.devices.panel.canvas.hover = h;
                     self.ui_dirty = true;
                 }
             }
             5 => {
-                if self.devices.panel.field.hover.is_some_and(|h| h.0 == device) {
-                    self.devices.panel.field.hover = None;
+                if self.devices.panel.canvas.hover.is_some_and(|h| h.0 == device) {
+                    self.devices.panel.canvas.hover = None;
                     self.ui_dirty = true;
                 }
             }
@@ -826,7 +826,7 @@ impl Controller {
         let start: Vec<(usize, f32)> = params.iter().map(|&i| (i, def.value(d, &def.params[i]))).collect();
         let mut live = start.clone();
         if let Some(i) = select {
-            self.devices.panel.field.selected.insert(device, i);
+            self.devices.panel.canvas.selected.insert(device, i);
         }
         for (i, v) in &set {
             let v = def.params[*i].snap(*v);
@@ -835,13 +835,13 @@ impl Controller {
             }
             let _ = self.engine.builtin_set_param(device.0, *i as u32, v);
         }
-        self.devices.panel.field.drag = Some(FieldDrag { device, hit, x0: x, y0: y, ax: x, ay: y, grab, anchor: live.clone(), start, live, active: false, fine: shift, alt, force: !set.is_empty() });
+        self.devices.panel.canvas.drag = Some(FieldDrag { device, hit, x0: x, y0: y, ax: x, ay: y, grab, anchor: live.clone(), start, live, active: false, fine: shift, alt, force: !set.is_empty() });
         self.ui_dirty = true;
     }
 
     fn field_move(&mut self, device: DeviceId, x: f32, y: f32, alt: bool, shift: bool) {
         let Some((d, def, eqv)) = self.field_kind(device) else { return };
-        let Some(mut g) = self.devices.panel.field.drag.clone().filter(|g| g.device == device) else { return };
+        let Some(mut g) = self.devices.panel.canvas.drag.clone().filter(|g| g.device == device) else { return };
         if !g.active && (x - g.x0).hypot(y - g.y0) < DRAG_SLOP {
             return;
         }
@@ -936,14 +936,14 @@ impl Controller {
                 changed = true;
             }
         }
-        self.devices.panel.field.drag = Some(g);
+        self.devices.panel.canvas.drag = Some(g);
         if changed {
             self.ui_dirty = true;
         }
     }
 
     fn field_release(&mut self) {
-        let Some(g) = self.devices.panel.field.drag.take() else { return };
+        let Some(g) = self.devices.panel.canvas.drag.take() else { return };
         self.ui_dirty = true;
         let Some(d) = self.project().device(g.device) else { return };
         let Some(def) = saine_core::builtin::def_of(d) else { return };
@@ -962,8 +962,8 @@ impl Controller {
     }
 
     /// Escape / pointer cancel during a field drag: back to the start values, no undo step.
-    pub fn panel_cancel_field(&mut self) -> bool {
-        let Some(g) = self.devices.panel.field.drag.take() else { return false };
+    pub fn panel_cancel_canvas(&mut self) -> bool {
+        let Some(g) = self.devices.panel.canvas.drag.take() else { return false };
         for (i, v) in &g.start {
             let _ = self.engine.builtin_set_param(g.device.0, *i as u32, *v);
         }
@@ -972,7 +972,7 @@ impl Controller {
     }
 
     fn field_double_click(&mut self, device: DeviceId, def: &'static DeviceDef, eqv: Option<&'static EqView>, hit: Hit) {
-        self.devices.panel.field.drag = None;
+        self.devices.panel.canvas.drag = None;
         let reset = |ids: &[&str]| -> Vec<Command> {
             ids.iter().filter_map(|id| def.param(id)).map(|p| Command::SetDeviceParam { device, param: p.id.into(), value: p.default }).collect()
         };
@@ -993,13 +993,13 @@ impl Controller {
 
     /// Mouse wheel over an EQ node: Q x1.1 per tick up, x0.9 down (24 px of
     /// pixel scrolling per tick). Returns whether the field used it.
-    pub fn panel_field_wheel(&mut self, device: DeviceId, x: f32, y: f32, dy: f32) -> bool {
+    pub fn panel_canvas_wheel(&mut self, device: DeviceId, x: f32, y: f32, dy: f32) -> bool {
         let Some((d, def, Some(v))) = self.field_kind(device) else { return false };
         let Hit::Node(i) = self.eq_hit(d, def, v, x, y) else { return false };
         let b = &v.bands[i];
         let (Some(qp), Some(onp)) = (def.param(b.q), def.param(b.on)) else { return true };
         let (q, off) = (def.value(d, qp), def.value(d, onp) < 0.5);
-        let ui = &mut self.devices.panel.field;
+        let ui = &mut self.devices.panel.canvas;
         ui.wheel += dy;
         let ticks = (ui.wheel / 24.0).trunc();
         if ticks == 0.0 {
@@ -1022,7 +1022,7 @@ impl Controller {
     /// frequency, through the bank's detents when it has them; Up / Down gain),
     /// Return / Space switch it, Delete removes it (Character EQ). Auto
     /// Filter arrows move the corner (frequency / position, resonance).
-    pub fn panel_field_key(&mut self, device: DeviceId, key: &str, shift: bool, _alt: bool) -> bool {
+    pub fn panel_canvas_key(&mut self, device: DeviceId, key: &str, shift: bool, _alt: bool) -> bool {
         use slint::platform::Key;
         let is = |k: Key| key == SharedString::from(k).as_str();
         let Some((d, def, eqv)) = self.field_kind(device) else { return false };
@@ -1099,7 +1099,7 @@ impl Controller {
         let b = &v.bands[sel];
         match action {
             0 => {
-                self.devices.panel.field.selected.insert(device, (value.max(0) as usize).min(v.bands.len() - 1));
+                self.devices.panel.canvas.selected.insert(device, (value.max(0) as usize).min(v.bands.len() - 1));
                 self.ui_dirty = true;
             }
             1 => {

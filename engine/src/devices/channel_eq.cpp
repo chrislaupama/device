@@ -126,7 +126,8 @@ std::unique_ptr<BuiltinProcessor> create_channel_eq() { return std::make_unique<
 
 } // namespace
 
+constexpr float kDefaults[kParamCount] = {20.0f, 0.0f, 0.71f, 0.0f, 75.0f, 0.0f, 1.0f, 1.0f, 100.0f, 0.0f, 0.6f, 1.0f, 250.0f, 0.0f, 0.3f, 1.0f, 1040.0f, 0.0f, 0.41f, 1.0f, 2500.0f, 0.0f, 0.2f, 1.0f, 7500.0f, 0.0f, 1.0f, 1.0f, 20000.0f, 0.0f, 0.71f, 0.0f, 0.0f, 4.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 2.0f, 5.0f, 0.0f, 0.0f, 0.0f};
 extern const BuiltinDescriptor kChannelEqDescriptor;
-const BuiltinDescriptor kChannelEqDescriptor{"channeleq", kParamIds, {}, &create_channel_eq, {}};
+const BuiltinDescriptor kChannelEqDescriptor{"channeleq", kParamIds, {}, &create_channel_eq, {}, kDefaults};
 
 } // namespace saine

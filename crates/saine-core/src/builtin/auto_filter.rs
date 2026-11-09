@@ -16,7 +16,7 @@ use std::f64::consts::PI;
 
 const TYPES: &[&str] = &["LP", "HP", "BP", "Notch"];
 const SLOPES: &[&str] = &["12", "24"];
-const DIVISIONS: &[&str] = &["1/1", "1/2", "1/2.", "1/2T", "1/4", "1/4.", "1/4T", "1/8", "1/8.", "1/8T", "1/16", "1/16.", "1/16T", "1/32"];
+const NOTE_VALUES: &[&str] = &["1/1", "1/2", "1/2.", "1/2T", "1/4", "1/4.", "1/4T", "1/8", "1/8.", "1/8T", "1/16", "1/16.", "1/16T", "1/32"];
 const SHAPES: &[&str] = &["Sine", "Triangle", "Saw", "Square", "S&H", "Random"];
 const SYNC: &[&str] = &["Free", "Sync"];
 const MODES: &[&str] = &["Filter", "DJ"];
@@ -30,7 +30,7 @@ pub static AUTO_FILTER: DeviceDef = DeviceDef {
     params: &[
         ParamDef::choice("filter_type", "Filter Type", TYPES, 0).label("Filter").help("Low-pass, high-pass, band-pass or notch."),
         ParamDef::choice("slope", "Slope", SLOPES, 0).help("12 or 24 dB per octave."),
-        ParamDef::new("frequency", "Frequency", 20.0, 20_000.0, 20_000.0, Taper::Log, "Hz", Format::Hz).label("Freq").help("Cutoff (or centre) frequency before the envelope and LFO move it."),
+        ParamDef::new("frequency", "Frequency", 20.0, 20_000.0, 20_000.0, Taper::Log, "Hz", Format::Freq).label("Freq").help("Cutoff (or centre) frequency before the envelope and LFO move it."),
         ParamDef::new("resonance", "Resonance", 0.0, 1.25, 0.0, LINEAR, "", Format::Plain(2)).help("Emphasis at the cutoff; high settings ring."),
         ParamDef::new("drive", "Drive", 0.0, 24.0, 0.0, LINEAR, "dB", Format::Plain(1)).help("Saturates the signal on its way into the filter."),
         ParamDef::new("env_amount", "Env Amount", -72.0, 72.0, 0.0, LINEAR, "st", Format::Signed(0)).label("Env").help("How far the input's envelope moves the cutoff, in semitones (negative closes it)."),
@@ -38,7 +38,7 @@ pub static AUTO_FILTER: DeviceDef = DeviceDef {
         ParamDef::new("env_release", "Env Release", 1.0, 3000.0, 100.0, Taper::Log, "ms", Format::MsAuto).label("Release").help("How fast the envelope falls back."),
         ParamDef::new("lfo_amount", "LFO Amount", 0.0, 72.0, 0.0, LINEAR, "st", Format::Plain(0)).label("LFO").help("How far the LFO swings the cutoff either way, in semitones."),
         ParamDef::new("lfo_rate_free", "LFO Rate", 0.01, 30.0, 1.0, Taper::Log, "Hz", Format::Rate).label("Rate").help("LFO speed in hertz (Timebase Free)."),
-        ParamDef::choice("lfo_rate_sync", "LFO Rate Sync", DIVISIONS, 4).label("Rate").help("LFO cycle as a note length (Timebase Sync)."),
+        ParamDef::choice("lfo_rate_sync", "LFO Rate Sync", NOTE_VALUES, 4).label("Rate").help("LFO cycle as a note length (Timebase Sync)."),
         ParamDef::choice("lfo_shape", "LFO Shape", SHAPES, 0).label("LFO").help("Waveform of the LFO."),
         ParamDef::choice("lfo_sync", "LFO Sync", SYNC, 0).label("Timebase").help("Free-running rate in hertz, or locked to the song tempo."),
         ParamDef::new("lfo_stereo", "LFO Stereo", 0.0, 180.0, 0.0, LINEAR, "deg", Format::Degrees).label("Stereo").help("Phase offset of the right channel's LFO; widens the sweep."),
@@ -53,7 +53,7 @@ pub static AUTO_FILTER: DeviceDef = DeviceDef {
         clusters: &[
             &[Control::Knob("drive")],
             &[Control::Knob("env_amount"), Control::Knob("env_attack"), Control::Knob("env_release")],
-            &[Control::Knob("lfo_amount"), Control::Swap("lfo_rate_free", "lfo_rate_sync")],
+            &[Control::Knob("lfo_amount"), Control::Swap(&["lfo_rate_free", "lfo_rate_sync"])],
             &[Control::Knob("mix")],
         ],
         faces: &[],

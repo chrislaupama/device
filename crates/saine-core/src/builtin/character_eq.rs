@@ -24,7 +24,7 @@ const OVERSAMPLING: &[&str] = &["2x", "4x"];
 const LISTEN: &[&str] = &["Off", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
 
 const fn freq(id: &'static str, name: &'static str, default: f32) -> ParamDef {
-    ParamDef::new(id, name, 20.0, 20_000.0, default, Taper::Linear { skew: 0.25 }, "Hz", Format::Hz).label("Freq").help("Centre or corner frequency.")
+    ParamDef::new(id, name, 20.0, 20_000.0, default, Taper::Linear { skew: 0.25 }, "Hz", Format::Freq).label("Freq").help("Centre or corner frequency.")
 }
 const fn width(id: &'static str, name: &'static str, default: f32) -> ParamDef {
     ParamDef::new(id, name, 0.1, 12.0, default, Taper::Linear { skew: 0.35 }, "", Format::Plain(2)).help("Width of a bell or notch; resonance of a shelf or pass filter.")
@@ -206,7 +206,7 @@ pub static CHARACTER_EQ: DeviceDef = DeviceDef {
         ParamDef::choice("bank", "Bank", BANKS, 0).help("Voicing and frequency steps of a classic EQ design; Free is unstepped and neutral."),
         pct("warmth_amount", "Warmth", 0.0).help("Gentle saturation of the low end below the Warmth Tail."),
         ParamDef::choice("warmth_slope", "Warmth Slope", WARMTH_SLOPES, 1).help("Steepness of the split below which Warmth works."),
-        ParamDef::new("warmth_tail", "Warmth Tail", 100.0, 1200.0, 300.0, Taper::Linear { skew: 0.5 }, "Hz", Format::Hz).help("Frequency below which Warmth works."),
+        ParamDef::new("warmth_tail", "Warmth Tail", 100.0, 1200.0, 300.0, Taper::Linear { skew: 0.5 }, "Hz", Format::Freq).help("Frequency below which Warmth works."),
         ParamDef::choice("valve_enabled", "Valve", OFF_ON, 0).help("Runs the output through a valve stage (oversampled)."),
         ParamDef::new("valve_trim", "Valve Trim", 0.0, 2.0, 1.0, LINEAR, "", Format::Plain(2)).help("Level into the valve stage: more trim, more harmonics."),
         pct("valve_mix", "Valve Mix", 100.0).help("Blend of the valve stage with the clean signal."),

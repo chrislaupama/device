@@ -141,7 +141,7 @@ TEST_CASE(auto_filter_synced_lfo_continues_through_automation_splits) {
         r->set("lfo_amount", 36.f);
         r->set("lfo_sync", 1.f);
         r->set("lfo_rate_sync", 10.f); // 1/16: fast enough to move inside a block
-        r->set_playing(true);
+        r->set_transport(true, 120.0);
     }
     const uint32_t mix = param_index(split.desc(), "mix");
     std::vector<std::pair<std::size_t, std::pair<uint32_t, float>>> ev;

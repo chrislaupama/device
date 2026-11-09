@@ -14,7 +14,7 @@ const SLOPES: &[&str] = &["12 dB/oct", "24 dB/oct", "36 dB/oct", "48 dB/oct"];
 const LISTEN: &[&str] = &["Off", "Band 1", "Band 2", "Band 3", "Band 4", "Band 5", "Band 6", "Band 7", "Band 8"];
 
 const fn freq(id: &'static str, name: &'static str, default: f32) -> ParamDef {
-    ParamDef::new(id, name, 20.0, 20_000.0, default, Taper::Log, "Hz", Format::Hz).label("Freq").help("Centre or corner frequency of the band.")
+    ParamDef::new(id, name, 20.0, 20_000.0, default, Taper::Log, "Hz", Format::Freq).label("Freq").help("Centre or corner frequency of the band.")
 }
 const fn gain(id: &'static str, name: &'static str) -> ParamDef {
     ParamDef::new(id, name, -48.0, 30.0, 0.0, LINEAR, "dB", Format::Db).label("Gain").help("Boost or cut of the band (bells and shelves).")

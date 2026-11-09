@@ -63,6 +63,22 @@ inline double rms(const Signal& s, std::size_t from = 0, std::size_t to = SIZE_M
     for (std::size_t i = from; i < std::min(to, s.size()); ++i, ++n) a += static_cast<double>(s[i]) * s[i];
     return n > 0 ? std::sqrt(a / static_cast<double>(n)) : 0.0;
 }
+// Amplitude of the `hz` component of s[from, to) (Goertzel, Hann window).
+inline double tone_level(const Signal& s, double hz, double rate, std::size_t from = 0, std::size_t to = SIZE_MAX) {
+    to = std::min(to, s.size());
+    const double w = 2.0 * 3.14159265358979323846 * hz / rate, k = 2.0 * std::cos(w);
+    double s1 = 0.0, s2 = 0.0, wsum = 0.0;
+    const double n = static_cast<double>(to - from);
+    for (std::size_t i = from; i < to; ++i) {
+        const double win = 0.5 - 0.5 * std::cos(2.0 * 3.14159265358979323846 * static_cast<double>(i - from) / n);
+        const double s0 = static_cast<double>(s[i]) * win + k * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+        wsum += win;
+    }
+    const double re = s1 - s2 * std::cos(w), im = s2 * std::sin(w);
+    return 2.0 * std::sqrt(re * re + im * im) / wsum;
+}
 inline bool all_finite(const Signal& s) {
     for (float v : s)
         if (!std::isfinite(v)) return false;
@@ -118,9 +134,14 @@ public:
         b_->set_value(i, v);
     }
     float get(const char* id) const { return values_[param_index(desc(), id)]; }
-    // Transport state passed to the device (playing locks synced LFOs to the beat).
-    void set_playing(bool on) { playing_ = on; }
     void reset() { b_->processor().reset(); }
+    // Transport seen by the device: playing at `bpm` from timeline frame
+    // `start` (tempo-synced devices lock to it). Default: stopped, 120 bpm.
+    void set_transport(bool playing, double bpm, int64_t start = 0) {
+        playing_ = playing;
+        bpm_ = bpm;
+        start_ = start;
+    }
 
     // Process l/r (same length) in blocks of block(); `sc` optional sidechain.
     // `events` are automation events at absolute frames (sorted).
@@ -129,6 +150,7 @@ public:
         saine::RtTransport tr;
         tr.sample_rate = rate_;
         tr.playing = playing_;
+        tr.tempo_bpm = bpm_;
         std::vector<saine::ParamEvent> ev;
         ev.reserve(saine::PluginInstance::kMaxParamEvents);
         std::size_t ei = 0;
@@ -145,7 +167,7 @@ public:
                 std::memcpy(sc_r_.data(), (sc_r != nullptr ? sc_r : sc_l)->data() + pos, 4 * n);
                 b_->set_sidechain(sc_l_.data(), sc_r_.data());
             }
-            tr.position = static_cast<int64_t>(pos);
+            tr.position = start_ + static_cast<int64_t>(pos);
             b_->run(l.data() + pos, r.data() + pos, n, nullptr, 0, tr, ev.data(), static_cast<uint32_t>(ev.size()));
         }
         return {std::move(l), std::move(r)};
@@ -163,6 +185,8 @@ private:
     uint32_t block_;
     std::vector<float> values_;
     bool playing_ = false;
+    double bpm_ = 120.0;
+    int64_t start_ = 0;
     std::shared_ptr<saine::PluginInstance> inst_;
     saine::BuiltinInstance* b_ = nullptr;
     Signal sc_l_, sc_r_;

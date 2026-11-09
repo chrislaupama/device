@@ -639,7 +639,20 @@ std::unique_ptr<BuiltinProcessor> create_character_eq() { return std::make_uniqu
 
 } // namespace
 
+#define SAINE_CEQ_BAND 0.0f, 0.0f, 1000.0f, 0.0f, 0.7071f, 1.0f, 0.0f, 0.0f, 0.0f
+#define SAINE_CEQ_DYN 0.0f, 0.0f, 1.0f, -30.0f, 15.0f, 150.0f
+constexpr float kDefaults[kParamCount] = {
+    SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND,
+    SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND,
+    0.0f, 0.0f, 1.0f, 300.0f, 0.0f, 1.0f, 100.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+    SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN,
+    SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN,
+    0.0f, 50.0f, 0.0f, 250.0f, 1.0f, 0.0f, 0.0f, 1000.0f, 1.0f, 0.0f, 0.0f, 4000.0f, 1.0f, 0.0f, 0.0f, 10000.0f, 1.0f, 0.0f,
+    0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+#undef SAINE_CEQ_BAND
+#undef SAINE_CEQ_DYN
+
 extern const BuiltinDescriptor kCharacterEqDescriptor;
-const BuiltinDescriptor kCharacterEqDescriptor{"character-eq", kParamIds, kReadoutIds, &create_character_eq, {}};
+const BuiltinDescriptor kCharacterEqDescriptor{"character-eq", kParamIds, kReadoutIds, &create_character_eq, {}, kDefaults};
 
 } // namespace saine

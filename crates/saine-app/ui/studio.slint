@@ -54,7 +54,8 @@ export struct PanelKnob { param: int, x: length, label: string, value: string, n
 // Picker row item. kind 0 caption, 1 segmented choice, 2 menu pill, 3 value box, 4 flexible gap.
 export struct PanelPick { kind: int, param: int, label: string, choices: [string], selected: int, value: string, enabled: bool, width: length }
 // Vertical slider column (x = column left, card relative).
-export struct PanelSlider { param: int, x: length, label: string, value: string, norm: float, bipolar: bool }
+// zero: normalised position the fill starts from (0 = bottom; 0 dB on a range through zero).
+export struct PanelSlider { param: int, x: length, label: string, value: string, norm: float, zero: float }
 export struct PanelTick { y: length, text: string, rule: bool }
 // Dynamics strip: caption + readout above a well; paths are in well coordinates (view box w x well-h).
 export struct PanelStrip {
@@ -64,19 +65,32 @@ export struct PanelStrip {
     thresh-param: int, thresh-y: length, thresh-dash: string, thresh-label: string, thresh-value: string, thresh-rate: float,
 }
 
-// Field view (EQ curve, filter response...): a well with paths, texts, dots and value pills
-// built in Rust (src/device_field.rs) in field-local px; pointer, wheel and keys go back to
+// Plotted field (View::Field): caption + readout above a well; paths in well coordinates.
+// plot-*: the drag area (well relative). band: fill is a min..max band (alpha .16) instead of
+// the area under the first trace (alpha .28). dot: live LFO dot at dot-x / dot-y; live: the
+// live response curve or the dot's trail, in the track colour.
+export struct PanelField {
+    visible: bool, x: length, y: length, w: length, h: length, well-y: length,
+    caption: string, readout: string, ticks: [PanelTick], rest: string,
+    fill: string, band: bool, main: string, main-w: length, main-hot-w: length,
+    alt: string, alt-alpha: float, third: string, third-alpha: float,
+    live: string, dot: bool, dot-x: length, dot-y: length,
+    x-param: int, y-param: int, plot-x: length, plot-y: length, plot-w: length, plot-h: length,
+}
+
+// Canvas view (EQ curve, filter response...): a well with paths, texts, dots and value pills
+// built in Rust (src/device_canvas.rs) in field-local px; pointer, wheel and keys go back to
 // Rust, which hit-tests and runs the gestures. cursor: 0 default, 1 ew-resize, 2 ns-resize,
 // 3 move, 4 pointer.
-export struct FieldPath { commands: string, stroke: color, width: length, fill: color }
-export struct FieldText { x: length, y: length, w: length, text: string, color: color, size: length, bold: bool, align: int }
-export struct FieldDot { x: length, y: length, r: length, fill: color, ring: length, ring-color: color }
+export struct CanvasPath { commands: string, stroke: color, width: length, fill: color }
+export struct CanvasText { x: length, y: length, w: length, text: string, color: color, size: length, bold: bool, align: int }
+export struct CanvasDot { x: length, y: length, r: length, fill: color, ring: length, ring-color: color }
 // anchor: x is the pill's left (0), centre (1) or right (2) edge; y its centre.
-export struct FieldPill { x: length, y: length, anchor: int, label: string, value: string, hot: bool, grip: bool }
-export struct PanelField {
+export struct CanvasPill { x: length, y: length, anchor: int, label: string, value: string, hot: bool, grip: bool }
+export struct PanelCanvas {
     visible: bool, x: length, y: length, w: length, h: length,
     caption: string, caption-h: length, well: bool,
-    paths: [FieldPath], texts: [FieldText], dots: [FieldDot], pills: [FieldPill],
+    paths: [CanvasPath], texts: [CanvasText], dots: [CanvasDot], pills: [CanvasPill],
     cursor: int, label: string, value: string,
 }
 // EQ chrome around a field (View::Eq): band tabs + On latch (+ Bank menu), type glyph picker,
@@ -118,11 +132,13 @@ export struct DeviceCard {
     picks: [PanelPick],
     sliders: [PanelSlider],
     strip: PanelStrip,
+    field: PanelField,
     // Slider column rail (card relative) and cell width.
     slider-top: length,
     slider-bottom: length,
     slider-w: length,
-    field: PanelField,
+    // Canvas view (src/device_canvas.rs) and EQ chrome.
+    canvas: PanelCanvas,
     eq: PanelEq,
 }
 
@@ -414,13 +430,14 @@ export global Studio {
     callback panel-step(int, int, int, bool);                // arrow keys: +1 / -1, fine
     callback panel-choice(int, int, int);                    // choice index
     callback panel-text(int, int, string);                   // typed value (parsed by the definition)
-    callback panel-menu(int, int, length, length);           // -1 sidechain source, -2 presets; window x, y
+    callback panel-menu(int, int, length, length);           // -1 sidechain source, -2 presets, >= 0 a dropdown's choices; window x, y
+    callback panel-field(int, int, float, float, bool);      // field XY drag: device, phase (as panel-drag), dx, dy (px, up +), fine
     callback panel-preset-step(int, int);                    // previous (-1) / next (+1) factory preset
-    // Field views: phase 0 press / 1 drag / 2 release / 3 cancel / 4 hover / 5 exit / 6 double-click;
+    // Canvas views (EQ, Auto Filter): phase 0 press / 1 drag / 2 release / 3 cancel / 4 hover / 5 exit / 6 double-click;
     // field-local x, y (px); alt, shift.
-    callback panel-field(int, int, float, float, bool, bool);
-    callback panel-field-wheel(int, float, float, float) -> bool; // x, y, wheel dy (px, up +): used
-    callback panel-field-key(int, string, bool, bool) -> bool;     // key text, shift, alt: accepted
+    callback panel-canvas(int, int, float, float, bool, bool);
+    callback panel-canvas-wheel(int, float, float, float) -> bool; // x, y, wheel dy (px, up +): used
+    callback panel-canvas-key(int, string, bool, bool) -> bool;     // key text, shift, alt: accepted
     callback panel-eq(int, int, int);                        // action 0 select band / 1 toggle On / 2 type choice / 3 reset type; value
     callback add-category(int, length, length); // row (Built-in, AU, VST3, CLAP, Chains), window x, y for the list
     callback add-search-edited(string);

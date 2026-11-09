@@ -8,7 +8,7 @@
 // multiplied by PanelStyle.z. Colours are the measured card colours.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
-import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField, PanelEq, EqCell } from "studio.slint";
+import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField, PanelCanvas, PanelEq, EqCell } from "studio.slint";
 
 export global PanelStyle {
     out property <float> z: 0.85;
@@ -179,7 +179,7 @@ component SliderCol inherits Rectangle {
     property <float> zm: PanelStyle.z;
     property <length> travel: root.bottom - root.top;
     property <length> cap-y: root.top + (1 - root.s.norm) * root.travel;
-    property <length> zero-y: root.top + (root.s.bipolar ? 0.5 : 1) * root.travel;
+    property <length> zero-y: root.top + (1 - root.s.zero) * root.travel;
     property <bool> editing;
     width: 62px * zm;
     accessible-role: slider; accessible-label: root.s.label; accessible-value: root.s.value;
@@ -223,7 +223,9 @@ component PickItem inherits HorizontalLayout {
     property <float> zm: PanelStyle.z;
     spacing: 6px * zm;
     horizontal-stretch: root.p.kind == 4 ? 1 : 0;
+    if root.p.kind == 4: Rectangle { horizontal-stretch: 1; }
     if root.p.kind != 4 && root.p.label != "": Text {
+        horizontal-stretch: 0;
         text: root.p.label; color: PanelStyle.caption; font-size: 11px * zm; font-weight: 500; letter-spacing: -0.02 * 11px * zm;
         vertical-alignment: center; opacity: root.p.enabled ? 1 : 0.55;
     }
@@ -385,11 +387,102 @@ component DynamicsStrip inherits Rectangle {
     }
 }
 
-// Field view (src/device_field.rs): caption, recessed well, paths / dots / texts / pills from
-// Rust in well-local px. Pointer, wheel and keys go to Rust, which hit-tests and drags.
+// Plotted field: caption + readout, then a well with tick labels and rules, the fill or band,
+// up to three traces, the live overlay and an XY drag over the plot area (paths from Rust).
 component FieldView inherits Rectangle {
     in property <int> device;
     in property <PanelField> f;
+    in property <color> accent;
+    property <float> zm: PanelStyle.z;
+    property <length> last-x;
+    property <length> last-y;
+    property <bool> dragging;
+    property <bool> hot: root.dragging || field-ta.has-hover;
+    if root.f.caption != "": HorizontalLayout {
+        x: 0; y: 0; height: 16px * zm; spacing: 5px * zm; alignment: start;
+        Text { text: root.f.caption; color: PanelStyle.caption; font-size: 11.5px * zm; font-weight: 500; letter-spacing: -0.02 * 11.5px * zm; vertical-alignment: center; }
+        Text { text: root.f.readout; color: PanelStyle.ink; font-size: 11.5px * zm; font-weight: 650; letter-spacing: -0.04 * 11.5px * zm; vertical-alignment: center; }
+    }
+    Rectangle {
+        y: root.f.well-y; height: root.height - root.f.well-y;
+        border-radius: 4px * zm;
+        background: @linear-gradient(180deg, #212125 0%, #18191d 100%);
+        clip: true;
+        accessible-role: groupbox; accessible-label: root.f.caption != "" ? root.f.caption : "Field"; accessible-value: root.f.readout;
+        for t in root.f.ticks: Rectangle {
+            x: root.f.plot-x; y: t.y; height: 0.5px; width: root.f.plot-w;
+            background: t.rule ? #ffffff0d : transparent;
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.f.fill; stroke-width: 0; fill: root.accent.with-alpha(root.f.band ? 0.16 : 0.28);
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.f.rest; stroke: #ffffff26; stroke-width: 1px; fill: transparent;
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.f.third; stroke: PanelStyle.ink.with-alpha(root.f.third-alpha); stroke-width: 1.2px * zm; fill: transparent;
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.f.alt; stroke: PanelStyle.ink.with-alpha(root.f.alt-alpha); stroke-width: 1.2px * zm; fill: transparent;
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.f.main; stroke: PanelStyle.ink; stroke-width: root.hot ? root.f.main-hot-w : root.f.main-w; fill: transparent; stroke-line-join: round;
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.f.live; stroke: root.accent; stroke-width: 1.6px * zm; fill: transparent; stroke-line-join: round;
+        }
+        if root.f.dot: Rectangle {
+            x: root.f.dot-x - 3.5px * zm; y: root.f.dot-y - 3.5px * zm; width: 7px * zm; height: 7px * zm; border-radius: 3.5px * zm;
+            background: PanelStyle.ink; drop-shadow-blur: 4px; drop-shadow-color: root.accent.with-alpha(0.8);
+        }
+        for t in root.f.ticks: Text {
+            x: 0; y: max(1px, min(parent.height - 13px * zm, t.y - 6.5px * zm)); width: root.f.plot-x - 4px * zm; height: 13px * zm;
+            text: t.text; color: PanelStyle.axis; font-size: 10px * zm; font-weight: 600; horizontal-alignment: right; vertical-alignment: center;
+        }
+        field-ta := TouchArea {
+            x: root.f.plot-x; y: root.f.plot-y - root.f.well-y; width: root.f.plot-w; height: root.f.plot-h;
+            mouse-cursor: MouseCursor.move;
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+                    if (e.modifiers.alt) {
+                        Studio.panel-reset(root.device, root.f.x-param);
+                        Studio.panel-reset(root.device, root.f.y-param);
+                        return;
+                    }
+                    root.dragging = true;
+                    root.last-x = self.mouse-x;
+                    root.last-y = self.mouse-y;
+                    Studio.panel-field(root.device, 0, 0, 0, e.modifiers.shift);
+                }
+                if (e.kind == PointerEventKind.move && root.dragging) {
+                    Studio.panel-field(root.device, 1, (self.mouse-x - root.last-x) / 1px, (root.last-y - self.mouse-y) / 1px, e.modifiers.shift);
+                    root.last-x = self.mouse-x;
+                    root.last-y = self.mouse-y;
+                }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up && root.dragging) {
+                    root.dragging = false;
+                    Studio.panel-field(root.device, 2, 0, 0, false);
+                }
+                if (e.kind == PointerEventKind.cancel && root.dragging) {
+                    root.dragging = false;
+                    Studio.panel-field(root.device, 3, 0, 0, false);
+                }
+            }
+        }
+    }
+}
+
+// Canvas view (src/device_canvas.rs): caption, recessed well, paths / dots / texts / pills from
+// Rust in well-local px. Pointer, wheel and keys go to Rust, which hit-tests and drags.
+component CanvasView inherits Rectangle {
+    in property <int> device;
+    in property <PanelCanvas> f;
     property <float> zm: PanelStyle.z;
     if root.f.caption != "": Text {
         x: 0; y: 0; height: root.f.caption-h;
@@ -437,7 +530,7 @@ component FieldView inherits Rectangle {
         }
         keys := FocusScope {
             key-pressed(e) => {
-                if (Studio.panel-field-key(root.device, e.text, e.modifiers.shift, e.modifiers.alt)) { return accept; }
+                if (Studio.panel-canvas-key(root.device, e.text, e.modifiers.shift, e.modifiers.alt)) { return accept; }
                 if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) { return accept; }
                 reject
             }
@@ -447,19 +540,19 @@ component FieldView inherits Rectangle {
             pointer-event(e) => {
                 if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
                     keys.focus();
-                    Studio.panel-field(root.device, 0, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.alt, e.modifiers.shift);
+                    Studio.panel-canvas(root.device, 0, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.alt, e.modifiers.shift);
                 } else if (e.kind == PointerEventKind.move) {
-                    Studio.panel-field(root.device, self.pressed ? 1 : 4, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.alt, e.modifiers.shift);
+                    Studio.panel-canvas(root.device, self.pressed ? 1 : 4, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.alt, e.modifiers.shift);
                 } else if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) {
-                    Studio.panel-field(root.device, 2, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.alt, e.modifiers.shift);
+                    Studio.panel-canvas(root.device, 2, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.alt, e.modifiers.shift);
                 } else if (e.kind == PointerEventKind.cancel) {
-                    Studio.panel-field(root.device, 3, self.mouse-x / 1px, self.mouse-y / 1px, false, false);
+                    Studio.panel-canvas(root.device, 3, self.mouse-x / 1px, self.mouse-y / 1px, false, false);
                 }
             }
-            changed has-hover => { if (!self.has-hover) { Studio.panel-field(root.device, 5, 0, 0, false, false); } }
-            double-clicked => { Studio.panel-field(root.device, 6, self.mouse-x / 1px, self.mouse-y / 1px, false, false); }
+            changed has-hover => { if (!self.has-hover) { Studio.panel-canvas(root.device, 5, 0, 0, false, false); } }
+            double-clicked => { Studio.panel-canvas(root.device, 6, self.mouse-x / 1px, self.mouse-y / 1px, false, false); }
             scroll-event(e) => {
-                if (Studio.panel-field-wheel(root.device, self.mouse-x / 1px, self.mouse-y / 1px, e.delta-y / 1px)) { return accept; }
+                if (Studio.panel-canvas-wheel(root.device, self.mouse-x / 1px, self.mouse-y / 1px, e.delta-y / 1px)) { return accept; }
                 reject
             }
         }
@@ -661,7 +754,11 @@ export component BuiltinCard inherits Rectangle {
         }
         if root.card.field.visible: FieldView {
             x: root.card.field.x; y: root.card.field.y; width: root.card.field.w; height: root.card.field.h;
-            device: root.card.id; f: root.card.field;
+            device: root.card.id; f: root.card.field; accent: root.card.accent;
+        }
+        if root.card.canvas.visible: CanvasView {
+            x: root.card.canvas.x; y: root.card.canvas.y; width: root.card.canvas.w; height: root.card.canvas.h;
+            device: root.card.id; f: root.card.canvas;
         }
         if root.card.eq.visible: EqChrome {
             x: 0; y: 0; width: root.width; height: root.height;
