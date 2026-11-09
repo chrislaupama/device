@@ -11,9 +11,11 @@
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
 //!              [--load-sample <file.wav>  (into the selected track's sampler, as a file drop)]
 //!              [--sampler-tab <0..4>  (with a sampler state: Sample, Pitch, Filter, Amp or Mod tab)]
+//!              [--hold-note <0..127>  (with a synth state: hold the note and render 0.75 s offline first)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
 //!              [--clip-menu <0..5>  (open a clip editor dropdown after --state: Speed, Warp, Mode, Grid, Type, Genre)]
+//!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
 //! ```
 
 mod analyzer_views;
@@ -91,6 +93,9 @@ struct Args {
     /// reference-automation (60): Instrument track 1 (MIDI clip at bar 6), Audio track 2 selected,
     /// playhead at bar 6, automation lanes shown (Track Volume at +0.0).
     automation_state: bool,
+    /// reference-live (renders/reference/ui/z100-main-default.png, 100 % zoom): the default project
+    /// with the assistant panel open and the automation lanes shown.
+    live_state: bool,
     /// review-automation / review-automation-picker: lanes with points (active, disabled, curved,
     /// an expanded extra lane, master) for review; the second also opens the picker with the
     /// Synth submenu. No reference capture.
@@ -105,6 +110,9 @@ struct Args {
     load_sample: Vec<PathBuf>,
     /// --sampler-tab N: with a sampler state, show that tab (review screenshots).
     sampler_tab: Option<i32>,
+    /// Test hook: hold this note on the selected synth and render 0.75 s offline before the
+    /// first frame, so the pictures show a voice's live modulation.
+    hold_note: Option<u8>,
     /// Never show the window (renders for --screenshot fall back to offscreen snapshots).
     offscreen: bool,
     /// review-analyzers: Pitch Corrector, Tuner and Spectrum fed 2 s of a sung-like line (no reference).
@@ -188,6 +196,11 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.settings_state = true;
                 }
+                "reference-live" => {
+                    a.reference_default = true;
+                    a.open_assistant = true;
+                    a.live_state = true;
+                }
                 "reference-automation" => {
                     a.reference_default = true;
                     a.automation_state = true;
@@ -236,7 +249,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight>)"
                     ));
                 }
             },
@@ -245,7 +258,17 @@ fn parse_args() -> Result<Args, String> {
             "--plugin-fixture" => a.plugin_fixture = Some(value(&mut i)?.into()),
             "--screenshot" => a.screenshot = Some(value(&mut i)?.into()),
             "--offscreen" => a.offscreen = true,
+            "--card-accent" => {
+                let hex = value(&mut i)?;
+                let hex = hex.trim_start_matches('#');
+                if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    return Err(format!("--card-accent: want six hex digits (RRGGBB), got {hex:?}"));
+                }
+                let c = u32::from_str_radix(hex, 16).map_err(|e| format!("--card-accent: {e}"))?;
+                let _ = controller::CARD_ACCENT.set(timeline::rgb(c));
+            }
             "--load-sample" => a.load_sample.push(value(&mut i)?.into()),
+            "--hold-note" => a.hold_note = Some(value(&mut i)?.parse().map_err(|e| format!("--hold-note: {e}"))?),
             "--sampler-tab" => a.sampler_tab = Some(value(&mut i)?.parse().map_err(|e| format!("--sampler-tab: {e}"))?),
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
             "--clip-menu" => a.clip_menu = Some(value(&mut i)?.parse().map_err(|e| format!("--clip-menu: {e}"))?),
@@ -253,7 +276,11 @@ fn parse_args() -> Result<Args, String> {
             "--frame-stats" => a.frame_stats = true,
             "--render-bench" => {
                 a.render_bench = value(&mut i)?.parse().map_err(|e| format!("--render-bench: {e}"))?;
+                if a.render_bench == 0 {
+                    return Err("--render-bench: the count must be at least 1".into());
+                }
                 a.offscreen = true;
+                a.audio = false;
             }
             "--self-test" | "--self-test-audio" => {
                 a.self_test = true;
@@ -699,6 +726,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(22.0);
         c.auto_toggle_shown();
     }
+    if args.live_state {
+        // The capture's tracks drew palette entries 4 and 5 (pink, orange); the reference picks
+        // the first track's colour at random.
+        let mut c = ctl.borrow_mut();
+        let mut p = c.project().clone();
+        for (t, k) in p.tracks.iter_mut().zip([4u8, 5]) {
+            t.color = saine_core::ColorIndex(k);
+        }
+        c.replace_project(p);
+        let first = c.project().tracks[0].id;
+        c.select_track(first);
+        c.auto_toggle_shown();
+    }
     if args.automation_review > 0 {
         use saine_core::{AutoPoint, AutomationLane, AutomationTarget, SynthParam};
         let pt = |beat: i64, value: f32, curve: f32| AutoPoint { time: beat * saine_core::PPQ, value, curve };
@@ -954,6 +994,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_track_solo, |c, id: i32| c.toggle_solo(TrackId(id as u64)));
     on!(on_track_volume, |c, id: i32, p: f32| c.set_track_gain(TrackId(id as u64), gain_from_slider(p)));
     on!(on_track_pan, |c, id: i32, p: f32| c.set_track_pan(TrackId(id as u64), p));
+    on!(on_track_pan_text, |c, id: i32, t: slint::SharedString| {
+        if let Some(p) = controller::parse_pan_text(&t) {
+            c.set_track_pan(TrackId(id as u64), p);
+        }
+    });
     on!(on_master_volume, |c, p: f32| c.set_master_gain(gain_from_slider(p)));
     on!(on_sel_fader_moved, |c, f: f32| {
         if let Some(t) = c.selected_track {
@@ -1077,6 +1122,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         use saine_core::DeviceId as Id;
         let id = |i: i32| Id(i as u64);
         on!(on_device_fold, |c, d: i32| c.device_fold(id(d)));
+        on!(on_device_ask, |c, d: i32| c.device_ask(id(d)));
+        on!(on_device_window, |c, d: i32| c.device_window(id(d)));
+        on!(on_device_window_moved, |c, d: i32, x: f32, y: f32| c.device_window_moved(id(d), x, y));
         on!(on_device_collapse, |c, d: i32| c.device_collapse(id(d)));
         on!(on_device_swap_menu, |c, d: i32, x: f32, y: f32| c.device_swap_menu(id(d), x, y));
         on!(on_device_rename, |c, d: i32, t: slint::SharedString| c.device_rename(id(d), &t));
@@ -1237,6 +1285,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ---- startup work ----
     if let Some(dir) = &args.open {
         ctl.borrow_mut().open(dir);
+    }
+    // After --open, so the held voice sounds on the project's own Synth.
+    if let Some(pitch) = args.hold_note {
+        let c = ctl.borrow();
+        if let Some(d) = c.synth_device() {
+            let mut out = vec![0f32; 2 * 36_000];
+            if let Err(e) = c.engine.builtin_note(d.0, pitch, 100).and_then(|_| c.engine.render_offline(&mut out)) {
+                eprintln!("--hold-note: {e}");
+            }
+        }
     }
     if args.demo {
         let dir = std::env::temp_dir().join(format!("saine-demo-{}", std::process::id()));
@@ -1505,7 +1563,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             eprintln!("screenshot: no frames presented (occluded/locked?), rendering offscreen");
             fr.borrow_mut().shot_taken = true;
-            // No frame ran the zoom fix-up (it is deferred from BeforeRendering), so apply it here.
+            // No frame ran, so the zoom was never applied: apply it before the snapshot.
             zm.borrow_mut().sync(a.window());
             for _ in 0..3 {
                 let _ = a.window().take_snapshot();
@@ -1521,19 +1579,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         slint::Timer::single_shot(Duration::from_secs(4), move || {
             let Some(a) = aw.upgrade() else { return };
             zm.borrow_mut().sync(a.window());
-            for _ in 0..5 {
-                let _ = a.window().take_snapshot();
+            let mut ms = Vec::with_capacity(n);
+            for i in 0..n + 5 {
+                let t = Instant::now();
+                if let Err(e) = a.window().take_snapshot() {
+                    eprintln!("--render-bench: snapshot failed: {e}");
+                    std::process::exit(1);
+                }
+                if i >= 5 {
+                    ms.push(t.elapsed().as_secs_f64() * 1e3);
+                }
             }
-            let mut ms: Vec<f64> = (0..n)
-                .map(|_| {
-                    let t = Instant::now();
-                    let _ = a.window().take_snapshot();
-                    t.elapsed().as_secs_f64() * 1e3
-                })
-                .collect();
             ms.sort_by(f64::total_cmp);
             let mean = ms.iter().sum::<f64>() / n as f64;
-            println!("{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{:.3},\"p95_ms\":{:.3}}}", ms[n / 2], ms[(n * 95 / 100).min(n - 1)]);
+            let median = if n % 2 == 0 { (ms[n / 2 - 1] + ms[n / 2]) / 2.0 } else { ms[n / 2] };
+            println!("{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{median:.3},\"p95_ms\":{:.3}}}", ms[(n * 95 / 100).min(n - 1)]);
             let _ = slint::quit_event_loop();
         });
     }

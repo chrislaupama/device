@@ -336,6 +336,10 @@ pub struct DevicesUi {
     /// Last `plugin_load_errors()`, editors we opened that are still open, latencies.
     pub load_errors: Vec<(DeviceId, String)>,
     pub editors: HashSet<DeviceId>,
+    /// Built-in devices shown in a floating device window.
+    pub windows: HashSet<DeviceId>,
+    /// Drag offset of each device window, kept while its device exists.
+    pub window_at: HashMap<DeviceId, (f32, f32)>,
     pub latency: HashMap<DeviceId, u32>,
     last_poll: Option<Instant>,
     /// After opening a project: report load errors that show up in this window.
@@ -370,6 +374,8 @@ impl Default for DevicesUi {
             chain_scroll: 0.0,
             load_errors: Vec::new(),
             editors: HashSet::new(),
+            windows: HashSet::new(),
+            window_at: HashMap::new(),
             latency: HashMap::new(),
             last_poll: None,
             report_until: None,
@@ -634,10 +640,14 @@ impl Controller {
     }
 
     /// Close every plugin window (before replacing the project).
+    /// Project replaced: close plugin editors and forget device windows and their offsets
+    /// (a new project can reuse device ids).
     pub(crate) fn close_all_editors(&mut self) {
         for id in std::mem::take(&mut self.devices.editors) {
             self.engine.close_plugin_editor(id);
         }
+        self.devices.windows.clear();
+        self.devices.window_at.clear();
     }
 
     /// After any document change: close windows of devices that no longer exist
@@ -817,9 +827,9 @@ impl Controller {
     pub fn drop_target(&self, x: f32, y: f32, item: &Item) -> Option<DropTarget> {
         let l = self.layout();
         let (tx, tw) = (l.timeline_x(), l.timeline_w());
-        let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - 30.5);
+        let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - crate::timeline::MASTER_H);
         if x >= tx && x < tx + tw && y >= top && y < bottom {
-            let i = ((y - top + l.scroll_y) / 74.5).floor();
+            let i = ((y - top + l.scroll_y) / crate::timeline::TRACK_PITCH).floor();
             if i < 0.0 {
                 return None;
             }
@@ -839,9 +849,9 @@ impl Controller {
     fn track_rect(&self, t: TrackId) -> Option<(f32, f32, f32, f32)> {
         let l = self.layout();
         let i = self.project().track_index(t)? as f32;
-        let y = 78.0 + 66.5 + i * 74.5 - l.scroll_y;
-        let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - 30.5);
-        let (y0, y1) = (y.max(top), (y + 74.0).min(bottom));
+        let y = 78.0 + 66.5 + i * crate::timeline::TRACK_PITCH - l.scroll_y;
+        let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - crate::timeline::MASTER_H);
+        let (y0, y1) = (y.max(top), (y + crate::timeline::TRACK_H).min(bottom));
         (y1 > y0).then_some((l.timeline_x(), y0, l.timeline_w(), y1 - y0))
     }
 
@@ -888,6 +898,11 @@ impl Controller {
     fn card_for(&self, d: &Device, instrument: bool) -> DeviceCard {
         let mut card = self.card_body(d, instrument);
         self.card_common(d, &mut card);
+        if card.builtin {
+            card.editor_open = self.devices.windows.contains(&d.id);
+        }
+        card.accent_light = crate::device_mod::is_light(card.accent);
+        card.accent_text = crate::device_mod::accent_text(card.accent);
         card
     }
 
@@ -1003,6 +1018,7 @@ impl Controller {
         }
         self.engine.close_plugin_editor(id);
         self.devices.editors.remove(&id);
+        self.devices.windows.remove(&id);
         self.execute(Command::RemoveDevice { device: id });
     }
 
@@ -1314,6 +1330,23 @@ impl Controller {
             }
         }
         sync_model(&self.cards_model, cards);
+        // Device windows: built-in cards opened from their header stay up across track changes
+        // (as plugin windows do) and close with their device.
+        let gone: Vec<DeviceId> = self.devices.windows.iter().copied().filter(|id| self.project().device(*id).is_none()).collect();
+        for id in gone {
+            self.devices.windows.remove(&id);
+            self.devices.window_at.remove(&id);
+        }
+        let mut ids: Vec<DeviceId> = self.devices.windows.iter().copied().collect();
+        ids.sort_by_key(|id| id.0);
+        let mut wins: Vec<DeviceCard> = ids.iter().filter_map(|id| self.project().device(*id).cloned()).map(|d| self.card_for(&d, false)).collect();
+        for (i, c) in wins.iter_mut().enumerate() {
+            (c.win_dx, c.win_dy) = self.devices.window_at.get(&DeviceId(c.id as u64)).copied().unwrap_or_default();
+            if let Some(old) = slint::Model::row_data(&*self.window_cards_model, i) {
+                crate::device_panel::reuse_card_models(&old, c);
+            }
+        }
+        sync_model(&self.window_cards_model, wins);
         s.set_chain_scroll(scroll);
         s.set_add_device_x(add_x - scroll);
         if let Some(d) = drag {

@@ -80,7 +80,7 @@ fn approx(a: f32, b: f32, tol: f32) -> bool {
 // Window geometry (reference layout): lanes origin and track rows.
 const LANE_X: f32 = 453.65;
 const TRACK0_Y: f32 = 144.5;
-const PITCH: f32 = 74.5;
+const PITCH: f32 = crate::timeline::TRACK_PITCH;
 
 fn clip_start_beats(c: &Controller, track: usize) -> Option<f64> {
     c.project().tracks.get(track)?.clips.first().map(|cl| cl.start as f64 / PPQ as f64)
@@ -727,7 +727,7 @@ fn steps() -> Vec<Step> {
         Check("undo restored mute=false", Box::new(|c, _| (!c.project().tracks[0].mute).then_some(()).ok_or("still muted".into()))),
         Do("Cmd+Shift+Z", Box::new(|a| key(a, "Z", true, true))),
         Check("redo muted again", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("redo failed".into()))),
-        Do("drag track 1 volume slider left", Box::new(|a| drag(a, 262.65 + 115.6 + 0.85 * 61.0 + 3.5, TRACK0_Y + 48.0, 262.65 + 140.0, TRACK0_Y + 48.0))),
+        Do("drag track 1 volume slider left", Box::new(|a| drag(a, 262.65 + 115.7 + 5.95 + 0.8 * 56.1, TRACK0_Y + 47.6, 262.65 + 140.0, TRACK0_Y + 47.6))),
         Check("track 1 gain lowered, one coalesced undo step", Box::new(|c, _| {
             let g = c.project().tracks[0].gain;
             let labels = c.doc.history_labels();
@@ -835,7 +835,7 @@ fn steps() -> Vec<Step> {
         Do("(audio) unmute track 1 (muted by the redo step)", Box::new(|a| click(a, 262.65 + 33.5, TRACK0_Y + 47.0))),
         Do("(audio) click ruler at beat 9 (start of track 1 clip)", Box::new(move |a| click(a, bx(9.0), 112.0))),
         Do("(audio) master -40 dB, Space", Box::new(|a| {
-            a.global::<Studio>().invoke_master_volume(0.85 * 0.01f32.cbrt());
+            a.global::<Studio>().invoke_master_volume(crate::controller::slider_from_gain(0.01));
             key(a, " ", false, false)
         })),
         Do("wait", Box::new(|_| {})),
@@ -1655,7 +1655,7 @@ fn device_steps() -> Vec<Step> {
             }
             let Some(cd) = card_named(a, "AULowpass") else { return };
             let id = saine_core::DeviceId(cd.id as u64);
-            let (x, y) = card_xy(&cd, crate::devices::CARD_W - 56.5, 13.5);
+            let (x, y) = card_xy(&cd, crate::devices::CARD_W - 53.0 * crate::device_panel::Z, 16.0 * crate::device_panel::Z);
             click(a, x, y);
             let (opened, err) = {
                 let c = ctl.borrow();
@@ -1665,7 +1665,7 @@ fn device_steps() -> Vec<Step> {
                 c.update_ui(a);
             }
             if let Some(cd) = card_named(a, "AULowpass") {
-                let (x, y) = card_xy(&cd, crate::devices::CARD_W - 56.5, 13.5);
+                let (x, y) = card_xy(&cd, crate::devices::CARD_W - 53.0 * crate::device_panel::Z, 16.0 * crate::device_panel::Z);
                 click(a, x, y);
             }
             let closed = !ctl.borrow().engine.plugin_editor_is_open(id);
@@ -1901,14 +1901,14 @@ fn automation_steps() -> Vec<Step> {
             let ok = c.project().tracks[0].clips.len() == 1 && !c.auto.shown && !a.global::<Studio>().get_auto_shown() && (a.get_lanes_width() - (1440.0 - 262.65 - 5.0 - 191.0)).abs() < 1.0;
             ok.then_some(()).ok_or(format!("clips {} shown {}", c.project().tracks[0].clips.len(), c.auto.shown))
         })),
-        Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 312.6 + 7.0, 78.0 + 14.0))),
+        Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 296.9, 78.0 + 14.0))),
         Check("automation: lanes shown; each header has the Track Volume pill and the disclosure; master row 64.5 pt; value labels (tracks +0.0, master at its static level)", Box::new(move |c, a| {
             ah_set(c.doc.history_labels().len());
             let s = a.global::<Studio>();
             let rows = s.get_tracks();
             let r0 = slint::Model::row_data(&rows, 0).ok_or("no rows")?;
             let labels: Vec<String> = slint::Model::iter(&s.get_auto_labels()).map(|l| l.text.to_string()).collect();
-            let ok = c.auto.shown && s.get_auto_shown() && r0.auto_cat == "Track" && r0.auto_param == "Volume" && r0.auto_count == 1 && (s.get_master_h() - 64.0).abs() < 1e-3 && labels.len() == 3 && labels[..2] == ["+0.0", "+0.0"] && labels[2] == crate::automation::volume_label(saine_core::gain_to_db(c.project().master_gain));
+            let ok = c.auto.shown && s.get_auto_shown() && r0.auto_cat == "Track" && r0.auto_param == "Volume" && r0.auto_count == 1 && (s.get_master_h() - (crate::timeline::MASTER_H_AUTO - 0.5)).abs() < 1e-3 && labels.len() == 3 && labels[..2] == ["+0.0", "+0.0"] && labels[2] == crate::automation::volume_label(saine_core::gain_to_db(c.project().master_gain));
             ok.then_some(()).ok_or(format!("shown {} pill {:?} {:?} count {} master {} labels {labels:?}", s.get_auto_shown(), r0.auto_cat, r0.auto_param, r0.auto_count, s.get_master_h()))
         })),
         DoC("automation: open the track 1 parameter picker, click “Track ›”, then “Pan”", Box::new(|a, ctl| {
@@ -2142,12 +2142,12 @@ fn automation_steps() -> Vec<Step> {
         })),
         Do("automation: click Automation Arm again (off), hide lanes", Box::new(|a| {
             click(a, 496.0 + 10.5, 41.0 + 11.0);
-            click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 312.6 + 7.0, 78.0 + 14.0);
+            click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 296.9, 78.0 + 14.0);
         })),
         Check("automation: disarmed, lanes hidden, master row back to 30 pt", Box::new(move |c, a| {
             let _ = &wav2;
             let s = a.global::<Studio>();
-            (!c.auto.armed && !c.auto.shown && (s.get_master_h() - 30.0).abs() < 1e-3).then_some(()).ok_or(format!("armed {} shown {} master {}", c.auto.armed, c.auto.shown, s.get_master_h()))
+            (!c.auto.armed && !c.auto.shown && (s.get_master_h() - (crate::timeline::MASTER_H - 0.5)).abs() < 1e-3).then_some(()).ok_or(format!("armed {} shown {} master {}", c.auto.armed, c.auto.shown, s.get_master_h()))
         })),
     ]
 }
@@ -2338,7 +2338,8 @@ fn builtin_device_steps() -> Vec<Step> {
         DoC("builtin: click › (next preset)", Box::new(|a, _| {
             if let Some(cd) = card_named(a, "Compressor") {
                 let z = crate::device_panel::Z;
-                let (x, y) = card_xy(&cd, cd.width - 87.0 * z + 7.0 * z, 13.5);
+                // Header: next-preset arrow centre (fold, window, rule and nav from the right edge).
+                let (x, y) = card_xy(&cd, cd.width - 71.25 * z, 16.0 * z);
                 click(a, x, y);
             }
         })),
@@ -2823,7 +2824,8 @@ fn modulation_steps() -> Vec<Step> {
         })),
         Do("modulation: fold the LFO (header −)", Box::new(|a| {
             if let Some(cd) = card_named(a, "LFO") {
-                let (x, y) = card_xy(&cd, cd.width - 35.5, 13.5);
+                let z = crate::device_panel::Z;
+                let (x, y) = card_xy(&cd, cd.width - 33.0 * z, 16.0 * z);
                 click(a, x, y);
             }
         })),

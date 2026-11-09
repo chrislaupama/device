@@ -41,7 +41,7 @@ component PluginFace inherits Rectangle {
     Rectangle {
         x: 0; y: 0; width: root.width; height: root.height;
         opacity: root.card.enabled ? 1.0 : 0.5;
-        for k in root.card.knobs: KnobCell { x: k.x + 8px; y: k.y; device: root.card.id; k: k; accent: root.card.accent; }
+        for k in root.card.knobs: KnobCell { x: k.x + 8px; y: k.y; device: root.card.id; k: k; accent: root.card.accent; value-ink: root.card.accent-text; }
         // "+ Add": the only control of a new card, then under the controls.
         add := Rectangle {
             x: root.card.knobs.length == 0 ? 15px : 11px; y: root.card.knobs.length == 0 ? 40px : root.height - 27px;

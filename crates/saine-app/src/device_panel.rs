@@ -29,7 +29,7 @@
 //! parameter says so); reversed parameters draw and drag their ring the other
 //! way; inert parameters (Layout::inert_when) are dimmed and ignore gestures.
 
-use crate::controller::{slint_color, track_color, Controller};
+use crate::controller::{card_color, Controller};
 use crate::devices::{DevMenu, MenuPick};
 use crate::device_canvas::{EQ_SLIDER_BOTTOM, EQ_SLIDER_TOP};
 use crate::device_fields::{self, Fill, Live, Style};
@@ -167,10 +167,25 @@ fn labels_model(def: &DeviceDef, p: &ParamDef, labels: &[&str]) -> ModelRc<Share
     STATIC_MODELS.with(|m| m.borrow_mut().entry(format!("{}/{}/{}", def.id, p.id, labels.join("|"))).or_insert_with(|| model(labels.iter().map(|c| s(*c)).collect())).clone())
 }
 
-/// Width of a dropdown pill: its longest choice, the padding and the chevron (pt).
+/// Advance width (pt) of `text` in Inter SemiBold at `size` pt, plus `tracking` per character.
+pub(crate) fn text_width(text: &str, size: f32, tracking: f32) -> f32 {
+    thread_local! {
+        static FACE: ttf_parser::Face<'static> =
+            ttf_parser::Face::parse(include_bytes!("../ui/fonts/Inter-SemiBold.ttf"), 0).expect("bundled Inter SemiBold parses");
+    }
+    FACE.with(|f| {
+        let scale = size / f.units_per_em() as f32;
+        let missing = f.glyph_index('M').and_then(|g| f.glyph_hor_advance(g)).unwrap_or(0);
+        text.chars().map(|c| f.glyph_index(c).and_then(|g| f.glyph_hor_advance(g)).unwrap_or(missing) as f32 * scale + tracking).sum()
+    })
+}
+
+/// Width of a dropdown pill (pt): its longest choice measured in the 10 pt
+/// semibold value face (tracking -0.4 per character), plus 30 for the left
+/// padding and the chevron, rounded up.
 fn dropdown_width(p: &ParamDef) -> f32 {
-    let longest = p.choices.iter().map(|c| pill_text(c).chars().count()).max().unwrap_or(4);
-    longest as f32 * 6.3 + 30.0
+    let longest = p.choices.iter().map(|c| text_width(pill_text(c), 10.0, -0.4)).fold(0.0, f32::max);
+    (30.0 + longest).ceil()
 }
 
 /// Off / on labels of a latch.
@@ -238,13 +253,16 @@ fn snap_to_detent(p: &ParamDef, detents: &[f32], norm: f32, fine: bool) -> Optio
     detents.iter().copied().map(|v| (v, (p.to_normalized(v) - norm).abs())).filter(|(_, d)| *d <= reach).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(v, _)| v)
 }
 
-/// Detent tick marks across a knob ring (32 x 32 view box).
+/// Detent tick marks just outside a knob ring (44 x 44 view box centred on the
+/// 32 pt ring): from one ring stroke (1.76) to 2.5 strokes past the ring's centre line.
 fn detent_ticks(p: &ParamDef, detents: &[f32]) -> String {
+    const R: f32 = 16.0 - 0.88;
+    let (inner, outer) = (R + 1.76, R + 1.76 * 2.5);
     let mut out = String::new();
     for v in detents {
         let a = (-135.0 + p.to_normalized(*v) * 270.0).to_radians();
         let (s, c) = a.sin_cos();
-        out.push_str(&format!("M{:.2} {:.2} L{:.2} {:.2} ", 16.0 + 13.0 * s, 16.0 - 13.0 * c, 16.0 + 16.0 * s, 16.0 - 16.0 * c));
+        out.push_str(&format!("M{:.2} {:.2} L{:.2} {:.2} ", 22.0 + inner * s, 22.0 - inner * c, 22.0 + outer * s, 22.0 - outer * c));
     }
     out
 }
@@ -530,7 +548,7 @@ impl Controller {
     /// Track colour of the card (reference fallback teal).
     pub(crate) fn card_accent(&self, d: &Device) -> slint::Color {
         let track = self.project().find_device(d.id).map(|(ti, _)| &self.project().tracks[ti]);
-        track.map_or(slint::Color::from_rgb_u8(0x43, 0x9b, 0x94), |t| slint_color(track_color(t.color)))
+        track.map_or(slint::Color::from_rgb_u8(0x43, 0x9b, 0x94), |t| card_color(t.color))
     }
 
     pub(crate) fn panel_value_of(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
@@ -770,7 +788,7 @@ impl Controller {
                     norm: if p.reversed { 1.0 - n } else { n },
                     cell: body.cell * Z,
                     origin: p.origin(),
-                    ticks: s(detent_ticks(p, &if detents.is_empty() && p.choices.len() > 2 { (0..p.choices.len()).map(|i| i as f32).collect::<Vec<_>>() } else { detents.to_vec() })),
+                    ticks: s(detent_ticks(p, detents)),
                     dim: body.dim.contains(&id),
                     latch,
                     on: latch && v >= 0.5,
@@ -971,15 +989,17 @@ impl Controller {
         };
         let ticks: Vec<PanelTick> = plot.ticks.iter().map(|(y, text)| PanelTick { y: at(0.0, *y).1, text: s(text.as_str()), rule: true }).collect();
         let (mut live, mut dot, mut dot_x, mut dot_y) = (String::new(), false, 0.0, 0.0);
+        // At rest only the phase dot shows; the live curve and the dot's trail follow playback.
+        let playing = self.engine.transport().playing;
         match &plot.live {
-            Some(Live::Curve(ys)) => live = polyline(&points(ys)),
+            Some(Live::Curve(ys)) if playing => live = polyline(&points(ys)),
             Some(Live::Dot { x, y, trail }) => {
                 (dot, (dot_x, dot_y)) = (true, at(*x, *y));
-                if trail.len() > 1 {
+                if playing && trail.len() > 1 {
                     live = polyline(&trail.iter().map(|(x, y)| at(*x, *y)).collect::<Vec<_>>());
                 }
             }
-            None => {}
+            _ => {}
         }
         let xi = Self::field_axis(d, def, f.x);
         let yi = Self::field_axis(d, def, f.y);
@@ -1020,15 +1040,14 @@ impl Controller {
     /// the selected track's built-in devices (every poll tick, ~30 ms).
     pub(crate) fn panel_poll_meters(&mut self) {
         self.sampler_poll();
+        self.synth_poll();
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else { return };
         let strips: Vec<(DeviceId, Strip)> =
             t.devices.iter().filter_map(|d| saine_core::builtin::def_of(d).and_then(|def| def.layout.view).and_then(|v| v.strip()).map(|st| (d.id, st))).collect();
-        // Field devices: follow the LFO phase readout while the transport plays.
-        let fields: Vec<DeviceId> = if self.engine.transport().playing {
-            t.devices.iter().filter(|d| saine_core::builtin::def_of(d).is_some_and(|def| matches!(def.layout.view, Some(View::Field(_))))).map(|d| d.id).collect()
-        } else {
-            Vec::new()
-        };
+        // Field devices: follow the LFO phase readout; at rest the dot stays where the phase is.
+        let playing = self.engine.transport().playing;
+        let fields: Vec<DeviceId> =
+            t.devices.iter().filter(|d| saine_core::builtin::def_of(d).is_some_and(|def| matches!(def.layout.view, Some(View::Field(_))))).map(|d| d.id).collect();
         let views: Vec<DeviceId> = t
             .devices
             .iter()
@@ -1105,7 +1124,12 @@ impl Controller {
         for id in fields {
             let Ok(()) = self.engine.builtin_readouts(id.0, &mut out) else { continue };
             let Some(phase) = out.first().copied().filter(|p| p.is_finite()) else { continue };
+            // At rest the phase is read once, so the dot holds still and the panel is not rebuilt.
+            let fresh = !self.devices.panel.lfo.contains_key(&id);
             let l = self.devices.panel.lfo.entry(id).or_insert((phase, phase as f64));
+            if !fresh && (!playing || l.0 == phase) {
+                continue;
+            }
             // Polled every ~30 ms: the forward step since the last poll (under one cycle).
             l.1 += (phase - l.0).rem_euclid(1.0) as f64;
             l.0 = phase;
