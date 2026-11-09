@@ -72,6 +72,26 @@ jobs:
           restore-keys: |
             cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
             cargo-${{ runner.os }}-
+      - name: Drop CMake caches restored from another runner's checkout
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          [ -d target ] || exit 0
+          root=$(pwd -P)
+          find target -name CMakeCache.txt > "$RUNNER_TEMP/cmake-caches.txt"
+          while IFS= read -r cache; do
+            [ -f "$cache" ] || continue
+            here=$(cd "$(dirname "$cache")" && pwd -P)
+            made=$(sed -n 's/^CMAKE_CACHEFILE_DIR:INTERNAL=//p' "$cache")
+            if [ -d "$made" ]; then made=$(cd "$made" && pwd -P); fi
+            [ "$made" = "$here" ] && continue
+            case "$here" in
+              "$root"/target/saine-third-party/*) stale="$root/target/saine-third-party" ;;
+              *) stale="$here" ;;
+            esac
+            echo "Removing $stale (its CMakeCache.txt was made in $made)"
+            rm -rf "$stale"
+          done < "$RUNNER_TEMP/cmake-caches.txt"
 
       - name: Engine — configure
         run: cmake -S engine -B engine/build-ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSAINE_ENGINE_WERROR=ON "-DFETCHCONTENT_BASE_DIR=${{ github.workspace }}/.deps"
