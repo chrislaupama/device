@@ -27,6 +27,7 @@ mod device_panel;
 mod panel_graph;
 mod device_views;
 mod devices;
+mod panel_multiband;
 mod gpu;
 mod highlight;
 mod mixer;
@@ -1025,6 +1026,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_field, |c, id: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.panel_field_drag(saine_core::DeviceId(id as u64), phase, dx, dy, fine));
     on!(on_panel_menu, |c, id: i32, which: i32, x: f32, y: f32| c.panel_menu(saine_core::DeviceId(id as u64), which, x, y));
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(saine_core::DeviceId(id as u64), dir));
+    on!(on_panel_view, |c, id: i32, action: i32, v: f32| c.panel_view(saine_core::DeviceId(id as u64), action, v));
     {
         use saine_core::DeviceId as Id;
         let id = |i: i32| Id(i as u64);

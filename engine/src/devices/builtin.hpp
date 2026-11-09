@@ -121,6 +121,9 @@ public:
     // Floats per analysis frame (spectra, traces) the processor publishes
     // through BuiltinContext::analysis; 0 = none. Read once after prepare().
     virtual uint32_t analysis_capacity() const noexcept { return 0; }
+    // Main thread: latency for these plain values (registry order), so delay
+    // compensation is right before the first block and after edits.
+    virtual uint32_t latency_for(const float* /*params*/) const noexcept { return latency(); }
 
     // ---- modulation sources (LFO, chain head; see se_mod_route)
     // Number of outputs (0 = not a source).
@@ -255,7 +258,7 @@ public:
     void process(float* l, float* r, uint32_t frames, const MidiEvent* events, uint32_t event_count,
                  const RtTransport& transport, const ParamEvent* params, uint32_t param_count) noexcept override;
     bool save_state(std::vector<uint8_t>& out, std::string& err) override;
-    uint32_t latency() override { return proc_->latency(); }
+    uint32_t latency() override;
     std::unique_ptr<PluginEditor> open_editor(const std::string& title, std::string& err) override;
     void params(std::vector<ParamInfo>& out) override;
     bool param_range(uint32_t id, double& min, double& max) override;
@@ -293,6 +296,7 @@ private:
     std::unique_ptr<BuiltinProcessor> proc_;
     std::unique_ptr<std::atomic<float>[]> target_; // written by the main thread
     std::vector<float> current_;                   // RT copy for this block
+    std::atomic<uint32_t> applied_latency_{0};     // latency of the values the last block ran with
     std::unique_ptr<std::atomic<float>[]> readout_atomic_;
     std::vector<float> readout_scratch_;
     std::vector<float> readout_segment_; // later automation segments, merged into readout_scratch_
