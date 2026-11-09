@@ -42,4 +42,5 @@ pub static DENOISER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Dialogue Cleanup", values: &[("threshold", -42.0), ("reduction", -15.0), ("release", 150.0), ("mix", 90.0)] },
     ],
     sidechain: false,
+    samples: 0,
 };

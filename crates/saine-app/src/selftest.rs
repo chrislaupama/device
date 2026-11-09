@@ -2545,6 +2545,175 @@ fn platform_device_steps() -> Vec<Step> {
         .collect()
 }
 
+// ------------------------------------------------------------------ built-in samplers
+
+fn inst_device(c: &Controller) -> Option<saine_core::Device> {
+    let t = track_of(c, TrackKind::Instrument)?;
+    c.project().tracks[t].instrument_plugin.clone()
+}
+
+fn sampler_card(a: &AppWindow) -> Option<crate::DeviceCard> {
+    cards(a).into_iter().find(|c| c.sampler.visible)
+}
+
+/// Drum Rack, Pad Sampler and Sampler in the instrument slot: added from the
+/// Built-in list, files loaded as drops, pads pressed, slices and a picture handle.
+fn sampler_steps() -> Vec<Step> {
+    use Step::*;
+    let wav = std::env::temp_dir().join(format!("saine-selftest-sampler-{}.wav", std::process::id()));
+    let _ = crate::wavgen::write_wav(&wav, 48_000, 1, &crate::wavgen::sine_bursts(48_000));
+    let hist = Rc::new(Cell::new(0usize));
+    fn one(hc: &Rc<Cell<usize>>, c: &Controller, label: &str) -> Result<(), String> {
+        let n = c.doc.history_labels().len();
+        let was = hc.get();
+        hc.set(n);
+        (n == was + 1 && c.doc.undo_label() == Some(label)).then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want {label})", c.doc.undo_label()))
+    }
+    let (h0, h1, h2, h3, h4, h5, h6) = (hist.clone(), hist.clone(), hist.clone(), hist.clone(), hist.clone(), hist.clone(), hist.clone());
+    let (w1, w2, w3, w4) = (wav.clone(), wav.clone(), wav.clone(), wav);
+    let h4b = h4.clone();
+    let (hp, hp2) = (hist.clone(), hist.clone());
+    vec![
+        Do("sampler: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("sampler: select the instrument track, Devices tab, Add device › Built-in", Box::new(move |a, ctl| {
+            {
+                let mut c = ctl.borrow_mut();
+                let t = track_of(&c, TrackKind::Instrument).map(|i| c.project().tracks[i].id);
+                if let Some(t) = t {
+                    c.select_track(t);
+                }
+                c.set_bottom_tab(crate::controller::BottomTab::Devices);
+                c.devmenu_dismiss();
+                h0.set(c.doc.history_labels().len());
+                // The chain is long here (Synth + plugin inserts): open Add device › Built-in directly.
+                c.add_category(0, 600.0, 520.0);
+                c.update_ui(a);
+            }
+        })),
+        Check("sampler: the Built-in list offers Sampler, Drum Rack and Pad Sampler", Box::new(|c, a| {
+            let items = devmenu_labels(a);
+            let has = |n: &str| items.iter().any(|r| r.0 == n && r.2);
+            (a.global::<Studio>().get_devmenu_open() && has("Sampler") && has("Drum Rack") && has("Pad Sampler")).then_some(()).ok_or(format!("items {items:?} selected {:?}", c.selected_track))
+        })),
+        Do("sampler: pick Drum Rack", Box::new(|a| {
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == "Drum Rack") {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })),
+        Check("sampler: Drum Rack is the track's instrument (one undo step); card has 16 pads, 5 knobs, an empty well; engine instance live (48 readouts)", Box::new(move |c, a| {
+            one(&h1, c, "Load Drum Rack")?;
+            let d = inst_device(c).ok_or("no instrument")?;
+            let cd = sampler_card(a).ok_or("no sampler card")?;
+            let s = &cd.sampler;
+            let mut r = Vec::new();
+            c.engine.builtin_readouts(d.id.0, &mut r).map_err(|e| e.to_string())?;
+            let ok = d.plugin.id == "drum-rack" && s.kind == 2 && slint::Model::row_count(&s.pads) == 16 && slint::Model::row_count(&s.knobs) == 5 && !s.loaded && r.len() == 48;
+            ok.then_some(()).ok_or(format!("id {} kind {} pads {} knobs {} loaded {} readouts {}", d.plugin.id, s.kind, slint::Model::row_count(&s.pads), slint::Model::row_count(&s.knobs), s.loaded, r.len()))
+        })),
+        DoC("sampler: drop a WAV on the window (pad 1)", Box::new(move |_, ctl| ctl.borrow_mut().drop_files(vec![w1.clone()]))),
+        Check("sampler: the file is pad 1's first sound (asset + sample, one undo step); the pad and well show it", Box::new(move |c, a| {
+            one(&h2, c, "Load Sample")?;
+            let d = inst_device(c).ok_or("no instrument")?;
+            let cd = sampler_card(a).ok_or("no card")?;
+            let pad = slint::Model::row_data(&cd.sampler.pads, 0).ok_or("no pad")?;
+            let ok = d.sample(0).is_some() && pad.filled && cd.sampler.loaded && !cd.sampler.wave.is_empty() && cd.sampler.layer_text == "1/1";
+            ok.then_some(()).ok_or(format!("sample {:?} pad {} well {} layer {}", d.sample(0).map(|s| &s.name), pad.filled, cd.sampler.loaded, cd.sampler.layer_text))
+        })),
+        DoC("sampler: drop it again (second sound of pad 1)", Box::new(move |_, ctl| ctl.borrow_mut().drop_files(vec![w2.clone()]))),
+        Check("sampler: pad 1 holds two alternating sounds (slots 0 and 1); the panel shows sound 2/2", Box::new(move |c, a| {
+            one(&h3, c, "Load Sample")?;
+            let d = inst_device(c).ok_or("no instrument")?;
+            let cd = sampler_card(a).ok_or("no card")?;
+            (d.sample(1).is_some() && cd.sampler.layer_text == "2/2").then_some(()).ok_or(format!("slot1 {} layer {}", d.sample(1).is_some(), cd.sampler.layer_text))
+        })),
+        Do("sampler: press the D1 pad", Box::new(|a| {
+            if let Some(cd) = sampler_card(a)
+                && let Some(p) = slint::Model::row_data(&cd.sampler.pads, 2)
+            {
+                let (x, y) = card_xy(&cd, p.x + p.w / 2.0, p.y + p.h / 2.0);
+                click(a, x, y);
+            }
+        })),
+        Check("sampler: D1 is selected (UI only, no undo step): the sub-card shows Pad 3, Mapped to D1, an empty well, and edits p3_ parameters", Box::new(|c, a| {
+            let cd = sampler_card(a).ok_or("no card")?;
+            let s = &cd.sampler;
+            let def = saine_core::builtin::find("drum-rack").unwrap();
+            let k = slint::Model::row_data(&s.knobs, 0).ok_or("no knob")?;
+            let ok = s.layer_name == "Pad 3" && s.mapped == "Mapped to D1" && !s.loaded && def.params[k.param as usize].id == "p3_gain" && c.doc.undo_label() == Some("Load Sample");
+            ok.then_some(()).ok_or(format!("{} / {} / loaded {} / knob {}", s.layer_name, s.mapped, s.loaded, def.params[k.param as usize].id))
+        })),
+        DoC("sampler: load the Pad Sampler as the instrument and drop the WAV on it", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = track_of(&c, TrackKind::Instrument).map(|i| c.project().tracks[i].id);
+            if let Some(t) = t {
+                c.add_item_to_track(&crate::devices::Item::Builtin(saine_core::builtin::find("pad-sampler").unwrap()), t, None);
+            }
+            hp.set(c.doc.history_labels().len());
+            c.drop_files(vec![w4.clone()]);
+        })),
+        Check("sampler: the Pad Sampler holds the file as sound 1/1, answers every key, and shows its 5 knobs", Box::new(move |c, a| {
+            one(&hp2, c, "Load Sample")?;
+            let d = inst_device(c).ok_or("no instrument")?;
+            let cd = sampler_card(a).ok_or("no card")?;
+            let s = &cd.sampler;
+            let ok = d.plugin.id == "pad-sampler" && d.sample(0).is_some() && s.kind == 1 && s.loaded && s.layer_text == "1/1" && s.mapped == "Mapped to all keys" && slint::Model::row_count(&s.knobs) == 5;
+            ok.then_some(()).ok_or(format!("id {} kind {} loaded {} layer {} mapped {}", d.plugin.id, s.kind, s.loaded, s.layer_text, s.mapped))
+        })),
+        DoC("sampler: load the Sampler as the instrument and drop the WAV on it", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = track_of(&c, TrackKind::Instrument).map(|i| c.project().tracks[i].id);
+            if let Some(t) = t {
+                c.add_item_to_track(&crate::devices::Item::Builtin(saine_core::builtin::find("sampler-steam").unwrap()), t, None);
+            }
+            h4b.set(c.doc.history_labels().len());
+            c.drop_files(vec![w3.clone()]);
+        })),
+        Check("sampler: the Sampler plays the file (One Shot); tabs Sample..Mod; start/end read in seconds (0.00 s / 4.00 s)", Box::new(move |c, a| {
+            one(&h4, c, "Load Sample")?;
+            let d = inst_device(c).ok_or("no instrument")?;
+            let cd = sampler_card(a).ok_or("no card")?;
+            let s = &cd.sampler;
+            let v: Vec<String> = slint::Model::iter(&s.knobs).map(|k| k.value.to_string()).collect();
+            let ok = d.plugin.id == "sampler-steam" && d.sample(0).is_some() && s.loaded && slint::Model::row_count(&s.tab_pick.choices) == 5 && v.first().map(String::as_str) == Some("0.00 s") && v.get(1).map(String::as_str) == Some("4.00 s");
+            ok.then_some(()).ok_or(format!("id {} loaded {} knobs {v:?}", d.plugin.id, s.loaded))
+        })),
+        DoC("sampler: switch the mode to Slice", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            if let Some(d) = inst_device(&c) {
+                let i = saine_core::builtin::find("sampler-steam").unwrap().index_of("mode").unwrap();
+                c.panel_choice(d.id, i as i32, 2);
+            }
+        })),
+        Check("sampler: Slice mode chops the sample by beat (quarter notes at 120 BPM: 8 slices of 4 s) in the same undo step", Box::new(move |c, _| {
+            one(&h5, c, "Device Parameter Change")?;
+            let d = inst_device(c).ok_or("no instrument")?;
+            let n = d.sample(0).map_or(0, |s| s.slices.len());
+            (n == 8).then_some(()).ok_or(format!("{n} slices"))
+        })),
+        DoC("sampler: Amp tab, drag the attack handle to the right", Box::new(|a, ctl| {
+            let id = inst_device(&ctl.borrow()).map(|d| d.id);
+            let Some(id) = id else { return };
+            ctl.borrow_mut().sampler_tab(id, 3);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            let Some(h) = sampler_card(a).and_then(|cd| slint::Model::row_data(&cd.sampler.handles, 0)) else { return };
+            let mut c = ctl.borrow_mut();
+            c.sampler_handle(id, 0, 0, h.x, h.y);
+            c.sampler_handle(id, 0, 1, h.x + 40.0, h.y);
+            c.sampler_handle(id, 0, 2, h.x + 40.0, h.y);
+        })),
+        Check("sampler: the attack handle drag is one undo step (Amp Envelope) and lengthens the attack", Box::new(move |c, _| {
+            one(&h6, c, "Amp Envelope")?;
+            let d = inst_device(c).ok_or("no instrument")?;
+            let def = saine_core::builtin::def_of(&d).ok_or("def")?;
+            let v = def.value(&d, def.param("ampAttack").unwrap());
+            (v > 2.0).then_some(()).ok_or(format!("attack {v} ms"))
+        })),
+    ]
+}
+
 fn named_builtin<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
     let t = track_of(c, TrackKind::Audio)?;
     c.project().tracks[t].devices.iter().find(|d| saine_core::builtin::def_of(d).is_some_and(|def| def.id == id))
@@ -2701,6 +2870,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(builtin_each_steps());
     all.extend(modulation_device_steps());
     all.extend(restoration_device_steps());
+    all.extend(sampler_steps());
     all.extend(automation_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));

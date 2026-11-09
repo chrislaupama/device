@@ -959,7 +959,10 @@ typedef struct se_builtin_state {
 
 /* One registered built-in processor (static data, valid for the process
  * lifetime). Readouts are values the processor publishes for visualisers
- * (for example input level, output level and gain reduction in dB). */
+ * (for example input level, output level and gain reduction in dB).
+ * Instruments (instrument != 0) go in a track's instrument slot
+ * (instrument_plugin) and render the track's notes; sample_slots > 0 means
+ * the device plays audio assets named in its state (see below). */
 typedef struct se_builtin_desc {
     const char* id;
     const char* const* param_ids;   /* param_count entries, registry order */
@@ -967,7 +970,45 @@ typedef struct se_builtin_desc {
     uint32_t param_count;
     uint32_t readout_count;
     const float* param_defaults; /* param_count entries: the processor's defaults */
-} se_builtin_desc; /* 40 bytes, align 8 */
+    uint32_t sample_slots;
+    uint8_t instrument;
+    uint8_t _pad[3];
+} se_builtin_desc; /* 48 bytes, align 8 */
+
+/* Built-in devices that play audio files (samplers, drum pads) use the v2
+ * state: the v1 header extended by the sample table. After the header come
+ * value_count float32 values, then sample_count se_builtin_sample entries,
+ * then slice_count se_builtin_slice entries (each sample's slices in table
+ * order). Every asset_id names an asset loaded with se_asset_load_file; an
+ * unknown asset leaves its slot empty. Slots must be < the device's
+ * sample_slots and unique; slices start in [0, 1) and ascend. The engine
+ * keeps a reference to every asset a live device uses, so releasing an
+ * asset while a device plays it is safe. Validation (else
+ * SE_ERR_INVALID_ARG): state_len == 24 + 4 * value_count + 16 *
+ * sample_count + 16 * slice_count, slice counts add up, values finite. */
+#define SE_BUILTIN_STATE_MAGIC2 0x32494253u /* "SBI2" */
+#define SE_BUILTIN_MAX_SLICES 128
+
+typedef struct se_builtin_state_v2 {
+    uint32_t magic;               /* SE_BUILTIN_STATE_MAGIC2 */
+    uint32_t value_count;
+    uint64_t sidechain_track_id;  /* 0 = no sidechain */
+    uint32_t sample_count;
+    uint32_t slice_count;         /* total over all samples */
+} se_builtin_state_v2; /* 24 bytes, align 8 */
+
+typedef struct se_builtin_sample {
+    uint64_t asset_id;
+    uint32_t slot;
+    uint32_t slice_count; /* at most SE_BUILTIN_MAX_SLICES */
+} se_builtin_sample; /* 16 bytes, align 8 */
+
+typedef struct se_builtin_slice {
+    float start;   /* fraction of the sample, 0 <= start < 1 */
+    float gain_db; /* -60 .. 12 */
+    float pan;     /* -1 .. 1 */
+    float pitch;   /* semitones, -24 .. 24 */
+} se_builtin_slice; /* 16 bytes, align 4 */
 
 /* Every registered built-in processor. Any thread. */
 const se_builtin_desc* se_builtin_registry(size_t* out_count);
@@ -985,6 +1026,15 @@ int32_t se_builtin_set_param(se_engine* engine, uint64_t device_id, uint32_t ind
  * Writes up to `capacity`; *out_count = the device's readout count.
  * MAIN THREAD. Unknown or non-built-in device -> SE_ERR_NOT_FOUND. */
 int32_t se_builtin_readouts(se_engine* engine, uint64_t device_id, float* out, size_t capacity, size_t* out_count);
+
+/* Play a note on a live built-in instrument right away (pads, auditions,
+ * previews), on top of the notes of its track. velocity 1..127 = note on,
+ * 0 = note off. Lock-free hand-over, applied at the start of the next
+ * block; up to 256 events wait per device, more are dropped
+ * (SE_ERR_STATE). MAIN THREAD. Unknown device, or one that is not a built-in
+ * instrument -> SE_ERR_NOT_FOUND; pitch > 127 or velocity > 127 ->
+ * SE_ERR_INVALID_ARG. */
+int32_t se_builtin_note(se_engine* engine, uint64_t device_id, uint8_t pitch, uint8_t velocity);
 
 #ifdef __cplusplus
 }

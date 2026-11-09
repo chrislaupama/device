@@ -36,4 +36,5 @@ pub static DECLIPPER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Crushed Master", values: &[("threshold", -5.0), ("ceiling", -1.0), ("oversampling", 2.0)] },
     ],
     sidechain: false,
+    samples: 0,
 };
