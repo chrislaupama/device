@@ -199,6 +199,11 @@ impl ParamDef {
             if let Some(i) = self.choices.iter().position(|c| c.to_lowercase() == lower) {
                 return Some(i as f32);
             }
+            // Slope names are shown with or without their unit ("24" / "24 dB/oct").
+            let bare = |s: &str| s.trim_end_matches("db/oct").trim().to_string();
+            if let Some(i) = self.choices.iter().position(|c| bare(&c.to_lowercase()) == bare(&lower)) {
+                return Some(i as f32);
+            }
         }
         let t = t.replace('\u{2212}', "-").replace(',', ".");
         let split = t.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+')).unwrap_or(t.len());
@@ -592,6 +597,16 @@ pub fn modulate(p: &ParamDef, plain: f32, offset: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slope_choices_parse_with_or_without_the_unit() {
+        let ce = find("character-eq").unwrap().param("band1_slope").unwrap();
+        assert_eq!(ce.parse("24 dB/oct"), Some(3.0));
+        assert_eq!(ce.parse("24"), Some(3.0));
+        let ch = find("channeleq").unwrap().param("hp_slope").unwrap();
+        assert_eq!(ch.parse("24"), Some(1.0));
+        assert_eq!(ch.parse("36 dB/oct"), Some(2.0));
+    }
 
     fn comp() -> &'static DeviceDef {
         find("compressor").unwrap()

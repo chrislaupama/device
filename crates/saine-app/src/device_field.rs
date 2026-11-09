@@ -847,7 +847,10 @@ impl Controller {
         }
         g.active = true;
         if shift != g.fine {
-            // Re-anchor so toggling fine mode never jumps.
+            // Re-anchor so toggling fine mode never jumps: the grab offset
+            // becomes the node's current position minus the pointer.
+            let old = if g.fine { 0.2 } else { 1.0 };
+            g.grab = (g.ax + g.grab.0 + (x - g.ax) * old - x, g.ay + g.grab.1 + (y - g.ay) * old - y);
             g.fine = shift;
             g.ax = x;
             g.ay = y;
@@ -881,10 +884,13 @@ impl Controller {
                 }
             }
             (Some(v), Hit::Wing(i)) => {
+                // The wing shows the bank-voiced Q; the parameter holds it unvoiced.
                 let (_, _, _, p) = self.eq_plot(def, v);
                 let f = self.field_value(d, def, v.bands[i].freq) as f64;
-                let hw = (p.f(x) / f).log2().abs().max(0.01) as f32;
-                out.push((idx(v.bands[i].q), 1.0 / (2.0 * hw)));
+                let q_scale = v.bank.map_or(1.0, |bk| eq::bank(self.field_value(d, def, bk)).q_scale);
+                let q_at = |px: f32| 1.0 / (2.0 * (p.f(px) / f).log2().abs().max(0.01) as f32) / q_scale;
+                let qi = idx(v.bands[i].q);
+                out.push((qi, anchor(qi) * (q_at(x) / q_at(g.ax)).powf(scale)));
             }
             (None, Hit::Corner) => {
                 let (_, _, _, p) = self.af_plot(def);
@@ -1077,6 +1083,10 @@ impl Controller {
     }
 
     fn panel_commit_value(&mut self, device: DeviceId, param: &str, value: f32) {
+        let unchanged = self.field_kind(device).and_then(|(d, def, _)| def.param(param).map(|p| p.snap(value) == def.value(d, p)));
+        if unchanged != Some(false) {
+            return;
+        }
         self.doc.seal_coalescing();
         self.execute(Command::SetDeviceParam { device, param: param.into(), value });
         self.doc.seal_coalescing();
@@ -1111,6 +1121,7 @@ impl Controller {
     pub(crate) fn panel_pick_bank(&mut self, device: DeviceId, param: usize, choice: f32) {
         let Some((d, def, Some(v))) = self.field_kind(device) else { return };
         let mut cmds = vec![Command::SetDeviceParam { device, param: def.params[param].id.into(), value: choice }];
+        let same_bank = def.value(d, &def.params[param]) == choice;
         let bank = eq::bank(choice);
         let val = |id: &str| def.value(d, def.param(id).unwrap());
         for (i, b) in v.bands.iter().enumerate() {
@@ -1121,6 +1132,9 @@ impl Controller {
                     cmds.push(Command::SetDeviceParam { device, param: b.freq.into(), value: to });
                 }
             }
+        }
+        if same_bank && cmds.len() == 1 {
+            return;
         }
         self.doc.seal_coalescing();
         self.execute(Command::Batch { label: "Device Parameter Change".into(), commands: cmds });

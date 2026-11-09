@@ -34,6 +34,9 @@ struct BuiltinContext {
     const float* sc_l = nullptr;
     const float* sc_r = nullptr;
     const RtTransport* transport = nullptr;
+    // First frame of this call within the engine block (automation splits a
+    // block into segments; transport->position is the block's first frame).
+    uint32_t offset = 0;
 };
 
 class BuiltinProcessor {

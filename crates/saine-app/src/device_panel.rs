@@ -112,6 +112,10 @@ pub(crate) fn reuse_card_models(old: &DeviceCard, new: &mut DeviceCard) {
     keep(&old.knobs, &mut new.knobs);
     keep(&old.picks, &mut new.picks);
     keep(&old.sliders, &mut new.sliders);
+    // EQ chrome: a rebuilt cell would drop its keyboard focus or an inline edit.
+    keep(&old.eq.tabs, &mut new.eq.tabs);
+    keep(&old.eq.glyphs, &mut new.eq.glyphs);
+    keep(&old.eq.cells, &mut new.eq.cells);
 }
 
 /// x of each dial-row knob cell (card relative, unscaled), cluster by cluster.
@@ -768,6 +772,8 @@ impl Controller {
         let mut commands = vec![Command::SetDeviceParam { device, param: p.id.into(), value }];
         if let Some(m) = mode.filter(|m| def.value(d, m) >= 0.5) {
             commands.push(Command::SetDeviceParam { device, param: m.id.into(), value: 0.0 });
+        } else if def.value(d, p) == value {
+            return;
         }
         self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands });
     }

@@ -173,7 +173,10 @@ public:
         if (sync) {
             const double q = kQuarters[choice(p[kLfoRateSync], 14)];
             rate = tempo / 60.0 / q;
-            if (tr != nullptr && tr->playing) phase_ = tr->beats() / q; // lock to the bar grid
+            if (tr != nullptr && tr->playing) { // lock to the bar grid at this segment's first frame
+                const double beats = static_cast<double>(tr->position + ctx.offset) / tr->sample_rate * tr->tempo_bpm / 60.0;
+                phase_ = beats / q;
+            }
         } else {
             rate = std::clamp(static_cast<double>(p[kLfoRate]), 0.001, 100.0);
         }

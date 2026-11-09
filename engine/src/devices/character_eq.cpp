@@ -417,16 +417,17 @@ public:
                         const eq::Coef wb = finished(eq::band_pass(tm.freq, std::max(0.1f, tm.q * 0.25f), fs_));
                         float pn = tm.pn, pw = tm.pw;
                         for (uint32_t i = 0; i < len; ++i) {
-                            const float x = 0.5f * (cl[i] + cr[i]);
-                            const float a = eq::tick(nb, tm.st, 0, x);
-                            const float b = eq::tick(wb, tm.st, 1, x);
-                            const float a2 = a * a, b2 = b * b;
+                            // Per-channel powers, so out-of-phase channels cannot hide a resonance.
+                            const float al = eq::tick(nb, tm.st, 0, cl[i]), ar = eq::tick(nb, tm.st2, 0, cr[i]);
+                            const float bl = eq::tick(wb, tm.st, 1, cl[i]), br2 = eq::tick(wb, tm.st2, 1, cr[i]);
+                            const float a2 = 0.5f * (al * al + ar * ar), b2 = 0.5f * (bl * bl + br2 * br2);
                             pn = a2 + (a2 > pn ? tame_att_ : tame_rel_) * (pn - a2);
                             pw = b2 + (b2 > pw ? tame_att_ : tame_rel_) * (pw - b2);
                         }
                         tm.pn = pn < 1e-20f ? 0.0f : pn;
                         tm.pw = pw < 1e-20f ? 0.0f : pw;
                         eq::sanitize(tm.st);
+                        eq::sanitize(tm.st2);
                         if (tm.pw > 1e-10f) {
                             // Narrow band against the rest of the neighbourhood (a flat
                             // spectrum puts a third of the narrow band's power there: -4.8 dB).
@@ -486,12 +487,13 @@ public:
                 const float dry_l = delayed(0, cl[i]);
                 const float dry_r = delayed(1, cr[i]);
                 if (w > 1e-5f || wet_target > 0.0f) {
-                    if (!valve_live_) {
+                    if (!valve_live_ || four != valve_four_) {
                         stage1_.clear();
                         stage2_.clear();
                         std::memset(pad_, 0, sizeof pad_);
                         dc_x_[0] = dc_x_[1] = dc_y_[0] = dc_y_[1] = 0.0f;
                         valve_live_ = true;
+                        valve_four_ = four;
                     }
                     const float vl = valve(0, cl[i], four, drive_v);
                     const float vr = valve(1, cr[i], four, drive_v);
@@ -526,7 +528,8 @@ private:
         bool on = false;
         float freq = 1000.0f, q = 1.0f, max_cut = 6.0f;
         float pn = 0.0f, pw = 0.0f, cut = 0.0f, applied = 0.0f, applied_freq = 0.0f, applied_q = 0.0f;
-        eq::State st{};
+        eq::State st{};  // left: narrow (0) and wide (1) detectors
+        eq::State st2{}; // right
         eq::Coef c{};
         eq::State cst{};
     };
@@ -625,6 +628,7 @@ private:
     int pad_pos_ = 0;
     float dc_x_[2] = {}, dc_y_[2] = {}, dc_a_ = 0.0f;
     bool valve_live_ = false;
+    bool valve_four_ = false;
     dsp::Smoother output_, auto_, wet_;
     float last_bands_[9 * kBands + 1] = {};
     float last_auto_ = 0.0f;

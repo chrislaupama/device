@@ -344,6 +344,40 @@ TEST_CASE(character_eq_tamer_pulls_down_a_resonance) {
     flat.set("tame2_freq", 1000.f);
     flat.run_mono(noise(n, 0.1f, 9));
     CHECK(flat.readouts()[13] > -1.5f);
+
+    // Opposite polarity in the two channels: each channel still has the resonance.
+    auto anti = character();
+    anti.set("tame_enabled", 1.f);
+    anti.set("tame_amount", 100.f);
+    anti.set("tame2_enabled", 1.f);
+    anti.set("tame2_freq", 1000.f);
+    anti.set("tame2_q", 4.f);
+    Signal neg(n);
+    for (std::size_t i = 0; i < n; ++i) neg[i] = -x[i];
+    anti.run(x, neg);
+    CHECK(anti.readouts()[13] < -3.0f);
+}
+
+TEST_CASE(character_eq_shape_and_oversampling_switches_stay_bounded) {
+    // A slope / shape change and a 2x <-> 4x switch while running start the
+    // new design from rest: the output stays near the input level.
+    auto r = character();
+    r.set("band1_enabled", 1.f);
+    r.set("band1_type", 3.f); // high pass
+    r.set("band1_freq", 200.f);
+    r.set("band1_slope", 5.f); // 48 dB/oct
+    r.set("valve_enabled", 1.f);
+    const Signal x = noise(4800, 0.3f, 3);
+    float peak = 0.f;
+    for (int k = 0; k < 12; ++k) {
+        r.set("band1_slope", (k % 2) ? 0.f : 5.f);
+        r.set("band1_type", (k % 3) == 2 ? 6.f : 3.f);
+        r.set("oversampling", (k % 2) ? 1.f : 0.f);
+        const Signal y = r.run_mono(x);
+        CHECK(all_finite(y));
+        for (float v : y) peak = std::max(peak, std::fabs(v));
+    }
+    CHECK(peak < 4.0f);
 }
 
 TEST_CASE(character_eq_listen_and_bypass) {

@@ -141,6 +141,7 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
         }
         const uint32_t end = e < param_count ? std::min(frames, params[e].offset) : frames;
         BuiltinContext seg = ctx;
+        seg.offset = pos;
         if (seg.sc_l != nullptr) {
             seg.sc_l += pos;
             seg.sc_r += pos;

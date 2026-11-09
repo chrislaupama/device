@@ -373,6 +373,8 @@ struct BandRunner {
     State st[kMaxSections]{};
     bool primed = false;
     bool dirty = true;
+    // Shape or slope changed: the sections' saved state belongs to another design.
+    bool retopo = false;
 
     void reset() noexcept {
         for (State& s : st) s.clear();
@@ -391,6 +393,7 @@ struct BandRunner {
             return false;
         }
         if (cur.shape != target.shape || cur.slope_db != target.slope_db || cur.prop_q != target.prop_q) {
+            retopo |= cur.shape != target.shape || cur.slope_db != target.slope_db;
             cur.shape = target.shape;
             cur.slope_db = target.slope_db;
             cur.prop_q = target.prop_q;
@@ -448,6 +451,10 @@ struct BandRunner {
             }
         }
         for (int i = d.n; i < old_n; ++i) st[i].clear();
+        if (retopo) {
+            for (int i = 0; i < d.n; ++i) st[i].clear();
+            retopo = false;
+        }
         dirty = false;
     }
 

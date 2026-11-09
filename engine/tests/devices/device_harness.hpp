@@ -118,6 +118,8 @@ public:
         b_->set_value(i, v);
     }
     float get(const char* id) const { return values_[param_index(desc(), id)]; }
+    // Transport state passed to the device (playing locks synced LFOs to the beat).
+    void set_playing(bool on) { playing_ = on; }
     void reset() { b_->processor().reset(); }
 
     // Process l/r (same length) in blocks of block(); `sc` optional sidechain.
@@ -126,6 +128,7 @@ public:
                                   const std::vector<std::pair<std::size_t, std::pair<uint32_t, float>>>& events = {}) {
         saine::RtTransport tr;
         tr.sample_rate = rate_;
+        tr.playing = playing_;
         std::vector<saine::ParamEvent> ev;
         ev.reserve(saine::PluginInstance::kMaxParamEvents);
         std::size_t ei = 0;
@@ -159,6 +162,7 @@ private:
     double rate_;
     uint32_t block_;
     std::vector<float> values_;
+    bool playing_ = false;
     std::shared_ptr<saine::PluginInstance> inst_;
     saine::BuiltinInstance* b_ = nullptr;
     Signal sc_l_, sc_r_;

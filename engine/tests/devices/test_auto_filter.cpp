@@ -131,6 +131,32 @@ TEST_CASE(auto_filter_lfo_sweeps_free_synced_and_stereo) {
     CHECK(std::fabs(seen[50] - seen[150]) > 0.2f * seen[50]);
 }
 
+TEST_CASE(auto_filter_synced_lfo_continues_through_automation_splits) {
+    // While playing, automation events split blocks into segments; the synced
+    // LFO must keep following the beat inside a block, not restart at each piece.
+    auto plain = rig();
+    auto split = rig();
+    for (DeviceRig* r : {&plain, &split}) {
+        r->set("frequency", 1000.f);
+        r->set("lfo_amount", 36.f);
+        r->set("lfo_sync", 1.f);
+        r->set("lfo_rate_sync", 10.f); // 1/16: fast enough to move inside a block
+        r->set_playing(true);
+    }
+    const uint32_t mix = param_index(split.desc(), "mix");
+    std::vector<std::pair<std::size_t, std::pair<uint32_t, float>>> ev;
+    for (std::size_t b = 0; b < 40; ++b) {
+        ev.push_back({b * 256 + 64, {mix, 100.f}});
+        ev.push_back({b * 256 + 192, {mix, 100.f}});
+    }
+    const Signal x = noise(40 * 256, 0.3f, 5);
+    const Signal a = plain.run(x, x).first;
+    const Signal b = split.run(x, x, nullptr, nullptr, ev).first;
+    double diff = 0.0;
+    for (std::size_t i = 0; i < x.size(); ++i) diff = std::max(diff, static_cast<double>(std::fabs(a[i] - b[i])));
+    CHECK(diff < 1e-3);
+}
+
 TEST_CASE(auto_filter_dj_mode_is_open_at_centre_and_sweeps_both_ways) {
     auto c = rig();
     c.set("mode", 1.f);
