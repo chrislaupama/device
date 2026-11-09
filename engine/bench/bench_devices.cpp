@@ -64,6 +64,83 @@ std::vector<uint8_t> blob_v2(const std::vector<float>& v, const std::vector<uint
     return out;
 }
 
+// Defaults of the EQ and filter devices (registry order) and busy settings.
+std::vector<float> channel_eq(bool busy) {
+    std::vector<float> v = {20.f,   0.f, 0.71f, 0.f, 75.f,   0.f, 1.f,  1.f, 100.f,  0.f, 0.6f,  1.f, 250.f, 0.f, 0.3f,
+                            1.f,    1040.f, 0.f, 0.41f, 1.f, 2500.f, 0.f, 0.2f, 1.f, 7500.f, 0.f, 1.f, 1.f, 20000.f, 0.f,
+                            0.71f,  0.f, 0.f, 4.f, 1.f, 0.f, 0.f, 0.f, 0.f, 2.f, 5.f, 0.f, 0.f, 0.f};
+    if (busy) { // every band on and moving the sound, 48 dB/oct pass filters
+        for (int b = 0; b < 8; ++b) {
+            v[static_cast<std::size_t>(4 * b + 1)] = (b % 2 ? -4.f : 5.f);
+            v[static_cast<std::size_t>(4 * b + 3)] = 1.f;
+        }
+        v[0] = 40.f;
+        v[28] = 16000.f;
+        v[41] = v[42] = 3.f;
+    }
+    return v;
+}
+
+enum class Ceq { Defaults, Bands, Dynamic, Valve4x, Everything };
+std::vector<float> character_eq(Ceq mode) {
+    std::vector<float> v;
+    for (int b = 0; b < 12; ++b) v.insert(v.end(), {0.f, 0.f, 1000.f, 0.f, 0.7071f, 1.f, 0.f, 0.f, 0.f});
+    v.insert(v.end(), {0.f, 0.f, 1.f, 300.f, 0.f, 1.f, 100.f, 0.f, 0.f, 0.f, 0.f});
+    for (int b = 0; b < 12; ++b) v.insert(v.end(), {0.f, 0.f, 1.f, -30.f, 15.f, 150.f});
+    v.insert(v.end(), {0.f, 50.f});
+    for (float f : {250.f, 1000.f, 4000.f, 10000.f}) v.insert(v.end(), {0.f, f, 1.f, 0.f});
+    for (int b = 0; b < 12; ++b) v.push_back(0.f);
+    v.push_back(0.f);
+    const auto at = [&](int i) -> float& { return v[static_cast<std::size_t>(i)]; };
+    if (mode != Ceq::Defaults && mode != Ceq::Valve4x) {
+        const float types[12] = {3.f, 1.f, 6.f, 0.f, 0.f, 0.f, 0.f, 5.f, 0.f, 0.f, 2.f, 4.f};
+        for (int b = 0; b < 12; ++b) {
+            at(9 * b) = 1.f;
+            at(9 * b + 1) = types[b];
+            at(9 * b + 2) = 40.f * std::pow(1.8f, static_cast<float>(b));
+            at(9 * b + 3) = (b % 2 ? -3.f : 4.f);
+            at(9 * b + 5) = 3.f;
+            at(9 * b + 8) = 4.f;
+        }
+    }
+    if (mode == Ceq::Dynamic || mode == Ceq::Everything) {
+        for (int b = 0; b < 12; b += 3) {
+            at(119 + 6 * b) = 1.f;
+            at(120 + 6 * b) = -6.f;
+            at(209 + b) = 40.f;
+        }
+    }
+    if (mode == Ceq::Valve4x || mode == Ceq::Everything) {
+        at(112) = 1.f;
+        at(113) = 1.5f;
+        at(115) = 1.f;
+    }
+    if (mode == Ceq::Everything) {
+        at(109) = 40.f; // warmth
+        at(118) = 1.f;  // auto gain
+        at(191) = 1.f;  // tamer + all four bands
+        for (int t = 0; t < 4; ++t) at(193 + 4 * t) = 1.f;
+    }
+    return v;
+}
+
+std::vector<float> auto_filter(int mode) {
+    std::vector<float> v = {0.f, 0.f, 20000.f, 0.f, 0.f, 0.f, 1.f, 100.f, 0.f, 1.f, 4.f, 0.f, 0.f, 0.f, 100.f, 0.f, 0.f};
+    if (mode >= 1) { // 24 dB/oct, resonant, envelope and LFO moving the cutoff
+        v[1] = 1.f;
+        v[2] = 800.f;
+        v[3] = 0.6f;
+        v[5] = 24.f;
+        v[8] = 24.f;
+        v[9] = 3.f;
+    }
+    if (mode >= 2) { // plus drive and a stereo LFO (two cutoffs)
+        v[4] = 12.f;
+        v[13] = 90.f;
+    }
+    return v;
+}
+
 std::vector<uint8_t> blob(const std::vector<float>& v, uint64_t sc = 0) {
     se_builtin_state h{SE_BUILTIN_STATE_MAGIC, static_cast<uint32_t>(v.size()), sc};
     std::vector<uint8_t> out(sizeof h + 4 * v.size());
@@ -114,8 +191,10 @@ Stats summarize(std::vector<double>& t) {
 
 double us(Clock::duration d) { return std::chrono::duration<double, std::micro>(d).count(); }
 
+// events_per_block automation events on parameter event_param, values base + i * step.
 Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, uint32_t events_per_block,
-                   const std::vector<saine::MidiEvent>& notes = {}, uint32_t event_param = 0) {
+                   const std::vector<saine::MidiEvent>& notes = {}, uint32_t event_param = 0, double base = -30.0,
+                   double step = 1.0) {
     saine::PluginSpec spec;
     spec.device_id = 1;
     spec.format = saine::PluginFormat::Builtin;
@@ -133,7 +212,7 @@ Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, u
     uint32_t seed = 7;
     std::vector<saine::ParamEvent> ev;
     for (uint32_t i = 0; i < events_per_block; ++i)
-        ev.push_back(saine::ParamEvent{i * (kBlock / std::max(1u, events_per_block)), event_param, -30.0 + i});
+        ev.push_back(saine::ParamEvent{i * (kBlock / std::max(1u, events_per_block)), event_param, base + step * i});
     saine::RtTransport tr;
     std::vector<double> t;
     t.reserve(blocks);
@@ -275,6 +354,18 @@ int main(int argc, char** argv) {
         row(name, bench_kernel("compressor", v, blocks, 0));
     }
     row("compressor (Clean, 16 auto events)", bench_kernel("compressor", kCompressor, blocks, 16));
+    row("channeleq (defaults)", bench_kernel("channeleq", channel_eq(false), blocks, 0));
+    row("channeleq (8 bands, 48 dB/oct)", bench_kernel("channeleq", channel_eq(true), blocks, 0));
+    row("channeleq (8 bands, 16 freq events)", bench_kernel("channeleq", channel_eq(true), blocks, 16, {}, 12, 200.0, 40.0));
+    row("character-eq (defaults)", bench_kernel("character-eq", character_eq(Ceq::Defaults), blocks, 0));
+    row("character-eq (12 bands)", bench_kernel("character-eq", character_eq(Ceq::Bands), blocks, 0));
+    row("character-eq (12 bands, 4 dyn+drive)", bench_kernel("character-eq", character_eq(Ceq::Dynamic), blocks, 0));
+    row("character-eq (valve 4x only)", bench_kernel("character-eq", character_eq(Ceq::Valve4x), blocks, 0));
+    row("character-eq (everything on)", bench_kernel("character-eq", character_eq(Ceq::Everything), blocks, 0));
+    row("character-eq (12 bands, 16 freq events)", bench_kernel("character-eq", character_eq(Ceq::Bands), blocks, 16, {}, 29, 200.0, 40.0));
+    row("auto-filter (defaults)", bench_kernel("auto-filter", auto_filter(0), blocks, 0));
+    row("auto-filter (24 dB, env + LFO)", bench_kernel("auto-filter", auto_filter(1), blocks, 0));
+    row("auto-filter (+ drive, stereo LFO)", bench_kernel("auto-filter", auto_filter(2), blocks, 0));
     row("limiter (true peak)", bench_kernel("limiter", with(kLimiter, {{5, 12.f}}), blocks, 0));
     row("limiter (sample peak)", bench_kernel("limiter", with(kLimiter, {{5, 12.f}, {3, 0.f}}), blocks, 0));
     row("gate", bench_kernel("gate", with(kGate, {{0, -10.f}}), blocks, 0));

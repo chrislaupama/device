@@ -24,8 +24,9 @@
 
 use crate::controller::{slint_color, track_color, Controller};
 use crate::devices::{DevMenu, MenuPick};
+use crate::device_canvas::{EQ_SLIDER_BOTTOM, EQ_SLIDER_TOP};
 use crate::device_fields::{self, Fill, Live, Style};
-use crate::{DeviceCard, PanelField, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelTick};
+use crate::{DeviceCard, PanelCanvas, PanelEq, PanelField, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelTick};
 use saine_core::builtin::{Control, DeviceDef, Face, Field, ParamDef, Strip, Transfer, View, CLUSTER_GAP, KNOB_CELL, KNOB_GAP};
 use saine_core::{Command, Device, DeviceId, TrackId};
 use std::borrow::Cow;
@@ -68,6 +69,8 @@ const FIELD_TOP: f32 = 4.0;
 const FIELD_BOTTOM: f32 = 6.0;
 /// Pointer travel before a press becomes a drag (px).
 const DRAG_SLOP: f32 = 3.0;
+/// Resonance given when DJ mode is entered with none (our value; the reference value is unpublished).
+const DJ_RESONANCE: f32 = 0.2;
 const MINUS: char = '\u{2212}';
 
 /// Live state of one parameter drag.
@@ -123,6 +126,8 @@ pub struct PanelState {
     /// Field devices while the transport plays: (last LFO phase, elapsed cycles).
     lfo: HashMap<DeviceId, (f32, f64)>,
     pub(crate) editors: crate::device_editors::ViewState,
+    /// Canvas views (EQ, Auto Filter): hover, drag and selection state.
+    pub(crate) canvas: crate::device_canvas::CanvasUi,
     /// Field views (src/panel_graph.rs): drag, hover and spectrum state.
     pub(crate) graph: crate::panel_graph::GraphState,
 }
@@ -172,6 +177,10 @@ pub(crate) fn reuse_card_models(old: &DeviceCard, new: &mut DeviceCard) {
     keep(&old.knobs, &mut new.knobs);
     keep(&old.picks, &mut new.picks);
     keep(&old.sliders, &mut new.sliders);
+    // EQ chrome: a rebuilt cell would drop its keyboard focus or an inline edit.
+    keep(&old.eq.tabs, &mut new.eq.tabs);
+    keep(&old.eq.glyphs, &mut new.eq.glyphs);
+    keep(&old.eq.cells, &mut new.eq.cells);
     keep(&old.buttons, &mut new.buttons);
     keep(&old.bands.bands, &mut new.bands.bands);
     keep(&old.bands.xovers, &mut new.bands.xovers);
@@ -443,7 +452,7 @@ impl Controller {
         Some((d, saine_core::builtin::def_of(d)?))
     }
 
-    /// Value shown for a parameter: the live drag value, else the model value.
+    /// Value shown for a parameter: the live drag value (knob, field or canvas), else the model value.
     pub(crate) fn panel_value(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
         if let Some(v) = def.index_of(p.id).and_then(|i| self.sampler_live(d.id, i).or_else(|| self.graph_drag_value(d.id, i))) {
             return v;
@@ -453,6 +462,9 @@ impl Controller {
             Some(g) if g.device == d.id && is(g.index) => return g.value,
             Some(ParamDrag { device, linked: Some(l), .. }) if device == d.id && is(l.index) => return l.value,
             _ => {}
+        }
+        if let Some(v) = def.index_of(p.id).and_then(|i| self.devices.panel.canvas.live(d.id, i)) {
+            return v;
         }
         if let Some(f) = self.devices.panel.field.filter(|f| f.device == d.id)
             && let Some((_, _, _, v)) = f.axes.iter().flatten().find(|a| is(a.0))
@@ -556,6 +568,13 @@ impl Controller {
                     ..Default::default()
                 }),
                 (Control::Gap, _) => picks.push(PanelPick { kind: 4, ..Default::default() }),
+                (Control::ModeDropdown { mode, .. }, Some(p)) => {
+                    // The mode's second choice is one more entry of the type menu (Auto Filter: DJ).
+                    let m = def.param(mode);
+                    let alt = m.filter(|m| self.panel_value(d, def, m) >= 0.5);
+                    let value = alt.map_or_else(|| p.format(self.panel_value(d, def, p)), |m| m.choices.get(1).copied().unwrap_or("").to_string());
+                    picks.push(PanelPick { kind: 2, param: idx(p.id), label: s(p.label), value: s(value), enabled: true, width: 57.0 * Z, ..Default::default() });
+                }
                 (Control::Pill(_), Some(p)) if def.is_shown(d, p.id) => picks.push(PanelPick {
                     kind: 3,
                     param: idx(p.id),
@@ -577,19 +596,26 @@ impl Controller {
             picks.push(PanelPick { kind: 4, ..Default::default() });
         }
 
-        // Slider column.
-        let slider_x = width - PAD - SLIDER_W;
+        // Slider column (an EQ's Output slider comes from its view).
+        let eqv = match def.layout.view {
+            Some(View::Eq(v)) => Some(v),
+            _ => None,
+        };
+        let slider_w = eqv.map_or(SLIDER_W, |v| v.slider_w);
+        let slider_x = width - PAD - slider_w;
         let sliders: Vec<PanelSlider> = def
             .layout
             .sliders
             .iter()
-            .filter_map(|c| c.param().and_then(|id| def.param(id)))
+            .filter_map(|c| c.param())
+            .chain(eqv.map(|v| v.output))
+            .filter_map(|id| def.param(id))
             .enumerate()
             .map(|(i, p)| {
                 let v = self.panel_value(d, def, p);
                 PanelSlider {
                     param: idx(p.id),
-                    x: (slider_x - i as f32 * (SLIDER_W + VIEW_GAP)) * Z,
+                    x: (slider_x - i as f32 * (slider_w + VIEW_GAP)) * Z,
                     label: s(p.label),
                     value: s(def.text(live, p, v)),
                     norm: p.to_normalized(v),
@@ -600,9 +626,11 @@ impl Controller {
         let view_right = view_right(def);
 
         // View row.
-        let (mut strip, mut field) = (PanelStrip::default(), PanelField::default());
+        let (mut strip, mut field, mut canvas, mut eq) = (PanelStrip::default(), PanelField::default(), PanelCanvas::default(), PanelEq::default());
         match def.layout.view {
             Some(View::Field(f)) => field = self.field_view(d, def, &f, view_right - PAD),
+            Some(View::Eq(v)) => (canvas, eq) = self.eq_parts(d, def, v, accent),
+            Some(View::Custom("auto-filter")) => canvas = self.auto_filter_field(d, def, accent),
             Some(v) => {
                 if let Some(st) = v.strip() {
                     strip = self.dynamics_strip(d, def, st, view_right - PAD, view_y);
@@ -610,9 +638,10 @@ impl Controller {
             }
             None => {}
         }
+        let (slider_top, slider_bottom) = if eqv.is_some() { (EQ_SLIDER_TOP, EQ_SLIDER_BOTTOM) } else { (view_y + SLIDER_TOP, 174.0) };
         let bands = self.view_field(d, def, live);
         let body = match def.layout.view {
-            Some(View::Custom(name)) => {
+            Some(View::Custom(name)) if name != "auto-filter" => {
                 let view_y = if def.layout.picker.is_empty() { VIEW_Y_NO_PICKER } else { VIEW_Y };
                 self.custom_body(d, def, name, (PAD, view_y, view_right - PAD, VIEW_BOTTOM - view_y))
             }
@@ -712,10 +741,13 @@ impl Controller {
             picks: model(picks),
             sliders: model(sliders),
             strip,
-            slider_top: (view_y + SLIDER_TOP) * Z,
             field,
+            slider_top: slider_top * Z,
+            slider_bottom: slider_bottom * Z,
+            slider_w: slider_w * Z,
+            canvas: if canvas.visible { canvas } else { body.canvas },
+            eq,
             bands,
-            canvas: body.canvas,
             buttons: model(body.buttons),
             ..Default::default()
         };
@@ -903,10 +935,23 @@ impl Controller {
             .filter(|d| saine_core::builtin::def_of(d).is_some_and(|def| matches!(def.layout.view, Some(View::Custom(n)) if n != GAIN_SCOPE)))
             .map(|d| d.id)
             .collect();
+        let canvases: Vec<DeviceId> = t
+            .devices
+            .iter()
+            .filter(|d| saine_core::builtin::def_of(d).is_some_and(|def| matches!(def.layout.view, Some(View::Eq(_)) | Some(View::Custom("auto-filter")))))
+            .map(|d| d.id)
+            .collect();
         let scopes: Vec<DeviceId> =
             t.devices.iter().filter(|d| saine_core::builtin::def_of(d).is_some_and(|def| def.layout.view == Some(View::Custom(GAIN_SCOPE)))).map(|d| d.id).collect();
         self.devices.panel.meters.retain(|id, _| strips.iter().any(|(s, _)| s == id) || scopes.contains(id));
         let mut out = Vec::new();
+        self.devices.panel.canvas.readouts.retain(|id, _| canvases.contains(id));
+        for id in canvases {
+            if self.engine.builtin_readouts(id.0, &mut out).is_ok() && self.devices.panel.canvas.readouts.get(&id) != Some(&out) {
+                self.devices.panel.canvas.readouts.insert(id, out.clone());
+                self.ui_dirty = true;
+            }
+        }
         for id in scopes {
             // Raw frames (output peak, pre-clip peak, gain dB); parked after silence.
             let next = match self.engine.builtin_readouts(id.0, &mut out) {
@@ -1321,17 +1366,9 @@ impl Controller {
 
     /// Sidechain picker (-1), presets (-2) or the choices of parameter `which` (>= 0) at window x, y.
     pub fn panel_menu(&mut self, device: DeviceId, which: i32, x: f32, y: f32) {
-        if which >= 0 {
-            return self.sampler_choice_menu(device, which as usize, x, y);
-        }
         let Some((d, def)) = self.panel_def(device) else { return };
         let check = |on: bool| if on { "✓".to_string() } else { String::new() };
         let rows = match which {
-            i if i >= 0 => {
-                let Some(p) = def.params.get(i as usize).filter(|p| p.is_discrete()) else { return };
-                let cur = self.panel_value(d, def, p).round() as i32;
-                p.choices.iter().enumerate().map(|(c, name)| (name.to_string(), check(c as i32 == cur), Some(MenuPick::Choice(device, i, c as i32)), false)).collect()
-            }
             -1 => {
                 let own = self.project().find_device(device).map(|(ti, _)| self.project().tracks[ti].id);
                 let mut rows = vec![("None".to_string(), check(d.sidechain.is_none()), Some(MenuPick::Sidechain(device, None)), false)];
@@ -1347,12 +1384,28 @@ impl Controller {
                 }
                 rows
             }
-            // A dropdown pill: the parameter's choices.
-            i => {
-                let Some(p) = usize::try_from(i).ok().and_then(|i| def.params.get(i)) else { return };
+            param if param >= 0 => {
+                let Some(p) = def.params.get(param as usize).filter(|p| p.is_discrete()) else { return };
                 let cur = def.value(d, p).round() as usize;
-                p.choices.iter().enumerate().map(|(k, c)| (c.to_string(), check(k == cur), Some(MenuPick::Choice(device, i, k as i32)), false)).collect()
+                let mode = def.layout.picker.iter().find_map(|c| match c {
+                    Control::ModeDropdown { param: q, mode } if *q == p.id => def.param(mode),
+                    _ => None,
+                });
+                let in_mode = mode.is_some_and(|m| def.value(d, m) >= 0.5);
+                let is_bank = matches!(def.layout.view, Some(View::Eq(v)) if v.bank == Some(p.id));
+                let mut rows: Vec<_> = p
+                    .choices
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| (c.to_string(), check(!in_mode && i == cur), Some(if is_bank || mode.is_some() { MenuPick::Param(device, param as usize, i as f32) } else { MenuPick::Choice(device, param, i as i32) }), false))
+                    .collect();
+                if let Some(m) = mode {
+                    let name = m.choices.get(1).copied().unwrap_or("");
+                    rows.push((name.to_string(), check(in_mode), Some(MenuPick::Mode(device, param as usize, def.index_of(m.id).unwrap_or(0))), false));
+                }
+                rows
             }
+            _ => return,
         };
         self.devices.menu = Some(DevMenu { pos: (x, y), w: 180.0, rows });
         self.ui_dirty = true;
@@ -1570,3 +1623,42 @@ mod tests {
     }
 }
 
+impl Controller {
+    /// A parameter menu row: Bank re-snaps the EQ bands; a type menu that
+    /// shares a mode switch also leaves the mode (Auto Filter: DJ -> Filter).
+    pub(crate) fn panel_pick_param(&mut self, device: DeviceId, param: usize, value: f32) {
+        let Some((d, def)) = self.panel_def(device) else { return };
+        let Some(p) = def.params.get(param) else { return };
+        if let Some(View::Eq(v)) = def.layout.view
+            && v.bank == Some(p.id)
+        {
+            return self.panel_pick_bank(device, param, value);
+        }
+        let mode = def.layout.picker.iter().find_map(|c| match c {
+            Control::ModeDropdown { param: q, mode } if *q == p.id => def.param(mode),
+            _ => None,
+        });
+        let mut commands = vec![Command::SetDeviceParam { device, param: p.id.into(), value }];
+        if let Some(m) = mode.filter(|m| def.value(d, m) >= 0.5) {
+            commands.push(Command::SetDeviceParam { device, param: m.id.into(), value: 0.0 });
+        } else if def.value(d, p) == value {
+            return;
+        }
+        self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands });
+    }
+
+    /// The mode entry of a type menu: switches the mode on. Entering Auto
+    /// Filter's DJ mode with no resonance gives it a little, so the sweep is audible.
+    pub(crate) fn panel_pick_mode(&mut self, device: DeviceId, mode: usize) {
+        let Some((d, def)) = self.panel_def(device) else { return };
+        let Some(m) = def.params.get(mode) else { return };
+        if def.value(d, m) >= 0.5 {
+            return;
+        }
+        let mut commands = vec![Command::SetDeviceParam { device, param: m.id.into(), value: 1.0 }];
+        if let Some(r) = def.param("resonance").filter(|r| def.value(d, r) <= 0.0) {
+            commands.push(Command::SetDeviceParam { device, param: r.id.into(), value: DJ_RESONANCE });
+        }
+        self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands });
+    }
+}

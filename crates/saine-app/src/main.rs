@@ -20,6 +20,7 @@ mod assistant_provider;
 mod automation;
 mod clipedit;
 mod controller;
+mod device_canvas;
 mod device_mod;
 mod device_fields;
 mod device_panel;
@@ -396,7 +397,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
-            if c.canvas_cancel() || c.panel_cancel_drag() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
+            if c.canvas_cancel() || c.panel_cancel_drag() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
                 return true;
             }
             if c.settings.menu.is_some() {
@@ -1033,7 +1034,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             EventResult::Propagate
         });
     }
-    on!(on_panel_graph, |c, id: i32, phase: i32, x: f32, y: f32, fine: bool, alt: bool| c.panel_graph(saine_core::DeviceId(id as u64), phase, x, y, fine, alt));
+    on!(on_panel_graph, |c, id: i32, phase: i32, x: f32, y: f32, fine: bool, alt: bool| {
+        let id = saine_core::DeviceId(id as u64);
+        if c.is_canvas_device(id) { c.panel_canvas(id, phase, x, y, alt, fine) } else { c.panel_graph(id, phase, x, y, fine, alt) }
+    });
+    on!(on_panel_eq, |c, id: i32, action: i32, value: i32| c.panel_eq(saine_core::DeviceId(id as u64), action, value));
+    {
+        // Canvas wheel / keys (EQ, Auto Filter) answer whether they used the event, so they cannot go through on!.
+        let (ctl1, aw1) = (ctl.clone(), app.as_weak());
+        studio.on_panel_graph_wheel(move |id, x, y, dy| {
+            let used = ctl1.borrow_mut().panel_canvas_wheel(saine_core::DeviceId(id as u64), x, y, dy);
+            if let Some(a) = aw1.upgrade() {
+                if let Ok(mut c) = ctl1.try_borrow_mut() { c.update_ui(&a); }
+                a.window().request_redraw();
+            }
+            used
+        });
+        let (ctl2, aw2) = (ctl.clone(), app.as_weak());
+        studio.on_panel_graph_key(move |id, key, shift, alt| {
+            let used = ctl2.borrow_mut().panel_canvas_key(saine_core::DeviceId(id as u64), key.as_str(), shift, alt);
+            if let Some(a) = aw2.upgrade() {
+                if let Ok(mut c) = ctl2.try_borrow_mut() { c.update_ui(&a); }
+                a.window().request_redraw();
+            }
+            used
+        });
+    }
     on!(on_chain_scroll_by, |c, d: f32| c.chain_scroll_by(d));
     on!(on_add_category, |c, i: i32, x: f32, y: f32| c.add_category(i.max(0) as usize, x, y));
     on!(on_add_search_edited, |c, t: slint::SharedString| c.add_search(t.as_str()));

@@ -546,7 +546,7 @@ impl Controller {
         for p in &pills {
             let x = if p.x < 0.0 { next_x } else { p.x };
             next_x = x + pill_width(p) + 8.0 * Z;
-            grips.push(PanelGrip { x, y: p.y, label: s(p.label), value: s(p.value.as_str()), hot: p.hot });
+            grips.push(PanelGrip { x, y: p.y, label: s(p.label), value: s(p.value.as_str()), hot: p.hot, ..Default::default() });
         }
         PanelCanvas {
             visible: true,
@@ -566,6 +566,7 @@ impl Controller {
             interactive: false,
             cursor,
             readout_accent: true,
+            ..Default::default()
         }
     }
 
