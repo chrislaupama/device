@@ -32,6 +32,8 @@ const std::thread::id g_initial_thread = std::this_thread::get_id();
 } // namespace
 #endif
 
+// True on the process's main thread (macOS: the Cocoa main thread; Linux:
+// the initial thread; Windows: the thread that ran the static initialisers).
 bool on_platform_main_thread() noexcept {
 #if defined(__APPLE__)
     return pthread_main_np() != 0;

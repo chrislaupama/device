@@ -979,13 +979,15 @@ typedef struct se_builtin_desc {
  * state: the v1 header extended by the sample table. After the header come
  * value_count float32 values, then sample_count se_builtin_sample entries,
  * then slice_count se_builtin_slice entries (each sample's slices in table
- * order). Every asset_id names an asset loaded with se_asset_load_file; an
+ * order), then route_count se_mod_route entries (modulation sources, see
+ * "modulation" below). Every asset_id names an asset loaded with se_asset_load_file; an
  * unknown asset leaves its slot empty. Slots must be < the device's
  * sample_slots and unique; slices start in [0, 1) and ascend. The engine
  * keeps a reference to every asset a live device uses, so releasing an
  * asset while a device plays it is safe. Validation (else
- * SE_ERR_INVALID_ARG): state_len == 24 + 4 * value_count + 16 *
- * sample_count + 16 * slice_count, slice counts add up, values finite. */
+ * SE_ERR_INVALID_ARG): state_len == 32 + 4 * value_count + 16 *
+ * sample_count + 16 * slice_count + 40 * route_count, slice counts add up,
+ * values finite. */
 #define SE_BUILTIN_STATE_MAGIC2 0x32494253u /* "SBI2" */
 #define SE_BUILTIN_MAX_SLICES 128
 
@@ -995,7 +997,9 @@ typedef struct se_builtin_state_v2 {
     uint64_t sidechain_track_id;  /* 0 = no sidechain */
     uint32_t sample_count;
     uint32_t slice_count;         /* total over all samples */
-} se_builtin_state_v2; /* 24 bytes, align 8 */
+    uint32_t route_count;         /* se_mod_route entries after the slices */
+    uint32_t _pad;
+} se_builtin_state_v2; /* 32 bytes, align 8 */
 
 typedef struct se_builtin_sample {
     uint64_t asset_id;
@@ -1037,6 +1041,60 @@ int32_t se_builtin_readouts(se_engine* engine, uint64_t device_id, float* out, s
  * MAIN THREAD. Unknown or non-built-in device -> SE_ERR_NOT_FOUND. */
 int32_t se_builtin_analysis(se_engine* engine, uint64_t device_id, float* out, size_t capacity, size_t* out_count,
                             uint64_t* out_seq);
+
+/* ---- modulation (ABI v1 addition) -----------------------------------------
+ * See docs/devices.md ("Modulation") and saine_core::modulation.
+ *
+ * A built-in device that is a modulation source (registry ids "lfo" and
+ * "device-rack") lists the parameters it moves in the route table of its v2
+ * state (se_builtin_state_v2): route_count se_mod_route records after the
+ * slices (read with memcpy; no alignment). SE_BUILTIN_STATE_MAGIC blobs
+ * carry no routes. Validation (else SE_ERR_INVALID_ARG): values and ranges
+ * finite, kind <= SE_MOD_PLUGIN.
+ *
+ * Every SE_MOD_GRID_FRAMES frames of a block the engine evaluates each
+ * enabled source of a track (its automation applied) and applies its routes
+ * to targets on the same track (inserts or the instrument plugin; others are
+ * inactive), in the target parameter's normalized 0..1 domain:
+ *   n = (absolute route ? min + (max - min) * value : normalized base)
+ *       + sum over additive routes of gain * (min + (max - min) * value)
+ * clamped to 0..1 (the last absolute route wins). Source outputs: an LFO has
+ * one (value = wave position 0..1, gain = Depth); a chain head has eight
+ * macros (value = macro / 100, gain 1, routes absolute). Built-in targets:
+ * base = the parameter's plain value (automation included), normalized with
+ * the route's plain range and taper (log: ln(v / p_min) / ln(p_max / p_min);
+ * linear: ((v - p_min) / (p_max - p_min))^p_skew) and converted back the same
+ * way, then snapped to p_step. Plugin targets: base = the value the
+ * parameter had when its first route appeared, or its automation lane, or
+ * the last se_plugin_set_param; modulated values are sent as parameter
+ * events and the base is restored when the last route goes away. */
+#define SE_MOD_GRID_FRAMES 32u
+enum { SE_MOD_BUILTIN = 0, SE_MOD_PLUGIN = 1 };
+
+typedef struct se_mod_route {
+    uint64_t target_device_id; /* an insert or the instrument plugin of the same track */
+    uint32_t param_id;         /* SE_MOD_BUILTIN: parameter index; SE_MOD_PLUGIN: format id */
+    uint8_t kind;              /* SE_MOD_* */
+    uint8_t slot;              /* source output (macro index; 0 for an LFO) */
+    uint8_t absolute;          /* != 0: sets the value (macros) instead of adding */
+    uint8_t log;               /* SE_MOD_BUILTIN: logarithmic taper */
+    float min;                 /* link range, normalized domain */
+    float max;
+    float p_min;               /* SE_MOD_BUILTIN: plain range, skew and step of the target */
+    float p_max;
+    float p_skew;
+    float p_step;
+} se_mod_route; /* 40 bytes, align 8 */
+
+/* Set a plugin parameter from the host (a plugin card control), normalized
+ * 0..1; delivered at the next processed block. A modulated parameter keeps
+ * the value as its base. MAIN THREAD. Unknown or failed device, built-in
+ * device or unknown parameter -> SE_ERR_NOT_FOUND; value not finite ->
+ * SE_ERR_INVALID_ARG. */
+int32_t se_plugin_set_param(se_engine* engine, uint64_t device_id, uint32_t param_id, float normalized);
+/* Base value of a modulated plugin parameter (what its card shows).
+ * SE_ERR_NOT_FOUND when the parameter is not modulated. MAIN THREAD. */
+int32_t se_mod_base(se_engine* engine, uint64_t device_id, uint32_t param_id, float* out_normalized);
 
 /* Play a note on a live built-in instrument right away (pads, auditions,
  * previews), on top of the notes of its track. velocity 1..127 = note on,

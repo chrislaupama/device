@@ -338,6 +338,26 @@ pub const SE_AUTO_BUILTIN: u8 = 4;
 // ---- built-in devices (state blob, registry)
 pub const SE_BUILTIN_STATE_MAGIC: u32 = 0x3149_4253;
 pub const SE_BUILTIN_MAX_SIDECHAINS: usize = 8;
+pub const SE_MOD_GRID_FRAMES: u32 = 32;
+pub const SE_MOD_BUILTIN: u8 = 0;
+pub const SE_MOD_PLUGIN: u8 = 1;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct se_mod_route {
+    pub target_device_id: u64,
+    pub param_id: u32,
+    pub kind: u8,
+    pub slot: u8,
+    pub absolute: u8,
+    pub log: u8,
+    pub min: f32,
+    pub max: f32,
+    pub p_min: f32,
+    pub p_max: f32,
+    pub p_skew: f32,
+    pub p_step: f32,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -372,6 +392,8 @@ pub struct se_builtin_state_v2 {
     pub sidechain_track_id: u64,
     pub sample_count: u32,
     pub slice_count: u32,
+    pub route_count: u32,
+    pub _pad: u32,
 }
 
 #[repr(C)]
@@ -693,6 +715,10 @@ unsafe extern "C" {
     pub fn se_builtin_set_param(engine: *mut se_engine, device_id: u64, index: u32, value: f32) -> i32;
     pub fn se_builtin_readouts(engine: *mut se_engine, device_id: u64, out: *mut f32, capacity: usize, out_count: *mut usize) -> i32;
     pub fn se_builtin_analysis(engine: *mut se_engine, device_id: u64, out: *mut f32, capacity: usize, out_count: *mut usize, out_seq: *mut u64) -> i32;
+
+    // modulation
+    pub fn se_plugin_set_param(engine: *mut se_engine, device_id: u64, param_id: u32, normalized: f32) -> i32;
+    pub fn se_mod_base(engine: *mut se_engine, device_id: u64, param_id: u32, out_normalized: *mut f32) -> i32;
     pub fn se_builtin_note(engine: *mut se_engine, device_id: u64, pitch: u8, velocity: u8) -> i32;
 }
 
@@ -1025,9 +1051,17 @@ mod abi_layout {
         assert_eq!([offset_of!(se_builtin_state, value_count), offset_of!(se_builtin_state, sidechain_track_id)], [4, 8]);
         assert_eq!((size_of::<se_builtin_desc>(), align_of::<se_builtin_desc>()), (48, 8));
         assert_eq!([offset_of!(se_builtin_desc, sample_slots), offset_of!(se_builtin_desc, instrument)], [40, 44]);
-        assert_eq!((size_of::<se_builtin_state_v2>(), align_of::<se_builtin_state_v2>()), (24, 8));
-        assert_eq!([offset_of!(se_builtin_state_v2, sample_count), offset_of!(se_builtin_state_v2, slice_count)], [16, 20]);
+        assert_eq!((size_of::<se_builtin_state_v2>(), align_of::<se_builtin_state_v2>()), (32, 8));
+        assert_eq!(
+            [offset_of!(se_builtin_state_v2, sample_count), offset_of!(se_builtin_state_v2, slice_count), offset_of!(se_builtin_state_v2, route_count)],
+            [16, 20, 24]
+        );
         assert_eq!((size_of::<se_builtin_sample>(), size_of::<se_builtin_slice>()), (16, 16));
+        assert_eq!((size_of::<se_mod_route>(), align_of::<se_mod_route>()), (40, 8));
+        assert_eq!(
+            [offset_of!(se_mod_route, param_id), offset_of!(se_mod_route, kind), offset_of!(se_mod_route, log), offset_of!(se_mod_route, min), offset_of!(se_mod_route, p_step)],
+            [8, 12, 15, 16, 36]
+        );
         assert_eq!(
             [
                 offset_of!(se_builtin_desc, param_ids),

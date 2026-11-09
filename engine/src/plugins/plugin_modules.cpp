@@ -102,6 +102,9 @@ std::string vst3_binary_path(const std::string& path) {
 #endif
 }
 
+// Loads a shared library (Windows: LoadLibraryExW on the absolute path, so the
+// plugin's folder is searched for its DLLs; elsewhere: dlopen). nullptr with
+// `err` set on failure.
 void* open_library(const std::string& path, std::string& err) {
 #if defined(_WIN32)
     // Altered search path: the plugin's own folder is searched for the DLLs
@@ -131,6 +134,7 @@ void* open_library(const std::string& path, std::string& err) {
 #endif
 }
 
+// Looks up an exported symbol in a library from open_library(); nullptr if absent.
 void* find_symbol(void* lib, const char* name) {
 #if defined(_WIN32)
     return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(lib), name));
@@ -139,6 +143,7 @@ void* find_symbol(void* lib, const char* name) {
 #endif
 }
 
+// find_symbol() cast to a function-pointer type.
 template <class Fn> Fn find_function(void* lib, const char* name) {
     return reinterpret_cast<Fn>(find_symbol(lib, name));
 }
@@ -147,6 +152,7 @@ template <class Fn> Fn find_function(void* lib, const char* name) {
 
 } // namespace
 
+// Deinitialises the CLAP entry (macOS: also releases the bundle).
 ClapModule::~ClapModule() {
     if (entry != nullptr) entry->deinit();
 #if defined(__APPLE__)
@@ -154,6 +160,7 @@ ClapModule::~ClapModule() {
 #endif
 }
 
+// Releases the factory and calls the module's exit function.
 Vst3Module::~Vst3Module() {
     if (factory != nullptr) factory->release();
     if (exit != nullptr) exit();
@@ -162,6 +169,8 @@ Vst3Module::~Vst3Module() {
 #endif
 }
 
+// Loads (or reuses, while still referenced) the CLAP module at `path` and
+// initialises its clap_entry. nullptr with `err` set on failure.
 std::shared_ptr<ClapModule> load_clap_module(const std::string& path, std::string& err) {
     std::lock_guard lock(g_modules_mutex);
     if (auto it = g_clap_modules.find(path); it != g_clap_modules.end())
@@ -215,6 +224,10 @@ std::shared_ptr<ClapModule> load_clap_module(const std::string& path, std::strin
 #endif
 }
 
+// Loads (or reuses, while still referenced) the VST3 module at `path`, runs
+// its platform entry function and gets its factory. A bundle directory
+// resolves to the binary for this architecture. nullptr with `err` set on
+// failure.
 std::shared_ptr<Vst3Module> load_vst3_module(const std::string& path, std::string& err) {
     std::lock_guard lock(g_modules_mutex);
     if (auto it = g_vst3_modules.find(path); it != g_vst3_modules.end())
@@ -300,6 +313,8 @@ std::shared_ptr<Vst3Module> load_vst3_module(const std::string& path, std::strin
 // in little-endian order. Converting here keeps ids saved in projects
 // identical across platforms.
 namespace {
+// Position (in bytes) of the in-memory TUID byte `memory_index` in the
+// canonical text order.
 constexpr int text_index(int memory_index) {
 #if COM_COMPATIBLE
     constexpr int kComOrder[16] = {3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15};
@@ -310,6 +325,8 @@ constexpr int text_index(int memory_index) {
 }
 } // namespace
 
+// Formats a VST3 class id as 32 uppercase hex digits in the canonical
+// (platform-independent) order.
 std::string vst3_uid_to_string(const char uid[16]) {
     static const char* hex = "0123456789ABCDEF";
     std::string s(32, '0');
@@ -322,6 +339,7 @@ std::string vst3_uid_to_string(const char uid[16]) {
     return s;
 }
 
+// Parses 32 hex digits in the canonical order into a TUID; false if malformed.
 bool vst3_uid_from_string(const std::string& s, char uid[16]) {
     if (s.size() != 32) return false;
     const auto nib = [](char c) -> int {

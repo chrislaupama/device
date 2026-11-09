@@ -1567,7 +1567,7 @@ fn device_steps() -> Vec<Step> {
         })),
         Do("devices: drag the AUDelay card (header) before AULowpass", Box::new(|a| {
             if let (Some(lp), Some(dl)) = (card_named(a, "AULowpass"), card_named(a, "AUDelay")) {
-                let (x0, y0) = card_xy(&dl, 110.0, 13.0);
+                let (x0, y0) = card_xy(&dl, 140.0, 13.0);
                 let (x1, _) = card_xy(&lp, 30.0, 13.0);
                 drag(a, x0, y0, x1, y0);
             }
@@ -1615,7 +1615,7 @@ fn device_steps() -> Vec<Step> {
             }
             let Some(cd) = card_named(a, "AULowpass") else { return };
             let id = saine_core::DeviceId(cd.id as u64);
-            let (x, y) = card_xy(&cd, crate::devices::CARD_W - 35.5, 13.5);
+            let (x, y) = card_xy(&cd, crate::devices::CARD_W - 56.5, 13.5);
             click(a, x, y);
             let (opened, err) = {
                 let c = ctl.borrow();
@@ -1625,7 +1625,7 @@ fn device_steps() -> Vec<Step> {
                 c.update_ui(a);
             }
             if let Some(cd) = card_named(a, "AULowpass") {
-                let (x, y) = card_xy(&cd, crate::devices::CARD_W - 35.5, 13.5);
+                let (x, y) = card_xy(&cd, crate::devices::CARD_W - 56.5, 13.5);
                 click(a, x, y);
             }
             let closed = !ctl.borrow().engine.plugin_editor_is_open(id);
@@ -2401,9 +2401,16 @@ fn analyzer_device_steps() -> Vec<Step> {
     let hist = Rc::new(Cell::new(0usize));
     let (h0, h1) = (hist.clone(), hist.clone());
     vec![
-        DoC("analyzers: add Pitch Corrector, Tuner and Spectrum to the audio track", Box::new(move |a, ctl| {
+        DoC("analyzers: select the audio track, clear its chain, add Pitch Corrector, Tuner and Spectrum", Box::new(move |a, ctl| {
+            key(a, Key::Escape, false, false);
+            let Some(i) = track_of(&ctl.borrow(), TrackKind::Audio) else { return };
+            click_track_header(a, ctl, i);
             let mut c = ctl.borrow_mut();
-            let Some(t) = track_of(&c, TrackKind::Audio).map(|i| c.project().tracks[i].id) else { return };
+            let t = c.project().tracks[i].id;
+            let ids: Vec<saine_core::DeviceId> = c.project().tracks[i].devices.iter().map(|d| d.id).collect();
+            for d in ids {
+                c.execute(saine_core::Command::RemoveDevice { device: d });
+            }
             for id in ["pitch-corrector", "tuner", "spectrum"] {
                 if let Some(def) = saine_core::builtin::find(id) {
                     c.add_item_to_track(&crate::devices::Item::Builtin(def), t, None);
@@ -2477,6 +2484,273 @@ fn analyzer_device_steps() -> Vec<Step> {
             let def = saine_core::builtin::def_of(d).ok_or("no def")?;
             let f = def.param("key_follow").map(|p| def.value(d, p));
             (f == Some(1.0)).then_some(()).ok_or(format!("follow {f:?}"))
+        })),
+        DoC("analyzers: remove the three devices and the project key", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.execute(saine_core::Command::SetProjectKey { key: None });
+            for id in ["pitch-corrector", "tuner", "spectrum"] {
+                if let Some(d) = analyzer_device(&c, id).map(|d| d.id) {
+                    c.execute(saine_core::Command::RemoveDevice { device: d });
+                }
+            }
+            c.update_ui(a);
+        })),
+        Check("analyzers: the audio track's chain is empty again", Box::new(|c, _| {
+            let t = track_of(c, TrackKind::Audio).ok_or("no audio track")?;
+            let n = c.project().tracks[t].devices.len();
+            (n == 0 && c.project().transport.key.is_none()).then_some(()).ok_or(format!("{n} devices left, key {:?}", c.project().transport.key))
+        })),
+    ]
+}
+
+// ------------------------------------------------------------------ modulation and containers
+
+fn device_where(c: &Controller, f: impl Fn(&saine_core::Device) -> bool) -> Option<saine_core::Device> {
+    let t = track_of(c, TrackKind::Audio)?;
+    c.project().tracks[t].devices.iter().find(|d| f(d)).cloned()
+}
+
+fn lfo_device(c: &Controller) -> Option<saine_core::Device> {
+    device_where(c, saine_core::modulation::is_lfo)
+}
+
+fn chain_head(c: &Controller) -> Option<saine_core::Device> {
+    device_where(c, saine_core::modulation::is_rack)
+}
+
+/// LFO from a control's menu, chain head with a member and a macro, folding,
+/// collapsing, the swap picker and the plugin card's "+ Add".
+fn modulation_steps() -> Vec<Step> {
+    use Step::*;
+    let hist = Rc::new(Cell::new(0usize));
+    let h = || hist.clone();
+    fn one(hc: &Rc<Cell<usize>>, c: &Controller, label: &str) -> Result<(), String> {
+        let n = c.doc.history_labels().len();
+        let was = hc.get();
+        hc.set(n);
+        (n == was + 1 && c.doc.undo_label() == Some(label)).then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want {label})", c.doc.undo_label()))
+    }
+    let first_comp = |c: &Controller| device_where(c, |d| d.plugin.id == "compressor" && d.chain.is_none()).map(|d| d.id);
+    let (h0, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11) = (h(), h(), h(), h(), h(), h(), h(), h(), h(), h(), h(), h());
+    vec![
+        DoC("modulation: right-click the Compressor's Threshold knob", Box::new(move |a, ctl| {
+            key(a, Key::Escape, false, false);
+            h0.set(ctl.borrow().doc.history_labels().len());
+            let Some(id) = first_comp(&ctl.borrow()) else { return };
+            a.global::<Studio>().invoke_mod_menu(id.0 as i32, 0, 600.0, 500.0);
+        })),
+        Check("modulation: the control menu offers Automate Threshold and Modulators › New LFO", Box::new(|_, a| {
+            let items = devmenu_labels(a);
+            (items.iter().any(|r| r.0 == "Automate Threshold" && r.2) && items.iter().any(|r| r.0 == "New LFO" && r.2)).then_some(()).ok_or(format!("items {items:?}"))
+        })),
+        Do("modulation: pick New LFO", Box::new(|a| {
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == "New LFO") {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })),
+        Check("modulation: an LFO at the chain start aims at Threshold (±25%) in one undo step; its card lists the target; the knob shows the reach", Box::new(move |c, a| {
+            one(&h1, c, "New LFO")?;
+            let t = track_of(c, TrackKind::Audio).ok_or("no audio track")?;
+            let lfo = c.project().tracks[t].devices.first().filter(|d| saine_core::modulation::is_lfo(d)).ok_or("no LFO first")?;
+            let l = lfo.links.first().ok_or("no link")?;
+            let cd = card_named(a, "LFO").ok_or("no LFO card")?;
+            let comp = card_named(a, "Compressor").and_then(|cd| slint::Model::row_data(&cd.knobs, 0)).ok_or("no knob")?;
+            let row = slint::Model::row_data(&cd.modv.targets, 0).ok_or("no target row")?;
+            (l.param == saine_core::ModParam::Builtin("threshold".into()) && approx(l.max, 0.25, 1e-6) && approx(l.min, -0.25, 1e-6) && cd.modv.kind == 1 && row.amount == "25%" && comp.mod_on && comp.mod_hi > comp.mod_lo)
+                .then_some(())
+                .ok_or(format!("link {l:?} card kind {} row {:?} knob reach {}..{}", cd.modv.kind, row.amount, comp.mod_lo, comp.mod_hi))
+        })),
+        Check("engine: the LFO is live and reports its readouts (position, depth, cycle)", Box::new(|c, _| {
+            let id = lfo_device(c).ok_or("no LFO")?.id;
+            let mut r = Vec::new();
+            c.engine.builtin_readouts(id.0, &mut r).map_err(|e| e.to_string())?;
+            (r.len() == 3).then_some(()).ok_or(format!("readouts {r:?}"))
+        })),
+        DoC("modulation: drag the target amount up 30 px", Box::new(|_, ctl| {
+            let Some(id) = lfo_device(&ctl.borrow()).map(|d| d.id) else { return };
+            let mut c = ctl.borrow_mut();
+            c.mod_amount_drag(id, 0, 0, 0.0, false);
+            for _ in 0..30 {
+                c.mod_amount_drag(id, 0, 1, 1.0, false);
+            }
+            c.mod_amount_drag(id, 0, 2, 0.0, false);
+        })),
+        Check("modulation: amount 25% → 45% (±), one undo step", Box::new(move |c, _| {
+            one(&h2, c, "Modulation Amount Change")?;
+            let l = lfo_device(c).and_then(|d| d.links.first().cloned()).ok_or("no link")?;
+            (approx(l.max, 0.45, 1e-4) && approx(l.min, -l.max, 1e-6)).then_some(()).ok_or(format!("link {l:?}"))
+        })),
+        Do("modulation: fold the LFO (header −)", Box::new(|a| {
+            if let Some(cd) = card_named(a, "LFO") {
+                let (x, y) = card_xy(&cd, cd.width - 35.5, 13.5);
+                click(a, x, y);
+            }
+        })),
+        Check("modulation: the LFO folds to a 30 pt strip, one undo step", Box::new(move |c, a| {
+            one(&h3, c, "Fold Device")?;
+            let cd = card_named(a, "LFO").ok_or("no card")?;
+            (cd.folded && approx(cd.width, crate::device_mod::FOLDED_W, 0.01)).then_some(()).ok_or(format!("folded {} width {}", cd.folded, cd.width))
+        })),
+        Do("modulation: click the folded strip", Box::new(|a| {
+            if let Some(cd) = card_named(a, "LFO") {
+                let (x, y) = card_xy(&cd, 15.0, 150.0);
+                click(a, x, y);
+            }
+        })),
+        Check("modulation: a click unfolds it, one undo step", Box::new(move |c, a| {
+            one(&h4, c, "Unfold Device")?;
+            card_named(a, "LFO").is_some_and(|cd| !cd.folded).then_some(()).ok_or("still folded".into())
+        })),
+        DoC("chain: Add device › Chains", Box::new(|a, ctl| {
+            // The Add device card is scrolled out of view by now: use its row callback.
+            a.global::<Studio>().invoke_add_category(4, 600.0, 300.0);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+        })),
+        Do("chain: pick Empty chain", Box::new(|a| {
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == "Empty chain") {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })),
+        Check("chain: a chain head with 8 macros, one undo step; its empty frame offers Add effect", Box::new(move |c, a| {
+            one(&h5, c, "Add Chain")?;
+            let cd = card_named(a, "Chain").ok_or("no Chain card")?;
+            let frames = a.global::<Studio>().get_chain_frames();
+            let f = slint::Model::row_data(&frames, 0).ok_or("no frame")?;
+            (cd.modv.kind == 2 && slint::Model::row_count(&cd.knobs) == 8 && f.empty).then_some(()).ok_or(format!("kind {} macros {} empty {}", cd.modv.kind, slint::Model::row_count(&cd.knobs), f.empty))
+        })),
+        DoC("chain: Add effect › Compressor", Box::new(|a, ctl| {
+            let Some(head) = chain_head(&ctl.borrow()).map(|d| d.id) else { return };
+            a.global::<Studio>().invoke_chain_add_effect(head.0 as i32, 600.0, 300.0);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == "Compressor") {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })),
+        Check("chain: the Compressor joins the chain right after the head, one undo step; the frame wraps it", Box::new(move |c, a| {
+            one(&h6, c, "Add Compressor")?;
+            let head = chain_head(c).ok_or("no head")?;
+            let member = device_where(c, |d| d.chain == Some(head.id)).ok_or("no member")?;
+            let f = slint::Model::row_data(&a.global::<Studio>().get_chain_frames(), 0).ok_or("no frame")?;
+            (member.plugin.id == "compressor" && !f.empty).then_some(()).ok_or(format!("member {:?} empty {}", member.plugin.id, f.empty))
+        })),
+        DoC("chain: open Macro 1, press Map, click the member's Threshold knob", Box::new(|_, ctl| {
+            let (head, member) = {
+                let c = ctl.borrow();
+                let Some(h) = chain_head(&c) else { return };
+                let Some(m) = device_where(&c, |d| d.chain == Some(h.id)) else { return };
+                (h.id, m.id)
+            };
+            // The member card may be scrolled out of the window: press its knob through the panel callback.
+            let mut c = ctl.borrow_mut();
+            c.macro_select(head, 0);
+            c.mod_map(head, 0);
+            c.panel_drag(member, 0, 0, 0.0, 1.0 / 160.0, false);
+            c.panel_drag(member, 0, 2, 0.0, 1.0 / 160.0, false);
+        })),
+        Check("chain: Macro 1 targets the member's Threshold (one undo step) and is drawn mapped", Box::new(move |c, a| {
+            one(&h7, c, "Add Modulation")?;
+            let head = chain_head(c).ok_or("no head")?;
+            let l = head.links.first().ok_or("no link")?;
+            let cd = card_named(a, "Chain").ok_or("no card")?;
+            let m1 = slint::Model::row_data(&cd.knobs, 0).ok_or("no macro")?;
+            (l.slot == 0 && l.param == saine_core::ModParam::Builtin("threshold".into()) && m1.mapped && m1.selected && slint::Model::row_count(&cd.modv.targets) == 1)
+                .then_some(())
+                .ok_or(format!("link {l:?} mapped {} selected {}", m1.mapped, m1.selected))
+        })),
+        Do("chain: Escape", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("chain: Escape stops mapping", Box::new(|c, _| c.devices.modu.map.is_none().then_some(()).ok_or(format!("map {:?}", c.devices.modu.map)))),
+        DoC("chain: drag Macro 1 to the top", Box::new(|_, ctl| {
+            let Some(head) = chain_head(&ctl.borrow()).map(|d| d.id) else { return };
+            let mut c = ctl.borrow_mut();
+            c.panel_drag(head, 0, 0, 0.0, 1.0 / 100.0, false);
+            c.panel_drag(head, 0, 1, 120.0, 1.0 / 100.0, false);
+            c.panel_drag(head, 0, 2, 0.0, 1.0 / 100.0, false);
+        })),
+        Check("chain: Macro 1 at 100% moves the member's Threshold to the top of its range (shown on the knob)", Box::new(move |c, a| {
+            one(&h8, c, "Device Parameter Change")?;
+            let head = chain_head(c).ok_or("no head")?;
+            let member = device_where(c, |d| d.chain == Some(head.id)).ok_or("no member")?;
+            let k = cards(a).into_iter().find(|cd| cd.id as u64 == member.id.0).and_then(|cd| slint::Model::row_data(&cd.knobs, 0)).ok_or("no knob")?;
+            (k.mod_on && approx(k.mod_now, 1.0, 1e-4)).then_some(()).ok_or(format!("knob now {}", k.mod_now))
+        })),
+        DoC("chain: collapse the chain («)", Box::new(|a, ctl| {
+            let Some(head) = chain_head(&ctl.borrow()).map(|d| d.id) else { return };
+            a.global::<Studio>().invoke_device_collapse(head.0 as i32);
+        })),
+        Check("chain: collapsed, the member's card is hidden (one undo step)", Box::new(move |c, a| {
+            one(&h9, c, "Unfold Device")?;
+            let head = chain_head(c).ok_or("no head")?;
+            let member = device_where(c, |d| d.chain == Some(head.id)).ok_or("no member")?;
+            (head.collapsed && !cards(a).iter().any(|cd| cd.id as u64 == member.id.0)).then_some(()).ok_or("member still shown".into())
+        })),
+        DoC("chain: ✕ on the chain head", Box::new(|a, ctl| {
+            let Some(head) = chain_head(&ctl.borrow()).map(|d| d.id) else { return };
+            if let Some(cd) = cards(a).into_iter().find(|cd| cd.id as u64 == head.0) {
+                let (x, y) = card_xy(&cd, cd.width - 14.5, 13.5);
+                click(a, x, y);
+            }
+        })),
+        Check("chain: removing the head removes its member in one undo step", Box::new(move |c, _| {
+            one(&h10, c, "Remove Chain")?;
+            (chain_head(c).is_none() && device_where(c, |d| d.chain.is_some()).is_none()).then_some(()).ok_or("chain left behind".into())
+        })),
+        Do("chain: ⌘Z", Box::new(|a| key(a, "z", true, false))),
+        Check("chain: undo brings back the head and its member", Box::new(move |c, _| {
+            h11.set(c.doc.history_labels().len());
+            let head = chain_head(c).ok_or(format!("no head; history {:?}", c.doc.history_labels().iter().rev().take(3).collect::<Vec<_>>()))?;
+            device_where(c, |d| d.chain == Some(head.id)).map(|_| ()).ok_or("no member".into())
+        })),
+        DoC("swap: open the Compressor's name menu", Box::new(move |a, ctl| {
+            let Some(id) = first_comp(&ctl.borrow()) else { return };
+            a.global::<Studio>().invoke_device_swap_menu(id.0 as i32, 600.0, 300.0);
+        })),
+        Check("swap: the effect picker marks Compressor and offers a new LFO", Box::new(|_, a| {
+            let items = devmenu_labels(a);
+            (items.iter().any(|r| r.0 == "Compressor" && r.1 == "✓") && items.iter().any(|r| r.0 == "LFO" && r.2)).then_some(()).ok_or(format!("items {items:?}"))
+        })),
+        DoC("plugin card: add the CLAP test gain, open + Add", Box::new(|a, ctl| {
+            key(a, Key::Escape, false, false);
+            let gain = saine_core::PluginRef {
+                format: saine_core::PluginFormat::Clap,
+                id: "studio.saine.test.gain".into(),
+                path: Some(saine_engine::test_plugin_dir().join("SaineTestGain.clap").to_string_lossy().into_owned()),
+                name: "Saine Test Gain".into(),
+                vendor: "Saine".into(),
+                version: "1.0.0".into(),
+                kind: saine_core::PluginKind::Effect,
+            };
+            let id = {
+                let mut c = ctl.borrow_mut();
+                let Some(t) = track_of(&c, TrackKind::Audio).map(|i| c.project().tracks[i].id) else { return };
+                c.add_item_to_track(&crate::devices::Item::Plugin(gain), t, None);
+                c.update_ui(a);
+                c.project().track(t).and_then(|t| t.devices.last()).map(|d| d.id)
+            };
+            if let Some(id) = id {
+                a.global::<Studio>().invoke_card_add_menu(id.0 as i32, 600.0, 300.0);
+            }
+        })),
+        Check("plugin card: a new card shows only + Add; the list names the plugin's parameters", Box::new(|_, a| {
+            let cd = card_named(a, "Saine Test Gain").ok_or("no card")?;
+            let items = devmenu_labels(a);
+            (!cd.builtin && slint::Model::row_count(&cd.knobs) == 0 && items.iter().any(|r| r.2)).then_some(()).ok_or(format!("knobs {} items {items:?}", slint::Model::row_count(&cd.knobs)))
+        })),
+        Do("plugin card: pick the first parameter", Box::new(|a| {
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.2) {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })),
+        Check("plugin card: the control is on the card (SetCardParams, one undo step)", Box::new(|c, a| {
+            let cd = card_named(a, "Saine Test Gain").ok_or("no card")?;
+            (c.doc.undo_label() == Some("Device Controls Change") && slint::Model::row_count(&cd.knobs) == 1).then_some(()).ok_or(format!("last {:?} knobs {}", c.doc.undo_label(), slint::Model::row_count(&cd.knobs)))
         })),
     ]
 }
@@ -2962,6 +3236,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(recording_steps());
     all.extend(platform_device_steps());
     all.extend(builtin_device_steps());
+    all.extend(modulation_steps());
     all.extend(builtin_each_steps());
     all.extend(modulation_device_steps());
     all.extend(restoration_device_steps());

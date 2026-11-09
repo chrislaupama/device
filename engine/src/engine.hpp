@@ -16,6 +16,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -114,6 +115,9 @@ public:
     int32_t builtin_set_param(uint64_t device_id, uint32_t index, float value);
     int32_t builtin_readouts(uint64_t device_id, float* out, std::size_t capacity, std::size_t& count);
     int32_t builtin_analysis(uint64_t device_id, float* out, std::size_t capacity, std::size_t& count, uint64_t& seq);
+    // Plugin card controls and modulation bases (main thread; see saine_engine.h).
+    int32_t plugin_set_param(uint64_t device_id, uint32_t param_id, float normalized);
+    int32_t mod_base(uint64_t device_id, uint32_t param_id, float& out);
     int32_t builtin_note(uint64_t device_id, uint8_t pitch, uint8_t velocity);
     // Frees retired graphs the audio thread can no longer reach. Non-RT.
     void collect_garbage();
@@ -311,6 +315,9 @@ private:
 
     // -- plugins (instances shared by every graph that references them)
     PluginHost plugins_;
+    // Normalized bases of modulated plugin parameters by (device, parameter),
+    // shared with the graphs that modulate them (guarded by plugins_.mutex()).
+    std::map<std::pair<uint64_t, uint32_t>, std::shared_ptr<std::atomic<float>>> mod_bases_;
     // -- delay compensation switch (written under plugins_.mutex()) and the
     // applied L of the current graph (for audible_position()).
     std::atomic<bool> pdc_enabled_{true};

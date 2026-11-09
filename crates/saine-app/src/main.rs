@@ -21,6 +21,7 @@ mod assistant_provider;
 mod automation;
 mod clipedit;
 mod controller;
+mod device_mod;
 mod device_fields;
 mod device_panel;
 mod panel_graph;
@@ -100,6 +101,9 @@ struct Args {
     offscreen: bool,
     /// review-analyzers: Pitch Corrector, Tuner and Spectrum fed 2 s of a sung-like line (no reference).
     analyzers_review: bool,
+    /// reference-lfo / reference-chain: 1 an LFO aimed at a Compressor, 2 a chain head
+    /// (macro panel open) holding a Compressor and the CLAP test plugin's card.
+    modulation_state: u8,
     /// review-settings-plugins: Settings open on the Plugins page (no reference comparison).
     plugins_page_review: bool,
     assistant_fixture: Option<PathBuf>,
@@ -182,6 +186,14 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.device_chain_review = true;
                 }
+                "reference-lfo" => {
+                    a.reference_default = true;
+                    a.modulation_state = 1;
+                }
+                "reference-chain" => {
+                    a.reference_default = true;
+                    a.modulation_state = 2;
+                }
                 s if s.strip_prefix("reference-").and_then(saine_core::builtin::find).is_some() => {
                     a.reference_default = true;
                     a.device_state = s.strip_prefix("reference-").and_then(saine_core::builtin::find).map(|d| d.id);
@@ -202,7 +214,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, review-settings-plugins, review-analyzers, reference-<built-in device id>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers)"
                     ));
                 }
             },
@@ -390,7 +402,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
-            if c.panel_cancel_drag() || (c.synth.menu.is_none() && c.synth_cancel()) {
+            if c.panel_cancel_drag() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
                 return true;
             }
             if c.settings.menu.is_some() {
@@ -770,6 +782,48 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.panel_poll_views_at(at);
         }
     }
+    if args.modulation_state > 0 {
+        // No the reference app capture of an LFO card exists; compare the chain with
+        // renders/reference/chain-head.png (Captain drive).
+        let mut c = ctl.borrow_mut();
+        if let Some(t) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Audio).map(|t| t.id) {
+            c.select_track(t);
+            let comp = saine_core::builtin::find("compressor").expect("compressor is registered");
+            if args.modulation_state == 1 {
+                c.add_item_to_track(&devices::Item::Builtin(comp), t, None);
+                let id = c.project().track(t).and_then(|t| t.devices.last()).map(|d| d.id);
+                if let Some(id) = id {
+                    c.mod_new_lfo(id, saine_core::ModParam::Builtin("threshold".into()));
+                }
+            } else {
+                c.add_item_to_track(&devices::Item::Builtin(&saine_core::builtin::rack::RACK), t, None);
+                let head = c.project().track(t).and_then(|t| t.devices.last()).map(|d| d.id);
+                if let Some(head) = head {
+                    c.add_to_chain(head, devices::Item::Builtin(comp));
+                    let gain = saine_core::PluginRef {
+                        format: saine_core::PluginFormat::Clap,
+                        id: "studio.saine.test.gain".into(),
+                        path: Some(saine_engine::test_plugin_dir().join("SaineTestGain.clap").to_string_lossy().into_owned()),
+                        name: "Saine Test Gain".into(),
+                        vendor: "Saine".into(),
+                        version: "1.0.0".into(),
+                        kind: saine_core::PluginKind::Effect,
+                    };
+                    c.add_to_chain(head, devices::Item::Plugin(gain));
+                    let ids: Vec<saine_core::DeviceId> = c.project().track(t).map(|t| t.devices.iter().map(|d| d.id).collect()).unwrap_or_default();
+                    if let [_, comp, plug] = ids[..] {
+                        if let Some(p) = c.engine.plugin_params(plug).first().map(|p| p.id) {
+                            c.card_toggle_param(plug, p);
+                        }
+                        c.mod_link(head, 0, comp, saine_core::ModParam::Builtin("threshold".into()));
+                        c.macro_select(head, 0);
+                    }
+                }
+            }
+        }
+        c.set_bottom_tab(BottomTab::Devices);
+        c.seek_beats(8.0);
+    }
     if !args.load_sample.is_empty() {
         ctl.borrow_mut().drop_files(args.load_sample.clone());
     }
@@ -971,6 +1025,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_field, |c, id: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.panel_field_drag(saine_core::DeviceId(id as u64), phase, dx, dy, fine));
     on!(on_panel_menu, |c, id: i32, which: i32, x: f32, y: f32| c.panel_menu(saine_core::DeviceId(id as u64), which, x, y));
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(saine_core::DeviceId(id as u64), dir));
+    {
+        use saine_core::DeviceId as Id;
+        let id = |i: i32| Id(i as u64);
+        on!(on_device_fold, |c, d: i32| c.device_fold(id(d)));
+        on!(on_device_collapse, |c, d: i32| c.device_collapse(id(d)));
+        on!(on_device_swap_menu, |c, d: i32, x: f32, y: f32| c.device_swap_menu(id(d), x, y));
+        on!(on_device_rename, |c, d: i32, t: slint::SharedString| c.device_rename(id(d), &t));
+        on!(on_mod_menu, |c, d: i32, p: i32, x: f32, y: f32| c.mod_menu(id(d), p, x, y));
+        on!(on_mod_map, |c, d: i32, slot: i32| c.mod_map(id(d), slot));
+        on!(on_mod_add_menu, |c, d: i32, slot: i32, x: f32, y: f32| c.mod_add_menu(id(d), slot, x, y));
+        on!(on_mod_amount_drag, |c, d: i32, i: i32, phase: i32, dy: f32, fine: bool| c.mod_amount_drag(id(d), i.max(0) as usize, phase, dy, fine));
+        on!(on_mod_amount_text, |c, d: i32, i: i32, t: slint::SharedString| c.mod_amount_text(id(d), i.max(0) as usize, &t));
+        on!(on_mod_amount_step, |c, d: i32, i: i32, delta: i32, fine: bool| c.mod_amount_step(id(d), i.max(0) as usize, delta, fine));
+        on!(on_mod_remove, |c, d: i32, i: i32| c.mod_remove(id(d), i.max(0) as usize));
+        on!(on_macro_select, |c, d: i32, i: i32| c.macro_select(id(d), i));
+        on!(on_macro_rename, |c, d: i32, i: i32, t: slint::SharedString| c.macro_rename(id(d), i, &t));
+        on!(on_chain_add_effect, |c, d: i32, x: f32, y: f32| c.chain_add_effect(id(d), x, y));
+        on!(on_card_add_menu, |c, d: i32, x: f32, y: f32| c.card_add_menu(id(d), x, y));
+        on!(on_card_page, |c, d: i32, dir: i32| c.card_page(id(d), dir));
+    }
     on!(on_sampler_tab, |c, id: i32, tab: i32| c.sampler_tab(saine_core::DeviceId(id as u64), tab));
     on!(on_sampler_pad, |c, id: i32, which: i32, i: i32, down: bool| c.sampler_pad(saine_core::DeviceId(id as u64), which, i, down));
     on!(on_sampler_layer, |c, id: i32, dir: i32| c.sampler_layer(saine_core::DeviceId(id as u64), dir));

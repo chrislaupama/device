@@ -129,11 +129,12 @@ struct TestSample {
 // The v2 se_builtin_state blob: values + sample table (asset ids are
 // first_asset + index in samples).
 inline std::vector<uint8_t> state_blob_v2(const std::vector<float>& values, const std::vector<TestSample>& samples,
-                                          uint64_t first_asset, uint64_t sidechain = 0) {
+                                          uint64_t first_asset, uint64_t sidechain = 0,
+                                          const std::vector<se_mod_route>& routes = {}) {
     uint32_t nslices = 0;
     for (const TestSample& s : samples) nslices += static_cast<uint32_t>(s.slices.size());
     se_builtin_state_v2 h{SE_BUILTIN_STATE_MAGIC2, static_cast<uint32_t>(values.size()), sidechain,
-                          static_cast<uint32_t>(samples.size()), nslices};
+                          static_cast<uint32_t>(samples.size()), nslices, static_cast<uint32_t>(routes.size()), 0};
     std::vector<uint8_t> out;
     const auto put = [&](const void* p, std::size_t n) {
         const auto* b = static_cast<const uint8_t*>(p);
@@ -147,6 +148,7 @@ inline std::vector<uint8_t> state_blob_v2(const std::vector<float>& values, cons
     }
     for (const TestSample& s : samples)
         for (const se_builtin_slice& c : s.slices) put(&c, sizeof c);
+    for (const se_mod_route& r : routes) put(&r, sizeof r);
     return out;
 }
 
@@ -157,6 +159,12 @@ struct NoteAt {
 };
 inline NoteAt note_on(std::size_t f, uint8_t pitch, uint8_t vel = 127) { return {f, 0x90, pitch, vel}; }
 inline NoteAt note_off(std::size_t f, uint8_t pitch) { return {f, 0x80, pitch, 64}; }
+
+// A modulation source's blob: values plus routes (se_mod_route), no samples.
+inline std::vector<uint8_t> route_blob(const std::vector<float>& values, const std::vector<se_mod_route>& routes,
+                                       uint64_t sidechain = 0) {
+    return state_blob_v2(values, {}, 0, sidechain, routes);
+}
 
 inline uint32_t param_index(const saine::BuiltinDescriptor& d, const char* id) {
     for (std::size_t i = 0; i < d.params.size(); ++i)
@@ -338,6 +346,7 @@ struct DeviceSession {
         std::vector<std::string> ids;
         std::vector<se_auto_lane_desc> lanes;
         std::vector<std::vector<se_auto_point>> points;
+        std::vector<std::string> paths; // plugin bundle paths (parallel to devices; "" for built-ins)
     };
     std::vector<Track> tracks;
     std::vector<se_track_desc_v6> descs;
@@ -352,11 +361,27 @@ struct DeviceSession {
     }
     static void add_device(Track& t, uint64_t device_id, const char* builtin_id, const std::vector<float>& values,
                            bool enabled = true, uint64_t sidechain = 0) {
+        add_device_state(t, device_id, builtin_id, state_blob(values, sidechain), enabled);
+    }
+    static void add_device_state(Track& t, uint64_t device_id, const char* builtin_id, std::vector<uint8_t> state,
+                                 bool enabled = true) {
         t.ids.emplace_back(builtin_id);
-        t.states.push_back(state_blob(values, sidechain));
+        t.states.push_back(std::move(state));
+        t.paths.emplace_back();
         se_device_desc d{};
         d.device_id = device_id;
         d.format = SE_PLUGIN_BUILTIN;
+        d.enabled = enabled ? 1 : 0;
+        t.devices.push_back(d);
+    }
+    // A CLAP plugin insert (no saved state).
+    static void add_clap(Track& t, uint64_t device_id, const std::string& path, const char* plugin_id, bool enabled = true) {
+        t.ids.emplace_back(plugin_id);
+        t.states.emplace_back();
+        t.paths.push_back(path);
+        se_device_desc d{};
+        d.device_id = device_id;
+        d.format = SE_PLUGIN_CLAP;
         d.enabled = enabled ? 1 : 0;
         t.devices.push_back(d);
     }
@@ -374,8 +399,9 @@ struct DeviceSession {
         for (Track& t : tracks) {
             for (std::size_t i = 0; i < t.devices.size(); ++i) {
                 t.devices[i].plugin_id = t.ids[i].c_str();
-                t.devices[i].state = t.states[i].data();
+                t.devices[i].state = t.states[i].empty() ? nullptr : t.states[i].data();
                 t.devices[i].state_len = t.states[i].size();
+                t.devices[i].path = i < t.paths.size() && !t.paths[i].empty() ? t.paths[i].c_str() : nullptr;
             }
             for (std::size_t i = 0; i < t.lanes.size(); ++i) {
                 t.lanes[i].points = t.points[i].data();

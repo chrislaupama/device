@@ -442,6 +442,64 @@ int32_t Engine::publish(const se_session_desc_v6& desc, std::string& err) {
             }
         }
     }
+    // Modulation targets: built-in parameters exist on built-ins; plugin
+    // parameters get their native range, lane and base (kept across publishes).
+    {
+        std::map<std::pair<uint64_t, uint32_t>, std::shared_ptr<std::atomic<float>>> bases;
+        const auto resolve_mods = [&](PluginInstance* inst, uint64_t device_id, uint32_t begin, uint32_t count,
+                                      uint32_t lane_begin, uint32_t lane_count) {
+            BuiltinInstance* const b = inst != nullptr ? inst->as_builtin() : nullptr;
+            for (uint32_t i = begin; i < begin + count; ++i) {
+                ModTarget& t = built->mod_targets[i];
+                if (!t.plugin) {
+                    t.active = b != nullptr && t.param_id < b->param_count();
+                    continue;
+                }
+                t.active = inst != nullptr && b == nullptr && inst->param_range(t.param_id, t.native_min, t.native_max);
+                if (!t.active) continue;
+                for (uint32_t l = lane_begin; l < lane_begin + lane_count; ++l) {
+                    const AutoLane& lane = built->lanes[l];
+                    if (lane.active && lane.target == SE_AUTO_PLUGIN && lane.param_id == t.param_id) t.lane = static_cast<int32_t>(l);
+                }
+                const auto key = std::make_pair(device_id, t.param_id);
+                std::shared_ptr<std::atomic<float>> base;
+                if (auto it = mod_bases_.find(key); it != mod_bases_.end()) {
+                    base = it->second;
+                } else if (auto jt = bases.find(key); jt != bases.end()) {
+                    base = jt->second;
+                } else {
+                    float v = 0.0f;
+                    inst->param_value(t.param_id, v);
+                    base = std::make_shared<std::atomic<float>>(std::clamp(std::isfinite(v) ? v : 0.0f, 0.0f, 1.0f));
+                }
+                bases[key] = base;
+                t.base = base.get();
+                built->mod_base_refs.push_back(base);
+            }
+        };
+        for (uint32_t t = 0; t < desc.track_count; ++t) {
+            TrackNode& node = built->tracks[t];
+            if (node.imod_count > 0)
+                resolve_mods(node.instrument_plugin, desc.tracks[t].instrument_plugin->device_id, node.imod_begin,
+                             node.imod_count, node.iplug_lane_begin, node.iplug_lane_count);
+            for (uint32_t i = 0; i < node.fx_count; ++i) {
+                FxSlot& slot = built->fx[node.fx_begin + i];
+                if (slot.mod_count > 0)
+                    resolve_mods(slot.inst, slot.device_id, slot.mod_begin, slot.mod_count, slot.lane_begin, slot.lane_count);
+            }
+        }
+        // Parameters that are no longer modulated go back to their base, on
+        // the audio thread once the new graph runs.
+        for (const auto& [key, base] : mod_bases_) {
+            if (bases.count(key) != 0) continue;
+            PluginInstance* const inst = plugins_.instance(key.first);
+            double lo = 0.0, hi = 1.0;
+            if (inst != nullptr && inst->as_builtin() == nullptr && inst->param_range(key.second, lo, hi))
+                built->mod_restores.push_back(
+                    {key.first, key.second, lo + static_cast<double>(base->load(std::memory_order_relaxed)) * (hi - lo)});
+        }
+        mod_bases_ = std::move(bases);
+    }
     // Delay compensation: pending restarts and fresh latencies (main thread),
     // then the plan for the new graph.
     plugins_.service_latencies();
@@ -1447,6 +1505,28 @@ int32_t Engine::builtin_analysis(uint64_t device_id, float* out, std::size_t cap
     BuiltinInstance* b = inst != nullptr ? inst->as_builtin() : nullptr;
     if (b == nullptr) return SE_ERR_NOT_FOUND;
     count = b->analysis(out, static_cast<uint32_t>(std::min<std::size_t>(capacity, UINT32_MAX)), seq);
+    return SE_OK;
+}
+
+int32_t Engine::plugin_set_param(uint64_t device_id, uint32_t param_id, float normalized) {
+    if (!std::isfinite(normalized)) return SE_ERR_INVALID_ARG;
+    std::lock_guard lock(plugins_.mutex());
+    PluginInstance* inst = plugins_.instance(device_id);
+    double lo = 0.0, hi = 1.0;
+    if (inst == nullptr || inst->as_builtin() != nullptr || !inst->param_range(param_id, lo, hi)) return SE_ERR_NOT_FOUND;
+    const float n = std::clamp(normalized, 0.0f, 1.0f);
+    if (auto it = mod_bases_.find({device_id, param_id}); it != mod_bases_.end()) {
+        it->second->store(n, std::memory_order_relaxed);
+        return SE_OK;
+    }
+    return inst->set_parameter(param_id, lo + static_cast<double>(n) * (hi - lo)) ? SE_OK : SE_ERR_STATE;
+}
+
+int32_t Engine::mod_base(uint64_t device_id, uint32_t param_id, float& out) {
+    std::lock_guard lock(plugins_.mutex());
+    auto it = mod_bases_.find({device_id, param_id});
+    if (it == mod_bases_.end()) return SE_ERR_NOT_FOUND;
+    out = it->second->load(std::memory_order_relaxed);
     return SE_OK;
 }
 
