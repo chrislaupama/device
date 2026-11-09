@@ -235,6 +235,7 @@ TEST_CASE(shaper_pitch_lane_shifts_and_reports_latency) {
     for (std::size_t i = 962; i < u.size(); ++i) worst = std::max(worst, static_cast<double>(std::fabs(u[i] - x[i - 962])));
     CHECK(worst < 1e-5);
     lane(unity, kPitch, kOn, 0.f);
+    unity.run_mono(Signal(unity.block(), 0.0f)); // the instance reports the latency of the last block's values too
     CHECK(unity.instance().latency() == 0);
 }
 
