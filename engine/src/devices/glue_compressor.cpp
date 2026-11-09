@@ -175,7 +175,7 @@ private:
     dsp::Biquad hpf_[2];
     int hpf_index_ = -1;
     dsp::Oversampler os_[2];
-    dsp::DelayLine dry_[2];
+    dsp::FixedDelay dry_[2];
     dsp::Smoother makeup_, mix_, output_;
     float a_color_ = 0.0f, color_now_ = 0.0f;
     float a_fast_rel_ = 0.0f, a_slow_rel_ = 0.0f, a_slow_att_ = 0.0f;
@@ -189,6 +189,8 @@ std::unique_ptr<BuiltinProcessor> create_glue() { return std::make_unique<GlueCo
 
 extern const BuiltinDescriptor kGlueCompressorDescriptor;
 constexpr float kIdleReadouts[] = {-120.0f, -120.0f, 0.0f};
-const BuiltinDescriptor kGlueCompressorDescriptor{"glue-compressor", kParamIds, kReadoutIds, &create_glue, kIdleReadouts};
+// Rust definition defaults, in parameter order.
+constexpr float kDefaults[] = {-15.f, 1.f, 5.f, 4.f, 0.f, 100.f, 50.f, 24.f, 0.f, 0.f, 0.f};
+const BuiltinDescriptor kGlueCompressorDescriptor{"glue-compressor", kParamIds, kReadoutIds, &create_glue, kIdleReadouts, kDefaults};
 
 } // namespace saine

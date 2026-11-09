@@ -14,6 +14,13 @@ extern const BuiltinDescriptor kLimiterDescriptor;
 extern const BuiltinDescriptor kMasteringLimiterDescriptor;
 extern const BuiltinDescriptor kGateDescriptor;
 extern const BuiltinDescriptor kTransientShaperDescriptor;
+extern const BuiltinDescriptor kChorusDescriptor;
+extern const BuiltinDescriptor kCharacterModDescriptor;
+extern const BuiltinDescriptor kFlangerDescriptor;
+extern const BuiltinDescriptor kPhaserDescriptor;
+extern const BuiltinDescriptor kTremoloDescriptor;
+extern const BuiltinDescriptor kAutopannerDescriptor;
+extern const BuiltinDescriptor kRingModDescriptor;
 
 namespace {
 
@@ -24,6 +31,13 @@ const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kMasteringLimiterDescriptor,
     &kGateDescriptor,
     &kTransientShaperDescriptor,
+    &kChorusDescriptor,
+    &kCharacterModDescriptor,
+    &kFlangerDescriptor,
+    &kPhaserDescriptor,
+    &kTremoloDescriptor,
+    &kAutopannerDescriptor,
+    &kRingModDescriptor,
 };
 
 struct CRegistry {
@@ -33,7 +47,7 @@ struct CRegistry {
         for (const BuiltinDescriptor* d : kBuiltinRegistry) list.push_back(*d);
         for (const BuiltinDescriptor& d : list)
             c.push_back(se_builtin_desc{d.id, d.params.data(), d.readouts.data(), static_cast<uint32_t>(d.params.size()),
-                                        static_cast<uint32_t>(d.readouts.size())});
+                                        static_cast<uint32_t>(d.readouts.size()), d.defaults.data()});
     }
 };
 
@@ -145,6 +159,7 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
         }
         const uint32_t end = e < param_count ? std::min(frames, params[e].offset) : frames;
         BuiltinContext seg = ctx;
+        seg.offset = pos;
         if (seg.sc_l != nullptr) {
             seg.sc_l += pos;
             seg.sc_r += pos;

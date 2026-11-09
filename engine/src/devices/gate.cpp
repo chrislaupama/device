@@ -132,7 +132,7 @@ public:
 private:
     double sr_ = 48000.0;
     uint32_t latency_ = 0, hold_left_ = 0;
-    dsp::DelayLine delay_[2], gain_delay_;
+    dsp::FixedDelay delay_[2], gain_delay_;
     dsp::Biquad hpf_[2];
     float hpf_hz_ = -1.0f, a_det_ = 0.0f, env_ = 0.0f, gain_db_ = kFloorDb;
     dsp::Smoother mix_;
@@ -145,6 +145,8 @@ std::unique_ptr<BuiltinProcessor> create_gate() { return std::make_unique<Gate>(
 
 extern const BuiltinDescriptor kGateDescriptor;
 constexpr float kIdleReadouts[] = {-120.0f, -120.0f, 0.0f};
-const BuiltinDescriptor kGateDescriptor{"gate", kParamIds, kReadoutIds, &create_gate, kIdleReadouts};
+// Rust definition defaults, in parameter order.
+constexpr float kDefaults[] = {-40.f, 10.f, 0.5f, 50.f, 100.f, 5.f, 80.f, 100.f};
+const BuiltinDescriptor kGateDescriptor{"gate", kParamIds, kReadoutIds, &create_gate, kIdleReadouts, kDefaults};
 
 } // namespace saine

@@ -38,11 +38,16 @@ fn engine_registry_matches_core_definitions() {
         let p = reg.iter().find(|p| p.id == def.id).unwrap_or_else(|| panic!("engine has no processor {:?}", def.id));
         let ids: Vec<&str> = def.params.iter().map(|q| q.id).collect();
         assert_eq!(p.params, ids, "{}: parameter order differs between saine-core and the engine", def.id);
+        let defaults: Vec<f32> = def.params.iter().map(|q| q.default).collect();
+        assert_eq!(p.defaults, defaults, "{}: defaults differ between saine-core and the engine", def.id);
     }
-    for p in reg.iter().filter(|p| builtin::find(&p.id).is_some()) {
-        let want: &[&str] = if p.id == "transient-shaper" { &["out_peak", "pre_peak", "gain_db"] } else { &["in_db", "out_db", "gr_db"] };
-        assert_eq!(p.readouts, want, "{}: readouts", p.id);
+    // The panel reads a strip device's readouts as input, output, gain reduction.
+    for def in builtin::all().iter().filter(|d| d.layout.view.is_some_and(|v| v.strip().is_some())) {
+        let p = reg.iter().find(|p| p.id == def.id).unwrap();
+        assert_eq!(p.readouts, ["in_db", "out_db", "gr_db"], "{}: readouts", def.id);
     }
+    let ts = reg.iter().find(|p| p.id == "transient-shaper").unwrap();
+    assert_eq!(ts.readouts, ["out_peak", "pre_peak", "gain_db"]);
 }
 
 #[test]

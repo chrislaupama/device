@@ -14,7 +14,7 @@
 
 namespace saine::dsp {
 
-constexpr double kPi = 3.14159265358979323846;
+constexpr double kPiD = 3.14159265358979323846;
 
 // Fast log2 for x > 0 (normal floats): exponent bits plus an atanh series
 // for the mantissa; error below 5e-5 (0.0003 dB). For per-sample gain maths.
@@ -74,7 +74,7 @@ struct Biquad {
     }
     // Butterworth high-pass (RBJ cookbook form).
     void highpass(double hz, double rate, double q = 0.70710678) noexcept {
-        const double w = 2.0 * kPi * std::clamp(hz, 1.0, 0.45 * rate) / rate;
+        const double w = 2.0 * kPiD * std::clamp(hz, 1.0, 0.45 * rate) / rate;
         const double c = std::cos(w), a = std::sin(w) / (2.0 * q), n = 1.0 / (1.0 + a);
         b0 = static_cast<float>((1.0 + c) * 0.5 * n);
         b1 = static_cast<float>(-(1.0 + c) * n);
@@ -96,7 +96,7 @@ struct Biquad {
 
 // Delay line with a fixed capacity (power of two); delays up to the
 // prepared maximum.
-class DelayLine {
+class FixedDelay {
 public:
     void prepare(uint32_t max_delay) {
         buf_.assign(pow2_at_least(max_delay + 1), 0.0f);
@@ -241,7 +241,7 @@ public:
         const double c = (n - 1) * 0.5;
         for (int i = 0; i < n; ++i) {
             const double t = (i - c) / 4.0;
-            const double s = std::sin(kPi * t) / (kPi * t); // t is never 0 (c is fractional)
+            const double s = std::sin(kPiD * t) / (kPiD * t); // t is never 0 (c is fractional)
             h_[i % 4][i / 4] = static_cast<float>(s * kaiser((i - c) / (c + 1.0), 7.0));
         }
         for (auto& p : h_) { // unity DC gain per phase
@@ -291,7 +291,7 @@ public:
         double sum = 0.5;
         for (int j = 0; j < M; ++j) {
             const int n = 2 * j - (M - 1); // odd offsets -(M-1) .. M-1
-            c[j] = std::sin(kPi * n / 2.0) / (kPi * n) * kaiser(static_cast<double>(n) / (M + 1), beta);
+            c[j] = std::sin(kPiD * n / 2.0) / (kPiD * n) * kaiser(static_cast<double>(n) / (M + 1), beta);
             sum += c[j];
         }
         for (int j = 0; j < M; ++j) odd_[j] = static_cast<float>(c[j] / sum);

@@ -1,7 +1,9 @@
 # Built-in devices
 
-Saine's own effects (Compressor, Limiter, Gate, Glue Compressor, Transient
-Shaper, Mastering Limiter; more follow from the device specs) are
+Saine's own effects (Compressor; the dynamics family: Limiter, Gate, Glue
+Compressor, Transient Shaper, Mastering Limiter; the modulation family:
+Tremolo, Auto-Panner, Chorus, Flanger, Phaser, Ring Mod, Character Mod; more
+follow from the device specs) are
 **declarative**: one definition in Rust describes a device, and the model,
 undo, persistence, automation, engine and panel all derive from it. A device
 is made of up to three parts:
@@ -60,32 +62,59 @@ flowchart LR
      the device spec (`handoffs/device-specs/<device>.md` in the Captain drive).
      Those are facts; write descriptions in your own words. Never copy the
      reference's code, CSS, images, audio or preset files.
-   - `Layout`: `picker` (menus / `Toggle` latches / `Sidechain` / pills; the
-     sidechain picker, a latch and what follows align right; an empty picker
-     moves the view row up), `view`, `sliders`, `clusters` of knobs
-     (a `Toggle` there is a latch in a knob cell; a discrete knob with more
-     than two choices draws detent ticks), `faces` (transfer curves inside a
-     knob: `SoftKneeCurve`, `BrickWall`, `Expander`, `BusVca`, `PushWall`),
-     `shown_when` (mode-dependent controls).
+   - `Layout`: `picker` (segmented `Menu`s, `Segments` with their own
+     labels, `Dropdown` pills for long lists, toggles, `Sidechain`, pills;
+     `Gap` or the sidechain picker pushes what follows to the right),
+     `view` (`DynamicsStrip`, `Field` or `Custom`), `sliders`,
+     `clusters` of knobs (`Swap` holds alternatives in one cell, such as
+     Rate / Rate Sync), `faces` (drawings inside a knob), `shown_when`
+     (mode-dependent controls: hidden parameters get no control and no
+     automation entry).
+   - `View::Field` is a plotted well (reference motion / response / sweep
+     fields): name a curve model in `crates/saine-app/src/device_fields.rs`
+     (traces, fill or band, ticks, caption value, live overlay), the caption,
+     the parameters dragged on x and y, and the field's width; the card is
+     at least field + sliders + padding wide. Field cards centre their dial
+     row and space its knobs evenly. The live overlay follows the kernel's
+     first readout as an LFO phase (0..1) while the transport plays.
+   - Parameter extras: `preset_locked()` (presets never load or save it,
+     e.g. a random seed), `reset_on_load()`, `Format::Freq` (reference Hz
+     text) and `Format::SignedPercent`. Tempo-synced LFOs use the
+     `DIVISIONS` / `MOD_NOTES` tables and `synced_hz`.
+   - Linked writes: when one edit must move other parameters in the same
+     undo step (Character Mod's circuit switch resets untouched artifacts),
+     add an arm to `builtin::linked_writes`; the panel then commits one
+     labelled `Command::Batch`.
+   - Dynamics additions: `Toggle` latches (a latch in a knob cell in the dial
+     row; a right-aligned "<label> <choice>" pill in the picker row), detent
+     ticks on discrete knobs with more than two choices, transfer faces
+     (`SoftKneeCurve`, `BrickWall`, `Expander`, `BusVca`, `PushWall`), and an
+     empty picker moves the view row up.
    - Views: `View::Strip(Strip::new("<line param>").range(top_db, floor_db).second("<param>"))`
      is the level / gain-reduction strip with a draggable dashed line, an
      optional solid second line (Alt+drag moves both by the same dB, one undo
      step) and its own plot range; `DynamicsStrip { threshold }` is shorthand
      for the 0..-36 dB strip. `View::Custom("gain-scope")` is the transient
      shaper's scrolling waveform + applied-gain scope.
-   - Parameter extras: `max_text` (the top of the range reads e.g. "Full"),
-     `overlays` (a choice also writes other parameters, in one undo step:
-     `DeviceDef::choice_values`), `Format::Ms(decimals)` and
-     `Format::SignedPercent`. The parameter named in `SIDECHAIN_ENABLE_IDS`
-     (`DeviceDef::sidechain_enable`) follows the sidechain picker.
+   - Choice overlays: `ParamDef::overlays` lists, per choice, other
+     parameters that choice writes (the mastering limiter's styles); they go
+     through `linked_writes` like any other linked write. Also `max_text` (the
+     top of the range reads e.g. "Full"), `Format::Ms(decimals)`, and
+     `DeviceDef::sidechain_enable` (the parameter that follows the sidechain
+     picker).
 2. **DSP kernel.** Add `engine/src/devices/<id>.cpp`: a `BuiltinProcessor`
    (`prepare` may allocate; `reset` / `process` are real-time: no
    allocation, locks, I/O or exceptions) and a `BuiltinDescriptor` whose
    parameter ids are the definition's ids **in the same order**. Register it
-   in `kBuiltinRegistry` (`engine/src/devices/builtin.cpp`) and add the
+   in `kBuiltinRegistry` (`engine/src/devices/builtin.cpp`), give the
+   descriptor its `defaults` (checked against the definition by the Rust
+   registry test through `se_builtin_desc::param_defaults`) and add the
    file to `engine/CMakeLists.txt`. `params` are plain values, constant
    within one `process` call (the instance splits blocks at automation
    events); smoothing audible steps is the kernel's job (`dsp::Smoother`).
+   `engine/src/devices/dsp.hpp` also has `LfoClock` (free or locked to
+   the song position through `BuiltinContext::offset`), `DelayLine`
+   (Hermite) and `Oversampler2x` (report its latency from `latency()`).
    Readouts (meters, gain reduction) are written per block; give
    `idle_readouts` for the values before the first block. When automation
    splits a block, the engine keeps each readout's segment value farthest
@@ -113,15 +142,15 @@ flowchart LR
      automatically.
    - Rust: `engine_registry_matches_core_definitions`
      (`crates/saine-engine/tests/builtin.rs`) fails when the definition and
-     the kernel disagree on parameter order. Add core tests for formatting and
+     the kernel disagree on parameter order or defaults. Add core tests for formatting and
      parsing of any new display format.
 5. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
    (`saine_device_bench`, Release build) and put the numbers in the PR.
-6. **Render.** `--state reference-<id>` shows any registered built-in at its
+6. **Render.** `--state reference-<id>` shows any built-in device at its
    defaults; render it with `--screenshot` (add `--offscreen` so no window
    appears) and compare it with the reference capture. Add the device to the
-   app self-test (`dynamics_device_steps` in `src/selftest.rs` adds each
-   dynamics device through Add device › Built-in).
+   app self-test (the dynamics and modulation sections in `src/selftest.rs`
+   add each device through Add device › Built-in).
 
 ## Commands
 

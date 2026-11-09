@@ -111,7 +111,7 @@ public:
 private:
     double sr_ = 48000.0;
     uint32_t max_la_ = 0, latency_ = 0;
-    dsp::DelayLine delay_[2], det_delay_[2], gain_delay_;
+    dsp::FixedDelay delay_[2], det_delay_[2], gain_delay_;
     dsp::LookaheadGain gain_;
     dsp::TruePeak4x tp_[2];
     dsp::Smoother input_, mix_, output_;
@@ -124,6 +124,8 @@ std::unique_ptr<BuiltinProcessor> create_limiter() { return std::make_unique<Lim
 
 extern const BuiltinDescriptor kLimiterDescriptor;
 constexpr float kIdleReadouts[] = {-120.0f, -120.0f, 0.0f};
-const BuiltinDescriptor kLimiterDescriptor{"limiter", kParamIds, kReadoutIds, &create_limiter, kIdleReadouts};
+// Rust definition defaults, in parameter order.
+constexpr float kDefaults[] = {-0.3f, 100.f, 5.f, 1.f, 100.f, 0.f, 0.f};
+const BuiltinDescriptor kLimiterDescriptor{"limiter", kParamIds, kReadoutIds, &create_limiter, kIdleReadouts, kDefaults};
 
 } // namespace saine

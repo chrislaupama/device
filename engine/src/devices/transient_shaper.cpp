@@ -145,6 +145,8 @@ std::unique_ptr<BuiltinProcessor> create_transient_shaper() { return std::make_u
 
 extern const BuiltinDescriptor kTransientShaperDescriptor;
 constexpr float kIdleReadouts[] = {0.0f, 0.0f, 0.0f};
-const BuiltinDescriptor kTransientShaperDescriptor{"transient-shaper", kParamIds, kReadoutIds, &create_transient_shaper, kIdleReadouts};
+// Rust definition defaults, in parameter order.
+constexpr float kDefaults[] = {0.f, 0.f, 50.f, 0.f, 100.f, 30.f, 2000.f, 0.f};
+const BuiltinDescriptor kTransientShaperDescriptor{"transient-shaper", kParamIds, kReadoutIds, &create_transient_shaper, kIdleReadouts, kDefaults};
 
 } // namespace saine

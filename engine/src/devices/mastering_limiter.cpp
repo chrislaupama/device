@@ -294,9 +294,9 @@ private:
     uint32_t la_base_ = 240, factor_ = 0;
     dsp::Oversampler os_[2];
     dsp::TruePeak4x tp_[2], tp_lr_[2];
-    dsp::DelayLine audio_[2], det_[2], slow_delay_[2], fast_delay_[2], dry_[2];
+    dsp::FixedDelay audio_[2], det_[2], slow_delay_[2], fast_delay_[2], dry_[2];
     dsp::LookaheadGain fast_[2], guard_;
-    dsp::DelayLine guard_audio_[2], guard_det_[2];
+    dsp::FixedDelay guard_audio_[2], guard_det_[2];
     dsp::TruePeak4x guard_tp_[2];
     float guard_rel_ = 0.0f;
     dsp::Smoother push_;
@@ -312,6 +312,8 @@ std::unique_ptr<BuiltinProcessor> create_mastering_limiter() { return std::make_
 
 extern const BuiltinDescriptor kMasteringLimiterDescriptor;
 constexpr float kIdleReadouts[] = {-120.0f, -120.0f, 0.0f};
-const BuiltinDescriptor kMasteringLimiterDescriptor{"mastering-limiter", kParamIds, kReadoutIds, &create_mastering_limiter, kIdleReadouts};
+// Rust definition defaults, in parameter order.
+constexpr float kDefaults[] = {0.f, -1.f, 150.f, 1.f, 0.f, 2.f, 10.f, 75.f, 100.f, 0.f, 2.f, 1.f, 0.f, 2.f, 0.f, 0.f, 0.f};
+const BuiltinDescriptor kMasteringLimiterDescriptor{"mastering-limiter", kParamIds, kReadoutIds, &create_mastering_limiter, kIdleReadouts, kDefaults};
 
 } // namespace saine
