@@ -119,6 +119,11 @@ int main(int argc, char** argv) {
             std::fprintf(f, "add_test(\"%s\" \"%s\" --run \"%s\")\n", t.name, argv[3], t.name);
             std::fprintf(f, "set_tests_properties(\"%s\" PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE %d)\n", t.name,
                          th::kSkipExitCode);
+            // The scanner tests share the test plugin folder, and one of them
+            // changes a bundle's modification time. Run them one at a time so
+            // a parallel ctest run (-j) can't see that change mid-test.
+            if (std::strncmp(t.name, "plugin_scanner_", 15) == 0)
+                std::fprintf(f, "set_tests_properties(\"%s\" PROPERTIES RESOURCE_LOCK saine_test_plugins)\n", t.name);
         }
         std::fclose(f);
         return 0;
