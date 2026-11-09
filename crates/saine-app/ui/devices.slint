@@ -1,11 +1,12 @@
 // Device chain (bottom panel, Devices tab): plugin cards, the "Add device" card and the
 // device popup list (src/devices.rs). Card styling follows the Synth card header measured
 // from 32-real-dblclick-instrument-lane.png (power toggle at 9,8.25, name at 37.5, header
-// line at 26.5). The plugin card body is ORIGINAL: there is no host-side parameter UI
-// (docs/adr/0003-plugins.md), so it shows the plugin identity and opens the plugin window.
+// line at 26.5). Plugin cards show the controls the user adds (plugin-card spec); the header
+// is shared with the built-in cards (device_panel.slint CardHeader).
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
 import { Studio, MenuItem, DeviceCard } from "studio.slint";
+import { KnobCell, CardHeader, FoldedStrip } from "device_panel.slint";
 
 global CardStyle {
     out property <color> card: #212227;
@@ -18,24 +19,13 @@ global CardStyle {
     out property <length> width: 220px;
 }
 
-component CardButton inherits Rectangle {
-    in property <string> text;
-    in property <bool> enabled: true;
-    callback clicked();
-    height: 22px;
-    border-radius: 6px;
-    background: ta.has-hover && root.enabled ? #333438 : #28292d;
-    border-width: 0.5px;
-    border-color: #3d3e42;
-    accessible-role: button;
-    accessible-label: root.text;
-    Text { text: root.text; color: root.enabled ? #e5e5e8 : #66676c; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
-}
-
-export component PluginCard inherits Rectangle {
+// Plugin card (third-party plugin, handoffs/device-specs/plugin-card.md): the generic header
+// (power, name = effect picker, device window, fold, remove), then only the controls the user
+// added with "+ Add" plus any the plugin's macros, LFOs or automation move; nine per page.
+component PluginFace inherits Rectangle {
     in property <DeviceCard> card;
-    width: CardStyle.width;
+    property <float> zm: 0.85;
+    width: root.card.width;
     height: 265px;
     border-radius: 6px;
     background: CardStyle.card;
@@ -46,85 +36,55 @@ export component PluginCard inherits Rectangle {
     accessible-role: groupbox;
     accessible-label: root.card.name;
 
-    // ---- header: drag to reorder (MoveDevice on release) ----
-    TouchArea {
-        x: 0; y: 0; width: root.width; height: 26.5px;
-        mouse-cursor: root.card.instrument ? MouseCursor.default : MouseCursor.grab;
-        pointer-event(e) => {
-            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.device-drag(root.card.id, 0, self.absolute-position.x + self.mouse-x); }
-            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.device-drag(root.card.id, 2, self.absolute-position.x + self.mouse-x); }
-        }
-        moved => { Studio.device-drag(root.card.id, 1, self.absolute-position.x + self.mouse-x); }
-    }
-    // Power toggle (real: SetDeviceEnabled; off = bypassed).
-    Rectangle {
-        x: 9px; y: 8.25px; width: 20px; height: 10px; border-radius: 5px;
-        background: root.card.enabled ? Studio.sel-color : #4a4b4f;
-        accessible-role: checkbox; accessible-label: "Device on"; accessible-checked: root.card.enabled;
-        Rectangle { x: root.card.enabled ? parent.width - 9px : 1px; y: 1px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; }
-        TouchArea { clicked => { Studio.device-power(root.card.id); } }
-    }
-    Text {
-        x: 37.5px; y: 6px; width: root.width - 37.5px - 56px; height: 14px;
-        text: root.card.name; color: root.card.enabled ? #ffffff : #9d9d9f; font-size: 9.75px; font-weight: 700;
-        vertical-alignment: center; overflow: elide;
-    }
-    // Plugin window (real: open/close_plugin_editor) and remove (real: RemoveDevice).
-    Rectangle {
-        x: root.width - 44px; y: 5px; width: 17px; height: 17px; border-radius: 4px;
-        background: root.card.editor-open ? #34363c : transparent;
-        accessible-role: button; accessible-label: root.card.editor-open ? "Close plugin window" : "Open plugin window";
-        accessible-enabled: root.card.editor-supported;
-        opacity: root.card.editor-supported ? 1 : 0.4;
-        Icon { x: 2.5px; y: 2.5px; width: 12px; height: 12px; d: Icons.window; ink: root.card.editor-open ? #ffffff : CardStyle.dim; stroke-width: 1.2px; }
-        TouchArea { enabled: root.card.editor-supported; clicked => { Studio.device-edit(root.card.id); } }
-    }
-    Rectangle {
-        x: root.width - 23px; y: 5px; width: 17px; height: 17px;
-        accessible-role: button; accessible-label: root.card.instrument ? "Use built-in Synth" : "Remove device";
-        Icon { x: 3.5px; y: 3.5px; width: 10px; height: 10px; d: Icons.close; ink: CardStyle.dim; stroke-width: 1.3px; }
-        TouchArea { clicked => { if (root.card.instrument) { Studio.device-use-synth(); } else { Studio.device-remove(root.card.id); } } }
-    }
-    Rectangle { x: 0; y: 26.5px; width: root.width; height: 0.5px; background: CardStyle.line; }
+    CardHeader { x: 0; y: 0; width: root.width; card: root.card; }
 
-    // ---- body ----
     Rectangle {
-        x: 0; y: 27px; width: root.width; height: root.height - 27px;
+        x: 0; y: 0; width: root.width; height: root.height;
         opacity: root.card.enabled ? 1.0 : 0.5;
-        badge := Rectangle {
-            x: 11px; y: 11px; width: badge-text.preferred-width + 10px; height: 15px; border-radius: 4px; background: CardStyle.badge;
-            badge-text := Text { text: root.card.format; color: #d4d4d7; font-size: 8.5px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+        for k in root.card.knobs: KnobCell { x: k.x + 8px; y: k.y; device: root.card.id; k: k; accent: root.card.accent; }
+        // "+ Add": the only control of a new card, then under the controls.
+        add := Rectangle {
+            x: root.card.knobs.length == 0 ? 15px : 11px; y: root.card.knobs.length == 0 ? 40px : root.height - 27px;
+            width: add-row.preferred-width; height: 18px; border-radius: 9px;
+            background: add-ta.has-hover ? #333438 : #28292d; border-width: 0.5px; border-color: #3d3e42;
+            accessible-role: button; accessible-label: "Add controls";
+            add-row := HorizontalLayout {
+                padding-left: 7px; padding-right: 9px; spacing: 4px;
+                Icon { y: 4px; width: 10px; height: 10px; d: Icons.plus; ink: #e5e5e8; stroke-width: 1.4px; }
+                Text { text: "Add"; color: #e5e5e8; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+            }
+            add-ta := TouchArea { clicked => { Studio.card-add-menu(root.card.id, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
         }
-        Text { x: badge.x + badge.width + 7px; y: 11px; height: 15px; text: root.card.kind; color: CardStyle.dim; font-size: 9px; font-weight: 500; vertical-alignment: center; }
-        Text {
-            x: 11px; y: 34px; width: parent.width - 22px; height: 18px;
-            text: root.card.name; color: #f0f0f2; font-size: 12.5px; font-weight: 700; vertical-alignment: center; overflow: elide;
+        if root.card.pages > 1: HorizontalLayout {
+            x: root.width - 80px; y: root.height - 27px; width: 70px; height: 18px; spacing: 2px; alignment: end;
+            for dir[i] in [-1, 1]: Rectangle {
+                width: 16px; accessible-role: button; accessible-label: i == 0 ? "Previous page" : "Next page";
+                Icon { x: 3px; y: 4px; width: 10px; height: 10px; d: i == 0 ? Icons.chevron-left : Icons.chevron-right; ink: pg-ta.has-hover ? #e5e5e8 : CardStyle.dim; stroke-width: 1.3px; }
+                pg-ta := TouchArea { clicked => { Studio.card-page(root.card.id, dir); } }
+            }
+            Text { text: (root.card.page + 1) + "/" + root.card.pages; color: CardStyle.dim; font-size: 9px; font-weight: 600; vertical-alignment: center; }
         }
-        Text { x: 11px; y: 53px; width: parent.width - 22px; height: 14px; text: root.card.vendor; color: Tokens.text-secondary; font-size: 9.5px; font-weight: 500; vertical-alignment: center; overflow: elide; }
-        if root.card.latency != "": Text { x: 11px; y: 72px; width: parent.width - 22px; height: 14px; text: root.card.latency; color: CardStyle.dim; font-size: 9px; vertical-alignment: center; }
-        Text {
-            x: 11px; y: parent.height - (root.card.instrument ? 92px : 64px); width: parent.width - 22px; height: 14px;
-            text: root.card.error != "" ? "Not loaded: the device passes audio through" : !root.card.has-editor ? "This plugin has no editor window" : !root.card.editor-supported ? "Plugin windows are not supported on Linux yet" : "Open the plugin window to edit";
-            color: Tokens.text-tertiary; font-size: 9px; horizontal-alignment: center; vertical-alignment: center;
+        if root.card.knobs.length == 0 && root.card.error == "": Text {
+            x: 15px; y: 66px; width: root.width - 30px; wrap: word-wrap;
+            text: root.card.has-editor ? "Add the controls you want on this card, or open the device window." : "Add the controls you want on this card.";
+            color: Tokens.text-tertiary; font-size: 9px;
         }
-        CardButton {
-            x: 11px; y: parent.height - (root.card.instrument ? 72px : 44px); width: parent.width - 22px;
-            text: root.card.editor-open ? "Close plugin window" : "Open plugin window";
-            enabled: root.card.has-editor && root.card.editor-supported && root.card.error == "";
-            clicked => { Studio.device-edit(root.card.id); }
-        }
-        if root.card.instrument: CardButton {
-            x: 11px; y: parent.height - 44px; width: parent.width - 22px;
-            text: "Use built-in Synth";
-            clicked => { Studio.device-use-synth(); }
-        }
+        if root.card.latency != "": Text { x: 11px + add.width + 10px; y: root.height - 27px; height: 18px; text: root.card.latency; color: CardStyle.dim; font-size: 9px; vertical-alignment: center; }
     }
     // Engine load error (not dimmed when bypassed).
     if root.card.error != "": Rectangle {
         x: 11px; y: 27px + 92px; width: root.width - 22px; height: err.preferred-height + 8px; border-radius: 4px; background: CardStyle.warn-bg;
         accessible-role: text; accessible-label: "Load error: " + root.card.error;
-        err := Text { x: 6px; width: parent.width - 12px; text: root.card.error; color: CardStyle.warn; font-size: 9px; font-weight: 600; wrap: word-wrap; vertical-alignment: center; }
+        err := Text { x: 6px; width: parent.width - 12px; text: "Not loaded, audio passes through: " + root.card.error; color: CardStyle.warn; font-size: 9px; font-weight: 600; wrap: word-wrap; vertical-alignment: center; }
     }
+}
+
+export component PluginCard inherits Rectangle {
+    in property <DeviceCard> card;
+    width: root.card.width;
+    height: 265px;
+    if root.card.folded: FoldedStrip { card: root.card; }
+    if !root.card.folded: PluginFace { card: root.card; }
 }
 
 // "Add device" card (reference 32: 182.5 x 264, rows 22 pt from y 56.5). The reference's rows are

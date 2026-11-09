@@ -47,7 +47,49 @@ flowchart LR
   clusters) and `ui/device_panel.slint` draws it. Lengths are the reference's
   100%-zoom card measurements times `device_panel::Z` (0.85, the zoom the rest
   of the UI is built at). Card width follows the reference rule:
-  knobs × 62 + inner gaps × 10 + cluster gaps × 21 + 16.
+  knobs × 62 + inner gaps × 10 + cluster gaps × 21 + 16, taken from the
+  widest `shown_when` state so the card never resizes when a mode changes.
+  The knob cells are then spread evenly across the dial row (the clusters
+  only size the card); field cards centre their dial row instead.
+
+## Modulation and chains
+
+Every device gets the same modulation and container features; nothing here is
+specific to one effect.
+
+- **Sources.** An LFO (`lfo`) and a chain head (`device-rack`) are built-in
+  devices with modulation outputs (`saine_core::modulation::outputs`: 1 and 8).
+  A source owns its links in `Device::links` (`ModLink { slot, target, param,
+  min, max }`); `param` is a built-in parameter id or a plugin parameter id
+  (`ModParam`). A parameter takes at most three sources
+  (`modulation::link_refusal` lists every rule). Edits are
+  `AddModLink` / `RemoveModLink` / `SetModLink` (amount drags coalesce).
+- **Maths** (in the target parameter's normalized 0..1 domain). LFO:
+  `n = base + depth * (min + (max - min) * wave)`, wave 0..1, several LFOs add.
+  Macro: `n = min + (max - min) * macro` (sets the value; min above max inverts).
+  The result is clamped to 0..1.
+- **Chains.** Members follow their head with `Device::chain = head`. The head's
+  power switch bypasses every member (`modulation::effectively_enabled`, used by
+  the snapshot); macros only reach members. Removing a head removes its members;
+  moving it moves them. `collapsed` hides the members, `folded` folds any card.
+- **Engine.** A source's state is an `se_builtin_state_v2` blob (the same
+  header the samplers use): values, then `se_mod_route` records built by
+  `modulation::routes` after the (empty) sample and slice tables. Every 32 frames
+  (`SE_MOD_GRID_FRAMES`) the engine runs each enabled source, applies its routes
+  to built-in parameters (as parameter events) or plugin parameters (as plugin
+  events, the base restored when the last route goes), with no allocation on the
+  audio thread. Plugin card knobs set values with `se_plugin_set_param`; a
+  modulated parameter keeps that as its base (`se_mod_base`).
+- **UI** (`src/device_mod.rs`). Right-click any control (built-in or plugin card)
+  for Automate, Modulators (New LFO, the track's LFOs, Remove) and Macros inside a
+  chain. Modulated knobs draw the reach of their sources and a dot at the live
+  value. The LFO and chain head have custom bodies (`View::Custom("lfo" |
+  "chain")`); their Map pill arms the source so the next control clicked becomes a
+  target. Card headers: name = effect picker (swap in place), fold, device window
+  (plugins), remove.
+- **Plugin card.** A third-party plugin shows the parameters added with "+ Add"
+  (`Device::card_params`, `SetCardParams`) plus any a source or automation moves,
+  nine per page.
 
 ## Instruments and sample slots
 
@@ -121,6 +163,17 @@ system. Any built-in device can use them.
      undo step (Character Mod's circuit switch resets untouched artifacts),
      add an arm to `builtin::linked_writes`; the panel then commits one
      labelled `Command::Batch`.
+   - `View::Strip(Strip::new("threshold").range(top, floor))` is the
+     dynamics strip with its own dB range. Value arcs and slider fills start
+     at 0 when the range spans it (−12..24 dB starts at 0 dB). Cards without
+     a field spread their knob cells evenly across the card.
+   - `Format::Custom(fn)` gives device-specific text; parsing still reads
+     the unit ("1.2 s" → 1200 ms, "2k" → 2000 Hz).
+   - **Behaviour** (optional, `builtin::behavior`): a `Behavior` with
+     state-dependent detents (drags snap within 0.025 of the range, arrow
+     keys step between them, ticks drawn on the ring), value text, latches
+     (a knob that becomes a two-state pill in some modes) and the curve of a
+     `Face::Transfer` knob. Start from `Behavior::NONE`.
 2. **DSP kernel.** Add `engine/src/devices/<id>.cpp`: a `BuiltinProcessor`
    (`prepare` may allocate; `reset` / `process` are real-time: no
    allocation, locks, I/O or exceptions) and a `BuiltinDescriptor` whose
@@ -148,13 +201,17 @@ system. Any built-in device can use them.
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a
    Slint component in `ui/device_panel.slint` chosen by that data. Reuse
-   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. Custom bodies
+   `ParamDrag` / `ParamDragX`, `KnobCell` and `SliderCol` for the gestures. Custom bodies
    return a `PanelCanvas` from `Controller::custom_body` (`device_views.rs`):
    paths, texts, grip pills and linear drag zones. When handles need
    non-linear mapping or hit-testing (several handles on one well, a live
    spectrum), set `pointer: true` and handle `Studio.panel-graph` in Rust,
    as the restoration devices do (`crates/saine-app/src/panel_graph.rs`: hit
    zones, spectrum ballistics from the readouts, one undo step per gesture).
+   View-local state (a selected band, meter ballistics) goes through
+   `Studio.panel-view(device, action, value)`; `src/panel_multiband.rs` is
+   an example with its own Slint component (band selector, threshold / floor
+   and crossover handles, dial row following the selected band).
 4. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),
@@ -182,5 +239,6 @@ cargo test --workspace                                   # core, engine wrapper,
 cd engine && cmake --build build && ./build/saine_engine_tests
 ./build/saine_device_bench                               # per-block cost, param updates, 32-track session
 cargo run -p saine-app -- --state reference-compressor --screenshot /tmp/compressor.png
+cargo run -p saine-app -- --state reference-lfo --screenshot /tmp/lfo.png      # also reference-chain
 cargo run -p saine-app -- --self-test                    # includes the built-in device section
 ~~~

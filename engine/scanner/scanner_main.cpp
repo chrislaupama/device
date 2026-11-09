@@ -25,6 +25,7 @@
 //   saine_plugin_scanner --scan-one audio_unit|vst3|clap <id-or-bundle>
 //       Child. Prints a JSON array of plugins, exit 0; on failure prints the
 //       reason to stderr and exits 2.
+#include "cache_json.hpp"
 #include "platform/os.hpp"
 #include "plugins/plugin_scan.hpp"
 
@@ -57,6 +58,8 @@
 namespace fs = std::filesystem;
 namespace os = saine::os;
 using saine::ScannedPlugin;
+using saine::scanner::Json;
+using saine::scanner::Parser;
 
 namespace {
 
@@ -97,152 +100,6 @@ std::string plugin_json(const ScannedPlugin& p) {
       << ",\"audio_outputs\":" << p.audio_outputs << "}";
     return o.str();
 }
-
-struct Json {
-    enum Type { Null, Bool, Num, Str, Arr, Obj } type = Null;
-    bool b = false;
-    double n = 0;
-    std::string s;
-    std::vector<Json> a;
-    std::vector<std::pair<std::string, Json>> o;
-    const Json* get(const std::string& k) const {
-        for (const auto& [key, v] : o)
-            if (key == k) return &v;
-        return nullptr;
-    }
-    std::string str(const std::string& k) const {
-        const Json* v = get(k);
-        return v && v->type == Str ? v->s : std::string();
-    }
-    double num(const std::string& k) const {
-        const Json* v = get(k);
-        return v && v->type == Num ? v->n : 0.0;
-    }
-    bool boolean(const std::string& k) const {
-        const Json* v = get(k);
-        return v && v->type == Bool && v->b;
-    }
-};
-
-class Parser {
-public:
-    explicit Parser(const std::string& t) : t_(t) {}
-    bool parse(Json& out) {
-        if (!value(out)) return false;
-        ws();
-        return i_ == t_.size();
-    }
-
-private:
-    void ws() {
-        while (i_ < t_.size() && std::isspace(static_cast<unsigned char>(t_[i_]))) ++i_;
-    }
-    bool lit(const char* w) {
-        const std::size_t n = std::strlen(w);
-        if (t_.compare(i_, n, w) != 0) return false;
-        i_ += n;
-        return true;
-    }
-    bool string(std::string& out) {
-        if (i_ >= t_.size() || t_[i_] != '"') return false;
-        ++i_;
-        while (i_ < t_.size() && t_[i_] != '"') {
-            char c = t_[i_++];
-            if (c == '\\') {
-                if (i_ >= t_.size()) return false;
-                const char e = t_[i_++];
-                switch (e) {
-                case 'n': out += '\n'; break;
-                case 'r': out += '\r'; break;
-                case 't': out += '\t'; break;
-                case 'b': out += '\b'; break;
-                case 'f': out += '\f'; break;
-                case 'u': {
-                    if (i_ + 4 > t_.size()) return false;
-                    const unsigned cp = static_cast<unsigned>(std::stoul(t_.substr(i_, 4), nullptr, 16));
-                    i_ += 4;
-                    if (cp < 0x80) {
-                        out += static_cast<char>(cp);
-                    } else if (cp < 0x800) {
-                        out += static_cast<char>(0xC0 | (cp >> 6));
-                        out += static_cast<char>(0x80 | (cp & 0x3F));
-                    } else {
-                        out += static_cast<char>(0xE0 | (cp >> 12));
-                        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-                        out += static_cast<char>(0x80 | (cp & 0x3F));
-                    }
-                    break;
-                }
-                default: out += e;
-                }
-            } else {
-                out += c;
-            }
-        }
-        if (i_ >= t_.size()) return false;
-        ++i_;
-        return true;
-    }
-    bool value(Json& v) {
-        ws();
-        if (i_ >= t_.size()) return false;
-        const char c = t_[i_];
-        if (c == '{') {
-            ++i_;
-            v.type = Json::Obj;
-            ws();
-            if (i_ < t_.size() && t_[i_] == '}') return ++i_, true;
-            for (;;) {
-                ws();
-                std::string k;
-                if (!string(k)) return false;
-                ws();
-                if (i_ >= t_.size() || t_[i_++] != ':') return false;
-                Json e;
-                if (!value(e)) return false;
-                v.o.emplace_back(std::move(k), std::move(e));
-                ws();
-                if (i_ < t_.size() && t_[i_] == ',') {
-                    ++i_;
-                    continue;
-                }
-                return i_ < t_.size() && t_[i_++] == '}';
-            }
-        }
-        if (c == '[') {
-            ++i_;
-            v.type = Json::Arr;
-            ws();
-            if (i_ < t_.size() && t_[i_] == ']') return ++i_, true;
-            for (;;) {
-                Json e;
-                if (!value(e)) return false;
-                v.a.push_back(std::move(e));
-                ws();
-                if (i_ < t_.size() && t_[i_] == ',') {
-                    ++i_;
-                    continue;
-                }
-                return i_ < t_.size() && t_[i_++] == ']';
-            }
-        }
-        if (c == '"') {
-            v.type = Json::Str;
-            return string(v.s);
-        }
-        if (lit("true")) return v.type = Json::Bool, v.b = true, true;
-        if (lit("false")) return v.type = Json::Bool, v.b = false, true;
-        if (lit("null")) return v.type = Json::Null, true;
-        char* end = nullptr;
-        v.n = std::strtod(t_.c_str() + i_, &end);
-        if (end == t_.c_str() + i_) return false;
-        v.type = Json::Num;
-        i_ = static_cast<std::size_t>(end - t_.c_str());
-        return true;
-    }
-    const std::string& t_;
-    std::size_t i_ = 0;
-};
 
 ScannedPlugin plugin_from_json(const Json& j) {
     ScannedPlugin p;
@@ -300,6 +157,8 @@ std::string bundle_stamp(const fs::path& path) {
     return std::to_string(m);
 }
 
+// Adds `dir` itself if it is a .vst3/.clap bundle, else searches it (sorted,
+// up to 4 levels deep) for bundles, appending them to `out`.
 void find_bundles(const fs::path& dir, int depth, std::vector<Item>& out) {
     std::error_code ec;
     const auto add = [&](const fs::path& p) {
@@ -321,6 +180,9 @@ void find_bundles(const fs::path& dir, int depth, std::vector<Item>& out) {
         if (!add(p) && fs::is_directory(p, ec)) find_bundles(p, depth + 1, out);
 }
 
+// Everything to scan: the Audio Units, then the VST3/CLAP bundles found in
+// the platform's standard folders, $CLAP_PATH (Windows/Linux only) and
+// $SAINE_PLUGIN_PATH (de-duplicated).
 std::vector<Item> enumerate_items() {
     std::vector<Item> items;
     for (const auto& au : saine::enumerate_audio_units())
@@ -384,6 +246,8 @@ std::vector<Item> enumerate_items() {
 
 // ---------------------------------------------------------------- cache
 
+// Reads the scan cache; an empty map if it is missing, malformed or of
+// another version.
 std::map<std::string, CacheEntry> load_cache(const std::string& path) {
     std::map<std::string, CacheEntry> out;
     const std::string text = read_file(path);
@@ -406,6 +270,8 @@ std::map<std::string, CacheEntry> load_cache(const std::string& path) {
     return out;
 }
 
+// Writes the scan cache through a temporary file renamed over the old one;
+// false on failure.
 bool write_cache(const std::string& path, const std::map<std::string, CacheEntry>& cache) {
     std::ostringstream o;
     o << "{\"version\":1,\"entries\":[";
@@ -435,11 +301,13 @@ bool write_cache(const std::string& path, const std::map<std::string, CacheEntry
 
 // ---------------------------------------------------------------- children
 
+// Path of this executable (used to spawn children), falling back to argv[0].
 std::string self_path(const std::string& argv0) {
     std::string p = os::executable_path();
     return p.empty() ? argv0 : p;
 }
 
+// One running "--scan-one" child and its output files.
 struct Child {
     std::size_t item = 0;
     os::ChildProcess process;
@@ -447,6 +315,8 @@ struct Child {
     std::chrono::steady_clock::time_point start;
 };
 
+// Starts "--scan-one <format> <target>" for items[index] with its output
+// redirected to temporary files; false if it could not be started.
 bool spawn_child(const std::string& exe, const Item& item, const std::string& tmpdir, std::size_t index, Child& c) {
     c.item = index;
     const std::string stem = tmpdir + "/scan-" + std::to_string(os::process_id()) + "-" + std::to_string(index);
@@ -458,16 +328,21 @@ bool spawn_child(const std::string& exe, const Item& item, const std::string& tm
     return ok;
 }
 
+// Deletes a file, ignoring errors.
 void remove_file(const std::string& path) {
     std::error_code ec;
     fs::remove(os::path_from_utf8(path), ec);
 }
 
+// Removes trailing whitespace.
 std::string trim(std::string s) {
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
     return s;
 }
 
+// Coordinator (--scan): reuses cached results whose stamp is unchanged,
+// scans the rest in up to 4 child processes with a timeout, writes the
+// cache and prints the JSON report. Returns the process exit code.
 int run_coordinator(const std::string& exe, const std::string& cache_path, bool rescan) {
     const auto t_start = std::chrono::steady_clock::now();
     long timeout_ms = 10000;
@@ -580,6 +455,8 @@ int run_coordinator(const std::string& exe, const std::string& cache_path, bool 
     return 0;
 }
 
+// Child (--scan-one): scans one plugin and prints its JSON array; exits 2 with
+// the reason on stderr on failure. Exits without static destructors.
 int run_child(const std::string& format, const std::string& target) {
 #if defined(_WIN32)
     // A crashing plugin must not open a Windows Error Reporting dialog: the
@@ -607,6 +484,7 @@ int run_child(const std::string& format, const std::string& target) {
     std::_Exit(0);
 }
 
+// Prints the command-line usage to stderr.
 void usage() {
     std::fprintf(stderr, "usage: saine_plugin_scanner --scan --cache <file.json> [--rescan]\n"
                          "       saine_plugin_scanner --scan-one audio_unit|vst3|clap <target>\n");
@@ -614,6 +492,8 @@ void usage() {
 
 } // namespace
 
+// Dispatches to the child (--scan-one) or the coordinator (--scan); exit 64
+// on bad arguments.
 int main(int argc, char** argv) {
 #if defined(_WIN32)
     // Byte-exact JSON on stdout (no "\n" -> "\r\n" translation).

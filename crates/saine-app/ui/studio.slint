@@ -49,9 +49,27 @@ export struct TreeRow { depth: int, label: string, count: string, icon: int, exp
 // and already includes the chain scroll and a drag offset.
 // ---- built-in device panel (src/device_panel.rs builds these from the DeviceDef) ----
 // Knob cell (card relative x, y). face 1 = soft-knee transfer curve instead of the ring (paths
-// in a 32 x 32 view box); face 2 = On/Off latch (value = state name). dim: drawn at 55% (the
-// control has no effect in the current state).
-export struct PanelKnob { param: int, x: length, y: length, label: string, value: string, norm: float, bipolar: bool, dim: bool, face: int, face-curve: string, face-bend: string, face-unity: string }
+// in a 32 x 32 view box); face 2 = On/Off latch (value = state name, norm 0 / 1). origin: the
+// arc's start as a norm. ticks: detent marks across the ring (32 x 32 view box). dim: drawn at
+// 55% (the control has no effect in the current state).
+// mod-*: modulation display (src/device_mod.rs): the reach of every source around the set value
+// (lo..hi, 0..1), the live modulated position and the first source's colour.
+export struct PanelKnob {
+    param: int, x: length, y: length, label: string, value: string, norm: float, origin: float, dim: bool, face: int, face-curve: string, face-bend: string, face-unity: string, ticks: string,
+    mod-on: bool, mod-lo: float, mod-hi: float, mod-now: float, mod-color: color, selected: bool, mapped: bool,
+    // Text the value editor starts with (empty = value).
+    edit: string,
+}
+// One modulation link in a source's target list (LFO targets, macro targets).
+export struct ModTarget { index: int, name: string, amount: string }
+// Modulation / container body of a card (src/device_mod.rs). kind 1 LFO, 2 chain head.
+export struct ModCard {
+    kind: int,
+    targets: [ModTarget], map-armed: bool, slot: int,
+    macro-name: string, macro-open: bool, members: int, collapsed: bool,
+}
+// A chain head's frame around its member cards (bottom-panel relative x).
+export struct ChainFrame { x: length, w: length, armed: bool, color: color, empty-x: length, empty: bool, head: int }
 // Picker row item. kind 0 caption, 1 segmented choice, 2 menu pill, 3 value box, 4 flexible gap,
 // 5 latch (On/Off parameter; label shows the state, selected 0 / 1).
 export struct PanelPick { kind: int, param: int, label: string, choices: [string], selected: int, value: string, enabled: bool, width: length }
@@ -86,6 +104,21 @@ export struct PanelStrip {
     caption: string, readout: string, ticks: [PanelTick],
     in-fill: string, gr-fill: string, in-line: string, out-line: string,
     thresh-param: int, thresh-y: length, thresh-dash: string, thresh-label: string, thresh-value: string, thresh-rate: float,
+}
+// Multiband field (src/panel_multiband.rs): field-relative lengths; paths in a w x h view box.
+export struct PanelBand {
+    x: length, w: length, selected: bool,
+    level-y: length, show-level: bool, gain-y: length, gain-h: length, show-gain: bool,
+    thr-y: length, floor-y: length, thr-param: int, floor-param: int, thr-active: bool, floor-active: bool,
+    thr-dash: string, floor-dash: string, thr-text: string, floor-text: string,
+    handle-x: length, handle-w: length, thr-hit-y: length, thr-hit-h: length, floor-hit-y: length, floor-hit-h: length,
+}
+export struct PanelXover { x: length, param: int, text: string, rate: float }
+export struct PanelFreq { x: length, text: string, grid: bool }
+export struct PanelBands {
+    visible: bool, x: length, y: length, w: length, h: length, ladder: length,
+    ticks: [PanelTick], freqs: [PanelFreq], bands: [PanelBand], xovers: [PanelXover],
+    thr-rate: float, floor-rate: float,
 }
 
 // Sampler-family panels (src/sampler_panel.rs): every length is card relative and
@@ -149,8 +182,17 @@ export struct DeviceCard {
     picks: [PanelPick],
     sliders: [PanelSlider],
     strip: PanelStrip,
+    // Generic header state (every card): folded to a strip, swappable from the name, in a chain.
+    folded: bool,
+    swappable: bool,
+    member: bool,
+    modv: ModCard,
+    // Plugin card (third-party plugins): shown controls (knobs), pager.
+    page: int,
+    pages: int,
     sampler: PanelSampler,
     field: PanelField,
+    bands: PanelBands,
     canvas: PanelCanvas,
     buttons: [PanelButton],
 }
@@ -490,6 +532,28 @@ export global Studio {
     callback panel-drag-xy(int, int, int, int, float, float, float, float, bool); // device, param x, param y, phase, dx, dy (px, right / up +), norm per px x / y, fine
     callback panel-field(int, int, float, float, bool);      // field XY drag: device, phase (as panel-drag), dx, dy (px, up +), fine
     callback panel-preset-step(int, int);                    // previous (-1) / next (+1) factory preset
+    callback panel-view(int, int, float);                    // custom view action (0 select band at field x px, 1 select band n)
+    // ---- modulation and containers (src/device_mod.rs) ----
+    in property <[ChainFrame]> chain-frames;
+    // Bumped when the chain's cards change (added, removed, moved, folded): a focused control
+    // inside a rebuilt card is gone, so the window takes the keyboard back.
+    in property <int> cards-epoch;
+    callback device-fold(int);                               // fold / unfold the card (header double-click, minus)
+    callback device-collapse(int);                           // chain head: hide / show its members
+    callback device-swap-menu(int, length, length);          // "Choose effect plugin" from the card name
+    callback device-rename(int, string);                     // card label (chain group name)
+    callback mod-menu(int, int, length, length);             // right-click on a control: Automate, Modulators, Macros
+    callback mod-map(int, int);                              // arm / disarm a source output (LFO 0, macro n) for mapping
+    callback mod-add-menu(int, int, length, length);         // + : parameter list of the track to add as targets
+    callback mod-amount-drag(int, int, int, float, bool);    // source, link index, phase 0/1/2/3, dy (px, up +), fine
+    callback mod-amount-text(int, int, string);              // typed amount (percent)
+    callback mod-amount-step(int, int, int, bool);           // arrow keys
+    callback mod-remove(int, int);                           // remove link
+    callback macro-select(int, int);                         // chain head: open / toggle a macro's side panel
+    callback macro-rename(int, int, string);
+    callback chain-add-effect(int, length, length);          // empty chain "Add effect"
+    callback card-add-menu(int, length, length);             // plugin card "+ Add": parameter list (knobs use panel-*)
+    callback card-page(int, int);                            // pager -1 / +1
     // Sampler-family panels (src/sampler_panel.rs).
     callback sampler-tab(int, int);                          // Sample / Pitch / Filter / Amp / Mod
     callback sampler-pad(int, int, int, bool);               // which (0 rack pad, 1 slice pad), index, pressed

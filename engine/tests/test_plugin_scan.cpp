@@ -117,3 +117,63 @@ TEST_CASE(plugin_scanner_finds_plugins_and_blocklists_crashes) {
     CHECK_EQ(scanned(r4), first);
     CHECK(has(r4, "SaineTestCrash.clap\",\"format\":\"clap\",\"reason\":\"crashed"));
 }
+
+namespace {
+
+// Replaces every occurrence of `from` in `s` with `to`; returns the count.
+int replace_all(std::string& s, const std::string& from, const std::string& to) {
+    int n = 0;
+    for (std::size_t at = s.find(from); at != std::string::npos; at = s.find(from, at + to.size())) {
+        s.replace(at, from.size(), to);
+        ++n;
+    }
+    return n;
+}
+
+// Overwrites the file at `path` (UTF-8) with `text`.
+void write_text(const std::string& path, const std::string& text) {
+    std::ofstream f(os::path_from_utf8(path), std::ios::binary | std::ios::trunc);
+    f << text;
+}
+
+} // namespace
+
+// The cache parser decodes valid \uXXXX escapes, and a cache with a malformed
+// one (non-hex digits) is treated as unreadable: the scanner rescans instead
+// of crashing.
+TEST_CASE(plugin_scanner_cache_unicode_escapes) {
+    TempFile cache("plugin_cache.json");
+    int rc = -1;
+    const std::string r1 = run_scan(cache.path, false, &rc);
+    REQUIRE(rc == 0);
+    const long first = scanned(r1);
+    REQUIRE(first > 0);
+    const std::string original = slurp(cache.path);
+
+    // Valid escape: "\u006Fk" is "ok", so every entry is still served from
+    // the cache.
+    std::string valid = original;
+    const int ok_entries = replace_all(valid, "\"status\":\"ok\"", "\"status\":\"\\u006Fk\"");
+    REQUIRE(ok_entries > 0);
+    write_text(cache.path, valid);
+    const std::string r2 = run_scan(cache.path, false, &rc);
+    REQUIRE(rc == 0);
+    CHECK_EQ(scanned(r2), 0L);
+    CHECK(has(r2, "\"from_cache\":true"));
+    // The escape decoded to "ok": the scanner rewrites the cache with the same
+    // successful entries (a wrong decode would turn them into failures).
+    std::string rewritten = slurp(cache.path);
+    CHECK_EQ(replace_all(rewritten, "\"status\":\"ok\"", "\"status\":\"ok\""), ok_entries);
+
+    // Malformed escapes: the cache is ignored and everything is rescanned.
+    for (const char* bad : {"\\uZZZZ", "\\u12G4", "\\u+123", "\\u 123"}) {
+        std::string broken = original;
+        REQUIRE(replace_all(broken, "\"status\":\"ok\"", std::string("\"status\":\"") + bad + "\"") > 0);
+        write_text(cache.path, broken);
+        const std::string r = run_scan(cache.path, false, &rc);
+        std::fprintf(stderr, "  cache with %s: exit %d\n", bad, rc);
+        REQUIRE(rc == 0);
+        CHECK_EQ(scanned(r), first);
+        CHECK(has(r, "\"from_cache\":false"));
+    }
+}
