@@ -51,6 +51,9 @@ public:
                          float* readouts) noexcept = 0;
     // Latency in frames (reported for delay compensation).
     virtual uint32_t latency() const noexcept { return 0; }
+    // Main thread: latency for these plain values (registry order), so delay
+    // compensation is right before the first block and after edits.
+    virtual uint32_t latency_for(const float* /*params*/) const noexcept { return latency(); }
 };
 
 struct BuiltinDescriptor {
@@ -103,7 +106,7 @@ public:
     void process(float* l, float* r, uint32_t frames, const MidiEvent* events, uint32_t event_count,
                  const RtTransport& transport, const ParamEvent* params, uint32_t param_count) noexcept override;
     bool save_state(std::vector<uint8_t>& out, std::string& err) override;
-    uint32_t latency() override { return proc_->latency(); }
+    uint32_t latency() override;
     std::unique_ptr<PluginEditor> open_editor(const std::string& title, std::string& err) override;
     void params(std::vector<ParamInfo>& out) override;
     bool param_range(uint32_t id, double& min, double& max) override;

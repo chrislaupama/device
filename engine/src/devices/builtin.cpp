@@ -111,6 +111,13 @@ void BuiltinInstance::update_state(const uint8_t* data, std::size_t len) noexcep
     }
 }
 
+uint32_t BuiltinInstance::latency() {
+    float v[kMaxParams];
+    const uint32_t n = std::min(param_count(), kMaxParams);
+    for (uint32_t i = 0; i < n; ++i) v[i] = target_[i].load(std::memory_order_relaxed);
+    return proc_->latency_for(v);
+}
+
 uint32_t BuiltinInstance::readouts(float* out, uint32_t capacity) const noexcept {
     const auto n = static_cast<uint32_t>(desc_.readouts.size());
     for (uint32_t i = 0; i < n && i < capacity; ++i) out[i] = readout_atomic_[i].load(std::memory_order_relaxed);

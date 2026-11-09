@@ -158,6 +158,20 @@ TEST_CASE(multiband_depth_downward_time_mix_and_band_input) {
     CHECK_NEAR(tone_gain(mk, 9000.0, 0.01), 4.0, 0.1);
 }
 
+TEST_CASE(multiband_input_gain_never_reaches_the_dry_path) {
+    const Signal x = noise(48000, 0.2f, 7);
+    auto a = rig();
+    a.set("mix", 0.f);
+    auto b = rig();
+    b.set("mix", 0.f);
+    const uint32_t gi = param_index(b.desc(), "input_gain");
+    const auto ya = a.run_mono(x);
+    const auto yb = b.run(x, x, nullptr, nullptr, {{10000, {gi, 12.f}}, {30000, {gi, -12.f}}}).first;
+    float diff = 0.0f;
+    for (std::size_t i = 0; i < x.size(); ++i) diff = std::max(diff, std::fabs(ya[i] - yb[i]));
+    CHECK(diff < 1e-5f);
+}
+
 TEST_CASE(multiband_readouts_are_at_rest_in_silence) {
     auto r = rig();
     r.run_mono(Signal(4800, 0.0f));

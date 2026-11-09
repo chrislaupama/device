@@ -127,16 +127,17 @@ public:
             const float xl = l[i], xr = r[i];
             in_peak = std::max(in_peak, std::max(std::fabs(xl), std::fabs(xr)));
             const float gi = input_.next(in_gain);
-            const float il = xl * gi, ir = xr * gi;
-            // Crossovers: lanes [L, R, L, R].
-            const F4 a = split_a_.process(F4{{il, ir, il, ir}}); // LP1a | HP1a
+            // Crossovers: lanes [L, R, L, R]. The input gain applies after the split so the
+            // dry sum (an all-pass of the input) never carries gain changes.
+            const F4 a = split_a_.process(F4{{xl, xr, xl, xr}}); // LP1a | HP1a
             const F4 lohi = split_b_.process(a);                 // LP1b | HP1b -> low L R, high L R
             const F4 c = split_c_.process(lohi);                 // AP2 (low) | LP2a (high)
             const F4 dd = split_d_.process(F4{{c[2], c[3], lohi[2], lohi[3]}}); // LP2b | HP2a
             const F4 e = split_e_.process(F4{{dd[2], dd[3], 0.0f, 0.0f}});        // HP2b
             const F4 bl{{c[0], dd[0], e[0], 0.0f}}; // low, mid, high (left)
             const F4 br{{c[1], dd[1], e[1], 0.0f}};
-            const F4 sl = bl * band_in, sr = br * band_in;
+            const F4 gin = band_in * F4::all(gi);
+            const F4 sl = bl * gin, sr = br * gin;
             // Envelopes: stereo-linked peak, attack / release in the linear domain.
             const F4 x = max4(F4{{std::fabs(sl[0]), std::fabs(sl[1]), std::fabs(sl[2]), 0.0f}},
                               F4{{std::fabs(sr[0]), std::fabs(sr[1]), std::fabs(sr[2]), 0.0f}});
@@ -158,9 +159,7 @@ public:
             const F4 k = lin * makeup;
             const F4 wl = sl * k, wr = sr * k;
             const float wet_l = wl[0] + wl[1] + wl[2], wet_r = wr[0] + wr[1] + wr[2];
-            // Dry: the unprocessed bands (an all-pass of the input), before the input gain.
-            const float inv = 1.0f / gi;
-            const float dry_l = (bl[0] + bl[1] + bl[2]) * inv, dry_r = (br[0] + br[1] + br[2]) * inv;
+            const float dry_l = bl[0] + bl[1] + bl[2], dry_r = br[0] + br[1] + br[2];
             const float m = mix_.next(mix), o = output_.next(out_gain);
             l[i] = (dry_l + m * (wet_l - dry_l)) * o;
             r[i] = (dry_r + m * (wet_r - dry_r)) * o;

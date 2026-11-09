@@ -188,7 +188,6 @@ public:
         for (int c = 0; c < 2; ++c) {
             la_delay_[c].prepare(max_la);
             dry_delay_[c].prepare(max_la + dsp::Oversampler::latency(4));
-            os_delay_[c].prepare(dsp::Oversampler::latency(4));
         }
         wet_l_.assign(max_block, 0.0f);
         wet_r_.assign(max_block, 0.0f);
@@ -219,7 +218,6 @@ public:
         for (int c = 0; c < 2; ++c) {
             la_delay_[c].reset();
             dry_delay_[c].reset();
-            os_delay_[c].reset();
             hpf_[c].reset();
             eq_[c].reset();
             gr_[c] = 0.0f;
@@ -227,8 +225,10 @@ public:
             hold_[c] = 0;
             dc_x_[c] = dc_y_[c] = 0.0f;
         }
-        tilt_.reset();
-        for (auto& b : weight_) b.reset();
+        for (int c = 0; c < 2; ++c) {
+            tilt_[c].reset();
+            for (auto& w : weight_[c]) w.reset();
+        }
         sus_ = 0.0f;
         opto_mem_ = 0.0f;
         lt_power_ = -1.0f;
@@ -237,6 +237,14 @@ public:
     }
 
     uint32_t latency() const noexcept override { return latency_.load(std::memory_order_relaxed); }
+    uint32_t latency_for(const float* p) const noexcept override { return latency_of(p); }
+
+    // Lookahead + oversampler latency (non-Clean models).
+    uint32_t latency_of(const float* p) const noexcept {
+        const int model = std::clamp(static_cast<int>(std::lround(p[kModel])), 0, 5);
+        const auto la = static_cast<uint32_t>(std::lround(static_cast<double>(std::clamp(p[kLookahead], 0.0f, kMaxLookaheadMs)) * 1e-3 * sr_));
+        return la + (model != kClean ? dsp::Oversampler::latency(p[kOversampling] >= 0.5f ? 4 : 2) : 0u);
+    }
 
     void process(float* l, float* r, uint32_t n, const float* p, const BuiltinContext& ctx, float* ro) noexcept override {
         const int model = std::clamp(static_cast<int>(std::lround(p[kModel])), 0, 5);
@@ -277,6 +285,10 @@ public:
             hpf_[0].c = hpf_[1].c = dsp::design_biquad(dsp::BiquadKind::Highpass, std::clamp(hpf_f_, 10.0f, 2000.0f), 0.7071f, 0.0f, sr_);
         }
         const bool eq_on = std::fabs(eq_gain) > 0.05f;
+        // A stage switched back on starts from silence, not from its old tail.
+        if (hpf_on && !hpf_was_) hpf_[0].reset(), hpf_[1].reset();
+        if (eq_on && !eq_was_) eq_[0].reset(), eq_[1].reset();
+        hpf_was_ = hpf_on, eq_was_ = eq_on;
         if (eq_on && (p[kScEqFreq] != eq_f_ || eq_gain != eq_g_ || p[kScEqQ] != eq_q_)) {
             eq_f_ = p[kScEqFreq], eq_g_ = eq_gain, eq_q_ = p[kScEqQ];
             eq_[0].c = eq_[1].c = dsp::design_biquad(dsp::BiquadKind::Peak, std::clamp(eq_f_, 20.0f, 20000.0f), std::clamp(eq_q_, 0.1f, 10.0f), eq_g_, sr_);
@@ -288,6 +300,15 @@ public:
         const float lt_pole = dsp::pole(std::clamp(p[kLevelResponse], 0.1f, 60.0f) * 1000.0f, sr_);
         const float tilt = std::clamp(p[kLevelTilt], -12.0f, 12.0f);
         if (level_on) update_weighting(p, tilt);
+        if (!level_on && level_was_) {
+            lt_power_ = -1.0f;
+            st_power_ = 0.0f;
+            for (int c = 0; c < 2; ++c) {
+                tilt_[c].reset();
+                for (auto& w : weight_[c]) w.reset();
+            }
+        }
+        level_was_ = level_on;
         const float level_max = std::min(range, 12.0f);
 
         if (!primed_) {
@@ -306,11 +327,15 @@ public:
             // Long-term level rider (on the input).
             float lev_db = 0.0f;
             if (level_on) {
-                float w = 0.5f * (xl + xr);
-                w = tilt_.process(w) * tilt_gain_;
-                for (int b = 0; b < 4; ++b)
-                    if (weight_on_[b]) w = weight_[b].process(w);
-                const float pw = w * w;
+                // Weighted power per channel, then averaged (a mono sum would cancel wide audio).
+                float pw = 0.0f;
+                const float x[2] = {xl, xr};
+                for (int c = 0; c < 2; ++c) {
+                    float w = tilt_[c].process(x[c]) * tilt_gain_;
+                    for (int b = 0; b < 4; ++b)
+                        if (weight_on_[b]) w = weight_[c][b].process(w);
+                    pw += 0.5f * w * w;
+                }
                 st_power_ = pw + short_pole_ * (st_power_ - pw);
                 if (lt_power_ < 0.0f) lt_power_ = dsp::db_to_gain(thr) * dsp::db_to_gain(thr);
                 if (st_power_ > 1e-5f) lt_power_ = pw + lt_pole * (lt_power_ - pw);
@@ -428,27 +453,27 @@ public:
             return;
         }
 
-        // Saturation (oversampled) or the same delay without it.
-        if (os_path && sat_.active) {
+        // Saturation, oversampled. Non-Clean models always run this one path (Drive 0 passes
+        // through), so Drive changes never switch between paths with different state.
+        if (os_path) {
             const Saturator s = sat_;
-            os_.process(wet_l_.data(), wet_r_.data(), n, factor, [&s](float& a, float& b) {
-                a = s(a);
-                b = s(b);
+            const bool sat = s.active;
+            os_.process(wet_l_.data(), wet_r_.data(), n, factor, [&s, sat](float& a, float& b) {
+                if (sat) {
+                    a = s(a);
+                    b = s(b);
+                }
             });
-            // Asymmetric models make DC: remove it below the audio band.
+            // Asymmetric models make DC: remove it below the audio band. Without Drive the
+            // blocker only follows the signal, so it starts clean when Drive comes back.
             for (uint32_t i = 0; i < n; ++i) {
                 for (int c = 0; c < 2; ++c) {
                     float& x = c == 0 ? wet_l_[i] : wet_r_[i];
-                    const float y = x - dc_x_[c] + dc_pole_ * dc_y_[c];
+                    const float y = sat ? x - dc_x_[c] + dc_pole_ * dc_y_[c] : x;
                     dc_x_[c] = x;
                     dc_y_[c] = y;
-                    x = y;
+                    if (sat) x = y;
                 }
-            }
-        } else if (os_lat > 0) {
-            for (uint32_t i = 0; i < n; ++i) {
-                wet_l_[i] = os_delay_[0].process(wet_l_[i], os_lat);
-                wet_r_[i] = os_delay_[1].process(wet_r_[i], os_lat);
             }
         }
 
@@ -476,15 +501,17 @@ private:
     void update_weighting(const float* p, float tilt) noexcept {
         if (tilt != tilt_db_) {
             tilt_db_ = tilt;
-            tilt_.c = dsp::design_biquad(dsp::BiquadKind::HighShelf, 1000.0f, 0.5f, tilt, sr_);
+            tilt_[0].c = tilt_[1].c = dsp::design_biquad(dsp::BiquadKind::HighShelf, 1000.0f, 0.5f, tilt, sr_);
             tilt_gain_ = dsp::db_to_gain(-0.5f * tilt);
         }
         for (int b = 0; b < 4; ++b) {
             const float* q = p + kLevelBands + 4 * b;
-            weight_on_[b] = q[0] >= 0.5f && q[3] < -0.05f;
+            const bool on = q[0] >= 0.5f && q[3] < -0.05f;
+            if (on && !weight_on_[b]) weight_[0][b].reset(), weight_[1][b].reset();
+            weight_on_[b] = on;
             if (weight_on_[b] && (q[1] != wf_[b] || q[2] != wq_[b] || q[3] != ww_[b])) {
                 wf_[b] = q[1], wq_[b] = q[2], ww_[b] = q[3];
-                weight_[b].c = dsp::design_biquad(dsp::BiquadKind::Peak, std::clamp(wf_[b], 20.0f, 20000.0f), std::clamp(wq_[b], 0.1f, 12.0f),
+                weight_[0][b].c = weight_[1][b].c = dsp::design_biquad(dsp::BiquadKind::Peak, std::clamp(wf_[b], 20.0f, 20000.0f), std::clamp(wq_[b], 0.1f, 12.0f),
                                                   std::clamp(ww_[b], -48.0f, 0.0f), sr_);
             }
         }
@@ -498,8 +525,10 @@ private:
             eq_[c].flush();
             if (std::fabs(dc_y_[c]) < 1e-20f) dc_y_[c] = 0.0f;
         }
-        tilt_.flush();
-        for (auto& b : weight_) b.flush();
+        for (int c = 0; c < 2; ++c) {
+            tilt_[c].flush();
+            for (auto& w : weight_[c]) w.flush();
+        }
         if (st_power_ < 1e-20f) st_power_ = 0.0f;
         ro[kInDb] = dsp::gain_to_db(in_peak);
         ro[kOutDb] = dsp::gain_to_db(dsp::stereo_peak(l, r, n));
@@ -511,9 +540,10 @@ private:
     Curve curve_;
     Saturator sat_;
     dsp::Oversampler os_;
-    dsp::DelayLine la_delay_[2], dry_delay_[2], os_delay_[2];
+    dsp::DelayLine la_delay_[2], dry_delay_[2];
     std::vector<float> wet_l_, wet_r_, pre_l_, pre_r_;
-    dsp::Biquad hpf_[2], eq_[2], tilt_, weight_[4];
+    dsp::Biquad hpf_[2], eq_[2], tilt_[2], weight_[2][4];
+    bool hpf_was_ = false, eq_was_ = false, level_was_ = false;
     float hpf_f_ = -1.0f, eq_f_ = -1.0f, eq_g_ = 0.0f, eq_q_ = -1.0f, tilt_db_ = 1e9f, tilt_gain_ = 1.0f;
     float wf_[4] = {-1, -1, -1, -1}, wq_[4] = {-1, -1, -1, -1}, ww_[4] = {1, 1, 1, 1};
     bool weight_on_[4] = {false, false, false, false};

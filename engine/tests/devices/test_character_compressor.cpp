@@ -280,6 +280,43 @@ TEST_CASE(character_mix_makeup_and_auto_gain) {
     CHECK_NEAR(settled_gain_db(ag.run_mono(dc(9600, 0.01f)), 0.01f), 6.75, 0.02);
 }
 
+TEST_CASE(character_latency_is_known_before_the_first_block) {
+    auto r = rig();
+    CHECK(r.instance().latency() == 0u);
+    r.set("lookahead", 5.f);
+    CHECK(r.instance().latency() == 240u);
+    r.set("model", 3.f);
+    CHECK(r.instance().latency() == 240u + 31u);
+}
+
+TEST_CASE(character_drive_changes_keep_the_wet_path_continuous) {
+    auto r = rig();
+    r.set("model", 3.f);
+    r.set("threshold", 0.f);
+    r.set("drive", 0.8f);
+    Signal y = r.run_mono(tone(4800, 1000.0, kRate, 0.1));
+    r.set("drive", 0.f);
+    y = concat(y, r.run_mono(tone(4800, 1000.0, kRate, 0.1)));
+    r.set("drive", 0.8f);
+    y = concat(y, r.run_mono(tone(4800, 1000.0, kRate, 0.1)));
+    float step = 0.0f;
+    for (std::size_t i = 2400; i < y.size(); ++i) step = std::max(step, std::fabs(y[i] - y[i - 1]));
+    CHECK(step < 0.03f); // a 0.1 tone at 1 kHz moves at most 0.013 per sample
+}
+
+TEST_CASE(character_level_rider_hears_wide_stereo) {
+    auto r = rig();
+    r.set("ratio", 1.f);
+    r.set("level_enabled", 1.f);
+    r.set("level_amount", 100.f);
+    r.set("level_response", 1.f);
+    const Signal x = noise(5 * 48000, 0.055f, 4);
+    Signal neg = x;
+    for (auto& v : neg) v = -v;
+    r.run(x, neg);
+    CHECK(r.readouts()[3] > 9.0f); // anti-phase audio is measured, not cancelled
+}
+
 TEST_CASE(character_level_rider_moves_long_term_level_towards_threshold) {
     auto r = rig();
     r.set("ratio", 1.f);

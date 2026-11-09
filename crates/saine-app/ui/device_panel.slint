@@ -43,12 +43,13 @@ component ParamDrag inherits TouchArea {
         if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
             root.grabbed();
             if (e.modifiers.alt) { Studio.panel-reset(root.device, root.param); return; }
-            root.last-y = self.mouse-y;
+            root.last-y = self.absolute-position.y + self.mouse-y;
             Studio.panel-drag(root.device, root.param, 0, 0, root.rate, e.modifiers.shift);
         }
+        // Window coordinates: a handle that moves with its value must not feed its own motion back.
         if (e.kind == PointerEventKind.move && self.pressed) {
-            Studio.panel-drag(root.device, root.param, 1, (root.last-y - self.mouse-y) / 1px, root.rate, e.modifiers.shift);
-            root.last-y = self.mouse-y;
+            Studio.panel-drag(root.device, root.param, 1, (root.last-y - self.absolute-position.y - self.mouse-y) / 1px, root.rate, e.modifiers.shift);
+            root.last-y = self.absolute-position.y + self.mouse-y;
         }
         if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-drag(root.device, root.param, 2, 0, root.rate, false); }
         if (e.kind == PointerEventKind.cancel) { Studio.panel-drag(root.device, root.param, 3, 0, root.rate, false); }
@@ -68,12 +69,12 @@ component ParamDragX inherits TouchArea {
         if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
             root.grabbed();
             if (e.modifiers.alt) { Studio.panel-reset(root.device, root.param); return; }
-            root.last-x = self.mouse-x;
+            root.last-x = self.absolute-position.x + self.mouse-x;
             Studio.panel-drag(root.device, root.param, 0, 0, root.rate, e.modifiers.shift);
         }
         if (e.kind == PointerEventKind.move && self.pressed) {
-            Studio.panel-drag(root.device, root.param, 1, (self.mouse-x - root.last-x) / 1px, root.rate, e.modifiers.shift);
-            root.last-x = self.mouse-x;
+            Studio.panel-drag(root.device, root.param, 1, (self.absolute-position.x + self.mouse-x - root.last-x) / 1px, root.rate, e.modifiers.shift);
+            root.last-x = self.absolute-position.x + self.mouse-x;
         }
         if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-drag(root.device, root.param, 2, 0, root.rate, false); }
         if (e.kind == PointerEventKind.cancel) { Studio.panel-drag(root.device, root.param, 3, 0, root.rate, false); }

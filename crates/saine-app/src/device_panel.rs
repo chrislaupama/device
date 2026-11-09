@@ -551,7 +551,9 @@ impl Controller {
             h.slots.push_back(next);
             self.ui_dirty = true;
         }
-        self.devices.panel.views.retain(|id, _| views.contains(id));
+        // View state (the selected band) lives as long as its device; meters only poll here.
+        let gone: Vec<DeviceId> = self.devices.panel.views.keys().copied().filter(|id| self.project().device(*id).is_none()).collect();
+        self.devices.panel.views.retain(|id, _| !gone.contains(id));
         for id in views {
             let r = self.engine.builtin_readouts(id.0, &mut out).ok().map(|_| out.clone()).unwrap_or_default();
             if self.devices.panel.views.entry(id).or_default().poll(&r) {
@@ -584,11 +586,16 @@ impl Controller {
                 let v = snap_to_detent(p, def.detents(d, p), g.norm, fine).unwrap_or(v);
                 if v != g.value {
                     g.value = v;
-                    // The value and what it links go to the engine live; the model changes on release.
+                    // The engine gets the model's values with this edit (and what it links) on
+                    // top, so links that stop applying mid-drag fall back; the model changes on release.
+                    let mut live = def.values(d);
                     for (id, x) in def.linked_values(d, p.id, v) {
                         if let Some(i) = def.index_of(&id) {
-                            let _ = self.engine.builtin_set_param(device.0, i as u32, x);
+                            live[i] = x;
                         }
+                    }
+                    for (i, x) in live.into_iter().enumerate() {
+                        let _ = self.engine.builtin_set_param(device.0, i as u32, x);
                     }
                     self.ui_dirty = true;
                 }
@@ -598,6 +605,10 @@ impl Controller {
                 self.ui_dirty = true;
                 if g.active && g.value != g.start {
                     self.panel_commit_values(device, p, def.linked_values(d, p.id, g.value));
+                } else if g.active {
+                    for (i, x) in def.values(d).into_iter().enumerate() {
+                        let _ = self.engine.builtin_set_param(device.0, i as u32, x);
+                    }
                 }
             }
             _ => {
@@ -684,6 +695,14 @@ impl Controller {
     }
 
     pub fn panel_text(&mut self, device: DeviceId, index: i32, text: &str) {
+        // Text the panel shows (e.g. "AUTO", "DIAL 3") committed unchanged is not an edit.
+        let shown = self.panel_def(device).and_then(|(d, def)| {
+            let p = def.params.get(usize::try_from(index).ok()?)?;
+            Some(def.text(d, p, def.value(d, p)))
+        });
+        if shown.is_some_and(|s| s.trim() == text.trim()) {
+            return;
+        }
         let mut bad = None;
         self.panel_set(device, index, |p, _, _| {
             let v = p.parse(text);
