@@ -69,6 +69,7 @@ component Switch inherits Rectangle {
     width: 20.5px; height: 10px; border-radius: 5px;
     background: root.on ? #2752f5 : #4a4b4f;
     accessible-role: checkbox; accessible-label: root.label; accessible-checked: root.on;
+    accessible-action-default => { root.toggled(); }
     Rectangle { x: root.on ? parent.width - self.width - 1px : 1px; y: 1px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; }
     TouchArea { clicked => { root.toggled(); } }
 }
