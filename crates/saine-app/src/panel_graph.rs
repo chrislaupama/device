@@ -546,17 +546,17 @@ impl Controller {
     /// Engine readouts -> spectrum ballistics of the selected track's graph devices (every poll tick).
     pub(crate) fn panel_poll_graphs(&mut self) {
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else { return };
-        let ids: Vec<(DeviceId, bool)> = t
+        let ids: Vec<(DeviceId, bool, bool)> = t
             .devices
             .iter()
-            .filter_map(|d| saine_core::builtin::def_of(d).and_then(Kind::of).filter(|k| k.has_spectrum()).map(|k| (d.id, k != Kind::Dehummer)))
+            .filter_map(|d| saine_core::builtin::def_of(d).and_then(Kind::of).filter(|k| k.has_spectrum()).map(|k| (d.id, k != Kind::Dehummer, d.enabled)))
             .collect();
-        self.devices.panel.graph.spectra.retain(|id, _| ids.iter().any(|(i, _)| i == id));
+        self.devices.panel.graph.spectra.retain(|id, _| ids.iter().any(|(i, _, _)| i == id));
         let now = Instant::now();
         let audio_running = self.engine.transport().playing || self.rec.recording || self.test_tone_active();
         let mut out = Vec::new();
         let mut dirty = false;
-        for (id, has_duck) in ids {
+        for (id, has_duck, enabled) in ids {
             if self.engine.builtin_readouts(id.0, &mut out).is_err() || out.len() < BANDS {
                 continue;
             }
@@ -570,7 +570,7 @@ impl Controller {
                 sp.raw = raw;
                 sp.changed = now;
             }
-            let stale = !audio_running && now - sp.changed > STALE;
+            let stale = !(audio_running && enabled) && now - sp.changed > STALE;
             let before = sp.shown;
             for (b, r) in sp.shown.iter_mut().zip(raw.iter()) {
                 let target = r.max(SPEC_FLOOR_DB);
