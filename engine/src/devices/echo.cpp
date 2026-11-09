@@ -145,9 +145,9 @@ public:
         // Sync: scale left / right head times so the first audible head on each side lands on its note.
         float scale_l = 1.0f, scale_r = 1.0f;
         if (p[kSync] >= 0.5f) {
-            const double bpm = ctx.transport != nullptr ? ctx.transport->tempo_bpm : 120.0;
-            const float tl = static_cast<float>(static_cast<double>(note_beats(choice(kNoteL, 20))) * 60.0 / bpm);
-            const float tr = static_cast<float>(static_cast<double>(note_beats(choice(kNoteR, 20))) * 60.0 / bpm);
+            const double bpm = std::clamp(ctx.transport != nullptr ? ctx.transport->tempo_bpm : 120.0, 20.0, 999.0);
+            const auto note_s = [&](int i) { return std::min(static_cast<float>(static_cast<double>(note_beats(i)) * 60.0 / bpm), kMaxSeconds - 0.1f); };
+            const float tl = note_s(choice(kNoteL, 20)), tr = note_s(choice(kNoteR, 20));
             const Head* fl = nullptr;
             const Head* fr = nullptr;
             for (int i = 0; i < count; ++i) {
@@ -158,7 +158,7 @@ public:
             if (fl == nullptr) fl = fr;
             if (fr == nullptr) fr = fl;
             if (fl != nullptr) {
-                if (machine != 2) target_speed = fl->mm / std::max(tl, 1e-3f);
+                if (machine != 2) target_speed = std::clamp(fl->mm / std::max(tl, 1e-3f), 5.0f, 5000.0f);
                 const float base_l = fl->mm / target_speed;
                 scale_l = tl / std::max(base_l, 1e-4f);
                 scale_r = tr / std::max(fr->mm / target_speed, 1e-4f);

@@ -57,6 +57,8 @@ pub const TAPE_LOOP: Machine = Machine { loop_mm: 1600.0, gap_mm: 18.0, heads_mm
 pub const DRUM: Machine = Machine { loop_mm: 388.28, gap_mm: 40.0, heads_mm: &[34.0, 68.0, 102.0, 136.0], onset: 8.1, detent: 0.30, spacing_um: 1.5, default_speed: 459.46 };
 pub const CARTRIDGE: Machine = Machine { loop_mm: 2400.0, gap_mm: 24.0, heads_mm: &[162.56], onset: 7.8, detent: 0.55, spacing_um: 5.0, default_speed: 203.2 };
 pub const MACHINE_SPECS: [&Machine; 3] = [&TAPE_LOOP, &DRUM, &CARTRIDGE];
+/// Longest echo the engine's tape holds (s), engine/src/devices/echo.cpp kMaxSeconds.
+pub const MAX_SECONDS: f32 = 14.0;
 pub const CARTRIDGE_SPEED: f32 = 203.2;
 pub const CARTRIDGE_TRAVEL: f32 = 146.3;
 pub const DRUM_SPEED: f32 = 459.46;
@@ -203,14 +205,14 @@ pub fn picture(def: &DeviceDef, d: &Device, bpm: f64) -> Picture {
     // Sync: the first audible left / right heads land on their note values.
     let (mut scale_l, mut scale_r) = (1.0f32, 1.0f32);
     if v("sync") >= 0.5 {
-        let beat = 60.0 / bpm.max(1.0) as f32;
-        let tl = note_beats(v("note_l").round().clamp(0.0, 20.0) as usize) * beat;
-        let tr = note_beats(v("note_r").round().clamp(0.0, 20.0) as usize) * beat;
+        let beat = 60.0 / bpm.clamp(20.0, 999.0) as f32;
+        let note_s = |id: &str| (note_beats(v(id).round().clamp(0.0, 20.0) as usize) * beat).min(MAX_SECONDS - 0.1);
+        let (tl, tr) = (note_s("note_l"), note_s("note_r"));
         let first = |right: bool| heads.iter().filter(|h| h.on && (h.pan > 0.0) == right).map(|h| h.mm).fold(None, |a: Option<f32>, m| Some(a.map_or(m, |a| a.min(m))));
         let (fl, fr) = (first(false), first(true));
         if let Some((fl, fr)) = fl.or(fr).zip(fr.or(fl)) {
             if machine != 2 {
-                speed = fl / tl.max(1e-3);
+                speed = (fl / tl.max(1e-3)).clamp(5.0, 5000.0);
             }
             scale_l = tl / (fl / speed).max(1e-4);
             scale_r = tr / (fr / speed).max(1e-4);

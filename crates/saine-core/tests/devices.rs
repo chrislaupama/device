@@ -318,6 +318,11 @@ fn echo_picture_follows_the_machine_model() {
     synced.params.insert("sync".into(), 1.0);
     let first = builtin::echo::picture(def, &synced, 120.0).heads.iter().filter(|h| h.on && h.pan <= 0.0).map(|h| h.ms).fold(f32::MAX, f32::min);
     assert!((first - 500.0).abs() < 0.5, "Note L 1/4 at 120 BPM: {first}");
+    // A note slower than the motor allows still lands exactly (speed clamped before the scale).
+    synced.params.insert("machine".into(), 1.0);
+    synced.params.insert("note_l".into(), 0.0);
+    let slow = builtin::echo::picture(def, &synced, 60.0).heads.iter().filter(|h| h.on && h.pan <= 0.0).map(|h| h.ms).fold(f32::MAX, f32::min);
+    assert!((slow - 12000.0).abs() < 2.0, "Note L 2/1. at 60 BPM: {slow}");
 }
 
 #[test]
