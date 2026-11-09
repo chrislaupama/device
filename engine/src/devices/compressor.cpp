@@ -177,6 +177,7 @@ std::unique_ptr<BuiltinProcessor> create_compressor() { return std::make_unique<
 
 extern const BuiltinDescriptor kCompressorDescriptor;
 constexpr float kIdleReadouts[] = {-120.0f, -120.0f, 0.0f}; // silent in / out, no reduction
-const BuiltinDescriptor kCompressorDescriptor{"compressor", kParamIds, kReadoutIds, &create_compressor, kIdleReadouts};
+constexpr float kDefaults[kParamCount] = {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};
+const BuiltinDescriptor kCompressorDescriptor{"compressor", kParamIds, kReadoutIds, &create_compressor, kIdleReadouts, kDefaults};
 
 } // namespace saine

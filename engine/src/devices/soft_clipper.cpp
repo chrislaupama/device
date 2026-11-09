@@ -142,8 +142,10 @@ private:
         float* dl = dry_buf_.data();
         float* dr = dry_buf_.data() + block_;
         for (uint32_t i = 0; i < n; ++i) {
-            dl[i] = dry_[0].process(l[i]);
-            dr[i] = dry_[1].process(r[i]);
+            dry_[0].push(l[i]);
+            dl[i] = dry_[0].at(dsp::Oversampler4x::kLatency);
+            dry_[1].push(r[i]);
+            dr[i] = dry_[1].at(dsp::Oversampler4x::kLatency);
         }
 
         os_.up(l, r, n);
@@ -210,6 +212,7 @@ std::unique_ptr<BuiltinProcessor> create_soft_clipper() { return std::make_uniqu
 } // namespace
 
 extern const BuiltinDescriptor kSoftClipperDescriptor;
-const BuiltinDescriptor kSoftClipperDescriptor{"soft-clipper", kParamIds, {}, &create_soft_clipper, {}};
+constexpr float kDefaults[] = {0.f, 0.f, 50.f, 0.f, 0.f, 100.f, 0.f};
+const BuiltinDescriptor kSoftClipperDescriptor{"soft-clipper", kParamIds, {}, &create_soft_clipper, {}, kDefaults};
 
 } // namespace saine

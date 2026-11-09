@@ -28,7 +28,7 @@ pub static UTILITY: DeviceDef = DeviceDef {
         ParamDef::choice("phase_r", "Phase R", OFF_ON, 0).label("\u{d8}R").help("Inverts the polarity of the right channel."),
         ParamDef::choice("mono", "Mono", OFF_ON, 0).help("Sums both channels to mono."),
         ParamDef::choice("bass_mono", "Bass Mono", OFF_ON, 0).help("Makes everything below the Bass Mono frequency mono."),
-        ParamDef::new("bass_mono_freq", "Bass Mono Freq", 50.0, 500.0, 120.0, Taper::Log, "Hz", Format::Hz).help("Crossover below which Bass Mono sums to mono."),
+        ParamDef::new("bass_mono_freq", "Bass Mono Freq", 50.0, 500.0, 120.0, Taper::Log, "Hz", Format::Freq).help("Crossover below which Bass Mono sums to mono."),
         ParamDef::choice("bass_mono_audition", "Bass Mono Audition", OFF_ON, 0).reset_on_load().help("Plays only the part below the Bass Mono frequency."),
         ParamDef::choice("mute", "Mute", OFF_ON, 0).help("Silences the output."),
         ParamDef::choice("dc_filter", "DC Filter", OFF_ON, 0).label("DC").help("Removes DC offset (a very low high-pass)."),

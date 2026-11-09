@@ -1,5 +1,5 @@
 //! Custom bodies of built-in device cards (View::Custom). Each arm turns a
-//! device's current values into a PanelField (path layers, texts, grip pills,
+//! device's current values into a PanelCanvas (path layers, texts, grip pills,
 //! drag zones) and, for grid bodies, freely placed knobs and buttons. The
 //! drawings follow the reference cards' field painters (device specs in the
 //! Captain drive); the curves come from the drawn models in saine_core.
@@ -14,7 +14,7 @@
 
 use crate::controller::Controller;
 use crate::device_panel::{CAPTION_H, Z};
-use crate::{PanelButton, PanelField, PanelGrip, PanelPath, PanelText, PanelZone};
+use crate::{PanelButton, PanelCanvas, PanelGrip, PanelPath, PanelText, PanelZone};
 use saine_core::builtin::{self, DeviceDef};
 use saine_core::Device;
 use slint::{Color, ModelRc, SharedString, VecModel};
@@ -29,7 +29,7 @@ const DRAW_RATE: f32 = 48_000.0;
 /// What a custom body adds to the generic card.
 #[derive(Default)]
 pub(crate) struct CustomBody {
-    pub field: PanelField,
+    pub canvas: PanelCanvas,
     pub buttons: Vec<PanelButton>,
     /// Knob placement (param, x, y; card relative, 100%) replacing the dial row.
     pub knobs: Vec<(&'static str, f32, f32)>,
@@ -163,9 +163,9 @@ impl Controller {
 }
 
 /// Field frame: caption row then the well; returns the field and the well size (scaled).
-fn frame(rect: (f32, f32, f32, f32), caption: &str, readout: String) -> (PanelField, f32, f32) {
+fn frame(rect: (f32, f32, f32, f32), caption: &str, readout: String) -> (PanelCanvas, f32, f32) {
     let (x, y, w, h) = rect;
-    let field = PanelField {
+    let field = PanelCanvas {
         visible: true,
         well: true,
         x: x * Z,
@@ -254,7 +254,7 @@ fn wave_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, drag_param: i32, acce
     }
     field.paths = model(paths);
     field.zones = model(vec![PanelZone { x: x0, y: y0, w: x1 - x0, h: y1 - y0, param_x: -1, param_y: drag_param, rate_x: 0.0, rate_y: 1.0 / (y1 - y0 - 16.0 * Z).max(8.0) }]);
-    CustomBody { field, ..Default::default() }
+    CustomBody { canvas: field, ..Default::default() }
 }
 
 fn crush_body(value: &dyn Fn(&str) -> f32, p_down: i32, p_bits: i32, accent: Color, rect: (f32, f32, f32, f32)) -> CustomBody {
@@ -305,7 +305,7 @@ fn crush_body(value: &dyn Fn(&str) -> f32, p_down: i32, p_bits: i32, accent: Col
         rate_x: -1.0 / (x1 - x0 - 16.0 * Z).max(8.0),
         rate_y: 1.0 / (y1 - y0 - 16.0 * Z).max(8.0),
     }]);
-    CustomBody { field, ..Default::default() }
+    CustomBody { canvas: field, ..Default::default() }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -380,7 +380,7 @@ fn stereo_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, p_width: i32, p_sid
         PanelZone { x: sx, y: sy, w: size + half_gutter, h: size, param_x: p_width, param_y: p_side, rate_x: 1.0 / size, rate_y: 1.0 / size },
         PanelZone { x: sx + size + half_gutter, y: 0.0, w: px1 - (sx + size + half_gutter) + m, h, param_x: p_low, param_y: -1, rate_x: 1.0 / low_travel.max(8.0), rate_y: 0.0 },
     ]);
-    CustomBody { field, ..Default::default() }
+    CustomBody { canvas: field, ..Default::default() }
 }
 
 fn utility_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, idx: &dyn Fn(&str) -> i32) -> CustomBody {
@@ -404,7 +404,7 @@ fn utility_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, idx: &dyn Fn(&str)
         at(latch("mute", right - 36.0, 34.0), 263.2),
         at(latch("dc_filter", right + 2.0, 34.0), 263.2),
     ];
-    let field = PanelField {
+    let field = PanelCanvas {
         visible: true,
         well: false,
         x: 0.0,
@@ -422,7 +422,7 @@ fn utility_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, idx: &dyn Fn(&str)
     // Width has no effect in mono or with a single channel on both sides.
     let width_dead = on("mono") || ((mode == 1 || mode == 2) && on("phase_l") == on("phase_r"));
     CustomBody {
-        field,
+        canvas: field,
         buttons,
         knobs: vec![("gain", right - 31.0, 93.8), ("width", left - 31.0, 178.0), ("balance", right - 31.0, 178.0)],
         dim: if width_dead { vec!["width"] } else { vec![] },

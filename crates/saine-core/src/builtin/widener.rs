@@ -15,7 +15,7 @@ pub static WIDENER: DeviceDef = DeviceDef {
         ParamDef::new("width2", "Width", 0.0, 400.0, 200.0, LINEAR, "%", Format::Percent0).help("Side level relative to the original: 0% is mono, 100% unchanged, 400% very wide."),
         ParamDef::new("midgain", "Mid Gain", -12.0, 12.0, 0.0, LINEAR, "dB", Format::Db).help("Level of the centre (mid) signal."),
         ParamDef::new("sidegain", "Side Gain", -12.0, 12.0, 0.0, LINEAR, "dB", Format::Db).help("Extra level of the side signal."),
-        ParamDef::new("lowcut", "Low Cut", 20.0, 500.0, 120.0, Taper::Log, "Hz", Format::Hz).help("Below this frequency the widening fades out so the bass stays centred."),
+        ParamDef::new("lowcut", "Low Cut", 20.0, 500.0, 120.0, Taper::Log, "Hz", Format::Freq).help("Below this frequency the widening fades out so the bass stays centred."),
         ParamDef::new("mix", "Mix", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent0).help("Blend of widened and original signal."),
     ],
     layout: Layout {

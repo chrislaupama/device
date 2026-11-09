@@ -97,6 +97,7 @@ std::unique_ptr<BuiltinProcessor> create_bitcrusher() { return std::make_unique<
 } // namespace
 
 extern const BuiltinDescriptor kBitCrusherDescriptor;
-const BuiltinDescriptor kBitCrusherDescriptor{"bitcrusher", kParamIds, {}, &create_bitcrusher, {}};
+constexpr float kDefaults[] = {16.f, 1.f, 100.f, 0.f, 0.f};
+const BuiltinDescriptor kBitCrusherDescriptor{"bitcrusher", kParamIds, {}, &create_bitcrusher, {}, kDefaults};
 
 } // namespace saine

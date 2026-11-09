@@ -15,7 +15,7 @@ pub static DISTORTION: DeviceDef = DeviceDef {
     purpose: "Drives the signal into a waveshaper for grit, warmth or fuzz, with a tone control and a dry/wet blend.",
     params: &[
         ParamDef::new("drive", "Drive", 0.0, 100.0, 30.0, LINEAR, "%", Format::Percent0).help("How hard the signal is pushed into the shaper."),
-        ParamDef::new("tone", "Tone", 20.0, 20000.0, 4000.0, Taper::Log, "Hz", Format::Hz).help("Low-pass cutoff on the distorted signal: lower is darker."),
+        ParamDef::new("tone", "Tone", 20.0, 20000.0, 4000.0, Taper::Log, "Hz", Format::Freq).help("Low-pass cutoff on the distorted signal: lower is darker."),
         ParamDef::new("mix", "Mix", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent0).help("Blend of distorted and dry signal."),
         ParamDef::new("output", "Gain", -24.0, 6.0, 0.0, LINEAR, "dB", Format::Db).help("Level of the distorted signal before the mix."),
         ParamDef::choice("mode", "Mode", MODES, 0).help("Shaper: Overdrive is smooth, Fuzz asymmetric and buzzy, Tube soft with even harmonics, Hard Clip flat-topped."),

@@ -175,8 +175,10 @@ private:
         for (uint32_t i = 0; i < n; ++i) {
             const float t = static_cast<float>(i + 1) * inv_n;
             const dsp::SvfCoeffs pre = dsp::SvfCoeffs::lerp(e0.pre, e1.pre, t);
-            dl[i] = dry_[0].process(l[i]);
-            dr[i] = dry_[1].process(r[i]);
+            dry_[0].push(l[i]);
+            dl[i] = dry_[0].at(dsp::Oversampler4x::kLatency);
+            dry_[1].push(r[i]);
+            dr[i] = dry_[1].at(dsp::Oversampler4x::kLatency);
             const float cmp = comp_.next(comp);
             const float xl = pre_[0].process(l[i], pre), xr = pre_[1].process(r[i], pre);
             const float x2 = 0.5f * (xl * xl + xr * xr);
@@ -266,6 +268,7 @@ std::unique_ptr<BuiltinProcessor> create_tape_saturation() { return std::make_un
 } // namespace
 
 extern const BuiltinDescriptor kTapeSaturationDescriptor;
-const BuiltinDescriptor kTapeSaturationDescriptor{"tapesaturation", kParamIds, {}, &create_tape_saturation, {}};
+constexpr float kDefaults[] = {30.f, 40.f, 30.f, -60.f, 100.f, 0.f, 0.f};
+const BuiltinDescriptor kTapeSaturationDescriptor{"tapesaturation", kParamIds, {}, &create_tape_saturation, {}, kDefaults};
 
 } // namespace saine

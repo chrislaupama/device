@@ -46,12 +46,12 @@ struct HalfbandCoeffs {
     // first for the padding), already scaled by 2 (interpolation gain).
     alignas(16) float c[LP] = {};
     explicit HalfbandCoeffs(double beta) {
-        constexpr double kPi = 3.14159265358979323846;
+        constexpr double kPiD = 3.14159265358979323846;
         const int M = 2 * P - 1;
         double taps[L];
         for (int k = 0; k < L; ++k) {
             const int n = -M + 2 * k; // odd offsets -M..M
-            const double sinc = std::sin(kPi * n / 2.0) / (kPi * n);
+            const double sinc = std::sin(kPiD * n / 2.0) / (kPiD * n);
             const double r = static_cast<double>(n) / (M + 1);
             const double w = bessel_i0(beta * std::sqrt(std::max(0.0, 1.0 - r * r))) / bessel_i0(beta);
             taps[k] = sinc * w;
@@ -191,20 +191,6 @@ private:
     HalfbandDown<kStage1Taps> down1_[2];
     HalfbandDown<kStage2Taps> down2_[2];
     float z_[2] = {0.0f, 0.0f};
-};
-
-// Integer delay line for the dry path (latency alignment). RT safe after prepare().
-struct DelayLine {
-    std::vector<float> buf;
-    uint32_t pos = 0;
-    void prepare(uint32_t frames) { buf.assign(std::max<uint32_t>(1, frames), 0.0f); pos = 0; }
-    void reset() noexcept { std::fill(buf.begin(), buf.end(), 0.0f); pos = 0; }
-    float process(float x) noexcept {
-        const float y = buf[pos];
-        buf[pos] = x;
-        pos = pos + 1 == buf.size() ? 0 : pos + 1;
-        return y;
-    }
 };
 
 } // namespace saine::dsp

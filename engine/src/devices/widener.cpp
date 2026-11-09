@@ -77,6 +77,7 @@ std::unique_ptr<BuiltinProcessor> create_widener() { return std::make_unique<Wid
 } // namespace
 
 extern const BuiltinDescriptor kWidenerDescriptor;
-const BuiltinDescriptor kWidenerDescriptor{"widener", kParamIds, {}, &create_widener, {}};
+constexpr float kDefaults[] = {200.f, 0.f, 0.f, 120.f, 100.f};
+const BuiltinDescriptor kWidenerDescriptor{"widener", kParamIds, {}, &create_widener, {}, kDefaults};
 
 } // namespace saine

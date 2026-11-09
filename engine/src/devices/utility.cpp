@@ -136,6 +136,7 @@ std::unique_ptr<BuiltinProcessor> create_utility() { return std::make_unique<Uti
 } // namespace
 
 extern const BuiltinDescriptor kUtilityDescriptor;
-const BuiltinDescriptor kUtilityDescriptor{"utility", kParamIds, {}, &create_utility, {}};
+constexpr float kDefaults[] = {0.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f, 0.f, 120.f, 0.f, 0.f, 0.f};
+const BuiltinDescriptor kUtilityDescriptor{"utility", kParamIds, {}, &create_utility, {}, kDefaults};
 
 } // namespace saine

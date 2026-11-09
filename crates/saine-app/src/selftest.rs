@@ -2071,7 +2071,7 @@ fn builtin_of<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device>
 fn builtin_each_steps() -> Vec<Step> {
     use Step::*;
     let mut steps: Vec<Step> = vec![Do("builtins: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false)))];
-    for def in saine_core::builtin::all().iter().filter(|d| d.id != "compressor") {
+    for def in saine_core::builtin::all().iter().filter(|d| ["distortion", "tapesaturation", "soft-clipper", "bitcrusher", "widener", "utility"].contains(&d.id)) {
         let (id, name) = (def.id, def.name);
         let base = Rc::new(Cell::new(0usize));
         let before = Rc::new(Cell::new(0.0f32));
@@ -2331,6 +2331,151 @@ fn platform_device_steps() -> Vec<Step> {
         .collect()
 }
 
+fn named_builtin<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
+    let t = track_of(c, TrackKind::Audio)?;
+    c.project().tracks[t].devices.iter().find(|d| saine_core::builtin::def_of(d).is_some_and(|def| def.id == id))
+}
+
+fn named_value(c: &Controller, id: &str, param: &str) -> Option<f32> {
+    let d = named_builtin(c, id)?;
+    let def = saine_core::builtin::def_of(d)?;
+    Some(def.value(d, def.param(param)?))
+}
+
+fn leak(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
+/// The modulation devices: each one added from Add device › Built-in, checked
+/// live in the engine with its generated field card, then removed; plus the
+/// Tremolo field drag (one undo step for both axes), the Sync swap of the Rate
+/// knob, and Character Mod's circuit switch moving untouched artifacts.
+fn modulation_device_steps() -> Vec<Step> {
+    use Step::*;
+    const DEVICES: [(&str, &str, usize); 7] =
+        [("tremolo", "Tremolo", 4), ("autopanner", "Auto-Panner", 4), ("chorus", "Chorus", 5), ("flanger", "Flanger", 5), ("phaser", "Phaser", 5), ("ring-mod", "Ring Mod", 5), ("character-mod", "Character Mod", 5)];
+    let hist = Rc::new(Cell::new(0usize));
+    fn one(hc: &Rc<Cell<usize>>, c: &Controller, label: &str) -> Result<(), String> {
+        let n = c.doc.history_labels().len();
+        let was = hc.get();
+        hc.set(n);
+        (n == was + 1 && c.doc.undo_label() == Some(label)).then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want {label})", c.doc.undo_label()))
+    }
+    let id_of = |ctl: &Ctl, id: &str| named_builtin(&ctl.borrow(), id).map(|d| d.id.0 as i32);
+    let refresh = |a: &AppWindow, ctl: &Ctl| {
+        if let Ok(mut c) = ctl.try_borrow_mut() {
+            c.update_ui(a);
+        }
+    };
+    let mut steps = vec![DoC("modulation: remove the Compressor", Box::new(move |a, ctl| {
+        if let Some(id) = id_of(ctl, "compressor") {
+            a.global::<Studio>().invoke_device_remove(id);
+        }
+        refresh(a, ctl);
+    }))];
+    for (id, name, knobs) in DEVICES {
+        let (h0, h1) = (hist.clone(), hist.clone());
+        steps.push(DoC(leak(format!("modulation: Add device › Built-in › {name}")), Box::new(move |a, ctl| {
+            h0.set(ctl.borrow().doc.history_labels().len());
+            refresh(a, ctl);
+            let add_x = a.global::<Studio>().get_add_device_x();
+            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+            refresh(a, ctl);
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == name) {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })));
+        steps.push(Check(leak(format!("{name}: added at its defaults in one step; field card with {knobs} knobs; live in the engine (LFO readout)")), Box::new(move |c, a| {
+            one(&h1, c, &format!("Add {name}"))?;
+            let d = named_builtin(c, id).ok_or("not added")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            let cd = card_named(a, name).ok_or("no card")?;
+            let mut r = Vec::new();
+            c.engine.builtin_readouts(d.id.0, &mut r).map_err(|e| e.to_string())?;
+            let errors = c.engine.plugin_load_errors();
+            let ok = cd.field.visible
+                && cd.field.main != ""
+                && slint::Model::row_count(&cd.knobs) == knobs
+                && approx(cd.width, def.layout.width() * crate::device_panel::Z, 0.01)
+                && r.len() == 1
+                && !errors.iter().any(|(e, _)| *e == d.id);
+            ok.then_some(()).ok_or(format!("field {} knobs {} width {} readouts {r:?} errors {errors:?}", cd.field.visible, slint::Model::row_count(&cd.knobs), cd.width))
+        })));
+        match id {
+            "tremolo" => {
+                let (h2, h3) = (hist.clone(), hist.clone());
+                steps.push(DoC("tremolo: drag the field 40 px right and 30 px up", Box::new(|a, _| {
+                    if let Some(cd) = card_named(a, "Tremolo") {
+                        let f = &cd.field;
+                        let (x, y) = card_xy(&cd, f.x + f.plot_x + f.plot_w / 2.0, f.y + f.plot_y + f.plot_h / 2.0);
+                        drag(a, x, y, x + 40.0, y - 30.0);
+                    }
+                })));
+                steps.push(Check("tremolo: Rate and Depth both moved, ONE undo step for the drag", Box::new(move |c, _| {
+                    one(&h2, c, "Device Parameter Change")?;
+                    let (r, d) = (named_value(c, "tremolo", "rate").unwrap_or(0.0), named_value(c, "tremolo", "depth").unwrap_or(0.0));
+                    (r > 5.5 && d > 75.0).then_some(()).ok_or(format!("rate {r} depth {d}"))
+                })));
+                // Through the controller: the Add device search field keeps keyboard focus after an add.
+                steps.push(DoC("tremolo: undo", Box::new(move |a, ctl| {
+                    ctl.borrow_mut().undo();
+                    refresh(a, ctl);
+                })));
+                steps.push(Check("tremolo: one undo restores Rate 5 Hz and Depth 70%", Box::new(move |c, _| {
+                    h3.set(c.doc.history_labels().len());
+                    let (r, d) = (named_value(c, "tremolo", "rate").unwrap_or(0.0), named_value(c, "tremolo", "depth").unwrap_or(0.0));
+                    (r == 5.0 && d == 70.0).then_some(()).ok_or(format!("rate {r} depth {d}"))
+                })));
+                let h4 = hist.clone();
+                steps.push(DoC("tremolo: Timebase › Sync", Box::new(move |a, ctl| {
+                    let Some(id) = id_of(ctl, "tremolo") else { return };
+                    let p = saine_core::builtin::find("tremolo").and_then(|d| d.index_of("sync")).map_or(-1, |i| i as i32);
+                    a.global::<Studio>().invoke_panel_choice(id, p, 1);
+                    refresh(a, ctl);
+                })));
+                steps.push(Check("tremolo: Sync on swaps the Rate knob for Rate Sync (1/4)", Box::new(move |c, a| {
+                    one(&h4, c, "Device Parameter Change")?;
+                    let k = card_named(a, "Tremolo").and_then(|cd| slint::Model::row_data(&cd.knobs, 0)).ok_or("no knob")?;
+                    (k.value == "1/4" && k.label == "Rate").then_some(()).ok_or(format!("knob {} {}", k.label, k.value))
+                })));
+            }
+            "character-mod" => {
+                let h2 = hist.clone();
+                steps.push(DoC("character mod: Character dropdown › Phaser", Box::new(move |a, ctl| {
+                    let Some(id) = id_of(ctl, "character-mod") else { return };
+                    let p = saine_core::builtin::find("character-mod").and_then(|d| d.index_of("model")).map_or(-1, |i| i as i32);
+                    a.global::<Studio>().invoke_panel_menu(id, p, 600.0, 600.0);
+                    refresh(a, ctl);
+                    if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == "Phaser") {
+                        let (x, y) = devmenu_row(a, i);
+                        click(a, x, y);
+                    }
+                })));
+                steps.push(Check("character mod: Phaser chosen, untouched Hiss moved to 0 in the same undo step; Mode now lists Phaser modes", Box::new(move |c, a| {
+                    one(&h2, c, "Character Change, with Hiss moved to its own defaults")?;
+                    let (m, hiss) = (named_value(c, "character-mod", "model"), named_value(c, "character-mod", "art_hiss"));
+                    let mode = card_named(a, "Character Mod")
+                        .and_then(|cd| (0..slint::Model::row_count(&cd.picks)).filter_map(|i| slint::Model::row_data(&cd.picks, i)).find(|p| p.label == "Mode"))
+                        .map(|p| p.value.to_string())
+                        .unwrap_or_default();
+                    (m == Some(7.0) && hiss == Some(0.0) && mode == "Four Plain").then_some(()).ok_or(format!("model {m:?} hiss {hiss:?} mode {mode:?}"))
+                })));
+            }
+            _ => {}
+        }
+        let h5 = hist.clone();
+        steps.push(DoC(leak(format!("modulation: remove {name}")), Box::new(move |a, ctl| {
+            if let Some(i) = id_of(ctl, id) {
+                a.global::<Studio>().invoke_device_remove(i);
+            }
+            refresh(a, ctl);
+            h5.set(ctl.borrow().doc.history_labels().len());
+        })));
+    }
+    steps
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
@@ -2340,6 +2485,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(platform_device_steps());
     all.extend(builtin_device_steps());
     all.extend(builtin_each_steps());
+    all.extend(modulation_device_steps());
     all.extend(automation_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));

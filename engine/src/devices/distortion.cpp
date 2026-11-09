@@ -153,8 +153,10 @@ private:
         float* dl = scratch_dry_l();
         float* dr = scratch_dry_r();
         for (uint32_t i = 0; i < n; ++i) {
-            dl[i] = dry_[0].process(l[i]);
-            dr[i] = dry_[1].process(r[i]);
+            dry_[0].push(l[i]);
+            dl[i] = dry_[0].at(dsp::Oversampler4x::kLatency);
+            dry_[1].push(r[i]);
+            dr[i] = dry_[1].at(dsp::Oversampler4x::kLatency);
         }
 
         // Shaper at 4x. Parameters are smoothed at the base rate and held
@@ -230,6 +232,7 @@ std::unique_ptr<BuiltinProcessor> create_distortion() { return std::make_unique<
 } // namespace
 
 extern const BuiltinDescriptor kDistortionDescriptor;
-const BuiltinDescriptor kDistortionDescriptor{"distortion", kParamIds, {}, &create_distortion, {}};
+constexpr float kDefaults[] = {30.f, 4000.f, 100.f, 0.f, 0.f, 0.f, 0.f};
+const BuiltinDescriptor kDistortionDescriptor{"distortion", kParamIds, {}, &create_distortion, {}, kDefaults};
 
 } // namespace saine
