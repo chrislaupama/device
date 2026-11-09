@@ -138,9 +138,11 @@ system. Any built-in device can use them.
      Those are facts; write descriptions in your own words. Never copy the
      reference's code, CSS, images, audio or preset files.
    - `Layout`: `picker` (segmented `Menu`s, `Segments` with their own
-     labels, `Dropdown` pills for long lists, toggles, `Sidechain`, pills;
+     labels, `Dropdown` pills for long lists, `ModeDropdown` (a type menu
+     whose last entry switches a mode parameter, e.g. Auto Filter's DJ),
+     toggles, `Sidechain`, pills;
      `Gap` or the sidechain picker pushes what follows to the right),
-     `view` (`DynamicsStrip`, `Field` or `Custom`), `sliders`,
+     `view` (`DynamicsStrip`, `Field`, `Eq` or `Custom`), `sliders`,
      `clusters` of knobs (`Swap` holds alternatives in one cell, such as
      Rate / Rate Sync), `faces` (drawings inside a knob), `shown_when`
      (mode-dependent controls: hidden parameters get no control and no
@@ -158,8 +160,10 @@ system. Any built-in device can use them.
      first readout as an LFO phase (0..1) while the transport plays.
    - Parameter extras: `preset_locked()` (presets never load or save it,
      e.g. a random seed), `reset_on_load()`, `Format::Freq` (reference Hz
-     text), `Format::SignedPercent` and `Format::DbCut` (a positive stored
-     cut shown as −x.x dB). Tempo-synced LFOs use the `DIVISIONS` /
+     text), `Format::SignedPercent`, `Format::DbCut` (a positive stored cut
+     shown as −x.x dB), `Format::MsAuto`, `Format::Rate` (LFO rates,
+     `1.00 Hz`), `Format::SignedBareZero(n)` (explicit sign, bare zero) and
+     `Format::Degrees`. Tempo-synced LFOs use the `DIVISIONS` /
      `MOD_NOTES` tables and `synced_hz`.
    - Linked writes: when one edit must move other parameters in the same
      undo step (Character Mod's circuit switch resets untouched artifacts),
@@ -222,7 +226,16 @@ system. Any built-in device can use them.
    dynamics building blocks (biquads, delay lines, sliding minimum, look-ahead
    gain, polyphase oversampler, 4x true-peak detector) are in
    `dsp_dynamics.hpp`.
-3. **Custom view (optional).** For bodies the template cannot express (EQ
+3. **EQ view.** `View::Eq(&EqView)` (`builtin/eq.rs`) describes an EQ card:
+   its bands (parameter ids per band), the shapes and their picker order,
+   pass slopes, Output, Bank and Auto Gain parameters, the dB window and
+   the node behaviour. `device_canvas.rs` draws it (band tabs, On latch,
+   Bank menu, response field with nodes and Q wings, type glyphs, value
+   cells, Output slider) and runs its gestures. The panel curve and the
+   engine use the same design (`eq::sections`, `engine/src/devices/eq_sections.hpp`);
+   `engine_contract_points` (Rust) and `eq_design_matches_the_panel_model`
+   (C++) pin the same points, so change both together.
+4. **Custom view (optional).** For bodies the template cannot express (EQ
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a
    Slint component in `ui/device_panel.slint` chosen by that data. Reuse
@@ -237,7 +250,10 @@ system. Any built-in device can use them.
    `Studio.panel-view(device, action, value)`; `src/panel_multiband.rs` is
    an example with its own Slint component (band selector, threshold / floor
    and crossover handles, dial row following the selected band).
-4. **Tests.**
+   The EQ and Auto Filter canvases (`device_canvas.rs`) use the same flag and
+   add dots, anchored grips, double-click (phase 6), wheel and keys
+   (`panel-graph-wheel`, `panel-graph-key`).
+5. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),
      `DeviceSession` (a published engine session with tracks, devices and
@@ -250,9 +266,9 @@ system. Any built-in device can use them.
      (`crates/saine-engine/tests/builtin.rs`) fails when the definition and
      the kernel disagree on parameter order or defaults. Add core tests for formatting and
      parsing of any new display format.
-5. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
+6. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
    (`saine_device_bench`, Release build) and put the numbers in the PR.
-6. **Render.** `--state reference-<id>` shows any built-in device at its
+7. **Render.** `--state reference-<id>` shows any built-in device at its
    defaults. Render it with `--offscreen --screenshot <png>` (a hidden
    window, so it does not take over the screen) and compare it with the
    reference capture. Add the device to the app self-test (the dynamics,
