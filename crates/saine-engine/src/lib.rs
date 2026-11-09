@@ -380,6 +380,19 @@ impl Engine {
         Ok(())
     }
 
+    /// Newest analysis frame of a live built-in device (bulk visualiser data,
+    /// e.g. the Spectrum's band levels; layout per device). Returns the
+    /// frame's publish number: 0 = nothing published yet, unchanged = the
+    /// same frame as last time.
+    pub fn builtin_analysis(&self, device_id: u64, out: &mut Vec<f32>) -> Result<u64, EngineError> {
+        const MAX: usize = 4096;
+        out.resize(MAX, 0.0);
+        let (mut n, mut seq) = (0usize, 0u64);
+        let r = check(unsafe { ffi::se_builtin_analysis(self.raw, device_id, out.as_mut_ptr(), MAX, &mut n, &mut seq) });
+        out.truncate(if r.is_ok() { n.min(MAX) } else { 0 });
+        r.map(|()| seq)
+    }
+
     pub fn export_wav(&self, path: &Path, start: i64, end: i64) -> Result<(), EngineError> {
         let p = cpath(path)?;
         check(unsafe { ffi::se_export_wav(self.raw, p.as_ptr(), start, end) })

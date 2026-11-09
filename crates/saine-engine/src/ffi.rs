@@ -658,6 +658,7 @@ unsafe extern "C" {
     pub fn se_builtin_registry(out_count: *mut usize) -> *const se_builtin_desc;
     pub fn se_builtin_set_param(engine: *mut se_engine, device_id: u64, index: u32, value: f32) -> i32;
     pub fn se_builtin_readouts(engine: *mut se_engine, device_id: u64, out: *mut f32, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_builtin_analysis(engine: *mut se_engine, device_id: u64, out: *mut f32, capacity: usize, out_count: *mut usize, out_seq: *mut u64) -> i32;
 }
 
 /// Guards the hand-written declarations against drift from saine_engine.h.

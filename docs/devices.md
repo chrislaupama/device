@@ -47,6 +47,23 @@ flowchart LR
   100%-zoom card measurements times `device_panel::Z` (0.85, the zoom the rest
   of the UI is built at). Card width follows the reference rule:
   knobs × 62 + inner gaps × 10 + cluster gaps × 21 + 16.
+- **Analysis frames.** Readouts are a few floats per block. A device that
+  shows more (a spectrum, a pitch trace) returns `analysis_capacity()` > 0 and
+  publishes whole frames through `BuiltinContext::analysis`, an
+  `AnalysisChannel` (lock-free triple buffer: the audio thread writes, the
+  main thread reads the newest frame). The app reads it with
+  `se_builtin_analysis` / `Engine::builtin_analysis(id, &mut Vec<f32>)`, which
+  returns the frame's sequence number so a poll can skip unchanged frames.
+- **Project key.** `Transport::key` (`ProjectKey { root, minor }`, set with
+  `Command::SetProjectKey`, "Key Change"). A device with `key_follow`
+  (Manual / Project), `key` and `scale` parameters runs with the project key
+  while it follows (`builtin::followed_key`; the snapshot sends
+  `builtin::engine_device`). Its stored Key and Scale are kept, and picking
+  either on the card while following writes Follow = Manual plus both values
+  as one undo step.
+- **Latency.** `BuiltinProcessor::latency()` is reported through
+  `se_plugin_latency` and compensated like plugin latency (Pitch Corrector:
+  1024 frames at 48 kHz).
 
 ## Adding a device
 
@@ -59,8 +76,9 @@ flowchart LR
      the device spec (`handoffs/device-specs/<device>.md` in the Captain drive).
      Those are facts; write descriptions in your own words. Never copy the
      reference's code, CSS, images, audio or preset files.
-   - `Layout`: `picker` (menus / toggles / `Sidechain` / pills; the
-     sidechain picker and what follows align right), `view`
+   - `Layout`: `picker` (`Menu` segmented pills, `Dropdown` value-and-chevron
+     menus, `Latch` single on/off pills, `Gap` to push the rest right,
+     `Sidechain`; the sidechain picker and what follows align right), `view`
      (`DynamicsStrip` or `Custom`), `sliders`, `clusters` of knobs,
      `faces` (drawings inside a knob), `shown_when` (mode-dependent controls).
 2. **DSP kernel.** Add `engine/src/devices/<id>.cpp`: a `BuiltinProcessor`
@@ -80,7 +98,11 @@ flowchart LR
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a
    Slint component in `ui/device_panel.slint` chosen by that data. Reuse
-   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures.
+   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. Views that only
+   draw (analyzers) need no Slint: fill a `PanelField` (boxes, path layers and
+   texts in field coordinates) in `src/analyzer_views.rs`, which also polls
+   analysis frames (`Controller::panel_poll_views`). `ViewMetrics` there
+   sets the card width and knob cell spacing of a custom view.
 4. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),
@@ -96,9 +118,11 @@ flowchart LR
      parsing of any new display format.
 5. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
    (`saine_device_bench`, Release build) and put the numbers in the PR.
-6. **Render.** Add a `--state` that shows the device at its defaults (see
-   `reference-compressor` in `crates/saine-app/src/main.rs`), render it with
-   `--screenshot` and compare it with the reference capture.
+6. **Render.** `--state reference-<id>` shows any built-in device at its
+   defaults on the first audio track. Render it with `--offscreen
+   --screenshot` (no visible window) and compare it with the reference
+   capture. `--state review-analyzers` feeds a sung-like line through Pitch
+   Corrector, Tuner and Spectrum so their views show live data.
 
 ## Commands
 
@@ -106,6 +130,6 @@ flowchart LR
 cargo test --workspace                                   # core, engine wrapper, app unit tests
 cd engine && cmake --build build && ./build/saine_engine_tests
 ./build/saine_device_bench                               # per-block cost, param updates, 32-track session
-cargo run -p saine-app -- --state reference-compressor --screenshot /tmp/compressor.png
+cargo run -p saine-app -- --state reference-compressor --offscreen --screenshot /tmp/compressor.png
 cargo run -p saine-app -- --self-test                    # includes the built-in device section
 ~~~

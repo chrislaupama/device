@@ -63,6 +63,8 @@ pub enum Command {
     SetTempo { bpm: f64 },
     SetTimeSignature { numerator: u8, denominator: u8 },
     SetLoop { enabled: bool, start: Ticks, end: Ticks },
+    /// Set or clear the project key.
+    SetProjectKey { key: Option<ProjectKey> },
     /// Insert a MIDI clip on an instrument track (id 0 → allocate).
     AddMidiClip { track: TrackId, clip: MidiClip },
     RemoveMidiClip { clip: ClipId },
@@ -126,6 +128,7 @@ impl Command {
             Command::SetTempo { .. } => "Tempo Change".into(),
             Command::SetTimeSignature { .. } => "Time Signature Change".into(),
             Command::SetLoop { .. } => "Loop Change".into(),
+            Command::SetProjectKey { .. } => "Key Change".into(),
             Command::AddMidiClip { .. } => "Insert MIDI Clip".into(),
             Command::RemoveMidiClip { .. } => "Delete Clip".into(),
             Command::MoveMidiClip { .. } => "Move Clip".into(),
@@ -332,6 +335,13 @@ impl Command {
                 let old = Command::SetTimeSignature { numerator: ts.numerator, denominator: ts.denominator };
                 *ts = TimeSignature { numerator, denominator };
                 Ok(old)
+            }
+            Command::SetProjectKey { key } => {
+                if key.is_some_and(|k| k.root > 11) {
+                    return Err(invalid("key", "root must be a pitch class 0..=11"));
+                }
+                let old = std::mem::replace(&mut p.transport.key, key);
+                Ok(Command::SetProjectKey { key: old })
             }
             Command::SetLoop { enabled, start, end } => {
                 if start < 0 || end <= start {

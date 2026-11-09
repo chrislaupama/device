@@ -28,12 +28,41 @@
 
 namespace saine {
 
+// Bulk analysis output of a built-in (spectra, traces): a lock-free triple
+// buffer of float frames. The audio thread fills begin() and publish()es a
+// frame; the main thread copies the newest complete frame with read().
+// One writer (the processor) and one reader (the main thread).
+class AnalysisChannel {
+public:
+    explicit AnalysisChannel(uint32_t capacity);
+    uint32_t capacity() const noexcept { return capacity_; }
+    // RT: the frame being written (capacity() floats).
+    float* begin() noexcept { return buf_.get() + std::size_t{back_} * capacity_; }
+    // RT: completes the frame begun with begin(); count floats are valid.
+    void publish(uint32_t count) noexcept;
+    // Main thread: copies the newest frame (up to cap floats) and returns
+    // its float count; seq = its publish number (0 = nothing published yet).
+    uint32_t read(float* out, uint32_t cap, uint64_t& seq) noexcept;
+
+private:
+    static constexpr uint32_t kFresh = 4;
+    uint32_t capacity_;
+    std::unique_ptr<float[]> buf_;
+    uint32_t count_[3] = {0, 0, 0};
+    uint64_t seq_[3] = {0, 0, 0};
+    uint64_t next_seq_ = 0;
+    uint32_t back_ = 0, front_ = 1;
+    std::atomic<uint32_t> middle_{2};
+};
+
 // Per-call context of BuiltinProcessor::process().
 struct BuiltinContext {
     // Sidechain input (post-fader output of the source track), or null.
     const float* sc_l = nullptr;
     const float* sc_r = nullptr;
     const RtTransport* transport = nullptr;
+    // Analysis output, when the processor asked for one (analysis_capacity()).
+    AnalysisChannel* analysis = nullptr;
 };
 
 class BuiltinProcessor {
@@ -51,6 +80,9 @@ public:
                          float* readouts) noexcept = 0;
     // Latency in frames (reported for delay compensation).
     virtual uint32_t latency() const noexcept { return 0; }
+    // Floats per analysis frame (spectra, traces) the processor publishes
+    // through BuiltinContext::analysis; 0 = none. Read once after prepare().
+    virtual uint32_t analysis_capacity() const noexcept { return 0; }
 };
 
 struct BuiltinDescriptor {
@@ -94,6 +126,9 @@ public:
     float value(uint32_t index) const noexcept;
     // Main thread: latest readouts.
     uint32_t readouts(float* out, uint32_t capacity) const noexcept;
+    // Main thread: newest analysis frame (see AnalysisChannel::read); 0 when
+    // the processor publishes none.
+    uint32_t analysis(float* out, uint32_t capacity, uint64_t& seq) noexcept;
     // RT: sidechain buffers for the next run() (cleared after it).
     void set_sidechain(const float* l, const float* r) noexcept {
         sc_l_ = l;
@@ -119,6 +154,7 @@ private:
     std::unique_ptr<std::atomic<float>[]> readout_atomic_;
     std::vector<float> readout_scratch_;
     std::vector<float> readout_segment_; // later automation segments, merged into readout_scratch_
+    std::unique_ptr<AnalysisChannel> analysis_;
     const float* sc_l_ = nullptr;
     const float* sc_r_ = nullptr;
 };

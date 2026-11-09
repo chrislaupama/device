@@ -263,6 +263,8 @@ pub enum MenuPick {
     Sidechain(DeviceId, Option<TrackId>),
     /// Built-in device panel: load factory preset `n`.
     Preset(DeviceId, usize),
+    /// Built-in device panel: choice of a parameter (index, choice) from its menu pill.
+    Choice(DeviceId, i32, i32),
 }
 
 #[derive(Debug, Clone)]
@@ -523,6 +525,7 @@ impl Controller {
     pub fn device_poll(&mut self) {
         let now = Instant::now();
         self.panel_poll_meters();
+        self.panel_poll_views();
         // Main-thread plugin housekeeping (retired instances, CLAP main-thread callbacks).
         if !self.devices.editors.is_empty() || self.project().tracks.iter().any(|t| !t.devices.is_empty() || t.instrument_plugin.is_some()) {
             self.engine.plugin_idle();
@@ -1059,6 +1062,7 @@ impl Controller {
             Some(MenuPick::Add(item)) => item,
             Some(MenuPick::Sidechain(device, source)) => return self.panel_set_sidechain(device, source),
             Some(MenuPick::Preset(device, n)) => return self.panel_load_preset(device, n),
+            Some(MenuPick::Choice(device, index, choice)) => return self.panel_choice(device, index, choice),
             None => return,
         };
         let Some(t) = self.selected_track else { return };
@@ -1351,17 +1355,18 @@ mod tests {
         let l = |d: i32, s: &str, n: &str| (d, s.to_string(), n.to_string());
         assert_eq!(
             labels(&rows),
-            vec![l(0, "Built-in", "1"), l(0, "Audio Units", "3"), l(1, "Acme", "1"), l(1, "Apple", "2"), l(0, "VST3", "1"), l(1, "Gain", ""), l(0, "CLAP", "0")]
+            vec![l(0, "Built-in", &saine_core::builtin::all().len().to_string()), l(0, "Audio Units", "3"), l(1, "Acme", "1"), l(1, "Apple", "2"), l(0, "VST3", "1"), l(1, "Gain", ""), l(0, "CLAP", "0")]
         );
         assert_eq!(rows[6].expander, 0, "empty folder has no expander");
         open.insert("e/au/Apple".into());
         open.insert("e/builtin".into());
         let (entries, rows) = build_tree(&c, 1, "", &open);
         assert!(matches!(&entries[1].item, Some(Item::Builtin(d)) if d.id == "compressor"));
-        assert_eq!(rows[5].label, "AUDelay");
-        assert_eq!(rows[6].label, "AULowpass");
-        assert!(rows[6].leaf && rows[6].icon == 2);
-        assert!(matches!(&entries[6].item, Some(Item::Plugin(p)) if p.name == "AULowpass"));
+        let more = saine_core::builtin::all().len() - 1;
+        assert_eq!(rows[5 + more].label, "AUDelay");
+        assert_eq!(rows[6 + more].label, "AULowpass");
+        assert!(rows[6 + more].leaf && rows[6 + more].icon == 2);
+        assert!(matches!(&entries[6 + more].item, Some(Item::Plugin(p)) if p.name == "AULowpass"));
     }
 
     #[test]

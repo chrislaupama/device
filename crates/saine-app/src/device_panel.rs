@@ -71,6 +71,8 @@ struct MeterHistory {
 pub struct PanelState {
     drag: Option<ParamDrag>,
     meters: HashMap<DeviceId, MeterHistory>,
+    /// Custom analyser views (pitch trace, tuner, spectrum).
+    pub(crate) analyzers: crate::analyzer_views::AnalyzerState,
 }
 
 fn s(v: impl Into<SharedString>) -> SharedString {
@@ -134,7 +136,7 @@ fn fmt_db(v: f32) -> String {
 }
 
 /// Points as Slint path commands ("M x y L x y ...").
-fn polyline(pts: &[(f32, f32)]) -> String {
+pub(crate) fn polyline(pts: &[(f32, f32)]) -> String {
     use std::fmt::Write;
     let mut out = String::with_capacity(pts.len() * 16);
     for (i, (x, y)) in pts.iter().enumerate() {
@@ -226,7 +228,7 @@ impl Controller {
     }
 
     /// Value shown for a parameter: the live drag value, else the model value.
-    fn panel_value(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
+    pub(crate) fn panel_value(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
         match self.devices.panel.drag {
             Some(g) if g.device == d.id && def.params.get(g.index).is_some_and(|q| q.id == p.id) => g.value,
             _ => def.value(d, p),
@@ -235,7 +237,13 @@ impl Controller {
 
     /// The card of a built-in device (generic panel).
     pub(crate) fn builtin_card(&self, d: &Device, def: &'static DeviceDef) -> DeviceCard {
-        let width = def.layout.width();
+        let custom = match def.layout.view {
+            Some(View::Custom(v)) => crate::analyzer_views::metrics(v).map(|m| (v, m)),
+            _ => None,
+        };
+        let width = custom.map_or_else(|| def.layout.width(), |(_, m)| m.width);
+        // Key and Scale that follow the project key are shown dimmed with the project's values.
+        let followed = saine_core::builtin::followed_key(def, d, self.project().transport.key);
         let track = self.project().find_device(d.id).map(|(ti, _)| &self.project().tracks[ti]);
         let accent = track.map_or(slint::Color::from_rgb_u8(0x43, 0x9b, 0x94), |t| slint_color(track_color(t.color)));
         let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
@@ -246,6 +254,30 @@ impl Controller {
         for c in def.layout.picker {
             let p = c.param().and_then(|id| def.param(id));
             match (c, p) {
+                (Control::Dropdown(_), Some(p)) if def.is_shown(d, p.id) => {
+                    let follow = followed.filter(|_| p.id == "key" || p.id == "scale");
+                    let v = follow.map_or_else(|| self.panel_value(d, def, p), |(k, sc)| if p.id == "key" { k } else { sc });
+                    let text = p.format(v);
+                    picks.push(PanelPick {
+                        kind: 2,
+                        param: idx(p.id),
+                        label: s(p.label),
+                        value: s(text.clone()),
+                        selected: v.round() as i32,
+                        enabled: true,
+                        dim: follow.is_some(),
+                        ..Default::default()
+                    });
+                }
+                (Control::Gap, _) => picks.push(PanelPick { kind: 4, ..Default::default() }),
+                (Control::Latch(_), Some(p)) if def.is_shown(d, p.id) => picks.push(PanelPick {
+                    kind: 5,
+                    param: idx(p.id),
+                    label: s(p.label),
+                    selected: self.panel_value(d, def, p).round() as i32,
+                    enabled: true,
+                    ..Default::default()
+                }),
                 (Control::Menu(_) | Control::Toggle(_), Some(p)) if def.is_shown(d, p.id) => picks.push(PanelPick {
                     kind: 1,
                     param: idx(p.id),
@@ -277,6 +309,11 @@ impl Controller {
             }
         }
 
+        // Without a flexible gap the row packs left: a trailing gap takes the free space.
+        if !picks.iter().any(|p| p.kind == 4) {
+            picks.push(PanelPick { kind: 4, ..Default::default() });
+        }
+
         // Slider column.
         let slider_x = width - PAD - SLIDER_W;
         let sliders: Vec<PanelSlider> = def
@@ -304,9 +341,18 @@ impl Controller {
             Some(View::DynamicsStrip { threshold }) => self.dynamics_strip(d, def, threshold, view_right - PAD),
             Some(View::Custom(_)) | None => PanelStrip::default(),
         };
+        let field = custom.and_then(|(v, _)| self.analyzer_field(d, def, v, accent)).unwrap_or_default();
 
-        // Dial row.
-        let knobs = knob_xs(def)
+        // Dial row (spread across the card for custom views with their own metrics).
+        let xs = match custom {
+            Some((_, m)) => {
+                let ids: Vec<&'static str> = def.layout.clusters.iter().flat_map(|c| c.iter()).filter_map(|c| c.param()).collect();
+                ids.iter().enumerate().map(|(i, id)| (*id, crate::analyzer_views::spread_x(&m, i, ids.len()))).collect()
+            }
+            None => knob_xs(def),
+        };
+        let cell = custom.map_or(0.0, |(_, m)| m.cell * Z);
+        let knobs = xs
             .into_iter()
             .filter(|(id, _)| def.is_shown(d, id))
             .filter_map(|(id, x)| {
@@ -319,6 +365,7 @@ impl Controller {
                     value: s(p.format(v)),
                     norm: p.to_normalized(v),
                     bipolar: p.is_bipolar(),
+                    cell,
                     ..Default::default()
                 };
                 if let Some((_, Face::SoftKneeCurve { threshold, ratio, knee })) = def.layout.faces.iter().find(|(f, _)| *f == id) {
@@ -359,6 +406,7 @@ impl Controller {
             picks: model(picks),
             sliders: model(sliders),
             strip,
+            field,
             ..Default::default()
         }
     }
@@ -526,6 +574,24 @@ impl Controller {
     }
 
     pub fn panel_choice(&mut self, device: DeviceId, index: i32, choice: i32) {
+        // Picking a Key or Scale while it follows the project turns Follow off and writes
+        // both values (the picked one and the one shown for the other) in one gesture.
+        if let Some((d, def)) = self.panel_def(device)
+            && let Some(p) = usize::try_from(index).ok().and_then(|i| def.params.get(i))
+            && (p.id == "key" || p.id == "scale")
+            && let Some(follow) = def.param("key_follow")
+            && def.value(d, follow) >= 0.5
+        {
+            let (k, sc) = saine_core::builtin::followed_key(def, d, self.project().transport.key)
+                .unwrap_or_else(|| (def.param("key").map_or(0.0, |q| def.value(d, q)), def.param("scale").map_or(0.0, |q| def.value(d, q))));
+            let (k, sc) = if p.id == "key" { (choice as f32, sc) } else { (k, choice as f32) };
+            let commands = [("key_follow", 0.0), ("key", k), ("scale", sc)]
+                .into_iter()
+                .filter_map(|(id, v)| def.param(id).map(|q| Command::SetDeviceParam { device, param: id.into(), value: q.snap(v) }))
+                .collect();
+            self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands });
+            return;
+        }
         self.panel_set(device, index, |_, _| Some(choice as f32));
     }
 
@@ -578,6 +644,13 @@ impl Controller {
                     rows.push((f.name.to_string(), check(d.preset.as_deref() == Some(f.name)), Some(MenuPick::Preset(device, i)), false));
                 }
                 rows
+            }
+            i if i >= 0 => {
+                let Some(p) = def.params.get(i as usize) else { return };
+                let shown = saine_core::builtin::followed_key(def, d, self.project().transport.key)
+                    .filter(|_| p.id == "key" || p.id == "scale")
+                    .map_or_else(|| def.value(d, p), |(k, sc)| if p.id == "key" { k } else { sc });
+                p.choices.iter().enumerate().map(|(n, c)| (c.to_string(), check(shown.round() as usize == n), Some(MenuPick::Choice(device, i, n as i32)), false)).collect()
             }
             _ => return,
         };

@@ -8,7 +8,7 @@
 // multiplied by PanelStyle.z. Colours are the measured card colours.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
-import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip } from "studio.slint";
+import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField } from "studio.slint";
 
 export global PanelStyle {
     out property <float> z: 0.85;
@@ -106,7 +106,7 @@ component KnobCell inherits Rectangle {
     property <float> angle: -135 + root.k.norm * 270;
     property <float> from: root.k.bipolar ? 0 : -135;
     property <bool> editing;
-    width: 62px * zm; height: 76px * zm;
+    width: root.k.cell > 0 ? root.k.cell : 62px * zm; height: 76px * zm;
     accessible-role: slider; accessible-label: root.k.label; accessible-value: root.k.value;
     fs := ParamKeys { device: root.device; param: root.k.param; edit => { root.editing = true; } }
     dial := Rectangle {
@@ -220,10 +220,15 @@ component PickItem inherits HorizontalLayout {
     in property <int> device;
     in property <PanelPick> p;
     in property <color> accent;
+    // 16 pt gap before this item (every item but the first and a flexible gap).
+    in property <bool> lead;
     property <float> zm: PanelStyle.z;
     spacing: 6px * zm;
+    padding-left: root.lead ? 16px * zm : 0;
     horizontal-stretch: root.p.kind == 4 ? 1 : 0;
-    if root.p.kind != 4 && root.p.label != "": Text {
+    // A flexible gap needs a child to stretch (an empty layout item can't).
+    if root.p.kind == 4: Rectangle { horizontal-stretch: 1; }
+    if root.p.kind != 4 && root.p.kind != 5 && root.p.label != "": Text {
         text: root.p.label; color: PanelStyle.caption; font-size: 11px * zm; font-weight: 500; letter-spacing: -0.02 * 11px * zm;
         vertical-alignment: center; opacity: root.p.enabled ? 1 : 0.55;
     }
@@ -233,7 +238,8 @@ component PickItem inherits HorizontalLayout {
         HorizontalLayout {
             padding: 2px * zm;
             for c[i] in root.p.choices: Rectangle {
-                min-width: seg-text.preferred-width + 18px * zm;
+                // Segments as the reference: the label plus 6.5 pt a side, at least 46 pt.
+                min-width: max(seg-text.preferred-width + 13px * zm, 46px * zm);
                 border-radius: self.height / 2;
                 background: i == root.p.selected ? root.accent : seg-ta.has-hover ? #ffffff0a : transparent;
                 accessible-role: tab; accessible-label: c; accessible-item-selected: i == root.p.selected;
@@ -256,14 +262,41 @@ component PickItem inherits HorizontalLayout {
         }
     }
     if root.p.kind == 2: Rectangle {
-        width: root.p.width; border-radius: self.height / 2; background: menu-ta.has-hover ? PanelStyle.pill-hot : PanelStyle.seg;
+        // Fixed width, or sized to the value text (10 pt before it, chevron after).
+        width: root.p.width > 0 ? root.p.width : menu-text.preferred-width + 34px * zm;
+        border-radius: self.height / 2; background: menu-ta.has-hover ? PanelStyle.pill-hot : PanelStyle.seg;
+        opacity: root.p.dim && !menu-ta.has-hover ? 0.6 : 1;
         accessible-role: combobox; accessible-label: root.p.label; accessible-value: root.p.value;
-        Text {
+        menu-text := Text {
             x: 10px * zm; width: parent.width - 28px * zm; text: root.p.value; color: PanelStyle.ink;
             font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm; vertical-alignment: center; overflow: elide;
         }
         Icon { x: parent.width - 18px * zm; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: Icons.chevron-down; ink: #a0a0a3; stroke-width: 1.3px; }
         menu-ta := TouchArea { clicked => { Studio.panel-menu(root.device, root.p.param, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
+    }
+    // Latch (reference fx latch): the parameter's label in a pill, filled while on.
+    if root.p.kind == 5: Rectangle {
+        width: latch-text.preferred-width + 16px * zm; height: 20px * zm; y: 0;
+        border-radius: self.height / 2;
+        background: root.p.selected == 1 ? (latch-ta.has-hover ? root.accent.brighter(0.14) : root.accent) : PanelStyle.seg;
+        border-width: root.p.selected == 1 ? 0.5px : 0; border-color: root.accent.darker(0.2);
+        accessible-role: checkbox; accessible-label: root.p.label; accessible-checked: root.p.selected == 1;
+        if root.p.selected != 1 && latch-ta.has-hover: Rectangle { border-radius: parent.border-radius; background: #ffffff09; }
+        latch-text := Text {
+            text: root.p.label; font-size: 10px * zm; font-weight: 600; letter-spacing: -0.04 * 10px * zm;
+            color: root.p.selected == 1 ? #17181b : latch-ta.has-hover ? #ffffffb3 : #ffffff8c;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+        latch-ta := TouchArea {
+            property <bool> alt-down;
+            pointer-event(e) => {
+                if (e.kind == PointerEventKind.down) {
+                    self.alt-down = e.modifiers.alt;
+                    if (e.modifiers.alt) { Studio.panel-reset(root.device, root.p.param); }
+                }
+            }
+            clicked => { if (!self.alt-down) { Studio.panel-choice(root.device, root.p.param, root.p.selected == 1 ? 0 : 1); } }
+        }
     }
     if root.p.kind == 3: Rectangle {
         width: root.p.width; border-radius: self.height / 2; background: PanelStyle.box;
@@ -385,6 +418,42 @@ component DynamicsStrip inherits Rectangle {
     }
 }
 
+// Generic drawing field of a custom view (src/analyzer_views.rs): caption, optional well, and
+// the shapes Rust built (boxes under the paths, paths, boxes over them, texts). Not interactive.
+component FieldView inherits Rectangle {
+    in property <PanelField> f;
+    property <float> zm: PanelStyle.z;
+    accessible-role: text;
+    accessible-label: root.f.label;
+    if root.f.caption != "": Text {
+        x: 0; y: 0; height: 16px * zm;
+        text: root.f.caption; color: PanelStyle.caption; font-size: 11.5px * zm; font-weight: 500; letter-spacing: -0.02 * 11.5px * zm; vertical-alignment: center;
+    }
+    Rectangle {
+        y: root.f.body-y; height: root.height - root.f.body-y;
+        border-radius: 4px * zm;
+        background: root.f.well ? @linear-gradient(180deg, #212125 0%, #18191d 100%) : transparent;
+        clip: true;
+        for b in root.f.under: Rectangle {
+            x: b.x; y: b.y; width: b.w; height: b.h; border-radius: b.radius; background: b.fill; border-color: b.border; border-width: b.border-width;
+        }
+        for l in root.f.layers: Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: l.commands; stroke: l.stroke; stroke-width: l.stroke-width;
+            fill: @linear-gradient(180deg, l.fill 0%, l.fill2 100%);
+            stroke-line-cap: round; stroke-line-join: round;
+        }
+        for b in root.f.over: Rectangle {
+            x: b.x; y: b.y; width: b.w; height: b.h; border-radius: b.radius; background: b.fill; border-color: b.border; border-width: b.border-width;
+        }
+        for t in root.f.texts: Text {
+            x: t.x; y: t.y; width: t.w; height: t.h;
+            text: t.text; color: t.color; font-size: t.size; font-weight: t.weight;
+            horizontal-alignment: t.align == 0 ? left : t.align == 1 ? center : right; vertical-alignment: center;
+        }
+    }
+}
+
 export component BuiltinCard inherits Rectangle {
     in property <DeviceCard> card;
     property <float> zm: PanelStyle.z;
@@ -453,12 +522,15 @@ export component BuiltinCard inherits Rectangle {
         opacity: root.card.enabled ? 1.0 : 0.5;
         HorizontalLayout {
             x: 8px * zm; y: 37px * zm; width: root.width - 16px * zm; height: 20px * zm;
-            spacing: 16px * zm;
-            for p in root.card.picks: PickItem { device: root.card.id; p: p; accent: root.card.accent; }
+            for p[i] in root.card.picks: PickItem { device: root.card.id; p: p; accent: root.card.accent; lead: i > 0 && p.kind != 4; }
         }
         if root.card.strip.visible: DynamicsStrip {
             x: root.card.strip.x; y: root.card.strip.y; width: root.card.strip.w; height: root.card.strip.h;
             device: root.card.id; s: root.card.strip; accent: root.card.accent;
+        }
+        if root.card.field.visible: FieldView {
+            x: root.card.field.x; y: root.card.field.y; width: root.card.field.w; height: root.card.field.h;
+            f: root.card.field;
         }
         for s in root.card.sliders: SliderCol {
             x: s.x; y: 0; height: root.height;

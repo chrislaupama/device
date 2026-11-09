@@ -9,11 +9,17 @@ namespace saine {
 // ---------------------------------------------------------------- registry
 // One line per built-in device; the descriptor lives next to its processor.
 extern const BuiltinDescriptor kCompressorDescriptor;
+extern const BuiltinDescriptor kPitchCorrectorDescriptor;
+extern const BuiltinDescriptor kTunerDescriptor;
+extern const BuiltinDescriptor kSpectrumDescriptor;
 
 namespace {
 
 const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kCompressorDescriptor,
+    &kPitchCorrectorDescriptor,
+    &kTunerDescriptor,
+    &kSpectrumDescriptor,
 };
 
 struct CRegistry {
@@ -69,6 +75,26 @@ const char* parse_builtin_state(const uint8_t* data, std::size_t len, const uint
     return nullptr;
 }
 
+// ---------------------------------------------------------------- analysis
+
+AnalysisChannel::AnalysisChannel(uint32_t capacity)
+    : capacity_(std::max<uint32_t>(1, capacity)), buf_(new float[std::size_t{3} * std::max<uint32_t>(1, capacity)]()) {}
+
+void AnalysisChannel::publish(uint32_t count) noexcept {
+    count_[back_] = std::min(count, capacity_);
+    seq_[back_] = ++next_seq_;
+    back_ = middle_.exchange(back_ | kFresh, std::memory_order_acq_rel) & 3u;
+}
+
+uint32_t AnalysisChannel::read(float* out, uint32_t cap, uint64_t& seq) noexcept {
+    if ((middle_.load(std::memory_order_acquire) & kFresh) != 0)
+        front_ = middle_.exchange(front_, std::memory_order_acq_rel) & 3u;
+    seq = seq_[front_];
+    const uint32_t n = std::min(count_[front_], cap);
+    if (n > 0) std::memcpy(out, buf_.get() + std::size_t{front_} * capacity_, sizeof(float) * n);
+    return count_[front_];
+}
+
 // ---------------------------------------------------------------- instance
 
 BuiltinInstance::BuiltinInstance(PluginSpec spec, const BuiltinDescriptor& desc, std::unique_ptr<BuiltinProcessor> proc,
@@ -83,6 +109,7 @@ BuiltinInstance::BuiltinInstance(PluginSpec spec, const BuiltinDescriptor& desc,
     update_state(spec_.state.data(), spec_.state.size());
     for (std::size_t i = 0; i < desc_.params.size(); ++i) current_[i] = target_[i].load(std::memory_order_relaxed);
     proc_->prepare(sample_rate, max_block);
+    if (const uint32_t cap = proc_->analysis_capacity(); cap > 0) analysis_ = std::make_unique<AnalysisChannel>(cap);
     proc_->reset();
 }
 
@@ -107,6 +134,11 @@ void BuiltinInstance::update_state(const uint8_t* data, std::size_t len) noexcep
     }
 }
 
+uint32_t BuiltinInstance::analysis(float* out, uint32_t capacity, uint64_t& seq) noexcept {
+    seq = 0;
+    return analysis_ ? analysis_->read(out, capacity, seq) : 0;
+}
+
 uint32_t BuiltinInstance::readouts(float* out, uint32_t capacity) const noexcept {
     const auto n = static_cast<uint32_t>(desc_.readouts.size());
     for (uint32_t i = 0; i < n && i < capacity; ++i) out[i] = readout_atomic_[i].load(std::memory_order_relaxed);
@@ -122,6 +154,7 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     ctx.sc_l = sc_l_;
     ctx.sc_r = sc_r_;
     ctx.transport = &transport;
+    ctx.analysis = analysis_.get();
     float* const ro = readout_scratch_.data();
     // Automation events split the block (sorted by offset): every segment
     // runs with the values in force at its first frame. The block's readouts

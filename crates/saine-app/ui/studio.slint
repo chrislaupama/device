@@ -50,9 +50,24 @@ export struct TreeRow { depth: int, label: string, count: string, icon: int, exp
 // ---- built-in device panel (src/device_panel.rs builds these from the DeviceDef) ----
 // Knob cell (dial row). face 1 = soft-knee transfer curve instead of the ring (paths in a
 // 32 x 32 view box). editing: the value text is being typed (inline field).
-export struct PanelKnob { param: int, x: length, label: string, value: string, norm: float, bipolar: bool, face: int, face-curve: string, face-bend: string, face-unity: string }
-// Picker row item. kind 0 caption, 1 segmented choice, 2 menu pill, 3 value box, 4 flexible gap.
-export struct PanelPick { kind: int, param: int, label: string, choices: [string], selected: int, value: string, enabled: bool, width: length }
+// cell: knob cell width (0 = the 62 pt default).
+export struct PanelKnob { param: int, x: length, label: string, value: string, norm: float, bipolar: bool, face: int, face-curve: string, face-bend: string, face-unity: string, cell: length }
+// Picker row item. kind 0 caption, 1 segmented choice, 2 menu pill (param >= 0: the parameter's
+// choices), 3 value box, 4 flexible gap, 5 latch. dim: shown at 60% until hovered (values that
+// follow the project, e.g. the Pitch Corrector's key while Follow is Project).
+export struct PanelPick { kind: int, param: int, label: string, choices: [string], selected: int, value: string, enabled: bool, width: length, dim: bool }
+// Generic drawing field of a custom device view (src/analyzer_views.rs): Rust builds every
+// shape; paths are in field coordinates below the caption (view box w x (h - body-y)).
+// fill / fill2: vertical gradient from the top to the bottom of the field (equal = solid).
+export struct PanelLayer { commands: string, stroke: color, stroke-width: length, fill: color, fill2: color }
+export struct PanelBox { x: length, y: length, w: length, h: length, radius: length, fill: color, border: color, border-width: length }
+// align: 0 left, 1 centre, 2 right; the text is vertically centred in its box.
+export struct PanelText { x: length, y: length, w: length, h: length, text: string, color: color, size: length, weight: int, align: int }
+// well: draw the recessed well behind the body; under: boxes below the layers, over: above them.
+export struct PanelField {
+    visible: bool, x: length, y: length, w: length, h: length, body-y: length, caption: string, well: bool, label: string,
+    under: [PanelBox], layers: [PanelLayer], over: [PanelBox], texts: [PanelText],
+}
 // Vertical slider column (x = column left, card relative).
 export struct PanelSlider { param: int, x: length, label: string, value: string, norm: float, bipolar: bool }
 export struct PanelTick { y: length, text: string, rule: bool }
@@ -89,6 +104,7 @@ export struct DeviceCard {
     picks: [PanelPick],
     sliders: [PanelSlider],
     strip: PanelStrip,
+    field: PanelField,
 }
 
 // Settings › Plugins list rows. warn: drawn with the orange "Missing"/failure badge.
@@ -379,7 +395,7 @@ export global Studio {
     callback panel-step(int, int, int, bool);                // arrow keys: +1 / -1, fine
     callback panel-choice(int, int, int);                    // choice index
     callback panel-text(int, int, string);                   // typed value (parsed by the definition)
-    callback panel-menu(int, int, length, length);           // -1 sidechain source, -2 presets; window x, y
+    callback panel-menu(int, int, length, length);           // -1 sidechain source, -2 presets, >= 0 a parameter's choices; window x, y
     callback panel-preset-step(int, int);                    // previous (-1) / next (+1) factory preset
     callback add-category(int, length, length); // row (Built-in, AU, VST3, CLAP, Chains), window x, y for the list
     callback add-search-edited(string);

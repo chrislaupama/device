@@ -114,7 +114,7 @@ pub fn build(project: &Project, engine_rate: f64, engine_assets: &HashMap<AssetI
                 .collect(),
             instrument: t.kind == crate::model::TrackKind::Instrument,
             synth: (t.kind == crate::model::TrackKind::Instrument).then(|| t.synth.clone()),
-            devices: t.devices.clone(),
+            devices: t.devices.iter().map(|d| crate::builtin::engine_device(d, project.transport.key)).collect(),
             instrument_plugin: if t.kind == crate::model::TrackKind::Instrument { t.instrument_plugin.clone() } else { None },
             automation: lanes(project, &t.automation, engine_rate),
             arm: t.arm,

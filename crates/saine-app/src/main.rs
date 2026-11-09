@@ -9,9 +9,10 @@
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
-//!              [--screenshot <out.png>] [--exit-after-frames N] [--frame-stats] [--self-test]
+//!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--self-test]
 //! ```
 
+mod analyzer_views;
 mod assistant_panel;
 mod assistant_provider;
 mod automation;
@@ -81,7 +82,12 @@ struct Args {
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
     device_chain_review: bool,
-    compressor_state: bool,
+    /// reference-<built-in id> (reference-compressor, reference-limiter...): that device at its defaults.
+    builtin_state: Option<&'static str>,
+    /// Never show the window (renders for --screenshot fall back to offscreen snapshots).
+    offscreen: bool,
+    /// review-analyzers: Pitch Corrector, Tuner and Spectrum fed 2 s of a sung-like line (no reference).
+    analyzers_review: bool,
     /// review-settings-plugins: Settings open on the Plugins page (no reference comparison).
     plugins_page_review: bool,
     assistant_fixture: Option<PathBuf>,
@@ -163,13 +169,18 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.device_chain_review = true;
                 }
-                "reference-compressor" => {
+                s if s.strip_prefix("reference-").and_then(saine_core::builtin::find).is_some() => {
                     a.reference_default = true;
-                    a.compressor_state = true;
+                    a.builtin_state = s.strip_prefix("reference-").and_then(saine_core::builtin::find).map(|d| d.id);
                 }
                 "review-settings-plugins" => {
                     a.reference_default = true;
                     a.plugins_page_review = true;
+                }
+                "review-analyzers" => {
+                    a.reference_default = true;
+                    a.analyzers_review = true;
+                    a.audio = false;
                 }
                 "review-recording" => {
                     a.reference_default = true;
@@ -178,7 +189,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, reference-compressor, review-settings-plugins)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, review-settings-plugins, review-analyzers, reference-<built-in device id>)"
                     ));
                 }
             },
@@ -186,6 +197,7 @@ fn parse_args() -> Result<Args, String> {
             "--assistant-fixture" => a.assistant_fixture = Some(value(&mut i)?.into()),
             "--plugin-fixture" => a.plugin_fixture = Some(value(&mut i)?.into()),
             "--screenshot" => a.screenshot = Some(value(&mut i)?.into()),
+            "--offscreen" => a.offscreen = true,
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
             "--self-test" | "--self-test-audio" => {
@@ -475,11 +487,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ---- Slint backend: our wgpu device + transparent macOS titlebar ----
     let (cfg, adapter) = gpu::make_wgpu_config()?;
     let selector = slint::BackendSelector::new().backend_name("winit".into()).renderer_name("femtovg-wgpu".into()).require_wgpu_30(cfg);
+    let offscreen = args.offscreen;
     #[cfg(target_os = "macos")]
-    let selector = selector.with_winit_window_attributes_hook(|attrs| {
+    let selector = selector.with_winit_window_attributes_hook(move |attrs| {
         use slint::winit_030::winit::platform::macos::WindowAttributesExtMacOS;
-        attrs.with_titlebar_transparent(true).with_fullsize_content_view(true).with_title_hidden(true)
+        let attrs = attrs.with_titlebar_transparent(true).with_fullsize_content_view(true).with_title_hidden(true);
+        if offscreen { attrs.with_visible(false).with_active(false) } else { attrs }
     });
+    #[cfg(not(target_os = "macos"))]
+    let selector = selector.with_winit_window_attributes_hook(move |attrs| if offscreen { attrs.with_visible(false).with_active(false) } else { attrs });
     selector.select()?;
 
     let app = AppWindow::new()?;
@@ -664,17 +680,61 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(20.0);
     }
-    if args.compressor_state {
-        // Compare with renders/reference/compressor.png (Captain drive): the built-in Compressor
+    if let Some(id) = args.builtin_state {
+        // Compare with renders/reference/<id>.png (Captain drive): the built-in device
         // at its defaults, alone in an audio track's chain, transport stopped.
         let mut c = ctl.borrow_mut();
         if let Some(t) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Audio).map(|t| t.id) {
             c.select_track(t);
-            let def = saine_core::builtin::find("compressor").expect("compressor is registered");
+            let def = saine_core::builtin::find(id).expect("built-in is registered");
             c.add_item_to_track(&devices::Item::Builtin(def), t, None);
         }
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(8.0);
+    }
+    if args.analyzers_review {
+        // Offline engine + injected input monitored through the audio track: a harmonic line
+        // (A3 +35 ct with vibrato, then C4 -30 ct) through Pitch Corrector (C major, fast),
+        // Tuner and Spectrum, rendered in 30 ms steps with the views polled after each step.
+        let mut c = ctl.borrow_mut();
+        c.rec.policy = recording::InputPolicy::InjectedOnly;
+        if let Some(t) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Audio).map(|t| t.id) {
+            c.select_track(t);
+            for id in ["pitch-corrector", "tuner", "spectrum"] {
+                let def = saine_core::builtin::find(id).expect("built-in is registered");
+                c.add_item_to_track(&devices::Item::Builtin(def), t, None);
+            }
+            let pc = c.project().track(t).and_then(|tr| tr.devices.first()).map(|d| d.id);
+            if let Some(d) = pc {
+                for (param, value) in [("key_follow", 0.0), ("scale", 1.0), ("speed", 100.0), ("retune_speed_ms", 20.0), ("humanize", 15.0)] {
+                    c.execute(saine_core::Command::SetDeviceParam { device: d, param: param.into(), value });
+                }
+            }
+            c.execute(saine_core::Command::SetTrackMonitor { track: t, monitor: true });
+            c.set_track_input(t, Some(saine_core::InputSource { channel: 0, stereo: false }));
+        }
+        c.set_bottom_tab(BottomTab::Devices);
+        let rate = 48_000.0f64;
+        let mut phase = 0.0f64;
+        let mut at = std::time::Instant::now() - std::time::Duration::from_secs(2);
+        let step = 1440usize;
+        for k in 0..(2 * 48_000 / step) {
+            let input: Vec<f32> = (0..step)
+                .map(|i| {
+                    let t = (k * step + i) as f64 / rate;
+                    let midi = if t < 1.0 { 57.35 + 0.25 * (std::f64::consts::TAU * 5.0 * t).sin() } else { 59.7 };
+                    phase += std::f64::consts::TAU * 440.0 * 2f64.powf((midi - 69.0) / 12.0) / rate;
+                    ((1..=8).map(|h| (phase * h as f64).sin() / h as f64).sum::<f64>() * 0.2) as f32
+                })
+                .collect();
+            let mut out = vec![0f32; 2 * step];
+            if let Err(e) = c.engine.render_offline_with_input(&input, 1, &mut out) {
+                c.set_status(format!("review-analyzers: {e}"), 10);
+                break;
+            }
+            at += std::time::Duration::from_millis(30);
+            c.panel_poll_views_at(at);
+        }
     }
     if args.recording_review {
         // Offline engine + injected input (no input device): track 1 armed on Input 1,

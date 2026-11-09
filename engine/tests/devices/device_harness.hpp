@@ -63,6 +63,31 @@ inline double rms(const Signal& s, std::size_t from = 0, std::size_t to = SIZE_M
     for (std::size_t i = from; i < std::min(to, s.size()); ++i, ++n) a += static_cast<double>(s[i]) * s[i];
     return n > 0 ? std::sqrt(a / static_cast<double>(n)) : 0.0;
 }
+// Mean frequency of a (near) sinusoid over [from, to): rising zero crossings,
+// linearly interpolated.
+inline double zero_cross_hz(const Signal& s, double rate, std::size_t from, std::size_t to) {
+    double first = -1.0, last = -1.0;
+    int count = 0;
+    for (std::size_t i = std::max<std::size_t>(from, 1); i < std::min(to, s.size()); ++i) {
+        if (s[i - 1] < 0.0f && s[i] >= 0.0f) {
+            const double t = static_cast<double>(i - 1) + s[i - 1] / static_cast<double>(s[i - 1] - s[i]);
+            if (first < 0.0) first = t;
+            else ++count;
+            last = t;
+        }
+    }
+    return count > 0 ? rate * count / (last - first) : 0.0;
+}
+// Sine whose frequency follows hz(t) (phase accumulated).
+template <class F> Signal sweep(std::size_t n, double rate, double amp, F hz) {
+    Signal s(n);
+    double ph = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        s[i] = static_cast<float>(amp * std::sin(ph));
+        ph += 2.0 * 3.14159265358979323846 * hz(static_cast<double>(i) / rate) / rate;
+    }
+    return s;
+}
 inline bool all_finite(const Signal& s) {
     for (float v : s)
         if (!std::isfinite(v)) return false;
@@ -153,6 +178,15 @@ public:
         std::vector<float> r(desc().readouts.size());
         b_->readouts(r.data(), static_cast<uint32_t>(r.size()));
         return r;
+    }
+    // Newest analysis frame (empty when the device publishes none); seq = its publish number.
+    std::vector<float> analysis(uint64_t* seq = nullptr) {
+        std::vector<float> a(8192);
+        uint64_t s = 0;
+        const uint32_t n = b_->analysis(a.data(), static_cast<uint32_t>(a.size()), s);
+        a.resize(std::min<std::size_t>(n, a.size()));
+        if (seq != nullptr) *seq = s;
+        return a;
     }
 
 private:

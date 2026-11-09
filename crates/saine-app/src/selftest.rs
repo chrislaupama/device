@@ -2229,6 +2229,88 @@ fn builtin_device_steps() -> Vec<Step> {
     ]
 }
 
+fn analyzer_device<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
+    let t = track_of(c, TrackKind::Audio)?;
+    c.project().tracks[t].devices.iter().find(|d| d.plugin.format == saine_core::PluginFormat::Builtin && d.plugin.id == id)
+}
+
+/// Pitch Corrector, Tuner and Spectrum: added from the Built-in list's
+/// definitions, generated cards with their analyzer fields, live engine
+/// instances (readouts and analysis frames), latency reported for PDC, and
+/// Key Follow (picking a Key while following the project turns Follow off
+/// in one undo step).
+fn analyzer_device_steps() -> Vec<Step> {
+    use Step::*;
+    let hist = Rc::new(Cell::new(0usize));
+    let (h0, h1) = (hist.clone(), hist.clone());
+    vec![
+        DoC("analyzers: add Pitch Corrector, Tuner and Spectrum to the audio track", Box::new(move |a, ctl| {
+            let mut c = ctl.borrow_mut();
+            let Some(t) = track_of(&c, TrackKind::Audio).map(|i| c.project().tracks[i].id) else { return };
+            for id in ["pitch-corrector", "tuner", "spectrum"] {
+                if let Some(def) = saine_core::builtin::find(id) {
+                    c.add_item_to_track(&crate::devices::Item::Builtin(def), t, None);
+                }
+            }
+            c.update_ui(a);
+        })),
+        Check("analyzers: three cards with their fields (Pitch trace, tuner, Spectrum) at the reference widths", Box::new(|_, a| {
+            let z = crate::device_panel::Z;
+            let want = [("Pitch Corrector", 375.0, "Pitch"), ("Tuner", 335.0, ""), ("Spectrum", 397.0, "Spectrum")];
+            for (name, w, caption) in want {
+                let cd = card_named(a, name).ok_or(format!("no {name} card"))?;
+                if !(cd.builtin && cd.field.visible && cd.field.caption == caption && approx(cd.width, w * z, 0.01)) {
+                    return Err(format!("{name}: builtin {} field {} caption {:?} width {}", cd.builtin, cd.field.visible, cd.field.caption, cd.width));
+                }
+            }
+            Ok(())
+        })),
+        Check("engine: the three are live (readouts, analysis frames, no load error); Pitch Corrector reports 1024 frames latency", Box::new(|c, _| {
+            let errors = c.engine.plugin_load_errors();
+            for id in ["pitch-corrector", "tuner", "spectrum"] {
+                let d = analyzer_device(c, id).ok_or(format!("no {id}"))?;
+                let (mut r, mut f) = (Vec::new(), Vec::new());
+                c.engine.builtin_readouts(d.id.0, &mut r).map_err(|e| format!("{id} readouts: {e}"))?;
+                c.engine.builtin_analysis(d.id.0, &mut f).map_err(|e| format!("{id} analysis: {e}"))?;
+                if errors.iter().any(|(e, _)| *e == d.id) {
+                    return Err(format!("{id}: load error {errors:?}"));
+                }
+            }
+            let lat = analyzer_device(c, "pitch-corrector").map_or(0, |d| c.engine.plugin_latency(d.id));
+            (lat == 1024).then_some(()).ok_or(format!("Pitch Corrector latency {lat} (want 1024 at 48 kHz)"))
+        })),
+        DoC("analyzers: set the project key to A minor, then pick Key D on the following Pitch Corrector", Box::new(move |a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.execute(saine_core::Command::SetProjectKey { key: Some(saine_core::ProjectKey { root: 9, minor: true }) });
+            h0.set(c.doc.history_labels().len());
+            let Some(d) = analyzer_device(&c, "pitch-corrector").map(|d| d.id) else { return };
+            let key = saine_core::builtin::find("pitch-corrector").and_then(|def| def.index_of("key")).unwrap_or(0);
+            c.panel_choice(d, key as i32, 2);
+            c.update_ui(a);
+        })),
+        Check("analyzers: Follow → Manual, Key D, Scale Minor (the shown project scale) in ONE undo step", Box::new(move |c, _| {
+            let d = analyzer_device(c, "pitch-corrector").ok_or("no device")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            let v = |id: &str| def.param(id).map(|p| def.value(d, p));
+            let n = c.doc.history_labels().len();
+            (n == h1.get() + 1 && v("key_follow") == Some(0.0) && v("key") == Some(2.0) && v("scale") == Some(2.0))
+                .then_some(())
+                .ok_or(format!("history {} -> {n}, follow {:?} key {:?} scale {:?}", h1.get(), v("key_follow"), v("key"), v("scale")))
+        })),
+        DoC("analyzers: undo", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.undo();
+            c.update_ui(a);
+        })),
+        Check("analyzers: undo restores Follow = Project", Box::new(|c, _| {
+            let d = analyzer_device(c, "pitch-corrector").ok_or("no device")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            let f = def.param("key_follow").map(|p| def.value(d, p));
+            (f == Some(1.0)).then_some(()).ok_or(format!("follow {f:?}"))
+        })),
+    ]
+}
+
 /// The devices section drives Apple's Audio Units (AULowpass, AUDelay,
 /// DLSMusicDevice). Elsewhere its actions are not performed and its checks
 /// are reported as skipped (counted like the other guarded skips).
@@ -2253,6 +2335,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(recording_steps());
     all.extend(platform_device_steps());
     all.extend(builtin_device_steps());
+    all.extend(analyzer_device_steps());
     all.extend(automation_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));

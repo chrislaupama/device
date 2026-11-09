@@ -26,6 +26,11 @@
 //! store the choice index as their plain value (`min` = 0, `max` = choices - 1).
 
 mod compressor;
+mod pitch_corrector;
+mod spectrum;
+mod tuner;
+
+pub use tuner::TUNING_STRINGS;
 
 use crate::device::{Device, DeviceId, PluginFormat, PluginKind, PluginRef};
 use crate::model::Track;
@@ -60,6 +65,8 @@ pub enum Format {
     Choice,
     /// Number with this many decimals and the unit appended when not empty.
     Plain(u8),
+    /// Number with an explicit sign, this many decimals and the unit: "+4.5 dB/oct", "−3.0 dB/oct", "0.0 dB/oct".
+    Signed(u8),
 }
 
 /// One parameter of a built-in device.
@@ -199,7 +206,7 @@ impl ParamDef {
             (Format::Hz, "k" | "khz") => v *= 1000.0,
             (Format::Hz, "hz") => {}
             (Format::Db, "db") | (Format::Percent, "%") => {}
-            (Format::Plain(_), u) if u == self.unit.to_lowercase() => {}
+            (Format::Plain(_) | Format::Signed(_), u) if u == self.unit.to_lowercase() => {}
             _ => return None,
         }
         if !v.is_finite() {
@@ -246,6 +253,12 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
             let s = format!("{:.*}", d as usize, v).replace('-', &MINUS.to_string());
             if unit.is_empty() { s } else { format!("{s} {unit}") }
         }
+        Format::Signed(d) => {
+            let a = format!("{:.*}", d as usize, v.abs());
+            let zero = a.chars().all(|c| c == '0' || c == '.');
+            let sign = if zero { String::new() } else if v < 0.0 { MINUS.to_string() } else { "+".into() };
+            if unit.is_empty() { format!("{sign}{a}") } else { format!("{sign}{a} {unit}") }
+        }
     }
 }
 
@@ -266,13 +279,21 @@ pub enum Control {
     Toggle(&'static str),
     /// Sidechain source picker (a track list, not a parameter).
     Sidechain,
+    /// Menu pill (picker row): the chosen choice and a chevron; click opens
+    /// the list of the parameter's choices.
+    Dropdown(&'static str),
+    /// Flexible gap in the picker row: the controls after it align right.
+    Gap,
+    /// Latch pill (reference fx latch) labelled with the parameter's label,
+    /// filled while the two-state parameter is on; click toggles.
+    Latch(&'static str),
 }
 
 impl Control {
     pub fn param(&self) -> Option<&'static str> {
         match *self {
-            Control::Knob(p) | Control::Slider(p) | Control::Menu(p) | Control::Pill(p) | Control::Toggle(p) => Some(p),
-            Control::Sidechain => None,
+            Control::Knob(p) | Control::Slider(p) | Control::Menu(p) | Control::Pill(p) | Control::Toggle(p) | Control::Dropdown(p) | Control::Latch(p) => Some(p),
+            Control::Sidechain | Control::Gap => None,
         }
     }
 }
@@ -371,7 +392,7 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 1] = [&compressor::COMPRESSOR];
+    static ALL: [&DeviceDef; 4] = [&compressor::COMPRESSOR, &pitch_corrector::PITCH_CORRECTOR, &tuner::TUNER, &spectrum::SPECTRUM];
     &ALL
 }
 
@@ -435,6 +456,41 @@ impl DeviceDef {
             self.param(by).map(|b| values.contains(&(self.value(device, b).round() as u32))).unwrap_or(true)
         })
     }
+}
+
+// ---------------------------------------------------------------- key follow
+
+/// Key and scale (plain choice values) a device shows and runs with while it
+/// follows the project key: devices with `key_follow` (Manual / Project),
+/// `key` (pitch classes from C) and `scale` parameters. None while Key
+/// Follow is Manual, or when the project has no key (the stored values
+/// stay in force). A minor project key picks the scale choice "Minor",
+/// otherwise "Major".
+pub fn followed_key(def: &DeviceDef, device: &Device, key: Option<crate::model::ProjectKey>) -> Option<(f32, f32)> {
+    let key = key?;
+    let follow = def.param("key_follow")?;
+    if def.value(device, follow) < 0.5 {
+        return None;
+    }
+    let scale = def.param("scale")?;
+    let want = if key.minor { "Minor" } else { "Major" };
+    let s = scale.choices.iter().position(|c| *c == want)?;
+    def.param("key")?;
+    Some((f32::from(key.root.min(11)), s as f32))
+}
+
+/// The device as the engine should run it: a copy with the followed project
+/// key written into `key` / `scale` (see [followed_key]); other devices
+/// unchanged.
+pub fn engine_device(device: &Device, key: Option<crate::model::ProjectKey>) -> Device {
+    let mut d = device.clone();
+    if let Some(def) = def_of(device)
+        && let Some((k, s)) = followed_key(def, device, key)
+    {
+        d.params.insert("key".into(), k);
+        d.params.insert("scale".into(), s);
+    }
+    d
 }
 
 /// Check one parameter edit against the definition: the parameter exists and

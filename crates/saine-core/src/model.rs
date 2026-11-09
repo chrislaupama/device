@@ -139,6 +139,18 @@ pub struct Transport {
     pub loop_enabled: bool,
     pub loop_start: Ticks,
     pub loop_end: Ticks,
+    /// Project key (None = not set, the reference's "—"). Devices whose Key
+    /// Follow is on use it (builtin::engine_device).
+    #[serde(default)]
+    pub key: Option<ProjectKey>,
+}
+
+/// A project key: tonic pitch class and mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectKey {
+    /// Pitch class of the tonic, 0 = C .. 11 = B.
+    pub root: u8,
+    pub minor: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -167,6 +179,7 @@ impl Default for Project {
                 loop_enabled: false,
                 loop_start: 0,
                 loop_end: 8 * 4 * PPQ,
+                key: None,
             },
             master_gain: 1.0,
             tracks: Vec::new(),
