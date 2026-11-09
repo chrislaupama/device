@@ -253,6 +253,7 @@ std::unique_ptr<BuiltinProcessor> create_spectrum() { return std::make_unique<Sp
 } // namespace
 
 extern const BuiltinDescriptor kSpectrumDescriptor;
-const BuiltinDescriptor kSpectrumDescriptor{"spectrum", kParamIds, {}, &create_spectrum, {}};
+constexpr float kDefaults[] = {3.0f, 0.0f, 0.0f, 30.0f, 4.5f, 0.0f, 90.0f, 1.0f, 30.0f, 50.0f, 1.0f, 0.0f, 3.0f};
+const BuiltinDescriptor kSpectrumDescriptor{"spectrum", kParamIds, {}, &create_spectrum, {}, kDefaults};
 
 } // namespace saine

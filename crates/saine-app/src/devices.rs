@@ -263,7 +263,7 @@ pub enum MenuPick {
     Sidechain(DeviceId, Option<TrackId>),
     /// Built-in device panel: load factory preset `n`.
     Preset(DeviceId, usize),
-    /// Built-in device panel: choice of a parameter (index, choice) from its menu pill.
+    /// Built-in device panel dropdown: (device, parameter index, choice).
     Choice(DeviceId, i32, i32),
 }
 
@@ -1362,11 +1362,12 @@ mod tests {
         open.insert("e/builtin".into());
         let (entries, rows) = build_tree(&c, 1, "", &open);
         assert!(matches!(&entries[1].item, Some(Item::Builtin(d)) if d.id == "compressor"));
-        let more = saine_core::builtin::all().len() - 1;
-        assert_eq!(rows[5 + more].label, "AUDelay");
-        assert_eq!(rows[6 + more].label, "AULowpass");
-        assert!(rows[6 + more].leaf && rows[6 + more].icon == 2);
-        assert!(matches!(&entries[6 + more].item, Some(Item::Plugin(p)) if p.name == "AULowpass"));
+        // One row per built-in device under the open Built-in folder.
+        let n = saine_core::builtin::all().len();
+        assert_eq!(rows[4 + n].label, "AUDelay");
+        assert_eq!(rows[5 + n].label, "AULowpass");
+        assert!(rows[5 + n].leaf && rows[5 + n].icon == 2);
+        assert!(matches!(&entries[5 + n].item, Some(Item::Plugin(p)) if p.name == "AULowpass"));
     }
 
     #[test]

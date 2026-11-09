@@ -4,14 +4,14 @@
 //! The engine publishes what these views show (readouts for the pitch trace
 //! and the tuner, analysis frames for the spectrum); every poll tick
 //! ([Controller::panel_poll_views], ~30 ms) folds the new data into a small
-//! per-device state, and [Controller::analyzer_field] turns that state into a
-//! generic [PanelField] (paths, boxes and texts in field coordinates) that
+//! per-device state, and [Controller::analyzer_canvas] turns that state into a
+//! generic [PanelCanvas] (paths, boxes and texts in field coordinates) that
 //! ui/device_panel.slint draws. Lengths are the reference's 100%-zoom card
 //! measurements (handoffs/device-specs/<device>.md) times [Z].
 
 use crate::controller::Controller;
 use crate::device_panel::{polyline, Z};
-use crate::{PanelBox, PanelField, PanelLayer, PanelText};
+use crate::{PanelBox, PanelCanvas, PanelLayer, PanelText};
 use saine_core::builtin::{DeviceDef, View, TUNING_STRINGS};
 use saine_core::{Device, DeviceId};
 use slint::{Color, ModelRc, SharedString, VecModel};
@@ -341,17 +341,17 @@ impl Controller {
     }
 
     /// The field of a custom analyser view (None for other views).
-    pub(crate) fn analyzer_field(&self, d: &Device, def: &'static DeviceDef, view: &str, accent: Color) -> Option<PanelField> {
+    pub(crate) fn analyzer_canvas(&self, d: &Device, def: &'static DeviceDef, view: &str, accent: Color) -> Option<PanelCanvas> {
         let m = metrics(view)?;
         let w = m.width - 2.0 * FIELD_X;
         Some(match view {
-            "pitch-trace" => self.trace_field(d, def, w, accent),
-            "tuner" => self.tuner_field(d, def, w, accent),
-            _ => self.spectrum_field(d, def, w, accent),
+            "pitch-trace" => self.trace_canvas(d, def, w, accent),
+            "tuner" => self.tuner_canvas(d, def, w, accent),
+            _ => self.spectrum_canvas(d, def, w, accent),
         })
     }
 
-    fn trace_field(&self, d: &Device, def: &'static DeviceDef, w: f32, accent: Color) -> PanelField {
+    fn trace_canvas(&self, d: &Device, def: &'static DeviceDef, w: f32, accent: Color) -> PanelCanvas {
         let (w, h) = (w * Z, (FIELD_BOTTOM - FIELD_Y) * Z);
         let body_y = CAPTION_H * Z;
         let bh = h - body_y;
@@ -409,7 +409,7 @@ impl Controller {
                 over.push(rect(p.0 - 2.0 * Z, p.2 - 2.0 * Z, 4.0 * Z, 4.0 * Z, 2.0 * Z, corr_color));
             }
         }
-        PanelField {
+        PanelCanvas {
             visible: true,
             x: FIELD_X * Z,
             y: FIELD_Y * Z,
@@ -426,7 +426,7 @@ impl Controller {
         }
     }
 
-    fn tuner_field(&self, d: &Device, def: &'static DeviceDef, w_pt: f32, accent: Color) -> PanelField {
+    fn tuner_canvas(&self, d: &Device, def: &'static DeviceDef, w_pt: f32, accent: Color) -> PanelCanvas {
         let z = Z;
         let (w, h) = (w_pt, TUNER_BOTTOM - FIELD_Y); // unscaled; scaled on output
         let empty = TunerView::default();
@@ -525,7 +525,7 @@ impl Controller {
                 layers.push(line(format!("M{:.2} {:.2} L{:.2} {:.2} L{:.2} {:.2}", x * z, (y - 6.0) * z, tip * z, y * z, x * z, (y + 6.0) * z), white(0.85 * a * voice * dim), 2.0 * z));
             }
         }
-        PanelField {
+        PanelCanvas {
             visible: true,
             x: FIELD_X * z,
             y: FIELD_Y * z,
@@ -542,7 +542,7 @@ impl Controller {
         }
     }
 
-    fn spectrum_field(&self, d: &Device, def: &'static DeviceDef, w: f32, _accent: Color) -> PanelField {
+    fn spectrum_canvas(&self, d: &Device, def: &'static DeviceDef, w: f32, _accent: Color) -> PanelCanvas {
         let (w, h) = (w * Z, (FIELD_BOTTOM - FIELD_Y) * Z);
         let body_y = CAPTION_H * Z;
         let bh = h - body_y;
@@ -592,7 +592,7 @@ impl Controller {
                 layers.push(line(curve, alpha(color, 0.95), 1.2 * Z));
             }
         }
-        PanelField {
+        PanelCanvas {
             visible: true,
             x: FIELD_X * Z,
             y: FIELD_Y * Z,

@@ -355,6 +355,7 @@ pub struct se_builtin_desc {
     pub readout_ids: *const *const c_char,
     pub param_count: u32,
     pub readout_count: u32,
+    pub param_defaults: *const f32,
 }
 /// Number of built-in synth parameters (`SE_SYNTH_P_*`, `SynthParam::ALL` order).
 pub const SE_SYNTH_P_COUNT: u16 = 20;
@@ -988,10 +989,16 @@ mod abi_layout {
         );
         assert_eq!((size_of::<se_builtin_state>(), align_of::<se_builtin_state>()), (16, 8));
         assert_eq!([offset_of!(se_builtin_state, value_count), offset_of!(se_builtin_state, sidechain_track_id)], [4, 8]);
-        assert_eq!((size_of::<se_builtin_desc>(), align_of::<se_builtin_desc>()), (32, 8));
+        assert_eq!((size_of::<se_builtin_desc>(), align_of::<se_builtin_desc>()), (40, 8));
         assert_eq!(
-            [offset_of!(se_builtin_desc, param_ids), offset_of!(se_builtin_desc, readout_ids), offset_of!(se_builtin_desc, param_count), offset_of!(se_builtin_desc, readout_count)],
-            [8, 16, 24, 28]
+            [
+                offset_of!(se_builtin_desc, param_ids),
+                offset_of!(se_builtin_desc, readout_ids),
+                offset_of!(se_builtin_desc, param_count),
+                offset_of!(se_builtin_desc, readout_count),
+                offset_of!(se_builtin_desc, param_defaults),
+            ],
+            [8, 16, 24, 28, 32]
         );
     }
 

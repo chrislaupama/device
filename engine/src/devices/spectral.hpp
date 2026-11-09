@@ -155,10 +155,10 @@ enum class Window : int { Hann, Hamming, Blackman, BlackmanHarris, FlatTop, Rect
 // Fills w[0..n) (RT safe: no allocation). Returns the coherent gain (mean of
 // the window), so a full-scale sine reads 0 dB after dividing by n * gain / 2.
 inline float fill_window(Window kind, uint32_t n, float* w) noexcept {
-    constexpr double kTwoPi = 6.283185307179586476925;
+    constexpr double kTau = 6.283185307179586476925;
     double sum = 0.0;
     for (uint32_t i = 0; i < n; ++i) {
-        const double x = kTwoPi * i / n;
+        const double x = kTau * i / n;
         double v = 1.0;
         switch (kind) {
         case Window::Hann: v = 0.5 - 0.5 * std::cos(x); break;
