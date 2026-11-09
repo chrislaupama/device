@@ -13,7 +13,7 @@ use crate::assistant_provider::Provider;
 use crate::mixer::{self, Ballistics, MASTER_METER_ID};
 use crate::pianoroll::{self, PrState};
 use crate::synth::SynthUi;
-use crate::{AppWindow, AutoExtra, AutoLabel, ChatEntry, ChoiceItem, ClipLabel, DeviceCard, HighlightRect, MenuItem, MixerStrip, PluginRow, RulerLabel, StripMeter, Studio, SynthDisplay, SynthParam, TrackRow, TreeRow, YLabel};
+use crate::{AppWindow, AutoExtra, AutoLabel, ChatEntry, ChoiceItem, ClipLabel, DeviceCard, HighlightRect, MenuItem, MixerStrip, PluginRow, RulerLabel, StripMeter, Studio, SynthDisplay, SynthParam, TrackLevel, TrackRow, TreeRow, YLabel};
 use saine_core::{
     Asset, AssetId, Clip, ClipId, ColorIndex, Command, Document, MidiClip, Origin, PPQ, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, gain_to_db, persist, snapshot,
 };
@@ -30,19 +30,37 @@ use std::time::{Duration, Instant};
 
 /// Track/header volume slider position (0..1) for a linear gain. 0 dB sits at
 /// 0.85 of the travel (measured handle position in the reference), +6 dB at 1.
-pub const SLIDER_ZERO_DB: f32 = 0.85;
+/// Track-header and header volume sliders: (dB, fraction of travel), piecewise linear between
+/// the points, as in the reference (reference/research-findings.md, "Track headers").
+const SLIDER_SCALE: [(f32, f32); 6] = [(-60.0, 0.0), (-48.0, 0.045), (-36.0, 0.11), (-24.0, 0.22), (-12.0, 0.4), (6.0, 1.0)];
 pub fn slider_from_gain(g: f32) -> f32 {
     if g <= 0.0 {
-        0.0
-    } else if g <= 1.0 {
-        SLIDER_ZERO_DB * g.cbrt()
-    } else {
-        (SLIDER_ZERO_DB + (1.0 - SLIDER_ZERO_DB) * gain_to_db(g) / 6.0).min(1.0)
+        return 0.0;
     }
+    let db = gain_to_db(g);
+    if db >= 6.0 {
+        return 1.0;
+    }
+    if db <= -60.0 {
+        return 0.0;
+    }
+    let k = SLIDER_SCALE.iter().position(|&(d, _)| db <= d).unwrap_or(SLIDER_SCALE.len() - 1).max(1);
+    let ((d0, p0), (d1, p1)) = (SLIDER_SCALE[k - 1], SLIDER_SCALE[k]);
+    p0 + (p1 - p0) * (db - d0) / (d1 - d0)
 }
 pub fn gain_from_slider(p: f32) -> f32 {
     let p = p.clamp(0.0, 1.0);
-    if p <= SLIDER_ZERO_DB { (p / SLIDER_ZERO_DB).powi(3) } else { db_to_gain(6.0 * (p - SLIDER_ZERO_DB) / (1.0 - SLIDER_ZERO_DB)) }
+    if p <= 0.0 {
+        return 0.0;
+    }
+    let k = SLIDER_SCALE.iter().position(|&(_, q)| p <= q).unwrap_or(SLIDER_SCALE.len() - 1).max(1);
+    let ((d0, p0), (d1, p1)) = (SLIDER_SCALE[k - 1], SLIDER_SCALE[k]);
+    db_to_gain(d0 + (d1 - d0) * (p - p0) / (p1 - p0))
+}
+
+/// Track-header meter length: linear in dB from -50 dB (empty) to 0 dB (full).
+pub fn header_meter(g: f32) -> f32 {
+    if g <= 0.0 { 0.0 } else { ((gain_to_db(g) + 50.0) / 50.0).clamp(0.0, 1.0) }
 }
 
 /// Inspector fader/meter scale: (dB, fraction of travel from the top), taken from
@@ -81,8 +99,23 @@ pub fn fmt_db(db: f32) -> String {
     if !db.is_finite() || db < -99.0 { "−∞".into() } else { format!("{db:.2}").replace('-', "−") }
 }
 
+/// Track-header pan entry: "C", "<n>L", "<n>R" (n 0..100) or a number -100..100.
+pub fn parse_pan_text(s: &str) -> Option<f32> {
+    let t = s.trim();
+    if t.eq_ignore_ascii_case("c") {
+        return Some(0.0);
+    }
+    let lower = t.to_ascii_lowercase();
+    for (suffix, sign) in [("l", -1.0f32), ("r", 1.0)] {
+        if let Some(n) = lower.strip_suffix(suffix).map(str::trim_end).filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())) {
+            return n.parse::<f32>().ok().map(|v| sign * v.min(100.0) / 100.0);
+        }
+    }
+    t.parse::<f32>().ok().filter(|v| v.is_finite()).map(|v| (v / 100.0).clamp(-1.0, 1.0))
+}
+
 pub(crate) fn fmt_pan(p: f32) -> String {
-    let v = (p * 50.0).round() as i32;
+    let v = (p * 100.0).round() as i32;
     match v {
         0 => "C".into(),
         v if v < 0 => format!("{}L", -v),
@@ -90,10 +123,26 @@ pub(crate) fn fmt_pan(p: f32) -> String {
     }
 }
 
+/// The reference's 13 track colours as shown on screen: its palette after the track tint
+/// (saturation ×1.64 about Rec. 709 luma, then 10 % toward white) in display-P3 values
+/// (reference/research-findings.md, "Track colours"). Rotated so that index 0 and 1 are the
+/// blue and purple of older projects; the order is the reference's cycle.
+const TRACK_PALETTE: [u32; 13] =
+    [0x72b5d7, 0x8092eb, 0x9b88f6, 0xc770f7, 0xec5c9f, 0xde7e36, 0x56b5ab, 0xec6e45, 0xe3aa4b, 0xc3cc47, 0xa9de4d, 0x78ea8e, 0x67c9c0];
+
 pub fn track_color(c: ColorIndex) -> [f32; 3] {
-    // 0 audio and 1 instrument are measured; the rest are ORIGINAL palette choices.
-    const PALETTE: [u32; 8] = [0x72b6d7, 0x8092eb, 0xd78f72, 0x8fd772, 0xd772b9, 0xd7c672, 0x72d7b4, 0xb38fe0];
-    timeline::rgb(PALETTE[c.0 as usize % PALETTE.len()])
+    timeline::rgb(TRACK_PALETTE[c.0 as usize % TRACK_PALETTE.len()])
+}
+
+/// Colour for a new track: the first palette entry after the last track's colour that no track
+/// uses yet, else the least-used one (the reference's rule; its first track starts at random,
+/// ours at 0).
+pub fn next_track_color(p: &Project) -> ColorIndex {
+    let n = TRACK_PALETTE.len();
+    let Some(last) = p.tracks.last() else { return ColorIndex(0) };
+    let start = last.color.0 as usize % n;
+    let used = |c: usize| p.tracks.iter().filter(|t| t.color.0 as usize % n == c).count();
+    (1..=n).map(|k| (start + k) % n).find(|&c| used(c) == 0).map_or_else(|| ColorIndex((0..n).min_by_key(|&c| used(c)).unwrap_or(0) as u8), |c| ColorIndex(c as u8))
 }
 
 /// Record-armed / recording red (ORIGINAL choice; the reference's armed state was not
@@ -259,6 +308,7 @@ pub struct Controller {
     ballistics: Ballistics,
     strips_model: Rc<VecModel<MixerStrip>>,
     strip_meters_model: Rc<VecModel<StripMeter>>,
+    track_levels_model: Rc<VecModel<TrackLevel>>,
     chat_model: Rc<VecModel<ChatEntry>>,
     chat_rev: Option<u64>,
     highlights_model: Rc<VecModel<HighlightRect>>,
@@ -342,6 +392,7 @@ impl Controller {
             ballistics: Ballistics::default(),
             strips_model: Rc::new(VecModel::default()),
             strip_meters_model: Rc::new(VecModel::default()),
+            track_levels_model: Rc::new(VecModel::default()),
             chat_model: Rc::new(VecModel::default()),
             chat_rev: None,
             highlights_model: Rc::new(VecModel::default()),
@@ -379,6 +430,7 @@ impl Controller {
         s.set_clip_labels(ModelRc::from(self.clip_ids_model()));
         s.set_strips(ModelRc::from(self.strips_model.clone()));
         s.set_strip_meters(ModelRc::from(self.strip_meters_model.clone()));
+        s.set_track_levels(ModelRc::from(self.track_levels_model.clone()));
         s.set_chat(ModelRc::from(self.chat_model.clone()));
         s.set_highlights(ModelRc::from(self.highlights_model.clone()));
         s.set_pr_bar_labels(ModelRc::from(self.pr_bar_model.clone()));
@@ -610,7 +662,7 @@ impl Controller {
     }
 
     pub fn add_audio_track(&mut self) -> Option<TrackId> {
-        let track = Track::new(TrackId(0), TrackKind::Audio, "Audio", ColorIndex(0));
+        let track = Track::new(TrackId(0), TrackKind::Audio, "Audio", next_track_color(self.project()));
         if self.execute(Command::AddTrack { index: None, track }) {
             let id = self.project().tracks.last().map(|t| t.id);
             if let Some(id) = id {
@@ -821,7 +873,7 @@ impl Controller {
         };
         let track_id = existing.unwrap_or_else(|| {
             let id = TrackId(alloc());
-            cmds.push(Command::AddTrack { index: None, track: Track::new(id, TrackKind::Audio, "Audio", ColorIndex(0)) });
+            cmds.push(Command::AddTrack { index: None, track: Track::new(id, TrackKind::Audio, "Audio", next_track_color(p)) });
             id
         });
         let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Audio".into());
@@ -1261,9 +1313,22 @@ impl Controller {
         }
         let mut metering = ml > 1e-5 || mr > 1e-5;
 
+        // Track-header meters (always shown) and the mixer meters share one ballistics state.
+        metering |= self.ballistics.update(&self.meters);
+        let p = self.doc.project();
+        let level = |id: u64| {
+            let (l, r, hold) = self.ballistics.get(id);
+            TrackLevel { l: header_meter(l), r: header_meter(r), clip: hold >= 1.0 }
+        };
+        let levels: Vec<TrackLevel> = p.tracks.iter().map(|t| level(t.id.0)).collect();
+        sync_model(&self.track_levels_model, levels);
+        let ml = level(MASTER_METER_ID);
+        if s.get_master_level() != ml {
+            s.set_master_level(ml);
+        }
+
         // Mixer meters (all strips + master), only while the mixer is visible.
         if self.mixer_open {
-            metering |= self.ballistics.update(&self.meters);
             let p = self.doc.project();
             let rows: Vec<StripMeter> = p
                 .tracks
@@ -1492,7 +1557,16 @@ mod tests {
             let p = slider_from_gain(g);
             assert!((gain_from_slider(p) - g).abs() < 1e-3, "{g} -> {p}");
         }
-        assert!((slider_from_gain(1.0) - 0.85).abs() < 1e-6);
+        assert!((slider_from_gain(1.0) - 0.8).abs() < 1e-6);
+    }
+    #[test]
+    fn pan_text_entry() {
+        assert_eq!(parse_pan_text(" c "), Some(0.0));
+        assert_eq!(parse_pan_text("30L"), Some(-0.3));
+        assert_eq!(parse_pan_text("100 r"), Some(1.0));
+        assert_eq!(parse_pan_text("250R"), Some(1.0));
+        assert_eq!(parse_pan_text("-45"), Some(-0.45));
+        assert_eq!(parse_pan_text("left"), None);
     }
     #[test]
     fn fader_mapping() {
@@ -1504,7 +1578,7 @@ mod tests {
     #[test]
     fn pan_text() {
         assert_eq!(fmt_pan(0.0), "C");
-        assert_eq!(fmt_pan(-0.5), "25L");
-        assert_eq!(fmt_pan(1.0), "50R");
+        assert_eq!(fmt_pan(-0.5), "50L");
+        assert_eq!(fmt_pan(1.0), "100R");
     }
 }

@@ -89,6 +89,9 @@ struct Args {
     /// reference-automation (60): Instrument track 1 (MIDI clip at bar 6), Audio track 2 selected,
     /// playhead at bar 6, automation lanes shown (Track Volume at +0.0).
     automation_state: bool,
+    /// reference-live (renders/reference/ui/z100-main-default.png, 100 % zoom): the default project
+    /// with the assistant panel open and the automation lanes shown.
+    live_state: bool,
     /// review-automation / review-automation-picker: lanes with points (active, disabled, curved,
     /// an expanded extra lane, master) for review; the second also opens the picker with the
     /// Synth submenu. No reference capture.
@@ -178,6 +181,11 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.settings_state = true;
                 }
+                "reference-live" => {
+                    a.reference_default = true;
+                    a.open_assistant = true;
+                    a.live_state = true;
+                }
                 "reference-automation" => {
                     a.reference_default = true;
                     a.automation_state = true;
@@ -226,7 +234,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight>)"
                     ));
                 }
             },
@@ -683,6 +691,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(22.0);
         c.auto_toggle_shown();
     }
+    if args.live_state {
+        // The capture's tracks drew palette entries 4 and 5 (pink, orange); the reference picks
+        // the first track's colour at random.
+        let mut c = ctl.borrow_mut();
+        let mut p = c.project().clone();
+        for (t, k) in p.tracks.iter_mut().zip([4u8, 5]) {
+            t.color = saine_core::ColorIndex(k);
+        }
+        c.replace_project(p);
+        let first = c.project().tracks[0].id;
+        c.select_track(first);
+        c.auto_toggle_shown();
+    }
     if args.automation_review > 0 {
         use saine_core::{AutoPoint, AutomationLane, AutomationTarget, SynthParam};
         let pt = |beat: i64, value: f32, curve: f32| AutoPoint { time: beat * saine_core::PPQ, value, curve };
@@ -935,6 +956,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_track_solo, |c, id: i32| c.toggle_solo(TrackId(id as u64)));
     on!(on_track_volume, |c, id: i32, p: f32| c.set_track_gain(TrackId(id as u64), gain_from_slider(p)));
     on!(on_track_pan, |c, id: i32, p: f32| c.set_track_pan(TrackId(id as u64), p));
+    on!(on_track_pan_text, |c, id: i32, t: slint::SharedString| {
+        if let Some(p) = controller::parse_pan_text(&t) {
+            c.set_track_pan(TrackId(id as u64), p);
+        }
+    });
     on!(on_master_volume, |c, p: f32| c.set_master_gain(gain_from_slider(p)));
     on!(on_sel_fader_moved, |c, f: f32| {
         if let Some(t) = c.selected_track {
