@@ -121,6 +121,8 @@ add_library(saine_engine STATIC
   src/devices/channel_eq.cpp
   src/devices/character_eq.cpp
   src/devices/auto_filter.cpp
+  src/devices/lfo.cpp
+  src/devices/rack.cpp
   src/devices/distortion.cpp
   src/devices/soft_clipper.cpp
   src/devices/tape_saturation.cpp
@@ -358,6 +360,7 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/devices/test_drive.cpp
     tests/devices/test_imaging.cpp
     tests/devices/test_modulation.cpp
+    tests/devices/test_mod_routes.cpp
     tests/devices/test_character_mod.cpp
     tests/devices/test_drum_rack.cpp
     tests/devices/test_sampler.cpp
@@ -403,6 +406,10 @@ if(SAINE_ENGINE_BUILD_BENCH)
   add_executable(saine_device_bench bench/bench_devices.cpp)
   target_include_directories(saine_device_bench PRIVATE src)
   target_link_libraries(saine_device_bench PRIVATE saine_engine saine_engine_warnings)
+  # Plugin-cache parse benchmark (the scanner's JSON reader only).
+  add_executable(saine_scan_cache_bench bench/bench_scan_cache.cpp)
+  target_include_directories(saine_scan_cache_bench PRIVATE scanner)
+  target_link_libraries(saine_scan_cache_bench PRIVATE saine_engine_warnings)
 endif()
 
 # ---------------------------------------------------------------- tools

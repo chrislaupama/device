@@ -47,6 +47,7 @@ bool set_env(const char* name, const char* utf8_value);
 // letters contain ':'), ':' elsewhere.
 char path_list_separator() noexcept;
 
+// Operating-system id of the current process.
 int process_id() noexcept;
 
 // The command-line arguments (without argv[0]) as UTF-8. Windows: from
@@ -54,12 +55,15 @@ int process_id() noexcept;
 std::vector<std::string> utf8_args(int argc, char** argv);
 
 #if defined(_WIN32)
+// UTF-8 <-> UTF-16 for the wide Win32 APIs. Invalid sequences are replaced
+// with U+FFFD, not rejected: these are conversions, not input checks.
 std::wstring widen(std::string_view utf8);
 std::string narrow(std::wstring_view wide);
 #endif
 
 // ---------------------------------------------------------------- child processes
 
+// How a child process ended.
 struct ExitStatus {
     bool crashed = false;   // POSIX: killed by a signal; Windows: NTSTATUS exception code
     int code = 0;           // exit code, or the signal number when crashed (POSIX)
@@ -89,9 +93,11 @@ public:
     bool wait_for(std::chrono::milliseconds timeout, ExitStatus& out);
     // Forcibly terminates the child and reaps it.
     void kill();
+    // True while a child has been spawned and not yet reaped.
     bool running() const noexcept;
 
 private:
+    // Forgets the child (Windows: closes its handle) without signalling it.
     void reset() noexcept;
 #if defined(_WIN32)
     void* process_ = nullptr; // HANDLE
