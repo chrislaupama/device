@@ -85,6 +85,7 @@ struct Args {
     input_menu_state: bool,
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
+    settings_general_state: bool,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
     /// the live recording clip. Not a reference capture (the reference recording UI was not captured).
     recording_review: bool,
@@ -181,6 +182,11 @@ fn parse_args() -> Result<Args, String> {
                 "reference-input-menu" => {
                     a.reference_default = true;
                     a.input_menu_state = true;
+                }
+                "reference-settings-general" => {
+                    a.reference_default = true;
+                    a.settings_state = true;
+                    a.settings_general_state = true;
                 }
                 "reference-settings-audio" => {
                     a.reference_default = true;
@@ -749,7 +755,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if args.settings_state {
-        ctl.borrow_mut().open_settings();
+        let mut c = ctl.borrow_mut();
+        c.open_settings();
+        if args.settings_general_state {
+            c.settings_page(0);
+        }
     }
     if args.plugins_page_review {
         let mut c = ctl.borrow_mut();
