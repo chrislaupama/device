@@ -1,11 +1,11 @@
-//! End-to-end synth parameters: `Command::SetSynthParams` on a document
-//! instrument track → snapshot (`TrackSnapshot::synth`) →
-//! `se_session_publish_v3` → built-in synth → offline render.
+//! End-to-end Synth (synth-v2) parameters: `Command::SetDeviceParam(s)` on
+//! an instrument track's built-in Synth → snapshot → engine → offline
+//! render.
 
-use saine_core::instrument::factory_presets;
+use saine_core::builtin::synth_v2::SYNTH_V2;
 use saine_core::*;
 use saine_engine::{Config, Engine};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 const RATE: f64 = 48_000.0;
 
@@ -60,16 +60,17 @@ fn render_doc(doc: &Document, frames: usize) -> Vec<f32> {
     left(&render(&engine, frames))
 }
 
+/// The track's Synth device.
+fn synth(doc: &Document, inst: TrackId) -> DeviceId {
+    doc.project().track(inst).unwrap().instrument_plugin.as_ref().unwrap().id
+}
+
 #[test]
 fn low_cutoff_via_command_darkens_the_sound() {
     let (mut doc, inst) = doc_with_c4();
     let default_out = render_doc(&doc, 36_000);
-    let ts = snapshot::build(doc.project(), RATE, &HashMap::new()).0;
-    assert_eq!(ts.tracks.iter().find(|t| t.track_id == inst.0).unwrap().synth, Some(SynthParams::default()));
-
-    let mut params = doc.project().track(inst).unwrap().synth.clone();
-    params.filter.cutoff_hz = 150.0;
-    doc.execute(Command::SetSynthParams { track: inst, params }, Origin::User).unwrap();
+    let device = synth(&doc, inst);
+    doc.execute(Command::SetDeviceParam { device, param: "cutoff".into(), value: 150.0 }, Origin::User).unwrap();
     let dark = render_doc(&doc, 36_000);
 
     let (b_default, b_dark) = (brightness(&default_out[4800..36_000]), brightness(&dark[4800..36_000]));
@@ -84,15 +85,17 @@ fn low_cutoff_via_command_darkens_the_sound() {
 
 #[test]
 fn every_factory_preset_renders_a_sane_c4() {
-    for preset in factory_presets() {
+    for preset in SYNTH_V2.factory {
         let (mut doc, inst) = doc_with_c4();
-        let name = preset.preset.clone();
-        doc.execute(Command::SetSynthParams { track: inst, params: preset }, Origin::User).unwrap();
-        // Note [0, 1 s) plus 3 s of release (the pad has a 2.5 s release).
+        let params: BTreeMap<String, f32> = preset.values.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+        let device = synth(&doc, inst);
+        doc.execute(Command::SetDeviceParams { device, params, preset: Some(preset.name.into()) }, Origin::User).unwrap();
+        // Note [0, 1 s) plus 3 s of release and effect tails.
         let out = render_doc(&doc, 4 * 48_000);
         let peak = out.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
         let body = rms(&out[2_400..48_000]);
-        eprintln!("{name:>14}: peak {:.3} ({:.1} dBFS), rms during note {body:.4}", peak, 20.0 * peak.log10());
+        let name = preset.name;
+        eprintln!("{name:>16}: peak {:.3} ({:.1} dBFS), rms during note {body:.4}", peak, 20.0 * peak.log10());
         assert!(out.iter().all(|v| v.is_finite()), "{name}: non-finite output");
         assert!(body > 1e-3, "{name}: silent (rms {body})");
         assert!(peak < 1.0, "{name}: peak {peak} reaches 0 dBFS");
