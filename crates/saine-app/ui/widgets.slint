@@ -11,6 +11,65 @@ export component Panel inherits Rectangle {
     clip: true;
 }
 
+// ---- Depth: the soft raised / inset look of the reference's controls --------------------------
+// ORIGINAL implementation; measured as edge and shadow profiles from the 100 % live capture
+// (see FIDELITY.md, "Depth"). Raised: 1 px light top lip that thins out down the sides, soft
+// shadow just below. Inset: 1 px dark top lip, a short inner shadow, 1 px light bottom lip.
+//
+// Both are built from stacked solid rounded rectangles offset by a lip, not from gradient
+// brushes: in FemtoVG every gradient fill or stroke costs far more than a solid one
+// (measured +0.75 ms/frame for ~20 controls, against ~0 for the stacked version).
+
+// Raised control surface (pills, dropdowns, value boxes, buttons).
+export component Raised inherits Rectangle {
+    in property <brush> fill: Tokens.bg-control;
+    in property <color> rim: Tokens.raised-rim;
+    /// Even outline (value boxes) instead of a top-only highlight.
+    in property <bool> outline: false;
+    /// Soft shadow underneath.
+    in property <bool> lifted: true;
+    property <length> r: min(self.border-radius, self.height / 2);
+    background: root.rim;
+    drop-shadow-offset-y: root.lifted ? 1.2px : 0px;
+    drop-shadow-blur: root.lifted ? 3px : 0px;
+    drop-shadow-color: root.lifted ? Tokens.raised-shadow : transparent;
+    // face: shifted down by the lip (top-only highlight), or inset on all sides (outline)
+    Rectangle {
+        x: root.outline ? Tokens.hairline : 0px;
+        y: Tokens.hairline;
+        width: root.outline ? root.width - 2 * Tokens.hairline : root.width;
+        height: root.height - (root.outline ? 2 : 1) * Tokens.hairline;
+        border-radius: max(0px, root.r - (root.outline ? Tokens.hairline : 0px));
+        background: root.fill;
+    }
+}
+
+// Search / text field: flat fill with an even hairline outline.
+export component Field inherits Rectangle {
+    background: Tokens.bg-control;
+    border-width: Tokens.hairline;
+    border-color: Tokens.field-rim;
+}
+
+// Inset well (slider grooves, the transport bar, the fader slot).
+export component Inset inherits Rectangle {
+    in property <color> fill: Tokens.bg-slider-track;
+    /// Lip thickness: 1 device px on small grooves, 2 on the transport bar.
+    in property <length> lip: Tokens.hairline;
+    /// Depth of the inner shadow below the top lip.
+    in property <length> shade: 1.2px;
+    in property <color> top: Tokens.inset-top;
+    in property <color> bottom: Tokens.inset-bottom;
+    property <length> r: min(self.border-radius, self.height / 2);
+    // light bottom lip shows below the dark layer
+    background: root.bottom;
+    Rectangle { y: 0; width: root.width; height: root.height - root.lip; border-radius: root.r; background: root.top; }
+    // inner shadow in two steps, then the face
+    Rectangle { y: root.lip; width: root.width; height: root.height - 2 * root.lip; border-radius: root.r; background: Tokens.inset-shade; }
+    Rectangle { y: root.lip + root.shade / 2; width: root.width; height: root.height - 2 * root.lip - root.shade / 2; border-radius: root.r; background: Tokens.inset-shade.mix(root.fill, 0.5); }
+    Rectangle { y: root.lip + root.shade; width: root.width; height: root.height - 2 * root.lip - root.shade; border-radius: root.r; background: root.fill; }
+}
+
 // Stroked line icon. `d` is an SVG path in a 16x16 box.
 export component Icon inherits Rectangle {
     in property <string> d;
@@ -98,7 +157,7 @@ export global Icons {
 }
 
 // Fully rounded pill button (Returns, Master, Smart Fill, Report a bug).
-export component Pill inherits Rectangle {
+export component Pill inherits Raised {
     in property <string> text;
     in property <string> icon: "";
     in property <int> weight: 600;
@@ -107,7 +166,8 @@ export component Pill inherits Rectangle {
     in property <color> text-color: active ? Tokens.on-accent : #c9c9cc;
     callback clicked;
     border-radius: self.height / 2;
-    background: active ? Tokens.accent : Tokens.bg-control;
+    fill: active ? Tokens.accent : Tokens.bg-control;
+    rim: active ? Tokens.raised-rim-accent : Tokens.raised-rim;
     HorizontalLayout {
         alignment: center;
         spacing: 5px;
@@ -143,9 +203,13 @@ export component SmallButton inherits Rectangle {
     in property <bool> on: false;
     in property <color> on-color: Tokens.text-bright;
     in property <length> font-size: 6px;
+    /// Inspector size: softer, slightly darker cap with a feathered shadow (track headers stay flat).
+    in property <bool> soft: false;
     callback clicked;
     border-radius: 2px;
-    background: on ? on-color : Tokens.small-button;
+    background: on ? on-color : root.soft ? #2f3032 : Tokens.small-button;
+    drop-shadow-blur: root.soft ? 1.5px : 0px;
+    drop-shadow-color: root.soft ? #00000066 : transparent;
     Text { text: root.text; color: root.on ? #18191c : #afafb1; font-size: root.font-size; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
     TouchArea { clicked => { root.clicked(); } }
 }
@@ -155,16 +219,18 @@ export component HSlider inherits Rectangle {
     in property <float> pos;
     in property <length> handle-size: 7px;
     in property <color> handle-color: Tokens.handle;
+    /// Groove lip: 1 device px on track sliders, 2 on the header volume.
+    in property <length> lip: Tokens.hairline;
     callback moved(float);
     callback released();
     callback reset();
     property <length> travel: self.width - self.handle-size;
-    groove := Rectangle {
+    groove := Inset {
         height: root.height;
         border-radius: self.height / 2;
-        background: Tokens.bg-slider-track;
-        border-width: 0.5px;
-        border-color: #2d2e31;
+        lip: root.lip;
+        fill: root.lip > Tokens.hairline ? Tokens.bg-raised : Tokens.bg-slider-track;
+        bottom: root.lip > Tokens.hairline ? Tokens.inset-bottom : #3f4044;
     }
     Rectangle {
         x: root.pos * root.travel;
@@ -195,6 +261,10 @@ export component Knob inherits Rectangle {
     in property <float> arc-gap: 2.5;
     /// Soft dark outer ring (header/inspector knobs); mixer strips use a flat body.
     in property <bool> ring: true;
+    /// Inspector style: flat face lifted by a soft shadow inside a 270° groove ring that
+    /// carries the value arc (overrides `ring`). Bipolar knobs get a centre marker.
+    in property <bool> groove: false;
+    in property <float> groove-radius: 12.5;
     in property <color> tick-color: #b9d3e4;
     in property <color> arc-color: Tokens.value-blue;
     in property <brush> ring-brush: @radial-gradient(circle, #111214 55%, #1c1d20 100%);
@@ -211,13 +281,36 @@ export component Knob inherits Rectangle {
     property <float> cx: self.width / 1px / 2;
     property <float> cy: self.height / 1px / 2;
     property <float> r: self.body / 1px / 2;
+    property <float> arc-r: root.groove ? root.groove-radius : root.r + root.arc-gap;
+    // groove ring (270°, open at the bottom)
+    if root.groove: Path {
+        width: root.width; height: root.height;
+        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        stroke: Tokens.knob-groove; stroke-width: 1.5px; fill: transparent;
+        MoveTo { x: root.cx + root.groove-radius * sin(-135deg); y: root.cy - root.groove-radius * cos(-135deg); }
+        ArcTo { x: root.cx + root.groove-radius * sin(135deg); y: root.cy - root.groove-radius * cos(135deg); radius-x: root.groove-radius; radius-y: root.groove-radius; large-arc: true; sweep: true; }
+    }
+    if root.groove: Rectangle {
+        width: root.body; height: root.body;
+        border-radius: self.width / 2;
+        background: Tokens.knob-face;
+        border-width: 0.45px; border-color: #262729;
+        drop-shadow-offset-y: 2px; drop-shadow-blur: 5px; drop-shadow-color: #000000a6;
+    }
+    if root.groove && !root.show-arc: Path {
+        width: root.width; height: root.height;
+        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        stroke: root.arc-color; stroke-width: 1.2px;
+        MoveTo { x: root.cx; y: root.cy - root.groove-radius + 1.2; }
+        LineTo { x: root.cx; y: root.cy - root.groove-radius - 1.5; }
+    }
     // soft outer ring
-    if root.ring: Rectangle {
+    if root.ring && !root.groove: Rectangle {
         width: root.body + 7px; height: root.body + 7px;
         border-radius: self.width / 2;
         background: root.ring-brush;
     }
-    Rectangle {
+    if !root.groove: Rectangle {
         width: root.body; height: root.body;
         border-radius: self.width / 2;
         background: root.body-brush;
@@ -231,14 +324,14 @@ export component Knob inherits Rectangle {
         stroke-width: root.arc-width;
         fill: transparent;
         MoveTo {
-            x: root.cx + (root.r + root.arc-gap) * sin(root.arc-from * 1deg);
-            y: root.cy - (root.r + root.arc-gap) * cos(root.arc-from * 1deg);
+            x: root.cx + root.arc-r * sin(root.arc-from * 1deg);
+            y: root.cy - root.arc-r * cos(root.arc-from * 1deg);
         }
         ArcTo {
-            x: root.cx + (root.r + root.arc-gap) * sin(root.value-angle * 1deg);
-            y: root.cy - (root.r + root.arc-gap) * cos(root.value-angle * 1deg);
-            radius-x: root.r + root.arc-gap;
-            radius-y: root.r + root.arc-gap;
+            x: root.cx + root.arc-r * sin(root.value-angle * 1deg);
+            y: root.cy - root.arc-r * cos(root.value-angle * 1deg);
+            radius-x: root.arc-r;
+            radius-y: root.arc-r;
             large-arc: abs(root.value-angle - root.arc-from) > 180;
             sweep: root.value-angle > root.arc-from;
         }
@@ -319,9 +412,9 @@ export component PanKnob inherits Rectangle {
     }
     // dark gap / contact shadow around the body
     Rectangle { width: 15.3px; height: 15.3px; border-radius: self.width / 2; background: #1d1e21; }
-    Rectangle { y: root.height / 2 - 6.8px + 0.6px; width: 13.6px; height: 13.6px; border-radius: self.width / 2; background: #18191b; }
-    // body
-    Rectangle { width: 13.6px; height: 13.6px; border-radius: self.width / 2; background: #2f3032; border-width: 0.45px; border-color: #313235; }
+    // body, lifted off the panel by a soft shadow that falls below it
+    Rectangle { width: 13.6px; height: 13.6px; border-radius: self.width / 2; background: #2f3032; border-width: 0.45px; border-color: #313235;
+        drop-shadow-offset-y: 1.2px; drop-shadow-blur: 3.5px; drop-shadow-color: #00000080; }
     // value arc (bipolar, from centre)
     if abs(root.value-angle) > 0.5: Path {
         width: root.width; height: root.height;

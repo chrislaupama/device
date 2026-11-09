@@ -16,7 +16,7 @@ import "fonts/Inter-Medium.ttf";
 import "fonts/Inter-SemiBold.ttf";
 import "fonts/Inter-Bold.ttf";
 import { Tokens } from "tokens.slint";
-import { Panel, Icon, Icons, Pill, IconButton, SmallButton, HSlider, Knob, PanKnob, Switch, Label } from "widgets.slint";
+import { Panel, Icon, Icons, Pill, IconButton, SmallButton, HSlider, Knob, PanKnob, Switch, Label, Raised, Field, Inset } from "widgets.slint";
 
 export { Tokens }
 
@@ -78,10 +78,11 @@ component Header inherits Rectangle {
             tooltip: "Record (R)"; active: false; clicked => { Studio.record(); } }
 
         // Transport pill 464.5..1008.5 x 36..69
-        Rectangle {
+        // Inset well: 2 px dark top lip, short inner shadow, light bottom lip.
+        Inset {
             x: 464.5px; y: 36px; width: 544px; height: 33px;
-            border-radius: 16.5px; background: Tokens.bg-raised;
-            border-width: 0.5px; border-color: Tokens.pill-border;
+            border-radius: 16.5px; fill: Tokens.bg-raised;
+            lip: 0.85px; shade: 1.3px; bottom: #4c4d51;
         }
         IconButton { x: 470px; y: 41px; width: 22px; height: 22px; icon: Icons.loop; ink: #63656c; tooltip: "Toggle loop (⌘L)"; active: Studio.loop-enabled; clicked => { Studio.toggle-loop(); } }
         // Automation Arm (src/automation.rs): while armed and playing, control moves write automation.
@@ -113,7 +114,7 @@ component Header inherits Rectangle {
 
         // Master volume (header), real: SetMasterGain
         HSlider {
-            x: 1022.5px; y: 45px; width: 95px; height: 14px; handle-size: 11px;
+            x: 1022.5px; y: 45px; width: 95px; height: 14px; handle-size: 11px; lip: 0.85px;
             pos: Studio.master-pos;
             moved(p) => { Studio.master-volume(p); }
             released => { Studio.gesture-end(); }
@@ -148,8 +149,8 @@ component Browser inherits Panel {
     // Section separator (01/05/06: 0.5 pt at panel y 27).
     Rectangle { x: 0; y: 27px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
     // Search field (real: filters the tree)
-    Rectangle {
-        x: 8.5px; y: 34px; width: 235px; height: 20px; border-radius: 10px; background: Tokens.bg-control;
+    Field {
+        x: 8.5px; y: 34px; width: 235px; height: 20px; border-radius: 10px;
         Icon { x: 8px; width: 13px; height: 13px; d: Icons.search; ink: #b0b0b3; }
         if Studio.browser-search == "": Text { x: 27px; text: "Search devices"; color: #a5a5a8; font-size: 9px; vertical-alignment: center; }
         TextInput {
@@ -216,7 +217,7 @@ component Browser inherits Panel {
         Icon { x: 42.5px; y: 9.5px; width: 13px; height: 14px; d: Icons.skip-back; ink: #55565c; stroke-width: 1.6px; }
         Icon { x: 56.5px; y: 9.5px; width: 13px; height: 14px; d: Icons.play; ink: #55565c; filled: true; }
         Icon { x: 71.5px; y: 9.5px; width: 13px; height: 14px; d: Icons.skip-fwd; ink: #55565c; stroke-width: 1.6px; }
-        Rectangle { x: 94.5px; y: 13px; width: 62.5px; height: 7px; border-radius: 3.5px; background: Tokens.bg-slider-track; border-width: 0.5px; border-color: #2a2b2e; }
+        Inset { x: 94.5px; y: 13px; width: 62.5px; height: 7px; border-radius: 3.5px; bottom: #3f4044; }
         Rectangle { x: 142.5px; y: 13px; width: 7px; height: 7px; border-radius: 3.5px; background: Tokens.handle; }
         Rectangle { x: 164px; y: 11px; width: 11px; height: 11px; border-radius: 2px; background: #2f3032;
             Text { text: "S"; font-size: 5.5px; font-weight: 700; color: #acacad; horizontal-alignment: center; vertical-alignment: center; } }
@@ -476,16 +477,16 @@ component Inspector inherits Rectangle {
     // In: audio tracks open the input selector (SetTrackInput; popup drawn by AppWindow). Instrument
     // tracks open the instrument selector (built-in Synth or an instrument plugin: SetInstrumentPlugin).
     // Out: PLACEHOLDER (fixed routing to Master).
-    Rectangle {
-        x: 10px; y: 37px; width: 149px; height: 19px; border-radius: 9.5px; background: Tokens.bg-control;
+    Raised {
+        x: 10px; y: 37px; width: 149px; height: 19px; border-radius: 9.5px;
         Text { x: 7.5px; text: Studio.sel-instrument ? "Inst" : "In"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
         Text { x: Studio.sel-instrument ? 29.5px : 21px; width: 134px - self.x - 4px; text: Studio.sel-instrument ? Studio.sel-inst-text : Studio.sel-input-text; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; overflow: elide; }
         Icon { x: 134px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #a0a0a3; }
         accessible-role: combobox; accessible-label: Studio.sel-instrument ? "Inst" : "In"; accessible-value: Studio.sel-instrument ? Studio.sel-inst-text : Studio.sel-input-text;
         TouchArea { clicked => { if (Studio.sel-instrument) { Studio.open-inst-menu(parent.absolute-position.x + 1px, parent.absolute-position.y + parent.height + 3px); } else if (Studio.has-selection) { Studio.open-input-menu(); } } }
     }
-    Rectangle {
-        x: 10px; y: 63px; width: 149px; height: 18px; border-radius: 9px; background: Tokens.bg-control;
+    Raised {
+        x: 10px; y: 63px; width: 149px; height: 18px; border-radius: 9px;
         Text { x: 7.5px; text: "Out"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
         Text { x: 29.5px; text: "Master"; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
         Icon { x: 134px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #a0a0a3; }
@@ -495,15 +496,15 @@ component Inspector inherits Rectangle {
     Rectangle { x: 10px; y: 108.5px; width: 150px; height: 0.5px; background: Tokens.line-separator; }
 
     // Trim / Width: PLACEHOLDERS (no per-track trim/width in the model). Pan: real.
-    Knob { x: 28px; y: 122px; width: 38px; height: 38px; body: 26px; value-angle: 0; tick-color: #d0d0d3; }
+    Knob { x: 28px; y: 122px; width: 38px; height: 38px; body: 20.5px; groove: true; value-angle: 0; tick-color: #ffffff; arc-color: root.value-color; }
     Text { x: 10px; y: 158px; width: 74px; height: 13px; text: "0.0 dB"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     Text { x: 10px; y: 173px; width: 74px; height: 14px; text: "Trim"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    Knob { x: 104px; y: 122px; width: 38px; height: 38px; body: 26px; value-angle: 0; show-arc: true; arc-from: -135; tick-color: #d0d0d3; arc-color: root.value-color; }
+    Knob { x: 104px; y: 122px; width: 38px; height: 38px; body: 20.5px; groove: true; value-angle: 0; show-arc: true; arc-from: -135; tick-color: #ffffff; arc-color: root.value-color; }
     Text { x: 86px; y: 158px; width: 74px; height: 13px; text: "100%"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     Text { x: 86px; y: 173px; width: 74px; height: 14px; text: "Width"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     Knob {
-        x: 28px; y: 191px; width: 38px; height: 38px; body: 26px;
-        value: Studio.sel-pan; value-angle: Studio.sel-pan * 135; tick-color: Studio.sel-pan-auto ? #65bce3 : #d0d0d3;
+        x: 28px; y: 191px; width: 38px; height: 38px; body: 20.5px; groove: true; arc-color: root.value-color;
+        value: Studio.sel-pan; value-angle: Studio.sel-pan * 135; tick-color: Studio.sel-pan-auto ? #65bce3 : #ffffff;
         value-changed(v) => { if (Studio.has-selection) { Studio.track-pan(Studio.sel-id, v); } }
         released => { Studio.gesture-end(); }
         reset => { if (Studio.has-selection) { Studio.track-pan(Studio.sel-id, 0); Studio.gesture-end(); } }
@@ -515,16 +516,15 @@ component Inspector inherits Rectangle {
     Text { x: 86px; y: 228px; width: 74px; height: 13px; text: "Off"; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     Text { x: 86px; y: 243px; width: 74px; height: 13px; text: "Mono"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
 
-    SmallButton { x: 42px; y: 275.3px; width: 19.55px; height: 17px; text: "M"; font-size: 8.25px; on: Studio.sel-mute; on-color: Tokens.mute-on; clicked => { Studio.track-mute(Studio.sel-id); } }
-    SmallButton { x: 64px; y: 275.3px; width: 19.55px; height: 17px; text: "S"; font-size: 8.25px; on: Studio.sel-solo; on-color: Tokens.solo-on; clicked => { Studio.track-solo(Studio.sel-id); } }
+    SmallButton { x: 42px; y: 275.3px; width: 19.55px; height: 17px; soft: true; text: "M"; font-size: 8.25px; on: Studio.sel-mute; on-color: Tokens.mute-on; clicked => { Studio.track-mute(Studio.sel-id); } }
+    SmallButton { x: 64px; y: 275.3px; width: 19.55px; height: 17px; soft: true; text: "S"; font-size: 8.25px; on: Studio.sel-solo; on-color: Tokens.solo-on; clicked => { Studio.track-solo(Studio.sel-id); } }
     // R / I: SetTrackArm / SetTrackMonitor on audio tracks; PLACEHOLDERS on instrument tracks.
-    SmallButton { x: 86px; y: 275.3px; width: 19.55px; height: 17px; text: "R"; font-size: 8.25px; on: Studio.sel-arm; on-color: Tokens.record-red; clicked => { Studio.track-arm(Studio.sel-id); } }
-    SmallButton { x: 108px; y: 275.3px; width: 19.55px; height: 17px; text: "I"; font-size: 8.25px; on: Studio.sel-monitor; clicked => { Studio.track-monitor(Studio.sel-id); } }
+    SmallButton { x: 86px; y: 275.3px; width: 19.55px; height: 17px; soft: true; text: "R"; font-size: 8.25px; on: Studio.sel-arm; on-color: Tokens.record-red; clicked => { Studio.track-arm(Studio.sel-id); } }
+    SmallButton { x: 108px; y: 275.3px; width: 19.55px; height: 17px; soft: true; text: "I"; font-size: 8.25px; on: Studio.sel-monitor; clicked => { Studio.track-monitor(Studio.sel-id); } }
 
     // Fader readout
-    Rectangle {
-        x: 185px; y: 37.5px; width: 59px; height: 17px; border-radius: 3px; background: Tokens.bg-raised;
-        border-width: 0.5px; border-color: #3a3b3f;
+    Raised {
+        x: 185px; y: 37.5px; width: 59px; height: 17px; border-radius: 3px; outline: true; rim: Tokens.box-rim;
         Text { text: Studio.sel-db-text; color: Tokens.text-bright; font-size: 8.75px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
     }
     // dB scale (labels at the reference positions, panel-relative y = window y - 509)
@@ -537,7 +537,10 @@ component Inspector inherits Rectangle {
     // Fader slot + fill + handle (real: SetTrackGain)
     fader := Rectangle {
         x: 197.5px; y: 66px; width: 12.5px; height: 200px; border-radius: 6.25px;
-        background: #161618; border-width: 0.5px; border-color: #2c2c2d;
+        // Inset slot (see Inset in widgets.slint): dark 2 px top lip, short inner shadow.
+        background: #0b0b0c;
+        Rectangle { y: 0.85px; width: parent.width; height: parent.height - 0.85px; border-radius: 6.25px; background: #121214; }
+        Rectangle { y: 1.7px; width: parent.width; height: parent.height - 1.7px; border-radius: 6.25px; background: #161618; }
         Rectangle {
             x: 4.5px; y: min(parent.height - 4px, 9px + Studio.sel-fader * (parent.height - 18px));
             width: 3.5px; height: max(0px, parent.height - 4px - self.y); border-radius: 1.75px;
@@ -545,7 +548,8 @@ component Inspector inherits Rectangle {
         }
         Rectangle {
             x: 2px; y: Studio.sel-fader * (parent.height - 18px) - 1.5px; width: 8.5px; height: 21px; border-radius: 3px;
-            background: Studio.sel-vol-auto ? #e9d38e : #f4f4f4;
+            background: Studio.sel-vol-auto ? #e9d38e : Tokens.fader-handle;
+            drop-shadow-blur: 2px; drop-shadow-color: #000000b3;
             Rectangle { x: 1.5px; width: parent.width - 3px; height: 0.75px; background: #8a8a8d; }
         }
         TouchArea {
@@ -568,9 +572,8 @@ component Inspector inherits Rectangle {
             background: @linear-gradient(0deg, Tokens.meter-green 0%, Tokens.meter-green 70%, #e3c53a 88%, #e5484d 100%);
         }
     }
-    Rectangle {
-        x: 184px; y: 275px; width: 61px; height: 18px; border-radius: 3px; background: Tokens.bg-raised;
-        border-width: 0.5px; border-color: #3a3b3f;
+    Raised {
+        x: 184px; y: 275px; width: 61px; height: 18px; border-radius: 3px; outline: true; rim: Tokens.box-rim;
         Text { text: Studio.sel-peak-text; color: #9d9d9f; font-size: 8.25px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     }
 }
