@@ -38,6 +38,12 @@ pub enum TrackKind {
 #[serde(transparent)]
 pub struct ColorIndex(pub u8);
 
+impl ColorIndex {
+    /// Colour of a new project's first track: the reference's pink (palette index 4). Later
+    /// tracks follow the cycle from there (orange, then teal, ...).
+    pub const FIRST: ColorIndex = ColorIndex(4);
+}
+
 /// Which device input feeds a track (reference "In" selector: "None",
 /// "Input 1 (Mono)", ...). Channels are 0-based device input channels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -188,9 +194,9 @@ impl Default for Project {
             master_automation: Vec::new(),
         };
         let a = p.alloc_id();
-        p.tracks.push(Track::new(TrackId(a), TrackKind::Audio, "Audio", ColorIndex(0)));
+        p.tracks.push(Track::new(TrackId(a), TrackKind::Audio, "Audio", ColorIndex::FIRST));
         let b = p.alloc_id();
-        p.tracks.push(Track::new(TrackId(b), TrackKind::Instrument, "Instrument", ColorIndex(1)));
+        p.tracks.push(Track::new(TrackId(b), TrackKind::Instrument, "Instrument", ColorIndex(ColorIndex::FIRST.0 + 1)));
         crate::builtin::synth_v2::upgrade_project(&mut p);
         p
     }
