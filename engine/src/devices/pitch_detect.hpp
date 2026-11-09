@@ -72,7 +72,7 @@ private:
     Biquad hp_, lp1_, lp2_;
     std::vector<float> ring_; // w_ analysis samples (power of two)
     uint32_t pos_ = 0;
-    Fft fft_;
+    RealFft fft_;
     std::vector<float> frame_, re_, im_, acf_, nsdf_;
     PitchEstimate est_;
 };

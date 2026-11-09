@@ -10,6 +10,7 @@
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--self-test]
+//!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
 //! ```
 
 mod analyzer_views;
@@ -20,6 +21,7 @@ mod clipedit;
 mod controller;
 mod device_fields;
 mod device_panel;
+mod panel_graph;
 mod device_views;
 mod devices;
 mod gpu;
@@ -35,6 +37,7 @@ mod settings;
 mod synth;
 mod timeline;
 mod wavgen;
+mod zoom;
 
 use controller::{BottomTab, Controller, ImportTarget, gain_from_slider};
 use saine_core::keymap::{Chord, Context, Keymap};
@@ -84,10 +87,10 @@ struct Args {
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
     device_chain_review: bool,
-    /// reference-<built-in device id>: that device alone in an audio track's chain.
-    device_state: Option<&'static str>,
     /// Never show the window (renders for --screenshot fall back to offscreen snapshots).
     offscreen: bool,
+    /// reference-<built-in device id>: that device alone in an audio track's chain.
+    device_state: Option<&'static str>,
     /// review-analyzers: Pitch Corrector, Tuner and Spectrum fed 2 s of a sung-like line (no reference).
     analyzers_review: bool,
     /// review-settings-plugins: Settings open on the Plugins page (no reference comparison).
@@ -96,6 +99,7 @@ struct Args {
     plugin_fixture: Option<PathBuf>,
     screenshot: Option<PathBuf>,
     exit_after_frames: Option<u64>,
+    zoom: Option<u32>,
     frame_stats: bool,
     self_test: bool,
 }
@@ -201,6 +205,7 @@ fn parse_args() -> Result<Args, String> {
             "--screenshot" => a.screenshot = Some(value(&mut i)?.into()),
             "--offscreen" => a.offscreen = true,
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
+            "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
             "--self-test" | "--self-test-audio" => {
                 a.self_test = true;
@@ -209,7 +214,7 @@ fn parse_args() -> Result<Args, String> {
                 a.audio = v[i] == "--self-test-audio";
             }
             "-h" | "--help" => {
-                println!("{}", include_str!("main.rs").lines().skip(6).take(7).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
+                println!("{}", include_str!("main.rs").lines().skip(6).take(8).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
                 std::process::exit(0);
             }
             other => return Err(format!("unknown argument {other}")),
@@ -376,7 +381,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
-            if c.panel_cancel_drag() {
+            if c.panel_cancel_drag() || (c.synth.menu.is_none() && c.synth_cancel()) {
                 return true;
             }
             if c.settings.menu.is_some() {
@@ -504,6 +509,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let studio = app.global::<Studio>();
 
     let ctl: Ctl = Rc::new(RefCell::new(Controller::new(engine.clone(), Project::default())));
+    // Interface zoom: --zoom, else the saved level, else 100 %. Self-tests keep our
+    // design units (85 %) so their scripted geometry is unchanged.
+    let zoom_percent = args.zoom.unwrap_or(if args.self_test { 85 } else if saved_prefs.interface_zoom > 0 { saved_prefs.interface_zoom } else { zoom::DEFAULT_PERCENT });
+    let zoom = Rc::new(RefCell::new(zoom::Zoom::new(zoom_percent)));
     ctl.borrow().bind_models(&app);
     {
         // Provider: TEST fixture (flag, or the built-in one for --self-test), else the API key env var.
@@ -566,12 +575,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let inst = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id);
         if let Some(t) = inst {
             c.select_track(t);
-            let mut p = saine_core::SynthParams { preset: "Test: reference-synth".into(), ..Default::default() };
-            use saine_core::instrument::{Osc, Waveform};
-            p.osc[0] = Osc { wave: Waveform::Triangle, shape: 0.1, octave: 0, semitones: 0, fine_cents: 0.0, level: 0.8 };
-            p.osc[1] = Osc { wave: Waveform::Sine, shape: 0.0, octave: 1, semitones: 0, fine_cents: 7.0, level: 0.3 };
-            p.cross_fm = 0.0;
-            c.execute(saine_core::Command::SetSynthParams { track: t, params: p });
+            // Values read off the reference captures (osc 2 FM, LFO 1 slow, 2 routes,
+            // one macro mapping, Tape off / Chorus / Delay / Reverb); not a factory sound.
+            let device = c.project().track(t).and_then(|t| t.instrument_plugin.as_ref()).map(|d| d.id);
+            if let Some(device) = device {
+                let params: std::collections::BTreeMap<String, f32> = [
+                    ("osc1_wave", 1.0), ("osc1_shape", 0.1), ("osc1_level", 0.8), ("osc2_wave", 5.0), ("osc2_shape", 0.0), ("osc2_octave", 3.0), ("osc2_fine", 7.0), ("osc2_level", 0.3),
+                    ("sub_level", 0.0), ("cutoff", 2400.0), ("resonance", 0.1), ("filter_drive", 0.2), ("filter_env", 0.25), ("filter_velocity", 0.35), ("env2_attack", 0.002),
+                    ("amp_attack", 0.004), ("amp_decay", 0.9 * 1.0), ("amp_sustain", 0.35), ("amp_release", 1.1), ("volume", -0.7), ("env2_decay", 0.9), ("env2_sustain", 0.1),
+                    ("lfo1_rate", 0.18), ("lfo2_rate", 5.0), ("unison_voices", 2.0), ("unison_detune", 0.18), ("unison_spread", 0.8),
+                    ("mod1_source", 3.0), ("mod1_target", 5.0), ("mod1_amount", 0.2), ("mod2_source", 7.0), ("mod2_target", 11.0), ("mod2_amount", 0.35), ("mod3_source", 0.0), ("mod3_target", 0.0), ("mod3_amount", 0.0),
+                    ("macro1_name", 12.0), ("macro2_name", 18.0), ("macro3_name", 7.0), ("macro4_name", 6.0), ("map1_macro", 1.0), ("map1_param", 22.0), ("map1_from", 0.693), ("map1_to", 0.943),
+                    ("fx1_on", 0.0), ("fx3_type", 7.0), ("fx3_on", 1.0), ("fx4_type", 8.0), ("fx4_on", 1.0),
+                ]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+                c.execute(saine_core::Command::SetDeviceParams { device, params, preset: Some("Test: reference-synth".into()) });
+            }
         }
         c.set_bottom_tab(BottomTab::Devices);
         c.synth_page(args.synth_page.unwrap_or(0));
@@ -861,12 +882,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_set_bottom_tab, |c, t: i32| c.set_bottom_tab(if t == 1 { BottomTab::Clip } else { BottomTab::Devices }));
     on!(on_synth_page_select, |c, i: i32| c.synth_page(i.max(0) as usize));
     on!(on_synth_param, |c, id: i32, norm: f32| c.synth_param(id.max(0) as usize, norm));
-    on!(on_synth_param_end, |c| c.synth_param_end());
+    on!(on_synth_param_end, |c, id: i32, moved: bool| c.synth_param_end(id.max(0) as usize, moved));
     on!(on_synth_param_reset, |c, id: i32| c.synth_param_reset(id.max(0) as usize));
-    on!(on_synth_dropdown, |c, id: i32, x: f32, y: f32, w: f32| {
-        let target = if id < 0 { synth::MenuTarget::Presets } else { synth::MenuTarget::Choice(id as usize) };
-        c.synth_open_menu(target, x, y, w)
-    });
+    on!(on_synth_set, |c, id: i32, v: f32| c.synth_set(id.max(0) as usize, v));
+    on!(on_synth_toggle, |c, id: i32| c.synth_toggle(id.max(0) as usize));
+    on!(on_synth_pill, |c, action: i32, arg: i32, x: f32, y: f32, w: f32| c.synth_pill(action, arg.max(0) as usize, x, y, w));
+    on!(on_synth_remove, |c, kind: i32, slot: i32| c.synth_remove(kind, slot.max(0) as usize));
+    on!(on_synth_knob_menu, |c, id: i32, x: f32, y: f32| c.synth_knob_menu(id.max(0) as usize, x, y));
+    on!(on_synth_rail, |c, src: i32, phase: i32, x: f32, y: f32| c.synth_rail(src.max(0) as usize, phase, x, y));
+    on!(on_synth_scope_drag, |c, slot: i32, phase: i32, x: f32, y: f32| c.synth_scope_drag(slot.max(0) as usize, phase, x, y));
+    on!(on_synth_macro_select, |c, m: i32| c.synth_macro_select(m.max(0) as usize));
+    on!(on_synth_bypass, |c| c.synth_bypass());
     on!(on_synth_menu_pick, |c, i: i32| c.synth_menu_pick(i.max(0) as usize));
     on!(on_synth_menu_dismiss, |c| c.synth_menu_dismiss());
     on!(on_synth_preset_step, |c, dir: i32| c.synth_preset_step(dir));
@@ -925,6 +951,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_field, |c, id: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.panel_field_drag(saine_core::DeviceId(id as u64), phase, dx, dy, fine));
     on!(on_panel_menu, |c, id: i32, which: i32, x: f32, y: f32| c.panel_menu(saine_core::DeviceId(id as u64), which, x, y));
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(saine_core::DeviceId(id as u64), dir));
+    on!(on_panel_graph, |c, id: i32, phase: i32, x: f32, y: f32, fine: bool, alt: bool| c.panel_graph(saine_core::DeviceId(id as u64), phase, x, y, fine, alt));
     on!(on_chain_scroll_by, |c, d: f32| c.chain_scroll_by(d));
     on!(on_add_category, |c, i: i32, x: f32, y: f32| c.add_category(i.max(0) as usize, x, y));
     on!(on_add_search_edited, |c, t: slint::SharedString| c.add_search(t.as_str()));
@@ -952,9 +979,34 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let ctl = ctl.clone();
         let aw = app.as_weak();
         let keymap = app_keymap();
+        let zm = zoom.clone();
         studio.on_key(move |text, primary, shift, alt, ctrl| {
             let Some(key) = key_name(text.as_str()) else { return false };
             let chord = Chord { key, primary, shift, alt, ctrl };
+            // View › Zoom In (⌘= / ⌘+), Zoom Out (⌘-), Reset Zoom (⌘0), as in the reference.
+            if primary && !alt && !ctrl {
+                let step = match chord.key.as_str() {
+                    "=" | "+" => Some(1),
+                    "-" | "_" => Some(-1),
+                    "0" if !shift => Some(0),
+                    _ => None,
+                };
+                if let Some(step) = step {
+                    let percent = {
+                        let mut z = zm.borrow_mut();
+                        if step == 0 { z.reset() } else { z.step(step) }
+                        z.percent
+                    };
+                    if let Some(a) = aw.upgrade() {
+                        zm.borrow_mut().sync(a.window());
+                        a.window().request_redraw();
+                    }
+                    if let Ok(mut c) = ctl.try_borrow_mut() {
+                        c.set_interface_zoom(percent);
+                    }
+                    return true;
+                }
+            }
             let cx = {
                 let c = ctl.borrow();
                 Context {
@@ -1066,6 +1118,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aw = app.as_weak();
         let ctl = ctl.clone();
         let fr = frame.clone();
+        let zm = zoom.clone();
         app.window().set_rendering_notifier(move |state, api| {
             let Some(app) = aw.upgrade() else { return };
             match state {
@@ -1079,6 +1132,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     f.renderer = r;
                 }
                 slint::RenderingState::BeforeRendering => {
+                    // Interface zoom: re-apply when the window is new or changed display.
+                    if zm.borrow().needs_sync(app.window().scale_factor()) {
+                        zm.borrow_mut().pending = true;
+                        let (aw, zm) = (app.as_weak(), zm.clone());
+                        slint::Timer::single_shot(Duration::ZERO, move || {
+                            if let Some(a) = aw.upgrade() {
+                                zm.borrow_mut().sync(a.window());
+                                a.window().request_redraw();
+                            }
+                        });
+                    }
                     let t0 = Instant::now();
                     let Ok(mut c) = ctl.try_borrow_mut() else { return };
                     let mut f = fr.borrow_mut();
@@ -1226,8 +1290,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let _ = slint::quit_event_loop();
         });
     }
+    // The OS window is 1440×820 pt like the reference's; interface zoom then sets how much
+    // of our (85 %-unit) layout fits in it, see `zoom.rs`.
     app.window().set_size(slint::LogicalSize::new(1440.0, 820.0));
-    app.window().set_position(slint::LogicalPosition::new(0.0, 33.0));
     app.run()?;
     if args.frame_stats && exit_after.is_none() {
         println!("{}", stats_json(&frame.borrow(), &app));

@@ -191,6 +191,7 @@ impl Default for Project {
         p.tracks.push(Track::new(TrackId(a), TrackKind::Audio, "Audio", ColorIndex(0)));
         let b = p.alloc_id();
         p.tracks.push(Track::new(TrackId(b), TrackKind::Instrument, "Instrument", ColorIndex(1)));
+        crate::builtin::synth_v2::upgrade_project(&mut p);
         p
     }
 }

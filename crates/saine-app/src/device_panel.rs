@@ -17,8 +17,9 @@
 //! engine's readouts); View::Field plots a curve model from device_fields.rs
 //! (traces, live LFO overlay from the engine's phase readout) and edits two
 //! parameters by dragging; View::Custom(name) is the escape hatch for device-
-//! specific bodies (EQ curve, shaper, trance-gate grid) and gets its own arm
-//! in [Controller::builtin_card] when such a device lands.
+//! specific bodies. The restoration devices' graphs (wave, band, comb and
+//! gate views with handles, grip pills and a spectrum overlay) live in
+//! src/panel_graph.rs.
 
 use crate::controller::{slint_color, track_color, Controller};
 use crate::devices::{DevMenu, MenuPick};
@@ -96,6 +97,8 @@ pub struct PanelState {
     lfo: HashMap<DeviceId, (f32, f64)>,
     /// Custom analyser views (pitch trace, tuner, spectrum).
     pub(crate) analyzers: crate::analyzer_views::AnalyzerState,
+    /// Field views (src/panel_graph.rs): drag, hover and spectrum state.
+    pub(crate) graph: crate::panel_graph::GraphState,
 }
 
 fn s(v: impl Into<SharedString>) -> SharedString {
@@ -334,6 +337,9 @@ impl Controller {
 
     /// Value shown for a parameter: the live drag value, else the model value.
     pub(crate) fn panel_value(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
+        if let Some(v) = def.index_of(p.id).and_then(|i| self.graph_drag_value(d.id, i)) {
+            return v;
+        }
         let is = |i: usize| def.params.get(i).is_some_and(|q| q.id == p.id);
         if let Some(g) = self.devices.panel.drag.filter(|g| g.device == d.id && is(g.index)) {
             return g.value;
@@ -506,6 +512,9 @@ impl Controller {
                     dim: body.dim.contains(&id),
                     ..Default::default()
                 };
+                if def.layout.clusters.iter().any(|c| c.contains(&Control::Toggle(id))) {
+                    k.face = 2; // latch capsule
+                }
                 if let Some((_, Face::SoftKneeCurve { threshold, ratio, knee })) = def.layout.faces.iter().find(|(f, _)| *f == id) {
                     let (curve, bend, unity) = soft_knee_face(value(threshold).unwrap_or(-24.0), value(ratio).unwrap_or(1.0), value(knee).unwrap_or(0.0));
                     k.face = 1;
@@ -542,6 +551,7 @@ impl Controller {
             preset: s(preset),
             knobs: model(knobs),
             picks: model(picks),
+            tight_picks: analyzer,
             sliders: model(sliders),
             strip,
             field,
@@ -778,6 +788,9 @@ impl Controller {
 
     /// Escape or a cancelled pointer: restore the value from before the drag, with no undo step.
     pub fn panel_cancel_drag(&mut self) -> bool {
+        if self.panel_cancel_graph_drag() {
+            return true;
+        }
         let Some(g) = self.devices.panel.drag.take() else { return false };
         let _ = self.engine.builtin_set_param(g.device.0, g.index as u32, g.start);
         self.ui_dirty = true;
@@ -882,7 +895,7 @@ impl Controller {
     }
 
     /// One gesture = one undo step: never merge with the previous edit of the same parameter.
-    fn panel_commit(&mut self, cmd: Command) {
+    pub(crate) fn panel_commit(&mut self, cmd: Command) {
         self.doc.seal_coalescing();
         self.execute(cmd);
         self.doc.seal_coalescing();

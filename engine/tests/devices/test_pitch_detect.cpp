@@ -27,8 +27,8 @@ Signal harmonic(std::size_t n, double hz, double rate, int harmonics) {
 
 TEST_CASE(fft_round_trips_and_matches_a_direct_dft) {
     for (uint32_t n : {8u, 16u, 64u, 1024u, 16384u}) {
-        saine::dsp::Fft f;
-        f.init(n);
+        saine::dsp::RealFft f;
+        f.prepare(n);
         Signal x = noise(n, 1.0f, n);
         std::vector<float> re(n / 2 + 1), im(n / 2 + 1), y(n);
         f.forward(x.data(), re.data(), im.data());

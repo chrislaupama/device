@@ -131,6 +131,12 @@ add_library(saine_engine STATIC
   src/devices/phaser.cpp
   src/devices/ring_mod.cpp
   src/devices/tremolo.cpp
+  src/devices/synth_v2.cpp
+  src/devices/synth_v2_fx.cpp
+  src/devices/declipper.cpp
+  src/devices/deesser.cpp
+  src/devices/dehummer.cpp
+  src/devices/denoiser.cpp
   src/devices/pitch_corrector.cpp
   src/devices/pitch_detect.cpp
   src/devices/spectrum.cpp
@@ -349,6 +355,9 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/devices/test_imaging.cpp
     tests/devices/test_modulation.cpp
     tests/devices/test_character_mod.cpp
+    tests/devices/test_synth_v2.cpp
+    tests/devices/test_restoration.cpp
+
     tests/devices/test_pitch_corrector.cpp
     tests/devices/test_pitch_detect.cpp
     tests/devices/test_spectrum.cpp

@@ -52,7 +52,7 @@ void PitchDetector::prepare(double sample_rate, float min_hz, float max_hz, floa
     lowpass(lp1_.b0, lp1_.b1, lp1_.b2, lp1_.a1, lp1_.a2, fc, sr, 0.54119610);
     lowpass(lp2_.b0, lp2_.b1, lp2_.b2, lp2_.a1, lp2_.a2, fc, sr, 1.3065630);
     ring_.assign(w_, 0.0f);
-    fft_.init(2 * w_);
+    fft_.prepare(2 * w_);
     frame_.assign(2 * w_, 0.0f);
     re_.assign(w_ + 1, 0.0f);
     im_.assign(w_ + 1, 0.0f);

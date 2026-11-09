@@ -60,7 +60,7 @@ fn states_sync_without_history_and_persist() {
     assert_eq!(d.project().device(id).unwrap().state.as_deref(), Some(blob.as_str()));
     let (snap, _) = snapshot::build(d.project(), 48_000.0, &HashMap::new());
     assert_eq!(snap.tracks[0].devices[0].state.as_deref(), Some(blob.as_str()));
-    assert!(snap.tracks[1].instrument_plugin.is_none());
+    assert_eq!(snap.tracks[1].instrument_plugin.as_ref().map(|d| d.plugin.id.as_str()), Some("synth-v2"), "instrument tracks play the built-in Synth");
 
     let dir = tempfile::tempdir().unwrap();
     persist::save(d.project(), dir.path()).unwrap();

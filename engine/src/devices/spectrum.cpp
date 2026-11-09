@@ -78,7 +78,7 @@ public:
         hop_ = hop;
         for (uint32_t s = 0; s < kSizes; ++s) {
             const uint32_t n = kMinSize << s;
-            fft_[s].init(n);
+            fft_[s].prepare(n);
             // Band -> bin ranges (b0 > b1: interpolate at the centre bin position).
             for (uint32_t i = 0; i < kBands; ++i) {
                 const double lo = 20.0 * std::pow(1000.0, static_cast<double>(i) / kBands) * n / sr_;
@@ -240,7 +240,7 @@ private:
     uint32_t hop_ = 1024, cur_hop_ = 1024, since_ = 0, pos_ = 0;
     std::vector<float> ring_l_, ring_r_, frame_, win_;
     std::vector<float> re_[2], im_[2], pow_[2];
-    dsp::Fft fft_[kSizes];
+    dsp::RealFft fft_[kSizes];
     Band bands_[kSizes][kBands];
     std::array<float, kBands> shown_{}, shown2_{}, peak_{}, peak_t_{};
     uint32_t win_size_ = 0;
