@@ -967,11 +967,11 @@ pub fn test_plugin_dir() -> PathBuf {
     PathBuf::from(env!("SAINE_TEST_PLUGIN_DIR"))
 }
 
-/// Scan AU/VST3/CLAP plugins in the standard locations (plus
-/// `$SAINE_PLUGIN_PATH`) using the out-of-process scanner, caching results
-/// in `cache_path` (JSON). With `rescan == false` unchanged bundles (and
-/// blocklisted ones) come from the cache. Blocking: call from a worker
-/// thread. `progress` receives a short status per plugin.
+/// Scan AU/VST3/CLAP plugins in the standard locations (plus `$CLAP_PATH`
+/// on Windows and Linux, and `$SAINE_PLUGIN_PATH`) using the out-of-process
+/// scanner, caching results in `cache_path` (JSON). With `rescan == false`
+/// unchanged bundles (and blocklisted ones) come from the cache. Blocking:
+/// call from a worker thread. `progress` receives a short status per plugin.
 pub fn scan_plugins(cache_path: &Path, rescan: bool, progress: &mut dyn FnMut(&str)) -> Result<ScanReport, EngineError> {
     use std::io::{BufRead, Read};
     let exe = plugin_scanner_path();

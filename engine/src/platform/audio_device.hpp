@@ -4,8 +4,8 @@
 // Exactly one backend translation unit provides create_platform_audio_device(),
 // list_audio_devices() and query_default_output_sample_rate():
 //   coreaudio_device.cpp  macOS  (AUHAL; private aggregate device for duplex)
-//   wasapi_device.cpp     Windows (TODO: WASAPI exclusive/shared + ASIO)
-//   pipewire_device.cpp   Linux  (TODO: PipeWire, JACK)
+//   wasapi_device.cpp     Windows (WASAPI shared mode; a separate capture client for duplex)
+//   pipewire_device.cpp   Linux  (PipeWire; separate playback and capture streams for duplex)
 //   audio_device.cpp      fallback for any other platform
 #pragma once
 
@@ -19,6 +19,8 @@ namespace saine {
 // Most device input channels handed to the engine (more are ignored).
 inline constexpr uint32_t kMaxDeviceInputChannels = 64;
 
+// One audio device as list_audio_devices() reports it. `uid` is the stable
+// id passed back in Config::output_uid / input_uid.
 struct DeviceInfo {
     std::string uid;
     std::string name;
@@ -29,6 +31,7 @@ struct DeviceInfo {
     bool is_default_output = false;
 };
 
+// One platform audio stream (output plus optional input) driving a Callback.
 class AudioDevice {
 public:
     // Implemented by the engine. Called on the device's real-time thread.
@@ -45,6 +48,7 @@ public:
         ~Callback() = default;
     };
 
+    // What to open and at which rates/sizes.
     struct Config {
         double sample_rate = 48000.0; // engine rate
         uint32_t channels = 2;
@@ -58,6 +62,7 @@ public:
         uint32_t buffer_size = 0;   // 0 = leave
     };
 
+    // What is actually in effect after start().
     struct Status {
         std::string output_name;
         std::string input_name; // empty when no input is open
@@ -83,11 +88,13 @@ public:
     // Stops the stream. When this returns the callback is no longer running
     // and will not be called again.
     virtual int32_t stop() = 0;
+    // True while the stream is running (false after stop() or a device loss).
     virtual bool is_running() const = 0;
     // Valid after a successful start (and kept after stop).
     virtual Status status() const = 0;
 };
 
+// Creates this platform's audio device (not yet started).
 std::unique_ptr<AudioDevice> create_platform_audio_device();
 
 // Enumerates devices (reads properties only; never opens a device).

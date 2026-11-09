@@ -157,6 +157,8 @@ std::string bundle_stamp(const fs::path& path) {
     return std::to_string(m);
 }
 
+// Adds `dir` itself if it is a .vst3/.clap bundle, else searches it (sorted,
+// up to 4 levels deep) for bundles, appending them to `out`.
 void find_bundles(const fs::path& dir, int depth, std::vector<Item>& out) {
     std::error_code ec;
     const auto add = [&](const fs::path& p) {
@@ -178,6 +180,9 @@ void find_bundles(const fs::path& dir, int depth, std::vector<Item>& out) {
         if (!add(p) && fs::is_directory(p, ec)) find_bundles(p, depth + 1, out);
 }
 
+// Everything to scan: the Audio Units, then the VST3/CLAP bundles found in
+// the platform's standard folders, $CLAP_PATH (Windows/Linux only) and
+// $SAINE_PLUGIN_PATH (de-duplicated).
 std::vector<Item> enumerate_items() {
     std::vector<Item> items;
     for (const auto& au : saine::enumerate_audio_units())
@@ -241,6 +246,8 @@ std::vector<Item> enumerate_items() {
 
 // ---------------------------------------------------------------- cache
 
+// Reads the scan cache; an empty map if it is missing, malformed or of
+// another version.
 std::map<std::string, CacheEntry> load_cache(const std::string& path) {
     std::map<std::string, CacheEntry> out;
     const std::string text = read_file(path);
@@ -263,6 +270,8 @@ std::map<std::string, CacheEntry> load_cache(const std::string& path) {
     return out;
 }
 
+// Writes the scan cache through a temporary file renamed over the old one;
+// false on failure.
 bool write_cache(const std::string& path, const std::map<std::string, CacheEntry>& cache) {
     std::ostringstream o;
     o << "{\"version\":1,\"entries\":[";
@@ -292,11 +301,13 @@ bool write_cache(const std::string& path, const std::map<std::string, CacheEntry
 
 // ---------------------------------------------------------------- children
 
+// Path of this executable (used to spawn children), falling back to argv[0].
 std::string self_path(const std::string& argv0) {
     std::string p = os::executable_path();
     return p.empty() ? argv0 : p;
 }
 
+// One running "--scan-one" child and its output files.
 struct Child {
     std::size_t item = 0;
     os::ChildProcess process;
@@ -304,6 +315,8 @@ struct Child {
     std::chrono::steady_clock::time_point start;
 };
 
+// Starts "--scan-one <format> <target>" for items[index] with its output
+// redirected to temporary files; false if it could not be started.
 bool spawn_child(const std::string& exe, const Item& item, const std::string& tmpdir, std::size_t index, Child& c) {
     c.item = index;
     const std::string stem = tmpdir + "/scan-" + std::to_string(os::process_id()) + "-" + std::to_string(index);
@@ -315,16 +328,21 @@ bool spawn_child(const std::string& exe, const Item& item, const std::string& tm
     return ok;
 }
 
+// Deletes a file, ignoring errors.
 void remove_file(const std::string& path) {
     std::error_code ec;
     fs::remove(os::path_from_utf8(path), ec);
 }
 
+// Removes trailing whitespace.
 std::string trim(std::string s) {
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
     return s;
 }
 
+// Coordinator (--scan): reuses cached results whose stamp is unchanged,
+// scans the rest in up to 4 child processes with a timeout, writes the
+// cache and prints the JSON report. Returns the process exit code.
 int run_coordinator(const std::string& exe, const std::string& cache_path, bool rescan) {
     const auto t_start = std::chrono::steady_clock::now();
     long timeout_ms = 10000;
@@ -437,6 +455,8 @@ int run_coordinator(const std::string& exe, const std::string& cache_path, bool 
     return 0;
 }
 
+// Child (--scan-one): scans one plugin and prints its JSON array; exits 2 with
+// the reason on stderr on failure. Exits without static destructors.
 int run_child(const std::string& format, const std::string& target) {
 #if defined(_WIN32)
     // A crashing plugin must not open a Windows Error Reporting dialog: the
@@ -464,6 +484,7 @@ int run_child(const std::string& format, const std::string& target) {
     std::_Exit(0);
 }
 
+// Prints the command-line usage to stderr.
 void usage() {
     std::fprintf(stderr, "usage: saine_plugin_scanner --scan --cache <file.json> [--rescan]\n"
                          "       saine_plugin_scanner --scan-one audio_unit|vst3|clap <target>\n");
@@ -471,6 +492,8 @@ void usage() {
 
 } // namespace
 
+// Dispatches to the child (--scan-one) or the coordinator (--scan); exit 64
+// on bad arguments.
 int main(int argc, char** argv) {
 #if defined(_WIN32)
     // Byte-exact JSON on stdout (no "\n" -> "\r\n" translation).
