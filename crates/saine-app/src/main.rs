@@ -13,6 +13,7 @@
 //!              [--sampler-tab <0..4>  (with a sampler state: Sample, Pitch, Filter, Amp or Mod tab)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
+//!              [--clip-menu <0..5>  (open a clip editor dropdown after --state: Speed, Warp, Mode, Grid, Type, Genre)]
 //! ```
 
 mod analyzer_views;
@@ -118,6 +119,7 @@ struct Args {
     screenshot: Option<PathBuf>,
     exit_after_frames: Option<u64>,
     zoom: Option<u32>,
+    clip_menu: Option<i32>,
     frame_stats: bool,
     /// --render-bench N: offscreen, render the state N times and print the mean / median /
     /// p95 milliseconds per full window render (Slint + wgpu surfaces + readback), then exit.
@@ -246,6 +248,7 @@ fn parse_args() -> Result<Args, String> {
             "--load-sample" => a.load_sample.push(value(&mut i)?.into()),
             "--sampler-tab" => a.sampler_tab = Some(value(&mut i)?.parse().map_err(|e| format!("--sampler-tab: {e}"))?),
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
+            "--clip-menu" => a.clip_menu = Some(value(&mut i)?.parse().map_err(|e| format!("--clip-menu: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
             "--render-bench" => {
@@ -440,6 +443,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.devmenu_dismiss();
             c.auto_picker_close();
             c.rename = None;
+            c.pr.menu = -1;
             c.ui_dirty = true;
         }
         a if a.starts_with("clip.") || a == "assistant.ask" => ctl.borrow_mut().set_status(format!("{a}: not implemented yet"), 3),
@@ -723,6 +727,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.auto_open_picker(Some(inst), 262.0 + 42.0, y);
             c.auto_picker_pick(1);
         }
+    }
+    if let Some(m) = args.clip_menu {
+        ctl.borrow_mut().clip_menu_open(m);
     }
     if args.settings_state {
         ctl.borrow_mut().open_settings();
@@ -1010,6 +1017,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool| c.pr_pointer(kind, x, y, shift, alt));
     on!(on_pr_scroll, |c, dy: f32| c.pr_scroll(dy));
     on!(on_pr_action, |c, a: slint::SharedString| c.pr_action(a.as_str()));
+    on!(on_clip_menu_open, |c, m: i32| c.clip_menu_open(m));
+    on!(on_clip_menu_pick, |c, i: i32| c.clip_menu_pick(i));
     on!(on_pr_value, |c, f: i32, phase: i32, dy: f32| c.pr_value(f, phase, dy));
     on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));

@@ -157,8 +157,10 @@ pub struct PrState {
     pub selected: BTreeSet<u32>,
     pub pen: bool,
     pub focused: bool,
-    /// Grid denominator (4, 8, 16, 32).
+    /// Grid denominator: 4, 8, 16, 32, or 6, 12, 24, 48 for the triplet grids.
     pub grid: u32,
+    /// Open clip editor dropdown (`clipedit::CLIP_MENUS` index), -1 when none.
+    pub menu: i32,
     pub quant_amount: f64,
     pub humanize_amount: f64,
     pub velocity: u8,
@@ -178,6 +180,7 @@ impl Default for PrState {
             pen: false,
             focused: false,
             grid: 16,
+            menu: -1,
             quant_amount: 1.0,
             humanize_amount: 0.5,
             velocity: 100,
@@ -788,12 +791,7 @@ impl Controller {
         self.ui_dirty = true;
         if field == Field::Grid {
             if phase == 2 {
-                self.pr.grid = match self.pr.grid {
-                    4 => 8,
-                    8 => 16,
-                    16 => 32,
-                    _ => 4,
-                };
+                self.clip_menu_open(3);
             }
             return;
         }
