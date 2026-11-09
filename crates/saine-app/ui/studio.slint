@@ -49,8 +49,8 @@ export struct TreeRow { depth: int, label: string, count: string, icon: int, exp
 // and already includes the chain scroll and a drag offset.
 // ---- built-in device panel (src/device_panel.rs builds these from the DeviceDef) ----
 // Knob cell (card relative x, y). face 1 = soft-knee transfer curve instead of the ring (paths
-// in a 32 x 32 view box); face 2 = latch (two-choice toggle; value is the choice name). steps > 0: detent
-// ticks around the ring of a stepped (discrete) knob. dim: drawn at 55% (the control has no effect in the current state).
+// in a 32 x 32 view box); face 2 = On/Off latch (value = state name). steps > 0: detent ticks around the
+// ring of a stepped (discrete) knob. dim: drawn at 55% (the control has no effect in the current state).
 export struct PanelKnob { param: int, x: length, y: length, label: string, value: string, norm: float, bipolar: bool, dim: bool, face: int, face-curve: string, face-bend: string, face-unity: string, steps: int }
 // Picker row item. kind 0 caption, 1 segmented choice, 2 menu pill, 3 value box, 4 flexible gap,
 // 5 latch (On/Off parameter; label shows the state, selected 0 / 1).
@@ -64,13 +64,18 @@ export struct PanelTick { y: length, text: string, rule: bool }
 export struct PanelPath { commands: string, stroke: color, width: length, fill: color }
 // align: 0 left, 1 centre, 2 right of [x, x + w].
 export struct PanelText { x: length, y: length, w: length, h: length, text: string, color: color, size: length, weight: int, align: int }
-export struct PanelGrip { x: length, y: length, label: string, value: string }
+// hot: drawn highlighted (hovered or dragged handle).
+export struct PanelGrip { x: length, y: length, label: string, value: string, hot: bool }
 // Drag zone: param-x / param-y (-1 = axis unused), norm per px (rate-x < 0: dragging right lowers).
 export struct PanelZone { x: length, y: length, w: length, h: length, param-x: int, param-y: int, rate-x: float, rate-y: float }
 export struct PanelCanvas {
     visible: bool, well: bool, x: length, y: length, w: length, h: length, well-y: length,
     caption: string, readout: string,
     paths: [PanelPath], texts: [PanelText], grips: [PanelGrip], zones: [PanelZone],
+    // pointer: raw pointer events over the well go to Rust (Studio.panel-graph), which hit-tests
+    // them; cursor: 0 default, 1 move, 2 ew-resize, 3 ns-resize. readout-accent: the caption
+    // value is drawn in the track colour.
+    pointer: bool, cursor: int, readout-accent: bool,
 }
 // Freely placed control (custom card bodies): kind 0 latch (On/Off parameter), 1 menu pill
 // (choice parameter, opens a menu of its choices).
@@ -465,6 +470,7 @@ export global Studio {
     callback panel-drag-xy(int, int, int, int, float, float, float, float, bool); // device, param x, param y, phase, dx, dy (px, right / up +), norm per px x / y, fine
     callback panel-field(int, int, float, float, bool);      // field XY drag: device, phase (as panel-drag), dx, dy (px, up +), fine
     callback panel-preset-step(int, int);                    // previous (-1) / next (+1) factory preset
+    callback panel-graph(int, int, float, float, bool, bool); // canvas pointer (PanelCanvas.pointer): phase (0 press, 1 drag, 2 release, 3 cancel, 4 hover, 5 leave), well x, y (px), shift, alt
     callback add-category(int, length, length); // row (Built-in, AU, VST3, CLAP, Chains), window x, y for the list
     callback add-search-edited(string);
     callback add-result-pick(int);

@@ -200,20 +200,20 @@ component KnobCell inherits Rectangle {
             double-clicked => { Studio.panel-reset(root.device, root.k.param); }
         }
     }
-    // Latch cell: the latch sits in the 53 px dial + value zone, caption below.
+    // Latch capsule (On/Off parameter in the dial row): click toggles, Alt-click resets.
     if root.k.face == 2: Latch {
-        width: max(self.min-width, 40px * zm); x: (root.width - self.width) / 2; y: (53px - 20px) * zm / 2;
-        label: root.k.value; on: root.k.norm > 0.5; accent: root.accent;
-        clicked => { Studio.panel-choice(root.device, root.k.param, root.k.norm > 0.5 ? 0 : 1); }
-        reset => { Studio.panel-reset(root.device, root.k.param); }
+        x: (root.width - self.width) / 2; y: (32px * zm - self.height) / 2 + 8px * zm;
+        width: self.min-width; label: root.k.value; on: root.k.norm > 0.5; accent: root.accent;
+        clicked => { fs.focus(); Studio.panel-choice(root.device, root.k.param, root.k.norm > 0.5 ? 0 : 1); }
+        reset => { fs.focus(); Studio.panel-reset(root.device, root.k.param); }
     }
-    if root.k.face != 2: value := Rectangle {
+    value := Rectangle {
         x: 0; y: 40px * zm; width: root.width; height: 14px * zm;
-        if !root.editing: Text {
+        if !root.editing && root.k.face != 2: Text {
             text: root.k.value; color: PanelStyle.ink; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
             horizontal-alignment: center; vertical-alignment: center; overflow: elide;
         }
-        if !root.editing: TouchArea { double-clicked => { root.editing = true; } }
+        if !root.editing && root.k.face != 2: TouchArea { double-clicked => { root.editing = true; } }
         if root.editing: ValueEditor {
             x: -6px * zm; width: parent.width + 12px * zm; device: root.device; param: root.k.param; initial: root.k.value; font-size: 11px * zm;
             done => { root.editing = false; }
@@ -273,6 +273,7 @@ component SliderCol inherits Rectangle {
     }
 }
 
+
 // Freely placed control of a custom card body: latch or menu pill.
 component ButtonCell inherits Rectangle {
     in property <int> device;
@@ -331,10 +332,16 @@ component DeviceCanvas inherits Rectangle {
     in property <PanelCanvas> f;
     in property <color> accent;
     property <float> zm: PanelStyle.z;
+    keys := FocusScope {
+        key-pressed(e) => {
+            if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) { return accept; }
+            reject
+        }
+    }
     if root.f.well: HorizontalLayout {
         x: 0; y: 0; height: 16px * zm; spacing: 5px * zm; alignment: start;
         Text { text: root.f.caption; color: PanelStyle.caption; font-size: 11.5px * zm; font-weight: 500; letter-spacing: -0.02 * 11.5px * zm; vertical-alignment: center; }
-        Text { text: root.f.readout; color: PanelStyle.ink; font-size: 11.5px * zm; font-weight: 650; letter-spacing: -0.04 * 11.5px * zm; vertical-alignment: center; }
+        Text { text: root.f.readout; color: root.f.readout-accent ? root.accent : PanelStyle.ink; font-size: 11.5px * zm; font-weight: 650; letter-spacing: -0.04 * 11.5px * zm; vertical-alignment: center; }
     }
     Rectangle {
         y: root.f.well-y; height: root.height - root.f.well-y;
@@ -355,7 +362,7 @@ component DeviceCanvas inherits Rectangle {
         }
         for g in root.f.grips: Rectangle {
             x: g.x; y: g.y - 8px * zm; height: 16px * zm; width: grip-row.preferred-width;
-            border-radius: self.height / 2; background: PanelStyle.pill;
+            border-radius: self.height / 2; background: g.hot ? PanelStyle.pill-hot : PanelStyle.pill;
             drop-shadow-blur: 2px; drop-shadow-offset-y: 1px; drop-shadow-color: #00000073;
             grip-row := HorizontalLayout {
                 padding-left: 8px * zm; padding-right: 8px * zm; spacing: 5px * zm;
@@ -369,6 +376,18 @@ component DeviceCanvas inherits Rectangle {
             }
         }
         for z in root.f.zones: ZoneDrag { x: z.x; y: z.y; width: z.w; height: z.h; device: root.device; zone: z; }
+        // pointer: Rust hit-tests the well (non-linear handles, src/panel_graph.rs); a press
+        // focuses the canvas so window shortcuts (undo, Escape) keep working after a gesture.
+        if root.f.pointer: TouchArea {
+            mouse-cursor: root.f.cursor == 1 ? MouseCursor.move : root.f.cursor == 2 ? MouseCursor.ew-resize : root.f.cursor == 3 ? MouseCursor.ns-resize : MouseCursor.default;
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { keys.focus(); Studio.panel-graph(root.device, 0, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
+                if (e.kind == PointerEventKind.move) { Studio.panel-graph(root.device, self.pressed ? 1 : 4, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, false); }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-graph(root.device, 2, self.mouse-x / 1px, self.mouse-y / 1px, false, false); }
+                if (e.kind == PointerEventKind.cancel) { Studio.panel-graph(root.device, 3, 0, 0, false, false); }
+            }
+            changed has-hover => { if (!self.has-hover && !self.pressed) { Studio.panel-graph(root.device, 5, 0, 0, false, false); } }
+        }
     }
 }
 
@@ -742,7 +761,7 @@ export component BuiltinCard inherits Rectangle {
         }
         preset-ta := TouchArea { clicked => { Studio.panel-menu(root.card.id, -2, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
     }
-    for dir[i] in [-1, 1]: Rectangle {
+    for dir[i] in root.narrow ? [] : [-1, 1]: Rectangle {
         x: root.width - (i == 0 ? 102px : 87px) * zm; y: 5px; width: 14px * zm; height: 17px;
         accessible-role: button; accessible-label: i == 0 ? "Previous preset" : "Next preset";
         Icon { x: (parent.width - 10px * zm) / 2; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: i == 0 ? Icons.chevron-left : Icons.chevron-right; ink: step-ta.has-hover ? #e5e5e8 : #9d9d9f; stroke-width: 1.3px; }

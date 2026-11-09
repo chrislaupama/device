@@ -28,6 +28,10 @@ extern const BuiltinDescriptor kTremoloDescriptor;
 extern const BuiltinDescriptor kAutopannerDescriptor;
 extern const BuiltinDescriptor kRingModDescriptor;
 extern const BuiltinDescriptor kSynthV2Descriptor;
+extern const BuiltinDescriptor kDeClipperDescriptor;
+extern const BuiltinDescriptor kDeEsserDescriptor;
+extern const BuiltinDescriptor kDeHummerDescriptor;
+extern const BuiltinDescriptor kDeNoiserDescriptor;
 
 namespace {
 
@@ -52,6 +56,7 @@ const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kAutopannerDescriptor,
     &kRingModDescriptor,
     &kSynthV2Descriptor,
+    &kDeClipperDescriptor, &kDeEsserDescriptor, &kDeHummerDescriptor, &kDeNoiserDescriptor,
 };
 
 struct CRegistry {

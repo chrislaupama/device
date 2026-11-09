@@ -35,6 +35,10 @@ mod glue_compressor;
 mod limiter;
 mod mastering_limiter;
 mod transient_shaper;
+mod declipper;
+mod deesser;
+mod dehummer;
+mod denoiser;
 mod distortion;
 mod flanger;
 mod phaser;
@@ -73,6 +77,9 @@ pub const LINEAR: Taper = Taper::Linear { skew: 1.0 };
 pub enum Format {
     /// Signed decibels, one decimal: "−24.0 dB", "+3.0 dB".
     Db,
+    /// A cut stored as a positive amount, shown as a negative level: 8 -> "−8.0 dB".
+    /// Typed text may carry either sign.
+    DbCut,
     /// Milliseconds, whole numbers when the range spans 20 ms or more ("10 ms", "1500 ms"), else one decimal.
     Time,
     /// Hertz: "4.0 kHz" from 999.5 Hz, "440 Hz" from 10 Hz, one decimal from 1 Hz, else two.
@@ -307,7 +314,7 @@ impl ParamDef {
             (Format::Time | Format::Ms(_), "ms" | "msec" | "msecs") => {}
             (Format::Hz | Format::Freq | Format::Hz3, "k" | "khz") => v *= 1000.0,
             (Format::Hz | Format::Freq | Format::Hz3, "hz") => {}
-            (Format::Db | Format::DbNoPlus | Format::DbOrInf, "db") | (Format::Percent | Format::Percent0 | Format::SignedPercent, "%") | (Format::Factor, "x") => {}
+            (Format::Db | Format::DbNoPlus | Format::DbOrInf | Format::DbCut, "db") | (Format::Percent | Format::Percent0 | Format::SignedPercent, "%") | (Format::Factor, "x") => {}
             (Format::Fraction | Format::SignedFraction, "%" | "percent") => {}
             (Format::Seconds, "s" | "sec" | "secs" | "second" | "seconds") => {}
             (Format::Seconds, "ms" | "msec" | "msecs") => v /= 1000.0,
@@ -320,6 +327,9 @@ impl ParamDef {
         }
         if !v.is_finite() {
             return None;
+        }
+        if self.format == Format::DbCut {
+            v = v.abs();
         }
         Some(self.snap(v))
     }
@@ -335,6 +345,10 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
             let a = (v.abs() * 10.0).round() / 10.0;
             let sign = if v <= -0.05 { MINUS } else { '+' };
             format!("{sign}{a:.1} dB")
+        }
+        Format::DbCut => {
+            let a = (v.abs() * 10.0).round() / 10.0;
+            if a < 0.05 { "0.0 dB".into() } else { format!("{MINUS}{a:.1} dB") }
         }
         Format::Time => {
             let d = if range < 20.0 { 1 } else { 0 };
@@ -691,7 +705,7 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 20] = [
+    static ALL: [&DeviceDef; 24] = [
         &compressor::COMPRESSOR,
         &distortion::DISTORTION,
         &tape_saturation::TAPE_SATURATION,
@@ -712,6 +726,10 @@ pub fn all() -> &'static [&'static DeviceDef] {
         &autopanner::AUTOPANNER,
         &ring_mod::RING_MOD,
         &synth_v2::SYNTH_V2,
+        &declipper::DECLIPPER,
+        &deesser::DEESSER,
+        &dehummer::DEHUMMER,
+        &denoiser::DENOISER,
     ];
     &ALL
 }
@@ -1179,6 +1197,68 @@ mod tests {
         for (id, w) in [("limiter", 471.0), ("gate", 543.0), ("glue-compressor", 615.0), ("transient-shaper", 543.0), ("mastering-limiter", 388.0)] {
             assert_eq!(find(id).unwrap().layout.width(), w, "{id}");
         }
+    }
+
+    #[test]
+    fn restoration_formats_match_the_reference_cards() {
+        let deesser = find("deesser").unwrap();
+        assert_eq!(deesser.param("frequency").unwrap().format(7000.0), "7.00 kHz");
+        assert_eq!(deesser.param("bandwidth").unwrap().format(1.0), "1.00");
+        let red = deesser.param("reduction").unwrap();
+        assert_eq!(red.format(8.0), "\u{2212}8.0 dB");
+        assert_eq!(red.format(0.0), "0.0 dB");
+        assert_eq!(red.parse("-12 dB"), Some(12.0));
+        assert_eq!(red.parse("6"), Some(6.0));
+        assert_eq!(red.parse("\u{2212}40"), Some(30.0), "clamped");
+        assert_eq!(deesser.param("listen").unwrap().format(0.0), "Off");
+        assert!(deesser.param("listen").unwrap().reset_on_load);
+        let hum = find("dehummer").unwrap();
+        assert_eq!(hum.param("frequency").unwrap().format(60.0), "60.0 Hz");
+        assert_eq!(hum.param("num_harmonics").unwrap().format(4.0), "4");
+        assert_eq!(hum.param("num_harmonics").unwrap().snap(4.4), 4.0);
+        assert_eq!(hum.param("notch_width").unwrap().format(5.0), "5.0");
+        assert_eq!(hum.param("depth").unwrap().format(-30.0), "\u{2212}30.0 dB");
+        let noise = find("denoiser").unwrap();
+        assert_eq!(noise.param("frequency_smoothing").unwrap().label, "Smoothing");
+        assert_eq!(noise.param("attack").unwrap().format(5.0), "5.0 ms");
+        assert_eq!(noise.param("release").unwrap().format(50.0), "50 ms");
+        assert_eq!(noise.param("attack").unwrap().parse("12 ms"), Some(12.0));
+        let clip = find("declipper").unwrap();
+        assert_eq!(clip.param("oversampling").unwrap().format(1.0), "4x");
+        assert_eq!(clip.param("threshold").unwrap().format(-1.0), "\u{2212}1.0 dB");
+    }
+
+    #[test]
+    fn restoration_defaults_match_the_reference_normalised_values() {
+        // Normalised defaults read from the reference's live control inventory.
+        let cases: &[(&str, &str, f32)] = &[
+            ("deesser", "frequency", 0.602_451_6),
+            ("deesser", "bandwidth", 0.230_769_2),
+            ("deesser", "threshold", 0.1),
+            ("deesser", "reduction", 0.266_666_7),
+            ("dehummer", "frequency", 0.666_666_7),
+            ("dehummer", "num_harmonics", 0.428_571_4),
+            ("dehummer", "notch_width", 0.473_684_2),
+            ("dehummer", "depth", 0.5),
+            ("denoiser", "threshold", 0.5),
+            ("denoiser", "reduction", 0.666_666_7),
+            ("denoiser", "attack", 0.629_488_3),
+            ("denoiser", "release", 0.629_488_3),
+            ("declipper", "threshold", 0.833_333_3),
+            ("declipper", "ceiling", 0.95),
+        ];
+        for (dev, id, n) in cases {
+            let p = find(dev).unwrap().param(id).unwrap();
+            assert!((p.to_normalized(p.default) - n).abs() < 1e-5, "{dev}.{id}: {} vs {n}", p.to_normalized(p.default));
+        }
+    }
+
+    #[test]
+    fn restoration_card_widths() {
+        assert_eq!(find("declipper").unwrap().layout.width(), 244.0);
+        assert_eq!(find("deesser").unwrap().layout.width(), 471.0);
+        assert_eq!(find("dehummer").unwrap().layout.width(), 388.0);
+        assert_eq!(find("denoiser").unwrap().layout.width(), 460.0);
     }
 
     #[test]
