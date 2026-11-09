@@ -258,6 +258,8 @@ public:
             }
         }
         for (auto& s : st_) eq::sanitize(s);
+        for (float& u : prev_)
+            if (!std::isfinite(u)) u = 0.0f;
         ro[kCutoff] = cutoff_n > 0 ? cutoff_sum / static_cast<float>(cutoff_n) : 0.0f;
     }
 

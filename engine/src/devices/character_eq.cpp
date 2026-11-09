@@ -131,6 +131,10 @@ inline float logcosh(float x) noexcept {
 struct Adaa {
     float prev[2] = {0.0f, 0.0f};
     void clear() noexcept { prev[0] = prev[1] = 0.0f; }
+    void sanitize() noexcept {
+        for (float& u : prev)
+            if (!std::isfinite(u)) u = 0.0f;
+    }
     float run(int ch, float u, float b, float tb) noexcept {
         const float u0 = prev[ch];
         prev[ch] = u;
@@ -512,6 +516,7 @@ public:
             }
         }
         for (auto& b : bands_) b.sanitize_state();
+        for (auto& a : adaa_) a.sanitize();
         for (int b = 0; b < kBands; ++b) ro[b] = dyn_peak[b];
         for (int t = 0; t < kTames; ++t) ro[kBands + t] = tame_peak[t];
     }

@@ -6,6 +6,8 @@
 #include "device_harness.hpp"
 #include "devices/eq_sections.hpp"
 
+#include <limits>
+
 using namespace devtest;
 
 namespace {
@@ -263,6 +265,20 @@ TEST_CASE(character_eq_drive_adds_harmonics_only_when_set) {
         if (drive == 0.f) CHECK(thd < -90.0);
         else CHECK(thd > -40.0);
     }
+}
+
+TEST_CASE(character_eq_drive_recovers_from_a_non_finite_last_sample) {
+    auto r = character();
+    r.set("band1_enabled", 1.f);
+    r.set("band1_freq", 300.f);
+    r.set("band1_gain", 12.f);
+    r.set("band1_drive", 100.f);
+    Signal bad = tone(256, 300.0, kRate, 0.25);
+    bad.back() = std::numeric_limits<float>::quiet_NaN();
+    r.run_mono(bad);
+    // The latency delay passes the one NaN through on the dry path; the drive must not spread it.
+    const Signal y = r.run_mono(tone(4096, 300.0, kRate, 0.25));
+    CHECK(std::count_if(y.begin(), y.end(), [](float v) { return !std::isfinite(v); }) <= 1);
 }
 
 TEST_CASE(character_eq_valve_warmth_and_mix) {

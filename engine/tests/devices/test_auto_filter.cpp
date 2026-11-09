@@ -3,6 +3,8 @@
 // synced, stereo), DJ mode, drive and mix.
 #include "device_harness.hpp"
 
+#include <limits>
+
 using namespace devtest;
 
 namespace {
@@ -70,6 +72,15 @@ TEST_CASE(auto_filter_resonance_peaks_and_stays_bounded) {
     const Signal y = loud.run_mono(noise(48000, 1.0f));
     CHECK(all_finite(y));
     CHECK(peak(y) < 64.0);
+}
+
+TEST_CASE(auto_filter_drive_recovers_from_a_non_finite_last_sample) {
+    auto r = rig();
+    r.set("drive", 12.f);
+    Signal bad = tone(256, 440.0, kRate, 0.5);
+    bad.back() = std::numeric_limits<float>::quiet_NaN();
+    r.run_mono(bad);
+    CHECK(all_finite(r.run_mono(tone(2048, 440.0, kRate, 0.5))));
 }
 
 TEST_CASE(auto_filter_envelope_opens_the_cutoff) {
