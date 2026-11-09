@@ -482,6 +482,10 @@ int main(int argc, char** argv) {
     {
         using devtest::shaper_lane;
         const std::vector<float> base = devtest::builtin_defaults("shaper");
+        if (base.size() <= static_cast<size_t>(shaper_lane(6, 3))) {
+            std::fprintf(stderr, "shaper has %zu parameters, fewer than the lanes need\n", base.size());
+            return 1;
+        }
         row("shaper (defaults: Volume lane)", bench_kernel("shaper", base, blocks, 0));
         const char* lanes[] = {"Volume", "Time", "Width", "Pan", "Filter", "Crush", "Pitch"};
         for (int lane = 1; lane < 7; ++lane) {

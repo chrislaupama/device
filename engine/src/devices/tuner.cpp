@@ -114,7 +114,10 @@ private:
         hist_n_ = std::min(hist_n_ + 1, 5);
         float s[5];
         std::copy(hist_, hist_ + hist_n_, s);
-        std::sort(s, s + hist_n_);
+        // Insertion sort: GCC's -Warray-bounds misreads std::sort's 16-element
+        // threshold on a 5-element array.
+        for (int i = 1; i < hist_n_; ++i)
+            for (int j = i; j > 0 && s[j] < s[j - 1]; --j) std::swap(s[j], s[j - 1]);
         const float mf = s[hist_n_ / 2];
 
         int note = note_, str = string_;
