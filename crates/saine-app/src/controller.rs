@@ -119,7 +119,9 @@ pub enum ImportTarget {
 }
 
 pub enum JobResult {
-    Imported { path: PathBuf, target: ImportTarget, at: Ticks, result: Result<(AssetInfo, Pyramid), String> },
+    /// A file import finished. `doc_epoch` is the project it was started in: a
+    /// result from a project that has since been closed is dropped.
+    Imported { path: PathBuf, target: ImportTarget, at: Ticks, doc_epoch: u64, result: Result<(AssetInfo, Pyramid), String> },
     /// Media of an opened project reloaded into the engine.
     Reloaded { asset: AssetId, doc_epoch: u64, result: Result<(AssetInfo, Pyramid), String> },
     /// Assistant provider reply (raw `AssistantTurn` JSON) for a request started at `started`.
@@ -701,6 +703,7 @@ impl Controller {
     /// Import on worker threads; clips land at `at` (default: the playhead).
     pub fn import_files(&mut self, paths: Vec<PathBuf>, target: ImportTarget, at: Option<Ticks>) {
         let at = at.unwrap_or_else(|| self.playhead_ticks());
+        let doc_epoch = self.doc_epoch;
         let target = match target {
             ImportTarget::Selected => self.selected_audio_track().map_or(ImportTarget::NewTrack, ImportTarget::Track),
             t => t,
@@ -715,7 +718,7 @@ impl Controller {
                 .name("import".into())
                 .spawn(move || {
                     let result = load_and_analyse(&engine, &path);
-                    let _ = tx.send(JobResult::Imported { path, target, at, result });
+                    let _ = tx.send(JobResult::Imported { path, target, at, doc_epoch, result });
                 })
                 .expect("spawn import thread");
         }
@@ -737,7 +740,13 @@ impl Controller {
         while let Ok(job) = self.jobs_rx.try_recv() {
             self.pending_jobs = self.pending_jobs.saturating_sub(1);
             match job {
-                JobResult::Imported { path, target, at, result } => match result {
+                JobResult::Imported { doc_epoch, result: Ok((info, _)), .. } if doc_epoch != self.doc_epoch => {
+                    // Started in a project that has since been closed: its target
+                    // track id could name a track in the new project.
+                    let _ = self.engine.release_asset(info.asset_id);
+                }
+                JobResult::Imported { doc_epoch, .. } if doc_epoch != self.doc_epoch => {}
+                JobResult::Imported { path, target, at, result, .. } => match result {
                     Ok((info, pyr)) => self.finish_import(&path, target, at, info, pyr),
                     Err(e) => self.set_status(format!("Import failed: {e}"), 6),
                 },
