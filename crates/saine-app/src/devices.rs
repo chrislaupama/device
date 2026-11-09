@@ -537,6 +537,7 @@ impl Controller {
     pub fn device_poll(&mut self) {
         let now = Instant::now();
         self.panel_poll_meters();
+        self.panel_poll_graphs();
         // Main-thread plugin housekeeping (retired instances, CLAP main-thread callbacks).
         if !self.devices.editors.is_empty() || self.project().tracks.iter().any(|t| !t.devices.is_empty() || t.instrument_plugin.is_some()) {
             self.engine.plugin_idle();
@@ -1055,7 +1056,7 @@ impl Controller {
         let cur = t.instrument_plugin.as_ref().filter(|d| !is_builtin_synth(d)).map(|d| (d.plugin.format, d.plugin.id.clone()));
         let check = |on: bool, s: &str| if on { "✓".to_string() } else { s.to_string() };
         let mut rows = vec![("Synth".to_string(), check(cur.is_none(), "Built-in"), Some(MenuPick::Add(Item::BuiltinSynth)), false)];
-        for d in saine_core::builtin::all().iter().filter(|d| d.kind == PluginKind::Instrument) {
+        for d in saine_core::builtin::all().iter().filter(|d| d.kind == PluginKind::Instrument && d.id != saine_core::builtin::synth_v2::SYNTH_V2.id) {
             let on = cur.as_ref().is_some_and(|(f, id)| *f == PluginFormat::Builtin && id == d.id);
             rows.push((d.name.to_string(), check(on, "Built-in"), Some(MenuPick::Add(Item::Builtin(d))), false));
         }

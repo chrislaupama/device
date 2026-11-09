@@ -117,6 +117,14 @@ pub fn apply_startup_prefs(engine: &saine_engine::Engine, p: &Preferences) -> Re
 impl Controller {
     // ---------------------------------------------------------------- startup
 
+    /// Remember the interface zoom level (saved with the preferences; not project state).
+    pub fn set_interface_zoom(&mut self, percent: u32) {
+        if self.settings.prefs.interface_zoom != percent {
+            self.settings.prefs.interface_zoom = percent;
+            self.save_prefs();
+        }
+    }
+
     fn save_prefs(&mut self) {
         if let Some(path) = self.settings.prefs_path.clone()
             && let Err(e) = prefs::save(&path, &self.settings.prefs)
