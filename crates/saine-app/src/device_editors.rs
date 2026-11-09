@@ -1119,8 +1119,12 @@ impl Controller {
         let mut commands: Vec<Command> = changed.iter().map(|(i, v)| Command::SetDeviceParam { device, param: def.params[*i].id.to_string(), value: *v }).collect();
         match commands.len() {
             0 => {}
-            1 => self.panel_commit(commands.remove(0)),
-            _ => self.panel_commit(Command::Batch { label: label.to_string(), commands }),
+            1 => {
+                self.panel_commit(commands.remove(0));
+            }
+            _ => {
+                self.panel_commit(Command::Batch { label: label.to_string(), commands });
+            }
         }
     }
 
@@ -1147,8 +1151,12 @@ impl Controller {
             .collect();
         match commands.len() {
             0 => {}
-            1 => self.panel_commit(commands.into_iter().next().unwrap()),
-            _ => self.panel_commit(Command::Batch { label: label.to_string(), commands }),
+            1 => {
+                self.panel_commit(commands.into_iter().next().unwrap());
+            }
+            _ => {
+                self.panel_commit(Command::Batch { label: label.to_string(), commands });
+            }
         }
     }
 
@@ -1595,7 +1603,8 @@ impl Controller {
                         }
                         commands.push(Command::SetDeviceParam { device, param: "trigger".into(), value: 1.0 });
                         commands.push(Command::SetDeviceParam { device, param: "sidechain".into(), value: 0.0 });
-                        return self.panel_commit(Command::Batch { label: "Trigger Change".into(), commands });
+                        self.panel_commit(Command::Batch { label: "Trigger Change".into(), commands });
+                        return;
                     }
                     c if c >= SH_TRIGGER_TRACK => {
                         let Some(t) = self.project().tracks.get((c - SH_TRIGGER_TRACK) as usize).map(|t| t.id) else { return };
@@ -1604,7 +1613,8 @@ impl Controller {
                             Command::SetDeviceParam { device, param: "trigger".into(), value: 1.0 },
                             Command::SetDeviceParam { device, param: "sidechain".into(), value: 1.0 },
                         ];
-                        return self.panel_commit(Command::Batch { label: "Trigger Change".into(), commands });
+                        self.panel_commit(Command::Batch { label: "Trigger Change".into(), commands });
+                        return;
                     }
                     c if c >= SH_SHAPE => match sh::SHAPES[lane].get((c - SH_SHAPE) as usize) {
                         Some(s) => sh::shape_points(s),
