@@ -1260,12 +1260,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(20.0);
         drop(c);
         let ctl = ctl.clone();
+        // Selects the clip once, after the import lands; later tab changes are the user's.
+        let done = std::cell::Cell::new(false);
         audio_clip_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
+            if done.get() {
+                return;
+            }
             let Ok(mut c) = ctl.try_borrow_mut() else { return };
             let clip = c.project().tracks.iter().flat_map(|t| t.clips.iter()).next().map(|cl| cl.id);
-            if clip.is_some() && c.bottom_tab != BottomTab::Clip {
+            if clip.is_some() {
                 c.select_clip(clip);
                 c.set_bottom_tab(BottomTab::Clip);
+                done.set(true);
             }
         });
     }
