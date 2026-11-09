@@ -1618,7 +1618,7 @@ fn device_steps() -> Vec<Step> {
             }
             let Some(cd) = card_named(a, "AULowpass") else { return };
             let id = saine_core::DeviceId(cd.id as u64);
-            let (x, y) = card_xy(&cd, crate::devices::CARD_W - 56.5, 13.5);
+            let (x, y) = card_xy(&cd, crate::devices::CARD_W - 53.0 * crate::device_panel::Z, 16.0 * crate::device_panel::Z);
             click(a, x, y);
             let (opened, err) = {
                 let c = ctl.borrow();
@@ -1628,7 +1628,7 @@ fn device_steps() -> Vec<Step> {
                 c.update_ui(a);
             }
             if let Some(cd) = card_named(a, "AULowpass") {
-                let (x, y) = card_xy(&cd, crate::devices::CARD_W - 56.5, 13.5);
+                let (x, y) = card_xy(&cd, crate::devices::CARD_W - 53.0 * crate::device_panel::Z, 16.0 * crate::device_panel::Z);
                 click(a, x, y);
             }
             let closed = !ctl.borrow().engine.plugin_editor_is_open(id);
@@ -2301,7 +2301,8 @@ fn builtin_device_steps() -> Vec<Step> {
         DoC("builtin: click › (next preset)", Box::new(|a, _| {
             if let Some(cd) = card_named(a, "Compressor") {
                 let z = crate::device_panel::Z;
-                let (x, y) = card_xy(&cd, cd.width - 87.0 * z + 7.0 * z, 13.5);
+                // Header: next-preset arrow centre (fold, window, rule and nav from the right edge).
+                let (x, y) = card_xy(&cd, cd.width - 71.25 * z, 16.0 * z);
                 click(a, x, y);
             }
         })),
@@ -2786,7 +2787,8 @@ fn modulation_steps() -> Vec<Step> {
         })),
         Do("modulation: fold the LFO (header −)", Box::new(|a| {
             if let Some(cd) = card_named(a, "LFO") {
-                let (x, y) = card_xy(&cd, cd.width - 35.5, 13.5);
+                let z = crate::device_panel::Z;
+                let (x, y) = card_xy(&cd, cd.width - 33.0 * z, 16.0 * z);
                 click(a, x, y);
             }
         })),

@@ -145,6 +145,15 @@ pub fn next_track_color(p: &Project) -> ColorIndex {
     (1..=n).map(|k| (start + k) % n).find(|&c| used(c) == 0).map_or_else(|| ColorIndex((0..n).min_by_key(|&c| used(c)).unwrap_or(0) as u8), |c| ColorIndex(c as u8))
 }
 
+/// Card accent for reference renders (`--card-accent RRGGBB`): the reference captures of the
+/// effect cards were taken on the Master track, whose colour is white.
+pub static CARD_ACCENT: std::sync::OnceLock<[f32; 3]> = std::sync::OnceLock::new();
+
+/// Accent of a device card on a track of colour `c`.
+pub fn card_color(c: ColorIndex) -> slint::Color {
+    slint_color(CARD_ACCENT.get().copied().unwrap_or_else(|| track_color(c)))
+}
+
 /// Record-armed / recording red (ORIGINAL choice; the reference's armed state was not
 /// captured, see ui-inventory.md §11). Mirrors `Tokens.record-red` (#e5484d).
 pub const RECORD_RED: [f32; 3] = [0xe5 as f32 / 255.0, 0x48 as f32 / 255.0, 0x4d as f32 / 255.0];
@@ -326,6 +335,7 @@ pub struct Controller {
     pub devices: crate::devices::DevicesUi,
     pub(crate) tree_model: Rc<VecModel<TreeRow>>,
     pub(crate) cards_model: Rc<VecModel<DeviceCard>>,
+    pub(crate) window_cards_model: Rc<VecModel<DeviceCard>>,
     pub(crate) add_results_model: Rc<VecModel<MenuItem>>,
     pub(crate) devmenu_model: Rc<VecModel<MenuItem>>,
     pub(crate) scan_dirs_model: Rc<VecModel<PluginRow>>,
@@ -407,6 +417,7 @@ impl Controller {
             devices: Default::default(),
             tree_model: Rc::new(VecModel::default()),
             cards_model: Rc::new(VecModel::default()),
+            window_cards_model: Rc::new(VecModel::default()),
             add_results_model: Rc::new(VecModel::default()),
             devmenu_model: Rc::new(VecModel::default()),
             scan_dirs_model: Rc::new(VecModel::default()),
@@ -444,6 +455,7 @@ impl Controller {
         s.set_settings_menu_items(ModelRc::from(self.settings_menu_model.clone()));
         s.set_tree(ModelRc::from(self.tree_model.clone()));
         s.set_device_cards(ModelRc::from(self.cards_model.clone()));
+        s.set_device_window_cards(ModelRc::from(self.window_cards_model.clone()));
         s.set_add_results(ModelRc::from(self.add_results_model.clone()));
         s.set_devmenu_items(ModelRc::from(self.devmenu_model.clone()));
         s.set_scan_dirs(ModelRc::from(self.scan_dirs_model.clone()));

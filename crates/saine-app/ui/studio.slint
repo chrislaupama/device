@@ -205,12 +205,16 @@ export struct DeviceCard {
     has-editor: bool,
     editor-supported: bool, // the host can open plugin windows on this OS (not on Linux yet)
     editor-open: bool,
+    win-dx: length,        // device window: drag offset from its default spot (src/devices.rs window_at)
+    win-dy: length,
     dragging: bool,
     // Built-in devices (src/device_panel.rs, ui/device_panel.slint): the panel generated
     // from the device definition. Unused (empty) on plugin cards.
     builtin: bool,
     width: length,
     accent: color,
+    accent-text: color,    // value text: the accent as a light OKLCH tint (L .87, chroma at most .11)
+    accent-light: bool,    // the accent needs dark ink on it (switch thumb, selected segment text)
     preset: string,
     knobs: [PanelKnob],
     picks: [PanelPick],
@@ -555,6 +559,7 @@ export global Studio {
 
     // ---- device chain (Devices tab; src/devices.rs, ui/devices.slint) ----
     in property <[DeviceCard]> device-cards;
+    in property <[DeviceCard]> device-window-cards;          // built-in cards open in a device window (any track)
     in property <length> chain-scroll;          // horizontal scroll of the chain (synth card included)
     in property <length> add-device-x: 265px;   // bottom-panel relative
     in property <bool> chain-marker-visible;    // insertion marker while dragging a card or a device
@@ -590,6 +595,9 @@ export global Studio {
     // Bumped when the chain's cards change (added, removed, moved, folded): a focused control
     // inside a rebuilt card is gone, so the window takes the keyboard back.
     in property <int> cards-epoch;
+    callback device-ask(int);                                // header spark: ask the assistant about this device
+    callback device-window-moved(int, length, length);       // device window dragged: its new offset, kept per device
+    callback device-window(int);                             // header arrow: open / close the device's floating window
     callback device-fold(int);                               // fold / unfold the card (header double-click, minus)
     callback device-collapse(int);                           // chain head: hide / show its members
     callback device-swap-menu(int, length, length);          // "Choose effect plugin" from the card name
