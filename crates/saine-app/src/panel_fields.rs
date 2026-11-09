@@ -1078,8 +1078,12 @@ impl Controller {
             .collect();
         match commands.len() {
             0 => {}
-            1 => self.panel_commit(commands.remove(0)),
-            _ => self.panel_commit(Command::Batch { label: "Device Edit".into(), commands }),
+            1 => {
+                self.panel_commit(commands.remove(0));
+            }
+            _ => {
+                self.panel_commit(Command::Batch { label: "Device Edit".into(), commands });
+            }
         }
     }
 

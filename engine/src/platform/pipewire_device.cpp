@@ -74,15 +74,18 @@ namespace {
 constexpr uint32_t kMaxDeviceChannels = 16;
 constexpr uint32_t kMaxCycleFrames = 8192; // largest quantum PipeWire uses
 
+// Initialises libpipewire once per process.
 void init_pipewire() {
     static std::once_flag once;
     std::call_once(once, [] { pw_init(nullptr, nullptr); });
 }
 
+// Formats a rate for error messages, e.g. "48000 Hz".
 std::string rate_str(double r) { return std::to_string(static_cast<long>(std::lround(r))) + " Hz"; }
 
 // ---------------------------------------------------------------- enumeration
 
+// One audio sink or source node found in the registry.
 struct PwNode {
     uint32_t id = 0;
     std::string name;        // node.name (our uid)
@@ -91,6 +94,8 @@ struct PwNode {
     uint32_t channels = 0;   // audio.channels / audio.position
 };
 
+// What one enumeration pass found: the audio nodes, the default sink and
+// source, and the graph's clock rate and allowed rates.
 struct PwSnapshot {
     bool connected = false;
     std::vector<PwNode> nodes;
@@ -99,6 +104,8 @@ struct PwSnapshot {
     std::vector<double> allowed_rates;
 };
 
+// Extracts the node name from a "default" metadata value
+// ({"name":"alsa_output.foo"} -> alsa_output.foo); "" if there is none.
 std::string json_name(const char* value) {
     // {"name":"alsa_output.foo"} -> alsa_output.foo
     if (value == nullptr) return {};
@@ -111,6 +118,7 @@ std::string json_name(const char* value) {
     return std::string(q1 + 1, static_cast<std::size_t>(q2 - q1 - 1));
 }
 
+// Parses every number in a list such as "[ 44100 48000 ]" (clock.allowed-rates).
 std::vector<double> parse_numbers(const char* s) {
     std::vector<double> out;
     if (s == nullptr) return out;
@@ -126,6 +134,8 @@ std::vector<double> parse_numbers(const char* s) {
     return out;
 }
 
+// Channel count from a node's properties: audio.channels, else the number of
+// names in audio.position; 0 if neither is present.
 uint32_t channels_from_props(const spa_dict* props) {
     if (props == nullptr) return 0;
     if (const char* c = spa_dict_lookup(props, "audio.channels")) return static_cast<uint32_t>(std::atoi(c));
@@ -144,6 +154,8 @@ uint32_t channels_from_props(const spa_dict* props) {
     return 0;
 }
 
+// Short-lived PipeWire connection that collects a PwSnapshot. Never opens a
+// stream; a 2 s watchdog keeps an unresponsive server from hanging the caller.
 class Enumerator {
 public:
     // One connection, registry + metadata, two round trips (globals, then
@@ -213,6 +225,7 @@ private:
         spa_hook listener{};
         pw_node_events events{};
     };
+    // A bound "default" or "settings" metadata object.
     struct Metadata {
         Enumerator* owner = nullptr;
         bool defaults = false; // "default" (else "settings")
@@ -221,26 +234,34 @@ private:
         pw_metadata_events events{};
     };
 
+    // Runs the loop until the server has answered everything sent so far (or
+    // the watchdog fires).
     void roundtrip() {
         if (timed_out_) return;
         pending_ = pw_core_sync(core_, PW_ID_CORE, 0);
         pw_main_loop_run(loop_);
     }
 
+    // Core "done" event: ends the round trip whose sync sequence matches.
     static void on_done(void* data, uint32_t id, int seq) {
         auto* self = static_cast<Enumerator*>(data);
         if (id == PW_ID_CORE && seq == self->pending_) pw_main_loop_quit(self->loop_);
     }
+    // Core error: ends the current round trip so the caller does not wait for it.
     static void on_error(void* data, uint32_t id, int, int, const char*) {
         auto* self = static_cast<Enumerator*>(data);
         if (id == PW_ID_CORE) pw_main_loop_quit(self->loop_);
     }
+    // Watchdog: the server did not answer in time; stop waiting.
     static void on_timeout(void* data, uint64_t) {
         auto* self = static_cast<Enumerator*>(data);
         self->timed_out_ = true;
         pw_main_loop_quit(self->loop_);
     }
 
+    // Registry event: records Audio/Sink and Audio/Source nodes (binding those
+    // whose channel count needs the full node info) and binds the "default" and
+    // "settings" metadata.
     static void on_global(void* data, uint32_t id, uint32_t, const char* type, uint32_t, const spa_dict* props) {
         auto* self = static_cast<Enumerator*>(data);
         if (props == nullptr || type == nullptr) return;
@@ -290,6 +311,8 @@ private:
         }
     }
 
+    // Node info event: fills in the channel count of a node whose registry
+    // properties did not include one.
     static void on_node_info(void* data, const pw_node_info* info) {
         auto* nb = static_cast<NodeBind*>(data);
         if (info == nullptr) return;
@@ -297,6 +320,8 @@ private:
             if (n.id == nb->id && n.channels == 0) n.channels = channels_from_props(info->props);
     }
 
+    // Metadata property event: reads the default sink/source ("default") and
+    // the clock rate and allowed rates ("settings").
     static int on_property(void* data, uint32_t subject, const char* key, const char*, const char* value) {
         auto* m = static_cast<Metadata*>(data);
         if (subject != PW_ID_CORE || key == nullptr) return 0;
@@ -330,8 +355,11 @@ private:
     bool timed_out_ = false;
 };
 
+// Serialises enumerations (one PipeWire connection at a time).
 std::mutex g_enum_mutex;
 
+// Enumerates the server and fills in defaults: 48 kHz when the clock rate
+// is unknown, and the clock rate is always among the (sorted) allowed rates.
 PwSnapshot snapshot() {
     std::lock_guard lock(g_enum_mutex);
     Enumerator e;
@@ -343,6 +371,9 @@ PwSnapshot snapshot() {
     return s;
 }
 
+// Finds the sink (or source) named `uid`; an empty uid means the default
+// node, or the first node of that kind when there is no default. nullptr if
+// none matches.
 const PwNode* find_node(const PwSnapshot& s, const std::string& uid, bool sink) {
     const std::string& want = uid.empty() ? (sink ? s.default_sink : s.default_source) : uid;
     for (const PwNode& n : s.nodes)
@@ -355,15 +386,22 @@ const PwNode* find_node(const PwSnapshot& s, const std::string& uid, bool sink) 
 
 // ---------------------------------------------------------------- streams
 
+// AudioDevice on PipeWire: a playback stream plus an optional capture stream
+// feeding a FrameRing, both driven by a pw_thread_loop.
 class PipeWireDevice final : public AudioDevice {
 public:
+    // Stops the streams and joins the data thread.
     ~PipeWireDevice() override { stop(); }
 
+    // Checks a configuration against a fresh enumeration without opening a stream.
     int32_t validate(const Config& c, std::string& err) const override {
         const PwSnapshot s = snapshot();
         return validate_with(s, c, err);
     }
 
+    // Opens the capture stream (when input is enabled) and the playback stream,
+    // waits for playback to start, then fills status(). An input that fails to
+    // start leaves the device running output-only with status().input_error set.
     int32_t start(const Config& config, Callback* callback, std::string& err) override {
         if (loop_ != nullptr) {
             err = "device already started";
@@ -463,18 +501,22 @@ public:
         return SE_OK;
     }
 
+    // Destroys the streams and joins the data thread; no callback runs afterwards.
     int32_t stop() override {
         running_.store(false, std::memory_order_release);
         teardown();
         return SE_OK;
     }
 
+    // True after a successful start() while the playback stream is streaming.
     bool is_running() const override {
         return running_.load(std::memory_order_acquire) && playback_.state.load() == PW_STREAM_STATE_STREAMING;
     }
+    // The rates, buffer size, latencies and device names in effect since start().
     Status status() const override { return status_; }
 
 private:
+    // One pw_stream with its listener and last reported state.
     struct StreamSlot {
         pw_stream* stream = nullptr;
         spa_hook listener{};
@@ -485,6 +527,8 @@ private:
         bool playback = false;
     };
 
+    // Checks the output and input devices, the requested graph rate (against
+    // clock.allowed-rates) and the buffer size against an enumeration snapshot.
     static int32_t validate_with(const PwSnapshot& s, const Config& c, std::string& err) {
         const PwNode* out = find_node(s, c.output_uid, true);
         if (out == nullptr) {
@@ -514,19 +558,26 @@ private:
         return SE_OK;
     }
 
+    // Quantum to request through node.latency: the configured buffer size, else
+    // the preferred block (at least 256).
     uint32_t requested_quantum() const {
         return config_.buffer_size != 0 ? config_.buffer_size : std::max<uint32_t>(config_.preferred_block, 256);
     }
 
+    // Records `what` in `err`, tears everything down and returns SE_ERR_DEVICE.
     int32_t fail(const char* what, std::string& err) {
         err = what;
         teardown();
         return SE_ERR_DEVICE;
     }
 
-    // Requires the thread-loop lock.
+    // The playback or capture slot. Requires the thread-loop lock.
     StreamSlot& slot(bool playback) { return playback ? playback_ : capture_; }
 
+    // Creates and connects the playback or capture stream (float32 interleaved at
+    // the engine rate) to `target`, or to the default node when it is empty. On
+    // failure the slot's stream is null and `err` says why. Requires the
+    // thread-loop lock.
     StreamSlot& make_stream(bool playback, const std::string& target, uint32_t channels, std::string& err) {
         StreamSlot& s = slot(playback);
         s.owner = this;
@@ -580,7 +631,8 @@ private:
         return s;
     }
 
-    // Requires the thread-loop lock (or a stopped loop).
+    // Disconnects and destroys a slot's stream, if any. Requires the
+    // thread-loop lock (or a stopped loop).
     static void destroy_stream(StreamSlot& s) {
         if (s.stream == nullptr) return;
         spa_hook_remove(&s.listener);
@@ -589,6 +641,8 @@ private:
         s.state.store(PW_STREAM_STATE_UNCONNECTED);
     }
 
+    // Destroys both streams, stops the thread loop and releases the core, the
+    // context (which joins the data thread) and the loop. Safe to call twice.
     void teardown() {
         input_live_.store(false, std::memory_order_release);
         if (loop_ != nullptr) {
@@ -606,6 +660,8 @@ private:
         loop_ = nullptr;
     }
 
+    // Fills status() with the graph rate, quantum and latencies, polling up to
+    // ~0.5 s for the playback stream's timing to become valid.
     void fill_timing(const PwSnapshot& snap) {
         // Timing becomes valid after the first cycles; poll briefly.
         pw_time t{};
@@ -637,6 +693,7 @@ private:
         }
     }
 
+    // Stream state event: records the state (and any error) and wakes start().
     static void on_state(void* data, pw_stream_state, pw_stream_state state, const char* error) {
         auto* s = static_cast<StreamSlot*>(data);
         if (error != nullptr) s->error = error;
@@ -644,7 +701,8 @@ private:
         pw_thread_loop_signal(s->owner->loop_, false);
     }
 
-    // Data thread.
+    // Data thread: copies the captured frames (or silence for an empty
+    // chunk) into the ring that on_playback drains.
     static void on_capture(void* data) {
         auto* s = static_cast<StreamSlot*>(data);
         PipeWireDevice* self = s->owner;
@@ -666,6 +724,9 @@ private:
         pw_stream_queue_buffer(s->stream, b);
     }
 
+    // Data thread: renders the whole requested cycle in chunks of at most
+    // kMaxCycleFrames, reading the matching input from the ring, and interleaves
+    // it into the PipeWire buffer.
     static void on_playback(void* data) {
         auto* s = static_cast<StreamSlot*>(data);
         PipeWireDevice* self = s->owner;
@@ -726,8 +787,10 @@ private:
 
 } // namespace
 
+// Creates the Linux audio device (PipeWire).
 std::unique_ptr<AudioDevice> create_platform_audio_device() { return std::make_unique<PipeWireDevice>(); }
 
+// Lists every PipeWire sink and source as a device (empty without a server).
 int32_t list_audio_devices(std::vector<DeviceInfo>& out, std::string&) {
     out.clear();
     const PwSnapshot s = snapshot();
@@ -749,6 +812,7 @@ int32_t list_audio_devices(std::vector<DeviceInfo>& out, std::string&) {
     return SE_OK;
 }
 
+// The graph's clock rate, or 0 when no PipeWire server is reachable.
 double query_default_output_sample_rate() {
     const PwSnapshot s = snapshot();
     return s.connected ? s.clock_rate : 0.0;
@@ -762,29 +826,38 @@ double query_default_output_sample_rate() {
 namespace saine {
 namespace {
 
+// Stand-in device for builds without libpipewire: every start fails.
 class NoBackendDevice final : public AudioDevice {
 public:
+    // Always fails: there are no devices to validate against.
     int32_t validate(const Config& c, std::string& err) const override {
         err = c.output_uid.empty() ? "no default output device (built without PipeWire support)"
                                    : "output device '" + c.output_uid + "' not found (built without PipeWire support)";
         return SE_ERR_NOT_FOUND;
     }
+    // Always fails with SE_ERR_DEVICE.
     int32_t start(const Config&, Callback*, std::string& err) override {
         err = "this build has no Linux audio backend (configure with libpipewire-0.3 installed)";
         return SE_ERR_DEVICE;
     }
+    // Nothing to stop.
     int32_t stop() override { return SE_OK; }
+    // Never running.
     bool is_running() const override { return false; }
+    // Empty status.
     Status status() const override { return {}; }
 };
 
 } // namespace
 
+// Creates the stand-in device (built without PipeWire).
 std::unique_ptr<AudioDevice> create_platform_audio_device() { return std::make_unique<NoBackendDevice>(); }
+// No devices without PipeWire.
 int32_t list_audio_devices(std::vector<DeviceInfo>& out, std::string&) {
     out.clear();
     return SE_OK;
 }
+// No default rate without PipeWire.
 double query_default_output_sample_rate() { return 0.0; }
 
 } // namespace saine

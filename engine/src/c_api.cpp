@@ -598,6 +598,26 @@ int32_t se_builtin_set_param(se_engine* engine, uint64_t device_id, uint32_t ind
     });
 }
 
+int32_t se_plugin_set_param(se_engine* engine, uint64_t device_id, uint32_t param_id, float normalized) {
+    SE_REQUIRE_ENGINE(engine);
+    if (!std::isfinite(normalized)) return fail(SE_ERR_INVALID_ARG, "normalized is not finite");
+    return guarded([&]() -> int32_t {
+        const int32_t rc = engine->impl->plugin_set_param(device_id, param_id, normalized);
+        if (rc == SE_ERR_NOT_FOUND) return fail(rc, "no live plugin instance with this parameter");
+        if (rc == SE_ERR_STATE) return fail(rc, "the plugin's parameter queue is full");
+        return rc;
+    });
+}
+
+int32_t se_mod_base(se_engine* engine, uint64_t device_id, uint32_t param_id, float* out_normalized) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out_normalized == nullptr) return fail(SE_ERR_INVALID_ARG, "out_normalized is NULL");
+    return guarded([&]() -> int32_t {
+        const int32_t rc = engine->impl->mod_base(device_id, param_id, *out_normalized);
+        return rc == SE_OK ? rc : fail(rc, "the parameter is not modulated");
+    });
+}
+
 int32_t se_builtin_readouts(se_engine* engine, uint64_t device_id, float* out, size_t capacity, size_t* out_count) {
     SE_REQUIRE_ENGINE(engine);
     if (capacity > 0 && out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");

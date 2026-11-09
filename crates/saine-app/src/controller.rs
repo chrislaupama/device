@@ -485,6 +485,7 @@ impl Controller {
             self.set_status(format!("Engine rejected the session: {e}"), 6);
         }
         self.published_rev = Some(self.doc.revision());
+        self.restore_mod_bases();
         self.sync_loop_and_click();
     }
 
@@ -824,6 +825,7 @@ impl Controller {
         self.doc_epoch += 1;
         self.auto.reset_project_state();
         self.doc = Document::new(project);
+        self.devices.modu.bases_pending = true;
         self.selected_track = self.project().tracks.first().map(|t| t.id);
         self.selected_clip = None;
         self.published_rev = None;
@@ -834,6 +836,8 @@ impl Controller {
         // Plugin instances own their state: pull it into the model first (no undo step).
         let states = self.engine.plugin_states();
         self.doc.sync_device_states(&states);
+        let bases = self.mod_bases_now();
+        self.doc.sync_mod_bases(&bases);
         match persist::save(self.project(), dir) {
             Ok(()) => {
                 self.doc.mark_saved();
@@ -860,6 +864,7 @@ impl Controller {
         self.doc_epoch += 1;
         self.auto.reset_project_state();
         self.doc = Document::new(loaded.project);
+        self.devices.modu.bases_pending = true;
         self.project_dir = Some(dir.to_path_buf());
         self.selected_track = self.project().tracks.first().map(|t| t.id);
         self.selected_clip = None;

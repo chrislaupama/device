@@ -49,7 +49,7 @@ pub(crate) const VIEW_Y_NO_PICKER: f32 = 37.0;
 pub(crate) const CAPTION_H: f32 = 19.0;
 pub(crate) const VIEW_BOTTOM: f32 = 214.0;
 /// Dial row top (card relative).
-const DIAL_Y: f32 = 229.0;
+pub(crate) const DIAL_Y: f32 = 229.0;
 /// Dynamics strip plot range (dB) and history length (slots across the well).
 const PLOT_TOP_DB: f32 = 0.0;
 const PLOT_FLOOR_DB: f32 = -36.0;
@@ -406,6 +406,10 @@ impl Controller {
         track.map_or(slint::Color::from_rgb_u8(0x43, 0x9b, 0x94), |t| slint_color(track_color(t.color)))
     }
 
+    pub(crate) fn panel_value_of(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
+        self.panel_value(d, def, p)
+    }
+
     /// The card of a built-in device (generic panel).
     pub(crate) fn builtin_card(&self, d: &Device, def: &'static DeviceDef) -> DeviceCard {
         let width = def.layout.width();
@@ -591,7 +595,7 @@ impl Controller {
             }
         };
 
-        let card = DeviceCard {
+        let mut card = DeviceCard {
             id: d.id.0 as i32,
             name: s(def.name),
             vendor: s(saine_core::builtin::VENDOR),
@@ -613,6 +617,9 @@ impl Controller {
         };
         if crate::sampler_panel::is_sampler(def) {
             return self.sampler_card(d, def, card);
+        }
+        if matches!(def.layout.view, Some(View::Custom(_))) {
+            self.mod_body(d, def, &mut card);
         }
         card
     }
@@ -806,11 +813,18 @@ impl Controller {
     // ---------------------------------------------------------------- gestures
 
     pub fn panel_drag(&mut self, device: DeviceId, index: i32, phase: i32, dy: f32, rate: f32, fine: bool) {
+        if phase == 0 && self.mod_map_click(device, index) {
+            return;
+        }
         if index <= crate::sampler_panel::SLICE_GAIN {
             return self.slice_drag(device, index, phase, dy, rate, fine);
         }
+        if self.project().device(device).is_some_and(|d| saine_core::builtin::def_of(d).is_none()) {
+            return self.card_drag(device, index as u32, phase, dy, rate, fine);
+        }
         let Some((d, def)) = self.panel_def(device) else { return };
         let Some(p) = usize::try_from(index).ok().and_then(|i| def.params.get(i)) else { return };
+        let rack = saine_core::modulation::is_rack(d);
         match phase {
             0 => {
                 let v = def.value(d, p);
@@ -834,9 +848,14 @@ impl Controller {
                 }
             }
             2 => {
+                let clicked = self.devices.panel.drag.is_some_and(|g| g.device == device && !g.active);
                 let cmd = self.devices.panel.drag.filter(|g| g.active && g.value != g.start).map(|g| param_command(def, d, p, g.value));
                 self.devices.panel.drag = None;
                 self.ui_dirty = true;
+                // A click on a chain macro opens (or closes) its side panel.
+                if rack && clicked {
+                    return self.macro_select(device, index);
+                }
                 if let Some(cmd) = cmd {
                     self.panel_commit(cmd);
                 }
@@ -944,8 +963,12 @@ impl Controller {
                     .collect();
                 match commands.len() {
                     0 => {}
-                    1 => self.panel_commit(commands.into_iter().next().unwrap()),
-                    _ => self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands }),
+                    1 => {
+                        self.panel_commit(commands.into_iter().next().unwrap());
+                    }
+                    _ => {
+                        self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands });
+                    }
                 }
             }
             _ => {
@@ -960,14 +983,18 @@ impl Controller {
     }
 
     /// One gesture = one undo step: never merge with the previous edit of the same parameter.
-    pub(crate) fn panel_commit(&mut self, cmd: Command) {
+    pub(crate) fn panel_commit(&mut self, cmd: Command) -> bool {
         let cmd = self.sampler_followups(cmd);
         self.doc.seal_coalescing();
-        self.execute(cmd);
+        let ok = self.execute(cmd);
         self.doc.seal_coalescing();
+        ok
     }
 
     pub fn panel_reset(&mut self, device: DeviceId, index: i32) {
+        if self.project().device(device).is_some_and(|d| saine_core::builtin::def_of(d).is_none()) {
+            return self.card_reset(device, index as u32);
+        }
         self.panel_set(device, index, |p, _| Some(p.default));
     }
 
@@ -982,13 +1009,20 @@ impl Controller {
             .collect();
         match commands.len() {
             0 => {}
-            1 => self.panel_commit(commands.remove(0)),
-            _ => self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands }),
+            1 => {
+                self.panel_commit(commands.remove(0));
+            }
+            _ => {
+                self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands });
+            }
         }
     }
 
     /// Arrow keys: discrete parameters move one choice, continuous ones 1% of the range (0.2% fine).
     pub fn panel_step(&mut self, device: DeviceId, index: i32, delta: i32, fine: bool) {
+        if self.project().device(device).is_some_and(|d| saine_core::builtin::def_of(d).is_none()) {
+            return self.card_step(device, index as u32, delta, fine);
+        }
         self.panel_set(device, index, |p, v| {
             if p.momentary {
                 return None;
@@ -1003,6 +1037,9 @@ impl Controller {
     }
 
     pub fn panel_choice(&mut self, device: DeviceId, index: i32, choice: i32) {
+        if self.project().device(device).is_some_and(|d| saine_core::builtin::def_of(d).is_none()) {
+            return self.card_click(device, index as u32);
+        }
         self.panel_set(device, index, |_, _| Some(choice as f32));
     }
 
@@ -1030,6 +1067,9 @@ impl Controller {
     }
 
     pub fn panel_text(&mut self, device: DeviceId, index: i32, text: &str) {
+        if self.project().device(device).is_some_and(|d| saine_core::builtin::def_of(d).is_none()) {
+            return self.card_text(device, index as u32, text);
+        }
         let Some((d, def)) = self.panel_def(device) else { return };
         let Some(p) = usize::try_from(index).ok().and_then(|i| def.params.get(i)) else { return };
         let parsed = def.parse_of(d, p, text);
