@@ -31,7 +31,10 @@ constexpr float kTwoOverPi = 0.636619772f;
 inline float shape(int mode, float x, float asym) noexcept {
     switch (mode) {
     case kFuzz: return x >= 0.0f ? dsp::fast_tanh(2.0f * x) : std::atan(3.0f * x) * kTwoOverPi;
-    case kTube: return x / (1.0f + std::fabs(x)) - asym * x * x;
+    case kTube: {
+        const float t = x / (1.0f + std::fabs(x));
+        return t - asym * t * t;
+    }
     case kHardClip: return std::clamp(x, -1.0f, 1.0f);
     default: return dsp::fast_tanh(x);
     }
@@ -44,7 +47,7 @@ inline double shape_integral(int mode, double x, double asym) noexcept {
     case kFuzz:
         if (x >= 0.0) return 0.5 * (2.0 * a + std::log1p(std::exp(-4.0 * a)) - 0.6931471805599453);
         return 0.6366197723675814 * (x * std::atan(3.0 * x) - std::log1p(9.0 * x * x) / 6.0);
-    case kTube: return a - std::log1p(a) - asym * x * x * x / 3.0;
+    case kTube: return a - std::log1p(a) - asym * std::copysign(a - 2.0 * std::log1p(a) + a / (1.0 + a), x);
     case kHardClip: return a <= 1.0 ? 0.5 * x * x : a - 0.5;
     default: return a + std::log1p(std::exp(-2.0 * a)) - 0.6931471805599453; // log cosh
     }

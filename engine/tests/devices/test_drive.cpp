@@ -53,7 +53,10 @@ double distortion_model(double x, double drive, double bias, int mode) {
     auto f = [&](double v) {
         switch (mode) {
         case 1: return v >= 0 ? std::tanh(2 * v) : std::atan(3 * v) / (kPi / 2);
-        case 2: return v / (1 + std::fabs(v)) - 0.5 * std::tanh(2 * b) * v * v;
+        case 2: {
+            const double t = v / (1 + std::fabs(v));
+            return t - 0.5 * std::tanh(2 * b) * t * t;
+        }
         case 3: return std::clamp(v, -1.0, 1.0);
         default: return std::tanh(v);
         }
@@ -71,8 +74,9 @@ TEST_CASE(oversampler_round_trip_is_a_pure_delay) {
     const Signal x = tone(9600, 1000.0, kRate, 0.8);
     Signal l = x, r = x;
     for (std::size_t pos = 0; pos < x.size(); pos += 256) {
-        os.up(l.data() + pos, r.data() + pos, 256);
-        os.down(l.data() + pos, r.data() + pos, 256);
+        const auto n = static_cast<uint32_t>(std::min<std::size_t>(256, x.size() - pos));
+        os.up(l.data() + pos, r.data() + pos, n);
+        os.down(l.data() + pos, r.data() + pos, n);
     }
     double err = 0;
     for (std::size_t i = 1000; i < x.size(); ++i) err = std::max(err, static_cast<double>(std::fabs(l[i] - x[i - kLat])));
@@ -81,8 +85,9 @@ TEST_CASE(oversampler_round_trip_is_a_pure_delay) {
     const Signal hi = tone(48000, 18000.0, kRate, 0.5);
     Signal hl = hi, hr = hi;
     for (std::size_t pos = 0; pos < hi.size(); pos += 256) {
-        os.up(hl.data() + pos, hr.data() + pos, 256);
-        os.down(hl.data() + pos, hr.data() + pos, 256);
+        const auto n = static_cast<uint32_t>(std::min<std::size_t>(256, hi.size() - pos));
+        os.up(hl.data() + pos, hr.data() + pos, n);
+        os.down(hl.data() + pos, hr.data() + pos, n);
     }
     CHECK_NEAR(db(rms(hl, 9600) / rms(hi, 9600)), 0.0, 0.1);
 }
@@ -160,6 +165,16 @@ TEST_CASE(drive_family_keeps_aliasing_down) {
         std::fprintf(stderr, "aliasing: tape %-8s drive 100%%           %6.1f dB\n", modes[md], a);
         CHECK(a < -45.0);
     }
+}
+
+TEST_CASE(distortion_tube_stays_bounded_at_full_drive_and_bias) {
+    DeviceRig rig("distortion", kDistortion, kRate);
+    rig.set("mode", 2.f);
+    rig.set("drive", 100.f);
+    rig.set("bias", 100.f);
+    rig.set("tone", 20000.f);
+    const double pk = peak(rig.run_mono(tone(48000, 200.0, kRate, 1.0)), 9600);
+    CHECK(pk < 2.0);
 }
 
 TEST_CASE(distortion_bias_adds_even_harmonics_without_dc) {
@@ -277,6 +292,17 @@ TEST_CASE(soft_clipper_respects_the_ceiling) {
         if (pk > 0.53 || pk < 0.45) std::fprintf(stderr, "soft clipper shape %d peak %.4f\n", shape, pk);
         CHECK(pk < 0.53 && pk > 0.45);
     }
+    // Extreme drive with a hard knee: +24 dB into a -12 dB ceiling at softness 0 (0.251).
+    for (int shape = 0; shape < 3; ++shape) {
+        DeviceRig rig("soft-clipper", kClipper, kRate);
+        rig.set("shape", static_cast<float>(shape));
+        rig.set("input", 24.f);
+        rig.set("ceiling", -12.f);
+        rig.set("softness", 0.f);
+        const double pk = peak(rig.run_mono(tone(48000, 200.0, kRate, 1.0)), 9600);
+        if (pk > 0.27) std::fprintf(stderr, "soft clipper shape %d extreme peak %.4f\n", shape, pk);
+        CHECK(pk < 0.27 && pk > 0.2);
+    }
 }
 
 TEST_CASE(soft_clipper_is_transparent_below_the_knee_and_gain_matches) {
@@ -359,6 +385,15 @@ TEST_CASE(bitcrusher_downsample_holds_and_jitter_varies) {
     for (std::size_t i = 2401; i < 4800; ++i)
         if (y[i] != y[i - 1]) ++changes;
     CHECK_NEAR(static_cast<double>(changes), 2399.0 / 4.0, 2.0);
+    // Fractional rates keep their average: 2.5 holds alternate 2 and 3 frames.
+    DeviceRig fr("bitcrusher", kCrusher, kRate);
+    fr.set("bitdepth", 32.f);
+    fr.set("downsample", 2.5f);
+    const Signal yf = fr.run_mono(tone(4800, 500.0, kRate, 0.5));
+    std::size_t fchanges = 0;
+    for (std::size_t i = 2401; i < 4800; ++i)
+        if (yf[i] != yf[i - 1]) ++fchanges;
+    CHECK_NEAR(static_cast<double>(fchanges), 2399.0 / 2.5, 2.0);
     DeviceRig j("bitcrusher", kCrusher, kRate);
     j.set("bitdepth", 32.f);
     j.set("downsample", 8.f);

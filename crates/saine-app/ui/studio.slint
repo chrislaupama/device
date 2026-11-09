@@ -395,6 +395,7 @@ export global Studio {
     // Built-in device panels: device id, parameter index (definition order).
     callback panel-drag(int, int, int, float, float, bool); // phase 0 press / 1 move / 2 release / 3 cancel, dy since last event (px, up +), norm per px, fine
     callback panel-reset(int, int);                          // default value (Alt-click, double-click)
+    callback panel-reset-xy(int, int, int);                  // device, param x, param y (-1 = unused): both to default, one undo step
     callback panel-step(int, int, int, bool);                // arrow keys: +1 / -1, fine
     callback panel-choice(int, int, int);                    // choice index
     callback panel-text(int, int, string);                   // typed value (parsed by the definition)

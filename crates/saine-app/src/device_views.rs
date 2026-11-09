@@ -420,7 +420,7 @@ fn utility_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, idx: &dyn Fn(&str)
         ..Default::default()
     };
     // Width has no effect in mono or with a single channel on both sides.
-    let width_dead = on("mono") || mode == 1 || mode == 2;
+    let width_dead = on("mono") || ((mode == 1 || mode == 2) && on("phase_l") == on("phase_r"));
     CustomBody {
         field,
         buttons,

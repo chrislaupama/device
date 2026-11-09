@@ -63,7 +63,16 @@ pub fn tape_transfer(x: f32, drive: f32, compression: f32, mix: f32, output_db: 
     };
     let s = s + k * s * s;
     let ceiling = 1.0 - 0.5 * compression / 100.0;
-    let limited = s.clamp(-ceiling, ceiling);
+    let (a, w) = (s.abs(), 0.15 * ceiling);
+    let lo = ceiling - w;
+    let limited = if a <= lo {
+        a
+    } else if a >= ceiling + w {
+        ceiling
+    } else {
+        a - (a - lo).powi(2) / (4.0 * w)
+    }
+    .copysign(s);
     let m = mix / 100.0;
     (x * (1.0 - m) + limited * m) * 10f32.powf(output_db / 20.0)
 }

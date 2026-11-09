@@ -764,7 +764,17 @@ mod tests {
             }
             assert!((clipper_transfer(0.01, 0.0, 0.0, 0.0, shape, false, 100.0, 0.0) - 0.01).abs() < 1e-3, "transparent well below the ceiling");
         }
+        assert!(distortion_transfer(1.0, 100.0, 100.0, 0.0, 100.0, 0.0, 2).abs() < 2.0, "Tube stays bounded at full drive and bias");
+        for shape in 0..3 {
+            let y = clipper_transfer(1.0, 24.0, -12.0, 0.0, shape, false, 100.0, 0.0);
+            assert!(y > 0.2 && y <= 10f32.powf(-12.0 / 20.0) + 1e-4, "shape {shape}: extreme drive keeps the ceiling ({y})");
+        }
+        let pic = super::bitcrusher::crush_picture(32.0, 2.5, 100.0, 0.0, 0.0);
+        let changes = pic.windows(2).filter(|w| w[0].1 != w[1].1).count();
+        assert!((changes as f32 - 480.0 / 2.5).abs() <= 2.0, "fractional downsample keeps its rate ({changes})");
         let sr = 48_000.0;
+        let half = widener_response(120.0, 100.0, 0.0, 0.0, 120.0, 50.0, sr);
+        assert!(half > 70.0 && half < 82.0, "partial mix sums the paths with their phase ({half})");
         assert!((widener_response(5000.0, 100.0, 0.0, 0.0, 20.0, 100.0, sr) - 100.0).abs() < 1.0, "100% is unchanged above the cut");
         assert!(widener_response(30.0, 200.0, 0.0, 0.0, 300.0, 100.0, sr) < widener_response(5000.0, 200.0, 0.0, 0.0, 300.0, 100.0, sr), "the low cut narrows the lows");
         assert!((widener_response(5000.0, 200.0, 0.0, 0.0, 20.0, 0.0, sr) - 100.0).abs() < 1e-3, "mix 0 is dry");

@@ -63,7 +63,7 @@ public:
             const float mx = mix_.next(mix);
             count += 1.0f;
             if (count >= hold) {
-                count = 0.0f;
+                count = count - hold < 1.0f ? count - hold : 0.0f; // keep the fraction (the first frame starts at 0)
                 hold = std::max(1.0f, h + rand() * jitter * h * 0.5f);
                 const float dl = 0.5f * (rand() + rand()) * dth;
                 const float dr = 0.5f * (rand() + rand()) * dth;

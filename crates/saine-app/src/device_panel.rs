@@ -588,6 +588,22 @@ impl Controller {
         self.panel_set(device, index, |p, _| Some(p.default));
     }
 
+    /// Reset of a two-parameter field zone: one command (a Batch when both change), one undo step.
+    pub fn panel_reset_xy(&mut self, device: DeviceId, params: [i32; 2]) {
+        let Some((d, def)) = self.panel_def(device) else { return };
+        let mut commands: Vec<Command> = params
+            .iter()
+            .filter_map(|&i| usize::try_from(i).ok().and_then(|i| def.params.get(i)))
+            .filter(|p| def.value(d, p) != p.default)
+            .map(|p| Command::SetDeviceParam { device, param: p.id.to_string(), value: p.default })
+            .collect();
+        match commands.len() {
+            0 => {}
+            1 => self.panel_commit(commands.remove(0)),
+            _ => self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands }),
+        }
+    }
+
     /// Arrow keys: discrete parameters move one choice, continuous ones 1% of the range (0.2% fine).
     pub fn panel_step(&mut self, device: DeviceId, index: i32, delta: i32, fine: bool) {
         self.panel_set(device, index, |p, v| {

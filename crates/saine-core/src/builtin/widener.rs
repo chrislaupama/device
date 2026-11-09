@@ -48,6 +48,11 @@ pub fn widener_response(f: f32, width: f32, mid_db: f32, side_db: f32, lowcut: f
     let s = 10f32.powf(side_db / 20.0);
     let pole = (-std::f32::consts::TAU * lowcut / sample_rate).exp();
     let wf = std::f32::consts::TAU * f / sample_rate;
-    let h = 2.0 * (std::f32::consts::PI * f / sample_rate).sin().abs() * pole / (1.0 - 2.0 * pole * wf.cos() + pole * pole).sqrt();
-    100.0 * (1.0 - x + x * w * s * h) / (1.0 - x + x * m).max(1e-6)
+    // High-pass pole (1 - z^-1) / (1 - pole z^-1) at e^{jw}, added to the dry side as complex values.
+    let (nr, ni) = (pole * (1.0 - wf.cos()), pole * wf.sin());
+    let (dr, di) = (1.0 - pole * wf.cos(), pole * wf.sin());
+    let dd = dr * dr + di * di;
+    let (hr, hi) = ((nr * dr + ni * di) / dd, (ni * dr - nr * di) / dd);
+    let k = x * w * s;
+    100.0 * ((1.0 - x + k * hr).powi(2) + (k * hi).powi(2)).sqrt() / (1.0 - x + x * m).max(1e-6)
 }

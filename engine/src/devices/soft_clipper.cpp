@@ -32,8 +32,10 @@ constexpr const char* kParamIds[kParamCount] = {"input", "ceiling", "softness", 
 // a / (1 + a^k)^(1/k) for a >= 0.
 inline float sat(float a, float k, float inv_k) noexcept {
     if (a < 1e-6f) return a;
-    const float ak = dsp::fast_exp2(k * dsp::fast_log2(a));
-    return a * dsp::fast_exp2(-inv_k * dsp::fast_log2(1.0f + ak));
+    const float la = dsp::fast_log2(a);
+    // Above 1 use the equal form 1 / (1 + a^-k)^(1/k): a^k would overflow.
+    if (a > 1.0f) return dsp::fast_exp2(-inv_k * dsp::fast_log2(1.0f + dsp::fast_exp2(-k * la)));
+    return a * dsp::fast_exp2(-inv_k * dsp::fast_log2(1.0f + dsp::fast_exp2(k * la)));
 }
 
 inline float hard(float u, float w) noexcept {

@@ -48,7 +48,7 @@ pub static SOFT_CLIPPER: DeviceDef = DeviceDef {
 /// softness s in 0..1.
 pub fn clip_curve(shape: u32, u: f32, s: f32) -> f32 {
     let k = 24.0 * (1.5f32 / 24.0).powf(s);
-    let sat = |a: f32, k: f32| a / (1.0 + a.powf(k)).powf(1.0 / k);
+    let sat = |a: f32, k: f32| if a > 1.0 { 1.0 / (1.0 + a.powf(-k)).powf(1.0 / k) } else { a / (1.0 + a.powf(k)).powf(1.0 / k) };
     match shape {
         1 => {
             if u >= 0.0 {

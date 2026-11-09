@@ -226,6 +226,7 @@ component Latch inherits Rectangle {
     callback clicked();
     callback reset();
     property <float> zm: PanelStyle.z;
+    property <bool> alt-down;
     height: 20px * zm;
     min-width: latch-text.preferred-width + 16px * zm;
     border-radius: self.height / 2;
@@ -241,9 +242,12 @@ component Latch inherits Rectangle {
     }
     latch-ta := TouchArea {
         pointer-event(e) => {
-            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left && e.modifiers.alt) { root.reset(); }
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                root.alt-down = e.modifiers.alt;
+                if (e.modifiers.alt) { root.reset(); }
+            }
         }
-        clicked => { root.clicked(); }
+        clicked => { if (!root.alt-down) { root.clicked(); } }
     }
 }
 
@@ -279,10 +283,7 @@ component ZoneDrag inherits TouchArea {
     property <length> last-x;
     property <length> last-y;
     mouse-cursor: root.zone.param-x >= 0 && root.zone.param-y >= 0 ? MouseCursor.move : root.zone.param-x >= 0 ? MouseCursor.ew-resize : MouseCursor.ns-resize;
-    function reset() {
-        if (root.zone.param-x >= 0) { Studio.panel-reset(root.device, root.zone.param-x); }
-        if (root.zone.param-y >= 0) { Studio.panel-reset(root.device, root.zone.param-y); }
-    }
+    function reset() { Studio.panel-reset-xy(root.device, root.zone.param-x, root.zone.param-y); }
     pointer-event(e) => {
         if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
             if (e.modifiers.alt) { root.reset(); return; }

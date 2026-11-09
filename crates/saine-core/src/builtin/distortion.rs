@@ -59,7 +59,8 @@ fn shape(mode: u32, x: f32, bias: f32) -> f32 {
         }
         2 => {
             let asym = 0.5 * (2.0 * bias).tanh();
-            x / (1.0 + x.abs()) - asym * x * x
+            let t = x / (1.0 + x.abs());
+            t - asym * t * t
         }
         3 => x.clamp(-1.0, 1.0),
         _ => x.tanh(),

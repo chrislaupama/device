@@ -62,7 +62,7 @@ pub fn crush_picture(bits: f32, downsample: f32, mix: f32, dither: f32, jitter: 
         let x = (std::f32::consts::TAU * i as f32 / N as f32).sin();
         count += 1.0;
         if count >= hold {
-            count = 0.0;
+            count = if count - hold < 1.0 { count - hold } else { 0.0 };
             hold = (h + rand() * jitter * h * 0.5).max(1.0);
             let tpdf = 0.5 * (rand() + rand()) * dither / levels;
             held = ((x + tpdf) * levels).round() / levels;

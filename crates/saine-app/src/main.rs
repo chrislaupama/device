@@ -858,6 +858,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_device_drag, |c, id: i32, phase: i32, x: f32| c.device_drag(saine_core::DeviceId(id as u64), phase, x));
     on!(on_panel_drag, |c, id: i32, p: i32, phase: i32, dy: f32, rate: f32, fine: bool| c.panel_drag(saine_core::DeviceId(id as u64), p, phase, dy, rate, fine));
     on!(on_panel_reset, |c, id: i32, p: i32| c.panel_reset(saine_core::DeviceId(id as u64), p));
+    on!(on_panel_reset_xy, |c, id: i32, px: i32, py: i32| c.panel_reset_xy(saine_core::DeviceId(id as u64), [px, py]));
     on!(on_panel_step, |c, id: i32, p: i32, delta: i32, fine: bool| c.panel_step(saine_core::DeviceId(id as u64), p, delta, fine));
     on!(on_panel_drag_xy, |c, id: i32, px: i32, py: i32, phase: i32, dx: f32, dy: f32, rx: f32, ry: f32, fine: bool| c.panel_drag_xy(saine_core::DeviceId(id as u64), [px, py], phase, [dx, dy], [rx, ry], fine));
     on!(on_panel_choice, |c, id: i32, p: i32, i: i32| c.panel_choice(saine_core::DeviceId(id as u64), p, i));
