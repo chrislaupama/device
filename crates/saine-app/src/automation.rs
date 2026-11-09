@@ -112,6 +112,10 @@ impl Hue {
             AutomationTarget::Pan => Hue::key("Channel", "Pan"),
             AutomationTarget::Synth { param } => Hue::key("Synth", param.name()),
             AutomationTarget::Plugin { name, .. } => Hue::key(device, name),
+            AutomationTarget::Builtin { .. } => {
+                let (device, param) = target.labels();
+                Hue::key(&device, &param)
+            }
         }
     }
 
@@ -236,6 +240,7 @@ pub fn norm_of(t: &AutomationTarget, v: f32) -> f32 {
             if param.logarithmic() { (v.max(lo) / lo).ln() / (hi / lo).ln() } else { (v - lo) / (hi - lo) }
         }
         AutomationTarget::Plugin { .. } => v,
+        AutomationTarget::Builtin { .. } => t.builtin_param().map_or(v, |p| p.to_normalized(v)),
     };
     n.clamp(0.0, 1.0)
 }
@@ -254,6 +259,7 @@ pub fn value_of(t: &AutomationTarget, n: f32) -> f32 {
             if param.logarithmic() { lo * (hi / lo).powf(n) } else { lo + (hi - lo) * n }
         }
         AutomationTarget::Plugin { .. } => n,
+        AutomationTarget::Builtin { .. } => t.builtin_param().map_or(n, |p| p.snap(p.from_normalized(n))),
     };
     let (lo, hi) = t.range();
     v.clamp(lo, hi)
@@ -266,40 +272,6 @@ pub fn volume_label(db: f32) -> String {
     }
     let r = (db * 10.0).round() / 10.0;
     if r >= 0.0 { format!("+{:.1}", r.abs()) } else { format!("−{:.1}", -r) }
-}
-
-/// Built-in synth panel id (src/synth.rs `p::*`) for a core automation parameter.
-pub fn synth_panel_id(p: SynthParam) -> usize {
-    use crate::synth::p as sp;
-    use SynthParam::*;
-    match p {
-        Osc1Level => sp::OSC1_LEVEL,
-        Osc1Shape => sp::OSC1_SHAPE,
-        Osc1Fine => sp::OSC1_FINE,
-        Osc2Level => sp::OSC2_LEVEL,
-        Osc2Shape => sp::OSC2_SHAPE,
-        Osc2Fine => sp::OSC2_FINE,
-        CrossFm => sp::CROSS_FM,
-        SubLevel => sp::SUB_LEVEL,
-        NoiseLevel => sp::NOISE_LEVEL,
-        FilterCutoff => sp::CUTOFF,
-        FilterResonance => sp::RESONANCE,
-        FilterKeyTrack => sp::KEY_TRACK,
-        FilterEnvAmount => sp::ENV_AMOUNT,
-        LfoRate => sp::LFO_RATE,
-        LfoToPitch => sp::LFO_PITCH,
-        LfoToCutoff => sp::LFO_CUTOFF,
-        LfoToAmp => sp::LFO_AMP,
-        Glide => sp::GLIDE,
-        UnisonDetune => sp::UNISON_DETUNE,
-        Output => sp::OUTPUT,
-    }
-}
-
-/// Core automation parameter for a synth panel control (envelopes, polyphony and unison
-/// voices are not automatable).
-pub fn synth_param_for_panel(id: usize) -> Option<SynthParam> {
-    SynthParam::ALL.iter().copied().find(|p| synth_panel_id(*p) == id)
 }
 
 /// Keep points within `tol` (fraction of 0..1) of the line through their kept neighbours out.
@@ -473,6 +445,14 @@ impl Controller {
                 .or_else(|| self.engine.plugin_params(*device).iter().find(|i| i.id == *param).map(|i| i.default_normalized))
                 .unwrap_or(0.0)
                 .clamp(0.0, 1.0),
+            AutomationTarget::Builtin { device, param, .. } => t
+                .devices
+                .iter()
+                .chain(t.instrument_plugin.iter())
+                .find(|d| d.id == *device)
+                .and_then(|d| saine_core::builtin::def_of(d).and_then(|def| def.param(param).map(|q| def.value(d, q))))
+                .or_else(|| target.builtin_param().map(|q| q.default))
+                .unwrap_or(0.0),
         }
     }
 
@@ -519,11 +499,12 @@ impl Controller {
         match target {
             AutomationTarget::Volume => volume_label(v),
             AutomationTarget::Pan => fmt_pan(v),
-            AutomationTarget::Synth { param } => crate::synth::fmt(synth_panel_id(*param), v),
+            AutomationTarget::Synth { .. } => format!("{v:.2}"),
             AutomationTarget::Plugin { device, param, .. } => {
                 let _ = key;
                 self.engine.plugin_param_text(*device, *param, v).unwrap_or_else(|| format!("{:.0}%", v * 100.0))
             }
+            AutomationTarget::Builtin { .. } => target.builtin_param().map_or_else(|| format!("{v:.2}"), |p| p.format(v)),
         }
     }
 
@@ -721,6 +702,16 @@ impl Controller {
             cats.push(("Synth".into(), SynthParam::ALL.iter().map(|p| e(p.name(), AutomationTarget::Synth { param: *p })).collect()));
         }
         for d in t.instrument_plugin.iter().chain(t.devices.iter()) {
+            if let Some(def) = saine_core::builtin::def_of(d) {
+                let items = def
+                    .params
+                    .iter()
+                    .filter(|p| p.automatable)
+                    .map(|p| e(p.name, AutomationTarget::Builtin { device: d.id, device_type: def.id.into(), param: p.id.into() }))
+                    .collect();
+                cats.push((def.name.into(), items));
+                continue;
+            }
             let mut params: Vec<_> = self.engine.plugin_params(d.id).into_iter().filter(|p| p.automatable).collect();
             params.sort_by(|a, b| a.group.cmp(&b.group));
             let mut items = Vec::new();
@@ -1261,23 +1252,36 @@ impl Controller {
             s.set_master_pos(mp);
         }
         s.set_master_vol_auto(mv.is_some());
-        // Synth knobs (built-in synth of the selected instrument track).
-        if let Some(t) = self.synth_track() {
-            for param in SynthParam::ALL {
-                let id = synth_panel_id(param);
-                let target = AutomationTarget::Synth { param };
-                let v = self.auto_value_now(Some(t), &target);
+        // Synth knobs (built-in Synth of the selected instrument track) follow their lanes.
+        if let (Some(t), Some(device)) = (self.synth_track(), self.synth_device()) {
+            let def = &saine_core::builtin::synth_v2::SYNTH_V2;
+            let targets: Vec<AutomationTarget> = self.project().track(t).map_or(Vec::new(), |tr| tr.automation.iter().filter(|l| matches!(&l.target, AutomationTarget::Builtin { device: d, .. } if *d == device)).map(|l| l.target.clone()).collect());
+            let mut followed = vec![false; def.params.len()];
+            for target in targets {
+                let AutomationTarget::Builtin { param, .. } = &target else { continue };
+                let (Some(id), Some(v)) = (def.index_of(param), self.auto_value_now(Some(t), &target)) else { continue };
+                followed[id] = true;
                 if let Some(mut row) = self.synth_params_model.row_data(id) {
-                    let auto = v.is_some();
-                    let mut changed = row.auto != auto;
-                    row.auto = auto;
-                    if let Some(v) = v {
-                        let (n, text) = (crate::synth::to_norm(id, v), crate::synth::fmt(id, v));
-                        changed |= (row.norm - n).abs() > 1e-5 || row.text.as_str() != text;
+                    let p = &def.params[id];
+                    let (n, text) = (p.to_normalized(v), p.format(v));
+                    if !row.auto || (row.norm - n).abs() > 1e-5 || row.text.as_str() != text {
+                        row.auto = true;
                         row.norm = n;
                         row.text = text.into();
+                        self.synth_params_model.set_row_data(id, row);
                     }
-                    if changed {
+                }
+            }
+            // Controls whose lane was disabled or removed go back to the saved value.
+            if let Some((_, v)) = self.synth_values() {
+                for (id, p) in def.params.iter().enumerate() {
+                    if followed[id] {
+                        continue;
+                    }
+                    if let Some(mut row) = self.synth_params_model.row_data(id).filter(|r| r.auto) {
+                        row.auto = false;
+                        row.norm = p.to_normalized(v[id]);
+                        row.text = p.format(v[id]).into();
                         self.synth_params_model.set_row_data(id, row);
                     }
                 }
@@ -1486,11 +1490,6 @@ mod tests {
         assert_eq!(volume_label(-0.04), "+0.0");
         assert_eq!(volume_label(-6.0), "−6.0");
         assert_eq!(volume_label(-60.0), "−∞");
-        assert_eq!(synth_param_for_panel(crate::synth::p::CUTOFF), Some(SynthParam::FilterCutoff));
-        assert_eq!(synth_param_for_panel(crate::synth::p::AMP_A), None);
-        for p in SynthParam::ALL {
-            assert_eq!(synth_param_for_panel(synth_panel_id(p)), Some(p));
-        }
     }
 
     #[test]

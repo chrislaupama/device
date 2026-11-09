@@ -1,4 +1,5 @@
 #include "plugin_instance.hpp"
+#include "../devices/builtin.hpp"
 
 #include <algorithm>
 #include <thread>
@@ -17,6 +18,7 @@ const char* plugin_format_name(PluginFormat f) noexcept {
     case PluginFormat::AudioUnit: return "Audio Unit";
     case PluginFormat::Vst3: return "VST3";
     case PluginFormat::Clap: return "CLAP";
+    case PluginFormat::Builtin: return "Built-in";
     }
     return "?";
 }
@@ -65,6 +67,7 @@ std::shared_ptr<PluginInstance> create_plugin_instance(const PluginSpec& spec, d
     case PluginFormat::AudioUnit: return create_au_instance(spec, sample_rate, max_block, err);
     case PluginFormat::Vst3: return create_vst3_instance(spec, sample_rate, max_block, err);
     case PluginFormat::Clap: return create_clap_instance(spec, sample_rate, max_block, err);
+    case PluginFormat::Builtin: return create_builtin_instance(spec, sample_rate, max_block, err);
     }
     err = "unknown plugin format";
     return nullptr;

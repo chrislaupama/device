@@ -35,6 +35,7 @@ PluginInstance* PluginHost::use(const se_device_desc& d, bool instrument, const 
             e.used = true;
             e.spec.name = key.name;
             e.spec.track = key.track;
+            if (e.inst && d.format == SE_PLUGIN_BUILTIN) e.inst->update_state(d.state, d.state_len);
             return e.inst.get();
         }
         // Same id, different plugin or role: replace the instance.
