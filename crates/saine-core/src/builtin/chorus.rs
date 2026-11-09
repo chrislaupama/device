@@ -49,4 +49,5 @@ pub static CHORUS: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     hooks: Hooks::NONE,
+    samples: 0,
 };

@@ -128,6 +128,11 @@ struct SvfCoeffs {
         const float k = 1.0f / q;
         return make(prewarp(hz, sr), k, 1.0f, -k, -1.0f);
     }
+    // Band-pass with 0 dB gain at the centre; x - bandpass(x) is the notch.
+    static SvfCoeffs bandpass(float hz, float q, double sr) noexcept {
+        const float k = 1.0f / std::max(q, 1e-3f);
+        return make(prewarp(hz, sr), k, 0.0f, k, 0.0f);
+    }
     static SvfCoeffs bell(float hz, float q, float db, double sr) noexcept {
         const float a = std::pow(10.0f, db / 40.0f);
         const float k = 1.0f / (q * a);

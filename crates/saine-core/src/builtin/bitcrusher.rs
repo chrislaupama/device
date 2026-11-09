@@ -41,6 +41,7 @@ pub static BITCRUSHER: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     hooks: Hooks::NONE,
+    samples: 0,
 };
 
 /// The crushed picture: one cycle of a 100 Hz sine at 48 kHz (480 samples)

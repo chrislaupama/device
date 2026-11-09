@@ -13,7 +13,7 @@
 // process() are RT safe.
 #pragma once
 
-#include "fft.hpp"
+#include "spectral.hpp"
 
 #include <cstdint>
 #include <vector>

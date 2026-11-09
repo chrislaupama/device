@@ -155,4 +155,5 @@ pub static GRAINS: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     hooks: Hooks::NONE,
+    samples: 0,
 };

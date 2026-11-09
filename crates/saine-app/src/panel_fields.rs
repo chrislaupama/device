@@ -27,6 +27,8 @@ const FIELD_BOTTOM: f32 = 214.0;
 const CAPTION_H: f32 = 19.0;
 const DRAG_SLOP: f32 = 3.0;
 const BANDS: usize = 24;
+/// Wet spectrum bands after the delay / reverb readouts (dsp::SpectrumTap, 20 Hz .. 20 kHz).
+const WASH_BANDS: usize = crate::panel_graph::BANDS;
 const TRAIL: usize = 12;
 const MINUS: char = '\u{2212}';
 
@@ -297,7 +299,7 @@ fn reverb_filter_db(low: f32, high: f32, f: f32) -> f32 {
     lo - 10.0 * (1.0 + (f / high).powi(2)).log10()
 }
 
-/// Band edge / centre frequency of the 24 visualiser bands (40 Hz .. 16 kHz).
+/// Band edge / centre frequency of the 24 reverb decay-picture bands (40 Hz .. 16 kHz).
 fn band_hz(i: f32) -> f32 {
     40.0 * 400f32.powf(i / BANDS as f32)
 }
@@ -437,14 +439,15 @@ fn hover_key(g: Option<Grab>) -> Option<Grab> {
 
 /// Spectrum wash from the smoothed band levels (dB): a filled curve from the bottom.
 fn wash(c: &mut Canvas, live: &Live, color: Color, x_of: &dyn Fn(f32) -> f32, bottom: f32, height: f32) {
-    if live.wash.len() != BANDS || live.wash.iter().all(|b| *b < -90.0) {
+    if live.wash.len() != WASH_BANDS || live.wash.iter().all(|b| *b < -90.0) {
         return;
     }
-    let mut pts: Vec<(f32, f32)> = vec![(x_of(band_hz(0.0)), bottom)];
+    let hz = |b: usize| 20.0 * 1000f32.powf(b as f32 / (WASH_BANDS - 1) as f32);
+    let mut pts: Vec<(f32, f32)> = vec![(x_of(hz(0)), bottom)];
     for (b, db) in live.wash.iter().enumerate() {
-        pts.push((x_of(band_hz(b as f32 + 0.5)), bottom - ((db + 72.0) / 72.0).clamp(0.0, 1.0) * height * 0.85));
+        pts.push((x_of(hz(b)), bottom - ((db + 72.0) / 72.0).clamp(0.0, 1.0) * height * 0.85));
     }
-    pts.push((x_of(band_hz(BANDS as f32)), bottom));
+    pts.push((x_of(hz(WASH_BANDS - 1)), bottom));
     let mut area = String::new();
     polyline(&mut area, &pts);
     area.push('Z');
@@ -948,7 +951,7 @@ impl Controller {
         }
     }
 
-    /// Pointer on a field: 0 down, 1 move, 2 up, 3 cancel, 4 hover, 5 double-click, 6 exit.
+    /// Pointer on a field (Studio.panel-graph): 0 down, 1 move, 2 up, 3 cancel, 4 hover, 5 leave, 6 double-click.
     #[allow(clippy::too_many_arguments)]
     pub fn panel_field_pointer(&mut self, device: DeviceId, phase: i32, x: f32, y: f32, shift: bool, alt: bool) {
         let Some(d) = self.project().device(device).cloned() else { return };
@@ -1030,7 +1033,7 @@ impl Controller {
                 }
                 fields.hover = Some((device, grab));
             }
-            5 => {
+            6 => {
                 let Some(grab) = self.field_hit(&d, def, name, w, h, x, y) else { return };
                 let params = match grab {
                     Grab::DelayBand(b) => {
@@ -1103,8 +1106,8 @@ impl Controller {
             match name {
                 "delay" | "reverb" => {
                     let off = if name == "delay" { 3 } else { 1 };
-                    if live.wash.len() != BANDS {
-                        live.wash = vec![-120.0; BANDS];
+                    if live.wash.len() != WASH_BANDS {
+                        live.wash = vec![-120.0; WASH_BANDS];
                     }
                     for (b, level) in live.wash.iter_mut().enumerate() {
                         let target = ro.get(off + b).copied().unwrap_or(-120.0);
@@ -1143,6 +1146,9 @@ impl Controller {
 
     /// Card view switch (Echoes / EQ, Tail / EQ).
     pub fn panel_view(&mut self, device: DeviceId, view: i32) {
+        if self.sampler_def(device).is_some() {
+            return self.sampler_tab(device, view);
+        }
         self.devices.panel.fields.views.insert(device, view.max(0) as usize);
         self.ui_dirty = true;
     }

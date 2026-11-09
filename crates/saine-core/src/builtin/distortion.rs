@@ -47,6 +47,7 @@ pub static DISTORTION: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     hooks: Hooks::NONE,
+    samples: 0,
 };
 
 /// Shaper of one mode (the drawn model; the engine kernel uses the same curves).

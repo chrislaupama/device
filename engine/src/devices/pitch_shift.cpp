@@ -18,7 +18,7 @@ void PitchShifter::prepare(uint32_t fft_size) {
     n_ = fft_size;
     hop_ = n_ / 4;
     bins_ = n_ / 2 + 1;
-    fft_.init(n_);
+    fft_.prepare(n_);
     window_.resize(n_);
     for (uint32_t i = 0; i < n_; ++i)
         window_[i] = static_cast<float>(0.5 - 0.5 * std::cos(2.0 * 3.14159265358979323846 * i / n_));

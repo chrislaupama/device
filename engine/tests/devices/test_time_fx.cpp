@@ -2,7 +2,7 @@
 // their shared blocks (FFT, phase-vocoder pitch shifter), through the shared
 // device harness.
 #include "device_harness.hpp"
-#include "devices/fft.hpp"
+#include "devices/spectral.hpp"
 #include "devices/pitch_shift.hpp"
 
 using namespace devtest;
@@ -26,7 +26,7 @@ std::vector<float> echo_defaults() { return defaults_of("echo"); }
 double dominant_hz(const Signal& x, std::size_t from) {
     constexpr uint32_t n = 8192;
     saine::dsp::RealFft fft;
-    fft.init(n);
+    fft.prepare(n);
     std::vector<float> f(n), re(n / 2 + 1), im(n / 2 + 1);
     for (uint32_t i = 0; i < n; ++i) f[i] = x[from + i] * static_cast<float>(0.5 - 0.5 * std::cos(2.0 * 3.14159265358979 * i / n));
     fft.forward(f.data(), re.data(), im.data());
@@ -54,7 +54,7 @@ std::size_t argmax_abs(const Signal& s, std::size_t from = 0, std::size_t to = S
 
 TEST_CASE(real_fft_round_trips_and_finds_a_sine) {
     saine::dsp::RealFft fft;
-    fft.init(1024);
+    fft.prepare(1024);
     const Signal x = noise(1024, 1.0f, 9);
     std::vector<float> re(513), im(513), y(1024);
     fft.forward(x.data(), re.data(), im.data());
@@ -411,9 +411,11 @@ TEST_CASE(reverb_cuts_and_shimmer_adds_upper_octave) {
         s.run_mono(tone(48000 * 2, 300.0, kRate, 0.3));
         return s.readouts();
     };
-    // Bands around 1.2 kHz (two octaves above 300 Hz is not the point; +1 octave = 600 Hz, band 11..12).
+    // The spectrum band nearest the shimmer's +1 octave (600 Hz).
+    uint32_t b = 0;
+    while (b + 1 < saine::dsp::kSpectrumBands && saine::dsp::spectrum_band_hz(b + 1) < 600.0f) ++b;
     const auto hall = readout_band(1.f), shim = readout_band(4.f);
-    CHECK(shim[1 + 11] > hall[1 + 11] + 3.0f);
+    CHECK(shim[1 + b] > hall[1 + b] + 3.0f);
 }
 
 // ---------------------------------------------------------------- grains

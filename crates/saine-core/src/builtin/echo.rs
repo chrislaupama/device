@@ -465,4 +465,5 @@ pub static ECHO: DeviceDef = DeviceDef {
     ],
     sidechain: true,
     hooks: Hooks { label: None, text: Some(motor_text), read: Some(motor_read) },
+    samples: 0,
 };

@@ -45,6 +45,7 @@ pub static TAPE_SATURATION: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     hooks: Hooks::NONE,
+    samples: 0,
 };
 
 /// Drawn transfer of the tape stage: drive into the mode's saturation curve

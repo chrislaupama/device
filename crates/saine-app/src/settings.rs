@@ -117,6 +117,14 @@ pub fn apply_startup_prefs(engine: &saine_engine::Engine, p: &Preferences) -> Re
 impl Controller {
     // ---------------------------------------------------------------- startup
 
+    /// Remember the interface zoom level (saved with the preferences; not project state).
+    pub fn set_interface_zoom(&mut self, percent: u32) {
+        if self.settings.prefs.interface_zoom != percent {
+            self.settings.prefs.interface_zoom = percent;
+            self.save_prefs();
+        }
+    }
+
     fn save_prefs(&mut self) {
         if let Some(path) = self.settings.prefs_path.clone()
             && let Err(e) = prefs::save(&path, &self.settings.prefs)
@@ -439,7 +447,7 @@ impl Controller {
                 automation: vec![],
             }],
             master_gain: 1.0,
-            master_automation: vec![],
+            master_automation: vec![], device_assets: Default::default(),
         };
         let e = &self.engine;
         let off = saine_engine::MetronomeConfig { enabled: false, gain: 0.0, frames_per_beat: 24_000.0, beats_per_bar: 4 };

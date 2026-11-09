@@ -55,7 +55,7 @@ export struct TreeRow { depth: int, label: string, count: string, icon: int, exp
 export struct PanelKnob { param: int, x: length, y: length, label: string, value: string, norm: float, bipolar: bool, dim: bool, face: int, face-curve: string, face-bend: string, face-unity: string, latch: bool, on: bool, momentary: bool, inert: bool }
 // Picker row item. kind 0 caption, 1 segmented choice, 2 menu pill (param -1: sidechain, else a
 // choice menu), 3 value box, 4 flexible gap, 5 latch (On/Off parameter; label shows the state,
-// selected 0 / 1), 6 view switch (choices = view names, selected = shown view; UI state).
+// selected 0 / 1), 6 action button, 7 view switch / tabs (choices = view names, selected = shown view; UI state).
 export struct PanelPick { kind: int, param: int, label: string, choices: [string], selected: int, value: string, enabled: bool, width: length }
 // Vertical slider column (x = column left, card relative).
 // zero: normalised position the fill starts from (0 = bottom; 0 dB on a range through zero).
@@ -66,7 +66,7 @@ export struct PanelTick { y: length, text: string, rule: bool }
 export struct PanelPath { commands: string, stroke: color, width: length, fill: color }
 // align: 0 left, 1 centre, 2 right of [x, x + w].
 export struct PanelText { x: length, y: length, w: length, h: length, text: string, color: color, size: length, weight: int, align: int }
-// hot: hovered or dragged (pointer canvases).
+// hot: drawn highlighted (hovered or dragged handle).
 export struct PanelGrip { x: length, y: length, label: string, value: string, hot: bool }
 // Drag zone: param-x / param-y (-1 = axis unused), norm per px (rate-x < 0: dragging right lowers).
 export struct PanelZone { x: length, y: length, w: length, h: length, param-x: int, param-y: int, rate-x: float, rate-y: float }
@@ -74,9 +74,10 @@ export struct PanelCanvas {
     visible: bool, well: bool, x: length, y: length, w: length, h: length, well-y: length,
     caption: string, readout: string,
     paths: [PanelPath], texts: [PanelText], grips: [PanelGrip], zones: [PanelZone],
-    // pointer: every pointer event in the well goes to Rust (panel-custom) for bodies whose
-    // gestures zones can't express; cursor: 0 default, 1 both axes, 2 horizontal, 3 vertical.
-    pointer: bool, cursor: int,
+    // pointer: raw pointer events over the well go to Rust (Studio.panel-graph), which hit-tests
+    // them; cursor: 0 default, 1 move, 2 ew-resize, 3 ns-resize. readout-accent: the caption
+    // value is drawn in the track colour.
+    pointer: bool, cursor: int, readout-accent: bool,
 }
 // Freely placed control (custom card bodies): kind 0 latch (On/Off parameter), 1 menu pill
 // (choice parameter, opens a menu of its choices).
@@ -87,6 +88,29 @@ export struct PanelStrip {
     caption: string, readout: string, ticks: [PanelTick],
     in-fill: string, gr-fill: string, in-line: string, out-line: string,
     thresh-param: int, thresh-y: length, thresh-dash: string, thresh-label: string, thresh-value: string, thresh-rate: float,
+}
+
+// Sampler-family panels (src/sampler_panel.rs): every length is card relative and
+// already scaled; paths are in their box's own coordinates.
+export struct PanelPad { label: string, name: string, filled: bool, selected: bool, level: float, x: length, y: length, w: length, h: length }
+export struct PanelHandle { x: length, y: length, active: bool }
+export struct PanelSampler {
+    visible: bool,
+    kind: int,                 // 0 Sampler, 1 Pad Sampler, 2 Drum Rack
+    pads: [PanelPad], divider-x: length,
+    sub-visible: bool, sub-x: length, sub-y: length, sub-w: length, sub-h: length, sub-on: bool, sub-on-param: int, sub-title: string,
+    layer-visible: bool, layer-x: length, layer-y: length, layer-text: string, layer-name: string, mapped: string, can-step: bool,
+    play-visible: bool, play-x: length,
+    head-x: length, head-picks: [PanelPick],
+    row-y: length, row-right: length, row-picks: [PanelPick],
+    well-x: length, well-y: length, well-w: length, well-h: length,
+    loaded: bool, empty-text: string, hint: string, sample-name: string, can-remove: bool,
+    wave: string, dim: string, fades: string, slices: string, sel-x: length, sel-w: length, heads: string,
+    start-x: length, end-x: length, fade-in-x: length, fade-out-x: length, loop-x: length, grips: [length],
+    tabs-visible: bool, tabs-y: length, tab-pick: PanelPick, tab-right: length, tab-picks: [PanelPick],
+    knobs: [PanelKnob], knob-y: length,
+    pic-visible: bool, pic-x: length, pic-y: length, pic-w: length, pic-h: length,
+    pic-fill: string, pic-line: string, pic-grid: string, handles: [PanelHandle], pic-pads: [PanelPad],
 }
 
 // Plotted field (View::Field): caption + readout above a well; paths in well coordinates.
@@ -127,6 +151,7 @@ export struct DeviceCard {
     picks: [PanelPick],
     sliders: [PanelSlider],
     strip: PanelStrip,
+    sampler: PanelSampler,
     field: PanelField,
     canvas: PanelCanvas,
     buttons: [PanelButton],
@@ -469,7 +494,16 @@ export global Studio {
     callback panel-preset-step(int, int);                    // previous (-1) / next (+1) factory preset
     callback panel-view(int, int);                           // card view switch (UI state)
     callback panel-latch(int, int, int);                     // latch: 0 click (toggle) / 1 press / 2 release (momentary)
-    callback panel-custom(int, int, length, length, bool, bool); // pointer canvas: 0 down 1 move 2 up 3 cancel 4 hover 5 double 6 exit; field x, y; shift, alt
+    // Sampler-family panels (src/sampler_panel.rs).
+    callback sampler-pad(int, int, int, bool);               // which (0 rack pad, 1 slice pad), index, pressed
+    callback sampler-layer(int, int);                        // previous (-1) / next (+1) sound of the pad
+    callback sampler-play(int, bool);                        // Play button pressed / released
+    callback sampler-action(int, int);                       // pick-row button (view, add slice, clear slice)
+    callback sampler-remove(int);                            // remove the shown sample
+    callback sampler-load(int);                              // choose an audio file for the shown slot
+    callback sampler-well(int, int, float, float, bool);     // phase, x fraction, grab distance (fraction), alt
+    callback sampler-handle(int, int, int, length, length);  // picture handle i: phase, x, y (picture px)
+    callback panel-graph(int, int, float, float, bool, bool); // canvas pointer (PanelCanvas.pointer): phase (0 press, 1 drag, 2 release, 3 cancel, 4 hover, 5 leave, 6 double-click), well x, y (px), shift, alt
     callback add-category(int, length, length); // row (Built-in, AU, VST3, CLAP, Chains), window x, y for the list
     callback add-search-edited(string);
     callback add-result-pick(int);

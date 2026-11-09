@@ -198,4 +198,5 @@ pub static DELAY: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     hooks: Hooks { label: Some(label), ..Hooks::NONE },
+    samples: 0,
 };

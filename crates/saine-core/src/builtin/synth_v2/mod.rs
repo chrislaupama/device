@@ -184,6 +184,7 @@ pub static SYNTH_V2: DeviceDef = DeviceDef {
     factory: &FACTORY,
     sidechain: false,
     hooks: crate::builtin::Hooks::NONE,
+    samples: 0,
 };
 
 const OFF: f32 = 0.0;

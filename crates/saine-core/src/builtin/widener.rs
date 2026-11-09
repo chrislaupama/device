@@ -39,6 +39,7 @@ pub static WIDENER: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     hooks: Hooks::NONE,
+    samples: 0,
 };
 
 /// Effective width (percent) at frequency f: the side path is scaled by

@@ -50,4 +50,5 @@ pub static RING_MOD: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     hooks: Hooks::NONE,
+    samples: 0,
 };

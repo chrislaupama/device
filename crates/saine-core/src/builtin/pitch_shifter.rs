@@ -84,4 +84,5 @@ pub static PITCH_SHIFTER: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     hooks: Hooks::NONE,
+    samples: 0,
 };

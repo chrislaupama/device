@@ -52,4 +52,5 @@ pub static COMPRESSOR: DeviceDef = DeviceDef {
     ],
     sidechain: true,
     hooks: Hooks::NONE,
+    samples: 0,
 };

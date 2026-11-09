@@ -184,6 +184,7 @@ pub static CHARACTER_MOD: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     hooks: Hooks::NONE,
+    samples: 0,
 };
 
 /// Circuit switch writes (reference behaviour): changing the circuit or its

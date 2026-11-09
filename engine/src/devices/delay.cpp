@@ -14,7 +14,7 @@
 #include "builtin.hpp"
 #include "dsp.hpp"
 #include "dsp_delay.hpp"
-#include "spectrum_tap.hpp"
+#include "spectral.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -34,11 +34,15 @@ constexpr const char* kParamIds[kParamCount] = {
     "eq2Freq", "eq2Gain", "eq2Q", "eq2Enabled", "eq3Freq", "eq3Gain", "eq3Q", "eq3Enabled",
     "eq4Freq", "eq4Gain", "eq4Q", "eq4Enabled", "eq5Freq", "eq5Gain", "eq5Q", "eq5Enabled",
     "sync", "dry", "timeMs", "link", "timeDivisionR", "timeMsR"};
-constexpr uint32_t kBands = dsp::SpectrumTap::kBands;
-// Readouts: wet peak (dB), current delay of each side (ms), 24 wet band levels (dB).
-constexpr const char* kReadoutIds[3 + kBands] = {"wet_db", "delay_l_ms", "delay_r_ms", "b0", "b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8",
-                                                 "b9", "b10", "b11", "b12", "b13", "b14", "b15", "b16", "b17", "b18", "b19", "b20", "b21",
-                                                 "b22", "b23"};
+constexpr uint32_t kBands = dsp::kSpectrumBands;
+// Readouts: wet peak (dB), current delay of each side (ms), then the wet spectrum bands (dB, dsp::SpectrumTap).
+struct ReadoutIds {
+    const char* ids[3 + kBands];
+    constexpr ReadoutIds() : ids{"wet_db", "delay_l_ms", "delay_r_ms"} {
+        for (uint32_t i = 0; i < kBands; ++i) ids[3 + i] = dsp::kSpectrumIds[i];
+    }
+};
+constexpr ReadoutIds kReadouts{};
 enum Mode : int { kTape, kDigital, kBbd };
 constexpr float kDivisionBeats[15] = {8.0f, 4.0f, 3.0f, 2.0f, 4.0f / 3.0f, 1.5f, 1.0f, 2.0f / 3.0f, 0.75f, 0.5f, 1.0f / 3.0f, 0.375f, 0.25f, 1.0f / 6.0f, 0.125f};
 constexpr float kMaxSeconds = 12.0f;
@@ -211,11 +215,11 @@ public:
             aa_[c][0].flush_state();
             aa_[c][1].flush_state();
         }
-        tap_.push(wet_.data(), std::min(n, cap));
+        tap_.push(wet_.data(), wet_.data(), std::min(n, cap));
         ro[0] = dsp::gain_to_db(wet_peak);
         ro[1] = cur_[0] / static_cast<float>(sr_) * 1000.0f;
         ro[2] = cur_[1] / static_cast<float>(sr_) * 1000.0f;
-        for (uint32_t b = 0; b < kBands; ++b) ro[3 + b] = tap_.bands()[b];
+        tap_.write(ro + 3);
     }
 
 private:
@@ -258,13 +262,17 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Delay>(); }
 } // namespace
 
 extern const BuiltinDescriptor kDelayDescriptor;
-constexpr float kIdle[3 + kBands] = {-120.0f, 0.0f, 0.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f,
-                                     -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f,
-                                     -120.0f, -120.0f, -120.0f, -120.0f};
+struct IdleReadouts {
+    float v[3 + kBands];
+    constexpr IdleReadouts() : v{-120.0f, 0.0f, 0.0f} {
+        for (uint32_t i = 3; i < 3 + kBands; ++i) v[i] = -120.0f;
+    }
+};
+constexpr IdleReadouts kIdle{};
 constexpr float kDefaults[kParamCount] = {120.f, 8.f, 50.f, 0.f, 0.0692f, 0.f, 100.f, 50.f, 0.f,
                                           20.f, 0.f, 0.71f, 0.f, 150.f, 0.f, 1.f, 1.f, 500.f, 0.f, 1.f, 1.f,
                                           3000.f, 0.f, 1.f, 1.f, 8000.f, 0.f, 1.f, 1.f, 20000.f, 0.f, 0.71f, 0.f,
                                           1.f, 1.f, 500.f, 1.f, 8.f, 500.f};
-const BuiltinDescriptor kDelayDescriptor{"delay", kParamIds, kReadoutIds, &create, kIdle, kDefaults};
+const BuiltinDescriptor kDelayDescriptor{"delay", kParamIds, kReadouts.ids, &create, kIdle.v, kDefaults};
 
 } // namespace saine

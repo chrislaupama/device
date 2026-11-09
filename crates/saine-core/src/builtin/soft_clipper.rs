@@ -44,6 +44,7 @@ pub static SOFT_CLIPPER: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     hooks: Hooks::NONE,
+    samples: 0,
 };
 
 /// Clip curve of a shape for a normalised input u (1.0 = the ceiling) and

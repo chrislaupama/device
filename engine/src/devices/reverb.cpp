@@ -24,7 +24,7 @@
 #include "dsp.hpp"
 #include "dsp_delay.hpp"
 #include "pitch_shift.hpp"
-#include "spectrum_tap.hpp"
+#include "spectral.hpp"
 
 #include <algorithm>
 #include <array>
@@ -40,10 +40,15 @@ enum Param : uint32_t {
 };
 constexpr const char* kParamIds[kParamCount] = {"size", "decay", "damping", "predelay", "mix", "width", "mode2", "highcut2",
                                                 "lowcut2", "dry", "moddepth", "modrate", "shift1", "shift2", "shimmer", "diffusion"};
-// Readouts: wet peak (dB), then 24 band levels of the wet signal (dB, 40 Hz .. 16 kHz).
-constexpr uint32_t kBands = dsp::SpectrumTap::kBands;
-constexpr const char* kReadoutIds[1 + kBands] = {"tail_db", "b0", "b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9", "b10", "b11",
-                                                 "b12", "b13", "b14", "b15", "b16", "b17", "b18", "b19", "b20", "b21", "b22", "b23"};
+// Readouts: wet peak (dB), then the wet spectrum bands (dB, dsp::SpectrumTap).
+constexpr uint32_t kBands = dsp::kSpectrumBands;
+struct ReadoutIds {
+    const char* ids[1 + kBands];
+    constexpr ReadoutIds() : ids{"tail_db"} {
+        for (uint32_t i = 0; i < kBands; ++i) ids[1 + i] = dsp::kSpectrumIds[i];
+    }
+};
+constexpr ReadoutIds kReadouts{};
 enum Mode : int { kRoom, kHall, kPlate, kSpring, kShimmerMode, kHaze };
 
 constexpr int kLines = 16;
@@ -203,9 +208,9 @@ public:
             }
             const auto m_cap = std::min<uint32_t>(n, static_cast<uint32_t>(wet_mono_.size()));
             std::fill(wet_mono_.begin(), wet_mono_.begin() + m_cap, 0.0f);
-            tap_.push(wet_mono_.data(), m_cap);
+            tap_.push(wet_mono_.data(), wet_mono_.data(), m_cap);
             ro[0] = -120.0f;
-            for (uint32_t b = 0; b < kBands; ++b) ro[1 + b] = tap_.bands()[b];
+            tap_.write(ro + 1);
             return;
         }
 
@@ -355,9 +360,9 @@ public:
             for (auto& s : shifter_) s.reset();
         }
         shim_was_on_ = shim_on;
-        tap_.push(wet_mono_.data(), m_cap);
+        tap_.push(wet_mono_.data(), wet_mono_.data(), m_cap);
         ro[0] = dsp::gain_to_db(wet_peak);
-        for (uint32_t b = 0; b < kBands; ++b) ro[1 + b] = tap_.bands()[b];
+        tap_.write(ro + 1);
     }
 
 private:
@@ -403,10 +408,14 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Reverb>(); 
 } // namespace
 
 extern const BuiltinDescriptor kReverbDescriptor;
-constexpr float kIdle[1 + kBands] = {-120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f,
-                                     -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f,
-                                     -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f};
+struct IdleReadouts {
+    float v[1 + kBands];
+    constexpr IdleReadouts() : v{-120.0f} {
+        for (uint32_t i = 1; i < 1 + kBands; ++i) v[i] = -120.0f;
+    }
+};
+constexpr IdleReadouts kIdle{};
 constexpr float kDefaults[kParamCount] = {50.f, 2.f, 50.f, 10.f, 30.f, 100.f, 1.f, 12000.f, 20.f, 1.f, 20.f, 1.f, 7.f, 10.f, 60.f, 50.f};
-const BuiltinDescriptor kReverbDescriptor{"reverb", kParamIds, kReadoutIds, &create, kIdle, kDefaults};
+const BuiltinDescriptor kReverbDescriptor{"reverb", kParamIds, kReadouts.ids, &create, kIdle.v, kDefaults};
 
 } // namespace saine

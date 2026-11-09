@@ -49,6 +49,9 @@ impl AudioPrefs {
 #[serde(default)]
 pub struct Preferences {
     pub audio: AudioPrefs,
+    /// Interface zoom in percent (View › Zoom In / Out / Reset); 0 = default (100).
+    #[serde(default)]
+    pub interface_zoom: u32,
 }
 
 /// The app's support directory (see the module docs), shared by the preferences
@@ -109,7 +112,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("saine-prefs-test-{}", std::process::id()));
         let path = dir.join("preferences.json");
         assert_eq!(load(&path).unwrap(), None);
-        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() } };
+        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110 };
         save(&path, &p).unwrap();
         assert_eq!(load(&path).unwrap(), Some(p.clone()));
         assert!(p.audio.is_custom());
