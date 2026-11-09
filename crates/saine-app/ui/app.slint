@@ -243,6 +243,7 @@ component AddTrackButton inherits Rectangle {
 }
 
 component Timeline inherits Panel {
+    callback focus-main();
     out property <length> lanes-width: lanes.width;
     out property <length> lanes-height: lanes.height;
 
@@ -363,7 +364,7 @@ component Timeline inherits Panel {
         }
         for t[i] in Studio.tracks: Rectangle {
             x: 0; y: t.y - Studio.scroll-y; width: parent.width; height: t.h;
-            TrackHeaderRow { x: 0; y: 0; width: parent.width; height: Tokens.track-h; t: t; automation: Studio.auto-shown; level: Studio.track-levels[i]; }
+            TrackHeaderRow { x: 0; y: 0; width: parent.width; height: Tokens.track-h; t: t; automation: Studio.auto-shown; level: Studio.track-levels[i]; edit-done => { root.focus-main(); } }
             Rectangle { y: Tokens.track-h; height: Tokens.track-pitch - Tokens.track-h; background: t.selected ? #353639 : Tokens.line-separator; }
         }
         // Expanded automation rows (src/automation.rs, EXTRA_H + separator): well fill, a 1 px
@@ -392,6 +393,7 @@ component Timeline inherits Panel {
     // ---- master row (36 px; 76 px with the automation row) ----
     Rectangle { x: 0; y: root.height - Studio.master-h - 0.5px; width: Tokens.lane-x - 0.5px; height: 0.5px; background: Tokens.line-separator; }
     MasterHeaderRow {
+        edit-done => { root.focus-main(); }
         x: 0; y: root.height - Studio.master-h; width: Tokens.lane-x - 0.5px; height: Studio.master-h;
         automation: Studio.auto-shown; volume-pos: Studio.master-pos; vol-auto: Studio.master-vol-auto;
         level: Studio.master-level; auto-state: Studio.master-auto-state;
@@ -635,6 +637,7 @@ export component AppWindow inherits Window {
         Header { x: 0; y: 0; width: root.width; height: 73px; }
         if Studio.sounds-visible: Browser { x: 5px; y: 78.2px; width: 252.45px; height: root.top-h; }
         timeline := Timeline {
+            focus-main => { fs.focus(); }
             x: Studio.sounds-visible ? 262.65px : 5px; y: 78.2px;
             width: root.width - self.x - 5px - root.right-w; height: root.top-h;
         }

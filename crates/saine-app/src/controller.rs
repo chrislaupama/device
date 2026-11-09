@@ -115,7 +115,7 @@ pub fn parse_pan_text(s: &str) -> Option<f32> {
 }
 
 pub(crate) fn fmt_pan(p: f32) -> String {
-    let v = (p * 50.0).round() as i32;
+    let v = (p * 100.0).round() as i32;
     match v {
         0 => "C".into(),
         v if v < 0 => format!("{}L", -v),
@@ -1577,7 +1577,7 @@ mod tests {
     #[test]
     fn pan_text() {
         assert_eq!(fmt_pan(0.0), "C");
-        assert_eq!(fmt_pan(-0.5), "25L");
-        assert_eq!(fmt_pan(1.0), "50R");
+        assert_eq!(fmt_pan(-0.5), "50L");
+        assert_eq!(fmt_pan(1.0), "100R");
     }
 }

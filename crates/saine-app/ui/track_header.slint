@@ -46,6 +46,7 @@ export component TrackPan inherits Rectangle {
     callback released();
     callback reset();
     callback edit();
+    property <bool> reset-held;
     property <float> start-value;
     property <float> angle: root.value * 135;
     property <float> c: self.width / 1px / 2;
@@ -94,12 +95,13 @@ export component TrackPan inherits Rectangle {
     if root.enabled: TouchArea {
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                root.reset-held = e.modifiers.alt;
                 if (e.modifiers.alt) { root.reset(); } else { root.start-value = root.value; }
             }
             if (e.kind == PointerEventKind.up) { root.released(); }
         }
         moved => {
-            root.value-changed(max(-1, min(1, root.start-value + (self.pressed-y - self.mouse-y) / 1px / 150 * 2)));
+            if (!root.reset-held) { root.value-changed(max(-1, min(1, root.start-value + (self.pressed-y - self.mouse-y) / 1px / 150 * 2))); }
         }
         double-clicked => { root.edit(); }
     }
@@ -118,6 +120,7 @@ export component TrackVolume inherits Rectangle {
     callback moved(float);
     callback released();
     callback reset();
+    property <bool> reset-held;
     property <length> rail-y: 1.7px;
     property <length> travel: self.width - 11.9px;
     height: 11.9px;
@@ -144,11 +147,12 @@ export component TrackVolume inherits Rectangle {
     ta := TouchArea {
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                root.reset-held = e.modifiers.alt;
                 if (e.modifiers.alt) { root.reset(); } else { root.moved(max(0, min(1, (self.mouse-x - 5.95px) / root.travel))); }
             }
             if (e.kind == PointerEventKind.up) { root.released(); }
         }
-        moved => { root.moved(max(0, min(1, (self.mouse-x - 5.95px) / root.travel))); }
+        moved => { if (!root.reset-held) { root.moved(max(0, min(1, (self.mouse-x - 5.95px) / root.travel))); } }
         double-clicked => { root.reset(); }
     }
 }
@@ -219,6 +223,8 @@ component ChannelControls inherits Rectangle {
     callback released();
     /// Inline pan entry ("C", "30L", "30R" or a number -100..100), opened by double-clicking the knob.
     callback pan-text(string);
+    /// The pan field closed from the keyboard (Enter or Escape): give focus back to the window.
+    callback edit-done();
     property <bool> editing;
     // root spans the content box; height 13.6 (16 px row)
     property <length> vol-w: min(68px, root.width - 51px - 18.7px);
@@ -242,9 +248,9 @@ component ChannelControls inherits Rectangle {
             horizontal-alignment: center; vertical-alignment: center; single-line: true;
             selection-background-color: #ffffff47;
             init => { self.focus(); self.select-all(); }
-            accepted => { root.editing = false; root.pan-text(self.text); }
+            accepted => { root.editing = false; root.pan-text(self.text); root.edit-done(); }
             key-pressed(e) => {
-                if (e.text == Key.Escape) { root.editing = false; return accept; }
+                if (e.text == Key.Escape) { root.editing = false; root.edit-done(); return accept; }
                 reject
             }
             changed has-focus => { if (!self.has-focus && root.editing) { root.editing = false; root.pan-text(self.text); } }
@@ -261,6 +267,7 @@ component ChannelControls inherits Rectangle {
 }
 
 export component TrackHeaderRow inherits Rectangle {
+    callback edit-done();
     in property <TrackRow> t;
     in property <TrackLevel> level;
     in property <bool> automation;        // automation lanes shown (88 px rows: full chrome)
@@ -313,6 +320,7 @@ export component TrackHeaderRow inherits Rectangle {
         on: root.t.monitor; on-color: Tokens.track-monitor-on; on-text: #1a1a1a; pressed => { Studio.track-monitor(root.t.id); }
     }
     ChannelControls {
+        edit-done => { root.edit-done(); }
         x: 27.2px; y: root.bottom-y; width: root.width - 34px; height: 13.6px;
         pan: root.t.pan; accent: root.t.pan-auto ? #65bce3 : root.t.color;
         volume-pos: root.t.volume-pos; handle-auto: root.t.vol-auto;
@@ -346,6 +354,7 @@ export component TrackHeaderRow inherits Rectangle {
 // Master row: pinned below the tracks; 36 px (76 px with automation lanes). No number or
 // M/S/R/I; the icon and name sit 14 px left of the track content with a 12 px gap.
 export component MasterHeaderRow inherits Rectangle {
+    callback edit-done();
     in property <bool> automation;
     in property <float> volume-pos;
     in property <TrackLevel> level;
@@ -364,6 +373,7 @@ export component MasterHeaderRow inherits Rectangle {
         font-size: 9.35px; font-weight: 700; letter-spacing: -0.374px; vertical-alignment: center;
     }
     ChannelControls {
+        edit-done => { root.edit-done(); }
         x: 27.2px; y: root.bottom-y; width: root.width - 34px; height: 13.6px;
         pan: 0; pan-enabled: false; accent: #ffffff;
         volume-pos: root.volume-pos; handle-auto: root.vol-auto;
