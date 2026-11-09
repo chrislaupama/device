@@ -61,15 +61,16 @@ component FieldLabel inherits Text {
     height: 14px;
 }
 
-// Toggle switch (Settings). `on` is local state on the PLACEHOLDER pages.
+// Toggle switch (Settings). The owner keeps `on`, so it survives page changes.
 component Switch inherits Rectangle {
-    in-out property <bool> on;
+    in property <bool> on;
+    callback toggled();
     in property <string> label;
     width: 20.5px; height: 10px; border-radius: 5px;
     background: root.on ? #2752f5 : #4a4b4f;
     accessible-role: checkbox; accessible-label: root.label; accessible-checked: root.on;
     Rectangle { x: root.on ? parent.width - self.width - 1px : 1px; y: 1px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; }
-    TouchArea { clicked => { root.on = !root.on; } }
+    TouchArea { clicked => { root.toggled(); } }
 }
 
 // Setting row label with the reference app's info badge after it.
@@ -98,6 +99,7 @@ component SmallSelect inherits Rectangle {
 // General page (the reference app z100-settings-general). Every control is a PLACEHOLDER: Saine has no
 // session restore, licensing, section-moves-clips, plugin window or voice settings yet.
 component GeneralPage inherits Rectangle {
+    in-out property <[bool]> switch-on;
     property <length> sw-x: root.width - 20.5px - 22.5px;
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "General"; font-size: 17.25px; font-weight: 700; }
     for s in [
@@ -105,16 +107,16 @@ component GeneralPage inherits Rectangle {
         { t: "Timeline annotations", y: 240.2px }, { t: "Plugin windows", y: 294.7px }, { t: "Assistant", y: 389.6px },
     ]: FieldLabel { x: 20.5px; y: s.y; text: s.t; }
     for y in [115.7px, 175.6px, 230.1px, 284.6px, 378.8px]: Rectangle { x: 20.5px; y: y; width: root.width - 41px; height: 0.75px; background: #2c2d30; }
-    for r in [
-        { t: "Always load last session", y: 88.4px, on: false }, { t: "License samples when you use them", y: 202.9px, on: true },
-        { t: "Sections move clips", y: 257.4px, on: true }, { t: "Auto-show third-party effect windows", y: 311.8px, on: true },
-        { t: "Auto-show built-in effect windows", y: 331.4px, on: false }, { t: "Keep plugin windows on top", y: 351.6px, on: true },
-        { t: "Let the assistant listen to audio", y: 406.7px, on: true }, { t: "Hold talk key to record", y: 474.6px, on: true },
-        { t: "Auto-send", y: 494.8px, on: true },
+    for r[i] in [
+        { t: "Always load last session", y: 88.4px }, { t: "License samples when you use them", y: 202.9px },
+        { t: "Sections move clips", y: 257.4px }, { t: "Auto-show third-party effect windows", y: 311.8px },
+        { t: "Auto-show built-in effect windows", y: 331.4px }, { t: "Keep plugin windows on top", y: 351.6px },
+        { t: "Let the assistant listen to audio", y: 406.7px }, { t: "Hold talk key to record", y: 474.6px },
+        { t: "Auto-send", y: 494.8px },
     ]: Rectangle {
         x: 0; y: r.y; width: root.width; height: 14px;
         RowLabel { x: 20.5px; y: 0; text: r.t; }
-        Switch { x: root.sw-x; y: 2px; on: r.on; label: r.t; }
+        Switch { x: root.sw-x; y: 2px; on: root.switch-on[i]; label: r.t; toggled => { root.switch-on[i] = !root.switch-on[i]; } }
     }
     RowLabel { x: 20.5px; y: 145.4px; text: "Playhead on stop"; }
     Rectangle {
@@ -280,6 +282,8 @@ component PluginsPage inherits Rectangle {
 }
 
 export component SettingsPanel inherits Rectangle {
+    // General page switch state lives here because GeneralPage is torn down on page change.
+    property <[bool]> general-switches: [false, true, true, true, false, true, true, true, true];
     border-radius: 10px;
     background: Tokens.bg-panel;
     border-width: 0.5px;
@@ -325,7 +329,7 @@ export component SettingsPanel inherits Rectangle {
     // ---- content ----
     if Studio.settings-page == 1: AudioPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     if Studio.settings-page == 3: PluginsPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
-    if Studio.settings-page == 0: GeneralPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
+    if Studio.settings-page == 0: GeneralPage { switch-on <=> root.general-switches; x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     if Studio.settings-page == 2: MidiPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     if Studio.settings-page > 3: Rectangle {
         x: 187px; y: 0; width: root.width - 187px; height: root.height;
