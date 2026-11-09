@@ -64,7 +64,7 @@ pub static PITCH_SHIFTER: DeviceDef = DeviceDef {
         view: Some(View::Custom("pitch-shifter")),
         clusters: &[&[Control::Knob("semitones"), Control::Knob("cents")], &[Control::Toggle("formant_preserve")], &[Control::Knob("mix")]],
         min_height: 220.0,
-        fixed_width: Some(332.0),
+        fixed_width: 332.0,
         spread_dials: true,
         ..Layout::EMPTY
     },

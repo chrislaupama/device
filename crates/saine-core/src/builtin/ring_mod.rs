@@ -31,6 +31,7 @@ pub static RING_MOD: DeviceDef = DeviceDef {
         ],
         faces: &[],
         min_height: 204.0,
+        fixed_width: 0.0,
         shown_when: &[],
         ..Layout::EMPTY
     },

@@ -10,7 +10,7 @@
 
 use crate::controller::Controller;
 use crate::device_panel::{s, Z};
-use crate::{CustomField, FieldPath, FieldPill, FieldText};
+use crate::{PanelCanvas, PanelGrip, PanelPath, PanelText};
 use saine_core::builtin::{delay, echo, grains, pitch_shifter, reverb, DeviceDef, View};
 use saine_core::{Command, Device, DeviceId};
 use slint::{Color, ModelRc, VecModel};
@@ -104,31 +104,31 @@ const NONE: Color = Color::from_argb_u8(0, 0, 0, 0);
 
 #[derive(Default)]
 struct Canvas {
-    paths: Vec<FieldPath>,
-    texts: Vec<FieldText>,
-    pills: Vec<FieldPill>,
+    paths: Vec<PanelPath>,
+    texts: Vec<PanelText>,
+    pills: Vec<PanelGrip>,
 }
 
 impl Canvas {
     fn stroke(&mut self, cmd: String, color: Color, width: f32) {
         if !cmd.is_empty() {
-            self.paths.push(FieldPath { commands: s(cmd), stroke: color, width, fill: NONE });
+            self.paths.push(PanelPath { commands: s(cmd), stroke: color, width, fill: NONE });
         }
     }
     fn fill(&mut self, cmd: String, color: Color) {
         if !cmd.is_empty() {
-            self.paths.push(FieldPath { commands: s(cmd), stroke: NONE, width: 0.0, fill: color });
+            self.paths.push(PanelPath { commands: s(cmd), stroke: NONE, width: 0.0, fill: color });
         }
     }
     /// Text whose vertical centre is y; align 0 left, 1 centre, 2 right within w.
     #[allow(clippy::too_many_arguments)]
     fn text(&mut self, x: f32, y: f32, w: f32, text: impl Into<String>, color: Color, size: f32, align: i32) {
-        self.texts.push(FieldText { x, y: y - size * 0.65, w, text: s(text.into()), color, size, align });
+        self.texts.push(PanelText { x, y: y - size * 0.65, w, h: size * 1.3, text: s(text.into()), color, size, weight: 600, align });
     }
     /// Grip pill with its left edge at x (kept inside the well), centred on y.
     fn pill(&mut self, x: f32, y: f32, w: f32, label: &str, value: &str, hot: bool) {
         let width = pill_width(label, value);
-        self.pills.push(FieldPill { x: x.min(w - width - 2.0).max(2.0), y, label: s(label), value: s(value), hot });
+        self.pills.push(PanelGrip { x: x.min(w - width - 2.0).max(2.0), y, label: s(label), value: s(value), hot });
     }
 }
 
@@ -451,9 +451,9 @@ fn wash(c: &mut Canvas, live: &Live, color: Color, x_of: &dyn Fn(f32) -> f32, bo
     c.fill(area, color);
 }
 
-fn field_name(def: &DeviceDef) -> Option<&'static str> {
+pub(crate) fn field_name(def: &DeviceDef) -> Option<&'static str> {
     match def.layout.view {
-        Some(View::Custom(n)) => Some(n),
+        Some(View::Custom(n @ ("delay" | "echo" | "reverb" | "pitch-shifter" | "grains"))) => Some(n),
         _ => None,
     }
 }
@@ -475,8 +475,8 @@ impl Controller {
         def.param(id).map_or(0.0, |p| self.panel_value(d, def, p))
     }
 
-    pub(crate) fn panel_field(&self, d: &Device, def: &'static DeviceDef, view_right: f32) -> CustomField {
-        let Some(name) = field_name(def) else { return CustomField::default() };
+    pub(crate) fn panel_field(&self, d: &Device, def: &'static DeviceDef, view_right: f32) -> PanelCanvas {
+        let Some(name) = field_name(def) else { return PanelCanvas::default() };
         let (x, y, w, h, well_y) = field_rect(def, view_right);
         let wh = h - well_y;
         let mut c = Canvas::default();
@@ -520,7 +520,7 @@ impl Controller {
             (None, "echo") => 3,
             _ => 0,
         };
-        CustomField { visible: true, x, y, w, h, caption: s(caption), value: s(value), well_y, paths: model(c.paths), texts: model(c.texts), pills: model(c.pills), cursor }
+        PanelCanvas { visible: true, well: true, x, y, w, h, well_y, caption: s(caption), readout: s(value), paths: model(c.paths), texts: model(c.texts), grips: model(c.pills), pointer: true, cursor, ..Default::default() }
     }
 
     #[allow(clippy::too_many_arguments)]

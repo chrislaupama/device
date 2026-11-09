@@ -48,33 +48,39 @@ export struct TreeRow { depth: int, label: string, count: string, icon: int, exp
 // One plugin card in the bottom-panel device chain (src/devices.rs). x is bottom-panel relative
 // and already includes the chain scroll and a drag offset.
 // ---- built-in device panel (src/device_panel.rs builds these from the DeviceDef) ----
-// Knob cell (dial row). face 1 = soft-knee transfer curve instead of the ring (paths in a
-// 32 x 32 view box). editing: the value text is being typed (inline field).
+// Knob cell (card relative x, y). face 1 = soft-knee transfer curve instead of the ring (paths
+// in a 32 x 32 view box). dim: drawn at 55% (the control has no effect in the current state).
 // latch: a two-state latch cell instead of a knob (value = its text, on = lit); momentary:
-// on only while held. inert: drawn dimmed, no gestures. steps: detent count of a stepped knob.
-export struct PanelKnob { param: int, x: length, label: string, value: string, norm: float, bipolar: bool, face: int, face-curve: string, face-bend: string, face-unity: string, latch: bool, on: bool, momentary: bool, inert: bool }
+// on only while held. inert: ignores gestures (drawn dim).
+export struct PanelKnob { param: int, x: length, y: length, label: string, value: string, norm: float, bipolar: bool, dim: bool, face: int, face-curve: string, face-bend: string, face-unity: string, latch: bool, on: bool, momentary: bool, inert: bool }
 // Picker row item. kind 0 caption, 1 segmented choice, 2 menu pill (param -1: sidechain, else a
-// choice menu), 3 value box, 4 flexible gap, 5 latch pill (value = text, selected 1 = on),
-// 6 view switch (choices = view names, selected = shown view; UI state, not a parameter).
+// choice menu), 3 value box, 4 flexible gap, 5 latch (On/Off parameter; label shows the state,
+// selected 0 / 1), 6 view switch (choices = view names, selected = shown view; UI state).
 export struct PanelPick { kind: int, param: int, label: string, choices: [string], selected: int, value: string, enabled: bool, width: length }
-// Custom field views (src/panel_fields.rs). The field sits at x, y (card relative) with an
-// optional caption line above a well starting at well-y; paths, texts and pills are in well
-// coordinates (origin = well top-left, already scaled). Paths are SVG commands.
-export struct FieldPath { commands: string, stroke: color, width: length, fill: color }
-// align: 0 left, 1 centre, 2 right of x (w wide).
-export struct FieldText { x: length, y: length, w: length, text: string, color: color, size: length, align: int }
-// Grip pill (name + value) at x (left edge), centred on y. hot: hovered or dragged.
-export struct FieldPill { x: length, y: length, label: string, value: string, hot: bool }
-// cursor: 0 default, 1 both axes (move), 2 horizontal, 3 vertical.
-export struct CustomField {
-    visible: bool, x: length, y: length, w: length, h: length,
-    caption: string, value: string, well-y: length,
-    paths: [FieldPath], texts: [FieldText], pills: [FieldPill], cursor: int,
-}
 // Vertical slider column (x = column left, card relative).
 // zero: normalised position the fill starts from (0 = bottom; 0 dB on a range through zero).
 export struct PanelSlider { param: int, x: length, label: string, value: string, norm: float, zero: float }
 export struct PanelTick { y: length, text: string, rule: bool }
+// Device field (View::Custom): layers of paths in field coordinates (the well below the
+// caption when well = true, else the field box), texts, grip pills and drag zones.
+export struct PanelPath { commands: string, stroke: color, width: length, fill: color }
+// align: 0 left, 1 centre, 2 right of [x, x + w].
+export struct PanelText { x: length, y: length, w: length, h: length, text: string, color: color, size: length, weight: int, align: int }
+// hot: hovered or dragged (pointer canvases).
+export struct PanelGrip { x: length, y: length, label: string, value: string, hot: bool }
+// Drag zone: param-x / param-y (-1 = axis unused), norm per px (rate-x < 0: dragging right lowers).
+export struct PanelZone { x: length, y: length, w: length, h: length, param-x: int, param-y: int, rate-x: float, rate-y: float }
+export struct PanelCanvas {
+    visible: bool, well: bool, x: length, y: length, w: length, h: length, well-y: length,
+    caption: string, readout: string,
+    paths: [PanelPath], texts: [PanelText], grips: [PanelGrip], zones: [PanelZone],
+    // pointer: every pointer event in the well goes to Rust (panel-custom) for bodies whose
+    // gestures zones can't express; cursor: 0 default, 1 both axes, 2 horizontal, 3 vertical.
+    pointer: bool, cursor: int,
+}
+// Freely placed control (custom card bodies): kind 0 latch (On/Off parameter), 1 menu pill
+// (choice parameter, opens a menu of its choices).
+export struct PanelButton { kind: int, param: int, x: length, y: length, w: length, label: string, on: bool }
 // Dynamics strip: caption + readout above a well; paths are in well coordinates (view box w x well-h).
 export struct PanelStrip {
     visible: bool, x: length, y: length, w: length, h: length, well-y: length,
@@ -122,7 +128,8 @@ export struct DeviceCard {
     sliders: [PanelSlider],
     strip: PanelStrip,
     field: PanelField,
-    custom: CustomField,
+    canvas: PanelCanvas,
+    buttons: [PanelButton],
 }
 
 // Settings › Plugins list rows. warn: drawn with the orange "Missing"/failure badge.
@@ -410,15 +417,17 @@ export global Studio {
     // Built-in device panels: device id, parameter index (definition order).
     callback panel-drag(int, int, int, float, float, bool); // phase 0 press / 1 move / 2 release / 3 cancel, dy since last event (px, up +), norm per px, fine
     callback panel-reset(int, int);                          // default value (Alt-click, double-click)
+    callback panel-reset-xy(int, int, int);                  // device, param x, param y (-1 = unused): both to default, one undo step
     callback panel-step(int, int, int, bool);                // arrow keys: +1 / -1, fine
     callback panel-choice(int, int, int);                    // choice index
     callback panel-text(int, int, string);                   // typed value (parsed by the definition)
     callback panel-menu(int, int, length, length);           // -1 sidechain source, -2 presets, >= 0 a dropdown's choices; window x, y
+    callback panel-drag-xy(int, int, int, int, float, float, float, float, bool); // device, param x, param y, phase, dx, dy (px, right / up +), norm per px x / y, fine
     callback panel-field(int, int, float, float, bool);      // field XY drag: device, phase (as panel-drag), dx, dy (px, up +), fine
     callback panel-preset-step(int, int);                    // previous (-1) / next (+1) factory preset
     callback panel-view(int, int);                           // card view switch (UI state)
     callback panel-latch(int, int, int);                     // latch: 0 click (toggle) / 1 press / 2 release (momentary)
-    callback panel-custom(int, int, length, length, bool, bool); // custom field pointer: 0 down 1 move 2 up 3 cancel 4 hover 5 double 6 exit; field x, y; shift, alt
+    callback panel-custom(int, int, length, length, bool, bool); // pointer canvas: 0 down 1 move 2 up 3 cancel 4 hover 5 double 6 exit; field x, y; shift, alt
     callback add-category(int, length, length); // row (Built-in, AU, VST3, CLAP, Chains), window x, y for the list
     callback add-search-edited(string);
     callback add-result-pick(int);

@@ -110,7 +110,7 @@ pub static GRAINS: DeviceDef = DeviceDef {
             ("gate", "mode", &[RHYTHM]),
             ("chance", "mode", &[RHYTHM]),
         ],
-        fixed_width: Some(532.0),
+        fixed_width: 532.0,
         spread_dials: true,
         ..Layout::EMPTY
     },

@@ -27,7 +27,7 @@
 use crate::controller::{slint_color, track_color, Controller};
 use crate::devices::{DevMenu, MenuPick};
 use crate::device_fields::{self, Fill, Live, Style};
-use crate::{CustomField, DeviceCard, PanelField, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelTick};
+use crate::{DeviceCard, PanelField, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelTick};
 use saine_core::builtin::{Control, DeviceDef, Face, Field, ParamDef, View, CLUSTER_GAP, KNOB_CELL, KNOB_GAP};
 use saine_core::{Command, Device, DeviceId, TrackId};
 use slint::{ModelRc, SharedString, VecModel};
@@ -37,13 +37,17 @@ use std::rc::Rc;
 /// Reference card lengths are at 100% zoom; ours are drawn at 85%.
 pub const Z: f32 = 0.85;
 /// Card padding, slider column width and the gap between view and sliders.
-const PAD: f32 = 8.0;
+pub(crate) const PAD: f32 = 8.0;
 const SLIDER_W: f32 = 62.0;
 const VIEW_GAP: f32 = 10.0;
 /// View row top, caption zone above the well, well bottom (card relative).
-const VIEW_Y: f32 = 63.0;
-const CAPTION_H: f32 = 19.0;
-const VIEW_BOTTOM: f32 = 214.0;
+/// Cards without a picker row start the view row higher (VIEW_Y_NO_PICKER).
+pub(crate) const VIEW_Y: f32 = 63.0;
+pub(crate) const VIEW_Y_NO_PICKER: f32 = 37.0;
+pub(crate) const CAPTION_H: f32 = 19.0;
+pub(crate) const VIEW_BOTTOM: f32 = 214.0;
+/// Dial row top (card relative).
+const DIAL_Y: f32 = 229.0;
 /// Dynamics strip plot range (dB) and history length (slots across the well).
 const PLOT_TOP_DB: f32 = 0.0;
 const PLOT_FLOOR_DB: f32 = -36.0;
@@ -133,11 +137,6 @@ fn latch_labels(p: &ParamDef) -> (&'static str, &'static str) {
     p.latch.unwrap_or(("Off", "On"))
 }
 
-fn latch_model(def: &DeviceDef, p: &ParamDef) -> ModelRc<SharedString> {
-    let (off, on) = latch_labels(p);
-    STATIC_MODELS.with(|m| m.borrow_mut().entry(format!("{}/{}/latch", def.id, p.id)).or_insert_with(|| model(vec![s(off), s(on)])).clone())
-}
-
 fn views_model(def: &DeviceDef) -> ModelRc<SharedString> {
     STATIC_MODELS.with(|m| m.borrow_mut().entry(format!("{}/views", def.id)).or_insert_with(|| model(def.layout.views.iter().map(|c| s(*c)).collect())).clone())
 }
@@ -166,6 +165,12 @@ pub(crate) fn reuse_card_models(old: &DeviceCard, new: &mut DeviceCard) {
     keep(&old.knobs, &mut new.knobs);
     keep(&old.picks, &mut new.picks);
     keep(&old.sliders, &mut new.sliders);
+    keep(&old.buttons, &mut new.buttons);
+    // Field zones are touch areas: a rebuilt one would drop its drag.
+    keep(&old.canvas.zones, &mut new.canvas.zones);
+    keep(&old.canvas.paths, &mut new.canvas.paths);
+    keep(&old.canvas.texts, &mut new.canvas.texts);
+    keep(&old.canvas.grips, &mut new.canvas.grips);
 }
 
 /// Right edge of the view row (card relative, unscaled): left of the slider column(s).
@@ -212,7 +217,13 @@ fn knob_xs(def: &DeviceDef, d: &Device) -> Vec<(&'static str, f32)> {
             x += KNOB_CELL + KNOB_GAP;
         }
     }
-    if matches!(def.layout.view, Some(View::Field(_))) && cells.len() > 1 {
+    if matches!(def.layout.view, Some(View::Custom(_))) && cells.len() > 1 {
+        // Custom bodies spread the cells across the whole card (fixed-width cards too).
+        let step = (def.layout.width() - 2.0 * PAD - KNOB_CELL) / (cells.len() - 1) as f32;
+        for (k, cell) in cells.iter_mut().enumerate() {
+            cell.1 = PAD + k as f32 * step;
+        }
+    } else if matches!(def.layout.view, Some(View::Field(_))) && cells.len() > 1 {
         let row = x - KNOB_GAP - PAD;
         let (start, step) = ((def.layout.width() - row) / 2.0, (row - KNOB_CELL) / (cells.len() - 1) as f32);
         for (k, cell) in cells.iter_mut().enumerate() {
@@ -400,6 +411,19 @@ impl Controller {
             let p = c.param().and_then(|id| def.param(id));
             match (c, p) {
                 (_, Some(p)) if !def.is_shown(d, p.id) => {}
+                // Latches align right (reference: margin-left auto) unless the row places its own gap;
+                // the label carries the state.
+                (Control::Toggle(_), Some(p)) => {
+                    if !def.layout.picker.contains(&Control::Gap) && !picks.iter().any(|q: &PanelPick| q.kind == 4) {
+                        picks.push(PanelPick { kind: 4, ..Default::default() });
+                    }
+                    let on = self.panel_value(d, def, p) >= 0.5;
+                    let label = match p.latch {
+                        Some((off, on_text)) => (if on { on_text } else { off }).to_string(),
+                        None => format!("{} {}", p.label, if on { "On" } else { "Off" }),
+                    };
+                    picks.push(PanelPick { kind: 5, param: idx(p.id), label: s(label), selected: on as i32, enabled: true, ..Default::default() });
+                }
                 (Control::Menu(_), Some(p)) => picks.push(PanelPick {
                     kind: 1,
                     param: idx(p.id),
@@ -418,19 +442,6 @@ impl Controller {
                     width: dropdown_width(p) * Z,
                     ..Default::default()
                 }),
-                (Control::Toggle(_), Some(p)) => {
-                    let on = self.panel_value(d, def, p) >= 0.5;
-                    let (off_label, on_label) = latch_labels(p);
-                    picks.push(PanelPick {
-                        kind: 5,
-                        param: idx(p.id),
-                        choices: latch_model(def, p),
-                        selected: on as i32,
-                        value: s(if on { on_label } else { off_label }),
-                        enabled: true,
-                        ..Default::default()
-                    });
-                }
                 (Control::Views, _) => picks.push(PanelPick {
                     kind: 6,
                     param: -1,
@@ -501,18 +512,31 @@ impl Controller {
         let view_right = view_right(def);
 
         // View row.
-        let (mut strip, mut field, mut custom) = (PanelStrip::default(), PanelField::default(), CustomField::default());
+        let (mut strip, mut field) = (PanelStrip::default(), PanelField::default());
         match def.layout.view {
             Some(View::DynamicsStrip { threshold }) => strip = self.dynamics_strip(d, def, threshold, view_right - PAD),
             Some(View::Field(f)) => field = self.field_view(d, def, &f, view_right - PAD),
-            Some(View::Custom(_)) => custom = self.panel_field(d, def, view_right),
-            None => {}
+            Some(View::Custom(_)) | None => {}
         }
+        let body = match def.layout.view {
+            // Pointer bodies with several grab targets (src/panel_fields.rs).
+            Some(View::Custom(_)) if crate::panel_fields::field_name(def).is_some() => {
+                crate::device_views::CustomBody { canvas: self.panel_field(d, def, view_right), ..Default::default() }
+            }
+            Some(View::Custom(name)) => {
+                let view_y = if def.layout.picker.is_empty() { VIEW_Y_NO_PICKER } else { VIEW_Y };
+                self.custom_body(d, def, name, (PAD, view_y, view_right - PAD, VIEW_BOTTOM - view_y))
+            }
+            _ => crate::device_views::CustomBody::default(),
+        };
 
-        // Dial row: knobs, and latch cells for On/Off parameters.
-        let knobs = knob_xs(def, d)
+        // Dial row (or the custom body's knob placement): knobs, and latch cells for On/Off parameters.
+        let places: Vec<(&'static str, f32, f32)> =
+            if body.knobs.is_empty() { knob_xs(def, d).into_iter().map(|(id, x)| (id, x, DIAL_Y)).collect() } else { body.knobs.clone() };
+        let knobs = places
             .into_iter()
-            .filter_map(|(id, x)| {
+            .filter(|(id, _, _)| def.is_shown(d, id))
+            .filter_map(|(id, x, y)| {
                 let p = def.param(id)?;
                 let v = self.panel_value(d, def, p);
                 let n = p.to_normalized(v);
@@ -521,10 +545,12 @@ impl Controller {
                 let mut k = PanelKnob {
                     param: idx(id),
                     x: x * Z,
+                    y: y * Z,
                     label: s(def.label_of(d, p)),
                     value: s(if latch { if v >= 0.5 { on_label } else { off_label }.to_string() } else { def.text_of(d, p, v) }),
                     norm: if p.reversed { 1.0 - n } else { n },
                     bipolar: p.is_bipolar(),
+                    dim: body.dim.contains(&id),
                     latch,
                     on: latch && v >= 0.5,
                     momentary: p.momentary,
@@ -570,7 +596,8 @@ impl Controller {
             sliders: model(sliders),
             strip,
             field,
-            custom,
+            canvas: body.canvas,
+            buttons: model(body.buttons),
             ..Default::default()
         }
     }
@@ -827,30 +854,47 @@ impl Controller {
     pub fn panel_field_drag(&mut self, device: DeviceId, phase: i32, dx: f32, dy: f32, fine: bool) {
         let Some((d, def)) = self.panel_def(device) else { return };
         let Some(View::Field(f)) = def.layout.view else { return };
+        let axes = [Self::field_axis(d, def, f.x), Self::field_axis(d, def, f.y)];
+        let (pw, ph) = field_plot_size(&f, view_right(def) - PAD);
+        self.axes_drag(device, axes, phase, [dx, dy], [1.0 / pw.max(1.0), 1.0 / ph.max(1.0)], fine);
+    }
+
+    /// Drag zone of a custom body (View::Custom): params [horizontal, vertical]
+    /// (-1 = unused), deltas since the last event (px, right / up +) and the
+    /// norm-per-px rate of each axis.
+    pub fn panel_drag_xy(&mut self, device: DeviceId, params: [i32; 2], phase: i32, delta: [f32; 2], rate: [f32; 2], fine: bool) {
+        let Some((_, def)) = self.panel_def(device) else { return };
+        let axes = params.map(|i| usize::try_from(i).ok().filter(|&i| i < def.params.len()));
+        self.axes_drag(device, axes, phase, delta, rate, fine);
+    }
+
+    /// Two-axis drag (fields and zones): live values go to the engine; release
+    /// commits one command (a Batch when both axes moved): one undo step.
+    fn axes_drag(&mut self, device: DeviceId, axes: [Option<usize>; 2], phase: i32, delta: [f32; 2], rate: [f32; 2], fine: bool) {
+        let Some((d, def)) = self.panel_def(device) else { return };
         match phase {
             0 => {
-                let axis = |ids: &[&'static str]| {
-                    Self::field_axis(d, def, ids).map(|i| {
+                let axis = |i: Option<usize>| {
+                    i.map(|i| {
                         let v = def.value(d, &def.params[i]);
                         (i, v, def.params[i].to_normalized(v), v)
                     })
                 };
-                self.devices.panel.field = Some(FieldDrag { device, axes: [axis(f.x), axis(f.y)], travel: 0.0, active: false });
+                self.devices.panel.field = Some(FieldDrag { device, axes: [axis(axes[0]), axis(axes[1])], travel: 0.0, active: false });
             }
             1 => {
-                let (pw, ph) = field_plot_size(&f, view_right(def) - PAD);
                 let Some(g) = self.devices.panel.field.as_mut().filter(|g| g.device == device) else { return };
-                g.travel += dx.abs() + dy.abs();
+                g.travel += delta[0].abs() + delta[1].abs();
                 if !g.active && g.travel < DRAG_SLOP {
                     return;
                 }
                 g.active = true;
                 let k = if fine { 0.2 } else { 1.0 };
                 let mut sends = Vec::new();
-                for (a, (delta, span)) in g.axes.iter_mut().zip([(dx, pw), (dy, ph)]) {
+                for (a, (dl, r)) in g.axes.iter_mut().zip(delta.into_iter().zip(rate)) {
                     let Some((i, _, norm, value)) = a else { continue };
                     let p = &def.params[*i];
-                    *norm = (*norm + delta / span.max(1.0) * k).clamp(0.0, 1.0);
+                    *norm = (*norm + dl * r * k).clamp(0.0, 1.0);
                     let v = if p.is_discrete() { p.from_normalized(*norm).round() } else { p.from_normalized(*norm) };
                     if v != *value {
                         *value = v;
@@ -898,6 +942,22 @@ impl Controller {
 
     pub fn panel_reset(&mut self, device: DeviceId, index: i32) {
         self.panel_set(device, index, |p, _| Some(p.default));
+    }
+
+    /// Reset of a two-parameter field zone: one command (a Batch when both change), one undo step.
+    pub fn panel_reset_xy(&mut self, device: DeviceId, params: [i32; 2]) {
+        let Some((d, def)) = self.panel_def(device) else { return };
+        let mut commands: Vec<Command> = params
+            .iter()
+            .filter_map(|&i| usize::try_from(i).ok().and_then(|i| def.params.get(i)))
+            .filter(|p| def.value(d, p) != p.default)
+            .map(|p| Command::SetDeviceParam { device, param: p.id.to_string(), value: p.default })
+            .collect();
+        match commands.len() {
+            0 => {}
+            1 => self.panel_commit(commands.remove(0)),
+            _ => self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands }),
+        }
     }
 
     /// Arrow keys: discrete parameters move one choice, continuous ones 1% of the range (0.2% fine).
@@ -952,11 +1012,16 @@ impl Controller {
         self.panel_set(device, index, |_, _| Some(v));
     }
 
-    /// Choice menu of parameter `which` (>= 0), sidechain picker (-1) or presets (-2) at window x, y.
+    /// Sidechain picker (-1), presets (-2) or the choices of parameter `which` (>= 0) at window x, y.
     pub fn panel_menu(&mut self, device: DeviceId, which: i32, x: f32, y: f32) {
         let Some((d, def)) = self.panel_def(device) else { return };
         let check = |on: bool| if on { "✓".to_string() } else { String::new() };
         let rows = match which {
+            i if i >= 0 => {
+                let Some(p) = def.params.get(i as usize).filter(|p| p.is_discrete()) else { return };
+                let cur = self.panel_value(d, def, p).round() as i32;
+                p.choices.iter().enumerate().map(|(c, name)| (name.to_string(), check(c as i32 == cur), Some(MenuPick::Choice(device, i, c as i32)), false)).collect()
+            }
             -1 => {
                 let own = self.project().find_device(device).map(|(ti, _)| self.project().tracks[ti].id);
                 // A source that already listens to this track (directly or through other sidechains) would form a cycle.

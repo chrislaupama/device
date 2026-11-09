@@ -31,6 +31,7 @@ pub static FLANGER: DeviceDef = DeviceDef {
         ],
         faces: &[],
         min_height: 202.0,
+        fixed_width: 0.0,
         shown_when: &[("rate", "sync", &[0]), ("rate_sync", "sync", &[1])],
         ..Layout::EMPTY
     },

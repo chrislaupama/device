@@ -92,7 +92,7 @@ pub static REVERB: DeviceDef = DeviceDef {
             ("diffusion", "mode2", &[HAZE]),
         ],
         // Widest of the mode layouts: [1,2,3,1] / [3,2,1,1] = 543 (the reference rule).
-        fixed_width: Some(543.0),
+        fixed_width: 543.0,
         views: &["Tail", "EQ"],
         spread_dials: true,
         ..Layout::EMPTY

@@ -165,7 +165,7 @@ pub static DELAY: DeviceDef = DeviceDef {
         shown_when: &[("timeMs", "sync", &[0]), ("timeMsR", "sync", &[0]), ("timeDivision", "sync", &[1]), ("timeDivisionR", "sync", &[1])],
         inert_when: &[("timeMsR", "link", &[1]), ("timeDivisionR", "link", &[1])],
         // Clusters [2,2,3,1]: 8 dials * 62 + 4 * 10 + 3 * 21 + 16.
-        fixed_width: Some(615.0),
+        fixed_width: 615.0,
         views: &["Echoes", "EQ"],
         spread_dials: true,
         ..Layout::EMPTY
