@@ -71,6 +71,7 @@ struct MeterHistory {
 pub struct PanelState {
     drag: Option<ParamDrag>,
     meters: HashMap<DeviceId, MeterHistory>,
+    pub(crate) views: crate::device_views::ViewState,
 }
 
 fn s(v: impl Into<SharedString>) -> SharedString {
@@ -220,13 +221,13 @@ fn strip_paths(slots: &VecDeque<(f32, f32, f32)>, w: f32, wh: f32) -> [String; 4
 }
 
 impl Controller {
-    fn panel_def(&self, id: DeviceId) -> Option<(&Device, &'static DeviceDef)> {
+    pub(crate) fn panel_def(&self, id: DeviceId) -> Option<(&Device, &'static DeviceDef)> {
         let d = self.project().device(id)?;
         Some((d, saine_core::builtin::def_of(d)?))
     }
 
     /// Value shown for a parameter: the live drag value, else the model value.
-    fn panel_value(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
+    pub(crate) fn panel_value(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
         match self.devices.panel.drag {
             Some(g) if g.device == d.id && def.params.get(g.index).is_some_and(|q| q.id == p.id) => g.value,
             _ => def.value(d, p),
@@ -344,7 +345,7 @@ impl Controller {
             }
         };
 
-        DeviceCard {
+        let mut card = DeviceCard {
             id: d.id.0 as i32,
             name: s(def.name),
             vendor: s(saine_core::builtin::VENDOR),
@@ -360,7 +361,11 @@ impl Controller {
             sliders: model(sliders),
             strip,
             ..Default::default()
+        };
+        if let Some(View::Custom(name)) = def.layout.view {
+            self.custom_card(name, d, def, &mut card);
         }
+        card
     }
 
     fn dynamics_strip(&self, d: &Device, def: &DeviceDef, threshold: &str, w: f32) -> PanelStrip {
@@ -484,6 +489,16 @@ impl Controller {
         }
     }
 
+    /// Parameter index of the running drag.
+    pub(crate) fn panel_drag_index(&self) -> Option<i32> {
+        self.devices.panel.drag.map(|g| g.index as i32)
+    }
+
+    /// True once the running drag has passed the start threshold.
+    pub(crate) fn panel_drag_active(&self) -> bool {
+        self.devices.panel.drag.is_some_and(|g| g.active)
+    }
+
     /// Escape or a cancelled pointer: restore the value from before the drag, with no undo step.
     pub fn panel_cancel_drag(&mut self) -> bool {
         let Some(g) = self.devices.panel.drag.take() else { return false };
@@ -504,7 +519,7 @@ impl Controller {
     }
 
     /// One gesture = one undo step: never merge with the previous edit of the same parameter.
-    fn panel_commit(&mut self, cmd: Command) {
+    pub(crate) fn panel_commit(&mut self, cmd: Command) {
         self.doc.seal_coalescing();
         self.execute(cmd);
         self.doc.seal_coalescing();

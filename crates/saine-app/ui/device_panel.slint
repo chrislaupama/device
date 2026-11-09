@@ -8,7 +8,7 @@
 // multiplied by PanelStyle.z. Colours are the measured card colours.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
-import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip } from "studio.slint";
+import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField } from "studio.slint";
 
 export global PanelStyle {
     out property <float> z: 0.85;
@@ -385,6 +385,61 @@ component DynamicsStrip inherits Rectangle {
     }
 }
 
+// Custom view (View::Custom): Rust draws paths and texts and handles every pointer event
+// (hit testing, gestures, menus) in src/device_views.rs.
+component FieldView inherits Rectangle {
+    in property <int> device;
+    in property <PanelField> f;
+    for p in root.f.paths: Path {
+        x: 0; y: 0; width: root.width; height: root.height;
+        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        commands: p.commands; stroke: p.stroke; stroke-width: p.width; fill: p.fill;
+        stroke-line-cap: round; stroke-line-join: round;
+    }
+    for t in root.f.texts: Text {
+        x: t.x; y: t.y; width: t.w; height: t.h;
+        text: t.text; color: t.color; font-size: t.size; font-weight: t.weight;
+        letter-spacing: -0.03 * t.size;
+        horizontal-alignment: t.align == 0 ? TextHorizontalAlignment.left : t.align == 1 ? TextHorizontalAlignment.center : TextHorizontalAlignment.right;
+        vertical-alignment: center; overflow: clip;
+    }
+    // A press takes keyboard focus so Escape (cancel gesture) and the app shortcuts reach the app.
+    keys := FocusScope {
+        key-pressed(e) => {
+            if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) { return accept; }
+            reject
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: root.f.cursor == 1 ? MouseCursor.pointer : root.f.cursor == 2 ? MouseCursor.ns-resize : root.f.cursor == 3 ? MouseCursor.ew-resize
+            : root.f.cursor == 4 ? MouseCursor.move : root.f.cursor == 5 ? MouseCursor.crosshair : MouseCursor.default;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                keys.focus();
+                Studio.panel-field(root.device, 0, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+            } else if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
+                Studio.panel-field(root.device, 5, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+            } else if (e.kind == PointerEventKind.move) {
+                Studio.panel-field(root.device, self.pressed ? 1 : 4, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+            } else if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) {
+                Studio.panel-field(root.device, 2, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+            } else if (e.kind == PointerEventKind.cancel) {
+                Studio.panel-field(root.device, 3, self.mouse-x, self.mouse-y, 0, 0, false, false, 0);
+            }
+        }
+        double-clicked => {
+            Studio.panel-field(root.device, 6, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, false, false, 0);
+        }
+        scroll-event(e) => {
+            Studio.panel-field(root.device, 7, self.mouse-x, self.mouse-y, 0, 0, e.modifiers.shift, e.modifiers.alt, e.delta-y / 1px);
+            accept
+        }
+        changed has-hover => {
+            if (!self.has-hover) { Studio.panel-field(root.device, 8, 0, 0, 0, 0, false, false, 0); }
+        }
+    }
+}
+
 export component BuiltinCard inherits Rectangle {
     in property <DeviceCard> card;
     property <float> zm: PanelStyle.z;
@@ -459,6 +514,10 @@ export component BuiltinCard inherits Rectangle {
         if root.card.strip.visible: DynamicsStrip {
             x: root.card.strip.x; y: root.card.strip.y; width: root.card.strip.w; height: root.card.strip.h;
             device: root.card.id; s: root.card.strip; accent: root.card.accent;
+        }
+        if root.card.field.visible: FieldView {
+            x: root.card.field.x; y: root.card.field.y; width: root.card.field.w; height: root.card.field.h;
+            device: root.card.id; f: root.card.field;
         }
         for s in root.card.sliders: SliderCol {
             x: s.x; y: 0; height: root.height;

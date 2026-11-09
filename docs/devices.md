@@ -77,10 +77,19 @@ flowchart LR
    from its idle value, so readouts must move away from idle as they grow
    (a peak meter rises from -120 dB, gain reduction falls from 0 dB).
 3. **Custom view (optional).** For bodies the template cannot express (EQ
-   curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
-   an arm in `Controller::builtin_card` that fills the card's view data, and a
-   Slint component in `ui/device_panel.slint` chosen by that data. Reuse
-   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures.
+   curve, shaper curve, trance-gate grid), use `View::Custom("<name>")` and
+   add an arm for `<name>` in `crates/saine-app/src/device_views.rs`
+   (`custom_card` draws, `panel_field` handles pointer events). The card's
+   `field` is a vector canvas: Rust builds SVG paths and text boxes in card
+   coordinates, `FieldView` in `ui/device_panel.slint` paints them and sends
+   every press, drag, release, hover, double-click, right-click and wheel back
+   to Rust. Hit testing, gestures and menus live in Rust. A gesture sends live
+   values to the engine and commits one undo step on release; Escape restores
+   the values from before it. The card may still use `knobs` (`KnobCell`)
+   for its dial row. The Trance Gate and the Shaper are the examples.
+   - A kernel whose latency depends on its parameters overrides
+     `BuiltinProcessor::latency_for` (main thread; the Shaper reports its
+     pitch-shift latency only while that lane is on).
 4. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),
@@ -96,9 +105,9 @@ flowchart LR
      parsing of any new display format.
 5. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
    (`saine_device_bench`, Release build) and put the numbers in the PR.
-6. **Render.** Add a `--state` that shows the device at its defaults (see
-   `reference-compressor` in `crates/saine-app/src/main.rs`), render it with
-   `--screenshot` and compare it with the reference capture.
+6. **Render.** `--state reference-<id>` shows any built-in at its defaults.
+   Render it with `--offscreen --screenshot <png>` (no window is shown) and
+   compare it with the reference capture.
 
 ## Commands
 

@@ -63,6 +63,13 @@ export struct PanelStrip {
     in-fill: string, gr-fill: string, in-line: string, out-line: string,
     thresh-param: int, thresh-y: length, thresh-dash: string, thresh-label: string, thresh-value: string, thresh-rate: float,
 }
+// Custom view field (View::Custom; src/device_views.rs): vector paths and texts drawn by
+// Rust in field coordinates (px, view box w x h); pointer events go back to Rust as
+// Studio.panel-field. align: 0 left, 1 centre, 2 right. cursor: 0 default, 1 pointer,
+// 2 ns-resize, 3 ew-resize, 4 move, 5 crosshair.
+export struct FieldPath { commands: string, stroke: brush, width: length, fill: brush }
+export struct FieldText { x: length, y: length, w: length, h: length, text: string, color: color, size: length, weight: int, align: int }
+export struct PanelField { visible: bool, x: length, y: length, w: length, h: length, paths: [FieldPath], texts: [FieldText], cursor: int }
 
 export struct DeviceCard {
     id: int,
@@ -89,6 +96,7 @@ export struct DeviceCard {
     picks: [PanelPick],
     sliders: [PanelSlider],
     strip: PanelStrip,
+    field: PanelField,
 }
 
 // Settings › Plugins list rows. warn: drawn with the orange "Missing"/failure badge.
@@ -381,6 +389,9 @@ export global Studio {
     callback panel-text(int, int, string);                   // typed value (parsed by the definition)
     callback panel-menu(int, int, length, length);           // -1 sidechain source, -2 presets; window x, y
     callback panel-preset-step(int, int);                    // previous (-1) / next (+1) factory preset
+    // Custom view field: kind 0 press, 1 drag, 2 release, 3 cancel, 4 hover, 5 right press,
+    // 6 double-click, 7 wheel (dy notches, up +), 8 pointer left; field x, y; window x, y; shift, alt.
+    callback panel-field(int, int, length, length, length, length, bool, bool, float);
     callback add-category(int, length, length); // row (Built-in, AU, VST3, CLAP, Chains), window x, y for the list
     callback add-search-edited(string);
     callback add-result-pick(int);
