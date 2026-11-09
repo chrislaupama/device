@@ -2443,6 +2443,19 @@ fn dynamics_device_steps() -> Vec<Step> {
         let k = slint::Model::row_data(&cd.knobs, 0).ok_or("no knob")?;
         (k.label == "Threshold" && k.value == "\u{2212}20.0 dB").then_some(()).ok_or(format!("{} {}", k.label, k.value))
     })));
+    // Leave the chain as the later sections expect it (their clicks assume its width).
+    v.push(DoC("dynamics: remove both devices again", Box::new(|a, ctl| {
+        let mut c = ctl.borrow_mut();
+        for id in ["character-compressor", "multiband-compressor"] {
+            if let Some(d) = builtin_of(&c, id).map(|d| d.id) {
+                c.execute(saine_core::Command::RemoveDevice { device: d });
+            }
+        }
+        c.update_ui(a);
+    })));
+    v.push(Check("dynamics: both devices are gone", Box::new(|c, _| {
+        (builtin_of(c, "character-compressor").is_none() && builtin_of(c, "multiband-compressor").is_none()).then_some(()).ok_or("still in the chain".into())
+    })));
     v
 }
 
