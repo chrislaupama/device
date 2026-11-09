@@ -44,8 +44,8 @@ component Header inherits Rectangle {
         horizontal-alignment: center; vertical-alignment: center;
         accessible-role: text;
     }
-    Pill { x: root.width - 220px; y: 9px; width: 82px; height: 23px; text: "Report a bug"; weight: 500; text-color: #f0f0f2; font-size: 9.5px; clicked => { Studio.report-bug(); } }
-    Pill { x: root.width - 131px; y: 9px; width: 118px; height: 23px; text: "Share your feedback"; weight: 500; text-color: #f0f0f2; font-size: 9.5px; clicked => { Studio.feedback(); } }
+    Pill { x: root.width - 220px; y: 9.45px; width: 82px; height: 22.1px; text: "Report a bug"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.report-bug(); } }
+    Pill { x: root.width - 131px; y: 9.45px; width: 118px; height: 22.1px; text: "Share your feedback"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.feedback(); } }
 
     // Logo: ORIGINAL sine-wave mark + "Beta" badge.
     Icon { x: 13px; y: 44px; width: 15px; height: 16px; d: Icons.logo; ink: #ffffff; stroke-width: 2.6px; }
@@ -59,7 +59,7 @@ component Header inherits Rectangle {
         x: 67px; y: 39px; width: 62px; height: 25px;
         accessible-role: checkbox; accessible-label: "Sounds"; accessible-checked: Studio.sounds-visible;
         Icon { x: 6px; width: 14px; height: 14px; d: Icons.library; ink: Studio.sounds-visible ? #c9c9cc : Tokens.icon; }
-        Text { x: 22px; y: 1.5px; height: parent.height; text: "Sounds"; font-size: 10px; font-weight: 600; color: Studio.sounds-visible ? #cfd0d3 : Tokens.text-tertiary; vertical-alignment: center; }
+        Text { x: 22px; y: 1.5px; height: parent.height; text: "Sounds"; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; color: Studio.sounds-visible ? #cfd0d3 : Tokens.text-tertiary; vertical-alignment: center; }
         TouchArea { clicked => { Studio.sounds-visible = !Studio.sounds-visible; } }
     }
 
@@ -78,40 +78,40 @@ component Header inherits Rectangle {
             ink: Studio.recording ? Tokens.record-red : Studio.record-ready ? #63656c : #303136;
             tooltip: "Record (R)"; active: false; clicked => { Studio.record(); } }
 
-        // Transport pill 464.5..1008.5 x 36..69
+        // Transport capsule 464.5..1008.5 x 34.85..68.85 (40 px high in the reference CSS)
         // Inset well: 2 px dark top lip, short inner shadow, light bottom lip.
         Inset {
-            x: 464.5px; y: 36px; width: 544px; height: 33px;
-            border-radius: 16.5px; fill: Tokens.bg-raised;
+            x: 464.5px; y: 34.85px; width: 544px; height: 34px;
+            border-radius: 17px; fill: Tokens.bg-raised;
             lip: 0.85px; shade: 1.3px; bottom: #4c4d51;
         }
         IconButton { x: 470px; y: 41px; width: 22px; height: 22px; icon: Icons.loop; ink: #63656c; tooltip: "Toggle loop (⌘L)"; active: Studio.loop-enabled; clicked => { Studio.toggle-loop(); } }
         // Automation Arm (src/automation.rs): while armed and playing, control moves write automation.
         IconButton { x: 496px; y: 41px; width: 21px; height: 22px; icon: Icons.automation; ink: #63656c; tooltip: "Automation Arm: knob moves write automation while playing";
             active: Studio.auto-armed; clicked => { Studio.auto-toggle-arm(); } }
-        Label { x: 527px; y: 45px; text: "Bar"; color: #606165; font-size: 10px; }
-        Label { x: 548px; y: 45px; text: Studio.bar-text; color: Tokens.text-bright; font-size: 10px; font-weight: 600; }
+        Label { x: 527px; y: 45px; text: "Bar"; color: #565656; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
+        Label { x: 548px; y: 45px; text: Studio.bar-text; color: #ffffff; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
         Rectangle { x: 581.5px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
-        Label { x: 595px; y: 45px; text: "Time"; color: #606165; font-size: 10px; }
-        Label { x: 624px; y: 45px; text: Studio.time-text; color: Tokens.text-bright; font-size: 10px; font-weight: 600; }
+        Label { x: 595px; y: 45px; text: "Time"; color: #565656; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
+        Label { x: 624px; y: 45px; text: Studio.time-text; color: #ffffff; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
         Rectangle { x: 689px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
-        Label { x: 703px; y: 45px; text: "BPM"; color: #606165; font-size: 10px; }
-        Label { x: 733px; y: 45px; text: Studio.bpm-text; color: Tokens.text-bright; font-size: 10px; font-weight: 600; }
+        Label { x: 703px; y: 45px; text: "BPM"; color: #565656; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
+        Label { x: 733px; y: 45px; text: Studio.bpm-text; color: #ffffff; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
         // TAP: PLACEHOLDER (tap tempo not implemented)
         Rectangle {
             x: 762px; y: 44px; width: 23px; height: 15px; border-radius: 3px; background: #34353a;
             Text { text: "TAP"; color: #e5e5e8; font-size: 7.75px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
         }
         Rectangle { x: 798px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
-        Label { x: 812px; y: 45px; text: "Key"; color: #606165; font-size: 10px; }
+        Label { x: 812px; y: 45px; text: "Key"; color: #565656; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
         // Key selector: PLACEHOLDER (no key/scale in the model yet)
         Rectangle { x: 846px; y: 51.5px; width: 13px; height: 1.2px; background: #7a7b7e; }
         Icon { x: 873px; y: 45px; width: 14px; height: 14px; d: Icons.chevron-down; ink: #7a7b7e; }
         Rectangle { x: 901.5px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
-        Label { x: 916px; y: 45px; text: "Sig"; color: #606165; font-size: 10px; }
-        Label { x: 936.5px; y: 45px; text: Studio.sig-text; color: Tokens.text-bright; font-size: 10px; font-weight: 600; }
+        Label { x: 916px; y: 45px; text: "Sig"; color: #565656; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
+        Label { x: 936.5px; y: 45px; text: Studio.sig-text; color: #ffffff; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
         Icon { x: 957px; y: 45px; width: 13px; height: 13px; d: Icons.chevron-down; ink: #a0a0a3; }
-        IconButton { x: 981px; y: 41px; width: 22px; height: 22px; icon: Icons.metronome; ink: #63656c; tooltip: "Metronome"; active: Studio.metronome-on; clicked => { Studio.toggle-metronome(); } }
+        IconButton { x: 981px; y: 41px; width: 22px; height: 22px; icon: Icons.metronome; filled: true; ink: #63656c; tooltip: "Metronome"; active: Studio.metronome-on; clicked => { Studio.toggle-metronome(); } }
 
         // Master volume (header), real: SetMasterGain
         HSlider {

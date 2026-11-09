@@ -1486,11 +1486,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             eprintln!("screenshot: no frames presented (occluded/locked?), rendering offscreen");
             fr.borrow_mut().shot_taken = true;
-            for _ in 0..3 {
-                let _ = a.window().take_snapshot();
-            }
-            save_snapshot(&a, &path);
-            let _ = slint::quit_event_loop();
+            // The first render queues the interface-zoom sync on a zero timer; let it run
+            // before the renders that count.
+            let _ = a.window().take_snapshot();
+            let aw = a.as_weak();
+            slint::Timer::single_shot(Duration::from_millis(200), move || {
+                let Some(a) = aw.upgrade() else { return };
+                for _ in 0..3 {
+                    let _ = a.window().take_snapshot();
+                }
+                save_snapshot(&a, &path);
+                let _ = slint::quit_event_loop();
+            });
         });
     }
     // The OS window is 1440×820 pt like the reference's; interface zoom then sets how much
