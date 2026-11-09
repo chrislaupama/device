@@ -174,6 +174,7 @@ hosted runners, without audio hardware.
 
 You need [Rust](https://rustup.rs/) 1.90 or newer, CMake 3.25 or newer, Ninja, and a C++23 compiler (Apple clang,
 Visual Studio 2022 or GCC 13). The first build downloads the CLAP headers and the VST3 SDK.
+On Linux, install the packages listed in the [build guide](docs/building.md#linux) first.
 
 ```sh
 git clone https://github.com/chrislaupama/sainestudio.git
