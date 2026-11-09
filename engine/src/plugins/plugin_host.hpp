@@ -9,6 +9,7 @@
 // for the hazard protocol; `rt_active` is Engine::rt_active_seq_).
 #pragma once
 
+#include "../asset.hpp"
 #include "plugin_instance.hpp"
 #include "saine_engine.h"
 
@@ -34,6 +35,9 @@ public:
     PluginHost& operator=(const PluginHost&) = delete;
 
     std::mutex& mutex() noexcept { return mutex_; }
+    // Asset registry access for built-in devices with sample slots (set
+    // once by the engine before the first publish).
+    void set_asset_lookup(AssetLookup lookup) { assets_ = std::move(lookup); }
 
     // ---- publish (caller holds mutex())
     void begin_publish();
@@ -91,6 +95,7 @@ private:
 
     const double sample_rate_;
     const uint32_t max_block_;
+    AssetLookup assets_;
     ParamBus bus_; // outlives every instance (declared before them)
     mutable std::mutex mutex_;
     std::unordered_map<uint64_t, Entry> entries_;

@@ -44,4 +44,5 @@ pub static PITCH_CORRECTOR: DeviceDef = DeviceDef {
         FactoryPreset { name: "Pitched Double", values: &[("speed", 100.0), ("retune_speed_ms", 10.0), ("humanize", 5.0), ("mix", 40.0)] },
     ],
     sidechain: false,
+    samples: 0,
 };

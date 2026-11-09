@@ -26,7 +26,7 @@ pub static SPECTRUM: DeviceDef = DeviceDef {
         ParamDef::choice("window", "Window", WINDOWS, 0).help("Analysis window: trades frequency resolution against leakage."),
         ParamDef::choice("channel_mode", "Channel Mode", CHANNELS, 0).label("Channel").help("Which signal is analysed: both channels, one side, mid, side, or mid and side together."),
         ParamDef::new("smoothing", "Smoothing", 0.0, 100.0, 30.0, LINEAR, "%", Format::Percent).help("Blurs the curve across neighbouring frequencies."),
-        ParamDef::new("slope", "Slope", -3.0, 6.0, 4.5, LINEAR, "dB/oct", Format::Signed(1)).help("Tilts the display around 1 kHz; 4.5 dB/oct shows a balanced mix as roughly flat."),
+        ParamDef::new("slope", "Slope", -3.0, 6.0, 4.5, LINEAR, "dB/oct", Format::Signed { decimals: 1, scale: 1 }).help("Tilts the display around 1 kHz; 4.5 dB/oct shows a balanced mix as roughly flat."),
         ParamDef::new("db_ceiling", "dB Ceiling", -20.0, 20.0, 0.0, LINEAR, "dB", Format::Db).label("Ceiling").help("Level at the top of the display."),
         ParamDef::new("db_range", "dB Range", 30.0, 120.0, 90.0, LINEAR, "dB", Format::Db).label("Range").help("Level span from the top to the bottom of the display."),
         ParamDef::choice("peak_hold", "Peak Hold", PEAK_HOLD, 1).help("Keeps each frequency's highest level for two seconds or until reset."),
@@ -48,4 +48,5 @@ pub static SPECTRUM: DeviceDef = DeviceDef {
     },
     factory: &[],
     sidechain: false,
+    samples: 0,
 };

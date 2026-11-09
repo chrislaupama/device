@@ -182,6 +182,7 @@ pub static CHARACTER_MOD: DeviceDef = DeviceDef {
         FactoryPreset { name: "Circling Source", values: &[("model", 10.0), ("mode_panner", 1.0), ("rate", 0.35), ("depth", 90.0), ("mix", 100.0), ("art_hiss", 0.0), ("art_drive", 0.0), ("art_darken", 0.0)] },
     ],
     sidechain: false,
+    samples: 0,
 };
 
 /// Circuit switch writes (reference behaviour): changing the circuit or its

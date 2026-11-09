@@ -35,4 +35,5 @@ pub static TUNER: DeviceDef = DeviceDef {
     },
     factory: &[],
     sidechain: false,
+    samples: 0,
 };

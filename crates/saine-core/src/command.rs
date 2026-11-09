@@ -7,7 +7,7 @@
 //! be deserialised straight into a `Command` and validated before execution).
 
 use crate::automation::{AutomationLane, AutomationTarget};
-use crate::device::{Device, DeviceId, PluginKind};
+use crate::device::{Device, DeviceId, DeviceSample, PluginKind};
 use crate::instrument::SynthParams;
 use crate::midi::{self, MidiClip, Note};
 use crate::model::*;
@@ -96,6 +96,10 @@ pub enum Command {
     /// Set several parameters of a built-in device at once (preset load, one
     /// undo step). `preset` becomes the name shown in the card header.
     SetDeviceParams { device: DeviceId, params: std::collections::BTreeMap<String, f32>, preset: Option<String> },
+    /// Load, replace or clear (`sample: None`) the audio file in one sample
+    /// slot of a built-in device (sampler, pads); slice edits replace the
+    /// sample with its new slices.
+    SetDeviceSample { device: DeviceId, slot: u32, sample: Option<DeviceSample> },
     /// Pick (or clear) the sidechain source track of a built-in device.
     SetDeviceSidechain { device: DeviceId, source: Option<TrackId> },
     /// Create, replace (points, enabled) or delete (`lane: None`) the lane for
@@ -146,6 +150,8 @@ impl Command {
             Command::SetDeviceParams { preset: Some(name), .. } => format!("Load Preset {name}"),
             Command::SetDeviceParams { preset: None, .. } => "Device Parameters Change".into(),
             Command::SetDeviceSidechain { .. } => "Sidechain Change".into(),
+            Command::SetDeviceSample { sample: None, .. } => "Remove Sample".into(),
+            Command::SetDeviceSample { sample: Some(_), .. } => "Sample Change".into(),
             Command::SetInstrumentPlugin { device, .. } => match device {
                 Some(d) => format!("Load {}", d.plugin.name),
                 None => "Use Built-in Synth".into(),
@@ -258,6 +264,9 @@ impl Command {
             Command::RemoveAsset { asset } => {
                 if p.tracks.iter().flat_map(|t| &t.clips).any(|c| c.asset == asset) {
                     return Err(invalid("asset", "still referenced by clips"));
+                }
+                if p.tracks.iter().flat_map(|t| t.devices.iter().chain(t.instrument_plugin.iter())).flat_map(|d| &d.samples).any(|s| s.asset == asset) {
+                    return Err(invalid("asset", "still played by a device"));
                 }
                 let idx = p.assets.iter().position(|a| a.id == asset).ok_or(EditError::AssetNotFound(asset))?;
                 let a = p.assets.remove(idx);
@@ -461,7 +470,7 @@ impl Command {
                 if device.plugin.kind != PluginKind::Effect {
                     return Err(invalid("device", "only effect plugins go in the insert chain"));
                 }
-                sanitize_builtin(&mut device)?;
+                sanitize_builtin(p, &mut device)?;
                 if device.id.0 == 0 {
                     device.id = DeviceId(p.alloc_id());
                 } else if p.find_device(device.id).is_some() {
@@ -525,7 +534,7 @@ impl Command {
                     if d.plugin.kind != PluginKind::Instrument {
                         return Err(invalid("device", "not an instrument plugin"));
                     }
-                    sanitize_builtin(d)?;
+                    sanitize_builtin(p, d)?;
                     if d.id.0 == 0 {
                         d.id = DeviceId(p.alloc_id());
                     } else if p.find_device(d.id).is_some_and(|(t, s)| !(t == ti && s == DeviceSlot::Instrument)) {
@@ -556,6 +565,33 @@ impl Command {
                 }
                 let old_preset = std::mem::replace(&mut d.preset, preset);
                 Ok(Command::SetDeviceParams { device, params: old, preset: old_preset })
+            }
+            Command::SetDeviceSample { device, slot, sample } => {
+                if let Some(s) = &sample {
+                    s.validate().map_err(|r| invalid("sample", r))?;
+                    if s.slot != slot {
+                        return Err(invalid("sample", "sample.slot must equal slot"));
+                    }
+                    if p.asset(s.asset).is_none() {
+                        return Err(EditError::AssetNotFound(s.asset));
+                    }
+                }
+                let (d, def) = builtin_mut(p, device)?;
+                if slot >= def.samples {
+                    return Err(invalid("slot", format!("{} has {} sample slots", def.name, def.samples)));
+                }
+                let pos = d.samples.iter().position(|s| s.slot == slot);
+                let old = match (pos, sample) {
+                    (Some(i), Some(s)) => Some(std::mem::replace(&mut d.samples[i], s)),
+                    (Some(i), None) => Some(d.samples.remove(i)),
+                    (None, Some(s)) => {
+                        let at = d.samples.partition_point(|x| x.slot < slot);
+                        d.samples.insert(at, s);
+                        None
+                    }
+                    (None, None) => None,
+                };
+                Ok(Command::SetDeviceSample { device, slot, sample: old })
             }
             Command::SetDeviceSidechain { device, source } => {
                 let (ti, _) = p.find_device(device).ok_or_else(|| invalid("device", format!("{} not found", device.0)))?;
@@ -598,7 +634,7 @@ impl Command {
                                 return Err(invalid("target", "plugin automation must target a device on the same track"));
                             }
                             AutomationTarget::Builtin { device, device_type, param } => {
-                                let d = p.tracks[ti].devices.iter().find(|d| d.id == *device).ok_or_else(|| invalid("target", "device automation must target a device on the same track"))?;
+                                let d = p.tracks[ti].devices.iter().chain(p.tracks[ti].instrument_plugin.iter()).find(|d| d.id == *device).ok_or_else(|| invalid("target", "device automation must target a device on the same track"))?;
                                 let def = crate::builtin::def_of(d).filter(|def| def.id == device_type).ok_or_else(|| invalid("target", "device kind mismatch"))?;
                                 if !def.param(param).is_some_and(|q| q.automatable) {
                                     return Err(invalid("target", format!("{} has no automatable parameter {param:?}", def.name)));
@@ -656,11 +692,24 @@ fn builtin_mut(p: &mut Project, id: DeviceId) -> Result<(&mut Device, &'static c
 /// Built-in devices entering the model: the definition must exist; stored
 /// values are snapped into range, unknown ids dropped and missing ids filled
 /// with defaults (so the saved state is always complete).
-fn sanitize_builtin(d: &mut Device) -> Result<(), EditError> {
+fn sanitize_builtin(p: &Project, d: &mut Device) -> Result<(), EditError> {
     if d.plugin.format != crate::device::PluginFormat::Builtin {
+        if !d.samples.is_empty() {
+            return Err(invalid("device", "only built-in devices hold samples"));
+        }
         return Ok(());
     }
     let def = crate::builtin::find(&d.plugin.id).ok_or_else(|| invalid("device", format!("unknown built-in device {:?}", d.plugin.id)))?;
+    d.samples.sort_by_key(|s| s.slot);
+    for (i, s) in d.samples.iter().enumerate() {
+        s.validate().map_err(|r| invalid("sample", r))?;
+        if s.slot >= def.samples || (i > 0 && d.samples[i - 1].slot == s.slot) {
+            return Err(invalid("sample", format!("slot {} is not a free slot of {}", s.slot, def.name)));
+        }
+        if p.asset(s.asset).is_none() {
+            return Err(EditError::AssetNotFound(s.asset));
+        }
+    }
     let mut values = def.defaults();
     for (k, v) in std::mem::take(&mut d.params) {
         if let Some(q) = def.param(&k) {

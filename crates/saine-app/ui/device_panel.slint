@@ -8,7 +8,7 @@
 // multiplied by PanelStyle.z. Colours are the measured card colours.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
-import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField, PanelCanvas, PanelZone, PanelButton } from "studio.slint";
+import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField, PanelCanvas, PanelZone, PanelButton, PanelSampler, PanelPad, PanelHandle } from "studio.slint";
 
 export global PanelStyle {
     out property <float> z: 0.85;
@@ -388,12 +388,12 @@ component PickItem inherits HorizontalLayout {
     padding-left: root.lead ? 16px * zm : 0;
     horizontal-stretch: root.p.kind == 4 ? 1 : 0;
     if root.p.kind == 4: Rectangle { horizontal-stretch: 1; }
-    if root.p.kind != 4 && root.p.kind != 5 && root.p.label != "": Text {
+    if root.p.kind != 4 && root.p.kind < 5 && root.p.label != "": Text {
         horizontal-stretch: 0;
         text: root.p.label; color: PanelStyle.caption; font-size: 11px * zm; font-weight: 500; letter-spacing: -0.02 * 11px * zm;
         vertical-alignment: center; opacity: root.p.enabled ? 1 : 0.55;
     }
-    if root.p.kind == 1: Rectangle {
+    if root.p.kind == 1 || root.p.kind == 7: Rectangle {
         border-radius: self.height / 2; background: PanelStyle.seg;
         accessible-role: tab-list; accessible-label: root.p.label;
         HorizontalLayout {
@@ -416,7 +416,10 @@ component PickItem inherits HorizontalLayout {
                             if (e.modifiers.alt) { Studio.panel-reset(root.device, root.p.param); }
                         }
                     }
-                    clicked => { if (!self.alt-down) { Studio.panel-choice(root.device, root.p.param, i); } }
+                    clicked => {
+                        if (root.p.kind == 7) { Studio.sampler-tab(root.device, i); }
+                        else if (!self.alt-down) { Studio.panel-choice(root.device, root.p.param, i); }
+                    }
                 }
             }
         }
@@ -438,6 +441,13 @@ component PickItem inherits HorizontalLayout {
         label: root.p.label; on: root.p.selected == 1; accent: root.accent;
         clicked => { Studio.panel-choice(root.device, root.p.param, root.p.selected == 1 ? 0 : 1); }
         reset => { Studio.panel-reset(root.device, root.p.param); }
+    }
+    // Button (sampler actions).
+    if root.p.kind == 6: Rectangle {
+        width: bt-text.preferred-width + 20px * zm; border-radius: self.height / 2; background: bt-ta.has-hover ? PanelStyle.pill-hot : PanelStyle.seg;
+        accessible-role: button; accessible-label: root.p.label;
+        bt-text := Text { text: root.p.label; color: PanelStyle.ink; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm; horizontal-alignment: center; vertical-alignment: center; }
+        bt-ta := TouchArea { clicked => { Studio.sampler-action(root.device, root.p.param); } }
     }
     if root.p.kind == 3: Rectangle {
         width: root.p.width; border-radius: self.height / 2; background: PanelStyle.box;
@@ -559,6 +569,177 @@ component DynamicsStrip inherits Rectangle {
     }
 }
 
+// A drum pad / slice pad: note name, sound name, activity glow; press plays it.
+component PadCell inherits Rectangle {
+    in property <int> device;
+    in property <int> which;
+    in property <int> index;
+    in property <PanelPad> p;
+    in property <color> accent;
+    property <float> zm: PanelStyle.z;
+    x: root.p.x; y: root.p.y; width: root.p.w; height: root.p.h;
+    border-radius: 3px * zm;
+    background: ta.pressed ? #34353a : root.p.filled ? #2c2d32 : #27282c;
+    border-width: root.p.selected ? 1px : 0px; border-color: root.accent;
+    accessible-role: button; accessible-label: root.p.label;
+    Rectangle { border-radius: parent.border-radius; background: root.accent.with-alpha(0.4 * root.p.level); }
+    Text { x: 6px * zm; y: 5px * zm; text: root.p.label; color: #8f8f93; font-size: 10.5px * zm; font-weight: 600; }
+    Text {
+        x: 6px * zm; y: parent.height - 17px * zm; width: parent.width - 12px * zm; height: 13px * zm;
+        text: root.p.name; color: PanelStyle.text; font-size: 10px * zm; font-weight: 600; overflow: elide; vertical-alignment: center;
+    }
+    ta := TouchArea {
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.sampler-pad(root.device, root.which, root.index, true); }
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.sampler-pad(root.device, root.which, root.index, false); }
+            if (e.kind == PointerEventKind.cancel) { Studio.sampler-pad(root.device, root.which, root.index, false); }
+        }
+    }
+}
+
+// Sampler / Pad Sampler / Drum Rack body (geometry and paths from src/sampler_panel.rs).
+component SamplerBody inherits Rectangle {
+    in property <int> device;
+    in property <PanelSampler> s;
+    in property <color> accent;
+    property <float> zm: PanelStyle.z;
+
+    for p[i] in root.s.pads: PadCell { device: root.device; which: 0; index: i; p: p; accent: root.accent; }
+    if root.s.divider-x > 0: Rectangle { x: root.s.divider-x; y: 42px * zm; width: 0.5px; height: 256px * zm; background: PanelStyle.line; }
+    if root.s.sub-visible: Rectangle {
+        x: root.s.sub-x; y: root.s.sub-y; width: root.s.sub-w; height: root.s.sub-h;
+        border-radius: 5px * zm; background: #25262b; border-width: 0.5px; border-color: PanelStyle.edge;
+        Rectangle {
+            x: 12px * zm; y: 7px * zm; width: 26px * zm; height: 13px * zm; border-radius: self.height / 2;
+            background: root.s.sub-on ? root.accent : #4a4b4f;
+            accessible-role: checkbox; accessible-label: "Pad on"; accessible-checked: root.s.sub-on;
+            Rectangle { x: root.s.sub-on ? parent.width - 12px * zm : 1px * zm; y: 1px * zm; width: 11px * zm; height: 11px * zm; border-radius: self.width / 2; background: root.s.sub-on ? #17181b : #ffffff; }
+            TouchArea { clicked => { Studio.panel-choice(root.device, root.s.sub-on-param, root.s.sub-on ? 0 : 1); } }
+        }
+        Text { x: 46px * zm; y: 5px * zm; height: 17px * zm; text: root.s.sub-title; color: PanelStyle.ink; font-size: 12.5px * zm; font-weight: 700; vertical-alignment: center; }
+    }
+    // Header picks (mode switch, warp).
+    HorizontalLayout {
+        x: root.s.head-x; y: 4px; height: 18px; spacing: 10px * zm; alignment: start;
+        for p in root.s.head-picks: PickItem { device: root.device; p: p; accent: root.accent; }
+    }
+    // Layer stepping (pad sampler): < 1/2 >  Pad 1  Mapped to C1
+    if root.s.layer-visible: HorizontalLayout {
+        x: root.s.layer-x; y: root.s.layer-y; height: 20px * zm; spacing: 8px * zm; alignment: start;
+        for dir[i] in [-1, 1]: Rectangle {
+            width: 14px * zm;
+            accessible-role: button; accessible-label: i == 0 ? "Previous sample" : "Next sample";
+            Icon { x: (parent.width - 10px * zm) / 2; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: i == 0 ? Icons.chevron-left : Icons.chevron-right; ink: root.s.can-step ? (lt.has-hover ? #e5e5e8 : #9d9d9f) : #55565a; stroke-width: 1.3px; }
+            lt := TouchArea { enabled: root.s.can-step; clicked => { Studio.sampler-layer(root.device, dir); } }
+        }
+        Text { text: root.s.layer-text; color: root.accent; font-size: 12px * zm; font-weight: 600; vertical-alignment: center; }
+        Rectangle { width: 6px * zm; }
+        Text { text: root.s.layer-name; color: PanelStyle.text; font-size: 12px * zm; font-weight: 600; vertical-alignment: center; }
+        Text { text: root.s.mapped; color: PanelStyle.caption; font-size: 10.5px * zm; font-weight: 500; vertical-alignment: center; }
+    }
+    if root.s.play-visible: Rectangle {
+        x: root.s.play-x; y: root.s.row-y; width: 38px * zm; height: 20px * zm; border-radius: self.height / 2;
+        background: play-ta.pressed ? root.accent : play-ta.has-hover ? PanelStyle.pill-hot : PanelStyle.seg;
+        accessible-role: button; accessible-label: "Play preview";
+        Text { text: "Play"; color: play-ta.pressed ? #17181b : #ffffffb3; font-size: 11px * zm; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        play-ta := TouchArea {
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.sampler-play(root.device, true); }
+                if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.sampler-play(root.device, false); }
+            }
+        }
+    }
+    HorizontalLayout {
+        x: 0; width: root.s.row-right; y: root.s.row-y; height: 20px * zm; spacing: 8px * zm; alignment: end;
+        for p in root.s.row-picks: PickItem { device: root.device; p: p; accent: root.accent; }
+    }
+    // Waveform well.
+    well := Rectangle {
+        x: root.s.well-x; y: root.s.well-y; width: root.s.well-w; height: root.s.well-h;
+        border-radius: 4px * zm; background: #1b1c20; clip: true;
+        accessible-role: groupbox; accessible-label: root.s.loaded ? root.s.sample-name : root.s.empty-text;
+        if !root.s.loaded: Rectangle {
+            VerticalLayout {
+                alignment: center; spacing: 3px * zm;
+                Text { text: root.s.empty-text; color: drop-ta.has-hover ? #c5c5c8 : #8f8f93; font-size: 12px * zm; font-weight: 500; horizontal-alignment: center; }
+                Text { text: root.s.hint; color: #6b6b6f; font-size: 10.5px * zm; horizontal-alignment: center; }
+            }
+            drop-ta := TouchArea { clicked => { Studio.sampler-load(root.device); } }
+        }
+        if root.s.loaded && root.s.sel-w > 0: Rectangle { x: root.s.sel-x; width: root.s.sel-w; background: root.accent.with-alpha(0.14); }
+        if root.s.loaded: Path { viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px; commands: root.s.wave; fill: root.accent.with-alpha(0.85); stroke-width: 0; }
+        if root.s.loaded: Path { viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px; commands: root.s.dim; fill: #1b1c20b8; stroke-width: 0; }
+        if root.s.loaded: Path { viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px; commands: root.s.fades; fill: #00000066; stroke-width: 0; }
+        if root.s.loaded: Path { viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px; commands: root.s.slices; stroke: #ffffffa6; stroke-width: 1px; fill: transparent; }
+        if root.s.loaded: Path { viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px; commands: root.s.heads; stroke: #ffffff; stroke-width: 1px; fill: transparent; }
+        // Flags: start / end lines with tabs, fade handles, loop start.
+        if root.s.loaded: Rectangle { x: root.s.start-x; width: 1px; background: PanelStyle.ink; }
+        if root.s.loaded: Rectangle { x: root.s.start-x; y: 0; width: 7px * zm; height: 9px * zm; background: PanelStyle.ink; }
+        if root.s.loaded: Rectangle { x: root.s.end-x - 1px; width: 1px; background: PanelStyle.ink; }
+        if root.s.loaded: Rectangle { x: root.s.end-x - 7px * zm; y: 0; width: 7px * zm; height: 9px * zm; background: PanelStyle.ink; }
+        if root.s.loaded: Rectangle { x: root.s.fade-in-x - 3px * zm; y: 0; width: 6px * zm; height: 6px * zm; border-radius: 1px; background: #ffffffcc; }
+        if root.s.loaded: Rectangle { x: root.s.fade-out-x - 3px * zm; y: 0; width: 6px * zm; height: 6px * zm; border-radius: 1px; background: #ffffffcc; }
+        if root.s.loaded && root.s.loop-x >= 0: Rectangle { x: root.s.loop-x; width: 1px; background: root.accent; }
+        if root.s.loaded && root.s.loop-x >= 0: Text { x: root.s.loop-x + 3px; y: 2px; text: "Loop"; color: root.accent; font-size: 9.5px * zm; font-weight: 600; }
+        if root.s.loaded: well-ta := TouchArea {
+            property <bool> down;
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+                    self.down = true;
+                    Studio.sampler-well(root.device, 0, self.mouse-x / self.width, 6px / self.width, e.modifiers.alt);
+                }
+                if (e.kind == PointerEventKind.move && self.down) { Studio.sampler-well(root.device, 1, self.mouse-x / self.width, 0, false); }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up && self.down) { self.down = false; Studio.sampler-well(root.device, 2, self.mouse-x / self.width, 0, false); }
+                if (e.kind == PointerEventKind.cancel && self.down) { self.down = false; Studio.sampler-well(root.device, 3, 0, 0, false); }
+            }
+        }
+        if root.s.loaded: Text { x: root.s.start-x + 12px * zm; y: 4px * zm; text: root.s.sample-name; color: #ffffffcc; font-size: 10.5px * zm; font-weight: 600; }
+        if root.s.can-remove: Rectangle {
+            x: parent.width - 30px * zm; y: 3px * zm; width: 16px * zm; height: 16px * zm; border-radius: 3px;
+            background: rm-ta.has-hover ? #ffffff1a : transparent;
+            accessible-role: button; accessible-label: "Remove sample";
+            Icon { x: 3px * zm; y: 3px * zm; width: 10px * zm; height: 10px * zm; d: Icons.close; ink: #c5c5c8; stroke-width: 1.3px; }
+            rm-ta := TouchArea { clicked => { Studio.sampler-remove(root.device); } }
+        }
+    }
+    // Tabs and the tab's picks.
+    if root.s.tabs-visible: HorizontalLayout {
+        x: root.s.well-x; y: root.s.tabs-y; height: 20px * zm; alignment: start;
+        PickItem { device: root.device; p: root.s.tab-pick; accent: root.accent; }
+    }
+    if root.s.tabs-visible: HorizontalLayout {
+        x: 0; width: root.s.tab-right; y: root.s.tabs-y; height: 20px * zm; spacing: 8px * zm; alignment: end;
+        for p in root.s.tab-picks: PickItem { device: root.device; p: p; accent: root.accent; }
+    }
+    // Picture canvas.
+    if root.s.pic-visible: Rectangle {
+        x: root.s.pic-x; y: root.s.pic-y; width: root.s.pic-w; height: root.s.pic-h;
+        border-radius: 4px * zm; background: #1b1c20; clip: true;
+        Path { viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px; commands: root.s.pic-grid; stroke: #ffffff0d; stroke-width: 0.5px; fill: transparent; }
+        Path { viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px; commands: root.s.pic-fill; fill: root.accent.with-alpha(0.16); stroke-width: 0; }
+        Path { viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px; commands: root.s.pic-line; stroke: root.accent; stroke-width: 1.5px * zm; fill: transparent; stroke-line-join: round; }
+        for p[i] in root.s.pic-pads: PadCell { device: root.device; which: 1; index: i; p: p; accent: root.accent; }
+        for h[i] in root.s.handles: Rectangle {
+            x: h.x - 9px; y: h.y - 9px; width: 18px; height: 18px;
+            Rectangle {
+                property <length> r: (hd.has-hover || hd.pressed ? 4.5px : 3px) * zm;
+                x: (parent.width - 2 * self.r) / 2; y: (parent.height - 2 * self.r) / 2; width: 2 * self.r; height: 2 * self.r;
+                border-radius: self.r; background: h.active ? PanelStyle.ink : #ffffff80;
+            }
+            hd := TouchArea {
+                mouse-cursor: MouseCursor.grab;
+                pointer-event(e) => {
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.sampler-handle(root.device, i, 0, h.x, h.y); }
+                    if (e.kind == PointerEventKind.move && self.pressed) { Studio.sampler-handle(root.device, i, 1, h.x - 9px + self.mouse-x, h.y - 9px + self.mouse-y); }
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.sampler-handle(root.device, i, 2, h.x, h.y); }
+                    if (e.kind == PointerEventKind.cancel) { Studio.sampler-handle(root.device, i, 3, h.x, h.y); }
+                }
+            }
+        }
+    }
+    for k in root.s.knobs: KnobCell { x: k.x; y: root.s.knob-y; device: root.device; k: k; accent: root.accent; }
+}
+
 // Plotted field: caption + readout, then a well with tick labels and rules, the fill or band,
 // up to three traces, the live overlay and an XY drag over the plot area (paths from Rust).
 component FieldView inherits Rectangle {
@@ -677,7 +858,7 @@ export component BuiltinCard inherits Rectangle {
     Rectangle {
         x: 8.5px; y: 7.75px; width: 22px; height: 11px; border-radius: 5.5px;
         background: root.card.enabled ? root.card.accent : #4a4b4f;
-        accessible-role: checkbox; accessible-label: "Bypass effect"; accessible-checked: root.card.enabled;
+        accessible-role: checkbox; accessible-label: root.card.instrument ? "Bypass instrument" : "Bypass effect"; accessible-checked: root.card.enabled;
         Rectangle { x: root.card.enabled ? parent.width - 10px : 1px; y: 1px; width: 9px; height: 9px; border-radius: 4.5px; background: root.card.enabled ? #17181b : #ffffff; }
         TouchArea { clicked => { Studio.device-power(root.card.id); } }
     }
@@ -715,7 +896,7 @@ export component BuiltinCard inherits Rectangle {
     Rectangle { x: root.width - 67px * zm; y: 6.5px; width: 0.5px; height: 13px; background: PanelStyle.line; }
     Rectangle {
         x: root.width - 23px; y: 5px; width: 17px; height: 17px;
-        accessible-role: button; accessible-label: "Remove effect";
+        accessible-role: button; accessible-label: root.card.instrument ? "Remove instrument" : "Remove effect";
         Icon { x: 3.5px; y: 3.5px; width: 10px; height: 10px; d: Icons.close; ink: #9d9d9f; stroke-width: 1.3px; }
         TouchArea { clicked => { Studio.device-remove(root.card.id); } }
     }
@@ -751,6 +932,10 @@ export component BuiltinCard inherits Rectangle {
         for k in root.card.knobs: KnobCell {
             x: k.x; y: k.y;
             device: root.card.id; k: k; accent: root.card.accent;
+        }
+        if root.card.sampler.visible: SamplerBody {
+            x: 0; y: 0; width: root.width; height: root.height;
+            device: root.card.id; s: root.card.sampler; accent: root.card.accent;
         }
     }
 }

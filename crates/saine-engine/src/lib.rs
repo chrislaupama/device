@@ -198,11 +198,11 @@ impl Engine {
         // Plugin devices: owned strings / decoded states first, then the
         // C descriptors pointing into them (both outlive the call).
         let dev_store: Vec<Vec<DeviceStore>> =
-            s.tracks.iter().map(|t| t.devices.iter().map(|d| self.device_store(d)).collect::<Result<_, _>>()).collect::<Result<_, _>>()?;
+            s.tracks.iter().map(|t| t.devices.iter().map(|d| self.device_store(d, &s.device_assets)).collect::<Result<_, _>>()).collect::<Result<_, _>>()?;
         let inst_store: Vec<Option<DeviceStore>> = s
             .tracks
             .iter()
-            .map(|t| if t.instrument { t.instrument_plugin.as_ref().map(|d| self.device_store(d)).transpose() } else { Ok(None) })
+            .map(|t| if t.instrument { t.instrument_plugin.as_ref().map(|d| self.device_store(d, &s.device_assets)).transpose() } else { Ok(None) })
             .collect::<Result<_, _>>()?;
         let dev_descs: Vec<Vec<ffi::se_device_desc>> = dev_store.iter().map(|v| v.iter().map(DeviceStore::desc).collect()).collect();
         let inst_descs: Vec<Option<ffi::se_device_desc>> = inst_store.iter().map(|d| d.as_ref().map(DeviceStore::desc)).collect();
@@ -258,11 +258,17 @@ impl Engine {
         check(unsafe { ffi::se_session_publish_v6(self.raw, &desc) })
     }
 
-    fn device_store(&self, d: &saine_core::Device) -> Result<DeviceStore, EngineError> {
+    fn device_store(&self, d: &saine_core::Device, assets: &std::collections::HashMap<saine_core::AssetId, u64>) -> Result<DeviceStore, EngineError> {
         let cs = |s: &str| CString::new(s).map_err(|_| nul_error());
         // SAFETY: plain query on a valid handle.
         let state = if let Some(def) = saine_core::builtin::def_of(d) {
-            Some(builtin_state(&def.values(d), d.sidechain.map_or(0, |t| t.0)))
+            let sidechain = d.sidechain.map_or(0, |t| t.0);
+            if def.samples == 0 {
+                Some(builtin_state(&def.values(d), sidechain))
+            } else {
+                let samples: Vec<_> = d.samples.iter().filter_map(|s| Some((*assets.get(&s.asset)?, s.slot, s.slices.as_slice()))).collect();
+                Some(builtin_state_v2(&def.values(d), sidechain, &samples))
+            }
         } else if unsafe { ffi::se_plugin_is_live(self.raw, d.id.0) } != 0 {
             None
         } else {
@@ -393,6 +399,12 @@ impl Engine {
         r.map(|()| seq)
     }
 
+    /// Play a note on a live built-in instrument right away (pad audition,
+    /// previews); velocity 0 releases it.
+    pub fn builtin_note(&self, device_id: u64, pitch: u8, velocity: u8) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_builtin_note(self.raw, device_id, pitch, velocity) })
+    }
+
     pub fn export_wav(&self, path: &Path, start: i64, end: i64) -> Result<(), EngineError> {
         let p = cpath(path)?;
         check(unsafe { ffi::se_export_wav(self.raw, p.as_ptr(), start, end) })
@@ -439,6 +451,50 @@ pub fn builtin_state(values: &[f32], sidechain_track: u64) -> Vec<u8> {
     out
 }
 
+/// The v2 engine state of a built-in device that plays audio files: the
+/// `se_builtin_state_v2` header, the values, then one `se_builtin_sample`
+/// per (engine asset, slot, slices) and every sample's slices in that order.
+pub fn builtin_state_v2(values: &[f32], sidechain_track: u64, samples: &[(u64, u32, &[saine_core::Slice])]) -> Vec<u8> {
+    // Slices the engine would reject (and with them the whole session):
+    // dropped, keeping the rest ascending.
+    let valid: Vec<Vec<saine_core::Slice>> = samples
+        .iter()
+        .map(|(_, _, sl)| {
+            let mut kept: Vec<saine_core::Slice> = Vec::new();
+            for s in sl.iter() {
+                let ok = [s.start, s.gain, s.pan, s.pitch].iter().all(|f| f.is_finite()) && (0.0..1.0).contains(&s.start) && kept.last().is_none_or(|p| s.start > p.start);
+                if ok && kept.len() < ffi::SE_BUILTIN_MAX_SLICES {
+                    kept.push(*s);
+                }
+            }
+            kept
+        })
+        .collect();
+    let slices: usize = valid.iter().map(Vec::len).sum();
+    let mut out = Vec::with_capacity(24 + 4 * values.len() + 16 * (samples.len() + slices));
+    out.extend_from_slice(&ffi::SE_BUILTIN_STATE_MAGIC2.to_le_bytes());
+    out.extend_from_slice(&(values.len() as u32).to_le_bytes());
+    out.extend_from_slice(&sidechain_track.to_le_bytes());
+    out.extend_from_slice(&(samples.len() as u32).to_le_bytes());
+    out.extend_from_slice(&(slices as u32).to_le_bytes());
+    for v in values {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    for ((asset, slot, _), sl) in samples.iter().zip(&valid) {
+        out.extend_from_slice(&asset.to_le_bytes());
+        out.extend_from_slice(&slot.to_le_bytes());
+        out.extend_from_slice(&(sl.len() as u32).to_le_bytes());
+    }
+    for sl in &valid {
+        for s in sl {
+            for f in [s.start, s.gain, s.pan, s.pitch] {
+                out.extend_from_slice(&f.to_le_bytes());
+            }
+        }
+    }
+    out
+}
+
 /// One processor in the engine's built-in registry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuiltinProcessor {
@@ -446,6 +502,10 @@ pub struct BuiltinProcessor {
     pub params: Vec<String>,
     pub readouts: Vec<String>,
     pub defaults: Vec<f32>,
+    /// Sample slots the processor plays (0 for effects without files).
+    pub sample_slots: u32,
+    /// Plays notes (an instrument) rather than processing audio.
+    pub instrument: bool,
 }
 
 /// Every built-in processor the engine was compiled with.
@@ -470,6 +530,8 @@ pub fn builtin_registry() -> Vec<BuiltinProcessor> {
             readouts: strings(d.readout_ids, d.readout_count),
             // SAFETY: static array of `param_count` floats.
             defaults: unsafe { std::slice::from_raw_parts(d.param_defaults, d.param_count as usize) }.to_vec(),
+            sample_slots: d.sample_slots,
+            instrument: d.instrument != 0,
         })
         .collect()
 }
@@ -1333,7 +1395,7 @@ mod tests {
                     automation: vec![],
                 }],
                 master_gain: 1.0,
-                master_automation: vec![],
+                master_automation: vec![], device_assets: Default::default(),
             };
             e.publish(&snap).unwrap_or_else(|err| panic!("{}: {err}", p.preset));
         }
@@ -1359,7 +1421,7 @@ mod tests {
                 automation: vec![],
             }],
             master_gain: 1.0,
-            master_automation: vec![],
+            master_automation: vec![], device_assets: Default::default(),
         };
         assert_eq!(e.publish(&snap).unwrap_err().code, ffi::SE_ERR_INVALID_ARG);
     }

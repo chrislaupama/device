@@ -114,6 +114,7 @@ public:
     int32_t builtin_set_param(uint64_t device_id, uint32_t index, float value);
     int32_t builtin_readouts(uint64_t device_id, float* out, std::size_t capacity, std::size_t& count);
     int32_t builtin_analysis(uint64_t device_id, float* out, std::size_t capacity, std::size_t& count, uint64_t& seq);
+    int32_t builtin_note(uint64_t device_id, uint8_t pitch, uint8_t velocity);
     // Frees retired graphs the audio thread can no longer reach. Non-RT.
     void collect_garbage();
     std::size_t retired_graph_count() const;

@@ -48,4 +48,5 @@ pub static RING_MOD: DeviceDef = DeviceDef {
         FactoryPreset { name: "Square Gate", values: &[("frequency", 6.0), ("bias", 100.0), ("modulator", 2.0), ("output", 2.0)] },
     ],
     sidechain: false,
+    samples: 0,
 };
