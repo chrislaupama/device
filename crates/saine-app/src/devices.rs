@@ -817,9 +817,9 @@ impl Controller {
     pub fn drop_target(&self, x: f32, y: f32, item: &Item) -> Option<DropTarget> {
         let l = self.layout();
         let (tx, tw) = (l.timeline_x(), l.timeline_w());
-        let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - 30.5);
+        let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - crate::timeline::MASTER_H);
         if x >= tx && x < tx + tw && y >= top && y < bottom {
-            let i = ((y - top + l.scroll_y) / 74.5).floor();
+            let i = ((y - top + l.scroll_y) / crate::timeline::TRACK_PITCH).floor();
             if i < 0.0 {
                 return None;
             }
@@ -839,9 +839,9 @@ impl Controller {
     fn track_rect(&self, t: TrackId) -> Option<(f32, f32, f32, f32)> {
         let l = self.layout();
         let i = self.project().track_index(t)? as f32;
-        let y = 78.0 + 66.5 + i * 74.5 - l.scroll_y;
-        let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - 30.5);
-        let (y0, y1) = (y.max(top), (y + 74.0).min(bottom));
+        let y = 78.0 + 66.5 + i * crate::timeline::TRACK_PITCH - l.scroll_y;
+        let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - crate::timeline::MASTER_H);
+        let (y0, y1) = (y.max(top), (y + crate::timeline::TRACK_H).min(bottom));
         (y1 > y0).then_some((l.timeline_x(), y0, l.timeline_w(), y1 - y0))
     }
 

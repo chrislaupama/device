@@ -5,6 +5,8 @@
 //! current layout (hidden panel, scrolled-out track) return `None`, and the
 //! UI falls back to showing only the note text.
 
+use crate::timeline::{MASTER_H, TRACK_H, TRACK_PITCH};
+
 /// Inputs that move things around.
 #[derive(Debug, Clone, Copy)]
 pub struct Layout {
@@ -112,20 +114,20 @@ fn track_rect(l: &Layout, t: &str, track_index: impl Fn(u64) -> Option<usize>) -
     let (_, id, part) = (it.next()?, it.next()?.parse::<u64>().ok()?, it.next()?);
     let i = track_index(id)?;
     let (tx, tw) = (l.timeline_x(), l.timeline_w());
-    let y = 78.0 + 66.5 + i as f32 * 74.5 - l.scroll_y;
+    let y = 78.0 + 66.5 + i as f32 * TRACK_PITCH - l.scroll_y;
     // Visible track area: between the top "Add track" row and the master row.
-    let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - 30.5);
-    if y + 74.0 <= top || y >= bottom {
+    let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - MASTER_H);
+    if y + TRACK_H <= top || y >= bottom {
         return None;
     }
     let r = match part {
-        "header" => (tx, y, 191.0, 74.0),
-        "mute" => (tx + 28.0, y + 41.5, 11.0, 11.0),
-        "solo" => (tx + 42.0, y + 41.5, 11.0, 11.0),
-        "arm" => (tx + 55.0, y + 41.5, 11.0, 11.0),
-        "pan" => (tx + 84.0, y + 33.5, 26.0, 26.0),
-        "volume" => (tx + 116.0, y + 41.0, 68.0, 14.0),
-        "lane" => (tx + 191.0, y, tw - 191.0, 74.0),
+        "header" => (tx, y, 190.5, TRACK_H),
+        "mute" => (tx + 28.05, y + 41.65, 10.2, 10.2),
+        "solo" => (tx + 41.65, y + 41.65, 10.2, 10.2),
+        "arm" => (tx + 55.25, y + 41.65, 10.2, 10.2),
+        "pan" => (tx + 87.6, y + 37.4, 18.7, 18.7),
+        "volume" => (tx + 115.7, y + 41.65, 68.0, 11.9),
+        "lane" => (tx + 191.0, y, tw - 191.0, TRACK_H),
         _ => return None,
     };
     Some(r)
@@ -158,7 +160,7 @@ mod tests {
         l.assistant = true;
         let ruler = target_rect(&l, "timeline.ruler", |_| None).unwrap();
         assert!((ruler.0 + ruler.2 - (1440.0 - 5.0 - 257.5)).abs() < 1e-3);
-        assert_eq!(target_rect(&l, "track:7:volume", |id| (id == 7).then_some(0)), Some((262.65 + 116.0, 144.5 + 41.0, 68.0, 14.0)));
+        assert_eq!(target_rect(&l, "track:7:volume", |id| (id == 7).then_some(0)), Some((262.65 + 115.7, 144.5 + 41.65, 68.0, 11.9)));
         assert_eq!(target_rect(&l, "track:7:volume", |_| None), None);
         l.scroll_y = 1000.0;
         assert_eq!(target_rect(&l, "track:7:header", |_| Some(0)), None, "scrolled out");
