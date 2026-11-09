@@ -6,6 +6,7 @@
 
 #include <array>
 #include <set>
+#include <string_view>
 
 using namespace devtest;
 
@@ -147,6 +148,32 @@ TEST_CASE(shaper_filter_lane_sweeps_between_low_and_high) {
     shape(hp, kFilter, {{0, 100, 0}, {1, 100, 0}});
     const Signal h = hp.run_mono(tone(2 * kQuarter, 300.0, kRate, 0.5));
     CHECK(db(rms(h, kQuarter) / 0.3535) < -40.0);
+}
+
+TEST_CASE(shaper_filter_depth_change_is_smooth) {
+    auto r = rig();
+    only(r, kFilter);
+    setp(r, 5, 2.f); // High-pass at Filter High: removes a 100 Hz tone
+    shape(r, kFilter, {{0, 100, 0}, {1, 100, 0}});
+    lane(r, kFilter, kDepth, 0.f);
+    const Signal x = tone(9600, 100.0, kRate, 0.5);
+    const Signal a = r.run_mono(Signal(x.begin(), x.begin() + 4800));
+    lane(r, kFilter, kDepth, 100.f);
+    const Signal b = r.run_mono(Signal(x.begin() + 4800, x.end()));
+    Signal y = a;
+    y.insert(y.end(), b.begin(), b.end());
+    float jump = 0.0f;
+    for (std::size_t i = 1; i < y.size(); ++i) jump = std::max(jump, std::fabs(y[i] - y[i - 1]));
+    CHECK(jump < 0.02f); // a one-sample switch would jump by up to 0.5
+    CHECK(rms(y, 7200) < 0.02);
+}
+
+TEST_CASE(shaper_pitch_switch_is_not_automatable) {
+    auto r = rig();
+    const auto& names = r.instance().descriptor().params;
+    for (uint32_t i = 0; i < names.size(); ++i)
+        CHECK(r.instance().param_automatable(i) == (std::string_view(names[i]) != "pitch_on"));
+    CHECK(!r.instance().param_automatable(static_cast<uint32_t>(names.size())));
 }
 
 TEST_CASE(shaper_crush_lane_reduces_bits_and_rate) {

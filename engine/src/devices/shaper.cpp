@@ -310,6 +310,7 @@ public:
         armed_ = true;
         since_trigger_ = holdoff_;
         filt_g_ = -1.0f;
+        filt_wet_ = -1.0f;
         primed_ = false;
     }
 
@@ -317,6 +318,7 @@ public:
     uint32_t latency_for(const float* params) const noexcept override {
         return params[kGlobals + kStride * kPitch + kOn] >= 0.5f ? pitch_latency_ : 0;
     }
+    bool automatable(uint32_t index) const noexcept override { return index != kGlobals + kStride * kPitch + kOn; }
 
     void process(float* l, float* r, uint32_t n, const float* p, const BuiltinContext& ctx, float*) noexcept override {
         // ---- parameters
@@ -602,10 +604,13 @@ private:
             const float dg = (g_end - filt_g_) / static_cast<float>(m);
             // Depth fades the filter in (as Crush does): at 0 the lane is neutral
             // whatever the type, since a high-pass at the rest cutoff is not.
-            const float wet = std::min(1.0f, depth * 10.0f);
-            float g = filt_g_;
+            const float wet_end = std::min(1.0f, depth * 10.0f);
+            if (filt_wet_ < 0.0f) filt_wet_ = wet_end;
+            const float dw = (wet_end - filt_wet_) / static_cast<float>(m);
+            float g = filt_g_, wet = filt_wet_;
             for (uint32_t i = 0; i < m; ++i) {
                 g += dg;
+                wet += dw;
                 float a, b, c, d, e, f;
                 filt_l_.run(l[i], g, sh.fk, a, b, c);
                 filt_r_.run(r[i], g, sh.fk, d, e, f);
@@ -615,6 +620,7 @@ private:
                 r[i] += wet * (fr - r[i]);
             }
             filt_g_ = g_end;
+            filt_wet_ = wet_end;
             break;
         }
         case kCrush: {
@@ -740,6 +746,7 @@ private:
     Ring time_buf_, pitch_buf_, dry_delay_, rest_delay_;
     Svf filt_l_, filt_r_;
     float filt_g_ = -1.0f;
+    float filt_wet_ = -1.0f;
     float smooth_a_ = 0.0f;
     dsp::Smoother mix_, out_;
     double free_beats_ = 0.0;

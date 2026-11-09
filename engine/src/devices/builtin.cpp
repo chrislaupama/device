@@ -216,6 +216,7 @@ void BuiltinInstance::params(std::vector<ParamInfo>& out) {
         p.name = desc_.params[i];
         p.min = -1e30;
         p.max = 1e30;
+        p.automatable = proc_->automatable(i);
         out.push_back(std::move(p));
     }
 }
