@@ -2386,6 +2386,16 @@ fn builtin_device_steps() -> Vec<Step> {
     ]
 }
 
+/// Built-in device of definition `id` on the first audio track.
+fn builtin_def_of<'a>(c: &'a Controller, id: &str) -> Option<(&'a saine_core::Device, &'static saine_core::builtin::DeviceDef)> {
+    let t = track_of(c, TrackKind::Audio)?;
+    c.project().tracks[t].devices.iter().find_map(|d| saine_core::builtin::def_of(d).filter(|def| def.id == id).map(|def| (d, def)))
+}
+
+fn leak(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
 /// Character and Multiband Compressor: added from the Built-in list, live in the engine,
 /// and their custom controls (Opto latch, band selector) drive the card.
 fn dynamics_device_steps() -> Vec<Step> {
@@ -2457,6 +2467,123 @@ fn dynamics_device_steps() -> Vec<Step> {
         (builtin_of(c, "character-compressor").is_none() && builtin_of(c, "multiband-compressor").is_none()).then_some(()).ok_or("still in the chain".into())
     })));
     v
+}
+
+/// The dynamics built-ins (limiter, gate, glue, transient shaper, mastering
+/// limiter): each added from Add device › Built-in with its generated card and a
+/// live engine instance, then the gestures the generic panel gained for them:
+/// a style choice that writes its overlays, the strip's Alt+drag of two lines,
+/// and latches (one undo step each).
+fn limiter_family_steps() -> Vec<Step> {
+    use Step::*;
+    fn clear_audio_chain(a: &AppWindow, ctl: &Ctl) {
+        let Some(t) = track_of(&ctl.borrow(), TrackKind::Audio) else { return };
+        click_track_header(a, ctl, t);
+        let mut c = ctl.borrow_mut();
+        let ids: Vec<saine_core::DeviceId> = c.project().tracks[t].devices.iter().map(|d| d.id).collect();
+        for d in ids {
+            c.execute(saine_core::Command::RemoveDevice { device: d });
+        }
+        c.update_ui(a);
+    }
+    let mut out = vec![DoC("dynamics: select the audio track and clear its chain", Box::new(|a, ctl| clear_audio_chain(a, ctl)))];
+    for id in ["limiter", "gate", "glue-compressor", "transient-shaper", "mastering-limiter"] {
+        let def = saine_core::builtin::find(id).expect("registered");
+        let name = def.name;
+        out.push(DoC(leak(format!("{id}: Add device › Built-in, pick {name}")), Box::new(move |a, ctl| {
+            key(a, Key::Escape, false, false);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            let add_x = a.global::<Studio>().get_add_device_x();
+            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == name) {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })));
+        out.push(Check(leak(format!("{id}: added at its defaults in one undo step; card has its knobs, sliders, view and width; engine instance live")), Box::new(move |c, a| {
+            let (d, def) = builtin_def_of(c, id).ok_or("not added")?;
+            let cd = card_named(a, name).ok_or("no card")?;
+            let knobs: usize = def.layout.clusters.iter().map(|k| k.len()).sum();
+            let mut r = Vec::new();
+            c.engine.builtin_readouts(d.id.0, &mut r).map_err(|e| e.to_string())?;
+            let errors = c.engine.plugin_load_errors();
+            let ok = c.doc.undo_label() == Some(&format!("Add {name}"))
+                && def.params.iter().all(|p| def.value(d, p) == p.default)
+                && slint::Model::row_count(&cd.knobs) == knobs
+                && slint::Model::row_count(&cd.sliders) == def.layout.sliders.len()
+                && (cd.strip.visible || slint::Model::row_count(&cd.canvas.paths) > 0)
+                && approx(cd.width, def.layout.width() * crate::device_panel::Z, 0.01)
+                && r.len() == 3
+                && !errors.iter().any(|(e, _)| *e == d.id);
+            ok.then_some(()).ok_or(format!("undo {:?} knobs {} sliders {} strip {} width {} readouts {r:?}", c.doc.undo_label(), slint::Model::row_count(&cd.knobs), slint::Model::row_count(&cd.sliders), cd.strip.visible, cd.width))
+        })));
+    }
+    let undo_len = Rc::new(Cell::new(0usize));
+    let (u0, u1, u2, u3, u4, u5) = (undo_len.clone(), undo_len.clone(), undo_len.clone(), undo_len.clone(), undo_len.clone(), undo_len.clone());
+    let param = |c: &Controller, dev: &str, p: &str| builtin_def_of(c, dev).and_then(|(d, def)| Some(def.value(d, def.param(p)?)));
+    let invoke = |dev: &'static str, f: fn(&Studio, i32, &'static saine_core::builtin::DeviceDef)| -> Box<dyn Fn(&AppWindow, &Ctl)> {
+        Box::new(move |a, ctl| {
+            let Some((id, def)) = builtin_def_of(&ctl.borrow(), dev).map(|(d, def)| (d.id.0 as i32, def)) else { return };
+            f(&a.global::<Studio>(), id, def);
+        })
+    };
+    out.push(DoC("mastering-limiter: pick Style › Loud", Box::new(move |a, ctl| {
+        u0.set(ctl.borrow().doc.history_labels().len());
+        invoke("mastering-limiter", |s, id, def| s.invoke_panel_choice(id, def.index_of("style").map_or(-1, |i| i as i32), 1))(a, ctl);
+    })));
+    out.push(Check("mastering-limiter: the style and its overlay values (times, links, auto release) change in ONE undo step", Box::new(move |c, _| {
+        let (d, def) = builtin_def_of(c, "mastering-limiter").ok_or("no device")?;
+        let want = def.choice_values("style", 1.0);
+        let n = c.doc.history_labels().len();
+        (n == u1.get() + 1 && want.len() > 1 && want.iter().all(|(k, v)| def.value(d, def.param(k).unwrap()) == *v))
+            .then_some(())
+            .ok_or(format!("history {} -> {n}, want {want:?}", u1.get()))
+    })));
+    out.push(DoC("mastering-limiter: Alt+drag the strip lines down 20 px (threshold and ceiling together)", Box::new(move |a, ctl| {
+        u2.set(ctl.borrow().doc.history_labels().len());
+        let Some((id, rate)) = builtin_def_of(&ctl.borrow(), "mastering-limiter").and_then(|(d, _)| Some((d.id.0 as i32, card_named(a, "Mastering Limiter")?.strip.thresh_rate))) else { return };
+        let s = a.global::<Studio>();
+        let def = saine_core::builtin::find("mastering-limiter").unwrap();
+        let (t, ce) = (def.index_of("threshold").unwrap() as i32, def.index_of("ceiling").unwrap() as i32);
+        s.invoke_panel_drag_pair(id, t, ce, 0, 0.0, rate, false);
+        for _ in 0..4 {
+            s.invoke_panel_drag_pair(id, t, ce, 1, -5.0, rate, false);
+        }
+        s.invoke_panel_drag_pair(id, t, ce, 2, 0.0, rate, false);
+    })));
+    out.push(Check("mastering-limiter: both lines moved down by the same dB, ONE undo step", Box::new(move |c, _| {
+        let (t, ce) = (param(c, "mastering-limiter", "threshold").unwrap_or(f32::NAN), param(c, "mastering-limiter", "ceiling").unwrap_or(f32::NAN));
+        let n = c.doc.history_labels().len();
+        (n == u3.get() + 1 && t < -1.0 && approx(t, ce + 1.0, 0.051)).then_some(()).ok_or(format!("history {} -> {n}, threshold {t} ceiling {ce}", u3.get()))
+    })));
+    out.push(Check("mastering-limiter: Auto Release is a right-aligned picker latch reading \"Auto Release On\"", Box::new(|_, a| {
+        let cd = card_named(a, "Mastering Limiter").ok_or("no card")?;
+        let picks: Vec<_> = (0..slint::Model::row_count(&cd.picks)).filter_map(|i| slint::Model::row_data(&cd.picks, i)).collect();
+        let latch = picks.iter().position(|p| p.kind == 5).ok_or("no latch")?;
+        let p = &picks[latch];
+        let label = p.label.to_string();
+        (picks[..latch].iter().any(|q| q.kind == 4) && p.selected == 1 && label == "Auto Release On").then_some(()).ok_or(format!("label {label:?}"))
+    })));
+    out.push(DoC("transient-shaper: switch the Clip latch on (panel-choice)", Box::new(move |a, ctl| {
+        u4.set(ctl.borrow().doc.history_labels().len());
+        invoke("transient-shaper", |s, id, def| s.invoke_panel_choice(id, def.index_of("clip").map_or(-1, |i| i as i32), 1))(a, ctl);
+    })));
+    out.push(Check("transient-shaper: Clip on in one undo step; its dial cell is a latch reading On", Box::new(move |c, a| {
+        let n = c.doc.history_labels().len();
+        let cd = card_named(a, "Transient Shaper").ok_or("no card")?;
+        let k = (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).find(|k| k.face == 2).ok_or("no latch")?;
+        (n == u5.get() + 1 && c.doc.undo_label() == Some("Device Parameter Change") && param(c, "transient-shaper", "clip") == Some(1.0) && k.norm > 0.5 && k.value == "On")
+            .then_some(())
+            .ok_or(format!("history {} -> {n}, clip {:?}", u5.get(), param(c, "transient-shaper", "clip")))
+    })));
+    out.push(DoC("dynamics: remove the section's devices", Box::new(|a, ctl| clear_audio_chain(a, ctl))));
+    out.push(Check("dynamics: the audio track's chain is empty again", Box::new(|c, _| {
+        let n = track_of(c, TrackKind::Audio).map_or(usize::MAX, |t| c.project().tracks[t].devices.len());
+        (n == 0).then_some(()).ok_or(format!("{n} devices left"))
+    })));
+    out
 }
 
 // ------------------------------------------------------------------ modulation and containers
@@ -3050,10 +3177,6 @@ fn named_value(c: &Controller, id: &str, param: &str) -> Option<f32> {
     Some(def.value(d, def.param(param)?))
 }
 
-fn leak(s: String) -> &'static str {
-    Box::leak(s.into_boxed_str())
-}
-
 /// The modulation devices: each one added from Add device › Built-in, checked
 /// live in the engine with its generated field card, then removed; plus the
 /// Tremolo field drag (one undo step for both axes), the Sync swap of the Rate
@@ -3196,6 +3319,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(modulation_steps());
     all.extend(builtin_each_steps());
     all.extend(modulation_device_steps());
+    all.extend(limiter_family_steps());
     all.extend(restoration_device_steps());
     all.extend(sampler_steps());
     all.extend(automation_steps());
