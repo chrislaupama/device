@@ -5,6 +5,8 @@
 #pragma once
 
 #include <algorithm>
+#include "dsp.hpp"
+
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -12,11 +14,8 @@
 
 namespace saine::dsp {
 
-constexpr float kPi = 3.14159265358979323846f;
-constexpr float kTwoPi = 6.28318530717958647692f;
-
 // xorshift32: deterministic, cheap, good enough for modulation and scatter.
-struct Rng {
+struct UnitRng {
     uint32_t s = 0x9e3779b9u;
     void seed(uint32_t v) noexcept { s = v != 0 ? v : 0x9e3779b9u; }
     uint32_t next() noexcept {
@@ -54,57 +53,6 @@ inline float hermite(float ym1, float y0, float y1, float y2, float t) noexcept 
     const float c3 = 0.5f * (y2 - ym1) + 1.5f * (y0 - y1);
     return ((c3 * t + c2) * t + c1) * t + y0;
 }
-
-// Power-of-two ring buffer with integer and interpolated reads behind the write head.
-class DelayLine {
-public:
-    void allocate(std::size_t min_len) {
-        std::size_t n = 8;
-        while (n < min_len + 4) n <<= 1;
-        buf_.assign(n, 0.0f);
-        mask_ = static_cast<uint32_t>(n - 1);
-        w_ = 0;
-    }
-    void clear() noexcept {
-        if (!buf_.empty()) std::memset(buf_.data(), 0, buf_.size() * sizeof(float));
-        w_ = 0;
-    }
-    std::size_t size() const noexcept { return buf_.size(); }
-    // Longest delay (samples) a read may ask for.
-    float max_delay() const noexcept { return static_cast<float>(buf_.size()) - 4.0f; }
-    void push(float x) noexcept {
-        buf_[w_] = x;
-        w_ = (w_ + 1) & mask_;
-    }
-    // Sample written d pushes ago (d >= 1 is the last pushed sample).
-    float at(uint32_t d) const noexcept { return buf_[(w_ - d) & mask_]; }
-    // Fractional delay in samples (>= 2), Hermite interpolated.
-    float read(float d) const noexcept {
-        d = std::clamp(d, 2.0f, max_delay());
-        const auto i = static_cast<uint32_t>(d);
-        const float t = d - static_cast<float>(i);
-        // newer -> older: at(i - 1), at(i), at(i + 1), at(i + 2)
-        const float y_new = buf_[(w_ - i + 1) & mask_];
-        const float y0 = buf_[(w_ - i) & mask_];
-        const float y1 = buf_[(w_ - i - 1) & mask_];
-        const float y2 = buf_[(w_ - i - 2) & mask_];
-        return hermite(y_new, y0, y1, y2, t);
-    }
-    // Linear read (cheaper; for heavily modulated networks where Hermite is overkill).
-    float read_linear(float d) const noexcept {
-        d = std::clamp(d, 1.0f, max_delay());
-        const auto i = static_cast<uint32_t>(d);
-        const float t = d - static_cast<float>(i);
-        const float a = buf_[(w_ - i) & mask_];
-        const float b = buf_[(w_ - i - 1) & mask_];
-        return a + t * (b - a);
-    }
-
-private:
-    std::vector<float> buf_;
-    uint32_t mask_ = 0;
-    uint32_t w_ = 0;
-};
 
 // Transposed direct form II biquad with RBJ cookbook designs.
 struct Biquad {
@@ -182,7 +130,7 @@ struct Biquad {
 };
 
 // One-pole low-pass / high-pass (6 dB/oct), matched at the cutoff.
-struct OnePole {
+struct ExpOnePole {
     float a = 0.0f; // feedback coefficient
     float y = 0.0f;
     void set_hz(float hz, double sample_rate) noexcept {
@@ -197,10 +145,10 @@ struct OnePole {
 // Schroeder allpass on its own buffer (fixed or modulated delay).
 class Allpass {
 public:
-    void allocate(std::size_t max_len) { line_.allocate(max_len + 2); }
-    void clear() noexcept { line_.clear(); }
+    void allocate(std::size_t max_len) { line_.prepare(max_len + 2); }
+    void clear() noexcept { line_.reset(); }
     float process(float x, float delay, float g) noexcept {
-        const float d = line_.read_linear(delay);
+        const float d = line_.read_linear(delay - 1.0f);
         const float v = x + g * d;
         line_.push(flush(v));
         return d - g * v;

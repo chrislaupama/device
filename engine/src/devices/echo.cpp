@@ -94,16 +94,16 @@ class Echo final : public BuiltinProcessor {
 public:
     void prepare(double sample_rate, uint32_t) override {
         sr_ = sample_rate;
-        tape_.allocate(static_cast<std::size_t>(static_cast<double>(kMaxSeconds) * sr_) + 64);
+        tape_.prepare(static_cast<std::size_t>(static_cast<double>(kMaxSeconds) * sr_) + 64);
         for (auto& a : smear_) a.allocate(static_cast<std::size_t>(0.03 * sr_));
-        spring_.allocate(static_cast<std::size_t>(0.1 * sr_));
+        spring_.prepare(static_cast<std::size_t>(0.1 * sr_));
         reset();
     }
 
     void reset() noexcept override {
-        tape_.clear();
+        tape_.reset();
         for (auto& a : smear_) a.clear();
-        spring_.clear();
+        spring_.reset();
         for (auto& d : disp_) d.reset();
         for (auto& b : loop_eq_) b.reset();
         loop_lp_.reset();
@@ -274,7 +274,7 @@ public:
                 if (!heads[h].on && heads[h].fb <= 0.0f) continue;
                 const float sc = heads[h].pan > 0.0f ? scale_r : scale_l;
                 const float d = heads[h].mm / spd * sc * static_cast<float>(sr_);
-                float v = tape_.read(d + 2.0f) * splice_g;
+                float v = tape_.read(d + 1.0f) * splice_g;
                 if (heads[h].tilt != 0.0f) {
                     const float lo = tilt_[h].lp(v);
                     v = lo + (v - lo) * (1.0f + heads[h].tilt);
@@ -298,14 +298,14 @@ public:
             // Record: input amp, throw, saturation onto tape.
             const float in = dsp::soft_clip(0.5f * (xl + xr) * drive) * throw_g_;
             float wr = in + loop;
-            if (sos) wr += tape_.read(ms.loop_mm / spd * static_cast<float>(sr_)) * 0.82f / w;
+            if (sos) wr += tape_.read(ms.loop_mm / spd * static_cast<float>(sr_) - 1.0f) * 0.82f / w;
             wr = dsp::soft_clip(wr * sat) / sat;
             tape_.push(spring_only ? 0.0f : dsp::flush(wr));
 
             // Spring tank on the echoes (and the input in "spring only").
             if (spring_amt > 0.0f) {
                 const float s_len = 0.047f * static_cast<float>(sr_);
-                float y = spring_lp_.lp(spring_.read_linear(s_len));
+                float y = spring_lp_.lp(spring_.read_linear(s_len - 1.0f));
                 float x = (spring_only ? in : 0.5f * (out_l + out_r) + 0.3f * in) + y * 0.72f;
                 for (auto& ap : disp_) x = ap.process(x, -0.6f);
                 spring_.push(dsp::flush(x));
@@ -355,7 +355,7 @@ private:
         const MachineSpec& ms = kMachines[machine];
         const float humanize = std::clamp(p[kHumanize], 0.0f, 100.0f) * 0.01f;
         // Pan pattern: alternating sides, made irregular by Humanize (seeded).
-        dsp::Rng prng;
+        dsp::UnitRng prng;
         prng.seed(0x70616e2eu ^ static_cast<uint32_t>(std::clamp(p[kSeed], 0.0f, 65535.0f)) * 2654435761u);
         float pattern[6];
         for (int i = 0; i < 6; ++i) {
@@ -431,14 +431,14 @@ private:
     };
     Disp disp_[16];
     dsp::Biquad loop_eq_[2];
-    dsp::OnePole loop_lp_;
+    dsp::ExpOnePole loop_lp_;
     dsp::Biquad tail_[2][2];
-    dsp::OnePole tilt_[6];
-    dsp::OnePole spring_lp_;
+    dsp::ExpOnePole tilt_[6];
+    dsp::ExpOnePole spring_lp_;
     float key_[4] = {};
     float speed_ = -1.0f, env_db_ = -120.0f, duck_ = 1.0f, throw_g_ = 1.0f, mix_ = 0.0f;
     float wow_ = 0.0f, flutter_ = 0.0f, scrape_ = 0.0f, loop_phase_ = 0.0f, splice_env_ = 0.0f;
-    dsp::Rng rng_;
+    dsp::UnitRng rng_;
     bool primed_ = false;
 };
 
@@ -448,6 +448,21 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Echo>(); }
 
 extern const BuiltinDescriptor kEchoDescriptor;
 constexpr float kIdle[kReadoutCount] = {-120.0f, 0.0f, 0.0f};
-const BuiltinDescriptor kEchoDescriptor{"echo", kParamIds, kReadoutIds, &create, kIdle};
+// Defaults: the machine and tape params, six authored-head blocks, then the seed.
+constexpr float kMainDefaults[] = {0.f, 3.f, 1.f, 0.f, 11.f, 0.5f, 1.f, 0.f, 10.f, 12.f, 5.f, 35.f, 0.f, 0.f, 0.f, 5.f, 5.f,
+                                   0.f, 1.f, 0.f, 0.f, 100.f, 45.f, 0.45f, 0.f, 25.f, 100.f, 100.f, 100.f, 0.f, 100.f, 0.f,
+                                   1.f, 20.f, 6200.f, 240.f, 20000.f, 0.f, 60.f, -24.f, 5.f, 180.f, 0.f, 0.f, 0.f, 6.f,
+                                   20673.f, 0.f, 0.f, 0.f, 0.f};
+constexpr float kHeadDefaults[] = {0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f};
+static_assert(std::size(kMainDefaults) + 6 * std::size(kHeadDefaults) + 1 == kParamCount);
+constexpr std::array<float, kParamCount> kDefaults = [] {
+    std::array<float, kParamCount> v{};
+    std::size_t i = 0;
+    for (float x : kMainDefaults) v[i++] = x;
+    for (int h = 0; h < 6; ++h)
+        for (float x : kHeadDefaults) v[i++] = x;
+    return v;
+}();
+const BuiltinDescriptor kEchoDescriptor{"echo", kParamIds, kReadoutIds, &create, kIdle, kDefaults};
 
 } // namespace saine

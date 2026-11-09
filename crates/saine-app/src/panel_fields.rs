@@ -10,7 +10,7 @@
 
 use crate::controller::Controller;
 use crate::device_panel::{s, Z};
-use crate::{FieldPath, FieldPill, FieldText, PanelField};
+use crate::{CustomField, FieldPath, FieldPill, FieldText};
 use saine_core::builtin::{delay, echo, grains, pitch_shifter, reverb, DeviceDef, View};
 use saine_core::{Command, Device, DeviceId};
 use slint::{Color, ModelRc, VecModel};
@@ -475,8 +475,8 @@ impl Controller {
         def.param(id).map_or(0.0, |p| self.panel_value(d, def, p))
     }
 
-    pub(crate) fn panel_field(&self, d: &Device, def: &'static DeviceDef, view_right: f32) -> PanelField {
-        let Some(name) = field_name(def) else { return PanelField::default() };
+    pub(crate) fn panel_field(&self, d: &Device, def: &'static DeviceDef, view_right: f32) -> CustomField {
+        let Some(name) = field_name(def) else { return CustomField::default() };
         let (x, y, w, h, well_y) = field_rect(def, view_right);
         let wh = h - well_y;
         let mut c = Canvas::default();
@@ -520,7 +520,7 @@ impl Controller {
             (None, "echo") => 3,
             _ => 0,
         };
-        PanelField { visible: true, x, y, w, h, caption: s(caption), value: s(value), well_y, paths: model(c.paths), texts: model(c.texts), pills: model(c.pills), cursor }
+        CustomField { visible: true, x, y, w, h, caption: s(caption), value: s(value), well_y, paths: model(c.paths), texts: model(c.texts), pills: model(c.pills), cursor }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -954,7 +954,7 @@ impl Controller {
         let Some(d) = self.project().device(device).cloned() else { return };
         let Some(def) = saine_core::builtin::def_of(&d) else { return };
         let Some(name) = field_name(def) else { return };
-        let (_, _, w, fh, well_y) = field_rect(def, self.view_right(def));
+        let (_, _, w, fh, well_y) = field_rect(def, crate::device_panel::view_right(def));
         let h = fh - well_y;
         match phase {
             0 => {

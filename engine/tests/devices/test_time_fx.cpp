@@ -11,39 +11,16 @@ namespace {
 
 constexpr double kRate = 48000.0;
 
-// Defaults of the Rust definitions, registry order.
-const std::vector<float> kDelay = {120.f, 8.f, 50.f, 0.f, 0.0692f, 0.f, 100.f, 50.f, 0.f,
-                                   20.f, 0.f, 0.71f, 0.f, 150.f, 0.f, 1.f, 1.f, 500.f, 0.f, 1.f, 1.f,
-                                   3000.f, 0.f, 1.f, 1.f, 8000.f, 0.f, 1.f, 1.f, 20000.f, 0.f, 0.71f, 0.f,
-                                   1.f, 1.f, 500.f, 1.f, 8.f, 500.f};
-const std::vector<float> kReverb = {50.f, 2.f, 50.f, 10.f, 30.f, 100.f, 1.f, 12000.f, 20.f, 1.f, 20.f, 1.f, 7.f, 10.f, 60.f, 50.f};
-const std::vector<float> kPitch = {0.f, 0.f, 0.f, 100.f};
-const std::vector<float> kGrains = {0.f, 0.f, 250.f, 3.f, 120.f, 100.f, 24.f, 8.f, 100.f, 40.f, 0.f, 0.f, 4.f,
-                                    0.f, 50.f, 50.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 50.f, 0.f, 0.f};
-std::vector<float> echo_defaults() {
-    std::vector<float> v = {0.f, 3.f, 1.f, 0.f, 11.f, 0.5f, 1.f, 0.f, 10.f, 12.f, 5.f, 35.f, 0.f, 0.f, 0.f, 5.f, 5.f,
-                            0.f, 1.f, 0.f, 0.f, 100.f, 45.f, 0.45f, 0.f, 25.f, 100.f, 100.f, 100.f, 0.f, 100.f, 0.f,
-                            1.f, 20.f, 6200.f, 240.f, 20000.f, 0.f, 60.f, -24.f, 5.f, 180.f, 0.f, 0.f, 0.f, 6.f,
-                            20673.f, 0.f, 0.f, 0.f, 0.f};
-    for (int h = 0; h < 6; ++h)
-        for (float x : {0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f}) v.push_back(x);
-    v.push_back(0.f);
-    return v;
+std::vector<float> defaults_of(const char* id) {
+    const saine::BuiltinDescriptor* d = saine::find_builtin(id);
+    return {d->defaults.begin(), d->defaults.end()};
 }
 
-} // namespace
-
-// Defaults of the time / pitch devices for the generic checks in test_builtin.cpp.
-std::vector<float> time_fx_defaults(const std::string& id) {
-    if (id == "delay") return kDelay;
-    if (id == "echo") return echo_defaults();
-    if (id == "reverb") return kReverb;
-    if (id == "pitch-shifter") return kPitch;
-    if (id == "grains") return kGrains;
-    return {};
-}
-
-namespace {
+const std::vector<float> kDelay = defaults_of("delay");
+const std::vector<float> kReverb = defaults_of("reverb");
+const std::vector<float> kPitch = defaults_of("pitch-shifter");
+const std::vector<float> kGrains = defaults_of("grains");
+std::vector<float> echo_defaults() { return defaults_of("echo"); }
 
 // Frequency of the strongest bin of x[from, from + 8192).
 double dominant_hz(const Signal& x, std::size_t from) {

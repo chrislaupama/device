@@ -33,7 +33,7 @@ public:
         sr_ = sample_rate;
         const uint32_t n = fft_size_for(sample_rate);
         for (auto& s : shift_) s.prepare(n);
-        for (auto& d : dry_) d.allocate(n + max_block + 8);
+        for (auto& d : dry_) d.prepare(n + max_block + 8);
         wet_l_.assign(max_block, 0.0f);
         wet_r_.assign(max_block, 0.0f);
         mix_.set_time(20.0f, sr_);
@@ -41,7 +41,7 @@ public:
 
     void reset() noexcept override {
         for (auto& s : shift_) s.reset();
-        for (auto& d : dry_) d.clear();
+        for (auto& d : dry_) d.reset();
         primed_ = false;
     }
 
@@ -75,7 +75,7 @@ public:
             for (uint32_t i = 0; i < m; ++i) {
                 dry_[0].push(cl[i]);
                 dry_[1].push(cr[i]);
-                const float dl = dry_[0].at(lat + 1), dr = dry_[1].at(lat + 1);
+                const float dl = dry_[0].at(lat), dr = dry_[1].at(lat);
                 const float wl = unity ? dl : wet_l_[i], wr = unity ? dr : wet_r_[i];
                 const float g = mix_.next(mix);
                 cl[i] = dl + g * (wl - dl);
@@ -102,6 +102,7 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<PitchShifte
 
 extern const BuiltinDescriptor kPitchShifterDescriptor;
 constexpr float kIdle[] = {0.0f, -120.0f};
-const BuiltinDescriptor kPitchShifterDescriptor{"pitch-shifter", kParamIds, kReadoutIds, &create, kIdle};
+constexpr float kDefaults[kParamCount] = {0.f, 0.f, 0.f, 100.f};
+const BuiltinDescriptor kPitchShifterDescriptor{"pitch-shifter", kParamIds, kReadoutIds, &create, kIdle, kDefaults};
 
 } // namespace saine

@@ -109,7 +109,7 @@ public:
         buf_[1].assign(len_, 0.0f);
         for (auto& side : blur_)
             for (auto& a : side) a.allocate(static_cast<std::size_t>(0.06 * sr_));
-        for (auto& d : space_) d.allocate(static_cast<std::size_t>(0.12 * sr_));
+        for (auto& d : space_) d.prepare(static_cast<std::size_t>(0.12 * sr_));
         tone_lo_[0].set(dsp::Biquad::kLowShelf, 700.0f, 0.6f, 0.0f, sr_);
         reset();
     }
@@ -125,7 +125,7 @@ public:
         frozen_ = false;
         for (auto& side : blur_)
             for (auto& a : side) a.clear();
-        for (auto& d : space_) d.clear();
+        for (auto& d : space_) d.reset();
         for (float& s : space_lp_) s = 0.0f;
         for (int c = 0; c < 2; ++c) {
             tone_lo_[c].reset();
@@ -280,7 +280,7 @@ public:
                 constexpr float kMs[4] = {37.3f, 47.9f, 61.1f, 73.7f};
                 float v[4];
                 for (int k = 0; k < 4; ++k) {
-                    float y = space_[k].read_linear(kMs[k] * 0.001f * static_cast<float>(sr_) * (0.6f + 0.6f * space));
+                    float y = space_[k].read_linear(kMs[k] * 0.001f * static_cast<float>(sr_) * (0.6f + 0.6f * space) - 1.0f);
                     space_lp_[k] = y + 0.35f * (space_lp_[k] - y);
                     v[k] = space_lp_[k] * (0.72f + 0.2f * space);
                 }
@@ -394,11 +394,11 @@ private:
     dsp::DelayLine space_[4];
     float space_lp_[4] = {};
     dsp::Biquad tone_lo_[2], tone_hi_[2];
-    dsp::OnePole char_lp_[2];
+    dsp::ExpOnePole char_lp_[2];
     float hold_[2] = {}, hold_phase_ = 0.0f, wob_ = 0.0f;
     float drift_pos_ = 0.0f, drift_st_ = 0.0f, fb_l_ = 0.0f, fb_r_ = 0.0f, mix_ = 0.0f;
     uint32_t clock_ = 0;
-    dsp::Rng rng_;
+    dsp::UnitRng rng_;
     bool primed_ = false;
 };
 
@@ -408,6 +408,8 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Grains>(); 
 
 extern const BuiltinDescriptor kGrainsDescriptor;
 constexpr float kIdle[2 + 3 * kShown] = {-120.0f};
-const BuiltinDescriptor kGrainsDescriptor{"grains", kParamIds, kReadoutIds, &create, kIdle};
+constexpr float kDefaults[kParamCount] = {0.f, 0.f, 250.f, 3.f, 120.f, 100.f, 24.f, 8.f, 100.f, 40.f, 0.f, 0.f, 4.f,
+                                          0.f, 50.f, 50.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 50.f, 0.f, 0.f};
+const BuiltinDescriptor kGrainsDescriptor{"grains", kParamIds, kReadoutIds, &create, kIdle, kDefaults};
 
 } // namespace saine

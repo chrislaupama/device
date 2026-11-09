@@ -49,7 +49,7 @@ class Delay final : public BuiltinProcessor {
 public:
     void prepare(double sample_rate, uint32_t max_block) override {
         sr_ = sample_rate;
-        for (auto& d : line_) d.allocate(static_cast<std::size_t>(static_cast<double>(kMaxSeconds + 0.05f + 2.0f * kMaxModMs * 0.001f) * sr_) + 16);
+        for (auto& d : line_) d.prepare(static_cast<std::size_t>(static_cast<double>(kMaxSeconds + 0.05f + 2.0f * kMaxModMs * 0.001f) * sr_) + 16);
         tap_.prepare(sample_rate);
         wet_.assign(max_block, 0.0f);
         mix_.set_time(20.0f, sr_);
@@ -60,7 +60,7 @@ public:
     }
 
     void reset() noexcept override {
-        for (auto& d : line_) d.clear();
+        for (auto& d : line_) d.reset();
         for (int c = 0; c < 2; ++c) {
             for (auto& b : eq_[c]) b.reset();
             tone_[c].reset();
@@ -161,9 +161,9 @@ public:
             for (int c = 0; c < 2; ++c) {
                 if (mode != kDigital) cur_[c] = target_[c] + glide_ * (cur_[c] - target_[c]);
                 const float d = cur_[c] + mod + 2.0f;
-                float v = line_[c].read(d);
+                float v = line_[c].read(d - 1.0f);
                 if (xf_[c] < 1.0f) {
-                    const float o = line_[c].read(old_[c] + mod + 2.0f);
+                    const float o = line_[c].read(old_[c] + mod + 1.0f);
                     v = o + xf_[c] * (v - o);
                     xf_[c] = std::min(1.0f, xf_[c] + xf_inc);
                 }
@@ -240,13 +240,13 @@ private:
     dsp::Biquad eq_[2][6];
     bool eq_on_[6] = {};
     float eq_key_[6] = {};
-    dsp::OnePole tone_[2];
+    dsp::ExpOnePole tone_[2];
     dsp::Biquad aa_[2][2];
     float cur_[2] = {}, target_[2] = {}, old_[2] = {}, xf_[2] = {1.0f, 1.0f}, fbs_[2] = {};
     float glide_ = 0.0f;
     float wow_phase_ = 0.0f, drift_ = 0.0f, drift_target_ = 0.0f;
     int32_t drift_count_ = 0;
-    dsp::Rng rng_;
+    dsp::UnitRng rng_;
     dsp::SpectrumTap tap_;
     std::vector<float> wet_;
     dsp::Smoother mix_, fb_, width_;
@@ -261,6 +261,10 @@ extern const BuiltinDescriptor kDelayDescriptor;
 constexpr float kIdle[3 + kBands] = {-120.0f, 0.0f, 0.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f,
                                      -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f,
                                      -120.0f, -120.0f, -120.0f, -120.0f};
-const BuiltinDescriptor kDelayDescriptor{"delay", kParamIds, kReadoutIds, &create, kIdle};
+constexpr float kDefaults[kParamCount] = {120.f, 8.f, 50.f, 0.f, 0.0692f, 0.f, 100.f, 50.f, 0.f,
+                                          20.f, 0.f, 0.71f, 0.f, 150.f, 0.f, 1.f, 1.f, 500.f, 0.f, 1.f, 1.f,
+                                          3000.f, 0.f, 1.f, 1.f, 8000.f, 0.f, 1.f, 1.f, 20000.f, 0.f, 0.71f, 0.f,
+                                          1.f, 1.f, 500.f, 1.f, 8.f, 500.f};
+const BuiltinDescriptor kDelayDescriptor{"delay", kParamIds, kReadoutIds, &create, kIdle, kDefaults};
 
 } // namespace saine

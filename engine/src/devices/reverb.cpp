@@ -110,14 +110,14 @@ public:
     void prepare(double sample_rate, uint32_t max_block) override {
         sr_ = sample_rate;
         const auto ms = [&](float v) { return static_cast<std::size_t>(static_cast<double>(v) * 0.001 * sr_) + 8; };
-        for (auto& d : pre_) d.allocate(ms(1000.0f));
+        for (auto& d : pre_) d.prepare(ms(1000.0f));
         for (int i = 0; i < kLines; ++i) {
-            line_[i].allocate(ms(kLineMs[i] * kMaxScale + 8.0f));
+            line_[i].prepare(ms(kLineMs[i] * kMaxScale + 8.0f));
             loop_ap_[i].allocate(ms(kLoopApMs[i] * 2.0f));
         }
         for (auto& side : diff_)
             for (int k = 0; k < 4; ++k) side[k].allocate(ms(kDiffMs[k] * 6.0f + 2.0f));
-        for (auto& s : spring_) s.allocate(ms(90.0f));
+        for (auto& s : spring_) s.prepare(ms(90.0f));
         for (auto& s : shifter_) s.prepare(sample_rate > 60000.0 ? 2048 : 1024);
         wet_mono_.assign(max_block, 0.0f);
         tap_.prepare(sample_rate);
@@ -128,16 +128,16 @@ public:
     }
 
     void reset() noexcept override {
-        for (auto& d : pre_) d.clear();
+        for (auto& d : pre_) d.reset();
         for (int i = 0; i < kLines; ++i) {
-            line_[i].clear();
+            line_[i].reset();
             loop_ap_[i].clear();
             damp_[i] = 0.0f;
             lfo_[i] = static_cast<float>(i) / kLines;
         }
         for (auto& side : diff_)
             for (auto& a : side) a.clear();
-        for (auto& s : spring_) s.clear();
+        for (auto& s : spring_) s.reset();
         for (auto& side : disp_)
             for (auto& a : side) a.reset();
         for (auto& f : spring_lp_) f.reset();
@@ -260,13 +260,13 @@ public:
             const float pd = std::max(1.0f, pre_ms_.next(pre_ms) * 0.001f * static_cast<float>(sr_));
             pre_[0].push(xl);
             pre_[1].push(xr);
-            float il = pre_[0].read(pd + 2.0f), ir = pre_[1].read(pd + 2.0f);
+            float il = pre_[0].read(pd + 1.0f), ir = pre_[1].read(pd + 1.0f);
             // Early reflections from the pre-delayed input.
             float erl = 0.0f, err = 0.0f;
             if (ms.er_level > 0.0f) {
                 for (int k = 0; k < 8; ++k) {
-                    erl += er_g[k] * pre_[k & 1].read_linear(pd + 2.0f + er_t[k]);
-                    err += er_g[k] * pre_[(k + 1) & 1].read_linear(pd + 2.0f + er_t[k] * 1.07f);
+                    erl += er_g[k] * pre_[k & 1].read_linear(pd + 1.0f + er_t[k]);
+                    err += er_g[k] * pre_[(k + 1) & 1].read_linear(pd + 1.0f + er_t[k] * 1.07f);
                 }
             }
             if (shim_on) {
@@ -285,7 +285,7 @@ public:
                 // Two dispersive tanks over a quiet diffuse bed.
                 for (int c = 0; c < 2; ++c) {
                     const float len_c = spring_len * (c == 0 ? 1.0f : 1.137f);
-                    float y = spring_[c].read_linear(len_c);
+                    float y = spring_[c].read_linear(len_c - 1.0f);
                     y = spring_lp_[c].lp(y);
                     float x = (c == 0 ? il : ir) + dsp::soft_clip(y * spring_g * 0.98f);
                     for (auto& ap : disp_[c]) x = ap.process(x, spring_disp);
@@ -299,7 +299,7 @@ public:
                 lfo_[k] += lfo_inc * (1.0f + 0.07f * static_cast<float>(k));
                 if (lfo_[k] >= 1.0f) lfo_[k] -= 1.0f;
                 const float d = len[k] + mod_samples * (1.0f + dsp::fast_sin(lfo_[k]));
-                float y = line_[k].read_linear(d + 2.0f);
+                float y = line_[k].read_linear(d + 1.0f);
                 damp_[k] = y + pole[k] * (damp_[k] - y); // two-band absorption
                 y = damp_[k] * g_lo[k];
                 v[k] = y;
@@ -363,13 +363,13 @@ public:
 private:
     void clear_tail() noexcept {
         for (int i = 0; i < kLines; ++i) {
-            line_[i].clear();
+            line_[i].reset();
             loop_ap_[i].clear();
             damp_[i] = 0.0f;
         }
         for (auto& side : diff_)
             for (auto& a : side) a.clear();
-        for (auto& s : spring_) s.clear();
+        for (auto& s : spring_) s.reset();
         for (auto& side : disp_)
             for (auto& a : side) a.reset();
         for (auto& s : shifter_) s.reset();
@@ -385,12 +385,12 @@ private:
     float lfo_[kLines] = {};
     dsp::DelayLine spring_[2];
     std::array<StretchedAp, 12> disp_[2];
-    dsp::OnePole spring_lp_[2];
+    dsp::ExpOnePole spring_lp_[2];
     dsp::PitchShifter shifter_[2];
     std::vector<float> wet_mono_;
     float shim_fb_ = 0.0f;
     bool shim_was_on_ = false;
-    dsp::OnePole lc_[2], hc_[2];
+    dsp::ExpOnePole lc_[2], hc_[2];
     dsp::SpectrumTap tap_;
     dsp::Smoother mix_, width_, pre_ms_;
     uint64_t quiet_ = 0;
@@ -406,6 +406,7 @@ extern const BuiltinDescriptor kReverbDescriptor;
 constexpr float kIdle[1 + kBands] = {-120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f,
                                      -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f,
                                      -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f, -120.0f};
-const BuiltinDescriptor kReverbDescriptor{"reverb", kParamIds, kReadoutIds, &create, kIdle};
+constexpr float kDefaults[kParamCount] = {50.f, 2.f, 50.f, 10.f, 30.f, 100.f, 1.f, 12000.f, 20.f, 1.f, 20.f, 1.f, 7.f, 10.f, 60.f, 50.f};
+const BuiltinDescriptor kReverbDescriptor{"reverb", kParamIds, kReadoutIds, &create, kIdle, kDefaults};
 
 } // namespace saine

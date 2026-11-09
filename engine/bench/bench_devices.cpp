@@ -14,7 +14,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <string>
+#include <utility>
 #include <vector>
 
 using Clock = std::chrono::steady_clock;
@@ -24,26 +26,6 @@ namespace {
 constexpr double kRate = 48000.0;
 constexpr uint32_t kBlock = 256;
 const std::vector<float> kCompressor = {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};
-// Defaults of the time / pitch devices (Rust definitions, registry order).
-const std::vector<float> kDelay = {120.f, 8.f, 50.f, 0.f, 0.0692f, 0.f, 100.f, 50.f, 0.f,
-                                   20.f, 0.f, 0.71f, 0.f, 150.f, 0.f, 1.f, 1.f, 500.f, 0.f, 1.f, 1.f,
-                                   3000.f, 0.f, 1.f, 1.f, 8000.f, 0.f, 1.f, 1.f, 20000.f, 0.f, 0.71f, 0.f,
-                                   1.f, 1.f, 500.f, 1.f, 8.f, 500.f};
-const std::vector<float> kReverb = {50.f, 2.f, 50.f, 10.f, 30.f, 100.f, 1.f, 12000.f, 20.f, 1.f, 20.f, 1.f, 7.f, 10.f, 60.f, 50.f};
-const std::vector<float> kPitch = {7.f, 0.f, 0.f, 100.f};
-const std::vector<float> kGrains = {0.f, 0.f, 250.f, 3.f, 120.f, 100.f, 24.f, 8.f, 100.f, 40.f, 0.f, 0.f, 4.f,
-                                    0.f, 50.f, 50.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 50.f, 0.f, 0.f};
-std::vector<float> echo_defaults() {
-    std::vector<float> v = {0.f, 3.f, 1.f, 0.f, 11.f, 0.5f, 1.f, 0.f, 10.f, 12.f, 5.f, 35.f, 0.f, 0.f, 0.f, 5.f, 5.f,
-                            0.f, 1.f, 0.f, 0.f, 100.f, 45.f, 0.45f, 0.f, 25.f, 100.f, 100.f, 100.f, 0.f, 100.f, 0.f,
-                            1.f, 20.f, 6200.f, 240.f, 20000.f, 0.f, 60.f, -24.f, 5.f, 180.f, 0.f, 0.f, 0.f, 6.f,
-                            20673.f, 0.f, 0.f, 0.f, 0.f};
-    for (int h = 0; h < 6; ++h)
-        for (float x : {0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f}) v.push_back(x);
-    v.push_back(0.f);
-    return v;
-}
-
 std::vector<uint8_t> blob(const std::vector<float>& v, uint64_t sc = 0) {
     se_builtin_state h{SE_BUILTIN_STATE_MAGIC, static_cast<uint32_t>(v.size()), sc};
     std::vector<uint8_t> out(sizeof h + 4 * v.size());
@@ -150,36 +132,54 @@ int main(int argc, char** argv) {
     }
     row("compressor (Clean, 16 auto events)", bench_kernel("compressor", kCompressor, blocks, 16));
 
-    // Time and pitch devices, one row per mode / machine (value index, value).
-    struct Variant {
-        const char* id;
-        const char* name;
-        std::vector<float> values;
-        int index;
-        float value;
+    // Modulation devices at their defaults, then the heavier settings.
+    const auto defaults = [](const char* id) {
+        const saine::BuiltinDescriptor* d = saine::find_builtin(id);
+        return std::vector<float>(d->defaults.begin(), d->defaults.end());
     };
-    const Variant variants[] = {
-        {"delay", "delay (Tape)", kDelay, 8, 0.f},
-        {"delay", "delay (Digital)", kDelay, 8, 1.f},
-        {"delay", "delay (BBD)", kDelay, 8, 2.f},
-        {"echo", "echo (Tape Loop)", echo_defaults(), 0, 0.f},
-        {"echo", "echo (Drum)", echo_defaults(), 0, 1.f},
-        {"echo", "echo (Cartridge)", echo_defaults(), 0, 2.f},
-        {"reverb", "reverb (Room)", kReverb, 6, 0.f},
-        {"reverb", "reverb (Hall)", kReverb, 6, 1.f},
-        {"reverb", "reverb (Plate)", kReverb, 6, 2.f},
-        {"reverb", "reverb (Spring)", kReverb, 6, 3.f},
-        {"reverb", "reverb (Shimmer)", kReverb, 6, 4.f},
-        {"reverb", "reverb (Haze)", kReverb, 6, 5.f},
-        {"pitch-shifter", "pitch-shifter (+7 st)", kPitch, 2, 0.f},
-        {"pitch-shifter", "pitch-shifter (+7 st, formant)", kPitch, 2, 1.f},
-        {"grains", "grains (Cloud)", kGrains, 0, 0.f},
-        {"grains", "grains (Rhythm)", kGrains, 0, 1.f},
+    const auto tweak = [&](const char* id, std::initializer_list<std::pair<const char*, float>> set) {
+        const saine::BuiltinDescriptor* d = saine::find_builtin(id);
+        std::vector<float> v = defaults(id);
+        for (const auto& [p, x] : set)
+            for (std::size_t i = 0; i < d->params.size(); ++i)
+                if (std::strcmp(d->params[i], p) == 0) v[i] = x;
+        return v;
     };
-    for (const auto& v : variants) {
-        std::vector<float> values = v.values;
-        values[static_cast<std::size_t>(v.index)] = v.value;
-        row(v.name, bench_kernel(v.id, values, blocks, 0));
+    for (const char* id : {"tremolo", "autopanner", "chorus", "flanger", "phaser", "ring-mod"}) row(id, bench_kernel(id, defaults(id), blocks, 0));
+    row("chorus (4 voices, feedback 60%)", bench_kernel("chorus", tweak("chorus", {{"voices", 3.0f}, {"feedback", 60.0f}}), blocks, 0));
+    row("flanger (Thru-Zero)", bench_kernel("flanger", tweak("flanger", {{"mode", 2.0f}}), blocks, 0));
+    row("phaser (12 stages)", bench_kernel("phaser", tweak("phaser", {{"stages", 3.0f}}), blocks, 0));
+    row("ring-mod (Noise, spread 100%)", bench_kernel("ring-mod", tweak("ring-mod", {{"modulator", 4.0f}, {"spread", 100.0f}}), blocks, 0));
+    const char* circuits[] = {"Single BBD", "Crossed", "Twin BBD", "Ensemble", "Tape", "Photocell", "Flanger", "Phaser", "Tremolo", "Rotary", "Panner"};
+    for (int c = 0; c < 11; ++c) {
+        char name[64];
+        std::snprintf(name, sizeof name, "character-mod (%s)", circuits[c]);
+        row(name, bench_kernel("character-mod", tweak("character-mod", {{"model", static_cast<float>(c)}}), blocks, 0));
+    }
+    row("character-mod (Phaser Barber)", bench_kernel("character-mod", tweak("character-mod", {{"model", 7.0f}, {"mode_phaser", 4.0f}}), blocks, 0));
+
+    // Time and pitch devices, one row per mode / machine.
+    const std::pair<const char*, std::vector<float>> time_fx[] = {
+        {"delay (Tape)", tweak("delay", {{"mode", 0.f}})},
+        {"delay (Digital)", tweak("delay", {{"mode", 1.f}})},
+        {"delay (BBD)", tweak("delay", {{"mode", 2.f}})},
+        {"echo (Tape Loop)", tweak("echo", {{"machine", 0.f}})},
+        {"echo (Drum)", tweak("echo", {{"machine", 1.f}})},
+        {"echo (Cartridge)", tweak("echo", {{"machine", 2.f}})},
+        {"reverb (Room)", tweak("reverb", {{"mode2", 0.f}})},
+        {"reverb (Hall)", tweak("reverb", {{"mode2", 1.f}})},
+        {"reverb (Plate)", tweak("reverb", {{"mode2", 2.f}})},
+        {"reverb (Spring)", tweak("reverb", {{"mode2", 3.f}})},
+        {"reverb (Shimmer)", tweak("reverb", {{"mode2", 4.f}})},
+        {"reverb (Haze)", tweak("reverb", {{"mode2", 5.f}})},
+        {"pitch-shifter (+7 st)", tweak("pitch-shifter", {{"semitones", 7.f}})},
+        {"pitch-shifter (+7 st, formant)", tweak("pitch-shifter", {{"semitones", 7.f}, {"formant_preserve", 1.f}})},
+        {"grains (Cloud)", tweak("grains", {{"mode", 0.f}})},
+        {"grains (Rhythm)", tweak("grains", {{"mode", 1.f}})},
+    };
+    for (const auto& [name, values] : time_fx) {
+        const std::string id(name, std::strchr(name, ' '));
+        row(name, bench_kernel(id.c_str(), values, blocks, 0));
     }
 
     // Parameter update paths and session cost: 32 tracks, one clip and two
