@@ -4008,6 +4008,7 @@ dependencies = [
  "serde_json",
  "slint",
  "slint-build",
+ "ttf-parser",
  "ureq",
  "wgpu",
 ]
