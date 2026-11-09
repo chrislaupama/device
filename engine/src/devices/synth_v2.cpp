@@ -1062,6 +1062,6 @@ std::unique_ptr<BuiltinProcessor> create_synth_v2() { return std::make_unique<Sy
 
 extern const BuiltinDescriptor kSynthV2Descriptor;
 const BuiltinDescriptor kSynthV2Descriptor{"synth-v2", synth_v2::kParamIds, kReadoutIds, &create_synth_v2, kIdleReadouts,
-                                           true};
+                                           synth_v2::kDefaults, true};
 
 } // namespace saine
