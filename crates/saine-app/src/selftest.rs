@@ -2449,10 +2449,16 @@ fn custom_view_steps() -> Vec<Step> {
     let (m0, m1, m2, m3) = (mask0.clone(), mask0.clone(), mask0.clone(), mask0.clone());
     vec![
         Do("views: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
-        DoC("views: add Trance Gate and Shaper to the first audio track", Box::new(move |a, ctl| {
+        DoC("views: select the first audio track, clear its chain, add Trance Gate and Shaper", Box::new(move |a, ctl| {
+            let Some(i) = track_of(&ctl.borrow(), TrackKind::Audio) else { return };
+            click_track_header(a, ctl, i);
             let mut c = ctl.borrow_mut();
+            let ids: Vec<saine_core::DeviceId> = c.project().tracks[i].devices.iter().map(|d| d.id).collect();
+            for d in ids {
+                c.execute(saine_core::Command::RemoveDevice { device: d });
+            }
             h0.set(c.doc.history_labels().len());
-            let Some(t) = track_of(&c, TrackKind::Audio).map(|i| c.project().tracks[i].id) else { return };
+            let t = c.project().tracks[i].id;
             for id in ["trance-gate", "shaper"] {
                 let def = saine_core::builtin::find(id).expect("registered");
                 c.add_item_to_track(&crate::devices::Item::Builtin(def), t, None);
@@ -2554,6 +2560,19 @@ fn custom_view_steps() -> Vec<Step> {
             let pts = saine_core::builtin::shaper::lane_points(&def.values(d), 4);
             let name = saine_core::builtin::shaper::matching_shape(4, &pts);
             (name == Some(saine_core::builtin::shaper::SHAPES[4][0].name)).then_some(()).ok_or(format!("shape {name:?}"))
+        })),
+        DoC("views: remove Trance Gate and Shaper", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            let ids: Vec<saine_core::DeviceId> = ["trance-gate", "shaper"].iter().filter_map(|id| device_of(&c, id).map(|d| d.id)).collect();
+            for d in ids {
+                c.execute(saine_core::Command::RemoveDevice { device: d });
+            }
+            c.update_ui(a);
+        })),
+        Check("views: the audio track's chain is empty again", Box::new(|c, _| {
+            let t = track_of(c, TrackKind::Audio).ok_or("no audio track")?;
+            let n = c.project().tracks[t].devices.len();
+            (n == 0).then_some(()).ok_or(format!("{n} devices left"))
         })),
     ]
 }
