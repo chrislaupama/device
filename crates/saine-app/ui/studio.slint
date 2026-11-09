@@ -112,9 +112,11 @@ export struct PanelCanvas {
     // 3 ns-resize, 4 pointer, 5 crosshair. readout-accent: the caption value is drawn in the
     // track colour. label / value: the pointer well's accessible name and value.
     pointer: bool, interactive: bool, cursor: int, readout-accent: bool, label: string, value: string,
-    // wash: a small intensity image stretched (bilinear) over the well box wash-x/y/w/h, under the paths.
-    wash: image, wash-x: length, wash-y: length, wash-w: length, wash-h: length,
 }
+// Intensity image of a field well (Reverb tail), stretched (bilinear) over the box x/y/w/h in
+// well coordinates under the paths. Kept out of PanelCanvas: an image field in that struct
+// doubled the first frames' render cost of every card.
+export struct PanelWash { device: int, img: image, x: length, y: length, w: length, h: length }
 // Freely placed control (custom card bodies): kind 0 latch (On/Off parameter), 1 menu pill
 // (choice parameter, opens a menu of its choices).
 export struct PanelButton { kind: int, param: int, x: length, y: length, w: length, label: string, on: bool }
@@ -627,6 +629,7 @@ export global Studio {
     callback sampler-well(int, int, float, float, bool);     // phase, x fraction, grab distance (fraction), alt
     callback sampler-handle(int, int, int, length, length);  // picture handle i: phase, x, y (picture px)
     callback panel-graph(int, int, float, float, bool, bool); // canvas pointer (PanelCanvas.pointer): phase (0 press, 1 drag, 2 release, 3 cancel, 4 hover, 5 leave, 6 double-click), well x, y (px), shift, alt
+    in property <[PanelWash]> field-washes;                  // src/panel_fields.rs: wash images of field wells
     callback panel-graph-menu(int, float, float, length, length); // canvas right press: well x, y (px), window x, y: the handle's parameter menu
     callback panel-graph-wheel(int, float, float, float) -> bool; // canvas wheel: x, y, wheel dy (px, up +): used
     callback panel-graph-key(int, string, bool, bool) -> bool;     // canvas key: text, shift, alt: accepted

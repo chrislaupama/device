@@ -1331,6 +1331,16 @@ impl Controller {
             }
         }
         sync_model(&self.cards_model, cards);
+        {
+            let fields = &self.devices.panel.fields;
+            let mut washes = fields.washes.borrow_mut();
+            let n = washes.len();
+            washes.retain(|id, _| self.project().device(*id).is_some());
+            if fields.washes_dirty.replace(false) || washes.len() != n {
+                let rows: Vec<crate::PanelWash> = washes.iter().map(|(id, w)| crate::PanelWash { device: id.0 as i32, img: w.img.clone(), x: w.rect[0], y: w.rect[1], w: w.rect[2], h: w.rect[3] }).collect();
+                s.set_field_washes(slint::ModelRc::from(std::rc::Rc::new(slint::VecModel::from(rows))));
+            }
+        }
         // Device windows: built-in cards opened from their header stay up across track changes
         // (as plugin windows do) and close with their device.
         let gone: Vec<DeviceId> = self.devices.windows.iter().copied().filter(|id| self.project().device(*id).is_none()).collect();

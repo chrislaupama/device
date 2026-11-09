@@ -443,9 +443,10 @@ component DeviceCanvas inherits Rectangle {
         background: root.f.well ? @linear-gradient(180deg, #212125 0%, #18191d 100%) : transparent;
         clip: root.f.well;
         accessible-role: groupbox; accessible-label: root.f.caption; accessible-value: root.f.value != "" ? root.f.value : root.f.readout;
-        if root.f.wash-w > 0: Image {
-            x: root.f.wash-x; y: root.f.wash-y; width: root.f.wash-w; height: root.f.wash-h;
-            source: root.f.wash; image-fit: fill; image-rendering: smooth;
+        for w in Studio.field-washes: Image {
+            visible: w.device == root.device;
+            x: w.x; y: w.y; width: w.w; height: w.h;
+            source: w.img; image-fit: fill; image-rendering: smooth;
         }
         for p in root.f.paths: Path {
             viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;

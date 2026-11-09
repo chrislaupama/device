@@ -90,6 +90,18 @@ pub struct FieldState {
     pub views: HashMap<DeviceId, usize>,
     /// Selected repeat-EQ band per delay.
     bands: HashMap<DeviceId, usize>,
+    /// Wash image and its well box per device (Reverb tail), set while its card is built.
+    pub(crate) washes: std::cell::RefCell<HashMap<DeviceId, Wash>>,
+    /// A wash was added, redrawn or removed since the last push to the UI.
+    pub(crate) washes_dirty: std::cell::Cell<bool>,
+}
+
+/// Field wash image, its box in well coordinates, and the inputs it was drawn from (bits).
+#[derive(Debug, Clone)]
+pub(crate) struct Wash {
+    pub img: slint::Image,
+    pub rect: [f32; 4],
+    key: Vec<u32>,
 }
 
 // ------------------------------------------------------------------ drawing helpers
@@ -109,8 +121,8 @@ struct Canvas {
     paths: Vec<PanelPath>,
     texts: Vec<PanelText>,
     pills: Vec<PanelGrip>,
-    /// Intensity image and its box (x, y, w, h) in well coordinates.
-    wash: Option<(slint::Image, [f32; 4])>,
+    /// Intensity image, its box (x, y, w, h) in well coordinates and the inputs it was drawn from.
+    wash: Option<Wash>,
 }
 
 impl Canvas {
@@ -525,8 +537,16 @@ impl Controller {
             (None, "echo") => 3,
             _ => 0,
         };
-        let (wash, [wash_x, wash_y, wash_w, wash_h]) = c.wash.take().unwrap_or_default();
-        PanelCanvas { visible: true, well: true, x, y, w, h, well_y, caption: s(caption), readout: s(value), paths: model(c.paths), texts: model(c.texts), grips: model(c.pills), pointer: true, cursor, wash, wash_x, wash_y, wash_w, wash_h, ..Default::default() }
+        let mut washes = fields.washes.borrow_mut();
+        let changed = match c.wash.take() {
+            Some(w) => washes.insert(d.id, w.clone()).is_none_or(|old| old.key != w.key),
+            None => washes.remove(&d.id).is_some(),
+        };
+        drop(washes);
+        if changed {
+            fields.washes_dirty.set(true);
+        }
+        PanelCanvas { visible: true, well: true, x, y, w, h, well_y, caption: s(caption), readout: s(value), paths: model(c.paths), texts: model(c.texts), grips: model(c.pills), pointer: true, cursor, ..Default::default() }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -649,33 +669,43 @@ impl Controller {
         // Wash: WASH_COLS columns x 24 bands of accent at the tail's intensity, drawn smoothed
         // (bilinear) over the plot like the reference app's low-resolution reverb field.
         const WASH_COLS: usize = 128;
-        let mut px = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(WASH_COLS as u32, BANDS as u32);
-        let (ar, ag, ab) = (accent.red(), accent.green(), accent.blue());
-        let pixels = px.make_mut_slice();
-        for b in 0..BANDS {
-            let f = band_hz(b as f32 + 0.5);
-            let t60 = reverb_t60(decay, damping, f).max(0.01);
-            let filt = 10f32.powf(reverb_filter_db(low, high, f) / 20.0);
-            let level_at = |ci: usize| -> f32 {
-                let t = (ci as f32 + 0.5) / WASH_COLS as f32 * span;
-                let intensity = if t < pre {
-                    0.0
-                } else if t < pre + first {
-                    let u = (t - pre) / first.max(1e-4);
-                    0.25 + 0.75 * u * u * (3.0 - 2.0 * u)
-                } else {
-                    let k = (1.0 - (t - pre - first) / t60).max(0.0).powi(2);
-                    if k < 0.01 { 0.0 } else { k }
-                };
-                let x2 = (ci as f32 + 0.5) * (right - left) / WASH_COLS as f32 / (2.0 * Z);
-                (intensity * 0.85 * (1.0 + shimmer * 0.3 * (0.45 * x2 + 1.3 * b as f32).sin()) * filt).clamp(0.0, 0.9)
-            };
-            let row = &mut pixels[(BANDS - 1 - b) * WASH_COLS..][..WASH_COLS];
-            for (ci, p) in row.iter_mut().enumerate() {
-                *p = slint::Rgba8Pixel { r: ar, g: ag, b: ab, a: (level_at(ci) * 255.0).round() as u8 };
-            }
+        let key: Vec<u32> = [decay, damping, pre, mode as f32, size, span, low, high, left, top, right, bottom, shimmer]
+            .iter()
+            .map(|v| v.to_bits())
+            .chain([u32::from_be_bytes([accent.red(), accent.green(), accent.blue(), accent.alpha()])])
+            .collect();
+        if let Some(w) = self.devices.panel.fields.washes.borrow().get(&d.id).filter(|w| w.key == key) {
+            c.wash = Some(w.clone());
         }
-        c.wash = Some((slint::Image::from_rgba8(px), [left, top, right - left, bottom - top]));
+        if c.wash.is_none() {
+            let mut px = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(WASH_COLS as u32, BANDS as u32);
+            let (ar, ag, ab) = (accent.red(), accent.green(), accent.blue());
+            let pixels = px.make_mut_slice();
+            for b in 0..BANDS {
+                let f = band_hz(b as f32 + 0.5);
+                let t60 = reverb_t60(decay, damping, f).max(0.01);
+                let filt = 10f32.powf(reverb_filter_db(low, high, f) / 20.0);
+                let level_at = |ci: usize| -> f32 {
+                    let t = (ci as f32 + 0.5) / WASH_COLS as f32 * span;
+                    let intensity = if t < pre {
+                        0.0
+                    } else if t < pre + first {
+                        let u = (t - pre) / first.max(1e-4);
+                        0.25 + 0.75 * u * u * (3.0 - 2.0 * u)
+                    } else {
+                        let k = (1.0 - (t - pre - first) / t60).max(0.0).powi(2);
+                        if k < 0.01 { 0.0 } else { k }
+                    };
+                    let x2 = (ci as f32 + 0.5) * (right - left) / WASH_COLS as f32 / (2.0 * Z);
+                    (intensity * 0.85 * (1.0 + shimmer * 0.3 * (0.45 * x2 + 1.3 * b as f32).sin()) * filt).clamp(0.0, 0.9)
+                };
+                let row = &mut pixels[(BANDS - 1 - b) * WASH_COLS..][..WASH_COLS];
+                for (ci, p) in row.iter_mut().enumerate() {
+                    *p = slint::Rgba8Pixel { r: ar, g: ag, b: ab, a: (level_at(ci) * 255.0).round() as u8 };
+                }
+            }
+            c.wash = Some(Wash { img: slint::Image::from_rgba8(px), rect: [left, top, right - left, bottom - top], key });
+        }
 
         // Axes.
         let mut grid = String::new();

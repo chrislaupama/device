@@ -506,16 +506,20 @@ fn strip_paths(slots: &VecDeque<(f32, f32, f32)>, strip: Strip, w: f32, wh: f32)
     let y_of = |db: f32| ((strip.top_db - db) / span).clamp(0.0, 1.0) * wh;
     let n = slots.len();
     let x_of = |i: usize| w - (n - 1 - i) as f32 * w / (HISTORY - 1) as f32;
-    let input: Vec<(f32, f32)> = slots.iter().enumerate().map(|(i, s)| (x_of(i), y_of(s.0))).collect();
-    let output: Vec<(f32, f32)> = slots.iter().enumerate().map(|(i, s)| (x_of(i), y_of(s.1))).collect();
+    // Curves through every 3 pt or so (the newest point always kept): denser cubic traces cost
+    // render time without a visible difference.
+    let step = ((3.0 * Z) / (w / (HISTORY - 1) as f32)).ceil().max(1.0) as usize;
+    let kept = |i: usize| (n - 1 - i) % step == 0 || i == 0;
+    let input: Vec<(f32, f32)> = slots.iter().enumerate().filter(|(i, _)| kept(*i)).map(|(i, s)| (x_of(i), y_of(s.0))).collect();
+    let output: Vec<(f32, f32)> = slots.iter().enumerate().filter(|(i, _)| kept(*i)).map(|(i, s)| (x_of(i), y_of(s.1))).collect();
     let audible = |v: &[(f32, f32)]| v.iter().any(|p| p.1 < wh - 0.5);
     let (mut in_fill, mut in_line, mut gr_fill, mut out_line) = (String::new(), String::new(), String::new(), String::new());
     if n > 1 && audible(&input) {
         in_line = smooth(&input, false);
-        in_fill = format!("{in_line} L{:.2} {wh:.2} L{:.2} {wh:.2} Z", input[n - 1].0, input[0].0);
+        in_fill = format!("{in_line} L{:.2} {wh:.2} L{:.2} {wh:.2} Z", input[input.len() - 1].0, input[0].0);
     }
     if n > 1 && slots.iter().any(|s| s.2 < -0.1) {
-        let floor: Vec<(f32, f32)> = slots.iter().enumerate().rev().map(|(i, s)| (x_of(i), y_of(s.0 + s.2))).collect();
+        let floor: Vec<(f32, f32)> = slots.iter().enumerate().rev().filter(|(i, _)| kept(*i)).map(|(i, s)| (x_of(i), y_of(s.0 + s.2))).collect();
         gr_fill = format!("{}{} Z", smooth(&input, false), smooth(&floor, true));
     }
     if n > 1 && audible(&output) {
