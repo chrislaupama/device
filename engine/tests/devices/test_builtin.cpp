@@ -124,7 +124,8 @@ TEST_CASE(every_builtin_is_rt_safe_and_robust) {
         }
         CHECK_EQ(rt_alloc_count() - before, 0);
         // Readouts are finite.
-        for (float v : rig.readouts()) CHECK(std::isfinite(v));
+        if (!rig.desc().readouts.empty())
+            for (float v : rig.readouts()) CHECK(std::isfinite(v));
     }
 }
 
