@@ -47,7 +47,10 @@ flowchart LR
   clusters) and `ui/device_panel.slint` draws it. Lengths are the reference's
   100%-zoom card measurements times `device_panel::Z` (0.85, the zoom the rest
   of the UI is built at). Card width follows the reference rule:
-  knobs × 62 + inner gaps × 10 + cluster gaps × 21 + 16.
+  knobs × 62 + inner gaps × 10 + cluster gaps × 21 + 16, taken from the
+  widest `shown_when` state so the card never resizes when a mode changes.
+  The knob cells are then spread evenly across the dial row (the clusters
+  only size the card); field cards centre their dial row instead.
 
 ## Modulation and chains
 
@@ -160,6 +163,17 @@ system. Any built-in device can use them.
      undo step (Character Mod's circuit switch resets untouched artifacts),
      add an arm to `builtin::linked_writes`; the panel then commits one
      labelled `Command::Batch`.
+   - `View::Strip(Strip::new("threshold").range(top, floor))` is the
+     dynamics strip with its own dB range. Value arcs and slider fills start
+     at 0 when the range spans it (−12..24 dB starts at 0 dB). Cards without
+     a field spread their knob cells evenly across the card.
+   - `Format::Custom(fn)` gives device-specific text; parsing still reads
+     the unit ("1.2 s" → 1200 ms, "2k" → 2000 Hz).
+   - **Behaviour** (optional, `builtin::behavior`): a `Behavior` with
+     state-dependent detents (drags snap within 0.025 of the range, arrow
+     keys step between them, ticks drawn on the ring), value text, latches
+     (a knob that becomes a two-state pill in some modes) and the curve of a
+     `Face::Transfer` knob. Start from `Behavior::NONE`.
 2. **DSP kernel.** Add `engine/src/devices/<id>.cpp`: a `BuiltinProcessor`
    (`prepare` may allocate; `reset` / `process` are real-time: no
    allocation, locks, I/O or exceptions) and a `BuiltinDescriptor` whose
@@ -184,14 +198,19 @@ system. Any built-in device can use them.
    state-variable filter (`SvfCoeffs`, including `bandpass`). Report look-ahead or block latency from
    `latency()` so the engine compensates it.
 3. **Custom view (optional).** For bodies the template cannot express, use
-   `View::Custom("<name>")`. Bodies that only draw and drag parameters add
-   an arm to `custom_body` in `crates/saine-app/src/device_views.rs`
-   (a `PanelCanvas` with paths, texts, grips and linear drag zones, plus
-   freely placed knobs and buttons). When handles need non-linear mapping or
+   `View::Custom("<name>")`. Bodies that only draw and drag parameters
+   return a `PanelCanvas` from `Controller::custom_body` (`device_views.rs`):
+   paths, texts, grip pills and linear drag zones, plus freely placed knobs
+   and buttons. Reuse `ParamDrag` / `ParamDragX`, `KnobCell` and
+   `SliderCol` for the gestures. When handles need non-linear mapping or
    hit-testing (several handles on one well, a live spectrum), set
    `pointer: true` and handle `Studio.panel-graph` in Rust, as the
    restoration devices do (`crates/saine-app/src/panel_graph.rs`: hit zones,
-   spectrum ballistics from the readouts, one undo step per gesture). Full
+   spectrum ballistics from the readouts, one undo step per gesture).
+   View-local state (a selected band, meter ballistics) goes through
+   `Studio.panel-view(device, action, value)`; `src/panel_multiband.rs` is
+   an example with its own Slint component (band selector, threshold / floor
+   and crossover handles, dial row following the selected band). Full
    editors with their own gestures and menus (step grids, curve editors) add
    an arm to `custom_card` in `crates/saine-app/src/device_editors.rs` and
    set `interactive: true`: `DeviceCanvas` then sends every press, drag,
@@ -202,9 +221,10 @@ system. Any built-in device can use them.
    that the dial row does not size. The Trance Gate and the Shaper are the
    editor examples.
    - A kernel whose latency depends on its parameters overrides
-     `BuiltinProcessor::latency_for` (main thread; the Shaper reports its
-     pitch-shift latency only while that lane is on) and returns false from
-     `BuiltinProcessor::automatable` for the parameters that set it.
+     `BuiltinProcessor::latency_for` (the Shaper reports its pitch-shift
+     latency only while that lane is on) and may return false from
+     `BuiltinProcessor::automatable` for a parameter that only the stored
+     value should drive.
 4. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),

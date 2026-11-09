@@ -25,8 +25,9 @@ use crate::controller::{slint_color, track_color, Controller};
 use crate::devices::{DevMenu, MenuPick};
 use crate::device_fields::{self, Fill, Live, Style};
 use crate::{DeviceCard, PanelField, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelTick};
-use saine_core::builtin::{Control, DeviceDef, Face, Field, ParamDef, View, CLUSTER_GAP, KNOB_CELL, KNOB_GAP};
+use saine_core::builtin::{Control, DeviceDef, Face, Field, ParamDef, Strip, Transfer, View, CLUSTER_GAP, KNOB_CELL, KNOB_GAP};
 use saine_core::{Command, Device, DeviceId, TrackId};
+use std::borrow::Cow;
 use slint::{ModelRc, SharedString, VecModel};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
@@ -45,10 +46,15 @@ pub(crate) const CAPTION_H: f32 = 19.0;
 pub(crate) const VIEW_BOTTOM: f32 = 214.0;
 /// Dial row top (card relative).
 pub(crate) const DIAL_Y: f32 = 229.0;
-/// Dynamics strip plot range (dB) and history length (slots across the well).
-const PLOT_TOP_DB: f32 = 0.0;
-const PLOT_FLOOR_DB: f32 = -36.0;
+/// Dynamics strip history length (slots across the well).
 const HISTORY: usize = 240;
+/// Readout level of silence (below every strip floor).
+const SILENT_DB: f32 = -120.0;
+/// Picker index of a card's view selector (not a parameter, e.g. the
+/// multiband band tabs): `panel_choice` with it changes the view state.
+pub(crate) const VIEW_SELECT: i32 = -3;
+/// Detent snap distance of a drag, in the 0..1 range (reference: 4 / 160).
+const DETENT_SNAP: f32 = 0.025;
 /// Plot area inside a field's well: tick gutter on the left, top and bottom insets.
 const FIELD_GUTTER: f32 = 24.0;
 const FIELD_TOP: f32 = 4.0;
@@ -93,6 +99,8 @@ pub struct PanelState {
     drag: Option<ParamDrag>,
     field: Option<FieldDrag>,
     meters: HashMap<DeviceId, MeterHistory>,
+    /// Card view state of devices with a custom view (selected band, meters).
+    pub(crate) views: HashMap<DeviceId, crate::panel_multiband::ViewState>,
     pub(crate) sampler: crate::sampler_panel::SamplerUi,
     /// Field devices while the transport plays: (last LFO phase, elapsed cycles).
     lfo: HashMap<DeviceId, (f32, f64)>,
@@ -147,11 +155,42 @@ pub(crate) fn reuse_card_models(old: &DeviceCard, new: &mut DeviceCard) {
     keep(&old.picks, &mut new.picks);
     keep(&old.sliders, &mut new.sliders);
     keep(&old.buttons, &mut new.buttons);
+    keep(&old.bands.bands, &mut new.bands.bands);
+    keep(&old.bands.xovers, &mut new.bands.xovers);
     // Field zones are touch areas: a rebuilt one would drop its drag.
     keep(&old.canvas.zones, &mut new.canvas.zones);
     keep(&old.canvas.paths, &mut new.canvas.paths);
     keep(&old.canvas.texts, &mut new.canvas.texts);
     keep(&old.canvas.grips, &mut new.canvas.grips);
+}
+
+/// x of each visible dial-row cell (card relative, unscaled). The reference
+/// spaces knobs evenly: the gap follows from the card width and the cell
+/// count of the widest state, and the visible cells are centred (so a mode
+/// with fewer knobs keeps the same spacing).
+fn dial_xs(def: &DeviceDef, visible: &[&'static str]) -> Vec<(&'static str, f32)> {
+    let (w, cells) = def.layout.widest_row();
+    let gap = if cells > 1 { (w - 2.0 * PAD - cells as f32 * KNOB_CELL) / (cells - 1) as f32 } else { 0.0 };
+    let n = visible.len() as f32;
+    let x0 = (w - n * KNOB_CELL - (n - 1.0).max(0.0) * gap) / 2.0;
+    visible.iter().enumerate().map(|(i, id)| (*id, x0 + i as f32 * (KNOB_CELL + gap))).collect()
+}
+
+/// Nearest detent within the snap distance of `norm` (plain value), if any.
+fn snap_to_detent(p: &ParamDef, detents: &[f32], norm: f32, fine: bool) -> Option<f32> {
+    let reach = if fine { DETENT_SNAP / 5.0 } else { DETENT_SNAP };
+    detents.iter().copied().map(|v| (v, (p.to_normalized(v) - norm).abs())).filter(|(_, d)| *d <= reach).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(v, _)| v)
+}
+
+/// Detent tick marks across a knob ring (32 x 32 view box).
+fn detent_ticks(p: &ParamDef, detents: &[f32]) -> String {
+    let mut out = String::new();
+    for v in detents {
+        let a = (-135.0 + p.to_normalized(*v) * 270.0).to_radians();
+        let (s, c) = a.sin_cos();
+        out.push_str(&format!("M{:.2} {:.2} L{:.2} {:.2} ", 16.0 + 13.0 * s, 16.0 - 13.0 * c, 16.0 + 16.0 * s, 16.0 - 16.0 * c));
+    }
+    out
 }
 
 /// Right edge of the view row (card relative, unscaled): left of the slider column(s).
@@ -287,11 +326,30 @@ fn soft_knee_face(threshold: f32, ratio: f32, knee: f32) -> (String, String, Str
     (polyline(&curve), polyline(&bend), unity)
 }
 
+/// Face paths of a device-computed transfer curve in a 32 x 32 box: (curve,
+/// bend highlight, dashed unity line), laid out like [soft_knee_face].
+pub(crate) fn transfer_face(t: &Transfer) -> (String, String, String) {
+    let (lo, hi) = (t.lo, t.hi.max(t.lo + 1.0));
+    let (pad, span) = (3.0, 26.0);
+    let px = |db: f32| pad + (db - lo) / (hi - lo) * span;
+    let py = |db: f32| 32.0 - pad - ((db - lo) / (hi - lo) * span).clamp(-pad, span + pad);
+    let curve: Vec<(f32, f32)> = t.points.iter().map(|(x, y)| (px(*x), py(*y))).collect();
+    let bend: Vec<(f32, f32)> = t.points.iter().filter(|(x, _)| *x >= t.bend.0 && *x <= t.bend.1).map(|(x, y)| (px(*x), py(*y))).collect();
+    let mut unity = String::new();
+    let mut s = 0.0;
+    while s < span {
+        let s1 = (s + 2.0).min(span);
+        unity.push_str(&format!("M{:.2} {:.2} L{:.2} {:.2} ", pad + s, 32.0 - pad - s, pad + s1, 32.0 - pad - s1));
+        s += 4.0;
+    }
+    (polyline(&curve), if bend.len() > 1 { polyline(&bend) } else { String::new() }, unity)
+}
+
 /// Strip paths for a level history in a w x wh well: [input fill, gain-reduction
 /// band (input to input + GR), input line, output line].
-fn strip_paths(slots: &VecDeque<(f32, f32, f32)>, w: f32, wh: f32) -> [String; 4] {
-    let span = PLOT_TOP_DB - PLOT_FLOOR_DB;
-    let y_of = |db: f32| ((PLOT_TOP_DB - db) / span).clamp(0.0, 1.0) * wh;
+fn strip_paths(slots: &VecDeque<(f32, f32, f32)>, strip: Strip, w: f32, wh: f32) -> [String; 4] {
+    let span = strip.top_db - strip.floor_db;
+    let y_of = |db: f32| ((strip.top_db - db) / span).clamp(0.0, 1.0) * wh;
     let n = slots.len();
     let x_of = |i: usize| w - (n - 1 - i) as f32 * w / (HISTORY - 1) as f32;
     let input: Vec<(f32, f32)> = slots.iter().enumerate().map(|(i, s)| (x_of(i), y_of(s.0))).collect();
@@ -356,17 +414,41 @@ impl Controller {
         self.panel_value(d, def, p)
     }
 
+    /// The device as the panel shows it: the model values, with a running
+    /// drag's value and the values it links applied.
+    fn live_device<'a>(&self, d: &'a Device, def: &DeviceDef) -> Cow<'a, Device> {
+        match self.devices.panel.drag {
+            Some(g) if g.device == d.id && g.active => {
+                let Some(p) = def.params.get(g.index) else { return Cow::Borrowed(d) };
+                let mut live = d.clone();
+                live.params.extend(def.linked_values(d, p.id, g.value));
+                Cow::Owned(live)
+            }
+            _ => Cow::Borrowed(d),
+        }
+    }
+
+    /// Transfer curve of a `Face::Transfer` knob.
+    fn device_transfer(&self, live: &Device, def: &DeviceDef) -> Option<Transfer> {
+        saine_core::builtin::behavior(def).and_then(|b| (b.transfer)(def, live)).or_else(|| self.view_transfer(live, def))
+    }
+
     /// The card of a built-in device (generic panel).
     pub(crate) fn builtin_card(&self, d: &Device, def: &'static DeviceDef) -> DeviceCard {
         let width = def.layout.width();
         let track = self.project().find_device(d.id).map(|(ti, _)| &self.project().tracks[ti]);
         let accent = track.map_or(slint::Color::from_rgb_u8(0x43, 0x9b, 0x94), |t| slint_color(track_color(t.color)));
         let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
+        let live = self.live_device(d, def);
+        let live = live.as_ref();
         let value = |id: &str| def.param(id).map(|p| self.panel_value(d, def, p));
 
         // Picker row; the sidechain picker and everything after it align right.
         let mut picks = Vec::new();
-        for c in def.layout.picker {
+        if let Some(pick) = self.view_picker(d, def) {
+            picks.push(pick);
+        }
+        for (ci, c) in def.layout.picker.iter().enumerate() {
             let p = c.param().and_then(|id| def.param(id));
             match (c, p) {
                 // Latches align right (reference: margin-left auto); the label carries the state.
@@ -399,7 +481,9 @@ impl Controller {
                         None => "None".to_string(),
                         Some(t) => self.project().track(t).map_or_else(|| "Removed".to_string(), |t| t.name.clone()),
                     };
-                    picks.push(PanelPick { kind: 2, param: -1, label: s("Sidechain"), value: s(source), enabled: true, width: 80.0 * Z, ..Default::default() });
+                    // Without a value box after it the source pill takes the room (reference).
+                    let w = if def.layout.picker[ci + 1..].is_empty() { 140.0 } else { 80.0 };
+                    picks.push(PanelPick { kind: 2, param: -1, label: s("Sidechain"), value: s(source), enabled: true, width: w * Z, ..Default::default() });
                 }
                 (Control::Segments(_, labels), Some(p)) if def.is_shown(d, p.id) => picks.push(PanelPick {
                     kind: 1,
@@ -414,7 +498,7 @@ impl Controller {
                     kind: 2,
                     param: idx(p.id),
                     label: s(p.label),
-                    value: s(p.format(self.panel_value(d, def, p))),
+                    value: s(def.text(live, p, self.panel_value(d, def, p))),
                     enabled: true,
                     width: dropdown_width(p) * Z,
                     ..Default::default()
@@ -424,16 +508,15 @@ impl Controller {
                     kind: 3,
                     param: idx(p.id),
                     label: s(p.label),
-                    value: s(p.format(self.panel_value(d, def, p))),
+                    value: s(def.text(live, p, self.panel_value(d, def, p))),
                     // A pill after the sidechain picker scales the key: inert without a source.
-                    enabled: d.sidechain.is_some() || !def.layout.picker.iter().take_while(|q| *q != c).any(|q| *q == Control::Sidechain),
+                    enabled: d.sidechain.is_some() || !def.layout.picker[..ci].contains(&Control::Sidechain),
                     width: 60.0 * Z,
                     ..Default::default()
                 }),
                 _ => {}
             }
         }
-
         // Without a gap the row's items stay on the left.
         if !picks.iter().any(|p| p.kind == 4) {
             picks.push(PanelPick { kind: 4, ..Default::default() });
@@ -453,9 +536,9 @@ impl Controller {
                     param: idx(p.id),
                     x: (slider_x - i as f32 * (SLIDER_W + VIEW_GAP)) * Z,
                     label: s(p.label),
-                    value: s(p.format(v)),
+                    value: s(def.text(live, p, v)),
                     norm: p.to_normalized(v),
-                    zero: if p.min < 0.0 && p.max > 0.0 { p.to_normalized(0.0) } else { 0.0 },
+                    zero: p.origin(),
                 }
             })
             .collect();
@@ -464,10 +547,15 @@ impl Controller {
         // View row.
         let (mut strip, mut field) = (PanelStrip::default(), PanelField::default());
         match def.layout.view {
-            Some(View::DynamicsStrip { threshold }) => strip = self.dynamics_strip(d, def, threshold, view_right - PAD),
             Some(View::Field(f)) => field = self.field_view(d, def, &f, view_right - PAD),
-            Some(View::Custom(_)) | None => {}
+            Some(v) => {
+                if let Some(st) = v.strip() {
+                    strip = self.dynamics_strip(d, def, st, view_right - PAD);
+                }
+            }
+            None => {}
         }
+        let bands = self.view_field(d, def, live);
         let body = match def.layout.view {
             Some(View::Custom(name)) => {
                 let view_y = if def.layout.picker.is_empty() { VIEW_Y_NO_PICKER } else { VIEW_Y };
@@ -476,35 +564,65 @@ impl Controller {
             _ => crate::device_views::CustomBody::default(),
         };
 
-        // Dial row (or the custom body's knob placement).
-        let places: Vec<(&'static str, f32, f32)> =
-            if body.knobs.is_empty() { knob_xs(def).into_iter().map(|(id, x)| (id, x, DIAL_Y)).collect() } else { body.knobs.clone() };
+        // Dial row (or the custom body's knob placement), bound to the view's selection.
+        let visible: Vec<&'static str> = def.layout.clusters.iter().flat_map(|c| c.iter()).flat_map(|c| c.params()).filter(|id| def.is_shown(d, id)).collect();
+        // Field cards centre their own dial row (knob_xs); the rest spread evenly across the card.
+        let places: Vec<(&'static str, f32, f32)> = if !body.knobs.is_empty() {
+            body.knobs.clone()
+        } else if matches!(def.layout.view, Some(View::Field(_))) {
+            knob_xs(def).into_iter().map(|(id, x)| (id, x, DIAL_Y)).collect()
+        } else {
+            dial_xs(def, &visible).into_iter().map(|(id, x)| (id, x, DIAL_Y)).collect()
+        };
+        let behavior = saine_core::builtin::behavior(def);
         let knobs = places
             .into_iter()
             .filter(|(id, _, _)| def.is_shown(d, id))
-            .filter_map(|(id, x, y)| {
+            .filter_map(|(slot, x, y)| {
+                let id = self.view_bind(d, def, slot);
                 let p = def.param(id)?;
                 let v = self.panel_value(d, def, p);
+                let detents = def.detents(live, p);
                 let mut k = PanelKnob {
                     param: idx(id),
                     x: x * Z,
                     y: y * Z,
                     label: s(p.label),
-                    value: s(p.format(v)),
+                    value: s(def.text(live, p, v)),
                     norm: p.to_normalized(v),
-                    bipolar: p.is_bipolar(),
+                    origin: p.origin(),
+                    ticks: s(detent_ticks(p, detents)),
                     dim: body.dim.contains(&id),
                     ..Default::default()
                 };
+                if let Some(l) = behavior.and_then(|b| (b.latch)(def, live, p)) {
+                    k.face = 2;
+                    k.value = s(l.labels[l.on as usize]);
+                    k.norm = if l.on { 1.0 } else { 0.0 };
+                    k.ticks = s("");
+                    return Some(k);
+                }
                 if def.layout.clusters.iter().any(|c| c.contains(&Control::Toggle(id))) {
                     k.face = 2; // latch capsule
                 }
-                if let Some((_, Face::SoftKneeCurve { threshold, ratio, knee })) = def.layout.faces.iter().find(|(f, _)| *f == id) {
-                    let (curve, bend, unity) = soft_knee_face(value(threshold).unwrap_or(-24.0), value(ratio).unwrap_or(1.0), value(knee).unwrap_or(0.0));
-                    k.face = 1;
-                    k.face_curve = s(curve);
-                    k.face_bend = s(bend);
-                    k.face_unity = s(unity);
+                match def.layout.faces.iter().find(|(f, _)| *f == slot).map(|(_, f)| *f) {
+                    Some(Face::SoftKneeCurve { threshold, ratio, knee }) => {
+                        let (curve, bend, unity) = soft_knee_face(value(threshold).unwrap_or(-24.0), value(ratio).unwrap_or(1.0), value(knee).unwrap_or(0.0));
+                        k.face = 1;
+                        k.face_curve = s(curve);
+                        k.face_bend = s(bend);
+                        k.face_unity = s(unity);
+                    }
+                    Some(Face::Transfer) => {
+                        if let Some(t) = self.device_transfer(live, def) {
+                            let (curve, bend, unity) = transfer_face(&t);
+                            k.face = 1;
+                            k.face_curve = s(curve);
+                            k.face_bend = s(bend);
+                            k.face_unity = s(unity);
+                        }
+                    }
+                    None => {}
                 }
                 Some(k)
             })
@@ -538,6 +656,7 @@ impl Controller {
             sliders: model(sliders),
             strip,
             field,
+            bands,
             canvas: body.canvas,
             buttons: model(body.buttons),
             ..Default::default()
@@ -554,27 +673,28 @@ impl Controller {
         card
     }
 
-    fn dynamics_strip(&self, d: &Device, def: &DeviceDef, threshold: &str, w: f32) -> PanelStrip {
+    fn dynamics_strip(&self, d: &Device, def: &DeviceDef, st: Strip, w: f32) -> PanelStrip {
         let (w, h) = (w * Z, (VIEW_BOTTOM - VIEW_Y) * Z);
         let well_y = CAPTION_H * Z;
         let wh = h - well_y;
-        let span = PLOT_TOP_DB - PLOT_FLOOR_DB;
-        let y_of = |db: f32| ((PLOT_TOP_DB - db) / span).clamp(0.0, 1.0) * wh;
-        let ticks: Vec<PanelTick> = (0..=(span / 12.0) as i32)
+        let span = st.top_db - st.floor_db;
+        let y_of = |db: f32| ((st.top_db - db) / span).clamp(0.0, 1.0) * wh;
+        let first = (st.top_db / 12.0).floor() * 12.0;
+        let ticks: Vec<PanelTick> = (0..=((first - st.floor_db) / 12.0) as i32)
             .map(|i| {
-                let db = PLOT_TOP_DB - 12.0 * i as f32;
-                let text = if db == 0.0 { "0".to_string() } else { format!("{MINUS}{}", db.abs() as i32) };
-                PanelTick { y: y_of(db), text: s(text), rule: db < PLOT_TOP_DB && db > PLOT_FLOOR_DB }
+                let db = first - 12.0 * i as f32;
+                let text = if db == 0.0 { "0".to_string() } else if db < 0.0 { format!("{MINUS}{}", db.abs() as i32) } else { format!("+{}", db as i32) };
+                PanelTick { y: y_of(db), text: s(text), rule: db < st.top_db && db > st.floor_db }
             })
             .collect();
 
         let empty = MeterHistory::default();
         let hist = self.devices.panel.meters.get(&d.id).unwrap_or(&empty);
-        let [in_fill, gr_fill, in_line, out_line] = strip_paths(&hist.slots, w, wh);
+        let [in_fill, gr_fill, in_line, out_line] = strip_paths(&hist.slots, st, w, wh);
         let gr_now = hist.slots.iter().rev().take(30).map(|s| s.2).fold(0.0f32, f32::min);
 
-        let p = def.param(threshold);
-        let t = p.map(|p| self.panel_value(d, def, p)).unwrap_or(PLOT_FLOOR_DB);
+        let p = def.param(st.line);
+        let t = p.map(|p| self.panel_value(d, def, p)).unwrap_or(st.floor_db);
         let ty = y_of(t).min(wh - 1.0);
         PanelStrip {
             visible: true,
@@ -590,7 +710,7 @@ impl Controller {
             gr_fill: s(gr_fill),
             in_line: s(in_line),
             out_line: s(out_line),
-            thresh_param: def.index_of(threshold).map_or(-1, |i| i as i32),
+            thresh_param: def.index_of(st.line).map_or(-1, |i| i as i32),
             thresh_y: ty,
             thresh_dash: s(dashes(30.0 * Z, w, ty, 6.0 * Z, 5.0 * Z)),
             thresh_label: s(p.map_or("", |p| p.label)),
@@ -687,34 +807,36 @@ impl Controller {
         }
     }
 
-    /// Engine readouts -> strip histories of the selected track's built-in
-    /// devices with a dynamics strip (every poll tick, ~30 ms).
+    /// Engine readouts -> strip histories, view meters and field LFO phases of
+    /// the selected track's built-in devices (every poll tick, ~30 ms).
     pub(crate) fn panel_poll_meters(&mut self) {
         self.sampler_poll();
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else { return };
+        let strips: Vec<(DeviceId, Strip)> =
+            t.devices.iter().filter_map(|d| saine_core::builtin::def_of(d).and_then(|def| def.layout.view).and_then(|v| v.strip()).map(|st| (d.id, st))).collect();
         // Field devices: follow the LFO phase readout while the transport plays.
         let fields: Vec<DeviceId> = if self.engine.transport().playing {
             t.devices.iter().filter(|d| saine_core::builtin::def_of(d).is_some_and(|def| matches!(def.layout.view, Some(View::Field(_))))).map(|d| d.id).collect()
         } else {
             Vec::new()
         };
-        let ids: Vec<DeviceId> = t
+        let views: Vec<DeviceId> = t
             .devices
             .iter()
-            .filter(|d| saine_core::builtin::def_of(d).is_some_and(|def| matches!(def.layout.view, Some(View::DynamicsStrip { .. }))))
+            .filter(|d| saine_core::builtin::def_of(d).is_some_and(|def| matches!(def.layout.view, Some(View::Custom(_)))))
             .map(|d| d.id)
             .collect();
-        self.devices.panel.meters.retain(|id, _| ids.contains(id));
+        self.devices.panel.meters.retain(|id, _| strips.iter().any(|(s, _)| s == id));
         let mut out = Vec::new();
-        for id in ids {
+        for (id, st) in strips {
             // Readout order of a strip device: input dB, output dB, gain reduction dB.
             let (i, o, g) = match self.engine.builtin_readouts(id.0, &mut out) {
                 Ok(()) if out.len() >= 3 => (out[0], out[1], out[2].min(0.0)),
-                _ => (PLOT_FLOOR_DB - 1.0, PLOT_FLOOR_DB - 1.0, 0.0),
+                _ => (SILENT_DB, SILENT_DB, 0.0),
             };
             let h = self.devices.panel.meters.entry(id).or_default();
-            let silent = |s: (f32, f32, f32)| s.0 < PLOT_FLOOR_DB && s.1 < PLOT_FLOOR_DB && s.2 > -0.05;
-            let prev = h.slots.back().copied().unwrap_or((PLOT_FLOOR_DB - 1.0, PLOT_FLOOR_DB - 1.0, 0.0));
+            let silent = |s: (f32, f32, f32)| s.0 < st.floor_db && s.1 < st.floor_db && s.2 > -0.05;
+            let prev = h.slots.back().copied().unwrap_or((st.floor_db - 1.0, st.floor_db - 1.0, 0.0));
             let next = (0.3 * prev.0 + 0.7 * i, 0.3 * prev.1 + 0.7 * o, 0.3 * prev.2 + 0.7 * g);
             if silent(next) && h.slots.iter().all(|s| silent(*s)) {
                 // Flat at the floor: nothing to scroll.
@@ -727,6 +849,15 @@ impl Controller {
             }
             h.slots.push_back(next);
             self.ui_dirty = true;
+        }
+        // View state (the selected band) lives as long as its device; meters only poll here.
+        let gone: Vec<DeviceId> = self.devices.panel.views.keys().copied().filter(|id| self.project().device(*id).is_none()).collect();
+        self.devices.panel.views.retain(|id, _| !gone.contains(id));
+        for id in views {
+            let r = self.engine.builtin_readouts(id.0, &mut out).ok().map(|_| out.clone()).unwrap_or_default();
+            if self.devices.panel.views.entry(id).or_default().poll(&r) {
+                self.ui_dirty = true;
+            }
         }
         self.devices.panel.lfo.retain(|id, _| fields.contains(id));
         for id in fields {
@@ -752,7 +883,8 @@ impl Controller {
         if self.project().device(device).is_some_and(|d| saine_core::builtin::def_of(d).is_none()) {
             return self.card_drag(device, index as u32, phase, dy, rate, fine);
         }
-        let Some((d, def)) = self.panel_def(device) else { return };
+        let Some((d, def)) = self.panel_def(device).map(|(d, def)| (d.clone(), def)) else { return };
+        let d = &d;
         let Some(p) = usize::try_from(index).ok().and_then(|i| def.params.get(i)) else { return };
         let rack = saine_core::modulation::is_rack(d);
         match phase {
@@ -770,23 +902,37 @@ impl Controller {
                 g.active = true;
                 g.norm = (g.norm + std::mem::take(&mut g.held) * rate * if fine { 0.2 } else { 1.0 }).clamp(0.0, 1.0);
                 let v = if p.is_discrete() { p.from_normalized(g.norm).round() } else { p.from_normalized(g.norm) };
+                let v = snap_to_detent(p, def.detents(d, p), g.norm, fine).unwrap_or(v);
                 if v != g.value {
                     g.value = v;
-                    let _ = self.engine.builtin_set_param(device.0, index as u32, v);
+                    // The engine gets the model's values with this edit (and what it links) on
+                    // top, so links that stop applying mid-drag fall back; the model changes on release.
+                    let mut live = def.values(d);
+                    for (id, x) in def.linked_values(d, p.id, v) {
+                        if let Some(i) = def.index_of(&id) {
+                            live[i] = x;
+                        }
+                    }
+                    for (i, x) in live.into_iter().enumerate() {
+                        let _ = self.engine.builtin_set_param(device.0, i as u32, x);
+                    }
                     self.ui_dirty = true;
                 }
             }
             2 => {
                 let clicked = self.devices.panel.drag.is_some_and(|g| g.device == device && !g.active);
-                let cmd = self.devices.panel.drag.filter(|g| g.active && g.value != g.start).map(|g| param_command(def, d, p, g.value));
-                self.devices.panel.drag = None;
+                let Some(g) = self.devices.panel.drag.take() else { return };
                 self.ui_dirty = true;
                 // A click on a chain macro opens (or closes) its side panel.
                 if rack && clicked {
                     return self.macro_select(device, index);
                 }
-                if let Some(cmd) = cmd {
-                    self.panel_commit(cmd);
+                if g.active && g.value != g.start {
+                    self.panel_commit(param_command(def, d, p, g.value));
+                } else if g.active {
+                    for (i, x) in def.values(d).into_iter().enumerate() {
+                        let _ = self.engine.builtin_set_param(device.0, i as u32, x);
+                    }
                 }
             }
             _ => {
@@ -805,26 +951,32 @@ impl Controller {
         self.devices.panel.drag.is_some_and(|g| g.active)
     }
 
-    /// Escape or a cancelled pointer: restore the value from before the drag, with no undo step.
+    /// Escape or a cancelled pointer: restore the values from before the drag
+    /// (the dragged one and any it linked), with no undo step.
     pub fn panel_cancel_drag(&mut self) -> bool {
         self.sampler_release_all();
         if self.sampler_cancel_drags() || self.panel_cancel_graph_drag() {
             return true;
         }
         let Some(g) = self.devices.panel.drag.take() else { return false };
-        let _ = self.engine.builtin_set_param(g.device.0, g.index as u32, g.start);
+        if let Some((d, def)) = self.panel_def(g.device) {
+            let values = def.values(d);
+            for (i, v) in values.into_iter().enumerate() {
+                let _ = self.engine.builtin_set_param(g.device.0, i as u32, v);
+            }
+        }
         self.ui_dirty = true;
         true
     }
 
-    fn panel_set(&mut self, device: DeviceId, index: i32, value: impl FnOnce(&ParamDef, f32) -> Option<f32>) {
+    fn panel_set(&mut self, device: DeviceId, index: i32, value: impl FnOnce(&ParamDef, f32, &[f32]) -> Option<f32>) {
         if index <= crate::sampler_panel::SLICE_GAIN {
-            return self.slice_set(device, index, value);
+            return self.slice_set(device, index, |p, v| value(p, v, &[]));
         }
         let Some((d, def)) = self.panel_def(device) else { return };
         let Some(p) = usize::try_from(index).ok().and_then(|i| def.params.get(i)) else { return };
         let cur = def.value(d, p);
-        if let Some(v) = value(p, cur).map(|v| p.snap(v))
+        if let Some(v) = value(p, cur, def.detents(d, p)).map(|v| p.snap(v))
             && v != cur
         {
             let cmd = param_command(def, d, p, v);
@@ -934,7 +1086,7 @@ impl Controller {
         if self.project().device(device).is_some_and(|d| saine_core::builtin::def_of(d).is_none()) {
             return self.card_reset(device, index as u32);
         }
-        self.panel_set(device, index, |p, _| Some(p.default));
+        self.panel_set(device, index, |p, _, _| Some(p.default));
     }
 
     /// Reset of a two-parameter field zone: one command (a Batch when both change), one undo step.
@@ -957,34 +1109,57 @@ impl Controller {
         }
     }
 
-    /// Arrow keys: discrete parameters move one choice, continuous ones 1% of the range (0.2% fine).
+    /// Arrow keys: discrete parameters move one choice, continuous ones 1% of
+    /// the range (0.2% fine), or to the next detent when the control has them.
     pub fn panel_step(&mut self, device: DeviceId, index: i32, delta: i32, fine: bool) {
         if self.project().device(device).is_some_and(|d| saine_core::builtin::def_of(d).is_none()) {
             return self.card_step(device, index as u32, delta, fine);
         }
-        self.panel_set(device, index, |p, v| {
-            Some(if p.is_discrete() {
-                v + delta as f32
-            } else {
-                p.from_normalized(p.to_normalized(v) + delta as f32 * if fine { 0.002 } else { 0.01 })
-            })
+        self.panel_set(device, index, |p, v, detents| {
+            if p.is_discrete() {
+                return Some(v + delta as f32);
+            }
+            let tol = 1e-4 * (p.max - p.min);
+            let next = if delta > 0 { detents.iter().copied().filter(|x| *x > v + tol).reduce(f32::min) } else { detents.iter().copied().filter(|x| *x < v - tol).reduce(f32::max) };
+            if !detents.is_empty() {
+                return next;
+            }
+            Some(p.from_normalized(p.to_normalized(v) + delta as f32 * if fine { 0.002 } else { 0.01 }))
         });
     }
 
+    /// A choice (segment, menu row or latch state); `VIEW_SELECT` picks the
+    /// card's view state instead of a parameter.
     pub fn panel_choice(&mut self, device: DeviceId, index: i32, choice: i32) {
         if self.project().device(device).is_some_and(|d| saine_core::builtin::def_of(d).is_none()) {
             return self.card_click(device, index as u32);
         }
-        self.panel_set(device, index, |_, _| Some(choice as f32));
+        if index == VIEW_SELECT {
+            self.panel_view(device, 1, choice as f32);
+            return;
+        }
+        let latch = self.panel_def(device).and_then(|(d, def)| {
+            let p = def.params.get(usize::try_from(index).ok()?)?;
+            saine_core::builtin::behavior(def).and_then(|b| (b.latch)(def, d, p))
+        });
+        self.panel_set(device, index, |_, _, _| Some(latch.map_or(choice as f32, |l| l.values[choice.clamp(0, 1) as usize])));
     }
 
     pub fn panel_text(&mut self, device: DeviceId, index: i32, text: &str) {
         if self.project().device(device).is_some_and(|d| saine_core::builtin::def_of(d).is_none()) {
             return self.card_text(device, index as u32, text);
         }
+        // Text the panel shows (e.g. "AUTO", "DIAL 3") committed unchanged is not an edit.
+        let shown = self.panel_def(device).and_then(|(d, def)| {
+            let p = def.params.get(usize::try_from(index).ok()?)?;
+            Some(def.text(d, p, def.value(d, p)))
+        });
+        if shown.is_some_and(|s| s.trim() == text.trim()) {
+            return;
+        }
         let mut bad = None;
         let typed = usize::try_from(index).ok().and_then(|i| self.panel_def(device).and_then(|(_, def)| def.params.get(i))).and_then(|p| self.sampler_parse(device, p, text));
-        self.panel_set(device, index, |p, _| {
+        self.panel_set(device, index, |p, _, _| {
             let v = typed.or_else(|| p.parse(text));
             if v.is_none() {
                 bad = Some(format!("{}: can't read “{}”", p.name, text.trim()));
@@ -1075,7 +1250,7 @@ impl Controller {
         let Some(f) = def.factory.get(n) else { return };
         let mut params = saine_core::builtin::DevicePreset::factory(def, f).load_values(def);
         // The sidechain switch follows the source picked in the panel, not the preset.
-        if let Some(p) = def.param("sidechainEnable") {
+        if let Some(p) = def.sidechain_enable() {
             params.insert(p.id.into(), def.value(d, p));
         }
         let cmd = self.sampler_followups(Command::SetDeviceParams { device, params, preset: Some(f.name.to_string()) });
@@ -1089,8 +1264,8 @@ impl Controller {
             return;
         }
         let mut commands = vec![Command::SetDeviceSidechain { device, source }];
-        if def.param("sidechainEnable").is_some() {
-            commands.push(Command::SetDeviceParam { device, param: "sidechainEnable".into(), value: if source.is_some() { 1.0 } else { 0.0 } });
+        if let Some(p) = def.sidechain_enable() {
+            commands.push(Command::SetDeviceParam { device, param: p.id.into(), value: if source.is_some() { 1.0 } else { 0.0 } });
         }
         self.execute(Command::Batch { label: "Sidechain Change".into(), commands });
     }
@@ -1103,11 +1278,47 @@ mod tests {
     #[test]
     fn compressor_card_geometry_matches_the_reference_template() {
         let def = saine_core::builtin::find("compressor").unwrap();
-        assert_eq!(def.layout.width(), 521.0);
-        let xs: Vec<f32> = knob_xs(def).iter().map(|(_, x)| *x).collect();
-        assert_eq!(xs, [8.0, 80.0, 163.0, 235.0, 307.0, 379.0, 451.0]);
+        let ids: Vec<&'static str> = def.layout.clusters.iter().flat_map(|c| c.iter()).filter_map(|c| c.param()).collect();
+        let xs: Vec<f32> = dial_xs(def, &ids).iter().map(|(_, x)| *x).collect();
+        // Even spacing (reference capture: knob centres 74 pt apart): gap (521 - 16 - 7 x 62) / 6.
+        let step = KNOB_CELL + 71.0 / 6.0;
+        for (i, x) in xs.iter().enumerate() {
+            assert!((x - (PAD + i as f32 * step)).abs() < 1e-3, "knob {i} at {x}");
+        }
         // The last knob cell ends at the card padding.
-        assert_eq!(xs[6] + KNOB_CELL + PAD, def.layout.width());
+        assert!((xs[6] + KNOB_CELL + PAD - def.layout.width()).abs() < 1e-3);
+    }
+
+    #[test]
+    fn mode_dependent_dial_rows_keep_their_spacing_and_centre() {
+        let def = saine_core::builtin::find("character-compressor").unwrap();
+        let six = dial_xs(def, &["threshold", "ratio", "knee", "attack", "release", "mix"]);
+        assert!((six[0].1 - PAD).abs() < 1e-3 && (six[5].1 + KNOB_CELL + PAD - 471.0).abs() < 1e-3);
+        let four = dial_xs(def, &["threshold", "ratio", "drive", "mix"]);
+        let step = six[1].1 - six[0].1;
+        assert!((four[1].1 - four[0].1 - step).abs() < 1e-3, "same gap");
+        assert!(((four[0].1 + four[3].1 + KNOB_CELL) / 2.0 - 471.0 / 2.0).abs() < 1e-3, "centred");
+    }
+
+    #[test]
+    fn detents_snap_within_reach() {
+        let def = saine_core::builtin::find("character-compressor").unwrap();
+        let ratio = def.param("ratio").unwrap();
+        let n4 = ratio.to_normalized(4.0);
+        assert_eq!(snap_to_detent(ratio, &[2.0, 4.0, 10.0], n4 + 0.02, false), Some(4.0));
+        assert_eq!(snap_to_detent(ratio, &[2.0, 4.0, 10.0], n4 + 0.02, true), None, "fine drags snap closer");
+        assert_eq!(snap_to_detent(ratio, &[], n4, false), None);
+        assert_eq!(detent_ticks(ratio, &[2.0, 4.0]).matches('M').count(), 2);
+    }
+
+    #[test]
+    fn transfer_face_paths() {
+        let t = Transfer { lo: -30.0, hi: 6.0, points: vec![(-30.0, -30.0), (-18.0, -18.0), (6.0, -12.0)], bend: (-20.0, -16.0) };
+        let (curve, bend, unity) = transfer_face(&t);
+        assert!(curve.starts_with("M3.0 29.0"));
+        assert_eq!(bend.matches('L').count(), 0, "a single bend point draws nothing");
+        assert!(bend.is_empty());
+        assert!(!unity.is_empty());
     }
 
     #[test]
@@ -1165,7 +1376,7 @@ mod tests {
         let n = 2000;
         let t0 = std::time::Instant::now();
         for _ in 0..n {
-            std::hint::black_box(strip_paths(std::hint::black_box(&slots), 368.0, 112.2));
+            std::hint::black_box(strip_paths(std::hint::black_box(&slots), Strip::new("threshold"), 368.0, 112.2));
         }
         let strip = t0.elapsed().as_secs_f64() * 1e6 / n as f64;
         let t0 = std::time::Instant::now();
@@ -1173,7 +1384,17 @@ mod tests {
             std::hint::black_box(soft_knee_face(-24.0 + (i % 7) as f32, 4.0, 6.0));
         }
         let face = t0.elapsed().as_secs_f64() * 1e6 / n as f64;
-        println!("panel model: strip paths (240-slot history) {strip:.2} us, transfer face {face:.2} us per refresh");
+        let cc = saine_core::builtin::find("character-compressor").unwrap();
+        let mut d = cc.instantiate();
+        d.params.insert("model".into(), 1.0);
+        let b = saine_core::builtin::behavior(cc).unwrap();
+        let t0 = std::time::Instant::now();
+        for i in 0..n {
+            d.params.insert("threshold".into(), -24.0 + (i % 7) as f32);
+            std::hint::black_box(transfer_face(&(b.transfer)(cc, &d).unwrap()));
+        }
+        let vm = t0.elapsed().as_secs_f64() * 1e6 / n as f64;
+        println!("panel model: strip paths (240-slot history) {strip:.2} us, transfer face {face:.2} us, Vari-Mu face {vm:.2} us per refresh");
     }
 
     #[test]
@@ -1184,3 +1405,4 @@ mod tests {
         assert_eq!(fmt_db(-3.26), "\u{2212}3.3 dB");
     }
 }
+

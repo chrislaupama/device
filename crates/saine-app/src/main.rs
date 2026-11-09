@@ -27,6 +27,7 @@ mod device_editors;
 mod panel_graph;
 mod device_views;
 mod devices;
+mod panel_multiband;
 mod gpu;
 mod highlight;
 mod mixer;
@@ -978,6 +979,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         saine_core::DeviceId(id as u64),
         crate::device_editors::CanvasEvent { kind, x, y, wx, wy, shift, alt, wheel }
     ));
+    on!(on_panel_view, |c, id: i32, action: i32, v: f32| c.panel_view(saine_core::DeviceId(id as u64), action, v));
     {
         use saine_core::DeviceId as Id;
         let id = |i: i32| Id(i as u64);

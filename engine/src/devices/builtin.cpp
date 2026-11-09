@@ -27,6 +27,8 @@ extern const BuiltinDescriptor kPhaserDescriptor;
 extern const BuiltinDescriptor kTremoloDescriptor;
 extern const BuiltinDescriptor kAutopannerDescriptor;
 extern const BuiltinDescriptor kRingModDescriptor;
+extern const BuiltinDescriptor kCharacterCompressorDescriptor;
+extern const BuiltinDescriptor kMultibandCompressorDescriptor;
 extern const BuiltinDescriptor kSynthV2Descriptor;
 extern const BuiltinDescriptor kDeClipperDescriptor;
 extern const BuiltinDescriptor kDeEsserDescriptor;
@@ -57,6 +59,8 @@ const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kTremoloDescriptor,
     &kAutopannerDescriptor,
     &kRingModDescriptor,
+    &kCharacterCompressorDescriptor,
+    &kMultibandCompressorDescriptor,
     &kSynthV2Descriptor,
     &kDeClipperDescriptor, &kDeEsserDescriptor, &kDeHummerDescriptor, &kDeNoiserDescriptor,
     &kTranceGateDescriptor,
@@ -204,7 +208,6 @@ BuiltinInstance::BuiltinInstance(PluginSpec spec, const BuiltinDescriptor& desc,
       target_(new std::atomic<float>[std::max<std::size_t>(1, desc.params.size())]), current_(desc.params.size(), 0.0f),
       readout_atomic_(new std::atomic<float>[std::max<std::size_t>(1, desc.readouts.size())]),
       readout_scratch_(desc.readouts.size(), 0.0f), readout_segment_(desc.readouts.size(), 0.0f),
-      latency_values_(desc.params.size(), 0.0f),
       midi_scratch_(desc.instrument ? kMaxEvents + kLiveEvents : 0) {
     if (desc_.instrument) merged_.resize(kMaxEvents + kLiveEvents);
     for (std::size_t i = 0; i < desc_.params.size(); ++i) target_[i].store(0.0f, std::memory_order_relaxed);
@@ -359,6 +362,13 @@ bool BuiltinInstance::push_note(uint8_t pitch, uint8_t velocity) noexcept {
     return live_.push(e);
 }
 
+uint32_t BuiltinInstance::latency() {
+    std::vector<float> v(param_count());
+    for (uint32_t i = 0; i < param_count(); ++i) v[i] = target_[i].load(std::memory_order_relaxed);
+    // The stored values give the latency before the first block; automation can hold others.
+    return std::max(proc_->latency_for(v.data()), applied_latency_.load(std::memory_order_relaxed));
+}
+
 uint32_t BuiltinInstance::readouts(float* out, uint32_t capacity) const noexcept {
     const auto n = static_cast<uint32_t>(desc_.readouts.size());
     for (uint32_t i = 0; i < n && i < capacity; ++i) out[i] = readout_atomic_[i].load(std::memory_order_relaxed);
@@ -403,7 +413,7 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     const bool modulated = mod_count_ > 0;
     float* const run_params = modulated ? modded_.data() : cur;
     MidiEvent* const seg_events = midi_scratch_.data();
-    uint32_t pos = 0, e = 0, m = 0;
+    uint32_t pos = 0, e = 0, m = 0, lat = 0;
     while (pos < frames) {
         while (e < param_count && params[e].offset <= pos) {
             if (params[e].id < n_params) cur[params[e].id] = static_cast<float>(params[e].value);
@@ -422,6 +432,7 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
                 run_params[md.index] = mod_from_norm(md, n);
             }
         }
+        lat = std::max(lat, proc_->latency_for(cur));
         BuiltinContext seg = ctx;
         seg.offset = pos;
         if (seg.sc_l != nullptr) {
@@ -450,14 +461,10 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
         pos = end;
     }
     for (std::size_t i = 0; i < readout_scratch_.size(); ++i) readout_atomic_[i].store(ro[i], std::memory_order_relaxed);
+    applied_latency_.store(lat, std::memory_order_relaxed);
     sc_l_ = sc_r_ = nullptr;
     mods_ = nullptr;
     mod_count_ = 0;
-}
-
-uint32_t BuiltinInstance::latency() {
-    for (std::size_t i = 0; i < latency_values_.size(); ++i) latency_values_[i] = target_[i].load(std::memory_order_relaxed);
-    return proc_->latency_for(latency_values_.data());
 }
 
 bool BuiltinInstance::save_state(std::vector<uint8_t>& out, std::string&) {

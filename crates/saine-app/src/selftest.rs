@@ -2386,6 +2386,79 @@ fn builtin_device_steps() -> Vec<Step> {
     ]
 }
 
+/// Character and Multiband Compressor: added from the Built-in list, live in the engine,
+/// and their custom controls (Opto latch, band selector) drive the card.
+fn dynamics_device_steps() -> Vec<Step> {
+    use Step::*;
+    let mut v = Vec::new();
+    for (id, name, readouts) in [("character-compressor", "Character Compressor", 4usize), ("multiband-compressor", "Multiband Compressor", 8)] {
+        let hist = Rc::new(Cell::new(0usize));
+        let h0 = hist.clone();
+        v.push(DoC(format!("dynamics: Add device › Built-in › {name}").leak(), Box::new(move |a, ctl| {
+            h0.set(ctl.borrow().doc.history_labels().len());
+            key(a, Key::Escape, false, false);
+            let add_x = a.global::<Studio>().get_add_device_x();
+            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == name) {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })));
+        v.push(Check(format!("dynamics: {name} added in one undo step, card built, engine live ({readouts} readouts)").leak(), Box::new(move |c, a| {
+            let n = c.doc.history_labels().len();
+            if n != hist.get() + 1 || c.doc.undo_label() != Some(&format!("Add {name}")) {
+                return Err(format!("history {} -> {n}, last {:?}", hist.get(), c.doc.undo_label()));
+            }
+            let d = builtin_of(c, id).ok_or("no device")?;
+            let cd = card_named(a, name).ok_or("no card")?;
+            let mut r = Vec::new();
+            c.engine.builtin_readouts(d.id.0, &mut r).map_err(|e| e.to_string())?;
+            let errors = c.engine.plugin_load_errors();
+            let ok = cd.builtin && slint::Model::row_count(&cd.knobs) >= 6 && (cd.strip.visible || cd.bands.visible) && r.len() == readouts && !errors.iter().any(|(e, _)| *e == d.id);
+            ok.then_some(()).ok_or(format!("knobs {} readouts {r:?} errors {errors:?}", slint::Model::row_count(&cd.knobs)))
+        })));
+    }
+    v.push(DoC("dynamics: Character Compressor model › Opto", Box::new(|_, ctl| {
+        let mut c = ctl.borrow_mut();
+        let Some(d) = builtin_of(&c, "character-compressor").map(|d| d.id) else { return };
+        let def = saine_core::builtin::find("character-compressor").unwrap();
+        let i = def.params.iter().position(|p| p.id == "model").unwrap_or(0) as i32;
+        let opto = def.param("model").and_then(|p| p.choices.iter().position(|c| *c == "Opto")).unwrap_or(0) as i32;
+        c.panel_choice(d, i, opto);
+    })));
+    v.push(Check("dynamics: Opto shows the Comp/Limit latch in the dial row", Box::new(|_, a| {
+        let cd = card_named(a, "Character Compressor").ok_or("no card")?;
+        let latch = (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).find(|k| k.face == 2);
+        latch.is_some_and(|k| k.value == "Comp" || k.value == "Limit").then_some(()).ok_or("no latch".into())
+    })));
+    v.push(DoC("dynamics: Multiband band selector › Mid", Box::new(|a, ctl| {
+        let Some(d) = builtin_of(&ctl.borrow(), "multiband-compressor").map(|d| d.id.0 as i32) else { return };
+        a.global::<Studio>().invoke_panel_view(d, 1, 1.0);
+    })));
+    v.push(Check("dynamics: the Threshold knob follows the Mid band (−20.0 dB)", Box::new(|_, a| {
+        let cd = card_named(a, "Multiband Compressor").ok_or("no card")?;
+        let k = slint::Model::row_data(&cd.knobs, 0).ok_or("no knob")?;
+        (k.label == "Threshold" && k.value == "\u{2212}20.0 dB").then_some(()).ok_or(format!("{} {}", k.label, k.value))
+    })));
+    // Leave the chain as the later sections expect it (their clicks assume its width).
+    v.push(DoC("dynamics: remove both devices again", Box::new(|a, ctl| {
+        let mut c = ctl.borrow_mut();
+        for id in ["character-compressor", "multiband-compressor"] {
+            if let Some(d) = builtin_of(&c, id).map(|d| d.id) {
+                c.execute(saine_core::Command::RemoveDevice { device: d });
+            }
+        }
+        c.update_ui(a);
+    })));
+    v.push(Check("dynamics: both devices are gone", Box::new(|c, _| {
+        (builtin_of(c, "character-compressor").is_none() && builtin_of(c, "multiband-compressor").is_none()).then_some(()).ok_or("still in the chain".into())
+    })));
+    v
+}
+
 // ------------------------------------------------------------------ modulation and containers
 
 fn device_where(c: &Controller, f: impl Fn(&saine_core::Device) -> bool) -> Option<saine_core::Device> {
@@ -3310,6 +3383,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(recording_steps());
     all.extend(platform_device_steps());
     all.extend(builtin_device_steps());
+    all.extend(dynamics_device_steps());
     all.extend(modulation_steps());
     all.extend(builtin_each_steps());
     all.extend(modulation_device_steps());

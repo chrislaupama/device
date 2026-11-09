@@ -89,14 +89,9 @@ public:
                          float* readouts) noexcept = 0;
     // Latency in frames (reported for delay compensation).
     virtual uint32_t latency() const noexcept { return 0; }
-    // Main thread: latency for the given plain values (registry order), for
-    // devices whose latency depends on a parameter (for example a lane that
-    // adds a look-ahead only while it is on). Polled by the host; a change
-    // re-runs delay compensation.
-    virtual uint32_t latency_for(const float* params) const noexcept {
-        (void)params;
-        return latency();
-    }
+    // Main thread: latency for these plain values (registry order), so delay
+    // compensation is right before the first block and after edits.
+    virtual uint32_t latency_for(const float* /*params*/) const noexcept { return latency(); }
     // Whether automation lanes may drive the parameter. A parameter that sets
     // the reported latency is not automatable: delay compensation follows the
     // main-thread value only.
@@ -270,10 +265,10 @@ private:
     std::unique_ptr<BuiltinProcessor> proc_;
     std::unique_ptr<std::atomic<float>[]> target_; // written by the main thread
     std::vector<float> current_;                   // RT copy for this block
+    std::atomic<uint32_t> applied_latency_{0};     // latency of the values the last block ran with
     std::unique_ptr<std::atomic<float>[]> readout_atomic_;
     std::vector<float> readout_scratch_;
     std::vector<float> readout_segment_; // later automation segments, merged into readout_scratch_
-    std::vector<float> latency_values_;  // main thread: values for latency_for()
     std::vector<MidiEvent> midi_scratch_; // MIDI events of one automation segment
     const float* sc_l_ = nullptr;
     const float* sc_r_ = nullptr;
