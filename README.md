@@ -232,7 +232,7 @@ finishes something it describes, the same pull request updates it:
 
 ## License
 
-Saine Studio doesn't have an open-source license yet. All rights are reserved until one is chosen.
+All rights reserved. How Saine Studio will be licensed has not been decided yet.
 
 Third-party code keeps its own license: the VST3 SDK and CLAP headers (MIT) are fetched at build time, and the bundled
 Inter font is under the SIL Open Font License.
