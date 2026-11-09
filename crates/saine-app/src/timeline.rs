@@ -301,12 +301,27 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
         } else {
             (c.color, c.color)
         };
-        let wave = rgba(mix(body, BLACK, 0.55), 1.0);
+        let wave = rgba(mix(body, BLACK, 0.92), 0.89);
         // Clip outline = rounded rect in the header colour; body drawn over it.
         dl.base.push(px.rounded(x, y, cw, ch, r, rgba(head, 1.0)));
         dl.base.push(px.rect(x, y + CLIP_HEADER, cw, ch - CLIP_HEADER - r, rgba(body, 1.0)));
         dl.base.push(px.rounded(x, y + ch - 2.0 * r, cw, 2.0 * r, r, rgba(body, 1.0)));
         dl.base.push(px.rect(x, y + CLIP_HEADER, cw, 1.0 / sc.scale, rgba(BLACK, 0.4)));
+        let half_bar = sc.beats_per_bar / 2.0;
+        let gw = 0.85f32.max(1.0 / sc.scale);
+        let mut k = (c.start_beats.max(v.start_beats) / half_bar).floor() as i64 + 1;
+        while half_bar * v.px_per_beat >= 10.0 {
+            let beat = k as f64 * half_bar;
+            let gx = v.x_of(beat);
+            if beat >= c.start_beats + c.len_beats || gx > w {
+                break;
+            }
+            if gx >= 0.0 {
+                let a = if k % 2 == 0 { 0.2 } else { 0.125 };
+                dl.base.push(px.rect(gx, y + CLIP_HEADER + 1.0 / sc.scale, gw, ch - CLIP_HEADER - 1.0 / sc.scale, rgba(BLACK, a)));
+            }
+            k += 1;
+        }
         if let Some((slot, first_frame, frames)) = c.wave {
             let vx0 = x.max(0.0);
             let vx1 = (x + cw).min(w);
