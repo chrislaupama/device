@@ -1,137 +1,374 @@
-// Assistant panel (right-docked, 252.5 pt) and the highlight overlay.
-// Geometry: reference/ui-inventory.md §6 and §10 (10-rheo-panel.png, ax-rheo.tsv).
-// Panel-relative coordinates: x = window x - 1182.5, y = window y - 78.
-// Our name, icon and copy are original ("Assistant", four-point star).
-// The transcript, mode, notice and context chip come from Rust; the composer
-// text is transient input (Studio.chat-draft) sent through Studio.chat-send.
+// Assistant panel (right-docked, 252.5 pt) and the Point overlay.
+// Values are the reference's docked chat (dist: app-shell, agentic-timeline, agentic-queue,
+// composer-card, context-chips, rheo-mode-picker, fx-choice-track, chat-send-button,
+// voice-mic-button, surface-close-button; reference/research-findings.md "Assistant panel"),
+// re-implemented here. Our units are 0.85 of the reference's CSS px (zoom.rs scales them back
+// to 100 %), so every length below is CSS px x 0.85. Saturated colours are the Display P3
+// values the reference renders (sRGB #1253ff shows as #2752f5, #d0ff41 as #d9fe65).
+// Our name, icon, copy and the Point glyph are original ("Assistant", four-point star).
+// The transcript, mode, notice and context chip come from Rust; the composer text is
+// transient input (Studio.chat-draft) sent through Studio.chat-send.
 import { Tokens } from "tokens.slint";
-import { Panel, Icon, Icons, IconButton } from "widgets.slint";
+import { Panel, Icon, Icons, Raised } from "widgets.slint";
 import { Studio, ChatEntry, HighlightRect } from "studio.slint";
+
+global Chat {
+    // Ink (white at an alpha) and greys of the reference's dark theme.
+    out property <color> menu-text: #ffffff;
+    out property <color> text: #81838a;          // --flow-text / gray-40
+    out property <color> gray-30: #a6a8ad;
+    out property <color> text-dim: #63656d;      // also --flow-chrome-icon
+    out property <color> icon-hover: #8a8b91;
+    out property <color> card: #212227;          // --flow-surface-card
+    out property <color> disc: #292a2f;          // --flow-surface-raised (composer discs)
+    out property <color> disc-hover: #48494f;    // --flow-bg-light
+    out property <color> accent: #2752f5;
+    out property <color> accent-hover: #608df7;
+    out property <color> point: #d9fe65;         // Point mode lime
+    out property <color> on-point: #1c2601;      // dark text the reference picks on lime
+    out property <color> alarm: #e57666;
+    out property <color> step-done: #77db89;
+    // Type: 12 px / 500, line 18 (x 0.85).
+    out property <length> fs: 10.2px;
+    out property <length> line: 15.3px;
+    out property <length> ls: -0.204px;
+}
+
+// Point glyph: a pointer arrow (ORIGINAL drawing, 16 box).
+global ChatIcons {
+    out property <string> pointer: "M3.2 2.6L13.2 7.1L8.9 8.5L7.4 12.9Z";
+}
+
+// Disclosure chevron, 10 px compact (points down at rest, up when open).
+component Chevron inherits Rectangle {
+    in property <bool> open;
+    in property <color> ink;
+    width: 8.5px; height: 8.5px;
+    Path {
+        width: parent.width; height: parent.height;
+        viewbox-width: 10; viewbox-height: 10;
+        commands: root.open ? "M2 6.5L5 3.5L8 6.5" : "M2 3.5L5 6.5L8 3.5";
+        stroke: root.ink; stroke-width: 1.3px; fill: transparent;
+        stroke-line-cap: round; stroke-line-join: round;
+    }
+}
+
+// Spinning sparkle of the live row (14 px, 1.2 s per turn).
+component Spinner inherits Rectangle {
+    in property <color> ink;
+    width: 11.9px; height: 11.9px;
+    Rectangle {
+        width: parent.width; height: parent.height;
+        cache-rendering-hint: true;
+        transform-rotation: (animation-tick() / 1ms * 0.3) * 1deg;
+        transform-origin: { x: self.width / 2, y: self.height / 2 };
+        Path {
+            width: parent.width; height: parent.height;
+            viewbox-width: 16; viewbox-height: 16;
+            commands: "M8 1.5v4 M8 10.5v4 M1.5 8h4 M10.5 8h4 M3.4 3.4l2.2 2.2 M10.4 10.4l2.2 2.2 M12.6 3.4l-2.2 2.2 M5.6 10.4l-2.2 2.2";
+            stroke: root.ink; stroke-width: 1.2px; fill: transparent; stroke-line-cap: round;
+        }
+    }
+}
+
+// Text with a band of light sweeping across it every 2 s (the reference's shimmer).
+component Shimmer inherits Rectangle {
+    in property <string> text;
+    in property <color> base;
+    in property <color> band;
+    property <length> tw: t.preferred-width;
+    property <float> phase: mod(animation-tick() / 1ms, 2000) / 2000;
+    width: self.tw; height: Chat.line;
+    property <float> s1: root.phase * 1.6 - 0.3;
+    property <float> s2: root.phase * 1.6 - 0.15;
+    property <float> s3: root.phase * 1.6;
+    t := Text {
+        text: root.text; font-size: Chat.fs; font-weight: 500; letter-spacing: Chat.ls; vertical-alignment: center; height: parent.height;
+        color: @linear-gradient(90deg, root.base 0%, root.base root.s1, root.band root.s2, root.base root.s3, root.base 100%);
+    }
+}
 
 component ChatItem inherits Rectangle {
     in property <ChatEntry> e;
     in property <int> index;
     property <length> w: self.width;
+    // Entry pop: 6 px rise + fade, 260 ms, only for entries added since the last rebuild.
+    property <float> t: root.e.fresh ? 0 : 1;
+    animate t { duration: 260ms; easing: cubic-bezier(0.22, 0.61, 0.36, 1); }
+    init => { root.t = 1; }
     min-height: lay.preferred-height;
     lay := VerticalLayout {
-        spacing: 7px;
-        // User prompt: right-aligned bubble.
+        y: (1 - root.t) * 5.1px;
+        opacity: root.t;
+        padding-top: root.e.kind == 0 && root.index > 0 ? 8.5px : 0px;
+        padding-bottom: root.e.kind == 0 ? 5.1px : 0px;
+        spacing: 6.8px;
+        // User prompt: right-aligned bubble (max 85 %), mode tag under it in Point mode.
         if root.e.kind == 0: HorizontalLayout {
             alignment: end;
             Rectangle {
-                width: min(root.w - 50px, user-text.preferred-width + 24px);
-                height: user-text.preferred-height + 14px;
-                border-radius: 9px;
-                background: Tokens.bg-raised;
+                width: min(root.w * 0.85, user-text.preferred-width + 20.4px);
+                height: user-text.preferred-height + 13.6px;
+                border-radius: 13.6px;
+                background: Chat.card;
                 user-text := Text {
-                    x: 12px; y: 7px; width: parent.width - 24px;
-                    text: root.e.text; color: Tokens.text-primary; font-size: 9.5px; font-weight: 500; wrap: word-wrap;
+                    x: 10.2px; y: 6.8px; width: parent.width - 20.4px;
+                    text: root.e.text; color: Chat.menu-text; font-size: Chat.fs; font-weight: 500;
+                    letter-spacing: Chat.ls; wrap: word-wrap;
                 }
             }
         }
-        // Assistant reply: "Worked for X.Xs" disclosure, explanation, action log.
-        if root.e.kind == 1: Rectangle {
-            height: 16px;
-            Icon { x: 0; y: 3px; width: 10px; height: 10px; d: root.e.expanded ? Icons.chevron-down : Icons.chevron-right; ink: #8e8f93; stroke-width: 1.4px; }
-            Text { x: 13px; text: root.e.worked; color: #8e8f93; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
-            TouchArea { clicked => { Studio.chat-toggle-entry(root.index); } }
+        if root.e.kind == 0 && root.e.point: HorizontalLayout {
+            alignment: end;
+            padding-right: 3.4px;
+            spacing: 3.4px;
+            height: 11.9px;
+            Icon { y: 1.7px; width: 8.5px; height: 8.5px; d: ChatIcons.pointer; filled: true; ink: Chat.point; }
+            Text { text: "Point"; color: Chat.text-dim; font-size: 8.5px; font-weight: 600; vertical-alignment: center; }
         }
-        if root.e.kind == 1 && root.e.expanded: VerticalLayout {
-            padding-left: 3px;
-            spacing: 10px;
-            if root.e.text != "": Text { text: root.e.text; color: Tokens.text-primary; font-size: 9.5px; font-weight: 500; wrap: word-wrap; }
-            for line in root.e.lines: Text { text: line; color: Tokens.text-primary; font-size: 9.5px; font-weight: 500; wrap: word-wrap; }
+        // Assistant turn: step log ("Worked for …", collapsed), then the reply.
+        if root.e.kind == 1 && root.e.lines.length > 0: VerticalLayout {
+            spacing: 1.7px;
+            HorizontalLayout {
+                alignment: start;
+                Rectangle {
+                    width: sum-text.preferred-width + 8.5px + 4.25px + 6.8px;
+                    height: Chat.line;
+                    property <color> ink: sum-ta.has-hover ? #ffffffb3 : #ffffff57;
+                    Chevron { x: 3.4px; y: (parent.height - self.height) / 2; open: root.e.expanded; ink: parent.ink; }
+                    sum-text := Text {
+                        x: 3.4px + 8.5px + 4.25px; height: parent.height;
+                        text: root.e.worked; color: parent.ink; font-size: Chat.fs; font-weight: 500;
+                        letter-spacing: Chat.ls; vertical-alignment: center;
+                    }
+                    sum-ta := TouchArea { clicked => { Studio.chat-toggle-entry(root.index); } }
+                }
+            }
+            if root.e.expanded: VerticalLayout {
+                padding-top: 1.7px;
+                for line in root.e.lines: Rectangle {
+                    min-height: step-text.preferred-height + 5.1px;
+                    border-radius: 5.1px;
+                    Rectangle { x: 5.1px; y: 7.65px; width: 5.1px; height: 5.1px; border-radius: 2.55px; background: Chat.step-done.with-alpha(0.85); }
+                    step-text := Text {
+                        x: 18.7px; y: 2.55px; width: parent.width - 18.7px - 10.2px;
+                        text: line; color: #ffffff9e; font-size: Chat.fs; font-weight: 500;
+                        letter-spacing: Chat.ls; wrap: word-wrap;
+                    }
+                }
+            }
         }
-        // Error entry (plan rejected, network error...). Nothing was executed.
+        if root.e.kind == 1: VerticalLayout {
+            padding-left: 3.4px;
+            padding-right: 3.4px;
+            padding-bottom: 3.4px;
+            Text {
+                text: root.e.text;
+                color: Chat.menu-text; font-size: Chat.fs; font-weight: 500; letter-spacing: Chat.ls; wrap: word-wrap;
+            }
+        }
+        // Error (plan rejected, network error...). Nothing was executed.
         if root.e.kind == 2: HorizontalLayout {
-            spacing: 6px;
-            padding-left: 3px;
-            Rectangle { width: 3px; border-radius: 1.5px; background: #e5484d; }
-            Text { text: root.e.text; color: #f08a8d; font-size: 9.5px; font-weight: 500; wrap: word-wrap; }
+            padding-left: 3.4px;
+            padding-right: 3.4px;
+            Text { text: root.e.text; color: Chat.alarm; font-size: Chat.fs; font-weight: 500; letter-spacing: Chat.ls; wrap: word-wrap; }
         }
-        if root.e.kind == 3: Text {
-            text: root.e.text; color: #8e8f93; font-size: 9.5px; font-weight: 500;
-            opacity: 0.55 + 0.45 * sin(animation-tick() / 1ms * 0.006 * 1rad);
+        // Live row while a request runs: spinning sparkle + shimmering label (28 px).
+        if root.e.kind == 3: Rectangle {
+            height: 23.8px;
+            Spinner { x: 0.85px; y: (parent.height - self.height) / 2; ink: #ffffff61; }
+            Shimmer { x: 0.85px + 11.9px + 3.4px; y: (parent.height - self.height) / 2; text: root.e.text; base: #ffffff61; band: #ffffffb0; }
         }
     }
+}
+
+// Header button (24 px, radius 4): dim icon, lighter on hover.
+component HeaderButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> tooltip;
+    in property <length> icon-size: 14.85px;
+    callback clicked;
+    width: 20.4px; height: 20.4px; border-radius: 3.4px;
+    accessible-role: button;
+    accessible-label: root.tooltip;
+    Icon { d: root.icon; width: root.icon-size; height: root.icon-size; stroke-width: 1.1px; ink: ta.has-hover ? #ffffffb3 : Chat.text-dim; }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+// One option of the mode switch: its own pill fades in when chosen (200 ms), ink follows.
+component ModeOption inherits Rectangle {
+    in property <string> label;
+    in property <string> glyph;
+    in property <bool> glyph-filled;
+    in property <bool> chosen;
+    in property <color> fill;
+    in property <color> fill-hover;
+    in property <color> rim;
+    in property <color> on-fill;
+    callback picked;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-checked: root.chosen;
+    Raised {
+        y: 1.7px; height: parent.height - 3.4px; border-radius: self.height / 2;
+        fill: ta.has-hover ? root.fill-hover : root.fill;
+        rim: root.rim;
+        opacity: root.chosen ? 1 : 0;
+        animate opacity { duration: 200ms; easing: ease; }
+    }
+    property <color> ink: root.chosen ? root.on-fill : (ta.has-hover ? #ffffffeb : Chat.gray-30);
+    animate ink { duration: 200ms; easing: ease; }
+    HorizontalLayout {
+        alignment: center;
+        spacing: 3.4px;
+        Icon { y: (root.height - self.height) / 2; width: 10.2px; height: 10.2px; d: root.glyph; filled: root.glyph-filled; stroke-width: 1.275px; ink: root.ink; }
+        Text { text: root.label; color: root.ink; font-size: 8.5px; font-weight: 600; letter-spacing: -0.34px; vertical-alignment: center; }
+    }
+    ta := TouchArea { clicked => { root.picked(); } }
+}
+
+// Assist / Point switch: 132 x 24 track, two equal options, 2 px gap.
+component ModeSwitch inherits Raised {
+    width: 112.2px; height: 20.4px; border-radius: self.height / 2;
+    fill: Chat.disc;
+    accessible-role: tab-list;
+    accessible-label: "Assistant mode";
+    property <length> ow: (self.width - 0.85px - 3.4px - 1.7px) / 2;
+    ModeOption {
+        x: 2.125px; y: 0.425px; width: root.ow; height: root.height - 0.85px;
+        label: "Assist"; glyph: Icons.assistant; glyph-filled: true;
+        chosen: !Studio.teach-mode;
+        fill: Chat.accent; fill-hover: #4167f6; rim: Tokens.raised-rim-accent; on-fill: #fffffff5;
+        picked => { Studio.chat-set-mode(false); }
+    }
+    ModeOption {
+        x: 2.125px + root.ow + 1.7px; y: 0.425px; width: root.ow; height: root.height - 0.85px;
+        label: "Point"; glyph: ChatIcons.pointer; glyph-filled: Studio.teach-mode;
+        chosen: Studio.teach-mode;
+        fill: Chat.point; fill-hover: #ddfe77; rim: #defe7c; on-fill: Chat.on-point;
+        picked => { Studio.chat-set-mode(true); }
+    }
+}
+
+// Round 24 px composer disc (mic / send / stop).
+component Disc inherits Rectangle {
+    in property <bool> enabled: true;
+    in property <color> fill;
+    in property <color> fill-hover;
+    in property <string> tooltip;
+    callback clicked;
+    width: 20.4px; height: 20.4px; border-radius: 10.2px;
+    accessible-role: button;
+    accessible-label: root.tooltip;
+    background: root.enabled && ta.has-hover ? root.fill-hover : root.fill;
+    ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
+    @children
 }
 
 export component AssistantPanel inherits Panel {
     callback focus-main();   // give keyboard focus back to the window after sending
 
-    // ---- header ----
-    Icon { x: 7.5px; y: 7.5px; width: 12px; height: 12px; d: Icons.assistant; ink: #ffffff; filled: true; }
-    Text { x: 21.5px; y: 7px; height: 13px; text: "Assistant"; color: Tokens.text-bright; font-size: 9.75px; font-weight: 700; vertical-alignment: center; }
-    IconButton { x: root.width - 53px; y: 3px; width: 21px; height: 21px; icon: Icons.plus-circle; ink: #6b6c70; icon-size: 14px;
-        tooltip: "New chat"; clicked => { Studio.chat-new(); } }
-    // Full height: PLACEHOLDER (the panel always spans the timeline row)
-    IconButton { x: root.width - 29px; y: 3px; width: 21px; height: 21px; icon: Icons.panel-right; ink: #6b6c70; icon-size: 14px;
-        tooltip: "Full height (not implemented)"; clicked => { Studio.chat-placeholder("Full height"); } }
-    Rectangle { x: 0; y: 27px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
+    // ---- header (32 px, padding 4 x 10) ----
+    Icon { x: 8.5px; y: (27.2px - 10.2px) / 2; width: 10.2px; height: 10.2px; d: Icons.assistant; ink: Chat.menu-text; filled: true; }
+    Text { x: 8.5px + 10.2px + 3.4px; y: 0; height: 27.2px; text: "Assistant"; color: Chat.menu-text; font-size: 10.2px; font-weight: 700; letter-spacing: -0.408px; vertical-alignment: center; }
+    HeaderButton { x: root.width - 8.5px - 20.4px - 3.4px - 20.4px; y: 3.4px; icon: Icons.plus-circle; tooltip: "New chat"; clicked => { Studio.chat-new(); } }
+    // Medium/full height layout: PLACEHOLDER (the panel always spans the timeline row)
+    HeaderButton { x: root.width - 8.5px - 20.4px; y: 3.4px; icon: Icons.panel-right; icon-size: 13.6px; tooltip: "Full height (not implemented)"; clicked => { Studio.chat-placeholder("Full height"); } }
+    Rectangle { x: 0; y: 27.2px - 0.425px; width: root.width; height: 0.425px; background: #2c2d30; }
 
-    // ---- composer card (bottom-anchored; the notice row folds away when dismissed) ----
-    property <length> notice-h: Studio.chat-notice ? 27px : 0px;
-    property <length> card-h: 92.5px + self.notice-h;
+    // ---- composer card geometry (bottom-anchored, 8 px inset) ----
+    property <length> notice-h: Studio.chat-notice ? 28.05px : 0px;   // 6 + 20 + 6 + 1 px rule
+    property <length> chips-h: 27.2px;                                 // 8 + 24
+    property <length> text-h: max(Chat.line, min(input.preferred-height, 115.6px - 11.9px));
+    property <length> text-row-h: 8.5px + 11.9px + root.text-h + 3.4px; // margins 10 / 4, padding 7 / 7
+    property <length> card-h: root.notice-h + root.chips-h + root.text-row-h + 27.2px;
+    property <bool> can-send: Studio.chat-available && !Studio.chat-busy && Studio.chat-draft != "";
 
-    // ---- transcript ----
+    // ---- transcript (padding 16 / 0 + 8 px gutter / 8, 8 px between items) ----
     flick := Flickable {
-        x: 0; y: 27.5px; width: root.width; height: root.height - 27.5px - root.card-h - 12px;
+        x: 0; y: 27.2px; width: root.width; height: root.height - 27.2px - root.card-h - 13.6px;
         content-height: max(self.height, col.preferred-height);
         changed content-height => { self.content-y = min(0px, self.height - self.content-height); }
         col := VerticalLayout {
             width: flick.width;
-            padding-left: 6.5px;
-            padding-right: 6px;
-            padding-top: 20px;
-            padding-bottom: 8px;
-            spacing: 16px;
+            padding-left: 6.8px;
+            padding-right: 6.8px;
+            padding-top: 13.6px;
+            spacing: 6.8px;
             alignment: start;
             for entry[i] in Studio.chat: ChatItem { e: entry; index: i; }
         }
     }
+    // Empty state: the greeting (12 px / 500, 16 px in from the panel edge's content box).
+    if Studio.chat.length == 0: Text {
+        x: 10.2px; y: 27.2px + 17px; width: root.width - 20.4px;
+        text: "Hi there. What would you like to make?"; color: Chat.menu-text;
+        font-size: Chat.fs; font-weight: 500; letter-spacing: Chat.ls; wrap: word-wrap;
+    }
+    // Scroll shade under the header once the transcript is scrolled.
+    Rectangle {
+        x: 0; y: 27.2px; width: root.width; height: 11.05px;
+        opacity: min(1, -flick.content-y / 13.6px);
+        background: @linear-gradient(180deg, #10111480 0%, #10111400 100%);
+    }
 
-    card := Rectangle {
-        x: 7px; y: root.height - 8px - root.card-h; width: root.width - 14.5px; height: root.card-h;
-        border-radius: 8px; background: Tokens.bg-raised; border-width: 0.5px; border-color: #525356;
+    Rectangle {
+        x: 6.8px; y: root.height - 6.8px - root.card-h; width: root.width - 13.6px; height: root.card-h;
+        border-radius: 8.5px; background: Chat.card; clip: true;
+        border-width: input.has-focus ? 0.85px : 0.425px;
+        border-color: input.has-focus ? #ffffff38 : #ffffff0e;
+        animate border-color { duration: 200ms; easing: ease-out; }
+        opacity: Studio.chat-available ? 1 : 0.4;
 
+        // AI notice (11 px / 500, padding 6 x 10, 1 px rule under it)
         if Studio.chat-notice: Rectangle {
-            x: 0; y: 0; width: parent.width; height: 27px;
-            Text { x: 8px; height: parent.height; text: "The assistant is AI and may make mistakes."; color: #818389; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+            x: 0; y: 0; width: parent.width; height: 28.05px;
+            Text { x: 8.5px; width: parent.width - 8.5px - 3.4px - 17px - 8.5px; height: 27.2px; text: "The assistant is AI and may make mistakes."; color: Chat.text; font-size: 9.35px; font-weight: 500; letter-spacing: -0.204px; vertical-alignment: center; overflow: elide; }
             Rectangle {
-                x: parent.width - 25px; y: 3.5px; width: 18px; height: 18px;
-                Icon { width: 10px; height: 10px; d: Icons.close; ink: #c3c3c4; stroke-width: 1.5px; }
-                TouchArea { clicked => { Studio.chat-dismiss-notice(); } }
+                x: parent.width - 8.5px - 17px; y: 5.1px; width: 17px; height: 17px;
+                accessible-role: button; accessible-label: "Close AI notice";
+                Icon { width: 10.2px; height: 10.2px; d: Icons.close; ink: close-ta.has-hover ? Chat.menu-text : Chat.icon-hover; stroke-width: 1.275px; }
+                close-ta := TouchArea { clicked => { Studio.chat-dismiss-notice(); } }
             }
-            Rectangle { y: parent.height - 0.5px; height: 0.5px; background: #313236; }
+            Rectangle { y: 27.2px; height: 0.85px; background: #ffffff14; }
         }
-        // Context chip: the current selection (track or clip) + scope label.
-        if Studio.chat-context-visible: Rectangle {
-            x: 6.5px; y: root.notice-h + 7px; height: 20px; width: chip-text.preferred-width + 29.5px;
-            border-radius: 10px; border-width: 0.5px; border-color: Studio.chat-context-color.with-alpha(0.45);
-            chip-ta := TouchArea { x: 0; width: 22px; clicked => { Studio.chat-remove-context(); } }
-            Icon {
-                x: 6px; width: 13px; height: 13px;
-                d: chip-ta.has-hover ? Icons.close : (Studio.chat-context-instrument ? Icons.keys : Icons.wave);
-                ink: chip-ta.has-hover ? #e5e5e8 : Studio.chat-context-color; stroke-width: 1.0px;
+        // Context chip row: the current selection (track or clip) and its type, or "Nothing selected".
+        Rectangle {
+            x: 0; y: root.notice-h; width: parent.width; height: root.chips-h;
+            if Studio.chat-context-visible: Rectangle {
+                x: 6.8px; y: 6.8px; height: 20.4px; width: min(chip-text.preferred-width + 6.8px + 13.6px - 1.7px + 6.8px, parent.width - 70px);
+                border-radius: 10.2px; border-width: 0.85px; border-color: Studio.chat-context-color.with-alpha(0.4);
+                chip-ta := TouchArea { clicked => { Studio.chat-remove-context(); } }
+                Icon {
+                    x: 6.8px - 1.7px; y: (parent.height - self.height) / 2; width: 13.6px; height: 13.6px;
+                    d: Studio.chat-context-instrument ? Icons.keys : Icons.wave; ink: Studio.chat-context-color; stroke-width: 1.0px;
+                    opacity: chip-ta.has-hover ? 0 : 1;
+                }
+                if chip-ta.has-hover: Icon { x: 6.8px; y: (parent.height - self.height) / 2; width: 10.2px; height: 10.2px; d: Icons.close; ink: Chat.menu-text; stroke-width: 1.275px; }
+                chip-text := Text { x: 6.8px + 13.6px - 1.7px; width: parent.width - self.x - 6.8px; height: parent.height; text: Studio.chat-context-name; color: Chat.menu-text; font-size: 8.5px; font-weight: 600; letter-spacing: -0.34px; vertical-alignment: center; overflow: elide; }
             }
-            chip-text := Text { x: 22px; text: Studio.chat-context-name; color: Tokens.text-bright; font-size: 9px; font-weight: 600; vertical-alignment: center; }
+            if Studio.chat-context-visible: Text {
+                x: parent.width - 13.6px - 60px; y: 6.8px; width: 60px; height: 20.4px;
+                text: Studio.chat-context-scope; color: Chat.text; font-size: 9.35px; font-weight: 600; letter-spacing: -0.34px;
+                horizontal-alignment: right; vertical-alignment: center;
+            }
+            if !Studio.chat-context-visible: Rectangle {
+                x: 6.8px; y: 6.8px; height: 20.4px; width: empty-text.preferred-width + 13.6px;
+                border-radius: 10.2px; border-width: 0.85px; border-color: #ffffff1f;
+                empty-text := Text { x: 6.8px; height: parent.height; text: "Nothing selected"; color: Chat.gray-30; font-size: 8.5px; font-weight: 600; letter-spacing: -0.34px; vertical-alignment: center; }
+            }
         }
-        if Studio.chat-context-visible: Text {
-            x: parent.width - 64.5px; y: root.notice-h + 7px; width: 52px; height: 20px;
-            text: Studio.chat-context-scope; color: #818389; font-size: 9.5px; font-weight: 500;
-            horizontal-alignment: right; vertical-alignment: center;
-        }
-        // Multi-line input. Enter sends, Shift+Enter inserts a newline.
+        // Multi-line input (12 px / 500, padding 7 0 7 10). Enter sends, Shift+Enter inserts a newline.
         input := TextInput {
-            x: 9.5px; y: root.notice-h + 40px; width: parent.width - 19px; height: 26px;
+            x: 8.5px; y: root.notice-h + root.chips-h + 8.5px + 5.95px; width: parent.width - 8.5px - 10.2px; height: root.text-h;
             text <=> Studio.chat-draft;
             enabled: Studio.chat-available;
             single-line: false; wrap: word-wrap;
-            color: Tokens.text-primary; font-size: 10px; font-weight: 500;
+            color: Chat.menu-text; font-size: Chat.fs; font-weight: 500; letter-spacing: Chat.ls;
             changed has-focus => { Studio.chat-focused = self.has-focus; }
             key-pressed(event) => {
                 if (event.text == Key.Return && !event.modifiers.shift) {
-                    if (Studio.chat-available && !Studio.chat-busy && Studio.chat-draft != "") {
+                    if (root.can-send) {
                         Studio.chat-send(Studio.chat-draft);
                         Studio.chat-draft = "";
                         root.focus-main();
@@ -142,56 +379,68 @@ export component AssistantPanel inherits Panel {
             }
         }
         if Studio.chat-draft == "": Text {
-            x: 10px; y: input.y + 2.5px; height: 13px;
-            text: Studio.chat-available ? "Ask the assistant to do anything…" : "Set ANTHROPIC_API_KEY to enable the assistant"; width: parent.width - 20px; overflow: elide;
-            color: #818389; font-size: 10.5px; font-weight: 500; vertical-alignment: center;
+            x: input.x + 1.7px; y: input.y; height: Chat.line; width: input.width - 1.7px;
+            text: !Studio.chat-available ? "Set ANTHROPIC_API_KEY to enable the assistant"
+                : Studio.teach-mode ? "Ask the assistant to show you how…" : "Ask the assistant to do anything…";
+            overflow: elide; color: Chat.text; font-size: Chat.fs; font-weight: 500; letter-spacing: Chat.ls; vertical-alignment: center;
         }
-        // Mode toggle: Assist (may edit) / Teach (highlight + explain only).
-        Rectangle {
-            x: 6.5px; y: root.notice-h + 66.5px; width: 113px; height: 21px; border-radius: 10.5px; background: #292a2e;
-            Rectangle {
-                x: 2px; y: 2px; width: 53px; height: 17px; border-radius: 8.5px;
-                background: Studio.teach-mode ? transparent : Tokens.accent;
-                Icon { x: 9px; width: 10px; height: 10px; d: Icons.assistant; filled: true; ink: Studio.teach-mode ? #a6a8ac : Tokens.on-accent; }
-                Text { x: 22px; text: "Assist"; color: Studio.teach-mode ? #a6a8ac : Tokens.on-accent; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
-                TouchArea { clicked => { Studio.chat-set-mode(false); } }
-            }
-            Rectangle {
-                x: 57px; y: 2px; width: 54px; height: 17px; border-radius: 8.5px;
-                background: Studio.teach-mode ? Tokens.accent : transparent;
-                Icon { x: 8px; width: 11px; height: 11px; d: Icons.teach; ink: Studio.teach-mode ? Tokens.on-accent : #a6a8ac; stroke-width: 1.2px; }
-                Text { x: 22px; text: "Teach"; color: Studio.teach-mode ? Tokens.on-accent : #a6a8ac; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
-                TouchArea { clicked => { Studio.chat-set-mode(true); } }
-            }
-        }
+        // Composer row (32 px, padding 0 8 8): mode switch, then mic and send on the right.
+        ModeSwitch { x: 6.8px; y: parent.height - 6.8px - 20.4px; }
         // Mic: PLACEHOLDER (voice input not implemented)
-        Rectangle {
-            x: parent.width - 51px; y: root.notice-h + 66px; width: 21px; height: 21px; border-radius: 10.5px; background: #292a2f;
-            Icon { width: 12px; height: 12px; d: Icons.mic; ink: #e5e5e8; stroke-width: 1.5px; }
-            TouchArea { clicked => { Studio.chat-placeholder("Voice input"); } }
+        Disc {
+            x: parent.width - 6.8px - 20.4px - 3.4px - 20.4px; y: parent.height - 6.8px - 20.4px;
+            fill: Chat.disc; fill-hover: Chat.disc-hover; tooltip: "Voice input (not implemented)";
+            clicked => { Studio.chat-placeholder("Voice input"); }
+            Icon { width: 11.9px; height: 11.9px; d: Icons.mic; ink: Chat.menu-text; stroke-width: 1.275px; }
         }
-        // Send
-        Rectangle {
-            property <bool> can-send: Studio.chat-available && !Studio.chat-busy && Studio.chat-draft != "";
-            x: parent.width - 27.5px; y: root.notice-h + 66px; width: 21px; height: 21px; border-radius: 10.5px;
-            background: self.can-send ? #3e3f44 : #292a2f;
-            Icon { width: 11px; height: 11px; d: Icons.arrow-up; ink: parent.can-send ? #ffffff : #d0d0d3; stroke-width: 1.5px; }
-            TouchArea {
-                enabled: parent.can-send;
-                clicked => { Studio.chat-send(Studio.chat-draft); Studio.chat-draft = ""; root.focus-main(); }
-            }
+        // Send (accent when there is text), or a bare stop square while busy.
+        Disc {
+            x: parent.width - 6.8px - 20.4px; y: parent.height - 6.8px - 20.4px;
+            enabled: root.can-send;
+            fill: Studio.chat-busy ? transparent : (root.can-send ? Chat.accent : Chat.disc);
+            fill-hover: Chat.accent-hover;
+            tooltip: Studio.chat-busy ? "Working" : "Send";
+            clicked => { Studio.chat-send(Studio.chat-draft); Studio.chat-draft = ""; root.focus-main(); }
+            if !Studio.chat-busy: Icon { width: 11.9px; height: 11.9px; d: Icons.arrow-up; ink: Chat.menu-text; stroke-width: 1.275px; }
+            if Studio.chat-busy: Rectangle { width: 8.5px; height: 8.5px; border-radius: 0.85px; background: Chat.menu-text; }
         }
     }
 }
 
-// Pulsing accent outlines over highlighted controls (window coordinates).
+// Point overlay: a lime ring around each target, a glow that breathes every 2.6 s, and a
+// light bubble with the note beside it. Ring and bubble geometry come from highlight.rs.
 export component HighlightOverlay inherits Rectangle {
     for h in Studio.highlights: Rectangle {
-        x: h.x - 3px; y: h.y - 3px; width: h.w + 6px; height: h.h + 6px;
-        border-radius: 5px; border-width: 2px; border-color: Tokens.accent;
-        background: Tokens.accent.with-alpha(0.12);
-        opacity: 0.55 + 0.45 * sin(animation-tick() / 1ms * 0.008 * 1rad);
+        x: h.x; y: h.y; width: h.w; height: h.h;
+        property <float> breathe: 0.5 - 0.5 * cos(animation-tick() / 1ms * 360deg / 2600);
         accessible-role: text;
         accessible-label: h.note;
+        // 4 px halo band (lime 8 %) and the 20 px glow (18 %, breathing up)
+        Rectangle {
+            x: -3.4px; y: -3.4px; width: parent.width + 6.8px; height: parent.height + 6.8px;
+            border-radius: h.r + 3.4px; border-width: 3.4px; border-color: Chat.point.with-alpha(0.08);
+            drop-shadow-blur: 17px; drop-shadow-color: Chat.point.with-alpha(0.18 + 0.1 * parent.breathe);
+        }
+        Rectangle {
+            border-radius: h.r; border-width: 1.275px; border-color: Chat.point.with-alpha(0.9);
+            background: Chat.point.with-alpha(0.03 + 0.03 * parent.breathe);
+        }
+    }
+    // Bubble: max-content up to 280 px, padding 12 x 14, radius 12; kept inside the window.
+    for h in Studio.highlights: Rectangle {
+        width: min(238px, max(title-t.preferred-width, note-t.preferred-width) + 23.8px);
+        height: bubble-col.preferred-height;
+        x: max(6.8px, min(h.bx, root.width - self.width - 6.8px));
+        y: h.above ? h.by - self.height : h.by;
+        visible: h.note != "";
+        border-radius: 10.2px; background: #f4f5f6;
+        border-width: 0.425px; border-color: #00000014;
+        drop-shadow-offset-y: 6.8px; drop-shadow-blur: 21.25px; drop-shadow-color: #00000080;
+        bubble-col := VerticalLayout {
+            padding-left: 11.9px; padding-right: 11.9px; padding-top: 10.2px; padding-bottom: 10.2px;
+            spacing: 3.4px;
+            title-t := Text { text: h.title; color: #16171a; font-size: 11.9px; font-weight: 600; letter-spacing: -0.12px; wrap: word-wrap; }
+            note-t := Text { text: h.note; color: #4a4e57; font-size: 10.2px; font-weight: 400; wrap: word-wrap; }
+        }
     }
 }

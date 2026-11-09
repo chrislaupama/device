@@ -73,6 +73,8 @@ struct Args {
     /// Extra panels for the reference states.
     open_mixer: bool,
     open_assistant: bool,
+    /// reference-assistant / review-assistant-<name>: canned transcript (assistant_panel::assistant_demo).
+    assistant_demo: Option<String>,
     /// 1 = reference-midi-clip (33), 2 = reference-pianoroll (34).
     midi_state: u8,
     /// reference-synth (32): Instrument track selected, Devices tab, test-state synth preset.
@@ -89,6 +91,9 @@ struct Args {
     /// reference-automation (60): Instrument track 1 (MIDI clip at bar 6), Audio track 2 selected,
     /// playhead at bar 6, automation lanes shown (Track Volume at +0.0).
     automation_state: bool,
+    /// reference-live (renders/reference/ui/z100-main-default.png, 100 % zoom): the default project
+    /// with the assistant panel open and the automation lanes shown.
+    live_state: bool,
     /// review-automation / review-automation-picker: lanes with points (active, disabled, curved,
     /// an expanded extra lane, master) for review; the second also opens the picker with the
     /// Synth submenu. No reference capture.
@@ -154,6 +159,12 @@ fn parse_args() -> Result<Args, String> {
                 "reference-assistant" => {
                     a.reference_default = true;
                     a.open_assistant = true;
+                    a.assistant_demo = Some("turn".into());
+                }
+                s if s.starts_with("review-assistant-") => {
+                    a.reference_default = true;
+                    a.open_assistant = true;
+                    a.assistant_demo = s.strip_prefix("review-assistant-").map(String::from);
                 }
                 "reference-midi-clip" => {
                     a.reference_default = true;
@@ -174,6 +185,11 @@ fn parse_args() -> Result<Args, String> {
                 "reference-settings-audio" => {
                     a.reference_default = true;
                     a.settings_state = true;
+                }
+                "reference-live" => {
+                    a.reference_default = true;
+                    a.open_assistant = true;
+                    a.live_state = true;
                 }
                 "reference-automation" => {
                     a.reference_default = true;
@@ -223,7 +239,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight>)"
                     ));
                 }
             },
@@ -558,6 +574,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 assistant_provider::Provider::fixture_from_json(&text, &path.display().to_string())?
             }
             (None, true) => assistant_provider::Provider::fixture_from_json(include_str!("../fixtures/assistant-selftest.json"), "built-in self-test fixture")?,
+            // Review renders: a stand-in provider so the composer shows its enabled state (never sends).
+            (None, false) if args.assistant_demo.is_some() => assistant_provider::Provider::fixture_from_json("{\"actions\": []}", "assistant demo")?,
             (None, false) => assistant_provider::Provider::from_env(),
         };
         eprintln!("assistant: provider {provider:?}{}", if provider.is_fixture() { " (TEST provider, no network)" } else { "" });
@@ -573,6 +591,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         c.mixer_open = args.open_mixer;
         c.assistant_open = args.open_assistant;
+        if let Some(d) = &args.assistant_demo {
+            c.assistant_demo(d)?;
+            if d == "draft" {
+                app.global::<Studio>().set_chat_draft("Make the lead brighter".into());
+            }
+        }
         // Plugin catalogue: the scan cache in the app support directory (startup reads the cache;
         // Settings › Plugins can force a rescan). The self-test uses its own cache file and never
         // touches the user's. --plugin-fixture (TEST seam) replaces the scan entirely.
@@ -676,6 +700,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.select_track(audio);
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(22.0);
+        c.auto_toggle_shown();
+    }
+    if args.live_state {
+        // The capture's tracks drew palette entries 4 and 5 (pink, orange); the reference picks
+        // the first track's colour at random.
+        let mut c = ctl.borrow_mut();
+        let mut p = c.project().clone();
+        for (t, k) in p.tracks.iter_mut().zip([4u8, 5]) {
+            t.color = saine_core::ColorIndex(k);
+        }
+        c.replace_project(p);
+        let first = c.project().tracks[0].id;
+        c.select_track(first);
         c.auto_toggle_shown();
     }
     if args.automation_review > 0 {
@@ -939,6 +976,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_track_solo, |c, id: i32| c.toggle_solo(TrackId(id as u64)));
     on!(on_track_volume, |c, id: i32, p: f32| c.set_track_gain(TrackId(id as u64), gain_from_slider(p)));
     on!(on_track_pan, |c, id: i32, p: f32| c.set_track_pan(TrackId(id as u64), p));
+    on!(on_track_pan_text, |c, id: i32, t: slint::SharedString| {
+        if let Some(p) = controller::parse_pan_text(&t) {
+            c.set_track_pan(TrackId(id as u64), p);
+        }
+    });
     on!(on_master_volume, |c, p: f32| c.set_master_gain(gain_from_slider(p)));
     on!(on_sel_fader_moved, |c, f: f32| {
         if let Some(t) = c.selected_track {

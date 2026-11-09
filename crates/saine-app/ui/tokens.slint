@@ -43,7 +43,6 @@ export global Tokens {
     out property <length> timeline-header-height: 27px;
     out property <length> ruler-height: 39px;
     out property <length> track-header-width: 191px;
-    out property <length> track-height: 74px;
     out property <length> master-row-height: 30px;
     out property <length> bottom-header-height: 26px;
     out property <length> bottom-height: 306px;
@@ -66,9 +65,9 @@ export global Tokens {
     out property <color> record-red: #e5484d;          // ORIGINAL choice: armed R and the recording record button (src/controller.rs RECORD_RED)
     out property <color> popup-border: #424347;        // "In" popup outline (50-input-selector-open.png)
     out property <color> popup-border-top: #5a5b5f;    // its 0.5 pt top highlight
-    out property <length> track-pitch: 74.5px;         // 74 pt lane + 0.5 pt separator
+    out property <length> track-pitch: 74.8px;         // 88 px row: lane + 0.5 pt rule (src/timeline.rs)
     out property <length> lane-x: 191px;               // lanes start, timeline-panel relative
-    out property <float> slider-zero-db: 0.85;         // (unitless) slider pos of 0 dB, header + track sliders
+    out property <float> slider-zero-db: 0.8;          // (unitless) slider pos of 0 dB, header + track sliders
     // ---- Depth (soft raised / inset surfaces), measured from the 100 % live capture 2026-11-09 ----
     // One device pixel at 100 % zoom on a 2x display is 0.425 of our units.
     out property <length> hairline: 0.45px;
@@ -83,4 +82,11 @@ export global Tokens {
     out property <color> knob-face: #232426;           // inspector knob body
     out property <color> knob-groove: #242528;         // inspector knob value ring track
     out property <color> fader-handle: #fcf8f1;        // warm white fader cap
+    // ---- Track headers (reference CSS, saturated colours in the display-P3 values the reference
+    // shows on screen; see reference/research-findings.md, "Track headers") ----
+    out property <length> track-h: 74.3px;             // track-pitch minus the 0.5 pt rule (TRACK_H)
+    out property <color> track-solo-on: #f2f652;
+    out property <color> track-arm-on: #d53721;
+    out property <color> track-monitor-on: #e89a38;
+    out property <color> meter-master: #abfcb6;
 }
