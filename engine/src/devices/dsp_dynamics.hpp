@@ -436,6 +436,24 @@ struct HeldPeak {
     void reset() noexcept { cur = shown = 0.0f, count = 0; }
 };
 
+// Like HeldPeak for a signed value: holds the largest magnitude with its sign.
+struct HeldSigned {
+    float cur = 0.0f, shown = 0.0f;
+    uint32_t count = 0;
+    float update(float v, uint32_t frames, uint32_t hold) noexcept {
+        if (std::fabs(v) > std::fabs(cur)) cur = v;
+        count += frames;
+        if (count >= hold) {
+            shown = cur;
+            cur = 0.0f;
+            count = 0;
+            return shown;
+        }
+        return std::fabs(shown) >= std::fabs(cur) ? shown : cur;
+    }
+    void reset() noexcept { cur = shown = 0.0f, count = 0; }
+};
+
 // xorshift32 noise (dither).
 struct Noise {
     uint32_t s = 0x9e3779b9u;

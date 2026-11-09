@@ -103,6 +103,7 @@ public:
         }
         push_.set_time(20.0f, sr_);
         guard_.prepare(kGuardWindow + 1);
+        pg_delay_.prepare(latency_of(8));
         guard_rel_ = dsp::pole(10.0f, sr_);
         factor_ = 0;
         reset();
@@ -126,6 +127,7 @@ public:
             err_[c][0] = err_[c][1] = 0.0f;
         }
         guard_.reset();
+        pg_delay_.reset();
         primed_ = false;
     }
 
@@ -216,8 +218,10 @@ public:
                     gain[c] = slow_delay_[c].process(s, max_la) + fast_delay_[c].process(fade, max_la - la);
                 }
                 gr_min = std::min(gr_min, std::min(gain[0], gain[1]));
-                const float da = audio_[0].process(a, max_la + g);
-                const float db = audio_[1].process(b, max_la + g);
+                // The delay holds left / right, so an M/S switch never decodes old samples in the new form.
+                const float dL = audio_[0].process(L, max_la + g), dR = audio_[1].process(R, max_la + g);
+                const float da = ms ? 0.5f * (dL + dR) : dL;
+                const float db = ms ? 0.5f * (dL - dR) : dR;
                 const float ga = gain[0] < 0.0f ? dsp::fast_exp2(gain[0]) : 1.0f;
                 const float gb = gain[1] < 0.0f ? dsp::fast_exp2(gain[1]) : 1.0f;
                 const float oa = da * ga, ob = db * gb;
@@ -237,12 +241,14 @@ public:
                 yr = std::clamp(guard_audio_[1].process(yr, kGuardDelay) * k, -ceiling, ceiling);
             }
             const float dl = dry_[0].process(xl, lat), dr = dry_[1].process(xr, lat);
+            // The push gain the output was made with (aligned with the audio delay).
+            const float pg_out = std::max(pg_delay_.process(pg, lat), 1e-6f); // 0 only while the delay fills after a reset
             if (unity) {
-                yl /= pg;
-                yr /= pg;
+                yl /= pg_out;
+                yr /= pg_out;
             } else if (delta) {
-                yl = dl * pg - yl;
-                yr = dr * pg - yr;
+                yl = dl * pg_out - yl;
+                yr = dr * pg_out - yr;
             }
             if (bits > 0) {
                 yl = dither(yl, 0, bits, shape);
@@ -294,7 +300,7 @@ private:
     uint32_t la_base_ = 240, factor_ = 0;
     dsp::Oversampler os_[2];
     dsp::TruePeak4x tp_[2], tp_lr_[2];
-    dsp::FixedDelay audio_[2], det_[2], slow_delay_[2], fast_delay_[2], dry_[2];
+    dsp::FixedDelay audio_[2], det_[2], slow_delay_[2], fast_delay_[2], dry_[2], pg_delay_;
     dsp::LookaheadGain fast_[2], guard_;
     dsp::FixedDelay guard_audio_[2], guard_det_[2];
     dsp::TruePeak4x guard_tp_[2];

@@ -121,10 +121,15 @@ component Latch inherits Rectangle {
         horizontal-alignment: center; vertical-alignment: center;
     }
     ta := TouchArea {
+        // An Alt press resets; its release must not toggle as well.
+        property <bool> alt-down;
         pointer-event(e) => {
-            if (e.kind == PointerEventKind.down && e.modifiers.alt) { Studio.panel-reset(root.device, root.param); }
+            if (e.kind == PointerEventKind.down) {
+                self.alt-down = e.modifiers.alt;
+                if (e.modifiers.alt) { Studio.panel-reset(root.device, root.param); }
+            }
         }
-        clicked => { Studio.panel-choice(root.device, root.param, root.on ? 0 : 1); }
+        clicked => { if (!self.alt-down) { Studio.panel-choice(root.device, root.param, root.on ? 0 : 1); } }
     }
 }
 

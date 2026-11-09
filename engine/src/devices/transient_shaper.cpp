@@ -122,20 +122,18 @@ public:
         env_ = env, slow_ = slow, hold_env_ = tail, gain_db_ = gdb;
         ro[kOutPeak] = out_hold_.update(out_peak, n, hold_);
         ro[kPrePeak] = pre_hold_.update(pre_peak, n, hold_);
-        // Signed: hold the largest magnitude, keep its sign.
-        const float held = gain_hold_.update(std::fabs(gain_max), n, hold_);
-        if (std::fabs(gain_max) >= held) gain_sign_ = gain_max < 0.0f ? -1.0f : 1.0f;
-        ro[kGainDb] = gain_sign_ * held;
+        ro[kGainDb] = gain_hold_.update(gain_max, n, hold_);
     }
 
 private:
     double sr_ = 48000.0;
     float rise_ = 0.0f, fall_ = 0.0f, gain_smooth_ = 0.0f;
-    float env_ = 0.0f, slow_ = 0.0f, hold_env_ = 0.0f, gain_db_ = 0.0f, gain_sign_ = 1.0f;
+    float env_ = 0.0f, slow_ = 0.0f, hold_env_ = 0.0f, gain_db_ = 0.0f;
     uint32_t hold_ = 1600;
     dsp::Oversampler os_[2];
     dsp::Smoother mix_, output_;
-    dsp::HeldPeak out_hold_, pre_hold_, gain_hold_;
+    dsp::HeldPeak out_hold_, pre_hold_;
+    dsp::HeldSigned gain_hold_;
     bool primed_ = false;
 };
 

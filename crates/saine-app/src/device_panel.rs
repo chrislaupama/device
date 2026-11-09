@@ -287,7 +287,9 @@ fn face_law(face: Face, num: impl Fn(&str) -> f32) -> (Box<dyn Fn(f32) -> f32>, 
             (Box::new(move |x| if x < t { t + (x - t) * r } else { x }), t, (t, t))
         }
         Face::BusVca { threshold, ratio, range } => {
-            let (t, r, depth) = (num(threshold), num(ratio), num(range).max(0.0));
+            let r = num(ratio);
+            // The bus VCA's working threshold sits lower for the gentler ratios (as the kernel).
+            let (t, depth) = (num(threshold) - 3.0 * (10.0 - r) / 8.0, num(range).max(0.0));
             (Box::new(move |x| x + soft_knee_gr(x, t, r, 4.0).max(-depth)), t, (t - 2.0, t + 2.0))
         }
         Face::PushWall { threshold, ceiling } => {
@@ -546,7 +548,8 @@ impl Controller {
                 let dirty = def.factory.iter().find(|f| f.name == name).is_some_and(|f| {
                     let want = def.factory_values(f);
                     // The sidechain switch follows the panel's source pick, not the preset.
-                    def.params.iter().filter(|p| p.id != "sidechainEnable").any(|p| (def.value(d, p) - want.get(p.id).copied().unwrap_or(p.default)).abs() > 1e-4 * (p.max - p.min))
+                    let enable = def.sidechain_enable().map(|p| p.id);
+                    def.params.iter().filter(|p| Some(p.id) != enable).any(|p| (def.value(d, p) - want.get(p.id).copied().unwrap_or(p.default)).abs() > 1e-4 * (p.max - p.min))
                 });
                 if dirty { format!("{name}*") } else { name.clone() }
             }
@@ -790,7 +793,10 @@ impl Controller {
         self.devices.panel.meters.retain(|id, _| ids.contains(id));
         let mut out = Vec::new();
         for id in ids {
-            let scope = self.panel_def(id).is_some_and(|(_, def)| def.layout.view == Some(View::Custom(GAIN_SCOPE)));
+            let view = self.panel_def(id).and_then(|(_, def)| def.layout.view);
+            let scope = view == Some(View::Custom(GAIN_SCOPE));
+            // Below the strip's own floor counts as silence.
+            let floor = view.and_then(|v| v.strip()).map_or(PLOT_FLOOR_DB, |s| s.floor_db);
             if scope {
                 // Raw frames (output peak, pre-clip peak, gain dB); parked after silence.
                 let next = match self.engine.builtin_readouts(id.0, &mut out) {
@@ -813,11 +819,11 @@ impl Controller {
             // Readout order of a strip device: input dB, output dB, gain reduction dB.
             let (i, o, g) = match self.engine.builtin_readouts(id.0, &mut out) {
                 Ok(()) if out.len() >= 3 => (out[0], out[1], out[2].min(0.0)),
-                _ => (PLOT_FLOOR_DB - 1.0, PLOT_FLOOR_DB - 1.0, 0.0),
+                _ => (floor - 1.0, floor - 1.0, 0.0),
             };
             let h = self.devices.panel.meters.entry(id).or_default();
-            let silent = |s: (f32, f32, f32)| s.0 < PLOT_FLOOR_DB && s.1 < PLOT_FLOOR_DB && s.2 > -0.05;
-            let prev = h.slots.back().copied().unwrap_or((PLOT_FLOOR_DB - 1.0, PLOT_FLOOR_DB - 1.0, 0.0));
+            let silent = |s: (f32, f32, f32)| s.0 < floor && s.1 < floor && s.2 > -0.05;
+            let prev = h.slots.back().copied().unwrap_or((floor - 1.0, floor - 1.0, 0.0));
             let next = (0.3 * prev.0 + 0.7 * i, 0.3 * prev.1 + 0.7 * o, 0.3 * prev.2 + 0.7 * g);
             if silent(next) && h.slots.iter().all(|s| silent(*s)) {
                 // Flat at the floor: nothing to scroll.
@@ -1131,7 +1137,7 @@ impl Controller {
         let Some(f) = def.factory.get(n) else { return };
         let mut params = saine_core::builtin::DevicePreset::factory(def, f).load_values(def);
         // The sidechain switch follows the source picked in the panel, not the preset.
-        if let Some(p) = def.param("sidechainEnable") {
+        if let Some(p) = def.sidechain_enable() {
             params.insert(p.id.into(), def.value(d, p));
         }
         self.execute(Command::SetDeviceParams { device, params, preset: Some(f.name.to_string()) });
