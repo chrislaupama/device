@@ -3,7 +3,7 @@
 // 32-track session with two compressors per track.
 //
 //   saine_device_bench [blocks]      (Release build; numbers in us per 256-frame block)
-#include "../tests/devices/modulation_defaults.hpp"
+#include "../tests/devices/shaper_layout.hpp"
 #include "devices/builtin.hpp"
 #include "platform/os.hpp"
 #include "saine_engine.h"
@@ -15,7 +15,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <string>
+#include <utility>
 #include <vector>
 
 using Clock = std::chrono::steady_clock;
@@ -132,11 +134,36 @@ int main(int argc, char** argv) {
     }
     row("compressor (Clean, 16 auto events)", bench_kernel("compressor", kCompressor, blocks, 16));
 
-    row("trance-gate (defaults)", bench_kernel("trance-gate", devtest::trance_gate_defaults(), blocks, 0));
-    row("trance-gate (16 auto events)", bench_kernel("trance-gate", devtest::trance_gate_defaults(), blocks, 16));
+    // Modulation devices at their defaults, then the heavier settings.
+    const auto defaults = [](const char* id) {
+        const saine::BuiltinDescriptor* d = saine::find_builtin(id);
+        return std::vector<float>(d->defaults.begin(), d->defaults.end());
+    };
+    const auto tweak = [&](const char* id, std::initializer_list<std::pair<const char*, float>> set) {
+        const saine::BuiltinDescriptor* d = saine::find_builtin(id);
+        std::vector<float> v = defaults(id);
+        for (const auto& [p, x] : set)
+            for (std::size_t i = 0; i < d->params.size(); ++i)
+                if (std::strcmp(d->params[i], p) == 0) v[i] = x;
+        return v;
+    };
+    for (const char* id : {"tremolo", "autopanner", "chorus", "flanger", "phaser", "ring-mod"}) row(id, bench_kernel(id, defaults(id), blocks, 0));
+    row("chorus (4 voices, feedback 60%)", bench_kernel("chorus", tweak("chorus", {{"voices", 3.0f}, {"feedback", 60.0f}}), blocks, 0));
+    row("flanger (Thru-Zero)", bench_kernel("flanger", tweak("flanger", {{"mode", 2.0f}}), blocks, 0));
+    row("phaser (12 stages)", bench_kernel("phaser", tweak("phaser", {{"stages", 3.0f}}), blocks, 0));
+    row("ring-mod (Noise, spread 100%)", bench_kernel("ring-mod", tweak("ring-mod", {{"modulator", 4.0f}, {"spread", 100.0f}}), blocks, 0));
+    const char* circuits[] = {"Single BBD", "Crossed", "Twin BBD", "Ensemble", "Tape", "Photocell", "Flanger", "Phaser", "Tremolo", "Rotary", "Panner"};
+    for (int c = 0; c < 11; ++c) {
+        char name[64];
+        std::snprintf(name, sizeof name, "character-mod (%s)", circuits[c]);
+        row(name, bench_kernel("character-mod", tweak("character-mod", {{"model", static_cast<float>(c)}}), blocks, 0));
+    }
+    row("character-mod (Phaser Barber)", bench_kernel("character-mod", tweak("character-mod", {{"model", 7.0f}, {"mode_phaser", 4.0f}}), blocks, 0));
+    row("trance-gate (defaults)", bench_kernel("trance-gate", devtest::builtin_defaults("trance-gate"), blocks, 0));
+    row("trance-gate (16 auto events)", bench_kernel("trance-gate", devtest::builtin_defaults("trance-gate"), blocks, 16));
     {
         using devtest::shaper_lane;
-        const std::vector<float> base = devtest::shaper_defaults();
+        const std::vector<float> base = devtest::builtin_defaults("shaper");
         row("shaper (defaults: Volume lane)", bench_kernel("shaper", base, blocks, 0));
         const char* lanes[] = {"Volume", "Time", "Width", "Pan", "Filter", "Crush", "Pitch"};
         for (int lane = 1; lane < 7; ++lane) {

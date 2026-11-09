@@ -74,7 +74,8 @@ public:
         const RtTransport* tr = ctx.transport;
         const double tempo = tr != nullptr ? std::clamp(tr->tempo_bpm, 1.0, 999.0) : 120.0;
         const bool playing = tr != nullptr && tr->playing;
-        const double beat0 = playing ? tr->beats() : free_beats_;
+        // ctx.offset: frames from the transport position to this segment's first frame.
+        const double beat0 = playing ? tr->beats() + static_cast<double>(ctx.offset) * tempo / 60.0 / sr_ : free_beats_;
         const double quarters = kStepQuarters[rate];
         const double du = tempo / 60.0 / sr_ / quarters; // steps per sample
         if (!primed_) {
@@ -163,7 +164,12 @@ std::unique_ptr<BuiltinProcessor> create_trance_gate() { return std::make_unique
 
 } // namespace
 
+// The definition's defaults (saine_core::builtin::trance_gate), in parameter order.
+constexpr float kDefaults[] = {0.f,  7.f,  3.f,     160.f, 60.f, 40.f,    0.f,  100.f, 16.f, 23387.f, 0.f,  16.f, 21845.f, 0.f,  16.f, 46967.f,
+                               0.f,  16.f, 19983.f, 0.f,   12.f, 2779.f,  0.f,  32.f,  44397.f, 30125.f, 16.f, 18761.f, 0.f,  16.f, 56669.f, 0.f};
+static_assert(sizeof kDefaults / sizeof kDefaults[0] == sizeof kParamIds / sizeof kParamIds[0]);
+
 extern const BuiltinDescriptor kTranceGateDescriptor;
-const BuiltinDescriptor kTranceGateDescriptor{"trance-gate", kParamIds, {}, &create_trance_gate, {}};
+const BuiltinDescriptor kTranceGateDescriptor{"trance-gate", kParamIds, {}, &create_trance_gate, {}, kDefaults};
 
 } // namespace saine

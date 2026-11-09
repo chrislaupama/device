@@ -358,7 +358,8 @@ public:
         const double tempo = tr != nullptr ? std::clamp(tr->tempo_bpm, 1.0, 999.0) : 120.0;
         const bool playing = tr != nullptr && tr->playing;
         const double beats_per_sample = tempo / 60.0 / sr_;
-        const double now = playing ? tr->beats() : free_beats_;
+        // ctx.offset: frames from the transport position to this segment's first frame.
+        const double now = playing ? tr->beats() + static_cast<double>(ctx.offset) * beats_per_sample : free_beats_;
         // The output is heard latency samples late: run the curves for that time.
         const double beat0 = now - static_cast<double>(latency) * beats_per_sample;
         free_beats_ = now + static_cast<double>(n) * beats_per_sample;
@@ -769,7 +770,40 @@ std::unique_ptr<BuiltinProcessor> create_shaper() { return std::make_unique<Shap
 
 } // namespace
 
+// The definition's defaults (saine_core::builtin::shaper), in parameter order:
+// the globals, then per lane on, rate, depth, band, split, points and 16
+// points (unused points parked at x = 1 on the lane's rest height).
+const std::array<float, kParamCount> kDefaults = [] {
+    struct LaneDefault {
+        float on, rate;
+        int points;
+        float x[5], y[5], bend[5];
+        float rest_y;
+    };
+    constexpr LaneDefault lanes[kLanes] = {
+        {1, 8, 3, {0, .5f, 1}, {0, 100, 100}, {55, 0, 0}, 100},
+        {0, 8, 4, {0, .5f, .5f, 1}, {0, 0, 50, 50}, {0, 0, 0, 0}, 50},
+        {0, 5, 3, {0, .5f, 1}, {50, 100, 50}, {45, 45, 0}, 50},
+        {0, 5, 5, {0, .25f, .5f, .75f, 1}, {50, 100, 50, 0, 50}, {50, 50, -50, -50, 0}, 50},
+        {0, 3, 2, {0, 1}, {100, 15}, {40, 0}, 15},
+        {0, 8, 2, {0, 1}, {100, 0}, {-50, 0}, 0},
+        {0, 8, 2, {0, 1}, {0, -12}, {50, 0}, -12},
+    };
+    std::array<float, kParamCount> v{0.f, -24.f, 100.f, 0.f, 0.f, 0.f, 1.2973f, 150.f, 12000.f, 6.f, 8.f};
+    std::size_t i = kGlobals;
+    for (const LaneDefault& l : lanes) {
+        for (float x : {l.on, l.rate, 100.f, 0.f, 150.f, static_cast<float>(l.points)}) v[i++] = x;
+        for (int k = 0; k < 16; ++k) {
+            const bool used = k < l.points;
+            v[i++] = used ? l.x[k] : 1.f;
+            v[i++] = used ? l.y[k] : l.rest_y;
+            v[i++] = used ? l.bend[k] : 0.f;
+        }
+    }
+    return v;
+}();
+
 extern const BuiltinDescriptor kShaperDescriptor;
-const BuiltinDescriptor kShaperDescriptor{"shaper", kParamIds, {}, &create_shaper, {}};
+const BuiltinDescriptor kShaperDescriptor{"shaper", kParamIds, {}, &create_shaper, {}, kDefaults};
 
 } // namespace saine

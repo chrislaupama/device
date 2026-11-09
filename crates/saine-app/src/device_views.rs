@@ -17,7 +17,7 @@
 use crate::controller::Controller;
 use crate::device_panel::Z;
 use crate::devices::{DevMenu, MenuPick};
-use crate::{DeviceCard, FieldPath, FieldText, PanelField, PanelKnob};
+use crate::{DeviceCard, CanvasPath, CanvasText, PanelCanvas, PanelKnob};
 use saine_core::builtin::shaper::{self as sh, Point};
 use saine_core::builtin::trance_gate as tg;
 use saine_core::builtin::DeviceDef;
@@ -34,7 +34,7 @@ const MINUS: char = '\u{2212}';
 
 /// A pointer event on a field (ui/device_panel.slint FieldView).
 #[derive(Debug, Clone, Copy, Default)]
-pub struct FieldEvent {
+pub struct CanvasEvent {
     pub kind: i32,
     pub x: f32,
     pub y: f32,
@@ -45,7 +45,7 @@ pub struct FieldEvent {
     pub wheel: f32,
 }
 
-impl FieldEvent {
+impl CanvasEvent {
     /// Card-relative reference coordinates (pt at 100%).
     fn pt(&self) -> (f32, f32) {
         (self.x / Z, (self.y + FIELD_Y) / Z)
@@ -216,14 +216,14 @@ impl PathData {
 
 #[derive(Default)]
 struct Canvas {
-    paths: Vec<FieldPath>,
-    texts: Vec<FieldText>,
+    paths: Vec<CanvasPath>,
+    texts: Vec<CanvasText>,
 }
 
 impl Canvas {
     fn path(&mut self, d: PathData, stroke: Brush, width: f32, fill: Brush) {
         if !d.empty() {
-            self.paths.push(FieldPath { commands: d.0.into(), stroke, width: width * Z, fill });
+            self.paths.push(CanvasPath { commands: d.0.into(), stroke, width: width * Z, fill });
         }
     }
     fn fill(&mut self, d: PathData, c: impl Into<Brush>) {
@@ -235,7 +235,7 @@ impl Canvas {
     /// Text in a box (reference units); align 0 left, 1 centre, 2 right.
     #[allow(clippy::too_many_arguments)]
     fn text(&mut self, x: f32, y: f32, w: f32, h: f32, text: impl Into<SharedString>, color: Color, size: f32, weight: i32, align: i32) {
-        self.texts.push(FieldText { x: fx(x), y: fy(y), w: w * Z, h: h * Z, text: text.into(), color, size: size * Z, weight, align });
+        self.texts.push(CanvasText { x: fx(x), y: fy(y), w: w * Z, h: h * Z, text: text.into(), color, size: size * Z, weight, align });
     }
     /// A rounded value pill: fill, optional label text, value text, chevron.
     fn pill(&mut self, x: f32, y: f32, w: f32, h: f32, hot: bool) {
@@ -245,8 +245,8 @@ impl Canvas {
         let s = if down { 1.0 } else { -1.0 };
         self.stroke(PathData::default().m(cx - 3.5, cy - 1.75 * s).l(cx, cy + 1.75 * s).l(cx + 3.5, cy - 1.75 * s), c, 1.4);
     }
-    fn into_field(self, w: f32, cursor: i32) -> PanelField {
-        PanelField {
+    fn into_canvas(self, w: f32, cursor: i32) -> PanelCanvas {
+        PanelCanvas {
             visible: true,
             x: 0.0,
             y: FIELD_Y,
@@ -709,7 +709,7 @@ impl Controller {
             _ => 0,
         };
         card.width = TG_W * Z;
-        card.field = c.into_field(TG_W, cursor);
+        card.canvas = c.into_canvas(TG_W, cursor);
     }
 
     fn tg_hit(&self, d: &Device, def: &DeviceDef, p: (f32, f32)) -> Hit {
@@ -1005,7 +1005,7 @@ impl Controller {
             _ => 0,
         };
         card.width = SH_W * Z;
-        card.field = c.into_field(SH_W, cursor);
+        card.canvas = c.into_canvas(SH_W, cursor);
     }
 
     fn sh_hit(&self, d: &Device, def: &DeviceDef, p: (f32, f32)) -> Hit {
@@ -1145,7 +1145,7 @@ impl Controller {
     }
 
     /// Escape: cancel a running field gesture. True when one was running.
-    pub(crate) fn field_cancel(&mut self) -> bool {
+    pub(crate) fn canvas_cancel(&mut self) -> bool {
         let Some(g) = self.devices.panel.views.gesture.take() else { return false };
         match g {
             Gesture::Param { .. } => {
@@ -1158,7 +1158,7 @@ impl Controller {
 
     // ---------------------------------------------------------------- events
 
-    pub fn panel_field(&mut self, device: DeviceId, e: FieldEvent) {
+    pub fn panel_canvas(&mut self, device: DeviceId, e: CanvasEvent) {
         let Some((d, def)) = self.panel_def(device) else { return };
         let name = match def.layout.view {
             Some(saine_core::builtin::View::Custom(n)) => n,
@@ -1183,7 +1183,7 @@ impl Controller {
             MOVE => self.field_move(def, e, p),
             UP => self.field_release(device, def),
             CANCEL => {
-                self.field_cancel();
+                self.canvas_cancel();
             }
             _ => match name {
                 "trance-gate" => self.tg_event(device, def, e, hit),
@@ -1192,7 +1192,7 @@ impl Controller {
         }
     }
 
-    fn field_move(&mut self, def: &'static DeviceDef, e: FieldEvent, p: (f32, f32)) {
+    fn field_move(&mut self, def: &'static DeviceDef, e: CanvasEvent, p: (f32, f32)) {
         let Some(g) = self.devices.panel.views.gesture.clone() else { return };
         match g {
             Gesture::Param { device, .. } => {
@@ -1282,8 +1282,6 @@ impl Controller {
 
 // ---------------------------------------------------------------- clicks, menus
 
-/// Choice-menu pick codes: CHOICE + index * 100 + choice.
-const CHOICE: i32 = 100_000;
 const MENU_PATTERN: i32 = 0;
 const MENU_SHAPE: i32 = 1;
 const MENU_CURVE: i32 = 2;
@@ -1292,14 +1290,14 @@ const MENU_TRIGGER: i32 = 3;
 const MENU_CHOICE: i32 = 1000;
 
 impl Controller {
-    fn begin_param(&mut self, device: DeviceId, index: usize, hit: Hit, p: (f32, f32), e: FieldEvent, menu: Option<i32>) {
+    fn begin_param(&mut self, device: DeviceId, index: usize, hit: Hit, p: (f32, f32), e: CanvasEvent, menu: Option<i32>) {
         self.devices.panel.views.hover = Some((device, hit, p));
         self.devices.panel.views.menu_at = (e.wx, e.wy);
         self.panel_drag(device, index as i32, 0, 0.0, 1.0 / 160.0, false);
         self.devices.panel.views.gesture = Some(Gesture::Param { device, menu });
     }
 
-    fn tg_event(&mut self, device: DeviceId, def: &'static DeviceDef, e: FieldEvent, hit: Hit) {
+    fn tg_event(&mut self, device: DeviceId, def: &'static DeviceDef, e: CanvasEvent, hit: Hit) {
         let Some((d, _)) = self.panel_def(device) else { return };
         let (pattern, steps, mask) = self.tg_pattern(d, def);
         let steps_idx = 8 + 3 * pattern;
@@ -1348,7 +1346,7 @@ impl Controller {
         self.live_set(device, def, base + 2, hi);
     }
 
-    fn sh_event(&mut self, device: DeviceId, def: &'static DeviceDef, e: FieldEvent, hit: Hit) {
+    fn sh_event(&mut self, device: DeviceId, def: &'static DeviceDef, e: CanvasEvent, hit: Hit) {
         let Some((d, _)) = self.panel_def(device) else { return };
         let lane = self.shaper_lane(device);
         let base = sh::lane_base(lane);
@@ -1499,7 +1497,7 @@ impl Controller {
                 let Some(p) = def.params.get(index) else { return };
                 let cur = self.fv(d, def, index).round() as usize;
                 for (i, c) in p.choices.iter().enumerate() {
-                    rows.push(((*c).into(), check(i == cur), pick(CHOICE + index as i32 * 100 + i as i32), false));
+                    rows.push(((*c).into(), check(i == cur), Some(MenuPick::Choice(device, index as i32, i as i32)), false));
                 }
                 w = 120.0;
             }
@@ -1513,12 +1511,8 @@ impl Controller {
     }
 
     /// A custom-view menu row was picked.
-    pub(crate) fn field_pick(&mut self, device: DeviceId, code: i32) {
+    pub(crate) fn canvas_pick(&mut self, device: DeviceId, code: i32) {
         let Some((d, def)) = self.panel_def(device) else { return };
-        if code >= CHOICE {
-            let index = (code - CHOICE) / 100;
-            return self.panel_choice(device, index, (code - CHOICE) % 100);
-        }
         match def.id {
             "trance-gate" => {
                 let (pattern, steps, mask) = self.tg_pattern(d, def);

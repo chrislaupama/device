@@ -2,7 +2,7 @@
 // effect (volume, time, width, pan, filter, crush, pitch), band split, audio
 // trigger, latency reporting and transparency, through the shared harness.
 #include "device_harness.hpp"
-#include "modulation_defaults.hpp"
+#include "shaper_layout.hpp"
 
 #include <array>
 #include <set>
@@ -17,8 +17,8 @@ enum { kVol, kTime, kWidth, kPan, kFilter, kCrush, kPitch };
 enum { kOn, kRateP, kDepth, kBand, kSplit, kPoints };
 
 DeviceRig rig() {
-    DeviceRig r("shaper", shaper_defaults(), kRate, 256);
-    r.play(120.0, 0);
+    DeviceRig r("shaper", builtin_defaults("shaper"), kRate, 256);
+    r.set_transport(true, 120.0, 0);
     return r;
 }
 

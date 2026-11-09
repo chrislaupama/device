@@ -3,7 +3,6 @@
 // integration (chain, bypass, live parameter updates, readouts, automation,
 // sidechain routing).
 #include "device_harness.hpp"
-#include "modulation_defaults.hpp"
 
 #include <set>
 
@@ -16,10 +15,7 @@ namespace {
 // known here, so every device starts from all zeros except what the
 // device-specific defaults table gives (devices must clamp anything).
 std::vector<float> defaults_for(const saine::BuiltinDescriptor& d) {
-    if (std::string(d.id) == "compressor") return {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};
-    if (std::string(d.id) == "trance-gate") return trance_gate_defaults();
-    if (std::string(d.id) == "shaper") return shaper_defaults();
-    return std::vector<float>(d.params.size(), 0.0f);
+    return {d.defaults.begin(), d.defaults.end()};
 }
 
 const std::vector<float> kComp = {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};

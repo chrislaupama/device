@@ -2,7 +2,7 @@
 // the song position, envelope stages, swing, pattern choice, mix, free
 // running while stopped and block splitting, through the shared harness.
 #include "device_harness.hpp"
-#include "modulation_defaults.hpp"
+#include "shaper_layout.hpp"
 
 using namespace devtest;
 using namespace testutil;
@@ -14,8 +14,8 @@ constexpr double kRate = 48000.0;
 constexpr std::size_t kStep = 6000;
 
 DeviceRig rig() {
-    DeviceRig r("trance-gate", trance_gate_defaults(), kRate, 256);
-    r.play(120.0, 0);
+    DeviceRig r("trance-gate", builtin_defaults("trance-gate"), kRate, 256);
+    r.set_transport(true, 120.0, 0);
     return r;
 }
 
@@ -103,7 +103,7 @@ TEST_CASE(trance_gate_tracks_the_song_position) {
     r.set("decay", 1.f);
     r.set("sustain", 100.f);
     r.set("release", 1.f);
-    r.play(120.0, static_cast<int64_t>(kStep)); // step 1 (off)
+    r.set_transport(true, 120.0, static_cast<int64_t>(kStep)); // step 1 (off)
     const Signal out = r.run_mono(dc(2 * kStep));
     CHECK(peak(out, 0, kStep) < 1e-6);
     CHECK_NEAR(out[kStep + kStep / 2], 1.0, 1e-6);
@@ -111,7 +111,7 @@ TEST_CASE(trance_gate_tracks_the_song_position) {
     auto f = rig();
     pattern(f, "x.");
     f.set("release", 1.f);
-    f.play(240.0, 0);
+    f.set_transport(true, 240.0, 0);
     const Signal fast = f.run_mono(dc(kStep));
     CHECK(peak(fast, kStep / 2 + 100, kStep) < 1e-6);
 }
@@ -146,7 +146,7 @@ TEST_CASE(trance_gate_pattern_choice_and_mix) {
 
 TEST_CASE(trance_gate_free_runs_while_stopped) {
     auto r = rig();
-    r.stop();
+    r.set_transport(false, 120.0);
     pattern(r, "x.");
     r.set("release", 1.f);
     const Signal out = r.run_mono(dc(4 * kStep));
@@ -181,7 +181,7 @@ TEST_CASE(trance_gate_runs_in_the_engine) {
     const uint64_t a = load_asset(e, {Signal(96000, 0.5f), Signal(96000, 0.5f)});
     DeviceSession s;
     auto& t = s.add_track(1, a, 96000);
-    std::vector<float> v = trance_gate_defaults();
+    std::vector<float> v = builtin_defaults("trance-gate");
     v[8] = 2.f;   // p1_steps
     v[9] = 1.f;   // p1_lo: x.
     v[5] = 1.f;   // release
