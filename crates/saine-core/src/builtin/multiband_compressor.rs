@@ -107,6 +107,7 @@ pub static MULTIBAND_COMPRESSOR: DeviceDef = DeviceDef {
         min_height: 213.0,
         shown_when: &[],
         fixed_width: 0.0,
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset {

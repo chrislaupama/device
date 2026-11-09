@@ -2386,6 +2386,123 @@ fn builtin_device_steps() -> Vec<Step> {
     ]
 }
 
+fn analyzer_device<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
+    let t = track_of(c, TrackKind::Audio)?;
+    c.project().tracks[t].devices.iter().find(|d| d.plugin.format == saine_core::PluginFormat::Builtin && d.plugin.id == id)
+}
+
+/// Pitch Corrector, Tuner and Spectrum: added from the Built-in list's
+/// definitions, generated cards with their analyzer fields, live engine
+/// instances (readouts and analysis frames), latency reported for PDC, and
+/// Key Follow (picking a Key while following the project turns Follow off
+/// in one undo step).
+fn analyzer_device_steps() -> Vec<Step> {
+    use Step::*;
+    let hist = Rc::new(Cell::new(0usize));
+    let (h0, h1) = (hist.clone(), hist.clone());
+    vec![
+        DoC("analyzers: select the audio track, clear its chain, add Pitch Corrector, Tuner and Spectrum", Box::new(move |a, ctl| {
+            key(a, Key::Escape, false, false);
+            let Some(i) = track_of(&ctl.borrow(), TrackKind::Audio) else { return };
+            click_track_header(a, ctl, i);
+            let mut c = ctl.borrow_mut();
+            let t = c.project().tracks[i].id;
+            let ids: Vec<saine_core::DeviceId> = c.project().tracks[i].devices.iter().map(|d| d.id).collect();
+            for d in ids {
+                c.execute(saine_core::Command::RemoveDevice { device: d });
+            }
+            for id in ["pitch-corrector", "tuner", "spectrum"] {
+                if let Some(def) = saine_core::builtin::find(id) {
+                    c.add_item_to_track(&crate::devices::Item::Builtin(def), t, None);
+                }
+            }
+            c.update_ui(a);
+        })),
+        Check("analyzers: three cards with their canvases (Pitch trace, tuner, Spectrum) at the reference widths", Box::new(|_, a| {
+            let z = crate::device_panel::Z;
+            let want = [("Pitch Corrector", 375.0, "Pitch"), ("Tuner", 335.0, ""), ("Spectrum", 397.0, "Spectrum")];
+            for (name, w, caption) in want {
+                let cd = card_named(a, name).ok_or(format!("no {name} card"))?;
+                if !(cd.builtin && cd.canvas.visible && cd.canvas.caption == caption && approx(cd.width, w * z, 0.01)) {
+                    return Err(format!("{name}: builtin {} field {} caption {:?} width {}", cd.builtin, cd.canvas.visible, cd.canvas.caption, cd.width));
+                }
+            }
+            Ok(())
+        })),
+        Check("engine: the three are live (readouts, analysis frames, no load error); Pitch Corrector reports 1024 frames latency", Box::new(|c, _| {
+            let errors = c.engine.plugin_load_errors();
+            for id in ["pitch-corrector", "tuner", "spectrum"] {
+                let d = analyzer_device(c, id).ok_or(format!("no {id}"))?;
+                let (mut r, mut f) = (Vec::new(), Vec::new());
+                c.engine.builtin_readouts(d.id.0, &mut r).map_err(|e| format!("{id} readouts: {e}"))?;
+                c.engine.builtin_analysis(d.id.0, &mut f).map_err(|e| format!("{id} analysis: {e}"))?;
+                if errors.iter().any(|(e, _)| *e == d.id) {
+                    return Err(format!("{id}: load error {errors:?}"));
+                }
+            }
+            let lat = analyzer_device(c, "pitch-corrector").map_or(0, |d| c.engine.plugin_latency(d.id));
+            (lat == 1024).then_some(()).ok_or(format!("Pitch Corrector latency {lat} (want 1024 at 48 kHz)"))
+        })),
+        DoC("analyzers: with no project key, pick Key E on the Pitch Corrector", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            let Some(d) = analyzer_device(&c, "pitch-corrector").map(|d| d.id) else { return };
+            let key = saine_core::builtin::find("pitch-corrector").and_then(|def| def.index_of("key")).unwrap_or(0);
+            c.panel_choice(d, key as i32, 4);
+            c.update_ui(a);
+        })),
+        Check("analyzers: nothing is followed without a project key: Key E, Follow stays Project", Box::new(|c, _| {
+            let d = analyzer_device(c, "pitch-corrector").ok_or("no device")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            let v = |id: &str| def.param(id).map(|p| def.value(d, p));
+            (v("key") == Some(4.0) && v("key_follow") == Some(1.0)).then_some(()).ok_or(format!("key {:?} follow {:?}", v("key"), v("key_follow")))
+        })),
+        DoC("analyzers: set the project key to A minor, then pick Key D on the following Pitch Corrector", Box::new(move |a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.execute(saine_core::Command::SetProjectKey { key: Some(saine_core::ProjectKey { root: 9, minor: true }) });
+            h0.set(c.doc.history_labels().len());
+            let Some(d) = analyzer_device(&c, "pitch-corrector").map(|d| d.id) else { return };
+            let key = saine_core::builtin::find("pitch-corrector").and_then(|def| def.index_of("key")).unwrap_or(0);
+            c.panel_choice(d, key as i32, 2);
+            c.update_ui(a);
+        })),
+        Check("analyzers: Follow → Manual, Key D, Scale Minor (the shown project scale) in ONE undo step", Box::new(move |c, _| {
+            let d = analyzer_device(c, "pitch-corrector").ok_or("no device")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            let v = |id: &str| def.param(id).map(|p| def.value(d, p));
+            let n = c.doc.history_labels().len();
+            (n == h1.get() + 1 && v("key_follow") == Some(0.0) && v("key") == Some(2.0) && v("scale") == Some(2.0))
+                .then_some(())
+                .ok_or(format!("history {} -> {n}, follow {:?} key {:?} scale {:?}", h1.get(), v("key_follow"), v("key"), v("scale")))
+        })),
+        DoC("analyzers: undo", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.undo();
+            c.update_ui(a);
+        })),
+        Check("analyzers: undo restores Follow = Project", Box::new(|c, _| {
+            let d = analyzer_device(c, "pitch-corrector").ok_or("no device")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            let f = def.param("key_follow").map(|p| def.value(d, p));
+            (f == Some(1.0)).then_some(()).ok_or(format!("follow {f:?}"))
+        })),
+        DoC("analyzers: remove the three devices and the project key", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.execute(saine_core::Command::SetProjectKey { key: None });
+            for id in ["pitch-corrector", "tuner", "spectrum"] {
+                if let Some(d) = analyzer_device(&c, id).map(|d| d.id) {
+                    c.execute(saine_core::Command::RemoveDevice { device: d });
+                }
+            }
+            c.update_ui(a);
+        })),
+        Check("analyzers: the audio track's chain is empty again", Box::new(|c, _| {
+            let t = track_of(c, TrackKind::Audio).ok_or("no audio track")?;
+            let n = c.project().tracks[t].devices.len();
+            (n == 0 && c.project().transport.key.is_none()).then_some(()).ok_or(format!("{n} devices left, key {:?}", c.project().transport.key))
+        })),
+    ]
+}
+
 /// Built-in device of definition `id` on the first audio track.
 fn builtin_def_of<'a>(c: &'a Controller, id: &str) -> Option<(&'a saine_core::Device, &'static saine_core::builtin::DeviceDef)> {
     let t = track_of(c, TrackKind::Audio)?;
@@ -2843,6 +2960,197 @@ fn modulation_steps() -> Vec<Step> {
     ]
 }
 
+// ------------------------------------------------------------------ custom device views
+
+fn device_of<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
+    let t = track_of(c, TrackKind::Audio)?;
+    c.project().tracks[t].devices.iter().find(|d| saine_core::builtin::def_of(d).is_some_and(|def| def.id == id))
+}
+
+fn value_of(c: &Controller, device: &str, param: &str) -> Option<f32> {
+    let d = device_of(c, device)?;
+    let def = saine_core::builtin::def_of(d)?;
+    Some(def.value(d, def.param(param)?))
+}
+
+/// A pointer event on a custom view at a card-relative reference point (pt at 100%).
+fn field_event(a: &AppWindow, ctl: &Ctl, device: &str, kind: i32, x: f32, y: f32) {
+    let Some(id) = device_of(&ctl.borrow(), device).map(|d| d.id.0 as i32) else { return };
+    let z = crate::device_panel::Z;
+    a.global::<Studio>().invoke_panel_editor(id, kind, x * z, y * z - 27.0, 600.0, 400.0, false, false, 0.0);
+}
+
+/// Window click on the Trance Gate's ring hole (no action): gives its field keyboard focus.
+fn focus_trance_gate(a: &AppWindow) {
+    if let Some(cd) = card_named(a, "Trance Gate") {
+        let z = crate::device_panel::Z;
+        let (x, y) = card_xy(&cd, 98.0 * z, 157.5 * z + 30.0 * z);
+        click(a, x, y);
+    }
+}
+
+/// Trance Gate ring: reference point in the middle of step i of 16.
+fn ring_xy(i: usize) -> (f32, f32) {
+    let a = std::f32::consts::TAU * (i as f32 + 0.5) / 16.0;
+    let r = 0.8 * 83.0;
+    (98.0 + r * a.sin(), 157.5 - r * a.cos())
+}
+
+/// Trance Gate and Shaper: added from the Built-in list, then driven through their custom views.
+fn custom_view_steps() -> Vec<Step> {
+    use Step::*;
+    let hist = Rc::new(Cell::new(0usize));
+    let mask0 = Rc::new(Cell::new(0u32));
+    fn grew(hc: &Rc<Cell<usize>>, c: &Controller, n: usize) -> Result<(), String> {
+        let now = c.doc.history_labels().len();
+        let was = hc.get();
+        hc.set(now);
+        (now == was + n).then_some(()).ok_or(format!("history {was} -> {now} (want +{n}), last {:?}", c.doc.undo_label()))
+    }
+    fn mask(c: &Controller) -> u32 {
+        saine_core::builtin::trance_gate::mask(value_of(c, "trance-gate", "p1_lo").unwrap_or(0.0), value_of(c, "trance-gate", "p1_hi").unwrap_or(0.0))
+    }
+    fn act(ctl: &Ctl, a: &AppWindow, f: impl FnOnce(&AppWindow, &Controller) -> Vec<(i32, f32, f32)>, device: &str) {
+        let events = f(a, &ctl.borrow());
+        for (kind, x, y) in events {
+            field_event(a, ctl, device, kind, x, y);
+        }
+        if let Ok(mut c) = ctl.try_borrow_mut() {
+            c.update_ui(a);
+        }
+    }
+    let (h0, h1, h2, h3, h4, h5, h6, h7) = (hist.clone(), hist.clone(), hist.clone(), hist.clone(), hist.clone(), hist.clone(), hist.clone(), hist.clone());
+    let (m0, m1, m2, m3) = (mask0.clone(), mask0.clone(), mask0.clone(), mask0.clone());
+    vec![
+        Do("views: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("views: select the first audio track, clear its chain, add Trance Gate and Shaper", Box::new(move |a, ctl| {
+            let Some(i) = track_of(&ctl.borrow(), TrackKind::Audio) else { return };
+            click_track_header(a, ctl, i);
+            let mut c = ctl.borrow_mut();
+            let ids: Vec<saine_core::DeviceId> = c.project().tracks[i].devices.iter().map(|d| d.id).collect();
+            for d in ids {
+                c.execute(saine_core::Command::RemoveDevice { device: d });
+            }
+            h0.set(c.doc.history_labels().len());
+            let t = c.project().tracks[i].id;
+            for id in ["trance-gate", "shaper"] {
+                let def = saine_core::builtin::find(id).expect("registered");
+                c.add_item_to_track(&crate::devices::Item::Builtin(def), t, None);
+            }
+            c.update_ui(a);
+        })),
+        Check("views: both added (two undo steps); cards are 528 / 501 pt with an interactive canvas, 6 / 4 knobs on the dial row; engine loaded them", Box::new(move |c, a| {
+            grew(&h1, c, 2)?;
+            let z = crate::device_panel::Z;
+            let tg = card_named(a, "Trance Gate").ok_or("no Trance Gate card")?;
+            let sh = card_named(a, "Shaper").ok_or("no Shaper card")?;
+            let errors = c.engine.plugin_load_errors();
+            let ok = tg.canvas.visible
+                && sh.canvas.visible
+                && approx(tg.width, 528.0 * z, 0.01)
+                && approx(sh.width, 501.0 * z, 0.01)
+                && slint::Model::row_count(&tg.knobs) == 6
+                && slint::Model::row_count(&sh.knobs) == 4
+                && slint::Model::row_count(&tg.canvas.paths) > 10
+                && slint::Model::row_count(&sh.canvas.paths) > 10
+                && tg.canvas.interactive
+                && sh.canvas.interactive
+                && [&tg.knobs, &sh.knobs].iter().all(|k| slint::Model::iter(*k).all(|k| approx(k.y, crate::device_panel::DIAL_Y * z, 0.01)))
+                && ["trance-gate", "shaper"].iter().all(|id| device_of(c, id).is_some_and(|d| !errors.iter().any(|(e, _)| *e == d.id)));
+            ok.then_some(()).ok_or(format!("tg {} {} sh {} {} errors {errors:?}", tg.width, tg.canvas.visible, sh.width, sh.canvas.visible))
+        })),
+        DoC("views: click step 1 on the Trance Gate ring", Box::new(move |a, ctl| {
+            m0.set(mask(&ctl.borrow()));
+            act(ctl, a, |_, _| {
+                let (x, y) = ring_xy(0);
+                vec![(0, x, y), (2, x, y)]
+            }, "trance-gate");
+        })),
+        Check("views: step 1 toggled, one undo step", Box::new(move |c, _| {
+            grew(&h2, c, 1)?;
+            let (was, now) = (m1.get(), mask(c));
+            (now == was ^ 1).then_some(()).ok_or(format!("mask {was:#x} -> {now:#x}"))
+        })),
+        DoC("views: paint steps 2-4 in one drag", Box::new(move |a, ctl| {
+            m2.set(mask(&ctl.borrow()));
+            act(ctl, a, |_, _| {
+                let ((x1, y1), (x2, y2), (x3, y3)) = (ring_xy(1), ring_xy(2), ring_xy(3));
+                vec![(0, x1, y1), (1, x2, y2), (1, x3, y3), (2, x3, y3)]
+            }, "trance-gate");
+        })),
+        Check("views: steps 2-4 all take the first step's new state, ONE undo step", Box::new(move |c, _| {
+            grew(&h3, c, 1)?;
+            let (was, now) = (m3.get(), mask(c));
+            let want = if was >> 1 & 1 == 1 { was & !0b1110 } else { was | 0b1110 };
+            (now == want).then_some(()).ok_or(format!("mask {was:#x} -> {now:#x}, want {want:#x}"))
+        })),
+        DoC("views: paint steps 6-7, press Escape before release", Box::new(move |a, ctl| {
+            focus_trance_gate(a);
+            act(ctl, a, |_, _| {
+                let ((x1, y1), (x2, y2)) = (ring_xy(5), ring_xy(6));
+                vec![(0, x1, y1), (1, x2, y2)]
+            }, "trance-gate");
+            key(a, Key::Escape, false, false);
+            act(ctl, a, |_, _| vec![(2, 0.0, 0.0)], "trance-gate");
+        })),
+        Check("views: Escape cancels the paint (no undo step)", Box::new(move |c, _| grew(&h4, c, 0))),
+        DoC("views: drag the Shaper's middle point down 40 px", Box::new(|a, ctl| {
+            act(ctl, a, |_, _| {
+                let (x, y) = (48.0 + 0.5 * 435.0, 108.0);
+                let d = 40.0 / crate::device_panel::Z;
+                vec![(0, x, y), (1, x, y + d / 2.0), (1, x, y + d), (2, x, y + d)]
+            }, "shaper");
+        })),
+        Check("views: the point follows (Volume 100% -> about 51%), one undo step", Box::new(move |c, _| {
+            grew(&h5, c, 1)?;
+            let v = value_of(c, "shaper", "vol_p2_y").unwrap_or(f32::NAN);
+            approx(v, 51.0, 1.5).then_some(()).ok_or(format!("vol_p2_y {v}"))
+        })),
+        DoC("views: Shaper › Filter tab, switch the lane on, pick the second library shape", Box::new(|a, ctl| {
+            act(ctl, a, |_, _| vec![(0, 291.5 + 30.0, 50.0), (2, 291.5 + 30.0, 50.0), (0, 291.5, 50.0), (2, 291.5, 50.0), (0, 60.0, 81.0)], "shaper");
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == saine_core::builtin::shaper::SHAPES[4][1].name) {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })),
+        Check("views: Filter lane on and shaped (two undo steps); the strip names the shape", Box::new(move |c, _| {
+            grew(&h6, c, 2)?;
+            let d = device_of(c, "shaper").ok_or("no shaper")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            let pts = saine_core::builtin::shaper::lane_points(&def.values(d), 4);
+            let name = saine_core::builtin::shaper::matching_shape(4, &pts);
+            (value_of(c, "shaper", "filter_on") == Some(1.0) && name == Some(saine_core::builtin::shaper::SHAPES[4][1].name))
+                .then_some(())
+                .ok_or(format!("filter_on {:?} shape {name:?}", value_of(c, "shaper", "filter_on")))
+        })),
+        Do("views: click the Trance Gate's ring hole, ⌘Z", Box::new(|a| {
+            focus_trance_gate(a);
+            key(a, "z", true, false);
+        })),
+        Check("views: undo restores the Filter lane's default shape", Box::new(move |c, _| {
+            h7.set(c.doc.history_labels().len());
+            let d = device_of(c, "shaper").ok_or("no shaper")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            let pts = saine_core::builtin::shaper::lane_points(&def.values(d), 4);
+            let name = saine_core::builtin::shaper::matching_shape(4, &pts);
+            (name == Some(saine_core::builtin::shaper::SHAPES[4][0].name)).then_some(()).ok_or(format!("shape {name:?}"))
+        })),
+        DoC("views: remove Trance Gate and Shaper", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            let ids: Vec<saine_core::DeviceId> = ["trance-gate", "shaper"].iter().filter_map(|id| device_of(&c, id).map(|d| d.id)).collect();
+            for d in ids {
+                c.execute(saine_core::Command::RemoveDevice { device: d });
+            }
+            c.update_ui(a);
+        })),
+        Check("views: the audio track's chain is empty again", Box::new(|c, _| {
+            let t = track_of(c, TrackKind::Audio).ok_or("no audio track")?;
+            let n = c.project().tracks[t].devices.len();
+            (n == 0).then_some(()).ok_or(format!("{n} devices left"))
+        })),
+    ]
+}
+
 /// The restoration devices (De-Clipper, De-Esser, De-Hummer, De-Noiser): each one is added
 /// through Add device › Built-in, checked against its definition and the engine, and its field
 /// is dragged with real pointer events (one undo step), then undone.
@@ -2984,6 +3292,228 @@ fn restoration_device_steps() -> Vec<Step> {
             .ok_or(format!("history {} -> {n}, listen {:?}, latch {shown:?}", hl2.get(), value(c, "deesser", "listen")))
     })));
     steps
+}
+
+fn index_of(id: &str, param: &str) -> i32 {
+    saine_core::builtin::find(id).and_then(|def| def.index_of(param)).map_or(-1, |i| i as i32)
+}
+
+/// Delay, Echo, Reverb, Pitch Shifter and Grains: added from the Built-in list, then
+/// their latches, view switches and custom fields driven through the panel entry points.
+fn time_fx_steps() -> Vec<Step> {
+    use Step::*;
+    const IDS: [&str; 5] = ["delay", "echo", "reverb", "pitch-shifter", "grains"];
+    thread_local! {
+        /// History length at the last mark (A) and a second mark inside one step (B).
+        static A: Cell<usize> = const { Cell::new(0) };
+        static B: Cell<usize> = const { Cell::new(0) };
+    }
+    fn mark(m: &'static std::thread::LocalKey<Cell<usize>>, c: &Controller) {
+        m.with(|m| m.set(c.doc.history_labels().len()));
+    }
+    fn steps(m: &'static std::thread::LocalKey<Cell<usize>>, c: &Controller) -> usize {
+        c.doc.history_labels().len() - m.with(|m| m.get())
+    }
+    fn id_of(c: &Controller, id: &str) -> Option<saine_core::DeviceId> {
+        device_of(c, id).map(|d| d.id)
+    }
+    vec![
+        Do("time fx: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("time fx: select the audio track, clear its chain, Add device › Built-in", Box::new(|a, ctl| {
+            let i = track_of(&ctl.borrow(), TrackKind::Audio).unwrap_or(0);
+            click_track_header(a, ctl, i);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                let ids: Vec<saine_core::DeviceId> = c.project().tracks[i].devices.iter().map(|d| d.id).collect();
+                for d in ids {
+                    c.execute(saine_core::Command::RemoveDevice { device: d });
+                }
+                c.update_ui(a);
+            }
+            let add_x = a.global::<Studio>().get_add_device_x();
+            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+        })),
+        Check("time fx: the Built-in list offers Delay, Echo, Reverb, Pitch Shifter and Grains", Box::new(|_, a| {
+            let items = devmenu_labels(a);
+            let all = ["Delay", "Echo", "Reverb", "Pitch Shifter", "Grains"].iter().all(|n| items.iter().any(|r| r.0 == *n && r.2));
+            all.then_some(()).ok_or(format!("items {items:?}"))
+        })),
+        DoC("time fx: pick Delay, add the other four", Box::new(|a, ctl| {
+            mark(&A, &ctl.borrow());
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == "Delay") {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+            let mut c = ctl.borrow_mut();
+            let Some(t) = track_of(&c, TrackKind::Audio).map(|i| c.project().tracks[i].id) else { return };
+            for id in &IDS[1..] {
+                c.add_item_to_track(&crate::devices::Item::Builtin(saine_core::builtin::find(id).unwrap()), t, None);
+            }
+        })),
+        Check("time fx: five cards at their defaults, reference widths, each with its field, one undo step each", Box::new(|c, a| {
+            let n = steps(&A, c);
+            for (id, name, w) in [("delay", "Delay", 615.0), ("echo", "Echo", 521.0), ("reverb", "Reverb", 543.0), ("pitch-shifter", "Pitch Shifter", 332.0), ("grains", "Grains", 532.0)] {
+                let cd = card_named(a, name).ok_or(format!("no {name} card"))?;
+                if !cd.builtin || !cd.canvas.visible || slint::Model::row_count(&cd.canvas.paths) == 0 || !approx(cd.width, w * crate::device_panel::Z, 0.01) {
+                    return Err(format!("{name}: builtin {} field {} width {}", cd.builtin, cd.canvas.visible, cd.width));
+                }
+                let d = device_of(c, id).ok_or(format!("no {id}"))?;
+                let def = saine_core::builtin::def_of(d).unwrap();
+                if def.params.iter().any(|p| def.value(d, p) != p.default) {
+                    return Err(format!("{id} not at defaults"));
+                }
+            }
+            (n == 5).then_some(()).ok_or(format!("history +{n}"))
+        })),
+        DoC("time fx: Delay Link latch off", Box::new(|_, ctl| {
+            mark(&A, &ctl.borrow());
+            let Some(d) = id_of(&ctl.borrow(), "delay") else { return };
+            ctl.borrow_mut().panel_latch(d, index_of("delay", "link"), 0);
+        })),
+        Check("time fx: Link off, Note L / Note R named, Note R live; one undo step", Box::new(|c, a| {
+            let cd = card_named(a, "Delay").ok_or("no card")?;
+            let knobs: Vec<_> = (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).collect();
+            let ok = value_of(c, "delay", "link") == Some(0.0)
+                && knobs.iter().any(|k| k.label == "Note L")
+                && knobs.iter().any(|k| k.label == "Note R" && !k.inert)
+                && steps(&A, c) == 1;
+            ok.then_some(()).ok_or(format!("link {:?} knobs {:?}", value_of(c, "delay", "link"), knobs.iter().map(|k| (k.label.to_string(), k.inert)).collect::<Vec<_>>()))
+        })),
+        DoC("time fx: drag the Delay echoes field 30 px down", Box::new(|_, ctl| {
+            mark(&A, &ctl.borrow());
+            let Some(d) = id_of(&ctl.borrow(), "delay") else { return };
+            let mut c = ctl.borrow_mut();
+            c.panel_field_pointer(d, 0, 60.0, 40.0, false, false);
+            for i in 1..=30 {
+                c.panel_field_pointer(d, 1, 60.0, 40.0 + i as f32, false, false);
+            }
+            c.panel_field_pointer(d, 2, 60.0, 70.0, false, false);
+        })),
+        Check("time fx: the echoes drag lowers Feedback, one undo step", Box::new(|c, _| {
+            let fb = value_of(c, "delay", "feedback").unwrap_or(f32::NAN);
+            (fb < 50.0 && fb > 0.0 && steps(&A, c) == 1).then_some(()).ok_or(format!("feedback {fb} history +{}", steps(&A, c)))
+        })),
+        DoC("time fx: Delay view EQ", Box::new(|_, ctl| {
+            let Some(d) = id_of(&ctl.borrow(), "delay") else { return };
+            ctl.borrow_mut().card_view_select(d, 1);
+        })),
+        Check("time fx: the EQ view is selected and drawn (UI state, no undo step)", Box::new(|c, a| {
+            let cd = card_named(a, "Delay").ok_or("no card")?;
+            let view = (0..slint::Model::row_count(&cd.picks)).filter_map(|i| slint::Model::row_data(&cd.picks, i)).find(|p| p.kind == 7).map(|p| p.selected);
+            (view == Some(1) && slint::Model::row_count(&cd.canvas.grips) == 1 && steps(&A, c) == 1).then_some(()).ok_or(format!("view {view:?}"))
+        })),
+        DoC("time fx: hold the Echo Throw latch", Box::new(|_, ctl| {
+            mark(&A, &ctl.borrow());
+            let Some(d) = id_of(&ctl.borrow(), "echo") else { return };
+            ctl.borrow_mut().panel_latch(d, index_of("echo", "throw"), 1);
+        })),
+        Check("time fx: Throw shows on while held, live only (model off, no undo step)", Box::new(|c, a| {
+            let cd = card_named(a, "Echo").ok_or("no card")?;
+            let on = (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).any(|k| k.label == "Throw" && k.latch && k.on);
+            (on && value_of(c, "echo", "throw") == Some(0.0) && steps(&A, c) == 0).then_some(()).ok_or(format!("on {on}"))
+        })),
+        DoC("time fx: release Throw, then drag the first Echo head right", Box::new(|_, ctl| {
+            let Some(d) = id_of(&ctl.borrow(), "echo") else { return };
+            ctl.borrow_mut().panel_latch(d, index_of("echo", "throw"), 2);
+            mark(&A, &ctl.borrow());
+            // Defaults: heads 2+3 of the tape loop; the first repeat of head 2 sits at 0.2 s of a 3 s span.
+            let (w, x) = {
+                let c = ctl.borrow();
+                let def = saine_core::builtin::find("echo").unwrap();
+                let (_, _, w, _, _) = crate::panel_fields::field_rect(def, crate::device_panel::view_right(def));
+                let pic = c.echo_picture(device_of(&c, "echo").unwrap(), def);
+                let ms = pic.heads.iter().filter(|h| h.on).map(|h| h.ms).fold(f32::MAX, f32::min);
+                let (left, right) = (40.0 * crate::device_panel::Z, w - 6.0 * crate::device_panel::Z);
+                (w, left + ms / 1000.0 / 3.0 * (right - left))
+            };
+            let _ = w;
+            let mut c = ctl.borrow_mut();
+            c.panel_field_pointer(d, 0, x, 80.0, false, false);
+            c.panel_field_pointer(d, 1, x + 20.0, 80.0, false, false);
+            c.panel_field_pointer(d, 2, x + 20.0, 80.0, false, false);
+        })),
+        Check("time fx: Throw released; the head drag authors the heads (Heads, Heads Machine, pinned position) in one undo step", Box::new(|c, _| {
+            let heads = value_of(c, "echo", "heads").unwrap_or(0.0);
+            let machine = value_of(c, "echo", "heads_machine").unwrap_or(0.0);
+            let ok = value_of(c, "echo", "throw") == Some(0.0) && heads >= 1.0 && machine == 1.0 && steps(&A, c) == 1;
+            ok.then_some(()).ok_or(format!("heads {heads} machine {machine} history +{}", steps(&A, c)))
+        })),
+        DoC("time fx: Reverb Mode › Shimmer", Box::new(|_, ctl| {
+            mark(&A, &ctl.borrow());
+            let Some(d) = id_of(&ctl.borrow(), "reverb") else { return };
+            ctl.borrow_mut().panel_choice(d, index_of("reverb", "mode2"), 4);
+        })),
+        Check("time fx: Shimmer dial row [Decay] [Pre-Delay, Mod Depth] [Shift 1, Shift 2, Shimmer] [Mix]", Box::new(|c, a| {
+            let cd = card_named(a, "Reverb").ok_or("no card")?;
+            let labels: Vec<String> = (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).map(|k| k.label.to_string()).collect();
+            let want = ["Decay", "Pre-Delay", "Mod Depth", "Shift 1", "Shift 2", "Shimmer", "Mix"];
+            (labels == want && steps(&A, c) == 1).then_some(()).ok_or(format!("{labels:?}"))
+        })),
+        DoC("time fx: drag the Reverb pre-delay line 20 px right", Box::new(|_, ctl| {
+            mark(&A, &ctl.borrow());
+            let Some(d) = id_of(&ctl.borrow(), "reverb") else { return };
+            // Pre-delay 10 ms on a span of a few seconds: the line sits at the left edge of the plot.
+            let x = 26.0 * crate::device_panel::Z + 1.0;
+            let mut c = ctl.borrow_mut();
+            c.panel_field_pointer(d, 0, x, 60.0, false, false);
+            c.panel_field_pointer(d, 1, x + 20.0, 60.0, false, false);
+            c.panel_field_pointer(d, 2, x + 20.0, 60.0, false, false);
+        })),
+        Check("time fx: Pre-Delay grows, one undo step", Box::new(|c, _| {
+            let v = value_of(c, "reverb", "predelay").unwrap_or(f32::NAN);
+            (v > 10.0 && steps(&A, c) == 1).then_some(()).ok_or(format!("pre-delay {v}"))
+        })),
+        DoC("time fx: press the Pitch Shifter field at +7 st", Box::new(|_, ctl| {
+            mark(&A, &ctl.borrow());
+            let Some(d) = id_of(&ctl.borrow(), "pitch-shifter") else { return };
+            let def = saine_core::builtin::find("pitch-shifter").unwrap();
+            let mut c = ctl.borrow_mut();
+            let (_, _, w, _, _) = crate::panel_fields::field_rect(def, crate::device_panel::view_right(def));
+            let x = (7.0 + 24.5) / 49.0 * w;
+            c.panel_field_pointer(d, 0, x - 10.0, 40.0, false, false);
+            c.panel_field_pointer(d, 1, x, 40.0, false, false);
+            c.panel_field_pointer(d, 2, x, 40.0, false, false);
+        })),
+        Check("time fx: Semitones +7, the caption reads Fifth up, one undo step", Box::new(|c, a| {
+            let cd = card_named(a, "Pitch Shifter").ok_or("no card")?;
+            let st = value_of(c, "pitch-shifter", "semitones");
+            (st == Some(7.0) && cd.canvas.readout == "Fifth up" && steps(&A, c) == 1).then_some(()).ok_or(format!("semitones {st:?} caption {}", cd.canvas.readout))
+        })),
+        DoC("time fx: Grains Freeze latch, then drag Position 30 px left and press Escape", Box::new(|a, ctl| {
+            mark(&A, &ctl.borrow());
+            let Some(d) = id_of(&ctl.borrow(), "grains") else { return };
+            ctl.borrow_mut().panel_latch(d, index_of("grains", "freeze"), 0);
+            mark(&B, &ctl.borrow());
+            let def = saine_core::builtin::find("grains").unwrap();
+            let x = {
+                let (_, _, w, _, _) = crate::panel_fields::field_rect(def, crate::device_panel::view_right(def));
+                let right = w - 5.0 * crate::device_panel::Z;
+                // Frozen defaults: reach 0.25 s on a 0.5 s span.
+                right - 0.5 * (right - 4.0 * crate::device_panel::Z)
+            };
+            ctl.borrow_mut().panel_field_pointer(d, 0, x, 50.0, false, false);
+            ctl.borrow_mut().panel_field_pointer(d, 1, x - 30.0, 50.0, false, false);
+            // The press focuses the field in the UI; here the pointer is synthetic, so run the Escape action.
+            let _ = a;
+            crate::run_action(ctl, "view.escape");
+            ctl.borrow_mut().panel_field_pointer(d, 2, x - 30.0, 50.0, false, false);
+        })),
+        Check("time fx: Freeze on (one undo step); Escape cancels the Position drag (250 ms, no undo step)", Box::new(|c, _| {
+            let pos = value_of(c, "grains", "position").unwrap_or(f32::NAN);
+            let ok = value_of(c, "grains", "freeze") == Some(1.0) && pos == 250.0 && steps(&A, c) == 1 && steps(&B, c) == 0;
+            ok.then_some(()).ok_or(format!("freeze {:?} position {pos}", value_of(c, "grains", "freeze")))
+        })),
+        DoC("time fx: remove the five devices", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let ids: Vec<saine_core::DeviceId> = IDS.iter().filter_map(|id| device_of(&c, id).map(|d| d.id)).collect();
+            for d in ids {
+                c.execute(saine_core::Command::RemoveDevice { device: d });
+            }
+        })),
+        Check("time fx: the audio track's chain is empty again", Box::new(|c, _| {
+            let n = track_of(c, TrackKind::Audio).map_or(usize::MAX, |t| c.project().tracks[t].devices.len());
+            (n == 0).then_some(()).ok_or(format!("{n} devices left"))
+        })),
+    ]
 }
 
 /// The devices section drives Apple's Audio Units (AULowpass, AUDelay,
@@ -3552,9 +4082,12 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(modulation_steps());
     all.extend(builtin_each_steps());
     all.extend(modulation_device_steps());
+    all.extend(custom_view_steps());
     all.extend(limiter_family_steps());
     all.extend(restoration_device_steps());
+    all.extend(analyzer_device_steps());
     all.extend(sampler_steps());
+    all.extend(time_fx_steps());
     all.extend(automation_steps());
     all.extend(field_device_steps());
     let steps = Rc::new(all);

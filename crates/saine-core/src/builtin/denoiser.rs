@@ -34,6 +34,7 @@ pub static DENOISER: DeviceDef = DeviceDef {
         min_height: 176.0,
         shown_when: &[],
         fixed_width: 0.0,
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Room Tone", values: &[("threshold", -52.0), ("reduction", -12.0), ("frequency_smoothing", 60.0), ("release", 120.0)] },

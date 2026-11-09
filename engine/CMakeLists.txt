@@ -143,6 +143,12 @@ add_library(saine_engine STATIC
   src/devices/phaser.cpp
   src/devices/ring_mod.cpp
   src/devices/tremolo.cpp
+  src/devices/delay.cpp
+  src/devices/echo.cpp
+  src/devices/grains.cpp
+  src/devices/pitch_shift.cpp
+  src/devices/pitch_shifter.cpp
+  src/devices/reverb.cpp
   src/devices/pad_sampler.cpp
   src/devices/sampler.cpp
   src/devices/sampler_engine.cpp
@@ -152,6 +158,12 @@ add_library(saine_engine STATIC
   src/devices/deesser.cpp
   src/devices/dehummer.cpp
   src/devices/denoiser.cpp
+  src/devices/pitch_corrector.cpp
+  src/devices/pitch_detect.cpp
+  src/devices/spectrum.cpp
+  src/devices/tuner.cpp
+  src/devices/shaper.cpp
+  src/devices/trance_gate.cpp
   $<TARGET_OBJECTS:saine_vst3_host>
   # Platform backends: each file is compile-guarded so exactly one is active.
   src/platform/audio_device.cpp
@@ -376,10 +388,18 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/devices/test_modulation.cpp
     tests/devices/test_mod_routes.cpp
     tests/devices/test_character_mod.cpp
+    tests/devices/test_time_fx.cpp
     tests/devices/test_drum_rack.cpp
     tests/devices/test_sampler.cpp
     tests/devices/test_synth_v2.cpp
-    tests/devices/test_restoration.cpp)
+    tests/devices/test_restoration.cpp
+
+    tests/devices/test_pitch_corrector.cpp
+    tests/devices/test_pitch_detect.cpp
+    tests/devices/test_spectrum.cpp
+    tests/devices/test_tuner.cpp
+    tests/devices/test_shaper.cpp
+    tests/devices/test_trance_gate.cpp)
   target_include_directories(saine_engine_tests PRIVATE src tests)
   target_link_libraries(saine_engine_tests PRIVATE saine_engine saine_engine_warnings)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")

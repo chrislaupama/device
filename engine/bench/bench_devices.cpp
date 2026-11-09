@@ -5,6 +5,7 @@
 // track, with and without an LFO moving both thresholds.
 //
 //   saine_device_bench [blocks]      (Release build; numbers in us per 256-frame block)
+#include "../tests/devices/shaper_layout.hpp"
 #include "devices/builtin.hpp"
 #include "devices/synth_v2_params.hpp"
 #include "platform/os.hpp"
@@ -191,9 +192,11 @@ Stats summarize(std::vector<double>& t) {
 double us(Clock::duration d) { return std::chrono::duration<double, std::micro>(d).count(); }
 
 // events_per_block automation events on parameter event_param, values base + i * step.
+// tone: a harmonic line (A3 with 5 Hz vibrato, 8 partials) instead of noise,
+// so pitch-tracking devices run their voiced path.
 Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, uint32_t events_per_block,
                    const std::vector<saine::MidiEvent>& notes = {}, uint32_t event_param = 0, double base = -30.0,
-                   double step = 1.0) {
+                   double step = 1.0, bool tone = false) {
     saine::PluginSpec spec;
     spec.device_id = 1;
     spec.format = saine::PluginFormat::Builtin;
@@ -209,6 +212,8 @@ Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, u
     }
     std::vector<float> l(kBlock), r(kBlock);
     uint32_t seed = 7;
+    double phase = 0.0;
+    uint64_t frame = 0;
     std::vector<saine::ParamEvent> ev;
     for (uint32_t i = 0; i < events_per_block; ++i)
         ev.push_back(saine::ParamEvent{i * (kBlock / std::max(1u, events_per_block)), event_param, base + step * i});
@@ -216,7 +221,15 @@ Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, u
     std::vector<double> t;
     t.reserve(blocks);
     for (uint32_t b = 0; b < blocks + 200; ++b) {
-        for (uint32_t i = 0; i < kBlock; ++i) {
+        for (uint32_t i = 0; i < kBlock; ++i, ++frame) {
+            if (tone) {
+                const double sec = static_cast<double>(frame) / kRate;
+                phase += 6.283185307179586 * 220.0 * std::pow(2.0, 0.25 * std::sin(6.283185307179586 * 5.0 * sec) / 12.0) / kRate;
+                double s = 0.0;
+                for (int h = 1; h <= 8; ++h) s += std::sin(phase * h) / h;
+                l[i] = r[i] = static_cast<float>(0.2 * s);
+                continue;
+            }
             seed = seed * 1664525u + 1013904223u;
             const float n = static_cast<float>(seed >> 8) / 8388608.0f - 1.0f;
             l[i] = 0.8f * n;
@@ -464,6 +477,27 @@ int main(int argc, char** argv) {
         row(name, bench_kernel("character-mod", tweak("character-mod", {{"model", static_cast<float>(c)}}), blocks, 0));
     }
     row("character-mod (Phaser Barber)", bench_kernel("character-mod", tweak("character-mod", {{"model", 7.0f}, {"mode_phaser", 4.0f}}), blocks, 0));
+    row("trance-gate (defaults)", bench_kernel("trance-gate", devtest::builtin_defaults("trance-gate"), blocks, 0));
+    row("trance-gate (16 auto events)", bench_kernel("trance-gate", devtest::builtin_defaults("trance-gate"), blocks, 16));
+    {
+        using devtest::shaper_lane;
+        const std::vector<float> base = devtest::builtin_defaults("shaper");
+        row("shaper (defaults: Volume lane)", bench_kernel("shaper", base, blocks, 0));
+        const char* lanes[] = {"Volume", "Time", "Width", "Pan", "Filter", "Crush", "Pitch"};
+        for (int lane = 1; lane < 7; ++lane) {
+            std::vector<float> v = base;
+            v[shaper_lane(0, 0)] = 0.f;
+            v[shaper_lane(lane, 0)] = 1.f;
+            char name[64];
+            std::snprintf(name, sizeof name, "shaper (%s lane only)", lanes[lane]);
+            row(name, bench_kernel("shaper", v, blocks, 0));
+        }
+        std::vector<float> all = base;
+        for (int lane = 0; lane < 7; ++lane) all[shaper_lane(lane, 0)] = 1.f;
+        row("shaper (all 7 lanes)", bench_kernel("shaper", all, blocks, 0));
+        for (int lane = 0; lane < 7; ++lane) all[shaper_lane(lane, 3)] = 1.f; // Band: Lows
+        row("shaper (all 7 lanes, band split)", bench_kernel("shaper", all, blocks, 0));
+    }
     // Synth: notes held from the first block (sustain keeps every voice busy).
     const std::vector<float> synth(std::begin(saine::synth_v2::kDefaults), std::end(saine::synth_v2::kDefaults));
     const auto chord = [](uint32_t n) {
@@ -480,6 +514,18 @@ int main(int argc, char** argv) {
         for (uint32_t s = 0; s < 4; ++s) heavy[184 + 79 * s] = 1.f; // every effect slot on
         row("synth-v2 (16 notes, unison 8, 4 FX)", bench_kernel("synth-v2", heavy, blocks, 0, chord(16)));
     }
+    // Analyzers and pitch: parameters in registry order.
+    const std::vector<float> pitch = {100.f, 0.f, 1.f, 20.f, 15.f, 100.f, 0.f};
+    row("pitch-corrector (C major, tone)", bench_kernel("pitch-corrector", pitch, blocks, 0, {}, 0, -30.0, 1.0, true));
+    row("pitch-corrector (noise, unvoiced)", bench_kernel("pitch-corrector", pitch, blocks, 0));
+    row("tuner (tone)", bench_kernel("tuner", {0.f, 0.f, 0.f}, blocks, 0, {}, 0, -30.0, 1.0, true));
+    std::vector<float> spectrum = {3.f, 0.f, 0.f, 30.f, 4.5f, 0.f, 90.f, 1.f, 30.f, 50.f, 1.f, 0.f, 3.f};
+    row("spectrum (FFT 4096, stereo)", bench_kernel("spectrum", spectrum, blocks, 0));
+    spectrum[2] = 5.f;
+    row("spectrum (FFT 4096, Mid+Side)", bench_kernel("spectrum", spectrum, blocks, 0));
+    spectrum[0] = 5.f;
+    spectrum[2] = 0.f;
+    row("spectrum (FFT 16384, stereo)", bench_kernel("spectrum", spectrum, blocks, 0));
     // Instruments: voices kept sounding by a new note every few blocks.
     const std::vector<uint8_t> keys = {48, 55, 60, 64, 67, 71, 72, 76};
     {
@@ -516,6 +562,30 @@ int main(int argc, char** argv) {
         row("drum-rack (16 pads, 1 hit/block)", bench_instrument("drum-rack", rack, blocks, pads, 1));
         rack[4 * 11 + 10] = 3; // pad 5 warped
         row("drum-rack (busy, 1 warped pad)", bench_instrument("drum-rack", rack, blocks, pads, 1));
+    }
+
+    // Time and pitch devices, one row per mode / machine.
+    const std::pair<const char*, std::vector<float>> time_fx[] = {
+        {"delay (Tape)", tweak("delay", {{"mode", 0.f}})},
+        {"delay (Digital)", tweak("delay", {{"mode", 1.f}})},
+        {"delay (BBD)", tweak("delay", {{"mode", 2.f}})},
+        {"echo (Tape Loop)", tweak("echo", {{"machine", 0.f}})},
+        {"echo (Drum)", tweak("echo", {{"machine", 1.f}})},
+        {"echo (Cartridge)", tweak("echo", {{"machine", 2.f}})},
+        {"reverb (Room)", tweak("reverb", {{"mode2", 0.f}})},
+        {"reverb (Hall)", tweak("reverb", {{"mode2", 1.f}})},
+        {"reverb (Plate)", tweak("reverb", {{"mode2", 2.f}})},
+        {"reverb (Spring)", tweak("reverb", {{"mode2", 3.f}})},
+        {"reverb (Shimmer)", tweak("reverb", {{"mode2", 4.f}})},
+        {"reverb (Haze)", tweak("reverb", {{"mode2", 5.f}})},
+        {"pitch-shifter (+7 st)", tweak("pitch-shifter", {{"semitones", 7.f}})},
+        {"pitch-shifter (+7 st, formant)", tweak("pitch-shifter", {{"semitones", 7.f}, {"formant_preserve", 1.f}})},
+        {"grains (Cloud)", tweak("grains", {{"mode", 0.f}})},
+        {"grains (Rhythm)", tweak("grains", {{"mode", 1.f}})},
+    };
+    for (const auto& [name, values] : time_fx) {
+        const std::string id(name, std::strchr(name, ' '));
+        row(name, bench_kernel(id.c_str(), values, blocks, 0));
     }
 
     // Parameter update paths and session cost: 32 tracks, one clip and two

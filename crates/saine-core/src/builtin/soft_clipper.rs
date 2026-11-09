@@ -32,6 +32,7 @@ pub static SOFT_CLIPPER: DeviceDef = DeviceDef {
         min_height: 202.0,
         shown_when: &[],
         fixed_width: 0.0,
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Peak Shave", values: &[("input", 3.0), ("ceiling", -0.5), ("softness", 30.0)] },

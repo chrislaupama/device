@@ -34,6 +34,7 @@ pub mod character_mod;
 mod character_compressor;
 mod chorus;
 mod compressor;
+pub mod delay;
 mod gate;
 mod glue_compressor;
 mod limiter;
@@ -49,14 +50,25 @@ mod deesser;
 mod dehummer;
 mod denoiser;
 mod distortion;
+pub mod echo;
 pub mod eq;
 mod flanger;
+pub mod grains;
 mod multiband_compressor;
 mod phaser;
+pub mod pitch_shifter;
+pub mod reverb;
 mod ring_mod;
+pub mod shaper;
 mod soft_clipper;
 mod tape_saturation;
+pub mod trance_gate;
 mod tremolo;
+mod pitch_corrector;
+mod spectrum;
+mod tuner;
+
+pub use tuner::TUNING_STRINGS;
 mod utility;
 mod widener;
 pub mod synth_v2;
@@ -130,7 +142,8 @@ pub enum Format {
     SignedPercent,
     /// Choice name from `ParamDef::choices`.
     Choice,
-    /// Number with this many decimals and the unit appended when not empty.
+    /// Number with this many decimals and the unit appended when not empty
+    /// (a multiplier unit "x" attaches without a space: "8.0x").
     Plain(u8),
     /// Signed number (plain value × `scale`) with the unit: "+0 st", "−12 ct",
     /// "+24 st" for an envelope depth of 0.5 shown in semitones (scale 48).
@@ -201,6 +214,17 @@ pub struct ParamDef {
     pub preset_lock: bool,
     /// One-sentence description (tooltips, the assistant).
     pub help: &'static str,
+    /// Knobs show and drag the reversed 0..1 position (note-length dials:
+    /// longer notes sit higher, as in the reference).
+    pub reversed: bool,
+    /// Latch texts (off, on) of a two-state parameter in the picker row,
+    /// e.g. ("Dry Off", "Dry On"); None = the choice names.
+    pub latch: Option<(&'static str, &'static str)>,
+    /// A latch that is on only while held (press writes 1, release 0).
+    pub momentary: bool,
+    /// While this (two-state) parameter is on, preset loads keep the current
+    /// values of these parameters (and of this one).
+    pub locks: &'static [&'static str],
     /// Text shown instead of the number at the top of the range ("Full"); "" = none.
     pub max_text: &'static str,
     /// Discrete parameters: values written together with each choice, by
@@ -212,12 +236,12 @@ impl ParamDef {
     /// A continuous parameter with defaults for the optional fields.
     #[allow(clippy::too_many_arguments)]
     pub const fn new(id: &'static str, name: &'static str, min: f32, max: f32, default: f32, taper: Taper, unit: &'static str, format: Format) -> ParamDef {
-        ParamDef { id, name, label: name, min, max, default, taper, step: 0.0, unit, format, choices: &[], automatable: true, reset_on_load: false, preset_lock: false, help: "", max_text: "", overlays: &[] }
+        ParamDef { id, name, label: name, min, max, default, taper, step: 0.0, unit, format, choices: &[], automatable: true, reset_on_load: false, preset_lock: false, help: "", reversed: false, latch: None, momentary: false, locks: &[], max_text: "", overlays: &[] }
     }
 
     /// A discrete parameter: plain value = index into `choices`.
     pub const fn choice(id: &'static str, name: &'static str, choices: &'static [&'static str], default: u32) -> ParamDef {
-        ParamDef { id, name, label: name, min: 0.0, max: (choices.len() - 1) as f32, default: default as f32, taper: LINEAR, step: 1.0, unit: "", format: Format::Choice, choices, automatable: true, reset_on_load: false, preset_lock: false, help: "", max_text: "", overlays: &[] }
+        ParamDef { id, name, label: name, min: 0.0, max: (choices.len() - 1) as f32, default: default as f32, taper: LINEAR, step: 1.0, unit: "", format: Format::Choice, choices, automatable: true, reset_on_load: false, preset_lock: false, help: "", reversed: false, latch: None, momentary: false, locks: &[], max_text: "", overlays: &[] }
     }
 
     pub const fn label(mut self, label: &'static str) -> ParamDef {
@@ -267,6 +291,27 @@ impl ParamDef {
     pub const fn preset_locked(mut self) -> ParamDef {
         self.preset_lock = true;
         self
+    }
+
+    pub const fn reversed(mut self) -> ParamDef {
+        self.reversed = true;
+        self
+    }
+    pub const fn latch(mut self, off: &'static str, on: &'static str) -> ParamDef {
+        self.latch = Some((off, on));
+        self
+    }
+    pub const fn momentary(mut self) -> ParamDef {
+        self.momentary = true;
+        self
+    }
+    pub const fn locks(mut self, ids: &'static [&'static str]) -> ParamDef {
+        self.locks = ids;
+        self
+    }
+    /// UI / state plumbing written by gestures and presets: no automation, no LFO.
+    pub const fn internal(self) -> ParamDef {
+        self.not_automatable()
     }
 
     pub fn is_discrete(&self) -> bool {
@@ -390,6 +435,7 @@ impl ParamDef {
             (Format::Seconds, "ms" | "msec" | "msecs") => v /= 1000.0,
             (Format::Semitones, "st" | "semitones") | (Format::Cents, "ct" | "cents") => {}
             (Format::Plain(_) | Format::Custom(_), u) if u == self.unit.to_lowercase().trim_end_matches(":1") => {}
+            (Format::Custom(_), "%") if self.unit == "%" => {}
             (Format::Custom(_), "s" | "sec" | "secs" | "second" | "seconds") if self.unit == "ms" => v *= 1000.0,
             (Format::Custom(_), "k" | "khz") if self.unit == "Hz" => v *= 1000.0,
             (Format::Rate, "hz") => {}
@@ -493,7 +539,12 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
         }
         Format::Plain(d) => {
             let s = format!("{:.*}", d as usize, v).replace('-', &MINUS.to_string());
-            if unit.is_empty() { s } else { format!("{s} {unit}") }
+            match unit {
+                "" => s,
+                // Multipliers attach to the number ("8.0x").
+                "x" => format!("{s}x"),
+                _ => format!("{s} {unit}"),
+            }
         }
         Format::Signed { decimals, scale } => {
             let x = v * scale.max(1) as f32;
@@ -647,11 +698,16 @@ pub enum Control {
     /// Segmented picker whose segments show these labels instead of the
     /// parameter's choice names (e.g. a Sync Off/On parameter shown as Free / Sync).
     Segments(&'static str, &'static [&'static str]),
+    /// Segmented switch between [`Layout::views`] (UI state of the card, not a parameter).
+    Views,
     /// Flexible gap in the picker row: the controls after it align right.
     Gap,
     /// One knob cell showing the first of these parameters that is shown
     /// (`Layout::shown_when`), e.g. Rate in Hz or Rate Sync as a note value.
     Swap(&'static [&'static str]),
+    /// Latch pill (reference fx latch) labelled with the parameter's label,
+    /// filled while the two-state parameter is on; click toggles.
+    Latch(&'static str),
     /// Menu pill over two discrete parameters: the choices of \`param\`, then
     /// the non-zero choices of \`mode\`. Picking a \`param\` entry writes it and
     /// sets \`mode\` to 0; picking a mode entry sets \`mode\` (one undo step).
@@ -662,10 +718,10 @@ impl Control {
     /// The (first) parameter of the control.
     pub fn param(&self) -> Option<&'static str> {
         match *self {
-            Control::Knob(p) | Control::Slider(p) | Control::Menu(p) | Control::Pill(p) | Control::Toggle(p) | Control::Dropdown(p) | Control::Segments(p, _) => Some(p),
+            Control::Knob(p) | Control::Slider(p) | Control::Menu(p) | Control::Pill(p) | Control::Toggle(p) | Control::Dropdown(p) | Control::Segments(p, _) | Control::Latch(p) => Some(p),
             Control::ModeDropdown { param, .. } => Some(param),
             Control::Swap(ps) => ps.first().copied(),
-            Control::Sidechain | Control::Gap => None,
+            Control::Sidechain | Control::Views | Control::Gap => None,
         }
     }
 
@@ -815,6 +871,10 @@ pub struct Behavior {
     pub latch: fn(&DeviceDef, &Device, &ParamDef) -> Option<Latch>,
     /// Curve of a `Face::Transfer` knob face.
     pub transfer: fn(&DeviceDef, &Device) -> Option<Transfer>,
+    /// Label that depends on other parameters (a dial called "Time L" while Link is off); None = `ParamDef::label`.
+    pub label: fn(&DeviceDef, &Device, &ParamDef) -> Option<&'static str>,
+    /// Typed text (trimmed, lower case) -> plain value, the inverse of `text`; None = `ParamDef::parse`.
+    pub read: fn(&DeviceDef, &Device, &ParamDef, &str) -> Option<f32>,
 }
 
 impl Behavior {
@@ -824,6 +884,8 @@ impl Behavior {
         text: |_, _, _, _| None,
         latch: |_, _, _| None,
         transfer: |_, _| None,
+        label: |_, _, _| None,
+        read: |_, _, _, _| None,
     };
 }
 
@@ -831,6 +893,10 @@ impl Behavior {
 pub fn behavior(def: &DeviceDef) -> Option<&'static Behavior> {
     match def.id {
         "character-compressor" => Some(&character_compressor::BEHAVIOR),
+        "delay" => Some(&delay::BEHAVIOR),
+        "echo" => Some(&echo::BEHAVIOR),
+        "grains" => Some(&grains::BEHAVIOR),
+        "reverb" => Some(&reverb::BEHAVIOR),
         _ => None,
     }
 }
@@ -854,9 +920,16 @@ pub struct Layout {
     /// (param, discrete param, values): `param` is shown only while the
     /// discrete parameter has one of `values` (mode-dependent layouts).
     pub shown_when: &'static [(&'static str, &'static str, &'static [u32])],
+    /// Same shape as `shown_when`: the control is drawn dimmed and does not
+    /// react while the discrete parameter has one of the values.
+    pub inert_when: &'static [(&'static str, &'static str, &'static [u32])],
     /// Card width (pt) for bodies that are not sized by the dial row
     /// (`View::Custom` grids); 0 = derived from `clusters`.
     pub fixed_width: f32,
+    /// Names of the card's views (picker `Control::Views`); the custom view draws the chosen one.
+    pub views: &'static [&'static str],
+    /// Dial-row cells spread evenly across the card instead of packing cluster by cluster.
+    pub spread_dials: bool,
 }
 
 /// Reference dial row metrics (pt).
@@ -866,6 +939,9 @@ pub const CLUSTER_GAP: f32 = 21.0;
 pub const CARD_PAD: f32 = 16.0;
 
 impl Layout {
+    /// A layout with nothing in it (struct update base for definitions).
+    pub const EMPTY: Layout = Layout { picker: &[], view: None, sliders: &[], clusters: &[], faces: &[], min_height: 0.0, shown_when: &[], inert_when: &[], fixed_width: 0.0, views: &[], spread_dials: false };
+
     /// Card width from the dial clusters: cells * 62 + inner gaps * 10 +
     /// cluster gaps * 21, plus 16 of padding (reference card sizing rule).
     /// With mode-dependent controls (`shown_when`) the card takes the width
@@ -958,7 +1034,7 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 34] = [
+    static ALL: [&DeviceDef; 44] = [
         &compressor::COMPRESSOR,
         &distortion::DISTORTION,
         &tape_saturation::TAPE_SATURATION,
@@ -981,6 +1057,11 @@ pub fn all() -> &'static [&'static DeviceDef] {
         &tremolo::TREMOLO,
         &autopanner::AUTOPANNER,
         &ring_mod::RING_MOD,
+        &delay::DELAY,
+        &echo::ECHO,
+        &grains::GRAINS,
+        &reverb::REVERB,
+        &pitch_shifter::PITCH_SHIFTER,
         &character_compressor::CHARACTER_COMPRESSOR,
         &multiband_compressor::MULTIBAND_COMPRESSOR,
         &lfo::LFO,
@@ -993,6 +1074,11 @@ pub fn all() -> &'static [&'static DeviceDef] {
         &deesser::DEESSER,
         &dehummer::DEHUMMER,
         &denoiser::DENOISER,
+        &pitch_corrector::PITCH_CORRECTOR,
+        &tuner::TUNER,
+        &spectrum::SPECTRUM,
+        &trance_gate::TRANCE_GATE,
+        &shaper::SHAPER,
     ];
     &ALL
 }
@@ -1143,12 +1229,80 @@ impl DeviceDef {
         out
     }
 
+    /// Whether `param` is drawn inert (`Layout::inert_when`).
+    pub fn is_inert(&self, device: &Device, param: &str) -> bool {
+        self.layout.inert_when.iter().filter(|(p, _, _)| *p == param).any(|(_, by, values)| {
+            self.param(by).is_some_and(|b| values.contains(&(self.value(device, b).round() as u32)))
+        })
+    }
+
+    /// Panel label of a parameter in the device's current state.
+    pub fn label_of(&self, device: &Device, p: &ParamDef) -> &'static str {
+        behavior(self).and_then(|b| (b.label)(self, device, p)).unwrap_or(p.label)
+    }
+
+    /// Parse typed text for `p` in the device's current state into a snapped plain value.
+    pub fn parse_of(&self, device: &Device, p: &ParamDef, text: &str) -> Option<f32> {
+        let read = behavior(self).and_then(|b| (b.read)(self, device, p, &text.trim().to_lowercase().replace('\u{2212}', "-")));
+        read.filter(|v| v.is_finite()).map(|v| p.snap(v)).or_else(|| p.parse(text))
+    }
+
+    /// Values of a preset as loaded onto `device`: `reset_on_load`
+    /// parameters take their default, and while a lock parameter is on, it and
+    /// the parameters it locks keep their current values.
+    pub fn preset_load_values(&self, device: &Device, preset: &DevicePreset) -> BTreeMap<String, f32> {
+        let mut v = preset.load_values(self);
+        for lock in self.params.iter().filter(|p| !p.locks.is_empty() && self.value(device, p) >= 0.5) {
+            for id in lock.locks.iter().copied().chain(std::iter::once(lock.id)) {
+                if let Some(p) = self.param(id) {
+                    v.insert(p.id.into(), self.value(device, p));
+                }
+            }
+        }
+        v
+    }
+
     /// Whether `param` is visible in the device's current state (`Layout::shown_when`).
     pub fn is_shown(&self, device: &Device, param: &str) -> bool {
         self.layout.shown_when.iter().filter(|(p, _, _)| *p == param).all(|(_, by, values)| {
             self.param(by).map(|b| values.contains(&(self.value(device, b).round() as u32))).unwrap_or(true)
         })
     }
+}
+
+// ---------------------------------------------------------------- key follow
+
+/// Key and scale (plain choice values) a device shows and runs with while it
+/// follows the project key: devices with `key_follow` (Manual / Project),
+/// `key` (pitch classes from C) and `scale` parameters. None while Key
+/// Follow is Manual, or when the project has no key (the stored values
+/// stay in force). A minor project key picks the scale choice "Minor",
+/// otherwise "Major".
+pub fn followed_key(def: &DeviceDef, device: &Device, key: Option<crate::model::ProjectKey>) -> Option<(f32, f32)> {
+    let key = key?;
+    let follow = def.param("key_follow")?;
+    if def.value(device, follow) < 0.5 {
+        return None;
+    }
+    let scale = def.param("scale")?;
+    let want = if key.minor { "Minor" } else { "Major" };
+    let s = scale.choices.iter().position(|c| *c == want)?;
+    def.param("key")?;
+    Some((f32::from(key.root.min(11)), s as f32))
+}
+
+/// The device as the engine should run it: a copy with the followed project
+/// key written into `key` / `scale` (see [followed_key]); other devices
+/// unchanged.
+pub fn engine_device(device: &Device, key: Option<crate::model::ProjectKey>) -> Device {
+    let mut d = device.clone();
+    if let Some(def) = def_of(device)
+        && let Some((k, s)) = followed_key(def, device, key)
+    {
+        d.params.insert("key".into(), k);
+        d.params.insert("scale".into(), s);
+    }
+    d
 }
 
 /// Check one parameter edit against the definition: the parameter exists and
@@ -1584,8 +1738,9 @@ mod tests {
         assert_eq!(ids[..7], ["compressor", "distortion", "tapesaturation", "soft-clipper", "bitcrusher", "widener", "utility"]);
         assert_eq!(find("widener").unwrap().layout.width(), 388.0);
         assert_eq!(find("utility").unwrap().layout.width(), 221.5);
-        // Modulation sources (LFO, chain head) are not listed effects and show no presets.
-        for def in all().iter().filter(|d| listed(d)) {
+        // Modulation sources (LFO, chain head) are not listed effects and show no presets;
+        // Tuner and Spectrum ship none (neither does the reference).
+        for def in all().iter().filter(|d| listed(d) && !matches!(d.id, "tuner" | "spectrum")) {
             assert!(!def.factory.is_empty(), "{} has factory presets", def.id);
         }
     }

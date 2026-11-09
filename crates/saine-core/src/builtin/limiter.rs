@@ -36,6 +36,7 @@ pub static LIMITER: DeviceDef = DeviceDef {
         fixed_width: 0.0,
         min_height: 180.0,
         shown_when: &[],
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Ceiling Guard", values: &[("ceiling", -0.5), ("release", 150.0), ("lookahead", 4.0)] },

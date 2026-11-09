@@ -427,6 +427,7 @@ impl Controller {
             value: s(p.format(v)),
             enabled: true,
             width: width * Z,
+            dim: false,
         })
     }
 
@@ -833,7 +834,7 @@ impl Controller {
 
     // ---------------------------------------------------------------- gestures
 
-    fn sampler_def(&self, device: DeviceId) -> Option<(&Device, &'static DeviceDef)> {
+    pub(crate) fn sampler_def(&self, device: DeviceId) -> Option<(&Device, &'static DeviceDef)> {
         let d = self.project().device(device)?;
         let def = builtin::def_of(d).filter(|def| is_sampler(def))?;
         Some((d, def))

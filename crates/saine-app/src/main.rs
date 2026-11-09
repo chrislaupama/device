@@ -15,6 +15,7 @@
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
 //! ```
 
+mod analyzer_views;
 mod assistant_panel;
 mod assistant_provider;
 mod automation;
@@ -24,6 +25,7 @@ mod device_canvas;
 mod device_mod;
 mod device_fields;
 mod device_panel;
+mod device_editors;
 mod panel_graph;
 mod device_views;
 mod devices;
@@ -31,6 +33,7 @@ mod panel_multiband;
 mod gpu;
 mod highlight;
 mod mixer;
+mod panel_fields;
 mod peaks;
 mod pianoroll;
 mod placeholder;
@@ -100,6 +103,8 @@ struct Args {
     sampler_tab: Option<i32>,
     /// Never show the window (renders for --screenshot fall back to offscreen snapshots).
     offscreen: bool,
+    /// review-analyzers: Pitch Corrector, Tuner and Spectrum fed 2 s of a sung-like line (no reference).
+    analyzers_review: bool,
     /// reference-lfo / reference-chain: 1 an LFO aimed at a Compressor, 2 a chain head
     /// (macro panel open) holding a Compressor and the CLAP test plugin's card.
     modulation_state: u8,
@@ -201,6 +206,11 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.plugins_page_review = true;
                 }
+                "review-analyzers" => {
+                    a.reference_default = true;
+                    a.analyzers_review = true;
+                    a.audio = false;
+                }
                 "review-recording" => {
                     a.reference_default = true;
                     a.recording_review = true;
@@ -208,7 +218,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers)"
                     ));
                 }
             },
@@ -396,7 +406,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
-            if c.panel_cancel_drag() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
+            if c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
                 return true;
             }
             if c.settings.menu.is_some() {
@@ -732,6 +742,50 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(8.0);
     }
+    if args.analyzers_review {
+        // Offline engine + injected input monitored through the audio track: a harmonic line
+        // (A3 +35 ct with vibrato, then C4 -30 ct) through Pitch Corrector (C major, fast),
+        // Tuner and Spectrum, rendered in 30 ms steps with the views polled after each step.
+        let mut c = ctl.borrow_mut();
+        c.rec.policy = recording::InputPolicy::InjectedOnly;
+        if let Some(t) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Audio).map(|t| t.id) {
+            c.select_track(t);
+            for id in ["pitch-corrector", "tuner", "spectrum"] {
+                let def = saine_core::builtin::find(id).expect("built-in is registered");
+                c.add_item_to_track(&devices::Item::Builtin(def), t, None);
+            }
+            let pc = c.project().track(t).and_then(|tr| tr.devices.first()).map(|d| d.id);
+            if let Some(d) = pc {
+                for (param, value) in [("key_follow", 0.0), ("scale", 1.0), ("speed", 100.0), ("retune_speed_ms", 20.0), ("humanize", 15.0)] {
+                    c.execute(saine_core::Command::SetDeviceParam { device: d, param: param.into(), value });
+                }
+            }
+            c.execute(saine_core::Command::SetTrackMonitor { track: t, monitor: true });
+            c.set_track_input(t, Some(saine_core::InputSource { channel: 0, stereo: false }));
+        }
+        c.set_bottom_tab(BottomTab::Devices);
+        let rate = 48_000.0f64;
+        let mut phase = 0.0f64;
+        let mut at = std::time::Instant::now() - std::time::Duration::from_secs(2);
+        let step = 1440usize;
+        for k in 0..(2 * 48_000 / step) {
+            let input: Vec<f32> = (0..step)
+                .map(|i| {
+                    let t = (k * step + i) as f64 / rate;
+                    let midi = if t < 1.0 { 57.35 + 0.25 * (std::f64::consts::TAU * 5.0 * t).sin() } else { 59.7 };
+                    phase += std::f64::consts::TAU * 440.0 * 2f64.powf((midi - 69.0) / 12.0) / rate;
+                    ((1..=8).map(|h| (phase * h as f64).sin() / h as f64).sum::<f64>() * 0.2) as f32
+                })
+                .collect();
+            let mut out = vec![0f32; 2 * step];
+            if let Err(e) = c.engine.render_offline_with_input(&input, 1, &mut out) {
+                c.set_status(format!("review-analyzers: {e}"), 10);
+                break;
+            }
+            at += std::time::Duration::from_millis(30);
+            c.panel_poll_views_at(at);
+        }
+    }
     if args.modulation_state > 0 {
         // No the reference app capture of an LFO card exists; compare the chain with
         // renders/reference/chain-head.png (Captain drive).
@@ -976,6 +1030,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_field, |c, id: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.panel_field_drag(saine_core::DeviceId(id as u64), phase, dx, dy, fine));
     on!(on_panel_menu, |c, id: i32, which: i32, x: f32, y: f32| c.panel_menu(saine_core::DeviceId(id as u64), which, x, y));
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(saine_core::DeviceId(id as u64), dir));
+    on!(on_panel_latch, |c, id: i32, p: i32, phase: i32| c.panel_latch(saine_core::DeviceId(id as u64), p, phase));
+    on!(on_panel_editor, |c, id: i32, kind: i32, x: f32, y: f32, wx: f32, wy: f32, shift: bool, alt: bool, wheel: f32| c.panel_editor(
+        saine_core::DeviceId(id as u64),
+        crate::device_editors::CanvasEvent { kind, x, y, wx, wy, shift, alt, wheel }
+    ));
     on!(on_panel_view, |c, id: i32, action: i32, v: f32| c.panel_view(saine_core::DeviceId(id as u64), action, v));
     {
         use saine_core::DeviceId as Id;
@@ -997,7 +1056,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         on!(on_card_add_menu, |c, d: i32, x: f32, y: f32| c.card_add_menu(id(d), x, y));
         on!(on_card_page, |c, d: i32, dir: i32| c.card_page(id(d), dir));
     }
-    on!(on_sampler_tab, |c, id: i32, tab: i32| c.sampler_tab(saine_core::DeviceId(id as u64), tab));
     on!(on_sampler_pad, |c, id: i32, which: i32, i: i32, down: bool| c.sampler_pad(saine_core::DeviceId(id as u64), which, i, down));
     on!(on_sampler_layer, |c, id: i32, dir: i32| c.sampler_layer(saine_core::DeviceId(id as u64), dir));
     on!(on_sampler_play, |c, id: i32, down: bool| c.sampler_play(saine_core::DeviceId(id as u64), down));

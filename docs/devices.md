@@ -53,6 +53,23 @@ flowchart LR
   widest `shown_when` state so the card never resizes when a mode changes.
   The knob cells are then spread evenly across the dial row (the clusters
   only size the card); field cards centre their dial row instead.
+- **Analysis frames.** Readouts are a few floats per block. A device that
+  shows more (a spectrum, a pitch trace) returns `analysis_capacity()` > 0 and
+  publishes whole frames through `BuiltinContext::analysis`, an
+  `AnalysisChannel` (lock-free triple buffer: the audio thread writes, the
+  main thread reads the newest frame). The app reads it with
+  `se_builtin_analysis` / `Engine::builtin_analysis(id, &mut Vec<f32>)`, which
+  returns the frame's sequence number so a poll can skip unchanged frames.
+- **Project key.** `Transport::key` (`ProjectKey { root, minor }`, set with
+  `Command::SetProjectKey`, "Key Change"). A device with `key_follow`
+  (Manual / Project), `key` and `scale` parameters runs with the project key
+  while it follows (`builtin::followed_key`; the snapshot sends
+  `builtin::engine_device`). Its stored Key and Scale are kept, and picking
+  either on the card while following writes Follow = Manual plus both values
+  as one undo step.
+- **Latency.** `BuiltinProcessor::latency()` is reported through
+  `se_plugin_latency` and compensated like plugin latency (Pitch Corrector:
+  1024 frames at 48 kHz).
 
 ## Modulation and chains
 
@@ -140,7 +157,7 @@ system. Any built-in device can use them.
    - `Layout`: `picker` (segmented `Menu`s, `Segments` with their own
      labels, `Dropdown` pills for long lists, `ModeDropdown` (a type menu
      whose last entry switches a mode parameter, e.g. Auto Filter's DJ),
-     toggles, `Sidechain`, pills;
+     toggles, `Latch` on/off pills, `Sidechain`, pills;
      `Gap` or the sidechain picker pushes what follows to the right),
      `view` (`DynamicsStrip`, `Field`, `Eq` or `Custom`), `sliders`,
      `clusters` of knobs (`Swap` holds alternatives in one cell, such as
@@ -246,6 +263,11 @@ system. Any built-in device can use them.
    spectrum), set `pointer: true` and handle `Studio.panel-graph` in Rust,
    as the restoration devices do (`crates/saine-app/src/panel_graph.rs`: hit
    zones, spectrum ballistics from the readouts, one undo step per gesture).
+   The analyzers (`src/analyzer_views.rs`) are `custom_body` arms too: they
+   poll analysis frames (`Controller::panel_poll_views`), draw gradient
+   fills with `PanelPath.fill2` (applied only when it differs from `fill`),
+   set a knob cell width (`CustomBody.cell`) and take their card width from
+   `Layout::fixed_width`.
    View-local state (a selected band, meter ballistics) goes through
    `Studio.panel-view(device, action, value)`; `src/panel_multiband.rs` is
    an example with its own Slint component (band selector, threshold / floor
@@ -253,6 +275,19 @@ system. Any built-in device can use them.
    The EQ and Auto Filter canvases (`device_canvas.rs`) use the same flag and
    add dots, anchored grips, double-click (phase 6), wheel and keys
    (`panel-graph-wheel`, `panel-graph-key`).
+   Full editors with their own gestures and menus (step grids, curve
+   editors) add an arm to `custom_card` in
+   `crates/saine-app/src/device_editors.rs` and set `interactive: true`:
+   `DeviceCanvas` then sends every press, drag, release, hover,
+   double-click, right-click and wheel over the canvas to `panel_editor`,
+   with window coordinates for menus. A gesture sends live values to the
+   engine and commits one undo step on release; Escape restores the values
+   from before it. Set `Layout::fixed_width` for a card that the dial row
+   does not size. The Trance Gate and the Shaper are the editor examples.
+   - A parameter that only the stored value should drive (the Shaper's
+     Pitch switch, which sets its latency) returns false from
+     `BuiltinProcessor::automatable`; the engine then leaves automation
+     lanes on it inactive.
 5. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),
@@ -274,6 +309,8 @@ system. Any built-in device can use them.
    reference capture. Add the device to the app self-test (the dynamics,
    modulation and restoration sections in `src/selftest.rs` add each device
    through Add device › Built-in).
+   `--state review-analyzers` feeds a sung-like line through Pitch
+   Corrector, Tuner and Spectrum so their views show live data.
 
 ## Commands
 
@@ -282,7 +319,7 @@ cargo test --workspace                                   # core, engine wrapper,
 cd engine && cmake --build build && ./build/saine_engine_tests
 ./build/saine_device_bench                               # per-block cost, param updates, 32-track session
 cargo run -p saine-app -- --state reference-limiter --offscreen --screenshot /tmp/limiter.png
-cargo run -p saine-app -- --state reference-compressor --screenshot /tmp/compressor.png
-cargo run -p saine-app -- --state reference-lfo --screenshot /tmp/lfo.png      # also reference-chain
+cargo run -p saine-app -- --state reference-compressor --offscreen --screenshot /tmp/compressor.png
+cargo run -p saine-app -- --state reference-lfo --offscreen --screenshot /tmp/lfo.png      # also reference-chain
 cargo run -p saine-app -- --self-test                    # includes the built-in device section
 ~~~

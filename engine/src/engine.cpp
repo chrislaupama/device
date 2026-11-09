@@ -429,7 +429,7 @@ int32_t Engine::publish(const se_session_desc_v6& desc, std::string& err) {
                 AutoLane& lane = built->lanes[i];
                 BuiltinInstance* const b = inst != nullptr ? inst->as_builtin() : nullptr;
                 if (lane.target == SE_AUTO_BUILTIN || b != nullptr) // built-in lanes only on built-ins, and vice versa
-                    lane.active = b != nullptr && lane.target == SE_AUTO_BUILTIN && lane.param_id < b->param_count();
+                    lane.active = b != nullptr && lane.target == SE_AUTO_BUILTIN && b->param_automatable(lane.param_id);
                 else
                     lane.active = inst != nullptr && inst->param_range(lane.param_id, lane.native_min, lane.native_max);
             }
@@ -1495,6 +1495,16 @@ int32_t Engine::builtin_readouts(uint64_t device_id, float* out, std::size_t cap
     BuiltinInstance* b = inst != nullptr ? inst->as_builtin() : nullptr;
     if (b == nullptr) return SE_ERR_NOT_FOUND;
     count = b->readouts(out, static_cast<uint32_t>(std::min<std::size_t>(capacity, UINT32_MAX)));
+    return SE_OK;
+}
+
+int32_t Engine::builtin_analysis(uint64_t device_id, float* out, std::size_t capacity, std::size_t& count,
+                                 uint64_t& seq) {
+    std::lock_guard lock(plugins_.mutex());
+    PluginInstance* inst = plugins_.instance(device_id);
+    BuiltinInstance* b = inst != nullptr ? inst->as_builtin() : nullptr;
+    if (b == nullptr) return SE_ERR_NOT_FOUND;
+    count = b->analysis(out, static_cast<uint32_t>(std::min<std::size_t>(capacity, UINT32_MAX)), seq);
     return SE_OK;
 }
 

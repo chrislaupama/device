@@ -28,6 +28,7 @@ pub static DECLIPPER: DeviceDef = DeviceDef {
         min_height: 202.0,
         shown_when: &[],
         fixed_width: 244.0,
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Gentle Repair", values: &[("threshold", -1.5), ("mix", 85.0)] },

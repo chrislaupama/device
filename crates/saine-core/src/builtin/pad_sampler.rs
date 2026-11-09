@@ -60,7 +60,7 @@ pub static PAD_SAMPLER: DeviceDef = DeviceDef {
         gate("gate", "Gate"),
         warp("warp", "Warp"),
     ],
-    layout: Layout { picker: &[], view: Some(View::Custom("pad-sampler")), sliders: &[], clusters: &[], faces: &[], min_height: 265.0, shown_when: &[], fixed_width: 599.0 },
+    layout: Layout { picker: &[], view: Some(View::Custom("pad-sampler")), sliders: &[], clusters: &[], faces: &[], min_height: 265.0, shown_when: &[], fixed_width: 599.0, ..Layout::EMPTY },
     factory: &[
         FactoryPreset { name: "Short Hit", values: &[("fadeOut", 40.0), ("end", 0.5), ("gate", 0.0)] },
         FactoryPreset { name: "Held Note", values: &[("gate", 1.0), ("fadeOut", 5.0)] },

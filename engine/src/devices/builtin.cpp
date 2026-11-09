@@ -35,6 +35,11 @@ extern const BuiltinDescriptor kPhaserDescriptor;
 extern const BuiltinDescriptor kTremoloDescriptor;
 extern const BuiltinDescriptor kAutopannerDescriptor;
 extern const BuiltinDescriptor kRingModDescriptor;
+extern const BuiltinDescriptor kDelayDescriptor;
+extern const BuiltinDescriptor kEchoDescriptor;
+extern const BuiltinDescriptor kGrainsDescriptor;
+extern const BuiltinDescriptor kReverbDescriptor;
+extern const BuiltinDescriptor kPitchShifterDescriptor;
 extern const BuiltinDescriptor kCharacterCompressorDescriptor;
 extern const BuiltinDescriptor kMultibandCompressorDescriptor;
 extern const BuiltinDescriptor kSynthV2Descriptor;
@@ -42,6 +47,11 @@ extern const BuiltinDescriptor kDeClipperDescriptor;
 extern const BuiltinDescriptor kDeEsserDescriptor;
 extern const BuiltinDescriptor kDeHummerDescriptor;
 extern const BuiltinDescriptor kDeNoiserDescriptor;
+extern const BuiltinDescriptor kPitchCorrectorDescriptor;
+extern const BuiltinDescriptor kTunerDescriptor;
+extern const BuiltinDescriptor kSpectrumDescriptor;
+extern const BuiltinDescriptor kTranceGateDescriptor;
+extern const BuiltinDescriptor kShaperDescriptor;
 
 namespace {
 
@@ -73,10 +83,20 @@ const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kTremoloDescriptor,
     &kAutopannerDescriptor,
     &kRingModDescriptor,
+    &kDelayDescriptor,
+    &kEchoDescriptor,
+    &kGrainsDescriptor,
+    &kReverbDescriptor,
+    &kPitchShifterDescriptor,
     &kCharacterCompressorDescriptor,
     &kMultibandCompressorDescriptor,
     &kSynthV2Descriptor,
     &kDeClipperDescriptor, &kDeEsserDescriptor, &kDeHummerDescriptor, &kDeNoiserDescriptor,
+    &kPitchCorrectorDescriptor,
+    &kTunerDescriptor,
+    &kSpectrumDescriptor,
+    &kTranceGateDescriptor,
+    &kShaperDescriptor,
 };
 
 struct CRegistry {
@@ -174,6 +194,26 @@ const char* parse_builtin_state(const uint8_t* data, std::size_t len, BuiltinSta
     return nullptr;
 }
 
+// ---------------------------------------------------------------- analysis
+
+AnalysisChannel::AnalysisChannel(uint32_t capacity)
+    : capacity_(std::max<uint32_t>(1, capacity)), buf_(new float[std::size_t{3} * std::max<uint32_t>(1, capacity)]()) {}
+
+void AnalysisChannel::publish(uint32_t count) noexcept {
+    count_[back_] = std::min(count, capacity_);
+    seq_[back_] = ++next_seq_;
+    back_ = middle_.exchange(back_ | kFresh, std::memory_order_acq_rel) & 3u;
+}
+
+uint32_t AnalysisChannel::read(float* out, uint32_t cap, uint64_t& seq) noexcept {
+    if ((middle_.load(std::memory_order_acquire) & kFresh) != 0)
+        front_ = middle_.exchange(front_, std::memory_order_acq_rel) & 3u;
+    seq = seq_[front_];
+    const uint32_t n = std::min(count_[front_], cap);
+    if (n > 0) std::memcpy(out, buf_.get() + std::size_t{front_} * capacity_, sizeof(float) * n);
+    return count_[front_];
+}
+
 float mod_to_norm(const BuiltinMod& m, float v) noexcept {
     if (!(m.max > m.min)) return 0.0f;
     v = std::clamp(v, m.min, m.max);
@@ -230,6 +270,7 @@ BuiltinInstance::BuiltinInstance(PluginSpec spec, const BuiltinDescriptor& desc,
     modded_.assign(desc_.params.size(), 0.0f);
     mod_params_.assign(desc_.params.size(), 0.0f);
     proc_->prepare(sample_rate, max_block);
+    if (const uint32_t cap = proc_->analysis_capacity(); cap > 0) analysis_ = std::make_unique<AnalysisChannel>(cap);
     proc_->reset();
     mod_outputs_ = proc_->mod_outputs();
     if (mod_outputs_ > 0) mod_out_.assign(2 * std::size_t{mod_outputs_} * (max_block / kGrid + 2), 0.0f);
@@ -374,6 +415,11 @@ bool BuiltinInstance::push_note(uint8_t pitch, uint8_t velocity) noexcept {
     return live_.push(e);
 }
 
+uint32_t BuiltinInstance::analysis(float* out, uint32_t capacity, uint64_t& seq) noexcept {
+    seq = 0;
+    return analysis_ ? analysis_->read(out, capacity, seq) : 0;
+}
+
 uint32_t BuiltinInstance::latency() {
     std::vector<float> v(param_count());
     for (uint32_t i = 0; i < param_count(); ++i) v[i] = target_[i].load(std::memory_order_relaxed);
@@ -397,6 +443,7 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     ctx.sc_l = sc_l_;
     ctx.sc_r = sc_r_;
     ctx.transport = &transport;
+    ctx.analysis = analysis_.get();
     if (desc_.sample_slots > 0) {
         take_samples();
         if (active_ != nullptr) {
@@ -420,8 +467,9 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     // runs with the values in force at its first frame. Modulation splits it
     // further at every grid point (SE_MOD_GRID_FRAMES). The block's readouts
     // keep, per readout, the segment value farthest from its idle value
-    // (highest peak, deepest reduction). MIDI events go to the segment they
-    // fall in, with segment-relative offsets.
+    // (highest peak, deepest reduction), or for state readouts the last
+    // segment's values. MIDI events go to the segment they fall in, with
+    // segment-relative offsets.
     const bool modulated = mod_count_ > 0;
     float* const run_params = modulated ? modded_.data() : cur;
     MidiEvent* const seg_events = midi_scratch_.data();
@@ -465,6 +513,11 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
         } else {
             float* const sr = readout_segment_.data();
             proc_->process(l + pos, r + pos, end - pos, run_params, seg, sr);
+            if (desc_.state_readouts) {
+                std::copy(sr, sr + readout_segment_.size(), ro);
+                pos = end;
+                continue;
+            }
             for (std::size_t i = 0; i < readout_segment_.size(); ++i) {
                 const float idle = i < desc_.idle_readouts.size() ? desc_.idle_readouts[i] : 0.0f;
                 if (std::fabs(sr[i] - idle) > std::fabs(ro[i] - idle)) ro[i] = sr[i];
@@ -503,6 +556,7 @@ void BuiltinInstance::params(std::vector<ParamInfo>& out) {
         p.name = desc_.params[i];
         p.min = -1e30;
         p.max = 1e30;
+        p.automatable = proc_->automatable(i);
         out.push_back(std::move(p));
     }
 }

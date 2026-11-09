@@ -35,6 +35,7 @@ pub static GATE: DeviceDef = DeviceDef {
         fixed_width: 0.0,
         min_height: 180.0,
         shown_when: &[],
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Kick Tightener", values: &[("threshold", -20.0), ("ratio", 80.0), ("attack", 0.2), ("hold", 12.0), ("release", 40.0), ("lookahead", 3.0), ("sidechain_hpf", 30.0)] },

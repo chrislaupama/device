@@ -172,11 +172,11 @@ fn hline(y: f32, x0: f32, x1: f32) -> String {
 }
 
 fn stroke(commands: String, color: Color, width: f32) -> PanelPath {
-    PanelPath { commands: s(commands), stroke: color, width, fill: Color::from_argb_u8(0, 0, 0, 0) }
+    PanelPath { commands: s(commands), stroke: color, width, fill: Color::from_argb_u8(0, 0, 0, 0), fill2: Color::from_argb_u8(0, 0, 0, 0) }
 }
 
 fn fill(commands: String, color: Color) -> PanelPath {
-    PanelPath { commands: s(commands), stroke: Color::from_argb_u8(0, 0, 0, 0), width: 0.0, fill: color }
+    PanelPath { commands: s(commands), stroke: Color::from_argb_u8(0, 0, 0, 0), width: 0.0, fill: color, fill2: color }
 }
 
 /// Text whose x is its left (align 0), centre (1) or right (2) edge and y its centre line.

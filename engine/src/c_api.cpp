@@ -630,6 +630,21 @@ int32_t se_builtin_readouts(se_engine* engine, uint64_t device_id, float* out, s
     });
 }
 
+int32_t se_builtin_analysis(se_engine* engine, uint64_t device_id, float* out, size_t capacity, size_t* out_count,
+                            uint64_t* out_seq) {
+    SE_REQUIRE_ENGINE(engine);
+    if (capacity > 0 && out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    return guarded([&]() -> int32_t {
+        std::size_t n = 0;
+        uint64_t seq = 0;
+        const int32_t rc = engine->impl->builtin_analysis(device_id, out, capacity, n, seq);
+        if (rc != SE_OK) return fail(rc, "no live built-in device with this id");
+        if (out_count != nullptr) *out_count = n;
+        if (out_seq != nullptr) *out_seq = seq;
+        return SE_OK;
+    });
+}
+
 int32_t se_builtin_note(se_engine* engine, uint64_t device_id, uint8_t pitch, uint8_t velocity) {
     SE_REQUIRE_ENGINE(engine);
     return guarded([&]() -> int32_t {
