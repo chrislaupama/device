@@ -30,4 +30,5 @@ pub static LFO: DeviceDef = DeviceDef {
     layout: Layout { picker: &[], view: Some(View::Custom("lfo")), sliders: &[], clusters: &[], faces: &[], min_height: 0.0, shown_when: &[], fixed_width: 0.0 },
     factory: &[],
     sidechain: false,
+    samples: 0,
 };

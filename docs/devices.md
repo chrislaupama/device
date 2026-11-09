@@ -69,8 +69,9 @@ specific to one effect.
   power switch bypasses every member (`modulation::effectively_enabled`, used by
   the snapshot); macros only reach members. Removing a head removes its members;
   moving it moves them. `collapsed` hides the members, `folded` folds any card.
-- **Engine.** A source's state is an `se_builtin_state_v2` blob: values, then
-  `se_mod_route` records built by `modulation::routes`. Every 32 frames
+- **Engine.** A source's state is an `se_builtin_state_v2` blob (the same
+  header the samplers use): values, then `se_mod_route` records built by
+  `modulation::routes` after the (empty) sample and slice tables. Every 32 frames
   (`SE_MOD_GRID_FRAMES`) the engine runs each enabled source, applies its routes
   to built-in parameters (as parameter events) or plugin parameters (as plugin
   events, the base restored when the last route goes), with no allocation on the
@@ -86,6 +87,39 @@ specific to one effect.
 - **Plugin card.** A third-party plugin shows the parameters added with "+ Add"
   (`Device::card_params`, `SetCardParams`) plus any a source or automation moves,
   nine per page.
+
+## Instruments and sample slots
+
+The Sampler, Drum Rack and Pad Sampler added two general features to the
+system. Any built-in device can use them.
+
+- **Built-in instruments.** A definition with `kind: PluginKind::Instrument`
+  goes in the track's instrument slot (`Command::SetInstrumentPlugin`, on
+  instrument tracks only), not in the insert chain. The engine kernel sets
+  `BuiltinDescriptor::instrument`. It then gets the track's notes as
+  `BuiltinContext::events` and renders into silence. `se_builtin_note`
+  plays a note on a live instrument right away, for pad and preview clicks.
+  Velocity 0 releases the note.
+- **Sample slots.** `DeviceDef::samples` is the number of audio files the
+  device can hold. Each file is a `DeviceSample` in `Device::samples`: a
+  slot, a project asset and optional slices (start, gain, pan, pitch).
+  `Command::SetDeviceSample` loads, replaces or clears one slot, and slice
+  edits use it too. Each of these is one undo step. `RemoveAsset` is refused
+  while a device still plays the asset. The snapshot maps the sample assets to
+  engine assets (`SessionSnapshot::device_assets`). The engine then gets the
+  v2 state (`se_builtin_state_v2`): the v1 header, the values, then one
+  `se_builtin_sample` per slot, followed by the slices. The kernel reads the
+  samples as `BuiltinContext::samples`, which are bound on the control thread
+  and never copied on the audio thread.
+- **Shared sampler engine.** `engine/src/devices/sampler_engine.{hpp,cpp}`
+  has the voice and voice pool, the sinc interpolator (band-limited when
+  pitched up), envelopes, the filter, the LFO and the granular warp. All
+  three samplers use it.
+- **Panel.** `View::Custom("sampler" | "pad-sampler" | "drum-rack")` uses
+  `src/sampler_panel.rs`. It has the waveform well with its flags, slices and
+  playheads, the tabs with a picture canvas, and the pad grid. Files are loaded
+  from the file picker or by dropping them on the window
+  (`ImportTarget::DeviceSample`).
 
 ## Adding a device
 

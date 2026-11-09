@@ -81,6 +81,6 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Lfo>(); }
 } // namespace
 
 extern const BuiltinDescriptor kLfoDescriptor;
-const BuiltinDescriptor kLfoDescriptor{"lfo", kParams, kReadouts, &create, kIdle, kDefaults, true};
+const BuiltinDescriptor kLfoDescriptor{"lfo", kParams, kReadouts, &create, kIdle, kDefaults, false, 0, true};
 
 } // namespace saine

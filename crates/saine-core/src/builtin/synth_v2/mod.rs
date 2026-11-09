@@ -183,6 +183,7 @@ pub static SYNTH_V2: DeviceDef = DeviceDef {
     layout: Layout { picker: &[], view: Some(View::Custom("synth-v2")), sliders: &[], clusters: &[], faces: &[], min_height: 265.0, shown_when: &[], fixed_width: 0.0 },
     factory: &FACTORY,
     sidechain: false,
+    samples: 0,
 };
 
 const OFF: f32 = 0.0;

@@ -117,6 +117,7 @@ public:
     // Plugin card controls and modulation bases (main thread; see saine_engine.h).
     int32_t plugin_set_param(uint64_t device_id, uint32_t param_id, float normalized);
     int32_t mod_base(uint64_t device_id, uint32_t param_id, float& out);
+    int32_t builtin_note(uint64_t device_id, uint8_t pitch, uint8_t velocity);
     // Frees retired graphs the audio thread can no longer reach. Non-RT.
     void collect_garbage();
     std::size_t retired_graph_count() const;

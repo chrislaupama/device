@@ -42,4 +42,5 @@ pub static RACK: DeviceDef = DeviceDef {
     layout: Layout { picker: &[], view: Some(View::Custom("chain")), sliders: &[], clusters: &[], faces: &[], min_height: 0.0, shown_when: &[], fixed_width: 0.0 },
     factory: FACTORY,
     sidechain: false,
+    samples: 0,
 };

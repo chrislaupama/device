@@ -410,9 +410,10 @@ pub fn build_tree(cat: &Catalog, tab: usize, search: &str, expanded: &HashSet<St
     let tp = if tab == 0 { "i" } else { "e" };
     let open = |key: &str| !q.is_empty() || expanded.contains(key);
     let leaf_icon = if kind == PluginKind::Instrument { 1 } else { 2 };
-    // Built-in: our devices of this kind (saine_core::builtin) and, for instruments, the Synth.
+    // Built-in: our devices of this kind (saine_core::builtin) and, for instruments, the Synth
+    // (its own row, Item::BuiltinSynth).
     let builtins: Vec<&'static DeviceDef> =
-        saine_core::builtin::all().iter().copied().filter(|d| d.kind == kind && saine_core::builtin::listed(d) && (q.is_empty() || d.name.to_lowercase().contains(&q) || d.category.to_lowercase().contains(&q))).collect();
+        saine_core::builtin::all().iter().copied().filter(|d| d.kind == kind && saine_core::builtin::listed(d) && d.id != saine_core::builtin::synth_v2::SYNTH_V2.id && (q.is_empty() || d.name.to_lowercase().contains(&q) || d.category.to_lowercase().contains(&q))).collect();
     if kind == PluginKind::Effect && !builtins.is_empty() {
         let key = format!("{tp}/builtin");
         let o = open(&key);
@@ -423,12 +424,18 @@ pub fn build_tree(cat: &Catalog, tab: usize, search: &str, expanded: &HashSet<St
             }
         }
     }
-    if kind == PluginKind::Instrument && (q.is_empty() || "synth".contains(&q) || "built-in".contains(&q)) {
+    let synth = q.is_empty() || "synth".contains(&q) || "built-in".contains(&q);
+    if kind == PluginKind::Instrument && (synth || !builtins.is_empty()) {
         let key = format!("{tp}/builtin");
         let o = open(&key);
-        push(TreeEntry { key: key.clone(), item: None, folder: true }, row(0, "Built-in", count_text(1), 0, if o { 2 } else { 1 }, false));
-        if o {
+        push(TreeEntry { key: key.clone(), item: None, folder: true }, row(0, "Built-in", count_text(usize::from(synth) + builtins.len()), 0, if o { 2 } else { 1 }, false));
+        if o && synth {
             push(TreeEntry { key: format!("{tp}/b/synth"), item: Some(Item::BuiltinSynth), folder: false }, row(1, "Synth", String::new(), 1, 0, true));
+        }
+        if o {
+            for d in &builtins {
+                push(TreeEntry { key: format!("{tp}/b/{}", d.id), item: Some(Item::Builtin(d)), folder: false }, row(1, d.name, String::new(), leaf_icon, 0, true));
+            }
         }
     }
     let all = cat.of_kind(kind);
@@ -651,7 +658,6 @@ impl Controller {
         let ok = match (item.kind(), item) {
             (PluginKind::Effect, Item::Plugin(p)) => self.execute(Command::AddDevice { track, index, device: Device::new(p.clone()) }),
             (PluginKind::Effect, Item::Builtin(d)) => self.execute(Command::AddDevice { track, index, device: d.instantiate() }),
-            (PluginKind::Instrument, Item::Builtin(_)) => false,
             (PluginKind::Instrument, _) if kind != TrackKind::Instrument => {
                 self.set_status(format!("{} is an instrument: choose an instrument track", item.name()), 4);
                 false
@@ -668,6 +674,10 @@ impl Controller {
             (PluginKind::Instrument, Item::Plugin(p)) => {
                 self.close_instrument_editor(track);
                 self.execute(Command::SetInstrumentPlugin { track, device: Some(Device::new(p.clone())) })
+            }
+            (PluginKind::Instrument, Item::Builtin(d)) => {
+                self.close_instrument_editor(track);
+                self.execute(Command::SetInstrumentPlugin { track, device: Some(d.instantiate()) })
             }
             (PluginKind::Effect, Item::BuiltinSynth) => false,
         };
@@ -1110,6 +1120,10 @@ impl Controller {
         let cur = t.instrument_plugin.as_ref().filter(|d| !is_builtin_synth(d)).map(|d| (d.plugin.format, d.plugin.id.clone()));
         let check = |on: bool, s: &str| if on { "✓".to_string() } else { s.to_string() };
         let mut rows = vec![("Synth".to_string(), check(cur.is_none(), "Built-in"), Some(MenuPick::Add(Item::BuiltinSynth)), false)];
+        for d in saine_core::builtin::all().iter().filter(|d| d.kind == PluginKind::Instrument && d.id != saine_core::builtin::synth_v2::SYNTH_V2.id) {
+            let on = cur.as_ref().is_some_and(|(f, id)| *f == PluginFormat::Builtin && id == d.id);
+            rows.push((d.name.to_string(), check(on, "Built-in"), Some(MenuPick::Add(Item::Builtin(d))), false));
+        }
         let plugins = self.devices.catalog.of_kind(PluginKind::Instrument);
         if !plugins.is_empty() {
             rows.push(("Instrument plugins".to_string(), String::new(), None, true));
@@ -1155,6 +1169,7 @@ impl Controller {
         let same = match (&item, &cur_inst) {
             (Item::BuiltinSynth, None) => item.kind() == PluginKind::Instrument && self.project().track(t).is_some_and(|t| t.kind == TrackKind::Instrument),
             (Item::Plugin(p), Some(c)) => p.kind == PluginKind::Instrument && p.format == c.format && p.id == c.id,
+            (Item::Builtin(d), Some(c)) => d.kind == PluginKind::Instrument && c.format == PluginFormat::Builtin && c.id == d.id,
             _ => false,
         };
         if !same {
@@ -1478,8 +1493,11 @@ mod tests {
         let (entries, rows) = build_tree(&c, 0, "", &open);
         assert_eq!(rows[0].label, "Built-in");
         assert_eq!(entries[1].item, Some(Item::BuiltinSynth));
-        assert_eq!(rows[2].label, "Audio Units");
-        assert_eq!(rows[4].label, "DLSMusicDevice");
+        assert_eq!(rows[0].count, "4");
+        assert_eq!([rows[2].label.as_str(), rows[3].label.as_str(), rows[4].label.as_str()], ["Sampler", "Drum Rack", "Pad Sampler"]);
+        assert!(matches!(&entries[3].item, Some(Item::Builtin(d)) if d.id == "drum-rack"));
+        assert_eq!(rows[5].label, "Audio Units");
+        assert_eq!(rows[7].label, "DLSMusicDevice");
     }
 
     #[test]

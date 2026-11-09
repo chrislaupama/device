@@ -271,8 +271,6 @@ std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g);
 // balance control to stereo sources (left gain on the left channel).
 void constant_power_pan(float pan, float& left, float& right) noexcept;
 
-using AssetLookup = std::function<AssetRef(uint64_t asset_id)>;
-
 // Validates and copies the description. Returns an se_result code. The v1..v5
 // entry points convert to v6 (v1..v5: no automation lanes) (v1: no instrument, no notes; v1/v2: default
 // synth parameters; v1..v3: no arm/monitor/input; v1..v4: no devices).

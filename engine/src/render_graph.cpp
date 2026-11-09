@@ -535,11 +535,10 @@ int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lo
             for (uint32_t i = 0; i < td.device_count; ++i) {
                 const se_device_desc& dd = td.devices[i];
                 if (dd.format != SE_PLUGIN_BUILTIN) continue;
-                const uint8_t* values = nullptr;
-                const uint8_t* routes = nullptr;
-                uint32_t count = 0, rc = 0;
-                uint64_t sc = 0;
-                parse_builtin_state(dd.state, dd.state_len, values, count, sc, routes, rc); // validated above
+                BuiltinStateView view;
+                parse_builtin_state(dd.state, dd.state_len, view); // validated above
+                const uint8_t* const routes = view.routes;
+                const uint32_t rc = view.route_count;
                 if (rc == 0) {
                     const BuiltinDescriptor* const bd = dd.plugin_id != nullptr ? find_builtin(dd.plugin_id) : nullptr;
                     if (bd == nullptr || !bd->mod_source) continue;

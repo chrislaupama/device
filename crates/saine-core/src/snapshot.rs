@@ -78,6 +78,9 @@ pub struct SessionSnapshot {
     pub master_gain: f32,
     /// Master volume automation (enabled, non-empty lanes).
     pub master_automation: Vec<LaneSnapshot>,
+    /// Engine assets of the audio files built-in devices play
+    /// (`Device::samples`); samples whose asset isn't loaded are left out.
+    pub device_assets: HashMap<AssetId, u64>,
 }
 
 /// Build a snapshot. `engine_assets` maps model assets to loaded engine
@@ -147,5 +150,12 @@ pub fn build(project: &Project, engine_rate: f64, engine_assets: &HashMap<AssetI
         })
         .collect();
     let master_automation = lanes(project, &project.master_automation, engine_rate);
-    (SessionSnapshot { tracks, master_gain: project.master_gain, master_automation }, skipped)
+    let device_assets = project
+        .tracks
+        .iter()
+        .flat_map(|t| t.devices.iter().chain(t.instrument_plugin.iter()))
+        .flat_map(|d| d.samples.iter())
+        .filter_map(|s| Some((s.asset, *engine_assets.get(&s.asset)?)))
+        .collect();
+    (SessionSnapshot { tracks, master_gain: project.master_gain, master_automation, device_assets }, skipped)
 }

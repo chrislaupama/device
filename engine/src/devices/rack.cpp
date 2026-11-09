@@ -33,6 +33,6 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Rack>(); }
 } // namespace
 
 extern const BuiltinDescriptor kRackDescriptor;
-const BuiltinDescriptor kRackDescriptor{"device-rack", kParams, {}, &create, {}, kDefaults, true};
+const BuiltinDescriptor kRackDescriptor{"device-rack", kParams, {}, &create, {}, kDefaults, false, 0, true};
 
 } // namespace saine

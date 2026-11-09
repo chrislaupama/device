@@ -127,22 +127,19 @@ TEST_CASE(rack_macros_are_outputs) {
 }
 
 TEST_CASE(state_v2_blobs_carry_routes) {
-    const uint8_t* v = nullptr;
-    const uint8_t* routes = nullptr;
-    uint32_t count = 0, rc = 0;
-    uint64_t sc = 0;
-    auto ok = state_blob_v2(kLfo, {makeup_route(7, -0.2f, 0.2f)});
-    CHECK(saine::parse_builtin_state(ok.data(), ok.size(), v, count, sc, routes, rc) == nullptr);
-    CHECK(count == 6 && rc == 1 && routes != nullptr);
-    auto bad = state_blob_v2(kLfo, {makeup_route(7, std::nanf(""), 0.2f)});
-    CHECK(saine::parse_builtin_state(bad.data(), bad.size(), v, count, sc, routes, rc) != nullptr);
+    saine::BuiltinStateView v;
+    auto ok = route_blob(kLfo, {makeup_route(7, -0.2f, 0.2f)});
+    CHECK(saine::parse_builtin_state(ok.data(), ok.size(), v) == nullptr);
+    CHECK(v.value_count == 6 && v.route_count == 1 && v.routes != nullptr);
+    auto bad = route_blob(kLfo, {makeup_route(7, std::nanf(""), 0.2f)});
+    CHECK(saine::parse_builtin_state(bad.data(), bad.size(), v) != nullptr);
     auto kind = makeup_route(7, 0.f, 0.f);
     kind.kind = 9;
-    auto bad2 = state_blob_v2(kLfo, {kind});
-    CHECK(saine::parse_builtin_state(bad2.data(), bad2.size(), v, count, sc, routes, rc) != nullptr);
+    auto bad2 = route_blob(kLfo, {kind});
+    CHECK(saine::parse_builtin_state(bad2.data(), bad2.size(), v) != nullptr);
     auto cut = ok;
     cut.pop_back();
-    CHECK(saine::parse_builtin_state(cut.data(), cut.size(), v, count, sc, routes, rc) != nullptr);
+    CHECK(saine::parse_builtin_state(cut.data(), cut.size(), v) != nullptr);
 }
 
 TEST_CASE(norm_conversions_match_the_core_codec) {
@@ -171,7 +168,7 @@ TEST_CASE(lfo_moves_a_builtin_parameter_in_the_engine) {
         std::vector<float> l = lfo;
         l[4] = depth;
         id += 2;
-        DeviceSession::add_device_state(t, id, "lfo", state_blob_v2(l, {makeup_route(id + 1, -1.f / 3.f, 1.f / 3.f)}), lfo_on);
+        DeviceSession::add_device_state(t, id, "lfo", route_blob(l, {makeup_route(id + 1, -1.f / 3.f, 1.f / 3.f)}), lfo_on);
         DeviceSession::add_device(t, id + 1, "compressor", comp);
         REQUIRE(s.publish(e) == SE_OK);
         REQUIRE(se_transport_seek(e, 0) == SE_OK);
@@ -203,7 +200,7 @@ TEST_CASE(macros_set_member_parameters) {
     DeviceSession s;
     auto& t = s.add_track(1, a, 24000);
     // Macro 3 maps makeup over 0..2/3 of its range: at 100% -> +12 dB.
-    DeviceSession::add_device_state(t, 20, "device-rack", state_blob_v2(rack, {makeup_route(21, 0.f, 2.f / 3.f, true, 2)}));
+    DeviceSession::add_device_state(t, 20, "device-rack", route_blob(rack, {makeup_route(21, 0.f, 2.f / 3.f, true, 2)}));
     DeviceSession::add_device(t, 21, "compressor", comp);
     REQUIRE(s.publish(e) == SE_OK);
     REQUIRE(se_transport_play(e) == SE_OK);
@@ -223,7 +220,7 @@ TEST_CASE(an_lfo_without_targets_keeps_running) {
     lfo[1] = 0.f; // free, 1 Hz
     DeviceSession s;
     auto& t = s.add_track(1, a, 48000);
-    DeviceSession::add_device_state(t, 40, "lfo", state_blob_v2(lfo, {}));
+    DeviceSession::add_device_state(t, 40, "lfo", route_blob(lfo, {}));
     REQUIRE(s.publish(e) == SE_OK);
     REQUIRE(se_transport_play(e) == SE_OK);
     float ro[3] = {};
@@ -253,7 +250,7 @@ TEST_CASE(lfo_moves_a_plugin_parameter_and_restores_its_base) {
     const auto session = [&](bool routed) {
         DeviceSession s;
         auto& t = s.add_track(1, a, 48000);
-        DeviceSession::add_device_state(t, 30, "lfo", state_blob_v2(lfo, routed ? std::vector<se_mod_route>{r} : std::vector<se_mod_route>{}));
+        DeviceSession::add_device_state(t, 30, "lfo", route_blob(lfo, routed ? std::vector<se_mod_route>{r} : std::vector<se_mod_route>{}));
         DeviceSession::add_clap(t, 31, clap_gain, "studio.saine.test.gain");
         REQUIRE(s.publish(e) == SE_OK);
     };
@@ -292,10 +289,10 @@ TEST_CASE(modulated_engine_path_does_not_allocate) {
         auto& tr = s.add_track(t, a, 48000);
         std::vector<float> lfo = kLfo;
         lfo[0] = static_cast<float>(t % 7);
-        DeviceSession::add_device_state(tr, t * 10, "lfo", state_blob_v2(lfo, {makeup_route(t * 10 + 2, -0.2f, 0.2f)}));
+        DeviceSession::add_device_state(tr, t * 10, "lfo", route_blob(lfo, {makeup_route(t * 10 + 2, -0.2f, 0.2f)}));
         std::vector<float> rack = kRack;
         rack[0] = 40.f;
-        DeviceSession::add_device_state(tr, t * 10 + 1, "device-rack", state_blob_v2(rack, {makeup_route(t * 10 + 2, 0.1f, 0.6f, true)}));
+        DeviceSession::add_device_state(tr, t * 10 + 1, "device-rack", route_blob(rack, {makeup_route(t * 10 + 2, 0.1f, 0.6f, true)}));
         DeviceSession::add_device(tr, t * 10 + 2, "compressor", kComp);
         DeviceSession::add_lane(tr, t * 10 + 1, 0, {{0, 0.0f, 0.0f}, {48000, 100.0f, 0.0f}});
     }
