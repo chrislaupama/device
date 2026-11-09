@@ -1,9 +1,10 @@
 // Built-in device benchmark: per-block DSP cost of every registered device
-// (and every compressor character), the parameter update paths, and a
-// 32-track session with two compressors per track.
+// (every compressor character, the Synth with held notes), the parameter
+// update paths, and a 32-track session with two compressors per track.
 //
 //   saine_device_bench [blocks]      (Release build; numbers in us per 256-frame block)
 #include "devices/builtin.hpp"
+#include "devices/synth_v2_params.hpp"
 #include "platform/os.hpp"
 #include "saine_engine.h"
 
@@ -77,12 +78,15 @@ Stats summarize(std::vector<double>& t) {
 
 double us(Clock::duration d) { return std::chrono::duration<double, std::micro>(d).count(); }
 
-Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, uint32_t events_per_block) {
+Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, uint32_t events_per_block,
+                   const std::vector<saine::MidiEvent>& notes = {}) {
     saine::PluginSpec spec;
     spec.device_id = 1;
     spec.format = saine::PluginFormat::Builtin;
     spec.plugin_id = id;
     spec.state = blob(values);
+    const saine::BuiltinDescriptor* d = saine::find_builtin(id);
+    spec.instrument = d != nullptr && d->instrument;
     std::string err;
     auto inst = saine::create_builtin_instance(spec, kRate, kBlock, err);
     if (!inst) {
@@ -105,7 +109,9 @@ Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, u
             r[i] = 0.7f * n;
         }
         const auto t0 = Clock::now();
-        inst->run(l.data(), r.data(), kBlock, nullptr, 0, tr, ev.data(), static_cast<uint32_t>(ev.size()));
+        const bool first = b == 0 && !notes.empty();
+        inst->run(l.data(), r.data(), kBlock, first ? notes.data() : nullptr, first ? static_cast<uint32_t>(notes.size()) : 0, tr,
+                  ev.data(), static_cast<uint32_t>(ev.size()));
         const auto t1 = Clock::now();
         if (b >= 200) t.push_back(us(t1 - t0));
     }
@@ -250,12 +256,28 @@ int main(int argc, char** argv) {
         row(name, bench_kernel("character-mod", tweak("character-mod", {{"model", static_cast<float>(c)}}), blocks, 0));
     }
     row("character-mod (Phaser Barber)", bench_kernel("character-mod", tweak("character-mod", {{"model", 7.0f}, {"mode_phaser", 4.0f}}), blocks, 0));
+    // Synth: notes held from the first block (sustain keeps every voice busy).
+    const std::vector<float> synth(std::begin(saine::synth_v2::kDefaults), std::end(saine::synth_v2::kDefaults));
+    const auto chord = [](uint32_t n) {
+        std::vector<saine::MidiEvent> v;
+        for (uint32_t i = 0; i < n; ++i) v.push_back(saine::MidiEvent{0, 0x90, static_cast<uint8_t>(36 + 5 * i), 100, 0});
+        return v;
+    };
+    row("synth-v2 (idle, sleeping)", bench_kernel("synth-v2", synth, blocks, 0));
+    row("synth-v2 (default, 1 note)", bench_kernel("synth-v2", synth, blocks, 0, chord(1)));
+    row("synth-v2 (default, 8 notes)", bench_kernel("synth-v2", synth, blocks, 0, chord(8)));
+    {
+        std::vector<float> heavy = synth;
+        heavy[17] = 7.f;                                           // unison 8
+        for (uint32_t s = 0; s < 4; ++s) heavy[184 + 79 * s] = 1.f; // every effect slot on
+        row("synth-v2 (16 notes, unison 8, 4 FX)", bench_kernel("synth-v2", heavy, blocks, 0, chord(16)));
+    }
     // Instruments: voices kept sounding by a new note every few blocks.
-    const std::vector<uint8_t> chord = {48, 55, 60, 64, 67, 71, 72, 76};
+    const std::vector<uint8_t> keys = {48, 55, 60, 64, 67, 71, 72, 76};
     {
         std::vector<float> v = sampler_values();
         v[2] = 1; // poly
-        row("sampler-steam (One Shot, 8 voices)", bench_instrument("sampler-steam", v, blocks, chord, 4));
+        row("sampler-steam (One Shot, 8 voices)", bench_instrument("sampler-steam", v, blocks, keys, 4));
         v[0] = 0;   // Classic
         v[41] = 1;  // loop
         v[18] = 1;  // filter on, LP 24
@@ -265,13 +287,13 @@ int main(int argc, char** argv) {
         v[24] = 0.5f; // env depth
         v[31] = 0.3f; // LFO amount
         v[34] = 1;    // LFO -> cutoff
-        row("sampler-steam (Classic+filter, 8 v)", bench_instrument("sampler-steam", v, blocks, chord, 4));
+        row("sampler-steam (Classic+filter, 8 v)", bench_instrument("sampler-steam", v, blocks, keys, 4));
         v = sampler_values();
         v[2] = 1;
         v[4] = 3; // warp quarter note
-        row("sampler-steam (warp, 8 voices)", bench_instrument("sampler-steam", v, blocks, chord, 4));
+        row("sampler-steam (warp, 8 voices)", bench_instrument("sampler-steam", v, blocks, keys, 4));
         v = sampler_values();
-        row("sampler-steam (mono, 1 voice)", bench_instrument("sampler-steam", v, blocks, chord, 8));
+        row("sampler-steam (mono, 1 voice)", bench_instrument("sampler-steam", v, blocks, keys, 8));
     }
     {
         std::vector<float> pad = {0, 0, 0, 0, 0, 0, 1, 0, 0, 0};

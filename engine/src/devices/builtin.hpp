@@ -60,10 +60,6 @@ struct BuiltinContext {
     const float* sc_l = nullptr;
     const float* sc_r = nullptr;
     const RtTransport* transport = nullptr;
-    // Instruments: this call's note events (offsets relative to the call's
-    // first frame, sorted): the track's notes plus se_builtin_note events.
-    const MidiEvent* events = nullptr;
-    uint32_t event_count = 0;
     // Devices with sample slots: one entry per slot (sample_count = the
     // descriptor's sample_slots).
     const BuiltinSample* samples = nullptr;
@@ -71,6 +67,10 @@ struct BuiltinContext {
     // Frames from transport->position to the first frame of this call (the
     // instance splits blocks at automation events).
     uint32_t offset = 0;
+    // MIDI events of this call (instruments): the track's notes plus
+    // se_builtin_note events, offsets relative to l/r[0], sorted by offset.
+    const MidiEvent* events = nullptr;
+    uint32_t event_count = 0;
 };
 
 class BuiltinProcessor {
@@ -80,8 +80,8 @@ public:
     virtual void prepare(double sample_rate, uint32_t max_block) = 0;
     // RT. Clears internal state (envelopes, delay lines) without allocating.
     virtual void reset() noexcept = 0;
-    // RT. Processes l/r in place (instruments: l/r arrive silent and get
-    // the instrument's output). `params` holds the current plain values
+    // RT. Processes l/r in place (an instrument gets silence in l/r and
+    // writes its output there; its notes arrive in ctx.events). `params` holds the current plain values
     // (registry order), constant over this call: the instance splits blocks
     // at automation events. Smoothing of audible steps is the processor's job.
     // Write readouts (if any) into `readouts`.
@@ -103,7 +103,8 @@ struct BuiltinDescriptor {
     // Default plain values in parameter order (the Rust definition's
     // defaults), for the generic tests and the benchmark; empty = unknown.
     std::span<const float> defaults;
-    // Instruments go in a track's instrument slot and get its note events.
+    // An instrument: it takes the track's instrument slot and plays the
+    // track's notes (BuiltinContext::events) instead of processing audio.
     bool instrument = false;
     // Sample slots (audio files the device plays, see BuiltinSample).
     uint32_t sample_slots = 0;
@@ -135,9 +136,6 @@ const char* parse_builtin_state(const uint8_t* data, std::size_t len, BuiltinSta
 // Adapter from a BuiltinProcessor to the plugin host.
 class BuiltinInstance final : public PluginInstance {
 public:
-    static constexpr uint32_t kMaxParams = 256;
-    static constexpr uint32_t kMaxReadouts = 64;
-
     BuiltinInstance(PluginSpec spec, const BuiltinDescriptor& desc, std::unique_ptr<BuiltinProcessor> proc,
                     double sample_rate, uint32_t max_block);
 
@@ -202,7 +200,6 @@ private:
     SampleSet* active_ = nullptr; // RT owned
     SpscQueue<MidiEvent, kLiveEvents> live_;
     std::vector<MidiEvent> merged_;  // RT scratch: live + sequenced events
-    std::vector<MidiEvent> seg_events_;
     const BuiltinDescriptor& desc_;
     std::unique_ptr<BuiltinProcessor> proc_;
     std::unique_ptr<std::atomic<float>[]> target_; // written by the main thread
@@ -210,6 +207,7 @@ private:
     std::unique_ptr<std::atomic<float>[]> readout_atomic_;
     std::vector<float> readout_scratch_;
     std::vector<float> readout_segment_; // later automation segments, merged into readout_scratch_
+    std::vector<MidiEvent> midi_scratch_; // MIDI events of one automation segment
     const float* sc_l_ = nullptr;
     const float* sc_r_ = nullptr;
 };

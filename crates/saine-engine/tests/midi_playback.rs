@@ -64,6 +64,18 @@ fn midi_notes_play_through_builtin_synth_and_undo_silences_them() {
     let mut doc = Document::new(Project::default());
     // Default project: one audio and one instrument track, 120 BPM (1 beat = 24000 frames).
     let inst = doc.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument).unwrap().id;
+    // The track's Synth as a plain sine voice: one oscillator, no unison,
+    // drift, modulation or effects, open filter, short release.
+    let synth = doc.project().track(inst).unwrap().instrument_plugin.as_ref().unwrap().id;
+    let plain: std::collections::BTreeMap<String, f32> = [
+        ("osc1_wave", 0.0), ("osc1_shape", 0.0), ("osc2_level", 0.0), ("sub_level", 0.0), ("unison_voices", 0.0),
+        ("drift", 0.0), ("cutoff", 20_000.0), ("resonance", 0.0), ("filter_drive", 0.0), ("filter_env", 0.0),
+        ("amp_release", 0.1), ("mod1_on", 0.0), ("mod2_on", 0.0), ("mod3_on", 0.0), ("fx1_on", 0.0), ("fx2_on", 0.0), ("fx3_on", 0.0), ("fx4_on", 0.0),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect();
+    doc.execute(Command::SetDeviceParams { device: synth, params: plain, preset: None }, Origin::User).unwrap();
     doc.execute(Command::AddMidiClip { track: inst, clip: MidiClip::empty(0, 4 * PPQ) }, Origin::User).unwrap();
     let clip = doc.project().track(inst).unwrap().midi_clips[0].id;
     // A4 from beat 1 to beat 3: frames [24000, 72000).
@@ -81,15 +93,16 @@ fn midi_notes_play_through_builtin_synth_and_undo_silences_them() {
     let l = left(&out);
     // Centre pan: identical channels.
     assert!(out.chunks_exact(2).all(|f| f[0] == f[1]));
-    // Silence before the note, sound from exactly its first frame.
+    // Silence before the note, sound from its first frames (a sine starts
+    // at zero phase).
     assert!(l[..24_000].iter().all(|&v| v == 0.0), "sound before the note-on");
-    assert_ne!(l[24_000], 0.0, "note-on frame must be non-zero");
+    assert!(l[24_000..24_004].iter().any(|&v| v != 0.0), "the note must start at its frame");
     let during = rms(&l[30_000..70_000]);
     assert!(during > 0.01, "rms during note {during}");
     // Right pitch (A4 = 440 Hz).
     let hz = estimate_hz(&l[34_000..60_000], 440.0, 10.0);
     assert!((hz - 440.0).abs() <= 0.5, "estimated {hz} Hz");
-    // Release tail after the note-off, then silence (voice freed at -90 dB, ~375 ms).
+    // Release tail after the note-off, then silence (100 ms release to -80 dB).
     assert!(rms(&l[72_000..73_000]) > 0.2 * during);
     assert!(l[72_000 + 19_200..].iter().all(|&v| v == 0.0));
 

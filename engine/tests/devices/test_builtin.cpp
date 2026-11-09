@@ -4,6 +4,7 @@
 // sidechain routing).
 #include "device_harness.hpp"
 #include "sampler_defaults.hpp"
+#include "devices/synth_v2_params.hpp"
 
 #include <set>
 
@@ -99,12 +100,26 @@ TEST_CASE(every_builtin_is_rt_safe_and_robust) {
         DeviceRig rig(d.id, defaults_for(d), 48000.0, 512);
         const std::size_t n = 48000;
         if (d.sample_slots > 0) load_test_samples(rig);
-        if (d.instrument) {
-            auto [pl, pr] = rig.play(n, test_notes(n));
-            CHECK(all_finite(pl) && all_finite(pr));
-        }
-        auto [sl, sr] = rig.run(Signal(n, 0.0f), Signal(n, 0.0f));
+        // Instruments play a chord with overlapping notes, pitch bend and
+        // the sustain pedal through every check.
+        std::vector<saine::MidiEvent> notes;
+        if (d.instrument)
+            for (uint32_t k = 0; k < 12; ++k) {
+                const auto at = k * 4000;
+                notes.push_back({at, 0x90, static_cast<uint8_t>(36 + 7 * k), 100, 0});
+                notes.push_back({at + 10, 0xe0, 0, static_cast<uint8_t>(k * 10), 0});
+                notes.push_back({at + 20, 0xb0, 64, static_cast<uint8_t>(k % 4 == 0 ? 127 : 0), 0});
+                notes.push_back({at + 3500, 0x80, static_cast<uint8_t>(36 + 7 * k), 0, 0});
+            }
+        const auto midi = [&](std::size_t frames) {
+            std::vector<saine::MidiEvent> m;
+            for (const saine::MidiEvent& e : notes)
+                if (e.offset < frames) m.push_back(e);
+            return m;
+        };
+        auto [sl, sr] = rig.run(Signal(n, 0.0f), Signal(n, 0.0f), nullptr, nullptr, {}, midi(n));
         CHECK(all_finite(sl) && all_finite(sr));
+        if (d.instrument) CHECK(peak(sl) > 0.01 && peak(sl) < 4.0);
         auto [il, ir] = rig.run(impulse(n), impulse(n));
         CHECK(all_finite(il) && all_finite(ir));
         auto [nl, nr] = rig.run(noise(n, 4.0f, 3), noise(n, 4.0f, 4));
@@ -113,7 +128,7 @@ TEST_CASE(every_builtin_is_rt_safe_and_robust) {
         // Extreme values in both directions must be clamped by the processor.
         for (float extreme : {-1e6f, 1e6f, 0.0f}) {
             for (std::size_t p = 0; p < d.params.size(); ++p) rig.instance().set_value(static_cast<uint32_t>(p), extreme);
-            auto [xl, xr] = rig.run(noise(4096, 1.0f, 5), noise(4096, 1.0f, 6));
+            auto [xl, xr] = rig.run(noise(4096, 1.0f, 5), noise(4096, 1.0f, 6), nullptr, nullptr, {}, midi(4096));
             CHECK(all_finite(xl) && all_finite(xr));
             if (d.instrument) {
                 auto [yl, yr] = rig.play(8192, test_notes(8192));
@@ -126,19 +141,6 @@ TEST_CASE(every_builtin_is_rt_safe_and_robust) {
         std::vector<float> l(512), r(512), scl(512, 0.25f), scr(512, 0.25f);
         std::vector<saine::ParamEvent> ev;
         for (uint32_t i = 0; i < 8; ++i) ev.push_back(saine::ParamEvent{i * 37, 0, static_cast<double>(defaults_for(d)[0])});
-        std::vector<saine::MidiEvent> notes;
-        for (uint32_t i = 0; i < 6; ++i) {
-            saine::MidiEvent on;
-            on.offset = i * 50;
-            on.status = 0x90;
-            on.data1 = static_cast<uint8_t>(36 + 7 * i);
-            on.data2 = 100;
-            notes.push_back(on);
-            saine::MidiEvent off = on;
-            off.offset = i * 50 + 20;
-            off.status = 0x80;
-            notes.push_back(off);
-        }
         saine::RtTransport tr;
         const long before = rt_alloc_count();
         {
@@ -149,12 +151,13 @@ TEST_CASE(every_builtin_is_rt_safe_and_robust) {
                 for (uint32_t i = 0; i < frames; ++i) l[i] = r[i] = 0.5f * std::sin(0.05f * static_cast<float>(i + k));
                 if (k % 3 == 0) rig.instance().set_sidechain(scl.data(), scr.data());
                 const auto ne = static_cast<uint32_t>(std::count_if(ev.begin(), ev.end(), [&](const saine::ParamEvent& e) { return e.offset < frames; }));
-                const auto nn = static_cast<uint32_t>(std::count_if(notes.begin(), notes.end(), [&](const saine::MidiEvent& m) { return m.offset < frames; }));
+                const saine::MidiEvent play[2] = {{0, static_cast<uint8_t>(k % 4 < 2 ? 0x90 : 0x80), static_cast<uint8_t>(40 + k % 24), 90, 0},
+                                                  {frames - 1, 0x90, static_cast<uint8_t>(64 + k % 12), 70, 0}};
                 if (d.instrument && k % 4 == 1) {
                     rig.instance().push_note(60, 90);
                     rig.instance().push_note(60, 0);
                 }
-                rig.instance().run(l.data(), r.data(), frames, d.instrument ? notes.data() : nullptr, d.instrument ? nn : 0, tr,
+                rig.instance().run(l.data(), r.data(), frames, d.instrument ? play : nullptr, d.instrument ? 2u : 0u, tr,
                                    ev.data(), k % 2 == 0 ? ne : 0);
                 if (k % 40 == 39) rig.instance().processor().reset();
             }

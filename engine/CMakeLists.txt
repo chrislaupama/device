@@ -134,6 +134,8 @@ add_library(saine_engine STATIC
   src/devices/pad_sampler.cpp
   src/devices/sampler.cpp
   src/devices/sampler_engine.cpp
+  src/devices/synth_v2.cpp
+  src/devices/synth_v2_fx.cpp
   $<TARGET_OBJECTS:saine_vst3_host>
   # Platform backends: each file is compile-guarded so exactly one is active.
   src/platform/audio_device.cpp
@@ -349,7 +351,8 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/devices/test_modulation.cpp
     tests/devices/test_character_mod.cpp
     tests/devices/test_drum_rack.cpp
-    tests/devices/test_sampler.cpp)
+    tests/devices/test_sampler.cpp
+    tests/devices/test_synth_v2.cpp)
   target_include_directories(saine_engine_tests PRIVATE src tests)
   target_link_libraries(saine_engine_tests PRIVATE saine_engine saine_engine_warnings)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
