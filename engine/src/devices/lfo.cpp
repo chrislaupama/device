@@ -7,7 +7,8 @@
 // plays the cycle position is the song position in quarter notes divided by
 // the division length, so it lines up with the bar; while stopped it keeps
 // counting at the tempo from where it was. Phase is added before the shape.
-// Readouts: the last wave position and the depth (for the panel's live dot).
+// Readouts: the last wave position, the depth and the position inside the
+// cycle 0..1 (for the panel's live dot).
 #include "builtin.hpp"
 #include "lfo.hpp"
 
@@ -18,8 +19,8 @@ namespace saine {
 namespace {
 
 constexpr const char* kParams[] = {"shape", "sync", "rate", "rateSync", "depth", "phase"};
-constexpr const char* kReadouts[] = {"position", "depth"};
-constexpr float kIdle[] = {0.5f, 0.0f};
+constexpr const char* kReadouts[] = {"position", "depth", "cycle"};
+constexpr float kIdle[] = {0.5f, 0.0f, 0.0f};
 
 class Lfo final : public BuiltinProcessor {
 public:
@@ -33,6 +34,7 @@ public:
     void process(float*, float*, uint32_t, const float*, const BuiltinContext&, float* readouts) noexcept override {
         readouts[0] = last_pos_;
         readouts[1] = last_depth_;
+        readouts[2] = last_cycle_;
     }
 
     uint32_t mod_outputs() const noexcept override { return 1; }
@@ -55,6 +57,7 @@ public:
         out[1] = depth;
         last_pos_ = pos;
         last_depth_ = depth;
+        last_cycle_ = static_cast<float>(x - std::floor(x));
         // Advance both clocks so switching Sync keeps running smoothly; wrap
         // the free phase at 4096 cycles (the random shapes repeat there).
         free_ = std::fmod(free_ + hz * frames / rate_, 4096.0);
@@ -68,6 +71,7 @@ private:
     bool was_playing_ = false;
     float last_pos_ = 0.5f;
     float last_depth_ = 0.0f;
+    float last_cycle_ = 0.0f;
 };
 
 std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Lfo>(); }

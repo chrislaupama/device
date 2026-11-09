@@ -225,12 +225,23 @@ impl Controller {
         Some((d, saine_core::builtin::def_of(d)?))
     }
 
-    /// Value shown for a parameter: the live drag value, else the model value.
+    /// Value shown for a parameter: the live drag value (a knob or the LFO
+    /// picture), else the model value.
     fn panel_value(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
         match self.devices.panel.drag {
             Some(g) if g.device == d.id && def.params.get(g.index).is_some_and(|q| q.id == p.id) => g.value,
-            _ => def.value(d, p),
+            _ => match self.wave_drag_values(d.id) {
+                Some((_, de)) if p.id == "depth" => p.from_normalized(de),
+                Some((r, _)) if (p.id == "rate" || p.id == "rateSync") && def.param("sync").is_some_and(|s| (def.value(d, s) >= 0.5) == (p.id == "rateSync")) => {
+                    if p.is_discrete() { p.from_normalized(r).round() } else { p.from_normalized(r) }
+                }
+                _ => def.value(d, p),
+            },
         }
+    }
+
+    pub(crate) fn panel_value_of(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
+        self.panel_value(d, def, p)
     }
 
     /// The card of a built-in device (generic panel).
@@ -344,7 +355,7 @@ impl Controller {
             }
         };
 
-        DeviceCard {
+        let mut card = DeviceCard {
             id: d.id.0 as i32,
             name: s(def.name),
             vendor: s(saine_core::builtin::VENDOR),
@@ -360,7 +371,11 @@ impl Controller {
             sliders: model(sliders),
             strip,
             ..Default::default()
+        };
+        if matches!(def.layout.view, Some(View::Custom(_))) {
+            self.mod_body(d, def, &mut card);
         }
+        card
     }
 
     fn dynamics_strip(&self, d: &Device, def: &DeviceDef, threshold: &str, w: f32) -> PanelStrip {
@@ -448,8 +463,15 @@ impl Controller {
     // ---------------------------------------------------------------- gestures
 
     pub fn panel_drag(&mut self, device: DeviceId, index: i32, phase: i32, dy: f32, rate: f32, fine: bool) {
+        if phase == 0 && self.mod_map_click(device, index) {
+            return;
+        }
+        if self.project().device(device).is_some_and(|d| saine_core::builtin::def_of(d).is_none()) {
+            return self.card_drag(device, index as u32, phase, dy, rate, fine);
+        }
         let Some((d, def)) = self.panel_def(device) else { return };
         let Some(p) = usize::try_from(index).ok().and_then(|i| def.params.get(i)) else { return };
+        let rack = saine_core::modulation::is_rack(d);
         match phase {
             0 => {
                 let v = def.value(d, p);
@@ -474,6 +496,10 @@ impl Controller {
             2 => {
                 let Some(g) = self.devices.panel.drag.take() else { return };
                 self.ui_dirty = true;
+                // A click on a chain macro opens (or closes) its side panel.
+                if !g.active && rack {
+                    return self.macro_select(device, index);
+                }
                 if g.active && g.value != g.start {
                     self.panel_commit(Command::SetDeviceParam { device, param: p.id.to_string(), value: g.value });
                 }
@@ -504,13 +530,17 @@ impl Controller {
     }
 
     /// One gesture = one undo step: never merge with the previous edit of the same parameter.
-    fn panel_commit(&mut self, cmd: Command) {
+    pub(crate) fn panel_commit(&mut self, cmd: Command) -> bool {
         self.doc.seal_coalescing();
-        self.execute(cmd);
+        let ok = self.execute(cmd);
         self.doc.seal_coalescing();
+        ok
     }
 
     pub fn panel_reset(&mut self, device: DeviceId, index: i32) {
+        if self.project().device(device).is_some_and(|d| saine_core::builtin::def_of(d).is_none()) {
+            return self.card_reset(device, index as u32);
+        }
         self.panel_set(device, index, |p, _| Some(p.default));
     }
 
@@ -530,6 +560,9 @@ impl Controller {
     }
 
     pub fn panel_text(&mut self, device: DeviceId, index: i32, text: &str) {
+        if self.project().device(device).is_some_and(|d| saine_core::builtin::def_of(d).is_none()) {
+            return self.card_text(device, index as u32, text);
+        }
         let mut bad = None;
         self.panel_set(device, index, |p, _| {
             let v = p.parse(text);
@@ -543,7 +576,7 @@ impl Controller {
         }
     }
 
-    /// Sidechain picker (-1) or presets (-2) menu at window x, y.
+    /// Sidechain picker (-1), presets (-2) or a choice parameter's menu (its index) at window x, y.
     pub fn panel_menu(&mut self, device: DeviceId, which: i32, x: f32, y: f32) {
         let Some((d, def)) = self.panel_def(device) else { return };
         let check = |on: bool| if on { "✓".to_string() } else { String::new() };
@@ -579,7 +612,11 @@ impl Controller {
                 }
                 rows
             }
-            _ => return,
+            i => {
+                let Some(p) = usize::try_from(i).ok().and_then(|i| def.params.get(i)) else { return };
+                let cur = def.value(d, p).round() as usize;
+                p.choices.iter().enumerate().map(|(k, c)| (c.to_string(), check(k == cur), Some(MenuPick::Choice(device, which, k as i32)), false)).collect()
+            }
         };
         self.devices.menu = Some(DevMenu { pos: (x, y), w: 180.0, rows });
         self.ui_dirty = true;

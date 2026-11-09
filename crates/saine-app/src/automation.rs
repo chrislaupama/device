@@ -784,7 +784,7 @@ impl Controller {
         self.ui_dirty = true;
     }
 
-    fn auto_choose(&mut self, key: LaneKey, target: AutomationTarget) {
+    pub(crate) fn auto_choose(&mut self, key: LaneKey, target: AutomationTarget) {
         self.auto.targets.insert(key, target);
         self.auto.picker = None;
         self.auto.sel = None;

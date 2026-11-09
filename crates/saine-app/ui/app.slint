@@ -591,6 +591,23 @@ component BottomPanel inherits Panel {
             scroll-event(e) => { Studio.chain-scroll-by(e.delta-x != 0 ? e.delta-x / 1px : e.delta-y / 1px); accept }
         }
         if Studio.synth-visible: SynthDevice { x: 263.5px - 255px - Studio.chain-scroll; y: 34px - 27px; }
+        // Chain heads frame their members; an empty chain offers "Add effect".
+        for f in Studio.chain-frames: Rectangle {
+            x: f.x - 255px; y: 34px - 27px - 5px; width: f.w; height: 265px + 10px; border-radius: 9px;
+            background: #1b1c20; border-width: f.armed ? 1px : 0.5px; border-color: f.armed ? f.color : #3a3b40;
+        }
+        for f in Studio.chain-frames: Rectangle {
+            visible: f.empty;
+            x: f.empty-x - 255px; y: 34px - 27px; width: 182.5px; height: 265px; border-radius: 6px;
+            background: empty-ta.has-hover ? #222328 : #1f2024; border-width: 0.5px; border-color: #313236;
+            accessible-role: button; accessible-label: "Add effect";
+            HorizontalLayout {
+                alignment: center; spacing: 6px;
+                Icon { y: (265px - 12px) / 2; width: 12px; height: 12px; d: Icons.plus; ink: #c5c5c8; stroke-width: 1.4px; }
+                Text { text: "Add effect"; color: #c5c5c8; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+            }
+            empty-ta := TouchArea { enabled: f.empty; clicked => { Studio.chain-add-effect(f.head, self.absolute-position.x + 20px, self.absolute-position.y + 120px); } }
+        }
         for card in Studio.device-cards: Rectangle {
             x: card.x - 255px; y: 34px - 27px; width: card.width; height: 265px;
             if !card.builtin: PluginCard { x: 0; y: 0; card: card; }
@@ -651,6 +668,8 @@ export component AppWindow inherits Window {
     property <length> top-h: root.height - 88px - self.bottom-h;
     property <length> right-w: Studio.assistant-open ? 257.5px : 0px;
 
+    property <int> cards-epoch: Studio.cards-epoch;
+    changed cards-epoch => { fs.focus(); }
     fs := FocusScope {
         init => { self.focus(); }
         key-pressed(e) => {

@@ -20,7 +20,7 @@ use crate::controller::{BottomTab, Controller, JobResult, sync_model};
 use crate::highlight::Layout;
 use crate::{DeviceCard, MenuItem, PluginRow, Studio, TreeRow};
 use saine_core::builtin::DeviceDef;
-use saine_core::{Command, Device, DeviceId, PluginFormat, PluginKind, PluginRef, TrackId, TrackKind};
+use saine_core::{Command, Device, DeviceId, ModParam, PluginFormat, PluginKind, PluginRef, TrackId, TrackKind};
 use saine_engine::{PluginInfo, ScanReport};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -263,6 +263,24 @@ pub enum MenuPick {
     Sidechain(DeviceId, Option<TrackId>),
     /// Built-in device panel: load factory preset `n`.
     Preset(DeviceId, usize),
+    /// Built-in device panel: choice `n` of parameter index `i` (menu pill).
+    Choice(DeviceId, i32, i32),
+    /// Control menu (src/device_mod.rs): show the parameter's automation lane.
+    Automate(DeviceId, ModParam),
+    /// Control menu: a new LFO aimed at the parameter.
+    NewLfo(DeviceId, ModParam),
+    /// Aim source output (source, slot) at (device, parameter).
+    Link(DeviceId, u8, DeviceId, ModParam),
+    /// Remove link `index` of a source.
+    Unlink(DeviceId, usize),
+    /// Card name menu: swap the device for another effect.
+    Swap(DeviceId, Item),
+    /// A new empty LFO on the device's track.
+    AddLfo(DeviceId),
+    /// Empty chain: add an effect into the chain headed by the device.
+    AddToChain(DeviceId, Item),
+    /// Plugin card: show / hide a parameter.
+    CardParam(DeviceId, u32),
 }
 
 #[derive(Debug, Clone)]
@@ -316,6 +334,10 @@ pub struct DevicesUi {
     pub sounds: bool,
     /// Built-in device panels: live gesture and meter history (src/device_panel.rs).
     pub panel: crate::device_panel::PanelState,
+    /// Modulation, chains and plugin cards (src/device_mod.rs).
+    pub modu: crate::device_mod::ModUi,
+    /// (id, folded, kind) of the cards last pushed: a change refocuses the window.
+    pub card_layout: Vec<(i32, bool, i32)>,
 }
 
 impl Default for DevicesUi {
@@ -343,6 +365,8 @@ impl Default for DevicesUi {
             win: (1440.0, 820.0),
             sounds: true,
             panel: Default::default(),
+            modu: Default::default(),
+            card_layout: Vec::new(),
         }
     }
 }
@@ -383,7 +407,7 @@ pub fn build_tree(cat: &Catalog, tab: usize, search: &str, expanded: &HashSet<St
     let leaf_icon = if kind == PluginKind::Instrument { 1 } else { 2 };
     // Built-in: our devices of this kind (saine_core::builtin) and, for instruments, the Synth.
     let builtins: Vec<&'static DeviceDef> =
-        saine_core::builtin::all().iter().copied().filter(|d| d.kind == kind && (q.is_empty() || d.name.to_lowercase().contains(&q) || d.category.to_lowercase().contains(&q))).collect();
+        saine_core::builtin::all().iter().copied().filter(|d| d.kind == kind && saine_core::builtin::listed(d) && (q.is_empty() || d.name.to_lowercase().contains(&q) || d.category.to_lowercase().contains(&q))).collect();
     if kind == PluginKind::Effect && !builtins.is_empty() {
         let key = format!("{tp}/builtin");
         let o = open(&key);
@@ -523,6 +547,7 @@ impl Controller {
     pub fn device_poll(&mut self) {
         let now = Instant::now();
         self.panel_poll_meters();
+        self.mod_poll();
         // Main-thread plugin housekeeping (retired instances, CLAP main-thread callbacks).
         if !self.devices.editors.is_empty() || self.project().tracks.iter().any(|t| !t.devices.is_empty() || t.instrument_plugin.is_some()) {
             self.engine.plugin_idle();
@@ -597,6 +622,7 @@ impl Controller {
     /// After any document change: close windows of devices that no longer exist
     /// (undo of an add, removal by another path) and drop stale gesture state.
     pub(crate) fn devices_after_change(&mut self) {
+        self.mod_after_change();
         let gone: Vec<DeviceId> = self.devices.editors.iter().copied().filter(|id| self.project().device(*id).is_none()).collect();
         for id in gone {
             self.engine.close_plugin_editor(id);
@@ -808,22 +834,41 @@ impl Controller {
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else { return (out, ADD_X_ALONE, synth) };
         let mut x = CHAIN_X0 + if synth { SYNTH_W + CARD_GAP } else { 0.0 };
         let inst = if t.kind == TrackKind::Instrument { t.instrument_plugin.as_ref() } else { None };
-        for (d, instrument) in inst.into_iter().map(|d| (d, true)).chain(t.devices.iter().map(|d| (d, false))) {
+        let inserts = t.devices.iter().enumerate().map(|(i, d)| (Some(i), d, false));
+        for (i, d, instrument) in inst.into_iter().map(|d| (None, d, true)).chain(inserts) {
+            // A collapsed chain hides its members; an empty one leaves room for "Add effect".
+            if i.and_then(|i| saine_core::modulation::head_of(&t.devices, i)).is_some_and(|h| t.devices[h].collapsed || t.devices[h].folded) {
+                continue;
+            }
             let card = self.card_for(d, instrument);
             x += card.width + CARD_GAP;
             out.push((x - card.width - CARD_GAP, card));
+            if let Some(i) = i
+                && saine_core::modulation::is_rack(d)
+                && !d.collapsed
+                && !d.folded
+                && saine_core::modulation::members(&t.devices, i).is_empty()
+            {
+                x += crate::device_mod::EMPTY_CHAIN_W + CARD_GAP;
+            }
         }
         let add_x = if out.is_empty() && !synth { ADD_X_ALONE } else { x };
         (out, add_x, synth)
     }
 
     fn card_for(&self, d: &Device, instrument: bool) -> DeviceCard {
+        let mut card = self.card_body(d, instrument);
+        self.card_common(d, &mut card);
+        card
+    }
+
+    fn card_body(&self, d: &Device, instrument: bool) -> DeviceCard {
         if let Some(def) = saine_core::builtin::def_of(d) {
             return self.builtin_card(d, def);
         }
         let info = self.devices.catalog.find(&d.plugin);
         let error = self.devices.load_errors.iter().find(|(id, _)| *id == d.id).map(|(_, e)| e.clone()).unwrap_or_default();
-        DeviceCard {
+        let mut card = DeviceCard {
             id: d.id.0 as i32,
             x: 0.0,
             name: d.plugin.name.clone().into(),
@@ -840,7 +885,9 @@ impl Controller {
             dragging: false,
             width: CARD_W,
             ..Default::default()
-        }
+        };
+        self.plugin_body(d, &mut card);
+        card
     }
 
     /// Insert index in the selected track's chain for a card centre at bottom-panel x
@@ -911,6 +958,9 @@ impl Controller {
         if self.project().device(id).is_none() {
             return;
         }
+        if self.remove_with_members(id) {
+            return;
+        }
         self.engine.close_plugin_editor(id);
         self.devices.editors.remove(&id);
         self.execute(Command::RemoveDevice { device: id });
@@ -950,9 +1000,7 @@ impl Controller {
                 let Some((x0, c)) = cards.iter().find(|(_, c)| c.id as u64 == d.id.0) else { return };
                 let centre = x0 - self.devices.chain_scroll + (d.cur_x - d.start_x) + c.width / 2.0;
                 let index = self.chain_insert_index(centre, Some(d.id));
-                if index != from {
-                    self.execute(Command::MoveDevice { device: d.id, track, index });
-                }
+                self.move_in_chain(d.id, track, from, index);
             }
         }
     }
@@ -970,7 +1018,7 @@ impl Controller {
         }
         let kinds: &[PluginKind] = if inst_track { &[PluginKind::Instrument, PluginKind::Effect] } else { &[PluginKind::Effect] };
         if fmt.is_none() {
-            for d in saine_core::builtin::all() {
+            for d in saine_core::builtin::all().iter().filter(|d| saine_core::builtin::listed(d)) {
                 if kinds.contains(&d.kind) && (q.is_empty() || d.name.to_lowercase().contains(&q) || d.category.to_lowercase().contains(&q) || "built-in".contains(&q)) {
                     v.push(Item::Builtin(d));
                 }
@@ -998,7 +1046,10 @@ impl Controller {
             2 => ("VST3 plugins", self.offered(Some(PluginFormat::Vst3), "")),
             3 => ("CLAP plugins", self.offered(Some(PluginFormat::Clap), "")),
             _ => {
-                self.set_status("Device chains: not implemented yet", 3);
+                // Chains: an empty chain (saved chains are not implemented yet).
+                let rows = vec![("Empty chain".to_string(), "Chain".to_string(), Some(MenuPick::Add(Item::Builtin(&saine_core::builtin::rack::RACK))), false)];
+                self.devices.menu = Some(DevMenu { pos: (x, y), w: 220.0, rows });
+                self.ui_dirty = true;
                 return;
             }
         };
@@ -1059,6 +1110,21 @@ impl Controller {
             Some(MenuPick::Add(item)) => item,
             Some(MenuPick::Sidechain(device, source)) => return self.panel_set_sidechain(device, source),
             Some(MenuPick::Preset(device, n)) => return self.panel_load_preset(device, n),
+            Some(MenuPick::Choice(device, i, n)) => return self.panel_choice(device, i, n),
+            Some(MenuPick::Automate(device, p)) => return self.mod_automate(device, p),
+            Some(MenuPick::NewLfo(device, p)) => return self.mod_new_lfo(device, p),
+            Some(MenuPick::Link(source, slot, device, p)) => {
+                self.mod_link(source, slot, device, p);
+                return;
+            }
+            Some(MenuPick::Unlink(source, i)) => return self.mod_remove(source, i),
+            Some(MenuPick::Swap(device, item)) => return self.device_swap(device, item),
+            Some(MenuPick::AddLfo(device)) => {
+                self.add_lfo_near(device);
+                return;
+            }
+            Some(MenuPick::AddToChain(head, item)) => return self.add_to_chain(head, item),
+            Some(MenuPick::CardParam(device, id)) => return self.card_toggle_param(device, id),
             None => return,
         };
         let Some(t) = self.selected_track else { return };
@@ -1156,6 +1222,21 @@ impl Controller {
         self.clamp_chain_scroll();
         let scroll = self.devices.chain_scroll;
         let (cards, add_x, _) = self.chain_layout_unscrolled();
+        let frames: Vec<crate::ChainFrame> = self
+            .chain_frames(&cards)
+            .into_iter()
+            .map(|mut f| {
+                f.x -= scroll;
+                f.empty_x -= scroll;
+                f
+            })
+            .collect();
+        s.set_chain_frames(slint::ModelRc::from(std::rc::Rc::new(slint::VecModel::from(frames))));
+        let layout: Vec<(i32, bool, i32)> = cards.iter().map(|(_, c)| (c.id, c.folded, c.modv.kind)).collect();
+        if layout != self.devices.card_layout {
+            self.devices.card_layout = layout;
+            s.set_cards_epoch(s.get_cards_epoch().wrapping_add(1));
+        }
         let drag = self.devices.card_drag.filter(|d| d.active);
         let cards: Vec<DeviceCard> = cards
             .into_iter()
