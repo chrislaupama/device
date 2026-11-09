@@ -1002,12 +1002,20 @@ private:
         }
     }
 
+    // Voice that drives per-voice modulation sources for effects and readouts: the most
+    // recently started voice that is still sounding (null when none is).
+    const Voice* mod_voice() const noexcept {
+        if (newest_ >= 0 && voices_[static_cast<std::size_t>(newest_)].active) return &voices_[static_cast<std::size_t>(newest_)];
+        const Voice* best = nullptr;
+        for (const Voice& v : voices_)
+            if (v.active && (best == nullptr || v.order > best->order)) best = &v;
+        return best;
+    }
+
     // ------------------------------------------------------------ effects
     void run_fx(float* l, float* r, uint32_t n, const BuiltinContext& ctx) noexcept {
         float src[kSourceCount], m[kTargetCount];
-        const Voice* nv = newest_ >= 0 && voices_[static_cast<std::size_t>(newest_)].active
-                              ? &voices_[static_cast<std::size_t>(newest_)]
-                              : nullptr;
+        const Voice* nv = mod_voice();
         sources(nv, src);
         modulation(src, m);
         FxClock clk;
@@ -1037,9 +1045,7 @@ private:
         int count = 0;
         for (const Voice& v : voices_) count += v.active ? 1 : 0;
         ro[kRoVoices] = static_cast<float>(count);
-        const Voice* nv = newest_ >= 0 && voices_[static_cast<std::size_t>(newest_)].active
-                              ? &voices_[static_cast<std::size_t>(newest_)]
-                              : nullptr;
+        const Voice* nv = mod_voice();
         ro[kRoAmpEnv] = nv != nullptr ? nv->amp.y : 0.0f;
         ro[kRoEnv2] = nv != nullptr ? nv->env2.y : 0.0f;
         ro[kRoLfo1] = nv != nullptr ? nv->lfo_val[0] : global_lfo(0);

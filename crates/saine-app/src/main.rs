@@ -1062,6 +1062,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         on!(on_device_fold, |c, d: i32| c.device_fold(id(d)));
         on!(on_device_ask, |c, d: i32| c.device_ask(id(d)));
         on!(on_device_window, |c, d: i32| c.device_window(id(d)));
+        on!(on_device_window_moved, |c, d: i32, x: f32, y: f32| c.device_window_moved(id(d), x, y));
         on!(on_device_collapse, |c, d: i32| c.device_collapse(id(d)));
         on!(on_device_swap_menu, |c, d: i32, x: f32, y: f32| c.device_swap_menu(id(d), x, y));
         on!(on_device_rename, |c, d: i32, t: slint::SharedString| c.device_rename(id(d), &t));

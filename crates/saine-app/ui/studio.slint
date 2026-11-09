@@ -202,6 +202,8 @@ export struct DeviceCard {
     has-editor: bool,
     editor-supported: bool, // the host can open plugin windows on this OS (not on Linux yet)
     editor-open: bool,
+    win-dx: length,        // device window: drag offset from its default spot (src/devices.rs window_at)
+    win-dy: length,
     dragging: bool,
     // Built-in devices (src/device_panel.rs, ui/device_panel.slint): the panel generated
     // from the device definition. Unused (empty) on plugin cards.
@@ -586,6 +588,7 @@ export global Studio {
     // inside a rebuilt card is gone, so the window takes the keyboard back.
     in property <int> cards-epoch;
     callback device-ask(int);                                // header spark: ask the assistant about this device
+    callback device-window-moved(int, length, length);       // device window dragged: its new offset, kept per device
     callback device-window(int);                             // header arrow: open / close the device's floating window
     callback device-fold(int);                               // fold / unfold the card (header double-click, minus)
     callback device-collapse(int);                           // chain head: hide / show its members

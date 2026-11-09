@@ -459,7 +459,7 @@ impl Controller {
         let p = self.project();
         let Some((ti, _)) = p.find_device(id) else { return };
         let track = p.tracks[ti].id;
-        self.selected_track = Some(track);
+        self.select_track(track);
         self.selected_clip = None;
         self.assistant.context_removed = None;
         self.assistant_open = true;
@@ -475,6 +475,11 @@ impl Controller {
             self.devices.windows.insert(id);
         }
         self.ui_dirty = true;
+    }
+
+    /// Device window dragged: keep its offset (clamped on screen by the window itself).
+    pub fn device_window_moved(&mut self, id: DeviceId, dx: f32, dy: f32) {
+        self.devices.window_at.insert(id, (dx, dy));
     }
 
     pub fn device_fold(&mut self, id: DeviceId) {
