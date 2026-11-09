@@ -1,158 +1,245 @@
-# Saine Studio
+<!-- Keep this README current: see "Keeping this README up to date" under Development. -->
 
-A desktop digital audio workstation: a C++23 real-time audio engine behind a C
-ABI, a Rust application core (model, validated commands, undo/redo,
-persistence), and a Rust desktop app built with Slint and custom wgpu surfaces.
+<div align="center">
 
-Start with [`PROGRESS.md`](PROGRESS.md) for the current milestone and status
-log, then [`docs/architecture.md`](docs/architecture.md) and the ADRs in
-[`docs/adr/`](docs/adr/). Engine internals, the ABI and per-platform details
-are in [`engine/README.md`](engine/README.md).
+<h1>Saine Studio</h1>
 
-## Repository layout
+<h3>Built for real time.</h3>
+
+<p>A desktop digital audio workstation with a real-time C++ engine and a GPU-drawn Rust interface, for macOS, Windows and Linux.</p>
+
+<p>
+  <a href="https://github.com/chrislaupama/sainestudio/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/chrislaupama/sainestudio/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <img alt="Status: pre-alpha" src="https://img.shields.io/badge/status-pre--alpha-e0a84b?style=flat-square">
+  <img alt="Platforms: macOS, Windows, Linux" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-4b8be0?style=flat-square">
+  <img alt="Engine: C++23" src="https://img.shields.io/badge/engine-C%2B%2B23-6e6e6e?style=flat-square">
+  <img alt="App: Rust 2024" src="https://img.shields.io/badge/app-Rust%202024-b7410e?style=flat-square">
+</p>
+
+<p>
+  <a href="#build-from-source"><b>Build</b></a> ·
+  <a href="docs/architecture.md"><b>Architecture</b></a> ·
+  <a href="docs/devices.md"><b>Devices</b></a> ·
+  <a href="PROGRESS.md"><b>Progress</b></a>
+</p>
+
+<br>
+
+<img alt="Saine Studio with automation lanes over an audio track, an instrument track and the master, and the Synth open below" src="docs/assets/screenshot.png" width="900">
+
+</div>
+
+---
+
+## What is Saine Studio?
+
+Saine Studio is a linear, track-based music production program. You record or import audio, write parts in the piano
+roll, shape sounds with the built-in instruments and effects or your own AU, VST3 and CLAP plugins, automate anything,
+and mix in the mixer. The audio engine is written in C++23 and never allocates or locks on the audio thread; the
+interface is written in Rust with Slint, and the timeline, waveforms, piano roll and meters are drawn on the GPU with
+wgpu.
+
+> [!WARNING]
+> **Saine Studio is pre-alpha.** There are no releases yet, features are missing, and the project format may still
+> change. macOS is the platform it's developed and tested on every day; Windows and Linux build, but their audio
+> backends have never run on real hardware. Keep copies of anything you care about.
+
+## Features
+
+- **Timeline.** Import audio, move and trim clips, loop a range, and play against a metronome. Waveforms, clips and the
+  playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips.
+- **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them.
+- **Recording.** Arm tracks, pick inputs, monitor, and record takes that land where you played them: latency
+  compensation is measured with an acoustic loopback test, not guessed.
+- **Mixer.** Faders, pan, mute, solo, stereo meters with peak hold, and a master strip.
+- **Instruments.** A subtractive/FM synth, a sampler, a drum rack and a pad sampler, all built in.
+- **Effects.** 20 built-in effects, from compression and saturation to modulation and audio restoration.
+- **Modulation and chains.** An LFO that moves any device parameter, and Chains that group effects under eight
+  macros.
+- **Plugins.** Hosts AU (macOS), VST3 and CLAP plugins. Plugins are scanned in a separate process, so a crashing plugin
+  is blocklisted instead of taking the app down, and their editors open in their own windows.
+- **Delay compensation.** Plugin latency is compensated across every track, the metronome, recording and export, and
+  can be switched off.
+- **Automation.** Draw volume, pan, built-in device and plugin parameters as lanes with points, curves or freehand, or
+  record your moves with touch-write.
+- **Undo for everything.** Every edit is a validated, invertible command, so undo and redo cover the whole project.
+- **Assistant.** An optional side panel that can explain the app (Teach) or make edits for you (Assist), each turn as
+  one undo step. It uses your own Anthropic API key.
+
+<table>
+  <tr>
+    <td width="50%"><a href="docs/assets/screenshot-timeline.png"><img alt="The timeline with two imported audio clips and their waveforms on separate tracks" src="docs/assets/screenshot-timeline.png"></a></td>
+    <td width="50%"><a href="docs/assets/screenshot-synth.png"><img alt="The Synth on an instrument track, showing a triangle and an FM oscillator with their waveform displays" src="docs/assets/screenshot-synth.png"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Timeline</sub></td>
+    <td align="center"><sub>Synth</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="docs/assets/screenshot-character-mod.png"><img alt="Character Mod in a track's device chain, with its delay sweep display and rate, depth, width, voice and mix knobs" src="docs/assets/screenshot-character-mod.png"></a></td>
+    <td width="50%"><a href="docs/assets/screenshot-drum-rack.png"><img alt="The Drum Rack's sixteen pads next to the sampler for the selected pad" src="docs/assets/screenshot-drum-rack.png"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Character Mod</sub></td>
+    <td align="center"><sub>Drum Rack</sub></td>
+  </tr>
+</table>
+
+<sub>Screenshots are rendered by the app itself (<code>saine-studio --screenshot</code>) on Linux with a software GPU.</sub>
+
+### Built-in devices
+
+Saine Studio comes with 26 devices of its own. Each one is a single declarative definition (parameters, panel layout and
+factory presets) that the model, undo, saving, automation, engine and panel all derive from, with a C++ DSP kernel
+behind it. [docs/devices.md](docs/devices.md) explains how they work and how to add one.
+
+| Kind | Devices |
+|---|---|
+| Instruments | Synth, Sampler, Drum Rack, Pad Sampler |
+| Dynamics and utility | Compressor, Character Compressor, Multiband Compressor, Utility, Stereo Widener |
+| Saturation | Distortion, Tape Saturation, Soft Clipper, Bit Crusher |
+| Modulation | Chorus, Flanger, Phaser, Tremolo, Auto-Panner, Ring Mod, Character Mod |
+| Restoration | De-Noiser, De-Hummer, De-Clipper, De-Esser |
+| Modulators and containers | LFO, Chain |
+
+### Project files
+
+A project is a `Name.saineproj/` folder holding a versioned JSON document, so it diffs cleanly and is easy to keep in
+version control. Plugin state is saved inside it. Audio files stay where they are: the project references each one by a
+path relative to the project (when both are on the same drive) and by its absolute path. To move a project, move its
+media with it and keep the same layout around the project folder, or leave the media at its original absolute path
+(always the case for media on another Windows drive). A backup of the project folder alone
+does not include the audio, so back up the media too. The format is versioned, but it isn't frozen until the first release.
+
+## Under the hood
+
+```
+ Rust app (Slint shell + wgpu surfaces)      crates/saine-app
+        │  validated commands       ▲ change notifications
+        ▼                           │
+ Rust core (model, undo, save)               crates/saine-core
+        │  immutable session snapshot over a C ABI
+        ▼
+ C++23 real-time engine                      engine/
+   Core Audio · WASAPI · PipeWire     AU · VST3 · CLAP hosting
+```
+
+- **The UI holds no state of its own.** It renders from the document and the engine's readouts, and every change goes
+  through a command, which is what makes undo, saving and the assistant all work the same way.
+- **The audio thread never waits.** The engine gets a new immutable snapshot for each edit and swaps it in without
+  locks, and old graphs are freed off the audio thread.
+- **It's measured.** On an Apple silicon Mac, 128 audio tracks with 4 clips each render a 256-frame block in about
+  12 µs, around 0.2% of the 5.3 ms deadline. The benchmark section of the [engine README](engine/README.md)
+  has the full numbers, including MIDI, plugins and delay compensation.
+
+Read [docs/architecture.md](docs/architecture.md) for the full specification and [docs/adr/](docs/adr/) for the
+decisions behind rendering, recording, plugins, delay compensation and automation.
+
+## Status
+
+✅ works · 🚧 partly works · ⏳ not started
+
+| Area | Status | Still missing |
+|---|:---:|---|
+| Timeline and audio clips | ✅ | Clip loop, track rename and resize |
+| Piano roll and MIDI | 🚧 | Velocity lane, note audition |
+| Built-in instruments | ✅ | |
+| Built-in effects | ✅ | More devices are planned |
+| Plugin hosting | 🚧 | Plugin editor windows on Linux |
+| Recording | 🚧 | Per-device manual recording offset |
+| Mixer | ✅ | |
+| Automation | ✅ | |
+| Delay compensation | ✅ | |
+| Export | 🚧 | The engine renders to WAV; export from the app isn't wired up yet |
+| Assistant | 🚧 | Tested only with a fixture provider, not yet against the live API |
+| Windows and Linux audio | 🚧 | Never run on real audio hardware; no ASIO |
+| Releases and branding | ⏳ | Signed builds, original icons |
+
+[PROGRESS.md](PROGRESS.md) has the dated, round-by-round log.
+
+## Get Saine Studio
+
+| System | You need | Audio | Plugins |
+|---|---|---|---|
+| macOS | Apple silicon | Core Audio | AU, VST3, CLAP |
+| Windows | Windows x64 | WASAPI (shared mode) | VST3, CLAP |
+| Linux | x64, X11 or Wayland | PipeWire | VST3, CLAP (no editor windows yet) |
+
+Every change is built and tested on a Mac with a real audio device. Windows and Linux were last built and tested on
+hosted runners, without audio hardware.
+
+### Download
+
+**No builds have been released yet.** For now, build it from source.
+
+### Build from source
+
+You need [Rust](https://rustup.rs/) 1.90 or newer, CMake 3.25 or newer, Ninja, and a C++23 compiler (Apple clang,
+Visual Studio 2022 or GCC 13). The first build downloads the CLAP headers and the VST3 SDK.
+On Linux, install the packages listed in the [build guide](docs/building.md#linux) first.
+
+```sh
+git clone https://github.com/chrislaupama/sainestudio.git
+cd sainestudio
+cargo run --release -p saine-app -- --demo
+```
+
+`cargo` builds the engine too, so that's all it takes. `--demo` opens the app with a small demo project; leave it out
+to start empty. Use release builds: debug builds abort at exit.
+
+[docs/building.md](docs/building.md) has the packages for each system, the Windows and PipeWire notes, the engine's own
+CMake build and tests, and how CI runs.
+
+### Useful options
+
+```sh
+cargo run --release -p saine-app -- --help                     # every option
+cargo run --release -p saine-app -- --open My.saineproj        # open a project
+cargo run --release -p saine-app -- --no-audio                 # run without an audio device
+cargo run --release -p saine-app -- --self-test --no-audio     # drive the app through its own checks
+```
+
+## Development
 
 | Path | What |
 |---|---|
 | `engine/` | C++23 real-time audio engine, C ABI in `engine/include/saine_engine.h` |
-| `crates/saine-core` | Model, commands, undo/redo, persistence, snapshots |
-| `crates/saine-engine` | Safe Rust FFI wrapper over the engine, end-to-end tests |
+| `crates/saine-core` | Model, commands, undo/redo, persistence, snapshots, built-in device definitions |
+| `crates/saine-engine` | Safe Rust wrapper over the engine, end-to-end tests |
 | `crates/saine-app` | Desktop app (binary `saine-studio`) |
-| `docs/` | Architecture specification and ADRs |
-| `reference/`, `tools/` | Reference research and inspection tooling |
-| `ui-spike/` | Slint ↔ wgpu interop spike (standalone workspace) |
-
-## Supported platforms
-
-The engine and the app build on macOS, Windows and Linux. Platform code lives
-only in `engine/src/platform/`; everything else is portable.
-
-| | macOS (arm64) | Windows (x64, MSVC) | Linux (x64, GCC) |
-|---|---|---|---|
-| Audio backend | Core Audio | WASAPI (shared mode) | PipeWire |
-| Plugin formats | AU, VST3, CLAP | VST3, CLAP | VST3, CLAP |
-| Plugin editor windows | yes | yes | not yet |
-| Built and tested in CI | every run (self-hosted Mac) | last hosted run only | last hosted run only |
-| Tested on real audio hardware | yes | **no** | **no** |
-
-macOS is the primary platform. The WASAPI and PipeWire streaming code compiles
-and its "no device" paths are tested, but it has never been run against a real
-audio device. See [engine/README.md › Platforms](engine/README.md#platforms)
-for the full matrix, the WASAPI notes and plugin folders on each system.
-
-## Building
-
-Requirements on every system:
-
-* Rust ≥ 1.90 (edition 2024), via [rustup](https://rustup.rs)
-* CMake ≥ 3.25 and Ninja
-* A C++23 compiler: Apple clang 21, MSVC 19.4x (Visual Studio 2022) or GCC 13
-  have built it with warnings as errors
-* Network access on the first configure, which fetches the pinned CLAP headers
-  and VST 3 SDK
-
-The Rust build compiles the engine itself (`crates/saine-engine/build.rs`), so
-`cargo` alone is enough to build and run the app. The engine also builds
-standalone with CMake for its own tests, benchmark and tools.
-
-### macOS
+| `docs/` | Architecture, ADRs, built-in devices, build guide |
+| `reference/`, `tools/` | Research notes and inspection tooling |
+| `ui-spike/` | The Slint and wgpu interop spike behind ADR 0001 |
 
 ```sh
-brew install cmake ninja
-cargo run --release -p saine-app             # the app
-cargo test --workspace                       # core, FFI and end-to-end tests
-
-cd engine
-cmake --preset default && cmake --build --preset default && ctest --preset default
+cargo test --workspace                     # core, FFI and end-to-end tests
+cd engine && cmake --preset default && cmake --build --preset default && ctest --preset default
 ```
 
-The Xcode command line tools provide Apple clang.
+The engine has its own tests (run under ASan and UBSan too) and a benchmark. The app's `--self-test` drives the real
+interface end to end, from importing audio to checking that notes drawn in the piano roll sound on the instrument.
+Pull requests with visual changes include before and after screenshots, and anything that could affect performance
+comes with benchmark results.
 
-### Windows
+Start with [PROGRESS.md](PROGRESS.md), then [docs/architecture.md](docs/architecture.md).
 
-Install Visual Studio 2022 with the C++ x64 tools, CMake and Ninja, then run
-everything from an **x64 Native Tools / developer command prompt** so the MSVC
-environment is set:
+### Keeping this README up to date
 
-```bat
-cargo run --release -p saine-app
-cargo test --workspace
+This README is the project's front page, so it has to keep up with development. When a change adds, removes or
+finishes something it describes, the same pull request updates it:
 
-cd engine
-cmake --preset default && cmake --build --preset default && ctest --preset default
-```
+- **Features** and **Built-in devices** when a feature or device lands or is removed (the device count too).
+- **Status** when an area moves between 🚧 and ✅, or a "still missing" item is done.
+- **Get Saine Studio** and **Build from source** when platform support, requirements or build steps change, along
+  with [docs/building.md](docs/building.md).
+- **Under the hood** when the benchmark numbers in [engine/README.md](engine/README.md) change noticeably.
+- **Screenshots** in `docs/assets/` when the part of the interface they show changes visibly. Render them with the
+  app itself, e.g. `saine-studio --no-audio --state review-automation --screenshot docs/assets/screenshot.png
+  --exit-after-frames 5`; the states used are listed in each image's pull request.
 
-ASIO is not supported (the ASIO SDK's licence keeps it out for now); audio goes
-through WASAPI shared mode at the rate set in the Sound control panel.
+## License
 
-### Linux
+All rights reserved. How Saine Studio will be licensed has not been decided yet.
 
-Debian/Ubuntu packages (the same list CI uses):
-
-```sh
-sudo apt-get install -y ninja-build cmake pkg-config \
-  libpipewire-0.3-dev libasound2-dev \
-  libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libx11-xcb-dev \
-  libxcursor-dev libxrandr-dev libxi-dev libfontconfig1-dev libfreetype-dev libudev-dev
-
-cargo run --release -p saine-app
-cargo test --workspace
-
-cd engine
-cmake --preset default && cmake --build --preset default && ctest --preset default
-```
-
-The X11, Wayland, xkbcommon, fontconfig and udev packages are for the app;
-the engine itself needs only `pkg-config` and `libpipewire-0.3-dev`.
-
-#### PipeWire notes
-
-* Audio I/O on Linux goes through PipeWire streams, not JACK or ALSA directly.
-  PipeWire is the default sound server on current mainstream distributions and
-  also serves JACK clients; a native JACK backend is possible future work.
-* Without a running PipeWire server the engine lists no devices and starting
-  audio fails; device tests skip. Run the app with `--no-audio` in that case.
-* A requested sample rate must be in the server's `clock.allowed-rates`, and
-  the buffer size is a request for a quantum (`node.latency`); PipeWire may not
-  honour either, and the device status reports what it actually chose.
-* For a real-time audio thread, RTKit or PipeWire's RT module must be allowed
-  on the system.
-* To build without PipeWire (an engine with no device I/O): configure CMake
-  with `-DSAINE_ENGINE_PIPEWIRE=OFF`, or set `SAINE_ENGINE_PIPEWIRE=OFF` in the
-  environment for a cargo build.
-
-Plugin editor windows are not implemented on Linux yet; opening one reports
-that it is unsupported.
-
-## Running the app
-
-```sh
-cargo run --release -p saine-app -- --help             # all options
-cargo run --release -p saine-app -- --demo             # open with a demo project
-cargo run --release -p saine-app -- --self-test --no-audio
-```
-
-Use release builds: debug builds of the app abort at exit on every OS (a known
-issue in wgpu-core's debug-only lock tracing).
-
-## Continuous integration
-
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push
-and pull request on a **self-hosted runner**: one Apple silicon Mac mini, so
-the tests run on real hardware with a real audio device. Each run:
-
-1. configures and builds the engine with warnings as errors, and runs ctest;
-2. builds and tests the Rust workspace (`--locked`);
-3. builds the app in release mode and runs `saine-studio --self-test
-   --no-audio`, which must report every check passed;
-4. uploads the self-test logs as an artifact.
-
-Windows and Linux are **not built in CI** at the moment. Their steps stay in
-the workflow, gated on `runner.os` (Linux: Xvfb + Mesa lavapipe screenshot and
-self-test; Windows: WARP, informational), but they run only when the job lands
-on a runner of that OS. The workflow has a single `runs-on: self-hosted` job
-and no platform matrix, so adding a Windows or Linux runner alone would not
-test every platform on each run: that runner could pick up the job instead of
-the Mac. Covering all three needs runner labels per OS and a matrix or one job
-per OS. The Windows and Linux results above come from the last run on
-GitHub-hosted runners, before that matrix was dropped; later changes are not
-compiled on those systems.
+Third-party code keeps its own license: the VST3 SDK and CLAP headers (MIT) are fetched at build time, and the bundled
+Inter font is under the SIL Open Font License.
