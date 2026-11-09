@@ -101,17 +101,20 @@ flowchart LR
    splits a block, the engine keeps each readout's segment value farthest
    from its idle value, so readouts must move away from idle as they grow
    (a peak meter rises from -120 dB, gain reduction falls from 0 dB).
-3. **Custom view (optional).** For bodies the template cannot express (EQ
-   curve, shaper curve, trance-gate grid), use `View::Custom("<name>")` and
-   add an arm for `<name>` in `crates/saine-app/src/device_views.rs`
-   (`custom_card` draws, `panel_field` handles pointer events). The card's
-   `field` is a vector canvas: Rust builds SVG paths and text boxes in card
-   coordinates, `FieldView` in `ui/device_panel.slint` paints them and sends
-   every press, drag, release, hover, double-click, right-click and wheel back
-   to Rust. Hit testing, gestures and menus live in Rust. A gesture sends live
-   values to the engine and commits one undo step on release; Escape restores
-   the values from before it. The card may still use `knobs` (`KnobCell`)
-   for its dial row. The Trance Gate and the Shaper are the examples.
+3. **Custom view (optional).** For bodies the template cannot express, use
+   `View::Custom("<name>")`. Bodies that only draw and drag parameters add
+   an arm to `custom_body` in `crates/saine-app/src/device_views.rs`
+   (a `PanelCanvas` with paths, texts, grips and drag zones, plus freely
+   placed knobs and buttons). Bodies with their own editing (step grids,
+   curve editors) add an arm to `custom_card` in
+   `crates/saine-app/src/device_editors.rs` and set the canvas's
+   `interactive` flag: `DeviceCanvas` in `ui/device_panel.slint` then
+   sends every press, drag, release, hover, double-click, right-click and
+   wheel back to `panel_canvas`, where hit testing, gestures and menus
+   live. A gesture sends live values to the engine and commits one undo step
+   on release; Escape restores the values from before it. Set
+   `Layout::fixed_width` for a card that the dial row does not size. The
+   Trance Gate and the Shaper are the interactive examples.
    - A kernel whose latency depends on its parameters overrides
      `BuiltinProcessor::latency_for` (main thread; the Shaper reports its
      pitch-shift latency only while that lane is on).

@@ -1,1612 +1,468 @@
-//! Custom device views (layout `View::Custom`): the Trance Gate's step ring and
-//! envelope, and the Shaper's lane tabs and curve editor.
+//! Custom bodies of built-in device cards (View::Custom). Each arm turns a
+//! device's current values into a PanelCanvas (path layers, texts, grip pills,
+//! drag zones) and, for grid bodies, freely placed knobs and buttons. The
+//! drawings follow the reference cards' field painters (device specs in the
+//! Captain drive); the curves come from the drawn models in saine_core.
 //!
-//! Both are drawn as a vector field: Rust builds paths and texts in field
-//! coordinates and ui/device_panel.slint (FieldView) only paints them and sends
-//! every pointer event back to [Controller::panel_field], where hit testing,
-//! gestures and menus live. Lengths are the reference's 100%-zoom card
-//! measurements (pt, card relative: handoffs/device-specs/<device>.md and the
-//! captures in renders/reference); [Z] scales them to our 85% UI.
+//!   "wave"          shaper wave field: Distortion, Tape Saturation, Soft Clipper
+//!   "crush"         sample-and-hold picture: Bit Crusher
+//!   "stereo-field"  stereo image + width-over-frequency plot: Stereo Widener
+//!   "utility"       Input | Output grid: Utility
 //!
-//! Gestures follow the generic panel: while a gesture runs its values go to
-//! the engine live (se_builtin_set_param) and the release commits ONE undo
-//! step (a batch when several parameters move); Escape or a cancelled pointer
-//! restores the values from before the gesture. Single clicks (toggles, menu
-//! picks) are single commands.
+//! Lengths are reference 100%-zoom values; everything handed to Slint is
+//! multiplied by Z.
 
 use crate::controller::Controller;
-use crate::device_panel::Z;
-use crate::devices::{DevMenu, MenuPick};
-use crate::{DeviceCard, CanvasPath, CanvasText, PanelCanvas, PanelKnob};
-use saine_core::builtin::shaper::{self as sh, Point};
-use saine_core::builtin::trance_gate as tg;
-use saine_core::builtin::DeviceDef;
-use saine_core::{Command, Device, DeviceId, PPQ};
-use slint::{Brush, Color, ModelRc, SharedString, VecModel};
-use std::collections::HashMap;
+use crate::device_panel::{CAPTION_H, Z};
+use crate::{PanelButton, PanelCanvas, PanelGrip, PanelPath, PanelText, PanelZone};
+use saine_core::builtin::{self, DeviceDef};
+use saine_core::Device;
+use slint::{Color, ModelRc, SharedString, VecModel};
+use std::f32::consts::TAU;
 use std::fmt::Write;
 use std::rc::Rc;
 
-/// The field starts under the card header (px) and runs to the card bottom.
-const FIELD_Y: f32 = 27.0;
-const CARD_H: f32 = 265.0;
 const MINUS: char = '\u{2212}';
+/// Sample rate the drawn responses assume.
+const DRAW_RATE: f32 = 48_000.0;
 
-/// A pointer event on a field (ui/device_panel.slint FieldView).
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CanvasEvent {
-    pub kind: i32,
-    pub x: f32,
-    pub y: f32,
-    pub wx: f32,
-    pub wy: f32,
-    pub shift: bool,
-    pub alt: bool,
-    pub wheel: f32,
-}
-
-impl CanvasEvent {
-    /// Card-relative reference coordinates (pt at 100%).
-    fn pt(&self) -> (f32, f32) {
-        (self.x / Z, (self.y + FIELD_Y) / Z)
-    }
-}
-
-const DOWN: i32 = 0;
-const MOVE: i32 = 1;
-const UP: i32 = 2;
-const CANCEL: i32 = 3;
-const HOVER: i32 = 4;
-const RIGHT: i32 = 5;
-const DOUBLE: i32 = 6;
-const WHEEL: i32 = 7;
-const LEAVE: i32 = 8;
-
-/// What the pointer is over.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-enum Hit {
-    #[default]
-    None,
-    // Trance Gate
-    Step(usize),
-    StepCount,
-    StepMore,
-    StepFewer,
-    Rate,
-    Pattern(usize),
-    EnvA,
-    EnvD,
-    EnvR,
-    Hole,
-    // Shaper
-    LaneOn(usize),
-    Lane(usize),
-    Shape,
-    Band,
-    Split,
-    FilterType,
-    Resonance,
-    Bits,
-    Decimate,
-    CurvePoint(usize),
-    Mid(usize),
-    Plot,
-    Trigger,
-    Threshold,
-    FilterHigh,
-    FilterLow,
-}
-
-#[derive(Debug, Clone)]
-enum Gesture {
-    /// Trance Gate ring: every step crossed gets the state of the first one.
-    Paint { device: DeviceId, on: bool, last: usize },
-    /// A value cell / counter / pill dragged like a knob (Controller::panel_drag);
-    /// a release without movement opens `menu` when it has one.
-    Param { device: DeviceId, menu: Option<i32> },
-    /// Trance Gate envelope handle; the time axis is fixed at press.
-    Env { device: DeviceId, handle: Hit, span: f32, gate_ms: f32 },
-    /// Shaper point (or bend handle when `mid`).
-    Curve { device: DeviceId, lane: usize, k: usize, mid: bool, pts: Vec<Point>, raw: (f32, f32), last: (f32, f32) },
-}
-
-/// Custom view state (lives in the panel state).
-#[derive(Debug, Default)]
-pub struct ViewState {
-    hover: Option<(DeviceId, Hit, (f32, f32))>,
-    gesture: Option<Gesture>,
-    /// Values a running gesture has sent to the engine but not committed.
-    live: HashMap<(DeviceId, usize), f32>,
-    /// Shaper: selected lane and grid divisions per device (UI state).
-    lane: HashMap<DeviceId, usize>,
-    grid: HashMap<DeviceId, u32>,
-    /// Trance Gate pattern clipboard (mask, steps) and Shaper shape clipboard,
-    /// shared by every device of the kind.
-    pattern_clip: Option<(u32, u32)>,
-    shape_clip: Option<Vec<Point>>,
-    /// Window position of the press that may open a menu on release.
-    menu_at: (f32, f32),
-}
-
-// Menu action codes (MenuPick::View).
-const TG_CLEAR: i32 = 10;
-const TG_FILL: i32 = 11;
-const TG_INVERT: i32 = 12;
-const TG_ROT_LEFT: i32 = 13;
-const TG_ROT_RIGHT: i32 = 14;
-const TG_COPY: i32 = 15;
-const TG_PASTE: i32 = 16;
-const SH_FLIP: i32 = 1;
-const SH_REVERSE: i32 = 2;
-const SH_CLEAR: i32 = 3;
-const SH_COPY: i32 = 4;
-const SH_PASTE: i32 = 5;
-const SH_SHAPE: i32 = 100; // + library index
-const SH_GRID: i32 = 200; // + divisions
-const SH_TRIGGER_SYNC: i32 = 300;
-const SH_TRIGGER_SELF: i32 = 301;
-const SH_TRIGGER_TRACK: i32 = 1000; // + project track index
-
-// ---------------------------------------------------------------- drawing
-
-fn rgba(r: u8, g: u8, b: u8, a: f32) -> Color {
-    Color::from_argb_u8((a.clamp(0.0, 1.0) * 255.0).round() as u8, r, g, b)
-}
-fn ink(a: f32) -> Color {
-    rgba(255, 255, 255, a)
-}
-fn alpha(c: Color, a: f32) -> Color {
-    Color::from_argb_u8((a.clamp(0.0, 1.0) * 255.0).round() as u8, c.red(), c.green(), c.blue())
-}
-fn none() -> Brush {
-    Brush::SolidColor(Color::from_argb_u8(0, 0, 0, 0))
-}
-fn vgrad(top: Color, bottom: Color) -> Brush {
-    let a = 0.5 * (top.alpha() as f32 + bottom.alpha() as f32) / 255.0;
-    Brush::SolidColor(alpha(top, a))
-}
-
-/// Field x / y (px) of a card-relative reference coordinate (pt).
-fn fx(x: f32) -> f32 {
-    x * Z
-}
-fn fy(y: f32) -> f32 {
-    y * Z - FIELD_Y
-}
-
-/// SVG path data in field px from reference coordinates.
+/// What a custom body adds to the generic card.
 #[derive(Default)]
-struct PathData(String);
-
-impl PathData {
-    fn m(mut self, x: f32, y: f32) -> Self {
-        let _ = write!(self.0, "M{:.2} {:.2} ", fx(x), fy(y));
-        self
-    }
-    fn l(mut self, x: f32, y: f32) -> Self {
-        let _ = write!(self.0, "L{:.2} {:.2} ", fx(x), fy(y));
-        self
-    }
-    /// Arc to (x, y) with radius r (reference units); sweep = clockwise on screen.
-    fn a(mut self, r: f32, large: bool, sweep: bool, x: f32, y: f32) -> Self {
-        let _ = write!(self.0, "A{:.2} {:.2} 0 {} {} {:.2} {:.2} ", r * Z, r * Z, large as u8, sweep as u8, fx(x), fy(y));
-        self
-    }
-    fn z(mut self) -> Self {
-        self.0.push_str("Z ");
-        self
-    }
-    fn poly(mut self, pts: &[(f32, f32)]) -> Self {
-        for (i, (x, y)) in pts.iter().enumerate() {
-            self = if i == 0 { self.m(*x, *y) } else { self.l(*x, *y) };
-        }
-        self
-    }
-    fn rrect(self, x: f32, y: f32, w: f32, h: f32, r: f32) -> Self {
-        let r = r.min(w / 2.0).min(h / 2.0);
-        self.m(x + r, y).l(x + w - r, y).a(r, false, true, x + w, y + r).l(x + w, y + h - r).a(r, false, true, x + w - r, y + h).l(x + r, y + h).a(r, false, true, x, y + h - r).l(x, y + r).a(r, false, true, x + r, y).z()
-    }
-    fn circle(self, cx: f32, cy: f32, r: f32) -> Self {
-        self.m(cx - r, cy).a(r, true, true, cx + r, cy).a(r, true, true, cx - r, cy).z()
-    }
-    fn empty(&self) -> bool {
-        self.0.is_empty()
-    }
+pub(crate) struct CustomBody {
+    pub canvas: PanelCanvas,
+    pub buttons: Vec<PanelButton>,
+    /// Knob placement (param, x, y; card relative, 100%) replacing the dial row.
+    pub knobs: Vec<(&'static str, f32, f32)>,
+    /// Knobs drawn dimmed (no effect in the current state).
+    pub dim: Vec<&'static str>,
 }
 
-#[derive(Default)]
-struct Canvas {
-    paths: Vec<CanvasPath>,
-    texts: Vec<CanvasText>,
+fn model<T: Clone + 'static>(v: Vec<T>) -> ModelRc<T> {
+    ModelRc::from(Rc::new(VecModel::from(v)))
 }
 
-impl Canvas {
-    fn path(&mut self, d: PathData, stroke: Brush, width: f32, fill: Brush) {
-        if !d.empty() {
-            self.paths.push(CanvasPath { commands: d.0.into(), stroke, width: width * Z, fill });
-        }
-    }
-    fn fill(&mut self, d: PathData, c: impl Into<Brush>) {
-        self.path(d, none(), 0.0, c.into());
-    }
-    fn stroke(&mut self, d: PathData, c: Color, w: f32) {
-        self.path(d, Brush::SolidColor(c), w, none());
-    }
-    /// Text in a box (reference units); align 0 left, 1 centre, 2 right.
-    #[allow(clippy::too_many_arguments)]
-    fn text(&mut self, x: f32, y: f32, w: f32, h: f32, text: impl Into<SharedString>, color: Color, size: f32, weight: i32, align: i32) {
-        self.texts.push(CanvasText { x: fx(x), y: fy(y), w: w * Z, h: h * Z, text: text.into(), color, size: size * Z, weight, align });
-    }
-    /// A rounded value pill: fill, optional label text, value text, chevron.
-    fn pill(&mut self, x: f32, y: f32, w: f32, h: f32, hot: bool) {
-        self.fill(PathData::default().rrect(x, y, w, h, h / 2.0), if hot { rgba(0x33, 0x34, 0x3a, 1.0) } else { rgba(0x2a, 0x2b, 0x30, 1.0) });
-    }
-    fn chevron(&mut self, cx: f32, cy: f32, down: bool, c: Color) {
-        let s = if down { 1.0 } else { -1.0 };
-        self.stroke(PathData::default().m(cx - 3.5, cy - 1.75 * s).l(cx, cy + 1.75 * s).l(cx + 3.5, cy - 1.75 * s), c, 1.4);
-    }
-    fn into_canvas(self, w: f32, cursor: i32) -> PanelCanvas {
-        PanelCanvas {
-            visible: true,
-            x: 0.0,
-            y: FIELD_Y,
-            w: w * Z,
-            h: CARD_H - FIELD_Y,
-            paths: ModelRc::from(Rc::new(VecModel::from(self.paths))),
-            texts: ModelRc::from(Rc::new(VecModel::from(self.texts))),
-            cursor,
-        }
-    }
+fn ink(alpha: f32) -> Color {
+    Color::from_argb_u8((alpha.clamp(0.0, 1.0) * 255.0).round() as u8, 255, 255, 255)
 }
 
-fn in_rect(p: (f32, f32), x: f32, y: f32, w: f32, h: f32) -> bool {
-    p.0 >= x && p.0 <= x + w && p.1 >= y && p.1 <= y + h
+fn path(commands: String, stroke: Color, width: f32, fill: Color) -> PanelPath {
+    PanelPath { commands: commands.into(), stroke, width: width * Z, fill }
 }
 
-fn knob(def: &DeviceDef, value: f32, index: usize, centre_x: f32) -> PanelKnob {
-    let p = &def.params[index];
-    PanelKnob {
-        param: index as i32,
-        x: (centre_x - 31.0) * Z,
-        label: p.label.into(),
-        value: p.format(value).into(),
-        norm: p.to_normalized(value),
-        bipolar: p.is_bipolar(),
-        ..Default::default()
+fn stroke(commands: String, color: Color, width: f32) -> PanelPath {
+    path(commands, color, width, Color::from_argb_u8(0, 0, 0, 0))
+}
+
+fn fill(commands: String, color: Color) -> PanelPath {
+    path(commands, Color::from_argb_u8(0, 0, 0, 0), 0.0, color)
+}
+
+fn text(x: f32, y: f32, w: f32, t: impl Into<SharedString>, color: Color, size: f32, weight: i32, align: i32) -> PanelText {
+    PanelText { x, y: y - 7.0 * Z, w, h: 14.0 * Z, text: t.into(), color, size: size * Z, weight, align }
+}
+
+/// "M x y L x y ..." (coordinates already scaled).
+pub(crate) fn poly(pts: &[(f32, f32)]) -> String {
+    let mut out = String::with_capacity(pts.len() * 16);
+    for (i, (x, y)) in pts.iter().enumerate() {
+        let _ = write!(out, "{}{x:.2} {y:.2}", if i == 0 { "M" } else { " L" });
     }
+    out
 }
 
-fn fmt_num(v: f32) -> String {
-    let s = if (v - v.round()).abs() < 0.05 { format!("{:.0}", v.round()) } else { format!("{v:.1}") };
-    s.replace('-', &MINUS.to_string())
-}
-
-// ---------------------------------------------------------------- trance gate model
-
-/// Envelope settings in ms (sustain 0..1).
-#[derive(Debug, Clone, Copy)]
-struct Adsr {
-    a: f32,
-    d: f32,
-    s: f32,
-    r: f32,
-}
-
-/// Linear envelope (the engine's model): attack to 1, decay to sustain, release to 0.
-#[derive(Debug, Clone, Copy, Default)]
-struct EnvSim {
-    level: f32,
-    stage: u8, // 0 idle, 1 attack, 2 decay, 3 sustain, 4 release
-    rel_rate: f32,
-}
-
-impl EnvSim {
-    fn gate(&mut self, on: bool, e: &Adsr) {
-        if on {
-            self.stage = 1;
-        } else if self.stage != 0 && self.stage != 4 {
-            self.stage = 4;
-            self.rel_rate = self.level / e.r.max(0.5);
-        }
-    }
-    /// Advance by `ms` exactly: every stage is linear, so each one is consumed
-    /// in one step (cost independent of the time span).
-    fn advance(&mut self, mut ms: f32, e: &Adsr) {
-        while ms > 0.0 {
-            let (rate, end, next) = match self.stage {
-                1 => (1.0 / e.a.max(0.5), 1.0, 2),
-                2 => (-(1.0 - e.s) / e.d.max(1.0), e.s, 3),
-                4 => (-self.rel_rate, 0.0, 0),
-                3 => {
-                    self.level = e.s;
-                    return;
-                }
-                _ => {
-                    self.level = 0.0;
-                    return;
-                }
-            };
-            let need = if rate == 0.0 { 0.0 } else { (end - self.level) / rate };
-            if need > ms {
-                self.level += rate * ms;
-                return;
+/// A polyline drawn as dashes of \`dash\` / \`gap\` length along its arc length.
+pub(crate) fn dashed(pts: &[(f32, f32)], dash: f32, gap: f32) -> String {
+    let mut out = String::new();
+    let mut on = true;
+    let mut left = dash;
+    for w in pts.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+        let mut t0 = 0.0;
+        while t0 < len {
+            let step = left.min(len - t0);
+            let p0 = (a.0 + (b.0 - a.0) * t0 / len, a.1 + (b.1 - a.1) * t0 / len);
+            let t1 = t0 + step;
+            let p1 = (a.0 + (b.0 - a.0) * t1 / len, a.1 + (b.1 - a.1) * t1 / len);
+            if on {
+                let _ = write!(out, "M{:.2} {:.2} L{:.2} {:.2} ", p0.0, p0.1, p1.0, p1.1);
             }
-            self.level = end;
-            self.stage = next;
-            ms -= need.max(0.0);
-        }
-    }
-}
-
-/// Step index at time t (in steps) with swing (0..1 of half a step on odd steps).
-fn swung_step(u: f64, swing: f64) -> i64 {
-    let k = u.floor();
-    let ki = k as i64;
-    if ki & 1 == 1 && u - k < swing * 0.5 { ki - 1 } else { ki }
-}
-
-/// Start of step i (in steps) with swing.
-fn step_start(i: usize, swing: f32) -> f32 {
-    i as f32 + if i % 2 == 1 { swing * 0.5 } else { 0.0 }
-}
-
-/// Gate level over one pattern cycle (480 samples), simulated three times
-/// around so the first cycle's state is warmed up. Exact between step
-/// boundaries: O(samples + steps) whatever the tempo and rate.
-fn ring_levels(e: &Adsr, steps: u32, mask: u32, swing: f32, step_ms: f32) -> Vec<f32> {
-    const N: usize = 480;
-    let steps = steps.max(1) as usize;
-    let total = steps as f32 * step_ms;
-    let gates: Vec<(f32, bool)> = (0..steps).map(|i| (step_start(i, swing) * step_ms, mask >> i & 1 == 1)).collect();
-    let mut sim = EnvSim::default();
-    let mut out = vec![0.0; N];
-    for pass in 0..3 {
-        let (mut t, mut next) = (0.0f32, 0usize);
-        let run_to = |sim: &mut EnvSim, until: f32, t: &mut f32, next: &mut usize| {
-            while *next < gates.len() && gates[*next].0 <= until {
-                sim.advance(gates[*next].0 - *t, e);
-                *t = gates[*next].0;
-                sim.gate(gates[*next].1, e);
-                *next += 1;
-            }
-            sim.advance(until - *t, e);
-            *t = until;
-        };
-        for (j, slot) in out.iter_mut().enumerate() {
-            run_to(&mut sim, total * (j + 1) as f32 / N as f32, &mut t, &mut next);
-            if pass == 2 {
-                *slot = sim.level;
+            left -= step;
+            t0 = t1;
+            if left <= 1e-4 {
+                on = !on;
+                left = if on { dash } else { gap };
             }
         }
     }
     out
 }
 
-/// Time axis of the envelope view: (gate-open ms, span ms).
-fn env_span(e: &Adsr, step_ms: f32) -> (f32, f32) {
-    let gate = (2.0 * step_ms).max(e.a + e.d + step_ms / 2.0);
-    let raw = 1.12 * (gate + e.r);
-    let grid = if raw < 1000.0 { 50.0 } else { 100.0 };
-    (gate, ((raw / grid).ceil() * grid).max(300.0))
+fn ellipse(cx: f32, cy: f32, rx: f32, ry: f32) -> String {
+    format!("M{:.2} {cy:.2} A{rx:.2} {ry:.2} 0 1 0 {:.2} {cy:.2} A{rx:.2} {ry:.2} 0 1 0 {:.2} {cy:.2} Z", cx - rx, cx + rx, cx - rx)
 }
 
-// Trance Gate geometry (reference pt, card relative).
-const TG_W: f32 = 528.0;
-const TG_CX: f32 = 98.0;
-const TG_CY: f32 = 157.5;
-const TG_R: f32 = 83.0;
-const TG_RI: f32 = 0.6 * TG_R;
-const TG_PAT: (f32, f32, f32, f32) = (8.0, 285.0, 180.0, 18.0);
-const TG_ENV: (f32, f32, f32, f32) = (200.0, 85.0, 320.0, 104.0);
-const TG_PLOT: (f32, f32, f32, f32) = (210.0, 95.0, 510.0, 173.0); // x0, y0 (level 1), x1, y1 (level 0)
-const TG_KNOB_X: f32 = 229.0;
-
-fn step_angle(i: f32, steps: u32) -> f32 {
-    std::f32::consts::TAU * i / steps.max(1) as f32
-}
-fn polar(r: f32, a: f32) -> (f32, f32) {
-    (TG_CX + r * a.sin(), TG_CY - r * a.cos())
-}
-fn sector(r0: f32, r1: f32, a0: f32, a1: f32) -> PathData {
-    let (o0, o1, i1, i0) = (polar(r1, a0), polar(r1, a1), polar(r0, a1), polar(r0, a0));
-    let large = a1 - a0 > std::f32::consts::PI;
-    PathData::default().m(o0.0, o0.1).a(r1, large, true, o1.0, o1.1).l(i1.0, i1.1).a(r0, large, false, i0.0, i0.1).z()
+fn circle_pts(cx: f32, cy: f32, r: f32) -> Vec<(f32, f32)> {
+    (0..=96).map(|i| {
+        let a = TAU * i as f32 / 96.0;
+        (cx + r * a.cos(), cy + r * a.sin())
+    }).collect()
 }
 
-// ---------------------------------------------------------------- shaper model
-
-// Shaper geometry (reference pt, card relative).
-const SH_W: f32 = 501.0;
-const SH_TABS_Y: f32 = 50.0;
-const SH_TAB_X: [f32; 7] = [16.0, 95.5, 161.0, 232.5, 291.5, 357.0, 428.0];
-const SH_STRIP_Y: f32 = 71.5; // pill top, 19 tall
-const SH_WELL: (f32, f32, f32, f32) = (8.0, 93.0, 485.0, 120.5);
-const SH_PLOT: (f32, f32, f32, f32) = (48.0, 108.0, 483.0, 205.0); // x0, y top (1), x1, y bottom (0)
-const SH_TRIGGER: (f32, f32, f32, f32) = (171.0, 245.0, 141.0, 19.0);
-const SH_TRIGGER_SPLIT: f32 = 84.5; // divider from the pill's left
-const SH_KNOBS: [f32; 4] = [39.0, 111.0, 371.5, 461.5];
-
-fn sh_px(x: f32) -> f32 {
-    SH_PLOT.0 + x * (SH_PLOT.2 - SH_PLOT.0)
-}
-fn sh_py(y: f32) -> f32 {
-    SH_PLOT.3 - y * (SH_PLOT.3 - SH_PLOT.1)
-}
-fn sh_x_of(px: f32) -> f32 {
-    ((px - SH_PLOT.0) / (SH_PLOT.2 - SH_PLOT.0)).clamp(0.0, 1.0)
-}
-fn sh_y_of(py: f32) -> f32 {
-    ((SH_PLOT.3 - py) / (SH_PLOT.3 - SH_PLOT.1)).clamp(0.0, 1.0)
-}
-
-/// The Crush lane's strip controls from the row start x (reference pt):
-/// label and (x, width) of the Bits and Decimate pills. Compact once the band
-/// split pill takes its room, so the row ends inside the curve well (x 493).
-struct CrushRow {
-    bits_label: f32,
-    bits_pill: (f32, f32),
-    dec_label: f32,
-    dec_pill: (f32, f32),
-    font: f32,
-}
-
-fn crush_row(x: f32, compact: bool) -> CrushRow {
-    if compact {
-        CrushRow { bits_label: x, bits_pill: (x + 24.0, 46.0), dec_label: x + 76.0, dec_pill: (x + 124.0, 42.0), font: 11.0 }
-    } else {
-        CrushRow { bits_label: x, bits_pill: (x + 27.0, 62.0), dec_label: x + 101.0, dec_pill: (x + 157.0, 50.0), font: 11.5 }
+/// Harmonic distortion of a transfer curve (the reference's "Harmonics"
+/// readout): one cycle of a full-scale sine, 256 points, harmonics 2..24
+/// against the fundamental, as a percentage.
+pub(crate) fn harmonics_percent(f: &dyn Fn(f32) -> f32) -> f32 {
+    const N: usize = 256;
+    let y: Vec<f32> = (0..N).map(|i| f((TAU * i as f32 / N as f32).sin())).collect();
+    let power = |k: usize| {
+        let (mut re, mut im) = (0.0f32, 0.0f32);
+        for (i, v) in y.iter().enumerate() {
+            let ph = TAU * ((k * i) % N) as f32 / N as f32;
+            re += v * ph.cos();
+            im -= v * ph.sin();
+        }
+        re * re + im * im
+    };
+    let fund = power(1);
+    if fund <= 1e-12 {
+        return 0.0;
     }
+    100.0 * ((2..=24).map(power).sum::<f32>() / fund).sqrt()
 }
 
-/// Lane value text at curve height y (the reference's readouts).
-/// `max_beats`: the Time lane's longest repeat at the project tempo
-/// ([sh::TIME_MAX_SECONDS]); a deeper point reads as that limit.
-#[allow(clippy::too_many_arguments)]
-fn lane_text(lane: usize, y: f32, depth: f32, quarters: f64, max_beats: f64, low: f32, high: f32) -> String {
-    match lane {
-        0 => format!("{}%", (100.0 * (1.0 - depth * (1.0 - y))).round()),
-        1 => {
-            let want = (y * depth) as f64 * quarters;
-            let b = (want.min(max_beats) * 100.0).round() / 100.0;
-            let text = if b == 0.0 { "Now".to_string() } else if (b - 1.0).abs() < 1e-9 { "1 beat".into() } else { format!("{b} beats") };
-            if want > max_beats + 1e-9 { format!("{text} (max)") } else { text }
-        }
-        2 => format!("{}%", (100.0 * (1.0 + depth * (2.0 * y - 1.0))).round()),
-        3 => {
-            let v = depth * (2.0 * y - 1.0);
-            let n = (100.0 * v.abs()).round();
-            if n == 0.0 { "C".into() } else if v < 0.0 { format!("{n}L") } else { format!("{n}R") }
-        }
-        4 => {
-            let f = low * (high / low).powf(y);
-            if f >= 1000.0 { format!("{:.1} kHz", f / 1000.0) } else { format!("{f:.0} Hz") }
-        }
-        5 => format!("{}%", (100.0 * depth * y).round()),
-        _ => {
-            let st = depth * (y - 0.5) * 24.0;
-            if st.abs() < 0.05 { "0 st".into() } else { format!("{}{} st", if st > 0.0 { "+" } else { "" }, fmt_num(st)) }
-        }
-    }
+pub(crate) fn fmt_percent_readout(p: f32) -> String {
+    if p < 9.95 { format!("{p:.1}%") } else { format!("{p:.0}%") }
 }
 
-/// Short frequency text for the filter range pills ("12k", "150").
-fn short_hz(f: f32) -> String {
-    if f >= 1000.0 {
-        let k = f / 1000.0;
-        if k >= 10.0 || (k - k.round()).abs() < 0.05 { format!("{:.0}k", k) } else { format!("{k:.1}k") }
-    } else {
-        format!("{f:.0}")
-    }
+/// "Clipping" readout: "0.0 dB" under 0.05 dB, else "−N.N dB".
+pub(crate) fn fmt_clipping(db: f32) -> String {
+    let a = (db.abs() * 10.0).round() / 10.0;
+    if a < 0.05 { "0.0 dB".into() } else if db < 0.0 { format!("{MINUS}{a:.1} dB") } else { format!("{a:.1} dB") }
 }
-
-// ---------------------------------------------------------------- controller
 
 impl Controller {
-    /// Value of parameter `i` as shown: a running gesture's live value, else the panel value.
-    fn fv(&self, d: &Device, def: &DeviceDef, i: usize) -> f32 {
-        if let Some(v) = self.devices.panel.views.live.get(&(d.id, i)) {
-            return *v;
-        }
-        def.params.get(i).map_or(0.0, |p| self.panel_value(d, def, p))
-    }
-
-    fn values(&self, d: &Device, def: &DeviceDef) -> Vec<f32> {
-        (0..def.params.len()).map(|i| self.fv(d, def, i)).collect()
-    }
-
-    /// Fill the card of a device whose layout has a custom view.
-    pub(crate) fn custom_card(&self, name: &str, d: &Device, def: &'static DeviceDef, card: &mut DeviceCard) {
+    /// Body of a View::Custom card. \`rect\` = the view area (x, y, w, h; card
+    /// relative, 100%): left of the slider column, from the view row top to
+    /// the bottom of the well.
+    pub(crate) fn custom_body(&self, d: &Device, def: &'static DeviceDef, name: &str, rect: (f32, f32, f32, f32)) -> CustomBody {
+        let value = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
+        let accent = self
+            .project()
+            .find_device(d.id)
+            .map_or(Color::from_rgb_u8(0x43, 0x9b, 0x94), |(ti, _)| crate::controller::slint_color(crate::controller::track_color(self.project().tracks[ti].color)));
+        let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
         match name {
-            "trance-gate" => self.trance_gate_card(d, def, card),
-            "shaper" => self.shaper_card(d, def, card),
-            _ => {}
-        }
-    }
-
-    fn hover_of(&self, id: DeviceId) -> (Hit, (f32, f32)) {
-        match self.devices.panel.views.hover {
-            Some((d, h, p)) if d == id => (h, p),
-            _ => (Hit::None, (-1.0, -1.0)),
-        }
-    }
-
-    fn step_ms(&self, rate: usize) -> f32 {
-        (60000.0 / self.project().transport.bpm.max(1.0) * tg::RATE_QUARTERS[rate.min(tg::RATES.len() - 1)]) as f32
-    }
-
-    fn adsr(&self, d: &Device, def: &DeviceDef) -> Adsr {
-        Adsr { a: self.fv(d, def, 2), d: self.fv(d, def, 3), s: self.fv(d, def, 4) / 100.0, r: self.fv(d, def, 5) }
-    }
-
-    /// (pattern index, steps, mask) of the active pattern.
-    fn tg_pattern(&self, d: &Device, def: &DeviceDef) -> (usize, u32, u32) {
-        let p = (self.fv(d, def, 0).round() as usize).min(tg::PATTERN_COUNT - 1);
-        let base = 8 + 3 * p;
-        let steps = (self.fv(d, def, base).round() as u32).clamp(1, tg::MAX_STEPS);
-        (p, steps, tg::mask(self.fv(d, def, base + 1), self.fv(d, def, base + 2)))
-    }
-
-    fn trance_gate_card(&self, d: &Device, def: &'static DeviceDef, card: &mut DeviceCard) {
-        let accent = card.accent;
-        let (hit, _) = self.hover_of(d.id);
-        let (pattern, steps, mask) = self.tg_pattern(d, def);
-        let rate = (self.fv(d, def, 1).round() as usize).min(tg::RATES.len() - 1);
-        let swing = self.fv(d, def, 6) / 100.0;
-        let env = self.adsr(d, def);
-        let step_ms = self.step_ms(rate);
-        let mut c = Canvas::default();
-
-        // Ring: one annular sector per step (swing-warped), then the gate-shape preview.
-        let gap = 0.6 / TG_R;
-        for i in 0..steps as usize {
-            let a0 = step_angle(step_start(i, swing), steps) + gap;
-            let a1 = step_angle(if i + 1 == steps as usize { steps as f32 } else { step_start(i + 1, swing) }, steps) - gap;
-            if a1 <= a0 {
-                continue;
-            }
-            let on = mask >> i & 1 == 1;
-            let hot = hit == Hit::Step(i);
-            let fill = if on { alpha(accent, if hot { 0.16 } else { 0.08 }) } else { ink(if hot { 0.10 } else { 0.045 }) };
-            c.fill(sector(TG_RI, TG_R, a0, a1), fill);
-        }
-        let levels = ring_levels(&env, steps, mask, swing, step_ms);
-        let n = levels.len();
-        for i in (0..steps as usize).filter(|i| mask >> i & 1 == 1) {
-            let a0 = step_angle(step_start(i, swing), steps) + gap;
-            let a1 = step_angle(if i + 1 == steps as usize { steps as f32 } else { step_start(i + 1, swing) }, steps) - gap;
-            if a1 <= a0 {
-                continue;
-            }
-            let j0 = ((a0 / std::f32::consts::TAU) * n as f32).ceil() as usize;
-            let j1 = (((a1 / std::f32::consts::TAU) * n as f32).floor() as usize).min(n - 1);
-            let mut outer: Vec<(f32, f32)> = Vec::new();
-            let r_of = |lv: f32| TG_RI + (TG_R - TG_RI) * lv;
-            outer.push(polar(r_of(levels[j0.min(n - 1)]), a0));
-            for (j, lv) in levels.iter().enumerate().take(j1 + 1).skip(j0) {
-                outer.push(polar(r_of(*lv), std::f32::consts::TAU * j as f32 / n as f32));
-            }
-            outer.push(polar(r_of(levels[j1]), a1));
-            if levels[j0.min(n - 1)..=j1].iter().all(|l| *l < 0.004) {
-                continue;
-            }
-            let (i1, i0) = (polar(TG_RI, a1), polar(TG_RI, a0));
-            let shape = PathData::default().poly(&outer).l(i1.0, i1.1).a(TG_RI, a1 - a0 > std::f32::consts::PI, false, i0.0, i0.1).z();
-            c.fill(shape, alpha(accent, 0.34));
-            c.stroke(PathData::default().poly(&outer), accent, 1.5);
-        }
-        c.stroke(PathData::default().circle(TG_CX, TG_CY, TG_RI - 4.2), ink(0.05), 1.0);
-        // Playhead while the transport plays.
-        if self.engine.transport().playing {
-            let beats = self.playhead_ticks() as f64 / PPQ as f64;
-            let pos = (beats / tg::RATE_QUARTERS[rate]).rem_euclid(steps as f64) as f32;
-            if pos > 0.01 {
-                let a1 = step_angle(pos, steps);
-                let r = TG_RI - 4.2;
-                let (sx, sy) = polar(r, 0.0);
-                let (ex, ey) = polar(r, a1);
-                c.stroke(PathData::default().m(sx, sy).a(r, a1 > std::f32::consts::PI, true, ex, ey), alpha(accent, 0.7), 2.0);
-            }
-        }
-        // Centre: step counter with chevrons, rate pill.
-        let count_hot = matches!(hit, Hit::StepCount);
-        c.text(TG_CX - 32.0, TG_CY - 26.0, 48.0, 28.0, steps.to_string(), ink(if count_hot { 1.0 } else { 0.92 }), 28.0, 600, 1);
-        for (k, h) in [(0, Hit::StepMore), (1, Hit::StepFewer)] {
-            let enabled = if k == 0 { steps < tg::MAX_STEPS } else { steps > 1 };
-            let cy = TG_CY - 18.0 + 14.0 * k as f32;
-            c.chevron(TG_CX + 19.0, cy, k == 1, ink(if !enabled { 0.25 } else if hit == h { 1.0 } else { 0.7 }));
-        }
-        let rate_hot = hit == Hit::Rate;
-        c.text(TG_CX - 26.0, TG_CY + 5.0, 44.0, 18.0, tg::RATES[rate], if rate_hot { Color::from_rgb_u8(255, 255, 255) } else { accent.brighter(0.2) }, 13.0, 600, 2);
-        c.chevron(TG_CX + 23.0, TG_CY + 14.0, true, rgba(0xa6, 0xa8, 0xad, 1.0));
-
-        // Pattern choice track.
-        c.text(TG_PAT.0, TG_PAT.1 - 19.0, 80.0, 19.0, "Pattern", ink(0.4), 12.0, 600, 0);
-        c.fill(PathData::default().rrect(TG_PAT.0, TG_PAT.1, TG_PAT.2, TG_PAT.3, TG_PAT.3 / 2.0), rgba(0x29, 0x2a, 0x2f, 1.0));
-        let cell = TG_PAT.2 / tg::PATTERN_COUNT as f32;
-        for i in 0..tg::PATTERN_COUNT {
-            let x = TG_PAT.0 + cell * i as f32;
-            let sel = i == pattern;
-            if sel {
-                c.fill(PathData::default().rrect(x + 2.0, TG_PAT.1 + 2.0, cell - 4.0, TG_PAT.3 - 4.0, (TG_PAT.3 - 4.0) / 2.0), accent);
-            } else if hit == Hit::Pattern(i) {
-                c.fill(PathData::default().rrect(x + 2.0, TG_PAT.1 + 2.0, cell - 4.0, TG_PAT.3 - 4.0, (TG_PAT.3 - 4.0) / 2.0), ink(0.04));
-            }
-            let col = if sel { rgba(0x17, 0x18, 0x1b, 1.0) } else if hit == Hit::Pattern(i) { ink(0.85) } else { ink(0.7) };
-            c.text(x, TG_PAT.1, cell, TG_PAT.3, (i + 1).to_string(), col, 11.0, 600, 1);
-        }
-
-        // Envelope.
-        c.text(TG_ENV.0, TG_ENV.1 - 19.0, 120.0, 19.0, "Envelope", ink(0.4), 12.0, 600, 0);
-        c.fill(PathData::default().rrect(TG_ENV.0, TG_ENV.1, TG_ENV.2, TG_ENV.3, 6.0), rgba(0, 0, 0, 0.26));
-        let (gate_ms, span) = match &self.devices.panel.views.gesture {
-            Some(Gesture::Env { device, span, gate_ms, .. }) if *device == d.id => (*gate_ms, *span),
-            _ => env_span(&env, step_ms),
-        };
-        let (x0, y0, x1, y1) = TG_PLOT;
-        let tx = |t: f32| x0 + (t / span).clamp(0.0, 1.0) * (x1 - x0);
-        let ly = |l: f32| y1 - l.clamp(0.0, 1.0) * (y1 - y0);
-        let mut grid = PathData::default();
-        let mut t = step_ms;
-        while t < span && step_ms > 1.0 {
-            grid = grid.m(tx(t), y0).l(tx(t), y1);
-            t += step_ms;
-        }
-        c.stroke(grid, ink(0.05), 1.0);
-        c.stroke(PathData::default().m(x0, y1).l(x1, y1), ink(0.08), 1.0);
-        c.fill(PathData::default().m(x0, y0).l(tx(gate_ms), y0).l(tx(gate_ms), y1).l(x0, y1).z(), alpha(accent, 0.07));
-        let mut dash = PathData::default();
-        let mut y = y0;
-        while y < y1 {
-            dash = dash.m(tx(gate_ms), y).l(tx(gate_ms), (y + 3.0).min(y1));
-            y += 6.0;
-        }
-        c.stroke(dash, alpha(accent, 0.45), 1.0);
-        // Gate level: open until gate_ms, then released.
-        let mut sim = EnvSim::default();
-        sim.gate(true, &env);
-        let samples = 240;
-        let mut pts = vec![(x0, ly(0.0))];
-        let mut gated = true;
-        let mut tt = 0.0f32;
-        for k in 1..=samples {
-            let target = span * k as f32 / samples as f32;
-            if gated && target >= gate_ms {
-                sim.advance(gate_ms - tt, &env);
-                tt = gate_ms;
-                sim.gate(false, &env);
-                gated = false;
-            }
-            sim.advance(target - tt, &env);
-            tt = target;
-            pts.push((tx(target), ly(sim.level)));
-        }
-        let mut area = PathData::default().poly(&pts);
-        area = area.l(x1, y1).l(x0, y1).z();
-        c.fill(area, vgrad(alpha(accent, 0.32), alpha(accent, 0.04)));
-        c.stroke(PathData::default().poly(&pts), accent, 1.5);
-        let handles = [(Hit::EnvA, env.a, 1.0), (Hit::EnvD, env.a + env.d, env.s), (Hit::EnvR, gate_ms + env.r, 0.0)];
-        for (hh, t, l) in handles {
-            let hot = hit == hh || matches!(&self.devices.panel.views.gesture, Some(Gesture::Env { handle, device, .. }) if *handle == hh && *device == d.id);
-            let r = if hot { 6.0 } else { 4.5 };
-            c.path(
-                PathData::default().circle(tx(t), ly(l), r),
-                Brush::SolidColor(if hot { accent } else { ink(0.9) }),
-                1.5,
-                Brush::SolidColor(if hot { accent.brighter(0.6) } else { rgba(0x17, 0x18, 0x1b, 1.0) }),
-            );
-        }
-        c.text(x0, y1 + 1.0, 80.0, 15.0, "Gate", ink(0.55), 10.5, 600, 0);
-        c.text(x1 - 100.0, y1 + 1.0, 100.0, 15.0, format!("{} ms", span.round()), ink(0.55), 10.5, 600, 2);
-
-        // Knobs: Attack, Decay, Sustain, Release, Swing, Mix (cells 50 wide, gap 4).
-        let knobs: Vec<PanelKnob> = (2..8).map(|i| knob(def, self.fv(d, def, i), i, TG_KNOB_X + 54.0 * (i - 2) as f32)).collect();
-        card.knobs = ModelRc::from(Rc::new(VecModel::from(knobs)));
-        let cursor = match hit {
-            Hit::Step(_) | Hit::Pattern(_) | Hit::StepMore | Hit::StepFewer | Hit::Rate => 1,
-            Hit::StepCount => 2,
-            Hit::EnvA | Hit::EnvR => 3,
-            Hit::EnvD => 4,
-            _ => 0,
-        };
-        card.width = TG_W * Z;
-        card.canvas = c.into_canvas(TG_W, cursor);
-    }
-
-    fn tg_hit(&self, d: &Device, def: &DeviceDef, p: (f32, f32)) -> Hit {
-        let (_, steps, _) = self.tg_pattern(d, def);
-        let swing = self.fv(d, def, 6) / 100.0;
-        let (dx, dy) = (p.0 - TG_CX, p.1 - TG_CY);
-        let dist = (dx * dx + dy * dy).sqrt();
-        if in_rect(p, TG_CX + 11.0, TG_CY - 25.0, 16.0, 13.0) {
-            return Hit::StepMore;
-        }
-        if in_rect(p, TG_CX + 11.0, TG_CY - 11.0, 16.0, 13.0) {
-            return Hit::StepFewer;
-        }
-        if in_rect(p, TG_CX - 32.0, TG_CY - 26.0, 43.0, 28.0) {
-            return Hit::StepCount;
-        }
-        if in_rect(p, TG_CX - 26.0, TG_CY + 5.0, 54.0, 18.0) {
-            return Hit::Rate;
-        }
-        if (TG_RI - 4.0..=TG_R + 6.0).contains(&dist) {
-            let a = dx.atan2(-dy).rem_euclid(std::f32::consts::TAU);
-            let u = a / std::f32::consts::TAU * steps as f32;
-            let k = swung_step(u as f64, swing as f64).rem_euclid(steps as i64) as usize;
-            return Hit::Step(k);
-        }
-        if dist < TG_RI - 4.0 {
-            return Hit::Hole;
-        }
-        if in_rect(p, TG_PAT.0, TG_PAT.1, TG_PAT.2, TG_PAT.3) {
-            return Hit::Pattern((((p.0 - TG_PAT.0) / (TG_PAT.2 / 8.0)) as usize).min(7));
-        }
-        if in_rect(p, TG_ENV.0, TG_ENV.1, TG_ENV.2, TG_ENV.3) {
-            let env = self.adsr(d, def);
-            let rate = (self.fv(d, def, 1).round() as usize).min(tg::RATES.len() - 1);
-            let (gate, span) = env_span(&env, self.step_ms(rate));
-            let (x0, y0, x1, y1) = TG_PLOT;
-            let tx = |t: f32| x0 + (t / span).clamp(0.0, 1.0) * (x1 - x0);
-            let ly = |l: f32| y1 - l * (y1 - y0);
-            let mut best = (Hit::None, 12.0f32);
-            for (h, t, l) in [(Hit::EnvA, env.a, 1.0), (Hit::EnvD, env.a + env.d, env.s), (Hit::EnvR, gate + env.r, 0.0)] {
-                let dd = ((p.0 - tx(t)).powi(2) + (p.1 - ly(l)).powi(2)).sqrt();
-                if dd <= best.1 {
-                    best = (h, dd);
-                }
-            }
-            return best.0;
-        }
-        Hit::None
-    }
-
-    /// The Time lane's longest repeat in quarter notes at the project tempo.
-    fn time_max_beats(&self) -> f64 {
-        sh::TIME_MAX_SECONDS * self.project().transport.bpm / 60.0
-    }
-
-    fn shaper_lane(&self, id: DeviceId) -> usize {
-        self.devices.panel.views.lane.get(&id).copied().unwrap_or(0).min(sh::LANE_COUNT - 1)
-    }
-
-    fn shaper_card(&self, d: &Device, def: &'static DeviceDef, card: &mut DeviceCard) {
-        let accent = card.accent;
-        let (hit, hp) = self.hover_of(d.id);
-        let lane = self.shaper_lane(d.id);
-        let values = self.values(d, def);
-        let base = sh::lane_base(lane);
-        let lane_on = values[base + sh::ON] >= 0.5;
-        let depth = values[base + sh::DEPTH] / 100.0;
-        let mut c = Canvas::default();
-        let rest_col = ink(0.45);
-
-        // Lane tabs: ring switch + name.
-        for (l, (_, name)) in sh::LANES.iter().enumerate() {
-            let on = values[sh::lane_base(l) + sh::ON] >= 0.5;
-            let x = SH_TAB_X[l];
-            let sel = l == lane;
-            let hot = matches!(hit, Hit::LaneOn(h) | Hit::Lane(h) if h == l);
-            let ring_col = if on { accent } else if hot { ink(0.7) } else { rest_col };
-            c.stroke(PathData::default().circle(x, SH_TABS_Y, 6.25 * 0.75), ring_col, 1.5);
-            if on {
-                c.fill(PathData::default().circle(x, SH_TABS_Y, 3.0 * 0.75), accent);
-            }
-            let col = if sel { ink(1.0) } else if hot { ink(0.7) } else { rest_col };
-            c.text(x + 14.5, SH_TABS_Y - 10.0, 70.0, 20.0, *name, col, 12.5, 600, 0);
-        }
-
-        // Strip row: Shape, Band (+ Split), the lane's own controls.
-        let dim = if lane_on { 1.0 } else { 0.55 };
-        let pts = sh::lane_points(&values, lane);
-        let shape_name = sh::matching_shape(lane, &pts).unwrap_or("Custom");
-        let y = SH_STRIP_Y;
-        c.text(8.0, y, 40.0, 19.0, "Shape", ink(0.4 * dim), 11.5, 500, 0);
-        c.pill(48.5, y, 97.0, 19.0, hit == Hit::Shape);
-        c.text(56.5, y, 70.0, 19.0, shape_name, ink(0.95 * dim), 11.5, 600, 0);
-        c.chevron(135.5, y + 9.5, true, ink(0.65 * dim));
-        c.text(162.0, y, 34.0, 19.0, "Band", ink(0.4 * dim), 11.5, 500, 0);
-        let band = values[base + sh::BAND].round() as usize;
-        let band_w = if band == 0 { 55.0 } else { 55.0 + 56.0 };
-        c.pill(196.5, y, band_w, 19.0, matches!(hit, Hit::Band | Hit::Split));
-        c.text(204.5, y, 34.0, 19.0, def.params[base + sh::BAND].format(band as f32), ink(0.95 * dim), 11.5, 600, 0);
-        c.chevron(241.0, y + 9.5, true, ink(0.65 * dim));
-        if band != 0 {
-            c.fill(PathData::default().m(251.5, y + 3.0).l(251.5, y + 16.0).l(252.0, y + 16.0).l(252.0, y + 3.0).z(), ink(0.08));
-            c.text(252.0, y, 55.5, 19.0, def.params[base + sh::SPLIT].format(values[base + sh::SPLIT]), ink(if hit == Hit::Split { 0.95 } else { 0.7 } * dim), 11.0, 600, 1);
-        }
-        let mut x = 196.5 + band_w + 16.0;
-        if lane == 4 {
-            c.text(x, y, 30.0, 19.0, "Type", ink(0.4 * dim), 11.5, 500, 0);
-            x += 32.0;
-            c.pill(x, y, 128.0, 19.0, matches!(hit, Hit::FilterType | Hit::Resonance));
-            c.text(x + 8.0, y, 64.0, 19.0, def.params[5].format(values[5]), ink(0.95 * dim), 11.5, 600, 0);
-            c.chevron(x + 70.0, y + 9.5, true, ink(0.65 * dim));
-            c.fill(PathData::default().m(x + 79.5, y + 3.0).l(x + 79.5, y + 16.0).l(x + 80.0, y + 16.0).l(x + 80.0, y + 3.0).z(), ink(0.08));
-            c.text(x + 80.0, y, 48.0, 19.0, def.params[6].format(values[6]), ink(if hit == Hit::Resonance { 0.95 } else { 0.7 } * dim), 11.0, 600, 1);
-        } else if lane == 5 {
-            let r = crush_row(x, band != 0);
-            c.text(r.bits_label, y, r.bits_pill.0 - r.bits_label, 19.0, "Bits", ink(0.4 * dim), r.font, 500, 0);
-            c.pill(r.bits_pill.0, y, r.bits_pill.1, 19.0, hit == Hit::Bits);
-            c.text(r.bits_pill.0, y, r.bits_pill.1, 19.0, def.params[9].format(values[9]), ink(0.9 * dim), 11.0, 600, 1);
-            c.text(r.dec_label, y, r.dec_pill.0 - r.dec_label, 19.0, "Decimate", ink(0.4 * dim), r.font, 500, 0);
-            c.pill(r.dec_pill.0, y, r.dec_pill.1, 19.0, hit == Hit::Decimate);
-            c.text(r.dec_pill.0, y, r.dec_pill.1, 19.0, def.params[10].format(values[10]), ink(0.9 * dim), 11.0, 600, 1);
-        }
-
-        // Curve well.
-        c.fill(PathData::default().rrect(SH_WELL.0, SH_WELL.1, SH_WELL.2, SH_WELL.3, 6.0), rgba(0, 0, 0, 0.26));
-        let grid = *self.devices.panel.views.grid.get(&d.id).unwrap_or(&16);
-        let (mut strong, mut weak) = (PathData::default(), PathData::default());
-        for k in 0..=grid {
-            let gx = sh_px(k as f32 / grid as f32);
-            if k % (grid / 4).max(1) == 0 {
-                strong = strong.m(gx, SH_PLOT.1).l(gx, SH_PLOT.3);
-            } else {
-                weak = weak.m(gx, SH_PLOT.1).l(gx, SH_PLOT.3);
-            }
-        }
-        c.stroke(weak, ink(0.05), 1.0);
-        c.stroke(strong, ink(0.1), 1.0);
-        let quarters = sh::DIVISION_QUARTERS[(values[base + sh::RATE].round() as usize).min(sh::DIVISIONS.len() - 1)];
-        let rulers: Vec<(f32, String)> = match lane {
-            0 => vec![(1.0, "100".into()), (0.5, fmt_num(100.0 * (1.0 - depth / 2.0))), (0.0, fmt_num(100.0 * (1.0 - depth)))],
-            1 => vec![(1.0, if depth as f64 * quarters > self.time_max_beats() { "Max".into() } else { "Cycle".into() }), (0.0, "Now".into())],
-            2 => vec![(1.0, "Wide".into()), (0.5, "As is".into()), (0.0, "Mono".into())],
-            3 => vec![(1.0, "R".into()), (0.5, "C".into()), (0.0, "L".into())],
-            5 => vec![(1.0, "Full".into()), (0.0, "Clean".into())],
-            6 => vec![(1.0, format!("+{}", fmt_num(12.0 * depth))), (0.5, "0".into()), (0.0, format!("{MINUS}{}", fmt_num(12.0 * depth)))],
-            _ => vec![],
-        };
-        if lane == 6 && depth > 0.0 {
-            let spacing = (SH_PLOT.3 - SH_PLOT.1) / (24.0 * depth);
-            if spacing >= 5.0 {
-                let (mut semis, mut fifths) = (PathData::default(), PathData::default());
-                for s in -12i32..=12 {
-                    let yy = 0.5 + s as f32 / (24.0 * depth);
-                    if !(0.0..=1.0).contains(&yy) || s == 0 {
-                        continue;
-                    }
-                    let py = sh_py(yy);
-                    if s.abs() == 7 {
-                        fifths = fifths.m(SH_PLOT.0, py).l(SH_PLOT.2, py);
-                    } else {
-                        semis = semis.m(SH_PLOT.0, py).l(SH_PLOT.2, py);
-                    }
-                }
-                c.stroke(semis, ink(0.05), 1.0);
-                c.stroke(fifths, ink(0.1), 1.0);
-            }
-        }
-        let rest = sh::REST[lane];
-        for (ry, text) in &rulers {
-            let py = sh_py(*ry);
-            c.text(SH_PLOT.0 - 46.0, py - 7.0, 38.0, 14.0, text.as_str(), ink(0.5), 10.0, 600, 2);
-            if (*ry - rest).abs() > 1e-4 {
-                c.stroke(PathData::default().m(SH_PLOT.0, py).l(SH_PLOT.2, py), ink(0.05), 1.0);
-            }
-        }
-        let mut dash = PathData::default();
-        let mut xx = SH_PLOT.0;
-        while xx < SH_PLOT.2 {
-            dash = dash.m(xx, sh_py(rest)).l((xx + 3.0).min(SH_PLOT.2), sh_py(rest));
-            xx += 6.0;
-        }
-        c.stroke(dash, ink(0.22), 1.0);
-
-        let curve_alpha = if lane_on { 1.0 } else { 0.4 };
-        let n = 240;
-        let line: Vec<(f32, f32)> = (0..=n).map(|i| {
-            let x = i as f32 / n as f32;
-            (sh_px(x), sh_py(sh::eval(&pts, x)))
-        }).collect();
-        // Vertical jumps (two points at one x) are drawn as steps.
-        let mut line = line;
-        for w in pts.windows(2) {
-            if (w[1].x - w[0].x).abs() < 1e-6 {
-                let px = sh_px(w[0].x);
-                let pos = line.iter().position(|(x, _)| *x >= px).unwrap_or(line.len());
-                line.insert(pos, (px, sh_py(w[1].y)));
-                line.insert(pos, (px, sh_py(w[0].y)));
-            }
-        }
-        let area = PathData::default().poly(&line).l(SH_PLOT.2, SH_PLOT.3).l(SH_PLOT.0, SH_PLOT.3).z();
-        c.fill(area, vgrad(alpha(accent, 0.3 * curve_alpha), alpha(accent, 0.04 * curve_alpha)));
-        c.stroke(PathData::default().poly(&line), alpha(accent, if lane_on { 1.0 } else { 0.45 }), 2.0);
-        let over_plot = in_rect(hp, SH_WELL.0, SH_WELL.1, SH_WELL.2, SH_WELL.3);
-        let gesture = match &self.devices.panel.views.gesture {
-            Some(Gesture::Curve { device, k, mid, .. }) if *device == d.id => Some((*k, *mid)),
-            _ => None,
-        };
-        if over_plot || gesture.is_some() {
-            for (k, w) in pts.windows(2).enumerate() {
-                if (w[1].x - w[0].x).abs() < 1e-6 || (w[1].y - w[0].y).abs() < 1e-6 {
-                    continue;
-                }
-                let mx = 0.5 * (w[0].x + w[1].x);
-                let hot = hit == Hit::Mid(k) || gesture == Some((k, true));
-                let r = if hot { 4.5 } else { 3.5 };
-                c.path(PathData::default().circle(sh_px(mx), sh_py(sh::eval(&pts, mx)), r), Brush::SolidColor(if hot { accent } else { ink(0.6) }), 1.2, Brush::SolidColor(rgba(0x17, 0x18, 0x1b, 1.0)));
-            }
-        }
-        for (k, p) in pts.iter().enumerate() {
-            let hot = hit == Hit::CurvePoint(k) || gesture == Some((k, false));
-            let r = if hot { 5.5 } else { 4.0 };
-            c.path(
-                PathData::default().circle(sh_px(p.x), sh_py(p.y), r),
-                Brush::SolidColor(if hot { accent } else { ink(0.9 * curve_alpha) }),
-                1.5,
-                Brush::SolidColor(if hot { Color::from_rgb_u8(255, 255, 255) } else { rgba(0x17, 0x18, 0x1b, 1.0) }),
-            );
-        }
-        // Readout bubble: the hot point's value, or the curve under the pointer.
-        let bubble = match (hit, gesture) {
-            (_, Some((k, false))) | (Hit::CurvePoint(k), None) => pts.get(k).map(|p| (p.x, p.y)),
-            (_, Some((k, true))) | (Hit::Mid(k), None) => pts.get(k + 1).map(|b| {
-                let mx = 0.5 * (pts[k].x + b.x);
-                (mx, sh::eval(&pts, mx))
-            }),
-            (Hit::Plot, None) => {
-                let x = sh_x_of(hp.0);
-                Some((x, sh::eval(&pts, x)))
-            }
-            _ => None,
-        };
-        if let Some((bx, by)) = bubble {
-            let text = lane_text(lane, by, depth, quarters, self.time_max_beats(), values[7], values[8]);
-            let w = 10.0 + 6.2 * text.chars().count() as f32;
-            let (px, py) = (sh_px(bx), sh_py(by));
-            let top = if py - 30.0 < SH_WELL.1 { py + 10.0 } else { py - 28.0 };
-            let left = (px - w / 2.0).clamp(SH_WELL.0 + 2.0, SH_WELL.0 + SH_WELL.2 - w - 2.0);
-            c.fill(PathData::default().rrect(left, top, w, 17.0, 8.5), rgba(0x2e, 0x2f, 0x35, 0.96));
-            c.text(left, top, w, 17.0, text, ink(0.95), 10.5, 600, 1);
-        }
-        // Filter range pills (High top right, Low bottom right).
-        if lane == 4 {
-            for (i, (idx, h)) in [(8usize, Hit::FilterHigh), (7usize, Hit::FilterLow)].into_iter().enumerate() {
-                let w = 38.0;
-                let px = SH_WELL.0 + SH_WELL.2 - w - 6.0;
-                let py = if i == 0 { SH_WELL.1 + 6.0 } else { SH_WELL.1 + SH_WELL.3 - 6.0 - 16.0 };
-                c.fill(PathData::default().rrect(px, py, w, 16.0, 8.0), if hit == h { rgba(0x29, 0x2a, 0x30, 1.0) } else { rgba(0x22, 0x23, 0x28, 1.0) });
-                c.text(px, py, w, 16.0, short_hz(values[idx]), accent.brighter(if hit == h { 0.35 } else { 0.2 }), 10.0, 650, 1);
-            }
-        }
-
-        // Trigger cell: [Sync / This track / source] | threshold, caption under.
-        let (tx, ty, tw, th) = SH_TRIGGER;
-        let audio = values[0] >= 0.5;
-        c.pill(tx, ty, tw, th, matches!(hit, Hit::Trigger | Hit::Threshold));
-        let source = if !audio {
-            "Sync".to_string()
-        } else {
-            match d.sidechain.filter(|_| values[4] >= 0.5) {
-                Some(t) => self.project().track(t).map_or_else(|| "Removed".to_string(), |t| t.name.clone()),
-                None => "This track".to_string(),
-            }
-        };
-        c.text(tx + 8.0, ty, SH_TRIGGER_SPLIT - 24.0, th, source, ink(0.95), 11.5, 600, 0);
-        c.chevron(tx + SH_TRIGGER_SPLIT - 11.0, ty + th / 2.0, true, ink(0.65));
-        c.fill(PathData::default().m(tx + SH_TRIGGER_SPLIT, ty + 3.0).l(tx + SH_TRIGGER_SPLIT, ty + th - 3.0).l(tx + SH_TRIGGER_SPLIT + 0.5, ty + th - 3.0).l(tx + SH_TRIGGER_SPLIT + 0.5, ty + 3.0).z(), ink(0.08));
-        let thr_alpha = if audio { if hit == Hit::Threshold { 0.95 } else { 0.75 } } else { 0.35 };
-        c.text(tx + SH_TRIGGER_SPLIT, ty, tw - SH_TRIGGER_SPLIT, th, def.params[1].format(values[1]), ink(thr_alpha), 11.0, 600, 1);
-        c.text(tx, 284.5, tw, 14.0, "Trigger", rgba(0xe5, 0xe5, 0xe8, 1.0), 11.0, 600, 1);
-
-        // Knobs: the lane's Rate and Depth, then Mix and Output.
-        let idx = [base + sh::RATE, base + sh::DEPTH, 2, 3];
-        let knobs: Vec<PanelKnob> = idx.iter().zip(SH_KNOBS).map(|(&i, x)| knob(def, values[i], i, x)).collect();
-        card.knobs = ModelRc::from(Rc::new(VecModel::from(knobs)));
-        let cursor = match hit {
-            Hit::LaneOn(_) | Hit::Lane(_) | Hit::Shape | Hit::Band | Hit::FilterType | Hit::Trigger => 1,
-            Hit::Split | Hit::Resonance | Hit::Bits | Hit::Decimate | Hit::Threshold | Hit::FilterHigh | Hit::FilterLow => 2,
-            Hit::CurvePoint(k) => {
-                if k == 0 || k + 1 == pts.len() { 2 } else { 4 }
-            }
-            Hit::Mid(_) => 2,
-            Hit::Plot if pts.len() < sh::MAX_POINTS => 5,
-            _ => 0,
-        };
-        card.width = SH_W * Z;
-        card.canvas = c.into_canvas(SH_W, cursor);
-    }
-
-    fn sh_hit(&self, d: &Device, def: &DeviceDef, p: (f32, f32)) -> Hit {
-        let lane = self.shaper_lane(d.id);
-        let values = self.values(d, def);
-        let base = sh::lane_base(lane);
-        for l in 0..sh::LANE_COUNT {
-            let x = SH_TAB_X[l];
-            if in_rect(p, x - 8.0, SH_TABS_Y - 9.0, 16.0, 18.0) {
-                return Hit::LaneOn(l);
-            }
-            let end = if l + 1 < sh::LANE_COUNT { SH_TAB_X[l + 1] - 12.0 } else { x + 70.0 };
-            if in_rect(p, x + 8.0, SH_TABS_Y - 10.0, end - x - 8.0, 20.0) {
-                return Hit::Lane(l);
-            }
-        }
-        let y = SH_STRIP_Y;
-        if in_rect(p, 48.5, y, 97.0, 19.0) {
-            return Hit::Shape;
-        }
-        let band = values[base + sh::BAND].round() as usize;
-        if in_rect(p, 196.5, y, 55.0, 19.0) {
-            return Hit::Band;
-        }
-        let band_w = if band == 0 { 55.0 } else { 111.0 };
-        if band != 0 && in_rect(p, 252.0, y, 55.5, 19.0) {
-            return Hit::Split;
-        }
-        let x = 196.5 + band_w + 16.0;
-        if lane == 4 {
-            if in_rect(p, x + 32.0, y, 80.0, 19.0) {
-                return Hit::FilterType;
-            }
-            if in_rect(p, x + 112.0, y, 48.0, 19.0) {
-                return Hit::Resonance;
-            }
-        } else if lane == 5 {
-            let r = crush_row(x, band != 0);
-            if in_rect(p, r.bits_pill.0, y, r.bits_pill.1, 19.0) {
-                return Hit::Bits;
-            }
-            if in_rect(p, r.dec_pill.0, y, r.dec_pill.1, 19.0) {
-                return Hit::Decimate;
-            }
-        }
-        let (tx, ty, tw, th) = SH_TRIGGER;
-        if in_rect(p, tx, ty, SH_TRIGGER_SPLIT, th) {
-            return Hit::Trigger;
-        }
-        if in_rect(p, tx + SH_TRIGGER_SPLIT, ty, tw - SH_TRIGGER_SPLIT, th) {
-            return if values[0] >= 0.5 { Hit::Threshold } else { Hit::None };
-        }
-        if !in_rect(p, SH_WELL.0, SH_WELL.1, SH_WELL.2, SH_WELL.3) {
-            return Hit::None;
-        }
-        if lane == 4 {
-            let px = SH_WELL.0 + SH_WELL.2 - 44.0;
-            if in_rect(p, px, SH_WELL.1 + 6.0, 38.0, 16.0) {
-                return Hit::FilterHigh;
-            }
-            if in_rect(p, px, SH_WELL.1 + SH_WELL.3 - 22.0, 38.0, 16.0) {
-                return Hit::FilterLow;
-            }
-        }
-        let pts = sh::lane_points(&values, lane);
-        let near = |x: f32, y: f32| ((p.0 - sh_px(x)).powi(2) + (p.1 - sh_py(y)).powi(2)).sqrt() <= 9.0;
-        if let Some(k) = pts.iter().enumerate().rev().find(|(_, q)| near(q.x, q.y)).map(|(k, _)| k) {
-            return Hit::CurvePoint(k);
-        }
-        for (k, w) in pts.windows(2).enumerate() {
-            if (w[1].x - w[0].x).abs() < 1e-6 || (w[1].y - w[0].y).abs() < 1e-6 {
-                continue;
-            }
-            let mx = 0.5 * (w[0].x + w[1].x);
-            if near(mx, sh::eval(&pts, mx)) {
-                return Hit::Mid(k);
-            }
-        }
-        Hit::Plot
-    }
-
-    // ---------------------------------------------------------------- live values
-
-    fn live_set(&mut self, device: DeviceId, def: &DeviceDef, i: usize, v: f32) {
-        let Some(p) = def.params.get(i) else { return };
-        let v = p.snap(v);
-        if self.devices.panel.views.live.get(&(device, i)) == Some(&v) {
-            return;
-        }
-        self.devices.panel.views.live.insert((device, i), v);
-        let _ = self.engine.builtin_set_param(device.0, i as u32, v);
-        self.ui_dirty = true;
-    }
-
-    /// Commit a gesture's live values as one undo step.
-    fn live_commit(&mut self, device: DeviceId, label: &str) {
-        let live: Vec<(usize, f32)> = self.devices.panel.views.live.iter().filter(|((d, _), _)| *d == device).map(|((_, i), v)| (*i, *v)).collect();
-        self.devices.panel.views.live.retain(|(d, _), _| *d != device);
-        self.ui_dirty = true;
-        let Some((d, def)) = self.panel_def(device) else { return };
-        let mut changed: Vec<(usize, f32)> = live.into_iter().filter(|(i, v)| (def.value(d, &def.params[*i]) - v).abs() > 0.0).collect();
-        changed.sort_by_key(|(i, _)| *i);
-        let mut commands: Vec<Command> = changed.iter().map(|(i, v)| Command::SetDeviceParam { device, param: def.params[*i].id.to_string(), value: *v }).collect();
-        match commands.len() {
-            0 => {}
-            1 => self.panel_commit(commands.remove(0)),
-            _ => self.panel_commit(Command::Batch { label: label.to_string(), commands }),
-        }
-    }
-
-    /// Restore the model values of a gesture's live parameters.
-    fn live_cancel(&mut self, device: DeviceId) {
-        let live: Vec<usize> = self.devices.panel.views.live.keys().filter(|(d, _)| *d == device).map(|(_, i)| *i).collect();
-        self.devices.panel.views.live.retain(|(d, _), _| *d != device);
-        if let Some((d, def)) = self.panel_def(device) {
-            let restore: Vec<(usize, f32)> = live.into_iter().map(|i| (i, def.value(d, &def.params[i]))).collect();
-            for (i, v) in restore {
-                let _ = self.engine.builtin_set_param(device.0, i as u32, v);
-            }
-        }
-        self.ui_dirty = true;
-    }
-
-    /// Several parameters as one command (one undo step).
-    fn set_many(&mut self, device: DeviceId, label: &str, writes: Vec<(&'static str, f32)>) {
-        let Some((d, def)) = self.panel_def(device) else { return };
-        let commands: Vec<Command> = writes
-            .into_iter()
-            .filter(|(id, v)| def.param(id).is_some_and(|p| (def.value(d, p) - p.snap(*v)).abs() > 0.0))
-            .map(|(id, value)| Command::SetDeviceParam { device, param: id.to_string(), value })
-            .collect();
-        match commands.len() {
-            0 => {}
-            1 => self.panel_commit(commands.into_iter().next().unwrap()),
-            _ => self.panel_commit(Command::Batch { label: label.to_string(), commands }),
-        }
-    }
-
-    /// Escape: cancel a running field gesture. True when one was running.
-    pub(crate) fn canvas_cancel(&mut self) -> bool {
-        let Some(g) = self.devices.panel.views.gesture.take() else { return false };
-        match g {
-            Gesture::Param { .. } => {
-                self.panel_cancel_drag();
-            }
-            Gesture::Paint { device, .. } | Gesture::Env { device, .. } | Gesture::Curve { device, .. } => self.live_cancel(device),
-        }
-        true
-    }
-
-    // ---------------------------------------------------------------- events
-
-    pub fn panel_canvas(&mut self, device: DeviceId, e: CanvasEvent) {
-        let Some((d, def)) = self.panel_def(device) else { return };
-        let name = match def.layout.view {
-            Some(saine_core::builtin::View::Custom(n)) => n,
-            _ => return,
-        };
-        let p = e.pt();
-        let hit = match name {
-            "trance-gate" => self.tg_hit(d, def, p),
-            "shaper" => self.sh_hit(d, def, p),
-            _ => Hit::None,
-        };
-        if e.kind == HOVER || e.kind == LEAVE {
-            let new = if e.kind == LEAVE { None } else { Some((device, hit, p)) };
-            let old = self.devices.panel.views.hover;
-            if old.map(|o| (o.0, o.1)) != new.map(|n| (n.0, n.1)) || (hit == Hit::Plot && new.is_some()) {
-                self.devices.panel.views.hover = new;
-                self.ui_dirty = true;
-            }
-            return;
-        }
-        match e.kind {
-            MOVE => self.field_move(def, e, p),
-            UP => self.field_release(device, def),
-            CANCEL => {
-                self.canvas_cancel();
-            }
-            _ => match name {
-                "trance-gate" => self.tg_event(device, def, e, hit),
-                _ => self.sh_event(device, def, e, hit),
-            },
-        }
-    }
-
-    fn field_move(&mut self, def: &'static DeviceDef, e: CanvasEvent, p: (f32, f32)) {
-        let Some(g) = self.devices.panel.views.gesture.clone() else { return };
-        match g {
-            Gesture::Param { device, .. } => {
-                let last = self.devices.panel.views.hover.map(|h| h.2).unwrap_or(p);
-                self.devices.panel.views.hover = Some((device, self.devices.panel.views.hover.map_or(Hit::None, |h| h.1), p));
-                let index = self.panel_drag_index().unwrap_or(-1);
-                self.panel_drag(device, index, 1, (last.1 - p.1) * Z, 1.0 / 160.0, e.shift);
-            }
-            Gesture::Paint { device, on, last } => {
-                let Some((d, _)) = self.panel_def(device) else { return };
-                let (Hit::Step(k), (_, steps, _)) = (self.tg_hit(d, def, p), self.tg_pattern(d, def)) else { return };
-                if k == last {
-                    return;
-                }
-                // Every step crossed since the last event, the short way round the ring.
-                let n = steps as usize;
-                let (fwd, back) = ((k + n - last) % n, (last + n - k) % n);
-                let crossed: Vec<usize> = if fwd <= back { (1..=fwd).map(|s| (last + s) % n).collect() } else { (1..=back).map(|s| (last + n - s) % n).collect() };
-                for s in crossed {
-                    self.tg_paint(device, def, s, on);
-                }
-                self.devices.panel.views.gesture = Some(Gesture::Paint { device, on, last: k });
-            }
-            Gesture::Env { device, handle, span, gate_ms } => {
-                let (x0, y0, x1, y1) = TG_PLOT;
-                let t = ((p.0 - x0) / (x1 - x0)).clamp(0.0, 1.0) * span;
-                let Some((d, _)) = self.panel_def(device) else { return };
-                let attack = self.fv(d, def, 2);
-                match handle {
-                    Hit::EnvA => self.live_set(device, def, 2, t),
-                    Hit::EnvD => {
-                        self.live_set(device, def, 3, t - attack);
-                        self.live_set(device, def, 4, ((y1 - p.1) / (y1 - y0)).clamp(0.0, 1.0) * 100.0);
-                    }
-                    _ => self.live_set(device, def, 5, t - gate_ms),
-                }
-            }
-            Gesture::Curve { device, lane, k, mid, mut pts, raw, last } => {
-                let factor = if e.shift { 0.25 } else { 1.0 };
-                let free = e.shift || e.alt;
-                let raw = (raw.0 + (p.0 - last.0) * factor, raw.1 + (p.1 - last.1) * factor);
-                let grid = *self.devices.panel.views.grid.get(&device).unwrap_or(&16) as f32;
-                if mid {
-                    if let (Some(a), Some(b)) = (pts.get(k).copied(), pts.get(k + 1).copied()) {
-                        pts[k].tension = sh::tension_through(a, b, sh_y_of(raw.1));
-                    }
-                } else {
-                    let n = pts.len();
-                    let mut x = sh_x_of(raw.0);
-                    let mut y = sh_y_of(raw.1);
-                    if !free {
-                        x = (x * grid).round() / grid;
-                        y = if lane == 6 { (y * 24.0).round() / 24.0 } else { (y * 100.0).round() / 100.0 };
-                    }
-                    if k == 0 || k + 1 == n {
-                        x = if k == 0 { 0.0 } else { 1.0 };
-                    } else {
-                        x = x.clamp(pts[k - 1].x, pts[k + 1].x);
-                    }
-                    pts[k].x = x;
-                    pts[k].y = y;
-                }
-                self.sh_write_live(device, def, lane, &pts);
-                self.devices.panel.views.gesture = Some(Gesture::Curve { device, lane, k, mid, pts, raw, last: p });
-            }
-        }
-    }
-
-    fn field_release(&mut self, device: DeviceId, def: &'static DeviceDef) {
-        let Some(g) = self.devices.panel.views.gesture.take() else { return };
-        match g {
-            Gesture::Param { menu, .. } => {
-                let moved = self.panel_drag_active();
-                let index = self.panel_drag_index().unwrap_or(-1);
-                self.panel_drag(device, index, 2, 0.0, 1.0 / 160.0, false);
-                if !moved && let Some(which) = menu {
-                    let (x, y) = self.devices.panel.views.menu_at;
-                    self.field_menu(device, def, which, x, y);
-                }
-            }
-            Gesture::Paint { .. } => self.live_commit(device, "Edit Pattern"),
-            Gesture::Env { .. } => self.live_commit(device, "Edit Envelope"),
-            Gesture::Curve { .. } => self.live_commit(device, "Edit Shape"),
+            "wave" => wave_body(def, &value, idx(def.params[0].id), accent, rect),
+            "crush" => crush_body(&value, idx("downsample"), idx("bitdepth"), accent, rect),
+            "stereo-field" => stereo_body(def, &value, idx("width2"), idx("sidegain"), idx("lowcut"), accent, rect),
+            "utility" => utility_body(def, &value, &idx),
+            _ => CustomBody::default(),
         }
     }
 }
 
-// ---------------------------------------------------------------- clicks, menus
+/// Field frame: caption row then the well; returns the field and the well size (scaled).
+fn frame(rect: (f32, f32, f32, f32), caption: &str, readout: String) -> (PanelCanvas, f32, f32) {
+    let (x, y, w, h) = rect;
+    let field = PanelCanvas {
+        visible: true,
+        well: true,
+        x: x * Z,
+        y: y * Z,
+        w: w * Z,
+        h: h * Z,
+        well_y: CAPTION_H * Z,
+        caption: caption.into(),
+        readout: readout.into(),
+        ..Default::default()
+    };
+    (field, w * Z, (h - CAPTION_H) * Z)
+}
 
-const MENU_PATTERN: i32 = 0;
-const MENU_SHAPE: i32 = 1;
-const MENU_CURVE: i32 = 2;
-const MENU_TRIGGER: i32 = 3;
-/// Opens the choice menu of parameter (code - MENU_CHOICE).
-const MENU_CHOICE: i32 = 1000;
+fn wave_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, drag_param: i32, accent: Color, rect: (f32, f32, f32, f32)) -> CustomBody {
+    let v = value;
+    let (curve, reference, caption, fill_alpha, hiss): (Box<dyn Fn(f32) -> f32>, Box<dyn Fn(f32) -> f32>, &str, f32, f32) = match def.id {
+        "tapesaturation" => {
+            let (dr, cp, mx, out, mode) = (v("drive"), v("compression"), v("mix"), v("output_gain"), v("mode").round() as u32);
+            let warmth = v("warmth") / 100.0;
+            let hiss = (v("noise") + 60.0) / 60.0;
+            (Box::new(move |x| builtin::tape_transfer(x, dr, cp, mx, out, mode)), Box::new(|x| x), "Harmonics", 0.18 + 0.2 * warmth, hiss)
+        }
+        "soft-clipper" => {
+            let (inp, ceil, soft, shape, gm, mx, out) = (v("input"), v("ceiling"), v("softness"), v("shape").round() as u32, v("gain_match") >= 0.5, v("mix"), v("output_gain"));
+            (
+                Box::new(move |x| builtin::clipper_transfer(x, inp, ceil, soft, shape, gm, mx, out)),
+                Box::new(move |x| builtin::clipper_open(x, inp, gm, mx, out)),
+                "Clipping",
+                0.18,
+                0.0,
+            )
+        }
+        _ => {
+            let (dr, bias, gain, mx, out, mode) = (v("drive"), v("bias"), v("output"), v("mix"), v("output_gain"), v("mode").round() as u32);
+            (Box::new(move |x| builtin::distortion_transfer(x, dr, bias, gain, mx, out, mode)), Box::new(|x| x), "Harmonics", 0.18, 0.0)
+        }
+    };
+    let readout = if caption == "Clipping" {
+        let n = 256;
+        let (mut pc, mut po) = (0.0f32, 0.0f32);
+        for i in 0..n {
+            let x = (TAU * i as f32 / n as f32).sin();
+            pc = pc.max(curve(x).abs());
+            po = po.max(reference(x).abs());
+        }
+        fmt_clipping(if po > 1e-9 && pc > 1e-9 { 20.0 * (pc / po).log10() } else { 0.0 })
+    } else {
+        fmt_percent_readout(harmonics_percent(&*curve))
+    };
+    let (mut field, w, h) = frame(rect, caption, readout);
+    let inset = 8.0 * Z;
+    let (x0, x1, y0, y1) = (inset, w - inset, inset, h - inset);
+    let mid = 0.5 * (y0 + y1);
+    let scale = 0.5 * (y1 - y0) / 1.25;
+    let y_of = |s: f32| mid - s * scale;
+    let n = ((x1 - x0).round() as usize).max(64);
+    let xs: Vec<f32> = (0..=n).map(|i| x0 + (x1 - x0) * i as f32 / n as f32).collect();
+    let input: Vec<f32> = (0..=n).map(|i| (TAU * 2.0 * i as f32 / n as f32).sin()).collect();
+    let out: Vec<(f32, f32)> = xs.iter().zip(&input).map(|(&x, &s)| (x, y_of(curve(s).clamp(-1.25, 1.25)))).collect();
+    let refs: Vec<(f32, f32)> = xs.iter().zip(&input).map(|(&x, &s)| (x, y_of(reference(s).clamp(-1.25, 1.25)))).collect();
+    let mut paths = vec![
+        stroke(format!("M{x0:.2} {mid:.2} L{x1:.2} {mid:.2}"), ink(0.13), 1.0),
+        stroke(format!("M{x0:.2} {a:.2} L{x1:.2} {a:.2} M{x0:.2} {b:.2} L{x1:.2} {b:.2}", a = y_of(1.0), b = y_of(-1.0)), ink(0.05), 1.0),
+        stroke(dashed(&refs, 3.0 * Z, 3.0 * Z), ink(0.25), 1.0),
+        fill(format!("{} L{x1:.2} {mid:.2} L{x0:.2} {mid:.2} Z", poly(&out)), accent.with_alpha(fill_alpha.min(1.0))),
+        stroke(poly(&out), accent, 1.5),
+    ];
+    if hiss > 0.0 {
+        // Hiss dots around the output trace (deterministic xorshift, seed 7).
+        let mut seed: u32 = 7;
+        let mut dots = String::new();
+        let amp = 0.12 * hiss * 0.5 * (y1 - y0);
+        let mut x = x0;
+        while x <= x1 {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            let r = seed as f32 / u32::MAX as f32 * 2.0 - 1.0;
+            let t = (x - x0) / (x1 - x0);
+            let y = y_of(curve((TAU * 2.0 * t).sin()).clamp(-1.25, 1.25)) + r * amp;
+            let _ = write!(dots, "M{x:.2} {y:.2} h{z:.2} v{z:.2} h-{z:.2} Z ", z = Z);
+            x += 2.0 * Z;
+        }
+        paths.push(fill(dots, accent.with_alpha(0.35)));
+    }
+    field.paths = model(paths);
+    field.zones = model(vec![PanelZone { x: x0, y: y0, w: x1 - x0, h: y1 - y0, param_x: -1, param_y: drag_param, rate_x: 0.0, rate_y: 1.0 / (y1 - y0 - 16.0 * Z).max(8.0) }]);
+    CustomBody { canvas: field, ..Default::default() }
+}
 
-impl Controller {
-    fn begin_param(&mut self, device: DeviceId, index: usize, hit: Hit, p: (f32, f32), e: CanvasEvent, menu: Option<i32>) {
-        self.devices.panel.views.hover = Some((device, hit, p));
-        self.devices.panel.views.menu_at = (e.wx, e.wy);
-        self.panel_drag(device, index as i32, 0, 0.0, 1.0 / 160.0, false);
-        self.devices.panel.views.gesture = Some(Gesture::Param { device, menu });
+fn crush_body(value: &dyn Fn(&str) -> f32, p_down: i32, p_bits: i32, accent: Color, rect: (f32, f32, f32, f32)) -> CustomBody {
+    let bits = value("bitdepth");
+    let pic = builtin::crush_picture(bits, value("downsample"), value("mix"), value("dither"), value("jitter"));
+    let (mut field, w, h) = frame(rect, "Waveform", String::new());
+    let inset = 8.0 * Z;
+    let (x0, x1, y0, y1) = (inset, w - inset, inset, h - inset);
+    let mid = 0.5 * h;
+    let scale = (0.5 * h - 8.0 * Z) / 1.15;
+    let y_of = |s: f32| mid - s * scale;
+    let mut guides = String::new();
+    let levels: Vec<f32> = if bits.round() <= 4.0 {
+        let q = 2f32.powf(bits.round() - 1.0);
+        (1..=q as i32).flat_map(|k| [k as f32 / q, -(k as f32) / q]).collect()
+    } else {
+        vec![1.0, -1.0]
+    };
+    for s in levels {
+        let y = y_of(s);
+        let _ = write!(guides, "M{x0:.2} {y:.2} L{x1:.2} {y:.2} ");
+    }
+    let n = pic.len();
+    let x_of = |i: usize| x0 + (x1 - x0) * i as f32 / n as f32;
+    let dry: Vec<(f32, f32)> = (0..=n).map(|i| (x_of(i), y_of(pic[i.min(n - 1)].0))).collect();
+    let mut steps = Vec::with_capacity(2 * n);
+    for (i, (_, c)) in pic.iter().enumerate() {
+        let y = y_of(c.clamp(-1.15, 1.15));
+        steps.push((x_of(i), y));
+        steps.push((x_of(i + 1), y));
+    }
+    field.paths = model(vec![
+        stroke(format!("M{x0:.2} {mid:.2} L{x1:.2} {mid:.2}"), ink(0.13), 1.0),
+        stroke(guides, ink(0.05), 1.0),
+        stroke(dashed(&dry, 3.0 * Z, 3.0 * Z), ink(0.25), 1.0),
+        fill(format!("M{x0:.2} {mid:.2} {} L{x1:.2} {mid:.2} Z", poly(&steps).replacen('M', "L", 1)), accent.with_alpha(0.3)),
+        stroke(poly(&steps), accent, 1.5),
+    ]);
+    // Two-axis drag: right lowers Downsample (inverted), up raises Bit Depth.
+    let top = y0 - 6.0 * Z;
+    field.zones = model(vec![PanelZone {
+        x: x0,
+        y: top,
+        w: x1 - x0,
+        h: y1 - top,
+        param_x: p_down,
+        param_y: p_bits,
+        rate_x: -1.0 / (x1 - x0 - 16.0 * Z).max(8.0),
+        rate_y: 1.0 / (y1 - y0 - 16.0 * Z).max(8.0),
+    }]);
+    CustomBody { canvas: field, ..Default::default() }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stereo_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, p_width: i32, p_side: i32, p_low: i32, accent: Color, rect: (f32, f32, f32, f32)) -> CustomBody {
+    let (width, mid_db, side_db, low, mix) = (value("width2"), value("midgain"), value("sidegain"), value("lowcut"), value("mix"));
+    let resp = |f: f32| builtin::widener_response(f, width, mid_db, side_db, low, mix, DRAW_RATE);
+    let fmt = |id: &str, v: f32| def.param(id).map(|p| p.format(v)).unwrap_or_default();
+    let (mut field, w, h) = frame(rect, "Width", format!("{:.0}%", resp(2000.0)));
+    let m = 8.0 * Z;
+    let mut paths = Vec::new();
+    let mut texts = Vec::new();
+    let mut grips = Vec::new();
+    let axis = Color::from_rgb_u8(0x8f, 0x8f, 0x93);
+
+    // Left: stereo image in a square.
+    let size = (h - 16.0 * Z).min(0.32 * w).max(24.0 * Z);
+    let (sx, sy) = (m, 0.5 * (h - size));
+    let (cx, cy) = (sx + 0.5 * size, sy + 0.5 * size);
+    let unity = 0.5 * size / 4.0;
+    let x = mix / 100.0;
+    let side_f = 1.0 - x + x * width / 100.0 * 10f32.powf(side_db / 20.0);
+    let mid_f = 1.0 - x + x * 10f32.powf(mid_db / 20.0);
+    let (rx, ry) = ((unity * side_f).min(0.5 * size), (unity * mid_f).min(0.5 * size));
+    paths.push(stroke(format!("M{sx:.2} {cy:.2} L{:.2} {cy:.2} M{cx:.2} {sy:.2} L{cx:.2} {:.2}", sx + size, sy + size), ink(0.08), 1.0));
+    paths.push(stroke(dashed(&circle_pts(cx, cy, unity), 2.0 * Z, 2.0 * Z), ink(0.3), 1.0));
+    if rx > 0.3 && ry > 0.3 {
+        paths.push(path(ellipse(cx, cy, rx, ry), accent, 1.5, accent.with_alpha(0.18)));
+    } else {
+        paths.push(stroke(format!("M{:.2} {cy:.2} L{:.2} {cy:.2}", cx - rx.max(0.3), cx + rx.max(0.3)), accent, 1.5));
+    }
+    paths.push(fill(ellipse(cx + rx, cy, 2.5 * Z, 2.5 * Z), accent));
+    texts.push(text(sx + 6.0 * Z, sy + 8.0 * Z, 12.0 * Z, "L", axis, 10.0, 600, 0));
+    texts.push(text(sx + size - 18.0 * Z, sy + 8.0 * Z, 12.0 * Z, "R", axis, 10.0, 600, 2));
+    grips.push(PanelGrip { x: cx + rx + 6.0 * Z, y: cy, label: "Width".into(), value: fmt("width2", width).into() });
+
+    // Right: effective width over 20 Hz .. 2 kHz (log), 0 .. 400 %.
+    let gutter = 30.0 * Z;
+    let px0 = sx + size + 14.0 * Z + gutter;
+    let px1 = w - m;
+    let (py0, py1) = (m, h - m - 12.0 * Z);
+    let fx = |f: f32| px0 + (px1 - px0) * (f / 20.0).ln() / 100f32.ln();
+    let fy = |pct: f32| py1 - (py1 - py0) * (pct / 400.0).clamp(0.0, 1.0);
+    paths.push(stroke(format!("M{px0:.2} {a:.2} L{px1:.2} {a:.2} M{px0:.2} {b:.2} L{px1:.2} {b:.2}", a = fy(0.0), b = fy(400.0)), ink(0.06), 1.0));
+    paths.push(stroke(dashed(&[(px0, fy(100.0)), (px1, fy(100.0))], 3.0 * Z, 3.0 * Z), ink(0.22), 1.0));
+    paths.push(stroke(format!("M{a:.2} {py0:.2} L{a:.2} {py1:.2} M{b:.2} {py0:.2} L{b:.2} {py1:.2}", a = fx(100.0), b = fx(1000.0)), ink(0.06), 1.0));
+    for (pct, label) in [(400.0, "400%"), (100.0, "100%"), (0.0, "0%")] {
+        texts.push(text(px0 - gutter - 4.0 * Z, fy(pct), gutter, label, axis, 9.5, 600, 2));
+    }
+    for (f, label) in [(20.0, "Hz"), (100.0, "100"), (1000.0, "1k")] {
+        let tx = if f == 20.0 { fx(f) } else { fx(f) - 10.0 * Z };
+        texts.push(text(tx, py1 + 8.0 * Z, 20.0 * Z, label, axis, 9.5, 600, if f == 20.0 { 0 } else { 1 }));
+    }
+    let n = ((px1 - px0).round() as usize).max(48);
+    let curve: Vec<(f32, f32)> = (0..=n).map(|i| {
+        let f = 20.0 * 100f32.powf(i as f32 / n as f32);
+        (fx(f), fy(resp(f)))
+    }).collect();
+    paths.push(stroke(poly(&curve), accent, 1.5));
+    let lx = fx(low.clamp(20.0, 2000.0));
+    paths.push(stroke(dashed(&[(lx, py0), (lx, py1)], 3.0 * Z, 3.0 * Z), ink(0.3), 1.0));
+    paths.push(fill(ellipse(lx, fy(resp(low)), 2.5 * Z, 2.5 * Z), accent));
+    grips.push(PanelGrip { x: lx + 4.0 * Z, y: (fy(resp(low)) - 18.0 * Z).max(py0 + 8.0 * Z), label: "Low Cut".into(), value: fmt("lowcut", low).into() });
+
+    field.paths = model(paths);
+    field.texts = model(texts);
+    field.grips = model(grips);
+    // Square: horizontal = Width, vertical = Side Gain, one square per full range.
+    // Plot: horizontal = Low Cut on the plot's log axis (tied to 20 Hz .. 2 kHz).
+    let half_gutter = 0.5 * (14.0 * Z + gutter);
+    let low_travel = (px1 - px0) * (500f32 / 20.0).ln() / 100f32.ln();
+    field.zones = model(vec![
+        PanelZone { x: sx, y: sy, w: size + half_gutter, h: size, param_x: p_width, param_y: p_side, rate_x: 1.0 / size, rate_y: 1.0 / size },
+        PanelZone { x: sx + size + half_gutter, y: 0.0, w: px1 - (sx + size + half_gutter) + m, h, param_x: p_low, param_y: -1, rate_x: 1.0 / low_travel.max(8.0), rate_y: 0.0 },
+    ]);
+    CustomBody { canvas: field, ..Default::default() }
+}
+
+fn utility_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, idx: &dyn Fn(&str) -> i32) -> CustomBody {
+    let on = |id: &str| value(id) >= 0.5;
+    let label = |id: &str| def.param(id).map_or("", |p| p.label);
+    let header = Color::from_rgb_u8(0xa6, 0xa8, 0xad);
+    // Two 91 pt columns around a 1 pt rule (centre 110.75 of the 221.5 pt card).
+    let (left, right) = (56.2, 164.2);
+    let latch = |id: &str, x: f32, w: f32| PanelButton { kind: 0, param: idx(id), x: x * Z, y: 0.0, w: w * Z, label: label(id).into(), on: on(id) };
+    let at = |mut b: PanelButton, y: f32| {
+        b.y = (y - 10.0) * Z;
+        b
+    };
+    let mode = value("channel_mode").round() as usize;
+    let mode_name = def.param("channel_mode").and_then(|p| p.choices.get(mode)).copied().unwrap_or("Stereo");
+    let buttons = vec![
+        at(latch("phase_l", left - 36.0, 34.0), 113.4),
+        at(latch("phase_r", left + 2.0, 34.0), 113.4),
+        at(PanelButton { kind: 1, param: idx("channel_mode"), x: (left - 36.0) * Z, y: 0.0, w: 72.0 * Z, label: mode_name.into(), on: false }, 137.9),
+        at(latch("mono", left - 36.0, 72.0), 263.2),
+        at(latch("mute", right - 36.0, 34.0), 263.2),
+        at(latch("dc_filter", right + 2.0, 34.0), 263.2),
+    ];
+    let field = PanelCanvas {
+        visible: true,
+        well: false,
+        x: 0.0,
+        y: 0.0,
+        w: 221.5 * Z,
+        h: 300.0 * Z,
+        well_y: 0.0,
+        paths: model(vec![stroke(format!("M{x:.2} {:.2} L{x:.2} {:.2}", 66.6 * Z, 274.0 * Z, x = 110.75 * Z), ink(0.08), 1.0)]),
+        texts: model(vec![
+            text((left - 45.5) * Z, 74.5 * Z, 91.0 * Z, "Input", header, 12.0, 600, 1),
+            text((right - 45.5) * Z, 74.5 * Z, 91.0 * Z, "Output", header, 12.0, 600, 1),
+        ]),
+        ..Default::default()
+    };
+    // Width has no effect in mono or with a single channel on both sides.
+    let width_dead = on("mono") || ((mode == 1 || mode == 2) && on("phase_l") == on("phase_r"));
+    CustomBody {
+        canvas: field,
+        buttons,
+        knobs: vec![("gain", right - 31.0, 93.8), ("width", left - 31.0, 178.0), ("balance", right - 31.0, 178.0)],
+        dim: if width_dead { vec!["width"] } else { vec![] },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn harmonics_readout_matches_the_reference_defaults() {
+        // Reference captures at defaults: Distortion "Harmonics 30%", Tape "27%".
+        let dist = |x: f32| builtin::distortion_transfer(x, 30.0, 0.0, 0.0, 100.0, 0.0, 0);
+        assert_eq!(fmt_percent_readout(harmonics_percent(&dist)), "30%");
+        let tape = |x: f32| builtin::tape_transfer(x, 30.0, 30.0, 100.0, 0.0, 0);
+        assert_eq!(fmt_percent_readout(harmonics_percent(&tape)), "27%");
+        assert_eq!(fmt_percent_readout(harmonics_percent(&|x: f32| x)), "0.0%");
+        assert_eq!(fmt_percent_readout(4.26), "4.3%");
     }
 
-    fn tg_event(&mut self, device: DeviceId, def: &'static DeviceDef, e: CanvasEvent, hit: Hit) {
-        let Some((d, _)) = self.panel_def(device) else { return };
-        let (pattern, steps, mask) = self.tg_pattern(d, def);
-        let steps_idx = 8 + 3 * pattern;
-        let p = e.pt();
-        match (e.kind, hit) {
-            (DOWN, Hit::Step(k)) => {
-                let on = mask >> k & 1 == 0;
-                self.tg_paint(device, def, k, on);
-                self.devices.panel.views.gesture = Some(Gesture::Paint { device, on, last: k });
-            }
-            (DOWN, Hit::StepMore) if steps < tg::MAX_STEPS => self.panel_step(device, steps_idx as i32, 1, false),
-            (DOWN, Hit::StepFewer) if steps > 1 => self.panel_step(device, steps_idx as i32, -1, false),
-            (DOWN, Hit::StepCount) => self.begin_param(device, steps_idx, hit, p, e, None),
-            (DOWN, Hit::Rate) => self.begin_param(device, 1, hit, p, e, Some(MENU_CHOICE + 1)),
-            (DOWN, Hit::Pattern(i)) => self.panel_choice(device, 0, i as i32),
-            (DOWN, Hit::EnvA | Hit::EnvD | Hit::EnvR) => {
-                let env = self.adsr(d, def);
-                let rate = (self.fv(d, def, 1).round() as usize).min(tg::RATES.len() - 1);
-                let (gate_ms, span) = env_span(&env, self.step_ms(rate));
-                self.devices.panel.views.gesture = Some(Gesture::Env { device, handle: hit, span, gate_ms });
-                self.ui_dirty = true;
-            }
-            (RIGHT, Hit::Step(_) | Hit::Hole | Hit::StepCount | Hit::Pattern(_)) => self.field_menu(device, def, MENU_PATTERN, e.wx, e.wy),
-            (DOUBLE, Hit::StepCount) => self.panel_reset(device, steps_idx as i32),
-            (DOUBLE, Hit::EnvA) => self.panel_reset(device, 2),
-            (DOUBLE, Hit::EnvD) => {
-                let writes = vec![("decay", def.params[3].default), ("sustain", def.params[4].default)];
-                self.set_many(device, "Reset Decay", writes);
-            }
-            (DOUBLE, Hit::EnvR) => self.panel_reset(device, 5),
-            (WHEEL, Hit::StepCount) => self.panel_step(device, steps_idx as i32, if e.wheel > 0.0 { 1 } else { -1 }, false),
-            (WHEEL, Hit::Rate) => self.panel_step(device, 1, if e.wheel > 0.0 { -1 } else { 1 }, false),
-            (WHEEL, Hit::Pattern(_)) => self.panel_step(device, 0, if e.wheel > 0.0 { -1 } else { 1 }, false),
-            _ => {}
-        }
+    #[test]
+    fn clipping_readout_matches_the_reference_default() {
+        // Soft Clipper at defaults: "Clipping −1.0 dB".
+        let c = builtin::clipper_transfer(1.0, 0.0, 0.0, 50.0, 0, false, 100.0, 0.0);
+        assert_eq!(fmt_clipping(20.0 * c.log10()), "\u{2212}1.0 dB");
+        assert_eq!(fmt_clipping(-0.02), "0.0 dB");
     }
 
-    /// Set step k of the active pattern (live; the release commits).
-    fn tg_paint(&mut self, device: DeviceId, def: &'static DeviceDef, k: usize, on: bool) {
-        let Some((d, _)) = self.panel_def(device) else { return };
-        let (pattern, _, mask) = self.tg_pattern(d, def);
-        let mask = if on { mask | 1 << k } else { mask & !(1 << k) };
-        let (lo, hi) = tg::halves(mask);
-        let base = 8 + 3 * pattern;
-        self.live_set(device, def, base + 1, lo);
-        self.live_set(device, def, base + 2, hi);
+    #[test]
+    fn widener_readout_matches_the_reference_default() {
+        // Stereo Widener at defaults: "Width 198%".
+        let r = builtin::widener_response(2000.0, 200.0, 0.0, 0.0, 120.0, 100.0, DRAW_RATE);
+        assert_eq!(format!("{r:.0}%"), "198%");
     }
 
-    fn sh_event(&mut self, device: DeviceId, def: &'static DeviceDef, e: CanvasEvent, hit: Hit) {
-        let Some((d, _)) = self.panel_def(device) else { return };
-        let lane = self.shaper_lane(device);
-        let base = sh::lane_base(lane);
-        let values = self.values(d, def);
-        let pts = sh::lane_points(&values, lane);
-        let p = e.pt();
-        let step = |w: f32| if w > 0.0 { 1 } else { -1 };
-        match (e.kind, hit) {
-            (DOWN, Hit::LaneOn(l)) => {
-                let i = sh::lane_base(l) + sh::ON;
-                let on = values[i] >= 0.5;
-                self.devices.panel.views.lane.insert(device, l);
-                self.panel_choice(device, i as i32, if on { 0 } else { 1 });
-                self.ui_dirty = true;
-            }
-            (DOWN, Hit::Lane(l)) => {
-                self.devices.panel.views.lane.insert(device, l);
-                self.ui_dirty = true;
-            }
-            (DOWN, Hit::Shape) => self.field_menu(device, def, MENU_SHAPE, e.wx, e.wy),
-            (DOWN, Hit::Trigger) => self.field_menu(device, def, MENU_TRIGGER, e.wx, e.wy),
-            (DOWN, Hit::Band) => self.begin_param(device, base + sh::BAND, hit, p, e, Some(MENU_CHOICE + (base + sh::BAND) as i32)),
-            (DOWN, Hit::FilterType) => self.begin_param(device, 5, hit, p, e, Some(MENU_CHOICE + 5)),
-            (DOWN, Hit::Split) => self.begin_param(device, base + sh::SPLIT, hit, p, e, None),
-            (DOWN, Hit::Resonance) => self.begin_param(device, 6, hit, p, e, None),
-            (DOWN, Hit::Bits) => self.begin_param(device, 9, hit, p, e, None),
-            (DOWN, Hit::Decimate) => self.begin_param(device, 10, hit, p, e, None),
-            (DOWN, Hit::Threshold) => self.begin_param(device, 1, hit, p, e, None),
-            (DOWN, Hit::FilterLow) => self.begin_param(device, 7, hit, p, e, None),
-            (DOWN, Hit::FilterHigh) => self.begin_param(device, 8, hit, p, e, None),
-            (DOWN, Hit::CurvePoint(k)) => {
-                let inner = k > 0 && k + 1 < pts.len();
-                if e.alt && inner {
-                    let mut next = pts.clone();
-                    next.remove(k);
-                    self.set_many(device, "Delete Point", sh::lane_writes(lane, &next));
-                    return;
-                }
-                let q = pts[k];
-                self.devices.panel.views.gesture = Some(Gesture::Curve { device, lane, k, mid: false, pts, raw: (sh_px(q.x), sh_py(q.y)), last: p });
-                self.ui_dirty = true;
-            }
-            (DOWN, Hit::Mid(k)) => {
-                self.devices.panel.views.gesture = Some(Gesture::Curve { device, lane, k, mid: true, pts, raw: p, last: p });
-                self.ui_dirty = true;
-            }
-            (DOWN, Hit::Plot) if pts.len() < sh::MAX_POINTS => {
-                let grid = *self.devices.panel.views.grid.get(&device).unwrap_or(&16) as f32;
-                let (mut x, mut y) = (sh_x_of(p.0), sh_y_of(p.1));
-                if !(e.shift || e.alt) {
-                    x = (x * grid).round() / grid;
-                    y = if lane == 6 { (y * 24.0).round() / 24.0 } else { (y * 100.0).round() / 100.0 };
-                }
-                x = x.clamp(1e-3, 1.0 - 1e-3);
-                let k = pts.iter().position(|q| q.x > x).unwrap_or(pts.len() - 1).max(1);
-                let mut next = pts;
-                next.insert(k, Point { x, y, tension: 0.0 });
-                self.sh_write_live(device, def, lane, &next);
-                self.devices.panel.views.gesture = Some(Gesture::Curve { device, lane, k, mid: false, pts: next, raw: (sh_px(x), sh_py(y)), last: p });
-            }
-            (RIGHT | DOUBLE, Hit::CurvePoint(k)) if k > 0 && k + 1 < pts.len() => {
-                let mut next = pts;
-                next.remove(k);
-                self.set_many(device, "Delete Point", sh::lane_writes(lane, &next));
-            }
-            (DOUBLE, Hit::Mid(k)) => {
-                let mut next = pts;
-                next[k].tension = 0.0;
-                self.set_many(device, "Reset Bend", sh::lane_writes(lane, &next));
-            }
-            (RIGHT, Hit::Plot | Hit::CurvePoint(_) | Hit::Mid(_)) => self.field_menu(device, def, MENU_CURVE, e.wx, e.wy),
-            (DOUBLE, Hit::Split) => self.panel_reset(device, (base + sh::SPLIT) as i32),
-            (DOUBLE, Hit::Resonance) => self.panel_reset(device, 6),
-            (DOUBLE, Hit::Bits) => self.panel_reset(device, 9),
-            (DOUBLE, Hit::Decimate) => self.panel_reset(device, 10),
-            (DOUBLE, Hit::Threshold) => self.panel_reset(device, 1),
-            (DOUBLE, Hit::FilterLow) => self.panel_reset(device, 7),
-            (DOUBLE, Hit::FilterHigh) => self.panel_reset(device, 8),
-            (WHEEL, Hit::Split) => self.panel_step(device, (base + sh::SPLIT) as i32, step(e.wheel), e.shift),
-            (WHEEL, Hit::Resonance) => self.panel_step(device, 6, step(e.wheel), e.shift),
-            (WHEEL, Hit::Bits) => self.panel_step(device, 9, step(e.wheel), e.shift),
-            (WHEEL, Hit::Decimate) => self.panel_step(device, 10, step(e.wheel), e.shift),
-            (WHEEL, Hit::Threshold) => self.panel_step(device, 1, step(e.wheel), e.shift),
-            (WHEEL, Hit::FilterLow) => self.panel_step(device, 7, step(e.wheel), e.shift),
-            (WHEEL, Hit::FilterHigh) => self.panel_step(device, 8, step(e.wheel), e.shift),
-            _ => {}
-        }
-    }
-
-    /// Write a lane's points as live values (the release commits them).
-    fn sh_write_live(&mut self, device: DeviceId, def: &'static DeviceDef, lane: usize, pts: &[Point]) {
-        for (id, v) in sh::lane_writes(lane, pts) {
-            if let Some(i) = def.index_of(id) {
-                self.live_set(device, def, i, v);
-            }
-        }
-    }
-
-    fn field_menu(&mut self, device: DeviceId, def: &'static DeviceDef, which: i32, x: f32, y: f32) {
-        let Some((d, _)) = self.panel_def(device) else { return };
-        let check = |on: bool| if on { "\u{2713}".to_string() } else { String::new() };
-        let pick = |code: i32| Some(MenuPick::View(device, code));
-        let mut rows: Vec<(String, String, Option<MenuPick>, bool)> = Vec::new();
-        let mut w = 180.0;
-        match which {
-            MENU_PATTERN => {
-                let clip = self.devices.panel.views.pattern_clip.is_some();
-                for (label, code) in [("Clear", TG_CLEAR), ("Fill", TG_FILL), ("Invert", TG_INVERT), ("Rotate Left", TG_ROT_LEFT), ("Rotate Right", TG_ROT_RIGHT)] {
-                    rows.push((label.into(), String::new(), pick(code), false));
-                }
-                rows.push(("Copy Pattern".into(), String::new(), pick(TG_COPY), true));
-                rows.push(("Paste Pattern".into(), String::new(), if clip { pick(TG_PASTE) } else { None }, false));
-            }
-            MENU_SHAPE => {
-                let lane = self.shaper_lane(device);
-                let pts = sh::lane_points(&self.values(d, def), lane);
-                let cur = sh::matching_shape(lane, &pts);
-                for (i, s) in sh::SHAPES[lane].iter().enumerate() {
-                    rows.push((s.name.into(), check(cur == Some(s.name)), pick(SH_SHAPE + i as i32), false));
-                }
-            }
-            MENU_CURVE => {
-                let clip = self.devices.panel.views.shape_clip.is_some();
-                for (label, code) in [("Flip", SH_FLIP), ("Reverse", SH_REVERSE), ("Clear", SH_CLEAR)] {
-                    rows.push((label.into(), String::new(), pick(code), false));
-                }
-                rows.push(("Copy Shape".into(), String::new(), pick(SH_COPY), true));
-                rows.push(("Paste Shape".into(), String::new(), if clip { pick(SH_PASTE) } else { None }, false));
-                let grid = *self.devices.panel.views.grid.get(&device).unwrap_or(&16);
-                for (i, g) in [4u32, 8, 16, 32].into_iter().enumerate() {
-                    rows.push((format!("Grid {g}"), check(grid == g), pick(SH_GRID + g as i32), i == 0));
-                }
-            }
-            MENU_TRIGGER => {
-                let audio = self.fv(d, def, 0) >= 0.5;
-                let side = d.sidechain.filter(|_| self.fv(d, def, 4) >= 0.5);
-                rows.push(("Sync".into(), check(!audio), pick(SH_TRIGGER_SYNC), false));
-                rows.push(("This track".into(), check(audio && side.is_none()), pick(SH_TRIGGER_SELF), false));
-                let own = self.project().find_device(device).map(|(ti, _)| self.project().tracks[ti].id);
-                let mut first = true;
-                for (ti, t) in self.project().tracks.iter().enumerate().filter(|(_, t)| Some(t.id) != own && (d.sidechain == Some(t.id) || !self.sidechain_feeds_back(device, t.id))) {
-                    rows.push((t.name.clone(), check(audio && side == Some(t.id)), pick(SH_TRIGGER_TRACK + ti as i32), std::mem::take(&mut first)));
-                }
-                w = 200.0;
-            }
-            _ => {
-                let Some(index) = usize::try_from(which - MENU_CHOICE).ok() else { return };
-                let Some(p) = def.params.get(index) else { return };
-                let cur = self.fv(d, def, index).round() as usize;
-                for (i, c) in p.choices.iter().enumerate() {
-                    rows.push(((*c).into(), check(i == cur), Some(MenuPick::Choice(device, index as i32, i as i32)), false));
-                }
-                w = 120.0;
-            }
-        }
-        // The separator flag of the first row is meaningless; keep only later ones.
-        if let Some(r) = rows.first_mut() {
-            r.3 = false;
-        }
-        self.devices.menu = Some(DevMenu { pos: (x, y), w, rows });
-        self.ui_dirty = true;
-    }
-
-    /// A custom-view menu row was picked.
-    pub(crate) fn canvas_pick(&mut self, device: DeviceId, code: i32) {
-        let Some((d, def)) = self.panel_def(device) else { return };
-        match def.id {
-            "trance-gate" => {
-                let (pattern, steps, mask) = self.tg_pattern(d, def);
-                let full = if steps >= 32 { u32::MAX } else { (1u32 << steps) - 1 };
-                let rot = |m: u32, left: bool| {
-                    let m = m & full;
-                    if steps <= 1 {
-                        return m;
-                    }
-                    if left { (m >> 1 | m << (steps - 1)) & full } else { (m << 1 | m >> (steps - 1)) & full }
-                };
-                let (next, n) = match code {
-                    TG_CLEAR => (0, steps),
-                    TG_FILL => (full, steps),
-                    TG_INVERT => (!mask & full, steps),
-                    TG_ROT_LEFT => (rot(mask, true), steps),
-                    TG_ROT_RIGHT => (rot(mask, false), steps),
-                    TG_COPY => {
-                        self.devices.panel.views.pattern_clip = Some((mask & full, steps));
-                        return;
-                    }
-                    TG_PASTE => match self.devices.panel.views.pattern_clip {
-                        Some(c) => c,
-                        None => return,
-                    },
-                    _ => return,
-                };
-                let (s_id, lo_id, hi_id) = tg::pattern_ids(pattern);
-                let (lo, hi) = tg::halves(next);
-                self.set_many(device, "Edit Pattern", vec![(s_id, n as f32), (lo_id, lo), (hi_id, hi)]);
-            }
-            "shaper" => {
-                let lane = self.shaper_lane(device);
-                let pts = sh::lane_points(&self.values(d, def), lane);
-                let next: Vec<Point> = match code {
-                    // A segment's bend is signed by its direction (sh::segment), so a
-                    // vertical mirror negates it and a time reversal keeps it.
-                    SH_FLIP => pts.iter().map(|p| Point { y: 1.0 - p.y, tension: -p.tension, ..*p }).collect(),
-                    SH_REVERSE => {
-                        let n = pts.len();
-                        (0..n)
-                            .map(|k| {
-                                let p = pts[n - 1 - k];
-                                // A segment's bend belongs to its left point.
-                                let tension = if k + 1 < n { pts[n - 2 - k].tension } else { 0.0 };
-                                Point { x: 1.0 - p.x, y: p.y, tension }
-                            })
-                            .collect()
-                    }
-                    SH_CLEAR => {
-                        let r = sh::REST[lane];
-                        vec![Point { x: 0.0, y: r, tension: 0.0 }, Point { x: 1.0, y: r, tension: 0.0 }]
-                    }
-                    SH_COPY => {
-                        self.devices.panel.views.shape_clip = Some(pts);
-                        return;
-                    }
-                    SH_PASTE => match self.devices.panel.views.shape_clip.clone() {
-                        Some(c) => c,
-                        None => return,
-                    },
-                    c if (SH_GRID..SH_GRID + 100).contains(&c) => {
-                        self.devices.panel.views.grid.insert(device, (c - SH_GRID) as u32);
-                        self.ui_dirty = true;
-                        return;
-                    }
-                    SH_TRIGGER_SYNC => return self.set_many(device, "Trigger Change", vec![("trigger", 0.0)]),
-                    SH_TRIGGER_SELF => {
-                        let mut commands = vec![];
-                        if d.sidechain.is_some() {
-                            commands.push(Command::SetDeviceSidechain { device, source: None });
-                        }
-                        commands.push(Command::SetDeviceParam { device, param: "trigger".into(), value: 1.0 });
-                        commands.push(Command::SetDeviceParam { device, param: "sidechain".into(), value: 0.0 });
-                        return self.panel_commit(Command::Batch { label: "Trigger Change".into(), commands });
-                    }
-                    c if c >= SH_TRIGGER_TRACK => {
-                        let Some(t) = self.project().tracks.get((c - SH_TRIGGER_TRACK) as usize).map(|t| t.id) else { return };
-                        let commands = vec![
-                            Command::SetDeviceSidechain { device, source: Some(t) },
-                            Command::SetDeviceParam { device, param: "trigger".into(), value: 1.0 },
-                            Command::SetDeviceParam { device, param: "sidechain".into(), value: 1.0 },
-                        ];
-                        return self.panel_commit(Command::Batch { label: "Trigger Change".into(), commands });
-                    }
-                    c if c >= SH_SHAPE => match sh::SHAPES[lane].get((c - SH_SHAPE) as usize) {
-                        Some(s) => sh::shape_points(s),
-                        None => return,
-                    },
-                    _ => return,
-                };
-                self.set_many(device, "Edit Shape", sh::lane_writes(lane, &next));
-            }
-            _ => {}
-        }
+    #[test]
+    fn dashes_follow_the_path() {
+        let d = dashed(&[(0.0, 0.0), (10.0, 0.0)], 3.0, 3.0);
+        assert_eq!(d.matches('M').count(), 2);
+        assert!(d.starts_with("M0.00 0.00 L3.00 0.00"));
     }
 }

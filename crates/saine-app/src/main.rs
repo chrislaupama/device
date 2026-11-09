@@ -19,6 +19,7 @@ mod clipedit;
 mod controller;
 mod device_fields;
 mod device_panel;
+mod device_editors;
 mod device_views;
 mod devices;
 mod gpu;
@@ -865,7 +866,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_device_drag, |c, id: i32, phase: i32, x: f32| c.device_drag(saine_core::DeviceId(id as u64), phase, x));
     on!(on_panel_drag, |c, id: i32, p: i32, phase: i32, dy: f32, rate: f32, fine: bool| c.panel_drag(saine_core::DeviceId(id as u64), p, phase, dy, rate, fine));
     on!(on_panel_reset, |c, id: i32, p: i32| c.panel_reset(saine_core::DeviceId(id as u64), p));
+    on!(on_panel_reset_xy, |c, id: i32, px: i32, py: i32| c.panel_reset_xy(saine_core::DeviceId(id as u64), [px, py]));
     on!(on_panel_step, |c, id: i32, p: i32, delta: i32, fine: bool| c.panel_step(saine_core::DeviceId(id as u64), p, delta, fine));
+    on!(on_panel_drag_xy, |c, id: i32, px: i32, py: i32, phase: i32, dx: f32, dy: f32, rx: f32, ry: f32, fine: bool| c.panel_drag_xy(saine_core::DeviceId(id as u64), [px, py], phase, [dx, dy], [rx, ry], fine));
     on!(on_panel_choice, |c, id: i32, p: i32, i: i32| c.panel_choice(saine_core::DeviceId(id as u64), p, i));
     on!(on_panel_text, |c, id: i32, p: i32, text: slint::SharedString| c.panel_text(saine_core::DeviceId(id as u64), p, &text));
     on!(on_panel_field, |c, id: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.panel_field_drag(saine_core::DeviceId(id as u64), phase, dx, dy, fine));
@@ -873,7 +876,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(saine_core::DeviceId(id as u64), dir));
     on!(on_panel_canvas, |c, id: i32, kind: i32, x: f32, y: f32, wx: f32, wy: f32, shift: bool, alt: bool, wheel: f32| c.panel_canvas(
         saine_core::DeviceId(id as u64),
-        crate::device_views::CanvasEvent { kind, x, y, wx, wy, shift, alt, wheel }
+        crate::device_editors::CanvasEvent { kind, x, y, wx, wy, shift, alt, wheel }
     ));
     on!(on_chain_scroll_by, |c, d: f32| c.chain_scroll_by(d));
     on!(on_add_category, |c, i: i32, x: f32, y: f32| c.add_category(i.max(0) as usize, x, y));
