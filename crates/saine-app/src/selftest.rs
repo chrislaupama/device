@@ -77,7 +77,7 @@ fn approx(a: f32, b: f32, tol: f32) -> bool {
 }
 
 // Window geometry (reference layout): lanes origin and track rows.
-const LANE_X: f32 = 453.0;
+const LANE_X: f32 = 453.65;
 const TRACK0_Y: f32 = 144.5;
 const PITCH: f32 = 74.5;
 
@@ -625,13 +625,13 @@ fn steps() -> Vec<Step> {
             let s = a.global::<Studio>();
             (c.selected_track == Some(t) && s.get_sel_number() == 2 && s.get_sel_name() == "Instrument").then_some(()).ok_or("selection".into())
         })),
-        Do("click M on track 1", Box::new(|a| click(a, 262.0 + 33.5, TRACK0_Y + 47.0))),
+        Do("click M on track 1", Box::new(|a| click(a, 262.65 + 33.5, TRACK0_Y + 47.0))),
         Check("track 1 muted (SetTrackMute)", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("not muted".into()))),
         Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
         Check("undo restored mute=false", Box::new(|c, _| (!c.project().tracks[0].mute).then_some(()).ok_or("still muted".into()))),
         Do("Cmd+Shift+Z", Box::new(|a| key(a, "Z", true, true))),
         Check("redo muted again", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("redo failed".into()))),
-        Do("drag track 1 volume slider left", Box::new(|a| drag(a, 262.0 + 116.0 + 0.85 * 61.0 + 3.5, TRACK0_Y + 48.0, 262.0 + 140.0, TRACK0_Y + 48.0))),
+        Do("drag track 1 volume slider left", Box::new(|a| drag(a, 262.65 + 115.6 + 0.85 * 61.0 + 3.5, TRACK0_Y + 48.0, 262.65 + 140.0, TRACK0_Y + 48.0))),
         Check("track 1 gain lowered, one coalesced undo step", Box::new(|c, _| {
             let g = c.project().tracks[0].gain;
             let labels = c.doc.history_labels();
@@ -723,7 +723,7 @@ fn steps() -> Vec<Step> {
             let txt = a.global::<Studio>().get_sel_pan_text();
             (pan > 0.2 && txt.ends_with('R')).then_some(()).ok_or(format!("pan {pan} text {txt}"))
         })),
-        Do("(audio) unmute track 1 (muted by the redo step)", Box::new(|a| click(a, 262.0 + 33.5, TRACK0_Y + 47.0))),
+        Do("(audio) unmute track 1 (muted by the redo step)", Box::new(|a| click(a, 262.65 + 33.5, TRACK0_Y + 47.0))),
         Do("(audio) click ruler at beat 9 (start of track 1 clip)", Box::new(move |a| click(a, bx(9.0), 112.0))),
         Do("(audio) master -40 dB, Space", Box::new(|a| {
             a.global::<Studio>().invoke_master_volume(0.85 * 0.01f32.cbrt());
@@ -769,7 +769,7 @@ fn steps() -> Vec<Step> {
         Check("assistant panel open, timeline narrower, fixture provider available", Box::new(|c, a| {
             let w = a.get_lanes_width();
             let s = a.global::<Studio>();
-            (c.assistant_open && s.get_assistant_open() && s.get_chat_available() && (w - (1440.0 - 262.0 - 5.0 - 257.5 - 191.0)).abs() < 1.0)
+            (c.assistant_open && s.get_assistant_open() && s.get_chat_available() && (w - (1440.0 - 262.65 - 5.0 - 257.5 - 191.0)).abs() < 1.0)
                 .then_some(())
                 .ok_or(format!("open {} lanes width {w}", c.assistant_open))
         })),
@@ -896,7 +896,7 @@ fn steps() -> Vec<Step> {
 /// Window centre of a track header's R button (track index `i`, current scroll).
 fn header_r(ctl: &Ctl, i: usize) -> (f32, f32) {
     let sy = ctl.borrow().view.scroll_y as f32;
-    (262.0 + 60.5, TRACK0_Y + i as f32 * PITCH + 47.0 - sy)
+    (262.65 + 60.5, TRACK0_Y + i as f32 * PITCH + 47.0 - sy)
 }
 
 /// Inspector (bottom panel 306 pt at y 509 with the Devices tab): R, I and the In field.
@@ -1699,7 +1699,7 @@ fn device_steps() -> Vec<Step> {
 // ------------------------------------------------------------------ automation
 
 /// Lanes surface origin in the window (timeline x 262 + lane-x 191, y 78 + 27.5).
-const LANES_ORIGIN: (f32, f32) = (453.0, 105.5);
+const LANES_ORIGIN: (f32, f32) = (453.65, 105.5);
 
 fn auto_row(c: &Controller, track: usize, target: &saine_core::AutomationTarget) -> Option<crate::automation::Row> {
     let key = Some(c.project().tracks.get(track)?.id);
@@ -1720,7 +1720,7 @@ fn lane_points(c: &Controller, track: usize, target: &saine_core::AutomationTarg
 /// Track header automation pill (track index `i`): window centre of the label and of the power icon.
 fn pill_xy(c: &Controller, i: usize) -> ((f32, f32), (f32, f32)) {
     let y = TRACK0_Y + c.view.track_offset(i) - c.view.scroll_y as f32 + 49.0 + 8.25;
-    ((262.0 + 42.0 + 70.0, y), (262.0 + 42.0 + 8.5, y))
+    ((262.65 + 42.0 + 70.0, y), (262.65 + 42.0 + 8.5, y))
 }
 
 fn with_shift(a: &AppWindow, f: impl FnOnce()) {
@@ -1787,10 +1787,10 @@ fn automation_steps() -> Vec<Step> {
             c.import_files(vec![wav.clone()], crate::controller::ImportTarget::Selected, Some(0));
         })),
         Check("automation: clip imported, lanes hidden, timeline at full width", Box::new(|c, a| {
-            let ok = c.project().tracks[0].clips.len() == 1 && !c.auto.shown && !a.global::<Studio>().get_auto_shown() && (a.get_lanes_width() - (1440.0 - 262.0 - 5.0 - 191.0)).abs() < 1.0;
+            let ok = c.project().tracks[0].clips.len() == 1 && !c.auto.shown && !a.global::<Studio>().get_auto_shown() && (a.get_lanes_width() - (1440.0 - 262.65 - 5.0 - 191.0)).abs() < 1.0;
             ok.then_some(()).ok_or(format!("clips {} shown {}", c.project().tracks[0].clips.len(), c.auto.shown))
         })),
-        Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, 262.0 + (1440.0 - 262.0 - 5.0) - 315.0 + 7.0, 78.0 + 14.0))),
+        Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 312.6 + 7.0, 78.0 + 14.0))),
         Check("automation: lanes shown; each header has the Track Volume pill and the disclosure; master row 64.5 pt; value labels (tracks +0.0, master at its static level)", Box::new(move |c, a| {
             ah_set(c.doc.history_labels().len());
             let s = a.global::<Studio>();
@@ -1936,7 +1936,7 @@ fn automation_steps() -> Vec<Step> {
         DoC("automation: move the volume slider while not armed (automation is active)", Box::new(move |a, ctl| {
             ah_set(ctl.borrow().doc.history_labels().len());
             let y = TRACK0_Y + 44.0 - 13.0 + 4.0;
-            drag(a, 262.0 + 116.0 + 10.0, y, 262.0 + 116.0 + 30.0, y);
+            drag(a, 262.65 + 115.6 + 10.0, y, 262.65 + 115.6 + 30.0, y);
         })),
         Check("automation: no edit, status hint “Volume is automated: arm automation to write, or disable the lane”", Box::new(move |c, a| {
             let st = a.global::<Studio>().get_status_text().to_string();
@@ -2009,7 +2009,7 @@ fn automation_steps() -> Vec<Step> {
             }
             advance(ctl, 0.1);
             let y = TRACK0_Y + 44.0 - 13.0 + 4.0;
-            let x0 = 262.0 + 116.0 + 3.5;
+            let x0 = 262.65 + 115.6 + 3.5;
             press(a, x0 + 50.0, y);
             for k in 1..=4 {
                 advance(ctl, 0.15);
@@ -2031,7 +2031,7 @@ fn automation_steps() -> Vec<Step> {
         })),
         Do("automation: click Automation Arm again (off), hide lanes", Box::new(|a| {
             click(a, 496.0 + 10.5, 41.0 + 11.0);
-            click(a, 262.0 + (1440.0 - 262.0 - 5.0) - 315.0 + 7.0, 78.0 + 14.0);
+            click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 312.6 + 7.0, 78.0 + 14.0);
         })),
         Check("automation: disarmed, lanes hidden, master row back to 30 pt", Box::new(move |c, a| {
             let _ = &wav2;
