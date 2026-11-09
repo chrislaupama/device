@@ -640,10 +640,14 @@ impl Controller {
     }
 
     /// Close every plugin window (before replacing the project).
+    /// Project replaced: close plugin editors and forget device windows and their offsets
+    /// (a new project can reuse device ids).
     pub(crate) fn close_all_editors(&mut self) {
         for id in std::mem::take(&mut self.devices.editors) {
             self.engine.close_plugin_editor(id);
         }
+        self.devices.windows.clear();
+        self.devices.window_at.clear();
     }
 
     /// After any document change: close windows of devices that no longer exist
