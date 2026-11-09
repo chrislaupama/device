@@ -180,7 +180,7 @@ pub static SYNTH_V2: DeviceDef = DeviceDef {
     category: "Instruments",
     purpose: "Polyphonic subtractive synth with two oscillators, sub and noise, a multimode filter, two envelopes, two LFOs, a modulation matrix, macros, unison and four effect slots.",
     params: &PARAMS,
-    layout: Layout { picker: &[], view: Some(View::Custom("synth-v2")), sliders: &[], clusters: &[], faces: &[], min_height: 265.0, shown_when: &[] },
+    layout: Layout { picker: &[], view: Some(View::Custom("synth-v2")), sliders: &[], clusters: &[], faces: &[], min_height: 265.0, shown_when: &[], fixed_width: 0.0 },
     factory: &FACTORY,
     sidechain: false,
 };

@@ -257,14 +257,14 @@ pub static PARAMS: [ParamDef; PARAM_COUNT] = [
     f("fx1_tape_compression", "FX 1 Tape Compression", 0.0, 1.0, 0.3, "", Format::Fraction), // 188
     f("fx1_tape_noise", "FX 1 Tape Noise", 0.0, 1.0, 0.0, "", Format::Fraction), // 189
     c("fx1_tape_mode", "FX 1 Tape Mode", TAPE_MODES, 0), // 190
-    f("fx1_tape_output", "FX 1 Tape Output", -12.0, 12.0, 0.0, "dB", Format::Gain), // 191
+    f("fx1_tape_output", "FX 1 Tape Output", -12.0, 12.0, 0.0, "dB", Format::DbNoPlus), // 191
     f("fx1_distortion_drive", "FX 1 Distortion Drive", 0.0, 1.0, 0.3, "", Format::Fraction), // 192
     lg("fx1_distortion_tone", "FX 1 Distortion Tone", 200.0, 20000.0, 4000.0, "Hz", Format::Hz3), // 193
     f("fx1_distortion_bias", "FX 1 Distortion Bias", 0.0, 1.0, 0.0, "", Format::Fraction), // 194
-    f("fx1_distortion_level", "FX 1 Distortion Level", -24.0, 6.0, 0.0, "dB", Format::Gain), // 195
+    f("fx1_distortion_level", "FX 1 Distortion Level", -24.0, 6.0, 0.0, "dB", Format::DbNoPlus), // 195
     c("fx1_distortion_mode", "FX 1 Distortion Mode", DISTORTION_MODES, 0), // 196
     f("fx1_bitcrusher_bits", "FX 1 Bitcrusher Bits", 1.0, 16.0, 8.0, "bits", Format::Plain(1)), // 197
-    lg("fx1_bitcrusher_downsample", "FX 1 Bitcrusher Downsample", 1.0, 100.0, 2.0, "x", Format::Multiplier), // 198
+    lg("fx1_bitcrusher_downsample", "FX 1 Bitcrusher Downsample", 1.0, 100.0, 2.0, "x", Format::Factor), // 198
     f("fx1_bitcrusher_dither", "FX 1 Bitcrusher Dither", 0.0, 1.0, 0.0, "", Format::Fraction), // 199
     f("fx1_bitcrusher_jitter", "FX 1 Bitcrusher Jitter", 0.0, 1.0, 0.0, "", Format::Fraction), // 200
     lg("fx1_chorus_rate", "FX 1 Chorus Rate", 0.1, 10.0, 0.5, "Hz", Format::Hz3), // 201
@@ -291,7 +291,7 @@ pub static PARAMS: [ParamDef; PARAM_COUNT] = [
     c("fx1_filter_type", "FX 1 Filter Type", FX_FILTER_TYPES, 0), // 222
     lg("fx1_filter_cutoff", "FX 1 Filter Cutoff", 20.0, 20000.0, 1200.0, "Hz", Format::Hz3), // 223
     f("fx1_filter_resonance", "FX 1 Filter Resonance", 0.0, 1.0, 0.25, "", Format::Fraction), // 224
-    f("fx1_filter_drive", "FX 1 Filter Drive", 0.0, 24.0, 0.0, "dB", Format::Gain), // 225
+    f("fx1_filter_drive", "FX 1 Filter Drive", 0.0, 24.0, 0.0, "dB", Format::DbNoPlus), // 225
     f("fx1_filter_env", "FX 1 Filter Env Amount", -72.0, 72.0, 0.0, "st", Format::Semitones), // 226
     f("fx1_filter_lfo_amount", "FX 1 Filter LFO Amount", 0.0, 72.0, 0.0, "st", Format::Semitones), // 227
     lg("fx1_filter_lfo_rate", "FX 1 Filter LFO Rate", 0.01, 30.0, 1.0, "Hz", Format::Hz3), // 228
@@ -317,16 +317,16 @@ pub static PARAMS: [ParamDef; PARAM_COUNT] = [
     f("fx1_reverb_width", "FX 1 Reverb Width", 0.0, 1.0, 1.0, "", Format::Fraction), // 248
     lg("fx1_reverb_low_cut", "FX 1 Reverb Low Cut", 20.0, 2000.0, 20.0, "Hz", Format::Hz3), // 249
     lg("fx1_reverb_high_cut", "FX 1 Reverb High Cut", 1000.0, 20000.0, 12000.0, "Hz", Format::Hz3), // 250
-    f("fx1_compressor_threshold", "FX 1 Compressor Threshold", -60.0, 0.0, -18.0, "dB", Format::Gain), // 251
+    f("fx1_compressor_threshold", "FX 1 Compressor Threshold", -60.0, 0.0, -18.0, "dB", Format::DbNoPlus), // 251
     lg("fx1_compressor_ratio", "FX 1 Compressor Ratio", 1.0, 20.0, 4.0, "", Format::Ratio), // 252
     lg("fx1_compressor_attack", "FX 1 Compressor Attack", 0.001, 1.0, 0.01, "s", Format::Seconds), // 253
     lg("fx1_compressor_release", "FX 1 Compressor Release", 0.01, 3.0, 0.1, "s", Format::Seconds), // 254
-    f("fx1_compressor_knee", "FX 1 Compressor Knee", 0.0, 40.0, 6.0, "dB", Format::Gain), // 255
-    f("fx1_compressor_makeup", "FX 1 Compressor Makeup", -12.0, 24.0, 0.0, "dB", Format::Gain), // 256
+    f("fx1_compressor_knee", "FX 1 Compressor Knee", 0.0, 40.0, 6.0, "dB", Format::DbNoPlus), // 255
+    f("fx1_compressor_makeup", "FX 1 Compressor Makeup", -12.0, 24.0, 0.0, "dB", Format::DbNoPlus), // 256
     c("fx1_compressor_style", "FX 1 Compressor Style", COMPRESSOR_STYLES, 0), // 257
     f("fx1_widener_width", "FX 1 Widener Width", 0.0, 2.0, 1.5, "", Format::Fraction), // 258
-    f("fx1_widener_mid", "FX 1 Widener Mid", -12.0, 12.0, 0.0, "dB", Format::Gain), // 259
-    f("fx1_widener_side", "FX 1 Widener Side", -12.0, 12.0, 0.0, "dB", Format::Gain), // 260
+    f("fx1_widener_mid", "FX 1 Widener Mid", -12.0, 12.0, 0.0, "dB", Format::DbNoPlus), // 259
+    f("fx1_widener_side", "FX 1 Widener Side", -12.0, 12.0, 0.0, "dB", Format::DbNoPlus), // 260
     lg("fx1_widener_low_cut", "FX 1 Widener Low Cut", 20.0, 500.0, 120.0, "Hz", Format::Hz3), // 261
     c("fx2_type", "FX 2 Type", FX_TYPES, 3), // 262
     c("fx2_on", "FX 2 On", OFF_ON, 1), // 263
@@ -336,14 +336,14 @@ pub static PARAMS: [ParamDef; PARAM_COUNT] = [
     f("fx2_tape_compression", "FX 2 Tape Compression", 0.0, 1.0, 0.3, "", Format::Fraction), // 267
     f("fx2_tape_noise", "FX 2 Tape Noise", 0.0, 1.0, 0.0, "", Format::Fraction), // 268
     c("fx2_tape_mode", "FX 2 Tape Mode", TAPE_MODES, 0), // 269
-    f("fx2_tape_output", "FX 2 Tape Output", -12.0, 12.0, 0.0, "dB", Format::Gain), // 270
+    f("fx2_tape_output", "FX 2 Tape Output", -12.0, 12.0, 0.0, "dB", Format::DbNoPlus), // 270
     f("fx2_distortion_drive", "FX 2 Distortion Drive", 0.0, 1.0, 0.3, "", Format::Fraction), // 271
     lg("fx2_distortion_tone", "FX 2 Distortion Tone", 200.0, 20000.0, 4000.0, "Hz", Format::Hz3), // 272
     f("fx2_distortion_bias", "FX 2 Distortion Bias", 0.0, 1.0, 0.0, "", Format::Fraction), // 273
-    f("fx2_distortion_level", "FX 2 Distortion Level", -24.0, 6.0, 0.0, "dB", Format::Gain), // 274
+    f("fx2_distortion_level", "FX 2 Distortion Level", -24.0, 6.0, 0.0, "dB", Format::DbNoPlus), // 274
     c("fx2_distortion_mode", "FX 2 Distortion Mode", DISTORTION_MODES, 0), // 275
     f("fx2_bitcrusher_bits", "FX 2 Bitcrusher Bits", 1.0, 16.0, 8.0, "bits", Format::Plain(1)), // 276
-    lg("fx2_bitcrusher_downsample", "FX 2 Bitcrusher Downsample", 1.0, 100.0, 2.0, "x", Format::Multiplier), // 277
+    lg("fx2_bitcrusher_downsample", "FX 2 Bitcrusher Downsample", 1.0, 100.0, 2.0, "x", Format::Factor), // 277
     f("fx2_bitcrusher_dither", "FX 2 Bitcrusher Dither", 0.0, 1.0, 0.0, "", Format::Fraction), // 278
     f("fx2_bitcrusher_jitter", "FX 2 Bitcrusher Jitter", 0.0, 1.0, 0.0, "", Format::Fraction), // 279
     lg("fx2_chorus_rate", "FX 2 Chorus Rate", 0.1, 10.0, 0.5, "Hz", Format::Hz3), // 280
@@ -370,7 +370,7 @@ pub static PARAMS: [ParamDef; PARAM_COUNT] = [
     c("fx2_filter_type", "FX 2 Filter Type", FX_FILTER_TYPES, 0), // 301
     lg("fx2_filter_cutoff", "FX 2 Filter Cutoff", 20.0, 20000.0, 1200.0, "Hz", Format::Hz3), // 302
     f("fx2_filter_resonance", "FX 2 Filter Resonance", 0.0, 1.0, 0.25, "", Format::Fraction), // 303
-    f("fx2_filter_drive", "FX 2 Filter Drive", 0.0, 24.0, 0.0, "dB", Format::Gain), // 304
+    f("fx2_filter_drive", "FX 2 Filter Drive", 0.0, 24.0, 0.0, "dB", Format::DbNoPlus), // 304
     f("fx2_filter_env", "FX 2 Filter Env Amount", -72.0, 72.0, 0.0, "st", Format::Semitones), // 305
     f("fx2_filter_lfo_amount", "FX 2 Filter LFO Amount", 0.0, 72.0, 0.0, "st", Format::Semitones), // 306
     lg("fx2_filter_lfo_rate", "FX 2 Filter LFO Rate", 0.01, 30.0, 1.0, "Hz", Format::Hz3), // 307
@@ -396,16 +396,16 @@ pub static PARAMS: [ParamDef; PARAM_COUNT] = [
     f("fx2_reverb_width", "FX 2 Reverb Width", 0.0, 1.0, 1.0, "", Format::Fraction), // 327
     lg("fx2_reverb_low_cut", "FX 2 Reverb Low Cut", 20.0, 2000.0, 20.0, "Hz", Format::Hz3), // 328
     lg("fx2_reverb_high_cut", "FX 2 Reverb High Cut", 1000.0, 20000.0, 12000.0, "Hz", Format::Hz3), // 329
-    f("fx2_compressor_threshold", "FX 2 Compressor Threshold", -60.0, 0.0, -18.0, "dB", Format::Gain), // 330
+    f("fx2_compressor_threshold", "FX 2 Compressor Threshold", -60.0, 0.0, -18.0, "dB", Format::DbNoPlus), // 330
     lg("fx2_compressor_ratio", "FX 2 Compressor Ratio", 1.0, 20.0, 4.0, "", Format::Ratio), // 331
     lg("fx2_compressor_attack", "FX 2 Compressor Attack", 0.001, 1.0, 0.01, "s", Format::Seconds), // 332
     lg("fx2_compressor_release", "FX 2 Compressor Release", 0.01, 3.0, 0.1, "s", Format::Seconds), // 333
-    f("fx2_compressor_knee", "FX 2 Compressor Knee", 0.0, 40.0, 6.0, "dB", Format::Gain), // 334
-    f("fx2_compressor_makeup", "FX 2 Compressor Makeup", -12.0, 24.0, 0.0, "dB", Format::Gain), // 335
+    f("fx2_compressor_knee", "FX 2 Compressor Knee", 0.0, 40.0, 6.0, "dB", Format::DbNoPlus), // 334
+    f("fx2_compressor_makeup", "FX 2 Compressor Makeup", -12.0, 24.0, 0.0, "dB", Format::DbNoPlus), // 335
     c("fx2_compressor_style", "FX 2 Compressor Style", COMPRESSOR_STYLES, 0), // 336
     f("fx2_widener_width", "FX 2 Widener Width", 0.0, 2.0, 1.5, "", Format::Fraction), // 337
-    f("fx2_widener_mid", "FX 2 Widener Mid", -12.0, 12.0, 0.0, "dB", Format::Gain), // 338
-    f("fx2_widener_side", "FX 2 Widener Side", -12.0, 12.0, 0.0, "dB", Format::Gain), // 339
+    f("fx2_widener_mid", "FX 2 Widener Mid", -12.0, 12.0, 0.0, "dB", Format::DbNoPlus), // 338
+    f("fx2_widener_side", "FX 2 Widener Side", -12.0, 12.0, 0.0, "dB", Format::DbNoPlus), // 339
     lg("fx2_widener_low_cut", "FX 2 Widener Low Cut", 20.0, 500.0, 120.0, "Hz", Format::Hz3), // 340
     c("fx3_type", "FX 3 Type", FX_TYPES, 7), // 341
     c("fx3_on", "FX 3 On", OFF_ON, 0), // 342
@@ -415,14 +415,14 @@ pub static PARAMS: [ParamDef; PARAM_COUNT] = [
     f("fx3_tape_compression", "FX 3 Tape Compression", 0.0, 1.0, 0.3, "", Format::Fraction), // 346
     f("fx3_tape_noise", "FX 3 Tape Noise", 0.0, 1.0, 0.0, "", Format::Fraction), // 347
     c("fx3_tape_mode", "FX 3 Tape Mode", TAPE_MODES, 0), // 348
-    f("fx3_tape_output", "FX 3 Tape Output", -12.0, 12.0, 0.0, "dB", Format::Gain), // 349
+    f("fx3_tape_output", "FX 3 Tape Output", -12.0, 12.0, 0.0, "dB", Format::DbNoPlus), // 349
     f("fx3_distortion_drive", "FX 3 Distortion Drive", 0.0, 1.0, 0.3, "", Format::Fraction), // 350
     lg("fx3_distortion_tone", "FX 3 Distortion Tone", 200.0, 20000.0, 4000.0, "Hz", Format::Hz3), // 351
     f("fx3_distortion_bias", "FX 3 Distortion Bias", 0.0, 1.0, 0.0, "", Format::Fraction), // 352
-    f("fx3_distortion_level", "FX 3 Distortion Level", -24.0, 6.0, 0.0, "dB", Format::Gain), // 353
+    f("fx3_distortion_level", "FX 3 Distortion Level", -24.0, 6.0, 0.0, "dB", Format::DbNoPlus), // 353
     c("fx3_distortion_mode", "FX 3 Distortion Mode", DISTORTION_MODES, 0), // 354
     f("fx3_bitcrusher_bits", "FX 3 Bitcrusher Bits", 1.0, 16.0, 8.0, "bits", Format::Plain(1)), // 355
-    lg("fx3_bitcrusher_downsample", "FX 3 Bitcrusher Downsample", 1.0, 100.0, 2.0, "x", Format::Multiplier), // 356
+    lg("fx3_bitcrusher_downsample", "FX 3 Bitcrusher Downsample", 1.0, 100.0, 2.0, "x", Format::Factor), // 356
     f("fx3_bitcrusher_dither", "FX 3 Bitcrusher Dither", 0.0, 1.0, 0.0, "", Format::Fraction), // 357
     f("fx3_bitcrusher_jitter", "FX 3 Bitcrusher Jitter", 0.0, 1.0, 0.0, "", Format::Fraction), // 358
     lg("fx3_chorus_rate", "FX 3 Chorus Rate", 0.1, 10.0, 0.5, "Hz", Format::Hz3), // 359
@@ -449,7 +449,7 @@ pub static PARAMS: [ParamDef; PARAM_COUNT] = [
     c("fx3_filter_type", "FX 3 Filter Type", FX_FILTER_TYPES, 0), // 380
     lg("fx3_filter_cutoff", "FX 3 Filter Cutoff", 20.0, 20000.0, 1200.0, "Hz", Format::Hz3), // 381
     f("fx3_filter_resonance", "FX 3 Filter Resonance", 0.0, 1.0, 0.25, "", Format::Fraction), // 382
-    f("fx3_filter_drive", "FX 3 Filter Drive", 0.0, 24.0, 0.0, "dB", Format::Gain), // 383
+    f("fx3_filter_drive", "FX 3 Filter Drive", 0.0, 24.0, 0.0, "dB", Format::DbNoPlus), // 383
     f("fx3_filter_env", "FX 3 Filter Env Amount", -72.0, 72.0, 0.0, "st", Format::Semitones), // 384
     f("fx3_filter_lfo_amount", "FX 3 Filter LFO Amount", 0.0, 72.0, 0.0, "st", Format::Semitones), // 385
     lg("fx3_filter_lfo_rate", "FX 3 Filter LFO Rate", 0.01, 30.0, 1.0, "Hz", Format::Hz3), // 386
@@ -475,16 +475,16 @@ pub static PARAMS: [ParamDef; PARAM_COUNT] = [
     f("fx3_reverb_width", "FX 3 Reverb Width", 0.0, 1.0, 1.0, "", Format::Fraction), // 406
     lg("fx3_reverb_low_cut", "FX 3 Reverb Low Cut", 20.0, 2000.0, 20.0, "Hz", Format::Hz3), // 407
     lg("fx3_reverb_high_cut", "FX 3 Reverb High Cut", 1000.0, 20000.0, 12000.0, "Hz", Format::Hz3), // 408
-    f("fx3_compressor_threshold", "FX 3 Compressor Threshold", -60.0, 0.0, -18.0, "dB", Format::Gain), // 409
+    f("fx3_compressor_threshold", "FX 3 Compressor Threshold", -60.0, 0.0, -18.0, "dB", Format::DbNoPlus), // 409
     lg("fx3_compressor_ratio", "FX 3 Compressor Ratio", 1.0, 20.0, 4.0, "", Format::Ratio), // 410
     lg("fx3_compressor_attack", "FX 3 Compressor Attack", 0.001, 1.0, 0.01, "s", Format::Seconds), // 411
     lg("fx3_compressor_release", "FX 3 Compressor Release", 0.01, 3.0, 0.1, "s", Format::Seconds), // 412
-    f("fx3_compressor_knee", "FX 3 Compressor Knee", 0.0, 40.0, 6.0, "dB", Format::Gain), // 413
-    f("fx3_compressor_makeup", "FX 3 Compressor Makeup", -12.0, 24.0, 0.0, "dB", Format::Gain), // 414
+    f("fx3_compressor_knee", "FX 3 Compressor Knee", 0.0, 40.0, 6.0, "dB", Format::DbNoPlus), // 413
+    f("fx3_compressor_makeup", "FX 3 Compressor Makeup", -12.0, 24.0, 0.0, "dB", Format::DbNoPlus), // 414
     c("fx3_compressor_style", "FX 3 Compressor Style", COMPRESSOR_STYLES, 0), // 415
     f("fx3_widener_width", "FX 3 Widener Width", 0.0, 2.0, 1.5, "", Format::Fraction), // 416
-    f("fx3_widener_mid", "FX 3 Widener Mid", -12.0, 12.0, 0.0, "dB", Format::Gain), // 417
-    f("fx3_widener_side", "FX 3 Widener Side", -12.0, 12.0, 0.0, "dB", Format::Gain), // 418
+    f("fx3_widener_mid", "FX 3 Widener Mid", -12.0, 12.0, 0.0, "dB", Format::DbNoPlus), // 417
+    f("fx3_widener_side", "FX 3 Widener Side", -12.0, 12.0, 0.0, "dB", Format::DbNoPlus), // 418
     lg("fx3_widener_low_cut", "FX 3 Widener Low Cut", 20.0, 500.0, 120.0, "Hz", Format::Hz3), // 419
     c("fx4_type", "FX 4 Type", FX_TYPES, 8), // 420
     c("fx4_on", "FX 4 On", OFF_ON, 1), // 421
@@ -494,14 +494,14 @@ pub static PARAMS: [ParamDef; PARAM_COUNT] = [
     f("fx4_tape_compression", "FX 4 Tape Compression", 0.0, 1.0, 0.3, "", Format::Fraction), // 425
     f("fx4_tape_noise", "FX 4 Tape Noise", 0.0, 1.0, 0.0, "", Format::Fraction), // 426
     c("fx4_tape_mode", "FX 4 Tape Mode", TAPE_MODES, 0), // 427
-    f("fx4_tape_output", "FX 4 Tape Output", -12.0, 12.0, 0.0, "dB", Format::Gain), // 428
+    f("fx4_tape_output", "FX 4 Tape Output", -12.0, 12.0, 0.0, "dB", Format::DbNoPlus), // 428
     f("fx4_distortion_drive", "FX 4 Distortion Drive", 0.0, 1.0, 0.3, "", Format::Fraction), // 429
     lg("fx4_distortion_tone", "FX 4 Distortion Tone", 200.0, 20000.0, 4000.0, "Hz", Format::Hz3), // 430
     f("fx4_distortion_bias", "FX 4 Distortion Bias", 0.0, 1.0, 0.0, "", Format::Fraction), // 431
-    f("fx4_distortion_level", "FX 4 Distortion Level", -24.0, 6.0, 0.0, "dB", Format::Gain), // 432
+    f("fx4_distortion_level", "FX 4 Distortion Level", -24.0, 6.0, 0.0, "dB", Format::DbNoPlus), // 432
     c("fx4_distortion_mode", "FX 4 Distortion Mode", DISTORTION_MODES, 0), // 433
     f("fx4_bitcrusher_bits", "FX 4 Bitcrusher Bits", 1.0, 16.0, 8.0, "bits", Format::Plain(1)), // 434
-    lg("fx4_bitcrusher_downsample", "FX 4 Bitcrusher Downsample", 1.0, 100.0, 2.0, "x", Format::Multiplier), // 435
+    lg("fx4_bitcrusher_downsample", "FX 4 Bitcrusher Downsample", 1.0, 100.0, 2.0, "x", Format::Factor), // 435
     f("fx4_bitcrusher_dither", "FX 4 Bitcrusher Dither", 0.0, 1.0, 0.0, "", Format::Fraction), // 436
     f("fx4_bitcrusher_jitter", "FX 4 Bitcrusher Jitter", 0.0, 1.0, 0.0, "", Format::Fraction), // 437
     lg("fx4_chorus_rate", "FX 4 Chorus Rate", 0.1, 10.0, 0.5, "Hz", Format::Hz3), // 438
@@ -528,7 +528,7 @@ pub static PARAMS: [ParamDef; PARAM_COUNT] = [
     c("fx4_filter_type", "FX 4 Filter Type", FX_FILTER_TYPES, 0), // 459
     lg("fx4_filter_cutoff", "FX 4 Filter Cutoff", 20.0, 20000.0, 1200.0, "Hz", Format::Hz3), // 460
     f("fx4_filter_resonance", "FX 4 Filter Resonance", 0.0, 1.0, 0.25, "", Format::Fraction), // 461
-    f("fx4_filter_drive", "FX 4 Filter Drive", 0.0, 24.0, 0.0, "dB", Format::Gain), // 462
+    f("fx4_filter_drive", "FX 4 Filter Drive", 0.0, 24.0, 0.0, "dB", Format::DbNoPlus), // 462
     f("fx4_filter_env", "FX 4 Filter Env Amount", -72.0, 72.0, 0.0, "st", Format::Semitones), // 463
     f("fx4_filter_lfo_amount", "FX 4 Filter LFO Amount", 0.0, 72.0, 0.0, "st", Format::Semitones), // 464
     lg("fx4_filter_lfo_rate", "FX 4 Filter LFO Rate", 0.01, 30.0, 1.0, "Hz", Format::Hz3), // 465
@@ -554,18 +554,18 @@ pub static PARAMS: [ParamDef; PARAM_COUNT] = [
     f("fx4_reverb_width", "FX 4 Reverb Width", 0.0, 1.0, 1.0, "", Format::Fraction), // 485
     lg("fx4_reverb_low_cut", "FX 4 Reverb Low Cut", 20.0, 2000.0, 20.0, "Hz", Format::Hz3), // 486
     lg("fx4_reverb_high_cut", "FX 4 Reverb High Cut", 1000.0, 20000.0, 12000.0, "Hz", Format::Hz3), // 487
-    f("fx4_compressor_threshold", "FX 4 Compressor Threshold", -60.0, 0.0, -18.0, "dB", Format::Gain), // 488
+    f("fx4_compressor_threshold", "FX 4 Compressor Threshold", -60.0, 0.0, -18.0, "dB", Format::DbNoPlus), // 488
     lg("fx4_compressor_ratio", "FX 4 Compressor Ratio", 1.0, 20.0, 4.0, "", Format::Ratio), // 489
     lg("fx4_compressor_attack", "FX 4 Compressor Attack", 0.001, 1.0, 0.01, "s", Format::Seconds), // 490
     lg("fx4_compressor_release", "FX 4 Compressor Release", 0.01, 3.0, 0.1, "s", Format::Seconds), // 491
-    f("fx4_compressor_knee", "FX 4 Compressor Knee", 0.0, 40.0, 6.0, "dB", Format::Gain), // 492
-    f("fx4_compressor_makeup", "FX 4 Compressor Makeup", -12.0, 24.0, 0.0, "dB", Format::Gain), // 493
+    f("fx4_compressor_knee", "FX 4 Compressor Knee", 0.0, 40.0, 6.0, "dB", Format::DbNoPlus), // 492
+    f("fx4_compressor_makeup", "FX 4 Compressor Makeup", -12.0, 24.0, 0.0, "dB", Format::DbNoPlus), // 493
     c("fx4_compressor_style", "FX 4 Compressor Style", COMPRESSOR_STYLES, 0), // 494
     f("fx4_widener_width", "FX 4 Widener Width", 0.0, 2.0, 1.5, "", Format::Fraction), // 495
-    f("fx4_widener_mid", "FX 4 Widener Mid", -12.0, 12.0, 0.0, "dB", Format::Gain), // 496
-    f("fx4_widener_side", "FX 4 Widener Side", -12.0, 12.0, 0.0, "dB", Format::Gain), // 497
+    f("fx4_widener_mid", "FX 4 Widener Mid", -12.0, 12.0, 0.0, "dB", Format::DbNoPlus), // 496
+    f("fx4_widener_side", "FX 4 Widener Side", -12.0, 12.0, 0.0, "dB", Format::DbNoPlus), // 497
     lg("fx4_widener_low_cut", "FX 4 Widener Low Cut", 20.0, 500.0, 120.0, "Hz", Format::Hz3), // 498
-    f("volume", "Volume", -36.0, 12.0, -1.5, "dB", Format::Gain), // 499
+    f("volume", "Volume", -36.0, 12.0, -1.5, "dB", Format::DbNoPlus), // 499
     f("mod_wheel", "Mod Wheel", 0.0, 1.0, 0.0, "", Format::Fraction), // 500
     f("macro1", "Macro 1", 0.0, 1.0, 0.0, "", Format::Fraction), // 501
     f("macro2", "Macro 2", 0.0, 1.0, 0.0, "", Format::Fraction), // 502
