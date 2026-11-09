@@ -82,7 +82,6 @@ struct Args {
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
     device_chain_review: bool,
-    compressor_state: bool,
     /// Never show the window (renders for --screenshot fall back to offscreen snapshots).
     offscreen: bool,
     /// reference-<built-in device id>: that device alone in an audio track's chain.

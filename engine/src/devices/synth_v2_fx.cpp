@@ -424,27 +424,30 @@ struct FilterFx {
         const float hz = sync_rate(p[kFiltLfoRate], sync, note, clk);
         const int shape = static_cast<int>(p[kFiltLfoShape]);
         const float ph0 = lfo.advance(hz, sync, note, clk, n, sr);
-        if (ph0 < last_phase) { // a new LFO cycle began since the last block
-            rnd_a = rnd_b;
-            rnd_b = rng.bipolar();
-        }
-        last_phase = ph0;
-        float lfo_v;
-        switch (shape) {
-        case 0: lfo_v = sin_turns(ph0); break;
-        case 1: lfo_v = lfo_shape(1, ph0, 0, 0); break;
-        case 2: lfo_v = 2.0f * ph0 - 1.0f; break;
-        case 3: lfo_v = ph0 < 0.5f ? 1.0f : -1.0f; break;
-        case 4: lfo_v = rnd_a; break;
-        default: lfo_v = lfo_shape(6, ph0, rnd_a, rnd_b); break;
-        }
         const float env_att = 1.0f - std::exp(-1.0f / (0.005f * sr));
         const float env_rel = 1.0f - std::exp(-1.0f / (0.15f * sr));
         const float env_st = p[kFiltEnv];
-        const float lfo_st = p[kFiltLfoAmount] * lfo_v;
+        const float ph_step = hz / sr;
         constexpr uint32_t kTick = 16;
         for (uint32_t i0 = 0; i0 < n; i0 += kTick) {
             const uint32_t i1 = std::min(n, i0 + kTick);
+            float ph = ph0 + ph_step * static_cast<float>(i0);
+            ph -= std::floor(ph);
+            if (ph < last_phase) { // a new LFO cycle began since the last tick
+                rnd_a = rnd_b;
+                rnd_b = rng.bipolar();
+            }
+            last_phase = ph;
+            float lfo_v;
+            switch (shape) {
+            case 0: lfo_v = sin_turns(ph); break;
+            case 1: lfo_v = lfo_shape(1, ph, 0, 0); break;
+            case 2: lfo_v = 2.0f * ph - 1.0f; break;
+            case 3: lfo_v = ph < 0.5f ? 1.0f : -1.0f; break;
+            case 4: lfo_v = rnd_a; break;
+            default: lfo_v = lfo_shape(6, ph, rnd_a, rnd_b); break;
+            }
+            const float lfo_st = p[kFiltLfoAmount] * lfo_v;
             for (uint32_t i = i0; i < i1; ++i) {
                 const float lvl = 0.5f * (std::fabs(l[i]) + std::fabs(r[i]));
                 env += (lvl > env ? env_att : env_rel) * (lvl - env);
@@ -851,9 +854,15 @@ void FxSlot::reset() noexcept {
     tel_ = {};
 }
 
+void FxSlot::suspend() noexcept { d_->active = -1; }
+
 void FxSlot::process(float* l, float* r, uint32_t n, const float* p, const FxClock& clock) noexcept {
     Impl& d = *d_;
-    if (p[kFxOn] < 0.5f || n == 0) return;
+    if (p[kFxOn] < 0.5f) {
+        d.active = -1;
+        return;
+    }
+    if (n == 0) return;
     const int type = std::clamp(static_cast<int>(p[kFxType]), 0, kFxTypeCount - 1);
     if (type != d.active) {
         d.reset_type(type);
@@ -861,7 +870,6 @@ void FxSlot::process(float* l, float* r, uint32_t n, const float* p, const FxClo
         tel_ = {};
     }
     const float mix = std::clamp(p[kFxMix], 0.0f, 1.0f);
-    if (mix <= 0.0f) return;
     n = std::min<uint32_t>(n, static_cast<uint32_t>(d.dry_l.size()));
     const bool blend = mix < 1.0f;
     if (blend) {

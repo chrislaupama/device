@@ -448,6 +448,7 @@ impl Controller {
             AutomationTarget::Builtin { device, param, .. } => t
                 .devices
                 .iter()
+                .chain(t.instrument_plugin.iter())
                 .find(|d| d.id == *device)
                 .and_then(|d| saine_core::builtin::def_of(d).and_then(|def| def.param(param).map(|q| def.value(d, q))))
                 .or_else(|| target.builtin_param().map(|q| q.default))
@@ -1255,9 +1256,11 @@ impl Controller {
         if let (Some(t), Some(device)) = (self.synth_track(), self.synth_device()) {
             let def = &saine_core::builtin::synth_v2::SYNTH_V2;
             let targets: Vec<AutomationTarget> = self.project().track(t).map_or(Vec::new(), |tr| tr.automation.iter().filter(|l| matches!(&l.target, AutomationTarget::Builtin { device: d, .. } if *d == device)).map(|l| l.target.clone()).collect());
+            let mut followed = vec![false; def.params.len()];
             for target in targets {
                 let AutomationTarget::Builtin { param, .. } = &target else { continue };
                 let (Some(id), Some(v)) = (def.index_of(param), self.auto_value_now(Some(t), &target)) else { continue };
+                followed[id] = true;
                 if let Some(mut row) = self.synth_params_model.row_data(id) {
                     let p = &def.params[id];
                     let (n, text) = (p.to_normalized(v), p.format(v));
@@ -1265,6 +1268,20 @@ impl Controller {
                         row.auto = true;
                         row.norm = n;
                         row.text = text.into();
+                        self.synth_params_model.set_row_data(id, row);
+                    }
+                }
+            }
+            // Controls whose lane was disabled or removed go back to the saved value.
+            if let Some((_, v)) = self.synth_values() {
+                for (id, p) in def.params.iter().enumerate() {
+                    if followed[id] {
+                        continue;
+                    }
+                    if let Some(mut row) = self.synth_params_model.row_data(id).filter(|r| r.auto) {
+                        row.auto = false;
+                        row.norm = p.to_normalized(v[id]);
+                        row.text = p.format(v[id]).into();
                         self.synth_params_model.set_row_data(id, row);
                     }
                 }

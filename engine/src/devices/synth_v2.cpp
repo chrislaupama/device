@@ -475,6 +475,13 @@ public:
         std::memset(r, 0, n * sizeof(float));
         load_values(p);
         block_setup(ctx, n);
+        const int mode = ichoice(v_[voice_mode], 2);
+        if (mode != mode_) {
+            for (Voice& v : voices_)
+                if (v.active && (v.gate || v.pedal_held)) release(v);
+            held_n_ = 0;
+            mode_ = mode;
+        }
 
         // Control ticks of at most kTick samples, cut at every MIDI event.
         uint32_t pos = 0, e = 0;
@@ -482,6 +489,7 @@ public:
             while (e < ctx.event_count && ctx.events[e].offset <= pos) midi(ctx.events[e++]);
             uint32_t end = std::min(n, pos + kTick);
             if (e < ctx.event_count && ctx.events[e].offset < end) end = std::max(pos + 1, ctx.events[e].offset);
+            tick_beats_ = beats_ + static_cast<double>(pos) * beats_per_sample();
             for (Voice& v : voices_)
                 if (v.active) render_voice(v, l + pos, r + pos, end - pos);
             pos = end;
@@ -506,7 +514,7 @@ public:
             }
         }
 
-        const float vol = db_to_gain(std::clamp(v_[volume], -60.0f, 24.0f));
+        const float vol = v_[volume] <= kRanges[volume].min ? 0.0f : db_to_gain(v_[volume]);
         if (!volume_primed_) {
             volume_.snap(vol);
             volume_primed_ = true;
@@ -555,12 +563,14 @@ private:
         }
     }
 
+    double beats_per_sample() const noexcept { return static_cast<double>(tempo_) / 60.0 * static_cast<double>(inv_sr_); }
+
     void block_setup(const BuiltinContext& ctx, uint32_t n) noexcept {
         amp_c_.set(v_[amp_attack], v_[amp_decay], v_[amp_sustain], v_[amp_release], sr_);
         env2_c_.set(v_[env2_attack], v_[env2_decay], v_[env2_sustain], v_[env2_release], sr_);
         if (ctx.transport != nullptr) {
             tempo_ = static_cast<float>(std::clamp(ctx.transport->tempo_bpm, 20.0, 999.0));
-            beats_ = ctx.transport->beats();
+            beats_ = ctx.transport->beats() + static_cast<double>(ctx.offset) * beats_per_sample();
             playing_ = ctx.transport->playing;
         } else {
             tempo_ = 120.0f;
@@ -807,7 +817,13 @@ private:
             const bool retrig = v_[b + 4] >= 0.5f;
             const float cyc = lfo_note_beats(ichoice(v_[b + 3], 16));
             if (sync && playing_ && !retrig && v.lfo_rate_mod[k] == 0.0f) {
-                v.lfo_ph[k] = glfo_ph_[k];
+                const double cycles = tick_beats_ / static_cast<double>(cyc);
+                const auto ph = static_cast<float>(cycles - std::floor(cycles));
+                if (ph < v.lfo_ph[k]) {
+                    v.lfo_a[k] = v.lfo_b[k];
+                    v.lfo_b[k] = v.rng.bipolar();
+                }
+                v.lfo_ph[k] = ph;
             } else {
                 const float hz = (sync ? tempo_ / 60.0f / cyc : v_[b + 1]) * std::exp2(v.lfo_rate_mod[k]);
                 float ph = v.lfo_ph[k] + std::min(hz * dt_s, 1.0f);
@@ -996,7 +1012,10 @@ private:
         for (int s = 0; s < kFxSlots; ++s) {
             const auto base = static_cast<uint32_t>(fx1_type + s * kFxParamCount);
             std::memcpy(fxp_.data(), v_.data() + base, sizeof(float) * kFxParamCount);
-            if (fxp_[kFxOn] < 0.5f) continue;
+            if (fxp_[kFxOn] < 0.5f) {
+                fx_[static_cast<std::size_t>(s)].suspend();
+                continue;
+            }
             const float mm = m[kTgtFxMix1 + s];
             if (mm != 0.0f) fxp_[kFxMix] = from_norm(base + kFxMix, to_norm(base + kFxMix, fxp_[kFxMix]) + mm);
             const float ma = m[kTgtFxAmount1 + s];
@@ -1049,6 +1068,8 @@ private:
     float glfo_ph_[2] = {0.0f, 0.0f};
     float tempo_ = 120.0f;
     double beats_ = 0.0;
+    double tick_beats_ = 0.0; // beat position of the current control tick
+    int mode_ = 0;
     bool playing_ = false;
     dsp::Smoother volume_;
     bool volume_primed_ = false;

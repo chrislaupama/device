@@ -30,11 +30,12 @@ fn lfo_shape(w: Waveform) -> f32 {
     }
 }
 
-/// Classic unison spread (cents) -> Unison Detune (the engine's spread is detune² × 50 cents).
+/// Classic unison spread (voices across ±cents/2) -> Unison Detune (voices across ±60 × detune² cents).
 fn detune(cents: f32) -> f32 {
-    (cents / 50.0).clamp(0.0, 1.0).sqrt()
+    (cents / 120.0).clamp(0.0, 1.0).sqrt()
 }
 
+/// Classic output gain -> Volume (dB). The engine plays Volume's minimum (−36 dB) as silence, so output 0 stays silent.
 fn volume_db(output: f32) -> f32 {
     if output <= 1e-6 { -36.0 } else { 20.0 * output.log10() }
 }

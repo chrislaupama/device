@@ -21,7 +21,7 @@ use crate::controller::{slint_color, sync_model, track_color, BottomTab, Control
 use crate::{MenuItem, Studio, SynthArc, SynthDisplay, SynthFaderItem, SynthKnobItem, SynthLabel, SynthLatchItem, SynthMapRow, SynthParam, SynthPillItem, SynthRouteRow, SynthScopeItem, SynthSegItem, SynthTextItem};
 use saine_core::builtin::synth_v2::{self as sv, SYNTH_V2};
 use saine_core::builtin::{DevicePreset, ParamDef};
-use saine_core::{Command, DeviceId, TrackId, TrackKind};
+use saine_core::{AutomationTarget, Command, DeviceId, TrackId, TrackKind};
 use slint::{Color, ModelRc, VecModel};
 use std::collections::{BTreeMap, HashMap};
 use std::f32::consts::PI;
@@ -188,7 +188,7 @@ pub struct SynthUi {
     /// Dial centres of the page last laid out (drop targets for the drawer).
     knob_pos: Vec<(usize, f32, f32)>,
     /// What the page models were last built from.
-    pushed: Option<(Vec<f32>, [usize; 4], u32)>,
+    pushed: Option<(Vec<f32>, [usize; 4], u32, Option<String>, u32)>,
     models: Option<Models>,
 }
 
@@ -1862,6 +1862,12 @@ impl Controller {
     /// A value heard during a gesture (no model change yet).
     fn synth_live(&mut self, device: DeviceId, i: usize, x: f32) {
         let x = pdef(i).snap(x);
+        // Automation: armed + playing records the move; an active lane blocks it (the knob follows the lane).
+        if let Some(t) = self.synth_track()
+            && self.auto_intercept(Some(t), AutomationTarget::Builtin { device, device_type: SYNTH_V2.id.into(), param: pdef(i).id.into() }, x)
+        {
+            return;
+        }
         let start = self.project().device(device).map(|d| SYNTH_V2.value(d, pdef(i))).unwrap_or(x);
         let live = self.synth.live.get_or_insert_with(|| Live { device, vals: Vec::new() });
         if live.device != device {
@@ -1878,7 +1884,11 @@ impl Controller {
 
     /// Gesture end: the heard values become one command. False when no gesture was live.
     fn synth_live_end(&mut self) -> bool {
-        let Some(live) = self.synth.live.take() else { return false };
+        let wrote = self.auto_write_end(|w| matches!(&w.target, AutomationTarget::Builtin { device_type, .. } if device_type == SYNTH_V2.id));
+        if wrote {
+            self.ui_dirty = true;
+        }
+        let Some(live) = self.synth.live.take() else { return wrote };
         let changes: Vec<(usize, f32)> = live.vals.iter().filter(|e| e.1 != e.2).map(|e| (e.0, e.2)).collect();
         if !self.synth_commit(live.device, changes) {
             for (i, start, _) in live.vals {
@@ -2093,6 +2103,11 @@ impl Controller {
                     (MenuTarget::RouteSource(n), rows)
                 } else {
                     let mut rows = Vec::new();
+                    let mut without = v.to_vec();
+                    for (i, x) in route_clear(n) {
+                        without[i] = x;
+                    }
+                    let fx = fx_types(&without);
                     for (g, ts) in TARGET_GROUPS {
                         rows.push(heading(g));
                         for &k in ts {
@@ -2100,7 +2115,8 @@ impl Controller {
                             if t == 0 {
                                 ch.push((b + 2, default_amount(k)));
                             }
-                            rows.push((sv::MOD_TARGETS[k].to_string(), check(t == k), Some(MenuAction::Set(ch))));
+                            let full = k != t && target_index(k, fx).is_some_and(|i| sources_on(&without, i) >= sv::MAX_SOURCES_PER_TARGET);
+                            rows.push((sv::MOD_TARGETS[k].to_string(), check(t == k), (!full).then_some(MenuAction::Set(ch))));
                         }
                     }
                     (MenuTarget::RouteTarget(n), rows)
@@ -2337,7 +2353,8 @@ impl Controller {
         let Some(d) = self.project().device(device) else { return };
         let (enabled, preset) = (d.enabled, d.preset.clone());
         let accent = self.project().find_device(device).map_or(rgb(0x439b94), |(ti, _)| slint_color(track_color(self.project().tracks[ti].color)));
-        let key = (v.clone(), [self.synth.page, self.synth.fx_slot, self.synth.macro_sel, self.synth.lit], accent.as_argb_encoded());
+        let bpm = self.project().transport.bpm as f32;
+        let key = (v.clone(), [self.synth.page, self.synth.fx_slot, self.synth.macro_sel, self.synth.lit], accent.as_argb_encoded(), preset.clone(), bpm.to_bits());
         if self.synth.pushed.as_ref() != Some(&key) {
             let modified = preset.as_deref().and_then(|name| SYNTH_V2.factory.iter().find(|f| f.name == name)).is_some_and(|f| {
                 let want = DevicePreset::factory(&SYNTH_V2, f).load_values(&SYNTH_V2);
@@ -2350,7 +2367,6 @@ impl Controller {
             });
             let params: Vec<SynthParam> = SYNTH_V2.params.iter().zip(&v).map(|(p, &x)| SynthParam { norm: p.to_normalized(x), text: p.format(x).into(), bipolar: p.is_bipolar(), auto: false }).collect();
             sync_model(&self.synth_params_model, params);
-            let bpm = self.project().transport.bpm as f32;
             let (pictures, labels) = displays(&v, bpm, self.synth.page, self.synth.fx_slot);
             sync_model(&self.synth_displays_model, pictures);
             let c = Ctx { v: &v, routes: routes(&v), maps: mappings(&v), fx: fx_types(&v), accent, lit: self.synth.lit };

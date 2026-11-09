@@ -129,6 +129,8 @@ public:
 
     void prepare(double sample_rate, uint32_t max_block);
     void reset() noexcept;
+    // RT. The slot is off: the next enable clears the selected type's state.
+    void suspend() noexcept;
     // p: the slot's kFxParamCount plain values (clamped, modulation applied).
     // Processes l/r in place, mixing the effect in by p[kFxMix].
     void process(float* l, float* r, uint32_t n, const float* p, const FxClock& clock) noexcept;

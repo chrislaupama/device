@@ -978,7 +978,7 @@ impl Controller {
         }
         let kinds: &[PluginKind] = if inst_track { &[PluginKind::Instrument, PluginKind::Effect] } else { &[PluginKind::Effect] };
         if fmt.is_none() {
-            for d in saine_core::builtin::all() {
+            for d in saine_core::builtin::all().iter().filter(|d| d.id != saine_core::builtin::synth_v2::SYNTH_V2.id) {
                 if kinds.contains(&d.kind) && (q.is_empty() || d.name.to_lowercase().contains(&q) || d.category.to_lowercase().contains(&q) || "built-in".contains(&q)) {
                     v.push(Item::Builtin(d));
                 }
