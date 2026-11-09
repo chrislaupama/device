@@ -14,6 +14,13 @@
 #include "dsp.hpp"
 
 namespace saine::dsp {
+// dsp_dynamics.hpp (the limiter, gate and glue family) defines its own
+// Oversampler, Biquad and dB helpers in saine::dsp with different layouts.
+// The inline namespace gives these distinct linker names, so the two sets
+// can't be merged across translation units (an ODR violation that made the
+// Character Compressor construct the other Oversampler and overrun its
+// heap block), while `dsp::Oversampler` etc. still name them here.
+inline namespace dynkit {
 
 // ---------------------------------------------------------------- fast math
 
@@ -271,4 +278,5 @@ private:
     float prev_[2] = {0.0f, 0.0f};
 };
 
+} // namespace dynkit
 } // namespace saine::dsp
