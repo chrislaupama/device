@@ -920,16 +920,14 @@ impl Controller {
     }
 
     pub fn panel_choice(&mut self, device: DeviceId, index: i32, choice: i32) {
-        // Picking a Key or Scale while it follows the project turns Follow off and writes
-        // both values (the picked one and the one shown for the other) in one gesture.
+        // Picking a Key or Scale while it shows the followed project key turns Follow off and
+        // writes both values (the picked one and the one shown for the other) in one gesture.
+        // Without a project key nothing is followed, so the pick is an ordinary choice.
         if let Some((d, def)) = self.panel_def(device)
             && let Some(p) = usize::try_from(index).ok().and_then(|i| def.params.get(i))
             && (p.id == "key" || p.id == "scale")
-            && let Some(follow) = def.param("key_follow")
-            && def.value(d, follow) >= 0.5
+            && let Some((k, sc)) = saine_core::builtin::followed_key(def, d, self.project().transport.key)
         {
-            let (k, sc) = saine_core::builtin::followed_key(def, d, self.project().transport.key)
-                .unwrap_or_else(|| (def.param("key").map_or(0.0, |q| def.value(d, q)), def.param("scale").map_or(0.0, |q| def.value(d, q))));
             let (k, sc) = if p.id == "key" { (choice as f32, sc) } else { (k, choice as f32) };
             let commands = [("key_follow", 0.0), ("key", k), ("scale", sc)]
                 .into_iter()

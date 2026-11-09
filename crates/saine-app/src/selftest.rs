@@ -2365,6 +2365,19 @@ fn analyzer_device_steps() -> Vec<Step> {
             let lat = analyzer_device(c, "pitch-corrector").map_or(0, |d| c.engine.plugin_latency(d.id));
             (lat == 1024).then_some(()).ok_or(format!("Pitch Corrector latency {lat} (want 1024 at 48 kHz)"))
         })),
+        DoC("analyzers: with no project key, pick Key E on the Pitch Corrector", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            let Some(d) = analyzer_device(&c, "pitch-corrector").map(|d| d.id) else { return };
+            let key = saine_core::builtin::find("pitch-corrector").and_then(|def| def.index_of("key")).unwrap_or(0);
+            c.panel_choice(d, key as i32, 4);
+            c.update_ui(a);
+        })),
+        Check("analyzers: nothing is followed without a project key: Key E, Follow stays Project", Box::new(|c, _| {
+            let d = analyzer_device(c, "pitch-corrector").ok_or("no device")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            let v = |id: &str| def.param(id).map(|p| def.value(d, p));
+            (v("key") == Some(4.0) && v("key_follow") == Some(1.0)).then_some(()).ok_or(format!("key {:?} follow {:?}", v("key"), v("key_follow")))
+        })),
         DoC("analyzers: set the project key to A minor, then pick Key D on the following Pitch Corrector", Box::new(move |a, ctl| {
             let mut c = ctl.borrow_mut();
             c.execute(saine_core::Command::SetProjectKey { key: Some(saine_core::ProjectKey { root: 9, minor: true }) });

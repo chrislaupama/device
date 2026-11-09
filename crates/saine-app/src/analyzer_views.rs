@@ -344,8 +344,8 @@ impl Controller {
                 }
                 _ => {
                     let def = saine_core::builtin::find("spectrum");
-                    let averaging = def.zip(self.project().device(id)).and_then(|(def, d)| def.param("averaging").map(|p| def.value(d, p) / 100.0)).unwrap_or(0.3);
-                    let smoothing = def.zip(self.project().device(id)).and_then(|(def, d)| def.param("smoothing").map(|p| def.value(d, p) / 100.0)).unwrap_or(0.3);
+                    let averaging = def.zip(self.project().device(id)).and_then(|(def, d)| def.param("averaging").map(|p| self.panel_value(d, def, p) / 100.0)).unwrap_or(0.3);
+                    let smoothing = def.zip(self.project().device(id)).and_then(|(def, d)| def.param("smoothing").map(|p| self.panel_value(d, def, p) / 100.0)).unwrap_or(0.3);
                     let seq = self.engine.builtin_analysis(id.0, &mut out).unwrap_or(0);
                     let sv = self.devices.panel.analyzers.spectra.entry(id).or_default();
                     if seq != 0 && seq != sv.seq && out.len() >= 2 * BANDS {
