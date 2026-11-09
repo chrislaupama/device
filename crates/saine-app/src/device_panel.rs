@@ -699,7 +699,7 @@ impl Controller {
                     };
                     // As wide as its longest option (None or another track's name), as a dropdown.
                     let own = self.project().find_device(d.id).map(|(ti, _)| self.project().tracks[ti].id);
-                    let longest = self.project().tracks.iter().filter(|t| Some(t.id) != own).map(|t| text_width(&t.name, 10.0, -0.4)).fold(text_width("None", 10.0, -0.4), f32::max);
+                    let longest = self.project().tracks.iter().filter(|t| Some(t.id) != own).map(|t| text_width(&t.name, 10.0, -0.4)).fold(text_width("None", 10.0, -0.4).max(text_width(&source, 10.0, -0.4)), f32::max);
                     let w = (30.0 + longest).ceil();
                     picks.push(PanelPick { kind: 2, param: -1, label: s("Sidechain"), value: s(source), enabled: true, width: w * Z, ..Default::default() });
                 }
