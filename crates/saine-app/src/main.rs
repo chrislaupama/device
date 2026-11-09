@@ -245,7 +245,11 @@ fn parse_args() -> Result<Args, String> {
             "--frame-stats" => a.frame_stats = true,
             "--render-bench" => {
                 a.render_bench = value(&mut i)?.parse().map_err(|e| format!("--render-bench: {e}"))?;
+                if a.render_bench == 0 {
+                    return Err("--render-bench: the count must be at least 1".into());
+                }
                 a.offscreen = true;
+                a.audio = false;
             }
             "--self-test" | "--self-test-audio" => {
                 a.self_test = true;
@@ -1484,19 +1488,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         slint::Timer::single_shot(Duration::from_secs(4), move || {
             let Some(a) = aw.upgrade() else { return };
             zm.borrow_mut().sync(a.window());
-            for _ in 0..5 {
-                let _ = a.window().take_snapshot();
+            let mut ms = Vec::with_capacity(n);
+            for i in 0..n + 5 {
+                let t = Instant::now();
+                if let Err(e) = a.window().take_snapshot() {
+                    eprintln!("--render-bench: snapshot failed: {e}");
+                    std::process::exit(1);
+                }
+                if i >= 5 {
+                    ms.push(t.elapsed().as_secs_f64() * 1e3);
+                }
             }
-            let mut ms: Vec<f64> = (0..n)
-                .map(|_| {
-                    let t = Instant::now();
-                    let _ = a.window().take_snapshot();
-                    t.elapsed().as_secs_f64() * 1e3
-                })
-                .collect();
             ms.sort_by(f64::total_cmp);
             let mean = ms.iter().sum::<f64>() / n as f64;
-            println!("{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{:.3},\"p95_ms\":{:.3}}}", ms[n / 2], ms[(n * 95 / 100).min(n - 1)]);
+            let median = if n % 2 == 0 { (ms[n / 2 - 1] + ms[n / 2]) / 2.0 } else { ms[n / 2] };
+            println!("{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{median:.3},\"p95_ms\":{:.3}}}", ms[(n * 95 / 100).min(n - 1)]);
             let _ = slint::quit_event_loop();
         });
     }
