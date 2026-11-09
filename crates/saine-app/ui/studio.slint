@@ -49,11 +49,13 @@ export struct TreeRow { depth: int, label: string, count: string, icon: int, exp
 // and already includes the chain scroll and a drag offset.
 // ---- built-in device panel (src/device_panel.rs builds these from the DeviceDef) ----
 // Knob cell (card relative x, y). face 1 = soft-knee transfer curve instead of the ring (paths
-// in a 32 x 32 view box); face 2 = On/Off latch (value = state name). dim: drawn at 55% (the control has no effect in the current state).
+// in a 32 x 32 view box); face 2 = On/Off latch (value = state name, norm 0 / 1). origin: the
+// arc's start as a norm. ticks: detent marks across the ring (32 x 32 view box). dim: drawn at
+// 55% (the control has no effect in the current state).
 // mod-*: modulation display (src/device_mod.rs): the reach of every source around the set value
 // (lo..hi, 0..1), the live modulated position and the first source's colour.
 export struct PanelKnob {
-    param: int, x: length, y: length, label: string, value: string, norm: float, bipolar: bool, dim: bool, face: int, face-curve: string, face-bend: string, face-unity: string,
+    param: int, x: length, y: length, label: string, value: string, norm: float, origin: float, dim: bool, face: int, face-curve: string, face-bend: string, face-unity: string, ticks: string,
     mod-on: bool, mod-lo: float, mod-hi: float, mod-now: float, mod-color: color, selected: bool, mapped: bool,
     // Text the value editor starts with (empty = value).
     edit: string,
@@ -102,6 +104,21 @@ export struct PanelStrip {
     caption: string, readout: string, ticks: [PanelTick],
     in-fill: string, gr-fill: string, in-line: string, out-line: string,
     thresh-param: int, thresh-y: length, thresh-dash: string, thresh-label: string, thresh-value: string, thresh-rate: float,
+}
+// Multiband field (src/panel_multiband.rs): field-relative lengths; paths in a w x h view box.
+export struct PanelBand {
+    x: length, w: length, selected: bool,
+    level-y: length, show-level: bool, gain-y: length, gain-h: length, show-gain: bool,
+    thr-y: length, floor-y: length, thr-param: int, floor-param: int, thr-active: bool, floor-active: bool,
+    thr-dash: string, floor-dash: string, thr-text: string, floor-text: string,
+    handle-x: length, handle-w: length, thr-hit-y: length, thr-hit-h: length, floor-hit-y: length, floor-hit-h: length,
+}
+export struct PanelXover { x: length, param: int, text: string, rate: float }
+export struct PanelFreq { x: length, text: string, grid: bool }
+export struct PanelBands {
+    visible: bool, x: length, y: length, w: length, h: length, ladder: length,
+    ticks: [PanelTick], freqs: [PanelFreq], bands: [PanelBand], xovers: [PanelXover],
+    thr-rate: float, floor-rate: float,
 }
 
 // Sampler-family panels (src/sampler_panel.rs): every length is card relative and
@@ -175,6 +192,7 @@ export struct DeviceCard {
     pages: int,
     sampler: PanelSampler,
     field: PanelField,
+    bands: PanelBands,
     canvas: PanelCanvas,
     buttons: [PanelButton],
 }
@@ -514,6 +532,7 @@ export global Studio {
     callback panel-drag-xy(int, int, int, int, float, float, float, float, bool); // device, param x, param y, phase, dx, dy (px, right / up +), norm per px x / y, fine
     callback panel-field(int, int, float, float, bool);      // field XY drag: device, phase (as panel-drag), dx, dy (px, up +), fine
     callback panel-preset-step(int, int);                    // previous (-1) / next (+1) factory preset
+    callback panel-view(int, int, float);                    // custom view action (0 select band at field x px, 1 select band n)
     // ---- modulation and containers (src/device_mod.rs) ----
     in property <[ChainFrame]> chain-frames;
     // Bumped when the chain's cards change (added, removed, moved, folded): a focused control
