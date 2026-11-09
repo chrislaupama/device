@@ -133,6 +133,27 @@ int main(int argc, char** argv) {
     }
     row("compressor (Clean, 16 auto events)", bench_kernel("compressor", kCompressor, blocks, 16));
 
+    const char* drive_modes[] = {"Overdrive", "Fuzz", "Tube", "Hard Clip"};
+    for (int m = 0; m < 4; ++m) {
+        char name[64];
+        std::snprintf(name, sizeof name, "distortion (%s, 4x)", drive_modes[m]);
+        row(name, bench_kernel("distortion", {70.f, 6000.f, 100.f, -6.f, static_cast<float>(m), 30.f, 0.f}, blocks, 0));
+    }
+    const char* tape_modes[] = {"Reel", "Cassette", "VHS"};
+    for (int m = 0; m < 3; ++m) {
+        char name[64];
+        std::snprintf(name, sizeof name, "tapesaturation (%s, 4x)", tape_modes[m]);
+        row(name, bench_kernel("tapesaturation", {70.f, 50.f, 40.f, -40.f, 100.f, static_cast<float>(m), 0.f}, blocks, 0));
+    }
+    const char* shapes[] = {"Smooth", "Warm", "Hard"};
+    for (int m = 0; m < 3; ++m) {
+        char name[64];
+        std::snprintf(name, sizeof name, "soft-clipper (%s, 4x)", shapes[m]);
+        row(name, bench_kernel("soft-clipper", {12.f, -3.f, 50.f, static_cast<float>(m), 0.f, 100.f, 0.f}, blocks, 0));
+    }
+    row("bitcrusher (8 bit, 4x down, jitter)", bench_kernel("bitcrusher", {8.f, 4.f, 100.f, 50.f, 30.f}, blocks, 0));
+    row("widener (200%)", bench_kernel("widener", {200.f, 0.f, 0.f, 120.f, 100.f}, blocks, 0));
+    row("utility (width, bass mono, DC)", bench_kernel("utility", {-3.f, 10.f, 150.f, 0.f, 0.f, 1.f, 0.f, 1.f, 120.f, 0.f, 0.f, 1.f}, blocks, 0));
     // Modulation devices at their defaults, then the heavier settings.
     const auto defaults = [](const char* id) {
         const saine::BuiltinDescriptor* d = saine::find_builtin(id);
