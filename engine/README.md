@@ -114,22 +114,19 @@ POSIX signal or Windows NTSTATUS exception code).
 | Plugin editors | NSWindow (AU/VST3/CLAP) | top-level HWND hosting the plugin child window (VST3 `kPlatformTypeHWND`, CLAP `win32`) | not implemented: `SE_ERR_UNSUPPORTED_FORMAT` |
 | Scanner children | `posix_spawn` | `CreateProcessW` (no WER dialogs in the child) | `posix_spawn` |
 | Test plugins | `.clap`/`.vst3` bundles | `.clap` DLL, `.vst3/Contents/x86_64-win/*.vst3`, + `SaineTestGui.clap` | `.clap` .so, `.vst3/Contents/x86_64-linux/*.so` |
-| Built with warnings as errors | yes (clang, `-Werror`), every CI run | yes (`/W4 /WX`), last hosted run | yes (GCC, `-Werror`), last hosted run |
-| ctest | all tests, every CI run, on the self-hosted Mac's real audio device | all tests in the last hosted run; AU tests and device tests skip (no audio endpoint) | all tests in the last hosted run; AU tests and device tests skip (no PipeWire server) |
+| Built with warnings as errors | yes (clang, `-Werror`), every CI run | yes (`/W4 /WX`), every CI run | yes (GCC, `-Werror`), every CI run |
+| ctest | all tests, every CI run, on the self-hosted Mac's real audio device | all tests, every CI run; AU tests and device tests skip (no audio endpoint) | all tests, every CI run; AU tests and device tests skip (no PipeWire server) |
 | Tested on real audio hardware | yes (Core Audio output + duplex, see below) | **no** | **no** |
 
-**CI runs only on the self-hosted runner** (one Apple silicon Mac mini; see
-`.github/workflows/ci.yml`): engine with `-Werror`, ctest, the Rust workspace
-tests and the app's `--self-test --no-audio`. Windows and Linux are **not
-built in CI**; their workflow steps stay in place, gated on `runner.os`, for
-when a self-hosted runner on those systems is added. The Windows and Linux
-results in this section come from the last run on GitHub-hosted runners
-(macos-15, windows-2025, ubuntu-24.04), run 42464468427 on commit `6cecd4f`,
-before the hosted matrix was dropped; changes after that are not
-compiled on those systems.
+**CI** (`.github/workflows/ci.yml`) runs one job per OS: macOS on the
+self-hosted runner (one Apple silicon Mac mini, with a real audio device),
+Windows and Linux on GitHub-hosted runners (`windows-latest`,
+`ubuntu-latest`). Each job builds the engine with warnings as errors, runs
+ctest, builds and tests the Rust workspace and runs the app's
+`--self-test --no-audio`.
 
-The app (`crates/saine-app`) builds on all three. That hosted run also ran
-it without a GPU or audio device: on Linux under Xvfb with Mesa lavapipe (software Vulkan;
+The app (`crates/saine-app`) builds on all three. The hosted jobs run it
+without a GPU or audio device: on Linux under Xvfb with Mesa lavapipe (software Vulkan;
 `SLINT_WGPU_CPU=1`), a reference-state screenshot and the full `--self-test
 --no-audio` (125 checks pass; the 21 checks of the Audio Unit devices section
 are reported as skipped off macOS), as a required step; on Windows with WARP
@@ -140,7 +137,7 @@ Debug builds of the app abort at exit on every OS (pre-existing: wgpu-core's
 debug-only lock tracing runs in a TLS destructor when Slint's thread-local
 backend drops the wgpu queue), so CI uses a release build. Screenshots and logs are uploaded as artifacts.
 
-What that run could not cover: the hosted runners had no audio devices (Windows: no
+What the hosted jobs cannot cover: the hosted runners have no audio devices (Windows: no
 endpoint; Linux: no PipeWire server), so the WASAPI and PipeWire streaming
 code (open, callbacks, duplex ring in a live stream, latency values) is
 compiled and its enumeration/validation "no device" paths run, but it has
@@ -234,9 +231,8 @@ running jackd without PipeWire.
 * **Editors.** Windows: `plugin_editor_win.cpp` (top-level window, plugin
   child HWND, `IPlugFrame::resizeView` / `request_resize`, user resizing,
   close box), covered by `SaineTestGui.clap` +
-  `plugin_editor_window_win32_open_resize_close`, which passed in the last
-  hosted Windows run (Windows is not built in CI now, see above, so later
-  editor changes are untested there); per-monitor DPI scaling is
+  `plugin_editor_window_win32_open_resize_close`, which runs in
+  every Windows CI job; per-monitor DPI scaling is
   not handled yet. Linux: not implemented (X11 embedding needs an X event
   loop plus the plugins' `posix-fd`/`timer` support for CLAP and
   `IRunLoop` for VST3); opening an editor returns

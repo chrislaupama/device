@@ -111,13 +111,20 @@ pub enum ImportTarget {
     /// Selected track if it is an audio track, else the first audio track, else a new one.
     Selected,
     NewTrack,
+    /// A track resolved from `Selected` when the import was requested (an audio
+    /// track, or a new one if it has since been removed). Imports finish on worker
+    /// threads in any order, so `Selected` must not be resolved at completion: an
+    /// earlier import's new track would be selected by then.
+    Track(TrackId),
     /// A built-in sampler's sample slot (`next_free`: the first free layer
     /// of the pad that starts at `slot`).
     DeviceSample { device: saine_core::DeviceId, slot: u32, next_free: bool },
 }
 
 pub enum JobResult {
-    Imported { path: PathBuf, target: ImportTarget, at: Ticks, result: Result<(AssetInfo, Pyramid), String> },
+    /// A file import finished. `doc_epoch` is the project it was started in: a
+    /// result from a project that has since been closed is dropped.
+    Imported { path: PathBuf, target: ImportTarget, at: Ticks, doc_epoch: u64, result: Result<(AssetInfo, Pyramid), String> },
     /// Media of an opened project reloaded into the engine.
     Reloaded { asset: AssetId, doc_epoch: u64, result: Result<(AssetInfo, Pyramid), String> },
     /// Assistant provider reply (raw `AssistantTurn` JSON) for a request started at `started`.
@@ -700,6 +707,11 @@ impl Controller {
     /// Import on worker threads; clips land at `at` (default: the playhead).
     pub fn import_files(&mut self, paths: Vec<PathBuf>, target: ImportTarget, at: Option<Ticks>) {
         let at = at.unwrap_or_else(|| self.playhead_ticks());
+        let doc_epoch = self.doc_epoch;
+        let target = match target {
+            ImportTarget::Selected => self.selected_audio_track().map_or(ImportTarget::NewTrack, ImportTarget::Track),
+            t => t,
+        };
         for (i, path) in paths.into_iter().enumerate() {
             let engine = self.engine.clone();
             let tx = self.jobs_tx.clone();
@@ -710,11 +722,21 @@ impl Controller {
                 .name("import".into())
                 .spawn(move || {
                     let result = load_and_analyse(&engine, &path);
-                    let _ = tx.send(JobResult::Imported { path, target, at, result });
+                    let _ = tx.send(JobResult::Imported { path, target, at, doc_epoch, result });
                 })
                 .expect("spawn import thread");
         }
         self.set_status("Importing…", 30);
+    }
+
+    /// The selected track if it is an audio track, else the first audio track.
+    fn selected_audio_track(&self) -> Option<TrackId> {
+        let p = self.project();
+        self.selected_track
+            .and_then(|t| p.track(t))
+            .filter(|t| t.kind == TrackKind::Audio)
+            .or_else(|| p.tracks.iter().find(|t| t.kind == TrackKind::Audio))
+            .map(|t| t.id)
     }
 
     /// Drain finished background jobs (called from a UI timer and each frame).
@@ -722,7 +744,13 @@ impl Controller {
         while let Ok(job) = self.jobs_rx.try_recv() {
             self.pending_jobs = self.pending_jobs.saturating_sub(1);
             match job {
-                JobResult::Imported { path, target, at, result } => match result {
+                JobResult::Imported { doc_epoch, result: Ok((info, _)), .. } if doc_epoch != self.doc_epoch => {
+                    // Started in a project that has since been closed: its target
+                    // track id could name a track in the new project.
+                    let _ = self.engine.release_asset(info.asset_id);
+                }
+                JobResult::Imported { doc_epoch, .. } if doc_epoch != self.doc_epoch => {}
+                JobResult::Imported { path, target, at, result, .. } => match result {
                     Ok((info, pyr)) => self.finish_import(&path, target, at, info, pyr),
                     Err(e) => self.set_status(format!("Import failed: {e}"), 6),
                 },
@@ -788,12 +816,8 @@ impl Controller {
         let existing = match target {
             ImportTarget::DeviceSample { .. } => None,
             ImportTarget::NewTrack => None,
-            ImportTarget::Selected => self
-                .selected_track
-                .and_then(|t| p.track(t))
-                .filter(|t| t.kind == TrackKind::Audio)
-                .or_else(|| p.tracks.iter().find(|t| t.kind == TrackKind::Audio))
-                .map(|t| t.id),
+            ImportTarget::Selected => self.selected_audio_track(),
+            ImportTarget::Track(t) => p.track(t).filter(|t| t.kind == TrackKind::Audio).map(|t| t.id),
         };
         let track_id = existing.unwrap_or_else(|| {
             let id = TrackId(alloc());

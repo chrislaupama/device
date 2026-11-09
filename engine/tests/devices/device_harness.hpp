@@ -114,8 +114,10 @@ inline bool all_finite(const Signal& s) {
 inline std::vector<uint8_t> state_blob(const std::vector<float>& values, uint64_t sidechain = 0) {
     se_builtin_state h{SE_BUILTIN_STATE_MAGIC, static_cast<uint32_t>(values.size()), sidechain};
     std::vector<uint8_t> out(sizeof h + 4 * values.size());
-    std::memcpy(out.data(), &h, sizeof h);
-    if (!values.empty()) std::memcpy(out.data() + sizeof h, values.data(), 4 * values.size());
+    uint8_t* p = out.data();
+    if (p == nullptr) std::abort(); // never (out is non-empty); tells GCC's -Wnull-dereference so
+    std::memcpy(p, &h, sizeof h);
+    if (!values.empty()) std::memcpy(p + sizeof h, values.data(), 4 * values.size());
     return out;
 }
 
@@ -309,6 +311,13 @@ public:
 
     std::vector<float> readouts() {
         std::vector<float> r(desc().readouts.size());
+        if (r.empty()) {
+            // Tests index readouts()[0], so asking a device without readouts
+            // is a test bug. Failing here also keeps GCC's -Wnull-dereference
+            // from flagging those reads of a possibly empty vector.
+            std::fprintf(stderr, "%s has no readouts\n", desc().id);
+            std::abort();
+        }
         b_->readouts(r.data(), static_cast<uint32_t>(r.size()));
         return r;
     }

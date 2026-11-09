@@ -401,9 +401,9 @@ Voice* VoicePool::allocate(int limit) noexcept {
     }
     for (Voice& v : voices_)
         if (!v.active()) return &v;
-    Voice* oldest = nullptr; // every slot busy declicking: reuse the oldest
+    Voice* oldest = &voices_[0]; // every slot busy declicking: reuse the oldest
     for (Voice& v : voices_)
-        if (oldest == nullptr || v.age() < oldest->age()) oldest = &v;
+        if (v.age() < oldest->age()) oldest = &v;
     oldest->stop();
     return oldest;
 }

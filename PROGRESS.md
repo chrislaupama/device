@@ -191,3 +191,13 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   was dropped. The Windows/Linux results above are from hosted run 42464468427 (`6cecd4f`); later
   changes are not compiled on those systems until a self-hosted Windows/Linux runner is added.
 
+### 2026-11-08: Windows and Linux back in CI
+
+- CI is a three-job matrix again: macOS stays on the self-hosted Mac mini, Windows and Linux run on
+  GitHub-hosted `windows-latest` / `ubuntu-latest` (engine `-Werror`/`/W4 /WX`, ctest, Rust
+  workspace build + tests, app self-test). All three pass.
+- Fix found by the Linux job: an import into the "selected track" was resolved when the import
+  finished, so when imports finished out of order (the demo's second, new-track import first) the
+  file landed on the newly selected track. The target track is now resolved when the import starts.
+- Windows app self-test: 125/125 pass; the process still exits 0x87A afterwards (step stays
+  informational, as before).
