@@ -130,7 +130,7 @@ impl Canvas {
     /// Grip pill with its left edge at x (kept inside the well), centred on y.
     fn pill(&mut self, x: f32, y: f32, w: f32, label: &str, value: &str, hot: bool) {
         let width = pill_width(label, value);
-        self.pills.push(PanelGrip { x: x.min(w - width - 2.0).max(2.0), y, label: s(label), value: s(value), hot });
+        self.pills.push(PanelGrip { x: x.min(w - width - 2.0).max(2.0), y, label: s(label), value: s(value), hot, ..Default::default() });
     }
 }
 

@@ -85,28 +85,34 @@ export struct PanelTick { y: length, text: string, rule: bool }
 export struct PanelPath { commands: string, stroke: color, width: length, fill: color }
 // align: 0 left, 1 centre, 2 right of [x, x + w].
 export struct PanelText { x: length, y: length, w: length, h: length, text: string, color: color, size: length, weight: int, align: int }
-// hot: drawn highlighted (hovered or dragged handle).
-export struct PanelGrip { x: length, y: length, label: string, value: string, hot: bool }
+// anchor: x is the grip's left (0), centre (1) or right (2) edge; y its centre. hot: drawn
+// highlighted (hovered or dragged handle); plain: no grip dots.
+export struct PanelGrip { x: length, y: length, label: string, value: string, anchor: int, hot: bool, plain: bool }
+// Dot (node, handle): centre x / y, radius r, optional ring of width ring.
+export struct PanelDot { x: length, y: length, r: length, fill: color, ring: length, ring-color: color }
 // Drag zone: param-x / param-y (-1 = axis unused), norm per px (rate-x < 0: dragging right lowers).
 export struct PanelZone { x: length, y: length, w: length, h: length, param-x: int, param-y: int, rate-x: float, rate-y: float }
 export struct PanelCanvas {
     visible: bool, well: bool, x: length, y: length, w: length, h: length, well-y: length,
     caption: string, readout: string,
-    paths: [PanelPath], texts: [PanelText], grips: [PanelGrip], zones: [PanelZone],
-    // pointer: raw pointer events over the well go to Rust (Studio.panel-graph), which hit-tests
-    // them; cursor: 0 default, 1 move, 2 ew-resize, 3 ns-resize. readout-accent: the caption
-    // value is drawn in the track colour.
-    pointer: bool, cursor: int, readout-accent: bool,
+    paths: [PanelPath], texts: [PanelText], dots: [PanelDot], grips: [PanelGrip], zones: [PanelZone],
+    // pointer: raw pointer, wheel and key events over the well go to Rust (Studio.panel-graph*),
+    // which hit-tests them; cursor: 0 default, 1 move, 2 ew-resize, 3 ns-resize. readout-accent:
+    // the caption value is drawn in the track colour. label / value: the pointer well's
+    // accessible name and value.
+    pointer: bool, cursor: int, readout-accent: bool, label: string, value: string,
 }
 // Freely placed control (custom card bodies): kind 0 latch (On/Off parameter), 1 menu pill
 // (choice parameter, opens a menu of its choices).
 export struct PanelButton { kind: int, param: int, x: length, y: length, w: length, label: string, on: bool }
 // Dynamics strip: caption + readout above a well; paths are in well coordinates (view box w x well-h).
+// Draggable dashed line and an optional solid second line (Alt+drag moves both).
 export struct PanelStrip {
     visible: bool, x: length, y: length, w: length, h: length, well-y: length,
     caption: string, readout: string, ticks: [PanelTick],
     in-fill: string, gr-fill: string, in-line: string, out-line: string,
     thresh-param: int, thresh-y: length, thresh-dash: string, thresh-label: string, thresh-value: string, thresh-rate: float,
+    second-param: int, second-y: length, second-line: string, second-label: string, second-value: string, second-rate: float,
 }
 // Multiband field (src/panel_multiband.rs): field-relative lengths; paths in a w x h view box.
 export struct PanelBand {
@@ -160,6 +166,20 @@ export struct PanelField {
     x-param: int, y-param: int, plot-x: length, plot-y: length, plot-w: length, plot-h: length,
 }
 
+// EQ chrome around a field (View::Eq): band tabs + On latch (+ Bank menu), type glyph picker,
+// value cells. Lengths are card relative.
+export struct EqTab { label: string, on: bool }
+export struct EqGlyph { commands: string, name: string, choice: int }
+export struct EqCell { x: length, w: length, label: string, value: string, param: int, enabled: bool, rate: float }
+export struct PanelEq {
+    visible: bool,
+    tabs: [EqTab], selected: int, tab-w: length,
+    on-param: int, on: bool, latch-x: length,
+    bank-param: int, bank-value: string, bank-x: length, bank-w: length,
+    glyphs: [EqGlyph], glyph-selected: int, type-param: int,
+    cells: [EqCell],
+}
+
 export struct DeviceCard {
     id: int,
     x: length,
@@ -184,6 +204,7 @@ export struct DeviceCard {
     knobs: [PanelKnob],
     picks: [PanelPick],
     sliders: [PanelSlider],
+    slider-top: length,
     strip: PanelStrip,
     // Generic header state (every card): folded to a strip, swappable from the name, in a chain.
     folded: bool,
@@ -196,7 +217,13 @@ export struct DeviceCard {
     sampler: PanelSampler,
     field: PanelField,
     bands: PanelBands,
+    // Slider column rail (card relative) and cell width.
+    slider-top: length,
+    slider-bottom: length,
+    slider-w: length,
+    // Canvas view (src/device_canvas.rs) and EQ chrome.
     canvas: PanelCanvas,
+    eq: PanelEq,
     buttons: [PanelButton],
 }
 
@@ -525,6 +552,7 @@ export global Studio {
     callback device-drag(int, int, length);     // card id, phase 0/1/2, window x (MoveDevice on release)
     callback chain-scroll-by(float);
     // Built-in device panels: device id, parameter index (definition order).
+    callback panel-drag-pair(int, int, int, int, float, float, bool); // device, line param, other line param, then as panel-drag
     callback panel-drag(int, int, int, float, float, bool); // phase 0 press / 1 move / 2 release / 3 cancel, dy since last event (px, up +), norm per px, fine
     callback panel-reset(int, int);                          // default value (Alt-click, double-click)
     callback panel-reset-xy(int, int, int);                  // device, param x, param y (-1 = unused): both to default, one undo step
@@ -568,6 +596,9 @@ export global Studio {
     callback sampler-well(int, int, float, float, bool);     // phase, x fraction, grab distance (fraction), alt
     callback sampler-handle(int, int, int, length, length);  // picture handle i: phase, x, y (picture px)
     callback panel-graph(int, int, float, float, bool, bool); // canvas pointer (PanelCanvas.pointer): phase (0 press, 1 drag, 2 release, 3 cancel, 4 hover, 5 leave, 6 double-click), well x, y (px), shift, alt
+    callback panel-graph-wheel(int, float, float, float) -> bool; // canvas wheel: x, y, wheel dy (px, up +): used
+    callback panel-graph-key(int, string, bool, bool) -> bool;     // canvas key: text, shift, alt: accepted
+    callback panel-eq(int, int, int);                        // action 0 select band / 1 toggle On / 2 type choice / 3 reset type; value
     callback add-category(int, length, length); // row (Built-in, AU, VST3, CLAP, Chains), window x, y for the list
     callback add-search-edited(string);
     callback add-result-pick(int);
