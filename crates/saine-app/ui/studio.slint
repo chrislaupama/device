@@ -49,7 +49,8 @@ export struct TreeRow { depth: int, label: string, count: string, icon: int, exp
 // and already includes the chain scroll and a drag offset.
 // ---- built-in device panel (src/device_panel.rs builds these from the DeviceDef) ----
 // Knob cell (card relative x, y). face 1 = soft-knee transfer curve instead of the ring (paths
-// in a 32 x 32 view box). dim: drawn at 55% (the control has no effect in the current state).
+// in a 32 x 32 view box); face 2 = On/Off latch (value = state name). dim: drawn at 55% (the
+// control has no effect in the current state).
 export struct PanelKnob { param: int, x: length, y: length, label: string, value: string, norm: float, bipolar: bool, dim: bool, face: int, face-curve: string, face-bend: string, face-unity: string }
 // Picker row item. kind 0 caption, 1 segmented choice, 2 menu pill, 3 value box, 4 flexible gap,
 // 5 latch (On/Off parameter; label shows the state, selected 0 / 1).
@@ -63,13 +64,18 @@ export struct PanelTick { y: length, text: string, rule: bool }
 export struct PanelPath { commands: string, stroke: color, width: length, fill: color }
 // align: 0 left, 1 centre, 2 right of [x, x + w].
 export struct PanelText { x: length, y: length, w: length, h: length, text: string, color: color, size: length, weight: int, align: int }
-export struct PanelGrip { x: length, y: length, label: string, value: string }
+// hot: drawn highlighted (hovered or dragged handle).
+export struct PanelGrip { x: length, y: length, label: string, value: string, hot: bool }
 // Drag zone: param-x / param-y (-1 = axis unused), norm per px (rate-x < 0: dragging right lowers).
 export struct PanelZone { x: length, y: length, w: length, h: length, param-x: int, param-y: int, rate-x: float, rate-y: float }
 export struct PanelCanvas {
     visible: bool, well: bool, x: length, y: length, w: length, h: length, well-y: length,
     caption: string, readout: string,
     paths: [PanelPath], texts: [PanelText], grips: [PanelGrip], zones: [PanelZone],
+    // pointer: raw pointer events over the well go to Rust (Studio.panel-graph), which hit-tests
+    // them; cursor: 0 default, 1 move, 2 ew-resize, 3 ns-resize. readout-accent: the caption
+    // value is drawn in the track colour.
+    pointer: bool, cursor: int, readout-accent: bool,
 }
 // Freely placed control (custom card bodies): kind 0 latch (On/Off parameter), 1 menu pill
 // (choice parameter, opens a menu of its choices).
@@ -153,10 +159,24 @@ export struct HighlightRect { x: length, y: length, w: length, h: length, note: 
 export struct YLabel { y: length, text: string }
 // separator: a line is drawn above the item; y: row top inside the menu.
 // ---- synth device (src/synth.rs) ----
-// One continuous parameter: control position 0..1, readout with units.
+// One parameter of the Synth device: control position 0..1, readout with units.
 export struct SynthParam { norm: float, text: string, bipolar: bool, auto: bool }
-// A display: SVG path of the curve and of its filled area (viewbox = element size in points).
-export struct SynthDisplay { line: string, fill: string }
+// A picture: SVG paths (viewbox = element size in points) of the curve, its filled area,
+// secondary curves, handles and grid lines; dim = the part is silent.
+export struct SynthDisplay { line: string, fill: string, ghost: string, dots: string, grid: string, dim: bool }
+// Axis / value text drawn inside picture slot; align 0 left, 1 centre, 2 right of x.
+export struct SynthLabel { slot: int, x: length, y: length, text: string, align: int, accent: bool }
+// Page elements (card coordinates; knobs, latches: centre of the dial; faders: centre x, groove top).
+export struct SynthArc { d: string, c: color }
+export struct SynthKnobItem { idx: int, x: length, y: length, label: string, accent: color, dim: bool, lit: bool, arcs: [SynthArc], dots: [color] }
+export struct SynthFaderItem { idx: int, x: length, y: length, label: string }
+export struct SynthPillItem { x: length, y: length, w: length, label: string, value: string, action: int, arg: int, ring: int, ring-idx: int, outline: bool, chevron: bool }
+export struct SynthTextItem { x: length, y: length, w: length, text: string, style: int, align: int }
+export struct SynthSegItem { idx: int, x: length, y: length, w: length, options: [string], sel: int, first: int }
+export struct SynthScopeItem { slot: int, x: length, y: length, w: length, h: length, grid: int, hgrid: int, zero: bool }
+export struct SynthLatchItem { idx: int, x: length, y: length, label: string, on: bool }
+export struct SynthRouteRow { slot: int, y: length, on: bool, on-idx: int, source: int, source-text: string, target-text: string, amount: float, amount-idx: int, text: string }
+export struct SynthMapRow { heading: bool, slot: int, y: length, label: string, from: float, to: float, from-idx: int, to-idx: int, from-text: string, to-text: string }
 
 // Checkable popup row ("In" selector, Settings dropdowns). hint: a grey wrapped note row.
 export struct ChoiceItem { label: string, checked: bool, hint: bool, y: length, h: length }
@@ -331,9 +351,29 @@ export global Studio {
     in property <bool> synth-visible;
     in property <int> synth-page;                // index into the category list
     in property <string> synth-preset: "Init";
-    in property <[SynthParam]> synth-params;     // indexed by SP.* (ui/synth.slint)
-    in property <[string]> synth-choices;        // dropdown value texts, indexed by SC.*
-    in property <[SynthDisplay]> synth-displays; // indexed by SD.*
+    in property <bool> synth-enabled: true;
+    in property <[SynthParam]> synth-params;     // indexed like the device definition
+    in property <[SynthDisplay]> synth-displays; // indexed by synth::disp
+    in property <[SynthLabel]> synth-labels;
+    in property <[SynthKnobItem]> synth-knobs;   // the current page's elements
+    in property <[SynthFaderItem]> synth-faders;
+    in property <[SynthPillItem]> synth-pills;
+    in property <[SynthTextItem]> synth-texts;
+    in property <[SynthSegItem]> synth-segs;
+    in property <[SynthScopeItem]> synth-scopes;
+    in property <[SynthLatchItem]> synth-latches;
+    in property <[SynthRouteRow]> synth-routes;  // Modulation page
+    in property <[SynthMapRow]> synth-map-rows;  // Macros page
+    in property <length> synth-split;            // module separator x (0 = none)
+    in property <length> synth-add-y;            // "+ Add modulation / mapping" row
+    in property <bool> synth-add-show;
+    in property <int> synth-lit;                 // lit modulation source (0 = none)
+    in property <color> synth-lit-color;
+    in property <int> synth-macro-sel;
+    in property <bool> synth-ghost-show;         // source chip dragged from the drawer
+    in property <length> synth-ghost-x;
+    in property <length> synth-ghost-y;
+    in property <int> synth-ghost-src;
     in property <bool> synth-menu-open;
     in property <length> synth-menu-x;
     in property <length> synth-menu-y;
@@ -341,10 +381,18 @@ export global Studio {
     in property <length> synth-menu-h;
     in property <[MenuItem]> synth-menu-items;
     callback synth-page-select(int);
-    callback synth-param(int, float);            // param id, control position 0..1 (drag preview)
-    callback synth-param-end();                  // gesture end: commits ONE SetSynthParams
+    callback synth-param(int, float);            // param index, control position 0..1 (heard, not yet a command)
+    callback synth-param-end(int, bool);         // gesture end (moved?): commits ONE SetDeviceParam
     callback synth-param-reset(int);             // double-click: default value
-    callback synth-dropdown(int, length, length, length); // choice id (-1 = presets), window x, y, width
+    callback synth-set(int, float);              // param index, value (switches)
+    callback synth-toggle(int);                  // on/off param index
+    callback synth-pill(int, int, length, length, length); // menu action, argument, window x, y, width
+    callback synth-remove(int, int);             // 0 route / 1 mapping, slot
+    callback synth-knob-menu(int, length, length); // right click: param index, window x, y
+    callback synth-rail(int, int, length, length); // source, phase (0 down 1 move 2 up), card x, y
+    callback synth-scope-drag(int, int, length, length); // picture slot, phase, local x, y
+    callback synth-macro-select(int);
+    callback synth-bypass();
     callback synth-menu-pick(int);
     callback synth-menu-dismiss();
     callback synth-preset-step(int);
@@ -418,6 +466,7 @@ export global Studio {
     callback panel-drag-xy(int, int, int, int, float, float, float, float, bool); // device, param x, param y, phase, dx, dy (px, right / up +), norm per px x / y, fine
     callback panel-field(int, int, float, float, bool);      // field XY drag: device, phase (as panel-drag), dx, dy (px, up +), fine
     callback panel-preset-step(int, int);                    // previous (-1) / next (+1) factory preset
+    callback panel-graph(int, int, float, float, bool, bool); // canvas pointer (PanelCanvas.pointer): phase (0 press, 1 drag, 2 release, 3 cancel, 4 hover, 5 leave), well x, y (px), shift, alt
     callback add-category(int, length, length); // row (Built-in, AU, VST3, CLAP, Chains), window x, y for the list
     callback add-search-edited(string);
     callback add-result-pick(int);

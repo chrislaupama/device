@@ -7,6 +7,7 @@ use crate::controller::Controller;
 use crate::{AppWindow, Studio};
 use crate::assistant_panel::EntryKind;
 use saine_core::assistant::Mode;
+use saine_core::builtin::synth_v2::SYNTH_V2;
 use saine_core::{PPQ, TrackKind, db_to_gain};
 use std::cell::Cell;
 use slint::platform::{Key, PointerEventButton, WindowEvent};
@@ -352,8 +353,20 @@ fn synth_menu_row(app: &AppWindow, i: usize) -> (f32, f32) {
     (x + 30.0, y + crate::synth::MENU_PAD + i as f32 * crate::synth::MENU_ROW + crate::synth::MENU_ROW / 2.0)
 }
 
-fn inst_synth(c: &Controller) -> Option<saine_core::SynthParams> {
-    c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument).map(|t| t.synth.clone())
+/// The Instrument track's Synth: (values, preset name).
+fn inst_synth(c: &Controller) -> Option<(Vec<f32>, Option<String>)> {
+    let d = c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument)?.instrument_plugin.as_ref()?;
+    Some((SYNTH_V2.values(d), d.preset.clone()))
+}
+
+fn sx(id: &str) -> usize {
+    crate::synth::ix(id)
+}
+
+/// Factory sound n as the Synth's values.
+fn factory_values(n: usize) -> Vec<f32> {
+    let m = saine_core::builtin::DevicePreset::factory(&SYNTH_V2, &SYNTH_V2.factory[n]).load_values(&SYNTH_V2);
+    SYNTH_V2.params.iter().map(|p| m.get(p.id).copied().unwrap_or(p.default)).collect()
 }
 
 /// Synth device (Devices tab on the Instrument track). Leaves the synth back at its
@@ -362,27 +375,37 @@ fn synth_steps() -> Vec<Step> {
     let bright_low = Rc::new(Cell::new(-1f32));
     let bright_low2 = bright_low.clone();
     use Step::*;
-    use saine_core::instrument::{Waveform, factory_presets};
     #[derive(Default)]
     struct Rec {
         hist: usize,
-        start: Option<saine_core::SynthParams>,
-        before: Option<saine_core::SynthParams>,
+        start: Option<(Vec<f32>, Option<String>)>,
+        before: Vec<f32>,
         path: String,
+        routes: usize,
     }
     let rec = Rc::new(RefCell::new(Rec::default()));
     let r = |n: usize| -> Vec<Rc<RefCell<Rec>>> { (0..n).map(|_| rec.clone()).collect() };
-    let rs = r(14);
-    let [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13] = <[Rc<RefCell<Rec>>; 14]>::try_from(rs).ok().unwrap();
-    // One new undo step labelled "Synth Parameter Change" since the last record; re-records.
-    fn one_step(rc: &Rc<RefCell<Rec>>, c: &Controller) -> Result<(), String> {
+    let rs = r(17);
+    let [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16] = <[Rc<RefCell<Rec>>; 17]>::try_from(rs).ok().unwrap();
+    // One new undo step with this label since the last record; re-records.
+    fn one_step(rc: &Rc<RefCell<Rec>>, c: &Controller, label: &str) -> Result<(), String> {
         let n = c.doc.history_labels().len();
         let was = rc.borrow().hist;
         rc.borrow_mut().hist = n;
-        (n == was + 1 && c.doc.undo_label() == Some("Synth Parameter Change"))
+        (n == was + 1 && c.doc.undo_label().is_some_and(|l| l.starts_with(label)))
             .then_some(())
             .ok_or(format!("history {was} -> {n}, last {:?}", c.doc.undo_label()))
     }
+    fn values(c: &Controller) -> Result<Vec<f32>, String> {
+        inst_synth(c).map(|v| v.0).ok_or_else(|| "no Synth on the instrument track".to_string())
+    }
+    fn param_text(a: &AppWindow, i: usize) -> String {
+        slint::Model::row_data(&a.global::<Studio>().get_synth_params(), i).map(|p| p.text.to_string()).unwrap_or_default()
+    }
+    fn others_equal(a: &[f32], b: &[f32], except: &[usize]) -> bool {
+        a.iter().zip(b).enumerate().all(|(i, (x, y))| except.contains(&i) || x == y)
+    }
+    const P: &str = "Device Parameter Change";
     vec![
         DoC("click the Instrument track header", Box::new(|a, ctl| {
             let sy = ctl.borrow().view.scroll_y as f32;
@@ -393,55 +416,55 @@ fn synth_steps() -> Vec<Step> {
             let mut r = r0.borrow_mut();
             r.hist = c.doc.history_labels().len();
             r.start = inst_synth(c);
-            let ok = s.get_synth_visible() && s.get_bottom_tab() == 0 && s.get_synth_page() == 0 && c.synth_track().is_some() && s.get_synth_preset() == r.start.as_ref().map(|p| p.preset.clone()).unwrap_or_default();
+            let ok = s.get_synth_visible() && s.get_bottom_tab() == 0 && s.get_synth_page() == 0 && c.synth_track().is_some() && slint::Model::row_count(&s.get_synth_knobs()) == 5;
             ok.then_some(()).ok_or(format!("visible {} tab {} page {}", s.get_synth_visible(), s.get_bottom_tab(), s.get_synth_page()))
         })),
         Do("click preset ›", Box::new(|a| {
             let (x, y) = synth_xy(726.5, 13.0);
             click(a, x, y);
         })),
-        Check("synth: preset › loaded factory_presets()[1] in one undo step", Box::new(move |c, a| {
-            one_step(&r1, c)?;
-            let p = inst_synth(c).ok_or("no instrument")?;
-            (p == factory_presets()[1] && a.global::<Studio>().get_synth_preset() == p.preset.as_str()).then_some(()).ok_or(format!("preset {}", p.preset))
+        Check("synth: preset › loaded the first factory sound in one undo step", Box::new(move |c, a| {
+            one_step(&r1, c, "Load Preset")?;
+            let (v, name) = inst_synth(c).ok_or("no instrument")?;
+            let want = SYNTH_V2.factory[0].name;
+            (v == factory_values(0) && name.as_deref() == Some(want) && a.global::<Studio>().get_synth_preset() == want).then_some(()).ok_or(format!("preset {name:?}"))
         })),
-        Do("click the preset name, pick the 4th preset in the list", Box::new(|a| {
+        Do("click the preset name, pick the 4th sound in the list", Box::new(|a| {
             let (x, y) = synth_xy(690.0, 13.0);
             click(a, x, y);
-            let (x, y) = synth_menu_row(a, 3);
+            let (x, y) = synth_menu_row(a, 4);
             click(a, x, y);
         })),
-        Check("synth: preset list loaded factory_presets()[3] in one undo step, list closed", Box::new(move |c, a| {
-            one_step(&r2, c)?;
-            let p = inst_synth(c).ok_or("no instrument")?;
-            (p == factory_presets()[3] && !a.global::<Studio>().get_synth_menu_open()).then_some(()).ok_or(format!("preset {}", p.preset))
+        Check("synth: preset list loaded factory sound 4 in one undo step, list closed", Box::new(move |c, a| {
+            one_step(&r2, c, "Load Preset")?;
+            let (v, name) = inst_synth(c).ok_or("no instrument")?;
+            (v == factory_values(3) && !a.global::<Studio>().get_synth_menu_open()).then_some(()).ok_or(format!("preset {name:?}"))
         })),
         Do("Cmd+Z, then the Filter page", Box::new(|a| {
             key(a, "z", true, false);
             let (x, y) = synth_category(2);
             click(a, x, y);
         })),
-        Check("synth: undo back to preset [1]; Filter page shown", Box::new(move |c, a| {
+        Check("synth: undo back to the first sound; Filter page shown", Box::new(move |c, a| {
             let mut r = r3.borrow_mut();
             r.hist = c.doc.history_labels().len();
-            r.before = inst_synth(c);
-            (r.before.as_ref() == Some(&factory_presets()[1]) && a.global::<Studio>().get_synth_page() == 2).then_some(()).ok_or(format!("page {}", a.global::<Studio>().get_synth_page()))
+            r.before = values(c)?;
+            (r.before == factory_values(0) && a.global::<Studio>().get_synth_page() == 2).then_some(()).ok_or(format!("page {}", a.global::<Studio>().get_synth_page()))
         })),
         Do("drag the Cutoff knob down 60 pt", Box::new(|a| {
             let (x, y) = synth_xy(152.5, 212.0);
             drag(a, x, y, x, y + 60.0);
         })),
         Check("synth: cutoff decreased (log taper) with exactly one undo step; readout in Hz", Box::new(move |c, a| {
-            one_step(&r4, c)?;
-            let before = r4.borrow().before.clone().ok_or("no record")?;
-            let p = inst_synth(c).ok_or("no instrument")?;
-            let want = crate::synth::from_norm(crate::synth::p::CUTOFF, crate::synth::to_norm(crate::synth::p::CUTOFF, before.filter.cutoff_hz) - 0.4);
-            let text = slint::Model::row_data(&a.global::<Studio>().get_synth_params(), crate::synth::p::CUTOFF).map(|p| p.text.to_string()).unwrap_or_default();
-            let mut rest = p.clone();
-            rest.filter.cutoff_hz = before.filter.cutoff_hz;
-            (p.filter.cutoff_hz < before.filter.cutoff_hz && (p.filter.cutoff_hz - want).abs() < want * 0.03 && rest == before && text.ends_with("Hz"))
+            one_step(&r4, c, P)?;
+            let before = r4.borrow().before.clone();
+            let v = values(c)?;
+            let (i, p) = (sx("cutoff"), &SYNTH_V2.params[sx("cutoff")]);
+            let want = p.from_normalized(p.to_normalized(before[i]) - 0.4);
+            let text = param_text(a, i);
+            (v[i] < before[i] && (v[i] - want).abs() < want * 0.03 && others_equal(&v, &before, &[i]) && text.ends_with("Hz"))
                 .then_some(())
-                .ok_or(format!("cutoff {} -> {} (want ≈{want}), readout {text:?}", before.filter.cutoff_hz, p.filter.cutoff_hz))
+                .ok_or(format!("cutoff {} -> {} (want ≈{want}), readout {text:?}", before[i], v[i]))
         })),
         Check("audio: rendered output with the lowered cutoff (measured for the next check)", Box::new(move |c, _| {
             if let Some(b) = rendered_brightness(c)? {
@@ -453,10 +476,11 @@ fn synth_steps() -> Vec<Step> {
             let (x, y) = synth_xy(152.5, 212.0);
             double_click(a, x, y);
         })),
-        Check("synth: double-click reset cutoff to the default (2093 Hz) in one undo step", Box::new(move |c, _| {
-            one_step(&r5, c)?;
-            let p = inst_synth(c).ok_or("no instrument")?;
-            (p.filter.cutoff_hz == saine_core::SynthParams::default().filter.cutoff_hz).then_some(()).ok_or(format!("cutoff {}", p.filter.cutoff_hz))
+        Check("synth: double-click reset cutoff to its default in one undo step", Box::new(move |c, _| {
+            one_step(&r5, c, P)?;
+            let v = values(c)?;
+            let i = sx("cutoff");
+            (v[i] == SYNTH_V2.params[i].default).then_some(()).ok_or(format!("cutoff {}", v[i]))
         })),
         Check("audio: panel cutoff reaches the engine (brighter after reset than with the lowered cutoff)", Box::new(move |c, _| {
             let Some(reset) = rendered_brightness(c)? else { return Ok(()) };
@@ -466,88 +490,135 @@ fn synth_steps() -> Vec<Step> {
         Do("Oscillators page, open the Osc 2 wave dropdown", Box::new(|a| {
             let (x, y) = synth_category(0);
             click(a, x, y);
-            let (x, y) = synth_xy(117.5 + 318.0 + 45.0, 42.0);
+            let (x, y) = synth_xy(433.0 + 45.0, 42.0);
             click(a, x, y);
         })),
-        Check("synth: wave list open with Saw/Square/Triangle/Sine; record the Osc 2 display", Box::new(move |c, a| {
+        Check("synth: wave list open with the six waves; record the Osc 2 picture", Box::new(move |c, a| {
             let s = a.global::<Studio>();
             let items: Vec<String> = (0..slint::Model::row_count(&s.get_synth_menu_items())).filter_map(|i| slint::Model::row_data(&s.get_synth_menu_items(), i)).map(|m| m.label.to_string()).collect();
             r6.borrow_mut().path = slint::Model::row_data(&s.get_synth_displays(), 1).map(|d| d.line.to_string()).unwrap_or_default();
             r6.borrow_mut().hist = c.doc.history_labels().len();
-            (s.get_synth_page() == 0 && s.get_synth_menu_open() && items == ["Saw", "Square", "Triangle", "Sine"]).then_some(()).ok_or(format!("page {} open {} {items:?}", s.get_synth_page(), s.get_synth_menu_open()))
+            (s.get_synth_page() == 0 && s.get_synth_menu_open() && items == ["Sine", "Triangle", "Saw", "Square", "Sync", "FM"]).then_some(()).ok_or(format!("page {} open {} {items:?}", s.get_synth_page(), s.get_synth_menu_open()))
         })),
         Do("pick Square", Box::new(|a| {
-            let (x, y) = synth_menu_row(a, 1);
+            let (x, y) = synth_menu_row(a, 3);
             click(a, x, y);
         })),
-        Check("synth: Osc 2 wave = Square (one undo step), dropdown text and display path updated", Box::new(move |c, a| {
-            one_step(&r7, c)?;
+        Check("synth: Osc 2 wave = Square (one undo step), pill text and picture updated", Box::new(move |c, a| {
+            one_step(&r7, c, P)?;
             let s = a.global::<Studio>();
-            let p = inst_synth(c).ok_or("no instrument")?;
+            let v = values(c)?;
+            let i = sx("osc2_wave");
             let line = slint::Model::row_data(&s.get_synth_displays(), 1).map(|d| d.line.to_string()).unwrap_or_default();
-            let text = slint::Model::row_data(&s.get_synth_choices(), crate::synth::ch::OSC2_WAVE).unwrap_or_default();
+            let pills = s.get_synth_pills();
+            let text = (0..slint::Model::row_count(&pills)).filter_map(|k| slint::Model::row_data(&pills, k)).find(|p| p.action == 0 && p.arg == i as i32).map(|p| p.value.to_string()).unwrap_or_default();
             let changed = line != r7.borrow().path;
             r7.borrow_mut().path = line;
-            (p.osc[1].wave == Waveform::Square && text == "Square" && changed && !s.get_synth_menu_open()).then_some(()).ok_or(format!("wave {:?} text {text} path changed {changed}", p.osc[1].wave))
+            (v[i] == 3.0 && text == "Square" && changed && !s.get_synth_menu_open()).then_some(()).ok_or(format!("wave {} text {text} path changed {changed}", v[i]))
         })),
         Do("Osc 2 wave dropdown -> Saw", Box::new(|a| {
-            let (x, y) = synth_xy(117.5 + 318.0 + 45.0, 42.0);
+            let (x, y) = synth_xy(433.0 + 45.0, 42.0);
             click(a, x, y);
-            let (x, y) = synth_menu_row(a, 0);
+            let (x, y) = synth_menu_row(a, 2);
             click(a, x, y);
         })),
-        Check("synth: Osc 2 wave = Saw; Saw and Square display paths differ", Box::new(move |c, a| {
-            one_step(&r8, c)?;
-            let p = inst_synth(c).ok_or("no instrument")?;
+        Check("synth: Osc 2 wave = Saw; Saw and Square pictures differ", Box::new(move |c, a| {
+            one_step(&r8, c, P)?;
+            let v = values(c)?;
             let line = slint::Model::row_data(&a.global::<Studio>().get_synth_displays(), 1).map(|d| d.line.to_string()).unwrap_or_default();
-            (p.osc[1].wave == Waveform::Saw && line != r8.borrow().path && !line.is_empty()).then_some(()).ok_or(format!("wave {:?}", p.osc[1].wave))
+            (v[sx("osc2_wave")] == 2.0 && line != r8.borrow().path && !line.is_empty()).then_some(()).ok_or(format!("wave {}", v[sx("osc2_wave")]))
         })),
-        Do("drag the Osc 1 Level fader up 20 pt", Box::new(|a| {
-            let (x, y) = synth_xy(117.5 + 254.75 + 20.0, 61.5 + 45.0);
-            drag(a, x, y, x, y - 20.0);
+        Do("drag the Osc 1 Level fader up 10 pt", Box::new(|a| {
+            let (x, y) = synth_xy(117.5 + 273.3, 61.5 + 45.0);
+            drag(a, x, y, x, y - 10.0);
         })),
-        Check("synth: Osc 1 level +20/91 in one undo step, readout in %", Box::new(move |c, a| {
-            let before = factory_presets()[1].osc[0].level; // the preset loaded by ›
-            one_step(&r9, c)?;
-            let p = inst_synth(c).ok_or("no instrument")?;
-            let text = slint::Model::row_data(&a.global::<Studio>().get_synth_params(), crate::synth::p::OSC1_LEVEL).map(|p| p.text.to_string()).unwrap_or_default();
-            (approx(p.osc[0].level, before + 20.0 / 91.0, 0.01) && text == format!("{:.0}%", p.osc[0].level * 100.0)).then_some(()).ok_or(format!("level {} text {text}", p.osc[0].level))
+        Check("synth: Osc 1 level +10/91 in one undo step, readout in %", Box::new(move |c, a| {
+            let i = sx("osc1_level");
+            let before = factory_values(0)[i];
+            one_step(&r9, c, P)?;
+            let v = values(c)?;
+            let text = param_text(a, i);
+            (approx(v[i], before + 10.0 / 91.0, 0.01) && text == format!("{:.0}%", v[i] * 100.0)).then_some(()).ok_or(format!("level {} text {text}", v[i]))
         })),
         Do("Envelopes page", Box::new(|a| {
             let (x, y) = synth_category(3);
             click(a, x, y);
         })),
         Check("synth: Envelopes page; record params", Box::new(move |c, a| {
-            r10.borrow_mut().before = inst_synth(c);
+            r10.borrow_mut().before = values(c)?;
             r10.borrow_mut().hist = c.doc.history_labels().len();
             (a.global::<Studio>().get_synth_page() == 3).then_some(()).ok_or("page".into())
         })),
         Do("drag the Amp Attack knob up 45 pt", Box::new(|a| {
-            let (x, y) = synth_xy(152.5, 212.0);
+            let (x, y) = synth_xy(117.5 + 27.5, 212.0);
             drag(a, x, y, x, y - 45.0);
         })),
-        Check("synth: amp attack increased (one undo step), filter envelope unchanged, readout in ms/s", Box::new(move |c, a| {
-            one_step(&r11, c)?;
-            let before = r11.borrow().before.clone().ok_or("no record")?;
-            let p = inst_synth(c).ok_or("no instrument")?;
-            let text = slint::Model::row_data(&a.global::<Studio>().get_synth_params(), crate::synth::p::AMP_A).map(|p| p.text.to_string()).unwrap_or_default();
-            (p.amp_env.attack > before.amp_env.attack * 2.0 && p.filter_env == before.filter_env && (text.ends_with(" ms") || text.ends_with(" s")))
+        Check("synth: amp attack increased (one undo step), Env 2 unchanged, readout in ms/s", Box::new(move |c, a| {
+            one_step(&r11, c, P)?;
+            let before = r11.borrow().before.clone();
+            let v = values(c)?;
+            let i = sx("amp_attack");
+            let text = param_text(a, i);
+            (v[i] > before[i] * 2.0 && others_equal(&v, &before, &[i]) && (text.ends_with(" ms") || text.ends_with(" s")))
                 .then_some(())
-                .ok_or(format!("attack {} -> {} {text}", before.amp_env.attack, p.amp_env.attack))
+                .ok_or(format!("attack {} -> {} {text}", before[i], v[i]))
         })),
         Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
         Check("synth: ⌘Z restored the previous parameters exactly", Box::new(move |c, _| {
-            let before = r12.borrow().before.clone().ok_or("no record")?;
-            (inst_synth(c).as_ref() == Some(&before)).then_some(()).ok_or("params differ after undo".into())
+            let before = r12.borrow().before.clone();
+            (values(c)? == before).then_some(()).ok_or("params differ after undo".into())
         })),
-        Do("Cmd+Z x6 (level, Saw, Square, reset, cutoff drag, preset ›)", Box::new(|a| {
-            for _ in 0..6 {
+        Do("Modulation page", Box::new(|a| {
+            let (x, y) = synth_category(5);
+            click(a, x, y);
+        })),
+        Check("synth: Modulation page lists the routes", Box::new(move |c, a| {
+            let s = a.global::<Studio>();
+            let n = slint::Model::row_count(&s.get_synth_routes());
+            let want = crate::synth::routes(&values(c)?).len();
+            r13.borrow_mut().routes = n;
+            r13.borrow_mut().hist = c.doc.history_labels().len();
+            (s.get_synth_page() == 5 && n == want && s.get_synth_add_show()).then_some(()).ok_or(format!("{n} rows, {want} routes"))
+        })),
+        Do("+ Add modulation", Box::new(|a| {
+            let y = a.global::<Studio>().get_synth_add_y();
+            let (x, y) = synth_xy(112.0 + 40.0, 35.0 + y + 10.0);
+            click(a, x, y);
+        })),
+        Check("synth: the source list is open", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            let n = slint::Model::row_count(&s.get_synth_menu_items());
+            (s.get_synth_menu_open() && n == 9).then_some(()).ok_or(format!("open {} rows {n}", s.get_synth_menu_open()))
+        })),
+        Do("pick Velocity", Box::new(|a| {
+            let (x, y) = synth_menu_row(a, 4);
+            click(a, x, y);
+        })),
+        Check("synth: a Velocity route was added in one undo step", Box::new(move |c, a| {
+            one_step(&r14, c, "Device Parameters Change")?;
+            let v = values(c)?;
+            let rs = crate::synth::routes(&v);
+            let n = slint::Model::row_count(&a.global::<Studio>().get_synth_routes());
+            (rs.len() == r14.borrow().routes + 1 && n == rs.len() && rs.iter().any(|r| r.1 == 5)).then_some(()).ok_or(format!("{} routes", rs.len()))
+        })),
+        Do("Effects page", Box::new(|a| {
+            let (x, y) = synth_category(8);
+            click(a, x, y);
+        })),
+        Check("synth: Effects page shows the four slot tabs, the mix fader and the dials", Box::new(move |_, a| {
+            let s = a.global::<Studio>();
+            let tabs = (0..slint::Model::row_count(&s.get_synth_pills())).filter_map(|k| slint::Model::row_data(&s.get_synth_pills(), k)).filter(|p| p.action == 9).count();
+            let _ = &r15;
+            (s.get_synth_page() == 8 && tabs == 4 && slint::Model::row_count(&s.get_synth_faders()) == 1 && slint::Model::row_count(&s.get_synth_knobs()) >= 4).then_some(()).ok_or(format!("{tabs} tabs"))
+        })),
+        Do("Cmd+Z x7 (route, level, Saw, Square, reset, cutoff drag, preset ›)", Box::new(|a| {
+            for _ in 0..7 {
                 key(a, "z", true, false);
             }
         })),
         Check("synth: every synth edit undone -> starting parameters exactly", Box::new(move |c, _| {
-            let start = r13.borrow().start.clone().ok_or("no record")?;
-            (inst_synth(c).as_ref() == Some(&start)).then_some(()).ok_or(format!("preset {:?}", inst_synth(c).map(|p| p.preset)))
+            let start = r16.borrow().start.clone().ok_or("no record")?;
+            (inst_synth(c).as_ref() == Some(&start)).then_some(()).ok_or(format!("preset {:?}", inst_synth(c).map(|p| p.1)))
         })),
     ]
 }
@@ -1602,10 +1673,10 @@ fn device_steps() -> Vec<Step> {
             let (x, y) = devmenu_row(a, 0);
             click(a, x, y);
         })),
-        Check("devices: back to the built-in Synth (instrument plugin None), one undo step, Synth card shown [needs engine plugin scanning]", Box::new(move |c, a| {
-            one(&h10, c, "Use Built-in Synth")?;
+        Check("devices: back to the built-in Synth (a new Synth device), one undo step, Synth card shown [needs engine plugin scanning]", Box::new(move |c, a| {
+            one(&h10, c, "Load Synth")?;
             let i = track_of(c, TrackKind::Instrument).ok_or("no instrument track")?;
-            (c.project().tracks[i].instrument_plugin.is_none() && a.global::<Studio>().get_synth_visible()).then_some(()).ok_or("still a plugin instrument".into())
+            (c.project().tracks[i].instrument_plugin.as_ref().is_some_and(crate::devices::is_builtin_synth) && a.global::<Studio>().get_synth_visible()).then_some(()).ok_or("still a plugin instrument".into())
         })),
         DoC("devices: search “AUDelay”, drag it from the browser onto the Instrument track lane", Box::new(|a, ctl| {
             retype(a, BROWSER_SEARCH, "AUDelay");
@@ -2315,6 +2386,149 @@ fn builtin_device_steps() -> Vec<Step> {
     ]
 }
 
+/// The restoration devices (De-Clipper, De-Esser, De-Hummer, De-Noiser): each one is added
+/// through Add device › Built-in, checked against its definition and the engine, and its field
+/// is dragged with real pointer events (one undo step), then undone.
+fn restoration_device_steps() -> Vec<Step> {
+    use Step::*;
+    // (display name, id, readouts, field drag in px, params the drag must move)
+    type Moves = &'static [&'static str];
+    const DEVICES: [(&str, &str, usize, (f32, f32), Moves); 4] = [
+        ("De-Clipper", "declipper", 0, (40.0, 0.0), &["threshold"]),
+        ("De-Esser", "deesser", 49, (30.0, 20.0), &["frequency", "reduction"]),
+        ("De-Hummer", "dehummer", 48, (-30.0, 20.0), &["frequency", "depth"]),
+        ("De-Noiser", "denoiser", 49, (0.0, -20.0), &["threshold"]),
+    ];
+    fn device<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
+        let t = track_of(c, TrackKind::Audio)?;
+        c.project().tracks[t].devices.iter().find(|d| d.plugin.format == saine_core::PluginFormat::Builtin && d.plugin.id == id)
+    }
+    fn value(c: &Controller, id: &str, param: &str) -> Option<f32> {
+        let d = device(c, id)?;
+        let def = saine_core::builtin::def_of(d)?;
+        Some(def.value(d, def.param(param)?))
+    }
+    let mut steps = Vec::new();
+    for (name, id, readouts, (dx, dy), moves) in DEVICES {
+        let hist = Rc::new(Cell::new(0usize));
+        let (h0, h1, h2, h3) = (hist.clone(), hist.clone(), hist.clone(), hist.clone());
+        steps.push(DoC(leak(format!("restoration: clear the audio track's chain, open Add device › Built-in for {name}")), Box::new(move |a, ctl| {
+            key(a, Key::Escape, false, false);
+            let i = track_of(&ctl.borrow(), TrackKind::Audio).unwrap_or(0);
+            click_track_header(a, ctl, i);
+            {
+                let mut c = ctl.borrow_mut();
+                let ids: Vec<saine_core::DeviceId> = c.project().tracks[i].devices.iter().map(|d| d.id).collect();
+                for d in ids {
+                    c.execute(saine_core::Command::RemoveDevice { device: d });
+                }
+                h0.set(c.doc.history_labels().len());
+                c.update_ui(a);
+            }
+            let add_x = a.global::<Studio>().get_add_device_x();
+            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+        })));
+        steps.push(Do(leak(format!("restoration: pick {name}")), Box::new(move |a| {
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == name && r.2) {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })));
+        steps.push(Check(leak(format!("restoration: {name} added at its defaults (one undo step); card follows the definition (width, knobs, field)")), Box::new(move |c, a| {
+            let n = c.doc.history_labels().len();
+            let want = format!("Add {name}");
+            if n != h1.get() + 1 || c.doc.undo_label() != Some(want.as_str()) {
+                return Err(format!("history {} -> {n}, last {:?}", h1.get(), c.doc.undo_label()));
+            }
+            let def = saine_core::builtin::find(id).ok_or("not registered")?;
+            let d = device(c, id).ok_or("not in the chain")?;
+            let cd = card_named(a, name).ok_or("no card")?;
+            let knobs: usize = def.layout.clusters.iter().map(|c| c.len()).sum();
+            let ok = cd.builtin
+                && cd.canvas.visible
+                && slint::Model::row_count(&cd.knobs) == knobs
+                && approx(cd.width, def.layout.width() * crate::device_panel::Z, 0.01)
+                && def.params.iter().all(|p| def.value(d, p) == p.default);
+            ok.then_some(()).ok_or(format!("knobs {} width {} field {}", slint::Model::row_count(&cd.knobs), cd.width, cd.canvas.visible))
+        })));
+        steps.push(Check(leak(format!("engine: {name} is live with {readouts} readouts (spectrum bands where the field draws one)")), Box::new(move |c, _| {
+            let d = device(c, id).ok_or("no device")?.id;
+            let mut r = Vec::new();
+            c.engine.builtin_readouts(d.0, &mut r).map_err(|e| e.to_string())?;
+            let errors = c.engine.plugin_load_errors();
+            (r.len() == readouts && !errors.iter().any(|(e, _)| *e == d)).then_some(()).ok_or(format!("readouts {} errors {errors:?}", r.len()))
+        })));
+        steps.push(DoC(leak(format!("restoration: drag {name}'s field ({dx:+}, {dy:+}) px")), Box::new(move |a, ctl| {
+            h2.set(ctl.borrow().doc.history_labels().len());
+            let Some(cd) = card_named(a, name) else { return };
+            let f = &cd.canvas;
+            // The De-Esser grabs its band handle (the circle path "M{x - r} {y} a..."), the
+            // De-Noiser its threshold line; the others drag the plane.
+            let handle = || {
+                let p = slint::Model::iter(&f.paths).find(|p| p.commands.contains(" a"))?;
+                let mut n = p.commands.trim_start_matches('M').split_whitespace().map(|t| t.parse::<f32>().unwrap_or(0.0));
+                Some((n.next()? + 5.0 * crate::device_panel::Z, n.next()?))
+            };
+            let (wx, wy) = match id {
+                "deesser" => handle().unwrap_or((0.0, 0.0)),
+                "denoiser" => (f.w * 0.75, slint::Model::row_data(&f.grips, 0).map_or(0.0, |p| p.y)),
+                _ => (f.w / 2.0, (f.h - f.well_y) / 2.0),
+            };
+            let (x, y) = card_xy(&cd, f.x + wx, f.y + f.well_y + wy);
+            drag(a, x, y, x + dx, y + dy);
+        })));
+        steps.push(Check(leak(format!("restoration: the {name} field gesture moved {moves:?} in ONE undo step")), Box::new(move |c, _| {
+            let n = c.doc.history_labels().len();
+            if n != h3.get() + 1 || c.doc.undo_label() != Some("Device Parameter Change") {
+                return Err(format!("history {} -> {n}, last {:?}", h3.get(), c.doc.undo_label()));
+            }
+            let def = saine_core::builtin::find(id).ok_or("not registered")?;
+            let still: Vec<&str> = moves.iter().copied().filter(|p| value(c, id, p) == def.param(p).map(|p| p.default)).collect();
+            still.is_empty().then_some(()).ok_or(format!("unchanged: {still:?}"))
+        })));
+        steps.push(Do(leak(format!("restoration: ⌘Z after the {name} gesture")), Box::new(|a| key(a, "z", true, false))));
+        steps.push(Check(leak(format!("restoration: undo restores every {name} parameter")), Box::new(move |c, _| {
+            let def = saine_core::builtin::find(id).ok_or("not registered")?;
+            let d = device(c, id).ok_or("no device")?;
+            let off: Vec<&str> = def.params.iter().filter(|p| def.value(d, p) != p.default).map(|p| p.id).collect();
+            let vals: Vec<(&str, f32)> = def.params.iter().map(|p| (p.id, def.value(d, p))).collect();
+            off.is_empty().then_some(()).ok_or(format!("not at default: {off:?} values {vals:?} history {:?}", c.doc.history_labels().iter().rev().take(4).collect::<Vec<_>>()))
+        })));
+    }
+    // The De-Esser's Listen latch in the dial row (the De-Esser is still in the chain from above).
+    let hl = Rc::new(Cell::new(0usize));
+    let hl2 = hl.clone();
+    steps.push(DoC("restoration: click the De-Esser's Listen latch", Box::new(move |a, ctl| {
+        {
+            let mut c = ctl.borrow_mut();
+            let Some(t) = track_of(&c, TrackKind::Audio) else { return };
+            let ids: Vec<saine_core::DeviceId> = c.project().tracks[t].devices.iter().map(|d| d.id).collect();
+            for d in ids {
+                c.execute(saine_core::Command::RemoveDevice { device: d });
+            }
+            let tid = c.project().tracks[t].id;
+            let def = saine_core::builtin::find("deesser").expect("registered");
+            c.add_item_to_track(&crate::devices::Item::Builtin(def), tid, None);
+            hl.set(c.doc.history_labels().len());
+            c.update_ui(a);
+        }
+        let Some(cd) = card_named(a, "De-Esser") else { return };
+        let z = crate::device_panel::Z;
+        if let Some(k) = (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).find(|k| k.face == 2) {
+            let (x, y) = card_xy(&cd, k.x + 31.0 * z, (229.0 + 24.0) * z);
+            click(a, x, y);
+        }
+    })));
+    steps.push(Check("restoration: the Listen latch turns Listen on (one undo step) and shows On", Box::new(move |c, a| {
+        let n = c.doc.history_labels().len();
+        let shown = card_named(a, "De-Esser").and_then(|cd| (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).find(|k| k.face == 2)).map(|k| k.value.to_string());
+        (n == hl2.get() + 1 && value(c, "deesser", "listen") == Some(1.0) && shown.as_deref() == Some("On"))
+            .then_some(())
+            .ok_or(format!("history {} -> {n}, listen {:?}, latch {shown:?}", hl2.get(), value(c, "deesser", "listen")))
+    })));
+    steps
+}
+
 /// The devices section drives Apple's Audio Units (AULowpass, AUDelay,
 /// DLSMusicDevice). Elsewhere its actions are not performed and its checks
 /// are reported as skipped (counted like the other guarded skips).
@@ -2486,6 +2700,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(builtin_device_steps());
     all.extend(builtin_each_steps());
     all.extend(modulation_device_steps());
+    all.extend(restoration_device_steps());
     all.extend(automation_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
