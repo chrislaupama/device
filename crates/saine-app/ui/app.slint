@@ -26,6 +26,7 @@ import { MixerPanel } from "mixer.slint";
 import { AssistantPanel, HighlightOverlay } from "assistant.slint";
 import { SynthDevice, SynthMenuList } from "synth.slint";
 import { SettingsPanel, ChoiceList } from "settings.slint";
+import { ExportModal, UnsavedPrompt } from "dialogs.slint";
 import { PluginCard, AddDeviceCard, DevMenuList } from "devices.slint";
 import { BuiltinCard } from "device_panel.slint";
 import { TrackHeaderRow, MasterHeaderRow, AutoPill } from "track_header.slint";
@@ -780,6 +781,18 @@ export component AppWindow inherits Window {
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { clicked => { Studio.close-settings(); fs.focus(); } }
             SettingsPanel { x: max(0px, min(255px, root.width - 960px)); y: 7px; width: min(960px, root.width); height: root.height - 7px + 12px; }
+        }
+        // Export dialog (centred) and the unsaved-changes prompt (over the timeline, as in the
+        // reference); both are modal: clicks outside them are swallowed.
+        if Studio.export-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { }
+            ExportModal { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
+        }
+        if Studio.unsaved-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { }
+            UnsavedPrompt { x: max(0px, min(438px, parent.width - self.width)); y: max(0px, min(295px, parent.height - self.height)); }
         }
         // Status line (engine/device/import messages); empty most of the time.
         if Studio.status-text != "": Rectangle {

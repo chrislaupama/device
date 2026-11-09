@@ -1,11 +1,17 @@
-//! Test-signal WAV writer for `--demo` (16-bit PCM). Generated at 44.1 kHz on
+//! WAV writer (16/24-bit PCM: export, test signals) and the `--demo` test signals. Generated at 44.1 kHz on
 //! purpose so the demo also exercises the engine's resampler (engine runs at 48 kHz).
 
 use std::io::Write;
 use std::path::Path;
 
 pub fn write_wav(path: &Path, rate: u32, channels: u16, samples: &[f32]) -> std::io::Result<()> {
-    let data_len = (samples.len() * 2) as u32;
+    write_wav_pcm(path, rate, channels, 16, samples)
+}
+
+/// Interleaved `samples` as 16- or 24-bit integer PCM.
+pub fn write_wav_pcm(path: &Path, rate: u32, channels: u16, bits: u16, samples: &[f32]) -> std::io::Result<()> {
+    let bytes = (bits / 8) as u32;
+    let data_len = samples.len() as u32 * bytes;
     let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
     f.write_all(b"RIFF")?;
     f.write_all(&(36 + data_len).to_le_bytes())?;
@@ -14,13 +20,15 @@ pub fn write_wav(path: &Path, rate: u32, channels: u16, samples: &[f32]) -> std:
     f.write_all(&1u16.to_le_bytes())?; // PCM
     f.write_all(&channels.to_le_bytes())?;
     f.write_all(&rate.to_le_bytes())?;
-    f.write_all(&(rate * channels as u32 * 2).to_le_bytes())?;
-    f.write_all(&(channels * 2).to_le_bytes())?;
-    f.write_all(&16u16.to_le_bytes())?;
+    f.write_all(&(rate * channels as u32 * bytes).to_le_bytes())?;
+    f.write_all(&(channels * bytes as u16).to_le_bytes())?;
+    f.write_all(&bits.to_le_bytes())?;
     f.write_all(b"data")?;
     f.write_all(&data_len.to_le_bytes())?;
+    let full = ((1i32 << (bits - 1)) - 1) as f32;
     for s in samples {
-        f.write_all(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())?;
+        let v = (s.clamp(-1.0, 1.0) * full) as i32;
+        f.write_all(&v.to_le_bytes()[..bytes as usize])?;
     }
     f.flush()
 }

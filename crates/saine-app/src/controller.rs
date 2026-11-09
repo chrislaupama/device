@@ -273,6 +273,9 @@ pub struct Controller {
     drag: Option<Drag>,
     status: Option<(String, Instant, Duration)>,
     pub project_dir: Option<PathBuf>,
+    /// Export dialog and the unsaved-changes prompt (src/dialogs.rs).
+    pub export: crate::dialogs::ExportUi,
+    pub unsaved_open: bool,
     pub(crate) jobs_tx: Sender<JobResult>,
     jobs_rx: Receiver<JobResult>,
     pub pending_jobs: usize,
@@ -366,6 +369,8 @@ impl Controller {
             drag: None,
             status: None,
             project_dir: None,
+            export: Default::default(),
+            unsaved_open: false,
             jobs_tx,
             jobs_rx,
             pending_jobs: 0,
@@ -1488,6 +1493,7 @@ impl Controller {
         self.push_synth(&s);
         self.push_recording(&s);
         self.push_settings(&s);
+        self.push_dialogs(&s);
         self.push_devices(&s);
         self.push_automation(&s);
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };

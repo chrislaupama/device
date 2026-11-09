@@ -31,6 +31,7 @@ mod device_editors;
 mod panel_graph;
 mod device_views;
 mod devices;
+mod dialogs;
 mod panel_multiband;
 mod gpu;
 mod highlight;
@@ -85,6 +86,8 @@ struct Args {
     input_menu_state: bool,
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
+    /// 1 export dialog, 2 unsaved-changes prompt.
+    dialog_state: u8,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
     /// the live recording clip. Not a reference capture (the reference recording UI was not captured).
     recording_review: bool,
@@ -181,6 +184,14 @@ fn parse_args() -> Result<Args, String> {
                 "reference-input-menu" => {
                     a.reference_default = true;
                     a.input_menu_state = true;
+                }
+                "reference-export" => {
+                    a.reference_default = true;
+                    a.dialog_state = 1;
+                }
+                "reference-unsaved" => {
+                    a.reference_default = true;
+                    a.dialog_state = 2;
                 }
                 "reference-settings-audio" => {
                     a.reference_default = true;
@@ -503,6 +514,8 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
                 ctl.borrow_mut().open(&dir);
             }
         }
+        "file.new" => ctl.borrow_mut().new_project_request(),
+        "file.export_audio" => ctl.borrow_mut().export_open(),
         _ => return false,
     }
     true
@@ -958,6 +971,43 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_input_menu_dismiss, |c| c.input_menu_close());
     on!(on_toggle_settings, |c| c.toggle_settings());
     on!(on_close_settings, |c| c.close_settings());
+    on!(on_export_close, |c| c.dialogs_close());
+    on!(on_export_run, |c| c.export_run());
+    on!(on_export_bits, |c, b: bool| c.export_set_bits(b));
+    on!(on_export_name_edited, |c, t: slint::SharedString| c.export_set_name(t.as_str()));
+    on!(on_unsaved_cancel, |c| c.dialogs_close());
+    on!(on_unsaved_dont_save, |c| c.new_project());
+    // Folder picker and Save run their native dialogs with the controller NOT borrowed.
+    {
+        let ctl = ctl.clone();
+        let aw = app.as_weak();
+        studio.on_export_choose_dir(move || {
+            let start = ctl.borrow().export.dir.clone();
+            if let Some(dir) = rfd::FileDialog::new().set_title("Export to").set_directory(&start).pick_folder() {
+                ctl.borrow_mut().export_set_dir(dir);
+            }
+            if let Some(a) = aw.upgrade() {
+                ctl.borrow_mut().update_ui(&a);
+            }
+        });
+    }
+    {
+        let ctl = ctl.clone();
+        let aw = app.as_weak();
+        studio.on_unsaved_save(move || {
+            let existing = ctl.borrow().project_dir.clone();
+            if let Some(dir) = existing.or_else(|| pick_project_dir(true)) {
+                let mut c = ctl.borrow_mut();
+                c.save_to(&dir);
+                if !c.doc.is_dirty() {
+                    c.new_project();
+                }
+            }
+            if let Some(a) = aw.upgrade() {
+                ctl.borrow_mut().update_ui(&a);
+            }
+        });
+    }
     on!(on_settings_page_select, |c, i: i32| c.settings_page(i.max(0) as usize));
     on!(on_settings_dropdown, |c, f: i32| c.settings_dropdown(f));
     on!(on_settings_menu_pick, |c, i: i32| c.settings_menu_pick(i.max(0) as usize));
@@ -1246,6 +1296,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if ctl.borrow().settings.open && action != "view.escape" && action != "app.settings" {
                 return true;
             }
+            // The export dialog and the unsaved-changes prompt are modal: Escape closes them (Cancel).
+            {
+                let mut c = ctl.borrow_mut();
+                if c.export.open || c.unsaved_open {
+                    if action == "view.escape" {
+                        c.dialogs_close();
+                    }
+                    drop(c);
+                    if let Some(a) = aw.upgrade()
+                        && let Ok(mut c) = ctl.try_borrow_mut()
+                    {
+                        c.update_ui(&a);
+                    }
+                    return true;
+                }
+            }
             let handled = run_action(&ctl, &action);
             if let Some(a) = aw.upgrade() {
                 if let Ok(mut c) = ctl.try_borrow_mut() {
@@ -1287,6 +1353,30 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if !args.import.is_empty() {
         ctl.borrow_mut().import_files(args.import.clone(), ImportTarget::Selected, None);
+    }
+    // Reference z100-modal-export-audio-mixdown / -save-changes-on-new-project: an 8 s sine clip
+    // at bar 3 of the Audio track (the export covers bars 1–6), then the dialog.
+    let dialog_timer = slint::Timer::default();
+    if args.dialog_state > 0 {
+        let dir = std::env::temp_dir().join(format!("saine-ref-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("sine-a220-steady.wav");
+        let samples: Vec<f32> = (0..8 * 44_100).map(|i| (std::f32::consts::TAU * 220.0 * i as f32 / 44_100.0).sin() * 0.5).collect();
+        wavgen::write_wav(&path, 44_100, 1, &samples)?;
+        ctl.borrow_mut().import_files(vec![path], ImportTarget::Selected, Some(8 * saine_core::PPQ));
+        let ctl = ctl.clone();
+        let state = args.dialog_state;
+        dialog_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
+            let Ok(mut c) = ctl.try_borrow_mut() else { return };
+            let imported = c.project().tracks.iter().any(|t| !t.clips.is_empty());
+            if imported && !c.export.open && !c.unsaved_open {
+                if state == 1 {
+                    c.export_open();
+                } else {
+                    c.new_project_request();
+                }
+            }
+        });
     }
 
     // ---- job polling (imports finish on worker threads) ----

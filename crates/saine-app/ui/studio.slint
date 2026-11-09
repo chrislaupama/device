@@ -531,6 +531,24 @@ export global Studio {
     callback open-input-menu();
     callback input-menu-pick(int);              // SetTrackInput
     callback input-menu-dismiss();
+    // ---- export dialog and unsaved-changes prompt (src/dialogs.rs, ui/dialogs.slint) ----
+    in property <bool> export-open;
+    in property <bool> export-bits24: true;
+    in property <bool> export-rate48: true;      // the engine rate (the render rate)
+    in property <string> export-recipe-text: "WAV 24-bit";
+    in property <string> export-bars-text: "Bars 1–1";
+    in property <string> export-name: "Untitled.wav";
+    in property <string> export-dir;
+    in property <string> export-estimate;
+    callback export-close();
+    callback export-run();
+    callback export-choose-dir();
+    callback export-bits(bool);                 // true = 24-bit
+    callback export-name-edited(string);
+    in property <bool> unsaved-open;
+    callback unsaved-cancel();
+    callback unsaved-dont-save();
+    callback unsaved-save();
     // ---- settings window (src/settings.rs, ui/settings.slint) ----
     in property <bool> settings-open;
     in property <int> settings-page: 1;
