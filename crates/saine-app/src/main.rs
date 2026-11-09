@@ -12,7 +12,7 @@
 //!              [--load-sample <file.wav>  (into the selected track's sampler, as a file drop)]
 //!              [--sampler-tab <0..4>  (with a sampler state: Sample, Pitch, Filter, Amp or Mod tab)]
 //!              [--hold-note <0..127>  (with a synth state: hold the note and render 0.75 s offline first)]
-//!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--self-test]
+//!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
 //!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
 //! ```
@@ -128,6 +128,9 @@ struct Args {
     exit_after_frames: Option<u64>,
     zoom: Option<u32>,
     frame_stats: bool,
+    /// --render-bench N: offscreen, render the state N times and print the mean / median /
+    /// p95 milliseconds per full window render (Slint + wgpu surfaces + readback), then exit.
+    render_bench: u32,
     self_test: bool,
 }
 
@@ -269,6 +272,14 @@ fn parse_args() -> Result<Args, String> {
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
+            "--render-bench" => {
+                a.render_bench = value(&mut i)?.parse().map_err(|e| format!("--render-bench: {e}"))?;
+                if a.render_bench == 0 {
+                    return Err("--render-bench: the count must be at least 1".into());
+                }
+                a.offscreen = true;
+                a.audio = false;
+            }
             "--self-test" | "--self-test-audio" => {
                 a.self_test = true;
                 a.demo = true;
@@ -723,14 +734,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.auto_toggle_shown();
     }
     if args.live_state {
-        // The capture's tracks drew palette entries 4 and 5 (pink, orange); the reference picks
-        // the first track's colour at random.
         let mut c = ctl.borrow_mut();
-        let mut p = c.project().clone();
-        for (t, k) in p.tracks.iter_mut().zip([4u8, 5]) {
-            t.color = saine_core::ColorIndex(k);
-        }
-        c.replace_project(p);
         let first = c.project().tracks[0].id;
         c.select_track(first);
         c.auto_toggle_shown();
@@ -1537,6 +1541,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = a.window().take_snapshot();
             }
             save_snapshot(&a, &path);
+            let _ = slint::quit_event_loop();
+        });
+    }
+    if args.render_bench > 0 {
+        let aw = app.as_weak();
+        let zm = zoom.clone();
+        let n = args.render_bench as usize;
+        slint::Timer::single_shot(Duration::from_secs(4), move || {
+            let Some(a) = aw.upgrade() else { return };
+            zm.borrow_mut().sync(a.window());
+            let mut ms = Vec::with_capacity(n);
+            for i in 0..n + 5 {
+                let t = Instant::now();
+                if let Err(e) = a.window().take_snapshot() {
+                    eprintln!("--render-bench: snapshot failed: {e}");
+                    std::process::exit(1);
+                }
+                if i >= 5 {
+                    ms.push(t.elapsed().as_secs_f64() * 1e3);
+                }
+            }
+            ms.sort_by(f64::total_cmp);
+            let mean = ms.iter().sum::<f64>() / n as f64;
+            let median = if n % 2 == 0 { (ms[n / 2 - 1] + ms[n / 2]) / 2.0 } else { ms[n / 2] };
+            println!("{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{median:.3},\"p95_ms\":{:.3}}}", ms[(n * 95 / 100).min(n - 1)]);
             let _ = slint::quit_event_loop();
         });
     }

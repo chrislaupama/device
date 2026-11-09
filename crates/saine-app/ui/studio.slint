@@ -259,6 +259,7 @@ export struct MixerStrip {
     pan: float,
     pan-text: string,
     fader: float,   // 0 (top, +6 dB) .. 1 (bottom, -inf)
+    gain-text: string, // gain readout: "0.0", "+1.5", "−12.0", "−∞" at or below -60 dB
 }
 export struct StripMeter { l: float, r: float, peak: string }   // 0 (top) .. 1 (silent)
 
@@ -391,10 +392,11 @@ export global Studio {
     // ---- mixer ----
     in property <[MixerStrip]> strips;
     in property <[StripMeter]> strip-meters;
-    in property <float> master-fader: 0.1126;
+    in property <float> master-fader: 0.2;
     in property <float> master-meter-l: 1;
     in property <float> master-meter-r: 1;
     in property <string> master-peak-text: "−∞";
+    in property <string> master-gain-text: "0.0";
     callback mixer-fader(int, float);      // track id, fader fraction
     callback master-fader-moved(float);
     callback reset-peaks();
