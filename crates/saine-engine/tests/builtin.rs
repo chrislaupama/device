@@ -174,6 +174,26 @@ fn compressor_in_a_chain_compresses_and_bypasses() {
 }
 
 #[test]
+fn chain_head_macro_sets_only_members_of_its_chain() {
+    let mut rig = Rig::new();
+    let compressed = rig.render();
+    let mut head = builtin::find(saine_core::modulation::RACK_ID).unwrap().instantiate();
+    head.id = DeviceId(DEV + 1);
+    // Macro 1 pins the member's threshold at the top of its range (0 dB).
+    head.links.push(saine_core::ModLink { slot: 0, target: DeviceId(DEV), param: saine_core::ModParam::Builtin("threshold".into()), min: 1.0, max: 1.0 });
+    let t = &mut rig.snap.tracks[0];
+    t.devices[0].chain = Some(head.id);
+    t.devices.insert(0, head);
+    let open = rig.render();
+    assert!(open > compressed * 1.5, "macro-opened {open} compressed {compressed}");
+    assert!(rig.readouts()[2] > -1.0, "gain reduction {:?}", rig.readouts());
+    // A link to a device outside the chain is inert.
+    rig.snap.tracks[0].devices[1].chain = None;
+    let outside = rig.render();
+    assert!((outside - compressed).abs() < compressed * 0.05, "outside {outside} compressed {compressed}");
+}
+
+#[test]
 fn live_param_update_and_unknown_device() {
     let rig = Rig::new();
     rig.render();
@@ -305,14 +325,15 @@ fn drum_rack_plays_its_pads_from_notes_and_auditions() {
 #[test]
 fn state_v2_blob_layout() {
     let sl = [Slice::at(0.0), Slice { start: 0.5, gain: -3.0, pan: 0.25, pitch: 2.0 }];
-    let b = builtin_state_v2(&[1.0], 0, &[(9, 3, &sl[..])]);
-    assert_eq!(b.len(), 24 + 4 + 16 + 32);
+    let b = builtin_state_v2(&[1.0], 0, &[(9, 3, &sl[..])], &[]);
+    assert_eq!(b.len(), 32 + 4 + 16 + 32);
     assert_eq!(&b[0..4], b"SBI2");
     assert_eq!(u32::from_le_bytes(b[16..20].try_into().unwrap()), 1);
     assert_eq!(u32::from_le_bytes(b[20..24].try_into().unwrap()), 2);
-    assert_eq!(u64::from_le_bytes(b[28..36].try_into().unwrap()), 9);
-    assert_eq!(u32::from_le_bytes(b[36..40].try_into().unwrap()), 3);
-    assert_eq!(f32::from_le_bytes(b[60..64].try_into().unwrap()), 0.5);
-    assert_eq!(f32::from_le_bytes(b[64..68].try_into().unwrap()), -3.0);
+    assert_eq!(u32::from_le_bytes(b[24..28].try_into().unwrap()), 0);
+    assert_eq!(u64::from_le_bytes(b[36..44].try_into().unwrap()), 9);
+    assert_eq!(u32::from_le_bytes(b[44..48].try_into().unwrap()), 3);
+    assert_eq!(f32::from_le_bytes(b[68..72].try_into().unwrap()), 0.5);
+    assert_eq!(f32::from_le_bytes(b[72..76].try_into().unwrap()), -3.0);
 }
 

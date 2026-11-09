@@ -129,6 +129,16 @@ impl Document {
         }
     }
 
+    /// Record the modulation bases of plugin devices before saving (no undo
+    /// step, like [Self::sync_device_states]); devices not listed get none.
+    pub fn sync_mod_bases(&mut self, bases: &[(crate::device::DeviceId, Vec<(u32, f32)>)]) {
+        for t in &mut self.project.tracks {
+            for d in t.devices.iter_mut().chain(t.instrument_plugin.iter_mut()) {
+                d.mod_bases = bases.iter().find(|(id, _)| *id == d.id).map(|(_, b)| b.clone()).unwrap_or_default();
+            }
+        }
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }

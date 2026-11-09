@@ -1,7 +1,8 @@
 // Built-in device benchmark: per-block DSP cost of every registered device
 // (every compressor character and dynamics mode, the Synth with held notes,
-// the restoration devices), the parameter update paths, and a 32-track
-// session with two compressors per track.
+// the restoration devices), the modulation sources (LFO, chain head), the
+// parameter update paths, and a 32-track session with two compressors per
+// track, with and without an LFO moving both thresholds.
 //
 //   saine_device_bench [blocks]      (Release build; numbers in us per 256-frame block)
 #include "devices/builtin.hpp"
@@ -38,6 +39,22 @@ const std::vector<float> kMastering = {0.f, -1.f, 150.f, 1.f, 0.f, 2.f, 10.f, 75
 std::vector<float> with(std::vector<float> v, std::initializer_list<std::pair<std::size_t, float>> set) {
     for (auto [i, x] : set) v[i] = x;
     return v;
+}
+
+// LFO: Sine, Sync off, 2 Hz, 1/4, depth 100 %, phase 0.
+const std::vector<float> kLfo = {0.f, 0.f, 2.f, 8.f, 100.f, 0.f};
+
+// v2 state: values, then routes moving parameter 0 (Threshold, -60..0 dB) of each target by +-25 %.
+std::vector<uint8_t> blob_v2(const std::vector<float>& v, const std::vector<uint64_t>& targets) {
+    se_builtin_state_v2 h{SE_BUILTIN_STATE_MAGIC2, static_cast<uint32_t>(v.size()), 0, 0, 0, static_cast<uint32_t>(targets.size()), 0};
+    std::vector<uint8_t> out(sizeof h + 4 * v.size() + sizeof(se_mod_route) * targets.size());
+    std::memcpy(out.data(), &h, sizeof h);
+    std::memcpy(out.data() + sizeof h, v.data(), 4 * v.size());
+    for (std::size_t i = 0; i < targets.size(); ++i) {
+        se_mod_route r{targets[i], 0, SE_MOD_BUILTIN, 0, 0, 0, -0.25f, 0.25f, -60.f, 0.f, 1.f, 0.f};
+        std::memcpy(out.data() + sizeof h + 4 * v.size() + i * sizeof r, &r, sizeof r);
+    }
+    return out;
 }
 
 std::vector<uint8_t> blob(const std::vector<float>& v, uint64_t sc = 0) {
@@ -130,6 +147,36 @@ Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, u
     return summarize(t);
 }
 
+// Modulation source cost: run_modulation per block (the grid of source outputs).
+Stats bench_source(const char* id, std::vector<float> values, uint32_t blocks) {
+    saine::PluginSpec spec;
+    spec.device_id = 1;
+    spec.format = saine::PluginFormat::Builtin;
+    spec.plugin_id = id;
+    spec.state = blob(values);
+    std::string err;
+    auto inst = saine::create_builtin_instance(spec, kRate, kBlock, err);
+    if (!inst) {
+        std::fprintf(stderr, "%s: %s\n", id, err.c_str());
+        std::exit(1);
+    }
+    auto* b = static_cast<saine::BuiltinInstance*>(inst.get());
+    saine::RtTransport tr;
+    tr.sample_rate = kRate;
+    tr.playing = true;
+    tr.tempo_bpm = 120.0;
+    std::vector<double> t;
+    t.reserve(blocks);
+    for (uint32_t k = 0; k < blocks + 200; ++k) {
+        tr.position = static_cast<int64_t>(k) * kBlock;
+        const auto t0 = Clock::now();
+        b->run_modulation(kBlock, tr, nullptr, 0);
+        const auto t1 = Clock::now();
+        if (k >= 200) t.push_back(us(t1 - t0));
+    }
+    return summarize(t);
+}
+
 // Instruments with one stereo sample (4 s) in every slot. Every block gets
 // note-ons from notes (cycled) so about voices voices keep sounding.
 Stats bench_instrument(const char* id, std::vector<float> values, uint32_t blocks, const std::vector<uint8_t>& notes,
@@ -161,7 +208,7 @@ Stats bench_instrument(const char* id, std::vector<float> values, uint32_t block
         asset->planar[1][i] = 0.3f * std::sin(0.031f * static_cast<float>(i)) + 0.1f * n;
     }
     // v2 state: every slot holds the asset.
-    se_builtin_state_v2 h{SE_BUILTIN_STATE_MAGIC2, static_cast<uint32_t>(values.size()), 0, d->sample_slots, 0};
+    se_builtin_state_v2 h{SE_BUILTIN_STATE_MAGIC2, static_cast<uint32_t>(values.size()), 0, d->sample_slots, 0, 0, 0};
     std::vector<uint8_t> st(sizeof h + 4 * values.size() + sizeof(se_builtin_sample) * d->sample_slots);
     std::memcpy(st.data(), &h, sizeof h);
     std::memcpy(st.data() + sizeof h, values.data(), 4 * values.size());
@@ -233,6 +280,14 @@ int main(int argc, char** argv) {
         row(name, bench_kernel("mastering-limiter", with(kMastering, {{0, -8.f}, {10, static_cast<float>(os)}}), blocks, 0));
     }
     row("mastering-limiter (4x, M/S, dither)", bench_kernel("mastering-limiter", with(kMastering, {{0, -8.f}, {9, 1.f}, {12, 3.f}}), blocks, 0));
+    row("lfo (modulation grid, Sine)", bench_source("lfo", kLfo, blocks));
+    {
+        std::vector<float> v = kLfo;
+        v[0] = 6.f;
+        v[1] = 1.f;
+        row("lfo (modulation grid, Smooth Random)", bench_source("lfo", v, blocks));
+    }
+    row("device-rack (8 macros)", bench_source("device-rack", std::vector<float>(8, 50.f), blocks));
     // Restoration: defaults, plus the heaviest setting of each.
     row("declipper (defaults, 4x)", bench_kernel("declipper", {-1.f, -0.3f, 1.f, 100.f}, blocks, 0));
     row("declipper (-3 dB, clipping, 8x)", bench_kernel("declipper", {-3.f, -0.3f, 2.f, 100.f}, blocks, 0));
@@ -370,7 +425,9 @@ int main(int argc, char** argv) {
     }
     const auto state = blob(kCompressor);
     std::vector<se_clip_desc> clips(32);
-    std::vector<se_device_desc> devs(64);
+    // Per track: [LFO, compressor, compressor]; the LFO moves both thresholds.
+    std::vector<se_device_desc> devs(96);
+    std::vector<std::vector<uint8_t>> lfo_states(32);
     std::vector<se_track_desc_v5> tracks(32);
     for (uint32_t t = 0; t < 32; ++t) {
         clips[t] = se_clip_desc{};
@@ -380,7 +437,7 @@ int main(int argc, char** argv) {
         clips[t].length = 7 * 48000;
         clips[t].gain = 1.0f;
         for (uint32_t k = 0; k < 2; ++k) {
-            se_device_desc& d = devs[2 * t + k];
+            se_device_desc& d = devs[3 * t + 1 + k];
             d = se_device_desc{};
             d.device_id = 1000 + 2 * t + k;
             d.plugin_id = "compressor";
@@ -389,13 +446,22 @@ int main(int argc, char** argv) {
             d.state = state.data();
             d.state_len = state.size();
         }
+        lfo_states[t] = blob_v2(kLfo, {1000 + 2 * t, 1000 + 2 * t + 1});
+        se_device_desc& l = devs[3 * t];
+        l = se_device_desc{};
+        l.device_id = 5000 + t;
+        l.plugin_id = "lfo";
+        l.format = SE_PLUGIN_BUILTIN;
+        l.enabled = 1;
+        l.state = lfo_states[t].data();
+        l.state_len = lfo_states[t].size();
         se_track_desc_v5& td = tracks[t];
         td = se_track_desc_v5{};
         td.track_id = t + 1;
         td.gain = 0.25f;
         td.clips = &clips[t];
         td.clip_count = 1;
-        td.devices = &devs[2 * t];
+        td.devices = &devs[3 * t + 1];
         td.device_count = 2;
     }
     se_session_desc_v5 s{tracks.data(), 32, 0.5f};
@@ -422,8 +488,12 @@ int main(int argc, char** argv) {
     std::printf("%-34s %12s %12s %12s %14s\n", "inserts", "avg us", "p99 us", "max us", "x real-time");
     std::vector<float> buf(2 * kBlock);
     const uint32_t session_blocks = std::min(blocks, 1200u);
-    for (int with = 1; with >= 0; --with) {
-        for (auto& td : tracks) td.device_count = with ? 2 : 0;
+    const char* names[] = {"none (same session)", "2 compressors per track (64)", "LFO + 2 compressors, 2 routes/track"};
+    for (int with = 2; with >= 0; --with) {
+        for (uint32_t t = 0; t < 32; ++t) {
+            tracks[t].devices = &devs[3 * t + (with == 2 ? 0 : 1)];
+            tracks[t].device_count = with == 2 ? 3 : with == 1 ? 2 : 0;
+        }
         se_session_publish_v5(e, &s);
         se_transport_seek(e, 0);
         se_transport_play(e);
@@ -434,7 +504,7 @@ int main(int argc, char** argv) {
             const auto t1 = Clock::now();
             if (b >= 50) t.push_back(us(t1 - t0));
         }
-        row(with ? "2 compressors per track (64)" : "none (same session)", summarize(t));
+        row(names[with], summarize(t));
     }
     se_engine_destroy(e);
     std::filesystem::remove(wav);
