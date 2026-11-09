@@ -48,6 +48,44 @@ flowchart LR
   of the UI is built at). Card width follows the reference rule:
   knobs × 62 + inner gaps × 10 + cluster gaps × 21 + 16.
 
+## Modulation and chains
+
+Every device gets the same modulation and container features; nothing here is
+specific to one effect.
+
+- **Sources.** An LFO (`lfo`) and a chain head (`device-rack`) are built-in
+  devices with modulation outputs (`saine_core::modulation::outputs`: 1 and 8).
+  A source owns its links in `Device::links` (`ModLink { slot, target, param,
+  min, max }`); `param` is a built-in parameter id or a plugin parameter id
+  (`ModParam`). A parameter takes at most three sources
+  (`modulation::link_refusal` lists every rule). Edits are
+  `AddModLink` / `RemoveModLink` / `SetModLink` (amount drags coalesce).
+- **Maths** (in the target parameter's normalized 0..1 domain). LFO:
+  `n = base + depth * (min + (max - min) * wave)`, wave 0..1, several LFOs add.
+  Macro: `n = min + (max - min) * macro` (sets the value; min above max inverts).
+  The result is clamped to 0..1.
+- **Chains.** Members follow their head with `Device::chain = head`. The head's
+  power switch bypasses every member (`modulation::effectively_enabled`, used by
+  the snapshot); macros only reach members. Removing a head removes its members;
+  moving it moves them. `collapsed` hides the members, `folded` folds any card.
+- **Engine.** A source's state is an `se_builtin_state_v2` blob: values, then
+  `se_mod_route` records built by `modulation::routes`. Every 32 frames
+  (`SE_MOD_GRID_FRAMES`) the engine runs each enabled source, applies its routes
+  to built-in parameters (as parameter events) or plugin parameters (as plugin
+  events, the base restored when the last route goes), with no allocation on the
+  audio thread. Plugin card knobs set values with `se_plugin_set_param`; a
+  modulated parameter keeps that as its base (`se_mod_base`).
+- **UI** (`src/device_mod.rs`). Right-click any control (built-in or plugin card)
+  for Automate, Modulators (New LFO, the track's LFOs, Remove) and Macros inside a
+  chain. Modulated knobs draw the reach of their sources and a dot at the live
+  value. The LFO and chain head have custom bodies (`View::Custom("lfo" |
+  "chain")`); their Map pill arms the source so the next control clicked becomes a
+  target. Card headers: name = effect picker (swap in place), fold, device window
+  (plugins), remove.
+- **Plugin card.** A third-party plugin shows the parameters added with "+ Add"
+  (`Device::card_params`, `SetCardParams`) plus any a source or automation moves,
+  nine per page.
+
 ## Adding a device
 
 1. **Definition.** Add `crates/saine-core/src/builtin/<id>.rs` with a
@@ -107,5 +145,6 @@ cargo test --workspace                                   # core, engine wrapper,
 cd engine && cmake --build build && ./build/saine_engine_tests
 ./build/saine_device_bench                               # per-block cost, param updates, 32-track session
 cargo run -p saine-app -- --state reference-compressor --screenshot /tmp/compressor.png
+cargo run -p saine-app -- --state reference-lfo --screenshot /tmp/lfo.png      # also reference-chain
 cargo run -p saine-app -- --self-test                    # includes the built-in device section
 ~~~
