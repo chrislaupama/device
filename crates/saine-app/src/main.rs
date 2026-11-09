@@ -71,6 +71,8 @@ struct Args {
     /// Extra panels for the reference states.
     open_mixer: bool,
     open_assistant: bool,
+    /// reference-assistant / review-assistant-<name>: canned transcript (assistant_panel::assistant_demo).
+    assistant_demo: Option<String>,
     /// 1 = reference-midi-clip (33), 2 = reference-pianoroll (34).
     midi_state: u8,
     /// reference-synth (32): Instrument track selected, Devices tab, test-state synth preset.
@@ -149,6 +151,12 @@ fn parse_args() -> Result<Args, String> {
                 "reference-assistant" => {
                     a.reference_default = true;
                     a.open_assistant = true;
+                    a.assistant_demo = Some("turn".into());
+                }
+                s if s.starts_with("review-assistant-") => {
+                    a.reference_default = true;
+                    a.open_assistant = true;
+                    a.assistant_demo = s.strip_prefix("review-assistant-").map(String::from);
                 }
                 "reference-midi-clip" => {
                     a.reference_default = true;
@@ -218,7 +226,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight>)"
                     ));
                 }
             },
@@ -547,6 +555,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 assistant_provider::Provider::fixture_from_json(&text, &path.display().to_string())?
             }
             (None, true) => assistant_provider::Provider::fixture_from_json(include_str!("../fixtures/assistant-selftest.json"), "built-in self-test fixture")?,
+            // Review renders: a stand-in provider so the composer shows its enabled state (never sends).
+            (None, false) if args.assistant_demo.is_some() => assistant_provider::Provider::fixture_from_json("{\"actions\": []}", "assistant demo")?,
             (None, false) => assistant_provider::Provider::from_env(),
         };
         eprintln!("assistant: provider {provider:?}{}", if provider.is_fixture() { " (TEST provider, no network)" } else { "" });
@@ -562,6 +572,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         c.mixer_open = args.open_mixer;
         c.assistant_open = args.open_assistant;
+        if let Some(d) = &args.assistant_demo {
+            c.assistant_demo(d)?;
+            if d == "draft" {
+                app.global::<Studio>().set_chat_draft("Make the lead brighter".into());
+            }
+        }
         // Plugin catalogue: the scan cache in the app support directory (startup reads the cache;
         // Settings › Plugins can force a rescan). The self-test uses its own cache file and never
         // touches the user's. --plugin-fixture (TEST seam) replaces the scan entirely.

@@ -107,6 +107,36 @@ pub fn target_rect(l: &Layout, target: &str, track_index: impl Fn(u64) -> Option
     Some(r)
 }
 
+/// Point ring around a target rect: (x, y, w, h, corner radius), our units (0.85 of the
+/// reference's CSS px). The reference pads small targets (<= 40 px) by 5 px and others by 6,
+/// draws near-square targets (<= 56 px, sides within 1.25:1) as a circle, gives other rings
+/// the target's radius (8 px when it has none) plus the padding, and keeps 2 px inside the window.
+pub fn ring(t: Rect, win_w: f32, win_h: f32) -> (f32, f32, f32, f32, f32) {
+    let (x, y, w, h) = t;
+    let (big, small) = (w.max(h), w.min(h));
+    let pad = if big <= 34.0 { 4.25 } else { 5.1 };
+    let (rx, ry, rw, rh, rr) = if small > 0.0 && big <= 47.6 && big / small <= 1.25 {
+        let d = big + 2.0 * pad;
+        (x + w / 2.0 - d / 2.0, y + h / 2.0 - d / 2.0, d, d, d / 2.0)
+    } else {
+        let (rw, rh) = (w + 2.0 * pad, h + 2.0 * pad);
+        (x - pad, y - pad, rw, rh, (6.8 + pad).min(rw / 2.0).min(rh / 2.0))
+    };
+    let inset = 1.7;
+    let (l, t) = (rx.max(inset), ry.max(inset));
+    let (r, b) = ((rx + rw).min(win_w - inset), (ry + rh).min(win_h - inset));
+    let (cw, ch) = ((r - l).max(0.0), (b - t).max(0.0));
+    (l, t, cw, ch, rr.min(cw / 2.0).min(ch / 2.0))
+}
+
+/// Where a ring's note bubble sits: (x, y, above). Below the ring with an 8 px gap, left edges
+/// aligned; above it (y is then the bubble's bottom) when less than 120 px remain underneath.
+pub fn bubble_anchor(ring: (f32, f32, f32, f32, f32), win_h: f32) -> (f32, f32, bool) {
+    let gap = 6.8;
+    let below = ring.1 + ring.3 + gap;
+    if win_h - below < 102.0 { (ring.0, ring.1 - gap, true) } else { (ring.0, below, false) }
+}
+
 fn track_rect(l: &Layout, t: &str, track_index: impl Fn(u64) -> Option<usize>) -> Option<Rect> {
     let mut it = t.split(':');
     let (_, id, part) = (it.next()?, it.next()?.parse::<u64>().ok()?, it.next()?);
@@ -162,5 +192,20 @@ mod tests {
         assert_eq!(target_rect(&l, "track:7:volume", |_| None), None);
         l.scroll_y = 1000.0;
         assert_eq!(target_rect(&l, "track:7:header", |_| Some(0)), None, "scrolled out");
+    }
+
+    #[test]
+    fn rings_pad_round_and_clamp() {
+        let near = |a: (f32, f32, f32, f32, f32), b: (f32, f32, f32, f32, f32)| {
+            [a.0 - b.0, a.1 - b.1, a.2 - b.2, a.3 - b.3, a.4 - b.4].iter().all(|d| d.abs() < 1e-3)
+        };
+        // wide control: padded rect, radius 8 + 6 (CSS) x 0.85
+        assert!(near(ring((700.0, 42.0, 57.0, 20.0), 1440.0, 820.0), (694.9, 36.9, 67.2, 30.2, 11.9)));
+        // small square button: circle, 5 px (CSS) padding
+        assert!(near(ring((100.0, 100.0, 22.0, 22.0), 1440.0, 820.0), (95.75, 95.75, 30.5, 30.5, 15.25)));
+        // clamped at the window edge
+        assert_eq!(ring((0.0, 0.0, 100.0, 20.0), 1440.0, 820.0).0, 1.7);
+        assert!(bubble_anchor((10.0, 780.0, 50.0, 20.0, 5.0), 820.0).2, "near the bottom: above");
+        assert_eq!(bubble_anchor((10.0, 36.9, 50.0, 30.2, 5.0), 820.0), (10.0, 36.9 + 30.2 + 6.8, false));
     }
 }
