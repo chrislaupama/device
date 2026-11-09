@@ -103,11 +103,13 @@ export struct PanelCanvas {
 // (choice parameter, opens a menu of its choices).
 export struct PanelButton { kind: int, param: int, x: length, y: length, w: length, label: string, on: bool }
 // Dynamics strip: caption + readout above a well; paths are in well coordinates (view box w x well-h).
+// Draggable dashed line and an optional solid second line (Alt+drag moves both).
 export struct PanelStrip {
     visible: bool, x: length, y: length, w: length, h: length, well-y: length,
     caption: string, readout: string, ticks: [PanelTick],
     in-fill: string, gr-fill: string, in-line: string, out-line: string,
     thresh-param: int, thresh-y: length, thresh-dash: string, thresh-label: string, thresh-value: string, thresh-rate: float,
+    second-param: int, second-y: length, second-line: string, second-label: string, second-value: string, second-rate: float,
 }
 // Multiband field (src/panel_multiband.rs): field-relative lengths; paths in a w x h view box.
 export struct PanelBand {
@@ -199,6 +201,7 @@ export struct DeviceCard {
     knobs: [PanelKnob],
     picks: [PanelPick],
     sliders: [PanelSlider],
+    slider-top: length,
     strip: PanelStrip,
     // Generic header state (every card): folded to a strip, swappable from the name, in a chain.
     folded: bool,
@@ -546,6 +549,7 @@ export global Studio {
     callback device-drag(int, int, length);     // card id, phase 0/1/2, window x (MoveDevice on release)
     callback chain-scroll-by(float);
     // Built-in device panels: device id, parameter index (definition order).
+    callback panel-drag-pair(int, int, int, int, float, float, bool); // device, line param, other line param, then as panel-drag
     callback panel-drag(int, int, int, float, float, bool); // phase 0 press / 1 move / 2 release / 3 cancel, dy since last event (px, up +), norm per px, fine
     callback panel-reset(int, int);                          // default value (Alt-click, double-click)
     callback panel-reset-xy(int, int, int);                  // device, param x, param y (-1 = unused): both to default, one undo step

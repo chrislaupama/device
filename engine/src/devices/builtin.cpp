@@ -12,6 +12,11 @@ extern const BuiltinDescriptor kCompressorDescriptor;
 extern const BuiltinDescriptor kChannelEqDescriptor;
 extern const BuiltinDescriptor kCharacterEqDescriptor;
 extern const BuiltinDescriptor kAutoFilterDescriptor;
+extern const BuiltinDescriptor kGlueCompressorDescriptor;
+extern const BuiltinDescriptor kLimiterDescriptor;
+extern const BuiltinDescriptor kMasteringLimiterDescriptor;
+extern const BuiltinDescriptor kGateDescriptor;
+extern const BuiltinDescriptor kTransientShaperDescriptor;
 extern const BuiltinDescriptor kLfoDescriptor;
 extern const BuiltinDescriptor kRackDescriptor;
 extern const BuiltinDescriptor kSamplerDescriptor;
@@ -45,6 +50,11 @@ const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kChannelEqDescriptor,
     &kCharacterEqDescriptor,
     &kAutoFilterDescriptor,
+    &kGlueCompressorDescriptor,
+    &kLimiterDescriptor,
+    &kMasteringLimiterDescriptor,
+    &kGateDescriptor,
+    &kTransientShaperDescriptor,
     &kLfoDescriptor,
     &kRackDescriptor,
     &kSamplerDescriptor,
