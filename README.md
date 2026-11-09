@@ -89,14 +89,14 @@ wgpu.
 
 ### Built-in devices
 
-Saine Studio comes with 29 devices of its own. Each one is a single declarative definition (parameters, panel layout and
+Saine Studio comes with 34 devices of its own. Each one is a single declarative definition (parameters, panel layout and
 factory presets) that the model, undo, saving, automation, engine and panel all derive from, with a C++ DSP kernel
 behind it. [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
 | Kind | Devices |
 |---|---|
 | Instruments | Synth, Sampler, Drum Rack, Pad Sampler |
-| Dynamics and utility | Compressor, Character Compressor, Multiband Compressor, Utility, Stereo Widener |
+| Dynamics and utility | Compressor, Character Compressor, Multiband Compressor, Glue Compressor, Limiter, Mastering Limiter, Gate, Transient Shaper, Utility, Stereo Widener |
 | Saturation | Distortion, Tape Saturation, Soft Clipper, Bit Crusher |
 | Modulation | Chorus, Flanger, Phaser, Tremolo, Auto-Panner, Ring Mod, Character Mod |
 | Restoration | De-Noiser, De-Hummer, De-Clipper, De-Esser |
