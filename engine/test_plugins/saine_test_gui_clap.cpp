@@ -29,6 +29,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     CLAP_VERSION_INIT, kId, "Saine Test GUI", "Saine", "", "", "", "1.0.0", "Pass-through with a Win32 editor",
     kFeatures};
 
+// Per-instance state: the host, the editor's child window and its size.
 struct Plugin {
     clap_plugin_t clap{};
     const clap_host_t* host = nullptr;
@@ -38,10 +39,13 @@ struct Plugin {
     bool resized_once = false;
 };
 
+// The Plugin behind a clap_plugin.
 Plugin* self(const clap_plugin_t* p) { return static_cast<Plugin*>(p->plugin_data); }
 
 // ---- ports
+// One main audio port in each direction.
 uint32_t audio_ports_count(const clap_plugin_t*, bool) { return 1; }
+// Describes the stereo main input (id 0) or output (id 1).
 bool audio_ports_get(const clap_plugin_t*, uint32_t index, bool is_input, clap_audio_port_info_t* info) {
     if (index != 0) return false;
     std::memset(info, 0, sizeof *info);
@@ -56,32 +60,40 @@ bool audio_ports_get(const clap_plugin_t*, uint32_t index, bool is_input, clap_a
 const clap_plugin_audio_ports_t kAudioPorts = {audio_ports_count, audio_ports_get};
 
 // ---- gui
+// Only embedded Win32 windows are supported.
 bool gui_is_api_supported(const clap_plugin_t*, const char* api, bool floating) {
     return !floating && std::strcmp(api, CLAP_WINDOW_API_WIN32) == 0;
 }
+// Prefers an embedded Win32 window.
 bool gui_get_preferred_api(const clap_plugin_t*, const char** api, bool* floating) {
     *api = CLAP_WINDOW_API_WIN32;
     *floating = false;
     return true;
 }
+// Marks the GUI created (the window itself is made in set_parent).
 bool gui_create(const clap_plugin_t* p, const char* api, bool floating) {
     if (!gui_is_api_supported(p, api, floating)) return false;
     self(p)->created = true;
     return true;
 }
+// Destroys the child window, if any.
 void gui_destroy(const clap_plugin_t* p) {
     Plugin* s = self(p);
     if (s->child != nullptr) DestroyWindow(s->child);
     s->child = nullptr;
     s->created = false;
 }
+// No scaling support.
 bool gui_set_scale(const clap_plugin_t*, double) { return false; }
+// Current editor size.
 bool gui_get_size(const clap_plugin_t* p, uint32_t* w, uint32_t* h) {
     *w = self(p)->width;
     *h = self(p)->height;
     return true;
 }
+// The editor is resizable.
 bool gui_can_resize(const clap_plugin_t*) { return true; }
+// Freely resizable in both directions, no fixed aspect ratio.
 bool gui_get_resize_hints(const clap_plugin_t*, clap_gui_resize_hints_t* hints) {
     hints->can_resize_horizontally = true;
     hints->can_resize_vertically = true;
@@ -90,11 +102,13 @@ bool gui_get_resize_hints(const clap_plugin_t*, clap_gui_resize_hints_t* hints) 
     hints->aspect_ratio_height = 0;
     return true;
 }
+// Enforces the minimum size of 100 x 60.
 bool gui_adjust_size(const clap_plugin_t*, uint32_t* w, uint32_t* h) {
     *w = std::max<uint32_t>(*w, 100);
     *h = std::max<uint32_t>(*h, 60);
     return true;
 }
+// Stores the size and resizes the child window to match.
 bool gui_set_size(const clap_plugin_t* p, uint32_t w, uint32_t h) {
     Plugin* s = self(p);
     s->width = w;
@@ -102,6 +116,7 @@ bool gui_set_size(const clap_plugin_t* p, uint32_t w, uint32_t h) {
     if (s->child != nullptr) MoveWindow(s->child, 0, 0, static_cast<int>(w), static_cast<int>(h), TRUE);
     return true;
 }
+// Creates the editor as a "STATIC" child window of the host's Win32 window.
 bool gui_set_parent(const clap_plugin_t* p, const clap_window_t* window) {
     Plugin* s = self(p);
     if (!s->created || window == nullptr || std::strcmp(window->api, CLAP_WINDOW_API_WIN32) != 0) return false;
@@ -110,8 +125,12 @@ bool gui_set_parent(const clap_plugin_t* p, const clap_window_t* window) {
                                GetModuleHandleW(nullptr), nullptr);
     return s->child != nullptr;
 }
+// Floating windows are not supported.
 bool gui_set_transient(const clap_plugin_t*, const clap_window_t*) { return false; }
+// Ignored (embedded only).
 void gui_suggest_title(const clap_plugin_t*, const char*) {}
+// Shows the child window; the first time, asks the host to resize the
+// editor to 400 x 250 and applies it if the host agrees.
 bool gui_show(const clap_plugin_t* p) {
     Plugin* s = self(p);
     if (s->child != nullptr) ShowWindow(s->child, SW_SHOW);
@@ -122,6 +141,7 @@ bool gui_show(const clap_plugin_t* p) {
     }
     return true;
 }
+// Hides the child window.
 bool gui_hide(const clap_plugin_t* p) {
     if (self(p)->child != nullptr) ShowWindow(self(p)->child, SW_HIDE);
     return true;
@@ -132,17 +152,21 @@ const clap_plugin_gui_t kGui = {gui_is_api_supported, gui_get_preferred_api, gui
                                 gui_suggest_title,    gui_show,              gui_hide};
 
 // ---- lifecycle
+// Nothing to initialise.
 bool init(const clap_plugin_t*) { return true; }
+// Destroys the GUI and frees the instance.
 void destroy(const clap_plugin_t* p) {
     gui_destroy(p);
     delete self(p);
 }
+// No processing state to set up or tear down.
 bool activate(const clap_plugin_t*, double, uint32_t, uint32_t) { return true; }
 void deactivate(const clap_plugin_t*) {}
 bool start_processing(const clap_plugin_t*) { return true; }
 void stop_processing(const clap_plugin_t*) {}
 void reset(const clap_plugin_t*) {}
 
+// Stereo pass-through.
 clap_process_status process(const clap_plugin_t*, const clap_process_t* pr) {
     for (int c = 0; c < 2; ++c) {
         const float* in = pr->audio_inputs[0].data32[c];
@@ -152,13 +176,16 @@ clap_process_status process(const clap_plugin_t*, const clap_process_t* pr) {
     return CLAP_PROCESS_CONTINUE;
 }
 
+// Supports clap.audio-ports and clap.gui.
 const void* get_extension(const clap_plugin_t*, const char* id) {
     if (std::strcmp(id, CLAP_EXT_AUDIO_PORTS) == 0) return &kAudioPorts;
     if (std::strcmp(id, CLAP_EXT_GUI) == 0) return &kGui;
     return nullptr;
 }
+// No main-thread callbacks are requested.
 void on_main_thread(const clap_plugin_t*) {}
 
+// Creates an instance for kId; nullptr for any other id.
 const clap_plugin_t* create(const clap_plugin_factory_t*, const clap_host_t* host, const char* id) {
     if (std::strcmp(id, kId) != 0) return nullptr;
     auto* s = new (std::nothrow) Plugin();
@@ -179,14 +206,18 @@ const clap_plugin_t* create(const clap_plugin_factory_t*, const clap_host_t* hos
     return &s->clap;
 }
 
+// One plugin in the factory.
 uint32_t factory_count(const clap_plugin_factory_t*) { return 1; }
+// The descriptor of plugin 0.
 const clap_plugin_descriptor_t* factory_descriptor(const clap_plugin_factory_t*, uint32_t i) {
     return i == 0 ? &kDescriptor : nullptr;
 }
 const clap_plugin_factory_t kFactory = {factory_count, factory_descriptor, create};
 
+// Module init/deinit: nothing to do.
 bool entry_init(const char*) { return true; }
 void entry_deinit() {}
+// The plugin factory; nullptr for any other factory id.
 const void* entry_get_factory(const char* id) {
     return std::strcmp(id, CLAP_PLUGIN_FACTORY_ID) == 0 ? &kFactory : nullptr;
 }

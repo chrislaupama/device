@@ -48,6 +48,7 @@ cmake --build --preset asan
 ctest --preset asan
 
 ./build/saine_engine_bench [blocks=4000] [clips_per_track=4] [features=0]  # 1 = loop + metronome on; also prints MIDI and plugin tables
+./build/saine_scan_cache_bench [entries=2000] [runs=50]  # plugin-cache JSON parse time
 ./build/play_sine_or_wav [file.wav] [seconds=1.0]   # real default output device, -24 dBFS
 ./build/record_check                                # list devices (enumeration only, opens nothing)
 SAINE_TEST_REAL_INPUT=1 ./build/record_check [s=2]  # MANUAL: opens the real default input (macOS mic prompt!)
@@ -257,6 +258,7 @@ running jackd without PipeWire.
 | `src/platform/` | `AudioDevice` interface + backends (Core Audio real; WASAPI/ASIO, PipeWire/JACK stubs) |
 | `tests/` | Self-contained harness (`test_harness.hpp`), tests, allocation-tracking `operator new` |
 | `bench/bench_render.cpp` | Offline render benchmark |
+| `bench/bench_scan_cache.cpp` | Plugin-cache parse benchmark (`saine_scan_cache_bench`) |
 | `src/recorder.{hpp,cpp}` | Recording: RT capture into per-track SPSC rings, WAV writer thread, live takes/peaks |
 | `src/test_hooks.hpp` | Test-only hooks (fake device factory, writer stall, ring size); not public ABI |
 | `tools/play_sine_or_wav.cpp` | Manual check through the real default output device |
@@ -268,6 +270,7 @@ running jackd without PipeWire.
 | `src/plugins/plugin_scan.{hpp,cpp}` | Inspecting one AU / bundle (used only by the scanner process) |
 | `src/platform/plugin_editor_mac.mm` | Editor windows (NSWindow; AU Cocoa view / AUGenericView, VST3 IPlugView, CLAP gui) |
 | `scanner/scanner_main.cpp` | `saine_plugin_scanner`: out-of-process scan coordinator + per-plugin child |
+| `scanner/cache_json.hpp` | The scanner's cache JSON reader (shared with the benchmark) |
 | `test_plugins/` | Original test plugins: `SaineTestGain.vst3`, `SaineTestGain.clap`, `SaineTestSine.clap`, `SaineTestLatency.clap`/`.vst3`, `SaineTestCrash.clap` |
 | `tools/plugin_editor_check.mm` | Manual editor-window smoke test |
 | `third_party_licenses.md` | Fetched SDKs: tags, commits, MIT texts |

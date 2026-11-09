@@ -7,7 +7,7 @@
 //! be deserialised straight into a `Command` and validated before execution).
 
 use crate::automation::{AutomationLane, AutomationTarget};
-use crate::device::{Device, DeviceId, DeviceSample, PluginKind};
+use crate::device::{Device, DeviceId, DeviceSample, ModLink, PluginKind};
 use crate::instrument::SynthParams;
 use crate::midi::{self, MidiClip, Note};
 use crate::model::*;
@@ -100,6 +100,26 @@ pub enum Command {
     SetDeviceSample { device: DeviceId, slot: u32, sample: Option<DeviceSample> },
     /// Pick (or clear) the sidechain source track of a built-in device.
     SetDeviceSidechain { device: DeviceId, source: Option<TrackId> },
+    /// Add a modulation link to a source device (LFO, chain head) at `index`
+    /// (None = the end). Refused past three sources per parameter.
+    AddModLink { source: DeviceId, index: Option<usize>, link: ModLink },
+    RemoveModLink { source: DeviceId, index: usize },
+    /// Change a link's range (amount drags coalesce per link).
+    SetModLink { source: DeviceId, index: usize, min: f32, max: f32 },
+    /// Put an insert into the chain headed by `chain` (it must follow the
+    /// head or its members) or take it out (None).
+    SetDeviceChain { device: DeviceId, chain: Option<DeviceId> },
+    /// Rename a device's card (None = the plugin name).
+    SetDeviceLabel { device: DeviceId, label: Option<String> },
+    /// Rename macro `index` of a chain head ("" = default name).
+    SetMacroName { device: DeviceId, index: usize, name: String },
+    /// Card fold state; `collapsed` hides a chain head's members.
+    SetDeviceView { device: DeviceId, folded: bool, collapsed: bool },
+    /// Parameters shown on a third-party plugin's card, in order.
+    SetCardParams { device: DeviceId, params: Vec<u32> },
+    /// Swap an insert for another device in the same slot (and chain). The
+    /// new device's id 0 allocates one.
+    ReplaceDevice { device: DeviceId, with: Device },
     /// Create, replace (points, enabled) or delete (`lane: None`) the lane for
     /// `target` on a track, or on the master when `track` is None.
     SetAutomationLane { track: Option<TrackId>, target: AutomationTarget, lane: Option<AutomationLane> },
@@ -157,6 +177,16 @@ impl Command {
                 None => format!("Delete {} Automation", target.labels().1),
                 Some(_) => format!("Edit {} Automation", target.labels().1),
             },
+            Command::AddModLink { .. } => "Add Modulation".into(),
+            Command::RemoveModLink { .. } => "Remove Modulation".into(),
+            Command::SetModLink { .. } => "Modulation Amount Change".into(),
+            Command::SetDeviceChain { chain: Some(_), .. } => "Move Effect into Chain".into(),
+            Command::SetDeviceChain { chain: None, .. } => "Remove Effect from Chain".into(),
+            Command::SetDeviceLabel { .. } => "Rename Device".into(),
+            Command::SetMacroName { .. } => "Rename Macro".into(),
+            Command::SetDeviceView { folded, .. } => (if *folded { "Fold Device" } else { "Unfold Device" }).into(),
+            Command::SetCardParams { .. } => "Device Controls Change".into(),
+            Command::ReplaceDevice { with, .. } => format!("Swap to {}", with.plugin.name),
             Command::Batch { label, .. } => label.clone(),
         }
     }
@@ -172,6 +202,7 @@ impl Command {
             Command::SetTempo { .. } => Some("tempo".into()),
             Command::SetSynthParams { track, params } => Some(format!("synth:{}:{}", track.0, params.preset)),
             Command::SetDeviceParam { device, param, .. } => Some(format!("devparam:{}:{param}", device.0)),
+            Command::SetModLink { source, index, .. } => Some(format!("modlink:{}:{index}", source.0)),
             _ => None,
         }
     }
@@ -473,6 +504,19 @@ impl Command {
                 if idx > n {
                     return Err(invalid("index", format!("{idx} > {n}")));
                 }
+                if let Some(h) = device.chain {
+                    let devs = &p.tracks[ti].devices;
+                    let hi = devs.iter().position(|d| d.id == h && crate::modulation::is_rack(d));
+                    let run = hi.map(|hi| crate::modulation::members(devs, hi));
+                    if crate::modulation::outputs(&device) > 0 || !run.is_some_and(|r| idx >= r.start && idx <= r.end) {
+                        return Err(invalid("chain", "a chain member goes right after its head or another member"));
+                    }
+                } else {
+                    let devs = &p.tracks[ti].devices;
+                    if (0..n).any(|hi| crate::modulation::members(devs, hi).contains(&idx)) {
+                        return Err(invalid("chain", "a device outside a chain cannot go between its members"));
+                    }
+                }
                 let id = device.id;
                 p.tracks[ti].devices.insert(idx, device);
                 Ok(Command::RemoveDevice { device: id })
@@ -598,6 +642,119 @@ impl Command {
                 let old = std::mem::replace(&mut d.sidechain, source);
                 Ok(Command::SetDeviceSidechain { device, source: old })
             }
+            Command::AddModLink { source, index, mut link } => {
+                let (ti, _) = p.find_device(source).ok_or_else(|| invalid("source", format!("{} not found", source.0)))?;
+                let t = &p.tracks[ti];
+                let s = t.devices.iter().find(|d| d.id == source).ok_or_else(|| invalid("source", "not in an insert chain"))?;
+                if let Some(why) = crate::modulation::link_refusal(t, s, link.slot, link.target, &link.param) {
+                    return Err(invalid("link", why));
+                }
+                (link.min, link.max) = crate::modulation::clamp_range(s, link.min, link.max).ok_or_else(|| invalid("link", "range must be finite"))?;
+                let s = insert_mut(p, source)?;
+                let i = index.unwrap_or(s.links.len());
+                if i > s.links.len() {
+                    return Err(invalid("index", "out of range"));
+                }
+                s.links.insert(i, link);
+                Ok(Command::RemoveModLink { source, index: i })
+            }
+            Command::RemoveModLink { source, index } => {
+                let s = insert_mut(p, source)?;
+                if index >= s.links.len() {
+                    return Err(invalid("index", "out of range"));
+                }
+                let link = s.links.remove(index);
+                Ok(Command::AddModLink { source, index: Some(index), link })
+            }
+            Command::SetModLink { source, index, min, max } => {
+                let s = insert_mut(p, source)?;
+                let (min, max) = crate::modulation::clamp_range(s, min, max).ok_or_else(|| invalid("link", "range must be finite"))?;
+                let l = s.links.get_mut(index).ok_or_else(|| invalid("index", "out of range"))?;
+                let old = (std::mem::replace(&mut l.min, min), std::mem::replace(&mut l.max, max));
+                Ok(Command::SetModLink { source, index, min: old.0, max: old.1 })
+            }
+            Command::SetDeviceChain { device, chain } => {
+                let (ti, slot) = p.find_device(device).ok_or_else(|| invalid("device", format!("{} not found", device.0)))?;
+                let DeviceSlot::Insert(i) = slot else { return Err(invalid("device", "instruments don't go in a chain")) };
+                let devs = &p.tracks[ti].devices;
+                if let Some(h) = chain {
+                    if crate::modulation::outputs(&devs[i]) > 0 {
+                        return Err(invalid("device", "chains don't hold LFOs or other chains"));
+                    }
+                    let hi = devs.iter().position(|d| d.id == h).ok_or_else(|| invalid("chain", "the chain head must be on the same track"))?;
+                    if !crate::modulation::is_rack(&devs[hi]) {
+                        return Err(invalid("chain", "not a chain head"));
+                    }
+                    // The device must sit right after the head or one of its members.
+                    let run = crate::modulation::members(devs, hi);
+                    if i != run.end && !run.contains(&i) {
+                        return Err(invalid("chain", "move the device next to the chain first"));
+                    }
+                }
+                let old = std::mem::replace(&mut p.tracks[ti].devices[i].chain, chain);
+                Ok(Command::SetDeviceChain { device, chain: old })
+            }
+            Command::SetDeviceLabel { device, label } => {
+                let label = label.map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+                let d = insert_mut(p, device)?;
+                let old = std::mem::replace(&mut d.label, label);
+                Ok(Command::SetDeviceLabel { device, label: old })
+            }
+            Command::SetMacroName { device, index, name } => {
+                let d = insert_mut(p, device)?;
+                if !crate::modulation::is_rack(d) || index >= crate::builtin::rack::MACROS {
+                    return Err(invalid("index", "not a macro of a chain head"));
+                }
+                if d.macro_names.len() <= index {
+                    d.macro_names.resize(index + 1, String::new());
+                }
+                let old = std::mem::replace(&mut d.macro_names[index], name.trim().to_string());
+                while d.macro_names.last().is_some_and(|n| n.is_empty()) {
+                    d.macro_names.pop();
+                }
+                Ok(Command::SetMacroName { device, index, name: old })
+            }
+            Command::SetDeviceView { device, folded, collapsed } => {
+                let d = insert_mut(p, device)?;
+                let old = (std::mem::replace(&mut d.folded, folded), std::mem::replace(&mut d.collapsed, collapsed));
+                Ok(Command::SetDeviceView { device, folded: old.0, collapsed: old.1 })
+            }
+            Command::SetCardParams { device, params } => {
+                let d = insert_or_instrument_mut(p, device)?;
+                if d.plugin.format == crate::device::PluginFormat::Builtin {
+                    return Err(invalid("device", "built-in devices have a fixed panel"));
+                }
+                let mut seen = std::collections::HashSet::new();
+                let params: Vec<u32> = params.into_iter().filter(|id| seen.insert(*id)).collect();
+                let old = std::mem::replace(&mut d.card_params, params);
+                Ok(Command::SetCardParams { device, params: old })
+            }
+            Command::ReplaceDevice { device, mut with } => {
+                let (ti, slot) = p.find_device(device).ok_or_else(|| invalid("device", format!("{} not found", device.0)))?;
+                let DeviceSlot::Insert(i) = slot else { return Err(invalid("device", "use SetInstrumentPlugin for instruments")) };
+                if with.plugin.kind != PluginKind::Effect {
+                    return Err(invalid("with", "only effects go in the insert chain"));
+                }
+                sanitize_builtin(p, &mut with)?;
+                if with.id.0 == 0 {
+                    with.id = DeviceId(p.alloc_id());
+                } else if with.id != device && p.find_device(with.id).is_some() {
+                    return Err(EditError::DuplicateId(with.id.0));
+                } else {
+                    p.next_id = p.next_id.max(with.id.0 + 1);
+                }
+                let old = &p.tracks[ti].devices[i];
+                if old.chain.is_some() && crate::modulation::outputs(&with) > 0 {
+                    return Err(invalid("with", "chains don't hold LFOs or other chains"));
+                }
+                if crate::modulation::is_rack(old) {
+                    return Err(invalid("device", "a chain head can't be swapped"));
+                }
+                with.chain = old.chain;
+                let new_id = with.id;
+                let old = std::mem::replace(&mut p.tracks[ti].devices[i], with);
+                Ok(Command::ReplaceDevice { device: new_id, with: old })
+            }
             Command::SetAutomationLane { track, target, lane } => {
                 if let Some(l) = &lane {
                     if l.target != target {
@@ -677,6 +834,24 @@ fn builtin_mut(p: &mut Project, id: DeviceId) -> Result<(&mut Device, &'static c
     };
     let def = crate::builtin::def_of(d).ok_or_else(|| invalid("device", "not a built-in device"))?;
     Ok((d, def))
+}
+
+/// An insert by id.
+fn insert_mut(p: &mut Project, id: DeviceId) -> Result<&mut Device, EditError> {
+    match p.find_device(id) {
+        Some((ti, DeviceSlot::Insert(i))) => Ok(&mut p.tracks[ti].devices[i]),
+        Some((_, DeviceSlot::Instrument)) => Err(invalid("device", "not an insert")),
+        None => Err(invalid("device", format!("{} not found", id.0))),
+    }
+}
+
+/// An insert or an instrument plugin by id.
+fn insert_or_instrument_mut(p: &mut Project, id: DeviceId) -> Result<&mut Device, EditError> {
+    let (ti, slot) = p.find_device(id).ok_or_else(|| invalid("device", format!("{} not found", id.0)))?;
+    Ok(match slot {
+        DeviceSlot::Insert(i) => &mut p.tracks[ti].devices[i],
+        DeviceSlot::Instrument => p.tracks[ti].instrument_plugin.as_mut().expect("found"),
+    })
 }
 
 /// Built-in devices entering the model: the definition must exist; stored
