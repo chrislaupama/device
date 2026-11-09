@@ -31,6 +31,12 @@ use std::rc::Rc;
 /// The field starts under the card header (px) and runs to the card bottom.
 const FIELD_Y: f32 = 27.0;
 const CARD_H: f32 = 265.0;
+// PanelCanvas.cursor codes (shared with src/panel_graph.rs: 1 move, 2 ew-resize, 3 ns-resize).
+const CURSOR_MOVE: i32 = 1;
+const CURSOR_EW: i32 = 2;
+const CURSOR_NS: i32 = 3;
+const CURSOR_POINTER: i32 = 4;
+const CURSOR_CROSSHAIR: i32 = 5;
 const MINUS: char = '\u{2212}';
 
 /// A pointer event on a field (ui/device_panel.slint FieldView).
@@ -706,10 +712,10 @@ impl Controller {
         let knobs: Vec<PanelKnob> = (2..8).map(|i| knob(def, self.fv(d, def, i), i, TG_KNOB_X + 54.0 * (i - 2) as f32)).collect();
         card.knobs = ModelRc::from(Rc::new(VecModel::from(knobs)));
         let cursor = match hit {
-            Hit::Step(_) | Hit::Pattern(_) | Hit::StepMore | Hit::StepFewer | Hit::Rate => 1,
-            Hit::StepCount => 2,
-            Hit::EnvA | Hit::EnvR => 3,
-            Hit::EnvD => 4,
+            Hit::Step(_) | Hit::Pattern(_) | Hit::StepMore | Hit::StepFewer | Hit::Rate => CURSOR_POINTER,
+            Hit::StepCount => CURSOR_NS,
+            Hit::EnvA | Hit::EnvR => CURSOR_EW,
+            Hit::EnvD => CURSOR_MOVE,
             _ => 0,
         };
         card.canvas = c.into_canvas(TG_W, cursor);
@@ -998,13 +1004,13 @@ impl Controller {
         let knobs: Vec<PanelKnob> = idx.iter().zip(SH_KNOBS).map(|(&i, x)| knob(def, values[i], i, x)).collect();
         card.knobs = ModelRc::from(Rc::new(VecModel::from(knobs)));
         let cursor = match hit {
-            Hit::LaneOn(_) | Hit::Lane(_) | Hit::Shape | Hit::Band | Hit::FilterType | Hit::Trigger => 1,
-            Hit::Split | Hit::Resonance | Hit::Bits | Hit::Decimate | Hit::Threshold | Hit::FilterHigh | Hit::FilterLow => 2,
+            Hit::LaneOn(_) | Hit::Lane(_) | Hit::Shape | Hit::Band | Hit::FilterType | Hit::Trigger => CURSOR_POINTER,
+            Hit::Split | Hit::Resonance | Hit::Bits | Hit::Decimate | Hit::Threshold | Hit::FilterHigh | Hit::FilterLow => CURSOR_NS,
             Hit::CurvePoint(k) => {
-                if k == 0 || k + 1 == pts.len() { 2 } else { 4 }
+                if k == 0 || k + 1 == pts.len() { CURSOR_NS } else { CURSOR_MOVE }
             }
-            Hit::Mid(_) => 2,
-            Hit::Plot if pts.len() < sh::MAX_POINTS => 5,
+            Hit::Mid(_) => CURSOR_NS,
+            Hit::Plot if pts.len() < sh::MAX_POINTS => CURSOR_CROSSHAIR,
             _ => 0,
         };
         card.canvas = c.into_canvas(SH_W, cursor);

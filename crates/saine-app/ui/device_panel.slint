@@ -94,6 +94,40 @@ component ValueEditor inherits FocusScope {
     }
 }
 
+// Latch: On/Off pill (reference fx latch): 20 pt, 10 pt / 600 text, dark at rest, filled with
+// the track colour when on. Click toggles, Alt-click resets.
+component Latch inherits Rectangle {
+    in property <string> label;
+    in property <bool> on;
+    in property <color> accent;
+    callback clicked();
+    callback reset();
+    property <float> zm: PanelStyle.z;
+    property <bool> alt-down;
+    height: 20px * zm;
+    min-width: latch-text.preferred-width + 16px * zm;
+    border-radius: self.height / 2;
+    background: root.on ? (latch-ta.has-hover ? root.accent.brighter(0.14) : root.accent) : PanelStyle.seg;
+    border-width: root.on ? 0.5px : 0;
+    border-color: root.accent.darker(0.2);
+    accessible-role: checkbox; accessible-label: root.label; accessible-checked: root.on;
+    if !root.on && latch-ta.has-hover: Rectangle { border-radius: parent.border-radius; background: #ffffff09; }
+    latch-text := Text {
+        text: root.label; font-size: 10px * zm; font-weight: 600; letter-spacing: -0.04 * 10px * zm;
+        color: root.on ? #17181b : latch-ta.has-hover ? #ffffffb3 : #ffffff8c;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+    latch-ta := TouchArea {
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                root.alt-down = e.modifiers.alt;
+                if (e.modifiers.alt) { root.reset(); }
+            }
+        }
+        clicked => { if (!root.alt-down) { root.clicked(); } }
+    }
+}
+
 // Knob cell: 32 px ring, value text, name (the reference app "xs" dial at 100%, scaled).
 component KnobCell inherits Rectangle {
     in property <int> device;
@@ -145,19 +179,26 @@ component KnobCell inherits Rectangle {
             Path { viewbox-width: 32; viewbox-height: 32; commands: root.k.face-curve; stroke: PanelStyle.ink; stroke-width: 1.5px * zm; fill: transparent; stroke-line-cap: round; stroke-line-join: round; }
             Path { viewbox-width: 32; viewbox-height: 32; commands: root.k.face-bend; stroke: root.accent; stroke-width: 2.25px * zm; fill: transparent; stroke-line-cap: round; }
         }
-        ParamDrag {
+        if root.k.face != 2: ParamDrag {
             device: root.device; param: root.k.param;
             grabbed => { fs.focus(); }
             double-clicked => { Studio.panel-reset(root.device, root.k.param); }
         }
     }
+    // Latch capsule (On/Off parameter in the dial row): click toggles, Alt-click resets.
+    if root.k.face == 2: Latch {
+        x: (root.width - self.width) / 2; y: (32px * zm - self.height) / 2 + 8px * zm;
+        width: self.min-width; label: root.k.value; on: root.k.norm > 0.5; accent: root.accent;
+        clicked => { fs.focus(); Studio.panel-choice(root.device, root.k.param, root.k.norm > 0.5 ? 0 : 1); }
+        reset => { fs.focus(); Studio.panel-reset(root.device, root.k.param); }
+    }
     value := Rectangle {
         x: 0; y: 40px * zm; width: root.width; height: 14px * zm;
-        if !root.editing: Text {
+        if !root.editing && root.k.face != 2: Text {
             text: root.k.value; color: PanelStyle.ink; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
             horizontal-alignment: center; vertical-alignment: center; overflow: elide;
         }
-        if !root.editing: TouchArea { double-clicked => { root.editing = true; } }
+        if !root.editing && root.k.face != 2: TouchArea { double-clicked => { root.editing = true; } }
         if root.editing: ValueEditor {
             x: -6px * zm; width: parent.width + 12px * zm; device: root.device; param: root.k.param; initial: root.k.value; font-size: 11px * zm;
             done => { root.editing = false; }
@@ -217,39 +258,6 @@ component SliderCol inherits Rectangle {
     }
 }
 
-// Latch: On/Off pill (reference fx latch): 20 pt, 10 pt / 600 text, dark at rest, filled with
-// the track colour when on. Click toggles, Alt-click resets.
-component Latch inherits Rectangle {
-    in property <string> label;
-    in property <bool> on;
-    in property <color> accent;
-    callback clicked();
-    callback reset();
-    property <float> zm: PanelStyle.z;
-    property <bool> alt-down;
-    height: 20px * zm;
-    min-width: latch-text.preferred-width + 16px * zm;
-    border-radius: self.height / 2;
-    background: root.on ? (latch-ta.has-hover ? root.accent.brighter(0.14) : root.accent) : PanelStyle.seg;
-    border-width: root.on ? 0.5px : 0;
-    border-color: root.accent.darker(0.2);
-    accessible-role: checkbox; accessible-label: root.label; accessible-checked: root.on;
-    if !root.on && latch-ta.has-hover: Rectangle { border-radius: parent.border-radius; background: #ffffff09; }
-    latch-text := Text {
-        text: root.label; font-size: 10px * zm; font-weight: 600; letter-spacing: -0.04 * 10px * zm;
-        color: root.on ? #17181b : latch-ta.has-hover ? #ffffffb3 : #ffffff8c;
-        horizontal-alignment: center; vertical-alignment: center;
-    }
-    latch-ta := TouchArea {
-        pointer-event(e) => {
-            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
-                root.alt-down = e.modifiers.alt;
-                if (e.modifiers.alt) { root.reset(); }
-            }
-        }
-        clicked => { if (!root.alt-down) { root.clicked(); } }
-    }
-}
 
 // Freely placed control of a custom card body: latch or menu pill.
 component ButtonCell inherits Rectangle {
@@ -302,21 +310,76 @@ component ZoneDrag inherits TouchArea {
     double-clicked => { root.reset(); }
 }
 
-// Pointer layer of an interactive canvas (Trance Gate, Shaper): every pointer event goes to
-// Rust (src/device_editors.rs), where hit testing, gestures and menus live.
-component CanvasInput inherits Rectangle {
+// Device field (View::Custom): optional caption + readout above a recessed well, then
+// path layers, texts, grip pills and drag zones, all computed in Rust.
+component DeviceCanvas inherits Rectangle {
     in property <int> device;
-    in property <int> cursor;
-    // A press takes keyboard focus so Escape (cancel gesture) and the app shortcuts reach the app.
+    in property <PanelCanvas> f;
+    in property <color> accent;
+    property <float> zm: PanelStyle.z;
+    property <MouseCursor> mouse-cursor: root.f.cursor == 1 ? MouseCursor.move : root.f.cursor == 2 ? MouseCursor.ew-resize : root.f.cursor == 3 ? MouseCursor.ns-resize
+        : root.f.cursor == 4 ? MouseCursor.pointer : root.f.cursor == 5 ? MouseCursor.crosshair : MouseCursor.default;
     keys := FocusScope {
         key-pressed(e) => {
             if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) { return accept; }
             reject
         }
     }
-    ta := TouchArea {
-        mouse-cursor: root.cursor == 1 ? MouseCursor.pointer : root.cursor == 2 ? MouseCursor.ns-resize : root.cursor == 3 ? MouseCursor.ew-resize
-            : root.cursor == 4 ? MouseCursor.move : root.cursor == 5 ? MouseCursor.crosshair : MouseCursor.default;
+    if root.f.well: HorizontalLayout {
+        x: 0; y: 0; height: 16px * zm; spacing: 5px * zm; alignment: start;
+        Text { text: root.f.caption; color: PanelStyle.caption; font-size: 11.5px * zm; font-weight: 500; letter-spacing: -0.02 * 11.5px * zm; vertical-alignment: center; }
+        Text { text: root.f.readout; color: root.f.readout-accent ? root.accent : PanelStyle.ink; font-size: 11.5px * zm; font-weight: 650; letter-spacing: -0.04 * 11.5px * zm; vertical-alignment: center; }
+    }
+    Rectangle {
+        y: root.f.well-y; height: root.height - root.f.well-y;
+        border-radius: root.f.well ? 4px * zm : 0;
+        background: root.f.well ? @linear-gradient(180deg, #212125 0%, #18191d 100%) : transparent;
+        clip: root.f.well;
+        accessible-role: groupbox; accessible-label: root.f.caption; accessible-value: root.f.readout;
+        for p in root.f.paths: Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: p.commands; stroke: p.stroke; stroke-width: p.width; fill: p.fill;
+            stroke-line-join: round; stroke-line-cap: round;
+        }
+        for t in root.f.texts: Text {
+            x: t.x; y: t.y; width: t.w; height: t.h;
+            text: t.text; color: t.color; font-size: t.size; font-weight: t.weight; letter-spacing: -0.04 * t.size;
+            horizontal-alignment: t.align == 0 ? TextHorizontalAlignment.left : t.align == 1 ? TextHorizontalAlignment.center : TextHorizontalAlignment.right;
+            vertical-alignment: center;
+        }
+        for g in root.f.grips: Rectangle {
+            x: g.x; y: g.y - 8px * zm; height: 16px * zm; width: grip-row.preferred-width;
+            border-radius: self.height / 2; background: g.hot ? PanelStyle.pill-hot : PanelStyle.pill;
+            drop-shadow-blur: 2px; drop-shadow-offset-y: 1px; drop-shadow-color: #00000073;
+            grip-row := HorizontalLayout {
+                padding-left: 8px * zm; padding-right: 8px * zm; spacing: 5px * zm;
+                Path {
+                    width: 7px * zm; height: 7px * zm; y: (16px * zm - 7px * zm) / 2;
+                    viewbox-width: 7; viewbox-height: 7; fill: #ffffff66; stroke-width: 0;
+                    commands: "M0.6 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0";
+                }
+                Text { text: g.label; color: #ffffff8c; font-size: 11px * zm; font-weight: 500; vertical-alignment: center; }
+                Text { text: g.value; color: PanelStyle.ink; font-size: 11px * zm; font-weight: 650; letter-spacing: -0.04 * 11px * zm; vertical-alignment: center; }
+            }
+        }
+        for z in root.f.zones: ZoneDrag { x: z.x; y: z.y; width: z.w; height: z.h; device: root.device; zone: z; }
+        // pointer: Rust hit-tests the well (non-linear handles, src/panel_graph.rs); a press
+        // focuses the canvas so window shortcuts (undo, Escape) keep working after a gesture.
+        if root.f.pointer: TouchArea {
+            mouse-cursor: root.mouse-cursor;
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { keys.focus(); Studio.panel-graph(root.device, 0, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
+                if (e.kind == PointerEventKind.move) { Studio.panel-graph(root.device, self.pressed ? 1 : 4, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, false); }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-graph(root.device, 2, self.mouse-x / 1px, self.mouse-y / 1px, false, false); }
+                if (e.kind == PointerEventKind.cancel) { Studio.panel-graph(root.device, 3, 0, 0, false, false); }
+            }
+            changed has-hover => { if (!self.has-hover && !self.pressed) { Studio.panel-graph(root.device, 5, 0, 0, false, false); } }
+        }
+    }
+    // interactive: an editor (src/device_editors.rs) gets every pointer event over the canvas,
+    // with window coordinates for its menus; a press focuses the canvas for Escape and shortcuts.
+    if root.f.interactive: TouchArea {
+        mouse-cursor: root.mouse-cursor;
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
                 keys.focus();
@@ -343,55 +406,6 @@ component CanvasInput inherits Rectangle {
             if (!self.has-hover) { Studio.panel-canvas(root.device, 8, 0, 0, 0, 0, false, false, 0); }
         }
     }
-}
-
-// Device field (View::Custom): optional caption + readout above a recessed well, then
-// path layers, texts, grip pills and drag zones, all computed in Rust.
-component DeviceCanvas inherits Rectangle {
-    in property <int> device;
-    in property <PanelCanvas> f;
-    in property <color> accent;
-    property <float> zm: PanelStyle.z;
-    if root.f.well: HorizontalLayout {
-        x: 0; y: 0; height: 16px * zm; spacing: 5px * zm; alignment: start;
-        Text { text: root.f.caption; color: PanelStyle.caption; font-size: 11.5px * zm; font-weight: 500; letter-spacing: -0.02 * 11.5px * zm; vertical-alignment: center; }
-        Text { text: root.f.readout; color: PanelStyle.ink; font-size: 11.5px * zm; font-weight: 650; letter-spacing: -0.04 * 11.5px * zm; vertical-alignment: center; }
-    }
-    Rectangle {
-        y: root.f.well-y; height: root.height - root.f.well-y;
-        border-radius: root.f.well ? 4px * zm : 0;
-        background: root.f.well ? @linear-gradient(180deg, #212125 0%, #18191d 100%) : transparent;
-        clip: root.f.well;
-        accessible-role: groupbox; accessible-label: root.f.caption; accessible-value: root.f.readout;
-        for p in root.f.paths: Path {
-            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
-            commands: p.commands; stroke: p.stroke; stroke-width: p.width; fill: p.fill;
-            stroke-line-join: round; stroke-line-cap: round;
-        }
-        for t in root.f.texts: Text {
-            x: t.x; y: t.y; width: t.w; height: t.h;
-            text: t.text; color: t.color; font-size: t.size; font-weight: t.weight; letter-spacing: -0.04 * t.size;
-            horizontal-alignment: t.align == 0 ? TextHorizontalAlignment.left : t.align == 1 ? TextHorizontalAlignment.center : TextHorizontalAlignment.right;
-            vertical-alignment: center;
-        }
-        for g in root.f.grips: Rectangle {
-            x: g.x; y: g.y - 8px * zm; height: 16px * zm; width: grip-row.preferred-width;
-            border-radius: self.height / 2; background: PanelStyle.pill;
-            drop-shadow-blur: 2px; drop-shadow-offset-y: 1px; drop-shadow-color: #00000073;
-            grip-row := HorizontalLayout {
-                padding-left: 8px * zm; padding-right: 8px * zm; spacing: 5px * zm;
-                Path {
-                    width: 7px * zm; height: 7px * zm; y: (16px * zm - 7px * zm) / 2;
-                    viewbox-width: 7; viewbox-height: 7; fill: #ffffff66; stroke-width: 0;
-                    commands: "M0.6 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0";
-                }
-                Text { text: g.label; color: #ffffff8c; font-size: 11px * zm; font-weight: 500; vertical-alignment: center; }
-                Text { text: g.value; color: PanelStyle.ink; font-size: 11px * zm; font-weight: 650; letter-spacing: -0.04 * 11px * zm; vertical-alignment: center; }
-            }
-        }
-        for z in root.f.zones: ZoneDrag { x: z.x; y: z.y; width: z.w; height: z.h; device: root.device; zone: z; }
-    }
-    if root.f.interactive: CanvasInput { width: root.width; height: root.height; device: root.device; cursor: root.f.cursor; }
 }
 
 // Picker row item: caption + control (segmented choice, menu pill, value box) or a flexible gap.
@@ -718,7 +732,7 @@ export component BuiltinCard inherits Rectangle {
         }
         preset-ta := TouchArea { clicked => { Studio.panel-menu(root.card.id, -2, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
     }
-    for dir[i] in [-1, 1]: Rectangle {
+    for dir[i] in root.narrow ? [] : [-1, 1]: Rectangle {
         x: root.width - (i == 0 ? 102px : 87px) * zm; y: 5px; width: 14px * zm; height: 17px;
         accessible-role: button; accessible-label: i == 0 ? "Previous preset" : "Next preset";
         Icon { x: (parent.width - 10px * zm) / 2; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: i == 0 ? Icons.chevron-left : Icons.chevron-right; ink: step-ta.has-hover ? #e5e5e8 : #9d9d9f; stroke-width: 1.3px; }

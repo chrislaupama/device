@@ -67,7 +67,11 @@ flowchart LR
      `clusters` of knobs (`Swap` holds alternatives in one cell, such as
      Rate / Rate Sync), `faces` (drawings inside a knob), `shown_when`
      (mode-dependent controls: hidden parameters get no control and no
-     automation entry).
+     automation entry), `fixed_width` (card width in pt; 0 derives it from
+     the dial row and view).
+   - A card narrower than 240 pt hides the preset label and arrows and opens
+     the preset menu from a chevron after the name. `Control::Toggle` on an
+     Off/On choice draws a latch capsule in the dial row.
    - `View::Field` is a plotted well (reference motion / response / sweep
      fields): name a curve model in `crates/saine-app/src/device_fields.rs`
      (traces, fill or band, ticks, caption value, live overlay), the caption,
@@ -77,8 +81,9 @@ flowchart LR
      first readout as an LFO phase (0..1) while the transport plays.
    - Parameter extras: `preset_locked()` (presets never load or save it,
      e.g. a random seed), `reset_on_load()`, `Format::Freq` (reference Hz
-     text) and `Format::SignedPercent`. Tempo-synced LFOs use the
-     `DIVISIONS` / `MOD_NOTES` tables and `synced_hz`.
+     text), `Format::SignedPercent` and `Format::DbCut` (a positive stored
+     cut shown as −x.x dB). Tempo-synced LFOs use the `DIVISIONS` /
+     `MOD_NOTES` tables and `synced_hz`.
    - Linked writes: when one edit must move other parameters in the same
      undo step (Character Mod's circuit switch resets untouched artifacts),
      add an arm to `builtin::linked_writes`; the panel then commits one
@@ -101,23 +106,33 @@ flowchart LR
    splits a block, the engine keeps each readout's segment value farthest
    from its idle value, so readouts must move away from idle as they grow
    (a peak meter rises from -120 dB, gain reduction falls from 0 dB).
+   A device has at most `kMaxReadouts` (64) readouts. Spectral helpers are in
+   `engine/src/devices/spectral.hpp` (`RealFft`, and `SpectrumTap`: 48 log
+   bands, 20 Hz–20 kHz, a full-scale sine reads 0 dB); `dsp.hpp` has the
+   state-variable filter (`SvfCoeffs`, including `bandpass`). Report look-ahead or block latency from
+   `latency()` so the engine compensates it.
 3. **Custom view (optional).** For bodies the template cannot express, use
    `View::Custom("<name>")`. Bodies that only draw and drag parameters add
    an arm to `custom_body` in `crates/saine-app/src/device_views.rs`
-   (a `PanelCanvas` with paths, texts, grips and drag zones, plus freely
-   placed knobs and buttons). Bodies with their own editing (step grids,
-   curve editors) add an arm to `custom_card` in
-   `crates/saine-app/src/device_editors.rs` and set the canvas's
-   `interactive` flag: `DeviceCanvas` in `ui/device_panel.slint` then
-   sends every press, drag, release, hover, double-click, right-click and
-   wheel back to `panel_canvas`, where hit testing, gestures and menus
-   live. A gesture sends live values to the engine and commits one undo step
-   on release; Escape restores the values from before it. Set
-   `Layout::fixed_width` for a card that the dial row does not size. The
-   Trance Gate and the Shaper are the interactive examples.
+   (a `PanelCanvas` with paths, texts, grips and linear drag zones, plus
+   freely placed knobs and buttons). When handles need non-linear mapping or
+   hit-testing (several handles on one well, a live spectrum), set
+   `pointer: true` and handle `Studio.panel-graph` in Rust, as the
+   restoration devices do (`crates/saine-app/src/panel_graph.rs`: hit zones,
+   spectrum ballistics from the readouts, one undo step per gesture). Full
+   editors with their own gestures and menus (step grids, curve editors) add
+   an arm to `custom_card` in `crates/saine-app/src/device_editors.rs` and
+   set `interactive: true`: `DeviceCanvas` then sends every press, drag,
+   release, hover, double-click, right-click and wheel over the canvas to
+   `panel_canvas`, with window coordinates for menus. A gesture sends live
+   values to the engine and commits one undo step on release; Escape
+   restores the values from before it. Set `Layout::fixed_width` for a card
+   that the dial row does not size. The Trance Gate and the Shaper are the
+   editor examples.
    - A kernel whose latency depends on its parameters overrides
      `BuiltinProcessor::latency_for` (main thread; the Shaper reports its
-     pitch-shift latency only while that lane is on).
+     pitch-shift latency only while that lane is on) and returns false from
+     `BuiltinProcessor::automatable` for the parameters that set it.
 4. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),
@@ -134,8 +149,9 @@ flowchart LR
 5. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
    (`saine_device_bench`, Release build) and put the numbers in the PR.
 6. **Render.** `--state reference-<id>` shows any built-in device at its
-   defaults; render it with `--offscreen --screenshot <png>` (no window is
-   shown) and compare it with the reference capture.
+   defaults. Render it with `--offscreen --screenshot <png>` (a hidden
+   window, so it does not take over the screen) and compare it with the
+   reference capture.
 
 ## Commands
 

@@ -30,6 +30,10 @@ mod bitcrusher;
 pub mod character_mod;
 mod chorus;
 mod compressor;
+mod declipper;
+mod deesser;
+mod dehummer;
+mod denoiser;
 mod distortion;
 mod flanger;
 mod phaser;
@@ -41,6 +45,7 @@ pub mod trance_gate;
 mod tremolo;
 mod utility;
 mod widener;
+pub mod synth_v2;
 
 pub use bitcrusher::crush_picture;
 pub use distortion::distortion_transfer;
@@ -69,6 +74,9 @@ pub const LINEAR: Taper = Taper::Linear { skew: 1.0 };
 pub enum Format {
     /// Signed decibels, one decimal: "−24.0 dB", "+3.0 dB".
     Db,
+    /// A cut stored as a positive amount, shown as a negative level: 8 -> "−8.0 dB".
+    /// Typed text may carry either sign.
+    DbCut,
     /// Milliseconds, whole numbers when the range spans 20 ms or more ("10 ms", "1500 ms"), else one decimal.
     Time,
     /// Hertz: "4.0 kHz" from 999.5 Hz, "440 Hz" from 10 Hz, one decimal from 1 Hz, else two.
@@ -98,6 +106,18 @@ pub enum Format {
     /// Number with this many decimals and the unit appended when not empty
     /// (a multiplier unit "x" attaches without a space: "8.0x").
     Plain(u8),
+    /// A 0..1 value shown as a percent: "30%", "12.5%".
+    Fraction,
+    /// A -1..1 value shown as a signed percent: "+25%", "−10%", "0%".
+    SignedFraction,
+    /// Seconds, shown in ms below one second ("4.0 ms", "900 ms") and in s above ("1.20 s").
+    Seconds,
+    /// Hertz with three significant digits: "0.18 Hz", "10.0 Hz", "440 Hz", "2.40 kHz", "13.5 kHz".
+    Hz3,
+    /// Signed semitones with one decimal: "+12.0 st", "−3.5 st".
+    Semitones,
+    /// Signed whole cents: "+7 ct", "0 ct", "−12 ct".
+    Cents,
 }
 
 /// One parameter of a built-in device.
@@ -228,8 +248,9 @@ impl ParamDef {
             return None;
         }
         if self.is_discrete() {
-            let lower = t.to_lowercase();
-            if let Some(i) = self.choices.iter().position(|c| c.to_lowercase() == lower) {
+            let norm = |s: &str| s.to_lowercase().replace('\u{2212}', "-");
+            let lower = norm(t);
+            if let Some(i) = self.choices.iter().position(|c| norm(c) == lower) {
                 return Some(i as f32);
             }
         }
@@ -250,14 +271,24 @@ impl ParamDef {
             (_, "") => {}
             (Format::Time, "s" | "sec" | "secs" | "second" | "seconds") => v *= 1000.0,
             (Format::Time, "ms" | "msec" | "msecs") => {}
-            (Format::Hz | Format::Freq, "k" | "khz") => v *= 1000.0,
-            (Format::Hz | Format::Freq, "hz") => {}
-            (Format::Db | Format::DbNoPlus | Format::DbOrInf, "db") | (Format::Percent | Format::Percent0 | Format::SignedPercent, "%") | (Format::Factor, "x") => {}
+            (Format::Hz | Format::Freq | Format::Hz3, "k" | "khz") => v *= 1000.0,
+            (Format::Hz | Format::Freq | Format::Hz3, "hz") => {}
+            (Format::Db | Format::DbNoPlus | Format::DbOrInf | Format::DbCut, "db") | (Format::Percent | Format::Percent0 | Format::SignedPercent, "%") | (Format::Factor, "x") => {}
+            (Format::Fraction | Format::SignedFraction, "%" | "percent") => {}
+            (Format::Seconds, "s" | "sec" | "secs" | "second" | "seconds") => {}
+            (Format::Seconds, "ms" | "msec" | "msecs") => v /= 1000.0,
+            (Format::Semitones, "st" | "semitones") | (Format::Cents, "ct" | "cents") => {}
             (Format::Plain(_), u) if u == self.unit.to_lowercase() => {}
             _ => return None,
         }
+        if matches!(self.format, Format::Fraction | Format::SignedFraction) {
+            v /= 100.0;
+        }
         if !v.is_finite() {
             return None;
+        }
+        if self.format == Format::DbCut {
+            v = v.abs();
         }
         Some(self.snap(v))
     }
@@ -273,6 +304,10 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
             let a = (v.abs() * 10.0).round() / 10.0;
             let sign = if v <= -0.05 { MINUS } else { '+' };
             format!("{sign}{a:.1} dB")
+        }
+        Format::DbCut => {
+            let a = (v.abs() * 10.0).round() / 10.0;
+            if a < 0.05 { "0.0 dB".into() } else { format!("{MINUS}{a:.1} dB") }
         }
         Format::Time => {
             let d = if range < 20.0 { 1 } else { 0 };
@@ -333,6 +368,44 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
                 "x" => format!("{s}x"),
                 _ => format!("{s} {unit}"),
             }
+        }
+        Format::Fraction => format_value(Format::Percent, v * 100.0, unit, choices, range),
+        Format::SignedFraction => {
+            let r = (v * 1000.0).round() / 10.0;
+            let body = if r.fract() == 0.0 { format!("{:.0}%", r.abs()) } else { format!("{:.1}%", r.abs()) };
+            if r == 0.0 { body } else if r < 0.0 { format!("{MINUS}{body}") } else { format!("+{body}") }
+        }
+        Format::Seconds => {
+            if v < 1.0 {
+                let ms = v * 1000.0;
+                if ms < 99.95 { format!("{ms:.1} ms") } else { format!("{ms:.0} ms") }
+            } else if v < 9.995 {
+                format!("{v:.2} s")
+            } else {
+                format!("{v:.1} s")
+            }
+        }
+        Format::Hz3 => {
+            if v >= 9999.5 {
+                format!("{:.1} kHz", v / 1000.0)
+            } else if v >= 999.5 {
+                format!("{:.2} kHz", v / 1000.0)
+            } else if v >= 99.95 {
+                format!("{v:.0} Hz")
+            } else if v >= 9.995 {
+                format!("{v:.1} Hz")
+            } else {
+                format!("{v:.2} Hz")
+            }
+        }
+        Format::Semitones => {
+            let a = (v.abs() * 10.0).round() / 10.0;
+            let sign = if a == 0.0 { "" } else if v < 0.0 { "\u{2212}" } else { "+" };
+            format!("{sign}{a:.1} st")
+        }
+        Format::Cents => {
+            let r = v.round();
+            if r == 0.0 { "0 ct".into() } else if r < 0.0 { format!("{MINUS}{} ct", -r) } else { format!("+{r} ct") }
         }
     }
 }
@@ -535,7 +608,7 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 16] = [
+    static ALL: [&DeviceDef; 21] = [
         &compressor::COMPRESSOR,
         &distortion::DISTORTION,
         &tape_saturation::TAPE_SATURATION,
@@ -550,6 +623,11 @@ pub fn all() -> &'static [&'static DeviceDef] {
         &tremolo::TREMOLO,
         &autopanner::AUTOPANNER,
         &ring_mod::RING_MOD,
+        &synth_v2::SYNTH_V2,
+        &declipper::DECLIPPER,
+        &deesser::DEESSER,
+        &dehummer::DEHUMMER,
+        &denoiser::DENOISER,
         &trance_gate::TRANCE_GATE,
         &shaper::SHAPER,
     ];
@@ -922,6 +1000,68 @@ mod tests {
     #[test]
     fn width_follows_clusters() {
         assert_eq!(comp().layout.width(), 521.0, "reference: [2,5] clusters -> 505 + 16");
+    }
+
+    #[test]
+    fn restoration_formats_match_the_reference_cards() {
+        let deesser = find("deesser").unwrap();
+        assert_eq!(deesser.param("frequency").unwrap().format(7000.0), "7.00 kHz");
+        assert_eq!(deesser.param("bandwidth").unwrap().format(1.0), "1.00");
+        let red = deesser.param("reduction").unwrap();
+        assert_eq!(red.format(8.0), "\u{2212}8.0 dB");
+        assert_eq!(red.format(0.0), "0.0 dB");
+        assert_eq!(red.parse("-12 dB"), Some(12.0));
+        assert_eq!(red.parse("6"), Some(6.0));
+        assert_eq!(red.parse("\u{2212}40"), Some(30.0), "clamped");
+        assert_eq!(deesser.param("listen").unwrap().format(0.0), "Off");
+        assert!(deesser.param("listen").unwrap().reset_on_load);
+        let hum = find("dehummer").unwrap();
+        assert_eq!(hum.param("frequency").unwrap().format(60.0), "60.0 Hz");
+        assert_eq!(hum.param("num_harmonics").unwrap().format(4.0), "4");
+        assert_eq!(hum.param("num_harmonics").unwrap().snap(4.4), 4.0);
+        assert_eq!(hum.param("notch_width").unwrap().format(5.0), "5.0");
+        assert_eq!(hum.param("depth").unwrap().format(-30.0), "\u{2212}30.0 dB");
+        let noise = find("denoiser").unwrap();
+        assert_eq!(noise.param("frequency_smoothing").unwrap().label, "Smoothing");
+        assert_eq!(noise.param("attack").unwrap().format(5.0), "5.0 ms");
+        assert_eq!(noise.param("release").unwrap().format(50.0), "50 ms");
+        assert_eq!(noise.param("attack").unwrap().parse("12 ms"), Some(12.0));
+        let clip = find("declipper").unwrap();
+        assert_eq!(clip.param("oversampling").unwrap().format(1.0), "4x");
+        assert_eq!(clip.param("threshold").unwrap().format(-1.0), "\u{2212}1.0 dB");
+    }
+
+    #[test]
+    fn restoration_defaults_match_the_reference_normalised_values() {
+        // Normalised defaults read from the reference's live control inventory.
+        let cases: &[(&str, &str, f32)] = &[
+            ("deesser", "frequency", 0.602_451_6),
+            ("deesser", "bandwidth", 0.230_769_2),
+            ("deesser", "threshold", 0.1),
+            ("deesser", "reduction", 0.266_666_7),
+            ("dehummer", "frequency", 0.666_666_7),
+            ("dehummer", "num_harmonics", 0.428_571_4),
+            ("dehummer", "notch_width", 0.473_684_2),
+            ("dehummer", "depth", 0.5),
+            ("denoiser", "threshold", 0.5),
+            ("denoiser", "reduction", 0.666_666_7),
+            ("denoiser", "attack", 0.629_488_3),
+            ("denoiser", "release", 0.629_488_3),
+            ("declipper", "threshold", 0.833_333_3),
+            ("declipper", "ceiling", 0.95),
+        ];
+        for (dev, id, n) in cases {
+            let p = find(dev).unwrap().param(id).unwrap();
+            assert!((p.to_normalized(p.default) - n).abs() < 1e-5, "{dev}.{id}: {} vs {n}", p.to_normalized(p.default));
+        }
+    }
+
+    #[test]
+    fn restoration_card_widths() {
+        assert_eq!(find("declipper").unwrap().layout.width(), 244.0);
+        assert_eq!(find("deesser").unwrap().layout.width(), 471.0);
+        assert_eq!(find("dehummer").unwrap().layout.width(), 388.0);
+        assert_eq!(find("denoiser").unwrap().layout.width(), 460.0);
     }
 
     #[test]
