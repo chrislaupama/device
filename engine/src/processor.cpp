@@ -240,7 +240,15 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
     };
     // Plugin targets: events (appended after `n` lane events, then sorted)
     // with the modulated value at every grid point where it changes.
-    const auto plugin_mod_events = [&](uint32_t begin, uint32_t count, uint32_t n) -> uint32_t {
+    // Timeline position of block offset `off` for audio `delay` frames late (loops, seeks).
+    const auto timeline_at = [&](uint32_t delay, uint32_t off) -> int64_t {
+        int64_t at = position;
+        pieces(delay, [&](uint32_t i0, uint32_t i1, int64_t tl0, bool moving) {
+            if (off >= i0 && off < i1) at = moving ? tl0 + static_cast<int64_t>(off - i0) : tl0;
+        });
+        return at;
+    };
+    const auto plugin_mod_events = [&](uint32_t begin, uint32_t count, uint32_t n, uint32_t delay) -> uint32_t {
         ParamEvent* const ev = ctx.param_events();
         static constexpr uint32_t cap = PluginInstance::kMaxParamEvents;
         float* const off = ctx.mod_off(0);
@@ -254,7 +262,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             for (uint32_t k = 0; k < mod_points && n < cap; ++k) {
                 float b0 = base;
                 if (t.lane >= 0) {
-                    const int64_t at = playing ? position + static_cast<int64_t>(k) * SE_MOD_GRID_FRAMES : position;
+                    const int64_t at = timeline_at(delay, k * SE_MOD_GRID_FRAMES);
                     b0 = std::clamp(auto_eval(lane_view(*graph, graph->lanes[static_cast<uint32_t>(t.lane)]), at), 0.0f, 1.0f);
                 }
                 const float v = std::clamp((std::isnan(abs[k]) ? b0 : abs[k]) + off[k], 0.0f, 1.0f);
@@ -265,6 +273,24 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         }
         std::sort(ev, ev + n, [](const ParamEvent& a, const ParamEvent& b) { return a.offset < b.offset; });
         return n;
+    };
+    // Bases of parameters that lost their last route (RenderGraph::mod_restores),
+    // put first so a lane event at offset 0 still wins.
+    const bool restoring = plugins_on && !graph->mod_restores.empty() && !graph->restores_done;
+    const auto add_restores = [&](uint64_t device, uint32_t n) -> uint32_t {
+        if (!restoring) return n;
+        ParamEvent* const ev = ctx.param_events();
+        static constexpr uint32_t cap = PluginInstance::kMaxParamEvents;
+        uint32_t r = 0;
+        for (const RenderGraph::ModRestore& m : graph->mod_restores) r += m.device_id == device ? 1u : 0u;
+        if (r == 0) return n;
+        r = std::min(r, cap);
+        n = std::min(n, cap - r);
+        std::memmove(ev + r, ev, sizeof(ParamEvent) * n);
+        uint32_t k = 0;
+        for (const RenderGraph::ModRestore& m : graph->mod_restores)
+            if (m.device_id == device && k < r) ev[k++] = ParamEvent{0, m.param_id, m.value};
+        return n + r;
     };
 
     float* const tl = ctx.track_l();
@@ -400,7 +426,8 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                                                       iplug->event_scratch(), PluginInstance::kMaxEvents);
             const ModTarget* const im = track.imod_count > 0 ? graph->mod_targets.data() + track.imod_begin : nullptr;
             uint32_t np = track.iplug_lane_count > 0 ? plugin_events(track.iplug_lane_begin, track.iplug_lane_count, 0, im, track.imod_count) : 0;
-            if (track.imod_count > 0) np = plugin_mod_events(track.imod_begin, track.imod_count, np);
+            if (track.imod_count > 0) np = plugin_mod_events(track.imod_begin, track.imod_count, np, 0);
+            np = add_restores(track.instrument_device_id, np);
             iplug->run(pl, pr, frames, iplug->event_scratch(), ne, *inst.transport, ctx.param_events(), np);
             if (track.audible) {
                 if (any) {
@@ -467,8 +494,10 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                         if (BuiltinInstance* b = slot->inst->as_builtin())
                             bind_builtin(b, slot->mod_begin, slot->mod_count);
                         else
-                            np = plugin_mod_events(slot->mod_begin, slot->mod_count, np);
+                            np = plugin_mod_events(slot->mod_begin, slot->mod_count, np,
+                                                   lines != nullptr ? slot->auto_delay : 0);
                     }
+                    np = add_restores(slot->device_id, np);
                     slot->inst->run(tl, tr, frames, nullptr, 0, *inst.transport, ctx.param_events(), np);
                     if (bypass != nullptr) bypass->discard(frames, gen);
                 } else if (bypass != nullptr) {
@@ -534,6 +563,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         }
     }
 
+    if (restoring) graph->restores_done = true;
     if (graph->master_vol_lane >= 0) {
         float* const gm = ctx.auto_a();
         fill_lane(graph->lanes[graph->master_vol_lane], lines != nullptr ? graph->pdc.total : 0, auto_db_to_gain, gm);

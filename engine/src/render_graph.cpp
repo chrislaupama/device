@@ -474,6 +474,7 @@ int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lo
             g->fx.push_back(slot);
         }
         node.has_instrument_plugin = node.instrument && td.instrument_plugin != nullptr;
+        if (node.has_instrument_plugin) node.instrument_device_id = td.instrument_plugin->device_id;
         node.instrument_plugin_enabled = node.has_instrument_plugin && td.instrument_plugin->enabled != 0;
         if (node.fx_count > 0 || node.has_instrument_plugin) g->has_plugins = true;
 
@@ -539,7 +540,10 @@ int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lo
                 uint32_t count = 0, rc = 0;
                 uint64_t sc = 0;
                 parse_builtin_state(dd.state, dd.state_len, values, count, sc, routes, rc); // validated above
-                if (rc == 0) continue;
+                if (rc == 0) {
+                    const BuiltinDescriptor* const bd = dd.plugin_id != nullptr ? find_builtin(dd.plugin_id) : nullptr;
+                    if (bd == nullptr || !bd->mod_source) continue;
+                }
                 const uint32_t src = node.fx_begin + i;
                 g->fx[src].mod_source = true;
                 g->mod_sources.push_back(src);

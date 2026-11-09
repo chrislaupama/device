@@ -55,6 +55,8 @@ export struct TreeRow { depth: int, label: string, count: string, icon: int, exp
 export struct PanelKnob {
     param: int, x: length, label: string, value: string, norm: float, bipolar: bool, face: int, face-curve: string, face-bend: string, face-unity: string,
     y: length, mod-on: bool, mod-lo: float, mod-hi: float, mod-now: float, mod-color: color, selected: bool, mapped: bool,
+    // Text the value editor starts with (empty = value).
+    edit: string,
 }
 // One modulation link in a source's target list (LFO targets, macro targets).
 export struct ModTarget { index: int, name: string, amount: string }

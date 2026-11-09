@@ -71,7 +71,9 @@ pub struct ModUi {
     /// Plugin parameter lists by device (filled on first use, dropped on change).
     pub plugin_params: std::cell::RefCell<HashMap<DeviceId, Vec<saine_engine::PluginParamInfo>>>,
     /// Plugin knob drag: (device, param id, start, value, active, travel).
-    plugin_drag: Option<(DeviceId, u32, f32, f32, bool, f32)>,
+    plugin_drag: Option<(DeviceId, u32, f32, f32, bool, f32, f32)>,
+    /// A project was just opened: restore the saved modulation bases after the next publish.
+    pub(crate) bases_pending: bool,
 }
 
 fn s(v: impl Into<SharedString>) -> SharedString {
@@ -360,15 +362,25 @@ impl Controller {
 
     /// Body of a third-party plugin card: the controls the user added, then
     /// every parameter a source or automation moves, three rows per page.
-    pub(crate) fn plugin_body(&self, d: &Device, card: &mut DeviceCard) {
-        let Some(t) = self.track_of(d.id) else { return };
-        let infos = self.plugin_params_of(d.id);
+    /// Parameters on a plugin card: the ones the user added, then every one a
+    /// source or automation moves.
+    fn plugin_card_ids(&self, d: &Device) -> Vec<u32> {
+        let Some(t) = self.track_of(d.id) else { return Vec::new() };
         let moved = |id: u32| {
             !modu::sources_of(t, d.id, &ModParam::Plugin(id)).is_empty()
                 || t.automation.iter().any(|l| matches!(&l.target, saine_core::AutomationTarget::Plugin { device, param, .. } if *device == d.id && *param == id))
         };
         let mut ids: Vec<u32> = d.card_params.clone();
-        ids.extend(infos.iter().filter(|p| !d.card_params.contains(&p.id) && moved(p.id)).map(|p| p.id));
+        ids.extend(self.plugin_params_of(d.id).iter().filter(|p| !d.card_params.contains(&p.id) && moved(p.id)).map(|p| p.id));
+        ids
+    }
+
+    pub(crate) fn plugin_body(&self, d: &Device, card: &mut DeviceCard) {
+        if self.track_of(d.id).is_none() {
+            return;
+        }
+        let infos = self.plugin_params_of(d.id);
+        let ids = self.plugin_card_ids(d);
         let per = CARD_COLS * CARD_ROWS;
         let pages = ids.len().div_ceil(per).max(1);
         let page = self.devices.modu.pages.get(&d.id).copied().unwrap_or(0).min(pages - 1);
@@ -380,7 +392,7 @@ impl Controller {
             .map(|(i, id)| {
                 let info = infos.iter().find(|p| p.id == *id);
                 let norm = match self.devices.modu.plugin_drag {
-                    Some((dev, pid, _, v, _, _)) if dev == d.id && pid == *id => v,
+                    Some((dev, pid, _, v, _, _, _)) if dev == d.id && pid == *id => v,
                     _ => self.engine.mod_base(d.id.0, *id).or_else(|| self.engine.plugin_param_value(d.id, *id)).unwrap_or(0.0),
                 };
                 PanelKnob {
@@ -389,6 +401,8 @@ impl Controller {
                     y: (40.0 + (i / CARD_COLS) as f32 * 76.0) * Z,
                     label: s(info.map_or_else(|| format!("Parameter {id}"), |p| p.name.clone())),
                     value: s(self.engine.plugin_param_text(d.id, *id, norm).unwrap_or_else(|| pct(norm))),
+                    // The value editor takes a percentage of the range (card_text).
+                    edit: s(pct(norm)),
                     norm,
                     // 2 = on/off switch (two states), 3 = menu (more steps).
                     face: match info.map_or(0, |p| p.steps) {
@@ -578,10 +592,18 @@ impl Controller {
             let d = &t.devices[from];
             let at = order.iter().position(|x| *x == id).expect("placed");
             let prev = at.checked_sub(1).and_then(|p| t.devices.iter().find(|x| x.id == order[p]));
-            let join = prev.and_then(|p| if modu::is_rack(p) { (!p.collapsed).then_some(p.id) } else { p.chain.filter(|h| t.devices.iter().any(|x| x.id == *h)) });
+            // A collapsed or folded chain hides its members: a drop next to them stays outside.
+            let open = |h: DeviceId| t.devices.iter().any(|x| x.id == h && !x.collapsed && !x.folded);
+            let join = prev.and_then(|p| if modu::is_rack(p) { Some(p.id) } else { p.chain }).filter(|h| open(*h));
             let join = join.filter(|_| modu::outputs(d) == 0);
+            // Leave before the moves and join after them, so Undo replays a valid order.
             if join != d.chain {
-                commands.push(Command::SetDeviceChain { device: id, chain: join });
+                if d.chain.is_some() {
+                    commands.insert(0, Command::SetDeviceChain { device: id, chain: None });
+                }
+                if join.is_some() {
+                    commands.push(Command::SetDeviceChain { device: id, chain: join });
+                }
             }
         }
         let unchanged = order.iter().zip(&t.devices).all(|(a, b)| *a == b.id) && commands.iter().all(|c| matches!(c, Command::MoveDevice { .. }));
@@ -597,7 +619,7 @@ impl Controller {
         let d = self.project().device(device)?;
         match builtin::def_of(d) {
             Some(def) => def.params.get(usize::try_from(param).ok()?).filter(|p| p.automatable).map(|p| ModParam::Builtin(p.id.to_string())),
-            None => u32::try_from(param).ok().map(ModParam::Plugin),
+            None => Some(ModParam::Plugin(param as u32)),
         }
     }
 
@@ -1016,8 +1038,9 @@ impl Controller {
     }
 
     pub fn card_page(&mut self, device: DeviceId, dir: i32) {
+        let pages = self.project().device(device).map_or(0, |d| self.plugin_card_ids(d).len()).div_ceil(CARD_COLS * CARD_ROWS).max(1);
         let p = self.devices.modu.pages.entry(device).or_insert(0);
-        *p = (*p as i32 + dir).max(0) as usize;
+        *p = ((*p as i32 + dir).max(0) as usize).min(pages - 1);
         self.ui_dirty = true;
     }
 
@@ -1031,7 +1054,7 @@ impl Controller {
         match phase {
             0 => {
                 let v = self.plugin_now(device, id);
-                self.devices.modu.plugin_drag = Some((device, id, v, v, false, 0.0));
+                self.devices.modu.plugin_drag = Some((device, id, v, v, false, 0.0, v));
             }
             1 => {
                 let steps = self.plugin_param_info(device, id).map_or(0, |p| p.steps);
@@ -1043,7 +1066,8 @@ impl Controller {
                     return;
                 }
                 g.4 = true;
-                let mut v = (g.3 + dy * rate * if fine { 0.2 } else { 1.0 }).clamp(0.0, 1.0);
+                g.6 = (g.6 + dy * rate * if fine { 0.2 } else { 1.0 }).clamp(0.0, 1.0);
+                let mut v = g.6;
                 if steps > 0 {
                     v = (v * steps as f32).round() / steps as f32;
                 }
@@ -1085,6 +1109,15 @@ impl Controller {
         let _ = self.engine.plugin_set_param(device.0, id, k as f32 / steps as f32);
     }
 
+    /// Arrow keys on a plugin control: one step, or 1% of the range (0.2% fine).
+    pub(crate) fn card_step(&mut self, device: DeviceId, id: u32, delta: i32, fine: bool) {
+        let steps = self.plugin_param_info(device, id).map_or(0, |p| p.steps);
+        let unit = if steps > 0 { 1.0 / steps as f32 } else if fine { 0.002 } else { 0.01 };
+        let v = (self.plugin_now(device, id) + delta as f32 * unit).clamp(0.0, 1.0);
+        let _ = self.engine.plugin_set_param(device.0, id, if steps > 0 { (v * steps as f32).round() / steps as f32 } else { v });
+        self.ui_dirty = true;
+    }
+
     /// Typed plugin value: a percentage of the range.
     pub(crate) fn card_text(&mut self, device: DeviceId, id: u32, text: &str) {
         match text.trim().trim_end_matches('%').trim().parse::<f32>() {
@@ -1093,6 +1126,41 @@ impl Controller {
                 self.ui_dirty = true;
             }
             _ => self.set_status(format!("Can't read “{}” (type a percentage)", text.trim()), 3),
+        }
+    }
+
+    /// (plugin device, [(parameter, base)]) of every modulated plugin parameter, for saving.
+    pub(crate) fn mod_bases_now(&self) -> Vec<(DeviceId, Vec<(u32, f32)>)> {
+        let mut out: Vec<(DeviceId, Vec<(u32, f32)>)> = Vec::new();
+        for t in &self.project().tracks {
+            for l in t.devices.iter().flat_map(|s| s.links.iter()) {
+                let ModParam::Plugin(p) = l.param else { continue };
+                let Some(b) = self.engine.mod_base(l.target.0, p) else { continue };
+                match out.iter_mut().find(|(d, _)| *d == l.target) {
+                    Some((_, v)) if !v.iter().any(|(q, _)| *q == p) => v.push((p, b)),
+                    Some(_) => {}
+                    None => out.push((l.target, vec![(p, b)])),
+                }
+            }
+        }
+        out
+    }
+
+    /// After a project opens: the saved plugin state holds the moving value,
+    /// so put back each modulated parameter's saved base (once per open).
+    pub(crate) fn restore_mod_bases(&mut self) {
+        if !std::mem::take(&mut self.devices.modu.bases_pending) {
+            return;
+        }
+        let bases: Vec<(DeviceId, u32, f32)> = self
+            .project()
+            .tracks
+            .iter()
+            .flat_map(|t| t.devices.iter().chain(t.instrument_plugin.iter()))
+            .flat_map(|d| d.mod_bases.iter().map(move |(p, b)| (d.id, *p, *b)))
+            .collect();
+        for (d, p, b) in bases {
+            let _ = self.engine.plugin_set_param(d.0, p, b);
         }
     }
 

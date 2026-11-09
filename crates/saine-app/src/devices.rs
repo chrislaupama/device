@@ -780,6 +780,7 @@ impl Controller {
                         self.add_item_to_track(&d.item, t, None);
                     }
                     Some(DropTarget::Chain { track, index }) => {
+                        let index = index.map(|i| self.chain_device_index(i, None));
                         self.add_item_to_track(&d.item, track, index);
                     }
                     None => {}
@@ -898,6 +899,17 @@ impl Controller {
         cards.iter().filter(|(_, c)| !c.instrument && Some(DeviceId(c.id as u64)) != moving).filter(|(x, c)| x + c.width / 2.0 < cx).count()
     }
 
+    /// Device position (in the chain without `moving`) of insert index
+    /// `visible`: before the card the marker stands at, so the hidden members
+    /// of a collapsed or folded chain stay with their head.
+    fn chain_device_index(&self, visible: usize, moving: Option<DeviceId>) -> usize {
+        let (cards, _, _) = self.chain_layout_unscrolled();
+        let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else { return visible };
+        let order: Vec<DeviceId> = t.devices.iter().map(|d| d.id).filter(|id| Some(*id) != moving).collect();
+        let anchor = cards.iter().map(|(_, c)| c).filter(|c| !c.instrument && Some(DeviceId(c.id as u64)) != moving).nth(visible).map(|c| DeviceId(c.id as u64));
+        anchor.and_then(|a| order.iter().position(|x| *x == a)).unwrap_or(order.len())
+    }
+
     /// Marker x (bottom-panel relative, scrolled) for an insert index.
     fn chain_marker_x(&self, index: usize, moving: Option<DeviceId>) -> f32 {
         let (cards, add_x, synth) = self.chain_layout_unscrolled();
@@ -999,7 +1011,7 @@ impl Controller {
                 let (cards, _, _) = self.chain_layout_unscrolled();
                 let Some((x0, c)) = cards.iter().find(|(_, c)| c.id as u64 == d.id.0) else { return };
                 let centre = x0 - self.devices.chain_scroll + (d.cur_x - d.start_x) + c.width / 2.0;
-                let index = self.chain_insert_index(centre, Some(d.id));
+                let index = self.chain_device_index(self.chain_insert_index(centre, Some(d.id)), Some(d.id));
                 self.move_in_chain(d.id, track, from, index);
             }
         }

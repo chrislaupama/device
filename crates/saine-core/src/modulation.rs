@@ -66,6 +66,11 @@ pub fn head_of(devices: &[Device], i: usize) -> Option<usize> {
     members(devices, h).contains(&i).then_some(h)
 }
 
+/// Whether `target` is a member of the chain headed by `head` (by position).
+pub fn is_member(devices: &[Device], head: DeviceId, target: DeviceId) -> bool {
+    devices.iter().position(|d| d.id == target).and_then(|i| head_of(devices, i)).is_some_and(|h| devices[h].id == head)
+}
+
 /// Whether `devices[i]` processes: its own switch and its chain head's.
 pub fn effectively_enabled(devices: &[Device], i: usize) -> bool {
     devices[i].enabled && head_of(devices, i).is_none_or(|h| devices[h].enabled)
@@ -96,7 +101,7 @@ pub fn link_refusal(track: &Track, source: &Device, slot: u8, target: DeviceId, 
     }
     match param {
         ModParam::Builtin(id) => {
-            let def = builtin::def_of(t)?;
+            let Some(def) = builtin::def_of(t) else { return Some(format!("{} has no built-in parameter {id:?}", t.display_name())) };
             if !def.param(id).is_some_and(|p| p.automatable) {
                 return Some(format!("{} has no modulatable parameter {id:?}", def.name));
             }
@@ -104,7 +109,7 @@ pub fn link_refusal(track: &Track, source: &Device, slot: u8, target: DeviceId, 
         ModParam::Plugin(_) if t.plugin.format == PluginFormat::Builtin => return Some("built-in parameters are addressed by id".into()),
         ModParam::Plugin(_) => {}
     }
-    if is_rack(source) && t.chain != Some(source.id) {
+    if is_rack(source) && !is_member(&track.devices, source.id, target) {
         return Some("a macro moves parameters inside its own chain".into());
     }
     if source.links.iter().any(|l| l.slot == slot && l.target == target && l.param == *param) {
@@ -248,7 +253,7 @@ pub fn routes(devices: &[Device], instrument: Option<&Device>, source: &Device) 
         .filter(|l| (l.slot as usize) < outputs(source))
         .filter_map(|l| {
             let t = devices.iter().chain(instrument).find(|d| d.id == l.target && outputs(d) == 0)?;
-            if rack && t.chain != Some(source.id) {
+            if rack && !is_member(devices, source.id, t.id) {
                 return None;
             }
             let mut r = ModRoute { target: t.id, param: 0, plugin: false, slot: l.slot, absolute: rack, min: l.min, max: l.max, p_min: 0.0, p_max: 1.0, p_log: false, p_skew: 1.0, p_step: 0.0 };
@@ -331,6 +336,20 @@ mod tests {
             full.devices[2].links.push(ModLink { slot, target, param: th.clone(), min: 0.0, max: 1.0 });
         }
         assert!(link_refusal(&full, &full.devices[0].clone(), 0, DeviceId(13), &th).unwrap().contains("at most 3"));
+        // A built-in parameter id on a third-party plugin.
+        let mut plug = t.clone();
+        let mut p = Device::new(crate::device::PluginRef { format: PluginFormat::Clap, ..t.devices[1].plugin.clone() });
+        p.id = DeviceId(14);
+        plug.devices.push(p);
+        assert!(link_refusal(&plug, lfo, 0, DeviceId(14), &th).is_some());
+        // A member moved away from its head is outside the chain for macros too.
+        let mut stray = t.clone();
+        let m = stray.devices.remove(3);
+        stray.devices.insert(0, m);
+        assert!(link_refusal(&stray, &stray.devices[3].clone(), 0, DeviceId(13), &th).is_some());
+        let mut rack = stray.devices[3].clone();
+        rack.links.push(ModLink { slot: 0, target: DeviceId(13), param: th.clone(), min: 0.0, max: 1.0 });
+        assert!(routes(&stray.devices, None, &rack).is_empty());
     }
 
     #[test]

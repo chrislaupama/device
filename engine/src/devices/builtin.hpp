@@ -98,6 +98,9 @@ struct BuiltinDescriptor {
     // Default plain values in parameter order (the Rust definition's
     // defaults), for the generic tests and the benchmark; empty = unknown.
     std::span<const float> defaults;
+    // A modulation source (LFO, chain head): it runs every block it is
+    // enabled, with or without routes, so its clock and readouts stay live.
+    bool mod_source = false;
 };
 
 std::span<const BuiltinDescriptor> builtin_registry() noexcept;

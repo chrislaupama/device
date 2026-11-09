@@ -216,6 +216,27 @@ TEST_CASE(macros_set_member_parameters) {
     CHECK_NEAR(db(peak_l(out, 4000, 20000)) - db(0.1 * 0.7071), 0.0, 0.5);
 }
 
+TEST_CASE(an_lfo_without_targets_keeps_running) {
+    EngineHandle e(48000, 256);
+    const uint64_t a = load_asset(e, {sine(48000, 400.0, 48000.0, 0.1), sine(48000, 400.0, 48000.0, 0.1)});
+    std::vector<float> lfo = kLfo;
+    lfo[1] = 0.f; // free, 1 Hz
+    DeviceSession s;
+    auto& t = s.add_track(1, a, 48000);
+    DeviceSession::add_device_state(t, 40, "lfo", state_blob_v2(lfo, {}));
+    REQUIRE(s.publish(e) == SE_OK);
+    REQUIRE(se_transport_play(e) == SE_OK);
+    float ro[3] = {};
+    std::size_t n = 0;
+    render(e, 12000, 256);
+    REQUIRE(se_builtin_readouts(e, 40, ro, 3, &n) == SE_OK);
+    const float first = ro[2];
+    render(e, 12000, 256);
+    REQUIRE(se_builtin_readouts(e, 40, ro, 3, &n) == SE_OK);
+    CHECK(n == 3);
+    CHECK_NEAR(ro[2] - first, 0.25, 0.02); // a quarter cycle later
+}
+
 TEST_CASE(lfo_moves_a_plugin_parameter_and_restores_its_base) {
     const std::string clap_gain = std::string(SAINE_TEST_PLUGIN_DIR) + "/SaineTestGain.clap";
     EngineHandle e(48000, 256);

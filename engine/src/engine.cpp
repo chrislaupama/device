@@ -483,13 +483,15 @@ int32_t Engine::publish(const se_session_desc_v6& desc, std::string& err) {
                     resolve_mods(slot.inst, slot.device_id, slot.mod_begin, slot.mod_count, slot.lane_begin, slot.lane_count);
             }
         }
-        // Parameters that are no longer modulated go back to their base.
+        // Parameters that are no longer modulated go back to their base, on
+        // the audio thread once the new graph runs.
         for (const auto& [key, base] : mod_bases_) {
             if (bases.count(key) != 0) continue;
             PluginInstance* const inst = plugins_.instance(key.first);
             double lo = 0.0, hi = 1.0;
             if (inst != nullptr && inst->as_builtin() == nullptr && inst->param_range(key.second, lo, hi))
-                inst->set_parameter(key.second, lo + static_cast<double>(base->load(std::memory_order_relaxed)) * (hi - lo));
+                built->mod_restores.push_back(
+                    {key.first, key.second, lo + static_cast<double>(base->load(std::memory_order_relaxed)) * (hi - lo)});
         }
         mod_bases_ = std::move(bases);
     }

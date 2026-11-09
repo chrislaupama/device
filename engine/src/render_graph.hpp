@@ -146,6 +146,7 @@ struct TrackNode {
     uint32_t fx_begin = 0;
     uint32_t fx_count = 0;
     bool has_instrument_plugin = false;          // instrument plugin replaces the synth
+    uint64_t instrument_device_id = 0;           // its device id (0 = none)
     bool instrument_plugin_enabled = true;       // false: bypassed (silent)
     PluginInstance* instrument_plugin = nullptr; // null: not loaded (silent)
     // Plugin delay compensation (RenderGraph::pdc; all 0 when inactive).
@@ -218,6 +219,16 @@ struct RenderGraph {
     std::vector<ModRoute> mod_routes;
     std::vector<uint32_t> mod_sources;
     std::vector<std::shared_ptr<std::atomic<float>>> mod_base_refs;
+    // Plugin parameters that lost their last route in this publish: their
+    // base, sent once at offset 0 of the graph's first block (the previous
+    // graph may still have moved them after the main thread's last look).
+    struct ModRestore {
+        uint64_t device_id = 0;
+        uint32_t param_id = 0;
+        double value = 0.0;
+    };
+    std::vector<ModRestore> mod_restores;
+    mutable bool restores_done = false; // written by the audio thread only
     int32_t master_vol_lane = -1;
     bool has_plugin_lanes = false;
     bool has_plugins = false; // any insert or instrument plugin

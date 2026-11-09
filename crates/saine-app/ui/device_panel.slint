@@ -194,7 +194,7 @@ export component KnobCell inherits Rectangle {
         }
         if !root.editing: TouchArea { double-clicked => { root.editing = true; } }
         if root.editing: ValueEditor {
-            x: -6px * zm; width: parent.width + 12px * zm; device: root.device; param: root.k.param; initial: root.k.value; font-size: 11px * zm;
+            x: -6px * zm; width: parent.width + 12px * zm; device: root.device; param: root.k.param; initial: root.k.edit != "" ? root.k.edit : root.k.value; font-size: 11px * zm;
             done => { root.editing = false; }
         }
     }

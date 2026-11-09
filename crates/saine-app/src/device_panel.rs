@@ -847,6 +847,9 @@ impl Controller {
 
     /// Arrow keys: discrete parameters move one choice, continuous ones 1% of the range (0.2% fine).
     pub fn panel_step(&mut self, device: DeviceId, index: i32, delta: i32, fine: bool) {
+        if self.project().device(device).is_some_and(|d| saine_core::builtin::def_of(d).is_none()) {
+            return self.card_step(device, index as u32, delta, fine);
+        }
         self.panel_set(device, index, |p, v| {
             Some(if p.is_discrete() {
                 v + delta as f32

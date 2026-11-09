@@ -99,6 +99,10 @@ pub struct Device {
     /// Third-party plugins: parameter ids shown on the card, in the order added.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub card_params: Vec<u32>,
+    /// Third-party plugins: (parameter id, normalized base) of each modulated
+    /// parameter when saved; `state` holds the moving value instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mod_bases: Vec<(u32, f32)>,
 }
 
 /// The parameter a modulation link moves.
@@ -146,6 +150,7 @@ impl Device {
             folded: false,
             collapsed: false,
             card_params: Vec::new(),
+            mod_bases: Vec::new(),
         }
     }
 
