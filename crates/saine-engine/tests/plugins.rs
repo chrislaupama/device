@@ -120,7 +120,8 @@ fn clap_gain_from_the_model_halves_the_signal_and_survives_undo_and_persist() {
     assert!(!rig.engine.plugin_editor_is_open(dev.id));
 
     // The engine's state of the live instance (default gain 0.5).
-    let states = rig.engine.plugin_states();
+    // (The default instrument track's built-in Synth reports its state too.)
+    let states: Vec<_> = rig.engine.plugin_states().into_iter().filter(|(id, _)| *id == dev.id).collect();
     assert_eq!(states, vec![(dev.id, gain_state(0.5))]);
 
     // Bypass → dry signal bit-exact.
@@ -144,7 +145,7 @@ fn clap_gain_from_the_model_halves_the_signal_and_survives_undo_and_persist() {
     rig.doc.execute(Command::RemoveDevice { device: q.id }, Origin::User).unwrap();
     rig.publish();
     assert_eq!(rig.render_left(4800), dry);
-    assert!(rig.engine.plugin_states().is_empty());
+    assert!(rig.engine.plugin_states().iter().all(|(id, _)| *id != q.id));
     rig.doc.undo().unwrap();
     let restored = rig.doc.project().tracks[0].devices[0].clone();
     assert_eq!(restored.id, q.id);
@@ -154,7 +155,7 @@ fn clap_gain_from_the_model_halves_the_signal_and_survives_undo_and_persist() {
     assert!((out[100] - 0.25 * dry[100]).abs() < 1e-6, "undo restored the state: {}", out[100]);
 
     // plugin_states → sync_device_states → persist → load → new engine.
-    let states = rig.engine.plugin_states();
+    let states: Vec<_> = rig.engine.plugin_states().into_iter().filter(|(id, _)| *id == q.id).collect();
     assert_eq!(states, vec![(q.id, gain_state(0.25))]);
     rig.doc.sync_device_states(&states);
     let proj_dir = dir.path().join("project");
@@ -184,7 +185,7 @@ fn missing_plugin_is_reported_and_passes_through() {
     assert_eq!(errs.len(), 1);
     assert_eq!(errs[0].0, id);
     assert!(errs[0].1.contains("Missing.clap"), "{}", errs[0].1);
-    assert!(rig.engine.plugin_states().is_empty());
+    assert!(rig.engine.plugin_states().iter().all(|(d, _)| *d != id));
     assert!(rig.engine.open_plugin_editor(id).is_err());
 }
 

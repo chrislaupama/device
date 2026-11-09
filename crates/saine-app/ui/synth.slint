@@ -1,59 +1,15 @@
-// Built-in "Synth" device card (bottom panel, Devices tab, instrument tracks).
+// Built-in "Synth" instrument card (bottom panel, Devices tab, instrument
+// tracks): the synth-v2 device. Geometry: the reference capture scaled to the
+// card size (776.5 x 265 pt; the capture's card is 920 x 317.5 pt).
 //
-// Geometry measured from reference/screenshots/32-real-dblclick-instrument-lane.png:
-// the card sits at window (268.5, 543), 776.5 x 265 pt; all coordinates below are
-// card-relative. Every control maps to a real SynthParams field (src/synth.rs);
-// values, readouts and display paths come from Rust (Studio.synth-*), edits leave
-// through Studio callbacks. Icons are ORIGINAL line drawings.
+// The pages are data: src/synth.rs lays out every knob, fader, pill, switch,
+// picture and label of the current page (Studio.synth-*), so this file only
+// draws the element kinds and the custom Modulation / Macros rows. Values,
+// pictures and texts come from Rust; edits leave through Studio callbacks.
+// Icons are ORIGINAL line drawings.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons, Knob } from "widgets.slint";
-import { Studio, MenuItem } from "studio.slint";
-
-// Continuous parameter ids (src/synth.rs `p`).
-export global SP {
-    out property <int> osc1-shape: 0;
-    out property <int> osc1-fine: 1;
-    out property <int> osc1-level: 2;
-    out property <int> cross-fm: 3;
-    out property <int> osc2-shape: 4;
-    out property <int> osc2-fine: 5;
-    out property <int> osc2-level: 6;
-    out property <int> sub-level: 7;
-    out property <int> noise-level: 8;
-    out property <int> cutoff: 9;
-    out property <int> resonance: 10;
-    out property <int> key-track: 11;
-    out property <int> env-amount: 12;
-    out property <int> amp-a: 13;
-    out property <int> flt-a: 17;
-    out property <int> lfo-rate: 21;
-    out property <int> lfo-pitch: 22;
-    out property <int> lfo-cutoff: 23;
-    out property <int> lfo-amp: 24;
-    out property <int> glide: 25;
-    out property <int> unison-detune: 26;
-    out property <int> output: 27;
-    out property <int> polyphony: 28;
-    out property <int> unison: 29;
-}
-// Dropdown ids (src/synth.rs `ch`).
-export global SC {
-    out property <int> osc1-wave: 0;
-    out property <int> osc1-oct: 1;
-    out property <int> osc1-semi: 2;
-    out property <int> osc2-wave: 3;
-    out property <int> filter-mode: 6;
-    out property <int> lfo-wave: 7;
-}
-// Display ids (src/synth.rs `disp`).
-export global SD {
-    out property <int> osc1: 0;
-    out property <int> sub: 2;
-    out property <int> noise: 3;
-    out property <int> filter: 4;
-    out property <int> amp-env: 5;
-    out property <int> lfo: 7;
-}
+import { Studio, MenuItem, SynthKnobItem, SynthFaderItem, SynthSegItem, SynthScopeItem, SynthLatchItem } from "studio.slint";
 
 global SynthStyle {
     out property <color> card: #212227;
@@ -61,65 +17,143 @@ global SynthStyle {
     out property <color> line: #323338;
     out property <color> control: #292a2f;
     out property <color> control-edge: #35363a;
-    out property <color> dim: #818389;          // header icons, preset name, chevrons
-    out property <color> label: #7f8082;        // dropdown prefixes ("Osc 1", "Octave")
-    out property <color> value: #cacacb;        // dropdown values
-    out property <color> category: #63656c;     // unselected category labels
+    out property <color> dim: #818389;
+    out property <color> label: #7f8082;
+    out property <color> value: #cacacb;
+    out property <color> title: #8b8c91;
+    out property <color> category: #63656c;
     out property <color> category-icon: #858588;
-    out property <color> caption: #e5e5e8;      // knob/fader captions
-    out property <length> col: 318px;           // Osc 1 -> Osc 2 column offset
+    out property <color> caption: #e5e5e8;
+    out property <color> ink-on-accent: #16171a;
+    // Source glyphs (index = source - 1: Env 2, Amp Env, LFO 1, LFO 2, Velocity, Key, Mod Wheel, Aftertouch, Random).
+    out property <[string]> glyphs: [
+        "M2 9 L5.5 3 L8.5 6.5 L10 5.5 L14 9",
+        "M2 9 L5 3 L8 6 L11 6 L14 9",
+        "M2 6 C 4 2, 6 2, 8 6 S 12 10, 14 6",
+        "M2 9 L5 3 L8 9 L11 3 L14 9",
+        "M3 10 V7 M6 10 V5 M9 10 V6 M12 10 V3",
+        "M2.5 3.5 H13.5 V10 H2.5 Z M5.5 3.5 V7 M8 3.5 V7 M10.5 3.5 V7",
+        "M4.5 1.5 H11.5 V12 H4.5 Z M4.5 6.5 H11.5",
+        "M8 2 V9 M5 6.5 L8 9.5 L11 6.5 M3 12 H13",
+        "M2 9 H5 V4 H8 V9 H11 V4 H14",
+    ];
+    out property <[color]> source-colors: [#a271b3, #c9708f, #d9c96a, #5fb5a3, #d8875a, #9cbf63, #6b98d8, #7fb0d0, #c8c8cc];
+    out property <[string]> source-names: ["Env 2", "Amp Env", "LFO 1", "LFO 2", "Velocity", "Key", "Mod Wheel", "Aftertouch", "Random"];
 }
 
-// Pill dropdown ("Osc 1  Triangle ⌄", "0 ⌄"). Opens the Rust-owned popup list.
-component Dropdown inherits Rectangle {
+component SourceGlyph inherits Path {
+    in property <int> src;      // 1..9
+    width: 15px; height: 13px;
+    viewbox-x: 0; viewbox-y: 0; viewbox-width: 16; viewbox-height: 13;
+    commands: root.src > 0 ? SynthStyle.glyphs[root.src - 1] : "M0 0";
+    stroke: root.src > 0 ? SynthStyle.source-colors[root.src - 1] : transparent;
+    stroke-width: 1.2px; fill: transparent;
+    stroke-line-cap: round; stroke-line-join: round;
+}
+
+// Pill: optional prefix label, value, chevron; optional power ring (effect tabs) or source glyph.
+component Pill inherits Rectangle {
     in property <string> label;
     in property <string> value;
-    in property <int> choice;          // SC.* id; -1 = presets
-    in property <length> value-x: 7.5px;
+    in property <int> ring: -1;        // -1 none, 0 off, 1 on
+    in property <int> glyph: 0;        // source glyph (route rows)
+    in property <bool> outline;        // selected effect tab
+    in property <bool> chevron: true;
+    callback open(length, length, length);
+    callback ring-clicked;
     height: 20px;
     border-radius: 10px;
     background: SynthStyle.control;
+    border-width: root.outline ? 1px : 0;
+    border-color: Studio.sel-color;
     drop-shadow-blur: 3px;
     drop-shadow-color: #00000040;
+    property <length> lead: root.ring >= 0 ? 24px : root.glyph > 0 ? 25px : 7.5px;
     Rectangle { x: 6px; y: 0; width: parent.width - 12px; height: 0.5px; background: SynthStyle.control-edge; }
-    if root.label != "": Text { x: 7.5px; y: 0; height: 17px; text: root.label; color: SynthStyle.label; font-size: 8.25px; font-weight: 500; vertical-alignment: center; }
-    Text { x: root.value-x; y: 0; height: 17px; text: root.value; color: SynthStyle.value; font-size: 8.75px; font-weight: 600; vertical-alignment: center; }
-    Icon { x: root.width - 16px; y: 2.5px; width: 12px; height: 12px; d: Icons.chevron-down; ink: SynthStyle.dim; stroke-width: 1.2px; }
     TouchArea {
-        clicked => { Studio.synth-dropdown(root.choice, root.absolute-position.x, root.absolute-position.y + root.height + 2px, root.width); }
+        clicked => { root.open(root.absolute-position.x, root.absolute-position.y + root.height + 2px, root.width); }
     }
+    if root.ring >= 0: Rectangle {
+        x: 6px; y: 3px; width: 14px; height: 14px; border-radius: 7px;
+        border-width: 1.2px; border-color: root.ring == 1 ? Studio.sel-color : #8a8b90;
+        if root.ring == 1: Rectangle { x: 3.5px; y: 3.5px; width: 7px; height: 7px; border-radius: 3.5px; background: Studio.sel-color; }
+        TouchArea { clicked => { root.ring-clicked(); } }
+    }
+    if root.glyph > 0: SourceGlyph { x: 7px; y: 3.5px; src: root.glyph; }
+    label-text := Text { x: root.lead; y: 0; height: 20px; text: root.label; color: SynthStyle.label; font-size: 7.6px; font-weight: 500; vertical-alignment: center; }
+    Text {
+        x: root.label == "" ? root.lead : root.lead + label-text.preferred-width + 4.5px; y: 0; height: 20px;
+        text: root.value; color: root.ring == 0 ? SynthStyle.dim : SynthStyle.value; font-size: 8px; font-weight: 600; vertical-alignment: center;
+    }
+    if root.chevron: Icon { x: root.width - 16px; y: 4px; width: 12px; height: 12px; d: Icons.chevron-down; ink: SynthStyle.dim; stroke-width: 1.2px; }
 }
 
-// Knob + value readout + caption. Knob centre at local (30, 19).
-component SynthKnob inherits Rectangle {
-    in property <int> idx;
-    in property <string> label;
-    property <float> norm: Studio.synth-params[root.idx].norm;
-    property <bool> bip: Studio.synth-params[root.idx].bipolar;
-    width: 60px; height: 64px;
+// Knob + readout + caption. Knob centre at local (30, 19); modulation rings and dots from Rust.
+component SynthKnobView inherits Rectangle {
+    in property <SynthKnobItem> k;
+    property <float> norm: Studio.synth-params[root.k.idx].norm;
+    property <bool> bip: Studio.synth-params[root.k.idx].bipolar;
+    property <float> start;
+    property <bool> moved;
+    width: 60px; height: 66px;
+    opacity: root.k.dim ? 0.45 : 1;
+    if root.k.lit: Rectangle {
+        x: 30px - 15px; y: 19px - 15px; width: 30px; height: 30px; border-radius: 15px;
+        border-width: 1px; border-color: Studio.synth-lit-color;
+    }
+    for a in root.k.arcs: Path {
+        x: 0; y: 0; width: root.width; height: root.height;
+        viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        commands: a.d; stroke: a.c; stroke-width: 1.5px; fill: transparent; stroke-line-cap: round;
+    }
     Knob {
         x: 11px; y: 0; width: 38px; height: 38px; body: 20.5px; arc-gap: 3;
         body-brush: #232426;
         ring-brush: @radial-gradient(circle, #1c1d21 78%, #2a2b30 96%, #26272b 100%);
-        value: root.norm; min-value: 0; max-value: 1; sensitivity: 150;
+        value: root.norm; min-value: 0; max-value: 1;
         value-angle: -135 + root.norm * 270;
         show-arc: root.bip ? abs(root.norm - 0.5) > 0.004 : root.norm > 0.004;
         arc-from: root.bip ? 0 : -135;
-        arc-color: Studio.sel-color;
+        arc-color: root.k.accent;
         tick-color: #f2f2f4;
-        value-changed(v) => { Studio.synth-param(root.idx, v); }
-        released => { Studio.synth-param-end(); }
-        reset => { Studio.synth-param-reset(root.idx); }
     }
-    Text { x: 0; y: 37px; width: root.width; height: 14px; text: Studio.synth-params[root.idx].text; color: Studio.sel-color; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    Text { x: 0; y: 53px; width: root.width; height: 14px; text: root.label; color: SynthStyle.caption; font-size: 10.25px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    ta := TouchArea {
+        x: 6px; y: -4px; width: 48px; height: 46px;
+        mouse-cursor: ns-resize;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { root.start = root.norm; root.moved = false; }
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
+                Studio.synth-knob-menu(root.k.idx, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+            if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) { Studio.synth-param-end(root.k.idx, root.moved); }
+        }
+        moved => {
+            if (self.pressed) {
+                root.moved = true;
+                Studio.synth-param(root.k.idx, max(0, min(1, root.start + (self.pressed-y - self.mouse-y) / 1px / 150)));
+            }
+        }
+        double-clicked => { Studio.synth-param-reset(root.k.idx); }
+    }
+    if root.k.dots.length > 0 && !ta.has-hover: HorizontalLayout {
+        x: 0; y: 39px; width: root.width; height: 10px;
+        alignment: center; spacing: 6px;
+        for c in root.k.dots: Rectangle { width: 7px; height: 7px; y: 1.5px; border-radius: 3.5px; background: c; }
+    }
+    if root.k.dots.length == 0 || ta.has-hover: Text {
+        x: -8px; y: 37px; width: root.width + 16px; height: 14px; text: Studio.synth-params[root.k.idx].text;
+        color: root.k.accent; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center;
+    }
+    Text {
+        x: -8px; y: 53px; width: root.width + 16px; height: 14px; text: root.k.label; color: SynthStyle.caption;
+        font-size: 10.25px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center;
+    }
 }
 
-// Vertical level fader (relative drag, double-click resets). Groove 2.5 x 91 pt at local (18.75, 0).
-component SynthFader inherits Rectangle {
-    in property <int> idx;
-    in property <string> label: "Level";
-    property <float> norm: Studio.synth-params[root.idx].norm;
+// Vertical fader (relative drag, double-click resets). Groove 2.5 x 91 pt.
+component SynthFaderView inherits Rectangle {
+    in property <SynthFaderItem> f;
+    property <float> norm: Studio.synth-params[root.f.idx].norm;
     property <float> start;
     property <length> travel: 91px;
     width: 40px; height: 124px;
@@ -128,148 +162,113 @@ component SynthFader inherits Rectangle {
         x: 18.75px; y: (1 - root.norm) * root.travel; width: 2.5px; height: root.norm * root.travel; border-radius: 1.25px;
         background: Studio.sel-color;
     }
-    Rectangle {
-        x: 14px; y: (1 - root.norm) * root.travel - 1.25px; width: 12px; height: 2.5px; border-radius: 1.25px;
-        background: #ffffff;
-    }
-    Text { x: -10px; y: 94.5px; width: root.width + 20px; height: 14px; text: Studio.synth-params[root.idx].text; color: Studio.sel-color; font-size: 10.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    Text { x: -10px; y: 110px; width: root.width + 20px; height: 14px; text: root.label; color: SynthStyle.caption; font-size: 9.75px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Rectangle { x: 14px; y: (1 - root.norm) * root.travel - 1.25px; width: 12px; height: 2.5px; border-radius: 1.25px; background: #ffffff; }
+    Text { x: -14px; y: 94.5px; width: root.width + 28px; height: 14px; text: Studio.synth-params[root.f.idx].text; color: Studio.sel-color; font-size: 10.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: -14px; y: 110px; width: root.width + 28px; height: 14px; text: root.f.label; color: SynthStyle.caption; font-size: 9.75px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     TouchArea {
         x: 0; y: -6px; width: root.width; height: root.travel + 12px;
         mouse-cursor: ns-resize;
         pointer-event(e) => {
-            if (e.kind == PointerEventKind.down) { root.start = root.norm; }
-            if (e.kind == PointerEventKind.up) { Studio.synth-param-end(); }
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { root.start = root.norm; }
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
+                Studio.synth-knob-menu(root.f.idx, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+            if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) { Studio.synth-param-end(root.f.idx, true); }
         }
-        moved => { Studio.synth-param(root.idx, max(0, min(1, root.start + (self.pressed-y - self.mouse-y) / root.travel))); }
-        double-clicked => { Studio.synth-param-reset(root.idx); }
+        moved => { if (self.pressed) { Studio.synth-param(root.f.idx, max(0, min(1, root.start + (self.pressed-y - self.mouse-y) / root.travel))); } }
+        double-clicked => { Studio.synth-param-reset(root.f.idx); }
     }
 }
 
-// Display: dark gradient, quarter grid, optional zero line, filled curve (paths from Rust).
-component SynthScope inherits Rectangle {
-    in property <int> slot;
-    in property <bool> zero-line: true;
-    in property <int> grid: 4;
-    width: 245px; height: 128px;
+// Segmented switch ("Wave  Sine | Triangle | Saw | Square").
+component Segmented inherits Rectangle {
+    in property <SynthSegItem> s;
+    height: 20px;
+    border-radius: 10px;
+    background: SynthStyle.control;
+    property <length> cell: (root.width - 4px) / max(1, root.s.options.length);
+    for o[i] in root.s.options: Rectangle {
+        x: 2px + i * root.cell; y: 2px; width: root.cell; height: 16px; border-radius: 8px;
+        background: i == root.s.sel ? Studio.sel-color : transparent;
+        Text {
+            text: o; color: i == root.s.sel ? SynthStyle.ink-on-accent : SynthStyle.value;
+            font-size: 8.75px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center;
+        }
+        TouchArea { clicked => { Studio.synth-set(root.s.idx, root.s.first + i); } }
+    }
+}
+
+// Picture: dark gradient, vertical grid, optional zero line, paths from Rust.
+component Scope inherits Rectangle {
+    in property <SynthScopeItem> s;
+    property <int> slot: root.s.slot;
     border-radius: 3px;
     clip: true;
     background: @linear-gradient(180deg, #212125 0%, #18191d 100%);
-    for i in root.grid - 1: Rectangle { x: (i + 1) * root.width / root.grid - 0.5px; y: 0; width: 1px; height: root.height; background: #ffffff09; }
-    if root.zero-line: Rectangle { x: 0; y: root.height / 2 - 0.5px; width: root.width; height: 1px; background: #ffffff0f; }
+    for i in root.s.grid - 1: Rectangle { x: (i + 1) * root.width / root.s.grid - 0.5px; y: 0; width: 1px; height: root.height; background: #ffffff09; }
+    for i in root.s.hgrid - 1: Rectangle { x: 0; y: (i + 1) * root.height / root.s.hgrid - 0.5px; width: root.width; height: 1px; background: #ffffff09; }
+    if root.s.zero: Rectangle { x: 0; y: root.height / 2 - 0.5px; width: root.width; height: 1px; background: #ffffff12; }
+    Path {
+        width: root.width; height: root.height;
+        viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        commands: Studio.synth-displays[root.slot].grid;
+        stroke: #ffffff10; stroke-width: 1px; fill: transparent;
+    }
     Path {
         width: root.width; height: root.height;
         viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
         commands: Studio.synth-displays[root.slot].fill;
-        fill: Studio.sel-color.transparentize(88%);
+        fill: Studio.sel-color.transparentize(Studio.synth-displays[root.slot].dim ? 95% : 85%);
         stroke: transparent;
     }
     Path {
         width: root.width; height: root.height;
         viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        commands: Studio.synth-displays[root.slot].ghost;
+        stroke: Studio.sel-color.transparentize(55%); stroke-width: 1px; fill: transparent;
+    }
+    Path {
+        width: root.width; height: root.height;
+        viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
         commands: Studio.synth-displays[root.slot].line;
-        stroke: Studio.sel-color;
-        stroke-width: 1.5px;
-        stroke-line-join: round;
-        fill: transparent;
+        stroke: Studio.sel-color.transparentize(Studio.synth-displays[root.slot].dim ? 60% : 0%);
+        stroke-width: 1.5px; stroke-line-join: round; fill: transparent;
+    }
+    Path {
+        width: root.width; height: root.height;
+        viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        commands: Studio.synth-displays[root.slot].dots;
+        stroke: Studio.sel-color; stroke-width: 1.3px; fill: #1b1c20;
+    }
+    for l in Studio.synth-labels: Rectangle {
+        x: 0; y: 0; width: root.width; height: root.height;
+        if l.slot == root.slot: Text {
+            x: l.align == 0 ? l.x : l.align == 1 ? l.x - 30px : l.x - 60px; y: l.y; width: l.align == 0 ? 120px : 60px; height: 13px;
+            text: l.text; color: l.accent ? Studio.sel-color : #8e8f94;
+            font-size: 7.75px; font-weight: 600; vertical-alignment: center;
+            horizontal-alignment: l.align == 0 ? TextHorizontalAlignment.left : l.align == 1 ? TextHorizontalAlignment.center : TextHorizontalAlignment.right;
+        }
+    }
+    TouchArea {
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.synth-scope-drag(root.slot, 0, self.mouse-x, self.mouse-y); }
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.synth-scope-drag(root.slot, 2, self.mouse-x, self.mouse-y); }
+        }
+        moved => { if (self.pressed) { Studio.synth-scope-drag(root.slot, 1, self.mouse-x, self.mouse-y); } }
     }
 }
 
-component ColumnTitle inherits Text {
-    y: 32px; height: 20px;
-    color: SynthStyle.value; font-size: 9px; font-weight: 600; vertical-alignment: center;
-}
-
-// ---------------------------------------------------------------- pages (content area x 106.5..776.5)
-component OscColumn inherits Rectangle {
-    in property <int> n;     // 0 or 1
-    // Column origin: card x 117.5 (+ 318 for Osc 2), y 0.
-    Dropdown { x: 0; y: 32px; width: 84px + root.n * 1px; label: "Osc " + (root.n + 1); value: Studio.synth-choices[root.n * 3]; value-x: 33.5px; choice: root.n * 3; }
-    Text { x: 98px; y: 32px; height: 17px; text: "Octave"; color: SynthStyle.label; font-size: 8.25px; font-weight: 500; letter-spacing: 0.6px; vertical-alignment: center; }
-    Dropdown { x: 136px; y: 32px; width: 36.5px; value: Studio.synth-choices[root.n * 3 + 1]; choice: root.n * 3 + 1; }
-    Text { x: 186.5px; y: 32px; height: 17px; text: "Semitones"; color: SynthStyle.label; font-size: 8.25px; font-weight: 500; letter-spacing: 0.45px; vertical-alignment: center; }
-    Dropdown { x: 238px; y: 32px; width: 50px; value: Studio.synth-choices[root.n * 3 + 2]; choice: root.n * 3 + 2; }
-    SynthScope { x: 0; y: 57.5px; slot: root.n; }
-    SynthFader { x: 254.75px; y: 61.5px; idx: root.n == 0 ? SP.osc1-level : SP.osc2-level; }
-    SynthKnob { x: 35px - 30px; y: 212px - 19px; idx: root.n == 0 ? SP.osc1-shape : SP.osc2-shape; label: "Shape"; }
-    SynthKnob { x: 110.5px - 30px; y: 212px - 19px; idx: root.n == 0 ? SP.osc1-fine : SP.osc2-fine; label: "Fine"; }
-    if root.n == 0: SynthKnob { x: 186px - 30px; y: 212px - 19px; idx: SP.cross-fm; label: "Cross FM"; }
-}
-
-component OscPage inherits Rectangle {
-    OscColumn { x: 117.5px; y: 0; width: 300px; height: root.height; n: 0; }
-    Rectangle { x: 425px; y: 32px; width: 0.5px; height: 227.5px; background: SynthStyle.line; }
-    OscColumn { x: 117.5px + SynthStyle.col; y: 0; width: 300px; height: root.height; n: 1; }
-}
-
-component SubNoisePage inherits Rectangle {
-    ColumnTitle { x: 117.5px; text: "Sub oscillator  (sine, one octave below Osc 1)"; }
-    SynthScope { x: 117.5px; y: 57.5px; slot: SD.sub; }
-    SynthFader { x: 117.5px + 254.75px; y: 61.5px; idx: SP.sub-level; }
-    Rectangle { x: 425px; y: 32px; width: 0.5px; height: 227.5px; background: SynthStyle.line; }
-    ColumnTitle { x: 117.5px + SynthStyle.col; text: "Noise  (white)"; }
-    SynthScope { x: 117.5px + SynthStyle.col; y: 57.5px; slot: SD.noise; }
-    SynthFader { x: 117.5px + SynthStyle.col + 254.75px; y: 61.5px; idx: SP.noise-level; }
-}
-
-component FilterPage inherits Rectangle {
-    Dropdown { x: 117.5px; y: 32px; width: 110px; label: "Mode"; value: Studio.synth-choices[SC.filter-mode]; value-x: 35px; choice: SC.filter-mode; }
-    SynthScope { x: 117.5px; y: 57.5px; width: 610px; slot: SD.filter; zero-line: false; grid: 1; }
-    // Decade lines at 100 Hz, 1 kHz, 10 kHz (log axis 20 Hz .. 20 kHz) and labels.
-    for f[i] in [{x: 0.233, t: "100"}, {x: 0.567, t: "1k"}, {x: 0.9, t: "10k"}]: Rectangle {
-        x: 117.5px + f.x * 610px; y: 57.5px; width: 1px; height: 128px; background: #ffffff09;
-        Text { x: 3px; y: 114px; height: 12px; text: f.t; color: #55565b; font-size: 7.5px; font-weight: 500; vertical-alignment: center; }
+// Two-state latch ("Retrigger  Off | On").
+component Latch inherits Rectangle {
+    in property <SynthLatchItem> l;
+    width: 60px; height: 66px;
+    Rectangle {
+        x: 17.5px; y: 10.5px; width: 25px; height: 17px; border-radius: 8.5px;
+        background: root.l.on ? Studio.sel-color : SynthStyle.control;
+        Text { text: root.l.on ? "On" : "Off"; color: root.l.on ? SynthStyle.ink-on-accent : SynthStyle.dim; font-size: 8.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        TouchArea { clicked => { Studio.synth-toggle(root.l.idx); } }
     }
-    SynthKnob { x: 152.5px - 30px; y: 212px - 19px; idx: SP.cutoff; label: "Cutoff"; }
-    SynthKnob { x: 228px - 30px; y: 212px - 19px; idx: SP.resonance; label: "Resonance"; }
-    SynthKnob { x: 303.5px - 30px; y: 212px - 19px; idx: SP.key-track; label: "Key track"; }
-    SynthKnob { x: 379px - 30px; y: 212px - 19px; idx: SP.env-amount; label: "Env amount"; }
-}
-
-component EnvColumn inherits Rectangle {
-    in property <int> base;   // SP.amp-a or SP.flt-a
-    in property <int> slot;
-    in property <string> title;
-    ColumnTitle { x: 0; text: root.title; }
-    SynthScope { x: 0; y: 57.5px; slot: root.slot; zero-line: false; }
-    for k[i] in ["Attack", "Decay", "Sustain", "Release"]: SynthKnob { x: 35px + i * 75.5px - 30px; y: 212px - 19px; idx: root.base + i; label: k; }
-}
-
-component EnvPage inherits Rectangle {
-    EnvColumn { x: 117.5px; y: 0; width: 300px; height: root.height; base: SP.amp-a; slot: SD.amp-env; title: "Amp envelope"; }
-    Rectangle { x: 425px; y: 32px; width: 0.5px; height: 227.5px; background: SynthStyle.line; }
-    EnvColumn { x: 117.5px + SynthStyle.col; y: 0; width: 300px; height: root.height; base: SP.flt-a; slot: SD.amp-env + 1; title: "Filter envelope"; }
-}
-
-component LfoPage inherits Rectangle {
-    Dropdown { x: 117.5px; y: 32px; width: 110px; label: "LFO"; value: Studio.synth-choices[SC.lfo-wave]; value-x: 30px; choice: SC.lfo-wave; }
-    Text { x: 117.5px + 245px - 40px; y: 32px; width: 40px; height: 17px; text: "1 s"; color: SynthStyle.label; font-size: 8.25px; font-weight: 500; horizontal-alignment: right; vertical-alignment: center; }
-    SynthScope { x: 117.5px; y: 57.5px; slot: SD.lfo; }
-    Rectangle { x: 425px; y: 32px; width: 0.5px; height: 227.5px; background: SynthStyle.line; }
-    ColumnTitle { x: 117.5px + SynthStyle.col; text: "Destinations"; }
-    SynthKnob { x: 152.5px - 30px; y: 212px - 19px; idx: SP.lfo-rate; label: "Rate"; }
-    SynthKnob { x: 152.5px + SynthStyle.col - 30px; y: 100px - 19px; idx: SP.lfo-pitch; label: "To pitch"; }
-    SynthKnob { x: 228px + SynthStyle.col - 30px; y: 100px - 19px; idx: SP.lfo-cutoff; label: "To cutoff"; }
-    SynthKnob { x: 303.5px + SynthStyle.col - 30px; y: 100px - 19px; idx: SP.lfo-amp; label: "To amp"; }
-}
-
-component VoicePage inherits Rectangle {
-    ColumnTitle { x: 117.5px; text: "Voices"; }
-    SynthKnob { x: 152.5px - 30px; y: 100px - 19px; idx: SP.polyphony; label: "Polyphony"; }
-    SynthKnob { x: 228px - 30px; y: 100px - 19px; idx: SP.unison; label: "Unison"; }
-    SynthKnob { x: 303.5px - 30px; y: 100px - 19px; idx: SP.unison-detune; label: "Detune"; }
-    Rectangle { x: 425px; y: 32px; width: 0.5px; height: 227.5px; background: SynthStyle.line; }
-    ColumnTitle { x: 117.5px + SynthStyle.col; text: "Glide & output"; }
-    SynthKnob { x: 152.5px + SynthStyle.col - 30px; y: 100px - 19px; idx: SP.glide; label: "Glide"; }
-    SynthKnob { x: 228px + SynthStyle.col - 30px; y: 100px - 19px; idx: SP.output; label: "Output"; }
-}
-
-// PLACEHOLDER pages (Modulation, Macros, Effects): nothing faked.
-component NotAvailablePage inherits Rectangle {
-    in property <string> title;
-    in property <string> section;
-    Text { x: 107px; y: 120px; width: 638px; height: 16px; text: root.title + ": not available yet"; color: SynthStyle.value; font-size: 10px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-    Text { x: 107px; y: 138px; width: 638px; height: 14px; text: "The built-in synth has no " + root.section + " section yet."; color: SynthStyle.category; font-size: 9px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: -8px; y: 53px; width: root.width + 16px; height: 14px; text: root.l.label; color: SynthStyle.caption; font-size: 10.25px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
 }
 
 // ---------------------------------------------------------------- the card
@@ -281,26 +280,22 @@ export component SynthDevice inherits Rectangle {
     border-color: SynthStyle.card-edge;
 
     // ---- header ----
-    // Power toggle: PLACEHOLDER (no bypass in the model; drawn "on").
     Rectangle {
-        x: 9px; y: 8.25px; width: 20px; height: 10px; border-radius: 5px; background: Studio.sel-color;
-        Rectangle { x: parent.width - 9px; y: 1px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; }
-        TouchArea { clicked => { Studio.synth-placeholder("Device bypass"); } }
+        x: 9px; y: 8.25px; width: 20px; height: 10px; border-radius: 5px; background: Studio.synth-enabled ? Studio.sel-color : #4a4b50;
+        Rectangle { x: Studio.synth-enabled ? parent.width - 9px : 1px; y: 1px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; }
+        TouchArea { clicked => { Studio.synth-bypass(); } }
     }
     Text { x: 37.5px; y: 6px; height: 14px; text: "Synth"; color: #ffffff; font-size: 9.75px; font-weight: 700; vertical-alignment: center; }
-    // Instrument menu (real): built-in Synth or an instrument plugin (SetInstrumentPlugin).
     Icon {
         x: 69px; y: 7px; width: 12px; height: 12px; d: Icons.chevron-down; ink: SynthStyle.dim; stroke-width: 1.2px;
         TouchArea { clicked => { Studio.open-inst-menu(root.absolute-position.x + 30px, root.absolute-position.y + 24px); } }
     }
-    // Sparkle: PLACEHOLDER. Sits 7 pt left of the preset name.
     Icon { x: preset.x - 21px; y: 6px; width: 14px; height: 14px; d: Icons.sparkle; ink: SynthStyle.dim; stroke-width: 1.1px;
         TouchArea { clicked => { Studio.synth-placeholder("Generate sound"); } } }
-    // Preset browser (real): name opens the list, ‹ › step through factory_presets().
     preset := Text {
         x: 704px - self.preferred-width; y: 6px; height: 14px; text: Studio.synth-preset;
         color: SynthStyle.dim; font-size: 9.5px; font-weight: 600; vertical-alignment: center;
-        TouchArea { clicked => { Studio.synth-dropdown(-1, preset.absolute-position.x + preset.width - 160px, preset.absolute-position.y + 18px, 160px); } }
+        TouchArea { clicked => { Studio.synth-pill(1, 0, preset.absolute-position.x + preset.width - 180px, preset.absolute-position.y + 18px, 180px); } }
     }
     Rectangle {
         x: 707px; y: 4px; width: 13px; height: 18px;
@@ -313,7 +308,6 @@ export component SynthDevice inherits Rectangle {
         TouchArea { clicked => { Studio.synth-preset-step(1); } }
     }
     Rectangle { x: 737px; y: 7.5px; width: 0.5px; height: 12px; background: SynthStyle.line; }
-    // Minimise / close: PLACEHOLDERS.
     Icon { x: 740.5px; y: 5px; width: 16px; height: 16px; d: "M5 8h6"; ink: SynthStyle.dim; stroke-width: 1.1px;
         TouchArea { clicked => { Studio.synth-placeholder("Minimise device"); } } }
     Icon { x: 759px; y: 8px; width: 10px; height: 10px; d: Icons.close; ink: SynthStyle.dim; stroke-width: 1.3px;
@@ -343,50 +337,197 @@ export component SynthDevice inherits Rectangle {
             stroke-width: i == 5 ? 2.2px : 1.2px;
             stroke-line-cap: round; stroke-line-join: round;
             fill: transparent;
+            opacity: parent.sel ? 1 : cat-ta.has-hover ? 0.7 : 0.45;
         }
-        Text { x: 38.5px; y: 0; height: parent.height; text: cat.name; color: parent.sel ? #ffffff : SynthStyle.category; font-size: 10px; font-weight: parent.sel ? 700 : 600; vertical-alignment: center; }
-        TouchArea { clicked => { Studio.synth-page-select(i); } }
+        Text { x: 38.5px; y: 0; height: parent.height; text: cat.name; color: parent.sel ? #ffffff : cat-ta.has-hover ? #a3a4a9 : SynthStyle.category; font-size: 10px; font-weight: parent.sel ? 700 : 600; vertical-alignment: center; }
+        cat-ta := TouchArea { clicked => { Studio.synth-page-select(i); } }
     }
 
-    // ---- page ----
-    if Studio.synth-page == 0: OscPage { x: 0; y: 0; width: root.width; height: root.height; }
-    if Studio.synth-page == 1: SubNoisePage { x: 0; y: 0; width: root.width; height: root.height; }
-    if Studio.synth-page == 2: FilterPage { x: 0; y: 0; width: root.width; height: root.height; }
-    if Studio.synth-page == 3: EnvPage { x: 0; y: 0; width: root.width; height: root.height; }
-    if Studio.synth-page == 4: LfoPage { x: 0; y: 0; width: root.width; height: root.height; }
-    if Studio.synth-page == 5: NotAvailablePage { x: 0; y: 0; width: root.width; height: root.height; title: "Modulation"; section: "modulation"; }
-    if Studio.synth-page == 6: NotAvailablePage { x: 0; y: 0; width: root.width; height: root.height; title: "Macros"; section: "macros"; }
-    if Studio.synth-page == 7: VoicePage { x: 0; y: 0; width: root.width; height: root.height; }
-    if Studio.synth-page == 8: NotAvailablePage { x: 0; y: 0; width: root.width; height: root.height; title: "Effects"; section: "effects"; }
+    // ---- page (laid out by src/synth.rs) ----
+    if Studio.synth-split > 0: Rectangle { x: Studio.synth-split; y: 35px; width: 0.5px; height: 224px; background: SynthStyle.line; }
+    for t in Studio.synth-texts: Text {
+        x: t.x; y: t.y; width: t.w; height: 20px; text: t.text;
+        color: t.style == 0 ? SynthStyle.title : t.style == 1 ? SynthStyle.label : t.style == 2 ? SynthStyle.caption : SynthStyle.dim;
+        font-size: t.style == 0 ? 9.5px : t.style == 2 ? 9.75px : 7.6px;
+        font-weight: t.style == 1 ? 500 : 600;
+        letter-spacing: t.style == 1 ? 0.5px : 0;
+        horizontal-alignment: t.align == 0 ? left : t.align == 1 ? center : right;
+        vertical-alignment: center;
+    }
+    for s in Studio.synth-scopes: Scope { x: s.x; y: s.y; width: s.w; height: s.h; s: s; }
+    for f in Studio.synth-faders: SynthFaderView { x: f.x - 20px; y: f.y; f: f; }
+    for k in Studio.synth-knobs: SynthKnobView { x: k.x - 30px; y: k.y - 19px; k: k; }
+    for l in Studio.synth-latches: Latch { x: l.x - 30px; y: l.y - 19px; l: l; }
+    for g in Studio.synth-segs: Segmented { x: g.x; y: g.y; width: g.w; s: g; }
+    for p in Studio.synth-pills: Pill {
+        x: p.x; y: p.y; width: p.w; label: p.label; value: p.value; ring: p.ring; outline: p.outline; chevron: p.chevron;
+        open(x, y, w) => { Studio.synth-pill(p.action, p.arg, x, y, w); }
+        ring-clicked => { Studio.synth-toggle(p.ring-idx); }
+    }
 
-    // ---- Mod column: PLACEHOLDER (modulation sources are not in the model) ----
-    Rectangle {
-        x: 745.5px; y: 31.5px; width: 29px; height: 229.5px; border-radius: 14.5px; background: SynthStyle.control;
+    // ---- Modulation page: route rows ----
+    if Studio.synth-page == 5: Flickable {
+        x: 112px; y: 35px; width: 618px; height: 224px;
+        content-height: max(self.height, Studio.synth-add-y + 30px);
+        for r in Studio.synth-routes: Rectangle {
+            x: 0; y: r.y; width: parent.width; height: 20px;
+            property <length> bar-x: 317.5px;
+            property <length> bar-w: 233px;
+            row-ta := TouchArea { }
+            Text { x: 4px; width: 12px; text: r.slot; color: SynthStyle.dim; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+            Rectangle {
+                x: 27px; y: 3px; width: 14px; height: 14px; border-radius: 7px;
+                border-width: 1.2px; border-color: r.on ? Studio.sel-color : #8a8b90;
+                if r.on: Rectangle { x: 3.5px; y: 3.5px; width: 7px; height: 7px; border-radius: 3.5px; background: Studio.sel-color; }
+                TouchArea { clicked => { Studio.synth-toggle(r.on-idx); } }
+            }
+            Pill {
+                x: 51px; width: 104px; glyph: r.source; value: r.source-text;
+                open(x, y, w) => { Studio.synth-pill(6, r.slot, x, y, w); }
+            }
+            Path {
+                x: 166px; y: 4px; width: 14px; height: 12px;
+                viewbox-x: 0; viewbox-y: 0; viewbox-width: 14; viewbox-height: 12;
+                commands: "M1 6 H12 M8 2 L12 6 L8 10"; stroke: SynthStyle.dim; stroke-width: 1.1px; fill: transparent;
+                stroke-line-cap: round; stroke-line-join: round;
+            }
+            Pill {
+                x: 189px; width: 118px; value: r.target-text;
+                open(x, y, w) => { Studio.synth-pill(7, r.slot, x, y, w); }
+            }
+            Rectangle { x: parent.bar-x; y: 9.25px; width: parent.bar-w; height: 1.5px; background: #3a3b40; }
+            Rectangle { x: parent.bar-x + parent.bar-w / 2 - 0.25px; y: 5px; width: 0.5px; height: 10px; background: #6a6b70; }
+            Rectangle {
+                x: parent.bar-x + parent.bar-w / 2 + min(0, r.amount) * parent.bar-w / 2; y: 8px;
+                width: abs(r.amount) * parent.bar-w / 2; height: 4px; border-radius: 1px; background: Studio.sel-color;
+            }
+            TouchArea {
+                x: parent.bar-x - 4px; width: parent.bar-w + 8px; mouse-cursor: ew-resize;
+                pointer-event(e) => { if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) { Studio.synth-param-end(r.amount-idx, true); } }
+                moved => { if (self.pressed) { Studio.synth-param(r.amount-idx, max(0, min(1, (self.mouse-x - 4px) / parent.bar-w))); } }
+                double-clicked => { Studio.synth-param-reset(r.amount-idx); }
+            }
+            Text { x: 560px; width: 34px; text: r.text; color: Studio.sel-color; font-size: 10px; font-weight: 600; horizontal-alignment: right; vertical-alignment: center; }
+            if row-ta.has-hover || rm-ta.has-hover: Icon {
+                x: 602px; y: 5px; width: 10px; height: 10px; d: Icons.close; ink: SynthStyle.dim; stroke-width: 1.3px;
+            }
+            rm-ta := TouchArea { x: 598px; width: 18px; clicked => { Studio.synth-remove(0, r.slot); } }
+        }
+        if Studio.synth-add-show: Rectangle {
+            x: 4px; y: Studio.synth-add-y; width: 110px; height: 20px;
+            Text { x: 0; text: "+"; color: SynthStyle.dim; font-size: 13px; font-weight: 500; vertical-alignment: center; }
+            Text { x: 15px; text: "Add modulation"; color: add-ta.has-hover ? SynthStyle.value : SynthStyle.dim; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+            add-ta := TouchArea { clicked => { Studio.synth-pill(8, 0, self.absolute-position.x, self.absolute-position.y + 22px, 160px); } }
+        }
+        if !Studio.synth-add-show: Text { x: 4px; y: Studio.synth-add-y; height: 20px; text: "Slots: Full"; color: SynthStyle.dim; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+    }
+
+    // ---- Macros page: macro selection ring, mapping rows ----
+    if Studio.synth-page == 6: Rectangle {
+        x: 0; y: 0; width: root.width; height: root.height;
+        for i in 8: Rectangle {
+            x: 117.7px + mod(i, 4) * 75.5px; y: 80px + floor(i / 4) * 81px; width: 68px; height: 73.5px;
+            border-radius: 4px;
+            border-width: i == Studio.synth-macro-sel ? 1px : 0;
+            border-color: #e9799a;
+        }
+        // Macro names: click opens the name list.
+        for i in 8: TouchArea {
+            x: 117.7px + mod(i, 4) * 75.5px + 4px; y: 80px + floor(i / 4) * 81px + 54px; width: 60px; height: 15px;
+            clicked => { Studio.synth-macro-select(i); Studio.synth-pill(4, i, self.absolute-position.x - 4px, self.absolute-position.y + 17px, 150px); }
+        }
+        Rectangle { x: 433px; y: 55.5px; width: 295px; height: 0.5px; background: SynthStyle.line; }
+        Flickable {
+            x: 433px; y: 60px; width: 296px; height: 199px;
+            content-height: max(self.height, Studio.synth-add-y + 26px);
+            for m in Studio.synth-map-rows: Rectangle {
+                x: 0; y: m.y; width: parent.width; height: m.heading ? 16px : 20px;
+                if m.heading: Text { x: 1.5px; text: m.label; color: SynthStyle.title; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+                if !m.heading: Rectangle {
+                    mrow-ta := TouchArea { }
+                    Text { x: 1.5px; text: m.label; color: SynthStyle.caption; font-size: 9.75px; font-weight: 600; vertical-alignment: center; }
+                    if mrow-ta.has-hover || mrm-ta.has-hover: Icon {
+                        x: 160px; y: 5px; width: 10px; height: 10px; d: Icons.close; ink: SynthStyle.dim; stroke-width: 1.3px;
+                    }
+                    mrm-ta := TouchArea { x: 156px; width: 18px; clicked => { Studio.synth-remove(1, m.slot); } }
+                    for e[j] in [{ idx: m.from-idx, v: m.from, t: m.from-text, x: 178px }, { idx: m.to-idx, v: m.to, t: m.to-text, x: 243px }]: Rectangle {
+                        x: e.x; y: 2px; width: 50px; height: 16px; border-radius: 2px; clip: true;
+                        background: #3a2a31;
+                        Rectangle { x: 0; width: e.v * parent.width; background: #7a4a5c; }
+                        Text { text: e.t; color: #f2f2f4; font-size: 8.25px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                        property <float> start;
+                        TouchArea {
+                            mouse-cursor: ew-resize;
+                            pointer-event(ev) => {
+                                if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left) { parent.start = e.v; }
+                                if (ev.kind == PointerEventKind.up && ev.button == PointerEventButton.left) { Studio.synth-param-end(e.idx, true); }
+                            }
+                            moved => { if (self.pressed) { Studio.synth-param(e.idx, max(0, min(1, parent.start + (self.mouse-x - self.pressed-x) / 120px))); } }
+                            double-clicked => { Studio.synth-param-reset(e.idx); }
+                        }
+                    }
+                    Path {
+                        x: 231px; y: 6px; width: 9px; height: 8px;
+                        viewbox-x: 0; viewbox-y: 0; viewbox-width: 9; viewbox-height: 8;
+                        commands: "M1 4 H8 M5 1 L8 4 L5 7"; stroke: SynthStyle.dim; stroke-width: 1px; fill: transparent;
+                    }
+                }
+            }
+            if Studio.synth-add-show: Rectangle {
+                x: 0; y: Studio.synth-add-y; width: 110px; height: 20px;
+                Text { x: 0; text: "+"; color: SynthStyle.dim; font-size: 13px; font-weight: 500; vertical-alignment: center; }
+                Text { x: 15px; text: "Add mapping"; color: madd-ta.has-hover ? SynthStyle.value : SynthStyle.dim; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+                madd-ta := TouchArea { clicked => { Studio.synth-pill(5, 0, self.absolute-position.x, self.absolute-position.y + 22px, 200px); } }
+            }
+            if !Studio.synth-add-show: Text { x: 0; y: Studio.synth-add-y; height: 20px; text: "Mappings: Full"; color: SynthStyle.dim; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+        }
+    }
+
+    // ---- modulation sources drawer: click lights a source, drag onto a knob adds a route ----
+    rail := Rectangle {
+        property <bool> open: rail-ta.has-hover || Studio.synth-ghost-show;
+        x: root.width - 2px - self.width; y: 31.5px; width: open ? 115.5px : 29px; height: 229.5px; border-radius: 14.5px;
+        background: SynthStyle.control;
+        animate width { duration: 120ms; easing: ease-out; }
+        rail-ta := TouchArea { }
         Rectangle { x: 8px; y: 0; width: parent.width - 16px; height: 0.5px; background: #424347; }
         Text { x: 0; y: 5.5px; width: parent.width; height: 14px; text: "Mod"; color: #9f9fa2; font-size: 8.25px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-        for m[i] in [
-            { d: "M2 9 L5.5 3 L8.5 6.5 L10 5.5 L14 9", c: #a271b3 },
-            { d: "M2 9 L5 3 L8 6 L11 6 L14 9", c: #c9708f },
-            { d: "M2 6 C 4 2, 6 2, 8 6 S 12 10, 14 6", c: #d9c96a },
-            { d: "M2 9 L5 3 L8 9 L11 3 L14 9", c: #5fb5a3 },
-            { d: "M3 10 V7 M6 10 V5 M9 10 V6 M12 10 V3", c: #d8875a },
-            { d: "M2.5 3.5 H13.5 V10 H2.5 Z M5.5 3.5 V7 M8 3.5 V7 M10.5 3.5 V7", c: #9cbf63 },
-            { d: "M4.5 1.5 H11.5 V12 H4.5 Z M4.5 6.5 H11.5", c: #6b98d8 },
-            { d: "M8 2 V9 M5 6.5 L8 9.5 L11 6.5 M3 12 H13", c: #a3a4aa },
-            { d: "M2 9 H5 V4 H8 V9 H11 V4 H14", c: #a3a4aa },
-        ]: Path {
-            x: 7px; y: 32px + i * 22px; width: 15px; height: 13px;
-            viewbox-x: 0; viewbox-y: 0; viewbox-width: 16; viewbox-height: 13;
-            commands: m.d; stroke: m.c; stroke-width: 1.2px; fill: transparent;
-            stroke-line-cap: round; stroke-line-join: round;
+        for g[i] in 9: Rectangle {
+            x: 0; y: 27.5px + i * 22px; width: rail.width; height: 22px;
+            property <bool> lit: Studio.synth-lit == i + 1;
+            Rectangle { x: 3px; y: 1px; width: parent.width - 6px; height: 20px; border-radius: 10px; background: parent.lit ? #ffffff14 : src-ta.has-hover ? #ffffff0a : transparent; }
+            if rail.open: Text { x: 12px; height: parent.height; text: SynthStyle.source-names[i]; color: parent.lit ? #ffffff : SynthStyle.value; font-size: 8.75px; font-weight: 600; vertical-alignment: center; }
+            SourceGlyph { x: rail.width - 22px; y: 4.5px; src: i + 1; }
+            src-ta := TouchArea {
+                mouse-cursor: grab;
+                pointer-event(e) => {
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+                        Studio.synth-rail(i + 1, 0, self.absolute-position.x - root.absolute-position.x + self.mouse-x, self.absolute-position.y - root.absolute-position.y + self.mouse-y);
+                    }
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) {
+                        Studio.synth-rail(i + 1, 2, self.absolute-position.x - root.absolute-position.x + self.mouse-x, self.absolute-position.y - root.absolute-position.y + self.mouse-y);
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        Studio.synth-rail(i + 1, 1, self.absolute-position.x - root.absolute-position.x + self.mouse-x, self.absolute-position.y - root.absolute-position.y + self.mouse-y);
+                    }
+                }
+            }
         }
-        TouchArea { clicked => { Studio.synth-placeholder("Modulation sources"); } }
+    }
+    if Studio.synth-ghost-show: Rectangle {
+        x: Studio.synth-ghost-x + 8px; y: Studio.synth-ghost-y + 8px; width: 74px; height: 18px; border-radius: 9px;
+        background: #2f3036; drop-shadow-blur: 6px; drop-shadow-color: #00000080;
+        SourceGlyph { x: 5px; y: 2.5px; src: Studio.synth-ghost-src; }
+        Text { x: 23px; text: Studio.synth-ghost-src > 0 ? SynthStyle.source-names[Studio.synth-ghost-src - 1] : ""; color: #f0f0f2; font-size: 8.5px; font-weight: 600; vertical-alignment: center; }
     }
 }
 
-// Popup list for the dropdowns and the preset browser (state owned by Rust).
+// Popup list for the dropdowns, menus and the preset browser (state owned by Rust).
 export component SynthMenuList inherits Rectangle {
     in property <[MenuItem]> items;
+    in property <length> content-h;
     callback picked(int);
     border-radius: 7px;
     background: #222327;
@@ -394,11 +535,16 @@ export component SynthMenuList inherits Rectangle {
     border-color: #3a3b40;
     drop-shadow-blur: 14px;
     drop-shadow-color: #00000090;
-    for it[i] in root.items: Rectangle {
-        x: 4px; y: it.y; width: root.width - 8px; height: 20.5px;
-        Rectangle { border-radius: 4px; background: ta.has-hover ? Tokens.accent : transparent; }
-        Text { x: 10px; text: it.label; color: #f0f0f2; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
-        Text { x: parent.width - 10px - self.preferred-width; text: it.shortcut; color: #c9c9cc; font-size: 9px; vertical-alignment: center; }
-        ta := TouchArea { clicked => { root.picked(i); } }
+    clip: true;
+    Flickable {
+        content-height: root.content-h;
+        for it[i] in root.items: Rectangle {
+            x: 4px; y: it.y; width: root.width - 8px; height: 20.5px;
+            if it.separator: Rectangle { x: 6px; y: -2px; width: parent.width - 12px; height: 0.5px; background: #3a3b40; }
+            Rectangle { border-radius: 4px; background: ta.has-hover && it.enabled ? Tokens.accent : transparent; }
+            Text { x: it.submenu ? 18px : 10px; text: it.label; color: it.enabled ? #f0f0f2 : #7f8085; font-size: it.enabled ? 9.5px : 8.5px; font-weight: 600; vertical-alignment: center; }
+            Text { x: parent.width - 10px - self.preferred-width; text: it.shortcut; color: #c9c9cc; font-size: 9px; vertical-alignment: center; }
+            ta := TouchArea { enabled: it.enabled; clicked => { root.picked(i); } }
+        }
     }
 }

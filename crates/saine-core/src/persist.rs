@@ -89,6 +89,8 @@ pub fn load(dir: &Path) -> Result<Loaded, PersistError> {
     }
     let value = migrate(env.schema_version, env.project);
     let mut project: Project = serde_json::from_value(value)?;
+    // Instrument tracks saved with the classic synth get the Synth device.
+    crate::builtin::synth_v2::upgrade_project(&mut project);
     // Resolve media: prefer the project-relative path (project was moved
     // together with its media), fall back to the absolute path.
     let abs_dir = absolute(dir);
