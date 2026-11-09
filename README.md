@@ -53,7 +53,9 @@ wgpu.
   compensation is measured with an acoustic loopback test, not guessed.
 - **Mixer.** Faders, pan, mute, solo, stereo meters with peak hold, and a master strip.
 - **Instruments.** A subtractive/FM synth, a sampler, a drum rack and a pad sampler, all built in.
-- **Effects.** 18 built-in effects, from compression and saturation to modulation and audio restoration.
+- **Effects.** 20 built-in effects, from compression and saturation to modulation and audio restoration.
+- **Modulation and chains.** An LFO that moves any device parameter, and Chains that group effects under eight
+  macros.
 - **Plugins.** Hosts AU (macOS), VST3 and CLAP plugins. Plugins are scanned in a separate process, so a crashing plugin
   is blocklisted instead of taking the app down, and their editors open in their own windows.
 - **Delay compensation.** Plugin latency is compensated across every track, the metronome, recording and export, and
@@ -87,17 +89,18 @@ wgpu.
 
 ### Built-in devices
 
-Saine Studio comes with 22 devices of its own. Each one is a single declarative definition (parameters, panel layout and
+Saine Studio comes with 26 devices of its own. Each one is a single declarative definition (parameters, panel layout and
 factory presets) that the model, undo, saving, automation, engine and panel all derive from, with a C++ DSP kernel
 behind it. [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
 | Kind | Devices |
 |---|---|
 | Instruments | Synth, Sampler, Drum Rack, Pad Sampler |
-| Dynamics and utility | Compressor, Utility, Stereo Widener |
+| Dynamics and utility | Compressor, Character Compressor, Multiband Compressor, Utility, Stereo Widener |
 | Saturation | Distortion, Tape Saturation, Soft Clipper, Bit Crusher |
 | Modulation | Chorus, Flanger, Phaser, Tremolo, Auto-Panner, Ring Mod, Character Mod |
 | Restoration | De-Noiser, De-Hummer, De-Clipper, De-Esser |
+| Modulators and containers | LFO, Chain |
 
 ### Project files
 
