@@ -233,9 +233,13 @@ component PluginsPage inherits Rectangle {
         for d[i] in Studio.scan-dirs: Rectangle {
             x: 0; y: i * 30.5px; width: parent.width; height: 25px; border-radius: 5px; background: #222326;
             accessible-role: text; accessible-label: d.name + (d.warn ? " (missing)" : "");
-            path := Text { x: 9px; text: d.name; color: d.warn ? #6f7074 : #d9d9dc; font-size: 10px; vertical-alignment: center; }
-            if d.warn: Rectangle { x: 9px; y: parent.height / 2; width: path.preferred-width; height: 0.75px; background: #6f7074; }
-            b1 := Badge { x: 9px + path.preferred-width + 8px; y: 4.5px; text: d.badge; }
+            // A long path is elided so its badges stay in the row; the full path is the accessible label.
+            path := Text {
+                x: 9px; width: min(self.preferred-width, parent.width - 9px - 8px - b1.width - (d.warn ? 6px + 52px : 0) - 9px);
+                text: d.name; overflow: elide; color: d.warn ? #6f7074 : #d9d9dc; font-size: 10px; vertical-alignment: center;
+            }
+            if d.warn: Rectangle { x: 9px; y: parent.height / 2; width: path.width; height: 0.75px; background: #6f7074; }
+            b1 := Badge { x: 9px + path.width + 8px; y: 4.5px; text: d.badge; }
             if d.warn: Badge { x: b1.x + b1.width + 6px; y: 4.5px; text: "Missing"; warn: true; }
         }
     }
