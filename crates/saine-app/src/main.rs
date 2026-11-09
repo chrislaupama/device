@@ -1114,6 +1114,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let id = saine_core::DeviceId(id as u64);
         if c.is_canvas_device(id) { c.panel_canvas(id, phase, x, y, alt, fine) } else { c.panel_graph(id, phase, x, y, fine, alt) }
     });
+    on!(on_panel_graph_menu, |c, id: i32, x: f32, y: f32, wx: f32, wy: f32| {
+        let id = saine_core::DeviceId(id as u64);
+        if !c.is_canvas_device(id) {
+            c.panel_graph_menu(id, x, y, wx, wy);
+        }
+    });
     on!(on_panel_eq, |c, id: i32, action: i32, value: i32| c.panel_eq(saine_core::DeviceId(id as u64), action, value));
     {
         // Canvas wheel / keys (EQ, Auto Filter) answer whether they used the event, so they cannot go through on!.
@@ -1457,6 +1463,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aw = app.as_weak();
         let fr = frame.clone();
         let ctl2 = ctl.clone();
+        let zm = zoom.clone();
         slint::Timer::single_shot(Duration::from_secs(4), move || {
             if fr.borrow().shot_taken {
                 return;
@@ -1467,6 +1474,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             eprintln!("screenshot: no frames presented (occluded/locked?), rendering offscreen");
             fr.borrow_mut().shot_taken = true;
+            // No frame ran, so the zoom was never applied: apply it before the snapshot.
+            zm.borrow_mut().sync(a.window());
             for _ in 0..3 {
                 let _ = a.window().take_snapshot();
             }
