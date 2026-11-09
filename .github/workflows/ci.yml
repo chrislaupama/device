@@ -76,9 +76,10 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          [ -d target ] || exit 0
           root=$(pwd -P)
-          find target -name CMakeCache.txt > "$RUNNER_TEMP/cmake-caches.txt"
+          for dir in target .deps; do
+            if [ -d "$dir" ]; then find "$dir" -name CMakeCache.txt; fi
+          done > "$RUNNER_TEMP/cmake-caches.txt"
           while IFS= read -r cache; do
             [ -f "$cache" ] || continue
             here=$(cd "$(dirname "$cache")" && pwd -P)
@@ -87,6 +88,7 @@ jobs:
             [ "$made" = "$here" ] && continue
             case "$here" in
               "$root"/target/saine-third-party/*) stale="$root/target/saine-third-party" ;;
+              "$root"/.deps/*) stale="$root/.deps" ;;
               *) stale="$here" ;;
             esac
             echo "Removing $stale (its CMakeCache.txt was made in $made)"
