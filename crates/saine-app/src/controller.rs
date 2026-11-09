@@ -567,7 +567,7 @@ impl Controller {
 
     /// Push loop region and metronome grid (both derived from the project
     /// transport) to the engine. Cheap; called after every publish.
-    fn sync_loop_and_click(&mut self) {
+    pub(crate) fn sync_loop_and_click(&mut self) {
         let p = self.doc.project();
         let tr = &p.transport;
         let (start, end) = (p.ticks_to_frames(tr.loop_start, self.rate), p.ticks_to_frames(tr.loop_end, self.rate));

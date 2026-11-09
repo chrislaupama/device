@@ -106,8 +106,12 @@ impl Controller {
         if was_running {
             e.stop_device().map_err(|e| e.to_string())?;
         }
+        // The mixdown plays the arrangement once: no loop, no click. Restored below.
+        let metronome_was = std::mem::replace(&mut self.metronome_on, false);
+        self.sync_loop_and_click();
         let mut out = vec![0f32; frames * 2];
         let rendered = (|| {
+            e.set_loop(false, 0, 0).map_err(|e| e.to_string())?;
             e.stop().map_err(|e| e.to_string())?;
             e.seek(0).map_err(|e| e.to_string())?;
             e.play().map_err(|e| e.to_string())?;
@@ -118,11 +122,13 @@ impl Controller {
         })();
         let _ = e.stop();
         let _ = e.seek(restore);
-        if was_running {
-            e.start_device().map_err(|e| e.to_string())?;
-        }
+        self.metronome_on = metronome_was;
+        self.sync_loop_and_click();
+        // Write a finished render even when the device fails to restart; report that after.
+        let restarted = if was_running { e.start_device().map_err(|e| format!("rendered, but the audio device did not restart: {e}")) } else { Ok(()) };
         rendered?;
-        wavgen::write_wav_pcm(path, rate.round() as u32, 2, if self.export.bits24 { 24 } else { 16 }, &out).map_err(|e| e.to_string())
+        wavgen::write_wav_pcm(path, rate.round() as u32, 2, if self.export.bits24 { 24 } else { 16 }, &out).map_err(|e| e.to_string())?;
+        restarted
     }
 
     /// File › New Project: ask first when the project has unsaved changes.

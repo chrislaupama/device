@@ -628,6 +628,13 @@ export component AppWindow inherits Window {
 
     property <int> cards-epoch: Studio.cards-epoch;
     changed cards-epoch => { fs.focus(); }
+    // The key handler gets the focus back when a modal dialog closes.
+    property <bool> modal-open: Studio.export-open || Studio.unsaved-open;
+    changed modal-open => {
+        if (!self.modal-open) {
+            fs.focus();
+        }
+    }
     fs := FocusScope {
         init => { self.focus(); }
         key-pressed(e) => {

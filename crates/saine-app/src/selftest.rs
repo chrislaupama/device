@@ -705,7 +705,7 @@ fn steps() -> Vec<Step> {
         Do("Cmd+Shift+Z", Box::new(|a| key(a, "Z", true, true))),
         Check("redo muted again", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("redo failed".into()))),
         Do("⇧⌘E (file.export_audio)", Box::new(|a| key(a, "E", true, true))),
-        Check("export dialog open with a range and a size estimate", Box::new(|c, a| {
+        Check("export dialog open with a range and a size estimate", Box::new(|_c, a| {
             let s = a.global::<Studio>();
             (s.get_export_open() && s.get_export_bars_text().starts_with("Bars 1–") && s.get_export_estimate().contains("MB"))
                 .then_some(())
