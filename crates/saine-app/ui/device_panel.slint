@@ -8,7 +8,7 @@
 // multiplied by PanelStyle.z. Colours are the measured card colours.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
-import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField, PanelBands, PanelBand, PanelXover, PanelCanvas, PanelZone, PanelButton, PanelSampler, PanelPad, PanelHandle } from "studio.slint";
+import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField, PanelBands, PanelBand, PanelXover, PanelCanvas, PanelZone, PanelButton, ModCard, ModTarget, PanelSampler, PanelPad, PanelHandle } from "studio.slint";
 
 export global PanelStyle {
     out property <float> z: 0.85;
@@ -40,6 +40,10 @@ component ParamDrag inherits TouchArea {
     property <length> last-y;
     mouse-cursor: ns-resize;
     pointer-event(e) => {
+        if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
+            Studio.mod-menu(root.device, root.param, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            return;
+        }
         if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
             root.grabbed();
             if (e.modifiers.alt) { Studio.panel-reset(root.device, root.param); return; }
@@ -154,8 +158,10 @@ component Latch inherits Rectangle {
     }
 }
 
-// Knob cell: 32 px ring, value text, name (the reference app "xs" dial at 100%, scaled).
-component KnobCell inherits Rectangle {
+// Knob cell: 32 px ring, value text, name (the reference app "xs" dial at 100%, scaled). Modulated
+// parameters get a thin arc over the reach of their sources and a dot at the live value.
+// Plugin cards also use face 2 (on/off switch) and face 3 (stepped menu).
+export component KnobCell inherits Rectangle {
     in property <int> device;
     in property <PanelKnob> k;
     in property <color> accent;
@@ -165,6 +171,10 @@ component KnobCell inherits Rectangle {
     property <float> r-arc: root.rc - 1.2 * zm;
     property <float> angle: -135 + root.k.norm * 270;
     property <float> from: -135 + root.k.origin * 270;
+    property <float> lo-a: -135 + root.k.mod-lo * 270;
+    property <float> hi-a: -135 + root.k.mod-hi * 270;
+    property <float> now-a: -135 + root.k.mod-now * 270;
+    property <float> r-mod: root.rc - 4.6 * zm;
     property <bool> editing;
     width: 62px * zm; height: 76px * zm;
     opacity: root.k.dim ? 0.55 : 1.0;
@@ -203,6 +213,27 @@ component KnobCell inherits Rectangle {
             MoveTo { x: root.rc + root.rc * 0.38 * sin(root.angle * 1deg); y: root.rc - root.rc * 0.38 * cos(root.angle * 1deg); }
             LineTo { x: root.rc + root.rc * 0.7 * sin(root.angle * 1deg); y: root.rc - root.rc * 0.7 * cos(root.angle * 1deg); }
         }
+        if root.k.face == 0 && root.k.mod-on && abs(root.hi-a - root.lo-a) > 0.8: Path {
+            width: parent.width; height: parent.height;
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            stroke: root.k.mod-color; stroke-width: 1.8px * zm; fill: transparent; stroke-line-cap: round;
+            MoveTo { x: root.rc + root.r-mod * sin(root.lo-a * 1deg); y: root.rc - root.r-mod * cos(root.lo-a * 1deg); }
+            ArcTo {
+                x: root.rc + root.r-mod * sin(root.hi-a * 1deg); y: root.rc - root.r-mod * cos(root.hi-a * 1deg);
+                radius-x: root.r-mod; radius-y: root.r-mod; large-arc: root.hi-a - root.lo-a > 180; sweep: true;
+            }
+        }
+        if root.k.face == 0 && root.k.mod-on: Rectangle {
+            x: root.rc * 1px + root.r-arc * 1px * sin(root.now-a * 1deg) - 2.5px * zm;
+            y: root.rc * 1px - root.r-arc * 1px * cos(root.now-a * 1deg) - 2.5px * zm;
+            width: 5px * zm; height: 5px * zm; border-radius: 2.5px * zm;
+            background: root.k.mod-color; border-width: 0.5px; border-color: #17181b;
+        }
+        // Plugin stepped menu.
+        if root.k.face == 3: Rectangle {
+            x: -10px * zm; y: (parent.height - 18px * zm) / 2; width: parent.width + 20px * zm; height: 18px * zm; border-radius: 9px * zm; background: PanelStyle.seg;
+            Icon { x: (parent.width - 10px * zm) / 2; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: Icons.chevron-down; ink: #a0a0a3; stroke-width: 1.3px; }
+        }
         // Transfer face (soft-knee curve of the device's gain computer) instead of the ring.
         if root.k.face == 1: Rectangle {
             border-radius: 4px * zm; background: PanelStyle.face; clip: true;
@@ -231,7 +262,7 @@ component KnobCell inherits Rectangle {
         }
         if !root.editing && root.k.face != 2: TouchArea { double-clicked => { root.editing = true; } }
         if root.editing: ValueEditor {
-            x: -6px * zm; width: parent.width + 12px * zm; device: root.device; param: root.k.param; initial: root.k.value; font-size: 11px * zm;
+            x: -6px * zm; width: parent.width + 12px * zm; device: root.device; param: root.k.param; initial: root.k.edit != "" ? root.k.edit : root.k.value; font-size: 11px * zm;
             done => { root.editing = false; }
         }
     }
@@ -978,53 +1009,266 @@ component FieldView inherits Rectangle {
     }
 }
 
-export component BuiltinCard inherits Rectangle {
+// ---- generic card parts (every device card: built-in and plugin) ----
+
+// Small header icon button (17 px hit box).
+export component HeaderButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> on;
+    in property <float> size: 10;
+    callback clicked();
+    width: 17px; height: 17px; border-radius: 4px;
+    background: root.on ? #34363c : ta.has-hover ? #ffffff0d : transparent;
+    accessible-role: button; accessible-label: root.label;
+    Icon { x: (parent.width - root.size * 1px) / 2; y: (parent.height - root.size * 1px) / 2; width: root.size * 1px; height: root.size * 1px; d: root.icon; ink: root.on ? #ffffff : ta.has-hover ? #d0d0d3 : #9d9d9f; stroke-width: 1.3px; }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+// Folded card: a narrow strip with the power switch and the name; a click unfolds it.
+export component FoldedStrip inherits Rectangle {
+    in property <DeviceCard> card;
+    width: root.card.width; height: 265px;
+    border-radius: 6px; background: PanelStyle.card; border-width: 0.5px; border-color: PanelStyle.edge;
+    accessible-role: button; accessible-label: "Unfold " + root.card.name;
+    TouchArea { clicked => { Studio.device-fold(root.card.id); } }
+    Rectangle {
+        x: (parent.width - 11px) / 2; y: 8px; width: 11px; height: 22px; border-radius: 5.5px;
+        background: root.card.enabled ? root.card.accent : #4a4b4f;
+        accessible-role: checkbox; accessible-label: "Bypass effect"; accessible-checked: root.card.enabled;
+        Rectangle { x: 1px; y: root.card.enabled ? 1px : parent.height - 10px; width: 9px; height: 9px; border-radius: 4.5px; background: root.card.enabled ? #17181b : #ffffff; }
+        TouchArea { clicked => { Studio.device-power(root.card.id); } }
+    }
+    Text {
+        x: (parent.width - 14px) / 2; y: 40px; width: 200px; height: 14px;
+        transform-rotation: 90deg; transform-origin: { x: 7px, y: 7px };
+        text: root.card.name; color: root.card.enabled ? #ffffff : #9d9d9f; font-size: 11px; font-weight: 700;
+        vertical-alignment: center; overflow: elide;
+    }
+}
+
+// Inline amount editor of a target row.
+component AmountEditor inherits FocusScope {
+    in property <int> device;
+    in property <int> index;
+    in property <string> initial;
+    callback done();
+    key-pressed(e) => {
+        if (e.text == Key.Escape) { root.done(); return accept; }
+        reject
+    }
+    Rectangle {
+        border-radius: self.height / 2; background: PanelStyle.pill-hot; border-width: 1px; border-color: Tokens.accent;
+        TextInput {
+            x: 4px; width: parent.width - 8px; text: root.initial; color: PanelStyle.ink; font-size: 10px * PanelStyle.z; font-weight: 600;
+            horizontal-alignment: center; vertical-alignment: center; single-line: true;
+            init => { self.focus(); self.select-all(); }
+            accepted => { Studio.mod-amount-text(root.device, root.index, self.text); root.done(); }
+            changed has-focus => { if (!self.has-focus) { if (self.text != root.initial) { Studio.mod-amount-text(root.device, root.index, self.text); } root.done(); } }
+        }
+    }
+}
+
+// One target row: name, draggable amount (up or right raises), x on hover.
+component TargetRow inherits Rectangle {
+    in property <int> device;
+    in property <ModTarget> t;
+    in property <color> accent;
+    property <float> zm: PanelStyle.z;
+    property <length> last-x;
+    property <length> last-y;
+    property <bool> editing;
+    height: 20px * zm;
+    border-radius: 4px * zm;
+    background: row-ta.has-hover ? #ffffff08 : transparent;
+    accessible-role: list-item; accessible-label: root.t.name; accessible-value: root.t.amount;
+    row-ta := TouchArea { }
+    Rectangle { x: 6px * zm; y: (parent.height - 5px * zm) / 2; width: 5px * zm; height: 5px * zm; border-radius: 2.5px * zm; background: root.accent; }
+    Text {
+        x: 16px * zm; width: parent.width - 16px * zm - 64px * zm; text: root.t.name; color: PanelStyle.text;
+        font-size: 10.5px * zm; font-weight: 500; vertical-alignment: center; overflow: elide;
+    }
+    keys := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.UpArrow || e.text == Key.RightArrow) { Studio.mod-amount-step(root.device, root.t.index, 1, e.modifiers.shift); return accept; }
+            if (e.text == Key.DownArrow || e.text == Key.LeftArrow) { Studio.mod-amount-step(root.device, root.t.index, -1, e.modifiers.shift); return accept; }
+            if (e.text == Key.Return) { root.editing = true; return accept; }
+            if (e.text == Key.Escape) { Studio.mod-amount-drag(root.device, root.t.index, 3, 0, false); return accept; }
+            reject
+        }
+    }
+    Rectangle {
+        x: parent.width - 60px * zm; width: 40px * zm; height: 16px * zm; y: (parent.height - self.height) / 2;
+        border-radius: self.height / 2; background: amt-ta.pressed ? PanelStyle.pill-hot : PanelStyle.box;
+        if !root.editing: Text { text: root.t.amount; color: PanelStyle.ink; font-size: 10px * zm; font-weight: 650; horizontal-alignment: center; vertical-alignment: center; }
+        amt-ta := TouchArea {
+            enabled: !root.editing;
+            mouse-cursor: ns-resize;
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+                    keys.focus();
+                    root.last-x = self.mouse-x; root.last-y = self.mouse-y;
+                    Studio.mod-amount-drag(root.device, root.t.index, 0, 0, e.modifiers.shift);
+                }
+                if (e.kind == PointerEventKind.move && self.pressed) {
+                    Studio.mod-amount-drag(root.device, root.t.index, 1, (root.last-y - self.mouse-y + self.mouse-x - root.last-x) / 1px, e.modifiers.shift);
+                    root.last-x = self.mouse-x; root.last-y = self.mouse-y;
+                }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.mod-amount-drag(root.device, root.t.index, 2, 0, false); }
+                if (e.kind == PointerEventKind.cancel) { Studio.mod-amount-drag(root.device, root.t.index, 3, 0, false); }
+            }
+            double-clicked => { root.editing = true; }
+        }
+        if root.editing: AmountEditor { device: root.device; index: root.t.index; initial: root.t.amount; done => { root.editing = false; } }
+    }
+    Rectangle {
+        opacity: row-ta.has-hover || amt-ta.has-hover || x-ta.has-hover ? 1 : 0;
+        x: parent.width - 17px * zm; width: 15px * zm; height: 15px * zm; y: (parent.height - self.height) / 2;
+        accessible-role: button; accessible-label: "Remove target";
+        Icon { x: 2.5px * zm; y: 2.5px * zm; width: 10px * zm; height: 10px * zm; d: Icons.close; ink: x-ta.has-hover ? #e5e5e8 : #9d9d9f; stroke-width: 1.3px; }
+        x-ta := TouchArea { clicked => { Studio.mod-remove(root.device, root.t.index); } }
+    }
+}
+
+// Targets of a source output: caption, Map pill, + (parameter list), rows.
+component TargetList inherits Rectangle {
+    in property <int> device;
+    in property <ModCard> m;
+    in property <color> accent;
+    in property <string> caption: "Targets";
+    property <float> zm: PanelStyle.z;
+    Text { x: 0; y: 0; height: 20px * zm; text: root.caption; color: PanelStyle.caption; font-size: 11px * zm; font-weight: 500; vertical-alignment: center; }
+    Rectangle {
+        x: root.width - 66px * zm; y: 1px * zm; width: 40px * zm; height: 18px * zm; border-radius: self.height / 2;
+        background: root.m.map-armed ? root.accent : map-ta.has-hover ? PanelStyle.pill-hot : PanelStyle.seg;
+        accessible-role: button; accessible-label: "Map"; accessible-checked: root.m.map-armed;
+        Text { text: "Map"; color: root.m.map-armed ? #17181b : #ffffffcc; font-size: 10.5px * zm; font-weight: 650; horizontal-alignment: center; vertical-alignment: center; }
+        map-ta := TouchArea { clicked => { Studio.mod-map(root.device, root.m.slot); } }
+    }
+    HeaderButton {
+        x: root.width - 20px * zm; y: 1.5px * zm; icon: Icons.plus; label: "Add target";
+        clicked => { Studio.mod-add-menu(root.device, root.m.slot, self.absolute-position.x, self.absolute-position.y + self.height + 2px); }
+    }
+    if root.m.targets.length == 0: Text {
+        x: 0; y: 26px * zm; width: root.width; text: "Press Map, then click a control on this track, or use +."; wrap: word-wrap;
+        color: PanelStyle.caption; font-size: 10px * zm; opacity: 0.8;
+    }
+    Flickable {
+        x: 0; y: 24px * zm; width: root.width; height: root.height - 24px * zm;
+        content-height: root.m.targets.length * 21px * zm;
+        for t[i] in root.m.targets: TargetRow { x: 0; y: i * 21px * zm; width: root.width; device: root.device; t: t; accent: root.accent; }
+    }
+}
+
+// Chain macro: 84 px cell, 32 px dial, name under it; unmapped macros are dimmed.
+component MacroCell inherits Rectangle {
+    in property <int> device;
+    in property <PanelKnob> k;
+    in property <color> accent;
+    property <float> zm: PanelStyle.z;
+    property <length> ring: 32px * zm;
+    property <float> rc: root.ring / 1px / 2;
+    property <float> r-arc: root.rc - 1.2 * zm;
+    property <float> angle: -135 + root.k.norm * 270;
+    width: 84px * zm; height: 60px * zm;
+    opacity: root.k.mapped || root.k.selected ? 1 : 0.55;
+    accessible-role: slider; accessible-label: root.k.label; accessible-value: root.k.value;
+    if root.k.selected: Rectangle { x: 0; y: -4px * zm; width: parent.width; height: parent.height + 8px * zm; border-radius: 6px * zm; border-width: 1px; border-color: root.accent; }
+    fs := ParamKeys { device: root.device; param: root.k.param; }
+    Rectangle {
+        x: (root.width - root.ring) / 2; y: 2px * zm; width: root.ring; height: root.ring;
+        Rectangle { border-radius: self.width / 2; background: root.k.mapped ? root.accent.with-alpha(0.26) : #2a2b30; }
+        Rectangle { x: 3px * zm; y: 3px * zm; width: parent.width - 6px * zm; height: parent.height - 6px * zm; border-radius: self.width / 2; background: PanelStyle.body; }
+        if root.angle > -134.5: Path {
+            width: parent.width; height: parent.height;
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            stroke: root.k.mapped ? root.accent : #c8c6bc; stroke-width: 1.9px * zm; fill: transparent; stroke-line-cap: round;
+            MoveTo { x: root.rc + root.r-arc * sin(-135deg); y: root.rc - root.r-arc * cos(-135deg); }
+            ArcTo { x: root.rc + root.r-arc * sin(root.angle * 1deg); y: root.rc - root.r-arc * cos(root.angle * 1deg); radius-x: root.r-arc; radius-y: root.r-arc; large-arc: root.angle > 45; sweep: true; }
+        }
+        Path {
+            width: parent.width; height: parent.height;
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            stroke: PanelStyle.ink; stroke-width: 1.4px * zm; stroke-line-cap: round;
+            MoveTo { x: root.rc + root.rc * 0.3 * sin(root.angle * 1deg); y: root.rc - root.rc * 0.3 * cos(root.angle * 1deg); }
+            LineTo { x: root.rc + root.rc * 0.66 * sin(root.angle * 1deg); y: root.rc - root.rc * 0.66 * cos(root.angle * 1deg); }
+        }
+        ParamDrag {
+            device: root.device; param: root.k.param;
+            grabbed => { fs.focus(); }
+            double-clicked => { Studio.panel-reset(root.device, root.k.param); }
+        }
+    }
+    Text {
+        x: 0; y: 40px * zm; width: root.width; height: 14px * zm;
+        text: root.k.label; color: root.k.mapped || root.k.selected ? PanelStyle.ink : PanelStyle.text;
+        font-size: 11px * zm; font-weight: 600; letter-spacing: 0.01 * 11px * zm;
+        horizontal-alignment: center; vertical-alignment: center; overflow: elide;
+    }
+}
+
+// Header of every card: drag to reorder, double-click folds; power, name (swap picker),
+// presets (fx cards), the trailing buttons and remove.
+export component CardHeader inherits Rectangle {
     in property <DeviceCard> card;
     property <float> zm: PanelStyle.z;
-    width: root.card.width;
-    height: 265px;
-    border-radius: 6px;
-    background: PanelStyle.card;
-    border-width: root.card.dragging ? 1px : 0.5px;
-    border-color: root.card.dragging ? Tokens.accent : PanelStyle.edge;
-    drop-shadow-blur: root.card.dragging ? 12px : 0px;
-    drop-shadow-color: #00000080;
-    accessible-role: groupbox;
-    accessible-label: root.card.name;
-
-    // ---- header: drag to reorder; power, name, presets, remove ----
+    property <bool> renaming;
+    property <bool> chain: root.card.modv.kind == 2;
+    height: 26.5px;
     TouchArea {
-        x: 0; y: 0; width: root.width; height: 26.5px;
         mouse-cursor: MouseCursor.grab;
         pointer-event(e) => {
             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.device-drag(root.card.id, 0, self.absolute-position.x + self.mouse-x); }
             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.device-drag(root.card.id, 2, self.absolute-position.x + self.mouse-x); }
         }
         moved => { Studio.device-drag(root.card.id, 1, self.absolute-position.x + self.mouse-x); }
+        double-clicked => { Studio.device-fold(root.card.id); }
     }
     Rectangle {
         x: 8.5px; y: 7.75px; width: 22px; height: 11px; border-radius: 5.5px;
         background: root.card.enabled ? root.card.accent : #4a4b4f;
-        accessible-role: checkbox; accessible-label: root.card.instrument ? "Bypass instrument" : "Bypass effect"; accessible-checked: root.card.enabled;
+        accessible-role: checkbox; accessible-label: root.chain ? "Turn the chain off, every effect in it" : root.card.instrument ? "Bypass instrument" : "Bypass effect"; accessible-checked: root.card.enabled;
         Rectangle { x: root.card.enabled ? parent.width - 10px : 1px; y: 1px; width: 9px; height: 9px; border-radius: 4.5px; background: root.card.enabled ? #17181b : #ffffff; }
         TouchArea { clicked => { Studio.device-power(root.card.id); } }
     }
-    // Narrow cards (Utility) have no room for the preset label: a chevron after the name opens the menu.
-    property <bool> narrow: root.width < 240px;
-    name-text := Text {
+    // Narrow built-in cards (Utility) have no room for the preset label: a chevron after the name opens the menu.
+    property <bool> narrow: root.card.builtin && root.card.modv.kind == 0 && root.width < 240px;
+    name := Rectangle {
         x: 37.5px; y: 5px; height: 16px;
-        width: root.narrow ? min(self.preferred-width, root.width - 37.5px - 120px * zm) : root.width - 37.5px - 140px;
-        text: root.card.name; color: root.card.enabled ? #ffffff : #9d9d9f; font-size: 11px; font-weight: 700;
-        vertical-alignment: center; overflow: elide;
+        width: min(name-text.preferred-width + (root.card.swappable ? 16px : 0px), root.width - 37.5px - (!root.card.builtin ? 72px : root.card.modv.kind == 0 ? (root.narrow ? 136px * zm : 210px * zm) : 100px));
+        accessible-role: button; accessible-label: root.card.swappable ? "Choose effect plugin" : root.card.name;
+        name-text := Text {
+            x: 0; width: parent.width - (root.card.swappable ? 16px : 0px); visible: !root.renaming;
+            text: root.card.name; color: root.card.enabled ? (root.chain && !name-ta.has-hover ? #81838a : #ffffff) : #9d9d9f;
+            font-size: 11px; font-weight: 700; vertical-alignment: center; overflow: elide;
+        }
+        if root.card.swappable && !root.renaming: Icon { x: parent.width - 12px; y: 3px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #9d9d9f; stroke-width: 1.3px; }
+        name-ta := TouchArea {
+            enabled: !root.renaming;
+            clicked => { if (root.card.swappable) { Studio.device-swap-menu(root.card.id, self.absolute-position.x, self.absolute-position.y + self.height + 4px); } }
+            double-clicked => { if (root.chain) { root.renaming = true; } }
+        }
+        if root.renaming: Rectangle {
+            x: -4px; width: max(parent.width + 8px, 120px); border-radius: 4px; background: PanelStyle.pill-hot; border-width: 1px; border-color: Tokens.accent;
+            FocusScope {
+                key-pressed(e) => { if (e.text == Key.Escape) { root.renaming = false; return accept; } reject }
+                TextInput {
+                    x: 4px; width: parent.width - 8px; text: root.card.name; color: #ffffff; font-size: 11px; font-weight: 700; vertical-alignment: center; single-line: true;
+                    init => { self.focus(); self.select-all(); }
+                    accepted => { Studio.device-rename(root.card.id, self.text); root.renaming = false; }
+                    changed has-focus => { if (!self.has-focus && root.renaming) { if (self.text != root.card.name) { Studio.device-rename(root.card.id, self.text); } root.renaming = false; } }
+                }
+            }
+        }
     }
     if root.narrow: Rectangle {
-        x: name-text.x + name-text.width + 2px; y: 5px; width: 14px; height: 17px;
+        x: name.x + name.width + 2px; y: 5px; width: 14px; height: 17px;
         accessible-role: combobox; accessible-label: "Presets"; accessible-value: root.card.preset;
         Icon { x: 2px; y: 4px; width: 9px; height: 9px; d: Icons.chevron-down; ink: menu-ta.has-hover ? #e5e5e8 : #9d9d9f; stroke-width: 1.3px; }
         menu-ta := TouchArea { clicked => { Studio.panel-menu(root.card.id, -2, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
     }
     // Presets: name (or "Presets") opens the menu; arrows step through the factory list.
-    if !root.narrow: Rectangle {
+    if root.card.builtin && root.card.modv.kind == 0 && !root.narrow: Rectangle {
         x: root.width - 200px * zm; y: 4px; width: 94px * zm; height: 18px;
         accessible-role: combobox; accessible-label: "Presets"; accessible-value: root.card.preset;
         Text {
@@ -1034,27 +1278,107 @@ export component BuiltinCard inherits Rectangle {
         }
         preset-ta := TouchArea { clicked => { Studio.panel-menu(root.card.id, -2, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
     }
-    for dir[i] in root.narrow ? [] : [-1, 1]: Rectangle {
-        x: root.width - (i == 0 ? 102px : 87px) * zm; y: 5px; width: 14px * zm; height: 17px;
-        accessible-role: button; accessible-label: i == 0 ? "Previous preset" : "Next preset";
-        Icon { x: (parent.width - 10px * zm) / 2; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: i == 0 ? Icons.chevron-left : Icons.chevron-right; ink: step-ta.has-hover ? #e5e5e8 : #9d9d9f; stroke-width: 1.3px; }
-        step-ta := TouchArea { clicked => { Studio.panel-preset-step(root.card.id, dir); } }
+    if root.card.builtin && root.card.modv.kind == 0 && !root.narrow: Rectangle {
+        x: root.width - 102px * zm; y: 5px; width: 30px * zm; height: 17px;
+        for dir[i] in [-1, 1]: Rectangle {
+            x: i * 15px * zm; width: 14px * zm; height: 17px;
+            accessible-role: button; accessible-label: i == 0 ? "Previous preset" : "Next preset";
+            Icon { x: (parent.width - 10px * zm) / 2; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: i == 0 ? Icons.chevron-left : Icons.chevron-right; ink: step-ta.has-hover ? #e5e5e8 : #9d9d9f; stroke-width: 1.3px; }
+            step-ta := TouchArea { clicked => { Studio.panel-preset-step(root.card.id, dir); } }
+        }
     }
-    Rectangle { x: root.width - 67px * zm; y: 6.5px; width: 0.5px; height: 13px; background: PanelStyle.line; }
-    Rectangle {
-        x: root.width - 23px; y: 5px; width: 17px; height: 17px;
-        accessible-role: button; accessible-label: root.card.instrument ? "Remove instrument" : "Remove effect";
-        Icon { x: 3.5px; y: 3.5px; width: 10px; height: 10px; d: Icons.close; ink: #9d9d9f; stroke-width: 1.3px; }
-        TouchArea { clicked => { Studio.device-remove(root.card.id); } }
+    if root.card.modv.kind == 0: Rectangle { x: root.width - (root.card.builtin ? 67px * zm : 70px); y: 6.5px; width: 0.5px; height: 13px; background: PanelStyle.line; }
+    // Chain head: map the selected macro, show / hide the members.
+    if root.chain: HeaderButton {
+        x: root.width - 87px; y: 5px; icon: Icons.link; label: "Map macro"; on: root.card.modv.map-armed;
+        clicked => {
+            if (!root.card.modv.macro-open) { Studio.macro-select(root.card.id, 0); }
+            Studio.mod-map(root.card.id, root.card.modv.macro-open ? root.card.modv.slot : 0);
+        }
+    }
+    if root.chain: HeaderButton {
+        x: root.width - 65px; y: 5px; icon: root.card.modv.collapsed ? Icons.chevrons-right : Icons.chevrons-left;
+        label: root.card.modv.collapsed ? "Show the chain's effects" : "Hide the chain's effects";
+        clicked => { Studio.device-collapse(root.card.id); }
+    }
+    // Plugin window (third-party plugins with their own window).
+    if !root.card.builtin && root.card.has-editor: HeaderButton {
+        x: root.width - 65px; y: 5px; icon: Icons.arrow-out; label: root.card.editor-open ? "Close device window" : "Open device window"; on: root.card.editor-open;
+        opacity: root.card.editor-supported ? 1 : 0.4;
+        clicked => { Studio.device-edit(root.card.id); }
+    }
+    if !root.card.instrument: HeaderButton {
+        x: root.width - 44px; y: 5px; icon: Icons.minus; label: "Fold";
+        clicked => { Studio.device-fold(root.card.id); }
+    }
+    HeaderButton {
+        x: root.width - 23px; y: 5px; icon: Icons.close; label: root.card.instrument ? "Remove instrument" : root.chain ? "Remove chain" : "Remove effect";
+        clicked => { Studio.device-remove(root.card.id); }
     }
     Rectangle { x: 0; y: 26px; width: root.width; height: 0.5px; background: PanelStyle.line; }
+}
+
+// LFO body: targets column (the wave picture is the card's canvas, src/device_mod.rs).
+component LfoBody inherits Rectangle {
+    in property <DeviceCard> card;
+    property <float> zm: PanelStyle.z;
+    Rectangle { x: 276px * zm; y: 34px; width: 0.5px; height: root.height - 42px; background: PanelStyle.line; }
+    TargetList { x: 284px * zm; y: 37px * zm; width: root.width - 292px * zm; height: root.height - 37px * zm - 8px; device: root.card.id; m: root.card.modv; accent: root.card.accent; }
+}
+
+// Chain head body: 2 x 4 macro grid; the side panel names the selected macro and lists its targets.
+component ChainBody inherits Rectangle {
+    in property <DeviceCard> card;
+    property <float> zm: PanelStyle.z;
+    for k in root.card.knobs: MacroCell { x: k.x + 28px * zm; y: k.y; device: root.card.id; k: k; accent: k.mod-color; }
+    if root.card.modv.macro-open: Rectangle {
+        x: 240px * zm; y: 26.5px; width: root.width - 240px * zm; height: root.height - 26.5px;
+        // Typing replaces the field's binding: show the model's name again when the macro or its name changes.
+        property <string> shown: root.card.modv.slot + ":" + root.card.modv.macro-name;
+        changed shown => { name-in.text = root.card.modv.macro-name; }
+        Rectangle { x: 0; y: 8px; width: 0.5px; height: parent.height - 16px; background: PanelStyle.line; }
+        Rectangle {
+            x: 10px * zm; y: 10px * zm; width: parent.width - 20px * zm; height: 22px * zm; border-radius: 5px * zm;
+            background: PanelStyle.box; border-width: name-in.has-focus ? 1px : 0px; border-color: root.card.accent;
+            accessible-role: text-input; accessible-label: "Macro name";
+            name-in := TextInput {
+                x: 8px * zm; width: parent.width - 16px * zm; text: root.card.modv.macro-name; color: PanelStyle.ink;
+                font-size: 11px * zm; font-weight: 600; vertical-alignment: center; single-line: true;
+                accepted => { Studio.macro-rename(root.card.id, root.card.modv.slot, self.text); }
+                changed has-focus => { if (!self.has-focus && self.text != root.card.modv.macro-name) { Studio.macro-rename(root.card.id, root.card.modv.slot, self.text); } }
+            }
+        }
+        TargetList {
+            x: 10px * zm; y: 42px * zm; width: parent.width - 20px * zm; height: parent.height - 42px * zm - 8px;
+            device: root.card.id; m: root.card.modv; accent: root.card.accent;
+        }
+    }
+}
+
+// Built-in device card: the generic panel (picker row, view row with sliders, dial row)
+// or a custom body (LFO, chain head); folded, a narrow strip.
+component BuiltinFace inherits Rectangle {
+    in property <DeviceCard> card;
+    property <float> zm: PanelStyle.z;
+    width: root.card.width;
+    height: 265px;
+    border-radius: 6px;
+    background: PanelStyle.card;
+    border-width: root.card.dragging || root.card.modv.map-armed ? 1px : 0.5px;
+    border-color: root.card.dragging ? Tokens.accent : root.card.modv.map-armed ? root.card.accent : PanelStyle.edge;
+    drop-shadow-blur: root.card.dragging ? 12px : 0px;
+    drop-shadow-color: #00000080;
+    accessible-role: groupbox;
+    accessible-label: root.card.name;
+
+    CardHeader { x: 0; y: 0; width: root.width; card: root.card; }
 
     // ---- body ----
     Rectangle {
         x: 0; y: 0; width: root.width; height: root.height;
         opacity: root.card.enabled ? 1.0 : 0.5;
         HorizontalLayout {
-            x: 8px * zm; y: 37px * zm; width: root.width - 16px * zm; height: 20px * zm;
+            x: 8px * zm; y: 37px * zm; width: (root.card.modv.kind == 1 ? 260px * zm : root.width - 16px * zm); height: 20px * zm;
             spacing: 16px * zm;
             for p in root.card.picks: PickItem { device: root.card.id; p: p; accent: root.card.accent; }
         }
@@ -1067,6 +1391,7 @@ export component BuiltinCard inherits Rectangle {
             x: root.card.strip.x; y: root.card.strip.y; width: root.card.strip.w; height: root.card.strip.h;
             device: root.card.id; s: root.card.strip; accent: root.card.accent;
         }
+        if root.card.modv.kind == 1: LfoBody { x: 0; y: 0; width: root.width; height: root.height; card: root.card; }
         if root.card.field.visible: FieldView {
             x: root.card.field.x; y: root.card.field.y; width: root.card.field.w; height: root.card.field.h;
             device: root.card.id; f: root.card.field; accent: root.card.accent;
@@ -1080,13 +1405,24 @@ export component BuiltinCard inherits Rectangle {
             device: root.card.id; s: s; accent: root.card.accent;
             top: 86px * zm; bottom: 174px * zm;
         }
-        for k in root.card.knobs: KnobCell {
-            x: k.x; y: k.y;
-            device: root.card.id; k: k; accent: root.card.accent;
+        if root.card.modv.kind != 2: Rectangle {
+            for k in root.card.knobs: KnobCell {
+                x: k.x; y: k.y;
+                device: root.card.id; k: k; accent: root.card.accent;
+            }
         }
+        if root.card.modv.kind == 2: ChainBody { x: 0; y: 0; width: root.width; height: root.height; card: root.card; }
         if root.card.sampler.visible: SamplerBody {
             x: 0; y: 0; width: root.width; height: root.height;
             device: root.card.id; s: root.card.sampler; accent: root.card.accent;
         }
     }
+}
+
+export component BuiltinCard inherits Rectangle {
+    in property <DeviceCard> card;
+    width: root.card.width;
+    height: 265px;
+    if root.card.folded: FoldedStrip { card: root.card; }
+    if !root.card.folded: BuiltinFace { card: root.card; }
 }

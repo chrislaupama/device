@@ -37,6 +37,8 @@ namespace saine::os {
 // ---------------------------------------------------------------- strings
 
 #if defined(_WIN32)
+// Converts UTF-8 to UTF-16 for the wide Win32 APIs. Malformed sequences are
+// replaced with U+FFFD, not rejected; "" only for empty input or a failed call.
 std::wstring widen(std::string_view utf8) {
     if (utf8.empty()) return {};
     const int n = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
@@ -46,6 +48,8 @@ std::wstring widen(std::string_view utf8) {
     return w;
 }
 
+// Converts UTF-16 from the wide Win32 APIs back to UTF-8. Unpaired surrogates
+// are replaced with U+FFFD, not rejected; "" only for empty input or a failed call.
 std::string narrow(std::wstring_view wide) {
     if (wide.empty()) return {};
     const int n =
@@ -59,6 +63,8 @@ std::string narrow(std::wstring_view wide) {
 
 // ---------------------------------------------------------------- files, paths
 
+// Opens a file by UTF-8 path; nullptr on failure. Windows uses _wfsopen with
+// full sharing so other readers can open the same file.
 std::FILE* fopen_utf8(const char* utf8_path, const char* mode) noexcept {
     if (utf8_path == nullptr || mode == nullptr) return nullptr;
 #if defined(_WIN32)
@@ -74,6 +80,7 @@ std::FILE* fopen_utf8(const char* utf8_path, const char* mode) noexcept {
 #endif
 }
 
+// Builds a filesystem path from UTF-8 without going through the ANSI code page.
 std::filesystem::path path_from_utf8(std::string_view utf8) {
 #if defined(_WIN32)
     return std::filesystem::path(widen(utf8));
@@ -82,6 +89,7 @@ std::filesystem::path path_from_utf8(std::string_view utf8) {
 #endif
 }
 
+// Returns a filesystem path as UTF-8 (Windows: converted from the native UTF-16).
 std::string path_to_utf8(const std::filesystem::path& p) {
 #if defined(_WIN32)
     return narrow(p.native());
@@ -90,6 +98,7 @@ std::string path_to_utf8(const std::filesystem::path& p) {
 #endif
 }
 
+// Last write time in nanoseconds since 1970, or 0 if the path cannot be read.
 int64_t file_mtime_ns(const std::string& utf8_path) noexcept {
 #if defined(_WIN32)
     WIN32_FILE_ATTRIBUTE_DATA data{};
@@ -114,6 +123,7 @@ int64_t file_mtime_ns(const std::string& utf8_path) noexcept {
 #endif
 }
 
+// Absolute path of the running executable as UTF-8, or "" if it cannot be found.
 std::string executable_path() {
 #if defined(_WIN32)
     std::wstring buf(1024, L'\0');
@@ -143,6 +153,7 @@ std::string executable_path() {
 
 // ---------------------------------------------------------------- environment
 
+// Reads an environment variable as UTF-8 into `out`; false if it is not set.
 bool get_env(const char* name, std::string& out) {
 #if defined(_WIN32)
     const std::wstring wname = widen(name);
@@ -161,6 +172,8 @@ bool get_env(const char* name, std::string& out) {
 #endif
 }
 
+// Sets an environment variable, or removes it when `utf8_value` is nullptr;
+// true on success.
 bool set_env(const char* name, const char* utf8_value) {
 #if defined(_WIN32)
     // Both the Win32 environment (inherited by CreateProcessW) and the CRT
@@ -175,6 +188,7 @@ bool set_env(const char* name, const char* utf8_value) {
 #endif
 }
 
+// Separator of PATH-like lists: ';' on Windows, ':' elsewhere.
 char path_list_separator() noexcept {
 #if defined(_WIN32)
     return ';';
@@ -183,6 +197,7 @@ char path_list_separator() noexcept {
 #endif
 }
 
+// Operating-system id of the current process.
 int process_id() noexcept {
 #if defined(_WIN32)
     return static_cast<int>(GetCurrentProcessId());
@@ -191,6 +206,8 @@ int process_id() noexcept {
 #endif
 }
 
+// Command-line arguments after argv[0] as UTF-8 (Windows: re-read from
+// GetCommandLineW, since argv there is in the ANSI code page).
 std::vector<std::string> utf8_args(int argc, char** argv) {
 #if defined(_WIN32)
     (void)argc;
@@ -209,6 +226,7 @@ std::vector<std::string> utf8_args(int argc, char** argv) {
 
 // ---------------------------------------------------------------- child processes
 
+// Human-readable status: "exit N", "crashed (signal N)" or "crashed (exception 0x...)".
 std::string ExitStatus::describe() const {
     if (!crashed) return "exit " + std::to_string(code);
 #if defined(_WIN32)
@@ -220,8 +238,10 @@ std::string ExitStatus::describe() const {
 #endif
 }
 
+// Kills the child if it is still running.
 ChildProcess::~ChildProcess() { kill(); }
 
+// Takes over the other object's child; `o` is left empty.
 ChildProcess::ChildProcess(ChildProcess&& o) noexcept {
 #if defined(_WIN32)
     process_ = o.process_;
@@ -232,6 +252,7 @@ ChildProcess::ChildProcess(ChildProcess&& o) noexcept {
 #endif
 }
 
+// Kills any child this object owns, then takes over the other object's child.
 ChildProcess& ChildProcess::operator=(ChildProcess&& o) noexcept {
     if (this != &o) {
         kill();
@@ -246,6 +267,7 @@ ChildProcess& ChildProcess::operator=(ChildProcess&& o) noexcept {
     return *this;
 }
 
+// True while a child has been spawned and not yet reaped.
 bool ChildProcess::running() const noexcept {
 #if defined(_WIN32)
     return process_ != nullptr;
@@ -286,6 +308,8 @@ void append_quoted(std::wstring& cmd, const std::wstring& arg) {
     cmd += L'"';
 }
 
+// Opens a file (or NUL) with an inheritable handle for a child's stdio;
+// `write` creates or truncates it.
 HANDLE open_inheritable(const std::wstring& path, bool write) {
     SECURITY_ATTRIBUTES sa{};
     sa.nLength = sizeof sa;
@@ -295,6 +319,8 @@ HANDLE open_inheritable(const std::wstring& path, bool write) {
                        write ? CREATE_ALWAYS : OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 }
 
+// Maps a Windows exit code to an ExitStatus; NTSTATUS error codes and
+// breakpoint exceptions count as crashes.
 ExitStatus status_from_code(DWORD code) {
     ExitStatus s;
     // NTSTATUS error codes (0xC0000005 access violation, 0xC0000409 stack
@@ -311,6 +337,9 @@ ExitStatus status_from_code(DWORD code) {
 
 } // namespace
 
+// Starts `exe` with `args`, stdin from NUL and stdout/stderr redirected to the
+// given files. Only those three handles are inherited. False with `err` set
+// on failure.
 bool ChildProcess::spawn(const std::string& exe, const std::vector<std::string>& args, const std::string& stdout_path,
                          const std::string& stderr_path, std::string& err) {
     kill();
@@ -370,6 +399,8 @@ bool ChildProcess::spawn(const std::string& exe, const std::vector<std::string>&
     return true;
 }
 
+// Waits up to `timeout` for the child to exit; on exit fills `out`, closes
+// the handle and returns true.
 bool ChildProcess::wait_for(std::chrono::milliseconds timeout, ExitStatus& out) {
     if (process_ == nullptr) return false;
     const auto ms = static_cast<DWORD>(std::max<long long>(0, timeout.count()));
@@ -381,8 +412,10 @@ bool ChildProcess::wait_for(std::chrono::milliseconds timeout, ExitStatus& out) 
     return true;
 }
 
+// Non-blocking check: true (with `out` filled) once the child has exited.
 bool ChildProcess::poll(ExitStatus& out) { return wait_for(std::chrono::milliseconds(0), out); }
 
+// Terminates the child, waits for it to exit and closes its handle.
 void ChildProcess::kill() {
     if (process_ == nullptr) return;
     TerminateProcess(static_cast<HANDLE>(process_), 1);
@@ -390,6 +423,7 @@ void ChildProcess::kill() {
     reset();
 }
 
+// Closes the process handle and forgets the child.
 void ChildProcess::reset() noexcept {
     if (process_ != nullptr) CloseHandle(static_cast<HANDLE>(process_));
     process_ = nullptr;
@@ -398,6 +432,7 @@ void ChildProcess::reset() noexcept {
 #else // POSIX
 
 namespace {
+// Maps a waitpid() status to an ExitStatus; death by a signal counts as a crash.
 ExitStatus status_from_wait(int status) {
     ExitStatus s;
     if (WIFSIGNALED(status)) {
@@ -410,6 +445,9 @@ ExitStatus status_from_wait(int status) {
 }
 } // namespace
 
+// Starts `exe` with `args` via posix_spawn, stdin from /dev/null and
+// stdout/stderr redirected to the given files (created or truncated). False
+// with `err` set on failure.
 bool ChildProcess::spawn(const std::string& exe, const std::vector<std::string>& args, const std::string& stdout_path,
                          const std::string& stderr_path, std::string& err) {
     kill();
@@ -436,6 +474,7 @@ bool ChildProcess::spawn(const std::string& exe, const std::vector<std::string>&
     return true;
 }
 
+// Non-blocking check: reaps the child and fills `out` once it has exited.
 bool ChildProcess::poll(ExitStatus& out) {
     if (pid_ <= 0) return false;
     int status = 0;
@@ -446,6 +485,8 @@ bool ChildProcess::poll(ExitStatus& out) {
     return true;
 }
 
+// Polls every 2 ms until the child exits or `timeout` passes; true once it
+// has exited (with `out` filled).
 bool ChildProcess::wait_for(std::chrono::milliseconds timeout, ExitStatus& out) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     for (;;) {
@@ -455,6 +496,7 @@ bool ChildProcess::wait_for(std::chrono::milliseconds timeout, ExitStatus& out) 
     }
 }
 
+// Sends SIGKILL to the child and reaps it.
 void ChildProcess::kill() {
     if (pid_ <= 0) return;
     ::kill(static_cast<pid_t>(pid_), SIGKILL);
@@ -463,6 +505,7 @@ void ChildProcess::kill() {
     pid_ = -1;
 }
 
+// Forgets the child without signalling it.
 void ChildProcess::reset() noexcept { pid_ = -1; }
 
 #endif

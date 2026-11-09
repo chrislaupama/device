@@ -17,12 +17,15 @@ constexpr const char* kUnsupported =
     "plugin editor windows are not implemented on Linux yet (X11 embedding is planned)";
 } // namespace
 
+// No editor windows on this platform: releases the view and fails with a
+// "not implemented" message.
 std::unique_ptr<PluginEditor> create_vst3_editor(Steinberg::IPlugView* view, const std::string&, std::string& err) {
     if (view != nullptr) view->release(); // the editor owns the view reference
     err = kUnsupported;
     return nullptr;
 }
 
+// No editor windows on this platform: fails with a "not implemented" message.
 std::unique_ptr<PluginEditor> create_clap_editor(const clap_plugin*, const clap_plugin_gui*, const std::string&,
                                                  std::function<void(ClapEditorHost*)>, std::string& err) {
     err = kUnsupported;

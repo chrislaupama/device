@@ -35,24 +35,33 @@
 namespace saine {
 namespace {
 
+// Window class shared by every editor window.
 constexpr wchar_t kWindowClass[] = L"SaineStudioPluginEditor";
 
+// Base of the Win32 editor windows: owns the top-level window and routes
+// its close and resize messages to the plugin-specific subclass.
 class WinEditor : public PluginEditor {
 public:
+    // Closes the window (tearing the plugin view down) if it is still open.
     ~WinEditor() override { close(); }
 
+    // False once the window has been closed by the user or by close().
     bool is_open() const noexcept override { return open_; }
 
+    // Destroys the window; WM_DESTROY then tears the plugin view down.
     void close() noexcept override {
         if (hwnd_ != nullptr) DestroyWindow(hwnd_); // -> WM_DESTROY -> window_closing()
     }
 
+    // Restores the window if minimised and brings it to the foreground.
     void bring_to_front() noexcept override {
         if (hwnd_ == nullptr) return;
         if (IsIconic(hwnd_)) ShowWindow(hwnd_, SW_RESTORE);
         SetForegroundWindow(hwnd_);
     }
 
+    // WM_DESTROY: tears the plugin view down while its child window still exists
+    // and detaches this object from the window. Runs once.
     void window_closing() noexcept {
         if (!open_) return;
         open_ = false;
@@ -60,6 +69,7 @@ public:
         SetWindowLongPtrW(hwnd_, GWLP_USERDATA, 0);
         hwnd_ = nullptr;
     }
+    // The user resized the window to a client area of w x h (no-op by default).
     virtual void window_resized(uint32_t, uint32_t) noexcept {}
 
 protected:
@@ -95,11 +105,13 @@ protected:
         return true;
     }
 
+    // Shows the window and brings it to the foreground.
     void show() noexcept {
         ShowWindow(hwnd_, SW_SHOW);
         SetForegroundWindow(hwnd_);
     }
 
+    // Resizes the window so its client area is w x h.
     void set_client_size(uint32_t w, uint32_t h) noexcept {
         if (hwnd_ == nullptr) return;
         RECT r{0, 0, static_cast<LONG>(w), static_cast<LONG>(h)};
@@ -108,6 +120,7 @@ protected:
                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
+    // Detaches and destroys the plugin's view (called while the window exists).
     virtual void teardown() noexcept = 0;
 
     HWND hwnd_ = nullptr;
@@ -115,6 +128,8 @@ protected:
     bool open_ = false;
 
 private:
+    // Window procedure: binds the window to its WinEditor on WM_NCCREATE and
+    // forwards close, destroy and resize to it.
     static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (msg == WM_NCCREATE) {
             const auto* cs = reinterpret_cast<const CREATESTRUCTW*>(lp);
@@ -140,20 +155,27 @@ private:
 
 class Vst3Editor;
 
+// IPlugFrame given to a VST3 view so it can ask its window to resize.
 class PlugFrame final : public Steinberg::U::Implements<Steinberg::U::Directly<Steinberg::IPlugFrame>> {
 public:
+    // Frame for `owner`'s view.
     explicit PlugFrame(Vst3Editor* owner) : owner_(owner) {}
     Steinberg::tresult PLUGIN_API resizeView(Steinberg::IPlugView* view, Steinberg::ViewRect* r) override;
+    // Stops forwarding resize requests (the editor is going away).
     void detach() { owner_ = nullptr; }
 
 private:
     Vst3Editor* owner_;
 };
 
+// A VST3 IPlugView embedded in a top-level window (kPlatformTypeHWND).
 class Vst3Editor final : public WinEditor {
 public:
+    // Takes ownership of one reference to `view`.
     explicit Vst3Editor(Steinberg::IPlugView* view) : view_(view) {}
 
+    // Creates the window at the view's size (400 x 300 if it reports none),
+    // attaches the view and shows it. False with `err` set on failure.
     bool open(const std::string& title, std::string& err) {
         using namespace Steinberg;
         if (view_->isPlatformTypeSupported(kPlatformTypeHWND) != kResultTrue) {
@@ -179,6 +201,8 @@ public:
         return true;
     }
 
+    // IPlugFrame::resizeView: resizes the window to the plugin's request and
+    // confirms the new size to the view.
     bool resize_from_plugin(Steinberg::ViewRect* r) {
         if (!open_ || r == nullptr) return false;
         in_resize_ = true;
@@ -188,6 +212,7 @@ public:
         return true;
     }
 
+    // User resize: snaps the size to the view's constraints and passes it to the view.
     void window_resized(uint32_t w, uint32_t h) noexcept override {
         if (!resizable_ || in_resize_ || !attached_) return;
         Steinberg::ViewRect r(0, 0, static_cast<Steinberg::int32>(w), static_cast<Steinberg::int32>(h));
@@ -200,6 +225,7 @@ public:
         view_->onSize(&r);
     }
 
+    // Closes the window, detaches the view and releases it.
     ~Vst3Editor() override {
         close();
         teardown();
@@ -208,6 +234,7 @@ public:
     }
 
 private:
+    // Removes the view from the window and releases the frame.
     void teardown() noexcept override {
         if (attached_) {
             view_->removed();
@@ -228,17 +255,24 @@ private:
     bool in_resize_ = false;
 };
 
+// Forwards the plugin's resize request to the editor, if it still exists.
 Steinberg::tresult PLUGIN_API PlugFrame::resizeView(Steinberg::IPlugView*, Steinberg::ViewRect* r) {
     return owner_ != nullptr && owner_->resize_from_plugin(r) ? Steinberg::kResultOk : Steinberg::kResultFalse;
 }
 
 // ---------------------------------------------------------------- CLAP
 
+// A CLAP clap.gui embedded in a top-level window (CLAP_WINDOW_API_WIN32).
 class ClapEditor final : public WinEditor, public ClapEditorHost {
 public:
+    // `attach` registers this editor with the plugin instance (nullptr unregisters)
+    // so the plugin's resize and closed requests reach it.
     ClapEditor(const clap_plugin* p, const clap_plugin_gui* g, std::function<void(ClapEditorHost*)> attach)
         : plugin_(p), gui_(g), attach_(std::move(attach)) {}
 
+    // Creates the plugin GUI and the window at the GUI's size (400 x 300 if it
+    // reports none), parents the GUI in it and shows it. False with `err` set on
+    // failure.
     bool open(const std::string& title, std::string& err) {
         if (!gui_->is_api_supported(plugin_, CLAP_WINDOW_API_WIN32, false)) {
             err = "the CLAP editor does not support embedded Win32 windows";
@@ -271,6 +305,7 @@ public:
         return true;
     }
 
+    // Plugin-initiated resize: sets the window's client area to w x h.
     bool request_resize(uint32_t w, uint32_t h) noexcept override {
         if (!open_) return false;
         in_resize_ = true;
@@ -279,8 +314,11 @@ public:
         return true;
     }
 
+    // The plugin closed its GUI: close the window too.
     void plugin_closed() noexcept override { close(); }
 
+    // User resize: lets the plugin adjust the size, snaps the window to it and
+    // applies it to the GUI.
     void window_resized(uint32_t w, uint32_t h) noexcept override {
         if (!resizable_ || in_resize_ || !created_) return;
         uint32_t aw = w, ah = h;
@@ -293,12 +331,14 @@ public:
         gui_->set_size(plugin_, aw, ah);
     }
 
+    // Closes the window and destroys the plugin GUI.
     ~ClapEditor() override {
         close();
         teardown();
     }
 
 private:
+    // Hides and destroys the plugin GUI and unregisters this editor.
     void teardown() noexcept override {
         if (created_) {
             gui_->hide(plugin_);
@@ -318,6 +358,8 @@ private:
 
 } // namespace
 
+// Opens a VST3 editor window; nullptr with `err` set on failure (the view is
+// released either way on failure).
 std::unique_ptr<PluginEditor> create_vst3_editor(Steinberg::IPlugView* view, const std::string& title,
                                                  std::string& err) {
     auto e = std::make_unique<Vst3Editor>(view);
@@ -325,6 +367,7 @@ std::unique_ptr<PluginEditor> create_vst3_editor(Steinberg::IPlugView* view, con
     return e;
 }
 
+// Opens a CLAP editor window; nullptr with `err` set on failure.
 std::unique_ptr<PluginEditor> create_clap_editor(const clap_plugin* plugin, const clap_plugin_gui* gui,
                                                  const std::string& title, std::function<void(ClapEditorHost*)> attach,
                                                  std::string& err) {

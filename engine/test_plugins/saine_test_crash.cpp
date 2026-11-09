@@ -5,6 +5,8 @@
 #include <csignal>
 
 namespace {
+// clap_entry.init: crashes on purpose (a real access violation on Windows,
+// SIGSEGV elsewhere).
 bool entry_init(const char*) {
 #if defined(_WIN32)
     // raise(SIGSEGV) on Windows is a clean exit(3), not a crash: fault for real.
@@ -14,7 +16,9 @@ bool entry_init(const char*) {
 #endif
     return false;
 }
+// Never reached.
 void entry_deinit() {}
+// No factory.
 const void* entry_get_factory(const char*) { return nullptr; }
 } // namespace
 

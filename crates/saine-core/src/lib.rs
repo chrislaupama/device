@@ -16,13 +16,14 @@ pub mod instrument;
 pub mod keymap;
 pub mod midi;
 pub mod model;
+pub mod modulation;
 pub mod persist;
 pub mod snapshot;
 
 pub use command::{Command, EditError};
 pub use history::{Document, Origin};
 pub use automation::{AutoPoint, AutomationLane, AutomationTarget, SynthParam};
-pub use device::{Device, DeviceId, DeviceSample, PluginFormat, PluginKind, PluginRef, Slice};
+pub use device::{Device, DeviceId, DeviceSample, ModLink, ModParam, PluginFormat, PluginKind, PluginRef, Slice};
 pub use instrument::SynthParams;
 pub use midi::{MidiClip, Note};
 pub use model::*;
