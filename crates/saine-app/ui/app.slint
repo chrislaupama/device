@@ -27,6 +27,7 @@ import { AssistantPanel, HighlightOverlay } from "assistant.slint";
 import { SynthDevice, SynthMenuList } from "synth.slint";
 import { SettingsPanel, ChoiceList } from "settings.slint";
 import { PluginCard, AddDeviceCard, DevMenuList } from "devices.slint";
+import { BuiltinCard } from "device_panel.slint";
 
 export { Studio, TrackRow, AutoLabel, AutoExtra, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, ChoiceItem, DeviceCard, PluginRow }
 
@@ -604,7 +605,11 @@ component BottomPanel inherits Panel {
             scroll-event(e) => { Studio.chain-scroll-by(e.delta-x != 0 ? e.delta-x / 1px : e.delta-y / 1px); accept }
         }
         if Studio.synth-visible: SynthDevice { x: 263.5px - 255px - Studio.chain-scroll; y: 34px - 27px; }
-        for card in Studio.device-cards: PluginCard { x: card.x - 255px; y: 34px - 27px; card: card; }
+        for card in Studio.device-cards: Rectangle {
+            x: card.x - 255px; y: 34px - 27px; width: card.width; height: 265px;
+            if !card.builtin: PluginCard { x: 0; y: 0; card: card; }
+            if card.builtin: BuiltinCard { x: 0; y: 0; card: card; }
+        }
         AddDeviceCard { x: Studio.add-device-x - 255px; y: 34.5px - 27px; }
         if Studio.chain-marker-visible: Rectangle { x: Studio.chain-marker-x - 255px - 1px; y: 34px - 27px; width: 2px; height: 265px; border-radius: 1px; background: Tokens.accent; }
     }

@@ -2041,6 +2041,280 @@ fn automation_steps() -> Vec<Step> {
     ]
 }
 
+// ------------------------------------------------------------------ built-in devices
+
+fn builtin_device(c: &Controller) -> Option<&saine_core::Device> {
+    let t = track_of(c, TrackKind::Audio)?;
+    c.project().tracks[t].devices.iter().find(|d| d.plugin.format == saine_core::PluginFormat::Builtin)
+}
+
+fn builtin_value(c: &Controller, param: &str) -> Option<f32> {
+    let d = builtin_device(c)?;
+    let def = saine_core::builtin::def_of(d)?;
+    Some(def.value(d, def.param(param)?))
+}
+
+/// Window centre of knob `i` of a built-in card (ui/device_panel.slint KnobCell).
+fn panel_knob_xy(cd: &crate::DeviceCard, i: usize) -> Option<(f32, f32)> {
+    let k = slint::Model::row_data(&cd.knobs, i)?;
+    let z = crate::device_panel::Z;
+    Some(card_xy(cd, k.x + 31.0 * z, k.y + 16.0 * z))
+}
+
+fn builtin_of<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
+    let t = track_of(c, TrackKind::Audio)?;
+    c.project().tracks[t].devices.iter().find(|d| saine_core::builtin::def_of(d).is_some_and(|def| def.id == id))
+}
+
+/// Each other built-in: add it from the Built-in list, check its card, defaults and engine
+/// state, drag its first knob (one undo step), then undo back to the empty chain.
+fn builtin_each_steps() -> Vec<Step> {
+    use Step::*;
+    let mut steps: Vec<Step> = vec![Do("builtins: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false)))];
+    for def in saine_core::builtin::all().iter().filter(|d| ["distortion", "tapesaturation", "soft-clipper", "bitcrusher", "widener", "utility"].contains(&d.id)) {
+        let (id, name) = (def.id, def.name);
+        let base = Rc::new(Cell::new(0usize));
+        let before = Rc::new(Cell::new(0.0f32));
+        let (b0, b1, b2, b3) = (base.clone(), base.clone(), base.clone(), base);
+        let (v0, v1) = (before.clone(), before);
+        steps.push(DoC(format!("{name}: Add device › Built-in › {name}").leak(), Box::new(move |a, ctl| {
+            b0.set(ctl.borrow().doc.history_labels().len());
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            let add_x = a.global::<Studio>().get_add_device_x();
+            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == name) {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })));
+        steps.push(Check(format!("{name}: added at its defaults in one undo step; card drawn; engine live").leak(), Box::new(move |c, a| {
+            let n = c.doc.history_labels().len();
+            let label = format!("Add {name}");
+            if n != b1.get() + 1 || c.doc.undo_label() != Some(label.as_str()) {
+                return Err(format!("history {} -> {n}, last {:?}", b1.get(), c.doc.undo_label()));
+            }
+            let d = builtin_of(c, id).ok_or("no device")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            if let Some(p) = def.params.iter().find(|p| def.value(d, p) != p.default) {
+                return Err(format!("{} = {} (default {})", p.id, def.value(d, p), p.default));
+            }
+            let cd = card_named(a, name).ok_or("no card")?;
+            if !cd.builtin || slint::Model::row_count(&cd.knobs) == 0 {
+                return Err(format!("builtin {} knobs {}", cd.builtin, slint::Model::row_count(&cd.knobs)));
+            }
+            let errors = c.engine.plugin_load_errors();
+            (!errors.iter().any(|(e, _)| *e == d.id)).then_some(()).ok_or(format!("load errors {errors:?}"))
+        })));
+        steps.push(DoC(format!("{name}: drag the first knob 40 px").leak(), Box::new(move |a, ctl| {
+            let Some(cd) = card_named(a, name) else { return };
+            let Some(k) = slint::Model::row_data(&cd.knobs, 0) else { return };
+            {
+                let c = ctl.borrow();
+                let Some(d) = builtin_of(&c, id) else { return };
+                let def = saine_core::builtin::def_of(d).unwrap();
+                v0.set(def.value(d, &def.params[k.param as usize]));
+            }
+            if let Some((x, y)) = panel_knob_xy(&cd, 0) {
+                drag(a, x, y, x, if k.norm > 0.5 { y + 40.0 } else { y - 40.0 });
+            }
+        })));
+        steps.push(Check(format!("{name}: the drag changed the first knob's parameter in ONE undo step").leak(), Box::new(move |c, a| {
+            let n = c.doc.history_labels().len();
+            if n != b2.get() + 2 || c.doc.undo_label() != Some("Device Parameter Change") {
+                return Err(format!("history {} -> {n}, last {:?}", b2.get() + 1, c.doc.undo_label()));
+            }
+            let cd = card_named(a, name).ok_or("no card")?;
+            let k = slint::Model::row_data(&cd.knobs, 0).ok_or("no knob")?;
+            let d = builtin_of(c, id).ok_or("no device")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            let v = def.value(d, &def.params[k.param as usize]);
+            (v != v1.get()).then_some(()).ok_or(format!("value stayed {v}"))
+        })));
+        steps.push(Do(format!("{name}: ⌘Z twice").leak(), Box::new(|a| {
+            key(a, "z", true, false);
+            key(a, "z", true, false);
+        })));
+        steps.push(Check(format!("{name}: undo removes the device").leak(), Box::new(move |c, _| {
+            let n = c.doc.history_labels().len();
+            (builtin_of(c, id).is_none() && n == b3.get()).then_some(()).ok_or(format!("history {n}, want {}", b3.get()))
+        })));
+    }
+    steps
+}
+
+/// The built-in Compressor driven through its generated panel (no plugins needed).
+fn builtin_device_steps() -> Vec<Step> {
+    use Step::*;
+    let hist = Rc::new(Cell::new(0usize));
+    let h = || hist.clone();
+    fn one(hc: &Rc<Cell<usize>>, c: &Controller, label: &str) -> Result<(), String> {
+        let n = c.doc.history_labels().len();
+        let was = hc.get();
+        hc.set(n);
+        (n == was + 1 && c.doc.undo_label() == Some(label)).then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want {label})", c.doc.undo_label()))
+    }
+    let (h0, h1, h2, h3, h4, h5, h6, h7, h8) = (h(), h(), h(), h(), h(), h(), h(), h(), h());
+    vec![
+        Do("builtin: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("builtin: select the first audio track, Devices tab, Add device › Built-in", Box::new(move |a, ctl| {
+            let i = track_of(&ctl.borrow(), TrackKind::Audio).unwrap_or(0);
+            click_track_header(a, ctl, i);
+            if ctl.borrow().bottom_tab == crate::controller::BottomTab::Clip {
+                click(a, 5.0 + 286.0 + 15.0, 820.0 - 5.0 - 390.0 + 14.0);
+            }
+            h0.set(ctl.borrow().doc.history_labels().len());
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            let add_x = a.global::<Studio>().get_add_device_x();
+            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+        })),
+        Check("builtin: the Built-in list offers Compressor", Box::new(|_, a| {
+            let items = devmenu_labels(a);
+            (a.global::<Studio>().get_devmenu_open() && items.iter().any(|r| r.0 == "Compressor" && r.2)).then_some(()).ok_or(format!("items {items:?}"))
+        })),
+        Do("builtin: pick Compressor", Box::new(|a| {
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == "Compressor") {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })),
+        Check("builtin: Compressor added (AddDevice) at its defaults, one undo step; generated card has 7 knobs, 1 slider, a strip", Box::new(move |c, a| {
+            one(&h1, c, "Add Compressor")?;
+            let cd = card_named(a, "Compressor").ok_or("no card")?;
+            let n = |m: usize| m;
+            let ok = cd.builtin
+                && n(slint::Model::row_count(&cd.knobs)) == 7
+                && slint::Model::row_count(&cd.sliders) == 1
+                && cd.strip.visible
+                && approx(cd.width, 521.0 * crate::device_panel::Z, 0.01)
+                && builtin_value(c, "threshold") == Some(-24.0);
+            ok.then_some(()).ok_or(format!("builtin {} knobs {} width {}", cd.builtin, slint::Model::row_count(&cd.knobs), cd.width))
+        })),
+        Check("engine: the Compressor is live (readouts available, no load error)", Box::new(|c, _| {
+            let id = builtin_device(c).ok_or("no device")?.id;
+            let mut r = Vec::new();
+            c.engine.builtin_readouts(id.0, &mut r).map_err(|e| e.to_string())?;
+            let errors = c.engine.plugin_load_errors();
+            (r.len() == 3 && !errors.iter().any(|(d, _)| *d == id)).then_some(()).ok_or(format!("readouts {r:?} errors {errors:?}"))
+        })),
+        DoC("builtin: drag the Threshold knob up 40 px", Box::new(|a, _| {
+            if let Some((x, y)) = card_named(a, "Compressor").and_then(|cd| panel_knob_xy(&cd, 0)) {
+                drag(a, x, y, x, y - 40.0);
+            }
+        })),
+        Check("builtin: Threshold −24 → −9 dB (40 px at 1/160 per px), ONE undo step for the drag", Box::new(move |c, a| {
+            one(&h2, c, "Device Parameter Change")?;
+            let v = builtin_value(c, "threshold").unwrap_or(f32::NAN);
+            let shown = card_named(a, "Compressor").and_then(|cd| slint::Model::row_data(&cd.knobs, 0)).map(|k| k.value.to_string()).unwrap_or_default();
+            (approx(v, -9.0, 0.05) && shown == "\u{2212}9.0 dB").then_some(()).ok_or(format!("threshold {v}, knob shows {shown:?}"))
+        })),
+        DoC("builtin: double-click the Threshold knob", Box::new(|a, _| {
+            if let Some((x, y)) = card_named(a, "Compressor").and_then(|cd| panel_knob_xy(&cd, 0)) {
+                double_click(a, x, y);
+            }
+        })),
+        Check("builtin: double-click reset Threshold to −24 dB, one undo step", Box::new(move |c, _| {
+            one(&h3, c, "Device Parameter Change")?;
+            let v = builtin_value(c, "threshold").unwrap_or(f32::NAN);
+            (v == -24.0).then_some(()).ok_or(format!("threshold {v}"))
+        })),
+        DoC("builtin: click › (next preset)", Box::new(|a, _| {
+            if let Some(cd) = card_named(a, "Compressor") {
+                let z = crate::device_panel::Z;
+                let (x, y) = card_xy(&cd, cd.width - 87.0 * z + 7.0 * z, 13.5);
+                click(a, x, y);
+            }
+        })),
+        Check("builtin: first factory preset loaded (SetDeviceParams), one undo step, header names it", Box::new(move |c, a| {
+            let def = saine_core::builtin::find("compressor").unwrap();
+            let first = def.factory[0];
+            one(&h4, c, &format!("Load Preset {}", first.name))?;
+            let want = def.factory_values(&first);
+            let d = builtin_device(c).ok_or("no device")?;
+            let shown = card_named(a, "Compressor").map(|cd| cd.preset.to_string()).unwrap_or_default();
+            (def.params.iter().all(|p| def.value(d, p) == want[p.id]) && shown == first.name).then_some(()).ok_or(format!("preset {:?}, header {shown:?}", d.preset))
+        })),
+        DoC("builtin: Sidechain menu, pick the Instrument track", Box::new(|a, ctl| {
+            let (id, name) = {
+                let c = ctl.borrow();
+                let Some(d) = builtin_device(&c) else { return };
+                let Some(t) = track_of(&c, TrackKind::Instrument) else { return };
+                (d.id.0 as i32, c.project().tracks[t].name.clone())
+            };
+            a.global::<Studio>().invoke_panel_menu(id, -1, 600.0, 600.0);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == name) {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })),
+        Check("builtin: sidechain source set and enabled in one undo step; the Gain pill is live", Box::new(move |c, a| {
+            one(&h5, c, "Sidechain Change")?;
+            let d = builtin_device(c).ok_or("no device")?;
+            let inst = track_of(c, TrackKind::Instrument).map(|t| c.project().tracks[t].id);
+            let pill = card_named(a, "Compressor").and_then(|cd| (0..slint::Model::row_count(&cd.picks)).filter_map(|i| slint::Model::row_data(&cd.picks, i)).find(|p| p.kind == 3));
+            (d.sidechain == inst && builtin_value(c, "sidechainEnable") == Some(1.0) && pill.is_some_and(|p| p.enabled))
+                .then_some(())
+                .ok_or(format!("sidechain {:?} enable {:?}", d.sidechain, builtin_value(c, "sidechainEnable")))
+        })),
+        Do("builtin: ⌘Z", Box::new(|a| key(a, "z", true, false))),
+        Check("builtin: undo removes the sidechain (source and enable)", Box::new(move |c, _| {
+            let d = builtin_device(c).ok_or("no device")?;
+            h6.set(c.doc.history_labels().len());
+            (d.sidechain.is_none() && builtin_value(c, "sidechainEnable") == Some(0.0)).then_some(()).ok_or(format!("sidechain {:?}", d.sidechain))
+        })),
+        DoC("builtin: pick the Instrument track as sidechain, then load the second factory preset", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let (Some(d), Some(t)) = (builtin_device(&c).map(|d| d.id), track_of(&c, TrackKind::Instrument)) else { return };
+            let src = c.project().tracks[t].id;
+            c.panel_set_sidechain(d, Some(src));
+            c.panel_load_preset(d, 1);
+        })),
+        Check("builtin: a preset keeps the sidechain source and its enable switch, and is not marked edited", Box::new(|c, a| {
+            let d = builtin_device(c).ok_or("no device")?;
+            let shown = card_named(a, "Compressor").map(|cd| cd.preset.to_string()).unwrap_or_default();
+            (d.sidechain.is_some() && builtin_value(c, "sidechainEnable") == Some(1.0) && !shown.is_empty() && !shown.ends_with('*'))
+                .then_some(())
+                .ok_or(format!("sidechain {:?} enable {:?} header {shown:?}", d.sidechain, builtin_value(c, "sidechainEnable")))
+        })),
+        DoC("builtin: reset Threshold, then drag it up 40 px as forty 1 px events", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let Some(d) = builtin_device(&c).map(|d| d.id) else { return };
+            c.panel_reset(d, 0);
+            c.panel_drag(d, 0, 0, 0.0, 1.0 / 160.0, false);
+            for _ in 0..40 {
+                c.panel_drag(d, 0, 1, 1.0, 1.0 / 160.0, false);
+            }
+            c.panel_drag(d, 0, 2, 0.0, 1.0 / 160.0, false);
+        })),
+        Check("builtin: small drag events add up like one large event (−24 → −9 dB)", Box::new(|c, _| {
+            let v = builtin_value(c, "threshold").unwrap_or(f32::NAN);
+            approx(v, -9.0, 0.05).then_some(()).ok_or(format!("threshold {v}"))
+        })),
+        DoC("builtin: drag Threshold 20 px, press Escape, release", Box::new(move |a, ctl| {
+            h7.set(ctl.borrow().doc.history_labels().len());
+            let Some(d) = builtin_device(&ctl.borrow()).map(|d| d.id) else { return };
+            ctl.borrow_mut().panel_drag(d, 0, 0, 0.0, 1.0 / 160.0, false);
+            ctl.borrow_mut().panel_drag(d, 0, 1, 20.0, 1.0 / 160.0, false);
+            key(a, Key::Escape, false, false);
+            ctl.borrow_mut().panel_drag(d, 0, 2, 0.0, 1.0 / 160.0, false);
+        })),
+        Check("builtin: Escape cancels the drag (Threshold stays −9 dB, no undo step)", Box::new(move |c, _| {
+            let v = builtin_value(c, "threshold").unwrap_or(f32::NAN);
+            let n = c.doc.history_labels().len();
+            (approx(v, -9.0, 0.05) && n == h8.get()).then_some(()).ok_or(format!("threshold {v}, history {} -> {n}", h8.get()))
+        })),
+    ]
+}
+
 /// The devices section drives Apple's Audio Units (AULowpass, AUDelay,
 /// DLSMusicDevice). Elsewhere its actions are not performed and its checks
 /// are reported as skipped (counted like the other guarded skips).
@@ -2057,6 +2331,151 @@ fn platform_device_steps() -> Vec<Step> {
         .collect()
 }
 
+fn named_builtin<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
+    let t = track_of(c, TrackKind::Audio)?;
+    c.project().tracks[t].devices.iter().find(|d| saine_core::builtin::def_of(d).is_some_and(|def| def.id == id))
+}
+
+fn named_value(c: &Controller, id: &str, param: &str) -> Option<f32> {
+    let d = named_builtin(c, id)?;
+    let def = saine_core::builtin::def_of(d)?;
+    Some(def.value(d, def.param(param)?))
+}
+
+fn leak(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
+/// The modulation devices: each one added from Add device › Built-in, checked
+/// live in the engine with its generated field card, then removed; plus the
+/// Tremolo field drag (one undo step for both axes), the Sync swap of the Rate
+/// knob, and Character Mod's circuit switch moving untouched artifacts.
+fn modulation_device_steps() -> Vec<Step> {
+    use Step::*;
+    const DEVICES: [(&str, &str, usize); 7] =
+        [("tremolo", "Tremolo", 4), ("autopanner", "Auto-Panner", 4), ("chorus", "Chorus", 5), ("flanger", "Flanger", 5), ("phaser", "Phaser", 5), ("ring-mod", "Ring Mod", 5), ("character-mod", "Character Mod", 5)];
+    let hist = Rc::new(Cell::new(0usize));
+    fn one(hc: &Rc<Cell<usize>>, c: &Controller, label: &str) -> Result<(), String> {
+        let n = c.doc.history_labels().len();
+        let was = hc.get();
+        hc.set(n);
+        (n == was + 1 && c.doc.undo_label() == Some(label)).then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want {label})", c.doc.undo_label()))
+    }
+    let id_of = |ctl: &Ctl, id: &str| named_builtin(&ctl.borrow(), id).map(|d| d.id.0 as i32);
+    let refresh = |a: &AppWindow, ctl: &Ctl| {
+        if let Ok(mut c) = ctl.try_borrow_mut() {
+            c.update_ui(a);
+        }
+    };
+    let mut steps = vec![DoC("modulation: remove the Compressor", Box::new(move |a, ctl| {
+        if let Some(id) = id_of(ctl, "compressor") {
+            a.global::<Studio>().invoke_device_remove(id);
+        }
+        refresh(a, ctl);
+    }))];
+    for (id, name, knobs) in DEVICES {
+        let (h0, h1) = (hist.clone(), hist.clone());
+        steps.push(DoC(leak(format!("modulation: Add device › Built-in › {name}")), Box::new(move |a, ctl| {
+            h0.set(ctl.borrow().doc.history_labels().len());
+            refresh(a, ctl);
+            let add_x = a.global::<Studio>().get_add_device_x();
+            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+            refresh(a, ctl);
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == name) {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })));
+        steps.push(Check(leak(format!("{name}: added at its defaults in one step; field card with {knobs} knobs; live in the engine (LFO readout)")), Box::new(move |c, a| {
+            one(&h1, c, &format!("Add {name}"))?;
+            let d = named_builtin(c, id).ok_or("not added")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            let cd = card_named(a, name).ok_or("no card")?;
+            let mut r = Vec::new();
+            c.engine.builtin_readouts(d.id.0, &mut r).map_err(|e| e.to_string())?;
+            let errors = c.engine.plugin_load_errors();
+            let ok = cd.field.visible
+                && cd.field.main != ""
+                && slint::Model::row_count(&cd.knobs) == knobs
+                && approx(cd.width, def.layout.width() * crate::device_panel::Z, 0.01)
+                && r.len() == 1
+                && !errors.iter().any(|(e, _)| *e == d.id);
+            ok.then_some(()).ok_or(format!("field {} knobs {} width {} readouts {r:?} errors {errors:?}", cd.field.visible, slint::Model::row_count(&cd.knobs), cd.width))
+        })));
+        match id {
+            "tremolo" => {
+                let (h2, h3) = (hist.clone(), hist.clone());
+                steps.push(DoC("tremolo: drag the field 40 px right and 30 px up", Box::new(|a, _| {
+                    if let Some(cd) = card_named(a, "Tremolo") {
+                        let f = &cd.field;
+                        let (x, y) = card_xy(&cd, f.x + f.plot_x + f.plot_w / 2.0, f.y + f.plot_y + f.plot_h / 2.0);
+                        drag(a, x, y, x + 40.0, y - 30.0);
+                    }
+                })));
+                steps.push(Check("tremolo: Rate and Depth both moved, ONE undo step for the drag", Box::new(move |c, _| {
+                    one(&h2, c, "Device Parameter Change")?;
+                    let (r, d) = (named_value(c, "tremolo", "rate").unwrap_or(0.0), named_value(c, "tremolo", "depth").unwrap_or(0.0));
+                    (r > 5.5 && d > 75.0).then_some(()).ok_or(format!("rate {r} depth {d}"))
+                })));
+                // Through the controller: the Add device search field keeps keyboard focus after an add.
+                steps.push(DoC("tremolo: undo", Box::new(move |a, ctl| {
+                    ctl.borrow_mut().undo();
+                    refresh(a, ctl);
+                })));
+                steps.push(Check("tremolo: one undo restores Rate 5 Hz and Depth 70%", Box::new(move |c, _| {
+                    h3.set(c.doc.history_labels().len());
+                    let (r, d) = (named_value(c, "tremolo", "rate").unwrap_or(0.0), named_value(c, "tremolo", "depth").unwrap_or(0.0));
+                    (r == 5.0 && d == 70.0).then_some(()).ok_or(format!("rate {r} depth {d}"))
+                })));
+                let h4 = hist.clone();
+                steps.push(DoC("tremolo: Timebase › Sync", Box::new(move |a, ctl| {
+                    let Some(id) = id_of(ctl, "tremolo") else { return };
+                    let p = saine_core::builtin::find("tremolo").and_then(|d| d.index_of("sync")).map_or(-1, |i| i as i32);
+                    a.global::<Studio>().invoke_panel_choice(id, p, 1);
+                    refresh(a, ctl);
+                })));
+                steps.push(Check("tremolo: Sync on swaps the Rate knob for Rate Sync (1/4)", Box::new(move |c, a| {
+                    one(&h4, c, "Device Parameter Change")?;
+                    let k = card_named(a, "Tremolo").and_then(|cd| slint::Model::row_data(&cd.knobs, 0)).ok_or("no knob")?;
+                    (k.value == "1/4" && k.label == "Rate").then_some(()).ok_or(format!("knob {} {}", k.label, k.value))
+                })));
+            }
+            "character-mod" => {
+                let h2 = hist.clone();
+                steps.push(DoC("character mod: Character dropdown › Phaser", Box::new(move |a, ctl| {
+                    let Some(id) = id_of(ctl, "character-mod") else { return };
+                    let p = saine_core::builtin::find("character-mod").and_then(|d| d.index_of("model")).map_or(-1, |i| i as i32);
+                    a.global::<Studio>().invoke_panel_menu(id, p, 600.0, 600.0);
+                    refresh(a, ctl);
+                    if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == "Phaser") {
+                        let (x, y) = devmenu_row(a, i);
+                        click(a, x, y);
+                    }
+                })));
+                steps.push(Check("character mod: Phaser chosen, untouched Hiss moved to 0 in the same undo step; Mode now lists Phaser modes", Box::new(move |c, a| {
+                    one(&h2, c, "Character Change, with Hiss moved to its own defaults")?;
+                    let (m, hiss) = (named_value(c, "character-mod", "model"), named_value(c, "character-mod", "art_hiss"));
+                    let mode = card_named(a, "Character Mod")
+                        .and_then(|cd| (0..slint::Model::row_count(&cd.picks)).filter_map(|i| slint::Model::row_data(&cd.picks, i)).find(|p| p.label == "Mode"))
+                        .map(|p| p.value.to_string())
+                        .unwrap_or_default();
+                    (m == Some(7.0) && hiss == Some(0.0) && mode == "Four Plain").then_some(()).ok_or(format!("model {m:?} hiss {hiss:?} mode {mode:?}"))
+                })));
+            }
+            _ => {}
+        }
+        let h5 = hist.clone();
+        steps.push(DoC(leak(format!("modulation: remove {name}")), Box::new(move |a, ctl| {
+            if let Some(i) = id_of(ctl, id) {
+                a.global::<Studio>().invoke_device_remove(i);
+            }
+            refresh(a, ctl);
+            h5.set(ctl.borrow().doc.history_labels().len());
+        })));
+    }
+    steps
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
@@ -2064,6 +2483,9 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(midi_steps());
     all.extend(recording_steps());
     all.extend(platform_device_steps());
+    all.extend(builtin_device_steps());
+    all.extend(builtin_each_steps());
+    all.extend(modulation_device_steps());
     all.extend(automation_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));

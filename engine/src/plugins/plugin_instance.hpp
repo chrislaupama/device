@@ -25,7 +25,9 @@
 
 namespace saine {
 
-enum class PluginFormat : uint8_t { AudioUnit = 0, Vst3 = 1, Clap = 2 };
+enum class PluginFormat : uint8_t { AudioUnit = 0, Vst3 = 1, Clap = 2, Builtin = 3 };
+
+class BuiltinInstance;
 
 const char* plugin_format_name(PluginFormat f) noexcept;
 
@@ -196,6 +198,15 @@ public:
     virtual void shutdown() noexcept {}
     // CLAP request_callback etc.
     virtual void on_main_thread() noexcept {}
+    // Built-in devices (devices/builtin.hpp): the instance itself, else null.
+    virtual BuiltinInstance* as_builtin() noexcept { return nullptr; }
+    // Main thread, every publish of an existing instance: the device's state
+    // as published. Plugins only read state at creation (default: ignore);
+    // built-in devices take their current parameter values from it.
+    virtual void update_state(const uint8_t* data, std::size_t len) noexcept {
+        (void)data;
+        (void)len;
+    }
 
     // ---- parameters (main thread; see se_plugin_params)
     // Visible parameters in the plugin's order.

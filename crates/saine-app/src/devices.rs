@@ -19,6 +19,7 @@
 use crate::controller::{BottomTab, Controller, JobResult, sync_model};
 use crate::highlight::Layout;
 use crate::{DeviceCard, MenuItem, PluginRow, Studio, TreeRow};
+use saine_core::builtin::DeviceDef;
 use saine_core::{Command, Device, DeviceId, PluginFormat, PluginKind, PluginRef, TrackId, TrackKind};
 use saine_engine::{PluginInfo, ScanReport};
 use serde::Deserialize;
@@ -59,6 +60,8 @@ const DRAG_SLOP: f32 = 4.0;
 pub enum Item {
     /// Our built-in Synth (selecting it sets `instrument_plugin` to None).
     BuiltinSynth,
+    /// A built-in device (saine_core::builtin), added as an insert.
+    Builtin(&'static DeviceDef),
     Plugin(PluginRef),
 }
 
@@ -66,12 +69,14 @@ impl Item {
     pub fn name(&self) -> &str {
         match self {
             Item::BuiltinSynth => "Synth",
+            Item::Builtin(d) => d.name,
             Item::Plugin(p) => &p.name,
         }
     }
     pub fn kind(&self) -> PluginKind {
         match self {
             Item::BuiltinSynth => PluginKind::Instrument,
+            Item::Builtin(d) => d.kind,
             Item::Plugin(p) => p.kind,
         }
     }
@@ -82,6 +87,7 @@ pub fn format_badge(f: PluginFormat) -> &'static str {
         PluginFormat::AudioUnit => "AU",
         PluginFormat::Vst3 => "VST3",
         PluginFormat::Clap => "CLAP",
+        PluginFormat::Builtin => "Built-in",
     }
 }
 
@@ -90,6 +96,7 @@ fn format_order(f: PluginFormat) -> u8 {
         PluginFormat::AudioUnit => 0,
         PluginFormat::Vst3 => 1,
         PluginFormat::Clap => 2,
+        PluginFormat::Builtin => 3,
     }
 }
 
@@ -243,8 +250,21 @@ pub struct TreeEntry {
 pub struct DevMenu {
     pub pos: (f32, f32),
     pub w: f32,
-    /// (label, right-hand text, item; None = header / note row, separator above)
-    pub rows: Vec<(String, String, Option<Item>, bool)>,
+    /// (label, right-hand text, action; None = header / note row, separator above)
+    pub rows: Vec<(String, String, Option<MenuPick>, bool)>,
+}
+
+/// What a device popup row does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MenuPick {
+    /// Add to the selected track (Add device submenus, instrument selector).
+    Add(Item),
+    /// Built-in device panel: sidechain source (None = off).
+    Sidechain(DeviceId, Option<TrackId>),
+    /// Built-in device panel: load factory preset `n`.
+    Preset(DeviceId, usize),
+    /// Built-in device panel dropdown: (device, parameter index, choice).
+    Choice(DeviceId, i32, i32),
 }
 
 #[derive(Debug, Clone)]
@@ -296,11 +316,13 @@ pub struct DevicesUi {
     /// Window size and browser visibility, refreshed by `update_ui` (drop hit tests).
     pub win: (f32, f32),
     pub sounds: bool,
+    /// Built-in device panels: live gesture and meter history (src/device_panel.rs).
+    pub panel: crate::device_panel::PanelState,
 }
 
 impl Default for DevicesUi {
     fn default() -> Self {
-        let expanded = ["i/builtin", "i/au", "i/vst3", "i/clap", "e/au", "e/vst3", "e/clap"].iter().map(|s| s.to_string()).collect();
+        let expanded = ["i/builtin", "i/au", "i/vst3", "i/clap", "e/builtin", "e/au", "e/vst3", "e/clap"].iter().map(|s| s.to_string()).collect();
         DevicesUi {
             catalog: Catalog::default(),
             tab: 0,
@@ -322,6 +344,7 @@ impl Default for DevicesUi {
             report_until: None,
             win: (1440.0, 820.0),
             sounds: true,
+            panel: Default::default(),
         }
     }
 }
@@ -360,7 +383,19 @@ pub fn build_tree(cat: &Catalog, tab: usize, search: &str, expanded: &HashSet<St
     let tp = if tab == 0 { "i" } else { "e" };
     let open = |key: &str| !q.is_empty() || expanded.contains(key);
     let leaf_icon = if kind == PluginKind::Instrument { 1 } else { 2 };
-    // Built-in: our Synth (instruments). There are no built-in effects yet: the folder is omitted.
+    // Built-in: our devices of this kind (saine_core::builtin) and, for instruments, the Synth.
+    let builtins: Vec<&'static DeviceDef> =
+        saine_core::builtin::all().iter().copied().filter(|d| d.kind == kind && (q.is_empty() || d.name.to_lowercase().contains(&q) || d.category.to_lowercase().contains(&q))).collect();
+    if kind == PluginKind::Effect && !builtins.is_empty() {
+        let key = format!("{tp}/builtin");
+        let o = open(&key);
+        push(TreeEntry { key: key.clone(), item: None, folder: true }, row(0, "Built-in", count_text(builtins.len()), 0, if o { 2 } else { 1 }, false));
+        if o {
+            for d in &builtins {
+                push(TreeEntry { key: format!("{tp}/b/{}", d.id), item: Some(Item::Builtin(d)), folder: false }, row(1, d.name, String::new(), leaf_icon, 0, true));
+            }
+        }
+    }
     if kind == PluginKind::Instrument && (q.is_empty() || "synth".contains(&q) || "built-in".contains(&q)) {
         let key = format!("{tp}/builtin");
         let o = open(&key);
@@ -489,6 +524,7 @@ impl Controller {
     /// editor windows closed by the user, latency.
     pub fn device_poll(&mut self) {
         let now = Instant::now();
+        self.panel_poll_meters();
         // Main-thread plugin housekeeping (retired instances, CLAP main-thread callbacks).
         if !self.devices.editors.is_empty() || self.project().tracks.iter().any(|t| !t.devices.is_empty() || t.instrument_plugin.is_some()) {
             self.engine.plugin_idle();
@@ -584,6 +620,8 @@ impl Controller {
         let (kind, has_plugin) = (t.kind, t.instrument_plugin.is_some());
         let ok = match (item.kind(), item) {
             (PluginKind::Effect, Item::Plugin(p)) => self.execute(Command::AddDevice { track, index, device: Device::new(p.clone()) }),
+            (PluginKind::Effect, Item::Builtin(d)) => self.execute(Command::AddDevice { track, index, device: d.instantiate() }),
+            (PluginKind::Instrument, Item::Builtin(_)) => false,
             (PluginKind::Instrument, _) if kind != TrackKind::Instrument => {
                 self.set_status(format!("{} is an instrument: choose an instrument track", item.name()), 4);
                 false
@@ -619,10 +657,10 @@ impl Controller {
             return;
         }
         let (cards, _, _) = self.chain_layout_unscrolled();
-        if let Some((x, _)) = cards.iter().rev().find(|(_, c)| c.name.as_str() == item.name()) {
+        if let Some((x, c)) = cards.iter().rev().find(|(_, c)| c.name.as_str() == item.name()) {
             let view_w = self.chain_view_w();
-            if *x + CARD_W > CHAIN_AREA_X + view_w + self.devices.chain_scroll {
-                self.devices.chain_scroll = *x + CARD_W + CARD_GAP + ADD_W + 8.0 - CHAIN_AREA_X - view_w;
+            if *x + c.width > CHAIN_AREA_X + view_w + self.devices.chain_scroll {
+                self.devices.chain_scroll = *x + c.width + CARD_GAP + ADD_W + 8.0 - CHAIN_AREA_X - view_w;
             }
         }
         self.clamp_chain_scroll();
@@ -773,14 +811,18 @@ impl Controller {
         let mut x = CHAIN_X0 + if synth { SYNTH_W + CARD_GAP } else { 0.0 };
         let inst = if t.kind == TrackKind::Instrument { t.instrument_plugin.as_ref() } else { None };
         for (d, instrument) in inst.into_iter().map(|d| (d, true)).chain(t.devices.iter().map(|d| (d, false))) {
-            out.push((x, self.card_for(d, instrument)));
-            x += CARD_W + CARD_GAP;
+            let card = self.card_for(d, instrument);
+            x += card.width + CARD_GAP;
+            out.push((x - card.width - CARD_GAP, card));
         }
         let add_x = if out.is_empty() && !synth { ADD_X_ALONE } else { x };
         (out, add_x, synth)
     }
 
     fn card_for(&self, d: &Device, instrument: bool) -> DeviceCard {
+        if let Some(def) = saine_core::builtin::def_of(d) {
+            return self.builtin_card(d, def);
+        }
         let info = self.devices.catalog.find(&d.plugin);
         let error = self.devices.load_errors.iter().find(|(id, _)| *id == d.id).map(|(_, e)| e.clone()).unwrap_or_default();
         DeviceCard {
@@ -798,6 +840,8 @@ impl Controller {
             editor_supported: EDITORS_SUPPORTED,
             editor_open: self.devices.editors.contains(&d.id),
             dragging: false,
+            width: CARD_W,
+            ..Default::default()
         }
     }
 
@@ -806,17 +850,17 @@ impl Controller {
     fn chain_insert_index(&self, centre: f32, moving: Option<DeviceId>) -> usize {
         let (cards, _, _) = self.chain_layout_unscrolled();
         let cx = centre + self.devices.chain_scroll;
-        cards.iter().filter(|(_, c)| !c.instrument && Some(DeviceId(c.id as u64)) != moving).filter(|(x, _)| x + CARD_W / 2.0 < cx).count()
+        cards.iter().filter(|(_, c)| !c.instrument && Some(DeviceId(c.id as u64)) != moving).filter(|(x, c)| x + c.width / 2.0 < cx).count()
     }
 
     /// Marker x (bottom-panel relative, scrolled) for an insert index.
     fn chain_marker_x(&self, index: usize, moving: Option<DeviceId>) -> f32 {
         let (cards, add_x, synth) = self.chain_layout_unscrolled();
-        let inserts: Vec<f32> = cards.iter().filter(|(_, c)| !c.instrument && Some(DeviceId(c.id as u64)) != moving).map(|(x, _)| *x).collect();
+        let inserts: Vec<(f32, f32)> = cards.iter().filter(|(_, c)| !c.instrument && Some(DeviceId(c.id as u64)) != moving).map(|(x, c)| (*x, c.width)).collect();
         let first = cards.iter().find(|(_, c)| !c.instrument).map(|(x, _)| *x).unwrap_or(add_x);
         let x = match inserts.get(index) {
-            Some(x) => x - CARD_GAP / 2.0,
-            None => inserts.last().map(|x| x + CARD_W + CARD_GAP / 2.0).unwrap_or(if synth || !cards.is_empty() { first - CARD_GAP / 2.0 } else { first - 4.0 }),
+            Some((x, _)) => x - CARD_GAP / 2.0,
+            None => inserts.last().map(|(x, w)| x + w + CARD_GAP / 2.0).unwrap_or(if synth || !cards.is_empty() { first - CARD_GAP / 2.0 } else { first - 4.0 }),
         };
         x - self.devices.chain_scroll
     }
@@ -905,8 +949,8 @@ impl Controller {
                 let Some((ti, saine_core::model::DeviceSlot::Insert(from))) = self.project().find_device(d.id) else { return };
                 let track = self.project().tracks[ti].id;
                 let (cards, _, _) = self.chain_layout_unscrolled();
-                let Some((x0, _)) = cards.iter().find(|(_, c)| c.id as u64 == d.id.0) else { return };
-                let centre = x0 - self.devices.chain_scroll + (d.cur_x - d.start_x) + CARD_W / 2.0;
+                let Some((x0, c)) = cards.iter().find(|(_, c)| c.id as u64 == d.id.0) else { return };
+                let centre = x0 - self.devices.chain_scroll + (d.cur_x - d.start_x) + c.width / 2.0;
                 let index = self.chain_insert_index(centre, Some(d.id));
                 if index != from {
                     self.execute(Command::MoveDevice { device: d.id, track, index });
@@ -927,6 +971,13 @@ impl Controller {
             v.push(Item::BuiltinSynth);
         }
         let kinds: &[PluginKind] = if inst_track { &[PluginKind::Instrument, PluginKind::Effect] } else { &[PluginKind::Effect] };
+        if fmt.is_none() {
+            for d in saine_core::builtin::all() {
+                if kinds.contains(&d.kind) && (q.is_empty() || d.name.to_lowercase().contains(&q) || d.category.to_lowercase().contains(&q) || "built-in".contains(&q)) {
+                    v.push(Item::Builtin(d));
+                }
+            }
+        }
         for k in kinds {
             for p in self.devices.catalog.of_kind(*k) {
                 if fmt.is_none_or(|f| f == p.plugin.format) && matches(&q, &p.plugin) {
@@ -944,7 +995,7 @@ impl Controller {
             return;
         }
         let (label, items): (&str, Vec<Item>) = match row {
-            0 => ("built-in devices", self.offered(None, "").into_iter().filter(|i| *i == Item::BuiltinSynth).collect()),
+            0 => ("built-in devices", self.offered(None, "").into_iter().filter(|i| matches!(i, Item::BuiltinSynth | Item::Builtin(_))).collect()),
             1 => ("Audio Units", self.offered(Some(PluginFormat::AudioUnit), "")),
             2 => ("VST3 plugins", self.offered(Some(PluginFormat::Vst3), "")),
             3 => ("CLAP plugins", self.offered(Some(PluginFormat::Clap), "")),
@@ -964,9 +1015,10 @@ impl Controller {
             }
             let right = match &it {
                 Item::BuiltinSynth => "Built-in".to_string(),
+                Item::Builtin(d) => d.category.to_string(),
                 Item::Plugin(p) => p.vendor.clone(),
             };
-            rows.push((it.name().to_string(), right, Some(it), false));
+            rows.push((it.name().to_string(), right, Some(MenuPick::Add(it)), false));
         }
         if rows.is_empty() {
             let note = match &self.devices.catalog.state {
@@ -986,14 +1038,14 @@ impl Controller {
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)).filter(|t| t.kind == TrackKind::Instrument) else { return };
         let cur = t.instrument_plugin.as_ref().map(|d| (d.plugin.format, d.plugin.id.clone()));
         let check = |on: bool, s: &str| if on { "✓".to_string() } else { s.to_string() };
-        let mut rows = vec![("Synth".to_string(), check(cur.is_none(), "Built-in"), Some(Item::BuiltinSynth), false)];
+        let mut rows = vec![("Synth".to_string(), check(cur.is_none(), "Built-in"), Some(MenuPick::Add(Item::BuiltinSynth)), false)];
         let plugins = self.devices.catalog.of_kind(PluginKind::Instrument);
         if !plugins.is_empty() {
             rows.push(("Instrument plugins".to_string(), String::new(), None, true));
         }
         for p in plugins {
             let on = cur.as_ref().is_some_and(|(f, id)| *f == p.plugin.format && *id == p.plugin.id);
-            rows.push((p.plugin.name.clone(), check(on, format_badge(p.plugin.format)), Some(Item::Plugin(p.plugin.clone())), false));
+            rows.push((p.plugin.name.clone(), check(on, format_badge(p.plugin.format)), Some(MenuPick::Add(Item::Plugin(p.plugin.clone()))), false));
         }
         if self.devices.catalog.state == ScanState::Scanning {
             rows.push(("Scanning plugins…".to_string(), String::new(), None, true));
@@ -1005,7 +1057,13 @@ impl Controller {
     pub fn devmenu_pick(&mut self, i: usize) {
         let Some(m) = self.devices.menu.take() else { return };
         self.ui_dirty = true;
-        let Some(item) = m.rows.get(i).and_then(|r| r.2.clone()) else { return };
+        let item = match m.rows.get(i).and_then(|r| r.2.clone()) {
+            Some(MenuPick::Add(item)) => item,
+            Some(MenuPick::Sidechain(device, source)) => return self.panel_set_sidechain(device, source),
+            Some(MenuPick::Preset(device, n)) => return self.panel_load_preset(device, n),
+            Some(MenuPick::Choice(device, index, choice)) => return self.panel_choice(device, index, choice),
+            None => return,
+        };
         let Some(t) = self.selected_track else { return };
         // Picking the current instrument again is a no-op (no undo step).
         let cur_inst = self.project().track(t).and_then(|t| t.instrument_plugin.as_ref()).map(|d| d.plugin.clone());
@@ -1118,13 +1176,18 @@ impl Controller {
         // Draw the dragged card last (on top).
         let mut cards = cards;
         cards.sort_by_key(|c| c.dragging);
+        for (i, c) in cards.iter_mut().enumerate() {
+            if let Some(old) = slint::Model::row_data(&*self.cards_model, i) {
+                crate::device_panel::reuse_card_models(&old, c);
+            }
+        }
         sync_model(&self.cards_model, cards);
         s.set_chain_scroll(scroll);
         s.set_add_device_x(add_x - scroll);
         if let Some(d) = drag {
             let (cards, _, _) = self.chain_layout_unscrolled();
-            if let Some((x0, _)) = cards.iter().find(|(_, c)| c.id as u64 == d.id.0) {
-                let centre = x0 - scroll + (d.cur_x - d.start_x) + CARD_W / 2.0;
+            if let Some((x0, c)) = cards.iter().find(|(_, c)| c.id as u64 == d.id.0) {
+                let centre = x0 - scroll + (d.cur_x - d.start_x) + c.width / 2.0;
                 let idx = self.chain_insert_index(centre, Some(d.id));
                 s.set_chain_marker_visible(true);
                 s.set_chain_marker_x(self.chain_marker_x(idx, Some(d.id)));
@@ -1149,7 +1212,7 @@ impl Controller {
             .map(|(i, it)| MenuItem {
                 label: it.name().into(),
                 shortcut: match it {
-                    Item::BuiltinSynth => "Built-in".into(),
+                    Item::BuiltinSynth | Item::Builtin(_) => "Built-in".into(),
                     Item::Plugin(p) => format_badge(p.format).into(),
                 },
                 enabled: true,
@@ -1289,14 +1352,24 @@ mod tests {
         let mut open: HashSet<String> = ["e/au", "e/vst3", "e/clap"].iter().map(|s| s.to_string()).collect();
         let (_, rows) = build_tree(&c, 1, "", &open);
         let l = |d: i32, s: &str, n: &str| (d, s.to_string(), n.to_string());
-        assert_eq!(labels(&rows), vec![l(0, "Audio Units", "3"), l(1, "Acme", "1"), l(1, "Apple", "2"), l(0, "VST3", "1"), l(1, "Gain", ""), l(0, "CLAP", "0")]);
-        assert_eq!(rows[5].expander, 0, "empty folder has no expander");
+        // Every built-in effect is listed under Built-in (more arrive with each device family).
+        let n = saine_core::builtin::all().iter().filter(|d| d.kind == PluginKind::Effect).count();
+        let built_in = n.to_string();
+        assert_eq!(
+            labels(&rows),
+            vec![l(0, "Built-in", &saine_core::builtin::all().len().to_string()), l(0, "Audio Units", "3"), l(1, "Acme", "1"), l(1, "Apple", "2"), l(0, "VST3", "1"), l(1, "Gain", ""), l(0, "CLAP", "0")]
+        );
+        assert_eq!(rows[6].expander, 0, "empty folder has no expander");
         open.insert("e/au/Apple".into());
+        open.insert("e/builtin".into());
         let (entries, rows) = build_tree(&c, 1, "", &open);
-        assert_eq!(rows[3].label, "AUDelay");
-        assert_eq!(rows[4].label, "AULowpass");
-        assert!(rows[4].leaf && rows[4].icon == 2);
-        assert!(matches!(&entries[4].item, Some(Item::Plugin(p)) if p.name == "AULowpass"));
+        assert!(matches!(&entries[1].item, Some(Item::Builtin(d)) if d.id == "compressor"));
+        // One row per built-in device under the open Built-in folder.
+        let n = saine_core::builtin::all().len();
+        assert_eq!(rows[4 + n].label, "AUDelay");
+        assert_eq!(rows[5 + n].label, "AULowpass");
+        assert!(rows[5 + n].leaf && rows[5 + n].icon == 2);
+        assert!(matches!(&entries[5 + n].item, Some(Item::Plugin(p)) if p.name == "AULowpass"));
     }
 
     #[test]

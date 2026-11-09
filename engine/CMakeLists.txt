@@ -115,6 +115,22 @@ add_library(saine_engine STATIC
   src/plugins/au_instance.cpp
   src/plugins/vst3_instance.cpp
   src/plugins/clap_instance.cpp
+  src/devices/builtin.cpp
+  src/devices/bitcrusher.cpp
+  src/devices/compressor.cpp
+  src/devices/distortion.cpp
+  src/devices/soft_clipper.cpp
+  src/devices/tape_saturation.cpp
+  src/devices/utility.cpp
+  src/devices/widener.cpp
+  src/devices/dsp.cpp
+  src/devices/autopanner.cpp
+  src/devices/character_mod.cpp
+  src/devices/chorus.cpp
+  src/devices/flanger.cpp
+  src/devices/phaser.cpp
+  src/devices/ring_mod.cpp
+  src/devices/tremolo.cpp
   $<TARGET_OBJECTS:saine_vst3_host>
   # Platform backends: each file is compile-guarded so exactly one is active.
   src/platform/audio_device.cpp
@@ -322,7 +338,13 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/test_plugin_scan.cpp
     tests/test_pdc.cpp
     tests/test_automation.cpp
-    tests/test_frame_ring.cpp)
+    tests/test_frame_ring.cpp
+    tests/devices/test_builtin.cpp
+    tests/devices/test_compressor.cpp
+    tests/devices/test_drive.cpp
+    tests/devices/test_imaging.cpp
+    tests/devices/test_modulation.cpp
+    tests/devices/test_character_mod.cpp)
   target_include_directories(saine_engine_tests PRIVATE src tests)
   target_link_libraries(saine_engine_tests PRIVATE saine_engine saine_engine_warnings)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
@@ -360,6 +382,9 @@ if(SAINE_ENGINE_BUILD_BENCH)
   if(TARGET saine_test_plugins)
     add_dependencies(saine_engine_bench saine_test_plugins)
   endif()
+  add_executable(saine_device_bench bench/bench_devices.cpp)
+  target_include_directories(saine_device_bench PRIVATE src)
+  target_link_libraries(saine_device_bench PRIVATE saine_engine saine_engine_warnings)
 endif()
 
 # ---------------------------------------------------------------- tools

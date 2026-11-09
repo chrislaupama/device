@@ -33,12 +33,16 @@ public:
     float* auto_b() noexcept { return auto_b_.data(); }
     ParamEvent* param_events() noexcept { return param_events_.data(); }
     se_synth_params& synth_params() noexcept { return synth_params_; }
+    // Sidechain taps (SE_BUILTIN_MAX_SIDECHAINS stereo buffers).
+    float* sc_l(uint32_t tap) noexcept { return sc_.data() + (2 * std::size_t{tap}) * max_block_; }
+    float* sc_r(uint32_t tap) noexcept { return sc_.data() + (2 * std::size_t{tap} + 1) * max_block_; }
 
 private:
     uint32_t max_block_;
     std::vector<float> track_l_, track_r_, master_l_, master_r_, synth_, zeros_, plugin_l_, plugin_r_;
     std::vector<float> gain_l_, gain_r_, auto_a_, auto_b_;
     std::vector<ParamEvent> param_events_;
+    std::vector<float> sc_;
     se_synth_params synth_params_{};
 };
 

@@ -913,6 +913,79 @@ typedef struct se_plugin_param_change {
 int32_t se_plugin_take_param_changes(se_engine* engine, se_plugin_param_change* out, size_t capacity,
                                      size_t* out_count);
 
+/* ---- built-in devices (ABI v1 addition) ----------------------------------
+ * See docs/devices.md and engine/src/devices/.
+ *
+ * A built-in device is an insert in a v5/v6 device chain with
+ * format = SE_PLUGIN_BUILTIN and plugin_id = its registry id (for example
+ * "compressor", see se_builtin_registry). It goes through the same instance
+ * lifecycle as a plugin: kept across republishes by device_id, bypass via
+ * `enabled`, delay compensation from its reported latency; a registry id
+ * the engine does not know passes audio through and is reported by
+ * se_plugin_load_errors. It has no editor window.
+ *
+ * `state` / `state_len` carry an se_builtin_state header followed by
+ * value_count float32 plain parameter values in the registry's parameter
+ * order. Unlike plugin state it is read on EVERY publish: the values become
+ * the device's current parameters (lock-free hand-over, applied at the next
+ * block, smoothed by the processor). Missing trailing values keep the
+ * processor's current values; state == NULL keeps every current value.
+ * Validation (else SE_ERR_INVALID_ARG): state_len >= 16, magic ==
+ * SE_BUILTIN_STATE_MAGIC, state_len == 16 + 4 * value_count, values finite.
+ *
+ * Sidechain: sidechain_track_id names another track of the session whose
+ * post-fader output feeds the device's detector. Tracks are processed so
+ * that sources come before the devices that read them; a sidechain that
+ * would form a cycle, names the device's own track or an unknown track, or
+ * exceeds SE_BUILTIN_MAX_SIDECHAINS distinct sources reads silence. The
+ * source is not delay-compensated relative to the reader.
+ *
+ * Automation: lanes with target SE_AUTO_BUILTIN name the device (device_id,
+ * same track) and the parameter index (param_id); point values are PLAIN
+ * values in the parameter's unit (no normalisation), interpolated like any
+ * lane (geometric when `logarithmic`) and delivered as sample-offset
+ * parameter events like plugin lanes. A lane whose index is out of range, or
+ * whose device is not a built-in, is inactive. */
+enum { SE_PLUGIN_BUILTIN = 3 };
+enum { SE_AUTO_BUILTIN = 4 };
+#define SE_BUILTIN_STATE_MAGIC 0x31494253u /* "SBI1" as a little-endian uint32 */
+#define SE_BUILTIN_MAX_SIDECHAINS 8
+
+typedef struct se_builtin_state {
+    uint32_t magic;               /* SE_BUILTIN_STATE_MAGIC */
+    uint32_t value_count;         /* float32 values that follow the header */
+    uint64_t sidechain_track_id;  /* 0 = no sidechain */
+} se_builtin_state; /* 16 bytes, align 8; followed by value_count float32 */
+
+/* One registered built-in processor (static data, valid for the process
+ * lifetime). Readouts are values the processor publishes for visualisers
+ * (for example input level, output level and gain reduction in dB). */
+typedef struct se_builtin_desc {
+    const char* id;
+    const char* const* param_ids;   /* param_count entries, registry order */
+    const char* const* readout_ids; /* readout_count entries */
+    uint32_t param_count;
+    uint32_t readout_count;
+    const float* param_defaults; /* param_count entries: the processor's defaults */
+} se_builtin_desc; /* 40 bytes, align 8 */
+
+/* Every registered built-in processor. Any thread. */
+const se_builtin_desc* se_builtin_registry(size_t* out_count);
+
+/* Set one parameter of a live built-in device right away (plain value,
+ * clamped by the processor; lock-free hand-over, applied at the next block).
+ * The next publish overwrites it with the value in the device's state.
+ * MAIN THREAD (like the other se_plugin_* calls). Unknown or non-built-in
+ * device -> SE_ERR_NOT_FOUND; index out of range or value not finite ->
+ * SE_ERR_INVALID_ARG. */
+int32_t se_builtin_set_param(se_engine* engine, uint64_t device_id, uint32_t index, float value);
+
+/* Latest readouts of a live built-in device (written by the audio thread
+ * after every processed block; held while the device is not processed).
+ * Writes up to `capacity`; *out_count = the device's readout count.
+ * MAIN THREAD. Unknown or non-built-in device -> SE_ERR_NOT_FOUND. */
+int32_t se_builtin_readouts(se_engine* engine, uint64_t device_id, float* out, size_t capacity, size_t* out_count);
+
 #ifdef __cplusplus
 }
 #endif

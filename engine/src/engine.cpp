@@ -1,6 +1,7 @@
 #include "engine.hpp"
 
 #include "delay_line.hpp"
+#include "devices/builtin.hpp"
 #include "resampler.hpp"
 #include "rt_util.hpp"
 #include "wav.hpp"
@@ -421,7 +422,11 @@ int32_t Engine::publish(const se_session_desc_v6& desc, std::string& err) {
         const auto resolve = [&](PluginInstance* inst, uint32_t begin, uint32_t count) {
             for (uint32_t i = begin; i < begin + count; ++i) {
                 AutoLane& lane = built->lanes[i];
-                lane.active = inst != nullptr && inst->param_range(lane.param_id, lane.native_min, lane.native_max);
+                BuiltinInstance* const b = inst != nullptr ? inst->as_builtin() : nullptr;
+                if (lane.target == SE_AUTO_BUILTIN || b != nullptr) // built-in lanes only on built-ins, and vice versa
+                    lane.active = b != nullptr && lane.target == SE_AUTO_BUILTIN && lane.param_id < b->param_count();
+                else
+                    lane.active = inst != nullptr && inst->param_range(lane.param_id, lane.native_min, lane.native_max);
             }
         };
         for (TrackNode& node : built->tracks) {
@@ -1400,6 +1405,25 @@ int64_t Engine::audible_position() const noexcept {
     if (!pub_playing_.load(std::memory_order_acquire)) return pos;
     return pos - static_cast<int64_t>(pdc_total_.load(std::memory_order_relaxed)) -
            device_out_latency_.load(std::memory_order_relaxed);
+}
+
+int32_t Engine::builtin_set_param(uint64_t device_id, uint32_t index, float value) {
+    std::lock_guard lock(plugins_.mutex());
+    PluginInstance* inst = plugins_.instance(device_id);
+    BuiltinInstance* b = inst != nullptr ? inst->as_builtin() : nullptr;
+    if (b == nullptr) return SE_ERR_NOT_FOUND;
+    if (index >= b->param_count() || !std::isfinite(value)) return SE_ERR_INVALID_ARG;
+    b->set_value(index, value);
+    return SE_OK;
+}
+
+int32_t Engine::builtin_readouts(uint64_t device_id, float* out, std::size_t capacity, std::size_t& count) {
+    std::lock_guard lock(plugins_.mutex());
+    PluginInstance* inst = plugins_.instance(device_id);
+    BuiltinInstance* b = inst != nullptr ? inst->as_builtin() : nullptr;
+    if (b == nullptr) return SE_ERR_NOT_FOUND;
+    count = b->readouts(out, static_cast<uint32_t>(std::min<std::size_t>(capacity, UINT32_MAX)));
+    return SE_OK;
 }
 
 bool Engine::plugin_set_parameter(uint64_t device_id, uint32_t param_id, double value) {
