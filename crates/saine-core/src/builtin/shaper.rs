@@ -441,8 +441,8 @@ static P_BAR_CLOSE: [(&str, f32); 10] = cat(
     &[("vol_on", 0.0), ("filter_on", 1.0), ("filter_rate", 3.0), ("filter_resonance", 1.8)],
     preset_points!("filter": (1, 0.0, 100.0, 35.0), (2, 1.0, 10.0, 0.0)),
 );
-static P_FILTER_PUMP: [(&str, f32); 14] = cat(
-    &[("vol_depth", 70.0), ("filter_on", 1.0), ("filter_rate", 8.0), ("filter_low", 300.0), ("filter_resonance", 1.6)],
+static P_FILTER_PUMP: [(&str, f32); 15] = cat(
+    &[("vol_depth", 70.0), ("filter_on", 1.0), ("filter_rate", 8.0), ("filter_points", 3.0), ("filter_low", 300.0), ("filter_resonance", 1.6)],
     preset_points!("filter": (1, 0.0, 20.0, -35.0), (2, 0.6, 100.0, 0.0), (3, 1.0, 100.0, 0.0)),
 );
 static P_PANNER: [(&str, f32); 17] = cat(
@@ -526,6 +526,19 @@ mod tests {
         assert_eq!(d.param("filter_resonance").unwrap().format(1.2973), "1.3 Q");
         assert_eq!(d.param("pitch_p2_y").unwrap().format(-12.0), "\u{2212}12.0 st");
         assert_eq!(DIVISIONS.len(), DIVISION_QUARTERS.len());
+    }
+
+    #[test]
+    fn factory_presets_use_every_point_they_set() {
+        for f in SHAPER.factory {
+            let values = SHAPER.factory_values(f);
+            for lane in ["vol", "time", "width", "pan", "filter", "crush", "pitch"] {
+                let used = values.get(format!("{lane}_points").as_str()).copied().unwrap_or(0.0) as usize;
+                let prefix = format!("{lane}_p");
+                let highest = f.values.iter().filter_map(|(id, _)| id.strip_prefix(prefix.as_str())?.split('_').next()?.parse::<usize>().ok()).max().unwrap_or(0);
+                assert!(highest <= used, "{}: {lane} sets point {highest} but uses {used}", f.name);
+            }
+        }
     }
 
     #[test]

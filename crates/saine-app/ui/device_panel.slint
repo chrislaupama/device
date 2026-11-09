@@ -335,6 +335,7 @@ component CanvasInput inherits Rectangle {
             Studio.panel-canvas(root.device, 6, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, false, false, 0);
         }
         scroll-event(e) => {
+            if (e.delta-y == 0) { return reject; }
             Studio.panel-canvas(root.device, 7, self.mouse-x, self.mouse-y, 0, 0, e.modifiers.shift, e.modifiers.alt, e.delta-y / 1px);
             accept
         }
