@@ -211,5 +211,4 @@ pub static DRUM_RACK: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     samples: PADS * LAYERS,
-    hooks: crate::builtin::Hooks::NONE,
 };

@@ -54,6 +54,5 @@ pub static UTILITY: DeviceDef = DeviceDef {
         FactoryPreset { name: "Left Mic Centred", values: &[("channel_mode", 1.0), ("gain", -3.0)] },
     ],
     sidechain: false,
-    hooks: Hooks::NONE,
     samples: 0,
 };

@@ -43,5 +43,4 @@ pub static RACK: DeviceDef = DeviceDef {
     factory: FACTORY,
     sidechain: false,
     samples: 0,
-    hooks: crate::builtin::Hooks::NONE,
 };

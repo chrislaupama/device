@@ -290,6 +290,12 @@ fn generation_text(v: f32) -> String {
     format!("{}%", (v * 100.0).round() as i32)
 }
 
+pub(super) static BEHAVIOR: Behavior = Behavior {
+    text: |def, d, p, v| motor_text(def, d, p, v),
+    read: |def, d, p, t| if p.id == "generations" { generation_read(t) } else { motor_read(def, d, p, t) },
+    ..Behavior::NONE
+};
+
 fn generation_read(text: &str) -> Option<f32> {
     text.trim_end_matches('%').trim().parse::<f32>().ok().map(|v| v / 100.0)
 }
@@ -327,7 +333,7 @@ pub static ECHO: DeviceDef = DeviceDef {
         ParamDef::new("tone_treble", "Treble", -10.0, 10.0, 0.0, LINEAR, "dB", Format::Db).help("Treble of the echo path."),
         ParamDef::new("width", "Width", 0.0, 200.0, 100.0, LINEAR, "%", Format::Percent).help("Stereo spread of the heads."),
         ParamDef::new("width_humanize", "Width Humanize", 0.0, 100.0, 45.0, LINEAR, "%", Format::Percent).help("Irregularity of the head pan pattern."),
-        ParamDef::new("generations", "Generations", 0.0, 1.0, 0.45, LINEAR, "", Format::Custom(TextFns { show: generation_text, read: Some(generation_read) }))
+        ParamDef::new("generations", "Generations", 0.0, 1.0, 0.45, LINEAR, "", Format::Custom(TextFn(generation_text)))
             .label("Generation")
             .help("How much each pass wears the sound: studio-fresh to dying tape."),
         ParamDef::choice("spring_on", "Spring On", OFF_ON, 0).help("Spring reverb on the echoes."),
@@ -464,6 +470,5 @@ pub static ECHO: DeviceDef = DeviceDef {
         FactoryPreset { name: "Send: Tape Loop", values: &[("machine", 0.0), ("intensity", 5.6), ("mix", 100.0), ("kill_dry", 1.0), ("tail_lp_l", 5000.0), ("tail_lp_r", 5000.0)] },
     ],
     sidechain: true,
-    hooks: Hooks { label: None, text: Some(motor_text), read: Some(motor_read) },
     samples: 0,
 };

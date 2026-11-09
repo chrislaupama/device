@@ -8,7 +8,7 @@
 // multiplied by PanelStyle.z. Colours are the measured card colours.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
-import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField, PanelCanvas, PanelZone, PanelButton, ModCard, ModTarget, PanelSampler, PanelPad, PanelHandle } from "studio.slint";
+import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField, PanelBands, PanelBand, PanelXover, PanelCanvas, PanelZone, PanelButton, ModCard, ModTarget, PanelSampler, PanelPad, PanelHandle } from "studio.slint";
 
 export global PanelStyle {
     out property <float> z: 0.85;
@@ -47,12 +47,38 @@ component ParamDrag inherits TouchArea {
         if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
             root.grabbed();
             if (e.modifiers.alt) { Studio.panel-reset(root.device, root.param); return; }
-            root.last-y = self.mouse-y;
+            root.last-y = self.absolute-position.y + self.mouse-y;
+            Studio.panel-drag(root.device, root.param, 0, 0, root.rate, e.modifiers.shift);
+        }
+        // Window coordinates: a handle that moves with its value must not feed its own motion back.
+        if (e.kind == PointerEventKind.move && self.pressed) {
+            Studio.panel-drag(root.device, root.param, 1, (root.last-y - self.absolute-position.y - self.mouse-y) / 1px, root.rate, e.modifiers.shift);
+            root.last-y = self.absolute-position.y + self.mouse-y;
+        }
+        if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-drag(root.device, root.param, 2, 0, root.rate, false); }
+        if (e.kind == PointerEventKind.cancel) { Studio.panel-drag(root.device, root.param, 3, 0, root.rate, false); }
+    }
+}
+
+// Horizontal drag on a parameter (multiband crossover lines): same gestures as ParamDrag,
+// right = up.
+component ParamDragX inherits TouchArea {
+    in property <int> device;
+    in property <int> param;
+    in property <float> rate: 1 / 160;
+    callback grabbed();
+    property <length> last-x;
+    mouse-cursor: col-resize;
+    pointer-event(e) => {
+        if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+            root.grabbed();
+            if (e.modifiers.alt) { Studio.panel-reset(root.device, root.param); return; }
+            root.last-x = self.absolute-position.x + self.mouse-x;
             Studio.panel-drag(root.device, root.param, 0, 0, root.rate, e.modifiers.shift);
         }
         if (e.kind == PointerEventKind.move && self.pressed) {
-            Studio.panel-drag(root.device, root.param, 1, (root.last-y - self.mouse-y) / 1px, root.rate, e.modifiers.shift);
-            root.last-y = self.mouse-y;
+            Studio.panel-drag(root.device, root.param, 1, (self.absolute-position.x + self.mouse-x - root.last-x) / 1px, root.rate, e.modifiers.shift);
+            root.last-x = self.absolute-position.x + self.mouse-x;
         }
         if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-drag(root.device, root.param, 2, 0, root.rate, false); }
         if (e.kind == PointerEventKind.cancel) { Studio.panel-drag(root.device, root.param, 3, 0, root.rate, false); }
@@ -144,7 +170,7 @@ export component KnobCell inherits Rectangle {
     property <float> rc: root.ring / 1px / 2;
     property <float> r-arc: root.rc - 1.2 * zm;
     property <float> angle: -135 + root.k.norm * 270;
-    property <float> from: root.k.bipolar ? 0 : -135;
+    property <float> from: -135 + root.k.origin * 270;
     property <float> lo-a: -135 + root.k.mod-lo * 270;
     property <float> hi-a: -135 + root.k.mod-hi * 270;
     property <float> now-a: -135 + root.k.mod-now * 270;
@@ -208,6 +234,11 @@ export component KnobCell inherits Rectangle {
                 radius-x: root.r-arc; radius-y: root.r-arc;
                 large-arc: abs(root.angle - root.from) > 180; sweep: root.angle > root.from;
             }
+        }
+        // Detent marks across the ring.
+        if root.k.face == 0 && root.k.ticks != "": Path {
+            viewbox-width: 32; viewbox-height: 32; commands: root.k.ticks;
+            stroke: #ffffff59; stroke-width: 1px * zm; fill: transparent;
         }
         if root.k.face == 0: Path {
             width: parent.width; height: parent.height;
@@ -473,7 +504,7 @@ component PickItem inherits HorizontalLayout {
                         }
                     }
                     clicked => {
-                        if (root.p.kind == 7) { Studio.panel-view(root.device, i); }
+                        if (root.p.kind == 7) { Studio.panel-view(root.device, 2, i); }
                         else if (!self.alt-down) { Studio.panel-choice(root.device, root.p.param, i); }
                     }
                 }
@@ -629,6 +660,128 @@ component DynamicsStrip inherits Rectangle {
             done => { root.editing = false; }
         }
     }
+}
+
+// Value pill on the multiband field (value only).
+component FieldPill inherits Rectangle {
+    in property <string> text;
+    property <float> zm: PanelStyle.z;
+    height: 16px * zm; width: pill-text.preferred-width + 14px * zm;
+    border-radius: self.height / 2; background: PanelStyle.pill-hot;
+    drop-shadow-blur: 2px; drop-shadow-offset-y: 1px; drop-shadow-color: #00000073;
+    pill-text := Text { text: root.text; color: PanelStyle.ink; font-size: 10px * zm; font-weight: 650; letter-spacing: -0.04 * 10px * zm; horizontal-alignment: center; vertical-alignment: center; }
+}
+
+// One band of the multiband field: threshold (dashed) and floor (dotted) lines with their
+// drag handles and value pills. Covers the whole field so paths share its view box.
+component FieldBand inherits Rectangle {
+    in property <int> device;
+    in property <int> index;
+    in property <PanelBand> b;
+    in property <float> thr-rate;
+    in property <float> floor-rate;
+    property <float> zm: PanelStyle.z;
+    property <bool> thr-hot: thr-ta.has-hover || thr-ta.pressed || thr-keys.has-focus;
+    property <bool> floor-hot: floor-ta.has-hover || floor-ta.pressed || floor-keys.has-focus;
+    Path {
+        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px; commands: root.b.thr-dash; fill: transparent;
+        stroke: PanelStyle.ink.with-alpha(root.thr-hot ? 0.95 : root.b.thr-active ? 0.7 : 0.4); stroke-width: (root.thr-hot ? 1.75px : 1.25px) * zm;
+    }
+    Path {
+        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px; commands: root.b.floor-dash; fill: transparent;
+        stroke: PanelStyle.ink.with-alpha(root.floor-hot ? 0.95 : root.b.floor-active ? 0.7 : 0.4); stroke-width: (root.floor-hot ? 1.75px : 1.25px) * zm;
+    }
+    thr-keys := ParamKeys { device: root.device; param: root.b.thr-param; }
+    floor-keys := ParamKeys { device: root.device; param: root.b.floor-param; }
+    Rectangle {
+        x: root.b.handle-x; y: root.b.thr-hit-y; width: root.b.handle-w; height: root.b.thr-hit-h;
+        border-radius: 4px * zm; background: thr-ta.has-hover ? #ffffff0a : transparent;
+        accessible-role: slider; accessible-label: "Threshold"; accessible-value: root.b.thr-text;
+        thr-ta := ParamDrag {
+            device: root.device; param: root.b.thr-param; rate: root.thr-rate;
+            grabbed => { Studio.panel-view(root.device, 1, root.index); thr-keys.focus(); }
+        }
+    }
+    Rectangle {
+        x: root.b.handle-x; y: root.b.floor-hit-y; width: root.b.handle-w; height: root.b.floor-hit-h;
+        border-radius: 4px * zm; background: floor-ta.has-hover ? #ffffff0a : transparent;
+        accessible-role: slider; accessible-label: "Floor"; accessible-value: root.b.floor-text;
+        floor-ta := ParamDrag {
+            device: root.device; param: root.b.floor-param; rate: root.floor-rate;
+            grabbed => { Studio.panel-view(root.device, 1, root.index); floor-keys.focus(); }
+        }
+    }
+    if root.thr-hot: FieldPill {
+        text: root.b.thr-text;
+        x: max(0, min(root.width - self.width, root.b.x + (root.b.w - self.width) / 2)); y: max(0, min(root.height - self.height, root.b.thr-y - self.height / 2));
+    }
+    if root.floor-hot: FieldPill {
+        text: root.b.floor-text;
+        x: max(0, min(root.width - self.width, root.b.x + (root.b.w - self.width) / 2)); y: max(0, min(root.height - self.height, root.b.floor-y - self.height / 2));
+    }
+}
+
+// A crossover line with its 12 px drag strip and value pill.
+component FieldXover inherits Rectangle {
+    in property <int> device;
+    in property <PanelXover> c;
+    property <float> zm: PanelStyle.z;
+    property <bool> hot: ta.has-hover || ta.pressed || keys.has-focus;
+    Rectangle { x: root.c.x - (root.hot ? 0.875px : 0.625px) * zm; width: (root.hot ? 1.75px : 1.25px) * zm; background: PanelStyle.ink.with-alpha(root.hot ? 0.95 : 0.5); }
+    keys := ParamKeys { device: root.device; param: root.c.param; }
+    Rectangle {
+        x: root.c.x - 6px * zm; width: 12px * zm;
+        border-radius: 4px * zm; background: ta.has-hover ? #ffffff0a : transparent;
+        accessible-role: slider; accessible-value: root.c.text;
+        ta := ParamDragX { device: root.device; param: root.c.param; rate: root.c.rate; grabbed => { keys.focus(); } }
+    }
+    if root.hot: FieldPill { text: root.c.text; x: max(0, min(root.width - self.width, root.c.x - self.width / 2)); y: 2px * root.zm; }
+}
+
+// Multiband field (src/panel_multiband.rs): dB ladder, bands with live level / gain, lines and handles.
+component MultibandField inherits Rectangle {
+    in property <int> device;
+    in property <PanelBands> f;
+    in property <color> accent;
+    property <float> zm: PanelStyle.z;
+    border-radius: 4px * zm;
+    background: #1d1e22;
+    clip: true;
+    Rectangle { x: 0; width: root.f.ladder; background: #19191d; }
+    for b in root.f.bands: Rectangle { x: b.x; width: b.w; background: b.selected ? #ffffff0d : transparent; }
+    for q in root.f.freqs: Rectangle { x: q.x; width: q.grid ? 1px : 0; background: #ffffff0d; }
+    for t in root.f.ticks: Rectangle { x: root.f.ladder; y: t.y; width: root.width - root.f.ladder; height: 1px; background: #ffffff0d; }
+    for b in root.f.bands: Rectangle { x: b.x; y: 0; width: b.w; height: b.thr-active ? max(0, b.thr-y) : 0; background: #ffffff09; }
+    for b in root.f.bands: Rectangle { x: b.x; y: b.floor-y; width: b.w; height: b.floor-active ? max(0, root.height - b.floor-y) : 0; background: #ffffff09; }
+    for b in root.f.bands: Rectangle {
+        x: b.x; y: b.level-y; width: b.w; height: b.show-level ? max(0, root.height - b.level-y) : 0;
+        background: @linear-gradient(180deg, #ffffff12 0%, #ffffff03 100%);
+    }
+    for b in root.f.bands: Rectangle { x: b.x; y: b.level-y - 0.75px * root.zm; width: b.w; height: b.show-level ? 1.5px * root.zm : 0; background: #ffffff8c; }
+    for b in root.f.bands: Rectangle { x: b.x; y: b.gain-y; width: b.w; height: b.show-gain ? b.gain-h : 0; background: root.accent.with-alpha(0.4); }
+    for t in root.f.ticks: Text {
+        x: 3px * root.zm; y: t.y - 13px * root.zm; height: 12px * root.zm;
+        text: t.text; color: PanelStyle.axis; font-size: 10px * root.zm; font-weight: 600; vertical-alignment: center;
+    }
+    for q in root.f.freqs: Text {
+        x: q.grid ? q.x - 20px * root.zm : 4px * root.zm; width: q.grid ? 40px * root.zm : 30px * root.zm; y: root.height - 15px * root.zm; height: 12px * root.zm;
+        text: q.text; color: PanelStyle.axis; font-size: 10px * root.zm; font-weight: 600;
+        horizontal-alignment: q.grid ? center : left; vertical-alignment: center;
+    }
+    // Clicking a band (right of the ladder) selects it.
+    TouchArea {
+        x: root.f.ladder; width: root.width - root.f.ladder;
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down && !e.modifiers.alt) {
+                Studio.panel-view(root.device, 0, (self.mouse-x + root.f.ladder) / 1px);
+            }
+        }
+    }
+    for b[i] in root.f.bands: FieldBand {
+        width: root.width; height: root.height;
+        device: root.device; index: i; b: b; thr-rate: root.f.thr-rate; floor-rate: root.f.floor-rate;
+    }
+    for c in root.f.xovers: FieldXover { width: root.width; height: root.height; device: root.device; c: c; }
 }
 
 // A drum pad / slice pad: note name, sound name, activity glow; press plays it.
@@ -1279,6 +1432,10 @@ component BuiltinFace inherits Rectangle {
         if root.card.field.visible: FieldView {
             x: root.card.field.x; y: root.card.field.y; width: root.card.field.w; height: root.card.field.h;
             device: root.card.id; f: root.card.field; accent: root.card.accent;
+        }
+        if root.card.bands.visible: MultibandField {
+            x: root.card.bands.x; y: root.card.bands.y; width: root.card.bands.w; height: root.card.bands.h;
+            device: root.card.id; f: root.card.bands; accent: root.card.accent;
         }
         for s in root.card.sliders: SliderCol {
             x: s.x; y: 0; height: root.height;

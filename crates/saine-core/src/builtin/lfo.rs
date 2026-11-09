@@ -31,5 +31,4 @@ pub static LFO: DeviceDef = DeviceDef {
     factory: &[],
     sidechain: false,
     samples: 0,
-    hooks: crate::builtin::Hooks::NONE,
 };

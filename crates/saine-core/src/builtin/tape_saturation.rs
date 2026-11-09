@@ -44,7 +44,6 @@ pub static TAPE_SATURATION: DeviceDef = DeviceDef {
         FactoryPreset { name: "Rental Tape", values: &[("drive", 50.0), ("warmth", 70.0), ("compression", 50.0), ("noise", -34.0), ("mode", 2.0), ("output_gain", -2.0)] },
     ],
     sidechain: false,
-    hooks: Hooks::NONE,
     samples: 0,
 };
 

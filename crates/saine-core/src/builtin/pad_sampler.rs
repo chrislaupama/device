@@ -70,5 +70,4 @@ pub static PAD_SAMPLER: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     samples: LAYERS,
-    hooks: crate::builtin::Hooks::NONE,
 };

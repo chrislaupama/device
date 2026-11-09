@@ -46,7 +46,6 @@ pub static DISTORTION: DeviceDef = DeviceDef {
         FactoryPreset { name: "Wrecked", values: &[("drive", 100.0), ("tone", 9000.0), ("mode", 1.0), ("bias", 90.0), ("output", -12.0), ("output_gain", -3.0)] },
     ],
     sidechain: false,
-    hooks: Hooks::NONE,
     samples: 0,
 };
 

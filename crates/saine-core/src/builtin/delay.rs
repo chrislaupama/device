@@ -90,9 +90,25 @@ pub fn q_text(v: f32) -> String {
     if v >= 10.0 { format!("{v:.1}") } else { format!("{v:.2}") }
 }
 
-const MS: Format = Format::Custom(TextFns { show: ms_text, read: Some(read_ms) });
-const FREQ: Format = Format::Custom(TextFns { show: freq_text, read: Some(read_freq) });
-const Q: Format = Format::Custom(TextFns { show: q_text, read: None });
+const MS: Format = Format::Custom(TextFn(ms_text));
+const FREQ: Format = Format::Custom(TextFn(freq_text));
+const Q: Format = Format::Custom(TextFn(q_text));
+
+pub(super) static BEHAVIOR: Behavior = Behavior {
+    label: |def, d, p| label(def, d, p),
+    read: |_, _, p, t| {
+        if p.format == MS {
+            read_ms(t)
+        } else if p.format == FREQ {
+            read_freq(t)
+        } else if p.id == "stereoWidth" {
+            read_width(t)
+        } else {
+            None
+        }
+    },
+    ..Behavior::NONE
+};
 
 const fn band(n: usize, freq: &'static str, gain: &'static str, q: &'static str, on: &'static str, names: [&'static str; 4]) -> [ParamDef; 4] {
     let (_, f, q0, enabled) = BANDS[n];
@@ -132,9 +148,9 @@ pub static DELAY: DeviceDef = DeviceDef {
         ParamDef::choice("timeDivision", "Time Division", DIVISIONS, 8).label("Note").reversed().help("Synced delay time of the left side (both sides while linked)."),
         ParamDef::new("feedback", "Feedback", 0.0, 100.0, 50.0, LINEAR, "%", Format::Percent).help("How much of each repeat feeds the next."),
         ParamDef::new("grit", "Grit", 0.0, 100.0, 0.0, LINEAR, "%", Format::Percent).help("Saturation and wear of the repeats, in the character of the mode."),
-        ParamDef::new("modSpeed", "Mod Speed", 0.01, 10.0, 0.0692, Taper::Log, "Hz", Format::Custom(TextFns { show: rate_text, read: None })).label("Rate").help("Speed of the delay-time wobble."),
+        ParamDef::new("modSpeed", "Mod Speed", 0.01, 10.0, 0.0692, Taper::Log, "Hz", Format::Custom(TextFn(rate_text))).label("Rate").help("Speed of the delay-time wobble."),
         ParamDef::new("modDepth", "Mod Depth", 0.0, 100.0, 0.0, LINEAR, "%", Format::Percent).help("Depth of the delay-time wobble."),
-        ParamDef::new("stereoWidth", "Stereo Width", 0.0, 200.0, 100.0, LINEAR, "%", Format::Custom(TextFns { show: width_text, read: Some(read_width) }))
+        ParamDef::new("stereoWidth", "Stereo Width", 0.0, 200.0, 100.0, LINEAR, "%", Format::Custom(TextFn(width_text)))
             .label("Width")
             .help("Mono to stereo; above 100% the repeats bounce between the sides (ping-pong)."),
         ParamDef::new("mix", "Mix", 0.0, 100.0, 50.0, LINEAR, "%", Format::Percent).help("Level of the repeats against the dry signal."),
@@ -197,6 +213,5 @@ pub static DELAY: DeviceDef = DeviceDef {
         FactoryPreset { name: "Send: Bounce", values: &[("timeDivision", 9.0), ("feedback", 44.0), ("stereoWidth", 190.0), ("mix", 100.0), ("mode", 1.0), ("eq0Freq", 210.0), ("eq0Enabled", 1.0), ("dry", 0.0)] },
     ],
     sidechain: false,
-    hooks: Hooks { label: Some(label), ..Hooks::NONE },
     samples: 0,
 };

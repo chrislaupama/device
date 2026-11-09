@@ -40,7 +40,6 @@ pub static BITCRUSHER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Two-Bit Rubble", values: &[("bitdepth", 2.0), ("downsample", 12.0), ("jitter", 20.0)] },
     ],
     sidechain: false,
-    hooks: Hooks::NONE,
     samples: 0,
 };
 

@@ -28,6 +28,7 @@
 mod autopanner;
 mod bitcrusher;
 pub mod character_mod;
+mod character_compressor;
 mod chorus;
 mod compressor;
 pub mod delay;
@@ -44,6 +45,7 @@ mod distortion;
 pub mod echo;
 mod flanger;
 pub mod grains;
+mod multiband_compressor;
 mod phaser;
 pub mod pitch_shifter;
 pub mod reverb;
@@ -60,6 +62,9 @@ pub use distortion::distortion_transfer;
 pub use soft_clipper::{clipper_open, clipper_transfer};
 pub use tape_saturation::tape_transfer;
 pub use widener::widener_response;
+
+pub use character_compressor::character_transfer;
+pub use multiband_compressor::{multiband_gain, MULTIBAND_BANDS};
 
 use crate::device::{Device, DeviceId, PluginFormat, PluginKind, PluginRef};
 use crate::model::Track;
@@ -134,27 +139,24 @@ pub enum Format {
     Cents,
     /// LFO rate: "2.00 Hz" below 10 Hz, "12.5 Hz" above.
     Rate,
-    /// Device-specific text ("Stereo", "Ping 40%", "0.07 Hz", "12.0k") and its parser.
-    Custom(TextFns),
+    /// Device-specific text (`ParamDef::parse` reads numbers with the
+    /// parameter's unit: "250 ms", "1.2 s", "2k" for Hz).
+    Custom(TextFn),
 }
 
-/// Display and entry functions of a [`Format::Custom`] value.
+/// Display function of `Format::Custom` (compared by address).
 #[derive(Clone, Copy)]
-pub struct TextFns {
-    pub show: fn(f32) -> String,
-    /// Typed text -> plain value (before snapping); None falls back to a bare number.
-    pub read: Option<fn(&str) -> Option<f32>>,
-}
+pub struct TextFn(pub fn(f32) -> String);
 
-impl PartialEq for TextFns {
-    fn eq(&self, o: &Self) -> bool {
-        std::ptr::fn_addr_eq(self.show, o.show)
+impl PartialEq for TextFn {
+    fn eq(&self, other: &TextFn) -> bool {
+        self.0 as usize == other.0 as usize
     }
 }
-impl Eq for TextFns {}
-impl std::fmt::Debug for TextFns {
+impl Eq for TextFn {}
+impl std::fmt::Debug for TextFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("TextFns")
+        f.write_str("TextFn")
     }
 }
 
@@ -234,6 +236,7 @@ impl ParamDef {
         self.preset_lock = true;
         self
     }
+
     pub const fn reversed(mut self) -> ParamDef {
         self.reversed = true;
         self
@@ -259,7 +262,13 @@ impl ParamDef {
         !self.choices.is_empty()
     }
 
-    /// Bipolar controls draw their arc from the centre (ranges symmetric around 0).
+    /// Normalized position the value arc / slider fill starts from: the 0 point when the
+    /// range spans 0 (bipolar and offset ranges such as −12..24 dB), else the minimum.
+    pub fn origin(&self) -> f32 {
+        if self.min < 0.0 && self.max > 0.0 { self.to_normalized(0.0) } else { 0.0 }
+    }
+
+    /// Range symmetric around 0 (−x..x).
     pub fn is_bipolar(&self) -> bool {
         self.min < 0.0 && self.max > 0.0 && (self.min + self.max).abs() <= 1e-6 * (self.max - self.min)
     }
@@ -323,11 +332,6 @@ impl ParamDef {
                 return Some(i as f32);
             }
         }
-        if let Format::Custom(TextFns { read: Some(read), .. }) = self.format
-            && let Some(v) = read(&t.to_lowercase().replace('\u{2212}', "-"))
-        {
-            return v.is_finite().then(|| self.snap(v));
-        }
         let t = t.replace('\u{2212}', "-").replace(',', ".");
         let lower = t.to_lowercase();
         if self.format == Format::DbOrInf && ["-inf", "-infinity", "-\u{221e}"].iter().any(|w| lower.trim_end_matches("db").trim() == *w) {
@@ -357,10 +361,12 @@ impl ParamDef {
             (Format::Seconds, "s" | "sec" | "secs" | "second" | "seconds") => {}
             (Format::Seconds, "ms" | "msec" | "msecs") => v /= 1000.0,
             (Format::Semitones, "st" | "semitones") | (Format::Cents, "ct" | "cents") => {}
-            (Format::Plain(_) | Format::Custom(_), u) if u == self.unit.to_lowercase() => {}
+            (Format::Plain(_) | Format::Custom(_), u) if u == self.unit.to_lowercase().trim_end_matches(":1") => {}
+            (Format::Custom(_), "%") if self.unit == "%" => {}
+            (Format::Custom(_), "s" | "sec" | "secs" | "second" | "seconds") if self.unit == "ms" => v *= 1000.0,
+            (Format::Custom(_), "k" | "khz") if self.unit == "Hz" => v *= 1000.0,
             (Format::Rate, "hz") => {}
             (Format::Signed { .. }, u) if u == self.unit.to_lowercase() => {}
-            (Format::Custom(_), "%") if self.unit == "%" => {}
             _ => return None,
         }
         match self.format {
@@ -448,7 +454,6 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
             let s = format!("{:.*}", d as usize, v).replace('-', &MINUS.to_string());
             if unit.is_empty() { s } else { format!("{s} {unit}") }
         }
-        Format::Custom(f) => (f.show)(v),
         Format::Signed { decimals, scale } => {
             let x = v * scale.max(1) as f32;
             let p = 10f32.powi(decimals as i32);
@@ -507,6 +512,7 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
         Format::Rate => {
             if v < 10.0 { format!("{v:.2} Hz") } else { format!("{v:.1} Hz") }
         }
+        Format::Custom(f) => (f.0)(v),
     }
 }
 
@@ -550,6 +556,12 @@ fn parse_pan(t: &str) -> Option<f32> {
         return num(n).map(|v| v.abs() / 100.0);
     }
     num(&t).map(|v| v / 100.0)
+}
+
+/// Decibels with one decimal and a U+2212 minus, no plus sign: "−18.0 dB", "6.0 dB".
+pub fn db_text(v: f32) -> String {
+    let a = (v.abs() * 10.0).round() / 10.0;
+    if v <= -0.05 { format!("{MINUS}{a:.1} dB") } else { format!("{a:.1} dB") }
 }
 
 /// "C", "25L", "L25", "25 r", "-25" (left negative) -> balance value.
@@ -623,8 +635,10 @@ impl Control {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum View {
     /// Scrolling level / gain-reduction strip with a draggable threshold
-    /// line bound to `threshold` (reference dynamics strip).
+    /// line bound to `threshold` (reference dynamics strip), plot 0..−36 dB.
     DynamicsStrip { threshold: &'static str },
+    /// Dynamics strip with its own plot range.
+    Strip(Strip),
     /// A device-specific view implemented in the panel code under this name
     /// (escape hatch for EQ curves, shaper, trance gate grid...).
     Custom(&'static str),
@@ -657,11 +671,108 @@ impl Field {
     }
 }
 
+impl View {
+    /// The dynamics strip of this view, if it is one.
+    pub fn strip(&self) -> Option<Strip> {
+        match *self {
+            View::DynamicsStrip { threshold } => Some(Strip::new(threshold)),
+            View::Strip(s) => Some(s),
+            View::Field(_) | View::Custom(_) => None,
+        }
+    }
+}
+
+/// Dynamics strip settings: the draggable line (a dB parameter, capped at
+/// 0 dB) and the plot range of the well.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Strip {
+    pub line: &'static str,
+    pub top_db: f32,
+    pub floor_db: f32,
+}
+
+impl Strip {
+    pub const fn new(line: &'static str) -> Strip {
+        Strip { line, top_db: 0.0, floor_db: -36.0 }
+    }
+    pub const fn range(mut self, top_db: f32, floor_db: f32) -> Strip {
+        self.top_db = top_db;
+        self.floor_db = floor_db;
+        self
+    }
+}
+
 /// Drawing inside a knob instead of the plain body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Face {
     /// Static transfer curve of a soft-knee compressor.
     SoftKneeCurve { threshold: &'static str, ratio: &'static str, knee: &'static str },
+    /// Transfer curve computed by the device (`Behavior::transfer`).
+    Transfer,
+}
+
+/// A transfer curve for a knob face: (input dB, output dB) points over
+/// `lo..hi` and the input interval drawn as the highlighted bend.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Transfer {
+    pub lo: f32,
+    pub hi: f32,
+    pub points: Vec<(f32, f32)>,
+    pub bend: (f32, f32),
+}
+
+/// A knob that becomes a two-state latch in some states (Character
+/// Compressor's Opto ratio: Comp / Limit).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Latch {
+    pub labels: [&'static str; 2],
+    /// Value written by each state.
+    pub values: [f32; 2],
+    pub on: bool,
+}
+
+/// State-dependent panel behaviour of a device, looked up with [`behavior`]:
+/// what depends on other parameters (mode-dependent detents, value text,
+/// latches, computed transfer faces; linked writes are [`linked_writes`]). Devices without one use
+/// the static definition only.
+pub struct Behavior {
+    /// Snap points (plain values) of a control: drags snap to the nearest one
+    /// within 0.025 of the 0..1 range, arrow keys jump between them.
+    pub detents: fn(&DeviceDef, &Device, &ParamDef) -> &'static [f32],
+    /// Display text that depends on other parameters; None = `ParamDef::format`.
+    pub text: fn(&DeviceDef, &Device, &ParamDef, f32) -> Option<String>,
+    /// The control of `param` is a latch in this state.
+    pub latch: fn(&DeviceDef, &Device, &ParamDef) -> Option<Latch>,
+    /// Curve of a `Face::Transfer` knob face.
+    pub transfer: fn(&DeviceDef, &Device) -> Option<Transfer>,
+    /// Label that depends on other parameters (a dial called "Time L" while Link is off); None = `ParamDef::label`.
+    pub label: fn(&DeviceDef, &Device, &ParamDef) -> Option<&'static str>,
+    /// Typed text (trimmed, lower case) -> plain value, the inverse of `text`; None = `ParamDef::parse`.
+    pub read: fn(&DeviceDef, &Device, &ParamDef, &str) -> Option<f32>,
+}
+
+impl Behavior {
+    /// No state-dependent behaviour (for `..Behavior::NONE`).
+    pub const NONE: Behavior = Behavior {
+        detents: |_, _, _| &[],
+        text: |_, _, _, _| None,
+        latch: |_, _, _| None,
+        transfer: |_, _| None,
+        label: |_, _, _| None,
+        read: |_, _, _, _| None,
+    };
+}
+
+/// The state-dependent behaviour of a device, if it has one.
+pub fn behavior(def: &DeviceDef) -> Option<&'static Behavior> {
+    match def.id {
+        "character-compressor" => Some(&character_compressor::BEHAVIOR),
+        "delay" => Some(&delay::BEHAVIOR),
+        "echo" => Some(&echo::BEHAVIOR),
+        "grains" => Some(&grains::BEHAVIOR),
+        "reverb" => Some(&reverb::BEHAVIOR),
+        _ => None,
+    }
 }
 
 /// Panel layout, top to bottom: picker row, view row (view + slider column),
@@ -687,17 +798,12 @@ pub struct Layout {
     /// react while the discrete parameter has one of the values.
     pub inert_when: &'static [(&'static str, &'static str, &'static [u32])],
     /// Card width (pt) for bodies that are not sized by the dial row
-    /// (`View::Custom` grids, mode-dependent dial rows); 0 = derived from `clusters`.
+    /// (`View::Custom` grids); 0 = derived from `clusters`.
     pub fixed_width: f32,
     /// Names of the card's views (picker `Control::Views`); the custom view draws the chosen one.
     pub views: &'static [&'static str],
     /// Dial-row cells spread evenly across the card instead of packing cluster by cluster.
     pub spread_dials: bool,
-}
-
-impl Layout {
-    /// A layout with nothing in it (struct update base for definitions).
-    pub const EMPTY: Layout = Layout { picker: &[], view: None, sliders: &[], clusters: &[], faces: &[], min_height: 0.0, shown_when: &[], inert_when: &[], fixed_width: 0.0, views: &[], spread_dials: false };
 }
 
 /// Reference dial row metrics (pt).
@@ -707,22 +813,54 @@ pub const CLUSTER_GAP: f32 = 21.0;
 pub const CARD_PAD: f32 = 16.0;
 
 impl Layout {
+    /// A layout with nothing in it (struct update base for definitions).
+    pub const EMPTY: Layout = Layout { picker: &[], view: None, sliders: &[], clusters: &[], faces: &[], min_height: 0.0, shown_when: &[], inert_when: &[], fixed_width: 0.0, views: &[], spread_dials: false };
+
     /// Card width from the dial clusters: cells * 62 + inner gaps * 10 +
     /// cluster gaps * 21, plus 16 of padding (reference card sizing rule).
+    /// With mode-dependent controls (`shown_when`) the card takes the width
+    /// of its widest state, so it never changes size when the mode does.
     pub fn width(&self) -> f32 {
         if self.fixed_width > 0.0 {
             return self.fixed_width;
         }
-        let cells: usize = self.clusters.iter().map(|c| c.len()).sum();
-        let inner: usize = self.clusters.iter().map(|c| c.len().saturating_sub(1)).sum();
-        let gaps = self.clusters.len().saturating_sub(1);
-        let dials = cells as f32 * KNOB_CELL + inner as f32 * KNOB_GAP + gaps as f32 * CLUSTER_GAP + CARD_PAD;
+        let dials = self.widest_row().0;
         // A field sets its own width; the view row is field + gap + slider column(s).
         let view = match self.view {
             Some(View::Field(f)) => f.width + self.sliders.len() as f32 * (KNOB_GAP + KNOB_CELL) + CARD_PAD,
             _ => 0.0,
         };
         dials.max(view)
+    }
+
+    /// (dial-row width, knob cells) of the widest dial-row state.
+    pub fn widest_row(&self) -> (f32, usize) {
+        let mut switches: Vec<(&str, Vec<u32>)> = Vec::new();
+        for (_, by, values) in self.shown_when {
+            let i = switches.iter().position(|(b, _)| b == by).unwrap_or_else(|| {
+                switches.push((by, vec![u32::MAX]));
+                switches.len() - 1
+            });
+            switches[i].1.extend(values.iter().copied());
+        }
+        let combos: usize = switches.iter().map(|(_, v)| v.len()).product();
+        (0..combos.max(1))
+            .map(|mut k| {
+                let state: Vec<(&str, u32)> = switches.iter().map(|(by, vals)| {
+                    let v = vals[k % vals.len()];
+                    k /= vals.len();
+                    (*by, v)
+                }).collect();
+                let shown = |c: &Control| c.param().is_none_or(|p| {
+                    self.shown_when.iter().filter(|(q, _, _)| *q == p).all(|(_, by, values)| state.iter().any(|(b, v)| b == by && values.contains(v)))
+                });
+                let sizes: Vec<usize> = self.clusters.iter().map(|c| c.iter().filter(|c| shown(c)).count()).filter(|n| *n > 0).collect();
+                let cells: usize = sizes.iter().sum();
+                let inner: usize = sizes.iter().map(|n| n - 1).sum();
+                let gaps = sizes.len().saturating_sub(1);
+                (cells as f32 * KNOB_CELL + inner as f32 * KNOB_GAP + gaps as f32 * CLUSTER_GAP + CARD_PAD, cells)
+            })
+            .fold((CARD_PAD, 0), |a, b| if b.0 > a.0 { b } else { a })
     }
 
     /// Every control, in panel order.
@@ -760,43 +898,17 @@ pub struct DeviceDef {
     /// Sample slots for audio files the device plays (`Device::samples`);
     /// 0 for devices that play no files.
     pub samples: u32,
-    /// Texts that depend on other parameters.
-    pub hooks: Hooks,
 }
 
-/// State-dependent labels and value texts of a device (e.g. a dial called
-/// "Time L" while Link is off, a motor shown in cm/s or ms by machine).
-#[derive(Clone, Copy)]
-pub struct Hooks {
-    pub label: Option<fn(&DeviceDef, &Device, &ParamDef) -> Option<&'static str>>,
-    pub text: Option<fn(&DeviceDef, &Device, &ParamDef, f32) -> Option<String>>,
-    /// Typed text -> plain value in the device's current state (the inverse of `text`).
-    pub read: Option<fn(&DeviceDef, &Device, &ParamDef, &str) -> Option<f32>>,
-}
-
-impl Hooks {
-    pub const NONE: Hooks = Hooks { label: None, text: None, read: None };
-}
-
-impl PartialEq for Hooks {
-    fn eq(&self, o: &Self) -> bool {
-        let same = |a: Option<usize>, b: Option<usize>| a == b;
-        same(self.label.map(|f| f as usize), o.label.map(|f| f as usize)) && same(self.text.map(|f| f as usize), o.text.map(|f| f as usize))
-            && same(self.read.map(|f| f as usize), o.read.map(|f| f as usize))
-    }
-}
-impl std::fmt::Debug for Hooks {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Hooks")
-    }
-}
+/// Ids of the hidden switch that follows a device's sidechain picker.
+pub const SIDECHAIN_ENABLE_IDS: [&str; 2] = ["sidechainEnable", "sc_source"];
 
 /// The vendor shown for built-in devices.
 pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 29] = [
+    static ALL: [&DeviceDef; 31] = [
         &compressor::COMPRESSOR,
         &distortion::DISTORTION,
         &tape_saturation::TAPE_SATURATION,
@@ -816,6 +928,8 @@ pub fn all() -> &'static [&'static DeviceDef] {
         &grains::GRAINS,
         &reverb::REVERB,
         &pitch_shifter::PITCH_SHIFTER,
+        &character_compressor::CHARACTER_COMPRESSOR,
+        &multiband_compressor::MULTIBAND_COMPRESSOR,
         &lfo::LFO,
         &rack::RACK,
         &sampler::SAMPLER,
@@ -836,6 +950,7 @@ pub fn all() -> &'static [&'static DeviceDef] {
 pub fn linked_writes(def: &DeviceDef, device: &Device, param: &str, value: f32) -> (Vec<(&'static str, f32)>, Option<String>) {
     match def.id {
         "character-mod" => character_mod::switch_writes(def, device, param, value),
+        "character-compressor" => (def.param(param).map(|p| character_compressor::linked(def, device, p, value)).unwrap_or_default(), None),
         _ => (Vec::new(), None),
     }
 }
@@ -926,11 +1041,34 @@ impl DeviceDef {
         v
     }
 
-    /// Whether `param` is visible in the device's current state (`Layout::shown_when`).
-    pub fn is_shown(&self, device: &Device, param: &str) -> bool {
-        self.layout.shown_when.iter().filter(|(p, _, _)| *p == param).all(|(_, by, values)| {
-            self.param(by).map(|b| values.contains(&(self.value(device, b).round() as u32))).unwrap_or(true)
-        })
+    /// The parameter that follows the sidechain picker (on while a source is picked).
+    pub fn sidechain_enable(&self) -> Option<&'static ParamDef> {
+        self.params.iter().find(|p| SIDECHAIN_ENABLE_IDS.contains(&p.id))
+    }
+
+    /// Display text of `param` = `v` on `device` (state-dependent text first).
+    pub fn text(&self, device: &Device, p: &ParamDef, v: f32) -> String {
+        behavior(self).and_then(|b| (b.text)(self, device, p, v)).unwrap_or_else(|| p.format(v))
+    }
+
+    /// Snap points of `param` in the device's current state.
+    pub fn detents(&self, device: &Device, p: &ParamDef) -> &'static [f32] {
+        behavior(self).map_or(&[], |b| (b.detents)(self, device, p))
+    }
+
+    /// Values written when `param` is set to `v`: the parameter itself plus
+    /// its [`linked_writes`], all snapped.
+    pub fn linked_values(&self, device: &Device, param: &str, v: f32) -> BTreeMap<String, f32> {
+        let mut out = BTreeMap::new();
+        let Some(p) = self.param(param) else { return out };
+        let v = p.snap(v);
+        for (id, x) in linked_writes(self, device, p.id, v).0 {
+            if let Some(q) = self.param(id) {
+                out.insert(id.to_string(), q.snap(x));
+            }
+        }
+        out.insert(p.id.to_string(), v);
+        out
     }
 
     /// Whether `param` is drawn inert (`Layout::inert_when`).
@@ -942,17 +1080,12 @@ impl DeviceDef {
 
     /// Panel label of a parameter in the device's current state.
     pub fn label_of(&self, device: &Device, p: &ParamDef) -> &'static str {
-        self.hooks.label.and_then(|f| f(self, device, p)).unwrap_or(p.label)
-    }
-
-    /// Display text of `v` for `p` in the device's current state.
-    pub fn text_of(&self, device: &Device, p: &ParamDef, v: f32) -> String {
-        self.hooks.text.and_then(|f| f(self, device, p, v)).unwrap_or_else(|| p.format(v))
+        behavior(self).and_then(|b| (b.label)(self, device, p)).unwrap_or(p.label)
     }
 
     /// Parse typed text for `p` in the device's current state into a snapped plain value.
     pub fn parse_of(&self, device: &Device, p: &ParamDef, text: &str) -> Option<f32> {
-        let read = self.hooks.read.and_then(|f| f(self, device, p, &text.trim().to_lowercase().replace('\u{2212}', "-")));
+        let read = behavior(self).and_then(|b| (b.read)(self, device, p, &text.trim().to_lowercase().replace('\u{2212}', "-")));
         read.filter(|v| v.is_finite()).map(|v| p.snap(v)).or_else(|| p.parse(text))
     }
 
@@ -969,6 +1102,13 @@ impl DeviceDef {
             }
         }
         v
+    }
+
+    /// Whether `param` is visible in the device's current state (`Layout::shown_when`).
+    pub fn is_shown(&self, device: &Device, param: &str) -> bool {
+        self.layout.shown_when.iter().filter(|(p, _, _)| *p == param).all(|(_, by, values)| {
+            self.param(by).map(|b| values.contains(&(self.value(device, b).round() as u32))).unwrap_or(true)
+        })
     }
 }
 

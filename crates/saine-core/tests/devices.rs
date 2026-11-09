@@ -240,15 +240,17 @@ fn time_fx_definitions_are_complete_and_presets_valid() {
 fn custom_formats_show_and_read_values() {
     let delay = time_fx("delay");
     let p = |def: &builtin::DeviceDef, id: &str| def.param(id).unwrap();
+    // Typed text is read in the device's state (Behavior::read), as the panel does.
+    let read = |def: &builtin::DeviceDef, id: &str, t: &str| def.parse_of(&def.instantiate(), def.param(id).unwrap(), t);
     assert_eq!(p(delay, "timeMs").format(1500.0), "1.50 s");
     assert_eq!(p(delay, "timeMs").format(4.5), "4.5 ms");
-    assert_eq!(p(delay, "timeMs").parse("1.2 s"), Some(1200.0));
+    assert_eq!(read(delay, "timeMs", "1.2 s"), Some(1200.0));
     assert_eq!(p(delay, "stereoWidth").format(140.0), "Ping 40%");
     assert_eq!(p(delay, "stereoWidth").format(0.0), "Mono");
-    assert_eq!(p(delay, "stereoWidth").parse("ping 40"), Some(140.0));
+    assert_eq!(read(delay, "stereoWidth", "ping 40"), Some(140.0));
     let reverb = time_fx("reverb");
     assert_eq!(p(reverb, "highcut2").format(12000.0), "12.0k");
-    assert_eq!(p(reverb, "highcut2").parse("8k"), Some(8000.0));
+    assert_eq!(read(reverb, "highcut2", "8k"), Some(8000.0));
     assert_eq!(p(reverb, "decay").format(0.45), "0.45 s");
     let pitch = time_fx("pitch-shifter");
     assert_eq!(p(pitch, "semitones").format(-12.0), "\u{2212}12 st");
@@ -336,7 +338,7 @@ fn echo_reads_back_the_text_it_shows() {
     for (machine, mains) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (2.0, 0.0)] {
         d.params.insert("machine".into(), machine);
         d.params.insert("drum_mains_60".into(), mains);
-        let shown = def.text_of(&d, motor, 0.3);
+        let shown = def.text(&d, motor, 0.3);
         let read = def.parse_of(&d, motor, &shown).unwrap_or_else(|| panic!("machine {machine}: can't read {shown}"));
         assert!((read - 0.3).abs() < 0.01, "machine {machine}: {shown} -> {read}");
     }

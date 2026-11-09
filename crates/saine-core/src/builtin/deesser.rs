@@ -46,5 +46,4 @@ pub static DEESSER: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     samples: 0,
-    hooks: crate::builtin::Hooks::NONE,
 };

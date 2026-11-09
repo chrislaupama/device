@@ -54,7 +54,9 @@ pub fn spread_text(v: f32) -> String {
     if r.fract() == 0.0 { format!("{r:.0} st") } else { format!("{r:.1} st") }
 }
 
-const MS: Format = Format::Custom(TextFns { show: ms_text, read: Some(read_ms) });
+const MS: Format = Format::Custom(TextFn(ms_text));
+
+pub(super) static BEHAVIOR: Behavior = Behavior { read: |_, _, p, t| if p.format == MS { read_ms(t) } else { None }, ..Behavior::NONE };
 const CLOUD: &[u32] = &[0];
 
 pub static GRAINS: DeviceDef = DeviceDef {
@@ -70,12 +72,12 @@ pub static GRAINS: DeviceDef = DeviceDef {
         ParamDef::choice("position_note", "Position Note", POSITION_NOTES, 3).help("How far back grains start reading, in note values (Rhythm)."),
         ParamDef::new("size", "Size", 5.0, 2000.0, 120.0, Taper::Linear { skew: 0.3 }, "ms", MS).help("Grain length (Cloud)."),
         ParamDef::new("gate", "Gate", 5.0, 400.0, 100.0, Taper::Linear { skew: 0.5 }, "%", Format::Percent).help("Grain length as a share of the step (Rhythm)."),
-        ParamDef::new("density", "Density", 0.5, 200.0, 24.0, Taper::Linear { skew: 0.3 }, "/s", Format::Custom(TextFns { show: density_text, read: None })).help("Grains per second (Cloud)."),
+        ParamDef::new("density", "Density", 0.5, 200.0, 24.0, Taper::Linear { skew: 0.3 }, "/s", Format::Custom(TextFn(density_text))).help("Grains per second (Cloud)."),
         ParamDef::choice("rate", "Rate", RATES, 8).help("Step length (Rhythm)."),
         ParamDef::new("chance", "Chance", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent).help("Probability that a step fires a grain (Rhythm)."),
         ParamDef::new("spray", "Spray", 0.0, 2000.0, 40.0, Taper::Linear { skew: 0.35 }, "ms", MS).help("Random extra reach back in time for each grain."),
-        ParamDef::new("pitch", "Pitch", -24.0, 24.0, 0.0, LINEAR, "st", Format::Custom(TextFns { show: pitch_text, read: None })).help("Transposition of every grain."),
-        ParamDef::new("spread", "Spread", 0.0, 24.0, 0.0, Taper::Linear { skew: 0.6 }, "st", Format::Custom(TextFns { show: spread_text, read: None })).help("Random pitch range per grain, kept on the Scale."),
+        ParamDef::new("pitch", "Pitch", -24.0, 24.0, 0.0, LINEAR, "st", Format::Custom(TextFn(pitch_text))).help("Transposition of every grain."),
+        ParamDef::new("spread", "Spread", 0.0, 24.0, 0.0, Taper::Linear { skew: 0.6 }, "st", Format::Custom(TextFn(spread_text))).help("Random pitch range per grain, kept on the Scale."),
         ParamDef::choice("scale", "Scale", SCALES, 4).help("Which pitches Spread lands on."),
         ParamDef::new("reverse", "Reverse", 0.0, 100.0, 0.0, LINEAR, "%", Format::Percent).help("Share of grains played backwards."),
         ParamDef::new("shape", "Shape", 0.0, 100.0, 50.0, LINEAR, "%", Format::Percent).help("Grain envelope: hard and clicky to soft and smooth."),
@@ -154,6 +156,5 @@ pub static GRAINS: DeviceDef = DeviceDef {
         FactoryPreset { name: "Deep Water", values: &[("size", 340.0), ("density", 26.0), ("spray", 240.0), ("shape", 72.0), ("width", 75.0), ("drift", 65.0), ("blur", 55.0), ("tone", -80.0), ("mix", 85.0), ("output", 3.5)] },
     ],
     sidechain: false,
-    hooks: Hooks::NONE,
     samples: 0,
 };

@@ -106,5 +106,4 @@ pub static SAMPLER: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     samples: 1,
-    hooks: crate::builtin::Hooks::NONE,
 };

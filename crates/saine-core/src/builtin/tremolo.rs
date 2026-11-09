@@ -48,6 +48,5 @@ pub static TREMOLO: DeviceDef = DeviceDef {
         FactoryPreset { name: "Parallel Flutter", values: &[("rate", 9.0), ("depth", 90.0), ("mix", 45.0)] },
     ],
     sidechain: false,
-    hooks: Hooks::NONE,
     samples: 0,
 };

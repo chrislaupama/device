@@ -610,7 +610,7 @@ impl Controller {
         };
         if let Some(p) = def.param(id) {
             let t = if right_side { tr } else { tl };
-            c.pill(x_of(t) - 9.0 * Z, cy[right_side as usize] - lane * 0.45 + 2.0 * Z, w, def.label_of(d, p), &def.text_of(d, p, v(id)), drag.is_some());
+            c.pill(x_of(t) - 9.0 * Z, cy[right_side as usize] - lane * 0.45 + 2.0 * Z, w, def.label_of(d, p), &def.text(d, p, v(id)), drag.is_some());
         }
     }
 
@@ -721,7 +721,7 @@ impl Controller {
         let mut pl = String::new();
         seg(&mut pl, px, top, px, bottom);
         c.stroke(pl, ink(0.95), if hot == Some(Grab::ReverbPre) { 2.0 } else { 1.5 } * Z);
-        let text = |id: &str| def.param(id).map(|p| def.text_of(d, p, v(id))).unwrap_or_default();
+        let text = |id: &str| def.param(id).map(|p| def.text(d, p, v(id))).unwrap_or_default();
         c.pill(px, top + 9.0 * Z, w, "Pre-Delay", &text("predelay"), hot == Some(Grab::ReverbPre));
         for (high_cut, id, label) in [(true, "highcut2", "High Cut"), (false, "lowcut2", "Low Cut")] {
             let y = y_of(v(id)).clamp(top, bottom);
@@ -1149,7 +1149,8 @@ impl Controller {
     }
 
     /// Card view switch (Echoes / EQ, Tail / EQ).
-    pub fn panel_view(&mut self, device: DeviceId, view: i32) {
+    /// Card view switch (picker `Control::Views`, sampler tabs): UI state, no undo step.
+    pub fn card_view_select(&mut self, device: DeviceId, view: i32) {
         if self.sampler_def(device).is_some() {
             return self.sampler_tab(device, view);
         }

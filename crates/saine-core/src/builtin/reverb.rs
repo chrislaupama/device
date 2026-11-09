@@ -40,8 +40,21 @@ fn read_hz(t: &str) -> Option<f32> {
     t.trim_end_matches("hz").trim().parse().ok()
 }
 
-const SECONDS: Format = Format::Custom(TextFns { show: seconds_text, read: Some(read_seconds) });
-const CUT: Format = Format::Custom(TextFns { show: cut_text, read: Some(read_hz) });
+const SECONDS: Format = Format::Custom(TextFn(seconds_text));
+const CUT: Format = Format::Custom(TextFn(cut_text));
+
+pub(super) static BEHAVIOR: Behavior = Behavior {
+    read: |_, _, p, t| {
+        if p.format == SECONDS {
+            read_seconds(t)
+        } else if p.format == CUT {
+            read_hz(t)
+        } else {
+            None
+        }
+    },
+    ..Behavior::NONE
+};
 const ALL_BUT_SHIMMER: &[u32] = &[0, 1, 2, 3, 5];
 const CLASSIC: &[u32] = &[0, 1, 2, 3];
 
@@ -128,6 +141,5 @@ pub static REVERB: DeviceDef = DeviceDef {
         FactoryPreset { name: "Send: Big Hall", values: &[("size", 85.0), ("decay", 3.2), ("damping", 52.0), ("predelay", 30.0), ("mix", 100.0), ("mode2", 1.0), ("highcut2", 8500.0), ("lowcut2", 130.0), ("dry", 0.0)] },
     ],
     sidechain: false,
-    hooks: Hooks::NONE,
     samples: 0,
 };

@@ -38,5 +38,4 @@ pub static DECLIPPER: DeviceDef = DeviceDef {
     ],
     sidechain: false,
     samples: 0,
-    hooks: crate::builtin::Hooks::NONE,
 };

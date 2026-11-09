@@ -38,7 +38,6 @@ pub static WIDENER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Fold to Centre", values: &[("width2", 0.0), ("lowcut", 20.0)] },
     ],
     sidechain: false,
-    hooks: Hooks::NONE,
     samples: 0,
 };
 

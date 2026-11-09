@@ -53,10 +53,10 @@ pub static PITCH_SHIFTER: DeviceDef = DeviceDef {
     category: "Pitch",
     purpose: "Moves the pitch up or down by semitones and cents, optionally keeping a voice's formants in place, with a dry/wet blend.",
     params: &[
-        ParamDef::new("semitones", "Semitones", -24.0, 24.0, 0.0, LINEAR, "st", Format::Custom(TextFns { show: semitones_text, read: None }))
+        ParamDef::new("semitones", "Semitones", -24.0, 24.0, 0.0, LINEAR, "st", Format::Custom(TextFn(semitones_text)))
             .step(1.0)
             .help("Shift in semitones."),
-        ParamDef::new("cents", "Cents", -100.0, 100.0, 0.0, LINEAR, "ct", Format::Custom(TextFns { show: cents_text, read: None })).help("Fine shift in cents."),
+        ParamDef::new("cents", "Cents", -100.0, 100.0, 0.0, LINEAR, "ct", Format::Custom(TextFn(cents_text))).help("Fine shift in cents."),
         ParamDef::choice("formant_preserve", "Formant", OFF_ON, 0).help("Keeps the spectral envelope (a voice's character) in place while the pitch moves."),
         ParamDef::new("mix", "Mix", 0.0, 100.0, 100.0, LINEAR, "%", Format::Percent).help("Blend of shifted and dry signal."),
     ],
@@ -83,6 +83,5 @@ pub static PITCH_SHIFTER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Two Octaves Up", values: &[("semitones", 24.0), ("mix", 25.0)] },
     ],
     sidechain: false,
-    hooks: Hooks::NONE,
     samples: 0,
 };

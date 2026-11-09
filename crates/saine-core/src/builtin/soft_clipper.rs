@@ -43,7 +43,6 @@ pub static SOFT_CLIPPER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Loud and Proud", values: &[("input", 7.0), ("ceiling", -0.8), ("softness", 40.0), ("gain_match", 0.0)] },
     ],
     sidechain: false,
-    hooks: Hooks::NONE,
     samples: 0,
 };
 

@@ -48,6 +48,5 @@ pub static CHORUS: DeviceDef = DeviceDef {
         FactoryPreset { name: "Half-Note Swirl", values: &[("depth", 4.5), ("mix", 50.0), ("feedback", 20.0), ("sync", 1.0), ("rate_sync", 5.0)] },
     ],
     sidechain: false,
-    hooks: Hooks::NONE,
     samples: 0,
 };
