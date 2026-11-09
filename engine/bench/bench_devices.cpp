@@ -1,6 +1,7 @@
 // Built-in device benchmark: per-block DSP cost of every registered device
-// (every compressor character, the Synth with held notes), the parameter
-// update paths, and a 32-track session with two compressors per track.
+// (every compressor character, the Synth with held notes, the restoration
+// devices), the parameter update paths, and a 32-track session with two
+// compressors per track.
 //
 //   saine_device_bench [blocks]      (Release build; numbers in us per 256-frame block)
 #include "devices/builtin.hpp"
@@ -138,6 +139,13 @@ int main(int argc, char** argv) {
         row(name, bench_kernel("compressor", v, blocks, 0));
     }
     row("compressor (Clean, 16 auto events)", bench_kernel("compressor", kCompressor, blocks, 16));
+    // Restoration: defaults, plus the heaviest setting of each.
+    row("declipper (defaults, 4x)", bench_kernel("declipper", {-1.f, -0.3f, 1.f, 100.f}, blocks, 0));
+    row("declipper (-3 dB, clipping, 8x)", bench_kernel("declipper", {-3.f, -0.3f, 2.f, 100.f}, blocks, 0));
+    row("deesser (defaults)", bench_kernel("deesser", {7000.f, 1.f, -36.f, 8.f, 0.f, 100.f}, blocks, 0));
+    row("dehummer (defaults, 4 notches)", bench_kernel("dehummer", {60.f, 4.f, 5.f, -30.f, 100.f}, blocks, 0));
+    row("dehummer (8 notches)", bench_kernel("dehummer", {60.f, 8.f, 5.f, -30.f, 100.f}, blocks, 0));
+    row("denoiser (defaults)", bench_kernel("denoiser", {-40.f, -20.f, 50.f, 5.f, 50.f, 100.f}, blocks, 0));
 
     const char* drive_modes[] = {"Overdrive", "Fuzz", "Tube", "Hard Clip"};
     for (int m = 0; m < 4; ++m) {

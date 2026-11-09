@@ -19,6 +19,7 @@ mod clipedit;
 mod controller;
 mod device_fields;
 mod device_panel;
+mod panel_graph;
 mod device_views;
 mod devices;
 mod gpu;
@@ -890,6 +891,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_field, |c, id: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.panel_field_drag(saine_core::DeviceId(id as u64), phase, dx, dy, fine));
     on!(on_panel_menu, |c, id: i32, which: i32, x: f32, y: f32| c.panel_menu(saine_core::DeviceId(id as u64), which, x, y));
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(saine_core::DeviceId(id as u64), dir));
+    on!(on_panel_graph, |c, id: i32, phase: i32, x: f32, y: f32, fine: bool, alt: bool| c.panel_graph(saine_core::DeviceId(id as u64), phase, x, y, fine, alt));
     on!(on_chain_scroll_by, |c, d: f32| c.chain_scroll_by(d));
     on!(on_add_category, |c, i: i32, x: f32, y: f32| c.add_category(i.max(0) as usize, x, y));
     on!(on_add_search_edited, |c, t: slint::SharedString| c.add_search(t.as_str()));
