@@ -32,6 +32,9 @@ export struct TrackRow {
     pan-auto: bool,
 }
 
+// Track-header meter: 0 (silent, below -50 dB) .. 1 (0 dB), clip latched.
+export struct TrackLevel { l: float, r: float, clip: bool }
+
 // Value label at the left of an automation row (lane-local). state, accent, dim: as TrackRow.auto-*.
 export struct AutoLabel { x: length, y: length, text: string, state: int, accent: color, dim: color }
 // Expanded automation row in the track header column (content y).
@@ -261,8 +264,10 @@ export struct StripMeter { l: float, r: float, peak: string }   // 0 (top) .. 1 
 
 // ---- assistant panel ----
 // kind: 0 user, 1 assistant reply, 2 error, 3 pending
-export struct ChatEntry { kind: int, text: string, lines: [string], worked: string, expanded: bool }
-export struct HighlightRect { x: length, y: length, w: length, h: length, note: string }
+// kind: 0 user, 1 reply, 2 error, 3 live row. point: sent in Point mode. fresh: added since the last rebuild (entry pop).
+export struct ChatEntry { kind: int, text: string, lines: [string], worked: string, expanded: bool, point: bool, fresh: bool }
+// Point ring (x, y, w, h, corner radius r) and its bubble anchor (bx; by is the bubble's top, or its bottom when above).
+export struct HighlightRect { x: length, y: length, w: length, h: length, r: length, bx: length, by: length, above: bool, title: string, note: string }
 
 // ---- clip editor / piano roll / context menu ----
 export struct YLabel { y: length, text: string }
@@ -311,6 +316,8 @@ export global Studio {
     callback toggle-metronome();
     // ---- timeline ----
     in property <[TrackRow]> tracks;
+    in property <[TrackLevel]> track-levels;    // by track index
+    in property <TrackLevel> master-level;
     in property <length> scroll-y;
     in property <image> timeline-image;
     in property <[RulerLabel]> ruler-labels;
@@ -368,6 +375,7 @@ export global Studio {
     callback track-solo(int);
     callback track-volume(int, float);
     callback track-pan(int, float);
+    callback track-pan-text(int, string);       // inline pan entry in the track header
     callback gesture-end();
     callback master-volume(float);
     callback sel-fader-moved(float);
@@ -406,7 +414,7 @@ export global Studio {
     in property <[HighlightRect]> highlights;
     callback chat-send(string);
     callback chat-new();
-    callback chat-set-mode(bool);          // true = Teach
+    callback chat-set-mode(bool);          // true = Point (Mode::Teach)
     callback chat-dismiss-notice();
     callback chat-toggle-entry(int);
     callback chat-remove-context();

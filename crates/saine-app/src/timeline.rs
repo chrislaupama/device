@@ -9,12 +9,14 @@ use crate::gpu::{DrawList, RectInst, WaveInst};
 use crate::peaks::Slot;
 
 pub const RULER_H: f32 = 39.0;
-pub const TRACK_PITCH: f32 = 74.5;
-pub const TRACK_H: f32 = 74.0;
-pub const MASTER_H: f32 = 30.5;
+/// Track rows are 88 px at the reference's default zoom (88 × 0.85), including a 0.5 pt rule.
+pub const TRACK_PITCH: f32 = 74.8;
+pub const TRACK_H: f32 = 74.3;
+/// Master row: 36 px, its top rule included.
+pub const MASTER_H: f32 = 30.6;
 /// Master row height while automation lanes are shown (60-automation-lanes.png: separator at
 /// window y 439.5, lanes bottom 504).
-pub const MASTER_H_AUTO: f32 = 64.5;
+pub const MASTER_H_AUTO: f32 = 64.6;
 pub const CLIP_HEADER: f32 = 17.0;
 pub const EDGE_GRAB: f32 = 5.0;
 /// Default zoom: 51.03 pt per 4/4 bar (measured: bar 20 line at x 1422.5, bar 1 at 453).

@@ -80,7 +80,7 @@ fn approx(a: f32, b: f32, tol: f32) -> bool {
 // Window geometry (reference layout): lanes origin and track rows.
 const LANE_X: f32 = 453.65;
 const TRACK0_Y: f32 = 144.5;
-const PITCH: f32 = 74.5;
+const PITCH: f32 = crate::timeline::TRACK_PITCH;
 
 fn clip_start_beats(c: &Controller, track: usize) -> Option<f64> {
     c.project().tracks.get(track)?.clips.first().map(|cl| cl.start as f64 / PPQ as f64)
@@ -676,8 +676,10 @@ fn steps() -> Vec<Step> {
     let (rv1, rv2) = (rec_vol_steps.clone(), rec_vol_steps.clone());
     let (rm1, rm2) = (rec_mute.clone(), rec_mute.clone());
     // Assistant panel geometry at 1440x820 with the mixer closed (see ui/assistant.slint).
-    const CARD_X: f32 = 1440.0 - 5.0 - 252.5 + 7.0;
-    const CARD_Y: f32 = 78.0 + 426.0 - 8.0 - 119.5;
+    // Card: 8 px inset, 143 px tall with the AI notice (CSS px x 0.85).
+    const CARD_X: f32 = 1440.0 - 5.0 - 252.5 + 6.8;
+    const CARD_Y: f32 = 78.0 + 426.0 - 6.8 - 121.55;
+    const INPUT_Y: f32 = CARD_Y + 28.05 + 27.2 + 22.0;
     const MIXER_Y: f32 = 820.0 - 5.0 - 390.0;
     let bx = |b: f64| LANE_X + (b * crate::timeline::DEFAULT_PX_PER_BEAT) as f32;
     vec![
@@ -702,7 +704,7 @@ fn steps() -> Vec<Step> {
         Check("undo restored mute=false", Box::new(|c, _| (!c.project().tracks[0].mute).then_some(()).ok_or("still muted".into()))),
         Do("Cmd+Shift+Z", Box::new(|a| key(a, "Z", true, true))),
         Check("redo muted again", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("redo failed".into()))),
-        Do("drag track 1 volume slider left", Box::new(|a| drag(a, 262.65 + 115.6 + 0.85 * 61.0 + 3.5, TRACK0_Y + 48.0, 262.65 + 140.0, TRACK0_Y + 48.0))),
+        Do("drag track 1 volume slider left", Box::new(|a| drag(a, 262.65 + 115.7 + 5.95 + 0.8 * 56.1, TRACK0_Y + 47.6, 262.65 + 140.0, TRACK0_Y + 47.6))),
         Check("track 1 gain lowered, one coalesced undo step", Box::new(|c, _| {
             let g = c.project().tracks[0].gain;
             let labels = c.doc.history_labels();
@@ -797,7 +799,7 @@ fn steps() -> Vec<Step> {
         Do("(audio) unmute track 1 (muted by the redo step)", Box::new(|a| click(a, 262.65 + 33.5, TRACK0_Y + 47.0))),
         Do("(audio) click ruler at beat 9 (start of track 1 clip)", Box::new(move |a| click(a, bx(9.0), 112.0))),
         Do("(audio) master -40 dB, Space", Box::new(|a| {
-            a.global::<Studio>().invoke_master_volume(0.85 * 0.01f32.cbrt());
+            a.global::<Studio>().invoke_master_volume(crate::controller::slider_from_gain(0.01));
             key(a, " ", false, false)
         })),
         Do("wait", Box::new(|_| {})),
@@ -850,7 +852,7 @@ fn steps() -> Vec<Step> {
             Ok(())
         })),
         Do("click the input and type a prompt (Slint key events)", Box::new(|a| {
-            click(a, CARD_X + 60.0, CARD_Y + 27.0 + 46.0);
+            click(a, CARD_X + 60.0, INPUT_Y);
             type_text(a, "add drums, tempo 128, audio down 6 db");
         })),
         Check("typed text reached the composer", Box::new(|c, a| {
@@ -886,24 +888,24 @@ fn steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("tracks {} bpm {} gain {}", p.tracks.len(), p.transport.bpm, p.tracks[0].gain))
         })),
-        Do("click Teach", Box::new(|a| click(a, CARD_X + 6.5 + 57.0 + 27.0, CARD_Y + 27.0 + 66.5 + 10.0))),
-        Check("Teach mode active", Box::new(move |c, a| {
+        Do("click Point", Box::new(|a| click(a, CARD_X + 6.8 + 2.125 + 53.125 + 1.7 + 26.5, CARD_Y + 121.55 - 6.8 - 10.2))),
+        Check("Point mode active", Box::new(move |c, a| {
             rr1.set(c.doc.revision());
             (c.assistant.mode == Mode::Teach && a.global::<Studio>().get_teach_mode()).then_some(()).ok_or("still Assist".into())
         })),
         Do("type + Enter (fixture turn with an edit)", Box::new(|a| {
-            click(a, CARD_X + 60.0, CARD_Y + 27.0 + 46.0);
+            click(a, CARD_X + 60.0, INPUT_Y);
             type_text(a, "slow it down");
             key(a, Key::Return, false, false);
         })),
-        Check("Teach edit rejected: error entry, project unchanged", Box::new(move |c, _| {
+        Check("Point edit rejected: error entry, project unchanged", Box::new(move |c, _| {
             let e = c.assistant.last().ok_or("empty transcript")?;
-            (e.kind == EntryKind::Error && e.text.contains("teach mode") && c.doc.revision() == rr2.get() && c.project().transport.bpm == 120.0)
+            (e.kind == EntryKind::Error && e.text.contains("Point mode") && c.doc.revision() == rr2.get() && c.project().transport.bpm == 120.0)
                 .then_some(())
                 .ok_or(format!("{:?} {:?} rev {} vs {}", e.kind, e.text, c.doc.revision(), rr2.get()))
         })),
         Do("type + Enter (fixture turn highlighting transport.bpm)", Box::new(|a| {
-            click(a, CARD_X + 60.0, CARD_Y + 27.0 + 46.0);
+            click(a, CARD_X + 60.0, INPUT_Y);
             type_text(a, "where is the tempo");
             key(a, Key::Return, false, false);
         })),
@@ -911,7 +913,8 @@ fn steps() -> Vec<Step> {
             let hl = c.assistant.highlights.iter().any(|h| h.target == "transport.bpm");
             let rects = a.global::<Studio>().get_highlights();
             let r = slint::Model::row_data(&rects, 0);
-            let mapped = r.as_ref().is_some_and(|r| r.x == 700.0 && r.y == 42.0);
+            // Point ring around the tempo box (700, 42, 57 x 20): padded 6 px (CSS), radius 14
+            let mapped = r.as_ref().is_some_and(|r| (r.x - 694.9).abs() < 0.01 && (r.y - 36.9).abs() < 0.01 && (r.r - 11.9).abs() < 0.01 && r.title == "Tempo (BPM)");
             let note = c.assistant.last().is_some_and(|e| e.lines.iter().any(|l| l.starts_with("Tempo (BPM)")));
             (hl && mapped && note && slint::Model::row_count(&rects) == 1).then_some(()).ok_or(format!("hl {hl} rect {r:?} note {note}"))
         })),
@@ -1861,14 +1864,14 @@ fn automation_steps() -> Vec<Step> {
             let ok = c.project().tracks[0].clips.len() == 1 && !c.auto.shown && !a.global::<Studio>().get_auto_shown() && (a.get_lanes_width() - (1440.0 - 262.65 - 5.0 - 191.0)).abs() < 1.0;
             ok.then_some(()).ok_or(format!("clips {} shown {}", c.project().tracks[0].clips.len(), c.auto.shown))
         })),
-        Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 312.6 + 7.0, 78.0 + 14.0))),
+        Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 296.9, 78.0 + 14.0))),
         Check("automation: lanes shown; each header has the Track Volume pill and the disclosure; master row 64.5 pt; value labels (tracks +0.0, master at its static level)", Box::new(move |c, a| {
             ah_set(c.doc.history_labels().len());
             let s = a.global::<Studio>();
             let rows = s.get_tracks();
             let r0 = slint::Model::row_data(&rows, 0).ok_or("no rows")?;
             let labels: Vec<String> = slint::Model::iter(&s.get_auto_labels()).map(|l| l.text.to_string()).collect();
-            let ok = c.auto.shown && s.get_auto_shown() && r0.auto_cat == "Track" && r0.auto_param == "Volume" && r0.auto_count == 1 && (s.get_master_h() - 64.0).abs() < 1e-3 && labels.len() == 3 && labels[..2] == ["+0.0", "+0.0"] && labels[2] == crate::automation::volume_label(saine_core::gain_to_db(c.project().master_gain));
+            let ok = c.auto.shown && s.get_auto_shown() && r0.auto_cat == "Track" && r0.auto_param == "Volume" && r0.auto_count == 1 && (s.get_master_h() - (crate::timeline::MASTER_H_AUTO - 0.5)).abs() < 1e-3 && labels.len() == 3 && labels[..2] == ["+0.0", "+0.0"] && labels[2] == crate::automation::volume_label(saine_core::gain_to_db(c.project().master_gain));
             ok.then_some(()).ok_or(format!("shown {} pill {:?} {:?} count {} master {} labels {labels:?}", s.get_auto_shown(), r0.auto_cat, r0.auto_param, r0.auto_count, s.get_master_h()))
         })),
         DoC("automation: open the track 1 parameter picker, click “Track ›”, then “Pan”", Box::new(|a, ctl| {
@@ -2102,12 +2105,12 @@ fn automation_steps() -> Vec<Step> {
         })),
         Do("automation: click Automation Arm again (off), hide lanes", Box::new(|a| {
             click(a, 496.0 + 10.5, 41.0 + 11.0);
-            click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 312.6 + 7.0, 78.0 + 14.0);
+            click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 296.9, 78.0 + 14.0);
         })),
         Check("automation: disarmed, lanes hidden, master row back to 30 pt", Box::new(move |c, a| {
             let _ = &wav2;
             let s = a.global::<Studio>();
-            (!c.auto.armed && !c.auto.shown && (s.get_master_h() - 30.0).abs() < 1e-3).then_some(()).ok_or(format!("armed {} shown {} master {}", c.auto.armed, c.auto.shown, s.get_master_h()))
+            (!c.auto.armed && !c.auto.shown && (s.get_master_h() - (crate::timeline::MASTER_H - 0.5)).abs() < 1e-3).then_some(()).ok_or(format!("armed {} shown {} master {}", c.auto.armed, c.auto.shown, s.get_master_h()))
         })),
     ]
 }
