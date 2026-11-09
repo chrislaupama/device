@@ -13,6 +13,7 @@
 //!              [--sampler-tab <0..4>  (with a sampler state: Sample, Pitch, Filter, Amp or Mod tab)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--self-test]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
+//!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
 //! ```
 
 mod analyzer_views;
@@ -227,6 +228,11 @@ fn parse_args() -> Result<Args, String> {
             "--plugin-fixture" => a.plugin_fixture = Some(value(&mut i)?.into()),
             "--screenshot" => a.screenshot = Some(value(&mut i)?.into()),
             "--offscreen" => a.offscreen = true,
+            "--card-accent" => {
+                let hex = value(&mut i)?;
+                let c = u32::from_str_radix(hex.trim_start_matches('#'), 16).map_err(|e| format!("--card-accent: {e}"))?;
+                let _ = controller::CARD_ACCENT.set(timeline::rgb(c));
+            }
             "--load-sample" => a.load_sample.push(value(&mut i)?.into()),
             "--sampler-tab" => a.sampler_tab = Some(value(&mut i)?.parse().map_err(|e| format!("--sampler-tab: {e}"))?),
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
@@ -1040,6 +1046,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         use saine_core::DeviceId as Id;
         let id = |i: i32| Id(i as u64);
         on!(on_device_fold, |c, d: i32| c.device_fold(id(d)));
+        on!(on_device_ask, |c, d: i32| c.device_ask(id(d)));
+        on!(on_device_window, |c, d: i32| c.device_window(id(d)));
         on!(on_device_collapse, |c, d: i32| c.device_collapse(id(d)));
         on!(on_device_swap_menu, |c, d: i32, x: f32, y: f32| c.device_swap_menu(id(d), x, y));
         on!(on_device_rename, |c, d: i32, t: slint::SharedString| c.device_rename(id(d), &t));

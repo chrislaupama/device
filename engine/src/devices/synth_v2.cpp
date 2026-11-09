@@ -68,12 +68,18 @@ constexpr uint32_t kFxAmount[kFxTypeCount] = {kTapeDrive,   kDistDrive,  kCrushD
 
 enum Readout : uint32_t {
     kRoVoices, kRoAmpEnv, kRoEnv2, kRoLfo1, kRoLfo2, kRoLfo1Phase, kRoLfo2Phase, kRoFx1Gr,
-    kRoOutDb = kRoFx1Gr + 3 * kFxSlots, kReadoutCount
+    kRoOutDb = kRoFx1Gr + 3 * kFxSlots,
+    // Summed modulation per target of the newest voice (global sources without one).
+    kRoMod, kReadoutCount = kRoMod + kTargetCount
 };
 constexpr const char* kReadoutIds[kReadoutCount] = {
     "voices",     "amp_env",    "env2",       "lfo1",      "lfo2",       "lfo1_phase", "lfo2_phase",
     "fx1_gr",     "fx1_phase",  "fx1_cutoff", "fx2_gr",    "fx2_phase",  "fx2_cutoff", "fx3_gr",
-    "fx3_phase",  "fx3_cutoff", "fx4_gr",     "fx4_phase", "fx4_cutoff", "out_db"};
+    "fx3_phase",  "fx3_cutoff", "fx4_gr",     "fx4_phase", "fx4_cutoff", "out_db",
+    "mod_0", "mod_1", "mod_2", "mod_3", "mod_4", "mod_5", "mod_6", "mod_7",
+    "mod_8", "mod_9", "mod_10", "mod_11", "mod_12", "mod_13", "mod_14", "mod_15",
+    "mod_16", "mod_17", "mod_18", "mod_19", "mod_20", "mod_21", "mod_22", "mod_23",
+    "mod_24", "mod_25", "mod_26", "mod_27", "mod_28", "mod_29"};
 constexpr float kIdleReadouts[kReadoutCount] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -120.0f};
 
 // Normalized <-> plain, the codec of saine_core::builtin (log tapers are
@@ -1048,6 +1054,9 @@ private:
             ro[o + 2] = t.cutoff_hz;
         }
         ro[kRoOutDb] = peak > 1e-6f ? 20.0f * std::log10(peak) : -120.0f;
+        float src[kSourceCount];
+        sources(nv, src);
+        modulation(src, ro + kRoMod);
     }
 
     float sr_ = 48000.0f, inv_sr_ = 1.0f / 48000.0f;

@@ -208,6 +208,8 @@ export struct DeviceCard {
     builtin: bool,
     width: length,
     accent: color,
+    accent-text: color,    // value text: the accent as a light OKLCH tint (L .87, chroma at most .11)
+    accent-light: bool,    // the accent needs dark ink on it (switch thumb, selected segment text)
     preset: string,
     knobs: [PanelKnob],
     picks: [PanelPick],
@@ -582,6 +584,8 @@ export global Studio {
     // Bumped when the chain's cards change (added, removed, moved, folded): a focused control
     // inside a rebuilt card is gone, so the window takes the keyboard back.
     in property <int> cards-epoch;
+    callback device-ask(int);                                // header spark: ask the assistant about this device
+    callback device-window(int);                             // header arrow: open / close the device's floating window
     callback device-fold(int);                               // fold / unfold the card (header double-click, minus)
     callback device-collapse(int);                           // chain head: hide / show its members
     callback device-swap-menu(int, length, length);          // "Choose effect plugin" from the card name

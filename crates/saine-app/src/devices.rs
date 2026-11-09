@@ -336,6 +336,8 @@ pub struct DevicesUi {
     /// Last `plugin_load_errors()`, editors we opened that are still open, latencies.
     pub load_errors: Vec<(DeviceId, String)>,
     pub editors: HashSet<DeviceId>,
+    /// Built-in devices shown in a floating device window.
+    pub windows: HashSet<DeviceId>,
     pub latency: HashMap<DeviceId, u32>,
     last_poll: Option<Instant>,
     /// After opening a project: report load errors that show up in this window.
@@ -370,6 +372,7 @@ impl Default for DevicesUi {
             chain_scroll: 0.0,
             load_errors: Vec::new(),
             editors: HashSet::new(),
+            windows: HashSet::new(),
             latency: HashMap::new(),
             last_poll: None,
             report_until: None,
@@ -888,6 +891,11 @@ impl Controller {
     fn card_for(&self, d: &Device, instrument: bool) -> DeviceCard {
         let mut card = self.card_body(d, instrument);
         self.card_common(d, &mut card);
+        if card.builtin {
+            card.editor_open = self.devices.windows.contains(&d.id);
+        }
+        card.accent_light = crate::device_mod::is_light(card.accent);
+        card.accent_text = crate::device_mod::accent_text(card.accent);
         card
     }
 
@@ -1003,6 +1011,7 @@ impl Controller {
         }
         self.engine.close_plugin_editor(id);
         self.devices.editors.remove(&id);
+        self.devices.windows.remove(&id);
         self.execute(Command::RemoveDevice { device: id });
     }
 

@@ -711,6 +711,33 @@ export component AppWindow inherits Window {
         if !Studio.mixer-open: BottomPanel { x: 5px; y: root.height - 5px - root.bottom-h; width: root.width - 10px; height: root.bottom-h; }
         if Studio.mixer-open: MixerPanel { x: 5px; y: root.height - 5px - root.bottom-h; width: root.width - 10px; height: root.bottom-h; }
         HighlightOverlay { x: 0; y: 0; width: root.width; height: root.height; }
+        // Device windows: a built-in card opened from its header arrow floats above the
+        // arrangement; its title strip moves it, the arrow or the strip's x closes it.
+        for card[i] in Studio.device-cards: win := Rectangle {
+            property <length> dx;
+            property <length> dy;
+            visible: card.builtin && card.editor-open;
+            x: (root.width - card.width) / 2 + i * 16px + self.dx;
+            y: 120px + i * 16px + self.dy;
+            width: card.width + 8px; height: 265px + 26px;
+            border-radius: 8px; background: #1a1b1e; border-width: 0.5px; border-color: #ffffff1f;
+            drop-shadow-blur: 24px; drop-shadow-offset-y: 8px; drop-shadow-color: #00000099;
+            if card.builtin && card.editor-open: Rectangle {
+                TouchArea {
+                    mouse-cursor: MouseCursor.move;
+                    moved => { win.dx += self.mouse-x - self.pressed-x; win.dy += self.mouse-y - self.pressed-y; }
+                }
+                Text { x: 10px; y: 0; height: 22px; text: card.name; color: #81838a; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+                Rectangle {
+                    x: parent.width - 21px; y: 3px; width: 16px; height: 16px; border-radius: 4px;
+                    background: close-ta.has-hover ? #ffffff14 : transparent;
+                    accessible-role: button; accessible-label: "Close device window";
+                    Icon { x: 3px; y: 3px; width: 10px; height: 10px; d: Icons.close; ink: close-ta.has-hover ? #ffffff : #81838a; stroke-width: 1.04px; }
+                    close-ta := TouchArea { clicked => { Studio.device-window(card.id); } }
+                }
+                BuiltinCard { x: 4px; y: 22px; card: card; }
+            }
+        }
         // Clip context menu (click outside dismisses).
         if Studio.menu-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height;

@@ -17,7 +17,7 @@
 //! They are drawing models of our own DSP (engine/src/devices/synth_v2.cpp),
 //! not measurements.
 
-use crate::controller::{slint_color, sync_model, track_color, BottomTab, Controller};
+use crate::controller::{card_color, sync_model, BottomTab, Controller};
 use crate::{MenuItem, Studio, SynthArc, SynthDisplay, SynthFaderItem, SynthKnobItem, SynthLabel, SynthLatchItem, SynthMapRow, SynthParam, SynthPillItem, SynthRouteRow, SynthScopeItem, SynthSegItem, SynthTextItem};
 use saine_core::builtin::synth_v2::{self as sv, SYNTH_V2};
 use saine_core::builtin::{DevicePreset, ParamDef};
@@ -173,6 +173,9 @@ struct RailDrag {
     dragging: bool,
 }
 
+/// First live-modulation readout of the synth (one per modulation target).
+const RO_MOD: usize = 20;
+
 #[derive(Debug, Default)]
 pub struct SynthUi {
     pub page: usize,
@@ -190,6 +193,10 @@ pub struct SynthUi {
     /// What the page models were last built from.
     pushed: Option<(Vec<f32>, [usize; 4], u32, Option<String>, u32)>,
     models: Option<Models>,
+    /// Live modulation per target (engine readouts), empty at rest.
+    mods: Vec<f32>,
+    /// What the pictures were last drawn from (values with live modulation, page, slot, bpm).
+    drawn: Option<(Vec<f32>, usize, usize, u32)>,
 }
 
 impl SynthUi {
@@ -2339,6 +2346,56 @@ impl Controller {
         }
     }
 
+    /// Engine readouts -> live modulation of the synth's pictures (called with the panel meters).
+    /// Readout order (engine/src/devices/synth_v2.cpp): 20 status values, then one per target.
+    pub(crate) fn synth_poll(&mut self) {
+        let Some(id) = self.synth_device() else {
+            self.synth.mods.clear();
+            return;
+        };
+        let mut out = Vec::new();
+        let mods: Vec<f32> = match self.engine.builtin_readouts(id.0, &mut out) {
+            Ok(()) if out.len() >= RO_MOD + sv::MOD_TARGETS.len() => out[RO_MOD..RO_MOD + sv::MOD_TARGETS.len()].iter().map(|m| (m * 1000.0).round() / 1000.0).collect(),
+            _ => Vec::new(),
+        };
+        let mods = if mods.iter().all(|m| *m == 0.0) { Vec::new() } else { mods };
+        if mods != self.synth.mods {
+            self.synth.mods = mods;
+            self.ui_dirty = true;
+        }
+    }
+
+    /// The synth's parameter values with the live modulation the pictures draw
+    /// (oscillator pitch, shape, level and cross FM), as the engine applies it.
+    fn picture_values(&self, v: &[f32]) -> Vec<f32> {
+        let mut pv = v.to_vec();
+        let m = |t: &str| sv::MOD_TARGETS.iter().position(|x| *x == t).and_then(|i| self.synth.mods.get(i)).copied().unwrap_or(0.0);
+        for (id, t) in [("osc1_shape", "Osc 1 Shape"), ("osc2_shape", "Osc 2 Shape"), ("osc1_level", "Osc 1 Level"), ("osc2_level", "Osc 2 Level"), ("cross_fm", "Cross FM")] {
+            pv[ix(id)] = (v[ix(id)] + m(t)).clamp(0.0, 1.0);
+        }
+        pv[ix("osc1_semi")] += m("Osc 1 Pitch");
+        pv[ix("osc2_semi")] += m("Osc 2 Pitch");
+        pv
+    }
+
+    /// Draw the page's pictures; returns their labels.
+    fn synth_pictures(&mut self, v: &[f32], bpm: f32) -> Vec<SynthLabel> {
+        let pv = self.picture_values(v);
+        let (pictures, labels) = displays(&pv, bpm, self.synth.page, self.synth.fx_slot);
+        sync_model(&self.synth_displays_model, pictures);
+        self.synth.drawn = Some((pv, self.synth.page, self.synth.fx_slot, bpm.to_bits()));
+        labels
+    }
+
+    /// Redraw only the pictures when the live modulation moved them.
+    fn synth_pictures_changed(&mut self, v: &[f32], bpm: f32) -> Option<Vec<SynthLabel>> {
+        let pv = self.picture_values(v);
+        if self.synth.drawn.as_ref() == Some(&(pv, self.synth.page, self.synth.fx_slot, bpm.to_bits())) {
+            return None;
+        }
+        Some(self.synth_pictures(v, bpm))
+    }
+
     /// Synth device view models -> Slint.
     pub fn push_synth(&mut self, s: &Studio) {
         let vals = self.synth_values();
@@ -2352,7 +2409,7 @@ impl Controller {
         self.synth.fx_slot = self.synth.fx_slot.clamp(1, 4);
         let Some(d) = self.project().device(device) else { return };
         let (enabled, preset) = (d.enabled, d.preset.clone());
-        let accent = self.project().find_device(device).map_or(rgb(0x439b94), |(ti, _)| slint_color(track_color(self.project().tracks[ti].color)));
+        let accent = self.project().find_device(device).map_or(rgb(0x439b94), |(ti, _)| card_color(self.project().tracks[ti].color));
         let bpm = self.project().transport.bpm as f32;
         let key = (v.clone(), [self.synth.page, self.synth.fx_slot, self.synth.macro_sel, self.synth.lit], accent.as_argb_encoded(), preset.clone(), bpm.to_bits());
         if self.synth.pushed.as_ref() != Some(&key) {
@@ -2367,10 +2424,9 @@ impl Controller {
             });
             let params: Vec<SynthParam> = SYNTH_V2.params.iter().zip(&v).map(|(p, &x)| SynthParam { norm: p.to_normalized(x), text: p.format(x).into(), bipolar: p.is_bipolar(), auto: false }).collect();
             sync_model(&self.synth_params_model, params);
-            let (pictures, labels) = displays(&v, bpm, self.synth.page, self.synth.fx_slot);
-            sync_model(&self.synth_displays_model, pictures);
             let c = Ctx { v: &v, routes: routes(&v), maps: mappings(&v), fx: fx_types(&v), accent, lit: self.synth.lit };
             let g = layout(&c, self.synth.page, self.synth.fx_slot, self.synth.macro_sel);
+            let labels = self.synth_pictures(&v, bpm);
             self.synth.knob_pos = g.knobs.iter().map(|k| (k.idx as usize, k.x, k.y)).chain(g.faders.iter().map(|f| (f.idx as usize, f.x, f.y + 45.0))).collect();
             s.set_synth_split(g.split);
             s.set_synth_add_y(g.add_y);
@@ -2391,6 +2447,10 @@ impl Controller {
                 sync_model(&m.maps, g.maps);
             }
             self.synth.pushed = Some(key);
+        } else if let Some(labels) = self.synth_pictures_changed(&v, bpm) {
+            if let Some(m) = &self.synth.models {
+                sync_model(&m.labels, labels);
+            }
         }
         s.set_synth_enabled(enabled);
         s.set_synth_lit(self.synth.lit as i32);

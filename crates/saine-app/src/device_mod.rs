@@ -9,7 +9,7 @@
 //! command, so one undo step. Live positions come from the LFO readouts
 //! (position, depth, cycle) polled with the meters.
 
-use crate::controller::{Controller, slint_color, track_color};
+use crate::controller::{card_color, Controller};
 use crate::device_panel::Z;
 use crate::devices::{DevMenu, Item, MenuPick, format_badge};
 use crate::{ChainFrame, DeviceCard, ModCard, ModTarget, PanelCanvas, PanelKnob, PanelPath, PanelPick, PanelSlider, PanelText, PanelZone};
@@ -154,7 +154,7 @@ impl Controller {
             card.width = FOLDED_W;
         }
         if !card.builtin {
-            card.accent = slint_color(track_color(t.color));
+            card.accent = card_color(t.color);
         }
         let n = slint::Model::row_count(&card.knobs);
         if n == 0 || modu::outputs(d) > 0 {
@@ -344,7 +344,7 @@ impl Controller {
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else {
             return Vec::new();
         };
-        let accent = slint_color(track_color(t.color));
+        let accent = card_color(t.color);
         let mut out = Vec::new();
         for (hi, h) in t.devices.iter().enumerate().filter(|(_, d)| modu::is_rack(d)) {
             let Some((x0, hc)) = cards.iter().find(|(_, c)| c.id as u64 == h.id.0) else {
@@ -453,6 +453,29 @@ impl Controller {
     }
 
     // ---------------------------------------------------------------- header actions
+
+    /// Header spark: select the device's track and open the assistant with it as context.
+    pub fn device_ask(&mut self, id: DeviceId) {
+        let p = self.project();
+        let Some((ti, _)) = p.find_device(id) else { return };
+        let track = p.tracks[ti].id;
+        self.selected_track = Some(track);
+        self.selected_clip = None;
+        self.assistant.context_removed = None;
+        self.assistant_open = true;
+        self.ui_dirty = true;
+    }
+
+    /// Header arrow of a built-in card: show or hide its floating device window.
+    pub fn device_window(&mut self, id: DeviceId) {
+        if self.project().device(id).is_none() {
+            return;
+        }
+        if !self.devices.windows.remove(&id) {
+            self.devices.windows.insert(id);
+        }
+        self.ui_dirty = true;
+    }
 
     pub fn device_fold(&mut self, id: DeviceId) {
         let Some(d) = self.project().device(id) else {
@@ -1160,4 +1183,46 @@ mod tests {
         }
         println!("lfo picture: {:.2} us per refresh", t0.elapsed().as_secs_f64() * 1e6 / n as f64);
     }
+}
+
+/// The accent needs dark ink on it: its relative luminance is above 0.3, where
+/// white text on it falls under 3:1 contrast (switch thumb, selected segments).
+pub fn is_light(c: slint::Color) -> bool {
+    let lin = |v: u8| {
+        let v = v as f32 / 255.0;
+        if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * lin(c.red()) + 0.7152 * lin(c.green()) + 0.0722 * lin(c.blue()) > 0.3
+}
+
+/// Value text colour on the dark card: the accent's hue as an OKLCH tint at
+/// lightness 0.87 with chroma capped at 0.11. On the card surface that tint
+/// already clears 4.5:1 contrast, so no lightness search is needed.
+pub fn accent_text(c: slint::Color) -> slint::Color {
+    let lin = |v: u8| {
+        let v = v as f32 / 255.0;
+        if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    let (r, g, b) = (lin(c.red()), lin(c.green()), lin(c.blue()));
+    let l = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b).cbrt();
+    let m = (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b).cbrt();
+    let s = (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b).cbrt();
+    let a = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
+    let bb = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
+    let chroma = a.hypot(bb).min(0.11);
+    let hue = bb.atan2(a);
+    let (a, bb, ll) = (chroma * hue.cos(), chroma * hue.sin(), 0.87f32);
+    let l = (ll + 0.3963377774 * a + 0.2158037573 * bb).powi(3);
+    let m = (ll - 0.1055613458 * a - 0.0638541728 * bb).powi(3);
+    let s = (ll - 0.0894841775 * a - 1.2914855480 * bb).powi(3);
+    let gamma = |v: f32| {
+        let v = v.clamp(0.0, 1.0);
+        let v = if v <= 0.0031308 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
+        (v * 255.0).round() as u8
+    };
+    slint::Color::from_rgb_u8(
+        gamma(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+        gamma(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+        gamma(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s),
+    )
 }
