@@ -16,7 +16,6 @@
 
 use crate::controller::{Controller, ImportTarget};
 use crate::device_panel::Z;
-use crate::devices::{DevMenu, MenuPick};
 use crate::{DeviceCard, PanelHandle, PanelKnob, PanelPad, PanelPick, PanelSampler};
 use saine_core::builtin::{self, drum_rack, note_name, DeviceDef, Format, ParamDef, LINEAR};
 use saine_core::{Command, Device, DeviceId, DeviceSample, Slice};
@@ -1386,21 +1385,6 @@ impl Controller {
             self.sp_mut().layer.insert(device, slot % builtin::pad_sampler::LAYERS);
         }
         ok
-    }
-
-    /// Choice menu of a menu pill (PanelPick kind 2) at window x, y.
-    pub(crate) fn sampler_choice_menu(&mut self, device: DeviceId, index: usize, x: f32, y: f32) {
-        let Some((d, def)) = self.panel_def_any(device) else { return };
-        let Some(p) = def.params.get(index) else { return };
-        let cur = def.value(d, p).round() as usize;
-        let rows = p.choices.iter().enumerate().map(|(i, c)| (c.to_string(), if i == cur { "✓".to_string() } else { String::new() }, Some(MenuPick::Choice(device, index as i32, i as i32)), false)).collect();
-        self.devices.menu = Some(DevMenu { pos: (x, y), w: 150.0, rows });
-        self.ui_dirty = true;
-    }
-
-    fn panel_def_any(&self, id: DeviceId) -> Option<(&Device, &'static DeviceDef)> {
-        let d = self.project().device(id)?;
-        Some((d, builtin::def_of(d)?))
     }
 }
 

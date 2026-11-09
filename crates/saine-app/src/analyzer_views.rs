@@ -184,7 +184,7 @@ fn canvas(x: f32, y: f32, w: f32, h: f32, well_y: f32, caption: &str, label: Str
         h,
         well_y,
         caption: s(caption),
-        label: s(label),
+        value: s(label),
         paths: model(paths.into_iter().flatten().collect()),
         texts: model(texts),
         ..Default::default()

@@ -118,6 +118,9 @@ add_library(saine_engine STATIC
   src/devices/builtin.cpp
   src/devices/bitcrusher.cpp
   src/devices/compressor.cpp
+  src/devices/channel_eq.cpp
+  src/devices/character_eq.cpp
+  src/devices/auto_filter.cpp
   src/devices/gate.cpp
   src/devices/glue_compressor.cpp
   src/devices/limiter.cpp
@@ -363,6 +366,8 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/test_frame_ring.cpp
     tests/devices/test_builtin.cpp
     tests/devices/test_compressor.cpp
+    tests/devices/test_eq.cpp
+    tests/devices/test_auto_filter.cpp
     tests/devices/test_gate.cpp
     tests/devices/test_glue_compressor.cpp
     tests/devices/test_limiter.cpp

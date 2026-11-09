@@ -25,8 +25,11 @@
 //! stepped linear parameters snap in the plain domain. Discrete parameters
 //! store the choice index as their plain value (`min` = 0, `max` = choices - 1).
 
+mod auto_filter;
 mod autopanner;
 mod bitcrusher;
+mod channel_eq;
+mod character_eq;
 pub mod character_mod;
 mod character_compressor;
 mod chorus;
@@ -46,6 +49,7 @@ mod deesser;
 mod dehummer;
 mod denoiser;
 mod distortion;
+pub mod eq;
 mod flanger;
 mod multiband_compressor;
 mod phaser;
@@ -68,6 +72,7 @@ pub use soft_clipper::{clipper_open, clipper_transfer};
 pub use tape_saturation::tape_transfer;
 pub use widener::widener_response;
 
+pub use auto_filter::{dj_map, filter_response, FilterSetting};
 pub use character_compressor::character_transfer;
 pub use multiband_compressor::{multiband_gain, MULTIBAND_BANDS};
 
@@ -103,6 +108,13 @@ pub enum Format {
     /// one below 10 Hz ("5.0 Hz"), whole numbers below 999.5 Hz ("440 Hz"),
     /// then kilohertz with one decimal ("2.2 kHz"). LFO rates, carriers.
     Freq,
+    /// Milliseconds: one decimal below 100 ms ("1.0 ms"), whole numbers from 100 ms ("150 ms").
+    MsAuto,
+    /// Number with this many decimals, an explicit sign and the unit, but a bare zero:
+    /// "+12 st", "−7 st", "0 st" (`Signed` shows "+0 st").
+    SignedBareZero(u8),
+    /// Whole degrees: "90°".
+    Degrees,
     /// Compression ratio: one decimal when the range spans less than 20 ("4.0:1"), else whole numbers ("10:1").
     Ratio,
     /// Milliseconds with a fixed number of decimals ("0.50 ms", "100 ms"); typed seconds are converted.
@@ -343,6 +355,11 @@ impl ParamDef {
             if let Some(i) = self.choices.iter().position(|c| norm(c) == lower) {
                 return Some(i as f32);
             }
+            // Slope names are shown with or without their unit ("24" / "24 dB/oct").
+            let bare = |s: &str| s.trim_end_matches("db/oct").trim().to_string();
+            if let Some(i) = self.choices.iter().position(|c| bare(&c.to_lowercase()) == bare(&lower)) {
+                return Some(i as f32);
+            }
         }
         let t = t.replace('\u{2212}', "-").replace(',', ".");
         let lower = t.to_lowercase();
@@ -368,6 +385,10 @@ impl ParamDef {
             (Format::Time | Format::Ms(_), "ms" | "msec" | "msecs") => {}
             (Format::Hz | Format::Freq | Format::Hz3, "k" | "khz") => v *= 1000.0,
             (Format::Hz | Format::Freq | Format::Hz3, "hz") => {}
+            (Format::MsAuto, "ms" | "msec" | "msecs") => {}
+            (Format::MsAuto, "s" | "sec" | "secs" | "second" | "seconds") => v *= 1000.0,
+            (Format::Degrees, "°" | "deg" | "degrees") => {}
+            (Format::SignedBareZero(_), u) if u == self.unit.to_lowercase() => {}
             (Format::Db | Format::DbNoPlus | Format::DbOrInf | Format::DbCut, "db") | (Format::Percent | Format::Percent0 | Format::SignedPercent, "%") | (Format::Factor, "x") => {}
             (Format::Fraction | Format::SignedFraction, "%" | "percent") => {}
             (Format::Seconds, "s" | "sec" | "secs" | "second" | "seconds") => {}
@@ -447,6 +468,16 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
                 format!("{v:.2} Hz")
             }
         }
+        Format::MsAuto => {
+            if v >= 99.95 { format!("{v:.0} ms") } else { format!("{v:.1} ms") }
+        }
+        Format::SignedBareZero(d) => {
+            let a = format!("{:.*}", d as usize, v.abs());
+            let zero = a.chars().all(|c| c == '0' || c == '.');
+            let sign = if zero { String::new() } else if v < 0.0 { MINUS.to_string() } else { "+".into() };
+            if unit.is_empty() { format!("{sign}{a}") } else { format!("{sign}{a} {unit}") }
+        }
+        Format::Degrees => format!("{:.0}°", v.round() + 0.0),
         Format::Ratio => {
             let d = if range < 20.0 { 1 } else { 0 };
             format!("{v:.d$}:1")
@@ -629,12 +660,18 @@ pub enum Control {
     /// Latch pill (reference fx latch) labelled with the parameter's label,
     /// filled while the two-state parameter is on; click toggles.
     Latch(&'static str),
+    /// Menu pill over two discrete parameters: the choices of \`param\`, then
+    /// the non-zero choices of \`mode\`. Picking a \`param\` entry writes it and
+    /// sets \`mode\` to 0; picking a mode entry sets \`mode\` (one undo step).
+    ModeDropdown { param: &'static str, mode: &'static str },
 }
 
 impl Control {
+    /// The (first) parameter of the control.
     pub fn param(&self) -> Option<&'static str> {
         match *self {
             Control::Knob(p) | Control::Slider(p) | Control::Menu(p) | Control::Pill(p) | Control::Toggle(p) | Control::Dropdown(p) | Control::Segments(p, _) | Control::Latch(p) => Some(p),
+            Control::ModeDropdown { param, .. } => Some(param),
             Control::Swap(ps) => ps.first().copied(),
             Control::Sidechain | Control::Gap => None,
         }
@@ -644,6 +681,7 @@ impl Control {
     pub fn params(&self) -> Vec<&'static str> {
         match *self {
             Control::Swap(ps) => ps.to_vec(),
+            Control::ModeDropdown { param, mode } => vec![param, mode],
             _ => self.param().into_iter().collect(),
         }
     }
@@ -661,6 +699,9 @@ pub enum View {
     /// A device-specific view implemented in the panel code under this name
     /// (escape hatch for EQ curves, shaper, trance gate grid...).
     Custom(&'static str),
+    /// Parametric EQ body (band tabs, response field with band nodes, type
+    /// picker and value cells), described by an [`eq::EqView`].
+    Eq(&'static eq::EqView),
     /// Plot well with traces computed by the panel code (reference motion,
     /// response and sweep fields) that edits two parameters by dragging.
     Field(Field),
@@ -696,7 +737,7 @@ impl View {
         match *self {
             View::DynamicsStrip { threshold } => Some(Strip::new(threshold)),
             View::Strip(s) => Some(s),
-            View::Custom(_) | View::Field(_) => None,
+            View::Field(_) | View::Custom(_) | View::Eq(_) => None,
         }
     }
 }
@@ -925,7 +966,7 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 34] = [
+    static ALL: [&DeviceDef; 37] = [
         &compressor::COMPRESSOR,
         &distortion::DISTORTION,
         &tape_saturation::TAPE_SATURATION,
@@ -933,6 +974,9 @@ pub fn all() -> &'static [&'static DeviceDef] {
         &bitcrusher::BITCRUSHER,
         &widener::WIDENER,
         &utility::UTILITY,
+        &channel_eq::CHANNEL_EQ,
+        &character_eq::CHARACTER_EQ,
+        &auto_filter::AUTO_FILTER,
         &glue_compressor::GLUE_COMPRESSOR,
         &limiter::LIMITER,
         &mastering_limiter::MASTERING_LIMITER,
@@ -1255,6 +1299,16 @@ pub fn modulate(p: &ParamDef, plain: f32, offset: f32) -> f32 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn slope_choices_parse_with_or_without_the_unit() {
+        let ce = find("character-eq").unwrap().param("band1_slope").unwrap();
+        assert_eq!(ce.parse("24 dB/oct"), Some(3.0));
+        assert_eq!(ce.parse("24"), Some(3.0));
+        let ch = find("channeleq").unwrap().param("hp_slope").unwrap();
+        assert_eq!(ch.parse("24"), Some(1.0));
+        assert_eq!(ch.parse("36 dB/oct"), Some(2.0));
+    }
+
     fn comp() -> &'static DeviceDef {
         find("compressor").unwrap()
     }
@@ -1282,6 +1336,11 @@ mod tests {
             if let Some(View::Field(f)) = def.layout.view {
                 for id in f.x.iter().chain(f.y) {
                     assert!(def.param(id).is_some(), "{}: field names unknown param {id}", def.id);
+                }
+            }
+            if let Some(View::Eq(v)) = def.layout.view {
+                for id in v.param_ids() {
+                    assert!(def.param(id).is_some(), "{}: EQ view names unknown param {id}", def.id);
                 }
             }
             for (p, by, values) in def.layout.shown_when {

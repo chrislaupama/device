@@ -377,7 +377,7 @@ fn stereo_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, p_width: i32, p_sid
     paths.push(fill(ellipse(cx + rx, cy, 2.5 * Z, 2.5 * Z), accent));
     texts.push(text(sx + 6.0 * Z, sy + 8.0 * Z, 12.0 * Z, "L", axis, 10.0, 600, 0));
     texts.push(text(sx + size - 18.0 * Z, sy + 8.0 * Z, 12.0 * Z, "R", axis, 10.0, 600, 2));
-    grips.push(PanelGrip { x: cx + rx + 6.0 * Z, y: cy, label: "Width".into(), value: fmt("width2", width).into(), hot: false });
+    grips.push(PanelGrip { x: cx + rx + 6.0 * Z, y: cy, label: "Width".into(), value: fmt("width2", width).into(), ..Default::default() });
 
     // Right: effective width over 20 Hz .. 2 kHz (log), 0 .. 400 %.
     let gutter = 30.0 * Z;
@@ -405,7 +405,7 @@ fn stereo_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, p_width: i32, p_sid
     let lx = fx(low.clamp(20.0, 2000.0));
     paths.push(stroke(dashed(&[(lx, py0), (lx, py1)], 3.0 * Z, 3.0 * Z), ink(0.3), 1.0));
     paths.push(fill(ellipse(lx, fy(resp(low)), 2.5 * Z, 2.5 * Z), accent));
-    grips.push(PanelGrip { x: lx + 4.0 * Z, y: (fy(resp(low)) - 18.0 * Z).max(py0 + 8.0 * Z), label: "Low Cut".into(), value: fmt("lowcut", low).into(), hot: false });
+    grips.push(PanelGrip { x: lx + 4.0 * Z, y: (fy(resp(low)) - 18.0 * Z).max(py0 + 8.0 * Z), label: "Low Cut".into(), value: fmt("lowcut", low).into(), ..Default::default() });
 
     field.paths = model(paths);
     field.texts = model(texts);
