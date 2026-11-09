@@ -1,5 +1,7 @@
 #include "render_graph.hpp"
 
+#include "devices/builtin.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -143,9 +145,15 @@ namespace {
 
 const char* validate_device(const se_device_desc& d) {
     if (d.device_id == 0) return "device_id must not be 0";
-    if (d.format > SE_PLUGIN_CLAP) return "invalid plugin format";
+    if (d.format > SE_PLUGIN_BUILTIN) return "invalid plugin format";
     if (d.plugin_id == nullptr) return "plugin_id is NULL";
     if (d.state_len > 0 && d.state == nullptr) return "state_len > 0 but state == NULL";
+    if (d.format == SE_PLUGIN_BUILTIN) {
+        const uint8_t* values = nullptr;
+        uint32_t count = 0;
+        uint64_t sc = 0;
+        if (const char* why = parse_builtin_state(d.state, d.state_len, values, count, sc)) return why;
+    }
     return nullptr;
 }
 
@@ -174,7 +182,7 @@ int32_t build_render_graph(const se_session_desc_v5& desc, const AssetLookup& lo
 }
 
 const char* validate_lane(const se_auto_lane_desc& d) noexcept {
-    if (d.target > SE_AUTO_PLUGIN) return "invalid automation target";
+    if (d.target > SE_AUTO_BUILTIN) return "invalid automation target";
     if (d.target == SE_AUTO_SYNTH && d.synth_param >= SE_SYNTH_P_COUNT) return "invalid synth parameter";
     if (d.point_count > 0 && d.points == nullptr) return "point_count > 0 but points == NULL";
     float lo = -std::numeric_limits<float>::infinity(), hi = std::numeric_limits<float>::infinity();
@@ -206,6 +214,82 @@ uint32_t add_lane(RenderGraph& g, const se_auto_lane_desc& d) {
         g.auto_points[at + i] = AutoPoint{d.points[i].frame, d.points[i].value, d.points[i].curve};
     g.lanes.push_back(l);
     return static_cast<uint32_t>(g.lanes.size() - 1);
+}
+
+// Sidechains (built-in devices): which tracks feed a tap, and a processing
+// order in which every source comes before the tracks that read it.
+// Sources that would form a cycle, are unknown, or exceed the tap count are
+// dropped (their readers get silence).
+void plan_sidechains(RenderGraph& g) {
+    const std::size_t n = g.tracks.size();
+    g.order.resize(n);
+    for (std::size_t t = 0; t < n; ++t) g.order[t] = static_cast<uint32_t>(t);
+    std::unordered_map<uint64_t, uint32_t> index;
+    for (std::size_t t = 0; t < n; ++t) index.emplace(g.tracks[t].track_id, static_cast<uint32_t>(t));
+    // Edges source -> reader (track indices).
+    std::vector<std::vector<uint32_t>> readers(n);
+    std::vector<uint32_t> indegree(n, 0);
+    bool any = false;
+    for (std::size_t t = 0; t < n; ++t) {
+        const TrackNode& node = g.tracks[t];
+        for (uint32_t i = 0; i < node.fx_count; ++i) {
+            FxSlot& slot = g.fx[node.fx_begin + i];
+            auto it = slot.sc_source != 0 ? index.find(slot.sc_source) : index.end();
+            if (it == index.end() || it->second == t) {
+                slot.sc_source = 0;
+                continue;
+            }
+            readers[it->second].push_back(static_cast<uint32_t>(t));
+            ++indegree[t];
+            any = true;
+        }
+    }
+    if (!any) return;
+    // Kahn's algorithm, stable (lowest index first among ready tracks).
+    std::vector<uint32_t> order;
+    order.reserve(n);
+    std::vector<bool> done(n, false);
+    while (order.size() < n) {
+        bool progressed = false;
+        for (uint32_t t = 0; t < n; ++t) {
+            if (done[t] || indegree[t] != 0) continue;
+            done[t] = true;
+            order.push_back(t);
+            for (uint32_t r : readers[t]) --indegree[r];
+            progressed = true;
+            break;
+        }
+        if (progressed) continue;
+        // Cycle: take the lowest remaining track and cut its sidechains.
+        for (uint32_t t = 0; t < n; ++t) {
+            if (done[t]) continue;
+            const TrackNode& node = g.tracks[t];
+            for (uint32_t i = 0; i < node.fx_count; ++i) {
+                FxSlot& slot = g.fx[node.fx_begin + i];
+                if (slot.sc_source == 0) continue;
+                const uint32_t s = index.at(slot.sc_source);
+                if (!done[s]) {
+                    auto& rs = readers[s];
+                    if (auto at = std::find(rs.begin(), rs.end(), t); at != rs.end()) rs.erase(at);
+                    slot.sc_source = 0;
+                }
+            }
+            indegree[t] = 0;
+            break;
+        }
+    }
+    g.order = std::move(order);
+    // Taps: one per distinct source track, in order of first use.
+    for (std::size_t t = 0; t < n; ++t) {
+        const TrackNode& node = g.tracks[t];
+        for (uint32_t i = 0; i < node.fx_count; ++i) {
+            FxSlot& slot = g.fx[node.fx_begin + i];
+            if (slot.sc_source == 0) continue;
+            TrackNode& src = g.tracks[index.at(slot.sc_source)];
+            if (src.sc_tap < 0 && g.sc_taps < SE_BUILTIN_MAX_SIDECHAINS) src.sc_tap = static_cast<int32_t>(g.sc_taps++);
+            slot.sc_tap = src.sc_tap;
+        }
+    }
 }
 
 } // namespace
@@ -376,8 +460,18 @@ int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lo
         node.note_count = static_cast<uint32_t>(g->notes.size()) - node.note_begin;
         node.fx_begin = static_cast<uint32_t>(g->fx.size());
         node.fx_count = td.device_count;
-        for (uint32_t i = 0; i < td.device_count; ++i)
-            g->fx.push_back(FxSlot{nullptr, td.devices[i].device_id, td.devices[i].enabled != 0, 0});
+        for (uint32_t i = 0; i < td.device_count; ++i) {
+            const se_device_desc& dd = td.devices[i];
+            FxSlot slot{nullptr, dd.device_id, dd.enabled != 0, 0};
+            if (dd.format == SE_PLUGIN_BUILTIN) {
+                const uint8_t* values = nullptr;
+                uint32_t count = 0;
+                parse_builtin_state(dd.state, dd.state_len, values, count, slot.sc_source); // validated above
+                slot.sc_wanted = slot.sc_source != 0;
+                if (slot.sc_source == td.track_id) slot.sc_source = 0;
+            }
+            g->fx.push_back(slot);
+        }
         node.has_instrument_plugin = node.instrument && td.instrument_plugin != nullptr;
         node.instrument_plugin_enabled = node.has_instrument_plugin && td.instrument_plugin->enabled != 0;
         if (node.fx_count > 0 || node.has_instrument_plugin) g->has_plugins = true;
@@ -406,10 +500,11 @@ int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lo
                 begin = static_cast<uint32_t>(g->lanes.size());
                 for (uint32_t i = 0; i < td.lane_count; ++i) {
                     const se_auto_lane_desc& d = td.lanes[i];
-                    if (d.target != SE_AUTO_PLUGIN || d.device_id != device_id || d.point_count == 0) continue;
+                    const bool device_lane = d.target == SE_AUTO_PLUGIN || d.target == SE_AUTO_BUILTIN;
+                    if (!device_lane || d.device_id != device_id || d.point_count == 0) continue;
                     bool later = false;
                     for (uint32_t j = i + 1; j < td.lane_count && !later; ++j)
-                        later = td.lanes[j].target == SE_AUTO_PLUGIN && td.lanes[j].device_id == device_id &&
+                        later = td.lanes[j].target == d.target && td.lanes[j].device_id == device_id &&
                                 td.lanes[j].param_id == d.param_id && td.lanes[j].point_count > 0;
                     if (!later) add_lane(*g, d);
                 }
@@ -448,6 +543,7 @@ int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lo
 
     g->synth_refs.resize(g->tracks.size());
     g->synths.assign(g->tracks.size(), nullptr);
+    plan_sidechains(*g);
 
     g->meter_count = g->tracks.size();
     g->meters = std::make_unique<TrackMeter[]>(g->meter_count);
@@ -465,6 +561,8 @@ std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g) {
     c->clips = g.clips;
     c->notes = g.notes;
     c->fx = g.fx;
+    c->order = g.order;
+    c->sc_taps = g.sc_taps;
     c->has_plugins = g.has_plugins;
     c->lanes = g.lanes;
     c->auto_points = g.auto_points;

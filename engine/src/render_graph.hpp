@@ -50,6 +50,12 @@ struct FxSlot {
     uint32_t lane_begin = 0;
     uint32_t lane_count = 0;
     uint32_t auto_delay = 0;
+    // Built-in devices with a sidechain: the source track id (0 = none) and
+    // its tap (RenderContext::sc_l/sc_r, -1 = silence). sc_wanted: a source
+    // was named, so a rejected route reads silence instead of no sidechain.
+    uint64_t sc_source = 0;
+    int32_t sc_tap = -1;
+    bool sc_wanted = false;
 };
 
 // One automation lane (se_auto_lane_desc) with its points in
@@ -114,6 +120,8 @@ struct TrackNode {
     uint32_t pdc_delay = 0;     // L - lat_i, applied post-chain (or pre-chain, see pdc_pre)
     uint32_t pdc_src_delay = 0; // instrument plugin latency, applied to the clips of that track
     bool pdc_pre = false;       // monitoring input: delay only the playback source, before the chain
+    // Sidechain tap fed with this track's post-fader output (-1 = none).
+    int32_t sc_tap = -1;
 };
 
 // Plugin delay compensation plan of a graph (docs/adr/0004). Computed on the
@@ -158,6 +166,10 @@ struct RenderGraph {
     std::vector<ClipNode> clips;
     std::vector<NoteEvent> notes;
     std::vector<FxSlot> fx; // insert chains, track after track
+    // Track processing order (sidechain sources first; identity without
+    // sidechains) and the number of sidechain taps in use.
+    std::vector<uint32_t> order;
+    uint32_t sc_taps = 0;
     // Automation: lanes (per track: [volume][pan][synth...][instrument
     // plugin...][slot 0...][slot 1...]...), their points, master volume.
     std::vector<AutoLane> lanes;

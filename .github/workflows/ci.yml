@@ -1,7 +1,12 @@
 name: ci
 on:
   push:
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # macOS runs on the self-hosted runner (one Apple silicon Mac mini, so real
 # hardware with a real audio device). Windows and Linux run on GitHub-hosted
@@ -77,6 +82,37 @@ jobs:
           restore-keys: |
             cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
             cargo-${{ runner.os }}-
+      - name: Drop CMake caches restored from another runner's checkout
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          root=$(pwd -P)
+          for dir in target .deps; do
+            if [ -d "$dir" ]; then find "$dir" -name CMakeCache.txt; fi
+          done > "$RUNNER_TEMP/cmake-caches.txt"
+          while IFS= read -r cache; do
+            [ -f "$cache" ] || continue
+            here=$(cd "$(dirname "$cache")" && pwd -P)
+            made=$(sed -n 's/^CMAKE_CACHEFILE_DIR:INTERNAL=//p' "$cache")
+            if [ -d "$made" ]; then made=$(cd "$made" && pwd -P); fi
+            [ "$made" = "$here" ] && continue
+            case "$here" in
+              "$root"/target/saine-third-party/*) stale="$root/target/saine-third-party" ;;
+              "$root"/.deps/*) stale="$root/.deps" ;;
+              *) stale="$here" ;;
+            esac
+            echo "Removing $stale (its CMakeCache.txt was made in $made)"
+            rm -rf "$stale"
+          done < "$RUNNER_TEMP/cmake-caches.txt"
+      # The restored target/ can hold saine-engine's build-script output
+      # (out/lib) and fingerprints saved from another commit; cargo would then
+      # skip CMake and link that old engine library. Cleaning the package
+      # forces build.rs (and so CMake) to run on every run. The shared
+      # FetchContent tree in target/saine-third-party is kept.
+      - name: Force the engine build script to rerun
+        run: |
+          cargo clean -p saine-engine --locked
+          cargo clean -p saine-engine --release --locked
 
       - name: Engine — configure
         run: cmake -S engine -B engine/build-ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSAINE_ENGINE_WERROR=ON "-DFETCHCONTENT_BASE_DIR=${{ github.workspace }}/.deps"

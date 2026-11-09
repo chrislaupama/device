@@ -260,7 +260,6 @@ pub struct Controller {
     // ---- synth device (src/synth.rs) ----
     pub synth: SynthUi,
     pub(crate) synth_params_model: Rc<VecModel<SynthParam>>,
-    pub(crate) synth_choices_model: Rc<VecModel<SharedString>>,
     pub(crate) synth_displays_model: Rc<VecModel<SynthDisplay>>,
     pub(crate) synth_menu_model: Rc<VecModel<MenuItem>>,
     // ---- recording (src/recording.rs) + settings (src/settings.rs) ----
@@ -343,7 +342,6 @@ impl Controller {
             highlights_model: Rc::new(VecModel::default()),
             synth: SynthUi::default(),
             synth_params_model: Rc::new(VecModel::default()),
-            synth_choices_model: Rc::new(VecModel::default()),
             synth_displays_model: Rc::new(VecModel::default()),
             synth_menu_model: Rc::new(VecModel::default()),
             rec: Default::default(),
@@ -383,7 +381,6 @@ impl Controller {
         s.set_menu_items(ModelRc::from(self.menu_model.clone()));
         s.set_sub_items(ModelRc::from(self.sub_model.clone()));
         s.set_synth_params(ModelRc::from(self.synth_params_model.clone()));
-        s.set_synth_choices(ModelRc::from(self.synth_choices_model.clone()));
         s.set_synth_displays(ModelRc::from(self.synth_displays_model.clone()));
         s.set_synth_menu_items(ModelRc::from(self.synth_menu_model.clone()));
         s.set_input_menu_items(ModelRc::from(self.input_menu_model.clone()));
@@ -463,14 +460,9 @@ impl Controller {
     }
 
     /// The session the engine should play right now: the document plus any
-    /// synth control currently being dragged (heard before it becomes a command).
+    /// automation lane being edited.
     pub fn current_snapshot(&self) -> snapshot::SessionSnapshot {
         let (mut snap, _skipped) = snapshot::build(self.doc.project(), self.rate, &self.asset_map);
-        if let Some((t, sp)) = &self.synth.pending
-            && let Some(ts) = snap.tracks.iter_mut().find(|ts| ts.track_id == t.0 && ts.synth.is_some())
-        {
-            ts.synth = Some(sp.clone());
-        }
         // Automation drag / write preview: the pending lane replaces the model lane.
         if let Some((key, lane)) = &self.auto.pending {
             let p = self.doc.project();
@@ -529,7 +521,7 @@ impl Controller {
     }
 
     pub fn undo(&mut self) {
-        self.synth.pending = None;
+        self.synth.drop_gesture();
         self.auto.sel = None;
         match self.doc.undo() {
             Ok(true) => self.after_change(),
@@ -539,7 +531,7 @@ impl Controller {
     }
 
     pub fn redo(&mut self) {
-        self.synth.pending = None;
+        self.synth.drop_gesture();
         self.auto.sel = None;
         match self.doc.redo() {
             Ok(true) => self.after_change(),
@@ -600,7 +592,7 @@ impl Controller {
             }
             self.sel_peak_hold = 0.0;
             self.meter_disp = (0.0, 0.0);
-            self.synth.pending = None;
+            self.synth.drop_gesture();
             self.synth.menu = None;
             // Instrument tracks open their device (Devices tab) unless a clip is selected.
             if self.selected_clip.is_none() && self.project().track(id).is_some_and(|t| t.kind == TrackKind::Instrument) {
