@@ -172,6 +172,7 @@ pub static CHARACTER_COMPRESSOR: DeviceDef = DeviceDef {
         },
     ],
     sidechain: true,
+    samples: 0,
 };
 
 // ---------------------------------------------------------------- behaviour

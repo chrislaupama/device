@@ -22,7 +22,7 @@ pub mod snapshot;
 pub use command::{Command, EditError};
 pub use history::{Document, Origin};
 pub use automation::{AutoPoint, AutomationLane, AutomationTarget, SynthParam};
-pub use device::{Device, DeviceId, PluginFormat, PluginKind, PluginRef};
+pub use device::{Device, DeviceId, DeviceSample, PluginFormat, PluginKind, PluginRef, Slice};
 pub use instrument::SynthParams;
 pub use midi::{MidiClip, Note};
 pub use model::*;

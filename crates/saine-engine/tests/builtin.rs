@@ -5,9 +5,9 @@
 
 use saine_core::automation::AutomationTarget;
 use saine_core::builtin;
-use saine_core::snapshot::{ClipSnapshot, LaneSnapshot, SessionSnapshot, TrackSnapshot};
-use saine_core::{DeviceId, TrackId};
-use saine_engine::{builtin_registry, builtin_state, Config, Engine};
+use saine_core::snapshot::{ClipSnapshot, LaneSnapshot, NoteSnapshot, SessionSnapshot, TrackSnapshot};
+use saine_core::{AssetId, DeviceId, DeviceSample, Slice, TrackId};
+use saine_engine::{builtin_registry, builtin_state, builtin_state_v2, Config, Engine};
 use std::path::Path;
 
 fn write_dc_wav(path: &Path, frames: u32, v: i16) {
@@ -89,7 +89,7 @@ impl Rig {
             instrument_plugin: None,
             synth: None,
         };
-        let snap = SessionSnapshot { tracks: vec![track], master_gain: 1.0, master_automation: vec![] };
+        let snap = SessionSnapshot { tracks: vec![track], master_gain: 1.0, master_automation: vec![], device_assets: Default::default() };
         Rig { engine, snap, _dir: dir }
     }
 
@@ -191,3 +191,89 @@ fn sidechain_from_another_track() {
     rig.engine.builtin_readouts(DEV + 1, &mut r).unwrap();
     assert!(keyed_gr < r[2] - 6.0, "keyed {keyed_gr} vs self {}", r[2]);
 }
+
+fn drum_rig(notes: Vec<NoteSnapshot>) -> (Engine, SessionSnapshot, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("dc.wav");
+    write_dc_wav(&wav, 96_000, 16384);
+    let engine = Engine::new(Config { sample_rate: 48_000.0, max_block_size: 256 }).unwrap();
+    let info = engine.load_file(&wav).unwrap();
+    let mut dev = builtin::find("drum-rack").unwrap().instantiate();
+    dev.id = DeviceId(DEV);
+    dev.samples.push(DeviceSample { slot: 0, asset: AssetId(5), name: "dc".into(), slices: vec![] });
+    let track = TrackSnapshot {
+        track_id: 1,
+        gain: 1.0,
+        pan: 0.0,
+        mute: false,
+        solo: false,
+        clips: vec![],
+        instrument: true,
+        notes,
+        automation: vec![],
+        arm: false,
+        monitor: false,
+        input: None,
+        devices: vec![],
+        instrument_plugin: Some(dev),
+        synth: None,
+    };
+    let snap = SessionSnapshot { tracks: vec![track], master_gain: 1.0, master_automation: vec![], device_assets: [(AssetId(5), info.asset_id)].into() };
+    (engine, snap, dir)
+}
+
+fn peak(engine: &Engine, frames: usize) -> f32 {
+    let mut out = vec![0f32; 2 * frames];
+    for chunk in out.chunks_mut(512) {
+        engine.render_offline(chunk).unwrap();
+    }
+    out.iter().fold(0f32, |m, v| m.max(v.abs()))
+}
+
+#[test]
+fn drum_rack_plays_its_pads_from_notes_and_auditions() {
+    let reg = builtin_registry();
+    for (id, slots) in [("sampler-steam", 1), ("pad-sampler", 8), ("drum-rack", 128)] {
+        let p = reg.iter().find(|p| p.id == id).unwrap();
+        assert_eq!((p.sample_slots, p.instrument), (slots, true), "{id}");
+        assert_eq!(builtin::find(id).unwrap().samples, slots, "{id}");
+    }
+
+    let note = |pitch| vec![NoteSnapshot { start: 0, end: 12_000, pitch, velocity: 127 }];
+    let (engine, snap, _dir) = drum_rig(note(36));
+    engine.publish(&snap).unwrap();
+    engine.seek(0).unwrap();
+    engine.play().unwrap();
+    assert!(peak(&engine, 9_600) > 0.25, "pad 1 (note 36) plays its sample");
+    let mut r = Vec::new();
+    engine.builtin_readouts(DEV, &mut r).unwrap();
+    assert_eq!(r.len(), 48);
+
+    let (engine, snap, _dir) = drum_rig(note(38));
+    engine.publish(&snap).unwrap();
+    engine.seek(0).unwrap();
+    engine.play().unwrap();
+    assert!(peak(&engine, 9_600) < 1e-6, "pad 3 is empty");
+
+    let (engine, snap, _dir) = drum_rig(vec![]);
+    engine.publish(&snap).unwrap();
+    assert!(peak(&engine, 2_048) < 1e-6);
+    engine.builtin_note(DEV, 36, 100).unwrap();
+    assert!(peak(&engine, 4_800) > 0.1, "audition plays pad 1");
+    assert!(engine.builtin_note(DEV + 1, 36, 100).is_err());
+}
+
+#[test]
+fn state_v2_blob_layout() {
+    let sl = [Slice::at(0.0), Slice { start: 0.5, gain: -3.0, pan: 0.25, pitch: 2.0 }];
+    let b = builtin_state_v2(&[1.0], 0, &[(9, 3, &sl[..])]);
+    assert_eq!(b.len(), 24 + 4 + 16 + 32);
+    assert_eq!(&b[0..4], b"SBI2");
+    assert_eq!(u32::from_le_bytes(b[16..20].try_into().unwrap()), 1);
+    assert_eq!(u32::from_le_bytes(b[20..24].try_into().unwrap()), 2);
+    assert_eq!(u64::from_le_bytes(b[28..36].try_into().unwrap()), 9);
+    assert_eq!(u32::from_le_bytes(b[36..40].try_into().unwrap()), 3);
+    assert_eq!(f32::from_le_bytes(b[60..64].try_into().unwrap()), 0.5);
+    assert_eq!(f32::from_le_bytes(b[64..68].try_into().unwrap()), -3.0);
+}
+

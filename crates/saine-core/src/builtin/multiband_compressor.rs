@@ -192,6 +192,7 @@ pub static MULTIBAND_COMPRESSOR: DeviceDef = DeviceDef {
         },
     ],
     sidechain: false,
+    samples: 0,
 };
 
 /// One-sided ramp with a 0.5 dB soft knee: 0 below -0.25 dB, the identity above +0.25 dB.

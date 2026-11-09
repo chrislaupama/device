@@ -39,6 +39,7 @@ pub static BITCRUSHER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Two-Bit Rubble", values: &[("bitdepth", 2.0), ("downsample", 12.0), ("jitter", 20.0)] },
     ],
     sidechain: false,
+    samples: 0,
 };
 
 /// The crushed picture: one cycle of a 100 Hz sine at 48 kHz (480 samples)

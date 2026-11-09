@@ -78,7 +78,7 @@ fn approx(a: f32, b: f32, tol: f32) -> bool {
 }
 
 // Window geometry (reference layout): lanes origin and track rows.
-const LANE_X: f32 = 453.0;
+const LANE_X: f32 = 453.65;
 const TRACK0_Y: f32 = 144.5;
 const PITCH: f32 = 74.5;
 
@@ -696,13 +696,13 @@ fn steps() -> Vec<Step> {
             let s = a.global::<Studio>();
             (c.selected_track == Some(t) && s.get_sel_number() == 2 && s.get_sel_name() == "Instrument").then_some(()).ok_or("selection".into())
         })),
-        Do("click M on track 1", Box::new(|a| click(a, 262.0 + 33.5, TRACK0_Y + 47.0))),
+        Do("click M on track 1", Box::new(|a| click(a, 262.65 + 33.5, TRACK0_Y + 47.0))),
         Check("track 1 muted (SetTrackMute)", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("not muted".into()))),
         Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
         Check("undo restored mute=false", Box::new(|c, _| (!c.project().tracks[0].mute).then_some(()).ok_or("still muted".into()))),
         Do("Cmd+Shift+Z", Box::new(|a| key(a, "Z", true, true))),
         Check("redo muted again", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("redo failed".into()))),
-        Do("drag track 1 volume slider left", Box::new(|a| drag(a, 262.0 + 116.0 + 0.85 * 61.0 + 3.5, TRACK0_Y + 48.0, 262.0 + 140.0, TRACK0_Y + 48.0))),
+        Do("drag track 1 volume slider left", Box::new(|a| drag(a, 262.65 + 115.6 + 0.85 * 61.0 + 3.5, TRACK0_Y + 48.0, 262.65 + 140.0, TRACK0_Y + 48.0))),
         Check("track 1 gain lowered, one coalesced undo step", Box::new(|c, _| {
             let g = c.project().tracks[0].gain;
             let labels = c.doc.history_labels();
@@ -794,7 +794,7 @@ fn steps() -> Vec<Step> {
             let txt = a.global::<Studio>().get_sel_pan_text();
             (pan > 0.2 && txt.ends_with('R')).then_some(()).ok_or(format!("pan {pan} text {txt}"))
         })),
-        Do("(audio) unmute track 1 (muted by the redo step)", Box::new(|a| click(a, 262.0 + 33.5, TRACK0_Y + 47.0))),
+        Do("(audio) unmute track 1 (muted by the redo step)", Box::new(|a| click(a, 262.65 + 33.5, TRACK0_Y + 47.0))),
         Do("(audio) click ruler at beat 9 (start of track 1 clip)", Box::new(move |a| click(a, bx(9.0), 112.0))),
         Do("(audio) master -40 dB, Space", Box::new(|a| {
             a.global::<Studio>().invoke_master_volume(0.85 * 0.01f32.cbrt());
@@ -840,7 +840,7 @@ fn steps() -> Vec<Step> {
         Check("assistant panel open, timeline narrower, fixture provider available", Box::new(|c, a| {
             let w = a.get_lanes_width();
             let s = a.global::<Studio>();
-            (c.assistant_open && s.get_assistant_open() && s.get_chat_available() && (w - (1440.0 - 262.0 - 5.0 - 257.5 - 191.0)).abs() < 1.0)
+            (c.assistant_open && s.get_assistant_open() && s.get_chat_available() && (w - (1440.0 - 262.65 - 5.0 - 257.5 - 191.0)).abs() < 1.0)
                 .then_some(())
                 .ok_or(format!("open {} lanes width {w}", c.assistant_open))
         })),
@@ -967,7 +967,7 @@ fn steps() -> Vec<Step> {
 /// Window centre of a track header's R button (track index `i`, current scroll).
 fn header_r(ctl: &Ctl, i: usize) -> (f32, f32) {
     let sy = ctl.borrow().view.scroll_y as f32;
-    (262.0 + 60.5, TRACK0_Y + i as f32 * PITCH + 47.0 - sy)
+    (262.65 + 60.5, TRACK0_Y + i as f32 * PITCH + 47.0 - sy)
 }
 
 /// Inspector (bottom panel 306 pt at y 509 with the Devices tab): R, I and the In field.
@@ -1770,7 +1770,7 @@ fn device_steps() -> Vec<Step> {
 // ------------------------------------------------------------------ automation
 
 /// Lanes surface origin in the window (timeline x 262 + lane-x 191, y 78 + 27.5).
-const LANES_ORIGIN: (f32, f32) = (453.0, 105.5);
+const LANES_ORIGIN: (f32, f32) = (453.65, 105.5);
 
 fn auto_row(c: &Controller, track: usize, target: &saine_core::AutomationTarget) -> Option<crate::automation::Row> {
     let key = Some(c.project().tracks.get(track)?.id);
@@ -1791,7 +1791,7 @@ fn lane_points(c: &Controller, track: usize, target: &saine_core::AutomationTarg
 /// Track header automation pill (track index `i`): window centre of the label and of the power icon.
 fn pill_xy(c: &Controller, i: usize) -> ((f32, f32), (f32, f32)) {
     let y = TRACK0_Y + c.view.track_offset(i) - c.view.scroll_y as f32 + 49.0 + 8.25;
-    ((262.0 + 42.0 + 70.0, y), (262.0 + 42.0 + 8.5, y))
+    ((262.65 + 42.0 + 70.0, y), (262.65 + 42.0 + 8.5, y))
 }
 
 fn with_shift(a: &AppWindow, f: impl FnOnce()) {
@@ -1858,10 +1858,10 @@ fn automation_steps() -> Vec<Step> {
             c.import_files(vec![wav.clone()], crate::controller::ImportTarget::Selected, Some(0));
         })),
         Check("automation: clip imported, lanes hidden, timeline at full width", Box::new(|c, a| {
-            let ok = c.project().tracks[0].clips.len() == 1 && !c.auto.shown && !a.global::<Studio>().get_auto_shown() && (a.get_lanes_width() - (1440.0 - 262.0 - 5.0 - 191.0)).abs() < 1.0;
+            let ok = c.project().tracks[0].clips.len() == 1 && !c.auto.shown && !a.global::<Studio>().get_auto_shown() && (a.get_lanes_width() - (1440.0 - 262.65 - 5.0 - 191.0)).abs() < 1.0;
             ok.then_some(()).ok_or(format!("clips {} shown {}", c.project().tracks[0].clips.len(), c.auto.shown))
         })),
-        Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, 262.0 + (1440.0 - 262.0 - 5.0) - 315.0 + 7.0, 78.0 + 14.0))),
+        Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 312.6 + 7.0, 78.0 + 14.0))),
         Check("automation: lanes shown; each header has the Track Volume pill and the disclosure; master row 64.5 pt; value labels (tracks +0.0, master at its static level)", Box::new(move |c, a| {
             ah_set(c.doc.history_labels().len());
             let s = a.global::<Studio>();
@@ -2007,7 +2007,7 @@ fn automation_steps() -> Vec<Step> {
         DoC("automation: move the volume slider while not armed (automation is active)", Box::new(move |a, ctl| {
             ah_set(ctl.borrow().doc.history_labels().len());
             let y = TRACK0_Y + 44.0 - 13.0 + 4.0;
-            drag(a, 262.0 + 116.0 + 10.0, y, 262.0 + 116.0 + 30.0, y);
+            drag(a, 262.65 + 115.6 + 10.0, y, 262.65 + 115.6 + 30.0, y);
         })),
         Check("automation: no edit, status hint “Volume is automated: arm automation to write, or disable the lane”", Box::new(move |c, a| {
             let st = a.global::<Studio>().get_status_text().to_string();
@@ -2080,7 +2080,7 @@ fn automation_steps() -> Vec<Step> {
             }
             advance(ctl, 0.1);
             let y = TRACK0_Y + 44.0 - 13.0 + 4.0;
-            let x0 = 262.0 + 116.0 + 3.5;
+            let x0 = 262.65 + 115.6 + 3.5;
             press(a, x0 + 50.0, y);
             for k in 1..=4 {
                 advance(ctl, 0.15);
@@ -2102,7 +2102,7 @@ fn automation_steps() -> Vec<Step> {
         })),
         Do("automation: click Automation Arm again (off), hide lanes", Box::new(|a| {
             click(a, 496.0 + 10.5, 41.0 + 11.0);
-            click(a, 262.0 + (1440.0 - 262.0 - 5.0) - 315.0 + 7.0, 78.0 + 14.0);
+            click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 312.6 + 7.0, 78.0 + 14.0);
         })),
         Check("automation: disarmed, lanes hidden, master row back to 30 pt", Box::new(move |c, a| {
             let _ = &wav2;
@@ -2432,7 +2432,7 @@ fn dynamics_device_steps() -> Vec<Step> {
     v.push(Check("dynamics: Opto shows the Comp/Limit latch in the dial row", Box::new(|_, a| {
         let cd = card_named(a, "Character Compressor").ok_or("no card")?;
         let latch = (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).find(|k| k.face == 2);
-        latch.is_some_and(|k| k.latch_a == "Comp" && k.latch_b == "Limit").then_some(()).ok_or("no latch".into())
+        latch.is_some_and(|k| k.value == "Comp" || k.value == "Limit").then_some(()).ok_or("no latch".into())
     })));
     v.push(DoC("dynamics: Multiband band selector › Mid", Box::new(|a, ctl| {
         let Some(d) = builtin_of(&ctl.borrow(), "multiband-compressor").map(|d| d.id.0 as i32) else { return };
@@ -2444,6 +2444,149 @@ fn dynamics_device_steps() -> Vec<Step> {
         (k.label == "Threshold" && k.value == "\u{2212}20.0 dB").then_some(()).ok_or(format!("{} {}", k.label, k.value))
     })));
     v
+}
+
+/// The restoration devices (De-Clipper, De-Esser, De-Hummer, De-Noiser): each one is added
+/// through Add device › Built-in, checked against its definition and the engine, and its field
+/// is dragged with real pointer events (one undo step), then undone.
+fn restoration_device_steps() -> Vec<Step> {
+    use Step::*;
+    // (display name, id, readouts, field drag in px, params the drag must move)
+    type Moves = &'static [&'static str];
+    const DEVICES: [(&str, &str, usize, (f32, f32), Moves); 4] = [
+        ("De-Clipper", "declipper", 0, (40.0, 0.0), &["threshold"]),
+        ("De-Esser", "deesser", 49, (30.0, 20.0), &["frequency", "reduction"]),
+        ("De-Hummer", "dehummer", 48, (-30.0, 20.0), &["frequency", "depth"]),
+        ("De-Noiser", "denoiser", 49, (0.0, -20.0), &["threshold"]),
+    ];
+    fn device<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
+        let t = track_of(c, TrackKind::Audio)?;
+        c.project().tracks[t].devices.iter().find(|d| d.plugin.format == saine_core::PluginFormat::Builtin && d.plugin.id == id)
+    }
+    fn value(c: &Controller, id: &str, param: &str) -> Option<f32> {
+        let d = device(c, id)?;
+        let def = saine_core::builtin::def_of(d)?;
+        Some(def.value(d, def.param(param)?))
+    }
+    let mut steps = Vec::new();
+    for (name, id, readouts, (dx, dy), moves) in DEVICES {
+        let hist = Rc::new(Cell::new(0usize));
+        let (h0, h1, h2, h3) = (hist.clone(), hist.clone(), hist.clone(), hist.clone());
+        steps.push(DoC(leak(format!("restoration: clear the audio track's chain, open Add device › Built-in for {name}")), Box::new(move |a, ctl| {
+            key(a, Key::Escape, false, false);
+            let i = track_of(&ctl.borrow(), TrackKind::Audio).unwrap_or(0);
+            click_track_header(a, ctl, i);
+            {
+                let mut c = ctl.borrow_mut();
+                let ids: Vec<saine_core::DeviceId> = c.project().tracks[i].devices.iter().map(|d| d.id).collect();
+                for d in ids {
+                    c.execute(saine_core::Command::RemoveDevice { device: d });
+                }
+                h0.set(c.doc.history_labels().len());
+                c.update_ui(a);
+            }
+            let add_x = a.global::<Studio>().get_add_device_x();
+            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+        })));
+        steps.push(Do(leak(format!("restoration: pick {name}")), Box::new(move |a| {
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == name && r.2) {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })));
+        steps.push(Check(leak(format!("restoration: {name} added at its defaults (one undo step); card follows the definition (width, knobs, field)")), Box::new(move |c, a| {
+            let n = c.doc.history_labels().len();
+            let want = format!("Add {name}");
+            if n != h1.get() + 1 || c.doc.undo_label() != Some(want.as_str()) {
+                return Err(format!("history {} -> {n}, last {:?}", h1.get(), c.doc.undo_label()));
+            }
+            let def = saine_core::builtin::find(id).ok_or("not registered")?;
+            let d = device(c, id).ok_or("not in the chain")?;
+            let cd = card_named(a, name).ok_or("no card")?;
+            let knobs: usize = def.layout.clusters.iter().map(|c| c.len()).sum();
+            let ok = cd.builtin
+                && cd.canvas.visible
+                && slint::Model::row_count(&cd.knobs) == knobs
+                && approx(cd.width, def.layout.width() * crate::device_panel::Z, 0.01)
+                && def.params.iter().all(|p| def.value(d, p) == p.default);
+            ok.then_some(()).ok_or(format!("knobs {} width {} field {}", slint::Model::row_count(&cd.knobs), cd.width, cd.canvas.visible))
+        })));
+        steps.push(Check(leak(format!("engine: {name} is live with {readouts} readouts (spectrum bands where the field draws one)")), Box::new(move |c, _| {
+            let d = device(c, id).ok_or("no device")?.id;
+            let mut r = Vec::new();
+            c.engine.builtin_readouts(d.0, &mut r).map_err(|e| e.to_string())?;
+            let errors = c.engine.plugin_load_errors();
+            (r.len() == readouts && !errors.iter().any(|(e, _)| *e == d)).then_some(()).ok_or(format!("readouts {} errors {errors:?}", r.len()))
+        })));
+        steps.push(DoC(leak(format!("restoration: drag {name}'s field ({dx:+}, {dy:+}) px")), Box::new(move |a, ctl| {
+            h2.set(ctl.borrow().doc.history_labels().len());
+            let Some(cd) = card_named(a, name) else { return };
+            let f = &cd.canvas;
+            // The De-Esser grabs its band handle (the circle path "M{x - r} {y} a..."), the
+            // De-Noiser its threshold line; the others drag the plane.
+            let handle = || {
+                let p = slint::Model::iter(&f.paths).find(|p| p.commands.contains(" a"))?;
+                let mut n = p.commands.trim_start_matches('M').split_whitespace().map(|t| t.parse::<f32>().unwrap_or(0.0));
+                Some((n.next()? + 5.0 * crate::device_panel::Z, n.next()?))
+            };
+            let (wx, wy) = match id {
+                "deesser" => handle().unwrap_or((0.0, 0.0)),
+                "denoiser" => (f.w * 0.75, slint::Model::row_data(&f.grips, 0).map_or(0.0, |p| p.y)),
+                _ => (f.w / 2.0, (f.h - f.well_y) / 2.0),
+            };
+            let (x, y) = card_xy(&cd, f.x + wx, f.y + f.well_y + wy);
+            drag(a, x, y, x + dx, y + dy);
+        })));
+        steps.push(Check(leak(format!("restoration: the {name} field gesture moved {moves:?} in ONE undo step")), Box::new(move |c, _| {
+            let n = c.doc.history_labels().len();
+            if n != h3.get() + 1 || c.doc.undo_label() != Some("Device Parameter Change") {
+                return Err(format!("history {} -> {n}, last {:?}", h3.get(), c.doc.undo_label()));
+            }
+            let def = saine_core::builtin::find(id).ok_or("not registered")?;
+            let still: Vec<&str> = moves.iter().copied().filter(|p| value(c, id, p) == def.param(p).map(|p| p.default)).collect();
+            still.is_empty().then_some(()).ok_or(format!("unchanged: {still:?}"))
+        })));
+        steps.push(Do(leak(format!("restoration: ⌘Z after the {name} gesture")), Box::new(|a| key(a, "z", true, false))));
+        steps.push(Check(leak(format!("restoration: undo restores every {name} parameter")), Box::new(move |c, _| {
+            let def = saine_core::builtin::find(id).ok_or("not registered")?;
+            let d = device(c, id).ok_or("no device")?;
+            let off: Vec<&str> = def.params.iter().filter(|p| def.value(d, p) != p.default).map(|p| p.id).collect();
+            let vals: Vec<(&str, f32)> = def.params.iter().map(|p| (p.id, def.value(d, p))).collect();
+            off.is_empty().then_some(()).ok_or(format!("not at default: {off:?} values {vals:?} history {:?}", c.doc.history_labels().iter().rev().take(4).collect::<Vec<_>>()))
+        })));
+    }
+    // The De-Esser's Listen latch in the dial row (the De-Esser is still in the chain from above).
+    let hl = Rc::new(Cell::new(0usize));
+    let hl2 = hl.clone();
+    steps.push(DoC("restoration: click the De-Esser's Listen latch", Box::new(move |a, ctl| {
+        {
+            let mut c = ctl.borrow_mut();
+            let Some(t) = track_of(&c, TrackKind::Audio) else { return };
+            let ids: Vec<saine_core::DeviceId> = c.project().tracks[t].devices.iter().map(|d| d.id).collect();
+            for d in ids {
+                c.execute(saine_core::Command::RemoveDevice { device: d });
+            }
+            let tid = c.project().tracks[t].id;
+            let def = saine_core::builtin::find("deesser").expect("registered");
+            c.add_item_to_track(&crate::devices::Item::Builtin(def), tid, None);
+            hl.set(c.doc.history_labels().len());
+            c.update_ui(a);
+        }
+        let Some(cd) = card_named(a, "De-Esser") else { return };
+        let z = crate::device_panel::Z;
+        if let Some(k) = (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).find(|k| k.face == 2) {
+            let (x, y) = card_xy(&cd, k.x + 31.0 * z, (229.0 + 24.0) * z);
+            click(a, x, y);
+        }
+    })));
+    steps.push(Check("restoration: the Listen latch turns Listen on (one undo step) and shows On", Box::new(move |c, a| {
+        let n = c.doc.history_labels().len();
+        let shown = card_named(a, "De-Esser").and_then(|cd| (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).find(|k| k.face == 2)).map(|k| k.value.to_string());
+        (n == hl2.get() + 1 && value(c, "deesser", "listen") == Some(1.0) && shown.as_deref() == Some("On"))
+            .then_some(())
+            .ok_or(format!("history {} -> {n}, listen {:?}, latch {shown:?}", hl2.get(), value(c, "deesser", "listen")))
+    })));
+    steps
 }
 
 /// The devices section drives Apple's Audio Units (AULowpass, AUDelay,
@@ -2460,6 +2603,175 @@ fn platform_device_steps() -> Vec<Step> {
             Step::Do(..) | Step::DoC(..) => None,
         })
         .collect()
+}
+
+// ------------------------------------------------------------------ built-in samplers
+
+fn inst_device(c: &Controller) -> Option<saine_core::Device> {
+    let t = track_of(c, TrackKind::Instrument)?;
+    c.project().tracks[t].instrument_plugin.clone()
+}
+
+fn sampler_card(a: &AppWindow) -> Option<crate::DeviceCard> {
+    cards(a).into_iter().find(|c| c.sampler.visible)
+}
+
+/// Drum Rack, Pad Sampler and Sampler in the instrument slot: added from the
+/// Built-in list, files loaded as drops, pads pressed, slices and a picture handle.
+fn sampler_steps() -> Vec<Step> {
+    use Step::*;
+    let wav = std::env::temp_dir().join(format!("saine-selftest-sampler-{}.wav", std::process::id()));
+    let _ = crate::wavgen::write_wav(&wav, 48_000, 1, &crate::wavgen::sine_bursts(48_000));
+    let hist = Rc::new(Cell::new(0usize));
+    fn one(hc: &Rc<Cell<usize>>, c: &Controller, label: &str) -> Result<(), String> {
+        let n = c.doc.history_labels().len();
+        let was = hc.get();
+        hc.set(n);
+        (n == was + 1 && c.doc.undo_label() == Some(label)).then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want {label})", c.doc.undo_label()))
+    }
+    let (h0, h1, h2, h3, h4, h5, h6) = (hist.clone(), hist.clone(), hist.clone(), hist.clone(), hist.clone(), hist.clone(), hist.clone());
+    let (w1, w2, w3, w4) = (wav.clone(), wav.clone(), wav.clone(), wav);
+    let h4b = h4.clone();
+    let (hp, hp2) = (hist.clone(), hist.clone());
+    vec![
+        Do("sampler: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("sampler: select the instrument track, Devices tab, Add device › Built-in", Box::new(move |a, ctl| {
+            {
+                let mut c = ctl.borrow_mut();
+                let t = track_of(&c, TrackKind::Instrument).map(|i| c.project().tracks[i].id);
+                if let Some(t) = t {
+                    c.select_track(t);
+                }
+                c.set_bottom_tab(crate::controller::BottomTab::Devices);
+                c.devmenu_dismiss();
+                h0.set(c.doc.history_labels().len());
+                // The chain is long here (Synth + plugin inserts): open Add device › Built-in directly.
+                c.add_category(0, 600.0, 520.0);
+                c.update_ui(a);
+            }
+        })),
+        Check("sampler: the Built-in list offers Sampler, Drum Rack and Pad Sampler", Box::new(|c, a| {
+            let items = devmenu_labels(a);
+            let has = |n: &str| items.iter().any(|r| r.0 == n && r.2);
+            (a.global::<Studio>().get_devmenu_open() && has("Sampler") && has("Drum Rack") && has("Pad Sampler")).then_some(()).ok_or(format!("items {items:?} selected {:?}", c.selected_track))
+        })),
+        Do("sampler: pick Drum Rack", Box::new(|a| {
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == "Drum Rack") {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })),
+        Check("sampler: Drum Rack is the track's instrument (one undo step); card has 16 pads, 5 knobs, an empty well; engine instance live (48 readouts)", Box::new(move |c, a| {
+            one(&h1, c, "Load Drum Rack")?;
+            let d = inst_device(c).ok_or("no instrument")?;
+            let cd = sampler_card(a).ok_or("no sampler card")?;
+            let s = &cd.sampler;
+            let mut r = Vec::new();
+            c.engine.builtin_readouts(d.id.0, &mut r).map_err(|e| e.to_string())?;
+            let ok = d.plugin.id == "drum-rack" && s.kind == 2 && slint::Model::row_count(&s.pads) == 16 && slint::Model::row_count(&s.knobs) == 5 && !s.loaded && r.len() == 48;
+            ok.then_some(()).ok_or(format!("id {} kind {} pads {} knobs {} loaded {} readouts {}", d.plugin.id, s.kind, slint::Model::row_count(&s.pads), slint::Model::row_count(&s.knobs), s.loaded, r.len()))
+        })),
+        DoC("sampler: drop a WAV on the window (pad 1)", Box::new(move |_, ctl| ctl.borrow_mut().drop_files(vec![w1.clone()]))),
+        Check("sampler: the file is pad 1's first sound (asset + sample, one undo step); the pad and well show it", Box::new(move |c, a| {
+            one(&h2, c, "Load Sample")?;
+            let d = inst_device(c).ok_or("no instrument")?;
+            let cd = sampler_card(a).ok_or("no card")?;
+            let pad = slint::Model::row_data(&cd.sampler.pads, 0).ok_or("no pad")?;
+            let ok = d.sample(0).is_some() && pad.filled && cd.sampler.loaded && !cd.sampler.wave.is_empty() && cd.sampler.layer_text == "1/1";
+            ok.then_some(()).ok_or(format!("sample {:?} pad {} well {} layer {}", d.sample(0).map(|s| &s.name), pad.filled, cd.sampler.loaded, cd.sampler.layer_text))
+        })),
+        DoC("sampler: drop it again (second sound of pad 1)", Box::new(move |_, ctl| ctl.borrow_mut().drop_files(vec![w2.clone()]))),
+        Check("sampler: pad 1 holds two alternating sounds (slots 0 and 1); the panel shows sound 2/2", Box::new(move |c, a| {
+            one(&h3, c, "Load Sample")?;
+            let d = inst_device(c).ok_or("no instrument")?;
+            let cd = sampler_card(a).ok_or("no card")?;
+            (d.sample(1).is_some() && cd.sampler.layer_text == "2/2").then_some(()).ok_or(format!("slot1 {} layer {}", d.sample(1).is_some(), cd.sampler.layer_text))
+        })),
+        Do("sampler: press the D1 pad", Box::new(|a| {
+            if let Some(cd) = sampler_card(a)
+                && let Some(p) = slint::Model::row_data(&cd.sampler.pads, 2)
+            {
+                let (x, y) = card_xy(&cd, p.x + p.w / 2.0, p.y + p.h / 2.0);
+                click(a, x, y);
+            }
+        })),
+        Check("sampler: D1 is selected (UI only, no undo step): the sub-card shows Pad 3, Mapped to D1, an empty well, and edits p3_ parameters", Box::new(|c, a| {
+            let cd = sampler_card(a).ok_or("no card")?;
+            let s = &cd.sampler;
+            let def = saine_core::builtin::find("drum-rack").unwrap();
+            let k = slint::Model::row_data(&s.knobs, 0).ok_or("no knob")?;
+            let ok = s.layer_name == "Pad 3" && s.mapped == "Mapped to D1" && !s.loaded && def.params[k.param as usize].id == "p3_gain" && c.doc.undo_label() == Some("Load Sample");
+            ok.then_some(()).ok_or(format!("{} / {} / loaded {} / knob {}", s.layer_name, s.mapped, s.loaded, def.params[k.param as usize].id))
+        })),
+        DoC("sampler: load the Pad Sampler as the instrument and drop the WAV on it", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = track_of(&c, TrackKind::Instrument).map(|i| c.project().tracks[i].id);
+            if let Some(t) = t {
+                c.add_item_to_track(&crate::devices::Item::Builtin(saine_core::builtin::find("pad-sampler").unwrap()), t, None);
+            }
+            hp.set(c.doc.history_labels().len());
+            c.drop_files(vec![w4.clone()]);
+        })),
+        Check("sampler: the Pad Sampler holds the file as sound 1/1, answers every key, and shows its 5 knobs", Box::new(move |c, a| {
+            one(&hp2, c, "Load Sample")?;
+            let d = inst_device(c).ok_or("no instrument")?;
+            let cd = sampler_card(a).ok_or("no card")?;
+            let s = &cd.sampler;
+            let ok = d.plugin.id == "pad-sampler" && d.sample(0).is_some() && s.kind == 1 && s.loaded && s.layer_text == "1/1" && s.mapped == "Mapped to all keys" && slint::Model::row_count(&s.knobs) == 5;
+            ok.then_some(()).ok_or(format!("id {} kind {} loaded {} layer {} mapped {}", d.plugin.id, s.kind, s.loaded, s.layer_text, s.mapped))
+        })),
+        DoC("sampler: load the Sampler as the instrument and drop the WAV on it", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = track_of(&c, TrackKind::Instrument).map(|i| c.project().tracks[i].id);
+            if let Some(t) = t {
+                c.add_item_to_track(&crate::devices::Item::Builtin(saine_core::builtin::find("sampler-steam").unwrap()), t, None);
+            }
+            h4b.set(c.doc.history_labels().len());
+            c.drop_files(vec![w3.clone()]);
+        })),
+        Check("sampler: the Sampler plays the file (One Shot); tabs Sample..Mod; start/end read in seconds (0.00 s / 4.00 s)", Box::new(move |c, a| {
+            one(&h4, c, "Load Sample")?;
+            let d = inst_device(c).ok_or("no instrument")?;
+            let cd = sampler_card(a).ok_or("no card")?;
+            let s = &cd.sampler;
+            let v: Vec<String> = slint::Model::iter(&s.knobs).map(|k| k.value.to_string()).collect();
+            let ok = d.plugin.id == "sampler-steam" && d.sample(0).is_some() && s.loaded && slint::Model::row_count(&s.tab_pick.choices) == 5 && v.first().map(String::as_str) == Some("0.00 s") && v.get(1).map(String::as_str) == Some("4.00 s");
+            ok.then_some(()).ok_or(format!("id {} loaded {} knobs {v:?}", d.plugin.id, s.loaded))
+        })),
+        DoC("sampler: switch the mode to Slice", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            if let Some(d) = inst_device(&c) {
+                let i = saine_core::builtin::find("sampler-steam").unwrap().index_of("mode").unwrap();
+                c.panel_choice(d.id, i as i32, 2);
+            }
+        })),
+        Check("sampler: Slice mode chops the sample by beat (quarter notes at 120 BPM: 8 slices of 4 s) in the same undo step", Box::new(move |c, _| {
+            one(&h5, c, "Device Parameter Change")?;
+            let d = inst_device(c).ok_or("no instrument")?;
+            let n = d.sample(0).map_or(0, |s| s.slices.len());
+            (n == 8).then_some(()).ok_or(format!("{n} slices"))
+        })),
+        DoC("sampler: Amp tab, drag the attack handle to the right", Box::new(|a, ctl| {
+            let id = inst_device(&ctl.borrow()).map(|d| d.id);
+            let Some(id) = id else { return };
+            ctl.borrow_mut().sampler_tab(id, 3);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            let Some(h) = sampler_card(a).and_then(|cd| slint::Model::row_data(&cd.sampler.handles, 0)) else { return };
+            let mut c = ctl.borrow_mut();
+            c.sampler_handle(id, 0, 0, h.x, h.y);
+            c.sampler_handle(id, 0, 1, h.x + 40.0, h.y);
+            c.sampler_handle(id, 0, 2, h.x + 40.0, h.y);
+        })),
+        Check("sampler: the attack handle drag is one undo step (Amp Envelope) and lengthens the attack", Box::new(move |c, _| {
+            one(&h6, c, "Amp Envelope")?;
+            let d = inst_device(c).ok_or("no instrument")?;
+            let def = saine_core::builtin::def_of(&d).ok_or("def")?;
+            let v = def.value(&d, def.param("ampAttack").unwrap());
+            (v > 2.0).then_some(()).ok_or(format!("attack {v} ms"))
+        })),
+    ]
 }
 
 fn named_builtin<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
@@ -2618,6 +2930,8 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(dynamics_device_steps());
     all.extend(builtin_each_steps());
     all.extend(modulation_device_steps());
+    all.extend(restoration_device_steps());
+    all.extend(sampler_steps());
     all.extend(automation_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));

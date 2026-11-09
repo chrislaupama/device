@@ -9,7 +9,10 @@
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
+//!              [--load-sample <file.wav>  (into the selected track's sampler, as a file drop)]
+//!              [--sampler-tab <0..4>  (with a sampler state: Sample, Pitch, Filter, Amp or Mod tab)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--self-test]
+//!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
 //! ```
 
 mod assistant_panel;
@@ -19,6 +22,7 @@ mod clipedit;
 mod controller;
 mod device_fields;
 mod device_panel;
+mod panel_graph;
 mod device_views;
 mod devices;
 mod panel_multiband;
@@ -30,11 +34,13 @@ mod pianoroll;
 mod placeholder;
 mod prefs;
 mod recording;
+mod sampler_panel;
 mod selftest;
 mod settings;
 mod synth;
 mod timeline;
 mod wavgen;
+mod zoom;
 
 use controller::{BottomTab, Controller, ImportTarget, gain_from_slider};
 use saine_core::keymap::{Chord, Context, Keymap};
@@ -84,16 +90,21 @@ struct Args {
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
     device_chain_review: bool,
+    /// reference-<built-in device id>: that device alone in an audio track's chain (an instrument on an instrument track).
+    device_state: Option<&'static str>,
+    /// Files loaded as if dropped on the window (after the state is set up).
+    load_sample: Vec<PathBuf>,
+    /// --sampler-tab N: with a sampler state, show that tab (review screenshots).
+    sampler_tab: Option<i32>,
     /// Never show the window (renders for --screenshot fall back to offscreen snapshots).
     offscreen: bool,
-    /// reference-<built-in device id>: that device alone in an audio track's chain.
-    device_state: Option<&'static str>,
     /// review-settings-plugins: Settings open on the Plugins page (no reference comparison).
     plugins_page_review: bool,
     assistant_fixture: Option<PathBuf>,
     plugin_fixture: Option<PathBuf>,
     screenshot: Option<PathBuf>,
     exit_after_frames: Option<u64>,
+    zoom: Option<u32>,
     frame_stats: bool,
     self_test: bool,
 }
@@ -193,7 +204,10 @@ fn parse_args() -> Result<Args, String> {
             "--plugin-fixture" => a.plugin_fixture = Some(value(&mut i)?.into()),
             "--screenshot" => a.screenshot = Some(value(&mut i)?.into()),
             "--offscreen" => a.offscreen = true,
+            "--load-sample" => a.load_sample.push(value(&mut i)?.into()),
+            "--sampler-tab" => a.sampler_tab = Some(value(&mut i)?.parse().map_err(|e| format!("--sampler-tab: {e}"))?),
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
+            "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
             "--self-test" | "--self-test-audio" => {
                 a.self_test = true;
@@ -202,7 +216,7 @@ fn parse_args() -> Result<Args, String> {
                 a.audio = v[i] == "--self-test-audio";
             }
             "-h" | "--help" => {
-                println!("{}", include_str!("main.rs").lines().skip(6).take(7).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
+                println!("{}", include_str!("main.rs").lines().take_while(|l| l.starts_with("//!")).skip(6).filter(|l| !l.contains("```")).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
                 std::process::exit(0);
             }
             other => return Err(format!("unknown argument {other}")),
@@ -497,6 +511,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let studio = app.global::<Studio>();
 
     let ctl: Ctl = Rc::new(RefCell::new(Controller::new(engine.clone(), Project::default())));
+    // Interface zoom: --zoom, else the saved level, else 100 %. Self-tests keep our
+    // design units (85 %) so their scripted geometry is unchanged.
+    let zoom_percent = args.zoom.unwrap_or(if args.self_test { 85 } else if saved_prefs.interface_zoom > 0 { saved_prefs.interface_zoom } else { zoom::DEFAULT_PERCENT });
+    let zoom = Rc::new(RefCell::new(zoom::Zoom::new(zoom_percent)));
     ctl.borrow().bind_models(&app);
     {
         // Provider: TEST fixture (flag, or the built-in one for --self-test), else the API key env var.
@@ -688,16 +706,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(20.0);
     }
     if let Some(id) = args.device_state {
-        // Compare with renders/reference/<id>.png (Captain drive): the built-in device
-        // at its defaults, alone in an audio track's chain, transport stopped.
+        // Compare with renders/reference/<id>.png (Captain drive): the built-in device at its
+        // defaults, alone in an audio track's chain (an instrument on an instrument track),
+        // transport stopped.
         let mut c = ctl.borrow_mut();
-        if let Some(t) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Audio).map(|t| t.id) {
+        let def = saine_core::builtin::find(id).expect("built-in is registered");
+        let kind = if def.kind == saine_core::PluginKind::Instrument { saine_core::TrackKind::Instrument } else { saine_core::TrackKind::Audio };
+        if let Some(t) = c.project().tracks.iter().find(|t| t.kind == kind).map(|t| t.id) {
             c.select_track(t);
-            let def = saine_core::builtin::find(id).expect("device is registered");
             c.add_item_to_track(&devices::Item::Builtin(def), t, None);
         }
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(8.0);
+    }
+    if !args.load_sample.is_empty() {
+        ctl.borrow_mut().drop_files(args.load_sample.clone());
+    }
+    if let Some(tab) = args.sampler_tab {
+        let mut c = ctl.borrow_mut();
+        if let Some(d) = c.selected_sampler() {
+            c.sampler_tab(d, tab);
+        }
     }
     if args.recording_review {
         // Offline engine + injected input (no input device): track 1 armed on Input 1,
@@ -892,6 +921,39 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_menu, |c, id: i32, which: i32, x: f32, y: f32| c.panel_menu(saine_core::DeviceId(id as u64), which, x, y));
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(saine_core::DeviceId(id as u64), dir));
     on!(on_panel_view, |c, id: i32, action: i32, v: f32| c.panel_view(saine_core::DeviceId(id as u64), action, v));
+    on!(on_sampler_tab, |c, id: i32, tab: i32| c.sampler_tab(saine_core::DeviceId(id as u64), tab));
+    on!(on_sampler_pad, |c, id: i32, which: i32, i: i32, down: bool| c.sampler_pad(saine_core::DeviceId(id as u64), which, i, down));
+    on!(on_sampler_layer, |c, id: i32, dir: i32| c.sampler_layer(saine_core::DeviceId(id as u64), dir));
+    on!(on_sampler_play, |c, id: i32, down: bool| c.sampler_play(saine_core::DeviceId(id as u64), down));
+    on!(on_sampler_action, |c, id: i32, a: i32| c.sampler_action(saine_core::DeviceId(id as u64), a));
+    on!(on_sampler_remove, |c, id: i32| c.sampler_remove(saine_core::DeviceId(id as u64)));
+    on!(on_sampler_well, |c, id: i32, phase: i32, x: f32, tol: f32, alt: bool| c.sampler_well(saine_core::DeviceId(id as u64), phase, x, tol, alt));
+    on!(on_sampler_handle, |c, id: i32, i: i32, phase: i32, x: f32, y: f32| c.sampler_handle(saine_core::DeviceId(id as u64), i, phase, x, y));
+    {
+        // The file dialog runs with the controller NOT borrowed (its modal loop keeps rendering).
+        let ctl = ctl.clone();
+        studio.on_sampler_load(move |id| {
+            let target = ctl.borrow().sampler_load_target(saine_core::DeviceId(id as u64));
+            let Some(target) = target else { return };
+            if let Some(file) = rfd::FileDialog::new().set_title("Choose audio file").add_filter("WAV audio", &["wav", "WAV"]).pick_file() {
+                ctl.borrow_mut().import_files(vec![file], target, None);
+            }
+        });
+    }
+    {
+        // Files dropped from Finder: onto the selected track's sampler, else imported as clips.
+        use slint::winit_030::{winit::event::WindowEvent, EventResult, WinitWindowAccessor};
+        let ctl = ctl.clone();
+        app.window().on_winit_window_event(move |_, ev| {
+            if let WindowEvent::DroppedFile(path) = ev
+                && let Ok(mut c) = ctl.try_borrow_mut()
+            {
+                c.drop_files(vec![path.clone()]);
+            }
+            EventResult::Propagate
+        });
+    }
+    on!(on_panel_graph, |c, id: i32, phase: i32, x: f32, y: f32, fine: bool, alt: bool| c.panel_graph(saine_core::DeviceId(id as u64), phase, x, y, fine, alt));
     on!(on_chain_scroll_by, |c, d: f32| c.chain_scroll_by(d));
     on!(on_add_category, |c, i: i32, x: f32, y: f32| c.add_category(i.max(0) as usize, x, y));
     on!(on_add_search_edited, |c, t: slint::SharedString| c.add_search(t.as_str()));
@@ -919,9 +981,34 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let ctl = ctl.clone();
         let aw = app.as_weak();
         let keymap = app_keymap();
+        let zm = zoom.clone();
         studio.on_key(move |text, primary, shift, alt, ctrl| {
             let Some(key) = key_name(text.as_str()) else { return false };
             let chord = Chord { key, primary, shift, alt, ctrl };
+            // View › Zoom In (⌘= / ⌘+), Zoom Out (⌘-), Reset Zoom (⌘0), as in the reference.
+            if primary && !alt && !ctrl {
+                let step = match chord.key.as_str() {
+                    "=" | "+" => Some(1),
+                    "-" | "_" => Some(-1),
+                    "0" if !shift => Some(0),
+                    _ => None,
+                };
+                if let Some(step) = step {
+                    let percent = {
+                        let mut z = zm.borrow_mut();
+                        if step == 0 { z.reset() } else { z.step(step) }
+                        z.percent
+                    };
+                    if let Some(a) = aw.upgrade() {
+                        zm.borrow_mut().sync(a.window());
+                        a.window().request_redraw();
+                    }
+                    if let Ok(mut c) = ctl.try_borrow_mut() {
+                        c.set_interface_zoom(percent);
+                    }
+                    return true;
+                }
+            }
             let cx = {
                 let c = ctl.borrow();
                 Context {
@@ -1033,6 +1120,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aw = app.as_weak();
         let ctl = ctl.clone();
         let fr = frame.clone();
+        let zm = zoom.clone();
         app.window().set_rendering_notifier(move |state, api| {
             let Some(app) = aw.upgrade() else { return };
             match state {
@@ -1046,6 +1134,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     f.renderer = r;
                 }
                 slint::RenderingState::BeforeRendering => {
+                    // Interface zoom: re-apply when the window is new or changed display.
+                    if zm.borrow().needs_sync(app.window().scale_factor()) {
+                        zm.borrow_mut().pending = true;
+                        let (aw, zm) = (app.as_weak(), zm.clone());
+                        slint::Timer::single_shot(Duration::ZERO, move || {
+                            if let Some(a) = aw.upgrade() {
+                                zm.borrow_mut().sync(a.window());
+                                a.window().request_redraw();
+                            }
+                        });
+                    }
                     let t0 = Instant::now();
                     let Ok(mut c) = ctl.try_borrow_mut() else { return };
                     let mut f = fr.borrow_mut();
@@ -1193,8 +1292,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let _ = slint::quit_event_loop();
         });
     }
+    // The OS window is 1440×820 pt like the reference's; interface zoom then sets how much
+    // of our (85 %-unit) layout fits in it, see `zoom.rs`.
     app.window().set_size(slint::LogicalSize::new(1440.0, 820.0));
-    app.window().set_position(slint::LogicalPosition::new(0.0, 33.0));
     app.run()?;
     if args.frame_stats && exit_after.is_none() {
         println!("{}", stats_json(&frame.borrow(), &app));

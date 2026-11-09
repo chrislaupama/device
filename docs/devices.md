@@ -52,6 +52,39 @@ flowchart LR
   The knob cells are then spread evenly across the dial row (the clusters
   only size the card); field cards centre their dial row instead.
 
+## Instruments and sample slots
+
+The Sampler, Drum Rack and Pad Sampler added two general features to the
+system. Any built-in device can use them.
+
+- **Built-in instruments.** A definition with `kind: PluginKind::Instrument`
+  goes in the track's instrument slot (`Command::SetInstrumentPlugin`, on
+  instrument tracks only), not in the insert chain. The engine kernel sets
+  `BuiltinDescriptor::instrument`. It then gets the track's notes as
+  `BuiltinContext::events` and renders into silence. `se_builtin_note`
+  plays a note on a live instrument right away, for pad and preview clicks.
+  Velocity 0 releases the note.
+- **Sample slots.** `DeviceDef::samples` is the number of audio files the
+  device can hold. Each file is a `DeviceSample` in `Device::samples`: a
+  slot, a project asset and optional slices (start, gain, pan, pitch).
+  `Command::SetDeviceSample` loads, replaces or clears one slot, and slice
+  edits use it too. Each of these is one undo step. `RemoveAsset` is refused
+  while a device still plays the asset. The snapshot maps the sample assets to
+  engine assets (`SessionSnapshot::device_assets`). The engine then gets the
+  v2 state (`se_builtin_state_v2`): the v1 header, the values, then one
+  `se_builtin_sample` per slot, followed by the slices. The kernel reads the
+  samples as `BuiltinContext::samples`, which are bound on the control thread
+  and never copied on the audio thread.
+- **Shared sampler engine.** `engine/src/devices/sampler_engine.{hpp,cpp}`
+  has the voice and voice pool, the sinc interpolator (band-limited when
+  pitched up), envelopes, the filter, the LFO and the granular warp. All
+  three samplers use it.
+- **Panel.** `View::Custom("sampler" | "pad-sampler" | "drum-rack")` uses
+  `src/sampler_panel.rs`. It has the waveform well with its flags, slices and
+  playheads, the tabs with a picture canvas, and the pad grid. Files are loaded
+  from the file picker or by dropping them on the window
+  (`ImportTarget::DeviceSample`).
+
 ## Adding a device
 
 1. **Definition.** Add `crates/saine-core/src/builtin/<id>.rs` with a
@@ -70,7 +103,11 @@ flowchart LR
      `clusters` of knobs (`Swap` holds alternatives in one cell, such as
      Rate / Rate Sync), `faces` (drawings inside a knob), `shown_when`
      (mode-dependent controls: hidden parameters get no control and no
-     automation entry).
+     automation entry), `fixed_width` (card width in pt; 0 derives it from
+     the dial row and view).
+   - A card narrower than 240 pt hides the preset label and arrows and opens
+     the preset menu from a chevron after the name. `Control::Toggle` on an
+     Off/On choice draws a latch capsule in the dial row.
    - `View::Field` is a plotted well (reference motion / response / sweep
      fields): name a curve model in `crates/saine-app/src/device_fields.rs`
      (traces, fill or band, ticks, caption value, live overlay), the caption,
@@ -80,8 +117,9 @@ flowchart LR
      first readout as an LFO phase (0..1) while the transport plays.
    - Parameter extras: `preset_locked()` (presets never load or save it,
      e.g. a random seed), `reset_on_load()`, `Format::Freq` (reference Hz
-     text) and `Format::SignedPercent`. Tempo-synced LFOs use the
-     `DIVISIONS` / `MOD_NOTES` tables and `synced_hz`.
+     text), `Format::SignedPercent` and `Format::DbCut` (a positive stored
+     cut shown as −x.x dB). Tempo-synced LFOs use the `DIVISIONS` /
+     `MOD_NOTES` tables and `synced_hz`.
    - Linked writes: when one edit must move other parameters in the same
      undo step (Character Mod's circuit switch resets untouched artifacts),
      add an arm to `builtin::linked_writes`; the panel then commits one
@@ -115,15 +153,26 @@ flowchart LR
    splits a block, the engine keeps each readout's segment value farthest
    from its idle value, so readouts must move away from idle as they grow
    (a peak meter rises from -120 dB, gain reduction falls from 0 dB).
+   A device has at most `kMaxReadouts` (64) readouts. Spectral helpers are in
+   `engine/src/devices/spectral.hpp` (`RealFft`, and `SpectrumTap`: 48 log
+   bands, 20 Hz–20 kHz, a full-scale sine reads 0 dB); `dsp.hpp` has the
+   state-variable filter (`SvfCoeffs`, including `bandpass`). Report look-ahead or block latency from
+   `latency()` so the engine compensates it.
 3. **Custom view (optional).** For bodies the template cannot express (EQ
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a
    Slint component in `ui/device_panel.slint` chosen by that data. Reuse
-   `ParamDrag` / `ParamDragX`, `KnobCell` and `SliderCol` for the gestures.
+   `ParamDrag` / `ParamDragX`, `KnobCell` and `SliderCol` for the gestures. Custom bodies
+   return a `PanelCanvas` from `Controller::custom_body` (`device_views.rs`):
+   paths, texts, grip pills and linear drag zones. When handles need
+   non-linear mapping or hit-testing (several handles on one well, a live
+   spectrum), set `pointer: true` and handle `Studio.panel-graph` in Rust,
+   as the restoration devices do (`crates/saine-app/src/panel_graph.rs`: hit
+   zones, spectrum ballistics from the readouts, one undo step per gesture).
    View-local state (a selected band, meter ballistics) goes through
    `Studio.panel-view(device, action, value)`; `src/panel_multiband.rs` is
-   the worked example (band selector, field with threshold / floor and
-   crossover handles, dial row following the selected band).
+   an example with its own Slint component (band selector, threshold / floor
+   and crossover handles, dial row following the selected band).
 4. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),
@@ -140,8 +189,9 @@ flowchart LR
 5. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
    (`saine_device_bench`, Release build) and put the numbers in the PR.
 6. **Render.** `--state reference-<id>` shows any built-in device at its
-   defaults; render it with `--screenshot` and compare it with the reference
-   capture.
+   defaults. Render it with `--offscreen --screenshot <png>` (a hidden
+   window, so it does not take over the screen) and compare it with the
+   reference capture.
 
 ## Commands
 

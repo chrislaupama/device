@@ -47,4 +47,5 @@ pub static FLANGER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Quarter Whoosh", values: &[("depth", 2.5), ("feedback", 45.0), ("width", 70.0), ("sync", 1.0), ("rate_sync", 8.0), ("output_gain", -0.8)] },
     ],
     sidechain: false,
+    samples: 0,
 };

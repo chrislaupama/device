@@ -94,6 +94,45 @@ inline std::vector<uint8_t> state_blob(const std::vector<float>& values, uint64_
     return out;
 }
 
+// One sample for a device's slot (planar audio at the rig's rate).
+struct TestSample {
+    uint32_t slot = 0;
+    Signal l, r; // r empty = mono
+    std::vector<se_builtin_slice> slices;
+};
+
+// The v2 se_builtin_state blob: values + sample table (asset ids are
+// first_asset + index in samples).
+inline std::vector<uint8_t> state_blob_v2(const std::vector<float>& values, const std::vector<TestSample>& samples,
+                                          uint64_t first_asset, uint64_t sidechain = 0) {
+    uint32_t nslices = 0;
+    for (const TestSample& s : samples) nslices += static_cast<uint32_t>(s.slices.size());
+    se_builtin_state_v2 h{SE_BUILTIN_STATE_MAGIC2, static_cast<uint32_t>(values.size()), sidechain,
+                          static_cast<uint32_t>(samples.size()), nslices};
+    std::vector<uint8_t> out;
+    const auto put = [&](const void* p, std::size_t n) {
+        const auto* b = static_cast<const uint8_t*>(p);
+        out.insert(out.end(), b, b + n);
+    };
+    put(&h, sizeof h);
+    if (!values.empty()) put(values.data(), 4 * values.size());
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        se_builtin_sample e{first_asset + i, samples[i].slot, static_cast<uint32_t>(samples[i].slices.size())};
+        put(&e, sizeof e);
+    }
+    for (const TestSample& s : samples)
+        for (const se_builtin_slice& c : s.slices) put(&c, sizeof c);
+    return out;
+}
+
+// Note events at absolute frames.
+struct NoteAt {
+    std::size_t frame;
+    uint8_t status, data1, data2;
+};
+inline NoteAt note_on(std::size_t f, uint8_t pitch, uint8_t vel = 127) { return {f, 0x90, pitch, vel}; }
+inline NoteAt note_off(std::size_t f, uint8_t pitch) { return {f, 0x80, pitch, 64}; }
+
 inline uint32_t param_index(const saine::BuiltinDescriptor& d, const char* id) {
     for (std::size_t i = 0; i < d.params.size(); ++i)
         if (std::strcmp(d.params[i], id) == 0) return static_cast<uint32_t>(i);
@@ -188,6 +227,53 @@ public:
     }
     Signal run_mono(const Signal& x) { return run(x, x).first; }
 
+    // Load samples into the device's slots (replaces every slot).
+    void load_samples(std::vector<TestSample> samples) {
+        samples_ = std::move(samples);
+        assets_.clear();
+        for (std::size_t i = 0; i < samples_.size(); ++i) {
+            auto a = std::make_shared<saine::Asset>();
+            a->id = 1000 + i;
+            a->channels = samples_[i].r.empty() ? 1 : 2;
+            a->frames = samples_[i].l.size();
+            a->source_sample_rate = rate_;
+            a->planar[0] = samples_[i].l;
+            if (!samples_[i].r.empty()) a->planar[1] = samples_[i].r;
+            assets_.push_back(std::move(a));
+        }
+        const auto blob = state_blob_v2(values_, samples_, 1000);
+        b_->update_state(blob.data(), blob.size());
+        b_->bind_samples([this](uint64_t id) -> saine::AssetRef {
+            return id >= 1000 && id < 1000 + assets_.size() ? assets_[id - 1000] : nullptr;
+        });
+    }
+
+    // Instruments: render n frames with note events (absolute frames).
+    std::pair<Signal, Signal> play(std::size_t n, const std::vector<NoteAt>& notes, double tempo = 120.0) {
+        Signal l(n, 0.0f), r(n, 0.0f);
+        saine::RtTransport tr;
+        tr.sample_rate = rate_;
+        tr.tempo_bpm = tempo;
+        std::vector<saine::MidiEvent> ev;
+        std::size_t ni = 0;
+        for (std::size_t pos = 0; pos < n; pos += block_) {
+            const auto len = static_cast<uint32_t>(std::min<std::size_t>(block_, n - pos));
+            ev.clear();
+            while (ni < notes.size() && notes[ni].frame < pos + len) {
+                saine::MidiEvent e;
+                e.offset = static_cast<uint32_t>(notes[ni].frame > pos ? notes[ni].frame - pos : 0);
+                e.status = notes[ni].status;
+                e.data1 = notes[ni].data1;
+                e.data2 = notes[ni].data2;
+                ev.push_back(e);
+                ++ni;
+            }
+            tr.position = static_cast<int64_t>(pos);
+            b_->run(l.data() + pos, r.data() + pos, len, ev.data(), static_cast<uint32_t>(ev.size()), tr);
+        }
+        return {std::move(l), std::move(r)};
+    }
+
     std::vector<float> readouts() {
         std::vector<float> r(desc().readouts.size());
         b_->readouts(r.data(), static_cast<uint32_t>(r.size()));
@@ -204,6 +290,8 @@ private:
     std::shared_ptr<saine::PluginInstance> inst_;
     saine::BuiltinInstance* b_ = nullptr;
     Signal sc_l_, sc_r_;
+    std::vector<TestSample> samples_;
+    std::vector<saine::AssetRef> assets_;
 };
 
 // v6 session builder for tracks that play a clip through built-in devices.
