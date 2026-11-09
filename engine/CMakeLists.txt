@@ -118,6 +118,8 @@ add_library(saine_engine STATIC
   src/devices/builtin.cpp
   src/devices/bitcrusher.cpp
   src/devices/compressor.cpp
+  src/devices/lfo.cpp
+  src/devices/rack.cpp
   src/devices/distortion.cpp
   src/devices/soft_clipper.cpp
   src/devices/tape_saturation.cpp
@@ -353,6 +355,7 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/devices/test_drive.cpp
     tests/devices/test_imaging.cpp
     tests/devices/test_modulation.cpp
+    tests/devices/test_mod_routes.cpp
     tests/devices/test_character_mod.cpp
     tests/devices/test_drum_rack.cpp
     tests/devices/test_sampler.cpp

@@ -198,11 +198,14 @@ impl Engine {
         // Plugin devices: owned strings / decoded states first, then the
         // C descriptors pointing into them (both outlive the call).
         let dev_store: Vec<Vec<DeviceStore>> =
-            s.tracks.iter().map(|t| t.devices.iter().map(|d| self.device_store(d, &s.device_assets)).collect::<Result<_, _>>()).collect::<Result<_, _>>()?;
+            s.tracks
+                .iter()
+                .map(|t| t.devices.iter().map(|d| self.device_store(d, &t.devices, t.instrument_plugin.as_ref(), &s.device_assets)).collect::<Result<_, _>>())
+                .collect::<Result<_, _>>()?;
         let inst_store: Vec<Option<DeviceStore>> = s
             .tracks
             .iter()
-            .map(|t| if t.instrument { t.instrument_plugin.as_ref().map(|d| self.device_store(d, &s.device_assets)).transpose() } else { Ok(None) })
+            .map(|t| if t.instrument { t.instrument_plugin.as_ref().map(|d| self.device_store(d, &[], None, &s.device_assets)).transpose() } else { Ok(None) })
             .collect::<Result<_, _>>()?;
         let dev_descs: Vec<Vec<ffi::se_device_desc>> = dev_store.iter().map(|v| v.iter().map(DeviceStore::desc).collect()).collect();
         let inst_descs: Vec<Option<ffi::se_device_desc>> = inst_store.iter().map(|d| d.as_ref().map(DeviceStore::desc)).collect();
@@ -258,16 +261,23 @@ impl Engine {
         check(unsafe { ffi::se_session_publish_v6(self.raw, &desc) })
     }
 
-    fn device_store(&self, d: &saine_core::Device, assets: &std::collections::HashMap<saine_core::AssetId, u64>) -> Result<DeviceStore, EngineError> {
+    fn device_store(
+        &self,
+        d: &saine_core::Device,
+        devices: &[saine_core::Device],
+        instrument: Option<&saine_core::Device>,
+        assets: &std::collections::HashMap<saine_core::AssetId, u64>,
+    ) -> Result<DeviceStore, EngineError> {
         let cs = |s: &str| CString::new(s).map_err(|_| nul_error());
         // SAFETY: plain query on a valid handle.
         let state = if let Some(def) = saine_core::builtin::def_of(d) {
             let sidechain = d.sidechain.map_or(0, |t| t.0);
-            if def.samples == 0 {
+            let routes = saine_core::modulation::routes(devices, instrument, d);
+            let samples: Vec<_> = d.samples.iter().filter_map(|s| Some((*assets.get(&s.asset)?, s.slot, s.slices.as_slice()))).collect();
+            if def.samples == 0 && routes.is_empty() {
                 Some(builtin_state(&def.values(d), sidechain))
             } else {
-                let samples: Vec<_> = d.samples.iter().filter_map(|s| Some((*assets.get(&s.asset)?, s.slot, s.slices.as_slice()))).collect();
-                Some(builtin_state_v2(&def.values(d), sidechain, &samples))
+                Some(builtin_state_v2(&def.values(d), sidechain, &samples, &routes))
             }
         } else if unsafe { ffi::se_plugin_is_live(self.raw, d.id.0) } != 0 {
             None
@@ -375,6 +385,18 @@ impl Engine {
         check(unsafe { ffi::se_builtin_set_param(self.raw, device_id, index, value) })
     }
 
+    /// Set a hosted plugin's parameter (normalized) from a plugin card. A
+    /// modulated parameter keeps it as its base.
+    pub fn plugin_set_param(&self, device_id: u64, param_id: u32, normalized: f32) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_plugin_set_param(self.raw, device_id, param_id, normalized) })
+    }
+
+    /// Base value of a modulated plugin parameter; `None` when it is not modulated.
+    pub fn mod_base(&self, device_id: u64, param_id: u32) -> Option<f32> {
+        let mut v = 0f32;
+        (unsafe { ffi::se_mod_base(self.raw, device_id, param_id, &mut v) } == ffi::SE_OK).then_some(v)
+    }
+
     /// Latest readouts of a live built-in device (registry order), e.g. the
     /// compressor's input, output and gain reduction in dB.
     pub fn builtin_readouts(&self, device_id: u64, out: &mut Vec<f32>) -> Result<(), EngineError> {
@@ -440,8 +462,9 @@ pub fn builtin_state(values: &[f32], sidechain_track: u64) -> Vec<u8> {
 
 /// The v2 engine state of a built-in device that plays audio files: the
 /// `se_builtin_state_v2` header, the values, then one `se_builtin_sample`
-/// per (engine asset, slot, slices) and every sample's slices in that order.
-pub fn builtin_state_v2(values: &[f32], sidechain_track: u64, samples: &[(u64, u32, &[saine_core::Slice])]) -> Vec<u8> {
+/// per (engine asset, slot, slices), every sample's slices in that order,
+/// then the routes of a modulation source.
+pub fn builtin_state_v2(values: &[f32], sidechain_track: u64, samples: &[(u64, u32, &[saine_core::Slice])], routes: &[saine_core::modulation::ModRoute]) -> Vec<u8> {
     // Slices the engine would reject (and with them the whole session):
     // dropped, keeping the rest ascending.
     let valid: Vec<Vec<saine_core::Slice>> = samples
@@ -458,12 +481,14 @@ pub fn builtin_state_v2(values: &[f32], sidechain_track: u64, samples: &[(u64, u
         })
         .collect();
     let slices: usize = valid.iter().map(Vec::len).sum();
-    let mut out = Vec::with_capacity(24 + 4 * values.len() + 16 * (samples.len() + slices));
+    let mut out = Vec::with_capacity(32 + 4 * values.len() + 16 * (samples.len() + slices) + 40 * routes.len());
     out.extend_from_slice(&ffi::SE_BUILTIN_STATE_MAGIC2.to_le_bytes());
     out.extend_from_slice(&(values.len() as u32).to_le_bytes());
     out.extend_from_slice(&sidechain_track.to_le_bytes());
     out.extend_from_slice(&(samples.len() as u32).to_le_bytes());
     out.extend_from_slice(&(slices as u32).to_le_bytes());
+    out.extend_from_slice(&(routes.len() as u32).to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
     for v in values {
         out.extend_from_slice(&v.to_le_bytes());
     }
@@ -477,6 +502,14 @@ pub fn builtin_state_v2(values: &[f32], sidechain_track: u64, samples: &[(u64, u
             for f in [s.start, s.gain, s.pan, s.pitch] {
                 out.extend_from_slice(&f.to_le_bytes());
             }
+        }
+    }
+    for r in routes {
+        out.extend_from_slice(&r.target.0.to_le_bytes());
+        out.extend_from_slice(&r.param.to_le_bytes());
+        out.extend_from_slice(&[if r.plugin { ffi::SE_MOD_PLUGIN } else { ffi::SE_MOD_BUILTIN }, r.slot, r.absolute as u8, r.p_log as u8]);
+        for f in [r.min, r.max, r.p_min, r.p_max, r.p_skew, r.p_step] {
+            out.extend_from_slice(&f.to_le_bytes());
         }
     }
     out

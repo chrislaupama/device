@@ -2,6 +2,7 @@
 // se_export_wav. Real-time safe: no allocation, no locks, no I/O.
 #pragma once
 
+#include "devices/builtin.hpp"
 #include "plugins/plugin_instance.hpp"
 #include "render_graph.hpp"
 
@@ -33,6 +34,13 @@ public:
     float* auto_b() noexcept { return auto_b_.data(); }
     ParamEvent* param_events() noexcept { return param_events_.data(); }
     se_synth_params& synth_params() noexcept { return synth_params_; }
+    // Modulation scratch: per modulated parameter of one device, an offset
+    // and an absolute value per grid point; and the built-in bindings.
+    static constexpr uint32_t kMaxModTargets = 128;
+    uint32_t mod_points() const noexcept { return mod_points_; }
+    float* mod_off(uint32_t t) noexcept { return mod_.data() + (2 * std::size_t{t}) * mod_points_; }
+    float* mod_abs(uint32_t t) noexcept { return mod_.data() + (2 * std::size_t{t} + 1) * mod_points_; }
+    BuiltinMod* mod_binds() noexcept { return mod_binds_.data(); }
     // Sidechain taps (SE_BUILTIN_MAX_SIDECHAINS stereo buffers).
     float* sc_l(uint32_t tap) noexcept { return sc_.data() + (2 * std::size_t{tap}) * max_block_; }
     float* sc_r(uint32_t tap) noexcept { return sc_.data() + (2 * std::size_t{tap} + 1) * max_block_; }
@@ -43,6 +51,9 @@ private:
     std::vector<float> gain_l_, gain_r_, auto_a_, auto_b_;
     std::vector<ParamEvent> param_events_;
     std::vector<float> sc_;
+    uint32_t mod_points_;
+    std::vector<float> mod_;
+    std::vector<BuiltinMod> mod_binds_;
     se_synth_params synth_params_{};
 };
 
