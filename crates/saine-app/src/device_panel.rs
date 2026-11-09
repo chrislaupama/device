@@ -658,11 +658,14 @@ impl Controller {
                         picks.push(PanelPick { kind: 4, ..Default::default() });
                     }
                     let on = self.panel_value(d, def, p) >= 0.5;
-                    let label = match p.latch {
-                        Some((off, on_text)) => (if on { on_text } else { off }).to_string(),
-                        None => format!("{} {}", p.label, if on { "On" } else { "Off" }),
+                    let (off_text, on_text) = match p.latch {
+                        Some((off, on_text)) => (off.to_string(), on_text.to_string()),
+                        None => (format!("{} Off", p.label), format!("{} On", p.label)),
                     };
-                    picks.push(PanelPick { kind: 5, param: idx(p.id), label: s(label), selected: on as i32, enabled: true, ..Default::default() });
+                    // As wide as its wider state label, padded 8 each side (the reference stacks both labels).
+                    let width = (text_width(&off_text, 10.0, -0.4).max(text_width(&on_text, 10.0, -0.4)) + 16.0).ceil() * Z;
+                    let label = if on { on_text } else { off_text };
+                    picks.push(PanelPick { kind: 5, param: idx(p.id), label: s(label), selected: on as i32, enabled: true, width, ..Default::default() });
                 }
                 (Control::Views, _) => picks.push(PanelPick {
                     kind: 7,

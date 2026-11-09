@@ -604,6 +604,7 @@ component PickItem inherits HorizontalLayout {
         }
     }
     if root.p.kind == 5: Latch {
+        width: root.p.width > 0 ? root.p.width : self.min-width;
         label: root.p.label; on: root.p.selected == 1; accent: root.accent;
         clicked => { Studio.panel-choice(root.device, root.p.param, root.p.selected == 1 ? 0 : 1); }
         reset => { Studio.panel-reset(root.device, root.p.param); }
