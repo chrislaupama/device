@@ -672,7 +672,7 @@ impl Controller {
     /// (`SetInstrumentPlugin`; the built-in Synth sets None). One undo step.
     pub fn add_item_to_track(&mut self, item: &Item, track: TrackId, index: Option<usize>) -> bool {
         let Some(t) = self.project().track(track) else { return false };
-        let (kind, has_plugin) = (t.kind, t.instrument_plugin.as_ref().is_some_and(|d| !is_builtin_synth(d)));
+        let (kind, has_synth) = (t.kind, t.instrument_plugin.as_ref().is_some_and(is_builtin_synth));
         let ok = match (item.kind(), item) {
             (PluginKind::Effect, Item::Plugin(p)) => self.execute(Command::AddDevice { track, index, device: Device::new(p.clone()) }),
             (PluginKind::Effect, Item::Builtin(d)) => self.execute(Command::AddDevice { track, index, device: d.instantiate() }),
@@ -681,7 +681,7 @@ impl Controller {
                 false
             }
             (PluginKind::Instrument, Item::BuiltinSynth) => {
-                if !has_plugin {
+                if has_synth {
                     self.set_status("The built-in Synth is already this track's instrument", 3);
                     false
                 } else {
@@ -1026,7 +1026,7 @@ impl Controller {
     /// Instrument card "Use built-in Synth".
     pub fn device_use_synth(&mut self) {
         let Some(t) = self.selected_track else { return };
-        if self.project().track(t).is_some_and(|t| t.instrument_plugin.as_ref().is_some_and(|d| !is_builtin_synth(d))) {
+        if self.project().track(t).is_some_and(|t| !t.instrument_plugin.as_ref().is_some_and(is_builtin_synth)) {
             self.add_item_to_track(&Item::BuiltinSynth, t, None);
         }
     }
