@@ -8,7 +8,7 @@
 // multiplied by PanelStyle.z. Colours are the measured card colours.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
-import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField, PanelSampler, PanelPad, PanelHandle } from "studio.slint";
+import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField, PanelCanvas, PanelZone, PanelButton, PanelSampler, PanelPad, PanelHandle } from "studio.slint";
 
 export global PanelStyle {
     out property <float> z: 0.85;
@@ -107,6 +107,7 @@ component KnobCell inherits Rectangle {
     property <float> from: root.k.bipolar ? 0 : -135;
     property <bool> editing;
     width: 62px * zm; height: 76px * zm;
+    opacity: root.k.dim ? 0.55 : 1.0;
     accessible-role: slider; accessible-label: root.k.label; accessible-value: root.k.value;
     fs := ParamKeys { device: root.device; param: root.k.param; edit => { root.editing = true; } }
     dial := Rectangle {
@@ -162,8 +163,9 @@ component KnobCell inherits Rectangle {
             done => { root.editing = false; }
         }
     }
+    // The name box is wider than the cell (76 pt) so "Compression" / "Downsample" fit.
     Text {
-        x: 0; y: 58px * zm; width: root.width; height: 14px * zm;
+        x: (root.width - 76px * zm) / 2; y: 58px * zm; width: 76px * zm; height: 14px * zm;
         text: root.k.label; color: PanelStyle.text; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
         horizontal-alignment: center; vertical-alignment: center; overflow: elide;
     }
@@ -212,6 +214,139 @@ component SliderCol inherits Rectangle {
         x: 0; y: root.bottom + 26px * zm; width: root.width; height: 14px * zm;
         text: root.s.label; color: PanelStyle.text; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
         horizontal-alignment: center; vertical-alignment: center;
+    }
+}
+
+// Latch: On/Off pill (reference fx latch): 20 pt, 10 pt / 600 text, dark at rest, filled with
+// the track colour when on. Click toggles, Alt-click resets.
+component Latch inherits Rectangle {
+    in property <string> label;
+    in property <bool> on;
+    in property <color> accent;
+    callback clicked();
+    callback reset();
+    property <float> zm: PanelStyle.z;
+    property <bool> alt-down;
+    height: 20px * zm;
+    min-width: latch-text.preferred-width + 16px * zm;
+    border-radius: self.height / 2;
+    background: root.on ? (latch-ta.has-hover ? root.accent.brighter(0.14) : root.accent) : PanelStyle.seg;
+    border-width: root.on ? 0.5px : 0;
+    border-color: root.accent.darker(0.2);
+    accessible-role: checkbox; accessible-label: root.label; accessible-checked: root.on;
+    if !root.on && latch-ta.has-hover: Rectangle { border-radius: parent.border-radius; background: #ffffff09; }
+    latch-text := Text {
+        text: root.label; font-size: 10px * zm; font-weight: 600; letter-spacing: -0.04 * 10px * zm;
+        color: root.on ? #17181b : latch-ta.has-hover ? #ffffffb3 : #ffffff8c;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+    latch-ta := TouchArea {
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                root.alt-down = e.modifiers.alt;
+                if (e.modifiers.alt) { root.reset(); }
+            }
+        }
+        clicked => { if (!root.alt-down) { root.clicked(); } }
+    }
+}
+
+// Freely placed control of a custom card body: latch or menu pill.
+component ButtonCell inherits Rectangle {
+    in property <int> device;
+    in property <PanelButton> b;
+    in property <color> accent;
+    property <float> zm: PanelStyle.z;
+    width: root.b.w; height: 20px * zm;
+    if root.b.kind == 0: Latch {
+        width: parent.width; label: root.b.label; on: root.b.on; accent: root.accent;
+        clicked => { Studio.panel-choice(root.device, root.b.param, root.b.on ? 0 : 1); }
+        reset => { Studio.panel-reset(root.device, root.b.param); }
+    }
+    if root.b.kind == 1: Rectangle {
+        border-radius: self.height / 2; background: pick-ta.has-hover ? PanelStyle.pill-hot : PanelStyle.seg;
+        accessible-role: combobox; accessible-label: root.b.label;
+        Text {
+            x: 10px * zm; width: parent.width - 28px * zm; text: root.b.label; color: PanelStyle.ink;
+            font-size: 10px * zm; font-weight: 600; letter-spacing: -0.04 * 10px * zm; vertical-alignment: center; overflow: elide;
+        }
+        Icon { x: parent.width - 17px * zm; y: (parent.height - 9px * zm) / 2; width: 9px * zm; height: 9px * zm; d: Icons.chevron-down; ink: #a0a0a3; stroke-width: 1.3px; }
+        pick-ta := TouchArea { clicked => { Studio.panel-menu(root.device, root.b.param, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
+    }
+}
+
+// Drag zone of a device field: one or two parameters (horizontal / vertical), Shift fine,
+// Alt-click or double-click resets them.
+component ZoneDrag inherits TouchArea {
+    in property <int> device;
+    in property <PanelZone> zone;
+    property <length> last-x;
+    property <length> last-y;
+    mouse-cursor: root.zone.param-x >= 0 && root.zone.param-y >= 0 ? MouseCursor.move : root.zone.param-x >= 0 ? MouseCursor.ew-resize : MouseCursor.ns-resize;
+    function reset() { Studio.panel-reset-xy(root.device, root.zone.param-x, root.zone.param-y); }
+    pointer-event(e) => {
+        if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+            if (e.modifiers.alt) { root.reset(); return; }
+            root.last-x = self.mouse-x;
+            root.last-y = self.mouse-y;
+            Studio.panel-drag-xy(root.device, root.zone.param-x, root.zone.param-y, 0, 0, 0, root.zone.rate-x, root.zone.rate-y, e.modifiers.shift);
+        }
+        if (e.kind == PointerEventKind.move && self.pressed) {
+            Studio.panel-drag-xy(root.device, root.zone.param-x, root.zone.param-y, 1, (self.mouse-x - root.last-x) / 1px, (root.last-y - self.mouse-y) / 1px, root.zone.rate-x, root.zone.rate-y, e.modifiers.shift);
+            root.last-x = self.mouse-x;
+            root.last-y = self.mouse-y;
+        }
+        if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-drag-xy(root.device, root.zone.param-x, root.zone.param-y, 2, 0, 0, root.zone.rate-x, root.zone.rate-y, false); }
+        if (e.kind == PointerEventKind.cancel) { Studio.panel-drag-xy(root.device, root.zone.param-x, root.zone.param-y, 3, 0, 0, root.zone.rate-x, root.zone.rate-y, false); }
+    }
+    double-clicked => { root.reset(); }
+}
+
+// Device field (View::Custom): optional caption + readout above a recessed well, then
+// path layers, texts, grip pills and drag zones, all computed in Rust.
+component DeviceCanvas inherits Rectangle {
+    in property <int> device;
+    in property <PanelCanvas> f;
+    in property <color> accent;
+    property <float> zm: PanelStyle.z;
+    if root.f.well: HorizontalLayout {
+        x: 0; y: 0; height: 16px * zm; spacing: 5px * zm; alignment: start;
+        Text { text: root.f.caption; color: PanelStyle.caption; font-size: 11.5px * zm; font-weight: 500; letter-spacing: -0.02 * 11.5px * zm; vertical-alignment: center; }
+        Text { text: root.f.readout; color: PanelStyle.ink; font-size: 11.5px * zm; font-weight: 650; letter-spacing: -0.04 * 11.5px * zm; vertical-alignment: center; }
+    }
+    Rectangle {
+        y: root.f.well-y; height: root.height - root.f.well-y;
+        border-radius: root.f.well ? 4px * zm : 0;
+        background: root.f.well ? @linear-gradient(180deg, #212125 0%, #18191d 100%) : transparent;
+        clip: root.f.well;
+        accessible-role: groupbox; accessible-label: root.f.caption; accessible-value: root.f.readout;
+        for p in root.f.paths: Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: p.commands; stroke: p.stroke; stroke-width: p.width; fill: p.fill;
+            stroke-line-join: round; stroke-line-cap: round;
+        }
+        for t in root.f.texts: Text {
+            x: t.x; y: t.y; width: t.w; height: t.h;
+            text: t.text; color: t.color; font-size: t.size; font-weight: t.weight; letter-spacing: -0.04 * t.size;
+            horizontal-alignment: t.align == 0 ? TextHorizontalAlignment.left : t.align == 1 ? TextHorizontalAlignment.center : TextHorizontalAlignment.right;
+            vertical-alignment: center;
+        }
+        for g in root.f.grips: Rectangle {
+            x: g.x; y: g.y - 8px * zm; height: 16px * zm; width: grip-row.preferred-width;
+            border-radius: self.height / 2; background: PanelStyle.pill;
+            drop-shadow-blur: 2px; drop-shadow-offset-y: 1px; drop-shadow-color: #00000073;
+            grip-row := HorizontalLayout {
+                padding-left: 8px * zm; padding-right: 8px * zm; spacing: 5px * zm;
+                Path {
+                    width: 7px * zm; height: 7px * zm; y: (16px * zm - 7px * zm) / 2;
+                    viewbox-width: 7; viewbox-height: 7; fill: #ffffff66; stroke-width: 0;
+                    commands: "M0.6 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0";
+                }
+                Text { text: g.label; color: #ffffff8c; font-size: 11px * zm; font-weight: 500; vertical-alignment: center; }
+                Text { text: g.value; color: PanelStyle.ink; font-size: 11px * zm; font-weight: 650; letter-spacing: -0.04 * 11px * zm; vertical-alignment: center; }
+            }
+        }
+        for z in root.f.zones: ZoneDrag { x: z.x; y: z.y; width: z.w; height: z.h; device: root.device; zone: z; }
     }
 }
 
@@ -270,20 +405,10 @@ component PickItem inherits HorizontalLayout {
         Icon { x: parent.width - 18px * zm; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: Icons.chevron-down; ink: #a0a0a3; stroke-width: 1.3px; }
         menu-ta := TouchArea { clicked => { Studio.panel-menu(root.device, root.p.param, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
     }
-    // Toggle pill: name + Off/On, click flips it.
-    if root.p.kind == 5: Rectangle {
-        width: tg-row.preferred-width; border-radius: self.height / 2; background: tg-ta.has-hover ? PanelStyle.pill-hot : PanelStyle.seg;
-        accessible-role: checkbox; accessible-label: root.p.label; accessible-checked: root.p.selected == 1;
-        tg-row := HorizontalLayout {
-            padding-left: 10px * zm; padding-right: 10px * zm; spacing: 4px * zm;
-            Text { text: root.p.label; color: PanelStyle.caption; font-size: 11px * zm; font-weight: 500; vertical-alignment: center; }
-            Text { text: root.p.value; color: root.p.selected == 1 ? root.accent : PanelStyle.ink; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm; vertical-alignment: center; }
-        }
-        tg-ta := TouchArea {
-            property <bool> alt-down;
-            pointer-event(e) => { if (e.kind == PointerEventKind.down) { self.alt-down = e.modifiers.alt; if (e.modifiers.alt) { Studio.panel-reset(root.device, root.p.param); } } }
-            clicked => { if (!self.alt-down) { Studio.panel-choice(root.device, root.p.param, 1 - root.p.selected); } }
-        }
+    if root.p.kind == 5: Latch {
+        label: root.p.label; on: root.p.selected == 1; accent: root.accent;
+        clicked => { Studio.panel-choice(root.device, root.p.param, root.p.selected == 1 ? 0 : 1); }
+        reset => { Studio.panel-reset(root.device, root.p.param); }
     }
     // Button (sampler actions).
     if root.p.kind == 6: Rectangle {
@@ -705,13 +830,22 @@ export component BuiltinCard inherits Rectangle {
         Rectangle { x: root.card.enabled ? parent.width - 10px : 1px; y: 1px; width: 9px; height: 9px; border-radius: 4.5px; background: root.card.enabled ? #17181b : #ffffff; }
         TouchArea { clicked => { Studio.device-power(root.card.id); } }
     }
-    Text {
-        x: 37.5px; y: 5px; width: root.width - 37.5px - 140px; height: 16px;
+    // Narrow cards (Utility) have no room for the preset label: a chevron after the name opens the menu.
+    property <bool> narrow: root.width < 240px;
+    name-text := Text {
+        x: 37.5px; y: 5px; height: 16px;
+        width: root.narrow ? min(self.preferred-width, root.width - 37.5px - 120px * zm) : root.width - 37.5px - 140px;
         text: root.card.name; color: root.card.enabled ? #ffffff : #9d9d9f; font-size: 11px; font-weight: 700;
         vertical-alignment: center; overflow: elide;
     }
+    if root.narrow: Rectangle {
+        x: name-text.x + name-text.width + 2px; y: 5px; width: 14px; height: 17px;
+        accessible-role: combobox; accessible-label: "Presets"; accessible-value: root.card.preset;
+        Icon { x: 2px; y: 4px; width: 9px; height: 9px; d: Icons.chevron-down; ink: menu-ta.has-hover ? #e5e5e8 : #9d9d9f; stroke-width: 1.3px; }
+        menu-ta := TouchArea { clicked => { Studio.panel-menu(root.card.id, -2, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
+    }
     // Presets: name (or "Presets") opens the menu; arrows step through the factory list.
-    Rectangle {
+    if !root.narrow: Rectangle {
         x: root.width - 200px * zm; y: 4px; width: 94px * zm; height: 18px;
         accessible-role: combobox; accessible-label: "Presets"; accessible-value: root.card.preset;
         Text {
@@ -745,6 +879,11 @@ export component BuiltinCard inherits Rectangle {
             spacing: 16px * zm;
             for p in root.card.picks: PickItem { device: root.card.id; p: p; accent: root.card.accent; }
         }
+        if root.card.canvas.visible: DeviceCanvas {
+            x: root.card.canvas.x; y: root.card.canvas.y; width: root.card.canvas.w; height: root.card.canvas.h;
+            device: root.card.id; f: root.card.canvas; accent: root.card.accent;
+        }
+        for b in root.card.buttons: ButtonCell { x: b.x; y: b.y; device: root.card.id; b: b; accent: root.card.accent; }
         if root.card.strip.visible: DynamicsStrip {
             x: root.card.strip.x; y: root.card.strip.y; width: root.card.strip.w; height: root.card.strip.h;
             device: root.card.id; s: root.card.strip; accent: root.card.accent;
@@ -759,7 +898,7 @@ export component BuiltinCard inherits Rectangle {
             top: 86px * zm; bottom: 174px * zm;
         }
         for k in root.card.knobs: KnobCell {
-            x: k.x; y: 229px * zm;
+            x: k.x; y: k.y;
             device: root.card.id; k: k; accent: root.card.accent;
         }
         if root.card.sampler.visible: SamplerBody {

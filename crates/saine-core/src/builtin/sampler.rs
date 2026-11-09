@@ -91,6 +91,7 @@ pub static SAMPLER: DeviceDef = DeviceDef {
         faces: &[],
         min_height: 265.0,
         shown_when: &[],
+        fixed_width: 798.0,
     },
     factory: &[
         FactoryPreset { name: "Felt Piano Keys", values: &[("mode", 0.0), ("voicing", 1.0), ("ampAttack", 4.0), ("ampDecay", 900.0), ("ampSustain", 0.35), ("ampRelease", 420.0), ("filterOn", 1.0), ("cutoff", 3200.0), ("keyTrack", 0.6), ("envDepth", 0.15), ("filterDecay", 600.0)] },

@@ -202,7 +202,7 @@ pub static DRUM_RACK: DeviceDef = DeviceDef {
         gate("p16_gate", "Pad 16 Gate"),
         warp("p16_warp", "Pad 16 Warp"),
     ],
-    layout: Layout { picker: &[], view: Some(View::Custom("drum-rack")), sliders: &[], clusters: &[], faces: &[], min_height: 265.0, shown_when: &[] },
+    layout: Layout { picker: &[], view: Some(View::Custom("drum-rack")), sliders: &[], clusters: &[], faces: &[], min_height: 265.0, shown_when: &[], fixed_width: 920.0 },
     factory: &[
         FactoryPreset { name: "Tight Kit", values: &[("p1_fadeOut", 20.0), ("p2_fadeOut", 30.0), ("p3_end", 0.4), ("p4_end", 0.6)] },
         FactoryPreset { name: "Wide Kit", values: &[("p3_pan", -0.3), ("p4_pan", 0.3), ("p5_pan", -0.5), ("p6_pan", 0.5), ("p7_pan", -0.2), ("p8_pan", 0.2)] },
