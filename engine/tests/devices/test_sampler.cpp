@@ -175,6 +175,18 @@ TEST_CASE(sampler_filter_and_amp_envelope) {
     CHECK(peak(a, 12000, 14000) > 0.45);  // fully open after it
 }
 
+TEST_CASE(sampler_envelope_edits_reach_held_notes) {
+    auto rig = sampler_with(tone(48000, 440.0, kRate, 0.5));
+    rig.set("mode", 0.0f); // Classic: held notes loop
+    rig.set("loop", 1.0f);
+    rig.set("ampRelease", 4000.0f);
+    rig.play(4800, {note_on(0, 60)});
+    rig.set("ampRelease", 10.0f); // while the note is held
+    auto [l, r] = rig.play(9600, {note_off(0, 60)});
+    CHECK(peak(l, 0, 240) > 0.2);
+    CHECK(peak(l, 4800, 9600) < 0.001); // the new 10 ms release, not 4 s
+}
+
 TEST_CASE(sampler_pitching_up_does_not_alias) {
     // A 15 kHz sine two octaves up would alias to audible tones; the
     // band-limited reader removes it.
@@ -183,6 +195,23 @@ TEST_CASE(sampler_pitching_up_does_not_alias) {
     CHECK(db(rms(l, 1000, 6000)) < -50.0);
     auto [ok, ok2] = rig.play(12000, {note_on(0, 60)}); // in place: passes
     CHECK(db(rms(ok, 1000, 10000)) > db(0.5 / std::sqrt(2.0)) - 1.5);
+}
+
+TEST_CASE(sampler_far_above_four_times_does_not_alias) {
+    // Three and five octaves up (8x, 32x) read octave-down copies of the
+    // sample: a 4 kHz sine at 8x and a 1 kHz sine at 32x would land at
+    // 32 kHz, above Nyquist (just past the read filter's corner, the worst
+    // case: without the copies these alias at -16 and -10 dB).
+    auto rig = sampler_with(tone(48000, 4000.0, kRate, 0.5));
+    auto [l, r] = rig.play(12000, {note_on(0, 96)});
+    CHECK(db(rms(l, 1000, 4000)) < -38.0);
+    auto rig32 = sampler_with(tone(48000, 1000.0, kRate, 0.5));
+    auto [l32, r32] = rig32.play(4800, {note_on(0, 120)});
+    CHECK(db(rms(l32, 200, 1400)) < -38.0);
+    // A 500 Hz sine at 8x (4 kHz) passes.
+    auto pass = sampler_with(tone(48000, 500.0, kRate, 0.5));
+    auto [p, p2] = pass.play(12000, {note_on(0, 96)});
+    CHECK(db(rms(p, 1000, 4000)) > db(0.5 / std::sqrt(2.0)) - 1.0);
 }
 
 TEST_CASE(sampler_plays_in_the_instrument_slot_with_live_notes) {

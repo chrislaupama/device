@@ -442,7 +442,22 @@ pub fn builtin_state(values: &[f32], sidechain_track: u64) -> Vec<u8> {
 /// `se_builtin_state_v2` header, the values, then one `se_builtin_sample`
 /// per (engine asset, slot, slices) and every sample's slices in that order.
 pub fn builtin_state_v2(values: &[f32], sidechain_track: u64, samples: &[(u64, u32, &[saine_core::Slice])]) -> Vec<u8> {
-    let slices: usize = samples.iter().map(|s| s.2.len().min(ffi::SE_BUILTIN_MAX_SLICES)).sum();
+    // Slices the engine would reject (and with them the whole session):
+    // dropped, keeping the rest ascending.
+    let valid: Vec<Vec<saine_core::Slice>> = samples
+        .iter()
+        .map(|(_, _, sl)| {
+            let mut kept: Vec<saine_core::Slice> = Vec::new();
+            for s in sl.iter() {
+                let ok = [s.start, s.gain, s.pan, s.pitch].iter().all(|f| f.is_finite()) && (0.0..1.0).contains(&s.start) && kept.last().is_none_or(|p| s.start > p.start);
+                if ok && kept.len() < ffi::SE_BUILTIN_MAX_SLICES {
+                    kept.push(*s);
+                }
+            }
+            kept
+        })
+        .collect();
+    let slices: usize = valid.iter().map(Vec::len).sum();
     let mut out = Vec::with_capacity(24 + 4 * values.len() + 16 * (samples.len() + slices));
     out.extend_from_slice(&ffi::SE_BUILTIN_STATE_MAGIC2.to_le_bytes());
     out.extend_from_slice(&(values.len() as u32).to_le_bytes());
@@ -452,13 +467,13 @@ pub fn builtin_state_v2(values: &[f32], sidechain_track: u64, samples: &[(u64, u
     for v in values {
         out.extend_from_slice(&v.to_le_bytes());
     }
-    for (asset, slot, sl) in samples {
+    for ((asset, slot, _), sl) in samples.iter().zip(&valid) {
         out.extend_from_slice(&asset.to_le_bytes());
         out.extend_from_slice(&slot.to_le_bytes());
-        out.extend_from_slice(&(sl.len().min(ffi::SE_BUILTIN_MAX_SLICES) as u32).to_le_bytes());
+        out.extend_from_slice(&(sl.len() as u32).to_le_bytes());
     }
-    for (_, _, sl) in samples {
-        for s in sl.iter().take(ffi::SE_BUILTIN_MAX_SLICES) {
+    for sl in &valid {
+        for s in sl {
             for f in [s.start, s.gain, s.pan, s.pitch] {
                 out.extend_from_slice(&f.to_le_bytes());
             }

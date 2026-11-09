@@ -98,6 +98,8 @@ void PluginHost::end_publish(uint64_t seq) {
 }
 
 void PluginHost::collect(uint64_t rt_active) {
+    for (auto& [id, e] : entries_)
+        if (BuiltinInstance* b = e.inst ? e.inst->as_builtin() : nullptr) b->reclaim();
     if (retired_.empty() || rt_active == kBusy) return;
     for (auto it = retired_.begin(); it != retired_.end();) {
         if (rt_active == kIdle || rt_active >= it->seq) {

@@ -139,6 +139,19 @@ fn model<T: Clone + 'static>(v: Vec<T>) -> ModelRc<T> {
 }
 
 /// Is this one of the sampler-family devices?
+/// The layers the arrows step through on `slot`'s pad: its filled layers
+/// plus the first free one (to load the next sound into).
+fn layer_stops(d: &Device, slot: u32) -> Vec<u32> {
+    let layers = builtin::pad_sampler::LAYERS;
+    let base = slot - slot % layers;
+    let mut stops: Vec<u32> = (0..layers).filter(|l| d.sample(base + l).is_some()).collect();
+    if let Some(free) = (0..layers).find(|l| d.sample(base + l).is_none()) {
+        stops.push(free);
+        stops.sort_unstable();
+    }
+    stops
+}
+
 pub fn is_sampler(def: &DeviceDef) -> bool {
     matches!(def.id, "sampler-steam" | "pad-sampler" | "drum-rack")
 }
@@ -529,6 +542,7 @@ impl Controller {
         }
         sp.row_picks = model(row);
         self.well(d, def, sp, 0, "", (7.0, 71.0, 783.0, 103.0), mode == 2);
+        sp.can_remove = sp.loaded;
         // Tab bar and the tab's controls.
         sp.tabs_visible = true;
         sp.tabs_y = 183.0 * Z;
@@ -732,7 +746,7 @@ impl Controller {
         let slot = self.shown_slot(d, def);
         let base = slot - slot % builtin::pad_sampler::LAYERS;
         let filled = (base..base + builtin::pad_sampler::LAYERS).filter(|s| d.sample(*s).is_some()).count() as u32;
-        let shown = slot % builtin::pad_sampler::LAYERS;
+        let shown = layer_stops(d, slot).iter().position(|l| *l == slot % builtin::pad_sampler::LAYERS).unwrap_or(0) as u32;
         let row_y = if def.id == "drum-rack" { oy + 33.0 } else { 41.0 };
         sp.layer_visible = true;
         sp.layer_x = (ox + 12.0) * Z;
@@ -887,12 +901,9 @@ impl Controller {
     pub fn sampler_layer(&mut self, device: DeviceId, dir: i32) {
         let Some((d, def)) = self.sampler_def(device) else { return };
         let slot = self.shown_slot(d, def);
-        let layers = builtin::pad_sampler::LAYERS;
-        let base = slot - slot % layers;
-        let filled = (0..layers).filter(|l| d.sample(base + l).is_some()).count() as i32;
-        // Filled layers plus one empty slot to load the next sound into.
-        let count = (filled + 1).min(layers as i32).max(1);
-        let next = ((slot % layers) as i32 + dir).rem_euclid(count) as u32;
+        let stops = layer_stops(d, slot);
+        let at = stops.iter().position(|l| *l == slot % builtin::pad_sampler::LAYERS).unwrap_or(0) as i32;
+        let next = stops[(at + dir).rem_euclid(stops.len() as i32) as usize];
         self.sp_mut().layer.insert(device, next);
         self.ui_dirty = true;
     }
@@ -931,7 +942,7 @@ impl Controller {
                     self.sp_mut().slice.insert(device, i);
                 } else {
                     let i = self.sp().slice.get(&device).copied().unwrap_or(0);
-                    if i >= slices.len() || slices.len() <= 1 {
+                    if i == 0 || i >= slices.len() {
                         return;
                     }
                     slices.remove(i);
@@ -975,7 +986,21 @@ impl Controller {
                 if mode == 2 && let Some(s) = d.sample(0) {
                     grips.extend(s.slices.iter().enumerate().skip(1).map(|(i, sl)| (Grip::Edge(i), sl.start)));
                 }
-                let near = grips.iter().filter(|(_, x)| (x - frac).abs() <= tol).min_by(|a, b| (a.1 - frac).abs().total_cmp(&(b.1 - frac).abs())).copied();
+                // Flags at the same spot (a fade or the loop start on a region edge): the
+                // edge from outside the region or on it, the inner flag from inside.
+                let (si, ei) = (idx("start"), idx("end"));
+                let (a, b) = (si.map_or(0.0, val), ei.map_or(1.0, val));
+                let wrong_side = |g: Grip| match g {
+                    Grip::Param(i) if Some(i) == si => frac > a,
+                    Grip::Param(i) if Some(i) == ei => frac < b,
+                    Grip::Param(_) => !(a < frac && frac < b),
+                    _ => false,
+                };
+                let near = grips
+                    .iter()
+                    .filter(|(_, x)| (x - frac).abs() <= tol)
+                    .min_by(|p, q| (p.1 - frac).abs().total_cmp(&(q.1 - frac).abs()).then(wrong_side(p.0).cmp(&wrong_side(q.0))))
+                    .copied();
                 let start_of = |g: Grip, x: f32| match g {
                     Grip::Param(i) => val(i),
                     _ => x,
@@ -1163,6 +1188,28 @@ impl Controller {
         }
     }
 
+    /// Escape: cancel a well, handle or slice-knob gesture (restoring the
+    /// engine values). True when one was active.
+    pub(crate) fn sampler_cancel_drags(&mut self) -> bool {
+        if let Some(g) = self.sp().well_drag {
+            self.sampler_well(g.device, 3, 0.0, 0.0, false);
+            return true;
+        }
+        if let Some((device, before)) = self.sp_mut().handle_drag.take() {
+            for (j, v) in before {
+                self.sp_mut().live.remove(&(device, j));
+                let _ = self.engine.builtin_set_param(device.0, j as u32, v);
+            }
+            self.ui_dirty = true;
+            return true;
+        }
+        if self.sp_mut().slice_drag.take().is_some() {
+            self.ui_dirty = true;
+            return true;
+        }
+        false
+    }
+
     /// Slice knob gestures (pseudo parameters SLICE_*): drag phases as panel_drag.
     pub(crate) fn slice_drag(&mut self, device: DeviceId, index: i32, phase: i32, dy: f32, rate: f32, fine: bool) {
         let Some(p) = slice_def(index) else { return };
@@ -1235,22 +1282,26 @@ impl Controller {
     /// to Slice mode chops an unsliced sample; changing the chop settings
     /// chops again.
     pub(crate) fn sampler_followups(&self, cmd: Command) -> Command {
-        let Command::SetDeviceParam { device, param, value } = &cmd else { return cmd };
-        let (device, param, value) = (*device, param.clone(), *value);
+        let (device, set): (DeviceId, Vec<(&str, f32)>) = match &cmd {
+            Command::SetDeviceParam { device, param, value } => (*device, vec![(param.as_str(), *value)]),
+            Command::SetDeviceParams { device, params, .. } => (*device, params.iter().map(|(k, v)| (k.as_str(), *v)).collect()),
+            _ => return cmd,
+        };
         let Some((d, def)) = self.sampler_def(device) else { return cmd };
         if def.id != "sampler-steam" {
             return cmd;
         }
         let Some(sample) = d.sample(0) else { return cmd };
-        let rechop = match param.as_str() {
-            "mode" => value == 2.0 && sample.slices.is_empty(),
-            "chop" | "division" | "sensitivity" => true,
-            _ => false,
+        let now = |id: &str| def.param(id).map_or(0.0, |p| def.value(d, p));
+        let v = |id: &str| set.iter().find(|(k, _)| *k == id).map_or_else(|| now(id), |s| s.1);
+        let chop_changed = ["chop", "division", "sensitivity"].iter().any(|id| v(id) != now(id));
+        let rechop = match &cmd {
+            Command::SetDeviceParam { param, .. } if matches!(param.as_str(), "chop" | "division" | "sensitivity") => true,
+            _ => v("mode") == 2.0 && (sample.slices.is_empty() || chop_changed),
         };
         if !rechop {
             return cmd;
         }
-        let v = |id: &str| if id == param { value } else { def.param(id).map_or(0.0, |p| def.value(d, p)) };
         let Some(asset) = self.project().asset(sample.asset) else { return cmd };
         let slices = self.chop_for(asset, v("chop") == 1.0, v("division") as u32, v("sensitivity"));
         let sample = DeviceSample { slices, ..sample.clone() };

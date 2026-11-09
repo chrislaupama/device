@@ -396,12 +396,15 @@ pub fn build_tree(cat: &Catalog, tab: usize, search: &str, expanded: &HashSet<St
             }
         }
     }
-    if kind == PluginKind::Instrument && (q.is_empty() || "synth".contains(&q) || "built-in".contains(&q)) {
+    let synth = q.is_empty() || "synth".contains(&q) || "built-in".contains(&q);
+    if kind == PluginKind::Instrument && (synth || !builtins.is_empty()) {
         let key = format!("{tp}/builtin");
         let o = open(&key);
-        push(TreeEntry { key: key.clone(), item: None, folder: true }, row(0, "Built-in", count_text(1 + builtins.len()), 0, if o { 2 } else { 1 }, false));
-        if o {
+        push(TreeEntry { key: key.clone(), item: None, folder: true }, row(0, "Built-in", count_text(usize::from(synth) + builtins.len()), 0, if o { 2 } else { 1 }, false));
+        if o && synth {
             push(TreeEntry { key: format!("{tp}/b/synth"), item: Some(Item::BuiltinSynth), folder: false }, row(1, "Synth", String::new(), 1, 0, true));
+        }
+        if o {
             for d in &builtins {
                 push(TreeEntry { key: format!("{tp}/b/{}", d.id), item: Some(Item::Builtin(d)), folder: false }, row(1, d.name, String::new(), leaf_icon, 0, true));
             }

@@ -225,6 +225,12 @@ void BuiltinInstance::bind_samples(const AssetLookup& lookup) {
         v.ch[1] = a->channel(a->channels > 1 ? 1 : 0);
         v.frames = a->frames;
         v.channels = a->channels;
+        const Asset::Octave* oct = a->octaves();
+        for (int L = 0; L < Asset::kOctaves; ++L) {
+            v.oct[L][0] = oct[L].channel(0);
+            v.oct[L][1] = oct[L].channel(a->channels > 1 ? 1 : 0);
+            v.oct_frames[L] = oct[L].frames;
+        }
         v.slice_count = static_cast<uint32_t>(e.slices.size());
         v.slices = nullptr;
         if (!e.slices.empty()) {
@@ -238,6 +244,9 @@ void BuiltinInstance::bind_samples(const AssetLookup& lookup) {
     bound_once_ = true;
     // A set the RT side never picked up can go right away.
     delete pending_.exchange(set.release(), std::memory_order_acq_rel);
+    // The RT side may have adopted an older set meanwhile: free it so the
+    // newest one is not held back behind it.
+    reclaim();
 }
 
 // RT: adopt the newest sample set. The previous one waits in retired_ until

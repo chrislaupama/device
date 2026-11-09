@@ -209,7 +209,7 @@ fn parse_args() -> Result<Args, String> {
                 a.audio = v[i] == "--self-test-audio";
             }
             "-h" | "--help" => {
-                println!("{}", include_str!("main.rs").lines().skip(6).take(7).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
+                println!("{}", include_str!("main.rs").lines().take_while(|l| l.starts_with("//!")).skip(6).filter(|l| !l.contains("```")).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
                 std::process::exit(0);
             }
             other => return Err(format!("unknown argument {other}")),

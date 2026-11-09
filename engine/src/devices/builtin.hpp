@@ -45,6 +45,10 @@ struct BuiltinSlice {
 struct BuiltinSample {
     const float* ch[2] = {nullptr, nullptr}; // ch[1] == ch[0] for mono
     uint64_t frames = 0;                     // at the engine rate
+    // Octave-down copies (Asset::octaves()): oct[L] is decimated by
+    // 2^(L+1); null when absent (readers then use ch).
+    const float* oct[Asset::kOctaves][2] = {};
+    uint64_t oct_frames[Asset::kOctaves] = {};
     uint32_t channels = 0;
     uint32_t slice_count = 0;
     const BuiltinSlice* slices = nullptr;
@@ -147,6 +151,8 @@ public:
     // Main thread: resolve the sample table of the last state into assets
     // and hand the new set to the RT side (only when it changed).
     void bind_samples(const AssetLookup& lookup);
+    // Main thread: free the sample set the RT side has stopped using.
+    void reclaim() noexcept;
     // Main thread: queue a live note (velocity 0 = off). False when full.
     bool push_note(uint8_t pitch, uint8_t velocity) noexcept;
     bool instrument() const noexcept { return desc_.instrument; }
@@ -185,7 +191,6 @@ private:
         std::vector<BuiltinSample> views; // one per slot
         std::vector<BuiltinSlice> slices;
     };
-    void reclaim() noexcept;
     void take_samples() noexcept; // RT
 
     std::vector<SampleEntry> table_;       // last parsed (main thread)

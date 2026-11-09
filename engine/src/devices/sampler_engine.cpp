@@ -92,12 +92,8 @@ void Voice::start(const VoiceSettings& vs, const BuiltinSample& s, const Region&
     vel_gain_ = 1.0f - std::clamp(vs.velocity_sens, 0.0f, 1.0f) * (1.0f - v * v);
     target_pitch_ = (vs.key_tracks ? static_cast<float>(note - vs.root) : 0.0f) + r.pitch;
     glide_pitch_ = std::isnan(from_pitch) || vs.glide_ms <= 0.0f ? target_pitch_ : from_pitch;
-    if (vs.use_amp_env)
-        amp_.set(vs.amp_a, vs.amp_d, vs.amp_s, vs.amp_r, sr_);
-    else
-        amp_.set(0.5f, 0.0f, 1.0f, 30.0f, sr_);
+    set_envelopes(vs);
     amp_.gate_on(true);
-    flt_env_.set(vs.flt_a, vs.flt_d, vs.flt_s, vs.flt_r, sr_);
     flt_env_.gate_on(true);
     filter_.reset();
     lfo_phase_ = lfo_phase - std::floor(lfo_phase);
@@ -140,6 +136,15 @@ void Voice::retarget(const VoiceSettings& vs, uint8_t note) noexcept {
     if (amp_.stage() == Adsr::Release) amp_.gate_on(false);
 }
 
+// Also per block: envelope edits reach sounding notes (their running stage).
+void Voice::set_envelopes(const VoiceSettings& vs) noexcept {
+    if (vs.use_amp_env)
+        amp_.set(vs.amp_a, vs.amp_d, vs.amp_s, vs.amp_r, sr_);
+    else
+        amp_.set(0.5f, 0.0f, 1.0f, 30.0f, sr_);
+    flt_env_.set(vs.flt_a, vs.flt_d, vs.flt_s, vs.flt_r, sr_);
+}
+
 void Voice::release() noexcept {
     held_ = false;
     if (region_.one_shot) return;
@@ -163,7 +168,12 @@ double Voice::wrap(double off) const noexcept {
 }
 
 void Voice::read_off(const BuiltinSample& s, double off, int k, float& l, float& r) const noexcept {
-    read_frame(*tab_, k, s.ch[0], s.ch[1], static_cast<int64_t>(s.frames), src_of(off), l, r);
+    if (oct_ < 0) {
+        read_frame(*tab_, k, s.ch[0], s.ch[1], static_cast<int64_t>(s.frames), src_of(off), l, r);
+        return;
+    }
+    const double pos = std::ldexp(src_of(off), -(oct_ + 1));
+    read_frame(*tab_, k, s.oct[oct_][0], s.oct[oct_][1], static_cast<int64_t>(s.oct_frames[oct_]), pos, l, r);
 }
 
 // Near the loop end, crossfade into the material just before the loop start.
@@ -269,6 +279,7 @@ void Voice::render(const VoiceSettings& vs, const BuiltinSample& s, float bend, 
         active_ = false;
         return;
     }
+    set_envelopes(vs);
     const double sr = sr_;
     for (uint32_t i0 = 0; i0 < frames && active_; i0 += kControl) {
         const uint32_t n = std::min(kControl, frames - i0);
@@ -297,7 +308,15 @@ void Voice::render(const VoiceSettings& vs, const BuiltinSample& s, float bend, 
         // Re-pitch: the read head moves at the pitch ratio. Warp: the head
         // moves at the stretch rate and grains read at the pitch ratio.
         const double head_rate = stretch_ ? stretch_rate_ : ratio;
-        const int k = cutoff_index(*tab_, ratio);
+        // Far up, read an octave-down copy so the interpolator's rate stays
+        // at most 2 (its 16 taps cannot low-pass much further).
+        double read_rate = ratio;
+        oct_ = -1;
+        while (read_rate > 2.0 && oct_ + 1 < Asset::kOctaves && s.oct[oct_ + 1][0] != nullptr) {
+            read_rate *= 0.5;
+            ++oct_;
+        }
+        const int k = cutoff_index(*tab_, read_rate);
         if (vs.filter_on) {
             float st = vs.env_depth * 48.0f * flt_env_.level() + vs.key_track * static_cast<float>(note_ - 60);
             if (vs.lfo_target == 1) st += lfo * 48.0f;

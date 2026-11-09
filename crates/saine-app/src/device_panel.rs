@@ -725,6 +725,9 @@ impl Controller {
     /// Escape or a cancelled pointer: restore the value from before the drag, with no undo step.
     pub fn panel_cancel_drag(&mut self) -> bool {
         self.sampler_release_all();
+        if self.sampler_cancel_drags() {
+            return true;
+        }
         let Some(g) = self.devices.panel.drag.take() else { return false };
         let _ = self.engine.builtin_set_param(g.device.0, g.index as u32, g.start);
         self.ui_dirty = true;
@@ -930,7 +933,8 @@ impl Controller {
         if let Some(p) = def.param("sidechainEnable") {
             params.insert(p.id.into(), def.value(d, p));
         }
-        self.execute(Command::SetDeviceParams { device, params, preset: Some(f.name.to_string()) });
+        let cmd = self.sampler_followups(Command::SetDeviceParams { device, params, preset: Some(f.name.to_string()) });
+        self.execute(cmd);
     }
 
     /// Sidechain source pick: the source and the device's enable switch in one undo step.

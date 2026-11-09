@@ -333,6 +333,7 @@ public:
 
 private:
     double src_of(double off) const noexcept { return region_.reverse ? region_.end - 1.0 - off : region_.start + off; }
+    void set_envelopes(const VoiceSettings& vs) noexcept;
     void read_off(const BuiltinSample& s, double off, int k, float& l, float& r) const noexcept;
     void read_seam(const BuiltinSample& s, double off, int k, float& l, float& r) const noexcept;
     float fades(double off) const noexcept;
@@ -341,6 +342,7 @@ private:
     double wrap(double off) const noexcept;
 
     const SincTables* tab_ = nullptr;
+    int oct_ = -1; // octave copy read this control block (-1 = the sample itself)
     double sr_ = 48000.0;
     bool active_ = false;
     bool held_ = false;

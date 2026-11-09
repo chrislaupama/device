@@ -354,7 +354,7 @@ fn parse_note(t: &str) -> Option<f32> {
         Some('b') if rest.len() > 1 => (-1, &rest[1..]),
         _ => (0, rest),
     };
-    let oct: i32 = oct.trim().parse().ok()?;
+    let oct: i32 = oct.trim().parse().ok().filter(|o| (-10..=20).contains(o))?;
     Some(((oct + 2) * 12 + base + acc) as f32)
 }
 
