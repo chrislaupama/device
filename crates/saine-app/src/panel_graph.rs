@@ -634,7 +634,8 @@ impl Controller {
                     return Some(Zone::Band);
                 }
                 let (lo, hi) = deesser_edges(f0, q);
-                let (dl, dh) = ((x - g.x_of(lo.max(g.lo))).abs(), (x - g.x_of(hi.min(g.hi))).abs());
+                let dist = |hz: f32| if hz > g.lo && hz < g.hi { (x - g.x_of(hz)).abs() } else { f32::INFINITY };
+                let (dl, dh) = (dist(lo), dist(hi));
                 let tol = 6.0 * Z;
                 match (dl <= tol, dh <= tol) {
                     (true, true) => Some(if dl <= dh { Zone::EdgeLo } else { Zone::EdgeHi }),
