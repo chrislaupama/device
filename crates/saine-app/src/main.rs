@@ -528,8 +528,23 @@ fn main() {
     }
 }
 
+/// AppKit adds Start Dictation, Emoji & Symbols and Enter Full Screen to any Edit and View
+/// menus; the reference's menus have none of them. Registered (not saved) defaults.
+#[cfg(target_os = "macos")]
+fn suppress_appkit_menu_items() {
+    use objc2_foundation::{NSDictionary, NSNumber, NSUserDefaults, ns_string};
+    let yes = NSNumber::new_bool(true);
+    let no = NSNumber::new_bool(false);
+    let keys = [ns_string!("NSDisabledDictationMenuItem"), ns_string!("NSDisabledCharacterPaletteMenuItem"), ns_string!("NSFullScreenMenuItemEverywhere")];
+    let values: [&objc2::runtime::AnyObject; 3] = [yes.as_ref(), yes.as_ref(), no.as_ref()];
+    let defaults = NSDictionary::from_slices(&keys, &values);
+    unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args()?;
+    #[cfg(target_os = "macos")]
+    suppress_appkit_menu_items();
 
     // ---- engine (48 kHz) ----
     let engine = Arc::new(Engine::new(Config { sample_rate: 48_000.0, ..Config::default() })?);
@@ -1006,6 +1021,34 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(a) = aw.upgrade() {
                 ctl.borrow_mut().update_ui(&a);
             }
+        });
+    }
+    on!(on_menu_action, |c, id: slint::SharedString| c.menu_action(&id));
+    {
+        // A menu item with a shortcut takes that keystroke away from the window (macOS key
+        // equivalents), so replay it: a focused text field, the modal gating and the keymap
+        // then handle it exactly as if the key had been pressed. Deferred, so the replay
+        // runs outside the menu's own event.
+        let aw = app.as_weak();
+        studio.on_menu_key(move |text, primary, shift| {
+            let aw = aw.clone();
+            slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                use slint::platform::{Key, WindowEvent};
+                let Some(a) = aw.upgrade() else { return };
+                let s = a.global::<Studio>();
+                s.set_menu_replay(true);
+                let w = a.window();
+                let mods: Vec<slint::SharedString> = [(primary, Key::Control), (shift, Key::Shift)].into_iter().filter(|m| m.0).map(|m| m.1.into()).collect();
+                for m in &mods {
+                    w.dispatch_event(WindowEvent::KeyPressed { text: m.clone() });
+                }
+                w.dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+                w.dispatch_event(WindowEvent::KeyReleased { text: text.clone() });
+                for m in mods.iter().rev() {
+                    w.dispatch_event(WindowEvent::KeyReleased { text: m.clone() });
+                }
+                s.set_menu_replay(false);
+            });
         });
     }
     on!(on_settings_page_select, |c, i: i32| c.settings_page(i.max(0) as usize));

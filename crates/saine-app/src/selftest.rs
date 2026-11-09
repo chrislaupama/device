@@ -700,8 +700,16 @@ fn steps() -> Vec<Step> {
         })),
         Do("click M on track 1", Box::new(|a| click(a, 262.65 + 33.5, TRACK0_Y + 47.0))),
         Check("track 1 muted (SetTrackMute)", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("not muted".into()))),
-        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("Edit menu names the edit: Undo Mute Change enabled", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_undo_text() == "Undo Mute Change" && s.get_can_undo()).then_some(()).ok_or(format!("{:?} {}", s.get_undo_text(), s.get_can_undo()))
+        })),
+        Do("Cmd+Z (Edit › Undo shortcut, replayed by the menu)", Box::new(|a| key(a, "z", true, false))),
         Check("undo restored mute=false", Box::new(|c, _| (!c.project().tracks[0].mute).then_some(()).ok_or("still muted".into()))),
+        Check("Edit menu: Redo Mute Change enabled", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_redo_text() == "Redo Mute Change" && s.get_can_redo()).then_some(()).ok_or(format!("{:?} {}", s.get_redo_text(), s.get_can_redo()))
+        })),
         Do("Cmd+Shift+Z", Box::new(|a| key(a, "Z", true, true))),
         Check("redo muted again", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("redo failed".into()))),
         Do("⇧⌘E (file.export_audio)", Box::new(|a| key(a, "E", true, true))),

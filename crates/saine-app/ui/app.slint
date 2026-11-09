@@ -617,6 +617,55 @@ export component AppWindow inherits Window {
     default-font-size: 9.5px;
     default-font-family: Tokens.font-ui;
 
+    // Native menu bar on macOS (the app menu with About/Services/Hide/Quit comes from the backend).
+    // Shortcut items are disabled while menu-key replays their key (see Studio.menu-replay).
+    MenuBar {
+        Menu {
+            title: "File";
+            MenuItem { title: "New Project"; enabled: !Studio.menu-replay; shortcut: @keys(Control + N); activated => { Studio.menu-key("n", true, false); } }
+            MenuSeparator { }
+            MenuItem { title: "Save Project"; enabled: !Studio.menu-replay; shortcut: @keys(Control + S); activated => { Studio.menu-key("s", true, false); } }
+            MenuItem { title: "Save Project As…"; enabled: !Studio.menu-replay; shortcut: @keys(Control + Shift + S); activated => { Studio.menu-key("s", true, true); } }
+            MenuSeparator { }
+            MenuItem { title: "Open Project…"; enabled: !Studio.menu-replay; shortcut: @keys(Control + O); activated => { Studio.menu-key("o", true, false); } }
+            Menu {
+                title: "Open Recent";
+                MenuItem { title: "Clear Menu"; enabled: false; }
+            }
+            MenuItem { title: "Show Project in Finder"; enabled: Studio.project-on-disk; activated => { Studio.menu-action("file.show_in_finder"); } }
+            MenuSeparator { }
+            MenuItem { title: "Export Audio…"; enabled: !Studio.menu-replay; shortcut: @keys(Control + Shift + E); activated => { Studio.menu-key("e", true, true); } }
+            MenuItem { title: "Export Project for Ableton Live…"; activated => { Studio.menu-action("file.export_ableton"); } }
+            MenuItem { title: "Import Ableton Live Set…"; activated => { Studio.menu-action("file.import_ableton"); } }
+        }
+        Menu {
+            title: "Edit";
+            MenuItem { title: Studio.undo-text; enabled: Studio.can-undo && !Studio.menu-replay; shortcut: @keys(Control + Z); activated => { Studio.menu-key("z", true, false); } }
+            MenuItem { title: Studio.redo-text; enabled: Studio.can-redo && !Studio.menu-replay; shortcut: @keys(Control + Shift + Z); activated => { Studio.menu-key("z", true, true); } }
+            MenuItem { title: "Undo History…"; activated => { Studio.menu-action("edit.undo_history"); } }
+            MenuSeparator { }
+            MenuItem { title: "Cut"; enabled: Studio.can-copy && !Studio.menu-replay; shortcut: @keys(Control + X); activated => { Studio.menu-key("x", true, false); } }
+            MenuItem { title: "Copy"; enabled: Studio.can-copy && !Studio.menu-replay; shortcut: @keys(Control + C); activated => { Studio.menu-key("c", true, false); } }
+            MenuItem { title: "Paste"; enabled: !Studio.menu-replay; shortcut: @keys(Control + V); activated => { Studio.menu-key("v", true, false); } }
+            MenuItem { title: "Delete"; activated => { Studio.menu-key(Key.Delete, false, false); } }
+        }
+        Menu {
+            title: "View";
+            MenuItem { title: "Zoom In"; enabled: !Studio.menu-replay; shortcut: @keys(Control + "="); activated => { Studio.menu-key("=", true, false); } }
+            MenuItem { title: "Zoom Out"; enabled: !Studio.menu-replay; shortcut: @keys(Control + "-"); activated => { Studio.menu-key("-", true, false); } }
+            MenuItem { title: "Reset Zoom"; enabled: !Studio.menu-replay; shortcut: @keys(Control + "0"); activated => { Studio.menu-key("0", true, false); } }
+        }
+        Menu {
+            title: "Options";
+            MenuItem { title: "Audio/MIDI Settings…"; activated => { Studio.menu-action("options.audio_midi"); } }
+            MenuSeparator { }
+            MenuItem { title: "Check for New Plugins…"; activated => { Studio.menu-action("options.check_plugins"); } }
+            MenuItem { title: "Rescan All Plugins…"; activated => { Studio.menu-action("options.rescan_plugins"); } }
+            MenuSeparator { }
+            MenuItem { title: "Check for Updates…"; activated => { Studio.menu-action("options.check_updates"); } }
+        }
+    }
+
     out property <length> lanes-width: timeline.lanes-width;
     out property <length> lanes-height: timeline.lanes-height;
     // Panel geometry (mirrored in src/highlight.rs `Layout`).
