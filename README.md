@@ -106,8 +106,9 @@ behind it. [docs/devices.md](docs/devices.md) explains how they work and how to 
 
 A project is a `Name.saineproj/` folder holding a versioned JSON document, so it diffs cleanly and is easy to keep in
 version control. Plugin state is saved inside it. Audio files stay where they are: the project references each one by a
-path relative to the project and by its absolute path, so when you move or back up a project, take its media along (or
-leave the media where it was). The format is versioned, but it isn't frozen until the first release.
+path relative to the project and by its absolute path. To move a project, move its media with it and keep the same
+layout around the project folder, or leave the media at its original absolute path. A backup of the project folder alone
+does not include the audio, so back up the media too. The format is versioned, but it isn't frozen until the first release.
 
 ## Under the hood
 
