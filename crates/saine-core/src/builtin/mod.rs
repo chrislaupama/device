@@ -26,18 +26,30 @@
 //! store the choice index as their plain value (`min` = 0, `max` = choices - 1).
 
 mod autopanner;
+mod bitcrusher;
 pub mod character_mod;
 mod chorus;
 mod compressor;
+mod distortion;
 mod flanger;
 mod phaser;
 mod ring_mod;
+mod soft_clipper;
+mod tape_saturation;
 mod tremolo;
 mod pitch_corrector;
 mod spectrum;
 mod tuner;
 
 pub use tuner::TUNING_STRINGS;
+mod utility;
+mod widener;
+
+pub use bitcrusher::crush_picture;
+pub use distortion::distortion_transfer;
+pub use soft_clipper::{clipper_open, clipper_transfer};
+pub use tape_saturation::tape_transfer;
+pub use widener::widener_response;
 
 use crate::device::{Device, DeviceId, PluginFormat, PluginKind, PluginRef};
 use crate::model::Track;
@@ -62,7 +74,7 @@ pub enum Format {
     Db,
     /// Milliseconds, whole numbers when the range spans 20 ms or more ("10 ms", "1500 ms"), else one decimal.
     Time,
-    /// Hertz below 1 kHz ("440 Hz"), kilohertz above ("2.50 kHz").
+    /// Hertz: "4.0 kHz" from 999.5 Hz, "440 Hz" from 10 Hz, one decimal from 1 Hz, else two.
     Hz,
     /// The reference's generic Hz text: two decimals below 1 Hz ("0.50 Hz"),
     /// one below 10 Hz ("5.0 Hz"), whole numbers below 999.5 Hz ("440 Hz"),
@@ -72,6 +84,16 @@ pub enum Format {
     Ratio,
     /// Percent, at most one decimal: "100%", "12.5%", "−40%".
     Percent,
+    /// Whole percent: "30%".
+    Percent0,
+    /// Decibels, one decimal, a minus sign below −0.05 and never a plus: "0.0 dB", "−1.5 dB".
+    DbNoPlus,
+    /// Signed decibels like `Db`, but the minimum of the range reads "−∞ dB" (off).
+    DbOrInf,
+    /// Multiplier: one decimal below 10 ("2.5x"), whole numbers above ("12x").
+    Factor,
+    /// Left / right balance: "C" at the centre, else "25L" / "25R".
+    Balance,
     /// Percent with an explicit sign, whole numbers: "+35%", "−100%", "0%".
     SignedPercent,
     /// Choice name from `ParamDef::choices`.
@@ -196,6 +218,9 @@ impl ParamDef {
 
     /// Display text of a plain value.
     pub fn format(&self, v: f32) -> String {
+        if self.format == Format::DbOrInf && v <= self.min + 1e-4 * (self.max - self.min) {
+            return format!("{MINUS}\u{221e} dB");
+        }
         format_value(self.format, v, self.unit, self.choices, self.max - self.min)
     }
 
@@ -213,6 +238,13 @@ impl ParamDef {
             }
         }
         let t = t.replace('\u{2212}', "-").replace(',', ".");
+        let lower = t.to_lowercase();
+        if self.format == Format::DbOrInf && ["-inf", "-infinity", "-\u{221e}"].iter().any(|w| lower.trim_end_matches("db").trim() == *w) {
+            return Some(self.min);
+        }
+        if self.format == Format::Balance {
+            return parse_balance(&lower).map(|v| self.snap(v));
+        }
         let split = t.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+')).unwrap_or(t.len());
         let (num, unit) = t.split_at(split);
         let mut v: f32 = num.parse().ok()?;
@@ -224,7 +256,7 @@ impl ParamDef {
             (Format::Time, "ms" | "msec" | "msecs") => {}
             (Format::Hz | Format::Freq, "k" | "khz") => v *= 1000.0,
             (Format::Hz | Format::Freq, "hz") => {}
-            (Format::Db, "db") | (Format::Percent | Format::SignedPercent, "%") => {}
+            (Format::Db | Format::DbNoPlus | Format::DbOrInf, "db") | (Format::Percent | Format::Percent0 | Format::SignedPercent, "%") | (Format::Factor, "x") => {}
             (Format::Plain(_) | Format::Signed(_), u) if u == self.unit.to_lowercase() => {}
             _ => return None,
         }
@@ -258,6 +290,19 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
             } else {
                 format!("{v:.0} Hz")
             }
+        }
+        Format::DbNoPlus => {
+            let a = (v.abs() * 10.0).round() / 10.0;
+            if v <= -0.05 { format!("{MINUS}{a:.1} dB") } else { format!("{a:.1} dB") }
+        }
+        Format::DbOrInf => format_value(Format::Db, v, unit, choices, range),
+        Format::Percent0 => format!("{:.0}%", v.round() + 0.0),
+        Format::Factor => {
+            if v < 9.95 { format!("{v:.1}x") } else { format!("{v:.0}x") }
+        }
+        Format::Balance => {
+            let r = v.round();
+            if r == 0.0 { "C".into() } else if r < 0.0 { format!("{:.0}L", -r) } else { format!("{r:.0}R") }
         }
         Format::Freq => {
             if v >= 999.5 {
@@ -295,6 +340,23 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
             if unit.is_empty() { format!("{sign}{a}") } else { format!("{sign}{a} {unit}") }
         }
     }
+}
+
+/// "C", "25L", "L25", "25 r", "-25" (left negative) -> balance value.
+fn parse_balance(t: &str) -> Option<f32> {
+    let t = t.trim();
+    if t == "c" || t == "center" || t == "centre" {
+        return Some(0.0);
+    }
+    let (side, num) = if let Some(n) = t.strip_suffix('l').or_else(|| t.strip_prefix('l')) {
+        (-1.0, n)
+    } else if let Some(n) = t.strip_suffix('r').or_else(|| t.strip_prefix('r')) {
+        (1.0, n)
+    } else {
+        (1.0, t)
+    };
+    let v: f32 = num.trim().parse().ok()?;
+    (v.is_finite() && (side > 0.0 || v >= 0.0)).then_some(side * v)
 }
 
 // ---------------------------------------------------------------- layout
@@ -412,6 +474,9 @@ pub struct Layout {
     /// (param, discrete param, values): `param` is shown only while the
     /// discrete parameter has one of `values` (mode-dependent layouts).
     pub shown_when: &'static [(&'static str, &'static str, &'static [u32])],
+    /// Card width (pt) for bodies that are not sized by the dial row
+    /// (`View::Custom` grids); 0 = derived from `clusters`.
+    pub fixed_width: f32,
 }
 
 /// Reference dial row metrics (pt).
@@ -424,6 +489,9 @@ impl Layout {
     /// Card width from the dial clusters: cells * 62 + inner gaps * 10 +
     /// cluster gaps * 21, plus 16 of padding (reference card sizing rule).
     pub fn width(&self) -> f32 {
+        if self.fixed_width > 0.0 {
+            return self.fixed_width;
+        }
         let cells: usize = self.clusters.iter().map(|c| c.len()).sum();
         let inner: usize = self.clusters.iter().map(|c| c.len().saturating_sub(1)).sum();
         let gaps = self.clusters.len().saturating_sub(1);
@@ -475,8 +543,14 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 11] = [
+    static ALL: [&DeviceDef; 17] = [
         &compressor::COMPRESSOR,
+        &distortion::DISTORTION,
+        &tape_saturation::TAPE_SATURATION,
+        &soft_clipper::SOFT_CLIPPER,
+        &bitcrusher::BITCRUSHER,
+        &widener::WIDENER,
+        &utility::UTILITY,
         &chorus::CHORUS,
         &character_mod::CHARACTER_MOD,
         &flanger::FLANGER,
@@ -899,5 +973,71 @@ mod tests {
         let p = comp().param("attack").unwrap();
         assert_eq!(modulate(p, 1000.0, 0.5), 1000.0);
         assert!((modulate(p, 1.0, 0.5) - 1000f32.sqrt()).abs() < 1e-2);
+    }
+
+    #[test]
+    fn registry_lists_the_drive_and_imaging_devices() {
+        let ids: Vec<_> = all().iter().map(|d| d.id).collect();
+        assert_eq!(ids[..7], ["compressor", "distortion", "tapesaturation", "soft-clipper", "bitcrusher", "widener", "utility"]);
+        assert_eq!(find("widener").unwrap().layout.width(), 388.0);
+        assert_eq!(find("utility").unwrap().layout.width(), 221.5);
+        // Tuner and Spectrum ship no factory presets (neither does the reference).
+        for def in all().iter().filter(|d| !matches!(d.id, "tuner" | "spectrum")) {
+            assert!(!def.factory.is_empty(), "{} has factory presets", def.id);
+        }
+    }
+
+    #[test]
+    fn new_formats_print_and_parse() {
+        let u = find("utility").unwrap();
+        let bal = u.param("balance").unwrap();
+        assert_eq!(bal.format(0.0), "C");
+        assert_eq!(bal.format(-25.0), "25L");
+        assert_eq!(bal.format(25.0), "25R");
+        assert_eq!(bal.parse("25L"), Some(-25.0));
+        assert_eq!(bal.parse("10 r"), Some(10.0));
+        assert_eq!(bal.parse("c"), Some(0.0));
+        assert_eq!(u.param("width").unwrap().format(100.0), "100%");
+        let f = u.param("bass_mono_freq").unwrap();
+        assert_eq!(f.format(120.0), "120 Hz");
+        assert_eq!(f.parse("200 Hz"), Some(200.0));
+        let inf: Vec<_> = all().iter().flat_map(|d| d.params.iter()).filter(|p| p.format == Format::DbOrInf).collect();
+        assert!(!inf.is_empty());
+        for p in inf {
+            assert!(p.format(p.min).contains('\u{221e}'), "{} at min shows -inf", p.id);
+            assert_eq!(p.parse("-inf"), Some(p.min));
+        }
+    }
+
+    #[test]
+    fn drawn_models_behave() {
+        use super::{distortion::distortion_transfer, soft_clipper::clipper_transfer, widener::widener_response};
+        for mode in 0..4 {
+            assert!(distortion_transfer(0.0, 50.0, 40.0, 0.0, 100.0, 0.0, mode).abs() < 1e-6, "mode {mode}: silence stays silent (bias has no DC)");
+            let (a, b) = (distortion_transfer(0.2, 50.0, 0.0, 0.0, 100.0, 0.0, mode), distortion_transfer(0.4, 50.0, 0.0, 0.0, 100.0, 0.0, mode));
+            assert!(b >= a, "mode {mode} is monotonic");
+        }
+        assert!((distortion_transfer(0.3, 80.0, 0.0, 0.0, 0.0, 0.0, 0) - 0.3).abs() < 1e-6, "mix 0 is dry");
+        for shape in 0..3 {
+            for s in [0.0, 50.0, 100.0] {
+                let y = clipper_transfer(4.0, 0.0, -6.0, s, shape, false, 100.0, 0.0);
+                assert!(y <= 10f32.powf(-6.0 / 20.0) + 1e-4, "shape {shape} softness {s}: held under the ceiling ({y})");
+            }
+            assert!((clipper_transfer(0.01, 0.0, 0.0, 0.0, shape, false, 100.0, 0.0) - 0.01).abs() < 1e-3, "transparent well below the ceiling");
+        }
+        assert!(distortion_transfer(1.0, 100.0, 100.0, 0.0, 100.0, 0.0, 2).abs() < 2.0, "Tube stays bounded at full drive and bias");
+        for shape in 0..3 {
+            let y = clipper_transfer(1.0, 24.0, -12.0, 0.0, shape, false, 100.0, 0.0);
+            assert!(y > 0.2 && y <= 10f32.powf(-12.0 / 20.0) + 1e-4, "shape {shape}: extreme drive keeps the ceiling ({y})");
+        }
+        let pic = super::bitcrusher::crush_picture(32.0, 2.5, 100.0, 0.0, 0.0);
+        let changes = pic.windows(2).filter(|w| w[0].1 != w[1].1).count();
+        assert!((changes as f32 - 480.0 / 2.5).abs() <= 2.0, "fractional downsample keeps its rate ({changes})");
+        let sr = 48_000.0;
+        let half = widener_response(120.0, 100.0, 0.0, 0.0, 120.0, 50.0, sr);
+        assert!(half > 70.0 && half < 82.0, "partial mix sums the paths with their phase ({half})");
+        assert!((widener_response(5000.0, 100.0, 0.0, 0.0, 20.0, 100.0, sr) - 100.0).abs() < 1.0, "100% is unchanged above the cut");
+        assert!(widener_response(30.0, 200.0, 0.0, 0.0, 300.0, 100.0, sr) < widener_response(5000.0, 200.0, 0.0, 0.0, 300.0, 100.0, sr), "the low cut narrows the lows");
+        assert!((widener_response(5000.0, 200.0, 0.0, 0.0, 20.0, 0.0, sr) - 100.0).abs() < 1e-3, "mix 0 is dry");
     }
 }

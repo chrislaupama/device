@@ -5,13 +5,15 @@
 //! and the tuner, analysis frames for the spectrum); every poll tick
 //! ([Controller::panel_poll_views], ~30 ms) folds the new data into a small
 //! per-device state, and [Controller::analyzer_canvas] turns that state into a
-//! generic [PanelCanvas] (paths, boxes and texts in field coordinates) that
+//! [PanelCanvas] (paths and texts in well coordinates; boxes are rounded-rect
+//! paths) that
 //! ui/device_panel.slint draws. Lengths are the reference's 100%-zoom card
 //! measurements (handoffs/device-specs/<device>.md) times [Z].
 
 use crate::controller::Controller;
-use crate::device_panel::{polyline, Z};
-use crate::{PanelBox, PanelCanvas, PanelLayer, PanelText};
+use crate::device_panel::{polyline, DIAL_Y, Z};
+use crate::device_views::CustomBody;
+use crate::{PanelCanvas, PanelPath, PanelText};
 use saine_core::builtin::{DeviceDef, View, TUNING_STRINGS};
 use saine_core::{Device, DeviceId};
 use slint::{Color, ModelRc, SharedString, VecModel};
@@ -19,11 +21,10 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-/// Card width and dial-row arrangement of a custom view whose card does not
-/// follow the dial-row width rule (reference measurements, pt).
+/// Dial-row arrangement of an analyzer card (reference measurements, pt);
+/// the card width is the definition's `Layout::fixed_width`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ViewMetrics {
-    pub width: f32,
     /// Knob cell width.
     pub cell: f32,
     /// Cells spread with the free space between them (else around them).
@@ -32,16 +33,16 @@ pub struct ViewMetrics {
 
 pub fn metrics(view: &str) -> Option<ViewMetrics> {
     match view {
-        "pitch-trace" => Some(ViewMetrics { width: 375.0, cell: 76.0, between: false }),
-        "tuner" => Some(ViewMetrics { width: 335.0, cell: 62.0, between: false }),
-        "spectrum" => Some(ViewMetrics { width: 397.0, cell: 66.0, between: true }),
+        "pitch-trace" => Some(ViewMetrics { cell: 76.0, between: false }),
+        "tuner" => Some(ViewMetrics { cell: 62.0, between: false }),
+        "spectrum" => Some(ViewMetrics { cell: 66.0, between: true }),
         _ => None,
     }
 }
 
-/// Left edge of knob cell `i` of `n` in a spread dial row (card relative, pt).
-pub fn spread_x(m: &ViewMetrics, i: usize, n: usize) -> f32 {
-    let inner = m.width - 16.0;
+/// Left edge of knob cell `i` of `n` in a dial row spread over a card `width` wide (card relative, pt).
+pub fn spread_x(m: &ViewMetrics, width: f32, i: usize, n: usize) -> f32 {
+    let inner = width - 16.0;
     if m.between && n > 1 {
         8.0 + i as f32 * (inner - m.cell) / (n - 1) as f32
     } else {
@@ -146,16 +147,48 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
     Color::from_argb_u8(l(a.alpha(), b.alpha()), l(a.red(), b.red()), l(a.green(), b.green()), l(a.blue(), b.blue()))
 }
 
-fn line(commands: String, stroke: Color, width: f32) -> PanelLayer {
-    PanelLayer { commands: s(commands), stroke, stroke_width: width, fill: Color::from_argb_u8(0, 0, 0, 0), fill2: Color::from_argb_u8(0, 0, 0, 0) }
+const CLEAR: Color = Color::from_argb_u8(0, 0, 0, 0);
+
+fn line(commands: String, stroke: Color, width: f32) -> PanelPath {
+    PanelPath { commands: s(commands), stroke, width, fill: CLEAR, fill2: CLEAR }
 }
 
-fn area(commands: String, top: Color, bottom: Color) -> PanelLayer {
-    PanelLayer { commands: s(commands), stroke: Color::from_argb_u8(0, 0, 0, 0), stroke_width: 0.0, fill: top, fill2: bottom }
+fn area(commands: String, top: Color, bottom: Color) -> PanelPath {
+    PanelPath { commands: s(commands), stroke: CLEAR, width: 0.0, fill: top, fill2: bottom }
 }
 
-fn rect(x: f32, y: f32, w: f32, h: f32, radius: f32, fill: Color) -> PanelBox {
-    PanelBox { x, y, w, h, radius, fill, border: Color::from_argb_u8(0, 0, 0, 0), border_width: 0.0 }
+/// Rounded rectangle as a path (fill, optional border stroke).
+fn rounded(x: f32, y: f32, w: f32, h: f32, r: f32, fill: Color, border: Color, border_width: f32) -> PanelPath {
+    let r = r.min(w / 2.0).min(h / 2.0);
+    let (x1, y1) = (x + w, y + h);
+    let commands = format!(
+        "M{:.2} {y:.2} H{:.2} A{r:.2} {r:.2} 0 0 1 {x1:.2} {:.2} V{:.2} A{r:.2} {r:.2} 0 0 1 {:.2} {y1:.2} H{:.2} A{r:.2} {r:.2} 0 0 1 {x:.2} {:.2} V{:.2} A{r:.2} {r:.2} 0 0 1 {:.2} {y:.2} Z",
+        x + r, x1 - r, y + r, y1 - r, x1 - r, x + r, y1 - r, y + r, x + r
+    );
+    PanelPath { commands: s(commands), stroke: border, width: border_width, fill, fill2: fill }
+}
+
+fn rect(x: f32, y: f32, w: f32, h: f32, radius: f32, fill: Color) -> PanelPath {
+    rounded(x, y, w, h, radius, fill, CLEAR, 0.0)
+}
+
+/// Canvas of one view: boxes under the layers, the layers, boxes over them, texts.
+#[allow(clippy::too_many_arguments)]
+fn canvas(x: f32, y: f32, w: f32, h: f32, well_y: f32, caption: &str, label: String, paths: [Vec<PanelPath>; 3], texts: Vec<PanelText>) -> PanelCanvas {
+    PanelCanvas {
+        visible: true,
+        well: true,
+        x,
+        y,
+        w,
+        h,
+        well_y,
+        caption: s(caption),
+        label: s(label),
+        paths: model(paths.into_iter().flatten().collect()),
+        texts: model(texts),
+        ..Default::default()
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -341,14 +374,19 @@ impl Controller {
     }
 
     /// The field of a custom analyser view (None for other views).
-    pub(crate) fn analyzer_canvas(&self, d: &Device, def: &'static DeviceDef, view: &str, accent: Color) -> Option<PanelCanvas> {
-        let m = metrics(view)?;
-        let w = m.width - 2.0 * FIELD_X;
-        Some(match view {
+    /// Custom body of an analyzer card: its canvas and the dial row spread over the card.
+    pub(crate) fn analyzer_body(&self, d: &Device, def: &'static DeviceDef, view: &str, accent: Color) -> CustomBody {
+        let Some(m) = metrics(view) else { return CustomBody::default() };
+        let width = def.layout.width();
+        let w = width - 2.0 * FIELD_X;
+        let canvas = match view {
             "pitch-trace" => self.trace_canvas(d, def, w, accent),
             "tuner" => self.tuner_canvas(d, def, w, accent),
             _ => self.spectrum_canvas(d, def, w, accent),
-        })
+        };
+        let ids: Vec<&'static str> = def.layout.clusters.iter().flat_map(|c| c.iter()).filter_map(|c| c.param()).collect();
+        let knobs = ids.iter().enumerate().map(|(i, id)| (*id, spread_x(&m, width, i, ids.len()), DIAL_Y)).collect();
+        CustomBody { canvas, knobs, cell: m.cell, ..Default::default() }
     }
 
     fn trace_canvas(&self, d: &Device, def: &'static DeviceDef, w: f32, accent: Color) -> PanelCanvas {
@@ -409,21 +447,7 @@ impl Controller {
                 over.push(rect(p.0 - 2.0 * Z, p.2 - 2.0 * Z, 4.0 * Z, 4.0 * Z, 2.0 * Z, corr_color));
             }
         }
-        PanelCanvas {
-            visible: true,
-            x: FIELD_X * Z,
-            y: FIELD_Y * Z,
-            w,
-            h,
-            body_y,
-            caption: s("Pitch"),
-            well: true,
-            label: s("Pitch"),
-            under: model(Vec::new()),
-            layers: model(layers),
-            over: model(over),
-            texts: model(Vec::new()),
-        }
+        canvas(FIELD_X * Z, FIELD_Y * Z, w, h, body_y, "Pitch", String::new(), [Vec::new(), layers, over], Vec::new())
     }
 
     fn tuner_canvas(&self, d: &Device, def: &'static DeviceDef, w_pt: f32, accent: Color) -> PanelCanvas {
@@ -466,16 +490,7 @@ impl Controller {
         }
         layers.push(line(ticks, white(0.16), 1.0));
         let tuned = tv.tuned * voice;
-        let zone = PanelBox {
-            x: (cx - 11.0) * z,
-            y: bar_top * z,
-            w: 22.0 * z,
-            h: bar_h * z,
-            radius: 4.0 * z,
-            fill: mix(white(0.10), alpha(SUCCESS, 0.4), tuned),
-            border: mix(white(0.22), SUCCESS, tuned),
-            border_width: 1.0,
-        };
+        let zone = rounded((cx - 11.0) * z, bar_top * z, 22.0 * z, bar_h * z, 4.0 * z, mix(white(0.10), alpha(SUCCESS, 0.4), tuned), mix(white(0.22), SUCCESS, tuned), 1.0);
         under.push(zone);
         let mut needle = String::new();
         vline(&mut needle, cx * z, (bar_top + 5.0) * z, (bar_top + bar_h - 5.0) * z);
@@ -525,21 +540,7 @@ impl Controller {
                 layers.push(line(format!("M{:.2} {:.2} L{:.2} {:.2} L{:.2} {:.2}", x * z, (y - 6.0) * z, tip * z, y * z, x * z, (y + 6.0) * z), white(0.85 * a * voice * dim), 2.0 * z));
             }
         }
-        PanelCanvas {
-            visible: true,
-            x: FIELD_X * z,
-            y: FIELD_Y * z,
-            w: w * z,
-            h: h * z,
-            body_y: 0.0,
-            caption: s(""),
-            well: true,
-            label: s(tv.spoken.clone()),
-            under: model(under),
-            layers: model(layers),
-            over: model(over),
-            texts: model(texts),
-        }
+        canvas(FIELD_X * z, FIELD_Y * z, w * z, h * z, 0.0, "", tv.spoken.clone(), [under, layers, over], texts)
     }
 
     fn spectrum_canvas(&self, d: &Device, def: &'static DeviceDef, w: f32, _accent: Color) -> PanelCanvas {
@@ -592,21 +593,7 @@ impl Controller {
                 layers.push(line(curve, alpha(color, 0.95), 1.2 * Z));
             }
         }
-        PanelCanvas {
-            visible: true,
-            x: FIELD_X * Z,
-            y: FIELD_Y * Z,
-            w,
-            h,
-            body_y,
-            caption: s("Spectrum"),
-            well: true,
-            label: s("Spectrum"),
-            under: model(Vec::new()),
-            layers: model(layers),
-            over: model(Vec::new()),
-            texts: model(Vec::new()),
-        }
+        canvas(FIELD_X * Z, FIELD_Y * Z, w, h, body_y, "Spectrum", String::new(), [Vec::new(), layers, Vec::new()], Vec::new())
     }
 }
 
@@ -645,11 +632,11 @@ mod tests {
     fn knob_rows_spread_like_the_reference() {
         // Pitch Corrector: four 76 pt cells around free space (centres 52.9 .. 322.1 measured 53 .. 321.5).
         let m = metrics("pitch-trace").unwrap();
-        let c: Vec<f32> = (0..4).map(|i| spread_x(&m, i, 4) + m.cell / 2.0).collect();
+        let c: Vec<f32> = (0..4).map(|i| spread_x(&m, saine_core::builtin::find("pitch-corrector").unwrap().layout.width(), i, 4) + m.cell / 2.0).collect();
         assert!((c[0] - 52.9).abs() < 0.1 && (c[3] - 322.1).abs() < 0.1, "{c:?}");
         // Spectrum: five 66 pt cells from edge to edge (centres 41 .. 356).
         let m = metrics("spectrum").unwrap();
-        let c: Vec<f32> = (0..5).map(|i| spread_x(&m, i, 5) + m.cell / 2.0).collect();
+        let c: Vec<f32> = (0..5).map(|i| spread_x(&m, saine_core::builtin::find("spectrum").unwrap().layout.width(), i, 5) + m.cell / 2.0).collect();
         assert_eq!((c[0], c[4]), (41.0, 356.0));
         assert!((c[2] - 198.5).abs() < 0.01);
     }

@@ -31,6 +31,7 @@ pub static TUNER: DeviceDef = DeviceDef {
         faces: &[],
         min_height: 202.0,
         shown_when: &[],
+        fixed_width: 335.0,
     },
     factory: &[],
     sidechain: false,

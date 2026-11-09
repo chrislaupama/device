@@ -123,11 +123,14 @@ flowchart LR
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a
    Slint component in `ui/device_panel.slint` chosen by that data. Reuse
-   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. Views that only
-   draw (analyzers) need no Slint: fill a `PanelCanvas` (boxes, path layers and
-   texts in field coordinates) in `src/analyzer_views.rs`, which also polls
-   analysis frames (`Controller::panel_poll_views`). `ViewMetrics` there
-   sets the card width and knob cell spacing of a custom view.
+   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. Most custom
+   bodies need no Slint at all: add an arm to `Controller::custom_body`
+   (`src/device_views.rs`) that returns a `CustomBody`. It holds a
+   `PanelCanvas` (path layers with an optional vertical gradient
+   `fill`..`fill2`, texts, grips and drag zones), knob placements, and
+   optionally a knob cell width. The analyzers (`src/analyzer_views.rs`) do
+   this and also poll analysis frames (`Controller::panel_poll_views`); their
+   card width is `Layout::fixed_width`.
 4. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),

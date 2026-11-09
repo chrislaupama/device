@@ -33,6 +33,7 @@ pub static PITCH_CORRECTOR: DeviceDef = DeviceDef {
         faces: &[],
         min_height: 202.0,
         shown_when: &[],
+        fixed_width: 375.0,
     },
     factory: &[
         FactoryPreset { name: "Robot Snap", values: &[("speed", 100.0), ("retune_speed_ms", 2.0), ("humanize", 0.0)] },

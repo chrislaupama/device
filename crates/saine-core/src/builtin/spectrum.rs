@@ -44,6 +44,7 @@ pub static SPECTRUM: DeviceDef = DeviceDef {
         faces: &[],
         min_height: 202.0,
         shown_when: &[],
+        fixed_width: 397.0,
     },
     factory: &[],
     sidechain: false,
