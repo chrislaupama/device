@@ -35,6 +35,8 @@ pub(crate) struct CustomBody {
     pub knobs: Vec<(&'static str, f32, f32)>,
     /// Knobs drawn dimmed (no effect in the current state).
     pub dim: Vec<&'static str>,
+    /// Knob cell width (pt, 0 = the 62 pt default).
+    pub cell: f32,
 }
 
 fn model<T: Clone + 'static>(v: Vec<T>) -> ModelRc<T> {
@@ -46,7 +48,7 @@ fn ink(alpha: f32) -> Color {
 }
 
 fn path(commands: String, stroke: Color, width: f32, fill: Color) -> PanelPath {
-    PanelPath { commands: commands.into(), stroke, width: width * Z, fill }
+    PanelPath { commands: commands.into(), stroke, width: width * Z, fill, fill2: fill }
 }
 
 fn stroke(commands: String, color: Color, width: f32) -> PanelPath {
@@ -157,6 +159,7 @@ impl Controller {
             "crush" => crush_body(&value, idx("downsample"), idx("bitdepth"), accent, rect),
             "stereo-field" => stereo_body(def, &value, idx("width2"), idx("sidegain"), idx("lowcut"), accent, rect),
             "utility" => utility_body(def, &value, &idx),
+            "pitch-trace" | "tuner" | "spectrum" => self.analyzer_body(d, def, name, accent),
             "gain-scope" => scope_body(&self.panel_meter_frames(d.id), crate::device_panel::HISTORY, accent, rect),
             "declipper-wave" | "deesser-graph" | "dehummer-graph" | "denoiser-graph" => CustomBody { canvas: self.graph_canvas(d, def, accent), ..Default::default() },
             _ => CustomBody::default(),
@@ -461,6 +464,7 @@ fn utility_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, idx: &dyn Fn(&str)
         buttons,
         knobs: vec![("gain", right - 31.0, 93.8), ("width", left - 31.0, 178.0), ("balance", right - 31.0, 178.0)],
         dim: if width_dead { vec!["width"] } else { vec![] },
+        ..Default::default()
     }
 }
 

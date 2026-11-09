@@ -192,9 +192,11 @@ Stats summarize(std::vector<double>& t) {
 double us(Clock::duration d) { return std::chrono::duration<double, std::micro>(d).count(); }
 
 // events_per_block automation events on parameter event_param, values base + i * step.
+// tone: a harmonic line (A3 with 5 Hz vibrato, 8 partials) instead of noise,
+// so pitch-tracking devices run their voiced path.
 Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, uint32_t events_per_block,
                    const std::vector<saine::MidiEvent>& notes = {}, uint32_t event_param = 0, double base = -30.0,
-                   double step = 1.0) {
+                   double step = 1.0, bool tone = false) {
     saine::PluginSpec spec;
     spec.device_id = 1;
     spec.format = saine::PluginFormat::Builtin;
@@ -210,6 +212,8 @@ Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, u
     }
     std::vector<float> l(kBlock), r(kBlock);
     uint32_t seed = 7;
+    double phase = 0.0;
+    uint64_t frame = 0;
     std::vector<saine::ParamEvent> ev;
     for (uint32_t i = 0; i < events_per_block; ++i)
         ev.push_back(saine::ParamEvent{i * (kBlock / std::max(1u, events_per_block)), event_param, base + step * i});
@@ -217,7 +221,15 @@ Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, u
     std::vector<double> t;
     t.reserve(blocks);
     for (uint32_t b = 0; b < blocks + 200; ++b) {
-        for (uint32_t i = 0; i < kBlock; ++i) {
+        for (uint32_t i = 0; i < kBlock; ++i, ++frame) {
+            if (tone) {
+                const double sec = static_cast<double>(frame) / kRate;
+                phase += 6.283185307179586 * 220.0 * std::pow(2.0, 0.25 * std::sin(6.283185307179586 * 5.0 * sec) / 12.0) / kRate;
+                double s = 0.0;
+                for (int h = 1; h <= 8; ++h) s += std::sin(phase * h) / h;
+                l[i] = r[i] = static_cast<float>(0.2 * s);
+                continue;
+            }
             seed = seed * 1664525u + 1013904223u;
             const float n = static_cast<float>(seed >> 8) / 8388608.0f - 1.0f;
             l[i] = 0.8f * n;
@@ -502,6 +514,18 @@ int main(int argc, char** argv) {
         for (uint32_t s = 0; s < 4; ++s) heavy[184 + 79 * s] = 1.f; // every effect slot on
         row("synth-v2 (16 notes, unison 8, 4 FX)", bench_kernel("synth-v2", heavy, blocks, 0, chord(16)));
     }
+    // Analyzers and pitch: parameters in registry order.
+    const std::vector<float> pitch = {100.f, 0.f, 1.f, 20.f, 15.f, 100.f, 0.f};
+    row("pitch-corrector (C major, tone)", bench_kernel("pitch-corrector", pitch, blocks, 0, {}, 0, -30.0, 1.0, true));
+    row("pitch-corrector (noise, unvoiced)", bench_kernel("pitch-corrector", pitch, blocks, 0));
+    row("tuner (tone)", bench_kernel("tuner", {0.f, 0.f, 0.f}, blocks, 0, {}, 0, -30.0, 1.0, true));
+    std::vector<float> spectrum = {3.f, 0.f, 0.f, 30.f, 4.5f, 0.f, 90.f, 1.f, 30.f, 50.f, 1.f, 0.f, 3.f};
+    row("spectrum (FFT 4096, stereo)", bench_kernel("spectrum", spectrum, blocks, 0));
+    spectrum[2] = 5.f;
+    row("spectrum (FFT 4096, Mid+Side)", bench_kernel("spectrum", spectrum, blocks, 0));
+    spectrum[0] = 5.f;
+    spectrum[2] = 0.f;
+    row("spectrum (FFT 16384, stereo)", bench_kernel("spectrum", spectrum, blocks, 0));
     // Instruments: voices kept sounding by a new note every few blocks.
     const std::vector<uint8_t> keys = {48, 55, 60, 64, 67, 71, 72, 76};
     {

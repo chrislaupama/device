@@ -135,6 +135,8 @@ pub struct PanelState {
     pub(crate) sampler: crate::sampler_panel::SamplerUi,
     /// Field devices while the transport plays: (last LFO phase, elapsed cycles).
     lfo: HashMap<DeviceId, (f32, f64)>,
+    /// Custom analyser views (pitch trace, tuner, spectrum).
+    pub(crate) analyzers: crate::analyzer_views::AnalyzerState,
     pub(crate) editors: crate::device_editors::ViewState,
     /// Canvas views (EQ, Auto Filter): hover, drag and selection state.
     pub(crate) canvas: crate::device_canvas::CanvasUi,
@@ -314,7 +316,7 @@ fn fmt_db(v: f32) -> String {
 }
 
 /// Points as Slint path commands ("M x y L x y ...").
-fn polyline(pts: &[(f32, f32)]) -> String {
+pub(crate) fn polyline(pts: &[(f32, f32)]) -> String {
     use std::fmt::Write;
     let mut out = String::with_capacity(pts.len() * 16);
     for (i, (x, y)) in pts.iter().enumerate() {
@@ -557,6 +559,9 @@ impl Controller {
     /// The card of a built-in device (generic panel).
     pub(crate) fn builtin_card(&self, d: &Device, def: &'static DeviceDef) -> DeviceCard {
         let width = def.layout.width();
+        let analyzer = matches!(def.layout.view, Some(View::Custom(v)) if crate::analyzer_views::metrics(v).is_some());
+        // Key and Scale that follow the project key are shown dimmed with the project's values.
+        let followed = saine_core::builtin::followed_key(def, d, self.project().transport.key);
         let accent = self.card_accent(d);
         let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
         let live = self.live_device(d, def);
@@ -572,6 +577,31 @@ impl Controller {
             let p = c.param().and_then(|id| def.param(id));
             match (c, p) {
                 (_, Some(p)) if !def.is_shown(d, p.id) => {}
+                (Control::Dropdown(_), Some(p)) => {
+                    let follow = followed.filter(|_| p.id == "key" || p.id == "scale");
+                    let v = follow.map_or_else(|| self.panel_value(d, def, p), |(k, sc)| if p.id == "key" { k } else { sc });
+                    let text = def.text(live, p, v);
+                    picks.push(PanelPick {
+                        kind: 2,
+                        param: idx(p.id),
+                        label: s(def.label_of(d, p)),
+                        value: s(pill_text(&text)),
+                        selected: v.round() as i32,
+                        enabled: true,
+                        // Analyzer cards size the pill to its value, as the reference cards do.
+                        width: if analyzer { 0.0 } else { dropdown_width(p) * Z },
+                        dim: follow.is_some(),
+                        ..Default::default()
+                    });
+                }
+                (Control::Latch(_), Some(p)) => picks.push(PanelPick {
+                    kind: 5,
+                    param: idx(p.id),
+                    label: s(def.label_of(d, p)),
+                    selected: self.panel_value(d, def, p).round() as i32,
+                    enabled: true,
+                    ..Default::default()
+                }),
                 // Latches align right (reference: margin-left auto) unless the row places its own gap;
                 // the label carries the state.
                 (Control::Toggle(_), Some(p)) => {
@@ -620,15 +650,6 @@ impl Controller {
                     choices: labels_model(def, p, labels),
                     selected: self.panel_value(d, def, p).round() as i32,
                     enabled: true,
-                    ..Default::default()
-                }),
-                (Control::Dropdown(_), Some(p)) => picks.push(PanelPick {
-                    kind: 2,
-                    param: idx(p.id),
-                    label: s(def.label_of(d, p)),
-                    value: s(pill_text(&def.text(live, p, self.panel_value(d, def, p)))),
-                    enabled: true,
-                    width: dropdown_width(p) * Z,
                     ..Default::default()
                 }),
                 (Control::Gap, _) => picks.push(PanelPick { kind: 4, ..Default::default() }),
@@ -747,6 +768,7 @@ impl Controller {
                     label: s(def.label_of(d, p)),
                     value: s(if latch { if v >= 0.5 { on_label } else { off_label }.to_string() } else { def.text(live, p, v) }),
                     norm: if p.reversed { 1.0 - n } else { n },
+                    cell: body.cell * Z,
                     origin: p.origin(),
                     ticks: s(detent_ticks(p, &if detents.is_empty() && p.choices.len() > 2 { (0..p.choices.len()).map(|i| i as f32).collect::<Vec<_>>() } else { detents.to_vec() })),
                     dim: body.dim.contains(&id),
@@ -816,6 +838,7 @@ impl Controller {
             preset: s(preset),
             knobs: model(knobs),
             picks: model(picks),
+            tight_picks: analyzer,
             sliders: model(sliders),
             strip,
             field,
@@ -1413,6 +1436,22 @@ impl Controller {
             self.panel_view(device, 1, choice as f32);
             return;
         }
+        // Picking a Key or Scale while it shows the followed project key turns Follow off and
+        // writes both values (the picked one and the one shown for the other) in one gesture.
+        // Without a project key nothing is followed, so the pick is an ordinary choice.
+        if let Some((d, def)) = self.panel_def(device)
+            && let Some(p) = usize::try_from(index).ok().and_then(|i| def.params.get(i))
+            && (p.id == "key" || p.id == "scale")
+            && let Some((k, sc)) = saine_core::builtin::followed_key(def, d, self.project().transport.key)
+        {
+            let (k, sc) = if p.id == "key" { (choice as f32, sc) } else { (k, choice as f32) };
+            let commands = [("key_follow", 0.0), ("key", k), ("scale", sc)]
+                .into_iter()
+                .filter_map(|(id, v)| def.param(id).map(|q| Command::SetDeviceParam { device, param: id.into(), value: q.snap(v) }))
+                .collect();
+            self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands });
+            return;
+        }
         let latch = self.panel_def(device).and_then(|(d, def)| {
             let p = def.params.get(usize::try_from(index).ok()?)?;
             saine_core::builtin::behavior(def).and_then(|b| (b.latch)(def, d, p))
@@ -1487,7 +1526,11 @@ impl Controller {
             }
             param if param >= 0 => {
                 let Some(p) = def.params.get(param as usize).filter(|p| p.is_discrete()) else { return };
-                let cur = def.value(d, p).round() as usize;
+                // Key and Scale check the followed project key, as their pills show it.
+                let cur = saine_core::builtin::followed_key(def, d, self.project().transport.key)
+                    .filter(|_| p.id == "key" || p.id == "scale")
+                    .map_or_else(|| def.value(d, p), |(k, sc)| if p.id == "key" { k } else { sc })
+                    .round() as usize;
                 let mode = def.layout.picker.iter().find_map(|c| match c {
                     Control::ModeDropdown { param: q, mode } if *q == p.id => def.param(mode),
                     _ => None,

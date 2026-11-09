@@ -565,6 +565,7 @@ impl Controller {
     pub fn device_poll(&mut self) {
         let now = Instant::now();
         self.panel_poll_meters();
+        self.panel_poll_views();
         self.panel_poll_fields();
         self.mod_poll();
         self.panel_poll_graphs();

@@ -177,7 +177,7 @@ export component KnobCell inherits Rectangle {
     property <float> now-a: -135 + root.k.mod-now * 270;
     property <float> r-mod: root.rc - 4.6 * zm;
     property <bool> editing;
-    width: 62px * zm; height: 76px * zm;
+    width: root.k.cell > 0 ? root.k.cell : 62px * zm; height: 76px * zm;
     opacity: (root.k.dim || root.k.inert) ? 0.55 : 1.0;
     accessible-role: slider; accessible-label: root.k.label; accessible-value: root.k.value;
     fs := ParamKeys {
@@ -431,10 +431,10 @@ component DeviceCanvas inherits Rectangle {
         border-radius: root.f.well ? 4px * zm : 0;
         background: root.f.well ? @linear-gradient(180deg, #212125 0%, #18191d 100%) : transparent;
         clip: root.f.well;
-        accessible-role: groupbox; accessible-label: root.f.caption; accessible-value: root.f.readout;
+        accessible-role: groupbox; accessible-label: root.f.caption; accessible-value: root.f.value != "" ? root.f.value : root.f.readout;
         for p in root.f.paths: Path {
             viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
-            commands: p.commands; stroke: p.stroke; stroke-width: p.width; fill: p.fill;
+            commands: p.commands; stroke: p.stroke; stroke-width: p.width; fill: p.fill2 == p.fill ? p.fill : @linear-gradient(180deg, p.fill 0%, p.fill2 100%);
             stroke-line-join: round; stroke-line-cap: round;
         }
         for t in root.f.texts: Text {
@@ -521,8 +521,11 @@ component PickItem inherits HorizontalLayout {
     in property <int> device;
     in property <PanelPick> p;
     in property <color> accent;
+    // 16 pt gap before this item (rows without spacing: every item but the first and a flexible gap).
+    in property <bool> lead;
     property <float> zm: PanelStyle.z;
     spacing: 6px * zm;
+    padding-left: root.lead ? 16px * zm : 0;
     horizontal-stretch: root.p.kind == 4 ? 1 : 0;
     if root.p.kind == 4: Rectangle { horizontal-stretch: 1; }
     if root.p.kind != 4 && root.p.kind < 5 && root.p.label != "": Text {
@@ -562,9 +565,12 @@ component PickItem inherits HorizontalLayout {
         }
     }
     if root.p.kind == 2: Rectangle {
-        width: root.p.width; border-radius: self.height / 2; background: menu-ta.has-hover ? PanelStyle.pill-hot : PanelStyle.seg;
+        // Fixed width, or sized to the value text (10 pt before it, chevron after).
+        width: root.p.width > 0 ? root.p.width : menu-text.preferred-width + 34px * zm;
+        border-radius: self.height / 2; background: menu-ta.has-hover ? PanelStyle.pill-hot : PanelStyle.seg;
+        opacity: root.p.dim && !menu-ta.has-hover ? 0.6 : 1;
         accessible-role: combobox; accessible-label: root.p.label; accessible-value: root.p.value;
-        Text {
+        menu-text := Text {
             x: 10px * zm; width: parent.width - 28px * zm; text: root.p.value; color: PanelStyle.ink;
             font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm; vertical-alignment: center; overflow: elide;
         }
@@ -1630,8 +1636,8 @@ component BuiltinFace inherits Rectangle {
         opacity: root.card.enabled ? 1.0 : 0.5;
         HorizontalLayout {
             x: 8px * zm; y: 37px * zm; width: (root.card.modv.kind == 1 ? 260px * zm : root.width - 16px * zm); height: 20px * zm;
-            spacing: 16px * zm;
-            for p in root.card.picks: PickItem { device: root.card.id; p: p; accent: root.card.accent; }
+            spacing: root.card.tight-picks ? 0 : 16px * zm;
+            for p[i] in root.card.picks: PickItem { device: root.card.id; p: p; accent: root.card.accent; lead: root.card.tight-picks && i > 0 && p.kind != 4; }
         }
         if root.card.canvas.visible: DeviceCanvas {
             x: root.card.canvas.x; y: root.card.canvas.y; width: root.card.canvas.w; height: root.card.canvas.h;

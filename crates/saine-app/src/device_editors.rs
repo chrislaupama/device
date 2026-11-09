@@ -230,7 +230,7 @@ struct Canvas {
 impl Canvas {
     fn path(&mut self, d: PathData, stroke: Color, width: f32, fill: Color) {
         if !d.empty() {
-            self.paths.push(PanelPath { commands: d.0.into(), stroke, width: width * Z, fill });
+            self.paths.push(PanelPath { commands: d.0.into(), stroke, width: width * Z, fill, fill2: fill });
         }
     }
     fn fill(&mut self, d: PathData, c: Color) {

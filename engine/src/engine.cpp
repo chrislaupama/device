@@ -1498,6 +1498,16 @@ int32_t Engine::builtin_readouts(uint64_t device_id, float* out, std::size_t cap
     return SE_OK;
 }
 
+int32_t Engine::builtin_analysis(uint64_t device_id, float* out, std::size_t capacity, std::size_t& count,
+                                 uint64_t& seq) {
+    std::lock_guard lock(plugins_.mutex());
+    PluginInstance* inst = plugins_.instance(device_id);
+    BuiltinInstance* b = inst != nullptr ? inst->as_builtin() : nullptr;
+    if (b == nullptr) return SE_ERR_NOT_FOUND;
+    count = b->analysis(out, static_cast<uint32_t>(std::min<std::size_t>(capacity, UINT32_MAX)), seq);
+    return SE_OK;
+}
+
 int32_t Engine::plugin_set_param(uint64_t device_id, uint32_t param_id, float normalized) {
     if (!std::isfinite(normalized)) return SE_ERR_INVALID_ARG;
     std::lock_guard lock(plugins_.mutex());

@@ -205,6 +205,50 @@ fn builtin_commands_round_trip_as_json() {
     assert_eq!(serde_json::from_str::<Command>(&json).unwrap(), cmd);
 }
 
+#[test]
+fn pitch_corrector_follows_the_project_key_undoably_and_persists_it() {
+    let pc = builtin::find("pitch-corrector").unwrap();
+    let mut d = Document::new(Project::default());
+    let a = d.project().tracks[0].id;
+    d.execute(Command::AddDevice { track: a, index: None, device: pc.instantiate() }, Origin::User).unwrap();
+    let dev = d.project().track(a).unwrap().devices[0].id;
+    d.execute(Command::SetDeviceParam { device: dev, param: "key".into(), value: 4.0 }, Origin::User).unwrap();
+    let values = |d: &Document| {
+        let (snap, _) = snapshot::build(d.project(), 48_000.0, &HashMap::new());
+        let v = pc.values(&snap.tracks[0].devices[0]);
+        (v[pc.index_of("key").unwrap()], v[pc.index_of("scale").unwrap()])
+    };
+    assert_eq!(values(&d), (4.0, 0.0), "no project key: the stored key and scale run");
+
+    assert!(d.execute(Command::SetProjectKey { key: Some(ProjectKey { root: 12, minor: false }) }, Origin::User).is_err());
+    d.execute(Command::SetProjectKey { key: Some(ProjectKey { root: 9, minor: true }) }, Origin::User).unwrap();
+    assert_eq!(d.undo_label(), Some("Key Change"));
+    assert_eq!(values(&d), (9.0, 2.0), "Follow = Project (default) runs A minor");
+    assert_eq!(d.project().device(dev).unwrap().params["key"], 4.0, "stored key is kept");
+
+    d.execute(Command::SetDeviceParam { device: dev, param: "key_follow".into(), value: 0.0 }, Origin::User).unwrap();
+    assert_eq!(values(&d), (4.0, 0.0), "Manual ignores the project key");
+    d.undo().unwrap();
+    assert_eq!(values(&d), (9.0, 2.0));
+
+    let dir = tempfile::tempdir().unwrap();
+    persist::save(d.project(), dir.path()).unwrap();
+    assert_eq!(persist::load(dir.path()).unwrap().project.transport.key, Some(ProjectKey { root: 9, minor: true }));
+    d.undo().unwrap();
+    assert_eq!(d.project().transport.key, None);
+    assert_eq!(values(&d), (4.0, 0.0));
+}
+
+#[test]
+fn analyzer_formats_and_tuner_strings() {
+    let sp = builtin::find("spectrum").unwrap();
+    let slope = sp.param("slope").unwrap();
+    assert_eq!(slope.format(4.5), "+4.5 dB/oct");
+    assert_eq!(slope.format(-3.0), "\u{2212}3.0 dB/oct");
+    assert_eq!(slope.parse("-1.5"), Some(-1.5));
+    let tu = builtin::find("tuner").unwrap();
+    assert_eq!(tu.param("tuning").unwrap().choices.len(), builtin::TUNING_STRINGS.len());
+}
 
 // ---------------------------------------------------------------- time and pitch built-ins
 

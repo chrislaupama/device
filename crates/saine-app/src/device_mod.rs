@@ -266,7 +266,7 @@ impl Controller {
         let dot_y = h / 2.0 - (h / 2.0 - 3.0) * (depth / 100.0).max(0.04) * (pos * 2.0 - 1.0);
         // The picture is a canvas: drag sideways for Rate, up or down for Depth (one undo step).
         let accent = card.accent;
-        let path = |commands: String, stroke: slint::Color, width: f32, fill: slint::Color| PanelPath { commands: s(commands), stroke, width, fill };
+        let path = |commands: String, stroke: slint::Color, width: f32, fill: slint::Color| PanelPath { commands: s(commands), stroke, width, fill, fill2: fill };
         let clear = slint::Color::from_argb_u8(0, 0, 0, 0);
         let r = 3.5 * Z;
         card.canvas = PanelCanvas {

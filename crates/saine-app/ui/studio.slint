@@ -60,6 +60,8 @@ export struct PanelKnob {
     mod-on: bool, mod-lo: float, mod-hi: float, mod-now: float, mod-color: color, selected: bool, mapped: bool,
     // Text the value editor starts with (empty = value).
     edit: string,
+    // Knob cell width (0 = the 62 pt default).
+    cell: length,
     latch: bool, on: bool, momentary: bool, inert: bool,
 }
 // One modulation link in a source's target list (LFO targets, macro targets).
@@ -74,15 +76,18 @@ export struct ModCard {
 export struct ChainFrame { x: length, w: length, armed: bool, color: color, empty-x: length, empty: bool, head: int }
 // Picker row item. kind 0 caption, 1 segmented choice, 2 menu pill (param -1: sidechain, else a
 // choice menu), 3 value box, 4 flexible gap, 5 latch (On/Off parameter; label shows the state,
-// selected 0 / 1), 6 action button, 7 view switch / tabs (choices = view names, selected = shown view; UI state).
-export struct PanelPick { kind: int, param: int, label: string, choices: [string], selected: int, value: string, enabled: bool, width: length }
+// selected 0 / 1), 6 action button, 7 view switch / tabs (choices = view names, selected = shown view; UI state). dim: a menu pill shown at 60% until hovered
+// (values that follow the project, e.g. the Pitch Corrector's key while Follow is Project).
+export struct PanelPick { kind: int, param: int, label: string, choices: [string], selected: int, value: string, enabled: bool, width: length, dim: bool }
 // Vertical slider column (x = column left, card relative).
 // zero: normalised position the fill starts from (0 = bottom; 0 dB on a range through zero).
 export struct PanelSlider { param: int, x: length, label: string, value: string, norm: float, zero: float }
 export struct PanelTick { y: length, text: string, rule: bool }
 // Device field (View::Custom): layers of paths in field coordinates (the well below the
 // caption when well = true, else the field box), texts, grip pills and drag zones.
-export struct PanelPath { commands: string, stroke: color, width: length, fill: color }
+// fill .. fill2: vertical gradient from the top to the bottom of the well (equal = solid).
+// label: accessible value when it differs from the readout (e.g. the Tuner's spoken note).
+export struct PanelPath { commands: string, stroke: color, width: length, fill: color, fill2: color }
 // align: 0 left, 1 centre, 2 right of [x, x + w].
 export struct PanelText { x: length, y: length, w: length, h: length, text: string, color: color, size: length, weight: int, align: int }
 // anchor: x is the grip's left (0), centre (1) or right (2) edge; y its centre. hot: drawn
@@ -206,6 +211,7 @@ export struct DeviceCard {
     preset: string,
     knobs: [PanelKnob],
     picks: [PanelPick],
+    tight-picks: bool,     // no gap around the flexible gap in the picks row (analyzer cards)
     sliders: [PanelSlider],
     slider-top: length,
     strip: PanelStrip,

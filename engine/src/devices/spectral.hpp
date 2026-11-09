@@ -7,6 +7,8 @@
 //    log-spaced bands (20 Hz .. 20 kHz) in dB, where a full-scale sine reads
 //    0 dB, and writes them as the last kSpectrumBands readouts of a device.
 //    The panel applies the display ballistics (rise / fall, decay).
+//  - fill_window: the analysis windows with their coherent gain (Spectrum,
+//    pitch detection).
 #pragma once
 
 #include <algorithm>
@@ -234,5 +236,34 @@ private:
     uint32_t first_[kSpectrumBands] = {}, last_[kSpectrumBands] = {};
     float bands_[kSpectrumBands] = {};
 };
+
+enum class Window : int { Hann, Hamming, Blackman, BlackmanHarris, FlatTop, Rect };
+
+// Analysis windows (Spectrum, pitch detection). Fills w[0..n) (RT safe: no allocation). Returns the coherent gain (mean of
+// the window), so a full-scale sine reads 0 dB after dividing by n * gain / 2.
+inline float fill_window(Window kind, uint32_t n, float* w) noexcept {
+    constexpr double kTau = 6.283185307179586476925;
+    double sum = 0.0;
+    for (uint32_t i = 0; i < n; ++i) {
+        const double x = kTau * i / n;
+        double v = 1.0;
+        switch (kind) {
+        case Window::Hann: v = 0.5 - 0.5 * std::cos(x); break;
+        case Window::Hamming: v = 0.54 - 0.46 * std::cos(x); break;
+        case Window::Blackman: v = 0.42 - 0.5 * std::cos(x) + 0.08 * std::cos(2 * x); break;
+        case Window::BlackmanHarris:
+            v = 0.35875 - 0.48829 * std::cos(x) + 0.14128 * std::cos(2 * x) - 0.01168 * std::cos(3 * x);
+            break;
+        case Window::FlatTop:
+            v = 0.21557895 - 0.41663158 * std::cos(x) + 0.277263158 * std::cos(2 * x) - 0.083578947 * std::cos(3 * x) +
+                0.006947368 * std::cos(4 * x);
+            break;
+        case Window::Rect: break;
+        }
+        w[i] = static_cast<float>(v);
+        sum += v;
+    }
+    return n > 0 ? static_cast<float>(sum / n) : 1.0f;
+}
 
 } // namespace saine::dsp

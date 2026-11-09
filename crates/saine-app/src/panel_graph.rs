@@ -214,7 +214,7 @@ fn none() -> Color {
 }
 
 fn layer(commands: String, stroke: Color, width: f32, fill: Color) -> PanelPath {
-    PanelPath { commands: s(commands), stroke, width: width * Z, fill }
+    PanelPath { commands: s(commands), stroke, width: width * Z, fill, fill2: fill }
 }
 
 /// Axis rule: position (well px), label, 0 dB emphasis.
@@ -481,7 +481,7 @@ impl Controller {
                     }
                 }
                 let dot_fill = if hot(Zone::Band) { Color::from_rgb_u8(0x29, 0x2a, 0x30) } else { well };
-                dots.push(PanelPath { commands: s(circle(g.x_of(f0), g.y_of(db_at(f0)), 5.0 * Z)), stroke: ink(1.0), width: 1.5 * Z, fill: dot_fill });
+                dots.push(PanelPath { commands: s(circle(g.x_of(f0), g.y_of(db_at(f0)), 5.0 * Z)), stroke: ink(1.0), width: 1.5 * Z, fill: dot_fill, fill2: dot_fill });
                 caption = "Band";
                 value = if f0 >= 1000.0 { format!("{:.2} kHz", f0 / 1000.0) } else { format!("{f0:.0} Hz") };
             }
@@ -525,7 +525,7 @@ impl Controller {
         }
         // Draw order: rules, spectrum, layers, axis labels, dots, grip pills.
         let (ww, wh) = (w * Z, (h - CAPTION) * Z);
-        let rule = |commands: String, a: f32| PanelPath { commands: s(commands), stroke: ink(a), width: 1.0, fill: none() };
+        let rule = |commands: String, a: f32| PanelPath { commands: s(commands), stroke: ink(a), width: 1.0, fill: none(), fill2: none() };
         let mut paths: Vec<PanelPath> = Vec::new();
         paths.extend(hrules.iter().map(|r| rule(format!("M0 {:.2} L{ww:.2} {:.2}", r.pos + 0.5, r.pos + 0.5), if r.strong { 0.13 } else { 0.05 })));
         paths.extend(vrules.iter().map(|r| rule(format!("M{:.2} 0 L{:.2} {wh:.2}", r.pos + 0.5, r.pos + 0.5), 0.05)));
@@ -533,7 +533,7 @@ impl Controller {
             let pts = spectrum_points(&sp.shown, &g);
             if !pts.is_empty() {
                 paths.push(layer(area(&pts, g.y1), none(), 0.0, ink(0.14)));
-                paths.push(PanelPath { commands: s(polyline(&pts)), stroke: ink(0.5), width: 1.0, fill: none() });
+                paths.push(PanelPath { commands: s(polyline(&pts)), stroke: ink(0.5), width: 1.0, fill: none(), fill2: none() });
             }
         }
         paths.extend(layers);

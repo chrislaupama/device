@@ -64,6 +64,11 @@ mod soft_clipper;
 mod tape_saturation;
 pub mod trance_gate;
 mod tremolo;
+mod pitch_corrector;
+mod spectrum;
+mod tuner;
+
+pub use tuner::TUNING_STRINGS;
 mod utility;
 mod widener;
 pub mod synth_v2;
@@ -700,6 +705,9 @@ pub enum Control {
     /// One knob cell showing the first of these parameters that is shown
     /// (`Layout::shown_when`), e.g. Rate in Hz or Rate Sync as a note value.
     Swap(&'static [&'static str]),
+    /// Latch pill (reference fx latch) labelled with the parameter's label,
+    /// filled while the two-state parameter is on; click toggles.
+    Latch(&'static str),
     /// Menu pill over two discrete parameters: the choices of \`param\`, then
     /// the non-zero choices of \`mode\`. Picking a \`param\` entry writes it and
     /// sets \`mode\` to 0; picking a mode entry sets \`mode\` (one undo step).
@@ -710,7 +718,7 @@ impl Control {
     /// The (first) parameter of the control.
     pub fn param(&self) -> Option<&'static str> {
         match *self {
-            Control::Knob(p) | Control::Slider(p) | Control::Menu(p) | Control::Pill(p) | Control::Toggle(p) | Control::Dropdown(p) | Control::Segments(p, _) => Some(p),
+            Control::Knob(p) | Control::Slider(p) | Control::Menu(p) | Control::Pill(p) | Control::Toggle(p) | Control::Dropdown(p) | Control::Segments(p, _) | Control::Latch(p) => Some(p),
             Control::ModeDropdown { param, .. } => Some(param),
             Control::Swap(ps) => ps.first().copied(),
             Control::Sidechain | Control::Views | Control::Gap => None,
@@ -1026,7 +1034,7 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 41] = [
+    static ALL: [&DeviceDef; 44] = [
         &compressor::COMPRESSOR,
         &distortion::DISTORTION,
         &tape_saturation::TAPE_SATURATION,
@@ -1066,6 +1074,9 @@ pub fn all() -> &'static [&'static DeviceDef] {
         &deesser::DEESSER,
         &dehummer::DEHUMMER,
         &denoiser::DENOISER,
+        &pitch_corrector::PITCH_CORRECTOR,
+        &tuner::TUNER,
+        &spectrum::SPECTRUM,
         &trance_gate::TRANCE_GATE,
         &shaper::SHAPER,
     ];
@@ -1257,6 +1268,41 @@ impl DeviceDef {
             self.param(by).map(|b| values.contains(&(self.value(device, b).round() as u32))).unwrap_or(true)
         })
     }
+}
+
+// ---------------------------------------------------------------- key follow
+
+/// Key and scale (plain choice values) a device shows and runs with while it
+/// follows the project key: devices with `key_follow` (Manual / Project),
+/// `key` (pitch classes from C) and `scale` parameters. None while Key
+/// Follow is Manual, or when the project has no key (the stored values
+/// stay in force). A minor project key picks the scale choice "Minor",
+/// otherwise "Major".
+pub fn followed_key(def: &DeviceDef, device: &Device, key: Option<crate::model::ProjectKey>) -> Option<(f32, f32)> {
+    let key = key?;
+    let follow = def.param("key_follow")?;
+    if def.value(device, follow) < 0.5 {
+        return None;
+    }
+    let scale = def.param("scale")?;
+    let want = if key.minor { "Minor" } else { "Major" };
+    let s = scale.choices.iter().position(|c| *c == want)?;
+    def.param("key")?;
+    Some((f32::from(key.root.min(11)), s as f32))
+}
+
+/// The device as the engine should run it: a copy with the followed project
+/// key written into `key` / `scale` (see [followed_key]); other devices
+/// unchanged.
+pub fn engine_device(device: &Device, key: Option<crate::model::ProjectKey>) -> Device {
+    let mut d = device.clone();
+    if let Some(def) = def_of(device)
+        && let Some((k, s)) = followed_key(def, device, key)
+    {
+        d.params.insert("key".into(), k);
+        d.params.insert("scale".into(), s);
+    }
+    d
 }
 
 /// Check one parameter edit against the definition: the parameter exists and
@@ -1692,8 +1738,9 @@ mod tests {
         assert_eq!(ids[..7], ["compressor", "distortion", "tapesaturation", "soft-clipper", "bitcrusher", "widener", "utility"]);
         assert_eq!(find("widener").unwrap().layout.width(), 388.0);
         assert_eq!(find("utility").unwrap().layout.width(), 221.5);
-        // Modulation sources (LFO, chain head) are not listed effects and show no presets.
-        for def in all().iter().filter(|d| listed(d)) {
+        // Modulation sources (LFO, chain head) are not listed effects and show no presets;
+        // Tuner and Spectrum ship none (neither does the reference).
+        for def in all().iter().filter(|d| listed(d) && !matches!(d.id, "tuner" | "spectrum")) {
             assert!(!def.factory.is_empty(), "{} has factory presets", def.id);
         }
     }

@@ -1031,6 +1031,17 @@ int32_t se_builtin_set_param(se_engine* engine, uint64_t device_id, uint32_t ind
  * MAIN THREAD. Unknown or non-built-in device -> SE_ERR_NOT_FOUND. */
 int32_t se_builtin_readouts(se_engine* engine, uint64_t device_id, float* out, size_t capacity, size_t* out_count);
 
+/* Newest analysis frame of a live built-in device: bulk data a processor
+ * publishes for visualisers (for example the Spectrum's band levels in dB;
+ * the layout is the device's, see its processor). Written by the audio
+ * thread whenever the processor completes a frame (lock-free triple
+ * buffer). Copies up to `capacity` floats; *out_count = the frame's float
+ * count (0 when the device publishes none or none yet); *out_seq = the
+ * frame's publish number (0 = none yet; equal numbers = the same frame).
+ * MAIN THREAD. Unknown or non-built-in device -> SE_ERR_NOT_FOUND. */
+int32_t se_builtin_analysis(se_engine* engine, uint64_t device_id, float* out, size_t capacity, size_t* out_count,
+                            uint64_t* out_seq);
+
 /* ---- modulation (ABI v1 addition) -----------------------------------------
  * See docs/devices.md ("Modulation") and saine_core::modulation.
  *

@@ -427,6 +427,7 @@ impl Controller {
             value: s(p.format(v)),
             enabled: true,
             width: width * Z,
+            dim: false,
         })
     }
 

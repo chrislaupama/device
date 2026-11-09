@@ -114,12 +114,12 @@ struct Canvas {
 impl Canvas {
     fn stroke(&mut self, cmd: String, color: Color, width: f32) {
         if !cmd.is_empty() {
-            self.paths.push(PanelPath { commands: s(cmd), stroke: color, width, fill: NONE });
+            self.paths.push(PanelPath { commands: s(cmd), stroke: color, width, fill: NONE, fill2: NONE });
         }
     }
     fn fill(&mut self, cmd: String, color: Color) {
         if !cmd.is_empty() {
-            self.paths.push(PanelPath { commands: s(cmd), stroke: NONE, width: 0.0, fill: color });
+            self.paths.push(PanelPath { commands: s(cmd), stroke: NONE, width: 0.0, fill: color, fill2: color });
         }
     }
     /// Text whose vertical centre is y; align 0 left, 1 centre, 2 right within w.
