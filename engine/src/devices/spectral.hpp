@@ -16,7 +16,7 @@
 
 namespace saine::dsp {
 
-constexpr double kPi = 3.14159265358979323846;
+constexpr double kPiD = 3.14159265358979323846;
 
 class RealFft {
 public:
@@ -36,14 +36,14 @@ public:
         tw_im_.clear();
         for (uint32_t len = 2; len <= m_; len <<= 1)
             for (uint32_t j = 0; j < len / 2; ++j) {
-                const double a = -2.0 * kPi * j / len;
+                const double a = -2.0 * kPiD * j / len;
                 tw_re_.push_back(static_cast<float>(std::cos(a)));
                 tw_im_.push_back(static_cast<float>(std::sin(a)));
             }
         split_re_.resize(m_ + 1);
         split_im_.resize(m_ + 1);
         for (uint32_t k = 0; k <= m_; ++k) {
-            const double a = -2.0 * kPi * k / n;
+            const double a = -2.0 * kPiD * k / n;
             split_re_[k] = static_cast<float>(std::cos(a));
             split_im_[k] = static_cast<float>(std::sin(a));
         }
@@ -165,7 +165,7 @@ public:
         window_.resize(n);
         double sum = 0.0;
         for (uint32_t i = 0; i < n; ++i) {
-            window_[i] = static_cast<float>(0.5 - 0.5 * std::cos(2.0 * kPi * i / n));
+            window_[i] = static_cast<float>(0.5 - 0.5 * std::cos(2.0 * kPiD * i / n));
             sum += static_cast<double>(window_[i]);
         }
         // A full-scale sine peaks at |X| = sum(w) / 2.

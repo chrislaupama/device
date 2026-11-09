@@ -23,7 +23,7 @@ pub static DENOISER: DeviceDef = DeviceDef {
     ],
     layout: Layout {
         picker: &[],
-        view: Some(View::Custom("denoiser-field")),
+        view: Some(View::Custom("denoiser-graph")),
         sliders: &[],
         clusters: &[
             &[Control::Knob("threshold"), Control::Knob("reduction")],

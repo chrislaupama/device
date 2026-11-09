@@ -1,11 +1,11 @@
-//! Field views of the restoration devices (De-Clipper, De-Esser, De-Hummer,
+//! Graph views of the restoration devices (De-Clipper, De-Esser, De-Hummer,
 //! De-Noiser): the `View::Custom` bodies their definitions name. Axes, drawing
 //! laws and gestures follow the device specs (handoffs/device-specs/<device>.md,
 //! sections 2 and 3); the curves are the responses the engine kernels implement.
 //!
-//! Slint (ui/device_panel.slint, FieldView) only draws what is built here and
-//! forwards pointer events (Studio.panel-field); hit-testing and the mapping
-//! from pointer to parameters live here. A field gesture sends live values to
+//! Slint (ui/device_panel.slint, GraphView) only draws what is built here and
+//! forwards pointer events (Studio.panel-graph); hit-testing and the mapping
+//! from pointer to parameters live here. A graph gesture sends live values to
 //! the engine and commits ONE command on release (a Batch when it moved more
 //! than one parameter), so it is one undo step; Escape restores the start
 //! values. Alt-press on a zone resets the parameters it edits.
@@ -13,11 +13,11 @@
 //! The spectrum overlay is shared: kernels append `BANDS` log-spaced band
 //! levels to their readouts (engine/src/devices/spectral.hpp) and this module
 //! applies the display ballistics (5-tap smoothing, 45 ms rise, 130 ms fall,
-//! 42 dB/s decay once frames stop) and maps them onto the field.
+//! 42 dB/s decay once frames stop) and maps them onto the graph.
 
 use crate::controller::Controller;
 use crate::device_panel::Z;
-use crate::{FieldDot, FieldLayer, FieldPill, FieldRule, PanelField};
+use crate::{GraphDot, GraphLayer, GraphPill, GraphRule, PanelGraph};
 use saine_core::builtin::{DeviceDef, ParamDef, View};
 use saine_core::{Command, Device, DeviceId};
 use slint::{Brush, Color, ModelRc, SharedString, VecModel};
@@ -45,7 +45,7 @@ const DRAW_RATE: f64 = 48000.0;
 const CAPTION: f32 = 19.0;
 const DRAG_SLOP: f32 = 3.0;
 
-/// Which field a card shows.
+/// Which graph a card shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Declipper,
@@ -58,9 +58,9 @@ impl Kind {
     pub(crate) fn of(def: &DeviceDef) -> Option<Kind> {
         match def.layout.view {
             Some(View::Custom("declipper-wave")) => Some(Kind::Declipper),
-            Some(View::Custom("deesser-field")) => Some(Kind::Deesser),
-            Some(View::Custom("dehummer-field")) => Some(Kind::Dehummer),
-            Some(View::Custom("denoiser-field")) => Some(Kind::Denoiser),
+            Some(View::Custom("deesser-graph")) => Some(Kind::Deesser),
+            Some(View::Custom("dehummer-graph")) => Some(Kind::Dehummer),
+            Some(View::Custom("denoiser-graph")) => Some(Kind::Denoiser),
             _ => None,
         }
     }
@@ -70,7 +70,7 @@ impl Kind {
     }
 }
 
-/// A draggable part of a field.
+/// A draggable part of a graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Zone {
     /// The whole well: a two-axis relative drag (De-Clipper, De-Hummer).
@@ -143,7 +143,7 @@ struct Spectrum {
 }
 
 #[derive(Debug, Default)]
-pub struct FieldState {
+pub struct GraphState {
     drag: Option<Drag>,
     hover: Option<(DeviceId, Zone)>,
     spectra: HashMap<DeviceId, Spectrum>,
@@ -180,7 +180,7 @@ impl Geo {
     }
 }
 
-/// Field rectangle on the card (pt, card relative): below the picker row when
+/// Graph rectangle on the card (pt, card relative): below the picker row when
 /// there is one (the reference view row), else where the picker row would be.
 fn placement(def: &DeviceDef) -> (f32, f32, f32, f32) {
     let y = if def.layout.picker.is_empty() { 37.0 } else { 63.0 };
@@ -220,8 +220,8 @@ fn none() -> Brush {
     Brush::SolidColor(Color::from_argb_u8(0, 0, 0, 0))
 }
 
-fn layer(commands: String, stroke: Color, width: f32, fill: Brush) -> FieldLayer {
-    FieldLayer { commands: s(commands), stroke, width: width * Z, fill }
+fn layer(commands: String, stroke: Color, width: f32, fill: Brush) -> GraphLayer {
+    GraphLayer { commands: s(commands), stroke, width: width * Z, fill }
 }
 
 fn polyline(pts: &[(f32, f32)]) -> String {
@@ -373,25 +373,25 @@ fn log_points(lo: f32, hi: f32, n: usize) -> Vec<f32> {
 // ---------------------------------------------------------------- controller
 
 impl Controller {
-    fn field_def(&self, id: DeviceId) -> Option<(&Device, &'static DeviceDef, Kind)> {
+    fn graph_def(&self, id: DeviceId) -> Option<(&Device, &'static DeviceDef, Kind)> {
         let d = self.project().device(id)?;
         let def = saine_core::builtin::def_of(d)?;
         Some((d, def, Kind::of(def)?))
     }
 
-    /// Live value of a parameter during a field drag.
-    pub(crate) fn field_drag_value(&self, device: DeviceId, index: usize) -> Option<f32> {
-        let g = self.devices.panel.field.drag.as_ref().filter(|g| g.device == device)?;
+    /// Live value of a parameter during a graph drag.
+    pub(crate) fn graph_drag_value(&self, device: DeviceId, index: usize) -> Option<f32> {
+        let g = self.devices.panel.graph.drag.as_ref().filter(|g| g.device == device)?;
         g.values.iter().find(|(i, _)| *i == index).map(|(_, v)| *v)
     }
 
-    /// The field of a built-in card, if its definition names one.
-    pub(crate) fn field_view(&self, d: &Device, def: &'static DeviceDef, accent: Color) -> PanelField {
-        let Some(kind) = Kind::of(def) else { return PanelField::default() };
+    /// The graph of a built-in card, if its definition names one.
+    pub(crate) fn graph_view(&self, d: &Device, def: &'static DeviceDef, accent: Color) -> PanelGraph {
+        let Some(kind) = Kind::of(def) else { return PanelGraph::default() };
         let (x, y, w, h) = placement(def);
         let g = geo(kind, def);
         let v = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
-        let st = &self.devices.panel.field;
+        let st = &self.devices.panel.graph;
         let dragging = st.drag.as_ref().filter(|g| g.device == d.id).map(|g| g.zone);
         let hover = st.hover.filter(|(dev, _)| *dev == d.id).map(|(_, z)| z);
         let hot = |z: Zone| dragging.or(hover) == Some(z);
@@ -400,15 +400,15 @@ impl Controller {
         let (mut layers, mut dots, mut pills, mut hrules, mut vrules) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (caption, value, label);
         let cursor = dragging.or(hover).map_or(0, |z| z.cursor(v("listen") >= 0.5));
-        let rungs = |hr: &mut Vec<FieldRule>, steps: &[f32]| {
+        let rungs = |hr: &mut Vec<GraphRule>, steps: &[f32]| {
             for &db in steps {
                 let last = db == g.bottom;
-                hr.push(FieldRule { pos: g.y_of(db).min(g.h - 1.0), text: s(if last { String::new() } else { axis_db(db) }), strong: db == 0.0 });
+                hr.push(GraphRule { pos: g.y_of(db).min(g.h - 1.0), text: s(if last { String::new() } else { axis_db(db) }), strong: db == 0.0 });
             }
         };
-        let grid = |vr: &mut Vec<FieldRule>, lines: &[(f32, &str)]| {
+        let grid = |vr: &mut Vec<GraphRule>, lines: &[(f32, &str)]| {
             for &(hz, t) in lines {
-                vr.push(FieldRule { pos: g.x_of(hz), text: s(t), strong: false });
+                vr.push(GraphRule { pos: g.x_of(hz), text: s(t), strong: false });
             }
         };
         match kind {
@@ -463,7 +463,7 @@ impl Controller {
                         layers.push(layer(format!("M{ex:.2} 0 L{ex:.2} {:.2}", g.h), ink(if hot(z) { 0.55 } else { 0.24 }), 1.0 / Z, none()));
                     }
                 }
-                dots.push(FieldDot {
+                dots.push(GraphDot {
                     x: g.x_of(f0),
                     y: g.y_of(db_at(f0)),
                     r: 5.0 * Z,
@@ -507,8 +507,8 @@ impl Controller {
                 layers.push(layer(format!("M{x0:.2} {ty:.2} L{:.2} {ty:.2}", g.w), accent, if hot(Zone::Threshold) { 2.0 } else { 1.5 }, none()));
                 layers.push(layer(format!("M{x0:.2} {fy:.2} L{:.2} {fy:.2}", g.w), alpha(accent, 0.45), if hot(Zone::Floor) { 1.5 } else { 1.0 }, none()));
                 let inside = |y: f32| y.clamp(9.0 * Z, g.h - 9.0 * Z);
-                pills.push(FieldPill { x: 30.0 * Z, y: inside(ty), label: s("Threshold"), value: s(db_text(t)), hot: hot(Zone::Threshold), zone: Zone::Threshold.id() });
-                pills.push(FieldPill { x: -1.0, y: inside(fy), label: s("Reduction"), value: s(db_text(red)), hot: hot(Zone::Floor), zone: Zone::Floor.id() });
+                pills.push(GraphPill { x: 30.0 * Z, y: inside(ty), label: s("Threshold"), value: s(db_text(t)), hot: hot(Zone::Threshold), zone: Zone::Threshold.id() });
+                pills.push(GraphPill { x: -1.0, y: inside(fy), label: s("Reduction"), value: s(db_text(red)), hot: hot(Zone::Floor), zone: Zone::Floor.id() });
                 caption = "Noise gate";
                 value = String::new();
                 label = format!("Noise gate, threshold {t:.1} decibels, reduction {red:.1} decibels");
@@ -522,7 +522,7 @@ impl Controller {
                 sfill = area(&pts, g.y1);
             }
         }
-        PanelField {
+        PanelGraph {
             visible: true,
             x: x * Z,
             y: y * Z,
@@ -543,15 +543,15 @@ impl Controller {
         }
     }
 
-    /// Engine readouts -> spectrum ballistics of the selected track's field devices (every poll tick).
-    pub(crate) fn panel_poll_fields(&mut self) {
+    /// Engine readouts -> spectrum ballistics of the selected track's graph devices (every poll tick).
+    pub(crate) fn panel_poll_graphs(&mut self) {
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else { return };
         let ids: Vec<(DeviceId, bool)> = t
             .devices
             .iter()
             .filter_map(|d| saine_core::builtin::def_of(d).and_then(Kind::of).filter(|k| k.has_spectrum()).map(|k| (d.id, k != Kind::Dehummer)))
             .collect();
-        self.devices.panel.field.spectra.retain(|id, _| ids.iter().any(|(i, _)| i == id));
+        self.devices.panel.graph.spectra.retain(|id, _| ids.iter().any(|(i, _)| i == id));
         let now = Instant::now();
         let audio_running = self.engine.transport().playing || self.rec.recording || self.test_tone_active();
         let mut out = Vec::new();
@@ -563,7 +563,7 @@ impl Controller {
             let mut raw = [SPEC_FLOOR_DB; BANDS];
             raw.copy_from_slice(&out[out.len() - BANDS..]);
             let duck = if has_duck { out[0].min(0.0) } else { 0.0 };
-            let sp = self.devices.panel.field.spectra.entry(id).or_insert_with(|| Spectrum { shown: [SPEC_FLOOR_DB; BANDS], raw: [f32::NAN; BANDS], duck: 0.0, changed: now, polled: now });
+            let sp = self.devices.panel.graph.spectra.entry(id).or_insert_with(|| Spectrum { shown: [SPEC_FLOOR_DB; BANDS], raw: [f32::NAN; BANDS], duck: 0.0, changed: now, polled: now });
             let dt = (now - sp.polled).as_secs_f32().min(0.25);
             sp.polled = now;
             if raw != sp.raw {
@@ -594,7 +594,7 @@ impl Controller {
 
     // ---------------------------------------------------------------- gestures
 
-    fn field_hit(&self, d: &Device, def: &'static DeviceDef, kind: Kind, x: f32, y: f32) -> Option<Zone> {
+    fn graph_hit(&self, d: &Device, def: &'static DeviceDef, kind: Kind, x: f32, y: f32) -> Option<Zone> {
         let g = geo(kind, def);
         let v = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
         if x < 0.0 || y < 0.0 || x > g.w || y > g.h {
@@ -633,23 +633,23 @@ impl Controller {
         }
     }
 
-    /// Field pointer events (Studio.panel-field). zone -1: hit-test the well; else a pill's zone.
+    /// Graph pointer events (Studio.panel-graph). zone -1: hit-test the well; else a pill's zone.
     #[allow(clippy::too_many_arguments)]
-    pub fn panel_field(&mut self, device: DeviceId, phase: i32, zone: i32, x: f32, y: f32, fine: bool, alt: bool) {
-        let Some((d, def, kind)) = self.field_def(device) else {
-            if matches!(phase, 2 | 3) && self.devices.panel.field.drag.take().is_some() {
+    pub fn panel_graph(&mut self, device: DeviceId, phase: i32, zone: i32, x: f32, y: f32, fine: bool, alt: bool) {
+        let Some((d, def, kind)) = self.graph_def(device) else {
+            if matches!(phase, 2 | 3) && self.devices.panel.graph.drag.take().is_some() {
                 self.ui_dirty = true;
             }
             return;
         };
-        let zone = if zone >= 0 { Zone::from_id(zone) } else { self.field_hit(d, def, kind, x, y) };
+        let zone = if zone >= 0 { Zone::from_id(zone) } else { self.graph_hit(d, def, kind, x, y) };
         match phase {
             0 => {
                 let Some(z) = zone else { return };
                 let idx: Vec<usize> = z.params(kind).iter().filter_map(|id| def.index_of(id)).collect();
                 if alt {
                     let params: Vec<(usize, f32)> = idx.iter().map(|&i| (i, def.params[i].default)).collect();
-                    self.field_commit(device, def, &params);
+                    self.graph_commit(device, def, &params);
                     return;
                 }
                 let start: Vec<(usize, f32)> = idx.iter().map(|&i| (i, def.value(d, &def.params[i]))).collect();
@@ -663,51 +663,51 @@ impl Controller {
                     }
                     _ => (0.0, 0.0),
                 };
-                self.devices.panel.field.drag = Some(Drag { device, kind, zone: z, values: start.clone(), start, last: (x, y), press: (x, y), pos: (x, y), grab, travel: 0.0, active: false });
-                self.devices.panel.field.hover = Some((device, z));
+                self.devices.panel.graph.drag = Some(Drag { device, kind, zone: z, values: start.clone(), start, last: (x, y), press: (x, y), pos: (x, y), grab, travel: 0.0, active: false });
+                self.devices.panel.graph.hover = Some((device, z));
                 self.ui_dirty = true;
             }
-            1 => self.field_move(device, def, x, y, fine),
+            1 => self.graph_move(device, def, x, y, fine),
             2 => {
-                let Some(g) = self.devices.panel.field.drag.take() else { return };
+                let Some(g) = self.devices.panel.graph.drag.take() else { return };
                 self.ui_dirty = true;
                 if g.device == device && g.active {
-                    self.field_commit(device, def, &g.values);
+                    self.graph_commit(device, def, &g.values);
                 }
             }
             3 => {
-                self.panel_cancel_field_drag();
+                self.panel_cancel_graph_drag();
             }
             4 => {
-                if self.devices.panel.field.drag.is_some() {
+                if self.devices.panel.graph.drag.is_some() {
                     return;
                 }
                 let next = zone.map(|z| (device, z));
-                if self.devices.panel.field.hover != next {
-                    self.devices.panel.field.hover = next;
+                if self.devices.panel.graph.hover != next {
+                    self.devices.panel.graph.hover = next;
                     self.ui_dirty = true;
                 }
             }
             _ => {
-                if self.devices.panel.field.drag.is_none() && self.devices.panel.field.hover.is_some_and(|(dev, _)| dev == device) {
-                    self.devices.panel.field.hover = None;
+                if self.devices.panel.graph.drag.is_none() && self.devices.panel.graph.hover.is_some_and(|(dev, _)| dev == device) {
+                    self.devices.panel.graph.hover = None;
                     self.ui_dirty = true;
                 }
             }
         }
     }
 
-    fn field_move(&mut self, device: DeviceId, def: &'static DeviceDef, x: f32, y: f32, fine: bool) {
-        let Some(mut g) = self.devices.panel.field.drag.take() else { return };
+    fn graph_move(&mut self, device: DeviceId, def: &'static DeviceDef, x: f32, y: f32, fine: bool) {
+        let Some(mut g) = self.devices.panel.graph.drag.take() else { return };
         if g.device != device {
-            self.devices.panel.field.drag = Some(g);
+            self.devices.panel.graph.drag = Some(g);
             return;
         }
         let (dx, dy) = (x - g.last.0, y - g.last.1);
         g.last = (x, y);
         g.travel += dx.abs() + dy.abs();
         if !g.active && g.travel < DRAG_SLOP {
-            self.devices.panel.field.drag = Some(g);
+            self.devices.panel.graph.drag = Some(g);
             return;
         }
         g.active = true;
@@ -769,12 +769,12 @@ impl Controller {
         for &(i, v) in &g.values {
             let _ = self.engine.builtin_set_param(device.0, i as u32, v);
         }
-        self.devices.panel.field.drag = Some(g);
+        self.devices.panel.graph.drag = Some(g);
         self.ui_dirty = true;
     }
 
     /// Commit changed values as one undo step.
-    fn field_commit(&mut self, device: DeviceId, def: &'static DeviceDef, values: &[(usize, f32)]) {
+    fn graph_commit(&mut self, device: DeviceId, def: &'static DeviceDef, values: &[(usize, f32)]) {
         let Some(d) = self.project().device(device) else { return };
         let mut commands: Vec<Command> = values
             .iter()
@@ -788,9 +788,9 @@ impl Controller {
         }
     }
 
-    /// Escape or a cancelled pointer: restore the values from before the field drag.
-    pub fn panel_cancel_field_drag(&mut self) -> bool {
-        let Some(g) = self.devices.panel.field.drag.take() else { return false };
+    /// Escape or a cancelled pointer: restore the values from before the graph drag.
+    pub fn panel_cancel_graph_drag(&mut self) -> bool {
+        let Some(g) = self.devices.panel.graph.drag.take() else { return false };
         self.ui_dirty = true;
         if self.project().device(g.device).is_none() {
             return false;
@@ -836,7 +836,7 @@ mod tests {
     }
 
     #[test]
-    fn every_restoration_device_names_a_field() {
+    fn every_restoration_device_names_a_graph() {
         for (id, kind) in [("declipper", Kind::Declipper), ("deesser", Kind::Deesser), ("dehummer", Kind::Dehummer), ("denoiser", Kind::Denoiser)] {
             assert_eq!(Kind::of(def(id)), Some(kind));
         }
@@ -844,7 +844,7 @@ mod tests {
     }
 
     #[test]
-    fn field_placement_follows_the_picker_row() {
+    fn graph_placement_follows_the_picker_row() {
         assert_eq!(placement(def("declipper")), (8.0, 63.0, 228.0, 151.0));
         assert_eq!(placement(def("deesser")), (8.0, 37.0, 455.0, 177.0));
     }
@@ -916,10 +916,10 @@ mod tests {
         assert!(pts.iter().all(|(x, y)| *x >= g.x0 && *x <= g.x1 && *y >= g.y0 && *y <= g.y1));
     }
 
-    /// Per-refresh cost of building each field (`cargo test -p saine-app --release bench_fields -- --ignored --nocapture`).
+    /// Per-refresh cost of building each graph (`cargo test -p saine-app --release bench_graphs -- --ignored --nocapture`).
     #[test]
     #[ignore]
-    fn bench_fields() {
+    fn bench_graphs() {
         let n = 2000;
         let t0 = Instant::now();
         for i in 0..n {
@@ -940,6 +940,6 @@ mod tests {
             std::hint::black_box(spectrum_points(std::hint::black_box(&bands), &g));
         }
         let spec = t0.elapsed().as_secs_f64() * 1e6 / n as f64;
-        println!("field model: de-hummer point (8 notches) {hum:.0} ns, de-esser point {ess:.0} ns, spectrum trace {spec:.2} us");
+        println!("graph model: de-hummer point (8 notches) {hum:.0} ns, de-esser point {ess:.0} ns, spectrum trace {spec:.2} us");
     }
 }

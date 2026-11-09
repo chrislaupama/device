@@ -33,6 +33,7 @@ namespace {
 
 enum Param : uint32_t { kThreshold, kCeiling, kOversampling, kMix, kParamCount };
 constexpr const char* kParamIds[kParamCount] = {"threshold", "ceiling", "oversampling", "mix"};
+constexpr float kDefaults[kParamCount] = {-1.0f, -0.3f, 1.0f, 100.0f};
 
 constexpr int kTaps = 16;        // interpolation taps: 7 samples before, 8 after
 constexpr int kTapsBefore = 7;   // so a point between s and s + 1 needs s + 8
@@ -67,8 +68,8 @@ public:
                 double c[kTaps];
                 for (int t = 0; t < kTaps; ++t) {
                     const double x = frac - (t - kTapsBefore);
-                    const double s = std::fabs(x) < 1e-9 ? 1.0 : std::sin(dsp::kPi * x) / (dsp::kPi * x);
-                    const double w = 0.42 + 0.5 * std::cos(dsp::kPi * x / 8.0) + 0.08 * std::cos(2.0 * dsp::kPi * x / 8.0);
+                    const double s = std::fabs(x) < 1e-9 ? 1.0 : std::sin(dsp::kPiD * x) / (dsp::kPiD * x);
+                    const double w = 0.42 + 0.5 * std::cos(dsp::kPiD * x / 8.0) + 0.08 * std::cos(2.0 * dsp::kPiD * x / 8.0);
                     c[t] = s * w;
                     sum += c[t];
                 }
@@ -236,6 +237,6 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<DeClipper>(
 } // namespace
 
 extern const BuiltinDescriptor kDeClipperDescriptor;
-const BuiltinDescriptor kDeClipperDescriptor{"declipper", kParamIds, {}, &create, {}};
+const BuiltinDescriptor kDeClipperDescriptor{"declipper", kParamIds, {}, &create, {}, kDefaults};
 
 } // namespace saine

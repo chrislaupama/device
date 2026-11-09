@@ -8,7 +8,7 @@
 // multiplied by PanelStyle.z. Colours are the measured card colours.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
-import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField, FieldPill } from "studio.slint";
+import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField, PanelGraph, GraphPill } from "studio.slint";
 
 export global PanelStyle {
     out property <float> z: 0.85;
@@ -206,7 +206,7 @@ component SliderCol inherits Rectangle {
     property <float> zm: PanelStyle.z;
     property <length> travel: root.bottom - root.top;
     property <length> cap-y: root.top + (1 - root.s.norm) * root.travel;
-    property <length> zero-y: root.top + (root.s.bipolar ? 0.5 : 1) * root.travel;
+    property <length> zero-y: root.top + (1 - root.s.zero) * root.travel;
     property <bool> editing;
     width: 62px * zm;
     accessible-role: slider; accessible-label: root.s.label; accessible-value: root.s.value;
@@ -250,7 +250,9 @@ component PickItem inherits HorizontalLayout {
     property <float> zm: PanelStyle.z;
     spacing: 6px * zm;
     horizontal-stretch: root.p.kind == 4 ? 1 : 0;
+    if root.p.kind == 4: Rectangle { horizontal-stretch: 1; }
     if root.p.kind != 4 && root.p.label != "": Text {
+        horizontal-stretch: 0;
         text: root.p.label; color: PanelStyle.caption; font-size: 11px * zm; font-weight: 500; letter-spacing: -0.02 * 11px * zm;
         vertical-alignment: center; opacity: root.p.enabled ? 1 : 0.55;
     }
@@ -412,10 +414,101 @@ component DynamicsStrip inherits Rectangle {
     }
 }
 
-// Grip pill on a field line (dot grid, name, value). Presses and hover go to Rust as the pill's zone.
-component FieldPillView inherits Rectangle {
+// Plotted field: caption + readout, then a well with tick labels and rules, the fill or band,
+// up to three traces, the live overlay and an XY drag over the plot area (paths from Rust).
+component FieldView inherits Rectangle {
     in property <int> device;
-    in property <FieldPill> p;
+    in property <PanelField> f;
+    in property <color> accent;
+    property <float> zm: PanelStyle.z;
+    property <length> last-x;
+    property <length> last-y;
+    property <bool> dragging;
+    property <bool> hot: root.dragging || field-ta.has-hover;
+    if root.f.caption != "": HorizontalLayout {
+        x: 0; y: 0; height: 16px * zm; spacing: 5px * zm; alignment: start;
+        Text { text: root.f.caption; color: PanelStyle.caption; font-size: 11.5px * zm; font-weight: 500; letter-spacing: -0.02 * 11.5px * zm; vertical-alignment: center; }
+        Text { text: root.f.readout; color: PanelStyle.ink; font-size: 11.5px * zm; font-weight: 650; letter-spacing: -0.04 * 11.5px * zm; vertical-alignment: center; }
+    }
+    Rectangle {
+        y: root.f.well-y; height: root.height - root.f.well-y;
+        border-radius: 4px * zm;
+        background: @linear-gradient(180deg, #212125 0%, #18191d 100%);
+        clip: true;
+        accessible-role: groupbox; accessible-label: root.f.caption != "" ? root.f.caption : "Field"; accessible-value: root.f.readout;
+        for t in root.f.ticks: Rectangle {
+            x: root.f.plot-x; y: t.y; height: 0.5px; width: root.f.plot-w;
+            background: t.rule ? #ffffff0d : transparent;
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.f.fill; stroke-width: 0; fill: root.accent.with-alpha(root.f.band ? 0.16 : 0.28);
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.f.rest; stroke: #ffffff26; stroke-width: 1px; fill: transparent;
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.f.third; stroke: PanelStyle.ink.with-alpha(root.f.third-alpha); stroke-width: 1.2px * zm; fill: transparent;
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.f.alt; stroke: PanelStyle.ink.with-alpha(root.f.alt-alpha); stroke-width: 1.2px * zm; fill: transparent;
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.f.main; stroke: PanelStyle.ink; stroke-width: root.hot ? root.f.main-hot-w : root.f.main-w; fill: transparent; stroke-line-join: round;
+        }
+        Path {
+            viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
+            commands: root.f.live; stroke: root.accent; stroke-width: 1.6px * zm; fill: transparent; stroke-line-join: round;
+        }
+        if root.f.dot: Rectangle {
+            x: root.f.dot-x - 3.5px * zm; y: root.f.dot-y - 3.5px * zm; width: 7px * zm; height: 7px * zm; border-radius: 3.5px * zm;
+            background: PanelStyle.ink; drop-shadow-blur: 4px; drop-shadow-color: root.accent.with-alpha(0.8);
+        }
+        for t in root.f.ticks: Text {
+            x: 0; y: max(1px, min(parent.height - 13px * zm, t.y - 6.5px * zm)); width: root.f.plot-x - 4px * zm; height: 13px * zm;
+            text: t.text; color: PanelStyle.axis; font-size: 10px * zm; font-weight: 600; horizontal-alignment: right; vertical-alignment: center;
+        }
+        field-ta := TouchArea {
+            x: root.f.plot-x; y: root.f.plot-y - root.f.well-y; width: root.f.plot-w; height: root.f.plot-h;
+            mouse-cursor: MouseCursor.move;
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+                    if (e.modifiers.alt) {
+                        Studio.panel-reset(root.device, root.f.x-param);
+                        Studio.panel-reset(root.device, root.f.y-param);
+                        return;
+                    }
+                    root.dragging = true;
+                    root.last-x = self.mouse-x;
+                    root.last-y = self.mouse-y;
+                    Studio.panel-field(root.device, 0, 0, 0, e.modifiers.shift);
+                }
+                if (e.kind == PointerEventKind.move && root.dragging) {
+                    Studio.panel-field(root.device, 1, (self.mouse-x - root.last-x) / 1px, (root.last-y - self.mouse-y) / 1px, e.modifiers.shift);
+                    root.last-x = self.mouse-x;
+                    root.last-y = self.mouse-y;
+                }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up && root.dragging) {
+                    root.dragging = false;
+                    Studio.panel-field(root.device, 2, 0, 0, false);
+                }
+                if (e.kind == PointerEventKind.cancel && root.dragging) {
+                    root.dragging = false;
+                    Studio.panel-field(root.device, 3, 0, 0, false);
+                }
+            }
+        }
+    }
+}
+
+// Grip pill on a field line (dot grid, name, value). Presses and hover go to Rust as the pill's zone.
+component GraphPillView inherits Rectangle {
+    in property <int> device;
+    in property <GraphPill> p;
     callback grabbed();
     property <float> zm: PanelStyle.z;
     y: root.p.y - 8px * zm; height: 16px * zm; width: pill-row.preferred-width;
@@ -435,20 +528,20 @@ component FieldPillView inherits Rectangle {
     TouchArea {
         mouse-cursor: ns-resize;
         pointer-event(e) => {
-            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { root.grabbed(); Studio.panel-field(root.device, 0, root.p.zone, (root.x + self.mouse-x) / 1px, (root.y + self.mouse-y) / 1px, e.modifiers.shift, e.modifiers.alt); }
-            if (e.kind == PointerEventKind.move) { Studio.panel-field(root.device, self.pressed ? 1 : 4, root.p.zone, (root.x + self.mouse-x) / 1px, (root.y + self.mouse-y) / 1px, e.modifiers.shift, false); }
-            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-field(root.device, 2, root.p.zone, (root.x + self.mouse-x) / 1px, (root.y + self.mouse-y) / 1px, false, false); }
-            if (e.kind == PointerEventKind.cancel) { Studio.panel-field(root.device, 3, root.p.zone, 0, 0, false, false); }
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { root.grabbed(); Studio.panel-graph(root.device, 0, root.p.zone, (root.x + self.mouse-x) / 1px, (root.y + self.mouse-y) / 1px, e.modifiers.shift, e.modifiers.alt); }
+            if (e.kind == PointerEventKind.move) { Studio.panel-graph(root.device, self.pressed ? 1 : 4, root.p.zone, (root.x + self.mouse-x) / 1px, (root.y + self.mouse-y) / 1px, e.modifiers.shift, false); }
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-graph(root.device, 2, root.p.zone, (root.x + self.mouse-x) / 1px, (root.y + self.mouse-y) / 1px, false, false); }
+            if (e.kind == PointerEventKind.cancel) { Studio.panel-graph(root.device, 3, root.p.zone, 0, 0, false, false); }
         }
-        changed has-hover => { if (!self.has-hover && !self.pressed) { Studio.panel-field(root.device, 5, root.p.zone, 0, 0, false, false); } }
+        changed has-hover => { if (!self.has-hover && !self.pressed) { Studio.panel-graph(root.device, 5, root.p.zone, 0, 0, false, false); } }
     }
 }
 
 // Field view (restoration devices): caption + track-coloured value, then the well. Rust
 // builds every path in well pixels and maps the pointer to parameters.
-component FieldView inherits Rectangle {
+component GraphView inherits Rectangle {
     in property <int> device;
-    in property <PanelField> f;
+    in property <PanelGraph> f;
     in property <color> accent;
     property <float> zm: PanelStyle.z;
     // A press focuses the field, so window shortcuts (undo, Escape) keep working after a gesture.
@@ -499,16 +592,16 @@ component FieldView inherits Rectangle {
         TouchArea {
             mouse-cursor: root.f.cursor == 1 ? MouseCursor.move : root.f.cursor == 2 ? MouseCursor.ew-resize : root.f.cursor == 3 ? MouseCursor.ns-resize : MouseCursor.default;
             pointer-event(e) => {
-                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { keys.focus(); Studio.panel-field(root.device, 0, -1, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
-                if (e.kind == PointerEventKind.move) { Studio.panel-field(root.device, self.pressed ? 1 : 4, -1, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, false); }
-                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-field(root.device, 2, -1, self.mouse-x / 1px, self.mouse-y / 1px, false, false); }
-                if (e.kind == PointerEventKind.cancel) { Studio.panel-field(root.device, 3, -1, 0, 0, false, false); }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { keys.focus(); Studio.panel-graph(root.device, 0, -1, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
+                if (e.kind == PointerEventKind.move) { Studio.panel-graph(root.device, self.pressed ? 1 : 4, -1, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, false); }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-graph(root.device, 2, -1, self.mouse-x / 1px, self.mouse-y / 1px, false, false); }
+                if (e.kind == PointerEventKind.cancel) { Studio.panel-graph(root.device, 3, -1, 0, 0, false, false); }
             }
-            changed has-hover => { if (!self.has-hover && !self.pressed) { Studio.panel-field(root.device, 5, -1, 0, 0, false, false); } }
+            changed has-hover => { if (!self.has-hover && !self.pressed) { Studio.panel-graph(root.device, 5, -1, 0, 0, false, false); } }
         }
         if root.f.pills.length > 0: Rectangle {
-            first := FieldPillView { x: root.f.pills[0].x; device: root.device; p: root.f.pills[0]; grabbed => { keys.focus(); } }
-            if root.f.pills.length > 1: FieldPillView {
+            first := GraphPillView { x: root.f.pills[0].x; device: root.device; p: root.f.pills[0]; grabbed => { keys.focus(); } }
+            if root.f.pills.length > 1: GraphPillView {
                 x: root.f.pills[1].x < 0 ? first.x + first.width + 8px * root.zm : root.f.pills[1].x;
                 device: root.device; p: root.f.pills[1];
                 grabbed => { keys.focus(); }
@@ -595,7 +688,6 @@ export component BuiltinCard inherits Rectangle {
         HorizontalLayout {
             x: 8px * zm; y: 37px * zm; width: root.width - 16px * zm; height: 20px * zm;
             spacing: 16px * zm;
-            alignment: start; // items keep their size; a sidechain gap (kind 4) takes the rest
             for p in root.card.picks: PickItem { device: root.card.id; p: p; accent: root.card.accent; }
         }
         if root.card.strip.visible: DynamicsStrip {
@@ -605,6 +697,10 @@ export component BuiltinCard inherits Rectangle {
         if root.card.field.visible: FieldView {
             x: root.card.field.x; y: root.card.field.y; width: root.card.field.w; height: root.card.field.h;
             device: root.card.id; f: root.card.field; accent: root.card.accent;
+        }
+        if root.card.graph.visible: GraphView {
+            x: root.card.graph.x; y: root.card.graph.y; width: root.card.graph.w; height: root.card.graph.h;
+            device: root.card.id; f: root.card.graph; accent: root.card.accent;
         }
         for s in root.card.sliders: SliderCol {
             x: s.x; y: 0; height: root.height;

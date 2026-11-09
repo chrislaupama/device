@@ -15,12 +15,7 @@ namespace {
 // known here, so every device starts from all zeros except what the
 // device-specific defaults table gives (devices must clamp anything).
 std::vector<float> defaults_for(const saine::BuiltinDescriptor& d) {
-    if (std::string(d.id) == "compressor") return {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};
-    if (std::string(d.id) == "declipper") return {-1.f, -0.3f, 1.f, 100.f};
-    if (std::string(d.id) == "deesser") return {7000.f, 1.f, -36.f, 8.f, 0.f, 100.f};
-    if (std::string(d.id) == "dehummer") return {60.f, 4.f, 5.f, -30.f, 100.f};
-    if (std::string(d.id) == "denoiser") return {-40.f, -20.f, 50.f, 5.f, 50.f, 100.f};
-    return std::vector<float>(d.params.size(), 0.0f);
+    return {d.defaults.begin(), d.defaults.end()};
 }
 
 const std::vector<float> kComp = {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};

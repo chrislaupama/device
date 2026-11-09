@@ -25,6 +25,7 @@ namespace {
 
 enum Param : uint32_t { kFrequency, kBandwidth, kThreshold, kReduction, kListen, kMix, kParamCount };
 constexpr const char* kParamIds[kParamCount] = {"frequency", "bandwidth", "threshold", "reduction", "listen", "mix"};
+constexpr float kDefaults[kParamCount] = {7000.0f, 1.0f, -36.0f, 8.0f, 0.0f, 100.0f};
 
 constexpr uint32_t kReadoutCount = 1 + dsp::kSpectrumBands;
 struct ReadoutIds {
@@ -150,6 +151,6 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<DeEsser>();
 } // namespace
 
 extern const BuiltinDescriptor kDeEsserDescriptor;
-const BuiltinDescriptor kDeEsserDescriptor{"deesser", kParamIds, kReadouts.ids, &create, kIdle.v};
+const BuiltinDescriptor kDeEsserDescriptor{"deesser", kParamIds, kReadouts.ids, &create, kIdle.v, kDefaults};
 
 } // namespace saine

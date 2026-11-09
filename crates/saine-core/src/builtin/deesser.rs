@@ -23,7 +23,7 @@ pub static DEESSER: DeviceDef = DeviceDef {
     ],
     layout: Layout {
         picker: &[],
-        view: Some(View::Custom("deesser-field")),
+        view: Some(View::Custom("deesser-graph")),
         sliders: &[],
         clusters: &[
             &[Control::Knob("frequency"), Control::Knob("bandwidth")],

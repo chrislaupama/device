@@ -23,6 +23,7 @@ namespace {
 
 enum Param : uint32_t { kFrequency, kHarmonics, kWidth, kDepth, kMix, kParamCount };
 constexpr const char* kParamIds[kParamCount] = {"frequency", "num_harmonics", "notch_width", "depth", "mix"};
+constexpr float kDefaults[kParamCount] = {60.0f, 4.0f, 5.0f, -30.0f, 100.0f};
 constexpr uint32_t kMaxHarmonics = 8;
 constexpr uint32_t kCoeffStride = 16;
 
@@ -126,6 +127,6 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<DeHummer>()
 } // namespace
 
 extern const BuiltinDescriptor kDeHummerDescriptor;
-const BuiltinDescriptor kDeHummerDescriptor{"dehummer", kParamIds, dsp::kSpectrumIds, &create, kIdle.v};
+const BuiltinDescriptor kDeHummerDescriptor{"dehummer", kParamIds, dsp::kSpectrumIds, &create, kIdle.v, kDefaults};
 
 } // namespace saine

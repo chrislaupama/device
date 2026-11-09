@@ -25,11 +25,18 @@
 //! stepped linear parameters snap in the plain domain. Discrete parameters
 //! store the choice index as their plain value (`min` = 0, `max` = choices - 1).
 
+mod autopanner;
+pub mod character_mod;
+mod chorus;
 mod compressor;
 mod declipper;
 mod deesser;
 mod dehummer;
 mod denoiser;
+mod flanger;
+mod phaser;
+mod ring_mod;
+mod tremolo;
 
 use crate::device::{Device, DeviceId, PluginFormat, PluginKind, PluginRef};
 use crate::model::Track;
@@ -59,10 +66,16 @@ pub enum Format {
     Time,
     /// Hertz below 1 kHz ("440 Hz"), kilohertz above ("2.50 kHz").
     Hz,
+    /// The reference's generic Hz text: two decimals below 1 Hz ("0.50 Hz"),
+    /// one below 10 Hz ("5.0 Hz"), whole numbers below 999.5 Hz ("440 Hz"),
+    /// then kilohertz with one decimal ("2.2 kHz"). LFO rates, carriers.
+    Freq,
     /// Compression ratio: "4.0:1".
     Ratio,
-    /// Percent, at most one decimal: "100%", "12.5%".
+    /// Percent, at most one decimal: "100%", "12.5%", "−40%".
     Percent,
+    /// Percent with an explicit sign, whole numbers: "+35%", "−100%", "0%".
+    SignedPercent,
     /// Choice name from `ParamDef::choices`.
     Choice,
     /// Number with this many decimals and the unit appended when not empty.
@@ -92,6 +105,8 @@ pub struct ParamDef {
     pub automatable: bool,
     /// Reset to the default when a preset loads (audition switches).
     pub reset_on_load: bool,
+    /// A preset load leaves the current value alone (seeds, locks).
+    pub preset_lock: bool,
     /// One-sentence description (tooltips, the assistant).
     pub help: &'static str,
 }
@@ -100,12 +115,12 @@ impl ParamDef {
     /// A continuous parameter with defaults for the optional fields.
     #[allow(clippy::too_many_arguments)]
     pub const fn new(id: &'static str, name: &'static str, min: f32, max: f32, default: f32, taper: Taper, unit: &'static str, format: Format) -> ParamDef {
-        ParamDef { id, name, label: name, min, max, default, taper, step: 0.0, unit, format, choices: &[], automatable: true, reset_on_load: false, help: "" }
+        ParamDef { id, name, label: name, min, max, default, taper, step: 0.0, unit, format, choices: &[], automatable: true, reset_on_load: false, preset_lock: false, help: "" }
     }
 
     /// A discrete parameter: plain value = index into `choices`.
     pub const fn choice(id: &'static str, name: &'static str, choices: &'static [&'static str], default: u32) -> ParamDef {
-        ParamDef { id, name, label: name, min: 0.0, max: (choices.len() - 1) as f32, default: default as f32, taper: LINEAR, step: 1.0, unit: "", format: Format::Choice, choices, automatable: true, reset_on_load: false, help: "" }
+        ParamDef { id, name, label: name, min: 0.0, max: (choices.len() - 1) as f32, default: default as f32, taper: LINEAR, step: 1.0, unit: "", format: Format::Choice, choices, automatable: true, reset_on_load: false, preset_lock: false, help: "" }
     }
 
     pub const fn label(mut self, label: &'static str) -> ParamDef {
@@ -126,6 +141,10 @@ impl ParamDef {
     }
     pub const fn reset_on_load(mut self) -> ParamDef {
         self.reset_on_load = true;
+        self
+    }
+    pub const fn preset_locked(mut self) -> ParamDef {
+        self.preset_lock = true;
         self
     }
 
@@ -203,9 +222,9 @@ impl ParamDef {
             (_, "") => {}
             (Format::Time, "s" | "sec" | "secs" | "second" | "seconds") => v *= 1000.0,
             (Format::Time, "ms" | "msec" | "msecs") => {}
-            (Format::Hz, "k" | "khz") => v *= 1000.0,
-            (Format::Hz, "hz") => {}
-            (Format::Db | Format::DbCut, "db") | (Format::Percent, "%") => {}
+            (Format::Hz | Format::Freq, "k" | "khz") => v *= 1000.0,
+            (Format::Hz | Format::Freq, "hz") => {}
+            (Format::Db | Format::DbCut, "db") | (Format::Percent | Format::SignedPercent, "%") => {}
             (Format::Plain(_), u) if u == self.unit.to_lowercase() => {}
             _ => return None,
         }
@@ -247,10 +266,26 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
                 format!("{v:.0} Hz")
             }
         }
+        Format::Freq => {
+            if v >= 999.5 {
+                format!("{:.1} kHz", v / 1000.0)
+            } else if v >= 9.995 {
+                format!("{v:.0} Hz")
+            } else if v >= 0.995 {
+                format!("{v:.1} Hz")
+            } else {
+                format!("{v:.2} Hz")
+            }
+        }
         Format::Ratio => format!("{v:.1}:1"),
         Format::Percent => {
             let r = (v * 10.0).round() / 10.0;
-            if r.fract() == 0.0 { format!("{r:.0}%") } else { format!("{r:.1}%") }
+            let s = if r.fract() == 0.0 { format!("{:.0}%", r.abs()) } else { format!("{:.1}%", r.abs()) };
+            if r < 0.0 { format!("{MINUS}{s}") } else { s }
+        }
+        Format::SignedPercent => {
+            let r = v.round();
+            if r == 0.0 { "0%".into() } else if r < 0.0 { format!("{MINUS}{}%", -r) } else { format!("+{r}%") }
         }
         Format::Choice => {
             let i = v.round().max(0.0) as usize;
@@ -280,19 +315,39 @@ pub enum Control {
     Toggle(&'static str),
     /// Sidechain source picker (a track list, not a parameter).
     Sidechain,
+    /// Option pill that opens a menu of the choices (picker row): label +
+    /// chosen value + chevron, for lists too long for a segmented track.
+    Dropdown(&'static str),
+    /// Segmented picker whose segments show these labels instead of the
+    /// parameter's choice names (e.g. a Sync Off/On parameter shown as Free / Sync).
+    Segments(&'static str, &'static [&'static str]),
+    /// Flexible gap in the picker row: the controls after it align right.
+    Gap,
+    /// One knob cell showing the first of these parameters that is shown
+    /// (`Layout::shown_when`), e.g. Rate in Hz or Rate Sync as a note value.
+    Swap(&'static [&'static str]),
 }
 
 impl Control {
     pub fn param(&self) -> Option<&'static str> {
         match *self {
-            Control::Knob(p) | Control::Slider(p) | Control::Menu(p) | Control::Pill(p) | Control::Toggle(p) => Some(p),
-            Control::Sidechain => None,
+            Control::Knob(p) | Control::Slider(p) | Control::Menu(p) | Control::Pill(p) | Control::Toggle(p) | Control::Dropdown(p) | Control::Segments(p, _) => Some(p),
+            Control::Swap(ps) => ps.first().copied(),
+            Control::Sidechain | Control::Gap => None,
+        }
+    }
+
+    /// Every parameter the control can show.
+    pub fn params(&self) -> Vec<&'static str> {
+        match *self {
+            Control::Swap(ps) => ps.to_vec(),
+            _ => self.param().into_iter().collect(),
         }
     }
 }
 
 /// A visualiser or custom view drawn by the panel code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum View {
     /// Scrolling level / gain-reduction strip with a draggable threshold
     /// line bound to `threshold` (reference dynamics strip).
@@ -300,6 +355,33 @@ pub enum View {
     /// A device-specific view implemented in the panel code under this name
     /// (escape hatch for EQ curves, shaper, trance gate grid...).
     Custom(&'static str),
+    /// Plot well with traces computed by the panel code (reference motion,
+    /// response and sweep fields) that edits two parameters by dragging.
+    Field(Field),
+}
+
+/// A plotted field in the view row (reference `flow-fx-motion-field` and
+/// response fields): caption strip, tick labels, up to three traces, a fill,
+/// an optional live LFO overlay, and an XY drag.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Field {
+    /// Curve model in the panel code (crates/saine-app/src/device_fields.rs).
+    pub plot: &'static str,
+    /// Caption at the top left ("" = no caption strip; the well starts at the top).
+    pub caption: &'static str,
+    /// Horizontal drag: the first of these parameters that is shown (Rate / Rate Sync).
+    pub x: &'static [&'static str],
+    /// Vertical drag: the first of these parameters that is shown.
+    pub y: &'static [&'static str],
+    /// Width of the field in reference pt; the card is at least this plus
+    /// the slider column and padding wide.
+    pub width: f32,
+}
+
+impl Field {
+    pub const fn new(plot: &'static str, caption: &'static str, x: &'static [&'static str], y: &'static [&'static str], width: f32) -> Field {
+        Field { plot, caption, x, y, width }
+    }
 }
 
 /// Drawing inside a knob instead of the plain body.
@@ -348,7 +430,13 @@ impl Layout {
         let cells: usize = self.clusters.iter().map(|c| c.len()).sum();
         let inner: usize = self.clusters.iter().map(|c| c.len().saturating_sub(1)).sum();
         let gaps = self.clusters.len().saturating_sub(1);
-        cells as f32 * KNOB_CELL + inner as f32 * KNOB_GAP + gaps as f32 * CLUSTER_GAP + CARD_PAD
+        let dials = cells as f32 * KNOB_CELL + inner as f32 * KNOB_GAP + gaps as f32 * CLUSTER_GAP + CARD_PAD;
+        // A field sets its own width; the view row is field + gap + slider column(s).
+        let view = match self.view {
+            Some(View::Field(f)) => f.width + self.sliders.len() as f32 * (KNOB_GAP + KNOB_CELL) + CARD_PAD,
+            _ => 0.0,
+        };
+        dials.max(view)
     }
 
     /// Every control, in panel order.
@@ -390,8 +478,57 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 5] = [&compressor::COMPRESSOR, &declipper::DECLIPPER, &deesser::DEESSER, &dehummer::DEHUMMER, &denoiser::DENOISER];
+    static ALL: [&DeviceDef; 12] = [
+        &compressor::COMPRESSOR,
+        &chorus::CHORUS,
+        &character_mod::CHARACTER_MOD,
+        &flanger::FLANGER,
+        &phaser::PHASER,
+        &tremolo::TREMOLO,
+        &autopanner::AUTOPANNER,
+        &ring_mod::RING_MOD,
+        &declipper::DECLIPPER,
+        &deesser::DEESSER,
+        &dehummer::DEHUMMER,
+        &denoiser::DENOISER,
+    ];
     &ALL
+}
+
+/// Other parameters a panel edit of `param` moves along in the same undo
+/// step, and the undo label to use (e.g. Character Mod's circuit switch
+/// carries per-circuit defaults). Empty for most devices.
+pub fn linked_writes(def: &DeviceDef, device: &Device, param: &str, value: f32) -> (Vec<(&'static str, f32)>, Option<String>) {
+    match def.id {
+        "character-mod" => character_mod::switch_writes(def, device, param, value),
+        _ => (Vec::new(), None),
+    }
+}
+
+// ---------------------------------------------------------------- tempo sync
+
+/// Note values of a synced LFO (reference value table LFO_DIVISION), slowest
+/// first; the plain value of a Rate Sync parameter is the index.
+pub const DIVISIONS: &[&str] = &["8/1", "4/1", "2/1", "1/1", "1/2.", "1/2", "1/2T", "1/4.", "1/4", "1/4T", "1/8.", "1/8", "1/8T", "1/16.", "1/16", "1/16T", "1/32", "1/64.", "1/64", "1/64T"];
+/// Length of each of [DIVISIONS] in quarter notes.
+pub const DIVISION_QUARTERS: &[f32] =
+    &[32.0, 16.0, 8.0, 4.0, 3.0, 2.0, 4.0 / 3.0, 1.5, 1.0, 2.0 / 3.0, 0.75, 0.5, 1.0 / 3.0, 0.375, 0.25, 1.0 / 6.0, 0.125, 0.093_75, 0.0625, 1.0 / 24.0];
+/// Index of 1/4 in [DIVISIONS].
+pub const DIVISION_QUARTER: u32 = 8;
+/// Character Mod's note table (reference MOD_NOTE), slowest first.
+pub const MOD_NOTES: &[&str] =
+    &["2/1.", "2/1", "2/1T", "1/1.", "1/1", "1/1T", "1/2.", "1/2", "1/2T", "1/4.", "1/4", "1/4T", "1/8.", "1/8", "1/8T", "1/16.", "1/16", "1/16T", "1/32.", "1/32", "1/32T"];
+/// Length of each of [MOD_NOTES] in quarter notes.
+pub const MOD_NOTE_QUARTERS: &[f32] = &[
+    12.0, 8.0, 16.0 / 3.0, 6.0, 4.0, 8.0 / 3.0, 3.0, 2.0, 4.0 / 3.0, 1.5, 1.0, 2.0 / 3.0, 0.75, 0.5, 1.0 / 3.0, 0.375, 0.25, 1.0 / 6.0, 0.1875, 0.125, 1.0 / 12.0,
+];
+/// Free / Sync labels of a timebase picker.
+pub const FREE_SYNC: &[&str] = &["Free", "Sync"];
+
+/// LFO rate in Hz of a synced note value of `quarters` quarter notes at `bpm`.
+pub fn synced_hz(quarters: f32, bpm: f32) -> f32 {
+    let bpm = if bpm.is_finite() && bpm > 0.0 { bpm } else { 120.0 };
+    bpm / 60.0 / quarters.max(1e-3)
 }
 
 pub fn find(id: &str) -> Option<&'static DeviceDef> {
@@ -508,11 +645,17 @@ impl DevicePreset {
         Ok(DevicePreset { device: raw.device, name: raw.name, values })
     }
 
-    /// Values to apply when loading: `reset_on_load` parameters go back to their default.
+    /// Values to apply when loading: `reset_on_load` parameters go back to
+    /// their default; `preset_lock` parameters are left out (they keep the
+    /// device's current value).
     pub fn load_values(&self, def: &DeviceDef) -> BTreeMap<String, f32> {
         let mut v = self.values.clone();
-        for p in def.params.iter().filter(|p| p.reset_on_load) {
-            v.insert(p.id.into(), p.default);
+        for p in def.params {
+            if p.reset_on_load {
+                v.insert(p.id.into(), p.default);
+            } else if p.preset_lock {
+                v.remove(p.id);
+            }
         }
         v
     }
@@ -572,9 +715,18 @@ mod tests {
                 }
             }
             for c in def.layout.controls() {
-                if let Some(id) = c.param() {
+                for id in c.params() {
                     assert!(def.param(id).is_some(), "{}: layout names unknown param {id}", def.id);
                 }
+            }
+            if let Some(View::Field(f)) = def.layout.view {
+                for id in f.x.iter().chain(f.y) {
+                    assert!(def.param(id).is_some(), "{}: field names unknown param {id}", def.id);
+                }
+            }
+            for (p, by, values) in def.layout.shown_when {
+                let b = def.param(by).unwrap_or_else(|| panic!("{}: shown_when names unknown param {by}", def.id));
+                assert!(def.param(p).is_some() && values.iter().all(|v| (*v as f32) <= b.max), "{}: shown_when {p}", def.id);
             }
             for f in def.factory {
                 for (id, v) in f.values {
@@ -642,6 +794,68 @@ mod tests {
         assert!(!q.values.contains_key("bogus"));
         assert_eq!(q.values.len(), c.params.len());
         assert!(DevicePreset::from_json(c, r#"{"device":"gate","name":"x","values":{}}"#).is_err());
+    }
+
+    #[test]
+    fn modulation_formats_follow_the_reference() {
+        let rate = find("tremolo").unwrap().param("rate").unwrap();
+        assert_eq!(rate.format(0.5), "0.50 Hz");
+        assert_eq!(rate.format(5.0), "5.0 Hz");
+        assert_eq!(rate.format(12.4), "12 Hz");
+        let f = find("ring-mod").unwrap().param("frequency").unwrap();
+        assert_eq!(f.format(440.0), "440 Hz");
+        assert_eq!(f.format(2199.99), "2.2 kHz");
+        assert_eq!(f.parse("2.5k"), Some(2500.0));
+        assert_eq!(f.parse("80 Hz"), Some(80.0));
+        let rect = find("ring-mod").unwrap().param("rectify").unwrap();
+        assert_eq!(rect.format(0.0), "0%");
+        assert_eq!(rect.format(35.0), "+35%");
+        assert_eq!(rect.format(-100.0), "−100%");
+        assert_eq!(rect.parse("+35%"), Some(35.0));
+        assert_eq!(rect.parse("−20"), Some(-20.0));
+        let fb = find("flanger").unwrap().param("feedback").unwrap();
+        assert_eq!(fb.format(-45.0), "−45%");
+        assert_eq!(fb.format(60.0), "60%");
+        let st = find("tremolo").unwrap().param("stereo_phase").unwrap();
+        assert_eq!(st.format(90.0), "90 deg");
+        let sync = find("chorus").unwrap().param("rate_sync").unwrap();
+        assert_eq!(sync.format(8.0), "1/4");
+        assert_eq!(sync.parse("1/8T"), Some(12.0));
+        assert_eq!(find("flanger").unwrap().param("depth").unwrap().format(3.0), "3.0 ms");
+    }
+
+    #[test]
+    fn tempo_tables_line_up() {
+        assert_eq!(DIVISIONS.len(), DIVISION_QUARTERS.len());
+        assert_eq!(MOD_NOTES.len(), MOD_NOTE_QUARTERS.len());
+        assert_eq!(DIVISIONS[DIVISION_QUARTER as usize], "1/4");
+        assert!((synced_hz(DIVISION_QUARTERS[DIVISION_QUARTER as usize], 120.0) - 2.0).abs() < 1e-6);
+        assert!((synced_hz(MOD_NOTE_QUARTERS[10], 0.0) - 2.0).abs() < 1e-6, "bpm falls back to 120");
+    }
+
+    #[test]
+    fn preset_lock_and_reset_on_load() {
+        let def = find("character-mod").unwrap();
+        let mut d = def.instantiate();
+        d.params.insert("seed".into(), 77.0);
+        d.params.insert("mono_audition".into(), 1.0);
+        let p = DevicePreset::capture(def, &d, "x");
+        let load = p.load_values(def);
+        assert!(!load.contains_key("seed"), "seed is preset-locked: the device keeps its own");
+        assert_eq!(load["mono_audition"], 0.0, "audition switches reset on load");
+        assert_eq!(load["model"], 2.0);
+    }
+
+    #[test]
+    fn field_cards_size_to_the_view_row() {
+        let w = |id: &str| find(id).unwrap().layout.width();
+        assert_eq!(w("tremolo"), 457.0);
+        assert_eq!(w("autopanner"), 417.0);
+        assert_eq!(w("chorus"), 377.0);
+        assert_eq!(w("flanger"), 388.0);
+        assert_eq!(w("phaser"), 377.0);
+        assert_eq!(w("ring-mod"), 390.0);
+        assert_eq!(w("character-mod"), 442.0);
     }
 
     #[test]

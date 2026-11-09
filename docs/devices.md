@@ -1,6 +1,7 @@
 # Built-in devices
 
-Saine's own effects (Compressor first; more follow from the device specs) are
+Saine's own effects (Compressor, the modulation family: Tremolo, Auto-Panner,
+Chorus, Flanger, Phaser, Ring Mod, Character Mod; more follow from the device specs) are
 **declarative**: one definition in Rust describes a device, and the model,
 undo, persistence, automation, engine and panel all derive from it. A device
 is made of up to three parts:
@@ -59,23 +60,47 @@ flowchart LR
      the device spec (`handoffs/device-specs/<device>.md` in the Captain drive).
      Those are facts; write descriptions in your own words. Never copy the
      reference's code, CSS, images, audio or preset files.
-   - `Layout`: `picker` (menus / toggles / `Sidechain` / pills; the
-     sidechain picker and what follows align right), `view`
-     (`DynamicsStrip` or `Custom`), `sliders`, `clusters` of knobs,
-     `faces` (drawings inside a knob), `shown_when` (mode-dependent controls),
-     `fixed_width` (card width in pt; 0 derives it from the dial row). A card
-     narrower than 240 pt hides the preset label and arrows and opens the
-     preset menu from a chevron after the name. `Control::Toggle` on an
-     Off/On choice draws a latch capsule. `Format::DbCut` stores a positive
-     cut and shows it as −x.x dB.
+   - `Layout`: `picker` (segmented `Menu`s, `Segments` with their own
+     labels, `Dropdown` pills for long lists, toggles, `Sidechain`, pills;
+     `Gap` or the sidechain picker pushes what follows to the right),
+     `view` (`DynamicsStrip`, `Field` or `Custom`), `sliders`,
+     `clusters` of knobs (`Swap` holds alternatives in one cell, such as
+     Rate / Rate Sync), `faces` (drawings inside a knob), `shown_when`
+     (mode-dependent controls: hidden parameters get no control and no
+     automation entry), `fixed_width` (card width in pt; 0 derives it from
+     the dial row and view).
+   - A card narrower than 240 pt hides the preset label and arrows and opens
+     the preset menu from a chevron after the name. `Control::Toggle` on an
+     Off/On choice draws a latch capsule in the dial row.
+   - `View::Field` is a plotted well (reference motion / response / sweep
+     fields): name a curve model in `crates/saine-app/src/device_fields.rs`
+     (traces, fill or band, ticks, caption value, live overlay), the caption,
+     the parameters dragged on x and y, and the field's width; the card is
+     at least field + sliders + padding wide. Field cards centre their dial
+     row and space its knobs evenly. The live overlay follows the kernel's
+     first readout as an LFO phase (0..1) while the transport plays.
+   - Parameter extras: `preset_locked()` (presets never load or save it,
+     e.g. a random seed), `reset_on_load()`, `Format::Freq` (reference Hz
+     text), `Format::SignedPercent` and `Format::DbCut` (a positive stored
+     cut shown as −x.x dB). Tempo-synced LFOs use the `DIVISIONS` /
+     `MOD_NOTES` tables and `synced_hz`.
+   - Linked writes: when one edit must move other parameters in the same
+     undo step (Character Mod's circuit switch resets untouched artifacts),
+     add an arm to `builtin::linked_writes`; the panel then commits one
+     labelled `Command::Batch`.
 2. **DSP kernel.** Add `engine/src/devices/<id>.cpp`: a `BuiltinProcessor`
    (`prepare` may allocate; `reset` / `process` are real-time: no
    allocation, locks, I/O or exceptions) and a `BuiltinDescriptor` whose
    parameter ids are the definition's ids **in the same order**. Register it
-   in `kBuiltinRegistry` (`engine/src/devices/builtin.cpp`) and add the
+   in `kBuiltinRegistry` (`engine/src/devices/builtin.cpp`), give the
+   descriptor its `defaults` (checked against the definition by the Rust
+   registry test through `se_builtin_desc::param_defaults`) and add the
    file to `engine/CMakeLists.txt`. `params` are plain values, constant
    within one `process` call (the instance splits blocks at automation
    events); smoothing audible steps is the kernel's job (`dsp::Smoother`).
+   `engine/src/devices/dsp.hpp` also has `LfoClock` (free or locked to
+   the song position through `BuiltinContext::offset`), `DelayLine`
+   (Hermite) and `Oversampler2x` (report its latency from `latency()`).
    Readouts (meters, gain reduction) are written per block; give
    `idle_readouts` for the values before the first block. When automation
    splits a block, the engine keeps each readout's segment value farthest
@@ -90,10 +115,10 @@ flowchart LR
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a
    Slint component in `ui/device_panel.slint` chosen by that data. Reuse
-   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. For an
-   interactive graph (response curve, spectrum, draggable handles), use the
-   generic `PanelField` (`crates/saine-app/src/panel_field.rs` +
-   `FieldView` in `device_panel.slint`): rules, layers, dots and pills,
+   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. When a graph
+   needs more than `View::Field`'s two-parameter drag (several handles, grip
+   pills, a live spectrum), use `PanelGraph` (`crates/saine-app/src/panel_graph.rs`
+   + `GraphView` in `device_panel.slint`): rules, layers, dots and pills,
    hit zones that edit parameters, spectrum ballistics from the readouts, and
    one undo step per gesture.
 4. **Tests.**
@@ -107,7 +132,7 @@ flowchart LR
      automatically.
    - Rust: `engine_registry_matches_core_definitions`
      (`crates/saine-engine/tests/builtin.rs`) fails when the definition and
-     the kernel disagree on parameter order. Add core tests for formatting and
+     the kernel disagree on parameter order or defaults. Add core tests for formatting and
      parsing of any new display format.
 5. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
    (`saine_device_bench`, Release build) and put the numbers in the PR.

@@ -117,6 +117,14 @@ add_library(saine_engine STATIC
   src/plugins/clap_instance.cpp
   src/devices/builtin.cpp
   src/devices/compressor.cpp
+  src/devices/dsp.cpp
+  src/devices/autopanner.cpp
+  src/devices/character_mod.cpp
+  src/devices/chorus.cpp
+  src/devices/flanger.cpp
+  src/devices/phaser.cpp
+  src/devices/ring_mod.cpp
+  src/devices/tremolo.cpp
   src/devices/declipper.cpp
   src/devices/deesser.cpp
   src/devices/dehummer.cpp
@@ -331,6 +339,8 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/test_frame_ring.cpp
     tests/devices/test_builtin.cpp
     tests/devices/test_compressor.cpp
+    tests/devices/test_modulation.cpp
+    tests/devices/test_character_mod.cpp
     tests/devices/test_restoration.cpp)
   target_include_directories(saine_engine_tests PRIVATE src tests)
   target_link_libraries(saine_engine_tests PRIVATE saine_engine saine_engine_warnings)

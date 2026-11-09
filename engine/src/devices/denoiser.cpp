@@ -36,6 +36,7 @@ namespace {
 
 enum Param : uint32_t { kThreshold, kReduction, kSmoothing, kAttack, kRelease, kMix, kParamCount };
 constexpr const char* kParamIds[kParamCount] = {"threshold", "reduction", "frequency_smoothing", "attack", "release", "mix"};
+constexpr float kDefaults[kParamCount] = {-40.0f, -20.0f, 50.0f, 5.0f, 50.0f, 100.0f};
 
 constexpr uint32_t kReadoutCount = 1 + dsp::kSpectrumBands;
 struct ReadoutIds {
@@ -70,7 +71,7 @@ public:
         win_.resize(n_);
         double wsum = 0.0;
         for (uint32_t i = 0; i < n_; ++i) {
-            win_[i] = static_cast<float>(std::sqrt(0.5 - 0.5 * std::cos(2.0 * dsp::kPi * i / n_)));
+            win_[i] = static_cast<float>(std::sqrt(0.5 - 0.5 * std::cos(2.0 * dsp::kPiD * i / n_)));
             wsum += static_cast<double>(win_[i]);
         }
         // Sum of analysis * synthesis windows at one point over all overlapping frames.
@@ -222,6 +223,6 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<DeNoiser>()
 } // namespace
 
 extern const BuiltinDescriptor kDeNoiserDescriptor;
-const BuiltinDescriptor kDeNoiserDescriptor{"denoiser", kParamIds, kReadouts.ids, &create, kIdle.v};
+const BuiltinDescriptor kDeNoiserDescriptor{"denoiser", kParamIds, kReadouts.ids, &create, kIdle.v, kDefaults};
 
 } // namespace saine

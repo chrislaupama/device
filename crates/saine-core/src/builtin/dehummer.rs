@@ -20,7 +20,7 @@ pub static DEHUMMER: DeviceDef = DeviceDef {
     ],
     layout: Layout {
         picker: &[],
-        view: Some(View::Custom("dehummer-field")),
+        view: Some(View::Custom("dehummer-graph")),
         sliders: &[],
         clusters: &[
             &[Control::Knob("frequency"), Control::Knob("num_harmonics")],

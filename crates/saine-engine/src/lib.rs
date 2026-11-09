@@ -432,6 +432,7 @@ pub struct BuiltinProcessor {
     pub id: String,
     pub params: Vec<String>,
     pub readouts: Vec<String>,
+    pub defaults: Vec<f32>,
 }
 
 /// Every built-in processor the engine was compiled with.
@@ -454,6 +455,8 @@ pub fn builtin_registry() -> Vec<BuiltinProcessor> {
             id: unsafe { CStr::from_ptr(d.id) }.to_string_lossy().into_owned(),
             params: strings(d.param_ids, d.param_count),
             readouts: strings(d.readout_ids, d.readout_count),
+            // SAFETY: static array of `param_count` floats.
+            defaults: unsafe { std::slice::from_raw_parts(d.param_defaults, d.param_count as usize) }.to_vec(),
         })
         .collect()
 }
