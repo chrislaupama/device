@@ -91,8 +91,6 @@ struct Args {
     offscreen: bool,
     /// reference-<built-in device id>: that device alone in an audio track's chain.
     device_state: Option<&'static str>,
-    /// Never show the window (renders for --screenshot fall back to offscreen snapshots).
-    offscreen: bool,
     /// review-settings-plugins: Settings open on the Plugins page (no reference comparison).
     plugins_page_review: bool,
     assistant_fixture: Option<PathBuf>,

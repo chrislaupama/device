@@ -563,6 +563,7 @@ impl Controller {
             grips: model(grips),
             zones: model(Vec::new()),
             pointer: true,
+            interactive: false,
             cursor,
             readout_accent: true,
         }
