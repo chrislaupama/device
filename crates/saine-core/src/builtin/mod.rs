@@ -44,6 +44,7 @@ mod tape_saturation;
 mod tremolo;
 mod utility;
 mod widener;
+pub mod synth_v2;
 
 pub use bitcrusher::crush_picture;
 pub use distortion::distortion_transfer;
@@ -100,6 +101,18 @@ pub enum Format {
     Choice,
     /// Number with this many decimals and the unit appended when not empty.
     Plain(u8),
+    /// A 0..1 value shown as a percent: "30%", "12.5%".
+    Fraction,
+    /// A -1..1 value shown as a signed percent: "+25%", "−10%", "0%".
+    SignedFraction,
+    /// Seconds, shown in ms below one second ("4.0 ms", "900 ms") and in s above ("1.20 s").
+    Seconds,
+    /// Hertz with three significant digits: "0.18 Hz", "10.0 Hz", "440 Hz", "2.40 kHz", "13.5 kHz".
+    Hz3,
+    /// Signed semitones with one decimal: "+12.0 st", "−3.5 st".
+    Semitones,
+    /// Signed whole cents: "+7 ct", "0 ct", "−12 ct".
+    Cents,
     /// Device-specific text ("Stereo", "Ping 40%", "0.07 Hz", "12.0k") and its parser.
     Custom(TextFns),
 }
@@ -283,8 +296,9 @@ impl ParamDef {
             return None;
         }
         if self.is_discrete() {
-            let lower = t.to_lowercase();
-            if let Some(i) = self.choices.iter().position(|c| c.to_lowercase() == lower) {
+            let norm = |s: &str| s.to_lowercase().replace('\u{2212}', "-");
+            let lower = norm(t);
+            if let Some(i) = self.choices.iter().position(|c| norm(c) == lower) {
                 return Some(i as f32);
             }
         }
@@ -310,12 +324,19 @@ impl ParamDef {
             (_, "") => {}
             (Format::Time, "s" | "sec" | "secs" | "second" | "seconds") => v *= 1000.0,
             (Format::Time, "ms" | "msec" | "msecs") => {}
-            (Format::Hz | Format::Freq, "k" | "khz") => v *= 1000.0,
-            (Format::Hz | Format::Freq, "hz") => {}
+            (Format::Hz | Format::Freq | Format::Hz3, "k" | "khz") => v *= 1000.0,
+            (Format::Hz | Format::Freq | Format::Hz3, "hz") => {}
             (Format::Db | Format::DbNoPlus | Format::DbOrInf, "db") | (Format::Percent | Format::Percent0 | Format::SignedPercent, "%") | (Format::Factor, "x") => {}
+            (Format::Fraction | Format::SignedFraction, "%" | "percent") => {}
+            (Format::Seconds, "s" | "sec" | "secs" | "second" | "seconds") => {}
+            (Format::Seconds, "ms" | "msec" | "msecs") => v /= 1000.0,
+            (Format::Semitones, "st" | "semitones") | (Format::Cents, "ct" | "cents") => {}
             (Format::Plain(_) | Format::Custom(_), u) if u == self.unit.to_lowercase() => {}
             (Format::Custom(_), "%") if self.unit == "%" => {}
             _ => return None,
+        }
+        if matches!(self.format, Format::Fraction | Format::SignedFraction) {
+            v /= 100.0;
         }
         if !v.is_finite() {
             return None;
@@ -391,6 +412,44 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
             if unit.is_empty() { s } else { format!("{s} {unit}") }
         }
         Format::Custom(f) => (f.show)(v),
+        Format::Fraction => format_value(Format::Percent, v * 100.0, unit, choices, range),
+        Format::SignedFraction => {
+            let r = (v * 1000.0).round() / 10.0;
+            let body = if r.fract() == 0.0 { format!("{:.0}%", r.abs()) } else { format!("{:.1}%", r.abs()) };
+            if r == 0.0 { body } else if r < 0.0 { format!("{MINUS}{body}") } else { format!("+{body}") }
+        }
+        Format::Seconds => {
+            if v < 1.0 {
+                let ms = v * 1000.0;
+                if ms < 99.95 { format!("{ms:.1} ms") } else { format!("{ms:.0} ms") }
+            } else if v < 9.995 {
+                format!("{v:.2} s")
+            } else {
+                format!("{v:.1} s")
+            }
+        }
+        Format::Hz3 => {
+            if v >= 9999.5 {
+                format!("{:.1} kHz", v / 1000.0)
+            } else if v >= 999.5 {
+                format!("{:.2} kHz", v / 1000.0)
+            } else if v >= 99.95 {
+                format!("{v:.0} Hz")
+            } else if v >= 9.995 {
+                format!("{v:.1} Hz")
+            } else {
+                format!("{v:.2} Hz")
+            }
+        }
+        Format::Semitones => {
+            let a = (v.abs() * 10.0).round() / 10.0;
+            let sign = if a == 0.0 { "" } else if v < 0.0 { "\u{2212}" } else { "+" };
+            format!("{sign}{a:.1} st")
+        }
+        Format::Cents => {
+            let r = v.round();
+            if r == 0.0 { "0 ct".into() } else if r < 0.0 { format!("{MINUS}{} ct", -r) } else { format!("+{r} ct") }
+        }
     }
 }
 
@@ -635,7 +694,7 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 19] = [
+    static ALL: [&DeviceDef; 20] = [
         &compressor::COMPRESSOR,
         &distortion::DISTORTION,
         &tape_saturation::TAPE_SATURATION,
@@ -655,6 +714,7 @@ pub fn all() -> &'static [&'static DeviceDef] {
         &grains::GRAINS,
         &reverb::REVERB,
         &pitch_shifter::PITCH_SHIFTER,
+        &synth_v2::SYNTH_V2,
     ];
     &ALL
 }

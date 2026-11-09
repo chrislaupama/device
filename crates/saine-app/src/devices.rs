@@ -82,6 +82,11 @@ impl Item {
     }
 }
 
+/// The built-in Synth (synth-v2): an instrument device with its own card (src/synth.rs).
+pub fn is_builtin_synth(d: &Device) -> bool {
+    saine_core::builtin::def_of(d).is_some_and(|def| def.id == saine_core::builtin::synth_v2::SYNTH_V2.id)
+}
+
 pub fn format_badge(f: PluginFormat) -> &'static str {
     match f {
         PluginFormat::AudioUnit => "AU",
@@ -618,7 +623,7 @@ impl Controller {
     /// (`SetInstrumentPlugin`; the built-in Synth sets None). One undo step.
     pub fn add_item_to_track(&mut self, item: &Item, track: TrackId, index: Option<usize>) -> bool {
         let Some(t) = self.project().track(track) else { return false };
-        let (kind, has_plugin) = (t.kind, t.instrument_plugin.is_some());
+        let (kind, has_plugin) = (t.kind, t.instrument_plugin.as_ref().is_some_and(|d| !is_builtin_synth(d)));
         let ok = match (item.kind(), item) {
             (PluginKind::Effect, Item::Plugin(p)) => self.execute(Command::AddDevice { track, index, device: Device::new(p.clone()) }),
             (PluginKind::Effect, Item::Builtin(d)) => self.execute(Command::AddDevice { track, index, device: d.instantiate() }),
@@ -633,7 +638,7 @@ impl Controller {
                     false
                 } else {
                     self.close_instrument_editor(track);
-                    self.execute(Command::SetInstrumentPlugin { track, device: None })
+                    self.execute(Command::SetInstrumentPlugin { track, device: Some(saine_core::builtin::synth_v2::SYNTH_V2.instantiate()) })
                 }
             }
             (PluginKind::Instrument, Item::Plugin(p)) => {
@@ -810,7 +815,8 @@ impl Controller {
         let mut out = Vec::new();
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else { return (out, ADD_X_ALONE, synth) };
         let mut x = CHAIN_X0 + if synth { SYNTH_W + CARD_GAP } else { 0.0 };
-        let inst = if t.kind == TrackKind::Instrument { t.instrument_plugin.as_ref() } else { None };
+        // The built-in Synth is drawn by its own card (src/synth.rs).
+        let inst = if t.kind == TrackKind::Instrument { t.instrument_plugin.as_ref().filter(|d| !is_builtin_synth(d)) } else { None };
         for (d, instrument) in inst.into_iter().map(|d| (d, true)).chain(t.devices.iter().map(|d| (d, false))) {
             let card = self.card_for(d, instrument);
             x += card.width + CARD_GAP;
@@ -922,7 +928,7 @@ impl Controller {
     /// Instrument card "Use built-in Synth".
     pub fn device_use_synth(&mut self) {
         let Some(t) = self.selected_track else { return };
-        if self.project().track(t).is_some_and(|t| t.instrument_plugin.is_some()) {
+        if self.project().track(t).is_some_and(|t| t.instrument_plugin.as_ref().is_some_and(|d| !is_builtin_synth(d))) {
             self.add_item_to_track(&Item::BuiltinSynth, t, None);
         }
     }
@@ -973,7 +979,7 @@ impl Controller {
         }
         let kinds: &[PluginKind] = if inst_track { &[PluginKind::Instrument, PluginKind::Effect] } else { &[PluginKind::Effect] };
         if fmt.is_none() {
-            for d in saine_core::builtin::all() {
+            for d in saine_core::builtin::all().iter().filter(|d| d.id != saine_core::builtin::synth_v2::SYNTH_V2.id) {
                 if kinds.contains(&d.kind) && (q.is_empty() || d.name.to_lowercase().contains(&q) || d.category.to_lowercase().contains(&q) || "built-in".contains(&q)) {
                     v.push(Item::Builtin(d));
                 }
@@ -1037,7 +1043,7 @@ impl Controller {
     /// Instrument selector (inspector "Inst", Synth header ▾): Synth + instrument plugins.
     pub fn open_inst_menu(&mut self, x: f32, y: f32) {
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)).filter(|t| t.kind == TrackKind::Instrument) else { return };
-        let cur = t.instrument_plugin.as_ref().map(|d| (d.plugin.format, d.plugin.id.clone()));
+        let cur = t.instrument_plugin.as_ref().filter(|d| !is_builtin_synth(d)).map(|d| (d.plugin.format, d.plugin.id.clone()));
         let check = |on: bool, s: &str| if on { "✓".to_string() } else { s.to_string() };
         let mut rows = vec![("Synth".to_string(), check(cur.is_none(), "Built-in"), Some(MenuPick::Add(Item::BuiltinSynth)), false)];
         let plugins = self.devices.catalog.of_kind(PluginKind::Instrument);
@@ -1067,7 +1073,7 @@ impl Controller {
         };
         let Some(t) = self.selected_track else { return };
         // Picking the current instrument again is a no-op (no undo step).
-        let cur_inst = self.project().track(t).and_then(|t| t.instrument_plugin.as_ref()).map(|d| d.plugin.clone());
+        let cur_inst = self.project().track(t).and_then(|t| t.instrument_plugin.as_ref()).filter(|d| !is_builtin_synth(d)).map(|d| d.plugin.clone());
         let same = match (&item, &cur_inst) {
             (Item::BuiltinSynth, None) => item.kind() == PluginKind::Instrument && self.project().track(t).is_some_and(|t| t.kind == TrackKind::Instrument),
             (Item::Plugin(p), Some(c)) => p.kind == PluginKind::Instrument && p.format == c.format && p.id == c.id,
@@ -1196,7 +1202,7 @@ impl Controller {
         }
         // Inspector instrument name.
         let sel = self.selected_track.and_then(|t| self.project().track(t));
-        let inst = sel.and_then(|t| t.instrument_plugin.as_ref()).map(|d| d.plugin.name.clone()).unwrap_or_else(|| "Synth".into());
+        let inst = sel.and_then(|t| t.instrument_plugin.as_ref()).filter(|d| !is_builtin_synth(d)).map(|d| d.plugin.name.clone()).unwrap_or_else(|| "Synth".into());
         s.set_sel_inst_text(inst.into());
 
         // ---- Add device search ----
@@ -1366,7 +1372,6 @@ mod tests {
         let (entries, rows) = build_tree(&c, 1, "", &open);
         assert!(matches!(&entries[1].item, Some(Item::Builtin(d)) if d.id == "compressor"));
         // One row per built-in device under the open Built-in folder.
-        let n = saine_core::builtin::all().len();
         assert_eq!(rows[4 + n].label, "AUDelay");
         assert_eq!(rows[5 + n].label, "AULowpass");
         assert!(rows[5 + n].leaf && rows[5 + n].icon == 2);
