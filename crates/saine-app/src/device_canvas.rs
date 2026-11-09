@@ -424,8 +424,8 @@ impl Controller {
         }
 
         let cursor = match field.drag.as_ref().filter(|g| g.device == d.id).map(|g| g.hit).or(field.hover.filter(|h| h.0 == d.id).map(|h| h.1)) {
-            Some(Hit::Wing(_)) => 1,
-            Some(Hit::Node(_)) => 3,
+            Some(Hit::Wing(_)) => 2,
+            Some(Hit::Node(_)) => 1,
             _ => 0,
         };
         let freq_text = def.param(v.bands[sel].freq).map(|fp| fp.format(sel_band.freq)).unwrap_or_default();
@@ -441,7 +441,7 @@ impl Controller {
             texts: model(texts),
             dots: model(dots),
             grips: model(pills),
-            interactive: true,
+            pointer: true,
             cursor,
             label: s(format!("Band {}", sel + 1)),
             value: s(if v.band_on(sel, &val) { format!("{freq_text}, {:+.1} dB", sel_band.gain_db) } else { format!("{freq_text}, out of the chain") }),
@@ -669,8 +669,8 @@ impl Controller {
         }
 
         let cursor = match field.drag.as_ref().filter(|g| g.device == d.id).map(|g| g.hit).or(field.hover.filter(|h| h.0 == d.id).map(|h| h.1)) {
-            Some(Hit::Edge(_)) | Some(Hit::Env) => 1,
-            Some(Hit::Corner) => 3,
+            Some(Hit::Edge(_)) | Some(Hit::Env) => 2,
+            Some(Hit::Corner) => 1,
             _ => 0,
         };
         PanelCanvas {
@@ -686,7 +686,7 @@ impl Controller {
             texts: model(texts),
             dots: model(dots),
             grips: model(pills),
-            interactive: true,
+            pointer: true,
             cursor,
             label: s("Filter corner"),
             value: s(format!("{name} {value}")),
@@ -732,6 +732,11 @@ impl Controller {
     }
 
     // ---------------------------------------------------------------- gestures
+
+    /// EQ and Auto Filter cards: their canvas pointer events go to panel_canvas.
+    pub(crate) fn is_canvas_device(&self, device: DeviceId) -> bool {
+        self.field_kind(device).is_some()
+    }
 
     fn field_kind(&self, device: DeviceId) -> Option<(&Device, &'static DeviceDef, Option<&'static EqView>)> {
         let d = self.project().device(device)?;

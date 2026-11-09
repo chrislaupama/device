@@ -157,6 +157,7 @@ impl Controller {
             "crush" => crush_body(&value, idx("downsample"), idx("bitdepth"), accent, rect),
             "stereo-field" => stereo_body(def, &value, idx("width2"), idx("sidegain"), idx("lowcut"), accent, rect),
             "utility" => utility_body(def, &value, &idx),
+            "declipper-wave" | "deesser-graph" | "dehummer-graph" | "denoiser-graph" => CustomBody { canvas: self.graph_canvas(d, def, accent), ..Default::default() },
             _ => CustomBody::default(),
         }
     }

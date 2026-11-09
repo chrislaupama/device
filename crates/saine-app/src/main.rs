@@ -20,6 +20,7 @@ mod controller;
 mod device_canvas;
 mod device_fields;
 mod device_panel;
+mod panel_graph;
 mod device_views;
 mod devices;
 mod gpu;
@@ -891,12 +892,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_field, |c, id: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.panel_field_drag(saine_core::DeviceId(id as u64), phase, dx, dy, fine));
     on!(on_panel_menu, |c, id: i32, which: i32, x: f32, y: f32| c.panel_menu(saine_core::DeviceId(id as u64), which, x, y));
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(saine_core::DeviceId(id as u64), dir));
-    on!(on_panel_canvas, |c, id: i32, phase: i32, x: f32, y: f32, alt: bool, shift: bool| c.panel_canvas(saine_core::DeviceId(id as u64), phase, x, y, alt, shift));
+    on!(on_panel_graph, |c, id: i32, phase: i32, x: f32, y: f32, fine: bool, alt: bool| {
+        let id = saine_core::DeviceId(id as u64);
+        if c.is_canvas_device(id) { c.panel_canvas(id, phase, x, y, alt, fine) } else { c.panel_graph(id, phase, x, y, fine, alt) }
+    });
     on!(on_panel_eq, |c, id: i32, action: i32, value: i32| c.panel_eq(saine_core::DeviceId(id as u64), action, value));
     {
-        // Canvas wheel / keys answer whether they used the event, so they cannot go through on!.
+        // Canvas wheel / keys (EQ, Auto Filter) answer whether they used the event, so they cannot go through on!.
         let (ctl1, aw1) = (ctl.clone(), app.as_weak());
-        studio.on_panel_canvas_wheel(move |id, x, y, dy| {
+        studio.on_panel_graph_wheel(move |id, x, y, dy| {
             let used = ctl1.borrow_mut().panel_canvas_wheel(saine_core::DeviceId(id as u64), x, y, dy);
             if let Some(a) = aw1.upgrade() {
                 if let Ok(mut c) = ctl1.try_borrow_mut() { c.update_ui(&a); }
@@ -905,7 +909,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             used
         });
         let (ctl2, aw2) = (ctl.clone(), app.as_weak());
-        studio.on_panel_canvas_key(move |id, key, shift, alt| {
+        studio.on_panel_graph_key(move |id, key, shift, alt| {
             let used = ctl2.borrow_mut().panel_canvas_key(saine_core::DeviceId(id as u64), key.as_str(), shift, alt);
             if let Some(a) = aw2.upgrade() {
                 if let Ok(mut c) = ctl2.try_borrow_mut() { c.update_ui(&a); }

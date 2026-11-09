@@ -69,8 +69,11 @@ flowchart LR
      `clusters` of knobs (`Swap` holds alternatives in one cell, such as
      Rate / Rate Sync), `faces` (drawings inside a knob), `shown_when`
      (mode-dependent controls: hidden parameters get no control and no
-     automation entry), `fixed_width` (card width for bodies not sized by
-     the dial row or a field; 0 = derived).
+     automation entry), `fixed_width` (card width in pt; 0 derives it from
+     the dial row and view).
+   - A card narrower than 240 pt hides the preset label and arrows and opens
+     the preset menu from a chevron after the name. `Control::Toggle` on an
+     Off/On choice draws a latch capsule in the dial row.
    - `View::Field` is a plotted well (reference motion / response / sweep
      fields): name a curve model in `crates/saine-app/src/device_fields.rs`
      (traces, fill or band, ticks, caption value, live overlay), the caption,
@@ -80,10 +83,11 @@ flowchart LR
      first readout as an LFO phase (0..1) while the transport plays.
    - Parameter extras: `preset_locked()` (presets never load or save it,
      e.g. a random seed), `reset_on_load()`, `Format::Freq` (reference Hz
-     text), `Format::SignedPercent`, `Format::MsAuto`, `Format::Rate` (LFO
-     rates, `1.00 Hz`), `Format::Signed(n)` (always shows the sign) and
-     `Format::Degrees`. Tempo-synced LFOs use the
-     `DIVISIONS` / `MOD_NOTES` tables and `synced_hz`.
+     text), `Format::SignedPercent`, `Format::DbCut` (a positive stored cut
+     shown as −x.x dB), `Format::MsAuto`, `Format::Rate` (LFO rates,
+     `1.00 Hz`), `Format::Signed(n)` (always shows the sign) and
+     `Format::Degrees`. Tempo-synced LFOs use the `DIVISIONS` /
+     `MOD_NOTES` tables and `synced_hz`.
    - Linked writes: when one edit must move other parameters in the same
      undo step (Character Mod's circuit switch resets untouched artifacts),
      add an arm to `builtin::linked_writes`; the panel then commits one
@@ -106,6 +110,11 @@ flowchart LR
    splits a block, the engine keeps each readout's segment value farthest
    from its idle value, so readouts must move away from idle as they grow
    (a peak meter rises from -120 dB, gain reduction falls from 0 dB).
+   A device has at most `kMaxReadouts` (64) readouts. Spectral helpers are in
+   `engine/src/devices/spectral.hpp` (`RealFft`, and `SpectrumTap`: 48 log
+   bands, 20 Hz–20 kHz, a full-scale sine reads 0 dB); `dsp.hpp` has the
+   state-variable filter (`SvfCoeffs`, including `bandpass`). Report look-ahead or block latency from
+   `latency()` so the engine compensates it.
 3. **EQ view.** `View::Eq(&EqView)` (`builtin/eq.rs`) describes an EQ card:
    its bands (parameter ids per band), the shapes and their picker order,
    pass slopes, Output, Bank and Auto Gain parameters, the dB window and
@@ -119,13 +128,16 @@ flowchart LR
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a
    Slint component in `ui/device_panel.slint` chosen by that data. Reuse
-   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. Drawn bodies
-   fill the card's `PanelCanvas` (paths, texts, dots, grip pills in well
-   px), which the Slint `DeviceCanvas` draws. Simple drags use its drag
-   `zones` (`device_views.rs`); a canvas with handles of its own (EQ
-   nodes, Auto Filter's corner, `device_canvas.rs`) sets `interactive`, so
-   pointer, wheel and key events go back to Rust for hit-testing, and a drag
-   that moves several parameters commits them as one batch.
+   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. Custom bodies
+   return a `PanelCanvas` from `Controller::custom_body` (`device_views.rs`):
+   paths, texts, grip pills and linear drag zones. When handles need
+   non-linear mapping or hit-testing (several handles on one well, a live
+   spectrum), set `pointer: true` and handle `Studio.panel-graph` in Rust,
+   as the restoration devices do (`crates/saine-app/src/panel_graph.rs`: hit
+   zones, spectrum ballistics from the readouts, one undo step per gesture).
+   The EQ and Auto Filter canvases (`device_canvas.rs`) use the same flag and
+   add dots, anchored grips, double-click (phase 6), wheel and keys
+   (`panel-graph-wheel`, `panel-graph-key`).
 5. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),
@@ -142,8 +154,9 @@ flowchart LR
 6. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
    (`saine_device_bench`, Release build) and put the numbers in the PR.
 7. **Render.** `--state reference-<id>` shows any built-in device at its
-   defaults; render it with `--screenshot` and compare it with the reference
-   capture.
+   defaults. Render it with `--offscreen --screenshot <png>` (a hidden
+   window, so it does not take over the screen) and compare it with the
+   reference capture.
 
 ## Commands
 
