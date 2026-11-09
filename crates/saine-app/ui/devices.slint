@@ -4,7 +4,7 @@
 // line at 26.5). Plugin cards show the controls the user adds (plugin-card spec); the header
 // is shared with the built-in cards (device_panel.slint CardHeader).
 import { Tokens } from "tokens.slint";
-import { Icon, Icons } from "widgets.slint";
+import { Icon, Icons, Field } from "widgets.slint";
 import { Studio, MenuItem, DeviceCard } from "studio.slint";
 import { KnobCell, CardHeader, FoldedStrip } from "device_panel.slint";
 
@@ -98,8 +98,8 @@ export component AddDeviceCard inherits Rectangle {
     border-color: #313236;
     Text { x: 11.5px; y: 6.5px; height: 14px; text: "Add device"; color: #a0a0a3; font-size: 10px; font-weight: 600; vertical-alignment: center; }
     Rectangle { x: 0; y: 26.5px; width: parent.width; height: 0.5px; background: #313236; }
-    Rectangle {
-        x: 5.5px; y: 31.5px; width: 171px; height: 20px; border-radius: 10px; background: Tokens.bg-control;
+    Field {
+        x: 5.5px; y: 31.5px; width: 171px; height: 20px; border-radius: 10px;
         Icon { x: 8.5px; width: 13px; height: 13px; d: Icons.search; ink: #b0b0b3; }
         if Studio.add-search == "": Text { x: 26px; text: "Search devices"; color: #a5a5a8; font-size: 9px; vertical-alignment: center; }
         TextInput {

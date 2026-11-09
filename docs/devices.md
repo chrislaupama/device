@@ -49,7 +49,10 @@ flowchart LR
   clusters) and `ui/device_panel.slint` draws it. Lengths are the reference's
   100%-zoom card measurements times `device_panel::Z` (0.85, the zoom the rest
   of the UI is built at). Card width follows the reference rule:
-  knobs × 62 + inner gaps × 10 + cluster gaps × 21 + 16.
+  knobs × 62 + inner gaps × 10 + cluster gaps × 21 + 16, taken from the
+  widest `shown_when` state so the card never resizes when a mode changes.
+  The knob cells are then spread evenly across the dial row (the clusters
+  only size the card); field cards centre their dial row instead.
 
 ## Modulation and chains
 
@@ -164,7 +167,8 @@ system. Any built-in device can use them.
      labelled `Command::Batch`.
    - Dynamics additions: `Toggle` latches (a latch in a knob cell in the dial
      row; a right-aligned "<label> <choice>" pill in the picker row), detent
-     ticks on discrete knobs with more than two choices, transfer faces
+     ticks on discrete knobs with more than two choices (drawn like the
+     Behavior detents), transfer faces
      (`SoftKneeCurve`, `BrickWall`, `Expander`, `BusVca`, `PushWall`), and an
      empty picker moves the view row up.
    - Views: `View::Strip(Strip::new("<line param>").range(top_db, floor_db).second("<param>"))`
@@ -179,6 +183,17 @@ system. Any built-in device can use them.
      top of the range reads e.g. "Full"), `Format::Ms(decimals)`, and
      `DeviceDef::sidechain_enable` (the parameter that follows the sidechain
      picker).
+   - `View::Strip(Strip::new("threshold").range(top, floor))` is the
+     dynamics strip with its own dB range. Value arcs and slider fills start
+     at 0 when the range spans it (−12..24 dB starts at 0 dB). Cards without
+     a field spread their knob cells evenly across the card.
+   - `Format::Custom(fn)` gives device-specific text; parsing still reads
+     the unit ("1.2 s" → 1200 ms, "2k" → 2000 Hz).
+   - **Behaviour** (optional, `builtin::behavior`): a `Behavior` with
+     state-dependent detents (drags snap within 0.025 of the range, arrow
+     keys step between them, ticks drawn on the ring), value text, latches
+     (a knob that becomes a two-state pill in some modes) and the curve of a
+     `Face::Transfer` knob. Start from `Behavior::NONE`.
 2. **DSP kernel.** Add `engine/src/devices/<id>.cpp`: a `BuiltinProcessor`
    (`prepare` may allocate; `reset` / `process` are real-time: no
    allocation, locks, I/O or exceptions) and a `BuiltinDescriptor` whose
@@ -211,13 +226,17 @@ system. Any built-in device can use them.
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a
    Slint component in `ui/device_panel.slint` chosen by that data. Reuse
-   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. Custom bodies
+   `ParamDrag` / `ParamDragX`, `KnobCell` and `SliderCol` for the gestures. Custom bodies
    return a `PanelCanvas` from `Controller::custom_body` (`device_views.rs`):
    paths, texts, grip pills and linear drag zones. When handles need
    non-linear mapping or hit-testing (several handles on one well, a live
    spectrum), set `pointer: true` and handle `Studio.panel-graph` in Rust,
    as the restoration devices do (`crates/saine-app/src/panel_graph.rs`: hit
    zones, spectrum ballistics from the readouts, one undo step per gesture).
+   View-local state (a selected band, meter ballistics) goes through
+   `Studio.panel-view(device, action, value)`; `src/panel_multiband.rs` is
+   an example with its own Slint component (band selector, threshold / floor
+   and crossover handles, dial row following the selected band).
 4. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),

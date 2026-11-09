@@ -123,6 +123,8 @@ add_library(saine_engine STATIC
   src/devices/limiter.cpp
   src/devices/mastering_limiter.cpp
   src/devices/transient_shaper.cpp
+  src/devices/character_compressor.cpp
+  src/devices/multiband_compressor.cpp
   src/devices/lfo.cpp
   src/devices/rack.cpp
   src/devices/distortion.cpp
@@ -362,6 +364,8 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/devices/test_limiter.cpp
     tests/devices/test_mastering_limiter.cpp
     tests/devices/test_transient_shaper.cpp
+    tests/devices/test_character_compressor.cpp
+    tests/devices/test_multiband_compressor.cpp
     tests/devices/test_drive.cpp
     tests/devices/test_imaging.cpp
     tests/devices/test_modulation.cpp

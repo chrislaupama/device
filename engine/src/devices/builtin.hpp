@@ -89,14 +89,9 @@ public:
                          float* readouts) noexcept = 0;
     // Latency in frames (reported for delay compensation).
     virtual uint32_t latency() const noexcept { return 0; }
-    // Latency for these parameter values (registry order), for devices whose
-    // latency follows a setting (e.g. an oversampling factor). Called on the
-    // main thread when the engine refreshes delay compensation (on publish),
-    // with the values about to be processed. Defaults to latency().
-    virtual uint32_t latency_for(const float* params) const noexcept {
-        (void)params;
-        return latency();
-    }
+    // Main thread: latency for these plain values (registry order), so delay
+    // compensation is right before the first block and after edits.
+    virtual uint32_t latency_for(const float* /*params*/) const noexcept { return latency(); }
 
     // ---- modulation sources (LFO, chain head; see se_mod_route)
     // Number of outputs (0 = not a source).
@@ -262,6 +257,7 @@ private:
     std::unique_ptr<BuiltinProcessor> proc_;
     std::unique_ptr<std::atomic<float>[]> target_; // written by the main thread
     std::vector<float> current_;                   // RT copy for this block
+    std::atomic<uint32_t> applied_latency_{0};     // latency of the values the last block ran with
     std::unique_ptr<std::atomic<float>[]> readout_atomic_;
     std::vector<float> readout_scratch_;
     std::vector<float> readout_segment_; // later automation segments, merged into readout_scratch_
