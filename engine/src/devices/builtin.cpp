@@ -9,6 +9,8 @@ namespace saine {
 // ---------------------------------------------------------------- registry
 // One line per built-in device; the descriptor lives next to its processor.
 extern const BuiltinDescriptor kCompressorDescriptor;
+extern const BuiltinDescriptor kLfoDescriptor;
+extern const BuiltinDescriptor kRackDescriptor;
 extern const BuiltinDescriptor kSamplerDescriptor;
 extern const BuiltinDescriptor kDrumRackDescriptor;
 extern const BuiltinDescriptor kPadSamplerDescriptor;
@@ -37,6 +39,8 @@ namespace {
 
 const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kCompressorDescriptor,
+    &kLfoDescriptor,
+    &kRackDescriptor,
     &kSamplerDescriptor,
     &kDrumRackDescriptor,
     &kPadSamplerDescriptor,
@@ -109,7 +113,7 @@ const char* parse_builtin_state(const uint8_t* data, std::size_t len, BuiltinSta
         se_builtin_state_v2 h;
         std::memcpy(&h, data, sizeof h);
         const std::size_t want = sizeof h + std::size_t{4} * h.value_count + sizeof(se_builtin_sample) * h.sample_count +
-                                 sizeof(se_builtin_slice) * h.slice_count;
+                                 sizeof(se_builtin_slice) * h.slice_count + sizeof(se_mod_route) * std::size_t{h.route_count};
         if (len != want) return "built-in state length does not match its counts";
         out.values = data + sizeof h;
         out.value_count = h.value_count;
@@ -118,6 +122,8 @@ const char* parse_builtin_state(const uint8_t* data, std::size_t len, BuiltinSta
         out.sample_count = h.sample_count;
         out.slices = out.samples + sizeof(se_builtin_sample) * h.sample_count;
         out.slice_count = h.slice_count;
+        out.routes = out.slices + sizeof(se_builtin_slice) * h.slice_count;
+        out.route_count = h.route_count;
         uint64_t total = 0;
         for (uint32_t i = 0; i < h.sample_count; ++i) {
             se_builtin_sample s;
@@ -141,7 +147,43 @@ const char* parse_builtin_state(const uint8_t* data, std::size_t len, BuiltinSta
         std::memcpy(&v, out.values + 4 * i, 4);
         if (!std::isfinite(v)) return "built-in state value is not finite";
     }
+    for (uint32_t i = 0; i < out.route_count; ++i) {
+        se_mod_route r;
+        std::memcpy(&r, out.routes + sizeof r * i, sizeof r);
+        if (r.kind > SE_MOD_PLUGIN) return "modulation route has an unknown kind";
+        if (!std::isfinite(r.min) || !std::isfinite(r.max) || !std::isfinite(r.p_min) || !std::isfinite(r.p_max) ||
+            !std::isfinite(r.p_skew) || !std::isfinite(r.p_step))
+            return "modulation route range is not finite";
+    }
     return nullptr;
+}
+
+float mod_to_norm(const BuiltinMod& m, float v) noexcept {
+    if (!(m.max > m.min)) return 0.0f;
+    v = std::clamp(v, m.min, m.max);
+    float n;
+    if (m.log) {
+        n = m.min > 0.0f ? std::log(v / m.min) / std::log(m.max / m.min) : 0.0f;
+    } else {
+        n = std::clamp((v - m.min) / (m.max - m.min), 0.0f, 1.0f);
+        if (m.skew != 1.0f && n > 0.0f) n = std::pow(n, m.skew);
+    }
+    return std::isfinite(n) ? std::clamp(n, 0.0f, 1.0f) : 0.0f;
+}
+
+float mod_from_norm(const BuiltinMod& m, float n) noexcept {
+    if (!(m.max > m.min)) return std::isfinite(m.min) ? m.min : 0.0f;
+    n = std::isfinite(n) ? std::clamp(n, 0.0f, 1.0f) : 0.0f;
+    float v;
+    if (m.log && m.min > 0.0f) {
+        v = m.min * std::pow(m.max / m.min, n); // max > min > 0
+    } else {
+        if (m.skew != 1.0f && m.skew > 0.0f && n > 0.0f) n = std::pow(n, 1.0f / m.skew);
+        v = m.min + (m.max - m.min) * n;
+    }
+    v = std::clamp(v, m.min, m.max);
+    if (m.step > 0.0f && !m.log) v = std::clamp(m.min + std::floor((v - m.min) / m.step + 0.501f) * m.step, m.min, m.max);
+    return v;
 }
 
 const char* parse_builtin_state(const uint8_t* data, std::size_t len, const uint8_t*& values, uint32_t& count,
@@ -170,8 +212,33 @@ BuiltinInstance::BuiltinInstance(PluginSpec spec, const BuiltinDescriptor& desc,
         readout_atomic_[i].store(i < desc_.idle_readouts.size() ? desc_.idle_readouts[i] : 0.0f, std::memory_order_relaxed);
     update_state(spec_.state.data(), spec_.state.size());
     for (std::size_t i = 0; i < desc_.params.size(); ++i) current_[i] = target_[i].load(std::memory_order_relaxed);
+    modded_.assign(desc_.params.size(), 0.0f);
+    mod_params_.assign(desc_.params.size(), 0.0f);
     proc_->prepare(sample_rate, max_block);
     proc_->reset();
+    mod_outputs_ = proc_->mod_outputs();
+    if (mod_outputs_ > 0) mod_out_.assign(2 * std::size_t{mod_outputs_} * (max_block / kGrid + 2), 0.0f);
+}
+
+void BuiltinInstance::run_modulation(uint32_t frames, const RtTransport& transport, const ParamEvent* params,
+                                     uint32_t param_count) noexcept {
+    if (mod_outputs_ == 0) return;
+    const auto n_params = static_cast<uint32_t>(mod_params_.size());
+    float* const cur = mod_params_.data();
+    for (uint32_t i = 0; i < n_params; ++i) cur[i] = target_[i].load(std::memory_order_relaxed);
+    const uint32_t cap = static_cast<uint32_t>(mod_out_.size() / (2 * std::size_t{mod_outputs_}));
+    uint32_t e = 0;
+    for (uint32_t k = 0, pos = 0; pos < frames && k < cap; ++k, pos += kGrid) {
+        while (e < param_count && params[e].offset <= pos) {
+            if (params[e].id < n_params) cur[params[e].id] = static_cast<float>(params[e].value);
+            ++e;
+        }
+        RtTransport t = transport;
+        if (t.playing) t.position += pos;
+        BuiltinContext ctx;
+        ctx.transport = &t;
+        proc_->modulate(cur, std::min(kGrid, frames - pos), ctx, mod_out_.data() + 2 * std::size_t{k} * mod_outputs_);
+    }
 }
 
 void BuiltinInstance::set_value(uint32_t index, float value) noexcept {
@@ -328,10 +395,13 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     const uint32_t evn = desc_.instrument ? ne : event_count;
     float* const ro = readout_scratch_.data();
     // Automation events split the block (sorted by offset): every segment
-    // runs with the values in force at its first frame. The block's readouts
+    // runs with the values in force at its first frame. Modulation splits it
+    // further at every grid point (SE_MOD_GRID_FRAMES). The block's readouts
     // keep, per readout, the segment value farthest from its idle value
     // (highest peak, deepest reduction). MIDI events go to the segment they
     // fall in, with segment-relative offsets.
+    const bool modulated = mod_count_ > 0;
+    float* const run_params = modulated ? modded_.data() : cur;
     MidiEvent* const seg_events = midi_scratch_.data();
     uint32_t pos = 0, e = 0, m = 0;
     while (pos < frames) {
@@ -339,7 +409,19 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
             if (params[e].id < n_params) cur[params[e].id] = static_cast<float>(params[e].value);
             ++e;
         }
-        const uint32_t end = e < param_count ? std::min(frames, params[e].offset) : frames;
+        uint32_t end = e < param_count ? std::min(frames, params[e].offset) : frames;
+        if (modulated) {
+            const uint32_t k = pos / kGrid;
+            end = std::min(end, (k + 1) * kGrid);
+            std::memcpy(run_params, cur, sizeof(float) * n_params);
+            for (uint32_t j = 0; j < mod_count_; ++j) {
+                const BuiltinMod& md = mods_[j];
+                if (md.index >= n_params) continue;
+                const float a = md.abs != nullptr ? md.abs[k] : std::nanf("");
+                const float n = (std::isnan(a) ? mod_to_norm(md, cur[md.index]) : a) + (md.off != nullptr ? md.off[k] : 0.0f);
+                run_params[md.index] = mod_from_norm(md, n);
+            }
+        }
         BuiltinContext seg = ctx;
         seg.offset = pos;
         if (seg.sc_l != nullptr) {
@@ -356,10 +438,10 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
         seg.events = nm > 0 ? seg_events : nullptr;
         seg.event_count = nm;
         if (pos == 0) {
-            proc_->process(l, r, end, cur, seg, ro);
+            proc_->process(l, r, end, run_params, seg, ro);
         } else {
             float* const sr = readout_segment_.data();
-            proc_->process(l + pos, r + pos, end - pos, cur, seg, sr);
+            proc_->process(l + pos, r + pos, end - pos, run_params, seg, sr);
             for (std::size_t i = 0; i < readout_segment_.size(); ++i) {
                 const float idle = i < desc_.idle_readouts.size() ? desc_.idle_readouts[i] : 0.0f;
                 if (std::fabs(sr[i] - idle) > std::fabs(ro[i] - idle)) ro[i] = sr[i];
@@ -369,6 +451,8 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     }
     for (std::size_t i = 0; i < readout_scratch_.size(); ++i) readout_atomic_[i].store(ro[i], std::memory_order_relaxed);
     sc_l_ = sc_r_ = nullptr;
+    mods_ = nullptr;
+    mod_count_ = 0;
 }
 
 uint32_t BuiltinInstance::latency() {

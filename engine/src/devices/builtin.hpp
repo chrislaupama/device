@@ -104,7 +104,37 @@ public:
         (void)index;
         return true;
     }
+
+    // ---- modulation sources (LFO, chain head; see se_mod_route)
+    // Number of outputs (0 = not a source).
+    virtual uint32_t mod_outputs() const noexcept { return 0; }
+    // RT. Writes (value 0..1, gain) per output into out[2 * o], out[2 * o + 1]
+    // for the moment ctx.transport->position, then advances the source's
+    // clock by `frames`. Called once per SE_MOD_GRID_FRAMES of every block
+    // the source is enabled, before the track's audio is processed.
+    virtual void modulate(const float* params, uint32_t frames, const BuiltinContext& ctx, float* out) noexcept {
+        (void)params;
+        (void)frames;
+        (void)ctx;
+        (void)out;
+    }
 };
+
+// One modulated parameter of a built-in target for the next process() call:
+// per grid point (SE_MOD_GRID_FRAMES apart from the block start) the
+// additive offset and the absolute normalized value (NaN = none).
+struct BuiltinMod {
+    uint32_t index = 0;
+    bool log = false;
+    float min = 0.0f, max = 1.0f, skew = 1.0f, step = 0.0f;
+    const float* off = nullptr;
+    const float* abs = nullptr;
+};
+
+// Normalisation of saine_core::builtin::ParamDef (to_normalized /
+// from_normalized + snap), used to apply modulation in the 0..1 domain.
+float mod_to_norm(const BuiltinMod& m, float v) noexcept;
+float mod_from_norm(const BuiltinMod& m, float n) noexcept;
 
 struct BuiltinDescriptor {
     const char* id;
@@ -123,6 +153,9 @@ struct BuiltinDescriptor {
     bool instrument = false;
     // Sample slots (audio files the device plays, see BuiltinSample).
     uint32_t sample_slots = 0;
+    // A modulation source (LFO, chain head): it runs every block it is
+    // enabled, with or without routes, so its clock and readouts stay live.
+    bool mod_source = false;
 };
 
 std::span<const BuiltinDescriptor> builtin_registry() noexcept;
@@ -145,6 +178,8 @@ struct BuiltinStateView {
     uint32_t sample_count = 0;
     const uint8_t* slices = nullptr;  // se_builtin_slice entries
     uint32_t slice_count = 0;
+    const uint8_t* routes = nullptr;  // se_mod_route entries (modulation sources)
+    uint32_t route_count = 0;
 };
 const char* parse_builtin_state(const uint8_t* data, std::size_t len, BuiltinStateView& out) noexcept;
 
@@ -178,6 +213,21 @@ public:
         sc_l_ = l;
         sc_r_ = r;
     }
+    // RT: modulated parameters for the next run() (cleared after it).
+    void set_modulation(const BuiltinMod* mods, uint32_t count) noexcept {
+        mods_ = mods;
+        mod_count_ = count;
+    }
+
+    // ---- modulation sources
+    static constexpr uint32_t kGrid = SE_MOD_GRID_FRAMES;
+    uint32_t mod_outputs() const noexcept { return mod_outputs_; }
+    // RT: evaluates the source for a block of `frames` (automation events
+    // applied at their grid point); results stay readable until the next call.
+    void run_modulation(uint32_t frames, const RtTransport& transport, const ParamEvent* params,
+                        uint32_t param_count) noexcept;
+    // (value, gain) of output `o` at grid point `k` of the last evaluated block.
+    const float* mod_point(uint32_t k, uint32_t o) const noexcept { return mod_out_.data() + 2 * (std::size_t{k} * mod_outputs_ + o); }
 
     void process(float* l, float* r, uint32_t frames, const MidiEvent* events, uint32_t event_count,
                  const RtTransport& transport, const ParamEvent* params, uint32_t param_count) noexcept override;
@@ -227,6 +277,12 @@ private:
     std::vector<MidiEvent> midi_scratch_; // MIDI events of one automation segment
     const float* sc_l_ = nullptr;
     const float* sc_r_ = nullptr;
+    const BuiltinMod* mods_ = nullptr;
+    uint32_t mod_count_ = 0;
+    std::vector<float> modded_;  // params with modulation applied (RT scratch)
+    uint32_t mod_outputs_ = 0;
+    std::vector<float> mod_out_; // [point][output][value, gain]
+    std::vector<float> mod_params_;
 };
 
 std::shared_ptr<PluginInstance> create_builtin_instance(const PluginSpec& spec, double sample_rate, uint32_t max_block,

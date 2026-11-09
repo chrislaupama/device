@@ -30,6 +30,8 @@ mod bitcrusher;
 pub mod character_mod;
 mod chorus;
 mod compressor;
+pub mod lfo;
+pub mod rack;
 pub mod drum_rack;
 pub mod pad_sampler;
 pub mod sampler;
@@ -709,6 +711,8 @@ pub fn all() -> &'static [&'static DeviceDef] {
         &tremolo::TREMOLO,
         &autopanner::AUTOPANNER,
         &ring_mod::RING_MOD,
+        &lfo::LFO,
+        &rack::RACK,
         &sampler::SAMPLER,
         &drum_rack::DRUM_RACK,
         &pad_sampler::PAD_SAMPLER,
@@ -757,6 +761,12 @@ pub const FREE_SYNC: &[&str] = &["Free", "Sync"];
 pub fn synced_hz(quarters: f32, bpm: f32) -> f32 {
     let bpm = if bpm.is_finite() && bpm > 0.0 { bpm } else { 120.0 };
     bpm / 60.0 / quarters.max(1e-3)
+}
+
+/// Shown in the browser and the Add device lists. LFOs come from a knob's
+/// Modulators menu or the device picker, chains from grouping or Chains.
+pub fn listed(def: &DeviceDef) -> bool {
+    def.id != crate::modulation::LFO_ID && def.id != crate::modulation::RACK_ID
 }
 
 pub fn find(id: &str) -> Option<&'static DeviceDef> {
@@ -908,7 +918,7 @@ pub fn mod_targets(track: &Track) -> Vec<ModTarget> {
         .devices
         .iter()
         .filter_map(|d| def_of(d).map(|def| (d, def)))
-        .filter(|(_, def)| def.kind == PluginKind::Effect)
+        .filter(|(_, def)| def.kind == PluginKind::Effect && listed(def))
         .flat_map(|(d, def)| def.params.iter().filter(|p| p.automatable).map(move |p| ModTarget { device: d.id, device_name: def.name.into(), param: p.id, param_name: p.name }))
         .collect()
 }
@@ -1166,7 +1176,8 @@ mod tests {
         assert_eq!(ids[..7], ["compressor", "distortion", "tapesaturation", "soft-clipper", "bitcrusher", "widener", "utility"]);
         assert_eq!(find("widener").unwrap().layout.width(), 388.0);
         assert_eq!(find("utility").unwrap().layout.width(), 221.5);
-        for def in all() {
+        // Modulation sources (LFO, chain head) are not listed effects and show no presets.
+        for def in all().iter().filter(|d| listed(d)) {
             assert!(!def.factory.is_empty(), "{} has factory presets", def.id);
         }
     }
