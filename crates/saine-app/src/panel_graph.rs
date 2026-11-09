@@ -563,6 +563,7 @@ impl Controller {
             grips: model(grips),
             zones: model(Vec::new()),
             pointer: true,
+            interactive: false,
             cursor,
             readout_accent: true,
             ..Default::default()
@@ -667,7 +668,7 @@ impl Controller {
             if matches!(phase, 2 | 3) && self.devices.panel.graph.drag.take().is_some() {
                 self.ui_dirty = true;
             }
-            return;
+            return self.panel_field_pointer(device, phase, x, y, fine, alt);
         };
         let zone = self.graph_hit(d, def, kind, x, y);
         match phase {

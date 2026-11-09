@@ -275,6 +275,19 @@ system. Any built-in device can use them.
    The EQ and Auto Filter canvases (`device_canvas.rs`) use the same flag and
    add dots, anchored grips, double-click (phase 6), wheel and keys
    (`panel-graph-wheel`, `panel-graph-key`).
+   Full editors with their own gestures and menus (step grids, curve
+   editors) add an arm to `custom_card` in
+   `crates/saine-app/src/device_editors.rs` and set `interactive: true`:
+   `DeviceCanvas` then sends every press, drag, release, hover,
+   double-click, right-click and wheel over the canvas to `panel_editor`,
+   with window coordinates for menus. A gesture sends live values to the
+   engine and commits one undo step on release; Escape restores the values
+   from before it. Set `Layout::fixed_width` for a card that the dial row
+   does not size. The Trance Gate and the Shaper are the editor examples.
+   - A parameter that only the stored value should drive (the Shaper's
+     Pitch switch, which sets its latency) returns false from
+     `BuiltinProcessor::automatable`; the engine then leaves automation
+     lanes on it inactive.
 5. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),

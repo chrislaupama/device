@@ -11,6 +11,7 @@
 using namespace testutil;
 using namespace devtest;
 
+
 namespace {
 
 // Neutral starting values for the generic checks: the middle of nothing is
@@ -151,6 +152,7 @@ TEST_CASE(every_builtin_is_rt_safe_and_robust) {
                 for (uint32_t i = 0; i < frames; ++i) l[i] = r[i] = 0.5f * std::sin(0.05f * static_cast<float>(i + k));
                 if (k % 3 == 0) rig.instance().set_sidechain(scl.data(), scr.data());
                 const auto ne = static_cast<uint32_t>(std::count_if(ev.begin(), ev.end(), [&](const saine::ParamEvent& e) { return e.offset < frames; }));
+                tr.playing = k % 4 < 2; // tempo-synced devices: playing and stopped transport
                 const saine::MidiEvent play[2] = {{0, static_cast<uint8_t>(k % 4 < 2 ? 0x90 : 0x80), static_cast<uint8_t>(40 + k % 24), 90, 0},
                                                   {frames - 1, 0x90, static_cast<uint8_t>(64 + k % 12), 70, 0}};
                 if (d.instrument && k % 4 == 1) {
@@ -159,6 +161,7 @@ TEST_CASE(every_builtin_is_rt_safe_and_robust) {
                 }
                 rig.instance().run(l.data(), r.data(), frames, d.instrument ? play : nullptr, d.instrument ? 2u : 0u, tr,
                                    ev.data(), k % 2 == 0 ? ne : 0);
+                tr.position += frames;
                 if (k % 40 == 39) rig.instance().processor().reset();
             }
         }

@@ -32,6 +32,7 @@ pub static TREMOLO: DeviceDef = DeviceDef {
         min_height: 202.0,
         fixed_width: 0.0,
         shown_when: &[("rate", "sync", &[0]), ("rate_sync", "sync", &[1])],
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Slow Throb", values: &[("depth", 50.0), ("shape", 1.0), ("sync", 1.0), ("rate_sync", 5.0)] },

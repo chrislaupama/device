@@ -31,6 +31,7 @@ pub static DEHUMMER: DeviceDef = DeviceDef {
         min_height: 176.0,
         shown_when: &[],
         fixed_width: 0.0,
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Mains 50 Hz", values: &[("frequency", 50.0), ("num_harmonics", 4.0), ("notch_width", 6.0), ("depth", -40.0)] },

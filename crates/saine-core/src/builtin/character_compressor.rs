@@ -146,6 +146,7 @@ pub static CHARACTER_COMPRESSOR: DeviceDef = DeviceDef {
             ("drive", "model", &[VARI_MU, BUS_VCA, FET, OPTO, RMS_VCA]),
         ],
         fixed_width: 0.0,
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Clear Lead Vocal", values: &[("model", 4.0), ("threshold", -27.0), ("ratio", 3.0), ("drive", 0.9), ("makeup", 9.5)] },
@@ -269,7 +270,7 @@ fn transfer(def: &DeviceDef, d: &Device) -> Option<Transfer> {
     Some(Transfer { lo, hi, points, bend })
 }
 
-pub static BEHAVIOR: Behavior = Behavior { detents, text, latch, transfer };
+pub static BEHAVIOR: Behavior = Behavior { detents, text, latch, transfer, ..Behavior::NONE };
 
 // ---------------------------------------------------------------- static curves
 

@@ -35,6 +35,11 @@ extern const BuiltinDescriptor kPhaserDescriptor;
 extern const BuiltinDescriptor kTremoloDescriptor;
 extern const BuiltinDescriptor kAutopannerDescriptor;
 extern const BuiltinDescriptor kRingModDescriptor;
+extern const BuiltinDescriptor kDelayDescriptor;
+extern const BuiltinDescriptor kEchoDescriptor;
+extern const BuiltinDescriptor kGrainsDescriptor;
+extern const BuiltinDescriptor kReverbDescriptor;
+extern const BuiltinDescriptor kPitchShifterDescriptor;
 extern const BuiltinDescriptor kCharacterCompressorDescriptor;
 extern const BuiltinDescriptor kMultibandCompressorDescriptor;
 extern const BuiltinDescriptor kSynthV2Descriptor;
@@ -45,6 +50,8 @@ extern const BuiltinDescriptor kDeNoiserDescriptor;
 extern const BuiltinDescriptor kPitchCorrectorDescriptor;
 extern const BuiltinDescriptor kTunerDescriptor;
 extern const BuiltinDescriptor kSpectrumDescriptor;
+extern const BuiltinDescriptor kTranceGateDescriptor;
+extern const BuiltinDescriptor kShaperDescriptor;
 
 namespace {
 
@@ -76,6 +83,11 @@ const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kTremoloDescriptor,
     &kAutopannerDescriptor,
     &kRingModDescriptor,
+    &kDelayDescriptor,
+    &kEchoDescriptor,
+    &kGrainsDescriptor,
+    &kReverbDescriptor,
+    &kPitchShifterDescriptor,
     &kCharacterCompressorDescriptor,
     &kMultibandCompressorDescriptor,
     &kSynthV2Descriptor,
@@ -83,6 +95,8 @@ const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kPitchCorrectorDescriptor,
     &kTunerDescriptor,
     &kSpectrumDescriptor,
+    &kTranceGateDescriptor,
+    &kShaperDescriptor,
 };
 
 struct CRegistry {
@@ -542,6 +556,7 @@ void BuiltinInstance::params(std::vector<ParamInfo>& out) {
         p.name = desc_.params[i];
         p.min = -1e30;
         p.max = 1e30;
+        p.automatable = proc_->automatable(i);
         out.push_back(std::move(p));
     }
 }

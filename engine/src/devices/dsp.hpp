@@ -283,6 +283,14 @@ public:
         const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
         return ((c3 * f + c2) * f + c1) * f + x0;
     }
+    // Linear read d samples back from the newest (cheaper; for heavily modulated networks).
+    float read_linear(float d) const noexcept {
+        d = std::clamp(d, 0.0f, static_cast<float>(mask_ - 3));
+        const auto di = static_cast<std::size_t>(d);
+        const float f = d - static_cast<float>(di);
+        const float a = buf_[(w_ - di) & mask_], b = buf_[(w_ - di - 1) & mask_];
+        return a + f * (b - a);
+    }
     float at(std::size_t d) const noexcept { return buf_[(w_ - d) & mask_]; }
     std::size_t size() const noexcept { return buf_.size(); }
 

@@ -154,6 +154,7 @@ pub static CHARACTER_MOD: DeviceDef = DeviceDef {
             ("rate", "sync", &[0]),
             ("note", "sync", &[1]),
         ],
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Juno Wash", values: &[("mix", 45.0)] },

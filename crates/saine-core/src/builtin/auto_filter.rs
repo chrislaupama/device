@@ -61,6 +61,7 @@ pub static AUTO_FILTER: DeviceDef = DeviceDef {
         min_height: 202.0,
         shown_when: &[("lfo_rate_free", "lfo_sync", &[0]), ("lfo_rate_sync", "lfo_sync", &[1])],
         fixed_width: 0.0,
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Gentle Dusk", values: &[("frequency", 3200.0), ("resonance", 0.12)] },

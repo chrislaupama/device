@@ -44,6 +44,7 @@ pub static GLUE_COMPRESSOR: DeviceDef = DeviceDef {
         fixed_width: 0.0,
         min_height: 217.0,
         shown_when: &[],
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Drum Group Glue", values: &[("threshold", -22.0), ("ratio", 1.0), ("attack", 3.0), ("release", 1.0), ("makeup", 5.5), ("color", 65.0), ("sc_hpf", 1.0)] },

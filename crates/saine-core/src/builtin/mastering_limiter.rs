@@ -62,6 +62,7 @@ pub static MASTERING_LIMITER: DeviceDef = DeviceDef {
         fixed_width: 0.0,
         min_height: 203.0,
         shown_when: &[],
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Streaming Safe", values: &[("threshold", -3.0), ("ceiling", -1.5), ("lookahead", 3.0)] },

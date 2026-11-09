@@ -124,6 +124,7 @@ pub static CHANNEL_EQ: DeviceDef = DeviceDef {
         min_height: 155.0,
         shown_when: &[],
         fixed_width: 528.0,
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Rumble Guard", values: &[("band0_enabled", 1.0), ("band0_freq", 60.0), ("hp_slope", 1.0)] },

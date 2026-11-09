@@ -328,6 +328,7 @@ pub static CHARACTER_EQ: DeviceDef = DeviceDef {
         min_height: 155.0,
         shown_when: &[],
         fixed_width: 575.0,
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Clean Lift", values: &[("band1_enabled", 1.0), ("band1_type", 0.0), ("band1_freq", 250.0), ("band1_gain", -1.5), ("band1_q", 1.0), ("band2_enabled", 1.0), ("band2_type", 2.0), ("band2_freq", 10_000.0), ("band2_gain", 2.0), ("band2_q", 0.7)] },

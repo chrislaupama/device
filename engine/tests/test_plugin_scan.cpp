@@ -27,10 +27,34 @@ std::string slurp(const std::string& path) {
     return ss.str();
 }
 
+// A private copy of the test plugin folder, removed by the destructor. CTest
+// runs test cases in parallel and they share SAINE_TEST_PLUGIN_DIR, so a test
+// that changes a bundle's modification time works on its own copy.
+struct PluginDirCopy {
+    PluginDirCopy() {
+        static int counter = 0;
+        const auto dir = std::filesystem::temp_directory_path() /
+                         ("saine_test_" + std::to_string(os::process_id()) + "_" + std::to_string(counter++) + "_plugins");
+        std::error_code ec;
+        std::filesystem::copy(os::path_from_utf8(SAINE_TEST_PLUGIN_DIR), dir,
+                              std::filesystem::copy_options::recursive | std::filesystem::copy_options::copy_symlinks,
+                              ec);
+        if (!ec) path = os::path_to_utf8(dir);
+    }
+    ~PluginDirCopy() {
+        std::error_code ec;
+        if (!path.empty()) std::filesystem::remove_all(os::path_from_utf8(path), ec);
+    }
+    PluginDirCopy(const PluginDirCopy&) = delete;
+    PluginDirCopy& operator=(const PluginDirCopy&) = delete;
+    std::string path;
+};
+
 // Runs the scanner coordinator (stdout captured) with SAINE_PLUGIN_PATH set
-// to the test plugin folder.
-std::string run_scan(const std::string& cache, bool rescan, int* exit_code) {
-    os::set_env("SAINE_PLUGIN_PATH", SAINE_TEST_PLUGIN_DIR);
+// to `plugin_dir`.
+std::string run_scan(const std::string& cache, bool rescan, int* exit_code,
+                     const std::string& plugin_dir = SAINE_TEST_PLUGIN_DIR) {
+    os::set_env("SAINE_PLUGIN_PATH", plugin_dir.c_str());
     os::set_env("SAINE_PLUGIN_SCAN_TIMEOUT_MS", "8000");
     TempFile out("scan.out"), err("scan.err");
     std::vector<std::string> args = {"--scan", "--cache", cache};
@@ -61,9 +85,11 @@ long scanned(const std::string& report) {
 } // namespace
 
 TEST_CASE(plugin_scanner_finds_plugins_and_blocklists_crashes) {
+    const PluginDirCopy plugins;
+    REQUIRE(!plugins.path.empty());
     TempFile cache("plugin_cache.json");
     int rc = -1;
-    const std::string r1 = run_scan(cache.path, false, &rc);
+    const std::string r1 = run_scan(cache.path, false, &rc, plugins.path);
     REQUIRE(rc == 0);
 #if defined(__APPLE__)
     // Apple AUs.
@@ -85,7 +111,7 @@ TEST_CASE(plugin_scanner_finds_plugins_and_blocklists_crashes) {
     CHECK(first > 5);
 
     // Second run: everything from the cache, crash still blocklisted.
-    const std::string r2 = run_scan(cache.path, false, &rc);
+    const std::string r2 = run_scan(cache.path, false, &rc, plugins.path);
     REQUIRE(rc == 0);
     CHECK_EQ(scanned(r2), 0L);
     CHECK(has(r2, "\"from_cache\":true"));
@@ -94,7 +120,7 @@ TEST_CASE(plugin_scanner_finds_plugins_and_blocklists_crashes) {
 
     // Touch the gain bundle: only it is re-scanned.
     // (macOS: the bundle folder; Windows/Linux: the single-file .clap.)
-    const std::string bundle_utf8 = std::string(SAINE_TEST_PLUGIN_DIR) + "/SaineTestGain.clap";
+    const std::string bundle_utf8 = plugins.path + "/SaineTestGain.clap";
     const auto bundle = os::path_from_utf8(bundle_utf8);
     const int64_t before = os::file_mtime_ns(bundle_utf8);
     std::error_code ec;
@@ -105,14 +131,14 @@ TEST_CASE(plugin_scanner_finds_plugins_and_blocklists_crashes) {
     std::fprintf(stderr, "  touched %s: mtime %lld -> %lld\n", bundle_utf8.c_str(), static_cast<long long>(before),
                  static_cast<long long>(after));
     CHECK(after != before);
-    const std::string r3 = run_scan(cache.path, false, &rc);
+    const std::string r3 = run_scan(cache.path, false, &rc, plugins.path);
     REQUIRE(rc == 0);
     CHECK_EQ(scanned(r3), 1L);
     if (scanned(r3) != 1L) std::fprintf(stderr, "  report after touching:\n%s\n", r3.c_str());
     CHECK(has(r3, "\"id\":\"studio.saine.test.gain\""));
 
     // --rescan scans everything again (the crash is retried and fails again).
-    const std::string r4 = run_scan(cache.path, true, &rc);
+    const std::string r4 = run_scan(cache.path, true, &rc, plugins.path);
     REQUIRE(rc == 0);
     CHECK_EQ(scanned(r4), first);
     CHECK(has(r4, "SaineTestCrash.clap\",\"format\":\"clap\",\"reason\":\"crashed"));

@@ -31,6 +31,7 @@ pub static DISTORTION: DeviceDef = DeviceDef {
         min_height: 202.0,
         shown_when: &[],
         fixed_width: 0.0,
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Edge of Breakup", values: &[("drive", 18.0), ("tone", 7500.0), ("output_gain", -2.5)] },

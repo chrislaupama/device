@@ -27,6 +27,7 @@ pub static WIDENER: DeviceDef = DeviceDef {
         min_height: 176.0,
         shown_when: &[],
         fixed_width: 388.0,
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Gentle Spread", values: &[("width2", 130.0)] },

@@ -429,7 +429,7 @@ int32_t Engine::publish(const se_session_desc_v6& desc, std::string& err) {
                 AutoLane& lane = built->lanes[i];
                 BuiltinInstance* const b = inst != nullptr ? inst->as_builtin() : nullptr;
                 if (lane.target == SE_AUTO_BUILTIN || b != nullptr) // built-in lanes only on built-ins, and vice versa
-                    lane.active = b != nullptr && lane.target == SE_AUTO_BUILTIN && lane.param_id < b->param_count();
+                    lane.active = b != nullptr && lane.target == SE_AUTO_BUILTIN && b->param_automatable(lane.param_id);
                 else
                     lane.active = inst != nullptr && inst->param_range(lane.param_id, lane.native_min, lane.native_max);
             }

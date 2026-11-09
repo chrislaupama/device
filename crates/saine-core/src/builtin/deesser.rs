@@ -35,6 +35,7 @@ pub static DEESSER: DeviceDef = DeviceDef {
         min_height: 176.0,
         shown_when: &[],
         fixed_width: 0.0,
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Soft Sibilance", values: &[("frequency", 6500.0), ("bandwidth", 1.1), ("threshold", -30.0), ("reduction", 5.0)] },

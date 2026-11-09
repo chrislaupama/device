@@ -33,6 +33,7 @@ pub static RING_MOD: DeviceDef = DeviceDef {
         min_height: 204.0,
         fixed_width: 0.0,
         shown_when: &[],
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Struck Bell", values: &[("frequency", 1100.0), ("mix", 55.0), ("output", 2.5)] },

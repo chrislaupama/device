@@ -124,6 +124,13 @@ public:
     // Main thread: latency for these plain values (registry order), so delay
     // compensation is right before the first block and after edits.
     virtual uint32_t latency_for(const float* /*params*/) const noexcept { return latency(); }
+    // Whether automation lanes may drive the parameter. A parameter that sets
+    // the reported latency is not automatable: delay compensation follows the
+    // main-thread value only.
+    virtual bool automatable(uint32_t index) const noexcept {
+        (void)index;
+        return true;
+    }
 
     // ---- modulation sources (LFO, chain head; see se_mod_route)
     // Number of outputs (0 = not a source).
@@ -216,6 +223,7 @@ public:
     BuiltinInstance* as_builtin() noexcept override { return this; }
     const BuiltinDescriptor& descriptor() const noexcept { return desc_; }
     uint32_t param_count() const noexcept { return static_cast<uint32_t>(desc_.params.size()); }
+    bool param_automatable(uint32_t index) const noexcept { return index < param_count() && proc_->automatable(index); }
 
     // Main thread: new values (lock-free stores, picked up at the next block).
     void set_value(uint32_t index, float value) noexcept;

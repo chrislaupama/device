@@ -37,6 +37,7 @@ pub static TRANSIENT_SHAPER: DeviceDef = DeviceDef {
         fixed_width: 0.0,
         min_height: 199.0,
         shown_when: &[],
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Kick Click", values: &[("attack", 45.0), ("sustain", -10.0), ("sensitivity", 55.0), ("output_gain", -1.0), ("attack_time", 12.0)] },
