@@ -44,4 +44,5 @@ pub static DEESSER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Hi-Hat Tamer", values: &[("frequency", 11000.0), ("bandwidth", 0.6), ("threshold", -38.0), ("reduction", 7.0)] },
     ],
     sidechain: false,
+    samples: 0,
 };

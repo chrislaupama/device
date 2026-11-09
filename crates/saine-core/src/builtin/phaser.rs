@@ -47,4 +47,5 @@ pub static PHASER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Sixteenth Ripple", values: &[("depth", 40.0), ("feedback", 25.0), ("sync", 1.0), ("rate_sync", 14.0), ("output_gain", 1.0)] },
     ],
     sidechain: false,
+    samples: 0,
 };

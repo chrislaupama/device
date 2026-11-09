@@ -62,7 +62,7 @@ fn publish_ramp(e: &Engine, dir: &Path, frames: u32) -> Vec<f32> {
             clips: vec![ClipSnapshot { clip_id: 1, engine_asset: info.asset_id, timeline_start: 0, source_offset: 0, length: frames as i64, gain: 1.0 }],
         }],
         master_gain: 1.0,
-        master_automation: vec![],
+        master_automation: vec![], device_assets: Default::default(),
     };
     e.publish(&snap).unwrap();
     src
@@ -208,7 +208,7 @@ fn export_excludes_loop_and_metronome() {
             clips: vec![ClipSnapshot { clip_id: 1, engine_asset: info.asset_id, timeline_start: 0, source_offset: 0, length: 5_000, gain: 1.0 }],
         }],
         master_gain: 1.0,
-        master_automation: vec![],
+        master_automation: vec![], device_assets: Default::default(),
     };
     e.publish(&snap).unwrap();
     e.set_metronome(MetronomeConfig { enabled: false, gain: 0.0, frames_per_beat: 1.0, beats_per_bar: 1 }).unwrap();
