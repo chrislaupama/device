@@ -250,7 +250,11 @@ fn parse_args() -> Result<Args, String> {
             "--offscreen" => a.offscreen = true,
             "--card-accent" => {
                 let hex = value(&mut i)?;
-                let c = u32::from_str_radix(hex.trim_start_matches('#'), 16).map_err(|e| format!("--card-accent: {e}"))?;
+                let hex = hex.trim_start_matches('#');
+                if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    return Err(format!("--card-accent: want six hex digits (RRGGBB), got {hex:?}"));
+                }
+                let c = u32::from_str_radix(hex, 16).map_err(|e| format!("--card-accent: {e}"))?;
                 let _ = controller::CARD_ACCENT.set(timeline::rgb(c));
             }
             "--load-sample" => a.load_sample.push(value(&mut i)?.into()),
@@ -885,15 +889,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.sampler_tab(d, tab);
         }
     }
-    if let Some(pitch) = args.hold_note {
-        let c = ctl.borrow();
-        if let Some(d) = c.synth_device() {
-            let mut out = vec![0f32; 2 * 36_000];
-            if let Err(e) = c.engine.builtin_note(d.0, pitch, 100).and_then(|_| c.engine.render_offline(&mut out)) {
-                eprintln!("--hold-note: {e}");
-            }
-        }
-    }
     if args.recording_review {
         // Offline engine + injected input (no input device): track 1 armed on Input 1,
         // recording from bar 2 with 3 s of a decaying 220 Hz tone rendered so far.
@@ -1266,6 +1261,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(dir) = &args.open {
         ctl.borrow_mut().open(dir);
     }
+    // After --open, so the held voice sounds on the project's own Synth.
+    if let Some(pitch) = args.hold_note {
+        let c = ctl.borrow();
+        if let Some(d) = c.synth_device() {
+            let mut out = vec![0f32; 2 * 36_000];
+            if let Err(e) = c.engine.builtin_note(d.0, pitch, 100).and_then(|_| c.engine.render_offline(&mut out)) {
+                eprintln!("--hold-note: {e}");
+            }
+        }
+    }
     if args.demo {
         let dir = std::env::temp_dir().join(format!("saine-demo-{}", std::process::id()));
         std::fs::create_dir_all(&dir)?;
@@ -1499,6 +1504,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aw = app.as_weak();
         let fr = frame.clone();
         let ctl2 = ctl.clone();
+        let zm = zoom.clone();
         slint::Timer::single_shot(Duration::from_secs(4), move || {
             if fr.borrow().shot_taken {
                 return;
@@ -1509,6 +1515,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             eprintln!("screenshot: no frames presented (occluded/locked?), rendering offscreen");
             fr.borrow_mut().shot_taken = true;
+            // No frame ran, so the zoom was never applied: apply it before the snapshot.
+            zm.borrow_mut().sync(a.window());
             for _ in 0..3 {
                 let _ = a.window().take_snapshot();
             }
