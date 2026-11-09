@@ -1,3 +1,5 @@
+<!-- Keep this README current: see "Keeping this README up to date" under Development. -->
+
 <div align="center">
 
 <h1>Saine Studio</h1>
@@ -213,6 +215,20 @@ Pull requests with visual changes include before and after screenshots, and anyt
 comes with benchmark results.
 
 Start with [PROGRESS.md](PROGRESS.md), then [docs/architecture.md](docs/architecture.md).
+
+### Keeping this README up to date
+
+This README is the project's front page, so it has to keep up with development. When a change adds, removes or
+finishes something it describes, the same pull request updates it:
+
+- **Features** and **Built-in devices** when a feature or device lands or is removed (the device count too).
+- **Status** when an area moves between 🚧 and ✅, or a "still missing" item is done.
+- **Get Saine Studio** and **Build from source** when platform support, requirements or build steps change, along
+  with [docs/building.md](docs/building.md).
+- **Under the hood** when the benchmark numbers in [engine/README.md](engine/README.md) change noticeably.
+- **Screenshots** in `docs/assets/` when the part of the interface they show changes visibly. Render them with the
+  app itself, e.g. `saine-studio --no-audio --state review-automation --screenshot docs/assets/screenshot.png
+  --exit-after-frames 5`; the states used are listed in each image's pull request.
 
 ## License
 
