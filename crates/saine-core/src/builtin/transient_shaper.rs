@@ -51,4 +51,5 @@ pub static TRANSIENT_SHAPER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Hard Snap Clip", values: &[("attack", 80.0), ("sensitivity", 70.0), ("output_gain", 2.0), ("attack_time", 15.0), ("clip", 1.0)] },
     ],
     sidechain: false,
+    samples: 0,
 };

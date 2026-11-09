@@ -40,4 +40,5 @@ pub static DEHUMMER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Fundamental Only", values: &[("num_harmonics", 1.0), ("notch_width", 9.0), ("depth", -45.0)] },
     ],
     sidechain: false,
+    samples: 0,
 };

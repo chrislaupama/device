@@ -74,4 +74,5 @@ pub static MASTERING_LIMITER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Wide Master", values: &[("threshold", -4.0), ("ceiling", -1.0), ("ms_mode", 1.0), ("transient_link", 40.0), ("release_link", 60.0)] },
     ],
     sidechain: false,
+    samples: 0,
 };

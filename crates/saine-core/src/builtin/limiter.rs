@@ -45,4 +45,5 @@ pub static LIMITER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Parallel Squash", values: &[("ceiling", -6.0), ("release", 60.0), ("lookahead", 2.0), ("input_gain", 14.0), ("mix", 40.0)] },
     ],
     sidechain: false,
+    samples: 0,
 };

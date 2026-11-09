@@ -9,6 +9,8 @@
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
+//!              [--load-sample <file.wav>  (into the selected track's sampler, as a file drop)]
+//!              [--sampler-tab <0..4>  (with a sampler state: Sample, Pitch, Filter, Amp or Mod tab)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--self-test]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
 //! ```
@@ -31,6 +33,7 @@ mod pianoroll;
 mod placeholder;
 mod prefs;
 mod recording;
+mod sampler_panel;
 mod selftest;
 mod settings;
 mod synth;
@@ -86,10 +89,14 @@ struct Args {
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
     device_chain_review: bool,
+    /// reference-<built-in device id>: that device alone in an audio track's chain (an instrument on an instrument track).
+    device_state: Option<&'static str>,
+    /// Files loaded as if dropped on the window (after the state is set up).
+    load_sample: Vec<PathBuf>,
+    /// --sampler-tab N: with a sampler state, show that tab (review screenshots).
+    sampler_tab: Option<i32>,
     /// Never show the window (renders for --screenshot fall back to offscreen snapshots).
     offscreen: bool,
-    /// reference-<built-in device id>: that device alone in an audio track's chain.
-    device_state: Option<&'static str>,
     /// review-settings-plugins: Settings open on the Plugins page (no reference comparison).
     plugins_page_review: bool,
     assistant_fixture: Option<PathBuf>,
@@ -196,6 +203,8 @@ fn parse_args() -> Result<Args, String> {
             "--plugin-fixture" => a.plugin_fixture = Some(value(&mut i)?.into()),
             "--screenshot" => a.screenshot = Some(value(&mut i)?.into()),
             "--offscreen" => a.offscreen = true,
+            "--load-sample" => a.load_sample.push(value(&mut i)?.into()),
+            "--sampler-tab" => a.sampler_tab = Some(value(&mut i)?.parse().map_err(|e| format!("--sampler-tab: {e}"))?),
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
@@ -206,7 +215,7 @@ fn parse_args() -> Result<Args, String> {
                 a.audio = v[i] == "--self-test-audio";
             }
             "-h" | "--help" => {
-                println!("{}", include_str!("main.rs").lines().skip(6).take(8).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
+                println!("{}", include_str!("main.rs").lines().take_while(|l| l.starts_with("//!")).skip(6).filter(|l| !l.contains("```")).map(|l| l.trim_start_matches("//! ")).collect::<Vec<_>>().join("\n"));
                 std::process::exit(0);
             }
             other => return Err(format!("unknown argument {other}")),
@@ -696,16 +705,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(20.0);
     }
     if let Some(id) = args.device_state {
-        // Compare with renders/reference/<id>.png (Captain drive): the built-in device
-        // at its defaults, alone in an audio track's chain, transport stopped.
+        // Compare with renders/reference/<id>.png (Captain drive): the built-in device at its
+        // defaults, alone in an audio track's chain (an instrument on an instrument track),
+        // transport stopped.
         let mut c = ctl.borrow_mut();
-        if let Some(t) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Audio).map(|t| t.id) {
+        let def = saine_core::builtin::find(id).expect("built-in is registered");
+        let kind = if def.kind == saine_core::PluginKind::Instrument { saine_core::TrackKind::Instrument } else { saine_core::TrackKind::Audio };
+        if let Some(t) = c.project().tracks.iter().find(|t| t.kind == kind).map(|t| t.id) {
             c.select_track(t);
-            let def = saine_core::builtin::find(id).expect("device is registered");
             c.add_item_to_track(&devices::Item::Builtin(def), t, None);
         }
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(8.0);
+    }
+    if !args.load_sample.is_empty() {
+        ctl.borrow_mut().drop_files(args.load_sample.clone());
+    }
+    if let Some(tab) = args.sampler_tab {
+        let mut c = ctl.borrow_mut();
+        if let Some(d) = c.selected_sampler() {
+            c.sampler_tab(d, tab);
+        }
     }
     if args.recording_review {
         // Offline engine + injected input (no input device): track 1 armed on Input 1,
@@ -900,6 +920,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_field, |c, id: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.panel_field_drag(saine_core::DeviceId(id as u64), phase, dx, dy, fine));
     on!(on_panel_menu, |c, id: i32, which: i32, x: f32, y: f32| c.panel_menu(saine_core::DeviceId(id as u64), which, x, y));
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(saine_core::DeviceId(id as u64), dir));
+    on!(on_sampler_tab, |c, id: i32, tab: i32| c.sampler_tab(saine_core::DeviceId(id as u64), tab));
+    on!(on_sampler_pad, |c, id: i32, which: i32, i: i32, down: bool| c.sampler_pad(saine_core::DeviceId(id as u64), which, i, down));
+    on!(on_sampler_layer, |c, id: i32, dir: i32| c.sampler_layer(saine_core::DeviceId(id as u64), dir));
+    on!(on_sampler_play, |c, id: i32, down: bool| c.sampler_play(saine_core::DeviceId(id as u64), down));
+    on!(on_sampler_action, |c, id: i32, a: i32| c.sampler_action(saine_core::DeviceId(id as u64), a));
+    on!(on_sampler_remove, |c, id: i32| c.sampler_remove(saine_core::DeviceId(id as u64)));
+    on!(on_sampler_well, |c, id: i32, phase: i32, x: f32, tol: f32, alt: bool| c.sampler_well(saine_core::DeviceId(id as u64), phase, x, tol, alt));
+    on!(on_sampler_handle, |c, id: i32, i: i32, phase: i32, x: f32, y: f32| c.sampler_handle(saine_core::DeviceId(id as u64), i, phase, x, y));
+    {
+        // The file dialog runs with the controller NOT borrowed (its modal loop keeps rendering).
+        let ctl = ctl.clone();
+        studio.on_sampler_load(move |id| {
+            let target = ctl.borrow().sampler_load_target(saine_core::DeviceId(id as u64));
+            let Some(target) = target else { return };
+            if let Some(file) = rfd::FileDialog::new().set_title("Choose audio file").add_filter("WAV audio", &["wav", "WAV"]).pick_file() {
+                ctl.borrow_mut().import_files(vec![file], target, None);
+            }
+        });
+    }
+    {
+        // Files dropped from Finder: onto the selected track's sampler, else imported as clips.
+        use slint::winit_030::{winit::event::WindowEvent, EventResult, WinitWindowAccessor};
+        let ctl = ctl.clone();
+        app.window().on_winit_window_event(move |_, ev| {
+            if let WindowEvent::DroppedFile(path) = ev
+                && let Ok(mut c) = ctl.try_borrow_mut()
+            {
+                c.drop_files(vec![path.clone()]);
+            }
+            EventResult::Propagate
+        });
+    }
     on!(on_panel_graph, |c, id: i32, phase: i32, x: f32, y: f32, fine: bool, alt: bool| c.panel_graph(saine_core::DeviceId(id as u64), phase, x, y, fine, alt));
     on!(on_chain_scroll_by, |c, d: f32| c.chain_scroll_by(d));
     on!(on_add_category, |c, i: i32, x: f32, y: f32| c.add_category(i.max(0) as usize, x, y));

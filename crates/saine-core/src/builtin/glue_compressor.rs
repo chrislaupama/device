@@ -56,4 +56,5 @@ pub static GLUE_COMPRESSOR: DeviceDef = DeviceDef {
         FactoryPreset { name: "Clean Control", values: &[("threshold", -12.0), ("ratio", 1.0), ("attack", 4.0), ("release", 4.0), ("makeup", 3.0), ("color", 0.0), ("range", 8.0), ("sc_hpf", 2.0)] },
     ],
     sidechain: true,
+    samples: 0,
 };

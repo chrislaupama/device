@@ -47,4 +47,5 @@ pub static GATE: DeviceDef = DeviceDef {
         FactoryPreset { name: "Big Gated Room", values: &[("threshold", -15.0), ("ratio", 100.0), ("attack", 0.08), ("hold", 120.0), ("release", 6.0), ("lookahead", 1.5), ("sidechain_hpf", 250.0)] },
     ],
     sidechain: false,
+    samples: 0,
 };
