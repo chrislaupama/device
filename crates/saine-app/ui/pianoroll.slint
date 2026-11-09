@@ -208,22 +208,23 @@ export component ContextMenu inherits Rectangle {
     in property <[MenuItem]> items;
     callback activated(int);
     width: 209px;
-    border-radius: 7px;
-    background: #222327;
-    border-width: 0.5px;
-    border-color: #3a3b40;
-    drop-shadow-blur: 14px;
-    drop-shadow-color: #00000090;
+    border-radius: 6.8px;
+    background: #212227;
+    border-width: 0.85px;
+    border-color: @linear-gradient(180deg, #ffffff41 0%, #ffffff26 40%, #ffffff26 100%);
+    drop-shadow-offset-y: 6.8px;
+    drop-shadow-blur: 20.4px;
+    drop-shadow-color: #00000066;
     for it[i] in root.items: Rectangle {
-        x: 4px; y: it.y; width: root.width - 8px; height: 20.5px;
-        if it.separator: Rectangle { x: 6px; y: -5.5px; width: parent.width - 12px; height: 0.5px; background: #3a3b40; }
+        x: 0; y: it.y; width: root.width; height: 20.4px;
+        if it.separator: Rectangle { x: 0; y: -5.3px - 0.2125px; width: parent.width; height: 0.425px; background: #ffffff1f; }
+        Rectangle { background: ta.has-hover && it.enabled ? #ffffff12 : transparent; }
         Rectangle {
-            border-radius: 4px;
-            background: ta.has-hover && it.enabled ? Tokens.accent : transparent;
+            opacity: it.enabled ? 1 : 0.4;
+            Text { x: 10.2px; text: it.label; color: #ffffff; font-size: 10.2px; font-weight: 600; letter-spacing: -0.306px; vertical-alignment: center; }
+            Text { x: parent.width - 10.2px - self.preferred-width; text: it.shortcut; color: #ffffff80; font-size: 11.9px; font-weight: 600; letter-spacing: -0.476px; vertical-alignment: center; }
+            if it.submenu: Icon { x: parent.width - 10.2px - 11.8px; y: 5.2px; width: 10px; height: 10px; d: Icons.chevron-right; ink: #ffffff80; }
         }
-        Text { x: 10px; text: it.label; color: it.enabled ? #f0f0f2 : #66676c; font-size: 10px; font-weight: 600; vertical-alignment: center; }
-        Text { x: parent.width - 10px - self.preferred-width; text: it.shortcut; color: it.enabled ? #c9c9cc : #55565b; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
-        if it.submenu: Icon { x: parent.width - 18px; y: 5.25px; width: 10px; height: 10px; d: Icons.chevron-right; ink: it.enabled ? #c9c9cc : #55565b; }
         ta := TouchArea { clicked => { if (it.enabled) { root.activated(i); } } }
     }
 }
