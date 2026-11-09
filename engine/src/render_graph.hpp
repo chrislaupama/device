@@ -228,7 +228,7 @@ struct RenderGraph {
         double value = 0.0;
     };
     std::vector<ModRestore> mod_restores;
-    mutable bool restores_done = false; // written by the audio thread only
+    mutable std::atomic<bool> restores_done{false}; // set by the audio thread
     int32_t master_vol_lane = -1;
     bool has_plugin_lanes = false;
     bool has_plugins = false; // any insert or instrument plugin

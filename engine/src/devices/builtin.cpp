@@ -137,10 +137,11 @@ float mod_to_norm(const BuiltinMod& m, float v) noexcept {
 }
 
 float mod_from_norm(const BuiltinMod& m, float n) noexcept {
+    if (!(m.max > m.min)) return std::isfinite(m.min) ? m.min : 0.0f;
     n = std::isfinite(n) ? std::clamp(n, 0.0f, 1.0f) : 0.0f;
     float v;
     if (m.log && m.min > 0.0f) {
-        v = m.min * std::pow(m.max / m.min, n);
+        v = m.min * std::pow(m.max / m.min, n); // max > min > 0
     } else {
         if (m.skew != 1.0f && m.skew > 0.0f && n > 0.0f) n = std::pow(n, 1.0f / m.skew);
         v = m.min + (m.max - m.min) * n;

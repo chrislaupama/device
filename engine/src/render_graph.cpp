@@ -643,6 +643,8 @@ std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g) {
     c->mod_routes = g.mod_routes;
     c->mod_sources = g.mod_sources;
     c->mod_base_refs = g.mod_base_refs;
+    // Restores the audio thread has not sent yet go with the clone.
+    if (!g.restores_done.load(std::memory_order_acquire)) c->mod_restores = g.mod_restores;
     c->master_vol_lane = g.master_vol_lane;
     c->has_plugin_lanes = g.has_plugin_lanes;
     c->synth_params = g.synth_params;

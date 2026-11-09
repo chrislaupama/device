@@ -276,7 +276,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
     };
     // Bases of parameters that lost their last route (RenderGraph::mod_restores),
     // put first so a lane event at offset 0 still wins.
-    const bool restoring = plugins_on && !graph->mod_restores.empty() && !graph->restores_done;
+    const bool restoring = plugins_on && !graph->mod_restores.empty() && !graph->restores_done.load(std::memory_order_relaxed);
     const auto add_restores = [&](uint64_t device, uint32_t n) -> uint32_t {
         if (!restoring) return n;
         ParamEvent* const ev = ctx.param_events();
@@ -563,7 +563,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         }
     }
 
-    if (restoring) graph->restores_done = true;
+    if (restoring) graph->restores_done.store(true, std::memory_order_release);
     if (graph->master_vol_lane >= 0) {
         float* const gm = ctx.auto_a();
         fill_lane(graph->lanes[graph->master_vol_lane], lines != nullptr ? graph->pdc.total : 0, auto_db_to_gain, gm);

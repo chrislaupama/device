@@ -860,6 +860,9 @@ component ChainBody inherits Rectangle {
     for k in root.card.knobs: MacroCell { x: k.x + 28px * zm; y: k.y; device: root.card.id; k: k; accent: k.mod-color; }
     if root.card.modv.macro-open: Rectangle {
         x: 240px * zm; y: 26.5px; width: root.width - 240px * zm; height: root.height - 26.5px;
+        // Typing replaces the field's binding: show the model's name again when the macro or its name changes.
+        property <string> shown: root.card.modv.slot + ":" + root.card.modv.macro-name;
+        changed shown => { name-in.text = root.card.modv.macro-name; }
         Rectangle { x: 0; y: 8px; width: 0.5px; height: parent.height - 16px; background: PanelStyle.line; }
         Rectangle {
             x: 10px * zm; y: 10px * zm; width: parent.width - 20px * zm; height: 22px * zm; border-radius: 5px * zm;

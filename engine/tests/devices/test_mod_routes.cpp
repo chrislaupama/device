@@ -94,7 +94,7 @@ TEST_CASE(lfo_free_rate_and_synced_clock) {
     // Stopped, it keeps counting at the tempo from where it was: 188 blocks
     // ended 128 frames past beat 8, so the peak comes 5872 frames later.
     auto stopped = lfo_points(sync, 6144, false);
-    CHECK_NEAR(stopped[0], 0.5 + 0.5 * std::sin(2.0 * M_PI * 128.0 / 24000.0), 1e-3);
+    CHECK_NEAR(stopped[0], 0.5 + 0.5 * std::sin(2.0 * 3.14159265358979323846 * 128.0 / 24000.0), 1e-3);
     CHECK_NEAR(stopped[5888 / SE_MOD_GRID_FRAMES], 1.0, 1e-3);
     // 1/8 doubles the speed.
     DeviceRig eighth("lfo", kLfo);
