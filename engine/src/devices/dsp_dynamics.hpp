@@ -16,41 +16,9 @@ namespace saine::dsp {
 
 constexpr double kPiD = 3.14159265358979323846;
 
-// Fast log2 for x > 0 (normal floats): exponent bits plus an atanh series
-// for the mantissa; error below 5e-5 (0.0003 dB). For per-sample gain maths.
-inline float fast_log2(float x) noexcept {
-    int32_t bits;
-    std::memcpy(&bits, &x, 4);
-    const auto e = static_cast<float>(((bits >> 23) & 255) - 127);
-    bits = (bits & 0x007fffff) | 0x3f800000;
-    float m;
-    std::memcpy(&m, &bits, 4); // 1 <= m < 2
-    const float t = (m - 1.0f) / (m + 1.0f), t2 = t * t;
-    return e + 2.88539008f * t * (1.0f + t2 * (0.333333333f + t2 * (0.2f + t2 * 0.142857143f)));
-}
-
-// Fast 2^x: integer part into the exponent, a degree-6 polynomial for the
-// fraction; relative error below 2e-5. Flushes to 0 below 2^-126.
-inline float fast_exp2(float x) noexcept {
-    if (x < -126.0f) return 0.0f;
-    x = std::min(x, 127.0f);
-    const float fl = std::floor(x), f = (x - fl) * 0.693147181f;
-    const float p = 1.0f + f * (1.0f + f * (0.5f + f * (0.166666667f + f * (0.0416666667f + f * (0.00833333333f + f * 0.00138888889f)))));
-    const int32_t bits = (static_cast<int32_t>(fl) + 127) << 23;
-    float s;
-    std::memcpy(&s, &bits, 4);
-    return s * p;
-}
-
+// fast_log2 / fast_exp2 / fast_tanh come from dsp.hpp.
 inline float fast_db_to_gain(float db) noexcept { return fast_exp2(db * kLog2_10_over_20); }
 inline float fast_gain_to_db(float g) noexcept { return g > 1e-6f ? kDbPerLog2 * fast_log2(g) : kSilenceDb; }
-
-// Padé tanh, |error| < 2e-5, exact sign and saturation outside +-4.97.
-inline float fast_tanh(float x) noexcept {
-    x = std::clamp(x, -4.97f, 4.97f);
-    const float x2 = x * x;
-    return x * (135135.0f + x2 * (17325.0f + x2 * (378.0f + x2))) / (135135.0f + x2 * (62370.0f + x2 * (3150.0f + 28.0f * x2)));
-}
 
 // Milliseconds -> samples (fractional).
 inline double ms_to_samples(float ms, double rate) noexcept { return static_cast<double>(ms) * 1e-3 * rate; }
@@ -452,17 +420,6 @@ struct HeldSigned {
         return std::fabs(shown) >= std::fabs(cur) ? shown : cur;
     }
     void reset() noexcept { cur = shown = 0.0f, count = 0; }
-};
-
-// xorshift32 noise (dither).
-struct Noise {
-    uint32_t s = 0x9e3779b9u;
-    float uniform() noexcept { // -0.5 .. 0.5
-        s ^= s << 13;
-        s ^= s >> 17;
-        s ^= s << 5;
-        return static_cast<float>(s) * (1.0f / 4294967296.0f) - 0.5f;
-    }
 };
 
 } // namespace saine::dsp

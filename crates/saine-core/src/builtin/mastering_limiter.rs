@@ -59,6 +59,7 @@ pub static MASTERING_LIMITER: DeviceDef = DeviceDef {
             &[Control::Knob("lookahead"), Control::Knob("attack")],
         ],
         faces: &[("ceiling", Face::PushWall { threshold: "threshold", ceiling: "ceiling" })],
+        fixed_width: 0.0,
         min_height: 203.0,
         shown_when: &[],
     },

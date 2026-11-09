@@ -289,7 +289,7 @@ private:
         default: break;
         }
         const float v = x - fb;
-        const float tpdf = (noise_.uniform() + noise_.uniform()) * q;
+        const float tpdf = 0.5f * (noise_.next() + noise_.next()) * q;
         const float y = std::clamp(std::nearbyint((v + tpdf) / q) * q, -1.0f, 1.0f - q);
         err_[c][1] = err_[c][0];
         err_[c][0] = std::clamp(y - v, -4.0f * q, 4.0f * q);

@@ -32,6 +32,7 @@ pub static GATE: DeviceDef = DeviceDef {
             &[Control::Knob("mix")],
         ],
         faces: &[("ratio", Face::Expander { threshold: "threshold", ratio: "ratio" })],
+        fixed_width: 0.0,
         min_height: 180.0,
         shown_when: &[],
     },

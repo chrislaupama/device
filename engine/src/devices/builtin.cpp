@@ -14,6 +14,12 @@ extern const BuiltinDescriptor kLimiterDescriptor;
 extern const BuiltinDescriptor kMasteringLimiterDescriptor;
 extern const BuiltinDescriptor kGateDescriptor;
 extern const BuiltinDescriptor kTransientShaperDescriptor;
+extern const BuiltinDescriptor kDistortionDescriptor;
+extern const BuiltinDescriptor kTapeSaturationDescriptor;
+extern const BuiltinDescriptor kSoftClipperDescriptor;
+extern const BuiltinDescriptor kBitCrusherDescriptor;
+extern const BuiltinDescriptor kWidenerDescriptor;
+extern const BuiltinDescriptor kUtilityDescriptor;
 extern const BuiltinDescriptor kChorusDescriptor;
 extern const BuiltinDescriptor kCharacterModDescriptor;
 extern const BuiltinDescriptor kFlangerDescriptor;
@@ -31,6 +37,12 @@ const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kMasteringLimiterDescriptor,
     &kGateDescriptor,
     &kTransientShaperDescriptor,
+    &kDistortionDescriptor,
+    &kTapeSaturationDescriptor,
+    &kSoftClipperDescriptor,
+    &kBitCrusherDescriptor,
+    &kWidenerDescriptor,
+    &kUtilityDescriptor,
     &kChorusDescriptor,
     &kCharacterModDescriptor,
     &kFlangerDescriptor,

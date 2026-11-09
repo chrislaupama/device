@@ -33,6 +33,7 @@ pub static LIMITER: DeviceDef = DeviceDef {
             &[Control::Knob("mix")],
         ],
         faces: &[("ceiling", Face::BrickWall { ceiling: "ceiling" })],
+        fixed_width: 0.0,
         min_height: 180.0,
         shown_when: &[],
     },

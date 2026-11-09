@@ -41,6 +41,7 @@ pub static GLUE_COMPRESSOR: DeviceDef = DeviceDef {
             &[Control::Knob("color"), Control::Knob("mix")],
         ],
         faces: &[("ratio", Face::BusVca { threshold: "threshold", ratio: "ratio", range: "range" })],
+        fixed_width: 0.0,
         min_height: 217.0,
         shown_when: &[],
     },

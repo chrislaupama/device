@@ -34,26 +34,27 @@ use std::rc::Rc;
 /// Reference card lengths are at 100% zoom; ours are drawn at 85%.
 pub const Z: f32 = 0.85;
 /// Card padding, slider column width and the gap between view and sliders.
-const PAD: f32 = 8.0;
+pub(crate) const PAD: f32 = 8.0;
 const SLIDER_W: f32 = 62.0;
 const VIEW_GAP: f32 = 10.0;
 /// View row top, caption zone above the well, well bottom (card relative).
-const VIEW_Y: f32 = 63.0;
-const CAPTION_H: f32 = 19.0;
-/// Picker row band above the view row (row top 37 to view top).
-const PICKER_H: f32 = 26.0;
+/// Cards without a picker row start the view row higher (VIEW_Y_NO_PICKER).
+pub(crate) const VIEW_Y: f32 = 63.0;
+pub(crate) const VIEW_Y_NO_PICKER: f32 = 37.0;
+pub(crate) const CAPTION_H: f32 = 19.0;
+pub(crate) const VIEW_BOTTOM: f32 = 214.0;
+/// Dial row top (card relative).
+const DIAL_Y: f32 = 229.0;
 /// Slider rail top below the view row top.
 const SLIDER_TOP: f32 = 23.0;
-const VIEW_BOTTOM: f32 = 214.0;
 /// Dynamics strip plot range (dB) and history length (slots across the well).
 #[cfg(test)]
 const PLOT_TOP_DB: f32 = 0.0;
 const PLOT_FLOOR_DB: f32 = -36.0;
-const HISTORY: usize = 240;
+pub(crate) const HISTORY: usize = 240;
 /// Custom view: scrolling output waveform with the applied-gain trace (transient shaper).
 const GAIN_SCOPE: &str = "gain-scope";
-/// Gain-scope trace range (+-dB) and the level under which it reads as silence (linear, -48 dB).
-const SCOPE_DB: f32 = 12.0;
+/// Level under which the gain scope reads as silence (linear, -48 dB).
 const SCOPE_SILENT: f32 = 0.004;
 /// Plot area inside a field's well: tick gutter on the left, top and bottom insets.
 const FIELD_GUTTER: f32 = 24.0;
@@ -143,11 +144,6 @@ fn dropdown_width(p: &ParamDef) -> f32 {
     longest as f32 * 5.4 + 26.0
 }
 
-/// Latch labels in the picker row: each choice prefixed with the parameter label.
-fn latch_model(def: &DeviceDef, p: &ParamDef) -> ModelRc<SharedString> {
-    STATIC_MODELS.with(|m| m.borrow_mut().entry(format!("{}/{}/latch", def.id, p.id)).or_insert_with(|| model(p.choices.iter().map(|c| s(format!("{} {c}", p.label))).collect())).clone())
-}
-
 /// Keep a card's row models across refreshes: the Slint repeaters then update
 /// their items in place instead of rebuilding them (a rebuilt knob would drop
 /// the drag it is in the middle of).
@@ -164,6 +160,12 @@ pub(crate) fn reuse_card_models(old: &DeviceCard, new: &mut DeviceCard) {
     keep(&old.knobs, &mut new.knobs);
     keep(&old.picks, &mut new.picks);
     keep(&old.sliders, &mut new.sliders);
+    keep(&old.buttons, &mut new.buttons);
+    // Field zones are touch areas: a rebuilt one would drop its drag.
+    keep(&old.canvas.zones, &mut new.canvas.zones);
+    keep(&old.canvas.paths, &mut new.canvas.paths);
+    keep(&old.canvas.texts, &mut new.canvas.texts);
+    keep(&old.canvas.grips, &mut new.canvas.grips);
 }
 
 /// Right edge of the view row (card relative, unscaled): left of the slider column(s).
@@ -194,7 +196,13 @@ fn knob_xs(def: &DeviceDef) -> Vec<(&'static str, f32)> {
             x += KNOB_CELL + KNOB_GAP;
         }
     }
-    if matches!(def.layout.view, Some(View::Field(_))) && cells.len() > 1 {
+    if matches!(def.layout.view, Some(View::Custom(_))) && cells.len() > 1 {
+        // Custom bodies spread the cells across the whole card (fixed-width cards too).
+        let step = (def.layout.width() - 2.0 * PAD - KNOB_CELL) / (cells.len() - 1) as f32;
+        for (k, cell) in cells.iter_mut().enumerate() {
+            cell.1 = PAD + k as f32 * step;
+        }
+    } else if matches!(def.layout.view, Some(View::Field(_))) && cells.len() > 1 {
         let row = x - KNOB_GAP - PAD;
         let (start, step) = ((def.layout.width() - row) / 2.0, (row - KNOB_CELL) / (cells.len() - 1) as f32);
         for (k, cell) in cells.iter_mut().enumerate() {
@@ -372,7 +380,7 @@ impl Controller {
     }
 
     /// Value shown for a parameter: the live drag value, else the model value.
-    fn panel_value(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
+    pub(crate) fn panel_value(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
         let is = |i: usize| def.params.get(i).is_some_and(|q| q.id == p.id);
         match self.devices.panel.drag {
             Some(g) if g.device == d.id && is(g.index) => return g.value,
@@ -400,16 +408,17 @@ impl Controller {
         for c in def.layout.picker {
             let p = c.param().and_then(|id| def.param(id));
             match (c, p) {
-                // Latch pill, right-aligned: "<label> <choice>".
+                // Latches align right (reference: margin-left auto); the label carries the state.
                 (Control::Toggle(_), Some(p)) if def.is_shown(d, p.id) => {
                     if !picks.iter().any(|q: &PanelPick| q.kind == 4) {
                         picks.push(PanelPick { kind: 4, ..Default::default() });
                     }
+                    let on = self.panel_value(d, def, p) >= 0.5;
                     picks.push(PanelPick {
                         kind: 5,
                         param: idx(p.id),
-                        choices: latch_model(def, p),
-                        selected: self.panel_value(d, def, p).round() as i32,
+                        label: s(format!("{} {}", p.label, if on { "On" } else { "Off" })),
+                        selected: on as i32,
                         enabled: true,
                         ..Default::default()
                     });
@@ -465,7 +474,7 @@ impl Controller {
         }
 
         // Without a picker row the view row moves up into its place.
-        let view_y = if def.layout.picker.is_empty() { VIEW_Y - PICKER_H } else { VIEW_Y };
+        let view_y = if def.layout.picker.is_empty() { VIEW_Y_NO_PICKER } else { VIEW_Y };
         // Without a gap the row's items stay on the left.
         if !picks.iter().any(|p| p.kind == 4) {
             picks.push(PanelPick { kind: 4, ..Default::default() });
@@ -496,7 +505,6 @@ impl Controller {
         // View row.
         let (mut strip, mut field) = (PanelStrip::default(), PanelField::default());
         match def.layout.view {
-            Some(View::Custom(GAIN_SCOPE)) => strip = self.gain_scope(d, view_right - PAD, view_y),
             Some(View::Field(f)) => field = self.field_view(d, def, &f, view_right - PAD),
             Some(view) => {
                 if let Some(st) = view.strip() {
@@ -505,31 +513,42 @@ impl Controller {
             }
             None => {}
         }
+        let body = match def.layout.view {
+            Some(View::Custom(name)) => {
+                let view_y = if def.layout.picker.is_empty() { VIEW_Y_NO_PICKER } else { VIEW_Y };
+                self.custom_body(d, def, name, (PAD, view_y, view_right - PAD, VIEW_BOTTOM - view_y))
+            }
+            _ => crate::device_views::CustomBody::default(),
+        };
 
         // Dial row.
         let toggles: Vec<&str> = def.layout.clusters.iter().flat_map(|c| c.iter()).filter_map(|c| match c {
             Control::Toggle(p) => Some(*p),
             _ => None,
         }).collect();
-        let knobs = knob_xs(def)
+        // Dial row (or the custom body's knob placement).
+        let places: Vec<(&'static str, f32, f32)> =
+            if body.knobs.is_empty() { knob_xs(def).into_iter().map(|(id, x)| (id, x, DIAL_Y)).collect() } else { body.knobs.clone() };
+        let knobs = places
             .into_iter()
-            .filter(|(id, _)| def.is_shown(d, id))
-            .filter_map(|(id, x)| {
+            .filter(|(id, _, _)| def.is_shown(d, id))
+            .filter_map(|(id, x, y)| {
                 let p = def.param(id)?;
                 let v = self.panel_value(d, def, p);
                 let mut k = PanelKnob {
                     param: idx(id),
                     x: x * Z,
+                    y: y * Z,
                     label: s(p.label),
                     value: s(p.format(v)),
                     norm: p.to_normalized(v),
                     bipolar: p.is_bipolar(),
                     steps: if p.choices.len() > 2 { p.choices.len() as i32 } else { 0 },
+                    dim: body.dim.contains(&id),
                     ..Default::default()
                 };
                 if toggles.contains(&id) {
                     k.face = 2;
-                    k.choices = choices_model(def, p);
                 } else if let Some((_, face)) = def.layout.faces.iter().find(|(f, _)| *f == id) {
                     let (law, at, knee) = face_law(*face, number);
                     let (curve, bend, unity) = transfer_face(&law, at, knee);
@@ -572,6 +591,8 @@ impl Controller {
             strip,
             slider_top: (view_y + SLIDER_TOP) * Z,
             field,
+            canvas: body.canvas,
+            buttons: model(body.buttons),
             ..Default::default()
         }
     }
@@ -636,55 +657,9 @@ impl Controller {
         }
     }
 
-    /// Gain scope (custom view): output waveform as mirrored bars (square-root
-    /// amplitude law), what a clipper removed above them, a dashed 0 dB line and
-    /// the applied-gain trace (+-12 dB). Readouts: output peak, pre-clip peak (linear), gain dB.
-    fn gain_scope(&self, d: &Device, w: f32, view_y: f32) -> PanelStrip {
-        let (w, h) = (w * Z, (VIEW_BOTTOM - view_y) * Z);
-        let well_y = CAPTION_H * Z;
-        let wh = h - well_y;
-        let mid = wh / 2.0;
-        let empty = MeterHistory::default();
-        let slots = &self.devices.panel.meters.get(&d.id).unwrap_or(&empty).slots;
-        let n = slots.len();
-        let x_of = |i: usize| w - (n - 1 - i) as f32 * (w - 6.0 * Z) / (HISTORY - 1) as f32;
-        let r_of = |peak: f32| (peak.abs().min(1.41) / 1.41).sqrt() * mid;
-        let band = |r: &dyn Fn(usize) -> f32, inner: &dyn Fn(usize) -> f32, sign: f32| {
-            let mut pts: Vec<(f32, f32)> = (0..n).map(|i| (x_of(i), mid - sign * r(i))).collect();
-            pts.extend((0..n).rev().map(|i| (x_of(i), mid - sign * inner(i))));
-            format!("{} Z", polyline(&pts))
-        };
-        let out_r = |i: usize| r_of(slots[i].0);
-        let pre_r = |i: usize| r_of(slots[i].1).max(out_r(i));
-        let (mut wave, mut clipped) = (String::new(), String::new());
-        // At rest the gain trace lies flat at 0 dB across the well.
-        let mut gain = polyline(&[(6.0 * Z, mid), (w, mid)]);
-        if n > 1 {
-            wave = format!("{} {}", band(&out_r, &|_| 0.0, 1.0), band(&out_r, &|_| 0.0, -1.0));
-            if slots.iter().any(|s| s.1 > s.0 * 1.005) {
-                clipped = format!("{} {}", band(&pre_r, &out_r, 1.0), band(&pre_r, &out_r, -1.0));
-            }
-            let y_of = |db: f32| 4.0 * Z + (SCOPE_DB - db.clamp(-SCOPE_DB, SCOPE_DB)) / (2.0 * SCOPE_DB) * (wh - 8.0 * Z);
-            gain = polyline(&slots.iter().enumerate().map(|(i, s)| (x_of(i), y_of(s.2))).collect::<Vec<_>>());
-        }
-        PanelStrip {
-            visible: true,
-            kind: 1,
-            x: PAD * Z,
-            y: view_y * Z,
-            w,
-            h,
-            well_y,
-            caption: s("Output"),
-            readout: s("Applied Gain"),
-            in_fill: s(wave),
-            gr_fill: s(clipped),
-            out_line: s(gain),
-            thresh_param: -1,
-            second_param: -1,
-            thresh_dash: s(dashes(6.0 * Z, w, mid, 3.0 * Z, 4.0 * Z)),
-            ..Default::default()
-        }
+    /// Polled readout history of a device (oldest first), for custom views.
+    pub(crate) fn panel_meter_frames(&self, id: DeviceId) -> Vec<(f32, f32, f32)> {
+        self.devices.panel.meters.get(&id).map(|h| h.slots.iter().copied().collect()).unwrap_or_default()
     }
 
     /// The first of a field axis' parameters that is shown (Rate or Rate Sync).
@@ -967,30 +942,47 @@ impl Controller {
     pub fn panel_field_drag(&mut self, device: DeviceId, phase: i32, dx: f32, dy: f32, fine: bool) {
         let Some((d, def)) = self.panel_def(device) else { return };
         let Some(View::Field(f)) = def.layout.view else { return };
+        let axes = [Self::field_axis(d, def, f.x), Self::field_axis(d, def, f.y)];
+        let (pw, ph) = field_plot_size(&f, view_right(def) - PAD);
+        self.axes_drag(device, axes, phase, [dx, dy], [1.0 / pw.max(1.0), 1.0 / ph.max(1.0)], fine);
+    }
+
+    /// Drag zone of a custom body (View::Custom): params [horizontal, vertical]
+    /// (-1 = unused), deltas since the last event (px, right / up +) and the
+    /// norm-per-px rate of each axis.
+    pub fn panel_drag_xy(&mut self, device: DeviceId, params: [i32; 2], phase: i32, delta: [f32; 2], rate: [f32; 2], fine: bool) {
+        let Some((_, def)) = self.panel_def(device) else { return };
+        let axes = params.map(|i| usize::try_from(i).ok().filter(|&i| i < def.params.len()));
+        self.axes_drag(device, axes, phase, delta, rate, fine);
+    }
+
+    /// Two-axis drag (fields and zones): live values go to the engine; release
+    /// commits one command (a Batch when both axes moved): one undo step.
+    fn axes_drag(&mut self, device: DeviceId, axes: [Option<usize>; 2], phase: i32, delta: [f32; 2], rate: [f32; 2], fine: bool) {
+        let Some((d, def)) = self.panel_def(device) else { return };
         match phase {
             0 => {
-                let axis = |ids: &[&'static str]| {
-                    Self::field_axis(d, def, ids).map(|i| {
+                let axis = |i: Option<usize>| {
+                    i.map(|i| {
                         let v = def.value(d, &def.params[i]);
                         (i, v, def.params[i].to_normalized(v), v)
                     })
                 };
-                self.devices.panel.field = Some(FieldDrag { device, axes: [axis(f.x), axis(f.y)], travel: 0.0, active: false });
+                self.devices.panel.field = Some(FieldDrag { device, axes: [axis(axes[0]), axis(axes[1])], travel: 0.0, active: false });
             }
             1 => {
-                let (pw, ph) = field_plot_size(&f, view_right(def) - PAD);
                 let Some(g) = self.devices.panel.field.as_mut().filter(|g| g.device == device) else { return };
-                g.travel += dx.abs() + dy.abs();
+                g.travel += delta[0].abs() + delta[1].abs();
                 if !g.active && g.travel < DRAG_SLOP {
                     return;
                 }
                 g.active = true;
                 let k = if fine { 0.2 } else { 1.0 };
                 let mut sends = Vec::new();
-                for (a, (delta, span)) in g.axes.iter_mut().zip([(dx, pw), (dy, ph)]) {
+                for (a, (dl, r)) in g.axes.iter_mut().zip(delta.into_iter().zip(rate)) {
                     let Some((i, _, norm, value)) = a else { continue };
                     let p = &def.params[*i];
-                    *norm = (*norm + delta / span.max(1.0) * k).clamp(0.0, 1.0);
+                    *norm = (*norm + dl * r * k).clamp(0.0, 1.0);
                     let v = if p.is_discrete() { p.from_normalized(*norm).round() } else { p.from_normalized(*norm) };
                     if v != *value {
                         *value = v;
@@ -1040,6 +1032,22 @@ impl Controller {
         self.panel_set(device, index, |p, _| Some(p.default));
     }
 
+    /// Reset of a two-parameter field zone: one command (a Batch when both change), one undo step.
+    pub fn panel_reset_xy(&mut self, device: DeviceId, params: [i32; 2]) {
+        let Some((d, def)) = self.panel_def(device) else { return };
+        let mut commands: Vec<Command> = params
+            .iter()
+            .filter_map(|&i| usize::try_from(i).ok().and_then(|i| def.params.get(i)))
+            .filter(|p| def.value(d, p) != p.default)
+            .map(|p| Command::SetDeviceParam { device, param: p.id.to_string(), value: p.default })
+            .collect();
+        match commands.len() {
+            0 => {}
+            1 => self.panel_commit(commands.remove(0)),
+            _ => self.panel_commit(Command::Batch { label: "Device Parameter Change".into(), commands }),
+        }
+    }
+
     /// Arrow keys: discrete parameters move one choice, continuous ones 1% of the range (0.2% fine).
     pub fn panel_step(&mut self, device: DeviceId, index: i32, delta: i32, fine: bool) {
         self.panel_set(device, index, |p, v| {
@@ -1069,11 +1077,16 @@ impl Controller {
         }
     }
 
-    /// Sidechain picker (-1) or presets (-2) menu at window x, y.
+    /// Sidechain picker (-1), presets (-2) or the choices of parameter `which` (>= 0) at window x, y.
     pub fn panel_menu(&mut self, device: DeviceId, which: i32, x: f32, y: f32) {
         let Some((d, def)) = self.panel_def(device) else { return };
         let check = |on: bool| if on { "✓".to_string() } else { String::new() };
         let rows = match which {
+            i if i >= 0 => {
+                let Some(p) = def.params.get(i as usize).filter(|p| p.is_discrete()) else { return };
+                let cur = self.panel_value(d, def, p).round() as i32;
+                p.choices.iter().enumerate().map(|(c, name)| (name.to_string(), check(c as i32 == cur), Some(MenuPick::Choice(device, i, c as i32)), false)).collect()
+            }
             -1 => {
                 let own = self.project().find_device(device).map(|(ti, _)| self.project().tracks[ti].id);
                 // A source that already listens to this track (directly or through other sidechains) would form a cycle.

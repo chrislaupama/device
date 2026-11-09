@@ -2058,7 +2058,93 @@ fn builtin_value(c: &Controller, param: &str) -> Option<f32> {
 fn panel_knob_xy(cd: &crate::DeviceCard, i: usize) -> Option<(f32, f32)> {
     let k = slint::Model::row_data(&cd.knobs, i)?;
     let z = crate::device_panel::Z;
-    Some(card_xy(cd, k.x + 31.0 * z, (229.0 + 16.0) * z))
+    Some(card_xy(cd, k.x + 31.0 * z, k.y + 16.0 * z))
+}
+
+fn builtin_of<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
+    let t = track_of(c, TrackKind::Audio)?;
+    c.project().tracks[t].devices.iter().find(|d| saine_core::builtin::def_of(d).is_some_and(|def| def.id == id))
+}
+
+/// Each other built-in: add it from the Built-in list, check its card, defaults and engine
+/// state, drag its first knob (one undo step), then undo back to the empty chain.
+fn builtin_each_steps() -> Vec<Step> {
+    use Step::*;
+    let mut steps: Vec<Step> = vec![Do("builtins: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false)))];
+    for def in saine_core::builtin::all().iter().filter(|d| ["distortion", "tapesaturation", "soft-clipper", "bitcrusher", "widener", "utility"].contains(&d.id)) {
+        let (id, name) = (def.id, def.name);
+        let base = Rc::new(Cell::new(0usize));
+        let before = Rc::new(Cell::new(0.0f32));
+        let (b0, b1, b2, b3) = (base.clone(), base.clone(), base.clone(), base);
+        let (v0, v1) = (before.clone(), before);
+        steps.push(DoC(format!("{name}: Add device › Built-in › {name}").leak(), Box::new(move |a, ctl| {
+            b0.set(ctl.borrow().doc.history_labels().len());
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            let add_x = a.global::<Studio>().get_add_device_x();
+            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == name) {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })));
+        steps.push(Check(format!("{name}: added at its defaults in one undo step; card drawn; engine live").leak(), Box::new(move |c, a| {
+            let n = c.doc.history_labels().len();
+            let label = format!("Add {name}");
+            if n != b1.get() + 1 || c.doc.undo_label() != Some(label.as_str()) {
+                return Err(format!("history {} -> {n}, last {:?}", b1.get(), c.doc.undo_label()));
+            }
+            let d = builtin_of(c, id).ok_or("no device")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            if let Some(p) = def.params.iter().find(|p| def.value(d, p) != p.default) {
+                return Err(format!("{} = {} (default {})", p.id, def.value(d, p), p.default));
+            }
+            let cd = card_named(a, name).ok_or("no card")?;
+            if !cd.builtin || slint::Model::row_count(&cd.knobs) == 0 {
+                return Err(format!("builtin {} knobs {}", cd.builtin, slint::Model::row_count(&cd.knobs)));
+            }
+            let errors = c.engine.plugin_load_errors();
+            (!errors.iter().any(|(e, _)| *e == d.id)).then_some(()).ok_or(format!("load errors {errors:?}"))
+        })));
+        steps.push(DoC(format!("{name}: drag the first knob 40 px").leak(), Box::new(move |a, ctl| {
+            let Some(cd) = card_named(a, name) else { return };
+            let Some(k) = slint::Model::row_data(&cd.knobs, 0) else { return };
+            {
+                let c = ctl.borrow();
+                let Some(d) = builtin_of(&c, id) else { return };
+                let def = saine_core::builtin::def_of(d).unwrap();
+                v0.set(def.value(d, &def.params[k.param as usize]));
+            }
+            if let Some((x, y)) = panel_knob_xy(&cd, 0) {
+                drag(a, x, y, x, if k.norm > 0.5 { y + 40.0 } else { y - 40.0 });
+            }
+        })));
+        steps.push(Check(format!("{name}: the drag changed the first knob's parameter in ONE undo step").leak(), Box::new(move |c, a| {
+            let n = c.doc.history_labels().len();
+            if n != b2.get() + 2 || c.doc.undo_label() != Some("Device Parameter Change") {
+                return Err(format!("history {} -> {n}, last {:?}", b2.get() + 1, c.doc.undo_label()));
+            }
+            let cd = card_named(a, name).ok_or("no card")?;
+            let k = slint::Model::row_data(&cd.knobs, 0).ok_or("no knob")?;
+            let d = builtin_of(c, id).ok_or("no device")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            let v = def.value(d, &def.params[k.param as usize]);
+            (v != v1.get()).then_some(()).ok_or(format!("value stayed {v}"))
+        })));
+        steps.push(Do(format!("{name}: ⌘Z twice").leak(), Box::new(|a| {
+            key(a, "z", true, false);
+            key(a, "z", true, false);
+        })));
+        steps.push(Check(format!("{name}: undo removes the device").leak(), Box::new(move |c, _| {
+            let n = c.doc.history_labels().len();
+            (builtin_of(c, id).is_none() && n == b3.get()).then_some(()).ok_or(format!("history {n}, want {}", b3.get()))
+        })));
+    }
+    steps
 }
 
 /// The built-in Compressor driven through its generated panel (no plugins needed).
@@ -2230,7 +2316,7 @@ fn builtin_device_steps() -> Vec<Step> {
 }
 
 /// Built-in device of definition `id` on the first audio track.
-fn builtin_of<'a>(c: &'a Controller, id: &str) -> Option<(&'a saine_core::Device, &'static saine_core::builtin::DeviceDef)> {
+fn builtin_def_of<'a>(c: &'a Controller, id: &str) -> Option<(&'a saine_core::Device, &'static saine_core::builtin::DeviceDef)> {
     let t = track_of(c, TrackKind::Audio)?;
     c.project().tracks[t].devices.iter().find_map(|d| saine_core::builtin::def_of(d).filter(|def| def.id == id).map(|def| (d, def)))
 }
@@ -2263,7 +2349,7 @@ fn dynamics_device_steps() -> Vec<Step> {
             }
         })));
         out.push(Check(leak(format!("{id}: added at its defaults in one undo step; card has its knobs, sliders, view and width; engine instance live")), Box::new(move |c, a| {
-            let (d, def) = builtin_of(c, id).ok_or("not added")?;
+            let (d, def) = builtin_def_of(c, id).ok_or("not added")?;
             let cd = card_named(a, name).ok_or("no card")?;
             let knobs: usize = def.layout.clusters.iter().map(|k| k.len()).sum();
             let mut r = Vec::new();
@@ -2273,7 +2359,7 @@ fn dynamics_device_steps() -> Vec<Step> {
                 && def.params.iter().all(|p| def.value(d, p) == p.default)
                 && slint::Model::row_count(&cd.knobs) == knobs
                 && slint::Model::row_count(&cd.sliders) == def.layout.sliders.len()
-                && cd.strip.visible
+                && (cd.strip.visible || slint::Model::row_count(&cd.canvas.paths) > 0)
                 && approx(cd.width, def.layout.width() * crate::device_panel::Z, 0.01)
                 && r.len() == 3
                 && !errors.iter().any(|(e, _)| *e == d.id);
@@ -2282,10 +2368,10 @@ fn dynamics_device_steps() -> Vec<Step> {
     }
     let undo_len = Rc::new(Cell::new(0usize));
     let (u0, u1, u2, u3, u4, u5) = (undo_len.clone(), undo_len.clone(), undo_len.clone(), undo_len.clone(), undo_len.clone(), undo_len.clone());
-    let param = |c: &Controller, dev: &str, p: &str| builtin_of(c, dev).and_then(|(d, def)| Some(def.value(d, def.param(p)?)));
+    let param = |c: &Controller, dev: &str, p: &str| builtin_def_of(c, dev).and_then(|(d, def)| Some(def.value(d, def.param(p)?)));
     let invoke = |dev: &'static str, f: fn(&Studio, i32, &'static saine_core::builtin::DeviceDef)| -> Box<dyn Fn(&AppWindow, &Ctl)> {
         Box::new(move |a, ctl| {
-            let Some((id, def)) = builtin_of(&ctl.borrow(), dev).map(|(d, def)| (d.id.0 as i32, def)) else { return };
+            let Some((id, def)) = builtin_def_of(&ctl.borrow(), dev).map(|(d, def)| (d.id.0 as i32, def)) else { return };
             f(&a.global::<Studio>(), id, def);
         })
     };
@@ -2294,7 +2380,7 @@ fn dynamics_device_steps() -> Vec<Step> {
         invoke("mastering-limiter", |s, id, def| s.invoke_panel_choice(id, def.index_of("style").map_or(-1, |i| i as i32), 1))(a, ctl);
     })));
     out.push(Check("mastering-limiter: the style and its overlay values (times, links, auto release) change in ONE undo step", Box::new(move |c, _| {
-        let (d, def) = builtin_of(c, "mastering-limiter").ok_or("no device")?;
+        let (d, def) = builtin_def_of(c, "mastering-limiter").ok_or("no device")?;
         let want = def.choice_values("style", 1.0);
         let n = c.doc.history_labels().len();
         (n == u1.get() + 1 && want.len() > 1 && want.iter().all(|(k, v)| def.value(d, def.param(k).unwrap()) == *v))
@@ -2303,7 +2389,7 @@ fn dynamics_device_steps() -> Vec<Step> {
     })));
     out.push(DoC("mastering-limiter: Alt+drag the strip lines down 20 px (threshold and ceiling together)", Box::new(move |a, ctl| {
         u2.set(ctl.borrow().doc.history_labels().len());
-        let Some((id, rate)) = builtin_of(&ctl.borrow(), "mastering-limiter").and_then(|(d, _)| Some((d.id.0 as i32, card_named(a, "Mastering Limiter")?.strip.thresh_rate))) else { return };
+        let Some((id, rate)) = builtin_def_of(&ctl.borrow(), "mastering-limiter").and_then(|(d, _)| Some((d.id.0 as i32, card_named(a, "Mastering Limiter")?.strip.thresh_rate))) else { return };
         let s = a.global::<Studio>();
         let def = saine_core::builtin::find("mastering-limiter").unwrap();
         let (t, ce) = (def.index_of("threshold").unwrap() as i32, def.index_of("ceiling").unwrap() as i32);
@@ -2323,8 +2409,8 @@ fn dynamics_device_steps() -> Vec<Step> {
         let picks: Vec<_> = (0..slint::Model::row_count(&cd.picks)).filter_map(|i| slint::Model::row_data(&cd.picks, i)).collect();
         let latch = picks.iter().position(|p| p.kind == 5).ok_or("no latch")?;
         let p = &picks[latch];
-        let label = slint::Model::row_data(&p.choices, p.selected.max(0) as usize).unwrap_or_default();
-        (picks[..latch].iter().any(|q| q.kind == 4) && label == "Auto Release On").then_some(()).ok_or(format!("label {label:?}"))
+        let label = p.label.to_string();
+        (picks[..latch].iter().any(|q| q.kind == 4) && p.selected == 1 && label == "Auto Release On").then_some(()).ok_or(format!("label {label:?}"))
     })));
     out.push(DoC("transient-shaper: switch the Clip latch on (panel-choice)", Box::new(move |a, ctl| {
         u4.set(ctl.borrow().doc.history_labels().len());
@@ -2334,8 +2420,7 @@ fn dynamics_device_steps() -> Vec<Step> {
         let n = c.doc.history_labels().len();
         let cd = card_named(a, "Transient Shaper").ok_or("no card")?;
         let k = (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).find(|k| k.face == 2).ok_or("no latch")?;
-        let on = slint::Model::row_data(&k.choices, 1).unwrap_or_default();
-        (n == u5.get() + 1 && c.doc.undo_label() == Some("Device Parameter Change") && param(c, "transient-shaper", "clip") == Some(1.0) && k.norm > 0.5 && on == "On")
+        (n == u5.get() + 1 && c.doc.undo_label() == Some("Device Parameter Change") && param(c, "transient-shaper", "clip") == Some(1.0) && k.norm > 0.5 && k.value == "On")
             .then_some(())
             .ok_or(format!("history {} -> {n}, clip {:?}", u5.get(), param(c, "transient-shaper", "clip")))
     })));
@@ -2508,6 +2593,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(platform_device_steps());
     all.extend(builtin_device_steps());
     all.extend(dynamics_device_steps());
+    all.extend(builtin_each_steps());
     all.extend(modulation_device_steps());
     all.extend(automation_steps());
     let steps = Rc::new(all);

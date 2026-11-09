@@ -34,6 +34,7 @@ pub static TRANSIENT_SHAPER: DeviceDef = DeviceDef {
             &[Control::Toggle("clip"), Control::Knob("mix")],
         ],
         faces: &[],
+        fixed_width: 0.0,
         min_height: 199.0,
         shown_when: &[],
     },

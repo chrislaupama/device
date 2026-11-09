@@ -116,12 +116,18 @@ add_library(saine_engine STATIC
   src/plugins/vst3_instance.cpp
   src/plugins/clap_instance.cpp
   src/devices/builtin.cpp
+  src/devices/bitcrusher.cpp
   src/devices/compressor.cpp
   src/devices/gate.cpp
   src/devices/glue_compressor.cpp
   src/devices/limiter.cpp
   src/devices/mastering_limiter.cpp
   src/devices/transient_shaper.cpp
+  src/devices/distortion.cpp
+  src/devices/soft_clipper.cpp
+  src/devices/tape_saturation.cpp
+  src/devices/utility.cpp
+  src/devices/widener.cpp
   src/devices/dsp.cpp
   src/devices/autopanner.cpp
   src/devices/character_mod.cpp
@@ -345,6 +351,8 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/devices/test_limiter.cpp
     tests/devices/test_mastering_limiter.cpp
     tests/devices/test_transient_shaper.cpp
+    tests/devices/test_drive.cpp
+    tests/devices/test_imaging.cpp
     tests/devices/test_modulation.cpp
     tests/devices/test_character_mod.cpp)
   target_include_directories(saine_engine_tests PRIVATE src tests)
