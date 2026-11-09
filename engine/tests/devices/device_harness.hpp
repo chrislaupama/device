@@ -112,6 +112,8 @@ public:
         spec.format = saine::PluginFormat::Builtin;
         spec.plugin_id = id;
         spec.state = state_blob(values_);
+        const saine::BuiltinDescriptor* d = saine::find_builtin(id);
+        spec.instrument = d != nullptr && d->instrument;
         std::string err;
         inst_ = saine::create_builtin_instance(spec, rate, block, err);
         if (!inst_) {
@@ -144,9 +146,14 @@ public:
     }
 
     // Process l/r (same length) in blocks of block(); `sc` optional sidechain.
-    // `events` are automation events at absolute frames (sorted).
+    // `events` are automation events at absolute frames (sorted); `midi`
+    // are instrument events at absolute frames (sorted by offset).
     std::pair<Signal, Signal> run(Signal l, Signal r, const Signal* sc_l = nullptr, const Signal* sc_r = nullptr,
-                                  const std::vector<std::pair<std::size_t, std::pair<uint32_t, float>>>& events = {}) {
+                                  const std::vector<std::pair<std::size_t, std::pair<uint32_t, float>>>& events = {},
+                                  const std::vector<saine::MidiEvent>& midi = {}) {
+        std::vector<saine::MidiEvent> block_midi;
+        block_midi.reserve(saine::PluginInstance::kMaxEvents);
+        std::size_t mi = 0;
         saine::RtTransport tr;
         tr.sample_rate = rate_;
         tr.playing = playing_;
@@ -167,8 +174,15 @@ public:
                 std::memcpy(sc_r_.data(), (sc_r != nullptr ? sc_r : sc_l)->data() + pos, 4 * n);
                 b_->set_sidechain(sc_l_.data(), sc_r_.data());
             }
+            block_midi.clear();
+            while (mi < midi.size() && midi[mi].offset < pos + n) {
+                saine::MidiEvent m = midi[mi++];
+                m.offset -= static_cast<uint32_t>(pos);
+                block_midi.push_back(m);
+            }
             tr.position = start_ + static_cast<int64_t>(pos);
-            b_->run(l.data() + pos, r.data() + pos, n, nullptr, 0, tr, ev.data(), static_cast<uint32_t>(ev.size()));
+            b_->run(l.data() + pos, r.data() + pos, n, block_midi.data(), static_cast<uint32_t>(block_midi.size()), tr,
+                    ev.data(), static_cast<uint32_t>(ev.size()));
         }
         return {std::move(l), std::move(r)};
     }

@@ -1,9 +1,10 @@
 // Built-in device benchmark: per-block DSP cost of every registered device
-// (and every compressor character), the parameter update paths, and a
-// 32-track session with two compressors per track.
+// (every compressor character, the Synth with held notes), the parameter
+// update paths, and a 32-track session with two compressors per track.
 //
 //   saine_device_bench [blocks]      (Release build; numbers in us per 256-frame block)
 #include "devices/builtin.hpp"
+#include "devices/synth_v2_params.hpp"
 #include "platform/os.hpp"
 #include "saine_engine.h"
 
@@ -83,12 +84,15 @@ Stats summarize(std::vector<double>& t) {
 
 double us(Clock::duration d) { return std::chrono::duration<double, std::micro>(d).count(); }
 
-Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, uint32_t events_per_block, uint32_t event_param = 0) {
+Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, uint32_t events_per_block,
+                   const std::vector<saine::MidiEvent>& notes = {}, uint32_t event_param = 0) {
     saine::PluginSpec spec;
     spec.device_id = 1;
     spec.format = saine::PluginFormat::Builtin;
     spec.plugin_id = id;
     spec.state = blob(values);
+    const saine::BuiltinDescriptor* d = saine::find_builtin(id);
+    spec.instrument = d != nullptr && d->instrument;
     std::string err;
     auto inst = saine::create_builtin_instance(spec, kRate, kBlock, err);
     if (!inst) {
@@ -111,7 +115,9 @@ Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, u
             r[i] = 0.7f * n;
         }
         const auto t0 = Clock::now();
-        inst->run(l.data(), r.data(), kBlock, nullptr, 0, tr, ev.data(), static_cast<uint32_t>(ev.size()));
+        const bool first = b == 0 && !notes.empty();
+        inst->run(l.data(), r.data(), kBlock, first ? notes.data() : nullptr, first ? static_cast<uint32_t>(notes.size()) : 0, tr,
+                  ev.data(), static_cast<uint32_t>(ev.size()));
         const auto t1 = Clock::now();
         if (b >= 200) t.push_back(us(t1 - t0));
     }
@@ -162,7 +168,7 @@ int main(int argc, char** argv) {
     {
         std::vector<float> v = kMultiband;
         for (int b = 0; b < 3; ++b) v[static_cast<std::size_t>(20 + 3 * b)] = -40.f, v[static_cast<std::size_t>(21 + 3 * b)] = 4.f; // upward on
-        row("multiband-compressor (up + down, 16 auto events)", bench_kernel("multiband-compressor", v, blocks, 16, 2)); // low threshold
+        row("multiband-compressor (up + down, 16 auto events)", bench_kernel("multiband-compressor", v, blocks, 16, {}, 2)); // low threshold
     }
     const char* drive_modes[] = {"Overdrive", "Fuzz", "Tube", "Hard Clip"};
     for (int m = 0; m < 4; ++m) {
@@ -210,6 +216,22 @@ int main(int argc, char** argv) {
         row(name, bench_kernel("character-mod", tweak("character-mod", {{"model", static_cast<float>(c)}}), blocks, 0));
     }
     row("character-mod (Phaser Barber)", bench_kernel("character-mod", tweak("character-mod", {{"model", 7.0f}, {"mode_phaser", 4.0f}}), blocks, 0));
+    // Synth: notes held from the first block (sustain keeps every voice busy).
+    const std::vector<float> synth(std::begin(saine::synth_v2::kDefaults), std::end(saine::synth_v2::kDefaults));
+    const auto chord = [](uint32_t n) {
+        std::vector<saine::MidiEvent> v;
+        for (uint32_t i = 0; i < n; ++i) v.push_back(saine::MidiEvent{0, 0x90, static_cast<uint8_t>(36 + 5 * i), 100, 0});
+        return v;
+    };
+    row("synth-v2 (idle, sleeping)", bench_kernel("synth-v2", synth, blocks, 0));
+    row("synth-v2 (default, 1 note)", bench_kernel("synth-v2", synth, blocks, 0, chord(1)));
+    row("synth-v2 (default, 8 notes)", bench_kernel("synth-v2", synth, blocks, 0, chord(8)));
+    {
+        std::vector<float> heavy = synth;
+        heavy[17] = 7.f;                                           // unison 8
+        for (uint32_t s = 0; s < 4; ++s) heavy[184 + 79 * s] = 1.f; // every effect slot on
+        row("synth-v2 (16 notes, unison 8, 4 FX)", bench_kernel("synth-v2", heavy, blocks, 0, chord(16)));
+    }
 
     // Parameter update paths and session cost: 32 tracks, one clip and two
     // compressors each.
