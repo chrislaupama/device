@@ -133,6 +133,26 @@ fn compressor_in_a_chain_compresses_and_bypasses() {
 }
 
 #[test]
+fn chain_head_macro_sets_only_members_of_its_chain() {
+    let mut rig = Rig::new();
+    let compressed = rig.render();
+    let mut head = builtin::find(saine_core::modulation::RACK_ID).unwrap().instantiate();
+    head.id = DeviceId(DEV + 1);
+    // Macro 1 pins the member's threshold at the top of its range (0 dB).
+    head.links.push(saine_core::ModLink { slot: 0, target: DeviceId(DEV), param: saine_core::ModParam::Builtin("threshold".into()), min: 1.0, max: 1.0 });
+    let t = &mut rig.snap.tracks[0];
+    t.devices[0].chain = Some(head.id);
+    t.devices.insert(0, head);
+    let open = rig.render();
+    assert!(open > compressed * 1.5, "macro-opened {open} compressed {compressed}");
+    assert!(rig.readouts()[2] > -1.0, "gain reduction {:?}", rig.readouts());
+    // A link to a device outside the chain is inert.
+    rig.snap.tracks[0].devices[1].chain = None;
+    let outside = rig.render();
+    assert!((outside - compressed).abs() < compressed * 0.05, "outside {outside} compressed {compressed}");
+}
+
+#[test]
 fn live_param_update_and_unknown_device() {
     let rig = Rig::new();
     rig.render();

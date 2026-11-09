@@ -56,6 +56,38 @@ struct FxSlot {
     uint64_t sc_source = 0;
     int32_t sc_tap = -1;
     bool sc_wanted = false;
+    // Modulation (RenderGraph::mod_targets): the modulated parameters of
+    // this device; mod_source: the device is a source (LFO, chain head).
+    uint32_t mod_begin = 0;
+    uint32_t mod_count = 0;
+    bool mod_source = false;
+};
+
+// One modulation route into a ModTarget (se_mod_route): the source slot
+// (index into RenderGraph::fx), its output and the link range.
+struct ModRoute {
+    uint32_t src = 0;
+    uint8_t slot = 0;
+    bool absolute = false;
+    float min = 0.0f;
+    float max = 0.0f;
+};
+
+// A modulated parameter of one device with its routes (contiguous in
+// RenderGraph::mod_routes). Plugin targets are resolved on the main thread
+// (Engine::publish): native range, automation lane and the engine-owned base.
+struct ModTarget {
+    uint32_t param_id = 0;
+    bool plugin = false;
+    bool log = false;
+    float p_min = 0.0f, p_max = 1.0f, p_skew = 1.0f, p_step = 0.0f;
+    uint32_t route_begin = 0;
+    uint32_t route_count = 0;
+    bool active = true;
+    double native_min = 0.0;
+    double native_max = 1.0;
+    int32_t lane = -1;                     // plugin targets: the parameter's automation lane
+    std::atomic<float>* base = nullptr;    // plugin targets: normalized base (Engine::mod_bases_)
 };
 
 // One automation lane (se_auto_lane_desc) with its points in
@@ -122,6 +154,12 @@ struct TrackNode {
     bool pdc_pre = false;       // monitoring input: delay only the playback source, before the chain
     // Sidechain tap fed with this track's post-fader output (-1 = none).
     int32_t sc_tap = -1;
+    // Modulation: source slots (RenderGraph::mod_sources, fx indices) and
+    // the instrument plugin's modulated parameters (RenderGraph::mod_targets).
+    uint32_t msrc_begin = 0;
+    uint32_t msrc_count = 0;
+    uint32_t imod_begin = 0;
+    uint32_t imod_count = 0;
 };
 
 // Plugin delay compensation plan of a graph (docs/adr/0004). Computed on the
@@ -174,6 +212,12 @@ struct RenderGraph {
     // plugin...][slot 0...][slot 1...]...), their points, master volume.
     std::vector<AutoLane> lanes;
     std::vector<AutoPoint> auto_points;
+    // Modulation (se_mod_route): targets per device, their routes, sources
+    // per track, and keep-alive references to the plugin bases.
+    std::vector<ModTarget> mod_targets;
+    std::vector<ModRoute> mod_routes;
+    std::vector<uint32_t> mod_sources;
+    std::vector<std::shared_ptr<std::atomic<float>>> mod_base_refs;
     int32_t master_vol_lane = -1;
     bool has_plugin_lanes = false;
     bool has_plugins = false; // any insert or instrument plugin

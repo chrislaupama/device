@@ -5,6 +5,7 @@
 //! converted from musical time to frames at the engine sample rate here, so
 //! the real-time thread never deals with tempo math.
 
+use crate::device::Device;
 use crate::model::{AssetId, Project};
 use std::collections::HashMap;
 
@@ -114,7 +115,8 @@ pub fn build(project: &Project, engine_rate: f64, engine_assets: &HashMap<AssetI
                 .collect(),
             instrument: t.kind == crate::model::TrackKind::Instrument,
             synth: (t.kind == crate::model::TrackKind::Instrument).then(|| t.synth.clone()),
-            devices: t.devices.clone(),
+            // A chain head's switch bypasses its members too.
+            devices: t.devices.iter().enumerate().map(|(i, d)| Device { enabled: crate::modulation::effectively_enabled(&t.devices, i), ..d.clone() }).collect(),
             instrument_plugin: if t.kind == crate::model::TrackKind::Instrument { t.instrument_plugin.clone() } else { None },
             automation: lanes(project, &t.automation, engine_rate),
             arm: t.arm,

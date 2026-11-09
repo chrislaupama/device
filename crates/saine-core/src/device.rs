@@ -76,11 +76,82 @@ pub struct Device {
     /// Name of the preset last loaded or saved (shown in the card header).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
+    /// Member of the chain (rack) whose head device has this id. Members sit
+    /// right after their head in the track's chain (crate::modulation).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain: Option<DeviceId>,
+    /// Modulation sources (LFO, chain head macros): the parameters this
+    /// device moves, in the order they were added.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<ModLink>,
+    /// Display name chosen by the user or generated ("LFO 2", "Chain").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Chain heads: macro names (empty or missing = "Macro N").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub macro_names: Vec<String>,
+    /// Card folded to a narrow strip (header fold button, double-click).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub folded: bool,
+    /// Chain heads: member cards hidden.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub collapsed: bool,
+    /// Third-party plugins: parameter ids shown on the card, in the order added.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub card_params: Vec<u32>,
+}
+
+/// The parameter a modulation link moves.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModParam {
+    /// Built-in device parameter by id.
+    Builtin(String),
+    /// Third-party plugin parameter by its format id (normalized 0..1 domain).
+    Plugin(u32),
+}
+
+/// One modulation link of a source device (crate::modulation): the target
+/// parameter and its range in the target's normalized 0..1 domain.
+///
+/// LFO: `min` / `max` span -1..1 around the knob's own value (created as
+/// `-amount..+amount`); the offset is `(min + (max - min) * wave) * depth`
+/// with wave in 0..1. Chain macro: the parameter's normalized value becomes
+/// `min + (max - min) * macro` (min above max inverts).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModLink {
+    /// Source output: the macro index on a chain head, 0 on an LFO.
+    #[serde(default)]
+    pub slot: u8,
+    pub target: DeviceId,
+    pub param: ModParam,
+    pub min: f32,
+    pub max: f32,
 }
 
 impl Device {
     pub fn new(plugin: PluginRef) -> Self {
-        Device { id: DeviceId(0), plugin, enabled: true, state: None, params: BTreeMap::new(), sidechain: None, preset: None }
+        Device {
+            id: DeviceId(0),
+            plugin,
+            enabled: true,
+            state: None,
+            params: BTreeMap::new(),
+            sidechain: None,
+            preset: None,
+            chain: None,
+            links: Vec::new(),
+            label: None,
+            macro_names: Vec::new(),
+            folded: false,
+            collapsed: false,
+            card_params: Vec::new(),
+        }
+    }
+
+    /// Name shown in the card header: the user's label, else the plugin name.
+    pub fn display_name(&self) -> &str {
+        self.label.as_deref().unwrap_or(&self.plugin.name)
     }
 }
 

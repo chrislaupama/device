@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
@@ -21,7 +22,8 @@ RenderContext::RenderContext(uint32_t max_block)
     : max_block_(max_block), track_l_(max_block), track_r_(max_block), master_l_(max_block), master_r_(max_block),
       synth_(max_block), zeros_(max_block, 0.0f), plugin_l_(max_block), plugin_r_(max_block), gain_l_(max_block),
       gain_r_(max_block), auto_a_(max_block), auto_b_(max_block), param_events_(PluginInstance::kMaxParamEvents),
-      sc_(std::size_t{2} * SE_BUILTIN_MAX_SIDECHAINS * max_block, 0.0f) {}
+      sc_(std::size_t{2} * SE_BUILTIN_MAX_SIDECHAINS * max_block, 0.0f), mod_points_(max_block / SE_MOD_GRID_FRAMES + 2),
+      mod_(std::size_t{2} * kMaxModTargets * mod_points_, 0.0f), mod_binds_(kMaxModTargets) {}
 
 void kernel_add_scaled(float* __restrict dst, const float* __restrict src, float gain, uint32_t n) noexcept {
     for (uint32_t i = 0; i < n; ++i) dst[i] += src[i] * gain;
@@ -137,7 +139,10 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
     // the value at the block start (and each timeline piece), every
     // kParamGrid timeline frames and at every point, unchanged values
     // skipped. Returns the event count.
-    const auto plugin_events = [&](uint32_t begin, uint32_t count, uint32_t delay) -> uint32_t {
+    // Lanes of modulated plugin parameters are left out: the modulation
+    // events below carry their values (`mods` / `nmods`: the device's targets).
+    const auto plugin_events = [&](uint32_t begin, uint32_t count, uint32_t delay, const ModTarget* mods = nullptr,
+                                   uint32_t nmods = 0) -> uint32_t {
         ParamEvent* const ev = ctx.param_events();
         // (static: MSVC does not see a constexpr local used in a nested lambda, C4189)
         static constexpr uint32_t cap = PluginInstance::kMaxParamEvents;
@@ -145,6 +150,10 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         for (uint32_t li = begin; li < begin + count; ++li) {
             const AutoLane& lane = graph->lanes[li];
             if (!lane.active) continue;
+            bool modulated = false;
+            for (uint32_t m = 0; m < nmods && !modulated; ++m)
+                modulated = mods[m].plugin && mods[m].active && mods[m].lane == static_cast<int32_t>(li);
+            if (modulated) continue;
             const LaneView v = lane_view(*graph, lane);
             uint32_t points_left = kMaxLanePoints;
             bool have_last = false;
@@ -183,6 +192,76 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                     emit(i0 + static_cast<uint32_t>(next - tl0), auto_eval(v, next));
                 }
             });
+        }
+        std::sort(ev, ev + n, [](const ParamEvent& a, const ParamEvent& b) { return a.offset < b.offset; });
+        return n;
+    };
+
+    // ---- modulation helpers (se_mod_route)
+    const uint32_t mod_points = std::min(ctx.mod_points(), (frames + SE_MOD_GRID_FRAMES - 1) / SE_MOD_GRID_FRAMES);
+    // Offsets and absolute values (NaN = none) of one target per grid point.
+    const auto mod_values = [&](const ModTarget& t, float* off, float* abs) -> bool {
+        bool has_abs = false;
+        for (uint32_t k = 0; k < mod_points; ++k) {
+            off[k] = 0.0f;
+            abs[k] = std::numeric_limits<float>::quiet_NaN();
+        }
+        for (uint32_t ri = t.route_begin; ri < t.route_begin + t.route_count; ++ri) {
+            const ModRoute& r = graph->mod_routes[ri];
+            const FxSlot& s = graph->fx[r.src];
+            BuiltinInstance* const b = s.enabled && s.inst != nullptr ? s.inst->as_builtin() : nullptr;
+            if (b == nullptr || r.slot >= b->mod_outputs()) continue;
+            const float span = r.max - r.min;
+            for (uint32_t k = 0; k < mod_points; ++k) {
+                const float* vg = b->mod_point(k, r.slot);
+                if (r.absolute) {
+                    abs[k] = r.min + span * vg[0];
+                    has_abs = true;
+                } else {
+                    off[k] += vg[1] * (r.min + span * vg[0]);
+                }
+            }
+        }
+        return has_abs;
+    };
+    // Built-in targets: bindings applied inside the instance's process().
+    const auto bind_builtin = [&](BuiltinInstance* b, uint32_t begin, uint32_t count) {
+        BuiltinMod* const binds = ctx.mod_binds();
+        uint32_t n = 0;
+        for (uint32_t i = begin; i < begin + count && n < RenderContext::kMaxModTargets; ++i) {
+            const ModTarget& t = graph->mod_targets[i];
+            if (t.plugin || !t.active || t.param_id >= b->param_count()) continue;
+            float* const off = ctx.mod_off(n);
+            float* const abs = ctx.mod_abs(n);
+            const bool has_abs = mod_values(t, off, abs);
+            binds[n++] = BuiltinMod{t.param_id, t.log, t.p_min, t.p_max, t.p_skew, t.p_step, off, has_abs ? abs : nullptr};
+        }
+        b->set_modulation(binds, n);
+    };
+    // Plugin targets: events (appended after `n` lane events, then sorted)
+    // with the modulated value at every grid point where it changes.
+    const auto plugin_mod_events = [&](uint32_t begin, uint32_t count, uint32_t n) -> uint32_t {
+        ParamEvent* const ev = ctx.param_events();
+        static constexpr uint32_t cap = PluginInstance::kMaxParamEvents;
+        float* const off = ctx.mod_off(0);
+        float* const abs = ctx.mod_abs(0);
+        for (uint32_t i = begin; i < begin + count; ++i) {
+            const ModTarget& t = graph->mod_targets[i];
+            if (!t.plugin || !t.active || t.base == nullptr) continue;
+            mod_values(t, off, abs);
+            const float base = t.base->load(std::memory_order_relaxed);
+            float last = -1.0f;
+            for (uint32_t k = 0; k < mod_points && n < cap; ++k) {
+                float b0 = base;
+                if (t.lane >= 0) {
+                    const int64_t at = playing ? position + static_cast<int64_t>(k) * SE_MOD_GRID_FRAMES : position;
+                    b0 = std::clamp(auto_eval(lane_view(*graph, graph->lanes[static_cast<uint32_t>(t.lane)]), at), 0.0f, 1.0f);
+                }
+                const float v = std::clamp((std::isnan(abs[k]) ? b0 : abs[k]) + off[k], 0.0f, 1.0f);
+                if (v == last) continue;
+                last = v;
+                ev[n++] = ParamEvent{k * SE_MOD_GRID_FRAMES, t.param_id, t.native_min + static_cast<double>(v) * (t.native_max - t.native_min)};
+            }
         }
         std::sort(ev, ev + n, [](const ParamEvent& a, const ParamEvent& b) { return a.offset < b.offset; });
         return n;
@@ -229,6 +308,15 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             if (src_line != nullptr) src_line->discard(frames, gen);
             continue;
         }
+        // Modulation sources run first: their outputs drive this block's targets.
+        if (plugins_on)
+            for (uint32_t k2 = track.msrc_begin; k2 < track.msrc_begin + track.msrc_count; ++k2) {
+                const FxSlot& s = graph->fx[graph->mod_sources[k2]];
+                BuiltinInstance* const b = s.enabled && s.inst != nullptr ? s.inst->as_builtin() : nullptr;
+                if (b == nullptr) continue;
+                const uint32_t np = s.lane_count > 0 ? plugin_events(s.lane_begin, s.lane_count, 0) : 0;
+                b->run_modulation(frames, *inst.transport, ctx.param_events(), np);
+            }
         // Runs `line` over the track buffer: the buffer's content if any,
         // else silence while the line still has a tail, else just advances.
         bool any = false;
@@ -310,7 +398,9 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             const uint32_t ne = iplug->feeder().build(graph->notes.data() + track.note_begin, track.note_count,
                                                       graph->seq, inst.transport_gen, position, frames, playing,
                                                       iplug->event_scratch(), PluginInstance::kMaxEvents);
-            const uint32_t np = track.iplug_lane_count > 0 ? plugin_events(track.iplug_lane_begin, track.iplug_lane_count, 0) : 0;
+            const ModTarget* const im = track.imod_count > 0 ? graph->mod_targets.data() + track.imod_begin : nullptr;
+            uint32_t np = track.iplug_lane_count > 0 ? plugin_events(track.iplug_lane_begin, track.iplug_lane_count, 0, im, track.imod_count) : 0;
+            if (track.imod_count > 0) np = plugin_mod_events(track.imod_begin, track.imod_count, np);
             iplug->run(pl, pr, frames, iplug->event_scratch(), ne, *inst.transport, ctx.param_events(), np);
             if (track.audible) {
                 if (any) {
@@ -368,10 +458,17 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                             b->set_sidechain(slot->sc_tap >= 0 ? ctx.sc_l(k2) : ctx.zeros(),
                                              slot->sc_tap >= 0 ? ctx.sc_r(k2) : ctx.zeros());
                         }
-                    const uint32_t np = slot->lane_count > 0
-                                            ? plugin_events(slot->lane_begin, slot->lane_count,
-                                                            lines != nullptr ? slot->auto_delay : 0)
-                                            : 0;
+                    const ModTarget* const sm = slot->mod_count > 0 ? graph->mod_targets.data() + slot->mod_begin : nullptr;
+                    uint32_t np = slot->lane_count > 0
+                                      ? plugin_events(slot->lane_begin, slot->lane_count,
+                                                      lines != nullptr ? slot->auto_delay : 0, sm, slot->mod_count)
+                                      : 0;
+                    if (slot->mod_count > 0) {
+                        if (BuiltinInstance* b = slot->inst->as_builtin())
+                            bind_builtin(b, slot->mod_begin, slot->mod_count);
+                        else
+                            np = plugin_mod_events(slot->mod_begin, slot->mod_count, np);
+                    }
                     slot->inst->run(tl, tr, frames, nullptr, 0, *inst.transport, ctx.param_events(), np);
                     if (bypass != nullptr) bypass->discard(frames, gen);
                 } else if (bypass != nullptr) {

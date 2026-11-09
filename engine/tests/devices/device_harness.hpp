@@ -78,6 +78,18 @@ inline std::vector<uint8_t> state_blob(const std::vector<float>& values, uint64_
     return out;
 }
 
+// A v2 blob: values plus modulation routes (se_mod_route).
+inline std::vector<uint8_t> state_blob_v2(const std::vector<float>& values, const std::vector<se_mod_route>& routes,
+                                          uint64_t sidechain = 0) {
+    se_builtin_state_v2 h{SE_BUILTIN_STATE_MAGIC2, static_cast<uint32_t>(values.size()), sidechain,
+                          static_cast<uint32_t>(routes.size()), 0};
+    std::vector<uint8_t> out(sizeof h + 4 * values.size() + sizeof(se_mod_route) * routes.size());
+    std::memcpy(out.data(), &h, sizeof h);
+    if (!values.empty()) std::memcpy(out.data() + sizeof h, values.data(), 4 * values.size());
+    if (!routes.empty()) std::memcpy(out.data() + sizeof h + 4 * values.size(), routes.data(), sizeof(se_mod_route) * routes.size());
+    return out;
+}
+
 inline uint32_t param_index(const saine::BuiltinDescriptor& d, const char* id) {
     for (std::size_t i = 0; i < d.params.size(); ++i)
         if (std::strcmp(d.params[i], id) == 0) return static_cast<uint32_t>(i);
@@ -174,6 +186,7 @@ struct DeviceSession {
         std::vector<std::string> ids;
         std::vector<se_auto_lane_desc> lanes;
         std::vector<std::vector<se_auto_point>> points;
+        std::vector<std::string> paths; // plugin bundle paths (parallel to devices; "" for built-ins)
     };
     std::vector<Track> tracks;
     std::vector<se_track_desc_v6> descs;
@@ -188,11 +201,27 @@ struct DeviceSession {
     }
     static void add_device(Track& t, uint64_t device_id, const char* builtin_id, const std::vector<float>& values,
                            bool enabled = true, uint64_t sidechain = 0) {
+        add_device_state(t, device_id, builtin_id, state_blob(values, sidechain), enabled);
+    }
+    static void add_device_state(Track& t, uint64_t device_id, const char* builtin_id, std::vector<uint8_t> state,
+                                 bool enabled = true) {
         t.ids.emplace_back(builtin_id);
-        t.states.push_back(state_blob(values, sidechain));
+        t.states.push_back(std::move(state));
+        t.paths.emplace_back();
         se_device_desc d{};
         d.device_id = device_id;
         d.format = SE_PLUGIN_BUILTIN;
+        d.enabled = enabled ? 1 : 0;
+        t.devices.push_back(d);
+    }
+    // A CLAP plugin insert (no saved state).
+    static void add_clap(Track& t, uint64_t device_id, const std::string& path, const char* plugin_id, bool enabled = true) {
+        t.ids.emplace_back(plugin_id);
+        t.states.emplace_back();
+        t.paths.push_back(path);
+        se_device_desc d{};
+        d.device_id = device_id;
+        d.format = SE_PLUGIN_CLAP;
         d.enabled = enabled ? 1 : 0;
         t.devices.push_back(d);
     }
@@ -210,8 +239,9 @@ struct DeviceSession {
         for (Track& t : tracks) {
             for (std::size_t i = 0; i < t.devices.size(); ++i) {
                 t.devices[i].plugin_id = t.ids[i].c_str();
-                t.devices[i].state = t.states[i].data();
+                t.devices[i].state = t.states[i].empty() ? nullptr : t.states[i].data();
                 t.devices[i].state_len = t.states[i].size();
+                t.devices[i].path = i < t.paths.size() && !t.paths[i].empty() ? t.paths[i].c_str() : nullptr;
             }
             for (std::size_t i = 0; i < t.lanes.size(); ++i) {
                 t.lanes[i].points = t.points[i].data();

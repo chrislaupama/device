@@ -26,6 +26,8 @@
 //! store the choice index as their plain value (`min` = 0, `max` = choices - 1).
 
 mod compressor;
+pub mod lfo;
+pub mod rack;
 
 use crate::device::{Device, DeviceId, PluginFormat, PluginKind, PluginRef};
 use crate::model::Track;
@@ -371,8 +373,14 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 1] = [&compressor::COMPRESSOR];
+    static ALL: [&DeviceDef; 3] = [&compressor::COMPRESSOR, &lfo::LFO, &rack::RACK];
     &ALL
+}
+
+/// Shown in the browser and the Add device lists. LFOs come from a knob's
+/// Modulators menu or the device picker, chains from grouping or Chains.
+pub fn listed(def: &DeviceDef) -> bool {
+    def.id != crate::modulation::LFO_ID && def.id != crate::modulation::RACK_ID
 }
 
 pub fn find(id: &str) -> Option<&'static DeviceDef> {
@@ -518,7 +526,7 @@ pub fn mod_targets(track: &Track) -> Vec<ModTarget> {
         .devices
         .iter()
         .filter_map(|d| def_of(d).map(|def| (d, def)))
-        .filter(|(_, def)| def.kind == PluginKind::Effect)
+        .filter(|(_, def)| def.kind == PluginKind::Effect && listed(def))
         .flat_map(|(d, def)| def.params.iter().filter(|p| p.automatable).map(move |p| ModTarget { device: d.id, device_name: def.name.into(), param: p.id, param_name: p.name }))
         .collect()
 }

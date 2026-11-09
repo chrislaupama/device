@@ -7,6 +7,7 @@
 #include <cstring>
 #include <limits>
 #include <numbers>
+#include <tuple>
 #include <unordered_map>
 
 namespace saine {
@@ -518,6 +519,74 @@ int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lo
                 device_lanes(slot.device_id, slot.lane_begin, slot.lane_count);
             }
         }
+        // Modulation: built-in devices carrying routes are sources; their
+        // routes are grouped per target device and parameter.
+        {
+            struct Pending {
+                int32_t target; // device index in the track, -1 = instrument plugin
+                uint32_t param;
+                bool plugin;
+                se_mod_route r;
+                uint32_t src;
+            };
+            std::vector<Pending> pend;
+            node.msrc_begin = static_cast<uint32_t>(g->mod_sources.size());
+            for (uint32_t i = 0; i < td.device_count; ++i) {
+                const se_device_desc& dd = td.devices[i];
+                if (dd.format != SE_PLUGIN_BUILTIN) continue;
+                const uint8_t* values = nullptr;
+                const uint8_t* routes = nullptr;
+                uint32_t count = 0, rc = 0;
+                uint64_t sc = 0;
+                parse_builtin_state(dd.state, dd.state_len, values, count, sc, routes, rc); // validated above
+                if (rc == 0) continue;
+                const uint32_t src = node.fx_begin + i;
+                g->fx[src].mod_source = true;
+                g->mod_sources.push_back(src);
+                for (uint32_t k = 0; k < rc; ++k) {
+                    se_mod_route r;
+                    std::memcpy(&r, routes + sizeof r * k, sizeof r);
+                    int32_t target = -2;
+                    for (uint32_t j = 0; j < td.device_count; ++j)
+                        if (j != i && td.devices[j].device_id == r.target_device_id) target = static_cast<int32_t>(j);
+                    if (target == -2 && node.has_instrument_plugin && td.instrument_plugin->device_id == r.target_device_id)
+                        target = -1;
+                    if (target != -2) pend.push_back(Pending{target, r.param_id, r.kind == SE_MOD_PLUGIN, r, src});
+                }
+            }
+            node.msrc_count = static_cast<uint32_t>(g->mod_sources.size()) - node.msrc_begin;
+            std::stable_sort(pend.begin(), pend.end(), [](const Pending& a, const Pending& b) {
+                return std::tie(a.target, a.plugin, a.param) < std::tie(b.target, b.plugin, b.param);
+            });
+            for (std::size_t a = 0; a < pend.size();) {
+                std::size_t b = a;
+                while (b < pend.size() && pend[b].target == pend[a].target && pend[b].plugin == pend[a].plugin &&
+                       pend[b].param == pend[a].param)
+                    ++b;
+                const se_mod_route& r0 = pend[a].r;
+                ModTarget mt;
+                mt.param_id = pend[a].param;
+                mt.plugin = pend[a].plugin;
+                mt.log = r0.log != 0;
+                mt.p_min = r0.p_min;
+                mt.p_max = r0.p_max;
+                mt.p_skew = r0.p_skew;
+                mt.p_step = r0.p_step;
+                mt.route_begin = static_cast<uint32_t>(g->mod_routes.size());
+                for (std::size_t k = a; k < b; ++k)
+                    g->mod_routes.push_back(ModRoute{pend[k].src, pend[k].r.slot, pend[k].r.absolute != 0, pend[k].r.min, pend[k].r.max});
+                mt.route_count = static_cast<uint32_t>(b - a);
+                const auto at = static_cast<uint32_t>(g->mod_targets.size());
+                if (pend[a].target < 0) {
+                    if (node.imod_count++ == 0) node.imod_begin = at;
+                } else {
+                    FxSlot& s = g->fx[node.fx_begin + static_cast<uint32_t>(pend[a].target)];
+                    if (s.mod_count++ == 0) s.mod_begin = at;
+                }
+                g->mod_targets.push_back(mt);
+                a = b;
+            }
+        }
         std::stable_sort(g->notes.begin() + node.note_begin, g->notes.end(), [](const NoteEvent& a, const NoteEvent& b) {
             return a.start != b.start ? a.start < b.start : a.pitch < b.pitch;
         });
@@ -566,6 +635,10 @@ std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g) {
     c->has_plugins = g.has_plugins;
     c->lanes = g.lanes;
     c->auto_points = g.auto_points;
+    c->mod_targets = g.mod_targets;
+    c->mod_routes = g.mod_routes;
+    c->mod_sources = g.mod_sources;
+    c->mod_base_refs = g.mod_base_refs;
     c->master_vol_lane = g.master_vol_lane;
     c->has_plugin_lanes = g.has_plugin_lanes;
     c->synth_params = g.synth_params;
