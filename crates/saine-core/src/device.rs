@@ -14,7 +14,7 @@
 //! plugin editors have their own internal undo and the host cannot observe
 //! individual edits).
 
-use crate::model::TrackId;
+use crate::model::{AssetId, TrackId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -76,11 +76,84 @@ pub struct Device {
     /// Name of the preset last loaded or saved (shown in the card header).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
+    /// Built-in devices that play audio files (samplers, drum pads): the
+    /// filled sample slots, ordered by slot (`DeviceDef::samples` slots).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub samples: Vec<DeviceSample>,
 }
 
 impl Device {
     pub fn new(plugin: PluginRef) -> Self {
-        Device { id: DeviceId(0), plugin, enabled: true, state: None, params: BTreeMap::new(), sidechain: None, preset: None }
+        Device { id: DeviceId(0), plugin, enabled: true, state: None, params: BTreeMap::new(), sidechain: None, preset: None, samples: Vec::new() }
+    }
+
+    pub fn sample(&self, slot: u32) -> Option<&DeviceSample> {
+        self.samples.iter().find(|s| s.slot == slot)
+    }
+}
+
+/// Most slices one sample can hold (sampler Slice mode).
+pub const MAX_SLICES: usize = 128;
+
+/// An audio file loaded into a built-in device's sample slot. The audio is
+/// a project asset (like a clip's), so it is saved, relinked and reloaded
+/// with the project.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeviceSample {
+    pub slot: u32,
+    pub asset: AssetId,
+    /// Display name (the file name without extension).
+    pub name: String,
+    /// Slice points, ascending by start (sampler Slice mode). Empty when the
+    /// sample is not sliced.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slices: Vec<Slice>,
+}
+
+/// One slice of a sample: where it starts and its own gain, pan and pitch.
+/// A slice ends where the next one starts (the last one at the sample end).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Slice {
+    /// Start as a fraction of the sample length, 0..1.
+    pub start: f32,
+    /// dB, -60..12.
+    #[serde(default)]
+    pub gain: f32,
+    /// -1..1.
+    #[serde(default)]
+    pub pan: f32,
+    /// Semitones, -24..24.
+    #[serde(default)]
+    pub pitch: f32,
+}
+
+impl Slice {
+    pub fn at(start: f32) -> Slice {
+        Slice { start, gain: 0.0, pan: 0.0, pitch: 0.0 }
+    }
+}
+
+impl DeviceSample {
+    /// Range and order checks (slices ascending, unique, inside 0..1).
+    pub fn validate(&self) -> Result<(), String> {
+        if self.name.chars().count() > 256 {
+            return Err("sample name longer than 256 characters".into());
+        }
+        if self.slices.len() > MAX_SLICES {
+            return Err(format!("more than {MAX_SLICES} slices"));
+        }
+        let mut last = -1.0f32;
+        for s in &self.slices {
+            let ok = |v: f32, lo: f32, hi: f32| v.is_finite() && (lo..=hi).contains(&v);
+            if !ok(s.start, 0.0, 1.0) || s.start >= 1.0 || s.start <= last {
+                return Err(format!("slice start {} out of order or range", s.start));
+            }
+            if !ok(s.gain, -60.0, 12.0) || !ok(s.pan, -1.0, 1.0) || !ok(s.pitch, -24.0, 24.0) {
+                return Err("slice gain, pan or pitch out of range".into());
+            }
+            last = s.start;
+        }
+        Ok(())
     }
 }
 

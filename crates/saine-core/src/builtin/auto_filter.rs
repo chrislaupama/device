@@ -22,6 +22,7 @@ const SYNC: &[&str] = &["Free", "Sync"];
 const MODES: &[&str] = &["Filter", "DJ"];
 
 pub static AUTO_FILTER: DeviceDef = DeviceDef {
+    samples: 0,
     id: "auto-filter",
     name: "Auto Filter",
     kind: PluginKind::Effect,
@@ -33,7 +34,7 @@ pub static AUTO_FILTER: DeviceDef = DeviceDef {
         ParamDef::new("frequency", "Frequency", 20.0, 20_000.0, 20_000.0, Taper::Log, "Hz", Format::Freq).label("Freq").help("Cutoff (or centre) frequency before the envelope and LFO move it."),
         ParamDef::new("resonance", "Resonance", 0.0, 1.25, 0.0, LINEAR, "", Format::Plain(2)).help("Emphasis at the cutoff; high settings ring."),
         ParamDef::new("drive", "Drive", 0.0, 24.0, 0.0, LINEAR, "dB", Format::Plain(1)).help("Saturates the signal on its way into the filter."),
-        ParamDef::new("env_amount", "Env Amount", -72.0, 72.0, 0.0, LINEAR, "st", Format::Signed(0)).label("Env").help("How far the input's envelope moves the cutoff, in semitones (negative closes it)."),
+        ParamDef::new("env_amount", "Env Amount", -72.0, 72.0, 0.0, LINEAR, "st", Format::SignedBareZero(0)).label("Env").help("How far the input's envelope moves the cutoff, in semitones (negative closes it)."),
         ParamDef::new("env_attack", "Env Attack", 0.1, 500.0, 1.0, Taper::Log, "ms", Format::MsAuto).label("Attack").help("How fast the envelope follows a rising level."),
         ParamDef::new("env_release", "Env Release", 1.0, 3000.0, 100.0, Taper::Log, "ms", Format::MsAuto).label("Release").help("How fast the envelope falls back."),
         ParamDef::new("lfo_amount", "LFO Amount", 0.0, 72.0, 0.0, LINEAR, "st", Format::Plain(0)).label("LFO").help("How far the LFO swings the cutoff either way, in semitones."),

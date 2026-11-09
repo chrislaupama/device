@@ -44,4 +44,5 @@ pub static AUTOPANNER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Fast Spin", values: &[("rate", 5.2), ("depth", 60.0), ("sync", 0.0)] },
     ],
     sidechain: false,
+    samples: 0,
 };

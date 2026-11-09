@@ -33,6 +33,9 @@ mod character_eq;
 pub mod character_mod;
 mod chorus;
 mod compressor;
+pub mod drum_rack;
+pub mod pad_sampler;
+pub mod sampler;
 mod declipper;
 mod deesser;
 mod dehummer;
@@ -91,10 +94,9 @@ pub enum Format {
     Freq,
     /// Milliseconds: one decimal below 100 ms ("1.0 ms"), whole numbers from 100 ms ("150 ms").
     MsAuto,
-    /// Rate in hertz: two decimals below 10 Hz ("1.00 Hz"), one from 10 Hz ("12.5 Hz").
-    Rate,
-    /// Whole number with an explicit sign and the unit: "+12 st", "−7 st", "0 st".
-    Signed(u8),
+    /// Number with this many decimals, an explicit sign and the unit, but a bare zero:
+    /// "+12 st", "−7 st", "0 st" (`Signed` shows "+0 st").
+    SignedBareZero(u8),
     /// Whole degrees: "90°".
     Degrees,
     /// Compression ratio: "4.0:1".
@@ -117,6 +119,13 @@ pub enum Format {
     Choice,
     /// Number with this many decimals and the unit appended when not empty.
     Plain(u8),
+    /// Signed number (plain value × `scale`) with the unit: "+0 st", "−12 ct",
+    /// "+24 st" for an envelope depth of 0.5 shown in semitones (scale 48).
+    Signed { decimals: u8, scale: u16 },
+    /// Pan position -1..1: "C", "25L", "40R" (rounded percent).
+    Pan,
+    /// MIDI note number as a name, middle C (60) = "C3".
+    Note,
     /// A 0..1 value shown as a percent: "30%", "12.5%".
     Fraction,
     /// A -1..1 value shown as a signed percent: "+25%", "−10%", "0%".
@@ -129,6 +138,8 @@ pub enum Format {
     Semitones,
     /// Signed whole cents: "+7 ct", "0 ct", "−12 ct".
     Cents,
+    /// LFO rate: "2.00 Hz" below 10 Hz, "12.5 Hz" above.
+    Rate,
 }
 
 /// One parameter of a built-in device.
@@ -278,6 +289,11 @@ impl ParamDef {
         if self.format == Format::Balance {
             return parse_balance(&lower).map(|v| self.snap(v));
         }
+        match self.format {
+            Format::Pan => return parse_pan(&t).map(|v| self.snap(v)),
+            Format::Note => return parse_note(&t).map(|v| self.snap(v)),
+            _ => {}
+        }
         let split = t.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+')).unwrap_or(t.len());
         let (num, unit) = t.split_at(split);
         let mut v: f32 = num.parse().ok()?;
@@ -288,21 +304,25 @@ impl ParamDef {
             (Format::Time, "s" | "sec" | "secs" | "second" | "seconds") => v *= 1000.0,
             (Format::Time, "ms" | "msec" | "msecs") => {}
             (Format::Hz | Format::Freq | Format::Hz3, "k" | "khz") => v *= 1000.0,
-            (Format::Hz | Format::Freq | Format::Hz3 | Format::Rate, "hz") => {}
+            (Format::Hz | Format::Freq | Format::Hz3, "hz") => {}
             (Format::MsAuto, "ms" | "msec" | "msecs") => {}
             (Format::MsAuto, "s" | "sec" | "secs" | "second" | "seconds") => v *= 1000.0,
             (Format::Degrees, "°" | "deg" | "degrees") => {}
-            (Format::Signed(_), u) if u == self.unit.to_lowercase() => {}
+            (Format::SignedBareZero(_), u) if u == self.unit.to_lowercase() => {}
             (Format::Db | Format::DbNoPlus | Format::DbOrInf | Format::DbCut, "db") | (Format::Percent | Format::Percent0 | Format::SignedPercent, "%") | (Format::Factor, "x") => {}
             (Format::Fraction | Format::SignedFraction, "%" | "percent") => {}
             (Format::Seconds, "s" | "sec" | "secs" | "second" | "seconds") => {}
             (Format::Seconds, "ms" | "msec" | "msecs") => v /= 1000.0,
             (Format::Semitones, "st" | "semitones") | (Format::Cents, "ct" | "cents") => {}
             (Format::Plain(_), u) if u == self.unit.to_lowercase() => {}
+            (Format::Rate, "hz") => {}
+            (Format::Signed { .. }, u) if u == self.unit.to_lowercase() => {}
             _ => return None,
         }
-        if matches!(self.format, Format::Fraction | Format::SignedFraction) {
-            v /= 100.0;
+        match self.format {
+            Format::Fraction | Format::SignedFraction => v /= 100.0,
+            Format::Signed { scale, .. } => v /= scale.max(1) as f32,
+            _ => {}
         }
         if !v.is_finite() {
             return None;
@@ -369,10 +389,7 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
         Format::MsAuto => {
             if v >= 99.95 { format!("{v:.0} ms") } else { format!("{v:.1} ms") }
         }
-        Format::Rate => {
-            if v >= 9.995 { format!("{v:.1} Hz") } else { format!("{v:.2} Hz") }
-        }
-        Format::Signed(d) => {
+        Format::SignedBareZero(d) => {
             let a = format!("{:.*}", d as usize, v.abs());
             let zero = a.chars().all(|c| c == '0' || c == '.');
             let sign = if zero { String::new() } else if v < 0.0 { MINUS.to_string() } else { "+".into() };
@@ -397,6 +414,23 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
             let s = format!("{:.*}", d as usize, v).replace('-', &MINUS.to_string());
             if unit.is_empty() { s } else { format!("{s} {unit}") }
         }
+        Format::Signed { decimals, scale } => {
+            let x = v * scale.max(1) as f32;
+            let p = 10f32.powi(decimals as i32);
+            let r = (x * p).round() / p;
+            let sign = if r < 0.0 { MINUS } else { '+' };
+            let s = format!("{sign}{:.*}", decimals as usize, r.abs());
+            if unit.is_empty() { s } else { format!("{s} {unit}") }
+        }
+        Format::Pan => {
+            let pct = (v * 100.0).round() as i32;
+            match pct {
+                0 => "C".into(),
+                p if p < 0 => format!("{}L", -p),
+                p => format!("{p}R"),
+            }
+        }
+        Format::Note => note_name(v.round() as i32),
         Format::Fraction => format_value(Format::Percent, v * 100.0, unit, choices, range),
         Format::SignedFraction => {
             let r = (v * 1000.0).round() / 10.0;
@@ -435,7 +469,52 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
             let r = v.round();
             if r == 0.0 { "0 ct".into() } else if r < 0.0 { format!("{MINUS}{} ct", -r) } else { format!("+{r} ct") }
         }
+        Format::Rate => {
+            if v < 10.0 { format!("{v:.2} Hz") } else { format!("{v:.1} Hz") }
+        }
     }
+}
+
+const NOTE_NAMES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+/// MIDI note name with middle C (60) = "C3", the reference's octave numbering.
+pub fn note_name(n: i32) -> String {
+    format!("{}{}", NOTE_NAMES[n.rem_euclid(12) as usize], n.div_euclid(12) - 2)
+}
+
+/// "C3", "c#3", "Db-1", or a plain note number.
+fn parse_note(t: &str) -> Option<f32> {
+    let t = t.trim();
+    if let Ok(n) = t.parse::<f32>() {
+        return n.is_finite().then_some(n.round());
+    }
+    let mut chars = t.chars();
+    let letter = chars.next()?.to_ascii_uppercase();
+    let base = [('C', 0), ('D', 2), ('E', 4), ('F', 5), ('G', 7), ('A', 9), ('B', 11)].iter().find(|(c, _)| *c == letter)?.1;
+    let rest = chars.as_str();
+    let (acc, oct) = match rest.chars().next() {
+        Some('#') => (1, &rest[1..]),
+        Some('b') if rest.len() > 1 => (-1, &rest[1..]),
+        _ => (0, rest),
+    };
+    let oct: i32 = oct.trim().parse().ok().filter(|o| (-10..=20).contains(o))?;
+    Some(((oct + 2) * 12 + base + acc) as f32)
+}
+
+/// "C", "L25", "25L", "R40", "40R", or a signed percent ("-25" = 25L).
+fn parse_pan(t: &str) -> Option<f32> {
+    let t = t.trim().to_lowercase();
+    if t == "c" || t == "center" || t == "centre" {
+        return Some(0.0);
+    }
+    let num = |s: &str| s.trim().trim_end_matches('%').trim().parse::<f32>().ok().filter(|v| v.is_finite());
+    if let Some(n) = t.strip_prefix('l').or_else(|| t.strip_suffix('l')) {
+        return num(n).map(|v| -v.abs() / 100.0);
+    }
+    if let Some(n) = t.strip_prefix('r').or_else(|| t.strip_suffix('r')) {
+        return num(n).map(|v| v.abs() / 100.0);
+    }
+    num(&t).map(|v| v / 100.0)
 }
 
 /// "C", "25L", "L25", "25 r", "-25" (left negative) -> balance value.
@@ -639,6 +718,9 @@ pub struct DeviceDef {
     pub factory: &'static [FactoryPreset],
     /// The device reads a sidechain input (another track) when one is picked.
     pub sidechain: bool,
+    /// Sample slots for audio files the device plays (`Device::samples`);
+    /// 0 for devices that play no files.
+    pub samples: u32,
 }
 
 /// The vendor shown for built-in devices.
@@ -646,7 +728,7 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 22] = [
+    static ALL: [&DeviceDef; 25] = [
         &compressor::COMPRESSOR,
         &distortion::DISTORTION,
         &tape_saturation::TAPE_SATURATION,
@@ -664,6 +746,9 @@ pub fn all() -> &'static [&'static DeviceDef] {
         &tremolo::TREMOLO,
         &autopanner::AUTOPANNER,
         &ring_mod::RING_MOD,
+        &sampler::SAMPLER,
+        &drum_rack::DRUM_RACK,
+        &pad_sampler::PAD_SAMPLER,
         &synth_v2::SYNTH_V2,
         &declipper::DECLIPPER,
         &deesser::DEESSER,

@@ -16,7 +16,9 @@
 // physically safe ranges (the C ABI can be called directly).
 #pragma once
 
+#include "../asset.hpp"
 #include "../plugins/plugin_instance.hpp"
+#include "../spsc_queue.hpp"
 #include "saine_engine.h"
 
 #include <atomic>
@@ -28,17 +30,45 @@
 
 namespace saine {
 
+// One slice of a sample (fractions of the sample, dB, pan, semitones).
+struct BuiltinSlice {
+    float start = 0.0f;
+    float gain_db = 0.0f;
+    float pan = 0.0f;
+    float pitch = 0.0f;
+    bool operator==(const BuiltinSlice&) const = default;
+};
+
+// The audio in one sample slot of a device (frames == 0: empty slot).
+// Sample memory may change between process() calls (a new file was loaded):
+// processors keep slot indices across calls, never these pointers.
+struct BuiltinSample {
+    const float* ch[2] = {nullptr, nullptr}; // ch[1] == ch[0] for mono
+    uint64_t frames = 0;                     // at the engine rate
+    // Octave-down copies (Asset::octaves()): oct[L] is decimated by
+    // 2^(L+1); null when absent (readers then use ch).
+    const float* oct[Asset::kOctaves][2] = {};
+    uint64_t oct_frames[Asset::kOctaves] = {};
+    uint32_t channels = 0;
+    uint32_t slice_count = 0;
+    const BuiltinSlice* slices = nullptr;
+};
+
 // Per-call context of BuiltinProcessor::process().
 struct BuiltinContext {
     // Sidechain input (post-fader output of the source track), or null.
     const float* sc_l = nullptr;
     const float* sc_r = nullptr;
     const RtTransport* transport = nullptr;
+    // Devices with sample slots: one entry per slot (sample_count = the
+    // descriptor's sample_slots).
+    const BuiltinSample* samples = nullptr;
+    uint32_t sample_count = 0;
     // Frames from transport->position to the first frame of this call (the
     // instance splits blocks at automation events).
     uint32_t offset = 0;
-    // MIDI events of this call (instruments), offsets relative to l/r[0],
-    // sorted by offset.
+    // MIDI events of this call (instruments): the track's notes plus
+    // se_builtin_note events, offsets relative to l/r[0], sorted by offset.
     const MidiEvent* events = nullptr;
     uint32_t event_count = 0;
 };
@@ -76,6 +106,8 @@ struct BuiltinDescriptor {
     // An instrument: it takes the track's instrument slot and plays the
     // track's notes (BuiltinContext::events) instead of processing audio.
     bool instrument = false;
+    // Sample slots (audio files the device plays, see BuiltinSample).
+    uint32_t sample_slots = 0;
 };
 
 std::span<const BuiltinDescriptor> builtin_registry() noexcept;
@@ -88,6 +120,18 @@ const se_builtin_desc* builtin_registry_c(std::size_t& count) noexcept;
 // memcpy) and `sidechain` is the source track id (0 = none).
 const char* parse_builtin_state(const uint8_t* data, std::size_t len, const uint8_t*& values, uint32_t& count,
                                 uint64_t& sidechain) noexcept;
+
+// A parsed v1 or v2 state (pointers into the blob; read with memcpy).
+struct BuiltinStateView {
+    const uint8_t* values = nullptr;
+    uint32_t value_count = 0;
+    uint64_t sidechain = 0;
+    const uint8_t* samples = nullptr; // se_builtin_sample entries
+    uint32_t sample_count = 0;
+    const uint8_t* slices = nullptr;  // se_builtin_slice entries
+    uint32_t slice_count = 0;
+};
+const char* parse_builtin_state(const uint8_t* data, std::size_t len, BuiltinStateView& out) noexcept;
 
 // Adapter from a BuiltinProcessor to the plugin host.
 class BuiltinInstance final : public PluginInstance {
@@ -102,6 +146,14 @@ public:
     // Main thread: new values (lock-free stores, picked up at the next block).
     void set_value(uint32_t index, float value) noexcept;
     void update_state(const uint8_t* data, std::size_t len) noexcept override;
+    // Main thread: resolve the sample table of the last state into assets
+    // and hand the new set to the RT side (only when it changed).
+    void bind_samples(const AssetLookup& lookup);
+    // Main thread: free the sample set the RT side has stopped using.
+    void reclaim() noexcept;
+    // Main thread: queue a live note (velocity 0 = off). False when full.
+    bool push_note(uint8_t pitch, uint8_t velocity) noexcept;
+    bool instrument() const noexcept { return desc_.instrument; }
     float value(uint32_t index) const noexcept;
     // Main thread: latest readouts.
     uint32_t readouts(float* out, uint32_t capacity) const noexcept;
@@ -121,8 +173,33 @@ public:
 
     // Test hook: the wrapped processor.
     BuiltinProcessor& processor() noexcept { return *proc_; }
+    ~BuiltinInstance() override;
+
+    static constexpr uint32_t kLiveEvents = 256;
 
 private:
+    struct SampleEntry {
+        uint64_t asset = 0;
+        uint32_t slot = 0;
+        std::vector<BuiltinSlice> slices;
+        bool operator==(const SampleEntry&) const = default;
+    };
+    struct SampleSet {
+        std::vector<AssetRef> refs;
+        std::vector<BuiltinSample> views; // one per slot
+        std::vector<BuiltinSlice> slices;
+    };
+    void take_samples() noexcept; // RT
+
+    std::vector<SampleEntry> table_;       // last parsed (main thread)
+    std::vector<SampleEntry> bound_;       // what the last bind resolved
+    std::vector<uint64_t> bound_present_;  // assets that resolved last time
+    bool bound_once_ = false;
+    std::atomic<SampleSet*> pending_{nullptr};
+    std::atomic<SampleSet*> retired_{nullptr};
+    SampleSet* active_ = nullptr; // RT owned
+    SpscQueue<MidiEvent, kLiveEvents> live_;
+    std::vector<MidiEvent> merged_;  // RT scratch: live + sequenced events
     const BuiltinDescriptor& desc_;
     std::unique_ptr<BuiltinProcessor> proc_;
     std::unique_ptr<std::atomic<float>[]> target_; // written by the main thread

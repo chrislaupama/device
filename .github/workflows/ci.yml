@@ -55,12 +55,36 @@ jobs:
           rustc --version
           if [ "$RUNNER_OS" = "Windows" ]; then cl 2>&1 | head -1; else c++ --version | head -1; fi
 
+      # Self-hosted runners keep a cargo target dir and an SDK download dir per
+      # runner outside the workspace (checkout wipes the workspace's ignored
+      # files), so each runner keeps its own incremental build and nothing is
+      # uploaded. Saving target/ to the GitHub cache took 26 minutes a run.
+      # GitHub-hosted runners start empty, so they use the workspace and
+      # actions/cache instead.
+      - name: Build directories
+        shell: bash
+        run: |
+          if [ "$RUNNER_ENVIRONMENT" = "github-hosted" ]; then
+            target="$GITHUB_WORKSPACE/target"
+            deps="$GITHUB_WORKSPACE/.deps"
+          else
+            base="$HOME/.cache/sainestudio-ci/$RUNNER_NAME"
+            target="$base/target"
+            deps="$base/deps"
+          fi
+          mkdir -p "$target" "$deps"
+          echo "CARGO_TARGET_DIR=$target" >> "$GITHUB_ENV"
+          echo "SAINE_DEPS_DIR=$deps" >> "$GITHUB_ENV"
+          echo "target: $target"
+          echo "deps:   $deps"
       - name: Cache SDK downloads
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v5
         with:
           path: .deps
           key: deps-${{ runner.os }}-${{ hashFiles('engine/CMakeLists.txt') }}
       - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v5
         with:
           path: |
@@ -72,14 +96,15 @@ jobs:
           restore-keys: |
             cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
             cargo-${{ runner.os }}-
+      # Only restored caches (hosted runners) can hold a CMakeCache.txt made
+      # in another checkout; the per-runner dirs always build in place.
       - name: Drop CMake caches restored from another runner's checkout
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && runner.environment == 'github-hosted'
         shell: bash
         run: |
-          root=$(pwd -P)
-          for dir in target .deps; do
-            if [ -d "$dir" ]; then find "$dir" -name CMakeCache.txt; fi
-          done > "$RUNNER_TEMP/cmake-caches.txt"
+          target=$(cd "$CARGO_TARGET_DIR" && pwd -P)
+          deps=$(cd "$SAINE_DEPS_DIR" && pwd -P)
+          find "$target" "$deps" -name CMakeCache.txt > "$RUNNER_TEMP/cmake-caches.txt"
           while IFS= read -r cache; do
             [ -f "$cache" ] || continue
             here=$(cd "$(dirname "$cache")" && pwd -P)
@@ -87,25 +112,25 @@ jobs:
             if [ -d "$made" ]; then made=$(cd "$made" && pwd -P); fi
             [ "$made" = "$here" ] && continue
             case "$here" in
-              "$root"/target/saine-third-party/*) stale="$root/target/saine-third-party" ;;
-              "$root"/.deps/*) stale="$root/.deps" ;;
+              "$target"/saine-third-party/*) stale="$target/saine-third-party" ;;
+              "$deps"/*) stale="$deps" ;;
               *) stale="$here" ;;
             esac
             echo "Removing $stale (its CMakeCache.txt was made in $made)"
             rm -rf "$stale"
           done < "$RUNNER_TEMP/cmake-caches.txt"
-      # The restored target/ can hold saine-engine's build-script output
+      # The target dir (persistent or restored) can hold saine-engine's build-script output
       # (out/lib) and fingerprints saved from another commit; cargo would then
       # skip CMake and link that old engine library. Cleaning the package
       # forces build.rs (and so CMake) to run on every run. The shared
-      # FetchContent tree in target/saine-third-party is kept.
+      # FetchContent tree in $CARGO_TARGET_DIR/saine-third-party is kept.
       - name: Force the engine build script to rerun
         run: |
           cargo clean -p saine-engine --locked
           cargo clean -p saine-engine --release --locked
 
       - name: Engine — configure
-        run: cmake -S engine -B engine/build-ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSAINE_ENGINE_WERROR=ON "-DFETCHCONTENT_BASE_DIR=${{ github.workspace }}/.deps"
+        run: cmake -S engine -B engine/build-ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSAINE_ENGINE_WERROR=ON "-DFETCHCONTENT_BASE_DIR=${{ env.SAINE_DEPS_DIR }}"
       - name: Engine — build
         run: cmake --build engine/build-ci -- -k 0
       - name: Engine — test
@@ -137,7 +162,7 @@ jobs:
           RUST_BACKTRACE: "1"
         run: |
           status=0
-          target/release/saine-studio --self-test --no-audio > selftest-macos.txt 2> selftest-macos-stderr.txt || status=$?
+          "$CARGO_TARGET_DIR/release/saine-studio" --self-test --no-audio > selftest-macos.txt 2> selftest-macos-stderr.txt || status=$?
           echo "self-test exit status: $status"
           grep -E "^(FAIL|SKIP)" selftest-macos.txt || true
           line=$(grep -E "^self-test: [0-9]+ / [0-9]+ checks passed" selftest-macos.txt) || { tail -30 selftest-macos-stderr.txt; exit 1; }
@@ -152,10 +177,10 @@ jobs:
           RUST_BACKTRACE: "1"
         run: |
           sudo apt-get install -y --no-install-recommends xvfb mesa-vulkan-drivers
-          xvfb-run -a -s "-screen 0 1600x1000x24" target/release/saine-studio --state reference-default --screenshot app-linux.png
+          xvfb-run -a -s "-screen 0 1600x1000x24" "$CARGO_TARGET_DIR/release/saine-studio" --state reference-default --screenshot app-linux.png
           test -s app-linux.png
           status=0
-          xvfb-run -a -s "-screen 0 1600x1000x24" target/release/saine-studio --self-test --no-audio > selftest-linux.txt 2> selftest-linux-stderr.txt || status=$?
+          xvfb-run -a -s "-screen 0 1600x1000x24" "$CARGO_TARGET_DIR/release/saine-studio" --self-test --no-audio > selftest-linux.txt 2> selftest-linux-stderr.txt || status=$?
           echo "self-test exit status: $status"
           grep -E "^(FAIL|SKIP)" selftest-linux.txt || true
           line=$(grep -E "^self-test: [0-9]+ / [0-9]+ checks passed" selftest-linux.txt) || { tail -30 selftest-linux-stderr.txt; exit 1; }
@@ -173,7 +198,7 @@ jobs:
           SLINT_WGPU_CPU: "1" # Slint refuses CPU adapters (WARP) unless allowed
           RUST_BACKTRACE: "1"
         run: |
-          $exe = "target\release\saine-studio.exe"
+          $exe = Join-Path $env:CARGO_TARGET_DIR "release\saine-studio.exe"
           $p = Start-Process -FilePath $exe -ArgumentList '--state','reference-default','--screenshot','app-windows.png' -NoNewWindow -Wait -PassThru -RedirectStandardError shot-windows-stderr.txt
           Get-Content shot-windows-stderr.txt
           "screenshot run exit code: 0x{0:X8}" -f $p.ExitCode

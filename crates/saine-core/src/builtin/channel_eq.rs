@@ -63,6 +63,7 @@ static VIEW: EqView = EqView {
 };
 
 pub static CHANNEL_EQ: DeviceDef = DeviceDef {
+    samples: 0,
     id: "channeleq",
     name: "Channel EQ",
     kind: PluginKind::Effect,

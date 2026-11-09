@@ -37,6 +37,7 @@ pub static WIDENER: DeviceDef = DeviceDef {
         FactoryPreset { name: "Fold to Centre", values: &[("width2", 0.0), ("lowcut", 20.0)] },
     ],
     sidechain: false,
+    samples: 0,
 };
 
 /// Effective width (percent) at frequency f: the side path is scaled by

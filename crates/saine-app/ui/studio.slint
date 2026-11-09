@@ -92,6 +92,29 @@ export struct PanelStrip {
     thresh-param: int, thresh-y: length, thresh-dash: string, thresh-label: string, thresh-value: string, thresh-rate: float,
 }
 
+// Sampler-family panels (src/sampler_panel.rs): every length is card relative and
+// already scaled; paths are in their box's own coordinates.
+export struct PanelPad { label: string, name: string, filled: bool, selected: bool, level: float, x: length, y: length, w: length, h: length }
+export struct PanelHandle { x: length, y: length, active: bool }
+export struct PanelSampler {
+    visible: bool,
+    kind: int,                 // 0 Sampler, 1 Pad Sampler, 2 Drum Rack
+    pads: [PanelPad], divider-x: length,
+    sub-visible: bool, sub-x: length, sub-y: length, sub-w: length, sub-h: length, sub-on: bool, sub-on-param: int, sub-title: string,
+    layer-visible: bool, layer-x: length, layer-y: length, layer-text: string, layer-name: string, mapped: string, can-step: bool,
+    play-visible: bool, play-x: length,
+    head-x: length, head-picks: [PanelPick],
+    row-y: length, row-right: length, row-picks: [PanelPick],
+    well-x: length, well-y: length, well-w: length, well-h: length,
+    loaded: bool, empty-text: string, hint: string, sample-name: string, can-remove: bool,
+    wave: string, dim: string, fades: string, slices: string, sel-x: length, sel-w: length, heads: string,
+    start-x: length, end-x: length, fade-in-x: length, fade-out-x: length, loop-x: length, grips: [length],
+    tabs-visible: bool, tabs-y: length, tab-pick: PanelPick, tab-right: length, tab-picks: [PanelPick],
+    knobs: [PanelKnob], knob-y: length,
+    pic-visible: bool, pic-x: length, pic-y: length, pic-w: length, pic-h: length,
+    pic-fill: string, pic-line: string, pic-grid: string, handles: [PanelHandle], pic-pads: [PanelPad],
+}
+
 // Plotted field (View::Field): caption + readout above a well; paths in well coordinates.
 // plot-*: the drag area (well relative). band: fill is a min..max band (alpha .16) instead of
 // the area under the first trace (alpha .28). dot: live LFO dot at dot-x / dot-y; live: the
@@ -144,6 +167,7 @@ export struct DeviceCard {
     picks: [PanelPick],
     sliders: [PanelSlider],
     strip: PanelStrip,
+    sampler: PanelSampler,
     field: PanelField,
     // Slider column rail (card relative) and cell width.
     slider-top: length,
@@ -490,6 +514,16 @@ export global Studio {
     callback panel-drag-xy(int, int, int, int, float, float, float, float, bool); // device, param x, param y, phase, dx, dy (px, right / up +), norm per px x / y, fine
     callback panel-field(int, int, float, float, bool);      // field XY drag: device, phase (as panel-drag), dx, dy (px, up +), fine
     callback panel-preset-step(int, int);                    // previous (-1) / next (+1) factory preset
+    // Sampler-family panels (src/sampler_panel.rs).
+    callback sampler-tab(int, int);                          // Sample / Pitch / Filter / Amp / Mod
+    callback sampler-pad(int, int, int, bool);               // which (0 rack pad, 1 slice pad), index, pressed
+    callback sampler-layer(int, int);                        // previous (-1) / next (+1) sound of the pad
+    callback sampler-play(int, bool);                        // Play button pressed / released
+    callback sampler-action(int, int);                       // pick-row button (view, add slice, clear slice)
+    callback sampler-remove(int);                            // remove the shown sample
+    callback sampler-load(int);                              // choose an audio file for the shown slot
+    callback sampler-well(int, int, float, float, bool);     // phase, x fraction, grab distance (fraction), alt
+    callback sampler-handle(int, int, int, length, length);  // picture handle i: phase, x, y (picture px)
     callback panel-graph(int, int, float, float, bool, bool); // canvas pointer (PanelCanvas.pointer): phase (0 press, 1 drag, 2 release, 3 cancel, 4 hover, 5 leave, 6 double-click), well x, y (px), shift, alt
     callback panel-graph-wheel(int, float, float, float) -> bool; // canvas wheel: x, y, wheel dy (px, up +): used
     callback panel-graph-key(int, string, bool, bool) -> bool;     // canvas key: text, shift, alt: accepted

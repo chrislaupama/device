@@ -89,6 +89,7 @@ static VIEW: EqView = EqView {
 };
 
 pub static CHARACTER_EQ: DeviceDef = DeviceDef {
+    samples: 0,
     id: "character-eq",
     name: "Character EQ",
     kind: PluginKind::Effect,

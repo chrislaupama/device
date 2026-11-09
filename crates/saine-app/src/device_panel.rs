@@ -96,6 +96,7 @@ pub struct PanelState {
     drag: Option<ParamDrag>,
     field: Option<FieldDrag>,
     meters: HashMap<DeviceId, MeterHistory>,
+    pub(crate) sampler: crate::sampler_panel::SamplerUi,
     /// Field devices while the transport plays: (last LFO phase, elapsed cycles).
     lfo: HashMap<DeviceId, (f32, f64)>,
     /// Canvas views (EQ, Auto Filter): hover, drag and selection state.
@@ -344,7 +345,7 @@ impl Controller {
 
     /// Value shown for a parameter: the live drag value (knob, field or canvas), else the model value.
     pub(crate) fn panel_value(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
-        if let Some(v) = def.index_of(p.id).and_then(|i| self.graph_drag_value(d.id, i)) {
+        if let Some(v) = def.index_of(p.id).and_then(|i| self.sampler_live(d.id, i).or_else(|| self.graph_drag_value(d.id, i))) {
             return v;
         }
         let is = |i: usize| def.params.get(i).is_some_and(|q| q.id == p.id);
@@ -545,7 +546,7 @@ impl Controller {
             }
         };
 
-        DeviceCard {
+        let card = DeviceCard {
             id: d.id.0 as i32,
             name: s(def.name),
             vendor: s(saine_core::builtin::VENDOR),
@@ -568,7 +569,11 @@ impl Controller {
             eq,
             buttons: model(body.buttons),
             ..Default::default()
+        };
+        if crate::sampler_panel::is_sampler(def) {
+            return self.sampler_card(d, def, card);
         }
+        card
     }
 
     fn dynamics_strip(&self, d: &Device, def: &DeviceDef, threshold: &str, w: f32) -> PanelStrip {
@@ -707,6 +712,7 @@ impl Controller {
     /// Engine readouts -> strip histories of the selected track's built-in
     /// devices with a dynamics strip (every poll tick, ~30 ms).
     pub(crate) fn panel_poll_meters(&mut self) {
+        self.sampler_poll();
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else { return };
         // Field devices: follow the LFO phase readout while the transport plays.
         let fields: Vec<DeviceId> = if self.engine.transport().playing {
@@ -772,6 +778,9 @@ impl Controller {
     // ---------------------------------------------------------------- gestures
 
     pub fn panel_drag(&mut self, device: DeviceId, index: i32, phase: i32, dy: f32, rate: f32, fine: bool) {
+        if index <= crate::sampler_panel::SLICE_GAIN {
+            return self.slice_drag(device, index, phase, dy, rate, fine);
+        }
         let Some((d, def)) = self.panel_def(device) else { return };
         let Some(p) = usize::try_from(index).ok().and_then(|i| def.params.get(i)) else { return };
         match phase {
@@ -811,7 +820,8 @@ impl Controller {
 
     /// Escape or a cancelled pointer: restore the value from before the drag, with no undo step.
     pub fn panel_cancel_drag(&mut self) -> bool {
-        if self.panel_cancel_graph_drag() {
+        self.sampler_release_all();
+        if self.sampler_cancel_drags() || self.panel_cancel_graph_drag() {
             return true;
         }
         let Some(g) = self.devices.panel.drag.take() else { return false };
@@ -821,6 +831,9 @@ impl Controller {
     }
 
     fn panel_set(&mut self, device: DeviceId, index: i32, value: impl FnOnce(&ParamDef, f32) -> Option<f32>) {
+        if index <= crate::sampler_panel::SLICE_GAIN {
+            return self.slice_set(device, index, value);
+        }
         let Some((d, def)) = self.panel_def(device) else { return };
         let Some(p) = usize::try_from(index).ok().and_then(|i| def.params.get(i)) else { return };
         let cur = def.value(d, p);
@@ -919,6 +932,7 @@ impl Controller {
 
     /// One gesture = one undo step: never merge with the previous edit of the same parameter.
     pub(crate) fn panel_commit(&mut self, cmd: Command) {
+        let cmd = self.sampler_followups(cmd);
         self.doc.seal_coalescing();
         self.execute(cmd);
         self.doc.seal_coalescing();
@@ -961,8 +975,9 @@ impl Controller {
 
     pub fn panel_text(&mut self, device: DeviceId, index: i32, text: &str) {
         let mut bad = None;
+        let typed = usize::try_from(index).ok().and_then(|i| self.panel_def(device).and_then(|(_, def)| def.params.get(i))).and_then(|p| self.sampler_parse(device, p, text));
         self.panel_set(device, index, |p, _| {
-            let v = p.parse(text);
+            let v = typed.or_else(|| p.parse(text));
             if v.is_none() {
                 bad = Some(format!("{}: can't read “{}”", p.name, text.trim()));
             }
@@ -1060,7 +1075,8 @@ impl Controller {
         if let Some(p) = def.param("sidechainEnable") {
             params.insert(p.id.into(), def.value(d, p));
         }
-        self.execute(Command::SetDeviceParams { device, params, preset: Some(f.name.to_string()) });
+        let cmd = self.sampler_followups(Command::SetDeviceParams { device, params, preset: Some(f.name.to_string()) });
+        self.execute(cmd);
     }
 
     /// Sidechain source pick: the source and the device's enable switch in one undo step.
