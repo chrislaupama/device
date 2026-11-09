@@ -38,6 +38,8 @@ fn engine_registry_matches_core_definitions() {
         let p = reg.iter().find(|p| p.id == def.id).unwrap_or_else(|| panic!("engine has no processor {:?}", def.id));
         let ids: Vec<&str> = def.params.iter().map(|q| q.id).collect();
         assert_eq!(p.params, ids, "{}: parameter order differs between saine-core and the engine", def.id);
+        let defaults: Vec<f32> = def.params.iter().map(|q| q.default).collect();
+        assert_eq!(p.defaults, defaults, "{}: defaults differ between saine-core and the engine", def.id);
     }
     let comp = reg.iter().find(|p| p.id == "compressor").unwrap();
     assert_eq!(comp.readouts, ["in_db", "out_db", "gr_db"]);

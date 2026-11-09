@@ -1341,7 +1341,7 @@ impl Controller {
         let Some((d, def)) = self.panel_def_any(device) else { return };
         let Some(p) = def.params.get(index) else { return };
         let cur = def.value(d, p).round() as usize;
-        let rows = p.choices.iter().enumerate().map(|(i, c)| (c.to_string(), if i == cur { "✓".to_string() } else { String::new() }, Some(MenuPick::Choice(device, index, i)), false)).collect();
+        let rows = p.choices.iter().enumerate().map(|(i, c)| (c.to_string(), if i == cur { "✓".to_string() } else { String::new() }, Some(MenuPick::Choice(device, index as i32, i as i32)), false)).collect();
         self.devices.menu = Some(DevMenu { pos: (x, y), w: 150.0, rows });
         self.ui_dirty = true;
     }

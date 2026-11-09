@@ -355,6 +355,7 @@ pub struct se_builtin_desc {
     pub readout_ids: *const *const c_char,
     pub param_count: u32,
     pub readout_count: u32,
+    pub param_defaults: *const f32,
     pub sample_slots: u32,
     pub instrument: u8,
     pub _pad: [u8; 3],
@@ -1021,14 +1022,20 @@ mod abi_layout {
         );
         assert_eq!((size_of::<se_builtin_state>(), align_of::<se_builtin_state>()), (16, 8));
         assert_eq!([offset_of!(se_builtin_state, value_count), offset_of!(se_builtin_state, sidechain_track_id)], [4, 8]);
-        assert_eq!((size_of::<se_builtin_desc>(), align_of::<se_builtin_desc>()), (40, 8));
-        assert_eq!([offset_of!(se_builtin_desc, sample_slots), offset_of!(se_builtin_desc, instrument)], [32, 36]);
+        assert_eq!((size_of::<se_builtin_desc>(), align_of::<se_builtin_desc>()), (48, 8));
+        assert_eq!([offset_of!(se_builtin_desc, sample_slots), offset_of!(se_builtin_desc, instrument)], [40, 44]);
         assert_eq!((size_of::<se_builtin_state_v2>(), align_of::<se_builtin_state_v2>()), (24, 8));
         assert_eq!([offset_of!(se_builtin_state_v2, sample_count), offset_of!(se_builtin_state_v2, slice_count)], [16, 20]);
         assert_eq!((size_of::<se_builtin_sample>(), size_of::<se_builtin_slice>()), (16, 16));
         assert_eq!(
-            [offset_of!(se_builtin_desc, param_ids), offset_of!(se_builtin_desc, readout_ids), offset_of!(se_builtin_desc, param_count), offset_of!(se_builtin_desc, readout_count)],
-            [8, 16, 24, 28]
+            [
+                offset_of!(se_builtin_desc, param_ids),
+                offset_of!(se_builtin_desc, readout_ids),
+                offset_of!(se_builtin_desc, param_count),
+                offset_of!(se_builtin_desc, readout_count),
+                offset_of!(se_builtin_desc, param_defaults),
+            ],
+            [8, 16, 24, 28, 32]
         );
     }
 

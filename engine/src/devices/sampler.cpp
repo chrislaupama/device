@@ -32,6 +32,8 @@ constexpr const char* kParamIds[] = {
     "start", "end", "fadeIn", "fadeOut", "reverse", "loop", "loopStart", "sliceKey", "chop", "sensitivity",
     "division"};
 static_assert(sizeof(kParamIds) / sizeof(kParamIds[0]) == kParamCount);
+constexpr float kDefaults[kParamCount] = {1, 0, 0, 8, 0, 60, 0, 0, 0, 0, 0, 2, 1, 0, 2, 120, 1, 48, 0, 1, 20000, 0, 0, 0,
+                                         0, 0, 300, 0, 200, 0, 2, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 60, 0, 50, 2};
 
 constexpr int kPlayheads = 8;
 constexpr const char* kReadoutIds[] = {"pos0", "pos1", "pos2", "pos3", "pos4", "pos5", "pos6", "pos7"};
@@ -307,6 +309,6 @@ std::unique_ptr<BuiltinProcessor> create_sampler() { return std::make_unique<Sam
 } // namespace
 
 extern const BuiltinDescriptor kSamplerDescriptor;
-const BuiltinDescriptor kSamplerDescriptor{"sampler-steam", kParamIds, kReadoutIds, &create_sampler, kIdleReadouts, true, 1};
+const BuiltinDescriptor kSamplerDescriptor{"sampler-steam", kParamIds, kReadoutIds, &create_sampler, kIdleReadouts, kDefaults, true, 1};
 
 } // namespace saine

@@ -19,6 +19,7 @@ mod assistant_provider;
 mod automation;
 mod clipedit;
 mod controller;
+mod device_fields;
 mod device_panel;
 mod devices;
 mod gpu;
@@ -85,7 +86,7 @@ struct Args {
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
     device_chain_review: bool,
     /// reference-<built-in id> (reference-compressor, reference-drum-rack...): that device at its defaults.
-    builtin_state: Option<&'static str>,
+    device_state: Option<&'static str>,
     /// Files loaded as if dropped on the window (after the state is set up).
     load_sample: Vec<PathBuf>,
     /// --sampler-tab N: with a sampler state, show that tab (review screenshots).
@@ -175,7 +176,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s if s.strip_prefix("reference-").and_then(saine_core::builtin::find).is_some() => {
                     a.reference_default = true;
-                    a.builtin_state = s.strip_prefix("reference-").and_then(saine_core::builtin::find).map(|d| d.id);
+                    a.device_state = s.strip_prefix("reference-").and_then(saine_core::builtin::find).map(|d| d.id);
                 }
                 "review-settings-plugins" => {
                     a.reference_default = true;
@@ -188,7 +189,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, review-settings-plugins, reference-<built-in device id>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, review-settings-plugins)"
                     ));
                 }
             },
@@ -681,7 +682,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(20.0);
     }
-    if let Some(id) = args.builtin_state {
+    if let Some(id) = args.device_state {
         // Compare with renders/reference/<id>.png (Captain drive): the built-in device at its
         // defaults, alone in an audio track's chain (an instrument on an instrument track),
         // transport stopped.
@@ -886,6 +887,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_step, |c, id: i32, p: i32, delta: i32, fine: bool| c.panel_step(saine_core::DeviceId(id as u64), p, delta, fine));
     on!(on_panel_choice, |c, id: i32, p: i32, i: i32| c.panel_choice(saine_core::DeviceId(id as u64), p, i));
     on!(on_panel_text, |c, id: i32, p: i32, text: slint::SharedString| c.panel_text(saine_core::DeviceId(id as u64), p, &text));
+    on!(on_panel_field, |c, id: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.panel_field_drag(saine_core::DeviceId(id as u64), phase, dx, dy, fine));
     on!(on_panel_menu, |c, id: i32, which: i32, x: f32, y: f32| c.panel_menu(saine_core::DeviceId(id as u64), which, x, y));
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(saine_core::DeviceId(id as u64), dir));
     on!(on_sampler_tab, |c, id: i32, tab: i32| c.sampler_tab(saine_core::DeviceId(id as u64), tab));

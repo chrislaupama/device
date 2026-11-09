@@ -7,6 +7,7 @@
 #include "builtin.hpp"
 #include "sampler_engine.hpp"
 
+#include <array>
 #include <cmath>
 #include <cstring>
 
@@ -135,6 +136,7 @@ void dispatch(const BuiltinContext& ctx, uint32_t frames, Render&& render, On&& 
 
 constexpr const char* kPadIds[] = {"gain", "pan", "transpose", "fadeIn", "fadeOut", "start", "end", "reverse", "gate", "warp"};
 static_assert(sizeof(kPadIds) / sizeof(kPadIds[0]) == kPadParams);
+constexpr float kPadDefaults[kPadParams] = {0, 0, 0, 0, 0, 0, 1, 0, 0, 0};
 constexpr const char* kPadReadouts[] = {"level", "pos", "layer"};
 constexpr float kPadIdle[] = {0.0f, -1.0f, -1.0f};
 
@@ -176,6 +178,14 @@ constexpr const char* kRackIds[] = {SAINE_PAD_IDS(1),  SAINE_PAD_IDS(2),  SAINE_
                                     SAINE_PAD_IDS(13), SAINE_PAD_IDS(14), SAINE_PAD_IDS(15), SAINE_PAD_IDS(16)};
 #undef SAINE_PAD_IDS
 static_assert(sizeof(kRackIds) / sizeof(kRackIds[0]) == kPads * kRackBlock);
+constexpr auto kRackDefaults = [] {
+    std::array<float, kPads * kRackBlock> v{};
+    for (uint32_t p = 0; p < kPads; ++p) {
+        v[p * kRackBlock] = 1.0f;
+        for (uint32_t i = 0; i < kPadParams; ++i) v[p * kRackBlock + 1 + i] = kPadDefaults[i];
+    }
+    return v;
+}();
 
 #define SAINE_PAD_RO(p) "lvl" #p, "pos" #p, "layer" #p
 constexpr const char* kRackReadouts[] = {SAINE_PAD_RO(0),  SAINE_PAD_RO(1),  SAINE_PAD_RO(2),  SAINE_PAD_RO(3),
@@ -243,7 +253,7 @@ std::unique_ptr<BuiltinProcessor> create_drum_rack() { return std::make_unique<D
 
 extern const BuiltinDescriptor kPadSamplerDescriptor;
 extern const BuiltinDescriptor kDrumRackDescriptor;
-const BuiltinDescriptor kPadSamplerDescriptor{"pad-sampler", kPadIds, kPadReadouts, &create_pad_sampler, kPadIdle, true, kLayers};
-const BuiltinDescriptor kDrumRackDescriptor{"drum-rack", kRackIds, kRackReadouts, &create_drum_rack, kRackIdle, true, kPads * kLayers};
+const BuiltinDescriptor kPadSamplerDescriptor{"pad-sampler", kPadIds, kPadReadouts, &create_pad_sampler, kPadIdle, kPadDefaults, true, kLayers};
+const BuiltinDescriptor kDrumRackDescriptor{"drum-rack", kRackIds, kRackReadouts, &create_drum_rack, kRackIdle, kRackDefaults, true, kPads * kLayers};
 
 } // namespace saine

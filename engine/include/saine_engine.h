@@ -969,10 +969,11 @@ typedef struct se_builtin_desc {
     const char* const* readout_ids; /* readout_count entries */
     uint32_t param_count;
     uint32_t readout_count;
+    const float* param_defaults; /* param_count entries: the processor's defaults */
     uint32_t sample_slots;
     uint8_t instrument;
     uint8_t _pad[3];
-} se_builtin_desc; /* 40 bytes, align 8 */
+} se_builtin_desc; /* 48 bytes, align 8 */
 
 /* Built-in devices that play audio files (samplers, drum pads) use the v2
  * state: the v1 header extended by the sample table. After the header come
