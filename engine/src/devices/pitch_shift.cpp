@@ -34,13 +34,13 @@ void PitchShifter::prepare(uint32_t fft_size) {
 void PitchShifter::reset() noexcept {
     for (auto* v : {&in_fifo_, &out_fifo_, &accum_, &last_phase_, &out_phase_acc_})
         std::fill(v->begin(), v->end(), 0.0f);
-    pos_ = latency();
+    pos_ = n_ - hop_;
 }
 
 void PitchShifter::set_ratio(float ratio) noexcept { ratio_ = std::clamp(ratio, 0.25f, 4.0f); }
 
 void PitchShifter::process(const float* in, float* out, uint32_t n) noexcept {
-    const uint32_t lat = latency();
+    const uint32_t lat = n_ - hop_;
     for (uint32_t i = 0; i < n; ++i) {
         const float x = in[i];
         in_fifo_[pos_] = x;

@@ -304,10 +304,14 @@ component PickItem inherits HorizontalLayout {
         }
         Icon { x: parent.width - 18px * zm; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: Icons.chevron-down; ink: #a0a0a3; stroke-width: 1.3px; }
         menu-ta := TouchArea {
+            property <bool> alt-down;
             pointer-event(e) => {
-                if (e.kind == PointerEventKind.down && e.modifiers.alt && root.p.param >= 0) { Studio.panel-reset(root.device, root.p.param); }
+                if (e.kind == PointerEventKind.down) {
+                    self.alt-down = e.modifiers.alt && root.p.param >= 0;
+                    if (self.alt-down) { Studio.panel-reset(root.device, root.p.param); }
+                }
             }
-            clicked => { Studio.panel-menu(root.device, root.p.param, self.absolute-position.x, self.absolute-position.y + self.height + 2px); }
+            clicked => { if (!self.alt-down) { Studio.panel-menu(root.device, root.p.param, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
         }
     }
     // Latch pill (On/Off parameter): sized by the wider label so toggling never moves the row.

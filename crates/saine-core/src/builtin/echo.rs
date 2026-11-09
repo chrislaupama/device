@@ -225,7 +225,8 @@ pub fn picture(def: &DeviceDef, d: &Device, bpm: f64) -> Picture {
     let loop_gain = 10f32.powf((v("intensity").clamp(0.0, 10.0) - ms.onset) * 3.0 / 20.0) * if machine == 1 { 0.5 + 0.5 * wire } else { 1.0 };
     let w = wear(v("generations").clamp(0.0, 1.0), ms.detent);
     let hf_loss = (-2.0 * std::f32::consts::PI * 2000.0 / ms.default_speed * ms.spacing_um * (w - 1.0) * 0.001).exp();
-    Picture { machine, speed, heads, pass_gain: loop_gain * hf_loss }
+    let feeding = heads.iter().filter(|h| h.fb).count().max(1) as f32;
+    Picture { machine, speed, heads, pass_gain: loop_gain * hf_loss / feeding }
 }
 
 /// Parameter writes that turn the current heads into authored (user-pinned) heads with
@@ -268,8 +269,27 @@ fn motor_text(def: &DeviceDef, d: &Device, p: &ParamDef, v: f32) -> Option<Strin
     })
 }
 
+/// Motor from typed text in the unit `motor_text` shows: ms (Cartridge) or cm/s (Tape Loop, Drum).
+fn motor_read(def: &DeviceDef, d: &Device, p: &ParamDef, text: &str) -> Option<f32> {
+    if p.id != "motor" {
+        return None;
+    }
+    let machine = def.param("machine").map_or(0.0, |m| def.value(d, m)).round() as u32;
+    let mains = def.param("drum_mains_60").is_some_and(|m| def.value(d, m) >= 0.5);
+    let x: f32 = text.trim_end_matches(if machine == 2 { "ms" } else { "cm/s" }).trim().parse().ok()?;
+    Some(match machine {
+        2 => (CARTRIDGE.heads_mm[0] - x / 1000.0 * CARTRIDGE_SPEED) / CARTRIDGE_TRAVEL,
+        0 => (x * 10.0 - 120.0) / 280.0,
+        _ => x * 10.0 / (DRUM_SPEED * if mains { 1.2 } else { 1.0 }) - 0.5,
+    })
+}
+
 fn generation_text(v: f32) -> String {
     format!("{}%", (v * 100.0).round() as i32)
+}
+
+fn generation_read(text: &str) -> Option<f32> {
+    text.trim_end_matches('%').trim().parse::<f32>().ok().map(|v| v / 100.0)
 }
 
 const HZ_SKEW: Taper = Taper::Linear { skew: 0.3 };
@@ -305,7 +325,7 @@ pub static ECHO: DeviceDef = DeviceDef {
         ParamDef::new("tone_treble", "Treble", -10.0, 10.0, 0.0, LINEAR, "dB", Format::Db).help("Treble of the echo path."),
         ParamDef::new("width", "Width", 0.0, 200.0, 100.0, LINEAR, "%", Format::Percent).help("Stereo spread of the heads."),
         ParamDef::new("width_humanize", "Width Humanize", 0.0, 100.0, 45.0, LINEAR, "%", Format::Percent).help("Irregularity of the head pan pattern."),
-        ParamDef::new("generations", "Generations", 0.0, 1.0, 0.45, LINEAR, "", Format::Custom(TextFns { show: generation_text, read: None }))
+        ParamDef::new("generations", "Generations", 0.0, 1.0, 0.45, LINEAR, "", Format::Custom(TextFns { show: generation_text, read: Some(generation_read) }))
             .label("Generation")
             .help("How much each pass wears the sound: studio-fresh to dying tape."),
         ParamDef::choice("spring_on", "Spring On", OFF_ON, 0).help("Spring reverb on the echoes."),
@@ -442,5 +462,5 @@ pub static ECHO: DeviceDef = DeviceDef {
         FactoryPreset { name: "Send: Tape Loop", values: &[("machine", 0.0), ("intensity", 5.6), ("mix", 100.0), ("kill_dry", 1.0), ("tail_lp_l", 5000.0), ("tail_lp_r", 5000.0)] },
     ],
     sidechain: true,
-    hooks: Hooks { label: None, text: Some(motor_text) },
+    hooks: Hooks { label: None, text: Some(motor_text), read: Some(motor_read) },
 };

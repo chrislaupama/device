@@ -356,11 +356,14 @@ private:
         if (spread > 0.0f) st += snap_to_scale(rng_.bi() * spread, spread, scale);
         st = std::clamp(st, -48.0f, 48.0f);
         const float ratio = std::exp2(st / 12.0f);
-        const float len = std::max(grain_s * static_cast<float>(sr_), 16.0f);
+        // A grain reads len * ratio samples; keep that within half the capture so a start exists
+        // that neither overruns the write head nor reaches audio older than the buffer.
+        const float max_read = 0.5f * static_cast<float>(len_) - 0.002f * static_cast<float>(sr_) - 8.0f;
+        const float len = std::max(std::min(grain_s * static_cast<float>(sr_), max_read / ratio), 16.0f);
         const bool rev = rng_.uni() < reverse;
         float back = (pos_s + rng_.uni() * spray_s + drift * 0.5f * std::fabs(drift_pos_)) * static_cast<float>(sr_);
-        // Forward grains faster than real time must start far enough back not to overrun the write head.
-        const float travel = frozen_ ? 0.0f : len * std::max(0.0f, ratio - 1.0f);
+        // Forward grains must not overrun the write head: it moves at 1x, or not at all while frozen.
+        const float travel = len * std::max(0.0f, ratio - (frozen_ ? 0.0f : 1.0f));
         back = std::max(back, travel + 0.002f * static_cast<float>(sr_));
         if (rev) back = std::max(back, len * ratio + 4.0f); // reversed grains read back from their start
         back = std::min(back, static_cast<float>(len_) - len * ratio - 8.0f);

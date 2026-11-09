@@ -197,5 +197,5 @@ pub static DELAY: DeviceDef = DeviceDef {
         FactoryPreset { name: "Send: Bounce", values: &[("timeDivision", 9.0), ("feedback", 44.0), ("stereoWidth", 190.0), ("mix", 100.0), ("mode", 1.0), ("eq0Freq", 210.0), ("eq0Enabled", 1.0), ("dry", 0.0)] },
     ],
     sidechain: false,
-    hooks: Hooks { label: Some(label), text: None },
+    hooks: Hooks { label: Some(label), ..Hooks::NONE },
 };

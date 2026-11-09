@@ -9,7 +9,7 @@
 // quefrencies) of the input is kept in place: every moved bin is rescaled by
 // envelope(new) / envelope(old).
 //
-// Latency: fft_size - hop samples. prepare() allocates; reset() and
+// Latency: fft_size samples (a hop completes one frame after it is analysed). prepare() allocates; reset() and
 // process() are RT safe.
 #pragma once
 
@@ -30,7 +30,7 @@ public:
     void set_formant(bool on) noexcept { formant_ = on; }
     // Mono, in-place allowed (in == out).
     void process(const float* in, float* out, uint32_t n) noexcept;
-    uint32_t latency() const noexcept { return n_ - hop_; }
+    uint32_t latency() const noexcept { return n_; }
     uint32_t fft_size() const noexcept { return n_; }
 
 private:

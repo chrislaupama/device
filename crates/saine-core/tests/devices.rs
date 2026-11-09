@@ -321,6 +321,23 @@ fn echo_picture_follows_the_machine_model() {
 }
 
 #[test]
+fn echo_reads_back_the_text_it_shows() {
+    let def = time_fx("echo");
+    let generations = def.param("generations").unwrap();
+    let motor = def.param("motor").unwrap();
+    let mut d = def.instantiate();
+    assert_eq!(def.parse_of(&d, generations, "45%"), Some(0.45));
+    assert_eq!(def.parse_of(&d, generations, "45"), Some(0.45));
+    for (machine, mains) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (2.0, 0.0)] {
+        d.params.insert("machine".into(), machine);
+        d.params.insert("drum_mains_60".into(), mains);
+        let shown = def.text_of(&d, motor, 0.3);
+        let read = def.parse_of(&d, motor, &shown).unwrap_or_else(|| panic!("machine {machine}: can't read {shown}"));
+        assert!((read - 0.3).abs() < 0.01, "machine {machine}: {shown} -> {read}");
+    }
+}
+
+#[test]
 fn mix_lock_keeps_mix_across_presets() {
     let def = time_fx("grains");
     let mut d = def.instantiate();

@@ -125,7 +125,7 @@ TEST_CASE(pitch_shifter_octave_up_and_down) {
 TEST_CASE(pitch_shifter_reports_latency_and_unity_is_a_pure_delay) {
     DeviceRig r("pitch-shifter", kPitch, kRate, 256);
     const uint32_t lat = r.instance().latency();
-    CHECK_EQ(lat, 1536u);
+    CHECK_EQ(lat, 2048u);
     const Signal x = noise(9600, 0.5f, 11);
     const auto y = r.run(x, x).first;
     for (std::size_t i = lat; i < x.size(); ++i) {
@@ -140,6 +140,26 @@ TEST_CASE(pitch_shifter_reports_latency_and_unity_is_a_pure_delay) {
     d.set("mix", 0.f);
     const auto z = d.run(x, x).first;
     CHECK(z[lat + 1000] == x[1000]);
+}
+
+TEST_CASE(pitch_shifter_vocoder_path_lines_up_with_the_dry_path) {
+    // Formants on at zero shift runs the vocoder; its output must sit at the reported latency.
+    DeviceRig r("pitch-shifter", kPitch, kRate, 256);
+    r.set("formant_preserve", 1.f);
+    const uint32_t lat = r.instance().latency();
+    const Signal x = noise(48000, 0.5f, 12);
+    const auto y = r.run(x, x).first;
+    const auto corr = [&](std::size_t lag) {
+        double xy = 0.0, xx = 0.0, yy = 0.0;
+        for (std::size_t i = 24000; i < 48000; ++i) {
+            xy += static_cast<double>(y[i]) * x[i - lag];
+            xx += static_cast<double>(x[i - lag]) * x[i - lag];
+            yy += static_cast<double>(y[i]) * y[i];
+        }
+        return xy / std::sqrt(xx * yy + 1e-12);
+    };
+    CHECK(corr(lat) > 0.8);
+    CHECK(corr(lat) > corr(lat - 512) + 0.3);
 }
 
 // ---------------------------------------------------------------- delay
@@ -421,6 +441,20 @@ TEST_CASE(reverb_cuts_and_shimmer_adds_upper_octave) {
 
 // ---------------------------------------------------------------- grains
 
+TEST_CASE(reverb_shimmer_does_not_depend_on_the_block_split) {
+    const Signal x = noise(48000, 0.5f, 21);
+    const auto render = [&](uint32_t block) {
+        DeviceRig r("reverb", kReverb, kRate, block);
+        r.set("mode2", 4.f);
+        r.set("shimmer", 100.f);
+        return r.run(x, x).first;
+    };
+    const auto a = render(256), b = render(37);
+    double diff = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i) diff = std::max(diff, static_cast<double>(std::fabs(a[i] - b[i])));
+    CHECK(diff < 1e-4);
+}
+
 TEST_CASE(grains_play_the_input_and_mix_zero_is_dry) {
     DeviceRig r("grains", kGrains, kRate, 256);
     r.set("mix", 100.f);
@@ -449,6 +483,20 @@ TEST_CASE(grains_freeze_holds_the_sound_after_the_input_stops) {
     o.run_mono(tone(48000, 440.0, kRate, 0.5));
     const auto gone = o.run_mono(Signal(48000 * 2, 0.0f));
     CHECK(rms(gone, 48000) < 1e-4);
+}
+
+TEST_CASE(grains_frozen_fast_grains_stay_in_the_capture) {
+    // A 2 s grain two octaves up reads 8 s; frozen, it must start far enough back to stay in the audio.
+    DeviceRig r("grains", kGrains, kRate, 256);
+    r.set("mix", 100.f);
+    r.set("size", 2000.f);
+    r.set("pitch", 24.f);
+    r.set("spray", 0.f);
+    r.run_mono(tone(48000 * 10, 200.0, kRate, 0.5));
+    r.set("freeze", 1.f);
+    const auto held = r.run_mono(Signal(48000 * 3, 0.0f));
+    CHECK(rms(held, 48000, 48000 * 3) > 0.05);
+    CHECK(peak(held) < 4.0);
 }
 
 TEST_CASE(grains_pitch_and_rhythm_steps) {

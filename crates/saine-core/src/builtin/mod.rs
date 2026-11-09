@@ -462,16 +462,19 @@ pub struct DeviceDef {
 pub struct Hooks {
     pub label: Option<fn(&DeviceDef, &Device, &ParamDef) -> Option<&'static str>>,
     pub text: Option<fn(&DeviceDef, &Device, &ParamDef, f32) -> Option<String>>,
+    /// Typed text -> plain value in the device's current state (the inverse of `text`).
+    pub read: Option<fn(&DeviceDef, &Device, &ParamDef, &str) -> Option<f32>>,
 }
 
 impl Hooks {
-    pub const NONE: Hooks = Hooks { label: None, text: None };
+    pub const NONE: Hooks = Hooks { label: None, text: None, read: None };
 }
 
 impl PartialEq for Hooks {
     fn eq(&self, o: &Self) -> bool {
         let same = |a: Option<usize>, b: Option<usize>| a == b;
         same(self.label.map(|f| f as usize), o.label.map(|f| f as usize)) && same(self.text.map(|f| f as usize), o.text.map(|f| f as usize))
+            && same(self.read.map(|f| f as usize), o.read.map(|f| f as usize))
     }
 }
 impl std::fmt::Debug for Hooks {
@@ -565,6 +568,12 @@ impl DeviceDef {
     /// Display text of `v` for `p` in the device's current state.
     pub fn text_of(&self, device: &Device, p: &ParamDef, v: f32) -> String {
         self.hooks.text.and_then(|f| f(self, device, p, v)).unwrap_or_else(|| p.format(v))
+    }
+
+    /// Parse typed text for `p` in the device's current state into a snapped plain value.
+    pub fn parse_of(&self, device: &Device, p: &ParamDef, text: &str) -> Option<f32> {
+        let read = self.hooks.read.and_then(|f| f(self, device, p, &text.trim().to_lowercase().replace('\u{2212}', "-")));
+        read.filter(|v| v.is_finite()).map(|v| p.snap(v)).or_else(|| p.parse(text))
     }
 
     /// Values of a preset as loaded onto `device`: `reset_on_load`

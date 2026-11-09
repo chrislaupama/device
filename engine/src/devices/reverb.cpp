@@ -119,10 +119,6 @@ public:
             for (int k = 0; k < 4; ++k) side[k].allocate(ms(kDiffMs[k] * 6.0f + 2.0f));
         for (auto& s : spring_) s.allocate(ms(90.0f));
         for (auto& s : shifter_) s.prepare(sample_rate > 60000.0 ? 2048 : 1024);
-        shim_in_.assign(max_block, 0.0f);
-        shim_a_.assign(max_block, 0.0f);
-        shim_b_.assign(max_block, 0.0f);
-        shim_out_.assign(max_block, 0.0f);
         wet_mono_.assign(max_block, 0.0f);
         tap_.prepare(sample_rate);
         mix_.set_time(25.0f, sr_);
@@ -146,7 +142,7 @@ public:
             for (auto& a : side) a.reset();
         for (auto& f : spring_lp_) f.reset();
         for (auto& s : shifter_) s.reset();
-        std::fill(shim_out_.begin(), shim_out_.end(), 0.0f);
+        shim_fb_ = 0.0f;
         for (auto& f : lc_) f.reset();
         for (auto& f : hc_) f.reset();
         tap_.reset();
@@ -247,7 +243,8 @@ public:
         const bool lc_on = lc > 20.02f;
         for (auto& f : lc_) f.set_hz(lc, sr_);
         for (auto& f : hc_) f.set_hz(hc, sr_);
-        // Shimmer voices: the previous block's shifted tail is this block's extra input.
+        // Shimmer voices: the tail is shifted sample by sample and fed back one sample later,
+        // so the feedback delay is the shifter latency whatever the block split.
         const bool shim_on = mode == kShimmerMode && shimmer > 0.0f;
         if (shim_on) {
             shifter_[0].set_ratio(std::exp2(kShiftSt[s1] / 12.0f));
@@ -272,8 +269,8 @@ public:
                     err += er_g[k] * pre_[(k + 1) & 1].read_linear(pd + 2.0f + er_t[k] * 1.07f);
                 }
             }
-            if (shim_on && i < cap) {
-                const float s = shim_out_[i] * shim_gain;
+            if (shim_on) {
+                const float s = shim_fb_ * shim_gain;
                 il += s;
                 ir += s;
             }
@@ -323,7 +320,14 @@ public:
             tr += bed * late_r * 0.35f + err;
             tl *= out_gain;
             tr *= out_gain;
-            if (i < cap) wet_mono_[i] = 0.5f * (tl + tr);
+            const float mono = 0.5f * (tl + tr);
+            if (i < cap) wet_mono_[i] = mono;
+            if (shim_on) {
+                float a = 0.0f, b = 0.0f;
+                shifter_[0].process(&mono, &a, 1);
+                if (s2 > 0) shifter_[1].process(&mono, &b, 1);
+                shim_fb_ = dsp::soft_clip((s2 > 0 ? 0.5f * (a + b) : a) * 1.6f) * 0.625f;
+            }
             // Width, filters, mix.
             const float wm = 0.5f * (tl + tr), wsd = 0.5f * (tl - tr) * width_.next(width);
             tl = wm + wsd;
@@ -346,17 +350,8 @@ public:
         for (auto& f : spring_lp_) f.y = dsp::flush(f.y);
 
         const uint32_t m_cap = std::min(n, cap);
-        if (shim_on) {
-            // Shift the block's tail; it feeds the network in the next block.
-            shifter_[0].process(wet_mono_.data(), shim_a_.data(), m_cap);
-            if (s2 > 0) shifter_[1].process(wet_mono_.data(), shim_b_.data(), m_cap);
-            for (uint32_t i = 0; i < m_cap; ++i) {
-                const float s = s2 > 0 ? 0.5f * (shim_a_[i] + shim_b_[i]) : shim_a_[i];
-                shim_out_[i] = dsp::soft_clip(s * 1.6f) * 0.625f;
-            }
-            for (uint32_t i = m_cap; i < cap; ++i) shim_out_[i] = 0.0f;
-        } else if (shim_was_on_) {
-            std::fill(shim_out_.begin(), shim_out_.end(), 0.0f);
+        if (!shim_on && shim_was_on_) {
+            shim_fb_ = 0.0f;
             for (auto& s : shifter_) s.reset();
         }
         shim_was_on_ = shim_on;
@@ -378,7 +373,7 @@ private:
         for (auto& side : disp_)
             for (auto& a : side) a.reset();
         for (auto& s : shifter_) s.reset();
-        std::fill(shim_out_.begin(), shim_out_.end(), 0.0f);
+        shim_fb_ = 0.0f;
     }
 
     double sr_ = 48000.0;
@@ -392,7 +387,8 @@ private:
     std::array<StretchedAp, 12> disp_[2];
     dsp::OnePole spring_lp_[2];
     dsp::PitchShifter shifter_[2];
-    std::vector<float> shim_in_, shim_a_, shim_b_, shim_out_, wet_mono_;
+    std::vector<float> wet_mono_;
+    float shim_fb_ = 0.0f;
     bool shim_was_on_ = false;
     dsp::OnePole lc_[2], hc_[2];
     dsp::SpectrumTap tap_;

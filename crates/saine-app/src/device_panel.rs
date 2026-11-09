@@ -632,6 +632,9 @@ impl Controller {
     /// Arrow keys: discrete parameters move one choice, continuous ones 1% of the range (0.2% fine).
     pub fn panel_step(&mut self, device: DeviceId, index: i32, delta: i32, fine: bool) {
         self.panel_set(device, index, |p, v| {
+            if p.momentary {
+                return None;
+            }
             let delta = if p.reversed { -delta } else { delta } as f32;
             Some(if p.is_discrete() {
                 v + delta
@@ -669,17 +672,13 @@ impl Controller {
     }
 
     pub fn panel_text(&mut self, device: DeviceId, index: i32, text: &str) {
-        let mut bad = None;
-        self.panel_set(device, index, |p, _| {
-            let v = p.parse(text);
-            if v.is_none() {
-                bad = Some(format!("{}: can't read “{}”", p.name, text.trim()));
-            }
-            v
-        });
-        if let Some(msg) = bad {
-            self.set_status(msg, 3);
-        }
+        let Some((d, def)) = self.panel_def(device) else { return };
+        let Some(p) = usize::try_from(index).ok().and_then(|i| def.params.get(i)) else { return };
+        let Some(v) = def.parse_of(d, p, text) else {
+            let msg = format!("{}: can't read “{}”", p.name, text.trim());
+            return self.set_status(msg, 3);
+        };
+        self.panel_set(device, index, |_, _| Some(v));
     }
 
     /// Choice menu of parameter `which` (>= 0), sidechain picker (-1) or presets (-2) at window x, y.

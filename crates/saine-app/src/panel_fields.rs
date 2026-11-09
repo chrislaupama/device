@@ -758,7 +758,7 @@ impl Controller {
                     .min_by(|a, b| a.1.total_cmp(&b.1))
                     .map(|(b, _)| Grab::DelayBand(b))
             }
-            "delay" => Some(Grab::DelayTime { right: v("link") < 0.5 && x > w / 2.0 }),
+            "delay" => Some(Grab::DelayTime { right: v("link") < 0.5 && y > h / 2.0 - 4.0 * Z }),
             "echo" => {
                 let pic = self.echo_picture(d, def);
                 let span = echo_span(&pic);
@@ -830,9 +830,9 @@ impl Controller {
             ],
             Grab::DelayBand(b) => DELAY_BAND_IDS[b].to_vec(),
             Grab::Pitch => vec!["semitones", "cents"],
-            Grab::EchoHead { .. } if v("machine").round() as u32 == 2 => vec!["motor", "intensity"],
+            Grab::EchoHead { .. } if v("machine").round() as u32 == 2 => vec!["motor", "intensity", "note_l", "note_r"],
             Grab::EchoHead { .. } => {
-                let mut ids = vec!["intensity", "heads", "heads_machine"];
+                let mut ids = vec!["intensity", "heads", "heads_machine", "note_l", "note_r"];
                 for n in 1..=6 {
                     for f in ["present", "on", "fb", "right", "pos", "level", "pan", "pan_pinned", "pos_pinned"] {
                         ids.extend(echo::head_param(n, f));
@@ -894,6 +894,13 @@ impl Controller {
                 let Some(hd) = pic.heads.get(head) else { return vec![intensity] };
                 let (left, right, _, _) = echo_box(w, h);
                 let ms = (hd.ms + dx / (right - left) * g.span * 1000.0 * fine / generation.max(1.0)).max(1.0);
+                let side = hd.pan > 0.0;
+                let first = pic.heads.iter().filter(|h| h.on && (h.pan > 0.0) == side).map(|h| h.mm).fold(f32::INFINITY, f32::min);
+                if start("sync") >= 0.5 && hd.on && hd.mm == first {
+                    let near = |i: &usize| (echo::note_beats(*i).ln() - (ms / 1000.0 / beat).ln()).abs();
+                    let note = (0..echo::NOTES.len()).min_by(|a, b| near(a).total_cmp(&near(b))).unwrap_or(10) as f32;
+                    return vec![(if side { "note_r" } else { "note_l" }, note), intensity];
+                }
                 if pic.machine == 2 {
                     let motor = ((echo::CARTRIDGE.heads_mm[0] - ms / 1000.0 * echo::CARTRIDGE_SPEED) / echo::CARTRIDGE_TRAVEL).clamp(0.0, 1.0);
                     return vec![("motor", motor), intensity];
