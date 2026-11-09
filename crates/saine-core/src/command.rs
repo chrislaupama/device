@@ -223,6 +223,8 @@ impl Command {
                 }
                 let id = track.id;
                 p.tracks.insert(idx, track);
+                // A new instrument track plays the built-in Synth.
+                crate::builtin::synth_v2::upgrade_track(p, idx);
                 Ok(Command::RemoveTrack { track: id })
             }
             Command::RemoveTrack { track } => {
@@ -552,6 +554,7 @@ impl Command {
                     if d.plugin.kind != PluginKind::Instrument {
                         return Err(invalid("device", "not an instrument plugin"));
                     }
+                    sanitize_builtin(d)?;
                     if d.id.0 == 0 {
                         d.id = DeviceId(p.alloc_id());
                     } else if p.find_device(d.id).is_some_and(|(t, s)| !(t == ti && s == DeviceSlot::Instrument)) {

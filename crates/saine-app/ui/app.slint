@@ -20,7 +20,7 @@ import { Panel, Icon, Icons, Pill, IconButton, SmallButton, HSlider, Knob, Switc
 
 export { Tokens }
 
-import { Studio, TrackRow, AutoLabel, AutoExtra, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, ChoiceItem, DeviceCard, PluginRow } from "studio.slint";
+import { Studio, TrackRow, AutoLabel, AutoExtra, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow } from "studio.slint";
 import { ClipSidebar, PianoRoll, ClipEmpty, ContextMenu } from "pianoroll.slint";
 import { MixerPanel } from "mixer.slint";
 import { AssistantPanel, HighlightOverlay } from "assistant.slint";
@@ -29,7 +29,7 @@ import { SettingsPanel, ChoiceList } from "settings.slint";
 import { PluginCard, AddDeviceCard, DevMenuList } from "devices.slint";
 import { BuiltinCard } from "device_panel.slint";
 
-export { Studio, TrackRow, AutoLabel, AutoExtra, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, ChoiceItem, DeviceCard, PluginRow }
+export { Studio, TrackRow, AutoLabel, AutoExtra, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow }
 
 // ------------------------------------------------------------------ header
 component Header inherits Rectangle {
@@ -709,7 +709,8 @@ export component AppWindow inherits Window {
             SynthMenuList {
                 x: min(Studio.synth-menu-x, root.width - 5px - Studio.synth-menu-w);
                 y: max(5px, min(Studio.synth-menu-y, root.height - 5px - Studio.synth-menu-h));
-                width: Studio.synth-menu-w; height: Studio.synth-menu-h;
+                width: Studio.synth-menu-w; height: min(Studio.synth-menu-h, root.height - 10px);
+                content-h: Studio.synth-menu-h;
                 items: Studio.synth-menu-items;
                 picked(i) => { Studio.synth-menu-pick(i); }
             }
