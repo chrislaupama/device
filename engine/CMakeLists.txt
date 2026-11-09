@@ -354,7 +354,7 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/devices/test_modulation.cpp
     tests/devices/test_character_mod.cpp
     tests/devices/test_synth_v2.cpp
-    tests/devices/test_restoration.cpp)
+    tests/devices/test_restoration.cpp
     tests/devices/test_shaper.cpp
     tests/devices/test_trance_gate.cpp)
   target_include_directories(saine_engine_tests PRIVATE src tests)
