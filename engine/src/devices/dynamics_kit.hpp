@@ -1,5 +1,5 @@
 // DSP building blocks of the dynamics devices (Character Compressor,
-// Multiband Compressor): fast log2 / exp2, biquads (scalar and four lanes),
+// Multiband Compressor): dB helpers over dsp.hpp fast math, biquads (scalar and four lanes),
 // linear-phase halfband oversampling with an integer latency, delay lines.
 // Header only; everything here is real-time safe after construction /
 // prepare (no allocation, locks or I/O on the processing calls).
@@ -11,41 +11,14 @@
 #include <cstring>
 #include <vector>
 
+#include "dsp.hpp"
+
 namespace saine::dsp {
 
 // ---------------------------------------------------------------- fast math
 
-// log2 with |error| < 2e-5 for x > 0 (x <= 0 reads as 1e-30).
-inline float fast_log2(float x) noexcept {
-    x = std::max(x, 1e-30f);
-    uint32_t b;
-    std::memcpy(&b, &x, 4);
-    const auto e = static_cast<float>(static_cast<int32_t>(b >> 23) - 127);
-    b = (b & 0x007FFFFFu) | 0x3F800000u;
-    float m;
-    std::memcpy(&m, &b, 4); // [1, 2)
-    // log2(m) = 2 / ln2 * atanh(t), t = (m - 1) / (m + 1) in [0, 1/3).
-    const float t = (m - 1.0f) / (m + 1.0f);
-    const float t2 = t * t;
-    const float s = t * (1.0f + t2 * (1.0f / 3.0f + t2 * (1.0f / 5.0f + t2 * (1.0f / 7.0f + t2 * (1.0f / 9.0f)))));
-    return e + 2.8853900817779268f * s;
-}
-
-// 2^x with relative error < 2e-6 on [-126, 126] (clamped outside).
-inline float fast_exp2(float x) noexcept {
-    x = std::clamp(x, -126.0f, 126.0f);
-    const float fl = std::floor(x);
-    const float f = x - fl;
-    const float p =
-        1.0f + f * (0.69314718f + f * (0.24022651f + f * (0.05550411f + f * (0.00961813f + f * (0.00133336f + f * 0.00015404f)))));
-    const auto bits = static_cast<uint32_t>(static_cast<int32_t>(fl) + 127) << 23;
-    float s;
-    std::memcpy(&s, &bits, 4);
-    return p * s;
-}
-
 inline float fast_db_to_gain(float db) noexcept { return fast_exp2(db * 0.166096404744368f); }
-inline float fast_gain_to_db(float g) noexcept { return 6.020599913279624f * fast_log2(g); }
+inline float fast_gain_to_db(float g) noexcept { return 6.020599913279624f * fast_log2(std::max(g, 1e-30f)); }
 
 // Rational tanh approximation (exact sign, |error| < 0.03, monotonic, saturates at +-1).
 inline float soft_tanh(float x) noexcept {

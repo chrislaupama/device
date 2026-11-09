@@ -145,6 +145,7 @@ pub static CHARACTER_COMPRESSOR: DeviceDef = DeviceDef {
             ("release", "model", &[CLEAN, VARI_MU, BUS_VCA, FET]),
             ("drive", "model", &[VARI_MU, BUS_VCA, FET, OPTO, RMS_VCA]),
         ],
+        fixed_width: 0.0,
     },
     factory: &[
         FactoryPreset { name: "Clear Lead Vocal", values: &[("model", 4.0), ("threshold", -27.0), ("ratio", 3.0), ("drive", 0.9), ("makeup", 9.5)] },

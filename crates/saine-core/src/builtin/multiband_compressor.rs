@@ -106,6 +106,7 @@ pub static MULTIBAND_COMPRESSOR: DeviceDef = DeviceDef {
         faces: &[("low_ratio", Face::Transfer)],
         min_height: 213.0,
         shown_when: &[],
+        fixed_width: 0.0,
     },
     factory: &[
         FactoryPreset {

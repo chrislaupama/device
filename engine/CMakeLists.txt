@@ -116,9 +116,15 @@ add_library(saine_engine STATIC
   src/plugins/vst3_instance.cpp
   src/plugins/clap_instance.cpp
   src/devices/builtin.cpp
+  src/devices/bitcrusher.cpp
   src/devices/compressor.cpp
   src/devices/character_compressor.cpp
   src/devices/multiband_compressor.cpp
+  src/devices/distortion.cpp
+  src/devices/soft_clipper.cpp
+  src/devices/tape_saturation.cpp
+  src/devices/utility.cpp
+  src/devices/widener.cpp
   src/devices/dsp.cpp
   src/devices/autopanner.cpp
   src/devices/character_mod.cpp
@@ -339,6 +345,8 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/devices/test_compressor.cpp
     tests/devices/test_character_compressor.cpp
     tests/devices/test_multiband_compressor.cpp
+    tests/devices/test_drive.cpp
+    tests/devices/test_imaging.cpp
     tests/devices/test_modulation.cpp
     tests/devices/test_character_mod.cpp)
   target_include_directories(saine_engine_tests PRIVATE src tests)

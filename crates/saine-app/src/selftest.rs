@@ -2058,7 +2058,93 @@ fn builtin_value(c: &Controller, param: &str) -> Option<f32> {
 fn panel_knob_xy(cd: &crate::DeviceCard, i: usize) -> Option<(f32, f32)> {
     let k = slint::Model::row_data(&cd.knobs, i)?;
     let z = crate::device_panel::Z;
-    Some(card_xy(cd, k.x + 31.0 * z, (229.0 + 16.0) * z))
+    Some(card_xy(cd, k.x + 31.0 * z, k.y + 16.0 * z))
+}
+
+fn builtin_of<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
+    let t = track_of(c, TrackKind::Audio)?;
+    c.project().tracks[t].devices.iter().find(|d| saine_core::builtin::def_of(d).is_some_and(|def| def.id == id))
+}
+
+/// Each other built-in: add it from the Built-in list, check its card, defaults and engine
+/// state, drag its first knob (one undo step), then undo back to the empty chain.
+fn builtin_each_steps() -> Vec<Step> {
+    use Step::*;
+    let mut steps: Vec<Step> = vec![Do("builtins: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false)))];
+    for def in saine_core::builtin::all().iter().filter(|d| ["distortion", "tapesaturation", "soft-clipper", "bitcrusher", "widener", "utility"].contains(&d.id)) {
+        let (id, name) = (def.id, def.name);
+        let base = Rc::new(Cell::new(0usize));
+        let before = Rc::new(Cell::new(0.0f32));
+        let (b0, b1, b2, b3) = (base.clone(), base.clone(), base.clone(), base);
+        let (v0, v1) = (before.clone(), before);
+        steps.push(DoC(format!("{name}: Add device › Built-in › {name}").leak(), Box::new(move |a, ctl| {
+            b0.set(ctl.borrow().doc.history_labels().len());
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            let add_x = a.global::<Studio>().get_add_device_x();
+            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == name) {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })));
+        steps.push(Check(format!("{name}: added at its defaults in one undo step; card drawn; engine live").leak(), Box::new(move |c, a| {
+            let n = c.doc.history_labels().len();
+            let label = format!("Add {name}");
+            if n != b1.get() + 1 || c.doc.undo_label() != Some(label.as_str()) {
+                return Err(format!("history {} -> {n}, last {:?}", b1.get(), c.doc.undo_label()));
+            }
+            let d = builtin_of(c, id).ok_or("no device")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            if let Some(p) = def.params.iter().find(|p| def.value(d, p) != p.default) {
+                return Err(format!("{} = {} (default {})", p.id, def.value(d, p), p.default));
+            }
+            let cd = card_named(a, name).ok_or("no card")?;
+            if !cd.builtin || slint::Model::row_count(&cd.knobs) == 0 {
+                return Err(format!("builtin {} knobs {}", cd.builtin, slint::Model::row_count(&cd.knobs)));
+            }
+            let errors = c.engine.plugin_load_errors();
+            (!errors.iter().any(|(e, _)| *e == d.id)).then_some(()).ok_or(format!("load errors {errors:?}"))
+        })));
+        steps.push(DoC(format!("{name}: drag the first knob 40 px").leak(), Box::new(move |a, ctl| {
+            let Some(cd) = card_named(a, name) else { return };
+            let Some(k) = slint::Model::row_data(&cd.knobs, 0) else { return };
+            {
+                let c = ctl.borrow();
+                let Some(d) = builtin_of(&c, id) else { return };
+                let def = saine_core::builtin::def_of(d).unwrap();
+                v0.set(def.value(d, &def.params[k.param as usize]));
+            }
+            if let Some((x, y)) = panel_knob_xy(&cd, 0) {
+                drag(a, x, y, x, if k.norm > 0.5 { y + 40.0 } else { y - 40.0 });
+            }
+        })));
+        steps.push(Check(format!("{name}: the drag changed the first knob's parameter in ONE undo step").leak(), Box::new(move |c, a| {
+            let n = c.doc.history_labels().len();
+            if n != b2.get() + 2 || c.doc.undo_label() != Some("Device Parameter Change") {
+                return Err(format!("history {} -> {n}, last {:?}", b2.get() + 1, c.doc.undo_label()));
+            }
+            let cd = card_named(a, name).ok_or("no card")?;
+            let k = slint::Model::row_data(&cd.knobs, 0).ok_or("no knob")?;
+            let d = builtin_of(c, id).ok_or("no device")?;
+            let def = saine_core::builtin::def_of(d).ok_or("no def")?;
+            let v = def.value(d, &def.params[k.param as usize]);
+            (v != v1.get()).then_some(()).ok_or(format!("value stayed {v}"))
+        })));
+        steps.push(Do(format!("{name}: ⌘Z twice").leak(), Box::new(|a| {
+            key(a, "z", true, false);
+            key(a, "z", true, false);
+        })));
+        steps.push(Check(format!("{name}: undo removes the device").leak(), Box::new(move |c, _| {
+            let n = c.doc.history_labels().len();
+            (builtin_of(c, id).is_none() && n == b3.get()).then_some(()).ok_or(format!("history {n}, want {}", b3.get()))
+        })));
+    }
+    steps
 }
 
 /// The built-in Compressor driven through its generated panel (no plugins needed).
@@ -2227,11 +2313,6 @@ fn builtin_device_steps() -> Vec<Step> {
             (approx(v, -9.0, 0.05) && n == h8.get()).then_some(()).ok_or(format!("threshold {v}, history {} -> {n}", h8.get()))
         })),
     ]
-}
-
-fn builtin_of<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
-    let t = track_of(c, TrackKind::Audio)?;
-    c.project().tracks[t].devices.iter().find(|d| saine_core::builtin::def_of(d).is_some_and(|def| def.id == id))
 }
 
 /// Character and Multiband Compressor: added from the Built-in list, live in the engine,
@@ -2464,6 +2545,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(platform_device_steps());
     all.extend(builtin_device_steps());
     all.extend(dynamics_device_steps());
+    all.extend(builtin_each_steps());
     all.extend(modulation_device_steps());
     all.extend(automation_steps());
     let steps = Rc::new(all);
