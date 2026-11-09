@@ -274,6 +274,7 @@ export component Knob inherits Rectangle {
     /// carries the value arc (overrides `ring`). Bipolar knobs get a centre marker.
     in property <bool> groove: false;
     in property <float> groove-radius: 12.5;
+    in property <color> groove-color: Tokens.knob-groove;
     in property <color> tick-color: #b9d3e4;
     in property <color> arc-color: Tokens.value-blue;
     in property <brush> ring-brush: @radial-gradient(circle, #111214 55%, #1c1d20 100%);
@@ -295,7 +296,7 @@ export component Knob inherits Rectangle {
     if root.groove: Path {
         width: root.width; height: root.height;
         viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
-        stroke: Tokens.knob-groove; stroke-width: 1.5px; fill: transparent;
+        stroke: root.groove-color; stroke-width: 1.5px; fill: transparent;
         MoveTo { x: root.cx + root.groove-radius * sin(-135deg); y: root.cy - root.groove-radius * cos(-135deg); }
         ArcTo { x: root.cx + root.groove-radius * sin(135deg); y: root.cy - root.groove-radius * cos(135deg); radius-x: root.groove-radius; radius-y: root.groove-radius; large-arc: true; sweep: true; }
     }

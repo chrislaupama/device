@@ -68,10 +68,25 @@ pub fn fmt_strip_pan(pan: f32) -> String {
     if v == 0.0 { "0.0".into() } else { format!("{v:.1}").replace('-', "−") }
 }
 
+/// Gain readout above a strip fader: one decimal with an explicit sign ("+1.5", "−12.0",
+/// "0.0"), and "−∞" at or below -60 dB, where the fader taper bottoms out.
+pub fn fmt_gain(db: f32) -> String {
+    if !db.is_finite() || db <= -60.0 {
+        return "−∞".into();
+    }
+    let v = (db * 10.0).round() / 10.0;
+    if v > 0.0 {
+        format!("+{v:.1}")
+    } else if v < 0.0 {
+        format!("−{:.1}", -v)
+    } else {
+        "0.0".into()
+    }
+}
+
 /// Peak-hold readout ("−∞" when silent), one decimal like the reference strip.
 pub fn fmt_peak(g: f32) -> String {
-    let db = gain_to_db(g);
-    if !db.is_finite() || db < -99.0 { "−∞".into() } else { format!("{db:.1}").replace('-', "−") }
+    fmt_gain(gain_to_db(g))
 }
 
 #[cfg(test)]
@@ -92,5 +107,9 @@ mod tests {
         assert_eq!(fmt_strip_pan(-0.5), "−25.0");
         assert_eq!(fmt_peak(0.0), "−∞");
         assert_eq!(fmt_peak(1.0), "0.0");
+        assert_eq!(fmt_gain(0.0), "0.0");
+        assert_eq!(fmt_gain(1.46), "+1.5");
+        assert_eq!(fmt_gain(-12.0), "−12.0");
+        assert_eq!(fmt_gain(-60.0), "−∞");
     }
 }
