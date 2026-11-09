@@ -849,6 +849,7 @@ impl Controller {
         self.doc_epoch += 1;
         self.auto.reset_project_state();
         self.doc = Document::new(loaded.project);
+        self.devices.modu.bases_pending = true;
         self.project_dir = Some(dir.to_path_buf());
         self.selected_track = self.project().tracks.first().map(|t| t.id);
         self.selected_clip = None;

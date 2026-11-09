@@ -502,6 +502,11 @@ impl Command {
                     if crate::modulation::outputs(&device) > 0 || !run.is_some_and(|r| idx >= r.start && idx <= r.end) {
                         return Err(invalid("chain", "a chain member goes right after its head or another member"));
                     }
+                } else {
+                    let devs = &p.tracks[ti].devices;
+                    if (0..n).any(|hi| crate::modulation::members(devs, hi).contains(&idx)) {
+                        return Err(invalid("chain", "a device outside a chain cannot go between its members"));
+                    }
                 }
                 let id = device.id;
                 p.tracks[ti].devices.insert(idx, device);

@@ -63,6 +63,8 @@ export global Icons {
     out property <string> search: "M7 2.5a4.5 4.5 0 1 1 0 9a4.5 4.5 0 1 1 0-9z M10.3 10.3L13.5 13.5";
     out property <string> link: "M7 5H5a3 3 0 0 0 0 6h2 M9 5h2a3 3 0 0 1 0 6H9 M5.5 8h5";
     out property <string> square: "M3 4h10v8H3z";
+    // Dashed marquee (Smart Fill): a 10×8 rounded box drawn as dashes.
+    out property <string> marquee: "M3 6V5a1 1 0 0 1 1-1h1 M7 4h2 M11 4h1a1 1 0 0 1 1 1v1 M13 8v0 M13 10v1a1 1 0 0 1-1 1h-1 M9 12H7 M5 12H4a1 1 0 0 1-1-1v-1 M3 8v0";
     out property <string> power: "M8 2.5v5 M4.4 4.6a5 5 0 1 0 7.2 0";
     out property <string> pencil: "M3 13l1-3.5L11 2.5l2.5 2.5L6.5 12z";
     out property <string> cursor: "M4 2.5l8 5-3.5 1 2 4-1.5.7-2-4L4 12z";
@@ -144,11 +146,11 @@ export component SmallButton inherits Rectangle {
     in property <string> text;
     in property <bool> on: false;
     in property <color> on-color: Tokens.text-bright;
-    in property <length> font-size: 5.5px;
+    in property <length> font-size: 6px;
     callback clicked;
     border-radius: 2px;
     background: on ? on-color : Tokens.small-button;
-    Text { text: root.text; color: root.on ? #18191c : #a9a9ac; font-size: root.font-size; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+    Text { text: root.text; color: root.on ? #18191c : #afafb1; font-size: root.font-size; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
     TouchArea { clicked => { root.clicked(); } }
 }
 
@@ -290,4 +292,78 @@ export component Label inherits Text {
     font-weight: 600;
     vertical-alignment: center;
     height: 14.5px; // fallback system font sits ~0.75 pt higher than Inter when centred in 13 pt
+}
+
+// Track-header pan knob, drawn to the reference at its default (100 %) zoom
+// (live capture 2026-11-09, sampled at 2×; values below are pt ÷ 1.1765 = our units):
+// a flat #2f3032 body (r 6.8), a thin dark gap, a 270° groove ring (r 7.65–9.35, open at
+// the bottom), a white value tick (r 3.8–6.0), and a bipolar value arc in the track's
+// colour on the ring with a short centre marker at 12 o'clock (r 8.1–10.2).
+export component PanKnob inherits Rectangle {
+    in property <float> value-angle: 0;   // degrees, 0 = up, ±135 = ends
+    in property <color> accent: #c670f7;
+    in property <float> value;
+    in property <float> min-value: -1;
+    in property <float> max-value: 1;
+    in property <float> sensitivity: 150;
+    callback value-changed(float);
+    callback released();
+    callback reset();
+    property <float> start-value;
+    property <float> cx: self.width / 1px / 2;
+    property <float> cy: self.height / 1px / 2;
+    property <float> rr: 8.5;    // groove/arc centre radius
+    // groove (270°, from -135° through 0° to +135°)
+    Path {
+        width: root.width; height: root.height;
+        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        stroke: #2d2e32; stroke-width: 1.7px; fill: transparent;
+        MoveTo { x: root.cx + root.rr * sin(-135deg); y: root.cy - root.rr * cos(-135deg); }
+        ArcTo { x: root.cx + root.rr * sin(135deg); y: root.cy - root.rr * cos(135deg); radius-x: root.rr; radius-y: root.rr; large-arc: true; sweep: true; }
+    }
+    // dark gap / contact shadow around the body
+    Rectangle { width: 15.3px; height: 15.3px; border-radius: self.width / 2; background: #1d1e21; }
+    Rectangle { y: root.height / 2 - 6.8px + 0.6px; width: 13.6px; height: 13.6px; border-radius: self.width / 2; background: #18191b; }
+    // body
+    Rectangle { width: 13.6px; height: 13.6px; border-radius: self.width / 2; background: #2f3032; border-width: 0.45px; border-color: #313235; }
+    // value arc (bipolar, from centre)
+    if abs(root.value-angle) > 0.5: Path {
+        width: root.width; height: root.height;
+        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        stroke: root.accent; stroke-width: 1.7px; fill: transparent;
+        MoveTo { x: root.cx; y: root.cy - root.rr; }
+        ArcTo {
+            x: root.cx + root.rr * sin(root.value-angle * 1deg); y: root.cy - root.rr * cos(root.value-angle * 1deg);
+            radius-x: root.rr; radius-y: root.rr; large-arc: false; sweep: root.value-angle > 0;
+        }
+    }
+    // centre marker
+    Path {
+        width: root.width; height: root.height;
+        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        stroke: root.accent; stroke-width: 0.95px;
+        MoveTo { x: root.cx; y: root.cy - 7.9; }
+        LineTo { x: root.cx; y: root.cy - 11.0; }
+    }
+    // value tick
+    Path {
+        width: root.width; height: root.height;
+        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        stroke: #ffffff; stroke-width: 0.95px;
+        MoveTo { x: root.cx + 3.5 * sin(root.value-angle * 1deg); y: root.cy - 3.5 * cos(root.value-angle * 1deg); }
+        LineTo { x: root.cx + 6.1 * sin(root.value-angle * 1deg); y: root.cy - 6.1 * cos(root.value-angle * 1deg); }
+    }
+    accessible-role: slider; accessible-value: root.value;
+    TouchArea {
+        mouse-cursor: ns-resize;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) { root.start-value = root.value; }
+            if (e.kind == PointerEventKind.up) { root.released(); }
+        }
+        moved => {
+            root.value-changed(max(root.min-value, min(root.max-value,
+                root.start-value + (self.pressed-y - self.mouse-y) / 1px / root.sensitivity * (root.max-value - root.min-value))));
+        }
+        double-clicked => { root.reset(); }
+    }
 }

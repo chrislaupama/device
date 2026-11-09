@@ -78,7 +78,7 @@ fn approx(a: f32, b: f32, tol: f32) -> bool {
 }
 
 // Window geometry (reference layout): lanes origin and track rows.
-const LANE_X: f32 = 453.0;
+const LANE_X: f32 = 453.65;
 const TRACK0_Y: f32 = 144.5;
 const PITCH: f32 = 74.5;
 
@@ -696,13 +696,13 @@ fn steps() -> Vec<Step> {
             let s = a.global::<Studio>();
             (c.selected_track == Some(t) && s.get_sel_number() == 2 && s.get_sel_name() == "Instrument").then_some(()).ok_or("selection".into())
         })),
-        Do("click M on track 1", Box::new(|a| click(a, 262.0 + 33.5, TRACK0_Y + 47.0))),
+        Do("click M on track 1", Box::new(|a| click(a, 262.65 + 33.5, TRACK0_Y + 47.0))),
         Check("track 1 muted (SetTrackMute)", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("not muted".into()))),
         Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
         Check("undo restored mute=false", Box::new(|c, _| (!c.project().tracks[0].mute).then_some(()).ok_or("still muted".into()))),
         Do("Cmd+Shift+Z", Box::new(|a| key(a, "Z", true, true))),
         Check("redo muted again", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("redo failed".into()))),
-        Do("drag track 1 volume slider left", Box::new(|a| drag(a, 262.0 + 116.0 + 0.85 * 61.0 + 3.5, TRACK0_Y + 48.0, 262.0 + 140.0, TRACK0_Y + 48.0))),
+        Do("drag track 1 volume slider left", Box::new(|a| drag(a, 262.65 + 115.6 + 0.85 * 61.0 + 3.5, TRACK0_Y + 48.0, 262.65 + 140.0, TRACK0_Y + 48.0))),
         Check("track 1 gain lowered, one coalesced undo step", Box::new(|c, _| {
             let g = c.project().tracks[0].gain;
             let labels = c.doc.history_labels();
@@ -794,7 +794,7 @@ fn steps() -> Vec<Step> {
             let txt = a.global::<Studio>().get_sel_pan_text();
             (pan > 0.2 && txt.ends_with('R')).then_some(()).ok_or(format!("pan {pan} text {txt}"))
         })),
-        Do("(audio) unmute track 1 (muted by the redo step)", Box::new(|a| click(a, 262.0 + 33.5, TRACK0_Y + 47.0))),
+        Do("(audio) unmute track 1 (muted by the redo step)", Box::new(|a| click(a, 262.65 + 33.5, TRACK0_Y + 47.0))),
         Do("(audio) click ruler at beat 9 (start of track 1 clip)", Box::new(move |a| click(a, bx(9.0), 112.0))),
         Do("(audio) master -40 dB, Space", Box::new(|a| {
             a.global::<Studio>().invoke_master_volume(0.85 * 0.01f32.cbrt());
@@ -840,7 +840,7 @@ fn steps() -> Vec<Step> {
         Check("assistant panel open, timeline narrower, fixture provider available", Box::new(|c, a| {
             let w = a.get_lanes_width();
             let s = a.global::<Studio>();
-            (c.assistant_open && s.get_assistant_open() && s.get_chat_available() && (w - (1440.0 - 262.0 - 5.0 - 257.5 - 191.0)).abs() < 1.0)
+            (c.assistant_open && s.get_assistant_open() && s.get_chat_available() && (w - (1440.0 - 262.65 - 5.0 - 257.5 - 191.0)).abs() < 1.0)
                 .then_some(())
                 .ok_or(format!("open {} lanes width {w}", c.assistant_open))
         })),
@@ -967,7 +967,7 @@ fn steps() -> Vec<Step> {
 /// Window centre of a track header's R button (track index `i`, current scroll).
 fn header_r(ctl: &Ctl, i: usize) -> (f32, f32) {
     let sy = ctl.borrow().view.scroll_y as f32;
-    (262.0 + 60.5, TRACK0_Y + i as f32 * PITCH + 47.0 - sy)
+    (262.65 + 60.5, TRACK0_Y + i as f32 * PITCH + 47.0 - sy)
 }
 
 /// Inspector (bottom panel 306 pt at y 509 with the Devices tab): R, I and the In field.
@@ -1770,7 +1770,7 @@ fn device_steps() -> Vec<Step> {
 // ------------------------------------------------------------------ automation
 
 /// Lanes surface origin in the window (timeline x 262 + lane-x 191, y 78 + 27.5).
-const LANES_ORIGIN: (f32, f32) = (453.0, 105.5);
+const LANES_ORIGIN: (f32, f32) = (453.65, 105.5);
 
 fn auto_row(c: &Controller, track: usize, target: &saine_core::AutomationTarget) -> Option<crate::automation::Row> {
     let key = Some(c.project().tracks.get(track)?.id);
@@ -1791,7 +1791,7 @@ fn lane_points(c: &Controller, track: usize, target: &saine_core::AutomationTarg
 /// Track header automation pill (track index `i`): window centre of the label and of the power icon.
 fn pill_xy(c: &Controller, i: usize) -> ((f32, f32), (f32, f32)) {
     let y = TRACK0_Y + c.view.track_offset(i) - c.view.scroll_y as f32 + 49.0 + 8.25;
-    ((262.0 + 42.0 + 70.0, y), (262.0 + 42.0 + 8.5, y))
+    ((262.65 + 42.0 + 70.0, y), (262.65 + 42.0 + 8.5, y))
 }
 
 fn with_shift(a: &AppWindow, f: impl FnOnce()) {
@@ -1858,10 +1858,10 @@ fn automation_steps() -> Vec<Step> {
             c.import_files(vec![wav.clone()], crate::controller::ImportTarget::Selected, Some(0));
         })),
         Check("automation: clip imported, lanes hidden, timeline at full width", Box::new(|c, a| {
-            let ok = c.project().tracks[0].clips.len() == 1 && !c.auto.shown && !a.global::<Studio>().get_auto_shown() && (a.get_lanes_width() - (1440.0 - 262.0 - 5.0 - 191.0)).abs() < 1.0;
+            let ok = c.project().tracks[0].clips.len() == 1 && !c.auto.shown && !a.global::<Studio>().get_auto_shown() && (a.get_lanes_width() - (1440.0 - 262.65 - 5.0 - 191.0)).abs() < 1.0;
             ok.then_some(()).ok_or(format!("clips {} shown {}", c.project().tracks[0].clips.len(), c.auto.shown))
         })),
-        Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, 262.0 + (1440.0 - 262.0 - 5.0) - 315.0 + 7.0, 78.0 + 14.0))),
+        Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 312.6 + 7.0, 78.0 + 14.0))),
         Check("automation: lanes shown; each header has the Track Volume pill and the disclosure; master row 64.5 pt; value labels (tracks +0.0, master at its static level)", Box::new(move |c, a| {
             ah_set(c.doc.history_labels().len());
             let s = a.global::<Studio>();
@@ -2007,7 +2007,7 @@ fn automation_steps() -> Vec<Step> {
         DoC("automation: move the volume slider while not armed (automation is active)", Box::new(move |a, ctl| {
             ah_set(ctl.borrow().doc.history_labels().len());
             let y = TRACK0_Y + 44.0 - 13.0 + 4.0;
-            drag(a, 262.0 + 116.0 + 10.0, y, 262.0 + 116.0 + 30.0, y);
+            drag(a, 262.65 + 115.6 + 10.0, y, 262.65 + 115.6 + 30.0, y);
         })),
         Check("automation: no edit, status hint “Volume is automated: arm automation to write, or disable the lane”", Box::new(move |c, a| {
             let st = a.global::<Studio>().get_status_text().to_string();
@@ -2080,7 +2080,7 @@ fn automation_steps() -> Vec<Step> {
             }
             advance(ctl, 0.1);
             let y = TRACK0_Y + 44.0 - 13.0 + 4.0;
-            let x0 = 262.0 + 116.0 + 3.5;
+            let x0 = 262.65 + 115.6 + 3.5;
             press(a, x0 + 50.0, y);
             for k in 1..=4 {
                 advance(ctl, 0.15);
@@ -2102,7 +2102,7 @@ fn automation_steps() -> Vec<Step> {
         })),
         Do("automation: click Automation Arm again (off), hide lanes", Box::new(|a| {
             click(a, 496.0 + 10.5, 41.0 + 11.0);
-            click(a, 262.0 + (1440.0 - 262.0 - 5.0) - 315.0 + 7.0, 78.0 + 14.0);
+            click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 312.6 + 7.0, 78.0 + 14.0);
         })),
         Check("automation: disarmed, lanes hidden, master row back to 30 pt", Box::new(move |c, a| {
             let _ = &wav2;
@@ -2638,6 +2638,149 @@ fn modulation_steps() -> Vec<Step> {
     ]
 }
 
+/// The restoration devices (De-Clipper, De-Esser, De-Hummer, De-Noiser): each one is added
+/// through Add device › Built-in, checked against its definition and the engine, and its field
+/// is dragged with real pointer events (one undo step), then undone.
+fn restoration_device_steps() -> Vec<Step> {
+    use Step::*;
+    // (display name, id, readouts, field drag in px, params the drag must move)
+    type Moves = &'static [&'static str];
+    const DEVICES: [(&str, &str, usize, (f32, f32), Moves); 4] = [
+        ("De-Clipper", "declipper", 0, (40.0, 0.0), &["threshold"]),
+        ("De-Esser", "deesser", 49, (30.0, 20.0), &["frequency", "reduction"]),
+        ("De-Hummer", "dehummer", 48, (-30.0, 20.0), &["frequency", "depth"]),
+        ("De-Noiser", "denoiser", 49, (0.0, -20.0), &["threshold"]),
+    ];
+    fn device<'a>(c: &'a Controller, id: &str) -> Option<&'a saine_core::Device> {
+        let t = track_of(c, TrackKind::Audio)?;
+        c.project().tracks[t].devices.iter().find(|d| d.plugin.format == saine_core::PluginFormat::Builtin && d.plugin.id == id)
+    }
+    fn value(c: &Controller, id: &str, param: &str) -> Option<f32> {
+        let d = device(c, id)?;
+        let def = saine_core::builtin::def_of(d)?;
+        Some(def.value(d, def.param(param)?))
+    }
+    let mut steps = Vec::new();
+    for (name, id, readouts, (dx, dy), moves) in DEVICES {
+        let hist = Rc::new(Cell::new(0usize));
+        let (h0, h1, h2, h3) = (hist.clone(), hist.clone(), hist.clone(), hist.clone());
+        steps.push(DoC(leak(format!("restoration: clear the audio track's chain, open Add device › Built-in for {name}")), Box::new(move |a, ctl| {
+            key(a, Key::Escape, false, false);
+            let i = track_of(&ctl.borrow(), TrackKind::Audio).unwrap_or(0);
+            click_track_header(a, ctl, i);
+            {
+                let mut c = ctl.borrow_mut();
+                let ids: Vec<saine_core::DeviceId> = c.project().tracks[i].devices.iter().map(|d| d.id).collect();
+                for d in ids {
+                    c.execute(saine_core::Command::RemoveDevice { device: d });
+                }
+                h0.set(c.doc.history_labels().len());
+                c.update_ui(a);
+            }
+            let add_x = a.global::<Studio>().get_add_device_x();
+            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+        })));
+        steps.push(Do(leak(format!("restoration: pick {name}")), Box::new(move |a| {
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == name && r.2) {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+        })));
+        steps.push(Check(leak(format!("restoration: {name} added at its defaults (one undo step); card follows the definition (width, knobs, field)")), Box::new(move |c, a| {
+            let n = c.doc.history_labels().len();
+            let want = format!("Add {name}");
+            if n != h1.get() + 1 || c.doc.undo_label() != Some(want.as_str()) {
+                return Err(format!("history {} -> {n}, last {:?}", h1.get(), c.doc.undo_label()));
+            }
+            let def = saine_core::builtin::find(id).ok_or("not registered")?;
+            let d = device(c, id).ok_or("not in the chain")?;
+            let cd = card_named(a, name).ok_or("no card")?;
+            let knobs: usize = def.layout.clusters.iter().map(|c| c.len()).sum();
+            let ok = cd.builtin
+                && cd.canvas.visible
+                && slint::Model::row_count(&cd.knobs) == knobs
+                && approx(cd.width, def.layout.width() * crate::device_panel::Z, 0.01)
+                && def.params.iter().all(|p| def.value(d, p) == p.default);
+            ok.then_some(()).ok_or(format!("knobs {} width {} field {}", slint::Model::row_count(&cd.knobs), cd.width, cd.canvas.visible))
+        })));
+        steps.push(Check(leak(format!("engine: {name} is live with {readouts} readouts (spectrum bands where the field draws one)")), Box::new(move |c, _| {
+            let d = device(c, id).ok_or("no device")?.id;
+            let mut r = Vec::new();
+            c.engine.builtin_readouts(d.0, &mut r).map_err(|e| e.to_string())?;
+            let errors = c.engine.plugin_load_errors();
+            (r.len() == readouts && !errors.iter().any(|(e, _)| *e == d)).then_some(()).ok_or(format!("readouts {} errors {errors:?}", r.len()))
+        })));
+        steps.push(DoC(leak(format!("restoration: drag {name}'s field ({dx:+}, {dy:+}) px")), Box::new(move |a, ctl| {
+            h2.set(ctl.borrow().doc.history_labels().len());
+            let Some(cd) = card_named(a, name) else { return };
+            let f = &cd.canvas;
+            // The De-Esser grabs its band handle (the circle path "M{x - r} {y} a..."), the
+            // De-Noiser its threshold line; the others drag the plane.
+            let handle = || {
+                let p = slint::Model::iter(&f.paths).find(|p| p.commands.contains(" a"))?;
+                let mut n = p.commands.trim_start_matches('M').split_whitespace().map(|t| t.parse::<f32>().unwrap_or(0.0));
+                Some((n.next()? + 5.0 * crate::device_panel::Z, n.next()?))
+            };
+            let (wx, wy) = match id {
+                "deesser" => handle().unwrap_or((0.0, 0.0)),
+                "denoiser" => (f.w * 0.75, slint::Model::row_data(&f.grips, 0).map_or(0.0, |p| p.y)),
+                _ => (f.w / 2.0, (f.h - f.well_y) / 2.0),
+            };
+            let (x, y) = card_xy(&cd, f.x + wx, f.y + f.well_y + wy);
+            drag(a, x, y, x + dx, y + dy);
+        })));
+        steps.push(Check(leak(format!("restoration: the {name} field gesture moved {moves:?} in ONE undo step")), Box::new(move |c, _| {
+            let n = c.doc.history_labels().len();
+            if n != h3.get() + 1 || c.doc.undo_label() != Some("Device Parameter Change") {
+                return Err(format!("history {} -> {n}, last {:?}", h3.get(), c.doc.undo_label()));
+            }
+            let def = saine_core::builtin::find(id).ok_or("not registered")?;
+            let still: Vec<&str> = moves.iter().copied().filter(|p| value(c, id, p) == def.param(p).map(|p| p.default)).collect();
+            still.is_empty().then_some(()).ok_or(format!("unchanged: {still:?}"))
+        })));
+        steps.push(Do(leak(format!("restoration: ⌘Z after the {name} gesture")), Box::new(|a| key(a, "z", true, false))));
+        steps.push(Check(leak(format!("restoration: undo restores every {name} parameter")), Box::new(move |c, _| {
+            let def = saine_core::builtin::find(id).ok_or("not registered")?;
+            let d = device(c, id).ok_or("no device")?;
+            let off: Vec<&str> = def.params.iter().filter(|p| def.value(d, p) != p.default).map(|p| p.id).collect();
+            let vals: Vec<(&str, f32)> = def.params.iter().map(|p| (p.id, def.value(d, p))).collect();
+            off.is_empty().then_some(()).ok_or(format!("not at default: {off:?} values {vals:?} history {:?}", c.doc.history_labels().iter().rev().take(4).collect::<Vec<_>>()))
+        })));
+    }
+    // The De-Esser's Listen latch in the dial row (the De-Esser is still in the chain from above).
+    let hl = Rc::new(Cell::new(0usize));
+    let hl2 = hl.clone();
+    steps.push(DoC("restoration: click the De-Esser's Listen latch", Box::new(move |a, ctl| {
+        {
+            let mut c = ctl.borrow_mut();
+            let Some(t) = track_of(&c, TrackKind::Audio) else { return };
+            let ids: Vec<saine_core::DeviceId> = c.project().tracks[t].devices.iter().map(|d| d.id).collect();
+            for d in ids {
+                c.execute(saine_core::Command::RemoveDevice { device: d });
+            }
+            let tid = c.project().tracks[t].id;
+            let def = saine_core::builtin::find("deesser").expect("registered");
+            c.add_item_to_track(&crate::devices::Item::Builtin(def), tid, None);
+            hl.set(c.doc.history_labels().len());
+            c.update_ui(a);
+        }
+        let Some(cd) = card_named(a, "De-Esser") else { return };
+        let z = crate::device_panel::Z;
+        if let Some(k) = (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).find(|k| k.face == 2) {
+            let (x, y) = card_xy(&cd, k.x + 31.0 * z, (229.0 + 24.0) * z);
+            click(a, x, y);
+        }
+    })));
+    steps.push(Check("restoration: the Listen latch turns Listen on (one undo step) and shows On", Box::new(move |c, a| {
+        let n = c.doc.history_labels().len();
+        let shown = card_named(a, "De-Esser").and_then(|cd| (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).find(|k| k.face == 2)).map(|k| k.value.to_string());
+        (n == hl2.get() + 1 && value(c, "deesser", "listen") == Some(1.0) && shown.as_deref() == Some("On"))
+            .then_some(())
+            .ok_or(format!("history {} -> {n}, listen {:?}, latch {shown:?}", hl2.get(), value(c, "deesser", "listen")))
+    })));
+    steps
+}
+
 /// The devices section drives Apple's Audio Units (AULowpass, AUDelay,
 /// DLSMusicDevice). Elsewhere its actions are not performed and its checks
 /// are reported as skipped (counted like the other guarded skips).
@@ -2810,6 +2953,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(modulation_steps());
     all.extend(builtin_each_steps());
     all.extend(modulation_device_steps());
+    all.extend(restoration_device_steps());
     all.extend(automation_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));

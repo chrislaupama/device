@@ -1058,7 +1058,7 @@ impl Controller {
     }
 
     /// A click on a switch toggles it; on a stepped menu it moves to the next step.
-    fn card_click(&mut self, device: DeviceId, id: u32) {
+    pub(crate) fn card_click(&mut self, device: DeviceId, id: u32) {
         let steps = self.plugin_param_info(device, id).map_or(0, |p| p.steps);
         if steps == 0 {
             return;

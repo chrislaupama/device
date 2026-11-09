@@ -388,7 +388,7 @@ impl Engine {
     /// Latest readouts of a live built-in device (registry order), e.g. the
     /// compressor's input, output and gain reduction in dB.
     pub fn builtin_readouts(&self, device_id: u64, out: &mut Vec<f32>) -> Result<(), EngineError> {
-        let mut buf = [0f32; 32];
+        let mut buf = [0f32; 64];
         let mut n = 0usize;
         check(unsafe { ffi::se_builtin_readouts(self.raw, device_id, buf.as_mut_ptr(), buf.len(), &mut n) })?;
         out.clear();

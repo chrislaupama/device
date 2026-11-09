@@ -553,6 +553,7 @@ impl Controller {
         let now = Instant::now();
         self.panel_poll_meters();
         self.mod_poll();
+        self.panel_poll_graphs();
         // Main-thread plugin housekeeping (retired instances, CLAP main-thread callbacks).
         if !self.devices.editors.is_empty() || self.project().tracks.iter().any(|t| !t.devices.is_empty() || t.instrument_plugin.is_some()) {
             self.engine.plugin_idle();
