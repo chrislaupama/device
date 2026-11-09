@@ -281,7 +281,7 @@ fn knob(def: &DeviceDef, value: f32, index: usize, centre_x: f32) -> PanelKnob {
         label: p.label.into(),
         value: p.format(value).into(),
         norm: p.to_normalized(value),
-        bipolar: p.is_bipolar(),
+        origin: p.origin(),
         ..Default::default()
     }
 }
@@ -514,7 +514,7 @@ fn short_hz(f: f32) -> String {
 impl Controller {
     /// Value of parameter `i` as shown: a running gesture's live value, else the panel value.
     fn fv(&self, d: &Device, def: &DeviceDef, i: usize) -> f32 {
-        if let Some(v) = self.devices.panel.views.live.get(&(d.id, i)) {
+        if let Some(v) = self.devices.panel.editors.live.get(&(d.id, i)) {
             return *v;
         }
         def.params.get(i).map_or(0.0, |p| self.panel_value(d, def, p))
@@ -534,7 +534,7 @@ impl Controller {
     }
 
     fn hover_of(&self, id: DeviceId) -> (Hit, (f32, f32)) {
-        match self.devices.panel.views.hover {
+        match self.devices.panel.editors.hover {
             Some((d, h, p)) if d == id => (h, p),
             _ => (Hit::None, (-1.0, -1.0)),
         }
@@ -648,7 +648,7 @@ impl Controller {
         // Envelope.
         c.text(TG_ENV.0, TG_ENV.1 - 19.0, 120.0, 19.0, "Envelope", ink(0.4), 12.0, 600, 0);
         c.fill(PathData::default().rrect(TG_ENV.0, TG_ENV.1, TG_ENV.2, TG_ENV.3, 6.0), rgba(0, 0, 0, 0.26));
-        let (gate_ms, span) = match &self.devices.panel.views.gesture {
+        let (gate_ms, span) = match &self.devices.panel.editors.gesture {
             Some(Gesture::Env { device, span, gate_ms, .. }) if *device == d.id => (*gate_ms, *span),
             _ => env_span(&env, step_ms),
         };
@@ -696,7 +696,7 @@ impl Controller {
         c.stroke(PathData::default().poly(&pts), accent, 1.5);
         let handles = [(Hit::EnvA, env.a, 1.0), (Hit::EnvD, env.a + env.d, env.s), (Hit::EnvR, gate_ms + env.r, 0.0)];
         for (hh, t, l) in handles {
-            let hot = hit == hh || matches!(&self.devices.panel.views.gesture, Some(Gesture::Env { handle, device, .. }) if *handle == hh && *device == d.id);
+            let hot = hit == hh || matches!(&self.devices.panel.editors.gesture, Some(Gesture::Env { handle, device, .. }) if *handle == hh && *device == d.id);
             let r = if hot { 6.0 } else { 4.5 };
             c.path(
                 PathData::default().circle(tx(t), ly(l), r),
@@ -775,7 +775,7 @@ impl Controller {
     }
 
     fn shaper_lane(&self, id: DeviceId) -> usize {
-        self.devices.panel.views.lane.get(&id).copied().unwrap_or(0).min(sh::LANE_COUNT - 1)
+        self.devices.panel.editors.lane.get(&id).copied().unwrap_or(0).min(sh::LANE_COUNT - 1)
     }
 
     fn shaper_card(&self, d: &Device, def: &'static DeviceDef, card: &mut DeviceCard) {
@@ -844,7 +844,7 @@ impl Controller {
 
         // Curve well.
         c.fill(PathData::default().rrect(SH_WELL.0, SH_WELL.1, SH_WELL.2, SH_WELL.3, 6.0), rgba(0, 0, 0, 0.26));
-        let grid = *self.devices.panel.views.grid.get(&d.id).unwrap_or(&16);
+        let grid = *self.devices.panel.editors.grid.get(&d.id).unwrap_or(&16);
         let (mut strong, mut weak) = (PathData::default(), PathData::default());
         for k in 0..=grid {
             let gx = sh_px(k as f32 / grid as f32);
@@ -922,7 +922,7 @@ impl Controller {
         c.fill(area, vgrad(alpha(accent, 0.3 * curve_alpha), alpha(accent, 0.04 * curve_alpha)));
         c.stroke(PathData::default().poly(&line), alpha(accent, if lane_on { 1.0 } else { 0.45 }), 2.0);
         let over_plot = in_rect(hp, SH_WELL.0, SH_WELL.1, SH_WELL.2, SH_WELL.3);
-        let gesture = match &self.devices.panel.views.gesture {
+        let gesture = match &self.devices.panel.editors.gesture {
             Some(Gesture::Curve { device, k, mid, .. }) if *device == d.id => Some((*k, *mid)),
             _ => None,
         };
@@ -1100,18 +1100,18 @@ impl Controller {
     fn live_set(&mut self, device: DeviceId, def: &DeviceDef, i: usize, v: f32) {
         let Some(p) = def.params.get(i) else { return };
         let v = p.snap(v);
-        if self.devices.panel.views.live.get(&(device, i)) == Some(&v) {
+        if self.devices.panel.editors.live.get(&(device, i)) == Some(&v) {
             return;
         }
-        self.devices.panel.views.live.insert((device, i), v);
+        self.devices.panel.editors.live.insert((device, i), v);
         let _ = self.engine.builtin_set_param(device.0, i as u32, v);
         self.ui_dirty = true;
     }
 
     /// Commit a gesture's live values as one undo step.
     fn live_commit(&mut self, device: DeviceId, label: &str) {
-        let live: Vec<(usize, f32)> = self.devices.panel.views.live.iter().filter(|((d, _), _)| *d == device).map(|((_, i), v)| (*i, *v)).collect();
-        self.devices.panel.views.live.retain(|(d, _), _| *d != device);
+        let live: Vec<(usize, f32)> = self.devices.panel.editors.live.iter().filter(|((d, _), _)| *d == device).map(|((_, i), v)| (*i, *v)).collect();
+        self.devices.panel.editors.live.retain(|(d, _), _| *d != device);
         self.ui_dirty = true;
         let Some((d, def)) = self.panel_def(device) else { return };
         let mut changed: Vec<(usize, f32)> = live.into_iter().filter(|(i, v)| (def.value(d, &def.params[*i]) - v).abs() > 0.0).collect();
@@ -1130,8 +1130,8 @@ impl Controller {
 
     /// Restore the model values of a gesture's live parameters.
     fn live_cancel(&mut self, device: DeviceId) {
-        let live: Vec<usize> = self.devices.panel.views.live.keys().filter(|(d, _)| *d == device).map(|(_, i)| *i).collect();
-        self.devices.panel.views.live.retain(|(d, _), _| *d != device);
+        let live: Vec<usize> = self.devices.panel.editors.live.keys().filter(|(d, _)| *d == device).map(|(_, i)| *i).collect();
+        self.devices.panel.editors.live.retain(|(d, _), _| *d != device);
         if let Some((d, def)) = self.panel_def(device) {
             let restore: Vec<(usize, f32)> = live.into_iter().map(|i| (i, def.value(d, &def.params[i]))).collect();
             for (i, v) in restore {
@@ -1162,7 +1162,7 @@ impl Controller {
 
     /// Escape: cancel a running field gesture. True when one was running.
     pub(crate) fn canvas_cancel(&mut self) -> bool {
-        let Some(g) = self.devices.panel.views.gesture.take() else { return false };
+        let Some(g) = self.devices.panel.editors.gesture.take() else { return false };
         match g {
             Gesture::Param { .. } => {
                 self.panel_cancel_drag();
@@ -1188,9 +1188,9 @@ impl Controller {
         };
         if e.kind == HOVER || e.kind == LEAVE {
             let new = if e.kind == LEAVE { None } else { Some((device, hit, p)) };
-            let old = self.devices.panel.views.hover;
+            let old = self.devices.panel.editors.hover;
             if old.map(|o| (o.0, o.1)) != new.map(|n| (n.0, n.1)) || (hit == Hit::Plot && new.is_some()) {
-                self.devices.panel.views.hover = new;
+                self.devices.panel.editors.hover = new;
                 self.ui_dirty = true;
             }
             return;
@@ -1209,11 +1209,11 @@ impl Controller {
     }
 
     fn field_move(&mut self, def: &'static DeviceDef, e: CanvasEvent, p: (f32, f32)) {
-        let Some(g) = self.devices.panel.views.gesture.clone() else { return };
+        let Some(g) = self.devices.panel.editors.gesture.clone() else { return };
         match g {
             Gesture::Param { device, .. } => {
-                let last = self.devices.panel.views.hover.map(|h| h.2).unwrap_or(p);
-                self.devices.panel.views.hover = Some((device, self.devices.panel.views.hover.map_or(Hit::None, |h| h.1), p));
+                let last = self.devices.panel.editors.hover.map(|h| h.2).unwrap_or(p);
+                self.devices.panel.editors.hover = Some((device, self.devices.panel.editors.hover.map_or(Hit::None, |h| h.1), p));
                 let index = self.panel_drag_index().unwrap_or(-1);
                 self.panel_drag(device, index, 1, (last.1 - p.1) * Z, 1.0 / 160.0, e.shift);
             }
@@ -1230,7 +1230,7 @@ impl Controller {
                 for s in crossed {
                     self.tg_paint(device, def, s, on);
                 }
-                self.devices.panel.views.gesture = Some(Gesture::Paint { device, on, last: k });
+                self.devices.panel.editors.gesture = Some(Gesture::Paint { device, on, last: k });
             }
             Gesture::Env { device, handle, span, gate_ms } => {
                 let (x0, y0, x1, y1) = TG_PLOT;
@@ -1250,7 +1250,7 @@ impl Controller {
                 let factor = if e.shift { 0.25 } else { 1.0 };
                 let free = e.shift || e.alt;
                 let raw = (raw.0 + (p.0 - last.0) * factor, raw.1 + (p.1 - last.1) * factor);
-                let grid = *self.devices.panel.views.grid.get(&device).unwrap_or(&16) as f32;
+                let grid = *self.devices.panel.editors.grid.get(&device).unwrap_or(&16) as f32;
                 if mid {
                     if let (Some(a), Some(b)) = (pts.get(k).copied(), pts.get(k + 1).copied()) {
                         pts[k].tension = sh::tension_through(a, b, sh_y_of(raw.1));
@@ -1272,20 +1272,20 @@ impl Controller {
                     pts[k].y = y;
                 }
                 self.sh_write_live(device, def, lane, &pts);
-                self.devices.panel.views.gesture = Some(Gesture::Curve { device, lane, k, mid, pts, raw, last: p });
+                self.devices.panel.editors.gesture = Some(Gesture::Curve { device, lane, k, mid, pts, raw, last: p });
             }
         }
     }
 
     fn field_release(&mut self, device: DeviceId, def: &'static DeviceDef) {
-        let Some(g) = self.devices.panel.views.gesture.take() else { return };
+        let Some(g) = self.devices.panel.editors.gesture.take() else { return };
         match g {
             Gesture::Param { menu, .. } => {
                 let moved = self.panel_drag_active();
                 let index = self.panel_drag_index().unwrap_or(-1);
                 self.panel_drag(device, index, 2, 0.0, 1.0 / 160.0, false);
                 if !moved && let Some(which) = menu {
-                    let (x, y) = self.devices.panel.views.menu_at;
+                    let (x, y) = self.devices.panel.editors.menu_at;
                     self.field_menu(device, def, which, x, y);
                 }
             }
@@ -1307,10 +1307,10 @@ const MENU_CHOICE: i32 = 1000;
 
 impl Controller {
     fn begin_param(&mut self, device: DeviceId, index: usize, hit: Hit, p: (f32, f32), e: CanvasEvent, menu: Option<i32>) {
-        self.devices.panel.views.hover = Some((device, hit, p));
-        self.devices.panel.views.menu_at = (e.wx, e.wy);
+        self.devices.panel.editors.hover = Some((device, hit, p));
+        self.devices.panel.editors.menu_at = (e.wx, e.wy);
         self.panel_drag(device, index as i32, 0, 0.0, 1.0 / 160.0, false);
-        self.devices.panel.views.gesture = Some(Gesture::Param { device, menu });
+        self.devices.panel.editors.gesture = Some(Gesture::Param { device, menu });
     }
 
     fn tg_event(&mut self, device: DeviceId, def: &'static DeviceDef, e: CanvasEvent, hit: Hit) {
@@ -1322,7 +1322,7 @@ impl Controller {
             (DOWN, Hit::Step(k)) => {
                 let on = mask >> k & 1 == 0;
                 self.tg_paint(device, def, k, on);
-                self.devices.panel.views.gesture = Some(Gesture::Paint { device, on, last: k });
+                self.devices.panel.editors.gesture = Some(Gesture::Paint { device, on, last: k });
             }
             (DOWN, Hit::StepMore) if steps < tg::MAX_STEPS => self.panel_step(device, steps_idx as i32, 1, false),
             (DOWN, Hit::StepFewer) if steps > 1 => self.panel_step(device, steps_idx as i32, -1, false),
@@ -1333,7 +1333,7 @@ impl Controller {
                 let env = self.adsr(d, def);
                 let rate = (self.fv(d, def, 1).round() as usize).min(tg::RATES.len() - 1);
                 let (gate_ms, span) = env_span(&env, self.step_ms(rate));
-                self.devices.panel.views.gesture = Some(Gesture::Env { device, handle: hit, span, gate_ms });
+                self.devices.panel.editors.gesture = Some(Gesture::Env { device, handle: hit, span, gate_ms });
                 self.ui_dirty = true;
             }
             (RIGHT, Hit::Step(_) | Hit::Hole | Hit::StepCount | Hit::Pattern(_)) => self.field_menu(device, def, MENU_PATTERN, e.wx, e.wy),
@@ -1374,12 +1374,12 @@ impl Controller {
             (DOWN, Hit::LaneOn(l)) => {
                 let i = sh::lane_base(l) + sh::ON;
                 let on = values[i] >= 0.5;
-                self.devices.panel.views.lane.insert(device, l);
+                self.devices.panel.editors.lane.insert(device, l);
                 self.panel_choice(device, i as i32, if on { 0 } else { 1 });
                 self.ui_dirty = true;
             }
             (DOWN, Hit::Lane(l)) => {
-                self.devices.panel.views.lane.insert(device, l);
+                self.devices.panel.editors.lane.insert(device, l);
                 self.ui_dirty = true;
             }
             (DOWN, Hit::Shape) => self.field_menu(device, def, MENU_SHAPE, e.wx, e.wy),
@@ -1402,15 +1402,15 @@ impl Controller {
                     return;
                 }
                 let q = pts[k];
-                self.devices.panel.views.gesture = Some(Gesture::Curve { device, lane, k, mid: false, pts, raw: (sh_px(q.x), sh_py(q.y)), last: p });
+                self.devices.panel.editors.gesture = Some(Gesture::Curve { device, lane, k, mid: false, pts, raw: (sh_px(q.x), sh_py(q.y)), last: p });
                 self.ui_dirty = true;
             }
             (DOWN, Hit::Mid(k)) => {
-                self.devices.panel.views.gesture = Some(Gesture::Curve { device, lane, k, mid: true, pts, raw: p, last: p });
+                self.devices.panel.editors.gesture = Some(Gesture::Curve { device, lane, k, mid: true, pts, raw: p, last: p });
                 self.ui_dirty = true;
             }
             (DOWN, Hit::Plot) if pts.len() < sh::MAX_POINTS => {
-                let grid = *self.devices.panel.views.grid.get(&device).unwrap_or(&16) as f32;
+                let grid = *self.devices.panel.editors.grid.get(&device).unwrap_or(&16) as f32;
                 let (mut x, mut y) = (sh_x_of(p.0), sh_y_of(p.1));
                 if !(e.shift || e.alt) {
                     x = (x * grid).round() / grid;
@@ -1421,7 +1421,7 @@ impl Controller {
                 let mut next = pts;
                 next.insert(k, Point { x, y, tension: 0.0 });
                 self.sh_write_live(device, def, lane, &next);
-                self.devices.panel.views.gesture = Some(Gesture::Curve { device, lane, k, mid: false, pts: next, raw: (sh_px(x), sh_py(y)), last: p });
+                self.devices.panel.editors.gesture = Some(Gesture::Curve { device, lane, k, mid: false, pts: next, raw: (sh_px(x), sh_py(y)), last: p });
             }
             (RIGHT | DOUBLE, Hit::CurvePoint(k)) if k > 0 && k + 1 < pts.len() => {
                 let mut next = pts;
@@ -1469,7 +1469,7 @@ impl Controller {
         let mut w = 180.0;
         match which {
             MENU_PATTERN => {
-                let clip = self.devices.panel.views.pattern_clip.is_some();
+                let clip = self.devices.panel.editors.pattern_clip.is_some();
                 for (label, code) in [("Clear", TG_CLEAR), ("Fill", TG_FILL), ("Invert", TG_INVERT), ("Rotate Left", TG_ROT_LEFT), ("Rotate Right", TG_ROT_RIGHT)] {
                     rows.push((label.into(), String::new(), pick(code), false));
                 }
@@ -1485,13 +1485,13 @@ impl Controller {
                 }
             }
             MENU_CURVE => {
-                let clip = self.devices.panel.views.shape_clip.is_some();
+                let clip = self.devices.panel.editors.shape_clip.is_some();
                 for (label, code) in [("Flip", SH_FLIP), ("Reverse", SH_REVERSE), ("Clear", SH_CLEAR)] {
                     rows.push((label.into(), String::new(), pick(code), false));
                 }
                 rows.push(("Copy Shape".into(), String::new(), pick(SH_COPY), true));
                 rows.push(("Paste Shape".into(), String::new(), if clip { pick(SH_PASTE) } else { None }, false));
-                let grid = *self.devices.panel.views.grid.get(&device).unwrap_or(&16);
+                let grid = *self.devices.panel.editors.grid.get(&device).unwrap_or(&16);
                 for (i, g) in [4u32, 8, 16, 32].into_iter().enumerate() {
                     rows.push((format!("Grid {g}"), check(grid == g), pick(SH_GRID + g as i32), i == 0));
                 }
@@ -1547,10 +1547,10 @@ impl Controller {
                     TG_ROT_LEFT => (rot(mask, true), steps),
                     TG_ROT_RIGHT => (rot(mask, false), steps),
                     TG_COPY => {
-                        self.devices.panel.views.pattern_clip = Some((mask & full, steps));
+                        self.devices.panel.editors.pattern_clip = Some((mask & full, steps));
                         return;
                     }
-                    TG_PASTE => match self.devices.panel.views.pattern_clip {
+                    TG_PASTE => match self.devices.panel.editors.pattern_clip {
                         Some(c) => c,
                         None => return,
                     },
@@ -1583,15 +1583,15 @@ impl Controller {
                         vec![Point { x: 0.0, y: r, tension: 0.0 }, Point { x: 1.0, y: r, tension: 0.0 }]
                     }
                     SH_COPY => {
-                        self.devices.panel.views.shape_clip = Some(pts);
+                        self.devices.panel.editors.shape_clip = Some(pts);
                         return;
                     }
-                    SH_PASTE => match self.devices.panel.views.shape_clip.clone() {
+                    SH_PASTE => match self.devices.panel.editors.shape_clip.clone() {
                         Some(c) => c,
                         None => return,
                     },
                     c if (SH_GRID..SH_GRID + 100).contains(&c) => {
-                        self.devices.panel.views.grid.insert(device, (c - SH_GRID) as u32);
+                        self.devices.panel.editors.grid.insert(device, (c - SH_GRID) as u32);
                         self.ui_dirty = true;
                         return;
                     }

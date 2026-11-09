@@ -104,7 +104,7 @@ pub struct PanelState {
     pub(crate) sampler: crate::sampler_panel::SamplerUi,
     /// Field devices while the transport plays: (last LFO phase, elapsed cycles).
     lfo: HashMap<DeviceId, (f32, f64)>,
-    pub(crate) views: crate::device_editors::ViewState,
+    pub(crate) editors: crate::device_editors::ViewState,
     /// Field views (src/panel_graph.rs): drag, hover and spectrum state.
     pub(crate) graph: crate::panel_graph::GraphState,
 }
