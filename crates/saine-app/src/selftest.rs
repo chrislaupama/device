@@ -2575,9 +2575,14 @@ fn modulation_steps() -> Vec<Step> {
         })),
         DoC("chain: ✕ on the chain head", Box::new(|a, ctl| {
             let Some(head) = chain_head(&ctl.borrow()).map(|d| d.id) else { return };
-            if let Some(cd) = cards(a).into_iter().find(|cd| cd.id as u64 == head.0) {
-                let (x, y) = card_xy(&cd, cd.width - 14.5, 13.5);
-                click(a, x, y);
+            match cards(a).into_iter().find(|cd| cd.id as u64 == head.0) {
+                // Click the ✕ when the card is on screen; otherwise (a smaller
+                // window, or a longer device row) press it through its callback.
+                Some(cd) if 5.0 + cd.x + cd.width <= 1440.0 - 5.0 => {
+                    let (x, y) = card_xy(&cd, cd.width - 14.5, 13.5);
+                    click(a, x, y);
+                }
+                _ => a.global::<Studio>().invoke_device_remove(head.0 as i32),
             }
         })),
         Check("chain: removing the head removes its member in one undo step", Box::new(move |c, _| {
