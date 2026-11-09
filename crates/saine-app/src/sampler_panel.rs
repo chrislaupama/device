@@ -409,7 +409,7 @@ impl Controller {
             label: s(label.unwrap_or(p.label)),
             value: s(secs.map_or_else(|| p.format(v), |t| fmt_secs(v * t))),
             norm: p.to_normalized(v),
-            bipolar: p.is_bipolar(),
+            origin: p.origin(),
             ..Default::default()
         })
     }
@@ -565,7 +565,7 @@ impl Controller {
                         Some(g) => g.value,
                         None => slices.get(sel).map_or(p.default, |sl| slice_field(sl, index)),
                     };
-                    knobs.push(PanelKnob { param: index, x: kx(n) * Z, label: s(p.label), value: s(p.format(v)), norm: p.to_normalized(v), bipolar: p.is_bipolar(), ..Default::default() });
+                    knobs.push(PanelKnob { param: index, x: kx(n) * Z, label: s(p.label), value: s(p.format(v)), norm: p.to_normalized(v), origin: p.origin(), ..Default::default() });
                 }
                 knobs.extend(self.knob(d, def, "sliceKey", kx(3), Some("Key")));
                 picks.extend(self.pick(d, def, 2, "chop", None, 84.0));

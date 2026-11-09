@@ -121,6 +121,8 @@ add_library(saine_engine STATIC
   src/devices/channel_eq.cpp
   src/devices/character_eq.cpp
   src/devices/auto_filter.cpp
+  src/devices/character_compressor.cpp
+  src/devices/multiband_compressor.cpp
   src/devices/lfo.cpp
   src/devices/rack.cpp
   src/devices/distortion.cpp
@@ -357,6 +359,8 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/devices/test_compressor.cpp
     tests/devices/test_eq.cpp
     tests/devices/test_auto_filter.cpp
+    tests/devices/test_character_compressor.cpp
+    tests/devices/test_multiband_compressor.cpp
     tests/devices/test_drive.cpp
     tests/devices/test_imaging.cpp
     tests/devices/test_modulation.cpp
