@@ -2346,7 +2346,7 @@ fn dynamics_device_steps() -> Vec<Step> {
             let mut r = Vec::new();
             c.engine.builtin_readouts(d.id.0, &mut r).map_err(|e| e.to_string())?;
             let errors = c.engine.plugin_load_errors();
-            let ok = cd.builtin && slint::Model::row_count(&cd.knobs) >= 6 && (cd.strip.visible || cd.field.visible) && r.len() == readouts && !errors.iter().any(|(e, _)| *e == d.id);
+            let ok = cd.builtin && slint::Model::row_count(&cd.knobs) >= 6 && (cd.strip.visible || cd.bands.visible) && r.len() == readouts && !errors.iter().any(|(e, _)| *e == d.id);
             ok.then_some(()).ok_or(format!("knobs {} readouts {r:?} errors {errors:?}", slint::Model::row_count(&cd.knobs)))
         })));
     }
