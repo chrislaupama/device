@@ -31,8 +31,8 @@ pub static CHORUS: DeviceDef = DeviceDef {
         ],
         faces: &[],
         min_height: 202.0,
-        shown_when: &[("rate", "sync", &[0]), ("rate_sync", "sync", &[1])],
         fixed_width: 0.0,
+        shown_when: &[("rate", "sync", &[0]), ("rate_sync", "sync", &[1])],
     },
     factory: &[
         FactoryPreset { name: "Light Double", values: &[("rate", 0.35), ("depth", 1.8), ("mix", 30.0), ("voices", 1.0), ("output_gain", 0.3)] },

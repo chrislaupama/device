@@ -108,19 +108,20 @@ flowchart LR
    (a peak meter rises from -120 dB, gain reduction falls from 0 dB).
    A device has at most `kMaxReadouts` (64) readouts. Spectral helpers are in
    `engine/src/devices/spectral.hpp` (`RealFft`, and `SpectrumTap`: 48 log
-   bands, 20 Hz–20 kHz, a full-scale sine reads 0 dB) and `svf.hpp` (TPT
-   state-variable filter). Report look-ahead or block latency from
+   bands, 20 Hz–20 kHz, a full-scale sine reads 0 dB); `dsp.hpp` has the
+   state-variable filter (`SvfCoeffs`, including `bandpass`). Report look-ahead or block latency from
    `latency()` so the engine compensates it.
 3. **Custom view (optional).** For bodies the template cannot express (EQ
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a
    Slint component in `ui/device_panel.slint` chosen by that data. Reuse
-   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. When a graph
-   needs more than `View::Field`'s two-parameter drag (several handles, grip
-   pills, a live spectrum), use `PanelGraph` (`crates/saine-app/src/panel_graph.rs`
-   + `GraphView` in `device_panel.slint`): rules, layers, dots and pills,
-   hit zones that edit parameters, spectrum ballistics from the readouts, and
-   one undo step per gesture.
+   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. Custom bodies
+   return a `PanelCanvas` from `Controller::custom_body` (`device_views.rs`):
+   paths, texts, grip pills and linear drag zones. When handles need
+   non-linear mapping or hit-testing (several handles on one well, a live
+   spectrum), set `pointer: true` and handle `Studio.panel-graph` in Rust,
+   as the restoration devices do (`crates/saine-app/src/panel_graph.rs`: hit
+   zones, spectrum ballistics from the readouts, one undo step per gesture).
 4. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),

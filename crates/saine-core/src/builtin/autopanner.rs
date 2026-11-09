@@ -28,8 +28,8 @@ pub static AUTOPANNER: DeviceDef = DeviceDef {
         clusters: &[&[Control::Swap(&["rate", "rate_sync"]), Control::Knob("depth")], &[Control::Knob("phase"), Control::Knob("mix")]],
         faces: &[],
         min_height: 204.0,
-        shown_when: &[("rate", "sync", &[0]), ("rate_sync", "sync", &[1])],
         fixed_width: 0.0,
+        shown_when: &[("rate", "sync", &[0]), ("rate_sync", "sync", &[1])],
     },
     factory: &[
         FactoryPreset { name: "Gentle Sway", values: &[("depth", 40.0), ("rate_sync", 5.0)] },

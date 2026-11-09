@@ -3,7 +3,7 @@
 //! laws and gestures follow the device specs (handoffs/device-specs/<device>.md,
 //! sections 2 and 3); the curves are the responses the engine kernels implement.
 //!
-//! Slint (ui/device_panel.slint, GraphView) only draws what is built here and
+//! Slint (ui/device_panel.slint, DeviceCanvas with pointer = true) only draws what is built here and
 //! forwards pointer events (Studio.panel-graph); hit-testing and the mapping
 //! from pointer to parameters live here. A graph gesture sends live values to
 //! the engine and commits ONE command on release (a Batch when it moved more
@@ -17,10 +17,10 @@
 
 use crate::controller::Controller;
 use crate::device_panel::Z;
-use crate::{GraphDot, GraphLayer, GraphPill, GraphRule, PanelGraph};
+use crate::{PanelCanvas, PanelGrip, PanelPath, PanelText};
 use saine_core::builtin::{DeviceDef, ParamDef, View};
 use saine_core::{Command, Device, DeviceId};
-use slint::{Brush, Color, ModelRc, SharedString, VecModel};
+use slint::{Color, ModelRc, SharedString, VecModel};
 use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::fmt::Write;
@@ -86,13 +86,6 @@ enum Zone {
 }
 
 impl Zone {
-    const ALL: [Zone; 6] = [Zone::Plane, Zone::Band, Zone::EdgeLo, Zone::EdgeHi, Zone::Threshold, Zone::Floor];
-    fn id(self) -> i32 {
-        Zone::ALL.iter().position(|z| *z == self).unwrap_or(0) as i32
-    }
-    fn from_id(i: i32) -> Option<Zone> {
-        usize::try_from(i).ok().and_then(|i| Zone::ALL.get(i).copied())
-    }
     /// Parameters a zone edits.
     fn params(self, kind: Kind) -> &'static [&'static str] {
         match (kind, self) {
@@ -216,12 +209,37 @@ fn alpha(c: Color, a: f32) -> Color {
     Color::from_argb_u8((a.clamp(0.0, 1.0) * 255.0).round() as u8, c.red(), c.green(), c.blue())
 }
 
-fn none() -> Brush {
-    Brush::SolidColor(Color::from_argb_u8(0, 0, 0, 0))
+fn none() -> Color {
+    Color::from_argb_u8(0, 0, 0, 0)
 }
 
-fn layer(commands: String, stroke: Color, width: f32, fill: Brush) -> GraphLayer {
-    GraphLayer { commands: s(commands), stroke, width: width * Z, fill }
+fn layer(commands: String, stroke: Color, width: f32, fill: Color) -> PanelPath {
+    PanelPath { commands: s(commands), stroke, width: width * Z, fill }
+}
+
+/// Axis rule: position (well px), label, 0 dB emphasis.
+struct Rule {
+    pos: f32,
+    text: SharedString,
+    strong: bool,
+}
+
+/// Grip pill on a line; x < 0 places it 8 pt after the previous pill.
+struct Pill {
+    x: f32,
+    y: f32,
+    label: &'static str,
+    value: String,
+    hot: bool,
+}
+
+/// Approximate pill width (8 + dots 7 + 5 + label + 5 + value + 8 pt, 11 pt text).
+fn pill_width(p: &Pill) -> f32 {
+    (33.0 + 6.2 * p.label.chars().count() as f32 + 6.0 * p.value.chars().count() as f32) * Z
+}
+
+fn circle(x: f32, y: f32, r: f32) -> String {
+    format!("M{:.2} {y:.2} a{r:.2} {r:.2} 0 1 0 {:.2} 0 a{r:.2} {r:.2} 0 1 0 {:.2} 0 Z", x - r, 2.0 * r, -2.0 * r)
 }
 
 fn polyline(pts: &[(f32, f32)]) -> String {
@@ -386,8 +404,8 @@ impl Controller {
     }
 
     /// The graph of a built-in card, if its definition names one.
-    pub(crate) fn graph_view(&self, d: &Device, def: &'static DeviceDef, accent: Color) -> PanelGraph {
-        let Some(kind) = Kind::of(def) else { return PanelGraph::default() };
+    pub(crate) fn graph_canvas(&self, d: &Device, def: &'static DeviceDef, accent: Color) -> PanelCanvas {
+        let Some(kind) = Kind::of(def) else { return PanelCanvas::default() };
         let (x, y, w, h) = placement(def);
         let g = geo(kind, def);
         let v = |id: &str| def.param(id).map_or(0.0, |p| self.panel_value(d, def, p));
@@ -398,17 +416,17 @@ impl Controller {
         let spectrum = st.spectra.get(&d.id);
         let well = Color::from_rgb_u8(0x1c, 0x1d, 0x21);
         let (mut layers, mut dots, mut pills, mut hrules, mut vrules) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        let (caption, value, label);
+        let (caption, value);
         let cursor = dragging.or(hover).map_or(0, |z| z.cursor(v("listen") >= 0.5));
-        let rungs = |hr: &mut Vec<GraphRule>, steps: &[f32]| {
+        let rungs = |hr: &mut Vec<Rule>, steps: &[f32]| {
             for &db in steps {
                 let last = db == g.bottom;
-                hr.push(GraphRule { pos: g.y_of(db).min(g.h - 1.0), text: s(if last { String::new() } else { axis_db(db) }), strong: db == 0.0 });
+                hr.push(Rule { pos: g.y_of(db).min(g.h - 1.0), text: s(if last { String::new() } else { axis_db(db) }), strong: db == 0.0 });
             }
         };
-        let grid = |vr: &mut Vec<GraphRule>, lines: &[(f32, &str)]| {
+        let grid = |vr: &mut Vec<Rule>, lines: &[(f32, &str)]| {
             for &(hz, t) in lines {
-                vr.push(GraphRule { pos: g.x_of(hz), text: s(t), strong: false });
+                vr.push(Rule { pos: g.x_of(hz), text: s(t), strong: false });
             }
         };
         match kind {
@@ -428,13 +446,12 @@ impl Controller {
                 let input: Vec<(f32, f32)> = xs.iter().map(|(px, s)| (*px, to_y(*s))).collect();
                 let out: Vec<(f32, f32)> = xs.iter().map(|(px, s)| (*px, to_y(declipper_wave(*s, t, c, mix).0))).collect();
                 layers.push(layer(dashed(&input, 3.0 * Z, 3.0 * Z), ink(0.25), 1.0, none()));
-                layers.push(layer(area(&out, mid), Color::from_argb_u8(0, 0, 0, 0), 0.0, Brush::SolidColor(alpha(accent, 0.18))));
+                layers.push(layer(area(&out, mid), Color::from_argb_u8(0, 0, 0, 0), 0.0, alpha(accent, 0.18)));
                 layers.push(layer(polyline(&out), accent, if hot(Zone::Plane) { 2.0 } else { 1.5 }, none()));
                 let peak_db = 20.0 * declipper_wave(1.0, t, c, mix).1.max(1e-6).log10();
                 caption = "Peak";
                 let a = (peak_db.abs() * 10.0).round() / 10.0;
                 value = if peak_db <= -0.05 { format!("{MINUS}{a:.1} dB") } else { format!("+{a:.1} dB") };
-                label = format!("Clipping repair, peak {peak_db:.1} decibels");
             }
             Kind::Deesser => {
                 let (f0, q, red, listen, mix) = (v("frequency"), v("bandwidth"), v("reduction"), v("listen") >= 0.5, v("mix") / 100.0);
@@ -446,13 +463,13 @@ impl Controller {
                 let db_at = |f: f32| deesser_db(f0, q, red, listen, mix, f).clamp(g.bottom, 0.0);
                 let pts: Vec<(f32, f32)> = fs.iter().map(|&f| (g.x_of(f), g.y_of(db_at(f)))).collect();
                 if listen {
-                    layers.push(layer(area(&pts, g.y1), Color::from_argb_u8(0, 0, 0, 0), 0.0, Brush::SolidColor(alpha(accent, 0.34))));
+                    layers.push(layer(area(&pts, g.y1), Color::from_argb_u8(0, 0, 0, 0), 0.0, alpha(accent, 0.34)));
                 } else {
-                    layers.push(layer(area(&pts, g.y_of(0.0)), Color::from_argb_u8(0, 0, 0, 0), 0.0, Brush::SolidColor(ink(0.07))));
+                    layers.push(layer(area(&pts, g.y_of(0.0)), Color::from_argb_u8(0, 0, 0, 0), 0.0, ink(0.07)));
                     let duck = spectrum.map_or(0.0, |s| s.duck);
                     let amount = (-duck / red.max(0.1)).clamp(0.0, 1.0);
                     if amount > 0.01 {
-                        layers.push(layer(area(&pts, g.y_of(0.0)), Color::from_argb_u8(0, 0, 0, 0), 0.0, Brush::SolidColor(alpha(accent, 0.34 * amount))));
+                        layers.push(layer(area(&pts, g.y_of(0.0)), Color::from_argb_u8(0, 0, 0, 0), 0.0, alpha(accent, 0.34 * amount)));
                     }
                 }
                 layers.push(layer(polyline(&pts), ink(1.0), 1.5, none()));
@@ -463,16 +480,10 @@ impl Controller {
                         layers.push(layer(format!("M{ex:.2} 0 L{ex:.2} {:.2}", g.h), ink(if hot(z) { 0.55 } else { 0.24 }), 1.0 / Z, none()));
                     }
                 }
-                dots.push(GraphDot {
-                    x: g.x_of(f0),
-                    y: g.y_of(db_at(f0)),
-                    r: 5.0 * Z,
-                    fill: if hot(Zone::Band) { Color::from_rgb_u8(0x29, 0x2a, 0x30) } else { well },
-                    stroke: ink(1.0),
-                });
+                let dot_fill = if hot(Zone::Band) { Color::from_rgb_u8(0x29, 0x2a, 0x30) } else { well };
+                dots.push(PanelPath { commands: s(circle(g.x_of(f0), g.y_of(db_at(f0)), 5.0 * Z)), stroke: ink(1.0), width: 1.5 * Z, fill: dot_fill });
                 caption = "Band";
                 value = if f0 >= 1000.0 { format!("{:.2} kHz", f0 / 1000.0) } else { format!("{f0:.0} Hz") };
-                label = format!("De-esser band, {value}, reduction {red:.1} decibels");
             }
             Kind::Dehummer => {
                 let (f0, harm, q, depth, mix) = (v("frequency"), v("num_harmonics").round().clamp(1.0, 8.0) as u32, v("notch_width"), v("depth"), v("mix") / 100.0);
@@ -490,7 +501,6 @@ impl Controller {
                 layers.push(layer(polyline(&pts), ink(1.0), if hot(Zone::Plane) { 2.25 } else { 1.5 }, none()));
                 caption = "Hum";
                 value = format!("{f0:.1} Hz");
-                label = format!("Hum notches at {value} and {harm} harmonics, depth {depth:.1} decibels");
             }
             Kind::Denoiser => {
                 let (t, red) = (v("threshold"), v("reduction"));
@@ -499,51 +509,65 @@ impl Controller {
                 grid(&mut vrules, &[(100.0, "100"), (1000.0, "1k"), (10000.0, "10k")]);
                 let (x0, ty, fy) = (26.0 * Z, g.y_of(t), g.y_of(floor));
                 let rect = |a: f32, b: f32| format!("M{x0:.2} {a:.2} L{:.2} {a:.2} L{:.2} {b:.2} L{x0:.2} {b:.2} Z", g.w, g.w);
-                layers.push(layer(rect(ty, fy), Color::from_argb_u8(0, 0, 0, 0), 0.0, Brush::SolidColor(alpha(accent, 0.16))));
+                layers.push(layer(rect(ty, fy), Color::from_argb_u8(0, 0, 0, 0), 0.0, alpha(accent, 0.16)));
                 let duck = spectrum.map_or(0.0, |s| s.duck);
                 if duck < -0.1 {
-                    layers.push(layer(rect(ty, g.y_of((t + duck).max(g.bottom))), Color::from_argb_u8(0, 0, 0, 0), 0.0, Brush::SolidColor(alpha(accent, 0.3))));
+                    layers.push(layer(rect(ty, g.y_of((t + duck).max(g.bottom))), Color::from_argb_u8(0, 0, 0, 0), 0.0, alpha(accent, 0.3)));
                 }
                 layers.push(layer(format!("M{x0:.2} {ty:.2} L{:.2} {ty:.2}", g.w), accent, if hot(Zone::Threshold) { 2.0 } else { 1.5 }, none()));
                 layers.push(layer(format!("M{x0:.2} {fy:.2} L{:.2} {fy:.2}", g.w), alpha(accent, 0.45), if hot(Zone::Floor) { 1.5 } else { 1.0 }, none()));
                 let inside = |y: f32| y.clamp(9.0 * Z, g.h - 9.0 * Z);
-                pills.push(GraphPill { x: 30.0 * Z, y: inside(ty), label: s("Threshold"), value: s(db_text(t)), hot: hot(Zone::Threshold), zone: Zone::Threshold.id() });
-                pills.push(GraphPill { x: -1.0, y: inside(fy), label: s("Reduction"), value: s(db_text(red)), hot: hot(Zone::Floor), zone: Zone::Floor.id() });
+                pills.push(Pill { x: 30.0 * Z, y: inside(ty), label: "Threshold", value: db_text(t), hot: hot(Zone::Threshold) });
+                pills.push(Pill { x: -1.0, y: inside(fy), label: "Reduction", value: db_text(red), hot: hot(Zone::Floor) });
                 caption = "Noise gate";
                 value = String::new();
-                label = format!("Noise gate, threshold {t:.1} decibels, reduction {red:.1} decibels");
             }
         }
-        let (mut sfill, mut sline) = (String::new(), String::new());
+        // Draw order: rules, spectrum, layers, axis labels, dots, grip pills.
+        let (ww, wh) = (w * Z, (h - CAPTION) * Z);
+        let rule = |commands: String, a: f32| PanelPath { commands: s(commands), stroke: ink(a), width: 1.0, fill: none() };
+        let mut paths: Vec<PanelPath> = Vec::new();
+        paths.extend(hrules.iter().map(|r| rule(format!("M0 {:.2} L{ww:.2} {:.2}", r.pos + 0.5, r.pos + 0.5), if r.strong { 0.13 } else { 0.05 })));
+        paths.extend(vrules.iter().map(|r| rule(format!("M{:.2} 0 L{:.2} {wh:.2}", r.pos + 0.5, r.pos + 0.5), 0.05)));
         if let Some(sp) = spectrum.filter(|_| kind.has_spectrum()) {
             let pts = spectrum_points(&sp.shown, &g);
             if !pts.is_empty() {
-                sline = polyline(&pts);
-                sfill = area(&pts, g.y1);
+                paths.push(layer(area(&pts, g.y1), none(), 0.0, ink(0.14)));
+                paths.push(PanelPath { commands: s(polyline(&pts)), stroke: ink(0.5), width: 1.0, fill: none() });
             }
         }
-        PanelGraph {
+        paths.extend(layers);
+        paths.extend(dots);
+        let label_text = |x: f32, y: f32, w: f32, t: &SharedString, align: i32| PanelText { x, y, w, h: 12.0 * Z, text: t.clone(), color: Color::from_argb_u8(0x66, 255, 255, 255), size: 9.0 * Z, weight: 500, align };
+        let mut texts: Vec<PanelText> = hrules.iter().filter(|r| !r.text.is_empty()).map(|r| label_text(3.0 * Z, r.pos + 1.0, 40.0 * Z, &r.text, 0)).collect();
+        texts.extend(vrules.iter().map(|r| label_text(r.pos - 20.0 * Z, wh - 13.0 * Z, 40.0 * Z, &r.text, 1)));
+        let mut grips = Vec::new();
+        let mut next_x = 0.0;
+        for p in &pills {
+            let x = if p.x < 0.0 { next_x } else { p.x };
+            next_x = x + pill_width(p) + 8.0 * Z;
+            grips.push(PanelGrip { x, y: p.y, label: s(p.label), value: s(p.value.as_str()), hot: p.hot });
+        }
+        PanelCanvas {
             visible: true,
+            well: true,
             x: x * Z,
             y: y * Z,
-            w: w * Z,
+            w: ww,
             h: h * Z,
             well_y: CAPTION * Z,
             caption: s(caption),
-            value: s(value),
-            label: s(label),
-            hrules: model(hrules),
-            vrules: model(vrules),
-            spectrum_fill: s(sfill),
-            spectrum_line: s(sline),
-            layers: model(layers),
-            dots: model(dots),
-            pills: model(pills),
+            readout: s(value),
+            paths: model(paths),
+            texts: model(texts),
+            grips: model(grips),
+            zones: model(Vec::new()),
+            pointer: true,
             cursor,
+            readout_accent: true,
         }
     }
 
-    /// Engine readouts -> spectrum ballistics of the selected track's graph devices (every poll tick).
     pub(crate) fn panel_poll_graphs(&mut self) {
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else { return };
         let ids: Vec<(DeviceId, bool, bool)> = t
@@ -622,9 +646,10 @@ impl Controller {
             Kind::Denoiser => {
                 let (t, red) = (v("threshold"), v("reduction"));
                 let tol = 7.0 * Z;
-                if (y - g.y_of((t + red).max(g.bottom))).abs() <= tol {
+                let inside = |y: f32| y.clamp(9.0 * Z, g.h - 9.0 * Z);
+                if (y - inside(g.y_of((t + red).max(g.bottom)))).abs() <= tol {
                     Some(Zone::Floor)
-                } else if (y - g.y_of(t)).abs() <= tol {
+                } else if (y - inside(g.y_of(t))).abs() <= tol {
                     Some(Zone::Threshold)
                 } else {
                     None
@@ -635,14 +660,14 @@ impl Controller {
 
     /// Graph pointer events (Studio.panel-graph). zone -1: hit-test the well; else a pill's zone.
     #[allow(clippy::too_many_arguments)]
-    pub fn panel_graph(&mut self, device: DeviceId, phase: i32, zone: i32, x: f32, y: f32, fine: bool, alt: bool) {
+    pub fn panel_graph(&mut self, device: DeviceId, phase: i32, x: f32, y: f32, fine: bool, alt: bool) {
         let Some((d, def, kind)) = self.graph_def(device) else {
             if matches!(phase, 2 | 3) && self.devices.panel.graph.drag.take().is_some() {
                 self.ui_dirty = true;
             }
             return;
         };
-        let zone = if zone >= 0 { Zone::from_id(zone) } else { self.graph_hit(d, def, kind, x, y) };
+        let zone = self.graph_hit(d, def, kind, x, y);
         match phase {
             0 => {
                 let Some(z) = zone else { return };

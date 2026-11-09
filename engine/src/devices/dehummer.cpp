@@ -12,7 +12,6 @@
 #include "builtin.hpp"
 #include "dsp.hpp"
 #include "spectral.hpp"
-#include "svf.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -87,7 +86,7 @@ public:
             const float f = freq_.next(freq);
             const float qq = q_.next(q);
             if (countdown_ == 0) {
-                for (uint32_t k = 0; k < active; ++k) c_[k] = dsp::SvfCoeffs::band(f * static_cast<float>(k + 1), qq, sr_);
+                for (uint32_t k = 0; k < active; ++k) c_[k] = dsp::SvfCoeffs::bandpass(f * static_cast<float>(k + 1), qq, sr_);
                 countdown_ = kCoeffStride;
             }
             --countdown_;
@@ -95,8 +94,8 @@ public:
             float yl = xl, yr = xr;
             for (uint32_t k = 0; k < active; ++k) {
                 const float ak = amount_[k].next(target[k]);
-                yl -= ak * svf_[0][k].band(yl, c_[k]);
-                yr -= ak * svf_[1][k].band(yr, c_[k]);
+                yl -= ak * svf_[0][k].process(yl, c_[k]);
+                yr -= ak * svf_[1][k].process(yr, c_[k]);
             }
             const float m = mix_.next(mix);
             l[i] = xl + m * (yl - xl);
@@ -108,7 +107,7 @@ public:
             svf_[1][k].reset();
         }
         for (auto& ch : svf_)
-            for (auto& f : ch) f.flush();
+            for (auto& f : ch) f.flush_denormals();
         spectrum_.write(ro);
     }
 

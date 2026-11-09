@@ -14,7 +14,6 @@
 #include "builtin.hpp"
 #include "dsp.hpp"
 #include "spectral.hpp"
-#include "svf.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -110,13 +109,13 @@ public:
             const float f = freq_.next(lf);
             const float qq = q_.next(q);
             if (countdown_ == 0) {
-                c_ = dsp::SvfCoeffs::band(std::exp2(f), qq, sr_);
+                c_ = dsp::SvfCoeffs::bandpass(std::exp2(f), qq, sr_);
                 countdown_ = kCoeffStride;
             }
             --countdown_;
             const float xl = l[i], xr = r[i];
-            const float bl = svf_[0].band(xl, c_);
-            const float br = svf_[1].band(xr, c_);
+            const float bl = svf_[0].process(xl, c_);
+            const float br = svf_[1].process(xr, c_);
             const float d = std::max(std::fabs(bl), std::fabs(br));
             env = d + (d > env ? att_ : rel_) * (env - d);
             const float gr = reduction_db(dsp::gain_to_db(env) - thr_.next(threshold), cap_.next(cap));
@@ -130,7 +129,7 @@ public:
         }
         if (env < 1e-20f) env = 0.0f;
         env_ = env;
-        for (auto& f : svf_) f.flush();
+        for (auto& f : svf_) f.flush_denormals();
         ro[0] = -gr_max;
         spectrum_.write(ro + 1);
     }
