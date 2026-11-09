@@ -154,13 +154,13 @@ public:
 private:
     struct Run {
         int64_t start = -1, pend_s = -1, pend_e = -1;
-        float sign = 0.0f;
+        float sign = 0.0f, pend_sign = 0.0f;
     };
 
     void detect(int c, float x, float threshold) noexcept {
         Run& st = run_[c];
         if (st.pend_e >= 0 && n_ == st.pend_e + 1) {
-            rebuild(c, st.pend_s, st.pend_e, threshold);
+            rebuild(c, st.pend_s, st.pend_e, st.pend_sign, threshold);
             st.pend_e = -1;
         }
         const bool clipped = std::fabs(x) >= threshold;
@@ -170,6 +170,7 @@ private:
             if (n_ - st.start <= window_ - 4 && st.pend_e < 0) {
                 st.pend_s = st.start;
                 st.pend_e = n_;
+                st.pend_sign = st.sign;
             }
             st.start = -1;
         }
@@ -180,9 +181,8 @@ private:
     }
 
     // Replace samples [s, e) with a Hermite arc from s - 1 to e.
-    void rebuild(int c, int64_t s, int64_t e, float threshold) noexcept {
+    void rebuild(int c, int64_t s, int64_t e, float sign, float threshold) noexcept {
         float* b = buf_[c].data();
-        const float sign = run_[c].sign;
         const float xa = b[(s - 1) & mask_], xb = b[e & mask_];
         const float ma = xa - b[(s - 2) & mask_];
         const float mb = b[(e + 1) & mask_] - xb;

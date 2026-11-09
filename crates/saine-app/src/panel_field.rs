@@ -124,6 +124,9 @@ struct Drag {
     start: Vec<(usize, f32)>,
     values: Vec<(usize, f32)>,
     last: (f32, f32),
+    /// Pointer at the press, and the pointer moved by the fine factor since then.
+    press: (f32, f32),
+    pos: (f32, f32),
     /// Pointer offset from the dragged handle at the press (keeps the grab point).
     grab: (f32, f32),
     travel: f32,
@@ -550,6 +553,7 @@ impl Controller {
             .collect();
         self.devices.panel.field.spectra.retain(|id, _| ids.iter().any(|(i, _)| i == id));
         let now = Instant::now();
+        let audio_running = self.engine.transport().playing || self.rec.recording || self.test_tone_active();
         let mut out = Vec::new();
         let mut dirty = false;
         for (id, has_duck) in ids {
@@ -566,7 +570,7 @@ impl Controller {
                 sp.raw = raw;
                 sp.changed = now;
             }
-            let stale = now - sp.changed > STALE;
+            let stale = !audio_running && now - sp.changed > STALE;
             let before = sp.shown;
             for (b, r) in sp.shown.iter_mut().zip(raw.iter()) {
                 let target = r.max(SPEC_FLOOR_DB);
@@ -632,7 +636,12 @@ impl Controller {
     /// Field pointer events (Studio.panel-field). zone -1: hit-test the well; else a pill's zone.
     #[allow(clippy::too_many_arguments)]
     pub fn panel_field(&mut self, device: DeviceId, phase: i32, zone: i32, x: f32, y: f32, fine: bool, alt: bool) {
-        let Some((d, def, kind)) = self.field_def(device) else { return };
+        let Some((d, def, kind)) = self.field_def(device) else {
+            if matches!(phase, 2 | 3) && self.devices.panel.field.drag.take().is_some() {
+                self.ui_dirty = true;
+            }
+            return;
+        };
         let zone = if zone >= 0 { Zone::from_id(zone) } else { self.field_hit(d, def, kind, x, y) };
         match phase {
             0 => {
@@ -654,7 +663,7 @@ impl Controller {
                     }
                     _ => (0.0, 0.0),
                 };
-                self.devices.panel.field.drag = Some(Drag { device, kind, zone: z, values: start.clone(), start, last: (x, y), grab, travel: 0.0, active: false });
+                self.devices.panel.field.drag = Some(Drag { device, kind, zone: z, values: start.clone(), start, last: (x, y), press: (x, y), pos: (x, y), grab, travel: 0.0, active: false });
                 self.devices.panel.field.hover = Some((device, z));
                 self.ui_dirty = true;
             }
@@ -704,6 +713,9 @@ impl Controller {
         g.active = true;
         let geo = geo(g.kind, def);
         let k = if fine { 0.2 } else { 1.0 };
+        g.pos = (g.pos.0 + k * dx, g.pos.1 + k * dy);
+        let (x, y) = g.pos;
+        let get0 = |g: &Drag, id: &str| def.index_of(id).and_then(|i| g.start.iter().find(|(j, _)| *j == i)).map(|(_, v)| *v);
         let get = |g: &Drag, id: &str| def.index_of(id).and_then(|i| g.values.iter().find(|(j, _)| *j == i)).map(|(_, v)| *v);
         let cur = |id: &str| def.param(id).map_or(0.0, |p| self.project().device(device).map_or(p.default, |d| def.value(d, p)));
         let set = |g: &mut Drag, id: &str, v: f32| {
@@ -747,11 +759,12 @@ impl Controller {
                 }
             }
             (Kind::Deesser, _) => set(&mut g, "bandwidth", deesser_q_for_edge(cur("frequency"), geo.hz_of(x))),
-            (Kind::Denoiser, Zone::Floor) => {
-                let t = cur("threshold");
-                set(&mut g, "reduction", (geo.db_of(y).clamp(geo.bottom, geo.top) - t).min(0.0));
+            (Kind::Denoiser, zone) => {
+                let delta = -(y - g.press.1) / (geo.y1 - geo.y0) * (geo.top - geo.bottom);
+                let id = if zone == Zone::Floor { "reduction" } else { "threshold" };
+                let v = get0(&g, id).unwrap_or(0.0) + delta;
+                set(&mut g, id, if zone == Zone::Floor { v.min(0.0) } else { v });
             }
-            (Kind::Denoiser, _) => set(&mut g, "threshold", geo.db_of(y).clamp(geo.bottom, geo.top)),
         }
         for &(i, v) in &g.values {
             let _ = self.engine.builtin_set_param(device.0, i as u32, v);
@@ -778,6 +791,10 @@ impl Controller {
     /// Escape or a cancelled pointer: restore the values from before the field drag.
     pub fn panel_cancel_field_drag(&mut self) -> bool {
         let Some(g) = self.devices.panel.field.drag.take() else { return false };
+        self.ui_dirty = true;
+        if self.project().device(g.device).is_none() {
+            return false;
+        }
         for &(i, v) in &g.start {
             let _ = self.engine.builtin_set_param(g.device.0, i as u32, v);
         }

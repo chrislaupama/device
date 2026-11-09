@@ -71,6 +71,8 @@ public:
         freq_.set_time(20.0f, sr_);
         q_.set_time(20.0f, sr_);
         mix_.set_time(20.0f, sr_);
+        thr_.set_time(20.0f, sr_);
+        cap_.set_time(20.0f, sr_);
         listen_.set_time(10.0f, sr_);
         spectrum_.prepare(sr_);
     }
@@ -95,6 +97,8 @@ public:
             freq_.snap(lf);
             q_.snap(q);
             mix_.snap(mix);
+            thr_.snap(threshold);
+            cap_.snap(cap);
             listen_.snap(listen);
             primed_ = true;
         }
@@ -114,7 +118,7 @@ public:
             const float br = svf_[1].band(xr, c_);
             const float d = std::max(std::fabs(bl), std::fabs(br));
             env = d + (d > env ? att_ : rel_) * (env - d);
-            const float gr = reduction_db(dsp::gain_to_db(env) - threshold, cap);
+            const float gr = reduction_db(dsp::gain_to_db(env) - thr_.next(threshold), cap_.next(cap));
             gr_max = std::max(gr_max, gr);
             const float cut = mix_.next(mix) * (1.0f - dsp::db_to_gain(-gr));
             const float ls = listen_.next(listen);
@@ -135,7 +139,7 @@ private:
     float att_ = 0.0f, rel_ = 0.0f, env_ = 0.0f;
     uint32_t countdown_ = 0;
     bool primed_ = false;
-    dsp::Smoother freq_, q_, mix_, listen_;
+    dsp::Smoother freq_, q_, mix_, thr_, cap_, listen_;
     dsp::SvfCoeffs c_;
     dsp::Svf svf_[2];
     dsp::SpectrumTap spectrum_;

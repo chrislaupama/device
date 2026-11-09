@@ -262,6 +262,22 @@ TEST_CASE(declipper_rebuilds_flattened_peaks) {
     CHECK(pk > 0.72);
 }
 
+TEST_CASE(declipper_keeps_the_polarity_of_adjacent_opposite_runs) {
+    DeviceRig r("declipper", kDeClipper, kRate);
+    const uint32_t lat = r.instance().latency();
+    r.set("threshold", -5.5f);
+    r.set("ceiling", 0.f);
+    // A positive clipped run that ends on a negative clipped sample, and back.
+    const float cycle[] = {0.0f, 0.3f, 0.55f, 0.55f, -0.55f, -0.55f, -0.3f, 0.0f};
+    Signal x(9600 + lat, 0.0f);
+    for (std::size_t i = 0; i < 9600; ++i) x[i] = cycle[i % 8];
+    const Signal y = r.run_mono(x);
+    int flipped = 0;
+    for (std::size_t i = 960; i < 9600; ++i)
+        if (std::fabs(x[i]) >= 0.5f && x[i] * y[i + lat] < 0.0f) ++flipped;
+    CHECK(flipped == 0);
+}
+
 TEST_CASE(declipper_holds_the_ceiling_with_true_peak) {
     for (float ceiling : {-0.3f, -3.f}) {
         DeviceRig r("declipper", kDeClipper, kRate);
