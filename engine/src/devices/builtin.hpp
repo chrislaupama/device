@@ -79,7 +79,7 @@ const char* parse_builtin_state(const uint8_t* data, std::size_t len, const uint
 class BuiltinInstance final : public PluginInstance {
 public:
     static constexpr uint32_t kMaxParams = 256;
-    static constexpr uint32_t kMaxReadouts = 32;
+    static constexpr uint32_t kMaxReadouts = 64;
 
     BuiltinInstance(PluginSpec spec, const BuiltinDescriptor& desc, std::unique_ptr<BuiltinProcessor> proc,
                     double sample_rate, uint32_t max_block);

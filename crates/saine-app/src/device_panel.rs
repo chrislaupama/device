@@ -15,8 +15,8 @@
 //!
 //! Custom views: View::DynamicsStrip is drawn here (paths built from the
 //! engine's readouts); View::Custom(name) is the escape hatch for device-
-//! specific bodies (EQ curve, shaper, trance-gate grid) and gets its own arm
-//! in [Controller::builtin_card] when such a device lands.
+//! specific bodies. The restoration devices' fields (wave, band, comb and
+//! gate views with the shared spectrum overlay) live in src/panel_field.rs.
 
 use crate::controller::{slint_color, track_color, Controller};
 use crate::devices::{DevMenu, MenuPick};
@@ -71,6 +71,8 @@ struct MeterHistory {
 pub struct PanelState {
     drag: Option<ParamDrag>,
     meters: HashMap<DeviceId, MeterHistory>,
+    /// Field views (src/panel_field.rs): drag, hover and spectrum state.
+    pub(crate) field: crate::panel_field::FieldState,
 }
 
 fn s(v: impl Into<SharedString>) -> SharedString {
@@ -226,7 +228,10 @@ impl Controller {
     }
 
     /// Value shown for a parameter: the live drag value, else the model value.
-    fn panel_value(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
+    pub(crate) fn panel_value(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
+        if let Some(v) = def.index_of(p.id).and_then(|i| self.field_drag_value(d.id, i)) {
+            return v;
+        }
         match self.devices.panel.drag {
             Some(g) if g.device == d.id && def.params.get(g.index).is_some_and(|q| q.id == p.id) => g.value,
             _ => def.value(d, p),
@@ -321,6 +326,9 @@ impl Controller {
                     bipolar: p.is_bipolar(),
                     ..Default::default()
                 };
+                if def.layout.clusters.iter().any(|c| c.contains(&Control::Toggle(id))) {
+                    k.face = 2; // latch capsule
+                }
                 if let Some((_, Face::SoftKneeCurve { threshold, ratio, knee })) = def.layout.faces.iter().find(|(f, _)| *f == id) {
                     let (curve, bend, unity) = soft_knee_face(value(threshold).unwrap_or(-24.0), value(ratio).unwrap_or(1.0), value(knee).unwrap_or(0.0));
                     k.face = 1;
@@ -359,6 +367,7 @@ impl Controller {
             picks: model(picks),
             sliders: model(sliders),
             strip,
+            field: self.field_view(d, def, accent),
             ..Default::default()
         }
     }
@@ -486,6 +495,9 @@ impl Controller {
 
     /// Escape or a cancelled pointer: restore the value from before the drag, with no undo step.
     pub fn panel_cancel_drag(&mut self) -> bool {
+        if self.panel_cancel_field_drag() {
+            return true;
+        }
         let Some(g) = self.devices.panel.drag.take() else { return false };
         let _ = self.engine.builtin_set_param(g.device.0, g.index as u32, g.start);
         self.ui_dirty = true;
@@ -504,7 +516,7 @@ impl Controller {
     }
 
     /// One gesture = one undo step: never merge with the previous edit of the same parameter.
-    fn panel_commit(&mut self, cmd: Command) {
+    pub(crate) fn panel_commit(&mut self, cmd: Command) {
         self.doc.seal_coalescing();
         self.execute(cmd);
         self.doc.seal_coalescing();

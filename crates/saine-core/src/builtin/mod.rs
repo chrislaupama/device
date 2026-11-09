@@ -26,6 +26,10 @@
 //! store the choice index as their plain value (`min` = 0, `max` = choices - 1).
 
 mod compressor;
+mod declipper;
+mod deesser;
+mod dehummer;
+mod denoiser;
 
 use crate::device::{Device, DeviceId, PluginFormat, PluginKind, PluginRef};
 use crate::model::Track;
@@ -48,6 +52,9 @@ pub const LINEAR: Taper = Taper::Linear { skew: 1.0 };
 pub enum Format {
     /// Signed decibels, one decimal: "−24.0 dB", "+3.0 dB".
     Db,
+    /// A cut stored as a positive amount, shown as a negative level: 8 -> "−8.0 dB".
+    /// Typed text may carry either sign.
+    DbCut,
     /// Milliseconds, whole numbers when the range spans 20 ms or more ("10 ms", "1500 ms"), else one decimal.
     Time,
     /// Hertz below 1 kHz ("440 Hz"), kilohertz above ("2.50 kHz").
@@ -198,12 +205,15 @@ impl ParamDef {
             (Format::Time, "ms" | "msec" | "msecs") => {}
             (Format::Hz, "k" | "khz") => v *= 1000.0,
             (Format::Hz, "hz") => {}
-            (Format::Db, "db") | (Format::Percent, "%") => {}
+            (Format::Db | Format::DbCut, "db") | (Format::Percent, "%") => {}
             (Format::Plain(_), u) if u == self.unit.to_lowercase() => {}
             _ => return None,
         }
         if !v.is_finite() {
             return None;
+        }
+        if self.format == Format::DbCut {
+            v = v.abs();
         }
         Some(self.snap(v))
     }
@@ -219,6 +229,10 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
             let a = (v.abs() * 10.0).round() / 10.0;
             let sign = if v <= -0.05 { MINUS } else { '+' };
             format!("{sign}{a:.1} dB")
+        }
+        Format::DbCut => {
+            let a = (v.abs() * 10.0).round() / 10.0;
+            if a < 0.05 { "0.0 dB".into() } else { format!("{MINUS}{a:.1} dB") }
         }
         Format::Time => {
             let d = if range < 20.0 { 1 } else { 0 };
@@ -314,6 +328,8 @@ pub struct Layout {
     /// (param, discrete param, values): `param` is shown only while the
     /// discrete parameter has one of `values` (mode-dependent layouts).
     pub shown_when: &'static [(&'static str, &'static str, &'static [u32])],
+    /// Card width (pt) when it is not derived from the dial row (0 = derived).
+    pub fixed_width: f32,
 }
 
 /// Reference dial row metrics (pt).
@@ -326,6 +342,9 @@ impl Layout {
     /// Card width from the dial clusters: cells * 62 + inner gaps * 10 +
     /// cluster gaps * 21, plus 16 of padding (reference card sizing rule).
     pub fn width(&self) -> f32 {
+        if self.fixed_width > 0.0 {
+            return self.fixed_width;
+        }
         let cells: usize = self.clusters.iter().map(|c| c.len()).sum();
         let inner: usize = self.clusters.iter().map(|c| c.len().saturating_sub(1)).sum();
         let gaps = self.clusters.len().saturating_sub(1);
@@ -371,7 +390,7 @@ pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 1] = [&compressor::COMPRESSOR];
+    static ALL: [&DeviceDef; 5] = [&compressor::COMPRESSOR, &declipper::DECLIPPER, &deesser::DEESSER, &dehummer::DEHUMMER, &denoiser::DENOISER];
     &ALL
 }
 
@@ -628,6 +647,68 @@ mod tests {
     #[test]
     fn width_follows_clusters() {
         assert_eq!(comp().layout.width(), 521.0, "reference: [2,5] clusters -> 505 + 16");
+    }
+
+    #[test]
+    fn restoration_formats_match_the_reference_cards() {
+        let deesser = find("deesser").unwrap();
+        assert_eq!(deesser.param("frequency").unwrap().format(7000.0), "7.00 kHz");
+        assert_eq!(deesser.param("bandwidth").unwrap().format(1.0), "1.00");
+        let red = deesser.param("reduction").unwrap();
+        assert_eq!(red.format(8.0), "\u{2212}8.0 dB");
+        assert_eq!(red.format(0.0), "0.0 dB");
+        assert_eq!(red.parse("-12 dB"), Some(12.0));
+        assert_eq!(red.parse("6"), Some(6.0));
+        assert_eq!(red.parse("\u{2212}40"), Some(30.0), "clamped");
+        assert_eq!(deesser.param("listen").unwrap().format(0.0), "Off");
+        assert!(deesser.param("listen").unwrap().reset_on_load);
+        let hum = find("dehummer").unwrap();
+        assert_eq!(hum.param("frequency").unwrap().format(60.0), "60.0 Hz");
+        assert_eq!(hum.param("num_harmonics").unwrap().format(4.0), "4");
+        assert_eq!(hum.param("num_harmonics").unwrap().snap(4.4), 4.0);
+        assert_eq!(hum.param("notch_width").unwrap().format(5.0), "5.0");
+        assert_eq!(hum.param("depth").unwrap().format(-30.0), "\u{2212}30.0 dB");
+        let noise = find("denoiser").unwrap();
+        assert_eq!(noise.param("frequency_smoothing").unwrap().label, "Smoothing");
+        assert_eq!(noise.param("attack").unwrap().format(5.0), "5.0 ms");
+        assert_eq!(noise.param("release").unwrap().format(50.0), "50 ms");
+        assert_eq!(noise.param("attack").unwrap().parse("12 ms"), Some(12.0));
+        let clip = find("declipper").unwrap();
+        assert_eq!(clip.param("oversampling").unwrap().format(1.0), "4x");
+        assert_eq!(clip.param("threshold").unwrap().format(-1.0), "\u{2212}1.0 dB");
+    }
+
+    #[test]
+    fn restoration_defaults_match_the_reference_normalised_values() {
+        // Normalised defaults read from the reference's live control inventory.
+        let cases: &[(&str, &str, f32)] = &[
+            ("deesser", "frequency", 0.602_451_6),
+            ("deesser", "bandwidth", 0.230_769_2),
+            ("deesser", "threshold", 0.1),
+            ("deesser", "reduction", 0.266_666_7),
+            ("dehummer", "frequency", 0.666_666_7),
+            ("dehummer", "num_harmonics", 0.428_571_4),
+            ("dehummer", "notch_width", 0.473_684_2),
+            ("dehummer", "depth", 0.5),
+            ("denoiser", "threshold", 0.5),
+            ("denoiser", "reduction", 0.666_666_7),
+            ("denoiser", "attack", 0.629_488_3),
+            ("denoiser", "release", 0.629_488_3),
+            ("declipper", "threshold", 0.833_333_3),
+            ("declipper", "ceiling", 0.95),
+        ];
+        for (dev, id, n) in cases {
+            let p = find(dev).unwrap().param(id).unwrap();
+            assert!((p.to_normalized(p.default) - n).abs() < 1e-5, "{dev}.{id}: {} vs {n}", p.to_normalized(p.default));
+        }
+    }
+
+    #[test]
+    fn restoration_card_widths() {
+        assert_eq!(find("declipper").unwrap().layout.width(), 244.0);
+        assert_eq!(find("deesser").unwrap().layout.width(), 471.0);
+        assert_eq!(find("dehummer").unwrap().layout.width(), 388.0);
+        assert_eq!(find("denoiser").unwrap().layout.width(), 460.0);
     }
 
     #[test]

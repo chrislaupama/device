@@ -62,7 +62,12 @@ flowchart LR
    - `Layout`: `picker` (menus / toggles / `Sidechain` / pills; the
      sidechain picker and what follows align right), `view`
      (`DynamicsStrip` or `Custom`), `sliders`, `clusters` of knobs,
-     `faces` (drawings inside a knob), `shown_when` (mode-dependent controls).
+     `faces` (drawings inside a knob), `shown_when` (mode-dependent controls),
+     `fixed_width` (card width in pt; 0 derives it from the dial row). A card
+     narrower than 240 pt hides the preset label and arrows and opens the
+     preset menu from a chevron after the name. `Control::Toggle` on an
+     Off/On choice draws a latch capsule. `Format::DbCut` stores a positive
+     cut and shows it as −x.x dB.
 2. **DSP kernel.** Add `engine/src/devices/<id>.cpp`: a `BuiltinProcessor`
    (`prepare` may allocate; `reset` / `process` are real-time: no
    allocation, locks, I/O or exceptions) and a `BuiltinDescriptor` whose
@@ -76,11 +81,21 @@ flowchart LR
    splits a block, the engine keeps each readout's segment value farthest
    from its idle value, so readouts must move away from idle as they grow
    (a peak meter rises from -120 dB, gain reduction falls from 0 dB).
+   A device has at most `kMaxReadouts` (64) readouts. Spectral helpers are in
+   `engine/src/devices/spectral.hpp` (`RealFft`, and `SpectrumTap`: 48 log
+   bands, 20 Hz–20 kHz, a full-scale sine reads 0 dB) and `svf.hpp` (TPT
+   state-variable filter). Report look-ahead or block latency from
+   `latency()` so the engine compensates it.
 3. **Custom view (optional).** For bodies the template cannot express (EQ
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a
    Slint component in `ui/device_panel.slint` chosen by that data. Reuse
-   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures.
+   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. For an
+   interactive graph (response curve, spectrum, draggable handles), use the
+   generic `PanelField` (`crates/saine-app/src/panel_field.rs` +
+   `FieldView` in `device_panel.slint`): rules, layers, dots and pills,
+   hit zones that edit parameters, spectrum ballistics from the readouts, and
+   one undo step per gesture.
 4. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),
@@ -96,9 +111,10 @@ flowchart LR
      parsing of any new display format.
 5. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
    (`saine_device_bench`, Release build) and put the numbers in the PR.
-6. **Render.** Add a `--state` that shows the device at its defaults (see
-   `reference-compressor` in `crates/saine-app/src/main.rs`), render it with
-   `--screenshot` and compare it with the reference capture.
+6. **Render.** `--state reference-<id>` shows any built-in device at its
+   defaults. Render it with `--offscreen --screenshot <png>` (a hidden
+   window, so it does not take over the screen) and compare it with the
+   reference capture.
 
 ## Commands
 

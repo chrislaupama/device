@@ -48,7 +48,7 @@ export struct TreeRow { depth: int, label: string, count: string, icon: int, exp
 // One plugin card in the bottom-panel device chain (src/devices.rs). x is bottom-panel relative
 // and already includes the chain scroll and a drag offset.
 // ---- built-in device panel (src/device_panel.rs builds these from the DeviceDef) ----
-// Knob cell (dial row). face 1 = soft-knee transfer curve instead of the ring (paths in a
+// Knob cell (dial row). face 2 = On/Off latch capsule (value = choice name). face 1 = soft-knee transfer curve instead of the ring (paths in a
 // 32 x 32 view box). editing: the value text is being typed (inline field).
 export struct PanelKnob { param: int, x: length, label: string, value: string, norm: float, bipolar: bool, face: int, face-curve: string, face-bend: string, face-unity: string }
 // Picker row item. kind 0 caption, 1 segmented choice, 2 menu pill, 3 value box, 4 flexible gap.
@@ -62,6 +62,23 @@ export struct PanelStrip {
     caption: string, readout: string, ticks: [PanelTick],
     in-fill: string, gr-fill: string, in-line: string, out-line: string,
     thresh-param: int, thresh-y: length, thresh-dash: string, thresh-label: string, thresh-value: string, thresh-rate: float,
+}
+
+// Field view of a built-in device (src/panel_field.rs): caption + value above a well with
+// rules, a spectrum trace, path layers, handles and grip pills. All positions are in well
+// coordinates; pointer events go back to Rust (Studio.panel-field), which hit-tests them.
+export struct FieldRule { pos: length, text: string, strong: bool }
+export struct FieldLayer { commands: string, stroke: color, width: length, fill: brush }
+export struct FieldDot { x: length, y: length, r: length, fill: color, stroke: color }
+// A grip pill on a line; x < 0 places it 8 pt after the previous pill.
+export struct FieldPill { x: length, y: length, label: string, value: string, hot: bool, zone: int }
+export struct PanelField {
+    visible: bool, x: length, y: length, w: length, h: length, well-y: length,
+    caption: string, value: string, label: string,
+    hrules: [FieldRule], vrules: [FieldRule],
+    spectrum-fill: string, spectrum-line: string,
+    layers: [FieldLayer], dots: [FieldDot], pills: [FieldPill],
+    cursor: int, // 0 default, 1 move, 2 ew-resize, 3 ns-resize
 }
 
 export struct DeviceCard {
@@ -89,6 +106,7 @@ export struct DeviceCard {
     picks: [PanelPick],
     sliders: [PanelSlider],
     strip: PanelStrip,
+    field: PanelField,
 }
 
 // Settings › Plugins list rows. warn: drawn with the orange "Missing"/failure badge.
@@ -381,6 +399,7 @@ export global Studio {
     callback panel-text(int, int, string);                   // typed value (parsed by the definition)
     callback panel-menu(int, int, length, length);           // -1 sidechain source, -2 presets; window x, y
     callback panel-preset-step(int, int);                    // previous (-1) / next (+1) factory preset
+    callback panel-field(int, int, int, float, float, bool, bool); // field pointer: phase (0 press, 1 drag, 2 release, 3 cancel, 4 hover, 5 leave), zone (-1 = hit-test), well x, y (px), shift, alt
     callback add-category(int, length, length); // row (Built-in, AU, VST3, CLAP, Chains), window x, y for the list
     callback add-search-edited(string);
     callback add-result-pick(int);
