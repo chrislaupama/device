@@ -134,6 +134,7 @@ pub static CHARACTER_MOD: DeviceDef = DeviceDef {
         clusters: &[&[Control::Swap(&["rate", "note"]), Control::Knob("depth")], &[Control::Knob("width"), Control::Knob("voice")], &[Control::Knob("mix")]],
         faces: &[],
         min_height: 202.0,
+        fixed_width: 0.0,
         shown_when: &[
             ("mode_single", "model", &[SINGLE]),
             ("mode_crossed", "model", &[CROSSED]),
@@ -153,7 +154,6 @@ pub static CHARACTER_MOD: DeviceDef = DeviceDef {
             ("rate", "sync", &[0]),
             ("note", "sync", &[1]),
         ],
-        fixed_width: 0.0,
     },
     factory: &[
         FactoryPreset { name: "Juno Wash", values: &[("mix", 45.0)] },

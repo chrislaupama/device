@@ -31,8 +31,8 @@ pub static PHASER: DeviceDef = DeviceDef {
         ],
         faces: &[],
         min_height: 202.0,
-        shown_when: &[("rate", "sync", &[0]), ("rate_sync", "sync", &[1])],
         fixed_width: 0.0,
+        shown_when: &[("rate", "sync", &[0]), ("rate_sync", "sync", &[1])],
     },
     factory: &[
         FactoryPreset { name: "Four-Pole Swirl", values: &[("rate", 0.45), ("depth", 75.0), ("feedback", 45.0), ("width", 30.0), ("output_gain", -1.0)] },

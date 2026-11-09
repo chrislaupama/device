@@ -119,11 +119,13 @@ flowchart LR
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a
    Slint component in `ui/device_panel.slint` chosen by that data. Reuse
-   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. A canvas view
-   (curve with handles, e.g. Auto Filter's response) fills a `PanelCanvas`
-   (paths, dots, texts, value pills in field px) from `device_canvas.rs`; the
-   Slint `CanvasView` draws it and sends pointer, wheel and key events back,
-   and a field drag that moves several parameters commits them as one batch.
+   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. Drawn bodies
+   fill the card's `PanelCanvas` (paths, texts, dots, grip pills in well
+   px), which the Slint `DeviceCanvas` draws. Simple drags use its drag
+   `zones` (`device_views.rs`); a canvas with handles of its own (EQ
+   nodes, Auto Filter's corner, `device_canvas.rs`) sets `interactive`, so
+   pointer, wheel and key events go back to Rust for hit-testing, and a drag
+   that moves several parameters commits them as one batch.
 5. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),

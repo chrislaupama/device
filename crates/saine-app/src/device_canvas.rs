@@ -13,7 +13,7 @@
 
 use crate::controller::Controller;
 use crate::device_panel::Z;
-use crate::{EqCell, EqGlyph, EqTab, CanvasDot, CanvasPath, CanvasPill, CanvasText, PanelEq, PanelCanvas};
+use crate::{EqCell, EqGlyph, EqTab, PanelCanvas, PanelDot, PanelEq, PanelGrip, PanelPath, PanelText};
 use saine_core::builtin::eq::{self, EqView, NodeDoubleClick, Shape};
 use saine_core::builtin::{dj_map, DeviceDef, FilterSetting, ParamDef, View};
 use saine_core::{Command, Device, DeviceId};
@@ -171,16 +171,18 @@ fn hline(y: f32, x0: f32, x1: f32) -> String {
     format!("M{x0:.1} {y:.1} L{x1:.1} {y:.1}")
 }
 
-fn stroke(commands: String, color: Color, width: f32) -> CanvasPath {
-    CanvasPath { commands: s(commands), stroke: color, width, fill: Color::from_argb_u8(0, 0, 0, 0) }
+fn stroke(commands: String, color: Color, width: f32) -> PanelPath {
+    PanelPath { commands: s(commands), stroke: color, width, fill: Color::from_argb_u8(0, 0, 0, 0) }
 }
 
-fn fill(commands: String, color: Color) -> CanvasPath {
-    CanvasPath { commands: s(commands), stroke: Color::from_argb_u8(0, 0, 0, 0), width: 0.0, fill: color }
+fn fill(commands: String, color: Color) -> PanelPath {
+    PanelPath { commands: s(commands), stroke: Color::from_argb_u8(0, 0, 0, 0), width: 0.0, fill: color }
 }
 
-fn text(x: f32, y: f32, w: f32, t: impl Into<SharedString>, color: Color, size: f32, align: i32) -> CanvasText {
-    CanvasText { x, y, w, text: t.into(), color, size, bold: true, align }
+/// Text whose x is its left (align 0), centre (1) or right (2) edge and y its centre line.
+fn text(x: f32, y: f32, w: f32, t: impl Into<SharedString>, color: Color, size: f32, align: i32) -> PanelText {
+    let left = match align { 0 => x, 1 => x - w / 2.0, _ => x - w };
+    PanelText { x: left, y: y - size * 0.7, w, h: size * 1.4, text: t.into(), color, size, weight: 600, align }
 }
 
 fn db_label(db: f32) -> String {
@@ -195,7 +197,7 @@ fn db_label(db: f32) -> String {
 
 /// Grid of a response field: dB rungs (labels in the left gutter) and the
 /// 100 / 1k / 10k rules with their labels along the bottom.
-fn grid(p: &Plot, rungs: &[f32], axis_strip: f32, paths: &mut Vec<CanvasPath>, texts: &mut Vec<CanvasText>) {
+fn grid(p: &Plot, rungs: &[f32], axis_strip: f32, paths: &mut Vec<PanelPath>, texts: &mut Vec<PanelText>) {
     for &db in rungs {
         let y = p.y(db);
         let rule = if db == 0.0 { white(0.13) } else { white(0.05) };
@@ -388,9 +390,9 @@ impl Controller {
             let is_sel = n.band == sel;
             let color = if n.on { accent } else { AXIS };
             if is_sel {
-                dots.push(CanvasDot { x: n.x, y: n.y, r: n.r + 3.5 * Z, fill: white(0.12), ring: 1.5 * Z, ring_color: color });
+                dots.push(PanelDot { x: n.x, y: n.y, r: n.r + 3.5 * Z, fill: white(0.12), ring: 1.5 * Z, ring_color: color });
             }
-            dots.push(CanvasDot { x: n.x, y: n.y, r: n.r, fill: color, ring: 0.0, ring_color: color });
+            dots.push(PanelDot { x: n.x, y: n.y, r: n.r, fill: color, ring: 0.0, ring_color: color });
         }
 
         // Value pill: dragged, else hovered, else selected band.
@@ -418,7 +420,7 @@ impl Controller {
             let above = n.y - (n.r + 13.0 * Z);
             let y = if above < 9.0 * Z { n.y + n.r + 13.0 * Z } else { above };
             let x = n.x.clamp(45.0 * Z, p.w - 45.0 * Z);
-            pills.push(CanvasPill { x, y, anchor: 1, label: s(format!("Band {}", n.band + 1)), value: s(value), hot: pill_band.1, grip: false });
+            pills.push(PanelGrip { x, y, anchor: 1, label: s(format!("Band {}", n.band + 1)), value: s(value), hot: pill_band.1, plain: true });
         }
 
         let cursor = match field.drag.as_ref().filter(|g| g.device == d.id).map(|g| g.hit).or(field.hover.filter(|h| h.0 == d.id).map(|h| h.1)) {
@@ -433,16 +435,17 @@ impl Controller {
             y: fy,
             w: p.w,
             h: fh,
-            caption: s(""),
-            caption_h: 0.0,
+            well_y: 0.0,
             well: true,
             paths: model(paths),
             texts: model(texts),
             dots: model(dots),
-            pills: model(pills),
+            grips: model(pills),
+            interactive: true,
             cursor,
             label: s(format!("Band {}", sel + 1)),
             value: s(if v.band_on(sel, &val) { format!("{freq_text}, {:+.1} dB", sel_band.gain_db) } else { format!("{freq_text}, out of the chain") }),
+            ..Default::default()
         };
 
         // Chrome: tabs, latch, bank, type glyphs, cells.
@@ -631,7 +634,7 @@ impl Controller {
             paths.push(stroke(vline(x, 0.0, p.h - AF_AXIS * Z), rgba(accent, 0.5), 1.0));
             let live_st = FilterSetting { cutoff: live, ..st };
             let y = p.y((saine_core::builtin::filter_response(&live_st, live as f64, fs) as f32).clamp(AF_BOTTOM_DB, AF_TOP_DB));
-            dots.push(CanvasDot { x, y, r: 2.75 * Z, fill: accent, ring: 0.0, ring_color: accent });
+            dots.push(PanelDot { x, y, r: 2.75 * Z, fill: accent, ring: 0.0, ring_color: accent });
         }
 
         // Env pill (and its tie to the base cutoff), LFO pill beside a hot edge.
@@ -643,26 +646,26 @@ impl Controller {
             if (env_x - base_x).abs() > 1.0 {
                 paths.push(stroke(hline(ey + eh / 2.0, base_x.min(ex + ew / 2.0), base_x.max(ex + ew / 2.0)), rgba(accent, 0.3), 1.0));
             }
-            pills.push(CanvasPill { x: ex, y: ey + eh / 2.0, anchor: 0, label: s("Env"), value: s(env_p.map(|e| e.format(val("env_amount"))).unwrap_or_default()), hot: hot(Hit::Env), grip: true });
+            pills.push(PanelGrip { x: ex, y: ey + eh / 2.0, anchor: 0, label: s("Env"), value: s(env_p.map(|e| e.format(val("env_amount"))).unwrap_or_default()), hot: hot(Hit::Env), plain: false });
         }
         for (x, high) in [(lo_x, false), (hi_x, true)] {
             if sweep && hot(Hit::Edge(high)) {
                 let lfo = def.param("lfo_amount").map(|l| l.format(val("lfo_amount"))).unwrap_or_default();
                 let right = x + 4.0 * Z + 60.0 * Z < p.w;
-                pills.push(CanvasPill { x: if right { x + 4.0 * Z } else { x - 4.0 * Z }, y: ey + eh / 2.0 + 20.0 * Z, anchor: if right { 0 } else { 2 }, label: s("LFO"), value: s(lfo), hot: true, grip: false });
+                pills.push(PanelGrip { x: if right { x + 4.0 * Z } else { x - 4.0 * Z }, y: ey + eh / 2.0 + 20.0 * Z, anchor: if right { 0 } else { 2 }, label: s("LFO"), value: s(lfo), hot: true, plain: true });
             }
         }
 
         // Corner handle and its value pill.
         let corner_hot = hot(Hit::Corner);
         if corner_hot {
-            dots.push(CanvasDot { x: corner.0, y: corner.1, r: 8.0 * Z, fill: Color::from_argb_u8(0, 0, 0, 0), ring: 1.25 * Z, ring_color: rgba(accent, 0.5) });
+            dots.push(PanelDot { x: corner.0, y: corner.1, r: 8.0 * Z, fill: Color::from_argb_u8(0, 0, 0, 0), ring: 1.25 * Z, ring_color: rgba(accent, 0.5) });
         }
-        dots.push(CanvasDot { x: corner.0, y: corner.1, r: 5.0 * Z, fill: rgba(accent, 0.95), ring: 0.0, ring_color: accent });
+        dots.push(PanelDot { x: corner.0, y: corner.1, r: 5.0 * Z, fill: rgba(accent, 0.95), ring: 0.0, ring_color: accent });
         let (name, value) = self.af_corner_text(d, def);
         if corner_hot {
             let right = corner.0 + 14.0 * Z + 80.0 * Z < p.w;
-            pills.push(CanvasPill { x: if right { corner.0 + 14.0 * Z } else { corner.0 - 14.0 * Z }, y: corner.1, anchor: if right { 0 } else { 2 }, label: s(name.clone()), value: s(value.clone()), hot: true, grip: true });
+            pills.push(PanelGrip { x: if right { corner.0 + 14.0 * Z } else { corner.0 - 14.0 * Z }, y: corner.1, anchor: if right { 0 } else { 2 }, label: s(name.clone()), value: s(value.clone()), hot: true, plain: false });
         }
 
         let cursor = match field.drag.as_ref().filter(|g| g.device == d.id).map(|g| g.hit).or(field.hover.filter(|h| h.0 == d.id).map(|h| h.1)) {
@@ -676,16 +679,18 @@ impl Controller {
             y: fy,
             w: p.w,
             h: fh,
+            well_y: AF_CAPTION * Z,
             caption: s("Response"),
-            caption_h: AF_CAPTION * Z,
             well: true,
             paths: model(paths),
             texts: model(texts),
             dots: model(dots),
-            pills: model(pills),
+            grips: model(pills),
+            interactive: true,
             cursor,
             label: s("Filter corner"),
             value: s(format!("{name} {value}")),
+            ..Default::default()
         }
     }
 

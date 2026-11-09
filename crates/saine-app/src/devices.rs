@@ -1358,6 +1358,9 @@ mod tests {
         let mut open: HashSet<String> = ["e/au", "e/vst3", "e/clap"].iter().map(|s| s.to_string()).collect();
         let (_, rows) = build_tree(&c, 1, "", &open);
         let l = |d: i32, s: &str, n: &str| (d, s.to_string(), n.to_string());
+        // Every built-in effect is listed under Built-in (more arrive with each device family).
+        let n = saine_core::builtin::all().iter().filter(|d| d.kind == PluginKind::Effect).count();
+        let built_in = n.to_string();
         assert_eq!(
             labels(&rows),
             vec![l(0, "Built-in", &saine_core::builtin::all().len().to_string()), l(0, "Audio Units", "3"), l(1, "Acme", "1"), l(1, "Apple", "2"), l(0, "VST3", "1"), l(1, "Gain", ""), l(0, "CLAP", "0")]
