@@ -257,7 +257,7 @@ system. Any built-in device can use them.
    editors) add an arm to `custom_card` in
    `crates/saine-app/src/device_editors.rs` and set `interactive: true`:
    `DeviceCanvas` then sends every press, drag, release, hover,
-   double-click, right-click and wheel over the canvas to `panel_canvas`,
+   double-click, right-click and wheel over the canvas to `panel_editor`,
    with window coordinates for menus. A gesture sends live values to the
    engine and commits one undo step on release; Escape restores the values
    from before it. Set `Layout::fixed_width` for a card that the dial row

@@ -4,7 +4,7 @@
 //! Both are drawn on the shared custom-body canvas (PanelCanvas, painted by
 //! DeviceCanvas in ui/device_panel.slint) with `interactive` set: Rust builds
 //! paths and texts in canvas coordinates and the canvas sends every pointer
-//! event back to [Controller::panel_canvas], where hit testing, gestures and
+//! event back to [Controller::panel_editor], where hit testing, gestures and
 //! menus live. Lengths are the reference's 100%-zoom card
 //! measurements (pt, card relative: handoffs/device-specs/<device>.md and the
 //! captures in renders/reference); [Z] scales them to our 85% UI.
@@ -1161,7 +1161,7 @@ impl Controller {
     }
 
     /// Escape: cancel a running field gesture. True when one was running.
-    pub(crate) fn canvas_cancel(&mut self) -> bool {
+    pub(crate) fn editor_cancel(&mut self) -> bool {
         let Some(g) = self.devices.panel.editors.gesture.take() else { return false };
         match g {
             Gesture::Param { .. } => {
@@ -1174,7 +1174,7 @@ impl Controller {
 
     // ---------------------------------------------------------------- events
 
-    pub fn panel_canvas(&mut self, device: DeviceId, e: CanvasEvent) {
+    pub fn panel_editor(&mut self, device: DeviceId, e: CanvasEvent) {
         let Some((d, def)) = self.panel_def(device) else { return };
         let name = match def.layout.view {
             Some(saine_core::builtin::View::Custom(n)) => n,
@@ -1196,10 +1196,10 @@ impl Controller {
             return;
         }
         match e.kind {
-            MOVE => self.field_move(def, e, p),
-            UP => self.field_release(device, def),
+            MOVE => self.editor_move(def, e, p),
+            UP => self.editor_release(device, def),
             CANCEL => {
-                self.canvas_cancel();
+                self.editor_cancel();
             }
             _ => match name {
                 "trance-gate" => self.tg_event(device, def, e, hit),
@@ -1208,7 +1208,7 @@ impl Controller {
         }
     }
 
-    fn field_move(&mut self, def: &'static DeviceDef, e: CanvasEvent, p: (f32, f32)) {
+    fn editor_move(&mut self, def: &'static DeviceDef, e: CanvasEvent, p: (f32, f32)) {
         let Some(g) = self.devices.panel.editors.gesture.clone() else { return };
         match g {
             Gesture::Param { device, .. } => {
@@ -1277,7 +1277,7 @@ impl Controller {
         }
     }
 
-    fn field_release(&mut self, device: DeviceId, def: &'static DeviceDef) {
+    fn editor_release(&mut self, device: DeviceId, def: &'static DeviceDef) {
         let Some(g) = self.devices.panel.editors.gesture.take() else { return };
         match g {
             Gesture::Param { menu, .. } => {
@@ -1286,7 +1286,7 @@ impl Controller {
                 self.panel_drag(device, index, 2, 0.0, 1.0 / 160.0, false);
                 if !moved && let Some(which) = menu {
                     let (x, y) = self.devices.panel.editors.menu_at;
-                    self.field_menu(device, def, which, x, y);
+                    self.editor_menu(device, def, which, x, y);
                 }
             }
             Gesture::Paint { .. } => self.live_commit(device, "Edit Pattern"),
@@ -1336,7 +1336,7 @@ impl Controller {
                 self.devices.panel.editors.gesture = Some(Gesture::Env { device, handle: hit, span, gate_ms });
                 self.ui_dirty = true;
             }
-            (RIGHT, Hit::Step(_) | Hit::Hole | Hit::StepCount | Hit::Pattern(_)) => self.field_menu(device, def, MENU_PATTERN, e.wx, e.wy),
+            (RIGHT, Hit::Step(_) | Hit::Hole | Hit::StepCount | Hit::Pattern(_)) => self.editor_menu(device, def, MENU_PATTERN, e.wx, e.wy),
             (DOUBLE, Hit::StepCount) => self.panel_reset(device, steps_idx as i32),
             (DOUBLE, Hit::EnvA) => self.panel_reset(device, 2),
             (DOUBLE, Hit::EnvD) => {
@@ -1382,8 +1382,8 @@ impl Controller {
                 self.devices.panel.editors.lane.insert(device, l);
                 self.ui_dirty = true;
             }
-            (DOWN, Hit::Shape) => self.field_menu(device, def, MENU_SHAPE, e.wx, e.wy),
-            (DOWN, Hit::Trigger) => self.field_menu(device, def, MENU_TRIGGER, e.wx, e.wy),
+            (DOWN, Hit::Shape) => self.editor_menu(device, def, MENU_SHAPE, e.wx, e.wy),
+            (DOWN, Hit::Trigger) => self.editor_menu(device, def, MENU_TRIGGER, e.wx, e.wy),
             (DOWN, Hit::Band) => self.begin_param(device, base + sh::BAND, hit, p, e, Some(MENU_CHOICE + (base + sh::BAND) as i32)),
             (DOWN, Hit::FilterType) => self.begin_param(device, 5, hit, p, e, Some(MENU_CHOICE + 5)),
             (DOWN, Hit::Split) => self.begin_param(device, base + sh::SPLIT, hit, p, e, None),
@@ -1433,7 +1433,7 @@ impl Controller {
                 next[k].tension = 0.0;
                 self.set_many(device, "Reset Bend", sh::lane_writes(lane, &next));
             }
-            (RIGHT, Hit::Plot | Hit::CurvePoint(_) | Hit::Mid(_)) => self.field_menu(device, def, MENU_CURVE, e.wx, e.wy),
+            (RIGHT, Hit::Plot | Hit::CurvePoint(_) | Hit::Mid(_)) => self.editor_menu(device, def, MENU_CURVE, e.wx, e.wy),
             (DOUBLE, Hit::Split) => self.panel_reset(device, (base + sh::SPLIT) as i32),
             (DOUBLE, Hit::Resonance) => self.panel_reset(device, 6),
             (DOUBLE, Hit::Bits) => self.panel_reset(device, 9),
@@ -1461,7 +1461,7 @@ impl Controller {
         }
     }
 
-    fn field_menu(&mut self, device: DeviceId, def: &'static DeviceDef, which: i32, x: f32, y: f32) {
+    fn editor_menu(&mut self, device: DeviceId, def: &'static DeviceDef, which: i32, x: f32, y: f32) {
         let Some((d, _)) = self.panel_def(device) else { return };
         let check = |on: bool| if on { "\u{2713}".to_string() } else { String::new() };
         let pick = |code: i32| Some(MenuPick::View(device, code));
@@ -1527,7 +1527,7 @@ impl Controller {
     }
 
     /// A custom-view menu row was picked.
-    pub(crate) fn canvas_pick(&mut self, device: DeviceId, code: i32) {
+    pub(crate) fn editor_pick(&mut self, device: DeviceId, code: i32) {
         let Some((d, def)) = self.panel_def(device) else { return };
         match def.id {
             "trance-gate" => {

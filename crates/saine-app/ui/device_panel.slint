@@ -465,27 +465,27 @@ component DeviceCanvas inherits Rectangle {
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
                 keys.focus();
-                Studio.panel-canvas(root.device, 0, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+                Studio.panel-editor(root.device, 0, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
             } else if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
-                Studio.panel-canvas(root.device, 5, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+                Studio.panel-editor(root.device, 5, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
             } else if (e.kind == PointerEventKind.move) {
-                Studio.panel-canvas(root.device, self.pressed ? 1 : 4, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+                Studio.panel-editor(root.device, self.pressed ? 1 : 4, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
             } else if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) {
-                Studio.panel-canvas(root.device, 2, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+                Studio.panel-editor(root.device, 2, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
             } else if (e.kind == PointerEventKind.cancel) {
-                Studio.panel-canvas(root.device, 3, self.mouse-x, self.mouse-y, 0, 0, false, false, 0);
+                Studio.panel-editor(root.device, 3, self.mouse-x, self.mouse-y, 0, 0, false, false, 0);
             }
         }
         double-clicked => {
-            Studio.panel-canvas(root.device, 6, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, false, false, 0);
+            Studio.panel-editor(root.device, 6, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, false, false, 0);
         }
         scroll-event(e) => {
             if (e.delta-y == 0) { return reject; }
-            Studio.panel-canvas(root.device, 7, self.mouse-x, self.mouse-y, 0, 0, e.modifiers.shift, e.modifiers.alt, e.delta-y / 1px);
+            Studio.panel-editor(root.device, 7, self.mouse-x, self.mouse-y, 0, 0, e.modifiers.shift, e.modifiers.alt, e.delta-y / 1px);
             accept
         }
         changed has-hover => {
-            if (!self.has-hover) { Studio.panel-canvas(root.device, 8, 0, 0, 0, 0, false, false, 0); }
+            if (!self.has-hover) { Studio.panel-editor(root.device, 8, 0, 0, 0, 0, false, false, 0); }
         }
     }
 }

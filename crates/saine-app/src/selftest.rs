@@ -2855,7 +2855,7 @@ fn value_of(c: &Controller, device: &str, param: &str) -> Option<f32> {
 fn field_event(a: &AppWindow, ctl: &Ctl, device: &str, kind: i32, x: f32, y: f32) {
     let Some(id) = device_of(&ctl.borrow(), device).map(|d| d.id.0 as i32) else { return };
     let z = crate::device_panel::Z;
-    a.global::<Studio>().invoke_panel_canvas(id, kind, x * z, y * z - 27.0, 600.0, 400.0, false, false, 0.0);
+    a.global::<Studio>().invoke_panel_editor(id, kind, x * z, y * z - 27.0, 600.0, 400.0, false, false, 0.0);
 }
 
 /// Window click on the Trance Gate's ring hole (no action): gives its field keyboard focus.
