@@ -100,6 +100,8 @@ pub struct ClipVis {
     pub len_beats: f64,
     pub color: [f32; 3],
     pub selected: bool,
+    /// Clip on a muted track: drawn grey, without the selection tint.
+    pub muted: bool,
     pub name: String,
     /// Waveform source: pyramid slot, first frame (engine rate), frame count.
     pub wave: Option<(Slot, f64, f64)>,
@@ -292,15 +294,19 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
             midi_clip(&mut dl.base, sc, &px, c, notes, (x, y, cw, ch));
             continue;
         }
-        let (body, wave) = if c.selected {
-            (mix(c.color, WHITE, 0.72), rgba(mix(c.color, BLACK, 0.55), 1.0))
+        let (head, body) = if c.muted {
+            (rgb(0xa8a8a8), rgb(0x6b6b6b))
+        } else if c.selected {
+            (c.color, mix(c.color, [0.91; 3], 0.69))
         } else {
-            (mix(rgb(0x131417), c.color, 0.30), rgba(mix(c.color, WHITE, 0.15), 1.0))
+            (c.color, c.color)
         };
+        let wave = rgba(mix(body, BLACK, 0.55), 1.0);
         // Clip outline = rounded rect in the header colour; body drawn over it.
-        dl.base.push(px.rounded(x, y, cw, ch, r, rgba(c.color, 1.0)));
+        dl.base.push(px.rounded(x, y, cw, ch, r, rgba(head, 1.0)));
         dl.base.push(px.rect(x, y + CLIP_HEADER, cw, ch - CLIP_HEADER - r, rgba(body, 1.0)));
         dl.base.push(px.rounded(x, y + ch - 2.0 * r, cw, 2.0 * r, r, rgba(body, 1.0)));
+        dl.base.push(px.rect(x, y + CLIP_HEADER, cw, 1.0 / sc.scale, rgba(BLACK, 0.4)));
         if let Some((slot, first_frame, frames)) = c.wave {
             let vx0 = x.max(0.0);
             let vx1 = (x + cw).min(w);
@@ -547,7 +553,7 @@ mod tests {
         assert!((v.beat_at(v.x_of(4.0)) - 4.0).abs() < 1e-4);
         assert_eq!(v.track_at(RULER_H + 1.0), Some(0));
         assert_eq!(v.track_at(RULER_H + TRACK_PITCH + 1.0), Some(1));
-        let clips = vec![ClipVis { track_index: 0, start_beats: 4.0, len_beats: 4.0, color: [1.0; 3], selected: false, name: String::new(), wave: None, midi: None, live: None }];
+        let clips = vec![ClipVis { track_index: 0, start_beats: 4.0, len_beats: 4.0, color: [1.0; 3], selected: false, muted: false, name: String::new(), wave: None, midi: None, live: None }];
         let size = (900.0, 400.0);
         assert_eq!(hit_test(&v, size, 2, &clips, 10.0, 5.0), Hit::Ruler);
         assert_eq!(hit_test(&v, size, 2, &clips, 70.0, 60.0), Hit::Clip { index: 0, zone: Zone::Body });
