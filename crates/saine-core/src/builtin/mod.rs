@@ -31,6 +31,11 @@ pub mod character_mod;
 mod character_compressor;
 mod chorus;
 mod compressor;
+mod gate;
+mod glue_compressor;
+mod limiter;
+mod mastering_limiter;
+mod transient_shaper;
 pub mod lfo;
 pub mod rack;
 pub mod drum_rack;
@@ -98,8 +103,10 @@ pub enum Format {
     /// one below 10 Hz ("5.0 Hz"), whole numbers below 999.5 Hz ("440 Hz"),
     /// then kilohertz with one decimal ("2.2 kHz"). LFO rates, carriers.
     Freq,
-    /// Compression ratio: "4.0:1".
+    /// Compression ratio: one decimal when the range spans less than 20 ("4.0:1"), else whole numbers ("10:1").
     Ratio,
+    /// Milliseconds with a fixed number of decimals ("0.50 ms", "100 ms"); typed seconds are converted.
+    Ms(u8),
     /// Percent, at most one decimal: "100%", "12.5%", "−40%".
     Percent,
     /// Whole percent: "30%".
@@ -187,18 +194,23 @@ pub struct ParamDef {
     pub preset_lock: bool,
     /// One-sentence description (tooltips, the assistant).
     pub help: &'static str,
+    /// Text shown instead of the number at the top of the range ("Full"); "" = none.
+    pub max_text: &'static str,
+    /// Discrete parameters: values written together with each choice, by
+    /// choice index (one undo step), e.g. a style that also sets its times.
+    pub overlays: &'static [&'static [(&'static str, f32)]],
 }
 
 impl ParamDef {
     /// A continuous parameter with defaults for the optional fields.
     #[allow(clippy::too_many_arguments)]
     pub const fn new(id: &'static str, name: &'static str, min: f32, max: f32, default: f32, taper: Taper, unit: &'static str, format: Format) -> ParamDef {
-        ParamDef { id, name, label: name, min, max, default, taper, step: 0.0, unit, format, choices: &[], automatable: true, reset_on_load: false, preset_lock: false, help: "" }
+        ParamDef { id, name, label: name, min, max, default, taper, step: 0.0, unit, format, choices: &[], automatable: true, reset_on_load: false, preset_lock: false, help: "", max_text: "", overlays: &[] }
     }
 
     /// A discrete parameter: plain value = index into `choices`.
     pub const fn choice(id: &'static str, name: &'static str, choices: &'static [&'static str], default: u32) -> ParamDef {
-        ParamDef { id, name, label: name, min: 0.0, max: (choices.len() - 1) as f32, default: default as f32, taper: LINEAR, step: 1.0, unit: "", format: Format::Choice, choices, automatable: true, reset_on_load: false, preset_lock: false, help: "" }
+        ParamDef { id, name, label: name, min: 0.0, max: (choices.len() - 1) as f32, default: default as f32, taper: LINEAR, step: 1.0, unit: "", format: Format::Choice, choices, automatable: true, reset_on_load: false, preset_lock: false, help: "", max_text: "", overlays: &[] }
     }
 
     pub const fn label(mut self, label: &'static str) -> ParamDef {
@@ -220,6 +232,30 @@ impl ParamDef {
     pub const fn reset_on_load(mut self) -> ParamDef {
         self.reset_on_load = true;
         self
+    }
+    pub const fn max_text(mut self, text: &'static str) -> ParamDef {
+        self.max_text = text;
+        self
+    }
+    pub const fn overlays(mut self, overlays: &'static [&'static [(&'static str, f32)]]) -> ParamDef {
+        self.overlays = overlays;
+        self
+    }
+
+    /// The number a value stands for: the plain value, or for a discrete
+    /// parameter the leading number of its choice name ("4:1" -> 4, "0.3 ms"
+    /// -> 0.3); NaN for a choice without one ("Auto").
+    pub fn number(&self, v: f32) -> f32 {
+        if !self.is_discrete() {
+            return v;
+        }
+        let name = self.choices.get(v.round().max(0.0) as usize).copied().unwrap_or("");
+        let end = name.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(name.len());
+        name[..end].parse().unwrap_or(f32::NAN)
+    }
+
+    fn at_max_text(&self, v: f32) -> bool {
+        !self.max_text.is_empty() && v >= self.max - 5e-4 * (self.max - self.min)
     }
     pub const fn preset_locked(mut self) -> ParamDef {
         self.preset_lock = true;
@@ -245,11 +281,13 @@ impl ParamDef {
     /// reference), discrete values rounded.
     pub fn snap(&self, v: f32) -> f32 {
         let v = if v.is_finite() { v.clamp(self.min, self.max) } else { self.default };
-        if self.step > 0.0 && self.taper != Taper::Log {
-            (self.min + ((v - self.min) / self.step + 0.501).floor() * self.step).clamp(self.min, self.max)
-        } else {
-            v
+        if self.step <= 0.0 || self.taper == Taper::Log {
+            return v;
         }
+        // In f64 on the decimal step (0.1, not 0.100000001), so 120 steps of 0.1 from -12 land on 0.
+        let dec = |x: f32| (x as f64 * 1e6).round() / 1e6;
+        let k = ((v - self.min) / self.step + 0.501).floor() as f64;
+        ((((dec(self.min) + k * dec(self.step)) * 1e6).round() / 1e6) as f32).clamp(self.min, self.max)
     }
 
     /// Plain value -> 0..1.
@@ -280,6 +318,9 @@ impl ParamDef {
 
     /// Display text of a plain value.
     pub fn format(&self, v: f32) -> String {
+        if self.at_max_text(v) {
+            return self.max_text.to_string();
+        }
         if self.format == Format::DbOrInf && v <= self.min + 1e-4 * (self.max - self.min) {
             return format!("{MINUS}\u{221e} dB");
         }
@@ -292,6 +333,9 @@ impl ParamDef {
         let t = text.trim();
         if t.is_empty() {
             return None;
+        }
+        if !self.max_text.is_empty() && t.eq_ignore_ascii_case(self.max_text) {
+            return Some(self.max);
         }
         if self.is_discrete() {
             let norm = |s: &str| s.to_lowercase().replace('\u{2212}', "-");
@@ -320,8 +364,8 @@ impl ParamDef {
         let unit = unit.trim_end_matches(":1").trim();
         match (self.format, unit) {
             (_, "") => {}
-            (Format::Time, "s" | "sec" | "secs" | "second" | "seconds") => v *= 1000.0,
-            (Format::Time, "ms" | "msec" | "msecs") => {}
+            (Format::Time | Format::Ms(_), "s" | "sec" | "secs" | "second" | "seconds") => v *= 1000.0,
+            (Format::Time | Format::Ms(_), "ms" | "msec" | "msecs") => {}
             (Format::Hz | Format::Freq | Format::Hz3, "k" | "khz") => v *= 1000.0,
             (Format::Hz | Format::Freq | Format::Hz3, "hz") => {}
             (Format::Db | Format::DbNoPlus | Format::DbOrInf | Format::DbCut, "db") | (Format::Percent | Format::Percent0 | Format::SignedPercent, "%") | (Format::Factor, "x") => {}
@@ -403,7 +447,11 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
                 format!("{v:.2} Hz")
             }
         }
-        Format::Ratio => format!("{v:.1}:1"),
+        Format::Ratio => {
+            let d = if range < 20.0 { 1 } else { 0 };
+            format!("{v:.d$}:1")
+        }
+        Format::Ms(d) => format!("{v:.*} ms", d as usize),
         Format::Percent => {
             let r = (v * 10.0).round() / 10.0;
             let s = if r.fract() == 0.0 { format!("{:.0}%", r.abs()) } else { format!("{:.1}%", r.abs()) };
@@ -561,7 +609,9 @@ pub enum Control {
     Menu(&'static str),
     /// Value pill dragged like a knob (picker row), e.g. sidechain gain.
     Pill(&'static str),
-    /// Two-state latch button (On/Off parameters).
+    /// Two-state latch button (On/Off parameters). In the dial row it takes a
+    /// knob cell (latch + caption); in the picker row it is a right-aligned
+    /// pill reading "<label> <choice>" ("Auto Release On").
     Toggle(&'static str),
     /// Sidechain source picker (a track list, not a parameter).
     Sidechain,
@@ -603,9 +653,10 @@ impl Control {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum View {
     /// Scrolling level / gain-reduction strip with a draggable threshold
-    /// line bound to `threshold` (reference dynamics strip), plot 0..−36 dB.
+    /// line bound to `threshold` (reference dynamics strip), plot 0..-36 dB.
+    /// Shorthand for `View::Strip(Strip::new(threshold))`.
     DynamicsStrip { threshold: &'static str },
-    /// Dynamics strip with its own plot range.
+    /// Dynamics strip with its own plot range and an optional second line.
     Strip(Strip),
     /// A device-specific view implemented in the panel code under this name
     /// (escape hatch for EQ curves, shaper, trance gate grid...).
@@ -645,27 +696,35 @@ impl View {
         match *self {
             View::DynamicsStrip { threshold } => Some(Strip::new(threshold)),
             View::Strip(s) => Some(s),
-            View::Field(_) | View::Custom(_) => None,
+            View::Custom(_) | View::Field(_) => None,
         }
     }
 }
 
-/// Dynamics strip settings: the draggable line (a dB parameter, capped at
-/// 0 dB) and the plot range of the well.
+/// Dynamics strip settings: draggable lines (dB parameters, capped at 0 dB)
+/// and the plot range of the well.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Strip {
+    /// First line (dashed): the threshold or ceiling the strip edits.
     pub line: &'static str,
+    /// Optional second line (solid); Alt+drag moves both by the same dB.
+    pub second: Option<&'static str>,
+    /// Plot top and floor (dB). Lines below the floor are drawn dotted at it.
     pub top_db: f32,
     pub floor_db: f32,
 }
 
 impl Strip {
     pub const fn new(line: &'static str) -> Strip {
-        Strip { line, top_db: 0.0, floor_db: -36.0 }
+        Strip { line, second: None, top_db: 0.0, floor_db: -36.0 }
     }
     pub const fn range(mut self, top_db: f32, floor_db: f32) -> Strip {
         self.top_db = top_db;
         self.floor_db = floor_db;
+        self
+    }
+    pub const fn second(mut self, line: &'static str) -> Strip {
+        self.second = Some(line);
         self
     }
 }
@@ -675,6 +734,16 @@ impl Strip {
 pub enum Face {
     /// Static transfer curve of a soft-knee compressor.
     SoftKneeCurve { threshold: &'static str, ratio: &'static str, knee: &'static str },
+    /// Brick-wall limiter: output = min(input, ceiling).
+    BrickWall { ceiling: &'static str },
+    /// Downward expander / gate below the threshold.
+    Expander { threshold: &'static str, ratio: &'static str },
+    /// Bus VCA compressor: fixed 4 dB soft knee, ratio-dependent threshold
+    /// offset, reduction limited by `range` (discrete ratios read as numbers).
+    BusVca { threshold: &'static str, ratio: &'static str, range: &'static str },
+    /// Mastering limiter "push": gain of ceiling - threshold below the
+    /// threshold, pinned at the ceiling above it.
+    PushWall { threshold: &'static str, ceiling: &'static str },
     /// Transfer curve computed by the device (`Behavior::transfer`).
     Transfer,
 }
@@ -849,14 +918,14 @@ pub struct DeviceDef {
 }
 
 /// Ids of the hidden switch that follows a device's sidechain picker.
-pub const SIDECHAIN_ENABLE_IDS: [&str; 2] = ["sidechainEnable", "sc_source"];
+pub const SIDECHAIN_ENABLE_IDS: [&str; 3] = ["sidechainEnable", "sidechain", "sc_source"];
 
 /// The vendor shown for built-in devices.
 pub const VENDOR: &str = "Saine Studio";
 
 /// Every built-in device, in browser order.
 pub fn all() -> &'static [&'static DeviceDef] {
-    static ALL: [&DeviceDef; 29] = [
+    static ALL: [&DeviceDef; 34] = [
         &compressor::COMPRESSOR,
         &distortion::DISTORTION,
         &tape_saturation::TAPE_SATURATION,
@@ -864,6 +933,11 @@ pub fn all() -> &'static [&'static DeviceDef] {
         &bitcrusher::BITCRUSHER,
         &widener::WIDENER,
         &utility::UTILITY,
+        &glue_compressor::GLUE_COMPRESSOR,
+        &limiter::LIMITER,
+        &mastering_limiter::MASTERING_LIMITER,
+        &gate::GATE,
+        &transient_shaper::TRANSIENT_SHAPER,
         &chorus::CHORUS,
         &character_mod::CHARACTER_MOD,
         &flanger::FLANGER,
@@ -897,7 +971,11 @@ pub fn linked_writes(def: &DeviceDef, device: &Device, param: &str, value: f32) 
     match def.id {
         "character-mod" => character_mod::switch_writes(def, device, param, value),
         "character-compressor" => (def.param(param).map(|p| character_compressor::linked(def, device, p, value)).unwrap_or_default(), None),
-        _ => (Vec::new(), None),
+        // A choice's overlays (the mastering limiter's styles).
+        _ => {
+            let writes = def.choice_values(param, value).into_iter().filter(|(id, _)| id != param).filter_map(|(id, v)| Some((def.param(&id)?.id, v))).collect();
+            (writes, None)
+        }
     }
 }
 
@@ -985,6 +1063,21 @@ impl DeviceDef {
             }
         }
         v
+    }
+
+    /// Values a choice writes: the parameter itself plus its overlay for that
+    /// choice (`ParamDef::overlays`), all snapped. Empty if `param` is unknown.
+    pub fn choice_values(&self, param: &str, choice: f32) -> BTreeMap<String, f32> {
+        let mut out = BTreeMap::new();
+        let Some(p) = self.param(param) else { return out };
+        let choice = p.snap(choice);
+        out.insert(p.id.to_string(), choice);
+        for (id, v) in p.overlays.get(choice.round() as usize).copied().unwrap_or(&[]) {
+            if let Some(q) = self.param(id) {
+                out.insert((*id).to_string(), q.snap(*v));
+            }
+        }
+        out
     }
 
     /// The parameter that follows the sidechain picker (on while a source is picked).
@@ -1201,6 +1294,21 @@ mod tests {
                     assert!(*v >= p.min && *v <= p.max, "{} preset {}: {id} out of range", def.id, f.name);
                 }
             }
+            for p in def.params {
+                assert!(p.overlays.is_empty() || p.overlays.len() == p.choices.len(), "{}.{}: one overlay per choice", def.id, p.id);
+                for (id, v) in p.overlays.iter().flat_map(|o| o.iter()) {
+                    let q = def.param(id).unwrap_or_else(|| panic!("{}.{} overlay names unknown {id}", def.id, p.id));
+                    assert_eq!(q.snap(*v), *v, "{}.{} overlay {id}={v} must be a valid value", def.id, p.id);
+                }
+            }
+            assert!(def.layout.width() > 0.0);
+            if let Some(s) = def.layout.view.and_then(|v| v.strip()) {
+                for line in std::iter::once(s.line).chain(s.second) {
+                    let p = def.param(line).unwrap_or_else(|| panic!("{}: strip line {line} unknown", def.id));
+                    assert!(p.max <= 0.0, "{}: strip lines are capped at 0 dB", def.id);
+                }
+                assert!(s.top_db > s.floor_db);
+            }
         }
     }
 
@@ -1328,6 +1436,64 @@ mod tests {
     #[test]
     fn width_follows_clusters() {
         assert_eq!(comp().layout.width(), 521.0, "reference: [2,5] clusters -> 505 + 16");
+    }
+
+    #[test]
+    fn dynamics_formats() {
+        let gate = find("gate").unwrap();
+        assert_eq!(gate.param("ratio").unwrap().format(10.0), "10:1", "ranges of 20 or more print whole ratios");
+        assert_eq!(gate.param("attack").unwrap().format(0.5), "0.50 ms");
+        assert_eq!(gate.param("release").unwrap().format(100.0), "100.0 ms");
+        assert_eq!(gate.param("hold").unwrap().format(50.0), "50 ms");
+        assert_eq!(gate.param("attack").unwrap().parse("0.02 s"), Some(20.0));
+        assert_eq!(gate.param("sidechain_hpf").unwrap().format(80.0), "80 Hz");
+        let ts = find("transient-shaper").unwrap();
+        let attack = ts.param("attack").unwrap();
+        assert_eq!(attack.format(35.0), "+35%");
+        assert_eq!(attack.format(-20.0), "\u{2212}20%");
+        assert_eq!(attack.format(0.2), "0%");
+        assert_eq!(attack.parse("-40%"), Some(-40.0));
+        let sus = ts.param("sustain_time").unwrap();
+        assert_eq!(sus.format(2000.0), "Full");
+        assert_eq!(sus.format(sus.from_normalized(0.9999)), "Full");
+        assert_eq!(sus.format(150.0), "150 ms");
+        assert_eq!(sus.parse("full"), Some(2000.0));
+        assert_eq!(ts.param("sensitivity").unwrap().label, "Sense");
+        let ml = find("mastering-limiter").unwrap();
+        assert_eq!(ml.param("threshold").unwrap().format(0.0), "0.0 dB");
+        assert_eq!(ml.param("ceiling").unwrap().format(-1.0), "\u{2212}1.0 dB");
+        assert_eq!(ml.param("release").unwrap().format(150.0), "150 ms");
+        assert!((ml.param("release").unwrap().to_normalized(150.0) - 0.6223).abs() < 1e-3, "skew 0.25");
+        assert!((ml.param("attack").unwrap().to_normalized(10.0) - 0.5012).abs() < 1e-3, "skew 0.3");
+        let glue = find("glue-compressor").unwrap();
+        assert_eq!(glue.param("release").unwrap().format(4.0), "Auto");
+        assert_eq!(glue.param("range").unwrap().format(24.0), "24.0 dB");
+        assert_eq!(glue.param("ratio").unwrap().number(2.0), 10.0);
+        assert_eq!(glue.param("attack").unwrap().number(1.0), 0.3);
+        assert!(glue.param("release").unwrap().number(4.0).is_nan());
+        assert_eq!(glue.param("ratio").unwrap().parse("10:1"), Some(2.0));
+    }
+
+    #[test]
+    fn choice_overlays_write_their_values() {
+        let ml = find("mastering-limiter").unwrap();
+        let v = ml.choice_values("style", 3.0);
+        assert_eq!(v["style"], 3.0);
+        assert_eq!(v["lookahead"], 3.0);
+        assert_eq!(v["attack"], 30.0);
+        assert_eq!(v["auto_release"], 0.0);
+        assert_eq!(v.len(), 7);
+        let comp = comp();
+        assert_eq!(comp.choice_values("style", 2.0).len(), 1, "no overlays: only the choice");
+        assert_eq!(find("glue-compressor").unwrap().sidechain_enable().map(|p| p.id), Some("sidechain"));
+        assert_eq!(comp.sidechain_enable().map(|p| p.id), Some("sidechainEnable"));
+    }
+
+    #[test]
+    fn dynamics_card_widths_follow_the_reference() {
+        for (id, w) in [("limiter", 471.0), ("gate", 543.0), ("glue-compressor", 615.0), ("transient-shaper", 543.0), ("mastering-limiter", 388.0)] {
+            assert_eq!(find(id).unwrap().layout.width(), w, "{id}");
+        }
     }
 
     #[test]

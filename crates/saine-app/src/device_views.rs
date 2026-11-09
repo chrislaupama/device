@@ -160,6 +160,7 @@ impl Controller {
             "stereo-field" => stereo_body(def, &value, idx("width2"), idx("sidegain"), idx("lowcut"), accent, rect),
             "utility" => utility_body(def, &value, &idx),
             "pitch-trace" | "tuner" | "spectrum" => self.analyzer_body(d, def, name, accent),
+            "gain-scope" => scope_body(&self.panel_meter_frames(d.id), crate::device_panel::HISTORY, accent, rect),
             "declipper-wave" | "deesser-graph" | "dehummer-graph" | "denoiser-graph" => CustomBody { canvas: self.graph_canvas(d, def, accent), ..Default::default() },
             _ => CustomBody::default(),
         }
@@ -258,6 +259,39 @@ fn wave_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, drag_param: i32, acce
     }
     field.paths = model(paths);
     field.zones = model(vec![PanelZone { x: x0, y: y0, w: x1 - x0, h: y1 - y0, param_x: -1, param_y: drag_param, rate_x: 0.0, rate_y: 1.0 / (y1 - y0 - 16.0 * Z).max(8.0) }]);
+    CustomBody { canvas: field, ..Default::default() }
+}
+
+/// Transient Shaper gain scope: the output as mirrored bars (square-root
+/// amplitude law), what the clipper removed above them, a dashed 0 dB line and
+/// the applied-gain trace (+-12 dB, flat at 0 dB at rest). `frames` are the
+/// polled readouts (output peak, pre-clip peak, gain dB), oldest first; `cap`
+/// frames span the well.
+fn scope_body(frames: &[(f32, f32, f32)], cap: usize, accent: Color, rect: (f32, f32, f32, f32)) -> CustomBody {
+    let (mut field, w, h) = frame(rect, "Output", "Applied Gain".into());
+    let (mid, x0, n) = (h / 2.0, 6.0 * Z, frames.len());
+    let x_of = |i: usize| w - (n - 1 - i) as f32 * (w - x0) / (cap.max(2) - 1) as f32;
+    let r_of = |peak: f32| (peak.abs().min(1.41) / 1.41).sqrt() * mid;
+    let out_r = |i: usize| r_of(frames[i].0);
+    let pre_r = |i: usize| r_of(frames[i].1).max(out_r(i));
+    let band = |outer: &dyn Fn(usize) -> f32, inner: &dyn Fn(usize) -> f32, sign: f32| {
+        let mut pts: Vec<(f32, f32)> = (0..n).map(|i| (x_of(i), mid - sign * outer(i))).collect();
+        pts.extend((0..n).rev().map(|i| (x_of(i), mid - sign * inner(i))));
+        format!("{} Z", poly(&pts))
+    };
+    let y_of = |db: f32| 4.0 * Z + (12.0 - db.clamp(-12.0, 12.0)) / 24.0 * (h - 8.0 * Z);
+    let mut paths = vec![stroke(dashed(&[(x0, mid), (w, mid)], 3.0 * Z, 4.0 * Z), ink(0.14), 1.0)];
+    let gain = if n > 1 {
+        paths.push(fill(format!("{} {}", band(&out_r, &|_| 0.0, 1.0), band(&out_r, &|_| 0.0, -1.0)), ink(0.3)));
+        if frames.iter().any(|f| f.1 > f.0 * 1.005) {
+            paths.push(fill(format!("{} {}", band(&pre_r, &out_r, 1.0), band(&pre_r, &out_r, -1.0)), ink(0.11)));
+        }
+        poly(&frames.iter().enumerate().map(|(i, f)| (x_of(i), y_of(f.2))).collect::<Vec<_>>())
+    } else {
+        poly(&[(x0, mid), (w, mid)])
+    };
+    paths.push(stroke(gain, accent, 2.0));
+    field.paths = model(paths);
     CustomBody { canvas: field, ..Default::default() }
 }
 
