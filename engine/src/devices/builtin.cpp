@@ -11,6 +11,12 @@ namespace saine {
 extern const BuiltinDescriptor kCompressorDescriptor;
 extern const BuiltinDescriptor kLfoDescriptor;
 extern const BuiltinDescriptor kRackDescriptor;
+extern const BuiltinDescriptor kDistortionDescriptor;
+extern const BuiltinDescriptor kTapeSaturationDescriptor;
+extern const BuiltinDescriptor kSoftClipperDescriptor;
+extern const BuiltinDescriptor kBitCrusherDescriptor;
+extern const BuiltinDescriptor kWidenerDescriptor;
+extern const BuiltinDescriptor kUtilityDescriptor;
 extern const BuiltinDescriptor kChorusDescriptor;
 extern const BuiltinDescriptor kCharacterModDescriptor;
 extern const BuiltinDescriptor kFlangerDescriptor;
@@ -25,6 +31,12 @@ const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kCompressorDescriptor,
     &kLfoDescriptor,
     &kRackDescriptor,
+    &kDistortionDescriptor,
+    &kTapeSaturationDescriptor,
+    &kSoftClipperDescriptor,
+    &kBitCrusherDescriptor,
+    &kWidenerDescriptor,
+    &kUtilityDescriptor,
     &kChorusDescriptor,
     &kCharacterModDescriptor,
     &kFlangerDescriptor,

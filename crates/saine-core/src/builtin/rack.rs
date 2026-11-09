@@ -39,7 +39,7 @@ pub static RACK: DeviceDef = DeviceDef {
     category: "Utility",
     purpose: "Groups effects into one chain with a shared power switch and eight macros.",
     params: PARAMS,
-    layout: Layout { picker: &[], view: Some(View::Custom("chain")), sliders: &[], clusters: &[], faces: &[], min_height: 0.0, shown_when: &[] },
+    layout: Layout { picker: &[], view: Some(View::Custom("chain")), sliders: &[], clusters: &[], faces: &[], min_height: 0.0, shown_when: &[], fixed_width: 0.0 },
     factory: FACTORY,
     sidechain: false,
 };

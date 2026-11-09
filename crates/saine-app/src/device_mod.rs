@@ -12,7 +12,7 @@
 use crate::controller::{Controller, slint_color, track_color};
 use crate::device_panel::Z;
 use crate::devices::{DevMenu, Item, MenuPick, format_badge};
-use crate::{ChainFrame, DeviceCard, ModCard, ModTarget, PanelKnob, PanelPick, PanelSlider};
+use crate::{ChainFrame, DeviceCard, ModCard, ModTarget, PanelCanvas, PanelKnob, PanelPath, PanelPick, PanelSlider, PanelText, PanelZone};
 use saine_core::builtin::{self, DeviceDef};
 use saine_core::modulation::{self as modu, DEFAULT_AMOUNT};
 use saine_core::{Command, Device, DeviceId, ModLink, ModParam, PluginFormat, PluginKind, TrackId};
@@ -60,8 +60,6 @@ pub struct ModUi {
     /// Armed source output for mapping: the next control clicked becomes a target.
     pub map: Option<(DeviceId, u8)>,
     amount: Option<AmountDrag>,
-    /// LFO picture drag: (device, start rate norm, start depth norm, rate norm, depth norm).
-    wave: Option<(DeviceId, f32, f32, f32, f32)>,
     /// Chain heads with the macro side panel open, and the selected macro.
     pub macro_open: HashMap<DeviceId, u8>,
     /// Latest LFO readouts: (position 0..1, depth 0..1, cycle 0..1).
@@ -253,7 +251,7 @@ impl Controller {
         ];
         let knob = |id: &str, x: f32| {
             let v = val(id);
-            PanelKnob { param: idx(id), x: x * Z, label: s(p(id).label), value: s(p(id).format(v)), norm: p(id).to_normalized(v), ..Default::default() }
+            PanelKnob { param: idx(id), x: x * Z, y: crate::device_panel::DIAL_Y * Z, label: s(p(id).label), value: s(p(id).format(v)), norm: p(id).to_normalized(v), ..Default::default() }
         };
         let knobs = vec![knob(if sync { "rateSync" } else { "rate" }, 8.0), knob("phase", 80.0)];
         let depth = val("depth");
@@ -266,18 +264,34 @@ impl Controller {
         let (cyc, pos) = self.devices.modu.lfo.get(&d.id).map_or((phase as f32, 0.5), |r| (r.2, r.0));
         let dot_x = ((cyc as f64 - phase).rem_euclid(1.0) as f32) * w / 2.0;
         let dot_y = h / 2.0 - (h / 2.0 - 3.0) * (depth / 100.0).max(0.04) * (pos * 2.0 - 1.0);
+        // The picture is a canvas: drag sideways for Rate, up or down for Depth (one undo step).
+        let accent = card.accent;
+        let path = |commands: String, stroke: slint::Color, width: f32, fill: slint::Color| PanelPath { commands: s(commands), stroke, width, fill };
+        let clear = slint::Color::from_argb_u8(0, 0, 0, 0);
+        let r = 3.5 * Z;
+        card.canvas = PanelCanvas {
+            visible: true,
+            well: true,
+            x: WAVE_X * Z,
+            y: WAVE_Y * Z,
+            w,
+            h,
+            paths: model(vec![
+                path(format!("M0 {:.1} L{w:.1} {:.1} M{:.1} 0 L{:.1} {h:.1}", h / 2.0, h / 2.0, w / 2.0, w / 2.0), slint::Color::from_argb_u8(0x14, 255, 255, 255), 0.5, clear),
+                path(wave_fill, clear, 0.0, accent.with_alpha(0.18)),
+                path(wave, accent, 1.6 * Z, clear),
+                path(format!("M{:.1} {dot_y:.1} m-{r} 0 a{r} {r} 0 1 0 {} 0 a{r} {r} 0 1 0 -{} 0", dot_x, 2.0 * r, 2.0 * r), accent, 1.0, slint::Color::from_rgb_u8(0xf2, 0xf2, 0xf2)),
+            ]),
+            texts: model(vec![PanelText { x: w - 60.0 * Z, y: 4.0 * Z, w: 54.0 * Z, h: 12.0 * Z, text: s("Wave"), color: slint::Color::from_argb_u8(0x8c, 255, 255, 255), size: 10.0 * Z, weight: 500, align: 2 }]),
+            zones: model(vec![PanelZone { x: 0.0, y: 0.0, w, h, param_x: idx(if sync { "rateSync" } else { "rate" }), param_y: idx("depth"), rate_x: 1.0 / 200.0, rate_y: 1.0 / 200.0 }]),
+            ..Default::default()
+        };
         card.width = LFO_W * Z;
         card.picks = model(picks);
         card.knobs = model(knobs);
         card.sliders = model(sliders);
         card.modv = ModCard {
             kind: 1,
-            wave: s(wave),
-            wave_fill: s(wave_fill),
-            dot_x,
-            dot_y,
-            wave_w: w,
-            wave_h: h,
             targets: model(self.targets(d, None)),
             map_armed: self.devices.modu.map.is_some_and(|(id, _)| id == d.id),
             ..Default::default()
@@ -322,7 +336,6 @@ impl Controller {
             macro_open: open.is_some(),
             members: members as i32,
             collapsed: d.collapsed,
-            ..Default::default()
         };
     }
 
@@ -888,61 +901,6 @@ impl Controller {
         if self.link_of(source, index).is_some() {
             self.panel_commit(Command::RemoveModLink { source, index });
         }
-    }
-
-    /// LFO picture drag: horizontal sets Rate, vertical sets Depth (one undo step).
-    pub fn mod_wave_drag(&mut self, device: DeviceId, phase: i32, dx: f32, dy: f32, fine: bool) {
-        let Some((d, def)) = self.project().device(device).and_then(|d| builtin::def_of(d).map(|def| (d, def))) else {
-            return;
-        };
-        let sync = def.param("sync").is_some_and(|p| def.value(d, p) >= 0.5);
-        let rate_id = if sync { "rateSync" } else { "rate" };
-        let (Some(ri), Some(di)) = (def.index_of(rate_id), def.index_of("depth")) else {
-            return;
-        };
-        let (rp, dp) = (&def.params[ri], &def.params[di]);
-        let rate_of = |n: f32| {
-            if rp.is_discrete() { rp.from_normalized(n).round() } else { rp.from_normalized(n) }
-        };
-        match phase {
-            0 => {
-                let (r, de) = (rp.to_normalized(def.value(d, rp)), dp.to_normalized(def.value(d, dp)));
-                self.devices.modu.wave = Some((device, r, de, r, de));
-            }
-            1 => {
-                let Some(w) = self.devices.modu.wave.as_mut().filter(|w| w.0 == device) else {
-                    return;
-                };
-                let k = if fine { 0.2 } else { 1.0 } / 200.0;
-                w.3 = (w.3 + dx * k).clamp(0.0, 1.0);
-                w.4 = (w.4 + dy * k).clamp(0.0, 1.0);
-                let (r, de) = (w.3, w.4);
-                let _ = self.engine.builtin_set_param(device.0, ri as u32, rate_of(r));
-                let _ = self.engine.builtin_set_param(device.0, di as u32, dp.from_normalized(de));
-            }
-            2 => {
-                let Some(w) = self.devices.modu.wave.take() else {
-                    return;
-                };
-                if (w.3 - w.1).abs() > 1e-6 || (w.4 - w.2).abs() > 1e-6 {
-                    let params = [(rate_id.to_string(), rate_of(w.3)), ("depth".to_string(), dp.from_normalized(w.4))].into_iter().collect();
-                    self.panel_commit(Command::SetDeviceParams { device, params, preset: None });
-                }
-            }
-            _ => {
-                let Some(w) = self.devices.modu.wave.take() else {
-                    return;
-                };
-                let _ = self.engine.builtin_set_param(device.0, ri as u32, rate_of(w.1));
-                let _ = self.engine.builtin_set_param(device.0, di as u32, dp.from_normalized(w.2));
-            }
-        }
-        self.ui_dirty = true;
-    }
-
-    /// Live picture values during a drag (rate norm, depth norm).
-    pub(crate) fn wave_drag_values(&self, device: DeviceId) -> Option<(f32, f32)> {
-        self.devices.modu.wave.filter(|w| w.0 == device).map(|w| (w.3, w.4))
     }
 
     /// Chain head: a click on a macro opens its side panel; the same macro again closes it.

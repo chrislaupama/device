@@ -20,6 +20,7 @@ mod controller;
 mod device_mod;
 mod device_fields;
 mod device_panel;
+mod device_views;
 mod devices;
 mod gpu;
 mod highlight;
@@ -911,7 +912,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_device_drag, |c, id: i32, phase: i32, x: f32| c.device_drag(saine_core::DeviceId(id as u64), phase, x));
     on!(on_panel_drag, |c, id: i32, p: i32, phase: i32, dy: f32, rate: f32, fine: bool| c.panel_drag(saine_core::DeviceId(id as u64), p, phase, dy, rate, fine));
     on!(on_panel_reset, |c, id: i32, p: i32| c.panel_reset(saine_core::DeviceId(id as u64), p));
+    on!(on_panel_reset_xy, |c, id: i32, px: i32, py: i32| c.panel_reset_xy(saine_core::DeviceId(id as u64), [px, py]));
     on!(on_panel_step, |c, id: i32, p: i32, delta: i32, fine: bool| c.panel_step(saine_core::DeviceId(id as u64), p, delta, fine));
+    on!(on_panel_drag_xy, |c, id: i32, px: i32, py: i32, phase: i32, dx: f32, dy: f32, rx: f32, ry: f32, fine: bool| c.panel_drag_xy(saine_core::DeviceId(id as u64), [px, py], phase, [dx, dy], [rx, ry], fine));
     on!(on_panel_choice, |c, id: i32, p: i32, i: i32| c.panel_choice(saine_core::DeviceId(id as u64), p, i));
     on!(on_panel_text, |c, id: i32, p: i32, text: slint::SharedString| c.panel_text(saine_core::DeviceId(id as u64), p, &text));
     on!(on_panel_field, |c, id: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.panel_field_drag(saine_core::DeviceId(id as u64), phase, dx, dy, fine));
@@ -931,7 +934,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         on!(on_mod_amount_text, |c, d: i32, i: i32, t: slint::SharedString| c.mod_amount_text(id(d), i.max(0) as usize, &t));
         on!(on_mod_amount_step, |c, d: i32, i: i32, delta: i32, fine: bool| c.mod_amount_step(id(d), i.max(0) as usize, delta, fine));
         on!(on_mod_remove, |c, d: i32, i: i32| c.mod_remove(id(d), i.max(0) as usize));
-        on!(on_mod_wave_drag, |c, d: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.mod_wave_drag(id(d), phase, dx, dy, fine));
         on!(on_macro_select, |c, d: i32, i: i32| c.macro_select(id(d), i));
         on!(on_macro_rename, |c, d: i32, i: i32, t: slint::SharedString| c.macro_rename(id(d), i, &t));
         on!(on_chain_add_effect, |c, d: i32, x: f32, y: f32| c.chain_add_effect(id(d), x, y));
