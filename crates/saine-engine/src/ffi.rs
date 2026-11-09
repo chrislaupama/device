@@ -355,6 +355,39 @@ pub struct se_builtin_desc {
     pub readout_ids: *const *const c_char,
     pub param_count: u32,
     pub readout_count: u32,
+    pub sample_slots: u32,
+    pub instrument: u8,
+    pub _pad: [u8; 3],
+}
+
+pub const SE_BUILTIN_STATE_MAGIC2: u32 = 0x3249_4253;
+pub const SE_BUILTIN_MAX_SLICES: usize = 128;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct se_builtin_state_v2 {
+    pub magic: u32,
+    pub value_count: u32,
+    pub sidechain_track_id: u64,
+    pub sample_count: u32,
+    pub slice_count: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct se_builtin_sample {
+    pub asset_id: u64,
+    pub slot: u32,
+    pub slice_count: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct se_builtin_slice {
+    pub start: f32,
+    pub gain_db: f32,
+    pub pan: f32,
+    pub pitch: f32,
 }
 /// Number of built-in synth parameters (`SE_SYNTH_P_*`, `SynthParam::ALL` order).
 pub const SE_SYNTH_P_COUNT: u16 = 20;
@@ -658,6 +691,7 @@ unsafe extern "C" {
     pub fn se_builtin_registry(out_count: *mut usize) -> *const se_builtin_desc;
     pub fn se_builtin_set_param(engine: *mut se_engine, device_id: u64, index: u32, value: f32) -> i32;
     pub fn se_builtin_readouts(engine: *mut se_engine, device_id: u64, out: *mut f32, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_builtin_note(engine: *mut se_engine, device_id: u64, pitch: u8, velocity: u8) -> i32;
 }
 
 /// Guards the hand-written declarations against drift from saine_engine.h.
@@ -987,7 +1021,11 @@ mod abi_layout {
         );
         assert_eq!((size_of::<se_builtin_state>(), align_of::<se_builtin_state>()), (16, 8));
         assert_eq!([offset_of!(se_builtin_state, value_count), offset_of!(se_builtin_state, sidechain_track_id)], [4, 8]);
-        assert_eq!((size_of::<se_builtin_desc>(), align_of::<se_builtin_desc>()), (32, 8));
+        assert_eq!((size_of::<se_builtin_desc>(), align_of::<se_builtin_desc>()), (40, 8));
+        assert_eq!([offset_of!(se_builtin_desc, sample_slots), offset_of!(se_builtin_desc, instrument)], [32, 36]);
+        assert_eq!((size_of::<se_builtin_state_v2>(), align_of::<se_builtin_state_v2>()), (24, 8));
+        assert_eq!([offset_of!(se_builtin_state_v2, sample_count), offset_of!(se_builtin_state_v2, slice_count)], [16, 20]);
+        assert_eq!((size_of::<se_builtin_sample>(), size_of::<se_builtin_slice>()), (16, 16));
         assert_eq!(
             [offset_of!(se_builtin_desc, param_ids), offset_of!(se_builtin_desc, readout_ids), offset_of!(se_builtin_desc, param_count), offset_of!(se_builtin_desc, readout_count)],
             [8, 16, 24, 28]

@@ -3,6 +3,7 @@
 // integration (chain, bypass, live parameter updates, readouts, automation,
 // sidechain routing).
 #include "device_harness.hpp"
+#include "sampler_defaults.hpp"
 
 #include <set>
 
@@ -16,7 +17,40 @@ namespace {
 // device-specific defaults table gives (devices must clamp anything).
 std::vector<float> defaults_for(const saine::BuiltinDescriptor& d) {
     if (std::string(d.id) == "compressor") return {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};
+    if (std::string(d.id) == "sampler-steam") return sampler_defaults();
+    if (std::string(d.id) == "pad-sampler") return pad_defaults();
+    if (std::string(d.id) == "drum-rack") return drum_rack_defaults();
     return std::vector<float>(d.params.size(), 0.0f);
+}
+
+// Instruments with sample slots get a short loud sample in every slot so the
+// generic checks exercise their voices.
+void load_test_samples(DeviceRig& rig) {
+    const saine::BuiltinDescriptor& d = rig.desc();
+    std::vector<TestSample> s;
+    for (uint32_t slot = 0; slot < d.sample_slots; ++slot) {
+        TestSample t;
+        t.slot = slot;
+        t.l = noise(3000 + 97 * slot, 2.0f, slot + 1);
+        if (slot % 2 == 0) t.r = noise(3000 + 97 * slot, 2.0f, slot + 7);
+        if (slot == 0) t.slices = {{0.0f, 0.0f, 0.0f, 0.0f}, {0.4f, 6.0f, -1.0f, 12.0f}, {0.7f, -60.0f, 1.0f, -24.0f}};
+        s.push_back(std::move(t));
+    }
+    rig.load_samples(std::move(s));
+}
+
+// Notes over the whole keyboard, pitch bend, sustain pedal and all-notes-off.
+std::vector<NoteAt> test_notes(std::size_t n) {
+    std::vector<NoteAt> v;
+    uint8_t k = 0;
+    for (std::size_t f = 0; f + 800 < n; f += 700, k = static_cast<uint8_t>((k + 13) % 128)) {
+        v.push_back(note_on(f, k, static_cast<uint8_t>(1 + k % 127)));
+        v.push_back(NoteAt{f + 10, 0xe0, static_cast<uint8_t>(k), static_cast<uint8_t>(127 - k % 128)});
+        if (k % 5 == 0) v.push_back(NoteAt{f + 20, 0xb0, 64, static_cast<uint8_t>(k % 2 ? 127 : 0)});
+        v.push_back(note_off(f + 400, k));
+        if (k % 11 == 0) v.push_back(NoteAt{f + 450, 0xb0, 123, 0});
+    }
+    return v;
 }
 
 const std::vector<float> kComp = {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};
@@ -68,6 +102,11 @@ TEST_CASE(every_builtin_is_rt_safe_and_robust) {
     for (const saine::BuiltinDescriptor& d : saine::builtin_registry()) {
         DeviceRig rig(d.id, defaults_for(d), 48000.0, 512);
         const std::size_t n = 48000;
+        if (d.sample_slots > 0) load_test_samples(rig);
+        if (d.instrument) {
+            auto [pl, pr] = rig.play(n, test_notes(n));
+            CHECK(all_finite(pl) && all_finite(pr));
+        }
         auto [sl, sr] = rig.run(Signal(n, 0.0f), Signal(n, 0.0f));
         CHECK(all_finite(sl) && all_finite(sr));
         auto [il, ir] = rig.run(impulse(n), impulse(n));
@@ -80,6 +119,10 @@ TEST_CASE(every_builtin_is_rt_safe_and_robust) {
             for (std::size_t p = 0; p < d.params.size(); ++p) rig.instance().set_value(static_cast<uint32_t>(p), extreme);
             auto [xl, xr] = rig.run(noise(4096, 1.0f, 5), noise(4096, 1.0f, 6));
             CHECK(all_finite(xl) && all_finite(xr));
+            if (d.instrument) {
+                auto [yl, yr] = rig.play(8192, test_notes(8192));
+                CHECK(all_finite(yl) && all_finite(yr));
+            }
         }
         rig.instance().update_state(state_blob(defaults_for(d)).data(), state_blob(defaults_for(d)).size());
 
@@ -87,6 +130,19 @@ TEST_CASE(every_builtin_is_rt_safe_and_robust) {
         std::vector<float> l(512), r(512), scl(512, 0.25f), scr(512, 0.25f);
         std::vector<saine::ParamEvent> ev;
         for (uint32_t i = 0; i < 8; ++i) ev.push_back(saine::ParamEvent{i * 37, 0, static_cast<double>(defaults_for(d)[0])});
+        std::vector<saine::MidiEvent> notes;
+        for (uint32_t i = 0; i < 6; ++i) {
+            saine::MidiEvent on;
+            on.offset = i * 50;
+            on.status = 0x90;
+            on.data1 = static_cast<uint8_t>(36 + 7 * i);
+            on.data2 = 100;
+            notes.push_back(on);
+            saine::MidiEvent off = on;
+            off.offset = i * 50 + 20;
+            off.status = 0x80;
+            notes.push_back(off);
+        }
         saine::RtTransport tr;
         const long before = rt_alloc_count();
         {
@@ -97,7 +153,13 @@ TEST_CASE(every_builtin_is_rt_safe_and_robust) {
                 for (uint32_t i = 0; i < frames; ++i) l[i] = r[i] = 0.5f * std::sin(0.05f * static_cast<float>(i + k));
                 if (k % 3 == 0) rig.instance().set_sidechain(scl.data(), scr.data());
                 const auto ne = static_cast<uint32_t>(std::count_if(ev.begin(), ev.end(), [&](const saine::ParamEvent& e) { return e.offset < frames; }));
-                rig.instance().run(l.data(), r.data(), frames, nullptr, 0, tr, ev.data(), k % 2 == 0 ? ne : 0);
+                const auto nn = static_cast<uint32_t>(std::count_if(notes.begin(), notes.end(), [&](const saine::MidiEvent& m) { return m.offset < frames; }));
+                if (d.instrument && k % 4 == 1) {
+                    rig.instance().push_note(60, 90);
+                    rig.instance().push_note(60, 0);
+                }
+                rig.instance().run(l.data(), r.data(), frames, d.instrument ? notes.data() : nullptr, d.instrument ? nn : 0, tr,
+                                   ev.data(), k % 2 == 0 ? ne : 0);
                 if (k % 40 == 39) rig.instance().processor().reset();
             }
         }

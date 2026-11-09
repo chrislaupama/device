@@ -610,6 +610,17 @@ int32_t se_builtin_readouts(se_engine* engine, uint64_t device_id, float* out, s
     });
 }
 
+int32_t se_builtin_note(se_engine* engine, uint64_t device_id, uint8_t pitch, uint8_t velocity) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&]() -> int32_t {
+        const int32_t rc = engine->impl->builtin_note(device_id, pitch, velocity);
+        if (rc == SE_ERR_NOT_FOUND) return fail(rc, "no live built-in instrument with this id");
+        if (rc == SE_ERR_INVALID_ARG) return fail(rc, "pitch or velocity above 127");
+        if (rc == SE_ERR_STATE) return fail(rc, "too many queued notes");
+        return rc;
+    });
+}
+
 // ---- plugin delay compensation
 
 int32_t se_pdc_set_enabled(se_engine* engine, uint8_t enabled) {

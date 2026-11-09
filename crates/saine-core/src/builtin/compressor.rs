@@ -50,4 +50,5 @@ pub static COMPRESSOR: DeviceDef = DeviceDef {
         FactoryPreset { name: "Bus Glue", values: &[("threshold", -14.0), ("ratio", 1.8), ("attack", 30.0), ("release", 400.0), ("knee", 16.0), ("makeup_gain", 1.5), ("style", 3.0)] },
     ],
     sidechain: true,
+    samples: 0,
 };

@@ -1,5 +1,7 @@
 #include "plugin_host.hpp"
 
+#include "../devices/builtin.hpp"
+
 #include <algorithm>
 
 namespace saine {
@@ -35,7 +37,10 @@ PluginInstance* PluginHost::use(const se_device_desc& d, bool instrument, const 
             e.used = true;
             e.spec.name = key.name;
             e.spec.track = key.track;
-            if (e.inst && d.format == SE_PLUGIN_BUILTIN) e.inst->update_state(d.state, d.state_len);
+            if (e.inst && d.format == SE_PLUGIN_BUILTIN) {
+                e.inst->update_state(d.state, d.state_len);
+                if (BuiltinInstance* b = e.inst->as_builtin()) b->bind_samples(assets_);
+            }
             return e.inst.get();
         }
         // Same id, different plugin or role: replace the instance.
@@ -64,6 +69,7 @@ PluginInstance* PluginHost::use(const se_device_desc& d, bool instrument, const 
     if (e.inst) {
         e.inst->refresh_latency(); // cached for delay compensation
         e.inst->attach_bus(&bus_);
+        if (BuiltinInstance* b = e.inst->as_builtin()) b->bind_samples(assets_);
     }
     PluginInstance* raw = e.inst.get();
     entries_.emplace(d.device_id, std::move(e));

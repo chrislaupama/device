@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -38,5 +39,7 @@ private:
 };
 
 using AssetRef = std::shared_ptr<const Asset>;
+// Resolves an engine asset id (null when unknown). Main thread.
+using AssetLookup = std::function<AssetRef(uint64_t asset_id)>;
 
 } // namespace saine

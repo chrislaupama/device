@@ -9,11 +9,17 @@ namespace saine {
 // ---------------------------------------------------------------- registry
 // One line per built-in device; the descriptor lives next to its processor.
 extern const BuiltinDescriptor kCompressorDescriptor;
+extern const BuiltinDescriptor kSamplerDescriptor;
+extern const BuiltinDescriptor kDrumRackDescriptor;
+extern const BuiltinDescriptor kPadSamplerDescriptor;
 
 namespace {
 
 const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kCompressorDescriptor,
+    &kSamplerDescriptor,
+    &kDrumRackDescriptor,
+    &kPadSamplerDescriptor,
 };
 
 struct CRegistry {
@@ -23,7 +29,8 @@ struct CRegistry {
         for (const BuiltinDescriptor* d : kBuiltinRegistry) list.push_back(*d);
         for (const BuiltinDescriptor& d : list)
             c.push_back(se_builtin_desc{d.id, d.params.data(), d.readouts.data(), static_cast<uint32_t>(d.params.size()),
-                                        static_cast<uint32_t>(d.readouts.size())});
+                                        static_cast<uint32_t>(d.readouts.size()), d.sample_slots,
+                                        static_cast<uint8_t>(d.instrument ? 1 : 0), {0, 0, 0}});
     }
 };
 
@@ -47,26 +54,67 @@ const se_builtin_desc* builtin_registry_c(std::size_t& count) noexcept {
     return registry().c.data();
 }
 
-const char* parse_builtin_state(const uint8_t* data, std::size_t len, const uint8_t*& values, uint32_t& count,
-                                uint64_t& sidechain) noexcept {
-    values = nullptr;
-    count = 0;
-    sidechain = 0;
+const char* parse_builtin_state(const uint8_t* data, std::size_t len, BuiltinStateView& out) noexcept {
+    out = BuiltinStateView{};
     if (data == nullptr || len == 0) return nullptr;
     if (len < sizeof(se_builtin_state)) return "built-in state shorter than its header";
-    se_builtin_state h;
-    std::memcpy(&h, data, sizeof h);
-    if (h.magic != SE_BUILTIN_STATE_MAGIC) return "built-in state has a wrong magic";
-    if (len != sizeof h + std::size_t{4} * h.value_count) return "built-in state length does not match value_count";
-    values = data + sizeof h;
-    count = h.value_count;
-    sidechain = h.sidechain_track_id;
-    for (uint32_t i = 0; i < count; ++i) {
+    uint32_t magic;
+    std::memcpy(&magic, data, 4);
+    if (magic == SE_BUILTIN_STATE_MAGIC) {
+        se_builtin_state h;
+        std::memcpy(&h, data, sizeof h);
+        if (len != sizeof h + std::size_t{4} * h.value_count) return "built-in state length does not match value_count";
+        out.values = data + sizeof h;
+        out.value_count = h.value_count;
+        out.sidechain = h.sidechain_track_id;
+    } else if (magic == SE_BUILTIN_STATE_MAGIC2) {
+        if (len < sizeof(se_builtin_state_v2)) return "built-in state shorter than its header";
+        se_builtin_state_v2 h;
+        std::memcpy(&h, data, sizeof h);
+        const std::size_t want = sizeof h + std::size_t{4} * h.value_count + sizeof(se_builtin_sample) * h.sample_count +
+                                 sizeof(se_builtin_slice) * h.slice_count;
+        if (len != want) return "built-in state length does not match its counts";
+        out.values = data + sizeof h;
+        out.value_count = h.value_count;
+        out.sidechain = h.sidechain_track_id;
+        out.samples = out.values + std::size_t{4} * h.value_count;
+        out.sample_count = h.sample_count;
+        out.slices = out.samples + sizeof(se_builtin_sample) * h.sample_count;
+        out.slice_count = h.slice_count;
+        uint64_t total = 0;
+        for (uint32_t i = 0; i < h.sample_count; ++i) {
+            se_builtin_sample s;
+            std::memcpy(&s, out.samples + sizeof s * i, sizeof s);
+            if (s.slice_count > SE_BUILTIN_MAX_SLICES) return "built-in sample has too many slices";
+            total += s.slice_count;
+        }
+        if (total != h.slice_count) return "built-in sample slice counts do not add up";
+        for (uint32_t i = 0; i < h.slice_count; ++i) {
+            se_builtin_slice s;
+            std::memcpy(&s, out.slices + sizeof s * i, sizeof s);
+            if (!std::isfinite(s.start) || !std::isfinite(s.gain_db) || !std::isfinite(s.pan) || !std::isfinite(s.pitch))
+                return "built-in slice value is not finite";
+            if (s.start < 0.0f || s.start >= 1.0f) return "built-in slice start outside 0..1";
+        }
+    } else {
+        return "built-in state has a wrong magic";
+    }
+    for (uint32_t i = 0; i < out.value_count; ++i) {
         float v;
-        std::memcpy(&v, values + 4 * i, 4);
+        std::memcpy(&v, out.values + 4 * i, 4);
         if (!std::isfinite(v)) return "built-in state value is not finite";
     }
     return nullptr;
+}
+
+const char* parse_builtin_state(const uint8_t* data, std::size_t len, const uint8_t*& values, uint32_t& count,
+                                uint64_t& sidechain) noexcept {
+    BuiltinStateView v;
+    const char* err = parse_builtin_state(data, len, v);
+    values = err == nullptr ? v.values : nullptr;
+    count = err == nullptr ? v.value_count : 0;
+    sidechain = err == nullptr ? v.sidechain : 0;
+    return err;
 }
 
 // ---------------------------------------------------------------- instance
@@ -77,6 +125,10 @@ BuiltinInstance::BuiltinInstance(PluginSpec spec, const BuiltinDescriptor& desc,
       target_(new std::atomic<float>[std::max<std::size_t>(1, desc.params.size())]), current_(desc.params.size(), 0.0f),
       readout_atomic_(new std::atomic<float>[std::max<std::size_t>(1, desc.readouts.size())]),
       readout_scratch_(desc.readouts.size(), 0.0f), readout_segment_(desc.readouts.size(), 0.0f) {
+    if (desc_.instrument) {
+        merged_.resize(kMaxEvents + kLiveEvents);
+        seg_events_.resize(kMaxEvents + kLiveEvents);
+    }
     for (std::size_t i = 0; i < desc_.params.size(); ++i) target_[i].store(0.0f, std::memory_order_relaxed);
     for (std::size_t i = 0; i < desc_.readouts.size(); ++i)
         readout_atomic_[i].store(i < desc_.idle_readouts.size() ? desc_.idle_readouts[i] : 0.0f, std::memory_order_relaxed);
@@ -95,16 +147,104 @@ float BuiltinInstance::value(uint32_t index) const noexcept {
 }
 
 void BuiltinInstance::update_state(const uint8_t* data, std::size_t len) noexcept {
-    const uint8_t* values = nullptr;
-    uint32_t count = 0;
-    uint64_t sc = 0;
-    if (parse_builtin_state(data, len, values, count, sc) != nullptr || values == nullptr) return;
-    count = std::min(count, param_count());
+    BuiltinStateView view;
+    if (parse_builtin_state(data, len, view) != nullptr || view.values == nullptr) return;
+    const uint32_t count = std::min(view.value_count, param_count());
     for (uint32_t i = 0; i < count; ++i) {
         float v;
-        std::memcpy(&v, values + 4 * i, 4);
+        std::memcpy(&v, view.values + 4 * i, 4);
         target_[i].store(v, std::memory_order_relaxed);
     }
+    if (desc_.sample_slots == 0) return;
+    // The sample table is resolved into assets by bind_samples() (it needs
+    // the engine's asset registry). Main thread: allocation is fine here.
+    try {
+        std::vector<SampleEntry> table;
+        table.reserve(view.sample_count);
+        const uint8_t* sl = view.slices;
+        for (uint32_t i = 0; i < view.sample_count; ++i) {
+            se_builtin_sample s;
+            std::memcpy(&s, view.samples + sizeof s * i, sizeof s);
+            SampleEntry e;
+            e.asset = s.asset_id;
+            e.slot = s.slot;
+            for (uint32_t k = 0; k < s.slice_count; ++k, sl += sizeof(se_builtin_slice)) {
+                se_builtin_slice c;
+                std::memcpy(&c, sl, sizeof c);
+                e.slices.push_back(BuiltinSlice{c.start, c.gain_db, c.pan, c.pitch});
+            }
+            if (e.slot < desc_.sample_slots) table.push_back(std::move(e));
+        }
+        table_ = std::move(table);
+    } catch (...) {
+        // Out of memory: keep the previous table.
+    }
+}
+
+BuiltinInstance::~BuiltinInstance() {
+    delete pending_.exchange(nullptr);
+    delete retired_.exchange(nullptr);
+    delete active_;
+}
+
+void BuiltinInstance::reclaim() noexcept { delete retired_.exchange(nullptr, std::memory_order_acq_rel); }
+
+void BuiltinInstance::bind_samples(const AssetLookup& lookup) {
+    if (desc_.sample_slots == 0) return;
+    reclaim();
+    // Rebuild when the table changed or an asset appeared / disappeared
+    // (a file finished loading, or was released).
+    std::vector<uint64_t> present;
+    for (const SampleEntry& e : table_)
+        if (lookup && lookup(e.asset)) present.push_back(e.asset);
+    if (bound_once_ && table_ == bound_ && present == bound_present_) return;
+    auto set = std::make_unique<SampleSet>();
+    set->views.resize(desc_.sample_slots);
+    std::size_t nslices = 0;
+    for (const SampleEntry& e : table_) nslices += e.slices.size();
+    set->slices.reserve(nslices);
+    for (const SampleEntry& e : table_) {
+        AssetRef a = lookup ? lookup(e.asset) : nullptr;
+        if (!a || a->frames == 0 || a->channels == 0) continue;
+        BuiltinSample& v = set->views[e.slot];
+        v.ch[0] = a->channel(0);
+        v.ch[1] = a->channel(a->channels > 1 ? 1 : 0);
+        v.frames = a->frames;
+        v.channels = a->channels;
+        v.slice_count = static_cast<uint32_t>(e.slices.size());
+        v.slices = nullptr;
+        if (!e.slices.empty()) {
+            v.slices = set->slices.data() + set->slices.size(); // reserved: no reallocation
+            set->slices.insert(set->slices.end(), e.slices.begin(), e.slices.end());
+        }
+        set->refs.push_back(std::move(a));
+    }
+    bound_ = table_;
+    bound_present_ = std::move(present);
+    bound_once_ = true;
+    // A set the RT side never picked up can go right away.
+    delete pending_.exchange(set.release(), std::memory_order_acq_rel);
+}
+
+// RT: adopt the newest sample set. The previous one waits in retired_ until
+// the main thread frees it; nothing is adopted while one still waits.
+void BuiltinInstance::take_samples() noexcept {
+    if (retired_.load(std::memory_order_acquire) != nullptr) return;
+    SampleSet* next = pending_.exchange(nullptr, std::memory_order_acq_rel);
+    if (next == nullptr) return;
+    SampleSet* old = active_;
+    active_ = next;
+    retired_.store(old, std::memory_order_release);
+}
+
+bool BuiltinInstance::push_note(uint8_t pitch, uint8_t velocity) noexcept {
+    if (!desc_.instrument) return false;
+    MidiEvent e;
+    e.offset = 0;
+    e.status = velocity > 0 ? 0x90 : 0x80;
+    e.data1 = pitch & 0x7f;
+    e.data2 = velocity > 0 ? (velocity & 0x7f) : 64;
+    return live_.push(e);
 }
 
 uint32_t BuiltinInstance::readouts(float* out, uint32_t capacity) const noexcept {
@@ -113,8 +253,8 @@ uint32_t BuiltinInstance::readouts(float* out, uint32_t capacity) const noexcept
     return n;
 }
 
-void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEvent*, uint32_t, const RtTransport& transport,
-                              const ParamEvent* params, uint32_t param_count) noexcept {
+void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEvent* events, uint32_t event_count,
+                              const RtTransport& transport, const ParamEvent* params, uint32_t param_count) noexcept {
     const auto n_params = static_cast<uint32_t>(current_.size());
     float* const cur = current_.data();
     for (uint32_t i = 0; i < n_params; ++i) cur[i] = target_[i].load(std::memory_order_relaxed);
@@ -122,6 +262,23 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     ctx.sc_l = sc_l_;
     ctx.sc_r = sc_r_;
     ctx.transport = &transport;
+    if (desc_.sample_slots > 0) {
+        take_samples();
+        if (active_ != nullptr) {
+            ctx.samples = active_->views.data();
+            ctx.sample_count = static_cast<uint32_t>(active_->views.size());
+        }
+    }
+    // Instruments: live notes (at the first frame) ahead of the track's
+    // notes, which arrive sorted by offset.
+    uint32_t ne = 0;
+    if (desc_.instrument) {
+        const auto cap = static_cast<uint32_t>(merged_.size());
+        MidiEvent e;
+        while (ne < kLiveEvents && live_.pop(e)) merged_[ne++] = e;
+        for (uint32_t i = 0; i < event_count && ne < cap; ++i) merged_[ne++] = events[i];
+    }
+    uint32_t ev = 0; // next merged event
     float* const ro = readout_scratch_.data();
     // Automation events split the block (sorted by offset): every segment
     // runs with the values in force at its first frame. The block's readouts
@@ -138,6 +295,16 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
         if (seg.sc_l != nullptr) {
             seg.sc_l += pos;
             seg.sc_r += pos;
+        }
+        if (ne > 0) {
+            uint32_t k = 0;
+            while (ev < ne && (merged_[ev].offset < end || end == frames)) {
+                MidiEvent m = merged_[ev++];
+                m.offset = m.offset > pos ? std::min(m.offset, end - 1) - pos : 0;
+                seg_events_[k++] = m;
+            }
+            seg.events = seg_events_.data();
+            seg.event_count = k;
         }
         if (pos == 0) {
             proc_->process(l, r, end, cur, seg, ro);
@@ -197,8 +364,12 @@ std::shared_ptr<PluginInstance> create_builtin_instance(const PluginSpec& spec, 
         err = "unknown built-in device \"" + spec.plugin_id + "\"";
         return nullptr;
     }
-    if (spec.instrument) {
+    if (spec.instrument && !d->instrument) {
         err = "built-in effects can't be used as an instrument";
+        return nullptr;
+    }
+    if (!spec.instrument && d->instrument) {
+        err = "built-in instruments go in a track's instrument slot, not in its effect chain";
         return nullptr;
     }
     return std::make_shared<BuiltinInstance>(spec, *d, d->create(), sample_rate, max_block);

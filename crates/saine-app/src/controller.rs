@@ -111,6 +111,9 @@ pub enum ImportTarget {
     /// Selected track if it is an audio track, else the first audio track, else a new one.
     Selected,
     NewTrack,
+    /// A built-in sampler's sample slot (`next_free`: the first free layer
+    /// of the pad that starts at `slot`).
+    DeviceSample { device: saine_core::DeviceId, slot: u32, next_free: bool },
 }
 
 pub enum JobResult {
@@ -708,7 +711,7 @@ impl Controller {
             let engine = self.engine.clone();
             let tx = self.jobs_tx.clone();
             // Additional files go to new tracks so they line up at the playhead.
-            let target = if i == 0 { target } else { ImportTarget::NewTrack };
+            let target = if i == 0 || matches!(target, ImportTarget::DeviceSample { .. }) { target } else { ImportTarget::NewTrack };
             self.pending_jobs += 1;
             std::thread::Builder::new()
                 .name("import".into())
@@ -777,8 +780,20 @@ impl Controller {
             channels: info.channels,
             frames: native_frames,
         };
+        if let ImportTarget::DeviceSample { device, slot, next_free } = target {
+            self.peaks.insert(info.asset_id, pyr);
+            self.asset_map.insert(asset_id, info.asset_id);
+            let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Sample".into());
+            if !self.finish_device_sample(asset, name, device, slot, next_free) {
+                self.asset_map.remove(&asset_id);
+                let _ = self.engine.release_asset(info.asset_id);
+            }
+            self.ui_dirty = true;
+            return;
+        }
         let mut cmds = vec![Command::AddAsset { asset }];
         let existing = match target {
+            ImportTarget::DeviceSample { .. } => None,
             ImportTarget::NewTrack => None,
             ImportTarget::Selected => self
                 .selected_track
