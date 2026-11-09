@@ -1614,7 +1614,10 @@ export component CardHeader inherits Rectangle {
             x: 2px * zm; y: 2px * zm; width: 12px * zm; height: 12px * zm; d: Icons.presets; filled: true;
             ink: preset-ta.has-hover ? #ffffffb3 : #81838a;
         }
-        preset-ta := TouchArea { clicked => { Studio.panel-menu(root.card.id, -2, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
+        preset-ta := TouchArea { clicked => {
+            if (root.card.instrument) { Studio.synth-pill(1, 0, self.absolute-position.x + self.width - 180px, self.absolute-position.y + self.height + 2px, 180px); }
+            else { Studio.panel-menu(root.card.id, -2, self.absolute-position.x, self.absolute-position.y + self.height + 2px); }
+        } }
     }
     if root.fx && !root.narrow: Rectangle {
         x: root.prev-x; y: 0; width: 33px * zm; height: root.height;
@@ -1625,7 +1628,7 @@ export component CardHeader inherits Rectangle {
                 x: i == 0 ? parent.width - 10px * zm : 0; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm;
                 d: i == 0 ? Icons.chevron-left : Icons.chevron-right; ink: step-ta.has-hover ? #ffffffb3 : #81838a; stroke-width: 1.04px * zm;
             }
-            step-ta := TouchArea { clicked => { Studio.panel-preset-step(root.card.id, dir); } }
+            step-ta := TouchArea { clicked => { if (root.card.instrument) { Studio.synth-preset-step(dir); } else { Studio.panel-preset-step(root.card.id, dir); } } }
         }
     }
     if root.fx: Rectangle { x: root.rule-x; y: (root.height - 20px * zm) / 2; width: 1px * zm; height: 20px * zm; background: #ffffff14; }

@@ -420,7 +420,7 @@ fn synth_steps() -> Vec<Step> {
             ok.then_some(()).ok_or(format!("visible {} tab {} page {}", s.get_synth_visible(), s.get_bottom_tab(), s.get_synth_page()))
         })),
         Do("click preset ›", Box::new(|a| {
-            let (x, y) = synth_xy(726.5, 13.0);
+            let (x, y) = synth_xy(crate::devices::SYNTH_W - 45.0, 16.0);
             click(a, x, y);
         })),
         Check("synth: preset › loaded the first factory sound in one undo step", Box::new(move |c, a| {
@@ -430,7 +430,7 @@ fn synth_steps() -> Vec<Step> {
             (v == factory_values(0) && name.as_deref() == Some(want) && a.global::<Studio>().get_synth_preset() == want).then_some(()).ok_or(format!("preset {name:?}"))
         })),
         Do("click the preset name, pick the 4th sound in the list", Box::new(|a| {
-            let (x, y) = synth_xy(690.0, 13.0);
+            let (x, y) = synth_xy(crate::devices::SYNTH_W - 74.0, 16.0);
             click(a, x, y);
             let (x, y) = synth_menu_row(a, 4);
             click(a, x, y);
