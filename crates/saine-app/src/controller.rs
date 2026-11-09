@@ -1460,6 +1460,7 @@ impl Controller {
         if self.chat_rev != Some(self.assistant.rev) {
             self.chat_rev = Some(self.assistant.rev);
             self.chat_model.set_vec(self.assistant.to_model());
+            self.assistant.fresh_from = self.assistant.entries.len();
         }
         match self.assistant_context() {
             Some((name, scope, color, instrument)) => {

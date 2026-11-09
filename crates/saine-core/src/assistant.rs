@@ -49,7 +49,7 @@ pub struct AssistantTurn {
 
 #[derive(Debug, Error, PartialEq)]
 pub enum AssistantError {
-    #[error("teach mode cannot modify the project (action {index})")]
+    #[error("Point mode cannot modify the project (action {index})")]
     EditInTeachMode { index: usize },
     #[error("unknown UI target {0:?}")]
     UnknownTarget(String),
