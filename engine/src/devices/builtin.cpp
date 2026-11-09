@@ -42,6 +42,8 @@ extern const BuiltinDescriptor kDeClipperDescriptor;
 extern const BuiltinDescriptor kDeEsserDescriptor;
 extern const BuiltinDescriptor kDeHummerDescriptor;
 extern const BuiltinDescriptor kDeNoiserDescriptor;
+extern const BuiltinDescriptor kTranceGateDescriptor;
+extern const BuiltinDescriptor kShaperDescriptor;
 
 namespace {
 
@@ -77,6 +79,8 @@ const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kMultibandCompressorDescriptor,
     &kSynthV2Descriptor,
     &kDeClipperDescriptor, &kDeEsserDescriptor, &kDeHummerDescriptor, &kDeNoiserDescriptor,
+    &kTranceGateDescriptor,
+    &kShaperDescriptor,
 };
 
 struct CRegistry {
@@ -503,6 +507,7 @@ void BuiltinInstance::params(std::vector<ParamInfo>& out) {
         p.name = desc_.params[i];
         p.min = -1e30;
         p.max = 1e30;
+        p.automatable = proc_->automatable(i);
         out.push_back(std::move(p));
     }
 }

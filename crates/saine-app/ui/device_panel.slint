@@ -386,6 +386,8 @@ component DeviceCanvas inherits Rectangle {
     in property <PanelCanvas> f;
     in property <color> accent;
     property <float> zm: PanelStyle.z;
+    property <MouseCursor> mouse-cursor: root.f.cursor == 1 ? MouseCursor.move : root.f.cursor == 2 ? MouseCursor.ew-resize : root.f.cursor == 3 ? MouseCursor.ns-resize
+        : root.f.cursor == 4 ? MouseCursor.pointer : root.f.cursor == 5 ? MouseCursor.crosshair : MouseCursor.default;
     keys := FocusScope {
         key-pressed(e) => {
             if (root.f.pointer && Studio.panel-graph-key(root.device, e.text, e.modifiers.shift, e.modifiers.alt)) { return accept; }
@@ -441,7 +443,7 @@ component DeviceCanvas inherits Rectangle {
         // a press focuses the canvas so window shortcuts (undo, Escape) and canvas keys keep working.
         if root.f.pointer: TouchArea {
             accessible-role: slider; accessible-label: root.f.label; accessible-value: root.f.value;
-            mouse-cursor: root.f.cursor == 1 ? MouseCursor.move : root.f.cursor == 2 ? MouseCursor.ew-resize : root.f.cursor == 3 ? MouseCursor.ns-resize : MouseCursor.default;
+            mouse-cursor: root.mouse-cursor;
             pointer-event(e) => {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { keys.focus(); Studio.panel-graph(root.device, 0, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
                 if (e.kind == PointerEventKind.move) { Studio.panel-graph(root.device, self.pressed ? 1 : 4, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
@@ -454,6 +456,36 @@ component DeviceCanvas inherits Rectangle {
                 if (Studio.panel-graph-wheel(root.device, self.mouse-x / 1px, self.mouse-y / 1px, e.delta-y / 1px)) { return accept; }
                 reject
             }
+        }
+    }
+    // interactive: an editor (src/device_editors.rs) gets every pointer event over the canvas,
+    // with window coordinates for its menus; a press focuses the canvas for Escape and shortcuts.
+    if root.f.interactive: TouchArea {
+        mouse-cursor: root.mouse-cursor;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                keys.focus();
+                Studio.panel-editor(root.device, 0, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+            } else if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
+                Studio.panel-editor(root.device, 5, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+            } else if (e.kind == PointerEventKind.move) {
+                Studio.panel-editor(root.device, self.pressed ? 1 : 4, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+            } else if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) {
+                Studio.panel-editor(root.device, 2, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+            } else if (e.kind == PointerEventKind.cancel) {
+                Studio.panel-editor(root.device, 3, self.mouse-x, self.mouse-y, 0, 0, false, false, 0);
+            }
+        }
+        double-clicked => {
+            Studio.panel-editor(root.device, 6, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, false, false, 0);
+        }
+        scroll-event(e) => {
+            if (e.delta-y == 0) { return reject; }
+            Studio.panel-editor(root.device, 7, self.mouse-x, self.mouse-y, 0, 0, e.modifiers.shift, e.modifiers.alt, e.delta-y / 1px);
+            accept
+        }
+        changed has-hover => {
+            if (!self.has-hover) { Studio.panel-editor(root.device, 8, 0, 0, 0, 0, false, false, 0); }
         }
     }
 }

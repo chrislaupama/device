@@ -5,6 +5,7 @@
 // track, with and without an LFO moving both thresholds.
 //
 //   saine_device_bench [blocks]      (Release build; numbers in us per 256-frame block)
+#include "../tests/devices/shaper_layout.hpp"
 #include "devices/builtin.hpp"
 #include "devices/synth_v2_params.hpp"
 #include "platform/os.hpp"
@@ -464,6 +465,27 @@ int main(int argc, char** argv) {
         row(name, bench_kernel("character-mod", tweak("character-mod", {{"model", static_cast<float>(c)}}), blocks, 0));
     }
     row("character-mod (Phaser Barber)", bench_kernel("character-mod", tweak("character-mod", {{"model", 7.0f}, {"mode_phaser", 4.0f}}), blocks, 0));
+    row("trance-gate (defaults)", bench_kernel("trance-gate", devtest::builtin_defaults("trance-gate"), blocks, 0));
+    row("trance-gate (16 auto events)", bench_kernel("trance-gate", devtest::builtin_defaults("trance-gate"), blocks, 16));
+    {
+        using devtest::shaper_lane;
+        const std::vector<float> base = devtest::builtin_defaults("shaper");
+        row("shaper (defaults: Volume lane)", bench_kernel("shaper", base, blocks, 0));
+        const char* lanes[] = {"Volume", "Time", "Width", "Pan", "Filter", "Crush", "Pitch"};
+        for (int lane = 1; lane < 7; ++lane) {
+            std::vector<float> v = base;
+            v[shaper_lane(0, 0)] = 0.f;
+            v[shaper_lane(lane, 0)] = 1.f;
+            char name[64];
+            std::snprintf(name, sizeof name, "shaper (%s lane only)", lanes[lane]);
+            row(name, bench_kernel("shaper", v, blocks, 0));
+        }
+        std::vector<float> all = base;
+        for (int lane = 0; lane < 7; ++lane) all[shaper_lane(lane, 0)] = 1.f;
+        row("shaper (all 7 lanes)", bench_kernel("shaper", all, blocks, 0));
+        for (int lane = 0; lane < 7; ++lane) all[shaper_lane(lane, 3)] = 1.f; // Band: Lows
+        row("shaper (all 7 lanes, band split)", bench_kernel("shaper", all, blocks, 0));
+    }
     // Synth: notes held from the first block (sustain keeps every voice busy).
     const std::vector<float> synth(std::begin(saine::synth_v2::kDefaults), std::end(saine::synth_v2::kDefaults));
     const auto chord = [](uint32_t n) {

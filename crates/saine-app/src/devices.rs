@@ -270,6 +270,8 @@ pub enum MenuPick {
     Preset(DeviceId, usize),
     /// Built-in device panel: choice `n` of parameter index `i` (menu pill).
     Choice(DeviceId, i32, i32),
+    /// Built-in device interactive view (src/device_editors.rs): action code.
+    View(DeviceId, i32),
     /// Built-in device panel: parameter (index) set to a choice.
     Param(DeviceId, usize, f32),
     /// Built-in device panel: the mode entry of a type menu (type index, mode index).
@@ -1154,6 +1156,7 @@ impl Controller {
             Some(MenuPick::Sidechain(device, source)) => return self.panel_set_sidechain(device, source),
             Some(MenuPick::Preset(device, n)) => return self.panel_load_preset(device, n),
             Some(MenuPick::Choice(device, index, choice)) => return self.panel_choice(device, index, choice),
+            Some(MenuPick::View(device, code)) => return self.editor_pick(device, code),
             Some(MenuPick::Param(device, param, v)) => return self.panel_pick_param(device, param, v),
             Some(MenuPick::Mode(device, _, mode)) => return self.panel_pick_mode(device, mode),
             Some(MenuPick::Automate(device, p)) => return self.mod_automate(device, p),
