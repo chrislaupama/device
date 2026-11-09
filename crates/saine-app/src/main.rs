@@ -11,6 +11,7 @@
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
 //!              [--load-sample <file.wav>  (into the selected track's sampler, as a file drop)]
 //!              [--sampler-tab <0..4>  (with a sampler state: Sample, Pitch, Filter, Amp or Mod tab)]
+//!              [--hold-note <0..127>  (with a synth state: hold the note and render 0.75 s offline first)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--self-test]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
 //!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
@@ -102,6 +103,9 @@ struct Args {
     load_sample: Vec<PathBuf>,
     /// --sampler-tab N: with a sampler state, show that tab (review screenshots).
     sampler_tab: Option<i32>,
+    /// Test hook: hold this note on the selected synth and render 0.75 s offline before the
+    /// first frame, so the pictures show a voice's live modulation.
+    hold_note: Option<u8>,
     /// Never show the window (renders for --screenshot fall back to offscreen snapshots).
     offscreen: bool,
     /// review-analyzers: Pitch Corrector, Tuner and Spectrum fed 2 s of a sung-like line (no reference).
@@ -234,6 +238,7 @@ fn parse_args() -> Result<Args, String> {
                 let _ = controller::CARD_ACCENT.set(timeline::rgb(c));
             }
             "--load-sample" => a.load_sample.push(value(&mut i)?.into()),
+            "--hold-note" => a.hold_note = Some(value(&mut i)?.parse().map_err(|e| format!("--hold-note: {e}"))?),
             "--sampler-tab" => a.sampler_tab = Some(value(&mut i)?.parse().map_err(|e| format!("--sampler-tab: {e}"))?),
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
@@ -841,6 +846,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut c = ctl.borrow_mut();
         if let Some(d) = c.selected_sampler() {
             c.sampler_tab(d, tab);
+        }
+    }
+    if let Some(pitch) = args.hold_note {
+        let c = ctl.borrow();
+        if let Some(d) = c.synth_device() {
+            let mut out = vec![0f32; 2 * 36_000];
+            if let Err(e) = c.engine.builtin_note(d.0, pitch, 100).and_then(|_| c.engine.render_offline(&mut out)) {
+                eprintln!("--hold-note: {e}");
+            }
         }
     }
     if args.recording_review {

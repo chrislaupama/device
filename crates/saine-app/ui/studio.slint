@@ -549,6 +549,7 @@ export global Studio {
 
     // ---- device chain (Devices tab; src/devices.rs, ui/devices.slint) ----
     in property <[DeviceCard]> device-cards;
+    in property <[DeviceCard]> device-window-cards;          // built-in cards open in a device window (any track)
     in property <length> chain-scroll;          // horizontal scroll of the chain (synth card included)
     in property <length> add-device-x: 265px;   // bottom-panel relative
     in property <bool> chain-marker-visible;    // insertion marker while dragging a card or a device

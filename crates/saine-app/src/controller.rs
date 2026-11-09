@@ -285,6 +285,7 @@ pub struct Controller {
     pub devices: crate::devices::DevicesUi,
     pub(crate) tree_model: Rc<VecModel<TreeRow>>,
     pub(crate) cards_model: Rc<VecModel<DeviceCard>>,
+    pub(crate) window_cards_model: Rc<VecModel<DeviceCard>>,
     pub(crate) add_results_model: Rc<VecModel<MenuItem>>,
     pub(crate) devmenu_model: Rc<VecModel<MenuItem>>,
     pub(crate) scan_dirs_model: Rc<VecModel<PluginRow>>,
@@ -365,6 +366,7 @@ impl Controller {
             devices: Default::default(),
             tree_model: Rc::new(VecModel::default()),
             cards_model: Rc::new(VecModel::default()),
+            window_cards_model: Rc::new(VecModel::default()),
             add_results_model: Rc::new(VecModel::default()),
             devmenu_model: Rc::new(VecModel::default()),
             scan_dirs_model: Rc::new(VecModel::default()),
@@ -401,6 +403,7 @@ impl Controller {
         s.set_settings_menu_items(ModelRc::from(self.settings_menu_model.clone()));
         s.set_tree(ModelRc::from(self.tree_model.clone()));
         s.set_device_cards(ModelRc::from(self.cards_model.clone()));
+        s.set_device_window_cards(ModelRc::from(self.window_cards_model.clone()));
         s.set_add_results(ModelRc::from(self.add_results_model.clone()));
         s.set_devmenu_items(ModelRc::from(self.devmenu_model.clone()));
         s.set_scan_dirs(ModelRc::from(self.scan_dirs_model.clone()));

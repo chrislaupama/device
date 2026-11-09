@@ -1323,6 +1323,21 @@ impl Controller {
             }
         }
         sync_model(&self.cards_model, cards);
+        // Device windows: built-in cards opened from their header stay up across track changes
+        // (as plugin windows do) and close with their device.
+        let gone: Vec<DeviceId> = self.devices.windows.iter().copied().filter(|id| self.project().device(*id).is_none()).collect();
+        for id in gone {
+            self.devices.windows.remove(&id);
+        }
+        let mut ids: Vec<DeviceId> = self.devices.windows.iter().copied().collect();
+        ids.sort_by_key(|id| id.0);
+        let mut wins: Vec<DeviceCard> = ids.iter().filter_map(|id| self.project().device(*id).cloned()).map(|d| self.card_for(&d, false)).collect();
+        for (i, c) in wins.iter_mut().enumerate() {
+            if let Some(old) = slint::Model::row_data(&*self.window_cards_model, i) {
+                crate::device_panel::reuse_card_models(&old, c);
+            }
+        }
+        sync_model(&self.window_cards_model, wins);
         s.set_chain_scroll(scroll);
         s.set_add_device_x(add_x - scroll);
         if let Some(d) = drag {

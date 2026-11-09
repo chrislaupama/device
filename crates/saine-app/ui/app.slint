@@ -712,17 +712,17 @@ export component AppWindow inherits Window {
         if Studio.mixer-open: MixerPanel { x: 5px; y: root.height - 5px - root.bottom-h; width: root.width - 10px; height: root.bottom-h; }
         HighlightOverlay { x: 0; y: 0; width: root.width; height: root.height; }
         // Device windows: a built-in card opened from its header arrow floats above the
-        // arrangement; its title strip moves it, the arrow or the strip's x closes it.
-        for card[i] in Studio.device-cards: win := Rectangle {
+        // arrangement (the card stays in the chain too) and stays up across track changes;
+        // its title strip moves it, the arrow or the strip's x closes it.
+        for card[i] in Studio.device-window-cards: win := Rectangle {
             property <length> dx;
             property <length> dy;
-            visible: card.builtin && card.editor-open;
             x: (root.width - card.width) / 2 + i * 16px + self.dx;
             y: 120px + i * 16px + self.dy;
             width: card.width + 8px; height: 265px + 26px;
             border-radius: 8px; background: #1a1b1e; border-width: 0.5px; border-color: #ffffff1f;
             drop-shadow-blur: 24px; drop-shadow-offset-y: 8px; drop-shadow-color: #00000099;
-            if card.builtin && card.editor-open: Rectangle {
+            Rectangle {
                 TouchArea {
                     mouse-cursor: MouseCursor.move;
                     moved => { win.dx += self.mouse-x - self.pressed-x; win.dy += self.mouse-y - self.pressed-y; }
