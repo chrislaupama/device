@@ -11,7 +11,7 @@
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
 //!              [--load-sample <file.wav>  (into the selected track's sampler, as a file drop)]
 //!              [--sampler-tab <0..4>  (with a sampler state: Sample, Pitch, Filter, Amp or Mod tab)]
-//!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--self-test]
+//!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
 //! ```
 
@@ -118,6 +118,9 @@ struct Args {
     exit_after_frames: Option<u64>,
     zoom: Option<u32>,
     frame_stats: bool,
+    /// --render-bench N: offscreen, render the state N times and print the mean / median /
+    /// p95 milliseconds per full window render (Slint + wgpu surfaces + readback), then exit.
+    render_bench: u32,
     self_test: bool,
 }
 
@@ -240,6 +243,10 @@ fn parse_args() -> Result<Args, String> {
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
+            "--render-bench" => {
+                a.render_bench = value(&mut i)?.parse().map_err(|e| format!("--render-bench: {e}"))?;
+                a.offscreen = true;
+            }
             "--self-test" | "--self-test-audio" => {
                 a.self_test = true;
                 a.demo = true;
@@ -1450,6 +1457,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aw = app.as_weak();
         let fr = frame.clone();
         let ctl2 = ctl.clone();
+        let zm = zoom.clone();
         slint::Timer::single_shot(Duration::from_secs(4), move || {
             if fr.borrow().shot_taken {
                 return;
@@ -1460,10 +1468,35 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             eprintln!("screenshot: no frames presented (occluded/locked?), rendering offscreen");
             fr.borrow_mut().shot_taken = true;
+            // No frame ran the zoom fix-up (it is deferred from BeforeRendering), so apply it here.
+            zm.borrow_mut().sync(a.window());
             for _ in 0..3 {
                 let _ = a.window().take_snapshot();
             }
             save_snapshot(&a, &path);
+            let _ = slint::quit_event_loop();
+        });
+    }
+    if args.render_bench > 0 {
+        let aw = app.as_weak();
+        let zm = zoom.clone();
+        let n = args.render_bench as usize;
+        slint::Timer::single_shot(Duration::from_secs(4), move || {
+            let Some(a) = aw.upgrade() else { return };
+            zm.borrow_mut().sync(a.window());
+            for _ in 0..5 {
+                let _ = a.window().take_snapshot();
+            }
+            let mut ms: Vec<f64> = (0..n)
+                .map(|_| {
+                    let t = Instant::now();
+                    let _ = a.window().take_snapshot();
+                    t.elapsed().as_secs_f64() * 1e3
+                })
+                .collect();
+            ms.sort_by(f64::total_cmp);
+            let mean = ms.iter().sum::<f64>() / n as f64;
+            println!("{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{:.3},\"p95_ms\":{:.3}}}", ms[n / 2], ms[(n * 95 / 100).min(n - 1)]);
             let _ = slint::quit_event_loop();
         });
     }
