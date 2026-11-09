@@ -1861,7 +1861,7 @@ fn automation_steps() -> Vec<Step> {
             let ok = c.project().tracks[0].clips.len() == 1 && !c.auto.shown && !a.global::<Studio>().get_auto_shown() && (a.get_lanes_width() - (1440.0 - 262.65 - 5.0 - 191.0)).abs() < 1.0;
             ok.then_some(()).ok_or(format!("clips {} shown {}", c.project().tracks[0].clips.len(), c.auto.shown))
         })),
-        Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 312.6 + 7.0, 78.0 + 14.0))),
+        Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 296.9, 78.0 + 14.0))),
         Check("automation: lanes shown; each header has the Track Volume pill and the disclosure; master row 64.5 pt; value labels (tracks +0.0, master at its static level)", Box::new(move |c, a| {
             ah_set(c.doc.history_labels().len());
             let s = a.global::<Studio>();
@@ -2102,7 +2102,7 @@ fn automation_steps() -> Vec<Step> {
         })),
         Do("automation: click Automation Arm again (off), hide lanes", Box::new(|a| {
             click(a, 496.0 + 10.5, 41.0 + 11.0);
-            click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 312.6 + 7.0, 78.0 + 14.0);
+            click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 296.9, 78.0 + 14.0);
         })),
         Check("automation: disarmed, lanes hidden, master row back to 30 pt", Box::new(move |c, a| {
             let _ = &wav2;
