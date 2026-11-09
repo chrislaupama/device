@@ -1,7 +1,9 @@
 # Built-in devices
 
-Saine's own effects (Compressor, the modulation family: Tremolo, Auto-Panner,
-Chorus, Flanger, Phaser, Ring Mod, Character Mod; more follow from the device specs) are
+Saine's own effects (Compressor; the dynamics family: Limiter, Gate, Glue
+Compressor, Transient Shaper, Mastering Limiter; the modulation family:
+Tremolo, Auto-Panner, Chorus, Flanger, Phaser, Ring Mod, Character Mod; more
+follow from the device specs) are
 **declarative**: one definition in Rust describes a device, and the model,
 undo, persistence, automation, engine and panel all derive from it. A device
 is made of up to three parts:
@@ -47,7 +49,10 @@ flowchart LR
   clusters) and `ui/device_panel.slint` draws it. Lengths are the reference's
   100%-zoom card measurements times `device_panel::Z` (0.85, the zoom the rest
   of the UI is built at). Card width follows the reference rule:
-  knobs × 62 + inner gaps × 10 + cluster gaps × 21 + 16.
+  knobs × 62 + inner gaps × 10 + cluster gaps × 21 + 16, taken from the
+  widest `shown_when` state so the card never resizes when a mode changes.
+  The knob cells are then spread evenly across the dial row (the clusters
+  only size the card); field cards centre their dial row instead.
 
 ## Modulation and chains
 
@@ -133,9 +138,11 @@ system. Any built-in device can use them.
      Those are facts; write descriptions in your own words. Never copy the
      reference's code, CSS, images, audio or preset files.
    - `Layout`: `picker` (segmented `Menu`s, `Segments` with their own
-     labels, `Dropdown` pills for long lists, toggles, `Sidechain`, pills;
+     labels, `Dropdown` pills for long lists, `ModeDropdown` (a type menu
+     whose last entry switches a mode parameter, e.g. Auto Filter's DJ),
+     toggles, `Sidechain`, pills;
      `Gap` or the sidechain picker pushes what follows to the right),
-     `view` (`DynamicsStrip`, `Field` or `Custom`), `sliders`,
+     `view` (`DynamicsStrip`, `Field`, `Eq` or `Custom`), `sliders`,
      `clusters` of knobs (`Swap` holds alternatives in one cell, such as
      Rate / Rate Sync), `faces` (drawings inside a knob), `shown_when`
      (mode-dependent controls: hidden parameters get no control and no
@@ -153,13 +160,44 @@ system. Any built-in device can use them.
      first readout as an LFO phase (0..1) while the transport plays.
    - Parameter extras: `preset_locked()` (presets never load or save it,
      e.g. a random seed), `reset_on_load()`, `Format::Freq` (reference Hz
-     text), `Format::SignedPercent` and `Format::DbCut` (a positive stored
-     cut shown as −x.x dB). Tempo-synced LFOs use the `DIVISIONS` /
+     text), `Format::SignedPercent`, `Format::DbCut` (a positive stored cut
+     shown as −x.x dB), `Format::MsAuto`, `Format::Rate` (LFO rates,
+     `1.00 Hz`), `Format::SignedBareZero(n)` (explicit sign, bare zero) and
+     `Format::Degrees`. Tempo-synced LFOs use the `DIVISIONS` /
      `MOD_NOTES` tables and `synced_hz`.
    - Linked writes: when one edit must move other parameters in the same
      undo step (Character Mod's circuit switch resets untouched artifacts),
      add an arm to `builtin::linked_writes`; the panel then commits one
      labelled `Command::Batch`.
+   - Dynamics additions: `Toggle` latches (a latch in a knob cell in the dial
+     row; a right-aligned "<label> <choice>" pill in the picker row), detent
+     ticks on discrete knobs with more than two choices (drawn like the
+     Behavior detents), transfer faces
+     (`SoftKneeCurve`, `BrickWall`, `Expander`, `BusVca`, `PushWall`), and an
+     empty picker moves the view row up.
+   - Views: `View::Strip(Strip::new("<line param>").range(top_db, floor_db).second("<param>"))`
+     is the level / gain-reduction strip with a draggable dashed line, an
+     optional solid second line (Alt+drag moves both by the same dB, one undo
+     step) and its own plot range; `DynamicsStrip { threshold }` is shorthand
+     for the 0..-36 dB strip. `View::Custom("gain-scope")` is the transient
+     shaper's scrolling waveform + applied-gain scope.
+   - Choice overlays: `ParamDef::overlays` lists, per choice, other
+     parameters that choice writes (the mastering limiter's styles); they go
+     through `linked_writes` like any other linked write. Also `max_text` (the
+     top of the range reads e.g. "Full"), `Format::Ms(decimals)`, and
+     `DeviceDef::sidechain_enable` (the parameter that follows the sidechain
+     picker).
+   - `View::Strip(Strip::new("threshold").range(top, floor))` is the
+     dynamics strip with its own dB range. Value arcs and slider fills start
+     at 0 when the range spans it (−12..24 dB starts at 0 dB). Cards without
+     a field spread their knob cells evenly across the card.
+   - `Format::Custom(fn)` gives device-specific text; parsing still reads
+     the unit ("1.2 s" → 1200 ms, "2k" → 2000 Hz).
+   - **Behaviour** (optional, `builtin::behavior`): a `Behavior` with
+     state-dependent detents (drags snap within 0.025 of the range, arrow
+     keys step between them, ticks drawn on the ring), value text, latches
+     (a knob that becomes a two-state pill in some modes) and the curve of a
+     `Face::Transfer` knob. Start from `Behavior::NONE`.
 2. **DSP kernel.** Add `engine/src/devices/<id>.cpp`: a `BuiltinProcessor`
    (`prepare` may allocate; `reset` / `process` are real-time: no
    allocation, locks, I/O or exceptions) and a `BuiltinDescriptor` whose
@@ -181,20 +219,41 @@ system. Any built-in device can use them.
    A device has at most `kMaxReadouts` (64) readouts. Spectral helpers are in
    `engine/src/devices/spectral.hpp` (`RealFft`, and `SpectrumTap`: 48 log
    bands, 20 Hz–20 kHz, a full-scale sine reads 0 dB); `dsp.hpp` has the
-   state-variable filter (`SvfCoeffs`, including `bandpass`). Report look-ahead or block latency from
-   `latency()` so the engine compensates it.
-3. **Custom view (optional).** For bodies the template cannot express (EQ
+   state-variable filter (`SvfCoeffs`, including `bandpass`). Report latency for
+   PDC: `latency_for(params)` (the default returns the fixed `latency`), so a
+   kernel whose delay depends on a setting (the mastering limiter's
+   oversampling) reports the delay of the values it will run with. Shared
+   dynamics building blocks (biquads, delay lines, sliding minimum, look-ahead
+   gain, polyphase oversampler, 4x true-peak detector) are in
+   `dsp_dynamics.hpp`.
+3. **EQ view.** `View::Eq(&EqView)` (`builtin/eq.rs`) describes an EQ card:
+   its bands (parameter ids per band), the shapes and their picker order,
+   pass slopes, Output, Bank and Auto Gain parameters, the dB window and
+   the node behaviour. `device_canvas.rs` draws it (band tabs, On latch,
+   Bank menu, response field with nodes and Q wings, type glyphs, value
+   cells, Output slider) and runs its gestures. The panel curve and the
+   engine use the same design (`eq::sections`, `engine/src/devices/eq_sections.hpp`);
+   `engine_contract_points` (Rust) and `eq_design_matches_the_panel_model`
+   (C++) pin the same points, so change both together.
+4. **Custom view (optional).** For bodies the template cannot express (EQ
    curve, shaper curve, trance-gate grid), use `View::Custom("<name>")`, add
    an arm in `Controller::builtin_card` that fills the card's view data, and a
    Slint component in `ui/device_panel.slint` chosen by that data. Reuse
-   `ParamDrag`, `KnobCell` and `SliderCol` for the gestures. Custom bodies
+   `ParamDrag` / `ParamDragX`, `KnobCell` and `SliderCol` for the gestures. Custom bodies
    return a `PanelCanvas` from `Controller::custom_body` (`device_views.rs`):
    paths, texts, grip pills and linear drag zones. When handles need
    non-linear mapping or hit-testing (several handles on one well, a live
    spectrum), set `pointer: true` and handle `Studio.panel-graph` in Rust,
    as the restoration devices do (`crates/saine-app/src/panel_graph.rs`: hit
    zones, spectrum ballistics from the readouts, one undo step per gesture).
-4. **Tests.**
+   View-local state (a selected band, meter ballistics) goes through
+   `Studio.panel-view(device, action, value)`; `src/panel_multiband.rs` is
+   an example with its own Slint component (band selector, threshold / floor
+   and crossover handles, dial row following the selected band).
+   The EQ and Auto Filter canvases (`device_canvas.rs`) use the same flag and
+   add dots, anchored grips, double-click (phase 6), wheel and keys
+   (`panel-graph-wheel`, `panel-graph-key`).
+5. **Tests.**
    - Engine: `engine/tests/devices/device_harness.hpp` gives `DeviceRig`
      (one instance, `set(id, value)`, `run` / `run_mono`, `readouts`),
      `DeviceSession` (a published engine session with tracks, devices and
@@ -207,12 +266,14 @@ system. Any built-in device can use them.
      (`crates/saine-engine/tests/builtin.rs`) fails when the definition and
      the kernel disagree on parameter order or defaults. Add core tests for formatting and
      parsing of any new display format.
-5. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
+6. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
    (`saine_device_bench`, Release build) and put the numbers in the PR.
-6. **Render.** `--state reference-<id>` shows any built-in device at its
+7. **Render.** `--state reference-<id>` shows any built-in device at its
    defaults. Render it with `--offscreen --screenshot <png>` (a hidden
    window, so it does not take over the screen) and compare it with the
-   reference capture.
+   reference capture. Add the device to the app self-test (the dynamics,
+   modulation and restoration sections in `src/selftest.rs` add each device
+   through Add device › Built-in).
 
 ## Commands
 
@@ -220,6 +281,7 @@ system. Any built-in device can use them.
 cargo test --workspace                                   # core, engine wrapper, app unit tests
 cd engine && cmake --build build && ./build/saine_engine_tests
 ./build/saine_device_bench                               # per-block cost, param updates, 32-track session
+cargo run -p saine-app -- --state reference-limiter --offscreen --screenshot /tmp/limiter.png
 cargo run -p saine-app -- --state reference-compressor --screenshot /tmp/compressor.png
 cargo run -p saine-app -- --state reference-lfo --screenshot /tmp/lfo.png      # also reference-chain
 cargo run -p saine-app -- --self-test                    # includes the built-in device section

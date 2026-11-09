@@ -20,12 +20,14 @@ mod assistant_provider;
 mod automation;
 mod clipedit;
 mod controller;
+mod device_canvas;
 mod device_mod;
 mod device_fields;
 mod device_panel;
 mod panel_graph;
 mod device_views;
 mod devices;
+mod panel_multiband;
 mod gpu;
 mod highlight;
 mod mixer;
@@ -394,7 +396,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
-            if c.panel_cancel_drag() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
+            if c.panel_cancel_drag() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
                 return true;
             }
             if c.settings.menu.is_some() {
@@ -964,6 +966,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_device_use_synth, |c| c.device_use_synth());
     on!(on_device_drag, |c, id: i32, phase: i32, x: f32| c.device_drag(saine_core::DeviceId(id as u64), phase, x));
     on!(on_panel_drag, |c, id: i32, p: i32, phase: i32, dy: f32, rate: f32, fine: bool| c.panel_drag(saine_core::DeviceId(id as u64), p, phase, dy, rate, fine));
+    on!(on_panel_drag_pair, |c, id: i32, p: i32, q: i32, phase: i32, dy: f32, rate: f32, fine: bool| c.panel_drag_pair(saine_core::DeviceId(id as u64), p, q, phase, dy, rate, fine));
     on!(on_panel_reset, |c, id: i32, p: i32| c.panel_reset(saine_core::DeviceId(id as u64), p));
     on!(on_panel_reset_xy, |c, id: i32, px: i32, py: i32| c.panel_reset_xy(saine_core::DeviceId(id as u64), [px, py]));
     on!(on_panel_step, |c, id: i32, p: i32, delta: i32, fine: bool| c.panel_step(saine_core::DeviceId(id as u64), p, delta, fine));
@@ -973,6 +976,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_field, |c, id: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.panel_field_drag(saine_core::DeviceId(id as u64), phase, dx, dy, fine));
     on!(on_panel_menu, |c, id: i32, which: i32, x: f32, y: f32| c.panel_menu(saine_core::DeviceId(id as u64), which, x, y));
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(saine_core::DeviceId(id as u64), dir));
+    on!(on_panel_view, |c, id: i32, action: i32, v: f32| c.panel_view(saine_core::DeviceId(id as u64), action, v));
     {
         use saine_core::DeviceId as Id;
         let id = |i: i32| Id(i as u64);
@@ -1025,7 +1029,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             EventResult::Propagate
         });
     }
-    on!(on_panel_graph, |c, id: i32, phase: i32, x: f32, y: f32, fine: bool, alt: bool| c.panel_graph(saine_core::DeviceId(id as u64), phase, x, y, fine, alt));
+    on!(on_panel_graph, |c, id: i32, phase: i32, x: f32, y: f32, fine: bool, alt: bool| {
+        let id = saine_core::DeviceId(id as u64);
+        if c.is_canvas_device(id) { c.panel_canvas(id, phase, x, y, alt, fine) } else { c.panel_graph(id, phase, x, y, fine, alt) }
+    });
+    on!(on_panel_eq, |c, id: i32, action: i32, value: i32| c.panel_eq(saine_core::DeviceId(id as u64), action, value));
+    {
+        // Canvas wheel / keys (EQ, Auto Filter) answer whether they used the event, so they cannot go through on!.
+        let (ctl1, aw1) = (ctl.clone(), app.as_weak());
+        studio.on_panel_graph_wheel(move |id, x, y, dy| {
+            let used = ctl1.borrow_mut().panel_canvas_wheel(saine_core::DeviceId(id as u64), x, y, dy);
+            if let Some(a) = aw1.upgrade() {
+                if let Ok(mut c) = ctl1.try_borrow_mut() { c.update_ui(&a); }
+                a.window().request_redraw();
+            }
+            used
+        });
+        let (ctl2, aw2) = (ctl.clone(), app.as_weak());
+        studio.on_panel_graph_key(move |id, key, shift, alt| {
+            let used = ctl2.borrow_mut().panel_canvas_key(saine_core::DeviceId(id as u64), key.as_str(), shift, alt);
+            if let Some(a) = aw2.upgrade() {
+                if let Ok(mut c) = ctl2.try_borrow_mut() { c.update_ui(&a); }
+                a.window().request_redraw();
+            }
+            used
+        });
+    }
     on!(on_chain_scroll_by, |c, d: f32| c.chain_scroll_by(d));
     on!(on_add_category, |c, i: i32, x: f32, y: f32| c.add_category(i.max(0) as usize, x, y));
     on!(on_add_search_edited, |c, t: slint::SharedString| c.add_search(t.as_str()));

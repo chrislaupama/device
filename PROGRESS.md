@@ -2,6 +2,11 @@
 
 Living handoff document for future agent sessions. Read this first, then `docs/architecture.md`.
 
+**Keep the README current.** `README.md` is the public front page. Any change that adds, finishes or removes a
+feature, device, platform or build step, or visibly changes the screens it shows, updates the README (and
+`docs/building.md`, re-rendered `docs/assets/` screenshots) in the same PR. The checklist is in README.md ›
+Development › Keeping this README up to date.
+
 ## Current milestone
 
 **Phase 1 (inspection + architecture) and the first slice of Phase 3 (functional audio).**

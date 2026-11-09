@@ -16,7 +16,6 @@
 
 use crate::controller::{Controller, ImportTarget};
 use crate::device_panel::Z;
-use crate::devices::{DevMenu, MenuPick};
 use crate::{DeviceCard, PanelHandle, PanelKnob, PanelPad, PanelPick, PanelSampler};
 use saine_core::builtin::{self, drum_rack, note_name, DeviceDef, Format, ParamDef, LINEAR};
 use saine_core::{Command, Device, DeviceId, DeviceSample, Slice};
@@ -410,7 +409,7 @@ impl Controller {
             label: s(label.unwrap_or(p.label)),
             value: s(secs.map_or_else(|| p.format(v), |t| fmt_secs(v * t))),
             norm: p.to_normalized(v),
-            bipolar: p.is_bipolar(),
+            origin: p.origin(),
             ..Default::default()
         })
     }
@@ -566,7 +565,7 @@ impl Controller {
                         Some(g) => g.value,
                         None => slices.get(sel).map_or(p.default, |sl| slice_field(sl, index)),
                     };
-                    knobs.push(PanelKnob { param: index, x: kx(n) * Z, label: s(p.label), value: s(p.format(v)), norm: p.to_normalized(v), bipolar: p.is_bipolar(), ..Default::default() });
+                    knobs.push(PanelKnob { param: index, x: kx(n) * Z, label: s(p.label), value: s(p.format(v)), norm: p.to_normalized(v), origin: p.origin(), ..Default::default() });
                 }
                 knobs.extend(self.knob(d, def, "sliceKey", kx(3), Some("Key")));
                 picks.extend(self.pick(d, def, 2, "chop", None, 84.0));
@@ -1385,21 +1384,6 @@ impl Controller {
             self.sp_mut().layer.insert(device, slot % builtin::pad_sampler::LAYERS);
         }
         ok
-    }
-
-    /// Choice menu of a menu pill (PanelPick kind 2) at window x, y.
-    pub(crate) fn sampler_choice_menu(&mut self, device: DeviceId, index: usize, x: f32, y: f32) {
-        let Some((d, def)) = self.panel_def_any(device) else { return };
-        let Some(p) = def.params.get(index) else { return };
-        let cur = def.value(d, p).round() as usize;
-        let rows = p.choices.iter().enumerate().map(|(i, c)| (c.to_string(), if i == cur { "✓".to_string() } else { String::new() }, Some(MenuPick::Choice(device, index as i32, i as i32)), false)).collect();
-        self.devices.menu = Some(DevMenu { pos: (x, y), w: 150.0, rows });
-        self.ui_dirty = true;
-    }
-
-    fn panel_def_any(&self, id: DeviceId) -> Option<(&Device, &'static DeviceDef)> {
-        let d = self.project().device(id)?;
-        Some((d, builtin::def_of(d)?))
     }
 }
 
