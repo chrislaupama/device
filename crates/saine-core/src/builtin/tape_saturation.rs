@@ -31,6 +31,7 @@ pub static TAPE_SATURATION: DeviceDef = DeviceDef {
         min_height: 202.0,
         shown_when: &[],
         fixed_width: 0.0,
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Light Print", values: &[("drive", 15.0), ("warmth", 30.0), ("compression", 15.0)] },

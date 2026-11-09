@@ -30,6 +30,7 @@ pub static AUTOPANNER: DeviceDef = DeviceDef {
         min_height: 204.0,
         fixed_width: 0.0,
         shown_when: &[("rate", "sync", &[0]), ("rate_sync", "sync", &[1])],
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Gentle Sway", values: &[("depth", 40.0), ("rate_sync", 5.0)] },

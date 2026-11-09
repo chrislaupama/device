@@ -42,6 +42,7 @@ pub static UTILITY: DeviceDef = DeviceDef {
         min_height: 176.0,
         shown_when: &[],
         fixed_width: 221.5,
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Headroom -12 dB", values: &[("gain", -12.0)] },

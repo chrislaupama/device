@@ -540,6 +540,30 @@ int main(int argc, char** argv) {
         row("drum-rack (busy, 1 warped pad)", bench_instrument("drum-rack", rack, blocks, pads, 1));
     }
 
+    // Time and pitch devices, one row per mode / machine.
+    const std::pair<const char*, std::vector<float>> time_fx[] = {
+        {"delay (Tape)", tweak("delay", {{"mode", 0.f}})},
+        {"delay (Digital)", tweak("delay", {{"mode", 1.f}})},
+        {"delay (BBD)", tweak("delay", {{"mode", 2.f}})},
+        {"echo (Tape Loop)", tweak("echo", {{"machine", 0.f}})},
+        {"echo (Drum)", tweak("echo", {{"machine", 1.f}})},
+        {"echo (Cartridge)", tweak("echo", {{"machine", 2.f}})},
+        {"reverb (Room)", tweak("reverb", {{"mode2", 0.f}})},
+        {"reverb (Hall)", tweak("reverb", {{"mode2", 1.f}})},
+        {"reverb (Plate)", tweak("reverb", {{"mode2", 2.f}})},
+        {"reverb (Spring)", tweak("reverb", {{"mode2", 3.f}})},
+        {"reverb (Shimmer)", tweak("reverb", {{"mode2", 4.f}})},
+        {"reverb (Haze)", tweak("reverb", {{"mode2", 5.f}})},
+        {"pitch-shifter (+7 st)", tweak("pitch-shifter", {{"semitones", 7.f}})},
+        {"pitch-shifter (+7 st, formant)", tweak("pitch-shifter", {{"semitones", 7.f}, {"formant_preserve", 1.f}})},
+        {"grains (Cloud)", tweak("grains", {{"mode", 0.f}})},
+        {"grains (Rhythm)", tweak("grains", {{"mode", 1.f}})},
+    };
+    for (const auto& [name, values] : time_fx) {
+        const std::string id(name, std::strchr(name, ' '));
+        row(name, bench_kernel(id.c_str(), values, blocks, 0));
+    }
+
     // Parameter update paths and session cost: 32 tracks, one clip and two
     // compressors each.
     const std::string wav = (std::filesystem::temp_directory_path() / "saine_device_bench.wav").string();

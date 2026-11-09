@@ -178,15 +178,48 @@ export component KnobCell inherits Rectangle {
     property <float> r-mod: root.rc - 4.6 * zm;
     property <bool> editing;
     width: 62px * zm; height: 76px * zm;
-    opacity: root.k.dim ? 0.55 : 1.0;
+    opacity: (root.k.dim || root.k.inert) ? 0.55 : 1.0;
     accessible-role: slider; accessible-label: root.k.label; accessible-value: root.k.value;
     fs := ParamKeys {
-        device: root.device; param: root.k.param;
+        enabled: !root.k.inert; device: root.device; param: root.k.param;
         edit => {
-            if (root.k.face == 2) { Studio.panel-choice(root.device, root.k.param, root.k.norm > 0.5 ? 0 : 1); } else { root.editing = true; }
+            if (root.k.latch) { Studio.panel-latch(root.device, root.k.param, root.k.momentary ? 1 : 0); }
+            else if (root.k.face == 2) { Studio.panel-choice(root.device, root.k.param, root.k.norm > 0.5 ? 0 : 1); }
+            else { root.editing = true; }
+        }
+        key-released(e) => {
+            if (root.k.momentary && (e.text == Key.Return || e.text == " ")) { Studio.panel-latch(root.device, root.k.param, 2); return accept; }
+            reject
         }
     }
-    dial := Rectangle {
+    // Latch cell (On/Off parameter in the dial row): a pill where the ring sits, the name below.
+    if root.k.latch: Rectangle {
+        x: (root.width - self.width) / 2; y: (32px - 20px) * zm / 2; height: 20px * zm;
+        width: max(30px * zm, latch-text.preferred-width + 16px * zm);
+        border-radius: self.height / 2;
+        background: root.k.on ? root.accent : latch-ta.has-hover ? #2e2f34 : PanelStyle.seg;
+        border-width: 0.5px; border-color: root.k.on ? root.accent.brighter(0.14) : #ffffff0f;
+        latch-text := Text {
+            text: root.k.value; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
+            color: root.k.on ? #17181b : latch-ta.has-hover ? #ffffffb3 : #ffffff8c;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+        latch-ta := TouchArea {
+            enabled: !root.k.inert;
+            pointer-event(e) => {
+                if (e.button != PointerEventButton.left) { return; }
+                if (e.kind == PointerEventKind.down) {
+                    fs.focus();
+                    if (e.modifiers.alt) { Studio.panel-reset(root.device, root.k.param); return; }
+                    if (root.k.momentary) { Studio.panel-latch(root.device, root.k.param, 1); }
+                }
+                if (e.kind == PointerEventKind.up && root.k.momentary) { Studio.panel-latch(root.device, root.k.param, 2); }
+                if (e.kind == PointerEventKind.cancel && root.k.momentary) { Studio.panel-latch(root.device, root.k.param, 2); }
+            }
+            clicked => { if (!root.k.momentary) { Studio.panel-latch(root.device, root.k.param, 0); } }
+        }
+    }
+    if !root.k.latch: dial := Rectangle {
         x: (root.width - root.ring) / 2; y: 0; width: root.ring; height: root.ring;
         if root.k.face == 0: Rectangle {
             border-radius: self.width / 2;
@@ -247,26 +280,19 @@ export component KnobCell inherits Rectangle {
             Path { viewbox-width: 32; viewbox-height: 32; commands: root.k.face-curve; stroke: PanelStyle.ink; stroke-width: 1.5px * zm; fill: transparent; stroke-line-cap: round; stroke-line-join: round; }
             Path { viewbox-width: 32; viewbox-height: 32; commands: root.k.face-bend; stroke: root.accent; stroke-width: 2.25px * zm; fill: transparent; stroke-line-cap: round; }
         }
-        if root.k.face != 2: ParamDrag {
-            device: root.device; param: root.k.param;
+        ParamDrag {
+            enabled: !root.k.inert; device: root.device; param: root.k.param;
             grabbed => { fs.focus(); }
             double-clicked => { Studio.panel-reset(root.device, root.k.param); }
         }
     }
-    // Latch capsule (On/Off parameter in the dial row): click toggles, Alt-click resets.
-    if root.k.face == 2: Latch {
-        x: (root.width - self.width) / 2; y: (32px * zm - self.height) / 2 + 8px * zm;
-        width: self.min-width; label: root.k.value; on: root.k.norm > 0.5; accent: root.accent;
-        clicked => { fs.focus(); Studio.panel-choice(root.device, root.k.param, root.k.norm > 0.5 ? 0 : 1); }
-        reset => { fs.focus(); Studio.panel-reset(root.device, root.k.param); }
-    }
-    value := Rectangle {
+    if !root.k.latch: Rectangle {
         x: 0; y: 40px * zm; width: root.width; height: 14px * zm;
-        if !root.editing && root.k.face != 2: Text {
-            text: root.k.value; color: PanelStyle.ink; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
+        if !root.editing: Text {
+            text: root.k.value; color: root.k.inert ? #ffffff80 : PanelStyle.ink; font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm;
             horizontal-alignment: center; vertical-alignment: center; overflow: elide;
         }
-        if !root.editing && root.k.face != 2: TouchArea { double-clicked => { root.editing = true; } }
+        if !root.editing: TouchArea { enabled: !root.k.inert; double-clicked => { root.editing = true; } }
         if root.editing: ValueEditor {
             x: -6px * zm; width: parent.width + 12px * zm; device: root.device; param: root.k.param; initial: root.k.edit != "" ? root.k.edit : root.k.value; font-size: 11px * zm;
             done => { root.editing = false; }
@@ -524,11 +550,11 @@ component PickItem inherits HorizontalLayout {
                     pointer-event(e) => {
                         if (e.kind == PointerEventKind.down) {
                             self.alt-down = e.modifiers.alt;
-                            if (e.modifiers.alt) { Studio.panel-reset(root.device, root.p.param); }
+                            if (e.modifiers.alt && root.p.kind == 1) { Studio.panel-reset(root.device, root.p.param); }
                         }
                     }
                     clicked => {
-                        if (root.p.kind == 7) { Studio.sampler-tab(root.device, i); }
+                        if (root.p.kind == 7) { Studio.panel-view(root.device, 2, i); }
                         else if (!self.alt-down) { Studio.panel-choice(root.device, root.p.param, i); }
                     }
                 }
@@ -543,7 +569,16 @@ component PickItem inherits HorizontalLayout {
             font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm; vertical-alignment: center; overflow: elide;
         }
         Icon { x: parent.width - 18px * zm; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: Icons.chevron-down; ink: #a0a0a3; stroke-width: 1.3px; }
-        menu-ta := TouchArea { clicked => { Studio.panel-menu(root.device, root.p.param, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
+        menu-ta := TouchArea {
+            property <bool> alt-down;
+            pointer-event(e) => {
+                if (e.kind == PointerEventKind.down) {
+                    self.alt-down = e.modifiers.alt && root.p.param >= 0;
+                    if (self.alt-down) { Studio.panel-reset(root.device, root.p.param); }
+                }
+            }
+            clicked => { if (!self.alt-down) { Studio.panel-menu(root.device, root.p.param, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
+        }
     }
     if root.p.kind == 5: Latch {
         label: root.p.label; on: root.p.selected == 1; accent: root.accent;

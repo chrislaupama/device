@@ -479,7 +479,7 @@ pub static SHAPER: DeviceDef = DeviceDef {
     category: "Modulation",
     purpose: "Draws rhythmic movement into a sound: tempo-synced curves for volume, time, width, pan, filter, bit crush and pitch.",
     params: &PARAMS,
-    layout: Layout { picker: &[], view: Some(View::Custom("shaper")), sliders: &[], clusters: &[], faces: &[], min_height: 220.0, shown_when: &[], fixed_width: 501.0 },
+    layout: Layout { picker: &[], view: Some(View::Custom("shaper")), sliders: &[], clusters: &[], faces: &[], min_height: 220.0, shown_when: &[], fixed_width: 501.0, ..Layout::EMPTY },
     factory: &[
         FactoryPreset { name: "Deep Duck", values: &P_DEEP_DUCK },
         FactoryPreset { name: "Low-End Duck", values: &P_LOW_DUCK },

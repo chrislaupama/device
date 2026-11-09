@@ -11,6 +11,7 @@
 using namespace testutil;
 using namespace devtest;
 
+
 namespace {
 
 // Neutral starting values for the generic checks: the middle of nothing is

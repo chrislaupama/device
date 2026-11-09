@@ -32,6 +32,7 @@ mod panel_multiband;
 mod gpu;
 mod highlight;
 mod mixer;
+mod panel_fields;
 mod peaks;
 mod pianoroll;
 mod placeholder;
@@ -397,7 +398,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
-            if c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
+            if c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
                 return true;
             }
             if c.settings.menu.is_some() {
@@ -977,6 +978,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_field, |c, id: i32, phase: i32, dx: f32, dy: f32, fine: bool| c.panel_field_drag(saine_core::DeviceId(id as u64), phase, dx, dy, fine));
     on!(on_panel_menu, |c, id: i32, which: i32, x: f32, y: f32| c.panel_menu(saine_core::DeviceId(id as u64), which, x, y));
     on!(on_panel_preset_step, |c, id: i32, dir: i32| c.panel_preset_step(saine_core::DeviceId(id as u64), dir));
+    on!(on_panel_latch, |c, id: i32, p: i32, phase: i32| c.panel_latch(saine_core::DeviceId(id as u64), p, phase));
     on!(on_panel_editor, |c, id: i32, kind: i32, x: f32, y: f32, wx: f32, wy: f32, shift: bool, alt: bool, wheel: f32| c.panel_editor(
         saine_core::DeviceId(id as u64),
         crate::device_editors::CanvasEvent { kind, x, y, wx, wy, shift, alt, wheel }
@@ -1002,7 +1004,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         on!(on_card_add_menu, |c, d: i32, x: f32, y: f32| c.card_add_menu(id(d), x, y));
         on!(on_card_page, |c, d: i32, dir: i32| c.card_page(id(d), dir));
     }
-    on!(on_sampler_tab, |c, id: i32, tab: i32| c.sampler_tab(saine_core::DeviceId(id as u64), tab));
     on!(on_sampler_pad, |c, id: i32, which: i32, i: i32, down: bool| c.sampler_pad(saine_core::DeviceId(id as u64), which, i, down));
     on!(on_sampler_layer, |c, id: i32, dir: i32| c.sampler_layer(saine_core::DeviceId(id as u64), dir));
     on!(on_sampler_play, |c, id: i32, down: bool| c.sampler_play(saine_core::DeviceId(id as u64), down));

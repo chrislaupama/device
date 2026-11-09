@@ -565,6 +565,7 @@ impl Controller {
     pub fn device_poll(&mut self) {
         let now = Instant::now();
         self.panel_poll_meters();
+        self.panel_poll_fields();
         self.mod_poll();
         self.panel_poll_graphs();
         // Main-thread plugin housekeeping (retired instances, CLAP main-thread callbacks).

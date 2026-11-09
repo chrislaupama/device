@@ -270,8 +270,12 @@ impl Controller {
         }
     }
 
-    /// Custom view actions: 0 = select the band under field x (px), 1 = select band `value`.
+    /// Custom view actions: 0 = select the band under field x (px), 1 = select band `value`,
+    /// 2 = show card view `value` (picker view switch / sampler tabs).
     pub fn panel_view(&mut self, device: DeviceId, action: i32, value: f32) {
+        if action == 2 {
+            return self.card_view_select(device, value as i32);
+        }
         let Some(d) = self.project().device(device) else { return };
         let Some(def) = saine_core::builtin::def_of(d) else { return };
         if !is_multiband(def) {

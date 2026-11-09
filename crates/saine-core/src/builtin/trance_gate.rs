@@ -114,7 +114,7 @@ pub static TRANCE_GATE: DeviceDef = DeviceDef {
     category: "Modulation",
     purpose: "Chops a sound into rhythmic, tempo-synced pulses from a step pattern, with an envelope that shapes each pulse.",
     params: &PARAMS,
-    layout: Layout { picker: &[], view: Some(View::Custom("trance-gate")), sliders: &[], clusters: &[], faces: &[], min_height: 220.0, shown_when: &[], fixed_width: 528.0 },
+    layout: Layout { picker: &[], view: Some(View::Custom("trance-gate")), sliders: &[], clusters: &[], faces: &[], min_height: 220.0, shown_when: &[], fixed_width: 528.0, ..Layout::EMPTY },
     factory: &[
         FactoryPreset {
             name: "Pulse Grid",

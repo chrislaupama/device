@@ -35,6 +35,11 @@ extern const BuiltinDescriptor kPhaserDescriptor;
 extern const BuiltinDescriptor kTremoloDescriptor;
 extern const BuiltinDescriptor kAutopannerDescriptor;
 extern const BuiltinDescriptor kRingModDescriptor;
+extern const BuiltinDescriptor kDelayDescriptor;
+extern const BuiltinDescriptor kEchoDescriptor;
+extern const BuiltinDescriptor kGrainsDescriptor;
+extern const BuiltinDescriptor kReverbDescriptor;
+extern const BuiltinDescriptor kPitchShifterDescriptor;
 extern const BuiltinDescriptor kCharacterCompressorDescriptor;
 extern const BuiltinDescriptor kMultibandCompressorDescriptor;
 extern const BuiltinDescriptor kSynthV2Descriptor;
@@ -75,6 +80,11 @@ const BuiltinDescriptor* const kBuiltinRegistry[] = {
     &kTremoloDescriptor,
     &kAutopannerDescriptor,
     &kRingModDescriptor,
+    &kDelayDescriptor,
+    &kEchoDescriptor,
+    &kGrainsDescriptor,
+    &kReverbDescriptor,
+    &kPitchShifterDescriptor,
     &kCharacterCompressorDescriptor,
     &kMultibandCompressorDescriptor,
     &kSynthV2Descriptor,

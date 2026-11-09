@@ -27,6 +27,7 @@ pub static BITCRUSHER: DeviceDef = DeviceDef {
         min_height: 176.0,
         shown_when: &[],
         fixed_width: 0.0,
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Vintage Sampler 12", values: &[("bitdepth", 12.0), ("downsample", 2.5)] },

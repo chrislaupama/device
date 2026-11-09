@@ -3172,6 +3172,228 @@ fn restoration_device_steps() -> Vec<Step> {
     steps
 }
 
+fn index_of(id: &str, param: &str) -> i32 {
+    saine_core::builtin::find(id).and_then(|def| def.index_of(param)).map_or(-1, |i| i as i32)
+}
+
+/// Delay, Echo, Reverb, Pitch Shifter and Grains: added from the Built-in list, then
+/// their latches, view switches and custom fields driven through the panel entry points.
+fn time_fx_steps() -> Vec<Step> {
+    use Step::*;
+    const IDS: [&str; 5] = ["delay", "echo", "reverb", "pitch-shifter", "grains"];
+    thread_local! {
+        /// History length at the last mark (A) and a second mark inside one step (B).
+        static A: Cell<usize> = const { Cell::new(0) };
+        static B: Cell<usize> = const { Cell::new(0) };
+    }
+    fn mark(m: &'static std::thread::LocalKey<Cell<usize>>, c: &Controller) {
+        m.with(|m| m.set(c.doc.history_labels().len()));
+    }
+    fn steps(m: &'static std::thread::LocalKey<Cell<usize>>, c: &Controller) -> usize {
+        c.doc.history_labels().len() - m.with(|m| m.get())
+    }
+    fn id_of(c: &Controller, id: &str) -> Option<saine_core::DeviceId> {
+        device_of(c, id).map(|d| d.id)
+    }
+    vec![
+        Do("time fx: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("time fx: select the audio track, clear its chain, Add device › Built-in", Box::new(|a, ctl| {
+            let i = track_of(&ctl.borrow(), TrackKind::Audio).unwrap_or(0);
+            click_track_header(a, ctl, i);
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                let ids: Vec<saine_core::DeviceId> = c.project().tracks[i].devices.iter().map(|d| d.id).collect();
+                for d in ids {
+                    c.execute(saine_core::Command::RemoveDevice { device: d });
+                }
+                c.update_ui(a);
+            }
+            let add_x = a.global::<Studio>().get_add_device_x();
+            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+        })),
+        Check("time fx: the Built-in list offers Delay, Echo, Reverb, Pitch Shifter and Grains", Box::new(|_, a| {
+            let items = devmenu_labels(a);
+            let all = ["Delay", "Echo", "Reverb", "Pitch Shifter", "Grains"].iter().all(|n| items.iter().any(|r| r.0 == *n && r.2));
+            all.then_some(()).ok_or(format!("items {items:?}"))
+        })),
+        DoC("time fx: pick Delay, add the other four", Box::new(|a, ctl| {
+            mark(&A, &ctl.borrow());
+            if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == "Delay") {
+                let (x, y) = devmenu_row(a, i);
+                click(a, x, y);
+            }
+            let mut c = ctl.borrow_mut();
+            let Some(t) = track_of(&c, TrackKind::Audio).map(|i| c.project().tracks[i].id) else { return };
+            for id in &IDS[1..] {
+                c.add_item_to_track(&crate::devices::Item::Builtin(saine_core::builtin::find(id).unwrap()), t, None);
+            }
+        })),
+        Check("time fx: five cards at their defaults, reference widths, each with its field, one undo step each", Box::new(|c, a| {
+            let n = steps(&A, c);
+            for (id, name, w) in [("delay", "Delay", 615.0), ("echo", "Echo", 521.0), ("reverb", "Reverb", 543.0), ("pitch-shifter", "Pitch Shifter", 332.0), ("grains", "Grains", 532.0)] {
+                let cd = card_named(a, name).ok_or(format!("no {name} card"))?;
+                if !cd.builtin || !cd.canvas.visible || slint::Model::row_count(&cd.canvas.paths) == 0 || !approx(cd.width, w * crate::device_panel::Z, 0.01) {
+                    return Err(format!("{name}: builtin {} field {} width {}", cd.builtin, cd.canvas.visible, cd.width));
+                }
+                let d = device_of(c, id).ok_or(format!("no {id}"))?;
+                let def = saine_core::builtin::def_of(d).unwrap();
+                if def.params.iter().any(|p| def.value(d, p) != p.default) {
+                    return Err(format!("{id} not at defaults"));
+                }
+            }
+            (n == 5).then_some(()).ok_or(format!("history +{n}"))
+        })),
+        DoC("time fx: Delay Link latch off", Box::new(|_, ctl| {
+            mark(&A, &ctl.borrow());
+            let Some(d) = id_of(&ctl.borrow(), "delay") else { return };
+            ctl.borrow_mut().panel_latch(d, index_of("delay", "link"), 0);
+        })),
+        Check("time fx: Link off, Note L / Note R named, Note R live; one undo step", Box::new(|c, a| {
+            let cd = card_named(a, "Delay").ok_or("no card")?;
+            let knobs: Vec<_> = (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).collect();
+            let ok = value_of(c, "delay", "link") == Some(0.0)
+                && knobs.iter().any(|k| k.label == "Note L")
+                && knobs.iter().any(|k| k.label == "Note R" && !k.inert)
+                && steps(&A, c) == 1;
+            ok.then_some(()).ok_or(format!("link {:?} knobs {:?}", value_of(c, "delay", "link"), knobs.iter().map(|k| (k.label.to_string(), k.inert)).collect::<Vec<_>>()))
+        })),
+        DoC("time fx: drag the Delay echoes field 30 px down", Box::new(|_, ctl| {
+            mark(&A, &ctl.borrow());
+            let Some(d) = id_of(&ctl.borrow(), "delay") else { return };
+            let mut c = ctl.borrow_mut();
+            c.panel_field_pointer(d, 0, 60.0, 40.0, false, false);
+            for i in 1..=30 {
+                c.panel_field_pointer(d, 1, 60.0, 40.0 + i as f32, false, false);
+            }
+            c.panel_field_pointer(d, 2, 60.0, 70.0, false, false);
+        })),
+        Check("time fx: the echoes drag lowers Feedback, one undo step", Box::new(|c, _| {
+            let fb = value_of(c, "delay", "feedback").unwrap_or(f32::NAN);
+            (fb < 50.0 && fb > 0.0 && steps(&A, c) == 1).then_some(()).ok_or(format!("feedback {fb} history +{}", steps(&A, c)))
+        })),
+        DoC("time fx: Delay view EQ", Box::new(|_, ctl| {
+            let Some(d) = id_of(&ctl.borrow(), "delay") else { return };
+            ctl.borrow_mut().card_view_select(d, 1);
+        })),
+        Check("time fx: the EQ view is selected and drawn (UI state, no undo step)", Box::new(|c, a| {
+            let cd = card_named(a, "Delay").ok_or("no card")?;
+            let view = (0..slint::Model::row_count(&cd.picks)).filter_map(|i| slint::Model::row_data(&cd.picks, i)).find(|p| p.kind == 7).map(|p| p.selected);
+            (view == Some(1) && slint::Model::row_count(&cd.canvas.grips) == 1 && steps(&A, c) == 1).then_some(()).ok_or(format!("view {view:?}"))
+        })),
+        DoC("time fx: hold the Echo Throw latch", Box::new(|_, ctl| {
+            mark(&A, &ctl.borrow());
+            let Some(d) = id_of(&ctl.borrow(), "echo") else { return };
+            ctl.borrow_mut().panel_latch(d, index_of("echo", "throw"), 1);
+        })),
+        Check("time fx: Throw shows on while held, live only (model off, no undo step)", Box::new(|c, a| {
+            let cd = card_named(a, "Echo").ok_or("no card")?;
+            let on = (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).any(|k| k.label == "Throw" && k.latch && k.on);
+            (on && value_of(c, "echo", "throw") == Some(0.0) && steps(&A, c) == 0).then_some(()).ok_or(format!("on {on}"))
+        })),
+        DoC("time fx: release Throw, then drag the first Echo head right", Box::new(|_, ctl| {
+            let Some(d) = id_of(&ctl.borrow(), "echo") else { return };
+            ctl.borrow_mut().panel_latch(d, index_of("echo", "throw"), 2);
+            mark(&A, &ctl.borrow());
+            // Defaults: heads 2+3 of the tape loop; the first repeat of head 2 sits at 0.2 s of a 3 s span.
+            let (w, x) = {
+                let c = ctl.borrow();
+                let def = saine_core::builtin::find("echo").unwrap();
+                let (_, _, w, _, _) = crate::panel_fields::field_rect(def, crate::device_panel::view_right(def));
+                let pic = c.echo_picture(device_of(&c, "echo").unwrap(), def);
+                let ms = pic.heads.iter().filter(|h| h.on).map(|h| h.ms).fold(f32::MAX, f32::min);
+                let (left, right) = (40.0 * crate::device_panel::Z, w - 6.0 * crate::device_panel::Z);
+                (w, left + ms / 1000.0 / 3.0 * (right - left))
+            };
+            let _ = w;
+            let mut c = ctl.borrow_mut();
+            c.panel_field_pointer(d, 0, x, 80.0, false, false);
+            c.panel_field_pointer(d, 1, x + 20.0, 80.0, false, false);
+            c.panel_field_pointer(d, 2, x + 20.0, 80.0, false, false);
+        })),
+        Check("time fx: Throw released; the head drag authors the heads (Heads, Heads Machine, pinned position) in one undo step", Box::new(|c, _| {
+            let heads = value_of(c, "echo", "heads").unwrap_or(0.0);
+            let machine = value_of(c, "echo", "heads_machine").unwrap_or(0.0);
+            let ok = value_of(c, "echo", "throw") == Some(0.0) && heads >= 1.0 && machine == 1.0 && steps(&A, c) == 1;
+            ok.then_some(()).ok_or(format!("heads {heads} machine {machine} history +{}", steps(&A, c)))
+        })),
+        DoC("time fx: Reverb Mode › Shimmer", Box::new(|_, ctl| {
+            mark(&A, &ctl.borrow());
+            let Some(d) = id_of(&ctl.borrow(), "reverb") else { return };
+            ctl.borrow_mut().panel_choice(d, index_of("reverb", "mode2"), 4);
+        })),
+        Check("time fx: Shimmer dial row [Decay] [Pre-Delay, Mod Depth] [Shift 1, Shift 2, Shimmer] [Mix]", Box::new(|c, a| {
+            let cd = card_named(a, "Reverb").ok_or("no card")?;
+            let labels: Vec<String> = (0..slint::Model::row_count(&cd.knobs)).filter_map(|i| slint::Model::row_data(&cd.knobs, i)).map(|k| k.label.to_string()).collect();
+            let want = ["Decay", "Pre-Delay", "Mod Depth", "Shift 1", "Shift 2", "Shimmer", "Mix"];
+            (labels == want && steps(&A, c) == 1).then_some(()).ok_or(format!("{labels:?}"))
+        })),
+        DoC("time fx: drag the Reverb pre-delay line 20 px right", Box::new(|_, ctl| {
+            mark(&A, &ctl.borrow());
+            let Some(d) = id_of(&ctl.borrow(), "reverb") else { return };
+            // Pre-delay 10 ms on a span of a few seconds: the line sits at the left edge of the plot.
+            let x = 26.0 * crate::device_panel::Z + 1.0;
+            let mut c = ctl.borrow_mut();
+            c.panel_field_pointer(d, 0, x, 60.0, false, false);
+            c.panel_field_pointer(d, 1, x + 20.0, 60.0, false, false);
+            c.panel_field_pointer(d, 2, x + 20.0, 60.0, false, false);
+        })),
+        Check("time fx: Pre-Delay grows, one undo step", Box::new(|c, _| {
+            let v = value_of(c, "reverb", "predelay").unwrap_or(f32::NAN);
+            (v > 10.0 && steps(&A, c) == 1).then_some(()).ok_or(format!("pre-delay {v}"))
+        })),
+        DoC("time fx: press the Pitch Shifter field at +7 st", Box::new(|_, ctl| {
+            mark(&A, &ctl.borrow());
+            let Some(d) = id_of(&ctl.borrow(), "pitch-shifter") else { return };
+            let def = saine_core::builtin::find("pitch-shifter").unwrap();
+            let mut c = ctl.borrow_mut();
+            let (_, _, w, _, _) = crate::panel_fields::field_rect(def, crate::device_panel::view_right(def));
+            let x = (7.0 + 24.5) / 49.0 * w;
+            c.panel_field_pointer(d, 0, x - 10.0, 40.0, false, false);
+            c.panel_field_pointer(d, 1, x, 40.0, false, false);
+            c.panel_field_pointer(d, 2, x, 40.0, false, false);
+        })),
+        Check("time fx: Semitones +7, the caption reads Fifth up, one undo step", Box::new(|c, a| {
+            let cd = card_named(a, "Pitch Shifter").ok_or("no card")?;
+            let st = value_of(c, "pitch-shifter", "semitones");
+            (st == Some(7.0) && cd.canvas.readout == "Fifth up" && steps(&A, c) == 1).then_some(()).ok_or(format!("semitones {st:?} caption {}", cd.canvas.readout))
+        })),
+        DoC("time fx: Grains Freeze latch, then drag Position 30 px left and press Escape", Box::new(|a, ctl| {
+            mark(&A, &ctl.borrow());
+            let Some(d) = id_of(&ctl.borrow(), "grains") else { return };
+            ctl.borrow_mut().panel_latch(d, index_of("grains", "freeze"), 0);
+            mark(&B, &ctl.borrow());
+            let def = saine_core::builtin::find("grains").unwrap();
+            let x = {
+                let (_, _, w, _, _) = crate::panel_fields::field_rect(def, crate::device_panel::view_right(def));
+                let right = w - 5.0 * crate::device_panel::Z;
+                // Frozen defaults: reach 0.25 s on a 0.5 s span.
+                right - 0.5 * (right - 4.0 * crate::device_panel::Z)
+            };
+            ctl.borrow_mut().panel_field_pointer(d, 0, x, 50.0, false, false);
+            ctl.borrow_mut().panel_field_pointer(d, 1, x - 30.0, 50.0, false, false);
+            // The press focuses the field in the UI; here the pointer is synthetic, so run the Escape action.
+            let _ = a;
+            crate::run_action(ctl, "view.escape");
+            ctl.borrow_mut().panel_field_pointer(d, 2, x - 30.0, 50.0, false, false);
+        })),
+        Check("time fx: Freeze on (one undo step); Escape cancels the Position drag (250 ms, no undo step)", Box::new(|c, _| {
+            let pos = value_of(c, "grains", "position").unwrap_or(f32::NAN);
+            let ok = value_of(c, "grains", "freeze") == Some(1.0) && pos == 250.0 && steps(&A, c) == 1 && steps(&B, c) == 0;
+            ok.then_some(()).ok_or(format!("freeze {:?} position {pos}", value_of(c, "grains", "freeze")))
+        })),
+        DoC("time fx: remove the five devices", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let ids: Vec<saine_core::DeviceId> = IDS.iter().filter_map(|id| device_of(&c, id).map(|d| d.id)).collect();
+            for d in ids {
+                c.execute(saine_core::Command::RemoveDevice { device: d });
+            }
+        })),
+        Check("time fx: the audio track's chain is empty again", Box::new(|c, _| {
+            let n = track_of(c, TrackKind::Audio).map_or(usize::MAX, |t| c.project().tracks[t].devices.len());
+            (n == 0).then_some(()).ok_or(format!("{n} devices left"))
+        })),
+    ]
+}
+
 /// The devices section drives Apple's Audio Units (AULowpass, AUDelay,
 /// DLSMusicDevice). Elsewhere its actions are not performed and its checks
 /// are reported as skipped (counted like the other guarded skips).
@@ -3742,6 +3964,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(limiter_family_steps());
     all.extend(restoration_device_steps());
     all.extend(sampler_steps());
+    all.extend(time_fx_steps());
     all.extend(automation_steps());
     all.extend(field_device_steps());
     let steps = Rc::new(all);

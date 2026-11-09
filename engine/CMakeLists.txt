@@ -143,6 +143,12 @@ add_library(saine_engine STATIC
   src/devices/phaser.cpp
   src/devices/ring_mod.cpp
   src/devices/tremolo.cpp
+  src/devices/delay.cpp
+  src/devices/echo.cpp
+  src/devices/grains.cpp
+  src/devices/pitch_shift.cpp
+  src/devices/pitch_shifter.cpp
+  src/devices/reverb.cpp
   src/devices/pad_sampler.cpp
   src/devices/sampler.cpp
   src/devices/sampler_engine.cpp
@@ -378,6 +384,7 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/devices/test_modulation.cpp
     tests/devices/test_mod_routes.cpp
     tests/devices/test_character_mod.cpp
+    tests/devices/test_time_fx.cpp
     tests/devices/test_drum_rack.cpp
     tests/devices/test_sampler.cpp
     tests/devices/test_synth_v2.cpp

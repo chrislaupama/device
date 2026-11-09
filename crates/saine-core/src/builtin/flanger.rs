@@ -33,6 +33,7 @@ pub static FLANGER: DeviceDef = DeviceDef {
         min_height: 202.0,
         fixed_width: 0.0,
         shown_when: &[("rate", "sync", &[0]), ("rate_sync", "sync", &[1])],
+        ..Layout::EMPTY
     },
     factory: &[
         FactoryPreset { name: "Light Flange", values: &[("rate", 0.25), ("depth", 2.0), ("feedback", 25.0), ("mix", 35.0), ("output_gain", -0.3)] },
