@@ -1151,7 +1151,7 @@ impl Controller {
                         self.pr.drag = Some(PrDrag::ClipEnd { end });
                     }
                     PrDrag::ClipStart { .. } => {
-                        let start = snap(raw).clamp(-clip.start, clip.length - g);
+                        let start = snap(raw).clamp(-clip.start, (clip.length - g).max(0));
                         self.pr.drag = Some(PrDrag::ClipStart { start });
                     }
                     PrDrag::Loop { edge, orig, anchor, .. } => {
