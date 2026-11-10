@@ -50,6 +50,9 @@ export struct SectionLabel { x: length, w: length, text: string, ink: color }
 // Minimap bar (src/minimap.rs): x and w are fractions of the strip width.
 export struct MiniBar { x: float, w: float, y: length, h: length, color: color }
 
+// Devices minimap tile (src/devminimap.rs): strip-local px; frame draws a chain's frame; glyph is a stroke path in a 24 x 14 box.
+export struct DevTile { x: length, y: length, w: length, h: length, frame: bool, glyph: string, glyph-w: length, ink: color, name: string }
+
 export struct ClipLabel { x: length, y: length, w: length, text: string, selected: bool }
 
 // Browser tree row (Devices tab; src/devices.rs). icon: 0 folder, 1 instrument (keys), 2 effect.
@@ -359,7 +362,9 @@ export global Studio {
     in property <float> minimap-win-w;
     in property <float> minimap-playhead: -1;
     in-out property <length> minimap-width;   // set by the strip (for the self-test)
-    callback minimap-pointer(int, length, length, length);
+    // A minimap drag hides the pointer (src/pointer.rs); Slint's own cursor follows for the strip under it.
+    in property <bool> pointer-hidden;
+    callback minimap-pointer(int, length, length, length, length, length);
     callback minimap-double();
     callback minimap-scroll(float, float, length, length, bool);
     in property <int> lane-cursor; // 0 default, 1 ew-resize (trim), 2 move (clip body)
@@ -776,6 +781,16 @@ export global Studio {
     callback device-use-synth();                // SetInstrumentPlugin(None)
     callback device-drag(int, int, length);     // card id, phase 0/1/2, window x (MoveDevice on release)
     callback chain-scroll-by(float);
+    // Devices minimap (src/devminimap.rs): shown while the chain is wider than the panel. Tiles are strip-local;
+    // the window is (x, w) in strip px; the strip reports its width for the self-test.
+    in property <bool> devmm-visible;
+    in property <[DevTile]> devmm-tiles;
+    in property <length> devmm-win-x;
+    in property <length> devmm-win-w;
+    in property <bool> devmm-dragging;
+    in-out property <length> devmm-width;
+    callback devmm-pointer(int, length, length, length, length);
+    callback devmm-scroll(float, float);
     // Built-in device panels: device id, parameter index (definition order).
     callback panel-drag-pair(int, int, int, int, float, float, bool); // device, line param, other line param, then as panel-drag
     callback panel-drag(int, int, int, float, float, bool); // phase 0 press / 1 move / 2 release / 3 cancel, dy since last event (px, up +), norm per px, fine

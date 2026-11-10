@@ -327,6 +327,9 @@ pub struct Controller {
     clips_model: Rc<VecModel<ClipLabel>>,
     ruler_key: (i64, i64, i64, i64),
     pub(crate) mm: crate::minimap::State,
+    /// Devices minimap (src/devminimap.rs) and the pointer hide / warp requests of minimap drags (src/pointer.rs).
+    pub(crate) dm: crate::devminimap::State,
+    pub(crate) ptr: crate::pointer::Queue,
     pub clip_vis: Vec<ClipVis>,
     pub track_vis: Vec<TrackVis>,
     pub(crate) clip_ids: Vec<ClipId>,
@@ -442,6 +445,8 @@ impl Controller {
             tracks_model: Rc::new(VecModel::default()),
             ruler_model: Rc::new(VecModel::default()),
             mm: crate::minimap::State::new(),
+            dm: crate::devminimap::State::new(),
+            ptr: crate::pointer::Queue::default(),
             section_label_model: Rc::new(VecModel::default()),
             clips_model: Rc::new(VecModel::default()),
             ruler_key: (i64::MIN, 0, 0, 0),
@@ -517,6 +522,7 @@ impl Controller {
         s.set_tracks(ModelRc::from(self.tracks_model.clone()));
         s.set_ruler_labels(ModelRc::from(self.ruler_model.clone()));
         s.set_minimap_bars(ModelRc::from(self.mm.model.clone()));
+        s.set_devmm_tiles(ModelRc::from(self.dm.model.clone()));
         s.set_section_labels(ModelRc::from(self.section_label_model.clone()));
         s.set_clip_labels(ModelRc::from(self.clip_ids_model()));
         s.set_strips(ModelRc::from(self.strips_model.clone()));
@@ -1611,6 +1617,8 @@ impl Controller {
         s.set_scroll_y(self.view.scroll_y as f32);
         self.update_labels();
         self.update_minimap(app);
+        self.update_devmm(app);
+        crate::pointer::apply(app, self.ptr.take());
         s.set_section_add_x(self.section_add_x());
         self.update_auto_labels();
         if self.auto_any_active() {
