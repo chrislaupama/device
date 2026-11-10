@@ -294,3 +294,12 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   `tools/rename/remove_saine.py` does the rename and is idempotent; branches started before it run it,
   then merge main. `--check` lists anything left. The only `saine` strings kept are the legacy
   project/settings names above and links to the GitHub repo (still `sainestudio`).
+
+### 2026-11-10: spec-driven workflow and agent skills
+
+- `specs/` holds specs for non-trivial work (`specs/README.md`: write, plan, build, verify, with a stop for agreement
+  after the spec and after the plan), templates in `specs/_template/`, and `specs/principles.md`. Spec 001 is the
+  worked example.
+- `AGENTS.md` is the entry point for coding agents; codebase skills live in `.agents/skills/` (commands, C ABI and
+  audio thread, built-in devices, UI, benchmarks, pull requests, plus the spec phases and bug fixing).
+  `python3 tools/agents/check_skills.py` fails when a skill names a file that no longer exists.

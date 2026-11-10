@@ -211,6 +211,8 @@ cargo run --release -p dstudio-app -- --self-test --no-audio     # drive the app
 | `crates/dstudio-engine` | Safe Rust wrapper over the engine, end-to-end tests |
 | `crates/dstudio-app` | Desktop app (binary `device-studio`) |
 | `docs/` | Architecture, ADRs, built-in devices, build guide |
+| `specs/` | Specs for non-trivial work, their templates and the project's principles |
+| `.agents/skills/`, `AGENTS.md` | Skills and a guide for coding agents working on this codebase |
 | `reference/`, `tools/` | Research notes and inspection tooling |
 | `ui-spike/` | The Slint and wgpu interop spike behind ADR 0001 |
 
@@ -230,6 +232,13 @@ Pull requests with visual changes include before and after screenshots, and anyt
 comes with benchmark results.
 
 Start with [PROGRESS.md](PROGRESS.md), then [docs/architecture.md](docs/architecture.md).
+
+Non-trivial work is spec-driven: a feature, a behaviour change or a hard bug starts with a short spec in `specs/`
+(what and why, then the plan and tasks), agreed before the code is written, and the spec ships with the change.
+[specs/README.md](specs/README.md) explains the workflow and when to skip it, and
+[specs/principles.md](specs/principles.md) lists the rules every change follows. If you work with a coding agent,
+[AGENTS.md](AGENTS.md) points it at the skills in `.agents/skills/`, which describe how each part of the codebase is
+changed; after editing a skill, run `python3 tools/agents/check_skills.py`.
 
 ### Keeping this README up to date
 
