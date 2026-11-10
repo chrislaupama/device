@@ -138,7 +138,14 @@ pub fn apply(notes: &[Note], shape: Shape, part: Option<PartType>, key: Option<P
     }
     v.extend(outside);
     midi::sort_notes(&mut v);
-    v.dedup_by(|b, a| a.start == b.start && a.pitch == b.pitch);
+    v.dedup_by(|b, a| {
+        let same = a.start == b.start && a.pitch == b.pitch;
+        if same {
+            a.length = a.length.max(b.length);
+            a.velocity = a.velocity.max(b.velocity);
+        }
+        same
+    });
     for (i, n) in v.iter_mut().enumerate() {
         n.id = i as u32 + 1;
     }
@@ -430,6 +437,9 @@ mod tests {
         let beyond = apply(&vec![Note { id: 1, ..note(60, 0.0, 1.0) }, Note { id: 2, ..note(62, 6.0, 1.0) }], Shape { velocity: 0.4, ..Shape::neutral(None) }, None, None, 4 * PPQ);
         assert_eq!(beyond.len(), 2, "notes past a shortened clip end come back when it grows");
         assert_eq!(beyond[1].start, 6 * PPQ);
+        let rep = apply(&vec![Note { id: 1, ..note(60, 0.0, 2.0) }, Note { id: 2, velocity: 100, ..note(60, 1.0, 1.0) }], Shape { repeat: 2, ..Shape::neutral(None) }, None, None, 4 * PPQ);
+        let hit = rep.iter().find(|n| n.start == PPQ).unwrap();
+        assert_eq!(hit.velocity, 100, "colliding retriggers merge, keeping the louder one");
     }
 
     #[test]
