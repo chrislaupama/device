@@ -234,9 +234,13 @@ pub fn humanize(notes: &[Note], amount: f64, seed: u64) -> Vec<Note> {
         .collect()
 }
 
-/// Mirror notes in time within `clip_length`.
-pub fn reverse(notes: &[Note], clip_length: Ticks) -> Vec<Note> {
-    notes.iter().map(|n| Note { start: (clip_length - n.start - n.length).max(0), ..*n }).collect()
+/// Mirror notes in time about the middle of their own extent (earliest start to latest end), as
+/// the reference app's Reverse does: lengths and pitches stay, the first note's start swaps with the last
+/// note's end, and the extent itself does not move.
+pub fn reverse(notes: &[Note]) -> Vec<Note> {
+    let Some(lo) = notes.iter().map(|n| n.start).min() else { return Vec::new() };
+    let hi = notes.iter().map(|n| n.start + n.length).max().unwrap_or(lo);
+    notes.iter().map(|n| Note { start: lo + hi - (n.start + n.length), ..*n }).collect()
 }
 
 /// Extend each note to the start of the next later note start (any pitch);
@@ -317,8 +321,6 @@ mod tests {
     #[test]
     fn reverse_legato_double() {
         let notes = [n(1, 60, 0, 240), n(2, 64, 960, 240)];
-        let r = reverse(&notes, 3840);
-        assert_eq!((r[0].start, r[1].start), (3600, 2640));
         let l = legato(&notes, 3840);
         assert_eq!((l[0].length, l[1].length), (960, 2880));
         let (d, len) = double(&notes, 3840);
@@ -326,6 +328,29 @@ mod tests {
         assert_eq!(d.len(), 4);
         assert_eq!(d[2].start, 3840);
         assert!(validate_notes(&d).is_ok(), "doubled notes get fresh ids");
+    }
+
+    #[test]
+    fn reverse_mirrors_about_the_notes_own_extent() {
+        // Extent 960..2880: the early short note lands at the end, the long one at the start.
+        let notes = [n(1, 60, 960, 240), n(2, 64, 1920, 960)];
+        let r = reverse(&notes);
+        assert_eq!((r[0].start, r[1].start), (2640, 960));
+        assert!(r.iter().zip(&notes).all(|(a, b)| a.id == b.id && a.pitch == b.pitch && a.length == b.length && a.velocity == b.velocity));
+        let extent = |v: &[Note]| (v.iter().map(|n| n.start).min().unwrap(), v.iter().map(|n| n.start + n.length).max().unwrap());
+        assert_eq!(extent(&r), extent(&notes));
+        assert_eq!(reverse(&r), notes, "reversing twice restores the notes");
+    }
+
+    #[test]
+    fn reverse_edge_cases() {
+        assert!(reverse(&[]).is_empty());
+        let one = [n(1, 60, 500, 100)];
+        assert_eq!(reverse(&one), one, "a single note is its own mirror");
+        let chord = [n(1, 60, 0, 480), n(2, 64, 0, 480), n(3, 67, 480, 480)];
+        let r = reverse(&chord);
+        assert_eq!((r[0].start, r[1].start, r[2].start), (480, 480, 0));
+        assert!(validate_notes(&r).is_ok());
     }
 
     #[test]

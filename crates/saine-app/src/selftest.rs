@@ -263,8 +263,20 @@ fn midi_steps() -> Vec<Step> {
         let y = bottom_y() + 41.0;
         if axis == 0 { (right - 224.0, 67.5, y) } else { (right - 132.5, 74.0, y) }
     };
+    // Reverse, wheel zoom and typing sections: notes and view numbers carried between steps.
+    let rvs = Rc::new(Cell::new(0usize));
+    let rvk = Rc::new(Cell::new(0usize));
+    let (rv1, rv2, rv3) = (rvs.clone(), rvk.clone(), rvs.clone());
+    let rv4 = rvk.clone();
+    let rvn: Rc<RefCell<Vec<saine_core::Note>>> = Rc::new(RefCell::new(Vec::new()));
+    let (rvn1, rvn2, rvn3, rvn4, rvn5) = (rvn.clone(), rvn.clone(), rvn.clone(), rvn.clone(), rvn.clone());
+    let wz: Rc<RefCell<(f64, f64, f32, f32)>> = Rc::new(RefCell::new((0.0, 0.0, 0.0, 0.0)));
+    let (wz1, wz2, wz3, wz4, wz5, wz6, wz7, wz8) = (wz.clone(), wz.clone(), wz.clone(), wz.clone(), wz.clone(), wz.clone(), wz.clone(), wz.clone());
+    let wzc: Rc<Cell<(f32, f32)>> = Rc::new(Cell::new((0.0, 0.0)));
+    let (wz9, wz10) = (wzc.clone(), wzc.clone());
+    let (hp3, hp4, hp5) = (hp.clone(), hp.clone(), hp.clone());
     let zoom_mem: Rc<Cell<(f32, i32, f64)>> = Rc::new(Cell::new((0.0, 0, 0.0)));
-    let (zm1, zm2, zm3, zm4, zm5) = (zoom_mem.clone(), zoom_mem.clone(), zoom_mem.clone(), zoom_mem.clone(), zoom_mem.clone());
+    let (zm1, zm2, zm3, zm4, zm5, zm6) = (zoom_mem.clone(), zoom_mem.clone(), zoom_mem.clone(), zoom_mem.clone(), zoom_mem.clone(), zoom_mem.clone());
     vec![
         DoC("snap: pin 1/16 for the piano-roll sections (their notes snap to the toolbar size)", Box::new(|_, ctl| ctl.borrow_mut().snap.grid = Some(crate::timeline::GridSize::Sixteenth))),
         Do("Enter (playhead to 0)", Box::new(|a| key(a, Key::Return, false, false))),
@@ -518,6 +530,215 @@ fn midi_steps() -> Vec<Step> {
             c.snap.grid = Some(crate::timeline::GridSize::Sixteenth);
             c.ui_dirty = true;
         })),
+        // ---- Reverse (toolbar and R), wheel / pinch zoom, musical typing ----
+        DoC("reverse: pen off, click empty grid, select the A3 and B3 notes, remember the notes", Box::new(move |a, ctl| {
+            ctl.borrow_mut().pr.pen = false;
+            let (x, y) = pr_xy(ctl, 2.9, 50);
+            click(a, x, y);
+            let mut c = ctl.borrow_mut();
+            let notes = notes_of(&c);
+            c.pr.selected = notes.iter().filter(|n| n.start == 960 || n.start == 1920).map(|n| n.id).collect();
+            rv1.set(c.doc.history_labels().len());
+            rv2.set(c.doc.history_labels().len());
+            *rvn1.borrow_mut() = notes;
+        })),
+        Do("R (Reverse)", Box::new(|a| key(a, "r", false, false))),
+        Check("R mirrored only the selected notes about their own extent, selection kept, one undo step, nothing recorded", Box::new(move |c, _| {
+            let before = rvn2.borrow().clone();
+            let sel = |n: &saine_core::Note| n.start == 960 || n.start == 1920;
+            let lo = before.iter().filter(|n| sel(n)).map(|n| n.start).min().unwrap_or(0);
+            let hi = before.iter().filter(|n| sel(n)).map(|n| n.start + n.length).max().unwrap_or(0);
+            let want: Vec<saine_core::Note> = before.iter().map(|n| if sel(n) { saine_core::Note { start: lo + hi - n.start - n.length, ..*n } } else { *n }).collect();
+            let mut got = notes_of(c);
+            got.sort_by_key(|n| n.id);
+            one_step(rv4.clone(), "Reverse Notes")(c)?;
+            (got == want && c.pr.selected.len() == 2 && !c.engine.transport().playing).then_some(()).ok_or(format!("{got:?} want {want:?}"))
+        })),
+        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("undo restored the notes", Box::new(move |c, _| (notes_of(c) == *rvn3.borrow()).then_some(()).ok_or("notes differ".into()))),
+        DoC("reverse: deselect, press R again", Box::new(|a, ctl| {
+            ctl.borrow_mut().pr.selected.clear();
+            key(a, "r", false, false);
+        })),
+        Check("with nothing selected R mirrored every note about the whole extent", Box::new(move |c, _| {
+            let before = rvn4.borrow().clone();
+            let lo = before.iter().map(|n| n.start).min().unwrap_or(0);
+            let hi = before.iter().map(|n| n.start + n.length).max().unwrap_or(0);
+            let want: Vec<saine_core::Note> = before.iter().map(|n| saine_core::Note { start: lo + hi - n.start - n.length, ..*n }).collect();
+            let mut got = notes_of(c);
+            got.sort_by_key(|n| n.id);
+            (got == want && c.doc.undo_label().as_deref() == Some("Reverse Notes")).then_some(()).ok_or(format!("{got:?} want {want:?}"))
+        })),
+        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("undone: notes restored, history back to where it started", Box::new(move |c, _| {
+            (notes_of(c) == *rvn5.borrow() && c.doc.history_labels().len() == rv3.get()).then_some(()).ok_or("not restored".into())
+        })),
+        DoC("zoom gestures: back to fit, Alt + Shift + wheel over the middle of the grid", Box::new(move |a, ctl| {
+            let (x, y) = {
+                let mut c = ctl.borrow_mut();
+                (c.pr.hzoom, c.pr.vzoom) = (0.0, None);
+                let v = c.pr_view();
+                *wz1.borrow_mut() = (v.ppb, v.beat_at(v.gx + (v.w - v.gx) / 2.0), v.row_h, v.scroll);
+                (PR_ORIGIN.0 + v.gx + (v.w - v.gx) / 2.0, PR_ORIGIN.1 + v.h / 2.0)
+            };
+            let w = a.window();
+            w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x, y) });
+            w.dispatch_event(WindowEvent::KeyPressed { text: Key::Alt.into() });
+            w.dispatch_event(WindowEvent::KeyPressed { text: Key::Shift.into() });
+            w.dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(x, y), delta_x: 0.0, delta_y: -300.0 });
+            w.dispatch_event(WindowEvent::KeyReleased { text: Key::Shift.into() });
+            w.dispatch_event(WindowEvent::KeyReleased { text: Key::Alt.into() });
+        })),
+        Check("Alt+Shift+wheel zoomed time by 1 + 300 * 0.001, the beat under the pointer stayed, rows unchanged", Box::new(move |c, _| {
+            let (ppb, at, row_h, _) = *wz2.borrow();
+            let v = c.pr_view();
+            let x = v.gx + (v.w - v.gx) / 2.0;
+            let ok = ((v.ppb / ppb) - 1.3).abs() < 1e-3 && (v.beat_at(x) - at).abs() < 1e-6 && c.pr.hzoom > 0.0 && approx(v.row_h, row_h, 1e-4);
+            ok.then_some(()).ok_or(format!("ppb {} -> {} (x1.3), beat {at} -> {}, hzoom {}", ppb, v.ppb, v.beat_at(x), c.pr.hzoom))
+        })),
+        DoC("zoom gestures: Alt + wheel over the middle row", Box::new(move |a, ctl| {
+            let (x, y) = {
+                let c = ctl.borrow();
+                let v = c.pr_view();
+                let mid = (v.h - crate::pianoroll::GRID_Y) / 2.0;
+                *wz3.borrow_mut() = (v.ppb, ((v.scroll + mid) / v.row_h) as f64, v.row_h, v.scroll);
+                (PR_ORIGIN.0 + v.gx + 200.0, PR_ORIGIN.1 + crate::pianoroll::GRID_Y + mid)
+            };
+            let w = a.window();
+            w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x, y) });
+            w.dispatch_event(WindowEvent::KeyPressed { text: Key::Alt.into() });
+            w.dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(x, y), delta_x: 0.0, delta_y: -200.0 });
+            w.dispatch_event(WindowEvent::KeyReleased { text: Key::Alt.into() });
+        })),
+        Check("Alt+wheel grew the rows by 1 + 200 * 0.001, the pitch row under the pointer stayed, time unchanged", Box::new(move |c, _| {
+            let (ppb, row_at, row_h, _) = *wz4.borrow();
+            let v = c.pr_view();
+            let mid = (v.h - crate::pianoroll::GRID_Y) / 2.0;
+            let ok = ((v.row_h / row_h) - 1.2).abs() < 1e-3 && (((v.scroll + mid) / v.row_h) as f64 - row_at).abs() < 1e-3 && ((v.ppb - ppb) / ppb).abs() < 1e-9;
+            ok.then_some(()).ok_or(format!("row_h {row_h} -> {}, row at {row_at} -> {}, ppb {ppb} -> {}", v.row_h, (v.scroll + mid) / v.row_h, v.ppb))
+        })),
+        DoC("zoom gestures: Ctrl + wheel (a trackpad pinch) out by far, then in a little", Box::new(move |a, ctl| {
+            let (x, y) = {
+                let c = ctl.borrow();
+                let v = c.pr_view();
+                *wz5.borrow_mut() = (v.ppb, 0.0, v.row_h, v.scroll);
+                (PR_ORIGIN.0 + v.gx + 200.0, PR_ORIGIN.1 + v.h / 2.0)
+            };
+            let w = a.window();
+            w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x, y) });
+            w.dispatch_event(WindowEvent::KeyPressed { text: Key::Control.into() });
+            w.dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(x, y), delta_x: 0.0, delta_y: -1000.0 });
+            w.dispatch_event(WindowEvent::KeyReleased { text: Key::Control.into() });
+        })),
+        Check("one big pinch out is capped at x0.1 and the zoom stops at the fit", Box::new(move |c, _| {
+            let (ppb, ..) = *wz6.borrow();
+            let v = c.pr_view();
+            let fit = crate::pianoroll::PrView::fit(c.pr.size, c.pr_clip().map_or(0, |m| m.length) as f64 / PPQ as f64, 0.0).ppb;
+            ((v.ppb - (ppb * 0.1).max(fit)).abs() < 1e-6 && v.ppb >= fit - 1e-9).then_some(()).ok_or(format!("ppb {ppb} -> {} fit {fit}", v.ppb))
+        })),
+        DoC("zoom gestures: pinch in by 20 %, then the zoom commands", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let v = c.pr_view();
+            *wz7.borrow_mut() = (v.ppb, v.beat_at(300.0), v.row_h, v.scroll);
+            c.pr_zoom_at(1.2, 1.0, 300.0, 100.0);
+        })),
+        Check("pinch zoomed time by 1.2 around x = 300", Box::new(move |c, _| {
+            let (ppb, at, ..) = *wz8.borrow();
+            let v = c.pr_view();
+            (((v.ppb / ppb) - 1.2).abs() < 1e-3 && (v.beat_at(300.0) - at).abs() < 1e-6).then_some(()).ok_or(format!("ppb {ppb} -> {}", v.ppb))
+        })),
+        DoC("zoom commands: horizontal out 0.1 from slider 0.7, vertical in 0.1 from 0.3, then 3 x out at 0.0", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.pr_zoom(1, 0.7);
+            c.pr_zoom(0, 0.3);
+            c.pr_zoom_step(false, 1);
+            c.pr_zoom_step(true, 0);
+            wz9.set(c.pr_zoom_values());
+            c.pr_zoom(1, 0.0);
+            for _ in 0..3 {
+                c.pr_zoom_step(false, 1);
+            }
+        })),
+        Check("each command moved its slider by exactly 0.1, and zooming out at the fit stays at 0 (clamped)", Box::new(move |c, _| {
+            let (vz, hz) = wz10.get();
+            let (_, h0) = c.pr_zoom_values();
+            ((vz - 0.4).abs() < 1e-3 && (hz - 0.6).abs() < 1e-3 && h0 == 0.0).then_some(()).ok_or(format!("v {vz} h {hz} then {h0}"))
+        })),
+        DoC("zoom gestures: back to fit and the default rows", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            (c.pr.hzoom, c.pr.vzoom, c.pr.scroll) = (0.0, None, zm6.get().0);
+            c.ui_dirty = true;
+        })),
+        DoC("typing: click the grid (focus), press K", Box::new(move |a, ctl| {
+            let (x, y) = pr_xy(ctl, 2.9, 50);
+            click(a, x, y);
+            hp3.set(ctl.borrow().doc.history_labels().len());
+            key(a, "k", false, false);
+        })),
+        Check("K turned musical typing on, the header button shows it", Box::new(|c, a| (c.typing.active && a.global::<Studio>().get_typing_on()).then_some(()).ok_or("typing off".into()))),
+        Do("hold A and D (no release yet), then an auto-repeat of A", Box::new(|a| {
+            let w = a.window();
+            w.dispatch_event(WindowEvent::KeyPressed { text: "a".into() });
+            w.dispatch_event(WindowEvent::KeyPressed { text: "d".into() });
+            w.dispatch_event(WindowEvent::KeyPressRepeated { text: "a".into() });
+        })),
+        Check("two notes sound (C3 = 48 and E3 = 52, one preview each), both keys lit, the repeat did not sound again, no edit", Box::new(move |c, _| {
+            let held = c.engine.preview().notes;
+            let lit = c.typing.lit();
+            (held == 2 && lit == (1u128 << 48 | 1u128 << 52) && c.doc.history_labels().len() == hp4.get()).then_some(()).ok_or(format!("held {held} lit {lit:#x}"))
+        })),
+        Check("the piano roll scene draws both keys pressed", Box::new(|c, _| {
+            let notes = c.pr_notes();
+            let lit = c.pr_scene(1.0, &notes).map_or(0, |s| s.lit);
+            (lit == (1u128 << 48 | 1u128 << 52)).then_some(()).ok_or(format!("lit {lit:#x}"))
+        })),
+        Do("release A, press X (octave up) and A again", Box::new(|a| {
+            let w = a.window();
+            w.dispatch_event(WindowEvent::KeyReleased { text: "a".into() });
+            w.dispatch_event(WindowEvent::KeyPressed { text: "x".into() });
+            w.dispatch_event(WindowEvent::KeyReleased { text: "x".into() });
+            w.dispatch_event(WindowEvent::KeyPressed { text: "a".into() });
+        })),
+        Check("C4 (60) and E3 (52) sound: the release let go of C3, X moved the octave up", Box::new(|c, _| {
+            let held = c.engine.preview().notes;
+            (held == 2 && c.typing.lit() == (1u128 << 60 | 1u128 << 52) && c.typing.octave == 4).then_some(()).ok_or(format!("held {held} lit {:#x} octave {}", c.typing.lit(), c.typing.octave))
+        })),
+        Do("release A and D, press C then V", Box::new(|a| {
+            let w = a.window();
+            for k in ["a", "d"] {
+                w.dispatch_event(WindowEvent::KeyReleased { text: k.into() });
+            }
+            w.dispatch_event(WindowEvent::KeyPressed { text: "c".into() });
+            w.dispatch_event(WindowEvent::KeyReleased { text: "c".into() });
+        })),
+        Check("nothing sounds, C played softer by 10/127 (default 0.7)", Box::new(|c, _| {
+            let held = c.engine.preview().notes;
+            (held == 0 && c.typing.lit() == 0 && (c.typing.velocity - (0.7 - 10.0 / 127.0)).abs() < 1e-4).then_some(()).ok_or(format!("held {held} velocity {}", c.typing.velocity))
+        })),
+        Do("V (loud), Z (octave down), then K: a note, not the toggle", Box::new(|a| {
+            let w = a.window();
+            for k in ["v", "z"] {
+                w.dispatch_event(WindowEvent::KeyPressed { text: k.into() });
+                w.dispatch_event(WindowEvent::KeyReleased { text: k.into() });
+            }
+            w.dispatch_event(WindowEvent::KeyPressed { text: "k".into() });
+        })),
+        Check("velocity back to 0.7, octave 3, typing still on and K sounds C4 (60) while held", Box::new(|c, _| {
+            let ok = c.typing.active && c.typing.octave == 3 && (c.typing.velocity - 0.7).abs() < 1e-4 && c.typing.lit() == 1u128 << 60 && c.engine.preview().notes == 1;
+            ok.then_some(()).ok_or(format!("active {} octave {} velocity {} lit {:#x}", c.typing.active, c.typing.octave, c.typing.velocity, c.typing.lit()))
+        })),
+        DoC("typing: release K, click the header button (off), press A", Box::new(|a, _| {
+            let w = a.window();
+            w.dispatch_event(WindowEvent::KeyReleased { text: "k".into() });
+            click(a, win().0 - 63.0 + 12.5, 51.5);
+            w.dispatch_event(WindowEvent::KeyPressed { text: "a".into() });
+            w.dispatch_event(WindowEvent::KeyReleased { text: "a".into() });
+        })),
+        Check("typing off: the header button is off and A sounds nothing", Box::new(move |c, a| {
+            let ok = !c.typing.active && !a.global::<Studio>().get_typing_on() && c.engine.preview().notes == 0 && c.typing.lit() == 0;
+            (ok && c.doc.history_labels().len() == hp5.get()).then_some(()).ok_or(format!("active {} held {}", c.typing.active, c.engine.preview().notes))
+        })),
+        DoC("pen back on for the sections after", Box::new(|_, ctl| ctl.borrow_mut().pr.pen = true)),
         DoC("click the E3 note at beat 0, press Up", Box::new(|a, ctl| {
             let (x, y) = pr_xy(ctl, 0.1, 52);
             click(a, x, y);

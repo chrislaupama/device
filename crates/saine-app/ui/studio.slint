@@ -591,7 +591,12 @@ export global Studio {
     in property <color> clip-color: Tokens.track-instrument;
     in property <color> clip-ink: #1d2142;   // text and icons on clip-colour fills
     callback pr-pointer(int, length, length, bool, bool, bool);   // kind 0 down 1 move 2 up, x, y, shift, alt, command (Cmd or Ctrl)
-    callback pr-scroll(float, float);
+    callback pr-scroll(float, float, length, length, bool, bool, bool);   // dx, dy, pointer x, y, shift, alt, ctrl: pan, or zoom with Ctrl / Alt
+    callback pr-pinch(float, length, length);                              // trackpad pinch: scale step, pointer x, y
+    in property <bool> typing-on;                                          // musical typing (K): the keyboard plays notes
+    callback typing-key(string, bool, bool, bool) -> bool;                 // text, down, auto-repeat, modifier held
+    callback typing-release();
+    callback toggle-typing();
     callback pr-zoom(int, float);                           // 0 vertical, 1 horizontal; 0..1
     in property <float> pr-vzoom: 0.49;
     in property <float> pr-hzoom;

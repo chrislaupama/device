@@ -71,6 +71,7 @@ mod splitters;
 mod synth;
 mod text_measure;
 mod timeline;
+mod typing;
 mod warpedit;
 mod wavgen;
 mod zoom;
@@ -289,6 +290,14 @@ fn parse_args() -> Result<Args, String> {
                     a.midi_state = 11;
                 }
 
+                "review-pr-typing" => {
+                    a.reference_default = true;
+                    a.midi_state = 12;
+                }
+                "review-pr-reverse" => {
+                    a.reference_default = true;
+                    a.midi_state = 13;
+                }
                 "review-clip-loop" => {
                     a.reference_default = true;
                     a.midi_state = 8;
@@ -472,7 +481,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-audio-loop-drag, review-pr-zoom, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -649,7 +658,10 @@ pub fn app_keymap() -> Keymap {
             k.bindings.push(Binding { action: action.into(), chords: vec![Chord::parse(chord).expect("valid chord")], when: Condition::TrackSelected });
         }
     }
-    // Piano roll (our bindings; the reference documents ↑/↓ transpose, Delete and B/E only).
+    // Musical typing: the tooltip reads "K / ⇧K"; the core preset has only K.
+    k.bindings.push(Binding { action: "view.musical_typing".into(), chords: vec![Chord::parse("shift+k").expect("valid chord")], when: Condition::Always });
+    // Piano roll (the reference documents ↑/↓ transpose, Delete, B/E and the toolbar's R = Reverse;
+    // the other chords are ours). While typing is on, its keys are taken before these.
     for (action, chords) in [
         ("midi.delete_notes", &["delete", "backspace"][..]),
         ("midi.transpose_up", &["up"][..]),
@@ -657,6 +669,7 @@ pub fn app_keymap() -> Keymap {
         ("midi.octave_up", &["shift+up"][..]),
         ("midi.octave_down", &["shift+down"][..]),
         ("midi.select_all", &["primary+a"][..]),
+        ("midi.reverse", &["r"][..]),
     ] {
         let chords = chords.iter().map(|c| Chord::parse(c).expect("valid chord")).collect();
         k.bindings.push(Binding { action: action.into(), chords, when: Condition::MidiEditorFocused });
@@ -738,6 +751,8 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.octave_up" => ctl.borrow_mut().pr_transpose(12),
         "midi.octave_down" => ctl.borrow_mut().pr_transpose(-12),
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
+        "midi.reverse" => ctl.borrow_mut().pr_action("reverse"),
+        "view.musical_typing" => ctl.borrow_mut().typing_toggle(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
             if c.devmm_cancel() || c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
@@ -980,7 +995,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.select_clip(clip);
             c.seek_beats(22.0); // 00:11.000, as captured
         }
-        if let (5..=7 | 10..=11, Some(id)) = (args.midi_state, clip) {
+        if let (5..=7 | 10..=13, Some(id)) = (args.midi_state, clip) {
             // REVIEW STATE: an E minor line with one out-of-scale note (F4), the clip's scale set
             // to E Minor with the footer Scale on; 6 adds scale rows, 7 opens the Scale type menu.
             let line = [(64u8, 0i64), (67, 1), (71, 2), (69, 3), (67, 4), (65, 5), (66, 6), (64, 7), (59, 8), (62, 10), (64, 12), (71, 14)];
@@ -1002,6 +1017,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 c.pr_zoom(1, 0.45);
                 c.pr_zoom(0, 0.8);
                 c.pr.hstart += 1.0;
+            }
+            if args.midi_state == 12 {
+                // REVIEW STATE: musical typing on, C4, E4, G4 and C#4 held (octave up first).
+                c.pr.focused = true;
+                c.typing_toggle();
+                for k in ["x", "a", "d", "g", "w"] {
+                    c.typing_key(k, true, false, false);
+                }
+            }
+            if args.midi_state == 13 {
+                // REVIEW STATE: the line mirrored by Reverse (nothing selected, so every note).
+                c.pr_action("reverse");
             }
 
         }
@@ -1798,7 +1825,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(tab)
     });
     on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool| c.pr_pointer(kind, x, y, shift, alt, command));
-    on!(on_pr_scroll, |c, dx: f32, dy: f32| c.pr_scroll(dx, dy));
+    on!(on_pr_scroll, |c, dx: f32, dy: f32, x: f32, y: f32, shift: bool, alt: bool, ctrl: bool| c.pr_wheel(dx, dy, x, y, shift, alt, ctrl));
+    on!(on_pr_pinch, |c, scale: f32, x: f32, y: f32| c.pr_zoom_at(scale as f64, 1.0, x, y));
+    on!(on_typing_release, |c| c.typing_release_all());
+    on!(on_toggle_typing, |c| c.typing_toggle());
+    {
+        let (ctl, aw) = (ctl.clone(), app.as_weak());
+        studio.on_typing_key(move |text, down, repeat, modified| {
+            let Ok(mut c) = ctl.try_borrow_mut() else { return false };
+            if !down && !c.typing.is_holding() || app_text_focused(&aw) && down {
+                return false;
+            }
+            let used = c.typing_key(text.as_str(), down, repeat, modified);
+            if used && let Some(a) = aw.upgrade() {
+                c.update_ui(&a);
+                a.window().request_redraw();
+            }
+            used
+        });
+    }
     on!(on_pr_zoom, |c, axis: i32, z: f32| c.pr_zoom(axis, z));
     on!(on_pr_action, |c, a: slint::SharedString| c.pr_action(a.as_str()));
     on!(on_clip_menu_open, |c, m: i32| c.clip_menu_open(m));
