@@ -16,7 +16,10 @@ pub fn write_wav_pcm(path: &Path, rate: u32, channels: u16, bits: u16, samples: 
 /// `write_wav_pcm` into an already opened file.
 pub fn encode_wav_pcm(file: std::fs::File, rate: u32, channels: u16, bits: u16, samples: &[f32]) -> std::io::Result<()> {
     let bytes = (bits / 8) as u32;
-    let data_len = samples.len() as u32 * bytes;
+    let data_len = u32::try_from(samples.len() as u64 * bytes as u64)
+        .ok()
+        .filter(|&n| n <= u32::MAX - 36)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "too long for a WAV file (4 GB limit)"))?;
     let mut f = std::io::BufWriter::new(file);
     f.write_all(b"RIFF")?;
     f.write_all(&(36 + data_len).to_le_bytes())?;

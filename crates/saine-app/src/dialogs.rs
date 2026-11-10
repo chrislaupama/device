@@ -103,6 +103,10 @@ impl Controller {
     fn render_mixdown(&mut self, name: &str) -> Result<(PathBuf, Result<(), String>), String> {
         std::fs::create_dir_all(&self.export.dir).map_err(|e| e.to_string())?;
         let frames = self.export_frames() as usize;
+        // WAV sizes are 32-bit: refuse before rendering rather than after.
+        if frames as u64 * 2 * if self.export.bits24 { 3 } else { 2 } > (u32::MAX - 36) as u64 {
+            return Err("too long for a WAV file (4 GB limit)".into());
+        }
         let rate = self.engine.sample_rate();
         let restore = self.project().ticks_to_frames(self.playhead_ticks(), rate);
         let e = self.engine.clone();
@@ -129,7 +133,16 @@ impl Controller {
         self.metronome_on = metronome_was;
         self.sync_loop_and_click();
         let restarted = if was_running { e.start_device().map_err(|e| e.to_string()) } else { Ok(()) };
-        rendered?;
+        match (self.write_mixdown(name, rendered.map(|_| out)), restarted) {
+            (Ok(path), restarted) => Ok((path, restarted)),
+            (Err(e), Ok(())) => Err(e),
+            (Err(e), Err(r)) => Err(format!("{e}; the audio device also did not restart: {r}")),
+        }
+    }
+
+    fn write_mixdown(&self, name: &str, rendered: Result<Vec<f32>, String>) -> Result<PathBuf, String> {
+        let out = rendered?;
+        let rate = self.engine.sample_rate();
         let stem = name.strip_suffix(".wav").or_else(|| name.strip_suffix(".WAV")).unwrap_or(name);
         let (path, file) = (1..1000)
             .find_map(|n| {
@@ -141,8 +154,11 @@ impl Controller {
                 }
             })
             .unwrap_or_else(|| Err("no free file name".into()))?;
-        wavgen::encode_wav_pcm(file, rate.round() as u32, 2, if self.export.bits24 { 24 } else { 16 }, &out).map_err(|e| e.to_string())?;
-        Ok((path, restarted))
+        if let Err(e) = wavgen::encode_wav_pcm(file, rate.round() as u32, 2, if self.export.bits24 { 24 } else { 16 }, &out) {
+            let _ = std::fs::remove_file(&path);
+            return Err(e.to_string());
+        }
+        Ok(path)
     }
 
     /// File › New Project: ask first when the project has unsaved changes.
