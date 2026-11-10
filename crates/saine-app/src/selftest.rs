@@ -4473,6 +4473,32 @@ fn files_steps() -> Vec<Step> {
             let ok = files_labels(a) == ["kit", "loops", "kick.wav"] && wav.is_some_and(|r| r.depth == 1 && r.detail == "wav") && a.global::<Studio>().get_files_guides().row_count() == 1;
             ok.then_some(()).ok_or(format!("{:?}", files_labels(a)))
         })),
+        DoC("files: click kick.wav to preview it", Box::new(|a, _| {
+            let Some(i) = files_row_of(a, "kick.wav") else { return };
+            let Some((x, y)) = files_row_xy(a, i) else { return };
+            click(a, x, y);
+        })),
+        Check("files: kick.wav loads into the preview bar and plays", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let au = &c.files.audition;
+            let m = s.get_files();
+            let row = (0..m.row_count()).filter_map(|i| m.row_data(i)).find(|r| r.label == "kick.wav");
+            let ok = au.path.as_ref().is_some_and(|p| p.ends_with("kick.wav")) && au.asset.is_some() && au.playing && s.get_preview_active() && s.get_preview_playing() && row.as_ref().is_some_and(|r| r.detail == "Playing");
+            ok.then_some(()).ok_or(format!("{:?} asset {:?} playing {} detail {:?}", au.path, au.asset, au.playing, row.map(|r| r.detail)))
+        })),
+        DoC("files: pause the preview and solo it", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.audition_toggle();
+            c.audition_solo();
+        })),
+        Check("files: paused and soloed; the row shows its type again", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let m = s.get_files();
+            let row = (0..m.row_count()).filter_map(|i| m.row_data(i)).find(|r| r.label == "kick.wav");
+            let ok = !c.files.audition.playing && !s.get_preview_playing() && s.get_preview_solo() && row.as_ref().is_some_and(|r| r.detail == "wav");
+            ok.then_some(()).ok_or(format!("playing {} solo {} detail {:?}", c.files.audition.playing, s.get_preview_solo(), row.map(|r| r.detail)))
+        })),
+        DoC("files: solo off", Box::new(|_, ctl| ctl.borrow_mut().audition_solo())),
         Do("files: Back (chevron)", Box::new(|a| click(a, 229.5, 91.2))),
         Check("files: Back returns to Projects with Forward enabled", Box::new(|c, a| {
             (c.files.section == SECTION_FILES && c.files.tab == TAB_PROJECTS && a.global::<Studio>().get_browser_can_forward()).then_some(()).ok_or(format!("section {} tab {}", c.files.section, c.files.tab))
@@ -4546,6 +4572,8 @@ fn files_steps() -> Vec<Step> {
         DoC("files: undo; back to Devices; forget the folder", Box::new(move |_, ctl| {
             let mut c = ctl.borrow_mut();
             c.undo();
+            let _ = c.engine.preview_stop();
+            c.files.audition.playing = false;
             c.settings.prefs.browser_folders.clear();
             c.browser_section(SECTION_DEVICES);
             c.project_dir = None;

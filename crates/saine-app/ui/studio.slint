@@ -394,6 +394,20 @@ export global Studio {
     callback files-activate(int);              // double-click
     callback files-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
     callback files-scroll-by(float);
+    // Browser preview bar (src/files.rs Audition): the file last clicked in Files.
+    in property <bool> preview-active;          // a file is loaded in the bar
+    in property <bool> preview-playing;
+    in property <float> preview-progress;       // 0..1 of the file
+    in property <float> preview-volume: 0.8;    // slider pos (header-slider taper)
+    in property <float> preview-meter-l;        // 0..1, -50..0 dB
+    in property <float> preview-meter-r;
+    in property <bool> preview-solo;
+    callback preview-toggle();
+    callback preview-step(int);                 // -1 previous, 1 next file
+    callback preview-volume-moved(float);
+    callback preview-volume-done();
+    callback preview-solo-toggle();
+    callback preview-reveal();
     // Drag and drop of a browser device (ghost + drop target, window coordinates).
     in property <bool> dnd-active;
     in property <bool> dnd-ok;
