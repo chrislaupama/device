@@ -405,6 +405,7 @@ impl Controller {
                 len_beats: len_beats.max(0.0),
                 color: crate::controller::RECORD_RED,
                 selected: false,
+                muted: false,
                 name: "Recording".into(),
                 wave: None,
                 midi: None,
