@@ -29,7 +29,7 @@ fn project(tracks: usize, warped: bool) -> (Document, HashMap<AssetId, u64>, Has
             d.execute(Command::AddTrack { index: None, track: Track::new(TrackId(0), TrackKind::Audio, "A", ColorIndex(1)) }, Origin::User).unwrap();
             d.project().tracks.last().unwrap().id
         };
-        let clip = Clip { id: ClipId(0), asset: a, name: "c".into(), start: 0, source_offset: 0, source_length: 44_100 * 16, gain: 1.0, warp: if warped { warp.clone() } else { ClipWarp::default() } };
+        let clip = Clip { id: ClipId(0), asset: a, name: "c".into(), start: 0, source_offset: 0, source_length: 44_100 * 16, gain: 1.0, warp: if warped { warp.clone() } else { ClipWarp::default() }, disabled: false };
         d.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
     }
     (d, HashMap::from([(a, 1)]), HashMap::from([(a, detected)]))
