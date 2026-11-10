@@ -22,6 +22,8 @@ export struct TrackRow {
     // the "Show N automated lanes" count, and controls following automation.
     y: length,
     h: length,
+    // Track row height without its 0.5 pt rule (height scale × 88 px row; src/timeline.rs).
+    row-h: length,
     auto-cat: string,
     auto-param: string,
     auto-state: int,
@@ -378,6 +380,10 @@ export global Studio {
     callback track-pan(int, float);
     callback track-pan-text(int, string);       // inline pan entry in the track header
     callback gesture-end();
+    // ---- splitters (src/splitters.rs): phase 0 press, 1 move, 2 release; window y ----
+    in property <length> bottom-h: 306px;
+    callback bottom-resize(int, length);
+    callback track-resize(int, int, length);                // track id, phase, window y
     callback master-volume(float);
     callback sel-fader-moved(float);
     callback lane-pointer(int, length, length, bool, bool, bool); // kind 0=down 1=move 2=up, x, y, shift, cmd, alt

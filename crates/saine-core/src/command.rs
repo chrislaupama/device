@@ -48,6 +48,8 @@ pub enum Command {
     SetTrackPan { track: TrackId, pan: f32 },
     SetTrackMute { track: TrackId, mute: bool },
     SetTrackSolo { track: TrackId, solo: bool },
+    /// Row height scale (1.0 = default), within [crate::Track::HEIGHT_RANGE].
+    SetTrackHeight { track: TrackId, height: f32 },
     SetMasterGain { gain: f32 },
     /// Register an imported media asset (id 0 → allocate).
     AddAsset { asset: Asset },
@@ -141,6 +143,7 @@ impl Command {
             Command::SetTrackPan { .. } => "Track Pan Change".into(),
             Command::SetTrackMute { .. } => "Mute Change".into(),
             Command::SetTrackSolo { .. } => "Solo Change".into(),
+            Command::SetTrackHeight { .. } => "Track Height Change".into(),
             Command::SetMasterGain { .. } => "Master Volume Change".into(),
             Command::AddAsset { .. } => "Import Audio".into(),
             Command::RemoveAsset { .. } => "Remove Audio".into(),
@@ -201,6 +204,7 @@ impl Command {
             Command::SetTrackGain { track, .. } => Some(format!("gain:{}", track.0)),
             Command::SetTrackPan { track, .. } => Some(format!("pan:{}", track.0)),
             Command::SetMasterGain { .. } => Some("master_gain".into()),
+            Command::SetTrackHeight { track, .. } => Some(format!("height:{}", track.0)),
             Command::SetClipGain { clip, .. } => Some(format!("clipgain:{}", clip.0)),
             Command::SetTempo { .. } => Some("tempo".into()),
             Command::SetSynthParams { track, params } => Some(format!("synth:{}:{}", track.0, params.preset)),
@@ -271,6 +275,15 @@ impl Command {
                 let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
                 let old = std::mem::replace(&mut t.solo, solo);
                 Ok(Command::SetTrackSolo { track, solo: old })
+            }
+            Command::SetTrackHeight { track, height } => {
+                let (lo, hi) = crate::Track::HEIGHT_RANGE;
+                if !(lo..=hi).contains(&height) {
+                    return Err(invalid("height", format!("{height} outside {lo}..{hi}")));
+                }
+                let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
+                let old = std::mem::replace(&mut t.height, height);
+                Ok(Command::SetTrackHeight { track, height: old })
             }
             Command::SetMasterGain { gain } => {
                 validate_gain("master_gain", gain)?;

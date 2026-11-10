@@ -233,6 +233,45 @@ fn seal_coalescing_starts_a_new_undo_step() {
 }
 
 #[test]
+fn track_height_is_undoable_and_panel_heights_are_not() {
+    let mut d = Document::new(Project::default());
+    let track = d.project().tracks[0].id;
+    assert!(d.execute(Command::SetTrackHeight { track, height: 0.1 }, Origin::User).is_err());
+    assert!(d.execute(Command::SetTrackHeight { track, height: f32::NAN }, Origin::User).is_err());
+    d.execute(Command::SetTrackHeight { track, height: 2.0 }, Origin::User).unwrap();
+    assert_eq!(d.undo_label(), Some("Track Height Change"));
+    d.undo().unwrap();
+    assert_eq!(d.project().track(track).unwrap().height, 1.0);
+    d.redo().unwrap();
+    assert_eq!(d.project().track(track).unwrap().height, 2.0);
+
+    let rev = d.revision();
+    d.set_bottom_panel_height("devices", Some(420.0));
+    assert!(d.revision() > rev, "a panel height marks the project dirty");
+    assert_eq!(d.undo_label(), Some("Track Height Change"), "but is not an undo step");
+    d.set_bottom_panel_height("devices", None);
+    assert!(d.project().bottom_panel_heights.is_empty());
+}
+
+#[test]
+fn track_and_panel_heights_persist_and_default_when_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = Document::new(Project::default());
+    let track = d.project().tracks[1].id;
+    d.execute(Command::SetTrackHeight { track, height: 0.5 }, Origin::User).unwrap();
+    d.set_bottom_panel_height("mixer", Some(500.0));
+    persist::save(d.project(), dir.path()).unwrap();
+    let loaded = persist::load(dir.path()).unwrap().project;
+    assert_eq!(loaded.track(track).unwrap().height, 0.5);
+    assert_eq!(loaded.bottom_panel_heights.get("mixer"), Some(&500.0));
+
+    let json = serde_json::to_string(&Project::default()).unwrap();
+    assert!(!json.contains("\"height\"") && !json.contains("bottom_panel_heights"), "defaults are not written");
+    let old: Project = serde_json::from_str(&json).unwrap();
+    assert!(old.tracks.iter().all(|t| t.height == 1.0));
+}
+
+#[test]
 fn arm_monitor_input_commands() {
     let mut d = Document::new(Project::default());
     let (audio, inst) = (d.project().tracks[0].id, d.project().tracks[1].id);

@@ -374,8 +374,18 @@ component Timeline inherits Panel {
         }
         for t[i] in Studio.tracks: Rectangle {
             x: 0; y: t.y - Studio.scroll-y; width: parent.width; height: t.h;
-            TrackHeaderRow { x: 0; y: 0; width: parent.width; height: Tokens.track-h; t: t; automation: Studio.auto-shown; level: Studio.track-levels[i]; edit-done => { root.focus-main(); } }
-            Rectangle { y: Tokens.track-h; height: Tokens.track-pitch - Tokens.track-h; background: t.selected ? #353639 : Tokens.line-separator; }
+            TrackHeaderRow { x: 0; y: 0; width: parent.width; height: t.row-h; row-h: t.row-h; t: t; automation: Studio.auto-shown; level: Studio.track-levels[i]; edit-done => { root.focus-main(); } }
+            Rectangle { y: t.row-h; height: Tokens.track-pitch - Tokens.track-h; background: t.selected ? #353639 : Tokens.line-separator; }
+            // Height handle: 6 px at the row's bottom edge.
+            TouchArea {
+                y: t.row-h + 0.5px - 5.1px; height: 5.1px;
+                mouse-cursor: row-resize;
+                pointer-event(e) => {
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.track-resize(t.id, 0, self.absolute-position.y + self.mouse-y); }
+                    if (e.kind == PointerEventKind.move && self.pressed) { Studio.track-resize(t.id, 1, self.absolute-position.y + self.mouse-y); }
+                    if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.track-resize(t.id, 2, self.absolute-position.y + self.mouse-y); }
+                }
+            }
         }
         // Expanded automation rows (src/automation.rs, EXTRA_H + separator): well fill, a 1 px
         // white 5 % top rule, and the pill 48 px in.
@@ -612,7 +622,7 @@ export component AppWindow inherits Window {
     out property <length> lanes-width: timeline.lanes-width;
     out property <length> lanes-height: timeline.lanes-height;
     // Panel geometry (mirrored in src/highlight.rs `Layout`).
-    property <length> bottom-h: Studio.mixer-open || Studio.bottom-tab == 1 ? 390px : 306px;
+    property <length> bottom-h: Studio.bottom-h;
     // Top row y 78.2 / browser width 252.45 / timeline x 262.65: the reference's 92 pt, 297 pt and
     // 309 pt at its default (100 %) zoom, in our 85 % units (AX dump, reference/data/ax-main-100.tsv).
     property <length> top-h: root.height - 88.4px - self.bottom-h;
@@ -642,6 +652,17 @@ export component AppWindow inherits Window {
         // Bottom panel: inspector + devices, or the mixer (taller; the row above shrinks).
         if !Studio.mixer-open: BottomPanel { x: 5px; y: root.height - 5px - root.bottom-h; width: root.width - 10px; height: root.bottom-h; }
         if Studio.mixer-open: MixerPanel { x: 5px; y: root.height - 5px - root.bottom-h; width: root.width - 10px; height: root.bottom-h; }
+        // Timeline / bottom-panel splitter: an invisible 14 px strip across the gap, 8 px of it
+        // above the panel's top edge (the reference's resize handle).
+        TouchArea {
+            x: 5px; y: root.height - 5px - root.bottom-h - 6.8px; width: root.width - 10px; height: 11.9px;
+            mouse-cursor: row-resize;
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.bottom-resize(0, self.absolute-position.y + self.mouse-y); }
+                if (e.kind == PointerEventKind.move && self.pressed) { Studio.bottom-resize(1, self.absolute-position.y + self.mouse-y); }
+                if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.bottom-resize(2, self.absolute-position.y + self.mouse-y); }
+            }
+        }
         HighlightOverlay { x: 0; y: 0; width: root.width; height: root.height; }
         // Device windows: a built-in card opened from its header arrow floats above the
         // arrangement (the card stays in the chain too) and stays up across track changes;

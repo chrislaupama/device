@@ -20,7 +20,7 @@
 //! parameters their normalized value.
 
 use crate::controller::{Controller, fmt_db, fmt_pan, slider_from_gain, sync_model};
-use crate::timeline::{self, TRACK_H, TRACK_PITCH};
+use crate::timeline;
 use crate::{AutoExtra, AutoLabel, MenuItem, Studio, TrackRow};
 use saine_core::automation::{AutoPoint, AutomationLane, AutomationTarget, SynthParam, VOLUME_MAX_DB, VOLUME_MIN_DB};
 use saine_core::{Command, PPQ, Ticks, TrackId, TrackKind, db_to_gain, gain_to_db};
@@ -526,6 +526,13 @@ impl Controller {
             Vec::new()
         };
         self.view.extra = extra;
+        let preview = self.track_resize.as_ref().map(|r| (r.track, r.scale));
+        self.view.pitches = self
+            .project()
+            .tracks
+            .iter()
+            .map(|t| timeline::pitch_for_scale(preview.filter(|(id, _)| *id == t.id).map_or(t.height, |(_, s)| s)))
+            .collect();
         self.view.master_h = if self.auto.shown { timeline::MASTER_H_AUTO } else { timeline::MASTER_H };
     }
 
@@ -539,10 +546,10 @@ impl Controller {
         for (i, t) in self.project().tracks.iter().enumerate() {
             let key = Some(t.id);
             let top = v.track_top(i);
-            rows.push(Row { key, target: self.auto_target(key), y0: top, h: TRACK_H, master: false, extra: false });
+            rows.push(Row { key, target: self.auto_target(key), y0: top, h: v.pitch(i) - 0.5, master: false, extra: false });
             if self.auto.expanded.contains(&t.id) {
                 for (k, target) in self.extra_targets(t.id).into_iter().enumerate() {
-                    rows.push(Row { key, target, y0: top + TRACK_PITCH + k as f32 * EXTRA_PITCH, h: EXTRA_H, master: false, extra: true });
+                    rows.push(Row { key, target, y0: top + v.pitch(i) + k as f32 * EXTRA_PITCH, h: EXTRA_H, master: false, extra: true });
                 }
             }
         }
@@ -1314,6 +1321,7 @@ impl Controller {
                     pan,
                     y: self.view.track_offset(i),
                     h: self.view.track_span(i),
+                    row_h: self.view.pitch(i) - 0.5,
                     auto_cat: cat.into(),
                     auto_param: param.into(),
                     auto_state: self.auto_style(Some(t.id), &target).code(),
@@ -1349,7 +1357,7 @@ impl Controller {
                     extras.push(AutoExtra {
                         track_id: id.0 as i32,
                         index: k as i32,
-                        y: self.view.track_offset(i) + TRACK_PITCH + k as f32 * EXTRA_PITCH,
+                        y: self.view.track_offset(i) + self.view.pitch(i) + k as f32 * EXTRA_PITCH,
                         cat: cat.into(),
                         param: param.into(),
                         state: self.auto_style(Some(id), &t).code(),

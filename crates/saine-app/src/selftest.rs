@@ -4080,6 +4080,61 @@ fn field_device_steps() -> Vec<Step> {
     ]
 }
 
+/// Track height handle and timeline / bottom-panel splitter (appended last; restores both).
+fn splitter_steps() -> Vec<Step> {
+    use Step::*;
+    fn edge_y(c: &Controller) -> f32 {
+        TRACK0_Y + c.view.pitch(0) - 2.5 - c.view.scroll_y as f32
+    }
+    fn splitter_y(c: &Controller) -> f32 {
+        820.0 - 5.0 - c.bottom_h() - 1.0
+    }
+    let base_h = Rc::new(Cell::new(0f32));
+    let (b1, b2) = (base_h.clone(), base_h.clone());
+    vec![
+        DoC("drag track 1's bottom edge down half a row", Box::new(|a, ctl| {
+            let y = edge_y(&ctl.borrow());
+            drag(a, 300.0, y, 300.0, y + PITCH / 2.0);
+        })),
+        Check("track 1 is 1.5x tall in the model and the view, one undo step", Box::new(|c, _| {
+            let h = c.project().tracks[0].height;
+            let ok = approx(h, 1.5, 0.02) && approx(c.view.pitch(0), PITCH * h, 0.5) && c.doc.undo_label() == Some("Track Height Change");
+            ok.then_some(()).ok_or(format!("height {h} pitch {} undo {:?}", c.view.pitch(0), c.doc.undo_label()))
+        })),
+        Do("undo the height change", Box::new(|a| key(a, "z", true, false))),
+        Check("track 1 back to its default height", Box::new(|c, _| {
+            let h = c.project().tracks[0].height;
+            (h == 1.0 && approx(c.view.pitch(0), PITCH, 0.01)).then_some(()).ok_or(format!("height {h}"))
+        })),
+        DoC("drag the bottom-panel splitter up 100 pt", Box::new(move |a, ctl| {
+            let (y, h) = { let c = ctl.borrow(); (splitter_y(&c), c.bottom_h()) };
+            b1.set(h);
+            drag(a, 700.0, y, 700.0, y - 100.0);
+        })),
+        Check("bottom panel 100 pt taller and saved with the project", Box::new(move |c, a| {
+            let h = c.bottom_h();
+            let saved = c.project().bottom_panel_heights.values().copied().next();
+            let ok = approx(h, b2.get() + 100.0, 0.5) && saved == Some(h) && approx(a.global::<Studio>().get_bottom_h(), h, 0.01);
+            ok.then_some(()).ok_or(format!("h {h} base {} saved {saved:?}", b2.get()))
+        })),
+        DoC("drag the splitter to the bottom edge", Box::new(|a, ctl| {
+            let y = splitter_y(&ctl.borrow());
+            drag(a, 700.0, y, 700.0, 815.0);
+        })),
+        Check("bottom panel collapses to its tab row", Box::new(|c, _| {
+            approx(c.bottom_h(), crate::splitters::BOTTOM_COLLAPSED_H, 0.01).then_some(()).ok_or(format!("h {}", c.bottom_h()))
+        })),
+        DoC("restore the default panel height", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let kinds: Vec<String> = c.project().bottom_panel_heights.keys().cloned().collect();
+            for k in kinds {
+                c.doc.set_bottom_panel_height(&k, None);
+            }
+            c.ui_dirty = true;
+        })),
+    ]
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
@@ -4100,6 +4155,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(time_fx_steps());
     all.extend(automation_steps());
     all.extend(field_device_steps());
+    all.extend(splitter_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));

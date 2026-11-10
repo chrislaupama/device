@@ -139,6 +139,19 @@ impl Document {
         }
     }
 
+    /// Remember the bottom panel height for a panel kind (splitter drag). Saved with the
+    /// project but not an undo step, like the reference's panel layout.
+    pub fn set_bottom_panel_height(&mut self, kind: &str, h: Option<f32>) {
+        let map = &mut self.project.bottom_panel_heights;
+        let changed = match h {
+            Some(h) => map.insert(kind.to_string(), h) != Some(h),
+            None => map.remove(kind).is_some(),
+        };
+        if changed {
+            self.revision += 1;
+        }
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }

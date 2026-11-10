@@ -777,13 +777,9 @@ impl Controller {
         self.ui_dirty = true;
     }
 
-    fn bottom_h(&self) -> f32 {
-        self.layout().bottom_h()
-    }
-
     pub fn layout(&self) -> Layout {
         let (w, h) = self.devices.win;
-        Layout { w, h, sounds: self.devices.sounds, mixer: self.mixer_open, assistant: self.assistant_open, clip_tab: self.bottom_tab == BottomTab::Clip, scroll_y: self.view.scroll_y as f32 }
+        Layout { w, h, sounds: self.devices.sounds, mixer: self.mixer_open, assistant: self.assistant_open, clip_tab: self.bottom_tab == BottomTab::Clip, scroll_y: self.view.scroll_y as f32, bottom: self.bottom_h() }
     }
 
     /// Browser row drag: phase 0 press, 1 move, 2 release (window coordinates).
@@ -829,11 +825,8 @@ impl Controller {
         let (tx, tw) = (l.timeline_x(), l.timeline_w());
         let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - crate::timeline::MASTER_H);
         if x >= tx && x < tx + tw && y >= top && y < bottom {
-            let i = ((y - top + l.scroll_y) / crate::timeline::TRACK_PITCH).floor();
-            if i < 0.0 {
-                return None;
-            }
-            return self.project().tracks.get(i as usize).map(|t| DropTarget::Track(t.id));
+            let i = self.view.track_at(y - top + crate::timeline::RULER_H)?;
+            return self.project().tracks.get(i).map(|t| DropTarget::Track(t.id));
         }
         if !l.mixer && !l.clip_tab {
             let by = l.bottom_y();
@@ -848,10 +841,10 @@ impl Controller {
 
     fn track_rect(&self, t: TrackId) -> Option<(f32, f32, f32, f32)> {
         let l = self.layout();
-        let i = self.project().track_index(t)? as f32;
-        let y = 78.0 + 66.5 + i * crate::timeline::TRACK_PITCH - l.scroll_y;
+        let i = self.project().track_index(t)?;
+        let y = 78.0 + 66.5 + self.view.track_offset(i) - l.scroll_y;
         let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - crate::timeline::MASTER_H);
-        let (y0, y1) = (y.max(top), (y + crate::timeline::TRACK_H).min(bottom));
+        let (y0, y1) = (y.max(top), (y + self.view.pitch(i) - 0.5).min(bottom));
         (y1 > y0).then_some((l.timeline_x(), y0, l.timeline_w(), y1 - y0))
     }
 
