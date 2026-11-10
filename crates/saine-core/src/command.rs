@@ -23,6 +23,7 @@ pub enum ComposerEdit {
     Original,
     Type,
     Genre,
+    Shape,
 }
 
 impl ComposerEdit {
@@ -33,6 +34,7 @@ impl ComposerEdit {
             ComposerEdit::Original => "Load Original",
             ComposerEdit::Type => "Pattern Type Change",
             ComposerEdit::Genre => "Pattern Genre Change",
+            ComposerEdit::Shape => "Shape Change",
         }
     }
 }
@@ -272,6 +274,7 @@ impl Command {
             Command::SetSynthParams { track, params } => Some(format!("synth:{}:{}", track.0, params.preset)),
             Command::SetDeviceParam { device, param, .. } => Some(format!("devparam:{}:{param}", device.0)),
             Command::SetModLink { source, index, .. } => Some(format!("modlink:{}:{index}", source.0)),
+            Command::SetComposer { clip, edit: ComposerEdit::Shape, .. } => Some(format!("shape:{}", clip.0)),
             _ => None,
         }
     }

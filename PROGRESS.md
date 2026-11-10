@@ -218,8 +218,18 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Header minimap drags (window and zoom grabs) hide the pointer and put it back on the grabbed spot on release
   (`src/pointer.rs`: NSCursor + winit warp; self-test records the requests). Findings S68.
 - Devices minimap at the right of the Clip / Devices strip (`src/devminimap.rs`, `DevMinimap` in `ui/app.slint`):
-  tiles with glyphs, chain frames, window, jump / drag / wheel, Esc restores. Findings S69, S70. Not done: tile
-  pictures, glide / fade animations, hover name.
+  tiles with glyphs, chain frames, window, jump / drag / wheel, Esc restores. Findings S69, S70. Not done: the hover name.
+
+### 2026-11-10: grid size and snap, clip-editor rulers, minimap pictures and motion (SAIN-33)
+
+- Timeline toolbar snap control (`src/snap.rs`): the readout toggles snapping, the chevron opens Off / Auto / 1 Bar ...
+  1/32 / triplet sizes. Auto follows the ruler step for the zoom (two beats at the default zoom, as the reference app's rule), a
+  fixed size overrides it when finer (doubled to 6 px), Cmd at the press drags off the grid. Findings S76.
+- Piano roll and audio clip editor rulers and grids use the same `RulerSteps` rules (bar labels by power-of-two
+  steps, ticks, 16 / 8 reference px sub and beat lines). Findings S77, S78.
+- Devices minimap tiles show pictures we draw from each device's own layout (`Art`), and fade in (300 ms) and glide
+  (spring) when the chain changes; the strip redraws only while they run. Findings S79, S80. `--drag-bench devmm`
+  benchmarks it; `--state review-snap-menu` shows the menu.
 
 ### 2026-11-10: step sequencer, gaps closed (SAIN-37)
 
@@ -232,3 +242,18 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   disabled when the pattern has no cells.
 - Value lanes use the reference's palette: empty steps dark, Velocity filled from the bottom on a lighter base.
   Findings SQ-8..SQ-11.
+### 2026-11-10: pattern library, Genre list and Shape tab (SAIN-37, PR B)
+
+- Genre now lists Any and the reference's 21 genres. The ten new ones come after the old eleven, because saved
+  clips store the index. Each new genre has its own feel (scale, grid, swing, density, octave, progressions) and
+  its own drum grooves, including two new grooves, Dembow and Warehouse pulse. Drum swing now follows the
+  genre's feel, which gives the same result as before for the old genres. The Genre menu shows 12 rows and
+  scrolls to the active one.
+- Shape tab (`saine_core::shape`, `composer.rs`): Octave, Voices, Density, Length, Velocity, Nudge, Repeat and
+  Arp reshape what the clip plays. The unshaped notes stay in `Composer::base`. Each part, and the kept
+  notes, keep their own Shape. A slider drag is one undo step ("Shape Change"). If you edit notes after they
+  were shaped, they play as edited under a neutral Shape. The other rack rows show disabled with the
+  reference's tips. Tab rules are in SQ-13. Findings are SQ-12..SQ-15 in
+  `reference/findings/step-sequencer.md`.
+- Review states: `--state review-patterns-3` (Shape on a lead) and `review-patterns-4` (the Genre menu).
+- Next: Shape option A, the full rack with drawn curves and the remaining transforms.

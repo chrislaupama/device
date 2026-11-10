@@ -5,11 +5,16 @@
 //! A MIDI clip lists the Type's set (Chords, Bass, Lead, Arp); a pattern clip
 //! (Drum Rack) lists drum grooves and shows Genre only. Loading a row plays it
 //! in place of the clip's own notes, which the card keeps behind its Original pill.
+//!
+//! Shape tab (MIDI clips): Octave, Voices, Density, Length, Velocity, Nudge,
+//! Repeat and Arp reshape what plays (`saine_core::shape`); each part, and the
+//! kept notes, keep their own Shape. The rack's other controls show disabled.
 
 use crate::controller::Controller;
 use saine_core::command::ComposerEdit;
 use saine_core::library::{self, Composer, LibPattern, MadeSet, PartType};
-use saine_core::midi::MidiClip;
+use saine_core::midi::{MidiClip, Note};
+use saine_core::shape::{self, Shape};
 use saine_core::{Command, PPQ};
 
 /// One list row: name, lit while it plays, and up to PREVIEW_MAX notes as
@@ -23,6 +28,92 @@ pub struct RowView {
 
 const PREVIEW_MAX: usize = 96;
 
+/// How a Shape row's control works.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShapeKind {
+    Slider,
+    Stepper,
+    Segments,
+}
+
+/// One row of the Shape rack.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShapeRowView {
+    pub label: &'static str,
+    pub value: String,
+    pub kind: ShapeKind,
+    /// Slider position 0..1.
+    pub norm: f32,
+    /// The slider fills from its middle (Nudge).
+    pub bipolar: bool,
+    /// Segment count and the lit one.
+    pub segs: i32,
+    pub seg: i32,
+    pub enabled: bool,
+    pub tip: &'static str,
+}
+
+/// Rack rows in the reference's order. Rows past Nudge's neighbours that Saine
+/// does not shape yet show disabled.
+pub const SHAPE_ROWS: [(&str, ShapeKind); 14] = [
+    ("Octave", ShapeKind::Stepper),
+    ("Voices", ShapeKind::Segments),
+    ("Density", ShapeKind::Slider),
+    ("Length", ShapeKind::Slider),
+    ("Velocity", ShapeKind::Slider),
+    ("Vary", ShapeKind::Slider),
+    ("Nudge", ShapeKind::Slider),
+    ("Repeat", ShapeKind::Stepper),
+    ("Air", ShapeKind::Slider),
+    ("Sub", ShapeKind::Slider),
+    ("Spread", ShapeKind::Slider),
+    ("Tension", ShapeKind::Slider),
+    ("Inversion", ShapeKind::Stepper),
+    ("Arp", ShapeKind::Stepper),
+];
+
+const NO_VOICES: &str = "This pattern has no extra voices to add";
+const NOT_AVAILABLE: &str = "Not available for this pattern";
+
+/// Shape callback ops: slider press / drag / release, stepper step, segment pick, reset.
+pub mod shape_op {
+    pub const PRESS: i32 = 0;
+    pub const DRAG: i32 = 1;
+    pub const RELEASE: i32 = 2;
+    pub const STEP: i32 = 3;
+    pub const PICK: i32 = 4;
+    pub const RESET: i32 = 5;
+}
+
+fn shape_rows(s: Shape, voices: bool) -> Vec<ShapeRowView> {
+    let pct = |v: f32| format!("{}%", (v * 100.0).round() as i32);
+    SHAPE_ROWS
+        .iter()
+        .enumerate()
+        .map(|(i, &(label, kind))| {
+            let mut r = ShapeRowView { label, value: String::new(), kind, norm: 0.0, bipolar: false, segs: 0, seg: 0, enabled: true, tip: "" };
+            match i {
+                0 => r.value = if s.octave > 0 { format!("+{}", s.octave) } else { s.octave.to_string().replace('-', "−") },
+                1 => {
+                    r.segs = shape::MAX_VOICES as i32;
+                    r.seg = s.voices as i32 - 1;
+                    r.enabled = voices;
+                    r.tip = if voices { "" } else { NO_VOICES };
+                }
+                2 => (r.norm, r.value) = (s.density, pct(s.density)),
+                3 => (r.norm, r.value) = (s.length, pct(s.length)),
+                4 => (r.norm, r.value) = (s.velocity, pct(s.velocity)),
+                6 => (r.norm, r.value, r.bipolar) = (s.nudge, format!("{:+}%", ((s.nudge - 0.5) * 200.0).round() as i32), true),
+                7 => r.value = shape::REPEAT_LABELS[s.repeat as usize].to_string(),
+                12 => (r.value, r.enabled, r.tip) = ("Root".to_string(), false, NOT_AVAILABLE),
+                13 => r.value = shape::ARP_LABELS[s.arp as usize].to_string(),
+                _ => (r.enabled, r.tip) = (false, NOT_AVAILABLE),
+            }
+            r
+        })
+        .collect()
+}
+
 pub struct SidebarView {
     pub drums: bool,
     pub part: i32,
@@ -31,6 +122,10 @@ pub struct SidebarView {
     /// The kept notes' pill (shown while a pattern plays).
     pub original: bool,
     pub create_label: String,
+    /// Shape can open (a MIDI clip with notes) and is the tab showing.
+    pub shape_ok: bool,
+    pub shape_tab: bool,
+    pub shape_rows: Vec<ShapeRowView>,
 }
 
 fn preview(notes: &[saine_core::Note], length: i64) -> Vec<(f32, f32, f32)> {
@@ -83,6 +178,8 @@ impl Controller {
         } else {
             format!("Create new {}", comp.part.plural())
         };
+        let shape_ok = !drums && !c.notes.is_empty() && c.pattern.is_none();
+        let (base, source, shape) = self.shape_state(&c);
         Some(SidebarView {
             drums,
             part: PartType::ALL.iter().position(|&p| p == comp.part).unwrap_or(0) as i32,
@@ -90,32 +187,127 @@ impl Controller {
             original: comp.playing.is_some(),
             rows,
             create_label,
+            shape_ok,
+            shape_tab: shape_ok && self.composer_shape_tab.unwrap_or(comp.playing.is_none()),
+            shape_rows: if shape_ok { shape_rows(shape, shape::has_voices(&base, source)) } else { Vec::new() },
         })
     }
 
-    fn commit_composer(&mut self, c: &MidiClip, edit: ComposerEdit, comp: Composer, load: Option<LibPattern>) {
+    fn shaped(&self, notes: &[Note], shape: Shape, source: Option<PartType>, c: &MidiClip) -> Vec<Note> {
+        shape::apply(notes, shape, source, self.project().transport.key, c.length)
+    }
+
+    /// The unshaped notes of what plays, its source and its Shape. Notes edited
+    /// since they were shaped play as they are, under a neutral Shape.
+    fn shape_state(&self, c: &MidiClip) -> (Vec<Note>, Option<PartType>, Shape) {
+        let comp = c.composer.clone().unwrap_or_default();
+        let source = comp.shape_source();
+        let shape = comp.shape_of(source);
+        if shape == Shape::neutral(source) {
+            return (c.notes.clone(), source, shape);
+        }
+        if !comp.base.is_empty() && self.shaped(&comp.base, shape, source, c) == c.notes {
+            return (comp.base, source, shape);
+        }
+        (c.notes.clone(), source, Shape::neutral(source))
+    }
+
+    /// Commit a composer edit; a loaded pattern plays under its source's Shape.
+    fn commit_composer(&mut self, c: &MidiClip, edit: ComposerEdit, mut comp: Composer, load: Option<LibPattern>) {
         let (notes, pattern) = match load {
-            Some(lp) => (lp.notes, lp.pattern),
+            Some(lp) => {
+                let source = comp.shape_source();
+                let shape = comp.shape_of(source);
+                comp.base.clear();
+                if lp.pattern.is_some() || shape == Shape::neutral(source) {
+                    (lp.notes, lp.pattern)
+                } else {
+                    let notes = self.shaped(&lp.notes, shape, source, c);
+                    comp.base = lp.notes;
+                    (notes, lp.pattern)
+                }
+            }
             None => (c.notes.clone(), c.pattern.clone()),
         };
         self.execute(Command::SetComposer { clip: c.id, edit, composer: Some(comp), notes, pattern });
         self.ui_dirty = true;
     }
 
-    /// The composer with the clip's own notes kept (when they are the ones playing).
-    fn composer_keeping(c: &MidiClip) -> Composer {
+    /// The composer with the clip's own (unshaped) notes kept, when they are the ones playing.
+    fn composer_keeping(&self, c: &MidiClip) -> Composer {
         let mut comp = c.composer.clone().unwrap_or_default();
         if comp.playing.is_none() {
-            comp.kept = c.notes.clone();
+            let (base, _, shape) = self.shape_state(c);
+            if shape == Shape::neutral(None) {
+                comp.set_shape(None, shape);
+            }
+            comp.kept = base;
             comp.kept_pattern = c.pattern.clone();
         }
         comp
     }
 
+    /// Patterns / Shape tabs: the pick holds on every clip.
+    pub fn composer_tab(&mut self, shape: bool) {
+        self.composer_shape_tab = Some(shape);
+        self.ui_dirty = true;
+    }
+
+    /// A Shape rack control (`shape_op`): sliders take a 0..1 value and coalesce into
+    /// one undo step until released; steppers step by `value`'s sign; segments pick
+    /// `value` (0-based); reset puts the control back to neutral.
+    pub fn composer_shape(&mut self, row: i32, op: i32, value: f32) {
+        use shape_op::*;
+        self.ui_dirty = true;
+        if op == RELEASE {
+            self.doc.seal_coalescing();
+            return;
+        }
+        let Some(c) = self.composer_clip() else { return };
+        if c.pattern.is_some() || c.notes.is_empty() {
+            return;
+        }
+        let (base, source, old) = self.shape_state(&c);
+        let neutral = Shape::neutral(source);
+        let mut s = old;
+        let unit = value.clamp(0.0, 1.0);
+        let step = |i: u8, len: usize| (i as i32 + value.signum() as i32).clamp(0, len as i32 - 1) as u8;
+        match (row, op) {
+            (0, STEP) => s.octave = (s.octave + value.signum() as i8).clamp(-shape::MAX_OCTAVE, shape::MAX_OCTAVE),
+            (0, RESET) => s.octave = neutral.octave,
+            (1, PICK) if shape::has_voices(&base, source) => s.voices = (value.round() as i32 + 1).clamp(1, shape::MAX_VOICES as i32) as u8,
+            (1, RESET) => s.voices = neutral.voices,
+            (2, PRESS | DRAG) => s.density = unit,
+            (2, RESET) => s.density = neutral.density,
+            (3, PRESS | DRAG) => s.length = unit,
+            (3, RESET) => s.length = neutral.length,
+            (4, PRESS | DRAG) => s.velocity = unit,
+            (4, RESET) => s.velocity = neutral.velocity,
+            (6, PRESS | DRAG) => s.nudge = unit,
+            (6, RESET) => s.nudge = neutral.nudge,
+            (7, STEP) => s.repeat = step(s.repeat, shape::REPEAT_BEATS.len()),
+            (7, RESET) => s.repeat = neutral.repeat,
+            (13, STEP) => s.arp = step(s.arp, shape::ARP_BEATS.len()),
+            (13, RESET) => s.arp = neutral.arp,
+            _ => return,
+        }
+        if s == old {
+            return;
+        }
+        let mut comp = c.composer.clone().unwrap_or_default();
+        comp.set_shape(source, s);
+        comp.base = if s == neutral { Vec::new() } else { base.clone() };
+        let notes = self.shaped(&base, s, source, &c);
+        self.execute(Command::SetComposer { clip: c.id, edit: ComposerEdit::Shape, composer: Some(comp), notes, pattern: c.pattern.clone() });
+        if op != PRESS && op != DRAG {
+            self.doc.seal_coalescing();
+        }
+    }
+
     /// Create: a new set of six for the shown part on the Genre field's genre; the first plays.
     pub fn composer_create(&mut self) {
         let Some(c) = self.composer_clip() else { return };
-        let mut comp = Self::composer_keeping(&c);
+        let mut comp = self.composer_keeping(&c);
         let part = if Self::is_drum_clip(&c) { None } else { Some(comp.part) };
         let set = comp.set_for(part).map_or(0, |m| m.set + 1);
         comp.made.retain(|m| m.part != part);
@@ -131,7 +323,7 @@ impl Controller {
         let Some(c) = self.composer_clip() else { return };
         let Some(made) = Self::shown_set(&c) else { return };
         let Some(lp) = self.set_patterns(&c, made).into_iter().nth(row) else { return };
-        let mut comp = Self::composer_keeping(&c);
+        let mut comp = self.composer_keeping(&c);
         if comp.playing == Some(row as u8) {
             return;
         }
@@ -156,7 +348,7 @@ impl Controller {
     pub fn composer_type(&mut self, index: usize) {
         let Some(c) = self.composer_clip() else { return };
         let Some(&part) = PartType::ALL.get(index) else { return };
-        let mut comp = Self::composer_keeping(&c);
+        let mut comp = self.composer_keeping(&c);
         if comp.part == part {
             return;
         }
