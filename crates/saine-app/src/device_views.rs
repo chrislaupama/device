@@ -152,7 +152,7 @@ impl Controller {
         let accent = self
             .project()
             .find_device(d.id)
-            .map_or(Color::from_rgb_u8(0x43, 0x9b, 0x94), |(ti, _)| crate::controller::slint_color(crate::controller::track_color(self.project().tracks[ti].color)));
+            .map_or(Color::from_rgb_u8(0x43, 0x9b, 0x94), |(ti, _)| crate::controller::card_color(self.project().tracks[ti].color));
         let idx = |id: &str| def.index_of(id).map_or(-1, |i| i as i32);
         match name {
             "wave" => wave_body(def, &value, idx(def.params[0].id), accent, rect),

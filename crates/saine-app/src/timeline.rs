@@ -463,17 +463,19 @@ fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &
     // On a track that isn't selected the reference draws the body in the plain track colour
     // with a darker line under the title and no grid (50-input-selector-open.png); on the
     // selected track it is the light lavender body with grid lines (33/34-*.png).
-    let track_selected = sc.tracks.get(c.track_index).is_some_and(|t| t.selected);
-    let body = if track_selected { mix(c.color, WHITE, 0.67) } else { c.color };
+    // A muted track's clips are grey with no selection tint, like audio clips.
+    let track_selected = !c.muted && sc.tracks.get(c.track_index).is_some_and(|t| t.selected);
+    let head = if c.muted { rgb(0xa8a8a8) } else { c.color };
+    let body = if c.muted { rgb(0x6b6b6b) } else if track_selected { mix(c.color, WHITE, 0.67) } else { c.color };
     // 0.5 pt outline (greyish in the reference), then title strip and body inset by it.
     out.push(px.rounded(x, y, cw, ch, r, rgba(mix(body, rgb(0x4a4c58), 0.45), 1.0)));
-    out.push(px.rounded(x + 0.5, y + 0.5, cw - 1.0, ch - 1.0, r - 0.5, rgba(c.color, 1.0)));
+    out.push(px.rounded(x + 0.5, y + 0.5, cw - 1.0, ch - 1.0, r - 0.5, rgba(head, 1.0)));
     let by = y + CLIP_HEADER + 0.5;
     out.push(px.rect(x + 0.5, by, cw - 1.0, ch - CLIP_HEADER - 0.5 - r, rgba(body, 1.0)));
     out.push(px.rounded(x + 0.5, y + ch - 2.0 * r, cw - 1.0, 2.0 * r - 0.5, r - 0.5, rgba(body, 1.0)));
     let v = &sc.view;
     if !track_selected {
-        out.push(px.rect(x + 0.5, by - 0.5, cw - 1.0, 0.5, rgba(mix(c.color, BLACK, 0.4), 1.0)));
+        out.push(px.rect(x + 0.5, by - 0.5, cw - 1.0, 0.5, rgba(mix(head, BLACK, 0.4), 1.0)));
     }
     let mut step = sc.beats_per_bar / 2.0;
     while step * v.px_per_beat < 10.0 {
@@ -492,7 +494,7 @@ fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &
     }
     let nh = ch - CLIP_HEADER - 6.0;
     let bar_h = (nh / 24.0).clamp(1.5, 3.0);
-    let ink = rgba(mix(c.color, BLACK, 0.45), 1.0);
+    let ink = rgba(mix(head, BLACK, 0.45), 1.0);
     for n in notes {
         let nx = x + n[0] * cw;
         let nw = (n[1] * cw).max(1.0).min(x + cw - nx);

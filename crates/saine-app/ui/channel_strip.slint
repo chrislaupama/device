@@ -1,0 +1,139 @@
+// Fader + meter column shared by the mixer strips and the track inspector.
+// Geometry from the reference's strip canvas (reference/research-findings.md, "Channel strip
+// fader"): a 92 pt wide column; tick labels right-aligned in its first 26 pt, a 14 pt rail at
+// x 38, two 5 pt meters at x 64 and x 71 with 5 x 3 clip lights on top. The handle travels
+// between 18 pt and h - 14 pt (12 pt in from each end of a rail that starts 6 pt down and stops
+// 2 pt short of the bottom). Lengths are written in reference points times `u` (our design
+// units are 85 % of the reference's points, see zoom.rs).
+import { Tokens } from "tokens.slint";
+
+export global StripMetrics {
+    out property <length> u: 0.85px;
+}
+
+export component StripCanvas inherits Rectangle {
+    /// Fader position, 0 (top, +6 dB) .. 1 (bottom, -inf). Mapping in Rust (`fader_from_db`).
+    in property <float> fader;
+    in property <float> meter-l: 1;  // 0 (top) .. 1 (silent)
+    in property <float> meter-r: 1;
+    in property <bool> clip-l;
+    in property <bool> clip-r;
+    in property <color> fill;
+    in property <brush> cap: #fdf8f0;
+    in property <bool> enabled: true;
+    callback moved(float);
+    callback released();
+    callback reset();
+    property <length> u: StripMetrics.u;
+    property <length> rail-y: 6 * root.u;
+    property <length> rail-h: max(40 * root.u, root.height - 8 * root.u);
+    property <length> travel: max(1px, root.rail-h - 24 * root.u);
+    property <length> top: root.rail-y + 12 * root.u;
+    property <length> handle-y: root.top + root.fader * root.travel;
+    width: 92 * root.u;
+
+    // Scale at the taper's own positions (+6 1.0, 0 0.8, -6 0.6, -12 0.4, -24 0.22, -36 0.11, -inf 0).
+    for t in [ {t: "+6", f: 0}, {t: "0", f: 0.2}, {t: "−6", f: 0.4}, {t: "−12", f: 0.6},
+               {t: "−24", f: 0.78}, {t: "−36", f: 0.89}, {t: "−∞", f: 1} ]: Rectangle {
+        x: 0; y: root.top + t.f * root.travel - 5 * root.u;
+        width: 40 * root.u; height: 10 * root.u;
+        Rectangle { x: 29 * root.u; y: parent.height / 2 - 0.5 * root.u; width: 8 * root.u; height: 1 * root.u; background: #6f7073; }
+        Text {
+            x: 0; width: 25 * root.u; height: parent.height;
+            text: t.t; color: #919294; font-size: 10 * root.u; font-weight: 500;
+            horizontal-alignment: right; vertical-alignment: center;
+        }
+    }
+
+    // Rail: 14 pt wide, fully rounded, with a faint light rim toward the bottom.
+    Rectangle {
+        x: 38 * root.u; y: root.rail-y; width: 14 * root.u; height: root.rail-h; border-radius: 7 * root.u;
+        background: #222225;
+        Rectangle {
+            x: 1.12 * root.u; y: 0.56 * root.u; width: parent.width - 2.24 * root.u; height: parent.height - 1.68 * root.u;
+            border-radius: 6 * root.u; background: #161618;
+        }
+    }
+    // Level line from the bottom of the rail up to the handle (4.5 pt, round ends).
+    if root.handle-y < root.rail-y + root.rail-h - 7.4 * root.u: Rectangle {
+        x: 45 * root.u - 2.25 * root.u; y: root.handle-y - 2.25 * root.u;
+        width: 4.5 * root.u; height: root.rail-y + root.rail-h - 7.4 * root.u - root.handle-y + 4.5 * root.u;
+        border-radius: 2.25 * root.u; background: root.fill;
+    }
+    // Cap: 10 x 24 pt, radius 5, warm white, soft shadow, dark centre line.
+    Rectangle {
+        x: 40 * root.u; y: root.handle-y - 12 * root.u; width: 10 * root.u; height: 24 * root.u; border-radius: 5 * root.u;
+        background: root.cap;
+        drop-shadow-offset-y: 1.12 * root.u; drop-shadow-blur: 4.5 * root.u; drop-shadow-color: #00000040;
+        Rectangle { x: 1.5 * root.u; y: 11.5 * root.u; width: 7 * root.u; height: 1 * root.u; border-radius: 0.5 * root.u; background: #00000073; }
+    }
+
+    // Meters: clip light on top, then a dark well with the level fill over the handle's travel.
+    for m[i] in [ {lvl: root.meter-l, clip: root.clip-l}, {lvl: root.meter-r, clip: root.clip-r} ]: Rectangle {
+        x: (64 + i * 7) * root.u; y: root.rail-y; width: 5 * root.u; height: root.rail-h - 7.4 * root.u;
+        Rectangle { y: 0; height: 3 * root.u; border-radius: 1 * root.u; background: m.clip ? #ef4444 : #3c3c4299; }
+        Rectangle {
+            y: 5 * root.u; height: parent.height - 5 * root.u; border-radius: 1 * root.u; background: #161619;
+            Rectangle {
+                y: 7 * root.u + m.lvl * (parent.height - 11.6 * root.u); height: max(0px, parent.height - self.y);
+                background: @linear-gradient(0deg, Tokens.meter-green 0%, Tokens.meter-green 70%, #e3c53a 88%, #e5484d 100%);
+                visible: m.lvl < 0.999;
+            }
+        }
+    }
+
+    TouchArea {
+        x: 32 * root.u; y: root.rail-y - 4 * root.u; width: 26 * root.u; height: root.rail-h + 8 * root.u;
+        enabled: root.enabled;
+        mouse-cursor: ns-resize;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                root.moved(max(0, min(1, (self.mouse-y + self.y - root.top) / root.travel)));
+            }
+            if (e.kind == PointerEventKind.up) { root.released(); }
+        }
+        moved => { root.moved(max(0, min(1, (self.mouse-y + self.y - root.top) / root.travel))); }
+        double-clicked => { root.reset(); }
+    }
+}
+
+/// Raised value box: the gain readout above the fader and the peak box below it.
+export component StripReadout inherits Rectangle {
+    in property <string> text;
+    in property <bool> boxed: true;
+    in property <color> ink: #ffffffcc;
+    callback clicked();
+    property <length> u: StripMetrics.u;
+    height: 18 * root.u;
+    border-radius: 3 * root.u;
+    background: root.boxed ? #292a2f : transparent;
+    border-width: root.boxed ? 0.3 * root.u : 0px;
+    border-color: #ffffff17;
+    drop-shadow-offset-y: root.boxed ? 0.6 * root.u : 0px;
+    drop-shadow-blur: root.boxed ? 2.4 * root.u : 0px;
+    drop-shadow-color: root.boxed ? #00000040 : transparent;
+    Text { text: root.text; color: root.ink; font-size: 10 * root.u; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+/// M / S / R / I square: 9 % ink at rest; mute lights accent blue, solo yellow, record red,
+/// input orange. `big` is the inspector size (22 x 20, 10 pt), else the mixer size (18 x 16, 8.5 pt).
+export component StripButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> on;
+    in property <int> kind;   // 0 mute, 1 solo, 2 record, 3 input
+    in property <bool> big;
+    callback clicked();
+    property <length> u: StripMetrics.u;
+    property <color> on-bg: root.kind == 0 ? #1253ff : root.kind == 1 ? #f1f607 : root.kind == 2 ? #e81d01 : #f5950a;
+    property <color> on-ink: root.kind == 0 || root.kind == 2 ? #ffffff : #1a1a1a;
+    width: (root.big ? 22 : 18) * root.u;
+    height: (root.big ? 20 : 16) * root.u;
+    border-radius: (root.big ? 3 : 2) * root.u;
+    background: root.on ? root.on-bg : ta.has-hover ? #ffffff26 : #ffffff17;
+    Text {
+        text: root.text; color: root.on ? root.on-ink : ta.has-hover ? #ffffff : #ffffff99;
+        font-size: (root.big ? 10 : 8.5) * root.u; font-weight: 700; horizontal-alignment: center; vertical-alignment: center;
+    }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
