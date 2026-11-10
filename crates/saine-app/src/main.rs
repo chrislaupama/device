@@ -925,6 +925,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if state >= 1 {
                     c.composer_create();
                 }
+                if state == 3 {
+                    // Shape tab on a lead: two voices, shorter notes, a little late, eighth repeats.
+                    c.composer_type(2);
+                    c.composer_tab(true);
+                    c.composer_shape(1, 4, 1.0);
+                    c.composer_shape(3, 0, 0.3);
+                    c.composer_shape(3, 2, 0.0);
+                    c.composer_shape(6, 0, 0.6);
+                    c.composer_shape(6, 2, 0.0);
+                    c.composer_shape(7, 3, 1.0);
+                    c.composer_shape(7, 3, 1.0);
+                }
+                if state == 4 {
+                    c.clip_menu_open(5);
+                }
             }
         }
     }
@@ -1474,6 +1489,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_composer_create, |c| c.composer_create());
     on!(on_composer_load, |c, i: i32| c.composer_load(i.max(0) as usize));
     on!(on_composer_original_pick, |c| c.composer_original());
+    on!(on_composer_tab, |c, shape: bool| c.composer_tab(shape));
+    on!(on_composer_shape, |c, row: i32, op: i32, value: f32| c.composer_shape(row, op, value));
     on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
     on!(on_menu_dismiss, |c| c.menu_close());

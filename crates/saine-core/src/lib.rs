@@ -21,6 +21,7 @@ pub mod midi;
 pub mod model;
 pub mod modulation;
 pub mod persist;
+pub mod shape;
 pub mod snapshot;
 pub mod steps;
 pub mod warp;

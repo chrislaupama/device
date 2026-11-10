@@ -4,7 +4,7 @@
 
 use crate::controller::{BottomTab, ClipboardItem, Controller, MenuAction, sync_model, track_color};
 use crate::pianoroll::{self, GRID_Y, ROW_H};
-use crate::{MenuItem, PatternRow, PreviewNote, RulerLabel, SeqCell, SeqNum, SeqRow, Studio, YLabel};
+use crate::{MenuItem, PatternRow, PreviewNote, RulerLabel, SeqCell, ShapeRow, SeqNum, SeqRow, Studio, YLabel};
 use saine_core::midi::{self, MidiClip};
 use saine_core::steps::StepPattern;
 use saine_core::{ClipId, Command, PPQ, Ticks, TrackKind};
@@ -530,6 +530,27 @@ impl Controller {
         s.set_composer_genre_text(CLIP_MENUS[5].get(v.genre as usize).copied().unwrap_or("Any").into());
         s.set_composer_original(v.original);
         s.set_composer_create_text(v.create_label.into());
+        s.set_composer_shape_ok(v.shape_ok);
+        s.set_composer_shape_tab(v.shape_tab);
+        if *self.composer_shape_shown.borrow() != v.shape_rows {
+            *self.composer_shape_shown.borrow_mut() = v.shape_rows.clone();
+            let rows: Vec<ShapeRow> = v
+                .shape_rows
+                .into_iter()
+                .map(|r| ShapeRow {
+                    label: r.label.into(),
+                    value: r.value.into(),
+                    kind: r.kind as i32,
+                    norm: r.norm,
+                    bipolar: r.bipolar,
+                    segs: r.segs,
+                    seg: r.seg,
+                    enabled: r.enabled,
+                    tip: r.tip.into(),
+                })
+                .collect();
+            self.composer_shape_model.set_vec(rows);
+        }
         if *self.composer_rows_shown.borrow() == v.rows {
             return;
         }
