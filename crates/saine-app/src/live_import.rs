@@ -3,7 +3,7 @@
 //! turns it into a Saine project. Arrangement clips come in; looped clips repeat their loop
 //! the way Live plays them. What Saine can't hold yet is counted in [Report].
 use crate::live_set::{child, number, path, value};
-use saine_core::{Asset, AssetId, Clip, ClipId, ClipWarp, MidiClip, Note, Project, Track, TrackId, TrackKind, WarpMarker, WarpMode, PPQ};
+use saine_core::{Asset, AssetId, Clip, ClipId, ClipWarp, Device, DeviceId, MidiClip, Note, PluginFormat, PluginKind, PluginRef, Project, Track, TrackId, TrackKind, WarpMarker, WarpMode, PPQ};
 use std::path::{Path, PathBuf};
 
 pub struct ParsedSet {
@@ -30,6 +30,14 @@ pub struct ParsedTrack {
     pub midi_clips: Vec<ParsedMidiClip>,
     /// The track's instrument when it is a Drum Rack.
     pub drums: Option<ParsedDrums>,
+    /// VST3 and Audio Unit plugins in the track's chain, in order.
+    pub plugins: Vec<ParsedPlugin>,
+}
+
+/// A plugin in a Live chain, named as Saine's scanner names it.
+pub struct ParsedPlugin {
+    pub plugin: PluginRef,
+    pub on: bool,
 }
 
 /// A Drum Rack: its pads that play a Simpler sample, and what can't come in.
@@ -113,6 +121,36 @@ fn elements<'a, 'i>(n: roxmltree::Node<'a, 'i>) -> impl Iterator<Item = roxmltre
 fn sample_ref(file: roxmltree::Node) -> SampleRef {
     let relative = value(file, "RelativePath").ok().filter(|r| !r.is_empty() && value(file, "RelativePathType").is_ok_and(|t| t != "0")).map(str::to_string);
     SampleRef { relative, absolute: value(file, "Path").unwrap_or("").to_string() }
+}
+
+/// A VST3 or Audio Unit plugin device. VST3: the class id's four 32-bit words (Uid/Fields.N)
+/// as 32 hex digits; DeviceType 1 is an instrument. Audio Unit: the component's type, subtype
+/// and manufacturer codes as four characters each; type aumu is an instrument.
+fn plugin(d: roxmltree::Node) -> Option<ParsedPlugin> {
+    if !d.has_tag_name("PluginDevice") && !d.has_tag_name("AuPluginDevice") {
+        return None;
+    }
+    let info = path(d, "PluginDesc").and_then(|p| elements(p).next())?;
+    let name = value(info, "Name").unwrap_or("").trim().to_string();
+    let (format, id, vendor, instrument) = match info.tag_name().name() {
+        "Vst3PluginInfo" => {
+            let words: Vec<u32> = path(info, "Uid").into_iter().flat_map(elements).filter_map(|f| f.attribute("Value")?.parse::<i64>().ok()).map(|w| w as u32).collect();
+            if words.len() != 4 {
+                return None;
+            }
+            (PluginFormat::Vst3, words.iter().map(|w| format!("{w:08X}")).collect::<String>(), String::new(), num(info, "DeviceType") == Some(1.0))
+        }
+        "AuPluginInfo" => {
+            let code = |p: &str| num(info, p).map(|v| (v as i64 as u32).to_be_bytes().iter().map(|&b| b as char).collect::<String>());
+            let (kind, sub, maker) = (code("ComponentType")?, code("ComponentSubType")?, code("ComponentManufacturer")?);
+            let instrument = kind == "aumu";
+            (PluginFormat::AudioUnit, format!("{kind} {sub} {maker}"), value(info, "Manufacturer").unwrap_or("").trim().to_string(), instrument)
+        }
+        _ => return None,
+    };
+    let kind = if instrument { PluginKind::Instrument } else { PluginKind::Effect };
+    let name = if name.is_empty() { "Plugin".into() } else { name };
+    Some(ParsedPlugin { plugin: PluginRef { format, id, path: None, name, vendor, version: String::new(), kind }, on: value(d, "On/Manual").map_or(true, |v| v == "true") })
 }
 
 /// A finite number, so a corrupt value (NaN, inf) falls back to its default.
@@ -240,7 +278,8 @@ pub fn parse(xml: &str) -> Result<ParsedSet, String> {
             .map_or(0, |l| l.descendants().filter(|n| n.has_tag_name("AudioClip") || n.has_tag_name("MidiClip")).count());
         let devices: Vec<_> = path(t, "DeviceChain/DeviceChain/Devices").into_iter().flat_map(elements).collect();
         let rack = devices.iter().find(|d| midi && d.has_tag_name("DrumGroupDevice"));
-        out.devices += devices.len() - rack.is_some() as usize;
+        let plugins: Vec<ParsedPlugin> = devices.iter().filter_map(|d| plugin(*d)).collect();
+        out.devices += devices.len() - rack.is_some() as usize - plugins.len();
         let name = value(t, "Name/EffectiveName").or_else(|_| value(t, "Name/UserName")).unwrap_or("").trim().to_string();
         let mut track = ParsedTrack {
             name: if name.is_empty() { if midi { "MIDI" } else { "Audio" }.into() } else { name },
@@ -251,6 +290,7 @@ pub fn parse(xml: &str) -> Result<ParsedSet, String> {
             audio: Vec::new(),
             midi_clips: Vec::new(),
             drums: rack.map(|r| drums(*r)),
+            plugins,
         };
         let events = if midi { "DeviceChain/MainSequencer/ClipTimeable/ArrangerAutomation/Events" } else { "DeviceChain/MainSequencer/Sample/ArrangerAutomation/Events" };
         for c in path(t, events).into_iter().flat_map(elements) {
@@ -348,6 +388,10 @@ pub struct Report {
     pub drum_pads: usize,
     /// Drum Rack pads in a choke group (they come in without it).
     pub choked_pads: usize,
+    /// Plugins brought in (with their default settings: Live's plugin state isn't read).
+    pub plugins: usize,
+    /// Of those, the ones not installed here (placeholders).
+    pub missing_plugins: Vec<String>,
 }
 
 impl Report {
@@ -374,6 +418,12 @@ impl Report {
         }
         if self.choked_pads > 0 {
             left.push(format!("choke groups on {}", plural(self.choked_pads, "pad")));
+        }
+        if !self.missing_plugins.is_empty() {
+            left.push(format!("{} not installed", plural(self.missing_plugins.len(), "plugin")));
+        }
+        if self.plugins > 0 {
+            left.push(format!("the settings of {}", plural(self.plugins, "plugin")));
         }
         let head = format!("Imported {name}: {}, {}", plural(self.tracks, "track"), plural(self.clips, "clip"));
         if left.is_empty() { head } else { format!("{head}. Left out: {}", left.join(", ")) }
@@ -455,7 +505,9 @@ fn drum_rack(p: &mut Project, assets: &mut Vec<(SampleRef, Found)>, files: &mut 
     dev
 }
 
-pub fn build(set: &ParsedSet, name: &str, sample: &dyn Fn(&SampleRef) -> Option<Sample>) -> (Project, Vec<(AssetId, PathBuf)>, Report) {
+/// `installed` gives the scanned plugin for a Live one; a plugin that isn't installed comes in
+/// as a placeholder device that the engine can't load (its card says so).
+pub fn build(set: &ParsedSet, name: &str, sample: &dyn Fn(&SampleRef) -> Option<Sample>, installed: &dyn Fn(&PluginRef) -> Option<PluginRef>) -> (Project, Vec<(AssetId, PathBuf)>, Report) {
     let mut p = Project::empty(name);
     p.transport.bpm = set.bpm.clamp(20.0, 999.0);
     p.transport.time_signature.numerator = set.numerator.max(1);
@@ -534,6 +586,25 @@ pub fn build(set: &ParsedSet, name: &str, sample: &dyn Fn(&SampleRef) -> Option<
         }
         if let Some(d) = &t.drums {
             track.instrument_plugin = Some(drum_rack(&mut p, &mut assets, &mut files, &mut report, sample, d));
+        }
+        for pl in &t.plugins {
+            let instrument = pl.plugin.kind == PluginKind::Instrument;
+            if instrument && (!t.midi || track.instrument_plugin.is_some()) {
+                report.devices += 1;
+                continue;
+            }
+            let mut dev = Device::new(installed(&pl.plugin).unwrap_or_else(|| {
+                report.missing_plugins.push(pl.plugin.name.clone());
+                pl.plugin.clone()
+            }));
+            dev.id = DeviceId(p.alloc_id());
+            dev.enabled = pl.on;
+            report.plugins += 1;
+            if instrument {
+                track.instrument_plugin = Some(dev);
+            } else {
+                track.devices.push(dev);
+            }
         }
         track.clips.sort_by_key(|c| c.start);
         track.midi_clips.sort_by_key(|c| c.start);
@@ -656,7 +727,7 @@ impl crate::controller::Controller {
                 channels: info.channels,
                 frames: (info.frames as f64 * info.source_sample_rate / rate).round().max(1.0) as u64,
             })
-        });
+        }, &|r| self.devices.catalog.find(r).map(|i| i.plugin.clone()));
         self.dialogs_close();
         self.stop_return();
         for (_, ea) in self.asset_map.drain().chain(self.reversed_assets.drain()) {
@@ -735,7 +806,7 @@ mod tests {
     }
 
     fn import(xml: &str) -> (Project, Report) {
-        let (p, files, report) = build(&parse(xml).unwrap(), "Set", &sample);
+        let (p, files, report) = build(&parse(xml).unwrap(), "Set", &sample, &|_| None);
         assert_eq!(files.len(), p.assets.len());
         (p, report)
     }
@@ -803,7 +874,7 @@ mod tests {
             clips.push(other);
         }
         let any = |_: &SampleRef| Some(Sample { path: "/s/break.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 192_000 });
-        let (p, files, _) = build(&parse(&to_xml(&s)).unwrap(), "Set", &any);
+        let (p, files, _) = build(&parse(&to_xml(&s)).unwrap(), "Set", &any, &|_| None);
         let clips = &p.tracks[0].clips;
         assert_eq!((p.assets.len(), files.len(), clips.len()), (1, 1, 2));
         assert_eq!(clips[0].asset, clips[1].asset);
@@ -846,6 +917,35 @@ mod tests {
         let doc = roxmltree::Document::parse(&rack).unwrap();
         let d = drums(doc.root_element());
         assert_eq!((d.pads[0].start, d.pads[0].end), (0.0, 0.5));
+    }
+
+    /// `xml` with `devices` in the first track of `tag`.
+    fn with_devices(xml: &str, tag: &str, devices: &str) -> String {
+        let at = xml.find(tag).unwrap();
+        let at = at + xml[at..].find("<Devices />").unwrap();
+        format!("{}<Devices>{devices}</Devices>{}", &xml[..at], &xml[at + "<Devices />".len()..])
+    }
+
+    fn vst3(words: [i64; 4], name: &str, device_type: u8, on: bool) -> String {
+        let fields: String = words.iter().enumerate().map(|(i, w)| format!(r#"<Fields.{i} Value="{w}" />"#)).collect();
+        format!(r#"<PluginDevice Id="0"><On><Manual Value="{on}" /></On><PluginDesc><Vst3PluginInfo Id="0"><Name Value="{name}" /><Uid>{fields}</Uid><DeviceType Value="{device_type}" /></Vst3PluginInfo></PluginDesc></PluginDevice>"#)
+    }
+
+    #[test]
+    fn plugins_come_in_as_devices_or_placeholders() {
+        let au = r#"<AuPluginDevice Id="0"><On><Manual Value="true" /></On><PluginDesc><AuPluginInfo Id="0"><Name Value="Echo" /><Manufacturer Value="Us" /><ComponentType Value="1635083896" /><ComponentSubType Value="1684368505" /><ComponentManufacturer Value="1970496032" /></AuPluginInfo></PluginDesc></AuPluginDevice>"#;
+        let xml = to_xml(&set());
+        let xml = with_devices(&xml, "<AudioTrack", &format!(r#"{au}{}<Eq8 Id="0" />{}"#, vst3([1, 2, 3, -1], "Squash", 2, false), vst3([5, 6, 7, 8], "Synth", 1, true)));
+        let xml = with_devices(&xml, "<MidiTrack", &vst3([0x5653_5400, 0, 0, 1], "Keys Synth", 1, true));
+        let installed = |r: &PluginRef| (r.id == "aufx dely usb ").then(|| PluginRef { path: Some("/Library/Echo.component".into()), name: "Echo Installed".into(), ..r.clone() });
+        let (p, _, report) = build(&parse(&xml).unwrap(), "Set", &sample, &installed);
+        let fx: Vec<(PluginFormat, &str, &str, bool)> = p.tracks[0].devices.iter().map(|d| (d.plugin.format, d.plugin.id.as_str(), d.plugin.name.as_str(), d.enabled)).collect();
+        assert_eq!(fx, [(PluginFormat::AudioUnit, "aufx dely usb ", "Echo Installed", true), (PluginFormat::Vst3, "000000010000000200000003FFFFFFFF", "Squash", false)]);
+        assert!(p.tracks[0].instrument_plugin.is_none(), "an instrument on an audio track is left out");
+        let keys = p.tracks[1].instrument_plugin.as_ref().expect("the MIDI track's instrument");
+        assert_eq!((keys.plugin.kind, keys.plugin.id.as_str(), keys.plugin.path.as_deref()), (PluginKind::Instrument, "56535400000000000000000000000001", None));
+        assert_eq!((report.plugins, report.missing_plugins.clone(), report.devices), (3, vec!["Squash".to_string(), "Keys Synth".to_string()], 2));
+        assert!(report.summary("Set").ends_with("2 devices, 2 plugins not installed, the settings of 3 plugins"), "{}", report.summary("Set"));
     }
 
     #[test]
