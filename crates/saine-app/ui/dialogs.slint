@@ -49,8 +49,10 @@ component RowLabel inherits Text {
     height: 20.4px; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center;
 }
 
-// Export (File › Export…, ⇧⌘E). Mixdown and Stems render to WAV; Project, MP3 and the other
-// sample rate are PLACEHOLDERS (status line), the range is always the full project. Stems adds
+// Export (File › Export…, ⇧⌘E). Mixdown and Stems render to WAV, Project writes an Ableton
+// Live set (Open in + Effects rows in place of Range + Format; Effects is always Render, Convert
+// is a PLACEHOLDER). MP3 and the other sample rate are PLACEHOLDERS (status line), the range is
+// always the full project. Stems adds
 // the Tracks row above Range (one form row, 30.6px, like the reference app's 24 pt rows 12 pt apart); the
 // window keeps its height, as in the reference app (z100-modal-export-audio-stems-selected).
 export component ExportModal inherits Rectangle {
@@ -81,7 +83,7 @@ export component ExportModal inherits Rectangle {
         accessible-role: tab; accessible-label: r.name; accessible-checked: i == Studio.export-recipe;
         Text { x: 10.2px; y: 7.9px; height: 13.6px; text: r.name; color: i == Studio.export-recipe ? #ffffff : DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
         Text { x: 10.2px; y: 23.4px; height: 11.9px; text: r.value; color: i == Studio.export-recipe ? #ffffffb8 : #d0d0d1b8; font-size: 9.35px; font-weight: 500; letter-spacing: -0.19px; vertical-alignment: center; }
-        rta := TouchArea { clicked => { if (i == 2) { Studio.chat-placeholder("Export " + r.name); } else { Studio.export-pick-recipe(i); } } }
+        rta := TouchArea { clicked => { Studio.export-pick-recipe(i); } }
     }
     // ---- form ----
     if Studio.export-recipe == 1: RowLabel { x: 17px; y: 105.4px; text: "Tracks"; }
@@ -93,17 +95,28 @@ export component ExportModal inherits Rectangle {
         Icon { x: parent.width - 18.7px; y: 6.2px; width: 8px; height: 8px; d: Icons.chevron-down; ink: DialogTokens.label; stroke-width: 1.4px; }
         tracks-ta := TouchArea { clicked => { Studio.export-toggle-tracks(); } }
     }
-    RowLabel { x: 17px; y: 105.4px + root.dy; text: "Range"; }
-    Rectangle {
+    if Studio.export-recipe == 2: RowLabel { x: 17px; y: 105.4px; text: "Open in"; }
+    if Studio.export-recipe == 2: Text { x: 71.4px; y: 105.4px; height: 20.4px; text: "Ableton Live"; color: #e5e5e8; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+    if Studio.export-recipe == 2: RowLabel { x: 17px; y: 136px; text: "Effects"; }
+    if Studio.export-recipe == 2: Rectangle {
+        x: 71.4px; y: 136px; width: fx-text.preferred-width + 11.9px + 22.1px; height: 20.4px; border-radius: 10.2px;
+        background: fx-ta.has-hover ? #2e2f34 : DialogTokens.pill;
+        accessible-role: combobox; accessible-label: "Saine effects"; accessible-value: "Render";
+        fx-text := Text { x: 11.9px; text: "Render"; color: DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+        Icon { x: parent.width - 18.7px; y: 6.2px; width: 8px; height: 8px; d: Icons.chevron-down; ink: DialogTokens.label; stroke-width: 1.4px; }
+        fx-ta := TouchArea { clicked => { Studio.chat-placeholder("Convert effects to Live devices"); } }
+    }
+    if Studio.export-recipe != 2: RowLabel { x: 17px; y: 105.4px + root.dy; text: "Range"; }
+    if Studio.export-recipe != 2: Rectangle {
         x: 71.4px; y: 105.4px + root.dy; width: 81.6px; height: 20.4px; border-radius: 10.2px; background: DialogTokens.pill;
         Text { x: 11.9px; text: "Full project"; color: DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
         Icon { x: parent.width - 18.7px; y: 6.2px; width: 8px; height: 8px; d: Icons.chevron-down; ink: DialogTokens.label; stroke-width: 1.4px; }
     }
-    Text { x: 71.4px + 81.6px + 8.5px; y: 105.4px + root.dy; height: 20.4px; text: Studio.export-bars-text; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
-    RowLabel { x: 17px; y: 136px + root.dy; text: "Format"; }
-    Segments { x: 71.4px; y: 136.85px + root.dy; width: 85.9px; a: "WAV"; b: "MP3"; a-w: 40px; index: 0; picked(i) => { if (i == 1) { Studio.chat-placeholder("MP3 export"); } } }
-    Segments { x: 71.4px + 91.8px; y: 136.85px + root.dy; width: 97.3px; a: "16-bit"; b: "24-bit"; a-w: 48.4px; index: Studio.export-bits24 ? 1 : 0; picked(i) => { Studio.export-bits(i == 1); } }
-    Segments {
+    if Studio.export-recipe != 2: Text { x: 71.4px + 81.6px + 8.5px; y: 105.4px + root.dy; height: 20.4px; text: Studio.export-bars-text; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+    if Studio.export-recipe != 2: RowLabel { x: 17px; y: 136px + root.dy; text: "Format"; }
+    if Studio.export-recipe != 2: Segments { x: 71.4px; y: 136.85px + root.dy; width: 85.9px; a: "WAV"; b: "MP3"; a-w: 40px; index: 0; picked(i) => { if (i == 1) { Studio.chat-placeholder("MP3 export"); } } }
+    if Studio.export-recipe != 2: Segments { x: 71.4px + 91.8px; y: 136.85px + root.dy; width: 97.3px; a: "16-bit"; b: "24-bit"; a-w: 48.4px; index: Studio.export-bits24 ? 1 : 0; picked(i) => { Studio.export-bits(i == 1); } }
+    if Studio.export-recipe != 2: Segments {
         x: 71.4px + 197.7px; y: 136.85px + root.dy; width: 117.3px; a: "44.1 kHz"; b: "48 kHz"; a-w: 56.3px; index: Studio.export-rate48 ? 1 : 0;
         picked(i) => { if ((i == 1) != Studio.export-rate48) { Studio.chat-placeholder("Export at another sample rate"); } }
     }
@@ -127,8 +140,8 @@ export component ExportModal inherits Rectangle {
     PillButton { x: root.width - 17px - 65.1px; y: 214.8px + root.dy; width: 65.1px; height: 20.4px; text: "Choose..."; clicked => { Studio.export-choose-dir(); } }
     // ---- footer ----
     Rectangle { x: 0; y: root.height - 57.8px; width: root.width; height: 0.45px; background: DialogTokens.rule; }
-    size-label := Text { x: 17px; y: root.height - 57.8px + 13.6px + 4.25px; height: 13.6px; text: Studio.export-recipe == 1 ? Studio.export-files-text : "Size"; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
-    Text { x: 17px + max(25.5px, size-label.preferred-width + 6.8px); y: root.height - 57.8px + 13.6px + 4.25px; height: 13.6px; text: Studio.export-estimate; color: #e5e5e8; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+    size-label := Text { visible: Studio.export-recipe != 2; x: 17px; y: root.height - 57.8px + 13.6px + 4.25px; height: 13.6px; text: Studio.export-recipe == 1 ? Studio.export-files-text : "Size"; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+    Text { visible: Studio.export-recipe != 2; x: 17px + max(25.5px, size-label.preferred-width + 6.8px); y: root.height - 57.8px + 13.6px + 4.25px; height: 13.6px; text: Studio.export-estimate; color: #e5e5e8; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
     PillButton { x: root.width - 17px - 52.2px - 6.8px - 46.75px; y: root.height - 57.8px + 16.15px; width: 46.75px; height: 22.1px; text: "Close"; clicked => { Studio.export-close(); } }
     PillButton { x: root.width - 17px - 52.2px; y: root.height - 57.8px + 16.15px; width: 52.2px; height: 22.1px; text: "Export"; primary: true; clicked => { Studio.export-run(); } }
     // Tracks menu (click outside closes it), below the picker.

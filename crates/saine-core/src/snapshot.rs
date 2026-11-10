@@ -193,13 +193,7 @@ pub fn build_full(
                 let mut v: Vec<NoteSnapshot> = t
                     .midi_clips
                     .iter()
-                    .flat_map(|c| {
-                        c.notes.iter().filter(|n| n.start < c.length).map(move |n| {
-                            let s = c.start + n.start;
-                            let e = c.start + (n.start + n.length).min(c.length);
-                            (s, e, n.pitch, n.velocity)
-                        })
-                    })
+                    .flat_map(|c| c.playing_notes().into_iter().map(move |n| (c.start + n.start, c.start + n.start + n.length, n.pitch, n.velocity)))
                     .map(|(s, e, pitch, velocity)| NoteSnapshot {
                         start: project.ticks_to_frames(s, engine_rate),
                         end: project.ticks_to_frames(e, engine_rate),

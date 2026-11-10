@@ -91,6 +91,13 @@ pub fn load(dir: &Path) -> Result<Loaded, PersistError> {
     let mut project: Project = serde_json::from_value(value)?;
     // Instrument tracks saved with the classic synth get the Synth device.
     crate::builtin::synth_v2::upgrade_project(&mut project);
+    // A step pattern the editor can't hold (hand-edited or damaged file) is dropped: the
+    // notes are the clip's content, so the clip loads as plain MIDI with nothing lost.
+    for c in project.tracks.iter_mut().flat_map(|t| &mut t.midi_clips) {
+        if c.pattern.as_ref().is_some_and(|p| p.validate().is_err()) {
+            c.pattern = None;
+        }
+    }
     // Resolve media: prefer the project-relative path (project was moved
     // together with its media), fall back to the absolute path.
     let abs_dir = absolute(dir);

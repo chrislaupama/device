@@ -5,6 +5,7 @@
 //! validated, invertible undo step.
 
 use crate::model::{ClipId, Ticks, PPQ};
+use crate::steps::{StepPattern, StepRows};
 use serde::{Deserialize, Serialize};
 
 /// A note inside a MIDI clip. `start` is relative to the clip start.
@@ -29,12 +30,41 @@ pub struct MidiClip {
     /// Clip duration (ticks). Notes beyond it are kept but not played.
     pub length: Ticks,
     pub notes: Vec<Note>,
+    /// Set on a pattern clip: the step grid its notes are baked from (the
+    /// clip repeats it). See `crate::steps`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<StepPattern>,
 }
 
 impl MidiClip {
     /// Reference default: "Insert empty MIDI clip" creates a 1-bar clip named "MIDI".
     pub fn empty(start: Ticks, length: Ticks) -> Self {
-        MidiClip { id: ClipId(0), name: "MIDI".into(), start, length, notes: Vec::new() }
+        MidiClip { id: ClipId(0), name: "MIDI".into(), start, length, notes: Vec::new(), pattern: None }
+    }
+
+    /// Reference default for a Drum Rack track: an empty one-bar "Pattern"
+    /// clip of 16 steps at 1/16.
+    pub fn empty_pattern(start: Ticks, rows: StepRows) -> Self {
+        let pattern = StepPattern::new(rows);
+        MidiClip { id: ClipId(0), name: "Pattern".into(), start, length: pattern.length(), notes: Vec::new(), pattern: Some(pattern) }
+    }
+
+    /// Notes as they play inside the clip (a pattern repeats without its
+    /// muted rows; notes are cut at the clip end).
+    pub fn playing_notes(&self) -> Vec<Note> {
+        let mut notes = self.tiled_notes();
+        if let Some(p) = &self.pattern {
+            notes.retain(|n| p.audible(n.pitch));
+        }
+        notes
+    }
+
+    /// Notes over the whole clip: a pattern repeated (every row), cut at the clip end.
+    pub fn tiled_notes(&self) -> Vec<Note> {
+        match &self.pattern {
+            Some(p) => crate::steps::tile(&self.notes, p.length(), self.length),
+            None => self.notes.iter().filter(|n| n.start < self.length).map(|n| Note { length: n.length.min(self.length - n.start), ..*n }).collect(),
+        }
     }
 
     pub fn end(&self) -> Ticks {
