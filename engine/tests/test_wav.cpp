@@ -279,3 +279,96 @@ TEST_CASE(export_wav_matches_offline_render) {
 
     CHECK_EQ(se_export_wav(e, f.path.c_str(), 10, 10), SE_ERR_INVALID_ARG);
 }
+
+namespace {
+
+// The RIFF file from make_wav rewritten as RF64/BW64: a ds64 chunk with the real sizes, and
+// 0xFFFFFFFF in the RIFF size, the data size and (with wide_list) the LIST chunk's size.
+std::vector<uint8_t> to_wide(const std::vector<uint8_t>& riff, const char* kind, bool wide_list) {
+    std::vector<uint8_t> rest(riff.begin() + 12, riff.end());
+    uint64_t data_size = 0;
+    uint32_t list_size = 0;
+    for (std::size_t pos = 0; pos + 8 <= rest.size();) {
+        uint32_t sz = 0;
+        std::memcpy(&sz, &rest[pos + 4], 4);
+        if (std::memcmp(&rest[pos], "data", 4) == 0) {
+            data_size = sz;
+            std::memset(&rest[pos + 4], 0xFF, 4);
+        } else if (wide_list && std::memcmp(&rest[pos], "LIST", 4) == 0) {
+            list_size = sz;
+            std::memset(&rest[pos + 4], 0xFF, 4);
+        }
+        pos += 8 + sz + (sz & 1u);
+    }
+    std::vector<uint8_t> out;
+    put_tag(out, kind);
+    put32(out, 0xFFFFFFFFu);
+    put_tag(out, "WAVE");
+    put_tag(out, "ds64");
+    put32(out, wide_list ? 40u : 28u);
+    const uint64_t riff_size = riff.size() - 8 + (wide_list ? 48 : 36);
+    for (uint64_t v : {riff_size, data_size, uint64_t{0}}) {
+        put32(out, static_cast<uint32_t>(v));
+        put32(out, static_cast<uint32_t>(v >> 32));
+    }
+    put32(out, wide_list ? 1u : 0u);
+    if (wide_list) {
+        put_tag(out, "LIST");
+        put32(out, list_size);
+        put32(out, 0);
+    }
+    out.insert(out.end(), rest.begin(), rest.end());
+    return out;
+}
+
+} // namespace
+
+TEST_CASE(wav_decode_rf64_and_bw64_match_riff) {
+    std::vector<uint8_t> data;
+    const int16_t samples[] = {0, -32768, 32767, 16384, -1, 1, 1234, -4321};
+    for (int16_t s : samples) put16(data, static_cast<uint16_t>(s));
+    WavSpec spec;
+    spec.channels = 2;
+    spec.bits = 16;
+    spec.junk_chunk_first = true;
+    const std::vector<uint8_t> riff = make_wav(spec, data);
+    saine::DecodedAudio want;
+    REQUIRE(decode(riff, want) == SE_OK);
+    for (const char* kind : {"RF64", "BW64"}) {
+        for (bool wide_list : {false, true}) {
+            saine::DecodedAudio d;
+            std::string err;
+            REQUIRE(saine::decode_audio_memory(to_wide(riff, kind, wide_list).data(), to_wide(riff, kind, wide_list).size(), d, err) == SE_OK);
+            CHECK_EQ(d.frames, 4u);
+            CHECK_EQ(d.channels, 2u);
+            CHECK(d.planar[0] == want.planar[0] && d.planar[1] == want.planar[1]);
+        }
+    }
+}
+
+TEST_CASE(wav_decode_rf64_with_32_bit_data_size) {
+    std::vector<uint8_t> data;
+    for (int16_t s : {int16_t{100}, int16_t{-100}, int16_t{200}}) put16(data, static_cast<uint16_t>(s));
+    WavSpec spec;
+    std::vector<uint8_t> bytes = to_wide(make_wav(spec, data), "RF64", false);
+    for (std::size_t p = 12; p + 8 <= bytes.size(); ++p) {
+        if (std::memcmp(&bytes[p], "data", 4) == 0) {
+            bytes[p + 4] = 6;
+            bytes[p + 5] = bytes[p + 6] = bytes[p + 7] = 0;
+            break;
+        }
+    }
+    saine::DecodedAudio d;
+    REQUIRE(decode(bytes, d) == SE_OK);
+    CHECK_EQ(d.frames, 3u);
+    CHECK(d.planar[0][2] == 200.0f / 32768.0f);
+}
+
+TEST_CASE(wav_decode_rf64_without_ds64_is_rejected) {
+    std::vector<uint8_t> bytes = make_wav(WavSpec{}, {0, 0, 1, 0});
+    std::memcpy(bytes.data(), "RF64", 4);
+    saine::DecodedAudio d;
+    std::string err;
+    CHECK_EQ(saine::decode_wav_memory(bytes.data(), bytes.size(), d, err), SE_ERR_UNSUPPORTED_FORMAT);
+    CHECK(err.find("ds64") != std::string::npos);
+}
