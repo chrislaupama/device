@@ -168,9 +168,9 @@ fn free_folder(dir: &Path, name: &str) -> Result<PathBuf, String> {
 
 /// Saine lets MIDI clips overlap on a track and a Live track can't, so overlapping clips are
 /// spread over lanes (one Live track each): in start order, each clip takes the first lane that
-/// is free at its start.
+/// is free at its start. Disabled clips are left out.
 pub fn midi_lanes(clips: &[saine_core::MidiClip]) -> Vec<Vec<&saine_core::MidiClip>> {
-    let mut sorted: Vec<&saine_core::MidiClip> = clips.iter().collect();
+    let mut sorted: Vec<&saine_core::MidiClip> = clips.iter().filter(|c| !c.disabled).collect();
     sorted.sort_by_key(|c| c.start);
     let mut lanes: Vec<Vec<&saine_core::MidiClip>> = Vec::new();
     for c in sorted {
@@ -649,6 +649,8 @@ mod tests {
         let starts: Vec<Vec<i64>> = lanes.iter().map(|l| l.iter().map(|c| c.start / bar).collect()).collect();
         assert_eq!(starts, vec![vec![0, 2], vec![1], vec![1]]);
         assert!(lanes.iter().all(|l| l.windows(2).all(|w| w[0].end() <= w[1].start)));
+        let off = [MidiClip::empty(0, bar), MidiClip { disabled: true, ..MidiClip::empty(0, bar) }];
+        assert_eq!(midi_lanes(&off).iter().map(Vec::len).collect::<Vec<_>>(), vec![1]);
     }
 
     #[test]

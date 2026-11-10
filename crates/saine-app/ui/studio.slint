@@ -92,7 +92,7 @@ export struct ChainFrame { x: length, w: length, armed: bool, color: color, empt
 // choice menu), 3 value box, 4 flexible gap, 5 latch (On/Off parameter; label shows the state,
 // selected 0 / 1), 6 action button, 7 view switch / tabs (choices = view names, selected = shown view; UI state). dim: a menu pill shown at 60% until hovered
 // (values that follow the project, e.g. the Pitch Corrector's key while Follow is Project).
-export struct PanelPick { kind: int, param: int, label: string, choices: [string], selected: int, value: string, enabled: bool, width: length, dim: bool }
+export struct PanelPick { kind: int, param: int, label: string, label-w: length, choices: [string], selected: int, value: string, enabled: bool, width: length, dim: bool }
 // Vertical slider column (x = column left, card relative).
 // zero: normalised position the fill starts from (0 = bottom; 0 dB on a range through zero).
 export struct PanelSlider { param: int, x: length, label: string, value: string, norm: float, zero: float }
@@ -233,7 +233,6 @@ export struct DeviceCard {
     preset: string,
     knobs: [PanelKnob],
     picks: [PanelPick],
-    tight-picks: bool,     // no gap around the flexible gap in the picks row (analyzer cards)
     sliders: [PanelSlider],
     slider-top: length,
     strip: PanelStrip,
@@ -308,7 +307,7 @@ export struct SynthDisplay { line: string, fill: string, ghost: string, dots: st
 export struct SynthLabel { slot: int, x: length, y: length, text: string, align: int, accent: bool }
 // Page elements (card coordinates; knobs, latches: centre of the dial; faders: centre x, groove top).
 export struct SynthArc { d: string, c: color }
-export struct SynthKnobItem { idx: int, x: length, y: length, label: string, accent: color, dim: bool, lit: bool, arcs: [SynthArc], dots: [color] }
+export struct SynthKnobItem { idx: int, x: length, y: length, label: string, accent: color, dim: bool, lit: bool, arcs: [SynthArc], dots: [color], band-on: bool, band-lo: float, band-hi: float, dot-on: bool, dot: float }
 export struct SynthFaderItem { idx: int, x: length, y: length, label: string }
 export struct SynthPillItem { x: length, y: length, w: length, label: string, value: string, action: int, arg: int, ring: int, ring-idx: int, outline: bool, chevron: bool }
 export struct SynthTextItem { x: length, y: length, w: length, text: string, style: int, align: int }
@@ -392,6 +391,8 @@ export global Studio {
     in property <length> files-list-y: 81px;   // rule above the rows (96 with the count row)
     in property <string> files-meta;           // "2 folders"; empty hides the count row
     in property <string> files-sort: "Recent";
+    in property <int> files-sort-index;        // 0 Recent, 1 Name
+    in property <bool> files-sort-open;        // the sort menu is open
     in property <string> files-empty-title;
     in property <string> files-empty-hint;
     callback browser-section-select(int);
@@ -399,7 +400,8 @@ export global Studio {
     callback browser-forward();
     callback files-tab-select(int);
     callback files-add-folder();
-    callback files-sort-toggle();
+    callback files-sort-open-menu(bool);       // open / close the sort menu
+    callback files-sort-pick(int);             // 0 Recent, 1 Name
     callback files-click(int, bool);           // row, on the chevron
     callback files-activate(int);              // double-click
     callback files-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
@@ -456,6 +458,11 @@ export global Studio {
     // ---- panels (owned by the controller) ----
     in property <bool> mixer-open;
     in property <bool> assistant-open;
+    // Saved docked-assistant width (or the live drag); AppWindow narrows it to the room the
+    // timeline header leaves (src/splitters.rs mirrors the rule).
+    in property <length> assistant-pref-w: 252.45px;
+    callback chat-resize(int, length);                       // phase 0/1/2, window x
+    callback chat-resize-reset();
     callback toggle-mixer();
     callback toggle-assistant();
     // ---- mixer ----
@@ -528,7 +535,7 @@ export global Studio {
     in property <string> clip-name: "MIDI";
     in property <color> clip-color: Tokens.track-instrument;
     in property <color> clip-ink: #1d2142;   // text and icons on clip-colour fills
-    callback pr-pointer(int, length, length, bool, bool);   // kind 0 down 1 move 2 up, x, y, shift, alt
+    callback pr-pointer(int, length, length, bool, bool, bool);   // kind 0 down 1 move 2 up, x, y, shift, alt, command (Cmd or Ctrl)
     callback pr-scroll(float);
     callback pr-action(string);                             // quantize|humanize|reverse|legato|double|pen|smart_quantize|velocity_lane
     // Clip editor dropdowns: 0 Speed, 1 Warp, 2 Mode, 3 Grid, 4 Type, 5 Genre; -1 when closed.

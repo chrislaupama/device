@@ -72,8 +72,10 @@ typedef struct se_asset_info {
     double source_sample_rate;
 } se_asset_info;
 
-/* Decode an audio file (WAV PCM 16/24/32, float 32) into engine memory.
- * Blocking; call from a worker thread. Resamples to the engine rate. */
+/* Decode an audio file into engine memory, recognised by its content: WAV
+ * (PCM 8/16/24/32, float 32/64), AIFF / AIFC, FLAC, Ogg Vorbis or MP3; mono
+ * or stereo. Blocking; call from a worker thread. Resamples to the engine
+ * rate. Anything else -> SE_ERR_UNSUPPORTED_FORMAT. */
 int32_t se_asset_load_file(se_engine* engine, const char* utf8_path, se_asset_info* out_info);
 int32_t se_asset_release(se_engine* engine, uint64_t asset_id);
 int32_t se_asset_get_info(const se_engine* engine, uint64_t asset_id, se_asset_info* out_info);

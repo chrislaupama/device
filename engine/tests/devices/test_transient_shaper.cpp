@@ -1,5 +1,6 @@
 // Transient Shaper (engine/src/devices/transient_shaper.cpp): attack and
-// sustain shaping, level independence, neutral settings, clip, readouts.
+// sustain shaping, level independence, neutral settings, clip, readouts,
+// scope columns.
 #include "device_harness.hpp"
 #include "devices/dsp_dynamics.hpp"
 
@@ -113,4 +114,25 @@ TEST_CASE(transient_shaper_reports_the_applied_gain) {
     s.set("sustain", 100.f);
     s.run_mono(Signal(x.begin(), x.begin() + 9000));
     CHECK(s.readouts()[2] > 3.0f);
+}
+
+TEST_CASE(transient_shaper_scope_columns_at_750_per_second) {
+    auto r = rig();
+    r.set("clip", 1.f);
+    r.set("output_gain", 12.f);
+    r.run_mono(tone(48000, 300.0, kRate, 0.9));
+    const auto a = r.analysis();
+    REQUIRE(a.size() == 2 + 3 * 256);
+    CHECK_EQ(static_cast<uint64_t>(a[0]) << 20 | static_cast<uint64_t>(a[1]), uint64_t{750});
+    // The newest column: output held near 0 dBFS, pre-clip about +12 dB on 0.9.
+    const float* c = a.data() + a.size() - 3;
+    CHECK(c[0] > 0.95f && c[0] <= 1.01f);
+    CHECK(c[1] > 3.0f);
+    CHECK_NEAR(c[2], 0.0f, 0.05f);
+    // 44.1 kHz: still 750 columns a second (58.8 samples each).
+    DeviceRig s("transient-shaper", kDefaults, 44100.0, 256);
+    s.run_mono(Signal(44100, 0.0f));
+    const auto b = s.analysis();
+    REQUIRE(b.size() >= 2);
+    CHECK_EQ(static_cast<uint64_t>(b[0]) << 20 | static_cast<uint64_t>(b[1]), uint64_t{750});
 }

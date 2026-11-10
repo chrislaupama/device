@@ -605,9 +605,9 @@ impl Controller {
     }
 
     /// Pointer in the piano roll texture (kind 0 down, 1 move, 2 up).
-    pub fn pr_pointer(&mut self, kind: i32, x: f32, y: f32, shift: bool, alt: bool) {
+    pub fn pr_pointer(&mut self, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool) {
         if self.ac_clip().is_some() {
-            self.ac_pointer(kind, x, y, alt);
+            self.ac_pointer(kind, x, y, shift, alt, command);
             return;
         }
         let Some(clip) = self.pr_clip().cloned() else { return };
@@ -961,7 +961,7 @@ mod tests {
 
     #[test]
     fn left_resize_keeps_note_timeline_positions() {
-        let clip = MidiClip { id: ClipId(5), name: "MIDI".into(), start: 3840, length: 3840, notes: vec![Note { id: 1, pitch: 60, start: 960, length: 480, velocity: 100 }], pattern: None, composer: None };
+        let clip = MidiClip { id: ClipId(5), name: "MIDI".into(), start: 3840, length: 3840, notes: vec![Note { id: 1, pitch: 60, start: 960, length: 480, velocity: 100 }], pattern: None, disabled: false, composer: None };
         let Some(Command::Batch { commands, .. }) = midi_left_resize(&clip, 3840 + 480) else { panic!() };
         assert_eq!(commands[0], Command::ResizeMidiClip { clip: ClipId(5), start: 4320, length: 3360 });
         assert_eq!(commands[1], Command::SetMidiNotes { clip: ClipId(5), notes: vec![Note { id: 1, pitch: 60, start: 480, length: 480, velocity: 100 }] });

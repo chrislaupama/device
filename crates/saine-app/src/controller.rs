@@ -245,6 +245,8 @@ pub enum MenuAction {
     Bounce,
     Delete,
     Disable,
+    Enable,
+    ShowInFinder,
     Rename,
     Export,
     Transpose,
@@ -296,6 +298,8 @@ pub struct Controller {
     pub(crate) track_resize: Option<crate::splitters::TrackResize>,
     /// Timeline / bottom-panel splitter drag (src/splitters.rs).
     pub(crate) bottom_drag: Option<crate::splitters::BottomDrag>,
+    /// Docked-assistant width drag (src/splitters.rs).
+    pub(crate) chat_drag: Option<crate::splitters::ChatDrag>,
     status: Option<(String, Instant, Duration)>,
     pub project_dir: Option<PathBuf>,
     /// Export dialog and the unsaved-changes prompt (src/dialogs.rs).
@@ -416,6 +420,7 @@ impl Controller {
             drag: None,
             track_resize: None,
             bottom_drag: None,
+            chat_drag: None,
             status: None,
             project_dir: None,
             export: Default::default(),
@@ -1001,7 +1006,7 @@ impl Controller {
         let clip_id = ClipId(alloc());
         cmds.push(Command::AddClip {
             track: track_id,
-            clip: Clip { id: clip_id, asset: asset_id, name, start: at.max(0), source_offset: 0, source_length: native_frames, gain: 1.0, warp: Default::default() },
+            clip: Clip { id: clip_id, asset: asset_id, name, start: at.max(0), source_offset: 0, source_length: native_frames, gain: 1.0, warp: Default::default(), disabled: false },
         });
         // Engine asset must be known before the snapshot is published.
         self.peaks.insert(info.asset_id, pyr);
@@ -1339,7 +1344,7 @@ impl Controller {
                     len_beats,
                     color: track_color(t.color),
                     selected: Some(c.id) == self.selected_clip,
-                    muted: t.mute,
+                    muted: t.mute || c.disabled,
                     name: c.name.clone(),
                     wave,
                     midi: None,
@@ -1366,7 +1371,7 @@ impl Controller {
                     len_beats: len as f64 / PPQ as f64,
                     color: track_color(t.color),
                     selected: Some(c.id) == self.selected_clip,
-                    muted: t.mute,
+                    muted: t.mute || c.disabled,
                     name: c.name.clone(),
                     wave: None,
                     midi: Some(mini_notes(&notes, shift, len)),
@@ -1636,6 +1641,10 @@ impl Controller {
         s.set_master_fader(fader_from_db(gain_to_db(p.master_gain)));
         // ---- assistant ----
         s.set_assistant_open(self.assistant_open);
+        s.set_assistant_pref_w(match self.chat_drag {
+            Some(d) => d.w,
+            None => self.chat_saved_w(),
+        });
         s.set_chat_available(self.provider.available());
         s.set_chat_busy(self.assistant.busy.is_some());
         s.set_chat_notice(self.assistant.notice_visible);

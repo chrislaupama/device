@@ -1032,8 +1032,8 @@ fn steps() -> Vec<Step> {
         DoC("warp: click the handle band at beat 1 (add a warp marker)", Box::new(|_, ctl| {
             let x = ctl.borrow().pr_view().x_of(1.0);
             let mut c = ctl.borrow_mut();
-            c.pr_pointer(0, x, 30.0, false, true);
-            c.pr_pointer(2, x, 30.0, false, true);
+            c.pr_pointer(0, x, 30.0, false, true, false);
+            c.pr_pointer(2, x, 30.0, false, true, false);
         })),
         Check("warp marker added (with the clip-start anchor)", Box::new(|c, _| {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
@@ -1052,6 +1052,52 @@ fn steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("segs {segs:?} marker {marker} waves {}", dl.waves.len()))
         })),
+        DoC("warp: Shift-drag the marker half a beat right (slide the audio)", Box::new(|_, ctl| {
+            let (x0, x1) = { let c = ctl.borrow(); let v = c.pr_view(); (v.x_of(1.0), v.x_of(1.5)) };
+            let mut c = ctl.borrow_mut();
+            c.pr_pointer(0, x0, 30.0, true, false, false);
+            c.pr_pointer(1, x1, 30.0, false, false, false);
+            c.pr_pointer(2, x1, 30.0, true, false, false);
+        })),
+        Check("slid: the marker stays at beat 1 and pins audio half a beat later", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let beats = c.ac_marker_beats();
+            let rate = c.project().asset(clip.asset).unwrap().sample_rate;
+            let per_beat = rate * 60.0 / clip.warp.original_bpm * clip.warp.speed;
+            let src = clip.warp.markers.get(1).map_or(0.0, |m| m.source as f64);
+            let want = clip.source_offset as f64 + 1.5 * per_beat;
+            ((beats.get(1).copied().unwrap_or(f64::NAN) - 1.0).abs() < 0.05 && (src - want).abs() < 0.02 * per_beat && c.doc.undo_label() == Some("Move warp marker"))
+                .then_some(())
+                .ok_or(format!("beats {beats:?} source {src} want {want} undo {:?}", c.doc.undo_label()))
+        })),
+        DoC("warp: three transients, Cmd-click the middle one in the handle band", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let Some(clip) = c.ac_clip().cloned() else { return };
+            let rate = c.project().asset(clip.asset).unwrap().sample_rate;
+            let per_beat = rate * 60.0 / clip.warp.original_bpm * clip.warp.speed;
+            let at = |b: f64| (clip.source_offset as f64 + b * per_beat) as u64;
+            let warp = saine_core::ClipWarp { transients_added: vec![at(2.25), at(2.5), at(2.75)], ..clip.warp.clone() };
+            c.execute(saine_core::Command::SetClipWarp { clip: clip.id, warp, label: "Add transient".into() });
+            drop(c);
+            let x = ctl.borrow().ac_transient_beats().get(1).map(|&b| ctl.borrow().pr_view().x_of(b)).unwrap_or(0.0);
+            let mut c = ctl.borrow_mut();
+            c.pr_pointer(0, x, 30.0, false, false, true);
+            c.pr_pointer(2, x, 30.0, false, false, true);
+        })),
+        Check("Add warp markers at transients: the transient and both neighbours, where they play", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let marks = c.ac_marker_beats();
+            let tr = c.ac_transient_beats();
+            let pinned = tr.iter().filter(|t| marks.iter().any(|m| (m - *t).abs() < 1e-6)).count();
+            (clip.warp.markers.len() == 5 && pinned == 3 && c.doc.undo_label() == Some("Add warp markers at transients"))
+                .then_some(())
+                .ok_or(format!("markers {marks:?} transients {tr:?} undo {:?}", c.doc.undo_label()))
+        })),
+        DoC("warp: undo the markers and the transients", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.undo();
+            c.undo();
+        })),
         DoC("warp: Warp menu -> Off", Box::new(|a, ctl| {
             ctl.borrow_mut().clip_menu_open(1);
             a.global::<Studio>().invoke_clip_menu_pick(1);
@@ -1066,8 +1112,8 @@ fn steps() -> Vec<Step> {
         })),
         DoC("warp: Mode menu stays closed with warp off", Box::new(|_, ctl| ctl.borrow_mut().clip_menu_open(2))),
         Check("mode menu closed", Box::new(|c, _| (c.pr.menu == -1).then_some(()).ok_or(format!("menu {}", c.pr.menu)))),
-        Do("Cmd+Z x6 (back to the unwarped clip)", Box::new(|a| {
-            for _ in 0..6 {
+        Do("Cmd+Z x7 (back to the unwarped clip)", Box::new(|a| {
+            for _ in 0..7 {
                 key(a, "z", true, false);
             }
         })),
@@ -4800,6 +4846,75 @@ fn splitter_steps() -> Vec<Step> {
     ]
 }
 
+/// Docked assistant width splitter: drag, narrowing to the header's room, double-click reset
+/// (appended last; restores the panel state and the saved width).
+fn chat_dock_steps() -> Vec<Step> {
+    use crate::splitters::{CHAT_GAP, CHAT_MAX_W, CHAT_MIN_W};
+    use Step::*;
+    fn split_x(c: &Controller) -> f32 {
+        1440.0 - 5.0 - c.chat_w() - CHAT_GAP / 2.0
+    }
+    let was_open = Rc::new(Cell::new(false));
+    let (w1, w2) = (was_open.clone(), was_open.clone());
+    let undo_n = Rc::new(Cell::new(0usize));
+    let (u1, u2) = (undo_n.clone(), undo_n.clone());
+    vec![
+        DoC("open the assistant at its default width", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            w1.set(c.assistant_open);
+            u1.set(c.doc.undo_depth());
+            c.assistant_open = true;
+            c.settings.prefs.assistant_width = 0.0;
+            c.ui_dirty = true;
+        })),
+        Check("default width 297 px, zoom sliders shown", Box::new(|c, a| {
+            let ok = approx(c.chat_w(), CHAT_MIN_W, 0.01) && approx(a.global::<Studio>().get_assistant_pref_w(), CHAT_MIN_W, 0.01) && !a.get_header_zoom_hidden();
+            ok.then_some(()).ok_or(format!("w {} hidden {}", c.chat_w(), a.get_header_zoom_hidden()))
+        })),
+        DoC("drag the splitter 60 pt left", Box::new(|a, ctl| {
+            let x = split_x(&ctl.borrow());
+            drag(a, x, 300.0, x - 60.0, 300.0);
+        })),
+        Check("chat 60 pt wider, saved as a preference, timeline narrower, not an undo step", Box::new(move |c, a| {
+            let w = c.chat_w();
+            let saved = c.settings.prefs.assistant_width;
+            let lanes = a.get_lanes_width();
+            let ok = approx(w, CHAT_MIN_W + 60.0, 0.6) && approx(saved, w, 0.01) && approx(lanes, 1440.0 - 262.65 - 5.0 - 5.0 - w - 191.0, 1.0) && c.doc.undo_depth() == u2.get();
+            ok.then_some(()).ok_or(format!("w {w} saved {saved} lanes {lanes}"))
+        })),
+        DoC("drag the splitter far left: stops at the room that keeps the sliders", Box::new(|a, ctl| {
+            let x = split_x(&ctl.borrow());
+            drag(a, x, 300.0, 200.0, 300.0);
+        })),
+        Check("chat narrowed to the header's room (below 600 px), sliders still shown", Box::new(|c, a| {
+            let room = crate::splitters::chat_room(1440.0, true);
+            let w = c.chat_w();
+            let ok = room < CHAT_MAX_W && approx(w, room, 0.01) && !a.get_header_zoom_hidden() && approx(a.get_lanes_width(), 1440.0 - 262.65 - 5.0 - 5.0 - room - 191.0, 1.0);
+            ok.then_some(()).ok_or(format!("w {w} room {room} hidden {}", a.get_header_zoom_hidden()))
+        })),
+        DoC("drag the splitter right: stops at the minimum", Box::new(|a, ctl| {
+            let x = split_x(&ctl.borrow());
+            drag(a, x, 300.0, 1400.0, 300.0);
+        })),
+        Check("chat at 297 px", Box::new(|c, _| approx(c.chat_w(), CHAT_MIN_W, 0.01).then_some(()).ok_or(format!("w {}", c.chat_w())))),
+        DoC("widen, then double-click the splitter", Box::new(|a, ctl| {
+            let x = split_x(&ctl.borrow());
+            drag(a, x, 300.0, x - 40.0, 300.0);
+            let x = split_x(&ctl.borrow());
+            double_click(a, x, 300.0);
+        })),
+        Check("double-click restored the default and cleared the preference", Box::new(|c, _| {
+            let ok = approx(c.chat_w(), CHAT_MIN_W, 0.01) && c.settings.prefs.assistant_width == 0.0;
+            ok.then_some(()).ok_or(format!("w {} pref {}", c.chat_w(), c.settings.prefs.assistant_width))
+        })),
+        DoC("restore the panel state", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.assistant_open = w2.get();
+            c.ui_dirty = true;
+        })),
+    ]
+}
+
 /// Window centre of Browser › Files row `i` (rows as pushed to the UI).
 fn files_row_xy(a: &AppWindow, i: usize) -> Option<(f32, f32)> {
     let s = a.global::<Studio>();
@@ -4854,6 +4969,31 @@ fn files_steps() -> Vec<Step> {
             let s = a.global::<Studio>();
             (files_labels(a) == ["kit"] && s.get_files_meta() == "1 folder" && s.get_files_sort() == "Recent").then_some(()).ok_or(format!("{:?} {:?}", files_labels(a), s.get_files_meta()))
         })),
+        DoC("files: click the sort button", Box::new(|a, _| {
+            let y = 78.2 + a.global::<Studio>().get_files_list_y() - 10.2;
+            click(a, 247.25 - 12.0, y);
+        })),
+        Check("files: the sort menu opens on Recent", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.files.sort_open && s.get_files_sort_open() && s.get_files_sort_index() == 0).then_some(()).ok_or(format!("open {} index {}", s.get_files_sort_open(), s.get_files_sort_index()))
+        })),
+        DoC("files: pick Name in the sort menu", Box::new(|a, _| {
+            let y = 78.2 + a.global::<Studio>().get_files_list_y() + 3.4 + 3.4 + 18.7 * 1.5;
+            click(a, 247.25 - 15.0, y);
+        })),
+        Check("files: sorted by Name, menu closed", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.files.sort_name && !s.get_files_sort_open() && s.get_files_sort() == "Name").then_some(()).ok_or(format!("sort {:?} open {}", s.get_files_sort(), s.get_files_sort_open()))
+        })),
+        DoC("files: open the menu and click outside it", Box::new(|a, ctl| {
+            ctl.borrow_mut().files_sort_open_menu(true);
+            ctl.borrow_mut().update_ui(a);
+            click(a, 600.0, 400.0);
+        })),
+        Check("files: a click outside closes the menu and keeps Name", Box::new(|c, _| {
+            (!c.files.sort_open && c.files.sort_name).then_some(()).ok_or(format!("open {} name {}", c.files.sort_open, c.files.sort_name))
+        })),
+        DoC("files: back to Recent", Box::new(|_, ctl| ctl.borrow_mut().files_sort_pick(0))),
         DoC("files: click the folder row", Box::new(|a, _| {
             let Some((x, y)) = files_row_xy(a, 0) else { return };
             click(a, x, y);
@@ -5082,6 +5222,144 @@ fn section_steps() -> Vec<Step> {
     ]
 }
 
+
+fn clip_menu_steps() -> Vec<Step> {
+    use Step::*;
+    use saine_core::{Asset, AssetId, Clip, ClipId, Command, MidiClip, Track, TrackId};
+    const LANE_Y0: f32 = TRACK0_Y - crate::timeline::RULER_H;
+    fn right_click(a: &AppWindow, x: f32, y: f32) {
+        let w = a.window();
+        let p = LogicalPosition::new(x, y);
+        w.dispatch_event(WindowEvent::PointerMoved { position: p });
+        w.dispatch_event(WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
+        w.dispatch_event(WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
+    }
+    fn menu_entry(a: &AppWindow, label: &str) -> Option<(f32, f32, bool)> {
+        let s = a.global::<Studio>();
+        let items = s.get_menu_items();
+        (0..slint::Model::row_count(&items))
+            .filter_map(|i| slint::Model::row_data(&items, i))
+            .find(|m| m.label == label)
+            .map(|m| (s.get_menu_x() + 40.0, s.get_menu_y() + m.y + crate::clipedit::MENU_ROW / 2.0, m.enabled))
+    }
+    fn click_entry(a: &AppWindow, label: &str) {
+        if let Some((x, y, _)) = menu_entry(a, label) {
+            click(a, x, y);
+        }
+    }
+    fn clip_xy(c: &Controller, id: ClipId) -> (f32, f32) {
+        let i = c.clip_ids.iter().position(|&k| k == id).unwrap_or(0);
+        let (x, y, w, h) = c.clip_vis[i].rect(&c.view);
+        (LANE_X + x + w / 2.0, LANE_Y0 + y + h * 0.7)
+    }
+    fn audio_clips(c: &Controller) -> Vec<(u64, i64, u64, bool)> {
+        let t = c.project().track(c.selected_track.unwrap_or(TrackId(0))).map(|t| t.clips.clone()).unwrap_or_default();
+        t.iter().map(|k| (k.id.0, k.start, k.source_length, k.disabled)).collect()
+    }
+    let ids = Rc::new(Cell::new((0u64, 0u64, 0u64)));
+    let (i1, i2, i3) = (ids.clone(), ids.clone(), ids.clone());
+    let (i4, i5) = (ids.clone(), ids.clone());
+    vec![
+        DoC("clip menu: add its own audio and instrument tracks, an audio clip (beats 4-12) and a MIDI clip (beats 4-8)", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let p = c.project();
+            let (a_id, i_id, asset) = (p.next_id, p.next_id + 1, p.next_id + 2);
+            c.execute(Command::Batch {
+                label: "clip menu test".into(),
+                commands: vec![
+                    Command::AddTrack { index: Some(0), track: Track::new(TrackId(a_id), TrackKind::Audio, "Clip menu", saine_core::ColorIndex::FIRST) },
+                    Command::AddTrack { index: Some(1), track: Track::new(TrackId(i_id), TrackKind::Instrument, "Clip menu MIDI", saine_core::ColorIndex::FIRST) },
+                    Command::AddAsset { asset: Asset { id: AssetId(asset), relative_path: None, absolute_path: "/nonexistent/clip-menu-test.wav".into(), sample_rate: 48_000.0, channels: 1, frames: 48_000 * 4 } },
+                    Command::AddClip { track: TrackId(a_id), clip: Clip { id: ClipId(asset + 1), asset: AssetId(asset), name: "menu".into(), start: 4 * PPQ, source_offset: 0, source_length: 48_000 * 4, gain: 1.0, warp: Default::default(), disabled: false } },
+                    Command::AddMidiClip { track: TrackId(i_id), clip: MidiClip { id: ClipId(asset + 2), start: 4 * PPQ, ..MidiClip::empty(4 * PPQ, 4 * PPQ) } },
+                ],
+            });
+            i1.set((a_id, asset + 1, asset + 2));
+            c.select_track(TrackId(a_id));
+            c.select_clip(None);
+            c.seek_beats(8.0);
+        })),
+        DoC("right-click the audio clip", Box::new(move |a, ctl| {
+            let (x, y) = clip_xy(&ctl.borrow(), ClipId(i2.get().1));
+            right_click(a, x, y);
+        })),
+        Check("menu: Split, Disable and Show in Finder are enabled; Consolidate is not", Box::new(|_, a| {
+            let on = |l: &str| menu_entry(a, l).is_some_and(|e| e.2);
+            let ok = a.global::<Studio>().get_menu_open() && on("Split") && on("Disable") && on("Show in Finder") && menu_entry(a, "Consolidate").is_some_and(|e| !e.2);
+            ok.then_some(()).ok_or("clip menu entries".into())
+        })),
+        Do("choose Split", Box::new(|a| click_entry(a, "Split"))),
+        Check("audio clip cut at beat 8 into two 2 s halves; one undo step; right half selected", Box::new(move |c, _| {
+            let v = audio_clips(c);
+            let ok = v.len() == 2 && v[0].1 == 4 * PPQ && v[0].2 == 96_000 && v[1].1 == 8 * PPQ && v[1].2 == 96_000 && c.doc.undo_label() == Some("Split Clip") && c.selected_clip == Some(ClipId(v[1].0));
+            ok.then_some(()).ok_or(format!("{v:?} {:?}", c.doc.undo_label()))
+        })),
+        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("undo joined the clip again", Box::new(|c, _| {
+            let v = audio_clips(c);
+            (v.len() == 1 && v[0].2 == 48_000 * 4).then_some(()).ok_or(format!("{v:?}"))
+        })),
+        DoC("select the clip, Cmd+E", Box::new(move |a, ctl| {
+            ctl.borrow_mut().select_clip(Some(ClipId(i3.get().1)));
+            key(a, "e", true, false);
+        })),
+        Check("Cmd+E split it at the playhead", Box::new(|c, _| {
+            let v = audio_clips(c);
+            (v.len() == 2 && v[1].1 == 8 * PPQ).then_some(()).ok_or(format!("{v:?}"))
+        })),
+        Do("press 0", Box::new(|a| key(a, "0", false, false))),
+        Check("the right half is disabled and drawn grey", Box::new(|c, _| {
+            let v = audio_clips(c);
+            let i = c.clip_ids.iter().position(|k| Some(k.0) == v.get(1).map(|x| x.0)).ok_or("no vis")?;
+            (v[1].3 && !v[0].3 && c.clip_vis[i].muted && c.doc.undo_label() == Some("Disable Clip")).then_some(()).ok_or(format!("{v:?}"))
+        })),
+        DoC("right-click the disabled half", Box::new(|a, ctl| {
+            let id = ctl.borrow().selected_clip.unwrap_or(ClipId(0));
+            let (x, y) = clip_xy(&ctl.borrow(), id);
+            right_click(a, x, y);
+        })),
+        Check("menu offers Enable instead of Disable", Box::new(|_, a| {
+            (menu_entry(a, "Enable").is_some() && menu_entry(a, "Disable").is_none()).then_some(()).ok_or("menu labels".into())
+        })),
+        Do("choose Enable", Box::new(|a| click_entry(a, "Enable"))),
+        Check("both halves enabled again", Box::new(|c, _| {
+            let v = audio_clips(c);
+            (v.len() == 2 && !v[0].3 && !v[1].3).then_some(()).ok_or(format!("{v:?}"))
+        })),
+        DoC("right-click the MIDI clip and choose Split (playhead beat 8 → beat 6 is outside, so move it first)", Box::new(move |a, ctl| {
+            let mid = {
+                let mut c = ctl.borrow_mut();
+                let t = c.project().tracks[1].id;
+                c.select_track(t);
+                c.seek_beats(6.0);
+                ClipId(i4.get().2)
+            };
+            let (x, y) = clip_xy(&ctl.borrow(), mid);
+            right_click(a, x, y);
+            click_entry(a, "Split");
+        })),
+        Check("MIDI clip split at beat 6 into 2 + 2 beats", Box::new(|c, _| {
+            let m = &c.project().tracks[1].midi_clips;
+            (m.len() == 2 && m[0].length == 2 * PPQ && m[1].start == 6 * PPQ && m[1].length == 2 * PPQ).then_some(()).ok_or(format!("{} clips", m.len()))
+        })),
+        DoC("clip menu: remove the test tracks and clips", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let (a_id, _, mid) = i5.get();
+            let inst = c.project().tracks[1].id;
+            c.execute(Command::Batch {
+                label: "clip menu cleanup".into(),
+                commands: vec![Command::RemoveTrack { track: TrackId(a_id) }, Command::RemoveTrack { track: inst }, Command::RemoveAsset { asset: AssetId(mid - 2) }],
+            });
+            c.select_clip(None);
+            c.seek_beats(0.0);
+        })),
+        Check("clip menu: project back to its earlier tracks and assets", Box::new(|c, _| {
+            let p = c.project();
+            (!p.tracks.iter().any(|t| t.name.starts_with("Clip menu")) && !p.assets.iter().any(|a| a.absolute_path.contains("clip-menu-test"))).then_some(()).ok_or("leftovers".into())
+        })),
+    ]
+}
+
 /// Clip sidebar pattern list (Saine's local library): Create, load a row, Original,
 /// Type and Genre, each one undo step. Removes its clip at the end.
 fn pattern_library_steps() -> Vec<Step> {
@@ -5196,8 +5474,10 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(step_sequencer_steps());
     all.extend(pattern_library_steps());
     all.extend(splitter_steps());
+    all.extend(chat_dock_steps());
     all.extend(files_steps());
     all.extend(section_steps());
+    all.extend(clip_menu_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));

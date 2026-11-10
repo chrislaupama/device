@@ -70,7 +70,10 @@ enum Readout : uint32_t {
     kRoVoices, kRoAmpEnv, kRoEnv2, kRoLfo1, kRoLfo2, kRoLfo1Phase, kRoLfo2Phase, kRoFx1Gr,
     kRoOutDb = kRoFx1Gr + 3 * kFxSlots,
     // Summed modulation per target of the newest voice (global sources without one).
-    kRoMod, kReadoutCount = kRoMod + kTargetCount
+    kRoMod,
+    // Each source's value (kSrcEnv2 onwards), for the per-source rings around the dials.
+    kRoSrc = kRoMod + kTargetCount,
+    kReadoutCount = kRoSrc + kSourceCount - 1
 };
 constexpr const char* kReadoutIds[kReadoutCount] = {
     "voices",     "amp_env",    "env2",       "lfo1",      "lfo2",       "lfo1_phase", "lfo2_phase",
@@ -79,7 +82,8 @@ constexpr const char* kReadoutIds[kReadoutCount] = {
     "mod_0", "mod_1", "mod_2", "mod_3", "mod_4", "mod_5", "mod_6", "mod_7",
     "mod_8", "mod_9", "mod_10", "mod_11", "mod_12", "mod_13", "mod_14", "mod_15",
     "mod_16", "mod_17", "mod_18", "mod_19", "mod_20", "mod_21", "mod_22", "mod_23",
-    "mod_24", "mod_25", "mod_26", "mod_27", "mod_28", "mod_29"};
+    "mod_24", "mod_25", "mod_26", "mod_27", "mod_28", "mod_29",
+    "src_env2", "src_amp_env", "src_lfo1", "src_lfo2", "src_velocity", "src_key", "src_wheel", "src_aftertouch", "src_random"};
 constexpr float kIdleReadouts[kReadoutCount] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -120.0f};
 
 // Normalized <-> plain, the codec of saine_core::builtin (log tapers are
@@ -1063,6 +1067,7 @@ private:
         float src[kSourceCount];
         sources(nv, src);
         modulation(src, ro + kRoMod);
+        std::copy(src + 1, src + kSourceCount, ro + kRoSrc);
     }
 
     float sr_ = 48000.0f, inv_sr_ = 1.0f / 48000.0f;

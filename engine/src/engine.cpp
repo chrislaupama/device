@@ -265,7 +265,7 @@ int32_t Engine::asset_add_decoded(DecodedAudio&& audio, se_asset_info* out, std:
 
 int32_t Engine::asset_load_file(const char* path, se_asset_info* out, std::string& err) {
     DecodedAudio audio;
-    const int32_t rc = decode_wav_file(path, audio, err);
+    const int32_t rc = decode_audio_file(path, audio, err);
     if (rc != SE_OK) return rc;
     return asset_add_decoded(std::move(audio), out, err);
 }

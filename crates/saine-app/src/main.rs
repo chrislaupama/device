@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! saine-studio [--open <dir>] [--import <wav>...] [--save-to <dir>] [--no-audio]
-//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-clip-menu|reference-settings-audio|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-device-chain|review-settings-plugins]
+//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-clip-menu|review-clip-menu|reference-settings-audio|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-device-chain|review-settings-plugins]
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
@@ -13,10 +13,13 @@
 //!              [--sampler-tab <0..4>  (with a sampler state: Sample, Pitch, Filter, Amp or Mod tab)]
 //!              [--hold-note <0..127>  (with a synth state: hold the note and render 0.75 s offline first)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
+//!              [--window-width <pt>  (OS window width, default 1440)] [--assistant-width <px>  (saved docked-assistant width, 297..600)]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
 //!              [--clip-menu <0|1|3|4|5>  (open a clip editor dropdown after --state: Speed, Warp, Grid, Type, Genre; 2, Mode, is disabled)]
 //!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
 //! ```
+
+static CLIP_MENU_AUDIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 mod analyzer_views;
 mod assistant_panel;
@@ -32,6 +35,7 @@ mod device_panel;
 mod device_editors;
 mod panel_graph;
 mod device_views;
+mod gain_scope;
 mod devices;
 mod dialogs;
 mod files;
@@ -53,6 +57,7 @@ mod stepseq;
 mod sections;
 mod splitters;
 mod synth;
+mod text_measure;
 mod timeline;
 mod warpedit;
 mod wavgen;
@@ -99,6 +104,8 @@ struct Args {
     input_menu_state: bool,
     /// reference-clip-menu: Instrument track with a 1-bar MIDI clip at bar 6, its context menu open.
     clip_menu_state: bool,
+    /// review-clip-menu: the first audio clip's menu open with the playhead inside it.
+    clip_menu_audio: bool,
     /// Step sequencer review state: lane tab shown (0 Steps .. 4 Tie), or None.
     seq_state: Option<i32>,
     /// Clip sidebar pattern list review: 0 empty MIDI clip, 1 chords made, 2 drum patterns made.
@@ -129,6 +136,7 @@ struct Args {
     /// an empty projects folder (compare z100-browser-files-projects.png), with a generated
     /// "audio" folder of two WAVs open (compare z100-files-audio-folder-expanded.png), and with a
     /// saved project open to its tracks, audio files and MIDI clips (no reference).
+    /// review-files-sort: the audio folder with the sort menu open.
     files_review: u8,
     /// review-section-added / review-sections-two: one new 8-bar section (compare
     /// z100-marker-after-plus-click.png), or two with the second selected.
@@ -160,6 +168,10 @@ struct Args {
     screenshot: Option<PathBuf>,
     exit_after_frames: Option<u64>,
     zoom: Option<u32>,
+    /// --window-width <pt>: OS window width in points (default 1440), for narrow-window reviews.
+    window_width: Option<f32>,
+    /// --assistant-width <px>: saved docked-assistant width in the reference's px (297..600), for reviews.
+    assistant_width: Option<f32>,
     clip_menu: Option<i32>,
     /// --ac-edit N: with review-warp, open the typed-value box (0 Original BPM, 1 Transpose).
     ac_edit: Option<i32>,
@@ -204,6 +216,13 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.open_assistant = true;
                     a.assistant_demo = Some("turn".into());
+                }
+                "review-assistant-narrow" => {
+                    a.reference_default = true;
+                    a.open_assistant = true;
+                    a.assistant_demo = Some("turn".into());
+                    a.assistant_width = Some(600.0);
+                    a.window_width.get_or_insert(1470.0);
                 }
                 s if s.starts_with("review-assistant-") => {
                     a.reference_default = true;
@@ -273,6 +292,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.clip_menu_state = true;
                 }
+                "review-clip-menu" => {
+                    a.reference_default = true;
+                    a.clip_menu_audio = true;
+                }
                 "reference-settings-audio" => {
                     a.reference_default = true;
                     a.settings_state = true;
@@ -308,7 +331,8 @@ fn parse_args() -> Result<Args, String> {
                         "review-files-projects" => 1,
                         "review-files-folders" => 2,
                         "review-files-project" => 3,
-                        _ => return Err(format!("unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project)")),
+                        "review-files-sort" => 5,
+                        _ => return Err(format!("unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project, review-files-sort)")),
                     };
                 }
                 "review-automation" => {
@@ -355,7 +379,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -383,6 +407,20 @@ fn parse_args() -> Result<Args, String> {
                     return Err(format!("--clip-menu: want 0, 1, 3, 4 or 5 (2, Mode, is disabled), got {m}"));
                 }
                 a.clip_menu = Some(m);
+            }
+            "--window-width" => {
+                let w: f32 = value(&mut i)?.parse().map_err(|e| format!("--window-width: {e}"))?;
+                if !(600.0..=4000.0).contains(&w) {
+                    return Err(format!("--window-width: want 600..4000 points, got {w}"));
+                }
+                a.window_width = Some(w);
+            }
+            "--assistant-width" => {
+                let w: f32 = value(&mut i)?.parse().map_err(|e| format!("--assistant-width: {e}"))?;
+                if !w.is_finite() {
+                    return Err(format!("--assistant-width: {w} is not a width"));
+                }
+                a.assistant_width = Some(w.clamp(297.0, 600.0));
             }
             "--ac-edit" => a.ac_edit = Some(value(&mut i)?.parse().map_err(|e| format!("--ac-edit: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
@@ -523,7 +561,7 @@ fn app_text_focused(aw: &slint::Weak<AppWindow>) -> bool {
 }
 
 fn pick_import() -> Vec<PathBuf> {
-    rfd::FileDialog::new().set_title("Import audio").add_filter("WAV audio", &["wav", "WAV"]).pick_files().unwrap_or_default()
+    rfd::FileDialog::new().set_title("Import audio").add_filter("Audio", &crate::files::dialog_exts()).pick_files().unwrap_or_default()
 }
 
 fn pick_project_dir(save: bool) -> Option<PathBuf> {
@@ -563,6 +601,8 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             ctl.borrow_mut().insert_midi_clip();
         }
         "clip.duplicate" => ctl.borrow_mut().duplicate_clip(),
+        "clip.split_at_marker" => ctl.borrow_mut().split_clip(),
+        "clip.disable" => ctl.borrow_mut().toggle_clip_disabled(),
         "clip.cut" => ctl.borrow_mut().cut_clip(),
         "edit.copy" => {
             ctl.borrow_mut().copy_clip();
@@ -655,6 +695,24 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         _ => return false,
     }
     true
+}
+
+/// Synth test state read off the reference captures (osc 2 FM, LFO 1 slow, 2 routes, one macro
+/// mapping, Tape off / Chorus / Delay / Reverb); not a factory sound.
+fn synth_test_state(device: saine_core::DeviceId) -> saine_core::Command {
+    let params = [
+        ("osc1_wave", 1.0), ("osc1_shape", 0.1), ("osc1_level", 0.8), ("osc2_wave", 5.0), ("osc2_shape", 0.25), ("osc2_octave", 3.0), ("osc2_fine", 7.0), ("osc2_level", 0.3),
+        ("sub_level", 0.0), ("cutoff", 2400.0), ("resonance", 0.1), ("filter_drive", 0.2), ("filter_env", 0.25), ("filter_velocity", 0.35), ("env2_attack", 0.002),
+        ("amp_attack", 0.004), ("amp_decay", 0.9 * 1.0), ("amp_sustain", 0.35), ("amp_release", 1.1), ("volume", -0.74), ("env2_decay", 0.9), ("env2_sustain", 0.1),
+        ("lfo1_rate", 0.18), ("lfo2_rate", 5.0), ("unison_voices", 2.0), ("unison_detune", 0.18), ("unison_spread", 0.8),
+        ("mod1_source", 3.0), ("mod1_target", 5.0), ("mod1_amount", 0.2), ("mod2_source", 7.0), ("mod2_target", 11.0), ("mod2_amount", 0.35), ("mod3_source", 0.0), ("mod3_target", 0.0), ("mod3_amount", 0.0),
+        ("macro1_name", 12.0), ("macro2_name", 18.0), ("macro3_name", 7.0), ("macro4_name", 6.0), ("map1_macro", 1.0), ("map1_param", 22.0), ("map1_from", 0.693), ("map1_to", 0.943),
+        ("fx1_on", 0.0), ("fx3_type", 7.0), ("fx3_on", 1.0), ("fx4_type", 8.0), ("fx4_on", 1.0),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect();
+    saine_core::Command::SetDeviceParams { device, params, preset: Some("Test: reference-synth".into()) }
 }
 
 fn main() {
@@ -759,6 +817,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         c.mixer_open = args.open_mixer;
         c.assistant_open = args.open_assistant;
+        if let Some(px) = args.assistant_width {
+            c.settings.prefs.assistant_width = px * zoom::DESIGN_LEVEL;
+        }
         if let Some(d) = &args.assistant_demo {
             c.assistant_demo(d)?;
             if d == "draft" {
@@ -803,23 +864,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let inst = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id);
         if let Some(t) = inst {
             c.select_track(t);
-            // Values read off the reference captures (osc 2 FM, LFO 1 slow, 2 routes,
-            // one macro mapping, Tape off / Chorus / Delay / Reverb); not a factory sound.
             let device = c.project().track(t).and_then(|t| t.instrument_plugin.as_ref()).map(|d| d.id);
             if let Some(device) = device {
-                let params: std::collections::BTreeMap<String, f32> = [
-                    ("osc1_wave", 1.0), ("osc1_shape", 0.1), ("osc1_level", 0.8), ("osc2_wave", 5.0), ("osc2_shape", 0.0), ("osc2_octave", 3.0), ("osc2_fine", 7.0), ("osc2_level", 0.3),
-                    ("sub_level", 0.0), ("cutoff", 2400.0), ("resonance", 0.1), ("filter_drive", 0.2), ("filter_env", 0.25), ("filter_velocity", 0.35), ("env2_attack", 0.002),
-                    ("amp_attack", 0.004), ("amp_decay", 0.9 * 1.0), ("amp_sustain", 0.35), ("amp_release", 1.1), ("volume", -0.7), ("env2_decay", 0.9), ("env2_sustain", 0.1),
-                    ("lfo1_rate", 0.18), ("lfo2_rate", 5.0), ("unison_voices", 2.0), ("unison_detune", 0.18), ("unison_spread", 0.8),
-                    ("mod1_source", 3.0), ("mod1_target", 5.0), ("mod1_amount", 0.2), ("mod2_source", 7.0), ("mod2_target", 11.0), ("mod2_amount", 0.35), ("mod3_source", 0.0), ("mod3_target", 0.0), ("mod3_amount", 0.0),
-                    ("macro1_name", 12.0), ("macro2_name", 18.0), ("macro3_name", 7.0), ("macro4_name", 6.0), ("map1_macro", 1.0), ("map1_param", 22.0), ("map1_from", 0.693), ("map1_to", 0.943),
-                    ("fx1_on", 0.0), ("fx3_type", 7.0), ("fx3_on", 1.0), ("fx4_type", 8.0), ("fx4_on", 1.0),
-                ]
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
-                c.execute(saine_core::Command::SetDeviceParams { device, params, preset: Some("Test: reference-synth".into()) });
+                c.execute(synth_test_state(device));
             }
         }
         c.set_bottom_tab(BottomTab::Devices);
@@ -853,6 +900,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(22.0);
         c.open_input_menu();
     }
+    CLIP_MENU_AUDIO.store(args.clip_menu_audio, std::sync::atomic::Ordering::Relaxed);
     if args.clip_menu_state {
         let mut c = ctl.borrow_mut();
         if let Some(inst) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id) {
@@ -999,9 +1047,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.browser_section(files::SECTION_FILES);
             c.files_tab(files::TAB_PROJECTS);
             c.files_expand(files::FileItem::Project(song));
-        } else if args.files_review == 2 {
+        } else if args.files_review == 2 || args.files_review == 5 {
             c.files_add_folder(&audio);
             c.files_expand(files::FileItem::Folder(audio));
+            c.files.sort_open = args.files_review == 5;
         } else {
             c.browser_section(files::SECTION_FILES);
             c.files_tab(files::TAB_PROJECTS);
@@ -1105,6 +1154,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(t) = c.project().tracks.iter().find(|t| t.kind == kind).map(|t| t.id) {
             c.select_track(t);
             c.add_item_to_track(&devices::Item::Builtin(def), t, None);
+            let added = c.project().track(t).and_then(|t| t.instrument_plugin.as_ref().filter(|_| id == "synth-v2")).map(|d| d.id);
+            if let Some(device) = added {
+                c.execute(synth_test_state(device));
+            }
         }
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(8.0);
@@ -1370,6 +1423,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.auto_write_end(|w| matches!(w.target, saine_core::AutomationTarget::Volume | saine_core::AutomationTarget::Pan));
         c.ui_dirty = true
     });
+    on!(on_chat_resize, |c, phase: i32, x: f32| c.chat_resize(phase, x));
+    on!(on_chat_resize_reset, |c| c.chat_resize_reset());
     on!(on_bottom_resize, |c, phase: i32, y: f32| c.bottom_resize(phase, y));
     on!(on_track_resize, |c, id: i32, phase: i32, y: f32| c.track_resize_drag(id, phase, y));
     on!(on_auto_toggle_shown, |c| c.auto_toggle_shown());
@@ -1424,7 +1479,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let tab = if c.bottom_tab == BottomTab::Clip { BottomTab::Devices } else { BottomTab::Clip };
         c.set_bottom_tab(tab)
     });
-    on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool| c.pr_pointer(kind, x, y, shift, alt));
+    on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool| c.pr_pointer(kind, x, y, shift, alt, command));
     on!(on_pr_scroll, |c, dy: f32| c.pr_scroll(dy));
     on!(on_pr_action, |c, a: slint::SharedString| c.pr_action(a.as_str()));
     on!(on_clip_menu_open, |c, m: i32| c.clip_menu_open(m));
@@ -1486,7 +1541,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_browser_back, |c| c.browser_back());
     on!(on_browser_forward, |c| c.browser_forward());
     on!(on_files_tab_select, |c, i: i32| c.files_tab(i.max(0) as usize));
-    on!(on_files_sort_toggle, |c| c.files_sort_toggle());
+    on!(on_files_sort_open_menu, |c, open: bool| c.files_sort_open_menu(open));
+    on!(on_files_sort_pick, |c, i: i32| c.files_sort_pick(i.max(0) as usize));
     on!(on_files_click, |c, i: i32, chevron: bool| c.files_click(i.max(0) as usize, chevron));
     on!(on_files_activate, |c, i: i32| c.files_activate(i.max(0) as usize));
     on!(on_files_drag, |c, i: i32, phase: i32, x: f32, y: f32| c.files_drag(i.max(0) as usize, phase, x, y));
@@ -1558,7 +1614,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         studio.on_sampler_load(move |id| {
             let target = ctl.borrow().sampler_load_target(saine_core::DeviceId(id as u64));
             let Some(target) = target else { return };
-            if let Some(file) = rfd::FileDialog::new().set_title("Choose audio file").add_filter("WAV audio", &["wav", "WAV"]).pick_file() {
+            if let Some(file) = rfd::FileDialog::new().set_title("Choose audio file").add_filter("Audio", &crate::files::dialog_exts()).pick_file() {
                 ctl.borrow_mut().import_files(vec![file], target, None);
             }
         });
@@ -1916,6 +1972,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     f.last_before = Some(t0);
                     c.poll_jobs();
+                    if c.pending_jobs == 0 && CLIP_MENU_AUDIO.load(std::sync::atomic::Ordering::Relaxed) {
+                        let found = c.project().tracks.iter().find_map(|t| t.clips.first().map(|k| (k.id, k.start, c.project().clip_length_ticks(k))));
+                        if let Some((id, start, len)) = found {
+                            CLIP_MENU_AUDIO.store(false, std::sync::atomic::Ordering::Relaxed);
+                            c.seek_beats((start + len / 2) as f64 / saine_core::PPQ as f64);
+                            c.open_clip_menu(id, 700.0, 215.0, (10_000.0, 10_000.0));
+                        }
+                    }
                     c.lanes_size = (app.get_lanes_width(), app.get_lanes_height());
                     c.update_ui(&app);
                     c.rebuild_vis();
@@ -2102,7 +2166,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     // The OS window is 1440×820 pt like the reference's; interface zoom then sets how much
     // of our (85 %-unit) layout fits in it, see `zoom.rs`.
-    app.window().set_size(slint::LogicalSize::new(1440.0, 820.0));
+    app.window().set_size(slint::LogicalSize::new(args.window_width.unwrap_or(1440.0), 820.0));
     app.run()?;
     if args.frame_stats && exit_after.is_none() {
         println!("{}", stats_json(&frame.borrow(), &app));

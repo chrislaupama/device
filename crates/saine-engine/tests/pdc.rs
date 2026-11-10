@@ -78,7 +78,7 @@ fn latency_plugin_on_one_of_two_tracks_is_compensated_and_toggle_off_restores_th
     let audio: Vec<TrackId> = doc.project().tracks.iter().filter(|t| t.kind == TrackKind::Audio).map(|t| t.id).collect();
     assert_eq!(audio.len(), 2);
     for &track in &audio {
-        doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "impulse".into(), start: 0, source_offset: 0, source_length: 9600, gain: 1.0, warp: Default::default() } }, Origin::User).unwrap();
+        doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "impulse".into(), start: 0, source_offset: 0, source_length: 9600, gain: 1.0, warp: Default::default(), disabled: false } }, Origin::User).unwrap();
     }
     let mut dev = Device::new(latency_plugin());
     dev.state = Some(device::b64::encode(&N.to_le_bytes()));

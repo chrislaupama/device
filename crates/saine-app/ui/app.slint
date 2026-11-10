@@ -174,9 +174,11 @@ component FilesPane inherits Rectangle {
         Rectangle {
             x: parent.width - 10.2px - self.width; width: sort-label.preferred-width + 3.4px + 8.5px;
             accessible-role: button; accessible-label: "Sort: " + Studio.files-sort;
-            sort-label := Text { x: 0; text: Studio.files-sort; color: #81838a; font-size: 8.5px; font-weight: 500; letter-spacing: -0.17px; vertical-alignment: center; }
-            Icon { x: sort-label.preferred-width + 3.4px; y: (parent.height - 8.5px) / 2; width: 8.5px; height: 8.5px; d: Icons.chevron-down; ink: #81838a; stroke-width: 1.4px; }
-            TouchArea { clicked => { Studio.files-sort-toggle(); } }
+            accessible-action-default => { Studio.files-sort-open-menu(!Studio.files-sort-open); }
+            property <color> ink: sort-ta.has-hover || Studio.files-sort-open ? #a6a8ad : #81838a;
+            sort-label := Text { x: 0; text: Studio.files-sort; color: parent.ink; font-size: 8.5px; font-weight: 500; letter-spacing: -0.17px; vertical-alignment: center; }
+            Icon { x: sort-label.preferred-width + 3.4px; y: (parent.height - 8.5px) / 2; width: 8.5px; height: 8.5px; d: Icons.chevron-down; ink: parent.ink; stroke-width: 1.4px; }
+            sort-ta := TouchArea { clicked => { Studio.files-sort-open-menu(!Studio.files-sort-open); } }
         }
     }
     Rectangle { x: 0; y: root.list-y; width: root.width; height: 0.5px; background: Tokens.line-separator; }
@@ -374,8 +376,8 @@ component Timeline inherits Panel {
 
     // ---- header row (y 0..27) ----
     // The reference app hides the zoom sliders once the header can no longer give the minimap its 140 px minimum
-    // (research-findings S16); widths are the right group's measured widths in design units.
-    property <bool> zoom-hidden: root.width - 200.6px - 10.2px - 206.3px - 175.4px < 119px;
+    // and the docked chat is already at its minimum width (research-findings S16, S43; AppWindow decides).
+    in property <bool> zoom-hidden;
     Text { x: 6.8px; y: 0; height: 27.2px; text: "Timeline"; color: Tokens.text-bright; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; vertical-alignment: center; }
     // Returns: PLACEHOLDER (no return tracks yet). Master pill: shows the master row (static on).
     // Header-row x positions/widths below are the reference's AX boxes at 100 % zoom (ax-main-100.tsv).
@@ -383,7 +385,7 @@ component Timeline inherits Panel {
     Pill { x: 124.1px; y: 5px; width: 59.5px; height: 18px; text: "Master"; icon: Icons.master; active: true; font-size: 8.75px; }
     // Minimap: fills the space up to the right group (PLACEHOLDER: outline of the whole-song view window only)
     Rectangle {
-        x: 200.6px; y: 5.1px; width: rgroup.x - 10.2px - self.x; height: 17px;
+        x: 200.6px; y: 5.1px; width: max(0px, rgroup.x - 10.2px - self.x); height: 17px;
         border-radius: 4.25px; border-width: 0.85px; border-color: #767678;
     }
     rgroup := HorizontalLayout {
@@ -812,7 +814,14 @@ export component AppWindow inherits Window {
     // Top row y 78.2 / browser width 252.45 / timeline x 262.65: the reference's 92 pt, 297 pt and
     // 309 pt at its default (100 %) zoom, in our 85 % units (AX dump, reference/data/ax-main-100.tsv).
     property <length> top-h: root.height - 88.4px - self.bottom-h;
-    property <length> right-w: Studio.assistant-open ? 257.5px : 0px;
+    // Docked assistant (findings S43): the saved width, narrowed first to keep the timeline header
+    // usable (down to 252.45 = 297 px); only then do the zoom sliders hide. 711.5 is the timeline
+    // width the header needs with its sliders; mirrored in src/splitters.rs.
+    property <length> timeline-x: Studio.sounds-visible ? 262.65px : 5px;
+    property <length> chat-room: root.width - self.timeline-x - 10px - 711.5px;
+    property <length> chat-w: max(252.45px, min(Studio.assistant-pref-w, self.chat-room));
+    out property <bool> header-zoom-hidden: Studio.assistant-open ? self.chat-room < 252.45px : self.chat-room + 5px < 0px;
+    property <length> right-w: Studio.assistant-open ? self.chat-w + 5px : 0px;
 
     property <int> cards-epoch: Studio.cards-epoch;
     changed cards-epoch => { fs.focus(); }
@@ -837,13 +846,26 @@ export component AppWindow inherits Window {
         if Studio.sounds-visible: Browser { x: 5px; y: 78.2px; width: 252.45px; height: root.top-h; }
         timeline := Timeline {
             focus-main => { fs.focus(); }
+            zoom-hidden: root.header-zoom-hidden;
             x: Studio.sounds-visible ? 262.65px : 5px; y: 78.2px;
             width: root.width - self.x - 5px - root.right-w; height: root.top-h;
         }
         // Assistant panel: right-docked beside the timeline (nothing overlaps).
         if Studio.assistant-open: AssistantPanel {
-            x: root.width - 5px - 252.5px; y: 78.2px; width: 252.5px; height: root.top-h;
+            x: root.width - 5px - root.chat-w; y: 78.2px; width: root.chat-w; height: root.top-h;
             focus-main => { fs.focus(); }
+        }
+        // Width splitter between timeline and assistant: 13 px hit strip over the 6 px gap
+        // (reference), col-resize cursor, double-click restores the default width.
+        if Studio.assistant-open: TouchArea {
+            x: root.width - 5px - root.chat-w - 7.55px; y: 78.2px; width: 11.05px; height: root.top-h;
+            mouse-cursor: col-resize;
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.chat-resize(0, self.absolute-position.x + self.mouse-x); }
+                if (e.kind == PointerEventKind.move && self.pressed) { Studio.chat-resize(1, self.absolute-position.x + self.mouse-x); }
+                if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.chat-resize(2, self.absolute-position.x + self.mouse-x); }
+            }
+            double-clicked => { Studio.chat-resize-reset(); }
         }
         // Bottom panel: inspector + devices, or the mixer (taller; the row above shrinks).
         if !Studio.mixer-open: BottomPanel { x: 5px; y: root.height - 5px - root.bottom-h; width: root.width - 10px; height: root.bottom-h; }
@@ -920,6 +942,31 @@ export component AppWindow inherits Window {
                 width: Studio.input-menu-w; height: Studio.input-menu-h;
                 items: Studio.input-menu-items;
                 picked(i) => { Studio.input-menu-pick(i); }
+            }
+        }
+        // Browser › Files sort menu (click outside dismisses): the reference app's select menu (#212227, 8 px
+        // radius, 4 px padding, 11 px semibold rows padded 4 / 12 px, the current one white on a
+        // 7 % tint), as wide as its longest label, right-aligned under the sort button.
+        if Studio.files-sort-open && Studio.sounds-visible && Studio.browser-section == 3: sm := Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.files-sort-open-menu(false); } } }
+            Rectangle {
+                width: widest.preferred-width + 20.4px; height: 2 * 18.7px + 6.8px;
+                x: 5px + 252.45px - 10.2px - self.width; y: 78.2px + Studio.files-list-y + 3.4px;
+                widest := Text { visible: false; text: "Recent"; font-size: 9.35px; font-weight: 600; letter-spacing: -0.374px; }
+                border-radius: 6.8px; background: #212227; border-width: 0.85px; border-color: #ffffff1c;
+                drop-shadow-blur: 20px; drop-shadow-color: #00000066; drop-shadow-offset-y: 6.8px;
+                accessible-role: list; accessible-label: "Sort";
+                TouchArea { }
+                for label[i] in ["Recent", "Name"]: Rectangle {
+                    x: 0; y: 3.4px + i * 18.7px; width: parent.width; height: 18.7px;
+                    accessible-role: list-item; accessible-label: label; accessible-checked: i == Studio.files-sort-index;
+                    accessible-action-default => { Studio.files-sort-pick(i); }
+                    Rectangle { background: row-ta.has-hover || i == Studio.files-sort-index ? #ffffff12 : transparent; }
+                    Text { x: 10.2px; text: label; color: i == Studio.files-sort-index ? #ffffff : #d6d6d9;
+                        font-size: 9.35px; font-weight: 600; letter-spacing: -0.374px; vertical-alignment: center; }
+                    row-ta := TouchArea { clicked => { Studio.files-sort-pick(i); } }
+                }
             }
         }
         // Clip editor dropdowns (click outside dismisses). Anchored below the field's value in

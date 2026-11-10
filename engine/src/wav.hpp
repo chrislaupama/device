@@ -29,6 +29,12 @@ struct DecodedAudio {
 // Return value is an se_result code; `err` receives a human-readable reason.
 int32_t decode_wav_memory(const uint8_t* data, std::size_t size, DecodedAudio& out, std::string& err);
 int32_t decode_wav_file(const char* utf8_path, DecodedAudio& out, std::string& err);
+int32_t read_file_bytes(const char* utf8_path, std::vector<uint8_t>& bytes, std::string& err);
+
+// Any importable file, by content: WAV (above), AIFF / AIFC, FLAC, Ogg Vorbis, MP3 (decode.cpp).
+// Mono and stereo only, like WAV.
+int32_t decode_audio_memory(const uint8_t* data, std::size_t size, DecodedAudio& out, std::string& err);
+int32_t decode_audio_file(const char* utf8_path, DecodedAudio& out, std::string& err);
 
 // Streaming writer for WAVE_FORMAT_IEEE_FLOAT, 32-bit, interleaved.
 class WavFloatWriter {
