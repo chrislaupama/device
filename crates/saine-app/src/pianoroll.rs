@@ -16,7 +16,7 @@ use crate::controller::{BottomTab, Controller};
 use crate::gpu::{DrawList, RectInst};
 use crate::timeline::{Px, rgb};
 use saine_core::midi::{self, MidiClip, Note};
-use saine_core::{ClipId, Command, PPQ, Ticks};
+use saine_core::{Clip, ClipId, Command, PPQ, Ticks};
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
@@ -28,8 +28,9 @@ pub const BAND_Y: f32 = 27.0;
 pub const GRID_Y: f32 = 54.5;
 /// One semitone row (12 rows = 176.5 pt in the reference).
 pub const ROW_H: f32 = 176.5 / 12.0;
-/// Space left and right of the clip when the clip is fitted to the view.
-pub const MARGIN: f32 = 32.5;
+/// Space left and right of the clip when it is fitted to the view, as a fraction of
+/// the clip length (the reference app shows 1.06 clip lengths, measured in both clip editors).
+pub const FIT_PAD: f64 = 0.03;
 /// Texture origin inside the bottom panel, and the panel height while the Clip tab is open.
 pub const PANEL_ORIGIN: (f32, f32) = (255.0, 54.5);
 pub const CLIP_PANEL_H: f32 = 390.0;
@@ -40,6 +41,8 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(350);
 
 #[derive(Debug, Clone, Copy)]
 pub struct PrView {
+    /// Left edge of the grid: `GRID_X` with the keyboard, 0 in the audio clip editor.
+    pub gx: f32,
     pub w: f32,
     pub h: f32,
     /// Points per beat.
@@ -50,16 +53,20 @@ pub struct PrView {
 }
 
 impl PrView {
-    /// Horizontal zoom fits the clip with `MARGIN` on both sides (reference behaviour).
+    /// Horizontal zoom fits the clip with `FIT_PAD` on both sides (reference behaviour).
     pub fn fit(size: (f32, f32), clip_beats: f64, scroll: f32) -> Self {
-        let ppb = (size.0 - GRID_X - 2.0 * MARGIN).max(40.0) as f64 / clip_beats.max(0.25);
-        PrView { w: size.0, h: size.1, ppb, start: -(MARGIN as f64) / ppb, scroll }
+        Self::fit_from(GRID_X, size, clip_beats, scroll)
+    }
+    pub fn fit_from(gx: f32, size: (f32, f32), clip_beats: f64, scroll: f32) -> Self {
+        let beats = clip_beats.max(0.25);
+        let ppb = (size.0 - gx).max(40.0) as f64 / (beats * (1.0 + 2.0 * FIT_PAD));
+        PrView { gx, w: size.0, h: size.1, ppb, start: -FIT_PAD * beats, scroll }
     }
     pub fn x_of(&self, beat: f64) -> f32 {
-        GRID_X + ((beat - self.start) * self.ppb) as f32
+        self.gx + ((beat - self.start) * self.ppb) as f32
     }
     pub fn beat_at(&self, x: f32) -> f64 {
-        self.start + (x - GRID_X) as f64 / self.ppb
+        self.start + (x - self.gx) as f64 / self.ppb
     }
     pub fn y_of(&self, pitch: i32) -> f32 {
         GRID_Y + (127 - pitch) as f32 * ROW_H - self.scroll
@@ -195,6 +202,8 @@ pub struct PrScene<'a> {
     pub playhead: f64,
     pub beats_per_bar: f64,
     pub marquee: Option<(f32, f32, f32, f32)>,
+    /// Audio clip editor: no keyboard or pitch rows, gain dots on the clip handles.
+    pub audio: bool,
 }
 
 fn rgba(c: [f32; 3], a: f32) -> [f32; 4] {
@@ -237,37 +246,41 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
     dl.clear_all();
     let px = Px { s: sc.scale };
     let v = &sc.view;
-    let (w, h) = (v.w, v.h);
+    let (w, h, gx) = (v.w, v.h, v.gx);
     dl.clear = [0.102, 0.106, 0.118]; // #1a1b1e
     dl.lanes_clip = ((GRID_Y * sc.scale).round() as u32, (h * sc.scale).round() as u32);
     let b = &mut dl.base;
 
-    // ---- rows ----
+    // ---- rows (the audio clip editor has one plain lane) ----
     let top = v.pitch_at(GRID_Y).min(127);
     let bottom = v.pitch_at(h - 0.01).max(0);
-    for p in (bottom..=top).rev() {
-        let y = v.y_of(p);
-        let c = if is_black(p) { 0x151619 } else { 0x191a1d };
-        b.push(px.rect(GRID_X, y, w - GRID_X, ROW_H, rgba(rgb(c), 1.0)));
-        if p.rem_euclid(12) == 0 {
-            b.push(px.rect(GRID_X, y + ROW_H - 1.0, w - GRID_X, 1.0, rgba(rgb(0x252629), 1.0)));
+    if sc.audio {
+        b.push(px.rect(gx, GRID_Y, w - gx, h - GRID_Y, rgba(rgb(0x141518), 1.0)));
+    } else {
+        for p in (bottom..=top).rev() {
+            let y = v.y_of(p);
+            let c = if is_black(p) { 0x151619 } else { 0x191a1d };
+            b.push(px.rect(gx, y, w - gx, ROW_H, rgba(rgb(c), 1.0)));
+            if p.rem_euclid(12) == 0 {
+                b.push(px.rect(gx, y + ROW_H - 1.0, w - gx, 1.0, rgba(rgb(0x252629), 1.0)));
+            }
         }
     }
-    vlines(b, sc, &px, GRID_Y, h, GRID_X);
+    vlines(b, sc, &px, GRID_Y, h, gx);
     // Outside the clip range: darker.
     let (cx0, cx1) = (v.x_of(sc.range.0), v.x_of(sc.range.1));
-    if cx0 > GRID_X {
-        b.push(px.rect(GRID_X, GRID_Y, cx0.min(w) - GRID_X, h - GRID_Y, rgba(BLACK, 0.2)));
+    if cx0 > gx {
+        b.push(px.rect(gx, GRID_Y, cx0.min(w) - gx, h - GRID_Y, rgba(BLACK, 0.2)));
     }
     if cx1 < w {
-        let x = cx1.max(GRID_X);
+        let x = cx1.max(gx);
         b.push(px.rect(x, GRID_Y, w - x, h - GRID_Y, rgba(BLACK, 0.2)));
     }
 
     // ---- notes ----
     for n in sc.notes {
         let (x, y, nw, nh) = v.note_rect(n);
-        if x > w || x + nw < GRID_X || y > h || y + nh < GRID_Y {
+        if x > w || x + nw < gx || y > h || y + nh < GRID_Y {
             continue;
         }
         let beat = n.start as f64 / PPQ as f64;
@@ -284,37 +297,39 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
     }
 
     // ---- keyboard (covers notes scrolled left of the grid) ----
-    b.push(px.rect(0.0, GRID_Y, GRID_X, h - GRID_Y, rgba(rgb(0x1a1b1e), 1.0)));
-    b.push(px.rect(0.5, GRID_Y, 49.5, h - GRID_Y, rgba(WHITE, 1.0)));
-    for p in (bottom..=top).rev() {
-        let y = v.y_of(p);
-        let line = rgba(rgb(0x555555), 1.0);
-        if is_black(p) {
-            b.push(px.rect(30.5, y + ROW_H / 2.0 - 1.0, 19.5, 1.0, line));
-            b.push(px.rect(0.5, y, 30.0, ROW_H, rgba(rgb(0x1a1a1a), 1.0)));
-            b.push(px.rect(0.5, y, 30.0, 1.0, rgba(rgb(0x3c3c3c), 1.0)));
-            b.push(px.rect(0.5, y + ROW_H - 1.0, 30.0, 1.0, rgba(rgb(0x0d0d0d), 1.0)));
-        } else if matches!(p.rem_euclid(12), 0 | 5) {
-            b.push(px.rect(0.5, y + ROW_H - 1.0, 49.5, 1.0, line));
+    if !sc.audio {
+        b.push(px.rect(0.0, GRID_Y, gx, h - GRID_Y, rgba(rgb(0x1a1b1e), 1.0)));
+        b.push(px.rect(0.5, GRID_Y, 49.5, h - GRID_Y, rgba(WHITE, 1.0)));
+        for p in (bottom..=top).rev() {
+            let y = v.y_of(p);
+            let line = rgba(rgb(0x555555), 1.0);
+            if is_black(p) {
+                b.push(px.rect(30.5, y + ROW_H / 2.0 - 1.0, 19.5, 1.0, line));
+                b.push(px.rect(0.5, y, 30.0, ROW_H, rgba(rgb(0x1a1a1a), 1.0)));
+                b.push(px.rect(0.5, y, 30.0, 1.0, rgba(rgb(0x3c3c3c), 1.0)));
+                b.push(px.rect(0.5, y + ROW_H - 1.0, 30.0, 1.0, rgba(rgb(0x0d0d0d), 1.0)));
+            } else if matches!(p.rem_euclid(12), 0 | 5) {
+                b.push(px.rect(0.5, y + ROW_H - 1.0, 49.5, 1.0, line));
+            }
         }
-    }
-    b.push(px.rect(50.0, GRID_Y, 1.0, h - GRID_Y, rgba(rgb(0x333333), 1.0)));
-    // Soft fades at the top and bottom of the keyboard.
-    for i in 0..8 {
-        let t = i as f32 / 8.0;
-        b.push(px.rect(0.5, GRID_Y + i as f32 * 2.0, 49.5, 2.0, rgba(BLACK, 0.45 * (1.0 - t))));
-        b.push(px.rect(0.5, h - 10.0 + i as f32 * 1.25, 49.5, 1.25, rgba(BLACK, 0.28 * t)));
+        b.push(px.rect(50.0, GRID_Y, 1.0, h - GRID_Y, rgba(rgb(0x333333), 1.0)));
+        // Soft fades at the top and bottom of the keyboard.
+        for i in 0..8 {
+            let t = i as f32 / 8.0;
+            b.push(px.rect(0.5, GRID_Y + i as f32 * 2.0, 49.5, 2.0, rgba(BLACK, 0.45 * (1.0 - t))));
+            b.push(px.rect(0.5, h - 10.0 + i as f32 * 1.25, 49.5, 1.25, rgba(BLACK, 0.28 * t)));
+        }
     }
 
     // ---- header: ruler, clip range bar, handle band (over) ----
     let o = &mut dl.over;
-    o.push(px.rect(GRID_X, 14.0, w - GRID_X, GRID_Y - 14.0, rgba(rgb(0x1e2024), 1.0)));
-    let rx = cx0.max(GRID_X);
+    o.push(px.rect(gx, 14.0, w - gx, GRID_Y - 14.0, rgba(rgb(0x1e2024), 1.0)));
+    let rx = cx0.max(gx);
     if rx < w {
         o.push(px.rect(rx, 0.0, w - rx, 13.5, rgba(rgb(0x2c2d30), 1.0)));
         o.push(px.rect(rx, 13.5, w - rx, 0.5, rgba(rgb(0x3d3e41), 1.0)));
         // beat ticks in the ruler
-        let mut beat = sc.range.0.max(v.beat_at(GRID_X)).ceil();
+        let mut beat = sc.range.0.max(v.beat_at(gx)).ceil();
         while v.x_of(beat) <= w {
             if beat >= sc.range.0 {
                 o.push(px.rect(v.x_of(beat), 0.0, 0.5, 13.5, rgba(rgb(0x303236), 1.0)));
@@ -323,18 +338,18 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
         }
     }
     let mut tmp = Vec::new();
-    vlines(&mut tmp, sc, &px, BAND_Y, GRID_Y, GRID_X);
+    vlines(&mut tmp, sc, &px, BAND_Y, GRID_Y, gx);
     o.extend(tmp);
     for (y, hh) in [(27.0, 0.5), (40.5, 1.0), (54.0, 0.5)] {
-        o.push(px.rect(GRID_X, y, w - GRID_X, hh, rgba(rgb(0x292b2e), 1.0)));
+        o.push(px.rect(gx, y, w - gx, hh, rgba(rgb(0x292b2e), 1.0)));
     }
     let bar = mix(sc.color, rgb(0x86a6ff), 0.5);
-    if cx1 > GRID_X && cx0 < w {
-        let x0 = cx0.max(GRID_X);
+    if cx1 > gx && cx0 < w {
+        let x0 = cx0.max(gx);
         o.push(px.rect(x0, BAR_Y.0, cx1.min(w) - x0, BAR_Y.1 - BAR_Y.0, rgba(bar, 1.0)));
     }
     for (x, left) in [(cx0, true), (cx1, false)] {
-        if x < GRID_X - 1.0 || x > w + 1.0 {
+        if x < gx - 1.0 || x > w + 1.0 {
             continue;
         }
         o.push(px.rect(x - 0.5, BAND_Y, 1.0, h - BAND_Y, rgba(WHITE, 1.0)));
@@ -343,10 +358,19 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
             let hx = if left { x - 0.5 } else { x + 0.5 - ww };
             o.push(px.rect(hx, 29.5 + r as f32 * 0.5, ww, 0.5, rgba(WHITE, 1.0)));
         }
+        // Audio clips: a gain pin under each handle (rounded top, pointed bottom).
+        if sc.audio {
+            let pin = rgba(mix(sc.color, rgb(0x383c42), 0.5), 1.0);
+            o.push(px.rounded(x - 3.8, 42.8, 7.6, 7.0, 2.5, pin));
+            for r in 0..8 {
+                let ww = 7.6 * (1.0 - r as f32 / 8.5);
+                o.push(px.rect(x - ww / 2.0, 48.0 + r as f32 * 0.75, ww, 0.75, pin));
+            }
+        }
     }
     // ---- playhead ----
     let phx = v.x_of(sc.playhead);
-    if phx >= GRID_X && phx <= w {
+    if phx >= gx && phx <= w {
         o.push(px.rect(phx - 0.5, 14.0, 1.0, h - 14.0, rgba(rgb(0x8a8a8b), 1.0)));
     }
     // ---- marquee ----
@@ -385,6 +409,19 @@ impl Controller {
         self.pr_clip().is_some()
     }
 
+    /// The audio clip shown in the audio clip editor (selected audio clip, Clip tab).
+    pub fn ac_clip(&self) -> Option<&Clip> {
+        if self.bottom_tab != BottomTab::Clip || self.mixer_open {
+            return None;
+        }
+        self.project().clip(self.selected_clip?)
+    }
+
+    /// One of the two clip editors (piano roll or audio clip editor) is open.
+    pub fn clip_editor_visible(&self) -> bool {
+        self.pr_visible() || self.ac_clip().is_some()
+    }
+
     /// Reset per-clip view state when another clip is opened.
     pub fn pr_sync_clip(&mut self) {
         let cur = self.pr_clip().map(|c| c.id);
@@ -415,6 +452,10 @@ impl Controller {
     }
 
     pub fn pr_view(&self) -> PrView {
+        if let Some(c) = self.ac_clip() {
+            let len = self.project().clip_length_ticks(c);
+            return PrView::fit_from(0.0, self.pr.size, len as f64 / PPQ as f64, 0.0);
+        }
         let len = self.pr_clip().map(|c| c.length).unwrap_or(self.project().ticks_per_bar());
         let mut v = PrView::fit(self.pr.size, len as f64 / PPQ as f64, self.pr.scroll);
         v.scroll = v.scroll.clamp(0.0, v.max_scroll());
@@ -443,8 +484,23 @@ impl Controller {
     }
 
     pub fn pr_scene<'a>(&'a self, scale: f32, notes: &'a [Note]) -> Option<PrScene<'a>> {
-        let clip = self.pr_clip()?;
         let p = self.project();
+        if let Some(c) = self.ac_clip() {
+            let color = p.find_clip(c.id).map(|(t, _)| crate::controller::track_color(p.tracks[t].color)).unwrap_or(WHITE);
+            return Some(PrScene {
+                view: self.pr_view(),
+                scale,
+                range: (0.0, p.clip_length_ticks(c) as f64 / PPQ as f64),
+                notes,
+                selected: &self.pr.selected,
+                color,
+                playhead: (self.playhead_ticks() - c.start) as f64 / PPQ as f64,
+                beats_per_bar: p.ticks_per_bar() as f64 / PPQ as f64,
+                marquee: None,
+                audio: true,
+            });
+        }
+        let clip = self.pr_clip()?;
         let color = p.find_midi_clip(clip.id).map(|(t, _)| crate::controller::track_color(p.tracks[t].color)).unwrap_or(WHITE);
         let marquee = match self.pr.drag {
             Some(PrDrag::Marquee { x0, y0, x1, y1, .. }) => Some((x0, y0, x1, y1)),
@@ -460,6 +516,7 @@ impl Controller {
             playhead: (self.playhead_ticks() - clip.start) as f64 / PPQ as f64,
             beats_per_bar: p.ticks_per_bar() as f64 / PPQ as f64,
             marquee,
+            audio: false,
         })
     }
 
@@ -824,8 +881,9 @@ mod tests {
     #[test]
     fn view_fits_clip_and_maps_pitches() {
         let v = PrView::fit((1174.5, 281.0), 4.0, DEFAULT_SCROLL);
-        assert!((v.x_of(0.0) - (GRID_X + MARGIN)).abs() < 1e-3);
-        assert!((v.x_of(4.0) - (1174.5 - MARGIN)).abs() < 1e-3);
+        let pad = (1174.5 - GRID_X) * (FIT_PAD / (1.0 + 2.0 * FIT_PAD)) as f32;
+        assert!((v.x_of(0.0) - (GRID_X + pad)).abs() < 1e-3);
+        assert!((v.x_of(4.0) - (1174.5 - pad)).abs() < 1e-3);
         assert!((v.y_of(60) - 106.5).abs() < 1e-3);
         assert_eq!(v.pitch_at(106.6), 60);
         assert_eq!(v.pitch_at(106.4), 61);
