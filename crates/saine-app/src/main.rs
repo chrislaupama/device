@@ -14,7 +14,7 @@
 //!              [--hold-note <0..127>  (with a synth state: hold the note and render 0.75 s offline first)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
-//!              [--clip-menu <0..5>  (open a clip editor dropdown after --state: Speed, Warp, Mode, Grid, Type, Genre)]
+//!              [--clip-menu <0|1|3|4|5>  (open a clip editor dropdown after --state: Speed, Warp, Grid, Type, Genre; 2, Mode, is disabled)]
 //!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
 //! ```
 
@@ -283,7 +283,13 @@ fn parse_args() -> Result<Args, String> {
             "--hold-note" => a.hold_note = Some(value(&mut i)?.parse().map_err(|e| format!("--hold-note: {e}"))?),
             "--sampler-tab" => a.sampler_tab = Some(value(&mut i)?.parse().map_err(|e| format!("--sampler-tab: {e}"))?),
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
-            "--clip-menu" => a.clip_menu = Some(value(&mut i)?.parse().map_err(|e| format!("--clip-menu: {e}"))?),
+            "--clip-menu" => {
+                let m: i32 = value(&mut i)?.parse().map_err(|e| format!("--clip-menu: {e}"))?;
+                if ![0, 1, 3, 4, 5].contains(&m) {
+                    return Err(format!("--clip-menu: want 0, 1, 3, 4 or 5 (2, Mode, is disabled), got {m}"));
+                }
+                a.clip_menu = Some(m);
+            }
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
             "--render-bench" => {
@@ -1432,6 +1438,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let measure = args.demo || args.frame_stats || args.exit_after_frames.is_some();
     let screenshot = args.screenshot.clone();
     let exit_after = args.exit_after_frames;
+    let want_menu = args.clip_menu;
     let save_to = args.save_to.clone();
     {
         let aw = app.as_weak();
@@ -1531,7 +1538,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         f.slint.0.push((now - t).as_secs_f64() * 1e3);
                     }
                     let (animating, ready) = match ctl.try_borrow() {
-                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || !c.assistant.highlights.is_empty() || c.rec.recording, c.pending_jobs == 0),
+                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || !c.assistant.highlights.is_empty() || c.rec.recording, c.pending_jobs == 0 && want_menu.is_none_or(|m| c.pr.menu == m)),
                         Err(_) => (true, false),
                     };
                     if ready {
