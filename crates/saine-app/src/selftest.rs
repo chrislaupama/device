@@ -261,6 +261,17 @@ fn midi_steps() -> Vec<Step> {
             one_step(h5.clone(), "Quantize Notes")(c)?;
             (n.iter().all(|n| n.start % 240 == 0) && n.iter().any(|n| n.start == 3360 && n.pitch == 52)).then_some(()).ok_or(format!("{n:?}"))
         })),
+        Do("click Smart Quantize", Box::new(|a| click(a, 260.0 + 55.0 + 30.0, 466.0))),
+        Check("Smart Quantize ran: one undo step, or no change to notes already on the grid", Box::new(|c, _| {
+            let label = c.doc.undo_label();
+            label.as_deref().is_some_and(|l| l.starts_with("Smart Quantize") || l.starts_with("Quantize Notes")).then_some(()).ok_or(format!("last {label:?}"))
+        })),
+        DoC("undo Smart Quantize if it changed the notes", Box::new(|a, ctl| {
+            let stepped = ctl.borrow().doc.undo_label().is_some_and(|l| l.starts_with("Smart Quantize"));
+            if stepped {
+                key(a, "z", true, false);
+            }
+        })),
         DoC("click the E3 note at beat 0, press Up", Box::new(|a, ctl| {
             let (x, y) = pr_xy(ctl, 0.1, 52);
             click(a, x, y);
