@@ -9,6 +9,7 @@
 // Icons are ORIGINAL line drawings.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons, Knob } from "widgets.slint";
+import { CardHeader } from "device_panel.slint";
 import { Studio, MenuItem, SynthKnobItem, SynthFaderItem, SynthSegItem, SynthScopeItem, SynthLatchItem } from "studio.slint";
 
 global SynthStyle {
@@ -279,40 +280,8 @@ export component SynthDevice inherits Rectangle {
     border-width: 0.5px;
     border-color: SynthStyle.card-edge;
 
-    // ---- header ----
-    Rectangle {
-        x: 9px; y: 8.25px; width: 20px; height: 10px; border-radius: 5px; background: Studio.synth-enabled ? Studio.sel-color : #4a4b50;
-        Rectangle { x: Studio.synth-enabled ? parent.width - 9px : 1px; y: 1px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; }
-        TouchArea { clicked => { Studio.synth-bypass(); } }
-    }
-    Text { x: 37.5px; y: 6px; height: 14px; text: "Synth"; color: #ffffff; font-size: 9.75px; font-weight: 700; vertical-alignment: center; }
-    Icon {
-        x: 69px; y: 7px; width: 12px; height: 12px; d: Icons.chevron-down; ink: SynthStyle.dim; stroke-width: 1.2px;
-        TouchArea { clicked => { Studio.open-inst-menu(root.absolute-position.x + 30px, root.absolute-position.y + 24px); } }
-    }
-    Icon { x: preset.x - 21px; y: 6px; width: 14px; height: 14px; d: Icons.sparkle; ink: SynthStyle.dim; stroke-width: 1.1px;
-        TouchArea { clicked => { Studio.synth-placeholder("Generate sound"); } } }
-    preset := Text {
-        x: 704px - self.preferred-width; y: 6px; height: 14px; text: Studio.synth-preset;
-        color: SynthStyle.dim; font-size: 9.5px; font-weight: 600; vertical-alignment: center;
-        TouchArea { clicked => { Studio.synth-pill(1, 0, preset.absolute-position.x + preset.width - 180px, preset.absolute-position.y + 18px, 180px); } }
-    }
-    Rectangle {
-        x: 707px; y: 4px; width: 13px; height: 18px;
-        Icon { x: 1.5px; y: 4px; width: 10px; height: 10px; d: Icons.chevron-left; ink: SynthStyle.dim; stroke-width: 1.3px; }
-        TouchArea { clicked => { Studio.synth-preset-step(-1); } }
-    }
-    Rectangle {
-        x: 720px; y: 4px; width: 13px; height: 18px;
-        Icon { x: 1.5px; y: 4px; width: 10px; height: 10px; d: Icons.chevron-right; ink: SynthStyle.dim; stroke-width: 1.3px; }
-        TouchArea { clicked => { Studio.synth-preset-step(1); } }
-    }
-    Rectangle { x: 737px; y: 7.5px; width: 0.5px; height: 12px; background: SynthStyle.line; }
-    Icon { x: 740.5px; y: 5px; width: 16px; height: 16px; d: "M5 8h6"; ink: SynthStyle.dim; stroke-width: 1.1px;
-        TouchArea { clicked => { Studio.synth-placeholder("Minimise device"); } } }
-    Icon { x: 759px; y: 8px; width: 10px; height: 10px; d: Icons.close; ink: SynthStyle.dim; stroke-width: 1.3px;
-        TouchArea { clicked => { Studio.synth-placeholder("Remove device"); } } }
-    Rectangle { x: 0; y: 26.5px; width: root.width; height: 0.5px; background: SynthStyle.line; }
+    // ---- header: the shared device card header (device_panel.slint) ----
+    CardHeader { x: 0; y: 0; width: root.width; card: Studio.synth-card; }
 
     // ---- category list ----
     Rectangle { x: 106.5px; y: 27px; width: 0.5px; height: root.height - 27px; background: SynthStyle.line; }

@@ -218,6 +218,8 @@ pub struct PrScene<'a> {
     /// Warped audio clips: warp markers and transients (clip-relative beats).
     pub warp_markers: Vec<f64>,
     pub transients: Vec<f64>,
+    /// Audio clip editor: the clip's waveform (`Controller::clip_wave`).
+    pub wave: Option<(crate::peaks::Slot, Vec<crate::peaks::WaveSeg>)>,
 }
 
 fn rgba(c: [f32; 3], a: f32) -> [f32; 4] {
@@ -297,6 +299,14 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
         if x >= gx && x <= w {
             b.push(px.rect(x - 0.25, GRID_Y, 0.5, h - GRID_Y, rgba(WHITE, 0.2)));
         }
+    }
+
+    // ---- waveform (audio clip editor): track colour halfway to white, 84 % of the lane ----
+    if let Some((slot, segs)) = &sc.wave {
+        let lane = h - GRID_Y;
+        let wh = lane * 0.84 / 0.92;
+        let color = rgba(mix(sc.color, WHITE, 0.5), 0.85);
+        crate::peaks::push_wave(&mut dl.waves, *slot, segs, |b| v.x_of(b), (cx0.max(gx), cx1.min(w)), (GRID_Y + (lane - wh) / 2.0, wh), sc.scale, color);
     }
 
     // ---- notes ----
@@ -539,6 +549,7 @@ impl Controller {
                 audio: true,
                 warp_markers: self.ac_marker_beats(),
                 transients: self.ac_transient_beats(),
+                wave: self.clip_wave(c),
             });
         }
         let clip = self.pr_clip()?;
@@ -560,6 +571,7 @@ impl Controller {
             audio: false,
             warp_markers: Vec::new(),
             transients: Vec::new(),
+            wave: None,
         })
     }
 

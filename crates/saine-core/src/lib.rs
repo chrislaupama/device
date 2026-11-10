@@ -13,6 +13,7 @@ pub mod builtin;
 pub mod command;
 pub mod device;
 pub mod history;
+pub mod import;
 pub mod instrument;
 pub mod keymap;
 pub mod midi;

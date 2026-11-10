@@ -251,6 +251,12 @@ pub enum MenuAction {
     Quantize,
     Humanize,
     Ask,
+    Paste,
+    SectionRename,
+    SectionColor,
+    SectionInsert,
+    SectionDelete,
+    SectionClear,
 }
 
 #[derive(Debug, Default)]
@@ -258,6 +264,7 @@ pub struct MenuState {
     pub open: bool,
     pub pos: (f32, f32),
     pub clip: Option<ClipId>,
+    pub section: Option<saine_core::SectionId>,
     pub items: Vec<(MenuAction, bool)>,
     pub sub_open: bool,
 }
@@ -269,6 +276,8 @@ pub struct Controller {
     pub engine: Arc<Engine>,
     pub rate: f64,
     pub(crate) asset_map: HashMap<AssetId, u64>,
+    /// The engine's reversed copies of assets that reversed clips play (src/warpedit.rs).
+    pub(crate) reversed_assets: HashMap<AssetId, u64>,
     /// Detected transients per engine asset (asset frames), and those being analysed.
     pub(crate) onsets: HashMap<u64, Vec<saine_core::Transient>>,
     pub(crate) onsets_pending: std::collections::HashSet<u64>,
@@ -286,6 +295,9 @@ pub struct Controller {
     pub(crate) bottom_drag: Option<crate::splitters::BottomDrag>,
     status: Option<(String, Instant, Duration)>,
     pub project_dir: Option<PathBuf>,
+    /// Export dialog and the unsaved-changes prompt (src/dialogs.rs).
+    pub export: crate::dialogs::ExportUi,
+    pub unsaved_open: bool,
     pub(crate) jobs_tx: Sender<JobResult>,
     jobs_rx: Receiver<JobResult>,
     pub pending_jobs: usize,
@@ -302,6 +314,7 @@ pub struct Controller {
     // models (kept to update in place)
     pub(crate) tracks_model: Rc<VecModel<TrackRow>>,
     ruler_model: Rc<VecModel<RulerLabel>>,
+    section_label_model: Rc<VecModel<crate::SectionLabel>>,
     clips_model: Rc<VecModel<ClipLabel>>,
     ruler_key: (i64, i64, i64),
     pub clip_vis: Vec<ClipVis>,
@@ -316,6 +329,10 @@ pub struct Controller {
     pub clipboard: Option<ClipboardItem>,
     /// Rename popup open for this clip.
     pub rename: Option<ClipId>,
+    pub rename_section: Option<saine_core::SectionId>,
+    pub selected_section: Option<saine_core::SectionId>,
+    pub(crate) section_drag: Option<crate::sections::SectionDrag>,
+    pub(crate) section_vis: Vec<crate::sections::SectionVis>,
     pub(crate) pr_bar_model: Rc<VecModel<RulerLabel>>,
     pub(crate) pr_key_model: Rc<VecModel<YLabel>>,
     pub(crate) menu_model: Rc<VecModel<MenuItem>>,
@@ -343,10 +360,15 @@ pub struct Controller {
     pub rec: crate::recording::RecState,
     pub settings: crate::settings::SettingsState,
     pub(crate) input_menu_model: Rc<VecModel<ChoiceItem>>,
+    pub(crate) export_tracks_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) settings_menu_model: Rc<VecModel<ChoiceItem>>,
     // ---- plugin devices (src/devices.rs) ----
     pub devices: crate::devices::DevicesUi,
     pub(crate) tree_model: Rc<VecModel<TreeRow>>,
+    // ---- browser Files section and Back / Forward (src/files.rs) ----
+    pub files: crate::files::FilesUi,
+    pub(crate) files_model: Rc<VecModel<crate::FileRow>>,
+    pub(crate) files_guides_model: Rc<VecModel<crate::FileGuide>>,
     pub(crate) cards_model: Rc<VecModel<DeviceCard>>,
     pub(crate) window_cards_model: Rc<VecModel<DeviceCard>>,
     pub(crate) add_results_model: Rc<VecModel<MenuItem>>,
@@ -371,6 +393,7 @@ impl Controller {
             engine,
             rate,
             asset_map: HashMap::new(),
+            reversed_assets: HashMap::new(),
             onsets: HashMap::new(),
             onsets_pending: std::collections::HashSet::new(),
             tempos: HashMap::new(),
@@ -384,6 +407,8 @@ impl Controller {
             bottom_drag: None,
             status: None,
             project_dir: None,
+            export: Default::default(),
+            unsaved_open: false,
             jobs_tx,
             jobs_rx,
             pending_jobs: 0,
@@ -397,6 +422,7 @@ impl Controller {
             meter_t: None,
             tracks_model: Rc::new(VecModel::default()),
             ruler_model: Rc::new(VecModel::default()),
+            section_label_model: Rc::new(VecModel::default()),
             clips_model: Rc::new(VecModel::default()),
             ruler_key: (i64::MIN, 0, 0),
             clip_vis: Vec::new(),
@@ -408,6 +434,10 @@ impl Controller {
             menu: MenuState::default(),
             clipboard: None,
             rename: None,
+            rename_section: None,
+            selected_section: None,
+            section_drag: None,
+            section_vis: Vec::new(),
             pr_bar_model: Rc::new(VecModel::default()),
             pr_key_model: Rc::new(VecModel::default()),
             menu_model: Rc::new(VecModel::default()),
@@ -431,9 +461,13 @@ impl Controller {
             rec: Default::default(),
             settings: Default::default(),
             input_menu_model: Rc::new(VecModel::default()),
+            export_tracks_model: Rc::new(VecModel::default()),
             settings_menu_model: Rc::new(VecModel::default()),
             devices: Default::default(),
             tree_model: Rc::new(VecModel::default()),
+            files: Default::default(),
+            files_model: Rc::new(VecModel::default()),
+            files_guides_model: Rc::new(VecModel::default()),
             cards_model: Rc::new(VecModel::default()),
             window_cards_model: Rc::new(VecModel::default()),
             add_results_model: Rc::new(VecModel::default()),
@@ -456,6 +490,7 @@ impl Controller {
         let s = app.global::<Studio>();
         s.set_tracks(ModelRc::from(self.tracks_model.clone()));
         s.set_ruler_labels(ModelRc::from(self.ruler_model.clone()));
+        s.set_section_labels(ModelRc::from(self.section_label_model.clone()));
         s.set_clip_labels(ModelRc::from(self.clip_ids_model()));
         s.set_strips(ModelRc::from(self.strips_model.clone()));
         s.set_strip_meters(ModelRc::from(self.strip_meters_model.clone()));
@@ -470,8 +505,11 @@ impl Controller {
         s.set_synth_displays(ModelRc::from(self.synth_displays_model.clone()));
         s.set_synth_menu_items(ModelRc::from(self.synth_menu_model.clone()));
         s.set_input_menu_items(ModelRc::from(self.input_menu_model.clone()));
+        s.set_export_tracks_items(ModelRc::from(self.export_tracks_model.clone()));
         s.set_settings_menu_items(ModelRc::from(self.settings_menu_model.clone()));
         s.set_tree(ModelRc::from(self.tree_model.clone()));
+        s.set_files(ModelRc::from(self.files_model.clone()));
+        s.set_files_guides(ModelRc::from(self.files_guides_model.clone()));
         s.set_device_cards(ModelRc::from(self.cards_model.clone()));
         s.set_device_window_cards(ModelRc::from(self.window_cards_model.clone()));
         s.set_add_results(ModelRc::from(self.add_results_model.clone()));
@@ -506,6 +544,26 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    /// App menu bar items without a shortcut (`Studio.menu-action`). Settings and the
+    /// dialogs are modal, so the menu does nothing while one is open.
+    pub fn menu_action(&mut self, id: &str) {
+        if self.settings.open || self.export.open || self.unsaved_open {
+            return;
+        }
+        match id {
+            "options.audio_midi" => self.open_settings(),
+            "options.check_plugins" => self.start_plugin_scan(false),
+            "options.rescan_plugins" => self.start_plugin_scan(true),
+            "file.show_in_finder" => {
+                let Some(dir) = &self.project_dir else { return };
+                if let Err(e) = std::process::Command::new("open").arg("-R").arg(dir).spawn() {
+                    self.set_status(format!("Show in Finder failed: {e}"), 3);
+                }
+            }
+            other => self.set_status(format!("{other}: not implemented yet"), 3),
+        }
+    }
+
     // ---------------------------------------------------------------- core glue
 
     pub fn execute(&mut self, cmd: Command) -> bool {
@@ -535,6 +593,9 @@ impl Controller {
         {
             self.selected_clip = None;
         }
+        if self.selected_section.is_some_and(|s| p.section_index(s).is_none()) {
+            self.selected_section = None;
+        }
         if self.menu.clip.is_some_and(|c| !p.clip_id_in_use(c)) {
             self.menu_close();
         }
@@ -549,7 +610,7 @@ impl Controller {
     /// The session the engine should play right now: the document plus any
     /// automation lane being edited.
     pub fn current_snapshot(&self) -> snapshot::SessionSnapshot {
-        let (mut snap, _skipped) = snapshot::build_with_transients(self.doc.project(), self.rate, &self.asset_map, &self.transients_by_asset());
+        let (mut snap, _skipped) = snapshot::build_full(self.doc.project(), self.rate, &self.asset_map, &self.reversed_assets, &self.transients_by_asset());
         // Automation drag / write preview: the pending lane replaces the model lane.
         if let Some((key, lane)) = &self.auto.pending {
             let p = self.doc.project();
@@ -570,6 +631,7 @@ impl Controller {
 
     pub fn publish(&mut self) {
         self.request_onsets();
+        self.ensure_reversed_assets();
         let snap = self.current_snapshot();
         if let Err(e) = self.engine.publish(&snap) {
             self.set_status(format!("Engine rejected the session: {e}"), 6);
@@ -581,7 +643,7 @@ impl Controller {
 
     /// Push loop region and metronome grid (both derived from the project
     /// transport) to the engine. Cheap; called after every publish.
-    fn sync_loop_and_click(&mut self) {
+    pub(crate) fn sync_loop_and_click(&mut self) {
         let p = self.doc.project();
         let tr = &p.transport;
         let (start, end) = (p.ticks_to_frames(tr.loop_start, self.rate), p.ticks_to_frames(tr.loop_end, self.rate));
@@ -673,6 +735,7 @@ impl Controller {
 
     pub fn select_track(&mut self, id: TrackId) {
         if self.selected_track != Some(id) {
+            self.selected_section = None;
             self.selected_track = Some(id);
             if let Some(c) = self.selected_clip
                 && self.clip_track(c) != Some(id)
@@ -705,7 +768,9 @@ impl Controller {
     }
 
     pub fn delete_selection(&mut self) {
-        if let Some(c) = self.selected_clip.take() {
+        if let Some(s) = self.selected_section.filter(|s| self.project().section_index(*s).is_some()) {
+            self.delete_section(s);
+        } else if let Some(c) = self.selected_clip.take() {
             let cmd = if self.project().find_midi_clip(c).is_some() { Command::RemoveMidiClip { clip: c } } else { Command::RemoveClip { clip: c } };
             self.execute(cmd);
         } else if let Some(t) = self.selected_track {
@@ -930,6 +995,8 @@ impl Controller {
     /// Start over with `project` (no undo history). Used by `--state` setups.
     pub fn replace_project(&mut self, project: Project) {
         self.close_all_editors();
+        self.onsets.clear();
+        self.tempos.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
         self.doc = Document::new(project);
@@ -951,6 +1018,7 @@ impl Controller {
                 self.doc.mark_saved();
                 self.project_dir = Some(dir.to_path_buf());
                 self.set_status(format!("Saved {}", dir.display()), 3);
+                self.files_refresh();
             }
             Err(e) => self.set_status(format!("Save failed: {e}"), 6),
         }
@@ -966,7 +1034,7 @@ impl Controller {
         };
         self.stop_return();
         self.close_all_editors();
-        for (_, ea) in self.asset_map.drain() {
+        for (_, ea) in self.asset_map.drain().chain(self.reversed_assets.drain()) {
             let _ = self.engine.release_asset(ea);
         }
         self.onsets.clear();
@@ -984,23 +1052,28 @@ impl Controller {
         self.devices_after_open();
         let missing: std::collections::HashSet<String> = loaded.missing_media.into_iter().collect();
         for a in self.project().assets.clone() {
-            if missing.contains(&a.absolute_path) {
-                continue;
+            if !missing.contains(&a.absolute_path) {
+                self.load_asset(&a);
             }
-            let engine = self.engine.clone();
-            let tx = self.jobs_tx.clone();
-            let epoch = self.doc_epoch;
-            self.pending_jobs += 1;
-            std::thread::spawn(move || {
-                let result = load_and_analyse(&engine, Path::new(&a.absolute_path));
-                let _ = tx.send(JobResult::Reloaded { asset: a.id, doc_epoch: epoch, result });
-            });
         }
         if !missing.is_empty() {
             self.set_status(format!("{} media file(s) missing", missing.len()), 6);
         } else if self.pending_jobs > 0 {
             self.set_status("Loading media…", 30);
         }
+    }
+
+    /// Load a project asset into the engine on a worker thread (finishes in `poll_jobs`).
+    pub(crate) fn load_asset(&mut self, a: &Asset) {
+        let engine = self.engine.clone();
+        let tx = self.jobs_tx.clone();
+        let epoch = self.doc_epoch;
+        let (id, path) = (a.id, a.absolute_path.clone());
+        self.pending_jobs += 1;
+        std::thread::spawn(move || {
+            let result = load_and_analyse(&engine, Path::new(&path));
+            let _ = tx.send(JobResult::Reloaded { asset: id, doc_epoch: epoch, result });
+        });
     }
 
     // ---------------------------------------------------------------- view
@@ -1044,6 +1117,12 @@ impl Controller {
 
     /// Lane pointer with modifiers: automation rows take it while lanes are shown.
     pub fn pointer_mods(&mut self, kind: i32, x: f32, y: f32, shift: bool, alt: bool) {
+        if self.drag.is_none() && self.section_pointer(kind, x, y) {
+            return;
+        }
+        if kind == 0 && self.selected_section.take().is_some() {
+            self.ui_dirty = true;
+        }
         if self.drag.is_none() && self.auto_pointer(kind, x, y, shift, alt) {
             return;
         }
@@ -1118,6 +1197,18 @@ impl Controller {
                         let p = self.project();
                         let Some(c) = p.clip(clip) else { return };
                         let (s0, off0, len0) = orig;
+                        if c.warp.reverse {
+                            // Reversed: the left edge plays the window's end, so it trims (or extends) that.
+                            let l0 = p.clip_ticks_at(c, (off0 + len0) as f64);
+                            let frames = p.asset(c.asset).map_or(off0 + len0, |a| a.frames);
+                            let min_start = s0 + (l0 - p.clip_ticks_at(c, frames as f64)).ceil() as Ticks;
+                            let max_start = s0 + l0 as Ticks - PPQ / 4;
+                            let start = snap(beat).clamp(min_start.max(0), max_start.max(s0));
+                            let end = p.clip_source_at(c, l0 - (start - s0) as f64).round().clamp((off0 + 1) as f64, frames as f64) as u64;
+                            self.drag = Some(Drag::TrimLeft { clip, orig, cur: (start, off0, end - off0) });
+                            self.ui_dirty = true;
+                            return;
+                        }
                         let at = |t: Ticks| p.clip_source_at(c, (t - s0) as f64);
                         let mut start = snap(beat);
                         // Source material before the current offset (warped clips follow their map).
@@ -1139,10 +1230,19 @@ impl Controller {
                     }
                     Drag::TrimRight { clip, orig, .. } => {
                         let Some((_, _, _, _, _, frames)) = self.clip_region(clip) else { return };
-                        let (s0, off0, _) = orig;
+                        let (s0, off0, len0) = orig;
                         let p = self.project();
                         let Some(c) = p.clip(clip) else { return };
                         let end = snap(beat).max(s0 + PPQ / 4);
+                        if c.warp.reverse {
+                            // Reversed: the right edge plays the window's start.
+                            let l0 = p.clip_ticks_at(c, (off0 + len0) as f64);
+                            let end = end.min((s0 + (l0 - p.clip_ticks_at(c, 0.0)).floor() as Ticks).max(s0 + PPQ / 4));
+                            let off = p.clip_source_at(c, l0 - (end - s0) as f64).round().clamp(0.0, (off0 + len0 - 1) as f64) as u64;
+                            self.drag = Some(Drag::TrimRight { clip, orig, cur: (s0, off, off0 + len0 - off) });
+                            self.ui_dirty = true;
+                            return;
+                        }
                         let len = (p.clip_source_at(c, (end - s0) as f64) - off0 as f64).round().max(1.0) as u64;
                         let len = len.clamp(1, frames - off0);
                         self.drag = Some(Drag::TrimRight { clip, orig, cur: (s0, off0, len) });
@@ -1177,11 +1277,20 @@ impl Controller {
 
     // ---------------------------------------------------------------- per-frame
 
+    /// Waveform of an audio clip: its pyramid slot (once the peaks exist) and its pieces.
+    pub fn clip_wave(&self, clip: &Clip) -> Option<(crate::peaks::Slot, Vec<crate::peaks::WaveSeg>)> {
+        let assets = if clip.warp.reverse { &self.reversed_assets } else { &self.asset_map };
+        let slot = assets.get(&clip.asset).and_then(|ea| self.peaks.slot(*ea))?;
+        Some((slot, crate::peaks::wave_segments(self.project(), clip, self.rate)))
+    }
+
     /// Rebuild the clip/track visuals (positions include in-progress drag previews).
     pub fn rebuild_vis(&mut self) {
         self.auto_sync_view();
         let p = self.doc.project();
         self.track_vis = p.tracks.iter().map(|t| TrackVis { selected: Some(t.id) == self.selected_track }).collect();
+        self.section_vis = self.build_section_vis();
+        let p = self.doc.project();
         self.clip_vis.clear();
         self.clip_ids.clear();
         for (ti, t) in p.tracks.iter().enumerate() {
@@ -1197,11 +1306,9 @@ impl Controller {
                     }
                     _ => {}
                 }
-                let rate = p.asset(c.asset).map(|a| a.sample_rate).unwrap_or(self.rate);
                 let shown = saine_core::Clip { source_offset: off, source_length: len, ..c.clone() };
                 let len_beats = p.clip_length_ticks(&shown) as f64 / PPQ as f64;
-                let ratio = self.rate / rate;
-                let wave = self.asset_map.get(&c.asset).and_then(|ea| self.peaks.slot(*ea)).map(|slot| (slot, off as f64 * ratio, len as f64 * ratio));
+                let wave = self.clip_wave(&shown);
                 self.clip_vis.push(ClipVis {
                     track_index,
                     start_beats: start as f64 / PPQ as f64,
@@ -1256,6 +1363,9 @@ impl Controller {
     /// Select a clip (or none). Selecting a MIDI clip opens the Clip tab (piano roll).
     pub fn select_clip(&mut self, id: Option<ClipId>) {
         self.selected_clip = id;
+        if id.is_some() {
+            self.selected_section = None;
+        }
         if id.is_some_and(|c| self.project().find_midi_clip(c).is_some()) {
             self.bottom_tab = BottomTab::Clip;
         }
@@ -1283,8 +1393,8 @@ impl Controller {
             loop_beats: (tr.loop_start as f64 / PPQ as f64, tr.loop_end as f64 / PPQ as f64),
             loop_on: tr.loop_enabled,
             beats_per_bar: self.beats_per_bar(),
-            frames_per_beat: self.rate * 60.0 / tr.bpm,
             auto: None,
+            sections: &self.section_vis,
         }
     }
 
@@ -1420,6 +1530,7 @@ impl Controller {
         self.view.clamp_scroll(self.project().tracks.len(), self.lanes_size.1);
         s.set_scroll_y(self.view.scroll_y as f32);
         self.update_labels();
+        s.set_section_add_x(self.section_add_x());
         self.update_auto_labels();
         if self.auto_any_active() {
             self.push_auto_feedback(&s);
@@ -1447,6 +1558,12 @@ impl Controller {
             self.tracks_model.set_vec(rows);
         }
         s.set_project_name(p.name.clone().into());
+        s.set_undo_text(self.doc.undo_label().map_or("Undo".into(), |l| format!("Undo {l}")).into());
+        s.set_redo_text(self.doc.redo_label().map_or("Redo".into(), |l| format!("Redo {l}")).into());
+        s.set_can_undo(self.doc.can_undo());
+        s.set_can_redo(self.doc.can_redo());
+        s.set_can_copy(self.selected_clip.is_some());
+        s.set_project_on_disk(self.project_dir.is_some());
         s.set_bpm_text(format!("{}", p.transport.bpm.round() as i64).into());
         s.set_loop_enabled(p.transport.loop_enabled);
         s.set_sig_text(format!("{}/{}", p.transport.time_signature.numerator, p.transport.time_signature.denominator).into());
@@ -1517,7 +1634,9 @@ impl Controller {
         self.push_synth(&s);
         self.push_recording(&s);
         self.push_settings(&s);
+        self.push_dialogs(&s);
         self.push_devices(&s);
+        self.push_files(&s);
         self.push_automation(&s);
         s.set_bottom_h(self.bottom_h());
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };
@@ -1527,6 +1646,23 @@ impl Controller {
 
     fn update_labels(&mut self) {
         let v = self.view.clone();
+        // Section names: 6 reference px in, hidden under 10 px of room (sections.rs).
+        let w = self.lanes_size.0;
+        let section_labels: Vec<crate::SectionLabel> = self
+            .section_vis
+            .iter()
+            .filter_map(|s| {
+                let x0 = v.x_of(s.start_beats);
+                let x1 = v.x_of(s.start_beats + s.len_beats);
+                let lx = (x0 + 5.1).max(3.4);
+                let room = x1 - 5.1 - lx;
+                (room >= 8.5 && x1 > 0.0 && x0 < w).then(|| {
+                    let ink = crate::sections::label_ink(crate::sections::lift(s.color, s.state));
+                    crate::SectionLabel { x: lx, w: room, text: s.name.clone().into(), ink: slint::Color::from_rgb_f32(ink[0], ink[1], ink[2]) }
+                })
+            })
+            .collect();
+        crate::controller::sync_model(&self.section_label_model, section_labels);
         let key = ((v.start_beats * 4096.0) as i64, (v.px_per_beat * 4096.0) as i64, self.lanes_size.0 as i64);
         if key != self.ruler_key {
             self.ruler_key = key;

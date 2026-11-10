@@ -180,6 +180,13 @@ pub(crate) fn text_width(text: &str, size: f32, tracking: f32) -> f32 {
     })
 }
 
+/// Width of one segment of a choice track (pt): every segment is as wide as the
+/// longest choice in the 10 pt semibold face plus 12, at least 20.
+fn segment_width(labels: &[&str]) -> f32 {
+    let longest = labels.iter().map(|c| text_width(c, 10.0, -0.4)).fold(0.0, f32::max);
+    (longest + 12.0).ceil().max(20.0)
+}
+
 /// Width of a dropdown pill (pt): its longest choice measured in the 10 pt
 /// semibold value face (tracking -0.4 per character), plus 30 for the left
 /// padding and the chevron, rounded up.
@@ -343,6 +350,23 @@ pub(crate) fn polyline(pts: &[(f32, f32)]) -> String {
     out
 }
 
+/// A smooth curve through the points (Catmull-Rom as cubic Béziers), for meter traces.
+/// `join` continues an open path with a line to the first point instead of a move.
+pub(crate) fn smooth(pts: &[(f32, f32)], join: bool) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(pts.len() * 40);
+    let Some(&(x0, y0)) = pts.first() else { return out };
+    let _ = write!(out, "{}{x0:.1} {y0:.1}", if join { " L" } else { "M" });
+    for i in 1..pts.len() {
+        let (p0, p1, p2) = (pts[i.saturating_sub(2)], pts[i - 1], pts[i]);
+        let p3 = pts[(i + 1).min(pts.len() - 1)];
+        let (c1x, c1y) = (p1.0 + (p2.0 - p0.0) / 6.0, p1.1 + (p2.1 - p0.1) / 6.0);
+        let (c2x, c2y) = (p2.0 - (p3.0 - p1.0) / 6.0, p2.1 - (p3.1 - p1.1) / 6.0);
+        let _ = write!(out, " C{c1x:.1} {c1y:.1} {c2x:.1} {c2y:.1} {:.1} {:.1}", p2.0, p2.1);
+    }
+    out
+}
+
 /// Dashed horizontal line from x0 to x1 at y (dash / gap lengths).
 fn dashes(x0: f32, x1: f32, y: f32, dash: f32, gap: f32) -> String {
     let mut out = String::new();
@@ -426,9 +450,17 @@ fn face_law(face: Face, num: impl Fn(&str) -> f32) -> Option<(Box<dyn Fn(f32) ->
 
 /// Transfer-face paths in a 32 x 32 box: (curve, knee highlight, dashed unity line).
 /// The input axis spans 12 dB below `at` to 24 dB above it (at least to 0 dB).
-fn law_face(law: &dyn Fn(f32) -> f32, at: f32, (knee_lo, knee_hi): (f32, f32)) -> (String, String, String) {
-    let lo = at - 12.0;
-    let hi = (at + 24.0).max(0.0);
+fn law_face(law: &dyn Fn(f32) -> f32, at: f32, knee: (f32, f32)) -> (String, String, String) {
+    law_face_in(law, at - 12.0, (at + 24.0).max(0.0), knee)
+}
+
+/// A brick wall's face: 24 dB below the ceiling up to just above it (at least 0 dB), so
+/// the curve runs up the diagonal and flattens near the top (Inference from the captures).
+fn wall_face(law: &dyn Fn(f32) -> f32, ceiling: f32, knee: (f32, f32)) -> (String, String, String) {
+    law_face_in(law, ceiling - 24.0, (ceiling + 1.0).max(0.0), knee)
+}
+
+fn law_face_in(law: &dyn Fn(f32) -> f32, lo: f32, hi: f32, (knee_lo, knee_hi): (f32, f32)) -> (String, String, String) {
     let (pad, span) = (3.0, 26.0);
     let px = |db: f32| pad + (db - lo) / (hi - lo) * span;
     let py = |db: f32| 32.0 - pad - ((db - lo) / (hi - lo) * span).clamp(-pad, span + pad);
@@ -474,21 +506,24 @@ fn strip_paths(slots: &VecDeque<(f32, f32, f32)>, strip: Strip, w: f32, wh: f32)
     let y_of = |db: f32| ((strip.top_db - db) / span).clamp(0.0, 1.0) * wh;
     let n = slots.len();
     let x_of = |i: usize| w - (n - 1 - i) as f32 * w / (HISTORY - 1) as f32;
-    let input: Vec<(f32, f32)> = slots.iter().enumerate().map(|(i, s)| (x_of(i), y_of(s.0))).collect();
-    let output: Vec<(f32, f32)> = slots.iter().enumerate().map(|(i, s)| (x_of(i), y_of(s.1))).collect();
+    // Curves through every 3 pt or so (the newest point always kept): denser cubic traces cost
+    // render time without a visible difference.
+    let step = ((3.0 * Z) / (w / (HISTORY - 1) as f32)).ceil().max(1.0) as usize;
+    let kept = |i: usize| (n - 1 - i) % step == 0 || i == 0;
+    let input: Vec<(f32, f32)> = slots.iter().enumerate().filter(|(i, _)| kept(*i)).map(|(i, s)| (x_of(i), y_of(s.0))).collect();
+    let output: Vec<(f32, f32)> = slots.iter().enumerate().filter(|(i, _)| kept(*i)).map(|(i, s)| (x_of(i), y_of(s.1))).collect();
     let audible = |v: &[(f32, f32)]| v.iter().any(|p| p.1 < wh - 0.5);
     let (mut in_fill, mut in_line, mut gr_fill, mut out_line) = (String::new(), String::new(), String::new(), String::new());
     if n > 1 && audible(&input) {
-        in_line = polyline(&input);
-        in_fill = format!("{in_line} L{:.2} {wh:.2} L{:.2} {wh:.2} Z", input[n - 1].0, input[0].0);
+        in_line = smooth(&input, false);
+        in_fill = format!("{in_line} L{:.2} {wh:.2} L{:.2} {wh:.2} Z", input[input.len() - 1].0, input[0].0);
     }
     if n > 1 && slots.iter().any(|s| s.2 < -0.1) {
-        let mut area = input.clone();
-        area.extend(slots.iter().enumerate().rev().map(|(i, s)| (x_of(i), y_of(s.0 + s.2))));
-        gr_fill = format!("{} Z", polyline(&area));
+        let floor: Vec<(f32, f32)> = slots.iter().enumerate().rev().filter(|(i, _)| kept(*i)).map(|(i, s)| (x_of(i), y_of(s.0 + s.2))).collect();
+        gr_fill = format!("{}{} Z", smooth(&input, false), smooth(&floor, true));
     }
     if n > 1 && audible(&output) {
-        out_line = polyline(&output);
+        out_line = smooth(&output, false);
     } else if in_line.is_empty() {
         // Silence: the level trace rests on the floor.
         in_line = polyline(&[(30.0 * Z, wh - 0.5), (w, wh - 0.5)]);
@@ -627,11 +662,14 @@ impl Controller {
                         picks.push(PanelPick { kind: 4, ..Default::default() });
                     }
                     let on = self.panel_value(d, def, p) >= 0.5;
-                    let label = match p.latch {
-                        Some((off, on_text)) => (if on { on_text } else { off }).to_string(),
-                        None => format!("{} {}", p.label, if on { "On" } else { "Off" }),
+                    let (off_text, on_text) = match p.latch {
+                        Some((off, on_text)) => (off.to_string(), on_text.to_string()),
+                        None => (format!("{} Off", p.label), format!("{} On", p.label)),
                     };
-                    picks.push(PanelPick { kind: 5, param: idx(p.id), label: s(label), selected: on as i32, enabled: true, ..Default::default() });
+                    // As wide as its wider state label, padded 8 each side (the reference stacks both labels).
+                    let width = (text_width(&off_text, 10.0, -0.4).max(text_width(&on_text, 10.0, -0.4)) + 16.0).ceil() * Z;
+                    let label = if on { on_text } else { off_text };
+                    picks.push(PanelPick { kind: 5, param: idx(p.id), label: s(label), selected: on as i32, enabled: true, width, ..Default::default() });
                 }
                 (Control::Views, _) => picks.push(PanelPick {
                     kind: 7,
@@ -640,6 +678,7 @@ impl Controller {
                     choices: views_model(def),
                     selected: self.card_view(d.id) as i32,
                     enabled: true,
+                    width: segment_width(def.layout.views) * Z,
                     ..Default::default()
                 }),
                 (Control::Menu(_), Some(p)) => picks.push(PanelPick {
@@ -649,6 +688,7 @@ impl Controller {
                     choices: choices_model(def, p),
                     selected: self.panel_value(d, def, p).round() as i32,
                     enabled: true,
+                    width: segment_width(p.choices) * Z,
                     ..Default::default()
                 }),
                 (Control::Sidechain, _) => {
@@ -657,8 +697,10 @@ impl Controller {
                         None => "None".to_string(),
                         Some(t) => self.project().track(t).map_or_else(|| "Removed".to_string(), |t| t.name.clone()),
                     };
-                    // Without a value box after it the source pill takes the room (reference).
-                    let w = if def.layout.picker[ci + 1..].is_empty() { 140.0 } else { 80.0 };
+                    // As wide as its longest option (None or another track's name), as a dropdown.
+                    let own = self.project().find_device(d.id).map(|(ti, _)| self.project().tracks[ti].id);
+                    let longest = self.project().tracks.iter().filter(|t| Some(t.id) != own).map(|t| text_width(&t.name, 10.0, -0.4)).fold(text_width("None", 10.0, -0.4).max(text_width(&source, 10.0, -0.4)), f32::max);
+                    let w = (30.0 + longest).ceil();
                     picks.push(PanelPick { kind: 2, param: -1, label: s("Sidechain"), value: s(source), enabled: true, width: w * Z, ..Default::default() });
                 }
                 (Control::Segments(_, labels), Some(p)) => picks.push(PanelPick {
@@ -668,6 +710,7 @@ impl Controller {
                     choices: labels_model(def, p, labels),
                     selected: self.panel_value(d, def, p).round() as i32,
                     enabled: true,
+                    width: segment_width(labels) * Z,
                     ..Default::default()
                 }),
                 (Control::Gap, _) => picks.push(PanelPick { kind: 4, ..Default::default() }),
@@ -817,8 +860,9 @@ impl Controller {
                         }
                     }
                     Some(face) => {
+                        let wall = matches!(face, Face::BrickWall { .. });
                         let Some((law, at, knee)) = face_law(face, number) else { return Some(k) };
-                        let (curve, bend, unity) = law_face(&law, at, knee);
+                        let (curve, bend, unity) = if wall { wall_face(&law, at, knee) } else { law_face(&law, at, knee) };
                         k.face = 1;
                         k.face_curve = s(curve);
                         k.face_bend = s(bend);
