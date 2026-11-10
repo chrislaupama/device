@@ -20,7 +20,7 @@ import { Panel, Icon, Icons, Pill, IconButton, SmallButton, HSlider, Knob, Switc
 
 export { Tokens }
 
-import { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, SectionLabel, ClipLabel, TreeRow, FileRow, FileGuide, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow } from "studio.slint";
+import { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, SectionLabel, ClipLabel, MiniBar, TreeRow, FileRow, FileGuide, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow } from "studio.slint";
 import { ClipSidebar, PianoRoll, ClipEmpty, ContextMenu, DropMenu } from "pianoroll.slint";
 import { StepSequencer } from "stepseq.slint";
 import { MixerPanel } from "mixer.slint";
@@ -369,6 +369,49 @@ component AddTrackButton inherits Rectangle {
     ta := TouchArea { clicked => { Studio.add-track(); } }
 }
 
+// Header minimap: clip bars per track, the visible-window outline with a scrim outside it,
+// window grips on hover, and the playhead. 20 reference px high, 5 px radius.
+component Minimap inherits Rectangle {
+    // Window in px: at least 6 reference px wide, kept inside the strip.
+    property <length> o: Studio.minimap-win-x * root.width;
+    property <length> s: (Studio.minimap-win-x + Studio.minimap-win-w) * root.width;
+    property <length> m: 5.1px;
+    property <length> wl: max(0px, min(s - o < m ? (o + s) / 2 - m / 2 : o, root.width - m));
+    property <length> wr: min(root.width, max(wl + m, s - o < m ? (o + s) / 2 + m / 2 : s));
+    property <bool> over-window: ta.has-hover && ta.mouse-x > root.wl && ta.mouse-x < root.wr;
+    background: #1a1b1e;
+    border-radius: 4.25px;
+    clip: true;
+    changed width => { Studio.minimap-width = self.width; }
+    Rectangle { border-radius: 4.25px; border-width: 0.85px; border-color: #ffffff14; }
+    for b in Studio.minimap-bars: Rectangle {
+        x: b.x * root.width; y: b.y; width: max(b.w * root.width, 1.0625px); height: b.h; background: b.color;
+    }
+    Rectangle { x: 0; width: root.wl; background: #0203062b; }
+    Rectangle { x: root.wr; width: root.width - root.wr; background: #0203062b; }
+    Rectangle { x: root.wl; width: root.wr - root.wl; border-radius: 4.25px; border-width: 0.85px; border-color: #767678; }
+    if root.over-window: Rectangle { x: root.wl + 1.7px; y: 2.55px; width: 0.85px; height: root.height - 5.1px; background: #ffffffb3; }
+    if root.over-window: Rectangle { x: root.wr - 2.55px; y: 2.55px; width: 0.85px; height: root.height - 5.1px; background: #ffffffb3; }
+    if Studio.minimap-playhead >= 0: Rectangle { x: Studio.minimap-playhead * root.width; y: 1.7px; width: 0.85px; height: root.height - 3.4px; background: #ffffff8c; }
+    ta := TouchArea {
+        mouse-cursor: (abs(self.mouse-x - root.wl) <= 4.25px || abs(self.mouse-x - root.wr) <= 4.25px) ? MouseCursor.ew-resize : MouseCursor.pointer;
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+                Studio.minimap-pointer(0, self.mouse-x, self.mouse-y, root.width);
+            }
+            if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) {
+                Studio.minimap-pointer(2, self.mouse-x, self.mouse-y, root.width);
+            }
+        }
+        moved => { if (self.pressed) { Studio.minimap-pointer(1, self.mouse-x, self.mouse-y, root.width); } }
+        double-clicked => { Studio.minimap-double(); }
+        scroll-event(e) => {
+            Studio.minimap-scroll(e.delta-x / 1px, e.delta-y / 1px, self.mouse-x, root.width, e.modifiers.control || e.modifiers.alt);
+            accept
+        }
+    }
+}
+
 component Timeline inherits Panel {
     callback focus-main();
     out property <length> lanes-width: lanes.width;
@@ -383,11 +426,8 @@ component Timeline inherits Panel {
     // Header-row x positions/widths below are the reference's AX boxes at 100 % zoom (ax-main-100.tsv).
     Pill { x: 60.35px; y: 5px; width: 59.5px; height: 18px; text: "Returns"; icon: Icons.returns; font-size: 8.75px; text-color: #a0a1a5; }
     Pill { x: 124.1px; y: 5px; width: 59.5px; height: 18px; text: "Master"; icon: Icons.master; active: true; font-size: 8.75px; }
-    // Minimap: fills the space up to the right group (PLACEHOLDER: outline of the whole-song view window only)
-    Rectangle {
-        x: 200.6px; y: 5.1px; width: max(0px, rgroup.x - 10.2px - self.x); height: 17px;
-        border-radius: 4.25px; border-width: 0.85px; border-color: #767678;
-    }
+    // Minimap: fills the space up to the right group (src/minimap.rs, research-findings S40-S42).
+    Minimap { x: 200.6px; y: 5.1px; width: max(0px, rgroup.x - 10.2px - self.x); height: 17px; }
     rgroup := HorizontalLayout {
         x: root.width - self.width - 10.2px; y: 0; width: self.preferred-width; height: 27.2px;
         spacing: 3.4px;

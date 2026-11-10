@@ -5189,6 +5189,86 @@ fn section_steps() -> Vec<Step> {
     ]
 }
 
+/// Header minimap: bars, the window, drag / jump / fit / wheel (src/minimap.rs). Moves the view
+/// and restores it at the end.
+fn minimap_steps() -> Vec<Step> {
+    use Step::*;
+    const STRIP_X: f32 = LANE_X - 191.0 + 200.6;
+    const STRIP_Y: f32 = 78.2 + 5.1 + 8.5;
+    let before = Rc::new(Cell::new((0.0f64, 0.0f64)));
+    let moved_from = Rc::new(Cell::new((0.0f64, 0.0f64)));
+    let (b1, b2, b3) = (before.clone(), moved_from.clone(), moved_from.clone());
+    fn width(a: &AppWindow) -> f32 {
+        a.global::<Studio>().get_minimap_width()
+    }
+    fn scroll(a: &AppWindow, x: f32, dx: f32, dy: f32) {
+        a.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(STRIP_X + x, STRIP_Y), delta_x: dx, delta_y: dy });
+    }
+    vec![
+        DoC("minimap: view at beat 200", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            b1.set((c.view.start_beats, c.view.px_per_beat));
+            c.view.start_beats = 200.0;
+            c.ui_dirty = true;
+        })),
+        Check("the strip is laid out and its window sits at the end of the map", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let span = c.lanes_size.0 as f64 / c.view.px_per_beat;
+            let map = (200.0 + span).max(c.minimap_content_end_for_test());
+            let (wx, ww) = (s.get_minimap_win_x(), s.get_minimap_win_w());
+            let ok = width(a) > 100.0 && approx(wx, (200.0 / map) as f32, 1e-3) && approx(ww, (span / map) as f32, 1e-3) && s.get_minimap_bars().row_count() == c.clip_vis.iter().filter(|v| v.track_index < c.project().tracks.len()).count();
+            ok.then_some(()).ok_or(format!("w {} win {wx} {ww} bars {}", width(a), s.get_minimap_bars().row_count()))
+        })),
+        DoC("drag the window 40 px left", Box::new(move |a, ctl| {
+            let (w, s) = (width(a), a.global::<Studio>());
+            let x0 = (s.get_minimap_win_x() + s.get_minimap_win_w() / 2.0) * w;
+            {
+                let c = ctl.borrow();
+                b2.set((c.view.start_beats, c.view.px_per_beat));
+            }
+            drag(a, STRIP_X + x0, STRIP_Y, STRIP_X + x0 - 40.0, STRIP_Y);
+        })),
+        Check("the view scrolled back (at most 40 px of map), at the same zoom", Box::new(move |c, a| {
+            let (start0, ppb0) = b3.get();
+            let w = width(a) as f64;
+            let span = c.lanes_size.0 as f64 / c.view.px_per_beat;
+            let max_move = 40.0 / w * (200.0 + span).max(16.0) + 0.05;
+            let moved = start0 - c.view.start_beats;
+            let ok = moved > 1.0 && moved <= max_move && approx((c.view.px_per_beat / ppb0) as f32, 1.0, 0.01) && c.mm.drag.is_none();
+            ok.then_some(()).ok_or(format!("moved {moved} max {max_move} ppb {}", c.view.px_per_beat))
+        })),
+        DoC("click the strip's left end", Box::new(|a, _| click(a, STRIP_X + 3.0, STRIP_Y))),
+        Check("the window jumped to the start of the song", Box::new(|c, _| approx(c.view.start_beats as f32, 0.0, 1e-3).then_some(()).ok_or(format!("start {}", c.view.start_beats)))),
+        DoC("wheel over the strip scrolls", Box::new(|a, ctl| {
+            ctl.borrow_mut().view.start_beats = 100.0;
+            ctl.borrow_mut().ui_dirty = true;
+            scroll(a, 20.0, 0.0, 30.0);
+        })),
+        Check("the view moved back", Box::new(|c, _| (c.view.start_beats < 99.5 && c.view.start_beats > 0.0).then_some(()).ok_or(format!("start {}", c.view.start_beats)))),
+        DoC("Ctrl + wheel zooms", Box::new(|a, ctl| {
+            ctl.borrow_mut().view.px_per_beat = crate::timeline::DEFAULT_PX_PER_BEAT;
+            a.window().dispatch_event(WindowEvent::KeyPressed { text: Key::Control.into() });
+            scroll(a, 20.0, 0.0, 40.0);
+            a.window().dispatch_event(WindowEvent::KeyReleased { text: Key::Control.into() });
+        })),
+        Check("zoomed in", Box::new(|c, _| (c.view.px_per_beat > crate::timeline::DEFAULT_PX_PER_BEAT * 1.05).then_some(()).ok_or(format!("ppb {}", c.view.px_per_beat)))),
+        DoC("double-click fits the arrangement", Box::new(|a, _| double_click(a, STRIP_X + 30.0, STRIP_Y))),
+        Check("the view starts at 0 and shows the whole song plus slack", Box::new(|c, _| {
+            let end = c.view.start_beats + c.lanes_size.0 as f64 / c.view.px_per_beat;
+            let want = crate::minimap::fit(c.minimap_content_end_for_test()).end;
+            (approx(c.view.start_beats as f32, 0.0, 1e-3) && approx(end as f32, want as f32, 0.05)).then_some(()).ok_or(format!("start {} end {end} want {want}", c.view.start_beats))
+        })),
+        DoC("minimap: restore the view", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let (s, p) = before.get();
+            c.view.start_beats = s;
+            c.view.px_per_beat = p;
+            c.ui_dirty = true;
+        })),
+        Check("view restored", Box::new(|c, _| (c.mm.drag.is_none() && c.view.start_beats < 1e6).then_some(()).ok_or("drag left open".to_string()))),
+    ]
+}
+
 
 fn clip_menu_steps() -> Vec<Step> {
     use Step::*;
@@ -5444,6 +5524,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(chat_dock_steps());
     all.extend(files_steps());
     all.extend(section_steps());
+    all.extend(minimap_steps());
     all.extend(clip_menu_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
