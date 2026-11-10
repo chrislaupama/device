@@ -737,15 +737,18 @@ impl Controller {
     // ---------------------------------------------------------------- browser tree
 
     pub fn browser_tab(&mut self, i: usize) {
-        self.devices.tab = i.min(2);
-        self.devices.tree_scroll = 0.0;
-        self.devices.selected = None;
-        self.ui_dirty = true;
+        self.browser_visit(crate::files::Loc { section: crate::files::SECTION_DEVICES, tab: i.min(2) });
     }
 
+    /// The search field filters the open section.
     pub fn browser_search(&mut self, text: &str) {
-        self.devices.search = text.to_string();
-        self.devices.tree_scroll = 0.0;
+        if self.files.section == crate::files::SECTION_FILES {
+            self.files.search = text.to_string();
+            self.files.scroll = 0.0;
+        } else {
+            self.devices.search = text.to_string();
+            self.devices.tree_scroll = 0.0;
+        }
         self.ui_dirty = true;
     }
 
@@ -842,7 +845,7 @@ impl Controller {
         None
     }
 
-    fn track_rect(&self, t: TrackId) -> Option<(f32, f32, f32, f32)> {
+    pub(crate) fn track_rect(&self, t: TrackId) -> Option<(f32, f32, f32, f32)> {
         let l = self.layout();
         let i = self.project().track_index(t)?;
         let y = 78.0 + 66.5 + self.view.track_offset(i) - l.scroll_y;
@@ -1241,7 +1244,7 @@ impl Controller {
         self.devices.entries = entries;
         sync_model(&self.tree_model, rows);
         s.set_browser_tab(self.devices.tab as i32);
-        if s.get_browser_search().as_str() != self.devices.search {
+        if self.files.section == crate::files::SECTION_DEVICES && s.get_browser_search().as_str() != self.devices.search {
             s.set_browser_search(self.devices.search.clone().into());
         }
         s.set_tree_scroll(self.devices.tree_scroll);

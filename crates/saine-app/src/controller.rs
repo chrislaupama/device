@@ -360,6 +360,10 @@ pub struct Controller {
     // ---- plugin devices (src/devices.rs) ----
     pub devices: crate::devices::DevicesUi,
     pub(crate) tree_model: Rc<VecModel<TreeRow>>,
+    // ---- browser Files section and Back / Forward (src/files.rs) ----
+    pub files: crate::files::FilesUi,
+    pub(crate) files_model: Rc<VecModel<crate::FileRow>>,
+    pub(crate) files_guides_model: Rc<VecModel<crate::FileGuide>>,
     pub(crate) cards_model: Rc<VecModel<DeviceCard>>,
     pub(crate) window_cards_model: Rc<VecModel<DeviceCard>>,
     pub(crate) add_results_model: Rc<VecModel<MenuItem>>,
@@ -453,6 +457,9 @@ impl Controller {
             settings_menu_model: Rc::new(VecModel::default()),
             devices: Default::default(),
             tree_model: Rc::new(VecModel::default()),
+            files: Default::default(),
+            files_model: Rc::new(VecModel::default()),
+            files_guides_model: Rc::new(VecModel::default()),
             cards_model: Rc::new(VecModel::default()),
             window_cards_model: Rc::new(VecModel::default()),
             add_results_model: Rc::new(VecModel::default()),
@@ -492,6 +499,8 @@ impl Controller {
         s.set_input_menu_items(ModelRc::from(self.input_menu_model.clone()));
         s.set_settings_menu_items(ModelRc::from(self.settings_menu_model.clone()));
         s.set_tree(ModelRc::from(self.tree_model.clone()));
+        s.set_files(ModelRc::from(self.files_model.clone()));
+        s.set_files_guides(ModelRc::from(self.files_guides_model.clone()));
         s.set_device_cards(ModelRc::from(self.cards_model.clone()));
         s.set_device_window_cards(ModelRc::from(self.window_cards_model.clone()));
         s.set_add_results(ModelRc::from(self.add_results_model.clone()));
@@ -998,6 +1007,7 @@ impl Controller {
                 self.doc.mark_saved();
                 self.project_dir = Some(dir.to_path_buf());
                 self.set_status(format!("Saved {}", dir.display()), 3);
+                self.files_refresh();
             }
             Err(e) => self.set_status(format!("Save failed: {e}"), 6),
         }
@@ -1030,23 +1040,28 @@ impl Controller {
         self.devices_after_open();
         let missing: std::collections::HashSet<String> = loaded.missing_media.into_iter().collect();
         for a in self.project().assets.clone() {
-            if missing.contains(&a.absolute_path) {
-                continue;
+            if !missing.contains(&a.absolute_path) {
+                self.load_asset(&a);
             }
-            let engine = self.engine.clone();
-            let tx = self.jobs_tx.clone();
-            let epoch = self.doc_epoch;
-            self.pending_jobs += 1;
-            std::thread::spawn(move || {
-                let result = load_and_analyse(&engine, Path::new(&a.absolute_path));
-                let _ = tx.send(JobResult::Reloaded { asset: a.id, doc_epoch: epoch, result });
-            });
         }
         if !missing.is_empty() {
             self.set_status(format!("{} media file(s) missing", missing.len()), 6);
         } else if self.pending_jobs > 0 {
             self.set_status("Loading media…", 30);
         }
+    }
+
+    /// Load a project asset into the engine on a worker thread (finishes in `poll_jobs`).
+    pub(crate) fn load_asset(&mut self, a: &Asset) {
+        let engine = self.engine.clone();
+        let tx = self.jobs_tx.clone();
+        let epoch = self.doc_epoch;
+        let (id, path) = (a.id, a.absolute_path.clone());
+        self.pending_jobs += 1;
+        std::thread::spawn(move || {
+            let result = load_and_analyse(&engine, Path::new(&path));
+            let _ = tx.send(JobResult::Reloaded { asset: id, doc_epoch: epoch, result });
+        });
     }
 
     // ---------------------------------------------------------------- view
@@ -1584,6 +1599,7 @@ impl Controller {
         self.push_settings(&s);
         self.push_dialogs(&s);
         self.push_devices(&s);
+        self.push_files(&s);
         self.push_automation(&s);
         s.set_bottom_h(self.bottom_h());
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };
