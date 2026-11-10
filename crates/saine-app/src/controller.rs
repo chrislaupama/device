@@ -932,6 +932,7 @@ impl Controller {
     /// Start over with `project` (no undo history). Used by `--state` setups.
     pub fn replace_project(&mut self, project: Project) {
         self.close_all_editors();
+        self.onsets.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
         self.doc = Document::new(project);
