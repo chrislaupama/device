@@ -335,6 +335,44 @@ fn midi_steps() -> Vec<Step> {
             }
         })),
         Check("undo cleared the clip's scale view", Box::new(|c, _| instrument_clip(c).is_some_and(|m| m.scale.is_none()).then_some(()).ok_or("scale still set".into()))),
+        Check("a new MIDI clip loops over the whole clip; footer Loop on", Box::new(|c, a| {
+            let m = instrument_clip(c).ok_or("clip gone")?;
+            let l = m.clip_loop.ok_or("no loop")?;
+            (l.on && l.start == 0 && l.end == m.length && a.global::<Studio>().get_pr_loop_on()).then_some(()).ok_or(format!("{l:?} len {}", m.length))
+        })),
+        DoC("drag the loop bar's end one beat left", Box::new(|a, ctl| {
+            let end = ctl.borrow().pr_loop().map_or(0, |l| l.end) as f64 / PPQ as f64;
+            let (x, _) = pr_xy(ctl, end, 60);
+            let (x1, _) = pr_xy(ctl, end - 1.0, 60);
+            let y = PR_ORIGIN.1 + (crate::pianoroll::BAR_Y.0 + crate::pianoroll::BAR_Y.1) / 2.0;
+            drag(a, x - 1.0, y, x1 - 1.0, y);
+        })),
+        Check("the loop ends a beat earlier, the clip keeps its length, one \"Clip Loop\" step", Box::new(|c, _| {
+            let m = instrument_clip(c).ok_or("clip gone")?;
+            let l = m.clip_loop.ok_or("no loop")?;
+            (l.on && l.start == 0 && l.end == m.length - PPQ && c.doc.undo_label().as_deref() == Some("Clip Loop")).then_some(()).ok_or(format!("{l:?} len {} {:?}", m.length, c.doc.undo_label()))
+        })),
+        Do("click the footer Loop switch (off)", Box::new(|a| click(a, 260.0 + 202.0 + 10.0, 452.0 + (390.0 - 27.0) - 54.5 + 13.0 + 7.0))),
+        Check("Loop off: the clip plays once, to the old loop end; footer Loop off", Box::new(|c, a| {
+            let m = instrument_clip(c).ok_or("clip gone")?;
+            let l = m.clip_loop.ok_or("no loop")?;
+            (!l.on && m.length == l.end && !a.global::<Studio>().get_pr_loop_on()).then_some(()).ok_or(format!("{l:?} len {}", m.length))
+        })),
+        Do("click the footer Loop switch (on)", Box::new(|a| click(a, 260.0 + 202.0 + 10.0, 452.0 + (390.0 - 27.0) - 54.5 + 13.0 + 7.0))),
+        Check("Loop on again: the kept range and the length the clip had while looping", Box::new(|c, _| {
+            let m = instrument_clip(c).ok_or("clip gone")?;
+            let l = m.clip_loop.ok_or("no loop")?;
+            (l.on && l.end == m.length - PPQ).then_some(()).ok_or(format!("{l:?} len {}", m.length))
+        })),
+        Do("undo the three loop edits", Box::new(|a| {
+            for _ in 0..3 {
+                key(a, "z", true, false);
+            }
+        })),
+        Check("undo restored the whole-clip loop", Box::new(|c, _| {
+            let m = instrument_clip(c).ok_or("clip gone")?;
+            (m.clip_loop == Some(saine_core::midi::ClipLoop::whole(m.length))).then_some(()).ok_or(format!("{:?} len {}", m.clip_loop, m.length))
+        })),
         Do("click Double", Box::new(|a| click(a, 260.0 + 270.5 + 10.0, 466.0))),
         Check("Double: 2x notes and 2x clip length in ONE undo step", Box::new(move |c, _| {
             let (before, len) = sv2.borrow().clone();

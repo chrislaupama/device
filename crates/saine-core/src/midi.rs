@@ -276,6 +276,16 @@ mod tests {
     }
 
     #[test]
+    fn loop_unrolls_first_pass_then_repeats() {
+        let notes = [n(1, 60, 0, 240), n(2, 62, 480, 960), n(3, 64, 1440, 480)];
+        let l = ClipLoop { on: true, start: 480, end: 1920, span: 0 };
+        let out: Vec<(Ticks, Ticks, u8, bool)> = l.unroll(&notes, 4000).iter().map(|(n, r)| (n.start, n.length, n.pitch, *r)).collect();
+        assert_eq!(out, vec![(0, 240, 60, false), (480, 960, 62, false), (1440, 480, 64, false), (1920, 960, 62, true), (2880, 480, 64, true), (3360, 640, 62, true)]);
+        assert_eq!(l.unroll(&notes, 1000).len(), 2);
+        assert!(ClipLoop { on: true, start: 960, end: 960, span: 0 }.validate().is_err());
+    }
+
+    #[test]
     fn quantize_full_and_partial() {
         let g = grid_ticks(16); // 240
         let notes = [n(1, 60, 250, 100), n(2, 62, 470, 100)];
