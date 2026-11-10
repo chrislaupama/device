@@ -171,7 +171,11 @@ pub struct AudioLoop {
 
 impl AudioLoop {
     pub fn validate(&self) -> Result<(), String> {
-        if self.start < 0 || self.end <= self.start || self.length <= 0 { Err(format!("loop {}..{} (length {}) is empty or before the clip", self.start, self.end, self.length)) } else { Ok(()) }
+        if self.start < 0 || self.end - self.start < crate::midi::ClipLoop::MIN_LEN || self.length <= 0 {
+            Err(format!("loop {}..{} (length {}) is shorter than {} ticks or before the clip", self.start, self.end, self.length, crate::midi::ClipLoop::MIN_LEN))
+        } else {
+            Ok(())
+        }
     }
 }
 

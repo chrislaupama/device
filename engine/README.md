@@ -29,7 +29,8 @@ compensation `SE_PDC_MAX_DELAY_FRAMES`, `se_pdc_set_enabled`,
 `se_asset_detect_onsets`). Plugin hosting (AU, VST3, CLAP) is
 described in [Plugins](#plugins), delay compensation in
 [Plugin delay compensation](#plugin-delay-compensation), automation in
-[Automation](#automation), clip warping in [Clip warping](#clip-warping).
+[Automation](#automation), clip warping in [Clip warping](#clip-warping), clip
+looping in [Clip looping](#clip-looping).
 
 ## Build, test, bench
 
@@ -1459,6 +1460,27 @@ Thirty-two stretch tracks with a transport jump every 50 blocks average
 11 µs per block rendered and 2.3 ms live. Onset detection takes 35–85 ms
 per minute of audio. Ranges cover two runs on a MacBook Air shared with
 other builds.
+
+## Clip looping
+
+`se_session_publish_v8` adds a loop window to any audio clip, warped or not
+(`se_clip_loop_desc`: clip id, loop start and loop end in content frames).
+Content frame c is what the clip plays at `timeline_start + c` without the
+loop: `source_offset + c` for a 1:1 clip, the warp map at
+`timeline_start + c` for a warped one. At clip-relative frame r a looped
+clip plays content frame `r` while `r < loop_end`, then
+`loop_start + (r - loop_end) mod (loop_end - loop_start)`, until
+`timeline_start + length` (`clip_content` in render_graph.hpp).
+
+- The process path splits a clip's run in a block at each wrap and reads each
+  piece as before (`kernel_add_scaled` for 1:1 clips, `render_warped_clip`
+  at the folded timeline frames for warped ones). It doesn't allocate or lock.
+- A looped 1:1 clip's length is not clamped to the asset; its loop end is
+  (and to the clip length). A loop the clamps leave empty is dropped.
+- A warped clip's background render covers frames below the loop end only,
+  so a long looped clip renders no more than its content. Live stretch voices
+  restart at every wrap (the folded position jumps).
+- Wraps are hard cuts with no crossfade, like the transport loop.
 
 ## Placeholders and known gaps
 

@@ -779,7 +779,7 @@ impl Controller {
                 wave: self.clip_lanes(c),
                 key: None,
                 curves: Vec::new(),
-                clip_loop: None,
+                clip_loop: self.pr_loop_preview().map(|l| (l.start as f64 / PPQ as f64, l.end as f64 / PPQ as f64, l.on)),
             });
         }
         let clip = self.pr_clip()?;
