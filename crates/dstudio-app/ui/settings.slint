@@ -238,7 +238,7 @@ component PluginsPage inherits Rectangle {
     property <int> dir-rows: min(Studio.scan-dirs.length, 8);
     Flickable {
         x: 20.5px; y: 91px; width: root.width - 41px; height: root.dir-rows * 30.5px;
-        viewport-height: Studio.scan-dirs.length * 30.5px;
+        content-height: Studio.scan-dirs.length * 30.5px;
         interactive: Studio.scan-dirs.length > 8;
         for d[i] in Studio.scan-dirs: Rectangle {
             x: 0; y: i * 30.5px; width: parent.width; height: 25px; border-radius: 5px; background: #222326;

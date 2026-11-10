@@ -244,7 +244,7 @@ export component UndoHistoryModal inherits Rectangle {
     }
     Flickable {
         x: 17px; y: 45.9px + root.row-h; width: root.width - 34px; height: root.list-h;
-        viewport-height: Studio.undo-history-rows.length * root.row-h;
+        content-height: Studio.undo-history-rows.length * root.row-h;
         for r[i] in Studio.undo-history-rows: Rectangle {
             y: i * root.row-h; height: root.row-h; border-radius: 5.1px;
             background: r.state == 1 ? #ffffff1f : (ta.has-hover ? #ffffff12 : transparent);
