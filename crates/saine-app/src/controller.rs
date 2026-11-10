@@ -362,6 +362,7 @@ pub struct Controller {
     // ---- clip editing ----
     pub bottom_tab: BottomTab,
     pub pr: PrState,
+    pub typing: crate::typing::Typing,
     pub menu: MenuState,
     pub clipboard: Option<ClipboardItem>,
     /// Rename popup open for this clip.
@@ -495,6 +496,7 @@ impl Controller {
             show_status: true,
             bottom_tab: BottomTab::Devices,
             pr: PrState::default(),
+            typing: Default::default(),
             menu: MenuState::default(),
             clipboard: None,
             rename: None,
