@@ -6932,7 +6932,7 @@ fn clip_render_plugin_steps() -> Vec<Step> {
     use saine_core::{AssetId, ClipId, Command, Device, PluginFormat, PluginKind, PluginRef, TrackId};
     use std::time::{Duration, Instant};
     fn dir() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("saine-selftest-clip-render-plugin-{}", std::process::id()))
+        run_dir().join("clip-render-plugin")
     }
     fn files() -> Vec<std::path::PathBuf> {
         let mut v: Vec<_> = std::fs::read_dir(dir().join("renders").join("bounce")).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
@@ -7073,7 +7073,7 @@ fn clip_render_plugin_steps() -> Vec<Step> {
             let mut c = ctl.borrow_mut();
             let s = s10.borrow();
             let mut commands = vec![Command::RemoveTrack { track: TrackId(s.track) }];
-            commands.extend(c.project().assets.iter().filter(|a| a.absolute_path.contains("saine-selftest-clip-render-plugin")).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
+            commands.extend(c.project().assets.iter().filter(|a| a.absolute_path.contains(&*dir().to_string_lossy())).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
             c.execute(Command::Batch { label: "clip render plugin cleanup".into(), commands });
             c.select_clip(None);
             c.clip_render.dir_override = None;
