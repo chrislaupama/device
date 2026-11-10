@@ -345,14 +345,21 @@ pub fn build(set: &ParsedSet, name: &str, sample: &dyn Fn(&SampleRef) -> Option<
             } else {
                 set.bpm / 60.0
             };
-            for (from, to, at) in pieces(&c.span, scale) {
+            // A loop from the clip's start becomes the clip's own loop; one that starts later
+            // (StartRelative) plays its first pass partly, so it comes in as repeated clips.
+            let s = &c.span;
+            let clip_loop = (s.loop_on && s.start_relative.abs() < 1e-9 && (s.end - s.start) > (s.loop_end - s.loop_start) * scale + 1e-9)
+                .then(|| saine_core::AudioLoop { on: true, start: 0, end: ticks((s.loop_end - s.loop_start) * scale), length: ticks(s.end - s.start) })
+                .filter(|l| l.validate().is_ok());
+            let parts = if clip_loop.is_some() { vec![(s.loop_start, s.loop_end, 0.0)] } else { pieces(s, scale) };
+            for (from, to, at) in parts {
                 let (s0, s1) = if c.warped { (warp.source_at(from, rate), warp.source_at(to, rate)) } else { (from * rate, to * rate) };
                 let (s0, s1) = (s0.round().clamp(0.0, frames as f64) as u64, s1.round().clamp(0.0, frames as f64) as u64);
                 if s1 <= s0 {
                     continue;
                 }
                 let id = ClipId(p.alloc_id());
-                track.clips.push(Clip { id, asset, name: c.name.clone(), start: ticks(c.span.start + at), source_offset: s0, source_length: s1 - s0, gain: c.gain.clamp(0.0, 4.0), warp: warp.clone(), disabled: c.disabled });
+                track.clips.push(Clip { id, asset, name: c.name.clone(), start: ticks(c.span.start + at), source_offset: s0, source_length: s1 - s0, gain: c.gain.clamp(0.0, 4.0), warp: warp.clone(), disabled: c.disabled, clip_loop });
                 report.clips += 1;
             }
         }
@@ -576,8 +583,8 @@ mod tests {
         assert_eq!(pieces(&s, 1.0), [(2.0, 4.0, 0.0), (1.0, 4.0, 2.0), (1.0, 4.0, 5.0), (1.0, 3.0, 8.0)]);
         let xml = to_xml(&set()).replace(r#"<LoopOn Value="false" />"#, r#"<LoopOn Value="true" />"#).replace(r#"<CurrentEnd Value="8" />"#, r#"<CurrentEnd Value="14" />"#);
         let (p, _) = import(&xml);
-        let starts: Vec<(i64, u64)> = p.tracks[0].clips.iter().map(|c| (c.start, c.source_length)).collect();
-        assert_eq!(starts, [(4 * PPQ, 144_000), (8 * PPQ, 144_000), (12 * PPQ, 48_000)], "a 10-beat clip of a 4-beat loop");
+        let clips: Vec<(i64, u64, Option<(bool, i64, i64, i64)>)> = p.tracks[0].clips.iter().map(|c| (c.start, c.source_length, c.clip_loop.map(|l| (l.on, l.start, l.end, l.length)))).collect();
+        assert_eq!(clips, [(4 * PPQ, 144_000, Some((true, 0, 4 * PPQ, 10 * PPQ)))], "a 10-beat clip of a 4-beat loop");
         let m = &p.tracks[1].midi_clips[0];
         assert_eq!(m.clip_loop.map(|l| (l.on, l.start, l.end)), Some((true, 0, 4 * PPQ)));
     }
