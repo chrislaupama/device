@@ -277,6 +277,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.midi_state = 7;
                 }
+                "review-footer-focus" => {
+                    a.reference_default = true;
+                    a.midi_state = 10;
+                }
                 "review-clip-loop" => {
                     a.reference_default = true;
                     a.midi_state = 8;
@@ -966,7 +970,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.select_clip(clip);
             c.seek_beats(22.0); // 00:11.000, as captured
         }
-        if let (5..=7, Some(id)) = (args.midi_state, clip) {
+        if let (5..=7 | 10, Some(id)) = (args.midi_state, clip) {
             // REVIEW STATE: an E minor line with one out-of-scale note (F4), the clip's scale set
             // to E Minor with the footer Scale on; 6 adds scale rows, 7 opens the Scale type menu.
             let line = [(64u8, 0i64), (67, 1), (71, 2), (69, 3), (67, 4), (65, 5), (66, 6), (64, 7), (59, 8), (62, 10), (64, 12), (71, 14)];
@@ -1018,6 +1022,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 c.pr_action("smart_quantize");
             }
         }
+    }
+    if args.midi_state == 10 {
+        // REVIEW STATE: the scale state with the keyboard focus on the footer's Root note (Tab,
+        // once the window is up and its shortcuts have taken the focus).
+        let aw = app.as_weak();
+        slint::Timer::single_shot(Duration::from_millis(400), move || {
+            let Some(app) = aw.upgrade() else { return };
+            for _ in 0..60 {
+                if app.global::<Studio>().get_footer_focus() == 2 {
+                    break;
+                }
+                app.window().dispatch_event(slint::platform::WindowEvent::KeyPressed { text: slint::platform::Key::Tab.into() });
+                app.window().dispatch_event(slint::platform::WindowEvent::KeyReleased { text: slint::platform::Key::Tab.into() });
+            }
+        });
     }
     if args.synth_state {
         // Reference 32: default project, Instrument track selected (playhead at bar 6), Devices tab,
@@ -1741,6 +1760,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_pr_scroll, |c, dy: f32| c.pr_scroll(dy));
     on!(on_pr_action, |c, a: slint::SharedString| c.pr_action(a.as_str()));
     on!(on_clip_menu_open, |c, m: i32| c.clip_menu_open(m));
+    on!(on_pr_scale_step, |c, m: i32, s: i32| c.pr_scale_step(m, s));
     on!(on_clip_menu_pick, |c, i: i32| c.clip_menu_pick(i));
     on!(on_ac_bpm_drag, |c, phase: i32, dx: f32, dy: f32| c.ac_bpm_drag(phase, dx, dy));
     on!(on_ac_reverse_toggle, |c| c.ac_reverse_toggle());

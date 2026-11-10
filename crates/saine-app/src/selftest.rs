@@ -97,6 +97,16 @@ fn pr_xy(ctl: &Ctl, beat: f64, pitch: i32) -> (f32, f32) {
     (PR_ORIGIN.0 + v.x_of(beat), PR_ORIGIN.1 + v.y_of(pitch) + crate::pianoroll::ROW_H / 2.0)
 }
 
+/// Presses Tab until the footer control `index` (FooterKeys) has the keyboard focus.
+fn tab_to(app: &AppWindow, index: i32) {
+    for _ in 0..60 {
+        if app.global::<Studio>().get_footer_focus() == index {
+            return;
+        }
+        key(app, Key::Tab, false, false);
+    }
+}
+
 fn instrument_clip(c: &Controller) -> Option<&saine_core::MidiClip> {
     c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument)?.midi_clips.first()
 }
@@ -340,6 +350,50 @@ fn midi_steps() -> Vec<Step> {
             }
         })),
         Check("undo cleared the clip's scale view", Box::new(|c, _| instrument_clip(c).is_some_and(|m| m.scale.is_none()).then_some(()).ok_or("scale still set".into()))),
+        Do("keyboard: Tab to the footer Loop switch", Box::new(|a| tab_to(a, 0))),
+        Check("Tab reached the Loop switch", Box::new(|_, a| (a.global::<Studio>().get_footer_focus() == 0).then_some(()).ok_or(format!("focus {}", a.global::<Studio>().get_footer_focus())))),
+        Do("Space", Box::new(|a| key(a, " ", false, false))),
+        Check("Space toggled Loop off (and played nothing)", Box::new(|c, _| {
+            let l = instrument_clip(c).and_then(|m| m.clip_loop).ok_or("no loop")?;
+            (!l.on && !c.engine.transport().playing && c.doc.undo_label().as_deref() == Some("Clip Loop")).then_some(()).ok_or(format!("{l:?} playing {}", c.engine.transport().playing))
+        })),
+        Do("Return", Box::new(|a| key(a, Key::Return, false, false))),
+        Check("Return toggled Loop back on", Box::new(|c, _| instrument_clip(c).and_then(|m| m.clip_loop).is_some_and(|l| l.on).then_some(()).ok_or("loop off".into()))),
+        Do("keyboard: Tab on to the Root note", Box::new(|a| tab_to(a, 2))),
+        Do("Down", Box::new(|a| key(a, Key::DownArrow, false, false))),
+        Check("Down picked the next root (C#), one \"Clip Scale\" step", Box::new(|c, a| {
+            let k = instrument_clip(c).and_then(|m| m.scale).and_then(|s| s.key).ok_or("no key")?;
+            (k.root == 1 && a.global::<Studio>().get_pr_scale_root() == "C#" && c.doc.undo_label().as_deref() == Some("Clip Scale")).then_some(()).ok_or(format!("{k:?}"))
+        })),
+        Do("End", Box::new(|a| key(a, Key::End, false, false))),
+        Check("End picked the last root (B)", Box::new(|_, a| (a.global::<Studio>().get_pr_scale_root() == "B").then_some(()).ok_or(a.global::<Studio>().get_pr_scale_root().to_string()))),
+        Do("Up, then Tab to the Scale type, End and Home", Box::new(|a| {
+            key(a, Key::UpArrow, false, false);
+            tab_to(a, 3);
+            key(a, Key::End, false, false);
+            key(a, Key::Home, false, false);
+        })),
+        Check("Up picked Bb; End then Home came back to the first scale type (Major)", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let k = instrument_clip(c).and_then(|m| m.scale).and_then(|s| s.key).ok_or("no key")?;
+            (s.get_pr_scale_root() == "Bb" && k.kind == 0 && s.get_pr_scale_type() == "Major").then_some(()).ok_or(format!("{} {}", s.get_pr_scale_root(), s.get_pr_scale_type()))
+        })),
+        Do("Return on the Scale type", Box::new(|a| key(a, Key::Return, false, false))),
+        Check("Return opened the Scale type menu", Box::new(|c, _| (c.pr.menu == 9).then_some(()).ok_or(format!("menu {}", c.pr.menu)))),
+        Do("Escape", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("Escape closed the menu and gave the keys back to the shortcuts", Box::new(|c, a| {
+            (c.pr.menu == -1 && a.global::<Studio>().get_footer_focus() == -1).then_some(()).ok_or(format!("menu {} focus {}", c.pr.menu, a.global::<Studio>().get_footer_focus()))
+        })),
+        DoC("undo the keyboard edits (two Loop, five Scale)", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            for _ in 0..7 {
+                c.undo();
+            }
+        })),
+        Check("keyboard edits undone", Box::new(|c, _| {
+            let m = instrument_clip(c).ok_or("clip gone")?;
+            (m.scale.is_none() && m.clip_loop.is_some_and(|l| l.on)).then_some(()).ok_or(format!("{:?} {:?}", m.scale, m.clip_loop))
+        })),
         Check("a new MIDI clip loops over the whole clip; footer Loop on", Box::new(|c, a| {
             let m = instrument_clip(c).ok_or("clip gone")?;
             let l = m.clip_loop.ok_or("no loop")?;

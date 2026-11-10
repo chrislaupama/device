@@ -562,6 +562,9 @@ export global Studio {
     // Footer Loop: the switch (pr-loop-on), live for MIDI clips other than patterns (pr-loop-enabled).
     in property <bool> pr-loop-on: true;
     in property <bool> pr-loop-enabled: true;
+    // Footer control with keyboard focus (FooterKeys): 0 Loop, 1 Scale, 2 Root note, 3 Scale type; -1 none.
+    in-out property <int> footer-focus: -1;
+    callback pr-scale-step(int, int);                       // menu (8 root, 9 type), step (-1 up, 1 down, -1000 Home, 1000 End)
     in property <string> pr-length-text: "1.0.0";
     in property <string> pr-grid-text: "1/16";
     in property <string> pr-quant-text: "100%";

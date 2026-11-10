@@ -237,6 +237,35 @@ export component FooterLabel inherits Text {
 export component FooterTitle inherits Text {
     height: 14px; color: Tokens.text-bright; font-size: 10px; font-weight: 600; vertical-alignment: center;
 }
+// Keyboard for a footer switch or select, like the buttons in the reference footer: Tab reaches
+// it, Space or Return presses it, a select steps with Up / Down / Home / End; Escape hands the keys
+// back to the shortcuts and other keys stay shortcuts. A click doesn't focus it, so the ring
+// (2 pt, ink at 22 %) only marks keyboard focus.
+component FooterKeys inherits FocusScope {
+    in property <int> index;
+    in property <bool> select;
+    callback pressed();
+    callback step(int);
+    focus-on-click: false;
+    changed has-focus => {
+        if (self.has-focus) { Studio.footer-focus = root.index; } else if (Studio.footer-focus == root.index) { Studio.footer-focus = -1; }
+    }
+    key-pressed(e) => {
+        if (e.text == Key.Escape) { return reject; }
+        if (e.text == Key.Return || e.text == " ") { root.pressed(); return accept; }
+        if (root.select && !e.modifiers.shift && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta) {
+            if (e.text == Key.UpArrow) { root.step(-1); return accept; }
+            if (e.text == Key.DownArrow) { root.step(1); return accept; }
+            if (e.text == Key.Home) { root.step(-1000); return accept; }
+            if (e.text == Key.End) { root.step(1000); return accept; }
+        }
+        if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) { return accept; }
+        reject
+    }
+    if root.has-focus: Rectangle { x: -2px; y: -2px; width: root.width + 4px; height: root.height + 4px; border-width: 2px; border-color: #ffffff38; border-radius: 3px; }
+    @children
+}
+
 component FooterSwitch inherits Rectangle {
     in property <bool> on;
     width: 20.5px; height: 10.5px; border-radius: 5.25px;
@@ -467,7 +496,11 @@ export component PianoRoll inherits Rectangle {
     // Loop: the switch, the loop's Position and Length (the clip's length while it doesn't loop).
     FooterTitle { x: 173.5px; y: root.r1; text: "Loop"; }
     FooterSwitch { x: 202px; y: root.r1 + 2px; on: Studio.pr-loop-on; }
-    if Studio.pr-loop-enabled: TouchArea { x: 200px; y: root.r1; width: 25px; height: 14px; clicked => { Studio.pr-action("loop"); } }
+    FooterKeys {
+        x: 200px; y: root.r1; width: 25px; height: 14px; index: 0; enabled: Studio.pr-loop-enabled;
+        pressed => { Studio.pr-action("loop"); }
+        if Studio.pr-loop-enabled: TouchArea { clicked => { Studio.pr-action("loop"); } }
+    }
     FooterLabel { x: 173.5px; y: root.r2; text: "Position"; }
     FooterValue { x: 216.5px; y: root.r2; text: Studio.pr-position-text; field: Studio.pr-loop-on && !Studio.ac-visible ? 5 : -1; ink: Studio.pr-loop-on ? Studio.clip-color : #4a4b50; }
     FooterLabel { x: 260px; y: root.r2; text: "Length"; }
@@ -507,11 +540,25 @@ export component PianoRoll inherits Rectangle {
     // Scale: the switch highlights in-scale rows and keys; Root note and Scale type open menus.
     FooterTitle { x: 720px; y: root.r1; text: "Scale"; }
     FooterSwitch { x: 751px; y: root.r1 + 2px; on: Studio.pr-scale-on; }
-    TouchArea { x: 749px; y: root.r1; width: 25px; height: 14px; clicked => { Studio.pr-action("scale_highlight"); } }
+    FooterKeys {
+        x: 749px; y: root.r1; width: 25px; height: 14px; index: 1;
+        pressed => { Studio.pr-action("scale_highlight"); }
+        TouchArea { clicked => { Studio.pr-action("scale_highlight"); } }
+    }
     scale-root := FooterValue { x: 720px; y: root.r2; text: Studio.pr-scale-root; }
-    TouchArea { x: 720px; y: root.r2; width: scale-root.width; height: 14px; clicked => { Studio.clip-menu-open(8); } }
+    FooterKeys {
+        x: 720px; y: root.r2; width: scale-root.width; height: 14px; index: 2; select: true;
+        pressed => { Studio.clip-menu-open(8); }
+        step(s) => { Studio.pr-scale-step(8, s); }
+        TouchArea { clicked => { Studio.clip-menu-open(8); } }
+    }
     scale-type := FooterValue { x: 720px + scale-root.width + 4px; y: root.r2; text: Studio.pr-scale-type; }
-    TouchArea { x: scale-type.x; y: root.r2; width: scale-type.width; height: 14px; clicked => { Studio.clip-menu-open(9); } }
+    FooterKeys {
+        x: scale-type.x; y: root.r2; width: scale-type.width; height: 14px; index: 3; select: true;
+        pressed => { Studio.clip-menu-open(9); }
+        step(s) => { Studio.pr-scale-step(9, s); }
+        TouchArea { clicked => { Studio.clip-menu-open(9); } }
+    }
     }
 }
 
