@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! saine-studio [--open <dir>] [--import <wav>...] [--save-to <dir>] [--no-audio]
-//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-settings-audio|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-device-chain|review-settings-plugins]
+//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-clip-menu|reference-settings-audio|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-device-chain|review-settings-plugins]
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
@@ -85,6 +85,8 @@ struct Args {
     synth_page: Option<usize>,
     /// reference-input-menu (50): Instrument + Audio tracks, Audio selected, "In" popup open.
     input_menu_state: bool,
+    /// reference-clip-menu: Instrument track with a 1-bar MIDI clip at bar 6, its context menu open.
+    clip_menu_state: bool,
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
@@ -191,6 +193,10 @@ fn parse_args() -> Result<Args, String> {
                 "reference-input-menu" => {
                     a.reference_default = true;
                     a.input_menu_state = true;
+                }
+                "reference-clip-menu" => {
+                    a.reference_default = true;
+                    a.clip_menu_state = true;
                 }
                 "reference-settings-audio" => {
                     a.reference_default = true;
@@ -709,6 +715,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(22.0);
         c.open_input_menu();
     }
+    if args.clip_menu_state {
+        let mut c = ctl.borrow_mut();
+        if let Some(inst) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id) {
+            c.select_track(inst);
+            c.seek_beats(20.0);
+            if let Some(id) = c.insert_midi_clip() {
+                c.open_clip_menu(id, 700.0, 215.0, (10_000.0, 10_000.0));
+            }
+        }
+    }
     if args.automation_state {
         // Reference 60: same project layout as 50 (Instrument 1 with a MIDI clip at bar 6, Audio 2
         // selected, playhead 00:11.000, Devices tab) with the automation lanes shown.
@@ -727,14 +743,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.auto_toggle_shown();
     }
     if args.live_state {
-        // The capture's tracks drew palette entries 4 and 5 (pink, orange); the reference picks
-        // the first track's colour at random.
         let mut c = ctl.borrow_mut();
-        let mut p = c.project().clone();
-        for (t, k) in p.tracks.iter_mut().zip([4u8, 5]) {
-            t.color = saine_core::ColorIndex(k);
-        }
-        c.replace_project(p);
         let first = c.project().tracks[0].id;
         c.select_track(first);
         c.auto_toggle_shown();
@@ -1327,12 +1336,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(20.0);
         drop(c);
         let ctl = ctl.clone();
+        // Selects the clip once, after the import lands; later tab changes are the user's.
+        let done = std::cell::Cell::new(false);
         audio_clip_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
+            if done.get() {
+                return;
+            }
             let Ok(mut c) = ctl.try_borrow_mut() else { return };
             let clip = c.project().tracks.iter().flat_map(|t| t.clips.iter()).next().map(|cl| cl.id);
-            if clip.is_some() && c.bottom_tab != BottomTab::Clip {
+            if clip.is_some() {
                 c.select_clip(clip);
                 c.set_bottom_tab(BottomTab::Clip);
+                done.set(true);
             }
         });
     }
