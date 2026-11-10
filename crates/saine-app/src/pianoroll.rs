@@ -897,8 +897,8 @@ impl Controller {
             self.pr.pen = !self.pr.pen;
             return;
         }
-        if action == "smart_quantize" || action == "velocity_lane" {
-            self.set_status(format!("{}: not implemented yet", if action == "smart_quantize" { "Smart Quantize" } else { "Velocity lane" }), 3);
+        if action == "velocity_lane" {
+            self.set_status("Velocity lane: not implemented yet", 3);
             return;
         }
         if self.pr_clip().is_none() {
@@ -919,6 +919,19 @@ impl Controller {
             }
             "reverse" => ("Reverse Notes", Self::replace_notes(&clip, &midi::reverse(&target, clip.length))),
             "legato" => ("Legato", Self::replace_notes(&clip, &midi::legato(&target, clip.length))),
+            "smart_quantize" => {
+                let done = saine_core::smart_quantize::smart_quantize(&target, self.project().transport.bpm);
+                let mut notes: Vec<Note> = clip.notes.iter().filter(|n| !target.iter().any(|t| t.id == n.id)).copied().collect();
+                notes.extend(done.notes);
+                if !self.commit_notes(clip.id, notes, Some("Smart Quantize")) {
+                    self.set_status("Already smart quantized, nothing changed", 3);
+                    return;
+                }
+                let kept: BTreeSet<u32> = self.project().midi_clip(clip.id).map(|c| c.notes.iter().map(|n| n.id).collect()).unwrap_or_default();
+                self.pr.selected.retain(|id| kept.contains(id));
+                self.set_status(format!("Smart Quantize: {} grid", done.grid), 2);
+                return;
+            }
             "double" => {
                 let (d, len) = midi::double(&target, clip.length);
                 let mut extra = d[target.len()..].to_vec();

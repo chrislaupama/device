@@ -260,6 +260,14 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.midi_state = 2;
                 }
+                "review-smart-quantize" => {
+                    a.reference_default = true;
+                    a.midi_state = 3;
+                }
+                "review-smart-quantize-done" => {
+                    a.reference_default = true;
+                    a.midi_state = 4;
+                }
                 "reference-audio-clip" => {
                     a.reference_default = true;
                     a.audio_clip_state = true;
@@ -922,6 +930,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if args.midi_state == 2 {
             c.select_clip(clip);
             c.seek_beats(22.0); // 00:11.000, as captured
+        }
+        if args.midi_state >= 3 {
+            // REVIEW STATE: a loosely played line (16ths, up to 40 ticks off), a ghost octave
+            // and a blip, then (state 4) the toolbar's Smart Quantize on it.
+            let jitter: [(u8, i64); 16] = [(60, 0), (63, 31), (67, -22), (70, 38), (72, -12), (70, 27), (67, -35), (63, 18), (60, 9), (63, -28), (67, 36), (70, -15), (72, 24), (75, -38), (72, 11), (67, -20)];
+            let mut notes: Vec<saine_core::midi::Note> = jitter
+                .iter()
+                .enumerate()
+                .map(|(i, &(pitch, j))| saine_core::midi::Note { id: i as u32 + 1, pitch, start: (i as i64 * 240 + j).max(0), length: 200 + (i as i64 % 3) * 25, velocity: 96 })
+                .collect();
+            notes.push(saine_core::midi::Note { id: 17, pitch: 84, start: 4 * 240 + 15, length: 180, velocity: 30 });
+            notes.push(saine_core::midi::Note { id: 18, pitch: 55, start: 2210, length: 30, velocity: 8 });
+            if let Some(clip) = clip {
+                c.execute(saine_core::Command::SetMidiNotes { clip, notes });
+            }
+            c.select_clip(clip);
+            c.seek_beats(22.0);
+            if args.midi_state == 4 {
+                c.pr_action("smart_quantize");
+            }
         }
     }
     if args.synth_state {
