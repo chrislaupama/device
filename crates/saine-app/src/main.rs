@@ -37,6 +37,7 @@ mod files;
 mod panel_multiband;
 mod gpu;
 mod highlight;
+mod live_set;
 mod mixer;
 mod panel_fields;
 mod peaks;
@@ -98,7 +99,7 @@ struct Args {
     clip_menu_state: bool,
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
-    /// 1 export dialog, 2 unsaved-changes prompt, 3 export dialog on Stems, 4 with its Tracks menu open.
+    /// 1 export dialog, 2 unsaved-changes prompt, 3 export dialog on Stems, 4 with its Tracks menu open, 5 on Project.
     dialog_state: u8,
     settings_general_state: bool,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
@@ -242,6 +243,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-export-stems-menu" => {
                     a.reference_default = true;
                     a.dialog_state = 4;
+                }
+                "review-export-project" => {
+                    a.reference_default = true;
+                    a.dialog_state = 5;
                 }
                 "reference-settings-general" => {
                     a.reference_default = true;
@@ -1652,7 +1657,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if state != 2 {
                     c.export_open();
                     if state >= 3 {
-                        c.export_pick_recipe(1);
+                        c.export_pick_recipe(if state == 5 { 2 } else { 1 });
                     }
                     if state == 4 {
                         c.export_toggle_tracks_menu();
