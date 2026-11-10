@@ -1105,16 +1105,16 @@ impl Controller {
                         self.drag = Some(Drag::Move { clip, grab_beats, orig_track, orig_start, track, start });
                     }
                     Drag::TrimLeft { clip, orig, .. } => {
-                        let Some((_, _, _, _, rate, _)) = self.clip_region(clip) else { return };
-                        let (s0, off0, len0) = orig;
                         let p = self.project();
+                        let Some(c) = p.clip(clip) else { return };
+                        let (s0, off0, len0) = orig;
+                        let at = |t: Ticks| p.clip_source_at(c, (t - s0) as f64);
                         let mut start = snap(beat);
-                        // Frames of source material before the current offset.
-                        let min_start = s0 - p.seconds_to_ticks(off0 as f64 / rate);
-                        let max_start = s0 + p.seconds_to_ticks(len0 as f64 / rate) - PPQ / 4;
+                        // Source material before the current offset (warped clips follow their map).
+                        let min_start = s0 + p.clip_ticks_at(c, 0.0).ceil() as Ticks;
+                        let max_start = s0 + p.clip_ticks_at(c, (off0 + len0) as f64) as Ticks - PPQ / 4;
                         start = start.clamp(min_start.max(0), max_start.max(s0));
-                        let delta = ((p.ticks_to_seconds(start - s0)) * rate).round() as i64;
-                        let off = (off0 as i64 + delta).max(0) as u64;
+                        let off = at(start).round().max(0.0) as u64;
                         let len = (len0 as i64 - (off as i64 - off0 as i64)).max(1) as u64;
                         self.drag = Some(Drag::TrimLeft { clip, orig, cur: (start, off, len) });
                     }
@@ -1128,11 +1128,12 @@ impl Controller {
                         self.drag = Some(Drag::MidiRight { clip, orig, cur: (orig.0, end - orig.0) });
                     }
                     Drag::TrimRight { clip, orig, .. } => {
-                        let Some((_, _, _, _, rate, frames)) = self.clip_region(clip) else { return };
+                        let Some((_, _, _, _, _, frames)) = self.clip_region(clip) else { return };
                         let (s0, off0, _) = orig;
                         let p = self.project();
+                        let Some(c) = p.clip(clip) else { return };
                         let end = snap(beat).max(s0 + PPQ / 4);
-                        let len = ((p.ticks_to_seconds(end - s0)) * rate).round() as u64;
+                        let len = (p.clip_source_at(c, (end - s0) as f64) - off0 as f64).round().max(1.0) as u64;
                         let len = len.clamp(1, frames - off0);
                         self.drag = Some(Drag::TrimRight { clip, orig, cur: (s0, off0, len) });
                     }
@@ -1187,7 +1188,8 @@ impl Controller {
                     _ => {}
                 }
                 let rate = p.asset(c.asset).map(|a| a.sample_rate).unwrap_or(self.rate);
-                let len_beats = p.seconds_to_ticks(len as f64 / rate) as f64 / PPQ as f64;
+                let shown = saine_core::Clip { source_offset: off, source_length: len, ..c.clone() };
+                let len_beats = p.clip_length_ticks(&shown) as f64 / PPQ as f64;
                 let ratio = self.rate / rate;
                 let wave = self.asset_map.get(&c.asset).and_then(|ea| self.peaks.slot(*ea)).map(|slot| (slot, off as f64 * ratio, len as f64 * ratio));
                 self.clip_vis.push(ClipVis {

@@ -80,6 +80,8 @@ struct Args {
     /// 1 = reference-midi-clip (33), 2 = reference-pianoroll (34).
     midi_state: u8,
     audio_clip_state: bool,
+    /// review-warp: the audio clip state with drum hits, warped (Drums, 1.5x, one marker).
+    warp_state: bool,
     /// reference-synth (32): Instrument track selected, Devices tab, test-state synth preset.
     synth_state: bool,
     /// --synth-page N: open that category page of the synth device (review screenshots).
@@ -184,6 +186,11 @@ fn parse_args() -> Result<Args, String> {
                 "reference-audio-clip" => {
                     a.reference_default = true;
                     a.audio_clip_state = true;
+                }
+                "review-warp" => {
+                    a.reference_default = true;
+                    a.audio_clip_state = true;
+                    a.warp_state = true;
                 }
                 "reference-synth" => {
                     a.reference_default = true;
@@ -1315,19 +1322,34 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let dir = std::env::temp_dir().join(format!("saine-ref-{}", std::process::id()));
         std::fs::create_dir_all(&dir)?;
         let path = dir.join("sine-a220-steady.wav");
-        let samples: Vec<f32> = (0..8 * 44_100).map(|i| (std::f32::consts::TAU * 220.0 * i as f32 / 44_100.0).sin() * 0.5).collect();
+        let hit = |i: usize| if args.warp_state { (-((i % 22_050) as f32) / 900.0).exp() * (std::f32::consts::TAU * 90.0 * (i % 22_050) as f32 / 44_100.0).sin() * 0.6 } else { 0.0 };
+        let samples: Vec<f32> = (0..8 * 44_100).map(|i| (std::f32::consts::TAU * 220.0 * i as f32 / 44_100.0).sin() * if args.warp_state { 0.15 } else { 0.5 } + hit(i)).collect();
         wavgen::write_wav(&path, 44_100, 1, &samples)?;
         let mut c = ctl.borrow_mut();
         c.import_files(vec![path], ImportTarget::Selected, Some(12 * saine_core::PPQ));
         c.seek_beats(20.0);
         drop(c);
         let ctl = ctl.clone();
+        let warp = args.warp_state;
+        let mut menu = args.clip_menu.filter(|_| warp);
         audio_clip_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
             let Ok(mut c) = ctl.try_borrow_mut() else { return };
-            let clip = c.project().tracks.iter().flat_map(|t| t.clips.iter()).next().map(|cl| cl.id);
+            let clip = c.project().tracks.iter().flat_map(|t| t.clips.iter()).next().cloned();
             if clip.is_some() && c.bottom_tab != BottomTab::Clip {
-                c.select_clip(clip);
+                c.select_clip(clip.as_ref().map(|cl| cl.id));
                 c.set_bottom_tab(BottomTab::Clip);
+            }
+            if let Some(cl) = clip.filter(|cl| warp && !cl.warp.enabled) {
+                let mut w = saine_core::ClipWarp { enabled: true, mode: saine_core::WarpMode::Drums, speed: 1.5, original_bpm: 120.0, ..Default::default() };
+                w.set_marker(0, 0.0);
+                w.set_marker(4 * 44_100, 9.0);
+                c.execute(saine_core::Command::SetClipWarp { clip: cl.id, warp: w, label: "Set clip speed".into() });
+            }
+            // review-warp + --clip-menu: open the dropdown once the warped clip is shown.
+            if c.ac_clip().is_some_and(|cl| cl.warp.enabled)
+                && let Some(m) = menu.take()
+            {
+                c.clip_menu_open(m);
             }
         });
     }
