@@ -2276,6 +2276,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.poll_test_tone();
             c.device_poll();
             c.auto_poll();
+            if !c.pr.preview_offs.is_empty() {
+                c.pr_retry_note_offs();
+            }
             if c.pending_jobs > 0 {
                 c.poll_jobs();
                 if let Some(a) = aw.upgrade() {
