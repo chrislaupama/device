@@ -3,7 +3,7 @@
 //! and checks the resulting `Document` / engine state. Does not touch the
 //! system cursor or keyboard. Coordinates are window points at 1440x820.
 
-use crate::controller::Controller;
+use crate::controller::{BottomTab, Controller};
 use crate::{AppWindow, Studio};
 use crate::assistant_panel::EntryKind;
 use saine_core::assistant::Mode;
@@ -11,7 +11,7 @@ use saine_core::builtin::synth_v2::SYNTH_V2;
 use saine_core::{PPQ, TrackKind, db_to_gain};
 use std::cell::Cell;
 use slint::platform::{Key, PointerEventButton, WindowEvent};
-use slint::{ComponentHandle, LogicalPosition, SharedString};
+use slint::{ComponentHandle, LogicalPosition, Model, SharedString};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -681,6 +681,10 @@ fn steps() -> Vec<Step> {
     const CARD_Y: f32 = 78.0 + 426.0 - 6.8 - 121.55;
     const INPUT_Y: f32 = CARD_Y + 28.05 + 27.2 + 22.0;
     const MIXER_Y: f32 = 820.0 - 5.0 - 390.0;
+    // Mixer strip fader travel (ui/channel_strip.slint): the 200 pt canvas sits 234 pt above the
+    // strip bottom; its handle travels 168 pt starting 18 pt down (reference points * 0.85).
+    const MIXER_TRAVEL_TOP: f32 = 390.0 - (234.0 - 18.0) * 0.85;
+    const MIXER_TRAVEL: f32 = 168.0 * 0.85;
     let bx = |b: f64| LANE_X + (b * crate::timeline::DEFAULT_PX_PER_BEAT) as f32;
     vec![
         Check("demo imported two clips on two audio tracks", Box::new(|c, _| {
@@ -713,7 +717,7 @@ fn steps() -> Vec<Step> {
         Do("Cmd+Shift+Z", Box::new(|a| key(a, "Z", true, true))),
         Check("redo muted again", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("redo failed".into()))),
         Do("⇧⌘E (file.export_audio)", Box::new(|a| key(a, "E", true, true))),
-        Check("export dialog open with a range and a size estimate", Box::new(|c, a| {
+        Check("export dialog open with a range and a size estimate", Box::new(|_c, a| {
             let s = a.global::<Studio>();
             (s.get_export_open() && s.get_export_bars_text().starts_with("Bars 1–") && s.get_export_estimate().contains("MB"))
                 .then_some(())
@@ -818,6 +822,19 @@ fn steps() -> Vec<Step> {
         })),
         Do("click metronome button again", Box::new(|a| click(a, 992.0, 52.0))),
         Check("metronome off", Box::new(|c, _| (!c.metronome_on).then_some(()).ok_or("still on".into()))),
+        DoC("select clip 1 and open the Clip tab", Box::new(move |a, ctl| {
+            click(a, bx(11.0), TRACK0_Y + 40.0);
+            ctl.borrow_mut().set_bottom_tab(BottomTab::Clip);
+        })),
+        Check("audio clip editor open: gain readout, no piano roll, clip-length ruler", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let bars = (c.project().clip_length_ticks(clip) as f64 / c.project().ticks_per_bar() as f64).ceil() as usize;
+            (s.get_ac_visible() && !s.get_pr_visible() && s.get_ac_gain_text() == "0.0 dB" && s.get_pr_bar_labels().row_count() >= bars && c.pr_view().gx == 0.0)
+                .then_some(())
+                .ok_or(format!("ac {} pr {} gain {} bars {}", s.get_ac_visible(), s.get_pr_visible(), s.get_ac_gain_text(), s.get_pr_bar_labels().row_count()))
+        })),
+        DoC("back to the Devices tab", Box::new(|_, ctl| ctl.borrow_mut().set_bottom_tab(BottomTab::Devices))),
         Do("select clip 1 and press Delete", Box::new(move |a| {
             click(a, bx(11.0), TRACK0_Y + 40.0);
             key(a, Key::Delete, false, false)
@@ -969,15 +986,15 @@ fn steps() -> Vec<Step> {
             rt4.set(c.project().tracks.len());
             (c.mixer_open && a.global::<Studio>().get_mixer_open() && (h - (342.0 - 27.5)).abs() < 1.0).then_some(()).ok_or(format!("open {} lanes h {h}", c.mixer_open))
         })),
-        Do("click the Instrument strip header", Box::new(|a| click(a, 5.0 + 91.5 + 40.0, MIXER_Y + 35.0))),
+        Do("click the Instrument strip header", Box::new(|a| click(a, 5.0 + 108.0 * 0.85 + 40.0, MIXER_Y + 35.0))),
         Check("strip click selected track 2", Box::new(move |c, _| {
             rv1.set(c.doc.history_labels().iter().filter(|l| l.as_str() == "Track Volume Change").count());
             rm1.set(c.project().tracks[0].mute);
             (c.selected_track == Some(c.project().tracks[1].id)).then_some(()).ok_or("not selected".into())
         })),
         Do("drag the Audio strip fader from -24 dB to -36 dB", Box::new(|a| {
-            let y = |f: f32| MIXER_Y + 196.0 + 10.5 + f * 143.0;
-            drag(a, 5.0 + 45.0, y(0.5), 5.0 + 45.0, y(crate::controller::fader_from_db(-36.0)));
+            let y = |f: f32| MIXER_Y + MIXER_TRAVEL_TOP + f * MIXER_TRAVEL;
+            drag(a, 5.0 + 53.0 * 0.85, y(crate::controller::fader_from_db(-24.0)), 5.0 + 53.0 * 0.85, y(crate::controller::fader_from_db(-36.0)));
         })),
         Check("track 1 gain ≈ -36 dB, exactly one new undo step", Box::new(move |c, _| {
             let g = c.project().tracks[0].gain;
@@ -985,20 +1002,21 @@ fn steps() -> Vec<Step> {
             let n = c.doc.history_labels().iter().filter(|l| l.as_str() == "Track Volume Change").count();
             ((db + 36.0).abs() < 0.3 && n == rv2.get() + 1).then_some(()).ok_or(format!("{db} dB, volume steps {n} (was {})", rv2.get()))
         })),
-        Do("click M on the Audio strip", Box::new(|a| click(a, 5.0 + 14.0 + 7.5, MIXER_Y + 368.5 + 7.0))),
+        Do("click M on the Audio strip", Box::new(|a| click(a, 5.0 + 25.0 * 0.85, MIXER_Y + 390.0 - 17.0 * 0.85))),
         Check("track 1 mute toggled via the mixer (SetTrackMute)", Box::new(move |c, _| {
             (c.project().tracks[0].mute != rm2.get() && c.doc.undo_label() == Some("Mute Change")).then_some(()).ok_or(format!("mute {} undo {:?}", c.project().tracks[0].mute, c.doc.undo_label()))
         })),
         Do("drag the master strip fader to ~-24 dB", Box::new(|a| {
-            let y = |f: f32| MIXER_Y + 196.0 + 10.5 + f * 143.0;
-            drag(a, 1440.0 - 5.0 - 92.0 + 45.0, y(0.3), 1440.0 - 5.0 - 92.0 + 45.0, y(0.5));
+            let y = |f: f32| MIXER_Y + MIXER_TRAVEL_TOP + f * MIXER_TRAVEL;
+            let x = 1440.0 - 5.0 - 108.0 * 0.85 + 53.0 * 0.85;
+            drag(a, x, y(0.3), x, y(crate::controller::fader_from_db(-24.0)));
         })),
         Check("master gain ≈ -24 dB (SetMasterGain), mixer master fader follows", Box::new(|c, a| {
             let db = saine_core::gain_to_db(c.project().master_gain);
             let f = a.global::<Studio>().get_master_fader();
-            ((db + 24.0).abs() < 0.3 && (f - 0.5).abs() < 0.01).then_some(()).ok_or(format!("{db} dB, fader {f}"))
+            ((db + 24.0).abs() < 0.3 && (f - 0.78).abs() < 0.01).then_some(()).ok_or(format!("{db} dB, fader {f}"))
         })),
-        Do("click '+ Add track' in the mixer", Box::new(|a| click(a, 5.0 + 3.0 * 91.5 + 46.0, MIXER_Y + 190.0))),
+        Do("click '+ Add track' in the mixer", Box::new(|a| click(a, 5.0 + 3.0 * 108.0 * 0.85 + 46.0, MIXER_Y + 210.0))),
         Check("mixer Add track added an audio track", Box::new(move |c, _| {
             let p = c.project();
             (p.tracks.len() == rt5.get() + 1 && p.tracks.last().unwrap().kind == TrackKind::Audio).then_some(()).ok_or(format!("{} tracks", p.tracks.len()))

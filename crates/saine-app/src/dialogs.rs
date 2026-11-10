@@ -6,7 +6,7 @@ use crate::Studio;
 use crate::controller::Controller;
 use crate::wavgen;
 use saine_core::{Project, Ticks};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Silence rendered after the last bar so reverb and delay tails ring out.
 pub const TAIL_S: f64 = 2.0;
@@ -85,20 +85,28 @@ impl Controller {
     /// device is paused for the render and restarted afterwards.
     pub fn export_run(&mut self) {
         let name = if self.export.name.to_lowercase().ends_with(".wav") { self.export.name.clone() } else { format!("{}.wav", self.export.name) };
-        let path = self.export.dir.join(name);
         self.ui_dirty = true;
-        match self.render_mixdown(&path) {
-            Ok(()) => {
+        match self.render_mixdown(&name) {
+            Ok((path, restart)) => {
                 self.export.open = false;
-                self.set_status(format!("Exported {}", path.display()), 4);
+                match restart {
+                    Ok(()) => self.set_status(format!("Exported {}", path.display()), 4),
+                    Err(e) => self.set_status(format!("Exported {}, but the audio device did not restart: {e}", path.display()), 8),
+                }
             }
             Err(e) => self.set_status(format!("Export failed: {e}"), 6),
         }
     }
 
-    fn render_mixdown(&mut self, path: &Path) -> Result<(), String> {
+    /// Returns the written file (never an existing one: a taken name gets " 2", " 3", …)
+    /// and the device restart result, which does not undo a written export.
+    fn render_mixdown(&mut self, name: &str) -> Result<(PathBuf, Result<(), String>), String> {
         std::fs::create_dir_all(&self.export.dir).map_err(|e| e.to_string())?;
         let frames = self.export_frames() as usize;
+        // WAV sizes are 32-bit: refuse before rendering rather than after.
+        if frames as u64 * 2 * if self.export.bits24 { 3 } else { 2 } > (u32::MAX - 36) as u64 {
+            return Err("too long for a WAV file (4 GB limit)".into());
+        }
         let rate = self.engine.sample_rate();
         let restore = self.project().ticks_to_frames(self.playhead_ticks(), rate);
         let e = self.engine.clone();
@@ -106,8 +114,12 @@ impl Controller {
         if was_running {
             e.stop_device().map_err(|e| e.to_string())?;
         }
+        // The mixdown plays the arrangement once: no loop, no click. Restored below.
+        let metronome_was = std::mem::replace(&mut self.metronome_on, false);
+        self.sync_loop_and_click();
         let mut out = vec![0f32; frames * 2];
         let rendered = (|| {
+            e.set_loop(false, 0, 0).map_err(|e| e.to_string())?;
             e.stop().map_err(|e| e.to_string())?;
             e.seek(0).map_err(|e| e.to_string())?;
             e.play().map_err(|e| e.to_string())?;
@@ -118,11 +130,35 @@ impl Controller {
         })();
         let _ = e.stop();
         let _ = e.seek(restore);
-        if was_running {
-            e.start_device().map_err(|e| e.to_string())?;
+        self.metronome_on = metronome_was;
+        self.sync_loop_and_click();
+        let restarted = if was_running { e.start_device().map_err(|e| e.to_string()) } else { Ok(()) };
+        match (self.write_mixdown(name, rendered.map(|_| out)), restarted) {
+            (Ok(path), restarted) => Ok((path, restarted)),
+            (Err(e), Ok(())) => Err(e),
+            (Err(e), Err(r)) => Err(format!("{e}; the audio device also did not restart: {r}")),
         }
-        rendered?;
-        wavgen::write_wav_pcm(path, rate.round() as u32, 2, if self.export.bits24 { 24 } else { 16 }, &out).map_err(|e| e.to_string())
+    }
+
+    fn write_mixdown(&self, name: &str, rendered: Result<Vec<f32>, String>) -> Result<PathBuf, String> {
+        let out = rendered?;
+        let rate = self.engine.sample_rate();
+        let stem = name.strip_suffix(".wav").or_else(|| name.strip_suffix(".WAV")).unwrap_or(name);
+        let (path, file) = (1..1000)
+            .find_map(|n| {
+                let path = self.export.dir.join(if n == 1 { format!("{stem}.wav") } else { format!("{stem} {n}.wav") });
+                match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+                    Ok(f) => Some(Ok((path, f))),
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => None,
+                    Err(e) => Some(Err(e.to_string())),
+                }
+            })
+            .unwrap_or_else(|| Err("no free file name".into()))?;
+        if let Err(e) = wavgen::encode_wav_pcm(file, rate.round() as u32, 2, if self.export.bits24 { 24 } else { 16 }, &out) {
+            let _ = std::fs::remove_file(&path);
+            return Err(e.to_string());
+        }
+        Ok(path)
     }
 
     /// File › New Project: ask first when the project has unsaved changes.
