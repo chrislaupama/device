@@ -108,11 +108,9 @@ pub fn apply(notes: &[Note], shape: Shape, part: Option<PartType>, key: Option<P
     }
     if shape.octave != 0 {
         let by = 12 * shape.octave as i32;
-        v.retain_mut(|n| {
-            let p = n.pitch as i32 + by;
-            n.pitch = p.clamp(0, 127) as u8;
-            (0..=127).contains(&p)
-        });
+        for n in &mut v {
+            n.pitch = fold(n.pitch as i32 + by);
+        }
     }
     let ratio = shape.velocity / neutral_velocity(part);
     if (ratio - 1.0).abs() > 1e-4 {
@@ -137,7 +135,7 @@ pub fn apply(notes: &[Note], shape: Shape, part: Option<PartType>, key: Option<P
     let shift = ((shape.nudge as f64 - 0.5) * 2.0 * NUDGE_BEATS * PPQ as f64).round() as Ticks;
     if shift != 0 {
         for n in &mut v {
-            n.start = (n.start + shift).max(0);
+            n.start = nudged(n.start, shift, clip);
         }
     }
     v.retain(|n| n.start < clip.max(1));
@@ -147,6 +145,22 @@ pub fn apply(notes: &[Note], shape: Shape, part: Option<PartType>, key: Option<P
         n.id = i as u32 + 1;
     }
     v
+}
+
+/// A pitch moved back by octaves into the MIDI range, so Octave never loses a note.
+fn fold(mut p: i32) -> u8 {
+    while p > 127 {
+        p -= 12;
+    }
+    while p < 0 {
+        p += 12;
+    }
+    p as u8
+}
+
+/// A start moved by Nudge, kept inside the clip when it was inside.
+fn nudged(start: Ticks, shift: Ticks, clip: Ticks) -> Ticks {
+    if start < clip { (start + shift).clamp(0, clip - 1) } else { (start + shift).max(0) }
 }
 
 /// Metric weight of a position: the bar line highest, off-sixteenths lowest.
@@ -399,6 +413,15 @@ mod tests {
         assert_eq!(at0, vec![65, 69, 72], "C5 gets A4 and F4 under it in C major");
         let chords = apply(&chord(), Shape { voices: 3, ..Shape::neutral(None) }, None, key, BAR2);
         assert_eq!(chords.len(), 7, "chords have no extra voices to add");
+    }
+
+    #[test]
+    fn octave_and_nudge_never_lose_notes() {
+        let top = vec![Note { id: 1, ..note(120, 3.75, 0.25) }];
+        let out = apply(&top, Shape { octave: 2, nudge: 1.0, ..Shape::neutral(None) }, None, None, 4 * PPQ);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].pitch, 120, "folded back an octave at a time into range");
+        assert!(out[0].start < 4 * PPQ);
     }
 
     #[test]
