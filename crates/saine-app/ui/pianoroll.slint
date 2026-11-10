@@ -149,7 +149,7 @@ component AcField inherits Rectangle {
         x: root.chevron-x; y: 3px; width: 8px; height: 8px; d: Icons.chevron-down;
         ink: root.enabled ? Studio.clip-color : #3c3d43; stroke-width: 1.4px;
     }
-    if root.menu >= 0 && root.enabled: TouchArea { clicked => { Studio.clip-menu-open(root.menu); } }
+    if root.menu >= 0 && root.enabled: TouchArea { x: 0; width: root.chevron-x + 10px; clicked => { Studio.clip-menu-open(root.menu); } }
     if root.bpm-drag: TouchArea {
         x: root.value-x - 2px; width: 30px;
         mouse-cursor: MouseCursor.ew-resize;
