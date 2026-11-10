@@ -5743,6 +5743,11 @@ fn pattern_library_steps() -> Vec<Step> {
     }
     let h = |_: u8| hist.clone();
     let (h0, h1, h2, h3, h4, h5) = (h(0), h(1), h(2), h(3), h(4), h(5));
+    let (h6, h7) = (h(6), h(7));
+    fn shaped(c: &Controller) -> Option<(Vec<saine_core::Note>, Vec<saine_core::Note>)> {
+        let m = c.pr_clip()?;
+        Some((m.composer.as_ref()?.base.clone(), m.notes.clone()))
+    }
     vec![
         Do("patterns: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
         DoC("patterns: Cmd+Shift+M on the instrument track at bar 61; select the clip", Box::new(move |a, ctl| {
@@ -5802,8 +5807,64 @@ fn pattern_library_steps() -> Vec<Step> {
             one(&h5, c, "Pattern Genre Change")?;
             (a.global::<Studio>().get_composer_genre_text() == "Drill").then_some(()).ok_or("genre not set".into())
         })),
+        DoC("patterns: open the Genre menu", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.clip_menu_open(5);
+            c.update_ui(a);
+        })),
+        Check("patterns: Genre menu lists Any and the 21 genres, Drill lit", Box::new(|c, a| {
+            let items = slint::Model::row_count(&a.global::<Studio>().get_clip_menu_items());
+            let ok = items == 22 && c.composer_menu_active(true) == 3;
+            ok.then_some(()).ok_or(format!("{items} items"))
+        })),
+        Do("patterns: Escape; click the Shape tab", Box::new(|a| {
+            key(a, Key::Escape, false, false);
+            click(a, 5.0 + 10.5 + 119.5 + 55.0, 425.0 + 38.0 + 45.5);
+        })),
+        Check("patterns: Shape shows 14 rows, Voices disabled on a bassline", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            let rows = s.get_composer_shape_rows();
+            let voices = slint::Model::row_data(&rows, 1).ok_or("no rows")?;
+            let ok = s.get_composer_shape_tab() && slint::Model::row_count(&rows) == 14 && !voices.enabled && voices.tip == "This pattern has no extra voices to add";
+            ok.then_some(()).ok_or(format!("tab {} rows {}", s.get_composer_shape_tab(), slint::Model::row_count(&rows)))
+        })),
+        Do("patterns: Octave ›", Box::new(|a| click(a, 5.0 + 10.5 + 72.0 + 120.0, 425.0 + 104.0 + 26.0 + 7.5))),
+        Check("patterns: the bassline plays an octave up over its kept base (one undo step 'Shape Change')", Box::new(move |c, a| {
+            one(&h6, c, "Shape Change")?;
+            let (base, notes) = shaped(c).ok_or("no clip")?;
+            let ok = !base.is_empty() && base.len() == notes.len() && base.iter().zip(&notes).all(|(b, n)| n.pitch == b.pitch + 12 && n.start == b.start);
+            let octave = slint::Model::row_data(&a.global::<Studio>().get_composer_shape_rows(), 0).map(|r| r.value.to_string());
+            (ok && octave.as_deref() == Some("+1")).then_some(()).ok_or(format!("{} base, {} notes, octave {octave:?}", base.len(), notes.len()))
+        })),
+        Do("patterns: click Density at a quarter", Box::new(|a| click(a, 5.0 + 10.5 + 72.0 + 0.25 * 118.0, 425.0 + 104.0 + 26.0 + 2.0 * 17.5 + 7.5))),
+        Check("patterns: Density thins the notes (one undo step 'Shape Change')", Box::new(move |c, _| {
+            one(&h7, c, "Shape Change")?;
+            let (base, notes) = shaped(c).ok_or("no clip")?;
+            let d = comp(c).map(|k| k.shape_of(k.shape_source()).density).unwrap_or(1.0);
+            ((0.2..0.3).contains(&d) && !notes.is_empty() && notes.len() < base.len()).then_some(()).ok_or(format!("density {d}, {} of {}", notes.len(), base.len()))
+        })),
+        DoC("patterns: undo twice", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.undo();
+            c.undo();
+            c.update_ui(a);
+        })),
+        Check("patterns: the bassline plays as made again", Box::new(|c, _| {
+            let k = comp(c).ok_or("no composer")?;
+            let made = k.set_for(Some(saine_core::library::PartType::Bass)).ok_or("no set")?;
+            let p = c.project();
+            let first = saine_core::library::patterns_of(made, p.transport.key, c.pr_clip().map_or(0, |m| m.length), p.ticks_per_bar()).remove(0);
+            let ok = k.shapes.is_empty() && k.base.is_empty() && c.pr_clip().is_some_and(|m| m.notes == first.notes);
+            ok.then_some(()).ok_or("shape not undone".into())
+        })),
+        Do("patterns: click the Patterns tab", Box::new(|a| click(a, 5.0 + 10.5 + 5.0 + 55.0, 425.0 + 38.0 + 45.5))),
+        Check("patterns: the list shows again", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (!s.get_composer_shape_tab() && slint::Model::row_count(&s.get_composer_rows()) == 6).then_some(()).ok_or("still on Shape".into())
+        })),
         DoC("patterns: remove the clip", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
+            c.composer_shape_tab = None;
             if let Some(id) = c.pr_clip().map(|m| m.id) {
                 c.execute(saine_core::Command::RemoveMidiClip { clip: id });
             }
