@@ -295,6 +295,46 @@ fn midi_steps() -> Vec<Step> {
             h14.set(c.doc.history_labels().len());
             (n.iter().any(|n| n.start == 0 && n.pitch == 65) && !c.pr.pen && c.pr.selected.is_empty()).then_some(()).ok_or(format!("{n:?}"))
         })),
+        DoC("Scale: click the root note in the footer, pick Eb", Box::new(|a, _| {
+            click(a, 260.0 + 720.0 + 3.0, 452.0 + (390.0 - 27.0) - 54.5 + 30.0 + 7.0);
+            a.global::<Studio>().invoke_clip_menu_pick(5);
+        })),
+        Check("the clip keeps Eb (scale type from the project key: Major), one undo step, footer reads Eb Major", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let scale = instrument_clip(c).and_then(|m| m.scale).ok_or("no clip scale")?;
+            let key = scale.key.ok_or("no key")?;
+            (key.root == 5 && key.kind == 0 && !scale.highlight && c.doc.undo_label().as_deref() == Some("Clip Scale") && s.get_pr_scale_root() == "Eb" && s.get_pr_scale_type() == "Major")
+                .then_some(())
+                .ok_or(format!("{scale:?} {:?} {} {}", c.doc.undo_label(), s.get_pr_scale_root(), s.get_pr_scale_type()))
+        })),
+        Do("click the footer Scale switch", Box::new(|a| click(a, 260.0 + 751.0 + 10.0, 452.0 + (390.0 - 27.0) - 54.5 + 13.0 + 7.0))),
+        Check("Scale highlight on, the Scale button shows above the keys, rows unchanged", Box::new(|c, a| {
+            let on = instrument_clip(c).and_then(|m| m.scale).is_some_and(|s| s.highlight && !s.fold);
+            (on && a.global::<Studio>().get_pr_scale_on() && !c.pr_view().rows.folded()).then_some(()).ok_or(format!("{:?}", instrument_clip(c).map(|m| m.scale)))
+        })),
+        Do("click Scale above the keys", Box::new(|a| click(a, 260.0 + 6.5 + 19.0, 452.0 + 27.5 + 30.0 + 8.0))),
+        Check("scale rows: only Eb Major pitches plus rows holding notes", Box::new(|c, _| {
+            let m = instrument_clip(c).ok_or("clip gone")?;
+            let v = c.pr_view();
+            let key = m.scale.and_then(|s| s.key).ok_or("no key")?;
+            let shown: Vec<i32> = (0..v.rows.len()).map(|i| v.pitch_at(crate::pianoroll::GRID_Y + i as f32 * crate::pianoroll::ROW_H - v.scroll + 1.0)).collect();
+            let ok = m.scale.is_some_and(|s| s.fold)
+                && v.rows.folded()
+                && shown.iter().all(|&p| key.contains(p) || m.notes.iter().any(|n| n.pitch as i32 == p))
+                && m.notes.iter().all(|n| shown.contains(&(n.pitch as i32)));
+            ok.then_some(()).ok_or(format!("{} rows", v.rows.len()))
+        })),
+        Do("click the footer Scale switch again", Box::new(|a| click(a, 260.0 + 751.0 + 10.0, 452.0 + (390.0 - 27.0) - 54.5 + 13.0 + 7.0))),
+        Check("Scale off restores chromatic rows and resets the Scale button", Box::new(|c, a| {
+            let s = instrument_clip(c).and_then(|m| m.scale).unwrap_or_default();
+            (!s.highlight && !s.fold && !c.pr_view().rows.folded() && !a.global::<Studio>().get_pr_scale_on()).then_some(()).ok_or(format!("{s:?}"))
+        })),
+        Do("undo the four scale edits", Box::new(|a| {
+            for _ in 0..4 {
+                key(a, "z", true, false);
+            }
+        })),
+        Check("undo cleared the clip's scale view", Box::new(|c, _| instrument_clip(c).is_some_and(|m| m.scale.is_none()).then_some(()).ok_or("scale still set".into()))),
         Do("click Double", Box::new(|a| click(a, 260.0 + 270.5 + 10.0, 466.0))),
         Check("Double: 2x notes and 2x clip length in ONE undo step", Box::new(move |c, _| {
             let (before, len) = sv2.borrow().clone();

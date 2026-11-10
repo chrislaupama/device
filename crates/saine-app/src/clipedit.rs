@@ -20,7 +20,7 @@ pub const MENU_SEP: f32 = 10.6;
 /// warp (`saine_core::warp`, presets and modes in the same order); Type and Genre pick the
 /// sidebar's library part (saine_core::library::GENRES has a feel for each).
 /// Genre lists the entries visible in the reference capture (its full list is catalogue data).
-const CLIP_MENUS: [&[&str]; 8] = [
+const CLIP_MENUS: [&[&str]; 10] = [
     &["0.5x", "0.75x", "1x", "1.25x", "1.5x", "2x"],
     &["On", "Off"],
     &["Auto", "Drums", "Melody", "Vocal", "Re-pitch"],
@@ -29,6 +29,8 @@ const CLIP_MENUS: [&[&str]; 8] = [
     &saine_core::library::GENRES,
     &["8", "12", "16", "24", "32", "36", "48", "64"],
     &["1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/8T", "1/16T", "1/32T"],
+    &saine_core::scale::ROOTS,
+    &saine_core::scale::SCALES,
 ];
 const GRID_DENOMS: [u32; 8] = [4, 8, 16, 32, 6, 12, 24, 48];
 
@@ -506,6 +508,7 @@ impl Controller {
             3 => GRID_DENOMS.iter().position(|&d| d == self.pr.grid).map_or(-1, |i| i as i32),
             6 | 7 => self.seq_menu_active(menu == 7),
             4 | 5 => self.composer_menu_active(menu == 5),
+            8 | 9 => self.pr_scale().map_or(-1, |(_, k)| if menu == 8 { k.root as i32 } else { k.kind as i32 }),
             _ => 0,
         }
     }
@@ -528,6 +531,8 @@ impl Controller {
             5 => return self.composer_genre(i),
             6 => return self.seq_set_length(i),
             7 => return self.seq_set_rate(i),
+            8 => return self.pr_scale_root(i),
+            9 => return self.pr_scale_kind(i),
             _ => {}
         }
         match menu {
@@ -710,9 +715,16 @@ impl Controller {
             s.set_pr_quant_text(format!("{}%", (self.pr.quant_amount * 100.0).round()).into());
             s.set_pr_human_text(format!("{}%", (self.pr.humanize_amount * 100.0).round()).into());
             s.set_pr_vel_text(format!("{}", self.pr.velocity).into());
+            let (scale, key) = self.pr_scale().unwrap_or_default();
+            s.set_pr_scale_on(scale.highlight);
+            s.set_pr_scale_fold(scale.highlight && scale.fold);
+            s.set_pr_scale_root(key.root_name().into());
+            s.set_pr_scale_type(key.kind_name().into());
             let v = self.pr_view();
-            let keys: Vec<YLabel> = (0..=127)
-                .filter(|p| p % 12 == 0)
+            let shown: Vec<i32> = v.visible().collect();
+            let keys: Vec<YLabel> = shown
+                .into_iter()
+                .filter(|&p| p % 12 == 0 || (scale.highlight && key.is_root(p)))
                 .filter_map(|p| {
                     let y = v.y_of(p);
                     (y >= GRID_Y - 1.0 && y + ROW_H <= v.h + 1.0).then(|| YLabel { y, text: midi::note_name(p as u8).into() })

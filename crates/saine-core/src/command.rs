@@ -134,6 +134,8 @@ pub enum Command {
     /// Replace an instrument track's synth parameters (knob drags coalesce
     /// per track; loading a preset is one step).
     SetSynthParams { track: TrackId, params: SynthParams },
+    /// The piano roll's scale view of a MIDI clip (root, type, highlight, scale rows).
+    SetClipScale { clip: ClipId, scale: Option<crate::scale::ClipScale> },
     SetTrackArm { track: TrackId, arm: bool },
     SetTrackMonitor { track: TrackId, monitor: bool },
     SetTrackInput { track: TrackId, input: Option<InputSource> },
@@ -226,6 +228,7 @@ impl Command {
             Command::SetStepPattern { pattern: Some(_), .. } => "Edit Step Sequencer".into(),
             Command::SetStepPattern { pattern: None, .. } => "Convert to MIDI Clip".into(),
             Command::SetSynthParams { .. } => "Synth Parameter Change".into(),
+            Command::SetClipScale { .. } => "Clip Scale".into(),
             Command::SetTrackArm { arm, .. } => (if *arm { "Arm Track" } else { "Disarm Track" }).into(),
             Command::SetTrackMonitor { .. } => "Input Monitoring Change".into(),
             Command::SetTrackInput { .. } => "Input Change".into(),
@@ -623,6 +626,14 @@ impl Command {
                 let old_notes = std::mem::replace(&mut c.notes, notes);
                 let old_pattern = std::mem::replace(&mut c.pattern, pattern);
                 Ok(Command::SetMidiContent { clip, notes: old_notes, pattern: old_pattern })
+            }
+            Command::SetClipScale { clip, scale } => {
+                if let Some(s) = &scale {
+                    s.validate().map_err(|r| invalid("scale", r))?;
+                }
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let old = std::mem::replace(&mut p.tracks[ti].midi_clips[ci].scale, scale);
+                Ok(Command::SetClipScale { clip, scale: old })
             }
             Command::SetComposer { clip, edit, composer, mut notes, pattern } => {
                 midi::validate_notes(&notes).map_err(|r| invalid("notes", r))?;
