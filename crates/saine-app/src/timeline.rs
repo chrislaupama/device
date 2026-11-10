@@ -5,8 +5,8 @@
 //! ruler is at the top, track 0 starts at `RULER_H`. Measured from
 //! reference/screenshots/01-main-default.png (see FIDELITY.md).
 
-use crate::gpu::{DrawList, RectInst, WaveInst};
-use crate::peaks::Slot;
+use crate::gpu::{DrawList, RectInst};
+use crate::peaks::{self, Slot, WaveSeg};
 
 pub const RULER_H: f32 = 39.0;
 /// Track rows are 88 px at the reference's default zoom (88 × 0.85), including a 0.5 pt rule.
@@ -118,8 +118,8 @@ pub struct ClipVis {
     /// Clip on a muted track: drawn grey, without the selection tint.
     pub muted: bool,
     pub name: String,
-    /// Waveform source: pyramid slot, first frame (engine rate), frame count.
-    pub wave: Option<(Slot, f64, f64)>,
+    /// Waveform: pyramid slot and the clip's pieces (`peaks::wave_segments`).
+    pub wave: Option<(Slot, Vec<WaveSeg>)>,
     /// MIDI clip: mini note view as (relative start 0..1, relative length, relative
     /// pitch 0 = top .. 1 = bottom). `None` for audio clips.
     pub midi: Option<Vec<[f32; 3]>>,
@@ -149,7 +149,6 @@ pub struct Scene<'a> {
     pub loop_beats: (f64, f64),
     pub loop_on: bool,
     pub beats_per_bar: f64,
-    pub frames_per_beat: f64,
     /// Automation overlay (src/automation.rs) while lanes are shown.
     pub auto: Option<&'a crate::automation::AutoScene>,
 }
@@ -339,22 +338,9 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
             }
             k += 1;
         }
-        if let Some((slot, first_frame, frames)) = c.wave {
-            let vx0 = x.max(0.0);
-            let vx1 = (x + cw).min(w);
-            if vx1 > vx0 {
-                let fpp = sc.frames_per_beat / (v.px_per_beat * sc.scale as f64);
-                let p0 = (vx0 * sc.scale).floor();
-                let frame_at = first_frame + (p0 as f64 - (x * sc.scale) as f64) * fpp;
-                let wy = y + CLIP_HEADER + 2.0;
-                let wh = ch - CLIP_HEADER - 4.0;
-                dl.waves.push(WaveInst {
-                    rect: [p0, (wy * sc.scale).round(), ((vx1 * sc.scale).ceil() - p0).max(1.0), (wh * sc.scale).round()],
-                    color: wave,
-                    params: [frame_at as f32, fpp as f32, (first_frame + frames) as f32, 0.0],
-                    src: [slot.base, slot.len0, slot.levels, 0],
-                });
-            }
+        if let Some((slot, segs)) = &c.wave {
+            let (wy, wh) = (y + CLIP_HEADER + 2.0, ch - CLIP_HEADER - 4.0);
+            peaks::push_wave(&mut dl.waves, *slot, segs, |b| v.x_of(c.start_beats + b), (x.max(0.0), (x + cw).min(w)), (wy, wh), sc.scale, wave);
         }
     }
 
