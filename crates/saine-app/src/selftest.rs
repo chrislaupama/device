@@ -4409,6 +4409,75 @@ fn splitter_steps() -> Vec<Step> {
     ]
 }
 
+/// Docked assistant width splitter: drag, narrowing to the header's room, double-click reset
+/// (appended last; restores the panel state and the saved width).
+fn chat_dock_steps() -> Vec<Step> {
+    use crate::splitters::{CHAT_GAP, CHAT_MAX_W, CHAT_MIN_W};
+    use Step::*;
+    fn split_x(c: &Controller) -> f32 {
+        1440.0 - 5.0 - c.chat_w() - CHAT_GAP / 2.0
+    }
+    let was_open = Rc::new(Cell::new(false));
+    let (w1, w2) = (was_open.clone(), was_open.clone());
+    let undo_n = Rc::new(Cell::new(0usize));
+    let (u1, u2) = (undo_n.clone(), undo_n.clone());
+    vec![
+        DoC("open the assistant at its default width", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            w1.set(c.assistant_open);
+            u1.set(c.doc.undo_depth());
+            c.assistant_open = true;
+            c.settings.prefs.assistant_width = 0.0;
+            c.ui_dirty = true;
+        })),
+        Check("default width 297 px, zoom sliders shown", Box::new(|c, a| {
+            let ok = approx(c.chat_w(), CHAT_MIN_W, 0.01) && approx(a.global::<Studio>().get_assistant_pref_w(), CHAT_MIN_W, 0.01) && !a.get_header_zoom_hidden();
+            ok.then_some(()).ok_or(format!("w {} hidden {}", c.chat_w(), a.get_header_zoom_hidden()))
+        })),
+        DoC("drag the splitter 60 pt left", Box::new(|a, ctl| {
+            let x = split_x(&ctl.borrow());
+            drag(a, x, 300.0, x - 60.0, 300.0);
+        })),
+        Check("chat 60 pt wider, saved as a preference, timeline narrower, not an undo step", Box::new(move |c, a| {
+            let w = c.chat_w();
+            let saved = c.settings.prefs.assistant_width;
+            let lanes = a.get_lanes_width();
+            let ok = approx(w, CHAT_MIN_W + 60.0, 0.6) && approx(saved, w, 0.01) && approx(lanes, 1440.0 - 262.65 - 5.0 - 5.0 - w - 191.0, 1.0) && c.doc.undo_depth() == u2.get();
+            ok.then_some(()).ok_or(format!("w {w} saved {saved} lanes {lanes}"))
+        })),
+        DoC("drag the splitter far left: stops at the room that keeps the sliders", Box::new(|a, ctl| {
+            let x = split_x(&ctl.borrow());
+            drag(a, x, 300.0, 200.0, 300.0);
+        })),
+        Check("chat narrowed to the header's room (below 600 px), sliders still shown", Box::new(|c, a| {
+            let room = crate::splitters::chat_room(1440.0, true);
+            let w = c.chat_w();
+            let ok = room < CHAT_MAX_W && approx(w, room, 0.01) && !a.get_header_zoom_hidden() && approx(a.get_lanes_width(), 1440.0 - 262.65 - 5.0 - 5.0 - room - 191.0, 1.0);
+            ok.then_some(()).ok_or(format!("w {w} room {room} hidden {}", a.get_header_zoom_hidden()))
+        })),
+        DoC("drag the splitter right: stops at the minimum", Box::new(|a, ctl| {
+            let x = split_x(&ctl.borrow());
+            drag(a, x, 300.0, 1400.0, 300.0);
+        })),
+        Check("chat at 297 px", Box::new(|c, _| approx(c.chat_w(), CHAT_MIN_W, 0.01).then_some(()).ok_or(format!("w {}", c.chat_w())))),
+        DoC("widen, then double-click the splitter", Box::new(|a, ctl| {
+            let x = split_x(&ctl.borrow());
+            drag(a, x, 300.0, x - 40.0, 300.0);
+            let x = split_x(&ctl.borrow());
+            double_click(a, x, 300.0);
+        })),
+        Check("double-click restored the default and cleared the preference", Box::new(|c, _| {
+            let ok = approx(c.chat_w(), CHAT_MIN_W, 0.01) && c.settings.prefs.assistant_width == 0.0;
+            ok.then_some(()).ok_or(format!("w {} pref {}", c.chat_w(), c.settings.prefs.assistant_width))
+        })),
+        DoC("restore the panel state", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.assistant_open = w2.get();
+            c.ui_dirty = true;
+        })),
+    ]
+}
+
 /// Window centre of Browser › Files row `i` (rows as pushed to the UI).
 fn files_row_xy(a: &AppWindow, i: usize) -> Option<(f32, f32)> {
     let s = a.global::<Studio>();
@@ -4712,6 +4781,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(automation_steps());
     all.extend(field_device_steps());
     all.extend(splitter_steps());
+    all.extend(chat_dock_steps());
     all.extend(files_steps());
     all.extend(section_steps());
     let steps = Rc::new(all);

@@ -55,6 +55,13 @@ pub struct Preferences {
     /// Browser › Files › Folders: folders the user added, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub browser_folders: Vec<String>,
+    /// Docked assistant width in design units (drag its splitter); 0 = default.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub assistant_width: f32,
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
 }
 
 /// The app's support directory (see the module docs), shared by the preferences
@@ -115,7 +122,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("saine-prefs-test-{}", std::process::id()));
         let path = dir.join("preferences.json");
         assert_eq!(load(&path).unwrap(), None);
-        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110, browser_folders: vec!["/tmp/kit".into()] };
+        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110, browser_folders: vec!["/tmp/kit".into()], assistant_width: 400.0 };
         save(&path, &p).unwrap();
         assert_eq!(load(&path).unwrap(), Some(p.clone()));
         assert!(p.audio.is_custom());

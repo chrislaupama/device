@@ -320,7 +320,7 @@ impl Controller {
     }
 
     pub fn highlight_layout(&self, w: f32, h: f32, sounds: bool) -> Layout {
-        Layout { w, h, sounds, mixer: self.mixer_open, assistant: self.assistant_open, clip_tab: self.bottom_tab == crate::controller::BottomTab::Clip, scroll_y: self.view.scroll_y as f32, bottom: self.bottom_h() }
+        Layout { w, h, sounds, mixer: self.mixer_open, assistant: self.assistant_open, chat_w: self.chat_w_at(w, sounds), clip_tab: self.bottom_tab == crate::controller::BottomTab::Clip, scroll_y: self.view.scroll_y as f32, bottom: self.bottom_h() }
     }
 
     /// Current highlight rects (expired ones dropped). Unknown-to-layout targets are skipped.

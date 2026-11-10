@@ -13,6 +13,7 @@
 //!              [--sampler-tab <0..4>  (with a sampler state: Sample, Pitch, Filter, Amp or Mod tab)]
 //!              [--hold-note <0..127>  (with a synth state: hold the note and render 0.75 s offline first)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
+//!              [--window-width <pt>  (OS window width, default 1440)] [--assistant-width <px>  (saved docked-assistant width, 297..600)]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
 //!              [--clip-menu <0|1|3|4|5>  (open a clip editor dropdown after --state: Speed, Warp, Grid, Type, Genre; 2, Mode, is disabled)]
 //!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
@@ -151,6 +152,10 @@ struct Args {
     screenshot: Option<PathBuf>,
     exit_after_frames: Option<u64>,
     zoom: Option<u32>,
+    /// --window-width <pt>: OS window width in points (default 1440), for narrow-window reviews.
+    window_width: Option<f32>,
+    /// --assistant-width <px>: saved docked-assistant width in the reference's px (297..600), for reviews.
+    assistant_width: Option<f32>,
     clip_menu: Option<i32>,
     frame_stats: bool,
     /// --render-bench N: offscreen, render the state N times and print the mean / median /
@@ -193,6 +198,13 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.open_assistant = true;
                     a.assistant_demo = Some("turn".into());
+                }
+                "review-assistant-narrow" => {
+                    a.reference_default = true;
+                    a.open_assistant = true;
+                    a.assistant_demo = Some("turn".into());
+                    a.assistant_width = Some(600.0);
+                    a.window_width.get_or_insert(1470.0);
                 }
                 s if s.starts_with("review-assistant-") => {
                     a.reference_default = true;
@@ -323,7 +335,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -351,6 +363,17 @@ fn parse_args() -> Result<Args, String> {
                     return Err(format!("--clip-menu: want 0, 1, 3, 4 or 5 (2, Mode, is disabled), got {m}"));
                 }
                 a.clip_menu = Some(m);
+            }
+            "--window-width" => {
+                let w: f32 = value(&mut i)?.parse().map_err(|e| format!("--window-width: {e}"))?;
+                if !(600.0..=4000.0).contains(&w) {
+                    return Err(format!("--window-width: want 600..4000 points, got {w}"));
+                }
+                a.window_width = Some(w);
+            }
+            "--assistant-width" => {
+                let w: f32 = value(&mut i)?.parse().map_err(|e| format!("--assistant-width: {e}"))?;
+                a.assistant_width = Some(w.clamp(297.0, 600.0));
             }
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
@@ -726,6 +749,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         c.mixer_open = args.open_mixer;
         c.assistant_open = args.open_assistant;
+        if let Some(px) = args.assistant_width {
+            c.settings.prefs.assistant_width = px * zoom::DESIGN_LEVEL;
+        }
         if let Some(d) = &args.assistant_demo {
             c.assistant_demo(d)?;
             if d == "draft" {
@@ -1262,6 +1288,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.auto_write_end(|w| matches!(w.target, saine_core::AutomationTarget::Volume | saine_core::AutomationTarget::Pan));
         c.ui_dirty = true
     });
+    on!(on_chat_resize, |c, phase: i32, x: f32| c.chat_resize(phase, x));
+    on!(on_chat_resize_reset, |c| c.chat_resize_reset());
     on!(on_bottom_resize, |c, phase: i32, y: f32| c.bottom_resize(phase, y));
     on!(on_track_resize, |c, id: i32, phase: i32, y: f32| c.track_resize_drag(id, phase, y));
     on!(on_auto_toggle_shown, |c| c.auto_toggle_shown());
@@ -1963,7 +1991,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     // The OS window is 1440×820 pt like the reference's; interface zoom then sets how much
     // of our (85 %-unit) layout fits in it, see `zoom.rs`.
-    app.window().set_size(slint::LogicalSize::new(1440.0, 820.0));
+    app.window().set_size(slint::LogicalSize::new(args.window_width.unwrap_or(1440.0), 820.0));
     app.run()?;
     if args.frame_stats && exit_after.is_none() {
         println!("{}", stats_json(&frame.borrow(), &app));
