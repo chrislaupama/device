@@ -579,7 +579,7 @@ fn midi_steps() -> Vec<Step> {
                 (c.pr.hzoom, c.pr.vzoom) = (0.0, None);
                 let v = c.pr_view();
                 *wz1.borrow_mut() = (v.ppb, v.beat_at(v.gx + (v.w - v.gx) / 2.0), v.row_h, v.scroll);
-                (PR_ORIGIN.0 + v.gx + (v.w - v.gx) / 2.0, PR_ORIGIN.1 + v.h / 2.0)
+                (pr_origin().0 + v.gx + (v.w - v.gx) / 2.0, pr_origin().1 + v.h / 2.0)
             };
             let w = a.window();
             w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x, y) });
@@ -602,7 +602,7 @@ fn midi_steps() -> Vec<Step> {
                 let v = c.pr_view();
                 let mid = (v.h - crate::pianoroll::GRID_Y) / 2.0;
                 *wz3.borrow_mut() = (v.ppb, ((v.scroll + mid) / v.row_h) as f64, v.row_h, v.scroll);
-                (PR_ORIGIN.0 + v.gx + 200.0, PR_ORIGIN.1 + crate::pianoroll::GRID_Y + mid)
+                (pr_origin().0 + v.gx + 200.0, pr_origin().1 + crate::pianoroll::GRID_Y + mid)
             };
             let w = a.window();
             w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x, y) });
@@ -622,7 +622,7 @@ fn midi_steps() -> Vec<Step> {
                 let c = ctl.borrow();
                 let v = c.pr_view();
                 *wz5.borrow_mut() = (v.ppb, 0.0, v.row_h, v.scroll);
-                (PR_ORIGIN.0 + v.gx + 200.0, PR_ORIGIN.1 + v.h / 2.0)
+                (pr_origin().0 + v.gx + 200.0, pr_origin().1 + v.h / 2.0)
             };
             let w = a.window();
             w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x, y) });
