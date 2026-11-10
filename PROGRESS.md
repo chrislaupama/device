@@ -220,3 +220,15 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Devices minimap at the right of the Clip / Devices strip (`src/devminimap.rs`, `DevMinimap` in `ui/app.slint`):
   tiles with glyphs, chain frames, window, jump / drag / wheel, Esc restores. Findings S69, S70. Not done: tile
   pictures, glide / fade animations, hover name.
+
+### 2026-11-10: step sequencer, gaps closed (SAIN-37)
+
+- Paging as in the reference: the grid shows 16 or 32 steps at a time (by width), with page tabs and a Follow
+  playhead button at the right of the toolbar. A MIDI clip longer than 64 steps now converts with its own step
+  count (up to `STEP_LIMIT`, 4096) instead of being refused; Length and Double still stop at 64.
+- While the transport plays inside the clip, the playing step's column has a white ring and the cells it hits
+  flash (230 ms, Steps lane).
+- Toolbar tooltips (Double, Clear, the lane tabs, Follow playhead) with the reference's 1 s hover delay; Clear is
+  disabled when the pattern has no cells.
+- Value lanes use the reference's palette: empty steps dark, Velocity filled from the bottom on a lighter base.
+  Findings SQ-8..SQ-11.

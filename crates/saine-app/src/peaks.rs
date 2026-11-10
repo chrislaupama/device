@@ -44,7 +44,7 @@ impl Pyramid {
 }
 
 /// Where an asset's pyramid lives in the packed array.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Slot {
     pub base: u32,
     pub len0: u32,
@@ -55,6 +55,8 @@ pub struct Slot {
 pub struct PeakStore {
     pub data: Vec<[f32; 2]>,
     slots: HashMap<u64, Slot>,
+    /// Left and right pyramids of stereo assets (the clip editor's lanes).
+    channels: HashMap<u64, [Slot; 2]>,
     /// Bumped on every change; the renderer re-uploads when it differs.
     pub generation: u64,
 }
@@ -72,6 +74,23 @@ impl PeakStore {
 
     pub fn slot(&self, engine_asset: u64) -> Option<Slot> {
         self.slots.get(&engine_asset).copied()
+    }
+
+    pub fn insert_channels(&mut self, engine_asset: u64, lr: [Pyramid; 2]) {
+        if self.channels.contains_key(&engine_asset) {
+            return;
+        }
+        let slots = lr.map(|p| {
+            let base = self.data.len() as u32;
+            self.data.extend_from_slice(&p.data);
+            Slot { base, len0: p.len0, levels: p.levels }
+        });
+        self.channels.insert(engine_asset, slots);
+        self.generation += 1;
+    }
+
+    pub fn channel_slots(&self, engine_asset: u64) -> Option<[Slot; 2]> {
+        self.channels.get(&engine_asset).copied()
     }
 }
 

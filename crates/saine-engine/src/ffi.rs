@@ -714,6 +714,16 @@ unsafe extern "C" {
         capacity: usize,
         out_count: *mut usize,
     ) -> i32;
+    pub fn se_asset_compute_channel_peaks(
+        engine: *const se_engine,
+        asset_id: u64,
+        channel: u32,
+        start_frame: u64,
+        frames_per_peak: u32,
+        out_minmax: *mut f32,
+        capacity: usize,
+        out_count: *mut usize,
+    ) -> i32;
 
     pub fn se_session_publish(engine: *mut se_engine, session: *const se_session_desc) -> i32;
 

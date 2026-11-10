@@ -589,6 +589,18 @@ export global Studio {
     in property <int> seq-row-count: 16;
     in property <length> seq-scroll-y;
     in property <bool> seq-can-double: true;
+    in property <bool> seq-can-clear: true;
+    in property <int> seq-page;                 // steps page shown (0-based)
+    in property <int> seq-pages: 1;
+    in property <bool> seq-follow: true;        // Follow playhead
+    in property <int> seq-play-col: -1;         // column of the playing step on this page, -1 none
+    in property <float> seq-flash: 1;           // hit flash phase 0..1 (1: over)
+    in property <[length]> seq-flash-rows;      // row tops of the cells the playing step hits
+    in property <[string]> seq-lane-tips;       // tooltips of Steps, Velocity .. Tie
+    in-out property <string> seq-tip;           // tooltip of the hovered toolbar control
+    in-out property <length> seq-tip-ax;        // its left edge and bottom (editor-local)
+    in-out property <length> seq-tip-ay;
+    in-out property <bool> seq-tip-on;          // shown (after the hover delay)
     in property <string> seq-length-text: "16";
     in property <string> seq-rate-text: "1/16";
     in property <string> seq-swing-text: "0%";
@@ -598,6 +610,8 @@ export global Studio {
     callback seq-pointer(int, length, length);              // kind 0 down 1 move 2 up, editor-local x, y
     callback seq-scroll(float);
     callback seq-swing(int, float);                         // phase 0/1/2, dy since press
+    callback seq-page-pick(int);
+    callback seq-follow-toggle();
     // ---- clip sidebar pattern list (src/composer.rs; Saine's own library, no service) ----
     in property <bool> composer-drums;       // pattern clip: Genre only, drum grooves
     in property <string> composer-part-text: "Chords";
