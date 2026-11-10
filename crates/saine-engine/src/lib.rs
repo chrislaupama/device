@@ -5,6 +5,7 @@
 //! lives entirely inside the C++ library.
 
 pub mod ffi;
+pub mod offline;
 
 use saine_core::automation::{AutomationTarget, SynthParam};
 use saine_core::instrument::{FilterMode, SynthParams, Waveform};

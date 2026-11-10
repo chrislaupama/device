@@ -577,6 +577,11 @@ impl Controller {
         self.status.as_ref().map(|s| s.0.as_str())
     }
 
+    /// The message of the status line (self-test).
+    pub(crate) fn status_message(&self) -> Option<&str> {
+        self.status.as_ref().map(|s| s.0.as_str())
+    }
+
     pub fn set_status(&mut self, msg: impl Into<String>, secs: u64) {
         let msg = msg.into();
         eprintln!("[status] {msg}");
@@ -929,6 +934,7 @@ impl Controller {
 
     /// Drain finished background jobs (called from a UI timer and each frame).
     pub fn poll_jobs(&mut self) {
+        self.clip_render_tick();
         while let Ok(job) = self.jobs_rx.try_recv() {
             self.pending_jobs = self.pending_jobs.saturating_sub(1);
             match job {
@@ -1727,6 +1733,7 @@ impl Controller {
         self.push_recording(&s);
         self.push_settings(&s);
         self.push_dialogs(&s);
+        self.push_clip_render(&s);
         self.push_devices(&s);
         self.push_files(&s);
         self.push_automation(&s);

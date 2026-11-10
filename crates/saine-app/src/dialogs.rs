@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 /// Silence rendered after the last bar so reverb and delay tails ring out.
 pub const TAIL_S: f64 = 2.0;
-pub(crate) const CHUNK: usize = 4096;
+const CHUNK: usize = 4096;
 /// Tracks menu rows (window points): item row, separator gap, top/bottom padding.
 const MENU_ROW: f32 = 21.0;
 const MENU_GAP: f32 = 7.0;
@@ -180,13 +180,6 @@ pub fn midi_lanes(clips: &[saine_core::MidiClip]) -> Vec<Vec<&saine_core::MidiCl
         }
     }
     lanes
-}
-
-/// The state `offline_begin` saved for `offline_end`.
-pub(crate) struct Offline {
-    restore: i64,
-    was_running: bool,
-    metronome_was: bool,
 }
 
 /// What one render pass writes.
@@ -513,12 +506,17 @@ impl Controller {
     fn render_passes(&mut self, passes: Vec<Pass>, frames: usize) -> (Result<(), String>, Result<(), String>) {
         let rate = self.engine.sample_rate();
         let bits = if self.export.bits24 { 24 } else { 16 };
+        let restore = self.project().ticks_to_frames(self.playhead_ticks(), rate);
         let solo_passes = passes.iter().any(|p| p.track.is_some());
         let e = self.engine.clone();
-        let guard = match self.offline_begin() {
-            Ok(g) => g,
-            Err(err) => return (Err(err), Ok(())),
-        };
+        let was_running = e.device_running();
+        if was_running
+            && let Err(err) = e.stop_device()
+        {
+            return (Err(err.to_string()), Ok(()));
+        }
+        let metronome_was = std::mem::replace(&mut self.metronome_on, false);
+        self.sync_loop_and_click();
         let mut out = vec![0f32; frames * 2];
         let mix = self.current_snapshot();
         let written = (|| {
@@ -545,34 +543,15 @@ impl Controller {
             }
             Ok::<(), String>(())
         })();
-        let restarted = self.offline_end(guard, solo_passes);
-        (written, restarted)
-    }
-
-    /// Pauses the audio device and the metronome for an offline render; `offline_end` undoes it.
-    pub(crate) fn offline_begin(&mut self) -> Result<Offline, String> {
-        let restore = self.project().ticks_to_frames(self.playhead_ticks(), self.engine.sample_rate());
-        let was_running = self.engine.device_running();
-        if was_running {
-            self.engine.stop_device().map_err(|e| e.to_string())?;
-        }
-        let metronome_was = std::mem::replace(&mut self.metronome_on, false);
-        self.sync_loop_and_click();
-        Ok(Offline { restore, was_running, metronome_was })
-    }
-
-    /// Stops the render transport, republishes the project when the render published another
-    /// session, puts the playhead and metronome back, and restarts the device. The result is the
-    /// restart's; it does not undo the render.
-    pub(crate) fn offline_end(&mut self, o: Offline, republish: bool) -> Result<(), String> {
-        let _ = self.engine.stop();
-        if republish {
+        let _ = e.stop();
+        if solo_passes {
             self.publish();
         }
-        let _ = self.engine.seek(o.restore);
-        self.metronome_on = o.metronome_was;
+        let _ = e.seek(restore);
+        self.metronome_on = metronome_was;
         self.sync_loop_and_click();
-        if o.was_running { self.engine.start_device().map_err(|e| e.to_string()) } else { Ok(()) }
+        let restarted = if was_running { e.start_device().map_err(|e| e.to_string()) } else { Ok(()) };
+        (written, restarted)
     }
 
     /// File › New Project: ask first when the project has unsaved changes.

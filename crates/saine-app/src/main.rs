@@ -28,6 +28,7 @@ mod analyzer_views;
 mod assistant_panel;
 mod assistant_provider;
 mod automation;
+mod clip_bench;
 mod clip_render;
 mod clipedit;
 mod composer;
@@ -185,6 +186,8 @@ struct Args {
     /// --ac-edit N: with review-warp, open the typed-value box (0 Original BPM, 1 Transpose).
     ac_edit: Option<i32>,
     frame_stats: bool,
+    /// --bench-clip-render idle|bounce: frame statistics split around a clip render (src/clip_bench.rs).
+    bench_clip_render: Option<bool>,
     /// --timeline-zoom <percent>: horizontal timeline zoom at start (100 = the default).
     timeline_zoom: Option<f64>,
     /// --render-bench N: offscreen, render the state N times and print the mean / median /
@@ -443,6 +446,13 @@ fn parse_args() -> Result<Args, String> {
             "--ac-edit" => a.ac_edit = Some(value(&mut i)?.parse().map_err(|e| format!("--ac-edit: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
+            "--bench-clip-render" => {
+                a.bench_clip_render = Some(match value(&mut i)?.as_str() {
+                    "idle" => false,
+                    "bounce" => true,
+                    v => return Err(format!("--bench-clip-render: want idle or bounce, got {v}")),
+                })
+            }
             "--timeline-zoom" => {
                 let z: f64 = value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--timeline-zoom: {e}"))?;
                 if z.is_nan() {
@@ -523,6 +533,12 @@ struct Frame {
     shot_taken: bool,
     saved: bool,
     tex: (u32, u32),
+    /// --bench-clip-render: 0 before, 1 during, 2 after the render; frames of each phase
+    /// (interval, our cpu, slint render cpu).
+    phase: usize,
+    phase_from: u64,
+    phases: [[Series; 3]; 3],
+    bench: bool,
 }
 
 /// Slint key text -> keymap key name.
@@ -652,7 +668,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
-            if c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
+            if c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) || c.cancel_clip_render() {
                 return true;
             }
             if c.settings.menu.is_some() {
@@ -1358,6 +1374,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_play_toggle, |c| c.play_toggle());
     on!(on_stop_return, |c| c.stop_return());
     on!(on_toggle_loop, |c| c.toggle_loop());
+    on!(on_render_cancel, |c| c.cancel_clip_render());
     on!(on_toggle_metronome, |c| c.toggle_metronome());
     on!(on_record, |c| c.record_toggle());
     on!(on_track_arm, |c, id: i32| c.toggle_arm(TrackId(id as u64)));
@@ -2007,8 +2024,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         shot_taken: false,
         saved: false,
         tex: (0, 0),
+        phase: 0,
+        phase_from: 0,
+        phases: Default::default(),
+        bench: args.bench_clip_render.is_some(),
     }));
     let measure = args.demo || args.frame_stats || args.exit_after_frames.is_some();
+    let bench_clip = args.bench_clip_render.map(|bounce| (bounce, clip_bench::setup(&mut ctl.borrow_mut())));
     let screenshot = args.screenshot.clone();
     let exit_after = args.exit_after_frames;
     let want_menu = args.clip_menu;
@@ -2048,7 +2070,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(last) = f.last_before
                         && f.ready_frames > 2
                     {
-                        f.interval.0.push((t0 - last).as_secs_f64() * 1e3);
+                        let ms = (t0 - last).as_secs_f64() * 1e3;
+                        f.interval.0.push(ms);
+                        let ph = f.phase;
+                        f.phases[ph][0].0.push(ms);
                     }
                     f.last_before = Some(t0);
                     c.poll_jobs();
@@ -2112,7 +2137,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     f.pr_visible = pr_vis;
                     let t1 = Instant::now();
                     if f.ready_frames > 2 {
-                        f.ours.0.push((t1 - t0).as_secs_f64() * 1e3);
+                        let ms = (t1 - t0).as_secs_f64() * 1e3;
+                        f.ours.0.push(ms);
+                        let ph = f.phase;
+                        f.phases[ph][1].0.push(ms);
                     }
                     f.slint_start = Some(t1);
                 }
@@ -2122,7 +2150,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(t) = f.slint_start.take()
                         && f.ready_frames > 2
                     {
-                        f.slint.0.push((now - t).as_secs_f64() * 1e3);
+                        let ms = (now - t).as_secs_f64() * 1e3;
+                        f.slint.0.push(ms);
+                        let ph = f.phase;
+                        f.phases[ph][2].0.push(ms);
                     }
                     let (animating, ready) = match ctl.try_borrow() {
                         Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || c.files.audition.animating || !c.assistant.highlights.is_empty() || c.rec.recording, c.pending_jobs == 0 && want_menu.is_none_or(|m| c.pr.menu == m)),
@@ -2133,6 +2164,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     if f.setup_done {
                         f.ready_frames += 1;
+                    }
+                    if let Some((bounce, clip)) = bench_clip
+                        && f.setup_done
+                    {
+                        if f.phase == 0 && f.ready_frames >= clip_bench::WARMUP_FRAMES {
+                            f.phase = 1;
+                            f.phase_from = f.ready_frames;
+                            if bounce && let Ok(mut c) = ctl.try_borrow_mut() {
+                                c.bounce_clip(clip);
+                            }
+                        } else if f.phase == 1 {
+                            let busy = ctl.try_borrow().map(|c| c.clip_render.busy() || c.pending_jobs > 0).unwrap_or(true);
+                            if (bounce && !busy && f.ready_frames > f.phase_from + 1) || (!bounce && f.ready_frames >= f.phase_from + clip_bench::IDLE_WINDOW) {
+                                f.phase = 2;
+                            }
+                        }
                     }
                     if f.setup_done
                         && !f.saved
@@ -2263,12 +2310,18 @@ thread_local! {
     static LANE_CURSOR: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
 }
 
+/// The per-phase statistics of --bench-clip-render, as a JSON member.
+fn phases_json(f: &Frame) -> String {
+    let one = |name: &str, p: &[Series; 3]| format!("\"{name}\":{{\"frames\":{},\"frame_interval_ms\":{},\"our_cpu_ms\":{},\"slint_render_cpu_ms\":{}}}", p[0].0.len(), p[0].summary(), p[1].summary(), p[2].summary());
+    format!(",\"phases\":{{{},{},{}}}", one("before", &f.phases[0]), one("during", &f.phases[1]), one("after", &f.phases[2]))
+}
+
 fn stats_json(f: &Frame, app: &AppWindow) -> String {
     let w = app.window();
     let sz = w.size();
     let rc = f.renderer.as_ref().map(|r| r.last_counts).unwrap_or((0, 0, 0));
     format!(
-        "{{\"adapter\":\"{}\",\"scale_factor\":{},\"window_physical\":[{},{}],\"timeline_tex\":[{},{}],\"instances\":{{\"base_rects\":{},\"waves\":{},\"over_rects\":{}}},\"frames\":{},\"frame_interval_ms\":{},\"our_cpu_ms\":{},\"slint_render_cpu_ms\":{}}}",
+        "{{\"adapter\":\"{}\",\"scale_factor\":{},\"window_physical\":[{},{}],\"timeline_tex\":[{},{}],\"instances\":{{\"base_rects\":{},\"waves\":{},\"over_rects\":{}}},\"frames\":{},\"frame_interval_ms\":{},\"our_cpu_ms\":{},\"slint_render_cpu_ms\":{}{}}}",
         f.adapter,
         w.scale_factor(),
         sz.width,
@@ -2281,7 +2334,8 @@ fn stats_json(f: &Frame, app: &AppWindow) -> String {
         f.interval.0.len(),
         f.interval.summary(),
         f.ours.summary(),
-        f.slint.summary()
+        f.slint.summary(),
+        if f.bench { phases_json(f) } else { String::new() }
     )
 }
 

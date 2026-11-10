@@ -5629,13 +5629,17 @@ fn clip_render_steps() -> Vec<Step> {
         tracks_before: usize,
         assets_before: usize,
         undo_before_export: Option<String>,
+        joined_before: usize,
+        assets_now: usize,
+        undo_now: Option<String>,
     }
     let st = Rc::new(RefCell::new(St::default()));
-    let k: Vec<Rc<RefCell<St>>> = (0..24).map(|_| st.clone()).collect();
+    let k: Vec<Rc<RefCell<St>>> = (0..40).map(|_| st.clone()).collect();
     let mut k = k.into_iter();
     let mut next = move || k.next().unwrap();
     let (s1, s2, s3, s4, s5, s6, s7, s8, s9, s10) = (next(), next(), next(), next(), next(), next(), next(), next(), next(), next());
     let (s11, s12, s13, s14, s15, s16, s17, s18) = (next(), next(), next(), next(), next(), next(), next(), next());
+    let (s19, s20, s21, s22, s23, s24, s25, s26) = (next(), next(), next(), next(), next(), next(), next(), next());
     vec![
         DoC("clip render: scratch folder, two 2 s sine WAVs; import the first at beat 4 on a new track", Box::new(move |_, ctl| {
             let mut c = ctl.borrow_mut();
@@ -5782,7 +5786,67 @@ fn clip_render_steps() -> Vec<Step> {
             let p = peak(&s, 0, s.len() / 2);
             eprintln!("clip-render: export render {:.1} ms", c.clip_render.last_ms);
             let same = c.doc.undo_label().map(str::to_string) == s14.borrow().undo_before_export;
-            (rate == 48_000 && ch == 2 && p > 0.02 && (96_000..=192_000).contains(&(s.len() / 2)) && same && !c.clip_render.busy).then_some(()).ok_or(format!("rate {rate} ch {ch} frames {} peak {p} same {same}", s.len() / 2))
+            (rate == 48_000 && ch == 2 && p > 0.02 && (96_000..=192_000).contains(&(s.len() / 2)) && same && !c.clip_render.busy()).then_some(()).ok_or(format!("rate {rate} ch {ch} frames {} peak {p} same {same}", s.len() / 2))
+        })),
+        DoC("clip render: select the audio track; Consolidate its first clip and Cancel at once", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let mut s = s19.borrow_mut();
+            c.select_track(TrackId(s.audio_track));
+            s.joined_before = files("joined").len();
+            s.assets_now = c.project().assets.len();
+            s.undo_now = c.doc.undo_label().map(str::to_string);
+            c.consolidate_clip(ClipId(s.first));
+            c.cancel_clip_render();
+        })),
+        Check("clip render: Cancel left nothing behind: both clips, no file, no asset, no undo step", Box::new(move |c, _| {
+            let s = s20.borrow();
+            let ids: Vec<u64> = c.project().track(TrackId(s.audio_track)).map(|t| t.clips.iter().map(|k| k.id.0).collect()).unwrap_or_default();
+            let ok = ids == vec![s.first, s.second] && files("joined").len() == s.joined_before && c.project().assets.len() == s.assets_now && c.doc.undo_label().map(str::to_string) == s.undo_now && !c.clip_render.busy() && c.status_message() == Some("Render cancelled");
+            ok.then_some(()).ok_or(format!("{ids:?}; {} files (was {}); {} assets (was {}); undo {:?}; busy {}; {:?}", files("joined").len(), s.joined_before, c.project().assets.len(), s.assets_now, c.doc.undo_label(), c.clip_render.busy(), c.status_message()))
+        })),
+        DoC("clip render: Consolidate, then change the second clip while it renders", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let s = s21.borrow();
+            c.consolidate_clip(ClipId(s.first));
+            let busy = c.clip_render.busy();
+            c.execute(Command::SetClipGain { clip: ClipId(s.second), gain: 0.5 });
+            eprintln!("clip-render: render in flight while the edit ran: {busy}");
+        })),
+        Check("clip render: the render was discarded (a source clip changed): two clips, no file, the gain edit on top of the undo stack", Box::new(move |c, _| {
+            let s = s22.borrow();
+            let ids: Vec<u64> = c.project().track(TrackId(s.audio_track)).map(|t| t.clips.iter().map(|k| k.id.0).collect()).unwrap_or_default();
+            let ok = ids == vec![s.first, s.second] && files("joined").len() == s.joined_before && c.project().assets.len() == s.assets_now && c.doc.undo_label() != Some("Consolidate Clips") && !c.clip_render.busy() && c.status_message().is_some_and(|m| m.contains("changed while it rendered"));
+            ok.then_some(()).ok_or(format!("{ids:?}; {} files; {} assets; undo {:?}; {:?}", files("joined").len(), c.project().assets.len(), c.doc.undo_label(), c.status_message()))
+        })),
+        Do("clip render: Cmd+Z (the gain edit)", Box::new(|a| key(a, "z", true, false))),
+        DoC("clip render: Consolidate, then change another track while it renders", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let s = s23.borrow();
+            c.consolidate_clip(ClipId(s.first));
+            c.execute(Command::SetTrackGain { track: TrackId(s.midi_track), gain: 0.9 });
+        })),
+        Check("clip render: that render still landed as one step on top of the other edit, the interface was free meanwhile", Box::new(move |c, _| {
+            let s = s24.borrow();
+            let t = c.project().track(TrackId(s.audio_track)).ok_or("no track")?;
+            let ok = t.clips.len() == 1 && c.doc.undo_label() == Some("Consolidate Clips") && files("joined").len() == s.joined_before + 1 && (c.project().track(TrackId(s.midi_track)).map(|m| m.gain) == Some(0.9));
+            ok.then_some(()).ok_or(format!("{} clips; undo {:?}; {} files", t.clips.len(), c.doc.undo_label(), files("joined").len()))
+        })),
+        Do("clip render: Cmd+Z (the consolidation)", Box::new(|a| key(a, "z", true, false))),
+        Do("clip render: Cmd+Z (the gain)", Box::new(|a| key(a, "z", true, false))),
+        DoC("clip render: delete the second WAV, then Consolidate", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let mut s = s25.borrow_mut();
+            s.joined_before = files("joined").len();
+            s.assets_now = c.project().assets.len();
+            s.undo_now = c.doc.undo_label().map(str::to_string);
+            std::fs::remove_file(dir().join("b.wav")).unwrap();
+            c.consolidate_clip(ClipId(s.first));
+        })),
+        Check("clip render: the render failed with a message; both clips, no file, no asset, no undo step", Box::new(move |c, _| {
+            let s = s26.borrow();
+            let ids: Vec<u64> = c.project().track(TrackId(s.audio_track)).map(|t| t.clips.iter().map(|k| k.id.0).collect()).unwrap_or_default();
+            let ok = ids == vec![s.first, s.second] && files("joined").len() == s.joined_before && c.project().assets.len() == s.assets_now && c.doc.undo_label().map(str::to_string) == s.undo_now && !c.clip_render.busy() && c.status_message().is_some_and(|m| m.starts_with("Render failed") && m.contains("b.wav"));
+            ok.then_some(()).ok_or(format!("{ids:?}; {} files (was {}); undo {:?}; {:?}", files("joined").len(), s.joined_before, c.doc.undo_label(), c.status_message()))
         })),
         DoC("clip render: remove the test tracks and assets and the scratch folder", Box::new(move |_, ctl| {
             let mut c = ctl.borrow_mut();

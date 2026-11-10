@@ -1,16 +1,17 @@
 //! Clip menu renders (Consolidate, Bounce, Export) end to end: `render_plan::render_project` →
-//! snapshot → publish → offline render over a clip's range, as src/clip_render.rs does it.
-//! `bench_four_bar_clip_render` (ignored; `cargo test --release -p saine-engine --test clip_render
-//! -- --ignored --nocapture`) prints how long a 4-bar clip takes.
+//! `saine_engine::offline::render` (a private engine on the calling thread, as src/clip_render.rs
+//! runs it on its worker). `bench_four_bar_clip_render` (ignored; `cargo test --release -p
+//! saine-engine --test clip_render -- --ignored --nocapture`) prints how long a 4-bar clip takes,
+//! engine start and file loading included.
 
 use saine_core::render_plan::{self, RenderMode};
 use saine_core::*;
-use saine_engine::{Config, Engine};
+use saine_engine::offline::{self, OfflineError, OfflineRender};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
 
 const RATE: f64 = 48_000.0;
-const CHUNK: usize = 4096;
 
 /// 16-bit mono WAV of a sine.
 fn write_sine(path: &std::path::Path, secs: f64, hz: f64, amp: f64) {
@@ -32,46 +33,32 @@ fn write_sine(path: &std::path::Path, secs: f64, hz: f64, amp: f64) {
 }
 
 struct Rig {
-    engine: Engine,
     doc: Document,
-    assets: HashMap<AssetId, u64>,
+    wav: std::path::PathBuf,
     _dir: tempfile::TempDir,
 }
 
-/// Default project (audio track 0, instrument track 1) with a sine asset loaded.
+/// Default project (audio track 0, instrument track 1) with a sine asset.
 fn rig(secs: f64) -> Rig {
-    let engine = Engine::new(Config { sample_rate: RATE, max_block_size: 4096 }).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let wav = dir.path().join("s.wav");
     write_sine(&wav, secs, 440.0, 0.3);
-    let info = engine.load_file(&wav).unwrap();
     let mut doc = Document::new(Project::default());
-    let asset = Asset { id: AssetId(0), relative_path: None, absolute_path: wav.to_string_lossy().into(), sample_rate: info.source_sample_rate, channels: 1, frames: (RATE * secs) as u64 };
+    let asset = Asset { id: AssetId(0), relative_path: None, absolute_path: wav.to_string_lossy().into(), sample_rate: RATE, channels: 1, frames: (RATE * secs) as u64 };
     doc.execute(Command::AddAsset { asset }, Origin::User).unwrap();
-    let id = doc.project().assets[0].id;
-    Rig { engine, doc, assets: HashMap::from([(id, info.asset_id)]), _dir: dir }
+    Rig { doc, wav, _dir: dir }
 }
 
 impl Rig {
-    /// What clip_render.rs does: the span's render project, published, played from the span start.
-    fn render(&self, span: &render_plan::ClipSpan, mode: RenderMode, tail_s: f64) -> Vec<f32> {
+    fn job(&self, span: &render_plan::ClipSpan, mode: RenderMode, tail_s: f64) -> OfflineRender {
         let p = self.doc.project();
         let start = p.ticks_to_frames(span.start, RATE);
         let body = (p.ticks_to_frames(span.end, RATE) - start) as usize + (tail_s * RATE) as usize;
-        let (snap, skipped) = snapshot::build(&render_plan::render_project(p, span, mode), RATE, &self.assets);
-        assert!(skipped.is_empty());
-        let e = &self.engine;
-        e.publish(&snap).unwrap();
-        e.set_loop(false, 0, 0).unwrap();
-        e.stop().unwrap();
-        e.seek(start).unwrap();
-        e.play().unwrap();
-        let mut out = vec![0f32; body * 2];
-        for chunk in out.chunks_mut(CHUNK * 2) {
-            e.render_offline(chunk).unwrap();
-        }
-        e.stop().unwrap();
-        out
+        OfflineRender { project: render_plan::render_project(p, span, mode), rate: RATE, transients: HashMap::new(), start, frames: body }
+    }
+
+    fn render(&self, span: &render_plan::ClipSpan, mode: RenderMode, tail_s: f64) -> Vec<f32> {
+        offline::render(&self.job(span, mode, tail_s), &AtomicBool::new(false), &AtomicUsize::new(0)).unwrap()
     }
 }
 
@@ -81,6 +68,12 @@ fn peak(x: &[f32]) -> f32 {
 
 fn audio_clip(asset: AssetId, id: u64, start_beat: i64, secs: f64) -> Clip {
     Clip { id: ClipId(id), asset, name: format!("c{id}"), start: start_beat * PPQ, source_offset: 0, source_length: (RATE * secs) as u64, gain: 1.0, warp: Default::default(), disabled: false }
+}
+
+fn midi_clip(start_beat: i64, beats: i64, pitch: u8) -> MidiClip {
+    let mut c = MidiClip::empty(start_beat * PPQ, beats * PPQ);
+    c.notes = (0..beats * 4).map(|i| Note { id: i as u32 + 1, pitch: pitch + ((i * 5) % 24) as u8, start: i * PPQ / 4, length: PPQ / 2, velocity: 100 }).collect();
+    c
 }
 
 #[test]
@@ -125,6 +118,61 @@ fn bounce_of_a_midi_clip_plays_that_clip_only_and_rings_into_its_tail() {
 }
 
 #[test]
+fn a_finished_render_reports_every_frame_done() {
+    let mut r = rig(2.0);
+    let (a, asset) = (r.doc.project().tracks[0].id, r.doc.project().assets[0].id);
+    r.doc.execute(Command::AddClip { track: a, clip: audio_clip(asset, 101, 0, 2.0) }, Origin::User).unwrap();
+    let span = render_plan::clip_span(r.doc.project(), ClipId(101)).unwrap();
+    let job = r.job(&span, RenderMode::Material, 0.0);
+    let done = AtomicUsize::new(0);
+    let out = offline::render(&job, &AtomicBool::new(false), &done).unwrap();
+    assert_eq!((out.len() / 2, done.load(Ordering::Relaxed)), (job.frames, job.frames));
+}
+
+#[test]
+fn a_cancelled_render_returns_cancelled_and_stops_early() {
+    let mut r = rig(2.0);
+    let inst = r.doc.project().tracks[1].id;
+    let reverb = saine_core::builtin::find("reverb").unwrap().instantiate();
+    r.doc.execute(Command::AddDevice { track: inst, index: None, device: reverb }, Origin::User).unwrap();
+    r.doc.execute(Command::AddMidiClip { track: inst, clip: midi_clip(0, 16, 48) }, Origin::User).unwrap();
+    let id = r.doc.project().tracks[1].midi_clips[0].id;
+    let span = render_plan::clip_span(r.doc.project(), id).unwrap();
+    // Not even started: the cancel flag is seen before an engine is made.
+    let job = r.job(&span, RenderMode::Bounce, 2.0);
+    let done = AtomicUsize::new(0);
+    assert_eq!(offline::render(&job, &AtomicBool::new(true), &done), Err(OfflineError::Cancelled));
+    assert_eq!(done.load(Ordering::Relaxed), 0);
+    // Cancelled once a tenth of the audio is rendered.
+    let (cancel, done) = (AtomicBool::new(false), AtomicUsize::new(0));
+    let result = std::thread::scope(|s| {
+        s.spawn(|| {
+            while done.load(Ordering::Relaxed) < job.frames / 10 {
+                std::thread::yield_now();
+            }
+            cancel.store(true, Ordering::Relaxed);
+        });
+        offline::render(&job, &cancel, &done)
+    });
+    assert_eq!(result, Err(OfflineError::Cancelled));
+    assert!(done.load(Ordering::Relaxed) < job.frames, "stopped before the end: {} of {}", done.load(Ordering::Relaxed), job.frames);
+}
+
+#[test]
+fn a_missing_audio_file_fails_the_render_and_names_the_file() {
+    let mut r = rig(1.0);
+    let (a, asset) = (r.doc.project().tracks[0].id, r.doc.project().assets[0].id);
+    r.doc.execute(Command::AddClip { track: a, clip: audio_clip(asset, 101, 0, 1.0) }, Origin::User).unwrap();
+    let span = render_plan::clip_span(r.doc.project(), ClipId(101)).unwrap();
+    let job = r.job(&span, RenderMode::Material, 0.0);
+    std::fs::remove_file(&r.wav).unwrap();
+    match offline::render(&job, &AtomicBool::new(false), &AtomicUsize::new(0)) {
+        Err(OfflineError::Failed(msg)) => assert!(msg.contains("s.wav"), "{msg}"),
+        other => panic!("expected a failure, got {:?}", other.map(|v| v.len())),
+    }
+}
+
+#[test]
 #[ignore]
 fn bench_four_bar_clip_render() {
     let mut r = rig(8.0);
@@ -137,9 +185,7 @@ fn bench_four_bar_clip_render() {
         r.doc.execute(Command::AddDevice { track: inst, index: None, device: d }, Origin::User).unwrap();
     }
     r.doc.execute(Command::AddClip { track: a, clip: audio_clip(asset, 101, 0, 8.0) }, Origin::User).unwrap();
-    let mut clip = MidiClip::empty(0, 16 * PPQ);
-    clip.notes = (0..64).map(|i| Note { id: i as u32 + 1, pitch: 48 + (i as u8 * 5) % 24, start: i as i64 * PPQ / 4, length: PPQ / 2, velocity: 100 }).collect();
-    r.doc.execute(Command::AddMidiClip { track: inst, clip }, Origin::User).unwrap();
+    r.doc.execute(Command::AddMidiClip { track: inst, clip: midi_clip(0, 16, 48) }, Origin::User).unwrap();
     let midi = r.doc.project().tracks[1].midi_clips[0].id;
     let cases = [("audio 4 bars, Material (consolidate)", ClipId(101), RenderMode::Material, 0.0), ("audio 4 bars + reverb, Bounce", ClipId(101), RenderMode::Bounce, 2.0), ("MIDI 4 bars, synth + reverb + delay, Bounce", midi, RenderMode::Bounce, 2.0), ("MIDI 4 bars, Stem (export)", midi, RenderMode::Stem, 2.0)];
     for (name, id, mode, tail) in cases {

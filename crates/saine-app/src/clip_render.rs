@@ -1,31 +1,37 @@
 //! Clip context menu renders: Consolidate (⌘J), Bounce › Bounce to new track (⌘B) and Export audio.
-//! Values and behaviour: reference/findings/clip-menu.md (S71–S74).
+//! Values and behaviour: reference/findings/clip-menu.md (S71–S74, S76).
 //!
-//! All three render one track through the engine's offline render (the same path as the Stems
-//! export in src/dialogs.rs) over the range of one clip or one group of clips, with the device
-//! paused. The render of a clip's range is short, so it runs on the UI thread in 4096-frame
-//! chunks; everything slow (WAV encode, file write, decode, peaks) runs on a worker thread and
-//! lands in `poll_jobs` as `JobResult::ClipRendered`. Each edit is one Batch.
+//! All three render one track over the range of one clip or one group of clips, in the Stems
+//! render's modes (`saine_core::render_plan`). The render runs on a worker thread that owns a
+//! private offline engine (`saine_engine::offline`): the live engine, its device and the UI
+//! thread are not involved, so playback and the interface carry on while it runs. The worker
+//! renders from a copy of the project taken when the menu entry was chosen, writes the WAV, loads
+//! it into the live engine and hands the result to `poll_jobs` as `JobResult::ClipRendered`, which
+//! lands it as one undo step, unless the project was replaced, the track or a source clip changed
+//! or the render was cancelled; then nothing is kept.
 //!
 //! Files go to `<project>/media/joined` (Consolidate) and `<project>/media/bounce` (Bounce) once
 //! the project is saved, else to `<temp>/Saine Studio/Unsaved renders/`; like unsaved
-//! recordings they are not moved into the project when it is saved.
+//! recordings they are not moved into the project when it is saved. A file only appears once its
+//! render finished; a cancelled or failed render leaves no file (an Export is written beside its
+//! destination as `<name>.part` and renamed, so an existing file is replaced only by a whole one).
 
+use crate::Studio;
 use crate::controller::{Controller, JobResult, load_and_analyse};
-use crate::dialogs::{CHUNK, TAIL_S, create_free_file, file_safe};
+use crate::dialogs::{TAIL_S, create_free_file, file_safe};
 use crate::peaks::Pyramid;
 use crate::wavgen;
 use saine_core::render_plan::{self, ClipSpan, RenderMode};
-use saine_core::{Asset, AssetId, Clip, ClipId, Command, Track, TrackId, TrackKind, snapshot};
-use saine_engine::AssetInfo;
+use saine_core::{Asset, AssetId, Clip, ClipId, Command, MidiClip, Track, TrackId, TrackKind};
+use saine_engine::offline::{self, OfflineError, OfflineRender};
+use saine_engine::{AssetInfo, Engine};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Instant;
 
 /// Below this a rendered frame counts as silence when the tail after the clip is trimmed (−80 dBFS).
 const SILENCE: f32 = 1e-4;
-/// How long a render waits for the engine's background warp renders (a warped clip is silent until
-/// its render is attached).
-const WARP_WAIT: Duration = Duration::from_millis(1500);
 
 /// What a finished render is for.
 pub enum ClipOp {
@@ -37,34 +43,67 @@ pub enum ClipOp {
     Export { reveal: bool },
 }
 
+/// Where a render is written.
+enum Output {
+    /// A fresh file `<stem>.wav` (or `<stem> 2.wav`, …) in `dir`, loaded into the engine.
+    New { dir: PathBuf, stem: String },
+    /// `path`, at `bits` per sample.
+    Export { path: PathBuf, bits: u16 },
+}
+
+/// A render that wrote its file (and, for Consolidate and Bounce, loaded it).
+pub struct Rendered {
+    pub path: PathBuf,
+    pub loaded: Option<(AssetInfo, Pyramid)>,
+    /// Milliseconds from the start of the render to the finished file.
+    pub render_ms: f64,
+}
+
 pub struct ClipRendered {
     pub doc_epoch: u64,
-    /// Document revision the render was made from; an edit in between cancels the landing.
-    pub revision: u64,
     pub op: ClipOp,
-    pub path: PathBuf,
-    /// The loaded file (Consolidate and Bounce); None for Export.
-    pub result: Result<Option<(AssetInfo, Pyramid)>, String>,
+    pub result: Result<Rendered, OfflineError>,
+}
+
+/// A clip as it was when the render began.
+enum Source {
+    Audio(Clip),
+    Midi(MidiClip),
+}
+
+/// The render in flight (one at a time).
+pub struct ActiveRender {
+    cancel: Arc<AtomicBool>,
+    progress: Arc<AtomicUsize>,
+    total: usize,
+    /// Frames already shown in the interface.
+    shown: usize,
+    label: &'static str,
+    cancelled: bool,
+    track: TrackId,
+    sources: Vec<Source>,
+    /// Selection when it began: the result is selected only if it is still the same.
+    selection: (Option<TrackId>, Option<ClipId>),
 }
 
 #[derive(Default)]
 pub struct ClipRender {
-    /// A render is between its start and its landing: the menu entries wait.
-    pub busy: bool,
+    pub active: Option<ActiveRender>,
     /// Overrides the render folder (self-test scratch directory).
     pub dir_override: Option<PathBuf>,
     /// Test hook: where the next Export audio writes, instead of asking with a file dialog.
     pub export_path: Option<PathBuf>,
     /// Export audio waits for the file dialog the main loop runs unborrowed: (clip, suggested name).
     pub dialog_request: Option<(ClipId, String)>,
-    /// Milliseconds the last engine render took on the UI thread.
+    /// Milliseconds the last finished render took on its worker.
     pub last_ms: f64,
 }
 
-/// A finished offline render of a span: interleaved stereo.
-struct Rendered {
-    samples: Vec<f32>,
-    rate: f64,
+impl ClipRender {
+    /// A render is between its start and its landing: the menu entries wait.
+    pub fn busy(&self) -> bool {
+        self.active.is_some()
+    }
 }
 
 /// Open the platform's file manager on `path`.
@@ -78,6 +117,43 @@ pub fn reveal(path: &str) -> Result<(), String> {
         std::process::Command::new("xdg-open").arg(p.parent().map(Path::to_path_buf).unwrap_or_default()).spawn()
     };
     spawned.map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Writes `samples` (interleaved stereo) to the output and, for a new file, loads it into
+/// `engine`. A failure or a cancel leaves no file behind.
+fn write_render(engine: &Engine, samples: &[f32], rate: f64, out: &Output, cancel: &AtomicBool) -> Result<(PathBuf, Option<(AssetInfo, Pyramid)>), OfflineError> {
+    let failed = |what: &Path, e: String| OfflineError::Failed(format!("{}: {e}", what.display()));
+    let (path, target, bits) = match out {
+        Output::New { dir, stem } => {
+            std::fs::create_dir_all(dir).map_err(|e| failed(dir, e.to_string()))?;
+            let (path, _) = create_free_file(dir, stem).map_err(|e| failed(dir, e))?;
+            (path.clone(), path, 24)
+        }
+        Output::Export { path, bits } => {
+            let mut part = path.clone().into_os_string();
+            part.push(".part");
+            (path.clone(), PathBuf::from(part), *bits)
+        }
+    };
+    let run = || {
+        let file = std::fs::File::create(&target).map_err(|e| failed(&target, e.to_string()))?;
+        wavgen::encode_wav_pcm(file, rate.round() as u32, 2, bits, samples).map_err(|e| failed(&target, e.to_string()))?;
+        if cancel.load(Ordering::Relaxed) {
+            return Err(OfflineError::Cancelled);
+        }
+        match out {
+            Output::Export { .. } => {
+                std::fs::rename(&target, &path).map_err(|e| failed(&path, e.to_string()))?;
+                Ok(None)
+            }
+            Output::New { .. } => load_and_analyse(engine, &path).map(Some).map_err(OfflineError::Failed),
+        }
+    };
+    let loaded = run();
+    if loaded.is_err() {
+        let _ = std::fs::remove_file(&target);
+    }
+    loaded.map(|l| (path, l))
 }
 
 impl Controller {
@@ -116,86 +192,94 @@ impl Controller {
         self.render_block(id, needs_notes).is_none()
     }
 
-    /// Renders `span` alone through the engine's offline render. The device is paused and the
-    /// transport, metronome and published session are restored afterwards. The rendered range is
-    /// the span plus, when the track's sound rings out, a tail trimmed at silence.
-    fn render_span(&mut self, span: &ClipSpan, mode: RenderMode) -> Result<Rendered, String> {
-        let p = self.project();
+    /// Starts rendering `span` alone on a worker thread (see the module comment). The rendered
+    /// range is the span plus, when the track's sound rings out, a tail trimmed at silence. The
+    /// interface only blocks for the copy of the project the worker renders from.
+    fn start_render(&mut self, op: ClipOp, span: &ClipSpan, mode: RenderMode, out: Output, label: &'static str) {
         let rate = self.engine.sample_rate();
+        let p = self.project();
         let start = p.ticks_to_frames(span.start, rate);
         let body = (p.ticks_to_frames(span.end, rate) - start).max(1) as usize;
         let tail = if render_plan::rings_out(p, span.track, mode) { (TAIL_S * rate) as usize } else { 0 };
-        let projected = render_plan::render_project(p, span, mode);
-        let (snap, _) = snapshot::build_full(&projected, self.rate, &self.asset_map, &self.reversed_assets, &self.transients_by_asset());
-        let guard = self.offline_begin()?;
-        let e = self.engine.clone();
-        let t0 = Instant::now();
-        let out = (|| {
-            e.publish(&snap).map_err(|e| e.to_string())?;
-            let waited = Instant::now();
-            while e.warp_renders_pending() > 0 {
-                if waited.elapsed() > WARP_WAIT {
-                    return Err("warped audio is still being prepared, try again in a moment".to_string());
+        let mut project = render_plan::render_project(p, span, mode);
+        let sources: Vec<Source> = span.clips.iter().filter_map(|&c| p.clip(c).cloned().map(Source::Audio).or_else(|| p.midi_clip(c).cloned().map(Source::Midi))).collect();
+        if project.tracks.iter().flat_map(|t| t.devices.iter().chain(t.instrument_plugin.iter())).any(|d| saine_core::builtin::def_of(d).is_none()) {
+            let live = self.engine.plugin_states();
+            for d in project.tracks.iter_mut().flat_map(|t| t.devices.iter_mut().chain(t.instrument_plugin.iter_mut())) {
+                if let Some((_, state)) = live.iter().find(|(id, _)| *id == d.id) {
+                    d.state = Some(state.clone());
                 }
-                e.plugin_idle();
-                std::thread::sleep(Duration::from_millis(2));
             }
-            e.set_loop(false, 0, 0).map_err(|e| e.to_string())?;
-            e.stop().map_err(|e| e.to_string())?;
-            e.seek(start).map_err(|e| e.to_string())?;
-            e.play().map_err(|e| e.to_string())?;
-            let mut out = vec![0f32; (body + tail) * 2];
-            for chunk in out.chunks_mut(CHUNK * 2) {
-                e.render_offline(chunk).map_err(|e| e.to_string())?;
-            }
-            Ok(out)
-        })();
-        self.clip_render.last_ms = t0.elapsed().as_secs_f64() * 1e3;
-        let restarted = self.offline_end(guard, true);
-        let mut samples = out?;
-        restarted?;
-        let last = samples.chunks_exact(2).rposition(|f| f[0].abs() > SILENCE || f[1].abs() > SILENCE);
-        samples.truncate(last.map_or(0, |i| i + 1).clamp(body, body + tail) * 2);
-        Ok(Rendered { samples, rate })
-    }
-
-    /// Writes the render to `file` and, for Consolidate and Bounce, loads it into the engine, on a
-    /// worker thread; the result lands in `poll_jobs`.
-    fn spawn_clip_render(&mut self, op: ClipOp, rendered: Rendered, path: PathBuf, file: std::fs::File, bits: u16) {
-        let (engine, tx) = (self.engine.clone(), self.jobs_tx.clone());
-        let (doc_epoch, revision) = (self.doc_epoch, self.doc.revision());
-        let load = !matches!(op, ClipOp::Export { .. });
-        self.clip_render.busy = true;
-        self.pending_jobs += 1;
+        }
+        let job = OfflineRender { project, rate, transients: self.transients_by_asset(), start, frames: body + tail };
+        let (cancel, progress) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicUsize::new(0)));
+        let (engine, tx, doc_epoch) = (self.engine.clone(), self.jobs_tx.clone(), self.doc_epoch);
+        let (c2, p2) = (cancel.clone(), progress.clone());
         std::thread::Builder::new()
             .name("clip-render".into())
             .spawn(move || {
-                let result = wavgen::encode_wav_pcm(file, rendered.rate.round() as u32, 2, bits, &rendered.samples)
-                    .map_err(|e| e.to_string())
-                    .and_then(|()| if load { load_and_analyse(&engine, &path).map(Some) } else { Ok(None) });
-                let _ = tx.send(JobResult::ClipRendered(Box::new(ClipRendered { doc_epoch, revision, op, path, result })));
+                let t0 = Instant::now();
+                let result = (|| {
+                    let mut samples = offline::render(&job, &c2, &p2)?;
+                    let last = samples.chunks_exact(2).rposition(|f| f[0].abs() > SILENCE || f[1].abs() > SILENCE);
+                    samples.truncate(last.map_or(0, |i| i + 1).clamp(body, body + tail) * 2);
+                    let (path, loaded) = write_render(&engine, &samples, rate, &out, &c2)?;
+                    Ok(Rendered { path, loaded, render_ms: t0.elapsed().as_secs_f64() * 1e3 })
+                })();
+                let _ = tx.send(JobResult::ClipRendered(Box::new(ClipRendered { doc_epoch, op, result })));
             })
             .expect("spawn clip render thread");
+        self.clip_render.active = Some(ActiveRender {
+            cancel,
+            progress,
+            total: body + tail,
+            shown: 0,
+            label,
+            cancelled: false,
+            track: span.track,
+            sources,
+            selection: (self.selected_track, self.selected_clip),
+        });
+        self.pending_jobs += 1;
+        self.ui_dirty = true;
     }
 
-    /// Consolidate and Bounce: render into a fresh file under `media/<kind>` named after the track.
-    fn render_to_file(&mut self, op: ClipOp, span: &ClipSpan, mode: RenderMode, kind: &str, suffix: &str) {
-        let track = self.project().track(span.track).map(|t| t.name.clone()).unwrap_or_default();
-        let stem = format!("{}-{suffix}", file_safe(&track, 40).replace(' ', "-"));
-        let dir = self.render_dir(kind);
-        let opened = std::fs::create_dir_all(&dir).map_err(|e| e.to_string()).and_then(|()| create_free_file(&dir, &stem));
-        let (path, file) = match opened {
-            Ok(v) => v,
-            Err(e) => return self.set_status(format!("Render failed: {e}"), 6),
-        };
-        self.set_status("Rendering…", 30);
-        match self.render_span(span, mode) {
-            Ok(r) => self.spawn_clip_render(op, r, path, file, 24),
-            Err(e) => {
-                let _ = std::fs::remove_file(&path);
-                self.set_status(format!("Render failed: {e}"), 6);
+    /// The Cancel button and Esc: stop the render in flight; nothing is kept.
+    pub fn cancel_clip_render(&mut self) -> bool {
+        let Some(a) = self.clip_render.active.as_mut() else { return false };
+        a.cancelled = true;
+        a.cancel.store(true, Ordering::Relaxed);
+        self.ui_dirty = true;
+        true
+    }
+
+    /// Called from `poll_jobs`: the interface redraws when the render moved on.
+    pub(crate) fn clip_render_tick(&mut self) {
+        if let Some(a) = self.clip_render.active.as_mut() {
+            let now = a.progress.load(Ordering::Relaxed);
+            if now != a.shown {
+                a.shown = now;
+                self.ui_dirty = true;
             }
         }
+    }
+
+    /// The progress line at the bottom right of the window.
+    pub(crate) fn push_clip_render(&self, s: &Studio) {
+        let Some(a) = &self.clip_render.active else {
+            s.set_render_busy(false);
+            return;
+        };
+        let fraction = if a.total == 0 { 0.0 } else { a.shown as f32 / a.total as f32 };
+        s.set_render_busy(true);
+        s.set_render_progress(fraction);
+        s.set_render_label(if a.cancelled { "Cancelling…".into() } else { format!("{}  {} %", a.label, (fraction * 100.0).round() as i32).into() });
+    }
+
+    /// Consolidate and Bounce write a new file named after the track under `media/<kind>`.
+    fn new_output(&self, span: &ClipSpan, kind: &str, suffix: &str) -> Output {
+        let track = self.project().track(span.track).map(|t| t.name.clone()).unwrap_or_default();
+        Output::New { dir: self.render_dir(kind), stem: format!("{}-{suffix}", file_safe(&track, 40).replace(' ', "-")) }
     }
 
     // ---------------------------------------------------------------- Consolidate (⌘J)
@@ -204,7 +288,7 @@ impl Controller {
     /// Audio is rendered from the track alone (no devices, fader or pan) and replaces the clips
     /// with one unwarped clip; MIDI clips merge their notes. One undo step.
     pub fn consolidate_clip(&mut self, id: ClipId) {
-        if self.clip_render.busy {
+        if self.clip_render.busy() {
             return self.set_status("Still rendering. One moment.", 3);
         }
         let p = self.project();
@@ -225,7 +309,8 @@ impl Controller {
             }
             return;
         }
-        self.render_to_file(ClipOp::Consolidate { span: span.clone() }, &span, RenderMode::Material, "joined", "merged");
+        let out = self.new_output(&span, "joined", "merged");
+        self.start_render(ClipOp::Consolidate { span: span.clone() }, &span, RenderMode::Material, out, "Consolidating Clips");
     }
 
     // ---------------------------------------------------------------- Bounce to new track (⌘B)
@@ -234,14 +319,15 @@ impl Controller {
     /// on a new track below, which takes the track's fader and pan; the source clip is disabled
     /// (the reference app mutes the originals the same way). A MIDI clip becomes audio. One undo step.
     pub fn bounce_clip(&mut self, id: ClipId) {
-        if self.clip_render.busy {
+        if self.clip_render.busy() {
             return self.set_status("Still rendering. One moment.", 3);
         }
         if let Some(why) = self.render_block(id, true) {
             return self.set_status(format!("Bounce: {why}"), 4);
         }
         let Some(span) = render_plan::clip_span(self.project(), id) else { return };
-        self.render_to_file(ClipOp::Bounce { source: id, span: span.clone() }, &span, RenderMode::Bounce, "bounce", "bounce");
+        let out = self.new_output(&span, "bounce", "bounce");
+        self.start_render(ClipOp::Bounce { source: id, span: span.clone() }, &span, RenderMode::Bounce, out, "Bouncing to New Track");
     }
 
     // ---------------------------------------------------------------- Export audio
@@ -270,56 +356,74 @@ impl Controller {
     /// Writes clip `id`'s range, as it sounds on its track (devices, fader, pan, with the tail of
     /// a ringing track), to `path` as a stereo WAV at the export dialog's bit depth.
     pub fn export_clip(&mut self, id: ClipId, path: &Path, reveal: bool) {
-        if self.clip_render.busy {
+        if self.clip_render.busy() {
             return self.set_status("Still rendering. One moment.", 3);
         }
         let Some(span) = render_plan::clip_span(self.project(), id) else { return };
-        let file = match std::fs::File::create(path) {
-            Ok(f) => f,
-            Err(e) => return self.set_status(format!("Export failed: {}: {e}", path.display()), 6),
-        };
-        self.set_status("Rendering…", 30);
-        match self.render_span(&span, RenderMode::Stem) {
-            Ok(r) => {
-                let bits = if self.export.bits24 { 24 } else { 16 };
-                self.spawn_clip_render(ClipOp::Export { reveal }, r, path.to_path_buf(), file, bits);
-            }
-            Err(e) => {
-                let _ = std::fs::remove_file(path);
-                self.set_status(format!("Export failed: {e}"), 6);
-            }
-        }
+        let bits = if self.export.bits24 { 24 } else { 16 };
+        self.start_render(ClipOp::Export { reveal }, &span, RenderMode::Stem, Output::Export { path: path.to_path_buf(), bits }, "Exporting Audio");
     }
 
     // ---------------------------------------------------------------- landing
 
+    /// Whether the track and every clip the render came from are still as they were.
+    fn render_sources_unchanged(&self, a: &ActiveRender) -> Result<(), &'static str> {
+        let p = self.project();
+        if p.track(a.track).is_none() {
+            return Err("the track is gone");
+        }
+        for s in &a.sources {
+            let (found, same) = match s {
+                Source::Audio(c) => (p.clip(c.id).is_some(), p.clip(c.id) == Some(c)),
+                Source::Midi(c) => (p.midi_clip(c.id).is_some(), p.midi_clip(c.id) == Some(c)),
+            };
+            if !found {
+                return Err("the clip is gone");
+            }
+            if !same {
+                return Err("the clip changed");
+            }
+        }
+        Ok(())
+    }
+
     /// A worker finished: put the render in the project (one Batch) or report the failure.
     pub(crate) fn finish_clip_render(&mut self, r: ClipRendered) {
-        self.clip_render.busy = false;
-        let ClipRendered { doc_epoch, revision, op, path, result } = r;
-        let (info, pyr) = match (result, &op) {
-            (Err(e), _) => {
-                let _ = std::fs::remove_file(&path);
-                let what = if matches!(op, ClipOp::Export { .. }) { "Export" } else { "Render" };
-                return self.set_status(format!("{what} failed: {e}"), 6);
-            }
-            (Ok(None), ClipOp::Export { reveal: show }) => {
-                self.set_status(format!("Exported {}", path.display()), 5);
-                if *show {
-                    let _ = reveal(&path.to_string_lossy());
-                }
-                return;
-            }
-            (Ok(None), _) => return,
-            (Ok(Some(loaded)), _) => loaded,
+        let ClipRendered { doc_epoch, op, result } = r;
+        let Some(active) = self.clip_render.active.take() else { return };
+        self.ui_dirty = true;
+        let is_export = matches!(op, ClipOp::Export { .. });
+        let rendered = match result {
+            Ok(r) => r,
+            Err(OfflineError::Cancelled) => return self.set_status("Render cancelled", 3),
+            Err(OfflineError::Failed(e)) => return self.set_status(format!("{} failed: {e}", if is_export { "Export" } else { "Render" }), 6),
         };
-        if doc_epoch != self.doc_epoch || revision != self.doc.revision() {
-            let _ = self.engine.release_asset(info.asset_id);
-            let _ = std::fs::remove_file(&path);
-            if doc_epoch == self.doc_epoch {
-                self.set_status("Render cancelled: the project changed while it rendered", 5);
+        self.clip_render.last_ms = rendered.render_ms;
+        let Rendered { path, loaded, .. } = rendered;
+        if let (ClipOp::Export { reveal: show }, None) = (&op, &loaded) {
+            self.set_status(format!("Exported {}", path.display()), 5);
+            if *show {
+                let _ = reveal(&path.to_string_lossy());
             }
             return;
+        }
+        let Some((info, pyr)) = loaded else { return };
+        let discard = |this: &mut Self, why: &str| {
+            let _ = this.engine.release_asset(info.asset_id);
+            let _ = std::fs::remove_file(&path);
+            if !why.is_empty() {
+                this.set_status(format!("Render discarded: {why}"), 5);
+            }
+        };
+        if active.cancelled {
+            discard(self, "");
+            return self.set_status("Render cancelled", 3);
+        }
+        if doc_epoch != self.doc_epoch {
+            return discard(self, "");
+        }
+        if let Err(why) = self.render_sources_unchanged(&active) {
+            return discard(self, &format!("{why} while it rendered"));
         }
         let p = self.project();
         let mut next = p.next_id;
@@ -349,10 +453,7 @@ impl Controller {
                 ("Consolidate Clips", span.track, format!("Consolidated {n} clip{}", if n == 1 { "" } else { "s" }))
             }
             ClipOp::Bounce { source, span } => {
-                let Some((src, index)) = p.track(span.track).zip(p.track_index(span.track)) else {
-                    let _ = self.engine.release_asset(info.asset_id);
-                    return self.set_status("Bounce: the track is gone", 4);
-                };
+                let (Some(src), Some(index)) = (p.track(span.track), p.track_index(span.track)) else { return discard(self, "the track is gone while it rendered") };
                 let name = p.clip(*source).map(|c| c.name.clone()).or_else(|| p.midi_clip(*source).map(|c| c.name.clone())).unwrap_or_default();
                 let id = TrackId(alloc());
                 let mut t = Track::new(id, TrackKind::Audio, &format!("{} (Bounce)", src.name.trim()), src.color);
@@ -366,13 +467,17 @@ impl Controller {
         };
         self.peaks.insert(info.asset_id, pyr);
         self.asset_map.insert(asset_id, info.asset_id);
+        let keep_selection = (self.selected_track, self.selected_clip) == active.selection;
         if self.execute(Command::Batch { label: label.into(), commands: cmds }) {
-            self.select_track(track);
-            self.select_clip(Some(clip_id));
+            if keep_selection {
+                self.select_track(track);
+                self.select_clip(Some(clip_id));
+            }
             self.set_status(status, 3);
         } else {
             self.asset_map.remove(&asset_id);
             let _ = self.engine.release_asset(info.asset_id);
+            let _ = std::fs::remove_file(&path);
         }
     }
 }
