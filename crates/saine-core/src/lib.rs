@@ -21,6 +21,7 @@ pub mod midi;
 pub mod model;
 pub mod modulation;
 pub mod persist;
+pub mod render_plan;
 pub mod shape;
 pub mod snapshot;
 pub mod steps;

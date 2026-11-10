@@ -1192,6 +1192,18 @@ export component AppWindow inherits Window {
             TouchArea { }
             UnsavedPrompt { x: max(0px, min(438px, parent.width - self.width)); y: max(0px, min(295px, parent.height - self.height)); }
         }
+        // Clip render in progress (the reference app's export progress: 6 px bar, 6 % white track, #1253ff fill).
+        if Studio.render-busy: Rectangle {
+            x: root.width - self.width - 14px; y: root.height - 60px; height: 24px; width: 292px; border-radius: 12px; background: #2a2b30ee;
+            Text { x: 12px; width: 150px; height: parent.height; text: Studio.render-label; color: #e5e5e8; font-size: 8.75px; vertical-alignment: center; overflow: elide; }
+            Rectangle {
+                x: 168px; y: 9px; width: 64px; height: 6px; border-radius: 3px; background: #ffffff0f; clip: true;
+                Rectangle { x: 0; width: parent.width * clamp(Studio.render-progress, 0, 1); background: #1253ff; }
+            }
+            Text { x: 242px; width: 44px; height: parent.height; text: "Cancel"; color: #8fb0ff; font-size: 8.75px; vertical-alignment: center; horizontal-alignment: center;
+                TouchArea { clicked => { Studio.render-cancel(); } mouse-cursor: pointer; }
+            }
+        }
         // Status line (engine/device/import messages); empty most of the time.
         if Studio.status-text != "": Rectangle {
             x: root.width - self.width - 14px; y: root.height - 34px; height: 20px;

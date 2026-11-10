@@ -96,6 +96,11 @@ impl MenuAction {
     }
 }
 
+/// Bounce submenu: (label, shortcut text, enabled). the reference app's flyout has the same two entries;
+/// Saine builds Bounce to new track. Bounce track in place needs a track that changes kind (MIDI to
+/// audio, its instrument and devices removed), which the model cannot do yet, so it stays greyed.
+const BOUNCE: [(&str, &str, bool); 2] = [("Bounce to new track", "⌘ B", true), ("Bounce track in place", "", false)];
+
 /// Transpose submenu: (label, shortcut text, semitones).
 const TRANSPOSE: [(&str, &str, i32); 4] = [("Octave up", "+12", 12), ("Semitone up", "+1", 1), ("Semitone down", "−1", -1), ("Octave down", "−12", -12)];
 
@@ -210,15 +215,7 @@ impl Controller {
             self.set_status("The audio file is missing", 3);
             return;
         }
-        let reveal = if cfg!(target_os = "macos") {
-            std::process::Command::new("open").arg("-R").arg(&path).spawn()
-        } else if cfg!(windows) {
-            std::process::Command::new("explorer").arg(format!("/select,{path}")).spawn()
-        } else {
-            let dir = std::path::Path::new(&path).parent().map(|d| d.to_path_buf()).unwrap_or_default();
-            std::process::Command::new("xdg-open").arg(dir).spawn()
-        };
-        if let Err(e) = reveal {
+        if let Err(e) = crate::clip_render::reveal(&path) {
             self.set_status(format!("Show in Finder failed: {e}"), 3);
         }
     }
@@ -346,7 +343,7 @@ impl Controller {
             items.push(if pattern { ToMidi } else { ToPattern });
         }
         items.push(Ask);
-        // PLACEHOLDER entries (disabled): Consolidate, Bounce, Export, Ask.
+        // PLACEHOLDER entry (disabled): Ask.
         self.menu.items = items
             .iter()
             .map(|&a| {
@@ -354,6 +351,8 @@ impl Controller {
                     Cut | Copy | Duplicate | Delete | Rename | Disable | Enable => true,
                     Split => splittable,
                     ShowInFinder => !midi,
+                    Consolidate => self.can_render_clip(id, false),
+                    Bounce | Export => self.can_render_clip(id, true),
                     Transpose | Quantize | Humanize | ToPattern | ToMidi => midi,
                     _ => false,
                 };
@@ -399,8 +398,9 @@ impl Controller {
             return;
         }
         let Some(id) = self.menu.clip else { return };
-        if action == MenuAction::Transpose {
-            self.menu.sub_open = !self.menu.sub_open;
+        if matches!(action, MenuAction::Transpose | MenuAction::Bounce) {
+            self.menu.sub_open = !(self.menu.sub_open && self.menu.sub_for == Some(action));
+            self.menu.sub_for = Some(action);
             self.ui_dirty = true;
             return;
         }
@@ -414,6 +414,8 @@ impl Controller {
             MenuAction::Duplicate => self.duplicate_clip(),
             MenuAction::Delete => self.delete_selection(),
             MenuAction::Split => self.split_clip(),
+            MenuAction::Consolidate => self.consolidate_clip(id),
+            MenuAction::Export => self.export_clip_request(id),
             MenuAction::Disable | MenuAction::Enable => self.toggle_clip_disabled(),
             MenuAction::ShowInFinder => self.show_clip_in_finder(),
             MenuAction::Rename => {
@@ -459,6 +461,14 @@ impl Controller {
 
     pub fn submenu_activate(&mut self, index: usize) {
         let Some(id) = self.menu.clip else { return };
+        if self.menu.sub_for == Some(MenuAction::Bounce) {
+            if BOUNCE.get(index).is_some_and(|b| b.2) {
+                self.menu_close();
+                self.selected_clip = Some(id);
+                self.bounce_clip(id);
+            }
+            return;
+        }
         let Some(&(_, _, semis)) = TRANSPOSE.get(index) else { return };
         self.menu_close();
         self.menu_midi(id, |_, c| midi::transpose(&c.notes, semis), "Transpose Notes");
@@ -706,14 +716,20 @@ impl Controller {
         s.set_menu_open(self.menu.open);
         if self.menu.open {
             let (items, h) = layout_items(self.menu.items.iter().map(|&(a, en)| (a.label().to_string(), a.shortcut().to_string(), en, a.separated(), a.submenu())));
-            let sub_y = items.iter().zip(&self.menu.items).find(|(_, (a, _))| *a == MenuAction::Transpose).map(|(m, _)| m.y).unwrap_or(0.0);
+            let sub_for = self.menu.sub_for.unwrap_or(MenuAction::Transpose);
+            let sub_y = items.iter().zip(&self.menu.items).find(|(_, (a, _))| *a == sub_for).map(|(m, _)| m.y).unwrap_or(0.0);
             sync_model(&self.menu_model, items);
             s.set_menu_x(self.menu.pos.0);
             s.set_menu_y(self.menu.pos.1);
             s.set_menu_h(h);
             s.set_sub_open(self.menu.sub_open);
             s.set_sub_y(sub_y - MENU_PAD);
-            let (sub, sub_h) = layout_items(TRANSPOSE.iter().map(|(l, k, _)| (l.to_string(), k.to_string(), true, false, false)));
+            let rows: Vec<(String, String, bool)> = if sub_for == MenuAction::Bounce {
+                BOUNCE.iter().map(|&(l, k, on)| (l.to_string(), k.to_string(), on)).collect()
+            } else {
+                TRANSPOSE.iter().map(|(l, k, _)| (l.to_string(), k.to_string(), true)).collect()
+            };
+            let (sub, sub_h) = layout_items(rows.into_iter().map(|(l, k, on)| (l, k, on, false, false)));
             sync_model(&self.sub_model, sub);
             s.set_sub_h(sub_h);
         }

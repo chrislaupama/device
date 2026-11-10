@@ -335,6 +335,11 @@ export global Studio {
     // ---- project / status ----
     in property <string> project-name: "Untitled";
     in property <string> status-text;
+    // A clip render (Consolidate, Bounce, Export audio) runs on a worker: label with percent, bar fill 0..1, Cancel.
+    in property <bool> render-busy;
+    in property <string> render-label;
+    in property <float> render-progress;
+    callback render-cancel();
     // ---- transport (driven by engine.transport() every frame) ----
     in property <bool> playing;
     in property <string> bar-text: "001";
