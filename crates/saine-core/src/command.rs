@@ -136,6 +136,8 @@ pub enum Command {
     SetSynthParams { track: TrackId, params: SynthParams },
     /// A MIDI clip's loop (Loop switch, Position, Length, loop bar) and its length.
     SetMidiLoop { clip: ClipId, clip_loop: Option<midi::ClipLoop>, length: Ticks },
+    /// The piano roll's scale view of a MIDI clip (root, type, highlight, scale rows).
+    SetClipScale { clip: ClipId, scale: Option<crate::scale::ClipScale> },
     SetTrackArm { track: TrackId, arm: bool },
     SetTrackMonitor { track: TrackId, monitor: bool },
     SetTrackInput { track: TrackId, input: Option<InputSource> },
@@ -229,6 +231,7 @@ impl Command {
             Command::SetStepPattern { pattern: None, .. } => "Convert to MIDI Clip".into(),
             Command::SetSynthParams { .. } => "Synth Parameter Change".into(),
             Command::SetMidiLoop { .. } => "Clip Loop".into(),
+            Command::SetClipScale { .. } => "Clip Scale".into(),
             Command::SetTrackArm { arm, .. } => (if *arm { "Arm Track" } else { "Disarm Track" }).into(),
             Command::SetTrackMonitor { .. } => "Input Monitoring Change".into(),
             Command::SetTrackInput { .. } => "Input Change".into(),
@@ -640,6 +643,14 @@ impl Command {
                 c.clip_loop = clip_loop;
                 c.length = length;
                 Ok(inv)
+            }
+            Command::SetClipScale { clip, scale } => {
+                if let Some(s) = &scale {
+                    s.validate().map_err(|r| invalid("scale", r))?;
+                }
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let old = std::mem::replace(&mut p.tracks[ti].midi_clips[ci].scale, scale);
+                Ok(Command::SetClipScale { clip, scale: old })
             }
             Command::SetComposer { clip, edit, composer, mut notes, pattern } => {
                 midi::validate_notes(&notes).map_err(|r| invalid("notes", r))?;

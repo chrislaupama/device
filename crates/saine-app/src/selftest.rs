@@ -295,6 +295,46 @@ fn midi_steps() -> Vec<Step> {
             h14.set(c.doc.history_labels().len());
             (n.iter().any(|n| n.start == 0 && n.pitch == 65) && !c.pr.pen && c.pr.selected.is_empty()).then_some(()).ok_or(format!("{n:?}"))
         })),
+        DoC("Scale: click the root note in the footer, pick Eb", Box::new(|a, _| {
+            click(a, 260.0 + 720.0 + 3.0, 452.0 + (390.0 - 27.0) - 54.5 + 30.0 + 7.0);
+            a.global::<Studio>().invoke_clip_menu_pick(5);
+        })),
+        Check("the clip keeps Eb (scale type from the project key: Major), one undo step, footer reads Eb Major", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let scale = instrument_clip(c).and_then(|m| m.scale).ok_or("no clip scale")?;
+            let key = scale.key.ok_or("no key")?;
+            (key.root == 5 && key.kind == 0 && !scale.highlight && c.doc.undo_label().as_deref() == Some("Clip Scale") && s.get_pr_scale_root() == "Eb" && s.get_pr_scale_type() == "Major")
+                .then_some(())
+                .ok_or(format!("{scale:?} {:?} {} {}", c.doc.undo_label(), s.get_pr_scale_root(), s.get_pr_scale_type()))
+        })),
+        Do("click the footer Scale switch", Box::new(|a| click(a, 260.0 + 751.0 + 10.0, 452.0 + (390.0 - 27.0) - 54.5 + 13.0 + 7.0))),
+        Check("Scale highlight on, the Scale button shows above the keys, rows unchanged", Box::new(|c, a| {
+            let on = instrument_clip(c).and_then(|m| m.scale).is_some_and(|s| s.highlight && !s.fold);
+            (on && a.global::<Studio>().get_pr_scale_on() && !c.pr_view().rows.folded()).then_some(()).ok_or(format!("{:?}", instrument_clip(c).map(|m| m.scale)))
+        })),
+        Do("click Scale above the keys", Box::new(|a| click(a, 260.0 + 6.5 + 19.0, 452.0 + 27.5 + 30.0 + 8.0))),
+        Check("scale rows: only Eb Major pitches plus rows holding notes", Box::new(|c, _| {
+            let m = instrument_clip(c).ok_or("clip gone")?;
+            let v = c.pr_view();
+            let key = m.scale.and_then(|s| s.key).ok_or("no key")?;
+            let shown: Vec<i32> = (0..v.rows.len()).map(|i| v.pitch_at(crate::pianoroll::GRID_Y + i as f32 * crate::pianoroll::ROW_H - v.scroll + 1.0)).collect();
+            let ok = m.scale.is_some_and(|s| s.fold)
+                && v.rows.folded()
+                && shown.iter().all(|&p| key.contains(p) || m.notes.iter().any(|n| n.pitch as i32 == p))
+                && m.notes.iter().all(|n| shown.contains(&(n.pitch as i32)));
+            ok.then_some(()).ok_or(format!("{} rows", v.rows.len()))
+        })),
+        Do("click the footer Scale switch again", Box::new(|a| click(a, 260.0 + 751.0 + 10.0, 452.0 + (390.0 - 27.0) - 54.5 + 13.0 + 7.0))),
+        Check("Scale off restores chromatic rows and resets the Scale button", Box::new(|c, a| {
+            let s = instrument_clip(c).and_then(|m| m.scale).unwrap_or_default();
+            (!s.highlight && !s.fold && !c.pr_view().rows.folded() && !a.global::<Studio>().get_pr_scale_on()).then_some(()).ok_or(format!("{s:?}"))
+        })),
+        Do("undo the four scale edits", Box::new(|a| {
+            for _ in 0..4 {
+                key(a, "z", true, false);
+            }
+        })),
+        Check("undo cleared the clip's scale view", Box::new(|c, _| instrument_clip(c).is_some_and(|m| m.scale.is_none()).then_some(()).ok_or("scale still set".into()))),
         Do("click Double", Box::new(|a| click(a, 260.0 + 270.5 + 10.0, 466.0))),
         Check("Double: 2x notes and 2x clip length in ONE undo step", Box::new(move |c, _| {
             let (before, len) = sv2.borrow().clone();
@@ -2276,9 +2316,12 @@ fn device_steps() -> Vec<Step> {
             let d = track_devices(c, TrackKind::Instrument);
             (d.iter().map(|x| x.1.as_str()).collect::<Vec<_>>() == ["AULowpass", "AUDelay"]).then_some(()).ok_or(format!("instrument devices {d:?}"))
         })),
-        DoC("devices: ⌘, then Settings › Plugins; record scans", Box::new(move |a, ctl| {
+        // ⌘, is the app menu's Settings… shortcut, which replays the key on the next tick.
+        DoC("devices: ⌘, (Settings…); record scans", Box::new(move |a, ctl| {
             sc1.set(ctl.borrow().devices.catalog.scans);
             key(a, ",", true, false);
+        })),
+        Do("settings: click Plugins", Box::new(|a| {
             let (x, y) = settings_row(crate::settings::PLUGINS_PAGE);
             click(a, x, y);
         })),
@@ -5195,6 +5238,56 @@ fn files_steps() -> Vec<Step> {
     ]
 }
 
+/// Menu bar items without a shortcut: Check for Updates…, Export Project for Ableton Live…
+/// and Open Recent (appended last; it saves and reopens the current project).
+fn menu_bar_steps() -> Vec<Step> {
+    use Step::*;
+    let dir = std::env::temp_dir().join(format!("saine-selftest-recent-{}", std::process::id())).join("Recent Song.saineproj");
+    let (d1, d2, d3) = (dir.clone(), dir.clone(), dir);
+    vec![
+        DoC("menu: Options › Check for Updates…", Box::new(|_, ctl| ctl.borrow_mut().menu_action("options.check_updates"))),
+        Check("menu: the updates dialog is open and names the version", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_updates_open() && s.get_app_version() == env!("CARGO_PKG_VERSION")).then_some(()).ok_or(format!("open {} version {:?}", s.get_updates_open(), s.get_app_version()))
+        })),
+        Do("menu: Escape closes it", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("menu: the updates dialog is closed", Box::new(|c, a| (!c.updates_open && !a.global::<Studio>().get_updates_open()).then_some(()).ok_or("still open".into()))),
+        DoC("menu: File › Export Project for Ableton Live…", Box::new(|_, ctl| ctl.borrow_mut().menu_action("file.export_ableton"))),
+        Check("menu: the export dialog opens on Project", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_export_open() && s.get_export_recipe() == 2).then_some(()).ok_or(format!("open {} recipe {}", s.get_export_open(), s.get_export_recipe()))
+        })),
+        Do("menu: Escape closes the export dialog", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("menu: save the project, then forget its folder", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.settings.prefs.recent_projects.clear();
+            c.save_to(&d1);
+            c.project_dir = None;
+        })),
+        Check("menu: File › Open Recent lists it", Box::new(|_, a| {
+            let names: Vec<String> = a.global::<Studio>().get_recent_projects().iter().map(|s| s.to_string()).collect();
+            (names == ["Recent Song"]).then_some(()).ok_or(format!("{names:?}"))
+        })),
+        DoC("menu: open it from Open Recent", Box::new(|_, ctl| ctl.borrow_mut().open_recent(0))),
+        Check("menu: the project is open from its folder", Box::new(move |c, _| (c.project_dir.as_ref() == Some(&d2)).then_some(()).ok_or(format!("{:?}", c.project_dir)))),
+        DoC("menu: Open Recent › Clear Menu; remove the folder", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.menu_action("file.clear_recent");
+            c.project_dir = None;
+            if let Some(parent) = d3.parent() {
+                let _ = std::fs::remove_dir_all(parent);
+            }
+        })),
+        Check("menu: Open Recent is empty", Box::new(|_, a| (a.global::<Studio>().get_recent_projects().row_count() == 0).then_some(()).ok_or("not empty".into()))),
+        DoC("menu: open a recent project whose folder is gone", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.settings.prefs.recent_projects = vec![std::env::temp_dir().join("saine-selftest-missing.saineproj").to_string_lossy().into_owned()];
+            c.open_recent(0);
+        })),
+        Check("menu: it leaves Open Recent", Box::new(|c, _| c.settings.prefs.recent_projects.is_empty().then_some(()).ok_or(format!("{:?}", c.settings.prefs.recent_projects)))),
+    ]
+}
+
 /// Section lane under the loop strip (appended last; clears its sections at the end).
 fn section_steps() -> Vec<Step> {
     use Step::*;
@@ -6380,6 +6473,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(clip_render_steps());
     all.extend(ruler_zoom_steps());
     all.extend(snap_steps());
+    all.extend(menu_bar_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));

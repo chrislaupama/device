@@ -312,6 +312,8 @@ pub struct Controller {
     pub export: crate::dialogs::ExportUi,
     pub clip_render: crate::clip_render::ClipRender,
     pub unsaved_open: bool,
+    /// Options › Check for Updates… dialog.
+    pub updates_open: bool,
     pub(crate) jobs_tx: Sender<JobResult>,
     jobs_rx: Receiver<JobResult>,
     pub pending_jobs: usize,
@@ -445,6 +447,7 @@ impl Controller {
             export: Default::default(),
             clip_render: Default::default(),
             unsaved_open: false,
+            updates_open: false,
             jobs_tx,
             jobs_rx,
             pending_jobs: 0,
@@ -613,11 +616,25 @@ impl Controller {
     /// App menu bar items without a shortcut (`Studio.menu-action`). Settings and the
     /// dialogs are modal, so the menu does nothing while one is open.
     pub fn menu_action(&mut self, id: &str) {
-        if self.settings.open || self.export.open || self.unsaved_open {
+        if self.modal_open() {
             return;
         }
         match id {
             "options.audio_midi" => self.open_settings(),
+            "options.check_updates" => {
+                self.updates_open = true;
+                self.ui_dirty = true;
+            }
+            "file.export_ableton" => {
+                self.export_open();
+                self.export_pick_recipe(2);
+            }
+            "file.clear_recent" => {
+                self.settings.prefs.recent_projects.clear();
+                self.settings.prefs.recent_resolved.clear();
+                self.save_prefs();
+                self.ui_dirty = true;
+            }
             "options.check_plugins" => self.start_plugin_scan(false),
             "options.rescan_plugins" => self.start_plugin_scan(true),
             "file.show_in_finder" => {
@@ -628,6 +645,38 @@ impl Controller {
             }
             other => self.set_status(format!("{other}: not implemented yet"), 3),
         }
+    }
+
+    pub fn modal_open(&self) -> bool {
+        self.settings.open || self.export.open || self.unsaved_open || self.updates_open
+    }
+
+    /// File › Open Recent item `i` (newest first). A project that no longer opens leaves the list.
+    pub fn open_recent(&mut self, i: usize) {
+        if self.modal_open() {
+            return;
+        }
+        let Some(path) = self.settings.prefs.recent_projects.get(i).map(PathBuf::from) else { return };
+        if !self.open(&path) {
+            self.settings.prefs.recent_projects.remove(i);
+            if i < self.settings.prefs.recent_resolved.len() {
+                self.settings.prefs.recent_resolved.remove(i);
+            }
+            self.save_prefs();
+        }
+    }
+
+    fn remember_recent(&mut self, dir: &Path) {
+        let path = dir.to_string_lossy().into_owned();
+        let resolved = std::fs::canonicalize(dir).map_or_else(|_| path.clone(), |p| p.to_string_lossy().into_owned());
+        let prefs = &mut self.settings.prefs;
+        prefs.recent_resolved.resize(prefs.recent_projects.len(), String::new());
+        let mut entries: Vec<(String, String)> =
+            prefs.recent_projects.drain(..).zip(prefs.recent_resolved.drain(..)).filter(|(p, r)| *p != path && *r != resolved).collect();
+        entries.insert(0, (path, resolved));
+        entries.truncate(10);
+        (prefs.recent_projects, prefs.recent_resolved) = entries.into_iter().unzip();
+        self.save_prefs();
     }
 
     // ---------------------------------------------------------------- core glue
@@ -1086,6 +1135,7 @@ impl Controller {
             Ok(()) => {
                 self.doc.mark_saved();
                 self.project_dir = Some(dir.to_path_buf());
+                self.remember_recent(dir);
                 self.set_status(format!("Saved {}", dir.display()), 3);
                 self.files_refresh();
             }
@@ -1093,12 +1143,13 @@ impl Controller {
         }
     }
 
-    pub fn open(&mut self, dir: &Path) {
+    /// Open the project in `dir`; false (with a status message) when it can't be read.
+    pub fn open(&mut self, dir: &Path) -> bool {
         let loaded = match persist::load(dir) {
             Ok(l) => l,
             Err(e) => {
                 self.set_status(format!("Open failed: {e}"), 6);
-                return;
+                return false;
             }
         };
         self.stop_return();
@@ -1113,6 +1164,7 @@ impl Controller {
         self.doc = Document::new(loaded.project);
         self.devices.modu.bases_pending = true;
         self.project_dir = Some(dir.to_path_buf());
+        self.remember_recent(dir);
         self.selected_track = self.project().tracks.first().map(|t| t.id);
         self.selected_clip = None;
         self.view = View::default();
@@ -1130,6 +1182,7 @@ impl Controller {
         } else if self.pending_jobs > 0 {
             self.set_status("Loading media…", 30);
         }
+        true
     }
 
     /// Load a project asset into the engine on a worker thread (finishes in `poll_jobs`).
