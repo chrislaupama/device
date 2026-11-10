@@ -456,6 +456,11 @@ export global Studio {
     // ---- panels (owned by the controller) ----
     in property <bool> mixer-open;
     in property <bool> assistant-open;
+    // Saved docked-assistant width (or the live drag); AppWindow narrows it to the room the
+    // timeline header leaves (src/splitters.rs mirrors the rule).
+    in property <length> assistant-pref-w: 252.45px;
+    callback chat-resize(int, length);                       // phase 0/1/2, window x
+    callback chat-resize-reset();
     callback toggle-mixer();
     callback toggle-assistant();
     // ---- mixer ----

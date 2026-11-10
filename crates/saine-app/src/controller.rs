@@ -296,6 +296,8 @@ pub struct Controller {
     pub(crate) track_resize: Option<crate::splitters::TrackResize>,
     /// Timeline / bottom-panel splitter drag (src/splitters.rs).
     pub(crate) bottom_drag: Option<crate::splitters::BottomDrag>,
+    /// Docked-assistant width drag (src/splitters.rs).
+    pub(crate) chat_drag: Option<crate::splitters::ChatDrag>,
     status: Option<(String, Instant, Duration)>,
     pub project_dir: Option<PathBuf>,
     /// Export dialog and the unsaved-changes prompt (src/dialogs.rs).
@@ -414,6 +416,7 @@ impl Controller {
             drag: None,
             track_resize: None,
             bottom_drag: None,
+            chat_drag: None,
             status: None,
             project_dir: None,
             export: Default::default(),
@@ -1629,6 +1632,10 @@ impl Controller {
         s.set_master_fader(fader_from_db(gain_to_db(p.master_gain)));
         // ---- assistant ----
         s.set_assistant_open(self.assistant_open);
+        s.set_assistant_pref_w(match self.chat_drag {
+            Some(d) => d.w,
+            None => self.chat_saved_w(),
+        });
         s.set_chat_available(self.provider.available());
         s.set_chat_busy(self.assistant.busy.is_some());
         s.set_chat_notice(self.assistant.notice_visible);
