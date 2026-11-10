@@ -897,6 +897,41 @@ fn steps() -> Vec<Step> {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
             clip.warp.is_default().then_some(()).ok_or(format!("warp {:?}", clip.warp))
         })),
+        DoC("transpose: drag the Transpose value 50 pt right", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.ac_transpose_drag(0, 0.0, 0.0);
+            c.ac_transpose_drag(1, 20.0, 0.0);
+            c.ac_transpose_drag(1, 50.0, 0.0);
+            c.ac_transpose_drag(2, 50.0, 0.0);
+        })),
+        Check("transpose +12 with warp off: an octave up, half as long, one undo step", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let plain = saine_core::Clip { warp: saine_core::ClipWarp::default(), ..clip.clone() };
+            let (len, full) = (c.project().clip_length_ticks(clip), c.project().clip_length_ticks(&plain));
+            (clip.warp.transpose == 12 && s.get_ac_transpose_text() == "+12 st" && s.get_ac_transpose_enabled() && len * 2 == full && c.doc.undo_label() == Some("Adjust clip transpose"))
+                .then_some(())
+                .ok_or(format!("transpose {} text {} len {len} of {full} undo {:?}", clip.warp.transpose, s.get_ac_transpose_text(), c.doc.undo_label()))
+        })),
+        DoC("transpose: Re-pitch disables it", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let Some(clip) = c.ac_clip().cloned() else { return };
+            let warp = saine_core::ClipWarp { enabled: true, mode: saine_core::WarpMode::Repitch, original_bpm: 60.0, ..clip.warp.clone() };
+            c.execute(saine_core::Command::SetClipWarp { clip: clip.id, warp, label: "Set clip mode".into() });
+        })),
+        Check("Re-pitch: Transpose greyed, shows the tempo ratio (+12 st at 120 over 60 BPM)", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (!s.get_ac_transpose_enabled() && s.get_ac_transpose_text() == "+12 st").then_some(()).ok_or(format!("enabled {} text {}", s.get_ac_transpose_enabled(), s.get_ac_transpose_text()))
+        })),
+        DoC("transpose: undo twice", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.undo();
+            c.undo();
+        })),
+        Check("transpose undone", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            (clip.warp.is_default() && a.global::<Studio>().get_ac_transpose_text() == "0 st").then_some(()).ok_or(format!("warp {:?}", clip.warp))
+        })),
         DoC("back to the Devices tab", Box::new(|_, ctl| ctl.borrow_mut().set_bottom_tab(BottomTab::Devices))),
         Do("select clip 1 and press Delete", Box::new(move |a| {
             click(a, bx(11.0), TRACK0_Y + 40.0);

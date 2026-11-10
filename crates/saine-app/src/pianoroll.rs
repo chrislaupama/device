@@ -484,7 +484,8 @@ impl Controller {
     }
 
     pub fn pr_view(&self) -> PrView {
-        if let Some(view) = self.pr.ac_drag.as_ref().map(|d| d.view) {
+        // Gestures keep the view, except Transpose: an unwarped clip's length follows it.
+        if let Some(view) = self.pr.ac_drag.as_ref().filter(|d| !matches!(d.kind, crate::warpedit::AcDragKind::Transpose { .. })).map(|d| d.view) {
             return view;
         }
         if let Some(c) = self.ac_clip() {

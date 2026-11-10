@@ -31,6 +31,8 @@ pub struct WarpSnapshot {
     pub points: Vec<(i64, f64)>,
     /// Slices (source frame, percussive) for Drums and Auto, sorted.
     pub slices: Vec<(f64, bool)>,
+    /// Semitones for the stretch modes.
+    pub transpose: f32,
 }
 
 /// A note as absolute engine frames: [start, end) with the clip boundary
@@ -132,18 +134,23 @@ pub fn build_with_transients(
                         return None;
                     };
                     let ratio = engine_rate / asset.sample_rate;
+                    let varispeed = !c.warp.enabled && c.warp.transpose != 0;
                     Some(ClipSnapshot {
                         clip_id: c.id.0,
                         engine_asset: ea,
                         timeline_start: project.ticks_to_frames(c.start, engine_rate),
                         source_offset: (c.source_offset as f64 * ratio).round() as i64,
-                        length: if c.warp.enabled {
+                        length: if c.warp.enabled || varispeed {
                             project.ticks_to_frames(c.start + project.clip_length_ticks(c), engine_rate) - project.ticks_to_frames(c.start, engine_rate)
                         } else {
                             (c.source_length as f64 * ratio).round() as i64
                         },
                         gain: c.gain,
-                        warp: c.warp.enabled.then(|| warp_snapshot(project, c, asset.sample_rate, engine_rate, transients.get(&c.asset).map_or(&[][..], |v| v))),
+                        warp: if varispeed {
+                            Some(varispeed_snapshot(project, c, ratio, engine_rate))
+                        } else {
+                            c.warp.enabled.then(|| warp_snapshot(project, c, asset.sample_rate, engine_rate, transients.get(&c.asset).map_or(&[][..], |v| v)))
+                        },
                     })
                 })
                 .collect(),
@@ -208,5 +215,15 @@ fn warp_snapshot(project: &Project, c: &Clip, asset_rate: f64, engine_rate: f64,
             slices.clear();
         }
     }
-    WarpSnapshot { mode: engine_mode(mode), points: project.warp_map(c, engine_rate), slices }
+    WarpSnapshot { mode: engine_mode(mode), points: project.warp_map(c, engine_rate), slices, transpose: c.warp.stretch_transpose() }
+}
+
+/// An unwarped, transposed clip: Re-pitch along a straight map from its start
+/// to its end, so the source plays 2^(st/12) times as fast.
+fn varispeed_snapshot(project: &Project, c: &Clip, ratio: f64, engine_rate: f64) -> WarpSnapshot {
+    let start = project.ticks_to_frames(c.start, engine_rate);
+    let end = project.ticks_to_frames(c.start + project.clip_length_ticks(c), engine_rate).max(start + 1);
+    let source = c.source_offset as f64 * ratio;
+    let points = vec![(start, source), (end, source + c.source_length as f64 * ratio)];
+    WarpSnapshot { mode: engine_mode(WarpMode::Repitch), points, slices: Vec::new(), transpose: 0.0 }
 }

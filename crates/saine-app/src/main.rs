@@ -1127,6 +1127,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_clip_menu_open, |c, m: i32| c.clip_menu_open(m));
     on!(on_clip_menu_pick, |c, i: i32| c.clip_menu_pick(i));
     on!(on_ac_bpm_drag, |c, phase: i32, dx: f32, dy: f32| c.ac_bpm_drag(phase, dx, dy));
+    on!(on_ac_transpose_drag, |c, phase: i32, dx: f32, dy: f32| c.ac_transpose_drag(phase, dx, dy));
     on!(on_pr_value, |c, f: i32, phase: i32, dy: f32| c.pr_value(f, phase, dy));
     on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
