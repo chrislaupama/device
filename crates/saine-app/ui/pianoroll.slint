@@ -142,8 +142,10 @@ component AcField inherits Rectangle {
     in property <bool> enabled: true;
     in property <int> menu: -1;   // Studio.clip-menu index this field opens
     height: 14px;
+    // Content width, so the menu TouchArea covers this field only.
+    width: max(v.x + v.preferred-width, root.chevron-x + 8px);
     Text { x: 0; text: root.label; color: root.enabled ? #a6a8ac : #3c3d43; font-size: 9.75px; font-weight: 500; vertical-alignment: center; }
-    Text { x: root.value-x; text: root.value; color: root.enabled ? Studio.clip-color : #3c3d43; font-size: 9.75px; font-weight: 600; vertical-alignment: center; }
+    v := Text { x: root.value-x; text: root.value; color: root.enabled ? Studio.clip-color : #3c3d43; font-size: 9.75px; font-weight: 600; vertical-alignment: center; }
     if root.chevron-x >= 0: Icon {
         x: root.chevron-x; y: 3px; width: 8px; height: 8px; d: Icons.chevron-down;
         ink: root.enabled ? Studio.clip-color : #3c3d43; stroke-width: 1.4px;

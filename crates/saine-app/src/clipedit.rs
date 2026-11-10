@@ -342,8 +342,8 @@ impl Controller {
 
     /// The editor that owns the dropdown is on screen: the audio clip editor for Speed / Warp /
     /// Mode, the piano roll for Grid, Type and Genre.
-    fn clip_menu_shown(&self, menu: i32) -> bool {
-        if menu <= 2 { self.ac_clip().is_some() } else { self.pr_visible() }
+    pub(crate) fn clip_menu_shown(&self, menu: i32) -> bool {
+        self.bottom_tab == BottomTab::Clip && if menu <= 2 { self.ac_clip().is_some() } else { self.pr_visible() }
     }
 
     fn clip_menu_active(&self, menu: i32) -> i32 {

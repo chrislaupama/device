@@ -777,8 +777,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.auto_picker_pick(1);
         }
     }
+    // The dropdown opens once its editor is on screen (the audio clip state imports first).
+    let clip_menu_timer = slint::Timer::default();
     if let Some(m) = args.clip_menu {
-        ctl.borrow_mut().clip_menu_open(m);
+        let ctl = ctl.clone();
+        // Opens after its editor has been on screen for 10 ticks, so the editor is drawn first.
+        let shown_ticks = std::cell::Cell::new(0u32);
+        clip_menu_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
+            let Ok(mut c) = ctl.try_borrow_mut() else { return };
+            if shown_ticks.get() > 10 || !c.clip_menu_shown(m) {
+                shown_ticks.set(if c.clip_menu_shown(m) { shown_ticks.get() } else { 0 });
+                return;
+            }
+            shown_ticks.set(shown_ticks.get() + 1);
+            if shown_ticks.get() == 10 {
+                c.clip_menu_open(m);
+            }
+        });
     }
     if args.settings_state {
         ctl.borrow_mut().open_settings();
