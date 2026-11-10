@@ -4219,10 +4219,10 @@ fn splitter_steps() -> Vec<Step> {
 }
 
 /// Window centre of Browser › Files row `i` (rows as pushed to the UI).
-fn files_row_xy(a: &AppWindow, i: usize) -> (f32, f32) {
+fn files_row_xy(a: &AppWindow, i: usize) -> Option<(f32, f32)> {
     let s = a.global::<Studio>();
-    let r = s.get_files().row_data(i).expect("files row");
-    (120.0, 78.2 + s.get_files_list_y() + 0.5 + r.y - s.get_files_scroll() + r.h / 2.0)
+    let r = s.get_files().row_data(i)?;
+    Some((120.0, 78.2 + s.get_files_list_y() + 0.5 + r.y - s.get_files_scroll() + r.h / 2.0))
 }
 
 fn files_labels(a: &AppWindow) -> Vec<String> {
@@ -4273,7 +4273,7 @@ fn files_steps() -> Vec<Step> {
             (files_labels(a) == ["kit"] && s.get_files_meta() == "1 folder" && s.get_files_sort() == "Recent").then_some(()).ok_or(format!("{:?} {:?}", files_labels(a), s.get_files_meta()))
         })),
         DoC("files: click the folder row", Box::new(|a, _| {
-            let (x, y) = files_row_xy(a, 0);
+            let Some((x, y)) = files_row_xy(a, 0) else { return };
             click(a, x, y);
         })),
         Check("files: the folder opens to its subfolder and WAV", Box::new(|_, a| {
@@ -4314,7 +4314,7 @@ fn files_steps() -> Vec<Step> {
             ctl.borrow_mut().browser_search("");
             ctl.borrow_mut().update_ui(a);
             let Some(i) = files_row_of(a, "kick.wav") else { return };
-            let (x, y) = files_row_xy(a, i);
+            let Some((x, y)) = files_row_xy(a, i) else { return };
             double_click(a, x, y);
         })),
         Check("files: the WAV lands on a new audio track", Box::new(move |c, _| {
@@ -4334,7 +4334,7 @@ fn files_steps() -> Vec<Step> {
             (files_labels(a) == ["Song"] && a.global::<Studio>().get_files_meta() == "1 project").then_some(()).ok_or(format!("{:?}", files_labels(a)))
         })),
         DoC("files: open the project with its chevron", Box::new(|a, _| {
-            let (_, y) = files_row_xy(a, 0);
+            let Some((_, y)) = files_row_xy(a, 0) else { return };
             click(a, 5.0 + 10.2 + 4.0, y);
         })),
         Check("files: the project lists its tracks and MIDI clips", Box::new(|_, a| {
@@ -4344,7 +4344,7 @@ fn files_steps() -> Vec<Step> {
         DoC("files: double-click the project's Instrument track", Box::new(move |a, ctl| {
             t3.set(ctl.borrow().project().tracks.len());
             let Some(i) = files_row_of(a, "Instrument") else { return };
-            let (x, y) = files_row_xy(a, i);
+            let Some((x, y)) = files_row_xy(a, i) else { return };
             double_click(a, x, y);
         })),
         Check("files: the track is added as a new track (one undo step)", Box::new(move |c, _| {
