@@ -5202,7 +5202,7 @@ fn menu_bar_steps() -> Vec<Step> {
             let rows: Vec<_> = s.get_undo_history_rows().iter().collect();
             let n = c.doc.history_steps().len();
             let last = rows.last();
-            (s.get_undo_history_open() && rows.len() == n + 1 && rows[0].label == "Open Project" && last.is_some_and(|r| r.state == 1 && r.label == "Solo Change" && r.time.contains(':')))
+            (s.get_undo_history_open() && rows.len() == n + 1 && rows[0].label == "Open Project" && last.is_some_and(|r| r.state == 1 && r.label == "Solo change" && r.time.contains(':')))
                 .then_some(())
                 .ok_or(format!("open {} rows {} steps {n}", s.get_undo_history_open(), rows.len()))
         })),

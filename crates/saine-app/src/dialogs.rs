@@ -562,8 +562,9 @@ impl Controller {
         (written, restarted)
     }
 
-    /// Edit › Undo History rows: "Open Project" (the state before any edit), then every edit,
-    /// undone ones last. State 0 applied, 1 current, 2 undone.
+    /// Edit › Undo History rows: "Open Project" (the state before any edit), then every edit in
+    /// sentence case like the Undo and Redo items, undone ones last. State 0 applied, 1
+    /// current, 2 undone.
     fn undo_history_rows(&self) -> Vec<crate::UndoHistoryRow> {
         let depth = self.doc.undo_depth();
         let state = |i: usize| if i < depth { 0 } else if i == depth { 1 } else { 2 };
@@ -572,7 +573,7 @@ impl Controller {
             let made = chrono::DateTime::<chrono::Local>::from(made);
             crate::UndoHistoryRow {
                 number: i as i32 + 2,
-                label: label.into(),
+                label: saine_core::history::sentence_case(label).into(),
                 date: made.format("%b %-d, %Y").to_string().into(),
                 time: made.format("%-I:%M:%S %p").to_string().into(),
                 state: state(i + 1),
