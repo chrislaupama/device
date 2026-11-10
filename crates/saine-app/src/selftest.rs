@@ -6873,6 +6873,10 @@ fn live_import_steps() -> Vec<Step> {
             let at = xml.find("<MidiTrack").unwrap();
             let at = at + xml[at..].find("<Devices />").unwrap();
             let xml = format!("{}{rack}{}", &xml[..at], &xml[at + "<Devices />".len()..]);
+            let fx = r#"<Devices><PluginDevice Id="0"><PluginDesc><Vst3PluginInfo Id="0"><Name Value="Missing FX" /><Uid><Fields.0 Value="1" /><Fields.1 Value="2" /><Fields.2 Value="3" /><Fields.3 Value="4" /></Uid><DeviceType Value="2" /></Vst3PluginInfo></PluginDesc></PluginDevice></Devices>"#;
+            let at = xml.find("<AudioTrack").unwrap();
+            let at = at + xml[at..].find("<Devices />").unwrap();
+            let xml = format!("{}{fx}{}", &xml[..at], &xml[at + "<Devices />".len()..]);
             let als = d.join("Imported Set.als");
             std::fs::write(&als, crate::live_set::gzip(&xml).unwrap()).unwrap();
             ctl.borrow_mut().import_live_set_request(als);
@@ -6881,13 +6885,15 @@ fn live_import_steps() -> Vec<Step> {
             (c.unsaved_open && c.pending_import.is_some() && a.global::<Studio>().get_unsaved_open()).then_some(()).ok_or(format!("prompt {} pending {}", c.unsaved_open, c.pending_import.is_some()))
         })),
         Do("live import: Don't Save", Box::new(|a| a.global::<Studio>().invoke_unsaved_dont_save())),
-        Check("live import: the set replaced the project (tempo, tracks, warped clip with its markers and sample loaded, MIDI notes, Drum Rack pad with its sample loaded)", Box::new(move |c, _| {
+        Check("live import: the set replaced the project (tempo, tracks, warped clip with its markers and sample loaded, MIDI notes, Drum Rack pad with its sample loaded, a plugin that isn't installed as a placeholder)", Box::new(move |c, _| {
             let p = c.project();
             let names: Vec<&str> = p.tracks.iter().map(|t| t.name.as_str()).collect();
             let clip = p.tracks.first().and_then(|t| t.clips.first()).ok_or(format!("tracks {names:?}"))?;
             let markers: Vec<(u64, f64)> = clip.warp.markers.iter().map(|m| (m.source, m.beat)).collect();
             let notes = p.tracks.get(1).map_or(0, |t| t.midi_clips.iter().map(|m| m.notes.len()).sum::<usize>());
             let pad = p.tracks.get(1).and_then(|t| t.instrument_plugin.as_ref()).filter(|d| d.plugin.id == "drum-rack").and_then(|d| d.samples.first()).map(|s| (s.slot, s.name.clone(), c.asset_map.contains_key(&s.asset)));
+            let errors = c.engine.plugin_load_errors();
+            let fx: Vec<(&str, bool)> = p.tracks.first().map_or(Vec::new(), |t| t.devices.iter().map(|d| (d.plugin.name.as_str(), errors.iter().any(|e| e.0 == d.id))).collect());
             let ok = p.name == "Imported Set"
                 && p.transport.bpm == 100.0
                 && names == ["Loop", "Keys"]
@@ -6898,10 +6904,11 @@ fn live_import_steps() -> Vec<Step> {
                 && c.asset_map.contains_key(&clip.asset)
                 && notes == 1
                 && pad == Some((0, "kick".into(), true))
+                && fx == [("Missing FX", true)]
                 && !c.unsaved_open
                 && c.project_dir.is_none();
             let _ = std::fs::remove_dir_all(dir());
-            ok.then_some(()).ok_or(format!("{} {} {names:?} {markers:?} start {} loaded {} notes {notes} pad {pad:?}", p.name, p.transport.bpm, clip.start, c.asset_map.contains_key(&clip.asset)))
+            ok.then_some(()).ok_or(format!("{} {} {names:?} {markers:?} start {} loaded {} notes {notes} pad {pad:?} fx {fx:?}", p.name, p.transport.bpm, clip.start, c.asset_map.contains_key(&clip.asset)))
         })),
     ]
 }
