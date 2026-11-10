@@ -37,6 +37,8 @@ export { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, Section
 
 // ------------------------------------------------------------------ header
 component Header inherits Rectangle {
+    // Left edge of the 1440-unit transport block (it stays centred in the window).
+    out property <length> transport-x: (root.width - 1440px) / 2;
     // Root-relative coordinates (header panel sits at 5,5).
     Panel { x: 5px; y: 5px; width: root.width - 10px; height: 68px; }
 
@@ -70,7 +72,7 @@ component Header inherits Rectangle {
     // window; the reference keeps the block centred, so it shifts by half the width change
     // (AX at 85 % and 100 % zoom: pill centre = window centre + 16.5 units in both).
     Rectangle {
-        x: (root.width - 1440px) / 2; y: 0; width: 1440px; height: root.height;
+        x: root.transport-x; y: 0; width: 1440px; height: root.height;
         // Transport buttons
         IconButton { x: 368px; y: 38px; width: 28px; height: 28px; icon: Icons.rewind; filled: true; icon-size: 21.5px; ink: #63656c; tooltip: "Rewind to start (Enter)"; clicked => { Studio.stop-return(); } }
         IconButton { x: 396px; y: 38px; width: 28px; height: 28px; icon: Studio.playing ? Icons.pause : Icons.play; filled: true; icon-size: 21.5px;
@@ -496,6 +498,9 @@ component Timeline inherits Panel {
     callback focus-main();
     out property <length> lanes-width: lanes.width;
     out property <length> lanes-height: lanes.height;
+    out property <length> lanes-x: lanes.x;
+    out property <length> lanes-y: lanes.y;
+    out property <length> tracks-y: track-area.y;
 
     // ---- header row (y 0..27) ----
     // The reference app hides the zoom sliders once the header can no longer give the minimap its 140 px minimum
@@ -871,6 +876,18 @@ component AutoPicker inherits Rectangle {
 }
 
 // ------------------------------------------------------------------ window
+// Window positions of the main panels (AppWindow.anchors).
+export struct LayoutAnchors {
+    transport-x: length,
+    timeline-x: length, timeline-y: length, timeline-w: length,
+    lanes-x: length, lanes-y: length,
+    tracks-x: length, tracks-y: length,
+    browser-x: length, browser-y: length,
+    chat-x: length, chat-y: length, chat-w: length, chat-h: length,
+    bottom-x: length, bottom-y: length, bottom-w: length,
+    settings-x: length, settings-y: length, settings-w: length,
+}
+
 export component AppWindow inherits Window {
     title: Studio.project-name + " — Saine Studio";
     preferred-width: 1440px;
@@ -954,6 +971,23 @@ export component AppWindow inherits Window {
     property <length> chat-w: max(252.45px, min(Studio.assistant-pref-w, self.chat-room));
     out property <bool> header-zoom-hidden: Studio.assistant-open ? self.chat-room < 252.45px : self.chat-room + 5px < 0px;
     property <length> right-w: Studio.assistant-open ? self.chat-w + 5px : 0px;
+    property <length> top-y: 78.2px;
+    property <length> chat-x: root.width - 5px - root.chat-w;
+    property <length> bottom-y: root.height - 5px - root.bottom-h;
+    property <length> settings-x: max(0px, min(216.75px, root.width - 816px));
+    property <length> settings-y: 5.5px;
+    property <length> settings-w: min(816px, root.width);
+    // Where the panels are, in window units: the self-test aims its clicks from these.
+    out property <LayoutAnchors> anchors: {
+        transport-x: header.transport-x,
+        timeline-x: timeline.x, timeline-y: timeline.y, timeline-w: timeline.width,
+        lanes-x: timeline.x + timeline.lanes-x, lanes-y: timeline.y + timeline.lanes-y,
+        tracks-x: timeline.x, tracks-y: timeline.y + timeline.tracks-y,
+        browser-x: 5px, browser-y: root.top-y,
+        chat-x: root.chat-x, chat-y: root.top-y, chat-w: root.chat-w, chat-h: root.top-h,
+        bottom-x: 5px, bottom-y: root.bottom-y, bottom-w: root.width - 10px,
+        settings-x: root.settings-x, settings-y: root.settings-y, settings-w: root.settings-w,
+    };
 
     property <int> cards-epoch: Studio.cards-epoch;
     changed cards-epoch => { fs.focus(); }
@@ -976,17 +1010,17 @@ export component AppWindow inherits Window {
             if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) { return accept; }
             reject
         }
-        Header { x: 0; y: 0; width: root.width; height: 73px; }
-        if Studio.sounds-visible: Browser { x: 5px; y: 78.2px; width: 252.45px; height: root.top-h; }
+        header := Header { x: 0; y: 0; width: root.width; height: 73px; }
+        if Studio.sounds-visible: Browser { x: 5px; y: root.top-y; width: 252.45px; height: root.top-h; }
         timeline := Timeline {
             focus-main => { fs.focus(); }
             zoom-hidden: root.header-zoom-hidden;
-            x: Studio.sounds-visible ? 262.65px : 5px; y: 78.2px;
+            x: root.timeline-x; y: root.top-y;
             width: root.width - self.x - 5px - root.right-w; height: root.top-h;
         }
         // Assistant panel: right-docked beside the timeline (nothing overlaps).
         if Studio.assistant-open: AssistantPanel {
-            x: root.width - 5px - root.chat-w; y: 78.2px; width: root.chat-w; height: root.top-h;
+            x: root.chat-x; y: root.top-y; width: root.chat-w; height: root.top-h;
             focus-main => { fs.focus(); }
         }
         // Width splitter between timeline and assistant: 13 px hit strip over the 6 px gap
@@ -1002,8 +1036,8 @@ export component AppWindow inherits Window {
             double-clicked => { Studio.chat-resize-reset(); }
         }
         // Bottom panel: inspector + devices, or the mixer (taller; the row above shrinks).
-        if !Studio.mixer-open: BottomPanel { x: 5px; y: root.height - 5px - root.bottom-h; width: root.width - 10px; height: root.bottom-h; }
-        if Studio.mixer-open: MixerPanel { x: 5px; y: root.height - 5px - root.bottom-h; width: root.width - 10px; height: root.bottom-h; }
+        if !Studio.mixer-open: BottomPanel { x: 5px; y: root.bottom-y; width: root.width - 10px; height: root.bottom-h; }
+        if Studio.mixer-open: MixerPanel { x: 5px; y: root.bottom-y; width: root.width - 10px; height: root.bottom-h; }
         // Timeline / bottom-panel splitter: an invisible 14 px strip across the gap, 8 px of it
         // above the panel's top edge (the reference's resize handle).
         TouchArea {
@@ -1208,7 +1242,7 @@ export component AppWindow inherits Window {
         if Studio.settings-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { clicked => { Studio.close-settings(); fs.focus(); } }
-            SettingsPanel { x: max(0px, min(216.75px, root.width - 816px)); y: 5.5px; width: min(816px, root.width); height: root.height - 5.5px + 12px; }
+            SettingsPanel { x: root.settings-x; y: root.settings-y; width: root.settings-w; height: root.height - 5.5px + 12px; }
         }
         // Export dialog (centred) and the unsaved-changes prompt (over the timeline, as in the
         // reference); both are modal: clicks outside them are swallowed.

@@ -1,7 +1,8 @@
 //! `--self-test`: drives the real UI input path with synthetic Slint window
 //! events (pointer + keyboard → TouchArea/FocusScope → callbacks → Commands)
 //! and checks the resulting `Document` / engine state. Does not touch the
-//! system cursor or keyboard. Coordinates are window points at 1440x820.
+//! system cursor or keyboard. Click targets are offsets from the live panel positions
+//! (AppWindow.anchors) or from positions the controller reports, in window units.
 
 use crate::controller::{BottomTab, Controller};
 use crate::{AppWindow, Studio};
@@ -84,24 +85,82 @@ fn approx(a: f32, b: f32, tol: f32) -> bool {
     (a - b).abs() <= tol
 }
 
-// Window geometry (reference layout): lanes origin and track rows.
-const LANE_X: f32 = 453.65;
-const TRACK0_Y: f32 = 144.5;
+thread_local! {
+    /// The window under test, for the layout getters below.
+    static APP: RefCell<Option<slint::Weak<AppWindow>>> = const { RefCell::new(None) };
+}
+
+/// Where the panels are right now (AppWindow.anchors, window units). Every click target is an
+/// offset from one of these or from a position the controller reports, never a fixed window
+/// point, so a layout change in one panel does not move the targets in another.
+fn geo() -> crate::LayoutAnchors {
+    APP.with(|a| a.borrow().as_ref().and_then(|w| w.upgrade()).map(|a| a.get_anchors())).expect("self-test window")
+}
+/// Window size in window units.
+fn win() -> (f32, f32) {
+    APP.with(|a| {
+        let a = a.borrow().as_ref().and_then(|w| w.upgrade()).expect("self-test window");
+        let s = a.window().size().to_logical(a.window().scale_factor());
+        (s.width, s.height)
+    })
+}
+/// Lanes origin (ruler top-left) and the top of track 0's row.
+fn lane_x() -> f32 {
+    geo().lanes_x
+}
+fn lane_y0() -> f32 {
+    geo().lanes_y
+}
+fn track0_y() -> f32 {
+    geo().tracks_y
+}
+/// Top of the bottom panel (Devices or Clip tab, or the mixer).
+fn bottom_y() -> f32 {
+    geo().bottom_y
+}
+fn bottom_x() -> f32 {
+    geo().bottom_x
+}
+/// Left edge of the track header column.
+fn tracks_x() -> f32 {
+    geo().tracks_x
+}
+/// Left edge of the 1440-unit transport block in the header.
+fn transport_x() -> f32 {
+    geo().transport_x
+}
+/// Bottom edge of the bottom panel.
+fn bottom_end() -> f32 {
+    win().1 - 5.0
+}
+/// A point over the lanes, and one over the track headers, for wheel events.
+fn lanes_point() -> LogicalPosition {
+    LogicalPosition::new(lane_x() + 446.35, track0_y() + 155.5)
+}
+fn headers_point() -> LogicalPosition {
+    LogicalPosition::new(tracks_x() + 37.35, track0_y() + 155.5)
+}
+/// Left edge of the automation parameter picker and of its submenu (ui/app.slint AutoPicker).
+fn picker_x(a: &AppWindow) -> (f32, f32) {
+    let px = a.global::<Studio>().get_picker_x();
+    let max = win().0 - 5.0 - 188.0;
+    (px.min(max).max(5.0), (px + 190.0).min(max))
+}
 const PITCH: f32 = crate::timeline::TRACK_PITCH;
 
 fn clip_start_beats(c: &Controller, track: usize) -> Option<f64> {
     c.project().tracks.get(track)?.clips.first().map(|cl| cl.start as f64 / PPQ as f64)
 }
 
-/// Top of the bottom panel while the Clip tab is open (same height as Devices).
-const CLIP_Y: f32 = 820.0 - 5.0 - crate::highlight::DEFAULT_BOTTOM_H;
-/// Piano-roll texture origin in the window (x 5 + 255).
-const PR_ORIGIN: (f32, f32) = (260.0, CLIP_Y + 54.5);
+/// Piano-roll texture origin in the window.
+fn pr_origin() -> (f32, f32) {
+    (bottom_x() + crate::pianoroll::PANEL_ORIGIN.0, bottom_y() + crate::pianoroll::PANEL_ORIGIN.1)
+}
 
 /// Window point at the centre of a piano-roll cell (beat is clip-relative).
 fn pr_xy(ctl: &Ctl, beat: f64, pitch: i32) -> (f32, f32) {
     let v = ctl.borrow().pr_view();
-    (PR_ORIGIN.0 + v.x_of(beat), PR_ORIGIN.1 + v.y_of(pitch) + crate::pianoroll::ROW_H / 2.0)
+    (pr_origin().0 + v.x_of(beat), pr_origin().1 + v.y_of(pitch) + crate::pianoroll::ROW_H / 2.0)
 }
 
 /// Presses Tab until the footer control `index` (FooterKeys) has the keyboard focus.
@@ -132,7 +191,7 @@ fn midi_steps() -> Vec<Step> {
     let (sv1, sv2) = (saved.clone(), saved.clone());
     let lane_xy = |ctl: &Ctl, beat: f64, track: usize| -> (f32, f32) {
         let c = ctl.borrow();
-        (LANE_X + c.view.x_of(beat), TRACK0_Y + track as f32 * PITCH + 40.0 - c.view.scroll_y as f32)
+        (lane_x() + c.view.x_of(beat), track0_y() + track as f32 * PITCH + 40.0 - c.view.scroll_y as f32)
     };
     let record = |hc: Rc<Cell<usize>>| -> Box<dyn Fn(&Controller, &AppWindow) -> Result<(), String>> {
         Box::new(move |c, _| {
@@ -154,8 +213,8 @@ fn midi_steps() -> Vec<Step> {
     let (hp0, hp1, hp2) = (hp.clone(), hp.clone(), hp.clone());
     // Toolbar zoom sliders: (left x, width, y) of the vertical (0) and horizontal (1) track.
     let zoom_track = |ctl: &Ctl, axis: usize| -> (f32, f32, f32) {
-        let right = PR_ORIGIN.0 + ctl.borrow().pr.size.0 + 0.5;
-        let y = CLIP_Y + 41.0;
+        let right = pr_origin().0 + ctl.borrow().pr.size.0 + 0.5;
+        let y = bottom_y() + 41.0;
         if axis == 0 { (right - 224.0, 67.5, y) } else { (right - 132.5, 74.0, y) }
     };
     let zoom_mem: Rc<Cell<(f32, i32, f64)>> = Rc::new(Cell::new((0.0, 0, 0.0)));
@@ -165,12 +224,12 @@ fn midi_steps() -> Vec<Step> {
         Do("Enter (playhead to 0)", Box::new(|a| key(a, Key::Return, false, false))),
         DoC("wheel back to the start of the timeline", Box::new(|a, _| {
             let w = a.window();
-            w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(900.0, 300.0) });
-            w.dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(900.0, 300.0), delta_x: 4000.0, delta_y: 0.0 });
+            w.dispatch_event(WindowEvent::PointerMoved { position: lanes_point() });
+            w.dispatch_event(WindowEvent::PointerScrolled { position: lanes_point(), delta_x: 4000.0, delta_y: 0.0 });
         })),
         DoC("click the Instrument track header", Box::new(|a, ctl| {
             let sy = ctl.borrow().view.scroll_y as f32;
-            click(a, 300.0, TRACK0_Y + PITCH + 10.0 - sy);
+            click(a, tracks_x() + 37.35, track0_y() + PITCH + 10.0 - sy);
         })),
         Check("record history", record(h0.clone())),
         Do("Cmd+Shift+M (clip.insert_midi)", Box::new(|a| key(a, "M", true, true))),
@@ -267,9 +326,9 @@ fn midi_steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("grid {} {n:?}", c.pr.grid))
         })),
-        Do("click Quantize (selection = the new note)", Box::new(|a| click(a, 267.0 + 15.0, CLIP_Y + 41.0))),
+        Do("click Quantize (selection = the new note)", Box::new(|a| click(a, pr_origin().0 + 7.0 + 15.0, bottom_y() + 41.0))),
         DoC("Grid menu: pick 1/8T", Box::new(|a, _| {
-            let (gx, gy) = (260.0 + 387.0 + 8.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 30.0 + 7.0);
+            let (gx, gy) = (pr_origin().0 + 387.0 + 8.0, bottom_end() - 54.5 + 30.0 + 7.0);
             click(a, gx, gy);
             click(a, gx + 22.0, gy - 10.2 - (8.0 * 20.4 + 6.8 + 10.2) + 3.4 + 5.0 * 20.4 + 10.2 + 10.2);
         })),
@@ -288,7 +347,7 @@ fn midi_steps() -> Vec<Step> {
             one_step(h5.clone(), "Quantize Notes")(c)?;
             (n.iter().all(|n| n.start % 240 == 0) && n.iter().any(|n| n.start == 3360 && n.pitch == 52)).then_some(()).ok_or(format!("{n:?}"))
         })),
-        Do("click Smart Quantize", Box::new(|a| click(a, 260.0 + 55.0 + 30.0, CLIP_Y + 41.0))),
+        Do("click Smart Quantize", Box::new(|a| click(a, pr_origin().0 + 55.0 + 30.0, bottom_y() + 41.0))),
         Check("Smart Quantize ran: one undo step, or no change to notes already on the grid", Box::new(|c, _| {
             let label = c.doc.undo_label();
             label.as_deref().is_some_and(|l| l.starts_with("Smart Quantize") || l.starts_with("Quantize Notes")).then_some(()).ok_or(format!("last {label:?}"))
@@ -302,7 +361,7 @@ fn midi_steps() -> Vec<Step> {
         DoC("preview: press the G3 key on the piano roll keyboard", Box::new(move |a, ctl| {
             hp0.set(ctl.borrow().doc.history_labels().len());
             let (_, y) = pr_xy(ctl, 0.0, 55);
-            press(a, PR_ORIGIN.0 + 20.0, y);
+            press(a, pr_origin().0 + 20.0, y);
         })),
         Check("preview: G3 sounds through the track's instrument (one held preview note), no edit", Box::new(move |c, _| {
             let dev = track_of(c, TrackKind::Instrument).and_then(|t| c.project().tracks[t].instrument_plugin.as_ref()).map(|d| d.id.0).ok_or("no instrument")?;
@@ -313,7 +372,7 @@ fn midi_steps() -> Vec<Step> {
         })),
         DoC("preview: slide up to A3 with the button held", Box::new(|a, ctl| {
             let (_, y) = pr_xy(ctl, 0.0, 57);
-            a.window().dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(PR_ORIGIN.0 + 20.0, y) });
+            a.window().dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(pr_origin().0 + 20.0, y) });
         })),
         Check("preview: A3 replaced G3 (still one note held)", Box::new(|c, _| {
             let held = c.engine.preview().notes;
@@ -321,7 +380,7 @@ fn midi_steps() -> Vec<Step> {
         })),
         DoC("preview: release the key", Box::new(|a, ctl| {
             let (_, y) = pr_xy(ctl, 0.0, 57);
-            release(a, PR_ORIGIN.0 + 20.0, y);
+            release(a, pr_origin().0 + 20.0, y);
         })),
         Check("preview: released, no note held, the clip unchanged", Box::new(move |c, _| {
             let held = c.engine.preview().notes;
@@ -357,7 +416,7 @@ fn midi_steps() -> Vec<Step> {
         })),
         DoC("zoom: trackpad scroll 100 pt to the right", Box::new(|a, _| {
             let w = a.window();
-            let p = LogicalPosition::new(PR_ORIGIN.0 + 400.0, PR_ORIGIN.1 + 60.0);
+            let p = LogicalPosition::new(pr_origin().0 + 400.0, pr_origin().1 + 60.0);
             w.dispatch_event(WindowEvent::PointerMoved { position: p });
             w.dispatch_event(WindowEvent::PointerScrolled { position: p, delta_x: -100.0, delta_y: 0.0 });
         })),
@@ -377,17 +436,17 @@ fn midi_steps() -> Vec<Step> {
             ok.then_some(()).ok_or(format!("row {} mid {mid} want {}", v.row_h, zm4.get().1))
         })),
         DoC("snap: click the piano roll's snap readout", Box::new(|a, ctl| {
-            let right = PR_ORIGIN.0 + ctl.borrow().pr.size.0 + 0.5;
-            click(a, right - 36.0, CLIP_Y + 41.0);
+            let right = pr_origin().0 + ctl.borrow().pr.size.0 + 0.5;
+            click(a, right - 36.0, bottom_y() + 41.0);
         })),
         Check("snap: off, the readout says Off", Box::new(|c, a| {
             let t = a.global::<Studio>().get_snap_text();
             (!c.snap.on && t == "Off").then_some(()).ok_or(format!("on {} text {t}", c.snap.on))
         })),
         DoC("snap: click it again, then the chevron", Box::new(|a, ctl| {
-            let right = PR_ORIGIN.0 + ctl.borrow().pr.size.0 + 0.5;
-            click(a, right - 36.0, CLIP_Y + 41.0);
-            click(a, right - 17.0, CLIP_Y + 41.0);
+            let right = pr_origin().0 + ctl.borrow().pr.size.0 + 0.5;
+            click(a, right - 36.0, bottom_y() + 41.0);
+            click(a, right - 17.0, bottom_y() + 41.0);
         })),
         Check("snap: on again, the shared snap menu open under the chevron", Box::new(|c, a| {
             let s = a.global::<Studio>();
@@ -437,7 +496,7 @@ fn midi_steps() -> Vec<Step> {
             (n.iter().any(|n| n.start == 0 && n.pitch == 65) && !c.pr.pen && c.pr.selected.is_empty()).then_some(()).ok_or(format!("{n:?}"))
         })),
         DoC("Scale: click the root note in the footer, pick Eb", Box::new(|a, _| {
-            click(a, 260.0 + 720.0 + 3.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 30.0 + 7.0);
+            click(a, pr_origin().0 + 720.0 + 3.0, bottom_end() - 54.5 + 30.0 + 7.0);
             a.global::<Studio>().invoke_clip_menu_pick(5);
         })),
         Check("the clip keeps Eb (scale type from the project key: Major), one undo step, footer reads Eb Major", Box::new(|c, a| {
@@ -448,12 +507,12 @@ fn midi_steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("{scale:?} {:?} {} {}", c.doc.undo_label(), s.get_pr_scale_root(), s.get_pr_scale_type()))
         })),
-        Do("click the footer Scale switch", Box::new(|a| click(a, 260.0 + 751.0 + 10.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 13.0 + 7.0))),
+        Do("click the footer Scale switch", Box::new(|a| click(a, pr_origin().0 + 751.0 + 10.0, bottom_end() - 54.5 + 13.0 + 7.0))),
         Check("Scale highlight on, the Scale button shows above the keys, rows unchanged", Box::new(|c, a| {
             let on = instrument_clip(c).and_then(|m| m.scale).is_some_and(|s| s.highlight && !s.fold);
             (on && a.global::<Studio>().get_pr_scale_on() && !c.pr_view().rows.folded()).then_some(()).ok_or(format!("{:?}", instrument_clip(c).map(|m| m.scale)))
         })),
-        Do("click Scale above the keys", Box::new(|a| click(a, 260.0 + 6.5 + 19.0, CLIP_Y + 27.0 + 27.5 + 30.0 + 8.0))),
+        Do("click Scale above the keys", Box::new(|a| click(a, pr_origin().0 + 6.5 + 19.0, bottom_y() + 27.0 + 27.5 + 30.0 + 8.0))),
         Check("scale rows: only Eb Major pitches plus rows holding notes", Box::new(|c, _| {
             let m = instrument_clip(c).ok_or("clip gone")?;
             let v = c.pr_view();
@@ -465,7 +524,7 @@ fn midi_steps() -> Vec<Step> {
                 && m.notes.iter().all(|n| shown.contains(&(n.pitch as i32)));
             ok.then_some(()).ok_or(format!("{} rows", v.rows.len()))
         })),
-        Do("click the footer Scale switch again", Box::new(|a| click(a, 260.0 + 751.0 + 10.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 13.0 + 7.0))),
+        Do("click the footer Scale switch again", Box::new(|a| click(a, pr_origin().0 + 751.0 + 10.0, bottom_end() - 54.5 + 13.0 + 7.0))),
         Check("Scale off restores chromatic rows and resets the Scale button", Box::new(|c, a| {
             let s = instrument_clip(c).and_then(|m| m.scale).unwrap_or_default();
             (!s.highlight && !s.fold && !c.pr_view().rows.folded() && !a.global::<Studio>().get_pr_scale_on()).then_some(()).ok_or(format!("{s:?}"))
@@ -529,7 +588,7 @@ fn midi_steps() -> Vec<Step> {
             let end = ctl.borrow().pr_loop().map_or(0, |l| l.end) as f64 / PPQ as f64;
             let (x, _) = pr_xy(ctl, end, 60);
             let (x1, _) = pr_xy(ctl, end - 1.0, 60);
-            let y = PR_ORIGIN.1 + (crate::pianoroll::BAR_Y.0 + crate::pianoroll::BAR_Y.1) / 2.0;
+            let y = pr_origin().1 + (crate::pianoroll::BAR_Y.0 + crate::pianoroll::BAR_Y.1) / 2.0;
             drag(a, x - 1.0, y, x1 - 1.0, y);
         })),
         Check("the loop ends a beat earlier, the clip keeps its length, one \"Clip Loop\" step", Box::new(|c, _| {
@@ -537,13 +596,13 @@ fn midi_steps() -> Vec<Step> {
             let l = m.clip_loop.ok_or("no loop")?;
             (l.on && l.start == 0 && l.end == m.length - PPQ && c.doc.undo_label().as_deref() == Some("Clip Loop")).then_some(()).ok_or(format!("{l:?} len {} {:?}", m.length, c.doc.undo_label()))
         })),
-        Do("click the footer Loop switch (off)", Box::new(|a| click(a, 260.0 + 202.0 + 10.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 13.0 + 7.0))),
+        Do("click the footer Loop switch (off)", Box::new(|a| click(a, pr_origin().0 + 202.0 + 10.0, bottom_end() - 54.5 + 13.0 + 7.0))),
         Check("Loop off: the clip plays once, to the old loop end; footer Loop off", Box::new(|c, a| {
             let m = instrument_clip(c).ok_or("clip gone")?;
             let l = m.clip_loop.ok_or("no loop")?;
             (!l.on && m.length == l.end && !a.global::<Studio>().get_pr_loop_on()).then_some(()).ok_or(format!("{l:?} len {}", m.length))
         })),
-        Do("click the footer Loop switch (on)", Box::new(|a| click(a, 260.0 + 202.0 + 10.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 13.0 + 7.0))),
+        Do("click the footer Loop switch (on)", Box::new(|a| click(a, pr_origin().0 + 202.0 + 10.0, bottom_end() - 54.5 + 13.0 + 7.0))),
         Check("Loop on again: the kept range and the length the clip had while looping", Box::new(|c, _| {
             let m = instrument_clip(c).ok_or("clip gone")?;
             let l = m.clip_loop.ok_or("no loop")?;
@@ -558,7 +617,7 @@ fn midi_steps() -> Vec<Step> {
             let m = instrument_clip(c).ok_or("clip gone")?;
             (m.clip_loop == Some(saine_core::midi::ClipLoop::whole(m.length))).then_some(()).ok_or(format!("{:?} len {}", m.clip_loop, m.length))
         })),
-        Do("click Double", Box::new(|a| click(a, 260.0 + 270.5 + 10.0, CLIP_Y + 41.0))),
+        Do("click Double", Box::new(|a| click(a, pr_origin().0 + 270.5 + 10.0, bottom_y() + 41.0))),
         Check("Double: 2x notes and 2x clip length in ONE undo step", Box::new(move |c, _| {
             let (before, len) = sv2.borrow().clone();
             let m = instrument_clip(c).ok_or("clip gone")?;
@@ -622,10 +681,12 @@ fn midi_steps() -> Vec<Step> {
 }
 
 /// Synth device card origin in the window (bottom panel 306 pt at y 509; card at panel 263.5, 34).
-const SYNTH: (f32, f32) = (5.0 + 263.5, 509.0 + 34.0);
+fn synth() -> (f32, f32) {
+    (bottom_x() + 263.5, bottom_y() + 34.0)
+}
 
 fn synth_xy(cx: f32, cy: f32) -> (f32, f32) {
-    (SYNTH.0 + cx, SYNTH.1 + cy)
+    (synth().0 + cx, synth().1 + cy)
 }
 
 /// Centre of category row `i` in the device's left list.
@@ -642,8 +703,8 @@ fn double_click(app: &AppWindow, x: f32, y: f32) {
 fn synth_menu_row(app: &AppWindow, i: usize) -> (f32, f32) {
     let s = app.global::<Studio>();
     let (w, h) = (s.get_synth_menu_w(), s.get_synth_menu_h());
-    let x = s.get_synth_menu_x().min(1440.0 - 5.0 - w);
-    let y = s.get_synth_menu_y().min(820.0 - 5.0 - h).max(5.0);
+    let x = s.get_synth_menu_x().min(win().0 - 5.0 - w);
+    let y = s.get_synth_menu_y().min(win().1 - 5.0 - h).max(5.0);
     (x + 30.0, y + crate::synth::MENU_PAD + i as f32 * crate::synth::MENU_ROW + crate::synth::MENU_ROW / 2.0)
 }
 
@@ -705,7 +766,7 @@ fn synth_steps() -> Vec<Step> {
     vec![
         DoC("click the Instrument track header", Box::new(|a, ctl| {
             let sy = ctl.borrow().view.scroll_y as f32;
-            click(a, 300.0, TRACK0_Y + PITCH + 10.0 - sy);
+            click(a, tracks_x() + 37.35, track0_y() + PITCH + 10.0 - sy);
         })),
         Check("synth: Instrument track selected -> Devices tab shows the Synth (Oscillators page)", Box::new(move |c, a| {
             let s = a.global::<Studio>();
@@ -1010,17 +1071,26 @@ fn steps() -> Vec<Step> {
     let (rr1, rr2) = (rec_rev.clone(), rec_rev.clone());
     let (rv1, rv2) = (rec_vol_steps.clone(), rec_vol_steps.clone());
     let (rm1, rm2) = (rec_mute.clone(), rec_mute.clone());
-    // Assistant panel geometry at 1440x820 with the mixer closed (see ui/assistant.slint).
+    // Assistant panel geometry with the mixer closed (see ui/assistant.slint).
     // Card: 8 px inset, 143 px tall with the AI notice (CSS px x 0.85).
-    const CARD_X: f32 = 1440.0 - 5.0 - 252.5 + 6.8;
-    const CARD_Y: f32 = 78.0 + 426.0 - 6.8 - 121.55;
-    const INPUT_Y: f32 = CARD_Y + 28.05 + 27.2 + 22.0;
-    const MIXER_Y: f32 = 820.0 - 5.0 - 390.0;
+    fn card_x() -> f32 {
+        geo().chat_x + 6.8
+    }
+    fn card_y() -> f32 {
+        let g = geo();
+        g.chat_y + g.chat_h - 6.8 - 121.55
+    }
+    fn input_y() -> f32 {
+        card_y() + 28.05 + 27.2 + 22.0
+    }
+    fn mixer_y() -> f32 {
+        bottom_y()
+    }
     // Mixer strip fader travel (ui/channel_strip.slint): the 200 pt canvas sits 234 pt above the
     // strip bottom; its handle travels 168 pt starting 18 pt down (reference points * 0.85).
     const MIXER_TRAVEL_TOP: f32 = 390.0 - (234.0 - 18.0) * 0.85;
     const MIXER_TRAVEL: f32 = 168.0 * 0.85;
-    let bx = |b: f64| LANE_X + (b * crate::timeline::DEFAULT_PX_PER_BEAT) as f32;
+    let bx = |b: f64| lane_x() + (b * crate::timeline::DEFAULT_PX_PER_BEAT) as f32;
     vec![
         Check("demo imported two clips on two audio tracks", Box::new(|c, _| {
             let p = c.project();
@@ -1031,13 +1101,13 @@ fn steps() -> Vec<Step> {
             let s = clip_start_beats(c, 2).ok_or("no clip on track 3")?;
             ((s - 10.0).abs() < 1e-6).then_some(()).ok_or(format!("start {s}"))
         })),
-        Do("click track 2 header", Box::new(|a| click(a, 300.0, TRACK0_Y + PITCH + 10.0))),
+        Do("click track 2 header", Box::new(|a| click(a, tracks_x() + 37.35, track0_y() + PITCH + 10.0))),
         Check("track 2 selected, inspector follows", Box::new(|c, a| {
             let t = c.project().tracks[1].id;
             let s = a.global::<Studio>();
             (c.selected_track == Some(t) && s.get_sel_number() == 2 && s.get_sel_name() == "Instrument").then_some(()).ok_or("selection".into())
         })),
-        Do("click M on track 1", Box::new(|a| click(a, 262.65 + 33.5, TRACK0_Y + 47.0))),
+        Do("click M on track 1", Box::new(|a| click(a, tracks_x() + 33.5, track0_y() + 47.0))),
         Check("track 1 muted (SetTrackMute)", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("not muted".into()))),
         Check("Edit menu names the edit in sentence case: Undo Mute change enabled", Box::new(|_, a| {
             let s = a.global::<Studio>();
@@ -1064,8 +1134,8 @@ fn steps() -> Vec<Step> {
                 c.export.dir = std::env::temp_dir().join(format!("saine-selftest-export-{}", std::process::id()));
                 c.export.name = "mix".into();
             }
-            // Export window centred in the 1440 x 820 window: 442 x 340.4, Export button 52.2 x 22.1.
-            click(a, (1440.0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (820.0 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
+            // Export window centred in the window: 442 x 340.4, Export button 52.2 x 22.1.
+            click(a, (win().0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (win().1 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
         })),
         Check("mix.wav written: stereo 24-bit at the engine rate, the full length, not silent; dialog closed", Box::new(|c, a| {
             let path = c.export.dir.join("mix.wav");
@@ -1078,7 +1148,7 @@ fn steps() -> Vec<Step> {
         })),
         Do("⇧⌘E again", Box::new(|a| key(a, "E", true, true))),
         Check("export dialog open again", Box::new(|_c, a| a.global::<Studio>().get_export_open().then_some(()).ok_or("not open".into()))),
-        Do("click the Stems card", Box::new(|a| click(a, (1440.0 - 442.0) / 2.0 + 17.0 + 131.47 + 6.8 + 65.0, (820.0 - 340.4) / 2.0 + 44.2 + 22.0))),
+        Do("click the Stems card", Box::new(|a| click(a, (win().0 - 442.0) / 2.0 + 17.0 + 131.47 + 6.8 + 65.0, (win().1 - 340.4) / 2.0 + 44.2 + 22.0))),
         Check("Stems picked: Tracks row, one file per heard track with clips, Folder label", Box::new(|c, a| {
             let s = a.global::<Studio>();
             let n = crate::dialogs::stem_tracks(c.project(), crate::dialogs::StemsPick::AllTracks, None).len();
@@ -1086,7 +1156,7 @@ fn steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("recipe {} files {n} text {} label {}", s.get_export_recipe(), s.get_export_stems_text(), s.get_export_name_label()))
         })),
-        Do("click the Tracks picker", Box::new(|a| click(a, (1440.0 - 442.0) / 2.0 + 71.4 + 30.0, (820.0 - 340.4) / 2.0 + 105.4 + 10.2))),
+        Do("click the Tracks picker", Box::new(|a| click(a, (win().0 - 442.0) / 2.0 + 71.4 + 30.0, (win().1 - 340.4) / 2.0 + 105.4 + 10.2))),
         Check("Tracks menu lists both choices, a gap and every track", Box::new(|c, a| {
             let s = a.global::<Studio>();
             let rows = s.get_export_tracks_items().row_count();
@@ -1099,7 +1169,7 @@ fn steps() -> Vec<Step> {
         })),
         DoC("name the stems mix and click Export", Box::new(|a, ctl| {
             ctl.borrow_mut().export.name = "mix".into();
-            click(a, (1440.0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (820.0 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
+            click(a, (win().0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (win().1 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
         })),
         Check("'mix Stems' holds one 'NN Name.wav' per track, full length, summing to the mixdown", Box::new(|c, a| {
             let p = c.project();
@@ -1126,7 +1196,7 @@ fn steps() -> Vec<Step> {
         Do("⇧⌘E for the Project export", Box::new(|a| key(a, "E", true, true))),
         Check("export dialog open for Project", Box::new(|_c, a| a.global::<Studio>().get_export_open().then_some(()).ok_or("not open".into()))),
         DoC("click the Project card, name it set, click Export", Box::new(|a, ctl| {
-            click(a, (1440.0 - 442.0) / 2.0 + 17.0 + 2.0 * (131.47 + 6.8) + 65.0, (820.0 - 340.4) / 2.0 + 44.2 + 22.0);
+            click(a, (win().0 - 442.0) / 2.0 + 17.0 + 2.0 * (131.47 + 6.8) + 65.0, (win().1 - 340.4) / 2.0 + 44.2 + 22.0);
             let mut c = ctl.borrow_mut();
             c.export.dir = std::env::temp_dir().join(format!("saine-selftest-project-{}", std::process::id()));
             c.export.name = "set".into();
@@ -1135,7 +1205,7 @@ fn steps() -> Vec<Step> {
             let s = a.global::<Studio>();
             (s.get_export_recipe() == 2 && s.get_export_name_label() == "Name").then_some(()).ok_or(format!("recipe {}", s.get_export_recipe()))
         })),
-        Do("click Export", Box::new(|a| click(a, (1440.0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (820.0 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05))),
+        Do("click Export", Box::new(|a| click(a, (win().0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (win().1 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05))),
         Check("'set Project' holds set.als that passes the Live structure check, its renders and the notes", Box::new(|c, a| {
             let folder = c.export.dir.join("set Project");
             let gz = std::fs::read(folder.join("set.als")).map_err(|e| format!("set.als: {e}"))?;
@@ -1161,26 +1231,26 @@ fn steps() -> Vec<Step> {
             let n: usize = c.project().tracks.iter().map(|t| t.clips.len()).sum();
             (!a.global::<Studio>().get_unsaved_open() && !c.unsaved_open && n == 2).then_some(()).ok_or(format!("clips {n}"))
         })),
-        Do("drag track 1 volume slider left", Box::new(|a| drag(a, 262.65 + 115.7 + 5.95 + 0.8 * 56.1, TRACK0_Y + 47.6, 262.65 + 140.0, TRACK0_Y + 47.6))),
+        Do("drag track 1 volume slider left", Box::new(|a| drag(a, tracks_x() + 115.7 + 5.95 + 0.8 * 56.1, track0_y() + 47.6, tracks_x() + 140.0, track0_y() + 47.6))),
         Check("track 1 gain lowered, one coalesced undo step", Box::new(|c, _| {
             let g = c.project().tracks[0].gain;
             let labels = c.doc.history_labels();
             let n = labels.iter().filter(|l| l.as_str() == "Track Volume Change").count();
             (g < 0.5 && n == 1).then_some(()).ok_or(format!("gain {g}, volume steps {n}"))
         })),
-        Do("drag clip 1 body right by ~2 bars", Box::new(move |a| drag(a, bx(1.0), TRACK0_Y + 40.0, bx(1.0) + 102.3, TRACK0_Y + 40.0))),
+        Do("drag clip 1 body right by ~2 bars", Box::new(move |a| drag(a, bx(1.0), track0_y() + 40.0, bx(1.0) + 102.3, track0_y() + 40.0))),
         Check("clip moved to beat 8 (snapped)", Box::new(|c, _| {
             let s = clip_start_beats(c, 0).ok_or("clip gone")?;
             ((s - 8.0).abs() < 1e-6).then_some(()).ok_or(format!("start {s}"))
         })),
-        Do("drag clip 1 right edge left by 2 beats", Box::new(move |a| drag(a, bx(16.0) - 2.0, TRACK0_Y + 40.0, bx(14.0) - 2.0, TRACK0_Y + 40.0))),
+        Do("drag clip 1 right edge left by 2 beats", Box::new(move |a| drag(a, bx(16.0) - 2.0, track0_y() + 40.0, bx(14.0) - 2.0, track0_y() + 40.0))),
         Check("clip trimmed to 6 beats (TrimClip)", Box::new(|c, _| {
             let p = c.project();
             let cl = &p.tracks[0].clips[0];
             let beats = p.clip_length_ticks(cl) as f64 / PPQ as f64;
             ((beats - 6.0).abs() < 0.01).then_some(()).ok_or(format!("len {beats} beats"))
         })),
-        Do("drag clip 1 left edge right by 1 beat", Box::new(move |a| drag(a, bx(8.0) + 1.5, TRACK0_Y + 40.0, bx(9.0) + 1.5, TRACK0_Y + 40.0))),
+        Do("drag clip 1 left edge right by 1 beat", Box::new(move |a| drag(a, bx(8.0) + 1.5, track0_y() + 40.0, bx(9.0) + 1.5, track0_y() + 40.0))),
         Check("left trim: start 9, offset 0.5 s of source, length 5 beats", Box::new(|c, _| {
             let p = c.project();
             let cl = &p.tracks[0].clips[0];
@@ -1191,22 +1261,22 @@ fn steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("start {} off {off_s}s len {beats}", cl.start))
         })),
-        Do("click ruler at bar 5", Box::new(move |a| click(a, bx(16.0), 112.0))),
+        Do("click ruler at bar 5", Box::new(move |a| click(a, bx(16.0), lane_y0() + 6.5))),
         Check("engine playhead at bar 5 (Bar readout 005, Time 00:08.000)", Box::new(|_, a| {
             let s = a.global::<Studio>();
             (s.get_bar_text() == "005" && s.get_time_text() == "00:08.000").then_some(()).ok_or(format!("{} {}", s.get_bar_text(), s.get_time_text()))
         })),
         Do("Enter (stop + return)", Box::new(|a| key(a, Key::Return, false, false))),
         Check("playhead back at 0", Box::new(|c, _| (c.engine.transport().position == 0).then_some(()).ok_or(format!("pos {}", c.engine.transport().position)))),
-        Do("click loop button", Box::new(|a| click(a, 481.0, 52.0))),
+        Do("click loop button", Box::new(|a| click(a, transport_x() + 481.0, 52.0))),
         Check("loop enabled in project + UI, undoable (SetLoop)", Box::new(|c, a| {
             let on = c.project().transport.loop_enabled;
             let ui = a.global::<Studio>().get_loop_enabled();
             (on && ui && c.doc.undo_label() == Some("Loop Change")).then_some(()).ok_or(format!("model {on} ui {ui} undo {:?}", c.doc.undo_label()))
         })),
-        Do("click loop button again", Box::new(|a| click(a, 481.0, 52.0))),
+        Do("click loop button again", Box::new(|a| click(a, transport_x() + 481.0, 52.0))),
         Check("loop disabled", Box::new(|c, _| (!c.project().transport.loop_enabled).then_some(()).ok_or("still on".into()))),
-        Do("click metronome button", Box::new(|a| click(a, 992.0, 52.0))),
+        Do("click metronome button", Box::new(|a| click(a, transport_x() + 992.0, 52.0))),
         Check("metronome on in controller + UI", Box::new(|c, a| {
             (c.metronome_on && a.global::<Studio>().get_metronome_on()).then_some(()).ok_or("metronome off".into())
         })),
@@ -1229,10 +1299,10 @@ fn steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or("click positions wrong".into())
         })),
-        Do("click metronome button again", Box::new(|a| click(a, 992.0, 52.0))),
+        Do("click metronome button again", Box::new(|a| click(a, transport_x() + 992.0, 52.0))),
         Check("metronome off", Box::new(|c, _| (!c.metronome_on).then_some(()).ok_or("still on".into()))),
         DoC("select clip 1 and open the Clip tab", Box::new(move |a, ctl| {
-            click(a, bx(11.0), TRACK0_Y + 40.0);
+            click(a, bx(11.0), track0_y() + 40.0);
             ctl.borrow_mut().set_bottom_tab(BottomTab::Clip);
         })),
         Check("audio clip editor open: gain readout, no piano roll, clip-length ruler", Box::new(|c, a| {
@@ -1476,7 +1546,7 @@ fn steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("reverse {} ui {} slot {slot:?} undo {:?}", clip.warp.reverse, a.global::<Studio>().get_ac_reversed(), c.doc.undo_label()))
         })),
-        Do("reversed: drag clip 1 left edge right by 1 beat", Box::new(move |a| drag(a, bx(9.0) + 1.5, TRACK0_Y + 40.0, bx(10.0) + 1.5, TRACK0_Y + 40.0))),
+        Do("reversed: drag clip 1 left edge right by 1 beat", Box::new(move |a| drag(a, bx(9.0) + 1.5, track0_y() + 40.0, bx(10.0) + 1.5, track0_y() + 40.0))),
         Check("reversed left trim cuts the window's end: start 10, offset still 0.5 s, 4 beats", Box::new(|c, _| {
             let p = c.project();
             let cl = &p.tracks[0].clips[0];
@@ -1531,7 +1601,7 @@ fn steps() -> Vec<Step> {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
             (clip.warp.is_default() && a.global::<Studio>().get_ac_transpose_text() == "0 st").then_some(()).ok_or(format!("warp {:?}", clip.warp))
         })),
-        Do("audio loop: click the footer Loop switch", Box::new(|a| click(a, 260.0 + 202.0 + 10.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 13.0 + 7.0))),
+        Do("audio loop: click the footer Loop switch", Box::new(|a| click(a, pr_origin().0 + 202.0 + 10.0, bottom_end() - 54.5 + 13.0 + 7.0))),
         Check("Loop on over the whole content: same length, one \"Clip Loop\" step, footer Loop on", Box::new(|c, a| {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
             let content = c.project().content_length_ticks(clip);
@@ -1554,9 +1624,9 @@ fn steps() -> Vec<Step> {
                 let Some(clip) = c.ac_clip() else { return };
                 let content = c.project().content_length_ticks(clip) as f64 / PPQ as f64;
                 let v = c.pr_view();
-                (PR_ORIGIN.0 + v.x_of(content / 2.0), PR_ORIGIN.0 + v.x_of(content * 0.75))
+                (pr_origin().0 + v.x_of(content / 2.0), pr_origin().0 + v.x_of(content * 0.75))
             };
-            let y = PR_ORIGIN.1 + 20.5;
+            let y = pr_origin().1 + 20.5;
             drag(a, x0, y, x1, y);
         })),
         Check("the loop ends near three quarters (on the snap step), its start kept, one \"Clip Loop\" step", Box::new(|c, _| {
@@ -1575,9 +1645,9 @@ fn steps() -> Vec<Step> {
                 let content = c.ac_clip().map_or(0, |clip| c.project().content_length_ticks(clip)) as f64 / PPQ as f64;
                 let v = c.pr_view();
                 let mid = (l.start + l.end) as f64 / 2.0 / PPQ as f64;
-                (PR_ORIGIN.0 + v.x_of(mid), PR_ORIGIN.0 + v.x_of(mid + content / 8.0))
+                (pr_origin().0 + v.x_of(mid), pr_origin().0 + v.x_of(mid + content / 8.0))
             };
-            let y = PR_ORIGIN.1 + 20.5;
+            let y = pr_origin().1 + 20.5;
             drag(a, x0, y, x1, y);
         })),
         Check("the whole loop moved later on the grid, length kept, inside the content", Box::new(|c, _| {
@@ -1593,7 +1663,7 @@ fn steps() -> Vec<Step> {
         DoC("audio loop: drag the footer Position value up 16 pt (two beats later)", Box::new(|a, ctl| {
             let mem = ctl.borrow().ac_clip().and_then(|clip| clip.clip_loop).map_or(0, |l| l.start);
             AUDIO_LOOP_START.with(|m| m.set(mem));
-            let (x, y) = (260.0 + 216.5 + 8.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 30.0 + 7.0);
+            let (x, y) = (pr_origin().0 + 216.5 + 8.0, bottom_end() - 54.5 + 30.0 + 7.0);
             drag(a, x, y, x, y - 16.0);
         })),
         Check("Position moved the loop two beats later (or to the content's end), length kept, one step", Box::new(|c, a| {
@@ -1624,7 +1694,7 @@ fn steps() -> Vec<Step> {
                 let c = ctl.borrow();
                 let Some(clip) = c.ac_clip() else { return };
                 let (s, content) = (clip.start as f64 / PPQ as f64, c.project().content_length_ticks(clip) as f64 / PPQ as f64);
-                (LANE_X + c.view.x_of(s + content), LANE_X + c.view.x_of(s + 2.0 * content), TRACK0_Y + 40.0 - c.view.scroll_y as f32)
+                (lane_x() + c.view.x_of(s + content), lane_x() + c.view.x_of(s + 2.0 * content), track0_y() + 40.0 - c.view.scroll_y as f32)
             };
             drag(a, x0 - 2.0, y, x1 - 2.0, y);
         })),
@@ -1647,7 +1717,7 @@ fn steps() -> Vec<Step> {
                 && s.get_pr_length_text() == crate::pianoroll::fmt_len(content / 2 - content / 4, tpb);
             ok.then_some(()).ok_or(format!("len {len} of {content}, {} pieces to {last}, pos {} length {} {:?}", segs.len(), s.get_pr_position_text(), s.get_pr_length_text(), c.doc.undo_label()))
         })),
-        Do("audio loop: click the Loop switch off", Box::new(|a| click(a, 260.0 + 202.0 + 10.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 13.0 + 7.0))),
+        Do("audio loop: click the Loop switch off", Box::new(|a| click(a, pr_origin().0 + 202.0 + 10.0, bottom_end() - 54.5 + 13.0 + 7.0))),
         Check("Loop off: the source window plays once; the range and looped length are kept", Box::new(|c, a| {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
             let content = c.project().content_length_ticks(clip);
@@ -1727,13 +1797,13 @@ fn steps() -> Vec<Step> {
         })),
         DoC("back to the Devices tab", Box::new(|_, ctl| ctl.borrow_mut().set_bottom_tab(BottomTab::Devices))),
         Do("select clip 1 and press Delete", Box::new(move |a| {
-            click(a, bx(11.0), TRACK0_Y + 40.0);
+            click(a, bx(11.0), track0_y() + 40.0);
             key(a, Key::Delete, false, false)
         })),
         Check("clip deleted (RemoveClip)", Box::new(|c, _| c.project().tracks[0].clips.is_empty().then_some(()).ok_or("clip still there".into()))),
         Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
         Check("undo restored the clip", Box::new(|c, _| (c.project().tracks[0].clips.len() == 1).then_some(()).ok_or("not restored".into()))),
-        Do("click 'Add track'", Box::new(|a| click(a, 300.0, 124.0))),
+        Do("click 'Add track'", Box::new(|a| click(a, tracks_x() + 37.35, geo().timeline_y + 45.8))),
         Check("4 tracks, new one is Audio and selected", Box::new(|c, _| {
             let p = c.project();
             let t = p.tracks.last().unwrap();
@@ -1741,15 +1811,15 @@ fn steps() -> Vec<Step> {
         })),
         Do("Delete (track header selected)", Box::new(|a| key(a, Key::Backspace, false, false))),
         Check("track deleted (RemoveTrack)", Box::new(|c, _| (c.project().tracks.len() == 3).then_some(()).ok_or(format!("{} tracks", c.project().tracks.len())))),
-        Do("click track 1 header", Box::new(|a| click(a, 300.0, TRACK0_Y + 10.0))),
-        Do("drag inspector pan knob up 30 pt", Box::new(|a| drag(a, 5.0 + 47.0, 509.0 + 210.0, 5.0 + 47.0, 509.0 + 210.0 - 30.0))),
+        Do("click track 1 header", Box::new(|a| click(a, tracks_x() + 37.35, track0_y() + 10.0))),
+        Do("drag inspector pan knob up 30 pt", Box::new(|a| drag(a, bottom_x() + 47.0, bottom_y() + 210.0, bottom_x() + 47.0, bottom_y() + 210.0 - 30.0))),
         Check("track 1 pan moved right, readout updated", Box::new(|c, a| {
             let pan = c.project().tracks[0].pan;
             let txt = a.global::<Studio>().get_sel_pan_text();
             (pan > 0.2 && txt.ends_with('R')).then_some(()).ok_or(format!("pan {pan} text {txt}"))
         })),
-        Do("(audio) unmute track 1 (muted by the redo step)", Box::new(|a| click(a, 262.65 + 33.5, TRACK0_Y + 47.0))),
-        Do("(audio) click ruler at beat 9 (start of track 1 clip)", Box::new(move |a| click(a, bx(9.0), 112.0))),
+        Do("(audio) unmute track 1 (muted by the redo step)", Box::new(|a| click(a, tracks_x() + 33.5, track0_y() + 47.0))),
+        Do("(audio) click ruler at beat 9 (start of track 1 clip)", Box::new(move |a| click(a, bx(9.0), lane_y0() + 6.5))),
         Do("(audio) master -40 dB, Space", Box::new(|a| {
             a.global::<Studio>().invoke_master_volume(crate::controller::slider_from_gain(0.01));
             key(a, " ", false, false)
@@ -1773,28 +1843,28 @@ fn steps() -> Vec<Step> {
         Check("(audio) paused", Box::new(|c, _| (!c.engine.transport().playing).then_some(()).ok_or("still playing".into()))),
         Do("wheel: scroll timeline right", Box::new(|a| {
             let w = a.window();
-            w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(900.0, 300.0) });
-            w.dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(900.0, 300.0), delta_x: -51.0, delta_y: 0.0 });
+            w.dispatch_event(WindowEvent::PointerMoved { position: lanes_point() });
+            w.dispatch_event(WindowEvent::PointerScrolled { position: lanes_point(), delta_x: -51.0, delta_y: 0.0 });
         })),
         Check("view scrolled by ~4 beats", Box::new(|c, _| ((c.view.start_beats - 4.0).abs() < 0.2).then_some(()).ok_or(format!("start {}", c.view.start_beats)))),
         Do("Cmd + wheel: zoom in around x=900", Box::new(|a| {
             let w = a.window();
             w.dispatch_event(WindowEvent::KeyPressed { text: Key::Control.into() });
-            w.dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(900.0, 300.0), delta_x: 0.0, delta_y: 50.0 });
+            w.dispatch_event(WindowEvent::PointerScrolled { position: lanes_point(), delta_x: 0.0, delta_y: 50.0 });
             w.dispatch_event(WindowEvent::KeyReleased { text: Key::Control.into() });
         })),
         Check("zoom changed px/beat, beat under the cursor kept", Box::new(|c, _| {
             let ppb = c.view.px_per_beat;
-            let anchor = c.view.beat_at(900.0 - LANE_X);
-            let expected = 4.0 + (900.0 - LANE_X) as f64 / crate::timeline::DEFAULT_PX_PER_BEAT;
+            let anchor = c.view.beat_at(446.35);
+            let expected = 4.0 + 446.35 as f64 / crate::timeline::DEFAULT_PX_PER_BEAT;
             ((ppb - crate::timeline::DEFAULT_PX_PER_BEAT).abs() > 1.0 && (anchor - expected).abs() < 0.05).then_some(()).ok_or(format!("ppb {ppb} anchor {anchor} vs {expected}"))
         })),
         // ---------------- assistant panel (TEST fixture provider, no network) ----------------
-        Do("click the assistant toggle", Box::new(|a| click(a, 1440.0 - 147.0 + 12.5, 48.0))),
+        Do("click the assistant toggle", Box::new(|a| click(a, win().0 - 147.0 + 12.5, 48.0))),
         Check("assistant panel open, timeline narrower, fixture provider available", Box::new(|c, a| {
             let w = a.get_lanes_width();
             let s = a.global::<Studio>();
-            (c.assistant_open && s.get_assistant_open() && s.get_chat_available() && (w - (1440.0 - 262.65 - 5.0 - 257.5 - 191.0)).abs() < 1.0)
+            (c.assistant_open && s.get_assistant_open() && s.get_chat_available() && (w - (win().0 - geo().timeline_x - 5.0 - 257.5 - 191.0)).abs() < 1.0)
                 .then_some(())
                 .ok_or(format!("open {} lanes width {w}", c.assistant_open))
         })),
@@ -1804,7 +1874,7 @@ fn steps() -> Vec<Step> {
             Ok(())
         })),
         Do("click the input and type a prompt (Slint key events)", Box::new(|a| {
-            click(a, CARD_X + 60.0, INPUT_Y);
+            click(a, card_x() + 60.0, input_y());
             type_text(a, "add drums, tempo 128, audio down 6 db");
         })),
         Check("typed text reached the composer", Box::new(|c, a| {
@@ -1840,13 +1910,13 @@ fn steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("tracks {} bpm {} gain {}", p.tracks.len(), p.transport.bpm, p.tracks[0].gain))
         })),
-        Do("click Point", Box::new(|a| click(a, CARD_X + 6.8 + 2.125 + 53.125 + 1.7 + 26.5, CARD_Y + 121.55 - 6.8 - 10.2))),
+        Do("click Point", Box::new(|a| click(a, card_x() + 6.8 + 2.125 + 53.125 + 1.7 + 26.5, card_y() + 121.55 - 6.8 - 10.2))),
         Check("Point mode active", Box::new(move |c, a| {
             rr1.set(c.doc.revision());
             (c.assistant.mode == Mode::Teach && a.global::<Studio>().get_teach_mode()).then_some(()).ok_or("still Assist".into())
         })),
         Do("type + Enter (fixture turn with an edit)", Box::new(|a| {
-            click(a, CARD_X + 60.0, INPUT_Y);
+            click(a, card_x() + 60.0, input_y());
             type_text(a, "slow it down");
             key(a, Key::Return, false, false);
         })),
@@ -1857,7 +1927,7 @@ fn steps() -> Vec<Step> {
                 .ok_or(format!("{:?} {:?} rev {} vs {}", e.kind, e.text, c.doc.revision(), rr2.get()))
         })),
         Do("type + Enter (fixture turn highlighting transport.bpm)", Box::new(|a| {
-            click(a, CARD_X + 60.0, INPUT_Y);
+            click(a, card_x() + 60.0, input_y());
             type_text(a, "where is the tempo");
             key(a, Key::Return, false, false);
         })),
@@ -1866,26 +1936,26 @@ fn steps() -> Vec<Step> {
             let rects = a.global::<Studio>().get_highlights();
             let r = slint::Model::row_data(&rects, 0);
             // Point ring around the tempo box (700, 42, 57 x 20): padded 6 px (CSS), radius 14
-            let mapped = r.as_ref().is_some_and(|r| (r.x - 694.9).abs() < 0.01 && (r.y - 36.9).abs() < 0.01 && (r.r - 11.9).abs() < 0.01 && r.title == "Tempo (BPM)");
+            let mapped = r.as_ref().is_some_and(|r| (r.x - (transport_x() + 694.9)).abs() < 0.01 && (r.y - 36.9).abs() < 0.01 && (r.r - 11.9).abs() < 0.01 && r.title == "Tempo (BPM)");
             let note = c.assistant.last().is_some_and(|e| e.lines.iter().any(|l| l.starts_with("Tempo (BPM)")));
             (hl && mapped && note && slint::Model::row_count(&rects) == 1).then_some(()).ok_or(format!("hl {hl} rect {r:?} note {note}"))
         })),
         // ---------------- mixer ----------------
-        Do("click the mixer toggle", Box::new(|a| click(a, 1440.0 - 119.0 + 12.5, 47.0))),
+        Do("click the mixer toggle", Box::new(|a| click(a, win().0 - 119.0 + 12.5, 47.0))),
         Check("mixer open: bottom panel 390 pt, timeline lanes shorter", Box::new(move |c, a| {
             let h = a.get_lanes_height();
             rt4.set(c.project().tracks.len());
-            (c.mixer_open && a.global::<Studio>().get_mixer_open() && (h - (342.0 - 27.5)).abs() < 1.0).then_some(()).ok_or(format!("open {} lanes h {h}", c.mixer_open))
+            (c.mixer_open && a.global::<Studio>().get_mixer_open() && (h - (win().1 - 88.4 - crate::highlight::MIXER_BOTTOM_H - 27.5)).abs() < 1.0).then_some(()).ok_or(format!("open {} lanes h {h}", c.mixer_open))
         })),
-        Do("click the Instrument strip header", Box::new(|a| click(a, 5.0 + 108.0 * 0.85 + 40.0, MIXER_Y + 35.0))),
+        Do("click the Instrument strip header", Box::new(|a| click(a, bottom_x() + 108.0 * 0.85 + 40.0, mixer_y() + 35.0))),
         Check("strip click selected track 2", Box::new(move |c, _| {
             rv1.set(c.doc.history_labels().iter().filter(|l| l.as_str() == "Track Volume Change").count());
             rm1.set(c.project().tracks[0].mute);
             (c.selected_track == Some(c.project().tracks[1].id)).then_some(()).ok_or("not selected".into())
         })),
         Do("drag the Audio strip fader from -24 dB to -36 dB", Box::new(|a| {
-            let y = |f: f32| MIXER_Y + MIXER_TRAVEL_TOP + f * MIXER_TRAVEL;
-            drag(a, 5.0 + 53.0 * 0.85, y(crate::controller::fader_from_db(-24.0)), 5.0 + 53.0 * 0.85, y(crate::controller::fader_from_db(-36.0)));
+            let y = |f: f32| mixer_y() + MIXER_TRAVEL_TOP + f * MIXER_TRAVEL;
+            drag(a, bottom_x() + 53.0 * 0.85, y(crate::controller::fader_from_db(-24.0)), bottom_x() + 53.0 * 0.85, y(crate::controller::fader_from_db(-36.0)));
         })),
         Check("track 1 gain ≈ -36 dB, exactly one new undo step", Box::new(move |c, _| {
             let g = c.project().tracks[0].gain;
@@ -1893,13 +1963,13 @@ fn steps() -> Vec<Step> {
             let n = c.doc.history_labels().iter().filter(|l| l.as_str() == "Track Volume Change").count();
             ((db + 36.0).abs() < 0.3 && n == rv2.get() + 1).then_some(()).ok_or(format!("{db} dB, volume steps {n} (was {})", rv2.get()))
         })),
-        Do("click M on the Audio strip", Box::new(|a| click(a, 5.0 + 25.0 * 0.85, MIXER_Y + 390.0 - 17.0 * 0.85))),
+        Do("click M on the Audio strip", Box::new(|a| click(a, bottom_x() + 25.0 * 0.85, bottom_end() - 17.0 * 0.85))),
         Check("track 1 mute toggled via the mixer (SetTrackMute)", Box::new(move |c, _| {
             (c.project().tracks[0].mute != rm2.get() && c.doc.undo_label() == Some("Mute Change")).then_some(()).ok_or(format!("mute {} undo {:?}", c.project().tracks[0].mute, c.doc.undo_label()))
         })),
         Do("drag the master strip fader to ~-24 dB", Box::new(|a| {
-            let y = |f: f32| MIXER_Y + MIXER_TRAVEL_TOP + f * MIXER_TRAVEL;
-            let x = 1440.0 - 5.0 - 108.0 * 0.85 + 53.0 * 0.85;
+            let y = |f: f32| mixer_y() + MIXER_TRAVEL_TOP + f * MIXER_TRAVEL;
+            let x = win().0 - 5.0 - 108.0 * 0.85 + 53.0 * 0.85;
             drag(a, x, y(0.3), x, y(crate::controller::fader_from_db(-24.0)));
         })),
         Check("master gain ≈ -24 dB (SetMasterGain), mixer master fader follows", Box::new(|c, a| {
@@ -1907,7 +1977,7 @@ fn steps() -> Vec<Step> {
             let f = a.global::<Studio>().get_master_fader();
             ((db + 24.0).abs() < 0.3 && (f - 0.78).abs() < 0.01).then_some(()).ok_or(format!("{db} dB, fader {f}"))
         })),
-        Do("click '+ Add track' in the mixer", Box::new(|a| click(a, 5.0 + 3.0 * 108.0 * 0.85 + 46.0, MIXER_Y + 210.0))),
+        Do("click '+ Add track' in the mixer", Box::new(|a| click(a, bottom_x() + 3.0 * 108.0 * 0.85 + 46.0, mixer_y() + 210.0))),
         Check("mixer Add track added an audio track", Box::new(move |c, _| {
             let p = c.project();
             (p.tracks.len() == rt5.get() + 1 && p.tracks.last().unwrap().kind == TrackKind::Audio).then_some(()).ok_or(format!("{} tracks", p.tracks.len()))
@@ -1915,7 +1985,7 @@ fn steps() -> Vec<Step> {
         Do("Cmd+Shift+X (view.toggle_mixer)", Box::new(|a| key(a, "X", true, true))),
         Check("mixer closed by the shortcut, bottom panel back", Box::new(|c, a| {
             let h = a.get_lanes_height();
-            (!c.mixer_open && (h - (426.0 - 27.5)).abs() < 1.0).then_some(()).ok_or(format!("open {} lanes h {h}", c.mixer_open))
+            (!c.mixer_open && (h - (win().1 - 88.4 - c.bottom_h() - 27.5)).abs() < 1.0).then_some(()).ok_or(format!("open {} lanes h {h}", c.mixer_open))
         })),
     ]
 }
@@ -1923,23 +1993,39 @@ fn steps() -> Vec<Step> {
 /// Window centre of a track header's R button (track index `i`, current scroll).
 fn header_r(ctl: &Ctl, i: usize) -> (f32, f32) {
     let sy = ctl.borrow().view.scroll_y as f32;
-    (262.65 + 60.5, TRACK0_Y + i as f32 * PITCH + 47.0 - sy)
+    (tracks_x() + 60.5, track0_y() + i as f32 * PITCH + 47.0 - sy)
 }
 
 /// Inspector (bottom panel 306 pt at y 509 with the Devices tab): R, I and the In field.
-const INSP_R: (f32, f32) = (5.0 + 86.0 + 10.0, 509.0 + 275.0 + 9.0);
-const INSP_I: (f32, f32) = (5.0 + 108.0 + 10.0, 509.0 + 275.0 + 9.0);
-const INSP_IN: (f32, f32) = (5.0 + 80.0, 509.0 + 37.0 + 9.5);
+fn insp_r() -> (f32, f32) {
+    (bottom_x() + 86.0 + 10.0, bottom_y() + 275.0 + 9.0)
+}
+fn insp_i() -> (f32, f32) {
+    (bottom_x() + 108.0 + 10.0, bottom_y() + 275.0 + 9.0)
+}
+fn insp_in() -> (f32, f32) {
+    (bottom_x() + 80.0, bottom_y() + 37.0 + 9.5)
+}
 /// "In" popup (window x 16, y 568): centre of row 0.
-const IN_ROW0: (f32, f32) = (60.0, 568.0 + crate::recording::IN_PAD + crate::recording::IN_ROW / 2.0);
-const RECORD_BTN: (f32, f32) = (423.0 + 14.0, 38.0 + 14.0);
+fn in_row0() -> (f32, f32) {
+    (60.0, bottom_y() + 59.0 + crate::recording::IN_PAD + crate::recording::IN_ROW / 2.0)
+}
+fn record_btn() -> (f32, f32) {
+    (geo().transport_x + 423.0 + 14.0, 38.0 + 14.0)
+}
 /// Settings panel origin (the reference app's 960 x 820 pt window at x 255, y 6.5, in 85 % units) and width.
-const SET_X: f32 = 216.75;
-const SET_Y: f32 = 5.5;
-const SET_W: f32 = 816.0;
+fn set_x() -> f32 {
+    geo().settings_x
+}
+fn set_y() -> f32 {
+    geo().settings_y
+}
+fn set_w() -> f32 {
+    geo().settings_w
+}
 /// Settings panel sidebar row centres.
 fn settings_row(i: usize) -> (f32, f32) {
-    (SET_X + 10.0 + 83.0, SET_Y + 94.75 + i as f32 * 27.25 + 12.75)
+    (set_x() + 10.0 + 83.0, set_y() + 94.75 + i as f32 * 27.25 + 12.75)
 }
 
 /// Injected test input: 1 s of a 440 Hz sine at -6 dBFS, mono.
@@ -1979,9 +2065,9 @@ fn recording_steps() -> Vec<Step> {
         })),
         DoC("rec: select audio track 1 (header), Devices tab", Box::new(|a, ctl| {
             let sy = ctl.borrow().view.scroll_y as f32;
-            click(a, 300.0, TRACK0_Y + 10.0 - sy);
+            click(a, tracks_x() + 37.35, track0_y() + 10.0 - sy);
             if ctl.borrow().bottom_tab == crate::controller::BottomTab::Clip {
-                click(a, 5.0 + 286.0 + 15.0, CLIP_Y + 14.0);
+                click(a, bottom_x() + 286.0 + 15.0, bottom_y() + 14.0);
             }
         })),
         Check("rec: nothing armed with an input; record history", Box::new(move |c, a| {
@@ -1991,7 +2077,7 @@ fn recording_steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("armed {:?} sel {:?}", c.armed_with_input(), c.selected_track))
         })),
-        Do("rec: click the header record button with nothing armed", Box::new(|a| click(a, RECORD_BTN.0, RECORD_BTN.1))),
+        Do("rec: click the header record button with nothing armed", Box::new(|a| click(a, record_btn().0, record_btn().1))),
         Check("rec: record refused with a clear status, not recording, project unchanged", Box::new(move |c, a| {
             let st = status(a);
             (!c.rec.recording && !a.global::<Studio>().get_recording() && st.starts_with("Nothing to record") && c.doc.history_labels().len() == h2.get())
@@ -2021,12 +2107,12 @@ fn recording_steps() -> Vec<Step> {
             one(&h5, c, "Arm Track")?;
             c.project().tracks[0].arm.then_some(()).ok_or("not armed".into())
         })),
-        Do("rec: click the inspector R", Box::new(|a| click(a, INSP_R.0, INSP_R.1))),
+        Do("rec: click the inspector R", Box::new(|a| click(a, insp_r().0, insp_r().1))),
         Check("rec: inspector R disarmed, one undo step", Box::new(move |c, a| {
             one(&h6, c, "Disarm Track")?;
             (!c.project().tracks[0].arm && !a.global::<Studio>().get_sel_arm()).then_some(()).ok_or("still armed".into())
         })),
-        Do("rec: click the inspector I", Box::new(|a| click(a, INSP_I.0, INSP_I.1))),
+        Do("rec: click the inspector I", Box::new(|a| click(a, insp_i().0, insp_i().1))),
         Check("rec: I turned input monitoring on (SetTrackMonitor), one undo step, I drawn on", Box::new(move |c, a| {
             one(&h7, c, "Input Monitoring Change")?;
             (c.project().tracks[0].monitor && a.global::<Studio>().get_sel_monitor()).then_some(()).ok_or("monitor off".into())
@@ -2047,8 +2133,8 @@ fn recording_steps() -> Vec<Step> {
         })),
         DoC("rec: re-select track 1, click the inspector In field", Box::new(|a, ctl| {
             let sy = ctl.borrow().view.scroll_y as f32;
-            click(a, 300.0, TRACK0_Y + 10.0 - sy);
-            click(a, INSP_IN.0, INSP_IN.1);
+            click(a, tracks_x() + 37.35, track0_y() + 10.0 - sy);
+            click(a, insp_in().0, insp_in().1);
         })),
         Check("rec: In popup open, \"None\" first and checked, device inputs listed (or the no-device hint)", Box::new(|c, a| {
             let s = a.global::<Studio>();
@@ -2065,17 +2151,17 @@ fn recording_steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("open {} rows {:?}", s.get_input_menu_open(), rows.iter().map(|r| r.label.to_string()).collect::<Vec<_>>()))
         })),
-        Do("rec: click \"None\" in the popup", Box::new(|a| click(a, IN_ROW0.0, IN_ROW0.1))),
+        Do("rec: click \"None\" in the popup", Box::new(|a| click(a, in_row0().0, in_row0().1))),
         Check("rec: popup closed; choosing the current entry made no undo step", Box::new(move |c, a| {
             (!a.global::<Studio>().get_input_menu_open() && c.doc.history_labels().len() == h10.get() && c.project().tracks[0].input.is_none())
                 .then_some(())
                 .ok_or("popup open or project changed".into())
         })),
         DoC("rec: pick a device input in the popup, or (COMMAND PATH: no device inputs are listed in the self-test) SetTrackInput Input 1 (Mono)", Box::new(|a, ctl| {
-            click(a, INSP_IN.0, INSP_IN.1);
+            click(a, insp_in().0, insp_in().1);
             let real = ctl.borrow().rec.input_menu.as_ref().is_some_and(|m| m.len() > 1);
             if real {
-                click(a, IN_ROW0.0, IN_ROW0.1 + crate::recording::IN_ROW);
+                click(a, in_row0().0, in_row0().1 + crate::recording::IN_ROW);
             } else {
                 key(a, Key::Escape, false, false);
                 let mut c = ctl.borrow_mut();
@@ -2106,7 +2192,7 @@ fn recording_steps() -> Vec<Step> {
                 && !s.get_set_input_muted();
             ok.then_some(()).ok_or(format!("open {} page {} out {:?} in {:?} rate {:?}", s.get_settings_open(), s.get_settings_page(), s.get_set_output_text(), s.get_set_input_text(), s.get_set_rate_text()))
         })),
-        Do("settings: click the Buffer size dropdown", Box::new(|a| click(a, SET_X + 187.0 + 300.0, SET_Y + 312.0 + 14.0))),
+        Do("settings: click the Buffer size dropdown", Box::new(|a| click(a, set_x() + 187.0 + 300.0, set_y() + 312.0 + 14.0))),
         Check("settings: buffer list 64..2048 with ms readouts", Box::new(|_, a| {
             let s = a.global::<Studio>();
             let items = s.get_settings_menu_items();
@@ -2143,14 +2229,14 @@ fn recording_steps() -> Vec<Step> {
             let ok_txt = if max == 0 { txt == "Plugin latency: none" } else { txt.contains(&format!("({max} samples)")) };
             (c.engine.delay_compensation_enabled() && s.get_set_pdc_on() && ok_txt).then_some(()).ok_or(format!("enabled {} ui {} text {txt:?} max {max}", c.engine.delay_compensation_enabled(), s.get_set_pdc_on()))
         })),
-        Do("pdc: click the Plugin delay compensation switch", Box::new(|a| click(a, SET_X + SET_W - 41.0 + 10.25, SET_Y + 355.0 + 5.0))),
+        Do("pdc: click the Plugin delay compensation switch", Box::new(|a| click(a, set_x() + set_w() - 41.0 + 10.25, set_y() + 355.0 + 5.0))),
         Check("pdc: switched off in the engine, the UI and the (in-memory) preferences", Box::new(|c, a| {
             (!c.engine.delay_compensation_enabled() && !a.global::<Studio>().get_set_pdc_on() && c.settings.prefs.audio.pdc_off)
                 .then_some(())
                 .ok_or(format!("engine {} ui {} pref_off {}", c.engine.delay_compensation_enabled(), a.global::<Studio>().get_set_pdc_on(), c.settings.prefs.audio.pdc_off))
         })),
         Do("pdc: click the switch again, then Escape", Box::new(|a| {
-            click(a, SET_X + SET_W - 41.0 + 10.25, SET_Y + 355.0 + 5.0);
+            click(a, set_x() + set_w() - 41.0 + 10.25, set_y() + 355.0 + 5.0);
             key(a, Key::Escape, false, false);
         })),
         Check("pdc: back on; Settings closed", Box::new(|c, a| {
@@ -2211,8 +2297,8 @@ fn recording_steps() -> Vec<Step> {
         // ---------------- recording with injected input (offline only) ----------------
         DoC("rec: Shift+R (arm track 1), click the ruler at bar 2", Box::new(|a, ctl| {
             key(a, "R", false, true);
-            let x = LANE_X + ctl.borrow().view.x_of(4.0);
-            click(a, x, 112.0);
+            let x = lane_x() + ctl.borrow().view.x_of(4.0);
+            click(a, x, lane_y0() + 6.5);
         })),
         Check("rec: track 1 armed with Input 1, playhead at beat 4; record history", Box::new(move |c, _| {
             rn1.set(c.project().tracks[0].clips.len());
@@ -2314,24 +2400,24 @@ fn click_track_header(a: &AppWindow, ctl: &Ctl, i: usize) {
         let c = ctl.borrow();
         (c.view.scroll_y as f32, c.lanes_size.1)
     };
-    let y = TRACK0_Y + i as f32 * PITCH - sy;
-    let bottom = 78.0 + 27.5 + lanes_h - 30.5;
-    if y < TRACK0_Y || y + 74.0 > bottom {
+    let y = track0_y() + i as f32 * PITCH - sy;
+    let bottom = lane_y0() + lanes_h - 30.5;
+    if y < track0_y() || y + 74.0 > bottom {
         let target = i as f32 * PITCH;
-        a.window().dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(300.0, 300.0) });
-        a.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(300.0, 300.0), delta_x: 0.0, delta_y: sy - target });
+        a.window().dispatch_event(WindowEvent::PointerMoved { position: headers_point() });
+        a.window().dispatch_event(WindowEvent::PointerScrolled { position: headers_point(), delta_x: 0.0, delta_y: sy - target });
         if let Ok(mut c) = ctl.try_borrow_mut() {
             c.update_ui(a);
         }
     }
     let sy = ctl.borrow().view.scroll_y as f32;
-    click(a, 300.0, TRACK0_Y + i as f32 * PITCH + 10.0 - sy);
+    click(a, tracks_x() + 37.35, track0_y() + i as f32 * PITCH + 10.0 - sy);
 }
 
 /// Window centre of browser tree row `i`.
 fn tree_row_xy(a: &AppWindow, i: usize) -> (f32, f32) {
     let sc = a.global::<Studio>().get_tree_scroll();
-    (5.0 + 110.0, crate::devices::TREE_Y + crate::devices::TREE_TOP + i as f32 * crate::devices::TREE_ROW + 10.5 - sc)
+    (geo().browser_x + 110.0, crate::devices::TREE_Y + crate::devices::TREE_TOP + i as f32 * crate::devices::TREE_ROW + 10.5 - sc)
 }
 
 fn tree_labels(a: &AppWindow) -> Vec<(i32, String, String, bool)> {
@@ -2352,20 +2438,26 @@ fn card_named(a: &AppWindow, name: &str) -> Option<crate::DeviceCard> {
     cards(a).into_iter().find(|c| c.name == name)
 }
 
-/// Bottom panel (Devices tab, 306 pt) top in the window.
-const BOTTOM_Y: f32 = 509.0;
 /// Card-relative point -> window point.
 fn card_xy(c: &crate::DeviceCard, x: f32, y: f32) -> (f32, f32) {
-    (5.0 + c.x + x, BOTTOM_Y + 34.0 + y)
+    (5.0 + c.x + x, bottom_y() + 34.0 + y)
 }
 
-/// Centre of row `i` of the device popup list (same clamping as ui/app.slint).
+/// Centre of row `i` of the device popup list (same clamping as ui/app.slint), scrolled into view.
 fn devmenu_row(a: &AppWindow, i: usize) -> (f32, f32) {
     let s = a.global::<Studio>();
     let (w, h) = (s.get_devmenu_w(), s.get_devmenu_h());
-    let x = s.get_devmenu_x().min(1440.0 - 5.0 - w).max(5.0);
-    let y = s.get_devmenu_y().min(820.0 - 5.0 - h).max(5.0);
-    (x + 40.0, y + crate::devices::MENU_PAD + i as f32 * crate::devices::MENU_ROW + 10.25)
+    let x = s.get_devmenu_x().min(win().0 - 5.0 - w).max(5.0);
+    let y = s.get_devmenu_y().min(win().1 - 5.0 - h).max(5.0);
+    let row = s.get_devmenu_items().row_data(i).map_or(0.0, |m| m.y) + 10.25;
+    // A list taller than the window scrolls: wheel a row that is out of view to the middle.
+    let scroll = (row - h / 2.0).clamp(0.0, (s.get_devmenu_content_h() - h).max(0.0));
+    if scroll > 0.0 {
+        let p = LogicalPosition::new(x + w / 2.0, y + h / 2.0);
+        a.window().dispatch_event(WindowEvent::PointerMoved { position: p });
+        a.window().dispatch_event(WindowEvent::PointerScrolled { position: p, delta_x: 0.0, delta_y: -scroll });
+    }
+    (x + 40.0, y + row - scroll)
 }
 
 fn devmenu_labels(a: &AppWindow) -> Vec<(String, String, bool)> {
@@ -2387,8 +2479,14 @@ fn retype(a: &AppWindow, field: (f32, f32), text: &str) {
     type_text(a, text);
 }
 
-const BROWSER_SEARCH: (f32, f32) = (5.0 + 8.5 + 120.0, 78.0 + 34.0 + 10.0);
-const EFFECTS_TAB: (f32, f32) = (5.0 + 86.0, 78.0 + 67.0);
+fn browser_search() -> (f32, f32) {
+    let g = geo();
+    (g.browser_x + 8.5 + 120.0, g.browser_y + 34.0 + 10.0)
+}
+fn effects_tab() -> (f32, f32) {
+    let g = geo();
+    (g.browser_x + 86.0, g.browser_y + 67.0)
+}
 
 /// Plugin devices (appended last). Checks marked [needs engine plugin …] depend on the
 /// engine's plugin hosting; with the engine stub they FAIL (the catalogue is empty and no
@@ -2434,9 +2532,9 @@ fn device_steps() -> Vec<Step> {
             let i = track_of(&ctl.borrow(), TrackKind::Audio).unwrap_or(0);
             click_track_header(a, ctl, i);
             if ctl.borrow().bottom_tab == crate::controller::BottomTab::Clip {
-                click(a, 5.0 + 286.0 + 15.0, CLIP_Y + 14.0);
+                click(a, bottom_x() + 286.0 + 15.0, bottom_y() + 14.0);
             }
-            click(a, EFFECTS_TAB.0, EFFECTS_TAB.1);
+            click(a, effects_tab().0, effects_tab().1);
         })),
         Check("devices: Effects tab lists Audio Units with plugins (catalogue scanned) [needs engine plugin scanning]", Box::new(|c, a| {
             let rows = tree_labels(a);
@@ -2444,7 +2542,7 @@ fn device_steps() -> Vec<Step> {
             let ok = a.global::<Studio>().get_browser_tab() == 1 && au.as_deref().and_then(|n| n.parse::<usize>().ok()).is_some_and(|n| n > 0);
             ok.then_some(()).ok_or(format!("tab {} Audio Units count {au:?}; scan {}", a.global::<Studio>().get_browser_tab(), scan_state(c)))
         })),
-        Do("devices: type “AULowpass” into the browser search", Box::new(|a| retype(a, BROWSER_SEARCH, "AULowpass"))),
+        Do("devices: type “AULowpass” into the browser search", Box::new(|a| retype(a, browser_search(), "AULowpass"))),
         Check("devices: search shows Audio Units › Apple › AULowpass; record history [needs engine plugin scanning]", Box::new(move |c, a| {
             h0.set(c.doc.history_labels().len());
             let rows = tree_labels(a);
@@ -2496,13 +2594,13 @@ fn device_steps() -> Vec<Step> {
             track_devices(c, TrackKind::Audio).first().is_some_and(|x| x.2).then_some(()).ok_or("still bypassed".into())
         })),
         DoC("devices: clear the search; Add device › Audio Units", Box::new(|a, ctl| {
-            retype(a, BROWSER_SEARCH, "");
+            retype(a, browser_search(), "");
             key(a, Key::Escape, false, false);
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.update_ui(a);
             }
-            let add_x = a.global::<Studio>().get_add_device_x();
-            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 22.0 + 11.0);
+            let add_x = add_card_x(a, ctl);
+            click(a, bottom_x() + add_x + 60.0, bottom_y() + 34.5 + 56.5 + 22.0 + 11.0);
         })),
         Check("devices: Audio Units list open with AUDelay [needs engine plugin scanning]", Box::new(|c, a| {
             let items = devmenu_labels(a);
@@ -2605,7 +2703,7 @@ fn device_steps() -> Vec<Step> {
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.update_ui(a);
             }
-            click(a, INSP_IN.0, INSP_IN.1);
+            click(a, insp_in().0, insp_in().1);
         })),
         Check("devices: Inst list shows Synth ✓ and DLSMusicDevice; record history [needs engine plugin scanning]", Box::new(move |c, a| {
             h8.set(c.doc.history_labels().len());
@@ -2632,7 +2730,7 @@ fn device_steps() -> Vec<Step> {
                 .ok_or(format!("instrument {ip:?}, synth visible {}, inst text {}", s.get_synth_visible(), s.get_sel_inst_text()))
         })),
         Do("devices: Inst selector → Synth", Box::new(|a| {
-            click(a, INSP_IN.0, INSP_IN.1);
+            click(a, insp_in().0, insp_in().1);
             let (x, y) = devmenu_row(a, 0);
             click(a, x, y);
         })),
@@ -2642,7 +2740,7 @@ fn device_steps() -> Vec<Step> {
             (c.project().tracks[i].instrument_plugin.as_ref().is_some_and(crate::devices::is_builtin_synth) && a.global::<Studio>().get_synth_visible()).then_some(()).ok_or("still a plugin instrument".into())
         })),
         DoC("devices: search “AUDelay”, drag it from the browser onto the Instrument track lane", Box::new(|a, ctl| {
-            retype(a, BROWSER_SEARCH, "AUDelay");
+            retype(a, browser_search(), "AUDelay");
             key(a, Key::Escape, false, false);
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.update_ui(a);
@@ -2653,7 +2751,7 @@ fn device_steps() -> Vec<Step> {
                 let c = ctl.borrow();
                 (track_of(&c, TrackKind::Instrument).unwrap_or(1), c.view.scroll_y as f32)
             };
-            drag(a, x0, y0, LANE_X + 300.0, TRACK0_Y + ti as f32 * PITCH + 37.0 - sy);
+            drag(a, x0, y0, lane_x() + 300.0, track0_y() + ti as f32 * PITCH + 37.0 - sy);
         })),
         Check("devices: AUDelay dropped on the Instrument track (AddDevice), one undo step [needs engine plugin scanning]", Box::new(move |c, a| {
             one(&h11, c, "Add AUDelay")?;
@@ -2661,7 +2759,7 @@ fn device_steps() -> Vec<Step> {
             (d.iter().map(|x| x.1.as_str()).collect::<Vec<_>>() == ["AUDelay"] && !a.global::<Studio>().get_dnd_active()).then_some(()).ok_or(format!("instrument devices {d:?}"))
         })),
         DoC("devices: search “AULowpass”, drag it into the device chain before AUDelay", Box::new(|a, ctl| {
-            retype(a, BROWSER_SEARCH, "AULowpass");
+            retype(a, browser_search(), "AULowpass");
             key(a, Key::Escape, false, false);
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.update_ui(a);
@@ -2695,10 +2793,10 @@ fn device_steps() -> Vec<Step> {
         })),
         Do("settings: click “Rescan all plugins”", Box::new(|a| {
             let dirs = slint::Model::row_count(&a.global::<Studio>().get_scan_dirs()).min(8) as f32; // list is at most 8 rows tall
-            let content_w = SET_W - 187.0;
+            let content_w = set_w() - 187.0;
             let card_x = 20.5 + ((content_w - 41.0) / 2.0 + 4.5);
             let card_y = 91.0 + dirs * 30.5 + 86.0;
-            click(a, SET_X + 187.0 + card_x + 10.5 + 30.0, SET_Y + card_y + 31.0 + 13.0);
+            click(a, set_x() + 187.0 + card_x + 10.5 + 30.0, set_y() + card_y + 31.0 + 13.0);
         })),
         Check("settings: a forced rescan ran (scan_plugins with rescan = true) and finished", Box::new(move |c, _| {
             let st = &c.devices.catalog.state;
@@ -2736,7 +2834,9 @@ fn device_steps() -> Vec<Step> {
 // ------------------------------------------------------------------ automation
 
 /// Lanes surface origin in the window (timeline x 262 + lane-x 191, y 78 + 27.5).
-const LANES_ORIGIN: (f32, f32) = (453.65, 105.5);
+fn lanes_origin() -> (f32, f32) {
+    (lane_x(), lane_y0())
+}
 
 fn auto_row(c: &Controller, track: usize, target: &saine_core::AutomationTarget) -> Option<crate::automation::Row> {
     let key = Some(c.project().tracks.get(track)?.id);
@@ -2746,7 +2846,7 @@ fn auto_row(c: &Controller, track: usize, target: &saine_core::AutomationTarget)
 /// Window point on an automation row at `beat` and lane value `v`.
 fn auto_xy(c: &Controller, track: usize, target: &saine_core::AutomationTarget, beat: f64, v: f32) -> (f32, f32) {
     let Some(r) = auto_row(c, track, target) else { return (0.0, 0.0) };
-    (LANES_ORIGIN.0 + c.view.x_of(beat), LANES_ORIGIN.1 + r.y_of(crate::automation::norm_of(target, v)))
+    (lanes_origin().0 + c.view.x_of(beat), lanes_origin().1 + r.y_of(crate::automation::norm_of(target, v)))
 }
 
 fn lane_points(c: &Controller, track: usize, target: &saine_core::AutomationTarget) -> Vec<(i64, f32, f32)> {
@@ -2756,8 +2856,8 @@ fn lane_points(c: &Controller, track: usize, target: &saine_core::AutomationTarg
 
 /// Track header automation pill (track index `i`): window centre of the label and of the power icon.
 fn pill_xy(c: &Controller, i: usize) -> ((f32, f32), (f32, f32)) {
-    let y = TRACK0_Y + c.view.track_offset(i) - c.view.scroll_y as f32 + 49.0 + 8.25;
-    ((262.65 + 42.0 + 70.0, y), (262.65 + 42.0 + 8.5, y))
+    let y = track0_y() + c.view.track_offset(i) - c.view.scroll_y as f32 + 49.0 + 8.25;
+    ((tracks_x() + 42.0 + 70.0, y), (tracks_x() + 42.0 + 8.5, y))
 }
 
 fn with_shift(a: &AppWindow, f: impl FnOnce()) {
@@ -2824,10 +2924,10 @@ fn automation_steps() -> Vec<Step> {
             c.import_files(vec![wav.clone()], crate::controller::ImportTarget::Selected, Some(0));
         })),
         Check("automation: clip imported, lanes hidden, timeline at full width", Box::new(|c, a| {
-            let ok = c.project().tracks[0].clips.len() == 1 && !c.auto.shown && !a.global::<Studio>().get_auto_shown() && (a.get_lanes_width() - (1440.0 - 262.65 - 5.0 - 191.0)).abs() < 1.0;
+            let ok = c.project().tracks[0].clips.len() == 1 && !c.auto.shown && !a.global::<Studio>().get_auto_shown() && (a.get_lanes_width() - (win().0 - geo().timeline_x - 5.0 - 191.0)).abs() < 1.0;
             ok.then_some(()).ok_or(format!("clips {} shown {}", c.project().tracks[0].clips.len(), c.auto.shown))
         })),
-        Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 296.9, 78.0 + 14.0))),
+        Do("automation: click “Show automation lanes” in the timeline header", Box::new(|a| click(a, geo().timeline_x + geo().timeline_w - 296.9, geo().timeline_y + 14.0))),
         Check("automation: lanes shown; each header has the Track Volume pill and the disclosure; master row 64.5 pt; value labels (tracks +0.0, master at its static level)", Box::new(move |c, a| {
             ah_set(c.doc.history_labels().len());
             let s = a.global::<Studio>();
@@ -2841,8 +2941,9 @@ fn automation_steps() -> Vec<Step> {
             let (pill, _) = pill_xy(&ctl.borrow(), 0);
             click(a, pill.0, pill.1);
             let top = pill.1 + 8.25 + 1.5;
-            click(a, 304.0 + 50.0, top + 30.5 + 10.5);
-            click(a, 304.0 + 190.0 + 50.0, top + 30.5 - 4.0 + 4.0 + 21.0 + 10.25);
+            let (px, sub_x) = picker_x(a);
+            click(a, px + 50.0, top + 30.5 + 10.5);
+            click(a, sub_x + 50.0, top + 30.5 - 4.0 + 4.0 + 21.0 + 10.25);
         })),
         Check("automation: picker closed, track 1 shows Track › Pan (UI state only, no undo step)", Box::new(move |c, a| {
             let s = a.global::<Studio>();
@@ -2878,7 +2979,7 @@ fn automation_steps() -> Vec<Step> {
         })),
         DoC("automation: drag the beat-8 point to beat 10 and up 20 pt", Box::new(|a, ctl| {
             let (x, y) = auto_xy(&ctl.borrow(), 0, &AT::Pan, 8.0, 0.0);
-            let x1 = LANES_ORIGIN.0 + ctl.borrow().view.x_of(10.0);
+            let x1 = lanes_origin().0 + ctl.borrow().view.x_of(10.0);
             drag(a, x, y, x1 + 3.0, y - 20.0);
         })),
         Check("automation: point moved to beat 10 (snapped) with a value right of centre, one undo step", Box::new({
@@ -2938,8 +3039,9 @@ fn automation_steps() -> Vec<Step> {
             let (pill, _) = pill_xy(&ctl.borrow(), 0);
             click(a, pill.0, pill.1);
             let top = pill.1 + 8.25 + 1.5;
-            click(a, 304.0 + 50.0, top + 30.5 + 10.5);
-            click(a, 304.0 + 190.0 + 50.0, top + 30.5 - 4.0 + 4.0 + 10.25);
+            let (px, sub_x) = picker_x(a);
+            click(a, px + 50.0, top + 30.5 + 10.5);
+            click(a, sub_x + 50.0, top + 30.5 - 4.0 + 4.0 + 10.25);
         })),
         Check("automation: track 1 shows Volume", Box::new(move |c, _| {
             ah_set(c.doc.history_labels().len());
@@ -2972,8 +3074,8 @@ fn automation_steps() -> Vec<Step> {
         })),
         DoC("automation: move the volume slider while not armed (automation is active)", Box::new(move |a, ctl| {
             ah_set(ctl.borrow().doc.history_labels().len());
-            let y = TRACK0_Y + 44.0 - 13.0 + 4.0;
-            drag(a, 262.65 + 115.6 + 10.0, y, 262.65 + 115.6 + 30.0, y);
+            let y = track0_y() + 44.0 - 13.0 + 4.0;
+            drag(a, tracks_x() + 115.6 + 10.0, y, tracks_x() + 115.6 + 30.0, y);
         })),
         Check("automation: no edit, status hint “Volume is automated: arm automation to write, or disable the lane”", Box::new(move |c, a| {
             let st = a.global::<Studio>().get_status_text().to_string();
@@ -3032,7 +3134,7 @@ fn automation_steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("rms 0–0.1 s {early:.4}, 0.45–0.55 s {mid:.4}, 0.9–1.0 s {late:.4}: the level does not follow the lane; the engine does not apply automation yet (depends on the engine agent's automation playback)"))
         })),
-        Do("automation: click Automation Arm in the transport", Box::new(|a| click(a, 496.0 + 10.5, 41.0 + 11.0))),
+        Do("automation: click Automation Arm in the transport", Box::new(|a| click(a, transport_x() + 496.0 + 10.5, 41.0 + 11.0))),
         Check("automation: armed (transport button on)", Box::new(move |c, a| {
             ah_set(c.doc.history_labels().len());
             (c.auto.armed && a.global::<Studio>().get_auto_armed()).then_some(()).ok_or("not armed".into())
@@ -3045,8 +3147,8 @@ fn automation_steps() -> Vec<Step> {
                 let _ = c.engine.play();
             }
             advance(ctl, 0.1);
-            let y = TRACK0_Y + 44.0 - 13.0 + 4.0;
-            let x0 = 262.65 + 115.6 + 3.5;
+            let y = track0_y() + 44.0 - 13.0 + 4.0;
+            let x0 = tracks_x() + 115.6 + 3.5;
             press(a, x0 + 50.0, y);
             for k in 1..=4 {
                 advance(ctl, 0.15);
@@ -3067,8 +3169,8 @@ fn automation_steps() -> Vec<Step> {
                 .ok_or(format!("points {p:?}"))
         })),
         Do("automation: click Automation Arm again (off), hide lanes", Box::new(|a| {
-            click(a, 496.0 + 10.5, 41.0 + 11.0);
-            click(a, 262.65 + (1440.0 - 262.65 - 5.0) - 296.9, 78.0 + 14.0);
+            click(a, transport_x() + 496.0 + 10.5, 41.0 + 11.0);
+            click(a, geo().timeline_x + geo().timeline_w - 296.9, geo().timeline_y + 14.0);
         })),
         Check("automation: disarmed, lanes hidden, master row back to 30 pt", Box::new(move |c, a| {
             let _ = &wav2;
@@ -3119,8 +3221,8 @@ fn builtin_each_steps() -> Vec<Step> {
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.update_ui(a);
             }
-            let add_x = a.global::<Studio>().get_add_device_x();
-            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+            let add_x = add_card_x(a, ctl);
+            click(a, bottom_x() + add_x + 60.0, bottom_y() + 34.5 + 56.5 + 11.0);
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.update_ui(a);
             }
@@ -3202,14 +3304,14 @@ fn builtin_device_steps() -> Vec<Step> {
             let i = track_of(&ctl.borrow(), TrackKind::Audio).unwrap_or(0);
             click_track_header(a, ctl, i);
             if ctl.borrow().bottom_tab == crate::controller::BottomTab::Clip {
-                click(a, 5.0 + 286.0 + 15.0, CLIP_Y + 14.0);
+                click(a, bottom_x() + 286.0 + 15.0, bottom_y() + 14.0);
             }
             h0.set(ctl.borrow().doc.history_labels().len());
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.update_ui(a);
             }
-            let add_x = a.global::<Studio>().get_add_device_x();
-            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+            let add_x = add_card_x(a, ctl);
+            click(a, bottom_x() + add_x + 60.0, bottom_y() + 34.5 + 56.5 + 11.0);
         })),
         Check("builtin: the Built-in list offers Compressor", Box::new(|_, a| {
             let items = devmenu_labels(a);
@@ -3491,8 +3593,8 @@ fn dynamics_device_steps() -> Vec<Step> {
         v.push(DoC(format!("dynamics: Add device › Built-in › {name}").leak(), Box::new(move |a, ctl| {
             h0.set(ctl.borrow().doc.history_labels().len());
             key(a, Key::Escape, false, false);
-            let add_x = a.global::<Studio>().get_add_device_x();
-            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+            let add_x = add_card_x(a, ctl);
+            click(a, bottom_x() + add_x + 60.0, bottom_y() + 34.5 + 56.5 + 11.0);
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.update_ui(a);
             }
@@ -3579,8 +3681,8 @@ fn limiter_family_steps() -> Vec<Step> {
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.update_ui(a);
             }
-            let add_x = a.global::<Studio>().get_add_device_x();
-            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+            let add_x = add_card_x(a, ctl);
+            click(a, bottom_x() + add_x + 60.0, bottom_y() + 34.5 + 56.5 + 11.0);
             if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == name) {
                 let (x, y) = devmenu_row(a, i);
                 click(a, x, y);
@@ -3863,7 +3965,7 @@ fn modulation_steps() -> Vec<Step> {
             match cards(a).into_iter().find(|cd| cd.id as u64 == head.0) {
                 // Click the ✕ when the card is on screen; otherwise (a smaller
                 // window, or a longer device row) press it through its callback.
-                Some(cd) if 5.0 + cd.x + cd.width <= 1440.0 - 5.0 => {
+                Some(cd) if bottom_x() + cd.x + cd.width <= win().0 - 5.0 => {
                     let (x, y) = card_xy(&cd, cd.width - 14.5, 13.5);
                     click(a, x, y);
                 }
@@ -4158,8 +4260,8 @@ fn restoration_device_steps() -> Vec<Step> {
                 h0.set(c.doc.history_labels().len());
                 c.update_ui(a);
             }
-            let add_x = a.global::<Studio>().get_add_device_x();
-            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+            let add_x = add_card_x(a, ctl);
+            click(a, bottom_x() + add_x + 60.0, bottom_y() + 34.5 + 56.5 + 11.0);
         })));
         steps.push(Do(leak(format!("restoration: pick {name}")), Box::new(move |a| {
             if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == name && r.2) {
@@ -4297,8 +4399,8 @@ fn time_fx_steps() -> Vec<Step> {
                 }
                 c.update_ui(a);
             }
-            let add_x = a.global::<Studio>().get_add_device_x();
-            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+            let add_x = add_card_x(a, ctl);
+            click(a, bottom_x() + add_x + 60.0, bottom_y() + 34.5 + 56.5 + 11.0);
         })),
         Check("time fx: the Built-in list offers Delay, Echo, Reverb, Pitch Shifter and Grains", Box::new(|_, a| {
             let items = devmenu_labels(a);
@@ -4712,8 +4814,8 @@ fn modulation_device_steps() -> Vec<Step> {
         steps.push(DoC(leak(format!("modulation: Add device › Built-in › {name}")), Box::new(move |a, ctl| {
             h0.set(ctl.borrow().doc.history_labels().len());
             refresh(a, ctl);
-            let add_x = a.global::<Studio>().get_add_device_x();
-            click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+            let add_x = add_card_x(a, ctl);
+            click(a, bottom_x() + add_x + 60.0, bottom_y() + 34.5 + 56.5 + 11.0);
             refresh(a, ctl);
             if let Some(i) = devmenu_labels(a).iter().position(|r| r.0 == name) {
                 let (x, y) = devmenu_row(a, i);
@@ -4812,12 +4914,29 @@ fn canvas_xy(cd: &crate::DeviceCard, x: f32, y: f32) -> (f32, f32) {
 }
 
 /// Opens Add device › Built-in on the first audio track and picks \`name\`.
+/// The Add device card's x in the bottom panel, after scrolling the chain until the whole card
+/// is on screen (a narrow window or a long chain can push it past the right edge).
+fn add_card_x(a: &AppWindow, ctl: &Ctl) -> f32 {
+    let refresh = || {
+        if let Ok(mut c) = ctl.try_borrow_mut() {
+            c.update_ui(a);
+        }
+    };
+    refresh();
+    let over = a.global::<Studio>().get_add_device_x() + 182.5 + 5.0 - geo().bottom_w;
+    if over > 0.0 {
+        ctl.borrow_mut().chain_scroll_by(-over);
+        refresh();
+    }
+    a.global::<Studio>().get_add_device_x()
+}
+
 fn add_builtin(a: &AppWindow, ctl: &Ctl, name: &str) {
     if let Ok(mut c) = ctl.try_borrow_mut() {
         c.update_ui(a);
     }
-    let add_x = a.global::<Studio>().get_add_device_x();
-    click(a, 5.0 + add_x + 60.0, BOTTOM_Y + 34.5 + 56.5 + 11.0);
+    let add_x = add_card_x(a, ctl);
+    click(a, bottom_x() + add_x + 60.0, bottom_y() + 34.5 + 56.5 + 11.0);
     if let Ok(mut c) = ctl.try_borrow_mut() {
         c.update_ui(a);
     }
@@ -5038,7 +5157,7 @@ fn field_device_steps() -> Vec<Step> {
 fn seq_xy(a: &AppWindow, row: u16, step: u16) -> (f32, f32) {
     let s = a.global::<Studio>();
     let (pitch, w, scroll) = (s.get_seq_col_pitch(), s.get_seq_cell_w(), s.get_seq_scroll_y());
-    (260.0 + crate::stepseq::COL_X0 + step as f32 * pitch + w / 2.0, CLIP_Y + 27.0 + crate::stepseq::ROW_Y0 + row as f32 * crate::stepseq::ROW_PITCH + 9.75 - scroll)
+    (pr_origin().0 + crate::stepseq::COL_X0 + step as f32 * pitch + w / 2.0, bottom_y() + 27.0 + crate::stepseq::ROW_Y0 + row as f32 * crate::stepseq::ROW_PITCH + 9.75 - scroll)
 }
 
 fn seq_clip(c: &Controller) -> Option<saine_core::MidiClip> {
@@ -5113,7 +5232,7 @@ fn step_sequencer_steps() -> Vec<Step> {
             (pad2 == vec![0, 1, 2, 3]).then_some(()).ok_or(format!("pad 2 {pad2:?}"))
         })),
         Do("seq: Velocity tab, drag Pad 1 step 1 down 60 pt", Box::new(|a| {
-            click(a, 260.0 + 220.0, CLIP_Y + 27.0 + 13.5);
+            click(a, pr_origin().0 + 220.0, bottom_y() + 27.0 + 13.5);
             let (x, y) = seq_xy(a, 0, 0);
             drag(a, x, y, x, y + 60.0);
         })),
@@ -5125,7 +5244,7 @@ fn step_sequencer_steps() -> Vec<Step> {
             (a.global::<Studio>().get_seq_lane() == 1 && v < 60 && v >= 1 && nv == v).then_some(()).ok_or(format!("lane {} velocity {v} note {nv}", a.global::<Studio>().get_seq_lane()))
         })),
         Do("seq: Tie tab, drag Pad 1 step 5 two steps right", Box::new(|a| {
-            click(a, 260.0 + 404.0, CLIP_Y + 27.0 + 13.5);
+            click(a, pr_origin().0 + 404.0, bottom_y() + 27.0 + 13.5);
             let (x, y) = seq_xy(a, 0, 4);
             let (x2, _) = seq_xy(a, 0, 6);
             drag(a, x, y, x2, y);
@@ -5138,7 +5257,7 @@ fn step_sequencer_steps() -> Vec<Step> {
         })),
         Do("seq: click Pad 2's M", Box::new(|a| {
             let s = a.global::<Studio>();
-            click(a, 260.0 + 101.0, CLIP_Y + 27.0 + crate::stepseq::ROW_Y0 + crate::stepseq::ROW_PITCH + 9.75 - s.get_seq_scroll_y());
+            click(a, pr_origin().0 + 101.0, bottom_y() + 27.0 + crate::stepseq::ROW_Y0 + crate::stepseq::ROW_PITCH + 9.75 - s.get_seq_scroll_y());
         })),
         Check("seq: Pad 2 muted (one undo step): its notes stay, playback leaves them out", Box::new(move |c, a| {
             one(&h6, c, "Edit Step Sequencer")?;
@@ -5156,7 +5275,7 @@ fn step_sequencer_steps() -> Vec<Step> {
                 c.clip_menu_pick(3);
                 c.update_ui(a);
             }
-            click(a, 260.0 + 20.0, CLIP_Y + 27.0 + 13.5);
+            click(a, pr_origin().0 + 20.0, bottom_y() + 27.0 + 13.5);
         })),
         Check("seq: 64 steps of 1/8 (three undo steps); the footer reads 64 / 1/8; Double is now disabled", Box::new(move |c, a| {
             let n = c.doc.history_labels().len();
@@ -5167,7 +5286,7 @@ fn step_sequencer_steps() -> Vec<Step> {
             let ok = n == was + 3 && p.steps == 64 && p.rate == saine_core::steps::StepRate::Eighth && s.get_seq_length_text() == "64" && s.get_seq_rate_text() == "1/8" && !s.get_seq_can_double();
             ok.then_some(()).ok_or(format!("history +{} steps {} rate {:?}", n - was, p.steps, p.rate))
         })),
-        Do("seq: Piano roll tab", Box::new(|a| click(a, 5.0 + 420.0, CLIP_Y + 13.5))),
+        Do("seq: Piano roll tab", Box::new(|a| click(a, bottom_x() + 420.0, bottom_y() + 13.5))),
         Check("seq: piano roll shown for the pattern clip", Box::new(|c, a| {
             let s = a.global::<Studio>();
             (!s.get_seq_visible() && s.get_seq_tabs() && s.get_pr_visible() && !c.seq_visible()).then_some(()).ok_or("sequencer still shown".into())
@@ -5218,8 +5337,8 @@ fn step_sequencer_steps() -> Vec<Step> {
             let _ = ctl.borrow().engine.stop();
             ctl.borrow_mut().update_ui(a);
             let w = ctl.borrow().pr.size.0;
-            click(a, 260.0 + w - 23.4 - 2.0 * 36.6, CLIP_Y + 27.0 + 13.5);
-            click(a, 260.0 + w - 23.4 - 2.0 * 36.6 - 36.8, CLIP_Y + 27.0 + 13.5);
+            click(a, pr_origin().0 + w - 23.4 - 2.0 * 36.6, bottom_y() + 27.0 + 13.5);
+            click(a, pr_origin().0 + w - 23.4 - 2.0 * 36.6 - 36.8, bottom_y() + 27.0 + 13.5);
         })),
         Check("seq: page 1 shown, no ring while stopped, Follow playhead off", Box::new(|c, a| {
             let s = a.global::<Studio>();
@@ -5265,10 +5384,10 @@ fn step_sequencer_steps() -> Vec<Step> {
 fn splitter_steps() -> Vec<Step> {
     use Step::*;
     fn edge_y(c: &Controller) -> f32 {
-        TRACK0_Y + c.view.pitch(0) - 2.5 - c.view.scroll_y as f32
+        track0_y() + c.view.pitch(0) - 2.5 - c.view.scroll_y as f32
     }
     fn splitter_y(c: &Controller) -> f32 {
-        820.0 - 5.0 - c.bottom_h() - 1.0
+        win().1 - 5.0 - c.bottom_h() - 1.0
     }
     let base_h = Rc::new(Cell::new(0f32));
     let (b1, b2) = (base_h.clone(), base_h.clone());
@@ -5281,7 +5400,7 @@ fn splitter_steps() -> Vec<Step> {
         })),
         DoC("drag track 1's bottom edge down half a row", Box::new(|a, ctl| {
             let y = edge_y(&ctl.borrow());
-            drag(a, 300.0, y, 300.0, y + PITCH / 2.0);
+            drag(a, tracks_x() + 37.35, y, tracks_x() + 37.35, y + PITCH / 2.0);
         })),
         Check("track 1 is 1.5x tall in the model and the view, not an undo step", Box::new(move |c, _| {
             let h = c.project().tracks[0].height;
@@ -5301,7 +5420,7 @@ fn splitter_steps() -> Vec<Step> {
         DoC("drag the bottom-panel splitter up 100 pt", Box::new(move |a, ctl| {
             let (y, h) = { let c = ctl.borrow(); (splitter_y(&c), c.bottom_h()) };
             b1.set(h);
-            drag(a, 700.0, y, 700.0, y - 100.0);
+            drag(a, lane_x() + 246.35, y, lane_x() + 246.35, y - 100.0);
         })),
         Check("bottom panel 100 pt taller and saved with the project", Box::new(move |c, a| {
             let h = c.bottom_h();
@@ -5311,7 +5430,7 @@ fn splitter_steps() -> Vec<Step> {
         })),
         DoC("drag the splitter to the bottom edge", Box::new(|a, ctl| {
             let y = splitter_y(&ctl.borrow());
-            drag(a, 700.0, y, 700.0, 815.0);
+            drag(a, lane_x() + 246.35, y, lane_x() + 246.35, win().1 - 5.0);
         })),
         Check("bottom panel collapses to its tab row", Box::new(|c, _| {
             approx(c.bottom_h(), crate::splitters::BOTTOM_COLLAPSED_H, 0.01).then_some(()).ok_or(format!("h {}", c.bottom_h()))
@@ -5333,7 +5452,7 @@ fn chat_dock_steps() -> Vec<Step> {
     use crate::splitters::{CHAT_GAP, CHAT_MAX_W, CHAT_MIN_W};
     use Step::*;
     fn split_x(c: &Controller) -> f32 {
-        1440.0 - 5.0 - c.chat_w() - CHAT_GAP / 2.0
+        win().0 - 5.0 - c.chat_w() - CHAT_GAP / 2.0
     }
     let was_open = Rc::new(Cell::new(false));
     let (w1, w2) = (was_open.clone(), was_open.clone());
@@ -5354,35 +5473,35 @@ fn chat_dock_steps() -> Vec<Step> {
         })),
         DoC("drag the splitter 60 pt left", Box::new(|a, ctl| {
             let x = split_x(&ctl.borrow());
-            drag(a, x, 300.0, x - 60.0, 300.0);
+            drag(a, x, track0_y() + 155.5, x - 60.0, track0_y() + 155.5);
         })),
         Check("chat 60 pt wider, saved as a preference, timeline narrower, not an undo step", Box::new(move |c, a| {
             let w = c.chat_w();
             let saved = c.settings.prefs.assistant_width;
             let lanes = a.get_lanes_width();
-            let ok = approx(w, CHAT_MIN_W + 60.0, 0.6) && approx(saved, w, 0.01) && approx(lanes, 1440.0 - 262.65 - 5.0 - 5.0 - w - 191.0, 1.0) && c.doc.undo_depth() == u2.get();
+            let ok = approx(w, CHAT_MIN_W + 60.0, 0.6) && approx(saved, w, 0.01) && approx(lanes, win().0 - geo().timeline_x - 5.0 - 5.0 - w - 191.0, 1.0) && c.doc.undo_depth() == u2.get();
             ok.then_some(()).ok_or(format!("w {w} saved {saved} lanes {lanes}"))
         })),
         DoC("drag the splitter far left: stops at the room that keeps the sliders", Box::new(|a, ctl| {
             let x = split_x(&ctl.borrow());
-            drag(a, x, 300.0, 200.0, 300.0);
+            drag(a, x, track0_y() + 155.5, tracks_x() - 62.65, track0_y() + 155.5);
         })),
         Check("chat narrowed to the header's room (below 600 px), sliders still shown", Box::new(|c, a| {
-            let room = crate::splitters::chat_room(1440.0, true);
+            let room = crate::splitters::chat_room(win().0, true);
             let w = c.chat_w();
-            let ok = room < CHAT_MAX_W && approx(w, room, 0.01) && !a.get_header_zoom_hidden() && approx(a.get_lanes_width(), 1440.0 - 262.65 - 5.0 - 5.0 - room - 191.0, 1.0);
+            let ok = room < CHAT_MAX_W && approx(w, room, 0.01) && !a.get_header_zoom_hidden() && approx(a.get_lanes_width(), win().0 - geo().timeline_x - 5.0 - 5.0 - room - 191.0, 1.0);
             ok.then_some(()).ok_or(format!("w {w} room {room} hidden {}", a.get_header_zoom_hidden()))
         })),
         DoC("drag the splitter right: stops at the minimum", Box::new(|a, ctl| {
             let x = split_x(&ctl.borrow());
-            drag(a, x, 300.0, 1400.0, 300.0);
+            drag(a, x, track0_y() + 155.5, win().0 - 40.0, track0_y() + 155.5);
         })),
         Check("chat at 297 px", Box::new(|c, _| approx(c.chat_w(), CHAT_MIN_W, 0.01).then_some(()).ok_or(format!("w {}", c.chat_w())))),
         DoC("widen, then double-click the splitter", Box::new(|a, ctl| {
             let x = split_x(&ctl.borrow());
-            drag(a, x, 300.0, x - 40.0, 300.0);
+            drag(a, x, track0_y() + 155.5, x - 40.0, track0_y() + 155.5);
             let x = split_x(&ctl.borrow());
-            double_click(a, x, 300.0);
+            double_click(a, x, track0_y() + 155.5);
         })),
         Check("double-click restored the default and cleared the preference", Box::new(|c, _| {
             let ok = approx(c.chat_w(), CHAT_MIN_W, 0.01) && c.settings.prefs.assistant_width == 0.0;
@@ -5400,7 +5519,7 @@ fn chat_dock_steps() -> Vec<Step> {
 fn files_row_xy(a: &AppWindow, i: usize) -> Option<(f32, f32)> {
     let s = a.global::<Studio>();
     let r = s.get_files().row_data(i)?;
-    Some((120.0, 78.2 + s.get_files_list_y() + 0.5 + r.y - s.get_files_scroll() + r.h / 2.0))
+    Some((geo().browser_x + 115.0, geo().browser_y + s.get_files_list_y() + 0.5 + r.y - s.get_files_scroll() + r.h / 2.0))
 }
 
 fn files_labels(a: &AppWindow) -> Vec<String> {
@@ -5434,13 +5553,13 @@ fn files_steps() -> Vec<Step> {
             t1.set(c.project().tracks.len());
         })),
         Do("files: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
-        Do("files: click the Files section tab", Box::new(|a| click(a, 150.0, 92.0))),
+        Do("files: click the Files section tab", Box::new(|a| click(a, geo().browser_x + 145.0, geo().browser_y + 13.8))),
         Check("files: Files › Projects is empty, Back is enabled", Box::new(|c, a| {
             let s = a.global::<Studio>();
             let ok = c.files.section == SECTION_FILES && c.files.tab == TAB_PROJECTS && s.get_browser_can_back() && !s.get_browser_can_forward() && s.get_files_empty_title() == "No projects yet" && s.get_files_meta() == "";
             ok.then_some(()).ok_or(format!("section {} tab {} title {:?}", c.files.section, c.files.tab, s.get_files_empty_title()))
         })),
-        Do("files: click the Folders sub-tab", Box::new(|a| click(a, 76.0, 144.7))),
+        Do("files: click the Folders sub-tab", Box::new(|a| click(a, geo().browser_x + 71.0, geo().browser_y + 66.5))),
         Check("files: Folders is empty with its hint", Box::new(|c, a| {
             let s = a.global::<Studio>();
             (c.files.tab == TAB_FOLDERS && s.get_files_empty_title() == "No folders yet").then_some(()).ok_or(format!("tab {} title {:?}", c.files.tab, s.get_files_empty_title()))
@@ -5451,16 +5570,16 @@ fn files_steps() -> Vec<Step> {
             (files_labels(a) == ["kit"] && s.get_files_meta() == "1 folder" && s.get_files_sort() == "Recent").then_some(()).ok_or(format!("{:?} {:?}", files_labels(a), s.get_files_meta()))
         })),
         DoC("files: click the sort button", Box::new(|a, _| {
-            let y = 78.2 + a.global::<Studio>().get_files_list_y() - 10.2;
-            click(a, 247.25 - 12.0, y);
+            let y = geo().browser_y + a.global::<Studio>().get_files_list_y() - 10.2;
+            click(a, geo().browser_x + 242.25 - 12.0, y);
         })),
         Check("files: the sort menu opens on Recent", Box::new(|c, a| {
             let s = a.global::<Studio>();
             (c.files.sort_open && s.get_files_sort_open() && s.get_files_sort_index() == 0).then_some(()).ok_or(format!("open {} index {}", s.get_files_sort_open(), s.get_files_sort_index()))
         })),
         DoC("files: pick Name in the sort menu", Box::new(|a, _| {
-            let y = 78.2 + a.global::<Studio>().get_files_list_y() + 3.4 + 3.4 + 18.7 * 1.5;
-            click(a, 247.25 - 15.0, y);
+            let y = geo().browser_y + a.global::<Studio>().get_files_list_y() + 3.4 + 3.4 + 18.7 * 1.5;
+            click(a, geo().browser_x + 242.25 - 15.0, y);
         })),
         Check("files: sorted by Name, menu closed", Box::new(|c, a| {
             let s = a.global::<Studio>();
@@ -5469,7 +5588,7 @@ fn files_steps() -> Vec<Step> {
         DoC("files: open the menu and click outside it", Box::new(|a, ctl| {
             ctl.borrow_mut().files_sort_open_menu(true);
             ctl.borrow_mut().update_ui(a);
-            click(a, 600.0, 400.0);
+            click(a, lane_x() + 146.35, track0_y() + 255.5);
         })),
         Check("files: a click outside closes the menu and keeps Name", Box::new(|c, _| {
             (!c.files.sort_open && c.files.sort_name).then_some(()).ok_or(format!("open {} name {}", c.files.sort_open, c.files.sort_name))
@@ -5511,11 +5630,11 @@ fn files_steps() -> Vec<Step> {
             ok.then_some(()).ok_or(format!("playing {} solo {} detail {:?}", c.files.audition.playing, s.get_preview_solo(), row.map(|r| r.detail)))
         })),
         DoC("files: solo off", Box::new(|_, ctl| ctl.borrow_mut().audition_solo())),
-        Do("files: Back (chevron)", Box::new(|a| click(a, 229.5, 91.2))),
+        Do("files: Back (chevron)", Box::new(|a| click(a, geo().browser_x + 224.5, geo().browser_y + 13.0))),
         Check("files: Back returns to Projects with Forward enabled", Box::new(|c, a| {
             (c.files.section == SECTION_FILES && c.files.tab == TAB_PROJECTS && a.global::<Studio>().get_browser_can_forward()).then_some(()).ok_or(format!("section {} tab {}", c.files.section, c.files.tab))
         })),
-        Do("files: Back again", Box::new(|a| click(a, 229.5, 91.2))),
+        Do("files: Back again", Box::new(|a| click(a, geo().browser_x + 224.5, geo().browser_y + 13.0))),
         Check("files: Back reaches Devices", Box::new(|c, a| {
             (c.files.section == SECTION_DEVICES && a.global::<Studio>().get_browser_section() == SECTION_DEVICES as i32).then_some(()).ok_or(format!("section {}", c.files.section))
         })),
@@ -5564,7 +5683,7 @@ fn files_steps() -> Vec<Step> {
         })),
         DoC("files: open the project with its chevron", Box::new(|a, _| {
             let Some((_, y)) = files_row_xy(a, 0) else { return };
-            click(a, 5.0 + 10.2 + 4.0, y);
+            click(a, geo().browser_x + 10.2 + 4.0, y);
         })),
         Check("files: the project lists its tracks and MIDI clips", Box::new(|_, a| {
             let l = files_labels(a);
@@ -5685,9 +5804,13 @@ fn menu_bar_steps() -> Vec<Step> {
 /// Settings › General: the controls Saine backs change the preferences; the others stay off.
 fn general_settings_steps() -> Vec<Step> {
     use Step::*;
-    const PAGE_X: f32 = SET_X + 187.0;
-    const CONTENT_W: f32 = SET_W - 187.0;
-    let switch_xy = |row_y: f32| (PAGE_X + CONTENT_W - 43.0 + 10.0, SET_Y + row_y + 7.0);
+    fn page_x() -> f32 {
+        set_x() + 187.0
+    }
+    fn content_w() -> f32 {
+        set_w() - 187.0
+    }
+    let switch_xy = |row_y: f32| (page_x() + content_w() - 43.0 + 10.0, set_y() + row_y + 7.0);
     let added = Rc::new(Cell::new(None));
     let (a1, a2) = (added.clone(), added);
     vec![
@@ -5703,7 +5826,7 @@ fn general_settings_steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("page {} on {on:?}", s.get_settings_page()))
         })),
-        Do("general: click Stop in place", Box::new(|a| click(a, PAGE_X + CONTENT_W - 20.5 - 172.5 + 87.0 + 40.0, SET_Y + 143.8 + 8.6))),
+        Do("general: click Stop in place", Box::new(|a| click(a, page_x() + content_w() - 20.5 - 172.5 + 87.0 + 40.0, set_y() + 143.8 + 8.6))),
         Do("general: click Auto-show built-in effect windows", Box::new(move |a| {
             let (x, y) = switch_xy(331.4);
             click(a, x, y);
@@ -5750,7 +5873,7 @@ fn add_search_steps() -> Vec<Step> {
     use Step::*;
     let hist = Rc::new(Cell::new(0usize));
     let (h0, h1, h2) = (hist.clone(), hist.clone(), hist);
-    let card_xy = |a: &AppWindow, x: f32, y: f32| (5.0 + a.global::<Studio>().get_add_device_x() + x, BOTTOM_Y + 34.5 + y);
+    let card_xy = |a: &AppWindow, x: f32, y: f32| (bottom_x() + a.global::<Studio>().get_add_device_x() + x, bottom_y() + 34.5 + y);
     let refresh = |a: &AppWindow, ctl: &Ctl| {
         if let Ok(mut c) = ctl.try_borrow_mut() {
             c.update_ui(a);
@@ -5806,12 +5929,13 @@ fn add_search_steps() -> Vec<Step> {
 fn section_steps() -> Vec<Step> {
     use Step::*;
     use saine_core::SectionId;
-    // Lane-local (x, y) → window: the lanes start at LANE_X, their ruler at TRACK0_Y - RULER_H.
-    const LANE_Y0: f32 = TRACK0_Y - crate::timeline::RULER_H;
-    const ROW_Y: f32 = LANE_Y0 + 31.8;
+    // Lane-local (x, y) → window: the lanes start at lane_x(), their ruler at track0_y() - RULER_H.
+    fn row_y() -> f32 {
+        lane_y0() + 31.8
+    }
     fn bar_x(c: &Controller, bar: f64) -> f32 {
         let bpb = c.project().ticks_per_bar() as f64 / PPQ as f64;
-        LANE_X + c.view.x_of(bar * bpb)
+        lane_x() + c.view.x_of(bar * bpb)
     }
     fn names(c: &Controller) -> Vec<String> {
         c.project().sections.iter().map(|s| s.name.clone()).collect()
@@ -5844,8 +5968,8 @@ fn section_steps() -> Vec<Step> {
                 c.view.start_beats = 0.0;
                 c.ui_dirty = true;
             }
-            let x = LANE_X + ctl.borrow().section_add_x();
-            click(a, x, ROW_Y);
+            let x = lane_x() + ctl.borrow().section_add_x();
+            click(a, x, row_y());
         })),
         Check("+ added \"Section 1\": 8 bars from bar 1, first colour, selected, one undo step", Box::new(move |c, _| {
             let p = c.project();
@@ -5860,8 +5984,8 @@ fn section_steps() -> Vec<Step> {
             ok.then_some(()).ok_or(format!("{:?} {:?}", names(c), c.doc.undo_label()))
         })),
         DoC("click the + after it", Box::new(|a, ctl| {
-            let x = LANE_X + ctl.borrow().section_add_x();
-            click(a, x, ROW_Y);
+            let x = lane_x() + ctl.borrow().section_add_x();
+            click(a, x, row_y());
         })),
         Check("\"Section 2\" follows at bar 9 in the next colour", Box::new(|c, _| {
             let p = c.project();
@@ -5870,7 +5994,7 @@ fn section_steps() -> Vec<Step> {
         })),
         DoC("drag Section 1's right edge from bar 9 to bar 5", Box::new(|a, ctl| {
             let (x0, x1) = { let c = ctl.borrow(); (bar_x(&c, 8.0) - 2.0, bar_x(&c, 4.0)) };
-            drag(a, x0, ROW_Y, x1, ROW_Y);
+            drag(a, x0, row_y(), x1, row_y());
         })),
         Check("Section 1 is 4 bars and Section 2 moved with its end", Box::new(|c, _| {
             let p = c.project();
@@ -5878,14 +6002,14 @@ fn section_steps() -> Vec<Step> {
         })),
         DoC("drag Section 2 to bar 1", Box::new(|a, ctl| {
             let (x0, x1) = { let c = ctl.borrow(); (bar_x(&c, 7.0), bar_x(&c, 0.2)) };
-            drag(a, x0, ROW_Y, x1, ROW_Y);
+            drag(a, x0, row_y(), x1, row_y());
         })),
         Check("Section 2 now comes first", Box::new(|c, _| {
             (names(c) == ["Section 2", "Section 1"] && c.doc.undo_label() == Some("Move Section")).then_some(()).ok_or(format!("{:?}", names(c)))
         })),
         DoC("double-click Section 1", Box::new(|a, ctl| {
             let x = bar_x(&ctl.borrow(), 10.0);
-            double_click(a, x, ROW_Y);
+            double_click(a, x, row_y());
         })),
         Check("rename popup open for the section", Box::new(move |c, a| {
             let s = a.global::<Studio>();
@@ -5901,7 +6025,7 @@ fn section_steps() -> Vec<Step> {
         })),
         DoC("right-click Chorus", Box::new(|a, ctl| {
             let x = bar_x(&ctl.borrow(), 10.0);
-            right_click(a, x, ROW_Y);
+            right_click(a, x, row_y());
         })),
         Check("section menu: Duplicate, Rename, Delete section, Clear all sections", Box::new(|_, a| {
             let s = a.global::<Studio>();
@@ -5919,7 +6043,7 @@ fn section_steps() -> Vec<Step> {
         Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
         DoC("click Section 2, press Delete", Box::new(|a, ctl| {
             let x = bar_x(&ctl.borrow(), 2.0);
-            click(a, x, ROW_Y);
+            click(a, x, row_y());
             key(a, Key::Delete, false, false);
         })),
         Check("undo restored Chorus; Delete removed the selected section", Box::new(|c, _| {
@@ -5927,7 +6051,7 @@ fn section_steps() -> Vec<Step> {
         })),
         DoC("right-click Chorus, Clear all sections", Box::new(|a, ctl| {
             let x = bar_x(&ctl.borrow(), 1.0);
-            right_click(a, x, ROW_Y);
+            right_click(a, x, row_y());
             if let Some((x, y)) = menu_row(a, "Clear all sections") {
                 click(a, x, y);
             }
@@ -5943,8 +6067,12 @@ fn section_steps() -> Vec<Step> {
 /// and restores it at the end.
 fn minimap_steps() -> Vec<Step> {
     use Step::*;
-    const STRIP_X: f32 = LANE_X - 191.0 + 200.6;
-    const STRIP_Y: f32 = 78.2 + 5.1 + 8.5;
+    fn strip_x() -> f32 {
+        geo().timeline_x + 200.6
+    }
+    fn strip_y() -> f32 {
+        geo().timeline_y + 5.1 + 8.5
+    }
     let before = Rc::new(Cell::new((0.0f64, 0.0f64)));
     let moved_from = Rc::new(Cell::new((0.0f64, 0.0f64)));
     let (b1, b2, b3) = (before.clone(), moved_from.clone(), moved_from.clone());
@@ -5955,7 +6083,7 @@ fn minimap_steps() -> Vec<Step> {
         a.global::<Studio>().get_minimap_width()
     }
     fn scroll(a: &AppWindow, x: f32, dx: f32, dy: f32) {
-        a.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(STRIP_X + x, STRIP_Y), delta_x: dx, delta_y: dy });
+        a.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(strip_x() + x, strip_y()), delta_x: dx, delta_y: dy });
     }
     vec![
         DoC("minimap: view at beat 200", Box::new(move |_, ctl| {
@@ -5980,8 +6108,8 @@ fn minimap_steps() -> Vec<Step> {
                 let c = ctl.borrow();
                 b2.set((c.view.start_beats, c.view.px_per_beat));
             }
-            l1.set(STRIP_X + x0);
-            drag(a, STRIP_X + x0, STRIP_Y, STRIP_X + x0 - 40.0, STRIP_Y);
+            l1.set(strip_x() + x0);
+            drag(a, strip_x() + x0, strip_y(), strip_x() + x0 - 40.0, strip_y());
         })),
         Check("the drag hid the pointer and put it back on the grabbed spot (the window moved that far on the strip), same row, shown again", Box::new(move |c, a| {
             use crate::pointer::Op;
@@ -5990,7 +6118,7 @@ fn minimap_steps() -> Vec<Step> {
             let span = c.lanes_size.0 as f64 / c.view.px_per_beat;
             let map = (200.0 + span).max(c.minimap_content_end_for_test());
             let want = l2.get() - ((start0 - c.view.start_beats) / map) as f32 * a.global::<Studio>().get_minimap_width();
-            let ok = matches!(ops.as_slice(), [Op::Hide, Op::Warp(x, y), Op::Show] if approx(*x, want, 2.0) && approx(*y, STRIP_Y, 1.0)) && !a.global::<Studio>().get_pointer_hidden();
+            let ok = matches!(ops.as_slice(), [Op::Hide, Op::Warp(x, y), Op::Show] if approx(*x, want, 2.0) && approx(*y, strip_y(), 1.0)) && !a.global::<Studio>().get_pointer_hidden();
             ok.then_some(()).ok_or(format!("{ops:?} want x {want}"))
         })),
         Check("the view scrolled back (at most 40 px of map), at the same zoom", Box::new(move |c, a| {
@@ -6002,7 +6130,7 @@ fn minimap_steps() -> Vec<Step> {
             let ok = moved > 1.0 && moved <= max_move && approx((c.view.px_per_beat / ppb0) as f32, 1.0, 0.01) && c.mm.drag.is_none();
             ok.then_some(()).ok_or(format!("moved {moved} max {max_move} ppb {}", c.view.px_per_beat))
         })),
-        DoC("click the strip's left end", Box::new(|a, _| click(a, STRIP_X + 3.0, STRIP_Y))),
+        DoC("click the strip's left end", Box::new(|a, _| click(a, strip_x() + 3.0, strip_y()))),
         Check("the window jumped to the start of the song", Box::new(|c, _| approx(c.view.start_beats as f32, 0.0, 1e-3).then_some(()).ok_or(format!("start {}", c.view.start_beats)))),
         DoC("wheel over the strip scrolls", Box::new(|a, ctl| {
             ctl.borrow_mut().view.start_beats = 100.0;
@@ -6017,7 +6145,7 @@ fn minimap_steps() -> Vec<Step> {
             a.window().dispatch_event(WindowEvent::KeyReleased { text: Key::Control.into() });
         })),
         Check("zoomed in", Box::new(|c, _| (c.view.px_per_beat > crate::timeline::DEFAULT_PX_PER_BEAT * 1.05).then_some(()).ok_or(format!("ppb {}", c.view.px_per_beat)))),
-        DoC("double-click fits the arrangement", Box::new(|a, _| double_click(a, STRIP_X + 30.0, STRIP_Y))),
+        DoC("double-click fits the arrangement", Box::new(|a, _| double_click(a, strip_x() + 30.0, strip_y()))),
         Check("the view starts at 0 and shows the whole song plus slack", Box::new(|c, _| {
             let end = c.view.start_beats + c.lanes_size.0 as f64 / c.view.px_per_beat;
             let want = crate::minimap::fit(c.minimap_content_end_for_test()).end;
@@ -6043,8 +6171,13 @@ fn devminimap_steps() -> Vec<Step> {
     use crate::devminimap as dm;
     use crate::pointer::Op;
     // The strip in the window: the bottom panel (x 5, 1430 wide) less 252.45 from its right edge; mid-height.
-    const STRIP_X: f32 = 5.0 + (1440.0 - 10.0) - dm::X_FROM_RIGHT;
-    const STRIP_Y: f32 = BOTTOM_Y + dm::Y + 10.2;
+    fn strip_x() -> f32 {
+        let g = geo();
+        g.bottom_x + g.bottom_w - dm::X_FROM_RIGHT
+    }
+    fn strip_y() -> f32 {
+        bottom_y() + dm::Y + 10.2
+    }
     const CSS: f32 = crate::minimap::CSS;
     fn clear(a: &AppWindow, ctl: &Ctl) {
         let Some(i) = track_of(&ctl.borrow(), TrackKind::Audio) else { return };
@@ -6059,7 +6192,7 @@ fn devminimap_steps() -> Vec<Step> {
     }
     fn window_mid(a: &AppWindow) -> f32 {
         let s = a.global::<Studio>();
-        STRIP_X + s.get_devmm_win_x() + s.get_devmm_win_w() / 2.0
+        strip_x() + s.get_devmm_win_x() + s.get_devmm_win_w() / 2.0
     }
     fn wait_chain(c: &Controller) -> Result<&dm::Chain, String> {
         c.devmm_chain_for_test().ok_or("no chain".to_string())
@@ -6109,7 +6242,7 @@ fn devminimap_steps() -> Vec<Step> {
             let n = c.project().track(c.selected_track.ok_or("no track")?).map_or(0, |t| t.devices.len());
             (pics == n && n > 0).then_some(()).ok_or(format!("{pics} pictures for {n} devices"))
         })),
-        DoC("devices minimap: click the strip's far end (the window jumps there)", Box::new(|a, _| click(a, STRIP_X + 190.0, STRIP_Y))),
+        DoC("devices minimap: click the strip's far end (the window jumps there)", Box::new(|a, _| click(a, strip_x() + 190.0, strip_y()))),
         Check("the chain scrolled so the window is centred on the click, and the pointer was not hidden", Box::new(|c, _| {
             let ch = wait_chain(c)?;
             let want = ch.scroll_at(190.0 / CSS, dm::WIDTH) * CSS;
@@ -6124,7 +6257,7 @@ fn devminimap_steps() -> Vec<Step> {
             }
             let x0 = window_mid(a);
             p1.set(x0);
-            drag(a, x0, STRIP_Y, x0 + 60.0, STRIP_Y);
+            drag(a, x0, strip_y(), x0 + 60.0, strip_y());
         })),
         Check("the chain followed the pointer one to one (in strip px) and the drag is over", Box::new(|c, _| {
             let ch = wait_chain(c)?;
@@ -6134,16 +6267,16 @@ fn devminimap_steps() -> Vec<Step> {
         })),
         Check("the drag hid the pointer and put it back on the window's spot, same row, shown again", Box::new(move |_, a| {
             let ops = crate::pointer::take_log();
-            let ok = matches!(ops.as_slice(), [Op::Hide, Op::Warp(x, y), Op::Show] if approx(*x, p2.get() + 60.0, 2.0) && approx(*y, STRIP_Y, 1.0)) && !a.global::<Studio>().get_pointer_hidden();
+            let ok = matches!(ops.as_slice(), [Op::Hide, Op::Warp(x, y), Op::Show] if approx(*x, p2.get() + 60.0, 2.0) && approx(*y, strip_y(), 1.0)) && !a.global::<Studio>().get_pointer_hidden();
             ok.then_some(()).ok_or(format!("{ops:?} want x {}", p2.get() + 60.0))
         })),
         DoC("devices minimap: press the window, drag 50 px, press Esc", Box::new(move |a, ctl| {
             let x0 = window_mid(a);
             b1.set(ctl.borrow().devices.chain_scroll);
             let w = a.window();
-            press(a, x0, STRIP_Y);
+            press(a, x0, strip_y());
             for i in 1..=6 {
-                w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x0 + 50.0 * i as f32 / 6.0, STRIP_Y) });
+                w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x0 + 50.0 * i as f32 / 6.0, strip_y()) });
             }
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.update_ui(a);
@@ -6154,14 +6287,14 @@ fn devminimap_steps() -> Vec<Step> {
             let ops = crate::pointer::take_log();
             let ok = approx(c.devices.chain_scroll, b2.get(), 0.01)
                 && c.dm.drag.is_none()
-                && matches!(ops.as_slice(), [Op::Hide, Op::Warp(_, y), Op::Show] if approx(*y, STRIP_Y, 1.0))
+                && matches!(ops.as_slice(), [Op::Hide, Op::Warp(_, y), Op::Show] if approx(*y, strip_y(), 1.0))
                 && !a.global::<Studio>().get_pointer_hidden();
             ok.then_some(()).ok_or(format!("scroll {} was {} ops {ops:?}", c.devices.chain_scroll, b2.get()))
         })),
         DoC("devices minimap: the held button keeps moving after Esc, then is released", Box::new(|a, _| {
             let w = a.window();
-            w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(STRIP_X + 150.0, STRIP_Y) });
-            release(a, STRIP_X + 150.0, STRIP_Y);
+            w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(strip_x() + 150.0, strip_y()) });
+            release(a, strip_x() + 150.0, strip_y());
         })),
         Check("nothing scrolled after Esc", Box::new(move |c, _| approx(c.devices.chain_scroll, before.get(), 0.01).then_some(()).ok_or(format!("scroll {}", c.devices.chain_scroll)))),
         DoC("devices minimap: from the start, wheel over the strip", Box::new(|a, ctl| {
@@ -6170,7 +6303,7 @@ fn devminimap_steps() -> Vec<Step> {
                 c.devices.chain_scroll = 0.0;
                 c.update_ui(a);
             }
-            a.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(STRIP_X + 80.0, STRIP_Y), delta_x: 0.0, delta_y: -20.0 });
+            a.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(strip_x() + 80.0, strip_y()), delta_x: 0.0, delta_y: -20.0 });
         })),
         Check("the wheel scrolled the chain forward by the same strip distance", Box::new(|c, _| {
             let want = 20.0 / wait_chain(c)?.ratio(dm::WIDTH);
@@ -6314,7 +6447,6 @@ fn ruler_zoom_steps() -> Vec<Step> {
 fn clip_menu_steps() -> Vec<Step> {
     use Step::*;
     use saine_core::{Asset, AssetId, Clip, ClipId, Command, MidiClip, Track, TrackId};
-    const LANE_Y0: f32 = TRACK0_Y - crate::timeline::RULER_H;
     fn right_click(a: &AppWindow, x: f32, y: f32) {
         let w = a.window();
         let p = LogicalPosition::new(x, y);
@@ -6338,7 +6470,7 @@ fn clip_menu_steps() -> Vec<Step> {
     fn clip_xy(c: &Controller, id: ClipId) -> (f32, f32) {
         let i = c.clip_ids.iter().position(|&k| k == id).unwrap_or(0);
         let (x, y, w, h) = c.clip_vis[i].rect(&c.view);
-        (LANE_X + x + w / 2.0, LANE_Y0 + y + h * 0.7)
+        (lane_x() + x + w / 2.0, lane_y0() + y + h * 0.7)
     }
     fn audio_clips(c: &Controller) -> Vec<(u64, i64, u64, bool)> {
         let t = c.project().track(c.selected_track.unwrap_or(TrackId(0))).map(|t| t.clips.clone()).unwrap_or_default();
@@ -6454,7 +6586,6 @@ fn clip_menu_steps() -> Vec<Step> {
 fn clip_render_steps() -> Vec<Step> {
     use Step::*;
     use saine_core::{AssetId, ClipId, Command, MidiClip, Note, Track, TrackId};
-    const LANE_Y0: f32 = TRACK0_Y - crate::timeline::RULER_H;
     fn dir() -> std::path::PathBuf {
         std::env::temp_dir().join(format!("saine-selftest-clip-render-{}", std::process::id()))
     }
@@ -6483,7 +6614,7 @@ fn clip_render_steps() -> Vec<Step> {
     fn clip_xy(c: &Controller, id: ClipId) -> (f32, f32) {
         let i = c.clip_ids.iter().position(|&k| k == id).unwrap_or(0);
         let (x, y, w, h) = c.clip_vis[i].rect(&c.view);
-        (LANE_X + x + w / 2.0, LANE_Y0 + y + h * 0.7)
+        (lane_x() + x + w / 2.0, lane_y0() + y + h * 0.7)
     }
     fn sine(secs: f32, hz: f32, amp: f32) -> Vec<f32> {
         (0..(48_000.0 * secs) as usize).map(|i| amp * (std::f32::consts::TAU * hz * i as f32 / 48_000.0).sin()).collect()
@@ -6787,7 +6918,7 @@ fn pattern_library_steps() -> Vec<Step> {
             let s = a.global::<Studio>();
             (slint::Model::row_count(&s.get_composer_rows()) == 0 && s.get_composer_create_text() == "Create chords").then_some(()).ok_or(format!("{:?}", s.get_composer_create_text()))
         })),
-        Do("patterns: click Create chords", Box::new(|a| click(a, 5.0 + 60.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 37.5 + 13.5))),
+        Do("patterns: click Create chords", Box::new(|a| click(a, bottom_x() + 60.0, bottom_end() - 37.5 + 13.5))),
         Check("patterns: six chord patterns, the first plays in the clip (one undo step 'Create Patterns')", Box::new(move |c, a| {
             one(&h1, c, "Create Patterns")?;
             let k = comp(c).ok_or("no composer")?;
@@ -6796,12 +6927,12 @@ fn pattern_library_steps() -> Vec<Step> {
             let ok = k.playing == Some(0) && slint::Model::row_count(&s.get_composer_rows()) == 6 && notes > 0 && s.get_composer_create_text() == "Create new chords" && s.get_composer_original();
             ok.then_some(()).ok_or(format!("playing {:?} notes {notes}", k.playing))
         })),
-        Do("patterns: click the third row", Box::new(|a| click(a, 5.0 + 60.0, CLIP_Y + 104.0 + 25.0 + 2.0 * 35.0 + 16.0))),
+        Do("patterns: click the third row", Box::new(|a| click(a, bottom_x() + 60.0, bottom_y() + 104.0 + 25.0 + 2.0 * 35.0 + 16.0))),
         Check("patterns: row 3 plays (one undo step 'Load Pattern')", Box::new(move |c, _| {
             one(&h2, c, "Load Pattern")?;
             (comp(c).and_then(|k| k.playing) == Some(2)).then_some(()).ok_or("row 3 not playing".into())
         })),
-        Do("patterns: click Original on the clip chip", Box::new(|a| click(a, 5.0 + 10.5 + 234.0 - 8.0 - 20.0, CLIP_Y + 38.0 + 15.25))),
+        Do("patterns: click Original on the clip chip", Box::new(|a| click(a, bottom_x() + 10.5 + 234.0 - 8.0 - 20.0, bottom_y() + 38.0 + 15.25))),
         Check("patterns: the clip's own (empty) notes are back (one undo step 'Load Original')", Box::new(move |c, a| {
             one(&h3, c, "Load Original")?;
             let ok = comp(c).is_some_and(|k| k.playing.is_none()) && c.pr_clip().is_some_and(|m| m.notes.is_empty()) && !a.global::<Studio>().get_composer_original();
@@ -6841,7 +6972,7 @@ fn pattern_library_steps() -> Vec<Step> {
         })),
         Do("patterns: Escape; click the Shape tab", Box::new(|a| {
             key(a, Key::Escape, false, false);
-            click(a, 5.0 + 10.5 + 119.5 + 55.0, CLIP_Y + 38.0 + 45.5);
+            click(a, bottom_x() + 10.5 + 119.5 + 55.0, bottom_y() + 38.0 + 45.5);
         })),
         Check("patterns: Shape shows 14 rows, Voices disabled on a bassline", Box::new(|_, a| {
             let s = a.global::<Studio>();
@@ -6850,7 +6981,7 @@ fn pattern_library_steps() -> Vec<Step> {
             let ok = s.get_composer_shape_tab() && slint::Model::row_count(&rows) == 14 && !voices.enabled && voices.tip == "This pattern has no extra voices to add";
             ok.then_some(()).ok_or(format!("tab {} rows {}", s.get_composer_shape_tab(), slint::Model::row_count(&rows)))
         })),
-        Do("patterns: Octave ›", Box::new(|a| click(a, 5.0 + 10.5 + 72.0 + 120.0, CLIP_Y + 104.0 + 26.0 + 7.5))),
+        Do("patterns: Octave ›", Box::new(|a| click(a, bottom_x() + 10.5 + 72.0 + 120.0, bottom_y() + 104.0 + 26.0 + 7.5))),
         Check("patterns: the bassline plays an octave up over its kept base (one undo step 'Shape Change')", Box::new(move |c, a| {
             one(&h6, c, "Shape Change")?;
             let (base, notes) = shaped(c).ok_or("no clip")?;
@@ -6858,7 +6989,7 @@ fn pattern_library_steps() -> Vec<Step> {
             let octave = slint::Model::row_data(&a.global::<Studio>().get_composer_shape_rows(), 0).map(|r| r.value.to_string());
             (ok && octave.as_deref() == Some("+1")).then_some(()).ok_or(format!("{} base, {} notes, octave {octave:?}", base.len(), notes.len()))
         })),
-        Do("patterns: click Density at a quarter", Box::new(|a| click(a, 5.0 + 10.5 + 72.0 + 0.25 * 118.0, CLIP_Y + 104.0 + 26.0 + 2.0 * 17.5 + 7.5))),
+        Do("patterns: click Density at a quarter", Box::new(|a| click(a, bottom_x() + 10.5 + 72.0 + 0.25 * 118.0, bottom_y() + 104.0 + 26.0 + 2.0 * 17.5 + 7.5))),
         Check("patterns: Density thins the notes (one undo step 'Shape Change')", Box::new(move |c, _| {
             one(&h7, c, "Shape Change")?;
             let (base, notes) = shaped(c).ok_or("no clip")?;
@@ -6879,7 +7010,7 @@ fn pattern_library_steps() -> Vec<Step> {
             let ok = k.shapes.is_empty() && k.base.is_empty() && c.pr_clip().is_some_and(|m| m.notes == first.notes);
             ok.then_some(()).ok_or("shape not undone".into())
         })),
-        Do("patterns: click the Patterns tab", Box::new(|a| click(a, 5.0 + 10.5 + 5.0 + 55.0, CLIP_Y + 38.0 + 45.5))),
+        Do("patterns: click the Patterns tab", Box::new(|a| click(a, bottom_x() + 10.5 + 5.0 + 55.0, bottom_y() + 38.0 + 45.5))),
         Check("patterns: the list shows again", Box::new(|_, a| {
             let s = a.global::<Studio>();
             (!s.get_composer_shape_tab() && slint::Model::row_count(&s.get_composer_rows()) == 6).then_some(()).ok_or("still on Shape".into())
@@ -6926,9 +7057,9 @@ fn pattern_library_steps() -> Vec<Step> {
             (k.shapes.is_empty() && k.base.is_empty() && !a.global::<Studio>().get_shape_has_curves()).then_some(()).ok_or("curves left".into())
         })),
         Do("patterns: scroll the Shape rack to its last row; Arp ›", Box::new(|a| {
-            let x = 5.0 + 10.5 + 72.0 + 120.0;
-            a.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(x, CLIP_Y + 200.0), delta_x: 0.0, delta_y: -1000.0 });
-            click(a, x, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 8.0 - 17.5 + 7.5);
+            let x = bottom_x() + 10.5 + 72.0 + 120.0;
+            a.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(x, bottom_y() + 200.0), delta_x: 0.0, delta_y: -1000.0 });
+            click(a, x, bottom_end() - 8.0 - 17.5 + 7.5);
         })),
         Check("patterns: Arp 1/8 plays and the Pattern and Octaves rows join (one undo step 'Shape Change')", Box::new(move |c, a| {
             one(&h11, c, "Shape Change")?;
@@ -6958,6 +7089,7 @@ fn pattern_library_steps() -> Vec<Step> {
 
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
+    APP.with(|a| *a.borrow_mut() = Some(app.as_weak()));
     let mut all = steps();
     // Auto snap follows the ruler step (S76: two beats at the default zoom); the sections below that
     // drag clips to beats pin the grid to a beat (1/4), and snap_steps puts Auto back.
