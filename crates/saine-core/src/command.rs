@@ -235,16 +235,8 @@ impl Command {
     pub fn apply(self, p: &mut Project) -> Result<Command, EditError> {
         match self {
             Command::AddTrack { index, mut track } => {
-                if track.id.0 == 0 {
-                    track.id = TrackId(p.alloc_id());
-                } else if p.track(track.id).is_some() {
+                if track.id.0 != 0 && p.track(track.id).is_some() {
                     return Err(EditError::DuplicateId(track.id.0));
-                } else {
-                    p.next_id = p.next_id.max(track.id.0 + 1);
-                }
-                let inner = track.clips.iter().map(|c| c.id.0).chain(track.midi_clips.iter().map(|c| c.id.0)).chain(track.devices.iter().chain(track.instrument_plugin.as_ref()).map(|d| d.id.0)).max();
-                if let Some(id) = inner {
-                    p.next_id = p.next_id.max(id + 1);
                 }
                 validate_gain("gain", track.gain)?;
                 validate_pan(track.pan)?;
@@ -255,6 +247,11 @@ impl Command {
                 if idx > p.tracks.len() {
                     return Err(invalid("index", format!("{idx} > {}", p.tracks.len())));
                 }
+                if track.id.0 == 0 {
+                    track.id = TrackId(p.alloc_id());
+                }
+                let ids = track.clips.iter().map(|c| c.id.0).chain(track.midi_clips.iter().map(|c| c.id.0)).chain(track.devices.iter().chain(track.instrument_plugin.as_ref()).map(|d| d.id.0));
+                p.next_id = ids.chain([track.id.0]).fold(p.next_id, |n, id| n.max(id + 1));
                 let id = track.id;
                 p.tracks.insert(idx, track);
                 // A new instrument track plays the built-in Synth.

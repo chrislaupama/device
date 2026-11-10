@@ -396,3 +396,16 @@ fn import_track_gives_fresh_ids_and_keeps_references() {
     assert!(d.project().next_id >= next, "next_id {} < {next}", d.project().next_id);
 }
 
+
+#[test]
+fn rejected_add_track_leaves_next_id_alone() {
+    let mut p = Project::default();
+    let before = p.next_id;
+    let mut track = Track::new(TrackId(before + 50), TrackKind::Instrument, "X", p.tracks[0].color);
+    track.midi_clips.push(MidiClip { id: ClipId(before + 100), ..MidiClip::empty(0, PPQ) });
+    assert!(Command::AddTrack { index: Some(99), track: track.clone() }.apply(&mut p).is_err());
+    assert_eq!(p.next_id, before);
+    Command::AddTrack { index: None, track }.apply(&mut p).unwrap();
+    assert_eq!(p.next_id, before + 101);
+}
+
