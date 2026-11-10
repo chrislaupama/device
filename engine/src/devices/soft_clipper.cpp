@@ -1,11 +1,11 @@
 // Soft Clipper: 4x oversampled clipping to a ceiling with three curves
 // (Smooth, Warm, Hard), adjustable softness, input gain with optional gain
 // match, dry/wet mix and output gain. Parameters in the order of
-// saine_core::builtin::soft_clipper (checked by a Rust test).
+// dstudio_core::builtin::soft_clipper (checked by a Rust test).
 //
 //   wet = c * clip(x * a / c) * m       a = Input, c = Ceiling, m = 1/a with Gain Match
 //   out = (dry * (1 - mix) + wet * mix) * Output
-// clip() is the curve the panel draws (saine_core clip_curve):
+// clip() is the curve the panel draws (dstudio_core clip_curve):
 //   Smooth  u / (1 + |u|^k)^(1/k),  k = 24 * (1/16)^softness
 //   Warm    the same, but the negative half uses k' = max(k/2, 1.2) (even
 //           harmonics); the DC this adds is tracked on the even part alone
@@ -20,7 +20,7 @@
 #include <cmath>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -215,4 +215,4 @@ extern const BuiltinDescriptor kSoftClipperDescriptor;
 constexpr float kDefaults[] = {0.f, 0.f, 50.f, 0.f, 0.f, 100.f, 0.f};
 const BuiltinDescriptor kSoftClipperDescriptor{"soft-clipper", kParamIds, {}, &create_soft_clipper, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

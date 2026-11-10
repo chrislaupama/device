@@ -10,7 +10,7 @@
 
 #include <pluginterfaces/gui/iplugview.h>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 constexpr const char* kUnsupported =
@@ -32,6 +32,6 @@ std::unique_ptr<PluginEditor> create_clap_editor(const clap_plugin*, const clap_
     return nullptr;
 }
 
-} // namespace saine
+} // namespace dstudio
 
 #endif

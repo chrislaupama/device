@@ -1,5 +1,5 @@
 // De-Esser: split-band dynamic cut. Parameters in the order of
-// saine_core::builtin::deesser (checked by a Rust test).
+// dstudio_core::builtin::deesser (checked by a Rust test).
 //
 //   band      b = k * v1 of a TPT state-variable band-pass at Frequency with
 //             Q = Bandwidth (0 dB at the centre), per channel
@@ -18,7 +18,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -152,4 +152,4 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<DeEsser>();
 extern const BuiltinDescriptor kDeEsserDescriptor;
 const BuiltinDescriptor kDeEsserDescriptor{"deesser", kParamIds, kReadouts.ids, &create, kIdle.v, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

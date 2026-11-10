@@ -8,18 +8,18 @@ using namespace devtest;
 
 namespace {
 
-// Defaults of saine_core::builtin::mastering_limiter, registry order.
+// Defaults of dstudio_core::builtin::mastering_limiter, registry order.
 const std::vector<float> kDefaults = {0.f, -1.f, 150.f, 1.f, 0.f, 2.f, 10.f, 75.f, 100.f, 0.f, 2.f, 1.f, 0.f, 2.f, 0.f, 0.f, 0.f};
 constexpr double kRate = 48000.0;
 
 DeviceRig rig() { return DeviceRig("mastering-limiter", kDefaults, kRate, 256); }
 
 uint32_t expected_latency(uint32_t factor) {
-    return saine::dsp::Oversampler::latency(factor) + 240 + (factor < 4 ? saine::dsp::TruePeak4x::kDelay / factor : 0) + 21;
+    return dstudio::dsp::Oversampler::latency(factor) + 240 + (factor < 4 ? dstudio::dsp::TruePeak4x::kDelay / factor : 0) + 21;
 }
 
 double true_peak_db(const Signal& s, std::size_t from) {
-    saine::dsp::TruePeak4x tp;
+    dstudio::dsp::TruePeak4x tp;
     double m = 0.0;
     for (std::size_t i = 0; i < s.size(); ++i) {
         const double v = tp.next(s[i]);
@@ -32,7 +32,7 @@ double true_peak_db(const Signal& s, std::size_t from) {
 Signal programme(std::size_t n) {
     Signal s = noise(n, 0.6f, 11);
     for (std::size_t i = 0; i < n; ++i)
-        s[i] = s[i] * (0.4f + 0.6f * static_cast<float>((i / 2400) % 2)) + static_cast<float>(0.3 * std::sin(2 * saine::dsp::kPi * 60.0 * static_cast<double>(i) / kRate));
+        s[i] = s[i] * (0.4f + 0.6f * static_cast<float>((i / 2400) % 2)) + static_cast<float>(0.3 * std::sin(2 * dstudio::dsp::kPi * 60.0 * static_cast<double>(i) / kRate));
     return s;
 }
 

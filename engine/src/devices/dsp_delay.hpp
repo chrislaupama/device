@@ -12,7 +12,7 @@
 #include <cstring>
 #include <vector>
 
-namespace saine::dsp {
+namespace dstudio::dsp {
 
 // xorshift32: deterministic, cheap, good enough for modulation and scatter.
 struct UnitRng {
@@ -166,4 +166,4 @@ inline float fast_sin(float phase01) noexcept {
     return -(y * (0.775f + 0.225f * std::fabs(y)));
 }
 
-} // namespace saine::dsp
+} // namespace dstudio::dsp

@@ -3,7 +3,7 @@
 // overshoot, drive and dynamics; ten banks that voice the bands; low-end
 // Warmth; an oversampled Valve stage; a four-band resonance Tamer; Auto Gain;
 // Output; a band Listen (solo); and a Bypass that keeps the latency.
-// Parameters in the order of saine_core::builtin::character_eq (checked by
+// Parameters in the order of dstudio_core::builtin::character_eq (checked by
 // a Rust test).
 //
 // Signal flow (stereo, linked detectors), in 16-sample control periods:
@@ -33,7 +33,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -63,28 +63,28 @@ enum Param : uint32_t {
     kParamCount = 222
 };
 
-#define SAINE_CEQ_BAND(n)                                                                                              \
+#define DSTUDIO_CEQ_BAND(n)                                                                                              \
     "band" #n "_enabled", "band" #n "_type", "band" #n "_freq", "band" #n "_gain", "band" #n "_q", "band" #n "_slope", \
         "band" #n "_propq", "band" #n "_overshoot", "band" #n "_low_atten"
-#define SAINE_CEQ_DYN(n)                                                                                               \
+#define DSTUDIO_CEQ_DYN(n)                                                                                               \
     "band" #n "_dyn", "band" #n "_dyn_range", "band" #n "_dyn_auto", "band" #n "_dyn_thresh", "band" #n "_dyn_attack", \
         "band" #n "_dyn_release"
-#define SAINE_CEQ_TAME(n) "tame" #n "_enabled", "tame" #n "_freq", "tame" #n "_q", "tame" #n "_weight"
+#define DSTUDIO_CEQ_TAME(n) "tame" #n "_enabled", "tame" #n "_freq", "tame" #n "_q", "tame" #n "_weight"
 
 constexpr const char* kParamIds[kParamCount] = {
-    SAINE_CEQ_BAND(1), SAINE_CEQ_BAND(2), SAINE_CEQ_BAND(3), SAINE_CEQ_BAND(4), SAINE_CEQ_BAND(5), SAINE_CEQ_BAND(6),
-    SAINE_CEQ_BAND(7), SAINE_CEQ_BAND(8), SAINE_CEQ_BAND(9), SAINE_CEQ_BAND(10), SAINE_CEQ_BAND(11), SAINE_CEQ_BAND(12),
+    DSTUDIO_CEQ_BAND(1), DSTUDIO_CEQ_BAND(2), DSTUDIO_CEQ_BAND(3), DSTUDIO_CEQ_BAND(4), DSTUDIO_CEQ_BAND(5), DSTUDIO_CEQ_BAND(6),
+    DSTUDIO_CEQ_BAND(7), DSTUDIO_CEQ_BAND(8), DSTUDIO_CEQ_BAND(9), DSTUDIO_CEQ_BAND(10), DSTUDIO_CEQ_BAND(11), DSTUDIO_CEQ_BAND(12),
     "bank", "warmth_amount", "warmth_slope", "warmth_tail", "valve_enabled", "valve_trim", "valve_mix", "oversampling",
     "output_trim", "bypass", "auto_gain",
-    SAINE_CEQ_DYN(1), SAINE_CEQ_DYN(2), SAINE_CEQ_DYN(3), SAINE_CEQ_DYN(4), SAINE_CEQ_DYN(5), SAINE_CEQ_DYN(6),
-    SAINE_CEQ_DYN(7), SAINE_CEQ_DYN(8), SAINE_CEQ_DYN(9), SAINE_CEQ_DYN(10), SAINE_CEQ_DYN(11), SAINE_CEQ_DYN(12),
-    "tame_enabled", "tame_amount", SAINE_CEQ_TAME(1), SAINE_CEQ_TAME(2), SAINE_CEQ_TAME(3), SAINE_CEQ_TAME(4),
+    DSTUDIO_CEQ_DYN(1), DSTUDIO_CEQ_DYN(2), DSTUDIO_CEQ_DYN(3), DSTUDIO_CEQ_DYN(4), DSTUDIO_CEQ_DYN(5), DSTUDIO_CEQ_DYN(6),
+    DSTUDIO_CEQ_DYN(7), DSTUDIO_CEQ_DYN(8), DSTUDIO_CEQ_DYN(9), DSTUDIO_CEQ_DYN(10), DSTUDIO_CEQ_DYN(11), DSTUDIO_CEQ_DYN(12),
+    "tame_enabled", "tame_amount", DSTUDIO_CEQ_TAME(1), DSTUDIO_CEQ_TAME(2), DSTUDIO_CEQ_TAME(3), DSTUDIO_CEQ_TAME(4),
     "band1_drive", "band2_drive", "band3_drive", "band4_drive", "band5_drive", "band6_drive", "band7_drive",
     "band8_drive", "band9_drive", "band10_drive", "band11_drive", "band12_drive", "listen_band"};
 
-#undef SAINE_CEQ_BAND
-#undef SAINE_CEQ_DYN
-#undef SAINE_CEQ_TAME
+#undef DSTUDIO_CEQ_BAND
+#undef DSTUDIO_CEQ_DYN
+#undef DSTUDIO_CEQ_TAME
 
 // Readouts: each band's dynamic gain offset (dB), then each tamer band's cut (dB, <= 0).
 constexpr const char* kReadoutIds[kBands + kTames] = {"dyn1", "dyn2",  "dyn3",  "dyn4",  "dyn5",  "dyn6",
@@ -95,7 +95,7 @@ constexpr eq::Shape kShapes[7] = {eq::Shape::Bell,    eq::Shape::LowShelf, eq::S
                                   eq::Shape::LowPass, eq::Shape::Notch,    eq::Shape::DualLow};
 constexpr float kSlopes[6] = {6.0f, 12.0f, 18.0f, 24.0f, 36.0f, 48.0f};
 
-// Bank voicings, mirroring saine_core::builtin::eq::BANKS: Q scale,
+// Bank voicings, mirroring dstudio_core::builtin::eq::BANKS: Q scale,
 // proportional Q on bells, added shelf / pass overshoot, drive asymmetry.
 struct Voicing {
     float q_scale;
@@ -644,20 +644,20 @@ std::unique_ptr<BuiltinProcessor> create_character_eq() { return std::make_uniqu
 
 } // namespace
 
-#define SAINE_CEQ_BAND 0.0f, 0.0f, 1000.0f, 0.0f, 0.7071f, 1.0f, 0.0f, 0.0f, 0.0f
-#define SAINE_CEQ_DYN 0.0f, 0.0f, 1.0f, -30.0f, 15.0f, 150.0f
+#define DSTUDIO_CEQ_BAND 0.0f, 0.0f, 1000.0f, 0.0f, 0.7071f, 1.0f, 0.0f, 0.0f, 0.0f
+#define DSTUDIO_CEQ_DYN 0.0f, 0.0f, 1.0f, -30.0f, 15.0f, 150.0f
 constexpr float kDefaults[kParamCount] = {
-    SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND,
-    SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND, SAINE_CEQ_BAND,
+    DSTUDIO_CEQ_BAND, DSTUDIO_CEQ_BAND, DSTUDIO_CEQ_BAND, DSTUDIO_CEQ_BAND, DSTUDIO_CEQ_BAND, DSTUDIO_CEQ_BAND,
+    DSTUDIO_CEQ_BAND, DSTUDIO_CEQ_BAND, DSTUDIO_CEQ_BAND, DSTUDIO_CEQ_BAND, DSTUDIO_CEQ_BAND, DSTUDIO_CEQ_BAND,
     0.0f, 0.0f, 1.0f, 300.0f, 0.0f, 1.0f, 100.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-    SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN,
-    SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN, SAINE_CEQ_DYN,
+    DSTUDIO_CEQ_DYN, DSTUDIO_CEQ_DYN, DSTUDIO_CEQ_DYN, DSTUDIO_CEQ_DYN, DSTUDIO_CEQ_DYN, DSTUDIO_CEQ_DYN,
+    DSTUDIO_CEQ_DYN, DSTUDIO_CEQ_DYN, DSTUDIO_CEQ_DYN, DSTUDIO_CEQ_DYN, DSTUDIO_CEQ_DYN, DSTUDIO_CEQ_DYN,
     0.0f, 50.0f, 0.0f, 250.0f, 1.0f, 0.0f, 0.0f, 1000.0f, 1.0f, 0.0f, 0.0f, 4000.0f, 1.0f, 0.0f, 0.0f, 10000.0f, 1.0f, 0.0f,
     0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-#undef SAINE_CEQ_BAND
-#undef SAINE_CEQ_DYN
+#undef DSTUDIO_CEQ_BAND
+#undef DSTUDIO_CEQ_DYN
 
 extern const BuiltinDescriptor kCharacterEqDescriptor;
 const BuiltinDescriptor kCharacterEqDescriptor{"character-eq", kParamIds, kReadoutIds, &create_character_eq, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

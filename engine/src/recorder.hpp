@@ -27,7 +27,7 @@
 #include <thread>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 struct RecordTrackSpec {
     uint64_t track_id = 0;
@@ -179,4 +179,4 @@ private:
     std::vector<Take> takes_;
 };
 
-} // namespace saine
+} // namespace dstudio

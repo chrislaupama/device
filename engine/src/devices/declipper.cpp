@@ -1,5 +1,5 @@
 // De-Clipper: rebuilds clipped peaks, then holds the result under a
-// true-peak ceiling. Parameters in the order of saine_core::builtin::declipper
+// true-peak ceiling. Parameters in the order of dstudio_core::builtin::declipper
 // (checked by a Rust test).
 //
 // 1. Detection, per channel: a run of consecutive samples at or above
@@ -27,7 +27,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -239,4 +239,4 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<DeClipper>(
 extern const BuiltinDescriptor kDeClipperDescriptor;
 const BuiltinDescriptor kDeClipperDescriptor{"declipper", kParamIds, {}, &create, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

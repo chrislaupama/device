@@ -32,7 +32,7 @@ extern char** environ;
 #include <mach-o/dyld.h>
 #endif
 
-namespace saine::os {
+namespace dstudio::os {
 
 // ---------------------------------------------------------------- strings
 
@@ -510,4 +510,4 @@ void ChildProcess::reset() noexcept { pid_ = -1; }
 
 #endif
 
-} // namespace saine::os
+} // namespace dstudio::os

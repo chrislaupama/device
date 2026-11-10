@@ -12,7 +12,7 @@ namespace {
 constexpr double kRate = 48000.0;
 
 std::vector<float> defaults_of(const char* id) {
-    const saine::BuiltinDescriptor* d = saine::find_builtin(id);
+    const dstudio::BuiltinDescriptor* d = dstudio::find_builtin(id);
     return {d->defaults.begin(), d->defaults.end()};
 }
 
@@ -25,7 +25,7 @@ std::vector<float> echo_defaults() { return defaults_of("echo"); }
 // Frequency of the strongest bin of x[from, from + 8192).
 double dominant_hz(const Signal& x, std::size_t from) {
     constexpr uint32_t n = 8192;
-    saine::dsp::RealFft fft;
+    dstudio::dsp::RealFft fft;
     fft.prepare(n);
     std::vector<float> f(n), re(n / 2 + 1), im(n / 2 + 1);
     for (uint32_t i = 0; i < n; ++i) f[i] = x[from + i] * static_cast<float>(0.5 - 0.5 * std::cos(2.0 * 3.14159265358979 * i / n));
@@ -53,7 +53,7 @@ std::size_t argmax_abs(const Signal& s, std::size_t from = 0, std::size_t to = S
 // ---------------------------------------------------------------- shared blocks
 
 TEST_CASE(real_fft_round_trips_and_finds_a_sine) {
-    saine::dsp::RealFft fft;
+    dstudio::dsp::RealFft fft;
     fft.prepare(1024);
     const Signal x = noise(1024, 1.0f, 9);
     std::vector<float> re(513), im(513), y(1024);
@@ -71,7 +71,7 @@ TEST_CASE(real_fft_round_trips_and_finds_a_sine) {
 
 TEST_CASE(phase_vocoder_shifts_a_sine_by_the_ratio) {
     for (float ratio : {2.0f, 0.5f, 1.4983f}) {
-        saine::dsp::PitchShifter ps;
+        dstudio::dsp::PitchShifter ps;
         ps.prepare(2048);
         ps.set_ratio(ratio);
         const Signal x = tone(48000, 440.0, kRate, 0.5);
@@ -413,7 +413,7 @@ TEST_CASE(reverb_cuts_and_shimmer_adds_upper_octave) {
     };
     // The spectrum band nearest the shimmer's +1 octave (600 Hz).
     uint32_t b = 0;
-    while (b + 1 < saine::dsp::kSpectrumBands && saine::dsp::spectrum_band_hz(b + 1) < 600.0f) ++b;
+    while (b + 1 < dstudio::dsp::kSpectrumBands && dstudio::dsp::spectrum_band_hz(b + 1) < 600.0f) ++b;
     const auto hall = readout_band(1.f), shim = readout_band(4.f);
     CHECK(shim[1 + b] > hall[1 + b] + 3.0f);
 }

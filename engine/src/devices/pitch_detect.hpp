@@ -22,7 +22,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace saine::dsp {
+namespace dstudio::dsp {
 
 struct PitchEstimate {
     float hz = 0.0f;       // fundamental (0 when unvoiced)
@@ -77,4 +77,4 @@ private:
     PitchEstimate est_;
 };
 
-} // namespace saine::dsp
+} // namespace dstudio::dsp

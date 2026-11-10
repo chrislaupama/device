@@ -10,7 +10,7 @@
 #include <tuple>
 #include <unordered_map>
 
-namespace saine {
+namespace dstudio {
 
 void constant_power_pan(float pan, float& left, float& right) noexcept {
     const double p = std::clamp(static_cast<double>(pan), -1.0, 1.0);
@@ -786,4 +786,4 @@ std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g) {
     return c;
 }
 
-} // namespace saine
+} // namespace dstudio

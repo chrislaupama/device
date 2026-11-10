@@ -2,7 +2,7 @@
 // (scanner/cache_json.hpp), which runs on every scan before any plugin is
 // looked at. Prints measurements only; no pass/fail thresholds.
 //
-// usage: saine_scan_cache_bench [entries=2000] [runs=50]
+// usage: dstudio_scan_cache_bench [entries=2000] [runs=50]
 // Two synthetic caches with `entries` bundles of 2 plugins each:
 //   typical:  what write_cache produces (non-ASCII stays raw UTF-8, so \u
 //             escapes are rare: only control characters);
@@ -21,8 +21,8 @@
 
 namespace {
 
-using saine::scanner::Json;
-using saine::scanner::Parser;
+using dstudio::scanner::Json;
+using dstudio::scanner::Parser;
 
 // Appends `s` as a JSON string; with `escape_all`, every character after the
 // first is written as \uXXXX (ASCII and 2-byte UTF-8 only in this input).
@@ -55,7 +55,7 @@ std::string make_cache(int entries, bool escape_all) {
         o += ",\"stamp\":\"1730000000" + n + "\",\"status\":\"ok\",\"reason\":\"\",\"plugins\":[";
         for (int p = 0; p < 2; ++p) {
             o += p ? ",{" : "{";
-            o += "\"format\":\"vst3\",\"id\":\"studio.saine.bench." + n + "." + std::to_string(p) + "\",\"path\":";
+            o += "\"format\":\"vst3\",\"id\":\"studio.dstudio.bench." + n + "." + std::to_string(p) + "\",\"path\":";
             put_string(o, path, escape_all);
             o += ",\"name\":";
             put_string(o, "R\xC3\xA9verb Pro " + n, escape_all);

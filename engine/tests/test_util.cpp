@@ -14,14 +14,14 @@ namespace testutil {
 
 TempFile::TempFile(const std::string& stem) {
     static std::atomic<int> counter{0};
-    path = saine::os::path_to_utf8(std::filesystem::temp_directory_path() /
-                                   ("saine_test_" + std::to_string(saine::os::process_id()) + "_" +
+    path = dstudio::os::path_to_utf8(std::filesystem::temp_directory_path() /
+                                   ("dstudio_test_" + std::to_string(dstudio::os::process_id()) + "_" +
                                     std::to_string(counter++) + "_" + stem));
 }
 
 TempFile::~TempFile() {
     std::error_code ec;
-    std::filesystem::remove(saine::os::path_from_utf8(path), ec);
+    std::filesystem::remove(dstudio::os::path_from_utf8(path), ec);
 }
 
 void write_float_wav(const std::string& path, const std::vector<std::vector<float>>& planar, uint32_t rate) {
@@ -31,14 +31,14 @@ void write_float_wav(const std::string& path, const std::vector<std::vector<floa
     for (std::size_t f = 0; f < frames; ++f)
         for (uint32_t c = 0; c < ch; ++c) inter[f * ch + c] = planar[c][f];
     std::string err;
-    if (saine::write_wav_float32(path.c_str(), inter.data(), frames, ch, rate, err) != SE_OK)
+    if (dstudio::write_wav_float32(path.c_str(), inter.data(), frames, ch, rate, err) != SE_OK)
         throw std::runtime_error("write_float_wav: " + err);
 }
 
-std::FILE* fopen_utf8(const char* path, const char* mode) { return saine::os::fopen_utf8(path, mode); }
+std::FILE* fopen_utf8(const char* path, const char* mode) { return dstudio::os::fopen_utf8(path, mode); }
 
 void write_bytes(const std::string& path, const std::vector<uint8_t>& bytes) {
-    std::FILE* f = saine::os::fopen_utf8(path.c_str(), "wb");
+    std::FILE* f = dstudio::os::fopen_utf8(path.c_str(), "wb");
     if (f == nullptr) throw std::runtime_error("cannot write " + path);
     std::fwrite(bytes.data(), 1, bytes.size(), f);
     std::fclose(f);

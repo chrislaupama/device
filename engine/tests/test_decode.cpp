@@ -11,10 +11,10 @@ using namespace testutil;
 
 namespace {
 
-saine::DecodedAudio decode(const uint8_t* data, std::size_t size, int32_t* rc = nullptr) {
-    saine::DecodedAudio d;
+dstudio::DecodedAudio decode(const uint8_t* data, std::size_t size, int32_t* rc = nullptr) {
+    dstudio::DecodedAudio d;
     std::string err;
-    const int32_t r = saine::decode_audio_memory(data, size, d, err);
+    const int32_t r = dstudio::decode_audio_memory(data, size, d, err);
     if (rc != nullptr) *rc = r;
     return d;
 }
@@ -32,7 +32,7 @@ int crossings(const std::vector<float>& v, std::size_t from, std::size_t to) {
 }
 
 // The fixtures hold 0.1 s at 48 kHz: left a 440 Hz sine at 0.5, right silent.
-void check_tone(const saine::DecodedAudio& d) {
+void check_tone(const dstudio::DecodedAudio& d) {
     CHECK_EQ(d.channels, 2u);
     CHECK_EQ(d.sample_rate, 48000.0);
     CHECK(d.frames >= 4700 && d.frames <= 6500);
@@ -132,9 +132,9 @@ TEST_CASE(decode_rejects_unknown_and_broken_files) {
     decode(nullptr, 0, &rc);
     CHECK_EQ(rc, SE_ERR_UNSUPPORTED_FORMAT);
     const uint8_t bw64[] = {'B', 'W', '6', '4', 0xff, 0xff, 0xff, 0xff, 'W', 'A', 'V', 'E'};
-    saine::DecodedAudio d;
+    dstudio::DecodedAudio d;
     std::string err;
-    CHECK_EQ(saine::decode_audio_memory(bw64, sizeof bw64, d, err), SE_ERR_UNSUPPORTED_FORMAT);
+    CHECK_EQ(dstudio::decode_audio_memory(bw64, sizeof bw64, d, err), SE_ERR_UNSUPPORTED_FORMAT);
     CHECK(err.find("BW64") != std::string::npos);
 }
 

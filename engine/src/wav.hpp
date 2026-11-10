@@ -18,7 +18,7 @@
 #include <string>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 struct DecodedAudio {
     uint32_t channels = 0;
@@ -61,4 +61,4 @@ private:
 int32_t write_wav_float32(const char* utf8_path, const float* interleaved, uint64_t frames, uint32_t channels,
                           uint32_t sample_rate, std::string& err);
 
-} // namespace saine
+} // namespace dstudio

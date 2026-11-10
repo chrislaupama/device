@@ -1,6 +1,6 @@
-// saine_plugin_scanner: out-of-process plugin scanner.
+// dstudio_plugin_scanner: out-of-process plugin scanner.
 //
-//   saine_plugin_scanner --scan --cache <file.json> [--rescan]
+//   dstudio_plugin_scanner --scan --cache <file.json> [--rescan]
 //       Coordinator. Enumerates Audio Units (macOS: types aufx/aumf/aumu)
 //       and the VST3/CLAP bundles in the platform's standard folders
 //         macOS:   /Library/Audio/Plug-Ins/{VST3,CLAP},
@@ -9,12 +9,12 @@
 //                  %LOCALAPPDATA%\Programs\Common\{VST3,CLAP}, %CLAP_PATH%
 //         Linux:   ~/.vst3, /usr/lib/vst3, /usr/local/lib/vst3,
 //                  ~/.clap, /usr/lib/clap, /usr/local/lib/clap, $CLAP_PATH
-//       and every entry of $SAINE_PLUGIN_PATH (':'-separated, ';' on
+//       and every entry of $DSTUDIO_PLUGIN_PATH (':'-separated, ';' on
 //       Windows; a directory is searched, a .vst3/.clap path is taken as a
 //       bundle). Each AU / bundle not in the
 //       cache (or whose stamp changed: AU version, bundle modification time)
 //       is inspected by a child process "--scan-one <format> <target>" with
-//       a timeout ($SAINE_PLUGIN_SCAN_TIMEOUT_MS, default 10000; up to 4
+//       a timeout ($DSTUDIO_PLUGIN_SCAN_TIMEOUT_MS, default 10000; up to 4
 //       children at a time). A child that crashes, times out or fails is
 //       blocklisted in the cache until --rescan or its stamp changes.
 //       Writes the cache, prints progress lines ("progress: ...") to stderr
@@ -22,7 +22,7 @@
 //         {"plugins":[{format,id,path,name,vendor,version,kind,has_editor,
 //                      audio_inputs,audio_outputs}...],
 //          "failed":[{"target":...,"reason":...}...], "from_cache":bool}
-//   saine_plugin_scanner --scan-one audio_unit|vst3|clap <id-or-bundle>
+//   dstudio_plugin_scanner --scan-one audio_unit|vst3|clap <id-or-bundle>
 //       Child. Prints a JSON array of plugins, exit 0; on failure prints the
 //       reason to stderr and exits 2.
 #include "cache_json.hpp"
@@ -56,10 +56,10 @@
 #endif
 
 namespace fs = std::filesystem;
-namespace os = saine::os;
-using saine::ScannedPlugin;
-using saine::scanner::Json;
-using saine::scanner::Parser;
+namespace os = dstudio::os;
+using dstudio::ScannedPlugin;
+using dstudio::scanner::Json;
+using dstudio::scanner::Parser;
 
 namespace {
 
@@ -182,10 +182,10 @@ void find_bundles(const fs::path& dir, int depth, std::vector<Item>& out) {
 
 // Everything to scan: the Audio Units, then the VST3/CLAP bundles found in
 // the platform's standard folders, $CLAP_PATH (Windows/Linux only) and
-// $SAINE_PLUGIN_PATH (de-duplicated).
+// $DSTUDIO_PLUGIN_PATH (de-duplicated).
 std::vector<Item> enumerate_items() {
     std::vector<Item> items;
-    for (const auto& au : saine::enumerate_audio_units())
+    for (const auto& au : dstudio::enumerate_audio_units())
         items.push_back(Item{"audio_unit", au.id, au.vendor.empty() ? au.name : au.vendor + ": " + au.name,
                              std::to_string(au.version)});
     std::vector<std::string> dirs;
@@ -234,7 +234,7 @@ std::vector<Item> enumerate_items() {
     dirs.push_back("/usr/local/lib/clap");
     if (os::get_env("CLAP_PATH", v)) split(v);
 #endif
-    if (os::get_env("SAINE_PLUGIN_PATH", v)) split(v);
+    if (os::get_env("DSTUDIO_PLUGIN_PATH", v)) split(v);
     std::vector<Item> bundles;
     for (const auto& d : dirs) find_bundles(os::path_from_utf8(d), 0, bundles);
     // De-duplicate (a bundle reachable from several roots).
@@ -346,7 +346,7 @@ std::string trim(std::string s) {
 int run_coordinator(const std::string& exe, const std::string& cache_path, bool rescan) {
     const auto t_start = std::chrono::steady_clock::now();
     long timeout_ms = 10000;
-    if (std::string t; os::get_env("SAINE_PLUGIN_SCAN_TIMEOUT_MS", t)) timeout_ms = std::max(100L, std::atol(t.c_str()));
+    if (std::string t; os::get_env("DSTUDIO_PLUGIN_SCAN_TIMEOUT_MS", t)) timeout_ms = std::max(100L, std::atol(t.c_str()));
     std::map<std::string, CacheEntry> cache = rescan ? std::map<std::string, CacheEntry>{} : load_cache(cache_path);
     const std::vector<Item> items = enumerate_items();
 
@@ -466,9 +466,9 @@ int run_child(const std::string& format, const std::string& target) {
     std::vector<ScannedPlugin> plugins;
     std::string err;
     bool ok = false;
-    if (format == "audio_unit") ok = saine::scan_audio_unit(target, plugins, err);
-    else if (format == "vst3") ok = saine::scan_vst3_bundle(target, plugins, err);
-    else if (format == "clap") ok = saine::scan_clap_bundle(target, plugins, err);
+    if (format == "audio_unit") ok = dstudio::scan_audio_unit(target, plugins, err);
+    else if (format == "vst3") ok = dstudio::scan_vst3_bundle(target, plugins, err);
+    else if (format == "clap") ok = dstudio::scan_clap_bundle(target, plugins, err);
     else err = "unknown format " + format;
     if (!ok) {
         std::fprintf(stderr, "%s\n", err.c_str());
@@ -486,8 +486,8 @@ int run_child(const std::string& format, const std::string& target) {
 
 // Prints the command-line usage to stderr.
 void usage() {
-    std::fprintf(stderr, "usage: saine_plugin_scanner --scan --cache <file.json> [--rescan]\n"
-                         "       saine_plugin_scanner --scan-one audio_unit|vst3|clap <target>\n");
+    std::fprintf(stderr, "usage: dstudio_plugin_scanner --scan --cache <file.json> [--rescan]\n"
+                         "       dstudio_plugin_scanner --scan-one audio_unit|vst3|clap <target>\n");
 }
 
 } // namespace

@@ -2,7 +2,7 @@
 // ABI layout, validation, oscillators, filter, envelopes, LFO, voice modes,
 // smoothing of republished parameters, and RT safety with parameter changes.
 //
-// DSP tests mostly drive saine::Synth directly with a "clean" patch (one sine
+// DSP tests mostly drive dstudio::Synth directly with a "clean" patch (one sine
 // or one waveform, filter wide open, no key tracking) so that each property
 // can be measured in isolation; engine-level tests go through
 // se_session_publish_v3.
@@ -18,10 +18,10 @@
 #include <thread>
 
 using namespace testutil;
-using saine::NoteEvent;
+using dstudio::NoteEvent;
 
 // ---------------------------------------------------------------- ABI layout
-// Mirrors the Rust abi_layout test (crates/saine-engine/src/ffi.rs).
+// Mirrors the Rust abi_layout test (crates/dstudio-engine/src/ffi.rs).
 static_assert(sizeof(se_synth_params) == 128 && alignof(se_synth_params) == 4);
 static_assert(offsetof(se_synth_params, osc1_wave) == 0 && offsetof(se_synth_params, osc2_wave) == 3);
 static_assert(offsetof(se_synth_params, filter_mode) == 6 && offsetof(se_synth_params, lfo_wave) == 7);
@@ -71,7 +71,7 @@ std::vector<float> run(const se_synth_params& p, std::vector<NoteEvent> notes, u
     std::sort(notes.begin(), notes.end(), [](const NoteEvent& a, const NoteEvent& b) {
         return a.start != b.start ? a.start < b.start : a.pitch < b.pitch;
     });
-    saine::Synth s(kRate);
+    dstudio::Synth s(kRate);
     std::vector<float> out(frames, 0.0f);
     for (uint32_t pos = 0; pos < frames; pos += block) {
         const uint32_t n = std::min(block, frames - pos);
@@ -150,7 +150,7 @@ float max_jump(const std::vector<float>& x, std::size_t from, std::size_t to) {
 }
 
 // Full-scale sine amplitude of one voice at velocity 127, output 1.
-constexpr double kFull = saine::Synth::kVoiceGain;
+constexpr double kFull = dstudio::Synth::kVoiceGain;
 
 se_note_desc note(int64_t start, int64_t end, uint8_t pitch, uint8_t velocity = 100) {
     se_note_desc n{};
@@ -214,12 +214,12 @@ TEST_CASE(synth_v3_defaults_and_validation) {
     se_synth_params d{};
     se_synth_params_default(&d);
     se_synth_params_default(nullptr); // no-op
-    // Same values as saine_core::instrument::SynthParams::default().
+    // Same values as dstudio_core::instrument::SynthParams::default().
     CHECK(d.osc1_wave == SE_WAVE_SAW && d.osc2_wave == SE_WAVE_SQUARE);
     CHECK(d.osc1_fine_cents == -5.0f && d.osc2_fine_cents == 5.0f && d.osc1_level == 0.6f && d.osc2_level == 0.5f);
     CHECK(d.filter_mode == SE_FILTER_LOWPASS && d.filter_cutoff_hz == 2093.0f && d.filter_key_track == 1.0f);
     CHECK(d.polyphony == 16 && d.unison == 1 && d.output == 1.0f && d.amp_sustain == 0.6f);
-    CHECK(saine::validate_synth_params(d) == nullptr);
+    CHECK(dstudio::validate_synth_params(d) == nullptr);
 
     EngineHandle e(kRate, 256);
     auto publish_with = [&](auto mutate) {
@@ -647,7 +647,7 @@ TEST_CASE(synth_mono_legato_and_glide) {
     }
     // Mono: a chord collapses to one voice (last note wins).
     {
-        saine::Synth s(kRate);
+        dstudio::Synth s(kRate);
         std::vector<NoteEvent> chord = {ev(0, 48000, 60), ev(0, 48000, 64), ev(0, 48000, 67)};
         std::vector<float> buf(256);
         s.render(chord.data(), 3, &p, 1, 0, 0, 256, true, buf.data());
@@ -692,7 +692,7 @@ TEST_CASE(synth_unison_detunes_and_keeps_level) {
     }
     CHECK(hi > 1.5 * lo); // beating
     // Unison does not use extra voice slots.
-    saine::Synth s(kRate);
+    dstudio::Synth s(kRate);
     std::vector<NoteEvent> notes;
     for (int i = 0; i < 16; ++i) notes.push_back(ev(0, 48000, static_cast<uint8_t>(40 + i)));
     std::vector<float> buf(256);
@@ -704,7 +704,7 @@ TEST_CASE(synth_unison_detunes_and_keeps_level) {
 TEST_CASE(synth_polyphony_limit_and_reduction) {
     se_synth_params p = clean(SE_WAVE_SAW);
     p.polyphony = 4;
-    saine::Synth s(kRate);
+    dstudio::Synth s(kRate);
     std::vector<NoteEvent> notes;
     for (int i = 0; i < 8; ++i) notes.push_back(ev(i * 480, 1000000, static_cast<uint8_t>(48 + i)));
     std::vector<float> buf(64);

@@ -1,7 +1,7 @@
 // Transient Shaper: level-independent attack / sustain shaping from the
 // difference of envelope followers, with a parallel mix, output gain and an
 // optional soft clipper at 0 dBFS. Parameters in the order of
-// saine_core::builtin::transient_shaper (checked by a Rust test).
+// dstudio_core::builtin::transient_shaper (checked by a Rust test).
 //
 //   detector  max(|L|, |R|), floored at a level set by Sensitivity
 //   envelope  e: 0.3 ms rise, 40 ms fall (smooth enough for low notes)
@@ -30,7 +30,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -198,4 +198,4 @@ constexpr float kIdleReadouts[] = {0.0f, 0.0f, 0.0f};
 constexpr float kDefaults[] = {0.f, 0.f, 50.f, 0.f, 100.f, 30.f, 2000.f, 0.f};
 const BuiltinDescriptor kTransientShaperDescriptor{"transient-shaper", kParamIds, kReadoutIds, &create_transient_shaper, kIdleReadouts, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

@@ -91,7 +91,7 @@ are still reported while off.
 ## API
 C ABI (append-only, `SE_ABI_VERSION` stays 1): `SE_PDC_MAX_DELAY_FRAMES`, `se_pdc_set_enabled`,
 `se_pdc_is_enabled`, `se_pdc_report` (16 bytes) + `se_pdc_track` (16 bytes) + `se_pdc_report_get`,
-`se_transport_audible_position`. Rust (`saine_engine::Engine`): `set_delay_compensation(bool)`,
+`se_transport_audible_position`. Rust (`dstudio_engine::Engine`): `set_delay_compensation(bool)`,
 `delay_compensation_enabled()`, `latency_report() -> LatencyReport { total_frames, tracks: Vec<(track_id, lat_i)>,
 clamped }`, `audible_position() -> i64`, plus `PDC_MAX_DELAY_FRAMES`.
 
@@ -117,7 +117,7 @@ Details in engine/README.md "Plugin delay compensation".
   `Engine::process`; `PluginInstance::run/suspend/restart`; `PluginHost::service_latencies`.
 - All graph installs (every publish version, re-plans) now happen under the plugin host mutex, so a re-plan can
   never overwrite a concurrent publish.
-- Test plugins `SaineTestLatency.clap` / `.vst3` (delay by N, report N; N from state, parameter 0 changes it at
+- Test plugins `DStudioTestLatency.clap` / `.vst3` (delay by N, report N; N from state, parameter 0 changes it at
   runtime through the format's restart protocol).
 - **Not verified:** real-device acoustic alignment with plugins (`real_loopback.rs`
   `acoustic_loopback_latency_with_pdc` exists but was not run: it opens the microphone); third-party plugins

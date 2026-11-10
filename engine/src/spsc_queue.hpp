@@ -10,7 +10,7 @@
 #include <cstddef>
 #include <type_traits>
 
-namespace saine {
+namespace dstudio {
 
 template <class T, std::size_t Capacity>
 class SpscQueue {
@@ -47,4 +47,4 @@ private:
     alignas(64) std::atomic<std::size_t> tail_{0}; // written by consumer
 };
 
-} // namespace saine
+} // namespace dstudio

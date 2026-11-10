@@ -20,7 +20,7 @@
 #include <cstring>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 class DelayLine {
 public:
@@ -104,4 +104,4 @@ private:
     uint64_t gen_ = 0;        // flush generation last seen
 };
 
-} // namespace saine
+} // namespace dstudio

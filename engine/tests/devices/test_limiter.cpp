@@ -7,7 +7,7 @@ using namespace devtest;
 
 namespace {
 
-// Defaults of saine_core::builtin::limiter, registry order:
+// Defaults of dstudio_core::builtin::limiter, registry order:
 // ceiling, release, lookahead, true_peak, mix, input_gain, output_gain.
 const std::vector<float> kDefaults = {-0.3f, 100.f, 5.f, 1.f, 100.f, 0.f, 0.f};
 constexpr double kRate = 48000.0;
@@ -15,11 +15,11 @@ constexpr double kRate = 48000.0;
 DeviceRig rig() { return DeviceRig("limiter", kDefaults, kRate, 256); }
 
 double true_peak(const Signal& s, std::size_t from = 0) {
-    saine::dsp::TruePeak4x tp;
+    dstudio::dsp::TruePeak4x tp;
     double m = 0.0;
     for (std::size_t i = 0; i < s.size(); ++i) {
         const double v = tp.next(s[i]);
-        if (i >= from + saine::dsp::TruePeak4x::kDelay) m = std::max(m, v);
+        if (i >= from + dstudio::dsp::TruePeak4x::kDelay) m = std::max(m, v);
     }
     return m;
 }
@@ -27,7 +27,7 @@ double true_peak(const Signal& s, std::size_t from = 0) {
 } // namespace
 
 TEST_CASE(true_peak_never_reads_below_the_sample_peak) {
-    saine::dsp::TruePeak4x tp;
+    dstudio::dsp::TruePeak4x tp;
     float m = 0.0f;
     for (int i = 0; i < 32; ++i) m = std::max(m, tp.next(i == 3 ? 1.0f : 0.0f));
     CHECK(m >= 1.0f);
@@ -36,7 +36,7 @@ TEST_CASE(true_peak_never_reads_below_the_sample_peak) {
 TEST_CASE(limiter_reports_a_fixed_latency_and_passes_quiet_audio_unchanged) {
     auto r = rig();
     const uint32_t lat = r.instance().latency();
-    CHECK_EQ(lat, 960u + saine::dsp::TruePeak4x::kDelay); // 20 ms at 48 kHz + the true-peak filter
+    CHECK_EQ(lat, 960u + dstudio::dsp::TruePeak4x::kDelay); // 20 ms at 48 kHz + the true-peak filter
     r.set("lookahead", 0.f);
     CHECK_EQ(r.instance().latency(), lat); // lookahead never changes PDC
     const Signal x = tone(9600, 1000.0, kRate, 0.3);
@@ -63,7 +63,7 @@ TEST_CASE(limiter_holds_the_ceiling_on_samples_and_between_them) {
     s.set("true_peak", 0.f);
     s.set("ceiling", -1.f);
     Signal x(24000);
-    for (std::size_t i = 0; i < x.size(); ++i) x[i] = static_cast<float>(1.2 * std::sin(saine::dsp::kPi * 0.5 * static_cast<double>(i) + saine::dsp::kPi / 4));
+    for (std::size_t i = 0; i < x.size(); ++i) x[i] = static_cast<float>(1.2 * std::sin(dstudio::dsp::kPi * 0.5 * static_cast<double>(i) + dstudio::dsp::kPi / 4));
     CHECK(db(true_peak(s.run_mono(x), 4800)) > -0.5);
 }
 

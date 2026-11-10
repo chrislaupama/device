@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/saine-core", "crates/saine-engine", "crates/saine-app"]
+members = ["crates/dstudio-core", "crates/dstudio-engine", "crates/dstudio-app"]
 
 [workspace.package]
 edition = "2024"

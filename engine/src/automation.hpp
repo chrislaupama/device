@@ -4,14 +4,14 @@
 // mapping. Everything here is RT-safe (no allocation, no locks).
 #pragma once
 
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 
-namespace saine {
+namespace dstudio {
 
 // Same layout as se_auto_point (copied with memcpy).
 struct AutoPoint {
@@ -27,7 +27,7 @@ struct LaneView {
     bool log = false;
 };
 
-// ---- the evaluation contract (saine_core::automation, bit-for-bit) --------
+// ---- the evaluation contract (dstudio_core::automation, bit-for-bit) --------
 // Float contraction (FMA) would change rounding versus the Rust reference.
 #if defined(__clang__)
 #pragma clang fp contract(off)
@@ -255,7 +255,7 @@ inline float* synth_param_field(se_synth_params& p, uint32_t index) noexcept {
     }
 }
 
-// (min, max) of a synth parameter (= SynthParam::range in saine_core).
+// (min, max) of a synth parameter (= SynthParam::range in dstudio_core).
 inline void synth_param_range(uint32_t index, float& lo, float& hi) noexcept {
     lo = 0.0f;
     hi = 1.0f;
@@ -274,4 +274,4 @@ inline void synth_param_range(uint32_t index, float& lo, float& hi) noexcept {
     }
 }
 
-} // namespace saine
+} // namespace dstudio

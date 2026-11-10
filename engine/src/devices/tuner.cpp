@@ -1,6 +1,6 @@
 // Tuner: shows the note being played and how far off it is; audio passes
 // through unchanged unless Mute Output is on. Parameters in the order of
-// saine_core::builtin::tuner (checked by a Rust test).
+// dstudio_core::builtin::tuner (checked by a Rust test).
 //
 // Detection: the shared PitchDetector (pitch_detect.hpp) on the mid signal,
 // 30 Hz .. 1.5 kHz, an estimate every 5 ms. The reading is the median of
@@ -19,7 +19,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -167,4 +167,4 @@ constexpr float kDefaults[] = {0.0f, 0.0f, 0.0f};
 constexpr float kIdleReadouts[] = {0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f};
 const BuiltinDescriptor kTunerDescriptor{"tuner", kParamIds, kReadoutIds, &create_tuner, kIdleReadouts, kDefaults, false, 0, false, true};
 
-} // namespace saine
+} // namespace dstudio

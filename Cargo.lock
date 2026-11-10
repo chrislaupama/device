@@ -1132,6 +1132,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "dstudio-app"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "chrono",
+ "dstudio-core",
+ "dstudio-engine",
+ "flate2",
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
+ "png",
+ "pollster",
+ "rfd",
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "slint",
+ "slint-build",
+ "ureq",
+ "wgpu",
+]
+
+[[package]]
+name = "dstudio-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "dstudio-engine"
+version = "0.1.0"
+dependencies = [
+ "cmake",
+ "dstudio-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "dtor"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3993,51 +4038,6 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
-
-[[package]]
-name = "saine-app"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "chrono",
- "flate2",
- "objc2 0.6.5",
- "objc2-foundation 0.3.2",
- "png",
- "pollster",
- "rfd",
- "roxmltree",
- "saine-core",
- "saine-engine",
- "serde",
- "serde_json",
- "slint",
- "slint-build",
- "ureq",
- "wgpu",
-]
-
-[[package]]
-name = "saine-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "saine-engine"
-version = "0.1.0"
-dependencies = [
- "cmake",
- "saine-core",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
-]
 
 [[package]]
 name = "same-file"

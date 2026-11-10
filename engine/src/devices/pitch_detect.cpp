@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine::dsp {
+namespace dstudio::dsp {
 
 namespace {
 
@@ -176,4 +176,4 @@ void PitchDetector::analyse() noexcept {
     if (!est_.voiced) est_.hz = 0.0f;
 }
 
-} // namespace saine::dsp
+} // namespace dstudio::dsp

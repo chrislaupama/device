@@ -1,4 +1,4 @@
-# Saine Studio: architecture specification
+# Device Studio: architecture specification
 
 Status: milestone 1 (functional audio vertical slice). Decisions marked **ADR** have their own record in `docs/adr/`.
 
@@ -6,14 +6,14 @@ Status: milestone 1 (functional audio vertical slice). Decisions marked **ADR** 
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ UI (Rust, Slint + custom wgpu surfaces)       crates/saine-app           │
+│ UI (Rust, Slint + custom wgpu surfaces)       crates/dstudio-app           │
 │  • declarative shell, panels, controls (Slint)                           │
 │  • GPU timeline / waveforms / meters (wgpu)      → ADR 0001              │
 │  • holds NO authoritative state; renders from Document + engine readouts │
 └───────────────▲───────────────────────────────┬──────────────────────────┘
                 │ revision-change notifications │ Command (validated)
 ┌───────────────┴───────────────────────────────▼──────────────────────────┐
-│ Application core (Rust)                        crates/saine-core         │
+│ Application core (Rust)                        crates/dstudio-core         │
 │  • model: Project / Track / Clip / Asset / Transport (musical time)      │
 │  • command: serialisable, validated, invertible edit commands            │
 │  • history: Document = project + undo/redo + coalescing + revisions      │
@@ -21,7 +21,7 @@ Status: milestone 1 (functional audio vertical slice). Decisions marked **ADR** 
 │  • snapshot: musical → sample-frame conversion, immutable session desc   │
 │  • (next) keymap with context predicates, AI tool schema, plugin catalog │
 └───────────────┬──────────────────────────────────────────────────────────┘
-                │ SessionSnapshot → C ABI (engine/include/saine_engine.h)
+                │ SessionSnapshot → C ABI (engine/include/dstudio_engine.h)
 ┌───────────────▼──────────────────────────────────────────────────────────┐
 │ Audio engine (C++23)                           engine/ (static library)  │
 │  • non-RT side: asset decode + resample, graph build, retire queue       │
@@ -51,11 +51,11 @@ Hand-off mechanisms:
    polled by the UI each frame.
 
 The audio callback never sees `Project`, tempo or ticks. All musical-time maths happens in
-`saine_core::snapshot`.
+`dstudio_core::snapshot`.
 
 ## Command system
 
-`saine_core::Command` is the single mutation path for the UI, keyboard shortcuts, scripting, tests and
+`dstudio_core::Command` is the single mutation path for the UI, keyboard shortcuts, scripting, tests and
 the AI assistant:
 
 - **Validation** in `apply` (ranges, existence, kind compatibility, asset bounds). On error the project is
@@ -70,7 +70,7 @@ the AI assistant:
 
 ## Persistence
 
-- Project = directory `Name.saineproj/` containing `project.json`
+- Project = directory `Name.dsproj/` containing `project.json`
   `{format, schema_version, saved_with, project}`. Atomic save (temp + fsync + rename).
 - Media referenced externally by project-relative *and* absolute path. On load the relative path wins
   (project moved with its media), then the absolute path, and anything missing is reported.
@@ -97,8 +97,8 @@ Status per platform, what CI covers and what is untested on real hardware:
 
 - Shared code (core, engine DSP and graph, UI) has no OS-specific dependencies. Platform code is
   isolated in `engine/src/platform/*` (C++) and behind `#[cfg]` in Rust (the macOS
-  transparent-titlebar winit hook in `saine-app`, per-OS folders in `prefs.rs`/`devices.rs`,
-  link libraries in `saine-engine/build.rs`).
+  transparent-titlebar winit hook in `dstudio-app`, per-OS folders in `prefs.rs`/`devices.rs`,
+  link libraries in `dstudio-engine/build.rs`).
 - OS layer: `engine/src/platform/os.{hpp,cpp}`: UTF-8 everywhere at the interface (wide Win32
   APIs underneath: `_wfopen`, `CreateProcessW`, `GetModuleFileNameW`, `CommandLineToArgvW`),
   environment, and a `ChildProcess` abstraction (CreateProcessW / posix_spawn) used by the

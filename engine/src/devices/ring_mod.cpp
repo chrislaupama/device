@@ -1,7 +1,7 @@
 // Ring Mod: multiplies the signal by a carrier (Sine, Triangle, Square, Saw,
 // smoothed Noise, stepped Random) with rectify, bias (towards amplitude
 // modulation), left/right detune (Spread), dry/wet mix and output gain.
-// Parameters in the order of saine_core::builtin::ring_mod (checked by a
+// Parameters in the order of dstudio_core::builtin::ring_mod (checked by a
 // Rust test).
 //
 // Carrier per channel: frequency f * 2^(-+spread / 12) (spread 0..1 = up to
@@ -23,7 +23,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -213,4 +213,4 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<RingMod>();
 extern const BuiltinDescriptor kRingModDescriptor;
 const BuiltinDescriptor kRingModDescriptor{"ring-mod", kParamIds, kReadoutIds, &create, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

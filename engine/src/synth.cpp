@@ -5,7 +5,7 @@
 #include <cstring>
 #include <numbers>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -777,4 +777,4 @@ bool Synth::render(const NoteEvent* notes, uint32_t note_count, const se_synth_p
     return true;
 }
 
-} // namespace saine
+} // namespace dstudio

@@ -1,0 +1,224 @@
+//! App preferences (Settings › Audio). Device setup is an app preference, not
+//! project state (docs/adr/0002-recording.md), so it lives in a small JSON file
+//! in the user's app-config directory, never in a project:
+//!
+//! - macOS: `~/Library/Application Support/Device Studio/preferences.json`
+//! - Linux: `$XDG_CONFIG_HOME/device-studio/preferences.json` (or `~/.config/...`)
+//! - Windows: `%APPDATA%\Device Studio\preferences.json`
+//!
+//! The directory was called `Saine Studio` (`saine-studio` on Linux) before the
+//! rename; `migrate_legacy_support_dir` moves it over on first launch.
+//!
+//! `DSTUDIO_PREFS_PATH` overrides the location. `--self-test` and the
+//! `--state`/`--screenshot` runs never read or write this file.
+
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AudioPrefs {
+    /// Output device id (Core Audio UID on macOS); None = system default.
+    pub output: Option<String>,
+    pub output_name: Option<String>,
+    /// Input device id; None = no input device. Only ever set by the user
+    /// picking an input in Settings › Audio (opening an input can show the
+    /// macOS microphone-permission prompt).
+    pub input: Option<String>,
+    pub input_name: Option<String>,
+    /// 0 = device default.
+    pub sample_rate: f64,
+    /// 0 = device default.
+    pub buffer_size: u32,
+    pub input_muted: bool,
+    /// Plugin delay compensation switched off (stored inverted so files
+    /// written before this field default to compensation ON).
+    #[serde(default)]
+    pub pdc_off: bool,
+}
+
+impl AudioPrefs {
+    /// True when the preferences ask for anything beyond the system defaults.
+    pub fn is_custom(&self) -> bool {
+        self.output.is_some() || self.input.is_some() || self.sample_rate > 0.0 || self.buffer_size > 0
+    }
+
+    pub fn device_config(&self) -> dstudio_engine::DeviceConfig {
+        dstudio_engine::DeviceConfig { output: self.output.clone(), input: self.input.clone(), sample_rate: self.sample_rate, buffer_size: self.buffer_size }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Preferences {
+    pub audio: AudioPrefs,
+    /// Interface zoom in percent (View › Zoom In / Out / Reset); 0 = default (100).
+    #[serde(default)]
+    pub interface_zoom: u32,
+    /// Browser › Files › Folders: folders the user added, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub browser_folders: Vec<String>,
+    /// Browser preview volume, linear gain 0..2 (None = 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_volume: Option<f32>,
+    /// Docked assistant width in design units (drag its splitter); 0 = default.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub assistant_width: f32,
+    /// File › Open Recent: project folders, newest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_projects: Vec<String>,
+    /// Canonical form of each `recent_projects` entry, resolved once when it was added,
+    /// so de-duplication never touches the disk. Empty for entries saved before this field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_resolved: Vec<String>,
+    #[serde(default)]
+    pub general: GeneralPrefs,
+}
+
+/// Settings › General, with the reference app's defaults.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GeneralPrefs {
+    /// Startup: reopen the most recent project at launch.
+    pub load_last_session: bool,
+    /// Transport › Playhead on stop: false = Return to start, true = Stop in place.
+    pub stop_in_place: bool,
+    /// Plugin windows: open a third-party effect's window when it is added.
+    pub show_plugin_windows: bool,
+    /// Plugin windows: open a built-in effect's device window when it is added.
+    pub show_builtin_windows: bool,
+    /// Plugin windows: keep plugin windows above the main window.
+    pub plugin_windows_on_top: bool,
+}
+
+impl Default for GeneralPrefs {
+    fn default() -> Self {
+        GeneralPrefs { load_last_session: false, stop_in_place: false, show_plugin_windows: true, show_builtin_windows: false, plugin_windows_on_top: true }
+    }
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+/// The app's support directory (see the module docs), shared by the preferences
+/// file and the plugin scan cache.
+pub fn support_dir() -> Option<PathBuf> {
+    support_dir_named("Device Studio", "device-studio")
+}
+
+/// The support directory used before the Device Studio rename.
+fn legacy_support_dir() -> Option<PathBuf> {
+    support_dir_named("Saine Studio", "saine-studio")
+}
+
+fn support_dir_named(name: &str, linux_name: &str) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    Some(if cfg!(target_os = "macos") {
+        home?.join("Library/Application Support").join(name)
+    } else if cfg!(windows) {
+        PathBuf::from(std::env::var_os("APPDATA")?).join(name)
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| home.map(|h| h.join(".config")))?.join(linux_name)
+    })
+}
+
+/// Moves the pre-rename support directory (preferences, plugin cache) to the
+/// current location, once: only when the old one exists and the new one does
+/// not. Failures are reported and leave both directories as they were, so the
+/// app simply starts with defaults.
+pub fn migrate_legacy_support_dir() -> Result<Option<PathBuf>, String> {
+    match (legacy_support_dir(), support_dir()) {
+        (Some(old), Some(new)) => migrate_dir(&old, &new),
+        _ => Ok(None),
+    }
+}
+
+fn migrate_dir(old: &Path, new: &Path) -> Result<Option<PathBuf>, String> {
+    if !old.is_dir() || new.exists() {
+        return Ok(None);
+    }
+    if let Some(parent) = new.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    std::fs::rename(old, new).map_err(|e| format!("moving {} to {}: {e}", old.display(), new.display()))?;
+    Ok(Some(new.to_path_buf()))
+}
+
+/// Default preferences file location (see the module docs).
+pub fn default_path() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("DSTUDIO_PREFS_PATH") {
+        return Some(PathBuf::from(p));
+    }
+    Some(support_dir()?.join("preferences.json"))
+}
+
+/// Plugin scan cache (`dstudio_engine::scan_plugins`), next to the preferences:
+/// `~/Library/Application Support/Device Studio/plugin-cache.json` on macOS.
+/// `DSTUDIO_PLUGIN_CACHE` overrides the location.
+pub fn plugin_cache_path() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("DSTUDIO_PLUGIN_CACHE") {
+        return Some(PathBuf::from(p));
+    }
+    Some(support_dir()?.join("plugin-cache.json"))
+}
+
+/// Missing file = defaults; a corrupt file is reported and ignored.
+pub fn load(path: &Path) -> Result<Option<Preferences>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(s) => serde_json::from_str(&s).map(Some).map_err(|e| format!("{}: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
+pub fn save(path: &Path, p: &Preferences) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    let text = serde_json::to_string_pretty(p).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn roundtrip_and_defaults() {
+        let dir = std::env::temp_dir().join(format!("dstudio-prefs-test-{}", std::process::id()));
+        let path = dir.join("preferences.json");
+        assert_eq!(load(&path).unwrap(), None);
+        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110, browser_folders: vec!["/tmp/kit".into()], preview_volume: Some(0.5), assistant_width: 400.0, recent_projects: vec!["/tmp/Song.dsproj".into()], recent_resolved: vec!["/private/tmp/Song.dsproj".into()], general: GeneralPrefs { load_last_session: true, stop_in_place: true, ..GeneralPrefs::default() } };
+        save(&path, &p).unwrap();
+        assert_eq!(load(&path).unwrap(), Some(p.clone()));
+        assert!(p.audio.is_custom());
+        assert!(!AudioPrefs::default().is_custom());
+        // Unknown/missing fields are tolerated.
+        std::fs::write(&path, r#"{"audio":{"buffer_size":512},"future":1}"#).unwrap();
+        let loaded = load(&path).unwrap().unwrap();
+        assert_eq!(loaded.audio.buffer_size, 512);
+        assert_eq!(loaded.general, GeneralPrefs::default(), "files without General get the reference app's defaults");
+        assert!(loaded.general.show_plugin_windows && loaded.general.plugin_windows_on_top);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn legacy_support_dir_moves_once() {
+        let root = std::env::temp_dir().join(format!("dstudio-prefs-migrate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (old, new) = (root.join("Saine Studio"), root.join("Device Studio"));
+        // Nothing to move.
+        assert_eq!(migrate_dir(&old, &new).unwrap(), None);
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("preferences.json"), "{}").unwrap();
+        assert_eq!(migrate_dir(&old, &new).unwrap(), Some(new.clone()));
+        assert!(new.join("preferences.json").is_file() && !old.exists());
+        // An existing new directory is never overwritten.
+        std::fs::create_dir_all(&old).unwrap();
+        assert_eq!(migrate_dir(&old, &new).unwrap(), None);
+        assert!(old.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+}

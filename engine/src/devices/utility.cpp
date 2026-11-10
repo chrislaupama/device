@@ -1,5 +1,5 @@
 // Utility: channel tools. Parameters in the order of
-// saine_core::builtin::utility (checked by a Rust test).
+// dstudio_core::builtin::utility (checked by a Rust test).
 //
 // Per frame:
 //   DC filter      5 Hz one-pole high-pass on both channels (switch crossfades)
@@ -19,7 +19,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -139,4 +139,4 @@ extern const BuiltinDescriptor kUtilityDescriptor;
 constexpr float kDefaults[] = {0.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f, 0.f, 120.f, 0.f, 0.f, 0.f};
 const BuiltinDescriptor kUtilityDescriptor{"utility", kParamIds, {}, &create_utility, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

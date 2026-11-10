@@ -336,16 +336,16 @@ TEST_CASE(builtin_state_v2_is_validated) {
     table[1].slot = 3;
     table[1].slices = {{0.0f, 0.0f, 0.0f, 0.0f}, {0.5f, 0.0f, 0.0f, 0.0f}};
     auto ok = state_blob_v2({1.f, 2.f}, table, 10, 5);
-    saine::BuiltinStateView v;
-    REQUIRE(saine::parse_builtin_state(ok.data(), ok.size(), v) == nullptr);
+    dstudio::BuiltinStateView v;
+    REQUIRE(dstudio::parse_builtin_state(ok.data(), ok.size(), v) == nullptr);
     CHECK(v.value_count == 2 && v.sample_count == 2 && v.slice_count == 2 && v.sidechain == 5);
     auto short_blob = ok;
     short_blob.pop_back();
-    CHECK(saine::parse_builtin_state(short_blob.data(), short_blob.size(), v) != nullptr);
+    CHECK(dstudio::parse_builtin_state(short_blob.data(), short_blob.size(), v) != nullptr);
     table[1].slices[1].start = 1.0f;
     auto bad_slice = state_blob_v2({1.f}, table, 10);
-    CHECK(saine::parse_builtin_state(bad_slice.data(), bad_slice.size(), v) != nullptr);
+    CHECK(dstudio::parse_builtin_state(bad_slice.data(), bad_slice.size(), v) != nullptr);
     table[1].slices[1].start = std::nanf("");
     auto nan_slice = state_blob_v2({1.f}, table, 10);
-    CHECK(saine::parse_builtin_state(nan_slice.data(), nan_slice.size(), v) != nullptr);
+    CHECK(dstudio::parse_builtin_state(nan_slice.data(), nan_slice.size(), v) != nullptr);
 }

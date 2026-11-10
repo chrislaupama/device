@@ -3,14 +3,14 @@
 #pragma once
 
 #include "platform/audio_device.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 
-namespace saine::testing {
+namespace dstudio::testing {
 
 // Replace the platform device (fake devices drive Engine's device path
 // without hardware). Call before the first start/configure.
@@ -33,4 +33,4 @@ bool plugin_set_parameter(se_engine* e, uint64_t device_id, uint32_t param_id, d
 // hidden gesture parameters instead).
 bool plugin_simulate_gesture(se_engine* e, uint64_t device_id, uint32_t param_id, float normalized);
 
-} // namespace saine::testing
+} // namespace dstudio::testing

@@ -31,7 +31,7 @@
 #if defined(__APPLE__)
 
 #include "audio_device.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreAudio/CoreAudio.h>
@@ -47,7 +47,7 @@
 #include <mutex>
 #include <thread>
 
-namespace saine {
+namespace dstudio {
 namespace {
 
 constexpr uint32_t kMaxDeviceChannels = 16;
@@ -193,7 +193,7 @@ uint32_t buffer_frames(AudioDeviceID id) {
 // Device latency + safety offset + first stream's latency for one direction.
 // No IO-buffer term: an acoustic loopback measurement on a MacBook Air
 // (aggregate of built-in mic + speakers, 512-frame buffer; see
-// crates/saine-engine/tests/real_loopback.rs) showed that adding one buffer
+// crates/dstudio-engine/tests/real_loopback.rs) showed that adding one buffer
 // per side over-compensated by ~2 buffers (clicks landed 18.5 ms early);
 // without it the residual is +2..3 ms (speaker-to-mic travel + onset detection).
 uint32_t side_latency(AudioDeviceID id, AudioObjectPropertyScope scope) {
@@ -208,7 +208,7 @@ uint32_t side_latency(AudioDeviceID id, AudioObjectPropertyScope scope) {
             get_prop(streams[0], kAudioStreamPropertyLatency, kAudioObjectPropertyScopeGlobal, stream_lat);
     }
     const uint32_t buf = buffer_frames(id);
-    if (std::getenv("SAINE_DEBUG_LATENCY") != nullptr)  // diagnostics only (non-RT path)
+    if (std::getenv("DSTUDIO_DEBUG_LATENCY") != nullptr)  // diagnostics only (non-RT path)
         std::fprintf(stderr, "latency dev=%u %s: device %u safety %u stream %u buffer %u\n", unsigned(id),
                      scope == kAudioObjectPropertyScopeInput ? "in " : "out", unsigned(lat), unsigned(safety),
                      unsigned(stream_lat), unsigned(buf));
@@ -510,14 +510,14 @@ private:
     int32_t create_aggregate(AudioDeviceID out, AudioDeviceID in, std::string& err) {
         use_hal_notification_thread();
         static std::atomic<unsigned> counter{0};
-        const std::string uid = "com.sainestudio.engine.duplex." + std::to_string(getpid()) + "." +
+        const std::string uid = "com.devicestudio.engine.duplex." + std::to_string(getpid()) + "." +
                                 std::to_string(counter.fetch_add(1));
         const std::string out_uid = device_uid(out);
         const std::string in_uid = device_uid(in);
 
         CFMutableDictionaryRef desc = new_dict();
         dict_set_str(desc, CFSTR(kAudioAggregateDeviceUIDKey), uid);
-        dict_set_str(desc, CFSTR(kAudioAggregateDeviceNameKey), "Saine Studio Duplex");
+        dict_set_str(desc, CFSTR(kAudioAggregateDeviceNameKey), "Device Studio Duplex");
         dict_set_int(desc, CFSTR(kAudioAggregateDeviceIsPrivateKey), 1);
         dict_set_int(desc, CFSTR(kAudioAggregateDeviceIsStackedKey), 0);
         CFMutableArrayRef subs = CFArrayCreateMutable(nullptr, 0, &kCFTypeArrayCallBacks);
@@ -659,6 +659,6 @@ double query_default_output_sample_rate() {
 // permission status without prompting.
 long coreaudio_microphone_authorization() { return microphone_authorization(); }
 
-} // namespace saine
+} // namespace dstudio
 
 #endif // __APPLE__

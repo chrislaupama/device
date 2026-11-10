@@ -14,7 +14,7 @@ using namespace testutil;
 
 TEST_CASE(snapshot_republish_while_rendering_stress) {
     EngineHandle e(48000, 128);
-    const int64_t base = saine::Asset::live_count();
+    const int64_t base = dstudio::Asset::live_count();
     std::vector<uint64_t> stable;
     for (int i = 0; i < 4; ++i)
         stable.push_back(load_asset(e, {constant(5000, 0.1f * static_cast<float>(i + 1))}));
@@ -115,7 +115,7 @@ TEST_CASE(snapshot_republish_while_rendering_stress) {
     Session empty;
     REQUIRE(empty.publish(e) == SE_OK);
     for (uint64_t id : stable) REQUIRE(se_asset_release(e, id) == SE_OK);
-    CHECK_EQ(saine::Asset::live_count(), base); // no leaked or prematurely-kept assets
+    CHECK_EQ(dstudio::Asset::live_count(), base); // no leaked or prematurely-kept assets
 }
 
 TEST_CASE(offline_render_is_exclusive) {

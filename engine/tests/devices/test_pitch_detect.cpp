@@ -10,7 +10,7 @@ using namespace testutil;
 namespace {
 
 // Feeds a signal in 128-frame pieces, returns the estimate after the last piece.
-saine::dsp::PitchEstimate detect(saine::dsp::PitchDetector& d, const Signal& x) {
+dstudio::dsp::PitchEstimate detect(dstudio::dsp::PitchDetector& d, const Signal& x) {
     for (std::size_t i = 0; i < x.size(); i += 128) d.push(x.data() + i, static_cast<uint32_t>(std::min<std::size_t>(128, x.size() - i)));
     return d.estimate();
 }
@@ -27,7 +27,7 @@ Signal harmonic(std::size_t n, double hz, double rate, int harmonics) {
 
 TEST_CASE(fft_round_trips_and_matches_a_direct_dft) {
     for (uint32_t n : {8u, 16u, 64u, 1024u, 16384u}) {
-        saine::dsp::RealFft f;
+        dstudio::dsp::RealFft f;
         f.prepare(n);
         Signal x = noise(n, 1.0f, n);
         std::vector<float> re(n / 2 + 1), im(n / 2 + 1), y(n);
@@ -53,19 +53,19 @@ TEST_CASE(fft_round_trips_and_matches_a_direct_dft) {
 
 TEST_CASE(windows_have_their_coherent_gain) {
     std::vector<float> w(4096);
-    CHECK_NEAR(saine::dsp::fill_window(saine::dsp::Window::Hann, 4096, w.data()), 0.5, 1e-6);
-    CHECK_NEAR(saine::dsp::fill_window(saine::dsp::Window::Hamming, 4096, w.data()), 0.54, 1e-6);
-    CHECK_NEAR(saine::dsp::fill_window(saine::dsp::Window::Blackman, 4096, w.data()), 0.42, 1e-6);
-    CHECK_NEAR(saine::dsp::fill_window(saine::dsp::Window::Rect, 4096, w.data()), 1.0, 1e-9);
+    CHECK_NEAR(dstudio::dsp::fill_window(dstudio::dsp::Window::Hann, 4096, w.data()), 0.5, 1e-6);
+    CHECK_NEAR(dstudio::dsp::fill_window(dstudio::dsp::Window::Hamming, 4096, w.data()), 0.54, 1e-6);
+    CHECK_NEAR(dstudio::dsp::fill_window(dstudio::dsp::Window::Blackman, 4096, w.data()), 0.42, 1e-6);
+    CHECK_NEAR(dstudio::dsp::fill_window(dstudio::dsp::Window::Rect, 4096, w.data()), 1.0, 1e-9);
     CHECK_NEAR(w[0], 1.0, 1e-9);
-    saine::dsp::fill_window(saine::dsp::Window::Hann, 4096, w.data());
+    dstudio::dsp::fill_window(dstudio::dsp::Window::Hann, 4096, w.data());
     CHECK_NEAR(w[0], 0.0, 1e-9);
     CHECK_NEAR(w[2048], 1.0, 1e-6);
 }
 
 TEST_CASE(pitch_detector_finds_sines_across_the_range_and_rates) {
     for (double rate : {44100.0, 48000.0, 96000.0}) {
-        saine::dsp::PitchDetector d;
+        dstudio::dsp::PitchDetector d;
         d.prepare(rate, 30.0f, 1500.0f, 5.0f);
         for (double hz : {41.2, 82.41, 110.0, 196.0, 440.0, 659.3, 1046.5, 1400.0}) {
             d.reset();
@@ -79,7 +79,7 @@ TEST_CASE(pitch_detector_finds_sines_across_the_range_and_rates) {
 }
 
 TEST_CASE(pitch_detector_avoids_octave_errors_and_rejects_noise) {
-    saine::dsp::PitchDetector d;
+    dstudio::dsp::PitchDetector d;
     d.prepare(48000.0, 55.0f, 1400.0f, 3.0f);
     // Rich harmonic tones (saw-like) and a tone with a missing fundamental.
     for (double hz : {98.0, 147.0, 220.0, 330.0}) {
@@ -100,7 +100,7 @@ TEST_CASE(pitch_detector_avoids_octave_errors_and_rejects_noise) {
 }
 
 TEST_CASE(pitch_detector_is_allocation_free) {
-    saine::dsp::PitchDetector d;
+    dstudio::dsp::PitchDetector d;
     d.prepare(48000.0, 30.0f, 1500.0f, 5.0f);
     const Signal x = harmonic(48000, 150.0, 48000.0, 8);
     const long before = rt_alloc_count();

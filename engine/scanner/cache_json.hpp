@@ -1,5 +1,5 @@
 // Minimal JSON reader for the plugin scanner's cache file.
-// Shared by saine_plugin_scanner and the cache-parse benchmark
+// Shared by dstudio_plugin_scanner and the cache-parse benchmark
 // (bench/bench_scan_cache.cpp). Not a general-purpose parser: numbers go
 // through strtod, \uXXXX escapes decode to UTF-8 without surrogate pairing,
 // and any malformed input makes parse() return false (it never throws on
@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-namespace saine::scanner {
+namespace dstudio::scanner {
 
 // A parsed JSON value; only the member matching `type` is meaningful.
 struct Json {
@@ -183,4 +183,4 @@ private:
     std::size_t i_ = 0;
 };
 
-} // namespace saine::scanner
+} // namespace dstudio::scanner

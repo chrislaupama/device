@@ -188,7 +188,7 @@ TEST_CASE(clip_loop_warped_render_repeats_its_loop) {
 
 TEST_CASE(clip_loop_render_path_does_not_allocate) {
     EngineHandle e;
-    saine::testing::set_warp_renders_enabled(e, false); // stretch voices restart at every wrap
+    dstudio::testing::set_warp_renders_enabled(e, false); // stretch voices restart at every wrap
     const uint64_t a = load_asset(e, {sine(96000, 220.0, kRate, 0.3), sine(96000, 330.0, kRate, 0.3)});
     const uint64_t m = load_asset(e, {sine(5000, 110.0, kRate, 0.3)});
     LoopSession s;

@@ -1,12 +1,12 @@
 // LFO wave shapes (handoffs/device-specs/lfo.md), shared by the LFO kernel
-// and its tests. Mirrors saine_core::modulation::lfo_wave / cycle_random bit
+// and its tests. Mirrors dstudio_core::modulation::lfo_wave / cycle_random bit
 // for bit in the integer hash, so the app draws the waves the engine plays.
 #pragma once
 
 #include <cmath>
 #include <cstdint>
 
-namespace saine::lfo {
+namespace dstudio::lfo {
 
 enum Shape : uint32_t { kSine = 0, kTriangle, kSawUp, kSawDown, kSquare, kRandom, kSmoothRandom, kShapeCount };
 
@@ -41,4 +41,4 @@ inline float wave(uint32_t shape, double x) noexcept {
     }
 }
 
-} // namespace saine::lfo
+} // namespace dstudio::lfo

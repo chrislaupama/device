@@ -17,7 +17,7 @@
 #include <string_view>
 #include <vector>
 
-namespace saine::os {
+namespace dstudio::os {
 
 // ---------------------------------------------------------------- files, paths
 
@@ -43,7 +43,7 @@ bool get_env(const char* name, std::string& out);
 // this process; inherited by children spawned afterwards.
 bool set_env(const char* name, const char* utf8_value);
 
-// Separator of PATH-like lists ($SAINE_PLUGIN_PATH): ';' on Windows (drive
+// Separator of PATH-like lists ($DSTUDIO_PLUGIN_PATH): ';' on Windows (drive
 // letters contain ':'), ':' elsewhere.
 char path_list_separator() noexcept;
 
@@ -106,4 +106,4 @@ private:
 #endif
 };
 
-} // namespace saine::os
+} // namespace dstudio::os

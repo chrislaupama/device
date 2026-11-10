@@ -8,7 +8,7 @@ using namespace devtest;
 
 namespace {
 
-// Defaults of saine_core::builtin::glue_compressor, registry order: threshold,
+// Defaults of dstudio_core::builtin::glue_compressor, registry order: threshold,
 // ratio, attack, release, makeup, mix, color, range, sc_hpf, sidechain, output_gain.
 const std::vector<float> kDefaults = {-15.f, 1.f, 5.f, 4.f, 0.f, 100.f, 50.f, 24.f, 0.f, 0.f, 0.f};
 constexpr double kRate = 48000.0;
@@ -89,8 +89,8 @@ TEST_CASE(glue_color_adds_harmonics_at_unity_level) {
         auto mag = [&](double hz) {
             double re = 0, im = 0;
             for (std::size_t i = 24000; i < y.size(); ++i) {
-                re += y[i] * std::cos(2 * saine::dsp::kPi * hz * static_cast<double>(i) / kRate);
-                im += y[i] * std::sin(2 * saine::dsp::kPi * hz * static_cast<double>(i) / kRate);
+                re += y[i] * std::cos(2 * dstudio::dsp::kPi * hz * static_cast<double>(i) / kRate);
+                im += y[i] * std::sin(2 * dstudio::dsp::kPi * hz * static_cast<double>(i) / kRate);
             }
             return std::sqrt(re * re + im * im);
         };

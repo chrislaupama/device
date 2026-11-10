@@ -11,7 +11,7 @@
 
 #include "../asset.hpp"
 #include "plugin_instance.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <atomic>
 #include <cstdint>
@@ -22,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 class PluginHost {
 public:
@@ -125,4 +125,4 @@ private:
     bool detached_ = false; // under mutex_
 };
 
-} // namespace saine
+} // namespace dstudio

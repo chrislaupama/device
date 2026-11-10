@@ -1,5 +1,5 @@
-// Built-in polyphonic instrument ("Saine synth"): one Synth per instrument
-// track, driven by se_synth_params (see saine_engine.h and README.md). An
+// Built-in polyphonic instrument ("DStudio synth"): one Synth per instrument
+// track, driven by se_synth_params (see dstudio_engine.h and README.md). An
 // original subtractive design, it does not model any commercial instrument:
 //
 //   voice = up to 4 unison stacks of (osc1 + osc2), osc2 -> osc1 linear FM,
@@ -44,11 +44,11 @@
 // not retriggered.
 #pragma once
 
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <cstdint>
 
-namespace saine {
+namespace dstudio {
 
 struct NoteEvent {
     int64_t start = 0; // note-on frame
@@ -57,7 +57,7 @@ struct NoteEvent {
     uint8_t velocity = 0;
 };
 
-// Defaults (= saine_core::instrument::SynthParams::default()).
+// Defaults (= dstudio_core::instrument::SynthParams::default()).
 se_synth_params default_synth_params() noexcept;
 // nullptr if valid, else a static description of the first problem.
 const char* validate_synth_params(const se_synth_params& p) noexcept;
@@ -213,4 +213,4 @@ private:
     bool have_last_pitch_ = false;
 };
 
-} // namespace saine
+} // namespace dstudio

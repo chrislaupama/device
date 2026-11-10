@@ -8,7 +8,7 @@ namespace {
 
 constexpr double kRate = 48000.0;
 
-// Defaults of the saine_core definitions, registry order.
+// Defaults of the dstudio_core definitions, registry order.
 const std::vector<float> kUtility = {0.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f, 0.f, 120.f, 0.f, 0.f, 0.f};
 const std::vector<float> kWidener = {200.f, 0.f, 0.f, 120.f, 100.f};
 
@@ -148,7 +148,7 @@ TEST_CASE(widener_scales_the_side_above_the_low_cut) {
 
 TEST_CASE(widener_matches_the_drawn_response) {
     // Effective width at f (side out / side in, relative to the mid gain)
-    // equals saine_core widener_response: 100 * w * s * |H(f)| / m at mix 100 %.
+    // equals dstudio_core widener_response: 100 * w * s * |H(f)| / m at mix 100 %.
     const double fc = 120.0, f = 300.0;
     DeviceRig rig("widener", kWidener, kRate);
     rig.set("sidegain", 3.f);

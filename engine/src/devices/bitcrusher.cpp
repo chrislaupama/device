@@ -1,6 +1,6 @@
 // Bit Crusher: sample-and-hold downsampling and amplitude quantisation, with
 // TPDF dither, clock jitter and a dry/wet mix. Parameters in the order of
-// saine_core::builtin::bitcrusher (checked by a Rust test).
+// dstudio_core::builtin::bitcrusher (checked by a Rust test).
 //
 //   hold      a new input sample is taken every h = Downsample frames
 //             (fractional h: a phase counter; Jitter varies each hold length
@@ -10,14 +10,14 @@
 //             dither = triangular noise of +-1 step scaled by Dither
 //   out       dry * (1 - mix) + crushed * mix
 // No anti-aliasing on purpose (the aliasing is the sound), no latency. The
-// model matches the panel's picture (saine_core crush_picture).
+// model matches the panel's picture (dstudio_core crush_picture).
 #include "builtin.hpp"
 #include "dsp.hpp"
 
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -100,4 +100,4 @@ extern const BuiltinDescriptor kBitCrusherDescriptor;
 constexpr float kDefaults[] = {16.f, 1.f, 100.f, 0.f, 0.f};
 const BuiltinDescriptor kBitCrusherDescriptor{"bitcrusher", kParamIds, {}, &create_bitcrusher, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

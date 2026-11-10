@@ -4,7 +4,7 @@
 #include <cmath>
 #include <numbers>
 
-namespace saine {
+namespace dstudio {
 namespace {
 
 constexpr int kPhases = 512;          // table resolution per input sample
@@ -81,4 +81,4 @@ void SincResampler::process(const float* in, uint64_t in_frames, std::vector<flo
     }
 }
 
-} // namespace saine
+} // namespace dstudio

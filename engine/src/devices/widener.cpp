@@ -1,19 +1,19 @@
 // Stereo Widener: mid/side width with a low cut that keeps the bass centred.
-// Parameters in the order of saine_core::builtin::widener (checked by a Rust
+// Parameters in the order of dstudio_core::builtin::widener (checked by a Rust
 // test).
 //
 //   M = (L + R) / 2, S = (L - R) / 2
 //   M' = M * (1 - x + x * mid)
 //   S' = S * (1 - x) + x * width * side * HP(S)     HP: one pole at Low Cut
 //   L = M' + S', R = M' - S'                         x = Mix
-// The same response the panel draws (saine_core widener_response). No latency.
+// The same response the panel draws (dstudio_core widener_response). No latency.
 #include "builtin.hpp"
 #include "dsp.hpp"
 
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -80,4 +80,4 @@ extern const BuiltinDescriptor kWidenerDescriptor;
 constexpr float kDefaults[] = {200.f, 0.f, 0.f, 120.f, 100.f};
 const BuiltinDescriptor kWidenerDescriptor{"widener", kParamIds, {}, &create_widener, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

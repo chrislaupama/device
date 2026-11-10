@@ -7,7 +7,7 @@ using namespace devtest;
 
 namespace {
 
-// Defaults of saine_core::builtin::compressor, registry order.
+// Defaults of dstudio_core::builtin::compressor, registry order.
 const std::vector<float> kDefaults = {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};
 constexpr double kRate = 48000.0;
 

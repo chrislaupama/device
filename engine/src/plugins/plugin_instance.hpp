@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 enum class PluginFormat : uint8_t { AudioUnit = 0, Vst3 = 1, Clap = 2, Builtin = 3 };
 
@@ -340,4 +340,4 @@ std::shared_ptr<PluginInstance> create_clap_instance(const PluginSpec& spec, dou
 // initialisers).
 bool on_platform_main_thread() noexcept;
 
-} // namespace saine
+} // namespace dstudio

@@ -8,13 +8,13 @@ monitor input (I), record from the transport, and configure output/input device,
 buffer size in Settings › Audio (reference/ui-inventory.md §11). Our engine was output-only.
 
 ## Decision
-- **Model (saine-core):** `Track.arm`, `Track.monitor`, `Track.input: Option<InputSource { channel, stereo }>`,
+- **Model (dstudio-core):** `Track.arm`, `Track.monitor`, `Track.input: Option<InputSource { channel, stereo }>`,
   with `SetTrackArm`, `SetTrackMonitor` and `SetTrackInput` (audio tracks only). The snapshot carries them to the
   engine. A finished take becomes an undoable `Batch` "Record": `AddAsset` + `AddClip` on the armed track at
   the take's latency-compensated start.
 - **Device setup is an app preference, not project state:** output/input device, sample rate, buffer size and
   input mute.
-- **Engine API (Rust contract in `crates/saine-engine/src/lib.rs`):** `list_devices`, `configure_device`,
+- **Engine API (Rust contract in `crates/dstudio-engine/src/lib.rs`):** `list_devices`, `configure_device`,
   `device_status`, `set_input_muted`, `start_recording(dir)`, `stop_recording() -> Vec<RecordedTake>`,
   `recording_state`, `recording_peaks`, and `render_offline_with_input` for deterministic tests.
 - **Real-time path:** the input callback writes into preallocated per-track ring buffers. A non-RT writer
@@ -27,7 +27,7 @@ buffer size in Settings › Audio (reference/ui-inventory.md §11). Our engine w
   reported by the device.
 - **Microphone permission:** opening an input device on macOS can show the system microphone-permission
   prompt for the host application. Automated tests use injected input only. A real-input check runs
-  only with `SAINE_TEST_REAL_INPUT=1`, after the user agrees.
+  only with `DSTUDIO_TEST_REAL_INPUT=1`, after the user agrees.
 
 ## Implementation notes (engine, 2026-11-08)
 Details in engine/README.md, "Input, monitoring and recording".
@@ -49,8 +49,8 @@ Details in engine/README.md, "Input, monitoring and recording".
   track per recording are possible); a loop wrap does not (looping writes linearly, no take lanes).
   An overrun drops the block and also starts a new take, so takes stay sample-aligned.
 - **Latency:** `start_frame = position − (input + output latency)`, each side = device latency +
-  safety offset + stream latency (no IO-buffer term: an acoustic loopback test on a MacBook Air showed the buffer term over-compensated by ~18.5 ms; without it recordings land +2.7..6.2 ms late, consistent with speaker→mic travel and onset detection; see crates/saine-engine/tests/real_loopback.rs); 0 for injected input. `DeviceStatus` reports the two
+  safety offset + stream latency (no IO-buffer term: an acoustic loopback test on a MacBook Air showed the buffer term over-compensated by ~18.5 ms; without it recordings land +2.7..6.2 ms late, consistent with speaker→mic travel and onset detection; see crates/dstudio-engine/tests/real_loopback.rs); 0 for injected input. `DeviceStatus` reports the two
   sides separately.
 - **Additive Rust API:** `Engine::recording_stats()` (overruns, dropped frames, write errors, takes),
   `Engine::input_error()`, `DeviceConfig::DEFAULT_INPUT`.
-- **Not verified on hardware:** the real-input path (prompt) — `SAINE_TEST_REAL_INPUT=1 record_check`.
+- **Not verified on hardware:** the real-input path (prompt) — `DSTUDIO_TEST_REAL_INPUT=1 record_check`.

@@ -17,7 +17,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace saine::synth_v2 {
+namespace dstudio::synth_v2 {
 
 // Offsets of a slot's parameters from its "type" parameter (the FX 1 block
 // layout; FX 2..4 repeat it).
@@ -142,4 +142,4 @@ private:
     FxTelemetry tel_;
 };
 
-} // namespace saine::synth_v2
+} // namespace dstudio::synth_v2

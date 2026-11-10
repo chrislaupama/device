@@ -487,9 +487,9 @@ TEST_CASE(export_ignores_loop_and_metronome) {
 
     TempFile f("export_loop_metro.wav");
     REQUIRE(se_export_wav(e, f.path.c_str(), 0, 5000) == SE_OK);
-    saine::DecodedAudio d;
+    dstudio::DecodedAudio d;
     std::string err;
-    REQUIRE(saine::decode_wav_file(f.path.c_str(), d, err) == SE_OK);
+    REQUIRE(dstudio::decode_wav_file(f.path.c_str(), d, err) == SE_OK);
     REQUIRE(d.frames == 5000);
     bool linear = true;
     for (std::size_t i = 0; i < 5000; ++i)
@@ -501,8 +501,8 @@ TEST_CASE(export_ignores_loop_and_metronome) {
     REQUIRE(empty.publish(e) == SE_OK);
     TempFile f2("export_metro_only.wav");
     REQUIRE(se_export_wav(e, f2.path.c_str(), 0, 3000) == SE_OK);
-    saine::DecodedAudio d2;
-    REQUIRE(saine::decode_wav_file(f2.path.c_str(), d2, err) == SE_OK);
+    dstudio::DecodedAudio d2;
+    REQUIRE(dstudio::decode_wav_file(f2.path.c_str(), d2, err) == SE_OK);
     bool silent = true;
     for (std::size_t i = 0; i < d2.frames; ++i) silent = silent && d2.planar[0][i] == 0.0f && d2.planar[1][i] == 0.0f;
     CHECK(silent);

@@ -11,7 +11,7 @@
 #include <unistd.h>
 #endif
 
-namespace saine {
+namespace dstudio {
 
 const char* plugin_format_name(PluginFormat f) noexcept {
     switch (f) {
@@ -172,4 +172,4 @@ uint32_t NoteFeeder::build(const NoteEvent* notes, uint32_t note_count, uint64_t
     return n;
 }
 
-} // namespace saine
+} // namespace dstudio

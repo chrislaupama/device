@@ -10,7 +10,7 @@ using namespace devtest;
 namespace {
 
 constexpr double kRate = 48000.0;
-// Defaults of saine_core::builtin::auto_filter, registry order.
+// Defaults of dstudio_core::builtin::auto_filter, registry order.
 const std::vector<float> kDefaults = {0.f, 0.f, 20000.f, 0.f, 0.f, 0.f, 1.f, 100.f, 0.f,
                                       1.f, 4.f, 0.f,     0.f, 0.f, 100.f, 0.f, 0.f};
 
@@ -33,7 +33,7 @@ TEST_CASE(auto_filter_defaults_are_open) {
 }
 
 TEST_CASE(auto_filter_shapes_match_the_panel_model) {
-    // saine_core::builtin::auto_filter::filter_response: Q 0.5 at zero
+    // dstudio_core::builtin::auto_filter::filter_response: Q 0.5 at zero
     // resonance gives -6.02 dB at the cutoff for LP and HP, 0 dB for BP.
     auto lp = rig();
     lp.set("frequency", 1000.f);

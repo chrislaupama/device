@@ -18,7 +18,7 @@ namespace Steinberg {
 class IPlugView;
 }
 
-namespace saine {
+namespace dstudio {
 
 #if defined(__APPLE__)
 // Hosts the AU's Cocoa view (kAudioUnitProperty_CocoaUI), else AUGenericView.
@@ -45,4 +45,4 @@ std::unique_ptr<PluginEditor> create_clap_editor(const clap_plugin* plugin, cons
                                                  const std::string& title, std::function<void(ClapEditorHost*)> attach,
                                                  std::string& err);
 
-} // namespace saine
+} // namespace dstudio

@@ -2,9 +2,9 @@
 // written as plain RIFF, RF64 and BW64 (ds64 sizes, data size 0xFFFFFFFF). Prints measurements
 // only; no pass/fail thresholds.
 //
-// usage: saine_decode_bench [reps=20]
+// usage: dstudio_decode_bench [reps=20]
 #include "platform/os.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 #include "wav.hpp"
 
 #include <algorithm>
@@ -77,8 +77,8 @@ int main(int argc, char** argv) {
     std::printf("| container | decode_wav_memory ms | decode_audio_file ms (read + decode) |\n|---|---:|---:|\n");
     for (const char* kind : {"RIFF", "RF64", "BW64"}) {
         const std::vector<uint8_t> bytes = make(kind, frames);
-        const auto path = std::filesystem::temp_directory_path() / (std::string("saine_decode_bench_") + kind + ".wav");
-        const std::string p8 = saine::os::path_to_utf8(path);
+        const auto path = std::filesystem::temp_directory_path() / (std::string("dstudio_decode_bench_") + kind + ".wav");
+        const std::string p8 = dstudio::os::path_to_utf8(path);
         if (std::FILE* f = std::fopen(p8.c_str(), "wb")) {
             std::fwrite(bytes.data(), 1, bytes.size(), f);
             std::fclose(f);
@@ -86,13 +86,13 @@ int main(int argc, char** argv) {
         std::vector<double> mem, file;
         bool ok = true;
         for (int i = 0; i < reps; ++i) {
-            saine::DecodedAudio d;
+            dstudio::DecodedAudio d;
             std::string err;
             auto t0 = std::chrono::steady_clock::now();
-            ok &= saine::decode_wav_memory(bytes.data(), bytes.size(), d, err) == SE_OK && d.frames == frames;
+            ok &= dstudio::decode_wav_memory(bytes.data(), bytes.size(), d, err) == SE_OK && d.frames == frames;
             mem.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
             t0 = std::chrono::steady_clock::now();
-            ok &= saine::decode_audio_file(p8.c_str(), d, err) == SE_OK && d.frames == frames;
+            ok &= dstudio::decode_audio_file(p8.c_str(), d, err) == SE_OK && d.frames == frames;
             file.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
         }
         std::filesystem::remove(path);

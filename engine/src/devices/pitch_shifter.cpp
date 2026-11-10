@@ -3,7 +3,7 @@
 // path is delayed by the vocoder latency so the mix never combs, and the
 // whole device reports that latency for delay compensation. At exactly zero
 // shift with formants off the wet path is the delayed input (bit exact).
-// Parameters in the order of saine_core::builtin::pitch_shifter.
+// Parameters in the order of dstudio_core::builtin::pitch_shifter.
 #include "builtin.hpp"
 #include "dsp.hpp"
 #include "dsp_delay.hpp"
@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -105,4 +105,4 @@ constexpr float kIdle[] = {0.0f, -120.0f};
 constexpr float kDefaults[kParamCount] = {0.f, 0.f, 0.f, 100.f};
 const BuiltinDescriptor kPitchShifterDescriptor{"pitch-shifter", kParamIds, kReadoutIds, &create, kIdle, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

@@ -1,7 +1,7 @@
 // Echo: a physical multi-head echo modelled on three machines (tape loop,
 // magnetic drum, cartridge), driven by the reference's machine constants
 // (head positions in mm, tape speeds in mm/s, oscillation onsets).
-// Parameters in the order of saine_core::builtin::echo.
+// Parameters in the order of dstudio_core::builtin::echo.
 //
 // One "tape" (a delay buffer) is written at the record head; every playback
 // head reads at delay = head position / tape speed, so the Motor bends all
@@ -22,7 +22,7 @@
 #include <array>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -43,10 +43,10 @@ constexpr const char* kParamIds[kParamCount] = {
     "art_bias", "art_scrape", "swell", "tail_on", "tail_hp_l", "tail_lp_l", "tail_hp_r", "tail_lp_r", "duck_on",
     "duck_amount", "duck_thresh", "duck_attack", "duck_release", "duck_key", "duck_fb_only", "throw", "throw_level", "seed",
     "drum_mains_60", "cartridge_late", "heads", "heads_machine",
-#define SAINE_HEAD(n) "h" #n "_present", "h" #n "_on", "h" #n "_fb", "h" #n "_right", "h" #n "_pos", "h" #n "_level", "h" #n "_pan", \
+#define DSTUDIO_HEAD(n) "h" #n "_present", "h" #n "_on", "h" #n "_fb", "h" #n "_right", "h" #n "_pos", "h" #n "_level", "h" #n "_pan", \
                       "h" #n "_tilt", "h" #n "_pan_pinned", "h" #n "_pos_pinned", "h" #n "_level_before_mute"
-    SAINE_HEAD(1), SAINE_HEAD(2), SAINE_HEAD(3), SAINE_HEAD(4), SAINE_HEAD(5), SAINE_HEAD(6),
-#undef SAINE_HEAD
+    DSTUDIO_HEAD(1), DSTUDIO_HEAD(2), DSTUDIO_HEAD(3), DSTUDIO_HEAD(4), DSTUDIO_HEAD(5), DSTUDIO_HEAD(6),
+#undef DSTUDIO_HEAD
     "patch"};
 // Readouts: wet peak (dB), ducking gain (dB, <= 0), tape speed (mm/s).
 enum Readout : uint32_t { kWetDb, kDuckDb, kSpeed, kReadoutCount };
@@ -465,4 +465,4 @@ constexpr std::array<float, kParamCount> kDefaults = [] {
 }();
 const BuiltinDescriptor kEchoDescriptor{"echo", kParamIds, kReadoutIds, &create, kIdle, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

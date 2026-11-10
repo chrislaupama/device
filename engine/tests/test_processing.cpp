@@ -10,13 +10,13 @@ using namespace testutil;
 
 TEST_CASE(kernels_basic) {
     std::vector<float> a = {1, 2, 3, 4, 5, 6, 7}, b = {1, 1, 1, 1, 1, 1, 1};
-    saine::kernel_add_scaled(a.data(), b.data(), 0.5f, 7);
+    dstudio::kernel_add_scaled(a.data(), b.data(), 0.5f, 7);
     CHECK(a[0] == 1.5f && a[6] == 7.5f);
-    saine::kernel_scale(a.data(), 2.0f, 7);
+    dstudio::kernel_scale(a.data(), 2.0f, 7);
     CHECK(a[0] == 3.0f && a[6] == 15.0f);
     a[3] = -100.0f;
-    CHECK(saine::kernel_peak(a.data(), 7) == 100.0f);
-    CHECK(saine::kernel_peak(a.data(), 0) == 0.0f);
+    CHECK(dstudio::kernel_peak(a.data(), 7) == 100.0f);
+    CHECK(dstudio::kernel_peak(a.data(), 0) == 0.0f);
 }
 
 TEST_CASE(kernel_peak_simd_matches_scalar) {
@@ -26,7 +26,7 @@ TEST_CASE(kernel_peak_simd_matches_scalar) {
             for (uint32_t i = 0; i < n; ++i) v[i] = 0.01f * static_cast<float>(i % 13) - 0.06f;
             v[at] = (at % 2) ? -0.875f : 0.75f;
             const float expect = (at % 2) ? 0.875f : 0.75f;
-            CHECK(saine::kernel_peak(v.data(), n) == expect);
+            CHECK(dstudio::kernel_peak(v.data(), n) == expect);
         }
     }
 }
@@ -98,7 +98,7 @@ TEST_CASE(stereo_asset_and_overlapping_clips_sum) {
     const auto out = render(e, 1000, 256);
     const float c = std::cos(static_cast<float>(std::numbers::pi / 4.0));
     float pl = 0, pr = 0;
-    saine::constant_power_pan(0.0f, pl, pr);
+    dstudio::constant_power_pan(0.0f, pl, pr);
     CHECK_NEAR(pl, c, 1e-7);
     CHECK_NEAR(out[2 * 100], 0.25f * pl, 1e-7);
     CHECK_NEAR(out[2 * 100 + 1], -0.5f * pr, 1e-7);
@@ -152,13 +152,13 @@ TEST_CASE(constant_power_pan_law) {
     }
     // Centre is -3.01 dB per side; hard pans are exact.
     float l = 0, r = 0;
-    saine::constant_power_pan(0.0f, l, r);
+    dstudio::constant_power_pan(0.0f, l, r);
     CHECK_NEAR(20.0 * std::log10(static_cast<double>(l)), -3.0103, 1e-3);
-    saine::constant_power_pan(-1.0f, l, r);
+    dstudio::constant_power_pan(-1.0f, l, r);
     CHECK(l == 1.0f && r == 0.0f);
-    saine::constant_power_pan(1.0f, l, r);
+    dstudio::constant_power_pan(1.0f, l, r);
     CHECK(l == 0.0f && r == 1.0f);
-    saine::constant_power_pan(5.0f, l, r); // clamped
+    dstudio::constant_power_pan(5.0f, l, r); // clamped
     CHECK(l == 0.0f && r == 1.0f);
 }
 

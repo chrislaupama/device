@@ -1,6 +1,6 @@
 // Mastering Limiter: a two-stage, oversampled, true-peak limiter with
 // stereo / mid-side linking, auto release, monitors and dither. Parameters in
-// the order of saine_core::builtin::mastering_limiter (checked by a Rust test).
+// the order of dstudio_core::builtin::mastering_limiter (checked by a Rust test).
 //
 // Signal flow (base rate unless noted):
 //   push       input * (ceiling - threshold) dB: the threshold lands on the ceiling
@@ -41,7 +41,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -322,4 +322,4 @@ constexpr float kIdleReadouts[] = {-120.0f, -120.0f, 0.0f};
 constexpr float kDefaults[] = {0.f, -1.f, 150.f, 1.f, 0.f, 2.f, 10.f, 75.f, 100.f, 0.f, 2.f, 1.f, 0.f, 2.f, 0.f, 0.f, 0.f};
 const BuiltinDescriptor kMasteringLimiterDescriptor{"mastering-limiter", kParamIds, kReadoutIds, &create_mastering_limiter, kIdleReadouts, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

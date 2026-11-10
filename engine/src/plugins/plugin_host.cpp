@@ -4,7 +4,7 @@
 
 #include <algorithm>
 
-namespace saine {
+namespace dstudio {
 
 PluginHost::PluginHost(double sample_rate, uint32_t max_block) : sample_rate_(sample_rate), max_block_(max_block) {}
 
@@ -276,4 +276,4 @@ bool PluginHost::latency(uint64_t device_id, uint32_t& frames) {
     return inst != nullptr;
 }
 
-} // namespace saine
+} // namespace dstudio

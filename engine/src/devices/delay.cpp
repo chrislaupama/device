@@ -1,7 +1,7 @@
 // Delay: stereo delay with Tape, Digital and BBD characters, tempo sync,
 // linked or independent sides, ping-pong above 100% width, wow modulation,
 // grit and a six-band EQ inside the feedback loop (it shapes the repeats,
-// never the dry path). Parameters in the order of saine_core::builtin::delay.
+// never the dry path). Parameters in the order of dstudio_core::builtin::delay.
 //
 // Routing (the reference's echo model): with ping-pong amount a = (width -
 // 100%) / 100% (0 below 100%), the left line takes the input and the right
@@ -19,7 +19,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -275,4 +275,4 @@ constexpr float kDefaults[kParamCount] = {120.f, 8.f, 50.f, 0.f, 0.0692f, 0.f, 1
                                           1.f, 1.f, 500.f, 1.f, 8.f, 500.f};
 const BuiltinDescriptor kDelayDescriptor{"delay", kParamIds, kReadouts.ids, &create, kIdle.v, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 // Scratch buffers, preallocated to max_block frames. One context per thread
 // that renders (the live/RT context, or an export job's private context).
@@ -148,4 +148,4 @@ void kernel_add_mul2(float* __restrict dst_l, float* __restrict dst_r, const flo
 void kernel_mul(float* __restrict buf, const float* __restrict gain, uint32_t n) noexcept;
 float kernel_peak(const float* __restrict buf, uint32_t n) noexcept;
 
-} // namespace saine
+} // namespace dstudio

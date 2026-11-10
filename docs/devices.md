@@ -1,6 +1,6 @@
 # Built-in devices
 
-Saine's own effects (Compressor; the dynamics family: Limiter, Gate, Glue
+DStudio's own effects (Compressor; the dynamics family: Limiter, Gate, Glue
 Compressor, Transient Shaper, Mastering Limiter; the modulation family:
 Tremolo, Auto-Panner, Chorus, Flanger, Phaser, Ring Mod, Character Mod; more
 follow from the device specs) are
@@ -8,13 +8,13 @@ follow from the device specs) are
 undo, persistence, automation, engine and panel all derive from it. A device
 is made of up to three parts:
 
-1. a **definition** (`saine_core::builtin::DeviceDef`): parameters, panel layout, factory presets;
-2. a **DSP kernel** (`saine::BuiltinProcessor` in `engine/src/devices/`);
+1. a **definition** (`dstudio_core::builtin::DeviceDef`): parameters, panel layout, factory presets;
+2. a **DSP kernel** (`dstudio::BuiltinProcessor` in `engine/src/devices/`);
 3. optionally a **custom view** in the panel code, when the standard card body is not enough.
 
 ~~~mermaid
 flowchart LR
-    Def["DeviceDef<br/>crates/saine-core/src/builtin/&lt;id&gt;.rs"] --> Model["Device in the track chain<br/>params by id, undo, save"]
+    Def["DeviceDef<br/>crates/dstudio-core/src/builtin/&lt;id&gt;.rs"] --> Model["Device in the track chain<br/>params by id, undo, save"]
     Def --> Panel["Generic card<br/>src/device_panel.rs + ui/device_panel.slint"]
     Model --> Snap["Snapshot: values in definition order<br/>SE_PLUGIN_BUILTIN + se_builtin_state"]
     Snap --> Engine["BuiltinInstance → BuiltinProcessor<br/>engine/src/devices/&lt;id&gt;.cpp"]
@@ -43,7 +43,7 @@ flowchart LR
   Lanes use `SE_AUTO_BUILTIN` with the parameter index. While a control is
   dragged the panel calls `se_builtin_set_param` (lock-free, applied at the
   next block) and commits one command on release. See the ABI block at the end
-  of `engine/include/saine_engine.h`.
+  of `engine/include/dstudio_engine.h`.
 - **Panel.** `device_panel.rs` turns the definition's `Layout` into a
   `DeviceCard` (picker row, view row with slider column, dial row of knob
   clusters) and `ui/device_panel.slint` draws it. Lengths are the reference's
@@ -77,7 +77,7 @@ Every device gets the same modulation and container features; nothing here is
 specific to one effect.
 
 - **Sources.** An LFO (`lfo`) and a chain head (`device-rack`) are built-in
-  devices with modulation outputs (`saine_core::modulation::outputs`: 1 and 8).
+  devices with modulation outputs (`dstudio_core::modulation::outputs`: 1 and 8).
   A source owns its links in `Device::links` (`ModLink { slot, target, param,
   min, max }`); `param` is a built-in parameter id or a plugin parameter id
   (`ModParam`). A parameter takes at most three sources
@@ -145,7 +145,7 @@ system. Any built-in device can use them.
 
 ## Adding a device
 
-1. **Definition.** Add `crates/saine-core/src/builtin/<id>.rs` with a
+1. **Definition.** Add `crates/dstudio-core/src/builtin/<id>.rs` with a
    `pub static <ID>: DeviceDef` and list it in `builtin::all()`.
    - Parameter order is the engine order. Never reorder or remove parameters
      of a shipped device; append new ones (old projects keep loading because
@@ -169,7 +169,7 @@ system. Any built-in device can use them.
      the preset menu from a chevron after the name. `Control::Toggle` on an
      Off/On choice draws a latch capsule in the dial row.
    - `View::Field` is a plotted well (reference motion / response / sweep
-     fields): name a curve model in `crates/saine-app/src/device_fields.rs`
+     fields): name a curve model in `crates/dstudio-app/src/device_fields.rs`
      (traces, fill or band, ticks, caption value, live overlay), the caption,
      the parameters dragged on x and y, and the field's width; the card is
      at least field + sliders + padding wide. Field cards centre their dial
@@ -261,7 +261,7 @@ system. Any built-in device can use them.
    paths, texts, grip pills and linear drag zones. When handles need
    non-linear mapping or hit-testing (several handles on one well, a live
    spectrum), set `pointer: true` and handle `Studio.panel-graph` in Rust,
-   as the restoration devices do (`crates/saine-app/src/panel_graph.rs`: hit
+   as the restoration devices do (`crates/dstudio-app/src/panel_graph.rs`: hit
    zones, spectrum ballistics from the readouts, one undo step per gesture).
    The analyzers (`src/analyzer_views.rs`) are `custom_body` arms too: they
    poll analysis frames (`Controller::panel_poll_views`), draw gradient
@@ -277,7 +277,7 @@ system. Any built-in device can use them.
    (`panel-graph-wheel`, `panel-graph-key`).
    Full editors with their own gestures and menus (step grids, curve
    editors) add an arm to `custom_card` in
-   `crates/saine-app/src/device_editors.rs` and set `interactive: true`:
+   `crates/dstudio-app/src/device_editors.rs` and set `interactive: true`:
    `DeviceCanvas` then sends every press, drag, release, hover,
    double-click, right-click and wheel over the canvas to `panel_editor`,
    with window coordinates for menus. A gesture sends live values to the
@@ -298,11 +298,11 @@ system. Any built-in device can use them.
      under the allocation guard with hostile input and extreme values
      automatically.
    - Rust: `engine_registry_matches_core_definitions`
-     (`crates/saine-engine/tests/builtin.rs`) fails when the definition and
+     (`crates/dstudio-engine/tests/builtin.rs`) fails when the definition and
      the kernel disagree on parameter order or defaults. Add core tests for formatting and
      parsing of any new display format.
 6. **Benchmark.** Add a row for the device to `engine/bench/bench_devices.cpp`
-   (`saine_device_bench`, Release build) and put the numbers in the PR.
+   (`dstudio_device_bench`, Release build) and put the numbers in the PR.
 7. **Render.** `--state reference-<id>` shows any built-in device at its
    defaults. Render it with `--offscreen --screenshot <png>` (a hidden
    window, so it does not take over the screen) and compare it with the
@@ -316,10 +316,10 @@ system. Any built-in device can use them.
 
 ~~~sh
 cargo test --workspace                                   # core, engine wrapper, app unit tests
-cd engine && cmake --build build && ./build/saine_engine_tests
-./build/saine_device_bench                               # per-block cost, param updates, 32-track session
-cargo run -p saine-app -- --state reference-limiter --offscreen --screenshot /tmp/limiter.png
-cargo run -p saine-app -- --state reference-compressor --offscreen --screenshot /tmp/compressor.png
-cargo run -p saine-app -- --state reference-lfo --offscreen --screenshot /tmp/lfo.png      # also reference-chain
-cargo run -p saine-app -- --self-test                    # includes the built-in device section
+cd engine && cmake --build build && ./build/dstudio_engine_tests
+./build/dstudio_device_bench                               # per-block cost, param updates, 32-track session
+cargo run -p dstudio-app -- --state reference-limiter --offscreen --screenshot /tmp/limiter.png
+cargo run -p dstudio-app -- --state reference-compressor --offscreen --screenshot /tmp/compressor.png
+cargo run -p dstudio-app -- --state reference-lfo --offscreen --screenshot /tmp/lfo.png      # also reference-chain
+cargo run -p dstudio-app -- --self-test                    # includes the built-in device section
 ~~~

@@ -90,7 +90,7 @@ TEST_CASE(transport_queue_overflow_reports_error) {
 
     // The bounded queue itself (used while the device owns the path)
     // refuses pushes once full and keeps FIFO order.
-    saine::SpscQueue<int, 256> q;
+    dstudio::SpscQueue<int, 256> q;
     int ok = 0;
     for (int i = 0; i < 300; ++i) ok += q.push(i) ? 1 : 0;
     CHECK_EQ(ok, 256);

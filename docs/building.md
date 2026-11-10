@@ -1,6 +1,6 @@
-# Building Saine Studio
+# Building Device Studio
 
-Everything you need to build, test and run Saine Studio from source on macOS, Windows and Linux. The [README](../README.md) has the short version.
+Everything you need to build, test and run Device Studio from source on macOS, Windows and Linux. The [README](../README.md) has the short version.
 
 ## Supported platforms
 
@@ -31,7 +31,7 @@ Requirements on every system:
 * Network access on the first configure, which fetches the pinned CLAP headers
   and VST 3 SDK
 
-The Rust build compiles the engine itself (`crates/saine-engine/build.rs`), so
+The Rust build compiles the engine itself (`crates/dstudio-engine/build.rs`), so
 `cargo` alone is enough to build and run the app. The engine also builds
 standalone with CMake for its own tests, benchmark and tools.
 
@@ -39,7 +39,7 @@ standalone with CMake for its own tests, benchmark and tools.
 
 ```sh
 brew install cmake ninja
-cargo run --release -p saine-app             # the app
+cargo run --release -p dstudio-app             # the app
 cargo test --workspace                       # core, FFI and end-to-end tests
 
 cd engine
@@ -55,7 +55,7 @@ everything from an **x64 Native Tools / developer command prompt** so the MSVC
 environment is set:
 
 ```bat
-cargo run --release -p saine-app
+cargo run --release -p dstudio-app
 cargo test --workspace
 
 cd engine
@@ -75,7 +75,7 @@ sudo apt-get install -y ninja-build cmake pkg-config \
   libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libx11-xcb-dev \
   libxcursor-dev libxrandr-dev libxi-dev libfontconfig1-dev libfreetype-dev libudev-dev
 
-cargo run --release -p saine-app
+cargo run --release -p dstudio-app
 cargo test --workspace
 
 cd engine
@@ -101,7 +101,7 @@ the engine itself needs only `pkg-config` and `libpipewire-0.3-dev`.
 * For a real-time audio thread, RTKit or PipeWire's RT module must be allowed
   on the system.
 * To build without PipeWire (an engine with no device I/O): configure CMake
-  with `-DSAINE_ENGINE_PIPEWIRE=OFF`, or set `SAINE_ENGINE_PIPEWIRE=OFF` in the
+  with `-DDSTUDIO_ENGINE_PIPEWIRE=OFF`, or set `DSTUDIO_ENGINE_PIPEWIRE=OFF` in the
   environment for a cargo build.
 
 Plugin editor windows are not implemented on Linux yet; opening one reports
@@ -110,9 +110,9 @@ that it is unsupported.
 ## Running the app
 
 ```sh
-cargo run --release -p saine-app -- --help             # all options
-cargo run --release -p saine-app -- --demo             # open with a demo project
-cargo run --release -p saine-app -- --self-test --no-audio
+cargo run --release -p dstudio-app -- --help             # all options
+cargo run --release -p dstudio-app -- --demo             # open with a demo project
+cargo run --release -p dstudio-app -- --self-test --no-audio
 ```
 
 Use release builds: debug builds of the app abort at exit on every OS (a known
@@ -126,7 +126,7 @@ the tests run on real hardware with a real audio device. Each run:
 
 1. configures and builds the engine with warnings as errors, and runs ctest;
 2. builds and tests the Rust workspace (`--locked`);
-3. builds the app in release mode and runs `saine-studio --self-test
+3. builds the app in release mode and runs `device-studio --self-test
    --no-audio`, which must report every check passed;
 4. uploads the self-test logs as an artifact.
 

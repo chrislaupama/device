@@ -6,7 +6,7 @@
 
 ## Context
 
-Saine Studio needs a declarative UI toolkit for its chrome (panels, inspectors, dialogs, text) and
+Device Studio needs a declarative UI toolkit for its chrome (panels, inspectors, dialogs, text) and
 very fast custom drawing for the dense surfaces: an arrangement timeline with hundreds of clips
 and waveforms, and meter bridges animating at display rate. We picked Slint as the main candidate,
 so the open question was how Slint and custom GPU rendering fit together, and whether it holds

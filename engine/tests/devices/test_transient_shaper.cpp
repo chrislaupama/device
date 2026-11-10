@@ -8,7 +8,7 @@ using namespace devtest;
 
 namespace {
 
-// Defaults of saine_core::builtin::transient_shaper, registry order: attack,
+// Defaults of dstudio_core::builtin::transient_shaper, registry order: attack,
 // sustain, sensitivity, output_gain, mix, attack_time, sustain_time, clip.
 const std::vector<float> kDefaults = {0.f, 0.f, 50.f, 0.f, 100.f, 30.f, 2000.f, 0.f};
 constexpr double kRate = 48000.0;
@@ -21,7 +21,7 @@ Signal hits(std::size_t n, double amp) {
     Signal s(n);
     for (std::size_t i = 0; i < n; ++i) {
         const double t = static_cast<double>(i % 12000) / kRate;
-        s[i] = static_cast<float>(amp * std::exp(-t * 18.0) * std::sin(2 * saine::dsp::kPi * 200.0 * t));
+        s[i] = static_cast<float>(amp * std::exp(-t * 18.0) * std::sin(2 * dstudio::dsp::kPi * 200.0 * t));
     }
     return s;
 }

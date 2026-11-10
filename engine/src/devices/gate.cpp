@@ -1,5 +1,5 @@
 // Gate: downward expander with hold, lookahead and a detector high-pass.
-// Parameters in the order of saine_core::builtin::gate (checked by a Rust
+// Parameters in the order of dstudio_core::builtin::gate (checked by a Rust
 // test).
 //
 //   detector   high-passed L/R (Sidechain HPF, 12 dB/oct), max(|L|, |R|),
@@ -22,7 +22,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -149,4 +149,4 @@ constexpr float kIdleReadouts[] = {-120.0f, -120.0f, 0.0f};
 constexpr float kDefaults[] = {-40.f, 10.f, 0.5f, 50.f, 100.f, 5.f, 80.f, 100.f};
 const BuiltinDescriptor kGateDescriptor{"gate", kParamIds, kReadoutIds, &create_gate, kIdleReadouts, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

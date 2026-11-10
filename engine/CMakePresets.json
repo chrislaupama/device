@@ -9,7 +9,7 @@
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "SAINE_ENGINE_WERROR": "ON"
+        "DSTUDIO_ENGINE_WERROR": "ON"
       }
     },
     {
@@ -19,8 +19,8 @@
       "binaryDir": "${sourceDir}/build-asan",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "SAINE_ENGINE_SANITIZE": "ON",
-        "SAINE_ENGINE_WERROR": "ON"
+        "DSTUDIO_ENGINE_SANITIZE": "ON",
+        "DSTUDIO_ENGINE_WERROR": "ON"
       }
     }
   ],

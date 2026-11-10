@@ -1,6 +1,6 @@
 // Pitch Corrector: automatic pitch correction of a monophonic voice or
 // instrument to a key and scale. Parameters in the order of
-// saine_core::builtin::pitch_corrector (checked by a Rust test). When Key
+// dstudio_core::builtin::pitch_corrector (checked by a Rust test). When Key
 // Follow is Project, the application sends the project's key and scale as
 // Key / Scale, so the kernel only reads those two.
 //
@@ -35,7 +35,7 @@
 #include <cmath>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -224,4 +224,4 @@ extern const BuiltinDescriptor kPitchCorrectorDescriptor;
 constexpr float kDefaults[] = {50.0f, 0.0f, 0.0f, 50.0f, 20.0f, 100.0f, 1.0f};
 const BuiltinDescriptor kPitchCorrectorDescriptor{"pitch-corrector", kParamIds, kReadoutIds, &create_pitch_corrector, {}, kDefaults, false, 0, false, true};
 
-} // namespace saine
+} // namespace dstudio

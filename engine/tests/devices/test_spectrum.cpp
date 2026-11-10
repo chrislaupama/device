@@ -8,7 +8,7 @@ using namespace testutil;
 
 namespace {
 
-// Defaults of saine_core::builtin::spectrum, registry order.
+// Defaults of dstudio_core::builtin::spectrum, registry order.
 const std::vector<float> kDefaults = {3.f, 0.f, 0.f, 30.f, 4.5f, 0.f, 90.f, 1.f, 30.f, 50.f, 1.f, 0.f, 3.f};
 constexpr double kRate = 48000.0;
 constexpr std::size_t kBands = 256;
@@ -158,7 +158,7 @@ TEST_CASE(spectrum_analysis_through_the_engine) {
 }
 
 TEST_CASE(analysis_channel_hands_over_the_newest_frame) {
-    saine::AnalysisChannel ch(4);
+    dstudio::AnalysisChannel ch(4);
     float out[8] = {};
     uint64_t seq = 7;
     CHECK(ch.read(out, 8, seq) == 0);

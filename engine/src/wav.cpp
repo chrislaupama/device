@@ -1,7 +1,7 @@
 #include "wav.hpp"
 
 #include "platform/os.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <algorithm>
 #include <bit>
@@ -9,7 +9,7 @@
 #include <limits>
 #include <utility>
 
-namespace saine {
+namespace dstudio {
 namespace {
 
 constexpr uint16_t kFormatPcm = 0x0001;
@@ -384,4 +384,4 @@ int32_t write_wav_float32(const char* utf8_path, const float* interleaved, uint6
     return rc;
 }
 
-} // namespace saine
+} // namespace dstudio

@@ -1,5 +1,5 @@
 // Tape Saturation: a tape-machine colour stage. Parameters in the order of
-// saine_core::builtin::tape_saturation (checked by a Rust test).
+// dstudio_core::builtin::tape_saturation (checked by a Rust test).
 //
 // Per channel:
 //   pre-emphasis   high shelf +E dB (the machine's record EQ), so highs
@@ -24,7 +24,7 @@
 #include <cmath>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -271,4 +271,4 @@ extern const BuiltinDescriptor kTapeSaturationDescriptor;
 constexpr float kDefaults[] = {30.f, 40.f, 30.f, -60.f, 100.f, 0.f, 0.f};
 const BuiltinDescriptor kTapeSaturationDescriptor{"tapesaturation", kParamIds, {}, &create_tape_saturation, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

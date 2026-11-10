@@ -23,15 +23,15 @@
 
 #include <cstdlib>
 
-namespace saine {
+namespace dstudio {
 class MacEditor;
 }
 
-@interface SaineEditorDelegate : NSObject <NSWindowDelegate>
-@property(nonatomic, assign) saine::MacEditor* owner;
+@interface DStudioEditorDelegate : NSObject <NSWindowDelegate>
+@property(nonatomic, assign) dstudio::MacEditor* owner;
 @end
 
-namespace saine {
+namespace dstudio {
 
 class MacEditor : public PluginEditor {
 public:
@@ -70,7 +70,7 @@ protected:
         window_.releasedWhenClosed = NO;
         NSString* t = [NSString stringWithUTF8String:title.c_str()];
         window_.title = t != nil ? t : @"Plugin";
-        delegate_ = [[SaineEditorDelegate alloc] init];
+        delegate_ = [[DStudioEditorDelegate alloc] init];
         delegate_.owner = this;
         window_.delegate = delegate_;
         window_.contentView = content;
@@ -86,7 +86,7 @@ protected:
     virtual void teardown() noexcept = 0;
 
     NSWindow* window_ = nil;
-    SaineEditorDelegate* delegate_ = nil;
+    DStudioEditorDelegate* delegate_ = nil;
     bool open_ = false;
 };
 
@@ -345,9 +345,9 @@ std::unique_ptr<PluginEditor> create_clap_editor(const clap_plugin* plugin, cons
     return e;
 }
 
-} // namespace saine
+} // namespace dstudio
 
-@implementation SaineEditorDelegate
+@implementation DStudioEditorDelegate
 - (void)windowWillClose:(NSNotification*)note {
     (void)note;
     if (self.owner != nullptr) self.owner->window_closing();

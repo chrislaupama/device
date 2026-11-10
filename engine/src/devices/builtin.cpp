@@ -4,7 +4,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace saine {
+namespace dstudio {
 
 // ---------------------------------------------------------------- registry
 // One line per built-in device; the descriptor lives next to its processor.
@@ -576,4 +576,4 @@ std::shared_ptr<PluginInstance> create_builtin_instance(const PluginSpec& spec, 
     return std::make_shared<BuiltinInstance>(spec, *d, d->create(), sample_rate, max_block);
 }
 
-} // namespace saine
+} // namespace dstudio

@@ -2,7 +2,7 @@
 // (the device-callback process path) at 48 kHz / 256 frames.
 // Prints measurements only; no pass/fail thresholds.
 //
-// usage: saine_engine_bench [blocks=4000] [clips_per_track=4] [features=0]
+// usage: dstudio_engine_bench [blocks=4000] [clips_per_track=4] [features=0]
 // A last table renders 8 armed + monitored tracks fed by injected input,
 // with recording off and on (the recording writer thread runs concurrently).
 //   features=1: also enable a 48 001-frame loop (odd length, so the wrap
@@ -13,10 +13,10 @@
 // held for the whole run plus one short note retriggered every 100 ms, so
 // 8-9 synth voices sound on every track in every block.
 // A plugin table renders 32 audio tracks (4 clips each) with two test-gain
-// inserts per track (the SaineTestGain CLAP and VST3 bundles built with the
+// inserts per track (the DStudioTestGain CLAP and VST3 bundles built with the
 // engine), i.e. 64 plugin process calls per block.
 // A delay compensation table renders the same 32 audio tracks with one
-// SaineTestLatency insert (N frames) on the first track, PDC on and off:
+// DStudioTestLatency insert (N frames) on the first track, PDC on and off:
 // N = 0 (L = 0, nothing to compensate) and N = 4096 (31 tracks + the
 // metronome line delayed by 4096 frames).
 // An automation table renders the 32 tracks with the CLAP + VST3 gain
@@ -26,7 +26,7 @@
 // A note preview table renders 32 CLAP instrument tracks with piano-roll
 // preview notes (se_preview_note) queued between blocks, against none.
 #include "platform/os.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <algorithm>
 #include <chrono>
@@ -46,7 +46,7 @@ constexpr double kRate = 48000.0;
 constexpr uint32_t kBlock = 256;
 
 bool write_float_wav(const std::string& path, const std::vector<float>& l, const std::vector<float>& r) {
-    std::FILE* f = saine::os::fopen_utf8(path.c_str(), "wb");
+    std::FILE* f = dstudio::os::fopen_utf8(path.c_str(), "wb");
     if (!f) return false;
     const auto frames = static_cast<uint32_t>(l.size());
     const uint32_t data = frames * 8;
@@ -80,7 +80,7 @@ struct Result {
 
 // plugins: 0 = none (se_session_publish), 1 = CLAP gain + VST3 gain per
 // track, 2 = two CLAP gains per track (se_session_publish_v5), 3 = one
-// SaineTestLatency (N = `latency`) on track 1 only, delay compensation
+// DStudioTestLatency (N = `latency`) on track 1 only, delay compensation
 // `pdc` on/off.
 Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std::vector<std::string>& files,
            bool features, int plugins = 0, uint32_t latency = 0, bool pdc = true, bool automation = false,
@@ -126,9 +126,9 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
         td.clip_count = clips_per_track;
     }
     se_session_desc sd{tds.data(), tracks, 0.5f};
-    const std::string clap_gain = std::string(SAINE_TEST_PLUGIN_DIR) + "/SaineTestGain.clap";
-    const std::string vst3_gain = std::string(SAINE_TEST_PLUGIN_DIR) + "/SaineTestGain.vst3";
-    const std::string clap_latency = std::string(SAINE_TEST_PLUGIN_DIR) + "/SaineTestLatency.clap";
+    const std::string clap_gain = std::string(DSTUDIO_TEST_PLUGIN_DIR) + "/DStudioTestGain.clap";
+    const std::string vst3_gain = std::string(DSTUDIO_TEST_PLUGIN_DIR) + "/DStudioTestGain.vst3";
+    const std::string clap_latency = std::string(DSTUDIO_TEST_PLUGIN_DIR) + "/DStudioTestLatency.clap";
     const uint8_t latency_state[4] = {static_cast<uint8_t>(latency), static_cast<uint8_t>(latency >> 8),
                                       static_cast<uint8_t>(latency >> 16), static_cast<uint8_t>(latency >> 24)};
     se_pdc_set_enabled(e, pdc ? 1 : 0);
@@ -140,7 +140,7 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
             d.device_id = 1000 + t * 2 + static_cast<uint32_t>(k);
             const bool vst3 = plugins == 1 && k == 1;
             d.format = static_cast<uint8_t>(vst3 ? SE_PLUGIN_VST3 : SE_PLUGIN_CLAP);
-            d.plugin_id = vst3 ? "5A17E5A16E0000018A1E7E576A170001" : "studio.saine.test.gain";
+            d.plugin_id = vst3 ? "5A17E5A16E0000018A1E7E576A170001" : "studio.dstudio.test.gain";
             d.path = vst3 ? vst3_gain.c_str() : clap_gain.c_str();
             d.enabled = 1;
             devices[t].push_back(d);
@@ -149,7 +149,7 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
             se_device_desc d{};
             d.device_id = 1000;
             d.format = SE_PLUGIN_CLAP;
-            d.plugin_id = "studio.saine.test.latency";
+            d.plugin_id = "studio.dstudio.test.latency";
             d.path = clap_latency.c_str();
             d.state = latency_state;
             d.state_len = 4;
@@ -211,7 +211,7 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
         size_t errors = 0;
         se_plugin_load_errors(e, nullptr, 0, &errors);
         if (errors != 0) {
-            std::fprintf(stderr, "test plugins failed to load (built? %s)\n", SAINE_TEST_PLUGIN_DIR);
+            std::fprintf(stderr, "test plugins failed to load (built? %s)\n", DSTUDIO_TEST_PLUGIN_DIR);
             std::exit(1);
         }
     }
@@ -261,7 +261,7 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
 }
 
 // Piano-roll note preview (se_preview_note): 32 instrument tracks, each with
-// the SaineTestSine CLAP instrument playing 8 held notes and a note
+// the DStudioTestSine CLAP instrument playing 8 held notes and a note
 // retriggered every 100 ms. mode 0: no previews; 1: one key held and
 // released every 100 ms on track 1 (a person clicking keys); 2: a preview
 // note on and off on every track in every block (a stress figure). The
@@ -274,7 +274,7 @@ Result run_preview_notes(uint32_t tracks, uint32_t blocks, int mode) {
         std::exit(1);
     }
     const int64_t total = static_cast<int64_t>(blocks) * kBlock;
-    const std::string sine = std::string(SAINE_TEST_PLUGIN_DIR) + "/SaineTestSine.clap";
+    const std::string sine = std::string(DSTUDIO_TEST_PLUGIN_DIR) + "/DStudioTestSine.clap";
     std::vector<std::vector<se_note_desc>> notes(tracks);
     std::vector<se_device_desc> insts(tracks);
     std::vector<se_track_desc_v5> tds(tracks);
@@ -300,7 +300,7 @@ Result run_preview_notes(uint32_t tracks, uint32_t blocks, int mode) {
         d.device_id = 1000 + t;
         d.format = SE_PLUGIN_CLAP;
         d.path = sine.c_str();
-        d.plugin_id = "studio.saine.test.sine";
+        d.plugin_id = "studio.dstudio.test.sine";
         d.enabled = 1;
         se_track_desc_v5& td = tds[t];
         td = se_track_desc_v5{};
@@ -411,7 +411,7 @@ Result run_midi(uint32_t tracks, uint32_t blocks, const se_synth_params* params)
     return r;
 }
 
-// Pattern: `tracks` instrument tracks playing a step pattern as saine-core
+// Pattern: `tracks` instrument tracks playing a step pattern as dstudio-core
 // bakes and repeats it (one bar of 4/4 at 120 BPM): `rows` keys, a hit on
 // every one of `steps` steps per bar, each split into `repeat` hits with
 // the gate gap, repeated for the whole run. This is the note density the step
@@ -510,8 +510,8 @@ Result run_input(uint32_t tracks, uint32_t blocks, bool record) {
     }
     std::vector<float> in(static_cast<std::size_t>(kBlock) * kInCh);
     for (std::size_t i = 0; i < in.size(); ++i) in[i] = 0.1f * std::sin(0.01f * static_cast<float>(i));
-    const auto dir = std::filesystem::temp_directory_path() / "saine_bench_record";
-    if (record && se_record_start(e, saine::os::path_to_utf8(dir).c_str()) != SE_OK) {
+    const auto dir = std::filesystem::temp_directory_path() / "dstudio_bench_record";
+    if (record && se_record_start(e, dstudio::os::path_to_utf8(dir).c_str()) != SE_OK) {
         std::fprintf(stderr, "record failed: %s\n", se_last_error());
         std::exit(1);
     }
@@ -569,7 +569,7 @@ int main(int argc, char** argv) {
             l[i] = static_cast<float>(0.3 * std::sin(2 * std::numbers::pi * (110.0 * (a + 1)) * t));
             r[i] = static_cast<float>(0.3 * std::sin(2 * std::numbers::pi * (165.0 * (a + 1)) * t));
         }
-        const std::string path = saine::os::path_to_utf8(dir / ("saine_bench_asset_" + std::to_string(a) + ".wav"));
+        const std::string path = dstudio::os::path_to_utf8(dir / ("dstudio_bench_asset_" + std::to_string(a) + ".wav"));
         if (!write_float_wav(path, l, r)) {
             std::fprintf(stderr, "cannot write %s\n", path.c_str());
             return 1;
@@ -578,7 +578,7 @@ int main(int argc, char** argv) {
     }
 
     const double deadline_us = kBlock / kRate * 1e6;
-    std::printf("saine_engine_bench: %u blocks x %u frames @ %.0f Hz (deadline %.1f us/block), %u clips/track%s\n",
+    std::printf("dstudio_engine_bench: %u blocks x %u frames @ %.0f Hz (deadline %.1f us/block), %u clips/track%s\n",
                 blocks, kBlock, kRate, deadline_us, clips_per_track, features ? ", loop + metronome" : "");
     std::printf("%8s %14s %14s %14s %16s\n", "tracks", "avg us/block", "p99 us/block", "max us/block",
                 "realtime ratio");
@@ -596,7 +596,7 @@ int main(int argc, char** argv) {
         std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name, r.us_per_block_avg, r.us_per_block_p99,
                     r.us_per_block_max, r.rt_ratio);
     }
-    std::printf("\nDelay compensation: 32 audio tracks x %u clips, one SaineTestLatency insert (N frames) on track 1\n",
+    std::printf("\nDelay compensation: 32 audio tracks x %u clips, one DStudioTestLatency insert (N frames) on track 1\n",
                 clips_per_track);
     std::printf("%22s %14s %14s %14s %16s\n", "N / PDC", "avg us/block", "p99 us/block", "max us/block",
                 "realtime ratio");
@@ -629,7 +629,7 @@ int main(int argc, char** argv) {
         pv_l[i] = static_cast<float>(0.2 * std::sin(0.013 * static_cast<double>(i)));
         pv_r[i] = static_cast<float>(0.2 * std::sin(0.017 * static_cast<double>(i)));
     }
-    const std::string pv_path = saine::os::path_to_utf8(dir / "saine_bench_preview.wav");
+    const std::string pv_path = dstudio::os::path_to_utf8(dir / "dstudio_bench_preview.wav");
     if (!write_float_wav(pv_path, pv_l, pv_r)) {
         std::fprintf(stderr, "cannot write %s\n", pv_path.c_str());
         return 1;
@@ -645,7 +645,7 @@ int main(int argc, char** argv) {
                     r.us_per_block_max, r.rt_ratio);
     }
     std::filesystem::remove(pv_path);
-    std::printf("\nPiano-roll note preview: 32 instrument tracks, SaineTestSine CLAP instrument, 8-9 notes each\n");
+    std::printf("\nPiano-roll note preview: 32 instrument tracks, DStudioTestSine CLAP instrument, 8-9 notes each\n");
     std::printf("%22s %14s %14s %14s %16s\n", "previews", "avg us/block", "p99 us/block", "max us/block",
                 "realtime ratio");
     for (const int mode : {0, 1, 2}) {

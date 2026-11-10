@@ -1,7 +1,7 @@
-# Saine Studio audio engine (`engine/`)
+# Device Studio audio engine (`engine/`)
 
-C++23 real-time audio engine behind the C ABI in `include/saine_engine.h`.
-The Rust core links the static library `saine_engine`. The header is the
+C++23 real-time audio engine behind the C ABI in `include/dstudio_engine.h`.
+The Rust core links the static library `dstudio_engine`. The header is the
 contract. `SE_ABI_VERSION` is still 1: the first milestone's structs and
 signatures are unchanged, and later features are **appended** at the end of
 the header (`se_meters_peek`, `se_transport_set_loop`, `se_metronome_desc` +
@@ -37,7 +37,7 @@ looping in [Clip looping](#clip-looping).
 Requirements: CMake ≥ 3.25, Ninja, a C++23 compiler (Apple clang 21, MSVC
 19.4x from Visual Studio 2022 and GCC 13 have built it with warnings as
 errors; see [Platforms](#platforms)). Linux also needs `pkg-config` and the PipeWire
-development files (`libpipewire-0.3-dev`), or `-DSAINE_ENGINE_PIPEWIRE=OFF`
+development files (`libpipewire-0.3-dev`), or `-DDSTUDIO_ENGINE_PIPEWIRE=OFF`
 for an engine without device I/O. Windows: run CMake from a developer
 command prompt (x64 MSVC environment) with the Ninja generator.
 
@@ -51,44 +51,44 @@ cmake --preset asan               # Debug + -fsanitize=address,undefined -> engi
 cmake --build --preset asan
 ctest --preset asan
 
-./build/saine_engine_bench [blocks=4000] [clips_per_track=4] [features=0]  # 1 = loop + metronome on; also prints MIDI and plugin tables
-./build/saine_scan_cache_bench [entries=2000] [runs=50]  # plugin-cache JSON parse time
+./build/dstudio_engine_bench [blocks=4000] [clips_per_track=4] [features=0]  # 1 = loop + metronome on; also prints MIDI and plugin tables
+./build/dstudio_scan_cache_bench [entries=2000] [runs=50]  # plugin-cache JSON parse time
 ./build/play_sine_or_wav [file.wav] [seconds=1.0]   # real default output device, -24 dBFS
 ./build/record_check                                # list devices (enumeration only, opens nothing)
-SAINE_TEST_REAL_INPUT=1 ./build/record_check [s=2]  # MANUAL: opens the real default input (macOS mic prompt!)
+DSTUDIO_TEST_REAL_INPUT=1 ./build/record_check [s=2]  # MANUAL: opens the real default input (macOS mic prompt!)
 ./build/plugin_editor_check [au <id> | clap <bundle> <id> | vst3 <bundle> <uid>]  # MANUAL: opens/closes an editor window
-SAINE_PLUGIN_PATH=build/test_plugins ./build/saine_plugin_scanner --scan --cache /tmp/plugins.json [--rescan]
+DSTUDIO_PLUGIN_PATH=build/test_plugins ./build/dstudio_plugin_scanner --scan --cache /tmp/plugins.json [--rescan]
 ```
 
 The first configure fetches the CLAP headers and the VST 3 SDK (pinned tags,
 network needed once; see `third_party_licenses.md`). Every build also produces
-`build/saine_plugin_scanner` and the test bundles in `build/test_plugins/`.
+`build/dstudio_plugin_scanner` and the test bundles in `build/test_plugins/`.
 
-CMake options: `SAINE_ENGINE_BUILD_TESTS|BENCH|TOOLS` (default ON when top
-level), `SAINE_ENGINE_BUILD_SCANNER` (ON), `SAINE_ENGINE_BUILD_TEST_PLUGINS`
-(ON when top level; build.rs turns it on), `SAINE_ENGINE_SANITIZE`
-(ASan+UBSan), `SAINE_ENGINE_WERROR`. The target `saine_engine_rust` builds
+CMake options: `DSTUDIO_ENGINE_BUILD_TESTS|BENCH|TOOLS` (default ON when top
+level), `DSTUDIO_ENGINE_BUILD_SCANNER` (ON), `DSTUDIO_ENGINE_BUILD_TEST_PLUGINS`
+(ON when top level; build.rs turns it on), `DSTUDIO_ENGINE_SANITIZE`
+(ASan+UBSan), `DSTUDIO_ENGINE_WERROR`. The target `dstudio_engine_rust` builds
 what the Rust crate needs (library, scanner, test plugins).
 
 ### Linking from Rust (`cmake` crate)
 
-`crates/saine-engine/build.rs` builds the `saine_engine_rust` target and links
-`<out>/build/libsaine_engine.a`; it bakes the scanner path
-(`SAINE_PLUGIN_SCANNER_BUILT`) and the test plugin directory
-(`SAINE_TEST_PLUGIN_DIR`) into the crate, and shares one SDK download between
-cargo profiles (`FETCHCONTENT_BASE_DIR=target/saine-third-party`). macOS
+`crates/dstudio-engine/build.rs` builds the `dstudio_engine_rust` target and links
+`<out>/build/libdstudio_engine.a`; it bakes the scanner path
+(`DSTUDIO_PLUGIN_SCANNER_BUILT`) and the test plugin directory
+(`DSTUDIO_TEST_PLUGIN_DIR`) into the crate, and shares one SDK download between
+cargo profiles (`FETCHCONTENT_BASE_DIR=target/dstudio-third-party`). macOS
 frameworks: AudioToolbox, AudioUnit, CoreAudio, CoreFoundation, CoreAudioKit,
 AppKit, Foundation (+ libobjc, libc++). The generic recipe with the `cmake`
 crate's `install` target (library + header only) still works:
 
 ```rust
 let dst = cmake::Config::new("../../engine")
-    .define("SAINE_ENGINE_BUILD_TESTS", "OFF")
-    .define("SAINE_ENGINE_BUILD_BENCH", "OFF")
-    .define("SAINE_ENGINE_BUILD_TOOLS", "OFF")
+    .define("DSTUDIO_ENGINE_BUILD_TESTS", "OFF")
+    .define("DSTUDIO_ENGINE_BUILD_BENCH", "OFF")
+    .define("DSTUDIO_ENGINE_BUILD_TOOLS", "OFF")
     .build();
 println!("cargo:rustc-link-search=native={}/lib", dst.display());
-println!("cargo:rustc-link-lib=static=saine_engine");
+println!("cargo:rustc-link-lib=static=dstudio_engine");
 // macOS
 println!("cargo:rustc-link-lib=c++");
 println!("cargo:rustc-link-lib=framework=AudioToolbox");
@@ -98,7 +98,7 @@ println!("cargo:rustc-link-lib=framework=CoreFoundation");
 
 The library is built with `-fPIC`, so it can go into a cdylib as well.
 On Windows build.rs also links `ole32 shell32 avrt user32`, on Linux
-`pipewire-0.3 stdc++ dl` (set `SAINE_ENGINE_PIPEWIRE=OFF` in the environment
+`pipewire-0.3 stdc++ dl` (set `DSTUDIO_ENGINE_PIPEWIRE=OFF` in the environment
 to build without PipeWire).
 
 ## Platforms
@@ -117,7 +117,7 @@ POSIX signal or Windows NTSTATUS exception code).
 | Plugin formats | AU, VST3, CLAP | VST3, CLAP | VST3, CLAP |
 | Plugin editors | NSWindow (AU/VST3/CLAP) | top-level HWND hosting the plugin child window (VST3 `kPlatformTypeHWND`, CLAP `win32`) | not implemented: `SE_ERR_UNSUPPORTED_FORMAT` |
 | Scanner children | `posix_spawn` | `CreateProcessW` (no WER dialogs in the child) | `posix_spawn` |
-| Test plugins | `.clap`/`.vst3` bundles | `.clap` DLL, `.vst3/Contents/x86_64-win/*.vst3`, + `SaineTestGui.clap` | `.clap` .so, `.vst3/Contents/x86_64-linux/*.so` |
+| Test plugins | `.clap`/`.vst3` bundles | `.clap` DLL, `.vst3/Contents/x86_64-win/*.vst3`, + `DStudioTestGui.clap` | `.clap` .so, `.vst3/Contents/x86_64-linux/*.so` |
 | Built with warnings as errors | yes (clang, `-Werror`), every CI run | yes (`/W4 /WX`), every CI run | yes (GCC, `-Werror`), every CI run |
 | ctest | all tests, every CI run, on the self-hosted Mac's real audio device | all tests, every CI run; AU tests and device tests skip (no audio endpoint) | all tests, every CI run; AU tests and device tests skip (no PipeWire server) |
 | Tested on real audio hardware | yes (Core Audio output + duplex, see below) | **no** | **no** |
@@ -129,7 +129,7 @@ Windows and Linux on GitHub-hosted runners (`windows-latest`,
 ctest, builds and tests the Rust workspace and runs the app's
 `--self-test --no-audio`.
 
-The app (`crates/saine-app`) builds on all three. The hosted jobs run it
+The app (`crates/dstudio-app`) builds on all three. The hosted jobs run it
 without a GPU or audio device: on Linux under Xvfb with Mesa lavapipe (software Vulkan;
 `SLINT_WGPU_CPU=1`), a reference-state screenshot and the full `--self-test
 --no-audio` (125 checks pass; the 21 checks of the Audio Unit devices section
@@ -229,12 +229,12 @@ running jackd without PipeWire.
   `%LOCALAPPDATA%\Programs\Common\{VST3,CLAP}`, `%CLAP_PATH%`; Linux:
   `~/.vst3`, `/usr/lib/vst3`, `/usr/local/lib/vst3`, `~/.clap`,
   `/usr/lib/clap`, `/usr/local/lib/clap`, `$CLAP_PATH`; plus
-  `$SAINE_PLUGIN_PATH` (`;`-separated on Windows).
+  `$DSTUDIO_PLUGIN_PATH` (`;`-separated on Windows).
 * **Audio Units** are macOS-only; AU tests skip elsewhere and tests that only
-  need "a third plugin" use `SaineTestLatency.clap` instead.
+  need "a third plugin" use `DStudioTestLatency.clap` instead.
 * **Editors.** Windows: `plugin_editor_win.cpp` (top-level window, plugin
   child HWND, `IPlugFrame::resizeView` / `request_resize`, user resizing,
-  close box), covered by `SaineTestGui.clap` +
+  close box), covered by `DStudioTestGui.clap` +
   `plugin_editor_window_win32_open_resize_close`, which runs in
   every Windows CI job; per-monitor DPI scaling is
   not handled yet. Linux: not implemented (X11 embedding needs an X event
@@ -246,7 +246,7 @@ running jackd without PipeWire.
 
 | Path | Contents |
 |---|---|
-| `include/saine_engine.h` | C ABI (v1; additions appended at the end) |
+| `include/dstudio_engine.h` | C ABI (v1; additions appended at the end) |
 | `src/c_api.cpp` | `extern "C"` wrappers, exception barrier, thread-local `se_last_error` |
 | `src/engine.{hpp,cpp}` | `Engine`: assets, graph publication/reclamation, transport, meters, stats, RT `process()` |
 | `src/render_graph.{hpp,cpp}` | Immutable render graph built from a session snapshot; pan law |
@@ -262,20 +262,20 @@ running jackd without PipeWire.
 | `src/platform/` | `AudioDevice` interface + backends (Core Audio real; WASAPI/ASIO, PipeWire/JACK stubs) |
 | `tests/` | Self-contained harness (`test_harness.hpp`), tests, allocation-tracking `operator new` |
 | `bench/bench_render.cpp` | Offline render benchmark |
-| `bench/bench_scan_cache.cpp` | Plugin-cache parse benchmark (`saine_scan_cache_bench`) |
+| `bench/bench_scan_cache.cpp` | Plugin-cache parse benchmark (`dstudio_scan_cache_bench`) |
 | `src/recorder.{hpp,cpp}` | Recording: RT capture into per-track SPSC rings, WAV writer thread, live takes/peaks |
 | `src/test_hooks.hpp` | Test-only hooks (fake device factory, writer stall, ring size); not public ABI |
 | `tools/play_sine_or_wav.cpp` | Manual check through the real default output device |
-| `tools/record_check.cpp` | Device listing; with `SAINE_TEST_REAL_INPUT=1` a 2 s real-input recording (manual only) |
+| `tools/record_check.cpp` | Device listing; with `DSTUDIO_TEST_REAL_INPUT=1` a 2 s real-input recording (manual only) |
 | `src/plugins/plugin_instance.hpp`, `plugin_common.cpp` | `PluginInstance` interface, `PluginSpec`, `NoteFeeder` (notes → MIDI), parameter queue |
 | `src/plugins/plugin_host.{hpp,cpp}` | Instance registry keyed by device id: creation, retirement, states, load errors, editors |
 | `src/plugins/au_instance.cpp`, `vst3_instance.cpp`, `clap_instance.cpp` | Format hosts |
 | `src/plugins/plugin_modules.{hpp,cpp}` | VST3 / CLAP bundle loading (CFBundle), shared per path |
 | `src/plugins/plugin_scan.{hpp,cpp}` | Inspecting one AU / bundle (used only by the scanner process) |
 | `src/platform/plugin_editor_mac.mm` | Editor windows (NSWindow; AU Cocoa view / AUGenericView, VST3 IPlugView, CLAP gui) |
-| `scanner/scanner_main.cpp` | `saine_plugin_scanner`: out-of-process scan coordinator + per-plugin child |
+| `scanner/scanner_main.cpp` | `dstudio_plugin_scanner`: out-of-process scan coordinator + per-plugin child |
 | `scanner/cache_json.hpp` | The scanner's cache JSON reader (shared with the benchmark) |
-| `test_plugins/` | Original test plugins: `SaineTestGain.vst3`, `SaineTestGain.clap`, `SaineTestSine.clap`, `SaineTestLatency.clap`/`.vst3`, `SaineTestCrash.clap` |
+| `test_plugins/` | Original test plugins: `DStudioTestGain.vst3`, `DStudioTestGain.clap`, `DStudioTestSine.clap`, `DStudioTestLatency.clap`/`.vst3`, `DStudioTestCrash.clap` |
 | `tools/plugin_editor_check.mm` | Manual editor-window smoke test |
 | `third_party_licenses.md` | Fetched SDKs: tags, commits, MIT texts |
 
@@ -330,7 +330,7 @@ Semantics:
   parameters (both convert to v3 internally).
 * **Synth parameters** (`se_session_publish_v3`): each track may point to an
   `se_synth_params` (NULL = defaults = `SynthParams::default()` in
-  saine-core). They are copied into the graph (`RenderGraph::synth_params`,
+  dstudio-core). They are copied into the graph (`RenderGraph::synth_params`,
   reserved bytes zeroed), so they change atomically with notes and mix.
   Validation: enums in range, every float finite and inside the documented
   range (same ranges as `SynthParams::validate`) → else `SE_ERR_INVALID_ARG`.
@@ -581,7 +581,7 @@ Built-in instruments drain it in `process()`, and plugin instruments in the
 processor's instrument path, so the notes go through the track's chain and
 mixer. The main thread keeps the held (device, pitch) pairs, so
 `se_preview_stop` can release them and `se_preview_info.notes` can count them.
-Nothing on the audio thread allocates or locks. `saine_engine_bench` has a
+Nothing on the audio thread allocates or locks. `dstudio_engine_bench` has a
 table for it.
 
 ### Export
@@ -831,7 +831,7 @@ counted in `write_errors` and those takes are left out of the result.
 output frame P was captured when the listener heard frame P − (input latency
 + output latency). So `start_frame = position − (in + out)`, with each side =
 `kAudioDevicePropertyLatency + kAudioDevicePropertySafetyOffset +` the first
-stream's `kAudioStreamPropertyLatency` (no IO-buffer term: an acoustic loopback test on a MacBook Air showed the buffer term over-compensated by ~18.5 ms; without it recordings land +2.7..6.2 ms late, consistent with speaker→mic travel and onset detection; see crates/saine-engine/tests/real_loopback.rs), read from the running
+stream's `kAudioStreamPropertyLatency` (no IO-buffer term: an acoustic loopback test on a MacBook Air showed the buffer term over-compensated by ~18.5 ms; without it recordings land +2.7..6.2 ms late, consistent with speaker→mic travel and onset detection; see crates/dstudio-engine/tests/real_loopback.rs), read from the running
 (aggregate) device; for an aggregate each side is the max of what the
 aggregate and the sub-device report. Converted to engine frames. Injected
 input (`se_render_offline_with_input`) has device compensation 0. With
@@ -864,7 +864,7 @@ and monitoring 8 tracks, the fake device path (default start never enables
 input, input failure keeps output running and reports the error, take
 `start_frame` compensated by input + output latency), configure validation
 against real Core Audio (no start), and a real output-only named-device
-start + running reconfigure. Rust: `crates/saine-engine/tests/recording.rs`
+start + running reconfigure. Rust: `crates/dstudio-engine/tests/recording.rs`
 (Document → snapshot → injected input → take → `load_file` → "Record" Batch →
 playback renders the same samples).
 
@@ -873,7 +873,7 @@ playback renders the same samples).
 Not verified on hardware by the engine agent, by design (it would trigger
 the microphone prompt): opening a real input, the aggregate device and its
 drift compensation, AUHAL input pull, and the latency values Core Audio
-reports for a real duplex setup. Run `SAINE_TEST_REAL_INPUT=1
+reports for a real duplex setup. Run `DSTUDIO_TEST_REAL_INPUT=1
 ./build/record_check` by hand to check level and reported latency; a
 loopback measurement (play a click, record it) is the next step to confirm
 the compensation is sample-accurate on real devices.
@@ -893,7 +893,7 @@ both MIT, fetched by CMake at configure time and never committed
 `instrument != 0`; replaces the built-in synth) and `track_name` (editor
 titles; the Rust side passes NULL because `TrackSnapshot` has no name, so
 titles are just the plugin name). Each `se_device_desc` carries `device_id`
-(saine_core `DeviceId`), `format` (`SE_PLUGIN_AU/VST3/CLAP`), `plugin_id`
+(dstudio_core `DeviceId`), `format` (`SE_PLUGIN_AU/VST3/CLAP`), `plugin_id`
 (AU `"aufx lpas appl"`, VST3 class UID as 32 hex chars in TUID byte order,
 CLAP id), `path` (bundle), `name`, `enabled` and the saved `state`
 (pointer + length). Layouts are guarded by `-Wpadded` (no implicit padding),
@@ -985,7 +985,7 @@ destroy queued instances when
 * **Parameters** (no automation yet): VST3 controller edits
   (`IComponentHandler::performEdit`) are forwarded to the processor through a
   lock-free queue as `IParameterChanges` at the next block; the same queue
-  backs the test hook `saine::testing::plugin_set_parameter` (AU
+  backs the test hook `dstudio::testing::plugin_set_parameter` (AU
   `AudioUnitSetParameter`, CLAP `CLAP_EVENT_PARAM_VALUE`).
 * **Export** (`se_export_wav`) of a session with plugins uses the live
   instances: it takes the RT ownership (fails with `SE_ERR_STATE` while the
@@ -1025,7 +1025,7 @@ is only served by `se_plugin_idle`, which a detached engine skips (macOS dispatc
 Tests: `offline_*` in `tests/test_plugins.cpp` (a worker render of prepared CLAP, VST3, AU and instrument
 plugins equals the main-thread render bit for bit with zero RT allocations; detached engines never
 instantiate; load failures; one-instance state save; latency in the plan), benchmark
-`build/saine_offline_plugin_bench`.
+`build/dstudio_offline_plugin_bench`.
 
 ### State
 
@@ -1053,17 +1053,17 @@ button tears the view down and `se_plugin_editor_is_open` returns 0. Editors
 of retired instances close in the publish that retires them. Plugins without
 an editor return `SE_ERR_UNSUPPORTED_FORMAT`.
 
-### Scanning (`saine_plugin_scanner`)
+### Scanning (`dstudio_plugin_scanner`)
 
-`scan_plugins` (Rust) runs `saine_plugin_scanner --scan --cache <file>
+`scan_plugins` (Rust) runs `dstudio_plugin_scanner --scan --cache <file>
 [--rescan]` and reads progress lines from its stderr and a JSON report from
-its stdout. The scanner is found at `$SAINE_PLUGIN_SCANNER` or the path
-baked in by build.rs (`<cargo out>/build/saine_plugin_scanner`; the app must
+its stdout. The scanner is found at `$DSTUDIO_PLUGIN_SCANNER` or the path
+baked in by build.rs (`<cargo out>/build/dstudio_plugin_scanner`; the app must
 ship it next to its binary and set the variable, or adapt the lookup). The
 coordinator enumerates AUs (macOS; types `aufx`, `aumf`, `aumu`; enumeration
 loads no plugin code), VST3/CLAP bundles in `/Library/Audio/Plug-Ins/{VST3,CLAP}`,
 `~/Library/Audio/Plug-Ins/{VST3,CLAP}` (Windows/Linux folders: see
-[Platforms](#platforms)) and the `$SAINE_PLUGIN_PATH` entries (`:`-separated,
+[Platforms](#platforms)) and the `$DSTUDIO_PLUGIN_PATH` entries (`:`-separated,
 `;` on Windows; directories searched up to 3 levels, or bundle
 paths). Every AU and every bundle not in the cache with the same stamp (AU
 version; newest mtime of the bundle, its Info.plist and its binaries in
@@ -1071,7 +1071,7 @@ version; newest mtime of the bundle, its Info.plist and its binaries in
 single-file plugin's own mtime)
 is inspected by its own child process (`--scan-one`, which instantiates the
 plugin to read bus channels and editor support), at most 4 at a time, with a
-timeout (`$SAINE_PLUGIN_SCAN_TIMEOUT_MS`, default 10000). Crashes (signal;
+timeout (`$DSTUDIO_PLUGIN_SCAN_TIMEOUT_MS`, default 10000). Crashes (signal;
 Windows: an NTSTATUS exception exit code, with error dialogs suppressed in
 the child), timeouts (SIGKILL / TerminateProcess) and failures are recorded in the cache and reported in
 `failed`; they stay blocklisted until `--rescan` or a stamp change. The cache
@@ -1083,16 +1083,16 @@ macOS: bundles. Windows/Linux: each `.clap` is a single shared library and
 each `.vst3` a bundle folder with the binary in `Contents/x86_64-win/` or
 `Contents/x86_64-linux/`.
 
-* `SaineTestGain.vst3`: processor + separate controller (connection points),
+* `DStudioTestGain.vst3`: processor + separate controller (connection points),
   stereo, parameter 0 "Gain" (normalized = linear 0..1, default 0.5), state =
   f32 LE.
-* `SaineTestGain.clap` (`studio.saine.test.gain`): same as a CLAP.
-* `SaineTestSine.clap` (`studio.saine.test.sine`): 16-voice instrument, a
+* `DStudioTestGain.clap` (`studio.dstudio.test.gain`): same as a CLAP.
+* `DStudioTestSine.clap` (`studio.dstudio.test.sine`): 16-voice instrument, a
   cosine at the equal-tempered note pitch, amplitude 0.25 × velocity, full
   amplitude on the note-on sample and silent from the note-off sample (makes
   onsets/offs exactly measurable).
-* `SaineTestLatency.clap` (`studio.saine.test.latency`) and
-  `SaineTestLatency.vst3` (class `5A17E5A16E0000038A1E7E576A170003`):
+* `DStudioTestLatency.clap` (`studio.dstudio.test.latency`) and
+  `DStudioTestLatency.vst3` (class `5A17E5A16E0000038A1E7E576A170003`):
   stereo effect that delays its input by exactly N frames and reports
   latency N. N = state (u32 LE; VST3 component state inside the SVS3
   container), default 0. Parameter 0 "Latency" changes it at runtime through
@@ -1103,9 +1103,9 @@ each `.vst3` a bundle folder with the binary in `Contents/x86_64-win/` or
   received in the next `setActive(true)` (so: set parameter → render a block
   → `se_plugin_idle`). Used as an instrument plugin it is silent but still
   reports N.
-* `SaineTestCrash.clap`: `clap_entry.init` raises SIGSEGV (Windows: writes
+* `DStudioTestCrash.clap`: `clap_entry.init` raises SIGSEGV (Windows: writes
   through a null pointer, since `raise(SIGSEGV)` there is a clean exit).
-* `SaineTestGui.clap` (`studio.saine.test.gui`, **Windows only**): stereo
+* `DStudioTestGui.clap` (`studio.dstudio.test.gui`, **Windows only**): stereo
   pass-through with a Win32 `clap.gui` (a child `STATIC` window) that asks the
   host to resize to 400 × 250 when shown; drives the HWND editor test.
 
@@ -1113,7 +1113,7 @@ each `.vst3` a bundle folder with the binary in `Contents/x86_64-win/` or
 
 C++ (`tests/test_plugins.cpp`, `tests/test_plugin_scan.cpp`, both presets;
 off macOS the AU-only tests skip, AU halves of mixed tests are left out and
-the "third plugin" is SaineTestLatency.clap):
+the "third plugin" is DStudioTestLatency.clap):
 AULowpass attenuates 15 kHz (< 0.25×) and passes 200 Hz (±5 %); CLAP and VST3
 gain halve the signal (≤ 1e-7); bypass (AU + CLAP + VST3 all disabled) is
 bit-exact; chain order (CLAP gain ↔ AUDistortion) changes the output, and
@@ -1123,7 +1123,7 @@ test hook), are retired on removal and re-created on re-add or plugin change;
 v5 validation; state round trips for CLAP, VST3 (parameter changed through
 the queue → saved → new engine → identical output) and AU (AULowpass cutoff
 → ClassInfo plist → identical output); corrupt state → load error +
-pass-through; SaineTestSine onset exactly on the note frame, note-off exact,
+pass-through; DStudioTestSine onset exactly on the note frame, note-off exact,
 pitch 440 Hz; DLSMusicDevice onset within 20 ms (measured: 7 frames above
 -60 dBFS); seek
 and stop send note-offs (sine: silent from the first sample; DLS: same
@@ -1135,7 +1135,7 @@ RT path (above). Scanner: Apple AUs + all test plugins found, the crash
 blocklisted while the scan completes, second run 100 % from cache, touching
 a bundle re-scans only it, `--rescan` re-scans all.
 
-Rust (`crates/saine-engine/tests/plugins.rs`): Document `AddDevice` (CLAP test
+Rust (`crates/dstudio-engine/tests/plugins.rs`): Document `AddDevice` (CLAP test
 gain) + audio clip → publish → offline render is halved; bypass bit-exact;
 model state applied at instantiation; remove + undo restores the same id and
 state; `plugin_states` → `sync_device_states` → `persist::save/load` → new
@@ -1250,7 +1250,7 @@ changes via the parameter hook (CLAP 1000→2500, VST3 0→4000, both → 0) wit
 re-alignment; seek/stop flush, pause tail, loop history; cap clamp + report;
 zero allocations while rendering with latency changes, bypass, monitoring,
 metronome, loop, seeks, pause and on/off toggles. Rust
-(`crates/saine-engine/tests/pdc.rs`): Document `AddDevice` (SaineTestLatency,
+(`crates/dstudio-engine/tests/pdc.rs`): Document `AddDevice` (DStudioTestLatency,
 N = 1000 from the model state) on one of two tracks with the same clip →
 aligned, report and audible position; toggle off → misaligned by N; bypass
 keeps timing. Manual (not run): `real_loopback.rs`
@@ -1264,7 +1264,7 @@ test AU changes latency).
 ## Automation
 
 Decision and model: [ADR 0005](../docs/adr/0005-automation.md). The core
-(`saine_core::automation`) owns the lanes and the evaluation contract; the
+(`dstudio_core::automation`) owns the lanes and the evaluation contract; the
 snapshot sends enabled, non-empty lanes with points converted to frames
 (`TrackSnapshot::automation`, `SessionSnapshot::master_automation`), and
 `Engine::publish` passes them through `se_session_publish_v6`.
@@ -1296,7 +1296,7 @@ value after the last point, the later point at a vertical step, `shape(s, c)`
 `(float)(t−a) / (float)(b−a)`, geometric `exp(lerp(log a, log b, s))` for
 logarithmic lanes, all in `float` with FP contraction disabled
 (`#pragma clang fp contract(off)`; Rust never fuses). The cross-language
-test (`crates/saine-engine/tests/automation.rs`) compares 135 522 values of
+test (`crates/dstudio-engine/tests/automation.rs`) compares 135 522 values of
 200 random lanes (all target kinds, curves incl. ±1 and 1e-7, steps at the
 first and inner points) with `value_at`: all are **bit-identical** (required:
 1e-5 relative).
@@ -1415,7 +1415,7 @@ VST3: `setParamNormalized(1000, v)` on the controller performs
 `beginEdit/performEdit/endEdit` on parameter 0; CLAP: a `PARAM_VALUE` for
 1000 emits the gesture from `process()`, for 1001 from `params.flush()` after
 a `request_callback` → `on_main_thread` → `request_flush` round trip.
-`saine::testing::plugin_simulate_gesture` does an AU view's gesture on an AU.
+`dstudio::testing::plugin_simulate_gesture` does an AU view's gesture on an AU.
 Both gain plugins now apply their gain sample-accurately at event offsets.
 
 ### Tests
@@ -1439,7 +1439,7 @@ alignment (above); export with a latency plugin and a master step (max error
 point every 7 frames, curves), CLAP/VST3 gain lanes, a synth with two lanes,
 a latency plugin, master lane, loop, seeks, pause and odd block sizes.
 
-Rust (`crates/saine-engine/tests/automation.rs`): the cross-language
+Rust (`crates/dstudio-engine/tests/automation.rs`): the cross-language
 evaluation test; validation parity; a Document `SetAutomationLane` volume
 lane on a DC clip follows `value_at` (worst 4.9e-6), a disabled lane renders
 bit-identically to no lane, undo restores the static output bit-exactly;
@@ -1495,7 +1495,7 @@ peak picking, then moves each one back to the start of its attack. A slice
 is flagged percussive when its tail sits 12 dB under its head, smoothed over
 neighbouring slices. The UI uses it for warp markers and the Auto mode.
 
-### Benchmark (`build/saine_warp_bench`, 20 s stereo loop, map 112/120)
+### Benchmark (`build/dstudio_warp_bench`, 20 s stereo loop, map 112/120)
 
 | Mode | µs per track per block, live | rendered | render time per track-minute |
 |---|---:|---:|---:|
@@ -1597,15 +1597,15 @@ plugin calls per block; same machine and run):
 | Inserts | avg µs/block | p99 |
 |---|---|---|
 | none (baseline) | 3.29 | 3.58 |
-| SaineTestGain CLAP + VST3 | 9.98 | 10.67 |
-| 2 × SaineTestGain CLAP | 10.03 | 10.79 |
+| DStudioTestGain CLAP + VST3 | 9.98 | 10.67 |
+| 2 × DStudioTestGain CLAP | 10.03 | 10.79 |
 
 ≈ 105 ns per plugin call including our input/output copies and event/
 transport setup (~0.2 % of the deadline for 64 inserts). The audio, MIDI and
 input tables were unchanged by the plugin work within run-to-run noise
 (e.g. audio 1.02 / 3.28 / 12.41 µs vs 1.03 / 3.34 / 12.59 µs before).
 
-Delay compensation (32 audio tracks × 4 clips, one SaineTestLatency insert
+Delay compensation (32 audio tracks × 4 clips, one DStudioTestLatency insert
 of N frames on track 1; same machine and run):
 
 | N / PDC | avg µs/block | p99 |

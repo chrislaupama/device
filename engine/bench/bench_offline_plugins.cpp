@@ -5,9 +5,9 @@
 // shows what the main thread is held for (the longest single call) next to what the worker spends.
 // Prints measurements only; no pass/fail thresholds.
 //
-// usage: saine_offline_plugin_bench [runs=9]
+// usage: dstudio_offline_plugin_bench [runs=9]
 #include "platform/os.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <algorithm>
 #include <chrono>
@@ -108,12 +108,12 @@ double median(std::vector<double> v) {
 
 int main(int argc, char** argv) {
     const int runs = argc > 1 ? std::atoi(argv[1]) : 9;
-    const std::string dir = SAINE_TEST_PLUGIN_DIR;
+    const std::string dir = DSTUDIO_TEST_PLUGIN_DIR;
     std::vector<float> l(kFrames);
     for (uint32_t i = 0; i < kFrames; ++i) l[i] = static_cast<float>(0.3 * std::sin(2 * std::numbers::pi * 220.0 * i / kRate));
-    const std::string wav = saine::os::path_to_utf8(std::filesystem::temp_directory_path() / "saine_offline_plugin_bench.wav");
+    const std::string wav = dstudio::os::path_to_utf8(std::filesystem::temp_directory_path() / "dstudio_offline_plugin_bench.wav");
     {
-        std::FILE* f = saine::os::fopen_utf8(wav.c_str(), "wb");
+        std::FILE* f = dstudio::os::fopen_utf8(wav.c_str(), "wb");
         if (!f) return 1;
         const uint32_t data = kFrames * 4;
         auto u32 = [&](uint32_t v) { std::fwrite(&v, 4, 1, f); };
@@ -124,11 +124,11 @@ int main(int argc, char** argv) {
         std::fclose(f);
     }
     std::vector<Chain> chains = {{"no plugins", {}}};
-    chains.push_back({"CLAP gain + VST3 gain", {device(10, SE_PLUGIN_CLAP, "studio.saine.test.gain", dir + "/SaineTestGain.clap"), device(11, SE_PLUGIN_VST3, "5A17E5A16E0000018A1E7E576A170001", dir + "/SaineTestGain.vst3")}});
+    chains.push_back({"CLAP gain + VST3 gain", {device(10, SE_PLUGIN_CLAP, "studio.dstudio.test.gain", dir + "/DStudioTestGain.clap"), device(11, SE_PLUGIN_VST3, "5A17E5A16E0000018A1E7E576A170001", dir + "/DStudioTestGain.vst3")}});
 #if defined(__APPLE__)
     chains.push_back({"AUMatrixReverb + AUDelay + AULowpass", {device(10, SE_PLUGIN_AU, "aufx mrev appl", ""), device(11, SE_PLUGIN_AU, "aufx dely appl", ""), device(12, SE_PLUGIN_AU, "aufx lpas appl", "")}});
 #endif
-    std::printf("saine_offline_plugin_bench: 8 s (4 bars at 120 BPM) rendered in %u-frame chunks on a worker, median of %d runs\n", kChunk, runs);
+    std::printf("dstudio_offline_plugin_bench: 8 s (4 bars at 120 BPM) rendered in %u-frame chunks on a worker, median of %d runs\n", kChunk, runs);
     std::printf("%-40s %14s %14s %12s %14s %12s\n", "chain", "prepare total", "prepare max", "worker", "destroy (main)", "x real time");
     for (const Chain& c : chains) {
         std::vector<double> pt, pm, w, d;

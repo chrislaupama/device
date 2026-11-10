@@ -12,7 +12,7 @@ namespace {
 constexpr double kRate = 48000.0;
 
 std::vector<float> defaults_of(const char* id) {
-    const saine::BuiltinDescriptor* d = saine::find_builtin(id);
+    const dstudio::BuiltinDescriptor* d = dstudio::find_builtin(id);
     if (d == nullptr || d->defaults.size() != d->params.size()) {
         std::fprintf(stderr, "no defaults for %s\n", id);
         std::abort();
@@ -277,7 +277,7 @@ TEST_CASE(flanger_thru_zero_delays_the_dry_path) {
     const auto out = r.run_mono(impulse(4800, 1.0f, 100));
     CHECK_EQ(argmax(out), static_cast<std::size_t>(148));
     float dry = 0.0f, wet = 0.0f;
-    saine::dsp::mix_gains(0.5f, -0.15f, dry, wet);
+    dstudio::dsp::mix_gains(0.5f, -0.15f, dry, wet);
     CHECK_NEAR(out[148], dry + 1.318f * wet, 1e-3);
 }
 

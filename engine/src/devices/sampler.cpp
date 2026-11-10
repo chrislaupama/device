@@ -11,7 +11,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace saine {
+namespace dstudio {
 namespace {
 
 using namespace sampler;
@@ -311,4 +311,4 @@ std::unique_ptr<BuiltinProcessor> create_sampler() { return std::make_unique<Sam
 extern const BuiltinDescriptor kSamplerDescriptor;
 const BuiltinDescriptor kSamplerDescriptor{"sampler-steam", kParamIds, kReadoutIds, &create_sampler, kIdleReadouts, kDefaults, true, 1};
 
-} // namespace saine
+} // namespace dstudio

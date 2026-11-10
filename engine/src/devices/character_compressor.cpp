@@ -1,5 +1,5 @@
 // Character Compressor: six circuit models on one feed-forward core.
-// Parameters in the order of saine_core::builtin::character_compressor
+// Parameters in the order of dstudio_core::builtin::character_compressor
 // (checked by a Rust test).
 //
 // Signal flow per sample (base rate unless noted):
@@ -9,7 +9,7 @@
 //                 optional M/S, SC high-pass and SC EQ; peak (Clean, Bus VCA,
 //                 FET) or RMS (Vari-Mu 5 ms, Opto 10 ms, RMS VCA 20 ms) level
 //   stereo link   per-channel levels pulled towards the louder one (dB)
-//   static curve  the model's law (same as saine_core character_transfer),
+//   static curve  the model's law (same as dstudio_core character_transfer),
 //                 limited by Range
 //   ballistics    gain reduction smoothed in dB: attack / release / hold
 //                 (Clean, Vari-Mu, Bus VCA, FET), Adapt = program-dependent
@@ -28,7 +28,7 @@
 #include <atomic>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -83,7 +83,7 @@ constexpr const char* kReadoutIds[kReadoutCount] = {"in_db", "out_db", "gr_db", 
 constexpr float kMaxLookaheadMs = 20.0f;
 
 // ---------------------------------------------------------------- static curves
-// The laws of saine_core::builtin::character_transfer (kept in step by
+// The laws of dstudio_core::builtin::character_transfer (kept in step by
 // test_character_compressor.cpp, which checks values computed in Rust).
 
 inline float slope_of(float ratio) noexcept { return ratio >= 29.5f ? -1.0f : 1.0f / std::max(ratio, 1.0f) - 1.0f; }
@@ -566,7 +566,7 @@ std::unique_ptr<BuiltinProcessor> create_character_compressor() { return std::ma
 
 extern const BuiltinDescriptor kCharacterCompressorDescriptor;
 constexpr float kIdleReadouts[] = {-120.0f, -120.0f, 0.0f, 0.0f}; // silent in / out, no reduction, no rider gain
-// Defaults of saine_core::builtin::character_compressor, registry order.
+// Defaults of dstudio_core::builtin::character_compressor, registry order.
 constexpr float kDefaults[kParamCount] = {
     0.f, -18.f, 4.f,  6.f,   10.f,   200.f, 0.f, 0.f, 24.f, 1.f, 100.f, 0.f, 0.f, 0.f, 0.f, 100.f, //
     0.f, 0.f,   0.f,  80.f,  1000.f, 0.f,   1.f, 0.f, 0.f,  0.f, 50.f,  8.f, 0.f,                   //
@@ -575,4 +575,4 @@ constexpr float kDefaults[kParamCount] = {
 const BuiltinDescriptor kCharacterCompressorDescriptor{"character-compressor", kParamIds, kReadoutIds, &create_character_compressor,
                                                        kIdleReadouts, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

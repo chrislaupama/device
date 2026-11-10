@@ -6,10 +6,10 @@ using namespace testutil;
 
 TEST_CASE(asset_release_while_referenced_keeps_audio_alive) {
     EngineHandle e(48000, 128);
-    const int64_t base = saine::Asset::live_count();
+    const int64_t base = dstudio::Asset::live_count();
     const auto src = ramp(4000);
     const uint64_t a = load_asset(e, {src});
-    CHECK_EQ(saine::Asset::live_count(), base + 1);
+    CHECK_EQ(dstudio::Asset::live_count(), base + 1);
 
     Session s;
     s.add_track(1, {clip(1, a, 0, 0, 4000)}, 1.0f, -1.0f);
@@ -22,7 +22,7 @@ TEST_CASE(asset_release_while_referenced_keeps_audio_alive) {
     se_asset_info info{};
     CHECK_EQ(se_asset_get_info(e, a, &info), SE_ERR_NOT_FOUND);
     CHECK_EQ(se_asset_release(e, a), SE_ERR_NOT_FOUND); // double release
-    CHECK_EQ(saine::Asset::live_count(), base + 1);     // still alive: graph holds it
+    CHECK_EQ(dstudio::Asset::live_count(), base + 1);     // still alive: graph holds it
 
     // Audio keeps playing correctly from the released asset.
     const auto out = render(e, 256, 100);
@@ -36,7 +36,7 @@ TEST_CASE(asset_release_while_referenced_keeps_audio_alive) {
     // idle (no render in flight), so reclamation frees it immediately.
     Session empty;
     REQUIRE(empty.publish(e) == SE_OK);
-    CHECK_EQ(saine::Asset::live_count(), base);
+    CHECK_EQ(dstudio::Asset::live_count(), base);
 }
 
 TEST_CASE(retired_graphs_reclaimed_off_rt_thread) {
@@ -49,16 +49,16 @@ TEST_CASE(retired_graphs_reclaimed_off_rt_thread) {
         render(e, 64, 64);
     }
     // With the RT path idle every retired graph is reclaimed at publish time.
-    const int64_t before = saine::Asset::live_count();
+    const int64_t before = dstudio::Asset::live_count();
     REQUIRE(se_asset_release(e, a) == SE_OK);
-    CHECK_EQ(saine::Asset::live_count(), before); // current graph still holds it
+    CHECK_EQ(dstudio::Asset::live_count(), before); // current graph still holds it
     Session empty;
     REQUIRE(empty.publish(e) == SE_OK);
-    CHECK_EQ(saine::Asset::live_count(), before - 1);
+    CHECK_EQ(dstudio::Asset::live_count(), before - 1);
 }
 
 TEST_CASE(engine_destroy_frees_everything) {
-    const int64_t base = saine::Asset::live_count();
+    const int64_t base = dstudio::Asset::live_count();
     {
         EngineHandle e;
         const uint64_t a = load_asset(e, {constant(100, 0.1f)});
@@ -67,7 +67,7 @@ TEST_CASE(engine_destroy_frees_everything) {
         s.add_track(1, {clip(1, a, 0, 0, 100), clip(2, b, 0, 0, 100)});
         REQUIRE(s.publish(e) == SE_OK);
         REQUIRE(s.publish(e) == SE_OK);
-        CHECK_EQ(saine::Asset::live_count(), base + 2);
+        CHECK_EQ(dstudio::Asset::live_count(), base + 2);
     }
-    CHECK_EQ(saine::Asset::live_count(), base);
+    CHECK_EQ(dstudio::Asset::live_count(), base);
 }
