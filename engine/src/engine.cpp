@@ -14,6 +14,7 @@
 #include <map>
 #include <numbers>
 #include <thread>
+#include <tuple>
 
 namespace saine {
 
@@ -47,7 +48,7 @@ int64_t floor_mod(int64_t a, int64_t m) noexcept {
 
 Engine::Engine(double sample_rate, uint32_t max_block, uint32_t channels)
     : sample_rate_(sample_rate), max_block_(max_block), channels_(channels), plugins_(sample_rate, max_block),
-      live_ctx_(max_block) {
+      live_ctx_(max_block), warp_renderer_(sample_rate, max_block) {
     // Preallocated here so neither se_metronome_set nor the callback allocates.
     const auto len = static_cast<std::size_t>(std::llround(0.015 * sample_rate));
     click_down_ = make_click(sample_rate, 1200.0, len);
@@ -326,6 +327,21 @@ int32_t Engine::asset_compute_peaks(uint64_t id, uint64_t start_frame, uint32_t 
     return SE_OK;
 }
 
+int32_t Engine::asset_detect_onsets(uint64_t id, se_onset* out, std::size_t capacity, std::size_t* out_count) const {
+    AssetRef asset;
+    {
+        std::lock_guard lock(assets_mutex_);
+        auto it = assets_.find(id);
+        if (it == assets_.end()) return SE_ERR_NOT_FOUND;
+        asset = it->second;
+    }
+    std::vector<se_onset> found;
+    detect_onsets(*asset, sample_rate_, found);
+    if (out != nullptr) std::copy_n(found.begin(), std::min(capacity, found.size()), out);
+    if (out_count != nullptr) *out_count = found.size();
+    return SE_OK;
+}
+
 // ============================================================ session
 
 int32_t Engine::publish(const se_session_desc& desc, std::string& err) {
@@ -401,14 +417,23 @@ int32_t Engine::publish(const se_session_desc_v5& desc, std::string& err) {
 }
 
 int32_t Engine::publish(const se_session_desc_v6& desc, std::string& err) {
+    se_session_desc_v7 d7{};
+    d7.v6 = desc;
+    return publish(d7, err);
+}
+
+int32_t Engine::publish(const se_session_desc_v7& desc7, std::string& err) {
+    const se_session_desc_v6& desc = desc7.v6;
     std::unique_ptr<RenderGraph> built;
     const AssetLookup lookup = [this](uint64_t id) -> AssetRef {
         std::lock_guard lock(assets_mutex_);
         auto it = assets_.find(id);
         return it == assets_.end() ? nullptr : it->second;
     };
-    const int32_t rc = build_render_graph(desc, lookup, built, err);
+    const int32_t rc = build_render_graph(desc7, lookup, built, err);
     if (rc != SE_OK) return rc;
+    built->sample_rate = sample_rate_;
+    warp_renderer_.resolve(*built);
     // Resolve plugin instances (instantiating new device ids on this, the
     // main, thread), in the order build_render_graph created the slots.
     std::lock_guard plock(plugins_.mutex());
@@ -541,6 +566,29 @@ uint64_t Engine::install_graph(std::unique_ptr<RenderGraph> built) {
         next->synth_refs[i] = std::move(synth);
     }
 
+    // Warp voices: keep the current graph's voice for the same slot (track,
+    // slot, channels), so a clip keeps stretching across republishes.
+    {
+        std::map<std::tuple<uint64_t, uint32_t, uint32_t>, std::shared_ptr<WarpVoice>> previous_voices;
+        if (current_)
+            for (std::size_t i = 0; i < current_->warp_voice_keys.size(); ++i) {
+                const WarpVoiceKey& k = current_->warp_voice_keys[i];
+                if (current_->warp_voice_refs[i]) previous_voices.emplace(std::make_tuple(k.track_id, k.slot, k.channels), current_->warp_voice_refs[i]);
+            }
+        for (std::size_t i = 0; i < next->warp_voice_keys.size(); ++i) {
+            const WarpVoiceKey& k = next->warp_voice_keys[i];
+            std::shared_ptr<WarpVoice> voice;
+            if (auto it = previous_voices.find(std::make_tuple(k.track_id, k.slot, k.channels)); it != previous_voices.end()) {
+                voice = std::move(it->second);
+                previous_voices.erase(it);
+            } else {
+                voice = std::make_shared<WarpVoice>(sample_rate_, k.channels, max_block_);
+            }
+            next->warp_voices[i] = voice.get();
+            next->warp_voice_refs[i] = std::move(voice);
+        }
+    }
+
     // Delay lines: keep the current graph's line for the same track / device
     // (so delays continue across republishes) when it is big enough;
     // allocate the others here, never on the RT side.
@@ -586,6 +634,7 @@ uint64_t Engine::install_graph(std::unique_ptr<RenderGraph> built) {
     if (current_) retired_.push_back(std::move(current_));
     current_ = std::move(next);
     reclaim_locked();
+    warp_renderer_.evict(*current_);
     return seq;
 }
 
@@ -859,8 +908,13 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
         transport.sample_rate = sample_rate_;
         transport.tempo_bpm = rt_tempo_fpb_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpb_ : 120.0;
         DelayLine* const* const lines = graph != nullptr && !graph->lines.empty() ? graph->lines.data() : nullptr;
-        const InstrumentInputs inst{graph != nullptr ? graph->synths.data() : nullptr, rt_synth_gen_, &transport,
-                                    lines, rt_pdc_gen_, &rt_history_};
+        const InstrumentInputs inst{graph != nullptr ? graph->synths.data() : nullptr,
+                                    rt_synth_gen_,
+                                    &transport,
+                                    lines,
+                                    rt_pdc_gen_,
+                                    &rt_history_,
+                                    graph != nullptr && !graph->warp_voices.empty() ? graph->warp_voices.data() : nullptr};
         const BlockPeaks p = render_block(graph, rt_position_, rt_playing_, n, live_ctx_, true, slot, inst, iv);
         rt_history_.append(rt_position_, n, rt_playing_);
         // The performer hears the mix L (delay compensation) + output latency
@@ -1222,8 +1276,17 @@ int32_t Engine::export_wav(const char* path, int64_t start_frame, int64_t end_fr
     transport.sample_rate = sample_rate_;
     transport.playing = true;
     transport.tempo_bpm = rt_tempo_fpb_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpb_ : 120.0;
+    // Warped clips: private stretch voices (the live ones keep their state).
+    std::vector<std::unique_ptr<WarpVoice>> own_voices;
+    std::vector<WarpVoice*> voice_ptrs;
+    if (graph)
+        for (const WarpVoiceKey& k : graph->warp_voice_keys) {
+            own_voices.push_back(std::make_unique<WarpVoice>(sample_rate_, k.channels, max_block_));
+            voice_ptrs.push_back(own_voices.back().get());
+        }
     InstrumentInputs inst{synth_ptrs.empty() ? nullptr : synth_ptrs.data(), plugins ? rt_synth_gen_ : 0,
                           plugins ? &transport : nullptr, line_ptrs.empty() ? nullptr : line_ptrs.data(), 0};
+    inst.warp_voices = voice_ptrs.empty() ? nullptr : voice_ptrs.data();
     ScopedFlushDenormals ftz;
     const int64_t render_end = end_frame + pdc_total;
     const int64_t first_kept = start_frame + pdc_total;
@@ -1296,6 +1359,7 @@ void Engine::plugin_idle() {
     std::lock_guard lock(plugins_.mutex());
     plugins_.idle(rt_active_seq_.load(std::memory_order_seq_cst));
     if (plugins_.service_latencies()) replan_pdc_locked();
+    if (warp_renderer_.take_finished()) attach_warp_renders_locked();
     // CLAP parameter flushes requested while nothing processes: run them
     // here with the RT path held (a running device or offline render
     // processes the plugin instead, which delivers the same events).
@@ -1438,6 +1502,18 @@ void Engine::replan_pdc_locked() {
     if (!current) return;
     auto next = clone_render_graph(*current);
     plan_pdc(*next);
+    install_graph(std::move(next));
+}
+
+void Engine::attach_warp_renders_locked() {
+    std::shared_ptr<RenderGraph> current;
+    {
+        std::lock_guard lock(control_mutex_);
+        current = current_;
+    }
+    if (!current) return;
+    auto next = clone_render_graph(*current);
+    warp_renderer_.resolve(*next);
     install_graph(std::move(next));
 }
 

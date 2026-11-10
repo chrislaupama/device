@@ -858,6 +858,118 @@ int32_t se_session_publish_v6(se_engine* engine, const se_session_desc_v6* sessi
  * timeline frames with the engine's evaluation code. Any thread. */
 int32_t se_automation_eval(const se_auto_lane_desc* lane, const int64_t* frames, size_t count, float* out_values);
 
+/* ---- audio clip warping (ABI v1 addition) --------------------------------
+ * See engine/README.md ("Clip warping").
+ *
+ * se_session_publish_v7 is a superset of se_session_publish_v6: the session
+ * carries v6 unchanged plus a list of warped clips. A clip listed there
+ * (by clip_id, which must name a clip of the session, once) is no longer
+ * played 1:1 from its asset: its timeline_start and length still give the
+ * timeline frames it covers (length is NOT clamped to the asset, and
+ * source_offset is ignored), and the warp map gives the source position of
+ * every timeline frame. Clips not listed play as in v6.
+ *
+ * Warp map: points (timeline frame, source frame at the engine rate,
+ * fractional) with strictly increasing frames and sources, at least two.
+ * source(t) is linear between points and extends the first / last segment
+ * beyond them.
+ *
+ * Modes:
+ *   SE_WARP_REPITCH          varispeed: reads source(t) with band-limited
+ *                            interpolation, so pitch follows the local rate.
+ *                            transpose is ignored.
+ *   SE_WARP_SLICE            transient slicing for drums: each slice (from
+ *                            slices[k].source to the next slice or the asset
+ *                            end) starts at the timeline frame where the map
+ *                            reaches its source and plays at the transpose
+ *                            rate (2^(transpose/12)), with a 2 ms fade where it
+ *                            runs out and a 2 ms crossfade where the next slice
+ *                            cuts it.
+ *   SE_WARP_STRETCH          phase-vocoder time stretch (signalsmith-stretch)
+ *                            following the map, pitch kept, then transposed.
+ *   SE_WARP_STRETCH_FORMANT  SE_WARP_STRETCH with formant compensation, so a
+ *                            transposed voice keeps its character.
+ *   SE_WARP_AUTO             per passage: slices flagged percussive play as
+ *                            SE_WARP_SLICE, the others as SE_WARP_STRETCH, with
+ *                            a 3 ms crossfade where the choice changes.
+ * The stretch modes run on per-track voices the engine allocates at publish
+ * time and keeps across republishes; rendering never allocates or locks.
+ * A voice restarts (aligned, without pre-roll latency) at a clip start,
+ * whenever playback jumps, and when a republished map moves the source under
+ * it. Meanwhile a background thread renders each stretch-mode clip ahead of
+ * time (renders are reused for any clip with the same asset, mode, transpose,
+ * map and slices relative to its start, so moving a clip or changing its gain
+ * keeps them); se_plugin_idle swaps a finished render in, after which the clip
+ * plays it at the cost of a copy (crossfading from the voice over one block
+ * when it is playing). se_export_wav uses the renders that are attached and
+ * private voices for the rest. Validation (else SE_ERR_INVALID_ARG): mode <= SE_WARP_AUTO,
+ * transpose finite in -48..48, point and slice arrays non-NULL when counted,
+ * point_count >= 2, frames strictly increasing, sources finite and strictly
+ * increasing, slice sources finite and strictly increasing, clip ids known
+ * and unique. */
+enum {
+    SE_WARP_REPITCH = 0,
+    SE_WARP_SLICE = 1,
+    SE_WARP_STRETCH = 2,
+    SE_WARP_STRETCH_FORMANT = 3,
+    SE_WARP_AUTO = 4
+};
+
+typedef struct se_warp_point {
+    int64_t frame;  /* timeline frame */
+    double source;  /* source frame (engine rate, fractional) */
+} se_warp_point;    /* 16 bytes, align 8 */
+
+typedef struct se_warp_slice {
+    double source;      /* source frame where the slice starts (a transient) */
+    uint8_t percussive; /* SE_WARP_AUTO: play this slice by slicing */
+    uint8_t _pad[7];
+} se_warp_slice;        /* 16 bytes, align 8 */
+
+typedef struct se_clip_warp_desc {
+    uint64_t clip_id;
+    uint8_t mode;     /* SE_WARP_* */
+    uint8_t _pad[3];
+    float transpose;  /* semitones */
+    const se_warp_point* points;
+    uint32_t point_count;
+    uint32_t slice_count;
+    const se_warp_slice* slices; /* SE_WARP_SLICE / SE_WARP_AUTO, sorted by source */
+} se_clip_warp_desc; /* 40 bytes, align 8 */
+
+typedef struct se_session_desc_v7 {
+    se_session_desc_v6 v6;
+    const se_clip_warp_desc* warps;
+    uint32_t warp_count;
+    uint32_t _pad;
+} se_session_desc_v7; /* 48 bytes, align 8 */
+
+/* MAIN THREAD (like se_session_publish_v5). */
+int32_t se_session_publish_v7(se_engine* engine, const se_session_desc_v7* session);
+
+/* Warp renders queued or running (0 = every stretch-mode clip of the latest
+ * publish has its render; call se_plugin_idle to attach finished ones). Any
+ * thread. */
+int32_t se_warp_renders_pending(const se_engine* engine, size_t* out_count);
+
+/* Transient (onset) detection on a loaded asset, for warp markers and
+ * slicing. Spectral-flux onsets with adaptive peak picking, each moved to
+ * the start of its attack. strength: 0..1 relative to the strongest onset.
+ * percussive: the audio from this onset to the next decays like a hit (its
+ * tail sits at least 12 dB under its attack; smoothed over neighbours).
+ * Writes up to `capacity` onsets sorted by frame (engine-rate frames);
+ * *out_count = total found. CPU-bound: call from a worker thread, never
+ * from the audio thread. Unknown asset -> SE_ERR_NOT_FOUND. */
+typedef struct se_onset {
+    int64_t frame;
+    float strength;
+    uint8_t percussive;
+    uint8_t _pad[3];
+} se_onset; /* 16 bytes, align 8 */
+
+int32_t se_asset_detect_onsets(se_engine* engine, uint64_t asset_id, se_onset* out, size_t capacity,
+                               size_t* out_count);
+
 /* ---- plugin parameters ---------------------------------------------------
  * MAIN THREAD, i.e. the thread that publishes sessions (VST3/CLAP parameter
  * queries are main-thread APIs; like se_session_publish_v5 this is not
