@@ -16,7 +16,7 @@ fn doc() -> (Document, ClipId, AssetId) {
     let asset = Asset { id: AssetId(0), relative_path: None, absolute_path: "/nonexistent/loop.wav".into(), sample_rate: 44_100.0, channels: 2, frames: 44_100 * 8 };
     d.execute(Command::AddAsset { asset }, Origin::User).unwrap();
     let a = d.project().assets[0].id;
-    let clip = Clip { id: ClipId(0), asset: a, name: "loop".into(), start: PPQ * 4, source_offset: 0, source_length: 44_100 * 4, gain: 1.0, warp: ClipWarp::default(), disabled: false };
+    let clip = Clip { id: ClipId(0), asset: a, name: "loop".into(), start: PPQ * 4, source_offset: 0, source_length: 44_100 * 4, gain: 1.0, warp: ClipWarp::default(), disabled: false, clip_loop: None };
     d.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
     let id = d.project().tracks[0].clips[0].id;
     (d, id, a)
@@ -405,3 +405,31 @@ fn sliding_a_marker_keeps_its_beat_and_stays_between_neighbours() {
     assert!(!w.slide_marker(12_345, 20_000), "no marker there");
     assert_eq!(w.markers[1].source, 50_000);
 }
+
+#[test]
+fn looped_clip_snapshot_carries_its_loop_in_content_frames() {
+    let (mut d, c, a) = doc();
+    // 4 s of source at 120 BPM: 8 beats of content. Loop beats 2..4 over a 16-beat clip.
+    let l = AudioLoop { on: true, start: 2 * PPQ, end: 4 * PPQ, length: 16 * PPQ };
+    d.execute(Command::SetClipLoop { clip: c, clip_loop: Some(l) }, Origin::User).unwrap();
+    assert_eq!(d.project().clip_length_ticks(d.project().clip(c).unwrap()), 16 * PPQ);
+    assert_eq!(d.undo_label().as_deref(), Some("Clip Loop"));
+    let (s, _) = snapshot::build(d.project(), RATE, &HashMap::from([(a, 7)]));
+    let cs = &s.tracks[0].clips[0];
+    assert_eq!((cs.length, cs.clip_loop), (8 * 48_000, Some((48_000, 2 * 48_000))));
+    // Warped, the loop stays in content frames; the map keeps the content's slope.
+    let mut w = warp(&d, c);
+    w.enabled = true;
+    set(&mut d, c, w, "warp");
+    let (s, _) = snapshot::build_with_transients(d.project(), RATE, &HashMap::from([(a, 7)]), &HashMap::new());
+    let cs = &s.tracks[0].clips[0];
+    let pts = &cs.warp.as_ref().unwrap().points;
+    assert_eq!((cs.length, cs.clip_loop), (8 * 48_000, Some((48_000, 2 * 48_000))));
+    assert_eq!(pts.last().unwrap().0 - pts[0].0, 4 * 48_000);
+    // Off: plays the content once; undo removes the loop.
+    d.execute(Command::SetClipLoop { clip: c, clip_loop: Some(AudioLoop { on: false, ..l }) }, Origin::User).unwrap();
+    let (s, _) = snapshot::build(d.project(), RATE, &HashMap::from([(a, 7)]));
+    assert_eq!((s.tracks[0].clips[0].length, s.tracks[0].clips[0].clip_loop), (4 * 48_000, None));
+    assert!(d.execute(Command::SetClipLoop { clip: c, clip_loop: Some(AudioLoop { end: 0, ..l }) }, Origin::User).is_err());
+}
+

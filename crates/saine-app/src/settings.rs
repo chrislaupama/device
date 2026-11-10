@@ -464,7 +464,7 @@ impl Controller {
                 pan: 0.0,
                 mute: false,
                 solo: false,
-                clips: vec![ClipSnapshot { clip_id: TONE_TRACK_ID, engine_asset: info.asset_id, timeline_start: pos, source_offset: 0, length: info.frames as i64, gain: 1.0, warp: None }],
+                clips: vec![ClipSnapshot { clip_id: TONE_TRACK_ID, engine_asset: info.asset_id, timeline_start: pos, source_offset: 0, length: info.frames as i64, gain: 1.0, warp: None, clip_loop: None }],
                 instrument: false,
                 notes: vec![],
                 arm: false,

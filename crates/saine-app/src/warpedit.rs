@@ -638,7 +638,7 @@ mod tests {
         for &(s, b) in markers {
             assert!(warp.set_marker(s, b));
         }
-        saine_core::Clip { id: saine_core::ClipId(1), asset: saine_core::AssetId(1), name: String::new(), start: 0, source_offset: 0, source_length: 4 * 48_000, gain: 1.0, warp, disabled: false }
+        saine_core::Clip { id: saine_core::ClipId(1), asset: saine_core::AssetId(1), name: String::new(), start: 0, source_offset: 0, source_length: 4 * 48_000, gain: 1.0, warp, disabled: false, clip_loop: None }
     }
 
     #[test]

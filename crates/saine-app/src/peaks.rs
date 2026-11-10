@@ -118,13 +118,42 @@ pub fn wave_segments(p: &Project, clip: &Clip, engine_rate: f64) -> Vec<WaveSeg>
         .map(|w| WaveSeg { beats: (beat(w[0]), beat(w[1])), frames: (w[0] * ratio, w[1] * ratio) })
         .filter(|s| s.beats.1 > s.beats.0)
         .collect();
-    if !clip.warp.reverse {
-        return segs;
+    let segs = if clip.warp.reverse {
+        // Reversed: the engine's back-to-front copy, read along the mirrored pieces.
+        let len = segs.last().map_or(0.0, |s| s.beats.1);
+        let frames = p.asset(clip.asset).map_or(0.0, |a| a.frames as f64 * ratio);
+        segs.iter().rev().map(|s| WaveSeg { beats: (len - s.beats.1, len - s.beats.0), frames: (frames - s.frames.1, frames - s.frames.0) }).collect()
+    } else {
+        segs
+    };
+    match clip.clip_loop.filter(|l| l.on) {
+        Some(l) => unroll(&segs, l.start as f64 / PPQ as f64, l.end as f64 / PPQ as f64, l.length as f64 / PPQ as f64),
+        None => segs,
     }
-    // Reversed: the engine's back-to-front copy, read along the mirrored pieces.
-    let len = segs.last().map_or(0.0, |s| s.beats.1);
-    let frames = p.asset(clip.asset).map_or(0.0, |a| a.frames as f64 * ratio);
-    segs.iter().rev().map(|s| WaveSeg { beats: (len - s.beats.1, len - s.beats.0), frames: (frames - s.frames.1, frames - s.frames.0) }).collect()
+}
+
+/// The pieces of a looping clip: the content to the loop end, then the loop's pieces again
+/// and again until the clip ends (the engine's clip_content).
+fn unroll(segs: &[WaveSeg], start: f64, end: f64, length: f64) -> Vec<WaveSeg> {
+    let end = end.min(segs.last().map_or(0.0, |s| s.beats.1));
+    let cut = |a: f64, b: f64, shift: f64| {
+        segs.iter().filter(move |s| s.beats.1 > a && s.beats.0 < b).map(move |s| {
+            let f = |x: f64| s.frames.0 + (s.frames.1 - s.frames.0) * (x - s.beats.0) / (s.beats.1 - s.beats.0);
+            let (x0, x1) = (s.beats.0.max(a), s.beats.1.min(b));
+            WaveSeg { beats: (x0 + shift, x1 + shift), frames: (f(x0), f(x1)) }
+        })
+    };
+    let mut out: Vec<WaveSeg> = cut(0.0, end.min(length), 0.0).collect();
+    let period = end - start;
+    if period <= 0.0 {
+        return out;
+    }
+    let mut at = end;
+    while at < length {
+        out.extend(cut(start, start + (length - at).min(period), at - start));
+        at += period;
+    }
+    out
 }
 
 /// Wave instances for `segs`: `x_of` maps clip-relative beats to logical x,
@@ -167,7 +196,7 @@ mod tests {
         let mut p = Project::default();
         p.transport.bpm = 120.0;
         p.assets.push(Asset { id: AssetId(0), relative_path: None, absolute_path: "/nonexistent/loop.wav".into(), sample_rate: 44_100.0, channels: 2, frames: 8 * 44_100 });
-        let clip = Clip { id: ClipId(1), asset: AssetId(0), name: String::new(), start: 0, source_offset: 0, source_length: 8 * 44_100, gain: 1.0, warp: warp.unwrap_or_default(), disabled: false };
+        let clip = Clip { id: ClipId(1), asset: AssetId(0), name: String::new(), start: 0, source_offset: 0, source_length: 8 * 44_100, gain: 1.0, warp: warp.unwrap_or_default(), disabled: false, clip_loop: None };
         (p, clip)
     }
 

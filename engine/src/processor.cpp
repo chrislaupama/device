@@ -371,17 +371,26 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             }
             const int64_t from = std::max(clip->timeline_start, block_start);
             const int64_t to = std::min(clip->timeline_end, block_end);
-            const auto out_off = static_cast<uint32_t>(from - block_start);
+            WarpVoice* voice = nullptr;
             if (clip->warp >= 0) {
                 const int32_t v = graph->warps[static_cast<std::size_t>(clip->warp)].voice;
-                WarpVoice* const voice = v >= 0 && inst.warp_voices != nullptr ? inst.warp_voices[v] : nullptr;
-                render_warped_clip(*graph, *clip, voice, from, to, tl + out_off, tr + out_off);
-                continue;
+                voice = v >= 0 && inst.warp_voices != nullptr ? inst.warp_voices[v] : nullptr;
             }
-            const auto n = static_cast<uint32_t>(to - from);
-            const int64_t src = clip->source_offset + (from - clip->timeline_start);
-            kernel_add_scaled(tl + out_off, clip->src_l + src, clip->gain, n);
-            kernel_add_scaled(tr + out_off, clip->src_r + src, clip->gain, n);
+            // One run per pass over the content (several when the loop wraps in this block).
+            for (int64_t at = from; at < to;) {
+                const int64_t c = clip_content(*clip, at - clip->timeline_start);
+                const int64_t n = clip->loop_end > 0 ? std::min(to - at, clip->loop_end - c) : to - at;
+                const auto out_off = static_cast<uint32_t>(at - block_start);
+                if (clip->warp >= 0) {
+                    const int64_t ct = clip->timeline_start + c;
+                    render_warped_clip(*graph, *clip, voice, ct, ct + n, tl + out_off, tr + out_off);
+                } else {
+                    const int64_t src = clip->source_offset + c;
+                    kernel_add_scaled(tl + out_off, clip->src_l + src, clip->gain, static_cast<uint32_t>(n));
+                    kernel_add_scaled(tr + out_off, clip->src_r + src, clip->gain, static_cast<uint32_t>(n));
+                }
+                at += n;
+            }
         }
         // Clips line up with the instrument plugin's (latent) output.
         if (src_line != nullptr) delay_track(src_line, track.pdc_src_delay);

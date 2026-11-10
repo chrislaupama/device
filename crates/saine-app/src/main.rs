@@ -105,6 +105,9 @@ struct Args {
     audio_clip_state: bool,
     /// review-warp: the audio clip state with drum hits, warped (Drums, 1.5x, one marker).
     warp_state: bool,
+    /// review-audio-clip-loop: review-warp with the clip looping its second quarter out to
+    /// twice its content.
+    audio_loop_state: bool,
     /// review-reverse: review-warp with the clip reversed.
     reverse_state: bool,
     /// review-warp-stereo: review-warp from a stereo file (hits on the left only).
@@ -294,10 +297,11 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.audio_clip_state = true;
                 }
-                s @ ("review-warp" | "review-reverse" | "review-warp-stereo") => {
+                s @ ("review-warp" | "review-reverse" | "review-warp-stereo" | "review-audio-clip-loop") => {
                     a.reference_default = true;
                     a.audio_clip_state = true;
                     a.warp_state = true;
+                    a.audio_loop_state = s == "review-audio-clip-loop";
                     a.reverse_state = s == "review-reverse";
                     a.stereo_state = s == "review-warp-stereo";
                 }
@@ -2166,6 +2170,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let ctl = ctl.clone();
         let warp = args.warp_state;
         let reverse = args.reverse_state;
+        let looped = args.audio_loop_state;
         let mut menu = args.clip_menu.filter(|_| warp);
         let mut edit = args.ac_edit.filter(|_| warp);
         // Selects the clip once, after the import lands; later tab changes are the user's.
@@ -2183,6 +2188,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 w.set_marker(0, 0.0);
                 w.set_marker(4 * 44_100, 9.0);
                 c.execute(saine_core::Command::SetClipWarp { clip: cl.id, warp: w, label: "Set clip speed".into() });
+            }
+            if let Some(cl) = c.ac_clip().filter(|cl| looped && cl.warp.enabled && cl.clip_loop.is_none()).cloned() {
+                let content = c.project().content_length_ticks(&cl);
+                let l = saine_core::model::AudioLoop { on: true, start: content / 4, end: content / 2, length: 2 * content };
+                c.execute(saine_core::Command::SetClipLoop { clip: cl.id, clip_loop: Some(l) });
             }
             // review-warp + --clip-menu: open the dropdown once the warped clip is shown.
             if c.ac_clip().is_some_and(|cl| cl.warp.enabled)

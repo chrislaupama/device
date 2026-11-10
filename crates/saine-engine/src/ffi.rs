@@ -532,6 +532,24 @@ pub struct se_session_desc_v7 {
     pub _pad: u32,
 }
 
+// ---- audio clip looping (se_session_publish_v8)
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct se_clip_loop_desc {
+    pub clip_id: u64,
+    pub loop_start: i64,
+    pub loop_end: i64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_session_desc_v8 {
+    pub v7: se_session_desc_v7,
+    pub loops: *const se_clip_loop_desc,
+    pub loop_count: u32,
+    pub _pad: u32,
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct se_onset {
@@ -783,6 +801,7 @@ unsafe extern "C" {
 
     // clip warping
     pub fn se_session_publish_v7(engine: *mut se_engine, session: *const se_session_desc_v7) -> i32;
+    pub fn se_session_publish_v8(engine: *mut se_engine, session: *const se_session_desc_v8) -> i32;
     pub fn se_warp_renders_pending(engine: *const se_engine, out_count: *mut usize) -> i32;
     pub fn se_asset_detect_onsets(engine: *mut se_engine, asset_id: u64, out: *mut se_onset, capacity: usize, out_count: *mut usize) -> i32;
     pub fn se_automation_eval(lane: *const se_auto_lane_desc, frames: *const i64, count: usize, out_values: *mut f32) -> i32;
@@ -1131,6 +1150,9 @@ mod abi_layout {
         );
         assert_eq!((size_of::<se_session_desc_v7>(), align_of::<se_session_desc_v7>()), (48, 8));
         assert_eq!([offset_of!(se_session_desc_v7, warps), offset_of!(se_session_desc_v7, warp_count)], [32, 40]);
+        assert_eq!((size_of::<se_clip_loop_desc>(), align_of::<se_clip_loop_desc>()), (24, 8));
+        assert_eq!((size_of::<se_session_desc_v8>(), align_of::<se_session_desc_v8>()), (64, 8));
+        assert_eq!([offset_of!(se_session_desc_v8, loops), offset_of!(se_session_desc_v8, loop_count)], [48, 56]);
         assert_eq!([offset_of!(se_onset, strength), offset_of!(se_onset, percussive)], [8, 12]);
         assert_eq!((size_of::<se_plugin_param_info>(), align_of::<se_plugin_param_info>()), (272, 4));
         assert_eq!(

@@ -219,6 +219,8 @@ enum Drag {
     Move { clip: ClipId, grab_beats: f64, orig_track: TrackId, orig_start: Ticks, track: TrackId, start: Ticks },
     TrimLeft { clip: ClipId, orig: (Ticks, u64, u64), cur: (Ticks, u64, u64) },
     TrimRight { clip: ClipId, orig: (Ticks, u64, u64), cur: (Ticks, u64, u64) },
+    /// Right edge of a looping audio clip: its looped length.
+    LoopRight { clip: ClipId, start: Ticks, orig: Ticks, cur: Ticks },
     /// MIDI clip edges: (start, length) in ticks.
     MidiLeft { clip: ClipId, orig: (Ticks, Ticks), cur: (Ticks, Ticks) },
     MidiRight { clip: ClipId, orig: (Ticks, Ticks), cur: (Ticks, Ticks) },
@@ -1135,7 +1137,7 @@ impl Controller {
         let clip_id = ClipId(alloc());
         cmds.push(Command::AddClip {
             track: track_id,
-            clip: Clip { id: clip_id, asset: asset_id, name, start: at.max(0), source_offset: 0, source_length: native_frames, gain: 1.0, warp: Default::default(), disabled: false },
+            clip: Clip { id: clip_id, asset: asset_id, name, start: at.max(0), source_offset: 0, source_length: native_frames, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None },
         });
         // Engine asset must be known before the snapshot is published.
         self.peaks.insert(info.asset_id, pyr);
@@ -1324,7 +1326,10 @@ impl Controller {
                         self.drag = Some(match zone {
                             Zone::Body => Drag::Move { clip: id, grab_beats: beat - start as f64 / PPQ as f64, orig_track: track, orig_start: start, track, start },
                             Zone::Left => Drag::TrimLeft { clip: id, orig: (start, off, len), cur: (start, off, len) },
-                            Zone::Right => Drag::TrimRight { clip: id, orig: (start, off, len), cur: (start, off, len) },
+                            Zone::Right => match self.project().clip(id).and_then(|c| c.clip_loop).filter(|l| l.on) {
+                                Some(l) => Drag::LoopRight { clip: id, start, orig: l.length, cur: l.length },
+                                None => Drag::TrimRight { clip: id, orig: (start, off, len), cur: (start, off, len) },
+                            },
                         });
                     }
                     Hit::Track(i) => {
@@ -1397,6 +1402,10 @@ impl Controller {
                         let end = snap(beat).max(orig.0 + PPQ);
                         self.drag = Some(Drag::MidiRight { clip, orig, cur: (orig.0, end - orig.0) });
                     }
+                    Drag::LoopRight { clip, start, orig, .. } => {
+                        let cur = snap(beat).max(start + PPQ / 4) - start;
+                        self.drag = Some(Drag::LoopRight { clip, start, orig, cur });
+                    }
                     Drag::TrimRight { clip, orig, .. } => {
                         let Some((_, _, _, _, _, frames)) = self.clip_region(clip) else { return };
                         let (s0, off0, len0) = orig;
@@ -1436,6 +1445,11 @@ impl Controller {
                     }
                     Some(Drag::TrimLeft { clip, orig, cur } | Drag::TrimRight { clip, orig, cur }) if orig != cur => {
                         self.execute(Command::TrimClip { clip, start: cur.0, source_offset: cur.1, source_length: cur.2 });
+                    }
+                    Some(Drag::LoopRight { clip, orig, cur, .. }) if orig != cur => {
+                        if let Some(l) = self.project().clip(clip).and_then(|c| c.clip_loop) {
+                            self.execute(Command::SetClipLoop { clip, clip_loop: Some(saine_core::model::AudioLoop { length: cur, ..l }) });
+                        }
                     }
                     _ => {}
                 }
@@ -1500,6 +1514,7 @@ impl Controller {
         for (ti, t) in p.tracks.iter().enumerate() {
             for c in &t.clips {
                 let (mut track_index, mut start, mut off, mut len) = (ti, c.start, c.source_offset, c.source_length);
+                let mut clip_loop = c.clip_loop;
                 match &self.drag {
                     Some(Drag::Move { clip, track, start: s, .. }) if *clip == c.id => {
                         track_index = p.track_index(*track).unwrap_or(ti);
@@ -1508,9 +1523,12 @@ impl Controller {
                     Some(Drag::TrimLeft { clip, cur, .. } | Drag::TrimRight { clip, cur, .. }) if *clip == c.id => {
                         (start, off, len) = *cur;
                     }
+                    Some(Drag::LoopRight { clip, cur, .. }) if *clip == c.id => {
+                        clip_loop = clip_loop.map(|l| saine_core::model::AudioLoop { length: *cur, ..l });
+                    }
                     _ => {}
                 }
-                let shown = saine_core::Clip { source_offset: off, source_length: len, ..c.clone() };
+                let shown = saine_core::Clip { source_offset: off, source_length: len, clip_loop, ..c.clone() };
                 let len_beats = p.clip_length_ticks(&shown) as f64 / PPQ as f64;
                 let wave = self.clip_wave(&shown);
                 self.clip_vis.push(ClipVis {
