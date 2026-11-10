@@ -932,6 +932,56 @@ fn steps() -> Vec<Step> {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
             (clip.warp.is_default() && a.global::<Studio>().get_ac_transpose_text() == "0 st").then_some(()).ok_or(format!("warp {:?}", clip.warp))
         })),
+        DoC("original BPM: double-click to type", Box::new(|_, ctl| ctl.borrow_mut().ac_edit_start(crate::warpedit::AcEdit::OriginalBpm))),
+        Check("Original BPM edit box open with the shown value", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_ac_edit_field() == 0 && s.get_ac_edit_text() == "120").then_some(()).ok_or(format!("field {} text {}", s.get_ac_edit_field(), s.get_ac_edit_text()))
+        })),
+        DoC("original BPM: type 96.5, Enter", Box::new(|_, ctl| ctl.borrow_mut().ac_edit_commit("96.5"))),
+        Check("typed BPM turns warp on at 96.5: the clip follows 120 BPM (longer), one undo step", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let p = c.project();
+            let secs = clip.source_length as f64 / p.asset(clip.asset).unwrap().sample_rate;
+            let beats = p.clip_length_ticks(clip) as f64 / PPQ as f64;
+            (clip.warp.enabled && clip.warp.original_bpm == 96.5 && (beats - secs * 96.5 / 60.0).abs() < 0.01 && a.global::<Studio>().get_ac_edit_field() == -1 && c.doc.undo_label() == Some("Set original BPM"))
+                .then_some(())
+                .ok_or(format!("warp {:?} beats {beats} undo {:?}", clip.warp, c.doc.undo_label()))
+        })),
+        DoC("original BPM: clear the field, Enter", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.ac_edit_start(crate::warpedit::AcEdit::OriginalBpm);
+            c.ac_edit_commit("");
+        })),
+        Check("an empty BPM turns warp off (Clear original BPM)", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            (!clip.warp.enabled && c.doc.undo_label() == Some("Clear original BPM")).then_some(()).ok_or(format!("warp {:?} undo {:?}", clip.warp, c.doc.undo_label()))
+        })),
+        DoC("transpose: type -7, then nonsense, then Escape", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.ac_edit_start(crate::warpedit::AcEdit::Transpose);
+            c.ac_edit_commit("-7");
+            c.ac_edit_start(crate::warpedit::AcEdit::Transpose);
+            c.ac_edit_commit("abc");
+            c.ac_edit_start(crate::warpedit::AcEdit::Transpose);
+            c.ac_edit_cancel();
+        })),
+        Check("typed transpose -7 st; nonsense and Escape change nothing", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let s = a.global::<Studio>();
+            (clip.warp.transpose == -7 && s.get_ac_transpose_text() == "-7 st" && s.get_ac_edit_field() == -1 && c.doc.undo_label() == Some("Set clip pitch shift"))
+                .then_some(())
+                .ok_or(format!("transpose {} text {} field {} undo {:?}", clip.warp.transpose, s.get_ac_transpose_text(), s.get_ac_edit_field(), c.doc.undo_label()))
+        })),
+        DoC("typed values: undo three times", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            for _ in 0..3 {
+                c.undo();
+            }
+        })),
+        Check("typed values undone", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            clip.warp.is_default().then_some(()).ok_or(format!("warp {:?}", clip.warp))
+        })),
         DoC("back to the Devices tab", Box::new(|_, ctl| ctl.borrow_mut().set_bottom_tab(BottomTab::Devices))),
         Do("select clip 1 and press Delete", Box::new(move |a| {
             click(a, bx(11.0), TRACK0_Y + 40.0);

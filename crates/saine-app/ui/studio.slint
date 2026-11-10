@@ -455,6 +455,11 @@ export global Studio {
     in property <string> ac-transpose-text: "0 st";
     in property <bool> ac-transpose-enabled: true;  // off in Re-pitch (pitch follows speed)
     callback ac-transpose-drag(int, length, length); // Transpose drag, like ac-bpm-drag
+    in property <int> ac-edit-field: -1;     // typing into: 0 Original BPM, 1 Transpose
+    in property <string> ac-edit-text;       // the value the field starts with
+    callback ac-edit-start(int);             // double-click
+    callback ac-edit-commit(string);         // Enter or focus loss
+    callback ac-edit-cancel();               // Escape
     in property <string> clip-name: "MIDI";
     in property <color> clip-color: Tokens.track-instrument;
     in property <color> clip-ink: #1d2142;   // text and icons on clip-colour fills

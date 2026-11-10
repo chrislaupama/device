@@ -37,6 +37,13 @@ pub enum AcDragKind {
     Transpose { start: i32 },
 }
 
+/// Audio clip editor fields that take typed values (double-click).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcEdit {
+    OriginalBpm,
+    Transpose,
+}
+
 /// Semitones per point of Transpose drag (the reference app: 48 st over 200 pt).
 const TRANSPOSE_PER_PT: f32 = 48.0 / 200.0;
 
@@ -93,28 +100,36 @@ impl Controller {
         self.asset_map.iter().filter_map(|(a, ea)| self.onsets.get(ea).map(|v| (*a, v.clone()))).collect()
     }
 
-    /// Analyse the assets of warped clips that have no onsets yet (worker thread).
+    /// Analyse the assets of warped clips and of the clip open in the editor
+    /// (its tempo) that have no onsets yet (worker thread).
     pub fn request_onsets(&mut self) {
+        let open = self.ac_clip().map(|c| c.id);
         let wanted: Vec<u64> = self
             .project()
             .tracks
             .iter()
             .flat_map(|t| &t.clips)
-            .filter(|c| c.warp.enabled)
+            .filter(|c| c.warp.enabled || Some(c.id) == open)
             .filter_map(|c| self.asset_map.get(&c.asset).copied())
             .filter(|ea| !self.onsets.contains_key(ea) && !self.onsets_pending.contains(ea))
             .collect();
         for ea in wanted {
             self.onsets_pending.insert(ea);
             self.pending_jobs += 1;
-            let (engine, tx) = (self.engine.clone(), self.jobs_tx.clone());
+            let (engine, tx, rate) = (self.engine.clone(), self.jobs_tx.clone(), self.rate);
             let _ = std::thread::Builder::new().name("onsets".into()).spawn(move || {
-                let _ = tx.send(JobResult::Onsets { engine_asset: ea, result: engine.detect_onsets(ea).map_err(|e| e.to_string()) });
+                let result = engine.detect_onsets(ea).map_err(|e| e.to_string());
+                // Tempo from the same onsets (engine frames), here off the UI thread: ms per minute.
+                let tempo = result.as_ref().ok().and_then(|v| {
+                    let tr: Vec<Transient> = v.iter().map(|o| Transient { source: o.frame.max(0) as u64, strength: o.strength, percussive: o.percussive }).collect();
+                    saine_core::warp::estimate_bpm(&tr, rate)
+                });
+                let _ = tx.send(JobResult::Onsets { engine_asset: ea, result, tempo });
             });
         }
     }
 
-    pub fn finish_onsets(&mut self, engine_asset: u64, result: Result<Vec<saine_engine::Onset>, String>) {
+    pub fn finish_onsets(&mut self, engine_asset: u64, result: Result<Vec<saine_engine::Onset>, String>, tempo: Option<f64>) {
         self.onsets_pending.remove(&engine_asset);
         let Some(asset) = self.asset_map.iter().find(|(_, ea)| **ea == engine_asset).map(|(a, _)| *a) else { return };
         let k = self.asset_rate(asset) / self.rate;
@@ -125,6 +140,7 @@ impl Controller {
                 Vec::new()
             }
         };
+        self.tempos.insert(engine_asset, tempo);
         self.onsets.insert(engine_asset, list);
         self.publish();
         self.ui_dirty = true;
@@ -137,12 +153,23 @@ impl Controller {
         self.execute(Command::SetClipWarp { clip, warp, label: label.into() })
     }
 
+    /// Tempo detected in a clip's audio, once its transients are analysed.
+    pub fn detected_bpm(&self, asset: AssetId) -> Option<f64> {
+        self.asset_map.get(&asset).and_then(|ea| self.tempos.get(ea).copied().flatten())
+    }
+
+    /// Original BPM of a clip whose tempo was never set: the detected tempo
+    /// (the reference app uses a sample's tempo metadata), else the project tempo.
+    fn default_original_bpm(&self, c: &Clip) -> f64 {
+        self.detected_bpm(c.asset).unwrap_or(self.project().transport.bpm)
+    }
+
     /// The open audio clip's warp, switched on the way the reference app does it: the
-    /// first time at the project tempo, so the clip keeps its length.
+    /// first time at the clip's own tempo (\`default_original_bpm\`).
     fn warp_on(&self, c: &Clip) -> ClipWarp {
         let mut w = c.warp.clone();
         if !w.enabled && w.tempo_is_default() {
-            w.original_bpm = self.project().transport.bpm;
+            w.original_bpm = self.default_original_bpm(c);
         }
         w.enabled = true;
         w
@@ -225,7 +252,56 @@ impl Controller {
         if let Some(AcDrag { kind: AcDragKind::Bpm { .. }, warp, .. }) = &self.pr.ac_drag {
             return warp.original_bpm;
         }
-        if c.warp.tempo_is_default() { self.project().transport.bpm } else { c.warp.original_bpm }
+        if c.warp.tempo_is_default() { self.default_original_bpm(c) } else { c.warp.original_bpm }
+    }
+
+    /// Double-click on Original BPM or Transpose: type a value.
+    pub fn ac_edit_start(&mut self, field: AcEdit) {
+        let Some(c) = self.ac_clip() else { return };
+        if field == AcEdit::Transpose && !Self::ac_transpose_editable(c) {
+            return;
+        }
+        self.pr.ac_edit = Some(field);
+        self.ui_dirty = true;
+    }
+
+    /// Text the edit field starts with: the shown value.
+    pub fn ac_edit_initial(&self, c: &Clip) -> String {
+        match self.pr.ac_edit {
+            Some(AcEdit::OriginalBpm) => format!("{}", self.ac_original_bpm(c).round()),
+            Some(AcEdit::Transpose) => c.warp.transpose.to_string(),
+            None => String::new(),
+        }
+    }
+
+    pub fn ac_edit_cancel(&mut self) {
+        self.pr.ac_edit = None;
+        self.ui_dirty = true;
+    }
+
+    /// Enter or focus loss. Original BPM: 20..300, two decimals; it turns
+    /// warp on, and an empty (or unreadable) value turns warp off ("Clear
+    /// original BPM"). Transpose: whole semitones, -24..24; unreadable is ignored.
+    pub fn ac_edit_commit(&mut self, text: &str) {
+        let (Some(field), Some(c)) = (self.pr.ac_edit.take(), self.ac_clip().cloned()) else { return };
+        self.ui_dirty = true;
+        let v: f64 = text.trim().parse().unwrap_or(f64::NAN);
+        match field {
+            AcEdit::OriginalBpm if !v.is_finite() => {
+                if c.warp.enabled {
+                    self.set_clip_warp(c.id, ClipWarp { enabled: false, speed: 1.0, ..c.warp.clone() }, "Clear original BPM");
+                }
+            }
+            AcEdit::OriginalBpm => {
+                let bpm = ((v * 100.0).round() / 100.0).clamp(saine_core::warp::MIN_ORIGINAL_BPM, saine_core::warp::MAX_ORIGINAL_BPM);
+                self.set_clip_warp(c.id, ClipWarp { original_bpm: bpm, ..self.warp_on(&c) }, "Set original BPM");
+            }
+            AcEdit::Transpose if v.is_finite() && Self::ac_transpose_editable(&c) => {
+                let st = (v.round() as i32).clamp(-saine_core::warp::MAX_TRANSPOSE, saine_core::warp::MAX_TRANSPOSE);
+                self.set_clip_warp(c.id, ClipWarp { transpose: st, ..c.warp.clone() }, "Set clip pitch shift");
+            }
+            AcEdit::Transpose => {}
+        }
     }
 
     /// Original BPM drag (phase 0 press, 1 move, 2 release): one BPM per point,

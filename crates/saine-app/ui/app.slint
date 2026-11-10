@@ -630,6 +630,9 @@ export component AppWindow inherits Window {
 
     property <int> cards-epoch: Studio.cards-epoch;
     changed cards-epoch => { fs.focus(); }
+    // A clip editor value stopped taking typing: keys go back to the shortcuts.
+    property <int> ac-edit-field: Studio.ac-edit-field;
+    changed ac-edit-field => { if (self.ac-edit-field < 0) { fs.focus(); } }
     fs := FocusScope {
         init => { self.focus(); }
         key-pressed(e) => {

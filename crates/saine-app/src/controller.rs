@@ -196,7 +196,7 @@ pub enum JobResult {
     /// Plugin catalogue scan finished (src/devices.rs).
     PluginScan(Result<saine_engine::ScanReport, String>),
     /// Transients of an engine asset (warped clips, src/warpedit.rs).
-    Onsets { engine_asset: u64, result: Result<Vec<saine_engine::Onset>, String> },
+    Onsets { engine_asset: u64, result: Result<Vec<saine_engine::Onset>, String>, tempo: Option<f64> },
 }
 
 /// Blocking decode + peak analysis. Runs on a worker thread.
@@ -272,6 +272,8 @@ pub struct Controller {
     /// Detected transients per engine asset (asset frames), and those being analysed.
     pub(crate) onsets: HashMap<u64, Vec<saine_core::Transient>>,
     pub(crate) onsets_pending: std::collections::HashSet<u64>,
+    /// Tempo detected from each analysed engine asset's transients (\`warp::estimate_bpm\`).
+    pub(crate) tempos: HashMap<u64, Option<f64>>,
     pub peaks: PeakStore,
     pub selected_track: Option<TrackId>,
     pub selected_clip: Option<ClipId>,
@@ -371,6 +373,7 @@ impl Controller {
             asset_map: HashMap::new(),
             onsets: HashMap::new(),
             onsets_pending: std::collections::HashSet::new(),
+            tempos: HashMap::new(),
             peaks: PeakStore::default(),
             selected_track: None,
             selected_clip: None,
@@ -838,7 +841,7 @@ impl Controller {
                 JobResult::Recorded { doc_epoch, takes } => self.finish_recorded(doc_epoch, takes),
                 JobResult::TestTone(r) => self.finish_test_tone(r),
                 JobResult::PluginScan(r) => self.finish_plugin_scan(r),
-                JobResult::Onsets { engine_asset, result } => self.finish_onsets(engine_asset, result),
+                JobResult::Onsets { engine_asset, result, tempo } => self.finish_onsets(engine_asset, result, tempo),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
                     if doc_epoch != self.doc_epoch {
                         if let Ok((info, _)) = result {
@@ -967,6 +970,7 @@ impl Controller {
             let _ = self.engine.release_asset(ea);
         }
         self.onsets.clear();
+        self.tempos.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
         self.doc = Document::new(loaded.project);

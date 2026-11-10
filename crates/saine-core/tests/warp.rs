@@ -283,3 +283,44 @@ fn transpose_is_validated_and_persisted() {
     assert!(!ClipWarp { transpose: 3, ..ClipWarp::default() }.is_default());
     assert!(ClipWarp { transpose: 3, ..ClipWarp::default() }.tempo_is_default());
 }
+
+fn pulse(bpm: f64, bars: usize, sub: usize, jitter_ms: f64) -> Vec<Transient> {
+    let rate = 44_100.0;
+    let step = 60.0 / bpm / sub as f64;
+    let mut seed = 7u64;
+    (0..bars * 4 * sub)
+        .map(|i| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let j = ((seed >> 33) as f64 / (1u64 << 31) as f64 - 0.5) * 2.0 * jitter_ms / 1000.0;
+            let t = (0.25 + i as f64 * step + j).max(0.0);
+            Transient { source: (t * rate) as u64, strength: if i % sub == 0 { 1.0 } else { 0.4 }, percussive: true }
+        })
+        .collect()
+}
+
+#[test]
+fn tempo_detection_finds_the_beat() {
+    use saine_core::warp::estimate_bpm;
+    assert_eq!(estimate_bpm(&pulse(123.0, 16, 2, 3.0), 44_100.0), Some(123.0), "eighths with jitter");
+    assert_eq!(estimate_bpm(&pulse(140.0, 16, 1, 0.0), 44_100.0), Some(140.0), "quarters");
+    assert_eq!(estimate_bpm(&pulse(128.0, 8, 4, 2.0), 44_100.0), Some(128.0), "sixteenths");
+    let b = estimate_bpm(&pulse(97.5, 16, 2, 1.0), 44_100.0).unwrap();
+    assert!((b - 97.5).abs() <= 0.1, "{b}");
+    assert_eq!(estimate_bpm(&pulse(75.0, 16, 1, 0.0), 44_100.0), Some(150.0), "folded into 80..160");
+}
+
+#[test]
+fn tempo_detection_declines_without_a_pulse() {
+    use saine_core::warp::estimate_bpm;
+    assert_eq!(estimate_bpm(&pulse(120.0, 1, 1, 0.0), 44_100.0), None, "four hits are too few");
+    let mut seed = 3u64;
+    let mut t = 0.0;
+    let scattered: Vec<Transient> = (0..120)
+        .map(|_| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            t += 0.05 + (seed >> 33) as f64 / (1u64 << 31) as f64 * 0.6;
+            Transient { source: (t * 44_100.0) as u64, strength: 1.0, percussive: true }
+        })
+        .collect();
+    assert_eq!(estimate_bpm(&scattered, 44_100.0), None);
+}
