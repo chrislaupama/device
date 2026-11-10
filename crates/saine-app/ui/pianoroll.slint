@@ -445,11 +445,12 @@ export component PianoRoll inherits Rectangle {
     FooterValue { x: 42.5px; y: root.r2; text: Studio.pr-start-text; }
     FooterLabel { x: 86px; y: root.r2; text: "End"; }
     FooterValue { x: 110px; y: root.r2; text: Studio.pr-end-text; ink: #4a4b50; }
-    // Loop toggle + Position: PLACEHOLDER readouts (clip looping is not in the model). Length is real.
+    // Loop: the switch, the loop's Position and Length (the clip's length while it doesn't loop).
     FooterTitle { x: 173.5px; y: root.r1; text: "Loop"; }
-    FooterSwitch { x: 202px; y: root.r1 + 2px; on: true; }
+    FooterSwitch { x: 202px; y: root.r1 + 2px; on: Studio.pr-loop-on; }
+    if Studio.pr-loop-enabled && !Studio.ac-visible: TouchArea { x: 200px; y: root.r1; width: 25px; height: 14px; clicked => { Studio.pr-action("loop"); } }
     FooterLabel { x: 173.5px; y: root.r2; text: "Position"; }
-    FooterValue { x: 216.5px; y: root.r2; text: Studio.pr-position-text; }
+    FooterValue { x: 216.5px; y: root.r2; text: Studio.pr-position-text; field: Studio.pr-loop-on && !Studio.ac-visible ? 5 : -1; ink: Studio.pr-loop-on ? Studio.clip-color : #4a4b50; }
     FooterLabel { x: 260px; y: root.r2; text: "Length"; }
     FooterValue { x: 298px; y: root.r2; text: Studio.pr-length-text; field: 4; }
     // Mix / Tune (audio): Gain is the clip gain; Transpose drags (disabled in Re-pitch).

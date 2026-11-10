@@ -338,7 +338,7 @@ pub struct ClipVis {
     pub wave: Option<(Slot, Vec<WaveSeg>)>,
     /// MIDI clip: mini note view as (relative start 0..1, relative length, relative
     /// pitch 0 = top .. 1 = bottom). `None` for audio clips.
-    pub midi: Option<Vec<[f32; 3]>>,
+    pub midi: Option<Vec<[f32; 4]>>,
     /// Take being recorded: live min/max peaks from `Engine::recording_peaks`
     /// (one pair every `.1` logical points from the clip start), drawn with the
     /// recording tint.
@@ -714,7 +714,7 @@ fn automation_row(out: &mut Vec<RectInst>, px: &Px, w: f32, row: &crate::automat
 
 /// MIDI clip: track-colour title strip, light lavender body (the reference draws it
 /// the same selected or not), grid lines inside the body and a mini note view.
-fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &[[f32; 3]], (x, y, cw, ch): (f32, f32, f32, f32)) {
+fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &[[f32; 4]], (x, y, cw, ch): (f32, f32, f32, f32)) {
     let r = 3.0;
     // On a track that isn't selected the reference draws the body in the plain track colour
     // with a darker line under the title and no grid (50-input-selector-open.png); on the
@@ -744,14 +744,14 @@ fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &
     }
     let nh = ch - CLIP_HEADER - 6.0;
     let bar_h = (nh / 24.0).clamp(1.5, 3.0);
-    let ink = rgba(mix(head, BLACK, 0.45), 1.0);
+    let ink = mix(head, BLACK, 0.45);
     for n in notes {
         let nx = x + n[0] * cw;
         let nw = (n[1] * cw).max(1.0).min(x + cw - nx);
         if nw <= 0.0 {
             continue;
         }
-        out.push(px.rect(nx, by + 2.5 + n[2] * (nh - bar_h), nw, bar_h, ink));
+        out.push(px.rect(nx, by + 2.5 + n[2] * (nh - bar_h), nw, bar_h, rgba(ink, n[3])));
     }
 }
 

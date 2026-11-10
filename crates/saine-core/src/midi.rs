@@ -40,19 +40,82 @@ pub struct MidiClip {
     /// The sidebar's pattern list (Type, Genre, made sets, kept notes). See `crate::library`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub composer: Option<crate::library::Composer>,
+    /// Clip looping (the editor's Loop switch, Position and Length). Clips saved before it
+    /// existed load without it and play once.
+    #[serde(default, rename = "loop", skip_serializing_if = "Option::is_none")]
+    pub clip_loop: Option<ClipLoop>,
+}
+
+/// A MIDI clip's loop: the content range that repeats (clip-relative ticks). The clip plays
+/// from its start to the loop end, then repeats the loop until the clip ends; repeats are
+/// drawn dimmer on the timeline. The range is kept while looping is off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClipLoop {
+    pub on: bool,
+    pub start: Ticks,
+    pub end: Ticks,
+    /// Clip length to return to when looping is turned back on (0 = none).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub span: Ticks,
+}
+
+fn is_zero(t: &Ticks) -> bool {
+    *t == 0
+}
+
+impl ClipLoop {
+    /// Looping on over the whole clip, as a new clip starts.
+    pub fn whole(length: Ticks) -> Self {
+        ClipLoop { on: true, start: 0, end: length, span: 0 }
+    }
+
+    pub fn len(&self) -> Ticks {
+        self.end - self.start
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.start < 0 || self.end <= self.start || self.span < 0 { Err(format!("loop {}..{} is empty or before the clip", self.start, self.end)) } else { Ok(()) }
+    }
+
+    /// Notes as they play over a clip of this length: the first pass to the loop end, then
+    /// the loop again and again, each cut at the loop end and at the clip end. The flag
+    /// marks repeats.
+    pub fn unroll(&self, notes: &[Note], length: Ticks) -> Vec<(Note, bool)> {
+        let mut out = Vec::new();
+        let first = self.end.min(length);
+        for n in notes.iter().filter(|n| n.start >= 0 && n.start < first) {
+            out.push((Note { length: n.length.min(first - n.start), ..*n }, false));
+        }
+        let period = self.len();
+        if period <= 0 {
+            return out;
+        }
+        let looped: Vec<&Note> = notes.iter().filter(|n| n.start >= self.start && n.start < self.end).collect();
+        let mut at = self.end;
+        while at < length && !looped.is_empty() {
+            for n in &looped {
+                let t = at + (n.start - self.start);
+                if t < length {
+                    out.push((Note { start: t, length: n.length.min(self.end - n.start).min(length - t), ..**n }, true));
+                }
+            }
+            at += period;
+        }
+        out
+    }
 }
 
 impl MidiClip {
     /// Reference default: "Insert empty MIDI clip" creates a 1-bar clip named "MIDI".
     pub fn empty(start: Ticks, length: Ticks) -> Self {
-        MidiClip { id: ClipId(0), name: "MIDI".into(), start, length, notes: Vec::new(), pattern: None, disabled: false, composer: None }
+        MidiClip { id: ClipId(0), name: "MIDI".into(), start, length, notes: Vec::new(), pattern: None, disabled: false, composer: None, clip_loop: Some(ClipLoop::whole(length)) }
     }
 
     /// Reference default for a Drum Rack track: an empty one-bar "Pattern"
     /// clip of 16 steps at 1/16.
     pub fn empty_pattern(start: Ticks, rows: StepRows) -> Self {
         let pattern = StepPattern::new(rows);
-        MidiClip { id: ClipId(0), name: "Pattern".into(), start, length: pattern.length(), notes: Vec::new(), pattern: Some(pattern), disabled: false, composer: None }
+        MidiClip { id: ClipId(0), name: "Pattern".into(), start, length: pattern.length(), notes: Vec::new(), pattern: Some(pattern), disabled: false, composer: None, clip_loop: None }
     }
 
     /// Notes as they play inside the clip (a pattern repeats without its
@@ -69,7 +132,10 @@ impl MidiClip {
     pub fn tiled_notes(&self) -> Vec<Note> {
         match &self.pattern {
             Some(p) => crate::steps::tile(&self.notes, p.length(), self.length),
-            None => self.notes.iter().filter(|n| n.start < self.length).map(|n| Note { length: n.length.min(self.length - n.start), ..*n }).collect(),
+            None => match self.clip_loop.filter(|l| l.on) {
+                Some(l) => l.unroll(&self.notes, self.length).into_iter().map(|(n, _)| n).collect(),
+                None => self.notes.iter().filter(|n| n.start < self.length).map(|n| Note { length: n.length.min(self.length - n.start), ..*n }).collect(),
+            },
         }
     }
 

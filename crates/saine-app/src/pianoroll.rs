@@ -15,7 +15,7 @@
 use crate::controller::{BottomTab, Controller};
 use crate::gpu::{DrawList, RectInst};
 use crate::timeline::{Px, REF, RulerSteps, rgb};
-use saine_core::midi::{self, MidiClip, Note};
+use saine_core::midi::{self, ClipLoop, MidiClip, Note};
 use saine_core::{Clip, ClipId, Command, PPQ, Ticks};
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
@@ -110,6 +110,8 @@ pub enum PrDrag {
     /// Clip range handles (clip-relative ticks; the view stays fixed during the drag).
     ClipStart { start: Ticks },
     ClipEnd { end: Ticks },
+    /// Loop bar: move it (edge None) or drag its start (Some(false)) or end (Some(true)).
+    Loop { edge: Option<bool>, orig: ClipLoop, anchor: Ticks, cur: ClipLoop },
 }
 
 /// Footer value fields (drag vertically; Grid cycles on click).
@@ -120,6 +122,7 @@ pub enum Field {
     HumanizeAmount = 2,
     Velocity = 3,
     Length = 4,
+    LoopPosition = 5,
 }
 
 impl Field {
@@ -130,6 +133,7 @@ impl Field {
             2 => Field::HumanizeAmount,
             3 => Field::Velocity,
             4 => Field::Length,
+            5 => Field::LoopPosition,
             _ => return None,
         })
     }
@@ -140,8 +144,11 @@ pub struct ValueDrag {
     orig: f64,
     /// Velocity edits of the selected notes (committed on release).
     preview: Option<Vec<Note>>,
-    /// Length edit (ticks), committed on release.
+    /// Length edit (ticks), committed on release: the loop's length while the clip loops,
+    /// else the clip's.
     length: Option<Ticks>,
+    /// Loop Position edit (ticks), committed on release.
+    position: Option<Ticks>,
 }
 
 impl ValueDrag {
@@ -231,6 +238,8 @@ pub struct PrScene<'a> {
     pub wave: Option<(Vec<crate::peaks::Slot>, Vec<crate::peaks::WaveSeg>)>,
     /// Shape tab curves over the notes (src/shape_rack.rs).
     pub curves: Vec<crate::shape_rack::CurveDraw>,
+    /// MIDI clip loop bar: range in clip-relative beats and whether looping is on.
+    pub clip_loop: Option<(f64, f64, bool)>,
 }
 
 fn rgba(c: [f32; 3], a: f32) -> [f32; 4] {
@@ -474,9 +483,13 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
         o.push(px.rect(gx, y, w - gx, hh, rgba(rgb(0x292b2e), 1.0)));
     }
     let bar = mix(sc.color, rgb(0x86a6ff), 0.5);
-    if cx1 > gx && cx0 < w {
-        let x0 = cx0.max(gx);
-        o.push(px.rect(x0, BAR_Y.0, cx1.min(w) - x0, BAR_Y.1 - BAR_Y.0, rgba(bar, 1.0)));
+    let (bar, (bx0, bx1)) = match sc.clip_loop {
+        Some((s, e, on)) => (if on { bar } else { rgb(0x4a4b50) }, (v.x_of(s), v.x_of(e))),
+        None => (bar, (cx0, cx1)),
+    };
+    if bx1 > gx && bx0 < w {
+        let x0 = bx0.max(gx);
+        o.push(px.rect(x0, BAR_Y.0, bx1.min(w) - x0, BAR_Y.1 - BAR_Y.0, rgba(bar, 1.0)));
     }
     for (x, left) in [(cx0, true), (cx1, false)] {
         if x < gx - 1.0 || x > w + 1.0 {
@@ -626,7 +639,7 @@ impl Controller {
     /// Clip range (clip-relative beats) and length including drag previews.
     fn pr_range(&self) -> (f64, f64) {
         let len = self.pr_clip().map(|c| c.length).unwrap_or(0);
-        let len = self.pr.value_drag.as_ref().and_then(|d| d.length).unwrap_or(len);
+        let len = self.pr.value_drag.as_ref().and_then(|d| d.length).filter(|_| !self.pr_loop().is_some_and(|l| l.on)).unwrap_or(len);
         let b = |t: Ticks| t as f64 / PPQ as f64;
         match self.pr.drag {
             Some(PrDrag::ClipStart { start }) => (b(start), b(len)),
@@ -667,6 +680,7 @@ impl Controller {
                 transients: self.ac_transient_beats(),
                 wave: self.clip_lanes(c),
                 curves: Vec::new(),
+                clip_loop: None,
             });
         }
         let clip = self.pr_clip()?;
@@ -695,7 +709,45 @@ impl Controller {
             transients: Vec::new(),
             wave: None,
             curves,
+            clip_loop: self.pr_loop_preview().map(|l| (l.start as f64 / PPQ as f64, l.end as f64 / PPQ as f64, l.on)),
         })
+    }
+
+    /// The open MIDI clip's loop (pattern clips repeat their pattern instead).
+    pub(crate) fn pr_loop(&self) -> Option<ClipLoop> {
+        self.pr_clip().filter(|c| c.pattern.is_none()).and_then(|c| c.clip_loop)
+    }
+
+    /// The loop as shown: with a loop bar drag or a Loop Position / Length drag applied.
+    pub(crate) fn pr_loop_preview(&self) -> Option<ClipLoop> {
+        if let Some(PrDrag::Loop { cur, .. }) = &self.pr.drag {
+            return Some(*cur);
+        }
+        let mut l = self.pr_loop()?;
+        if let Some(d) = self.pr.value_drag.as_ref().filter(|_| l.on) {
+            if let Some(p) = d.position {
+                l = ClipLoop { start: p, end: p + l.len(), ..l };
+            }
+            if let Some(len) = d.length {
+                l.end = l.start + len;
+            }
+        }
+        Some(l)
+    }
+
+    /// The footer Loop switch. On: the kept loop range (else the whole clip) and the length
+    /// the clip had while it last looped. Off: the clip plays once, to the loop end.
+    pub fn pr_loop_toggle(&mut self) {
+        let Some(clip) = self.pr_clip().filter(|c| c.pattern.is_none()).cloned() else { return };
+        let (clip_loop, length) = match clip.clip_loop {
+            Some(l) if l.on => (ClipLoop { on: false, span: if clip.length > l.end { clip.length } else { 0 }, ..l }, l.end),
+            kept => {
+                let l = kept.filter(|l| l.validate().is_ok()).unwrap_or(ClipLoop::whole(clip.length));
+                (ClipLoop { on: true, span: 0, ..l }, if l.span > clip.length { l.span } else { clip.length })
+            }
+        };
+        self.execute(Command::SetMidiLoop { clip: clip.id, clip_loop: Some(clip_loop), length });
+        self.ui_dirty = true;
     }
 
     fn commit_notes(&mut self, clip: ClipId, mut notes: Vec<Note>, label: Option<&str>) -> bool {
@@ -749,9 +801,23 @@ impl Controller {
                         return;
                     }
                     let (x0, x1) = (v.x_of(0.0), v.x_of(clip.length as f64 / PPQ as f64));
-                    if y >= BAR_Y.0 && (x - x1).abs() <= 6.0 {
+                    if let Some(l) = self.pr_loop().filter(|l| l.on && y >= BAR_Y.0 && y < BAR_Y.1) {
+                        let (lx0, lx1) = (v.x_of(l.start as f64 / PPQ as f64), v.x_of(l.end as f64 / PPQ as f64));
+                        let edge = if (x - lx1).abs() <= 6.0 {
+                            Some(Some(true))
+                        } else if (x - lx0).abs() <= 6.0 {
+                            Some(Some(false))
+                        } else {
+                            (x > lx0 && x < lx1).then_some(None)
+                        };
+                        if let Some(edge) = edge {
+                            self.pr.drag = Some(PrDrag::Loop { edge, orig: l, anchor: raw, cur: l });
+                            return;
+                        }
+                    }
+                    if y >= BAND_Y && (x - x1).abs() <= 6.0 {
                         self.pr.drag = Some(PrDrag::ClipEnd { end: clip.length });
-                    } else if y >= BAR_Y.0 && (x - x0).abs() <= 6.0 {
+                    } else if y >= BAND_Y && (x - x0).abs() <= 6.0 {
                         self.pr.drag = Some(PrDrag::ClipStart { start: 0 });
                     } else {
                         // Ruler / band click: move the playhead (timeline position).
@@ -852,6 +918,17 @@ impl Controller {
                         let start = snap(raw).clamp(-clip.start, clip.length - g);
                         self.pr.drag = Some(PrDrag::ClipStart { start });
                     }
+                    PrDrag::Loop { edge, orig, anchor, .. } => {
+                        let cur = match edge {
+                            None => {
+                                let d = snap(raw - anchor).max(-orig.start);
+                                ClipLoop { start: orig.start + d, end: orig.end + d, ..orig }
+                            }
+                            Some(false) => ClipLoop { start: snap(raw).clamp(0, orig.end - g), ..orig },
+                            Some(true) => ClipLoop { end: snap(raw).max(orig.start + g), ..orig },
+                        };
+                        self.pr.drag = Some(PrDrag::Loop { edge, orig, anchor, cur });
+                    }
                 }
             }
             _ => match self.pr.drag.take() {
@@ -865,6 +942,9 @@ impl Controller {
                     if let Some(cmd) = midi_left_resize(&clip, clip.start + start) {
                         self.execute(cmd);
                     }
+                }
+                Some(PrDrag::Loop { orig, cur, .. }) if orig != cur => {
+                    self.execute(Command::SetMidiLoop { clip: clip.id, clip_loop: Some(cur), length: clip.length });
                 }
                 _ => {}
             },
@@ -894,6 +974,9 @@ impl Controller {
         if action == "pen" {
             self.pr.pen = !self.pr.pen;
             return;
+        }
+        if action == "loop" {
+            return self.pr_loop_toggle();
         }
         if action == "velocity_lane" {
             self.set_status("Velocity lane: not implemented yet", 3);
@@ -937,7 +1020,10 @@ impl Controller {
                 let mut notes = clip.notes.clone();
                 notes.extend(extra);
                 midi::sort_notes(&mut notes);
-                let cmds = vec![Command::SetMidiNotes { clip: clip.id, notes }, Command::ResizeMidiClip { clip: clip.id, start: clip.start, length: len }];
+                let mut cmds = vec![Command::SetMidiNotes { clip: clip.id, notes }, Command::ResizeMidiClip { clip: clip.id, start: clip.start, length: len }];
+                if let Some(l) = clip.clip_loop.filter(|l| l.start == 0 && l.end == clip.length) {
+                    cmds.push(Command::SetMidiLoop { clip: clip.id, clip_loop: Some(ClipLoop { end: len, ..l }), length: len });
+                }
                 self.execute(Command::Batch { label: "Double".into(), commands: cmds });
                 return;
             }
@@ -998,10 +1084,14 @@ impl Controller {
                     Field::QuantizeAmount => self.pr.quant_amount,
                     Field::HumanizeAmount => self.pr.humanize_amount,
                     Field::Velocity => self.pr.velocity as f64,
-                    Field::Length => clip.length as f64,
+                    Field::Length => self.pr_loop().filter(|l| l.on).map_or(clip.length, |l| l.len()) as f64,
+                    Field::LoopPosition => match self.pr_loop().filter(|l| l.on) {
+                        Some(l) => l.start as f64,
+                        None => return,
+                    },
                     Field::Grid => 0.0,
                 };
-                self.pr.value_drag = Some(ValueDrag { orig, preview: None, length: None });
+                self.pr.value_drag = Some(ValueDrag { orig, preview: None, length: None, position: None });
             }
             1 => {
                 let Some(mut d) = self.pr.value_drag.clone() else { return };
@@ -1019,6 +1109,10 @@ impl Controller {
                         let beats = (d.orig / PPQ as f64 - dy as f64 / 8.0).round().max(1.0);
                         d.length = Some((beats * PPQ as f64) as Ticks);
                     }
+                    Field::LoopPosition => {
+                        let beats = (d.orig / PPQ as f64 - dy as f64 / 8.0).round().max(0.0);
+                        d.position = Some((beats * PPQ as f64) as Ticks);
+                    }
                     Field::Grid => {}
                 }
                 self.pr.value_drag = Some(d);
@@ -1028,10 +1122,21 @@ impl Controller {
                     if let Some(p) = d.preview {
                         self.commit_notes(clip.id, p, Some("Note Velocity"));
                     }
-                    if let Some(len) = d.length
-                        && len != clip.length
-                    {
-                        self.execute(Command::ResizeMidiClip { clip: clip.id, start: clip.start, length: len });
+                    match self.pr_loop().filter(|l| l.on) {
+                        Some(l) => {
+                            let start = d.position.unwrap_or(l.start);
+                            let moved = ClipLoop { start, end: start + d.length.unwrap_or(l.len()), ..l };
+                            if moved != l {
+                                self.execute(Command::SetMidiLoop { clip: clip.id, clip_loop: Some(moved), length: clip.length });
+                            }
+                        }
+                        None => {
+                            if let Some(len) = d.length
+                                && len != clip.length
+                            {
+                                self.execute(Command::ResizeMidiClip { clip: clip.id, start: clip.start, length: len });
+                            }
+                        }
                     }
                 }
             }
@@ -1062,10 +1167,13 @@ pub fn midi_left_resize(clip: &MidiClip, new_start: Ticks) -> Option<Command> {
             (e > 0).then(|| Note { start: s.max(0), length: e - s.max(0), ..*n })
         })
         .collect();
-    Some(Command::Batch {
-        label: "Resize Clip".into(),
-        commands: vec![Command::ResizeMidiClip { clip: clip.id, start: new_start, length: end - new_start }, Command::SetMidiNotes { clip: clip.id, notes }],
-    })
+    let mut commands = vec![Command::ResizeMidiClip { clip: clip.id, start: new_start, length: end - new_start }, Command::SetMidiNotes { clip: clip.id, notes }];
+    if let Some(l) = clip.clip_loop {
+        let start = (l.start - delta).max(0);
+        let moved = ClipLoop { start, end: (l.end - delta).max(start + 1), span: 0, ..l };
+        commands.push(Command::SetMidiLoop { clip: clip.id, clip_loop: Some(moved), length: end - new_start });
+    }
+    Some(Command::Batch { label: "Resize Clip".into(), commands })
 }
 
 #[cfg(test)]
@@ -1104,7 +1212,7 @@ mod tests {
 
     #[test]
     fn left_resize_keeps_note_timeline_positions() {
-        let clip = MidiClip { id: ClipId(5), name: "MIDI".into(), start: 3840, length: 3840, notes: vec![Note { id: 1, pitch: 60, start: 960, length: 480, velocity: 100 }], pattern: None, disabled: false, composer: None };
+        let clip = MidiClip { id: ClipId(5), name: "MIDI".into(), start: 3840, length: 3840, notes: vec![Note { id: 1, pitch: 60, start: 960, length: 480, velocity: 100 }], pattern: None, disabled: false, composer: None, clip_loop: None };
         let Some(Command::Batch { commands, .. }) = midi_left_resize(&clip, 3840 + 480) else { panic!() };
         assert_eq!(commands[0], Command::ResizeMidiClip { clip: ClipId(5), start: 4320, length: 3360 });
         assert_eq!(commands[1], Command::SetMidiNotes { clip: ClipId(5), notes: vec![Note { id: 1, pitch: 60, start: 480, length: 480, velocity: 100 }] });

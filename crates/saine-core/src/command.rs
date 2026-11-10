@@ -134,6 +134,8 @@ pub enum Command {
     /// Replace an instrument track's synth parameters (knob drags coalesce
     /// per track; loading a preset is one step).
     SetSynthParams { track: TrackId, params: SynthParams },
+    /// A MIDI clip's loop (Loop switch, Position, Length, loop bar) and its length.
+    SetMidiLoop { clip: ClipId, clip_loop: Option<midi::ClipLoop>, length: Ticks },
     SetTrackArm { track: TrackId, arm: bool },
     SetTrackMonitor { track: TrackId, monitor: bool },
     SetTrackInput { track: TrackId, input: Option<InputSource> },
@@ -226,6 +228,7 @@ impl Command {
             Command::SetStepPattern { pattern: Some(_), .. } => "Edit Step Sequencer".into(),
             Command::SetStepPattern { pattern: None, .. } => "Convert to MIDI Clip".into(),
             Command::SetSynthParams { .. } => "Synth Parameter Change".into(),
+            Command::SetMidiLoop { .. } => "Clip Loop".into(),
             Command::SetTrackArm { arm, .. } => (if *arm { "Arm Track" } else { "Disarm Track" }).into(),
             Command::SetTrackMonitor { .. } => "Input Monitoring Change".into(),
             Command::SetTrackInput { .. } => "Input Change".into(),
@@ -623,6 +626,20 @@ impl Command {
                 let old_notes = std::mem::replace(&mut c.notes, notes);
                 let old_pattern = std::mem::replace(&mut c.pattern, pattern);
                 Ok(Command::SetMidiContent { clip, notes: old_notes, pattern: old_pattern })
+            }
+            Command::SetMidiLoop { clip, clip_loop, length } => {
+                if let Some(l) = &clip_loop {
+                    l.validate().map_err(|r| invalid("loop", r))?;
+                }
+                if length <= 0 {
+                    return Err(invalid("clip", "requires length > 0"));
+                }
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let c = &mut p.tracks[ti].midi_clips[ci];
+                let inv = Command::SetMidiLoop { clip, clip_loop: c.clip_loop, length: c.length };
+                c.clip_loop = clip_loop;
+                c.length = length;
+                Ok(inv)
             }
             Command::SetComposer { clip, edit, composer, mut notes, pattern } => {
                 midi::validate_notes(&notes).map_err(|r| invalid("notes", r))?;
