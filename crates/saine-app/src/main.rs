@@ -97,6 +97,8 @@ struct Args {
     warp_state: bool,
     /// review-reverse: review-warp with the clip reversed.
     reverse_state: bool,
+    /// review-warp-stereo: review-warp from a stereo file (hits on the left only).
+    stereo_state: bool,
     /// reference-synth (32): Instrument track selected, Devices tab, test-state synth preset.
     synth_state: bool,
     /// --synth-page N: open that category page of the synth device (review screenshots).
@@ -244,11 +246,12 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.audio_clip_state = true;
                 }
-                s @ ("review-warp" | "review-reverse") => {
+                s @ ("review-warp" | "review-reverse" | "review-warp-stereo") => {
                     a.reference_default = true;
                     a.audio_clip_state = true;
                     a.warp_state = true;
                     a.reverse_state = s == "review-reverse";
+                    a.stereo_state = s == "review-warp-stereo";
                 }
                 "reference-synth" => {
                     a.reference_default = true;
@@ -1828,7 +1831,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let path = dir.join("sine-a220-steady.wav");
         let hit = |i: usize| if args.warp_state { (-((i % 22_050) as f32) / 900.0).exp() * (std::f32::consts::TAU * 90.0 * (i % 22_050) as f32 / 44_100.0).sin() * 0.6 } else { 0.0 };
         let samples: Vec<f32> = (0..8 * 44_100).map(|i| (std::f32::consts::TAU * 220.0 * i as f32 / 44_100.0).sin() * if args.warp_state { 0.15 } else { 0.5 } + hit(i)).collect();
-        wavgen::write_wav(&path, 44_100, 1, &samples)?;
+        if args.stereo_state {
+            let lr: Vec<f32> = samples.iter().enumerate().flat_map(|(i, &s)| [s, s - hit(i)]).collect();
+            wavgen::write_wav(&path, 44_100, 2, &lr)?;
+        } else {
+            wavgen::write_wav(&path, 44_100, 1, &samples)?;
+        }
         let mut c = ctl.borrow_mut();
         c.import_files(vec![path], ImportTarget::Selected, Some(12 * saine_core::PPQ));
         c.seek_beats(20.0);

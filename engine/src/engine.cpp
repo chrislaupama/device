@@ -322,8 +322,8 @@ int32_t Engine::asset_get_info(uint64_t id, se_asset_info* out) const {
     return SE_OK;
 }
 
-int32_t Engine::asset_compute_peaks(uint64_t id, uint64_t start_frame, uint32_t frames_per_peak, float* out_minmax,
-                                    std::size_t capacity, std::size_t* out_count) const {
+int32_t Engine::asset_compute_peaks(uint64_t id, int32_t channel, uint64_t start_frame, uint32_t frames_per_peak,
+                                    float* out_minmax, std::size_t capacity, std::size_t* out_count) const {
     AssetRef asset;
     {
         std::lock_guard lock(assets_mutex_);
@@ -331,10 +331,11 @@ int32_t Engine::asset_compute_peaks(uint64_t id, uint64_t start_frame, uint32_t 
         if (it == assets_.end()) return SE_ERR_NOT_FOUND;
         asset = it->second;
     }
+    if (channel >= 0 && static_cast<uint32_t>(channel) >= asset->channels) return SE_ERR_INVALID_ARG;
     std::size_t count = 0;
-    const float* l = asset->channel(0);
+    const float* l = asset->channel(channel < 0 ? 0 : static_cast<uint32_t>(channel));
     const float* r = asset->channel(1);
-    const bool stereo = asset->channels == 2;
+    const bool stereo = channel < 0 && asset->channels == 2;
     for (uint64_t f = start_frame; count < capacity && f < asset->frames; f += frames_per_peak) {
         const uint64_t end = std::min<uint64_t>(asset->frames, f + frames_per_peak);
         float lo = std::numeric_limits<float>::infinity();

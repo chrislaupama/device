@@ -288,7 +288,7 @@ pub struct Controller {
     /// Detected transients per engine asset (asset frames), and those being analysed.
     pub(crate) onsets: HashMap<u64, Vec<saine_core::Transient>>,
     pub(crate) onsets_pending: std::collections::HashSet<u64>,
-    /// Tempo detected from each analysed engine asset's transients (\`warp::estimate_bpm\`).
+    /// Tempo detected from each analysed engine asset's transients (`warp::estimate_bpm`).
     pub(crate) tempos: HashMap<u64, Option<f64>>,
     pub peaks: PeakStore,
     pub selected_track: Option<TrackId>,
@@ -1308,9 +1308,44 @@ impl Controller {
 
     /// Waveform of an audio clip: its pyramid slot (once the peaks exist) and its pieces.
     pub fn clip_wave(&self, clip: &Clip) -> Option<(crate::peaks::Slot, Vec<crate::peaks::WaveSeg>)> {
-        let assets = if clip.warp.reverse { &self.reversed_assets } else { &self.asset_map };
-        let slot = assets.get(&clip.asset).and_then(|ea| self.peaks.slot(*ea))?;
+        let slot = self.clip_engine_asset(clip).and_then(|ea| self.peaks.slot(ea))?;
         Some((slot, crate::peaks::wave_segments(self.project(), clip, self.rate)))
+    }
+
+    /// The clip editor's waveform: a lane per channel once `ensure_lane_peaks`
+    /// has run for a stereo asset, else the mono mix.
+    pub fn clip_lanes(&self, clip: &Clip) -> Option<(Vec<crate::peaks::Slot>, Vec<crate::peaks::WaveSeg>)> {
+        let ea = self.clip_engine_asset(clip)?;
+        let slots = match self.peaks.channel_slots(ea) {
+            Some(lr) => lr.to_vec(),
+            None => vec![self.peaks.slot(ea)?],
+        };
+        Some((slots, crate::peaks::wave_segments(self.project(), clip, self.rate)))
+    }
+
+    /// Engine asset a clip plays (the reversed copy when it plays back to front).
+    fn clip_engine_asset(&self, clip: &Clip) -> Option<u64> {
+        let assets = if clip.warp.reverse { &self.reversed_assets } else { &self.asset_map };
+        assets.get(&clip.asset).copied()
+    }
+
+    /// Per-channel peaks of the open stereo audio clip, for the editor's two
+    /// lanes. Computed once per engine asset (about a ms per channel-minute).
+    pub fn ensure_lane_peaks(&mut self) {
+        let Some(c) = self.ac_clip() else { return };
+        if self.project().asset(c.asset).is_none_or(|a| a.channels != 2) {
+            return;
+        }
+        let Some(ea) = self.clip_engine_asset(c) else { return };
+        if self.peaks.channel_slots(ea).is_some() {
+            return;
+        }
+        let Ok(info) = self.engine.asset_info(ea) else { return };
+        let pairs = (info.frames / crate::peaks::L0_FRAMES as u64 + 1) as usize;
+        let lane = |ch: u32| self.engine.channel_peaks(ea, ch, 0, crate::peaks::L0_FRAMES, pairs).map(crate::peaks::Pyramid::from_level0);
+        if let (Ok(l), Ok(r)) = (lane(0), lane(1)) {
+            self.peaks.insert_channels(ea, [l, r]);
+        }
     }
 
     /// Rebuild the clip/track visuals (positions include in-progress drag previews).

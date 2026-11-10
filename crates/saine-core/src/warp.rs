@@ -8,10 +8,10 @@
 //! original beat, so 2x plays the source twice as fast (half the footprint).
 //! The engine gets the map as (timeline frame, source frame) points.
 //!
-//! \`reverse\` plays the clip's source window back to front, warped or not.
+//! `reverse` plays the clip's source window back to front, warped or not.
 //! Markers and transients stay in source frames; the engine plays a reversed
 //! copy of the asset along the mirrored map.
-//! \`transpose\` shifts the pitch in semitones. With warp on the stretcher
+//! `transpose` shifts the pitch in semitones. With warp on the stretcher
 //! keeps the timing (Re-pitch ignores it: its pitch follows speed); with warp
 //! off the clip varispeeds, so it also plays 2^(st/12) times as fast.
 //!
@@ -21,9 +21,11 @@
 use crate::model::{Asset, Clip, PPQ, Project};
 use serde::{Deserialize, Serialize};
 
-/// The Mode menu (the reference app's names): Auto decides per passage, Drums keeps hits
-/// sharp, Melody keeps tones even, Vocal keeps a voice natural when
-/// transposed, Re-pitch lets pitch move with speed.
+/// The Mode menu (the reference app's names). The reference app stores them as auto, percussive,
+/// tonal, vocal and repitch, and hands its stretcher a content mode of auto,
+/// percussive or tonal, with vocal sent as tonal. So: Auto decides per
+/// passage, Drums keeps hits sharp, Melody and Vocal stretch tonally,
+/// Re-pitch lets pitch move with speed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WarpMode {
@@ -238,8 +240,8 @@ impl ClipWarp {
         true
     }
 
-    /// Slide the audio under the marker at \`from\`: it keeps its beat and
-    /// pins source \`to\` instead. Refused when \`to\` would reach a neighbour.
+    /// Slide the audio under the marker at `from`: it keeps its beat and
+    /// pins source `to` instead. Refused when `to` would reach a neighbour.
     pub fn slide_marker(&mut self, from: u64, to: u64) -> bool {
         let Some(i) = self.markers.iter().position(|m| m.source == from) else { return false };
         if (i > 0 && self.markers[i - 1].source >= to) || self.markers.get(i + 1).is_some_and(|m| m.source <= to) {
@@ -322,13 +324,13 @@ pub fn estimate_bpm(transients: &[Transient], rate: f64) -> Option<f64> {
     Some(if (fine - whole).abs() <= 0.15 { whole } else { (fine * 100.0).round() / 100.0 })
 }
 
-/// Engine mode for a model mode (`SE_WARP_*`).
+/// Engine mode for a model mode (`SE_WARP_*`). Vocal plays as Melody: the reference app
+/// sends vocal to its stretcher as the tonal content mode, with no formant step.
 pub fn engine_mode(mode: WarpMode) -> u8 {
     match mode {
         WarpMode::Repitch => 0,
         WarpMode::Drums => 1,
-        WarpMode::Melody => 2,
-        WarpMode::Vocal => 3,
+        WarpMode::Melody | WarpMode::Vocal => 2,
         WarpMode::Auto => 4,
     }
 }

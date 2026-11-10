@@ -577,6 +577,7 @@ impl Controller {
     pub fn push_clip_editor(&mut self, s: &Studio) {
         if self.ac_clip().is_some() {
             self.request_onsets();
+            self.ensure_lane_peaks();
         }
         if self.pr.ac_edit.is_some_and(|(_, id)| self.ac_clip().map(|c| c.id) != Some(id)) {
             self.pr.ac_edit = None;
