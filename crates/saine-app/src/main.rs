@@ -37,6 +37,7 @@ mod files;
 mod panel_multiband;
 mod gpu;
 mod highlight;
+mod minimap;
 mod mixer;
 mod panel_fields;
 mod peaks;
@@ -1293,6 +1294,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.section_double(x, y);
     });
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, _cmd: bool, alt: bool| c.pointer_mods(kind, x, y, shift, alt));
+    on!(on_minimap_pointer, |c, kind: i32, x: f32, y: f32, w: f32| c.minimap_pointer(kind, x, y, w));
+    on!(on_minimap_double, |c| c.minimap_fit());
+    on!(on_minimap_scroll, |c, dx: f32, dy: f32, x: f32, w: f32, zoom: bool| c.minimap_scroll(dx, dy, x, w, zoom));
     on!(on_lane_scroll, |c, dx: f32, dy: f32, x: f32, zoom: bool| c.scroll(dx, dy, x, zoom));
     on!(on_set_bottom_tab, |c, t: i32| c.set_bottom_tab(if t == 1 { BottomTab::Clip } else { BottomTab::Devices }));
     on!(on_synth_page_select, |c, i: i32| c.synth_page(i.max(0) as usize));
