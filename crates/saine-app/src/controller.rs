@@ -318,6 +318,8 @@ pub struct Controller {
     /// stopped (Space).
     play_start: Option<i64>,
     stopped_at: Option<i64>,
+    /// A seek the user made since the last stop, which the engine may not have applied yet.
+    seeked_to: Option<i64>,
     /// Edit › Undo History… dialog.
     pub undo_history_open: bool,
     pub(crate) undo_history_model: Rc<VecModel<crate::UndoHistoryRow>>,
@@ -457,6 +459,7 @@ impl Controller {
             updates_open: false,
             play_start: None,
             stopped_at: None,
+            seeked_to: None,
             undo_history_open: false,
             undo_history_model: Rc::new(VecModel::default()),
             jobs_tx,
@@ -832,12 +835,14 @@ impl Controller {
         let t = self.engine.transport();
         let r = if t.playing {
             self.stopped_at = Some(t.position);
+            self.seeked_to = None;
             self.engine.pause()
         } else {
             let resume = return_to(self.settings.prefs.general.stop_in_place, self.play_start, self.stopped_at, t.position);
+            let seeked = self.seeked_to.take();
             self.play_start = Some(match resume {
                 Some(start) if self.engine.seek(start).is_ok() => start,
-                _ => self.engine.transport().position,
+                _ => seeked.unwrap_or(self.engine.transport().position),
             });
             self.engine.play()
         };
@@ -870,7 +875,10 @@ impl Controller {
         let ticks = (beats.max(0.0) * PPQ as f64).round() as Ticks;
         let frame = self.project().ticks_to_frames(ticks, self.rate);
         // Applied immediately when no device runs (engine ABI), else at the next block.
-        let _ = self.engine.seek(frame);
+        if self.engine.seek(frame).is_ok() {
+            self.stopped_at = None;
+            self.seeked_to = Some(frame as i64);
+        }
     }
 
     // ---------------------------------------------------------------- track edits
