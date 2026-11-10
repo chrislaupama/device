@@ -573,7 +573,7 @@ impl Command {
                 }
                 let notes = match &pattern {
                     Some(pat) => steps::bake_into(pat, &c.notes),
-                    None => c.playing_notes(),
+                    None => c.tiled_notes(),
                 };
                 let old_notes = std::mem::replace(&mut c.notes, notes);
                 let old_pattern = std::mem::replace(&mut c.pattern, pattern);

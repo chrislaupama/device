@@ -48,6 +48,7 @@ mod recording;
 mod sampler_panel;
 mod selftest;
 mod settings;
+mod stepseq;
 mod sections;
 mod splitters;
 mod synth;
@@ -97,6 +98,8 @@ struct Args {
     input_menu_state: bool,
     /// reference-clip-menu: Instrument track with a 1-bar MIDI clip at bar 6, its context menu open.
     clip_menu_state: bool,
+    /// Step sequencer review state: lane tab shown (0 Steps .. 4 Tie), or None.
+    seq_state: Option<i32>,
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
     /// 1 export dialog, 2 unsaved-changes prompt, 3 export dialog on Stems, 4 with its Tracks menu open, 5 on Project.
@@ -229,6 +232,10 @@ fn parse_args() -> Result<Args, String> {
                 "reference-input-menu" => {
                     a.reference_default = true;
                     a.input_menu_state = true;
+                }
+                s if s.starts_with("review-step-sequencer") => {
+                    a.reference_default = true;
+                    a.seq_state = Some(s.rsplit('-').next().and_then(|l| l.parse().ok()).unwrap_or(0));
                 }
                 "reference-export" => {
                     a.reference_default = true;
@@ -849,6 +856,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    if let Some(lane) = args.seq_state {
+        // Drum Rack track with a one-bar drum pattern (reference z100-clip-pattern-sequencer-*:
+        // Pad 1 on steps 1, 5, 9, 13, Pad 2 on 5, Pad 3 on 9), plus lane values to show.
+        use saine_core::steps::StepLane;
+        let mut c = ctl.borrow_mut();
+        if let Some(inst) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id) {
+            c.select_track(inst);
+            c.execute(saine_core::Command::SetInstrumentPlugin { track: inst, device: Some(saine_core::builtin::drum_rack::DRUM_RACK.instantiate()) });
+            c.seek_beats(16.0);
+            if let Some(id) = c.insert_midi_clip() {
+                let mut p = c.project().midi_clip(id).and_then(|m| m.pattern.clone()).unwrap_or_default();
+                for (key, step) in [(36, 0), (36, 4), (36, 8), (36, 12), (37, 4), (38, 8)] {
+                    p = p.toggled(key, step);
+                }
+                if lane > 0 {
+                    p = p.toggled(42, 2).toggled(42, 6).toggled(42, 10).toggled(42, 14).with_row_flag(39, false);
+                    p = p.with_lane(42, 2, StepLane::Velocity, 60).with_lane(42, 10, StepLane::Velocity, 30);
+                    p = p.with_lane(42, 6, StepLane::Offset, 25).with_lane(42, 14, StepLane::Offset, -20);
+                    p = p.with_lane(37, 4, StepLane::Repeat, 3).with_lane(38, 8, StepLane::Tie, 2);
+                }
+                c.execute(saine_core::Command::SetStepPattern { clip: id, pattern: Some(p) });
+                c.select_clip(Some(id));
+                c.seq_lane(lane);
+            }
+        }
+    }
     if args.automation_state {
         // Reference 60: same project layout as 50 (Instrument 1 with a MIDI clip at bar 6, Audio 2
         // selected, playhead 00:11.000, Devices tab) with the automation lanes shown.
@@ -1350,6 +1383,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_ac_edit_commit, |c, text: slint::SharedString| c.ac_edit_commit(&text));
     on!(on_ac_edit_cancel, |c| c.ac_edit_cancel());
     on!(on_pr_value, |c, f: i32, phase: i32, dy: f32| c.pr_value(f, phase, dy));
+    on!(on_seq_tab, |c, piano: bool| c.seq_tab(piano));
+    on!(on_seq_lane_pick, |c, i: i32| c.seq_lane(i));
+    on!(on_seq_action, |c, a: slint::SharedString| c.seq_action(a.as_str()));
+    on!(on_seq_pointer, |c, kind: i32, x: f32, y: f32| c.seq_pointer(kind, x, y));
+    on!(on_seq_scroll, |c, dy: f32| c.seq_scroll(dy));
+    on!(on_seq_swing, |c, phase: i32, dy: f32| c.seq_swing(phase, dy));
     on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
     on!(on_menu_dismiss, |c| c.menu_close());
@@ -1843,6 +1882,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     // Clip editor texture (only while a MIDI or audio clip is open in the Clip tab).
                     let pr_vis = c.clip_editor_visible();
                     if pr_vis {
+                        // The step sequencer draws in Slint; the texture keeps its size for the piano roll tab.
                         let win = app.window().size();
                         let size = ((win.width as f32 / scale) - 10.0 - pianoroll::PANEL_ORIGIN.0 - 0.5, pianoroll::CLIP_PANEL_H - pianoroll::PANEL_ORIGIN.1 - pianoroll::FOOTER_H);
                         if c.pr.size != size {
@@ -1850,7 +1890,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             c.ui_dirty = true;
                         }
                         let notes = c.pr_notes();
-                        if let (Some(r), Some(sc)) = (f.pr_renderer.as_mut(), c.pr_scene(scale, &notes)) {
+                        if let (false, Some(r), Some(sc)) = (c.seq_visible(), f.pr_renderer.as_mut(), c.pr_scene(scale, &notes)) {
                             let phys = ((size.0 * scale).round() as u32, (size.1 * scale).round() as u32);
                             if let Some(tex) = r.ensure_target(phys) {
                                 match gpu::to_slint_image(tex) {

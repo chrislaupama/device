@@ -215,6 +215,12 @@ pub struct StepPattern {
     /// Active cells, sorted by (key, step), at most one per (key, step).
     #[serde(default)]
     pub cells: Vec<StepCell>,
+    /// Rows muted / soloed with the editor's M / S buttons. Their notes stay in
+    /// the clip; playback leaves them out (`StepPattern::audible`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub muted: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub soloed: Vec<u8>,
 }
 
 impl Default for StepPattern {
@@ -225,7 +231,7 @@ impl Default for StepPattern {
 
 impl StepPattern {
     pub fn new(rows: StepRows) -> Self {
-        StepPattern { rate: StepRate::default(), steps: DEFAULT_STEPS, swing: 0.0, rows, cells: Vec::new() }
+        StepPattern { rate: StepRate::default(), steps: DEFAULT_STEPS, swing: 0.0, rows, cells: Vec::new(), muted: Vec::new(), soloed: Vec::new() }
     }
 
     /// Pattern length (ticks); the clip repeats it.
@@ -239,6 +245,12 @@ impl StepPattern {
         }
         if !self.swing.is_finite() || !(0.0..=1.0).contains(&self.swing) {
             return Err(format!("swing {} outside 0..=1", self.swing));
+        }
+        if let Some(k) = self.muted.iter().chain(&self.soloed).find(|&&k| !self.rows.contains(k)) {
+            return Err(format!("muted or soloed key {k} is not a row of this pattern"));
+        }
+        if [&self.muted, &self.soloed].iter().any(|l| l.windows(2).any(|w| w[0] >= w[1])) {
+            return Err("muted and soloed keys must be sorted and unique".into());
         }
         for (i, c) in self.cells.iter().enumerate() {
             if !self.rows.contains(c.key) {
@@ -293,7 +305,7 @@ impl StepPattern {
 
     /// The row's cells that sound, each with its tie clamped to the pattern;
     /// cells under an earlier tie are left out.
-    fn sounding(&self, key: u8) -> Vec<(StepCell, u16)> {
+    pub fn sounding(&self, key: u8) -> Vec<(StepCell, u16)> {
         let mut out = Vec::new();
         let mut held_until: i32 = -1;
         for c in self.row(key) {
@@ -321,6 +333,24 @@ impl StepPattern {
     pub fn effective_offset(&self, c: &StepCell) -> i32 {
         let lo = if c.step == 0 { 0 } else { -49 };
         (c.offset as i32 + self.swing_offset(c.step)).clamp(lo, 49)
+    }
+
+    /// The row plays: not muted, and soloed when any row is.
+    pub fn audible(&self, key: u8) -> bool {
+        !self.muted.contains(&key) && (self.soloed.is_empty() || self.soloed.contains(&key))
+    }
+
+    /// Row M / S button: toggle the key in the muted (`solo` false) or soloed list.
+    pub fn with_row_flag(&self, key: u8, solo: bool) -> StepPattern {
+        let mut p = self.clone();
+        let list = if solo { &mut p.soloed } else { &mut p.muted };
+        match list.binary_search(&key) {
+            Ok(i) => {
+                list.remove(i);
+            }
+            Err(i) => list.insert(i, key),
+        }
+        p
     }
 
     /// Turn a step on (default lane values) or off.
@@ -418,7 +448,7 @@ impl StepPattern {
     /// that are not rows, at or past the pattern end, or on a step already
     /// taken are left out.
     pub fn derive(notes: &[Note], rate: StepRate, steps: u16, swing: f32, rows: StepRows) -> StepPattern {
-        let mut p = StepPattern { rate, steps: steps.clamp(1, MAX_STEPS), swing, rows, cells: Vec::new() };
+        let mut p = StepPattern { rate, steps: steps.clamp(1, MAX_STEPS), swing, ..StepPattern::new(rows) };
         let mut keys: Vec<u8> = notes.iter().map(|n| n.pitch).filter(|&k| rows.contains(k)).collect();
         keys.sort_unstable();
         keys.dedup();
