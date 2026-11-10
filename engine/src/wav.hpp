@@ -8,7 +8,8 @@
 //   - 1 or 2 channels. Files with more than 2 channels are REJECTED with
 //     SE_ERR_UNSUPPORTED_FORMAT (no implicit downmix: a correct downmix needs
 //     the channel mask / layout policy, which belongs to a later milestone).
-// Not supported: RF64/BW64 (>4 GiB), compressed formats (ADPCM, mu-law, ...).
+//   - RF64 / BW64 (64-bit sizes from the ds64 chunk), within the importer's 2 GB file cap
+// Not supported: compressed formats (ADPCM, mu-law, ...).
 #pragma once
 
 #include <cstddef>
