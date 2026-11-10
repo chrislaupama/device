@@ -10,6 +10,14 @@
 //! lands it as one undo step, unless the project was replaced, the track or a source clip changed
 //! or the render was cancelled; then nothing is kept.
 //!
+//! A track with plugins (VST3, AU, CLAP) needs one more step first: plugins want their creation,
+//! state and teardown on the main thread, so the UI thread prepares their instances in the
+//! private engine, one plugin per `poll_jobs` tick (each starting from the live instance's
+//! current state, so the file sounds like playback), then the worker renders, and the private
+//! engine goes back to the UI thread with the result to be torn down there. The main thread is
+//! never held for more than one plugin's creation or teardown at a time. A plugin that cannot be
+//! read or loaded fails the render before anything is written.
+//!
 //! Files go to `<project>/media/joined` (Consolidate) and `<project>/media/bounce` (Bounce) once
 //! the project is saved, else to `<temp>/Saine Studio/Unsaved renders/`; like unsaved
 //! recordings they are not moved into the project when it is saved. A file only appears once its
@@ -24,7 +32,7 @@ use crate::wavgen;
 use saine_core::render_plan::{self, ClipSpan, RenderMode};
 use saine_core::automation::AutomationTarget;
 use saine_core::{Asset, AssetId, Clip, ClipId, Command, MidiClip, Track, TrackId, TrackKind};
-use saine_engine::offline::{self, OfflineError, OfflineRender};
+use saine_engine::offline::{self, OfflineError, OfflineRender, Session};
 use saine_engine::{AssetInfo, Engine};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -64,6 +72,8 @@ pub struct ClipRendered {
     pub doc_epoch: u64,
     pub op: ClipOp,
     pub result: Result<Rendered, OfflineError>,
+    /// The private engine of a render with plugins, sent back to be dropped on the UI thread.
+    pub session: Option<Session>,
 }
 
 /// A clip as it was when the render began.
@@ -72,8 +82,28 @@ enum Source {
     Midi(MidiClip),
 }
 
+/// What the worker renders.
+enum Work {
+    Job(OfflineRender),
+    /// A private engine with plugins, prepared on the UI thread.
+    Session(Session),
+}
+
+/// A render whose plugins are still being prepared (UI thread, one per tick).
+struct Preparing {
+    session: Session,
+    op: ClipOp,
+    out: Output,
+    rate: f64,
+    body: usize,
+    tail: usize,
+    doc_epoch: u64,
+}
+
 /// The render in flight (one at a time).
 pub struct ActiveRender {
+    /// Some until the worker starts.
+    preparing: Option<Preparing>,
     cancel: Arc<AtomicBool>,
     progress: Arc<AtomicUsize>,
     total: usize,
@@ -98,6 +128,10 @@ pub struct ClipRender {
     pub dialog_request: Option<(ClipId, String)>,
     /// Milliseconds the last finished render took on its worker.
     pub last_ms: f64,
+    /// The longest single piece of a render the UI thread did itself: copying the project,
+    /// preparing one plugin, tearing the private engine down. Milliseconds, the maximum over
+    /// the renders since the app started.
+    pub ui_stall_ms: f64,
 }
 
 impl ClipRender {
@@ -193,10 +227,13 @@ impl Controller {
         self.render_block(id, needs_notes).is_none()
     }
 
-    /// Starts rendering `span` alone on a worker thread (see the module comment). The rendered
-    /// range is the span plus, when the track's sound rings out, a tail trimmed at silence. The
-    /// interface only blocks for the copy of the project the worker renders from.
+    /// Starts rendering `span` alone (see the module comment). The rendered range is the span
+    /// plus, when the track's sound rings out, a tail trimmed at silence. A track without plugins
+    /// renders on a worker at once; one with plugins first has its instances prepared here, one per
+    /// tick (`prepare_render_step`). The interface only blocks for the copy of the project the
+    /// render works from.
     fn start_render(&mut self, op: ClipOp, span: &ClipSpan, mode: RenderMode, out: Output, label: &'static str) {
+        let t0 = Instant::now();
         let rate = self.engine.sample_rate();
         let p = self.project();
         let start = p.ticks_to_frames(span.start, rate);
@@ -205,26 +242,12 @@ impl Controller {
         let project = render_plan::render_project(p, span, mode);
         let sources: Vec<Source> = span.clips.iter().filter_map(|&c| p.clip(c).cloned().map(Source::Audio).or_else(|| p.midi_clip(c).cloned().map(Source::Midi))).collect();
         let job = OfflineRender { project, rate, transients: self.transients_by_asset(), start, frames: body + tail };
-        let (cancel, progress) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicUsize::new(0)));
-        let (engine, tx, doc_epoch) = (self.engine.clone(), self.jobs_tx.clone(), self.doc_epoch);
-        let (c2, p2) = (cancel.clone(), progress.clone());
-        std::thread::Builder::new()
-            .name("clip-render".into())
-            .spawn(move || {
-                let t0 = Instant::now();
-                let result = (|| {
-                    let mut samples = offline::render(&job, &c2, &p2)?;
-                    let last = samples.chunks_exact(2).rposition(|f| f[0].abs() > SILENCE || f[1].abs() > SILENCE);
-                    samples.truncate(last.map_or(0, |i| i + 1).clamp(body, body + tail) * 2);
-                    let (path, loaded) = write_render(&engine, &samples, rate, &out, &c2)?;
-                    Ok(Rendered { path, loaded, render_ms: t0.elapsed().as_secs_f64() * 1e3 })
-                })();
-                let _ = tx.send(JobResult::ClipRendered(Box::new(ClipRendered { doc_epoch, op, result })));
-            })
-            .expect("spawn clip render thread");
+        let plugins = !job.plugin_devices().is_empty();
+        let doc_epoch = self.doc_epoch;
         self.clip_render.active = Some(ActiveRender {
-            cancel,
-            progress,
+            preparing: None,
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(AtomicUsize::new(0)),
             total: body + tail,
             shown: 0,
             label,
@@ -235,19 +258,120 @@ impl Controller {
         });
         self.pending_jobs += 1;
         self.ui_dirty = true;
+        if !plugins {
+            self.spawn_render(Work::Job(job), op, out, rate, body, tail, doc_epoch);
+        } else {
+            match Session::new(job) {
+                Ok(session) => {
+                    if let Some(a) = self.clip_render.active.as_mut() {
+                        a.preparing = Some(Preparing { session, op, out, rate, body, tail, doc_epoch });
+                    }
+                }
+                Err(e) => self.fail_render(&op, e),
+            }
+        }
+        self.note_ui_stall(t0);
+    }
+
+    /// Runs the render on a worker thread; its result (and the private engine of a render with
+    /// plugins) comes back through `poll_jobs`.
+    fn spawn_render(&mut self, work: Work, op: ClipOp, out: Output, rate: f64, body: usize, tail: usize, doc_epoch: u64) {
+        let Some(a) = self.clip_render.active.as_ref() else { return };
+        let (c2, p2) = (a.cancel.clone(), a.progress.clone());
+        let (engine, tx) = (self.engine.clone(), self.jobs_tx.clone());
+        std::thread::Builder::new()
+            .name("clip-render".into())
+            .spawn(move || {
+                let t0 = Instant::now();
+                let mut session = None;
+                let result = (|| {
+                    let mut samples = match work {
+                        Work::Job(job) => offline::render(job, &c2, &p2)?,
+                        Work::Session(s) => {
+                            let rendered = s.render(&c2, &p2);
+                            session = Some(s);
+                            rendered?
+                        }
+                    };
+                    let last = samples.chunks_exact(2).rposition(|f| f[0].abs() > SILENCE || f[1].abs() > SILENCE);
+                    samples.truncate(last.map_or(0, |i| i + 1).clamp(body, body + tail) * 2);
+                    let (path, loaded) = write_render(&engine, &samples, rate, &out, &c2)?;
+                    Ok(Rendered { path, loaded, render_ms: t0.elapsed().as_secs_f64() * 1e3 })
+                })();
+                let _ = tx.send(JobResult::ClipRendered(Box::new(ClipRendered { doc_epoch, op, result, session })));
+            })
+            .expect("spawn clip render thread");
+    }
+
+    /// The render ended before its worker started (a plugin could not be read or loaded): say
+    /// why and leave nothing behind.
+    fn fail_render(&mut self, op: &ClipOp, e: OfflineError) {
+        self.clip_render.active = None;
+        self.pending_jobs = self.pending_jobs.saturating_sub(1);
+        self.ui_dirty = true;
+        let what = if matches!(op, ClipOp::Export { .. }) { "Export" } else { "Render" };
+        match e {
+            OfflineError::Cancelled => self.set_status("Render cancelled", 3),
+            OfflineError::Failed(e) => self.set_status(format!("{what} failed: {e}"), 6),
+        }
+    }
+
+    fn note_ui_stall(&mut self, since: Instant) {
+        self.clip_render.ui_stall_ms = self.clip_render.ui_stall_ms.max(since.elapsed().as_secs_f64() * 1e3);
+    }
+
+    /// Prepares the next plugin of the render waiting for its instances (one per call, so the
+    /// interface is never held for more than one plugin's creation) and starts the worker when
+    /// the last one is ready.
+    fn prepare_render_step(&mut self) {
+        let Some(mut prep) = self.clip_render.active.as_mut().and_then(|a| a.preparing.take()) else { return };
+        if prep.doc_epoch != self.doc_epoch {
+            self.clip_render.active = None;
+            self.pending_jobs = self.pending_jobs.saturating_sub(1);
+            self.ui_dirty = true;
+            return;
+        }
+        let t0 = Instant::now();
+        match prep.session.prepare_next(Some(&self.engine)) {
+            Err(e) => {
+                self.fail_render(&prep.op, e);
+                self.note_ui_stall(t0);
+                return;
+            }
+            Ok(_) => self.ui_dirty = true,
+        }
+        let (done, total) = prep.session.plugins();
+        if done < total {
+            if let Some(a) = self.clip_render.active.as_mut() {
+                a.preparing = Some(prep);
+            }
+        } else {
+            let Preparing { session, op, out, rate, body, tail, doc_epoch } = prep;
+            self.spawn_render(Work::Session(session), op, out, rate, body, tail, doc_epoch);
+        }
+        self.note_ui_stall(t0);
     }
 
     /// The Cancel button and Esc: stop the render in flight; nothing is kept.
     pub fn cancel_clip_render(&mut self) -> bool {
         let Some(a) = self.clip_render.active.as_mut() else { return false };
+        self.ui_dirty = true;
+        if a.preparing.is_some() {
+            let t0 = Instant::now();
+            self.clip_render.active = None;
+            self.pending_jobs = self.pending_jobs.saturating_sub(1);
+            self.set_status("Render cancelled", 3);
+            self.note_ui_stall(t0);
+            return true;
+        }
         a.cancelled = true;
         a.cancel.store(true, Ordering::Relaxed);
-        self.ui_dirty = true;
         true
     }
 
-    /// Called from `poll_jobs`: the interface redraws when the render moved on.
+    /// Called from `poll_jobs`: prepares plugins, and the interface redraws when the render moved on.
     pub(crate) fn clip_render_tick(&mut self) {
+        self.prepare_render_step();
         if let Some(a) = self.clip_render.active.as_mut() {
             let now = a.progress.load(Ordering::Relaxed);
             if now != a.shown {
@@ -266,7 +390,11 @@ impl Controller {
         let fraction = if a.total == 0 { 0.0 } else { a.shown as f32 / a.total as f32 };
         s.set_render_busy(true);
         s.set_render_progress(fraction);
-        s.set_render_label(if a.cancelled { "Cancelling…".into() } else { format!("{}  {} %", a.label, (fraction * 100.0).round() as i32).into() });
+        s.set_render_label(match &a.preparing {
+            _ if a.cancelled => "Cancelling…".into(),
+            Some(p) => format!("{}  plugin {}/{}", a.label, p.session.plugins().0 + 1, p.session.plugins().1).into(),
+            None => format!("{}  {} %", a.label, (fraction * 100.0).round() as i32).into(),
+        });
     }
 
     /// Consolidate and Bounce write a new file named after the track under `media/<kind>`.
@@ -385,7 +513,10 @@ impl Controller {
 
     /// A worker finished: put the render in the project (one Batch) or report the failure.
     pub(crate) fn finish_clip_render(&mut self, r: ClipRendered) {
-        let ClipRendered { doc_epoch, op, result } = r;
+        let ClipRendered { doc_epoch, op, result, session } = r;
+        let t0 = Instant::now();
+        drop(session);
+        self.note_ui_stall(t0);
         let Some(active) = self.clip_render.active.take() else { return };
         self.ui_dirty = true;
         let is_export = matches!(op, ClipOp::Export { .. });

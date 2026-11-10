@@ -97,6 +97,10 @@ public:
     void plugin_load_errors(std::vector<std::pair<uint64_t, std::string>>& out);
     std::size_t plugin_save_states();
     bool plugin_saved_state(std::size_t index, uint64_t& id, const uint8_t*& data, std::size_t& len);
+    // Offline renders on a worker (see "Plugins in offline renders" in the README).
+    int32_t plugin_save_state_of(uint64_t device_id, std::string& err);
+    int32_t plugin_prepare(const se_device_desc& d, bool instrument, const char* track_name, std::string& err);
+    void plugin_set_detached(bool detached);
     int32_t plugin_editor_open(uint64_t device_id, std::string& err);
     void plugin_editor_close(uint64_t device_id);
     bool plugin_editor_is_open(uint64_t device_id);

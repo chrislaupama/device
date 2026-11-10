@@ -20,7 +20,7 @@ void PluginHost::begin_publish() {
     for (auto& [id, e] : entries_) e.used = false;
 }
 
-PluginInstance* PluginHost::use(const se_device_desc& d, bool instrument, const char* track_name) {
+PluginSpec PluginHost::spec_of(const se_device_desc& d, bool instrument, const char* track_name) {
     PluginSpec key;
     key.device_id = d.device_id;
     key.format = static_cast<PluginFormat>(d.format);
@@ -29,6 +29,11 @@ PluginInstance* PluginHost::use(const se_device_desc& d, bool instrument, const 
     key.name = d.name != nullptr ? d.name : key.plugin_id;
     key.track = track_name != nullptr ? track_name : "";
     key.instrument = instrument;
+    return key;
+}
+
+PluginInstance* PluginHost::use(const se_device_desc& d, bool instrument, const char* track_name) {
+    const PluginSpec key = spec_of(d, instrument, track_name);
 
     auto it = entries_.find(d.device_id);
     if (it != entries_.end()) {
@@ -51,10 +56,29 @@ PluginInstance* PluginHost::use(const se_device_desc& d, bool instrument, const 
         if (e.inst) pending_.push_back(std::move(e.inst));
         entries_.erase(it);
     }
+    return create(d, key);
+}
 
+PluginInstance* PluginHost::prepare(const se_device_desc& d, bool instrument, const char* track_name, std::string& err) {
+    const PluginSpec key = spec_of(d, instrument, track_name);
+    if (auto it = entries_.find(d.device_id); it != entries_.end() && it->second.spec.same_plugin(key)) {
+        err = it->second.error;
+        return it->second.inst.get();
+    }
+    PluginInstance* inst = use(d, instrument, track_name);
+    if (inst == nullptr) err = entries_.at(d.device_id).error;
+    return inst;
+}
+
+PluginInstance* PluginHost::create(const se_device_desc& d, const PluginSpec& key) {
     Entry e;
     e.spec = key;
     e.used = true;
+    if (detached_ && d.format != SE_PLUGIN_BUILTIN) { // built-in devices have no thread affinity
+        e.error = "the plugin was not prepared on the main thread";
+        entries_.emplace(d.device_id, std::move(e));
+        return nullptr;
+    }
     PluginSpec full = key;
     if (d.state != nullptr && d.state_len > 0) full.state.assign(d.state, d.state + d.state_len);
     std::string err;
@@ -100,7 +124,7 @@ void PluginHost::end_publish(uint64_t seq) {
 void PluginHost::collect(uint64_t rt_active) {
     for (auto& [id, e] : entries_)
         if (BuiltinInstance* b = e.inst ? e.inst->as_builtin() : nullptr) b->reclaim();
-    if (retired_.empty() || rt_active == kBusy) return;
+    if (detached_ || retired_.empty() || rt_active == kBusy) return;
     for (auto it = retired_.begin(); it != retired_.end();) {
         if (rt_active == kIdle || rt_active >= it->seq) {
             destroy(it->inst);
@@ -113,6 +137,7 @@ void PluginHost::collect(uint64_t rt_active) {
 
 void PluginHost::idle(uint64_t rt_active) {
     collect(rt_active);
+    if (detached_) return;
     for (auto& [id, e] : entries_)
         if (e.inst) e.inst->on_main_thread();
     for (auto it = editors_.begin(); it != editors_.end();)
@@ -121,6 +146,7 @@ void PluginHost::idle(uint64_t rt_active) {
 
 bool PluginHost::service_latencies() {
     bool changed = false;
+    if (detached_) return changed;
     for (auto& [id, e] : entries_) {
         if (!e.inst) continue;
         if (e.inst->take_restart_request()) {
@@ -167,6 +193,19 @@ std::size_t PluginHost::save_states() {
     return saved_.size();
 }
 
+int32_t PluginHost::save_state_of(uint64_t device_id, std::string& err) {
+    saved_.clear();
+    auto it = entries_.find(device_id);
+    if (it == entries_.end() || !it->second.inst) {
+        err = "no live plugin instance for this device";
+        return SE_ERR_NOT_FOUND;
+    }
+    std::vector<uint8_t> bytes;
+    if (!it->second.inst->save_state(bytes, err)) return SE_ERR_STATE;
+    saved_.emplace_back(device_id, std::move(bytes));
+    return SE_OK;
+}
+
 bool PluginHost::saved_state(std::size_t index, uint64_t& id, const uint8_t*& data, std::size_t& len) const {
     if (index >= saved_.size()) return false;
     id = saved_[index].first;
@@ -176,6 +215,7 @@ bool PluginHost::saved_state(std::size_t index, uint64_t& id, const uint8_t*& da
 }
 
 bool PluginHost::flush_pending() const {
+    if (detached_) return false;
     for (const auto& [id, e] : entries_)
         if (e.inst && e.inst->wants_flush()) return true;
     return false;

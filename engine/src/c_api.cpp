@@ -532,6 +532,14 @@ int32_t se_plugin_saved_state(se_engine* engine, size_t index, uint64_t* out_dev
     });
 }
 
+int32_t se_plugin_save_state(se_engine* engine, uint64_t device_id) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&]() -> int32_t {
+        std::string err;
+        return check(engine->impl->plugin_save_state_of(device_id, err), err);
+    });
+}
+
 #define SE_REQUIRE_MAIN_THREAD()                                                                                       \
     do {                                                                                                               \
         if (!saine::on_platform_main_thread()) return fail(SE_ERR_STATE, "plugin editors are main-thread only");      \
@@ -580,6 +588,26 @@ int32_t se_plugin_idle(se_engine* engine) {
     SE_REQUIRE_ENGINE(engine);
     return guarded([&]() -> int32_t {
         engine->impl->plugin_idle();
+        return SE_OK;
+    });
+}
+
+int32_t se_plugin_prepare(se_engine* engine, const se_device_desc* device, uint8_t instrument) {
+    SE_REQUIRE_ENGINE(engine);
+    if (device == nullptr) return fail(SE_ERR_INVALID_ARG, "device is NULL");
+    if (device->device_id == 0 || device->plugin_id == nullptr || device->format > SE_PLUGIN_CLAP ||
+        (device->state == nullptr && device->state_len > 0))
+        return fail(SE_ERR_INVALID_ARG, "invalid plugin device description");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->plugin_prepare(*device, instrument != 0, nullptr, err), err);
+    });
+}
+
+int32_t se_plugin_set_detached(se_engine* engine, uint8_t detached) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&]() -> int32_t {
+        engine->impl->plugin_set_detached(detached != 0);
         return SE_OK;
     });
 }

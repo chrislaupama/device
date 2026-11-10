@@ -47,6 +47,19 @@ public:
     // The graph with `seq` is live: retire everything it does not use.
     void end_publish(uint64_t seq);
 
+    // ---- offline renders on a worker (caller holds mutex(); docs: engine/README.md "Plugins in offline renders")
+    // Main thread: instantiate the device now, so that a later publish from
+    // another thread finds and reuses it. Null + `err` when it fails to load
+    // (the failed entry stays, like a failed instance of a publish).
+    PluginInstance* prepare(const se_device_desc& d, bool instrument, const char* track_name, std::string& err);
+    // Detached: publish and housekeeping run on a worker thread, so they never
+    // instantiate a third-party plugin (a device that was not prepared fails to
+    // load; built-in devices have no thread affinity and are still created), restart,
+    // poll, call back or destroy plugin instances. Those stay with the main
+    // thread's later teardown (shutdown_all).
+    void set_detached(bool detached) noexcept { detached_ = detached; }
+    bool detached() const noexcept { return detached_; }
+
     // ---- main-thread housekeeping (caller holds mutex())
     void collect(uint64_t rt_active);
     void idle(uint64_t rt_active);
@@ -61,6 +74,9 @@ public:
     bool is_live(uint64_t device_id) const;
     void load_errors(std::vector<std::pair<uint64_t, std::string>>& out) const;
     std::size_t save_states();
+    // Saves one live instance into the saved-state list (index 0), replacing it.
+    // 0: saved; SE_ERR_NOT_FOUND: no live instance; SE_ERR_STATE: the plugin failed to save.
+    int32_t save_state_of(uint64_t device_id, std::string& err);
     bool saved_state(std::size_t index, uint64_t& id, const uint8_t*& data, std::size_t& len) const;
     int32_t editor_open(uint64_t device_id, std::string& err);
     void editor_close(uint64_t device_id);
@@ -90,6 +106,8 @@ private:
         uint64_t seq; // first graph seq that does not reference it
     };
 
+    static PluginSpec spec_of(const se_device_desc& d, bool instrument, const char* track_name);
+    PluginInstance* create(const se_device_desc& d, const PluginSpec& key);
     void retire(uint64_t device_id, Entry& e, uint64_t seq);
     static void destroy(std::shared_ptr<PluginInstance>& inst) noexcept;
 
@@ -104,6 +122,7 @@ private:
     std::unordered_map<uint64_t, std::unique_ptr<PluginEditor>> editors_;
     std::vector<std::pair<uint64_t, std::vector<uint8_t>>> saved_;
     std::atomic<uint64_t> instantiations_{0};
+    bool detached_ = false; // under mutex_
 };
 
 } // namespace saine
