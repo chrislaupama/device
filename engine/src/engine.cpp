@@ -1244,6 +1244,13 @@ int32_t Engine::preview_play(uint64_t asset_id, int64_t start_frame, float gain,
 int32_t Engine::preview_stop() {
     std::lock_guard lock(preview_mutex_);
     reclaim_previews_locked();
+    if (!preview_notes_.empty()) {
+        std::lock_guard pl(plugins_.mutex());
+        for (const auto& [device, pitch] : preview_notes_)
+            if (PluginInstance* inst = plugins_.instance(device)) inst->push_note(pitch, 0);
+        preview_notes_.clear();
+        pub_pv_notes_.store(0, std::memory_order_relaxed);
+    }
     TransportCommand cmd;
     cmd.type = TransportCommand::Type::PreviewStop;
     return push_command(cmd);
@@ -1258,12 +1265,30 @@ int32_t Engine::preview_set(float gain, float rate, bool solo) {
     return push_command(cmd);
 }
 
+int32_t Engine::preview_note(uint64_t device_id, uint8_t pitch, uint8_t velocity) {
+    if (pitch > 127 || velocity > 127) return SE_ERR_INVALID_ARG;
+    std::lock_guard lock(preview_mutex_);
+    {
+        std::lock_guard pl(plugins_.mutex());
+        PluginInstance* inst = plugins_.instance(device_id);
+        if (inst == nullptr || !inst->plays_notes()) return SE_ERR_NOT_FOUND;
+        if (!inst->push_note(pitch, velocity)) return SE_ERR_STATE;
+    }
+    const std::pair<uint64_t, uint8_t> key{device_id, pitch};
+    const auto held = std::find(preview_notes_.begin(), preview_notes_.end(), key);
+    if (velocity > 0 && held == preview_notes_.end()) preview_notes_.push_back(key);
+    if (velocity == 0 && held != preview_notes_.end()) preview_notes_.erase(held);
+    pub_pv_notes_.store(static_cast<uint32_t>(preview_notes_.size()), std::memory_order_relaxed);
+    return SE_OK;
+}
+
 void Engine::preview_get(se_preview_info* out) noexcept {
     *out = se_preview_info{};
     out->asset_id = pub_pv_asset_.load(std::memory_order_relaxed);
     out->playing = out->asset_id != 0 ? 1 : 0;
     out->position = pub_pv_pos_.load(std::memory_order_relaxed);
     out->frames = pub_pv_frames_.load(std::memory_order_relaxed);
+    out->notes = static_cast<uint8_t>(std::min<uint32_t>(pub_pv_notes_.load(std::memory_order_relaxed), 255));
     out->peak_l = pv_peak_l_.exchange(0.0f, std::memory_order_relaxed);
     out->peak_r = pv_peak_r_.exchange(0.0f, std::memory_order_relaxed);
     if (std::unique_lock lock(preview_mutex_, std::try_to_lock); lock.owns_lock()) reclaim_previews_locked();

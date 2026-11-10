@@ -255,6 +255,27 @@ public:
     NoteFeeder& feeder() noexcept { return feeder_; }
     MidiEvent* event_scratch() noexcept { return events_; }
 
+    // ---- live notes (se_builtin_note, se_preview_note), played at the first
+    // frame of the next block on top of the track's notes.
+    static constexpr uint32_t kLiveEvents = 256;
+    // Main thread (one producer): queue a note, velocity 0 = off. False when
+    // the queue is full or the instance plays no notes.
+    bool push_note(uint8_t pitch, uint8_t velocity) noexcept {
+        if (!plays_notes()) return false;
+        MidiEvent e;
+        e.status = velocity > 0 ? 0x90 : 0x80;
+        e.data1 = pitch & 0x7f;
+        e.data2 = velocity > 0 ? (velocity & 0x7f) : 64;
+        return live_.push(e);
+    }
+    virtual bool plays_notes() const noexcept { return spec_.instrument; }
+    // RT: moves queued live notes to `out` (at most `cap`); returns the count.
+    uint32_t take_live(MidiEvent* out, uint32_t cap) noexcept {
+        uint32_t n = 0;
+        while (n < cap && live_.pop(out[n])) ++n;
+        return n;
+    }
+
 protected:
     explicit PluginInstance(PluginSpec spec) : spec_(std::move(spec)) {}
     // Main thread hook for set_parameter (controller side). Default: nothing.
@@ -295,6 +316,7 @@ private:
     uint32_t cached_latency_ = 0;
     std::mutex param_mutex_; // serialises producers (SPSC producer side)
     SpscQueue<ParamChange, 256> params_;
+    SpscQueue<MidiEvent, kLiveEvents> live_;
     NoteFeeder feeder_;
     MidiEvent events_[kMaxEvents];
 };

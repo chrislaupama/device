@@ -43,6 +43,8 @@ pub const FOOTER_H: f32 = 54.5;
 /// C4 row top at y 106.5 (window 670 with the default panel) in the reference.
 pub const DEFAULT_SCROLL: f32 = GRID_Y + 67.0 * ROW_H - 106.5;
 const DOUBLE_CLICK: Duration = Duration::from_millis(350);
+/// Velocity of a key preview: 0.8 of full scale, as in the reference.
+pub const KEY_VELOCITY: u8 = 102;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PrView {
@@ -202,6 +204,8 @@ pub enum PrDrag {
     ClipEnd { end: Ticks },
     /// Loop bar: move it (edge None) or drag its start (Some(false)) or end (Some(true)).
     Loop { edge: Option<bool>, orig: ClipLoop, anchor: Ticks, cur: ClipLoop },
+    /// A key held on the keyboard: the preview follows the pointer from key to key.
+    Keys,
 }
 
 /// Footer value fields (drag vertically; Grid cycles on click).
@@ -282,6 +286,10 @@ pub struct PrState {
     pub hzoom: f32,
     pub hstart: f64,
     pub vzoom: Option<f32>,
+    /// The note previewed through the track's instrument: (device, pitch).
+    pub preview: Option<(u64, u8)>,
+    /// Note-offs the engine rejected while its live queue was full, sent again once it drains.
+    pub preview_offs: Vec<(u64, u8)>,
 }
 
 impl Default for PrState {
@@ -310,6 +318,8 @@ impl Default for PrState {
             hzoom: 0.0,
             hstart: 0.0,
             vzoom: None,
+            preview: None,
+            preview_offs: Vec::new(),
         }
     }
 }
@@ -687,10 +697,37 @@ impl Controller {
         self.pr_visible() || self.ac_clip().is_some()
     }
 
+    /// Preview `note` (pitch, velocity) through the clip's track instrument, releasing the one
+    /// sounding before; `None` releases it. One note at a time, as in the reference (W2-20).
+    pub fn pr_preview(&mut self, note: Option<(u8, u8)>) {
+        let p = self.project();
+        let device = self.pr_clip().and_then(|c| p.find_midi_clip(c.id)).and_then(|(t, _)| p.tracks[t].instrument_plugin.as_ref()).map(|d| d.id.0);
+        let want = note.zip(device).map(|((pitch, vel), d)| (d, pitch, vel));
+        if self.pr.preview == want.map(|(d, pitch, _)| (d, pitch)) {
+            return;
+        }
+        if let Some(off) = self.pr.preview.take() {
+            self.pr.preview_offs.push(off);
+        }
+        self.pr_retry_note_offs();
+        if let Some((d, pitch, vel)) = want
+            && self.engine.preview_note(d, pitch, vel).is_ok()
+        {
+            self.pr.preview = Some((d, pitch));
+        }
+    }
+
+    /// Sends the held note-offs; a queue-full rejection keeps the note for the next try.
+    pub fn pr_retry_note_offs(&mut self) {
+        let engine = &self.engine;
+        self.pr.preview_offs.retain(|&(d, pitch)| engine.preview_note(d, pitch, 0).is_err_and(|e| e.code == saine_engine::ffi::SE_ERR_STATE));
+    }
+
     /// Reset per-clip view state when another clip is opened.
     pub fn pr_sync_clip(&mut self) {
         let cur = self.pr_clip().map(|c| c.id);
         if cur != self.pr.clip {
+            self.pr_preview(None);
             self.pr.clip = cur;
             self.pr.selected.clear();
             self.pr.drag = None;
@@ -1064,7 +1101,8 @@ impl Controller {
                     return;
                 }
                 if x < GRID_X {
-                    // PLACEHOLDER: note preview on key click needs an engine audition API.
+                    self.pr.drag = Some(PrDrag::Keys);
+                    self.pr_preview(Some((v.pitch_at(y).clamp(0, 127) as u8, KEY_VELOCITY)));
                     return;
                 }
                 let notes = clip.notes.clone();
@@ -1086,6 +1124,7 @@ impl Controller {
                     let id = clip.next_note_id();
                     let mut preview = notes;
                     preview.push(Note { id, pitch, start, length: g, velocity: self.pr.velocity });
+                    self.pr_preview(Some((pitch, self.pr.velocity)));
                     self.pr.selected = [id].into();
                     self.pr.drag = Some(PrDrag::Draw { id, preview });
                 } else {
@@ -1097,6 +1136,7 @@ impl Controller {
             1 => {
                 let Some(drag) = self.pr.drag.clone() else { return };
                 match drag {
+                    PrDrag::Keys => self.pr_preview(Some((v.pitch_at(y).clamp(0, 127) as u8, KEY_VELOCITY))),
                     PrDrag::Notes { resize, dup, ids, anchor_beat, anchor_pitch, anchor, .. } => {
                         let dt_raw = ((beat - anchor_beat) * PPQ as f64).round() as Ticks;
                         let orig = clip.notes.clone();
@@ -1112,6 +1152,9 @@ impl Controller {
                             let mut dp = v.pitch_at(y) - anchor_pitch;
                             let (lo, hi) = moving.iter().fold((127, 0), |(lo, hi), n| (lo.min(n.pitch as i32), hi.max(n.pitch as i32)));
                             dp = dp.clamp(-lo, 127 - hi);
+                            if dp != 0 || self.pr.preview.is_some() {
+                                self.pr_preview(Some(((anchor.pitch as i32 + dp) as u8, anchor.velocity)));
+                            }
                             moving.iter().map(|n| Note { start: n.start + dt, pitch: (n.pitch as i32 + dp) as u8, ..*n }).collect()
                         };
                         let changed = moved != moving;
@@ -1169,7 +1212,7 @@ impl Controller {
                     }
                 }
             }
-            _ => match self.pr.drag.take() {
+            _ => match self.pr.drag.take().inspect(|_| self.pr_preview(None)) {
                 Some(PrDrag::Notes { preview, .. } | PrDrag::Draw { preview, .. }) => {
                     self.commit_notes(clip.id, preview, None);
                 }

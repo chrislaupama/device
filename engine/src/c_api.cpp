@@ -830,6 +830,16 @@ int32_t se_preview_stop(se_engine* engine) {
     return guarded([&] { return engine->impl->preview_stop(); });
 }
 
+int32_t se_preview_note(se_engine* engine, uint64_t device_id, uint8_t pitch, uint8_t velocity) {
+    SE_REQUIRE_ENGINE(engine);
+    if (pitch > 127 || velocity > 127) return fail(SE_ERR_INVALID_ARG, "pitch and velocity must be 0..127");
+    return guarded([&] {
+        const int32_t rc = engine->impl->preview_note(device_id, pitch, velocity);
+        if (rc == SE_ERR_NOT_FOUND) return fail(rc, "unknown device, or one that plays no notes");
+        return rc == SE_ERR_STATE ? fail(rc, "live note queue full") : rc;
+    });
+}
+
 int32_t se_preview_set(se_engine* engine, float gain, float rate, uint8_t solo) {
     SE_REQUIRE_ENGINE(engine);
     if (!preview_args_ok(gain, rate)) return fail(SE_ERR_INVALID_ARG, "preview gain must be 0..2 and rate 0.25..4");

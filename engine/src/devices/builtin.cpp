@@ -405,16 +405,6 @@ void BuiltinInstance::take_samples() noexcept {
     retired_.store(old, std::memory_order_release);
 }
 
-bool BuiltinInstance::push_note(uint8_t pitch, uint8_t velocity) noexcept {
-    if (!desc_.instrument) return false;
-    MidiEvent e;
-    e.offset = 0;
-    e.status = velocity > 0 ? 0x90 : 0x80;
-    e.data1 = pitch & 0x7f;
-    e.data2 = velocity > 0 ? (velocity & 0x7f) : 64;
-    return live_.push(e);
-}
-
 uint32_t BuiltinInstance::analysis(float* out, uint32_t capacity, uint64_t& seq) noexcept {
     seq = 0;
     return analysis_ ? analysis_->read(out, capacity, seq) : 0;
@@ -456,8 +446,7 @@ void BuiltinInstance::process(float* l, float* r, uint32_t frames, const MidiEve
     uint32_t ne = 0;
     if (desc_.instrument) {
         const auto cap = static_cast<uint32_t>(merged_.size());
-        MidiEvent e;
-        while (ne < kLiveEvents && live_.pop(e)) merged_[ne++] = e;
+        ne = take_live(merged_.data(), kLiveEvents);
         for (uint32_t i = 0; i < event_count && ne < cap; ++i) merged_[ne++] = events[i];
     }
     const MidiEvent* const evs = desc_.instrument ? merged_.data() : events;

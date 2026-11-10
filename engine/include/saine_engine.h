@@ -1276,12 +1276,25 @@ int32_t se_builtin_note(se_engine* engine, uint64_t device_id, uint8_t pitch, ui
  * at the next block. MAIN THREAD. Unknown asset -> SE_ERR_NOT_FOUND; gain
  * or rate out of range or not finite -> SE_ERR_INVALID_ARG. */
 int32_t se_preview_play(se_engine* engine, uint64_t asset_id, int64_t start_frame, float gain, float rate, uint8_t solo);
-int32_t se_preview_stop(se_engine* engine); /* fades out */
+int32_t se_preview_stop(se_engine* engine); /* fades out; also releases held preview notes */
 int32_t se_preview_set(se_engine* engine, float gain, float rate, uint8_t solo);
+/* Preview a note through a track's instrument (piano-roll keys, drawn and
+ * moved notes): device_id is the track's instrument device, built-in or
+ * plugin. velocity 1..127 = note on, 0 = note off. The note plays at the
+ * start of the next block on top of the track's own notes, whether the
+ * transport runs or not, and goes through the track's chain and mixer like
+ * them (never into exports, which render their own session). The engine
+ * remembers the held notes: se_preview_stop releases them, and
+ * se_preview_info.notes counts them. Lock-free hand-over (the live note
+ * queue the device shares with se_builtin_note, 256 events). MAIN THREAD.
+ * Unknown device, or one that plays no notes (an effect) -> SE_ERR_NOT_FOUND;
+ * pitch or velocity > 127 -> SE_ERR_INVALID_ARG; queue full -> SE_ERR_STATE. */
+int32_t se_preview_note(se_engine* engine, uint64_t device_id, uint8_t pitch, uint8_t velocity);
 
 typedef struct se_preview_info {
     uint8_t playing;     /* 1 while a voice sounds (not counting a fade-out) */
-    uint8_t reserved[7];
+    uint8_t notes;       /* preview notes held (se_preview_note), at most 255 */
+    uint8_t reserved[6];
     uint64_t asset_id;   /* asset of the sounding voice, 0 when none */
     int64_t position;    /* frames into the asset */
     int64_t frames;      /* asset length in frames */
