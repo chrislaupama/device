@@ -461,6 +461,14 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
                 ctl.borrow_mut().import_files(files, ImportTarget::Selected, None);
             }
         }
+        "file.export_audio" => {
+            let name = ctl.borrow().project().name.clone();
+            let name = if name.trim().is_empty() { "Untitled".to_string() } else { name };
+            if let Some(path) = rfd::FileDialog::new().set_title("Export audio").add_filter("WAV audio", &["wav"]).set_file_name(format!("{name}.wav")).save_file() {
+                let path = if path.extension().is_none() { path.with_extension("wav") } else { path };
+                let _ = ctl.borrow_mut().export_mix(&path);
+            }
+        }
         "file.save" | "file.save_as" => {
             let existing = ctl.borrow().project_dir.clone().filter(|_| action == "file.save");
             if let Some(dir) = existing.or_else(|| pick_project_dir(true)) {

@@ -1767,6 +1767,36 @@ fn device_steps() -> Vec<Step> {
     ]
 }
 
+// ------------------------------------------------------------------ export
+
+/// Reads a 32-bit float WAV (what the engine exports): channels, rate and
+/// the interleaved samples.
+fn read_float_wav(path: &std::path::Path) -> Result<(u16, u32, Vec<f32>), String> {
+    let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
+        return Err("not a WAV file".into());
+    }
+    let (mut at, mut fmt, mut data) = (12usize, None, None);
+    while at + 8 <= b.len() {
+        let id = &b[at..at + 4];
+        let len = u32::from_le_bytes(b[at + 4..at + 8].try_into().unwrap()) as usize;
+        let body = &b[at + 8..(at + 8 + len).min(b.len())];
+        match id {
+            b"fmt " if body.len() >= 16 => fmt = Some((u16::from_le_bytes([body[0], body[1]]), u16::from_le_bytes([body[2], body[3]]), u32::from_le_bytes(body[4..8].try_into().unwrap()), u16::from_le_bytes([body[14], body[15]]))),
+            b"data" => data = Some(body),
+            _ => {}
+        }
+        at += 8 + len + (len & 1);
+    }
+    let (format, channels, rate, bits) = fmt.ok_or("no fmt chunk")?;
+    // 3 = IEEE float; 0xFFFE = extensible (the engine writes plain float).
+    if !(format == 3 || format == 0xFFFE) || bits != 32 {
+        return Err(format!("format {format}, {bits} bits: not 32-bit float"));
+    }
+    let data = data.ok_or("no data chunk")?;
+    Ok((channels, rate, data.chunks_exact(4).map(|s| f32::from_le_bytes(s.try_into().unwrap())).collect()))
+}
+
 // ------------------------------------------------------------------ automation
 
 /// Lanes surface origin in the window (timeline x 262 + lane-x 191, y 78 + 27.5).
@@ -1835,6 +1865,8 @@ fn automation_steps() -> Vec<Step> {
     }
     let wav = std::env::temp_dir().join(format!("saine-selftest-auto-{}.wav", std::process::id()));
     let wav2 = wav.clone();
+    let exported: Rc<RefCell<Option<Result<(), String>>>> = Rc::new(RefCell::new(None));
+    let (ex1, ex2) = (exported.clone(), exported);
     vec![
         DoC("automation: fresh project, steady 440 Hz clip on Audio track 1 at 0", Box::new(move |a, ctl| {
             key(a, Key::Escape, false, false);
@@ -2065,6 +2097,25 @@ fn automation_steps() -> Vec<Step> {
             (late > 0.05 && early < late * 0.05 && mid > early && late > mid)
                 .then_some(())
                 .ok_or(format!("rms 0–0.1 s {early:.4}, 0.45–0.55 s {mid:.4}, 0.9–1.0 s {late:.4}: the level does not follow the lane; the engine does not apply automation yet (depends on the engine agent's automation playback)"))
+        })),
+        DoC("export: render the whole song to a WAV (what ⌘⇧E does after its file dialog)", Box::new(move |_, ctl| {
+            let path = std::env::temp_dir().join(format!("saine-selftest-export-{}.wav", std::process::id()));
+            let mut c = ctl.borrow_mut();
+            let end_ticks = c.project().content_end_ticks();
+            let want = c.project().ticks_to_frames(end_ticks, c.rate) + (Controller::EXPORT_TAIL_SECONDS * c.rate).round() as i64;
+            let result = c.export_mix(&path).and_then(|frames| {
+                let (channels, rate, samples) = read_float_wav(&path)?;
+                // Not silent (the audio run plays at a -40 dB master).
+                let peak = samples.iter().fold(0f32, |m, x| m.max(x.abs()));
+                (end_ticks > 0 && frames == want && channels == 2 && rate == c.rate as u32 && samples.len() as i64 == 2 * want && peak > 1e-4)
+                    .then_some(())
+                    .ok_or(format!("{channels} ch at {rate} Hz, {} frames (want {want}, export said {frames}), peak {peak}", samples.len() / 2))
+            });
+            let _ = std::fs::remove_file(&path);
+            *ex1.borrow_mut() = Some(result);
+        })),
+        Check("export: a stereo float WAV at the engine rate, from the start to the last clip's end plus the release tail", Box::new(move |_, _| {
+            ex2.borrow().clone().unwrap_or_else(|| Err("the export step did not run".into()))
         })),
         Do("automation: click Automation Arm in the transport", Box::new(|a| click(a, 496.0 + 10.5, 41.0 + 11.0))),
         Check("automation: armed (transport button on)", Box::new(move |c, a| {

@@ -872,6 +872,56 @@ impl Controller {
         }
     }
 
+    /// Seconds rendered after the last clip ends, so releases, delays and
+    /// reverb tails are not cut off.
+    pub const EXPORT_TAIL_SECONDS: f64 = 2.0;
+
+    /// Renders the whole song (timeline start to the end of the last clip,
+    /// plus a release tail) to a 32-bit float stereo WAV at the engine rate.
+    /// Mixes exactly like playback (mixer, devices, plugins, automation,
+    /// delay compensation); the loop and metronome are left out. Playback
+    /// pauses and the audio device stops for the export. Returns the frames
+    /// written.
+    pub fn export_mix(&mut self, path: &Path) -> Result<i64, String> {
+        let end_ticks = self.project().content_end_ticks();
+        if end_ticks <= 0 {
+            let msg = "Nothing to export: the project has no clips".to_string();
+            self.set_status(msg.clone(), 4);
+            return Err(msg);
+        }
+        if self.rec.recording {
+            let msg = "Stop recording to export".to_string();
+            self.set_status(msg.clone(), 4);
+            return Err(msg);
+        }
+        let end = self.project().ticks_to_frames(end_ticks, self.rate) + (Self::EXPORT_TAIL_SECONDS * self.rate).round() as i64;
+        // Devices and plugins render on one thread at a time: the export
+        // takes them over from the audio device, which is paused meanwhile.
+        let was_running = self.engine.device_running();
+        if was_running {
+            let _ = self.engine.pause();
+            let _ = self.engine.stop_device();
+        }
+        let result = self.engine.export_wav(path, 0, end);
+        if was_running && let Err(e) = self.engine.start_device() {
+            self.set_status(format!("Audio device did not restart after the export: {e}"), 6);
+        }
+        self.ui_dirty = true;
+        match result {
+            Ok(()) => {
+                let secs = end as f64 / self.rate;
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string());
+                self.set_status(format!("Exported {name} ({}:{:04.1})", (secs / 60.0).floor() as i64, secs % 60.0), 4);
+                Ok(end)
+            }
+            Err(e) => {
+                let msg = format!("Export failed: {e}");
+                self.set_status(msg.clone(), 6);
+                Err(msg)
+            }
+        }
+    }
+
     pub fn open(&mut self, dir: &Path) {
         let loaded = match persist::load(dir) {
             Ok(l) => l,

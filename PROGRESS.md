@@ -201,3 +201,21 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   file landed on the newly selected track. The target track is now resolved when the import starts.
 - Windows app self-test: 125/125 pass; the process still exits 0x87A afterwards (step stays
   informational, as before).
+
+### 2026-11-09: Linux audio runs in CI; export from the app
+
+- Linux CI starts a headless PipeWire graph (`tools/ci/headless-pipewire.sh`: null sink + `pw-loopback`
+  to a virtual source). The device tests now open real PipeWire streams instead of skipping, and the
+  new opt-in `device_duplex_loopback_take_lands_on_the_clicks` records a click track back through the
+  loopback: every click lands sample-exact on its timeline position. The app also runs
+  `--self-test-audio` there (265/265).
+- Fix found by the loopback test: when one PipeWire stream missed a cycle (an xrun), the duplex input
+  ring kept the extra cycle forever, so every later take landed one quantum late. Both streams now
+  share a `node.group` (one clock), and `FrameRing` re-syncs after a window of 32 cycles that is off
+  by more than half a quantum (`saine_frame_ring_bench`: no measurable cost). WASAPI keeps the old
+  policy (separate clocks; re-sync off).
+- Export: ⌘⇧E (`file.export_audio`) renders the song (start to last clip end + 2 s tail) to a 32-bit
+  float WAV through `se_export_wav`; the device is stopped for the export and restarted. Self-test
+  check added.
+- Still open: WASAPI has never run against an audio device (the hosted Windows runner has none);
+  Linux plugin editor windows (X11) are not implemented.

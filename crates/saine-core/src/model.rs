@@ -301,6 +301,21 @@ impl Project {
         let rate = self.asset(clip.asset).map(|a| a.sample_rate).unwrap_or(48_000.0);
         self.seconds_to_ticks(clip.source_length as f64 / rate)
     }
+
+    /// Where the last audio or MIDI clip ends (ticks); 0 for an empty project.
+    /// Export renders up to here (plus a release tail).
+    pub fn content_end_ticks(&self) -> Ticks {
+        self.tracks
+            .iter()
+            .flat_map(|t| {
+                let audio = t.clips.iter().map(|c| c.start + self.clip_length_ticks(c));
+                let midi = t.midi_clips.iter().map(|c| c.start + c.length);
+                audio.chain(midi)
+            })
+            .max()
+            .unwrap_or(0)
+            .max(0)
+    }
 }
 
 /// Linear gain ↔ decibels helpers used by UI and AI commands.

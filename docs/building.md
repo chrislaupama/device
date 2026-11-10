@@ -12,12 +12,15 @@ only in `engine/src/platform/`; everything else is portable.
 | Audio backend | Core Audio | WASAPI (shared mode) | PipeWire |
 | Plugin formats | AU, VST3, CLAP | VST3, CLAP | VST3, CLAP |
 | Plugin editor windows | yes | yes | not yet |
-| Built and tested in CI | every run (self-hosted Mac) | last hosted run only | last hosted run only |
+| Built and tested in CI | every run (self-hosted Mac) | every run (hosted runner) | every run (hosted runner) |
+| Audio streams run in CI | yes, real device | no (no audio endpoint) | yes, a headless PipeWire server |
 | Tested on real audio hardware | yes | **no** | **no** |
 
-macOS is the primary platform. The WASAPI and PipeWire streaming code compiles
-and its "no device" paths are tested, but it has never been run against a real
-audio device. See [engine/README.md › Platforms](../engine/README.md#platforms)
+macOS is the primary platform. On Linux, CI runs a real PipeWire server with a
+null sink and a loopback, so the PipeWire streams, duplex recording and the
+app's audio self-test run on every change; only physical sound cards are
+missing. The WASAPI streaming code compiles and its "no device" paths are
+tested, but it has never been run against an audio device. See [engine/README.md › Platforms](../engine/README.md#platforms)
 for the full matrix, the WASAPI notes and plugin folders on each system.
 
 ## Building
@@ -95,6 +98,14 @@ the engine itself needs only `pkg-config` and `libpipewire-0.3-dev`.
   also serves JACK clients; a native JACK backend is possible future work.
 * Without a running PipeWire server the engine lists no devices and starting
   audio fails; device tests skip. Run the app with `--no-audio` in that case.
+* No sound card (a container, a headless box)? `eval "$(tools/ci/headless-pipewire.sh)"`
+  starts PipeWire with a null sink and a loopback source, as CI does. Then
+  `SAINE_TEST_LOOPBACK_INPUT=saine-loop-source ctest --test-dir engine/build`
+  also runs the duplex loopback test, and the app runs with audio.
+* Input and output streams share one `node.group`, so PipeWire drives them from
+  one clock (resampling the other device when they are different hardware), and
+  recordings stay sample-aligned. After a glitch that shifts the input by a
+  cycle, the input ring re-syncs within about 64 cycles.
 * A requested sample rate must be in the server's `clock.allowed-rates`, and
   the buffer size is a request for a quantum (`node.latency`); PipeWire may not
   honour either, and the device status reports what it actually chose.
@@ -121,22 +132,21 @@ issue in wgpu-core's debug-only lock tracing).
 ## Continuous integration
 
 CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs on every push
-and pull request on a **self-hosted runner**: one Apple silicon Mac mini, so
-the tests run on real hardware with a real audio device. Each run:
+and pull request, one job per OS: macOS on a **self-hosted runner** (one Apple
+silicon Mac mini, with a real audio device), Windows and Linux on GitHub-hosted
+runners (`windows-latest`, `ubuntu-latest`). Each job:
 
 1. configures and builds the engine with warnings as errors, and runs ctest;
 2. builds and tests the Rust workspace (`--locked`);
 3. builds the app in release mode and runs `saine-studio --self-test
-   --no-audio`, which must report every check passed;
-4. uploads the self-test logs as an artifact.
+   --no-audio`, which must report every check passed (on Windows this step is
+   informational);
+4. uploads the screenshots and self-test logs as an artifact.
 
-Windows and Linux are **not built in CI** at the moment. Their steps stay in
-the workflow, gated on `runner.os` (Linux: Xvfb + Mesa lavapipe screenshot and
-self-test; Windows: WARP, informational), but they run only when the job lands
-on a runner of that OS. The workflow has a single `runs-on: self-hosted` job
-and no platform matrix, so adding a Windows or Linux runner alone would not
-test every platform on each run: that runner could pick up the job instead of
-the Mac. Covering all three needs runner labels per OS and a matrix or one job
-per OS. The Windows and Linux results above come from the last run on
-GitHub-hosted runners, before that matrix was dropped; later changes are not
-compiled on those systems.
+Linux also starts a headless PipeWire graph first
+([`tools/ci/headless-pipewire.sh`](../tools/ci/headless-pipewire.sh)): the
+engine's device tests then open real PipeWire streams, the duplex loopback test
+records what the engine plays and checks every click lands on its timeline
+position, and the app runs its self-test a second time with audio
+(`--self-test-audio`). The hosted Windows runner has no audio endpoint, so the
+WASAPI device tests skip there.
