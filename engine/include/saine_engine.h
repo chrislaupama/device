@@ -92,6 +92,12 @@ int32_t se_asset_compute_peaks(const se_engine* engine, uint64_t asset_id,
                                uint64_t start_frame, uint32_t frames_per_peak,
                                float* out_minmax, size_t capacity, size_t* out_count);
 
+/* The same for one channel (0 left, 1 right), for editors that draw a lane
+ * per channel. A channel the asset lacks -> SE_ERR_INVALID_ARG. */
+int32_t se_asset_compute_channel_peaks(const se_engine* engine, uint64_t asset_id, uint32_t channel,
+                                       uint64_t start_frame, uint32_t frames_per_peak,
+                                       float* out_minmax, size_t capacity, size_t* out_count);
+
 /* ---- session snapshots -------------------------------------------------- */
 typedef struct se_clip_desc {
     uint64_t clip_id;

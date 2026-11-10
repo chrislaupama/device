@@ -729,6 +729,7 @@ fn steps() -> Vec<Step> {
     let rec_rev = Rc::new(Cell::new(0u64));
     let rec_vol_steps = Rc::new(Cell::new(0usize));
     let rec_mute = Rc::new(Cell::new(false));
+    let (press_beat, press_beat2) = { let b = Rc::new(Cell::new(0f64)); (b.clone(), b) };
     let (rt1, rt2, rt3, rt4, rt5) = (rec_tracks.clone(), rec_tracks.clone(), rec_tracks.clone(), rec_tracks.clone(), rec_tracks.clone());
     let (rg1, rg2) = (rec_gain.clone(), rec_gain.clone());
     let (rr1, rr2) = (rec_rev.clone(), rec_rev.clone());
@@ -1048,9 +1049,41 @@ fn steps() -> Vec<Step> {
             let marker = c.ac_marker_beats().get(1).copied().unwrap_or(f64::NAN);
             let mut dl = crate::gpu::DrawList::default();
             crate::pianoroll::build(&mut dl, &sc);
-            (segs.len() == 2 && dl.waves.len() == 2 && (segs[0].beats.1 - marker).abs() < 1e-6 && dl.waves[0].rect[0] + dl.waves[0].rect[2] == dl.waves[1].rect[0])
+            let lanes = sc.wave.as_ref().map_or(0, |w| w.0.len());
+            (segs.len() == 2 && dl.waves.len() == 2 * lanes && (segs[0].beats.1 - marker).abs() < 1e-6 && dl.waves[0].rect[0] + dl.waves[0].rect[2] == dl.waves[1].rect[0])
                 .then_some(())
                 .ok_or(format!("segs {segs:?} marker {marker} waves {}", dl.waves.len()))
+        })),
+        Check("a mono clip keeps one lane", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let lanes = c.clip_lanes(clip).map_or(0, |l| l.0.len());
+            (c.project().asset(clip.asset).is_some_and(|a| a.channels == 1) && lanes == 1).then_some(()).ok_or(format!("lanes {lanes}"))
+        })),
+        DoC("open the demo's stereo noise clip in the Clip tab", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let p = c.project();
+            let id = p.tracks.iter().flat_map(|t| &t.clips).find(|cl| p.asset(cl.asset).is_some_and(|a| a.channels == 2)).map(|cl| cl.id);
+            c.select_clip(id);
+            c.set_bottom_tab(BottomTab::Clip);
+        })),
+        Check("a stereo clip draws a lane per channel: left above right, each from its own peaks", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let stereo = c.project().asset(clip.asset).is_some_and(|a| a.channels == 2);
+            let (slots, _) = c.clip_lanes(clip).ok_or("no waveform")?;
+            let ea = *c.asset_map.get(&clip.asset).ok_or("no engine asset")?;
+            let sc = c.pr_scene(1.0, &[]).ok_or("no clip editor scene")?;
+            let mut dl = crate::gpu::DrawList::default();
+            crate::pianoroll::build(&mut dl, &sc);
+            let (top, bottom) = (dl.waves.first().map(|w| w.rect[1]), dl.waves.last().map(|w| w.rect[1]));
+            (stereo && slots.len() == 2 && Some(slots) == c.peaks.channel_slots(ea).map(|s| s.to_vec()) && top < bottom)
+                .then_some(())
+                .ok_or(format!("stereo {stereo} lanes {} tops {top:?} {bottom:?}", c.clip_lanes(clip).map_or(0, |l| l.0.len())))
+        })),
+        DoC("back to clip 1 in the Clip tab", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let id = c.project().tracks[0].clips.first().map(|cl| cl.id);
+            c.select_clip(id);
+            c.set_bottom_tab(BottomTab::Clip);
         })),
         DoC("warp: Shift-drag the marker half a beat right (slide the audio)", Box::new(|_, ctl| {
             let (x0, x1) = { let c = ctl.borrow(); let v = c.pr_view(); (v.x_of(1.0), v.x_of(1.5)) };
@@ -1089,15 +1122,36 @@ fn steps() -> Vec<Step> {
             let marks = c.ac_marker_beats();
             let tr = c.ac_transient_beats();
             let pinned = tr.iter().filter(|t| marks.iter().any(|m| (m - *t).abs() < 1e-6)).count();
-            (clip.warp.markers.len() == 5 && pinned == 3 && c.doc.undo_label() == Some("Add warp markers at transients"))
+            (clip.warp.markers.len() == 5 && pinned == 3 && c.doc.undo_label() == Some("Add warp marker at transient"))
                 .then_some(())
                 .ok_or(format!("markers {marks:?} transients {tr:?} undo {:?}", c.doc.undo_label()))
         })),
-        DoC("warp: undo the markers and the transients", Box::new(|_, ctl| {
+        DoC("warp: undo, then press the first transient and drag a quarter beat right in one gesture", Box::new(move |_, ctl| {
+            ctl.borrow_mut().undo();
+            let b = ctl.borrow().ac_transient_beats().first().copied().unwrap_or(0.0);
+            press_beat.set(b);
+            let (x0, x1) = { let c = ctl.borrow(); let v = c.pr_view(); (v.x_of(b), v.x_of(b + 0.25)) };
             let mut c = ctl.borrow_mut();
-            c.undo();
-            c.undo();
+            c.pr_pointer(0, x0, 30.0, false, false, false);
+            c.pr_pointer(1, x1, 30.0, false, false, false);
+            c.pr_pointer(2, x1, 30.0, false, false, false);
         })),
+        Check("the press pinned the transient and the drag moved its marker: one undo step", Box::new(move |c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let marks = c.ac_marker_beats();
+            let tr = c.ac_transient_beats();
+            let pinned = tr.first().is_some_and(|t| marks.iter().any(|m| (m - t).abs() < 1e-6));
+            let want = press_beat2.get() + 0.25;
+            (clip.warp.markers.len() == 3 && pinned && (tr[0] - want).abs() < 0.02 && c.doc.undo_label() == Some("Add warp marker at transient"))
+                .then_some(())
+                .ok_or(format!("markers {marks:?} transients {tr:?} undo {:?}", c.doc.undo_label()))
+        })),
+        DoC("warp: undo once", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check("one undo removes the placed and dragged marker", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            (clip.warp.markers.len() == 2).then_some(()).ok_or(format!("markers {:?}", clip.warp.markers))
+        })),
+        DoC("warp: undo the transients", Box::new(|_, ctl| ctl.borrow_mut().undo())),
         DoC("warp: Warp menu -> Off", Box::new(|a, ctl| {
             ctl.borrow_mut().clip_menu_open(1);
             a.global::<Studio>().invoke_clip_menu_pick(1);
@@ -4702,19 +4756,52 @@ fn step_sequencer_steps() -> Vec<Step> {
             let m = c.pr_clip().ok_or("clip closed")?;
             (m.pattern.is_none() && !m.notes.is_empty() && !a.global::<Studio>().get_seq_tabs()).then_some(()).ok_or("still a pattern".into())
         })),
-        DoC("seq: stretch the plain clip to 20 beats (notes in the first bar only), convert to a pattern", Box::new(|_, ctl| {
+        DoC("seq: stretch the plain clip to 20 beats (notes in the first bar only), convert to a pattern", Box::new(|a, ctl| {
             let mut c = ctl.borrow_mut();
             let Some(m) = c.pr_clip().cloned() else { return };
             c.execute(saine_core::Command::ResizeMidiClip { clip: m.id, start: m.start, length: 20 * PPQ });
             c.convert_clip(m.id);
+            c.ui_dirty = true;
+            c.update_ui(a);
         })),
-        Check("seq: conversion refused (the clip is longer than 64 steps would repeat), notes unchanged; undo the resize", Box::new(|c, _| {
+        Check("seq: the 80-step clip converts with its own step count (no 64-step cap) and pages: 3 pages of 32, page 1 shown, pager on", Box::new(|c, a| {
             let m = c.pr_clip().ok_or("clip closed")?;
-            let ok = m.pattern.is_none() && m.length == 20 * PPQ && !m.notes.is_empty() && c.status_text().is_some_and(|s| s.starts_with("Too long"));
-            ok.then_some(()).ok_or(format!("pattern {} status {:?}", m.pattern.is_some(), c.status_text()))
+            let p = m.pattern.as_ref().ok_or("conversion refused")?;
+            let s = a.global::<Studio>();
+            let ok = m.length == 20 * PPQ && p.steps == 80 && !p.cells.is_empty() && s.get_seq_pages() == 3 && s.get_seq_page() == 0 && s.get_seq_follow() && s.get_seq_play_col() == -1;
+            ok.then_some(()).ok_or(format!("steps {} pages {} page {}", p.steps, s.get_seq_pages(), s.get_seq_page()))
         })),
-        DoC("seq: undo the resize", Box::new(|a, ctl| {
+        DoC("seq: play from beat 17 of the clip (step 69)", Box::new(|a, ctl| {
+            {
+                let c = ctl.borrow();
+                let start = c.pr_clip().map_or(0, |m| m.start);
+                let f = c.project().ticks_to_frames(start + 17 * PPQ, c.rate);
+                let _ = c.engine.seek(f);
+                let _ = c.engine.play();
+            }
+            ctl.borrow_mut().update_ui(a);
+            ctl.borrow_mut().update_ui(a);
+        })),
+        Check("seq: Follow playhead turned to page 3; the ring is on its 5th column", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let step = c.seq_play_step();
+            (step == Some(68) && s.get_seq_page() == 2 && s.get_seq_play_col() == 4).then_some(()).ok_or(format!("step {step:?} page {} col {}", s.get_seq_page(), s.get_seq_play_col()))
+        })),
+        DoC("seq: stop; click page tab 1, then Follow playhead", Box::new(|a, ctl| {
+            let _ = ctl.borrow().engine.stop();
+            ctl.borrow_mut().update_ui(a);
+            let w = ctl.borrow().pr.size.0;
+            click(a, 260.0 + w - 23.4 - 2.0 * 36.6, 452.0 + 13.5);
+            click(a, 260.0 + w - 23.4 - 2.0 * 36.6 - 36.8, 452.0 + 13.5);
+        })),
+        Check("seq: page 1 shown, no ring while stopped, Follow playhead off", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let ok = s.get_seq_page() == 0 && s.get_seq_play_col() == -1 && !s.get_seq_follow() && c.pr.seq.follow_off;
+            ok.then_some(()).ok_or(format!("page {} col {} follow {}", s.get_seq_page(), s.get_seq_play_col(), s.get_seq_follow()))
+        })),
+        DoC("seq: undo the conversion and the resize", Box::new(|a, ctl| {
             let mut c = ctl.borrow_mut();
+            let _ = c.doc.undo();
             let _ = c.doc.undo();
             c.ui_dirty = true;
             c.update_ui(a);
@@ -5298,6 +5385,55 @@ fn minimap_steps() -> Vec<Step> {
 }
 
 
+/// The timeline ruler's bar labels at several zooms: the reference app's rule (S65) is a label every
+/// power-of-two bars once the bars are 50 px apart, starting at bar 1.
+fn ruler_zoom_steps() -> Vec<Step> {
+    use Step::*;
+    let saved = Rc::new(Cell::new((0.0f64, 0.0f64)));
+    let save = saved.clone();
+    let mut v: Vec<Step> = vec![DoC("ruler: remember the view", Box::new(move |_, ctl| {
+        let c = ctl.borrow();
+        save.set((c.view.start_beats, c.view.px_per_beat));
+    }))];
+    let zooms: [(&'static str, &'static str, f64, i64); 5] = [
+        ("ruler: zoom out to 12.5 %", "labels every 8 bars at 12.5 %", 0.125, 8),
+        ("ruler: zoom out to 25 %", "labels every 4 bars at 25 %", 0.25, 4),
+        ("ruler: default zoom", "a label on every bar at 100 %", 1.0, 1),
+        ("ruler: zoom in to 400 %", "a label on every bar at 400 %", 4.0, 1),
+        ("ruler: zoom in to 1500 %", "a label on every bar at 1500 %", 15.0, 1),
+    ];
+    for (name, check, factor, want_bars) in zooms {
+        v.push(DoC(name, Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.view.start_beats = 0.0;
+            c.view.px_per_beat = crate::timeline::DEFAULT_PX_PER_BEAT * factor;
+            c.ui_dirty = true;
+        })));
+        v.push(Check(check, Box::new(move |c, a| {
+            let labels = a.global::<Studio>().get_ruler_labels();
+            let rows: Vec<(f32, String)> = (0..slint::Model::row_count(&labels)).filter_map(|i| slint::Model::row_data(&labels, i)).map(|l| (l.x, l.text.to_string())).collect();
+            let gap = want_bars as f64 * 4.0 * c.view.px_per_beat;
+            let ok = !rows.is_empty()
+                && rows[0].1 == "1"
+                && rows.windows(2).all(|w| {
+                    let (n0, n1): (i64, i64) = (w[0].1.parse().unwrap_or(0), w[1].1.parse().unwrap_or(0));
+                    n1 - n0 == want_bars && ((w[1].0 - w[0].0) as f64 - gap).abs() < 0.5 && gap >= 49.0
+                });
+            ok.then_some(()).ok_or(format!("labels {rows:?} want every {want_bars} bars"))
+        })));
+    }
+    let saved_check = saved.clone();
+    v.push(DoC("ruler: restore the view", Box::new(move |_, ctl| {
+        let mut c = ctl.borrow_mut();
+        let (s, p) = saved.get();
+        c.view.start_beats = s;
+        c.view.px_per_beat = p;
+        c.ui_dirty = true;
+    })));
+    v.push(Check("ruler: view restored", Box::new(move |c, _| approx(c.view.px_per_beat as f32, saved_check.get().1 as f32, 0.01).then_some(()).ok_or(format!("ppb {}", c.view.px_per_beat)))));
+    v
+}
+
 fn clip_menu_steps() -> Vec<Step> {
     use Step::*;
     use saine_core::{Asset, AssetId, Clip, ClipId, Command, MidiClip, Track, TrackId};
@@ -5786,6 +5922,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(minimap_steps());
     all.extend(clip_menu_steps());
     all.extend(clip_render_steps());
+    all.extend(ruler_zoom_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));

@@ -292,7 +292,7 @@ pub struct Controller {
     /// Detected transients per engine asset (asset frames), and those being analysed.
     pub(crate) onsets: HashMap<u64, Vec<saine_core::Transient>>,
     pub(crate) onsets_pending: std::collections::HashSet<u64>,
-    /// Tempo detected from each analysed engine asset's transients (\`warp::estimate_bpm\`).
+    /// Tempo detected from each analysed engine asset's transients (`warp::estimate_bpm`).
     pub(crate) tempos: HashMap<u64, Option<f64>>,
     pub peaks: PeakStore,
     pub selected_track: Option<TrackId>,
@@ -330,7 +330,7 @@ pub struct Controller {
     ruler_model: Rc<VecModel<RulerLabel>>,
     section_label_model: Rc<VecModel<crate::SectionLabel>>,
     clips_model: Rc<VecModel<ClipLabel>>,
-    ruler_key: (i64, i64, i64),
+    ruler_key: (i64, i64, i64, i64),
     pub(crate) mm: crate::minimap::State,
     pub clip_vis: Vec<ClipVis>,
     pub track_vis: Vec<TrackVis>,
@@ -353,6 +353,8 @@ pub struct Controller {
     pub(crate) seq_row_model: Rc<VecModel<SeqRow>>,
     pub(crate) seq_cell_model: Rc<VecModel<SeqCell>>,
     pub(crate) seq_num_model: Rc<VecModel<SeqNum>>,
+    /// Row tops of the cells the playing step hits (the step sequencer's flash).
+    pub(crate) seq_flash_model: Rc<VecModel<f32>>,
     pub(crate) composer_row_model: Rc<VecModel<PatternRow>>,
     /// The rows last pushed to `composer_row_model` (rebuilt only when they change).
     pub(crate) composer_rows_shown: std::cell::RefCell<Vec<crate::composer::RowView>>,
@@ -448,7 +450,7 @@ impl Controller {
             mm: crate::minimap::State::new(),
             section_label_model: Rc::new(VecModel::default()),
             clips_model: Rc::new(VecModel::default()),
-            ruler_key: (i64::MIN, 0, 0),
+            ruler_key: (i64::MIN, 0, 0, 0),
             clip_vis: Vec::new(),
             track_vis: Vec::new(),
             clip_ids: Vec::new(),
@@ -467,6 +469,7 @@ impl Controller {
             seq_row_model: Rc::new(VecModel::default()),
             seq_cell_model: Rc::new(VecModel::default()),
             seq_num_model: Rc::new(VecModel::default()),
+            seq_flash_model: Rc::new(VecModel::default()),
             composer_row_model: Rc::new(VecModel::default()),
             composer_rows_shown: Default::default(),
             menu_model: Rc::new(VecModel::default()),
@@ -532,6 +535,9 @@ impl Controller {
         s.set_seq_rows(ModelRc::from(self.seq_row_model.clone()));
         s.set_seq_cells(ModelRc::from(self.seq_cell_model.clone()));
         s.set_seq_nums(ModelRc::from(self.seq_num_model.clone()));
+        s.set_seq_flash_rows(ModelRc::from(self.seq_flash_model.clone()));
+        let tips: Vec<SharedString> = std::iter::once("Turn steps on and off").chain(saine_core::steps::StepLane::ALL.iter().map(|l| l.spec().tip)).map(Into::into).collect();
+        s.set_seq_lane_tips(ModelRc::new(VecModel::from(tips)));
         s.set_composer_rows(ModelRc::from(self.composer_row_model.clone()));
         s.set_menu_items(ModelRc::from(self.menu_model.clone()));
         s.set_sub_items(ModelRc::from(self.sub_model.clone()));
@@ -1132,6 +1138,11 @@ impl Controller {
         self.project().ticks_per_bar() as f64 / PPQ as f64
     }
 
+    fn ruler_steps(&self) -> timeline::RulerSteps {
+        let beat_len = 4.0 / self.project().transport.time_signature.denominator as f64;
+        timeline::RulerSteps::new(self.view.px_per_beat, self.beats_per_bar(), beat_len)
+    }
+
     pub fn hover(&self, x: f32, y: f32) -> i32 {
         if self.auto.shown && y >= timeline::RULER_H {
             return 0;
@@ -1315,9 +1326,44 @@ impl Controller {
 
     /// Waveform of an audio clip: its pyramid slot (once the peaks exist) and its pieces.
     pub fn clip_wave(&self, clip: &Clip) -> Option<(crate::peaks::Slot, Vec<crate::peaks::WaveSeg>)> {
-        let assets = if clip.warp.reverse { &self.reversed_assets } else { &self.asset_map };
-        let slot = assets.get(&clip.asset).and_then(|ea| self.peaks.slot(*ea))?;
+        let slot = self.clip_engine_asset(clip).and_then(|ea| self.peaks.slot(ea))?;
         Some((slot, crate::peaks::wave_segments(self.project(), clip, self.rate)))
+    }
+
+    /// The clip editor's waveform: a lane per channel once `ensure_lane_peaks`
+    /// has run for a stereo asset, else the mono mix.
+    pub fn clip_lanes(&self, clip: &Clip) -> Option<(Vec<crate::peaks::Slot>, Vec<crate::peaks::WaveSeg>)> {
+        let ea = self.clip_engine_asset(clip)?;
+        let slots = match self.peaks.channel_slots(ea) {
+            Some(lr) => lr.to_vec(),
+            None => vec![self.peaks.slot(ea)?],
+        };
+        Some((slots, crate::peaks::wave_segments(self.project(), clip, self.rate)))
+    }
+
+    /// Engine asset a clip plays (the reversed copy when it plays back to front).
+    fn clip_engine_asset(&self, clip: &Clip) -> Option<u64> {
+        let assets = if clip.warp.reverse { &self.reversed_assets } else { &self.asset_map };
+        assets.get(&clip.asset).copied()
+    }
+
+    /// Per-channel peaks of the open stereo audio clip, for the editor's two
+    /// lanes. Computed once per engine asset (about a ms per channel-minute).
+    pub fn ensure_lane_peaks(&mut self) {
+        let Some(c) = self.ac_clip() else { return };
+        if self.project().asset(c.asset).is_none_or(|a| a.channels != 2) {
+            return;
+        }
+        let Some(ea) = self.clip_engine_asset(c) else { return };
+        if self.peaks.channel_slots(ea).is_some() {
+            return;
+        }
+        let Ok(info) = self.engine.asset_info(ea) else { return };
+        let pairs = (info.frames / crate::peaks::L0_FRAMES as u64 + 1) as usize;
+        let lane = |ch: u32| self.engine.channel_peaks(ea, ch, 0, crate::peaks::L0_FRAMES, pairs).map(crate::peaks::Pyramid::from_level0);
+        if let (Ok(l), Ok(r)) = (lane(0), lane(1)) {
+            self.peaks.insert_channels(ea, [l, r]);
+        }
     }
 
     /// Rebuild the clip/track visuals (positions include in-progress drag previews).
@@ -1429,6 +1475,7 @@ impl Controller {
             loop_beats: (tr.loop_start as f64 / PPQ as f64, tr.loop_end as f64 / PPQ as f64),
             loop_on: tr.loop_enabled,
             beats_per_bar: self.beats_per_bar(),
+            steps: self.ruler_steps(),
             auto: None,
             sections: &self.section_vis,
         }
@@ -1557,6 +1604,7 @@ impl Controller {
             self.ui_dirty = true;
         }
 
+        self.seq_tick(&s);
         if self.ui_rev != Some(self.doc.revision()) {
             self.ui_dirty = true;
         }
@@ -1707,10 +1755,10 @@ impl Controller {
             })
             .collect();
         crate::controller::sync_model(&self.section_label_model, section_labels);
-        let key = ((v.start_beats * 4096.0) as i64, (v.px_per_beat * 4096.0) as i64, self.lanes_size.0 as i64);
+        let key = ((v.start_beats * 4096.0) as i64, (v.px_per_beat * 4096.0) as i64, self.lanes_size.0 as i64, (self.beats_per_bar() * 1024.0) as i64);
         if key != self.ruler_key {
             self.ruler_key = key;
-            let labels = timeline::ruler_labels(&v, self.lanes_size.0, self.beats_per_bar());
+            let labels = timeline::ruler_labels(&v, self.lanes_size.0, &self.ruler_steps());
             self.ruler_model.set_vec(labels.into_iter().map(|(x, t)| RulerLabel { x, text: t.into() }).collect::<Vec<_>>());
         }
         let w = self.lanes_size.0;

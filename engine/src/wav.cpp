@@ -3,9 +3,11 @@
 #include "platform/os.hpp"
 #include "saine_engine.h"
 
+#include <algorithm>
 #include <bit>
 #include <cstring>
 #include <limits>
+#include <utility>
 
 namespace saine {
 namespace {
@@ -63,12 +65,30 @@ int32_t decode_wav_memory(const uint8_t* data, std::size_t size, DecodedAudio& o
         err = "file too small to be a WAV file";
         return SE_ERR_UNSUPPORTED_FORMAT;
     }
-    if (std::memcmp(data, "RIFF", 4) != 0 || std::memcmp(data + 8, "WAVE", 4) != 0) {
-        if (std::memcmp(data, "RF64", 4) == 0 || std::memcmp(data, "BW64", 4) == 0)
-            err = "RF64/BW64 WAV files are not supported yet";
-        else
-            err = "not a RIFF/WAVE file";
+    const bool wide = std::memcmp(data, "RF64", 4) == 0 || std::memcmp(data, "BW64", 4) == 0;
+    if ((!wide && std::memcmp(data, "RIFF", 4) != 0) || std::memcmp(data + 8, "WAVE", 4) != 0) {
+        err = "not a RIFF/WAVE file";
         return SE_ERR_UNSUPPORTED_FORMAT;
+    }
+
+    // RF64 (EBU Tech 3306) and BW64 (ITU-R BS.2088) carry 64-bit sizes in a ds64 chunk that must
+    // come first: RIFF size, data size, sample count, then a table of other oversized chunks.
+    // A 32-bit chunk size of 0xFFFFFFFF means "look it up in ds64".
+    uint64_t ds64_data = 0;
+    std::vector<std::pair<uint32_t, uint64_t>> ds64_table;
+    if (wide) {
+        if (size < 12 + 8 + 28 || std::memcmp(data + 12, "ds64", 4) != 0 || rd32(data + 16) < 28) {
+            err = "RF64/BW64 file without a ds64 chunk";
+            return SE_ERR_UNSUPPORTED_FORMAT;
+        }
+        const uint8_t* d = data + 20;
+        const uint32_t ds_size = rd32(data + 16);
+        ds64_data = rd64(d + 8);
+        const uint32_t entries = rd32(d + 24);
+        for (uint32_t i = 0; i < entries && 28 + (i + 1) * 12ull <= ds_size && 20 + 28 + (i + 1) * 12ull <= size; ++i) {
+            const uint8_t* e = d + 28 + i * 12;
+            ds64_table.emplace_back(rd32(e), rd64(e + 4));
+        }
     }
 
     FmtInfo fmt;
@@ -79,7 +99,17 @@ int32_t decode_wav_memory(const uint8_t* data, std::size_t size, DecodedAudio& o
     std::size_t pos = 12;
     while (pos + 8 <= size) {
         const uint8_t* ck = data + pos;
-        const uint32_t ck_size = rd32(ck + 4);
+        uint64_t ck_size = rd32(ck + 4);
+        if (wide && ck_size == 0xFFFFFFFFu) {
+            if (std::memcmp(ck, "data", 4) == 0) {
+                ck_size = ds64_data;
+            } else {
+                const auto it = std::find_if(ds64_table.begin(), ds64_table.end(),
+                                             [&](const auto& e) { return e.first == rd32(ck); });
+                if (it == ds64_table.end()) break;
+                ck_size = it->second;
+            }
+        }
         const std::size_t body = pos + 8;
         const std::size_t avail = size - body;
 
@@ -116,6 +146,7 @@ int32_t decode_wav_memory(const uint8_t* data, std::size_t size, DecodedAudio& o
 
         // Chunks are word aligned (odd sizes carry a pad byte).
         const uint64_t next = static_cast<uint64_t>(body) + ck_size + (ck_size & 1u);
+        if (next < body) break;
         if (next > size) break;
         pos = static_cast<std::size_t>(next);
     }

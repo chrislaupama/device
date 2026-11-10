@@ -235,6 +235,28 @@ int main(int argc, char** argv) {
         }
         se_asset_release(e, rev.asset_id);
     }
+    {
+        // Clip editor peaks (32 frames per pair, as the app's level 0): the mono
+        // mix the timeline draws against the two channels a stereo editor adds.
+        const std::size_t pairs = info.frames / 32 + 1;
+        std::vector<float> mm(2 * pairs);
+        std::size_t n = 0;
+        auto ms = [&](auto&& f) {
+            double best = 1e9;
+            for (int i = 0; i < 5; ++i) {
+                const auto t0 = std::chrono::steady_clock::now();
+                f();
+                best = std::min(best, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+            }
+            return best * 3.0;
+        };
+        const double mono = ms([&] { se_asset_compute_peaks(e, info.asset_id, 0, 32, mm.data(), pairs, &n); });
+        const double lr = ms([&] {
+            se_asset_compute_channel_peaks(e, info.asset_id, 0, 0, 32, mm.data(), pairs, &n);
+            se_asset_compute_channel_peaks(e, info.asset_id, 1, 0, 32, mm.data(), pairs, &n);
+        });
+        std::printf("\nWaveform peaks per minute of stereo audio (best of 5): mono mix %.2f ms, left + right %.2f ms\n", mono, lr);
+    }
     std::printf("\nClip transpose (32 tracks): 0 vs +7 st (Re-pitch ignores transpose; an unwarped transposed clip "
                 "plays as Re-pitch)\n\n");
     std::printf("| mode | case | 0 st avg us/block | +7 st avg us/block | 0 st p99 | +7 st p99 | +7 st render ms |\n"

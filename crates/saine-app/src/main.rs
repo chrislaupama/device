@@ -14,6 +14,7 @@
 //!              [--hold-note <0..127>  (with a synth state: hold the note and render 0.75 s offline first)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
 //!              [--window-width <pt>  (OS window width, default 1440)] [--assistant-width <px>  (saved docked-assistant width, 297..600)]
+//!              [--timeline-zoom <percent>  (horizontal timeline zoom, 100 = default; 100 is 12.76 pt per beat)]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
 //!              [--clip-menu <0|1|3|4|5>  (open a clip editor dropdown after --state: Speed, Warp, Grid, Type, Genre; 2, Mode, is disabled)]
 //!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
@@ -100,6 +101,8 @@ struct Args {
     warp_state: bool,
     /// review-reverse: review-warp with the clip reversed.
     reverse_state: bool,
+    /// review-warp-stereo: review-warp from a stereo file (hits on the left only).
+    stereo_state: bool,
     /// reference-synth (32): Instrument track selected, Devices tab, test-state synth preset.
     synth_state: bool,
     /// --synth-page N: open that category page of the synth device (review screenshots).
@@ -182,6 +185,8 @@ struct Args {
     /// --ac-edit N: with review-warp, open the typed-value box (0 Original BPM, 1 Transpose).
     ac_edit: Option<i32>,
     frame_stats: bool,
+    /// --timeline-zoom <percent>: horizontal timeline zoom at start (100 = the default).
+    timeline_zoom: Option<f64>,
     /// --render-bench N: offscreen, render the state N times and print the mean / median /
     /// p95 milliseconds per full window render (Slint + wgpu surfaces + readback), then exit.
     render_bench: u32,
@@ -247,11 +252,12 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.audio_clip_state = true;
                 }
-                s @ ("review-warp" | "review-reverse") => {
+                s @ ("review-warp" | "review-reverse" | "review-warp-stereo") => {
                     a.reference_default = true;
                     a.audio_clip_state = true;
                     a.warp_state = true;
                     a.reverse_state = s == "review-reverse";
+                    a.stereo_state = s == "review-warp-stereo";
                 }
                 "reference-synth" => {
                     a.reference_default = true;
@@ -437,6 +443,13 @@ fn parse_args() -> Result<Args, String> {
             "--ac-edit" => a.ac_edit = Some(value(&mut i)?.parse().map_err(|e| format!("--ac-edit: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
+            "--timeline-zoom" => {
+                let z: f64 = value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--timeline-zoom: {e}"))?;
+                if z.is_nan() {
+                    return Err(format!("--timeline-zoom: invalid percentage {z}"));
+                }
+                a.timeline_zoom = Some(z);
+            }
             "--drag-bench" => {
                 let v = value(&mut i)?;
                 if v != "track" && v != "bottom" {
@@ -958,7 +971,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 for (key, step) in [(36, 0), (36, 4), (36, 8), (36, 12), (37, 4), (38, 8)] {
                     p = p.toggled(key, step);
                 }
-                if lane > 0 {
+                if lane == 5 {
+                    // An 80-step pattern (a 20-beat clip converted past the 64-step Length choices),
+                    // playing on step 69: Follow playhead shows page 3 with the ring on step 69.
+                    let mut long = saine_core::steps::StepPattern { steps: 80, ..p.clone() };
+                    for bar in 1..5 {
+                        for c in &p.cells {
+                            long = long.toggled(c.key, c.step + bar * 16);
+                        }
+                    }
+                    p = long.toggled(42, 68).toggled(42, 70);
+                    if let Some(m) = c.project().midi_clip(id).cloned() {
+                        c.execute(saine_core::Command::ResizeMidiClip { clip: id, start: m.start, length: p.length() });
+                    }
+                }
+                if (1..5).contains(&lane) || lane == 6 {
                     p = p.toggled(42, 2).toggled(42, 6).toggled(42, 10).toggled(42, 14).with_row_flag(39, false);
                     p = p.with_lane(42, 2, StepLane::Velocity, 60).with_lane(42, 10, StepLane::Velocity, 30);
                     p = p.with_lane(42, 6, StepLane::Offset, 25).with_lane(42, 14, StepLane::Offset, -20);
@@ -966,7 +993,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 c.execute(saine_core::Command::SetStepPattern { clip: id, pattern: Some(p) });
                 c.select_clip(Some(id));
-                c.seq_lane(lane);
+                c.seq_lane(match lane {
+                    5 => 0,
+                    6 => 1,
+                    l => l,
+                });
+                if lane == 5 {
+                    c.seek_beats(16.0 + 17.0);
+                    let _ = c.engine.play();
+                }
+                if lane == 6 {
+                    // The Velocity tab's tooltip, as after a second of hover.
+                    let s = app.global::<Studio>();
+                    s.set_seq_tip(StepLane::Velocity.spec().tip.into());
+                    s.set_seq_tip_ax(208.0 - 13.35);
+                    s.set_seq_tip_ay(24.0);
+                    s.set_seq_tip_on(true);
+                }
             }
         }
     }
@@ -1498,6 +1541,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_seq_pointer, |c, kind: i32, x: f32, y: f32| c.seq_pointer(kind, x, y));
     on!(on_seq_scroll, |c, dy: f32| c.seq_scroll(dy));
     on!(on_seq_swing, |c, phase: i32, dy: f32| c.seq_swing(phase, dy));
+    on!(on_seq_page_pick, |c, i: i32| c.seq_page(i));
+    on!(on_seq_follow_toggle, |c| c.seq_follow());
     on!(on_composer_create, |c| c.composer_create());
     on!(on_composer_load, |c, i: i32| c.composer_load(i.max(0) as usize));
     on!(on_composer_original_pick, |c| c.composer_original());
@@ -1794,6 +1839,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(dir) = &args.open {
         ctl.borrow_mut().open(dir);
     }
+    // After --open, which resets the view.
+    if let Some(pct) = args.timeline_zoom {
+        let mut c = ctl.borrow_mut();
+        c.view.px_per_beat = (timeline::DEFAULT_PX_PER_BEAT * pct / 100.0).clamp(timeline::MIN_PX_PER_BEAT, timeline::MAX_PX_PER_BEAT);
+        c.ui_dirty = true;
+    }
     // After --open, so the held voice sounds on the project's own Synth.
     if let Some(pitch) = args.hold_note {
         let c = ctl.borrow();
@@ -1860,7 +1911,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let path = dir.join("sine-a220-steady.wav");
         let hit = |i: usize| if args.warp_state { (-((i % 22_050) as f32) / 900.0).exp() * (std::f32::consts::TAU * 90.0 * (i % 22_050) as f32 / 44_100.0).sin() * 0.6 } else { 0.0 };
         let samples: Vec<f32> = (0..8 * 44_100).map(|i| (std::f32::consts::TAU * 220.0 * i as f32 / 44_100.0).sin() * if args.warp_state { 0.15 } else { 0.5 } + hit(i)).collect();
-        wavgen::write_wav(&path, 44_100, 1, &samples)?;
+        if args.stereo_state {
+            let lr: Vec<f32> = samples.iter().enumerate().flat_map(|(i, &s)| [s, s - hit(i)]).collect();
+            wavgen::write_wav(&path, 44_100, 2, &lr)?;
+        } else {
+            wavgen::write_wav(&path, 44_100, 1, &samples)?;
+        }
         let mut c = ctl.borrow_mut();
         c.import_files(vec![path], ImportTarget::Selected, Some(12 * saine_core::PPQ));
         c.seek_beats(20.0);
