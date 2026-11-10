@@ -222,12 +222,16 @@ fn midi_steps() -> Vec<Step> {
         })),
         DoC("Grid 1/32, draw an off-grid note at beat 3.375, Grid back to 1/16", Box::new(|a, ctl| {
             let (gx, gy) = (260.0 + 387.0 + 8.0, 452.0 + (390.0 - 27.0) - 54.5 + 30.0 + 7.0);
-            click(a, gx, gy); // 1/16 -> 1/32
+            // Grid menu above the value: 8 rows of 20.4 with 3.4 padding and a 10.2 gap before the triplets.
+            let item = |i: usize| (gx + 22.0, gy - 10.2 - (8.0 * 20.4 + 6.8 + 10.2) + 3.4 + i as f32 * 20.4 + 10.2);
+            click(a, gx, gy);
+            let (ix, iy) = item(3);
+            click(a, ix, iy); // 1/32
             let (x, y) = pr_xy(ctl, 3.375 + 0.03, 52);
             click(a, x, y);
-            for _ in 0..3 {
-                click(a, gx, gy); // 1/32 -> 1/4 -> 1/8 -> 1/16
-            }
+            click(a, gx, gy);
+            let (ix, iy) = item(2);
+            click(a, ix, iy); // back to 1/16
         })),
         Check("off-grid note drawn at 3240 ticks, grid back at 1/16", Box::new(move |c, a| {
             let n = notes_of(c);
@@ -237,6 +241,21 @@ fn midi_steps() -> Vec<Step> {
                 .ok_or(format!("grid {} {n:?}", c.pr.grid))
         })),
         Do("click Quantize (selection = the new note)", Box::new(|a| click(a, 267.0 + 15.0, 466.0))),
+        DoC("Grid menu: pick 1/8T", Box::new(|a, _| {
+            let (gx, gy) = (260.0 + 387.0 + 8.0, 452.0 + (390.0 - 27.0) - 54.5 + 30.0 + 7.0);
+            click(a, gx, gy);
+            click(a, gx + 22.0, gy - 10.2 - (8.0 * 20.4 + 6.8 + 10.2) + 3.4 + 5.0 * 20.4 + 10.2 + 10.2);
+        })),
+        Check("Grid 1/8T (1/12 note), menu closed", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.pr.grid == 12 && s.get_pr_grid_text() == "1/8T" && s.get_clip_menu() == -1)
+                .then_some(())
+                .ok_or(format!("grid {} {:?} menu {}", c.pr.grid, s.get_pr_grid_text(), s.get_clip_menu()))
+        })),
+        DoC("Grid back to 1/16 (menu pick)", Box::new(|a, ctl| {
+            ctl.borrow_mut().clip_menu_open(3);
+            a.global::<Studio>().invoke_clip_menu_pick(2);
+        })),
         Check("Quantize snapped it to the 1/16 grid (3360), one undo step", Box::new(move |c, _| {
             let n = notes_of(c);
             one_step(h5.clone(), "Quantize Notes")(c)?;

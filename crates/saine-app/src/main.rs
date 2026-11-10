@@ -14,6 +14,7 @@
 //!              [--hold-note <0..127>  (with a synth state: hold the note and render 0.75 s offline first)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
+//!              [--clip-menu <0|1|3|4|5>  (open a clip editor dropdown after --state: Speed, Warp, Grid, Type, Genre; 2, Mode, is disabled)]
 //!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
 //! ```
 
@@ -134,6 +135,7 @@ struct Args {
     screenshot: Option<PathBuf>,
     exit_after_frames: Option<u64>,
     zoom: Option<u32>,
+    clip_menu: Option<i32>,
     frame_stats: bool,
     /// --render-bench N: offscreen, render the state N times and print the mean / median /
     /// p95 milliseconds per full window render (Slint + wgpu surfaces + readback), then exit.
@@ -297,6 +299,13 @@ fn parse_args() -> Result<Args, String> {
             "--hold-note" => a.hold_note = Some(value(&mut i)?.parse().map_err(|e| format!("--hold-note: {e}"))?),
             "--sampler-tab" => a.sampler_tab = Some(value(&mut i)?.parse().map_err(|e| format!("--sampler-tab: {e}"))?),
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
+            "--clip-menu" => {
+                let m: i32 = value(&mut i)?.parse().map_err(|e| format!("--clip-menu: {e}"))?;
+                if ![0, 1, 3, 4, 5].contains(&m) {
+                    return Err(format!("--clip-menu: want 0, 1, 3, 4 or 5 (2, Mode, is disabled), got {m}"));
+                }
+                a.clip_menu = Some(m);
+            }
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
             "--drag-bench" => {
@@ -502,6 +511,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.devmenu_dismiss();
             c.auto_picker_close();
             c.rename = None;
+            c.pr.menu = -1;
             c.ui_dirty = true;
         }
         a if a.starts_with("clip.") || a == "assistant.ask" => ctl.borrow_mut().set_status(format!("{a}: not implemented yet"), 3),
@@ -812,6 +822,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.auto_picker_pick(1);
         }
     }
+    // The dropdown opens once its editor is on screen (the audio clip state imports first).
+    let clip_menu_timer = slint::Timer::default();
+    if let Some(m) = args.clip_menu {
+        let ctl = ctl.clone();
+        // Opens after its editor has been on screen for 10 ticks, so the editor is drawn first.
+        let shown_ticks = std::cell::Cell::new(0u32);
+        let started = Instant::now();
+        clip_menu_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
+            if shown_ticks.get() < 10 && started.elapsed() > Duration::from_secs(3) {
+                eprintln!("saine-studio: --clip-menu {m}: its editor never appeared; use a --state that shows it (0, 1: an audio clip; 3, 4, 5: a MIDI clip)");
+                std::process::exit(2);
+            }
+            let Ok(mut c) = ctl.try_borrow_mut() else { return };
+            if shown_ticks.get() > 10 || !c.clip_menu_shown(m) {
+                shown_ticks.set(if c.clip_menu_shown(m) { shown_ticks.get() } else { 0 });
+                return;
+            }
+            shown_ticks.set(shown_ticks.get() + 1);
+            if shown_ticks.get() == 10 {
+                c.clip_menu_open(m);
+            }
+        });
+    }
     if args.settings_state {
         let mut c = ctl.borrow_mut();
         c.open_settings();
@@ -1109,6 +1142,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool| c.pr_pointer(kind, x, y, shift, alt));
     on!(on_pr_scroll, |c, dy: f32| c.pr_scroll(dy));
     on!(on_pr_action, |c, a: slint::SharedString| c.pr_action(a.as_str()));
+    on!(on_clip_menu_open, |c, m: i32| c.clip_menu_open(m));
+    on!(on_clip_menu_pick, |c, i: i32| c.clip_menu_pick(i));
     on!(on_pr_value, |c, f: i32, phase: i32, dy: f32| c.pr_value(f, phase, dy));
     on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
@@ -1443,6 +1478,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let measure = args.demo || args.frame_stats || args.exit_after_frames.is_some();
     let screenshot = args.screenshot.clone();
     let exit_after = args.exit_after_frames;
+    let want_menu = args.clip_menu;
     let save_to = args.save_to.clone();
     {
         let aw = app.as_weak();
@@ -1542,7 +1578,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         f.slint.0.push((now - t).as_secs_f64() * 1e3);
                     }
                     let (animating, ready) = match ctl.try_borrow() {
-                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || !c.assistant.highlights.is_empty() || c.rec.recording, c.pending_jobs == 0),
+                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || !c.assistant.highlights.is_empty() || c.rec.recording, c.pending_jobs == 0 && want_menu.is_none_or(|m| c.pr.menu == m)),
                         Err(_) => (true, false),
                     };
                     if ready {
