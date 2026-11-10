@@ -401,6 +401,7 @@ Result run_midi(uint32_t tracks, uint32_t blocks, const se_synth_params* params)
     }
     const double wall_us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t_all).count();
     se_engine_destroy(e);
+    if (times.empty()) return Result{}; // also tells GCC -Wnull-dereference that back() is safe
     std::vector<double> sorted = times;
     std::sort(sorted.begin(), sorted.end());
     Result r{};
@@ -541,6 +542,7 @@ Result run_input(uint32_t tracks, uint32_t blocks, bool record) {
         std::filesystem::remove_all(dir);
     }
     se_engine_destroy(e);
+    if (times.empty()) return Result{}; // also tells GCC -Wnull-dereference that back() is safe
     std::vector<double> sorted = times;
     std::sort(sorted.begin(), sorted.end());
     Result r{};
