@@ -64,6 +64,30 @@ pub struct Preferences {
     /// File › Open Recent: project folders, newest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recent_projects: Vec<String>,
+    #[serde(default)]
+    pub general: GeneralPrefs,
+}
+
+/// Settings › General, with the reference app's defaults.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GeneralPrefs {
+    /// Startup: reopen the most recent project at launch.
+    pub load_last_session: bool,
+    /// Transport › Playhead on stop: false = Return to start, true = Stop in place.
+    pub stop_in_place: bool,
+    /// Plugin windows: open a third-party effect's window when it is added.
+    pub show_plugin_windows: bool,
+    /// Plugin windows: open a built-in effect's device window when it is added.
+    pub show_builtin_windows: bool,
+    /// Plugin windows: keep plugin windows above the main window.
+    pub plugin_windows_on_top: bool,
+}
+
+impl Default for GeneralPrefs {
+    fn default() -> Self {
+        GeneralPrefs { load_last_session: false, stop_in_place: false, show_plugin_windows: true, show_builtin_windows: false, plugin_windows_on_top: true }
+    }
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -128,7 +152,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("saine-prefs-test-{}", std::process::id()));
         let path = dir.join("preferences.json");
         assert_eq!(load(&path).unwrap(), None);
-        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110, browser_folders: vec!["/tmp/kit".into()], preview_volume: Some(0.5), assistant_width: 400.0, recent_projects: vec!["/tmp/Song.saineproj".into()] };
+        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110, browser_folders: vec!["/tmp/kit".into()], preview_volume: Some(0.5), assistant_width: 400.0, recent_projects: vec!["/tmp/Song.saineproj".into()], general: GeneralPrefs { load_last_session: true, stop_in_place: true, ..GeneralPrefs::default() } };
         save(&path, &p).unwrap();
         assert_eq!(load(&path).unwrap(), Some(p.clone()));
         assert!(p.audio.is_custom());

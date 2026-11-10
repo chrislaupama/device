@@ -840,6 +840,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.provider = Arc::new(provider);
         c.settings.prefs = saved_prefs;
         c.settings.prefs_path = prefs_path;
+        c.settings.headless = !use_prefs;
         if args.self_test {
             // Recording in the self-test uses injected input only (render_offline_with_input)
             // into a scratch directory; it never opens or requires a real input device.
@@ -1428,6 +1429,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_menu_action, |c, id: slint::SharedString| c.menu_action(&id));
     on!(on_open_recent, |c, i: i32| c.open_recent(i as usize));
     on!(on_updates_close, |c| c.dialogs_close());
+    on!(on_general_toggle, |c, i: i32| c.general_toggle(i));
+    on!(on_general_stop_mode, |c, on: bool| c.general_stop_in_place(on));
     {
         // A menu item with a shortcut takes that keystroke away from the window (macOS key
         // equivalents), so replay it: a focused text field, the modal gating and the keymap
@@ -1871,6 +1874,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         // Second clip at bar 3 beat 3; leave the playhead there too.
         c.import_files(vec![noise], ImportTarget::NewTrack, Some(10 * saine_core::PPQ));
         c.seek_beats(10.0);
+    }
+    // Settings › General › Always load last session.
+    if use_prefs && args.import.is_empty() {
+        let last = ctl.borrow().settings.prefs.general.load_last_session.then(|| ctl.borrow().settings.prefs.recent_projects.first().cloned()).flatten();
+        if let Some(dir) = last {
+            ctl.borrow_mut().open_recent(0);
+            eprintln!("startup: reopened {dir}");
+        }
     }
     if !args.import.is_empty() {
         ctl.borrow_mut().import_files(args.import.clone(), ImportTarget::Selected, None);

@@ -309,6 +309,10 @@ pub struct Controller {
     pub unsaved_open: bool,
     /// Options › Check for Updates… dialog.
     pub updates_open: bool,
+    /// Settings › General › Playhead on stop: where the last playback started and where it
+    /// stopped (Space).
+    play_start: Option<i64>,
+    stopped_at: Option<i64>,
     pub(crate) jobs_tx: Sender<JobResult>,
     jobs_rx: Receiver<JobResult>,
     pub pending_jobs: usize,
@@ -434,6 +438,8 @@ impl Controller {
             export: Default::default(),
             unsaved_open: false,
             updates_open: false,
+            play_start: None,
+            stopped_at: None,
             jobs_tx,
             jobs_rx,
             pending_jobs: 0,
@@ -780,7 +786,17 @@ impl Controller {
             self.set_status("No audio device: playback unavailable (offline mode)", 4);
             return;
         }
-        let r = if self.engine.transport().playing { self.engine.pause() } else { self.engine.play() };
+        let t = self.engine.transport();
+        let r = if t.playing {
+            self.stopped_at = Some(t.position);
+            self.engine.pause()
+        } else {
+            if let Some(start) = return_to(self.settings.prefs.general.stop_in_place, self.play_start, self.stopped_at, t.position) {
+                let _ = self.engine.seek(start);
+            }
+            self.play_start = Some(self.engine.transport().position);
+            self.engine.play()
+        };
         if let Err(e) = r {
             self.set_status(format!("Transport: {e}"), 4);
         }
@@ -1851,6 +1867,15 @@ fn mini_notes(notes: &[saine_core::Note], shift: Ticks, len: Ticks) -> Vec<[f32;
 }
 
 /// Update a VecModel in place (row-wise) so Slint only re-renders changed rows.
+/// Playhead on stop: with Return to start, playback resumes where the previous one started,
+/// unless the playhead was moved since it stopped; Stop in place resumes where it stopped.
+fn return_to(stop_in_place: bool, play_start: Option<i64>, stopped_at: Option<i64>, position: i64) -> Option<i64> {
+    if stop_in_place || stopped_at != Some(position) {
+        return None;
+    }
+    play_start
+}
+
 pub(crate) fn sync_model<T: Clone + PartialEq + 'static>(m: &VecModel<T>, rows: Vec<T>) {
     if m.row_count() == rows.len() {
         for (i, r) in rows.into_iter().enumerate() {
@@ -1866,6 +1891,14 @@ pub(crate) fn sync_model<T: Clone + PartialEq + 'static>(m: &VecModel<T>, rows: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn playhead_on_stop() {
+        assert_eq!(return_to(false, Some(100), Some(500), 500), Some(100), "Return to start");
+        assert_eq!(return_to(false, Some(100), Some(500), 900), None, "moved since it stopped");
+        assert_eq!(return_to(true, Some(100), Some(500), 500), None, "Stop in place");
+        assert_eq!(return_to(false, None, None, 0), None, "first playback");
+    }
     #[test]
     fn slider_mapping_roundtrip() {
         for g in [0.0f32, 0.1, 0.5, 1.0, 1.5, 1.99] {

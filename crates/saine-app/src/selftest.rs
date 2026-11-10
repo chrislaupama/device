@@ -5214,6 +5214,68 @@ fn menu_bar_steps() -> Vec<Step> {
     ]
 }
 
+/// Settings › General: the controls Saine backs change the preferences; the others stay off.
+fn general_settings_steps() -> Vec<Step> {
+    use Step::*;
+    const PAGE_X: f32 = SET_X + 187.0;
+    const CONTENT_W: f32 = SET_W - 187.0;
+    let switch_xy = |row_y: f32| (PAGE_X + CONTENT_W - 43.0 + 10.0, SET_Y + row_y + 7.0);
+    let added = Rc::new(Cell::new(None));
+    let (a1, a2) = (added.clone(), added);
+    vec![
+        DoC("general: open Settings › General", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.open_settings();
+            c.settings_page(0);
+        })),
+        Check("general: the reference app's defaults (Return to start; third-party windows and on top on)", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let on: Vec<bool> = s.get_general_on().iter().collect();
+            (s.get_settings_page() == 0 && on == [false, true, false, true] && !s.get_general_stop_in_place() && c.settings.prefs.general == crate::prefs::GeneralPrefs::default())
+                .then_some(())
+                .ok_or(format!("page {} on {on:?}", s.get_settings_page()))
+        })),
+        Do("general: click Stop in place", Box::new(|a| click(a, PAGE_X + CONTENT_W - 20.5 - 172.5 + 87.0 + 40.0, SET_Y + 143.8 + 8.6))),
+        Do("general: click Auto-show built-in effect windows", Box::new(move |a| {
+            let (x, y) = switch_xy(331.4);
+            click(a, x, y);
+        })),
+        Do("general: click the disabled Sample licensing switch", Box::new(move |a| {
+            let (x, y) = switch_xy(202.9);
+            click(a, x, y);
+        })),
+        Check("general: Stop in place and built-in windows on; licensing unchanged", Box::new(|c, a| {
+            let g = &c.settings.prefs.general;
+            let s = a.global::<Studio>();
+            (g.stop_in_place && g.show_builtin_windows && s.get_general_stop_in_place() && s.get_general_on().row_data(2) == Some(true))
+                .then_some(())
+                .ok_or(format!("{g:?}"))
+        })),
+        DoC("general: close Settings; add a built-in Utility to the selected track", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.close_settings();
+            let Some(t) = c.selected_track else { return };
+            let Some(def) = saine_core::builtin::find("utility") else { return };
+            c.add_item_to_track(&crate::devices::Item::Builtin(def), t, None);
+            a1.set(c.project().track(t).and_then(|t| t.devices.last()).map(|d| d.id));
+        })),
+        Check("general: its device window opened", Box::new(move |c, _| {
+            let id = a2.get().ok_or("no device added")?;
+            c.devices.windows.contains(&id).then_some(()).ok_or("no window".into())
+        })),
+        DoC("general: remove it; restore the defaults", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let Some(t) = c.selected_track else { return };
+            if let Some(id) = c.project().track(t).and_then(|t| t.devices.last()).map(|d| d.id) {
+                c.device_remove(id);
+            }
+            c.general_toggle(2);
+            c.general_stop_in_place(false);
+        })),
+        Check("general: defaults back", Box::new(|c, _| (c.settings.prefs.general == crate::prefs::GeneralPrefs::default()).then_some(()).ok_or(format!("{:?}", c.settings.prefs.general)))),
+    ]
+}
+
 /// Section lane under the loop strip (appended last; clears its sections at the end).
 fn section_steps() -> Vec<Step> {
     use Step::*;
@@ -5896,6 +5958,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(clip_menu_steps());
     all.extend(ruler_zoom_steps());
     all.extend(menu_bar_steps());
+    all.extend(general_settings_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));

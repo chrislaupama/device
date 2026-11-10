@@ -738,6 +738,12 @@ export global Studio {
     callback export-bits(bool);                 // true = 24-bit
     callback export-name-edited(string);
     in property <bool> unsaved-open;
+    // Settings › General (src/settings.rs general_toggle): Always load last session, Auto-show
+    // third-party effect windows, Auto-show built-in effect windows, Keep plugin windows on top.
+    in property <[bool]> general-on: [false, true, false, true];
+    in property <bool> general-stop-in-place;
+    callback general-toggle(int);
+    callback general-stop-mode(bool);                       // true = Stop in place
     in property <bool> updates-open;                        // Options › Check for Updates…
     in property <string> app-version;
     callback updates-close();
