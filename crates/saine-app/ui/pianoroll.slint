@@ -2,8 +2,8 @@
 // piano roll (toolbar, wgpu note grid + keyboard from src/pianoroll.rs, footer),
 // the empty state, and the clip context menu.
 //
-// Geometry measured from reference/screenshots/33-*.png and 34-*.png (bottom panel
-// at y 425, 390 pt tall while the Clip tab is open). Panel-relative coordinates.
+// Geometry measured from reference/screenshots/33-*.png and 34-*.png. Panel-relative
+// coordinates; the panel is as tall as the Devices tab's (306 pt by default).
 import { Tokens } from "tokens.slint";
 import { Icon, Icons, Label } from "widgets.slint";
 import { Studio, MenuItem } from "studio.slint";
@@ -152,28 +152,36 @@ export component ClipSidebar inherits Rectangle {
             Icon { x: parent.width - 14px; y: 4.5px; width: 8px; height: 8px; d: Icons.chevron-down; ink: #9a9ba0; }
             TouchArea { clicked => { Studio.clip-menu-open(5); } }
         }
-        if Studio.composer-shape-tab: ShapeRack { x: 10.5px; y: parent.fy + 26px; width: 234px; height: 14 * 17.5px; }
+        if Studio.composer-shape-tab: Flickable {
+            x: 0; y: prv.fy + 26px; width: prv.width; height: max(0px, prv.height - 8px - self.y);
+            content-height: 14 * 17.5px;
+            ShapeRack { x: 10.5px; y: 0; width: 234px; height: 14 * 17.5px; }
+        }
         if !Studio.composer-shape-tab && Studio.composer-rows.length == 0: Rectangle {
-            Text { x: 0; y: 193.5px; width: root.width; height: 15px; text: "No patterns"; color: #a5a6aa; font-size: 9.75px; horizontal-alignment: center; vertical-alignment: center; }
-            Text { x: 0; y: 210.5px; width: root.width; height: 14px; text: "Create some with the button below."; color: #6c6e74; font-size: 8.75px; horizontal-alignment: center; vertical-alignment: center; }
+            Text { x: 0; y: 151px; width: root.width; height: 15px; text: "No patterns"; color: #a5a6aa; font-size: 9.75px; horizontal-alignment: center; vertical-alignment: center; }
+            Text { x: 0; y: 169px; width: root.width; height: 14px; text: "Create some with the button below."; color: #6c6e74; font-size: 8.75px; horizontal-alignment: center; vertical-alignment: center; }
         }
         // Pattern list: six rows, each named, with its notes in miniature; the playing one is lit.
-        if !Studio.composer-shape-tab: Rectangle { for row[i] in Studio.composer-rows: Rectangle {
-            x: 10.5px; y: prv.fy + 25px + i * 35px; width: 234px; height: 32px; border-radius: 6px;
-            background: row.playing ? #2c2d32 : rta.has-hover ? #222328 : transparent;
-            border-width: row.playing ? 1px : 0; border-color: Studio.clip-color;
-            Text { x: 10px; width: 112px; text: row.name; overflow: elide; color: row.playing ? #ffffff : #c9c9cc; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
-            Rectangle {
-                x: 126px; y: 6px; width: 100px; height: 20px; border-radius: 3px; background: #1a1b1e; clip: true;
-                for n in row.notes: Rectangle {
-                    x: n.x * parent.width; y: 2px + n.y * (parent.height - 6px); width: max(1.5px, n.w * parent.width - 0.5px); height: 2px;
-                    background: row.playing ? Studio.clip-color : #6b6c70;
+        if !Studio.composer-shape-tab: Flickable {
+            x: 0; y: prv.fy + 25px; width: prv.width; height: max(0px, prv.height - 37.5px - 4px - self.y);
+            content-height: Studio.composer-rows.length * 35px;
+            for row[i] in Studio.composer-rows: Rectangle {
+                x: 10.5px; y: i * 35px; width: 234px; height: 32px; border-radius: 6px;
+                background: row.playing ? #2c2d32 : rta.has-hover ? #222328 : transparent;
+                border-width: row.playing ? 1px : 0; border-color: Studio.clip-color;
+                Text { x: 10px; width: 112px; text: row.name; overflow: elide; color: row.playing ? #ffffff : #c9c9cc; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+                Rectangle {
+                    x: 126px; y: 6px; width: 100px; height: 20px; border-radius: 3px; background: #1a1b1e; clip: true;
+                    for n in row.notes: Rectangle {
+                        x: n.x * parent.width; y: 2px + n.y * (parent.height - 6px); width: max(1.5px, n.w * parent.width - 0.5px); height: 2px;
+                        background: row.playing ? Studio.clip-color : #6b6c70;
+                    }
                 }
+                rta := TouchArea { clicked => { Studio.composer-load(i); } }
             }
-            rta := TouchArea { clicked => { Studio.composer-load(i); } }
-        } }
+        }
         if !Studio.composer-shape-tab: Rectangle {
-            x: 10.5px; y: 352.5px; width: 234px; height: 27px; border-radius: 13.5px; background: Studio.clip-color;
+            x: 10.5px; y: prv.height - 37.5px; width: 234px; height: 27px; border-radius: 13.5px; background: Studio.clip-color;
             Text { x: 12px; text: Studio.composer-create-text; color: Studio.clip-ink; font-size: 10px; font-weight: 500; vertical-alignment: center; }
             Icon { x: parent.width - 21.5px; y: 7px; width: 13px; height: 13px; d: Icons.sparkle; ink: Studio.clip-ink; stroke-width: 1.1px; }
             TouchArea { clicked => { Studio.composer-create(); } }

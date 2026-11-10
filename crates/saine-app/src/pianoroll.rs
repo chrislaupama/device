@@ -9,8 +9,10 @@
 //! selected) with the footer's Grid / Amount values.
 //!
 //! Coordinates are texture-local logical points. The texture sits at panel
-//! (255, 54.5) of the 390 pt bottom panel, i.e. window (260, 479.5) at the
-//! reference size (measured from `34-midi-clip-selected-pianoroll.png`).
+//! (255, 54.5) of the bottom panel, i.e. window (260, 563.5) in the 820 pt window
+//! with the default 306 pt panel (layout from `34-midi-clip-selected-pianoroll.png`; the
+//! panel height from the z100 clip editor captures, where the Clip tab row sits at 454 pt
+//! like the Devices tab's).
 
 use crate::controller::{BottomTab, Controller};
 use crate::gpu::{DrawList, RectInst};
@@ -33,9 +35,9 @@ pub const ROW_H: f32 = 176.5 / 12.0;
 pub const FIT_PAD: f64 = 0.03;
 /// Texture origin inside the bottom panel, and the panel height while the Clip tab is open.
 pub const PANEL_ORIGIN: (f32, f32) = (255.0, 54.5);
-pub const CLIP_PANEL_H: f32 = 390.0;
+pub const CLIP_PANEL_H: f32 = crate::highlight::DEFAULT_BOTTOM_H;
 pub const FOOTER_H: f32 = 54.5;
-/// C4 row top at y 106.5 (window 586) in the reference.
+/// C4 row top at y 106.5 (window 670 with the default panel) in the reference.
 pub const DEFAULT_SCROLL: f32 = GRID_Y + 67.0 * ROW_H - 106.5;
 const DOUBLE_CLICK: Duration = Duration::from_millis(350);
 

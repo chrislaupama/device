@@ -551,7 +551,7 @@ mod tests {
     fn geometry_matches_the_reference_and_pages_long_patterns() {
         let g = SeqGeom::new(1174.5, 16, StepRows::Pads, 0.0, 0);
         assert_eq!((g.cols, g.pitch, g.rows, g.pages), (32, COL_PITCH, 16, 1));
-        assert_eq!(g.visible_rows(), 0..12);
+        assert_eq!(g.visible_rows(), 0..8);
         let long = SeqGeom::new(1174.5, 100, StepRows::Pads, 0.0, 9);
         assert_eq!((long.cols, long.pages, long.page, long.first), (32, 4, 3, 96), "the page clamps to the last one");
         assert_eq!((long.col_of(97), long.col_of(95), long.step_at(COL_X0 + 1.0)), (Some(1), None, Some(96)));
@@ -566,7 +566,7 @@ mod tests {
     fn view_draws_ties_lanes_and_muted_rows() {
         let p = beat();
         let v = build_view(&p, 1174.5, 0.0, 0, Some(StepLane::Velocity), &|k| format!("k{k}"), Some((36, 4)));
-        assert_eq!(v.rows.len(), 12);
+        assert_eq!(v.rows.len(), 8);
         assert_eq!(v.rows[0].name, "k36");
         assert!(!v.rows[2].audible && v.rows[2].muted);
         let on: Vec<&CellView> = v.cells.iter().filter(|c| c.state == 2).collect();
@@ -575,7 +575,7 @@ mod tests {
         assert_eq!(tied.w, v.geom.cell_w + 2.0 * v.geom.pitch);
         assert!((on[0].bar - 100.0 / 127.0).abs() < 1e-6);
         assert_eq!(on[1].label, "100", "the dragged cell shows its value");
-        assert_eq!(v.cells.iter().filter(|c| c.state == 0).count(), 12 * 16);
+        assert_eq!(v.cells.iter().filter(|c| c.state == 0).count(), 8 * 16);
         let beats: Vec<&str> = v.nums.iter().filter(|n| n.beat && n.active).map(|n| n.text.as_str()).collect();
         assert_eq!(beats, ["1", "5", "9", "13"]);
     }
