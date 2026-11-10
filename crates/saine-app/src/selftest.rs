@@ -4751,11 +4751,7 @@ fn modulation_device_steps() -> Vec<Step> {
                     let (r, d) = (named_value(c, "tremolo", "rate").unwrap_or(0.0), named_value(c, "tremolo", "depth").unwrap_or(0.0));
                     (r > 5.5 && d > 75.0).then_some(()).ok_or(format!("rate {r} depth {d}"))
                 })));
-                // Through the controller: the Add device search field keeps keyboard focus after an add.
-                steps.push(DoC("tremolo: undo", Box::new(move |a, ctl| {
-                    ctl.borrow_mut().undo();
-                    refresh(a, ctl);
-                })));
+                steps.push(Do("tremolo: Cmd+Z", Box::new(|a| key(a, "z", true, false))));
                 steps.push(Check("tremolo: one undo restores Rate 5 Hz and Depth 70%", Box::new(move |c, _| {
                     h3.set(c.doc.history_labels().len());
                     let (r, d) = (named_value(c, "tremolo", "rate").unwrap_or(0.0), named_value(c, "tremolo", "depth").unwrap_or(0.0));
@@ -5745,6 +5741,64 @@ fn general_settings_steps() -> Vec<Step> {
             c.general_stop_in_place(false);
         })),
         Check("general: defaults back", Box::new(|c, _| (c.settings.prefs.general == crate::prefs::GeneralPrefs::default()).then_some(()).ok_or(format!("{:?}", c.settings.prefs.general)))),
+    ]
+}
+
+/// Add device card search (CHR-17): picking a search result hands the keyboard back to the
+/// shortcuts, so ⌘Z undoes the add instead of editing the search text.
+fn add_search_steps() -> Vec<Step> {
+    use Step::*;
+    let hist = Rc::new(Cell::new(0usize));
+    let (h0, h1, h2) = (hist.clone(), hist.clone(), hist);
+    let card_xy = |a: &AppWindow, x: f32, y: f32| (5.0 + a.global::<Studio>().get_add_device_x() + x, BOTTOM_Y + 34.5 + y);
+    let refresh = |a: &AppWindow, ctl: &Ctl| {
+        if let Ok(mut c) = ctl.try_borrow_mut() {
+            c.update_ui(a);
+        }
+    };
+    vec![
+        DoC("add search: select the Audio track (empty chain), Devices tab", Box::new(move |a, ctl| {
+            let i = track_of(&ctl.borrow(), TrackKind::Audio).unwrap_or(0);
+            click_track_header(a, ctl, i);
+            ctl.borrow_mut().set_bottom_tab(BottomTab::Devices);
+            refresh(a, ctl);
+            h0.set(ctl.borrow().doc.history_labels().len());
+        })),
+        Do("add search: click the search field and type Utility", Box::new(move |a| {
+            let (x, y) = card_xy(a, 5.5 + 26.0 + 40.0, 31.5 + 10.0);
+            click(a, x, y);
+            type_text(a, "Utility");
+        })),
+        Check("add search: the field has the focus and lists Utility", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let found = (0..s.get_add_results().row_count()).filter_map(|i| s.get_add_results().row_data(i)).any(|m| m.label == "Utility");
+            let empty = track_devices(c, TrackKind::Audio).is_empty();
+            (s.get_search_focused() && found && empty).then_some(()).ok_or(format!("focused {} found {found} empty chain {empty}", s.get_search_focused()))
+        })),
+        DoC("add search: click the Utility result", Box::new(move |a, ctl| {
+            refresh(a, ctl);
+            let s = a.global::<Studio>();
+            let Some(i) = (0..s.get_add_results().row_count()).filter_map(|i| s.get_add_results().row_data(i)).position(|m| m.label == "Utility") else { return };
+            let (x, y) = card_xy(a, 60.0, 56.5 + i as f32 * 22.0 + 11.0);
+            click(a, x, y);
+            refresh(a, ctl);
+        })),
+        Check("add search: Utility added in one step; the search field gave up the focus", Box::new(move |c, a| {
+            let n = c.doc.history_labels().len();
+            let names: Vec<String> = track_devices(c, TrackKind::Audio).into_iter().map(|d| d.1).collect();
+            let focused = a.global::<Studio>().get_search_focused();
+            (n == h1.get() + 1 && names == ["Utility"] && !focused).then_some(()).ok_or(format!("history {} -> {n}, chain {names:?}, focused {focused}", h1.get()))
+        })),
+        Do("add search: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("add search: Cmd+Z undid the add (the search text is untouched)", Box::new(move |c, a| {
+            let names: Vec<String> = track_devices(c, TrackKind::Audio).into_iter().map(|d| d.1).collect();
+            let text = a.global::<Studio>().get_add_search();
+            (c.doc.history_labels().len() == h2.get() && names.is_empty() && text == "Utility").then_some(()).ok_or(format!("chain {names:?}, search {text:?}"))
+        })),
+        DoC("add search: clear the search", Box::new(move |a, ctl| {
+            ctl.borrow_mut().add_search("");
+            refresh(a, ctl);
+        })),
     ]
 }
 
@@ -6939,6 +6993,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(snap_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());
+    all.extend(add_search_steps());
     all.extend(live_import_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
