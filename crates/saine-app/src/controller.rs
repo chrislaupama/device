@@ -324,6 +324,7 @@ pub struct Controller {
     section_label_model: Rc<VecModel<crate::SectionLabel>>,
     clips_model: Rc<VecModel<ClipLabel>>,
     ruler_key: (i64, i64, i64),
+    pub(crate) mm: crate::minimap::State,
     pub clip_vis: Vec<ClipVis>,
     pub track_vis: Vec<TrackVis>,
     pub(crate) clip_ids: Vec<ClipId>,
@@ -438,6 +439,7 @@ impl Controller {
             meter_t: None,
             tracks_model: Rc::new(VecModel::default()),
             ruler_model: Rc::new(VecModel::default()),
+            mm: crate::minimap::State::new(),
             section_label_model: Rc::new(VecModel::default()),
             clips_model: Rc::new(VecModel::default()),
             ruler_key: (i64::MIN, 0, 0),
@@ -512,6 +514,7 @@ impl Controller {
         let s = app.global::<Studio>();
         s.set_tracks(ModelRc::from(self.tracks_model.clone()));
         s.set_ruler_labels(ModelRc::from(self.ruler_model.clone()));
+        s.set_minimap_bars(ModelRc::from(self.mm.model.clone()));
         s.set_section_labels(ModelRc::from(self.section_label_model.clone()));
         s.set_clip_labels(ModelRc::from(self.clip_ids_model()));
         s.set_strips(ModelRc::from(self.strips_model.clone()));
@@ -1560,6 +1563,7 @@ impl Controller {
         self.view.clamp_scroll(self.project().tracks.len(), self.lanes_size.1);
         s.set_scroll_y(self.view.scroll_y as f32);
         self.update_labels();
+        self.update_minimap(app);
         s.set_section_add_x(self.section_add_x());
         self.update_auto_labels();
         if self.auto_any_active() {

@@ -47,6 +47,9 @@ export struct RulerLabel { x: length, text: string }
 // Section name in the ruler's section lane (src/sections.rs): x and room in lane points, ink per block.
 export struct SectionLabel { x: length, w: length, text: string, ink: color }
 
+// Minimap bar (src/minimap.rs): x and w are fractions of the strip width.
+export struct MiniBar { x: float, w: float, y: length, h: length, color: color }
+
 export struct ClipLabel { x: length, y: length, w: length, text: string, selected: bool }
 
 // Browser tree row (Devices tab; src/devices.rs). icon: 0 folder, 1 instrument (keys), 2 effect.
@@ -350,6 +353,15 @@ export global Studio {
     in property <length> section-add-x: 8.5px;     // centre of the section lane's "+"
     callback lane-double(length, length);          // lane x, y
     in property <[ClipLabel]> clip-labels;
+    // Header minimap: bars, the visible window (fractions of the whole-song map), playhead (< 0 hidden).
+    in property <[MiniBar]> minimap-bars;
+    in property <float> minimap-win-x;
+    in property <float> minimap-win-w;
+    in property <float> minimap-playhead: -1;
+    in-out property <length> minimap-width;   // set by the strip (for the self-test)
+    callback minimap-pointer(int, length, length, length);
+    callback minimap-double();
+    callback minimap-scroll(float, float, length, length, bool);
     in property <int> lane-cursor; // 0 default, 1 ew-resize (trim), 2 move (clip body)
     // ---- inspector (selected track) ----
     in property <bool> has-selection;
