@@ -76,8 +76,12 @@ impl ClipLoop {
         self.end - self.start
     }
 
+    /// The shortest loop: below the finest grid step (1/48), so every snapped range fits,
+    /// and long enough that unrolling stays small.
+    pub const MIN_LEN: Ticks = crate::PPQ / 16;
+
     pub fn validate(&self) -> Result<(), String> {
-        if self.start < 0 || self.end <= self.start || self.span < 0 { Err(format!("loop {}..{} is empty or before the clip", self.start, self.end)) } else { Ok(()) }
+        if self.start < 0 || self.len() < Self::MIN_LEN || self.span < 0 { Err(format!("loop {}..{} is shorter than {} ticks or before the clip", self.start, self.end, Self::MIN_LEN)) } else { Ok(()) }
     }
 
     /// Notes as they play over a clip of this length: the first pass to the loop end, then
@@ -90,7 +94,7 @@ impl ClipLoop {
             out.push((Note { length: n.length.min(first - n.start), ..*n }, false));
         }
         let period = self.len();
-        if period <= 0 {
+        if period < Self::MIN_LEN {
             return out;
         }
         let looped: Vec<&Note> = notes.iter().filter(|n| n.start >= self.start && n.start < self.end).collect();

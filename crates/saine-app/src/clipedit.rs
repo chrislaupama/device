@@ -692,7 +692,7 @@ impl Controller {
             s.set_pr_end_text(pianoroll::fmt_pos(len, tpb).into());
             let looped = self.pr_loop_preview().filter(|l| l.on);
             s.set_pr_loop_on(looped.is_some());
-            s.set_pr_loop_enabled(self.pr_loop().is_some());
+            s.set_pr_loop_enabled(self.pr_clip().is_some_and(|c| c.pattern.is_none()));
             s.set_pr_position_text(pianoroll::fmt_pos(looped.map_or(0, |l| l.start), tpb).into());
             s.set_pr_length_text(pianoroll::fmt_len(looped.map_or(len, |l| l.len()), tpb).into());
             let v = self.pr_view();
