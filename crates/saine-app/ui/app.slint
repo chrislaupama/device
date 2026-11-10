@@ -21,7 +21,7 @@ import { Panel, Icon, Icons, Pill, IconButton, SmallButton, HSlider, Knob, Switc
 export { Tokens }
 
 import { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow } from "studio.slint";
-import { ClipSidebar, PianoRoll, ClipEmpty, ContextMenu } from "pianoroll.slint";
+import { ClipSidebar, PianoRoll, ClipEmpty, ContextMenu, DropMenu } from "pianoroll.slint";
 import { MixerPanel } from "mixer.slint";
 import { StripMetrics, StripCanvas, StripReadout, StripButton } from "channel_strip.slint";
 import { AssistantPanel, HighlightOverlay } from "assistant.slint";
@@ -525,8 +525,8 @@ component BottomPanel inherits Panel {
         color: Studio.bottom-tab == 0 ? Tokens.text-bright : Tokens.text-tertiary; font-size: 10px; font-weight: Studio.bottom-tab == 0 ? 600 : 500;
         TouchArea { clicked => { Studio.set-bottom-tab(0); } }
     }
-    if Studio.bottom-tab == 1 && Studio.pr-visible: PianoRoll { x: 255px; y: 27px; width: root.width - 255px; height: root.height - 27px; }
-    if Studio.bottom-tab == 1 && !Studio.pr-visible: ClipEmpty { x: 255px; y: 27px; width: root.width - 255px; height: root.height - 27px; }
+    if Studio.bottom-tab == 1 && (Studio.pr-visible || Studio.ac-visible): PianoRoll { x: 255px; y: 27px; width: root.width - 255px; height: root.height - 27px; }
+    if Studio.bottom-tab == 1 && !Studio.pr-visible && !Studio.ac-visible: ClipEmpty { x: 255px; y: 27px; width: root.width - 255px; height: root.height - 27px; }
     IconButton { x: root.width - 53px; y: 3px; width: 21px; height: 21px; icon: Icons.panel-bottom; ink: #6b6c70; icon-size: 14px; }
     IconButton { x: root.width - 29px; y: 3px; width: 21px; height: 21px; icon: Icons.download; ink: #6b6c70; icon-size: 14px; }
     // Device chain (Devices tab): built-in Synth card (instrument tracks without an instrument
@@ -703,6 +703,27 @@ export component AppWindow inherits Window {
                 width: Studio.input-menu-w; height: Studio.input-menu-h;
                 items: Studio.input-menu-items;
                 picked(i) => { Studio.input-menu-pick(i); }
+            }
+        }
+        // Clip editor dropdowns (click outside dismisses). Anchored below the field's value in
+        // the audio toolbar (PianoRoll at window x 260, bottom panel y + 27), above the Grid footer
+        // value, and below the Type / Genre pickers of the clip sidebar (above when it does not fit).
+        if Studio.clip-menu >= 0: cm := Rectangle {
+            property <length> bp-y: root.height - 5px - root.bottom-h;
+            property <int> m: Studio.clip-menu;
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.clip-menu-open(-1); } } }
+            DropMenu {
+                row-h: cm.m <= 2 ? 18.7px : 20.4px;
+                text-size: cm.m <= 2 ? 9.35px : 10.2px;
+                check: cm.m == 3;
+                section: cm.m == 3 ? 4 : -1;
+                width: cm.m <= 1 ? 47.6px : cm.m == 2 ? 56px : cm.m == 3 ? 108px : cm.m == 4 ? 61px : 104px;
+                x: cm.m == 0 ? 260px + 206.2px : cm.m == 1 ? 260px + 273.95px : cm.m == 2 ? 260px + 347.6px : cm.m == 3 ? 260px + 387px : cm.m == 4 ? 5px + 48px : 5px + 153px;
+                y: cm.m <= 2 ? cm.bp-y + 27px + 24.4px
+                    : cm.m == 3 ? root.height - 5px - 24.5px + 7px - 10.2px - self.height
+                    : cm.bp-y + 124.4px + self.height <= root.height - 5px ? cm.bp-y + 124.4px : cm.bp-y + 104px - 5.1px - self.height;
+                picked(i) => { Studio.clip-menu-pick(i); }
             }
         }
         // Device popup list: Add device submenus, instrument selector (click outside dismisses).

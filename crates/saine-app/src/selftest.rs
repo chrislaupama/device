@@ -3,7 +3,7 @@
 //! and checks the resulting `Document` / engine state. Does not touch the
 //! system cursor or keyboard. Coordinates are window points at 1440x820.
 
-use crate::controller::Controller;
+use crate::controller::{BottomTab, Controller};
 use crate::{AppWindow, Studio};
 use crate::assistant_panel::EntryKind;
 use saine_core::assistant::Mode;
@@ -11,7 +11,7 @@ use saine_core::builtin::synth_v2::SYNTH_V2;
 use saine_core::{PPQ, TrackKind, db_to_gain};
 use std::cell::Cell;
 use slint::platform::{Key, PointerEventButton, WindowEvent};
-use slint::{ComponentHandle, LogicalPosition, SharedString};
+use slint::{ComponentHandle, LogicalPosition, Model, SharedString};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -222,12 +222,16 @@ fn midi_steps() -> Vec<Step> {
         })),
         DoC("Grid 1/32, draw an off-grid note at beat 3.375, Grid back to 1/16", Box::new(|a, ctl| {
             let (gx, gy) = (260.0 + 387.0 + 8.0, 452.0 + (390.0 - 27.0) - 54.5 + 30.0 + 7.0);
-            click(a, gx, gy); // 1/16 -> 1/32
+            // Grid menu above the value: 8 rows of 20.4 with 3.4 padding and a 10.2 gap before the triplets.
+            let item = |i: usize| (gx + 22.0, gy - 10.2 - (8.0 * 20.4 + 6.8 + 10.2) + 3.4 + i as f32 * 20.4 + 10.2);
+            click(a, gx, gy);
+            let (ix, iy) = item(3);
+            click(a, ix, iy); // 1/32
             let (x, y) = pr_xy(ctl, 3.375 + 0.03, 52);
             click(a, x, y);
-            for _ in 0..3 {
-                click(a, gx, gy); // 1/32 -> 1/4 -> 1/8 -> 1/16
-            }
+            click(a, gx, gy);
+            let (ix, iy) = item(2);
+            click(a, ix, iy); // back to 1/16
         })),
         Check("off-grid note drawn at 3240 ticks, grid back at 1/16", Box::new(move |c, a| {
             let n = notes_of(c);
@@ -237,6 +241,21 @@ fn midi_steps() -> Vec<Step> {
                 .ok_or(format!("grid {} {n:?}", c.pr.grid))
         })),
         Do("click Quantize (selection = the new note)", Box::new(|a| click(a, 267.0 + 15.0, 466.0))),
+        DoC("Grid menu: pick 1/8T", Box::new(|a, _| {
+            let (gx, gy) = (260.0 + 387.0 + 8.0, 452.0 + (390.0 - 27.0) - 54.5 + 30.0 + 7.0);
+            click(a, gx, gy);
+            click(a, gx + 22.0, gy - 10.2 - (8.0 * 20.4 + 6.8 + 10.2) + 3.4 + 5.0 * 20.4 + 10.2 + 10.2);
+        })),
+        Check("Grid 1/8T (1/12 note), menu closed", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.pr.grid == 12 && s.get_pr_grid_text() == "1/8T" && s.get_clip_menu() == -1)
+                .then_some(())
+                .ok_or(format!("grid {} {:?} menu {}", c.pr.grid, s.get_pr_grid_text(), s.get_clip_menu()))
+        })),
+        DoC("Grid back to 1/16 (menu pick)", Box::new(|a, ctl| {
+            ctl.borrow_mut().clip_menu_open(3);
+            a.global::<Studio>().invoke_clip_menu_pick(2);
+        })),
         Check("Quantize snapped it to the 1/16 grid (3360), one undo step", Box::new(move |c, _| {
             let n = notes_of(c);
             one_step(h5.clone(), "Quantize Notes")(c)?;
@@ -778,6 +797,19 @@ fn steps() -> Vec<Step> {
         })),
         Do("click metronome button again", Box::new(|a| click(a, 992.0, 52.0))),
         Check("metronome off", Box::new(|c, _| (!c.metronome_on).then_some(()).ok_or("still on".into()))),
+        DoC("select clip 1 and open the Clip tab", Box::new(move |a, ctl| {
+            click(a, bx(11.0), TRACK0_Y + 40.0);
+            ctl.borrow_mut().set_bottom_tab(BottomTab::Clip);
+        })),
+        Check("audio clip editor open: gain readout, no piano roll, clip-length ruler", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let bars = (c.project().clip_length_ticks(clip) as f64 / c.project().ticks_per_bar() as f64).ceil() as usize;
+            (s.get_ac_visible() && !s.get_pr_visible() && s.get_ac_gain_text() == "0.0 dB" && s.get_pr_bar_labels().row_count() >= bars && c.pr_view().gx == 0.0)
+                .then_some(())
+                .ok_or(format!("ac {} pr {} gain {} bars {}", s.get_ac_visible(), s.get_pr_visible(), s.get_ac_gain_text(), s.get_pr_bar_labels().row_count()))
+        })),
+        DoC("back to the Devices tab", Box::new(|_, ctl| ctl.borrow_mut().set_bottom_tab(BottomTab::Devices))),
         Do("select clip 1 and press Delete", Box::new(move |a| {
             click(a, bx(11.0), TRACK0_Y + 40.0);
             key(a, Key::Delete, false, false)

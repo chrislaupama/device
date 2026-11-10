@@ -14,6 +14,23 @@ pub const MENU_PAD: f32 = 4.0;
 pub const MENU_ROW: f32 = 20.5;
 pub const MENU_SEP: f32 = 10.5;
 
+/// Clip editor dropdowns, in `Studio.clip-menu` order: Speed, Warp, Mode (audio toolbar),
+/// Grid (piano roll footer), Type, Genre (clip sidebar). Only Grid is backed by the model.
+/// Genre lists the entries visible in the reference capture (its full list is catalogue data).
+const CLIP_MENUS: [&[&str]; 6] = [
+    &["0.5x", "0.75x", "1x", "1.25x", "1.5x", "2x"],
+    &["On", "Off"],
+    &["Auto", "Drums", "Melody", "Vocal", "Re-pitch"],
+    &["1/4", "1/8", "1/16", "1/32", "1/4T", "1/8T", "1/16T", "1/32T"],
+    &["Chords", "Bass", "Lead", "Arp"],
+    &["Any", "Afrobeats", "Ambient", "Drill", "Drum & bass", "EDM", "Electronic", "Experimental", "Folk", "Future bass", "Hip-hop"],
+];
+const GRID_DENOMS: [u32; 8] = [4, 8, 16, 32, 6, 12, 24, 48];
+
+fn grid_label(denominator: u32) -> String {
+    GRID_DENOMS.iter().position(|&d| d == denominator).map_or(format!("1/{denominator}"), |i| CLIP_MENUS[3][i].to_owned())
+}
+
 fn slint_color(c: [f32; 3]) -> slint::Color {
     slint::Color::from_rgb_f32(c[0], c[1], c[2])
 }
@@ -311,36 +328,86 @@ impl Controller {
     // ---------------------------------------------------------------- view models
 
     /// Clip tab, piano roll, context menu and rename popup → Slint.
+    /// Open (or, when it is already open, close) a clip editor dropdown. Mode stays
+    /// disabled: Saine never warps, and the reference disables it with Warp off.
+    pub fn clip_menu_open(&mut self, menu: i32) {
+        self.pr.menu = if (0..CLIP_MENUS.len() as i32).contains(&menu) && menu != 2 && self.pr.menu != menu && self.clip_menu_shown(menu) { menu } else { -1 };
+        self.ui_dirty = true;
+    }
+
+    /// The editor that owns the dropdown is on screen: the audio clip editor for Speed / Warp /
+    /// Mode, the piano roll for Grid, Type and Genre.
+    fn clip_menu_shown(&self, menu: i32) -> bool {
+        if menu <= 2 { self.ac_clip().is_some() } else { self.pr_visible() }
+    }
+
+    fn clip_menu_active(&self, menu: i32) -> i32 {
+        match menu {
+            0 => 2,
+            1 => 1,
+            3 => GRID_DENOMS.iter().position(|&d| d == self.pr.grid).map_or(-1, |i| i as i32),
+            _ => 0,
+        }
+    }
+
+    pub fn clip_menu_pick(&mut self, index: i32) {
+        let menu = std::mem::replace(&mut self.pr.menu, -1);
+        self.ui_dirty = true;
+        if menu == 3 {
+            if let Some(&d) = GRID_DENOMS.get(index.max(0) as usize) {
+                self.pr.grid = d;
+            }
+            return;
+        }
+        if menu < 0 || index == self.clip_menu_active(menu) {
+            return;
+        }
+        let what = ["Clip speed", "Warp", "Warp mode", "", "Pattern type", "Pattern genre"][menu as usize];
+        self.set_status(format!("{what}: not in Saine yet"), 3);
+    }
+
     pub fn push_clip_editor(&mut self, s: &Studio) {
+        if self.pr.menu >= 0 && !self.clip_menu_shown(self.pr.menu) {
+            self.pr.menu = -1;
+        }
+        s.set_clip_menu(self.pr.menu);
+        if self.pr.menu >= 0 {
+            let items: Vec<slint::SharedString> = CLIP_MENUS[self.pr.menu as usize].iter().map(|&t| t.into()).collect();
+            s.set_clip_menu_items(slint::ModelRc::new(slint::VecModel::from(items)));
+            s.set_clip_menu_active(self.clip_menu_active(self.pr.menu));
+        }
         let p = self.doc.project();
         s.set_bottom_tab(if self.bottom_tab == BottomTab::Clip { 1 } else { 0 });
         let pr = self.pr_clip().cloned();
         s.set_pr_visible(pr.is_some());
         s.set_pr_pen(self.pr.pen);
-        // Empty state (Clip tab without an editable clip).
-        let audio = self.selected_clip.and_then(|c| p.clip(c)).map(|c| c.name.clone());
-        let (title, text) = match audio {
-            Some(name) => (format!("Audio clip: {name}"), "Audio clip editing is not implemented yet.".to_string()),
-            None => ("No clip selected".to_string(), "Select a clip to edit it.".to_string()),
-        };
-        s.set_clip_empty_title(title.into());
-        s.set_clip_empty_text(text.into());
-        if let Some(c) = &pr {
-            let tpb = p.ticks_per_bar();
-            let len = self.pr.value_drag.as_ref().and_then(|d| d.length_preview()).unwrap_or(c.length);
-            s.set_clip_name(c.name.clone().into());
-            if let Some((ti, _)) = p.find_midi_clip(c.id) {
-                s.set_clip_color(slint_color(track_color(p.tracks[ti].color)));
+        let ac = self.ac_clip().cloned();
+        s.set_ac_visible(ac.is_some());
+        // Clip header, range readouts and colour: shared by the piano roll and the audio clip editor.
+        let open = match (&pr, &ac) {
+            (Some(c), _) => {
+                let len = self.pr.value_drag.as_ref().and_then(|d| d.length_preview()).unwrap_or(c.length);
+                Some((c.name.clone(), len, p.find_midi_clip(c.id).map(|(t, _)| t)))
             }
-            s.set_pr_has_notes(!c.notes.is_empty());
+            (None, Some(c)) => {
+                s.set_ac_gain_text(format!("{:.1} dB", saine_core::model::gain_to_db(c.gain).max(-99.9)).into());
+                s.set_ac_bpm_text(format!("{}", p.transport.bpm.round()).into());
+                Some((c.name.clone(), p.clip_length_ticks(c), p.find_clip(c.id).map(|(t, _)| t)))
+            }
+            _ => None,
+        };
+        if let Some((name, len, ti)) = open {
+            let tpb = p.ticks_per_bar();
+            s.set_clip_name(name.into());
+            if let Some(ti) = ti {
+                let col = track_color(p.tracks[ti].color);
+                s.set_clip_color(slint_color(col));
+                s.set_clip_ink(slint_color(col.map(|v| v * 0.22)));
+            }
             s.set_pr_start_text(pianoroll::fmt_pos(0, tpb).into());
             s.set_pr_end_text(pianoroll::fmt_pos(len, tpb).into());
             s.set_pr_position_text(pianoroll::fmt_pos(0, tpb).into());
             s.set_pr_length_text(pianoroll::fmt_len(len, tpb).into());
-            s.set_pr_grid_text(format!("1/{}", self.pr.grid).into());
-            s.set_pr_quant_text(format!("{}%", (self.pr.quant_amount * 100.0).round()).into());
-            s.set_pr_human_text(format!("{}%", (self.pr.humanize_amount * 100.0).round()).into());
-            s.set_pr_vel_text(format!("{}", self.pr.velocity).into());
             let v = self.pr_view();
             let bpb = tpb as f64 / PPQ as f64;
             let mut bars = Vec::new();
@@ -350,12 +417,20 @@ impl Controller {
                 if x > v.w || b > 4096 {
                     break;
                 }
-                if x >= pianoroll::GRID_X - 2.0 {
+                if x >= v.gx - 2.0 {
                     bars.push(RulerLabel { x: x + 4.5, text: format!("{}", b + 1).into() });
                 }
                 b += 1;
             }
             sync_model(&self.pr_bar_model, bars);
+        }
+        if let Some(c) = &pr {
+            s.set_pr_has_notes(!c.notes.is_empty());
+            s.set_pr_grid_text(grid_label(self.pr.grid).into());
+            s.set_pr_quant_text(format!("{}%", (self.pr.quant_amount * 100.0).round()).into());
+            s.set_pr_human_text(format!("{}%", (self.pr.humanize_amount * 100.0).round()).into());
+            s.set_pr_vel_text(format!("{}", self.pr.velocity).into());
+            let v = self.pr_view();
             let keys: Vec<YLabel> = (0..=127)
                 .filter(|p| p % 12 == 0)
                 .filter_map(|p| {

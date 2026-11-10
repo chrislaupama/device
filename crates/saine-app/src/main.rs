@@ -14,6 +14,7 @@
 //!              [--hold-note <0..127>  (with a synth state: hold the note and render 0.75 s offline first)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
+//!              [--clip-menu <0..5>  (open a clip editor dropdown after --state: Speed, Warp, Mode, Grid, Type, Genre)]
 //!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
 //! ```
 
@@ -77,6 +78,7 @@ struct Args {
     assistant_demo: Option<String>,
     /// 1 = reference-midi-clip (33), 2 = reference-pianoroll (34).
     midi_state: u8,
+    audio_clip_state: bool,
     /// reference-synth (32): Instrument track selected, Devices tab, test-state synth preset.
     synth_state: bool,
     /// --synth-page N: open that category page of the synth device (review screenshots).
@@ -125,6 +127,7 @@ struct Args {
     screenshot: Option<PathBuf>,
     exit_after_frames: Option<u64>,
     zoom: Option<u32>,
+    clip_menu: Option<i32>,
     frame_stats: bool,
     /// --render-bench N: offscreen, render the state N times and print the mean / median /
     /// p95 milliseconds per full window render (Slint + wgpu surfaces + readback), then exit.
@@ -176,6 +179,10 @@ fn parse_args() -> Result<Args, String> {
                 "reference-pianoroll" => {
                     a.reference_default = true;
                     a.midi_state = 2;
+                }
+                "reference-audio-clip" => {
+                    a.reference_default = true;
+                    a.audio_clip_state = true;
                 }
                 "reference-synth" => {
                     a.reference_default = true;
@@ -264,6 +271,7 @@ fn parse_args() -> Result<Args, String> {
             "--hold-note" => a.hold_note = Some(value(&mut i)?.parse().map_err(|e| format!("--hold-note: {e}"))?),
             "--sampler-tab" => a.sampler_tab = Some(value(&mut i)?.parse().map_err(|e| format!("--sampler-tab: {e}"))?),
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
+            "--clip-menu" => a.clip_menu = Some(value(&mut i)?.parse().map_err(|e| format!("--clip-menu: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
             "--render-bench" => {
@@ -462,6 +470,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.devmenu_dismiss();
             c.auto_picker_close();
             c.rename = None;
+            c.pr.menu = -1;
             c.ui_dirty = true;
         }
         a if a.starts_with("clip.") || a == "assistant.ask" => ctl.borrow_mut().set_status(format!("{a}: not implemented yet"), 3),
@@ -751,6 +760,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.auto_open_picker(Some(inst), 262.0 + 42.0, y);
             c.auto_picker_pick(1);
         }
+    }
+    if let Some(m) = args.clip_menu {
+        ctl.borrow_mut().clip_menu_open(m);
     }
     if args.settings_state {
         ctl.borrow_mut().open_settings();
@@ -1043,6 +1055,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool| c.pr_pointer(kind, x, y, shift, alt));
     on!(on_pr_scroll, |c, dy: f32| c.pr_scroll(dy));
     on!(on_pr_action, |c, a: slint::SharedString| c.pr_action(a.as_str()));
+    on!(on_clip_menu_open, |c, m: i32| c.clip_menu_open(m));
+    on!(on_clip_menu_pick, |c, i: i32| c.clip_menu_pick(i));
     on!(on_pr_value, |c, f: i32, phase: i32, dy: f32| c.pr_value(f, phase, dy));
     on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
@@ -1292,6 +1306,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if !args.import.is_empty() {
         ctl.borrow_mut().import_files(args.import.clone(), ImportTarget::Selected, None);
     }
+    // Reference z100-inspector-audio-clip-tab-warp-off: a 4-bar 220 Hz sine clip at bar 4 on the
+    // Audio track, opened in the Clip tab once the import lands; playhead at bar 6.
+    let audio_clip_timer = slint::Timer::default();
+    if args.audio_clip_state {
+        let dir = std::env::temp_dir().join(format!("saine-ref-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("sine-a220-steady.wav");
+        let samples: Vec<f32> = (0..8 * 44_100).map(|i| (std::f32::consts::TAU * 220.0 * i as f32 / 44_100.0).sin() * 0.5).collect();
+        wavgen::write_wav(&path, 44_100, 1, &samples)?;
+        let mut c = ctl.borrow_mut();
+        c.import_files(vec![path], ImportTarget::Selected, Some(12 * saine_core::PPQ));
+        c.seek_beats(20.0);
+        drop(c);
+        let ctl = ctl.clone();
+        audio_clip_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
+            let Ok(mut c) = ctl.try_borrow_mut() else { return };
+            let clip = c.project().tracks.iter().flat_map(|t| t.clips.iter()).next().map(|cl| cl.id);
+            if clip.is_some() && c.bottom_tab != BottomTab::Clip {
+                c.select_clip(clip);
+                c.set_bottom_tab(BottomTab::Clip);
+            }
+        });
+    }
 
     // ---- job polling (imports finish on worker threads) ----
     let poll_timer = slint::Timer::default();
@@ -1409,8 +1446,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         timeline::build(&mut f.dl, &sc);
                         r.render(&f.dl);
                     }
-                    // Piano roll texture (only while a MIDI clip is open in the Clip tab).
-                    let pr_vis = c.pr_visible();
+                    // Clip editor texture (only while a MIDI or audio clip is open in the Clip tab).
+                    let pr_vis = c.clip_editor_visible();
                     if pr_vis {
                         let win = app.window().size();
                         let size = ((win.width as f32 / scale) - 10.0 - pianoroll::PANEL_ORIGIN.0 - 0.5, pianoroll::CLIP_PANEL_H - pianoroll::PANEL_ORIGIN.1 - pianoroll::FOOTER_H);
