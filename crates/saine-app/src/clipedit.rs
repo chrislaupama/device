@@ -10,9 +10,9 @@ use saine_core::{ClipId, Command, PPQ, Ticks, TrackKind};
 
 /// Context-menu geometry (window points), measured from `35-clip-context-menu.png`.
 pub const MENU_W: f32 = 209.0;
-pub const MENU_PAD: f32 = 4.0;
-pub const MENU_ROW: f32 = 20.5;
-pub const MENU_SEP: f32 = 10.5;
+pub const MENU_PAD: f32 = 3.4;
+pub const MENU_ROW: f32 = 20.4;
+pub const MENU_SEP: f32 = 10.6;
 
 /// Clip editor dropdowns, in `Studio.clip-menu` order: Speed, Warp, Mode (audio toolbar),
 /// Grid (piano roll footer), Type, Genre (clip sidebar). Only Grid is backed by the model.
@@ -243,6 +243,11 @@ impl Controller {
             return;
         };
         let Some(&id) = self.clip_ids.get(index) else { return };
+        self.open_clip_menu(id, wx, wy, win);
+    }
+
+    /// Select clip `id` and open its context menu at window point (wx, wy).
+    pub fn open_clip_menu(&mut self, id: ClipId, wx: f32, wy: f32, win: (f32, f32)) {
         if let Some(t) = self.clip_track(id) {
             self.select_track(t);
         }
