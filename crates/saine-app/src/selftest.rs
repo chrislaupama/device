@@ -807,6 +807,34 @@ fn steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("files {files} of {} max error {err} peak {peak}", tracks.len()))
         })),
+        Do("⇧⌘E for the Project export", Box::new(|a| key(a, "E", true, true))),
+        Check("export dialog open for Project", Box::new(|_c, a| a.global::<Studio>().get_export_open().then_some(()).ok_or("not open".into()))),
+        DoC("click the Project card, name it set, click Export", Box::new(|a, ctl| {
+            click(a, (1440.0 - 442.0) / 2.0 + 17.0 + 2.0 * (131.47 + 6.8) + 65.0, (820.0 - 340.4) / 2.0 + 44.2 + 22.0);
+            let mut c = ctl.borrow_mut();
+            c.export.dir = std::env::temp_dir().join(format!("saine-selftest-project-{}", std::process::id()));
+            c.export.name = "set".into();
+        })),
+        Check("Project picked: recipe 2, Name label", Box::new(|_c, a| {
+            let s = a.global::<Studio>();
+            (s.get_export_recipe() == 2 && s.get_export_name_label() == "Name").then_some(()).ok_or(format!("recipe {}", s.get_export_recipe()))
+        })),
+        Do("click Export", Box::new(|a| click(a, (1440.0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (820.0 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05))),
+        Check("'set Project' holds set.als that passes the Live structure check, its renders and the notes", Box::new(|c, a| {
+            let folder = c.export.dir.join("set Project");
+            let gz = std::fs::read(folder.join("set.als")).map_err(|e| format!("set.als: {e}"))?;
+            let mut xml = String::new();
+            std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(&gz[..]), &mut xml).map_err(|e| e.to_string())?;
+            let sum = crate::live_set::validate(&xml, Some(&folder))?;
+            let p = c.project();
+            let with_clips = p.tracks.iter().filter(|t| !t.clips.is_empty() || !t.midi_clips.is_empty()).count();
+            let midi: usize = p.tracks.iter().map(|t| t.midi_clips.len()).sum();
+            let notes = folder.join("Saine Export Notes.txt").is_file();
+            let _ = std::fs::remove_dir_all(&c.export.dir);
+            (sum.audio_clips == with_clips && sum.midi_clips == midi && notes && !a.global::<Studio>().get_export_open())
+                .then_some(())
+                .ok_or(format!("{sum:?} vs {with_clips} rendered, {midi} MIDI clips; notes {notes}"))
+        })),
         Do("⌘N (file.new) with unsaved changes", Box::new(|a| key(a, "n", true, false))),
         Check("Save changes? prompt open, project untouched", Box::new(|c, a| {
             let n: usize = c.project().tracks.iter().map(|t| t.clips.len()).sum();

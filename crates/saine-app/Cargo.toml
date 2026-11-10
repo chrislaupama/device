@@ -32,6 +32,8 @@ ttf-parser = "=0.25.1"
 pollster = "=0.4.0"
 rfd = "0.15"
 ureq = { version = "3", features = ["json"] }
+flate2 = "1.1"
+roxmltree = "0.21"
 serde_json.workspace = true
 serde.workspace = true
 
