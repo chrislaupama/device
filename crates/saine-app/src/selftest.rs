@@ -723,8 +723,16 @@ fn steps() -> Vec<Step> {
         })),
         Do("click M on track 1", Box::new(|a| click(a, 262.65 + 33.5, TRACK0_Y + 47.0))),
         Check("track 1 muted (SetTrackMute)", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("not muted".into()))),
-        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("Edit menu names the edit: Undo Mute Change enabled", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_undo_text() == "Undo Mute Change" && s.get_can_undo()).then_some(()).ok_or(format!("{:?} {}", s.get_undo_text(), s.get_can_undo()))
+        })),
+        Do("Cmd+Z (Edit › Undo shortcut, replayed by the menu)", Box::new(|a| key(a, "z", true, false))),
         Check("undo restored mute=false", Box::new(|c, _| (!c.project().tracks[0].mute).then_some(()).ok_or("still muted".into()))),
+        Check("Edit menu: Redo Mute Change enabled", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_redo_text() == "Redo Mute Change" && s.get_can_redo()).then_some(()).ok_or(format!("{:?} {}", s.get_redo_text(), s.get_can_redo()))
+        })),
         Do("Cmd+Shift+Z", Box::new(|a| key(a, "Z", true, true))),
         Check("redo muted again", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("redo failed".into()))),
         Do("⇧⌘E (file.export_audio)", Box::new(|a| key(a, "E", true, true))),
@@ -4265,6 +4273,143 @@ fn splitter_steps() -> Vec<Step> {
     ]
 }
 
+/// Section lane under the loop strip (appended last; clears its sections at the end).
+fn section_steps() -> Vec<Step> {
+    use Step::*;
+    use saine_core::SectionId;
+    // Lane-local (x, y) → window: the lanes start at LANE_X, their ruler at TRACK0_Y - RULER_H.
+    const LANE_Y0: f32 = TRACK0_Y - crate::timeline::RULER_H;
+    const ROW_Y: f32 = LANE_Y0 + 31.8;
+    fn bar_x(c: &Controller, bar: f64) -> f32 {
+        let bpb = c.project().ticks_per_bar() as f64 / PPQ as f64;
+        LANE_X + c.view.x_of(bar * bpb)
+    }
+    fn names(c: &Controller) -> Vec<String> {
+        c.project().sections.iter().map(|s| s.name.clone()).collect()
+    }
+    fn bars(c: &Controller) -> Vec<i64> {
+        let bar = c.project().ticks_per_bar();
+        c.project().sections.iter().map(|s| s.length / bar).collect()
+    }
+    fn right_click(a: &AppWindow, x: f32, y: f32) {
+        let w = a.window();
+        let p = LogicalPosition::new(x, y);
+        w.dispatch_event(WindowEvent::PointerMoved { position: p });
+        w.dispatch_event(WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
+        w.dispatch_event(WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
+    }
+    fn menu_row(a: &AppWindow, label: &str) -> Option<(f32, f32)> {
+        let s = a.global::<Studio>();
+        let items = s.get_menu_items();
+        (0..slint::Model::row_count(&items))
+            .filter_map(|i| slint::Model::row_data(&items, i))
+            .find(|m| m.label == label)
+            .map(|m| (s.get_menu_x() + 40.0, s.get_menu_y() + m.y + crate::clipedit::MENU_ROW / 2.0))
+    }
+    let first = Rc::new(Cell::new(0u64));
+    let (f1, f2) = (first.clone(), first.clone());
+    vec![
+        DoC("start the section lane at bar 1, click its +", Box::new(|a, ctl| {
+            {
+                let mut c = ctl.borrow_mut();
+                c.view.start_beats = 0.0;
+                c.ui_dirty = true;
+            }
+            let x = LANE_X + ctl.borrow().section_add_x();
+            click(a, x, ROW_Y);
+        })),
+        Check("+ added \"Section 1\": 8 bars from bar 1, first colour, selected, one undo step", Box::new(move |c, _| {
+            let p = c.project();
+            let s = p.sections.first().ok_or("no section")?;
+            f1.set(s.id.0);
+            let ok = p.sections.len() == 1
+                && s.name == "Section 1"
+                && s.length == 8 * p.ticks_per_bar()
+                && s.color == crate::sections::PALETTE[6]
+                && c.selected_section == Some(s.id)
+                && c.doc.undo_label() == Some("Add Section");
+            ok.then_some(()).ok_or(format!("{:?} {:?}", names(c), c.doc.undo_label()))
+        })),
+        DoC("click the + after it", Box::new(|a, ctl| {
+            let x = LANE_X + ctl.borrow().section_add_x();
+            click(a, x, ROW_Y);
+        })),
+        Check("\"Section 2\" follows at bar 9 in the next colour", Box::new(|c, _| {
+            let p = c.project();
+            let ok = names(c) == ["Section 1", "Section 2"] && p.section_start(1) == 8 * p.ticks_per_bar() && p.sections[1].color == crate::sections::PALETTE[7];
+            ok.then_some(()).ok_or(format!("{:?} {:?}", names(c), bars(c)))
+        })),
+        DoC("drag Section 1's right edge from bar 9 to bar 5", Box::new(|a, ctl| {
+            let (x0, x1) = { let c = ctl.borrow(); (bar_x(&c, 8.0) - 2.0, bar_x(&c, 4.0)) };
+            drag(a, x0, ROW_Y, x1, ROW_Y);
+        })),
+        Check("Section 1 is 4 bars and Section 2 moved with its end", Box::new(|c, _| {
+            let p = c.project();
+            (bars(c) == [4, 8] && p.section_start(1) == 4 * p.ticks_per_bar() && c.doc.undo_label() == Some("Resize Section")).then_some(()).ok_or(format!("{:?}", bars(c)))
+        })),
+        DoC("drag Section 2 to bar 1", Box::new(|a, ctl| {
+            let (x0, x1) = { let c = ctl.borrow(); (bar_x(&c, 7.0), bar_x(&c, 0.2)) };
+            drag(a, x0, ROW_Y, x1, ROW_Y);
+        })),
+        Check("Section 2 now comes first", Box::new(|c, _| {
+            (names(c) == ["Section 2", "Section 1"] && c.doc.undo_label() == Some("Move Section")).then_some(()).ok_or(format!("{:?}", names(c)))
+        })),
+        DoC("double-click Section 1", Box::new(|a, ctl| {
+            let x = bar_x(&ctl.borrow(), 10.0);
+            double_click(a, x, ROW_Y);
+        })),
+        Check("rename popup open for the section", Box::new(move |c, a| {
+            let s = a.global::<Studio>();
+            (s.get_rename_open() && s.get_rename_title() == "Rename section" && c.rename_section == Some(SectionId(f2.get()))).then_some(()).ok_or(format!("open {} title {}", s.get_rename_open(), s.get_rename_title()))
+        })),
+        Do("type Chorus, Enter", Box::new(|a| {
+            key(a, "a", true, false);
+            type_text(a, "Chorus");
+            key(a, Key::Return, false, false);
+        })),
+        Check("renamed to Chorus (one undo step)", Box::new(|c, _| {
+            (names(c) == ["Section 2", "Chorus"] && c.doc.undo_label() == Some("Rename Section")).then_some(()).ok_or(format!("{:?} {:?}", names(c), c.doc.undo_label()))
+        })),
+        DoC("right-click Chorus", Box::new(|a, ctl| {
+            let x = bar_x(&ctl.borrow(), 10.0);
+            right_click(a, x, ROW_Y);
+        })),
+        Check("section menu: Duplicate, Rename, Delete section, Clear all sections", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            let ok = s.get_menu_open() && ["Duplicate", "Rename…", "Delete section", "Clear all sections"].iter().all(|l| menu_row(a, l).is_some());
+            ok.then_some(()).ok_or(format!("open {}", s.get_menu_open()))
+        })),
+        Do("choose Delete section", Box::new(|a| {
+            if let Some((x, y)) = menu_row(a, "Delete section") {
+                click(a, x, y);
+            }
+        })),
+        Check("Chorus deleted, menu closed", Box::new(|c, a| {
+            (names(c) == ["Section 2"] && !a.global::<Studio>().get_menu_open()).then_some(()).ok_or(format!("{:?}", names(c)))
+        })),
+        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        DoC("click Section 2, press Delete", Box::new(|a, ctl| {
+            let x = bar_x(&ctl.borrow(), 2.0);
+            click(a, x, ROW_Y);
+            key(a, Key::Delete, false, false);
+        })),
+        Check("undo restored Chorus; Delete removed the selected section", Box::new(|c, _| {
+            (names(c) == ["Chorus"]).then_some(()).ok_or(format!("{:?}", names(c)))
+        })),
+        DoC("right-click Chorus, Clear all sections", Box::new(|a, ctl| {
+            let x = bar_x(&ctl.borrow(), 1.0);
+            right_click(a, x, ROW_Y);
+            if let Some((x, y)) = menu_row(a, "Clear all sections") {
+                click(a, x, y);
+            }
+        })),
+        Check("no sections left; the + is back at bar 1", Box::new(|c, _| {
+            let x = c.section_add_x();
+            (c.project().sections.is_empty() && approx(x, c.view.x_of(0.0) + 8.5, 0.01)).then_some(()).ok_or(format!("{:?} add x {x}", names(c)))
+        })),
+    ]
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
@@ -4286,6 +4431,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(automation_steps());
     all.extend(field_device_steps());
     all.extend(splitter_steps());
+    all.extend(section_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));

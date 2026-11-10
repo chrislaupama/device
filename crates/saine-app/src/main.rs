@@ -46,6 +46,7 @@ mod recording;
 mod sampler_panel;
 mod selftest;
 mod settings;
+mod sections;
 mod splitters;
 mod synth;
 mod timeline;
@@ -111,6 +112,9 @@ struct Args {
     /// height; the second instead collapses the bottom panel to its tab row (compare
     /// z100-arr-resize-timeline-taller.png).
     splitters_review: u8,
+    /// review-section-added / review-sections-two: one new 8-bar section (compare
+    /// z100-marker-after-plus-click.png), or two with the second selected.
+    sections_review: u8,
     /// reference-devices-effects (05): browser Devices › Effects sub-tab.
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
@@ -247,6 +251,14 @@ fn parse_args() -> Result<Args, String> {
                 "review-track-heights" => {
                     a.reference_default = true;
                     a.splitters_review = 1;
+                }
+                "review-section-added" => {
+                    a.reference_default = true;
+                    a.sections_review = 1;
+                }
+                "review-sections-two" => {
+                    a.reference_default = true;
+                    a.sections_review = 2;
                 }
                 "review-bottom-collapsed" => {
                     a.reference_default = true;
@@ -530,6 +542,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.devmenu_dismiss();
             c.auto_picker_close();
             c.rename = None;
+            c.rename_section = None;
             c.pr.menu = -1;
             c.ui_dirty = true;
         }
@@ -597,8 +610,23 @@ fn main() {
     }
 }
 
+/// AppKit adds Start Dictation, Emoji & Symbols and Enter Full Screen to any Edit and View
+/// menus; the reference's menus have none of them. Registered (not saved) defaults.
+#[cfg(target_os = "macos")]
+fn suppress_appkit_menu_items() {
+    use objc2_foundation::{NSDictionary, NSNumber, NSUserDefaults, ns_string};
+    let yes = NSNumber::new_bool(true);
+    let no = NSNumber::new_bool(false);
+    let keys = [ns_string!("NSDisabledDictationMenuItem"), ns_string!("NSDisabledCharacterPaletteMenuItem"), ns_string!("NSFullScreenMenuItemEverywhere")];
+    let values: [&objc2::runtime::AnyObject; 3] = [yes.as_ref(), yes.as_ref(), no.as_ref()];
+    let defaults = NSDictionary::from_slices(&keys, &values);
+    unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args()?;
+    #[cfg(target_os = "macos")]
+    suppress_appkit_menu_items();
 
     // ---- engine (48 kHz) ----
     let engine = Arc::new(Engine::new(Config { sample_rate: 48_000.0, ..Config::default() })?);
@@ -810,6 +838,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         for (track, height) in ids.into_iter().zip([0.25, 0.5, 2.0]) {
             let _ = c.doc.set_track_height(track, height);
         }
+    }
+    if args.sections_review > 0 {
+        let mut c = ctl.borrow_mut();
+        for _ in 0..args.sections_review {
+            c.insert_section(None);
+        }
+        c.ui_dirty = true;
     }
     if args.splitters_review == 2 {
         ctl.borrow_mut().doc.set_bottom_panel_height("devices", Some(0.0));
@@ -1120,6 +1155,34 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+    on!(on_menu_action, |c, id: slint::SharedString| c.menu_action(&id));
+    {
+        // A menu item with a shortcut takes that keystroke away from the window (macOS key
+        // equivalents), so replay it: a focused text field, the modal gating and the keymap
+        // then handle it exactly as if the key had been pressed. Deferred, so the replay
+        // runs outside the menu's own event.
+        let aw = app.as_weak();
+        studio.on_menu_key(move |text, primary, shift| {
+            let aw = aw.clone();
+            slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                use slint::platform::{Key, WindowEvent};
+                let Some(a) = aw.upgrade() else { return };
+                let s = a.global::<Studio>();
+                s.set_menu_replay(true);
+                let w = a.window();
+                let mods: Vec<slint::SharedString> = [(primary, Key::Control), (shift, Key::Shift)].into_iter().filter(|m| m.0).map(|m| m.1.into()).collect();
+                for m in &mods {
+                    w.dispatch_event(WindowEvent::KeyPressed { text: m.clone() });
+                }
+                w.dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+                w.dispatch_event(WindowEvent::KeyReleased { text: text.clone() });
+                for m in mods.iter().rev() {
+                    w.dispatch_event(WindowEvent::KeyReleased { text: m.clone() });
+                }
+                s.set_menu_replay(false);
+            });
+        });
+    }
     on!(on_settings_page_select, |c, i: i32| c.settings_page(i.max(0) as usize));
     on!(on_settings_dropdown, |c, f: i32| c.settings_dropdown(f));
     on!(on_settings_menu_pick, |c, i: i32| c.settings_menu_pick(i.max(0) as usize));
@@ -1176,6 +1239,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_chat_toggle_entry, |c, i: i32| c.assistant_toggle_entry(i.max(0) as usize));
     on!(on_chat_remove_context, |c| c.assistant_remove_context());
     on!(on_chat_placeholder, |c, what: slint::SharedString| c.set_status(format!("{what}: not implemented yet"), 3));
+    on!(on_lane_double, |c, x: f32, y: f32| {
+        c.section_double(x, y);
+    });
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, _cmd: bool, alt: bool| c.pointer_mods(kind, x, y, shift, alt));
     on!(on_lane_scroll, |c, dx: f32, dy: f32, x: f32, zoom: bool| c.scroll(dx, dy, x, zoom));
     on!(on_set_bottom_tab, |c, t: i32| c.set_bottom_tab(if t == 1 { BottomTab::Clip } else { BottomTab::Devices }));
@@ -1210,12 +1276,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
     on!(on_menu_dismiss, |c| c.menu_close());
     on!(on_rename_commit, |c, t: slint::SharedString| {
-        if let Some(id) = c.rename {
+        if let Some(id) = c.rename_section {
+            c.rename_section(id, t.as_str());
+        } else if let Some(id) = c.rename {
             c.rename_clip(id, t.as_str());
         }
     });
     on!(on_rename_cancel, |c| {
         c.rename = None;
+        c.rename_section = None;
         c.ui_dirty = true;
     });
     {
