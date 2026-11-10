@@ -1533,6 +1533,30 @@ bool Engine::plugin_saved_state(std::size_t index, uint64_t& id, const uint8_t*&
     return plugins_.saved_state(index, id, data, len);
 }
 
+int32_t Engine::plugin_save_state_of(uint64_t device_id, std::string& err) {
+    std::lock_guard lock(plugins_.mutex());
+    return plugins_.save_state_of(device_id, err);
+}
+
+int32_t Engine::plugin_prepare(const se_device_desc& d, bool instrument, const char* track_name, std::string& err) {
+    std::lock_guard lock(plugins_.mutex());
+    if (plugins_.detached()) {
+        err = "the engine is detached from the main thread";
+        return SE_ERR_STATE;
+    }
+    PluginInstance* inst = plugins_.prepare(d, instrument, track_name, err);
+    if (inst == nullptr) {
+        if (err.empty()) err = "could not load the plugin";
+        return SE_ERR_NOT_FOUND;
+    }
+    return SE_OK;
+}
+
+void Engine::plugin_set_detached(bool detached) {
+    std::lock_guard lock(plugins_.mutex());
+    plugins_.set_detached(detached);
+}
+
 int32_t Engine::plugin_editor_open(uint64_t device_id, std::string& err) {
     std::lock_guard lock(plugins_.mutex());
     plugins_.collect(rt_active_seq_.load(std::memory_order_seq_cst));

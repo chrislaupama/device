@@ -364,7 +364,6 @@ impl Engine {
         instrument: Option<&saine_core::Device>,
         assets: &std::collections::HashMap<saine_core::AssetId, u64>,
     ) -> Result<DeviceStore, EngineError> {
-        let cs = |s: &str| CString::new(s).map_err(|_| nul_error());
         // SAFETY: plain query on a valid handle.
         let state = if let Some(def) = saine_core::builtin::def_of(d) {
             let sidechain = d.sidechain.map_or(0, |t| t.0);
@@ -380,20 +379,7 @@ impl Engine {
         } else {
             d.state.as_deref().and_then(saine_core::device::b64::decode)
         };
-        Ok(DeviceStore {
-            id: d.id.0,
-            name: cs(&d.plugin.name)?,
-            plugin_id: cs(&d.plugin.id)?,
-            path: d.plugin.path.as_deref().map(cs).transpose()?,
-            state,
-            format: match d.plugin.format {
-                saine_core::PluginFormat::AudioUnit => ffi::SE_PLUGIN_AU,
-                saine_core::PluginFormat::Vst3 => ffi::SE_PLUGIN_VST3,
-                saine_core::PluginFormat::Clap => ffi::SE_PLUGIN_CLAP,
-                saine_core::PluginFormat::Builtin => ffi::SE_PLUGIN_BUILTIN,
-            },
-            enabled: d.enabled,
-        })
+        store_of(d, state)
     }
 
     pub fn play(&self) -> Result<(), EngineError> {
@@ -527,6 +513,24 @@ impl Engine {
         let p = cpath(path)?;
         check(unsafe { ffi::se_export_wav(self.raw, p.as_ptr(), start, end) })
     }
+}
+
+fn store_of(d: &saine_core::Device, state: Option<Vec<u8>>) -> Result<DeviceStore, EngineError> {
+    let cs = |s: &str| CString::new(s).map_err(|_| nul_error());
+    Ok(DeviceStore {
+        id: d.id.0,
+        name: cs(&d.plugin.name)?,
+        plugin_id: cs(&d.plugin.id)?,
+        path: d.plugin.path.as_deref().map(cs).transpose()?,
+        state,
+        format: match d.plugin.format {
+            saine_core::PluginFormat::AudioUnit => ffi::SE_PLUGIN_AU,
+            saine_core::PluginFormat::Vst3 => ffi::SE_PLUGIN_VST3,
+            saine_core::PluginFormat::Clap => ffi::SE_PLUGIN_CLAP,
+            saine_core::PluginFormat::Builtin => ffi::SE_PLUGIN_BUILTIN,
+        },
+        enabled: d.enabled,
+    })
 }
 
 /// Owned storage behind one `se_device_desc` during a publish.
@@ -1232,6 +1236,46 @@ impl Engine {
             }
         }
         out
+    }
+
+    /// The current state of one live plugin instance (the bytes a save would
+    /// store, before base64), or `None` when the device has no live instance.
+    /// An instance that fails to save is an error. MAIN THREAD, like
+    /// [`Engine::plugin_states`], but one instance per call.
+    pub fn plugin_state_of(&self, device: saine_core::DeviceId) -> Result<Option<Vec<u8>>, EngineError> {
+        // SAFETY: valid handle.
+        match unsafe { ffi::se_plugin_save_state(self.raw, device.0) } {
+            ffi::SE_ERR_NOT_FOUND => return Ok(None),
+            rc => check(rc)?,
+        }
+        let (mut id, mut data, mut len) = (0u64, std::ptr::null::<u8>(), 0usize);
+        // SAFETY: out pointers are valid; the data stays valid until the next save call (we copy it now).
+        check(unsafe { ffi::se_plugin_saved_state(self.raw, 0, &mut id, &mut data, &mut len) })?;
+        Ok(Some(if len == 0 { Vec::new() } else { unsafe { std::slice::from_raw_parts(data, len) }.to_vec() }))
+    }
+
+    /// Instantiates a plugin device now with `state` (its saved state, or the
+    /// live instance's current one), so that a later [`Engine::publish`] of a
+    /// session with this device from another thread reuses the instance
+    /// instead of creating it. `instrument`: the device is a track's
+    /// instrument plugin. MAIN THREAD. A plugin that fails to load is an
+    /// error with the plugin's reason. See [`Engine::set_plugin_detached`].
+    pub fn prepare_plugin(&self, device: &saine_core::Device, instrument: bool, state: Option<Vec<u8>>) -> Result<(), EngineError> {
+        let store = store_of(device, state)?;
+        let desc = store.desc();
+        // SAFETY: valid handle; `desc` points into `store`, which outlives the call; the engine copies.
+        check(unsafe { ffi::se_plugin_prepare(self.raw, &desc, instrument as u8) })
+    }
+
+    /// Detaches publish and housekeeping from the main thread (engine/README.md,
+    /// "Plugins in offline renders"): after this the engine never instantiates,
+    /// restarts or destroys plugin instances on whichever thread publishes or
+    /// renders it; a device that was not prepared fails to load. The instances
+    /// are torn down when the engine is dropped, which then has to happen on
+    /// the main thread.
+    pub fn set_plugin_detached(&self, detached: bool) {
+        // SAFETY: valid handle.
+        unsafe { ffi::se_plugin_set_detached(self.raw, detached as u8) };
     }
 
     /// Devices whose plugin could not be instantiated (missing, failed to

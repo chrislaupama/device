@@ -269,3 +269,11 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   draw list. A stroke or a slider drag is one undo step.
 - Review states: `review-patterns-5` (Velocity and Density curves) and `review-patterns-6` (Air, a Tension
   curve, and the arp).
+
+### 2026-11-11: Clip renders through plugins (CHR-38)
+- Consolidate's sibling renders (Bounce to new track, Export audio) now render tracks with VST3, AU and CLAP plugins
+  and instrument plugins. The UI thread prepares the instances in the private engine, one per tick, from the live
+  instances' current state; the worker renders; the engine is dropped on the UI thread. New engine entry points
+  `se_plugin_prepare`, `se_plugin_save_state`, `se_plugin_set_detached` (engine/README.md "Plugins in offline renders").
+- The render honours plugin delay compensation (renders L more frames, drops the first L) and the project tempo.
+- Self-test section "clip render plugin", ctest `offline_*`, `tests/clip_render.rs`, `saine_offline_plugin_bench`.

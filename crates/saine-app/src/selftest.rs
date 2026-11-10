@@ -6744,6 +6744,172 @@ fn clip_render_steps() -> Vec<Step> {
     ]
 }
 
+/// Clip menu Bounce through a third-party plugin (src/clip_render.rs, CHR-38): the CLAP test gain
+/// on a track is edited after the project's state was saved, the clip is bounced, and the file has
+/// the live instance's gain (the plugin was prepared on this thread from its current state and
+/// rendered on the worker). Measures the longest gap between two turns of the event loop during
+/// the render. A plugin that cannot be loaded fails the render before any file is written, and a
+/// render cancelled while it prepares leaves nothing. Adds its own track and removes it at the end.
+fn clip_render_plugin_steps() -> Vec<Step> {
+    use Step::*;
+    use saine_core::{AssetId, ClipId, Command, Device, PluginFormat, PluginKind, PluginRef, TrackId};
+    use std::time::{Duration, Instant};
+    fn dir() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("saine-selftest-clip-render-plugin-{}", std::process::id()))
+    }
+    fn files() -> Vec<std::path::PathBuf> {
+        let mut v: Vec<_> = std::fs::read_dir(dir().join("renders").join("bounce")).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+        v.sort();
+        v
+    }
+    fn plugin(path: &str, name: &str) -> PluginRef {
+        PluginRef { format: PluginFormat::Clap, id: "studio.saine.test.gain".into(), path: Some(path.into()), name: name.into(), vendor: "Saine".into(), version: "1.0.0".into(), kind: PluginKind::Effect }
+    }
+    #[derive(Default)]
+    struct St {
+        track: u64,
+        clip: u64,
+        tracks_before: usize,
+        assets_before: usize,
+        tracks_now: usize,
+        assets_now: usize,
+        undo_now: Option<String>,
+        files_now: usize,
+        gaps: Rc<RefCell<(Option<Instant>, f64)>>,
+        timer: Option<slint::Timer>,
+    }
+    let st = Rc::new(RefCell::new(St::default()));
+    let k: Vec<Rc<RefCell<St>>> = (0..12).map(|_| st.clone()).collect();
+    let mut k = k.into_iter();
+    let mut next = move || k.next().unwrap();
+    let (s1, s2, s3, s4, s5, s6, s7, s8) = (next(), next(), next(), next(), next(), next(), next(), next());
+    let (s9, s10, s11) = (next(), next(), next());
+    vec![
+        DoC("clip render plugin: scratch folder, a 2 s sine imported at beat 4 on a new track", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let d = dir();
+            let _ = std::fs::remove_dir_all(&d);
+            std::fs::create_dir_all(&d).unwrap();
+            c.clip_render.dir_override = Some(d.join("renders"));
+            {
+                let mut s = s1.borrow_mut();
+                s.tracks_before = c.project().tracks.len();
+                s.assets_before = c.project().assets.len();
+            }
+            let sine: Vec<f32> = (0..96_000).map(|i| 0.4 * (std::f32::consts::TAU * 440.0 * i as f32 / 48_000.0).sin()).collect();
+            crate::wavgen::write_wav_pcm(&d.join("p.wav"), 48_000, 1, 24, &sine).unwrap();
+            c.import_files(vec![d.join("p.wav")], crate::controller::ImportTarget::NewTrack, Some(4 * PPQ));
+        })),
+        DoC("clip render plugin: add the CLAP test gain (saved state 0.25), then set it to 0.5 in the live instance", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let mut s = s2.borrow_mut();
+            let t = c.selected_track.unwrap();
+            s.track = t.0;
+            s.clip = c.project().track(t).and_then(|t| t.clips.first()).map_or(0, |k| k.id.0);
+            let mut gain = Device::new(plugin(&saine_engine::test_plugin_dir().join("SaineTestGain.clap").to_string_lossy(), "Saine Test Gain"));
+            gain.state = Some(saine_core::device::b64::encode(&0.25f32.to_le_bytes()));
+            c.execute(Command::AddDevice { track: t, index: None, device: gain });
+            let id = c.project().track(t).and_then(|t| t.devices.first()).map_or(0, |d| d.id.0);
+            // The edit reaches the plugin's state when the engine processes a block: one offline
+            // block on the live engine (no device runs in the self-test), transport put back.
+            let was = c.engine.transport();
+            let ok = c.engine.plugin_set_param(id, 0, 0.5).is_ok() && c.engine.seek(0).is_ok() && c.engine.play().is_ok() && c.engine.render_offline(&mut [0.0; 1024]).is_ok();
+            let _ = c.engine.pause();
+            let _ = c.engine.seek(was.position);
+            eprintln!("clip-render plugin: live gain edited: {ok}");
+        })),
+        Check("clip render plugin: the track holds the clip and the plugin, no load error", Box::new(move |c, _| {
+            let s = s3.borrow();
+            let t = c.project().track(TrackId(s.track)).ok_or("no track")?;
+            (s.clip != 0 && t.devices.len() == 1 && c.engine.plugin_load_errors().is_empty()).then_some(()).ok_or(format!("{} devices; {:?}", t.devices.len(), c.engine.plugin_load_errors()))
+        })),
+        DoC("clip render plugin: Bounce to new track, with a 4 ms timer measuring the event loop meanwhile", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let mut s = s4.borrow_mut();
+            *s.gaps.borrow_mut() = (Some(Instant::now()), 0.0);
+            let gaps = s.gaps.clone();
+            let timer = slint::Timer::default();
+            timer.start(slint::TimerMode::Repeated, Duration::from_millis(4), move || {
+                let mut g = gaps.borrow_mut();
+                let now = Instant::now();
+                if let Some(last) = g.0 {
+                    g.1 = g.1.max((now - last).as_secs_f64() * 1e3);
+                }
+                g.0 = Some(now);
+            });
+            s.timer = Some(timer);
+            c.bounce_clip(ClipId(s.clip));
+            eprintln!("clip-render plugin: render in flight: {}", c.clip_render.busy());
+        })),
+        Check("clip render plugin: a new track '(Bounce)' holds the render, one undo step, the event loop was never held long", Box::new(move |c, _| {
+            let mut s = s5.borrow_mut();
+            s.timer = None;
+            let gap = s.gaps.borrow().1;
+            let p = c.project();
+            let i = p.track_index(TrackId(s.track)).ok_or("no track")?;
+            let t = p.tracks.get(i + 1).ok_or("no track below")?;
+            let ok = t.name.ends_with("(Bounce)") && t.clips.len() == 1 && c.doc.undo_label() == Some("Bounce to New Track") && !c.clip_render.busy();
+            eprintln!("clip-render plugin: render {:.1} ms; longest UI-thread piece {:.1} ms; longest gap between event-loop turns {gap:.1} ms (4 ms timer)", c.clip_render.last_ms, c.clip_render.ui_stall_ms);
+            (ok && gap < 400.0).then_some(()).ok_or(format!("{} {:?} {:?}; gap {gap:.1} ms; status {:?}", t.name, t.clips.len(), c.doc.undo_label(), c.status_message()))
+        })),
+        Check("clip render plugin: the file has the live gain 0.5 (peak 0.2), not the saved 0.25 (0.1) nor the dry level (0.4)", Box::new(|_, _| {
+            let f = files();
+            let path = f.first().ok_or("no file in bounce/")?;
+            let (rate, ch, s) = crate::wavgen::read_wav(path)?;
+            let frames = s.len() / 2;
+            let p = s.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            eprintln!("clip-render plugin: bounced peak {p:.4} ({frames} frames)");
+            (rate == 48_000 && ch == 2 && (96_000..=98_000).contains(&frames) && (p - 0.2).abs() < 0.01).then_some(()).ok_or(format!("rate {rate} ch {ch} frames {frames} peak {p}"))
+        })),
+        Do("clip render plugin: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        DoC("clip render plugin: add a plugin that cannot be loaded after the first, then Bounce", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let mut s = s6.borrow_mut();
+            let missing = Device::new(plugin("/nonexistent/Missing Verb.clap", "Missing Verb"));
+            c.execute(Command::AddDevice { track: TrackId(s.track), index: None, device: missing });
+            s.files_now = files().len();
+            s.assets_now = c.project().assets.len();
+            s.tracks_now = c.project().tracks.len();
+            s.undo_now = c.doc.undo_label().map(str::to_string);
+            c.bounce_clip(ClipId(s.clip));
+        })),
+        Check("clip render plugin: the render failed by plugin name; no file, no asset, no track, no undo step", Box::new(move |c, _| {
+            let s = s7.borrow();
+            let msg = c.status_message().unwrap_or_default().to_string();
+            let ok = msg.starts_with("Render failed: Missing Verb could not be loaded") && files().len() == s.files_now && c.project().assets.len() == s.assets_now && c.project().tracks.len() == s.tracks_now && c.doc.undo_label().map(str::to_string) == s.undo_now && !c.clip_render.busy() && c.pending_jobs == 0;
+            ok.then_some(()).ok_or(format!("{msg:?}; {} files; {} assets; undo {:?}; busy {}", files().len(), c.project().assets.len(), c.doc.undo_label(), c.clip_render.busy()))
+        })),
+        DoC("clip render plugin: Bounce and Cancel at once, while the plugins prepare", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let s = s8.borrow();
+            c.bounce_clip(ClipId(s.clip));
+            let busy = c.clip_render.busy();
+            let cancelled = c.cancel_clip_render();
+            eprintln!("clip-render plugin: busy {busy}, cancel took effect {cancelled}");
+        })),
+        Check("clip render plugin: Cancel left nothing behind and the interface is free", Box::new(move |c, _| {
+            let s = s9.borrow();
+            let ok = c.status_message() == Some("Render cancelled") && files().len() == s.files_now && c.project().assets.len() == s.assets_now && c.project().tracks.len() == s.tracks_now && c.doc.undo_label().map(str::to_string) == s.undo_now && !c.clip_render.busy() && c.pending_jobs == 0;
+            ok.then_some(()).ok_or(format!("{:?}; busy {}; pending {}", c.status_message(), c.clip_render.busy(), c.pending_jobs))
+        })),
+        DoC("clip render plugin: remove the test track, its asset and the scratch folder", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let s = s10.borrow();
+            let mut commands = vec![Command::RemoveTrack { track: TrackId(s.track) }];
+            commands.extend(c.project().assets.iter().filter(|a| a.absolute_path.contains("saine-selftest-clip-render-plugin")).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
+            c.execute(Command::Batch { label: "clip render plugin cleanup".into(), commands });
+            c.select_clip(None);
+            c.clip_render.dir_override = None;
+            let _ = std::fs::remove_dir_all(dir());
+        })),
+        Check("clip render plugin: project back to its earlier tracks and assets", Box::new(move |c, _| {
+            let s = s11.borrow();
+            let p = c.project();
+            (p.tracks.len() == s.tracks_before && p.assets.len() == s.assets_before).then_some(()).ok_or(format!("{} tracks {} assets", p.tracks.len(), p.assets.len()))
+        })),
+    ]
+}
+
 /// Clip sidebar pattern list (Saine's local library): Create, load a row, Original,
 /// Type and Genre, each one undo step. Removes its clip at the end.
 fn pattern_library_steps() -> Vec<Step> {
@@ -6989,6 +7155,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(devminimap_steps());
     all.extend(clip_menu_steps());
     all.extend(clip_render_steps());
+    all.extend(clip_render_plugin_steps());
     all.extend(ruler_zoom_steps());
     all.extend(snap_steps());
     all.extend(menu_bar_steps());

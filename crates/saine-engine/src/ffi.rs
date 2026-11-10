@@ -790,6 +790,9 @@ unsafe extern "C" {
     pub fn se_plugin_editor_is_open(engine: *mut se_engine, device_id: u64) -> i32;
     pub fn se_plugin_latency(engine: *mut se_engine, device_id: u64, out_frames: *mut u32) -> i32;
     pub fn se_plugin_idle(engine: *mut se_engine) -> i32;
+    pub fn se_plugin_save_state(engine: *mut se_engine, device_id: u64) -> i32;
+    pub fn se_plugin_prepare(engine: *mut se_engine, device: *const se_device_desc, instrument: u8) -> i32;
+    pub fn se_plugin_set_detached(engine: *mut se_engine, detached: u8) -> i32;
 
     // plugin delay compensation
     pub fn se_pdc_set_enabled(engine: *mut se_engine, enabled: u8) -> i32;
