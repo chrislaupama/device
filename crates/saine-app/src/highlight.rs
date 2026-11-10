@@ -15,6 +15,8 @@ pub struct Layout {
     pub sounds: bool,
     pub mixer: bool,
     pub assistant: bool,
+    /// Docked assistant width (src/splitters.rs `Controller::chat_w`).
+    pub chat_w: f32,
     /// Bottom panel shows the Clip tab (390 pt tall, no inspector).
     pub clip_tab: bool,
     pub scroll_y: f32,
@@ -27,7 +29,6 @@ pub type Rect = (f32, f32, f32, f32);
 // Panel geometry (app.slint `AppWindow`).
 pub const MIXER_BOTTOM_H: f32 = 390.0;
 pub const DEFAULT_BOTTOM_H: f32 = 306.0;
-pub const ASSISTANT_W: f32 = 252.5;
 pub const ASSISTANT_GAP: f32 = 5.0;
 
 impl Layout {
@@ -45,7 +46,7 @@ impl Layout {
         if self.sounds { 262.65 } else { 5.0 }
     }
     pub fn timeline_w(&self) -> f32 {
-        let right = if self.assistant { ASSISTANT_W + ASSISTANT_GAP } else { 0.0 };
+        let right = if self.assistant { self.chat_w + ASSISTANT_GAP } else { 0.0 };
         self.w - self.timeline_x() - 5.0 - right
     }
 }
@@ -92,6 +93,7 @@ pub fn target_rect(l: &Layout, target: &str, track_row: impl Fn(u64) -> Option<(
         "timeline.automation_toggle" => (tx + tw - 314.6, 83.0, 18.0, 18.0),
         "timeline.draw_mode" => (tx + tw - 292.8, 83.0, 17.0, 18.0),
         "timeline.tool" => (tx + tw - 268.6, 83.0, 25.5, 18.0),
+        "timeline.vertical_zoom" | "timeline.horizontal_zoom" if crate::splitters::zoom_hidden(w, l.sounds, l.assistant) => return None,
         "timeline.vertical_zoom" => (tx + tw - 242.0, 83.0, 95.0, 18.0),
         "timeline.horizontal_zoom" => (tx + tw - 149.0, 83.0, 94.0, 18.0),
         "timeline.snap" => (tx + tw - 54.4, 83.0, 44.2, 18.0),
@@ -174,7 +176,7 @@ mod tests {
     use saine_core::assistant::UI_TARGETS;
 
     fn default_layout() -> Layout {
-        Layout { w: 1440.0, h: 820.0, sounds: true, mixer: false, assistant: false, clip_tab: false, scroll_y: 0.0, bottom: DEFAULT_BOTTOM_H }
+        Layout { w: 1440.0, h: 820.0, sounds: true, mixer: false, assistant: false, chat_w: crate::splitters::CHAT_MIN_W, clip_tab: false, scroll_y: 0.0, bottom: DEFAULT_BOTTOM_H }
     }
 
     #[test]
@@ -194,7 +196,7 @@ mod tests {
         assert_eq!(target_rect(&l, "inspector.fader", |_| None), None);
         l.assistant = true;
         let ruler = target_rect(&l, "timeline.ruler", |_| None).unwrap();
-        assert!((ruler.0 + ruler.2 - (1440.0 - 5.0 - 257.5)).abs() < 1e-3);
+        assert!((ruler.0 + ruler.2 - (1440.0 - 5.0 - crate::splitters::CHAT_MIN_W - ASSISTANT_GAP)).abs() < 1e-3);
         assert_eq!(target_rect(&l, "track:7:volume", |id| (id == 7).then_some((0.0, TRACK_H))), Some((262.65 + 115.7, 144.5 + 41.65, 68.0, 11.9)));
         assert_eq!(target_rect(&l, "track:7:volume", |_| None), None);
         l.scroll_y = 1000.0;

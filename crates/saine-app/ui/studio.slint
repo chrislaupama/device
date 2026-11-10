@@ -296,6 +296,10 @@ export struct YLabel { y: length, text: string }
 export struct SeqRow { y: length, number: string, name: string, muted: bool, soloed: bool, audible: bool }
 export struct SeqCell { x: length, y: length, w: length, state: int, lane: int, bar: float, marks: int, label: string, dim: bool }
 export struct SeqNum { x: length, text: string, beat: bool, active: bool }
+// Clip sidebar pattern list (src/composer.rs): a row and its notes in miniature (x, y, w as
+// fractions of the preview box).
+export struct PreviewNote { x: float, y: float, w: float }
+export struct PatternRow { name: string, playing: bool, notes: [PreviewNote] }
 // separator: a line is drawn above the item; y: row top inside the menu.
 // ---- synth device (src/synth.rs) ----
 // One parameter of the Synth device: control position 0..1, readout with units.
@@ -400,6 +404,8 @@ export global Studio {
     in property <length> files-list-y: 81px;   // rule above the rows (96 with the count row)
     in property <string> files-meta;           // "2 folders"; empty hides the count row
     in property <string> files-sort: "Recent";
+    in property <int> files-sort-index;        // 0 Recent, 1 Name
+    in property <bool> files-sort-open;        // the sort menu is open
     in property <string> files-empty-title;
     in property <string> files-empty-hint;
     callback browser-section-select(int);
@@ -407,7 +413,8 @@ export global Studio {
     callback browser-forward();
     callback files-tab-select(int);
     callback files-add-folder();
-    callback files-sort-toggle();
+    callback files-sort-open-menu(bool);       // open / close the sort menu
+    callback files-sort-pick(int);             // 0 Recent, 1 Name
     callback files-click(int, bool);           // row, on the chevron
     callback files-activate(int);              // double-click
     callback files-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
@@ -464,6 +471,11 @@ export global Studio {
     // ---- panels (owned by the controller) ----
     in property <bool> mixer-open;
     in property <bool> assistant-open;
+    // Saved docked-assistant width (or the live drag); AppWindow narrows it to the room the
+    // timeline header leaves (src/splitters.rs mirrors the rule).
+    in property <length> assistant-pref-w: 252.45px;
+    callback chat-resize(int, length);                       // phase 0/1/2, window x
+    callback chat-resize-reset();
     callback toggle-mixer();
     callback toggle-assistant();
     // ---- mixer ----
@@ -568,6 +580,16 @@ export global Studio {
     callback seq-pointer(int, length, length);              // kind 0 down 1 move 2 up, editor-local x, y
     callback seq-scroll(float);
     callback seq-swing(int, float);                         // phase 0/1/2, dy since press
+    // ---- clip sidebar pattern list (src/composer.rs; Saine's own library, no service) ----
+    in property <bool> composer-drums;       // pattern clip: Genre only, drum grooves
+    in property <string> composer-part-text: "Chords";
+    in property <string> composer-genre-text: "Any";
+    in property <[PatternRow]> composer-rows;
+    in property <bool> composer-original;    // a pattern plays in place of the kept notes
+    in property <string> composer-create-text: "Create chords";
+    callback composer-create();
+    callback composer-load(int);
+    callback composer-original-pick();
     // ---- clip context menu + rename ----
     callback lane-context(length, length, length, length);  // lane x, y, window x, y
     in property <bool> menu-open;

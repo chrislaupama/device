@@ -4,7 +4,7 @@
 
 use crate::controller::{BottomTab, ClipboardItem, Controller, MenuAction, sync_model, track_color};
 use crate::pianoroll::{self, GRID_Y, ROW_H};
-use crate::{MenuItem, RulerLabel, SeqCell, SeqNum, SeqRow, Studio, YLabel};
+use crate::{MenuItem, PatternRow, PreviewNote, RulerLabel, SeqCell, SeqNum, SeqRow, Studio, YLabel};
 use saine_core::midi::{self, MidiClip};
 use saine_core::steps::StepPattern;
 use saine_core::{ClipId, Command, PPQ, Ticks, TrackKind};
@@ -17,7 +17,8 @@ pub const MENU_SEP: f32 = 10.6;
 
 /// Clip editor dropdowns, in `Studio.clip-menu` order: Speed, Warp, Mode (audio toolbar),
 /// Grid (piano roll footer), Type, Genre (clip sidebar). Speed, Warp and Mode edit the clip's
-/// warp (`saine_core::warp`, presets and modes in the same order); Type and Genre are not modelled.
+/// warp (`saine_core::warp`, presets and modes in the same order); Type and Genre pick the
+/// sidebar's library part (saine_core::library::GENRES has a feel for each).
 /// Genre lists the entries visible in the reference capture (its full list is catalogue data).
 const CLIP_MENUS: [&[&str]; 8] = [
     &["0.5x", "0.75x", "1x", "1.25x", "1.5x", "2x"],
@@ -25,7 +26,7 @@ const CLIP_MENUS: [&[&str]; 8] = [
     &["Auto", "Drums", "Melody", "Vocal", "Re-pitch"],
     &["1/4", "1/8", "1/16", "1/32", "1/4T", "1/8T", "1/16T", "1/32T"],
     &["Chords", "Bass", "Lead", "Arp"],
-    &["Any", "Afrobeats", "Ambient", "Drill", "Drum & bass", "EDM", "Electronic", "Experimental", "Folk", "Future bass", "Hip-hop"],
+    &saine_core::library::GENRES,
     &["8", "12", "16", "24", "32", "36", "48", "64"],
     &["1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/8T", "1/16T", "1/32T"],
 ];
@@ -408,6 +409,7 @@ impl Controller {
             && match menu {
                 ..=2 => self.ac_clip().is_some(),
                 6 | 7 => self.seq_visible(),
+                4 => self.pr_visible() && !self.composer_is_drums(),
                 _ => self.pr_visible(),
             }
     }
@@ -420,6 +422,7 @@ impl Controller {
             2 => saine_core::WarpMode::ALL.iter().position(|&m| m == warp.mode).map_or(-1, |i| i as i32),
             3 => GRID_DENOMS.iter().position(|&d| d == self.pr.grid).map_or(-1, |i| i as i32),
             6 | 7 => self.seq_menu_active(menu == 7),
+            4 | 5 => self.composer_menu_active(menu == 5),
             _ => 0,
         }
     }
@@ -436,20 +439,43 @@ impl Controller {
         if menu < 0 || index < 0 || index == self.clip_menu_active(menu) {
             return;
         }
-        if menu >= 6 {
-            let i = index.max(0) as usize;
-            if menu == 6 { self.seq_set_length(i) } else { self.seq_set_rate(i) }
-            return;
+        let i = index.max(0) as usize;
+        match menu {
+            4 => return self.composer_type(i),
+            5 => return self.composer_genre(i),
+            6 => return self.seq_set_length(i),
+            7 => return self.seq_set_rate(i),
+            _ => {}
         }
         match menu {
-            0 => self.warp_pick_speed(index as usize),
+            0 => self.warp_pick_speed(i),
             1 => self.warp_pick_enabled(index == 0),
-            2 => self.warp_pick_mode(index as usize),
-            _ => {
-                let what = ["", "", "", "", "Pattern type", "Pattern genre"][menu as usize];
-                self.set_status(format!("{what}: not in Saine yet"), 3);
-            }
+            2 => self.warp_pick_mode(i),
+            _ => {}
         }
+    }
+
+    fn push_composer(&self, s: &Studio) {
+        let Some(v) = self.sidebar_view() else { return };
+        s.set_composer_drums(v.drums);
+        s.set_composer_part_text(CLIP_MENUS[4].get(v.part as usize).copied().unwrap_or("Chords").into());
+        s.set_composer_genre_text(CLIP_MENUS[5].get(v.genre as usize).copied().unwrap_or("Any").into());
+        s.set_composer_original(v.original);
+        s.set_composer_create_text(v.create_label.into());
+        if *self.composer_rows_shown.borrow() == v.rows {
+            return;
+        }
+        *self.composer_rows_shown.borrow_mut() = v.rows.clone();
+        let rows: Vec<PatternRow> = v
+            .rows
+            .into_iter()
+            .map(|r| PatternRow {
+                name: r.name.into(),
+                playing: r.playing,
+                notes: slint::ModelRc::new(slint::VecModel::from(r.preview.into_iter().map(|(x, y, w)| PreviewNote { x, y, w }).collect::<Vec<_>>())),
+            })
+            .collect();
+        self.composer_row_model.set_vec(rows);
     }
 
     fn push_step_sequencer(&self, s: &Studio) {
@@ -576,6 +602,7 @@ impl Controller {
             sync_model(&self.pr_key_model, keys);
         }
         self.push_step_sequencer(s);
+        self.push_composer(s);
         // Context menu.
         s.set_menu_open(self.menu.open);
         if self.menu.open {

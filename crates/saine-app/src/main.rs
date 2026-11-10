@@ -13,6 +13,7 @@
 //!              [--sampler-tab <0..4>  (with a sampler state: Sample, Pitch, Filter, Amp or Mod tab)]
 //!              [--hold-note <0..127>  (with a synth state: hold the note and render 0.75 s offline first)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
+//!              [--window-width <pt>  (OS window width, default 1440)] [--assistant-width <px>  (saved docked-assistant width, 297..600)]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
 //!              [--clip-menu <0|1|3|4|5>  (open a clip editor dropdown after --state: Speed, Warp, Grid, Type, Genre; 2, Mode, is disabled)]
 //!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
@@ -23,6 +24,7 @@ mod assistant_panel;
 mod assistant_provider;
 mod automation;
 mod clipedit;
+mod composer;
 mod controller;
 mod device_canvas;
 mod device_mod;
@@ -101,6 +103,8 @@ struct Args {
     clip_menu_state: bool,
     /// Step sequencer review state: lane tab shown (0 Steps .. 4 Tie), or None.
     seq_state: Option<i32>,
+    /// Clip sidebar pattern list review: 0 empty MIDI clip, 1 chords made, 2 drum patterns made.
+    patterns_state: Option<i32>,
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
     /// 1 export dialog, 2 unsaved-changes prompt, 3 export dialog on Stems, 4 with its Tracks menu open, 5 on Project.
@@ -127,6 +131,7 @@ struct Args {
     /// an empty projects folder (compare z100-browser-files-projects.png), with a generated
     /// "audio" folder of two WAVs open (compare z100-files-audio-folder-expanded.png), and with a
     /// saved project open to its tracks, audio files and MIDI clips (no reference).
+    /// review-files-sort: the audio folder with the sort menu open.
     files_review: u8,
     /// review-section-added / review-sections-two: one new 8-bar section (compare
     /// z100-marker-after-plus-click.png), or two with the second selected.
@@ -158,6 +163,10 @@ struct Args {
     screenshot: Option<PathBuf>,
     exit_after_frames: Option<u64>,
     zoom: Option<u32>,
+    /// --window-width <pt>: OS window width in points (default 1440), for narrow-window reviews.
+    window_width: Option<f32>,
+    /// --assistant-width <px>: saved docked-assistant width in the reference's px (297..600), for reviews.
+    assistant_width: Option<f32>,
     clip_menu: Option<i32>,
     /// --ac-edit N: with review-warp, open the typed-value box (0 Original BPM, 1 Transpose).
     ac_edit: Option<i32>,
@@ -203,6 +212,13 @@ fn parse_args() -> Result<Args, String> {
                     a.open_assistant = true;
                     a.assistant_demo = Some("turn".into());
                 }
+                "review-assistant-narrow" => {
+                    a.reference_default = true;
+                    a.open_assistant = true;
+                    a.assistant_demo = Some("turn".into());
+                    a.assistant_width = Some(600.0);
+                    a.window_width.get_or_insert(1470.0);
+                }
                 s if s.starts_with("review-assistant-") => {
                     a.reference_default = true;
                     a.open_assistant = true;
@@ -233,6 +249,10 @@ fn parse_args() -> Result<Args, String> {
                 "reference-input-menu" => {
                     a.reference_default = true;
                     a.input_menu_state = true;
+                }
+                s if s.starts_with("review-patterns-") => {
+                    a.reference_default = true;
+                    a.patterns_state = s.rsplit('-').next().and_then(|l| l.parse().ok());
                 }
                 s if s.starts_with("review-step-sequencer") => {
                     a.reference_default = true;
@@ -302,7 +322,8 @@ fn parse_args() -> Result<Args, String> {
                         "review-files-projects" => 1,
                         "review-files-folders" => 2,
                         "review-files-project" => 3,
-                        _ => return Err(format!("unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project)")),
+                        "review-files-sort" => 5,
+                        _ => return Err(format!("unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project, review-files-sort)")),
                     };
                 }
                 "review-automation" => {
@@ -349,7 +370,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -377,6 +398,20 @@ fn parse_args() -> Result<Args, String> {
                     return Err(format!("--clip-menu: want 0, 1, 3, 4 or 5 (2, Mode, is disabled), got {m}"));
                 }
                 a.clip_menu = Some(m);
+            }
+            "--window-width" => {
+                let w: f32 = value(&mut i)?.parse().map_err(|e| format!("--window-width: {e}"))?;
+                if !(600.0..=4000.0).contains(&w) {
+                    return Err(format!("--window-width: want 600..4000 points, got {w}"));
+                }
+                a.window_width = Some(w);
+            }
+            "--assistant-width" => {
+                let w: f32 = value(&mut i)?.parse().map_err(|e| format!("--assistant-width: {e}"))?;
+                if !w.is_finite() {
+                    return Err(format!("--assistant-width: {w} is not a width"));
+                }
+                a.assistant_width = Some(w.clamp(297.0, 600.0));
             }
             "--ac-edit" => a.ac_edit = Some(value(&mut i)?.parse().map_err(|e| format!("--ac-edit: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
@@ -517,7 +552,7 @@ fn app_text_focused(aw: &slint::Weak<AppWindow>) -> bool {
 }
 
 fn pick_import() -> Vec<PathBuf> {
-    rfd::FileDialog::new().set_title("Import audio").add_filter("WAV audio", &["wav", "WAV"]).pick_files().unwrap_or_default()
+    rfd::FileDialog::new().set_title("Import audio").add_filter("Audio", &crate::files::dialog_exts()).pick_files().unwrap_or_default()
 }
 
 fn pick_project_dir(save: bool) -> Option<PathBuf> {
@@ -753,6 +788,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         c.mixer_open = args.open_mixer;
         c.assistant_open = args.open_assistant;
+        if let Some(px) = args.assistant_width {
+            c.settings.prefs.assistant_width = px * zoom::DESIGN_LEVEL;
+        }
         if let Some(d) = &args.assistant_demo {
             c.assistant_demo(d)?;
             if d == "draft" {
@@ -857,6 +895,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    if let Some(state) = args.patterns_state {
+        let mut c = ctl.borrow_mut();
+        if let Some(inst) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id) {
+            c.select_track(inst);
+            if state == 2 {
+                c.execute(saine_core::Command::SetInstrumentPlugin { track: inst, device: Some(saine_core::builtin::drum_rack::DRUM_RACK.instantiate()) });
+            }
+            c.seek_beats(20.0);
+            if let Some(id) = c.insert_midi_clip() {
+                c.select_clip(Some(id));
+                if state >= 1 {
+                    c.composer_create();
+                }
+            }
+        }
+    }
     if let Some(lane) = args.seq_state {
         // Drum Rack track with a one-bar drum pattern (reference z100-clip-pattern-sequencer-*:
         // Pad 1 on steps 1, 5, 9, 13, Pad 2 on 5, Pad 3 on 9), plus lane values to show.
@@ -947,9 +1001,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.browser_section(files::SECTION_FILES);
             c.files_tab(files::TAB_PROJECTS);
             c.files_expand(files::FileItem::Project(song));
-        } else if args.files_review == 2 {
+        } else if args.files_review == 2 || args.files_review == 5 {
             c.files_add_folder(&audio);
             c.files_expand(files::FileItem::Folder(audio));
+            c.files.sort_open = args.files_review == 5;
         } else {
             c.browser_section(files::SECTION_FILES);
             c.files_tab(files::TAB_PROJECTS);
@@ -1318,6 +1373,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.auto_write_end(|w| matches!(w.target, saine_core::AutomationTarget::Volume | saine_core::AutomationTarget::Pan));
         c.ui_dirty = true
     });
+    on!(on_chat_resize, |c, phase: i32, x: f32| c.chat_resize(phase, x));
+    on!(on_chat_resize_reset, |c| c.chat_resize_reset());
     on!(on_bottom_resize, |c, phase: i32, y: f32| c.bottom_resize(phase, y));
     on!(on_track_resize, |c, id: i32, phase: i32, y: f32| c.track_resize_drag(id, phase, y));
     on!(on_auto_toggle_shown, |c| c.auto_toggle_shown());
@@ -1393,6 +1450,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_seq_pointer, |c, kind: i32, x: f32, y: f32| c.seq_pointer(kind, x, y));
     on!(on_seq_scroll, |c, dy: f32| c.seq_scroll(dy));
     on!(on_seq_swing, |c, phase: i32, dy: f32| c.seq_swing(phase, dy));
+    on!(on_composer_create, |c| c.composer_create());
+    on!(on_composer_load, |c, i: i32| c.composer_load(i.max(0) as usize));
+    on!(on_composer_original_pick, |c| c.composer_original());
     on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
     on!(on_menu_dismiss, |c| c.menu_close());
@@ -1432,7 +1492,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_browser_back, |c| c.browser_back());
     on!(on_browser_forward, |c| c.browser_forward());
     on!(on_files_tab_select, |c, i: i32| c.files_tab(i.max(0) as usize));
-    on!(on_files_sort_toggle, |c| c.files_sort_toggle());
+    on!(on_files_sort_open_menu, |c, open: bool| c.files_sort_open_menu(open));
+    on!(on_files_sort_pick, |c, i: i32| c.files_sort_pick(i.max(0) as usize));
     on!(on_files_click, |c, i: i32, chevron: bool| c.files_click(i.max(0) as usize, chevron));
     on!(on_files_activate, |c, i: i32| c.files_activate(i.max(0) as usize));
     on!(on_files_drag, |c, i: i32, phase: i32, x: f32, y: f32| c.files_drag(i.max(0) as usize, phase, x, y));
@@ -1504,7 +1565,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         studio.on_sampler_load(move |id| {
             let target = ctl.borrow().sampler_load_target(saine_core::DeviceId(id as u64));
             let Some(target) = target else { return };
-            if let Some(file) = rfd::FileDialog::new().set_title("Choose audio file").add_filter("WAV audio", &["wav", "WAV"]).pick_file() {
+            if let Some(file) = rfd::FileDialog::new().set_title("Choose audio file").add_filter("Audio", &crate::files::dialog_exts()).pick_file() {
                 ctl.borrow_mut().import_files(vec![file], target, None);
             }
         });
@@ -2048,7 +2109,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     // The OS window is 1440×820 pt like the reference's; interface zoom then sets how much
     // of our (85 %-unit) layout fits in it, see `zoom.rs`.
-    app.window().set_size(slint::LogicalSize::new(1440.0, 820.0));
+    app.window().set_size(slint::LogicalSize::new(args.window_width.unwrap_or(1440.0), 820.0));
     app.run()?;
     if args.frame_stats && exit_after.is_none() {
         println!("{}", stats_json(&frame.borrow(), &app));

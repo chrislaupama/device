@@ -1334,9 +1334,9 @@ impl Controller {
     /// Files dropped on the window: onto the selected track's sampler (a
     /// drum pad takes them as new layers), else imported as clips.
     pub fn drop_files(&mut self, paths: Vec<PathBuf>) {
-        let audio: Vec<PathBuf> = paths.into_iter().filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav"))).collect();
+        let audio: Vec<PathBuf> = paths.into_iter().filter(|p| crate::files::is_audio(p)).collect();
         if audio.is_empty() {
-            return self.set_status("Only WAV files can be loaded", 4);
+            return self.set_status("Only audio files (WAV, AIFF, FLAC, Ogg Vorbis, MP3) can be loaded", 4);
         }
         let Some(device) = self.selected_sampler().filter(|_| self.bottom_tab == crate::controller::BottomTab::Devices) else {
             return self.import_files(audio, ImportTarget::Selected, None);

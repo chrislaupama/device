@@ -4767,6 +4767,75 @@ fn splitter_steps() -> Vec<Step> {
     ]
 }
 
+/// Docked assistant width splitter: drag, narrowing to the header's room, double-click reset
+/// (appended last; restores the panel state and the saved width).
+fn chat_dock_steps() -> Vec<Step> {
+    use crate::splitters::{CHAT_GAP, CHAT_MAX_W, CHAT_MIN_W};
+    use Step::*;
+    fn split_x(c: &Controller) -> f32 {
+        1440.0 - 5.0 - c.chat_w() - CHAT_GAP / 2.0
+    }
+    let was_open = Rc::new(Cell::new(false));
+    let (w1, w2) = (was_open.clone(), was_open.clone());
+    let undo_n = Rc::new(Cell::new(0usize));
+    let (u1, u2) = (undo_n.clone(), undo_n.clone());
+    vec![
+        DoC("open the assistant at its default width", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            w1.set(c.assistant_open);
+            u1.set(c.doc.undo_depth());
+            c.assistant_open = true;
+            c.settings.prefs.assistant_width = 0.0;
+            c.ui_dirty = true;
+        })),
+        Check("default width 297 px, zoom sliders shown", Box::new(|c, a| {
+            let ok = approx(c.chat_w(), CHAT_MIN_W, 0.01) && approx(a.global::<Studio>().get_assistant_pref_w(), CHAT_MIN_W, 0.01) && !a.get_header_zoom_hidden();
+            ok.then_some(()).ok_or(format!("w {} hidden {}", c.chat_w(), a.get_header_zoom_hidden()))
+        })),
+        DoC("drag the splitter 60 pt left", Box::new(|a, ctl| {
+            let x = split_x(&ctl.borrow());
+            drag(a, x, 300.0, x - 60.0, 300.0);
+        })),
+        Check("chat 60 pt wider, saved as a preference, timeline narrower, not an undo step", Box::new(move |c, a| {
+            let w = c.chat_w();
+            let saved = c.settings.prefs.assistant_width;
+            let lanes = a.get_lanes_width();
+            let ok = approx(w, CHAT_MIN_W + 60.0, 0.6) && approx(saved, w, 0.01) && approx(lanes, 1440.0 - 262.65 - 5.0 - 5.0 - w - 191.0, 1.0) && c.doc.undo_depth() == u2.get();
+            ok.then_some(()).ok_or(format!("w {w} saved {saved} lanes {lanes}"))
+        })),
+        DoC("drag the splitter far left: stops at the room that keeps the sliders", Box::new(|a, ctl| {
+            let x = split_x(&ctl.borrow());
+            drag(a, x, 300.0, 200.0, 300.0);
+        })),
+        Check("chat narrowed to the header's room (below 600 px), sliders still shown", Box::new(|c, a| {
+            let room = crate::splitters::chat_room(1440.0, true);
+            let w = c.chat_w();
+            let ok = room < CHAT_MAX_W && approx(w, room, 0.01) && !a.get_header_zoom_hidden() && approx(a.get_lanes_width(), 1440.0 - 262.65 - 5.0 - 5.0 - room - 191.0, 1.0);
+            ok.then_some(()).ok_or(format!("w {w} room {room} hidden {}", a.get_header_zoom_hidden()))
+        })),
+        DoC("drag the splitter right: stops at the minimum", Box::new(|a, ctl| {
+            let x = split_x(&ctl.borrow());
+            drag(a, x, 300.0, 1400.0, 300.0);
+        })),
+        Check("chat at 297 px", Box::new(|c, _| approx(c.chat_w(), CHAT_MIN_W, 0.01).then_some(()).ok_or(format!("w {}", c.chat_w())))),
+        DoC("widen, then double-click the splitter", Box::new(|a, ctl| {
+            let x = split_x(&ctl.borrow());
+            drag(a, x, 300.0, x - 40.0, 300.0);
+            let x = split_x(&ctl.borrow());
+            double_click(a, x, 300.0);
+        })),
+        Check("double-click restored the default and cleared the preference", Box::new(|c, _| {
+            let ok = approx(c.chat_w(), CHAT_MIN_W, 0.01) && c.settings.prefs.assistant_width == 0.0;
+            ok.then_some(()).ok_or(format!("w {} pref {}", c.chat_w(), c.settings.prefs.assistant_width))
+        })),
+        DoC("restore the panel state", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.assistant_open = w2.get();
+            c.ui_dirty = true;
+        })),
+    ]
+}
+
 /// Window centre of Browser › Files row `i` (rows as pushed to the UI).
 fn files_row_xy(a: &AppWindow, i: usize) -> Option<(f32, f32)> {
     let s = a.global::<Studio>();
@@ -4821,6 +4890,31 @@ fn files_steps() -> Vec<Step> {
             let s = a.global::<Studio>();
             (files_labels(a) == ["kit"] && s.get_files_meta() == "1 folder" && s.get_files_sort() == "Recent").then_some(()).ok_or(format!("{:?} {:?}", files_labels(a), s.get_files_meta()))
         })),
+        DoC("files: click the sort button", Box::new(|a, _| {
+            let y = 78.2 + a.global::<Studio>().get_files_list_y() - 10.2;
+            click(a, 247.25 - 12.0, y);
+        })),
+        Check("files: the sort menu opens on Recent", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.files.sort_open && s.get_files_sort_open() && s.get_files_sort_index() == 0).then_some(()).ok_or(format!("open {} index {}", s.get_files_sort_open(), s.get_files_sort_index()))
+        })),
+        DoC("files: pick Name in the sort menu", Box::new(|a, _| {
+            let y = 78.2 + a.global::<Studio>().get_files_list_y() + 3.4 + 3.4 + 18.7 * 1.5;
+            click(a, 247.25 - 15.0, y);
+        })),
+        Check("files: sorted by Name, menu closed", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.files.sort_name && !s.get_files_sort_open() && s.get_files_sort() == "Name").then_some(()).ok_or(format!("sort {:?} open {}", s.get_files_sort(), s.get_files_sort_open()))
+        })),
+        DoC("files: open the menu and click outside it", Box::new(|a, ctl| {
+            ctl.borrow_mut().files_sort_open_menu(true);
+            ctl.borrow_mut().update_ui(a);
+            click(a, 600.0, 400.0);
+        })),
+        Check("files: a click outside closes the menu and keeps Name", Box::new(|c, _| {
+            (!c.files.sort_open && c.files.sort_name).then_some(()).ok_or(format!("open {} name {}", c.files.sort_open, c.files.sort_name))
+        })),
+        DoC("files: back to Recent", Box::new(|_, ctl| ctl.borrow_mut().files_sort_pick(0))),
         DoC("files: click the folder row", Box::new(|a, _| {
             let Some((x, y)) = files_row_xy(a, 0) else { return };
             click(a, x, y);
@@ -5129,6 +5223,97 @@ fn minimap_steps() -> Vec<Step> {
     ]
 }
 
+/// Clip sidebar pattern list (Saine's local library): Create, load a row, Original,
+/// Type and Genre, each one undo step. Removes its clip at the end.
+fn pattern_library_steps() -> Vec<Step> {
+    use Step::*;
+    let hist = Rc::new(Cell::new(0usize));
+    fn one(hc: &Rc<Cell<usize>>, c: &Controller, label: &str) -> Result<(), String> {
+        let n = c.doc.history_labels().len();
+        let was = hc.get();
+        hc.set(n);
+        (n == was + 1 && c.doc.undo_label() == Some(label)).then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want {label})", c.doc.undo_label()))
+    }
+    fn comp(c: &Controller) -> Option<saine_core::library::Composer> {
+        c.pr_clip().and_then(|m| m.composer.clone())
+    }
+    let h = |_: u8| hist.clone();
+    let (h0, h1, h2, h3, h4, h5) = (h(0), h(1), h(2), h(3), h(4), h(5));
+    vec![
+        Do("patterns: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("patterns: Cmd+Shift+M on the instrument track at bar 61; select the clip", Box::new(move |a, ctl| {
+            let mut c = ctl.borrow_mut();
+            let Some(t) = track_of(&c, TrackKind::Instrument).map(|i| c.project().tracks[i].id) else { return };
+            c.select_track(t);
+            c.seek_beats(240.0);
+            if let Some(id) = c.insert_midi_clip() {
+                c.select_clip(Some(id));
+            }
+            h0.set(c.doc.history_labels().len());
+            c.update_ui(a);
+        })),
+        Check("patterns: empty list, 'Create chords' pill", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (slint::Model::row_count(&s.get_composer_rows()) == 0 && s.get_composer_create_text() == "Create chords").then_some(()).ok_or(format!("{:?}", s.get_composer_create_text()))
+        })),
+        Do("patterns: click Create chords", Box::new(|a| click(a, 5.0 + 60.0, 425.0 + 352.5 + 13.5))),
+        Check("patterns: six chord patterns, the first plays in the clip (one undo step 'Create Patterns')", Box::new(move |c, a| {
+            one(&h1, c, "Create Patterns")?;
+            let k = comp(c).ok_or("no composer")?;
+            let s = a.global::<Studio>();
+            let notes = c.pr_clip().map_or(0, |m| m.notes.len());
+            let ok = k.playing == Some(0) && slint::Model::row_count(&s.get_composer_rows()) == 6 && notes > 0 && s.get_composer_create_text() == "Create new chords" && s.get_composer_original();
+            ok.then_some(()).ok_or(format!("playing {:?} notes {notes}", k.playing))
+        })),
+        Do("patterns: click the third row", Box::new(|a| click(a, 5.0 + 60.0, 425.0 + 104.0 + 25.0 + 2.0 * 35.0 + 16.0))),
+        Check("patterns: row 3 plays (one undo step 'Load Pattern')", Box::new(move |c, _| {
+            one(&h2, c, "Load Pattern")?;
+            (comp(c).and_then(|k| k.playing) == Some(2)).then_some(()).ok_or("row 3 not playing".into())
+        })),
+        Do("patterns: click Original on the clip chip", Box::new(|a| click(a, 5.0 + 10.5 + 234.0 - 8.0 - 20.0, 425.0 + 38.0 + 15.25))),
+        Check("patterns: the clip's own (empty) notes are back (one undo step 'Load Original')", Box::new(move |c, a| {
+            one(&h3, c, "Load Original")?;
+            let ok = comp(c).is_some_and(|k| k.playing.is_none()) && c.pr_clip().is_some_and(|m| m.notes.is_empty()) && !a.global::<Studio>().get_composer_original();
+            ok.then_some(()).ok_or("original not restored".into())
+        })),
+        DoC("patterns: Type menu › Bass", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.clip_menu_open(4);
+            c.clip_menu_pick(1);
+            c.update_ui(a);
+        })),
+        Check("patterns: Bass set made and playing (one undo step 'Pattern Type Change')", Box::new(move |c, a| {
+            one(&h4, c, "Pattern Type Change")?;
+            let k = comp(c).ok_or("no composer")?;
+            let ok = k.part == saine_core::library::PartType::Bass && k.playing == Some(0) && a.global::<Studio>().get_composer_part_text() == "Bass";
+            ok.then_some(()).ok_or(format!("{:?} playing {:?}", k.part, k.playing))
+        })),
+        DoC("patterns: Genre menu › Drill", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.clip_menu_open(5);
+            c.clip_menu_pick(3);
+            c.update_ui(a);
+        })),
+        Check("patterns: Genre reads Drill (one undo step 'Pattern Genre Change')", Box::new(move |c, a| {
+            one(&h5, c, "Pattern Genre Change")?;
+            (a.global::<Studio>().get_composer_genre_text() == "Drill").then_some(()).ok_or("genre not set".into())
+        })),
+        DoC("patterns: remove the clip", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            if let Some(id) = c.pr_clip().map(|m| m.id) {
+                c.execute(saine_core::Command::RemoveMidiClip { clip: id });
+            }
+            c.select_clip(None);
+            c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            c.seek_beats(0.0);
+        })),
+        Check("patterns: clip removed", Box::new(|c, _| {
+            let left = track_of(c, TrackKind::Instrument).map_or(0, |i| c.project().tracks[i].midi_clips.iter().filter(|m| m.start >= 240 * PPQ).count());
+            (left == 0).then_some(()).ok_or(format!("{left} clips left"))
+        })),
+    ]
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
@@ -5150,7 +5335,9 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(automation_steps());
     all.extend(field_device_steps());
     all.extend(step_sequencer_steps());
+    all.extend(pattern_library_steps());
     all.extend(splitter_steps());
+    all.extend(chat_dock_steps());
     all.extend(files_steps());
     all.extend(section_steps());
     all.extend(minimap_steps());
