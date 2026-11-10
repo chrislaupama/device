@@ -17,6 +17,50 @@ use std::rc::Rc;
 
 type Ctl = Rc<RefCell<Controller>>;
 
+/// This run's scratch folder: every file the self-test writes (exports, saved projects, WAVs,
+/// recordings, clip renders, its plugin cache) lives under it, so runs that overlap on one
+/// machine never share a path. Created on first use; removed when every check passes.
+pub fn run_dir() -> &'static std::path::Path {
+    static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let base = std::env::temp_dir();
+        (0..1000)
+            .map(|n| base.join(format!("saine-selftest-{}-{n}", std::process::id())))
+            .find(|d| std::fs::create_dir(d).is_ok())
+            .expect("self-test: cannot create a scratch folder in the temp directory")
+    })
+}
+
+/// The plugin scan cache the self-tests share between runs (so a run does not rescan every
+/// plugin). A run works on its own copy and puts it back atomically when it ends.
+pub fn shared_plugin_cache() -> std::path::PathBuf {
+    std::env::temp_dir().join("saine-selftest-plugin-cache.json")
+}
+
+/// The run's copy of the shared plugin cache.
+pub fn run_plugin_cache() -> std::path::PathBuf {
+    let mine = run_dir().join("plugin-cache.json");
+    if !mine.exists() {
+        let _ = std::fs::copy(shared_plugin_cache(), &mine);
+    }
+    mine
+}
+
+/// End of a run: the run's plugin cache replaces the shared one (rename, so a run that starts
+/// meanwhile reads a whole file), and the scratch folder goes unless a check failed.
+fn finish_run(failed: usize) {
+    let dir = run_dir();
+    let tmp = std::env::temp_dir().join(format!("saine-selftest-plugin-cache.json.{}", std::process::id()));
+    if std::fs::copy(dir.join("plugin-cache.json"), &tmp).is_ok() && std::fs::rename(&tmp, shared_plugin_cache()).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    if failed == 0 {
+        let _ = std::fs::remove_dir_all(dir);
+    } else {
+        println!("self-test: scratch files kept in {}", dir.display());
+    }
+}
+
 enum Step {
     Do(&'static str, Box<dyn Fn(&AppWindow)>),
     /// Like `Do`, but computes coordinates from the controller first (the closure must
@@ -1061,7 +1105,7 @@ fn steps() -> Vec<Step> {
         DoC("export into a temp folder: click Export", Box::new(|a, ctl| {
             {
                 let mut c = ctl.borrow_mut();
-                c.export.dir = std::env::temp_dir().join(format!("saine-selftest-export-{}", std::process::id()));
+                c.export.dir = run_dir().join("export");
                 c.export.name = "mix".into();
             }
             // Export window centred in the 1440 x 820 window: 442 x 340.4, Export button 52.2 x 22.1.
@@ -1128,7 +1172,7 @@ fn steps() -> Vec<Step> {
         DoC("click the Project card, name it set, click Export", Box::new(|a, ctl| {
             click(a, (1440.0 - 442.0) / 2.0 + 17.0 + 2.0 * (131.47 + 6.8) + 65.0, (820.0 - 340.4) / 2.0 + 44.2 + 22.0);
             let mut c = ctl.borrow_mut();
-            c.export.dir = std::env::temp_dir().join(format!("saine-selftest-project-{}", std::process::id()));
+            c.export.dir = run_dir().join("project");
             c.export.name = "set".into();
         })),
         Check("Project picked: recipe 2, Name label", Box::new(|_c, a| {
@@ -2419,7 +2463,7 @@ fn device_steps() -> Vec<Step> {
     let (ed1, ed2) = (editor.clone(), editor.clone());
     let saved: Rc<RefCell<Vec<(u64, String, bool)>>> = Rc::new(RefCell::new(Vec::new()));
     let (sv1, sv2) = (saved.clone(), saved.clone());
-    let save_dir = std::env::temp_dir().join(format!("saine-selftest-devices-{}.saineproj", std::process::id()));
+    let save_dir = run_dir().join("devices.saineproj");
     let (sd1, sd2, sd3) = (save_dir.clone(), save_dir.clone(), save_dir);
     let (h0, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12) = (h(), h(), h(), h(), h(), h(), h(), h(), h(), h(), h(), h(), h());
     fn scan_state(c: &Controller) -> String {
@@ -2799,7 +2843,7 @@ fn automation_steps() -> Vec<Step> {
         ah_set(n);
         ok.then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want one {label:?})", c.doc.undo_label()))
     }
-    let wav = std::env::temp_dir().join(format!("saine-selftest-auto-{}.wav", std::process::id()));
+    let wav = run_dir().join("auto.wav");
     let wav2 = wav.clone();
     vec![
         DoC("automation: fresh project, steady 440 Hz clip on Audio track 1 at 0", Box::new(move |a, ctl| {
@@ -4515,7 +4559,7 @@ fn sampler_card(a: &AppWindow) -> Option<crate::DeviceCard> {
 /// Built-in list, files loaded as drops, pads pressed, slices and a picture handle.
 fn sampler_steps() -> Vec<Step> {
     use Step::*;
-    let wav = std::env::temp_dir().join(format!("saine-selftest-sampler-{}.wav", std::process::id()));
+    let wav = run_dir().join("sampler.wav");
     let _ = crate::wavgen::write_wav(&wav, 48_000, 1, &crate::wavgen::sine_bursts(48_000));
     let hist = Rc::new(Cell::new(0usize));
     fn one(hc: &Rc<Cell<usize>>, c: &Controller, label: &str) -> Result<(), String> {
@@ -5421,7 +5465,7 @@ fn files_row_of(a: &AppWindow, label: &str) -> Option<usize> {
 fn files_steps() -> Vec<Step> {
     use crate::files::{SECTION_DEVICES, SECTION_FILES, TAB_FOLDERS, TAB_PROJECTS};
     use Step::*;
-    let root = std::env::temp_dir().join(format!("saine-selftest-files-{}", std::process::id()));
+    let root = run_dir().join("files");
     let kit = root.join("kit");
     let (r1, k1, k2) = (root.clone(), kit.clone(), kit.clone());
     let tracks = Rc::new(Cell::new(0usize));
@@ -5602,7 +5646,7 @@ fn files_steps() -> Vec<Step> {
 /// and Open Recent (appended last; it saves and reopens the current project).
 fn menu_bar_steps() -> Vec<Step> {
     use Step::*;
-    let dir = std::env::temp_dir().join(format!("saine-selftest-recent-{}", std::process::id())).join("Recent Song.saineproj");
+    let dir = run_dir().join("recent").join("Recent Song.saineproj");
     let (d1, d2, d3) = (dir.clone(), dir.clone(), dir);
     vec![
         DoC("menu: Options › Check for Updates…", Box::new(|_, ctl| ctl.borrow_mut().menu_action("options.check_updates"))),
@@ -5679,7 +5723,7 @@ fn menu_bar_steps() -> Vec<Step> {
         Check("menu: Open Recent is empty", Box::new(|_, a| (a.global::<Studio>().get_recent_projects().row_count() == 0).then_some(()).ok_or("not empty".into()))),
         DoC("menu: open a recent project whose folder is gone", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
-            c.settings.prefs.recent_projects = vec![std::env::temp_dir().join("saine-selftest-missing.saineproj").to_string_lossy().into_owned()];
+            c.settings.prefs.recent_projects = vec![run_dir().join("missing.saineproj").to_string_lossy().into_owned()];
             c.open_recent(0);
         })),
         Check("menu: it leaves Open Recent", Box::new(|c, _| c.settings.prefs.recent_projects.is_empty().then_some(()).ok_or(format!("{:?}", c.settings.prefs.recent_projects)))),
@@ -6402,7 +6446,7 @@ fn clip_render_steps() -> Vec<Step> {
     use saine_core::{AssetId, ClipId, Command, MidiClip, Note, Track, TrackId};
     const LANE_Y0: f32 = TRACK0_Y - crate::timeline::RULER_H;
     fn dir() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("saine-selftest-clip-render-{}", std::process::id()))
+        run_dir().join("clip-render")
     }
     fn right_click(a: &AppWindow, x: f32, y: f32) {
         let w = a.window();
@@ -6676,10 +6720,10 @@ fn clip_render_steps() -> Vec<Step> {
             let mut c = ctl.borrow_mut();
             let s = s15.borrow();
             let mut commands: Vec<Command> = [s.audio_track, s.midi_track].iter().map(|&t| Command::RemoveTrack { track: TrackId(t) }).collect();
-            commands.extend(c.project().assets.iter().filter(|a| a.absolute_path.contains("saine-selftest-clip-render")).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
+            commands.extend(c.project().assets.iter().filter(|a| a.absolute_path.contains(&*dir().to_string_lossy())).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
             c.execute(Command::Batch { label: "clip render cleanup".into(), commands });
             c.select_clip(None);
-            c.clip_render.dir_override = None;
+            c.clip_render.dir_override = Some(run_dir().join("renders"));
             let _ = std::fs::remove_dir_all(dir());
         })),
         Check("clip render: project back to its earlier tracks and assets", Box::new(move |c, _| {
@@ -6963,6 +7007,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
             let fixture = ctl.try_borrow().map(|c| c.devices.catalog.fixture.is_some()).unwrap_or(false);
             let note = if fixture { " [plugin catalogue from a TEST fixture: the plugin checks did not exercise the engine scanner]" } else { "" };
             println!("self-test: {} / {n} checks passed{skipped}{note}", n - fails.get());
+            finish_run(fails.get());
             t2.stop();
             let _ = slint::quit_event_loop();
             return;
@@ -7016,7 +7061,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
 fn live_import_steps() -> Vec<Step> {
     use crate::live_set::{LiveSet, SetAudioClip, SetContent, SetMidiClip, SetNote, SetTrack};
     use Step::*;
-    let dir = || std::env::temp_dir().join(format!("saine-selftest-live-{}", std::process::id()));
+    let dir = || run_dir().join("live");
     vec![
         DoC("live import: write a set and its sample, then File › Import Ableton Live Set…", Box::new(move |_, ctl| {
             let d = dir();

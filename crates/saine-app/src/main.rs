@@ -936,7 +936,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // Recording in the self-test uses injected input only (render_offline_with_input)
             // into a scratch directory; it never opens or requires a real input device.
             c.rec.policy = recording::InputPolicy::InjectedOnly;
-            c.rec.dir_override = Some(std::env::temp_dir().join(format!("saine-selftest-rec-{}", std::process::id())));
+            c.rec.dir_override = Some(selftest::run_dir().join("rec"));
+            c.clip_render.dir_override = Some(selftest::run_dir().join("renders"));
             pointer::simulate(true);
         }
         c.mixer_open = args.open_mixer;
@@ -954,7 +955,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         // Settings › Plugins can force a rescan). The self-test uses its own cache file and never
         // touches the user's. --plugin-fixture (TEST seam) replaces the scan entirely.
         c.devices.catalog.cache_path = if args.self_test {
-            Some(std::env::temp_dir().join("saine-selftest-plugin-cache.json"))
+            Some(selftest::run_plugin_cache())
         } else {
             prefs::plugin_cache_path()
         };
@@ -2144,7 +2145,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if args.demo {
-        let dir = std::env::temp_dir().join(format!("saine-demo-{}", std::process::id()));
+        let dir = if args.self_test { selftest::run_dir().join("demo") } else { std::env::temp_dir().join(format!("saine-demo-{}", std::process::id())) };
         std::fs::create_dir_all(&dir)?;
         let sine = dir.join("sine-bursts.wav");
         let noise = dir.join("noise-stereo.wav");
