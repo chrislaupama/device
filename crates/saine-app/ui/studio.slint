@@ -507,6 +507,9 @@ export global Studio {
     callback ac-bpm-drag(int, length, length); // Original BPM drag: phase 0 press, 1 move, 2 release; offset from the press
     in property <bool> ac-reversed;
     callback ac-reverse-toggle();
+    in property <string> ac-transpose-text: "0 st";
+    in property <bool> ac-transpose-enabled: true;  // off in Re-pitch (pitch follows speed)
+    callback ac-transpose-drag(int, length, length); // Transpose drag, like ac-bpm-drag
     in property <string> clip-name: "MIDI";
     in property <color> clip-color: Tokens.track-instrument;
     in property <color> clip-ink: #1d2142;   // text and icons on clip-colour fills

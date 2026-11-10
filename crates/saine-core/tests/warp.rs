@@ -305,3 +305,47 @@ fn reverse_persists() {
     assert!(persist::load(dir.path()).unwrap().project.clip(c).unwrap().warp.reverse);
     assert!(ClipWarp { reverse: true, ..ClipWarp::default() }.tempo_is_default());
 }
+
+#[test]
+fn transpose_with_warp_off_varispeeds_the_clip() {
+    let (mut d, c, _) = doc();
+    set(&mut d, c, ClipWarp { transpose: 12, ..ClipWarp::default() }, "Adjust clip transpose");
+    let clip = d.project().clip(c).unwrap().clone();
+    assert!(!clip.warp.enabled);
+    assert_eq!(d.project().clip_length_ticks(&clip), 4 * PPQ, "an octave up plays twice as fast");
+    assert!((d.project().clip_source_at(&clip, (2 * PPQ) as f64) - 44_100.0 * 2.0).abs() < 1e-6);
+    assert!((d.project().clip_ticks_at(&clip, 44_100.0 * 2.0) - (2 * PPQ) as f64).abs() < 1e-6);
+    let (start, len, w) = snap_warp(&d, c, &HashMap::new());
+    let w = w.expect("a varispeed clip goes to the engine as Re-pitch");
+    assert_eq!((start, len, w.mode, w.transpose), (96_000, 96_000, 0, 0.0));
+    assert_eq!((w.points.len(), w.points[0], w.points[1].0), (2, (96_000, 0.0), 192_000));
+    assert!((w.points[1].1 - 4.0 * RATE).abs() < 1e-6, "{:?}", w.points);
+    assert!((slope(&w.points) - 2.0).abs() < 1e-9);
+    d.undo().unwrap();
+    assert_eq!(snap_warp(&d, c, &HashMap::new()), (96_000, 192_000, None));
+}
+
+#[test]
+fn transpose_with_warp_on_keeps_the_timing_except_in_repitch() {
+    let (mut d, c, _) = doc();
+    let on = ClipWarp { enabled: true, original_bpm: 120.0, transpose: -5, ..ClipWarp::default() };
+    for (mode, engine_transpose) in [(WarpMode::Melody, -5.0), (WarpMode::Vocal, -5.0), (WarpMode::Drums, -5.0), (WarpMode::Repitch, 0.0)] {
+        set(&mut d, c, ClipWarp { mode, ..on.clone() }, "Set clip mode");
+        let (_, len, w) = snap_warp(&d, c, &HashMap::new());
+        assert_eq!(len, 192_000, "{mode:?}: the length follows the tempo, not the pitch");
+        assert_eq!(w.unwrap().transpose, engine_transpose, "{mode:?}");
+    }
+}
+
+#[test]
+fn transpose_is_validated_and_persisted() {
+    let (mut d, c, _) = doc();
+    let bad = ClipWarp { transpose: 25, ..ClipWarp::default() };
+    assert!(d.execute(Command::SetClipWarp { clip: c, warp: bad, label: "Adjust clip transpose".into() }, Origin::User).is_err());
+    set(&mut d, c, ClipWarp { transpose: -24, ..ClipWarp::default() }, "Adjust clip transpose");
+    let dir = tempfile::tempdir().unwrap();
+    persist::save(d.project(), dir.path()).unwrap();
+    assert_eq!(persist::load(dir.path()).unwrap().project.clip(c).unwrap().warp.transpose, -24);
+    assert!(!ClipWarp { transpose: 3, ..ClipWarp::default() }.is_default());
+    assert!(ClipWarp { transpose: 3, ..ClipWarp::default() }.tempo_is_default());
+}

@@ -1326,6 +1326,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_clip_menu_pick, |c, i: i32| c.clip_menu_pick(i));
     on!(on_ac_bpm_drag, |c, phase: i32, dx: f32, dy: f32| c.ac_bpm_drag(phase, dx, dy));
     on!(on_ac_reverse_toggle, |c| c.ac_reverse_toggle());
+    on!(on_ac_transpose_drag, |c, phase: i32, dx: f32, dy: f32| c.ac_transpose_drag(phase, dx, dy));
     on!(on_pr_value, |c, f: i32, phase: i32, dy: f32| c.pr_value(f, phase, dy));
     on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
@@ -1672,7 +1673,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 done.set(true);
             }
             if let Some(cl) = clip.filter(|cl| warp && !cl.warp.enabled) {
-                let mut w = saine_core::ClipWarp { enabled: true, mode: saine_core::WarpMode::Drums, speed: 1.5, original_bpm: 120.0, reverse, ..Default::default() };
+                let mut w = saine_core::ClipWarp { enabled: true, mode: saine_core::WarpMode::Drums, speed: 1.5, original_bpm: 120.0, reverse, transpose: 3, ..Default::default() };
                 w.set_marker(0, 0.0);
                 w.set_marker(4 * 44_100, 9.0);
                 c.execute(saine_core::Command::SetClipWarp { clip: cl.id, warp: w, label: "Set clip speed".into() });

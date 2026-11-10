@@ -184,3 +184,24 @@ fn reversed_clip_plays_back_to_front() {
     assert!(rms(&l[50_000..94_000]) > 0.2, "then the tone");
     assert!((frequency(&l[50_000..94_000]) - 440.0).abs() < 1.0);
 }
+
+#[test]
+fn transpose_shifts_the_pitch_and_varispeeds_unwarped_clips() {
+    let (mut rig, _dir) = tone_rig();
+    let none = HashMap::new();
+    // Warp off, +12: an octave up and twice as fast (1 s of the 2 s tone).
+    rig.warp(ClipWarp { transpose: 12, ..ClipWarp::default() });
+    assert_eq!(rig.doc.project().clip_length_ticks(rig.doc.project().clip(rig.clip).unwrap()), 2 * PPQ);
+    let out = rig.render(72_000, &none);
+    assert!(rms(&out[8_000..40_000]) > 0.2);
+    assert!(rms(&out[52_000..72_000]) < 1e-3, "and then it ends");
+    let f = frequency(&out[8_000..40_000]);
+    assert!((f - 880.0).abs() < 8.8, "{f} Hz, want 880");
+    // Warp on (Melody), -12: an octave down, same length.
+    rig.warp(ClipWarp { enabled: true, original_bpm: 120.0, mode: WarpMode::Melody, transpose: -12, ..ClipWarp::default() });
+    assert_eq!(rig.doc.project().clip_length_ticks(rig.doc.project().clip(rig.clip).unwrap()), 4 * PPQ);
+    let out = rig.render(120_000, &none);
+    assert!(rms(&out[80_000..90_000]) > 0.2, "still 2 s long");
+    let f = frequency(&out[10_000..80_000]);
+    assert!((f - 220.0).abs() < 2.2, "{f} Hz, want 220");
+}

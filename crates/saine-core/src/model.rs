@@ -360,7 +360,7 @@ impl Project {
             return crate::warp::beats_to_ticks(self.warped_clip_beats(clip));
         }
         let rate = self.asset(clip.asset).map(|a| a.sample_rate).unwrap_or(48_000.0);
-        self.seconds_to_ticks(clip.source_length as f64 / rate)
+        self.seconds_to_ticks(clip.source_length as f64 / rate / clip.warp.varispeed())
     }
 }
 

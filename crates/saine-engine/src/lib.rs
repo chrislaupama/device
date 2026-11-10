@@ -300,7 +300,7 @@ impl Engine {
                 clip_id: *id,
                 mode: w.mode,
                 _pad: [0; 3],
-                transpose: 0.0,
+                transpose: w.transpose,
                 points: pts.as_ptr(),
                 point_count: pts.len() as u32,
                 slice_count: sl.len() as u32,
