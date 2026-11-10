@@ -5249,6 +5249,12 @@ fn menu_bar_steps() -> Vec<Step> {
             }
         })),
         Check("menu: Open Recent is empty", Box::new(|_, a| (a.global::<Studio>().get_recent_projects().row_count() == 0).then_some(()).ok_or("not empty".into()))),
+        DoC("menu: open a recent project whose folder is gone", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.settings.prefs.recent_projects = vec![std::env::temp_dir().join("saine-selftest-missing.saineproj").to_string_lossy().into_owned()];
+            c.open_recent(0);
+        })),
+        Check("menu: it leaves Open Recent", Box::new(|c, _| c.settings.prefs.recent_projects.is_empty().then_some(()).ok_or(format!("{:?}", c.settings.prefs.recent_projects)))),
     ]
 }
 
