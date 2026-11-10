@@ -98,7 +98,9 @@ impl Controller {
         if let Some(d) = self.bottom_drag {
             return d.h;
         }
-        let default = if self.mixer_open || self.bottom_tab == BottomTab::Clip { MIXER_BOTTOM_H } else { DEFAULT_BOTTOM_H };
+        // the reference app's clip editor and Devices tab share one height (the tab row at 454 pt in a
+        // 820 pt window); only the mixer is taller.
+        let default = if self.mixer_open { MIXER_BOTTOM_H } else { DEFAULT_BOTTOM_H };
         let saved = self.project().bottom_panel_heights.get(self.bottom_kind()).copied().unwrap_or(default);
         self.clamp_bottom_h(saved)
     }
