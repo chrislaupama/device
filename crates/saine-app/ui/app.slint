@@ -28,7 +28,7 @@ import { StripMetrics, StripCanvas, StripReadout, StripButton } from "channel_st
 import { AssistantPanel, HighlightOverlay } from "assistant.slint";
 import { SynthDevice, SynthMenuList } from "synth.slint";
 import { SettingsPanel, ChoiceList } from "settings.slint";
-import { ExportModal, UnsavedPrompt } from "dialogs.slint";
+import { ExportModal, UnsavedPrompt, UpdatesModal } from "dialogs.slint";
 import { PluginCard, AddDeviceCard, DevMenuList } from "devices.slint";
 import { BuiltinCard, FoldedStrip } from "device_panel.slint";
 import { TrackHeaderRow, MasterHeaderRow, AutoPill } from "track_header.slint";
@@ -878,7 +878,14 @@ export component AppWindow inherits Window {
 
     // Native menu bar on macOS (the app menu with About/Services/Hide/Quit comes from the backend).
     // Shortcut items are disabled while menu-key replays their key (see Studio.menu-replay).
+    // The first menu holds the app menu's own items: src/appmenu.rs moves them into the app
+    // menu after About and hides this menu (other platforms show it as is).
     MenuBar {
+        Menu {
+            title: "Saine Studio";
+            MenuItem { title: "Settings…"; enabled: !Studio.menu-replay; shortcut: @keys(Control + ","); activated => { Studio.menu-key(",", true, false); } }
+            MenuSeparator { }
+        }
         Menu {
             title: "File";
             MenuItem { title: "New Project"; enabled: !Studio.menu-replay; shortcut: @keys(Control + N); activated => { Studio.menu-key("n", true, false); } }
@@ -889,13 +896,15 @@ export component AppWindow inherits Window {
             MenuItem { title: "Open Project…"; enabled: !Studio.menu-replay; shortcut: @keys(Control + O); activated => { Studio.menu-key("o", true, false); } }
             Menu {
                 title: "Open Recent";
-                MenuItem { title: "Clear Menu"; enabled: false; }
+                for name[i] in Studio.recent-projects: MenuItem { title: name; activated => { Studio.open-recent(i); } }
+                if Studio.recent-projects.length > 0: MenuSeparator { }
+                MenuItem { title: "Clear Menu"; enabled: Studio.recent-projects.length > 0; activated => { Studio.menu-action("file.clear_recent"); } }
             }
             MenuItem { title: "Show Project in Finder"; enabled: Studio.project-on-disk; activated => { Studio.menu-action("file.show_in_finder"); } }
             MenuSeparator { }
             MenuItem { title: "Export Audio…"; enabled: !Studio.menu-replay; shortcut: @keys(Control + Shift + E); activated => { Studio.menu-key("e", true, true); } }
             MenuItem { title: "Export Project for Ableton Live…"; activated => { Studio.menu-action("file.export_ableton"); } }
-            MenuItem { title: "Import Ableton Live Set…"; activated => { Studio.menu-action("file.import_ableton"); } }
+            MenuItem { title: "Import Ableton Live Set…"; enabled: false; }
         }
         Menu {
             title: "Edit";
@@ -947,7 +956,7 @@ export component AppWindow inherits Window {
     property <int> ac-edit-field: Studio.ac-edit-field;
     changed ac-edit-field => { if (self.ac-edit-field < 0) { fs.focus(); } }
     // The key handler gets the focus back when a modal dialog closes.
-    property <bool> modal-open: Studio.export-open || Studio.unsaved-open;
+    property <bool> modal-open: Studio.export-open || Studio.unsaved-open || Studio.updates-open;
     changed modal-open => {
         if (!self.modal-open) {
             fs.focus();
@@ -1190,6 +1199,11 @@ export component AppWindow inherits Window {
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { }
             UnsavedPrompt { x: max(0px, min(438px, parent.width - self.width)); y: max(0px, min(295px, parent.height - self.height)); }
+        }
+        if Studio.updates-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { clicked => { Studio.updates-close(); } }
+            UpdatesModal { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
         }
         // Status line (engine/device/import messages); empty most of the time.
         if Studio.status-text != "": Rectangle {

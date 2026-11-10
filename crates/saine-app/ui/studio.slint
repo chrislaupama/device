@@ -477,6 +477,8 @@ export global Studio {
     // exactly like the keystroke; the others call menu-action with an id.
     callback menu-key(string, bool, bool);
     callback menu-action(string);
+    in property <[string]> recent-projects;                 // File › Open Recent, newest first
+    callback open-recent(int);
     // True while menu-key replays its key: the shortcut items are disabled so the replay
     // reaches the widgets instead of activating the menu item again.
     in property <bool> menu-replay;
@@ -736,6 +738,9 @@ export global Studio {
     callback export-bits(bool);                 // true = 24-bit
     callback export-name-edited(string);
     in property <bool> unsaved-open;
+    in property <bool> updates-open;                        // Options › Check for Updates…
+    in property <string> app-version;
+    callback updates-close();
     callback unsaved-cancel();
     callback unsaved-dont-save();
     callback unsaved-save();

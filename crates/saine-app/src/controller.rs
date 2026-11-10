@@ -307,6 +307,8 @@ pub struct Controller {
     /// Export dialog and the unsaved-changes prompt (src/dialogs.rs).
     pub export: crate::dialogs::ExportUi,
     pub unsaved_open: bool,
+    /// Options › Check for Updates… dialog.
+    pub updates_open: bool,
     pub(crate) jobs_tx: Sender<JobResult>,
     jobs_rx: Receiver<JobResult>,
     pub pending_jobs: usize,
@@ -431,6 +433,7 @@ impl Controller {
             project_dir: None,
             export: Default::default(),
             unsaved_open: false,
+            updates_open: false,
             jobs_tx,
             jobs_rx,
             pending_jobs: 0,
@@ -587,11 +590,24 @@ impl Controller {
     /// App menu bar items without a shortcut (`Studio.menu-action`). Settings and the
     /// dialogs are modal, so the menu does nothing while one is open.
     pub fn menu_action(&mut self, id: &str) {
-        if self.settings.open || self.export.open || self.unsaved_open {
+        if self.modal_open() {
             return;
         }
         match id {
             "options.audio_midi" => self.open_settings(),
+            "options.check_updates" => {
+                self.updates_open = true;
+                self.ui_dirty = true;
+            }
+            "file.export_ableton" => {
+                self.export_open();
+                self.export_pick_recipe(2);
+            }
+            "file.clear_recent" => {
+                self.settings.prefs.recent_projects.clear();
+                self.save_prefs();
+                self.ui_dirty = true;
+            }
             "options.check_plugins" => self.start_plugin_scan(false),
             "options.rescan_plugins" => self.start_plugin_scan(true),
             "file.show_in_finder" => {
@@ -602,6 +618,32 @@ impl Controller {
             }
             other => self.set_status(format!("{other}: not implemented yet"), 3),
         }
+    }
+
+    pub fn modal_open(&self) -> bool {
+        self.settings.open || self.export.open || self.unsaved_open || self.updates_open
+    }
+
+    /// File › Open Recent item `i` (newest first). A project that no longer opens leaves the list.
+    pub fn open_recent(&mut self, i: usize) {
+        if self.modal_open() {
+            return;
+        }
+        let Some(path) = self.settings.prefs.recent_projects.get(i).map(PathBuf::from) else { return };
+        self.open(&path);
+        if self.project_dir.as_ref() != Some(&path) {
+            self.settings.prefs.recent_projects.remove(i);
+            self.save_prefs();
+        }
+    }
+
+    fn remember_recent(&mut self, dir: &Path) {
+        let path = dir.to_string_lossy().into_owned();
+        let list = &mut self.settings.prefs.recent_projects;
+        list.retain(|p| *p != path);
+        list.insert(0, path);
+        list.truncate(10);
+        self.save_prefs();
     }
 
     // ---------------------------------------------------------------- core glue
@@ -1058,6 +1100,7 @@ impl Controller {
             Ok(()) => {
                 self.doc.mark_saved();
                 self.project_dir = Some(dir.to_path_buf());
+                self.remember_recent(dir);
                 self.set_status(format!("Saved {}", dir.display()), 3);
                 self.files_refresh();
             }
@@ -1085,6 +1128,7 @@ impl Controller {
         self.doc = Document::new(loaded.project);
         self.devices.modu.bases_pending = true;
         self.project_dir = Some(dir.to_path_buf());
+        self.remember_recent(dir);
         self.selected_track = self.project().tracks.first().map(|t| t.id);
         self.selected_clip = None;
         self.view = View::default();

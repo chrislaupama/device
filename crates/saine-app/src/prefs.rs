@@ -61,6 +61,9 @@ pub struct Preferences {
     /// Docked assistant width in design units (drag its splitter); 0 = default.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub assistant_width: f32,
+    /// File › Open Recent: project folders, newest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_projects: Vec<String>,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -125,7 +128,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("saine-prefs-test-{}", std::process::id()));
         let path = dir.join("preferences.json");
         assert_eq!(load(&path).unwrap(), None);
-        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110, browser_folders: vec!["/tmp/kit".into()], preview_volume: Some(0.5), assistant_width: 400.0 };
+        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110, browser_folders: vec!["/tmp/kit".into()], preview_volume: Some(0.5), assistant_width: 400.0, recent_projects: vec!["/tmp/Song.saineproj".into()] };
         save(&path, &p).unwrap();
         assert_eq!(load(&path).unwrap(), Some(p.clone()));
         assert!(p.audio.is_custom());
