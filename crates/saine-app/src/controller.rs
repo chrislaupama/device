@@ -63,11 +63,13 @@ pub fn header_meter(g: f32) -> f32 {
     if g <= 0.0 { 0.0 } else { ((gain_to_db(g) + 50.0) / 50.0).clamp(0.0, 1.0) }
 }
 
-/// Inspector fader/meter scale: (dB, fraction of travel from the top), taken from
-/// the reference scale label positions (+6 … −48, −∞).
-const FADER_SCALE: [(f32, f32); 8] = [(6.0, 0.0), (0.0, 0.1126), (-6.0, 0.2115), (-12.0, 0.3104), (-24.0, 0.5), (-36.0, 0.6868), (-48.0, 0.8269), (-72.0, 1.0)];
+/// Fader/meter taper of the mixer strips and the track inspector: (dB, fraction of travel from
+/// the top). Piecewise linear in dB between the reference's breakpoints (reference/
+/// research-findings.md, "Channel strip fader"): +6 dB at the top, 0 dB at 20 %, -12 dB at
+/// 60 %, then -24 / -36 / -48 dB at 78 / 89 / 95.5 %, and -60 dB (shown as −∞) at the bottom.
+const FADER_SCALE: [(f32, f32); 6] = [(6.0, 0.0), (-12.0, 0.6), (-24.0, 0.78), (-36.0, 0.89), (-48.0, 0.955), (-60.0, 1.0)];
 pub fn fader_from_db(db: f32) -> f32 {
-    if !db.is_finite() || db <= -72.0 {
+    if !db.is_finite() || db <= -60.0 {
         return 1.0;
     }
     if db >= 6.0 {
@@ -83,7 +85,7 @@ pub fn fader_from_db(db: f32) -> f32 {
 }
 pub fn db_from_fader(f: f32) -> f32 {
     let f = f.clamp(0.0, 1.0);
-    if f >= 0.995 {
+    if f >= 0.999 {
         return f32::NEG_INFINITY;
     }
     for w in FADER_SCALE.windows(2) {
@@ -135,11 +137,11 @@ pub fn track_color(c: ColorIndex) -> [f32; 3] {
 }
 
 /// Colour for a new track: the first palette entry after the last track's colour that no track
-/// uses yet, else the least-used one (the reference's rule; its first track starts at random,
-/// ours at 0).
+/// uses yet, else the least-used one (the reference's rule). The first track is pink, as in the
+/// reference's new projects.
 pub fn next_track_color(p: &Project) -> ColorIndex {
     let n = TRACK_PALETTE.len();
-    let Some(last) = p.tracks.last() else { return ColorIndex(0) };
+    let Some(last) = p.tracks.last() else { return ColorIndex::FIRST };
     let start = last.color.0 as usize % n;
     let used = |c: usize| p.tracks.iter().filter(|t| t.color.0 as usize % n == c).count();
     (1..=n).map(|k| (start + k) % n).find(|&c| used(c) == 0).map_or_else(|| ColorIndex((0..n).min_by_key(|&c| used(c)).unwrap_or(0) as u8), |c| ColorIndex(c as u8))
@@ -1461,9 +1463,11 @@ impl Controller {
                 pan: t.pan,
                 pan_text: mixer::fmt_strip_pan(t.pan).into(),
                 fader: fader_from_db(gain_to_db(t.gain)),
+                gain_text: mixer::fmt_gain(gain_to_db(t.gain)).into(),
             })
             .collect();
         sync_model(&self.strips_model, strips);
+        s.set_master_gain_text(mixer::fmt_gain(gain_to_db(p.master_gain)).into());
         if self.strip_meters_model.row_count() != p.tracks.len() {
             self.strip_meters_model.set_vec(vec![StripMeter { l: 1.0, r: 1.0, peak: "−∞".into() }; p.tracks.len()]);
         }
@@ -1588,8 +1592,10 @@ mod tests {
     }
     #[test]
     fn fader_mapping() {
-        assert!((fader_from_db(0.0) - 0.1126).abs() < 1e-4);
-        assert!((db_from_fader(0.5) + 24.0).abs() < 1e-3);
+        assert!((fader_from_db(0.0) - 0.2).abs() < 1e-4);
+        assert!((fader_from_db(-24.0) - 0.78).abs() < 1e-4);
+        assert!((db_from_fader(0.5) + 9.0).abs() < 1e-3);
+        assert!((db_from_fader(fader_from_db(-30.0)) + 30.0).abs() < 1e-3);
         assert_eq!(fader_from_db(f32::NEG_INFINITY), 1.0);
         assert!(db_from_fader(1.0).is_infinite());
     }

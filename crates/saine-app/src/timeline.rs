@@ -329,6 +329,8 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     let o = &mut dl.over;
     o.push(px.rect(0.0, 0.0, w, RULER_H, rgba(rgb(0x1a1b1e), 1.0)));
     let lw = 1.0 / sc.scale;
+    // One reference px (0.85 units), at least one physical pixel: 2 px on Retina, 1 px at 1x.
+    let mark = 0.85f32.max(lw);
     let bar_px = sc.beats_per_bar * v.px_per_beat;
     let mut label_step = 1i64;
     while (label_step as f64) * bar_px < 24.0 {
@@ -342,14 +344,11 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
             break;
         }
         if b % label_step == 0 {
-            o.push(px.rect(x, 0.0, lw, 16.5, rgba(rgb(0x4c4d4f), 1.0)));
+            o.push(px.rect(x - 0.5 * mark, 0.0, mark, 16.5, rgba(rgb(0x4c4d4f), 1.0)));
         }
-        if bar_px >= 24.0 {
-            for q in 1..(sc.beats_per_bar.round() as i64) {
-                let xq = v.x_of(b as f64 * sc.beats_per_bar + q as f64);
-                let tall = if (q as f64) * 2.0 == sc.beats_per_bar { 4.0 } else { 2.5 };
-                o.push(px.rect(xq, 16.5 - tall, lw, tall, rgba(rgb(0x3a3b3e), 1.0)));
-            }
+        if bar_px >= 24.0 && sc.beats_per_bar.round() as i64 % 2 == 0 {
+            let xq = v.x_of((b as f64 + 0.5) * sc.beats_per_bar);
+            o.push(px.rect(xq - 0.5 * mark, 16.5 - 5.1, mark, 5.1, rgba(rgb(0x38393c), 1.0)));
         }
         b += 1;
     }
@@ -386,7 +385,7 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     // ---- playhead ----
     let phx = v.x_of(sc.playhead_beats);
     if phx >= -1.0 && phx <= w {
-        dl.over.push(px.rect(phx, 0.0, lw, h, rgba(rgb(0x949495), 1.0)));
+        dl.over.push(px.rect(phx - 0.5 * mark, 0.0, mark, h, rgba(rgb(0xb3b3b3), 0.8)));
     }
 }
 
