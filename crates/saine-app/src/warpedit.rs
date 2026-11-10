@@ -34,6 +34,20 @@ pub enum AcDragKind {
     Marker { source: u64 },
     Transient { from: u64, to: u64 },
     Bpm { start: f64 },
+    Transpose { start: i32 },
+}
+
+/// Semitones per point of Transpose drag (the reference app: 48 st over 200 pt).
+const TRANSPOSE_PER_PT: f32 = 48.0 / 200.0;
+
+/// "0 st", "+3 st", "-1.5 st" (whole semitones bare, others to one decimal).
+pub fn format_semitones(st: f64) -> String {
+    let st = (st * 10.0).round() / 10.0;
+    if st == 0.0 {
+        return "0 st".into();
+    }
+    let sign = if st > 0.0 { "+" } else { "" };
+    if st.fract() == 0.0 { format!("{sign}{st:.0} st") } else { format!("{sign}{st:.1} st") }
 }
 
 /// "2x", "0.75x", "1.33x" (the reference app's speed format).
@@ -127,7 +141,7 @@ impl Controller {
     /// first time at the project tempo, so the clip keeps its length.
     fn warp_on(&self, c: &Clip) -> ClipWarp {
         let mut w = c.warp.clone();
-        if !w.enabled && w.is_default() {
+        if !w.enabled && w.tempo_is_default() {
             w.original_bpm = self.project().transport.bpm;
         }
         w.enabled = true;
@@ -163,12 +177,55 @@ impl Controller {
         self.set_clip_warp(c.id, ClipWarp { mode, ..c.warp.clone() }, "Set clip mode");
     }
 
+    /// Transpose can be edited except in Re-pitch, where the pitch follows the speed.
+    pub fn ac_transpose_editable(c: &Clip) -> bool {
+        !(c.warp.enabled && c.warp.mode == WarpMode::Repitch)
+    }
+
+    /// Transpose readout: the clip's semitones, or in Re-pitch the shift its tempo ratio makes.
+    pub fn ac_transpose_text(&self, c: &Clip) -> String {
+        if Self::ac_transpose_editable(c) {
+            return format_semitones(c.warp.transpose as f64);
+        }
+        format_semitones(12.0 * (self.project().transport.bpm * c.warp.speed / c.warp.original_bpm).log2())
+    }
+
+    /// Transpose drag (phase 0 press, 1 move, 2 release): right or up raises,
+    /// 48 st per 200 pt, clamped to -24..=24, one undo step.
+    pub fn ac_transpose_drag(&mut self, phase: i32, dx: f32, dy: f32) {
+        let Some(c) = self.ac_clip().cloned() else { return };
+        self.ui_dirty = true;
+        match phase {
+            0 if Self::ac_transpose_editable(&c) => {
+                let start = c.warp.transpose;
+                self.pr.ac_drag = Some(AcDrag { view: self.pr_view(), clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Transpose { start }, moved: false });
+            }
+            1 => {
+                let Some(d) = self.pr.ac_drag.as_mut() else { return };
+                let AcDragKind::Transpose { start } = d.kind else { return };
+                let st = (start + ((dx - dy) * TRANSPOSE_PER_PT).round() as i32).clamp(-saine_core::warp::MAX_TRANSPOSE, saine_core::warp::MAX_TRANSPOSE);
+                if st == d.warp.transpose {
+                    return;
+                }
+                d.moved = true;
+                d.warp.transpose = st;
+                let (clip, w) = (d.clip, d.warp.clone());
+                self.set_clip_warp(clip, w, "Adjust clip transpose");
+            }
+            _ => {
+                if matches!(self.pr.ac_drag, Some(AcDrag { kind: AcDragKind::Transpose { .. }, .. })) {
+                    self.pr.ac_drag = None;
+                }
+            }
+        }
+    }
+
     /// Original BPM shown in the toolbar (the project tempo until it is set).
     pub fn ac_original_bpm(&self, c: &Clip) -> f64 {
         if let Some(AcDrag { kind: AcDragKind::Bpm { .. }, warp, .. }) = &self.pr.ac_drag {
             return warp.original_bpm;
         }
-        if c.warp.is_default() { self.project().transport.bpm } else { c.warp.original_bpm }
+        if c.warp.tempo_is_default() { self.project().transport.bpm } else { c.warp.original_bpm }
     }
 
     /// Original BPM drag (phase 0 press, 1 move, 2 release): one BPM per point,
@@ -326,7 +383,7 @@ impl Controller {
                         d.moved = d.moved || to != from;
                         d.kind = AcDragKind::Transient { from, to };
                     }
-                    AcDragKind::Bpm { .. } => {}
+                    AcDragKind::Bpm { .. } | AcDragKind::Transpose { .. } => {}
                 }
             }
             _ => {
@@ -365,5 +422,16 @@ mod tests {
         assert_eq!(format_speed(0.75), "0.75x");
         assert_eq!(format_speed(1.333), "1.33x");
         assert_eq!(format_speed(1.0), "1x");
+    }
+
+    #[test]
+    fn semitones_format_like_create() {
+        use super::format_semitones;
+        assert_eq!(format_semitones(0.0), "0 st");
+        assert_eq!(format_semitones(-0.04), "0 st");
+        assert_eq!(format_semitones(3.0), "+3 st");
+        assert_eq!(format_semitones(-12.0), "-12 st");
+        assert_eq!(format_semitones(4.98), "+5 st");
+        assert_eq!(format_semitones(-1.53), "-1.5 st");
     }
 }
