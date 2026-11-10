@@ -53,6 +53,7 @@ struct WarpRender {
     int64_t frames = 0;
     std::vector<float> left;
     std::vector<float> right;
+    std::size_t bytes() const { return (left.capacity() + right.capacity()) * sizeof(float); }
 };
 
 struct WarpClip {
@@ -146,7 +147,8 @@ public:
     // True once since a render finished after the last call (then resolve
     // a fresh copy of the current graph).
     bool take_finished();
-    // Drops renders `current` does not use, beyond the newest kKeepUnused.
+    // Drops the oldest renders `current` does not use until at most
+    // kKeepUnused of them, holding at most kUnusedBytes, remain.
     void evict(const RenderGraph& current);
     // Renders queued or running.
     std::size_t pending() const;
@@ -154,6 +156,7 @@ public:
     void set_enabled(bool enabled);
 
     static constexpr std::size_t kKeepUnused = 32;
+    static constexpr std::size_t kUnusedBytes = std::size_t{512} << 20;
     static constexpr int64_t kMaxFrames = int64_t{48000} * 600; // longer clips always stretch live
 
 private:

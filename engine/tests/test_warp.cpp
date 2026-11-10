@@ -149,6 +149,11 @@ TEST_CASE(warp_rejects_invalid_descriptions) {
     CHECK(try_publish([](WarpSession& s) { s.warp(7, SE_WARP_REPITCH, line(0, 0.0, 1.0, 10)); }) ==
           SE_ERR_INVALID_ARG);
     CHECK(try_publish([](WarpSession& s) { s.slices[0] = {{100.0, 1, {}}, {50.0, 0, {}}}; }) == SE_ERR_INVALID_ARG);
+    // Two clips with the warped id 7 and a warp for a missing clip 8: the counts match, still invalid.
+    CHECK(try_publish([&](WarpSession& s) {
+              s.add(7, a, 1000, 48000);
+              s.warp(8, SE_WARP_STRETCH, line(0, 0.0, 0.9, 48000));
+          }) == SE_ERR_INVALID_ARG);
 }
 
 TEST_CASE(warp_repitch_identity_matches_unwarped_playback) {
