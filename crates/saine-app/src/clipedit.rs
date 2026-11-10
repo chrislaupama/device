@@ -373,7 +373,7 @@ impl Controller {
             Some(_) => None,
             None => {
                 let p = StepPattern::from_notes(&c.notes, c.length, self.seq_rows_for(&c));
-                if c.notes.iter().any(|n| p.rows.contains(n.pitch) && n.start >= p.length()) {
+                if c.length > p.length() || c.notes.iter().any(|n| n.start >= p.length()) {
                     self.set_status(format!("Too long for a step pattern: {} steps at most", saine_core::steps::MAX_STEPS), 3);
                     return;
                 }
