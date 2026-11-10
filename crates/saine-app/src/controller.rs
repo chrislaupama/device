@@ -197,6 +197,8 @@ pub enum JobResult {
     PluginScan(Result<saine_engine::ScanReport, String>),
     /// Transients of an engine asset (warped clips, src/warpedit.rs).
     Onsets { engine_asset: u64, result: Result<Vec<saine_engine::Onset>, String>, tempo: Option<f64> },
+    /// A file clicked in Browser › Files, decoded for the preview voice (src/files.rs).
+    Auditioned { path: PathBuf, result: Result<AssetInfo, String> },
 }
 
 /// Blocking decode + peak analysis. Runs on a worker thread.
@@ -933,6 +935,7 @@ impl Controller {
                 JobResult::TestTone(r) => self.finish_test_tone(r),
                 JobResult::PluginScan(r) => self.finish_plugin_scan(r),
                 JobResult::Onsets { engine_asset, result, tempo } => self.finish_onsets(engine_asset, result, tempo),
+                JobResult::Auditioned { path, result } => self.finish_audition(path, result),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
                     if doc_epoch != self.doc_epoch {
                         if let Ok((info, _)) = result {
@@ -1462,6 +1465,9 @@ impl Controller {
             s.set_metronome_on(self.metronome_on);
         }
 
+        let previewing = self.push_audition(&s);
+        self.files.audition.animating = previewing;
+
         // Meters (master first, then tracks).
         self.engine.peek_meters(&mut self.meters, 256);
         let sel_id = self.selected_track.map(|t| t.0).unwrap_or(u64::MAX);
@@ -1566,7 +1572,7 @@ impl Controller {
         if s.get_recording() != self.rec.recording {
             s.set_recording(self.rec.recording);
         }
-        tp.playing || metering || highlighting || self.pending_jobs > 0 || self.drag.is_some() || self.pr_animating() || self.rec.recording || self.test_tone_active()
+        tp.playing || previewing || metering || highlighting || self.pending_jobs > 0 || self.drag.is_some() || self.pr_animating() || self.rec.recording || self.test_tone_active()
     }
 
     fn push_models(&mut self, app: &AppWindow) {

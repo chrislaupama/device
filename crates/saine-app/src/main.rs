@@ -137,6 +137,8 @@ struct Args {
     /// an empty projects folder (compare z100-browser-files-projects.png), with a generated
     /// "audio" folder of two WAVs open (compare z100-files-audio-folder-expanded.png), and with a
     /// saved project open to its tracks, audio files and MIDI clips (no reference).
+    /// review-files-preview: the audio folder with sine-a440-pulsed.wav playing in the preview
+    /// bar (compare z100-files-row-preview-playing.png).
     /// review-files-sort: the audio folder with the sort menu open.
     files_review: u8,
     /// review-section-added / review-sections-two: one new 8-bar section (compare
@@ -332,8 +334,9 @@ fn parse_args() -> Result<Args, String> {
                         "review-files-projects" => 1,
                         "review-files-folders" => 2,
                         "review-files-project" => 3,
+                        "review-files-preview" => 4,
                         "review-files-sort" => 5,
-                        _ => return Err(format!("unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project, review-files-sort)")),
+                        _ => return Err(format!("unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project, review-files-preview, review-files-sort)")),
                     };
                 }
                 "review-automation" => {
@@ -1018,10 +1021,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.browser_section(files::SECTION_FILES);
             c.files_tab(files::TAB_PROJECTS);
             c.files_expand(files::FileItem::Project(song));
-        } else if args.files_review == 2 || args.files_review == 5 {
+        } else if args.files_review >= 2 {
             c.files_add_folder(&audio);
-            c.files_expand(files::FileItem::Folder(audio));
+            c.files_expand(files::FileItem::Folder(audio.clone()));
             c.files.sort_open = args.files_review == 5;
+            if args.files_review == 4 {
+                // Preview of the pulsed file, shown 30 % in (no audio device: the voice never advances).
+                let path = audio.join("sine-a440-pulsed.wav");
+                let loaded = c.engine.load_file(&path).map_err(|e| e.to_string());
+                c.files.selected = Some(path.to_string_lossy().into_owned());
+                c.files.audition.loading = Some(path.clone());
+                c.finish_audition(path, loaded);
+                if let Some((id, frames)) = c.files.audition.asset {
+                    c.audition_play(id, frames * 3 / 10);
+                }
+            }
         } else {
             c.browser_section(files::SECTION_FILES);
             c.files_tab(files::TAB_PROJECTS);
@@ -1519,6 +1533,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_files_activate, |c, i: i32| c.files_activate(i.max(0) as usize));
     on!(on_files_drag, |c, i: i32, phase: i32, x: f32, y: f32| c.files_drag(i.max(0) as usize, phase, x, y));
     on!(on_files_scroll_by, |c, dy: f32| c.files_scroll_by(dy));
+    on!(on_preview_toggle, |c| c.audition_toggle());
+    on!(on_preview_step, |c, dir: i32| c.audition_step(dir));
+    on!(on_preview_volume_moved, |c, p: f32| c.audition_volume(p));
+    on!(on_preview_volume_done, |c| c.save_prefs());
+    on!(on_preview_solo_toggle, |c| c.audition_solo());
+    on!(on_preview_reveal, |c| c.audition_reveal());
     {
         // The folder dialog runs with the controller NOT borrowed (its modal loop keeps rendering).
         let ctl = ctl.clone();
@@ -2013,7 +2033,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         f.slint.0.push((now - t).as_secs_f64() * 1e3);
                     }
                     let (animating, ready) = match ctl.try_borrow() {
-                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || !c.assistant.highlights.is_empty() || c.rec.recording, c.pending_jobs == 0 && want_menu.is_none_or(|m| c.pr.menu == m)),
+                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || c.files.audition.animating || !c.assistant.highlights.is_empty() || c.rec.recording, c.pending_jobs == 0 && want_menu.is_none_or(|m| c.pr.menu == m)),
                         Err(_) => (true, false),
                     };
                     if ready {
