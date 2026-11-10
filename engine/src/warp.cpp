@@ -553,14 +553,23 @@ void WarpRenderer::evict(const RenderGraph& current) {
     // Queued renders nothing plays any more (a tempo drag publishes many maps).
     std::erase_if(queue_, [&](const auto& j) { return used.find(j->key) == used.end(); });
     std::vector<std::pair<uint64_t, uint64_t>> unused; // (generation, key)
+    std::size_t unused_bytes = 0;
     for (const auto& [key, r] : done_)
-        if (used.find(key) == used.end()) unused.emplace_back(last_used_[key], key);
-    if (unused.size() <= kKeepUnused) return;
+        if (used.find(key) == used.end()) {
+            unused.emplace_back(last_used_[key], key);
+            unused_bytes += r->bytes();
+        }
     std::sort(unused.begin(), unused.end());
-    for (std::size_t i = 0; i + kKeepUnused < unused.size(); ++i) {
+    for (std::size_t i = 0; i < unused.size() && (unused.size() - i > kKeepUnused || unused_bytes > kUnusedBytes); ++i) {
+        unused_bytes -= done_[unused[i].second]->bytes();
         done_.erase(unused[i].second);
-        last_used_.erase(unused[i].second);
     }
+    // Generations of keys that are neither rendered, queued nor rendering.
+    std::erase_if(last_used_, [&](const auto& kv) {
+        const uint64_t key = kv.first;
+        return done_.find(key) == done_.end() && key != in_flight_ &&
+               std::none_of(queue_.begin(), queue_.end(), [&](const auto& j) { return j->key == key; });
+    });
 }
 
 std::size_t WarpRenderer::pending() const {
