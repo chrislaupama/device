@@ -247,6 +247,7 @@ impl Keymap {
                 b("track.add_instrument", &["primary+shift+t"], Always),
                 b("track.mute", &["m"], TrackSelected),
                 b("track.solo", &["s"], TrackSelected),
+                b("file.new", &["primary+n"], Always),
                 b("file.save", &["primary+s"], Always),
                 b("file.save_as", &["primary+shift+s"], Always),
                 b("file.open", &["primary+o"], Always),

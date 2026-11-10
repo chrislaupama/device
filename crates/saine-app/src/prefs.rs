@@ -52,6 +52,9 @@ pub struct Preferences {
     /// Interface zoom in percent (View › Zoom In / Out / Reset); 0 = default (100).
     #[serde(default)]
     pub interface_zoom: u32,
+    /// Browser › Files › Folders: folders the user added, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub browser_folders: Vec<String>,
 }
 
 /// The app's support directory (see the module docs), shared by the preferences
@@ -112,7 +115,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("saine-prefs-test-{}", std::process::id()));
         let path = dir.join("preferences.json");
         assert_eq!(load(&path).unwrap(), None);
-        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110 };
+        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110, browser_folders: vec!["/tmp/kit".into()] };
         save(&path, &p).unwrap();
         assert_eq!(load(&path).unwrap(), Some(p.clone()));
         assert!(p.audio.is_custom());

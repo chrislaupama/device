@@ -663,6 +663,18 @@ impl Controller {
 
     /// Graph pointer events (Studio.panel-graph). zone -1: hit-test the well; else a pill's zone.
     #[allow(clippy::too_many_arguments)]
+    /// Right press on a canvas well: the parameter menu (modulate, map to a macro) of the
+    /// handle under the pointer, as a right press on its knob opens.
+    pub fn panel_graph_menu(&mut self, device: DeviceId, x: f32, y: f32, wx: f32, wy: f32) {
+        let param = match self.graph_def(device) {
+            Some((d, def, kind)) => self.graph_hit(d, def, kind, x, y).and_then(|z| z.params(kind).iter().find_map(|id| def.index_of(id))),
+            None => self.field_param_at(device, x, y),
+        };
+        if let Some(p) = param {
+            self.mod_menu(device, p as i32, wx, wy);
+        }
+    }
+
     pub fn panel_graph(&mut self, device: DeviceId, phase: i32, x: f32, y: f32, fine: bool, alt: bool) {
         let Some((d, def, kind)) = self.graph_def(device) else {
             if matches!(phase, 2 | 3) && self.devices.panel.graph.drag.take().is_some() {

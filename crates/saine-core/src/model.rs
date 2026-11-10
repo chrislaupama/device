@@ -26,6 +26,22 @@ pub struct ClipId(pub u64);
 #[serde(transparent)]
 pub struct AssetId(pub u64);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SectionId(pub u64);
+
+/// A named, coloured arrangement range. Like the reference's sections, they tile the
+/// timeline from bar 1 in list order: a section starts where the previous one ends.
+/// Labels only: editing sections never moves clips.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Section {
+    pub id: SectionId,
+    pub name: String,
+    /// 0xRRGGBB (the reference's section palette, before display tinting).
+    pub color: u32,
+    pub length: Ticks,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrackKind {
@@ -190,6 +206,9 @@ pub struct Project {
     /// user dragged the splitter; absent kinds use the default height. Not an undo step.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub bottom_panel_heights: std::collections::BTreeMap<String, f32>,
+    /// Arrangement sections in timeline order (see [Section]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<Section>,
 }
 
 impl Default for Project {
@@ -212,6 +231,7 @@ impl Default for Project {
             next_id: 1,
             master_automation: Vec::new(),
             bottom_panel_heights: Default::default(),
+            sections: Vec::new(),
         };
         let a = p.alloc_id();
         p.tracks.push(Track::new(TrackId(a), TrackKind::Audio, "Audio", ColorIndex::FIRST));
@@ -251,6 +271,15 @@ impl Project {
 
     pub fn track_mut(&mut self, id: TrackId) -> Option<&mut Track> {
         self.tracks.iter_mut().find(|t| t.id == id)
+    }
+
+    pub fn section_index(&self, id: SectionId) -> Option<usize> {
+        self.sections.iter().position(|s| s.id == id)
+    }
+
+    /// Start of section `i` (the sum of the lengths before it).
+    pub fn section_start(&self, i: usize) -> Ticks {
+        self.sections[..i.min(self.sections.len())].iter().map(|s| s.length).sum()
     }
 
     pub fn track_index(&self, id: TrackId) -> Option<usize> {

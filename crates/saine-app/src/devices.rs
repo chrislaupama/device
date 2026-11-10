@@ -675,7 +675,7 @@ impl Controller {
     /// (`SetInstrumentPlugin`; the built-in Synth sets None). One undo step.
     pub fn add_item_to_track(&mut self, item: &Item, track: TrackId, index: Option<usize>) -> bool {
         let Some(t) = self.project().track(track) else { return false };
-        let (kind, has_plugin) = (t.kind, t.instrument_plugin.as_ref().is_some_and(|d| !is_builtin_synth(d)));
+        let (kind, has_synth) = (t.kind, t.instrument_plugin.as_ref().is_some_and(is_builtin_synth));
         let ok = match (item.kind(), item) {
             (PluginKind::Effect, Item::Plugin(p)) => self.execute(Command::AddDevice { track, index, device: Device::new(p.clone()) }),
             (PluginKind::Effect, Item::Builtin(d)) => self.execute(Command::AddDevice { track, index, device: d.instantiate() }),
@@ -684,7 +684,7 @@ impl Controller {
                 false
             }
             (PluginKind::Instrument, Item::BuiltinSynth) => {
-                if !has_plugin {
+                if has_synth {
                     self.set_status("The built-in Synth is already this track's instrument", 3);
                     false
                 } else {
@@ -737,15 +737,18 @@ impl Controller {
     // ---------------------------------------------------------------- browser tree
 
     pub fn browser_tab(&mut self, i: usize) {
-        self.devices.tab = i.min(2);
-        self.devices.tree_scroll = 0.0;
-        self.devices.selected = None;
-        self.ui_dirty = true;
+        self.browser_visit(crate::files::Loc { section: crate::files::SECTION_DEVICES, tab: i.min(2) });
     }
 
+    /// The search field filters the open section.
     pub fn browser_search(&mut self, text: &str) {
-        self.devices.search = text.to_string();
-        self.devices.tree_scroll = 0.0;
+        if self.files.section == crate::files::SECTION_FILES {
+            self.files.search = text.to_string();
+            self.files.scroll = 0.0;
+        } else {
+            self.devices.search = text.to_string();
+            self.devices.tree_scroll = 0.0;
+        }
         self.ui_dirty = true;
     }
 
@@ -842,7 +845,7 @@ impl Controller {
         None
     }
 
-    fn track_rect(&self, t: TrackId) -> Option<(f32, f32, f32, f32)> {
+    pub(crate) fn track_rect(&self, t: TrackId) -> Option<(f32, f32, f32, f32)> {
         let l = self.layout();
         let i = self.project().track_index(t)?;
         let y = 78.0 + 66.5 + self.view.track_offset(i) - l.scroll_y;
@@ -863,7 +866,8 @@ impl Controller {
         let synth = self.synth_track().is_some();
         let mut out = Vec::new();
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else { return (out, ADD_X_ALONE, synth) };
-        let mut x = CHAIN_X0 + if synth { SYNTH_W + CARD_GAP } else { 0.0 };
+        let synth_folded = synth && t.instrument_plugin.as_ref().is_some_and(|d| d.folded);
+        let mut x = CHAIN_X0 + if !synth { 0.0 } else if synth_folded { crate::device_mod::FOLDED_W + CARD_GAP } else { SYNTH_W + CARD_GAP };
         // The built-in Synth is drawn by its own card (src/synth.rs).
         let inst = if t.kind == TrackKind::Instrument { t.instrument_plugin.as_ref().filter(|d| !is_builtin_synth(d)) } else { None };
         let inserts = t.devices.iter().enumerate().map(|(i, d)| (Some(i), d, false));
@@ -1021,7 +1025,7 @@ impl Controller {
     /// Instrument card "Use built-in Synth".
     pub fn device_use_synth(&mut self) {
         let Some(t) = self.selected_track else { return };
-        if self.project().track(t).is_some_and(|t| t.instrument_plugin.as_ref().is_some_and(|d| !is_builtin_synth(d))) {
+        if self.project().track(t).is_some_and(|t| !t.instrument_plugin.as_ref().is_some_and(is_builtin_synth)) {
             self.add_item_to_track(&Item::BuiltinSynth, t, None);
         }
     }
@@ -1240,7 +1244,7 @@ impl Controller {
         self.devices.entries = entries;
         sync_model(&self.tree_model, rows);
         s.set_browser_tab(self.devices.tab as i32);
-        if s.get_browser_search().as_str() != self.devices.search {
+        if self.files.section == crate::files::SECTION_DEVICES && s.get_browser_search().as_str() != self.devices.search {
             s.set_browser_search(self.devices.search.clone().into());
         }
         s.set_tree_scroll(self.devices.tree_scroll);
@@ -1326,6 +1330,16 @@ impl Controller {
             }
         }
         sync_model(&self.cards_model, cards);
+        {
+            let fields = &self.devices.panel.fields;
+            let mut washes = fields.washes.borrow_mut();
+            let n = washes.len();
+            washes.retain(|id, _| self.project().device(*id).is_some());
+            if fields.washes_dirty.replace(false) || washes.len() != n {
+                let rows: Vec<crate::PanelWash> = washes.iter().map(|(id, w)| crate::PanelWash { device: id.0 as i32, img: w.img.clone(), x: w.rect[0], y: w.rect[1], w: w.rect[2], h: w.rect[3] }).collect();
+                s.set_field_washes(slint::ModelRc::from(std::rc::Rc::new(slint::VecModel::from(rows))));
+            }
+        }
         // Device windows: built-in cards opened from their header stay up across track changes
         // (as plugin windows do) and close with their device.
         let gone: Vec<DeviceId> = self.devices.windows.iter().copied().filter(|id| self.project().device(*id).is_none()).collect();

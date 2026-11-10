@@ -393,6 +393,8 @@ fn factory_values(n: usize) -> Vec<f32> {
 fn synth_steps() -> Vec<Step> {
     let bright_low = Rc::new(Cell::new(-1f32));
     let bright_low2 = bright_low.clone();
+    let fold_hist = Rc::new(Cell::new(0usize));
+    let fold_hist2 = fold_hist.clone();
     use Step::*;
     #[derive(Default)]
     struct Rec {
@@ -404,8 +406,8 @@ fn synth_steps() -> Vec<Step> {
     }
     let rec = Rc::new(RefCell::new(Rec::default()));
     let r = |n: usize| -> Vec<Rc<RefCell<Rec>>> { (0..n).map(|_| rec.clone()).collect() };
-    let rs = r(17);
-    let [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16] = <[Rc<RefCell<Rec>>; 17]>::try_from(rs).ok().unwrap();
+    let rs = r(18);
+    let [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r16b] = <[Rc<RefCell<Rec>>; 18]>::try_from(rs).ok().unwrap();
     // One new undo step with this label since the last record; re-records.
     fn one_step(rc: &Rc<RefCell<Rec>>, c: &Controller, label: &str) -> Result<(), String> {
         let n = c.doc.history_labels().len();
@@ -439,7 +441,7 @@ fn synth_steps() -> Vec<Step> {
             ok.then_some(()).ok_or(format!("visible {} tab {} page {}", s.get_synth_visible(), s.get_bottom_tab(), s.get_synth_page()))
         })),
         Do("click preset ›", Box::new(|a| {
-            let (x, y) = synth_xy(726.5, 13.0);
+            let (x, y) = synth_xy(crate::devices::SYNTH_W - 45.0, 16.0);
             click(a, x, y);
         })),
         Check("synth: preset › loaded the first factory sound in one undo step", Box::new(move |c, a| {
@@ -449,7 +451,7 @@ fn synth_steps() -> Vec<Step> {
             (v == factory_values(0) && name.as_deref() == Some(want) && a.global::<Studio>().get_synth_preset() == want).then_some(()).ok_or(format!("preset {name:?}"))
         })),
         Do("click the preset name, pick the 4th sound in the list", Box::new(|a| {
-            let (x, y) = synth_xy(690.0, 13.0);
+            let (x, y) = synth_xy(crate::devices::SYNTH_W - 74.0, 16.0);
             click(a, x, y);
             let (x, y) = synth_menu_row(a, 4);
             click(a, x, y);
@@ -639,6 +641,44 @@ fn synth_steps() -> Vec<Step> {
             let start = r16.borrow().start.clone().ok_or("no record")?;
             (inst_synth(c).as_ref() == Some(&start)).then_some(()).ok_or(format!("preset {:?}", inst_synth(c).map(|p| p.1)))
         })),
+        DoC("click the Synth header's fold button", Box::new(move |a, ctl| {
+            fold_hist.set(ctl.borrow().doc.history_labels().len());
+            let (x, y) = synth_xy(crate::devices::SYNTH_W - 27.5, 16.0);
+            click(a, x, y);
+        })),
+        Check("synth: folds to the 30 pt strip in one undo step", Box::new(move |c, a| {
+            let card = a.global::<Studio>().get_synth_card();
+            let n = c.doc.history_labels().len();
+            (n == fold_hist2.get() + 1 && card.folded && card.width == crate::device_mod::FOLDED_W).then_some(()).ok_or(format!("history {} -> {n}, folded {} width {}", fold_hist2.get(), card.folded, card.width))
+        })),
+        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("synth: undo unfolds it to full width", Box::new(move |_, a| {
+            let card = a.global::<Studio>().get_synth_card();
+            (!card.folded && card.width == crate::devices::SYNTH_W).then_some(()).ok_or(format!("folded {} width {}", card.folded, card.width))
+        })),
+        Do("click the Synth header's remove button", Box::new(|a| {
+            let (x, y) = synth_xy(crate::devices::SYNTH_W - 9.5, 16.0);
+            click(a, x, y);
+        })),
+        Check("synth: removed, the slot is empty", Box::new(|c, a| {
+            (c.synth_device().is_none() && !a.global::<Studio>().get_synth_visible()).then_some(()).ok_or("the Synth is still there".to_string())
+        })),
+        DoC("choose Synth for the empty slot", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = c.selected_track.expect("selected track");
+            c.add_item_to_track(&crate::devices::Item::BuiltinSynth, t, None);
+        })),
+        Check("synth: choosing Synth restores it", Box::new(|c, a| {
+            (c.synth_device().is_some() && a.global::<Studio>().get_synth_visible()).then_some(()).ok_or("no Synth".to_string())
+        })),
+        Do("Cmd+Z x2 (add, remove)", Box::new(|a| {
+            key(a, "z", true, false);
+            key(a, "z", true, false);
+        })),
+        Check("synth: undo brings back the original Synth", Box::new(move |c, _| {
+            let start = r16b.borrow().start.clone().ok_or("no record")?;
+            (inst_synth(c).as_ref() == Some(&start)).then_some(()).ok_or(format!("preset {:?}", inst_synth(c).map(|p| p.1)))
+        })),
     ]
 }
 
@@ -723,10 +763,54 @@ fn steps() -> Vec<Step> {
         })),
         Do("click M on track 1", Box::new(|a| click(a, 262.65 + 33.5, TRACK0_Y + 47.0))),
         Check("track 1 muted (SetTrackMute)", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("not muted".into()))),
-        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("Edit menu names the edit: Undo Mute Change enabled", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_undo_text() == "Undo Mute Change" && s.get_can_undo()).then_some(()).ok_or(format!("{:?} {}", s.get_undo_text(), s.get_can_undo()))
+        })),
+        Do("Cmd+Z (Edit › Undo shortcut, replayed by the menu)", Box::new(|a| key(a, "z", true, false))),
         Check("undo restored mute=false", Box::new(|c, _| (!c.project().tracks[0].mute).then_some(()).ok_or("still muted".into()))),
+        Check("Edit menu: Redo Mute Change enabled", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_redo_text() == "Redo Mute Change" && s.get_can_redo()).then_some(()).ok_or(format!("{:?} {}", s.get_redo_text(), s.get_can_redo()))
+        })),
         Do("Cmd+Shift+Z", Box::new(|a| key(a, "Z", true, true))),
         Check("redo muted again", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("redo failed".into()))),
+        Do("⇧⌘E (file.export_audio)", Box::new(|a| key(a, "E", true, true))),
+        Check("export dialog open with a range and a size estimate", Box::new(|_c, a| {
+            let s = a.global::<Studio>();
+            (s.get_export_open() && s.get_export_bars_text().starts_with("Bars 1–") && s.get_export_estimate().contains("MB"))
+                .then_some(())
+                .ok_or(format!("open {} bars {} est {}", s.get_export_open(), s.get_export_bars_text(), s.get_export_estimate()))
+        })),
+        DoC("export into a temp folder: click Export", Box::new(|a, ctl| {
+            {
+                let mut c = ctl.borrow_mut();
+                c.export.dir = std::env::temp_dir().join(format!("saine-selftest-export-{}", std::process::id()));
+                c.export.name = "mix".into();
+            }
+            // Export window centred in the 1440 x 820 window: 442 x 340.4, Export button 52.2 x 22.1.
+            click(a, (1440.0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (820.0 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
+        })),
+        Check("mix.wav written: stereo 24-bit at the engine rate, the full length, not silent; dialog closed", Box::new(|c, a| {
+            let path = c.export.dir.join("mix.wav");
+            let (rate, ch, s) = crate::wavgen::read_wav(&path)?;
+            let _ = std::fs::remove_dir_all(&c.export.dir);
+            let peak = s.iter().fold(0f32, |m, v| m.max(v.abs()));
+            let frames = s.len() / 2;
+            (rate as f64 == c.engine.sample_rate() && ch == 2 && frames as u64 == c.export_frames() && peak > 0.01 && !a.global::<Studio>().get_export_open())
+                .then_some(())
+                .ok_or(format!("rate {rate} ch {ch} frames {frames} vs {} peak {peak}", c.export_frames()))
+        })),
+        Do("⌘N (file.new) with unsaved changes", Box::new(|a| key(a, "n", true, false))),
+        Check("Save changes? prompt open, project untouched", Box::new(|c, a| {
+            let n: usize = c.project().tracks.iter().map(|t| t.clips.len()).sum();
+            (a.global::<Studio>().get_unsaved_open() && n == 2).then_some(()).ok_or(format!("prompt {} clips {n}", a.global::<Studio>().get_unsaved_open()))
+        })),
+        Do("Escape (Cancel)", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("prompt closed, project kept", Box::new(|c, a| {
+            let n: usize = c.project().tracks.iter().map(|t| t.clips.len()).sum();
+            (!a.global::<Studio>().get_unsaved_open() && !c.unsaved_open && n == 2).then_some(()).ok_or(format!("clips {n}"))
+        })),
         Do("drag track 1 volume slider left", Box::new(|a| drag(a, 262.65 + 115.7 + 5.95 + 0.8 * 56.1, TRACK0_Y + 47.6, 262.65 + 140.0, TRACK0_Y + 47.6))),
         Check("track 1 gain lowered, one coalesced undo step", Box::new(|c, _| {
             let g = c.project().tracks[0].gain;
@@ -809,6 +893,16 @@ fn steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("ac {} pr {} gain {} bars {}", s.get_ac_visible(), s.get_pr_visible(), s.get_ac_gain_text(), s.get_pr_bar_labels().row_count()))
         })),
+        Check("audio clip editor draws the clip waveform across the clip", Box::new(|c, _| {
+            let sc = c.pr_scene(1.0, &[]).ok_or("no clip editor scene")?;
+            let mut dl = crate::gpu::DrawList::default();
+            crate::pianoroll::build(&mut dl, &sc);
+            let (x0, x1) = (sc.view.x_of(sc.range.0), sc.view.x_of(sc.range.1).min(sc.view.w));
+            let span = dl.waves.iter().map(|w| w.rect[2]).sum::<f32>();
+            (dl.waves.len() == 1 && (span - (x1 - x0)).abs() <= 1.0)
+                .then_some(())
+                .ok_or(format!("waves {} span {span} want {}", dl.waves.len(), x1 - x0))
+        })),
         // ---- warp (SAIN-38): Speed / Warp / Mode menus, Original BPM drag, a warp marker ----
         DoC("warp: Warp menu -> On", Box::new(|a, ctl| {
             ctl.borrow_mut().clip_menu_open(1);
@@ -873,6 +967,16 @@ fn steps() -> Vec<Step> {
             (clip.warp.markers.len() == 2 && beats.len() == 2 && beats[0].abs() < 1e-6 && (beats[1] - 1.0).abs() < 0.05 && c.doc.undo_label() == Some("Add warp marker"))
                 .then_some(())
                 .ok_or(format!("markers {:?} beats {beats:?}", clip.warp.markers))
+        })),
+        Check("the clip editor waveform bends at the warp marker", Box::new(|c, _| {
+            let sc = c.pr_scene(1.0, &[]).ok_or("no clip editor scene")?;
+            let segs = sc.wave.as_ref().map(|w| w.1.clone()).unwrap_or_default();
+            let marker = c.ac_marker_beats().get(1).copied().unwrap_or(f64::NAN);
+            let mut dl = crate::gpu::DrawList::default();
+            crate::pianoroll::build(&mut dl, &sc);
+            (segs.len() == 2 && dl.waves.len() == 2 && (segs[0].beats.1 - marker).abs() < 1e-6 && dl.waves[0].rect[0] + dl.waves[0].rect[2] == dl.waves[1].rect[0])
+                .then_some(())
+                .ok_or(format!("segs {segs:?} marker {marker} waves {}", dl.waves.len()))
         })),
         DoC("warp: Warp menu -> Off", Box::new(|a, ctl| {
             ctl.borrow_mut().clip_menu_open(1);
@@ -4355,6 +4459,288 @@ fn splitter_steps() -> Vec<Step> {
     ]
 }
 
+/// Window centre of Browser › Files row `i` (rows as pushed to the UI).
+fn files_row_xy(a: &AppWindow, i: usize) -> Option<(f32, f32)> {
+    let s = a.global::<Studio>();
+    let r = s.get_files().row_data(i)?;
+    Some((120.0, 78.2 + s.get_files_list_y() + 0.5 + r.y - s.get_files_scroll() + r.h / 2.0))
+}
+
+fn files_labels(a: &AppWindow) -> Vec<String> {
+    let m = a.global::<Studio>().get_files();
+    (0..m.row_count()).filter_map(|i| m.row_data(i)).map(|r| r.label.to_string()).collect()
+}
+
+fn files_row_of(a: &AppWindow, label: &str) -> Option<usize> {
+    let m = a.global::<Studio>().get_files();
+    (0..m.row_count()).find(|&i| m.row_data(i).is_some_and(|r| r.kind == 0 && r.label == label))
+}
+
+/// Browser sections, Back / Forward, and Files › Folders and Projects on generated files.
+fn files_steps() -> Vec<Step> {
+    use crate::files::{SECTION_DEVICES, SECTION_FILES, TAB_FOLDERS, TAB_PROJECTS};
+    use Step::*;
+    let root = std::env::temp_dir().join(format!("saine-selftest-files-{}", std::process::id()));
+    let kit = root.join("kit");
+    let (r1, k1, k2) = (root.clone(), kit.clone(), kit.clone());
+    let tracks = Rc::new(Cell::new(0usize));
+    let (t1, t2, t3, t4) = (tracks.clone(), tracks.clone(), tracks.clone(), tracks.clone());
+    vec![
+        DoC("files: generated projects folder and sample folder; Devices section", Box::new(move |_, ctl| {
+            let _ = std::fs::remove_dir_all(&r1);
+            let _ = std::fs::create_dir_all(k1.join("loops"));
+            let _ = std::fs::create_dir_all(r1.join("Projects"));
+            let _ = crate::wavgen::write_wav(&k1.join("kick.wav"), 48_000, 1, &crate::wavgen::sine_bursts(48_000));
+            let mut c = ctl.borrow_mut();
+            c.files.projects_dir = Some(r1.join("Projects"));
+            c.browser_section(SECTION_DEVICES);
+            t1.set(c.project().tracks.len());
+        })),
+        Do("files: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
+        Do("files: click the Files section tab", Box::new(|a| click(a, 150.0, 92.0))),
+        Check("files: Files › Projects is empty, Back is enabled", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let ok = c.files.section == SECTION_FILES && c.files.tab == TAB_PROJECTS && s.get_browser_can_back() && !s.get_browser_can_forward() && s.get_files_empty_title() == "No projects yet" && s.get_files_meta() == "";
+            ok.then_some(()).ok_or(format!("section {} tab {} title {:?}", c.files.section, c.files.tab, s.get_files_empty_title()))
+        })),
+        Do("files: click the Folders sub-tab", Box::new(|a| click(a, 76.0, 144.7))),
+        Check("files: Folders is empty with its hint", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.files.tab == TAB_FOLDERS && s.get_files_empty_title() == "No folders yet").then_some(()).ok_or(format!("tab {} title {:?}", c.files.tab, s.get_files_empty_title()))
+        })),
+        DoC("files: add the sample folder", Box::new(move |_, ctl| ctl.borrow_mut().files_add_folder(&k2))),
+        Check("files: one folder row and the count row", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (files_labels(a) == ["kit"] && s.get_files_meta() == "1 folder" && s.get_files_sort() == "Recent").then_some(()).ok_or(format!("{:?} {:?}", files_labels(a), s.get_files_meta()))
+        })),
+        DoC("files: click the folder row", Box::new(|a, _| {
+            let Some((x, y)) = files_row_xy(a, 0) else { return };
+            click(a, x, y);
+        })),
+        Check("files: the folder opens to its subfolder and WAV", Box::new(|_, a| {
+            let m = a.global::<Studio>().get_files();
+            let wav = (0..m.row_count()).filter_map(|i| m.row_data(i)).find(|r| r.label == "kick.wav");
+            let ok = files_labels(a) == ["kit", "loops", "kick.wav"] && wav.is_some_and(|r| r.depth == 1 && r.detail == "wav") && a.global::<Studio>().get_files_guides().row_count() == 1;
+            ok.then_some(()).ok_or(format!("{:?}", files_labels(a)))
+        })),
+        Do("files: Back (chevron)", Box::new(|a| click(a, 229.5, 91.2))),
+        Check("files: Back returns to Projects with Forward enabled", Box::new(|c, a| {
+            (c.files.section == SECTION_FILES && c.files.tab == TAB_PROJECTS && a.global::<Studio>().get_browser_can_forward()).then_some(()).ok_or(format!("section {} tab {}", c.files.section, c.files.tab))
+        })),
+        Do("files: Back again", Box::new(|a| click(a, 229.5, 91.2))),
+        Check("files: Back reaches Devices", Box::new(|c, a| {
+            (c.files.section == SECTION_DEVICES && a.global::<Studio>().get_browser_section() == SECTION_DEVICES as i32).then_some(()).ok_or(format!("section {}", c.files.section))
+        })),
+        DoC("files: Forward, then the Devices › Effects sub-tab", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.browser_forward();
+            c.browser_tab(1);
+        })),
+        Check("files: a new location drops the Forward entries", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.files.section == SECTION_DEVICES && c.devices.tab == 1 && !s.get_browser_can_forward() && s.get_browser_can_back()).then_some(()).ok_or(format!("section {} tab {}", c.files.section, c.devices.tab))
+        })),
+        DoC("files: Folders again, search \"KICK\"", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.browser_tab(0);
+            c.files_tab(TAB_FOLDERS);
+            c.browser_search("KICK");
+        })),
+        Check("files: search keeps the folder and its match only", Box::new(|c, a| {
+            let shown = a.global::<Studio>().get_browser_search();
+            let ok = files_labels(a) == ["kit", "kick.wav"] && shown == "KICK" && c.files.search == "KICK";
+            ok.then_some(()).ok_or(format!("{:?} field {shown:?} devices {:?}", files_labels(a), c.devices.search))
+        })),
+        DoC("files: clear the search; double-click kick.wav", Box::new(|a, ctl| {
+            ctl.borrow_mut().browser_search("");
+            ctl.borrow_mut().update_ui(a);
+            let Some(i) = files_row_of(a, "kick.wav") else { return };
+            let Some((x, y)) = files_row_xy(a, i) else { return };
+            double_click(a, x, y);
+        })),
+        Check("files: the WAV lands on a new audio track", Box::new(move |c, _| {
+            let p = c.project();
+            let last = p.tracks.last();
+            let ok = p.tracks.len() == t2.get() + 1 && last.is_some_and(|t| t.kind == TrackKind::Audio && t.clips.first().is_some_and(|k| k.name == "kick"));
+            ok.then_some(()).ok_or(format!("{} tracks (was {})", p.tracks.len(), t2.get()))
+        })),
+        DoC("files: undo; save the project into the projects folder; open Projects", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.undo();
+            let dir = c.files.projects_dir.clone().unwrap_or_default().join("Song.saineproj");
+            c.save_to(&dir);
+            c.files_tab(TAB_PROJECTS);
+        })),
+        Check("files: the saved project is listed", Box::new(|_, a| {
+            (files_labels(a) == ["Song"] && a.global::<Studio>().get_files_meta() == "1 project").then_some(()).ok_or(format!("{:?}", files_labels(a)))
+        })),
+        DoC("files: open the project with its chevron", Box::new(|a, _| {
+            let Some((_, y)) = files_row_xy(a, 0) else { return };
+            click(a, 5.0 + 10.2 + 4.0, y);
+        })),
+        Check("files: the project lists its tracks and MIDI clips", Box::new(|_, a| {
+            let l = files_labels(a);
+            (l.first().map(String::as_str) == Some("Song") && l.contains(&"Tracks".to_string()) && files_row_of(a, "Instrument").is_some()).then_some(()).ok_or(format!("{l:?}"))
+        })),
+        DoC("files: double-click the project's Instrument track", Box::new(move |a, ctl| {
+            t3.set(ctl.borrow().project().tracks.len());
+            let Some(i) = files_row_of(a, "Instrument") else { return };
+            let Some((x, y)) = files_row_xy(a, i) else { return };
+            double_click(a, x, y);
+        })),
+        Check("files: the track is added as a new track (one undo step)", Box::new(move |c, _| {
+            let p = c.project();
+            let ok = p.tracks.len() == t4.get() + 1 && p.tracks.last().is_some_and(|t| t.kind == TrackKind::Instrument) && c.doc.undo_label() == Some("Add Track");
+            ok.then_some(()).ok_or(format!("{} tracks, undo {:?}", p.tracks.len(), c.doc.undo_label()))
+        })),
+        DoC("files: undo; back to Devices; forget the folder", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.undo();
+            c.settings.prefs.browser_folders.clear();
+            c.browser_section(SECTION_DEVICES);
+            c.project_dir = None;
+            let _ = std::fs::remove_dir_all(&root);
+        })),
+    ]
+}
+
+/// Section lane under the loop strip (appended last; clears its sections at the end).
+fn section_steps() -> Vec<Step> {
+    use Step::*;
+    use saine_core::SectionId;
+    // Lane-local (x, y) → window: the lanes start at LANE_X, their ruler at TRACK0_Y - RULER_H.
+    const LANE_Y0: f32 = TRACK0_Y - crate::timeline::RULER_H;
+    const ROW_Y: f32 = LANE_Y0 + 31.8;
+    fn bar_x(c: &Controller, bar: f64) -> f32 {
+        let bpb = c.project().ticks_per_bar() as f64 / PPQ as f64;
+        LANE_X + c.view.x_of(bar * bpb)
+    }
+    fn names(c: &Controller) -> Vec<String> {
+        c.project().sections.iter().map(|s| s.name.clone()).collect()
+    }
+    fn bars(c: &Controller) -> Vec<i64> {
+        let bar = c.project().ticks_per_bar();
+        c.project().sections.iter().map(|s| s.length / bar).collect()
+    }
+    fn right_click(a: &AppWindow, x: f32, y: f32) {
+        let w = a.window();
+        let p = LogicalPosition::new(x, y);
+        w.dispatch_event(WindowEvent::PointerMoved { position: p });
+        w.dispatch_event(WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
+        w.dispatch_event(WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
+    }
+    fn menu_row(a: &AppWindow, label: &str) -> Option<(f32, f32)> {
+        let s = a.global::<Studio>();
+        let items = s.get_menu_items();
+        (0..slint::Model::row_count(&items))
+            .filter_map(|i| slint::Model::row_data(&items, i))
+            .find(|m| m.label == label)
+            .map(|m| (s.get_menu_x() + 40.0, s.get_menu_y() + m.y + crate::clipedit::MENU_ROW / 2.0))
+    }
+    let first = Rc::new(Cell::new(0u64));
+    let (f1, f2) = (first.clone(), first.clone());
+    vec![
+        DoC("start the section lane at bar 1, click its +", Box::new(|a, ctl| {
+            {
+                let mut c = ctl.borrow_mut();
+                c.view.start_beats = 0.0;
+                c.ui_dirty = true;
+            }
+            let x = LANE_X + ctl.borrow().section_add_x();
+            click(a, x, ROW_Y);
+        })),
+        Check("+ added \"Section 1\": 8 bars from bar 1, first colour, selected, one undo step", Box::new(move |c, _| {
+            let p = c.project();
+            let s = p.sections.first().ok_or("no section")?;
+            f1.set(s.id.0);
+            let ok = p.sections.len() == 1
+                && s.name == "Section 1"
+                && s.length == 8 * p.ticks_per_bar()
+                && s.color == crate::sections::PALETTE[6]
+                && c.selected_section == Some(s.id)
+                && c.doc.undo_label() == Some("Add Section");
+            ok.then_some(()).ok_or(format!("{:?} {:?}", names(c), c.doc.undo_label()))
+        })),
+        DoC("click the + after it", Box::new(|a, ctl| {
+            let x = LANE_X + ctl.borrow().section_add_x();
+            click(a, x, ROW_Y);
+        })),
+        Check("\"Section 2\" follows at bar 9 in the next colour", Box::new(|c, _| {
+            let p = c.project();
+            let ok = names(c) == ["Section 1", "Section 2"] && p.section_start(1) == 8 * p.ticks_per_bar() && p.sections[1].color == crate::sections::PALETTE[7];
+            ok.then_some(()).ok_or(format!("{:?} {:?}", names(c), bars(c)))
+        })),
+        DoC("drag Section 1's right edge from bar 9 to bar 5", Box::new(|a, ctl| {
+            let (x0, x1) = { let c = ctl.borrow(); (bar_x(&c, 8.0) - 2.0, bar_x(&c, 4.0)) };
+            drag(a, x0, ROW_Y, x1, ROW_Y);
+        })),
+        Check("Section 1 is 4 bars and Section 2 moved with its end", Box::new(|c, _| {
+            let p = c.project();
+            (bars(c) == [4, 8] && p.section_start(1) == 4 * p.ticks_per_bar() && c.doc.undo_label() == Some("Resize Section")).then_some(()).ok_or(format!("{:?}", bars(c)))
+        })),
+        DoC("drag Section 2 to bar 1", Box::new(|a, ctl| {
+            let (x0, x1) = { let c = ctl.borrow(); (bar_x(&c, 7.0), bar_x(&c, 0.2)) };
+            drag(a, x0, ROW_Y, x1, ROW_Y);
+        })),
+        Check("Section 2 now comes first", Box::new(|c, _| {
+            (names(c) == ["Section 2", "Section 1"] && c.doc.undo_label() == Some("Move Section")).then_some(()).ok_or(format!("{:?}", names(c)))
+        })),
+        DoC("double-click Section 1", Box::new(|a, ctl| {
+            let x = bar_x(&ctl.borrow(), 10.0);
+            double_click(a, x, ROW_Y);
+        })),
+        Check("rename popup open for the section", Box::new(move |c, a| {
+            let s = a.global::<Studio>();
+            (s.get_rename_open() && s.get_rename_title() == "Rename section" && c.rename_section == Some(SectionId(f2.get()))).then_some(()).ok_or(format!("open {} title {}", s.get_rename_open(), s.get_rename_title()))
+        })),
+        Do("type Chorus, Enter", Box::new(|a| {
+            key(a, "a", true, false);
+            type_text(a, "Chorus");
+            key(a, Key::Return, false, false);
+        })),
+        Check("renamed to Chorus (one undo step)", Box::new(|c, _| {
+            (names(c) == ["Section 2", "Chorus"] && c.doc.undo_label() == Some("Rename Section")).then_some(()).ok_or(format!("{:?} {:?}", names(c), c.doc.undo_label()))
+        })),
+        DoC("right-click Chorus", Box::new(|a, ctl| {
+            let x = bar_x(&ctl.borrow(), 10.0);
+            right_click(a, x, ROW_Y);
+        })),
+        Check("section menu: Duplicate, Rename, Delete section, Clear all sections", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            let ok = s.get_menu_open() && ["Duplicate", "Rename…", "Delete section", "Clear all sections"].iter().all(|l| menu_row(a, l).is_some());
+            ok.then_some(()).ok_or(format!("open {}", s.get_menu_open()))
+        })),
+        Do("choose Delete section", Box::new(|a| {
+            if let Some((x, y)) = menu_row(a, "Delete section") {
+                click(a, x, y);
+            }
+        })),
+        Check("Chorus deleted, menu closed", Box::new(|c, a| {
+            (names(c) == ["Section 2"] && !a.global::<Studio>().get_menu_open()).then_some(()).ok_or(format!("{:?}", names(c)))
+        })),
+        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        DoC("click Section 2, press Delete", Box::new(|a, ctl| {
+            let x = bar_x(&ctl.borrow(), 2.0);
+            click(a, x, ROW_Y);
+            key(a, Key::Delete, false, false);
+        })),
+        Check("undo restored Chorus; Delete removed the selected section", Box::new(|c, _| {
+            (names(c) == ["Chorus"]).then_some(()).ok_or(format!("{:?}", names(c)))
+        })),
+        DoC("right-click Chorus, Clear all sections", Box::new(|a, ctl| {
+            let x = bar_x(&ctl.borrow(), 1.0);
+            right_click(a, x, ROW_Y);
+            if let Some((x, y)) = menu_row(a, "Clear all sections") {
+                click(a, x, y);
+            }
+        })),
+        Check("no sections left; the + is back at bar 1", Box::new(|c, _| {
+            let x = c.section_add_x();
+            (c.project().sections.is_empty() && approx(x, c.view.x_of(0.0) + 8.5, 0.01)).then_some(()).ok_or(format!("{:?} add x {x}", names(c)))
+        })),
+    ]
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
@@ -4376,6 +4762,8 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(automation_steps());
     all.extend(field_device_steps());
     all.extend(splitter_steps());
+    all.extend(files_steps());
+    all.extend(section_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));

@@ -18,7 +18,7 @@
 //! not measurements.
 
 use crate::controller::{card_color, sync_model, BottomTab, Controller};
-use crate::{MenuItem, Studio, SynthArc, SynthDisplay, SynthFaderItem, SynthKnobItem, SynthLabel, SynthLatchItem, SynthMapRow, SynthParam, SynthPillItem, SynthRouteRow, SynthScopeItem, SynthSegItem, SynthTextItem};
+use crate::{DeviceCard, MenuItem, Studio, SynthArc, SynthDisplay, SynthFaderItem, SynthKnobItem, SynthLabel, SynthLatchItem, SynthMapRow, SynthParam, SynthPillItem, SynthRouteRow, SynthScopeItem, SynthSegItem, SynthTextItem};
 use saine_core::builtin::synth_v2::{self as sv, SYNTH_V2};
 use saine_core::builtin::{DevicePreset, ParamDef};
 use saine_core::{AutomationTarget, Command, DeviceId, TrackId, TrackKind};
@@ -2453,6 +2453,23 @@ impl Controller {
             }
         }
         s.set_synth_enabled(enabled);
+        // The shared card header (and the folded strip) read the Synth as a device card.
+        let folded = self.project().device(device).is_some_and(|d| d.folded);
+        s.set_synth_card(DeviceCard {
+            id: device.0 as i32,
+            name: "Synth".into(),
+            builtin: true,
+            instrument: true,
+            swappable: true,
+            enabled,
+            folded,
+            width: if folded { crate::device_mod::FOLDED_W } else { crate::devices::SYNTH_W },
+            accent,
+            accent_light: crate::device_mod::is_light(accent),
+            accent_text: crate::device_mod::accent_text(accent),
+            preset: s.get_synth_preset(),
+            ..Default::default()
+        });
         s.set_synth_lit(self.synth.lit as i32);
         s.set_synth_lit_color(rgb(SOURCE_COLORS[self.synth.lit.min(9)]));
         s.set_synth_macro_sel(self.synth.macro_sel as i32);
