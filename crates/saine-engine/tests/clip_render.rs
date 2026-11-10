@@ -67,7 +67,7 @@ fn peak(x: &[f32]) -> f32 {
 }
 
 fn audio_clip(asset: AssetId, id: u64, start_beat: i64, secs: f64) -> Clip {
-    Clip { id: ClipId(id), asset, name: format!("c{id}"), start: start_beat * PPQ, source_offset: 0, source_length: (RATE * secs) as u64, gain: 1.0, warp: Default::default(), disabled: false }
+    Clip { id: ClipId(id), asset, name: format!("c{id}"), start: start_beat * PPQ, source_offset: 0, source_length: (RATE * secs) as u64, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None }
 }
 
 fn midi_clip(start_beat: i64, beats: i64, pitch: u8) -> MidiClip {

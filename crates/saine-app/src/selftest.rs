@@ -5925,7 +5925,7 @@ fn clip_menu_steps() -> Vec<Step> {
                     Command::AddTrack { index: Some(0), track: Track::new(TrackId(a_id), TrackKind::Audio, "Clip menu", saine_core::ColorIndex::FIRST) },
                     Command::AddTrack { index: Some(1), track: Track::new(TrackId(i_id), TrackKind::Instrument, "Clip menu MIDI", saine_core::ColorIndex::FIRST) },
                     Command::AddAsset { asset: Asset { id: AssetId(asset), relative_path: None, absolute_path: "/nonexistent/clip-menu-test.wav".into(), sample_rate: 48_000.0, channels: 1, frames: 48_000 * 4 } },
-                    Command::AddClip { track: TrackId(a_id), clip: Clip { id: ClipId(asset + 1), asset: AssetId(asset), name: "menu".into(), start: 4 * PPQ, source_offset: 0, source_length: 48_000 * 4, gain: 1.0, warp: Default::default(), disabled: false } },
+                    Command::AddClip { track: TrackId(a_id), clip: Clip { id: ClipId(asset + 1), asset: AssetId(asset), name: "menu".into(), start: 4 * PPQ, source_offset: 0, source_length: 48_000 * 4, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None } },
                     Command::AddMidiClip { track: TrackId(i_id), clip: MidiClip { id: ClipId(asset + 2), start: 4 * PPQ, ..MidiClip::empty(4 * PPQ, 4 * PPQ) } },
                 ],
             });

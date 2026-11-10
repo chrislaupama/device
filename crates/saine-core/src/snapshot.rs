@@ -20,6 +20,9 @@ pub struct ClipSnapshot {
     pub gain: f32,
     /// Warp on: how the clip follows the tempo (`se_clip_warp_desc`).
     pub warp: Option<WarpSnapshot>,
+    /// Looping: (loop start, loop end) in content frames from the clip start
+    /// (`se_clip_loop_desc`); `length` is then the looped length.
+    pub clip_loop: Option<(i64, i64)>,
 }
 
 /// A warped clip in engine frames.
@@ -157,13 +160,15 @@ pub fn build_full(
                         }
                     };
                     let varispeed = !c.warp.enabled && c.warp.transpose != 0;
+                    let start = project.ticks_to_frames(c.start, engine_rate);
+                    let frames_at = |t| project.ticks_to_frames(c.start + t, engine_rate) - start;
                     let cs = ClipSnapshot {
                         clip_id: c.id.0,
                         engine_asset: ea,
-                        timeline_start: project.ticks_to_frames(c.start, engine_rate),
+                        timeline_start: start,
                         source_offset: (c.source_offset as f64 * ratio).round() as i64,
                         length: if c.warp.enabled || varispeed {
-                            project.ticks_to_frames(c.start + project.clip_length_ticks(c), engine_rate) - project.ticks_to_frames(c.start, engine_rate)
+                            frames_at(project.content_length_ticks(c))
                         } else {
                             (c.source_length as f64 * ratio).round() as i64
                         },
@@ -173,12 +178,19 @@ pub fn build_full(
                         } else {
                             c.warp.enabled.then(|| warp_snapshot(project, c, asset.sample_rate, engine_rate, transients.get(&c.asset).map_or(&[][..], |v| v)))
                         },
+                        clip_loop: None,
                     };
                     let frames = asset.frames as f64 * ratio;
-                    Some(match reversed {
+                    let mut cs = match reversed {
                         Some(r) => mirror(cs, r, frames - (c.source_offset + c.source_length) as f64 * ratio, frames),
                         None => cs,
-                    })
+                    };
+                    if let Some(l) = c.clip_loop.filter(|l| l.on) {
+                        let (ls, le) = (frames_at(l.start).max(0), frames_at(l.end).min(cs.length));
+                        cs.length = frames_at(l.length);
+                        cs.clip_loop = (le > ls).then_some((ls, le));
+                    }
+                    Some(cs)
                 })
                 .collect(),
             instrument: t.kind == crate::model::TrackKind::Instrument,
@@ -263,7 +275,7 @@ fn warp_snapshot(project: &Project, c: &Clip, asset_rate: f64, engine_rate: f64,
 /// to its end, so the source plays 2^(st/12) times as fast.
 fn varispeed_snapshot(project: &Project, c: &Clip, ratio: f64, engine_rate: f64) -> WarpSnapshot {
     let start = project.ticks_to_frames(c.start, engine_rate);
-    let end = project.ticks_to_frames(c.start + project.clip_length_ticks(c), engine_rate).max(start + 1);
+    let end = project.ticks_to_frames(c.start + project.content_length_ticks(c), engine_rate).max(start + 1);
     let source = c.source_offset as f64 * ratio;
     let points = vec![(start, source), (end, source + c.source_length as f64 * ratio)];
     WarpSnapshot { mode: engine_mode(WarpMode::Repitch), points, slices: Vec::new(), transpose: 0.0 }

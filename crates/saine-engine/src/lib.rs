@@ -217,7 +217,7 @@ impl Engine {
     }
 
     /// Publish an immutable session snapshot to the audio thread
-    /// (`se_session_publish_v7`: audio clips, warped ones with their map, plus, on instrument tracks,
+    /// (`se_session_publish_v8`: audio clips, warped ones with their map, looped ones with their loop, plus, on instrument tracks,
     /// MIDI notes rendered by the engine's built-in synth with the track's
     /// [`SynthParams`] (`synth: None` uses the engine defaults, which equal
     /// `SynthParams::default()`) or by the track's instrument plugin; each
@@ -328,21 +328,31 @@ impl Engine {
                 slices: if sl.is_empty() { std::ptr::null() } else { sl.as_ptr() },
             })
             .collect();
-        let desc = ffi::se_session_desc_v7 {
-            v6: ffi::se_session_desc_v6 {
-                tracks: tracks.as_ptr(),
-                track_count: tracks.len() as u32,
-                master_gain: s.master_gain,
-                master_lanes: master_descs.as_ptr(),
-                master_lane_count: master_descs.len() as u32,
+        let loop_descs: Vec<ffi::se_clip_loop_desc> = s
+            .tracks
+            .iter()
+            .flat_map(|t| t.clips.iter().filter_map(|c| c.clip_loop.map(|(loop_start, loop_end)| ffi::se_clip_loop_desc { clip_id: c.clip_id, loop_start, loop_end })))
+            .collect();
+        let desc = ffi::se_session_desc_v8 {
+            v7: ffi::se_session_desc_v7 {
+                v6: ffi::se_session_desc_v6 {
+                    tracks: tracks.as_ptr(),
+                    track_count: tracks.len() as u32,
+                    master_gain: s.master_gain,
+                    master_lanes: master_descs.as_ptr(),
+                    master_lane_count: master_descs.len() as u32,
+                    _pad: 0,
+                },
+                warps: warp_descs.as_ptr(),
+                warp_count: warp_descs.len() as u32,
                 _pad: 0,
             },
-            warps: warp_descs.as_ptr(),
-            warp_count: warp_descs.len() as u32,
+            loops: loop_descs.as_ptr(),
+            loop_count: loop_descs.len() as u32,
             _pad: 0,
         };
         // SAFETY: all pointers stay valid for the duration of the call; the engine copies.
-        check(unsafe { ffi::se_session_publish_v7(self.raw, &desc) })
+        check(unsafe { ffi::se_session_publish_v8(self.raw, &desc) })
     }
 
     fn device_store(

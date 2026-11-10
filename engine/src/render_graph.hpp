@@ -116,7 +116,17 @@ struct ClipNode {
     float gain = 1.0f;
     int64_t source_frames = 0;    // asset length (warped clips read anywhere in it)
     int32_t warp = -1;            // index into RenderGraph::warps; -1 = plays 1:1
+    // Loop (se_session_publish_v8), in content frames from timeline_start;
+    // loop_end == 0: plays once.
+    int64_t loop_start = 0;
+    int64_t loop_end = 0;
 };
+
+// Content frame a clip plays at clip-relative frame r (see se_session_publish_v8).
+inline int64_t clip_content(const ClipNode& c, int64_t r) noexcept {
+    if (c.loop_end <= 0 || r < c.loop_end) return r;
+    return c.loop_start + (r - c.loop_end) % (c.loop_end - c.loop_start);
+}
 
 struct TrackNode {
     uint64_t track_id = 0;
@@ -291,6 +301,8 @@ void constant_power_pan(float pan, float& left, float& right) noexcept;
 // Synth states are not assigned here (see RenderGraph::synth_refs); `synths`
 // is sized and null. Plugin slots are created with null instances (the
 // engine resolves them in the same track/device order).
+int32_t build_render_graph(const se_session_desc_v8& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v7& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lookup,

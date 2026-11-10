@@ -438,7 +438,7 @@ impl Controller {
             frames: native_frames,
         };
         let clip_id = ClipId(alloc());
-        let new_clip = |name: String, start: saine_core::Ticks| Clip { id: clip_id, asset: asset_id, name, start: start.max(0), source_offset: 0, source_length: native_frames, gain: 1.0, warp: Default::default(), disabled: false };
+        let new_clip = |name: String, start: saine_core::Ticks| Clip { id: clip_id, asset: asset_id, name, start: start.max(0), source_offset: 0, source_length: native_frames, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None };
         let mut cmds = vec![Command::AddAsset { asset }];
         let (label, track, status) = match &op {
             ClipOp::Consolidate { span } => {

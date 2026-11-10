@@ -8,7 +8,7 @@ fn audio_doc() -> (Document, TrackId, ClipId) {
     let asset = Asset { id: AssetId(0), relative_path: None, absolute_path: "/nonexistent/t.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 48_000 * 10 };
     d.execute(Command::AddAsset { asset }, Origin::User).unwrap();
     let a = d.project().assets[0].id;
-    let clip = Clip { id: ClipId(0), asset: a, name: "loop".into(), start: 4 * PPQ, source_offset: 0, source_length: 48_000 * 4, gain: 1.0, warp: Default::default(), disabled: false };
+    let clip = Clip { id: ClipId(0), asset: a, name: "loop".into(), start: 4 * PPQ, source_offset: 0, source_length: 48_000 * 4, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None };
     d.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
     let c = d.project().tracks[0].clips[0].id;
     (d, track, c)
@@ -124,7 +124,7 @@ fn disabled_clips_are_left_out_of_the_session_snapshot_and_persist() {
 // ---- Consolidate, Bounce and Export (render_plan) ----
 
 fn audio_clip(id: u64, asset: AssetId, start: Ticks, secs: u64) -> Clip {
-    Clip { id: ClipId(id), asset, name: format!("c{id}"), start, source_offset: 0, source_length: 48_000 * secs, gain: 1.0, warp: Default::default(), disabled: false }
+    Clip { id: ClipId(id), asset, name: format!("c{id}"), start, source_offset: 0, source_length: 48_000 * secs, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None }
 }
 
 /// Audio track with clips at beats 4-8, 6-10 (overlapping), 10-12 (touching) and 20-24 (apart);

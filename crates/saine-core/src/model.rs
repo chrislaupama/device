@@ -151,6 +151,28 @@ pub struct Clip {
     /// Disabled clips stay on the timeline but make no sound (the Disable menu entry).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub disabled: bool,
+    /// Clip looping (the editor's Loop switch). Clips saved before it existed load without it.
+    #[serde(default, rename = "loop", skip_serializing_if = "Option::is_none")]
+    pub clip_loop: Option<AudioLoop>,
+}
+
+/// An audio clip's loop, like a MIDI clip's: the range of the clip's content that repeats,
+/// in ticks from the clip start, where content is what the clip plays without the loop. The
+/// clip plays from its start to the loop end, then repeats the range until it ends. The range
+/// (and the looped length) is kept while looping is off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioLoop {
+    pub on: bool,
+    pub start: Ticks,
+    pub end: Ticks,
+    /// The clip's length on the timeline while it loops.
+    pub length: Ticks,
+}
+
+impl AudioLoop {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.start < 0 || self.end <= self.start || self.length <= 0 { Err(format!("loop {}..{} (length {}) is empty or before the clip", self.start, self.end, self.length)) } else { Ok(()) }
+    }
 }
 
 /// External media reference. Media is never copied into the project unless
@@ -359,6 +381,14 @@ impl Project {
     /// Duration of a clip in ticks at the current tempo: warped clips cover
     /// their beats, the others keep their real-time duration.
     pub fn clip_length_ticks(&self, clip: &Clip) -> Ticks {
+        match clip.clip_loop {
+            Some(l) if l.on => l.length,
+            _ => self.content_length_ticks(clip),
+        }
+    }
+
+    /// What the clip plays without its loop: the source window at the clip's speed.
+    pub fn content_length_ticks(&self, clip: &Clip) -> Ticks {
         if clip.warp.enabled {
             return crate::warp::beats_to_ticks(self.warped_clip_beats(clip));
         }
