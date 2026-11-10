@@ -575,8 +575,11 @@ impl Controller {
         self.panel_poll_fields();
         self.mod_poll();
         self.panel_poll_graphs();
-        // Main-thread plugin housekeeping (retired instances, CLAP main-thread callbacks).
-        if !self.devices.editors.is_empty() || self.project().tracks.iter().any(|t| !t.devices.is_empty() || t.instrument_plugin.is_some()) {
+        // Main-thread plugin housekeeping (retired instances, CLAP main-thread callbacks),
+        // which also attaches finished background warp renders.
+        if !self.devices.editors.is_empty()
+            || self.project().tracks.iter().any(|t| !t.devices.is_empty() || t.instrument_plugin.is_some() || t.clips.iter().any(|c| c.warp.enabled))
+        {
             self.engine.plugin_idle();
         }
         if self.devices.last_poll.is_some_and(|t| now - t < Duration::from_millis(250)) {

@@ -15,7 +15,8 @@ pub const MENU_ROW: f32 = 20.5;
 pub const MENU_SEP: f32 = 10.5;
 
 /// Clip editor dropdowns, in `Studio.clip-menu` order: Speed, Warp, Mode (audio toolbar),
-/// Grid (piano roll footer), Type, Genre (clip sidebar). Only Grid is backed by the model.
+/// Grid (piano roll footer), Type, Genre (clip sidebar). Speed, Warp and Mode edit the clip's
+/// warp (`saine_core::warp`, presets and modes in the same order); Type and Genre are not modelled.
 /// Genre lists the entries visible in the reference capture (its full list is catalogue data).
 const CLIP_MENUS: [&[&str]; 6] = [
     &["0.5x", "0.75x", "1x", "1.25x", "1.5x", "2x"],
@@ -328,10 +329,11 @@ impl Controller {
     // ---------------------------------------------------------------- view models
 
     /// Clip tab, piano roll, context menu and rename popup → Slint.
-    /// Open (or, when it is already open, close) a clip editor dropdown. Mode stays
-    /// disabled: Saine never warps, and the reference disables it with Warp off.
+    /// Open (or, when it is already open, close) a clip editor dropdown. Mode is
+    /// disabled with Warp off, as in the reference.
     pub fn clip_menu_open(&mut self, menu: i32) {
-        self.pr.menu = if (0..CLIP_MENUS.len() as i32).contains(&menu) && menu != 2 && self.pr.menu != menu && self.clip_menu_shown(menu) { menu } else { -1 };
+        let warped = self.ac_clip().is_some_and(|c| c.warp.enabled);
+        self.pr.menu = if (0..CLIP_MENUS.len() as i32).contains(&menu) && (menu != 2 || warped) && self.pr.menu != menu && self.clip_menu_shown(menu) { menu } else { -1 };
         self.ui_dirty = true;
     }
 
@@ -342,9 +344,11 @@ impl Controller {
     }
 
     fn clip_menu_active(&self, menu: i32) -> i32 {
+        let warp = self.ac_clip().map(|c| c.warp.clone()).unwrap_or_default();
         match menu {
-            0 => 2,
-            1 => 1,
+            0 => saine_core::warp::SPEED_PRESETS.iter().position(|s| (s - warp.effective_speed()).abs() < 0.01).map_or(-1, |i| i as i32),
+            1 => if warp.enabled { 0 } else { 1 },
+            2 => saine_core::WarpMode::ALL.iter().position(|&m| m == warp.mode).map_or(-1, |i| i as i32),
             3 => GRID_DENOMS.iter().position(|&d| d == self.pr.grid).map_or(-1, |i| i as i32),
             _ => 0,
         }
@@ -359,11 +363,18 @@ impl Controller {
             }
             return;
         }
-        if menu < 0 || index == self.clip_menu_active(menu) {
+        if menu < 0 || index < 0 || index == self.clip_menu_active(menu) {
             return;
         }
-        let what = ["Clip speed", "Warp", "Warp mode", "", "Pattern type", "Pattern genre"][menu as usize];
-        self.set_status(format!("{what}: not in Saine yet"), 3);
+        match menu {
+            0 => self.warp_pick_speed(index as usize),
+            1 => self.warp_pick_enabled(index == 0),
+            2 => self.warp_pick_mode(index as usize),
+            _ => {
+                let what = ["", "", "", "", "Pattern type", "Pattern genre"][menu as usize];
+                self.set_status(format!("{what}: not in Saine yet"), 3);
+            }
+        }
     }
 
     pub fn push_clip_editor(&mut self, s: &Studio) {
@@ -391,7 +402,10 @@ impl Controller {
             }
             (None, Some(c)) => {
                 s.set_ac_gain_text(format!("{:.1} dB", saine_core::model::gain_to_db(c.gain).max(-99.9)).into());
-                s.set_ac_bpm_text(format!("{}", p.transport.bpm.round()).into());
+                s.set_ac_bpm_text(format!("{}", self.ac_original_bpm(c).round()).into());
+                s.set_ac_speed_text(crate::warpedit::format_speed(c.warp.effective_speed()).into());
+                s.set_ac_warped(c.warp.enabled);
+                s.set_ac_mode_text(c.warp.mode.label().into());
                 Some((c.name.clone(), p.clip_length_ticks(c), p.find_clip(c.id).map(|(t, _)| t)))
             }
             _ => None,

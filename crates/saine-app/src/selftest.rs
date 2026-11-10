@@ -809,6 +809,94 @@ fn steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("ac {} pr {} gain {} bars {}", s.get_ac_visible(), s.get_pr_visible(), s.get_ac_gain_text(), s.get_pr_bar_labels().row_count()))
         })),
+        // ---- warp (SAIN-38): Speed / Warp / Mode menus, Original BPM drag, a warp marker ----
+        DoC("warp: Warp menu -> On", Box::new(|a, ctl| {
+            ctl.borrow_mut().clip_menu_open(1);
+            a.global::<Studio>().invoke_clip_menu_pick(0);
+        })),
+        Check("warp on at the project tempo: same length, Mode enabled", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let w = &clip.warp;
+            let plain = c.project().seconds_to_ticks(clip.source_length as f64 / c.project().asset(clip.asset).map_or(48_000.0, |x| x.sample_rate));
+            let len = c.project().clip_length_ticks(clip);
+            (w.enabled && w.original_bpm == c.project().transport.bpm && (len - plain).abs() <= 1 && s.get_ac_warped() && s.get_ac_speed_text() == "1x" && c.doc.undo_label() == Some("Set clip warp mode"))
+                .then_some(())
+                .ok_or(format!("warp {w:?} len {len} vs {plain} speed {}", s.get_ac_speed_text()))
+        })),
+        DoC("warp: Speed menu -> 2x", Box::new(|a, ctl| {
+            ctl.borrow_mut().clip_menu_open(0);
+            a.global::<Studio>().invoke_clip_menu_pick(5);
+        })),
+        Check("double speed halves the clip", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let plain = c.project().seconds_to_ticks(clip.source_length as f64 / c.project().asset(clip.asset).map_or(48_000.0, |x| x.sample_rate));
+            let len = c.project().clip_length_ticks(clip);
+            let s = a.global::<Studio>();
+            ((len - plain / 2).abs() <= 1 && s.get_ac_speed_text() == "2x" && c.doc.undo_label() == Some("Set clip speed"))
+                .then_some(())
+                .ok_or(format!("len {len} vs {plain} speed {}", s.get_ac_speed_text()))
+        })),
+        DoC("warp: Mode menu -> Drums", Box::new(|a, ctl| {
+            ctl.borrow_mut().clip_menu_open(2);
+            a.global::<Studio>().invoke_clip_menu_pick(1);
+        })),
+        Check("mode Drums", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            (clip.warp.mode == saine_core::WarpMode::Drums && a.global::<Studio>().get_ac_mode_text() == "Drums" && c.pr.menu == -1)
+                .then_some(())
+                .ok_or(format!("mode {:?}", clip.warp.mode))
+        })),
+        Do("warp: drag Original BPM right 20 pt", Box::new(|a| {
+            let s = a.global::<Studio>();
+            s.invoke_ac_bpm_drag(0, 0.0, 0.0);
+            s.invoke_ac_bpm_drag(1, 10.0, 0.0);
+            s.invoke_ac_bpm_drag(1, 20.0, 0.0);
+            s.invoke_ac_bpm_drag(2, 20.0, 0.0);
+        })),
+        Check("original BPM +20, one undo step", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let want = c.project().transport.bpm + 20.0;
+            (clip.warp.original_bpm == want && a.global::<Studio>().get_ac_bpm_text() == format!("{}", want.round()) && c.doc.undo_label() == Some("Set original BPM"))
+                .then_some(())
+                .ok_or(format!("bpm {} label {:?}", clip.warp.original_bpm, c.doc.undo_label()))
+        })),
+        DoC("warp: click the handle band at beat 1 (add a warp marker)", Box::new(|_, ctl| {
+            let x = ctl.borrow().pr_view().x_of(1.0);
+            let mut c = ctl.borrow_mut();
+            c.pr_pointer(0, x, 30.0, false, true);
+            c.pr_pointer(2, x, 30.0, false, true);
+        })),
+        Check("warp marker added (with the clip-start anchor)", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let beats = c.ac_marker_beats();
+            (clip.warp.markers.len() == 2 && beats.len() == 2 && beats[0].abs() < 1e-6 && (beats[1] - 1.0).abs() < 0.05 && c.doc.undo_label() == Some("Add warp marker"))
+                .then_some(())
+                .ok_or(format!("markers {:?} beats {beats:?}", clip.warp.markers))
+        })),
+        DoC("warp: Warp menu -> Off", Box::new(|a, ctl| {
+            ctl.borrow_mut().clip_menu_open(1);
+            a.global::<Studio>().invoke_clip_menu_pick(1);
+        })),
+        Check("warp off resets the speed and plays 1:1; Mode disabled", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let plain = c.project().seconds_to_ticks(clip.source_length as f64 / c.project().asset(clip.asset).map_or(48_000.0, |x| x.sample_rate));
+            let s = a.global::<Studio>();
+            (!clip.warp.enabled && clip.warp.speed == 1.0 && c.project().clip_length_ticks(clip) == plain && !s.get_ac_warped() && c.doc.undo_label() == Some("Reset clip speed"))
+                .then_some(())
+                .ok_or(format!("warp {:?}", clip.warp))
+        })),
+        DoC("warp: Mode menu stays closed with warp off", Box::new(|_, ctl| ctl.borrow_mut().clip_menu_open(2))),
+        Check("mode menu closed", Box::new(|c, _| (c.pr.menu == -1).then_some(()).ok_or(format!("menu {}", c.pr.menu)))),
+        Do("Cmd+Z x6 (back to the unwarped clip)", Box::new(|a| {
+            for _ in 0..6 {
+                key(a, "z", true, false);
+            }
+        })),
+        Check("warp undone", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            clip.warp.is_default().then_some(()).ok_or(format!("warp {:?}", clip.warp))
+        })),
         DoC("back to the Devices tab", Box::new(|_, ctl| ctl.borrow_mut().set_bottom_tab(BottomTab::Devices))),
         Do("select clip 1 and press Delete", Box::new(move |a| {
             click(a, bx(11.0), TRACK0_Y + 40.0);

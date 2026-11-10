@@ -170,6 +170,9 @@ pub struct PrState {
     last_down: Option<(Instant, f32, f32)>,
     pub size: (f32, f32),
     humanize_count: u64,
+    /// Audio clip editor gesture (warp marker / transient), see `warpedit`.
+    pub ac_drag: Option<crate::warpedit::AcDrag>,
+    pub ac_last_down: Option<(Instant, f32, f32)>,
 }
 
 impl Default for PrState {
@@ -190,6 +193,8 @@ impl Default for PrState {
             last_down: None,
             size: (1174.5, 281.0),
             humanize_count: 0,
+            ac_drag: None,
+            ac_last_down: None,
         }
     }
 }
@@ -207,6 +212,9 @@ pub struct PrScene<'a> {
     pub marquee: Option<(f32, f32, f32, f32)>,
     /// Audio clip editor: no keyboard or pitch rows, gain dots on the clip handles.
     pub audio: bool,
+    /// Warped audio clips: warp markers and transients (clip-relative beats).
+    pub warp_markers: Vec<f64>,
+    pub transients: Vec<f64>,
 }
 
 fn rgba(c: [f32; 3], a: f32) -> [f32; 4] {
@@ -278,6 +286,14 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
     if cx1 < w {
         let x = cx1.max(gx);
         b.push(px.rect(x, GRID_Y, w - x, h - GRID_Y, rgba(BLACK, 0.2)));
+    }
+
+    // ---- transients (warped audio clips): faint guides through the lane ----
+    for &t in &sc.transients {
+        let x = v.x_of(t);
+        if x >= gx && x <= w {
+            b.push(px.rect(x - 0.25, GRID_Y, 0.5, h - GRID_Y, rgba(WHITE, 0.2)));
+        }
     }
 
     // ---- notes ----
@@ -371,6 +387,19 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
             }
         }
     }
+    // ---- warp markers: a flag in the upper handle band and a line through the lane ----
+    let marker = mix(sc.color, WHITE, 0.55);
+    for &m in &sc.warp_markers {
+        let x = v.x_of(m);
+        if x < gx - 4.0 || x > w + 4.0 {
+            continue;
+        }
+        o.push(px.rect(x - 0.5, BAND_Y + 1.0, 1.0, h - BAND_Y - 1.0, rgba(marker, 0.7)));
+        for r in 0..10 {
+            let ww = 8.0 * (1.0 - r as f32 / 10.0);
+            o.push(px.rect(x - ww / 2.0, BAND_Y + 1.5 + r as f32, ww, 1.0, rgba(marker, 1.0)));
+        }
+    }
     // ---- playhead ----
     let phx = v.x_of(sc.playhead);
     if phx >= gx && phx <= w {
@@ -455,6 +484,9 @@ impl Controller {
     }
 
     pub fn pr_view(&self) -> PrView {
+        if let Some(view) = self.pr.ac_drag.as_ref().map(|d| d.view) {
+            return view;
+        }
         if let Some(c) = self.ac_clip() {
             let len = self.project().clip_length_ticks(c);
             return PrView::fit_from(0.0, self.pr.size, len as f64 / PPQ as f64, 0.0);
@@ -501,6 +533,8 @@ impl Controller {
                 beats_per_bar: p.ticks_per_bar() as f64 / PPQ as f64,
                 marquee: None,
                 audio: true,
+                warp_markers: self.ac_marker_beats(),
+                transients: self.ac_transient_beats(),
             });
         }
         let clip = self.pr_clip()?;
@@ -520,6 +554,8 @@ impl Controller {
             beats_per_bar: p.ticks_per_bar() as f64 / PPQ as f64,
             marquee,
             audio: false,
+            warp_markers: Vec::new(),
+            transients: Vec::new(),
         })
     }
 
@@ -546,6 +582,10 @@ impl Controller {
 
     /// Pointer in the piano roll texture (kind 0 down, 1 move, 2 up).
     pub fn pr_pointer(&mut self, kind: i32, x: f32, y: f32, shift: bool, alt: bool) {
+        if self.ac_clip().is_some() {
+            self.ac_pointer(kind, x, y, alt);
+            return;
+        }
         let Some(clip) = self.pr_clip().cloned() else { return };
         let v = self.pr_view();
         let g = self.grid_ticks();

@@ -195,6 +195,8 @@ pub enum JobResult {
     TestTone(Result<AssetInfo, String>),
     /// Plugin catalogue scan finished (src/devices.rs).
     PluginScan(Result<saine_engine::ScanReport, String>),
+    /// Transients of an engine asset (warped clips, src/warpedit.rs).
+    Onsets { engine_asset: u64, result: Result<Vec<saine_engine::Onset>, String> },
 }
 
 /// Blocking decode + peak analysis. Runs on a worker thread.
@@ -267,6 +269,9 @@ pub struct Controller {
     pub engine: Arc<Engine>,
     pub rate: f64,
     pub(crate) asset_map: HashMap<AssetId, u64>,
+    /// Detected transients per engine asset (asset frames), and those being analysed.
+    pub(crate) onsets: HashMap<u64, Vec<saine_core::Transient>>,
+    pub(crate) onsets_pending: std::collections::HashSet<u64>,
     pub peaks: PeakStore,
     pub selected_track: Option<TrackId>,
     pub selected_clip: Option<ClipId>,
@@ -360,6 +365,8 @@ impl Controller {
             engine,
             rate,
             asset_map: HashMap::new(),
+            onsets: HashMap::new(),
+            onsets_pending: std::collections::HashSet::new(),
             peaks: PeakStore::default(),
             selected_track: None,
             selected_clip: None,
@@ -533,7 +540,7 @@ impl Controller {
     /// The session the engine should play right now: the document plus any
     /// automation lane being edited.
     pub fn current_snapshot(&self) -> snapshot::SessionSnapshot {
-        let (mut snap, _skipped) = snapshot::build(self.doc.project(), self.rate, &self.asset_map);
+        let (mut snap, _skipped) = snapshot::build_with_transients(self.doc.project(), self.rate, &self.asset_map, &self.transients_by_asset());
         // Automation drag / write preview: the pending lane replaces the model lane.
         if let Some((key, lane)) = &self.auto.pending {
             let p = self.doc.project();
@@ -553,6 +560,7 @@ impl Controller {
     }
 
     pub fn publish(&mut self) {
+        self.request_onsets();
         let snap = self.current_snapshot();
         if let Err(e) = self.engine.publish(&snap) {
             self.set_status(format!("Engine rejected the session: {e}"), 6);
@@ -824,6 +832,7 @@ impl Controller {
                 JobResult::Recorded { doc_epoch, takes } => self.finish_recorded(doc_epoch, takes),
                 JobResult::TestTone(r) => self.finish_test_tone(r),
                 JobResult::PluginScan(r) => self.finish_plugin_scan(r),
+                JobResult::Onsets { engine_asset, result } => self.finish_onsets(engine_asset, result),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
                     if doc_epoch != self.doc_epoch {
                         if let Ok((info, _)) = result {
@@ -951,6 +960,7 @@ impl Controller {
         for (_, ea) in self.asset_map.drain() {
             let _ = self.engine.release_asset(ea);
         }
+        self.onsets.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
         self.doc = Document::new(loaded.project);
