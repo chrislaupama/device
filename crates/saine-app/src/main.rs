@@ -23,6 +23,7 @@ mod assistant_panel;
 mod assistant_provider;
 mod automation;
 mod clipedit;
+mod composer;
 mod controller;
 mod device_canvas;
 mod device_mod;
@@ -1113,6 +1114,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_seq_pointer, |c, kind: i32, x: f32, y: f32| c.seq_pointer(kind, x, y));
     on!(on_seq_scroll, |c, dy: f32| c.seq_scroll(dy));
     on!(on_seq_swing, |c, phase: i32, dy: f32| c.seq_swing(phase, dy));
+    on!(on_composer_create, |c| c.composer_create());
+    on!(on_composer_load, |c, i: i32| c.composer_load(i.max(0) as usize));
+    on!(on_composer_original_pick, |c| c.composer_original());
     on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
     on!(on_menu_dismiss, |c| c.menu_close());

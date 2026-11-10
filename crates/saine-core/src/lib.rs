@@ -14,6 +14,7 @@ pub mod device;
 pub mod history;
 pub mod instrument;
 pub mod keymap;
+pub mod library;
 pub mod midi;
 pub mod model;
 pub mod modulation;
