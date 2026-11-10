@@ -18,6 +18,52 @@ use std::rc::Rc;
 
 type Ctl = Rc<RefCell<Controller>>;
 
+/// This run's scratch folder: every file the self-test writes (exports, saved projects, WAVs,
+/// recordings, clip renders, its plugin cache) lives under it, so runs that overlap on one
+/// machine never share a path. Created on first use; removed when every check passes.
+pub fn run_dir() -> &'static std::path::Path {
+    static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let base = std::env::temp_dir();
+        (0..1000)
+            .map(|n| base.join(format!("saine-selftest-{}-{n}", std::process::id())))
+            .find(|d| std::fs::create_dir(d).is_ok())
+            .expect("self-test: cannot create a scratch folder in the temp directory")
+    })
+}
+
+/// The plugin scan cache the self-tests share between runs (so a run does not rescan every
+/// plugin). A run works on its own copy and puts it back atomically when it ends.
+pub fn shared_plugin_cache() -> std::path::PathBuf {
+    std::env::temp_dir().join("saine-selftest-plugin-cache.json")
+}
+
+/// The run's copy of the shared plugin cache.
+pub fn run_plugin_cache() -> std::path::PathBuf {
+    let mine = run_dir().join("plugin-cache.json");
+    if !mine.exists() {
+        let _ = std::fs::copy(shared_plugin_cache(), &mine);
+    }
+    mine
+}
+
+/// End of a run: the run's plugin cache replaces the shared one (rename, so a run that starts
+/// meanwhile reads a whole file), and the scratch folder goes unless a check failed.
+fn finish_run(failed: usize) {
+    let dir = run_dir();
+    let tmp = std::env::temp_dir().join(format!("saine-selftest-plugin-cache.json.{}", std::process::id()));
+    if std::fs::copy(dir.join("plugin-cache.json"), &tmp).is_ok() && std::fs::rename(&tmp, shared_plugin_cache()).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    if failed == 0 {
+        if let Err(e) = std::fs::remove_dir_all(dir) {
+            println!("self-test: could not remove the scratch folder {}: {e}", dir.display());
+        }
+    } else {
+        println!("self-test: scratch files kept in {}", dir.display());
+    }
+}
+
 enum Step {
     Do(&'static str, Box<dyn Fn(&AppWindow)>),
     /// Like `Do`, but computes coordinates from the controller first (the closure must
@@ -1131,7 +1177,7 @@ fn steps() -> Vec<Step> {
         DoC("export into a temp folder: click Export", Box::new(|a, ctl| {
             {
                 let mut c = ctl.borrow_mut();
-                c.export.dir = std::env::temp_dir().join(format!("saine-selftest-export-{}", std::process::id()));
+                c.export.dir = run_dir().join("export");
                 c.export.name = "mix".into();
             }
             // Export window centred in the window: 442 x 340.4, Export button 52.2 x 22.1.
@@ -1198,7 +1244,7 @@ fn steps() -> Vec<Step> {
         DoC("click the Project card, name it set, click Export", Box::new(|a, ctl| {
             click(a, (win().0 - 442.0) / 2.0 + 17.0 + 2.0 * (131.47 + 6.8) + 65.0, (win().1 - 340.4) / 2.0 + 44.2 + 22.0);
             let mut c = ctl.borrow_mut();
-            c.export.dir = std::env::temp_dir().join(format!("saine-selftest-project-{}", std::process::id()));
+            c.export.dir = run_dir().join("project");
             c.export.name = "set".into();
         })),
         Check("Project picked: recipe 2, Name label", Box::new(|_c, a| {
@@ -2517,7 +2563,7 @@ fn device_steps() -> Vec<Step> {
     let (ed1, ed2) = (editor.clone(), editor.clone());
     let saved: Rc<RefCell<Vec<(u64, String, bool)>>> = Rc::new(RefCell::new(Vec::new()));
     let (sv1, sv2) = (saved.clone(), saved.clone());
-    let save_dir = std::env::temp_dir().join(format!("saine-selftest-devices-{}.saineproj", std::process::id()));
+    let save_dir = run_dir().join("devices.saineproj");
     let (sd1, sd2, sd3) = (save_dir.clone(), save_dir.clone(), save_dir);
     let (h0, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12) = (h(), h(), h(), h(), h(), h(), h(), h(), h(), h(), h(), h(), h());
     fn scan_state(c: &Controller) -> String {
@@ -2899,7 +2945,7 @@ fn automation_steps() -> Vec<Step> {
         ah_set(n);
         ok.then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want one {label:?})", c.doc.undo_label()))
     }
-    let wav = std::env::temp_dir().join(format!("saine-selftest-auto-{}.wav", std::process::id()));
+    let wav = run_dir().join("auto.wav");
     let wav2 = wav.clone();
     vec![
         DoC("automation: fresh project, steady 440 Hz clip on Audio track 1 at 0", Box::new(move |a, ctl| {
@@ -4617,7 +4663,7 @@ fn sampler_card(a: &AppWindow) -> Option<crate::DeviceCard> {
 /// Built-in list, files loaded as drops, pads pressed, slices and a picture handle.
 fn sampler_steps() -> Vec<Step> {
     use Step::*;
-    let wav = std::env::temp_dir().join(format!("saine-selftest-sampler-{}.wav", std::process::id()));
+    let wav = run_dir().join("sampler.wav");
     let _ = crate::wavgen::write_wav(&wav, 48_000, 1, &crate::wavgen::sine_bursts(48_000));
     let hist = Rc::new(Cell::new(0usize));
     fn one(hc: &Rc<Cell<usize>>, c: &Controller, label: &str) -> Result<(), String> {
@@ -5536,7 +5582,7 @@ fn files_row_of(a: &AppWindow, label: &str) -> Option<usize> {
 fn files_steps() -> Vec<Step> {
     use crate::files::{SECTION_DEVICES, SECTION_FILES, TAB_FOLDERS, TAB_PROJECTS};
     use Step::*;
-    let root = std::env::temp_dir().join(format!("saine-selftest-files-{}", std::process::id()));
+    let root = run_dir().join("files");
     let kit = root.join("kit");
     let (r1, k1, k2) = (root.clone(), kit.clone(), kit.clone());
     let tracks = Rc::new(Cell::new(0usize));
@@ -5717,7 +5763,7 @@ fn files_steps() -> Vec<Step> {
 /// and Open Recent (appended last; it saves and reopens the current project).
 fn menu_bar_steps() -> Vec<Step> {
     use Step::*;
-    let dir = std::env::temp_dir().join(format!("saine-selftest-recent-{}", std::process::id())).join("Recent Song.saineproj");
+    let dir = run_dir().join("recent").join("Recent Song.saineproj");
     let (d1, d2, d3) = (dir.clone(), dir.clone(), dir);
     vec![
         DoC("menu: Options › Check for Updates…", Box::new(|_, ctl| ctl.borrow_mut().menu_action("options.check_updates"))),
@@ -5794,7 +5840,7 @@ fn menu_bar_steps() -> Vec<Step> {
         Check("menu: Open Recent is empty", Box::new(|_, a| (a.global::<Studio>().get_recent_projects().row_count() == 0).then_some(()).ok_or("not empty".into()))),
         DoC("menu: open a recent project whose folder is gone", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
-            c.settings.prefs.recent_projects = vec![std::env::temp_dir().join("saine-selftest-missing.saineproj").to_string_lossy().into_owned()];
+            c.settings.prefs.recent_projects = vec![run_dir().join("missing.saineproj").to_string_lossy().into_owned()];
             c.open_recent(0);
         })),
         Check("menu: it leaves Open Recent", Box::new(|c, _| c.settings.prefs.recent_projects.is_empty().then_some(()).ok_or(format!("{:?}", c.settings.prefs.recent_projects)))),
@@ -6587,7 +6633,7 @@ fn clip_render_steps() -> Vec<Step> {
     use Step::*;
     use saine_core::{AssetId, ClipId, Command, MidiClip, Note, Track, TrackId};
     fn dir() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("saine-selftest-clip-render-{}", std::process::id()))
+        run_dir().join("clip-render")
     }
     fn right_click(a: &AppWindow, x: f32, y: f32) {
         let w = a.window();
@@ -6861,14 +6907,180 @@ fn clip_render_steps() -> Vec<Step> {
             let mut c = ctl.borrow_mut();
             let s = s15.borrow();
             let mut commands: Vec<Command> = [s.audio_track, s.midi_track].iter().map(|&t| Command::RemoveTrack { track: TrackId(t) }).collect();
-            commands.extend(c.project().assets.iter().filter(|a| a.absolute_path.contains("saine-selftest-clip-render")).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
+            commands.extend(c.project().assets.iter().filter(|a| a.absolute_path.contains(&*dir().to_string_lossy())).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
             c.execute(Command::Batch { label: "clip render cleanup".into(), commands });
             c.select_clip(None);
-            c.clip_render.dir_override = None;
+            c.clip_render.dir_override = Some(run_dir().join("renders"));
             let _ = std::fs::remove_dir_all(dir());
         })),
         Check("clip render: project back to its earlier tracks and assets", Box::new(move |c, _| {
             let s = s16.borrow();
+            let p = c.project();
+            (p.tracks.len() == s.tracks_before && p.assets.len() == s.assets_before).then_some(()).ok_or(format!("{} tracks {} assets", p.tracks.len(), p.assets.len()))
+        })),
+    ]
+}
+
+/// Clip menu Bounce through a third-party plugin (src/clip_render.rs, CHR-38): the CLAP test gain
+/// on a track is edited after the project's state was saved, the clip is bounced, and the file has
+/// the live instance's gain (the plugin was prepared on this thread from its current state and
+/// rendered on the worker). Measures the longest gap between two turns of the event loop during
+/// the render. A plugin that cannot be loaded fails the render before any file is written, and a
+/// render cancelled while it prepares leaves nothing. Adds its own track and removes it at the end.
+fn clip_render_plugin_steps() -> Vec<Step> {
+    use Step::*;
+    use saine_core::{AssetId, ClipId, Command, Device, PluginFormat, PluginKind, PluginRef, TrackId};
+    use std::time::{Duration, Instant};
+    fn dir() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("saine-selftest-clip-render-plugin-{}", std::process::id()))
+    }
+    fn files() -> Vec<std::path::PathBuf> {
+        let mut v: Vec<_> = std::fs::read_dir(dir().join("renders").join("bounce")).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+        v.sort();
+        v
+    }
+    fn plugin(path: &str, name: &str) -> PluginRef {
+        PluginRef { format: PluginFormat::Clap, id: "studio.saine.test.gain".into(), path: Some(path.into()), name: name.into(), vendor: "Saine".into(), version: "1.0.0".into(), kind: PluginKind::Effect }
+    }
+    #[derive(Default)]
+    struct St {
+        track: u64,
+        clip: u64,
+        tracks_before: usize,
+        assets_before: usize,
+        tracks_now: usize,
+        assets_now: usize,
+        undo_now: Option<String>,
+        files_now: usize,
+        gaps: Rc<RefCell<(Option<Instant>, f64)>>,
+        timer: Option<slint::Timer>,
+    }
+    let st = Rc::new(RefCell::new(St::default()));
+    let k: Vec<Rc<RefCell<St>>> = (0..12).map(|_| st.clone()).collect();
+    let mut k = k.into_iter();
+    let mut next = move || k.next().unwrap();
+    let (s1, s2, s3, s4, s5, s6, s7, s8) = (next(), next(), next(), next(), next(), next(), next(), next());
+    let (s9, s10, s11) = (next(), next(), next());
+    vec![
+        DoC("clip render plugin: scratch folder, a 2 s sine imported at beat 4 on a new track", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let d = dir();
+            let _ = std::fs::remove_dir_all(&d);
+            std::fs::create_dir_all(&d).unwrap();
+            c.clip_render.dir_override = Some(d.join("renders"));
+            {
+                let mut s = s1.borrow_mut();
+                s.tracks_before = c.project().tracks.len();
+                s.assets_before = c.project().assets.len();
+            }
+            let sine: Vec<f32> = (0..96_000).map(|i| 0.4 * (std::f32::consts::TAU * 440.0 * i as f32 / 48_000.0).sin()).collect();
+            crate::wavgen::write_wav_pcm(&d.join("p.wav"), 48_000, 1, 24, &sine).unwrap();
+            c.import_files(vec![d.join("p.wav")], crate::controller::ImportTarget::NewTrack, Some(4 * PPQ));
+        })),
+        DoC("clip render plugin: add the CLAP test gain (saved state 0.25), then set it to 0.5 in the live instance", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let mut s = s2.borrow_mut();
+            let t = c.selected_track.unwrap();
+            s.track = t.0;
+            s.clip = c.project().track(t).and_then(|t| t.clips.first()).map_or(0, |k| k.id.0);
+            let mut gain = Device::new(plugin(&saine_engine::test_plugin_dir().join("SaineTestGain.clap").to_string_lossy(), "Saine Test Gain"));
+            gain.state = Some(saine_core::device::b64::encode(&0.25f32.to_le_bytes()));
+            c.execute(Command::AddDevice { track: t, index: None, device: gain });
+            let id = c.project().track(t).and_then(|t| t.devices.first()).map_or(0, |d| d.id.0);
+            // The edit reaches the plugin's state when the engine processes a block: one offline
+            // block on the live engine (no device runs in the self-test), transport put back.
+            let was = c.engine.transport();
+            let ok = c.engine.plugin_set_param(id, 0, 0.5).is_ok() && c.engine.seek(0).is_ok() && c.engine.play().is_ok() && c.engine.render_offline(&mut [0.0; 1024]).is_ok();
+            let _ = c.engine.pause();
+            let _ = c.engine.seek(was.position);
+            eprintln!("clip-render plugin: live gain edited: {ok}");
+        })),
+        Check("clip render plugin: the track holds the clip and the plugin, no load error", Box::new(move |c, _| {
+            let s = s3.borrow();
+            let t = c.project().track(TrackId(s.track)).ok_or("no track")?;
+            (s.clip != 0 && t.devices.len() == 1 && c.engine.plugin_load_errors().is_empty()).then_some(()).ok_or(format!("{} devices; {:?}", t.devices.len(), c.engine.plugin_load_errors()))
+        })),
+        DoC("clip render plugin: Bounce to new track, with a 4 ms timer measuring the event loop meanwhile", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let mut s = s4.borrow_mut();
+            *s.gaps.borrow_mut() = (Some(Instant::now()), 0.0);
+            let gaps = s.gaps.clone();
+            let timer = slint::Timer::default();
+            timer.start(slint::TimerMode::Repeated, Duration::from_millis(4), move || {
+                let mut g = gaps.borrow_mut();
+                let now = Instant::now();
+                if let Some(last) = g.0 {
+                    g.1 = g.1.max((now - last).as_secs_f64() * 1e3);
+                }
+                g.0 = Some(now);
+            });
+            s.timer = Some(timer);
+            c.bounce_clip(ClipId(s.clip));
+            eprintln!("clip-render plugin: render in flight: {}", c.clip_render.busy());
+        })),
+        Check("clip render plugin: a new track '(Bounce)' holds the render, one undo step, the event loop was never held long", Box::new(move |c, _| {
+            let mut s = s5.borrow_mut();
+            s.timer = None;
+            let gap = s.gaps.borrow().1;
+            let p = c.project();
+            let i = p.track_index(TrackId(s.track)).ok_or("no track")?;
+            let t = p.tracks.get(i + 1).ok_or("no track below")?;
+            let ok = t.name.ends_with("(Bounce)") && t.clips.len() == 1 && c.doc.undo_label() == Some("Bounce to New Track") && !c.clip_render.busy();
+            eprintln!("clip-render plugin: render {:.1} ms; longest UI-thread piece {:.1} ms; longest gap between event-loop turns {gap:.1} ms (4 ms timer)", c.clip_render.last_ms, c.clip_render.ui_stall_ms);
+            (ok && gap < 400.0).then_some(()).ok_or(format!("{} {:?} {:?}; gap {gap:.1} ms; status {:?}", t.name, t.clips.len(), c.doc.undo_label(), c.status_message()))
+        })),
+        Check("clip render plugin: the file has the live gain 0.5 (peak 0.2), not the saved 0.25 (0.1) nor the dry level (0.4)", Box::new(|_, _| {
+            let f = files();
+            let path = f.first().ok_or("no file in bounce/")?;
+            let (rate, ch, s) = crate::wavgen::read_wav(path)?;
+            let frames = s.len() / 2;
+            let p = s.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            eprintln!("clip-render plugin: bounced peak {p:.4} ({frames} frames)");
+            (rate == 48_000 && ch == 2 && (96_000..=98_000).contains(&frames) && (p - 0.2).abs() < 0.01).then_some(()).ok_or(format!("rate {rate} ch {ch} frames {frames} peak {p}"))
+        })),
+        Do("clip render plugin: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        DoC("clip render plugin: add a plugin that cannot be loaded after the first, then Bounce", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let mut s = s6.borrow_mut();
+            let missing = Device::new(plugin("/nonexistent/Missing Verb.clap", "Missing Verb"));
+            c.execute(Command::AddDevice { track: TrackId(s.track), index: None, device: missing });
+            s.files_now = files().len();
+            s.assets_now = c.project().assets.len();
+            s.tracks_now = c.project().tracks.len();
+            s.undo_now = c.doc.undo_label().map(str::to_string);
+            c.bounce_clip(ClipId(s.clip));
+        })),
+        Check("clip render plugin: the render failed by plugin name; no file, no asset, no track, no undo step", Box::new(move |c, _| {
+            let s = s7.borrow();
+            let msg = c.status_message().unwrap_or_default().to_string();
+            let ok = msg.starts_with("Render failed: Missing Verb could not be loaded") && files().len() == s.files_now && c.project().assets.len() == s.assets_now && c.project().tracks.len() == s.tracks_now && c.doc.undo_label().map(str::to_string) == s.undo_now && !c.clip_render.busy() && c.pending_jobs == 0;
+            ok.then_some(()).ok_or(format!("{msg:?}; {} files; {} assets; undo {:?}; busy {}", files().len(), c.project().assets.len(), c.doc.undo_label(), c.clip_render.busy()))
+        })),
+        DoC("clip render plugin: Bounce and Cancel at once, while the plugins prepare", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let s = s8.borrow();
+            c.bounce_clip(ClipId(s.clip));
+            let busy = c.clip_render.busy();
+            let cancelled = c.cancel_clip_render();
+            eprintln!("clip-render plugin: busy {busy}, cancel took effect {cancelled}");
+        })),
+        Check("clip render plugin: Cancel left nothing behind and the interface is free", Box::new(move |c, _| {
+            let s = s9.borrow();
+            let ok = c.status_message() == Some("Render cancelled") && files().len() == s.files_now && c.project().assets.len() == s.assets_now && c.project().tracks.len() == s.tracks_now && c.doc.undo_label().map(str::to_string) == s.undo_now && !c.clip_render.busy() && c.pending_jobs == 0;
+            ok.then_some(()).ok_or(format!("{:?}; busy {}; pending {}", c.status_message(), c.clip_render.busy(), c.pending_jobs))
+        })),
+        DoC("clip render plugin: remove the test track, its asset and the scratch folder", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let s = s10.borrow();
+            let mut commands = vec![Command::RemoveTrack { track: TrackId(s.track) }];
+            commands.extend(c.project().assets.iter().filter(|a| a.absolute_path.contains("saine-selftest-clip-render-plugin")).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
+            c.execute(Command::Batch { label: "clip render plugin cleanup".into(), commands });
+            c.select_clip(None);
+            c.clip_render.dir_override = None;
+            let _ = std::fs::remove_dir_all(dir());
+        })),
+        Check("clip render plugin: project back to its earlier tracks and assets", Box::new(move |c, _| {
+            let s = s11.borrow();
             let p = c.project();
             (p.tracks.len() == s.tracks_before && p.assets.len() == s.assets_before).then_some(()).ok_or(format!("{} tracks {} assets", p.tracks.len(), p.assets.len()))
         })),
@@ -7121,6 +7333,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(devminimap_steps());
     all.extend(clip_menu_steps());
     all.extend(clip_render_steps());
+    all.extend(clip_render_plugin_steps());
     all.extend(ruler_zoom_steps());
     all.extend(snap_steps());
     all.extend(menu_bar_steps());
@@ -7150,6 +7363,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
             let fixture = ctl.try_borrow().map(|c| c.devices.catalog.fixture.is_some()).unwrap_or(false);
             let note = if fixture { " [plugin catalogue from a TEST fixture: the plugin checks did not exercise the engine scanner]" } else { "" };
             println!("self-test: {} / {n} checks passed{skipped}{note}", n - fails.get());
+            finish_run(fails.get());
             t2.stop();
             let _ = slint::quit_event_loop();
             return;
@@ -7203,7 +7417,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
 fn live_import_steps() -> Vec<Step> {
     use crate::live_set::{LiveSet, SetAudioClip, SetContent, SetMidiClip, SetNote, SetTrack};
     use Step::*;
-    let dir = || std::env::temp_dir().join(format!("saine-selftest-live-{}", std::process::id()));
+    let dir = || run_dir().join("live");
     vec![
         DoC("live import: write a set and its sample, then File › Import Ableton Live Set…", Box::new(move |_, ctl| {
             let d = dir();

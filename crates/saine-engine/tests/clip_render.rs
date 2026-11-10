@@ -7,6 +7,7 @@
 use saine_core::render_plan::{self, RenderMode};
 use saine_core::*;
 use saine_engine::offline::{self, OfflineError, OfflineRender};
+use saine_engine::{Config, Engine};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
@@ -58,7 +59,7 @@ impl Rig {
     }
 
     fn render(&self, span: &render_plan::ClipSpan, mode: RenderMode, tail_s: f64) -> Vec<f32> {
-        offline::render(&self.job(span, mode, tail_s), &AtomicBool::new(false), &AtomicUsize::new(0)).unwrap()
+        offline::render(self.job(span, mode, tail_s), &AtomicBool::new(false), &AtomicUsize::new(0)).unwrap()
     }
 }
 
@@ -128,8 +129,9 @@ fn a_finished_render_reports_every_frame_done() {
     let span = render_plan::clip_span(r.doc.project(), ClipId(101)).unwrap();
     let job = r.job(&span, RenderMode::Material, 0.0);
     let done = AtomicUsize::new(0);
-    let out = offline::render(&job, &AtomicBool::new(false), &done).unwrap();
-    assert_eq!((out.len() / 2, done.load(Ordering::Relaxed)), (job.frames, job.frames));
+    let frames = job.frames;
+    let out = offline::render(job, &AtomicBool::new(false), &done).unwrap();
+    assert_eq!((out.len() / 2, done.load(Ordering::Relaxed)), (frames, frames));
 }
 
 #[test]
@@ -142,25 +144,25 @@ fn a_cancelled_render_returns_cancelled_and_stops_early() {
     let id = r.doc.project().tracks[1].midi_clips[0].id;
     let span = render_plan::clip_span(r.doc.project(), id).unwrap();
     // Not even started: the cancel flag is seen before an engine is made.
-    let job = r.job(&span, RenderMode::Bounce, 2.0);
+    let frames = r.job(&span, RenderMode::Bounce, 2.0).frames;
     let done = AtomicUsize::new(0);
-    assert_eq!(offline::render(&job, &AtomicBool::new(true), &done), Err(OfflineError::Cancelled));
+    assert_eq!(offline::render(r.job(&span, RenderMode::Bounce, 2.0), &AtomicBool::new(true), &done), Err(OfflineError::Cancelled));
     assert_eq!(done.load(Ordering::Relaxed), 0);
     // Cancelled once a tenth of the audio is rendered.
     let (cancel, done, finished) = (AtomicBool::new(false), AtomicUsize::new(0), AtomicBool::new(false));
     let result = std::thread::scope(|s| {
         s.spawn(|| {
-            while done.load(Ordering::Relaxed) < job.frames / 10 && !finished.load(Ordering::Relaxed) {
+            while done.load(Ordering::Relaxed) < frames / 10 && !finished.load(Ordering::Relaxed) {
                 std::thread::yield_now();
             }
             cancel.store(true, Ordering::Relaxed);
         });
-        let r = offline::render(&job, &cancel, &done);
+        let r = offline::render(r.job(&span, RenderMode::Bounce, 2.0), &cancel, &done);
         finished.store(true, Ordering::Relaxed);
         r
     });
     assert_eq!(result, Err(OfflineError::Cancelled));
-    assert!(done.load(Ordering::Relaxed) < job.frames, "stopped before the end: {} of {}", done.load(Ordering::Relaxed), job.frames);
+    assert!(done.load(Ordering::Relaxed) < frames, "stopped before the end: {} of {}", done.load(Ordering::Relaxed), frames);
 }
 
 #[test]
@@ -171,37 +173,113 @@ fn a_missing_audio_file_fails_the_render_and_names_the_file() {
     let span = render_plan::clip_span(r.doc.project(), ClipId(101)).unwrap();
     let job = r.job(&span, RenderMode::Material, 0.0);
     std::fs::remove_file(&r.wav).unwrap();
-    match offline::render(&job, &AtomicBool::new(false), &AtomicUsize::new(0)) {
+    match offline::render(job, &AtomicBool::new(false), &AtomicUsize::new(0)) {
         Err(OfflineError::Failed(msg)) => assert!(msg.contains("s.wav"), "{msg}"),
         other => panic!("expected a failure, got {:?}", other.map(|v| v.len())),
     }
 }
 
-#[test]
-fn a_track_with_a_plugin_device_is_refused_before_any_engine_is_made() {
+fn test_plugin(file: &str, id: &str, name: &str) -> PluginRef {
+    PluginRef { format: PluginFormat::Clap, id: id.into(), path: Some(saine_engine::test_plugin_dir().join(file).to_string_lossy().into_owned()), name: name.into(), vendor: "Saine".into(), version: "1.0.0".into(), kind: PluginKind::Effect }
+}
+
+fn gain_plugin(gain: Option<f32>) -> Device {
+    let mut d = Device::new(test_plugin("SaineTestGain.clap", "studio.saine.test.gain", "Saine Test Gain"));
+    d.state = gain.map(|g| device::b64::encode(&g.to_le_bytes()));
+    d
+}
+
+/// The rig with a 1 s sine clip on the audio track (with `device` on it), and the span of that clip.
+fn audio_rig(device: Option<Device>) -> (Rig, render_plan::ClipSpan) {
     let mut r = rig(1.0);
-    let inst = r.doc.project().tracks[1].id;
-    let clap = PluginRef { format: PluginFormat::Clap, id: "test.plugin".into(), path: None, name: "Test".into(), vendor: String::new(), version: String::new(), kind: PluginKind::Effect };
-    r.doc.execute(Command::AddDevice { track: inst, index: None, device: Device::new(clap) }, Origin::User).unwrap();
-    r.doc.execute(Command::AddMidiClip { track: inst, clip: midi_clip(0, 1, 60) }, Origin::User).unwrap();
-    let id = r.doc.project().tracks[1].midi_clips[0].id;
-    let span = render_plan::clip_span(r.doc.project(), id).unwrap();
-    let job = r.job(&span, RenderMode::Bounce, 0.0);
-    assert_eq!(offline::render(&job, &AtomicBool::new(false), &AtomicUsize::new(0)), Err(OfflineError::Failed(offline::PLUGINS_REFUSED.into())));
-    let material = r.job(&span, RenderMode::Material, 0.0);
-    assert!(material.project.track(inst).unwrap().devices.is_empty(), "Material renders without devices, so it is not refused");
+    let (a, asset) = (r.doc.project().tracks[0].id, r.doc.project().assets[0].id);
+    r.doc.execute(Command::AddClip { track: a, clip: audio_clip(asset, 101, 0, 1.0) }, Origin::User).unwrap();
+    if let Some(device) = device {
+        r.doc.execute(Command::AddDevice { track: a, index: None, device }, Origin::User).unwrap();
+    }
+    let span = render_plan::clip_span(r.doc.project(), ClipId(101)).unwrap();
+    (r, span)
 }
 
 #[test]
-fn a_plugin_on_another_track_does_not_stop_a_render() {
+fn a_plugin_chain_is_rendered_from_its_saved_state_and_equals_the_same_render_on_a_worker() {
+    let (r, span) = audio_rig(Some(gain_plugin(Some(0.25))));
+    // All on this thread (the engine tests have no "main thread" of their own to keep).
+    let direct = r.render(&span, RenderMode::Bounce, 0.0);
+    assert!((peak(&direct) - 0.3 * 0.25).abs() < 0.005, "the plugin's gain is in the file: {}", peak(&direct));
+    // Prepared here (as the app does on the UI thread), rendered on a worker, dropped here.
+    let mut session = offline::Session::new(r.job(&span, RenderMode::Bounce, 0.0)).unwrap();
+    assert_eq!(session.plugins(), (0, 1));
+    assert_eq!(session.render(&AtomicBool::new(false), &AtomicUsize::new(0)), Err(OfflineError::Failed("the plugins are not ready".into())));
+    assert_eq!(session.prepare_next(None).unwrap().as_deref(), Some("Saine Test Gain"));
+    assert_eq!(session.prepare_next(None).unwrap(), None);
+    let done = AtomicUsize::new(0);
+    let worker = std::thread::scope(|s| s.spawn(|| session.render(&AtomicBool::new(false), &done)).join().unwrap()).unwrap();
+    assert_eq!(worker, direct, "a worker render of the prepared plugins is the same file");
+    assert_eq!(done.load(Ordering::Relaxed), worker.len() / 2);
+    drop(session);
+}
+
+#[test]
+fn the_plugin_starts_from_the_live_instances_current_state_not_the_saved_one() {
+    let (r, span) = audio_rig(Some(gain_plugin(Some(0.25))));
+    let device = r.doc.project().tracks[0].devices[0].clone();
+    let live = Engine::new(Config { sample_rate: RATE, max_block_size: 512 }).unwrap();
+    let info = live.load_file(&r.wav).unwrap();
+    let map = HashMap::from([(r.doc.project().assets[0].id, info.asset_id)]);
+    live.publish(&snapshot::build(r.doc.project(), RATE, &map).0).unwrap();
+    live.plugin_set_param(device.id.0, 0, 0.8).unwrap(); // edited in the plugin since the project's state was saved
+    live.seek(0).unwrap();
+    live.play().unwrap();
+    live.render_offline(&mut [0.0; 1024]).unwrap();
+    assert!(live.plugin_state_of(DeviceId(9999)).unwrap().is_none(), "no live instance, no state");
+    let mut session = offline::Session::new(r.job(&span, RenderMode::Bounce, 0.0)).unwrap();
+    session.prepare_next(Some(&live)).unwrap();
+    let out = session.render(&AtomicBool::new(false), &AtomicUsize::new(0)).unwrap();
+    assert!((peak(&out) - 0.3 * 0.8).abs() < 0.005, "the live 0.8, not the saved 0.25: {}", peak(&out));
+    drop(session);
+}
+
+#[test]
+fn a_latency_plugin_is_rendered_aligned_to_the_timeline() {
+    let n: u32 = 1000;
+    let mut latency = Device::new(test_plugin("SaineTestLatency.clap", "studio.saine.test.latency", "Saine Test Latency"));
+    latency.state = Some(device::b64::encode(&n.to_le_bytes()));
+    let (with, span) = audio_rig(Some(latency));
+    let (without, _) = audio_rig(None);
+    let delayed = with.render(&span, RenderMode::Bounce, 0.0);
+    let dry = without.render(&span, RenderMode::Bounce, 0.0);
+    assert_eq!(delayed.len(), dry.len());
+    let worst = delayed.iter().zip(&dry).fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
+    assert!(peak(&dry) > 0.2 && worst < 1e-5, "the plugin's {n} frames are compensated: the file equals the dry render, worst difference {worst}");
+}
+
+#[test]
+fn a_plugin_that_cannot_be_loaded_fails_the_render_by_name_before_any_audio() {
+    let missing = Device::new(PluginRef { path: Some("/nonexistent/Missing.clap".into()), ..test_plugin("SaineTestGain.clap", "studio.saine.test.gain", "Missing Verb") });
+    let (r, span) = audio_rig(Some(missing));
+    let done = AtomicUsize::new(0);
+    match offline::render(r.job(&span, RenderMode::Bounce, 0.0), &AtomicBool::new(false), &done) {
+        Err(OfflineError::Failed(msg)) => assert!(msg.starts_with("Missing Verb could not be loaded"), "{msg}"),
+        other => panic!("expected a load failure, got {:?}", other.map(|v| v.len())),
+    }
+    assert_eq!(done.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn an_instrument_plugin_is_rendered_and_a_plugin_on_another_track_is_left_out() {
     let mut r = rig(1.0);
     let (a, inst) = (r.doc.project().tracks[0].id, r.doc.project().tracks[1].id);
-    let clap = PluginRef { format: PluginFormat::Clap, id: "test.plugin".into(), path: None, name: "Test".into(), vendor: String::new(), version: String::new(), kind: PluginKind::Effect };
-    r.doc.execute(Command::AddDevice { track: a, index: None, device: Device::new(clap) }, Origin::User).unwrap();
+    r.doc.execute(Command::AddDevice { track: a, index: None, device: gain_plugin(None) }, Origin::User).unwrap();
+    let sine = Device::new(PluginRef { kind: PluginKind::Instrument, ..test_plugin("SaineTestSine.clap", "studio.saine.test.sine", "Saine Test Sine") });
+    r.doc.execute(Command::SetInstrumentPlugin { track: inst, device: Some(sine) }, Origin::User).unwrap();
     r.doc.execute(Command::AddMidiClip { track: inst, clip: midi_clip(0, 1, 60) }, Origin::User).unwrap();
     let id = r.doc.project().tracks[1].midi_clips[0].id;
     let span = render_plan::clip_span(r.doc.project(), id).unwrap();
-    assert!(peak(&r.render(&span, RenderMode::Bounce, 0.0)) > 0.02);
+    let session = offline::Session::new(r.job(&span, RenderMode::Bounce, 0.0)).unwrap();
+    assert_eq!(session.plugins(), (0, 1), "only the instrument plugin of the rendered track: the effect on the other track is muted and left out");
+    drop(session);
+    assert!(peak(&r.render(&span, RenderMode::Bounce, 0.0)) > 0.02, "the plugin instrument sounds");
 }
 
 #[test]
@@ -234,4 +312,24 @@ fn bench_four_bar_clip_render() {
         let audio = 8.0 + tail;
         println!("BENCH {name}: median {:.1} ms, min {:.1} ms for {audio:.0} s of audio ({:.0}x real time)", ms[4], ms[0], audio * 1e3 / ms[4]);
     }
+    // The same clip with a CLAP plugin added to the chain: the main thread's share (prepare + teardown) next to the worker's.
+    r.doc.execute(Command::AddDevice { track: a, index: None, device: gain_plugin(Some(0.5)) }, Origin::User).unwrap();
+    let span = render_plan::clip_span(r.doc.project(), ClipId(101)).unwrap();
+    let mut rows: Vec<(f64, f64, f64)> = (0..9)
+        .map(|_| {
+            let mut session = offline::Session::new(r.job(&span, RenderMode::Bounce, 2.0)).unwrap();
+            let t = Instant::now();
+            while session.prepare_next(None).unwrap().is_some() {}
+            let prepare = t.elapsed().as_secs_f64() * 1e3;
+            let t = Instant::now();
+            let out = session.render(&AtomicBool::new(false), &AtomicUsize::new(0)).unwrap();
+            let worker = t.elapsed().as_secs_f64() * 1e3;
+            assert!(peak(&out) > 0.0);
+            let t = Instant::now();
+            drop(session);
+            (prepare, worker, t.elapsed().as_secs_f64() * 1e3)
+        })
+        .collect();
+    rows.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    println!("BENCH audio 4 bars + reverb + CLAP gain, Bounce, plugin path: main thread prepare {:.2} ms, worker {:.1} ms, main thread teardown {:.2} ms (medians of 9)", rows[4].0, rows[4].1, rows[4].2);
 }

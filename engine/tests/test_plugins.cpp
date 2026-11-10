@@ -10,6 +10,7 @@
 #include "test_util.hpp"
 
 #include "platform/os.hpp"
+#include "plugins/plugin_instance.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -740,6 +741,201 @@ TEST_CASE(preview_note_rt_render_does_not_allocate) {
     }
     CHECK_EQ(rt_alloc_count() - before, 0L);
     CHECK_EQ(rt_free_count() - freed, 0L);
+}
+
+// ---------------------------------------------------------------- offline renders on a worker
+// A private engine prepares its plugin instances on the main thread (se_plugin_prepare), then a
+// worker publishes and renders it detached from the main thread, as the app's clip renders do.
+
+namespace {
+
+std::vector<uint8_t> f32_state(float v) {
+    uint8_t b[4];
+    std::memcpy(b, &v, 4);
+    return {b[0], b[1], b[2], b[3]};
+}
+
+// The chain of the worker tests: CLAP gain (state 0.25), VST3 gain (default 0.5), an Audio Unit
+// on macOS, and on a second track a CLAP instrument with a CLAP gain.
+struct WorkerChain {
+    std::vector<uint8_t> gain_state = f32_state(0.25f);
+    se_device_desc inserts[3];
+    std::size_t insert_count = 0;
+    se_device_desc instrument = clap(20, kClapSine, "studio.saine.test.sine");
+    se_device_desc inst_fx = clap_gain(21);
+    WorkerChain() {
+        inserts[insert_count] = clap_gain(10);
+        inserts[insert_count].state = gain_state.data();
+        inserts[insert_count++].state_len = gain_state.size();
+        inserts[insert_count++] = vst3_gain(11);
+        if (kHaveAu) inserts[insert_count++] = au(12, kAuLowpass);
+    }
+    void fill(Session5& s, uint64_t asset) const {
+        s.audio(1, {clip(1, asset, 0, 0, 9600)}, std::vector<se_device_desc>(inserts, inserts + insert_count));
+        s.instrument(2, {note(0, 4800, 60), note(4800, 9600, 67)}, &instrument, {inst_fx});
+    }
+};
+
+std::size_t prepare_chain(se_engine* e, const WorkerChain& c) {
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < c.insert_count; ++i, ++n) REQUIRE(se_plugin_prepare(e, &c.inserts[i], 0) == SE_OK);
+    REQUIRE(se_plugin_prepare(e, &c.instrument, 1) == SE_OK);
+    REQUIRE(se_plugin_prepare(e, &c.inst_fx, 0) == SE_OK);
+    return n + 2;
+}
+
+} // namespace
+
+TEST_CASE(offline_worker_render_of_prepared_plugins_equals_the_main_thread_render) {
+    const WorkerChain chain;
+    const auto source = sine(9600, 220.0, 48000.0, 0.5);
+    EngineHandle live(48000, 256);
+    Session5 sl;
+    chain.fill(sl, load_asset(live, {source}));
+    REQUIRE(sl.publish(live) == SE_OK);
+    CHECK_EQ(error_count(live), std::size_t{0});
+    const auto expected = play_render(live, 9600);
+    REQUIRE(rms(left(expected)) > 0.01);
+
+    EngineHandle priv(48000, 256);
+    Session5 sp;
+    chain.fill(sp, load_asset(priv, {source}));
+    const std::size_t plugins = prepare_chain(priv, chain);
+    CHECK_EQ(saine::testing::plugin_instantiations(priv), uint64_t{plugins});
+    REQUIRE(se_plugin_set_detached(priv, 1) == SE_OK);
+    std::vector<float> out;
+    long allocs = -1;
+    bool on_main = true;
+    std::thread worker([&] {
+        on_main = saine::on_platform_main_thread();
+        int32_t rc = sp.publish(priv);
+        se_plugin_idle(priv);
+        se_transport_seek(priv, 0);
+        se_transport_play(priv);
+        out.assign(2 * 9600, 0.0f);
+        const long before = rt_alloc_count();
+        {
+            RtAllocGuard g;
+            for (uint32_t i = 0; i < 9600; i += 256) rc |= se_render_offline(priv, out.data() + 2 * i, std::min<uint32_t>(256, 9600 - i));
+        }
+        allocs = rt_alloc_count() - before;
+        if (rc != SE_OK) out.clear();
+    });
+    worker.join();
+    CHECK(!on_main);
+    CHECK_EQ(error_count(priv), std::size_t{0});
+    CHECK_EQ(saine::testing::plugin_instantiations(priv), uint64_t{plugins}); // the worker created nothing
+    CHECK_EQ(allocs, 0L);
+    REQUIRE(out.size() == expected.size());
+    CHECK(out == expected);
+}
+
+TEST_CASE(offline_detached_engine_never_instantiates_and_reports_the_unprepared_device) {
+    EngineHandle e(48000, 256);
+    const uint64_t a = load_asset(e, {constant(4800, 0.5f)});
+    Session5 s;
+    s.audio(1, {clip(1, a, 0, 0, 4800)}, {clap_gain(10)});
+    REQUIRE(se_plugin_set_detached(e, 1) == SE_OK);
+    int32_t rc = SE_ERR_STATE;
+    std::thread worker([&] { rc = s.publish(e); });
+    worker.join();
+    REQUIRE(rc == SE_OK);
+    CHECK_EQ(saine::testing::plugin_instantiations(e), uint64_t{0});
+    std::vector<se_plugin_message> msgs(4);
+    std::size_t n = 0;
+    REQUIRE(se_plugin_load_errors(e, msgs.data(), msgs.size(), &n) == SE_OK);
+    REQUIRE(n == 1);
+    CHECK(std::strstr(msgs[0].message, "not prepared") != nullptr);
+    CHECK_NEAR(play_render(e, 256)[2 * 10], 0.5, 1e-6); // pass-through, pan -1: the left channel
+    // Prepare after the engine was detached is refused.
+    const se_device_desc d = clap_gain(11);
+    CHECK(se_plugin_prepare(e, &d, 0) == SE_ERR_STATE);
+}
+
+TEST_CASE(offline_prepare_reports_load_failures_and_validates_the_description) {
+    EngineHandle e(48000, 256);
+    const std::string missing = kPluginDir + "/DoesNotExist.clap";
+    const se_device_desc bad = clap(10, missing, "x.y");
+    CHECK(se_plugin_prepare(e, &bad, 0) == SE_ERR_NOT_FOUND);
+    CHECK(std::strlen(se_last_error()) > 0);
+    const se_device_desc wrong_id = clap(11, kClapGain, "wrong.id");
+    CHECK(se_plugin_prepare(e, &wrong_id, 0) == SE_ERR_NOT_FOUND);
+    const se_device_desc ok = clap_gain(12);
+    CHECK(se_plugin_prepare(e, &ok, 0) == SE_OK);
+    CHECK(se_plugin_prepare(e, &ok, 0) == SE_OK); // already prepared: reused
+    CHECK_EQ(saine::testing::plugin_instantiations(e), uint64_t{3});
+    se_device_desc invalid = ok;
+    invalid.plugin_id = nullptr;
+    CHECK(se_plugin_prepare(e, &invalid, 0) == SE_ERR_INVALID_ARG);
+    CHECK(se_plugin_prepare(e, nullptr, 0) == SE_ERR_INVALID_ARG);
+}
+
+TEST_CASE(offline_one_instance_state_is_saved_and_prepared_into_a_private_engine) {
+    EngineHandle live(48000, 256);
+    const uint64_t a = load_asset(live, {constant(2048, 0.8f)});
+    Session5 s;
+    s.audio(1, {clip(1, a, 0, 0, 2048)}, {clap_gain(10), vst3_gain(11)});
+    REQUIRE(s.publish(live) == SE_OK);
+    REQUIRE(saine::testing::plugin_set_parameter(live, 10, 0, 0.25));
+    const auto expected = play_render(live, 1024);
+    CHECK_NEAR(expected[2 * 100], 0.8 * 0.25 * 0.5, 1e-6);
+
+    CHECK(se_plugin_save_state(live, 99) == SE_ERR_NOT_FOUND);
+    REQUIRE(se_plugin_save_state(live, 10) == SE_OK);
+    uint64_t id = 0;
+    const uint8_t* data = nullptr;
+    std::size_t len = 0;
+    REQUIRE(se_plugin_saved_state(live, 0, &id, &data, &len) == SE_OK);
+    CHECK_EQ(id, uint64_t{10});
+    CHECK(se_plugin_saved_state(live, 1, &id, &data, &len) == SE_ERR_NOT_FOUND); // one instance only
+    std::vector<uint8_t> state(data, data + len);
+
+    EngineHandle priv(48000, 256);
+    const uint64_t b = load_asset(priv, {constant(2048, 0.8f)});
+    Session5 sp;
+    sp.audio(1, {clip(1, b, 0, 0, 2048)}, {clap_gain(10), vst3_gain(11)});
+    se_device_desc d = clap_gain(10);
+    d.state = state.data();
+    d.state_len = state.size();
+    REQUIRE(se_plugin_prepare(priv, &d, 0) == SE_OK);
+    const se_device_desc v = vst3_gain(11);
+    REQUIRE(se_plugin_prepare(priv, &v, 0) == SE_OK);
+    REQUIRE(se_plugin_set_detached(priv, 1) == SE_OK);
+    int32_t rc = SE_ERR_STATE;
+    std::thread worker([&] { rc = sp.publish(priv); });
+    worker.join();
+    REQUIRE(rc == SE_OK);
+    CHECK(play_render(priv, 1024) == expected);
+}
+
+TEST_CASE(offline_prepared_latency_reaches_the_delay_compensation_plan) {
+    constexpr uint32_t kN = 1000;
+    std::vector<uint8_t> st = {kN & 0xff, kN >> 8, 0, 0};
+    se_device_desc lat = clap(10, kClapLatency, "studio.saine.test.latency");
+    lat.state = st.data();
+    lat.state_len = st.size();
+    EngineHandle e(48000, 256);
+    std::vector<float> impulse(4800, 0.0f);
+    impulse[0] = 1.0f;
+    const uint64_t a = load_asset(e, {impulse});
+    Session5 s;
+    s.audio(1, {clip(1, a, 0, 0, 4800)}, {lat});
+    REQUIRE(se_plugin_prepare(e, &lat, 0) == SE_OK);
+    REQUIRE(se_plugin_set_detached(e, 1) == SE_OK);
+    std::vector<float> out;
+    se_pdc_report rep{};
+    std::thread worker([&] {
+        CHECK(s.publish(e) == SE_OK);
+        std::vector<se_pdc_track> t(4);
+        std::size_t n = 0;
+        CHECK(se_pdc_report_get(e, &rep, t.data(), t.size(), &n) == SE_OK);
+        out = play_render(e, 2048);
+    });
+    worker.join();
+    CHECK_EQ(rep.total_frames, kN);
+    const auto l = left(out);
+    const auto peak = std::max_element(l.begin(), l.end()) - l.begin();
+    CHECK_EQ(static_cast<uint32_t>(peak), kN); // late by L: a render drops the first L frames
 }
 
 // ---------------------------------------------------------------- editor windows (Windows)

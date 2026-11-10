@@ -84,8 +84,9 @@ pub fn consolidate_group(p: &Project, id: ClipId) -> Option<ClipSpan> {
 }
 
 /// A copy of `p` for one render: `span.track` unmuted with only the span's clips, every
-/// other track muted (and without plugin devices: they are silent, and a render does not
-/// instantiate plugins, see saine_engine::offline), and the track and master settings `mode` asks for.
+/// other track muted (and without plugin devices: they are silent, so instantiating them would
+/// only cost start-up time; the track's own plugins stay and are rendered, see
+/// saine_engine::offline), and the track and master settings `mode` asks for.
 pub fn render_project(p: &Project, span: &ClipSpan, mode: RenderMode) -> Project {
     let mut r = p.clone();
     for t in &mut r.tracks {

@@ -669,6 +669,42 @@ int32_t se_plugin_save_states(se_engine* engine, size_t* out_count);
 int32_t se_plugin_saved_state(se_engine* engine, size_t index, uint64_t* out_device_id, const uint8_t** out_data,
                               size_t* out_len);
 
+/* Saves the state of ONE live instance (same formats as se_plugin_save_states)
+ * into the engine-owned buffer, replacing its contents: afterwards
+ * se_plugin_saved_state(index 0) reads it. MAIN THREAD. SE_ERR_NOT_FOUND: no
+ * live instance for the device; SE_ERR_STATE: the plugin failed to save (the
+ * reason is the last error). A clip render calls it once per UI tick so the
+ * main thread is never held for the whole chain. */
+int32_t se_plugin_save_state(se_engine* engine, uint64_t device_id);
+
+/* ---- plugins in offline renders on a worker thread (ABI v1 addition)
+ * See engine/README.md ("Plugins in offline renders").
+ *
+ * A private engine without a device renders a project on a worker thread, but
+ * plugins want their creation, state, latency and teardown on the main thread
+ * (CLAP calls the creating thread its main thread, and publish creates). So
+ * the main thread prepares the instances ahead of the publish and the worker
+ * only publishes and renders:
+ *   1. MAIN THREAD (like se_session_publish_v5, which creates instances the
+ *      same way), per device, one device per UI tick: se_plugin_prepare
+ *      (instantiates now with `state`, the live instance's current state,
+ *      stereo in/out at the engine rate and max block size, the saved state
+ *      applied, activated). SE_ERR_NOT_FOUND = the plugin failed to load; the
+ *      reason is the last error. `instrument` is 1 for a track's instrument
+ *      plugin (as in se_track_desc_v5.instrument_plugin), 0 for an insert.
+ *   2. se_plugin_set_detached(engine, 1) before the worker publishes.
+ *   3. WORKER: se_session_publish_* finds the prepared instances by device_id
+ *      (same plugin, same role) and reuses them; se_render_offline processes
+ *      them (process() may run on any thread). Detached, the engine never
+ *      instantiates (a device id that was not prepared fails to load: pass-
+ *      through / silent instrument, reported by se_plugin_load_errors), never
+ *      restarts, polls, calls back or destroys instances, and se_plugin_idle
+ *      only attaches finished warp renders.
+ *   4. MAIN THREAD: se_engine_destroy tears the instances down once the
+ *      worker is done with the engine. */
+int32_t se_plugin_prepare(se_engine* engine, const se_device_desc* device, uint8_t instrument);
+int32_t se_plugin_set_detached(se_engine* engine, uint8_t detached);
+
 /* Native editor windows (macOS: NSWindow titled "<plugin>: <track>").
  * MAIN THREAD ONLY (else SE_ERR_STATE). Opening an open editor brings its
  * window to the front. Unknown/failed device -> SE_ERR_NOT_FOUND; a plugin

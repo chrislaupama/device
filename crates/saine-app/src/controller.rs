@@ -2022,6 +2022,30 @@ mod tests {
         assert_eq!(fader_from_db(f32::NEG_INFINITY), 1.0);
         assert!(db_from_fader(1.0).is_infinite());
     }
+    /// CHR-24: imports finish on worker threads in any order. A file meant for the selected audio
+    /// track must land there even when a later import (on a new track) finishes first and
+    /// selects its own track.
+    #[test]
+    fn import_target_survives_completion_order() {
+        let engine = Arc::new(Engine::new(saine_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        let dir = std::env::temp_dir().join(format!("saine-import-order-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.wav"), dir.join("b.wav"));
+        crate::wavgen::write_wav(&a, 48_000, 1, &vec![0.25; 4_800]).unwrap();
+        crate::wavgen::write_wav(&b, 48_000, 1, &vec![0.25; 4_800]).unwrap();
+        c.import_files(vec![a.clone()], ImportTarget::Selected, Some(0));
+        c.import_files(vec![b], ImportTarget::NewTrack, Some(10 * PPQ));
+        let mut done: Vec<JobResult> = (0..2).map(|_| c.jobs_rx.recv_timeout(Duration::from_secs(20)).expect("import result")).collect();
+        done.sort_by_key(|j| matches!(j, JobResult::Imported { path, .. } if *path == a));
+        for j in done {
+            c.jobs_tx.send(j).unwrap();
+        }
+        c.poll_jobs();
+        let _ = std::fs::remove_dir_all(&dir);
+        let starts: Vec<Vec<Ticks>> = c.project().tracks.iter().map(|t| t.clips.iter().map(|k| k.start).collect()).collect();
+        assert_eq!(starts, vec![vec![0], vec![], vec![10 * PPQ]]);
+    }
     #[test]
     fn pan_text() {
         assert_eq!(fmt_pan(0.0), "C");

@@ -992,6 +992,41 @@ destroy queued instances when
   device runs) and pins its graph with the hazard marker; instrument plugins
   get all-notes-off before and after.
 
+### Plugins in offline renders (private engine on a worker thread)
+
+The app's clip renders (Consolidate, Bounce, Export audio) render on a private, device-less engine
+on a worker thread, while the main thread has to stay free. Plugins want the main thread for
+creation, state, latency and teardown (CLAP calls the creating thread its main thread, VST3 and AU
+instantiate there, and `publish` creates), but their `process()` may run on any thread. So a
+render with plugins is split:
+
+1. **Main thread, one device per UI tick:** `se_plugin_prepare` creates the instance now, with the
+   state the caller passes (the app reads the live instance's current state with
+   `se_plugin_save_state`, one device per call, the same bytes a project save would store). A
+   plugin that fails to load returns `SE_ERR_NOT_FOUND` with the plugin's reason, and the render
+   stops before any audio or file exists. Instances are reused by the later publish when the
+   device id, plugin and role (insert or instrument) match.
+2. **Worker:** `se_plugin_set_detached(engine, 1)`, then publish and `se_render_offline`. A detached
+   engine never instantiates a third-party plugin (a device that was not prepared reports "not
+   prepared on the main thread" in `se_plugin_load_errors` and passes through), never services restarts,
+   polls latency, calls `on_main_thread` or destroys instances; `se_plugin_idle` only attaches finished
+   warp renders. Built-in devices have no thread affinity and are created as usual. The latency each plugin
+   reported when it was prepared feeds delay compensation; the Rust side renders `L` frames more than
+   asked and drops the first `L`, so the file lines up with the timeline like the audible playback.
+3. **Main thread:** `se_engine_destroy` tears the instances down once the worker is done with the engine
+   (Rust: the `offline::Session` travels back to the UI thread with the result and is dropped there).
+
+Plugins run in real-time process mode, as in playback (no VST3 `kOffline` or AU offline flag): a
+plugin that sounds different when it knows it is offline would make the file differ from what the user
+hears. The project's tempo is set on the private engine (metronome off) so tempo-synced plugins see it.
+Limits: a plugin's own restart request (CLAP `request_restart`, VST3 `restartComponent`) is ignored for
+the length of a render (its latency stays as prepared); on Windows and Linux, CLAP `request_callback`
+is only served by `se_plugin_idle`, which a detached engine skips (macOS dispatches it to the main queue).
+Tests: `offline_*` in `tests/test_plugins.cpp` (a worker render of prepared CLAP, VST3, AU and instrument
+plugins equals the main-thread render bit for bit with zero RT allocations; detached engines never
+instantiate; load failures; one-instance state save; latency in the plan), benchmark
+`build/saine_offline_plugin_bench`.
+
 ### State
 
 `se_plugin_save_states` runs on the main thread while audio may run: AU reads
