@@ -19,10 +19,18 @@ export component TrackTitle inherits Rectangle {
 // One Shape rack row (src/composer.rs SHAPE_ROWS): label, then a slider, stepper or
 // segments. Sliders drag across (double-click resets); a disabled row shows its tip on hover.
 component ShapeRack inherits Rectangle {
+    property <length> pitch: Studio.composer-shape-rows.length > 14 ? 15.5px : 17.5px;
     for r[i] in Studio.composer-shape-rows: Rectangle {
-        x: 0; y: i * 17.5px; width: root.width; height: 15px;
+        x: 0; y: i * root.pitch; width: root.width; height: 15px;
         property <color> ink: r.enabled ? Studio.clip-color : #3c3d43;
-        Text { x: 7px; text: r.label; color: r.enabled ? #a6a8ac : #4a4b51; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+        // The row whose curve the piano roll draws: its label lit, a bar in the curve's colour.
+        if r.selected && r.enabled: Rectangle { x: 0; y: 3px; width: 2px; height: 9px; border-radius: 1px; background: r.color; }
+        if r.curved: Rectangle { x: 60px; y: 5.5px; width: 4px; height: 4px; border-radius: 2px; background: r.color; }
+        Text {
+            x: 7px; text: r.label; font-size: 9.5px; font-weight: r.selected ? 600 : 500; vertical-alignment: center;
+            color: !r.enabled ? #4a4b51 : r.selected ? Tokens.text-bright : #a6a8ac;
+        }
+        if r.enabled: TouchArea { x: 0; width: 66px; clicked => { Studio.composer-shape(i, 6, 0); } }
         if r.kind == 0: Rectangle {
             x: 72px; y: 5px; width: 118px; height: 5px; border-radius: 2.5px; background: #2a2b30;
             Rectangle {
@@ -152,7 +160,7 @@ export component ClipSidebar inherits Rectangle {
             Icon { x: parent.width - 14px; y: 4.5px; width: 8px; height: 8px; d: Icons.chevron-down; ink: #9a9ba0; }
             TouchArea { clicked => { Studio.clip-menu-open(5); } }
         }
-        if Studio.composer-shape-tab: ShapeRack { x: 10.5px; y: parent.fy + 26px; width: 234px; height: 14 * 17.5px; }
+        if Studio.composer-shape-tab: ShapeRack { x: 10.5px; y: parent.fy + 26px; width: 234px; height: 16 * 15.5px; }
         if !Studio.composer-shape-tab && Studio.composer-rows.length == 0: Rectangle {
             Text { x: 0; y: 193.5px; width: root.width; height: 15px; text: "No patterns"; color: #a5a6aa; font-size: 9.75px; horizontal-alignment: center; vertical-alignment: center; }
             Text { x: 0; y: 210.5px; width: root.width; height: 14px; text: "Create some with the button below."; color: #6c6e74; font-size: 8.75px; horizontal-alignment: center; vertical-alignment: center; }
@@ -337,11 +345,38 @@ export component PianoRoll inherits Rectangle {
     // ---- toolbar (y 0..27) ----
     if !Studio.ac-visible: Rectangle {
         ToolText { x: 7px; y: 7px; text: "Quantize"; action: "quantize"; }
-        ToolText { x: 55px; y: 7px; text: "Smart Quantize"; action: "smart_quantize"; placeholder: true; }
+        ToolText { x: 55px; y: 7px; text: "Smart Quantize"; action: "smart_quantize"; }
         ToolText { x: 134px; y: 7px; text: "Humanize"; action: "humanize"; }
         ToolText { x: 187px; y: 7px; text: "Reverse"; action: "reverse"; }
         ToolText { x: 232px; y: 7px; text: "Legato"; action: "legato"; }
         ToolText { x: 270.5px; y: 7px; text: "Double"; action: "double"; }
+        // Shape tab: draw curves (Shape), brush, Reset (src/shape_rack.rs).
+        if Studio.composer-shape-tab: Rectangle {
+            x: 322px; y: 4px; width: 200px; height: 20px;
+            Rectangle {
+                x: 0; y: 0; width: 56px; height: 20px; border-radius: 10px;
+                background: Studio.shape-drawing ? Studio.clip-color : #292a2f;
+                Icon { x: 8px; y: 4px; width: 12px; height: 12px; d: "M1 12 C 3.5 12 4.5 3 7 3 S 10.5 12 13 12"; ink: Studio.shape-drawing ? Studio.clip-ink : #a6a8ad; stroke-width: 1.4px; }
+                Text { x: 23px; text: "Shape"; color: Studio.shape-drawing ? Studio.clip-ink : #a6a8ad; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+                TouchArea { clicked => { Studio.shape-draw-toggle(); } }
+            }
+            Rectangle {
+                x: 62px; y: 0; width: 66px; height: 20px; border-radius: 10px; background: #292a2f;
+                opacity: Studio.shape-drawing ? 1 : 0.45;
+                Rectangle { x: 2px + Studio.shape-brush * 21px; y: 2px; width: 20px; height: 16px; border-radius: 8px; background: #46474d; }
+                for d[i] in ["M3 12.5 L11.5 4 L13 5.5 L4.5 14 Z M3 12.5 L2.5 14.5 L4.5 14 Z", "M2 13 H6 V8 H10 V3 H14", "M3 13 L13 3"]: Rectangle {
+                    x: 2px + i * 21px; y: 2px; width: 20px; height: 16px;
+                    Icon { x: 4px; y: 2px; width: 12px; height: 12px; d: d; ink: i == Studio.shape-brush ? #ffffff : #a6a8ad; stroke-width: 1.4px; }
+                    TouchArea { clicked => { Studio.shape-brush-pick(i); } }
+                }
+            }
+            Rectangle {
+                x: 134px; y: 0; width: 44px; height: 20px; border-radius: 10px;
+                background: Studio.shape-has-curves ? #292a2f : transparent;
+                Text { text: "Reset"; color: Studio.shape-has-curves ? #d0d0d1 : #4a4b51; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { enabled: Studio.shape-has-curves; clicked => { Studio.shape-reset(); } }
+            }
+        }
     }
     // Audio toolbar: Original BPM (drag), Speed, Warp and Mode edit the clip's warp;
     // Reverse is a PLACEHOLDER (no reverse in the clip model yet).

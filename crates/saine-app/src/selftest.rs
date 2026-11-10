@@ -261,6 +261,17 @@ fn midi_steps() -> Vec<Step> {
             one_step(h5.clone(), "Quantize Notes")(c)?;
             (n.iter().all(|n| n.start % 240 == 0) && n.iter().any(|n| n.start == 3360 && n.pitch == 52)).then_some(()).ok_or(format!("{n:?}"))
         })),
+        Do("click Smart Quantize", Box::new(|a| click(a, 260.0 + 55.0 + 30.0, 466.0))),
+        Check("Smart Quantize ran: one undo step, or no change to notes already on the grid", Box::new(|c, _| {
+            let label = c.doc.undo_label();
+            label.as_deref().is_some_and(|l| l.starts_with("Smart Quantize") || l.starts_with("Quantize Notes")).then_some(()).ok_or(format!("last {label:?}"))
+        })),
+        DoC("undo Smart Quantize if it changed the notes", Box::new(|a, ctl| {
+            let stepped = ctl.borrow().doc.undo_label().is_some_and(|l| l.starts_with("Smart Quantize"));
+            if stepped {
+                key(a, "z", true, false);
+            }
+        })),
         DoC("click the E3 note at beat 0, press Up", Box::new(|a, ctl| {
             let (x, y) = pr_xy(ctl, 0.1, 52);
             click(a, x, y);
@@ -977,6 +988,23 @@ fn steps() -> Vec<Step> {
             (dl.waves.len() == 1 && (span - (x1 - x0)).abs() <= 1.0)
                 .then_some(())
                 .ok_or(format!("waves {} span {span} want {}", dl.waves.len(), x1 - x0))
+        })),
+        Check("clip editor ruler: bar numbers start at 1 and step by the ruler's label step", Box::new(|c, a| {
+            let labels = a.global::<Studio>().get_pr_bar_labels();
+            let step = c.pr_steps().label_bars;
+            let nums: Vec<i64> = (0..labels.row_count()).filter_map(|i| labels.row_data(i)).filter_map(|l| l.text.parse().ok()).collect();
+            (nums.first() == Some(&1) && nums.windows(2).all(|w| w[1] - w[0] == step))
+                .then_some(())
+                .ok_or(format!("step {step} labels {nums:?}"))
+        })),
+        Check("clip editor ruler: the editor's grid draws bar lines, and beat lines while the step is below a bar", Box::new(|c, _| {
+            let sc = c.pr_scene(1.0, &[]).ok_or("no clip editor scene")?;
+            let mut dl = crate::gpu::DrawList::default();
+            crate::pianoroll::build(&mut dl, &sc);
+            let alphas: Vec<f32> = dl.base.iter().filter(|r| r.rect[3] > 20.0 && r.rect[2] <= 1.01).map(|r| r.color[3]).collect();
+            let bar = alphas.iter().filter(|a| (**a - 0.06).abs() < 1e-4).count();
+            let beat = alphas.iter().filter(|a| (**a - 0.038).abs() < 1e-4).count();
+            (bar > 0 && (beat > 0 || sc.steps.tick_beats >= sc.beats_per_bar)).then_some(()).ok_or(format!("bar lines {bar} beat lines {beat} of {}", alphas.len()))
         })),
         // ---- warp (SAIN-38): Speed / Warp / Mode menus, Original BPM drag, a warp marker ----
         DoC("warp: Warp menu -> On", Box::new(|a, ctl| {
@@ -5523,6 +5551,8 @@ fn devminimap_steps() -> Vec<Step> {
     let before = Rc::new(Cell::new(0.0f32));
     let press_at = Rc::new(Cell::new(0.0f32));
     let (b1, b2, p1, p2) = (before.clone(), before.clone(), press_at.clone(), press_at.clone());
+    let first = Rc::new(Cell::new((false, 1.0f32, 0usize)));
+    let first2 = first.clone();
     vec![
         DoC("devices minimap: select the audio track, clear its chain, add effects until the chain scrolls", Box::new(|a, ctl| {
             key(a, Key::Escape, false, false);
@@ -5556,6 +5586,12 @@ fn devminimap_steps() -> Vec<Step> {
                 && approx(s.get_devmm_win_x(), 0.0, 0.01)
                 && approx(s.get_devmm_win_w(), w * CSS, 0.05);
             ok.then_some(()).ok_or(format!("visible {} width {} tiles {} of {n} window {} {}", s.get_devmm_visible(), s.get_devmm_width(), s.get_devmm_tiles().row_count(), s.get_devmm_win_x(), s.get_devmm_win_w()))
+        })),
+        Check("devices minimap: every device tile carries its picture (neutral and accent paths) in the track colour", Box::new(|c, a| {
+            let tiles = a.global::<Studio>().get_devmm_tiles();
+            let pics = (0..tiles.row_count()).filter_map(|i| tiles.row_data(i)).filter(|t| !t.frame && !t.art.is_empty() && !t.art_accent.is_empty() && t.art.starts_with('M')).count();
+            let n = c.project().track(c.selected_track.ok_or("no track")?).map_or(0, |t| t.devices.len());
+            (pics == n && n > 0).then_some(()).ok_or(format!("{pics} pictures for {n} devices"))
         })),
         DoC("devices minimap: click the strip's far end (the window jumps there)", Box::new(|a, _| click(a, STRIP_X + 190.0, STRIP_Y))),
         Check("the chain scrolled so the window is centred on the click, and the pointer was not hidden", Box::new(|c, _| {
@@ -5624,10 +5660,88 @@ fn devminimap_steps() -> Vec<Step> {
             let want = 20.0 / wait_chain(c)?.ratio(dm::WIDTH);
             approx(c.devices.chain_scroll, want, 2.0).then_some(()).ok_or(format!("scroll {} want {want}", c.devices.chain_scroll))
         })),
+        DoC("devices minimap: let a running fade finish, then add one more effect", Box::new(move |a, ctl| {
+            for _ in 0..40 {
+                if !ctl.borrow().devmm_animating() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+                ctl.borrow_mut().update_ui(a);
+            }
+            let mut c = ctl.borrow_mut();
+            let Some(t) = c.selected_track else { return };
+            if let Some(def) = saine_core::builtin::find("delay") {
+                c.add_item_to_track(&crate::devices::Item::Builtin(def), t, None);
+            }
+            c.update_ui(a);
+            let tiles = a.global::<Studio>().get_devmm_tiles();
+            let newest = tiles.row_data(tiles.row_count().saturating_sub(1)).map_or(1.0, |t| t.opacity);
+            first.set((c.devmm_animating(), newest, tiles.row_count()));
+        })),
+        Check("devices minimap: the new tile started transparent and the strip asked for redraws", Box::new(move |c, _| {
+            let (animating, opacity, rows) = first2.get();
+            let n = c.project().track(c.selected_track.ok_or("no track")?).map_or(0, |t| t.devices.len());
+            (animating && opacity < 0.05 && rows == n).then_some(()).ok_or(format!("animating {animating} newest opacity {opacity} tiles {rows} of {n}"))
+        })),
+        DoC("devices minimap: wait for the glide to settle", Box::new(|a, ctl| {
+            for _ in 0..80 {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+                let mut c = ctl.borrow_mut();
+                c.update_ui(a);
+                if !c.devmm_animating() {
+                    break;
+                }
+            }
+        })),
+        Check("devices minimap: at rest every tile is fully opaque and nothing keeps the strip redrawing", Box::new(|c, a| {
+            let tiles = a.global::<Studio>().get_devmm_tiles();
+            let dim = (0..tiles.row_count()).filter_map(|i| tiles.row_data(i)).filter(|t| t.opacity < 0.999).count();
+            (!c.devmm_animating() && dim == 0).then_some(()).ok_or(format!("animating {} dim tiles {dim}", c.devmm_animating()))
+        })),
         DoC("devices minimap: remove the effects again", Box::new(|a, ctl| clear(a, ctl))),
         Check("the chain is empty again and the strip is hidden", Box::new(|c, a| {
             let n = c.selected_track.and_then(|t| c.project().track(t)).map_or(1, |t| t.devices.len());
             (n == 0 && !a.global::<Studio>().get_devmm_visible() && c.devices.chain_scroll == 0.0).then_some(()).ok_or(format!("devices {n}"))
+        })),
+    ]
+}
+
+/// Snap readout and menu in the timeline toolbar (src/snap.rs, S76): Auto, a fixed size, Off.
+fn snap_steps() -> Vec<Step> {
+    use Step::*;
+    vec![
+        DoC("snap: back to Auto after the sections that pinned a beat", Box::new(|_, ctl| ctl.borrow_mut().snap.grid = None)),
+        Check("snap: the readout starts at Auto with snapping on", Box::new(|c, a| {
+            (a.global::<Studio>().get_snap_text() == "Auto" && c.snap_active()).then_some(()).ok_or(format!("text {}", a.global::<Studio>().get_snap_text()))
+        })),
+        DoC("snap: open the menu from the chevron", Box::new(|_, ctl| ctl.borrow_mut().snap_menu_toggle(900.0, 40.0))),
+        Check("snap: the menu lists Off, Auto and ten sizes, Auto checked", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            let rows = s.get_snap_menu_items();
+            let checked: Vec<usize> = (0..rows.row_count()).filter(|i| rows.row_data(*i).is_some_and(|r| r.checked)).collect();
+            (s.get_snap_menu_open() && rows.row_count() == 12 && checked == [1]).then_some(()).ok_or(format!("open {} rows {} checked {checked:?}", s.get_snap_menu_open(), rows.row_count()))
+        })),
+        DoC("snap: pick 1/16", Box::new(|a, _| a.global::<Studio>().invoke_snap_menu_pick(6))),
+        Check("snap: the readout says 1/16, the menu closed, snapping on", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (s.get_snap_text() == "1/16" && !s.get_snap_menu_open() && c.snap_active()).then_some(()).ok_or(format!("text {} open {}", s.get_snap_text(), s.get_snap_menu_open()))
+        })),
+        DoC("snap: pick Off", Box::new(|a, ctl| {
+            ctl.borrow_mut().snap_menu_toggle(900.0, 40.0);
+            a.global::<Studio>().invoke_snap_menu_pick(0);
+        })),
+        Check("snap: Off reads Off and drags move freely", Box::new(|c, a| {
+            let t = a.global::<Studio>().get_snap_text();
+            (t == "Off" && !c.snap_active()).then_some(()).ok_or(format!("text {t}"))
+        })),
+        DoC("snap: toggle the readout back on, then pick Auto", Box::new(|a, ctl| {
+            ctl.borrow_mut().snap_toggle();
+            ctl.borrow_mut().snap_menu_toggle(900.0, 40.0);
+            a.global::<Studio>().invoke_snap_menu_pick(1);
+        })),
+        Check("snap: Auto again", Box::new(|c, a| {
+            let t = a.global::<Studio>().get_snap_text();
+            (t == "Auto" && c.snap_active()).then_some(()).ok_or(format!("text {t}"))
         })),
     ]
 }
@@ -5818,6 +5932,302 @@ fn clip_menu_steps() -> Vec<Step> {
     ]
 }
 
+/// Clip menu Consolidate (⌘J), Bounce › Bounce to new track and Export audio (src/clip_render.rs):
+/// real clips imported from generated WAVs, the menu clicked, the rendered files read back.
+/// Adds its own tracks and clips and removes them (and its scratch folder) at the end.
+fn clip_render_steps() -> Vec<Step> {
+    use Step::*;
+    use saine_core::{AssetId, ClipId, Command, MidiClip, Note, Track, TrackId};
+    const LANE_Y0: f32 = TRACK0_Y - crate::timeline::RULER_H;
+    fn dir() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("saine-selftest-clip-render-{}", std::process::id()))
+    }
+    fn right_click(a: &AppWindow, x: f32, y: f32) {
+        let w = a.window();
+        let p = LogicalPosition::new(x, y);
+        w.dispatch_event(WindowEvent::PointerMoved { position: p });
+        w.dispatch_event(WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
+        w.dispatch_event(WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
+    }
+    fn entry(items: &slint::ModelRc<crate::MenuItem>, label: &str) -> Option<crate::MenuItem> {
+        (0..items.row_count()).filter_map(|i| items.row_data(i)).find(|m| m.label == label)
+    }
+    fn click_entry(a: &AppWindow, label: &str) {
+        let s = a.global::<Studio>();
+        if let Some(m) = entry(&s.get_menu_items(), label) {
+            click(a, s.get_menu_x() + 40.0, s.get_menu_y() + m.y + crate::clipedit::MENU_ROW / 2.0);
+        }
+    }
+    fn click_sub(a: &AppWindow, label: &str) {
+        let s = a.global::<Studio>();
+        if let Some(m) = entry(&s.get_sub_items(), label) {
+            click(a, s.get_menu_x() + 209.0 - 4.0 + 40.0, s.get_menu_y() + s.get_sub_y() + m.y + crate::clipedit::MENU_ROW / 2.0);
+        }
+    }
+    fn clip_xy(c: &Controller, id: ClipId) -> (f32, f32) {
+        let i = c.clip_ids.iter().position(|&k| k == id).unwrap_or(0);
+        let (x, y, w, h) = c.clip_vis[i].rect(&c.view);
+        (LANE_X + x + w / 2.0, LANE_Y0 + y + h * 0.7)
+    }
+    fn sine(secs: f32, hz: f32, amp: f32) -> Vec<f32> {
+        (0..(48_000.0 * secs) as usize).map(|i| amp * (std::f32::consts::TAU * hz * i as f32 / 48_000.0).sin()).collect()
+    }
+    fn peak(s: &[f32], from: usize, to: usize) -> f32 {
+        s[from * 2..(to * 2).min(s.len())].iter().fold(0.0f32, |m, v| m.max(v.abs()))
+    }
+    fn files(sub: &str) -> Vec<std::path::PathBuf> {
+        let mut v: Vec<_> = std::fs::read_dir(dir().join("renders").join(sub)).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+        v.sort();
+        v
+    }
+    #[derive(Default)]
+    struct St {
+        audio_track: u64,
+        first: u64,
+        second: u64,
+        midi_track: u64,
+        midi_clip: u64,
+        tracks_before: usize,
+        assets_before: usize,
+        undo_before_export: Option<String>,
+        joined_before: usize,
+        assets_now: usize,
+        undo_now: Option<String>,
+    }
+    let st = Rc::new(RefCell::new(St::default()));
+    let k: Vec<Rc<RefCell<St>>> = (0..40).map(|_| st.clone()).collect();
+    let mut k = k.into_iter();
+    let mut next = move || k.next().unwrap();
+    let (s1, s2, s3, s4, s5, s6, s7, s8, s9, s10) = (next(), next(), next(), next(), next(), next(), next(), next(), next(), next());
+    let (s11, s12, s13, s14, s15, s16, s17, s18) = (next(), next(), next(), next(), next(), next(), next(), next());
+    let (s19, s20, s21, s22, s23, s24, s25, s26) = (next(), next(), next(), next(), next(), next(), next(), next());
+    vec![
+        DoC("clip render: scratch folder, two 2 s sine WAVs; import the first at beat 4 on a new track", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let d = dir();
+            let _ = std::fs::remove_dir_all(&d);
+            std::fs::create_dir_all(&d).unwrap();
+            c.clip_render.dir_override = Some(d.join("renders"));
+            {
+                let mut s = s1.borrow_mut();
+                s.tracks_before = c.project().tracks.len();
+                s.assets_before = c.project().assets.len();
+            }
+            crate::wavgen::write_wav_pcm(&d.join("a.wav"), 48_000, 1, 24, &sine(2.0, 440.0, 0.3)).unwrap();
+            crate::wavgen::write_wav_pcm(&d.join("b.wav"), 48_000, 1, 24, &sine(2.0, 440.0, 0.3)).unwrap();
+            c.import_files(vec![d.join("a.wav")], crate::controller::ImportTarget::NewTrack, Some(4 * PPQ));
+        })),
+        DoC("clip render: import the second at beat 6 on the same track (overlaps the first by 1 s)", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = c.selected_track.unwrap();
+            s2.borrow_mut().audio_track = t.0;
+            c.import_files(vec![dir().join("b.wav")], crate::controller::ImportTarget::Track(t), Some(6 * PPQ));
+        })),
+        DoC("clip render: add an instrument track with a 2 s MIDI clip of two notes at beat 4", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let mut s = s3.borrow_mut();
+            let id = c.project().next_id;
+            let mut clip = MidiClip::empty(4 * PPQ, 4 * PPQ);
+            clip.id = ClipId(id + 1);
+            clip.name = "bounce me".into();
+            clip.notes = vec![Note { id: 1, pitch: 60, start: 0, length: 2 * PPQ, velocity: 110 }, Note { id: 2, pitch: 67, start: 2 * PPQ, length: PPQ, velocity: 110 }];
+            let track = Track::new(TrackId(id), TrackKind::Instrument, "Render synth", saine_core::ColorIndex::FIRST);
+            let fader = saine_core::automation::AutomationLane { target: saine_core::automation::AutomationTarget::Volume, enabled: true, points: vec![saine_core::automation::AutoPoint { time: 4 * PPQ, value: -6.0, curve: 0.0 }] };
+            c.execute(Command::Batch { label: "clip render test".into(), commands: vec![Command::AddTrack { index: None, track }, Command::AddMidiClip { track: TrackId(id), clip }, Command::SetAutomationLane { track: Some(TrackId(id)), target: fader.target.clone(), lane: Some(fader) }] });
+            s.midi_track = id;
+            s.midi_clip = id + 1;
+            let ids: Vec<u64> = c.project().track(TrackId(s.audio_track)).map(|t| t.clips.iter().map(|k| k.id.0).collect()).unwrap_or_default();
+            s.first = ids.first().copied().unwrap_or(0);
+            s.second = ids.get(1).copied().unwrap_or(0);
+            c.select_track(TrackId(s.audio_track));
+            c.select_clip(None);
+        })),
+        Check("clip render: two overlapping audio clips and one MIDI clip imported", Box::new(move |c, _| {
+            let s = s4.borrow();
+            let t = c.project().track(TrackId(s.audio_track)).ok_or("no audio track")?;
+            (t.clips.len() == 2 && s.first != 0 && s.second != 0 && c.project().midi_clip(ClipId(s.midi_clip)).is_some()).then_some(()).ok_or(format!("{} clips", t.clips.len()))
+        })),
+        DoC("clip render: right-click the first audio clip", Box::new(move |a, ctl| {
+            let (x, y) = clip_xy(&ctl.borrow(), ClipId(s5.borrow().first));
+            right_click(a, x, y);
+        })),
+        Check("clip render: Consolidate, Bounce and Export are enabled, Ask is not; Bounce has a submenu", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            let items = s.get_menu_items();
+            let on = |l: &str| entry(&items, l).is_some_and(|m| m.enabled);
+            let ok = on("Consolidate") && on("Bounce") && on("Export audio to Finder") && entry(&items, "Ask").is_some_and(|m| !m.enabled) && entry(&items, "Bounce").is_some_and(|m| m.submenu);
+            ok.then_some(()).ok_or("menu entries".into())
+        })),
+        Do("clip render: choose Consolidate", Box::new(|a| click_entry(a, "Consolidate"))),
+        Check("clip render: Consolidate joined both clips into one 3 s clip at beat 4, named '<first> merged', one undo step", Box::new(move |c, _| {
+            let s = s6.borrow();
+            let t = c.project().track(TrackId(s.audio_track)).ok_or("no track")?;
+            let k = t.clips.first().ok_or("no clip")?;
+            let ok = t.clips.len() == 1 && k.start == 4 * PPQ && k.source_length.abs_diff(144_000) <= 1 && k.name.ends_with(" merged") && !k.warp.enabled && c.doc.undo_label() == Some("Consolidate Clips") && c.selected_clip == Some(k.id);
+            ok.then_some(()).ok_or(format!("{} clips; {:?}; undo {:?}", t.clips.len(), t.clips.first().map(|k| (k.start, k.source_length, k.name.clone())), c.doc.undo_label()))
+        })),
+        Check("clip render: the rendered file is in the render folder; the overlap is the sum of both clips (unity level), the rest one clip", Box::new(|c, _| {
+            let f = files("joined");
+            let path = f.first().ok_or("no file in joined/")?;
+            let (rate, ch, s) = crate::wavgen::read_wav(path)?;
+            let (a, b, tail) = (peak(&s, 0, 40_000), peak(&s, 52_000, 92_000), peak(&s, 104_000, 143_000));
+            eprintln!("clip-render: consolidate render {:.1} ms (3 s of audio)", c.clip_render.last_ms);
+            let ok = rate == 48_000 && ch == 2 && s.len() / 2 == 144_000 && (a - 0.3).abs() < 0.02 && (b - 0.6).abs() < 0.03 && (tail - 0.3).abs() < 0.02;
+            ok.then_some(()).ok_or(format!("rate {rate} ch {ch} frames {} peaks {a} {b} {tail}", s.len() / 2))
+        })),
+        Do("clip render: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("clip render: one undo restored both clips and removed the merged asset", Box::new(move |c, _| {
+            let s = s7.borrow();
+            let t = c.project().track(TrackId(s.audio_track)).ok_or("no track")?;
+            let ids: Vec<u64> = t.clips.iter().map(|k| k.id.0).collect();
+            (ids == vec![s.first, s.second] && c.project().assets.len() == s.assets_before + 2).then_some(()).ok_or(format!("{ids:?} assets {}", c.project().assets.len()))
+        })),
+        DoC("clip render: select the first clip and press Cmd+J", Box::new(move |a, ctl| {
+            ctl.borrow_mut().select_clip(Some(ClipId(s8.borrow().first)));
+            key(a, "j", true, false);
+        })),
+        Check("clip render: Cmd+J consolidated them again", Box::new(move |c, _| {
+            let t = c.project().track(TrackId(s9.borrow().audio_track)).ok_or("no track")?;
+            (t.clips.len() == 1 && c.doc.undo_label() == Some("Consolidate Clips")).then_some(()).ok_or(format!("{} clips", t.clips.len()))
+        })),
+        Do("clip render: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        DoC("clip render: select the instrument track (the lanes scroll to it)", Box::new(move |_, ctl| {
+            ctl.borrow_mut().select_track(TrackId(s17.borrow().midi_track));
+        })),
+        DoC("clip render: right-click the MIDI clip", Box::new(move |a, ctl| {
+            let id = ClipId(s10.borrow().midi_clip);
+            let (x, y) = clip_xy(&ctl.borrow(), id);
+            right_click(a, x, y);
+        })),
+        Do("clip render: open Bounce", Box::new(|a| click_entry(a, "Bounce"))),
+        Check("clip render: the Bounce submenu lists Bounce to new track (enabled, ⌘ B) and Bounce track in place (greyed)", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let sub = s.get_sub_items();
+            let _ = c;
+            let ok = s.get_sub_open() && sub.row_count() == 2 && entry(&sub, "Bounce to new track").is_some_and(|m| m.enabled && m.shortcut == "⌘ B") && entry(&sub, "Bounce track in place").is_some_and(|m| !m.enabled);
+            ok.then_some(()).ok_or(format!("open {} rows {}", s.get_sub_open(), sub.row_count()))
+        })),
+        Do("clip render: choose Bounce to new track", Box::new(|a| click_sub(a, "Bounce to new track"))),
+        Check("clip render: a new audio track 'Render synth (Bounce)' below holds a clip at beat 4 (2-4 s); the MIDI clip is disabled; one undo step", Box::new(move |c, _| {
+            let s = s11.borrow();
+            let p = c.project();
+            let i = p.track_index(TrackId(s.midi_track)).ok_or("no instrument track")?;
+            let t = p.tracks.get(i + 1).ok_or("no track below")?;
+            let k = t.clips.first().ok_or("no clip")?;
+            let ok = t.kind == TrackKind::Audio && t.name == "Render synth (Bounce)" && k.start == 4 * PPQ && (96_000..=192_001).contains(&k.source_length) && t.automation.iter().any(|l| l.target == saine_core::automation::AutomationTarget::Volume) && p.midi_clip(ClipId(s.midi_clip)).is_some_and(|m| m.disabled) && c.doc.undo_label() == Some("Bounce to New Track") && c.selected_track == Some(t.id);
+            ok.then_some(()).ok_or(format!("{} {:?} {:?}", t.name, t.clips.first().map(|k| (k.start, k.source_length)), c.doc.undo_label()))
+        })),
+        Check("clip render: the bounced file has sound (the synth was rendered)", Box::new(|c, _| {
+            let f = files("bounce");
+            let path = f.first().ok_or("no file in bounce/")?;
+            let (rate, ch, s) = crate::wavgen::read_wav(path)?;
+            let p = peak(&s, 0, s.len() / 2);
+            eprintln!("clip-render: bounce render {:.1} ms (2 s clip + tail)", c.clip_render.last_ms);
+            (rate == 48_000 && ch == 2 && p > 0.02 && s.len() / 2 >= 96_000).then_some(()).ok_or(format!("rate {rate} ch {ch} frames {} peak {p}", s.len() / 2))
+        })),
+        Do("clip render: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("clip render: undo removed the bounce track and enabled the MIDI clip again", Box::new(move |c, _| {
+            let s = s12.borrow();
+            let p = c.project();
+            (p.tracks.len() == s.tracks_before + 2 && p.midi_clip(ClipId(s.midi_clip)).is_some_and(|m| !m.disabled)).then_some(()).ok_or(format!("{} tracks", p.tracks.len()))
+        })),
+        DoC("clip render: select the instrument track again", Box::new(move |_, ctl| {
+            ctl.borrow_mut().select_track(TrackId(s18.borrow().midi_track));
+        })),
+        DoC("clip render: right-click the MIDI clip, with Export pointed at a temp file", Box::new(move |a, ctl| {
+            let id = ClipId(s13.borrow().midi_clip);
+            s13.borrow_mut().undo_before_export = ctl.borrow().doc.undo_label().map(str::to_string);
+            ctl.borrow_mut().clip_render.export_path = Some(dir().join("export").join("clip.wav"));
+            std::fs::create_dir_all(dir().join("export")).unwrap();
+            let (x, y) = clip_xy(&ctl.borrow(), id);
+            right_click(a, x, y);
+        })),
+        Do("clip render: choose Export audio to Finder", Box::new(|a| click_entry(a, "Export audio to Finder"))),
+        Check("clip render: the exported WAV is stereo 48 kHz with sound, 2-4 s long, and the project is untouched", Box::new(move |c, _| {
+            let (rate, ch, s) = crate::wavgen::read_wav(&dir().join("export").join("clip.wav"))?;
+            let p = peak(&s, 0, s.len() / 2);
+            eprintln!("clip-render: export render {:.1} ms", c.clip_render.last_ms);
+            let same = c.doc.undo_label().map(str::to_string) == s14.borrow().undo_before_export;
+            (rate == 48_000 && ch == 2 && p > 0.02 && (96_000..=192_000).contains(&(s.len() / 2)) && same && !c.clip_render.busy()).then_some(()).ok_or(format!("rate {rate} ch {ch} frames {} peak {p} same {same}", s.len() / 2))
+        })),
+        DoC("clip render: select the audio track; Consolidate its first clip and Cancel at once", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let mut s = s19.borrow_mut();
+            c.select_track(TrackId(s.audio_track));
+            s.joined_before = files("joined").len();
+            s.assets_now = c.project().assets.len();
+            s.undo_now = c.doc.undo_label().map(str::to_string);
+            c.consolidate_clip(ClipId(s.first));
+            c.cancel_clip_render();
+        })),
+        Check("clip render: Cancel left nothing behind: both clips, no file, no asset, no undo step", Box::new(move |c, _| {
+            let s = s20.borrow();
+            let ids: Vec<u64> = c.project().track(TrackId(s.audio_track)).map(|t| t.clips.iter().map(|k| k.id.0).collect()).unwrap_or_default();
+            let ok = ids == vec![s.first, s.second] && files("joined").len() == s.joined_before && c.project().assets.len() == s.assets_now && c.doc.undo_label().map(str::to_string) == s.undo_now && !c.clip_render.busy() && c.status_message() == Some("Render cancelled");
+            ok.then_some(()).ok_or(format!("{ids:?}; {} files (was {}); {} assets (was {}); undo {:?}; busy {}; {:?}", files("joined").len(), s.joined_before, c.project().assets.len(), s.assets_now, c.doc.undo_label(), c.clip_render.busy(), c.status_message()))
+        })),
+        DoC("clip render: Consolidate, then change the second clip while it renders", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let s = s21.borrow();
+            c.consolidate_clip(ClipId(s.first));
+            let busy = c.clip_render.busy();
+            c.execute(Command::SetClipGain { clip: ClipId(s.second), gain: 0.5 });
+            eprintln!("clip-render: render in flight while the edit ran: {busy}");
+        })),
+        Check("clip render: the render was discarded (a source clip changed): two clips, no file, the gain edit on top of the undo stack", Box::new(move |c, _| {
+            let s = s22.borrow();
+            let ids: Vec<u64> = c.project().track(TrackId(s.audio_track)).map(|t| t.clips.iter().map(|k| k.id.0).collect()).unwrap_or_default();
+            let ok = ids == vec![s.first, s.second] && files("joined").len() == s.joined_before && c.project().assets.len() == s.assets_now && c.doc.undo_label() != Some("Consolidate Clips") && !c.clip_render.busy() && c.status_message().is_some_and(|m| m.contains("changed while it rendered"));
+            ok.then_some(()).ok_or(format!("{ids:?}; {} files; {} assets; undo {:?}; {:?}", files("joined").len(), c.project().assets.len(), c.doc.undo_label(), c.status_message()))
+        })),
+        Do("clip render: Cmd+Z (the gain edit)", Box::new(|a| key(a, "z", true, false))),
+        DoC("clip render: Consolidate, then change another track while it renders", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let s = s23.borrow();
+            c.consolidate_clip(ClipId(s.first));
+            c.execute(Command::SetTrackGain { track: TrackId(s.midi_track), gain: 0.9 });
+        })),
+        Check("clip render: that render still landed as one step on top of the other edit, the interface was free meanwhile", Box::new(move |c, _| {
+            let s = s24.borrow();
+            let t = c.project().track(TrackId(s.audio_track)).ok_or("no track")?;
+            let ok = t.clips.len() == 1 && c.doc.undo_label() == Some("Consolidate Clips") && files("joined").len() == s.joined_before + 1 && (c.project().track(TrackId(s.midi_track)).map(|m| m.gain) == Some(0.9));
+            ok.then_some(()).ok_or(format!("{} clips; undo {:?}; {} files", t.clips.len(), c.doc.undo_label(), files("joined").len()))
+        })),
+        Do("clip render: Cmd+Z (the consolidation)", Box::new(|a| key(a, "z", true, false))),
+        Do("clip render: Cmd+Z (the gain)", Box::new(|a| key(a, "z", true, false))),
+        DoC("clip render: delete the second WAV, then Consolidate", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let mut s = s25.borrow_mut();
+            s.joined_before = files("joined").len();
+            s.assets_now = c.project().assets.len();
+            s.undo_now = c.doc.undo_label().map(str::to_string);
+            std::fs::remove_file(dir().join("b.wav")).unwrap();
+            c.consolidate_clip(ClipId(s.first));
+        })),
+        Check("clip render: the render failed with a message; both clips, no file, no asset, no undo step", Box::new(move |c, _| {
+            let s = s26.borrow();
+            let ids: Vec<u64> = c.project().track(TrackId(s.audio_track)).map(|t| t.clips.iter().map(|k| k.id.0).collect()).unwrap_or_default();
+            let ok = ids == vec![s.first, s.second] && files("joined").len() == s.joined_before && c.project().assets.len() == s.assets_now && c.doc.undo_label().map(str::to_string) == s.undo_now && !c.clip_render.busy() && c.status_message().is_some_and(|m| m.starts_with("Render failed") && m.contains("b.wav"));
+            ok.then_some(()).ok_or(format!("{ids:?}; {} files (was {}); undo {:?}; {:?}", files("joined").len(), s.joined_before, c.doc.undo_label(), c.status_message()))
+        })),
+        DoC("clip render: remove the test tracks and assets and the scratch folder", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let s = s15.borrow();
+            let mut commands: Vec<Command> = [s.audio_track, s.midi_track].iter().map(|&t| Command::RemoveTrack { track: TrackId(t) }).collect();
+            commands.extend(c.project().assets.iter().filter(|a| a.absolute_path.contains("saine-selftest-clip-render")).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
+            c.execute(Command::Batch { label: "clip render cleanup".into(), commands });
+            c.select_clip(None);
+            c.clip_render.dir_override = None;
+            let _ = std::fs::remove_dir_all(dir());
+        })),
+        Check("clip render: project back to its earlier tracks and assets", Box::new(move |c, _| {
+            let s = s16.borrow();
+            let p = c.project();
+            (p.tracks.len() == s.tracks_before && p.assets.len() == s.assets_before).then_some(()).ok_or(format!("{} tracks {} assets", p.tracks.len(), p.assets.len()))
+        })),
+    ]
+}
+
 /// Clip sidebar pattern list (Saine's local library): Create, load a row, Original,
 /// Type and Genre, each one undo step. Removes its clip at the end.
 fn pattern_library_steps() -> Vec<Step> {
@@ -5835,6 +6245,11 @@ fn pattern_library_steps() -> Vec<Step> {
     let h = |_: u8| hist.clone();
     let (h0, h1, h2, h3, h4, h5) = (h(0), h(1), h(2), h(3), h(4), h(5));
     let (h6, h7) = (h(6), h(7));
+    let (h8, h9, h10, h11, hsync) = (h(8), h(9), h(10), h(11), h(12));
+    fn shape_rows(a: &AppWindow) -> Vec<crate::ShapeRow> {
+        let m = a.global::<Studio>().get_composer_shape_rows();
+        (0..slint::Model::row_count(&m)).filter_map(|i| slint::Model::row_data(&m, i)).collect()
+    }
     fn shaped(c: &Controller) -> Option<(Vec<saine_core::Note>, Vec<saine_core::Note>)> {
         let m = c.pr_clip()?;
         Some((m.composer.as_ref()?.base.clone(), m.notes.clone()))
@@ -5953,9 +6368,60 @@ fn pattern_library_steps() -> Vec<Step> {
             let s = a.global::<Studio>();
             (!s.get_composer_shape_tab() && slint::Model::row_count(&s.get_composer_rows()) == 6).then_some(()).ok_or("still on Shape".into())
         })),
+        DoC("patterns: Type › Chords, Shape tab, toolbar Shape on", Box::new(move |a, ctl| {
+            let mut c = ctl.borrow_mut();
+            hsync.set(c.doc.history_labels().len());
+            c.clip_menu_open(4);
+            c.clip_menu_pick(0);
+            c.composer_tab(true);
+            c.shape_draw_toggle();
+            c.update_ui(a);
+        })),
+        Check("patterns: chords show the chord rows enabled and the toolbar draws curves", Box::new(move |c, a| {
+            one(&h8, c, "Pattern Type Change")?;
+            let rows = shape_rows(a);
+            let air = rows.iter().find(|r| r.label == "Air").ok_or("no Air row")?;
+            let ok = a.global::<Studio>().get_shape_drawing() && c.shape_drawing() && air.enabled && rows.len() == 14 && !a.global::<Studio>().get_shape_has_curves();
+            ok.then_some(()).ok_or(format!("{} rows, Air enabled {}", rows.len(), air.enabled))
+        })),
+        DoC("patterns: ramp a Velocity curve up across the bar", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.shape_stroke(saine_core::shape::ShapeKey::Velocity, 2, &[(0.0, 0.2), (2.0, 0.6), (4.0, 1.0)]);
+            c.update_ui(a);
+        })),
+        Check("patterns: the curve plays (quiet first beat, full last), one undo step 'Shape Change'", Box::new(move |c, a| {
+            one(&h9, c, "Shape Change")?;
+            let k = comp(c).ok_or("no composer")?;
+            let curved = k.shape_of(k.shape_source()).curve(saine_core::shape::ShapeKey::Velocity).is_some();
+            let (base, notes) = shaped(c).ok_or("no clip")?;
+            let vel = |v: &[saine_core::Note], b: i64| v.iter().filter(|n| n.start / PPQ == b).map(|n| n.velocity as u32).max().unwrap_or(0);
+            let ok = curved && vel(&notes, 0) < vel(&base, 0) && vel(&notes, 3) >= vel(&notes, 0) && a.global::<Studio>().get_shape_has_curves();
+            let row = shape_rows(a).into_iter().find(|r| r.label == "Velocity").ok_or("no row")?;
+            (ok && row.selected && row.curved).then_some(()).ok_or(format!("curved {curved}, first {} -> {}", vel(&base, 0), vel(&notes, 0)))
+        })),
+        DoC("patterns: toolbar Reset", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.shape_reset();
+            c.update_ui(a);
+        })),
+        Check("patterns: Reset clears the curves (one undo step 'Shape Change')", Box::new(move |c, a| {
+            one(&h10, c, "Shape Change")?;
+            let k = comp(c).ok_or("no composer")?;
+            (k.shapes.is_empty() && k.base.is_empty() && !a.global::<Studio>().get_shape_has_curves()).then_some(()).ok_or("curves left".into())
+        })),
+        Do("patterns: Arp ›", Box::new(|a| click(a, 5.0 + 10.5 + 72.0 + 120.0, 425.0 + 104.0 + 26.0 + 13.0 * 17.5 + 7.5))),
+        Check("patterns: Arp 1/8 plays and the Pattern and Octaves rows join (one undo step 'Shape Change')", Box::new(move |c, a| {
+            one(&h11, c, "Shape Change")?;
+            let rows = shape_rows(a);
+            let arp = rows.iter().find(|r| r.label == "Arp").map(|r| r.value.to_string());
+            let pattern = rows.iter().find(|r| r.label == "Pattern").map(|r| r.value.to_string());
+            let ok = rows.len() == 16 && arp.as_deref() == Some("1/8") && pattern.as_deref() == Some("Up & down");
+            ok.then_some(()).ok_or(format!("{} rows, arp {arp:?}, pattern {pattern:?}", rows.len()))
+        })),
         DoC("patterns: remove the clip", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
             c.composer_shape_tab = None;
+            c.shape_ui = Default::default();
             if let Some(id) = c.pr_clip().map(|m| m.id) {
                 c.execute(saine_core::Command::RemoveMidiClip { clip: id });
             }
@@ -5973,6 +6439,9 @@ fn pattern_library_steps() -> Vec<Step> {
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
+    // Auto snap follows the ruler step (S76: two beats at the default zoom); the sections below that
+    // drag clips to beats pin the grid to a beat (1/4), and snap_steps puts Auto back.
+    all.insert(0, Step::DoC("snap: pin the grid to a beat for the drag sections", Box::new(|_, ctl| ctl.borrow_mut().snap.grid = Some(crate::timeline::GridSize::Quarter))));
     all.extend(synth_steps());
     all.extend(midi_steps());
     all.extend(recording_steps());
@@ -5999,7 +6468,9 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(minimap_steps());
     all.extend(devminimap_steps());
     all.extend(clip_menu_steps());
+    all.extend(clip_render_steps());
     all.extend(ruler_zoom_steps());
+    all.extend(snap_steps());
     all.extend(menu_bar_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));

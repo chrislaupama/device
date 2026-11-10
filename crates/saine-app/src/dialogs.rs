@@ -150,7 +150,7 @@ pub fn estimate_text(frames: u64, rate: f64, bits: u32, files: usize) -> String 
 }
 
 /// Opens "dir/<stem>.wav", or "<stem> 2.wav", "<stem> 3.wav", … when taken; never an existing file.
-fn create_free_file(dir: &Path, stem: &str) -> Result<(PathBuf, std::fs::File), String> {
+pub(crate) fn create_free_file(dir: &Path, stem: &str) -> Result<(PathBuf, std::fs::File), String> {
     (1..1000)
         .find_map(|n| {
             let path = dir.join(if n == 1 { format!("{stem}.wav") } else { format!("{stem} {n}.wav") });

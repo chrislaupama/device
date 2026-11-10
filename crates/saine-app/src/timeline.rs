@@ -32,6 +32,9 @@ pub const MAX_PX_PER_BEAT: f64 = 2000.0;
 /// Default zoom: 51.03 pt per 4/4 bar (measured: bar 20 line at x 1422.5, bar 1 at 453).
 pub const DEFAULT_PX_PER_BEAT: f64 = 969.5 / 76.0;
 
+/// Design units per reference px (our drawings are 0.85 of the reference app's px); the thresholds below
+/// are in reference px (S65).
+pub const REF: f64 = 0.85;
 /// Pixels between two labelled bars before the label step stops doubling (S65).
 const LABEL_MIN_PX: f64 = 50.0;
 /// Fewest pixels between grid lines inside a bar, and between bar-or-longer grid lines (S66).
@@ -44,7 +47,77 @@ const GRID_MIN_BEATS: f64 = 1.0 / 16.0;
 const GRID_MAX_BEATS: f64 = 128.0;
 /// Ticks closer than this many pixels are not drawn.
 const TICK_MIN_PX: f64 = 4.0;
+/// A fixed grid size is doubled until it is this wide (S76).
+const FIXED_MIN_PX: f64 = 6.0;
 const EPS: f64 = 1e-6;
+
+/// The grid sizes of the toolbar's snap menu (S76); `None` in a [RulerSteps] is "Auto".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridSize {
+    Bar,
+    HalfBar,
+    Quarter,
+    Eighth,
+    Sixteenth,
+    ThirtySecond,
+    QuarterTriplet,
+    EighthTriplet,
+    SixteenthTriplet,
+    ThirtySecondTriplet,
+}
+
+impl GridSize {
+    /// Menu order: straight sizes, then the triplets (a rule between them).
+    pub const ALL: [GridSize; 10] = [
+        GridSize::Bar,
+        GridSize::HalfBar,
+        GridSize::Quarter,
+        GridSize::Eighth,
+        GridSize::Sixteenth,
+        GridSize::ThirtySecond,
+        GridSize::QuarterTriplet,
+        GridSize::EighthTriplet,
+        GridSize::SixteenthTriplet,
+        GridSize::ThirtySecondTriplet,
+    ];
+    /// Number of straight entries (after "Auto") before the rule.
+    pub const STRAIGHT: usize = 6;
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GridSize::Bar => "1 Bar",
+            GridSize::HalfBar => "1/2",
+            GridSize::Quarter => "1/4",
+            GridSize::Eighth => "1/8",
+            GridSize::Sixteenth => "1/16",
+            GridSize::ThirtySecond => "1/32",
+            GridSize::QuarterTriplet => "1/4T",
+            GridSize::EighthTriplet => "1/8T",
+            GridSize::SixteenthTriplet => "1/16T",
+            GridSize::ThirtySecondTriplet => "1/32T",
+        }
+    }
+
+    pub fn is_triplet(self) -> bool {
+        self as usize >= GridSize::QuarterTriplet as usize
+    }
+
+    /// Length in beats (quarter notes); a "1/2" is two beats whatever the signature.
+    pub fn beats(self, beats_per_bar: f64) -> f64 {
+        match self {
+            GridSize::Bar => beats_per_bar,
+            GridSize::HalfBar => 2.0,
+            GridSize::Quarter => 1.0,
+            GridSize::Eighth => 0.5,
+            GridSize::Sixteenth => 0.25,
+            GridSize::ThirtySecond => 0.125,
+            GridSize::QuarterTriplet => 2.0 / 3.0,
+            GridSize::EighthTriplet => 1.0 / 3.0,
+            GridSize::SixteenthTriplet => 1.0 / 6.0,
+            GridSize::ThirtySecondTriplet => 1.0 / 12.0,
+        }
+    }
+}
 
 /// Which bars get a label and a full-height tick, where lanes get grid lines, and how long a
 /// shaded group is, at one zoom. Steps in bars are whole bars; steps in beats are quarter notes.
@@ -63,11 +136,14 @@ pub struct RulerSteps {
     pub band_beats: f64,
     pub beats_per_bar: f64,
     pub beat_len: f64,
+    /// Whether the tick step is wide enough (4 reference px) to draw short ticks.
+    pub ticks_visible: bool,
 }
 
 impl RulerSteps {
     /// `beats_per_bar` and `beat_len` are in quarter notes (4/4: 4 and 1; 6/8: 3 and 0.5).
-    pub fn new(px_per_beat: f64, beats_per_bar: f64, beat_len: f64) -> Self {
+    pub fn new(px_per_beat: f64, beats_per_bar: f64, beat_len: f64, grid: Option<GridSize>) -> Self {
+        let px_per_beat = px_per_beat / REF;
         let bar_px = px_per_beat * beats_per_bar;
         let mut label_bars = 1i64;
         while bar_px > 0.0 && bar_px * (label_bars as f64) < LABEL_MIN_PX && label_bars < 1024 {
@@ -103,17 +179,64 @@ impl RulerSteps {
             n += 1;
             s *= 2.0;
         }
-        let tick_beats = (0..n)
+        let mut tick_beats = (0..n)
             .map(|i| cand[i])
             .find(|&c| c * px_per_beat >= if c >= beats_per_bar - EPS { GRID_BAR_MIN_PX } else { GRID_MIN_PX })
             .unwrap_or(cand[n - 1]);
+        if let Some(g) = grid {
+            if let Some(fixed) = Self::fixed_step(g, beats_per_bar, px_per_beat) {
+                if g.is_triplet() || fixed < tick_beats {
+                    tick_beats = fixed;
+                }
+            }
+        }
         let line_beats = if tick_beats < beats_per_bar - EPS { tick_beats } else { tick_beats.max(tick_bars as f64 * beats_per_bar) };
 
         let bar = beats_per_bar;
         let mut bands = [beat_len, bar, numerator as f64 * bar, 4.0 * numerator as f64 * bar];
         bands.sort_by(f64::total_cmp);
         let band_beats = bands.into_iter().find(|&b| b * px_per_beat >= BAND_MIN_PX).unwrap_or(bands[3]);
-        RulerSteps { label_bars, tick_bars, tick_beats, line_beats, band_beats, beats_per_bar, beat_len }
+        RulerSteps { label_bars, tick_bars, tick_beats, line_beats, band_beats, beats_per_bar, beat_len, ticks_visible: tick_beats * px_per_beat >= TICK_MIN_PX }
+    }
+
+    /// A fixed grid size at this zoom: doubled until 6 px wide (or 128 beats); a triplet that
+    /// stops fitting the bar when doubled is not used (`None`).
+    fn fixed_step(g: GridSize, beats_per_bar: f64, px_per_beat: f64) -> Option<f64> {
+        let widen = |mut s: f64| {
+            while s * px_per_beat < FIXED_MIN_PX && s < GRID_MAX_BEATS {
+                s *= 2.0;
+            }
+            s
+        };
+        if !g.is_triplet() {
+            return Some(widen(g.beats(beats_per_bar)));
+        }
+        let unit = {
+            let (mut a, mut b) = ((beats_per_bar * 4.0).round() as i64, 8i64);
+            while b != 0 {
+                (a, b) = (b, a % b);
+            }
+            a as f64 / 4.0
+        };
+        let mut s = g.beats(beats_per_bar);
+        while !Self::on(unit, s) && s > 0.0625 / 4.0 {
+            s /= 2.0;
+        }
+        let s = widen(s);
+        Self::on(unit, s).then_some(s)
+    }
+
+    /// The beat a pointer position snaps to on this grid, never before 0.
+    pub fn snap(&self, beat: f64) -> f64 {
+        ((beat / self.tick_beats).round() * self.tick_beats).max(0.0)
+    }
+
+    /// Dragging a clip: the grid position or, for a clip that sits off the grid, the position
+    /// that keeps its own offset, whichever is nearer (`orig` is the clip's start before the drag).
+    pub fn snap_move(&self, beat: f64, orig: f64) -> f64 {
+        let on_grid = (beat / self.tick_beats).round() * self.tick_beats;
+        let kept = orig + ((beat - orig) / self.tick_beats).round() * self.tick_beats;
+        (if (kept - beat).abs() < (on_grid - beat).abs() { kept } else { on_grid }).max(0.0)
     }
 
     /// Whether `beat` is a multiple of `unit` (to within a millionth of a beat).
@@ -470,7 +593,7 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
         o.push(px.rect(x - 0.5 * mark, 0.0, mark, 16.5, rgba(rgb(0x4c4d4f), 1.0)));
         b += st.tick_bars;
     }
-    if st.tick_beats * v.px_per_beat >= TICK_MIN_PX {
+    if st.ticks_visible {
         let full = st.tick_bars as f64 * bar;
         let mut i = (v.start_beats / st.tick_beats).floor() as i64;
         loop {
@@ -690,7 +813,11 @@ mod tests {
     use super::*;
 
     fn steps(ppb: f64) -> RulerSteps {
-        RulerSteps::new(ppb, 4.0, 1.0)
+        RulerSteps::new(ppb, 4.0, 1.0, None)
+    }
+
+    fn fixed(ppb: f64, g: GridSize) -> RulerSteps {
+        RulerSteps::new(ppb, 4.0, 1.0, Some(g))
     }
 
     #[test]
@@ -718,19 +845,20 @@ mod tests {
         let mut ppb = MIN_PX_PER_BEAT;
         while ppb <= MAX_PX_PER_BEAT {
             let s = steps(ppb);
-            assert!(s.label_bars as f64 * 4.0 * ppb >= LABEL_MIN_PX - 1e-9 || s.label_bars == 1024, "labels at {ppb}");
-            assert!(s.line_beats * ppb >= GRID_BAR_MIN_PX, "grid at {ppb}");
+            let ref_px = ppb / REF;
+            assert!(s.label_bars as f64 * 4.0 * ref_px >= LABEL_MIN_PX - 1e-9 || s.label_bars == 1024, "labels at {ppb}");
+            assert!(s.line_beats * ref_px >= GRID_BAR_MIN_PX, "grid at {ppb}");
             assert!(s.line_beats >= s.tick_beats && s.tick_bars * 2 >= s.label_bars, "ticks at {ppb}");
-            assert!(s.band_beats * ppb >= BAND_MIN_PX || s.band_beats == 64.0, "band at {ppb}");
+            assert!(s.band_beats * ref_px >= BAND_MIN_PX || s.band_beats == 64.0, "band at {ppb}");
             ppb *= 1.07;
         }
     }
 
     #[test]
     fn ruler_steps_follow_the_time_signature() {
-        let s = RulerSteps::new(DEFAULT_PX_PER_BEAT, 3.0, 0.5);
+        let s = RulerSteps::new(DEFAULT_PX_PER_BEAT, 3.0, 0.5, None);
         assert_eq!((s.label_bars, s.tick_bars, s.tick_beats, s.line_beats), (2, 1, 1.5, 1.5));
-        let s = RulerSteps::new(DEFAULT_PX_PER_BEAT, 3.0, 1.0);
+        let s = RulerSteps::new(DEFAULT_PX_PER_BEAT, 3.0, 1.0, None);
         assert_eq!((s.label_bars, s.tick_beats, s.line_beats), (2, 3.0, 3.0));
     }
 
@@ -764,7 +892,7 @@ mod tests {
             let reach = w as f64 / ppb;
             let full = s.tick_bars as f64 * 4.0;
             let fulls = (reach / full).floor() as usize + 1;
-            if s.tick_beats * ppb < TICK_MIN_PX {
+            if !s.ticks_visible {
                 return (fulls, 0, 0);
             }
             let (mut beat, mut sub) = (0, 0);
@@ -786,6 +914,57 @@ mod tests {
         for ppb in [DEFAULT_PX_PER_BEAT / 8.0, DEFAULT_PX_PER_BEAT / 2.0, DEFAULT_PX_PER_BEAT, DEFAULT_PX_PER_BEAT * 4.0, DEFAULT_PX_PER_BEAT * 16.0] {
             assert_eq!(count(ppb), expect(ppb), "ppb {ppb}");
         }
+    }
+
+    #[test]
+    fn thresholds_are_in_reference_pixels() {
+        // the reference app's default is 15 px per beat; one beat is 16 px wide from 16 / 15 of that zoom.
+        let ppb = |create_px: f64| create_px * REF;
+        assert_eq!(steps(ppb(15.9)).tick_beats, 2.0);
+        assert_eq!(steps(ppb(16.1)).tick_beats, 1.0);
+        assert_eq!(steps(ppb(12.4)).label_bars, 2, "a 4/4 bar of 49.6 px");
+        assert_eq!(steps(ppb(12.6)).label_bars, 1, "a bar of 50.4 px");
+    }
+
+    #[test]
+    fn a_fixed_grid_overrides_auto_when_finer() {
+        let z = DEFAULT_PX_PER_BEAT;
+        assert_eq!(steps(z).tick_beats, 2.0);
+        assert_eq!(fixed(z, GridSize::Quarter).tick_beats, 1.0);
+        assert_eq!(fixed(z, GridSize::Eighth).tick_beats, 0.5);
+        assert_eq!(fixed(z, GridSize::HalfBar).tick_beats, 2.0);
+        assert_eq!(fixed(z, GridSize::Bar).tick_beats, 2.0, "coarser than auto: auto stays");
+        assert_eq!(fixed(z, GridSize::Quarter).line_beats, 1.0);
+        assert_eq!(fixed(z * 8.0, GridSize::Sixteenth).tick_beats, 0.25);
+    }
+
+    #[test]
+    fn a_fixed_grid_too_dense_is_doubled_to_six_px() {
+        let z = DEFAULT_PX_PER_BEAT;
+        assert_eq!(fixed(z, GridSize::ThirtySecond).tick_beats, 0.5);
+        assert_eq!(fixed(z, GridSize::Sixteenth).tick_beats, 0.5);
+        assert_eq!(fixed(z / 8.0, GridSize::Bar).tick_beats, 4.0);
+    }
+
+    #[test]
+    fn triplets_override_and_stay_on_the_bar() {
+        let z = DEFAULT_PX_PER_BEAT * 8.0;
+        let third = fixed(z, GridSize::QuarterTriplet);
+        assert!((third.tick_beats - 2.0 / 3.0).abs() < 1e-9);
+        assert!((fixed(z, GridSize::SixteenthTriplet).tick_beats - 1.0 / 6.0).abs() < 1e-9);
+        assert!((fixed(DEFAULT_PX_PER_BEAT, GridSize::EighthTriplet).tick_beats - 2.0 / 3.0).abs() < 1e-9, "doubled once to 6 px");
+        assert!((RulerSteps::new(z, 3.0, 1.0, Some(GridSize::QuarterTriplet)).tick_beats - 1.0 / 3.0).abs() < 1e-9, "3/4 is not a whole number of 2/3 beats: halved to 1/3");
+    }
+
+    #[test]
+    fn snap_rounds_to_the_step_and_moves_keep_an_off_grid_offset() {
+        let s = fixed(DEFAULT_PX_PER_BEAT, GridSize::Quarter);
+        assert_eq!(s.snap(3.4), 3.0);
+        assert_eq!(s.snap(3.6), 4.0);
+        assert_eq!(s.snap(-2.0), 0.0);
+        assert_eq!(s.snap_move(5.2, 4.0), 5.0);
+        assert!((s.snap_move(5.4, 4.25) - 5.25).abs() < 1e-9, "a clip that started 0.25 off the grid keeps that offset");
+        assert_eq!(s.snap_move(5.9, 4.25), 6.0, "nearer to the grid than to the kept offset");
     }
 
     #[test]

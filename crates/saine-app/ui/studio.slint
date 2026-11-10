@@ -51,7 +51,7 @@ export struct SectionLabel { x: length, w: length, text: string, ink: color }
 export struct MiniBar { x: float, w: float, y: length, h: length, color: color }
 
 // Devices minimap tile (src/devminimap.rs): strip-local px; frame draws a chain's frame; glyph is a stroke path in a 24 x 14 box.
-export struct DevTile { x: length, y: length, w: length, h: length, frame: bool, glyph: string, glyph-w: length, ink: color, name: string }
+export struct DevTile { x: length, y: length, w: length, h: length, frame: bool, art: string, art-accent: string, bg: color, art-fill: color, ink: color, opacity: float, name: string }
 
 export struct ClipLabel { x: length, y: length, w: length, text: string, selected: bool }
 
@@ -304,7 +304,8 @@ export struct PreviewNote { x: float, y: float, w: float }
 export struct PatternRow { name: string, playing: bool, notes: [PreviewNote] }
 // One Shape rack row. kind 0 slider (norm 0..1, bipolar fills from the middle),
 // 1 stepper (‹ value ›), 2 segments (segs, seg lit); tip shows on a disabled row.
-export struct ShapeRow { label: string, value: string, kind: int, norm: float, bipolar: bool, segs: int, seg: int, enabled: bool, tip: string }
+// selected: the row whose curve the piano roll edits; curved: a curve is drawn on it.
+export struct ShapeRow { label: string, value: string, kind: int, norm: float, bipolar: bool, segs: int, seg: int, enabled: bool, tip: string, selected: bool, curved: bool, color: color }
 // separator: a line is drawn above the item; y: row top inside the menu.
 // ---- synth device (src/synth.rs) ----
 // One parameter of the Synth device: control position 0..1, readout with units.
@@ -337,6 +338,11 @@ export global Studio {
     // ---- project / status ----
     in property <string> project-name: "Untitled";
     in property <string> status-text;
+    // A clip render (Consolidate, Bounce, Export audio) runs on a worker: label with percent, bar fill 0..1, Cancel.
+    in property <bool> render-busy;
+    in property <string> render-label;
+    in property <float> render-progress;
+    callback render-cancel();
     // ---- transport (driven by engine.transport() every frame) ----
     in property <bool> playing;
     in property <string> bar-text: "001";
@@ -633,7 +639,13 @@ export global Studio {
     in property <bool> composer-shape-tab;   // the Shape tab is showing
     in property <[ShapeRow]> composer-shape-rows;
     callback composer-tab(bool);                            // true: Shape
-    callback composer-shape(int, int, float);               // row, op (src/composer.rs shape_op), value
+    callback composer-shape(int, int, float);               // row, op (src/shape_rack.rs shape_op), value
+    in property <bool> shape-drawing;        // piano roll toolbar Shape: draw curves
+    in property <int> shape-brush;           // 0 Pencil, 1 Steps, 2 Ramp
+    in property <bool> shape-has-curves;     // Reset is live
+    callback shape-draw-toggle();
+    callback shape-brush-pick(int);
+    callback shape-reset();
     // ---- clip context menu + rename ----
     callback lane-context(length, length, length, length);  // lane x, y, window x, y
     in property <bool> menu-open;
@@ -713,6 +725,20 @@ export global Studio {
     in property <bool> sel-arm;
     in property <bool> sel-monitor;
     in property <string> sel-input-text: "Select audio input";
+    // Timeline snap: the readout ("Off", "Auto", "1/16" ...), its menu (Off, grid sizes) and where it opens.
+    in property <string> snap-text: "Auto";
+    in property <bool> snap-menu-open;
+    in property <[ChoiceItem]> snap-menu-items;
+    in property <length> snap-menu-h: 100px;
+    in property <length> snap-menu-w: 108.8px;
+    in property <length> snap-menu-x;
+    in property <length> snap-menu-y;
+    in property <length> snap-menu-rule1;
+    in property <length> snap-menu-rule2;
+    callback snap-toggle();
+    callback snap-menu-toggle(length, length);
+    callback snap-menu-pick(int);
+    callback snap-menu-dismiss();
     in property <bool> input-menu-open;
     in property <[ChoiceItem]> input-menu-items;
     in property <length> input-menu-h: 48px;

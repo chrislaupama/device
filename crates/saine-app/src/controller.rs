@@ -199,6 +199,8 @@ pub enum JobResult {
     Onsets { engine_asset: u64, result: Result<Vec<saine_engine::Onset>, String>, tempo: Option<f64> },
     /// A file clicked in Browser › Files, decoded for the preview voice (src/files.rs).
     Auditioned { path: PathBuf, result: Result<AssetInfo, String> },
+    /// A Consolidate, Bounce or Export render written and loaded (src/clip_render.rs).
+    ClipRendered(Box<crate::clip_render::ClipRendered>),
 }
 
 /// Blocking decode + peak analysis. Runs on a worker thread.
@@ -274,6 +276,8 @@ pub struct MenuState {
     pub section: Option<saine_core::SectionId>,
     pub items: Vec<(MenuAction, bool)>,
     pub sub_open: bool,
+    /// The entry whose submenu `sub_open` shows (Transpose or Bounce).
+    pub sub_for: Option<MenuAction>,
 }
 
 // ------------------------------------------------------------------ controller
@@ -306,6 +310,7 @@ pub struct Controller {
     pub project_dir: Option<PathBuf>,
     /// Export dialog and the unsaved-changes prompt (src/dialogs.rs).
     pub export: crate::dialogs::ExportUi,
+    pub clip_render: crate::clip_render::ClipRender,
     pub unsaved_open: bool,
     /// Options › Check for Updates… dialog.
     pub updates_open: bool,
@@ -332,6 +337,8 @@ pub struct Controller {
     clips_model: Rc<VecModel<ClipLabel>>,
     ruler_key: (i64, i64, i64, i64),
     pub(crate) mm: crate::minimap::State,
+    /// Timeline snap toggle, grid size and menu (src/snap.rs).
+    pub(crate) snap: crate::snap::State,
     /// Devices minimap (src/devminimap.rs) and the pointer hide / warp requests of minimap drags (src/pointer.rs).
     pub(crate) dm: crate::devminimap::State,
     pub(crate) ptr: crate::pointer::Queue,
@@ -362,9 +369,11 @@ pub struct Controller {
     /// The rows last pushed to `composer_row_model` (rebuilt only when they change).
     pub(crate) composer_rows_shown: std::cell::RefCell<Vec<crate::composer::RowView>>,
     pub(crate) composer_shape_model: Rc<VecModel<ShapeRow>>,
-    pub(crate) composer_shape_shown: std::cell::RefCell<Vec<crate::composer::ShapeRowView>>,
+    pub(crate) composer_shape_shown: std::cell::RefCell<Vec<crate::shape_rack::ShapeRowView>>,
     /// The clip sidebar tab picked (true: Shape); None until one is picked.
     pub(crate) composer_shape_tab: Option<bool>,
+    /// Shape tab: the curve the piano roll edits, draw mode, brush.
+    pub(crate) shape_ui: crate::shape_rack::ShapeUi,
     pub(crate) menu_model: Rc<VecModel<MenuItem>>,
     pub(crate) sub_model: Rc<VecModel<MenuItem>>,
     /// Metronome on/off (app preference, not saved in the project).
@@ -439,6 +448,7 @@ impl Controller {
             status: None,
             project_dir: None,
             export: Default::default(),
+            clip_render: Default::default(),
             unsaved_open: false,
             updates_open: false,
             undo_history_open: false,
@@ -457,6 +467,7 @@ impl Controller {
             tracks_model: Rc::new(VecModel::default()),
             ruler_model: Rc::new(VecModel::default()),
             mm: crate::minimap::State::new(),
+            snap: crate::snap::State::new(),
             dm: crate::devminimap::State::new(),
             ptr: crate::pointer::Queue::default(),
             section_label_model: Rc::new(VecModel::default()),
@@ -486,6 +497,7 @@ impl Controller {
             composer_shape_model: Rc::new(VecModel::default()),
             composer_shape_shown: Default::default(),
             composer_shape_tab: None,
+            shape_ui: Default::default(),
             menu_model: Rc::new(VecModel::default()),
             sub_model: Rc::new(VecModel::default()),
             metronome_on: false,
@@ -538,6 +550,7 @@ impl Controller {
         s.set_ruler_labels(ModelRc::from(self.ruler_model.clone()));
         s.set_minimap_bars(ModelRc::from(self.mm.model.clone()));
         s.set_devmm_tiles(ModelRc::from(self.dm.model.clone()));
+        s.set_snap_menu_items(ModelRc::from(self.snap.model.clone()));
         s.set_section_labels(ModelRc::from(self.section_label_model.clone()));
         s.set_clip_labels(ModelRc::from(self.clip_ids_model()));
         s.set_strips(ModelRc::from(self.strips_model.clone()));
@@ -594,6 +607,11 @@ impl Controller {
         self.status.as_ref().map(|s| s.0.as_str())
     }
 
+    /// The message of the status line (self-test).
+    pub(crate) fn status_message(&self) -> Option<&str> {
+        self.status.as_ref().map(|s| s.0.as_str())
+    }
+
     pub fn set_status(&mut self, msg: impl Into<String>, secs: u64) {
         let msg = msg.into();
         eprintln!("[status] {msg}");
@@ -623,6 +641,7 @@ impl Controller {
             }
             "file.clear_recent" => {
                 self.settings.prefs.recent_projects.clear();
+                self.settings.prefs.recent_resolved.clear();
                 self.save_prefs();
                 self.ui_dirty = true;
             }
@@ -650,16 +669,23 @@ impl Controller {
         let Some(path) = self.settings.prefs.recent_projects.get(i).map(PathBuf::from) else { return };
         if !self.open(&path) {
             self.settings.prefs.recent_projects.remove(i);
+            if i < self.settings.prefs.recent_resolved.len() {
+                self.settings.prefs.recent_resolved.remove(i);
+            }
             self.save_prefs();
         }
     }
 
     fn remember_recent(&mut self, dir: &Path) {
         let path = dir.to_string_lossy().into_owned();
-        let list = &mut self.settings.prefs.recent_projects;
-        list.retain(|p| *p != path);
-        list.insert(0, path);
-        list.truncate(10);
+        let resolved = std::fs::canonicalize(dir).map_or_else(|_| path.clone(), |p| p.to_string_lossy().into_owned());
+        let prefs = &mut self.settings.prefs;
+        prefs.recent_resolved.resize(prefs.recent_projects.len(), String::new());
+        let mut entries: Vec<(String, String)> =
+            prefs.recent_projects.drain(..).zip(prefs.recent_resolved.drain(..)).filter(|(p, r)| *p != path && *r != resolved).collect();
+        entries.insert(0, (path, resolved));
+        entries.truncate(10);
+        (prefs.recent_projects, prefs.recent_resolved) = entries.into_iter().unzip();
         self.save_prefs();
     }
 
@@ -988,6 +1014,7 @@ impl Controller {
 
     /// Drain finished background jobs (called from a UI timer and each frame).
     pub fn poll_jobs(&mut self) {
+        self.clip_render_tick();
         while let Ok(job) = self.jobs_rx.try_recv() {
             self.pending_jobs = self.pending_jobs.saturating_sub(1);
             match job {
@@ -1007,6 +1034,7 @@ impl Controller {
                 JobResult::PluginScan(r) => self.finish_plugin_scan(r),
                 JobResult::Onsets { engine_asset, result, tempo } => self.finish_onsets(engine_asset, result, tempo),
                 JobResult::Auditioned { path, result } => self.finish_audition(path, result),
+                JobResult::ClipRendered(r) => self.finish_clip_render(*r),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
                     if doc_epoch != self.doc_epoch {
                         if let Ok((info, _)) = result {
@@ -1202,7 +1230,7 @@ impl Controller {
 
     fn ruler_steps(&self) -> timeline::RulerSteps {
         let beat_len = 4.0 / self.project().transport.time_signature.denominator as f64;
-        timeline::RulerSteps::new(self.view.px_per_beat, self.beats_per_bar(), beat_len)
+        timeline::RulerSteps::new(self.view.px_per_beat, self.beats_per_bar(), beat_len, self.snap.grid)
     }
 
     pub fn hover(&self, x: f32, y: f32) -> i32 {
@@ -1286,11 +1314,13 @@ impl Controller {
             }
             1 => {
                 let Some(drag) = self.drag.clone() else { return };
-                let snap = |b: f64| (b.max(0.0).round() * PPQ as f64) as Ticks; // snap to beat
+                let (steps, on) = (self.ruler_steps(), self.snap_active());
+                let snap = |b: f64| (if on { steps.snap(b) } else { b.max(0.0) } * PPQ as f64).round() as Ticks;
                 match drag {
                     Drag::Scrub => self.seek_beats(beat),
                     Drag::Move { clip, grab_beats, orig_track, orig_start, .. } => {
-                        let start = snap(beat - grab_beats);
+                        let want = beat - grab_beats;
+                        let start = (if on { steps.snap_move(want, orig_start as f64 / PPQ as f64) } else { want.max(0.0) } * PPQ as f64).round() as Ticks;
                         let p = self.project();
                         let kind = p.track(orig_track).map(|t| t.kind);
                         let track = self
@@ -1681,6 +1711,7 @@ impl Controller {
         self.update_labels();
         self.update_minimap(app);
         self.update_devmm(app);
+        self.push_snap(&s);
         crate::pointer::apply(app, self.ptr.take());
         s.set_section_add_x(self.section_add_x());
         self.update_auto_labels();
@@ -1691,7 +1722,7 @@ impl Controller {
         if s.get_recording() != self.rec.recording {
             s.set_recording(self.rec.recording);
         }
-        tp.playing || previewing || metering || highlighting || self.pending_jobs > 0 || self.drag.is_some() || self.pr_animating() || self.rec.recording || self.test_tone_active()
+        tp.playing || previewing || metering || highlighting || self.pending_jobs > 0 || self.drag.is_some() || self.pr_animating() || self.rec.recording || self.test_tone_active() || self.devmm_animating()
     }
 
     fn push_models(&mut self, app: &AppWindow) {
@@ -1792,6 +1823,7 @@ impl Controller {
         self.push_recording(&s);
         self.push_settings(&s);
         self.push_dialogs(&s);
+        self.push_clip_render(&s);
         self.push_devices(&s);
         self.push_files(&s);
         self.push_automation(&s);
