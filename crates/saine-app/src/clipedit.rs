@@ -649,6 +649,7 @@ impl Controller {
             s.set_pr_length_text(pianoroll::fmt_len(len, tpb).into());
             let v = self.pr_view();
             let bpb = tpb as f64 / PPQ as f64;
+            let step = self.pr_steps().label_bars;
             let mut bars = Vec::new();
             let mut b = 0i64;
             loop {
@@ -659,7 +660,7 @@ impl Controller {
                 if x >= v.gx - 2.0 {
                     bars.push(RulerLabel { x: x + 4.5, text: format!("{}", b + 1).into() });
                 }
-                b += 1;
+                b += step;
             }
             sync_model(&self.pr_bar_model, bars);
         }

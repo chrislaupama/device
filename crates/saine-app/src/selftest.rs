@@ -978,6 +978,23 @@ fn steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("waves {} span {span} want {}", dl.waves.len(), x1 - x0))
         })),
+        Check("clip editor ruler: bar numbers start at 1 and step by the ruler's label step", Box::new(|c, a| {
+            let labels = a.global::<Studio>().get_pr_bar_labels();
+            let step = c.pr_steps().label_bars;
+            let nums: Vec<i64> = (0..labels.row_count()).filter_map(|i| labels.row_data(i)).filter_map(|l| l.text.parse().ok()).collect();
+            (nums.first() == Some(&1) && nums.windows(2).all(|w| w[1] - w[0] == step))
+                .then_some(())
+                .ok_or(format!("step {step} labels {nums:?}"))
+        })),
+        Check("clip editor ruler: the editor's grid draws bar lines, and beat lines while the step is below a bar", Box::new(|c, _| {
+            let sc = c.pr_scene(1.0, &[]).ok_or("no clip editor scene")?;
+            let mut dl = crate::gpu::DrawList::default();
+            crate::pianoroll::build(&mut dl, &sc);
+            let alphas: Vec<f32> = dl.base.iter().filter(|r| r.rect[3] > 20.0 && r.rect[2] <= 1.01).map(|r| r.color[3]).collect();
+            let bar = alphas.iter().filter(|a| (**a - 0.06).abs() < 1e-4).count();
+            let beat = alphas.iter().filter(|a| (**a - 0.038).abs() < 1e-4).count();
+            (bar > 0 && (beat > 0 || sc.steps.tick_beats >= sc.beats_per_bar)).then_some(()).ok_or(format!("bar lines {bar} beat lines {beat} of {}", alphas.len()))
+        })),
         // ---- warp (SAIN-38): Speed / Warp / Mode menus, Original BPM drag, a warp marker ----
         DoC("warp: Warp menu -> On", Box::new(|a, ctl| {
             ctl.borrow_mut().clip_menu_open(1);
@@ -5432,6 +5449,8 @@ fn devminimap_steps() -> Vec<Step> {
     let before = Rc::new(Cell::new(0.0f32));
     let press_at = Rc::new(Cell::new(0.0f32));
     let (b1, b2, p1, p2) = (before.clone(), before.clone(), press_at.clone(), press_at.clone());
+    let first = Rc::new(Cell::new((false, 1.0f32, 0usize)));
+    let first2 = first.clone();
     vec![
         DoC("devices minimap: select the audio track, clear its chain, add effects until the chain scrolls", Box::new(|a, ctl| {
             key(a, Key::Escape, false, false);
@@ -5465,6 +5484,12 @@ fn devminimap_steps() -> Vec<Step> {
                 && approx(s.get_devmm_win_x(), 0.0, 0.01)
                 && approx(s.get_devmm_win_w(), w * CSS, 0.05);
             ok.then_some(()).ok_or(format!("visible {} width {} tiles {} of {n} window {} {}", s.get_devmm_visible(), s.get_devmm_width(), s.get_devmm_tiles().row_count(), s.get_devmm_win_x(), s.get_devmm_win_w()))
+        })),
+        Check("devices minimap: every device tile carries its picture (neutral and accent paths) in the track colour", Box::new(|c, a| {
+            let tiles = a.global::<Studio>().get_devmm_tiles();
+            let pics = (0..tiles.row_count()).filter_map(|i| tiles.row_data(i)).filter(|t| !t.frame && !t.art.is_empty() && !t.art_accent.is_empty() && t.art.starts_with('M')).count();
+            let n = c.project().track(c.selected_track.ok_or("no track")?).map_or(0, |t| t.devices.len());
+            (pics == n && n > 0).then_some(()).ok_or(format!("{pics} pictures for {n} devices"))
         })),
         DoC("devices minimap: click the strip's far end (the window jumps there)", Box::new(|a, _| click(a, STRIP_X + 190.0, STRIP_Y))),
         Check("the chain scrolled so the window is centred on the click, and the pointer was not hidden", Box::new(|c, _| {
@@ -5533,10 +5558,88 @@ fn devminimap_steps() -> Vec<Step> {
             let want = 20.0 / wait_chain(c)?.ratio(dm::WIDTH);
             approx(c.devices.chain_scroll, want, 2.0).then_some(()).ok_or(format!("scroll {} want {want}", c.devices.chain_scroll))
         })),
+        DoC("devices minimap: let a running fade finish, then add one more effect", Box::new(move |a, ctl| {
+            for _ in 0..40 {
+                if !ctl.borrow().devmm_animating() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+                ctl.borrow_mut().update_ui(a);
+            }
+            let mut c = ctl.borrow_mut();
+            let Some(t) = c.selected_track else { return };
+            if let Some(def) = saine_core::builtin::find("delay") {
+                c.add_item_to_track(&crate::devices::Item::Builtin(def), t, None);
+            }
+            c.update_ui(a);
+            let tiles = a.global::<Studio>().get_devmm_tiles();
+            let newest = tiles.row_data(tiles.row_count().saturating_sub(1)).map_or(1.0, |t| t.opacity);
+            first.set((c.devmm_animating(), newest, tiles.row_count()));
+        })),
+        Check("devices minimap: the new tile started transparent and the strip asked for redraws", Box::new(move |c, _| {
+            let (animating, opacity, rows) = first2.get();
+            let n = c.project().track(c.selected_track.ok_or("no track")?).map_or(0, |t| t.devices.len());
+            (animating && opacity < 0.05 && rows == n).then_some(()).ok_or(format!("animating {animating} newest opacity {opacity} tiles {rows} of {n}"))
+        })),
+        DoC("devices minimap: wait for the glide to settle", Box::new(|a, ctl| {
+            for _ in 0..80 {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+                let mut c = ctl.borrow_mut();
+                c.update_ui(a);
+                if !c.devmm_animating() {
+                    break;
+                }
+            }
+        })),
+        Check("devices minimap: at rest every tile is fully opaque and nothing keeps the strip redrawing", Box::new(|c, a| {
+            let tiles = a.global::<Studio>().get_devmm_tiles();
+            let dim = (0..tiles.row_count()).filter_map(|i| tiles.row_data(i)).filter(|t| t.opacity < 0.999).count();
+            (!c.devmm_animating() && dim == 0).then_some(()).ok_or(format!("animating {} dim tiles {dim}", c.devmm_animating()))
+        })),
         DoC("devices minimap: remove the effects again", Box::new(|a, ctl| clear(a, ctl))),
         Check("the chain is empty again and the strip is hidden", Box::new(|c, a| {
             let n = c.selected_track.and_then(|t| c.project().track(t)).map_or(1, |t| t.devices.len());
             (n == 0 && !a.global::<Studio>().get_devmm_visible() && c.devices.chain_scroll == 0.0).then_some(()).ok_or(format!("devices {n}"))
+        })),
+    ]
+}
+
+/// Snap readout and menu in the timeline toolbar (src/snap.rs, S76): Auto, a fixed size, Off.
+fn snap_steps() -> Vec<Step> {
+    use Step::*;
+    vec![
+        DoC("snap: back to Auto after the sections that pinned a beat", Box::new(|_, ctl| ctl.borrow_mut().snap.grid = None)),
+        Check("snap: the readout starts at Auto with snapping on", Box::new(|c, a| {
+            (a.global::<Studio>().get_snap_text() == "Auto" && c.snap_active()).then_some(()).ok_or(format!("text {}", a.global::<Studio>().get_snap_text()))
+        })),
+        DoC("snap: open the menu from the chevron", Box::new(|_, ctl| ctl.borrow_mut().snap_menu_toggle(900.0, 40.0))),
+        Check("snap: the menu lists Off, Auto and ten sizes, Auto checked", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            let rows = s.get_snap_menu_items();
+            let checked: Vec<usize> = (0..rows.row_count()).filter(|i| rows.row_data(*i).is_some_and(|r| r.checked)).collect();
+            (s.get_snap_menu_open() && rows.row_count() == 12 && checked == [1]).then_some(()).ok_or(format!("open {} rows {} checked {checked:?}", s.get_snap_menu_open(), rows.row_count()))
+        })),
+        DoC("snap: pick 1/16", Box::new(|a, _| a.global::<Studio>().invoke_snap_menu_pick(6))),
+        Check("snap: the readout says 1/16, the menu closed, snapping on", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (s.get_snap_text() == "1/16" && !s.get_snap_menu_open() && c.snap_active()).then_some(()).ok_or(format!("text {} open {}", s.get_snap_text(), s.get_snap_menu_open()))
+        })),
+        DoC("snap: pick Off", Box::new(|a, ctl| {
+            ctl.borrow_mut().snap_menu_toggle(900.0, 40.0);
+            a.global::<Studio>().invoke_snap_menu_pick(0);
+        })),
+        Check("snap: Off reads Off and drags move freely", Box::new(|c, a| {
+            let t = a.global::<Studio>().get_snap_text();
+            (t == "Off" && !c.snap_active()).then_some(()).ok_or(format!("text {t}"))
+        })),
+        DoC("snap: toggle the readout back on, then pick Auto", Box::new(|a, ctl| {
+            ctl.borrow_mut().snap_toggle();
+            ctl.borrow_mut().snap_menu_toggle(900.0, 40.0);
+            a.global::<Studio>().invoke_snap_menu_pick(1);
+        })),
+        Check("snap: Auto again", Box::new(|c, a| {
+            let t = a.global::<Studio>().get_snap_text();
+            (t == "Auto" && c.snap_active()).then_some(()).ok_or(format!("text {t}"))
         })),
     ]
 }
@@ -5821,6 +5924,9 @@ fn pattern_library_steps() -> Vec<Step> {
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
+    // Auto snap follows the ruler step (S76: two beats at the default zoom); the sections below that
+    // drag clips to beats pin the grid to a beat (1/4), and snap_steps puts Auto back.
+    all.insert(0, Step::DoC("snap: pin the grid to a beat for the drag sections", Box::new(|_, ctl| ctl.borrow_mut().snap.grid = Some(crate::timeline::GridSize::Quarter))));
     all.extend(synth_steps());
     all.extend(midi_steps());
     all.extend(recording_steps());
@@ -5848,6 +5954,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(devminimap_steps());
     all.extend(clip_menu_steps());
     all.extend(ruler_zoom_steps());
+    all.extend(snap_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));
