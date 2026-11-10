@@ -101,16 +101,13 @@ pub fn apply(notes: &[Note], shape: Shape, part: Option<PartType>, key: Option<P
     if shape == Shape::neutral(part) {
         return notes.to_vec();
     }
-    let mut v = notes.to_vec();
+    let (mut v, outside): (Vec<Note>, Vec<Note>) = notes.iter().partition(|n| n.start < clip.max(1));
     v.sort_by_key(|n| (n.start, n.pitch));
     if shape.density < 1.0 {
         v = thin(&v, shape.density as f64);
     }
     if shape.octave != 0 {
-        let by = 12 * shape.octave as i32;
-        for n in &mut v {
-            n.pitch = fold(n.pitch as i32 + by);
-        }
+        shift_octaves(&mut v, |_| 12 * shape.octave as i32);
     }
     let ratio = shape.velocity / neutral_velocity(part);
     if (ratio - 1.0).abs() > 1e-4 {
@@ -133,12 +130,13 @@ pub fn apply(notes: &[Note], shape: Shape, part: Option<PartType>, key: Option<P
         v = repeat(&v, ((rate * PPQ as f64).round() as Ticks).max(1));
     }
     let shift = ((shape.nudge as f64 - 0.5) * 2.0 * NUDGE_BEATS * PPQ as f64).round() as Ticks;
+    v.retain(|n| n.start < clip.max(1));
     if shift != 0 {
         for n in &mut v {
-            n.start = nudged(n.start, shift, clip);
+            n.start = (n.start + shift).rem_euclid(clip.max(1));
         }
     }
-    v.retain(|n| n.start < clip.max(1));
+    v.extend(outside);
     midi::sort_notes(&mut v);
     v.dedup_by(|b, a| a.start == b.start && a.pitch == b.pitch);
     for (i, n) in v.iter_mut().enumerate() {
@@ -147,20 +145,23 @@ pub fn apply(notes: &[Note], shape: Shape, part: Option<PartType>, key: Option<P
     v
 }
 
-/// A pitch moved back by octaves into the MIDI range, so Octave never loses a note.
-fn fold(mut p: i32) -> u8 {
-    while p > 127 {
-        p -= 12;
+/// Octave moves each onset's notes together, an octave less where they would leave
+/// the MIDI range, so a chord keeps every note and its voicing.
+fn shift_octaves(v: &mut [Note], by: impl Fn(Ticks) -> i32) {
+    for (start, idx) in onsets(v) {
+        let lo = idx.iter().map(|&i| v[i].pitch as i32).min().unwrap_or(0);
+        let hi = idx.iter().map(|&i| v[i].pitch as i32).max().unwrap_or(0);
+        let mut by = by(start);
+        while by > 0 && hi + by > 127 {
+            by -= 12;
+        }
+        while by < 0 && lo + by < 0 {
+            by += 12;
+        }
+        for i in idx {
+            v[i].pitch = (v[i].pitch as i32 + by) as u8;
+        }
     }
-    while p < 0 {
-        p += 12;
-    }
-    p as u8
-}
-
-/// A start moved by Nudge, kept inside the clip when it was inside.
-fn nudged(start: Ticks, shift: Ticks, clip: Ticks) -> Ticks {
-    if start < clip { (start + shift).clamp(0, clip - 1) } else { (start + shift).max(0) }
 }
 
 /// Metric weight of a position: the bar line highest, off-sixteenths lowest.
@@ -416,12 +417,19 @@ mod tests {
     }
 
     #[test]
-    fn octave_and_nudge_never_lose_notes() {
+    fn shapes_never_lose_notes() {
         let top = vec![Note { id: 1, ..note(120, 3.75, 0.25) }];
         let out = apply(&top, Shape { octave: 2, nudge: 1.0, ..Shape::neutral(None) }, None, None, 4 * PPQ);
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].pitch, 120, "folded back an octave at a time into range");
-        assert!(out[0].start < 4 * PPQ);
+        assert_eq!(out[0].pitch, 120, "folded back an octave into range");
+        assert_eq!(out[0].start, PPQ / 4, "nudged past the end wraps to the clip start");
+        let chord = apply(&vec![Note { id: 1, ..note(103, 0.0, 1.0) }, Note { id: 2, ..note(115, 0.0, 1.0) }], Shape { octave: 2, ..Shape::neutral(None) }, None, None, 4 * PPQ);
+        assert_eq!(chord.iter().map(|n| n.pitch).collect::<Vec<_>>(), vec![115, 127], "the chord moves as one");
+        let end = apply(&vec![Note { id: 1, ..note(60, 3.5, 0.25) }, Note { id: 2, ..note(60, 3.75, 0.25) }], Shape { nudge: 1.0, ..Shape::neutral(None) }, None, None, 4 * PPQ);
+        assert_eq!(end.len(), 2, "repeated notes near the end stay apart");
+        let beyond = apply(&vec![Note { id: 1, ..note(60, 0.0, 1.0) }, Note { id: 2, ..note(62, 6.0, 1.0) }], Shape { velocity: 0.4, ..Shape::neutral(None) }, None, None, 4 * PPQ);
+        assert_eq!(beyond.len(), 2, "notes past a shortened clip end come back when it grows");
+        assert_eq!(beyond[1].start, 6 * PPQ);
     }
 
     #[test]
