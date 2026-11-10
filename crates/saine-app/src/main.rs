@@ -37,6 +37,7 @@ mod panel_graph;
 mod device_views;
 mod gain_scope;
 mod devices;
+mod devminimap;
 mod dialogs;
 mod files;
 mod panel_multiband;
@@ -49,6 +50,7 @@ mod panel_fields;
 mod peaks;
 mod pianoroll;
 mod placeholder;
+mod pointer;
 mod prefs;
 mod recording;
 mod sampler_panel;
@@ -148,6 +150,8 @@ struct Args {
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
     device_chain_review: bool,
+    /// review-devices-minimap: Instrument track with the Synth and a long chain of built-in effects (the Devices minimap shows).
+    devices_minimap_review: bool,
     /// reference-<built-in device id>: that device alone in an audio track's chain (an instrument on an instrument track).
     device_state: Option<&'static str>,
     /// Files loaded as if dropped on the window (after the state is set up).
@@ -355,6 +359,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.device_chain_review = true;
                 }
+                "review-devices-minimap" => {
+                    a.reference_default = true;
+                    a.devices_minimap_review = true;
+                }
                 "reference-lfo" => {
                     a.reference_default = true;
                     a.modulation_state = 1;
@@ -383,7 +391,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -626,7 +634,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
-            if c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
+            if c.devmm_cancel() || c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
                 return true;
             }
             if c.settings.menu.is_some() {
@@ -818,6 +826,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // into a scratch directory; it never opens or requires a real input device.
             c.rec.policy = recording::InputPolicy::InjectedOnly;
             c.rec.dir_override = Some(std::env::temp_dir().join(format!("saine-selftest-rec-{}", std::process::id())));
+            pointer::simulate(true);
         }
         c.mixer_open = args.open_mixer;
         c.assistant_open = args.open_assistant;
@@ -1125,6 +1134,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 kind: saine_core::PluginKind::Effect,
             };
             c.add_item_to_track(&devices::Item::Plugin(plugin), t, None);
+        }
+        c.set_bottom_tab(BottomTab::Devices);
+        c.seek_beats(20.0);
+    }
+    if args.devices_minimap_review {
+        // Review and benchmark: the Instrument track's Synth followed by ten built-in effects, so the chain is
+        // several panels wide.
+        let mut c = ctl.borrow_mut();
+        if let Some(t) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id) {
+            c.select_track(t);
+            for id in ["compressor", "channeleq", "delay", "reverb", "chorus", "auto-filter", "limiter", "utility", "widener", "phaser"] {
+                if let Some(def) = saine_core::builtin::find(id) {
+                    c.add_item_to_track(&devices::Item::Builtin(def), t, None);
+                }
+            }
+            c.devices.chain_scroll = 700.0;
         }
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(20.0);
@@ -1441,7 +1466,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.section_double(x, y);
     });
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, _cmd: bool, alt: bool| c.pointer_mods(kind, x, y, shift, alt));
-    on!(on_minimap_pointer, |c, kind: i32, x: f32, y: f32, w: f32| c.minimap_pointer(kind, x, y, w));
+    on!(on_minimap_pointer, |c, kind: i32, x: f32, y: f32, w: f32, ox: f32, oy: f32| c.minimap_pointer(kind, x, y, w, ox, oy));
+    on!(on_devmm_pointer, |c, kind: i32, x: f32, y: f32, ox: f32, oy: f32| c.devmm_pointer(kind, x, y, ox, oy));
+    on!(on_devmm_scroll, |c, dx: f32, dy: f32| c.devmm_wheel(dx, dy));
     on!(on_minimap_double, |c| c.minimap_fit());
     on!(on_minimap_scroll, |c, dx: f32, dy: f32, x: f32, w: f32, zoom: bool| c.minimap_scroll(dx, dy, x, w, zoom));
     on!(on_lane_scroll, |c, dx: f32, dy: f32, x: f32, zoom: bool| c.scroll(dx, dy, x, zoom));

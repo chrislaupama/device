@@ -429,21 +429,63 @@ component Minimap inherits Rectangle {
     if root.over-window: Rectangle { x: root.wr - 2.55px; y: 2.55px; width: 0.85px; height: root.height - 5.1px; background: #ffffffb3; }
     if Studio.minimap-playhead >= 0: Rectangle { x: Studio.minimap-playhead * root.width; y: 1.7px; width: 0.85px; height: root.height - 3.4px; background: #ffffff8c; }
     ta := TouchArea {
-        mouse-cursor: (abs(self.mouse-x - root.wl) <= 4.25px || abs(self.mouse-x - root.wr) <= 4.25px) ? MouseCursor.ew-resize : MouseCursor.pointer;
+        mouse-cursor: Studio.pointer-hidden ? MouseCursor.none : (abs(self.mouse-x - root.wl) <= 4.25px || abs(self.mouse-x - root.wr) <= 4.25px) ? MouseCursor.ew-resize : MouseCursor.pointer;
         pointer-event(e) => {
             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
-                Studio.minimap-pointer(0, self.mouse-x, self.mouse-y, root.width);
+                Studio.minimap-pointer(0, self.mouse-x, self.mouse-y, root.width, root.absolute-position.x, root.absolute-position.y);
             }
             if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) {
-                Studio.minimap-pointer(2, self.mouse-x, self.mouse-y, root.width);
+                Studio.minimap-pointer(2, self.mouse-x, self.mouse-y, root.width, root.absolute-position.x, root.absolute-position.y);
             }
         }
-        moved => { if (self.pressed) { Studio.minimap-pointer(1, self.mouse-x, self.mouse-y, root.width); } }
+        moved => { if (self.pressed) { Studio.minimap-pointer(1, self.mouse-x, self.mouse-y, root.width, root.absolute-position.x, root.absolute-position.y); } }
         double-clicked => { Studio.minimap-double(); }
         scroll-event(e) => {
             Studio.minimap-scroll(e.delta-x / 1px, e.delta-y / 1px, self.mouse-x, root.width, e.modifiers.control || e.modifiers.alt);
             accept
         }
+    }
+}
+
+// Devices minimap (src/devminimap.rs, findings S68-S70): the track's devices in miniature at the right of the
+// Clip / Devices strip, with the part the panel shows outlined and the rest in a scrim. 20 reference px of
+// strip minus padding, 5 px radius; the window outline brightens while dragging.
+component DevMinimap inherits Rectangle {
+    background: #1a1b1e;
+    border-radius: 4.25px;
+    clip: true;
+    init => { Studio.devmm-width = self.width; }
+    changed width => { Studio.devmm-width = self.width; }
+    Rectangle { border-radius: 4.25px; border-width: 0.85px; border-color: #ffffff14; }
+    for t in Studio.devmm-tiles: Rectangle {
+        x: t.x; y: t.y; width: t.w; height: t.h;
+        background: t.frame ? #ffffff12 : #212227;
+        if !t.frame && t.glyph-w > 0px: Path {
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            width: t.glyph-w; height: t.glyph-w * 14 / 24;
+            viewbox-width: 24; viewbox-height: 14;
+            commands: t.glyph; fill: transparent; stroke: t.ink; stroke-width: 1.0625px;
+            stroke-line-cap: round; stroke-line-join: round;
+        }
+    }
+    Rectangle { x: 0; width: Studio.devmm-win-x; background: #0203062b; }
+    Rectangle { x: Studio.devmm-win-x + Studio.devmm-win-w; width: root.width - self.x; background: #0203062b; }
+    Rectangle {
+        x: Studio.devmm-win-x; width: Studio.devmm-win-w; border-radius: 4.25px; border-width: 0.85px;
+        border-color: Studio.devmm-dragging ? #dddddd : #767678;
+    }
+    ta := TouchArea {
+        mouse-cursor: Studio.pointer-hidden ? MouseCursor.none : MouseCursor.default;
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+                Studio.devmm-pointer(0, self.mouse-x, self.mouse-y, root.absolute-position.x, root.absolute-position.y);
+            }
+            if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) {
+                Studio.devmm-pointer(2, self.mouse-x, self.mouse-y, root.absolute-position.x, root.absolute-position.y);
+            }
+        }
+        moved => { if (self.pressed) { Studio.devmm-pointer(1, self.mouse-x, self.mouse-y, root.absolute-position.x, root.absolute-position.y); } }
+        scroll-event(e) => { Studio.devmm-scroll(e.delta-x / 1px, e.delta-y / 1px); accept }
     }
 }
 
@@ -750,6 +792,7 @@ component BottomPanel inherits Panel {
     if Studio.bottom-tab == 1 && Studio.seq-visible: StepSequencer { x: 255px; y: 27px; width: root.width - 255px; height: root.height - 27px; }
     if Studio.bottom-tab == 1 && !Studio.seq-visible && (Studio.pr-visible || Studio.ac-visible): PianoRoll { x: 255px; y: 27px; width: root.width - 255px; height: root.height - 27px; }
     if Studio.bottom-tab == 1 && !Studio.pr-visible && !Studio.ac-visible: ClipEmpty { x: 255px; y: 27px; width: root.width - 255px; height: root.height - 27px; }
+    if Studio.bottom-tab == 0 && Studio.devmm-visible: DevMinimap { x: root.width - 252.45px; y: 3.4px; width: 192.95px; height: 20.4px; }
     IconButton { x: root.width - 53px; y: 3px; width: 21px; height: 21px; icon: Icons.panel-bottom; ink: #6b6c70; icon-size: 14px; }
     IconButton { x: root.width - 29px; y: 3px; width: 21px; height: 21px; icon: Icons.download; ink: #6b6c70; icon-size: 14px; }
     // Device chain (Devices tab): built-in Synth card (instrument tracks without an instrument

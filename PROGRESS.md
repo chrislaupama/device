@@ -212,3 +212,11 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Engine: patterns play as ordinary notes; a new ctest checks that dense repeats republished while playing
   don't allocate, and bench_render has a Pattern table. `cargo bench -p saine-core --bench steps` times bake,
   read-back and snapshot builds.
+
+### 2026-11-10: minimap pointer hide and Devices minimap (SAIN-33)
+
+- Header minimap drags (window and zoom grabs) hide the pointer and put it back on the grabbed spot on release
+  (`src/pointer.rs`: NSCursor + winit warp; self-test records the requests). Findings S68.
+- Devices minimap at the right of the Clip / Devices strip (`src/devminimap.rs`, `DevMinimap` in `ui/app.slint`):
+  tiles with glyphs, chain frames, window, jump / drag / wheel, Esc restores. Findings S69, S70. Not done: tile
+  pictures, glide / fade animations, hover name.

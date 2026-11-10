@@ -201,6 +201,7 @@ pub struct Drag {
     velocity: (f32, f32),
     pending: (f32, f32),
     travel: (f32, f32),
+    press: (f32, f32),
     last: (f32, f32),
     moved: bool,
 }
@@ -244,6 +245,7 @@ pub fn press(m: &Metrics, x: f32, y: f32, width: f32) -> Option<(Drag, Option<Ra
         velocity: (0.0, 0.0),
         pending: (0.0, 0.0),
         travel: (0.0, 0.0),
+        press: (px, py),
         last: (px, py),
         moved: false,
     };
@@ -251,6 +253,18 @@ pub fn press(m: &Metrics, x: f32, y: f32, width: f32) -> Option<(Drag, Option<Ra
 }
 
 impl Drag {
+    /// Window and Jump drags hide the pointer once they count as drags; edge drags keep it.
+    pub fn hides_pointer(&self) -> bool {
+        self.moved && matches!(self.grab, Grab::Window | Grab::Jump)
+    }
+
+    /// Where the pointer goes on release, in strip coordinates (design units): the strip position
+    /// of the spot the drag grabbed (kept inside the strip), on the row where it was pressed.
+    pub fn landing(&self) -> (f32, f32) {
+        let x = ((self.anchor + self.pan_beats) / self.map_end * self.width as f64).clamp(0.0, self.width as f64) as f32;
+        (x * CSS, self.press.1 * CSS)
+    }
+
     /// Pointer moved to (x, y) (design units); returns the new range once the drag has travelled past the slop.
     pub fn moved(&mut self, x: f32, y: f32, l: &Limits) -> Option<Range> {
         let (px, py) = (x / CSS, y / CSS);
@@ -358,8 +372,9 @@ impl Controller {
         self.view.clamp();
     }
 
-    /// Pointer on the strip: kind 0 press, 1 move, 2 release; x and y in strip coordinates, width the strip's width.
-    pub fn minimap_pointer(&mut self, kind: i32, x: f32, y: f32, width: f32) {
+    /// Pointer on the strip: kind 0 press, 1 move, 2 release; x and y in strip coordinates, width the strip's width,
+    /// (ox, oy) the strip's origin in the window (where the pointer is put back after a hidden drag).
+    pub fn minimap_pointer(&mut self, kind: i32, x: f32, y: f32, width: f32, ox: f32, oy: f32) {
         let l = self.minimap_limits();
         match kind {
             0 => {
@@ -374,12 +389,20 @@ impl Controller {
             1 => {
                 let Some(mut drag) = self.mm.drag.take() else { return };
                 let r = drag.moved(x, y, &l);
+                if drag.hides_pointer() {
+                    self.ptr.hide();
+                }
                 self.mm.drag = Some(drag);
                 if let Some(r) = r {
                     self.minimap_set_range(r);
                 }
             }
-            _ => self.mm.drag = None,
+            _ => {
+                if let Some(d) = self.mm.drag.take() {
+                    let (lx, ly) = d.landing();
+                    self.ptr.release(Some((ox + lx, oy + ly)));
+                }
+            }
         }
     }
 
