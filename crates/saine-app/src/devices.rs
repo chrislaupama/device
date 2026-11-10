@@ -228,6 +228,51 @@ pub fn scan_dirs() -> Vec<PathBuf> {
 /// `has_editor` capability is kept as is.
 pub const EDITORS_SUPPORTED: bool = !cfg!(target_os = "linux");
 
+/// Settings › General › Keep plugin windows on top. The engine opens plugin editors as plain
+/// NSWindows; the main window and the file panels are subclasses, so only editors float.
+#[cfg(target_os = "macos")]
+pub fn set_plugin_windows_on_top(on: bool) {
+    use objc2::msg_send;
+    const NORMAL: isize = 0;
+    const FLOATING: isize = 3;
+    for w in plugin_windows() {
+        let _: () = unsafe { msg_send![w, setLevel: if on { FLOATING } else { NORMAL }] };
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_plugin_windows_on_top(_: bool) {}
+
+/// Window levels of the open plugin editor windows (self-test).
+#[cfg(target_os = "macos")]
+pub fn plugin_window_levels() -> Vec<isize> {
+    plugin_windows().into_iter().map(|w| unsafe { objc2::msg_send![w, level] }).collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn plugin_window_levels() -> Vec<isize> {
+    Vec::new()
+}
+
+#[cfg(target_os = "macos")]
+fn plugin_windows() -> Vec<*mut objc2::runtime::AnyObject> {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    unsafe {
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let windows: *mut AnyObject = msg_send![app, windows];
+        let n: usize = msg_send![windows, count];
+        (0..n)
+            .map(|i| -> *mut AnyObject { msg_send![windows, objectAtIndex: i] })
+            .filter(|w| {
+                let plain: bool = msg_send![*w, isMemberOfClass: class!(NSWindow)];
+                let visible: bool = msg_send![*w, isVisible];
+                plain && visible
+            })
+            .collect()
+    }
+}
+
 /// Extra folders the scanner searches from the environment, with the variable
 /// that set them: `CLAP_PATH` (Windows, Linux) and `SAINE_PLUGIN_PATH`.
 pub fn configured_scan_dirs() -> Vec<(PathBuf, &'static str)> {
@@ -707,8 +752,32 @@ impl Controller {
             self.select_clip(None);
             self.set_bottom_tab(BottomTab::Devices);
             self.reveal_last_change(track, item);
+            self.auto_show_window(item, track, index);
         }
         ok
+    }
+
+    /// Settings › General › Plugin windows: open a new effect's window (third-party: its
+    /// own editor; built-in: its floating device window) when that switch is on.
+    fn auto_show_window(&mut self, item: &Item, track: TrackId, index: Option<usize>) {
+        let g = &self.settings.prefs.general;
+        let show = match item {
+            Item::Plugin(_) => g.show_plugin_windows && EDITORS_SUPPORTED && !self.settings.headless,
+            Item::Builtin(_) => g.show_builtin_windows,
+            Item::BuiltinSynth => false,
+        };
+        if !show || item.kind() != PluginKind::Effect {
+            return;
+        }
+        let Some(t) = self.project().track(track) else { return };
+        let Some(id) = index.and_then(|i| t.devices.get(i)).or(t.devices.last()).map(|d| d.id) else { return };
+        match item {
+            Item::Plugin(_) if !self.engine.plugin_editor_is_open(id) => self.device_edit(id),
+            Item::Builtin(_) => {
+                self.devices.windows.insert(id);
+            }
+            _ => {}
+        }
     }
 
     /// Scroll the chain so a newly added card is visible.
@@ -1001,6 +1070,7 @@ impl Controller {
             match self.engine.open_plugin_editor(id) {
                 Ok(()) => {
                     self.devices.editors.insert(id);
+                    set_plugin_windows_on_top(self.settings.prefs.general.plugin_windows_on_top);
                 }
                 Err(e) => self.set_status(format!("Plugin window: {e}"), 5),
             }

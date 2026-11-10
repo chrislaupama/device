@@ -314,6 +314,12 @@ pub struct Controller {
     pub unsaved_open: bool,
     /// Options › Check for Updates… dialog.
     pub updates_open: bool,
+    /// Settings › General › Playhead on stop: where the last playback started, whether the
+    /// transport is paused there since (Space), and a position the user chose since (a seek, or
+    /// 0 after Stop), kept because the engine may apply it only at the next block.
+    play_start: Option<i64>,
+    paused: bool,
+    cue: Option<i64>,
     /// Edit › Undo History… dialog.
     pub undo_history_open: bool,
     pub(crate) undo_history_model: Rc<VecModel<crate::UndoHistoryRow>>,
@@ -451,6 +457,9 @@ impl Controller {
             clip_render: Default::default(),
             unsaved_open: false,
             updates_open: false,
+            play_start: None,
+            paused: false,
+            cue: None,
             undo_history_open: false,
             undo_history_model: Rc::new(VecModel::default()),
             jobs_tx,
@@ -823,7 +832,22 @@ impl Controller {
             self.set_status("No audio device: playback unavailable (offline mode)", 4);
             return;
         }
-        let r = if self.engine.transport().playing { self.engine.pause() } else { self.engine.play() };
+        let r = if self.engine.transport().playing {
+            let r = self.engine.pause();
+            if r.is_ok() {
+                self.paused = true;
+                self.cue = None;
+            }
+            r
+        } else {
+            let from = play_from(self.settings.prefs.general.stop_in_place, self.play_start, self.paused, self.cue.take());
+            self.paused = false;
+            self.play_start = Some(match from {
+                Some(start) if self.engine.seek(start).is_ok() => start,
+                _ => self.engine.transport().position,
+            });
+            self.engine.play()
+        };
         if let Err(e) = r {
             self.set_status(format!("Transport: {e}"), 4);
         }
@@ -834,7 +858,10 @@ impl Controller {
         if self.rec.recording {
             self.stop_recording();
         }
-        let _ = self.engine.stop();
+        if self.engine.stop().is_ok() {
+            self.paused = false;
+            self.cue = Some(0);
+        }
         self.ui_dirty = true;
     }
 
@@ -853,7 +880,10 @@ impl Controller {
         let ticks = (beats.max(0.0) * PPQ as f64).round() as Ticks;
         let frame = self.project().ticks_to_frames(ticks, self.rate);
         // Applied immediately when no device runs (engine ABI), else at the next block.
-        let _ = self.engine.seek(frame);
+        if self.engine.seek(frame).is_ok() {
+            self.paused = false;
+            self.cue = Some(frame as i64);
+        }
     }
 
     // ---------------------------------------------------------------- track edits
@@ -1909,6 +1939,14 @@ fn mini_notes(notes: &[(saine_core::Note, bool)], shift: Ticks, len: Ticks) -> V
 }
 
 /// Update a VecModel in place (row-wise) so Slint only re-renders changed rows.
+/// Playhead on stop: with Return to start, playback resumes where the previous one started,
+/// unless the playhead was moved since it stopped; Stop in place resumes where it stopped.
+/// Where Play starts: a position the user chose since the last pause, else the last playback's
+/// start after a pause (Return to start), else wherever the transport is (None).
+fn play_from(stop_in_place: bool, play_start: Option<i64>, paused: bool, cue: Option<i64>) -> Option<i64> {
+    cue.or(play_start.filter(|_| paused && !stop_in_place))
+}
+
 pub(crate) fn sync_model<T: Clone + PartialEq + 'static>(m: &VecModel<T>, rows: Vec<T>) {
     if m.row_count() == rows.len() {
         for (i, r) in rows.into_iter().enumerate() {
@@ -1924,6 +1962,16 @@ pub(crate) fn sync_model<T: Clone + PartialEq + 'static>(m: &VecModel<T>, rows: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn playhead_on_stop() {
+        assert_eq!(play_from(false, Some(100), true, None), Some(100), "Return to start");
+        assert_eq!(play_from(false, Some(100), false, Some(900)), Some(900), "a seek since the pause wins");
+        assert_eq!(play_from(false, Some(100), false, Some(0)), Some(0), "Stop since the pause");
+        assert_eq!(play_from(true, Some(100), true, None), None, "Stop in place");
+        assert_eq!(play_from(true, Some(100), false, Some(900)), Some(900), "Stop in place still honours a seek");
+        assert_eq!(play_from(false, None, false, None), None, "first playback");
+    }
     #[test]
     fn slider_mapping_roundtrip() {
         for g in [0.0f32, 0.1, 0.5, 1.0, 1.5, 1.99] {
