@@ -299,6 +299,8 @@ pub struct PrScene<'a> {
     pub wave: Option<(Vec<crate::peaks::Slot>, Vec<crate::peaks::WaveSeg>)>,
     /// The clip's scale while the footer's Scale switch is on: in-scale rows and keys are tinted.
     pub key: Option<ScaleKey>,
+    /// Shape tab curves over the notes (src/shape_rack.rs).
+    pub curves: Vec<crate::shape_rack::CurveDraw>,
 }
 
 fn rgba(c: [f32; 3], a: f32) -> [f32; 4] {
@@ -456,6 +458,26 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
         } else {
             b.push(px.rounded(x, y + 0.5, nw, nh - 1.0, 2.0, rgba(mix(sc.color, BLACK, 0.45), a)));
             b.push(px.rounded(x + 0.5, y + 1.0, nw - 1.0, nh - 2.0, 1.5, rgba(mix(mix(sc.color, BLACK, 0.35), sc.color, vel), a)));
+        }
+    }
+
+    // ---- Shape curves (over the notes) ----
+    for c in &sc.curves {
+        let (th, a) = if c.active { (2.0, 1.0) } else { (1.25, 0.7) };
+        if let Some(gy) = c.guide {
+            let mut x = gx;
+            while x < w {
+                b.push(px.rect(x, gy - 0.5, 4.0, 1.0, rgba(WHITE, 0.18)));
+                x += 8.0;
+            }
+        }
+        for s in c.line.windows(2) {
+            let ((x0, y0), (x1, y1)) = (s[0], s[1]);
+            b.push(px.rect(x0, y0.min(y1) - th / 2.0, (x1 - x0).max(1.0), (y0 - y1).abs() + th, rgba(c.color, a)));
+        }
+        for &(x, y) in &c.dots {
+            b.push(px.rounded(x - 3.0, y - 3.0, 6.0, 6.0, 3.0, rgba(c.color, 1.0)));
+            b.push(px.rounded(x - 1.5, y - 1.5, 3.0, 3.0, 1.5, rgba(rgb(0x141518), 1.0)));
         }
     }
 
@@ -725,6 +747,7 @@ impl Controller {
                 transients: self.ac_transient_beats(),
                 wave: self.clip_lanes(c),
                 key: None,
+                curves: Vec::new(),
             });
         }
         let clip = self.pr_clip()?;
@@ -733,8 +756,10 @@ impl Controller {
             Some(PrDrag::Marquee { x0, y0, x1, y1, .. }) => Some((x0, y0, x1, y1)),
             _ => None,
         };
+        let view = self.pr_view();
+        let curves = self.shape_scene_curves(&view);
         Some(PrScene {
-            view: self.pr_view(),
+            view,
             scale,
             range: self.pr_range(),
             notes,
@@ -751,6 +776,7 @@ impl Controller {
             transients: Vec::new(),
             wave: None,
             key: self.pr_scale().filter(|(s, _)| s.highlight).map(|(_, k)| k),
+            curves,
         })
     }
 
@@ -812,6 +838,10 @@ impl Controller {
     pub fn pr_pointer(&mut self, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool) {
         if self.ac_clip().is_some() {
             self.ac_pointer(kind, x, y, shift, alt, command);
+            return;
+        }
+        if self.shape_drawing() && self.pr.drag.is_none() && (kind != 0 || (x >= GRID_X && y >= GRID_Y)) {
+            self.shape_draw(kind, x, y);
             return;
         }
         let Some(clip) = self.pr_clip().cloned() else { return };
@@ -989,8 +1019,8 @@ impl Controller {
         if action == "scale_fold" {
             return self.pr_set_scale(|s, _| s.fold = s.highlight && !s.fold);
         }
-        if action == "smart_quantize" || action == "velocity_lane" {
-            self.set_status(format!("{}: not implemented yet", if action == "smart_quantize" { "Smart Quantize" } else { "Velocity lane" }), 3);
+        if action == "velocity_lane" {
+            self.set_status("Velocity lane: not implemented yet", 3);
             return;
         }
         if self.pr_clip().is_none() {
@@ -1011,6 +1041,19 @@ impl Controller {
             }
             "reverse" => ("Reverse Notes", Self::replace_notes(&clip, &midi::reverse(&target, clip.length))),
             "legato" => ("Legato", Self::replace_notes(&clip, &midi::legato(&target, clip.length))),
+            "smart_quantize" => {
+                let done = saine_core::smart_quantize::smart_quantize(&target, self.project().transport.bpm);
+                let mut notes: Vec<Note> = clip.notes.iter().filter(|n| !target.iter().any(|t| t.id == n.id)).copied().collect();
+                notes.extend(done.notes);
+                if !self.commit_notes(clip.id, notes, Some("Smart Quantize")) {
+                    self.set_status("Already smart quantized, nothing changed", 3);
+                    return;
+                }
+                let kept: BTreeSet<u32> = self.project().midi_clip(clip.id).map(|c| c.notes.iter().map(|n| n.id).collect()).unwrap_or_default();
+                self.pr.selected.retain(|id| kept.contains(id));
+                self.set_status(format!("Smart Quantize: {} grid", done.grid), 2);
+                return;
+            }
             "double" => {
                 let (d, len) = midi::double(&target, clip.length);
                 let mut extra = d[target.len()..].to_vec();

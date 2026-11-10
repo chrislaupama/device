@@ -261,6 +261,17 @@ fn midi_steps() -> Vec<Step> {
             one_step(h5.clone(), "Quantize Notes")(c)?;
             (n.iter().all(|n| n.start % 240 == 0) && n.iter().any(|n| n.start == 3360 && n.pitch == 52)).then_some(()).ok_or(format!("{n:?}"))
         })),
+        Do("click Smart Quantize", Box::new(|a| click(a, 260.0 + 55.0 + 30.0, 466.0))),
+        Check("Smart Quantize ran: one undo step, or no change to notes already on the grid", Box::new(|c, _| {
+            let label = c.doc.undo_label();
+            label.as_deref().is_some_and(|l| l.starts_with("Smart Quantize") || l.starts_with("Quantize Notes")).then_some(()).ok_or(format!("last {label:?}"))
+        })),
+        DoC("undo Smart Quantize if it changed the notes", Box::new(|a, ctl| {
+            let stepped = ctl.borrow().doc.undo_label().is_some_and(|l| l.starts_with("Smart Quantize"));
+            if stepped {
+                key(a, "z", true, false);
+            }
+        })),
         DoC("click the E3 note at beat 0, press Up", Box::new(|a, ctl| {
             let (x, y) = pr_xy(ctl, 0.1, 52);
             click(a, x, y);
@@ -6183,6 +6194,11 @@ fn pattern_library_steps() -> Vec<Step> {
     let h = |_: u8| hist.clone();
     let (h0, h1, h2, h3, h4, h5) = (h(0), h(1), h(2), h(3), h(4), h(5));
     let (h6, h7) = (h(6), h(7));
+    let (h8, h9, h10, h11, hsync) = (h(8), h(9), h(10), h(11), h(12));
+    fn shape_rows(a: &AppWindow) -> Vec<crate::ShapeRow> {
+        let m = a.global::<Studio>().get_composer_shape_rows();
+        (0..slint::Model::row_count(&m)).filter_map(|i| slint::Model::row_data(&m, i)).collect()
+    }
     fn shaped(c: &Controller) -> Option<(Vec<saine_core::Note>, Vec<saine_core::Note>)> {
         let m = c.pr_clip()?;
         Some((m.composer.as_ref()?.base.clone(), m.notes.clone()))
@@ -6301,9 +6317,60 @@ fn pattern_library_steps() -> Vec<Step> {
             let s = a.global::<Studio>();
             (!s.get_composer_shape_tab() && slint::Model::row_count(&s.get_composer_rows()) == 6).then_some(()).ok_or("still on Shape".into())
         })),
+        DoC("patterns: Type › Chords, Shape tab, toolbar Shape on", Box::new(move |a, ctl| {
+            let mut c = ctl.borrow_mut();
+            hsync.set(c.doc.history_labels().len());
+            c.clip_menu_open(4);
+            c.clip_menu_pick(0);
+            c.composer_tab(true);
+            c.shape_draw_toggle();
+            c.update_ui(a);
+        })),
+        Check("patterns: chords show the chord rows enabled and the toolbar draws curves", Box::new(move |c, a| {
+            one(&h8, c, "Pattern Type Change")?;
+            let rows = shape_rows(a);
+            let air = rows.iter().find(|r| r.label == "Air").ok_or("no Air row")?;
+            let ok = a.global::<Studio>().get_shape_drawing() && c.shape_drawing() && air.enabled && rows.len() == 14 && !a.global::<Studio>().get_shape_has_curves();
+            ok.then_some(()).ok_or(format!("{} rows, Air enabled {}", rows.len(), air.enabled))
+        })),
+        DoC("patterns: ramp a Velocity curve up across the bar", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.shape_stroke(saine_core::shape::ShapeKey::Velocity, 2, &[(0.0, 0.2), (2.0, 0.6), (4.0, 1.0)]);
+            c.update_ui(a);
+        })),
+        Check("patterns: the curve plays (quiet first beat, full last), one undo step 'Shape Change'", Box::new(move |c, a| {
+            one(&h9, c, "Shape Change")?;
+            let k = comp(c).ok_or("no composer")?;
+            let curved = k.shape_of(k.shape_source()).curve(saine_core::shape::ShapeKey::Velocity).is_some();
+            let (base, notes) = shaped(c).ok_or("no clip")?;
+            let vel = |v: &[saine_core::Note], b: i64| v.iter().filter(|n| n.start / PPQ == b).map(|n| n.velocity as u32).max().unwrap_or(0);
+            let ok = curved && vel(&notes, 0) < vel(&base, 0) && vel(&notes, 3) >= vel(&notes, 0) && a.global::<Studio>().get_shape_has_curves();
+            let row = shape_rows(a).into_iter().find(|r| r.label == "Velocity").ok_or("no row")?;
+            (ok && row.selected && row.curved).then_some(()).ok_or(format!("curved {curved}, first {} -> {}", vel(&base, 0), vel(&notes, 0)))
+        })),
+        DoC("patterns: toolbar Reset", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.shape_reset();
+            c.update_ui(a);
+        })),
+        Check("patterns: Reset clears the curves (one undo step 'Shape Change')", Box::new(move |c, a| {
+            one(&h10, c, "Shape Change")?;
+            let k = comp(c).ok_or("no composer")?;
+            (k.shapes.is_empty() && k.base.is_empty() && !a.global::<Studio>().get_shape_has_curves()).then_some(()).ok_or("curves left".into())
+        })),
+        Do("patterns: Arp ›", Box::new(|a| click(a, 5.0 + 10.5 + 72.0 + 120.0, 425.0 + 104.0 + 26.0 + 13.0 * 17.5 + 7.5))),
+        Check("patterns: Arp 1/8 plays and the Pattern and Octaves rows join (one undo step 'Shape Change')", Box::new(move |c, a| {
+            one(&h11, c, "Shape Change")?;
+            let rows = shape_rows(a);
+            let arp = rows.iter().find(|r| r.label == "Arp").map(|r| r.value.to_string());
+            let pattern = rows.iter().find(|r| r.label == "Pattern").map(|r| r.value.to_string());
+            let ok = rows.len() == 16 && arp.as_deref() == Some("1/8") && pattern.as_deref() == Some("Up & down");
+            ok.then_some(()).ok_or(format!("{} rows, arp {arp:?}, pattern {pattern:?}", rows.len()))
+        })),
         DoC("patterns: remove the clip", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
             c.composer_shape_tab = None;
+            c.shape_ui = Default::default();
             if let Some(id) = c.pr_clip().map(|m| m.id) {
                 c.execute(saine_core::Command::RemoveMidiClip { clip: id });
             }
