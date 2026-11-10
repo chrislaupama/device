@@ -11,6 +11,7 @@ use crate::device::{Device, DeviceId, DeviceSample, ModLink, PluginKind};
 use crate::instrument::SynthParams;
 use crate::midi::{self, MidiClip, Note};
 use crate::model::*;
+use crate::steps::{self, StepPattern};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -75,6 +76,13 @@ pub enum Command {
     /// Replace all notes of a MIDI clip (draw, erase, move, resize, velocity,
     /// quantize, transpose... each editor gesture is one of these).
     SetMidiNotes { clip: ClipId, notes: Vec<Note> },
+    /// Make a MIDI clip a pattern clip, or change its pattern (its notes are
+    /// re-baked from the grid; notes on keys that aren't rows stay), or with
+    /// `None` make it a plain MIDI clip again (the repeats become notes).
+    SetStepPattern { clip: ClipId, pattern: Option<StepPattern> },
+    /// Replace a MIDI clip's notes and pattern as they are (the exact inverse
+    /// of the two commands above).
+    SetMidiContent { clip: ClipId, notes: Vec<Note>, pattern: Option<StepPattern> },
     /// Replace an instrument track's synth parameters (knob drags coalesce
     /// per track; loading a preset is one step).
     SetSynthParams { track: TrackId, params: SynthParams },
@@ -157,7 +165,9 @@ impl Command {
             Command::RemoveMidiClip { .. } => "Delete Clip".into(),
             Command::MoveMidiClip { .. } => "Move Clip".into(),
             Command::ResizeMidiClip { .. } => "Resize Clip".into(),
-            Command::SetMidiNotes { .. } => "Edit Notes".into(),
+            Command::SetMidiNotes { .. } | Command::SetMidiContent { .. } => "Edit Notes".into(),
+            Command::SetStepPattern { pattern: Some(_), .. } => "Edit Step Sequencer".into(),
+            Command::SetStepPattern { pattern: None, .. } => "Convert to MIDI Clip".into(),
             Command::SetSynthParams { .. } => "Synth Parameter Change".into(),
             Command::SetTrackArm { arm, .. } => (if *arm { "Arm Track" } else { "Disarm Track" }).into(),
             Command::SetTrackMonitor { .. } => "Input Monitoring Change".into(),
@@ -454,8 +464,41 @@ impl Command {
                 midi::validate_notes(&notes).map_err(|r| invalid("notes", r))?;
                 let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
                 midi::sort_notes(&mut notes);
-                let old = std::mem::replace(&mut p.tracks[ti].midi_clips[ci].notes, notes);
-                Ok(Command::SetMidiNotes { clip, notes: old })
+                let c = &mut p.tracks[ti].midi_clips[ci];
+                let Some(pattern) = c.pattern.take() else {
+                    let old = std::mem::replace(&mut c.notes, notes);
+                    return Ok(Command::SetMidiNotes { clip, notes: old });
+                };
+                // A piano-roll edit of a pattern clip: the rows it touched are read back into the grid.
+                c.pattern = Some(steps::rederive(&pattern, &c.notes, &notes));
+                let old = std::mem::replace(&mut c.notes, notes);
+                Ok(Command::SetMidiContent { clip, notes: old, pattern: Some(pattern) })
+            }
+            Command::SetStepPattern { clip, pattern } => {
+                if let Some(pat) = &pattern {
+                    pat.validate().map_err(|r| invalid("pattern", r))?;
+                }
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let c = &mut p.tracks[ti].midi_clips[ci];
+                let notes = match &pattern {
+                    Some(pat) => steps::bake_into(pat, &c.notes),
+                    None => c.playing_notes(),
+                };
+                let old_notes = std::mem::replace(&mut c.notes, notes);
+                let old_pattern = std::mem::replace(&mut c.pattern, pattern);
+                Ok(Command::SetMidiContent { clip, notes: old_notes, pattern: old_pattern })
+            }
+            Command::SetMidiContent { clip, mut notes, pattern } => {
+                midi::validate_notes(&notes).map_err(|r| invalid("notes", r))?;
+                if let Some(pat) = &pattern {
+                    pat.validate().map_err(|r| invalid("pattern", r))?;
+                }
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                midi::sort_notes(&mut notes);
+                let c = &mut p.tracks[ti].midi_clips[ci];
+                let old_notes = std::mem::replace(&mut c.notes, notes);
+                let old_pattern = std::mem::replace(&mut c.pattern, pattern);
+                Ok(Command::SetMidiContent { clip, notes: old_notes, pattern: old_pattern })
             }
             Command::SetSynthParams { track, params } => {
                 params.validate().map_err(|r| invalid("synth", r))?;
@@ -923,7 +966,11 @@ fn validate_midi_clip(c: &MidiClip) -> Result<(), EditError> {
     if c.start < 0 || c.length <= 0 {
         return Err(invalid("clip", "requires start >= 0 and length > 0"));
     }
-    midi::validate_notes(&c.notes).map_err(|r| invalid("notes", r))
+    midi::validate_notes(&c.notes).map_err(|r| invalid("notes", r))?;
+    match &c.pattern {
+        Some(p) => p.validate().map_err(|r| invalid("pattern", r)),
+        None => Ok(()),
+    }
 }
 
 fn validate_clip(p: &Project, c: &Clip) -> Result<(), EditError> {
