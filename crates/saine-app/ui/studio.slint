@@ -536,7 +536,7 @@ export global Studio {
     in property <string> clip-name: "MIDI";
     in property <color> clip-color: Tokens.track-instrument;
     in property <color> clip-ink: #1d2142;   // text and icons on clip-colour fills
-    callback pr-pointer(int, length, length, bool, bool);   // kind 0 down 1 move 2 up, x, y, shift, alt
+    callback pr-pointer(int, length, length, bool, bool, bool);   // kind 0 down 1 move 2 up, x, y, shift, alt, command (Cmd or Ctrl)
     callback pr-scroll(float);
     callback pr-action(string);                             // quantize|humanize|reverse|legato|double|pen|smart_quantize|velocity_lane
     // Clip editor dropdowns: 0 Speed, 1 Warp, 2 Mode, 3 Grid, 4 Type, 5 Genre; -1 when closed.

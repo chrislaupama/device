@@ -32,7 +32,8 @@ pub struct AcDrag {
 
 #[derive(Debug, Clone, Copy)]
 pub enum AcDragKind {
-    Marker { source: u64 },
+    /// \`slide\` (Shift): the marker keeps its beat and the audio moves under it.
+    Marker { source: u64, slide: bool },
     Transient { from: u64, to: u64 },
     Bpm { start: f64 },
     Transpose { start: i32 },
@@ -92,6 +93,35 @@ impl<'a> Map<'a> {
     fn source(&self, clip_beat: f64) -> f64 {
         self.w.source_at(self.original_beat(clip_beat), self.rate)
     }
+}
+
+/// The clip's warp with a marker pinning the window's source start where it
+/// plays now, when there are no markers yet (the first marker added needs it).
+fn anchored(c: &Clip, rate: f64) -> ClipWarp {
+    let mut w = c.warp.clone();
+    if w.markers.is_empty() {
+        w.set_marker(c.source_offset, c.warp.beat_at(c.source_offset as f64, rate));
+    }
+    w
+}
+
+/// Shift-drag: slide the audio under the marker at \`source\` to \`to\`. A
+/// reversed clip starts at its window's source end, so that end is pinned
+/// first (also when a trim left markers past it) and the slide stays inside
+/// the window; otherwise it would move the clip's start and length.
+fn slide(c: &Clip, w: &ClipWarp, source: u64, to: u64, rate: f64) -> Option<ClipWarp> {
+    let mut w = w.clone();
+    let end = c.source_offset + c.source_length;
+    let mut to = to;
+    if w.reverse {
+        if !w.markers.iter().any(|k| k.source == end) {
+            w.set_marker(end, w.beat_at(end as f64, rate));
+        }
+        if source < end {
+            to = to.min(end - 1);
+        }
+    }
+    w.slide_marker(source, to).then_some(w)
 }
 
 impl Controller {
@@ -267,6 +297,7 @@ impl Controller {
         self.ui_dirty = true;
         match phase {
             0 if Self::ac_transpose_editable(&c) => {
+                self.doc.seal_coalescing();
                 let start = c.warp.transpose;
                 self.pr.ac_drag = Some(AcDrag { view: self.pr_view(), clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Transpose { start }, moved: false });
             }
@@ -361,6 +392,7 @@ impl Controller {
         self.ui_dirty = true;
         match phase {
             0 => {
+                self.doc.seal_coalescing();
                 let start = self.ac_original_bpm(&c).round();
                 self.pr.ac_drag = Some(AcDrag { view: self.pr_view(), clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Bpm { start }, moved: false });
             }
@@ -422,13 +454,18 @@ impl Controller {
     /// transient unless Alt), drag moves one, click without dragging removes
     /// it. Lane: drag a transient to move it, double-click to add or remove
     /// one. Ruler: move the playhead. Markers and transients need warp on.
-    pub fn ac_pointer(&mut self, kind: i32, x: f32, y: f32, alt: bool) {
+    /// Modifiers: \`shift\` slides the audio under a dragged marker, \`alt\`
+    /// places a marker without snapping to transients, \`command\` (Cmd or
+    /// Ctrl) on a transient adds markers there and at its two neighbours.
+    pub fn ac_pointer(&mut self, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool) {
         let Some(c) = self.ac_clip().cloned() else { return };
         self.ui_dirty = true;
         let rate = self.asset_rate(c.asset);
         match kind {
             0 => {
                 self.menu_close();
+                // Each press is its own undo step; only its drag coalesces.
+                self.doc.seal_coalescing();
                 let now = Instant::now();
                 let double = self.pr.ac_last_down.is_some_and(|(t, lx, ly)| now - t < DOUBLE_CLICK && (lx - x).abs() < 4.0 && (ly - y).abs() < 4.0);
                 self.pr.ac_last_down = Some((now, x, y));
@@ -449,7 +486,21 @@ impl Controller {
                         let d = |s: u64| (view.x_of(m.clip_beat(s as f64)) - x).abs();
                         d(a.source).total_cmp(&d(b.source))
                     }) {
-                        self.pr.ac_drag = Some(AcDrag { view, clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Marker { source: k.source }, moved: false });
+                        self.pr.ac_drag = Some(AcDrag { view, clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Marker { source: k.source, slide: shift }, moved: false });
+                        return;
+                    }
+                    let tr: Vec<u64> = transients.iter().map(|t| t.source).collect();
+                    if command && let Some(i) = tr.iter().position(|&s| near(s, TRANSIENT_SNAP)) {
+                        // Pin the transient and its neighbours where they play now.
+                        let mut w = anchored(&c, rate);
+                        let inside = |s: u64| s > c.source_offset && s < c.source_offset + c.source_length;
+                        let mut added = false;
+                        for &s in tr[i.saturating_sub(1)..(i + 2).min(tr.len())].iter().filter(|&&s| inside(s)) {
+                            added |= w.set_marker(s, c.warp.beat_at(s as f64, rate));
+                        }
+                        if added {
+                            self.set_clip_warp(c.id, w, "Add warp markers at transients");
+                        }
                         return;
                     }
                     let beat = view.beat_at(x);
@@ -458,10 +509,7 @@ impl Controller {
                     if source <= c.source_offset || source >= c.source_offset + c.source_length {
                         return;
                     }
-                    let mut w = c.warp.clone();
-                    if w.markers.is_empty() {
-                        w.set_marker(c.source_offset, m.original_beat(0.0));
-                    }
+                    let mut w = anchored(&c, rate);
                     if w.set_marker(source, c.warp.beat_at(source as f64, rate)) {
                         self.set_clip_warp(c.id, w, "Add warp marker");
                     }
@@ -495,7 +543,19 @@ impl Controller {
                 let m = Map::new(&c, &d.warp, rate);
                 let beat = d.view.beat_at(x);
                 match d.kind {
-                    AcDragKind::Marker { source } => {
+                    AcDragKind::Marker { source, slide: true } => {
+                        // The audio moves at the local rate of the map, the marker stays put.
+                        let b0 = m.clip_beat(source as f64);
+                        let slope = (m.source(b0) - m.source(b0 - 1e-3)) / 1e-3;
+                        let lo = d.warp.markers.iter().rev().find(|k| k.source < source).map_or(c.source_offset as f64, |k| k.source as f64 + 1.0);
+                        let hi = d.warp.markers.iter().find(|k| k.source > source).map_or((c.source_offset + c.source_length) as f64, |k| k.source as f64 - 1.0);
+                        let to = (source as f64 + (beat - b0) * slope).clamp(lo, hi.max(lo)).round() as u64;
+                        let Some(w) = slide(&c, &d.warp, source, to, rate) else { return };
+                        d.moved = true;
+                        let clip = d.clip;
+                        self.set_clip_warp(clip, w, "Move warp marker");
+                    }
+                    AcDragKind::Marker { source, slide: false } => {
                         let mut w = d.warp.clone();
                         if !w.set_marker(source, m.original_beat(beat)) {
                             return;
@@ -515,7 +575,7 @@ impl Controller {
             _ => {
                 let Some(d) = self.pr.ac_drag.take() else { return };
                 match d.kind {
-                    AcDragKind::Marker { source } if !d.moved => {
+                    AcDragKind::Marker { source, .. } if !d.moved => {
                         let mut w = d.warp.clone();
                         if let Some(i) = w.markers.iter().position(|k| k.source == source)
                             && w.remove_marker(i)
@@ -559,5 +619,51 @@ mod tests {
         assert_eq!(format_semitones(-12.0), "-12 st");
         assert_eq!(format_semitones(4.98), "+5 st");
         assert_eq!(format_semitones(-1.53), "-1.5 st");
+    }
+
+    fn reversed_clip(markers: &[(u64, f64)]) -> saine_core::Clip {
+        // 4 s at 120 BPM: 8 beats, played back to front.
+        let mut warp = saine_core::ClipWarp { enabled: true, reverse: true, original_bpm: 120.0, ..Default::default() };
+        for &(s, b) in markers {
+            assert!(warp.set_marker(s, b));
+        }
+        saine_core::Clip { id: saine_core::ClipId(1), asset: saine_core::AssetId(1), name: String::new(), start: 0, source_offset: 0, source_length: 4 * 48_000, gain: 1.0, warp }
+    }
+
+    #[test]
+    fn markers_at_transients_anchor_a_reversed_clip_at_its_source_start() {
+        let c = reversed_clip(&[]);
+        let mut w = super::anchored(&c, 48_000.0);
+        assert_eq!(w.markers.len(), 1);
+        assert_eq!((w.markers[0].source, w.markers[0].beat), (0, 0.0));
+        assert!(w.set_marker(24_000, c.warp.beat_at(24_000.0, 48_000.0)), "an interior transient can be pinned");
+    }
+
+    #[test]
+    fn sliding_a_reversed_clips_last_marker_keeps_the_marker_and_the_clip_length() {
+        let rate = 48_000.0;
+        let c = reversed_clip(&[(0, 0.0), (96_000, 4.0)]);
+        let m = super::Map::new(&c, &c.warp, rate);
+        let (len, at) = (m.mirror.unwrap(), m.clip_beat(96_000.0));
+        let w = super::slide(&c, &c.warp, 96_000, 120_000, rate).unwrap();
+        let m2 = super::Map::new(&c, &w, rate);
+        assert!((m2.mirror.unwrap() - len).abs() < 1e-9, "clip length {} vs {len}", m2.mirror.unwrap());
+        assert!((m2.clip_beat(120_000.0) - at).abs() < 1e-9, "the marker stays at clip beat {at}");
+        assert_eq!(w.markers.last().map(|k| k.source), Some(4 * 48_000), "the window end is pinned");
+    }
+
+    #[test]
+    fn sliding_inside_a_trimmed_reversed_clip_keeps_the_clip_length() {
+        // A trim left the last marker (240000) past the window end (192000).
+        let rate = 48_000.0;
+        let c = reversed_clip(&[(0, 0.0), (96_000, 4.0), (240_000, 10.0)]);
+        let m = super::Map::new(&c, &c.warp, rate);
+        let (len, at) = (m.mirror.unwrap(), m.clip_beat(96_000.0));
+        let w = super::slide(&c, &c.warp, 96_000, 300_000, rate).unwrap();
+        let m2 = super::Map::new(&c, &w, rate);
+        assert!((m2.mirror.unwrap() - len).abs() < 1e-9, "clip length {} vs {len}", m2.mirror.unwrap());
+        let moved = w.markers.iter().find(|k| k.beat == 4.0).unwrap().source;
+        assert_eq!(moved, 4 * 48_000 - 1, "the slide stops inside the window");
+        assert!((m2.clip_beat(moved as f64) - at).abs() < 1e-9);
     }
 }
