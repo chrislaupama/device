@@ -25,6 +25,7 @@ static CLIP_MENU_AUDIO: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 static CLIP_MENU_BOUNCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 mod analyzer_views;
+mod appmenu;
 mod assistant_panel;
 mod assistant_provider;
 mod automation;
@@ -124,7 +125,8 @@ struct Args {
     patterns_state: Option<i32>,
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
-    /// 1 export dialog, 2 unsaved-changes prompt, 3 export dialog on Stems, 4 with its Tracks menu open, 5 on Project.
+    /// 1 export dialog, 2 unsaved-changes prompt, 3 export dialog on Stems, 4 with its Tracks menu open, 5 on Project,
+    /// 6 Check for Updates.
     dialog_state: u8,
     settings_general_state: bool,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
@@ -314,6 +316,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-export-project" => {
                     a.reference_default = true;
                     a.dialog_state = 5;
+                }
+                "review-check-updates" => {
+                    a.reference_default = true;
+                    a.dialog_state = 6;
                 }
                 "reference-settings-general" => {
                     a.reference_default = true;
@@ -1535,6 +1541,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     on!(on_menu_action, |c, id: slint::SharedString| c.menu_action(&id));
+    on!(on_open_recent, |c, i: i32| c.open_recent(i as usize));
+    on!(on_updates_close, |c| c.dialogs_close());
     {
         // A menu item with a shortcut takes that keystroke away from the window (macOS key
         // equivalents), so replay it: a focused text field, the modal gating and the keymap
@@ -1963,7 +1971,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // The export dialog and the unsaved-changes prompt are modal: Escape closes them (Cancel).
             {
                 let mut c = ctl.borrow_mut();
-                if c.export.open || c.unsaved_open {
+                if c.export.open || c.unsaved_open || c.updates_open {
                     if action == "view.escape" && c.export.tracks_menu {
                         c.export_toggle_tracks_menu();
                     } else if action == "view.escape" {
@@ -2028,6 +2036,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     // Reference z100-modal-export-audio-mixdown / -save-changes-on-new-project: an 8 s sine clip
     // at bar 3 of the Audio track (the export covers bars 1–6), then the dialog.
+    let app_menu_timer = slint::Timer::default();
+    app_menu_timer.start(slint::TimerMode::Repeated, Duration::from_millis(16), appmenu::adopt_items);
     let dialog_timer = slint::Timer::default();
     if args.dialog_state > 0 {
         let dir = std::env::temp_dir().join(format!("saine-ref-{}", std::process::id()));
@@ -2041,8 +2051,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         dialog_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
             let Ok(mut c) = ctl.try_borrow_mut() else { return };
             let imported = c.project().tracks.iter().any(|t| !t.clips.is_empty());
-            if imported && !c.export.open && !c.unsaved_open {
-                if state != 2 {
+            if imported && !c.modal_open() {
+                if state == 6 {
+                    c.menu_action("options.check_updates");
+                } else if state != 2 {
                     c.export_open();
                     if state >= 3 {
                         c.export_pick_recipe(if state == 5 { 2 } else { 1 });

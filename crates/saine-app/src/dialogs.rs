@@ -20,6 +20,11 @@ const MENU_ROW: f32 = 21.0;
 const MENU_GAP: f32 = 7.0;
 const MENU_PAD: f32 = 3.0;
 
+/// File › Open Recent shows a project by its folder name without the extension.
+fn recent_name(path: &str) -> String {
+    Path::new(path).file_stem().map_or_else(|| path.to_string(), |s| s.to_string_lossy().into_owned())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Recipe {
     #[default]
@@ -219,11 +224,13 @@ impl Controller {
         self.ui_dirty = true;
     }
 
-    /// Close the export dialog and the unsaved-changes prompt (Close, ×, Cancel, Escape).
+    /// Close the export dialog, the unsaved-changes prompt and Check for Updates (Close, ×,
+    /// Cancel, OK, Escape).
     pub fn dialogs_close(&mut self) {
         self.export.open = false;
         self.export.tracks_menu = false;
         self.unsaved_open = false;
+        self.updates_open = false;
         self.ui_dirty = true;
     }
 
@@ -578,6 +585,16 @@ impl Controller {
     pub(crate) fn push_dialogs(&self, s: &Studio) {
         s.set_export_open(self.export.open);
         s.set_unsaved_open(self.unsaved_open);
+        s.set_updates_open(self.updates_open);
+        s.set_app_version(env!("CARGO_PKG_VERSION").into());
+        use slint::Model as _;
+        let recent = &self.settings.prefs.recent_projects;
+        let names = s.get_recent_projects();
+        let unchanged = names.row_count() == recent.len() && recent.iter().enumerate().all(|(i, p)| names.row_data(i).is_some_and(|n| n == recent_name(p)));
+        if !unchanged {
+            let rows: Vec<slint::SharedString> = recent.iter().map(|p| recent_name(p).into()).collect();
+            s.set_recent_projects(slint::ModelRc::new(slint::VecModel::from(rows)));
+        }
         if !self.export.open {
             return;
         }

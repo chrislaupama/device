@@ -2276,9 +2276,12 @@ fn device_steps() -> Vec<Step> {
             let d = track_devices(c, TrackKind::Instrument);
             (d.iter().map(|x| x.1.as_str()).collect::<Vec<_>>() == ["AULowpass", "AUDelay"]).then_some(()).ok_or(format!("instrument devices {d:?}"))
         })),
-        DoC("devices: ⌘, then Settings › Plugins; record scans", Box::new(move |a, ctl| {
+        // ⌘, is the app menu's Settings… shortcut, which replays the key on the next tick.
+        DoC("devices: ⌘, (Settings…); record scans", Box::new(move |a, ctl| {
             sc1.set(ctl.borrow().devices.catalog.scans);
             key(a, ",", true, false);
+        })),
+        Do("settings: click Plugins", Box::new(|a| {
             let (x, y) = settings_row(crate::settings::PLUGINS_PAGE);
             click(a, x, y);
         })),
@@ -5195,6 +5198,56 @@ fn files_steps() -> Vec<Step> {
     ]
 }
 
+/// Menu bar items without a shortcut: Check for Updates…, Export Project for Ableton Live…
+/// and Open Recent (appended last; it saves and reopens the current project).
+fn menu_bar_steps() -> Vec<Step> {
+    use Step::*;
+    let dir = std::env::temp_dir().join(format!("saine-selftest-recent-{}", std::process::id())).join("Recent Song.saineproj");
+    let (d1, d2, d3) = (dir.clone(), dir.clone(), dir);
+    vec![
+        DoC("menu: Options › Check for Updates…", Box::new(|_, ctl| ctl.borrow_mut().menu_action("options.check_updates"))),
+        Check("menu: the updates dialog is open and names the version", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_updates_open() && s.get_app_version() == env!("CARGO_PKG_VERSION")).then_some(()).ok_or(format!("open {} version {:?}", s.get_updates_open(), s.get_app_version()))
+        })),
+        Do("menu: Escape closes it", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("menu: the updates dialog is closed", Box::new(|c, a| (!c.updates_open && !a.global::<Studio>().get_updates_open()).then_some(()).ok_or("still open".into()))),
+        DoC("menu: File › Export Project for Ableton Live…", Box::new(|_, ctl| ctl.borrow_mut().menu_action("file.export_ableton"))),
+        Check("menu: the export dialog opens on Project", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_export_open() && s.get_export_recipe() == 2).then_some(()).ok_or(format!("open {} recipe {}", s.get_export_open(), s.get_export_recipe()))
+        })),
+        Do("menu: Escape closes the export dialog", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("menu: save the project, then forget its folder", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.settings.prefs.recent_projects.clear();
+            c.save_to(&d1);
+            c.project_dir = None;
+        })),
+        Check("menu: File › Open Recent lists it", Box::new(|_, a| {
+            let names: Vec<String> = a.global::<Studio>().get_recent_projects().iter().map(|s| s.to_string()).collect();
+            (names == ["Recent Song"]).then_some(()).ok_or(format!("{names:?}"))
+        })),
+        DoC("menu: open it from Open Recent", Box::new(|_, ctl| ctl.borrow_mut().open_recent(0))),
+        Check("menu: the project is open from its folder", Box::new(move |c, _| (c.project_dir.as_ref() == Some(&d2)).then_some(()).ok_or(format!("{:?}", c.project_dir)))),
+        DoC("menu: Open Recent › Clear Menu; remove the folder", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.menu_action("file.clear_recent");
+            c.project_dir = None;
+            if let Some(parent) = d3.parent() {
+                let _ = std::fs::remove_dir_all(parent);
+            }
+        })),
+        Check("menu: Open Recent is empty", Box::new(|_, a| (a.global::<Studio>().get_recent_projects().row_count() == 0).then_some(()).ok_or("not empty".into()))),
+        DoC("menu: open a recent project whose folder is gone", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.settings.prefs.recent_projects = vec![std::env::temp_dir().join("saine-selftest-missing.saineproj").to_string_lossy().into_owned()];
+            c.open_recent(0);
+        })),
+        Check("menu: it leaves Open Recent", Box::new(|c, _| c.settings.prefs.recent_projects.is_empty().then_some(()).ok_or(format!("{:?}", c.settings.prefs.recent_projects)))),
+    ]
+}
+
 /// Section lane under the loop strip (appended last; clears its sections at the end).
 fn section_steps() -> Vec<Step> {
     use Step::*;
@@ -6380,6 +6433,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(clip_render_steps());
     all.extend(ruler_zoom_steps());
     all.extend(snap_steps());
+    all.extend(menu_bar_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));
