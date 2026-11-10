@@ -53,6 +53,12 @@ impl MenuAction {
             MenuAction::Quantize => "Quantize",
             MenuAction::Humanize => "Humanize",
             MenuAction::Ask => "Ask",
+            MenuAction::Paste => "Paste",
+            MenuAction::SectionRename => "Rename…",
+            MenuAction::SectionColor => "Color",
+            MenuAction::SectionInsert => "Insert",
+            MenuAction::SectionDelete => "Delete section",
+            MenuAction::SectionClear => "Clear all sections",
         }
     }
     fn shortcut(self) -> &'static str {
@@ -65,15 +71,20 @@ impl MenuAction {
             MenuAction::Delete => "Del",
             MenuAction::Disable => "0",
             MenuAction::Ask => "⌘ K",
+            MenuAction::Paste => "⌘ V",
+            MenuAction::SectionDelete => "Del",
             _ => "",
         }
     }
     /// A separator is drawn above these entries (reference grouping).
     fn separated(self) -> bool {
-        matches!(self, MenuAction::Delete | MenuAction::Disable | MenuAction::Export | MenuAction::Transpose | MenuAction::Ask)
+        matches!(
+            self,
+            MenuAction::Delete | MenuAction::Disable | MenuAction::Export | MenuAction::Transpose | MenuAction::Ask | MenuAction::SectionRename | MenuAction::SectionDelete | MenuAction::SectionClear
+        )
     }
     fn submenu(self) -> bool {
-        matches!(self, MenuAction::Bounce | MenuAction::Transpose)
+        matches!(self, MenuAction::Bounce | MenuAction::Transpose | MenuAction::SectionColor | MenuAction::SectionInsert)
     }
 }
 
@@ -238,6 +249,9 @@ impl Controller {
     /// Right-click on the lanes (lane-local x/y for hit-testing, window wx/wy for placement).
     pub fn lane_context(&mut self, x: f32, y: f32, wx: f32, wy: f32, win: (f32, f32)) {
         use crate::timeline::{Hit, hit_test};
+        if self.section_context(x, y, wx, wy, win) {
+            return;
+        }
         let hit = hit_test(&self.view, self.lanes_size, self.project().tracks.len(), &self.clip_vis, x, y);
         let Hit::Clip { index, .. } = hit else {
             self.menu_close();
@@ -268,13 +282,22 @@ impl Controller {
                 (a, enabled)
             })
             .collect();
+        let items = std::mem::take(&mut self.menu.items);
+        self.open_menu(items, wx, wy, win);
+        self.menu.clip = Some(id);
+    }
+
+    /// Open the context menu with `items` at window point (wx, wy), kept inside the window.
+    pub fn open_menu(&mut self, items: Vec<(MenuAction, bool)>, wx: f32, wy: f32, win: (f32, f32)) {
+        self.menu.items = items;
         let (_, h) = layout_items(self.menu.items.iter().map(|&(a, en)| (String::new(), String::new(), en, a.separated(), false)));
         let mx = (wx + 2.0).min(win.0 - MENU_W - 4.0).max(4.0);
         let my = (wy + 2.0).min(win.1 - h - 4.0).max(4.0);
         self.menu.open = true;
         self.menu.sub_open = false;
         self.menu.pos = (mx, my);
-        self.menu.clip = Some(id);
+        self.menu.clip = None;
+        self.menu.section = None;
         self.ui_dirty = true;
     }
 
@@ -283,16 +306,21 @@ impl Controller {
             self.menu.open = false;
             self.menu.sub_open = false;
             self.menu.clip = None;
+            self.menu.section = None;
             self.ui_dirty = true;
         }
     }
 
     pub fn menu_activate(&mut self, index: usize) {
         let Some(&(action, enabled)) = self.menu.items.get(index) else { return };
-        let Some(id) = self.menu.clip else { return };
         if !enabled {
             return;
         }
+        if let Some(id) = self.menu.section {
+            self.section_menu_activate(id, action);
+            return;
+        }
+        let Some(id) = self.menu.clip else { return };
         if action == MenuAction::Transpose {
             self.menu.sub_open = !self.menu.sub_open;
             self.ui_dirty = true;
@@ -344,8 +372,8 @@ impl Controller {
 
     /// The editor that owns the dropdown is on screen: the audio clip editor for Speed / Warp /
     /// Mode, the piano roll for Grid, Type and Genre.
-    fn clip_menu_shown(&self, menu: i32) -> bool {
-        if menu <= 2 { self.ac_clip().is_some() } else { self.pr_visible() }
+    pub(crate) fn clip_menu_shown(&self, menu: i32) -> bool {
+        self.bottom_tab == BottomTab::Clip && if menu <= 2 { self.ac_clip().is_some() } else { self.pr_visible() }
     }
 
     fn clip_menu_active(&self, menu: i32) -> i32 {
@@ -476,7 +504,11 @@ impl Controller {
             s.set_sub_h(sub_h);
         }
         // Rename popup.
-        let renaming = self.rename.and_then(|id| p.midi_clip(id).map(|c| c.name.clone()).or_else(|| p.clip(id).map(|c| c.name.clone())));
+        let renaming = self
+            .rename
+            .and_then(|id| p.midi_clip(id).map(|c| c.name.clone()).or_else(|| p.clip(id).map(|c| c.name.clone())))
+            .or_else(|| self.rename_section.and_then(|id| p.section_index(id)).map(|i| p.sections[i].name.clone()));
+        s.set_rename_title(if self.rename_section.is_some() { "Rename section" } else { "Rename clip" }.into());
         if renaming.is_some() != s.get_rename_open() {
             if let Some(n) = &renaming {
                 s.set_rename_text(n.clone().into());

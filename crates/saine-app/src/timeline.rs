@@ -151,6 +151,8 @@ pub struct Scene<'a> {
     pub beats_per_bar: f64,
     /// Automation overlay (src/automation.rs) while lanes are shown.
     pub auto: Option<&'a crate::automation::AutoScene>,
+    /// Arrangement sections in the ruler's section lane (src/sections.rs).
+    pub sections: &'a [crate::sections::SectionVis],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -385,6 +387,27 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     if lx1 > 0.0 && lx0 < w {
         let color = if sc.loop_on { rgb(0xefb259) } else { rgb(0x4d4d4f) };
         o.push(px.rect(lx0.max(0.0), 17.6, lx1.min(w) - lx0.max(0.0), 6.8, rgba(color, 1.0)));
+    }
+    // Sections: rounded blocks inset half a reference px at each end; selected and dragged
+    // blocks lift and get a white rim (38 % / 1 px, 70 % / 1.5 px).
+    use crate::sections::{BLOCK_H, BLOCK_Y, RADIUS, lift};
+    for s in sc.sections {
+        let x0 = v.x_of(s.start_beats) + 0.425;
+        let bw = (s.len_beats * v.px_per_beat) as f32 - 0.85;
+        if bw <= 0.0 || x0 > w || x0 + bw < 0.0 {
+            continue;
+        }
+        o.push(px.rounded(x0, BLOCK_Y, bw, BLOCK_H, RADIUS, rgba(lift(s.color, s.state), 1.0)));
+        let (a, t) = match s.state {
+            1 => (0.38, 0.85),
+            2 => (0.7, 1.275),
+            _ => continue,
+        };
+        let rim = rgba(WHITE, a);
+        o.push(px.rect(x0 + RADIUS, BLOCK_Y, bw - 2.0 * RADIUS, t, rim));
+        o.push(px.rect(x0 + RADIUS, BLOCK_Y + BLOCK_H - t, bw - 2.0 * RADIUS, t, rim));
+        o.push(px.rect(x0, BLOCK_Y + RADIUS, t, BLOCK_H - 2.0 * RADIUS, rim));
+        o.push(px.rect(x0 + bw - t, BLOCK_Y + RADIUS, t, BLOCK_H - 2.0 * RADIUS, rim));
     }
 
     // ---- master lane (over, pinned to the bottom) ----

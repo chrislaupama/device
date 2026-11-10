@@ -44,11 +44,20 @@ export struct AutoExtra { track-id: int, index: int, y: length, cat: string, par
 
 export struct RulerLabel { x: length, text: string }
 
+// Section name in the ruler's section lane (src/sections.rs): x and room in lane points, ink per block.
+export struct SectionLabel { x: length, w: length, text: string, ink: color }
+
 export struct ClipLabel { x: length, y: length, w: length, text: string, selected: bool }
 
 // Browser tree row (Devices tab; src/devices.rs). icon: 0 folder, 1 instrument (keys), 2 effect.
 // expander: 0 none, 1 closed, 2 open. leaf: a device (double-click / drag adds it).
 export struct TreeRow { depth: int, label: string, count: string, icon: int, expander: int, selected: bool, leaf: bool }
+// Browser › Files row (src/files.rs): kind 0 row, 1 group label, 2 note; y and h in list
+// coordinates; glyph 0 folder, 1 audio file, 2 project, 3 audio track, 4 instrument track,
+// 5 MIDI clip; expander 0 none, 1 closed, 2 open.
+export struct FileRow { kind: int, depth: int, y: length, h: length, label: string, detail: string, glyph: int, expander: int, selected: bool }
+// Vertical guide beside an open row's contents (list coordinates).
+export struct FileGuide { x: length, y: length, h: length }
 
 // One plugin card in the bottom-panel device chain (src/devices.rs). x is bottom-panel relative
 // and already includes the chain scroll and a drag offset.
@@ -115,6 +124,10 @@ export struct PanelCanvas {
     // track colour. label / value: the pointer well's accessible name and value.
     pointer: bool, interactive: bool, cursor: int, readout-accent: bool, label: string, value: string,
 }
+// Intensity image of a field well (Reverb tail), stretched (bilinear) over the box x/y/w/h in
+// well coordinates under the paths. Kept out of PanelCanvas: an image field in that struct
+// doubled the first frames' render cost of every card.
+export struct PanelWash { device: int, img: image, x: length, y: length, w: length, h: length }
 // Freely placed control (custom card bodies): kind 0 latch (On/Off parameter), 1 menu pill
 // (choice parameter, opens a menu of its choices).
 export struct PanelButton { kind: int, param: int, x: length, y: length, w: length, label: string, on: bool }
@@ -324,6 +337,9 @@ export global Studio {
     in property <length> scroll-y;
     in property <image> timeline-image;
     in property <[RulerLabel]> ruler-labels;
+    in property <[SectionLabel]> section-labels;
+    in property <length> section-add-x: 8.5px;     // centre of the section lane's "+"
+    callback lane-double(length, length);          // lane x, y
     in property <[ClipLabel]> clip-labels;
     in property <int> lane-cursor; // 0 default, 1 ew-resize (trim), 2 move (clip body)
     // ---- inspector (selected track) ----
@@ -355,6 +371,29 @@ export global Studio {
     callback tree-activate(int);               // double-click: add to the selected track
     callback tree-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
     callback tree-scroll-by(float);
+    // ---- browser sections, Back / Forward and the Files section (src/files.rs) ----
+    in property <int> browser-section: 2;      // 2 Devices, 3 Files (Search and Library have no content)
+    in property <bool> browser-can-back;
+    in property <bool> browser-can-forward;
+    in property <int> files-tab;               // 0 Projects, 1 Folders
+    in property <[FileRow]> files;
+    in property <[FileGuide]> files-guides;
+    in property <length> files-scroll;
+    in property <length> files-list-y: 81px;   // rule above the rows (96 with the count row)
+    in property <string> files-meta;           // "2 folders"; empty hides the count row
+    in property <string> files-sort: "Recent";
+    in property <string> files-empty-title;
+    in property <string> files-empty-hint;
+    callback browser-section-select(int);
+    callback browser-back();
+    callback browser-forward();
+    callback files-tab-select(int);
+    callback files-add-folder();
+    callback files-sort-toggle();
+    callback files-click(int, bool);           // row, on the chevron
+    callback files-activate(int);              // double-click
+    callback files-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
+    callback files-scroll-by(float);
     // Drag and drop of a browser device (ghost + drop target, window coordinates).
     in property <bool> dnd-active;
     in property <bool> dnd-ok;
@@ -390,6 +429,20 @@ export global Studio {
     callback lane-hover(length, length);
     callback lane-scroll(float, float, length, bool);      // dx, dy, x, zoom
     callback key(string, bool, bool, bool, bool) -> bool;   // text, primary (Cmd on macOS), shift, alt, ctrl
+    // ---- app menu bar (AppWindow MenuBar) ----
+    // Items with a shortcut replay that key (text, primary, shift) into the window, so they act
+    // exactly like the keystroke; the others call menu-action with an id.
+    callback menu-key(string, bool, bool);
+    callback menu-action(string);
+    // True while menu-key replays its key: the shortcut items are disabled so the replay
+    // reaches the widgets instead of activating the menu item again.
+    in property <bool> menu-replay;
+    in property <string> undo-text: "Undo";
+    in property <string> redo-text: "Redo";
+    in property <bool> can-undo;
+    in property <bool> can-redo;
+    in property <bool> can-copy;
+    in property <bool> project-on-disk;
     // ---- panels (owned by the controller) ----
     in property <bool> mixer-open;
     in property <bool> assistant-open;
@@ -482,6 +535,7 @@ export global Studio {
     callback sub-activate(int);
     callback menu-dismiss();
     in property <bool> rename-open;
+    in property <string> rename-title: "Rename clip";
     in-out property <string> rename-text;
     callback rename-commit(string);
     callback rename-cancel();
@@ -491,6 +545,7 @@ export global Studio {
     in property <int> synth-page;                // index into the category list
     in property <string> synth-preset: "Init";
     in property <bool> synth-enabled: true;
+    in property <DeviceCard> synth-card;                     // the Synth as a device card (shared header, folded strip)
     in property <[SynthParam]> synth-params;     // indexed like the device definition
     in property <[SynthDisplay]> synth-displays; // indexed by synth::disp
     in property <[SynthLabel]> synth-labels;
@@ -553,6 +608,24 @@ export global Studio {
     callback open-input-menu();
     callback input-menu-pick(int);              // SetTrackInput
     callback input-menu-dismiss();
+    // ---- export dialog and unsaved-changes prompt (src/dialogs.rs, ui/dialogs.slint) ----
+    in property <bool> export-open;
+    in property <bool> export-bits24: true;
+    in property <bool> export-rate48: true;      // the engine rate (the render rate)
+    in property <string> export-recipe-text: "WAV 24-bit";
+    in property <string> export-bars-text: "Bars 1–1";
+    in property <string> export-name: "Untitled.wav";
+    in property <string> export-dir;
+    in property <string> export-estimate;
+    callback export-close();
+    callback export-run();
+    callback export-choose-dir();
+    callback export-bits(bool);                 // true = 24-bit
+    callback export-name-edited(string);
+    in property <bool> unsaved-open;
+    callback unsaved-cancel();
+    callback unsaved-dont-save();
+    callback unsaved-save();
     // ---- settings window (src/settings.rs, ui/settings.slint) ----
     in property <bool> settings-open;
     in property <int> settings-page: 1;
@@ -646,6 +719,8 @@ export global Studio {
     callback sampler-well(int, int, float, float, bool);     // phase, x fraction, grab distance (fraction), alt
     callback sampler-handle(int, int, int, length, length);  // picture handle i: phase, x, y (picture px)
     callback panel-graph(int, int, float, float, bool, bool); // canvas pointer (PanelCanvas.pointer): phase (0 press, 1 drag, 2 release, 3 cancel, 4 hover, 5 leave, 6 double-click), well x, y (px), shift, alt
+    in property <[PanelWash]> field-washes;                  // src/panel_fields.rs: wash images of field wells
+    callback panel-graph-menu(int, float, float, length, length); // canvas right press: well x, y (px), window x, y: the handle's parameter menu
     callback panel-graph-wheel(int, float, float, float) -> bool; // canvas wheel: x, y, wheel dy (px, up +): used
     callback panel-graph-key(int, string, bool, bool) -> bool;     // canvas key: text, shift, alt: accepted
     callback panel-eq(int, int, int);                        // action 0 select band / 1 toggle On / 2 type choice / 3 reset type; value
