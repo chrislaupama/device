@@ -214,11 +214,19 @@ int32_t read_file_bytes(const char* utf8_path, std::vector<uint8_t>& bytes, std:
         return SE_ERR_IO;
     }
     bytes.clear();
-    if (std::fseek(f, 0, SEEK_END) == 0) {
-        const long len = std::ftell(f);
-        if (len > 0) bytes.resize(static_cast<std::size_t>(len));
-        std::fseek(f, 0, SEEK_SET);
+    constexpr long kMaxImportBytes = 0x7fffffffL;
+    const long len = std::fseek(f, 0, SEEK_END) == 0 ? std::ftell(f) : -1L;
+    if (len < 0 || std::fseek(f, 0, SEEK_SET) != 0) {
+        std::fclose(f);
+        err = std::string("cannot read file size: ") + utf8_path;
+        return SE_ERR_IO;
     }
+    if (len >= kMaxImportBytes) {
+        std::fclose(f);
+        err = std::string("file is larger than 2 GB: ") + utf8_path;
+        return SE_ERR_IO;
+    }
+    if (len > 0) bytes.resize(static_cast<std::size_t>(len));
     const std::size_t got = bytes.empty() ? 0 : std::fread(bytes.data(), 1, bytes.size(), f);
     const bool io_error = std::ferror(f) != 0;
     std::fclose(f);

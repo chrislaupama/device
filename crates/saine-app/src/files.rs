@@ -171,7 +171,14 @@ fn file_name(p: &Path) -> String {
 
 /// Extensions for file dialogs, in both cases (some platforms match them case-sensitively).
 pub fn dialog_exts() -> Vec<String> {
-    AUDIO_EXT.iter().flat_map(|e| [e.to_string(), e.to_uppercase()]).collect()
+    AUDIO_EXT
+        .iter()
+        .flat_map(|e| {
+            (0..1u32 << e.len()).map(move |m| e.char_indices().map(|(i, c)| if m >> i & 1 == 1 { c.to_ascii_uppercase() } else { c }).collect::<String>())
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 pub fn is_audio(p: &Path) -> bool {
@@ -716,6 +723,8 @@ mod tests {
         let kit = dir.join("kit");
         let names: Vec<_> = list_folder(&kit).unwrap().into_iter().map(|(n, _)| n).collect();
         assert_eq!(names, ["drums", "A.WAV", "b.wav", "c.flac", "d.MP3", "e.ogg", "f.aif"]);
+        let exts = dialog_exts();
+        assert!(["Mp3", "fLaC", "AiFf", "wav", "OGG"].iter().all(|e| exts.iter().any(|x| x == e)));
         let mut ui = FilesUi { tab: TAB_FOLDERS, projects_dir: None, ..Default::default() };
         let folders = vec![dir.join("other").to_string_lossy().into_owned(), kit.to_string_lossy().into_owned()];
         let b = build(&ui, &folders);

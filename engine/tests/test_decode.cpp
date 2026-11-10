@@ -131,6 +131,11 @@ TEST_CASE(decode_rejects_unknown_and_broken_files) {
     CHECK_EQ(rc, SE_ERR_UNSUPPORTED_FORMAT);
     decode(nullptr, 0, &rc);
     CHECK_EQ(rc, SE_ERR_UNSUPPORTED_FORMAT);
+    const uint8_t bw64[] = {'B', 'W', '6', '4', 0xff, 0xff, 0xff, 0xff, 'W', 'A', 'V', 'E'};
+    saine::DecodedAudio d;
+    std::string err;
+    CHECK_EQ(saine::decode_audio_memory(bw64, sizeof bw64, d, err), SE_ERR_UNSUPPORTED_FORMAT);
+    CHECK(err.find("BW64") != std::string::npos);
 }
 
 TEST_CASE(asset_load_file_reads_compressed_formats) {

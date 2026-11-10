@@ -129,7 +129,7 @@ int32_t decode_mp3(const uint8_t* data, std::size_t size, DecodedAudio& out, std
 } // namespace
 
 int32_t decode_audio_memory(const uint8_t* data, std::size_t size, DecodedAudio& out, std::string& err) {
-    if (has_tag(data, size, "RIFF") || has_tag(data, size, "RF64")) return decode_wav_memory(data, size, out, err);
+    if (has_tag(data, size, "RIFF") || has_tag(data, size, "RF64") || has_tag(data, size, "BW64")) return decode_wav_memory(data, size, out, err);
     if (has_tag(data, size, "FORM") && (has_tag(data, size, "AIFF", 8) || has_tag(data, size, "AIFC", 8)))
         return decode_aiff(data, size, out, err);
     if (has_tag(data, size, "fLaC")) return decode_flac(data, size, out, err);
