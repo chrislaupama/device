@@ -432,7 +432,13 @@ fn parse_args() -> Result<Args, String> {
             "--ac-edit" => a.ac_edit = Some(value(&mut i)?.parse().map_err(|e| format!("--ac-edit: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
-            "--timeline-zoom" => a.timeline_zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--timeline-zoom: {e}"))?),
+            "--timeline-zoom" => {
+                let z: f64 = value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--timeline-zoom: {e}"))?;
+                if z.is_nan() {
+                    return Err(format!("--timeline-zoom: invalid percentage {z}"));
+                }
+                a.timeline_zoom = Some(z);
+            }
             "--drag-bench" => {
                 let v = value(&mut i)?;
                 if v != "track" && v != "bottom" {
@@ -1276,11 +1282,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.reference_default || args.screenshot.is_some() {
         ctl.borrow_mut().show_status = !args.reference_default;
     }
-    if let Some(pct) = args.timeline_zoom {
-        let mut c = ctl.borrow_mut();
-        c.view.px_per_beat = (timeline::DEFAULT_PX_PER_BEAT * pct / 100.0).clamp(timeline::MIN_PX_PER_BEAT, timeline::MAX_PX_PER_BEAT);
-        c.ui_dirty = true;
-    }
     if let Some(e) = &prefs_error {
         ctl.borrow_mut().set_status(e.clone(), 8);
     }
@@ -1770,6 +1771,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ---- startup work ----
     if let Some(dir) = &args.open {
         ctl.borrow_mut().open(dir);
+    }
+    // After --open, which resets the view.
+    if let Some(pct) = args.timeline_zoom {
+        let mut c = ctl.borrow_mut();
+        c.view.px_per_beat = (timeline::DEFAULT_PX_PER_BEAT * pct / 100.0).clamp(timeline::MIN_PX_PER_BEAT, timeline::MAX_PX_PER_BEAT);
+        c.ui_dirty = true;
     }
     // After --open, so the held voice sounds on the project's own Synth.
     if let Some(pitch) = args.hold_note {
