@@ -340,6 +340,8 @@ pub struct Controller {
     pub(crate) seq_cell_model: Rc<VecModel<SeqCell>>,
     pub(crate) seq_num_model: Rc<VecModel<SeqNum>>,
     pub(crate) composer_row_model: Rc<VecModel<PatternRow>>,
+    /// The rows last pushed to `composer_row_model` (rebuilt only when they change).
+    pub(crate) composer_rows_shown: std::cell::RefCell<Vec<crate::composer::RowView>>,
     pub(crate) menu_model: Rc<VecModel<MenuItem>>,
     pub(crate) sub_model: Rc<VecModel<MenuItem>>,
     /// Metronome on/off (app preference, not saved in the project).
@@ -448,6 +450,7 @@ impl Controller {
             seq_cell_model: Rc::new(VecModel::default()),
             seq_num_model: Rc::new(VecModel::default()),
             composer_row_model: Rc::new(VecModel::default()),
+            composer_rows_shown: Default::default(),
             menu_model: Rc::new(VecModel::default()),
             sub_model: Rc::new(VecModel::default()),
             metronome_on: false,

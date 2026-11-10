@@ -462,6 +462,10 @@ impl Controller {
         s.set_composer_genre_text(CLIP_MENUS[5].get(v.genre as usize).copied().unwrap_or("Any").into());
         s.set_composer_original(v.original);
         s.set_composer_create_text(v.create_label.into());
+        if *self.composer_rows_shown.borrow() == v.rows {
+            return;
+        }
+        *self.composer_rows_shown.borrow_mut() = v.rows.clone();
         let rows: Vec<PatternRow> = v
             .rows
             .into_iter()

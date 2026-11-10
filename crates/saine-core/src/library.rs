@@ -492,7 +492,7 @@ pub fn create_drum_set(genre: usize, set: u32) -> Vec<LibPattern> {
         .map(|i| {
             let mut rng = Rng::new(0xD5 << 32 ^ (genre as u64) << 16 ^ (set as u64) << 4 ^ i as u64);
             let (gname, rows) = GROOVES[pool[(i + set as usize * 2) % pool.len()]];
-            let var = (i / pool.len().min(SET_SIZE) + set as usize + i) % VARIATIONS.len();
+            let var = (2 * (i / pool.len().min(SET_SIZE)) + set as usize + i) % VARIATIONS.len();
             let mut p = StepPattern::new(StepRows::Pads);
             p.rate = StepRate::Sixteenth;
             if genre == 10 || genre == 1 {
@@ -644,6 +644,10 @@ mod tests {
             for set in 0..3 {
                 let s = create_drum_set(genre, set);
                 assert_eq!(s.len(), SET_SIZE);
+                let mut names: Vec<&str> = s.iter().map(|p| p.name.as_str()).collect();
+                names.sort_unstable();
+                names.dedup();
+                assert_eq!(names.len(), SET_SIZE, "genre {genre} set {set}");
                 for p in &s {
                     let pat = p.pattern.as_ref().unwrap();
                     pat.validate().unwrap();
