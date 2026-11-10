@@ -34,19 +34,22 @@ pub struct MidiClip {
     /// clip repeats it). See `crate::steps`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pattern: Option<StepPattern>,
+    /// Disabled clips stay on the timeline but play no notes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
 }
 
 impl MidiClip {
     /// Reference default: "Insert empty MIDI clip" creates a 1-bar clip named "MIDI".
     pub fn empty(start: Ticks, length: Ticks) -> Self {
-        MidiClip { id: ClipId(0), name: "MIDI".into(), start, length, notes: Vec::new(), pattern: None }
+        MidiClip { id: ClipId(0), name: "MIDI".into(), start, length, notes: Vec::new(), pattern: None, disabled: false }
     }
 
     /// Reference default for a Drum Rack track: an empty one-bar "Pattern"
     /// clip of 16 steps at 1/16.
     pub fn empty_pattern(start: Ticks, rows: StepRows) -> Self {
         let pattern = StepPattern::new(rows);
-        MidiClip { id: ClipId(0), name: "Pattern".into(), start, length: pattern.length(), notes: Vec::new(), pattern: Some(pattern) }
+        MidiClip { id: ClipId(0), name: "Pattern".into(), start, length: pattern.length(), notes: Vec::new(), pattern: Some(pattern), disabled: false }
     }
 
     /// Notes as they play inside the clip (a pattern repeats; notes are cut

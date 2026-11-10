@@ -148,7 +148,7 @@ mod tests {
         let mut p = Project::default();
         p.transport.bpm = 120.0;
         p.assets.push(Asset { id: AssetId(0), relative_path: None, absolute_path: "/nonexistent/loop.wav".into(), sample_rate: 44_100.0, channels: 2, frames: 8 * 44_100 });
-        let clip = Clip { id: ClipId(1), asset: AssetId(0), name: String::new(), start: 0, source_offset: 0, source_length: 8 * 44_100, gain: 1.0, warp: warp.unwrap_or_default() };
+        let clip = Clip { id: ClipId(1), asset: AssetId(0), name: String::new(), start: 0, source_offset: 0, source_length: 8 * 44_100, gain: 1.0, warp: warp.unwrap_or_default(), disabled: false };
         (p, clip)
     }
 

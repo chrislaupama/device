@@ -47,6 +47,8 @@ impl MenuAction {
             MenuAction::Bounce => "Bounce",
             MenuAction::Delete => "Delete",
             MenuAction::Disable => "Disable",
+            MenuAction::Enable => "Enable",
+            MenuAction::ShowInFinder => "Show in Finder",
             MenuAction::Rename => "Rename…",
             MenuAction::Export => "Export audio to Finder",
             MenuAction::Transpose => "Transpose",
@@ -69,7 +71,7 @@ impl MenuAction {
             MenuAction::Split => "⌘ E",
             MenuAction::Consolidate => "⌘ J",
             MenuAction::Delete => "Del",
-            MenuAction::Disable => "0",
+            MenuAction::Disable | MenuAction::Enable => "0",
             MenuAction::Ask => "⌘ K",
             MenuAction::Paste => "⌘ V",
             MenuAction::SectionDelete => "Del",
@@ -80,7 +82,7 @@ impl MenuAction {
     fn separated(self) -> bool {
         matches!(
             self,
-            MenuAction::Delete | MenuAction::Disable | MenuAction::Export | MenuAction::Transpose | MenuAction::Ask | MenuAction::SectionRename | MenuAction::SectionDelete | MenuAction::SectionClear
+            MenuAction::Delete | MenuAction::Disable | MenuAction::Enable | MenuAction::ShowInFinder | MenuAction::Transpose | MenuAction::Ask | MenuAction::SectionRename | MenuAction::SectionDelete | MenuAction::SectionClear
         )
     }
     fn submenu(self) -> bool {
@@ -152,6 +154,64 @@ impl Controller {
             && self.execute(Command::Batch { label: "Duplicate Clip".into(), commands: vec![cmd] })
         {
             self.select_clip(Some(new_id));
+        }
+    }
+
+    /// Whether the playhead lies inside clip id, which can be split there (audio
+    /// clips that are not warped or reversed, and MIDI clips that are not patterns).
+    pub(crate) fn can_split(&self, id: ClipId) -> bool {
+        let p = self.project();
+        let at = self.playhead_ticks();
+        if let Some((ti, ci)) = p.find_clip(id) {
+            let c = &p.tracks[ti].clips[ci];
+            return !c.warp.enabled && !c.warp.reverse && at > c.start && at < c.start + p.clip_length_ticks(c);
+        }
+        p.midi_clip(id).is_some_and(|c| c.pattern.is_none() && at > c.start && at < c.end())
+    }
+
+    /// ⌘E: cut the selected clip in two at the playhead and select the right part.
+    pub fn split_clip(&mut self) {
+        let Some(id) = self.selected_clip else { return };
+        if !self.can_split(id) {
+            self.set_status("Move the playhead inside an audio clip (no warp or reverse) or a MIDI clip to split it", 3);
+            return;
+        }
+        let new_id = ClipId(self.project().next_id);
+        let at = self.playhead_ticks();
+        if self.execute(Command::SplitClip { clip: id, at, new_id }) {
+            self.select_clip(Some(new_id));
+        }
+    }
+
+    /// 0: disable the selected clip (silent, stays on the timeline), or enable it again.
+    pub fn toggle_clip_disabled(&mut self) {
+        let Some(id) = self.selected_clip else { return };
+        let p = self.project();
+        let disabled = p.find_clip(id).map(|(t, c)| p.tracks[t].clips[c].disabled).or_else(|| p.midi_clip(id).map(|c| c.disabled));
+        if let Some(disabled) = disabled {
+            self.execute(Command::SetClipEnabled { clip: id, enabled: disabled });
+        }
+    }
+
+    /// Reveal the selected audio clip's source file in Finder.
+    pub fn show_clip_in_finder(&mut self) {
+        let Some(id) = self.selected_clip else { return };
+        let p = self.project();
+        let Some(path) = p.find_clip(id).and_then(|(t, c)| p.asset(p.tracks[t].clips[c].asset)).map(|a| a.absolute_path.clone()) else { return };
+        if !std::path::Path::new(&path).exists() {
+            self.set_status("The audio file is missing", 3);
+            return;
+        }
+        let reveal = if cfg!(target_os = "macos") {
+            std::process::Command::new("open").arg("-R").arg(&path).spawn()
+        } else if cfg!(windows) {
+            std::process::Command::new("explorer").arg(format!("/select,{path}")).spawn()
+        } else {
+            let dir = std::path::Path::new(&path).parent().map(|d| d.to_path_buf()).unwrap_or_default();
+            std::process::Command::new("xdg-open").arg(dir).spawn()
+        };
+        if let Err(e) = reveal {
+            self.set_status(format!("Show in Finder failed: {e}"), 3);
         }
     }
 
@@ -267,15 +327,20 @@ impl Controller {
             self.select_track(t);
         }
         self.select_clip(Some(id));
-        let midi = self.project().find_midi_clip(id).is_some();
+        let p = self.project();
+        let midi = p.find_midi_clip(id).is_some();
+        let disabled = p.find_clip(id).map(|(t, c)| p.tracks[t].clips[c].disabled).or_else(|| p.midi_clip(id).map(|c| c.disabled)).unwrap_or(false);
+        let splittable = self.can_split(id);
         use MenuAction::*;
-        let items = [Cut, Copy, Duplicate, Split, Consolidate, Bounce, Delete, Disable, Rename, Export, Transpose, Quantize, Humanize, Ask];
-        // PLACEHOLDER entries (disabled): Split, Consolidate, Bounce, Disable, Export, Ask.
+        let items = [Cut, Copy, Duplicate, Split, Consolidate, Bounce, Delete, if disabled { Enable } else { Disable }, Rename, ShowInFinder, Export, Transpose, Quantize, Humanize, Ask];
+        // PLACEHOLDER entries (disabled): Consolidate, Bounce, Export, Ask.
         self.menu.items = items
             .iter()
             .map(|&a| {
                 let enabled = match a {
-                    Cut | Copy | Duplicate | Delete | Rename => true,
+                    Cut | Copy | Duplicate | Delete | Rename | Disable | Enable => true,
+                    Split => splittable,
+                    ShowInFinder => !midi,
                     Transpose | Quantize | Humanize => midi,
                     _ => false,
                 };
@@ -335,6 +400,9 @@ impl Controller {
             }
             MenuAction::Duplicate => self.duplicate_clip(),
             MenuAction::Delete => self.delete_selection(),
+            MenuAction::Split => self.split_clip(),
+            MenuAction::Disable | MenuAction::Enable => self.toggle_clip_disabled(),
+            MenuAction::ShowInFinder => self.show_clip_in_finder(),
             MenuAction::Rename => {
                 self.rename = Some(id);
                 self.ui_dirty = true;

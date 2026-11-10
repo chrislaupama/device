@@ -4794,6 +4794,144 @@ fn section_steps() -> Vec<Step> {
     ]
 }
 
+
+fn clip_menu_steps() -> Vec<Step> {
+    use Step::*;
+    use saine_core::{Asset, AssetId, Clip, ClipId, Command, MidiClip, Track, TrackId};
+    const LANE_Y0: f32 = TRACK0_Y - crate::timeline::RULER_H;
+    fn right_click(a: &AppWindow, x: f32, y: f32) {
+        let w = a.window();
+        let p = LogicalPosition::new(x, y);
+        w.dispatch_event(WindowEvent::PointerMoved { position: p });
+        w.dispatch_event(WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
+        w.dispatch_event(WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
+    }
+    fn menu_entry(a: &AppWindow, label: &str) -> Option<(f32, f32, bool)> {
+        let s = a.global::<Studio>();
+        let items = s.get_menu_items();
+        (0..slint::Model::row_count(&items))
+            .filter_map(|i| slint::Model::row_data(&items, i))
+            .find(|m| m.label == label)
+            .map(|m| (s.get_menu_x() + 40.0, s.get_menu_y() + m.y + crate::clipedit::MENU_ROW / 2.0, m.enabled))
+    }
+    fn click_entry(a: &AppWindow, label: &str) {
+        if let Some((x, y, _)) = menu_entry(a, label) {
+            click(a, x, y);
+        }
+    }
+    fn clip_xy(c: &Controller, id: ClipId) -> (f32, f32) {
+        let i = c.clip_ids.iter().position(|&k| k == id).unwrap_or(0);
+        let (x, y, w, h) = c.clip_vis[i].rect(&c.view);
+        (LANE_X + x + w / 2.0, LANE_Y0 + y + h * 0.7)
+    }
+    fn audio_clips(c: &Controller) -> Vec<(u64, i64, u64, bool)> {
+        let t = c.project().track(c.selected_track.unwrap_or(TrackId(0))).map(|t| t.clips.clone()).unwrap_or_default();
+        t.iter().map(|k| (k.id.0, k.start, k.source_length, k.disabled)).collect()
+    }
+    let ids = Rc::new(Cell::new((0u64, 0u64, 0u64)));
+    let (i1, i2, i3) = (ids.clone(), ids.clone(), ids.clone());
+    let (i4, i5) = (ids.clone(), ids.clone());
+    vec![
+        DoC("clip menu: add its own audio and instrument tracks, an audio clip (beats 4-12) and a MIDI clip (beats 4-8)", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let p = c.project();
+            let (a_id, i_id, asset) = (p.next_id, p.next_id + 1, p.next_id + 2);
+            c.execute(Command::Batch {
+                label: "clip menu test".into(),
+                commands: vec![
+                    Command::AddTrack { index: Some(0), track: Track::new(TrackId(a_id), TrackKind::Audio, "Clip menu", saine_core::ColorIndex::FIRST) },
+                    Command::AddTrack { index: Some(1), track: Track::new(TrackId(i_id), TrackKind::Instrument, "Clip menu MIDI", saine_core::ColorIndex::FIRST) },
+                    Command::AddAsset { asset: Asset { id: AssetId(asset), relative_path: None, absolute_path: "/nonexistent/clip-menu-test.wav".into(), sample_rate: 48_000.0, channels: 1, frames: 48_000 * 4 } },
+                    Command::AddClip { track: TrackId(a_id), clip: Clip { id: ClipId(asset + 1), asset: AssetId(asset), name: "menu".into(), start: 4 * PPQ, source_offset: 0, source_length: 48_000 * 4, gain: 1.0, warp: Default::default(), disabled: false } },
+                    Command::AddMidiClip { track: TrackId(i_id), clip: MidiClip { id: ClipId(asset + 2), start: 4 * PPQ, ..MidiClip::empty(4 * PPQ, 4 * PPQ) } },
+                ],
+            });
+            i1.set((a_id, asset + 1, asset + 2));
+            c.select_track(TrackId(a_id));
+            c.select_clip(None);
+            c.seek_beats(8.0);
+        })),
+        DoC("right-click the audio clip", Box::new(move |a, ctl| {
+            let (x, y) = clip_xy(&ctl.borrow(), ClipId(i2.get().1));
+            right_click(a, x, y);
+        })),
+        Check("menu: Split, Disable and Show in Finder are enabled; Consolidate is not", Box::new(|_, a| {
+            let on = |l: &str| menu_entry(a, l).is_some_and(|e| e.2);
+            let ok = a.global::<Studio>().get_menu_open() && on("Split") && on("Disable") && on("Show in Finder") && menu_entry(a, "Consolidate").is_some_and(|e| !e.2);
+            ok.then_some(()).ok_or("clip menu entries".into())
+        })),
+        Do("choose Split", Box::new(|a| click_entry(a, "Split"))),
+        Check("audio clip cut at beat 8 into two 2 s halves; one undo step; right half selected", Box::new(move |c, _| {
+            let v = audio_clips(c);
+            let ok = v.len() == 2 && v[0].1 == 4 * PPQ && v[0].2 == 96_000 && v[1].1 == 8 * PPQ && v[1].2 == 96_000 && c.doc.undo_label() == Some("Split Clip") && c.selected_clip == Some(ClipId(v[1].0));
+            ok.then_some(()).ok_or(format!("{v:?} {:?}", c.doc.undo_label()))
+        })),
+        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("undo joined the clip again", Box::new(|c, _| {
+            let v = audio_clips(c);
+            (v.len() == 1 && v[0].2 == 48_000 * 4).then_some(()).ok_or(format!("{v:?}"))
+        })),
+        DoC("select the clip, Cmd+E", Box::new(move |a, ctl| {
+            ctl.borrow_mut().select_clip(Some(ClipId(i3.get().1)));
+            key(a, "e", true, false);
+        })),
+        Check("Cmd+E split it at the playhead", Box::new(|c, _| {
+            let v = audio_clips(c);
+            (v.len() == 2 && v[1].1 == 8 * PPQ).then_some(()).ok_or(format!("{v:?}"))
+        })),
+        Do("press 0", Box::new(|a| key(a, "0", false, false))),
+        Check("the right half is disabled and drawn grey", Box::new(|c, _| {
+            let v = audio_clips(c);
+            let i = c.clip_ids.iter().position(|k| Some(k.0) == v.get(1).map(|x| x.0)).ok_or("no vis")?;
+            (v[1].3 && !v[0].3 && c.clip_vis[i].muted && c.doc.undo_label() == Some("Disable Clip")).then_some(()).ok_or(format!("{v:?}"))
+        })),
+        DoC("right-click the disabled half", Box::new(|a, ctl| {
+            let id = ctl.borrow().selected_clip.unwrap_or(ClipId(0));
+            let (x, y) = clip_xy(&ctl.borrow(), id);
+            right_click(a, x, y);
+        })),
+        Check("menu offers Enable instead of Disable", Box::new(|_, a| {
+            (menu_entry(a, "Enable").is_some() && menu_entry(a, "Disable").is_none()).then_some(()).ok_or("menu labels".into())
+        })),
+        Do("choose Enable", Box::new(|a| click_entry(a, "Enable"))),
+        Check("both halves enabled again", Box::new(|c, _| {
+            let v = audio_clips(c);
+            (v.len() == 2 && !v[0].3 && !v[1].3).then_some(()).ok_or(format!("{v:?}"))
+        })),
+        DoC("right-click the MIDI clip and choose Split (playhead beat 8 → beat 6 is outside, so move it first)", Box::new(move |a, ctl| {
+            let mid = {
+                let mut c = ctl.borrow_mut();
+                let t = c.project().tracks[1].id;
+                c.select_track(t);
+                c.seek_beats(6.0);
+                ClipId(i4.get().2)
+            };
+            let (x, y) = clip_xy(&ctl.borrow(), mid);
+            right_click(a, x, y);
+            click_entry(a, "Split");
+        })),
+        Check("MIDI clip split at beat 6 into 2 + 2 beats", Box::new(|c, _| {
+            let m = &c.project().tracks[1].midi_clips;
+            (m.len() == 2 && m[0].length == 2 * PPQ && m[1].start == 6 * PPQ && m[1].length == 2 * PPQ).then_some(()).ok_or(format!("{} clips", m.len()))
+        })),
+        DoC("clip menu: remove the test tracks and clips", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let (a_id, _, mid) = i5.get();
+            let inst = c.project().tracks[1].id;
+            c.execute(Command::Batch {
+                label: "clip menu cleanup".into(),
+                commands: vec![Command::RemoveTrack { track: TrackId(a_id) }, Command::RemoveTrack { track: inst }, Command::RemoveAsset { asset: AssetId(mid - 2) }],
+            });
+            c.select_clip(None);
+            c.seek_beats(0.0);
+        })),
+        Check("clip menu: project back to its earlier tracks and assets", Box::new(|c, _| {
+            let p = c.project();
+            (!p.tracks.iter().any(|t| t.name.starts_with("Clip menu")) && !p.assets.iter().any(|a| a.absolute_path.contains("clip-menu-test"))).then_some(()).ok_or("leftovers".into())
+        })),
+    ]
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
@@ -4817,6 +4955,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(splitter_steps());
     all.extend(files_steps());
     all.extend(section_steps());
+    all.extend(clip_menu_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));

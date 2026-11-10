@@ -7,7 +7,7 @@ fn asset(frames: u64, rate: f64) -> Asset {
 }
 
 fn clip(asset: AssetId, start: Ticks, len: u64) -> Clip {
-    Clip { id: ClipId(0), asset, name: "c".into(), start, source_offset: 0, source_length: len, gain: 1.0, warp: Default::default() }
+    Clip { id: ClipId(0), asset, name: "c".into(), start, source_offset: 0, source_length: len, gain: 1.0, warp: Default::default(), disabled: false }
 }
 
 fn doc_with_asset() -> (Document, TrackId, AssetId) {

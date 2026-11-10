@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! saine-studio [--open <dir>] [--import <wav>...] [--save-to <dir>] [--no-audio]
-//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-clip-menu|reference-settings-audio|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-device-chain|review-settings-plugins]
+//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-clip-menu|review-clip-menu|reference-settings-audio|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-device-chain|review-settings-plugins]
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
@@ -17,6 +17,8 @@
 //!              [--clip-menu <0|1|3|4|5>  (open a clip editor dropdown after --state: Speed, Warp, Grid, Type, Genre; 2, Mode, is disabled)]
 //!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
 //! ```
+
+static CLIP_MENU_AUDIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 mod analyzer_views;
 mod assistant_panel;
@@ -97,6 +99,8 @@ struct Args {
     input_menu_state: bool,
     /// reference-clip-menu: Instrument track with a 1-bar MIDI clip at bar 6, its context menu open.
     clip_menu_state: bool,
+    /// review-clip-menu: the first audio clip's menu open with the playhead inside it.
+    clip_menu_audio: bool,
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
     /// 1 export dialog, 2 unsaved-changes prompt, 3 export dialog on Stems, 4 with its Tracks menu open, 5 on Project.
@@ -256,6 +260,10 @@ fn parse_args() -> Result<Args, String> {
                 "reference-clip-menu" => {
                     a.reference_default = true;
                     a.clip_menu_state = true;
+                }
+                "review-clip-menu" => {
+                    a.reference_default = true;
+                    a.clip_menu_audio = true;
                 }
                 "reference-settings-audio" => {
                     a.reference_default = true;
@@ -546,6 +554,8 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             ctl.borrow_mut().insert_midi_clip();
         }
         "clip.duplicate" => ctl.borrow_mut().duplicate_clip(),
+        "clip.split_at_marker" => ctl.borrow_mut().split_clip(),
+        "clip.disable" => ctl.borrow_mut().toggle_clip_disabled(),
         "clip.cut" => ctl.borrow_mut().cut_clip(),
         "edit.copy" => {
             ctl.borrow_mut().copy_clip();
@@ -836,6 +846,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(22.0);
         c.open_input_menu();
     }
+    CLIP_MENU_AUDIO.store(args.clip_menu_audio, std::sync::atomic::Ordering::Relaxed);
     if args.clip_menu_state {
         let mut c = ctl.borrow_mut();
         if let Some(inst) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id) {
@@ -1807,6 +1818,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     f.last_before = Some(t0);
                     c.poll_jobs();
+                    if c.pending_jobs == 0 && CLIP_MENU_AUDIO.load(std::sync::atomic::Ordering::Relaxed) {
+                        let found = c.project().tracks.iter().find_map(|t| t.clips.first().map(|k| (k.id, k.start, c.project().clip_length_ticks(k))));
+                        if let Some((id, start, len)) = found {
+                            CLIP_MENU_AUDIO.store(false, std::sync::atomic::Ordering::Relaxed);
+                            c.seek_beats((start + len / 2) as f64 / saine_core::PPQ as f64);
+                            c.open_clip_menu(id, 700.0, 215.0, (10_000.0, 10_000.0));
+                        }
+                    }
                     c.lanes_size = (app.get_lanes_width(), app.get_lanes_height());
                     c.update_ui(&app);
                     c.rebuild_vis();
