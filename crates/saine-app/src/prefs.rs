@@ -159,7 +159,10 @@ mod tests {
         assert!(!AudioPrefs::default().is_custom());
         // Unknown/missing fields are tolerated.
         std::fs::write(&path, r#"{"audio":{"buffer_size":512},"future":1}"#).unwrap();
-        assert_eq!(load(&path).unwrap().unwrap().audio.buffer_size, 512);
+        let loaded = load(&path).unwrap().unwrap();
+        assert_eq!(loaded.audio.buffer_size, 512);
+        assert_eq!(loaded.general, GeneralPrefs::default(), "files without General get the reference app's defaults");
+        assert!(loaded.general.show_plugin_windows && loaded.general.plugin_windows_on_top);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

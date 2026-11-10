@@ -2156,6 +2156,9 @@ fn device_steps() -> Vec<Step> {
                 let c = ctl.borrow();
                 (c.engine.plugin_editor_is_open(id), a.global::<Studio>().get_status_text().to_string())
             };
+            // Settings › General › Keep plugin windows on top (on by default): the editor floats.
+            let levels = crate::devices::plugin_window_levels();
+            let err = if cfg!(target_os = "macos") && opened && !levels.contains(&3) { format!("editor window levels {levels:?}, expected floating (3)") } else { err };
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.update_ui(a);
             }
@@ -2168,7 +2171,7 @@ fn device_steps() -> Vec<Step> {
         })),
         Check("devices: plugin window opened, then closed (plugin_editor_is_open toggled) [needs engine plugin editors]", Box::new(move |_, _| match &*ed2.borrow() {
             None => Err("SKIP: the engine reports no editor for AULowpass (no scan, fixture catalogue or has_editor false)".into()),
-            Some((true, true, _)) => Ok(()),
+            Some((true, true, e)) if !e.starts_with("editor window levels") => Ok(()),
             Some((o, cl, e)) => Err(format!("opened {o} closed {cl}; status {e:?}")),
         })),
         DoC("devices: select the Instrument track; open the Inst selector", Box::new(move |a, ctl| {

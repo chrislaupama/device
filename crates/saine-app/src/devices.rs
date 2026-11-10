@@ -232,26 +232,46 @@ pub const EDITORS_SUPPORTED: bool = !cfg!(target_os = "linux");
 /// NSWindows; the main window and the file panels are subclasses, so only editors float.
 #[cfg(target_os = "macos")]
 pub fn set_plugin_windows_on_top(on: bool) {
-    use objc2::runtime::AnyObject;
-    use objc2::{class, msg_send};
+    use objc2::msg_send;
     const NORMAL: isize = 0;
     const FLOATING: isize = 3;
-    unsafe {
-        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
-        let windows: *mut AnyObject = msg_send![app, windows];
-        let n: usize = msg_send![windows, count];
-        for i in 0..n {
-            let w: *mut AnyObject = msg_send![windows, objectAtIndex: i];
-            let plain: bool = msg_send![w, isMemberOfClass: class!(NSWindow)];
-            if plain {
-                let _: () = msg_send![w, setLevel: if on { FLOATING } else { NORMAL }];
-            }
-        }
+    for w in plugin_windows() {
+        let _: () = unsafe { msg_send![w, setLevel: if on { FLOATING } else { NORMAL }] };
     }
 }
 
 #[cfg(not(target_os = "macos"))]
 pub fn set_plugin_windows_on_top(_: bool) {}
+
+/// Window levels of the open plugin editor windows (self-test).
+#[cfg(target_os = "macos")]
+pub fn plugin_window_levels() -> Vec<isize> {
+    plugin_windows().into_iter().map(|w| unsafe { objc2::msg_send![w, level] }).collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn plugin_window_levels() -> Vec<isize> {
+    Vec::new()
+}
+
+#[cfg(target_os = "macos")]
+fn plugin_windows() -> Vec<*mut objc2::runtime::AnyObject> {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    unsafe {
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let windows: *mut AnyObject = msg_send![app, windows];
+        let n: usize = msg_send![windows, count];
+        (0..n)
+            .map(|i| -> *mut AnyObject { msg_send![windows, objectAtIndex: i] })
+            .filter(|w| {
+                let plain: bool = msg_send![*w, isMemberOfClass: class!(NSWindow)];
+                let visible: bool = msg_send![*w, isVisible];
+                plain && visible
+            })
+            .collect()
+    }
+}
 
 /// Extra folders the scanner searches from the environment, with the variable
 /// that set them: `CLAP_PATH` (Windows, Linux) and `SAINE_PLUGIN_PATH`.
