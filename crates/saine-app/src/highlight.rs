@@ -17,7 +17,7 @@ pub struct Layout {
     pub assistant: bool,
     /// Docked assistant width (src/splitters.rs `Controller::chat_w`).
     pub chat_w: f32,
-    /// Bottom panel shows the Clip tab (390 pt tall, no inspector).
+    /// Bottom panel shows the Clip tab (no inspector).
     pub clip_tab: bool,
     pub scroll_y: f32,
     /// Bottom panel height (src/splitters.rs `Controller::bottom_h`).
