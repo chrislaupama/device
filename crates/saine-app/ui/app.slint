@@ -909,7 +909,7 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "Export Audio…"; enabled: !Studio.menu-replay; shortcut: @keys(Control + Shift + E); activated => { Studio.menu-key("e", true, true); } }
             MenuItem { title: "Export Project for Ableton Live…"; activated => { Studio.menu-action("file.export_ableton"); } }
-            MenuItem { title: "Import Ableton Live Set…"; enabled: false; }
+            MenuItem { title: "Import Ableton Live Set…"; enabled: !Studio.menu-replay; activated => { Studio.menu-action("file.import_ableton"); } }
         }
         Menu {
             title: "Edit";

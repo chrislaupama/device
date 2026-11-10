@@ -201,6 +201,8 @@ pub enum JobResult {
     Auditioned { path: PathBuf, result: Result<AssetInfo, String> },
     /// A Consolidate, Bounce or Export render written and loaded (src/clip_render.rs).
     ClipRendered(Box<crate::clip_render::ClipRendered>),
+    /// File › Import Ableton Live Set… read and its samples decoded (src/live_import.rs).
+    LiveSet(Box<crate::live_import::LiveSetJob>),
 }
 
 /// Blocking decode + peak analysis. Runs on a worker thread.
@@ -312,6 +314,8 @@ pub struct Controller {
     pub export: crate::dialogs::ExportUi,
     pub clip_render: crate::clip_render::ClipRender,
     pub unsaved_open: bool,
+    /// A Live set to import once the unsaved-changes prompt is answered.
+    pub(crate) pending_import: Option<PathBuf>,
     /// Options › Check for Updates… dialog.
     pub updates_open: bool,
     /// Settings › General › Playhead on stop: where the last playback started, whether the
@@ -456,6 +460,7 @@ impl Controller {
             export: Default::default(),
             clip_render: Default::default(),
             unsaved_open: false,
+            pending_import: None,
             updates_open: false,
             play_start: None,
             paused: false,
@@ -1065,6 +1070,7 @@ impl Controller {
                 JobResult::Onsets { engine_asset, result, tempo } => self.finish_onsets(engine_asset, result, tempo),
                 JobResult::Auditioned { path, result } => self.finish_audition(path, result),
                 JobResult::ClipRendered(r) => self.finish_clip_render(*r),
+                JobResult::LiveSet(job) => self.finish_live_set(*job),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
                     if doc_epoch != self.doc_epoch {
                         if let Ok((info, _)) = result {
