@@ -4,6 +4,7 @@
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
 import { Studio } from "studio.slint";
+import { ChoiceList } from "settings.slint";
 
 global DialogTokens {
     out property <color> surface: #232426;
@@ -48,9 +49,12 @@ component RowLabel inherits Text {
     height: 20.4px; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center;
 }
 
-// Export (File › Export…, ⇧⌘E). Mixdown renders to WAV; Stems, Project, MP3 and the other
-// sample rate are PLACEHOLDERS (status line), the range is always the full project.
+// Export (File › Export…, ⇧⌘E). Mixdown and Stems render to WAV; Project, MP3 and the other
+// sample rate are PLACEHOLDERS (status line), the range is always the full project. Stems adds
+// the Tracks row above Range (one form row, 30.6px, like the reference app's 24 pt rows 12 pt apart); the
+// window keeps its height, as in the reference app (z100-modal-export-audio-stems-selected).
 export component ExportModal inherits Rectangle {
+    property <length> dy: Studio.export-recipe == 1 ? 30.6px : 0px;
     width: 442px; height: 340.4px;
     border-radius: 10.2px; background: DialogTokens.surface;
     border-width: 0.5px; border-color: #ffffff12;
@@ -69,35 +73,44 @@ export component ExportModal inherits Rectangle {
     // ---- recipes ----
     for r[i] in [
         { name: "Mixdown", value: Studio.export-recipe-text },
-        { name: "Stems", value: "1 WAV file" },
+        { name: "Stems", value: Studio.export-stems-text },
         { name: "Project", value: "Ableton Live" },
     ]: Rectangle {
         x: 17px + i * (131.47px + 6.8px); y: 44.2px; width: 131.47px; height: 44.2px; border-radius: 8.5px;
-        background: i == 0 ? DialogTokens.accent : (rta.has-hover ? #2e2f34 : DialogTokens.pill);
-        accessible-role: tab; accessible-label: r.name; accessible-checked: i == 0;
-        Text { x: 10.2px; y: 7.9px; height: 13.6px; text: r.name; color: i == 0 ? #ffffff : DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
-        Text { x: 10.2px; y: 23.4px; height: 11.9px; text: r.value; color: i == 0 ? #ffffffb8 : #d0d0d1b8; font-size: 9.35px; font-weight: 500; letter-spacing: -0.19px; vertical-alignment: center; }
-        rta := TouchArea { clicked => { if (i > 0) { Studio.chat-placeholder("Export " + r.name); } } }
+        background: i == Studio.export-recipe ? DialogTokens.accent : (rta.has-hover ? #2e2f34 : DialogTokens.pill);
+        accessible-role: tab; accessible-label: r.name; accessible-checked: i == Studio.export-recipe;
+        Text { x: 10.2px; y: 7.9px; height: 13.6px; text: r.name; color: i == Studio.export-recipe ? #ffffff : DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+        Text { x: 10.2px; y: 23.4px; height: 11.9px; text: r.value; color: i == Studio.export-recipe ? #ffffffb8 : #d0d0d1b8; font-size: 9.35px; font-weight: 500; letter-spacing: -0.19px; vertical-alignment: center; }
+        rta := TouchArea { clicked => { if (i == 2) { Studio.chat-placeholder("Export " + r.name); } else { Studio.export-pick-recipe(i); } } }
     }
     // ---- form ----
-    RowLabel { x: 17px; y: 105.4px; text: "Range"; }
+    if Studio.export-recipe == 1: RowLabel { x: 17px; y: 105.4px; text: "Tracks"; }
+    if Studio.export-recipe == 1: Rectangle {
+        x: 71.4px; y: 105.4px; width: tracks-text.preferred-width + 11.9px + 22.1px; height: 20.4px; border-radius: 10.2px;
+        background: tracks-ta.has-hover || Studio.export-tracks-menu-open ? #2e2f34 : DialogTokens.pill;
+        accessible-role: combobox; accessible-label: "Tracks"; accessible-value: Studio.export-tracks-label;
+        tracks-text := Text { x: 11.9px; text: Studio.export-tracks-label; color: DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+        Icon { x: parent.width - 18.7px; y: 6.2px; width: 8px; height: 8px; d: Icons.chevron-down; ink: DialogTokens.label; stroke-width: 1.4px; }
+        tracks-ta := TouchArea { clicked => { Studio.export-toggle-tracks(); } }
+    }
+    RowLabel { x: 17px; y: 105.4px + root.dy; text: "Range"; }
     Rectangle {
-        x: 71.4px; y: 105.4px; width: 81.6px; height: 20.4px; border-radius: 10.2px; background: DialogTokens.pill;
+        x: 71.4px; y: 105.4px + root.dy; width: 81.6px; height: 20.4px; border-radius: 10.2px; background: DialogTokens.pill;
         Text { x: 11.9px; text: "Full project"; color: DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
         Icon { x: parent.width - 18.7px; y: 6.2px; width: 8px; height: 8px; d: Icons.chevron-down; ink: DialogTokens.label; stroke-width: 1.4px; }
     }
-    Text { x: 71.4px + 81.6px + 8.5px; y: 105.4px; height: 20.4px; text: Studio.export-bars-text; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
-    RowLabel { x: 17px; y: 136px; text: "Format"; }
-    Segments { x: 71.4px; y: 136.85px; width: 85.9px; a: "WAV"; b: "MP3"; a-w: 40px; index: 0; picked(i) => { if (i == 1) { Studio.chat-placeholder("MP3 export"); } } }
-    Segments { x: 71.4px + 91.8px; y: 136.85px; width: 97.3px; a: "16-bit"; b: "24-bit"; a-w: 48.4px; index: Studio.export-bits24 ? 1 : 0; picked(i) => { Studio.export-bits(i == 1); } }
+    Text { x: 71.4px + 81.6px + 8.5px; y: 105.4px + root.dy; height: 20.4px; text: Studio.export-bars-text; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+    RowLabel { x: 17px; y: 136px + root.dy; text: "Format"; }
+    Segments { x: 71.4px; y: 136.85px + root.dy; width: 85.9px; a: "WAV"; b: "MP3"; a-w: 40px; index: 0; picked(i) => { if (i == 1) { Studio.chat-placeholder("MP3 export"); } } }
+    Segments { x: 71.4px + 91.8px; y: 136.85px + root.dy; width: 97.3px; a: "16-bit"; b: "24-bit"; a-w: 48.4px; index: Studio.export-bits24 ? 1 : 0; picked(i) => { Studio.export-bits(i == 1); } }
     Segments {
-        x: 71.4px + 197.7px; y: 136.85px; width: 117.3px; a: "44.1 kHz"; b: "48 kHz"; a-w: 56.3px; index: Studio.export-rate48 ? 1 : 0;
+        x: 71.4px + 197.7px; y: 136.85px + root.dy; width: 117.3px; a: "44.1 kHz"; b: "48 kHz"; a-w: 56.3px; index: Studio.export-rate48 ? 1 : 0;
         picked(i) => { if ((i == 1) != Studio.export-rate48) { Studio.chat-placeholder("Export at another sample rate"); } }
     }
-    Rectangle { x: 17px; y: 170px; width: root.width - 34px; height: 0.45px; background: DialogTokens.rule; }
-    RowLabel { x: 17px; y: 184.2px; text: "Name"; }
+    Rectangle { x: 17px; y: 170px + root.dy; width: root.width - 34px; height: 0.45px; background: DialogTokens.rule; }
+    RowLabel { x: 17px; y: 184.2px + root.dy; text: Studio.export-name-label; }
     Rectangle {
-        x: 71.4px; y: 184.2px; width: root.width - 17px - 71.4px; height: 20.4px; border-radius: 6.8px; background: DialogTokens.pill;
+        x: 71.4px; y: 184.2px + root.dy; width: root.width - 17px - 71.4px; height: 20.4px; border-radius: 6.8px; background: DialogTokens.pill;
         border-width: 0.3px; border-color: name-in.has-focus ? DialogTokens.accent : #ffffff17;
         name-in := TextInput {
             x: 10.2px; width: parent.width - 20.4px; height: parent.height; text: Studio.export-name; color: #ffffff;
@@ -105,19 +118,28 @@ export component ExportModal inherits Rectangle {
             edited => { Studio.export-name-edited(self.text); }
         }
     }
-    RowLabel { x: 17px; y: 214.8px; text: "Save in"; }
+    RowLabel { x: 17px; y: 214.8px + root.dy; text: "Save in"; }
     Rectangle {
-        x: 71.4px; y: 214.8px; width: 279.7px; height: 20.4px; border-radius: 6.8px; background: DialogTokens.pill;
+        x: 71.4px; y: 214.8px + root.dy; width: 279.7px; height: 20.4px; border-radius: 6.8px; background: DialogTokens.pill;
         border-width: 0.3px; border-color: #ffffff17;
         Text { x: 10.2px; width: parent.width - 20.4px; text: Studio.export-dir; color: #ffffff; font-size: 9.35px; font-weight: 500; letter-spacing: -0.28px; vertical-alignment: center; overflow: elide; }
     }
-    PillButton { x: root.width - 17px - 65.1px; y: 214.8px; width: 65.1px; height: 20.4px; text: "Choose..."; clicked => { Studio.export-choose-dir(); } }
+    PillButton { x: root.width - 17px - 65.1px; y: 214.8px + root.dy; width: 65.1px; height: 20.4px; text: "Choose..."; clicked => { Studio.export-choose-dir(); } }
     // ---- footer ----
     Rectangle { x: 0; y: root.height - 57.8px; width: root.width; height: 0.45px; background: DialogTokens.rule; }
-    Text { x: 17px; y: root.height - 57.8px + 13.6px + 4.25px; height: 13.6px; text: "Size"; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
-    Text { x: 17px + 25.5px; y: root.height - 57.8px + 13.6px + 4.25px; height: 13.6px; text: Studio.export-estimate; color: #e5e5e8; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+    size-label := Text { x: 17px; y: root.height - 57.8px + 13.6px + 4.25px; height: 13.6px; text: Studio.export-recipe == 1 ? Studio.export-files-text : "Size"; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+    Text { x: 17px + max(25.5px, size-label.preferred-width + 6.8px); y: root.height - 57.8px + 13.6px + 4.25px; height: 13.6px; text: Studio.export-estimate; color: #e5e5e8; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
     PillButton { x: root.width - 17px - 52.2px - 6.8px - 46.75px; y: root.height - 57.8px + 16.15px; width: 46.75px; height: 22.1px; text: "Close"; clicked => { Studio.export-close(); } }
     PillButton { x: root.width - 17px - 52.2px; y: root.height - 57.8px + 16.15px; width: 52.2px; height: 22.1px; text: "Export"; primary: true; clicked => { Studio.export-run(); } }
+    // Tracks menu (click outside closes it), below the picker.
+    if Studio.export-tracks-menu-open: Rectangle {
+        TouchArea { clicked => { Studio.export-toggle-tracks(); } }
+        ChoiceList {
+            x: 71.4px; y: 105.4px + 20.4px + 3.4px; width: 170px; height: Studio.export-tracks-menu-h;
+            items: Studio.export-tracks-items;
+            picked(i) => { Studio.export-pick-tracks(i); }
+        }
+    }
 }
 
 // "Save changes?" before File › New Project (⌘N) replaces a project with unsaved changes.
