@@ -459,13 +459,16 @@ component DevMinimap inherits Rectangle {
     Rectangle { border-radius: 4.25px; border-width: 0.85px; border-color: #ffffff14; }
     for t in Studio.devmm-tiles: Rectangle {
         x: t.x; y: t.y; width: t.w; height: t.h;
-        background: t.frame ? #ffffff12 : #212227;
-        if !t.frame && t.glyph-w > 0px: Path {
-            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
-            width: t.glyph-w; height: t.glyph-w * 14 / 24;
-            viewbox-width: 24; viewbox-height: 14;
-            commands: t.glyph; fill: transparent; stroke: t.ink; stroke-width: 1.0625px;
-            stroke-line-cap: round; stroke-line-join: round;
+        background: t.bg;
+        if t.art != "": Path {
+            width: parent.width; height: parent.height;
+            viewbox-width: 127; viewbox-height: 75;
+            commands: t.art; fill: t.art-fill;
+        }
+        if t.art != "": Path {
+            width: parent.width; height: parent.height;
+            viewbox-width: 127; viewbox-height: 75;
+            commands: t.art-accent; fill: t.ink;
         }
     }
     Rectangle { x: 0; width: Studio.devmm-win-x; background: #0203062b; }
@@ -547,11 +550,13 @@ component Timeline inherits Panel {
             Rectangle { x: 110.2px; y: 13px; width: 8px; height: 2px; background: #e5e5e8; }
             Rectangle { x: 116px; y: 10px; width: 8px; height: 8px; border-radius: 4px; background: #f2f2f2; }
         }
-        // Snap: beat snap is always on in milestone 1 ("Auto" label mirrors that)
+        // Snap: the readout toggles snapping, the chevron opens the grid-size menu (S76).
         Rectangle {
             width: 44.2px;
-            Text { x: 0; y: 7px; width: 28.9px; height: 14px; text: "Auto"; color: Tokens.text-bright; font-size: 9px; font-weight: 600; vertical-alignment: center; horizontal-alignment: right; }
-            Icon { x: 32.3px; y: 8px; width: 11.9px; height: 11px; d: Icons.chevron-down; ink: #c9c9cc; }
+            Text { x: 0; y: 7px; width: 28.9px; height: 14px; text: Studio.snap-text; color: Studio.snap-text == "Off" ? #8e8f93 : Tokens.text-bright; font-size: 9px; font-weight: 600; letter-spacing: -0.36px; vertical-alignment: center; horizontal-alignment: right; }
+            Icon { x: 32.3px; y: 8px; width: 11.9px; height: 11px; d: Icons.chevron-down; ink: Studio.snap-menu-open ? #ffffff : #c9c9cc; }
+            TouchArea { x: 0; width: 30px; clicked => { Studio.snap-toggle(); } }
+            TouchArea { x: 30px; width: 14.2px; clicked => { Studio.snap-menu-toggle(parent.absolute-position.x + parent.width, parent.absolute-position.y + parent.height); } }
         }
     }
     Rectangle { x: 0; y: 27px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
@@ -1062,6 +1067,20 @@ export component AppWindow inherits Window {
                 picked(i) => { Studio.synth-menu-pick(i); }
             }
         }
+        // Timeline snap menu: Off, then Auto and the grid sizes, a rule before the triplets (S76).
+        if Studio.snap-menu-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.snap-menu-dismiss(); } } }
+            ChoiceList {
+                x: Studio.snap-menu-x - Studio.snap-menu-w; y: Studio.snap-menu-y + 5.1px;
+                width: Studio.snap-menu-w; height: Studio.snap-menu-h;
+                items: Studio.snap-menu-items;
+                font-size: 9.35px; text-x: 10.2px; check-x: 17px;
+                picked(i) => { Studio.snap-menu-pick(i); }
+                Rectangle { x: 3px; y: Studio.snap-menu-rule1; width: parent.width - 6px; height: 0.5px; background: #ffffff1c; }
+                Rectangle { x: 3px; y: Studio.snap-menu-rule2; width: parent.width - 6px; height: 0.5px; background: #ffffff1c; }
+            }
+        }
         // Inspector "In" selector (audio tracks): below the In field (bottom panel y + 59, x 5 + 11).
         if Studio.input-menu-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height;
@@ -1111,9 +1130,10 @@ export component AppWindow inherits Window {
                 row-h: cm.m <= 2 ? 18.7px : 20.4px;
                 text-size: cm.m <= 2 ? 9.35px : 10.2px;
                 check: cm.m == 3 || cm.m >= 6;
+                max-rows: cm.m == 5 || cm.m >= 8 ? 12 : 99;
                 section: cm.m == 3 ? 4 : cm.m == 7 ? 6 : -1;
-                width: cm.m <= 1 ? 47.6px : cm.m == 2 ? 56px : cm.m == 3 ? 108px : cm.m == 4 ? 61px : cm.m == 5 ? 104px : 72px;
-                x: cm.m == 0 ? 260px + 206.2px : cm.m == 1 ? 260px + 273.95px : cm.m == 2 ? 260px + 347.6px : cm.m == 3 ? 260px + 387px : cm.m == 4 ? 5px + 48px
+                width: cm.m <= 1 ? 47.6px : cm.m == 2 ? 56px : cm.m == 3 ? 108px : cm.m == 4 ? 61px : cm.m == 5 ? 104px : cm.m == 8 ? 60px : cm.m == 9 ? 150px : 72px;
+                x: cm.m >= 8 ? 260px + 720px : cm.m == 0 ? 260px + 206.2px : cm.m == 1 ? 260px + 273.95px : cm.m == 2 ? 260px + 347.6px : cm.m == 3 ? 260px + 387px : cm.m == 4 ? 5px + 48px
                     : cm.m == 6 ? 260px + 211.5px : cm.m == 7 ? 260px + 264px : Studio.composer-drums ? 5px + 53.5px : 5px + 153px;
                 y: cm.m <= 2 ? cm.bp-y + 27px + 24.4px
                     : cm.m == 3 || cm.m >= 6 ? root.height - 5px - 24.5px + 7px - 10.2px - self.height
@@ -1201,6 +1221,18 @@ export component AppWindow inherits Window {
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { }
             UnsavedPrompt { x: max(0px, min(438px, parent.width - self.width)); y: max(0px, min(295px, parent.height - self.height)); }
+        }
+        // Clip render in progress (the reference app's export progress: 6 px bar, 6 % white track, #1253ff fill).
+        if Studio.render-busy: Rectangle {
+            x: root.width - self.width - 14px; y: root.height - 60px; height: 24px; width: 292px; border-radius: 12px; background: #2a2b30ee;
+            Text { x: 12px; width: 150px; height: parent.height; text: Studio.render-label; color: #e5e5e8; font-size: 8.75px; vertical-alignment: center; overflow: elide; }
+            Rectangle {
+                x: 168px; y: 9px; width: 64px; height: 6px; border-radius: 3px; background: #ffffff0f; clip: true;
+                Rectangle { x: 0; width: parent.width * clamp(Studio.render-progress, 0, 1); background: #1253ff; }
+            }
+            Text { x: 242px; width: 44px; height: parent.height; text: "Cancel"; color: #8fb0ff; font-size: 8.75px; vertical-alignment: center; horizontal-alignment: center;
+                TouchArea { clicked => { Studio.render-cancel(); } mouse-cursor: pointer; }
+            }
         }
         if Studio.updates-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height;

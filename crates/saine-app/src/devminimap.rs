@@ -1,15 +1,19 @@
-//! Devices minimap (reference/findings/minimap.md, S68-S70): the overview at the right end of the
+//! Devices minimap (reference/findings/minimap.md, S68-S70, S79-S80): the overview at the right end of the
 //! Clip / Devices strip. It shows while the selected track's device chain is wider than the panel.
-//! Each device is a small tile, a chain's tiles sit in a frame, and a window marks the part the
-//! panel shows. Drag to scroll, press outside the window to jump, wheel to scroll, Esc goes back.
+//! Each device is a small tile with a picture of its panel, a chain's tiles sit in a frame, and a
+//! window marks the part the panel shows. Tiles fade in when a device is added and glide when the
+//! layout changes ([Motion]); the strip redraws only while one runs. Drag to scroll, press outside the window to jump, wheel to scroll, Esc goes back.
 //!
 //! The metrics here are pure and work in the reference's own px (design units / 0.85); the
 //! Controller methods at the bottom convert and keep the drag, the pointer and the Slint model.
 
 use crate::controller::{BottomTab, Controller, card_color, sync_model};
+use std::collections::HashMap;
+use std::time::Instant;
 use crate::devices::{CHAIN_AREA_X, CHAIN_X0};
 use crate::minimap::CSS;
 use crate::{AppWindow, DevTile, DeviceCard, Studio};
+use saine_core::builtin::Control;
 use saine_core::{Device, DeviceId, builtin, modulation};
 use slint::{ComponentHandle, VecModel};
 use std::rc::Rc;
@@ -31,100 +35,110 @@ const INSET: f32 = 1.0;
 const MIN_WINDOW: f32 = 8.0;
 /// A press must travel 3 px before it counts as a drag.
 const DRAG_SLOP: f32 = 3.0;
-/// Glyph: 24 x 14 box, at most 240 / 14 px wide, 1.5 px clear of the tile edge, hidden under 6 px.
-const GLYPH_MAX: f32 = 240.0 / 14.0;
-const GLYPH_PAD: f32 = 1.5;
-const GLYPH_MIN: f32 = 6.0;
+/// A tile narrower than this shows no picture.
+const ART_MIN: f32 = 6.0;
 /// Where the strip sits in the bottom panel: its left edge is 252.45 design units (297 - 8 ref px) from the
 /// panel's right edge, it is 20.4 units high and 3.4 units below the top.
 pub const X_FROM_RIGHT: f32 = 252.45;
 pub const Y: f32 = 3.4;
 /// The bar needs room for the tabs: the strip hides in a panel narrower than this (design units).
 pub const MIN_PANEL_W: f32 = X_FROM_RIGHT + 330.0;
-/// Tile fill and the glyph's mix: 60 % of the track colour over the card colour.
+/// Tile fill and the picture's accent: 60 % of the track colour over the card colour.
 const CARD: [u8; 3] = [0x21, 0x22, 0x27];
-const GLYPH_MIX: f32 = 0.6;
-/// Glyph colour of a bypassed device: ink at 30 % over the tile.
-const BYPASS_INK: [u8; 4] = [0xff, 0xff, 0xff, 0x4d];
+const ACCENT_MIX: f32 = 0.6;
+/// A bypassed device's tile is drawn at 40 % (its picture keeps the accent).
+pub const BYPASS_OPACITY: f32 = 0.4;
+/// Fade-in of a new tile: 300 ms on cubic-bezier(.22, 1, .36, 1).
+pub const FADE_S: f32 = 0.3;
+const EASE: [f32; 4] = [0.22, 1.0, 0.36, 1.0];
+/// Glide of the tiles' left edge and width: a critically damped spring whose rate lets it settle
+/// within the same 300 ms. A tile is at rest when it is within half a reference px of its target and
+/// slower than 20 px/s.
+const GLIDE_OMEGA: f32 = 19.0;
+const REST_POS: f32 = 0.5;
+const REST_VEL: f32 = 20.0;
+/// A frame's key in [Motion] (its head device's key with this bit set).
+const FRAME_KEY: u64 = 1 << 62;
 
-/// What a tile's glyph depicts (the device's family).
+/// A device's picture: its panel in miniature, built from the device's own layout (a view well,
+/// the slider column, the dial rows). Drawn as two filled paths in a 127 x 75 box (the tile's viewbox in
+/// app.slint) that stretches over the tile: the neutral parts (title bar, wells, dial bodies) and the accent parts
+/// (dial marks, slider thumbs) that take the track colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Glyph {
-    Device,
-    Synth,
-    Sampler,
-    Pads,
-    Lfo,
-    Macros,
-    Eq,
-    Dynamics,
-    Reverb,
-    Delay,
-    Modulation,
-    Distortion,
-    Filter,
-    Imaging,
-    Pitch,
-    Restoration,
-    Utility,
-    Analyzer,
+pub struct Art {
+    pub view: bool,
+    pub sliders: u8,
+    pub knobs: u8,
 }
 
-impl Glyph {
-    /// Stroke path in a 24 x 14 box (our own drawings).
-    pub fn path(self) -> &'static str {
-        match self {
-            Glyph::Device => "M5 3.5 H19 V10.5 H5 Z M8 7 H16",
-            Glyph::Synth => "M2 11 L7 3 V11 L12 3 V11 L17 3 V11 L22 3",
-            Glyph::Sampler => "M3 7 V7.2 M6 4 V10 M9 2 V12 M12 5 V9 M15 3 V11 M18 5 V9 M21 6.5 V7.5",
-            Glyph::Pads => "M4.5 3 H8.5 V6 H4.5 Z M10 3 H14 V6 H10 Z M15.5 3 H19.5 V6 H15.5 Z M4.5 8 H8.5 V11 H4.5 Z M10 8 H14 V11 H10 Z M15.5 8 H19.5 V11 H15.5 Z",
-            Glyph::Lfo => "M2 7 C5 1 8 1 11 7 C14 13 17 13 20 7 H22",
-            Glyph::Macros => "M2.4 7 a2.6 2.6 0 1 0 5.2 0 a2.6 2.6 0 1 0 -5.2 0 M9.4 7 a2.6 2.6 0 1 0 5.2 0 a2.6 2.6 0 1 0 -5.2 0 M16.4 7 a2.6 2.6 0 1 0 5.2 0 a2.6 2.6 0 1 0 -5.2 0",
-            Glyph::Eq => "M2 9 H6 C8 9 9 3 12 3 C15 3 16 9 18 9 H22",
-            Glyph::Dynamics => "M2 12 H8 C10 12 11 6 14 6 H22",
-            Glyph::Reverb => "M2 2.5 C5 9 10 11 22 11.5",
-            Glyph::Delay => "M4 3 V11 M10 4.5 V9.5 M16 6 V8 M21 6.8 V7.2",
-            Glyph::Modulation => "M2 7 C5 2 8 2 12 7 S19 12 22 7",
-            Glyph::Distortion => "M2 7 L5 3 H9 L15 11 H19 L22 7",
-            Glyph::Filter => "M2 4 H11 C16 4 17 10 22 10",
-            Glyph::Imaging => "M3 4 H8 M3 10 H8 M16 4 H21 M16 10 H21 M12 2 V12",
-            Glyph::Pitch => "M12 12 V3 M8 7 L12 3 L16 7",
-            Glyph::Restoration => "M4 7 H20 M12 3 V11",
-            Glyph::Utility => "M7 7 a5 5 0 1 0 10 0 a5 5 0 1 0 -10 0 M12 7 L14.5 4.5",
-            Glyph::Analyzer => "M3 12 V8 M7 12 V4 M11 12 V6 M15 12 V2 M19 12 V7",
-        }
-    }
+const MAX_SLIDERS: usize = 5;
+const MAX_KNOBS: usize = 12;
+const PER_ROW: usize = 6;
 
-    /// The glyph of a device: its own kind first, then its browser category.
-    pub fn of(d: &Device) -> Glyph {
+impl Art {
+    /// The instrument panel: a view well over eight dials.
+    pub const SYNTH: Art = Art { view: true, sliders: 0, knobs: 8 };
+    /// A device this app has no layout for (a hosted plug-in): one large well.
+    pub const PLUGIN: Art = Art { view: true, sliders: 0, knobs: 0 };
+
+    pub fn of(d: &Device) -> Art {
         if modulation::is_lfo(d) {
-            return Glyph::Lfo;
+            return Art { view: true, sliders: 0, knobs: 3 };
         }
         if modulation::is_rack(d) {
-            return Glyph::Macros;
+            return Art { view: false, sliders: 0, knobs: 8 };
         }
-        let Some(def) = builtin::def_of(d) else { return Glyph::Device };
-        match def.id {
-            "drum-rack" => return Glyph::Pads,
-            "sampler-steam" | "pad-sampler" => return Glyph::Sampler,
-            "synth-v2" => return Glyph::Synth,
-            _ => {}
+        let Some(def) = builtin::def_of(d) else { return Art::PLUGIN };
+        let l = &def.layout;
+        let knobs = l.clusters.iter().flat_map(|c| c.iter()).filter(|c| matches!(c, Control::Knob(_) | Control::Swap(_) | Control::Toggle(_))).count();
+        Art { view: l.view.is_some(), sliders: l.sliders.len().min(MAX_SLIDERS) as u8, knobs: knobs.min(MAX_KNOBS) as u8 }
+    }
+
+    /// The neutral and the accent path commands (filled shapes only, so the stretch keeps them crisp).
+    pub fn paths(self) -> (String, String) {
+        use std::fmt::Write;
+        let (mut base, mut acc) = (String::new(), String::new());
+        let rect = |s: &mut String, x: f32, y: f32, w: f32, h: f32| {
+            let _ = write!(s, "M{x:.1} {y:.1}H{:.1}V{:.1}H{x:.1}Z", x + w, y + h);
+        };
+        let dot = |s: &mut String, cx: f32, cy: f32, r: f32| {
+            let _ = write!(s, "M{:.1} {cy:.1}a{r:.1} {r:.1} 0 1 0 {:.1} 0a{r:.1} {r:.1} 0 1 0 -{:.1} 0Z", cx - r, 2.0 * r, 2.0 * r);
+        };
+        rect(&mut base, 6.0, 6.0, 46.0, 5.0);
+        dot(&mut acc, 115.0, 8.5, 3.0);
+        let (top, bottom) = (17.0, 69.0);
+        let n = self.sliders as usize;
+        let mut right = 121.0;
+        for i in 0..n {
+            let x = 121.0 - (n - i) as f32 * 10.0 + 3.0;
+            rect(&mut base, x, top, 4.0, bottom - top);
+            rect(&mut acc, x - 1.0, top + (i * 17 % 36) as f32 + 4.0, 6.0, 5.0);
+            right = x - 5.0;
         }
-        match def.category {
-            "EQ" => Glyph::Eq,
-            "Dynamics" => Glyph::Dynamics,
-            "Reverb" => Glyph::Reverb,
-            "Delay" => Glyph::Delay,
-            "Modulation" => Glyph::Modulation,
-            "Distortion" => Glyph::Distortion,
-            "Filter" => Glyph::Filter,
-            "Imaging" => Glyph::Imaging,
-            "Pitch" => Glyph::Pitch,
-            "Restoration" => Glyph::Restoration,
-            "Utility" => Glyph::Utility,
-            "Analyzer" => Glyph::Analyzer,
-            _ => Glyph::Device,
+        let knobs = self.knobs as usize;
+        let well_bottom = if knobs > 0 { 43.0 } else { bottom };
+        if self.view {
+            rect(&mut base, 6.0, top, right - 6.0, well_bottom - top);
         }
+        if knobs == 0 {
+            return (base, acc);
+        }
+        let rows = knobs.div_ceil(PER_ROW);
+        let y0 = if self.view { 49.0 } else { top };
+        let row_h = (bottom - y0) / rows as f32;
+        for row in 0..rows {
+            let cols = (knobs - row * PER_ROW).min(PER_ROW);
+            let col_w = (right - 6.0) / PER_ROW.min(knobs) as f32;
+            let r = (row_h / 2.0 - 1.0).min(col_w / 2.0 - 1.0).min(5.5);
+            for col in 0..cols {
+                let k = row * PER_ROW + col;
+                let (cx, cy) = (6.0 + col_w * (col as f32 + 0.5), y0 + row_h * (row as f32 + 0.5));
+                dot(&mut base, cx, cy, r);
+                let a = -2.35 + (k * 37 % 100) as f32 / 100.0 * 4.7;
+                dot(&mut acc, cx + r * 0.55 * a.sin(), cy - r * 0.55 * a.cos(), r * 0.35);
+            }
+        }
+        (base, acc)
     }
 }
 
@@ -135,7 +149,9 @@ pub struct Block {
     pub left: f32,
     pub width: f32,
     pub bypassed: bool,
-    pub glyph: Glyph,
+    pub art: Art,
+    /// The device's id: tiles keep their motion across layout changes by it.
+    pub key: u64,
     pub name: String,
     pub children: Vec<Block>,
 }
@@ -208,16 +224,14 @@ pub struct Tile {
     /// Index into Chain::blocks, and into its children for a device inside a frame.
     pub block: usize,
     pub child: Option<usize>,
+    /// The tile's motion key: the device's id, or a frame's head id with [FRAME_KEY] set.
+    pub key: u64,
 }
 
 impl Tile {
-    /// The glyph's width: as wide as the tile allows (1.5 px clear each side), at most 17.1 px, none under 6 px.
-    pub fn glyph_w(&self) -> Option<f32> {
-        if self.role == Role::Frame {
-            return None;
-        }
-        let w = GLYPH_MAX.min(self.w - 2.0 * GLYPH_PAD);
-        (w >= GLYPH_MIN).then_some(w)
+    /// Whether the tile shows its device's picture: devices only, and not narrower than 6 px.
+    pub fn has_art(&self) -> bool {
+        self.role == Role::Block && self.w >= ART_MIN
     }
 }
 
@@ -233,7 +247,8 @@ pub fn tiles(chain: &Chain, strip: f32, snap: f32) -> Vec<Tile> {
         let s = round(b.left * r);
         let c = round((b.left + b.width) * r) - s;
         let l = if c - 2.0 * inset >= 2.0 { inset } else { 0.0 };
-        Tile { x: s + l, y, w: (c - 2.0 * l).max(2.0 * snap), h: HEIGHT - 2.0 * y, role, block, child }
+        let key = if role == Role::Frame { b.key | FRAME_KEY } else { b.key };
+        Tile { x: s + l, y, w: (c - 2.0 * l).max(2.0 * snap), h: HEIGHT - 2.0 * y, role, block, child, key }
     };
     let mut out = Vec::new();
     for (i, b) in chain.blocks.iter().enumerate() {
@@ -258,6 +273,90 @@ pub fn wheel(chain: &Chain, scroll: f32, dx: f32, dy: f32, strip: f32) -> f32 {
     }
     let d = if dx.abs() > dy.abs() { dx } else { dy };
     chain.clamp(scroll - d / r)
+}
+
+/// The fade-in curve, cubic-bezier(.22, 1, .36, 1): progress for time fraction `u`.
+fn ease(u: f32) -> f32 {
+    let [x1, y1, x2, y2] = EASE;
+    let at = |t: f32, a: f32, b: f32| 3.0 * (1.0 - t) * (1.0 - t) * t * a + 3.0 * (1.0 - t) * t * t * b + t * t * t;
+    if u <= 0.0 || u >= 1.0 {
+        return u.clamp(0.0, 1.0);
+    }
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    for _ in 0..24 {
+        let mid = (lo + hi) / 2.0;
+        if at(mid, x1, x2) < u { lo = mid } else { hi = mid }
+    }
+    at((lo + hi) / 2.0, y1, y2)
+}
+
+/// One step of a critically damped spring (exact, so any `dt` is stable).
+fn spring(x: &mut f32, v: &mut f32, target: f32, dt: f32) {
+    let d = *x - target;
+    let k = *v + GLIDE_OMEGA * d;
+    let e = (-GLIDE_OMEGA * dt).exp();
+    *x = target + (d + k * dt) * e;
+    *v = (*v - GLIDE_OMEGA * k * dt) * e;
+    if (*x - target).abs() < REST_POS && v.abs() < REST_VEL {
+        (*x, *v) = (target, 0.0);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Mot {
+    x: f32,
+    vx: f32,
+    w: f32,
+    vw: f32,
+    /// Seconds since the tile appeared (capped at [FADE_S]).
+    age: f32,
+}
+
+/// Where a tile is drawn now: its left edge and width in strip px, and its opacity from 0 to 1.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Placed {
+    pub x: f32,
+    pub w: f32,
+    pub appear: f32,
+}
+
+/// The tiles' fade and glide (S80). A tile new to a layout fades in at its place; a tile whose place
+/// or width changed glides there. UI side only: the audio thread never sees it, and `busy` tells the
+/// frame loop when to keep redrawing.
+#[derive(Debug, Default)]
+pub struct Motion {
+    items: HashMap<u64, Mot>,
+    busy: bool,
+}
+
+impl Motion {
+    /// Whether any tile is still fading or gliding after the last step.
+    pub fn busy(&self) -> bool {
+        self.busy
+    }
+
+    /// Advance `dt` seconds toward `targets` (key, left, width); `jump` places every tile at once
+    /// (the first layout shown, or another track's chain). Tiles no longer in `targets` are dropped.
+    pub fn step(&mut self, targets: &[(u64, f32, f32)], dt: f32, jump: bool) -> Vec<Placed> {
+        let fresh = jump || self.items.is_empty();
+        let mut next = HashMap::with_capacity(targets.len());
+        let mut busy = false;
+        let out = targets
+            .iter()
+            .map(|&(key, tx, tw)| {
+                let mut m = self.items.get(&key).copied().filter(|_| !jump).unwrap_or(Mot { x: tx, vx: 0.0, w: tw, vw: 0.0, age: if fresh { FADE_S } else { 0.0 } });
+                spring(&mut m.x, &mut m.vx, tx, dt);
+                spring(&mut m.w, &mut m.vw, tw, dt);
+                m.age = (m.age + dt).min(FADE_S);
+                busy |= m.x != tx || m.w != tw || m.age < FADE_S;
+                next.insert(key, m);
+                Placed { x: m.x, w: m.w, appear: ease(m.age / FADE_S) }
+            })
+            .collect();
+        self.items = next;
+        self.busy = busy;
+        out
+    }
 }
 
 /// A drag in progress (positions in reference px).
@@ -310,18 +409,37 @@ pub struct State {
     pub chain: Option<Chain>,
     pub drag: Option<Drag>,
     pub model: Rc<VecModel<DevTile>>,
+    pub motion: Motion,
+    /// When the tiles were last stepped (only while they move).
+    last: Option<Instant>,
+    /// The track whose chain the tiles show (another track's chain is placed without a fade).
+    track: Option<saine_core::TrackId>,
+    /// The device the render bench added (--drag-bench devmm).
+    bench: Option<DeviceId>,
+    /// Pictures by shape: built once, cloned per frame.
+    art: HashMap<Art, (slint::SharedString, slint::SharedString)>,
     /// One device pixel in reference px (1 / (scale x 0.85)).
     pub snap: f32,
 }
 
 impl State {
     pub fn new() -> State {
-        State { chain: None, drag: None, model: Rc::new(VecModel::default()), snap: 1.0 / CSS }
+        State { chain: None, drag: None, model: Rc::new(VecModel::default()), motion: Motion::default(), last: None, track: None, bench: None, art: HashMap::new(), snap: 1.0 / CSS }
     }
 }
 
+/// A frame's fill (ink at 7 %) and the picture's neutral layer (white at 18 %).
+const FRAME_BG: [u8; 4] = [0xff, 0xff, 0xff, 0x12];
+const ART_FILL: [u8; 4] = [0xff, 0xff, 0xff, 0x2e];
+
+/// A colour with its alpha scaled by `opacity`. The fade works on colours, not on a Slint opacity,
+/// which would put every fading tile in its own layer.
+fn fade(c: [u8; 4], opacity: f32) -> slint::Color {
+    slint::Color::from_argb_u8((c[3] as f32 * opacity).round() as u8, c[0], c[1], c[2])
+}
+
 fn mix(accent: [u8; 3]) -> slint::Color {
-    let c = |a: u8, b: u8| (a as f32 * GLYPH_MIX + b as f32 * (1.0 - GLYPH_MIX)).round() as u8;
+    let c = |a: u8, b: u8| (a as f32 * ACCENT_MIX + b as f32 * (1.0 - ACCENT_MIX)).round() as u8;
     slint::Color::from_rgb_u8(c(accent[0], CARD[0]), c(accent[1], CARD[1]), c(accent[2], CARD[2]))
 }
 
@@ -338,7 +456,7 @@ impl Controller {
         let mut blocks = Vec::new();
         if let Some(synth) = self.synth_device().and_then(|id| self.project().device(id)) {
             let w = if synth.folded { crate::device_mod::FOLDED_W } else { crate::devices::SYNTH_W };
-            blocks.push(Block { left: left(CHAIN_X0), width: r(w), bypassed: !synth.enabled, glyph: Glyph::Synth, name: "Synth".into(), children: Vec::new() });
+            blocks.push(Block { left: left(CHAIN_X0), width: r(w), bypassed: !synth.enabled, art: Art::SYNTH, key: synth.id.0, name: "Synth".into(), children: Vec::new() });
         }
         let device = |c: &DeviceCard| t.devices.iter().position(|d| d.id == DeviceId(c.id as u64));
         let leaf = |x: f32, c: &DeviceCard| {
@@ -348,7 +466,8 @@ impl Controller {
                 left: left(x),
                 width: r(c.width),
                 bypassed: at.map_or(d.is_some_and(|d| !d.enabled), |i| !modulation::effectively_enabled(&t.devices, i)),
-                glyph: d.map_or(Glyph::Device, Glyph::of),
+                art: d.map_or(Art::PLUGIN, Art::of),
+                key: c.id as u64,
                 name: c.name.to_string(),
                 children: Vec::new(),
             }
@@ -460,26 +579,45 @@ impl Controller {
                 self.ptr.release(None);
             }
             sync_model(&self.dm.model, Vec::new());
+            self.dm.motion = Motion::default();
+            self.dm.last = None;
+            self.dm.track = None;
             return;
         };
         self.dm.snap = 1.0 / (app.window().scale_factor() * CSS);
         let accent = self.selected_track.and_then(|t| self.project().track(t)).map(|t| card_color(t.color)).unwrap_or_default();
         let ink = mix([accent.red(), accent.green(), accent.blue()]);
-        let rows: Vec<DevTile> = tiles(chain, WIDTH, self.dm.snap)
+        let laid = tiles(chain, WIDTH, self.dm.snap);
+        let targets: Vec<(u64, f32, f32)> = laid.iter().map(|t| (t.key, t.x, t.w)).collect();
+        let now = Instant::now();
+        let dt = match self.dm.last {
+            Some(t) if self.dm.motion.busy() => (now - t).as_secs_f32().min(0.1),
+            _ => 0.0,
+        };
+        self.dm.last = Some(now);
+        let jump = self.dm.track != self.selected_track;
+        self.dm.track = self.selected_track;
+        let placed = self.dm.motion.step(&targets, dt, jump);
+        let rows: Vec<DevTile> = laid
             .iter()
-            .map(|t| {
+            .zip(&placed)
+            .map(|(t, p)| {
                 let block = &chain.blocks[t.block];
                 let b = t.child.map_or(block, |j| &block.children[j]);
-                let glyph_w = t.glyph_w();
+                let opacity = p.appear * if b.bypassed && t.role == Role::Block { BYPASS_OPACITY } else { 1.0 };
+                let (art, art_accent) = if t.has_art() { self.dm.art.entry(b.art).or_insert_with(|| { let (n, a) = b.art.paths(); (n.into(), a.into()) }).clone() } else { Default::default() };
                 DevTile {
-                    x: t.x * CSS,
+                    x: p.x * CSS,
                     y: t.y * CSS,
-                    w: t.w * CSS,
+                    w: p.w * CSS,
                     h: t.h * CSS,
                     frame: t.role == Role::Frame,
-                    glyph: b.glyph.path().into(),
-                    glyph_w: glyph_w.unwrap_or(0.0) * CSS,
-                    ink: if b.bypassed { slint_color_rgba(BYPASS_INK) } else { ink },
+                    art,
+                    art_accent,
+                    bg: fade(if t.role == Role::Frame { FRAME_BG } else { [CARD[0], CARD[1], CARD[2], 0xff] }, opacity),
+                    art_fill: fade(ART_FILL, opacity),
+                    ink: fade([ink.red(), ink.green(), ink.blue(), 0xff], opacity),
+                    opacity,
                     name: b.name.clone().into(),
                 }
             })
@@ -495,13 +633,31 @@ impl Controller {
         }
     }
 
+    /// --drag-bench devmm: add a delay to the selected track, or take it out again (the tiles fade and
+    /// glide, or with `still` are placed at once).
+    pub fn devmm_bench_toggle(&mut self, still: bool) {
+        let Some(t) = self.selected_track else { return };
+        if still {
+            self.dm.track = None;
+        }
+        if let Some(device) = self.dm.bench.take() {
+            self.execute(saine_core::Command::RemoveDevice { device });
+            return;
+        }
+        let Some(def) = builtin::find("delay") else { return };
+        if self.add_item_to_track(&crate::devices::Item::Builtin(def), t, None) {
+            self.dm.bench = self.project().track(t).and_then(|t| t.devices.last()).map(|d| d.id);
+        }
+    }
+
+    /// Whether the tiles are still fading or gliding (the frame loop keeps redrawing while so).
+    pub fn devmm_animating(&self) -> bool {
+        self.dm.motion.busy()
+    }
+
     pub fn devmm_chain_for_test(&self) -> Option<&Chain> {
         self.dm.chain.as_ref()
     }
-}
-
-fn slint_color_rgba(c: [u8; 4]) -> slint::Color {
-    slint::Color::from_argb_u8(c[3], c[0], c[1], c[2])
 }
 
 #[cfg(test)]
@@ -509,7 +665,7 @@ mod tests {
     use super::*;
 
     fn block(left: f32, width: f32) -> Block {
-        Block { left, width, bypassed: false, glyph: Glyph::Device, name: String::new(), children: Vec::new() }
+        Block { left, width, bypassed: false, art: Art::PLUGIN, key: left as u64, name: String::new(), children: Vec::new() }
     }
 
     /// Three cards 200 wide, 8 apart, starting 10 from the left; 700 wide to scroll, 300 shown.
@@ -645,40 +801,118 @@ mod tests {
         assert_eq!((t[0].y, t[0].h, t[1].y, t[1].h), (2.0, 20.0, 4.0, 16.0));
         assert_eq!(t[0].x, 0.0, "a frame has no inset");
         assert_eq!((t[1].block, t[1].child, t[3].child), (0, Some(0), None));
-        assert!(t[0].glyph_w().is_none());
+        assert!(!t[0].has_art());
     }
 
     #[test]
-    fn glyph_is_sized_by_its_tile() {
-        let t = |w| Tile { x: 0.0, y: 3.0, w, h: 18.0, role: Role::Block, block: 0, child: None };
-        assert_eq!(t(40.0).glyph_w(), Some(240.0 / 14.0));
-        assert_eq!(t(12.0).glyph_w(), Some(9.0));
-        assert_eq!(t(8.9).glyph_w(), None);
-        assert_eq!(t(9.0).glyph_w(), Some(6.0));
+    fn a_picture_needs_a_device_tile_of_6_px() {
+        let t = |w, role| Tile { x: 0.0, y: 3.0, w, h: 18.0, role, block: 0, child: None, key: 1 };
+        assert!(t(6.0, Role::Block).has_art());
+        assert!(!t(5.9, Role::Block).has_art());
+        assert!(!t(40.0, Role::Frame).has_art());
     }
 
     #[test]
-    fn every_glyph_has_a_path() {
-        use Glyph::*;
-        for g in [Device, Synth, Sampler, Pads, Lfo, Macros, Eq, Dynamics, Reverb, Delay, Modulation, Distortion, Filter, Imaging, Pitch, Restoration, Utility, Analyzer] {
-            assert!(g.path().starts_with('M'), "{g:?}");
+    fn every_picture_is_two_filled_paths_in_the_box() {
+        for art in [Art::SYNTH, Art::PLUGIN, Art { view: false, sliders: 0, knobs: 12 }, Art { view: true, sliders: 5, knobs: 7 }, Art { view: false, sliders: 0, knobs: 0 }] {
+            let (base, acc) = art.paths();
+            assert!(base.starts_with('M') && acc.starts_with('M'), "{art:?}");
+            assert!(base.ends_with('Z') && acc.ends_with('Z'), "{art:?}");
+            assert_eq!(base.matches('M').count() >= 1, true);
+        }
+        let (_, none) = Art { view: true, sliders: 0, knobs: 0 }.paths();
+        assert_eq!(none.matches('M').count(), 1, "only the title dot is accent without dials");
+        let (_, acc) = Art { view: false, sliders: 2, knobs: 4 }.paths();
+        assert_eq!(acc.matches('M').count(), 1 + 2 + 4, "a title dot, a thumb per slider, a mark per dial");
+    }
+
+    #[test]
+    fn pictures_follow_the_device_layout() {
+        use saine_core::builtin;
+        let of = |id: &str| Art::of(&builtin::find(id).unwrap().instantiate());
+        let comp = of("compressor");
+        let def = builtin::find("compressor").unwrap();
+        assert_eq!(comp.view, def.layout.view.is_some());
+        assert_eq!(comp.sliders as usize, def.layout.sliders.len().min(MAX_SLIDERS));
+        assert!(comp.knobs > 0);
+        assert_ne!(of("compressor"), of("reverb"), "different layouts give different pictures");
+        assert_eq!(of("lfo"), Art { view: true, sliders: 0, knobs: 3 });
+        assert_eq!(of("device-rack").knobs, 8);
+    }
+
+    #[test]
+    fn fade_curve_runs_from_0_to_1_and_leads_the_clock() {
+        assert!(ease(0.0).abs() < 1e-3 && (ease(1.0) - 1.0).abs() < 1e-3);
+        assert!(ease(0.5) > 0.5, "a fast start: {}", ease(0.5));
+        assert!(ease(0.9) > 0.97 && ease(0.9) <= 1.0);
+        let mut last = 0.0;
+        for i in 0..=20 {
+            let v = ease(i as f32 / 20.0);
+            assert!(v >= last - 1e-4, "monotonic at {i}");
+            last = v;
         }
     }
 
     #[test]
-    fn glyphs_follow_the_device_family() {
-        use saine_core::builtin;
-        let of = |id: &str| Glyph::of(&builtin::find(id).unwrap().instantiate());
-        assert_eq!(of("compressor"), Glyph::Dynamics);
-        assert_eq!(of("channeleq"), Glyph::Eq);
-        assert_eq!(of("reverb"), Glyph::Reverb);
-        assert_eq!(of("delay"), Glyph::Delay);
-        assert_eq!(of("chorus"), Glyph::Modulation);
-        assert_eq!(of("drum-rack"), Glyph::Pads);
-        assert_eq!(of("sampler-steam"), Glyph::Sampler);
-        assert_eq!(of("synth-v2"), Glyph::Synth);
-        assert_eq!(of("lfo"), Glyph::Lfo);
-        assert_eq!(of("device-rack"), Glyph::Macros);
-        assert_eq!(of("utility"), Glyph::Utility);
+    fn the_first_layout_is_placed_at_rest_without_a_fade() {
+        let mut m = Motion::default();
+        let p = m.step(&[(1, 10.0, 40.0), (2, 60.0, 40.0)], 0.0, false);
+        assert_eq!((p[0].x, p[0].w, p[0].appear), (10.0, 40.0, 1.0));
+        assert!(!m.busy());
+    }
+
+    #[test]
+    fn a_new_tile_fades_in_and_the_others_glide() {
+        let mut m = Motion::default();
+        m.step(&[(1, 10.0, 80.0), (2, 100.0, 80.0)], 0.0, false);
+        let p = m.step(&[(1, 10.0, 50.0), (2, 70.0, 50.0), (3, 130.0, 50.0)], 0.0, false);
+        assert_eq!(p[2].appear, 0.0, "a new tile starts transparent");
+        assert_eq!((p[0].w, p[1].x), (80.0, 100.0), "the others have not moved yet");
+        assert!(m.busy());
+        let p = m.step(&[(1, 10.0, 50.0), (2, 70.0, 50.0), (3, 130.0, 50.0)], 0.1, false);
+        assert!(p[0].w < 80.0 && p[0].w > 50.0 && p[1].x < 100.0 && p[1].x > 70.0);
+        assert!(p[2].appear > 0.5 && p[2].appear < 1.0);
+        let p = m.step(&[(1, 10.0, 50.0), (2, 70.0, 50.0), (3, 130.0, 50.0)], 0.3, false);
+        assert!(p[2].appear > 0.999);
+        for _ in 0..10 {
+            m.step(&[(1, 10.0, 50.0), (2, 70.0, 50.0), (3, 130.0, 50.0)], 0.1, false);
+        }
+        assert!(!m.busy(), "everything settles");
+        let p = m.step(&[(1, 10.0, 50.0), (2, 70.0, 50.0), (3, 130.0, 50.0)], 0.0, false);
+        assert_eq!((p[0].w, p[1].x, p[2].appear), (50.0, 70.0, 1.0));
+    }
+
+    #[test]
+    fn the_glide_is_smooth_settles_in_about_300_ms_and_never_overshoots() {
+        let (mut x, mut v) = (0.0f32, 0.0f32);
+        let mut at_300 = 0.0;
+        for i in 1..=60 {
+            spring(&mut x, &mut v, 100.0, 0.01);
+            assert!(x <= 100.0 + 1e-3, "no overshoot at {i}");
+            if i == 30 {
+                at_300 = x;
+            }
+        }
+        assert!(at_300 > 95.0, "within 5 % after 300 ms: {at_300}");
+        assert_eq!((x, v), (100.0, 0.0), "at rest after 600 ms");
+        let (mut a, mut va, mut b, mut vb) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        spring(&mut a, &mut va, 50.0, 0.1);
+        for _ in 0..10 {
+            spring(&mut b, &mut vb, 50.0, 0.01);
+        }
+        assert!((a - b).abs() < 1e-2, "one 100 ms step equals ten 10 ms steps: {a} {b}");
+    }
+
+    #[test]
+    fn another_chain_and_a_removed_tile_do_not_animate() {
+        let mut m = Motion::default();
+        m.step(&[(1, 0.0, 50.0), (2, 60.0, 50.0)], 0.0, false);
+        let p = m.step(&[(7, 5.0, 40.0)], 0.0, true);
+        assert_eq!((p[0].x, p[0].appear), (5.0, 1.0));
+        assert!(!m.busy());
+        m.step(&[(7, 5.0, 40.0), (8, 50.0, 40.0)], 0.0, false);
+        assert!(m.busy());
+        let p = m.step(&[(8, 5.0, 40.0)], 0.0, false);
+        assert_eq!(p.len(), 1, "a removed tile is gone at once");
     }
 }

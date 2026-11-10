@@ -21,12 +21,16 @@
 //! ```
 
 static CLIP_MENU_AUDIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// With `review-clip-bounce-menu`: the audio clip menu opens with its Bounce submenu showing.
+static CLIP_MENU_BOUNCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 mod analyzer_views;
 mod appmenu;
 mod assistant_panel;
 mod assistant_provider;
 mod automation;
+mod clip_bench;
+mod clip_render;
 mod clipedit;
 mod composer;
 mod controller;
@@ -58,6 +62,8 @@ mod recording;
 mod sampler_panel;
 mod selftest;
 mod settings;
+mod shape_rack;
+mod snap;
 mod stepseq;
 mod sections;
 mod splitters;
@@ -157,6 +163,8 @@ struct Args {
     device_chain_review: bool,
     /// review-devices-minimap: Instrument track with the Synth and a long chain of built-in effects (the Devices minimap shows).
     devices_minimap_review: bool,
+    /// review-snap-menu: the timeline's snap menu open, with 1/8 chosen.
+    snap_menu_review: bool,
     /// reference-<built-in device id>: that device alone in an audio track's chain (an instrument on an instrument track).
     device_state: Option<&'static str>,
     /// Files loaded as if dropped on the window (after the state is set up).
@@ -188,13 +196,16 @@ struct Args {
     /// --ac-edit N: with review-warp, open the typed-value box (0 Original BPM, 1 Transpose).
     ac_edit: Option<i32>,
     frame_stats: bool,
+    /// --bench-clip-render idle|bounce: frame statistics split around a clip render (src/clip_bench.rs).
+    bench_clip_render: Option<bool>,
     /// --timeline-zoom <percent>: horizontal timeline zoom at start (100 = the default).
     timeline_zoom: Option<f64>,
     /// --render-bench N: offscreen, render the state N times and print the mean / median /
     /// p95 milliseconds per full window render (Slint + wgpu surfaces + readback), then exit.
     render_bench: u32,
-    /// --drag-bench track|bottom: with --render-bench, move a track-height or splitter drag
-    /// one step (controller update + view-model sync) before each render.
+    /// --drag-bench track|bottom|devmm|devmm-still: with --render-bench, move a track-height or splitter drag
+    /// one step (controller update + view-model sync) before each render; devmm adds and removes
+    /// a device every 24 renders so the Devices minimap fades and glides (devmm-still: the same without the motion, as a baseline).
     drag_bench: Option<String>,
     self_test: bool,
 }
@@ -250,6 +261,26 @@ fn parse_args() -> Result<Args, String> {
                 "reference-pianoroll" => {
                     a.reference_default = true;
                     a.midi_state = 2;
+                }
+                "review-scale" => {
+                    a.reference_default = true;
+                    a.midi_state = 5;
+                }
+                "review-scale-fold" => {
+                    a.reference_default = true;
+                    a.midi_state = 6;
+                }
+                "review-scale-menu" => {
+                    a.reference_default = true;
+                    a.midi_state = 7;
+                }
+                "review-smart-quantize" => {
+                    a.reference_default = true;
+                    a.midi_state = 3;
+                }
+                "review-smart-quantize-done" => {
+                    a.reference_default = true;
+                    a.midi_state = 4;
                 }
                 "reference-audio-clip" => {
                     a.reference_default = true;
@@ -315,6 +346,11 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.clip_menu_audio = true;
                 }
+                "review-clip-bounce-menu" => {
+                    a.reference_default = true;
+                    a.clip_menu_audio = true;
+                    CLIP_MENU_BOUNCE.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
                 "reference-settings-audio" => {
                     a.reference_default = true;
                     a.settings_state = true;
@@ -375,6 +411,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.devices_minimap_review = true;
                 }
+                "review-snap-menu" => {
+                    a.reference_default = true;
+                    a.snap_menu_review = true;
+                }
                 "reference-lfo" => {
                     a.reference_default = true;
                     a.modulation_state = 1;
@@ -403,7 +443,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -449,6 +489,13 @@ fn parse_args() -> Result<Args, String> {
             "--ac-edit" => a.ac_edit = Some(value(&mut i)?.parse().map_err(|e| format!("--ac-edit: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
+            "--bench-clip-render" => {
+                a.bench_clip_render = Some(match value(&mut i)?.as_str() {
+                    "idle" => false,
+                    "bounce" => true,
+                    v => return Err(format!("--bench-clip-render: want idle or bounce, got {v}")),
+                })
+            }
             "--timeline-zoom" => {
                 let z: f64 = value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--timeline-zoom: {e}"))?;
                 if z.is_nan() {
@@ -458,8 +505,8 @@ fn parse_args() -> Result<Args, String> {
             }
             "--drag-bench" => {
                 let v = value(&mut i)?;
-                if v != "track" && v != "bottom" {
-                    return Err(format!("--drag-bench: want track or bottom, got {v:?}"));
+                if !["track", "bottom", "devmm", "devmm-still"].contains(&v.as_str()) {
+                    return Err(format!("--drag-bench: want track, bottom, devmm or devmm-still, got {v:?}"));
                 }
                 a.drag_bench = Some(v.to_string());
             }
@@ -529,6 +576,12 @@ struct Frame {
     shot_taken: bool,
     saved: bool,
     tex: (u32, u32),
+    /// --bench-clip-render: 0 before, 1 during, 2 after the render; frames of each phase
+    /// (interval, our cpu, slint render cpu).
+    phase: usize,
+    phase_from: u64,
+    phases: [[Series; 3]; 3],
+    bench: bool,
 }
 
 /// Slint key text -> keymap key name.
@@ -635,6 +688,11 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "clip.split_at_marker" => ctl.borrow_mut().split_clip(),
         "clip.disable" => ctl.borrow_mut().toggle_clip_disabled(),
         "clip.cut" => ctl.borrow_mut().cut_clip(),
+        "clip.consolidate" | "clip.bounce_to_track" => {
+            let mut c = ctl.borrow_mut();
+            let Some(id) = c.selected_clip else { return true };
+            if action == "clip.consolidate" { c.consolidate_clip(id) } else { c.bounce_clip(id) }
+        }
         "edit.copy" => {
             ctl.borrow_mut().copy_clip();
         }
@@ -654,6 +712,10 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "view.escape" => {
             let mut c = ctl.borrow_mut();
             if c.devmm_cancel() || c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
+                return true;
+            }
+            let popup_open = c.settings.open || c.settings.menu.is_some() || c.menu.open || c.rec.input_menu.is_some() || c.synth.menu.is_some() || c.devices.menu.is_some() || c.auto.picker.is_some() || c.rename.is_some() || c.rename_section.is_some() || c.pr.menu >= 0;
+            if !popup_open && c.cancel_clip_render() {
                 return true;
             }
             if c.settings.menu.is_some() {
@@ -888,6 +950,43 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.select_clip(clip);
             c.seek_beats(22.0); // 00:11.000, as captured
         }
+        if let (5..=7, Some(id)) = (args.midi_state, clip) {
+            // REVIEW STATE: an E minor line with one out-of-scale note (F4), the clip's scale set
+            // to E Minor with the footer Scale on; 6 adds scale rows, 7 opens the Scale type menu.
+            let line = [(64u8, 0i64), (67, 1), (71, 2), (69, 3), (67, 4), (65, 5), (66, 6), (64, 7), (59, 8), (62, 10), (64, 12), (71, 14)];
+            let notes = line.iter().enumerate().map(|(i, &(pitch, s))| saine_core::midi::Note { id: i as u32 + 1, pitch, start: s * 240, length: 220, velocity: 96 }).collect();
+            c.execute(saine_core::Command::SetMidiNotes { clip: id, notes });
+            c.execute(saine_core::Command::SetClipScale { clip: id, scale: Some(saine_core::scale::ClipScale { key: Some(saine_core::scale::ScaleKey { root: 6, kind: 1 }), highlight: true, fold: false }) });
+            c.select_clip(clip);
+            c.seek_beats(22.0);
+            c.pr_sync_clip();
+            if args.midi_state == 6 {
+                c.pr_action("scale_fold");
+            }
+            if args.midi_state == 7 {
+                c.clip_menu_open(9);
+            }
+        }
+        if (3..=4).contains(&args.midi_state) {
+            // REVIEW STATE: a loosely played line (16ths, up to 40 ticks off), a ghost octave
+            // and a blip, then (state 4) the toolbar's Smart Quantize on it.
+            let jitter: [(u8, i64); 16] = [(60, 0), (63, 31), (67, -22), (70, 38), (72, -12), (70, 27), (67, -35), (63, 18), (60, 9), (63, -28), (67, 36), (70, -15), (72, 24), (75, -38), (72, 11), (67, -20)];
+            let mut notes: Vec<saine_core::midi::Note> = jitter
+                .iter()
+                .enumerate()
+                .map(|(i, &(pitch, j))| saine_core::midi::Note { id: i as u32 + 1, pitch, start: (i as i64 * 240 + j).max(0), length: 200 + (i as i64 % 3) * 25, velocity: 96 })
+                .collect();
+            notes.push(saine_core::midi::Note { id: 17, pitch: 84, start: 4 * 240 + 15, length: 180, velocity: 30 });
+            notes.push(saine_core::midi::Note { id: 18, pitch: 55, start: 2210, length: 30, velocity: 8 });
+            if let Some(clip) = clip {
+                c.execute(saine_core::Command::SetMidiNotes { clip, notes });
+            }
+            c.select_clip(clip);
+            c.seek_beats(22.0);
+            if args.midi_state == 4 {
+                c.pr_action("smart_quantize");
+            }
+        }
     }
     if args.synth_state {
         // Reference 32: default project, Instrument track selected (playhead at bar 6), Devices tab,
@@ -956,6 +1055,45 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 c.select_clip(Some(id));
                 if state >= 1 {
                     c.composer_create();
+                }
+                if state == 3 {
+                    // Shape tab on a lead: two voices, shorter notes, a little late, eighth repeats.
+                    c.composer_type(2);
+                    c.composer_tab(true);
+                    c.composer_shape(1, 4, 1.0);
+                    c.composer_shape(3, 0, 0.3);
+                    c.composer_shape(3, 2, 0.0);
+                    c.composer_shape(6, 0, 0.6);
+                    c.composer_shape(6, 2, 0.0);
+                    c.composer_shape(7, 3, 1.0);
+                    c.composer_shape(7, 3, 1.0);
+                }
+                if state == 4 {
+                    c.clip_menu_open(5);
+                }
+                if state == 5 {
+                    // Shape curves on chords: Velocity ramps up (edited), Density drawn beat by beat.
+                    use saine_core::shape::ShapeKey;
+                    c.composer_tab(true);
+                    c.shape_draw_toggle();
+                    c.shape_stroke(ShapeKey::Density, 1, &[(0.0, 1.0), (1.0, 0.55), (2.0, 0.9), (3.0, 0.4), (3.9, 0.4)]);
+                    c.shape_stroke(ShapeKey::Velocity, 2, &[(0.0, 0.3), (2.0, 0.6), (4.0, 1.0)]);
+                }
+                if state == 6 {
+                    // Chord controls and the arp: Air, Tension drawn per beat, a sixteenth arp.
+                    use saine_core::shape::ShapeKey;
+                    c.composer_tab(true);
+                    c.composer_shape(8, 0, 0.67);
+                    c.composer_shape(8, 2, 0.0);
+                    for _ in 0..3 {
+                        c.composer_shape(13, 3, 1.0);
+                    }
+                    c.shape_draw_toggle();
+                    c.shape_stroke(ShapeKey::Tension, 1, &[(0.0, 0.0), (1.0, 0.0), (2.0, 0.5), (3.0, 0.9), (3.9, 0.9)]);
+                    if let Some(mid) = c.pr_clip().filter(|m| !m.notes.is_empty()).map(|m| m.notes.iter().map(|n| n.pitch as f32).sum::<f32>() / m.notes.len() as f32) {
+                        use crate::pianoroll::{GRID_Y, ROW_H};
+                        c.pr.scroll = (127.0 - mid) * ROW_H + ROW_H / 2.0 - (c.pr.size.1 - GRID_Y) / 2.0;
+                    }
                 }
             }
         }
@@ -1188,6 +1326,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(20.0);
     }
+    if args.snap_menu_review {
+        let mut c = ctl.borrow_mut();
+        c.snap.pick(5);
+        c.snap_menu_toggle(1211.0, 98.0);
+    }
     if args.devices_minimap_review {
         // Review and benchmark: the Instrument track's Synth followed by ten built-in effects, so the chain is
         // several panels wide.
@@ -1377,6 +1520,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_play_toggle, |c| c.play_toggle());
     on!(on_stop_return, |c| c.stop_return());
     on!(on_toggle_loop, |c| c.toggle_loop());
+    on!(on_render_cancel, |c| c.cancel_clip_render());
     on!(on_toggle_metronome, |c| c.toggle_metronome());
     on!(on_record, |c| c.record_toggle());
     on!(on_track_arm, |c, id: i32| c.toggle_arm(TrackId(id as u64)));
@@ -1519,7 +1663,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_lane_double, |c, x: f32, y: f32| {
         c.section_double(x, y);
     });
-    on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, _cmd: bool, alt: bool| c.pointer_mods(kind, x, y, shift, alt));
+    on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, cmd: bool, alt: bool| {
+        if kind == 0 {
+            c.snap.bypass = cmd;
+        }
+        c.pointer_mods(kind, x, y, shift, alt)
+    });
+    on!(on_snap_toggle, |c| c.snap_toggle());
+    on!(on_snap_menu_toggle, |c, x: f32, y: f32| c.snap_menu_toggle(x, y));
+    on!(on_snap_menu_pick, |c, i: i32| c.snap_menu_pick(i.max(0) as usize));
+    on!(on_snap_menu_dismiss, |c| {
+        c.snap.menu = None;
+        c.ui_dirty = true;
+    });
     on!(on_minimap_pointer, |c, kind: i32, x: f32, y: f32, w: f32, ox: f32, oy: f32| c.minimap_pointer(kind, x, y, w, ox, oy));
     on!(on_devmm_pointer, |c, kind: i32, x: f32, y: f32, ox: f32, oy: f32| c.devmm_pointer(kind, x, y, ox, oy));
     on!(on_devmm_scroll, |c, dx: f32, dy: f32| c.devmm_wheel(dx, dy));
@@ -1571,7 +1727,39 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_composer_create, |c| c.composer_create());
     on!(on_composer_load, |c, i: i32| c.composer_load(i.max(0) as usize));
     on!(on_composer_original_pick, |c| c.composer_original());
-    on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
+    // Export audio asks for a file with the controller NOT borrowed.
+    {
+        let ctl = ctl.clone();
+        let aw = app.as_weak();
+        studio.on_menu_activate(move |i: i32| {
+            ctl.borrow_mut().menu_activate(i.max(0) as usize);
+            let request = ctl.borrow_mut().clip_render.dialog_request.take();
+            if let Some((id, name)) = request {
+                let start = ctl.borrow().export.dir.clone();
+                let picked = rfd::FileDialog::new().set_title("Export audio").add_filter("WAV", &["wav"]).set_file_name(name).set_directory(&start).save_file();
+                if let Some(path) = picked {
+                    let is_wav = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav"));
+                    let path = if is_wav {
+                        path
+                    } else {
+                        let mut name = path.into_os_string();
+                        name.push(".wav");
+                        name.into()
+                    };
+                    ctl.borrow_mut().export_clip(id, &path, true);
+                }
+            }
+            if let Some(a) = aw.upgrade() {
+                ctl.borrow_mut().update_ui(&a);
+                a.window().request_redraw();
+            }
+        });
+    }
+    on!(on_composer_tab, |c, shape: bool| c.composer_tab(shape));
+    on!(on_composer_shape, |c, row: i32, op: i32, value: f32| c.composer_shape(row, op, value));
+    on!(on_shape_draw_toggle, |c| c.shape_draw_toggle());
+    on!(on_shape_brush_pick, |c, brush: i32| c.shape_brush(brush));
+    on!(on_shape_reset, |c| c.shape_reset());
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
     on!(on_menu_dismiss, |c| c.menu_close());
     on!(on_rename_commit, |c, t: slint::SharedString| {
@@ -2025,8 +2213,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         shot_taken: false,
         saved: false,
         tex: (0, 0),
+        phase: 0,
+        phase_from: 0,
+        phases: Default::default(),
+        bench: args.bench_clip_render.is_some(),
     }));
     let measure = args.demo || args.frame_stats || args.exit_after_frames.is_some();
+    let bench_clip = args.bench_clip_render.map(|bounce| (bounce, clip_bench::setup(&mut ctl.borrow_mut())));
     let screenshot = args.screenshot.clone();
     let exit_after = args.exit_after_frames;
     let want_menu = args.clip_menu;
@@ -2066,7 +2259,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(last) = f.last_before
                         && f.ready_frames > 2
                     {
-                        f.interval.0.push((t0 - last).as_secs_f64() * 1e3);
+                        let ms = (t0 - last).as_secs_f64() * 1e3;
+                        f.interval.0.push(ms);
+                        let ph = f.phase;
+                        f.phases[ph][0].0.push(ms);
                     }
                     f.last_before = Some(t0);
                     c.poll_jobs();
@@ -2076,6 +2272,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             CLIP_MENU_AUDIO.store(false, std::sync::atomic::Ordering::Relaxed);
                             c.seek_beats((start + len / 2) as f64 / saine_core::PPQ as f64);
                             c.open_clip_menu(id, 700.0, 215.0, (10_000.0, 10_000.0));
+                            if CLIP_MENU_BOUNCE.load(std::sync::atomic::Ordering::Relaxed) {
+                                c.menu.sub_open = true;
+                                c.menu.sub_for = Some(controller::MenuAction::Bounce);
+                            }
                         }
                     }
                     c.lanes_size = (app.get_lanes_width(), app.get_lanes_height());
@@ -2126,7 +2326,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     f.pr_visible = pr_vis;
                     let t1 = Instant::now();
                     if f.ready_frames > 2 {
-                        f.ours.0.push((t1 - t0).as_secs_f64() * 1e3);
+                        let ms = (t1 - t0).as_secs_f64() * 1e3;
+                        f.ours.0.push(ms);
+                        let ph = f.phase;
+                        f.phases[ph][1].0.push(ms);
                     }
                     f.slint_start = Some(t1);
                 }
@@ -2136,10 +2339,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(t) = f.slint_start.take()
                         && f.ready_frames > 2
                     {
-                        f.slint.0.push((now - t).as_secs_f64() * 1e3);
+                        let ms = (now - t).as_secs_f64() * 1e3;
+                        f.slint.0.push(ms);
+                        let ph = f.phase;
+                        f.phases[ph][2].0.push(ms);
                     }
                     let (animating, ready) = match ctl.try_borrow() {
-                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || c.files.audition.animating || !c.assistant.highlights.is_empty() || c.rec.recording, c.pending_jobs == 0 && want_menu.is_none_or(|m| c.pr.menu == m)),
+                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || c.files.audition.animating || !c.assistant.highlights.is_empty() || c.rec.recording || c.devmm_animating(), c.pending_jobs == 0 && want_menu.is_none_or(|m| c.pr.menu == m)),
                         Err(_) => (true, false),
                     };
                     if ready {
@@ -2147,6 +2353,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     if f.setup_done {
                         f.ready_frames += 1;
+                    }
+                    if let Some((bounce, clip)) = bench_clip
+                        && f.setup_done
+                    {
+                        if f.phase == 0 && f.ready_frames >= clip_bench::WARMUP_FRAMES {
+                            f.phase = 1;
+                            f.phase_from = f.ready_frames;
+                            if bounce && let Ok(mut c) = ctl.try_borrow_mut() {
+                                c.bounce_clip(clip);
+                            }
+                        } else if f.phase == 1 {
+                            let busy = ctl.try_borrow().map(|c| c.clip_render.busy() || c.pending_jobs > 0).unwrap_or(true);
+                            if (bounce && !busy && f.ready_frames > f.phase_from + 1) || (!bounce && f.ready_frames >= f.phase_from + clip_bench::IDLE_WINDOW) {
+                                f.phase = 2;
+                            }
+                        }
                     }
                     if f.setup_done
                         && !f.saved
@@ -2230,6 +2452,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let Some(a) = aw.upgrade() else { return };
             zm.borrow_mut().sync(a.window());
             let mut ms = Vec::with_capacity(n);
+            let mut ui_ms = 0.0;
             let track = dc.borrow().project().tracks[0].id.0 as i32;
             match drag.as_deref() {
                 Some("track") => dc.borrow_mut().track_resize_drag(track, 0, 200.0),
@@ -2242,10 +2465,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 match drag.as_deref() {
                     Some("track") => dc.borrow_mut().track_resize_drag(track, 1, 200.0 + dy),
                     Some("bottom") => dc.borrow_mut().bottom_resize(1, 500.0 - dy),
+                    Some(m @ ("devmm" | "devmm-still")) if i % 24 == 0 => dc.borrow_mut().devmm_bench_toggle(m == "devmm-still"),
                     _ => {}
                 }
                 if drag.is_some() {
+                    let t_ui = Instant::now();
                     dc.borrow_mut().update_ui(&a);
+                    if i >= 5 {
+                        ui_ms += t_ui.elapsed().as_secs_f64() * 1e3;
+                    }
                 }
                 if let Err(e) = a.window().take_snapshot() {
                     eprintln!("--render-bench: snapshot failed: {e}");
@@ -2258,7 +2486,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             ms.sort_by(f64::total_cmp);
             let mean = ms.iter().sum::<f64>() / n as f64;
             let median = if n % 2 == 0 { (ms[n / 2 - 1] + ms[n / 2]) / 2.0 } else { ms[n / 2] };
-            println!("{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{median:.3},\"p95_ms\":{:.3}}}", ms[(n * 95 / 100).min(n - 1)]);
+            println!("{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{median:.3},\"p95_ms\":{:.3},\"update_ui_mean_ms\":{:.3}}}", ms[(n * 95 / 100).min(n - 1)], ui_ms / n as f64);
             let _ = slint::quit_event_loop();
         });
     }
@@ -2277,12 +2505,18 @@ thread_local! {
     static LANE_CURSOR: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
 }
 
+/// The per-phase statistics of --bench-clip-render, as a JSON member.
+fn phases_json(f: &Frame) -> String {
+    let one = |name: &str, p: &[Series; 3]| format!("\"{name}\":{{\"frames\":{},\"frame_interval_ms\":{},\"our_cpu_ms\":{},\"slint_render_cpu_ms\":{}}}", p[0].0.len(), p[0].summary(), p[1].summary(), p[2].summary());
+    format!(",\"phases\":{{{},{},{}}}", one("before", &f.phases[0]), one("during", &f.phases[1]), one("after", &f.phases[2]))
+}
+
 fn stats_json(f: &Frame, app: &AppWindow) -> String {
     let w = app.window();
     let sz = w.size();
     let rc = f.renderer.as_ref().map(|r| r.last_counts).unwrap_or((0, 0, 0));
     format!(
-        "{{\"adapter\":\"{}\",\"scale_factor\":{},\"window_physical\":[{},{}],\"timeline_tex\":[{},{}],\"instances\":{{\"base_rects\":{},\"waves\":{},\"over_rects\":{}}},\"frames\":{},\"frame_interval_ms\":{},\"our_cpu_ms\":{},\"slint_render_cpu_ms\":{}}}",
+        "{{\"adapter\":\"{}\",\"scale_factor\":{},\"window_physical\":[{},{}],\"timeline_tex\":[{},{}],\"instances\":{{\"base_rects\":{},\"waves\":{},\"over_rects\":{}}},\"frames\":{},\"frame_interval_ms\":{},\"our_cpu_ms\":{},\"slint_render_cpu_ms\":{}{}}}",
         f.adapter,
         w.scale_factor(),
         sz.width,
@@ -2295,7 +2529,8 @@ fn stats_json(f: &Frame, app: &AppWindow) -> String {
         f.interval.0.len(),
         f.interval.summary(),
         f.ours.summary(),
-        f.slint.summary()
+        f.slint.summary(),
+        if f.bench { phases_json(f) } else { String::new() }
     )
 }
 

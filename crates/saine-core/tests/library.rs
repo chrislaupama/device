@@ -23,7 +23,7 @@ fn clip(d: &Document, c: ClipId) -> MidiClip {
 fn create(d: &mut Document, c: ClipId, part: PartType, genre: u8) {
     let m = clip(d, c);
     let made = MadeSet { part: Some(part), genre, set: 0, last: 0 };
-    let comp = Composer { part, genre, made: vec![made], playing: Some(0), kept: m.notes.clone(), kept_pattern: None };
+    let comp = Composer { part, genre, made: vec![made], playing: Some(0), kept: m.notes.clone(), ..Default::default() };
     let first = library::patterns_of(made, None, m.length, 4 * PPQ).remove(0);
     d.execute(Command::SetComposer { clip: c, edit: ComposerEdit::Create, composer: Some(comp), notes: first.notes, pattern: first.pattern }, Origin::User).unwrap();
 }

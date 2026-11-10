@@ -13,6 +13,7 @@
 
 use crate::midi::{self, Note};
 use crate::model::ProjectKey;
+use crate::shape::{Shape, ShapeSlot};
 use crate::steps::{StepLane, StepPattern, StepRate, StepRows};
 use crate::{PPQ, Ticks};
 use serde::{Deserialize, Serialize};
@@ -50,8 +51,33 @@ impl PartType {
     }
 }
 
-/// Genre field entries; 0 is Any (the library's neutral feel).
-pub const GENRES: [&str; 11] = ["Any", "Afrobeats", "Ambient", "Drill", "Drum & bass", "EDM", "Electronic", "Experimental", "Folk", "Future bass", "Hip-hop"];
+/// Genre field entries; 0 is Any (the library's neutral feel), then the reference's
+/// 21 genres in its (alphabetical) order. Saved clips store the index, so new
+/// entries only ever go at the end.
+pub const GENRES: [&str; 22] = [
+    "Any",
+    "Afrobeats",
+    "Ambient",
+    "Drill",
+    "Drum & bass",
+    "EDM",
+    "Electronic",
+    "Experimental",
+    "Folk",
+    "Future bass",
+    "Hip-hop",
+    "House",
+    "Indie",
+    "Lo-fi",
+    "Neo-soul",
+    "Pop",
+    "R&B",
+    "Reggaeton",
+    "Singer-songwriter",
+    "Techno",
+    "Trap",
+    "UK garage",
+];
 
 /// Patterns one Create makes.
 pub const SET_SIZE: usize = 6;
@@ -92,6 +118,17 @@ fn feel(genre: usize) -> Feel {
         "Folk" => f(false, S8, 0.0, 1, 0, &[1, 4, 6]),
         "Future bass" => f(false, S16, 0.0, 2, 0, &[1, 3, 4]),
         "Hip-hop" => f(true, S16, 0.18, 1, -1, &[0, 2, 6]),
+        "House" => f(true, S16, 0.0, 2, 0, &[1, 3, 4]),
+        "Indie" => f(false, S8, 0.0, 1, 0, &[1, 3, 7]),
+        "Lo-fi" => f(false, S16, 0.2, 0, -1, &[5, 4, 7]),
+        "Neo-soul" => f(false, S16, 0.15, 1, 0, &[5, 7, 3]),
+        "Pop" => f(false, S8, 0.0, 1, 0, &[1, 3, 4]),
+        "R&B" => f(true, S16, 0.1, 1, 0, &[5, 2, 6]),
+        "Reggaeton" => f(true, S16, 0.0, 2, 0, &[0, 6, 2]),
+        "Singer-songwriter" => f(false, S8, 0.0, 0, 0, &[1, 4, 3]),
+        "Techno" => f(true, S16, 0.0, 2, -1, &[0, 2, 7]),
+        "Trap" => f(true, S16, 0.0, 1, -1, &[0, 2, 6]),
+        "UK garage" => f(true, S16, 0.25, 2, 0, &[5, 0, 3]),
         _ => f(true, S16, 0.0, 1, 0, &[0, 1, 2, 3, 4, 5, 6, 7]),
     }
 }
@@ -457,7 +494,7 @@ pub fn create_set(part: PartType, genre: usize, key: Option<ProjectKey>, set: u3
 /// Drum grooves: (name, rows for pads 1..6 as 16 sixteenths; 'x' hit, 'o' soft hit, '-' rest).
 type Groove = (&'static str, [&'static str; 6]);
 
-const GROOVES: [Groove; 8] = [
+const GROOVES: [Groove; 10] = [
     ("Four on the floor", ["x---x---x---x---", "----x-------x---", "--x---x---x---x-", "------------x---", "----------------", "-------o-------o"]),
     ("Boom bap", ["x------x-x------", "----x-------x---", "x-x-x-x-x-x-x-x-", "----------------", "----------------", "---o------o-----"]),
     ("Trap rolls", ["x-------x-x-----", "--------x-------", "x-x-xxx-x-x-x-xx", "----------------", "--------x-------", "------o-------o-"]),
@@ -466,6 +503,8 @@ const GROOVES: [Groove; 8] = [
     ("Drill slide", ["x------x--x-----", "------x-------x-", "x-x-x-x-xxx-x-x-", "----------------", "------x-------x-", "---o-------o----"]),
     ("Half-time float", ["x-------------x-", "--------x-------", "x---x---x---x---", "------x---------", "----------------", "------o-----o---"]),
     ("Folk shuffle", ["x-------x-------", "----x-------x---", "x--x--x-x--x--x-", "----------------", "----x-------x---", "--o-------o-----"]),
+    ("Dembow", ["x---x---x---x---", "---x--x----x--x-", "x-x-x-x-x-x-x-x-", "----------------", "----------------", "-o-----o-o-----o"]),
+    ("Warehouse pulse", ["x---x---x---x---", "----o-------o---", "x-x-x-x-x-x-x-x-", "--x---x---x---x-", "----x-------x---", "-o--o--o-o--o--o"]),
 ];
 
 fn grooves_for(genre: usize) -> &'static [usize] {
@@ -478,6 +517,18 @@ fn grooves_for(genre: usize) -> &'static [usize] {
         "Experimental" => &[6, 3, 4],
         "Folk" => &[7, 1, 0],
         "Hip-hop" => &[1, 2, 6],
+        "House" => &[0, 9, 3],
+        "Indie" => &[1, 7, 0],
+        "Lo-fi" => &[1, 6, 7],
+        "Neo-soul" => &[1, 6, 4],
+        "Pop" => &[0, 3, 1],
+        "R&B" => &[6, 1, 2],
+        "Reggaeton" => &[8, 4, 0],
+        "Singer-songwriter" => &[7, 6, 1],
+        "Techno" => &[9, 0, 3],
+        "Trap" => &[2, 5, 6],
+        "UK garage" => &[3, 4, 9],
+        // Any keeps the first eight, so sets made before Dembow and Warehouse pulse stay the same.
         _ => &[0, 1, 2, 3, 4, 5, 6, 7],
     }
 }
@@ -495,7 +546,7 @@ pub fn create_drum_set(genre: usize, set: u32) -> Vec<LibPattern> {
             let var = (2 * (i / pool.len().min(SET_SIZE)) + set as usize + i) % VARIATIONS.len();
             let mut p = StepPattern::new(StepRows::Pads);
             p.rate = StepRate::Sixteenth;
-            if genre == 10 || genre == 1 {
+            if feel(genre).swing > 0.0 {
                 p.swing = 0.3;
             }
             for (pad, row) in rows.iter().enumerate() {
@@ -572,6 +623,12 @@ pub struct Composer {
     pub kept: Vec<Note>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept_pattern: Option<StepPattern>,
+    /// The Shape tab's values per source (only sources that are not neutral).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shapes: Vec<ShapeSlot>,
+    /// The unshaped notes of what plays, while its Shape is not neutral.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub base: Vec<Note>,
 }
 
 impl Composer {
@@ -590,7 +647,28 @@ impl Composer {
         if let Some(p) = &self.kept_pattern {
             p.validate()?;
         }
+        for s in &self.shapes {
+            s.shape.validate()?;
+        }
+        midi::validate_notes(&self.base)?;
         midi::validate_notes(&self.kept)
+    }
+
+    /// What the Shape tab shapes: the shown part's patterns while one plays, else the kept notes.
+    pub fn shape_source(&self) -> Option<PartType> {
+        self.playing.map(|_| self.part)
+    }
+
+    pub fn shape_of(&self, source: Option<PartType>) -> Shape {
+        self.shapes.iter().find(|s| s.part == source).map_or_else(|| Shape::neutral(source), |s| s.shape.clone())
+    }
+
+    /// Store a source's Shape (a neutral one is dropped).
+    pub fn set_shape(&mut self, source: Option<PartType>, shape: Shape) {
+        self.shapes.retain(|s| s.part != source);
+        if shape != Shape::neutral(source) {
+            self.shapes.push(ShapeSlot { part: source, shape });
+        }
     }
 }
 
@@ -636,6 +714,13 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), SET_SIZE);
+    }
+
+    #[test]
+    fn saved_genre_indices_keep_their_genre() {
+        let before = ["Any", "Afrobeats", "Ambient", "Drill", "Drum & bass", "EDM", "Electronic", "Experimental", "Folk", "Future bass", "Hip-hop"];
+        assert_eq!(GENRES[..before.len()], before);
+        assert_eq!(grooves_for(0), &[0, 1, 2, 3, 4, 5, 6, 7], "Any's drum sets are unchanged");
     }
 
     #[test]

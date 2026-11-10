@@ -4,7 +4,7 @@
 
 use crate::controller::{BottomTab, ClipboardItem, Controller, MenuAction, sync_model, track_color};
 use crate::pianoroll::{self, GRID_Y, ROW_H};
-use crate::{MenuItem, PatternRow, PreviewNote, RulerLabel, SeqCell, SeqNum, SeqRow, Studio, YLabel};
+use crate::{MenuItem, PatternRow, PreviewNote, RulerLabel, SeqCell, ShapeRow, SeqNum, SeqRow, Studio, YLabel};
 use saine_core::midi::{self, MidiClip};
 use saine_core::steps::StepPattern;
 use saine_core::{ClipId, Command, PPQ, Ticks, TrackKind};
@@ -20,7 +20,7 @@ pub const MENU_SEP: f32 = 10.6;
 /// warp (`saine_core::warp`, presets and modes in the same order); Type and Genre pick the
 /// sidebar's library part (saine_core::library::GENRES has a feel for each).
 /// Genre lists the entries visible in the reference capture (its full list is catalogue data).
-const CLIP_MENUS: [&[&str]; 8] = [
+const CLIP_MENUS: [&[&str]; 10] = [
     &["0.5x", "0.75x", "1x", "1.25x", "1.5x", "2x"],
     &["On", "Off"],
     &["Auto", "Drums", "Melody", "Vocal", "Re-pitch"],
@@ -29,6 +29,8 @@ const CLIP_MENUS: [&[&str]; 8] = [
     &saine_core::library::GENRES,
     &["8", "12", "16", "24", "32", "36", "48", "64"],
     &["1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/8T", "1/16T", "1/32T"],
+    &saine_core::scale::ROOTS,
+    &saine_core::scale::SCALES,
 ];
 const GRID_DENOMS: [u32; 8] = [4, 8, 16, 32, 6, 12, 24, 48];
 
@@ -95,6 +97,11 @@ impl MenuAction {
         matches!(self, MenuAction::Bounce | MenuAction::Transpose | MenuAction::SectionColor | MenuAction::SectionInsert)
     }
 }
+
+/// Bounce submenu: (label, shortcut text, enabled). the reference app's flyout has the same two entries;
+/// Saine builds Bounce to new track. Bounce track in place needs a track that changes kind (MIDI to
+/// audio, its instrument and devices removed), which the model cannot do yet, so it stays greyed.
+const BOUNCE: [(&str, &str, bool); 2] = [("Bounce to new track", "⌘ B", true), ("Bounce track in place", "", false)];
 
 /// Transpose submenu: (label, shortcut text, semitones).
 const TRANSPOSE: [(&str, &str, i32); 4] = [("Octave up", "+12", 12), ("Semitone up", "+1", 1), ("Semitone down", "−1", -1), ("Octave down", "−12", -12)];
@@ -210,15 +217,7 @@ impl Controller {
             self.set_status("The audio file is missing", 3);
             return;
         }
-        let reveal = if cfg!(target_os = "macos") {
-            std::process::Command::new("open").arg("-R").arg(&path).spawn()
-        } else if cfg!(windows) {
-            std::process::Command::new("explorer").arg(format!("/select,{path}")).spawn()
-        } else {
-            let dir = std::path::Path::new(&path).parent().map(|d| d.to_path_buf()).unwrap_or_default();
-            std::process::Command::new("xdg-open").arg(dir).spawn()
-        };
-        if let Err(e) = reveal {
+        if let Err(e) = crate::clip_render::reveal(&path) {
             self.set_status(format!("Show in Finder failed: {e}"), 3);
         }
     }
@@ -346,7 +345,7 @@ impl Controller {
             items.push(if pattern { ToMidi } else { ToPattern });
         }
         items.push(Ask);
-        // PLACEHOLDER entries (disabled): Consolidate, Bounce, Export, Ask.
+        // PLACEHOLDER entry (disabled): Ask.
         self.menu.items = items
             .iter()
             .map(|&a| {
@@ -354,6 +353,8 @@ impl Controller {
                     Cut | Copy | Duplicate | Delete | Rename | Disable | Enable => true,
                     Split => splittable,
                     ShowInFinder => !midi,
+                    Consolidate => self.can_render_clip(id, false),
+                    Bounce | Export => self.can_render_clip(id, true),
                     Transpose | Quantize | Humanize | ToPattern | ToMidi => midi,
                     _ => false,
                 };
@@ -399,8 +400,9 @@ impl Controller {
             return;
         }
         let Some(id) = self.menu.clip else { return };
-        if action == MenuAction::Transpose {
-            self.menu.sub_open = !self.menu.sub_open;
+        if matches!(action, MenuAction::Transpose | MenuAction::Bounce) {
+            self.menu.sub_open = !(self.menu.sub_open && self.menu.sub_for == Some(action));
+            self.menu.sub_for = Some(action);
             self.ui_dirty = true;
             return;
         }
@@ -414,6 +416,8 @@ impl Controller {
             MenuAction::Duplicate => self.duplicate_clip(),
             MenuAction::Delete => self.delete_selection(),
             MenuAction::Split => self.split_clip(),
+            MenuAction::Consolidate => self.consolidate_clip(id),
+            MenuAction::Export => self.export_clip_request(id),
             MenuAction::Disable | MenuAction::Enable => self.toggle_clip_disabled(),
             MenuAction::ShowInFinder => self.show_clip_in_finder(),
             MenuAction::Rename => {
@@ -459,6 +463,14 @@ impl Controller {
 
     pub fn submenu_activate(&mut self, index: usize) {
         let Some(id) = self.menu.clip else { return };
+        if self.menu.sub_for == Some(MenuAction::Bounce) {
+            if BOUNCE.get(index).is_some_and(|b| b.2) {
+                self.menu_close();
+                self.selected_clip = Some(id);
+                self.bounce_clip(id);
+            }
+            return;
+        }
         let Some(&(_, _, semis)) = TRANSPOSE.get(index) else { return };
         self.menu_close();
         self.menu_midi(id, |_, c| midi::transpose(&c.notes, semis), "Transpose Notes");
@@ -496,6 +508,7 @@ impl Controller {
             3 => GRID_DENOMS.iter().position(|&d| d == self.pr.grid).map_or(-1, |i| i as i32),
             6 | 7 => self.seq_menu_active(menu == 7),
             4 | 5 => self.composer_menu_active(menu == 5),
+            8 | 9 => self.pr_scale().map_or(-1, |(_, k)| if menu == 8 { k.root as i32 } else { k.kind as i32 }),
             _ => 0,
         }
     }
@@ -518,6 +531,8 @@ impl Controller {
             5 => return self.composer_genre(i),
             6 => return self.seq_set_length(i),
             7 => return self.seq_set_rate(i),
+            8 => return self.pr_scale_root(i),
+            9 => return self.pr_scale_kind(i),
             _ => {}
         }
         match menu {
@@ -535,6 +550,36 @@ impl Controller {
         s.set_composer_genre_text(CLIP_MENUS[5].get(v.genre as usize).copied().unwrap_or("Any").into());
         s.set_composer_original(v.original);
         s.set_composer_create_text(v.create_label.into());
+        s.set_composer_shape_ok(v.shape_ok);
+        s.set_composer_shape_tab(v.shape_tab);
+        s.set_shape_drawing(self.shape_ui.drawing);
+        s.set_shape_brush(self.shape_ui.brush as i32);
+        s.set_shape_has_curves(self.shape_has_curves());
+        if *self.composer_shape_shown.borrow() != v.shape_rows {
+            *self.composer_shape_shown.borrow_mut() = v.shape_rows.clone();
+            let rows: Vec<ShapeRow> = v
+                .shape_rows
+                .into_iter()
+                .map(|r| {
+                    let c = r.key.color();
+                    ShapeRow {
+                        label: r.key.label().into(),
+                        value: r.value.into(),
+                        kind: r.kind as i32,
+                        norm: r.norm,
+                        bipolar: r.bipolar,
+                        segs: r.segs,
+                        seg: r.seg,
+                        enabled: r.enabled,
+                        tip: r.tip.into(),
+                        selected: r.selected,
+                        curved: r.curved,
+                        color: slint::Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8),
+                    }
+                })
+                .collect();
+            self.composer_shape_model.set_vec(rows);
+        }
         if *self.composer_rows_shown.borrow() == v.rows {
             return;
         }
@@ -649,6 +694,7 @@ impl Controller {
             s.set_pr_length_text(pianoroll::fmt_len(len, tpb).into());
             let v = self.pr_view();
             let bpb = tpb as f64 / PPQ as f64;
+            let step = self.pr_steps().label_bars;
             let mut bars = Vec::new();
             let mut b = 0i64;
             loop {
@@ -659,7 +705,7 @@ impl Controller {
                 if x >= v.gx - 2.0 {
                     bars.push(RulerLabel { x: x + 4.5, text: format!("{}", b + 1).into() });
                 }
-                b += 1;
+                b += step;
             }
             sync_model(&self.pr_bar_model, bars);
         }
@@ -669,9 +715,16 @@ impl Controller {
             s.set_pr_quant_text(format!("{}%", (self.pr.quant_amount * 100.0).round()).into());
             s.set_pr_human_text(format!("{}%", (self.pr.humanize_amount * 100.0).round()).into());
             s.set_pr_vel_text(format!("{}", self.pr.velocity).into());
+            let (scale, key) = self.pr_scale().unwrap_or_default();
+            s.set_pr_scale_on(scale.highlight);
+            s.set_pr_scale_fold(scale.highlight && scale.fold);
+            s.set_pr_scale_root(key.root_name().into());
+            s.set_pr_scale_type(key.kind_name().into());
             let v = self.pr_view();
-            let keys: Vec<YLabel> = (0..=127)
-                .filter(|p| p % 12 == 0)
+            let shown: Vec<i32> = v.visible().collect();
+            let keys: Vec<YLabel> = shown
+                .into_iter()
+                .filter(|&p| p % 12 == 0 || (scale.highlight && key.is_root(p)))
                 .filter_map(|p| {
                     let y = v.y_of(p);
                     (y >= GRID_Y - 1.0 && y + ROW_H <= v.h + 1.0).then(|| YLabel { y, text: midi::note_name(p as u8).into() })
@@ -685,14 +738,20 @@ impl Controller {
         s.set_menu_open(self.menu.open);
         if self.menu.open {
             let (items, h) = layout_items(self.menu.items.iter().map(|&(a, en)| (a.label().to_string(), a.shortcut().to_string(), en, a.separated(), a.submenu())));
-            let sub_y = items.iter().zip(&self.menu.items).find(|(_, (a, _))| *a == MenuAction::Transpose).map(|(m, _)| m.y).unwrap_or(0.0);
+            let sub_for = self.menu.sub_for.unwrap_or(MenuAction::Transpose);
+            let sub_y = items.iter().zip(&self.menu.items).find(|(_, (a, _))| *a == sub_for).map(|(m, _)| m.y).unwrap_or(0.0);
             sync_model(&self.menu_model, items);
             s.set_menu_x(self.menu.pos.0);
             s.set_menu_y(self.menu.pos.1);
             s.set_menu_h(h);
             s.set_sub_open(self.menu.sub_open);
             s.set_sub_y(sub_y - MENU_PAD);
-            let (sub, sub_h) = layout_items(TRANSPOSE.iter().map(|(l, k, _)| (l.to_string(), k.to_string(), true, false, false)));
+            let rows: Vec<(String, String, bool)> = if sub_for == MenuAction::Bounce {
+                BOUNCE.iter().map(|&(l, k, on)| (l.to_string(), k.to_string(), on)).collect()
+            } else {
+                TRANSPOSE.iter().map(|(l, k, _)| (l.to_string(), k.to_string(), true)).collect()
+            };
+            let (sub, sub_h) = layout_items(rows.into_iter().map(|(l, k, on)| (l, k, on, false, false)));
             sync_model(&self.sub_model, sub);
             s.set_sub_h(sub_h);
         }
