@@ -2252,7 +2252,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     if pr_vis {
                         // The step sequencer draws in Slint; the texture keeps its size for the piano roll tab.
                         let win = app.window().size();
-                        let size = ((win.width as f32 / scale) - 10.0 - pianoroll::PANEL_ORIGIN.0 - 0.5, pianoroll::CLIP_PANEL_H - pianoroll::PANEL_ORIGIN.1 - pianoroll::FOOTER_H);
+                        let size = ((win.width as f32 / scale) - 10.0 - pianoroll::PANEL_ORIGIN.0 - 0.5, (c.bottom_h() - pianoroll::PANEL_ORIGIN.1 - pianoroll::FOOTER_H).max(1.0));
                         if c.pr.size != size {
                             c.pr.size = size;
                             c.ui_dirty = true;

@@ -34,7 +34,6 @@ const MUTE_X: f32 = 95.0;
 const SOLO_X: f32 = 112.0;
 const BTN_W: f32 = 12.0;
 /// Editor height while the Clip tab is open, and the footer below the grid.
-const EDITOR_H: f32 = crate::pianoroll::CLIP_PANEL_H - 27.0;
 const FOOTER_H: f32 = crate::pianoroll::FOOTER_H;
 /// Pitch rows open with C5 (72) on the top row.
 const PITCH_TOP: u8 = 72;
@@ -106,7 +105,7 @@ pub struct SeqGeom {
 }
 
 impl SeqGeom {
-    pub fn new(width: f32, steps: u16, rows: StepRows, scroll: f32, page: u16) -> Self {
+    pub fn new((width, height): (f32, f32), steps: u16, rows: StepRows, scroll: f32, page: u16) -> Self {
         let cols = steps_per_page(width);
         let pages = page_count(width, steps);
         let page = page.min(pages - 1);
@@ -115,7 +114,7 @@ impl SeqGeom {
             StepRows::Pads => drum_rack::PADS as u16,
             StepRows::Pitches => 128,
         };
-        let view_h = EDITOR_H - FOOTER_H - ROW_Y0;
+        let view_h = (height + crate::pianoroll::PANEL_ORIGIN.1 - 27.0 - ROW_Y0).max(0.0);
         let max = (rows as f32 * ROW_PITCH - view_h + 4.0).max(0.0);
         SeqGeom { cols, page, first: page * cols, pages, pitch, cell_w: (pitch - COL_GAP).max(3.0), rows, scroll: scroll.clamp(0.0, max), view_h }
     }
@@ -209,8 +208,8 @@ fn lane_index(lane: Option<StepLane>) -> i32 {
 /// The grid's view model for one page: visible rows only, background cells
 /// first, then the active cells on top (a tied cell spans the steps it holds,
 /// cut at the page edges).
-pub fn build_view(p: &StepPattern, width: f32, scroll: f32, page: u16, lane: Option<StepLane>, names: &dyn Fn(u8) -> String, dragging: Option<(u8, u16)>) -> SeqView {
-    let g = SeqGeom::new(width, p.steps, p.rows, scroll, page);
+pub fn build_view(p: &StepPattern, size: (f32, f32), scroll: f32, page: u16, lane: Option<StepLane>, names: &dyn Fn(u8) -> String, dragging: Option<(u8, u16)>) -> SeqView {
+    let g = SeqGeom::new(size, p.steps, p.rows, scroll, page);
     let last = g.first + g.cols - 1;
     let mut rows = Vec::new();
     let mut cells = Vec::with_capacity(g.visible_rows().len() * (g.cols as usize + 4));
@@ -297,7 +296,7 @@ impl Controller {
             Some(SeqDrag::Value { key, step, .. }) => Some((*key, *step)),
             _ => None,
         };
-        Some(build_view(&p, self.pr.size.0, self.pr.seq.scroll, self.pr.seq.page, self.pr.seq.lane, &|k| self.seq_row_name(p.rows, k), dragging))
+        Some(build_view(&p, self.pr.size, self.pr.seq.scroll, self.pr.seq.page, self.pr.seq.lane, &|k| self.seq_row_name(p.rows, k), dragging))
     }
 
     fn seq_clip(&self) -> Option<(ClipId, StepPattern)> {
@@ -393,7 +392,7 @@ impl Controller {
             }
         }
         let shown = self.pr.seq.play.zip(self.seq_pattern()).and_then(|((st, t0), p)| {
-            let g = SeqGeom::new(self.pr.size.0, p.steps, p.rows, self.pr.seq.scroll, self.pr.seq.page);
+            let g = SeqGeom::new(self.pr.size, p.steps, p.rows, self.pr.seq.scroll, self.pr.seq.page);
             let col = g.col_of(st)?;
             let hits: Vec<f32> = g.visible_rows().filter(|&r| p.cell(row_key(p.rows, r), st).is_some()).map(|r| g.row_y(r)).collect();
             Some((col as i32, hits, (t0.elapsed().as_secs_f32() / FLASH.as_secs_f32()).min(1.0)))
@@ -425,7 +424,7 @@ impl Controller {
 
     pub fn seq_scroll(&mut self, dy: f32) {
         let Some(p) = self.seq_pattern() else { return };
-        self.pr.seq.scroll = SeqGeom::new(self.pr.size.0, p.steps, p.rows, self.pr.seq.scroll - dy, self.pr.seq.page).scroll;
+        self.pr.seq.scroll = SeqGeom::new(self.pr.size, p.steps, p.rows, self.pr.seq.scroll - dy, self.pr.seq.page).scroll;
         self.ui_dirty = true;
     }
 
@@ -433,7 +432,7 @@ impl Controller {
     pub fn seq_pointer(&mut self, kind: i32, x: f32, y: f32) {
         let Some((id, base)) = self.seq_clip() else { return };
         let shown = self.pr.seq.preview.clone().unwrap_or_else(|| base.clone());
-        let g = SeqGeom::new(self.pr.size.0, shown.steps, shown.rows, self.pr.seq.scroll, self.pr.seq.page);
+        let g = SeqGeom::new(self.pr.size, shown.steps, shown.rows, self.pr.seq.scroll, self.pr.seq.page);
         let hit = g.row_at(y).map(|r| (row_key(shown.rows, r), g.step_at(x).filter(|&s| s < shown.steps)));
         match kind {
             0 => {
@@ -539,6 +538,8 @@ mod tests {
     use super::*;
     use saine_core::steps::StepLane;
 
+    const SIZE: (f32, f32) = (1174.5, crate::pianoroll::CLIP_PANEL_H - crate::pianoroll::PANEL_ORIGIN.1 - crate::pianoroll::FOOTER_H);
+
     fn beat() -> StepPattern {
         let mut p = StepPattern::default();
         for s in [0, 4, 8, 12] {
@@ -549,14 +550,14 @@ mod tests {
 
     #[test]
     fn geometry_matches_the_reference_and_pages_long_patterns() {
-        let g = SeqGeom::new(1174.5, 16, StepRows::Pads, 0.0, 0);
+        let g = SeqGeom::new(SIZE, 16, StepRows::Pads, 0.0, 0);
         assert_eq!((g.cols, g.pitch, g.rows, g.pages), (32, COL_PITCH, 16, 1));
         assert_eq!(g.visible_rows(), 0..8);
-        let long = SeqGeom::new(1174.5, 100, StepRows::Pads, 0.0, 9);
+        let long = SeqGeom::new(SIZE, 100, StepRows::Pads, 0.0, 9);
         assert_eq!((long.cols, long.pages, long.page, long.first), (32, 4, 3, 96), "the page clamps to the last one");
         assert_eq!((long.col_of(97), long.col_of(95), long.step_at(COL_X0 + 1.0)), (Some(1), None, Some(96)));
         assert_eq!((steps_per_page(1174.5), steps_per_page(700.0), steps_per_page(100.0), steps_per_page(4000.0)), (32, 16, 16, 32));
-        let pitches = SeqGeom::new(1174.5, 16, StepRows::Pitches, 1e9, 0);
+        let pitches = SeqGeom::new(SIZE, 16, StepRows::Pitches, 1e9, 0);
         assert_eq!(pitches.visible_rows().end, 128, "scroll clamps to the last row");
         assert_eq!(row_key(StepRows::Pitches, 0), 127);
         assert_eq!(row_key(StepRows::Pads, 15), 51);
@@ -565,7 +566,7 @@ mod tests {
     #[test]
     fn view_draws_ties_lanes_and_muted_rows() {
         let p = beat();
-        let v = build_view(&p, 1174.5, 0.0, 0, Some(StepLane::Velocity), &|k| format!("k{k}"), Some((36, 4)));
+        let v = build_view(&p, SIZE, 0.0, 0, Some(StepLane::Velocity), &|k| format!("k{k}"), Some((36, 4)));
         assert_eq!(v.rows.len(), 8);
         assert_eq!(v.rows[0].name, "k36");
         assert!(!v.rows[2].audible && v.rows[2].muted);
@@ -583,12 +584,12 @@ mod tests {
     #[test]
     fn a_later_page_shows_its_steps_and_cuts_ties_at_the_edges() {
         let p = StepPattern { steps: 80, ..StepPattern::default() }.toggled(36, 30).with_lane(36, 30, StepLane::Tie, 4).toggled(37, 70);
-        let v = build_view(&p, 1174.5, 0.0, 1, None, &|k| format!("k{k}"), None);
+        let v = build_view(&p, SIZE, 0.0, 1, None, &|k| format!("k{k}"), None);
         assert_eq!((v.nums[0].text.as_str(), v.nums.len()), ("33", 32));
         let on: Vec<&CellView> = v.cells.iter().filter(|c| c.state == 2).collect();
         assert_eq!(on.len(), 1, "step 71 is on page 3");
         assert_eq!((on[0].x, on[0].w), (COL_X0, v.geom.cell_w + 2.0 * v.geom.pitch), "the tie from step 31 shows its last three steps");
-        let last = build_view(&p, 1174.5, 0.0, 2, None, &|k| format!("k{k}"), None);
+        let last = build_view(&p, SIZE, 0.0, 2, None, &|k| format!("k{k}"), None);
         assert_eq!(last.cells.iter().filter(|c| c.y == last.rows[0].y && c.state == 1).count(), 16, "steps 65..80 in the pattern, the rest past its end");
     }
 
@@ -607,7 +608,7 @@ mod tests {
             let mut t: Vec<f64> = (0..2000)
                 .map(|_| {
                     let s = std::time::Instant::now();
-                    std::hint::black_box(build_view(&p, 1174.5, 0.0, 0, lane, &|k| format!("Pad {}", k - 35), None));
+                    std::hint::black_box(build_view(&p, SIZE, 0.0, 0, lane, &|k| format!("Pad {}", k - 35), None));
                     s.elapsed().as_secs_f64() * 1e6
                 })
                 .collect();
