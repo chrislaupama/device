@@ -274,6 +274,14 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.midi_state = 7;
                 }
+                "review-clip-loop" => {
+                    a.reference_default = true;
+                    a.midi_state = 8;
+                }
+                "review-clip-loop-off" => {
+                    a.reference_default = true;
+                    a.midi_state = 9;
+                }
                 "review-smart-quantize" => {
                     a.reference_default = true;
                     a.midi_state = 3;
@@ -968,6 +976,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             if args.midi_state == 7 {
                 c.clip_menu_open(9);
+            }
+        }
+        if let (8..=9, Some(id)) = (args.midi_state, clip) {
+            // REVIEW STATE: a one-bar line in a four-bar clip that loops beats 2 to 4 of the
+            // bar (the first pass plays the whole bar, then the loop repeats); 9 turns Loop off.
+            let line = [(60u8, 0i64), (64, 2), (67, 4), (72, 6), (71, 8), (67, 10), (64, 12), (62, 14)];
+            let notes = line.iter().enumerate().map(|(i, &(pitch, s))| saine_core::midi::Note { id: i as u32 + 1, pitch, start: s * 240, length: 220, velocity: 96 }).collect();
+            let bar = 4 * saine_core::PPQ;
+            c.execute(saine_core::Command::SetMidiNotes { clip: id, notes });
+            c.execute(saine_core::Command::SetMidiLoop { clip: id, clip_loop: Some(saine_core::midi::ClipLoop { on: true, start: bar / 4, end: bar, span: 0 }), length: 4 * bar });
+            c.select_clip(clip);
+            c.seek_beats(22.0);
+            c.pr_sync_clip();
+            if args.midi_state == 9 {
+                c.pr_action("loop");
             }
         }
         if (3..=4).contains(&args.midi_state) {

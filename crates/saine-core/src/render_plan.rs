@@ -162,5 +162,5 @@ pub fn merge_midi(p: &Project, span: &ClipSpan) -> Option<MidiClip> {
     for (i, n) in notes.iter_mut().enumerate() {
         n.id = i as u32 + 1;
     }
-    Some(MidiClip { id: ClipId(0), name: merged_name(&first.name), start: span.start, length: span.end - span.start, notes, pattern: None, disabled: false, composer: None, scale: None })
+    Some(MidiClip { id: ClipId(0), name: merged_name(&first.name), start: span.start, length: span.end - span.start, notes, pattern: None, disabled: false, composer: None, scale: None, clip_loop: None })
 }

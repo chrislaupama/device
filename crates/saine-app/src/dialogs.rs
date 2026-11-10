@@ -422,8 +422,7 @@ impl Controller {
                         name: c.name.clone(),
                         start: beats(c.start),
                         length: beats(c.length),
-                        notes: c
-                            .notes
+                        notes: if c.pattern.is_some() { c.notes.clone() } else { c.tiled_notes() }
                             .iter()
                             .filter(|n| n.start >= 0 && n.start < c.length && n.length > 0)
                             .map(|n| SetNote { pitch: n.pitch.min(127), time: beats(n.start), duration: beats(n.length.min(c.length - n.start)), velocity: n.velocity.clamp(1, 127) })

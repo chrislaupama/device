@@ -1510,6 +1510,12 @@ impl Controller {
                 // Notes as displayed: piano-roll gesture preview for the open clip.
                 let notes = if self.pr.clip == Some(c.id) { self.pr_notes() } else { c.notes.clone() };
                 let shift = start - c.start; // left-resize preview keeps notes in place on the timeline
+                // A looping clip repeats its loop to the clip end; repeats are drawn dimmer.
+                let looped = if self.pr.clip == Some(c.id) { self.pr_loop_preview() } else { c.clip_loop }.filter(|l| l.on && c.pattern.is_none());
+                let notes: Vec<(saine_core::Note, bool)> = match looped {
+                    Some(l) => l.unroll(&notes, shift + len),
+                    None => notes.into_iter().map(|n| (n, false)).collect(),
+                };
                 self.clip_vis.push(ClipVis {
                     track_index,
                     start_beats: start as f64 / PPQ as f64,
@@ -1882,21 +1888,21 @@ impl Controller {
 
 /// Mini note view of a MIDI clip: (rel start, rel length, rel pitch 0 top .. 1 bottom).
 /// `shift` = ticks the clip start moved (left-resize preview).
-fn mini_notes(notes: &[saine_core::Note], shift: Ticks, len: Ticks) -> Vec<[f32; 3]> {
+fn mini_notes(notes: &[(saine_core::Note, bool)], shift: Ticks, len: Ticks) -> Vec<[f32; 4]> {
     if notes.is_empty() || len <= 0 {
         return Vec::new();
     }
-    let lo = notes.iter().map(|n| n.pitch).min().unwrap_or(60) as f32;
-    let hi = notes.iter().map(|n| n.pitch).max().unwrap_or(60) as f32;
+    let lo = notes.iter().map(|n| n.0.pitch).min().unwrap_or(60) as f32;
+    let hi = notes.iter().map(|n| n.0.pitch).max().unwrap_or(60) as f32;
     let pad = ((12.0 - (hi - lo)) / 2.0).max(0.0);
     let (lo, hi) = (lo - pad, hi + pad);
     notes
         .iter()
-        .filter_map(|n| {
+        .filter_map(|&(n, repeat)| {
             let s = n.start - shift;
             (s < len && s + n.length > 0).then(|| {
                 let s0 = s.max(0);
-                [s0 as f32 / len as f32, ((s + n.length).min(len) - s0) as f32 / len as f32, (hi - n.pitch as f32) / (hi - lo).max(1.0)]
+                [s0 as f32 / len as f32, ((s + n.length).min(len) - s0) as f32 / len as f32, (hi - n.pitch as f32) / (hi - lo).max(1.0), if repeat { 0.5 } else { 1.0 }]
             })
         })
         .collect()
