@@ -5,7 +5,7 @@
 //! current layout (hidden panel, scrolled-out track) return `None`, and the
 //! UI falls back to showing only the note text.
 
-use crate::timeline::{MASTER_H, TRACK_H, TRACK_PITCH};
+use crate::timeline::{MASTER_H, TRACK_H};
 
 /// Inputs that move things around.
 #[derive(Debug, Clone, Copy)]
@@ -18,6 +18,8 @@ pub struct Layout {
     /// Bottom panel shows the Clip tab (390 pt tall, no inspector).
     pub clip_tab: bool,
     pub scroll_y: f32,
+    /// Bottom panel height (src/splitters.rs `Controller::bottom_h`).
+    pub bottom: f32,
 }
 
 pub type Rect = (f32, f32, f32, f32);
@@ -30,7 +32,7 @@ pub const ASSISTANT_GAP: f32 = 5.0;
 
 impl Layout {
     pub fn bottom_h(&self) -> f32 {
-        if self.mixer || self.clip_tab { MIXER_BOTTOM_H } else { DEFAULT_BOTTOM_H }
+        self.bottom
     }
     /// Height of the browser/timeline row (y 78 ..).
     pub fn top_h(&self) -> f32 {
@@ -48,8 +50,9 @@ impl Layout {
     }
 }
 
-/// Window rect of a highlight target. `track_index` resolves `track:<id>:…` ids.
-pub fn target_rect(l: &Layout, target: &str, track_index: impl Fn(u64) -> Option<usize>) -> Option<Rect> {
+/// Window rect of a highlight target. `track_row` resolves `track:<id>:…` ids to the track's
+/// content offset and row height.
+pub fn target_rect(l: &Layout, target: &str, track_row: impl Fn(u64) -> Option<(f32, f32)>) -> Option<Rect> {
     let w = l.w;
     let (tx, tw) = (l.timeline_x(), l.timeline_w());
     let by = l.bottom_y();
@@ -103,7 +106,7 @@ pub fn target_rect(l: &Layout, target: &str, track_index: impl Fn(u64) -> Option
         "inspector.mono" if !l.mixer && !l.clip_tab => (96.0, by + 189.0, 54.0, 68.0),
         "inspector.fader" if !l.mixer && !l.clip_tab => (188.0, by + 35.0, 63.0, 260.0),
         "devices.add_device" if !l.mixer && !l.clip_tab => (270.0, by + 34.5, 182.5, 264.0),
-        t if t.starts_with("track:") => return track_rect(l, t, track_index),
+        t if t.starts_with("track:") => return track_rect(l, t, track_row),
         _ => return None,
     };
     Some(r)
@@ -139,25 +142,27 @@ pub fn bubble_anchor(ring: (f32, f32, f32, f32, f32), win_h: f32) -> (f32, f32, 
     if win_h - below < 102.0 { (ring.0, ring.1 - gap, true) } else { (ring.0, below, false) }
 }
 
-fn track_rect(l: &Layout, t: &str, track_index: impl Fn(u64) -> Option<usize>) -> Option<Rect> {
+fn track_rect(l: &Layout, t: &str, track_row: impl Fn(u64) -> Option<(f32, f32)>) -> Option<Rect> {
     let mut it = t.split(':');
     let (_, id, part) = (it.next()?, it.next()?.parse::<u64>().ok()?, it.next()?);
-    let i = track_index(id)?;
+    let (offset, row_h) = track_row(id)?;
     let (tx, tw) = (l.timeline_x(), l.timeline_w());
-    let y = 78.0 + 66.5 + i as f32 * TRACK_PITCH - l.scroll_y;
+    let y = 78.0 + 66.5 + offset - l.scroll_y;
+    // Header chrome is centred in the row (track_header.slint); offsets below are for 88 px rows.
+    let c = y + (row_h - TRACK_H) / 2.0;
     // Visible track area: between the top "Add track" row and the master row.
     let (top, bottom) = (78.0 + 66.5, 78.0 + l.top_h() - MASTER_H);
-    if y + TRACK_H <= top || y >= bottom {
+    if y + row_h <= top || y >= bottom {
         return None;
     }
     let r = match part {
-        "header" => (tx, y, 190.5, TRACK_H),
-        "mute" => (tx + 28.05, y + 41.65, 10.2, 10.2),
-        "solo" => (tx + 41.65, y + 41.65, 10.2, 10.2),
-        "arm" => (tx + 55.25, y + 41.65, 10.2, 10.2),
-        "pan" => (tx + 87.6, y + 37.4, 18.7, 18.7),
-        "volume" => (tx + 115.7, y + 41.65, 68.0, 11.9),
-        "lane" => (tx + 191.0, y, tw - 191.0, TRACK_H),
+        "header" => (tx, y, 190.5, row_h),
+        "mute" => (tx + 28.05, c + 41.65, 10.2, 10.2),
+        "solo" => (tx + 41.65, c + 41.65, 10.2, 10.2),
+        "arm" => (tx + 55.25, c + 41.65, 10.2, 10.2),
+        "pan" => (tx + 87.6, c + 37.4, 18.7, 18.7),
+        "volume" => (tx + 115.7, c + 41.65, 68.0, 11.9),
+        "lane" => (tx + 191.0, y, tw - 191.0, row_h),
         _ => return None,
     };
     Some(r)
@@ -169,7 +174,7 @@ mod tests {
     use saine_core::assistant::UI_TARGETS;
 
     fn default_layout() -> Layout {
-        Layout { w: 1440.0, h: 820.0, sounds: true, mixer: false, assistant: false, clip_tab: false, scroll_y: 0.0 }
+        Layout { w: 1440.0, h: 820.0, sounds: true, mixer: false, assistant: false, clip_tab: false, scroll_y: 0.0, bottom: DEFAULT_BOTTOM_H }
     }
 
     #[test]
@@ -190,10 +195,10 @@ mod tests {
         l.assistant = true;
         let ruler = target_rect(&l, "timeline.ruler", |_| None).unwrap();
         assert!((ruler.0 + ruler.2 - (1440.0 - 5.0 - 257.5)).abs() < 1e-3);
-        assert_eq!(target_rect(&l, "track:7:volume", |id| (id == 7).then_some(0)), Some((262.65 + 115.7, 144.5 + 41.65, 68.0, 11.9)));
+        assert_eq!(target_rect(&l, "track:7:volume", |id| (id == 7).then_some((0.0, TRACK_H))), Some((262.65 + 115.7, 144.5 + 41.65, 68.0, 11.9)));
         assert_eq!(target_rect(&l, "track:7:volume", |_| None), None);
         l.scroll_y = 1000.0;
-        assert_eq!(target_rect(&l, "track:7:header", |_| Some(0)), None, "scrolled out");
+        assert_eq!(target_rect(&l, "track:7:header", |_| Some((0.0, TRACK_H))), None, "scrolled out");
     }
 
     #[test]

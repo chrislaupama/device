@@ -249,6 +249,9 @@ impl StepPattern {
         if let Some(k) = self.muted.iter().chain(&self.soloed).find(|&&k| !self.rows.contains(k)) {
             return Err(format!("muted or soloed key {k} is not a row of this pattern"));
         }
+        if [&self.muted, &self.soloed].iter().any(|l| l.windows(2).any(|w| w[0] >= w[1])) {
+            return Err("muted and soloed keys must be sorted and unique".into());
+        }
         for (i, c) in self.cells.iter().enumerate() {
             if !self.rows.contains(c.key) {
                 return Err(format!("cell key {} is not a row of this pattern", c.key));

@@ -87,7 +87,7 @@ impl Rig {
             pan: 0.0,
             mute: false,
             solo: false,
-            clips: vec![ClipSnapshot { clip_id: 1, engine_asset: info.asset_id, timeline_start: 0, source_offset: 0, length: 96_000, gain: 1.0 }],
+            clips: vec![ClipSnapshot { clip_id: 1, engine_asset: info.asset_id, timeline_start: 0, source_offset: 0, length: 96_000, gain: 1.0, warp: None }],
             instrument: false,
             notes: vec![],
             automation: vec![],

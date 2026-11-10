@@ -272,9 +272,15 @@ export component TrackHeaderRow inherits Rectangle {
     in property <TrackLevel> level;
     in property <bool> automation;        // automation lanes shown (88 px rows: full chrome)
     in property <length> row-h: Tokens.track-h;
+    // Layout by row height, like the reference: full (48 px and up) shows the automation row
+    // when lanes are shown, compact drops it, minimal (under 28 px) keeps only the name row.
+    property <bool> full: root.row-h >= 40.8px;
+    property <bool> minimal: root.row-h < 23.8px;
+    property <bool> show-auto: root.automation && root.full;
     // Chrome block (16 + 4 + 16, plus 10 + 20 for the automation row) centred in the row.
-    property <length> top-y: root.automation ? 8.5px : 21.25px;
-    property <length> bottom-y: root.automation ? 27.2px : 39.95px;
+    property <length> centre-shift: (root.row-h - Tokens.track-h) / 2;
+    property <length> top-y: root.minimal ? (root.row-h - 13.6px) / 2 : (root.show-auto ? 8.5px : 21.25px) + root.centre-shift;
+    property <length> bottom-y: root.top-y + 18.7px;
     accessible-role: list-item;
     accessible-label: "Track " + root.t.number + " " + root.t.name;
     ta := TouchArea { clicked => { Studio.select-track(root.t.id); } }
@@ -303,23 +309,23 @@ export component TrackHeaderRow inherits Rectangle {
         text: root.t.name; color: Tokens.text-primary; font-size: 9.35px; font-weight: 700; letter-spacing: -0.374px;
         vertical-alignment: center; overflow: elide;
     }
-    TrackButton {
+    if !root.minimal: TrackButton {
         x: 28.05px; y: root.bottom-y + 1.7px; text: "M"; label: root.t.mute ? "Unmute track" : "Mute track";
         on: root.t.mute; on-color: Tokens.accent; pressed => { Studio.track-mute(root.t.id); }
     }
-    TrackButton {
+    if !root.minimal: TrackButton {
         x: 41.65px; y: root.bottom-y + 1.7px; text: "S"; label: root.t.solo ? "Unsolo track" : "Solo track";
         on: root.t.solo; on-color: Tokens.track-solo-on; on-text: #1a1a1a; pressed => { Studio.track-solo(root.t.id); }
     }
-    TrackButton {
+    if !root.minimal: TrackButton {
         x: 55.25px; y: root.bottom-y + 1.7px; text: "R"; label: root.t.arm ? "Disarm track for recording" : "Arm track for recording";
         on: root.t.arm; on-color: Tokens.track-arm-on; pressed => { Studio.track-arm(root.t.id); }
     }
-    if root.t.instrument: TrackButton {
+    if root.t.instrument && !root.minimal: TrackButton {
         x: 68.85px; y: root.bottom-y + 1.7px; text: "I"; label: root.t.monitor ? "Disable input monitoring" : "Enable input monitoring";
         on: root.t.monitor; on-color: Tokens.track-monitor-on; on-text: #1a1a1a; pressed => { Studio.track-monitor(root.t.id); }
     }
-    ChannelControls {
+    if !root.minimal: ChannelControls {
         edit-done => { root.edit-done(); }
         x: 27.2px; y: root.bottom-y; width: root.width - 34px; height: 13.6px;
         pan: root.t.pan; accent: root.t.pan-auto ? #65bce3 : root.t.color;
@@ -333,8 +339,8 @@ export component TrackHeaderRow inherits Rectangle {
         released => { Studio.gesture-end(); }
     }
     // Automation row: fold button in the gutter, then the pill (16 px in from the content box).
-    if root.automation: Rectangle {
-        x: 23.8px; y: 50.15px; width: 13.6px; height: 13.6px;
+    if root.show-auto: Rectangle {
+        x: 23.8px; y: 50.15px + root.centre-shift; width: 13.6px; height: 13.6px;
         accessible-role: button;
         accessible-label: (root.t.auto-expanded ? "Collapse " : "Show ") + root.t.auto-count + (root.t.auto-count == 1 ? " automated lane" : " automated lanes");
         fold-ta := TouchArea { clicked => { Studio.auto-expand(root.t.id); } }
@@ -343,8 +349,8 @@ export component TrackHeaderRow inherits Rectangle {
             d: root.t.auto-expanded ? Icons.chevron-down : Icons.chevron-right; ink: fold-ta.has-hover ? #ffffff : #ffffff8c;
         }
     }
-    if root.automation: AutoPill {
-        x: 40.8px; y: 48.45px; width: root.width - 34px - 13.6px;
+    if root.show-auto: AutoPill {
+        x: 40.8px; y: 48.45px + root.centre-shift; width: root.width - 34px - 13.6px;
         cat: root.t.auto-cat; param: root.t.auto-param; state: root.t.auto-state; accent: root.t.auto-accent;
         power => { Studio.auto-power(root.t.id, -1); }
         open(x, y) => { Studio.auto-open-picker(root.t.id, x, y); }

@@ -69,8 +69,12 @@ public:
     int32_t asset_load_file(const char* path, se_asset_info* out, std::string& err);
     int32_t asset_release(uint64_t id);
     int32_t asset_get_info(uint64_t id, se_asset_info* out) const;
+    int32_t asset_reverse(uint64_t id, se_asset_info* out);
     int32_t asset_compute_peaks(uint64_t id, uint64_t start_frame, uint32_t frames_per_peak, float* out_minmax,
                                 std::size_t capacity, std::size_t* out_count) const;
+    int32_t asset_detect_onsets(uint64_t id, se_onset* out, std::size_t capacity, std::size_t* out_count) const;
+    std::size_t warp_renders_pending() const { return warp_renderer_.pending(); }
+    void set_warp_renders_enabled(bool enabled) { warp_renderer_.set_enabled(enabled); }
     // Registers already-decoded audio (resampling to the engine rate if needed).
     int32_t asset_add_decoded(DecodedAudio&& audio, se_asset_info* out, std::string& err);
 
@@ -81,6 +85,7 @@ public:
     int32_t publish(const se_session_desc_v4& desc, std::string& err);
     int32_t publish(const se_session_desc_v5& desc, std::string& err);
     int32_t publish(const se_session_desc_v6& desc, std::string& err);
+    int32_t publish(const se_session_desc_v7& desc, std::string& err);
 
     // ---- plugins (see saine_engine.h; main thread where documented)
     bool plugin_is_live(uint64_t device_id);
@@ -181,6 +186,9 @@ private:
     void plan_pdc(RenderGraph& g) const;
     // Re-plans the current graph (clone + install). Requires plugins_.mutex().
     void replan_pdc_locked();
+    // Installs a copy of the current graph with the warp renders that finished
+    // since (clone + install). Requires plugins_.mutex().
+    void attach_warp_renders_locked();
     // Assigns synth states (reusing the previous graph's by track_id) and
     // publishes the graph to the RT side. Returns the graph's seq.
     uint64_t install_graph(std::unique_ptr<RenderGraph> built);
@@ -327,6 +335,11 @@ private:
     RenderContext live_ctx_;
     std::vector<float> in_scratch_; // kMaxInjectedInputChannels x max_block (deinterleaved injected input)
     std::vector<float> click_scratch_; // max_block, metronome before its delay line
+
+    // -- warped clips rendered ahead of time (resolve / evict under
+    // plugins_.mutex(), like every graph install). Declared last: its worker
+    // stops first.
+    WarpRenderer warp_renderer_;
 };
 
 } // namespace saine

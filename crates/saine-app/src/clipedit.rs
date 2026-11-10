@@ -16,9 +16,10 @@ pub const MENU_ROW: f32 = 20.4;
 pub const MENU_SEP: f32 = 10.6;
 
 /// Clip editor dropdowns, in `Studio.clip-menu` order: Speed, Warp, Mode (audio toolbar),
-/// Grid (piano roll footer), Type, Genre (clip sidebar). Only Grid is backed by the model.
-/// Genre lists the entries visible in the reference capture (its full list is catalogue data);
-/// Saine's library (saine_core::library::GENRES) has a feel for each.
+/// Grid (piano roll footer), Type, Genre (clip sidebar). Speed, Warp and Mode edit the clip's
+/// warp (`saine_core::warp`, presets and modes in the same order); Type and Genre pick the
+/// sidebar's library part (saine_core::library::GENRES has a feel for each).
+/// Genre lists the entries visible in the reference capture (its full list is catalogue data).
 const CLIP_MENUS: [&[&str]; 8] = [
     &["0.5x", "0.75x", "1x", "1.25x", "1.5x", "2x"],
     &["On", "Off"],
@@ -58,6 +59,12 @@ impl MenuAction {
             MenuAction::ToPattern => "Convert to Step Pattern",
             MenuAction::ToMidi => "Convert to MIDI Clip",
             MenuAction::Ask => "Ask",
+            MenuAction::Paste => "Paste",
+            MenuAction::SectionRename => "Rename…",
+            MenuAction::SectionColor => "Color",
+            MenuAction::SectionInsert => "Insert",
+            MenuAction::SectionDelete => "Delete section",
+            MenuAction::SectionClear => "Clear all sections",
         }
     }
     fn shortcut(self) -> &'static str {
@@ -70,15 +77,20 @@ impl MenuAction {
             MenuAction::Delete => "Del",
             MenuAction::Disable => "0",
             MenuAction::Ask => "⌘ K",
+            MenuAction::Paste => "⌘ V",
+            MenuAction::SectionDelete => "Del",
             _ => "",
         }
     }
     /// A separator is drawn above these entries (reference grouping).
     fn separated(self) -> bool {
-        matches!(self, MenuAction::Delete | MenuAction::Disable | MenuAction::Export | MenuAction::Transpose | MenuAction::Ask)
+        matches!(
+            self,
+            MenuAction::Delete | MenuAction::Disable | MenuAction::Export | MenuAction::Transpose | MenuAction::Ask | MenuAction::SectionRename | MenuAction::SectionDelete | MenuAction::SectionClear
+        )
     }
     fn submenu(self) -> bool {
-        matches!(self, MenuAction::Bounce | MenuAction::Transpose)
+        matches!(self, MenuAction::Bounce | MenuAction::Transpose | MenuAction::SectionColor | MenuAction::SectionInsert)
     }
 }
 
@@ -245,6 +257,9 @@ impl Controller {
     /// Right-click on the lanes (lane-local x/y for hit-testing, window wx/wy for placement).
     pub fn lane_context(&mut self, x: f32, y: f32, wx: f32, wy: f32, win: (f32, f32)) {
         use crate::timeline::{Hit, hit_test};
+        if self.section_context(x, y, wx, wy, win) {
+            return;
+        }
         let hit = hit_test(&self.view, self.lanes_size, self.project().tracks.len(), &self.clip_vis, x, y);
         let Hit::Clip { index, .. } = hit else {
             self.menu_close();
@@ -280,13 +295,22 @@ impl Controller {
                 (a, enabled)
             })
             .collect();
+        let items = std::mem::take(&mut self.menu.items);
+        self.open_menu(items, wx, wy, win);
+        self.menu.clip = Some(id);
+    }
+
+    /// Open the context menu with `items` at window point (wx, wy), kept inside the window.
+    pub fn open_menu(&mut self, items: Vec<(MenuAction, bool)>, wx: f32, wy: f32, win: (f32, f32)) {
+        self.menu.items = items;
         let (_, h) = layout_items(self.menu.items.iter().map(|&(a, en)| (String::new(), String::new(), en, a.separated(), false)));
         let mx = (wx + 2.0).min(win.0 - MENU_W - 4.0).max(4.0);
         let my = (wy + 2.0).min(win.1 - h - 4.0).max(4.0);
         self.menu.open = true;
         self.menu.sub_open = false;
         self.menu.pos = (mx, my);
-        self.menu.clip = Some(id);
+        self.menu.clip = None;
+        self.menu.section = None;
         self.ui_dirty = true;
     }
 
@@ -295,16 +319,21 @@ impl Controller {
             self.menu.open = false;
             self.menu.sub_open = false;
             self.menu.clip = None;
+            self.menu.section = None;
             self.ui_dirty = true;
         }
     }
 
     pub fn menu_activate(&mut self, index: usize) {
         let Some(&(action, enabled)) = self.menu.items.get(index) else { return };
-        let Some(id) = self.menu.clip else { return };
         if !enabled {
             return;
         }
+        if let Some(id) = self.menu.section {
+            self.section_menu_activate(id, action);
+            return;
+        }
+        let Some(id) = self.menu.clip else { return };
         if action == MenuAction::Transpose {
             self.menu.sub_open = !self.menu.sub_open;
             self.ui_dirty = true;
@@ -343,11 +372,16 @@ impl Controller {
         let Some(c) = self.project().midi_clip(id).cloned() else { return };
         let pattern = match c.pattern {
             Some(_) => None,
-            None => Some(StepPattern::from_notes(&c.notes, c.length, self.seq_rows_for(&c))),
+            None => {
+                let p = StepPattern::from_notes(&c.notes, c.length, self.seq_rows_for(&c));
+                if c.notes.iter().any(|n| p.rows.contains(n.pitch) && n.start >= p.length()) {
+                    self.set_status(format!("Too long for a step pattern: {} steps at most", saine_core::steps::MAX_STEPS), 3);
+                    return;
+                }
+                Some(p)
+            }
         };
-        if self.execute(Command::SetStepPattern { clip: id, pattern }) {
-            self.pr.seq.piano = false;
-        }
+        self.execute(Command::SetStepPattern { clip: id, pattern });
     }
 
     pub fn submenu_activate(&mut self, index: usize) {
@@ -360,28 +394,32 @@ impl Controller {
     // ---------------------------------------------------------------- view models
 
     /// Clip tab, piano roll, context menu and rename popup → Slint.
-    /// Open (or, when it is already open, close) a clip editor dropdown. Mode stays
-    /// disabled: Saine never warps, and the reference disables it with Warp off.
+    /// Open (or, when it is already open, close) a clip editor dropdown. Mode is
+    /// disabled with Warp off, as in the reference.
     pub fn clip_menu_open(&mut self, menu: i32) {
-        self.pr.menu = if (0..CLIP_MENUS.len() as i32).contains(&menu) && menu != 2 && self.pr.menu != menu && self.clip_menu_shown(menu) { menu } else { -1 };
+        let warped = self.ac_clip().is_some_and(|c| c.warp.enabled);
+        self.pr.menu = if (0..CLIP_MENUS.len() as i32).contains(&menu) && (menu != 2 || warped) && self.pr.menu != menu && self.clip_menu_shown(menu) { menu } else { -1 };
         self.ui_dirty = true;
     }
 
     /// The editor that owns the dropdown is on screen: the audio clip editor for Speed / Warp /
     /// Mode, the piano roll for Grid, Type and Genre.
-    fn clip_menu_shown(&self, menu: i32) -> bool {
-        match menu {
-            ..=2 => self.ac_clip().is_some(),
-            6 | 7 => self.seq_visible(),
-            4 => self.pr_visible() && !self.composer_is_drums(),
-            _ => self.pr_visible(),
-        }
+    pub(crate) fn clip_menu_shown(&self, menu: i32) -> bool {
+        self.bottom_tab == BottomTab::Clip
+            && match menu {
+                ..=2 => self.ac_clip().is_some(),
+                6 | 7 => self.seq_visible(),
+                4 => self.pr_visible() && !self.composer_is_drums(),
+                _ => self.pr_visible(),
+            }
     }
 
     fn clip_menu_active(&self, menu: i32) -> i32 {
+        let warp = self.ac_clip().map(|c| c.warp.clone()).unwrap_or_default();
         match menu {
-            0 => 2,
-            1 => 1,
+            0 => saine_core::warp::SPEED_PRESETS.iter().position(|s| (s - warp.effective_speed()).abs() < 0.01).map_or(-1, |i| i as i32),
+            1 => if warp.enabled { 0 } else { 1 },
+            2 => saine_core::WarpMode::ALL.iter().position(|&m| m == warp.mode).map_or(-1, |i| i as i32),
             3 => GRID_DENOMS.iter().position(|&d| d == self.pr.grid).map_or(-1, |i| i as i32),
             6 | 7 => self.seq_menu_active(menu == 7),
             4 | 5 => self.composer_menu_active(menu == 5),
@@ -398,7 +436,7 @@ impl Controller {
             }
             return;
         }
-        if menu < 0 || index == self.clip_menu_active(menu) {
+        if menu < 0 || index < 0 || index == self.clip_menu_active(menu) {
             return;
         }
         let i = index.max(0) as usize;
@@ -409,8 +447,12 @@ impl Controller {
             7 => return self.seq_set_rate(i),
             _ => {}
         }
-        let what = ["Clip speed", "Warp", "Warp mode"][menu.min(2) as usize];
-        self.set_status(format!("{what}: not in Saine yet"), 3);
+        match menu {
+            0 => self.warp_pick_speed(i),
+            1 => self.warp_pick_enabled(index == 0),
+            2 => self.warp_pick_mode(i),
+            _ => {}
+        }
     }
 
     fn push_composer(&self, s: &Studio) {
@@ -485,7 +527,13 @@ impl Controller {
             }
             (None, Some(c)) => {
                 s.set_ac_gain_text(format!("{:.1} dB", saine_core::model::gain_to_db(c.gain).max(-99.9)).into());
-                s.set_ac_bpm_text(format!("{}", p.transport.bpm.round()).into());
+                s.set_ac_bpm_text(format!("{}", self.ac_original_bpm(c).round()).into());
+                s.set_ac_speed_text(crate::warpedit::format_speed(c.warp.effective_speed()).into());
+                s.set_ac_warped(c.warp.enabled);
+                s.set_ac_mode_text(c.warp.mode.label().into());
+                s.set_ac_reversed(c.warp.reverse);
+                s.set_ac_transpose_text(self.ac_transpose_text(c).into());
+                s.set_ac_transpose_enabled(Self::ac_transpose_editable(c));
                 Some((c.name.clone(), p.clip_length_ticks(c), p.find_clip(c.id).map(|(t, _)| t)))
             }
             _ => None,
@@ -552,7 +600,11 @@ impl Controller {
             s.set_sub_h(sub_h);
         }
         // Rename popup.
-        let renaming = self.rename.and_then(|id| p.midi_clip(id).map(|c| c.name.clone()).or_else(|| p.clip(id).map(|c| c.name.clone())));
+        let renaming = self
+            .rename
+            .and_then(|id| p.midi_clip(id).map(|c| c.name.clone()).or_else(|| p.clip(id).map(|c| c.name.clone())))
+            .or_else(|| self.rename_section.and_then(|id| p.section_index(id)).map(|i| p.sections[i].name.clone()));
+        s.set_rename_title(if self.rename_section.is_some() { "Rename section" } else { "Rename clip" }.into());
         if renaming.is_some() != s.get_rename_open() {
             if let Some(n) = &renaming {
                 s.set_rename_text(n.clone().into());

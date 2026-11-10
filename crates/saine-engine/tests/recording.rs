@@ -130,7 +130,7 @@ fn record_armed_track_then_play_back_the_take() {
                 Command::AddAsset { asset: Asset { id: asset_id, relative_path: None, absolute_path: take.path.to_string_lossy().into(), sample_rate: take.sample_rate, channels: take.channels, frames: take.frames } },
                 Command::AddClip {
                     track,
-                    clip: Clip { id: ClipId(9_002), asset: asset_id, name: "Vox Take 1".into(), start: doc.project().frames_to_ticks(take.start_frame, RATE), source_offset: 0, source_length: take.frames, gain: 1.0 },
+                    clip: Clip { id: ClipId(9_002), asset: asset_id, name: "Vox Take 1".into(), start: doc.project().frames_to_ticks(take.start_frame, RATE), source_offset: 0, source_length: take.frames, gain: 1.0, warp: Default::default() },
                 },
             ],
         },

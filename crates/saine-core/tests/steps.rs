@@ -172,6 +172,11 @@ fn muted_and_soloed_rows_keep_their_notes_but_do_not_play() {
     let mut bad = beat();
     bad.muted.push(60);
     assert!(bad.validate().is_err());
+    let mut unsorted = beat();
+    unsorted.muted = vec![38, 37];
+    assert!(unsorted.validate().is_err());
+    unsorted.muted = vec![37, 37];
+    assert!(unsorted.validate().is_err());
 }
 
 #[test]
