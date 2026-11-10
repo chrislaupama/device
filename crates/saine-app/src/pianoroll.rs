@@ -1328,6 +1328,8 @@ pub fn midi_left_resize(clip: &MidiClip, new_start: Ticks) -> Option<Command> {
     if let Some(l) = clip.clip_loop {
         let start = (l.start - delta).max(0);
         let moved = ClipLoop { start, end: (l.end - delta).max(start + 1), span: 0, ..l };
+        // A trim past (or nearly past) the loop end loops the whole clip, as the Loop switch does.
+        let moved = if moved.len() <= PPQ / 4 { ClipLoop { on: l.on, ..ClipLoop::whole(end - new_start) } } else { moved };
         commands.push(Command::SetMidiLoop { clip: clip.id, clip_loop: Some(moved), length: end - new_start });
     }
     Some(Command::Batch { label: "Resize Clip".into(), commands })
@@ -1373,5 +1375,19 @@ mod tests {
         let Some(Command::Batch { commands, .. }) = midi_left_resize(&clip, 3840 + 480) else { panic!() };
         assert_eq!(commands[0], Command::ResizeMidiClip { clip: ClipId(5), start: 4320, length: 3360 });
         assert_eq!(commands[1], Command::SetMidiNotes { clip: ClipId(5), notes: vec![Note { id: 1, pitch: 60, start: 480, length: 480, velocity: 100 }] });
+    }
+
+    #[test]
+    fn left_resize_moves_the_loop_and_falls_back_to_the_whole_clip() {
+        let looped = |start, end| MidiClip { clip_loop: Some(ClipLoop { on: true, start, end, span: 0 }), ..MidiClip::empty(3840, 3840) };
+        let loop_of = |cmd: Option<Command>| match cmd {
+            Some(Command::Batch { commands, .. }) => commands.into_iter().find_map(|c| match c {
+                Command::SetMidiLoop { clip_loop, length, .. } => Some((clip_loop, length)),
+                _ => None,
+            }),
+            _ => None,
+        };
+        assert_eq!(loop_of(midi_left_resize(&looped(960, 2880), 3840 + 480)), Some((Some(ClipLoop { on: true, start: 480, end: 2400, span: 0 }), 3360)));
+        assert_eq!(loop_of(midi_left_resize(&looped(0, 960), 3840 + 2000)), Some((Some(ClipLoop::whole(1840)), 1840)));
     }
 }
