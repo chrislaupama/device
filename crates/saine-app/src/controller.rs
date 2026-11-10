@@ -13,7 +13,7 @@ use crate::assistant_provider::Provider;
 use crate::mixer::{self, Ballistics, MASTER_METER_ID};
 use crate::pianoroll::{self, PrState};
 use crate::synth::SynthUi;
-use crate::{AppWindow, AutoExtra, AutoLabel, ChatEntry, ChoiceItem, ClipLabel, DeviceCard, HighlightRect, MenuItem, MixerStrip, PluginRow, RulerLabel, PatternRow, SeqCell, SeqNum, SeqRow, StripMeter, Studio, SynthDisplay, SynthParam, TrackLevel, TrackRow, TreeRow, YLabel};
+use crate::{AppWindow, AutoExtra, AutoLabel, ChatEntry, ChoiceItem, ClipLabel, DeviceCard, HighlightRect, MenuItem, MixerStrip, PluginRow, RulerLabel, PatternRow, SeqCell, SeqNum, SeqRow, ShapeRow, StripMeter, Studio, SynthDisplay, SynthParam, TrackLevel, TrackRow, TreeRow, YLabel};
 use saine_core::{
     Asset, AssetId, Clip, ClipId, ColorIndex, Command, Document, MidiClip, Origin, PPQ, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, gain_to_db, persist, snapshot,
 };
@@ -361,6 +361,10 @@ pub struct Controller {
     pub(crate) composer_row_model: Rc<VecModel<PatternRow>>,
     /// The rows last pushed to `composer_row_model` (rebuilt only when they change).
     pub(crate) composer_rows_shown: std::cell::RefCell<Vec<crate::composer::RowView>>,
+    pub(crate) composer_shape_model: Rc<VecModel<ShapeRow>>,
+    pub(crate) composer_shape_shown: std::cell::RefCell<Vec<crate::composer::ShapeRowView>>,
+    /// The clip sidebar tab picked (true: Shape); None until one is picked.
+    pub(crate) composer_shape_tab: Option<bool>,
     pub(crate) menu_model: Rc<VecModel<MenuItem>>,
     pub(crate) sub_model: Rc<VecModel<MenuItem>>,
     /// Metronome on/off (app preference, not saved in the project).
@@ -477,6 +481,9 @@ impl Controller {
             seq_flash_model: Rc::new(VecModel::default()),
             composer_row_model: Rc::new(VecModel::default()),
             composer_rows_shown: Default::default(),
+            composer_shape_model: Rc::new(VecModel::default()),
+            composer_shape_shown: Default::default(),
+            composer_shape_tab: None,
             menu_model: Rc::new(VecModel::default()),
             sub_model: Rc::new(VecModel::default()),
             metronome_on: false,
@@ -545,6 +552,7 @@ impl Controller {
         let tips: Vec<SharedString> = std::iter::once("Turn steps on and off").chain(saine_core::steps::StepLane::ALL.iter().map(|l| l.spec().tip)).map(Into::into).collect();
         s.set_seq_lane_tips(ModelRc::new(VecModel::from(tips)));
         s.set_composer_rows(ModelRc::from(self.composer_row_model.clone()));
+        s.set_composer_shape_rows(ModelRc::from(self.composer_shape_model.clone()));
         s.set_menu_items(ModelRc::from(self.menu_model.clone()));
         s.set_sub_items(ModelRc::from(self.sub_model.clone()));
         s.set_synth_params(ModelRc::from(self.synth_params_model.clone()));
@@ -1660,8 +1668,9 @@ impl Controller {
             self.tracks_model.set_vec(rows);
         }
         s.set_project_name(p.name.clone().into());
-        s.set_undo_text(self.doc.undo_label().map_or("Undo".into(), |l| format!("Undo {l}")).into());
-        s.set_redo_text(self.doc.redo_label().map_or("Redo".into(), |l| format!("Redo {l}")).into());
+        let sentence = saine_core::history::sentence_case;
+        s.set_undo_text(self.doc.undo_label().map_or("Undo".into(), |l| format!("Undo {}", sentence(l))).into());
+        s.set_redo_text(self.doc.redo_label().map_or("Redo".into(), |l| format!("Redo {}", sentence(l))).into());
         s.set_can_undo(self.doc.can_undo());
         s.set_can_redo(self.doc.can_redo());
         s.set_can_copy(self.selected_clip.is_some());

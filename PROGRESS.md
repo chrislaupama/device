@@ -232,3 +232,18 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   disabled when the pattern has no cells.
 - Value lanes use the reference's palette: empty steps dark, Velocity filled from the bottom on a lighter base.
   Findings SQ-8..SQ-11.
+### 2026-11-10: pattern library, Genre list and Shape tab (SAIN-37, PR B)
+
+- Genre now lists Any and the reference's 21 genres. The ten new ones come after the old eleven, because saved
+  clips store the index. Each new genre has its own feel (scale, grid, swing, density, octave, progressions) and
+  its own drum grooves, including two new grooves, Dembow and Warehouse pulse. Drum swing now follows the
+  genre's feel, which gives the same result as before for the old genres. The Genre menu shows 12 rows and
+  scrolls to the active one.
+- Shape tab (`saine_core::shape`, `composer.rs`): Octave, Voices, Density, Length, Velocity, Nudge, Repeat and
+  Arp reshape what the clip plays. The unshaped notes stay in `Composer::base`. Each part, and the kept
+  notes, keep their own Shape. A slider drag is one undo step ("Shape Change"). If you edit notes after they
+  were shaped, they play as edited under a neutral Shape. The other rack rows show disabled with the
+  reference's tips. Tab rules are in SQ-13. Findings are SQ-12..SQ-15 in
+  `reference/findings/step-sequencer.md`.
+- Review states: `--state review-patterns-3` (Shape on a lead) and `review-patterns-4` (the Genre menu).
+- Next: Shape option A, the full rack with drawn curves and the remaining transforms.
