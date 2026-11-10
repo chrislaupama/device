@@ -15,9 +15,9 @@ nothing in it is missed. Start from the closest existing device and mirror it (g
 
 | Part | Where | Notes |
 |---|---|---|
-| Definition | `crates/dstudio-core/src/builtin/<id>.rs`, listed in `builtin::all()` (`builtin/mod.rs`) | parameters, layout, factory presets, behaviour |
+| Definition | `crates/dstudio-core/src/builtin/<id>.rs`, listed in `builtin::all()` (`crates/dstudio-core/src/builtin/mod.rs`) | parameters, layout, factory presets, behaviour |
 | DSP kernel | `engine/src/devices/<id>.cpp`, registered in `kBuiltinRegistry` (`engine/src/devices/builtin.cpp`), added to `engine/CMakeLists.txt` | a `BuiltinProcessor` plus a `BuiltinDescriptor` |
-| Standard card | derived by `crates/dstudio-app/src/device_panel.rs`, drawn by `ui/device_panel.slint` | nothing to write unless the layout needs a new control kind |
+| Standard card | derived by `crates/dstudio-app/src/device_panel.rs`, drawn by `crates/dstudio-app/ui/device_panel.slint` | nothing to write unless the layout needs a new control kind |
 | Custom view | `View::Custom("<name>")`: `device_views.rs` (`custom_body`), `device_canvas.rs`, `panel_graph.rs`, `device_editors.rs` in `crates/dstudio-app/src/` | only when the standard card can't express it |
 | Engine test | `engine/tests/devices/test_<id>.cpp` with `DeviceRig` / `DeviceSession` from `device_harness.hpp` | behaviour, not just "it runs" |
 | Benchmark row | `engine/bench/bench_devices.cpp` (`dstudio_device_bench`) | numbers go in the pull request |
@@ -63,6 +63,6 @@ nothing in it is missed. Start from the closest existing device and mirror it (g
 
 ```sh
 cargo test --workspace
-cd engine && cmake --build --preset default && ctest --preset default && ./build/dstudio_device_bench
+cd engine && cmake --preset default && cmake --build --preset default && ctest --preset default && ./build/dstudio_device_bench
 cargo run --release -p dstudio-app -- --state reference-<id> --offscreen --screenshot /tmp/<id>.png
 ```

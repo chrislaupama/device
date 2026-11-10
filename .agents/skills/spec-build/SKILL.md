@@ -18,7 +18,8 @@ For each unticked task in `tasks.md`, in order:
    sentences.
 4. Run the task's verification. Also run the fast checks for what you touched:
    - Rust: `cargo test -p <crate>` (and `cargo clippy -p <crate>`).
-   - Engine: `cmake --build --preset default && ctest --preset default` from `engine/`.
+   - Engine: `cmake --preset default && cmake --build --preset default && ctest --preset default`
+     from `engine/` (the first command configures the build tree; it is quick when it already exists).
    - App: render the review state, or run the relevant self-test section.
 5. Tick the task (`- [x]`) only when its verification passed. Commit at sensible points with
    messages that say what and why.

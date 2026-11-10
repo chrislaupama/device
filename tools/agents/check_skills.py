@@ -5,9 +5,10 @@ Skills describe the codebase, so they go stale when code moves. This catches the
 
   * every skill is .agents/skills/<name>/SKILL.md with front matter giving `name` (equal to the
     folder name) and a one-line `description`;
-  * every repository path a skill or AGENTS.md names in backticks still exists (paths that start
-    with a top-level folder or file of the repository; ones with placeholders such as <id> are
-    skipped);
+  * every repository path a skill or AGENTS.md names in backticks still exists. A path is any
+    backticked token with a slash in it (written from the repository root), or a bare name of a
+    current top-level entry or of a root document such as `PROGRESS.md`. Tokens with placeholders
+    such as <id>, Rust paths (`a::b`), git refs (`origin/main`) and relative paths are skipped;
   * every skill AGENTS.md mentions exists, and every skill is mentioned in AGENTS.md.
 
 Usage: python3 tools/agents/check_skills.py     (exit status 1 on any problem)
@@ -21,9 +22,13 @@ ROOT = Path(__file__).resolve().parents[2]
 SKILLS = ROOT / ".agents" / "skills"
 GUIDE = ROOT / "AGENTS.md"
 TICKED = re.compile(r"`([^`\n]+)`")
+# A root document named in capitals, such as README.md or PROGRESS.md. SKILL.md is the name of
+# every skill file, not a root document.
+ROOT_DOC = re.compile(r"[A-Z][A-Z0-9_-]*\.md")
 
 
 def front_matter(text):
+    """Return the front matter fields of a skill file as a dict, or None if it has none."""
     if not text.startswith("---\n"):
         return None
     end = text.find("\n---\n", 4)
@@ -38,17 +43,21 @@ def front_matter(text):
 
 
 def named_paths(text, top_level):
+    """Yield every backticked token in text that names a repository path."""
     for token in TICKED.findall(text):
         token = token.strip().rstrip(".,;:")
-        if any(c in token for c in "<>*{}$ ") or token.startswith("-"):
+        if any(c in token for c in "<>*{}$ ") or "::" in token:
             continue
-        token = token.split("::")[0]
-        first = token.split("/")[0]
-        if first in top_level and ("/" in token or "." in first):
+        if token.startswith(("-", "/", "~", ".", "http", "origin/")):
+            continue
+        if "/" in token:
+            yield token
+        elif token in top_level and "." in token or ROOT_DOC.fullmatch(token) and token != "SKILL.md":
             yield token
 
 
 def main():
+    """Check every skill and AGENTS.md; print the problems and return the exit status."""
     problems = []
     top_level = {p.name for p in ROOT.iterdir() if p.name != ".git"}
     names = []

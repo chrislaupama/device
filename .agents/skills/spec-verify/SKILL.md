@@ -26,7 +26,7 @@ through a `Command` with a working undo; old projects still load; ABI layout tes
 ```sh
 cargo fmt --all --check && cargo clippy --workspace
 cargo test --workspace
-cd engine && cmake --build --preset default && ctest --preset default
+cd engine && cmake --preset default && cmake --build --preset default && ctest --preset default
 cargo run --release -p dstudio-app -- --self-test --no-audio
 ```
 
