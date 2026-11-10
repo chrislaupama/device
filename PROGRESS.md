@@ -218,8 +218,18 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Header minimap drags (window and zoom grabs) hide the pointer and put it back on the grabbed spot on release
   (`src/pointer.rs`: NSCursor + winit warp; self-test records the requests). Findings S68.
 - Devices minimap at the right of the Clip / Devices strip (`src/devminimap.rs`, `DevMinimap` in `ui/app.slint`):
-  tiles with glyphs, chain frames, window, jump / drag / wheel, Esc restores. Findings S69, S70. Not done: tile
-  pictures, glide / fade animations, hover name.
+  tiles with glyphs, chain frames, window, jump / drag / wheel, Esc restores. Findings S69, S70. Not done: the hover name.
+
+### 2026-11-10: grid size and snap, clip-editor rulers, minimap pictures and motion (SAIN-33)
+
+- Timeline toolbar snap control (`src/snap.rs`): the readout toggles snapping, the chevron opens Off / Auto / 1 Bar ...
+  1/32 / triplet sizes. Auto follows the ruler step for the zoom (two beats at the default zoom, as the reference app's rule), a
+  fixed size overrides it when finer (doubled to 6 px), Cmd at the press drags off the grid. Findings S76.
+- Piano roll and audio clip editor rulers and grids use the same `RulerSteps` rules (bar labels by power-of-two
+  steps, ticks, 16 / 8 reference px sub and beat lines). Findings S77, S78.
+- Devices minimap tiles show pictures we draw from each device's own layout (`Art`), and fade in (300 ms) and glide
+  (spring) when the chain changes; the strip redraws only while they run. Findings S79, S80. `--drag-bench devmm`
+  benchmarks it; `--state review-snap-menu` shows the menu.
 
 ### 2026-11-10: step sequencer, gaps closed (SAIN-37)
 

@@ -61,6 +61,7 @@ mod recording;
 mod sampler_panel;
 mod selftest;
 mod settings;
+mod snap;
 mod stepseq;
 mod sections;
 mod splitters;
@@ -159,6 +160,8 @@ struct Args {
     device_chain_review: bool,
     /// review-devices-minimap: Instrument track with the Synth and a long chain of built-in effects (the Devices minimap shows).
     devices_minimap_review: bool,
+    /// review-snap-menu: the timeline's snap menu open, with 1/8 chosen.
+    snap_menu_review: bool,
     /// reference-<built-in device id>: that device alone in an audio track's chain (an instrument on an instrument track).
     device_state: Option<&'static str>,
     /// Files loaded as if dropped on the window (after the state is set up).
@@ -197,8 +200,9 @@ struct Args {
     /// --render-bench N: offscreen, render the state N times and print the mean / median /
     /// p95 milliseconds per full window render (Slint + wgpu surfaces + readback), then exit.
     render_bench: u32,
-    /// --drag-bench track|bottom: with --render-bench, move a track-height or splitter drag
-    /// one step (controller update + view-model sync) before each render.
+    /// --drag-bench track|bottom|devmm|devmm-still: with --render-bench, move a track-height or splitter drag
+    /// one step (controller update + view-model sync) before each render; devmm adds and removes
+    /// a device every 24 renders so the Devices minimap fades and glides (devmm-still: the same without the motion, as a baseline).
     drag_bench: Option<String>,
     self_test: bool,
 }
@@ -380,6 +384,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.devices_minimap_review = true;
                 }
+                "review-snap-menu" => {
+                    a.reference_default = true;
+                    a.snap_menu_review = true;
+                }
                 "reference-lfo" => {
                     a.reference_default = true;
                     a.modulation_state = 1;
@@ -408,7 +416,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -470,8 +478,8 @@ fn parse_args() -> Result<Args, String> {
             }
             "--drag-bench" => {
                 let v = value(&mut i)?;
-                if v != "track" && v != "bottom" {
-                    return Err(format!("--drag-bench: want track or bottom, got {v:?}"));
+                if !["track", "bottom", "devmm", "devmm-still"].contains(&v.as_str()) {
+                    return Err(format!("--drag-bench: want track, bottom, devmm or devmm-still, got {v:?}"));
                 }
                 a.drag_bench = Some(v.to_string());
             }
@@ -1229,6 +1237,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(20.0);
     }
+    if args.snap_menu_review {
+        let mut c = ctl.borrow_mut();
+        c.snap.pick(5);
+        c.snap_menu_toggle(1211.0, 98.0);
+    }
     if args.devices_minimap_review {
         // Review and benchmark: the Instrument track's Synth followed by ten built-in effects, so the chain is
         // several panels wide.
@@ -1557,7 +1570,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_lane_double, |c, x: f32, y: f32| {
         c.section_double(x, y);
     });
-    on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, _cmd: bool, alt: bool| c.pointer_mods(kind, x, y, shift, alt));
+    on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, cmd: bool, alt: bool| {
+        if kind == 0 {
+            c.snap.bypass = cmd;
+        }
+        c.pointer_mods(kind, x, y, shift, alt)
+    });
+    on!(on_snap_toggle, |c| c.snap_toggle());
+    on!(on_snap_menu_toggle, |c, x: f32, y: f32| c.snap_menu_toggle(x, y));
+    on!(on_snap_menu_pick, |c, i: i32| c.snap_menu_pick(i.max(0) as usize));
+    on!(on_snap_menu_dismiss, |c| {
+        c.snap.menu = None;
+        c.ui_dirty = true;
+    });
     on!(on_minimap_pointer, |c, kind: i32, x: f32, y: f32, w: f32, ox: f32, oy: f32| c.minimap_pointer(kind, x, y, w, ox, oy));
     on!(on_devmm_pointer, |c, kind: i32, x: f32, y: f32, ox: f32, oy: f32| c.devmm_pointer(kind, x, y, ox, oy));
     on!(on_devmm_scroll, |c, dx: f32, dy: f32| c.devmm_wheel(dx, dy));
@@ -2212,7 +2237,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         f.phases[ph][2].0.push(ms);
                     }
                     let (animating, ready) = match ctl.try_borrow() {
-                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || c.files.audition.animating || !c.assistant.highlights.is_empty() || c.rec.recording, c.pending_jobs == 0 && want_menu.is_none_or(|m| c.pr.menu == m)),
+                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || c.files.audition.animating || !c.assistant.highlights.is_empty() || c.rec.recording || c.devmm_animating(), c.pending_jobs == 0 && want_menu.is_none_or(|m| c.pr.menu == m)),
                         Err(_) => (true, false),
                     };
                     if ready {
@@ -2319,6 +2344,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let Some(a) = aw.upgrade() else { return };
             zm.borrow_mut().sync(a.window());
             let mut ms = Vec::with_capacity(n);
+            let mut ui_ms = 0.0;
             let track = dc.borrow().project().tracks[0].id.0 as i32;
             match drag.as_deref() {
                 Some("track") => dc.borrow_mut().track_resize_drag(track, 0, 200.0),
@@ -2331,10 +2357,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 match drag.as_deref() {
                     Some("track") => dc.borrow_mut().track_resize_drag(track, 1, 200.0 + dy),
                     Some("bottom") => dc.borrow_mut().bottom_resize(1, 500.0 - dy),
+                    Some(m @ ("devmm" | "devmm-still")) if i % 24 == 0 => dc.borrow_mut().devmm_bench_toggle(m == "devmm-still"),
                     _ => {}
                 }
                 if drag.is_some() {
+                    let t_ui = Instant::now();
                     dc.borrow_mut().update_ui(&a);
+                    if i >= 5 {
+                        ui_ms += t_ui.elapsed().as_secs_f64() * 1e3;
+                    }
                 }
                 if let Err(e) = a.window().take_snapshot() {
                     eprintln!("--render-bench: snapshot failed: {e}");
@@ -2347,7 +2378,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             ms.sort_by(f64::total_cmp);
             let mean = ms.iter().sum::<f64>() / n as f64;
             let median = if n % 2 == 0 { (ms[n / 2 - 1] + ms[n / 2]) / 2.0 } else { ms[n / 2] };
-            println!("{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{median:.3},\"p95_ms\":{:.3}}}", ms[(n * 95 / 100).min(n - 1)]);
+            println!("{{\"renders\":{n},\"mean_ms\":{mean:.3},\"median_ms\":{median:.3},\"p95_ms\":{:.3},\"update_ui_mean_ms\":{:.3}}}", ms[(n * 95 / 100).min(n - 1)], ui_ms / n as f64);
             let _ = slint::quit_event_loop();
         });
     }
