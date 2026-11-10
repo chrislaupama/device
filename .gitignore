@@ -11,3 +11,6 @@ tools/reference/bin/
 # Diff heatmaps embed traces of the reference UI (logo/icons); keep local.
 crates/dstudio-app/fidelity/*-diff.png
 __pycache__/
+
+# Local workspace tool config (Paradev); not part of the project.
+.paradev/
