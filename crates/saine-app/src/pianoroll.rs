@@ -54,6 +54,8 @@ pub struct PrView {
     pub start: f64,
     pub scroll: f32,
     pub rows: Rows,
+    /// Row height: \`ROW_H\` until the vertical zoom slider moves.
+    pub row_h: f32,
 }
 
 /// The pitch rows the piano roll shows, top first: all 128, or (scale view) the scale
@@ -115,7 +117,7 @@ impl PrView {
     pub fn fit_from(gx: f32, size: (f32, f32), clip_beats: f64, scroll: f32) -> Self {
         let beats = clip_beats.max(0.25);
         let ppb = (size.0 - gx).max(40.0) as f64 / (beats * (1.0 + 2.0 * FIT_PAD));
-        PrView { gx, w: size.0, h: size.1, ppb, start: -FIT_PAD * beats, scroll, rows: Rows::ALL }
+        PrView { gx, w: size.0, h: size.1, ppb, start: -FIT_PAD * beats, scroll, rows: Rows::ALL, row_h: ROW_H }
     }
     pub fn x_of(&self, beat: f64) -> f32 {
         self.gx + ((beat - self.start) * self.ppb) as f32
@@ -125,10 +127,10 @@ impl PrView {
     }
     pub fn y_of(&self, pitch: i32) -> f32 {
         let row = if (0..128).contains(&pitch) { self.rows.row[pitch as usize] as i32 } else { 127 - pitch };
-        GRID_Y + row as f32 * ROW_H - self.scroll
+        GRID_Y + row as f32 * self.row_h - self.scroll
     }
     pub fn pitch_at(&self, y: f32) -> i32 {
-        let r = ((y - GRID_Y + self.scroll) / ROW_H).floor() as i32;
+        let r = ((y - GRID_Y + self.scroll) / self.row_h).floor() as i32;
         let n = self.rows.len() as i32;
         if r < 0 {
             self.rows.pitch[0] as i32 - r
@@ -139,19 +141,35 @@ impl PrView {
         }
     }
     pub fn max_scroll(&self) -> f32 {
-        (self.rows.len() as f32 * ROW_H - (self.h - GRID_Y)).max(0.0)
+        (self.rows.len() as f32 * self.row_h - (self.h - GRID_Y)).max(0.0)
     }
     /// Pitches of the rows on screen, top first.
     pub fn visible(&self) -> impl Iterator<Item = i32> + '_ {
-        let first = ((self.scroll / ROW_H).floor() as i32).max(0);
-        let last = (((self.h - GRID_Y + self.scroll) / ROW_H).ceil() as i32).min(self.rows.len() as i32 - 1);
+        let first = ((self.scroll / self.row_h).floor() as i32).max(0);
+        let last = (((self.h - GRID_Y + self.scroll) / self.row_h).ceil() as i32).min(self.rows.len() as i32 - 1);
         (first..=last).map(|r| self.rows.pitch[r as usize] as i32)
     }
     pub fn note_rect(&self, n: &Note) -> (f32, f32, f32, f32) {
         let x0 = self.x_of(n.start as f64 / PPQ as f64);
         let x1 = self.x_of((n.start + n.length) as f64 / PPQ as f64);
-        (x0, self.y_of(n.pitch as i32), (x1 - x0).max(2.0), ROW_H)
+        (x0, self.y_of(n.pitch as i32), (x1 - x0).max(2.0), self.row_h)
     }
+}
+
+/// Points per beat at horizontal slider position \`z\`: from the fitted zoom (0) to one reference
+/// px per tick (1), on a log scale.
+pub fn zoom_ppb(fit: f64, z: f32) -> f64 {
+    let max = PPQ as f64 * REF;
+    if fit >= max { fit } else { fit * (max / fit).powf(z.clamp(0.0, 1.0) as f64) }
+}
+
+/// Row height range of the vertical slider: at least 3 reference px (16 in the scale view) and
+/// enough to fill the view with the rows shown, at most 32 reference px.
+pub fn row_h_range(v: &PrView) -> (f32, f32) {
+    let r = REF as f32;
+    let fill = (v.h - GRID_Y).max(0.0) / v.rows.len().max(1) as f32;
+    let lo = (if v.rows.folded() { 16.0 } else { 3.0 } * r).max(fill);
+    (lo, (32.0 * r).max(lo))
 }
 
 pub fn is_black(pitch: i32) -> bool {
@@ -257,6 +275,11 @@ pub struct PrState {
     /// The rows the view last showed: when they change (Scale rows on or off, a new scale,
     /// undo or redo) the pitch in the middle of the view stays in place.
     pub rows: Rows,
+    /// Toolbar zoom sliders: horizontal 0 (fit the clip) .. 1 (one reference px per tick), with
+    /// the beat at the grid's left edge, and the row height the vertical slider set.
+    pub hzoom: f32,
+    pub hstart: f64,
+    pub vzoom: Option<f32>,
 }
 
 impl Default for PrState {
@@ -282,6 +305,9 @@ impl Default for PrState {
             ac_edit: None,
             ac_last_down: None,
             rows: Rows::ALL,
+            hzoom: 0.0,
+            hstart: 0.0,
+            vzoom: None,
         }
     }
 }
@@ -406,12 +432,12 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
         for p in v.visible() {
             let y = v.y_of(p);
             let c = if is_black(p) { 0x151619 } else { 0x191a1d };
-            b.push(px.rect(gx, y, w - gx, ROW_H, rgba(rgb(c), 1.0)));
+            b.push(px.rect(gx, y, w - gx, v.row_h, rgba(rgb(c), 1.0)));
             if let Some(k) = sc.key.filter(|k| k.contains(p)) {
-                b.push(px.rect(gx, y, w - gx, ROW_H, rgba(sc.color, if k.is_root(p) { 0.22 } else { 0.08 })));
+                b.push(px.rect(gx, y, w - gx, v.row_h, rgba(sc.color, if k.is_root(p) { 0.22 } else { 0.08 })));
             }
             if p.rem_euclid(12) == 0 {
-                b.push(px.rect(gx, y + ROW_H - 1.0, w - gx, 1.0, rgba(rgb(0x252629), 1.0)));
+                b.push(px.rect(gx, y + v.row_h - 1.0, w - gx, 1.0, rgba(rgb(0x252629), 1.0)));
             }
         }
     }
@@ -504,16 +530,16 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
             let y = v.y_of(p);
             let line = rgba(rgb(0x555555), 1.0);
             if is_black(p) {
-                b.push(px.rect(30.5, y + ROW_H / 2.0 - 1.0, 19.5, 1.0, line));
-                b.push(px.rect(0.5, y, 30.0, ROW_H, rgba(rgb(0x1a1a1a), 1.0)));
+                b.push(px.rect(30.5, y + v.row_h / 2.0 - 1.0, 19.5, 1.0, line));
+                b.push(px.rect(0.5, y, 30.0, v.row_h, rgba(rgb(0x1a1a1a), 1.0)));
                 b.push(px.rect(0.5, y, 30.0, 1.0, rgba(rgb(0x3c3c3c), 1.0)));
-                b.push(px.rect(0.5, y + ROW_H - 1.0, 30.0, 1.0, rgba(rgb(0x0d0d0d), 1.0)));
+                b.push(px.rect(0.5, y + v.row_h - 1.0, 30.0, 1.0, rgba(rgb(0x0d0d0d), 1.0)));
             } else if matches!(p.rem_euclid(12), 0 | 5) || v.rows.folded() {
-                b.push(px.rect(0.5, y + ROW_H - 1.0, 49.5, 1.0, line));
+                b.push(px.rect(0.5, y + v.row_h - 1.0, 49.5, 1.0, line));
             }
             if let Some(k) = sc.key.filter(|k| k.contains(p)) {
                 let sw = if k.is_root(p) { 6.0 } else { 3.0 };
-                b.push(px.rect(50.0 - sw, y, sw, ROW_H, rgba(sc.color, 1.0)));
+                b.push(px.rect(50.0 - sw, y, sw, v.row_h, rgba(sc.color, 1.0)));
             }
         }
         b.push(px.rect(50.0, GRID_Y, 1.0, h - GRID_Y, rgba(rgb(0x333333), 1.0)));
@@ -668,6 +694,7 @@ impl Controller {
             self.pr.drag = None;
             self.pr.value_drag = None;
             self.pr.scroll = DEFAULT_SCROLL;
+            (self.pr.hzoom, self.pr.vzoom) = (0.0, None);
             self.pr.seq = crate::stepseq::SeqState::opened(self.pr_clip().and_then(|c| c.pattern.as_ref()));
             // A clip with notes opens centred on its pitch range (empty clips: C4 as in the reference).
             if let Some(c) = self.pr_clip()
@@ -677,7 +704,7 @@ impl Controller {
                 let hi = c.notes.iter().map(|n| n.pitch).max().unwrap_or(60) as i32;
                 self.pr.scroll = 0.0;
                 let v = self.pr_view();
-                self.pr.scroll = (v.y_of(lo) + v.y_of(hi)) / 2.0 - GRID_Y + ROW_H / 2.0 - (self.pr.size.1 - GRID_Y) / 2.0;
+                self.pr.scroll = (v.y_of(lo) + v.y_of(hi)) / 2.0 - GRID_Y + v.row_h / 2.0 - (self.pr.size.1 - GRID_Y) / 2.0;
             }
             self.pr.rows = self.pr_view().rows;
         } else {
@@ -688,7 +715,7 @@ impl Controller {
                 old.scroll = old.scroll.clamp(0.0, old.max_scroll());
                 let centre = old.pitch_at(mid);
                 let top = PrView { scroll: 0.0, ..v };
-                self.pr.scroll = (top.y_of(centre) + ROW_H / 2.0 - mid).clamp(0.0, v.max_scroll());
+                self.pr.scroll = (top.y_of(centre) + v.row_h / 2.0 - mid).clamp(0.0, v.max_scroll());
                 self.pr.rows = v.rows;
             }
         }
@@ -706,6 +733,14 @@ impl Controller {
         midi::grid_ticks(self.pr.grid)
     }
 
+    /// The step note edits snap to: the toolbar's snap size (shared with the timeline, S76) at
+    /// the editor's zoom. Also the length of a drawn note and the shortest edit while snap is off.
+    fn pr_snap_ticks(&self, v: &PrView) -> Ticks {
+        let bar = self.project().ticks_per_bar() as f64 / PPQ as f64;
+        let beats = crate::timeline::note_snap_beats(v.ppb / REF, bar, self.snap.grid);
+        ((beats * PPQ as f64).round() as Ticks).max(1)
+    }
+
     pub fn pr_view(&self) -> PrView {
         // Gestures keep the view, except Transpose: an unwarped clip's length follows it.
         if let Some(view) = self.pr.ac_drag.as_ref().filter(|d| !matches!(d.kind, crate::warpedit::AcDragKind::Transpose { .. })).map(|d| d.view) {
@@ -713,7 +748,7 @@ impl Controller {
         }
         if let Some(c) = self.ac_clip() {
             let len = self.project().clip_length_ticks(c);
-            return PrView::fit_from(0.0, self.pr.size, len as f64 / PPQ as f64, 0.0);
+            return self.pr_zoomed(PrView::fit_from(0.0, self.pr.size, len as f64 / PPQ as f64, 0.0));
         }
         let len = self.pr_clip().map(|c| c.length).unwrap_or(self.project().ticks_per_bar());
         let mut v = PrView::fit(self.pr.size, len as f64 / PPQ as f64, self.pr.scroll);
@@ -721,8 +756,51 @@ impl Controller {
             let notes = self.pr_clip().map(|c| c.notes.iter().map(|n| n.pitch).collect::<Vec<_>>()).unwrap_or_default();
             v.rows = Rows::only(&scale::fold_rows(key, notes));
         }
+        let mut v = self.pr_zoomed(v);
+        if let Some(rh) = self.pr.vzoom {
+            let (lo, hi) = row_h_range(&v);
+            v.row_h = rh.clamp(lo, hi);
+        }
         v.scroll = v.scroll.clamp(0.0, v.max_scroll());
         v
+    }
+
+    /// The fitted view at the horizontal slider's zoom, panned within the fitted range.
+    fn pr_zoomed(&self, mut v: PrView) -> PrView {
+        if self.pr.hzoom <= 0.0 {
+            return v;
+        }
+        let (fit_start, fit_end) = (v.start, v.beat_at(v.w));
+        v.ppb = zoom_ppb(v.ppb, self.pr.hzoom);
+        let shown = (v.w - v.gx) as f64 / v.ppb;
+        v.start = self.pr.hstart.clamp(fit_start, (fit_end - shown).max(fit_start));
+        v
+    }
+
+    /// Slider positions 0..1 for the toolbar: (vertical, horizontal).
+    pub fn pr_zoom_values(&self) -> (f32, f32) {
+        let v = self.pr_view();
+        let (lo, hi) = row_h_range(&v);
+        let vz = if hi > lo { ((v.row_h - lo) / (hi - lo)).clamp(0.0, 1.0) } else { 0.0 };
+        (vz, self.pr.hzoom)
+    }
+
+    /// A zoom slider moved to \`z\` (0..1). Vertical (\`axis\` 0) keeps the row in the middle of the
+    /// view in place; horizontal keeps the grid's left edge, as in the reference.
+    pub fn pr_zoom(&mut self, axis: i32, z: f32) {
+        let z = z.clamp(0.0, 1.0);
+        let v = self.pr_view();
+        if axis == 0 {
+            let (lo, hi) = row_h_range(&v);
+            let rh = lo + z * (hi - lo);
+            let mid = (v.h - GRID_Y) / 2.0;
+            self.pr.vzoom = Some(rh);
+            self.pr.scroll = ((v.scroll + mid) / v.row_h * rh - mid).max(0.0);
+        } else {
+            self.pr.hstart = v.start;
+            self.pr.hzoom = z;
+        }
+        self.ui_dirty = true;
     }
 
     /// Notes as displayed (gesture preview while dragging).
@@ -940,11 +1018,12 @@ impl Controller {
         }
         let Some(clip) = self.pr_clip().cloned() else { return };
         let v = self.pr_view();
-        let g = self.grid_ticks();
+        let g = self.pr_snap_ticks(&v);
+        let sg = if self.snap.on { g } else { 1 };
         let beat = v.beat_at(x);
         let raw = (beat * PPQ as f64).round() as Ticks;
-        let snap = |t: Ticks| ((t as f64 / g as f64).round() as Ticks) * g;
-        let snap_floor = |t: Ticks| t.div_euclid(g) * g;
+        let snap = |t: Ticks| ((t as f64 / sg as f64).round() as Ticks) * sg;
+        let snap_floor = |t: Ticks| t.div_euclid(sg) * sg;
         self.ui_dirty = true;
         match kind {
             0 => {
@@ -1050,7 +1129,7 @@ impl Controller {
                     }
                     PrDrag::Draw { id, mut preview } => {
                         if let Some(n) = preview.iter_mut().find(|n| n.id == id) {
-                            let end = ((raw as f64 / g as f64).ceil() as Ticks) * g;
+                            let end = ((raw as f64 / sg as f64).ceil() as Ticks) * sg;
                             n.length = (end - n.start).max(g);
                         }
                         self.pr.drag = Some(PrDrag::Draw { id, preview });
@@ -1108,9 +1187,12 @@ impl Controller {
         }
     }
 
-    pub fn pr_scroll(&mut self, dy: f32) {
+    pub fn pr_scroll(&mut self, dx: f32, dy: f32) {
         let v = self.pr_view();
         self.pr.scroll = (v.scroll - dy).clamp(0.0, v.max_scroll());
+        if self.pr.hzoom > 0.0 {
+            self.pr.hstart = v.start - dx as f64 / v.ppb;
+        }
         self.ui_dirty = true;
     }
 
@@ -1346,6 +1428,20 @@ pub fn midi_left_resize(clip: &MidiClip, new_start: Ticks) -> Option<Command> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn zoom_slider_ranges() {
+        assert_eq!(zoom_ppb(100.0, 0.0), 100.0);
+        assert!((zoom_ppb(100.0, 1.0) - PPQ as f64 * REF).abs() < 1e-9);
+        assert!((zoom_ppb(100.0, 0.5) - (100.0 * PPQ as f64 * REF).sqrt()).abs() < 1e-9);
+        assert_eq!(zoom_ppb(2000.0, 0.7), 2000.0);
+        let v = PrView::fit((1174.5, 281.0), 8.0, 0.0);
+        let (lo, hi) = row_h_range(&v);
+        assert!((lo - 3.0 * 0.85).abs() < 1e-4 && (hi - 32.0 * 0.85).abs() < 1e-4);
+        let folded = PrView { rows: Rows::only(&[64, 62, 60]), ..v };
+        let (lo, hi) = row_h_range(&folded);
+        assert!((lo - (281.0 - GRID_Y) / 3.0).abs() < 1e-3 && hi == lo);
+    }
+
     use super::*;
 
     #[test]
