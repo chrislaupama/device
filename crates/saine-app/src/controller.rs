@@ -628,6 +628,7 @@ impl Controller {
             }
             "file.clear_recent" => {
                 self.settings.prefs.recent_projects.clear();
+                self.settings.prefs.recent_resolved.clear();
                 self.save_prefs();
                 self.ui_dirty = true;
             }
@@ -655,17 +656,23 @@ impl Controller {
         let Some(path) = self.settings.prefs.recent_projects.get(i).map(PathBuf::from) else { return };
         if !self.open(&path) {
             self.settings.prefs.recent_projects.remove(i);
+            if i < self.settings.prefs.recent_resolved.len() {
+                self.settings.prefs.recent_resolved.remove(i);
+            }
             self.save_prefs();
         }
     }
 
     fn remember_recent(&mut self, dir: &Path) {
         let path = dir.to_string_lossy().into_owned();
-        let resolved = std::fs::canonicalize(dir).ok();
-        let list = &mut self.settings.prefs.recent_projects;
-        list.retain(|p| *p != path && (resolved.is_none() || std::fs::canonicalize(p).ok() != resolved));
-        list.insert(0, path);
-        list.truncate(10);
+        let resolved = std::fs::canonicalize(dir).map_or_else(|_| path.clone(), |p| p.to_string_lossy().into_owned());
+        let prefs = &mut self.settings.prefs;
+        prefs.recent_resolved.resize(prefs.recent_projects.len(), String::new());
+        let mut entries: Vec<(String, String)> =
+            prefs.recent_projects.drain(..).zip(prefs.recent_resolved.drain(..)).filter(|(p, r)| *p != path && *r != resolved).collect();
+        entries.insert(0, (path, resolved));
+        entries.truncate(10);
+        (prefs.recent_projects, prefs.recent_resolved) = entries.into_iter().unzip();
         self.save_prefs();
     }
 
