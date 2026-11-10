@@ -81,6 +81,18 @@ pub struct se_transport_info {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
+pub struct se_preview_info {
+    pub playing: u8,
+    pub reserved: [u8; 7],
+    pub asset_id: u64,
+    pub position: i64,
+    pub frames: i64,
+    pub peak_l: f32,
+    pub peak_r: f32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct se_meter {
     pub track_id: u64,
     pub peak_l: f32,
@@ -789,6 +801,10 @@ unsafe extern "C" {
     pub fn se_plugin_set_param(engine: *mut se_engine, device_id: u64, param_id: u32, normalized: f32) -> i32;
     pub fn se_mod_base(engine: *mut se_engine, device_id: u64, param_id: u32, out_normalized: *mut f32) -> i32;
     pub fn se_builtin_note(engine: *mut se_engine, device_id: u64, pitch: u8, velocity: u8) -> i32;
+    pub fn se_preview_play(engine: *mut se_engine, asset_id: u64, start_frame: i64, gain: f32, rate: f32, solo: u8) -> i32;
+    pub fn se_preview_stop(engine: *mut se_engine) -> i32;
+    pub fn se_preview_set(engine: *mut se_engine, gain: f32, rate: f32, solo: u8) -> i32;
+    pub fn se_preview_get(engine: *mut se_engine, out: *mut se_preview_info) -> i32;
 }
 
 /// Guards the hand-written declarations against drift from saine_engine.h.
@@ -808,6 +824,7 @@ mod abi_layout {
         assert_eq!(size_of::<se_session_desc>(), 16);
         assert_eq!(size_of::<se_transport_info>(), 16);
         assert_eq!(size_of::<se_meter>(), 16);
+        assert_eq!((size_of::<se_preview_info>(), align_of::<se_preview_info>()), (40, 8));
         assert_eq!(size_of::<se_stats>(), 48);
         // Verified with clang against saine_engine.h: size 24, align 8,
         // offsets enabled 0, gain 4, frames_per_beat 8, beats_per_bar 16, _pad2 20.

@@ -47,6 +47,9 @@ export struct RulerLabel { x: length, text: string }
 // Section name in the ruler's section lane (src/sections.rs): x and room in lane points, ink per block.
 export struct SectionLabel { x: length, w: length, text: string, ink: color }
 
+// Minimap bar (src/minimap.rs): x and w are fractions of the strip width.
+export struct MiniBar { x: float, w: float, y: length, h: length, color: color }
+
 export struct ClipLabel { x: length, y: length, w: length, text: string, selected: bool }
 
 // Browser tree row (Devices tab; src/devices.rs). icon: 0 folder, 1 instrument (keys), 2 effect.
@@ -92,7 +95,7 @@ export struct ChainFrame { x: length, w: length, armed: bool, color: color, empt
 // choice menu), 3 value box, 4 flexible gap, 5 latch (On/Off parameter; label shows the state,
 // selected 0 / 1), 6 action button, 7 view switch / tabs (choices = view names, selected = shown view; UI state). dim: a menu pill shown at 60% until hovered
 // (values that follow the project, e.g. the Pitch Corrector's key while Follow is Project).
-export struct PanelPick { kind: int, param: int, label: string, choices: [string], selected: int, value: string, enabled: bool, width: length, dim: bool }
+export struct PanelPick { kind: int, param: int, label: string, label-w: length, choices: [string], selected: int, value: string, enabled: bool, width: length, dim: bool }
 // Vertical slider column (x = column left, card relative).
 // zero: normalised position the fill starts from (0 = bottom; 0 dB on a range through zero).
 export struct PanelSlider { param: int, x: length, label: string, value: string, norm: float, zero: float }
@@ -233,7 +236,6 @@ export struct DeviceCard {
     preset: string,
     knobs: [PanelKnob],
     picks: [PanelPick],
-    tight-picks: bool,     // no gap around the flexible gap in the picks row (analyzer cards)
     sliders: [PanelSlider],
     slider-top: length,
     strip: PanelStrip,
@@ -308,7 +310,7 @@ export struct SynthDisplay { line: string, fill: string, ghost: string, dots: st
 export struct SynthLabel { slot: int, x: length, y: length, text: string, align: int, accent: bool }
 // Page elements (card coordinates; knobs, latches: centre of the dial; faders: centre x, groove top).
 export struct SynthArc { d: string, c: color }
-export struct SynthKnobItem { idx: int, x: length, y: length, label: string, accent: color, dim: bool, lit: bool, arcs: [SynthArc], dots: [color] }
+export struct SynthKnobItem { idx: int, x: length, y: length, label: string, accent: color, dim: bool, lit: bool, arcs: [SynthArc], dots: [color], band-on: bool, band-lo: float, band-hi: float, dot-on: bool, dot: float }
 export struct SynthFaderItem { idx: int, x: length, y: length, label: string }
 export struct SynthPillItem { x: length, y: length, w: length, label: string, value: string, action: int, arg: int, ring: int, ring-idx: int, outline: bool, chevron: bool }
 export struct SynthTextItem { x: length, y: length, w: length, text: string, style: int, align: int }
@@ -351,6 +353,15 @@ export global Studio {
     in property <length> section-add-x: 8.5px;     // centre of the section lane's "+"
     callback lane-double(length, length);          // lane x, y
     in property <[ClipLabel]> clip-labels;
+    // Header minimap: bars, the visible window (fractions of the whole-song map), playhead (< 0 hidden).
+    in property <[MiniBar]> minimap-bars;
+    in property <float> minimap-win-x;
+    in property <float> minimap-win-w;
+    in property <float> minimap-playhead: -1;
+    in-out property <length> minimap-width;   // set by the strip (for the self-test)
+    callback minimap-pointer(int, length, length, length);
+    callback minimap-double();
+    callback minimap-scroll(float, float, length, length, bool);
     in property <int> lane-cursor; // 0 default, 1 ew-resize (trim), 2 move (clip body)
     // ---- inspector (selected track) ----
     in property <bool> has-selection;
@@ -407,6 +418,20 @@ export global Studio {
     callback files-activate(int);              // double-click
     callback files-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
     callback files-scroll-by(float);
+    // Browser preview bar (src/files.rs Audition): the file last clicked in Files.
+    in property <bool> preview-active;          // a file is loaded in the bar
+    in property <bool> preview-playing;
+    in property <float> preview-progress;       // 0..1 of the file
+    in property <float> preview-volume: 0.8;    // slider pos (header-slider taper)
+    in property <float> preview-meter-l;        // 0..1, -50..0 dB
+    in property <float> preview-meter-r;
+    in property <bool> preview-solo;
+    callback preview-toggle();
+    callback preview-step(int);                 // -1 previous, 1 next file
+    callback preview-volume-moved(float);
+    callback preview-volume-done();
+    callback preview-solo-toggle();
+    callback preview-reveal();
     // Drag and drop of a browser device (ghost + drop target, window coordinates).
     in property <bool> dnd-active;
     in property <bool> dnd-ok;

@@ -26,6 +26,9 @@ pub const MASTER_H: f32 = 30.6;
 pub const MASTER_H_AUTO: f32 = 64.6;
 pub const CLIP_HEADER: f32 = 17.0;
 pub const EDGE_GRAB: f32 = 5.0;
+/// Zoom limits, in logical points per beat.
+pub const MIN_PX_PER_BEAT: f64 = 0.5;
+pub const MAX_PX_PER_BEAT: f64 = 2000.0;
 /// Default zoom: 51.03 pt per 4/4 bar (measured: bar 20 line at x 1422.5, bar 1 at 453).
 pub const DEFAULT_PX_PER_BEAT: f64 = 969.5 / 76.0;
 
@@ -89,7 +92,7 @@ impl View {
     }
     pub fn zoom_at(&mut self, factor: f64, x: f32) {
         let anchor = self.beat_at(x);
-        self.px_per_beat = (self.px_per_beat * factor).clamp(0.5, 2000.0);
+        self.px_per_beat = (self.px_per_beat * factor).clamp(MIN_PX_PER_BEAT, MAX_PX_PER_BEAT);
         self.start_beats = anchor - x as f64 / self.px_per_beat;
         self.clamp();
     }

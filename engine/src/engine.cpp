@@ -779,6 +779,29 @@ void Engine::apply_command(const TransportCommand& cmd) noexcept {
             rt_loop_end_ = cmd.frame2;
         }
         break;
+    case TransportCommand::Type::PreviewPlay:
+        if (rt_pv_[0].asset != nullptr) {
+            rt_pv_[1] = rt_pv_[0]; // the old voice fades out (a fading one is cut)
+            rt_pv_[1].step = -1.0f / kPreviewFadeFrames;
+        }
+        rt_pv_[0] = PreviewVoice{cmd.asset, cmd.seq, static_cast<double>(cmd.frame), 0.0f, 1.0f / kPreviewFadeFrames};
+        rt_pv_applied_ = cmd.seq;
+        rt_pv_gain_ = cmd.gain;
+        rt_pv_rate_ = cmd.rate;
+        rt_pv_solo_ = cmd.enabled;
+        break;
+    case TransportCommand::Type::PreviewStop:
+        if (rt_pv_[0].asset != nullptr) {
+            rt_pv_[1] = rt_pv_[0];
+            rt_pv_[1].step = -1.0f / kPreviewFadeFrames;
+            rt_pv_[0] = PreviewVoice{};
+        }
+        break;
+    case TransportCommand::Type::PreviewSet:
+        rt_pv_gain_ = cmd.gain;
+        rt_pv_rate_ = cmd.rate;
+        rt_pv_solo_ = cmd.enabled;
+        break;
     case TransportCommand::Type::SetMetronome:
         if (std::isfinite(cmd.frames_per_beat) && cmd.frames_per_beat >= 1.0) rt_tempo_fpb_ = cmd.frames_per_beat;
         rt_metro_enabled_ = cmd.enabled;
@@ -941,7 +964,11 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
                                     rt_pdc_gen_,
                                     &rt_history_,
                                     graph != nullptr && !graph->warp_voices.empty() ? graph->warp_voices.data() : nullptr};
-        const BlockPeaks p = render_block(graph, rt_position_, rt_playing_, n, live_ctx_, true, slot, inst, iv);
+        BlockPeaks p = render_block(graph, rt_position_, rt_playing_, n, live_ctx_, true, slot, inst, iv);
+        if (mix_preview(live_ctx_.master_l(), live_ctx_.master_r(), n)) {
+            p.l = kernel_peak(live_ctx_.master_l(), n);
+            p.r = kernel_peak(live_ctx_.master_r(), n);
+        }
         rt_history_.append(rt_position_, n, rt_playing_);
         // The performer hears the mix L (delay compensation) + output latency
         // late, so takes are placed that much earlier too.
@@ -985,6 +1012,17 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
     }
 
     // 4. Release the graph, publish state.
+    {
+        const PreviewVoice& v = rt_pv_[0];
+        pub_pv_asset_.store(v.asset != nullptr ? v.asset->id : 0, std::memory_order_relaxed);
+        pub_pv_pos_.store(static_cast<int64_t>(v.pos), std::memory_order_relaxed);
+        pub_pv_frames_.store(v.asset != nullptr ? static_cast<int64_t>(v.asset->frames) : 0, std::memory_order_relaxed);
+        pub_pv_solo_.store(rt_pv_solo_, std::memory_order_relaxed);
+        uint64_t floor = rt_pv_applied_ + 1;
+        for (const PreviewVoice& w : rt_pv_)
+            if (w.asset != nullptr) floor = std::min(floor, w.seq);
+        rt_preview_floor_.store(floor, std::memory_order_release);
+    }
     rt_active_seq_.store(kIdle, std::memory_order_seq_cst);
     rec_in_use_.store(false, std::memory_order_release);
     publish_transport();
@@ -1119,6 +1157,110 @@ int32_t Engine::render_offline_impl(const RtInput& input, float* out_interleaved
     });
     release_rt_owner(); // also applies commands queued during the render
     return SE_OK;
+}
+
+// ============================================================ preview
+
+bool Engine::mix_preview(float* l, float* r, uint32_t frames) noexcept {
+    if (rt_pv_[0].asset == nullptr && rt_pv_[1].asset == nullptr) {
+        rt_pv_gain_cur_ = rt_pv_gain_;
+        return false;
+    }
+    if (rt_pv_solo_ && rt_pv_[0].asset != nullptr) {
+        std::memset(l, 0, sizeof(float) * frames);
+        std::memset(r, 0, sizeof(float) * frames);
+    }
+    const float g0 = rt_pv_gain_cur_;
+    const float dg = (rt_pv_gain_ - g0) / static_cast<float>(frames);
+    const double rate = static_cast<double>(rt_pv_rate_);
+    float pk_l = 0.0f, pk_r = 0.0f;
+    for (PreviewVoice& v : rt_pv_) {
+        if (v.asset == nullptr) continue;
+        const Asset& a = *v.asset;
+        const float* sl = a.channel(0);
+        const float* sr = a.channel(a.channels > 1 ? 1 : 0);
+        const double last = a.frames > 0 ? static_cast<double>(a.frames - 1) : 0.0;
+        for (uint32_t i = 0; i < frames; ++i) {
+            if (v.pos >= last) {
+                v.asset = nullptr;
+                break;
+            }
+            const auto k = static_cast<uint64_t>(v.pos);
+            const float t = static_cast<float>(v.pos - static_cast<double>(k));
+            const float g = (g0 + dg * static_cast<float>(i)) * v.fade;
+            const float yl = g * (sl[k] + t * (sl[k + 1] - sl[k]));
+            const float yr = g * (sr[k] + t * (sr[k + 1] - sr[k]));
+            l[i] += yl;
+            r[i] += yr;
+            pk_l = std::max(pk_l, std::fabs(yl));
+            pk_r = std::max(pk_r, std::fabs(yr));
+            v.pos += rate;
+            v.fade = std::min(1.0f, v.fade + v.step);
+            if (v.fade <= 0.0f) {
+                v.asset = nullptr;
+                break;
+            }
+        }
+    }
+    rt_pv_gain_cur_ = rt_pv_gain_;
+    atomic_store_max(pv_peak_l_, pk_l);
+    atomic_store_max(pv_peak_r_, pk_r);
+    return true;
+}
+
+void Engine::reclaim_previews_locked() {
+    const uint64_t floor = rt_preview_floor_.load(std::memory_order_acquire);
+    std::erase_if(preview_held_, [floor](const auto& h) { return h.first < floor; });
+}
+
+int32_t Engine::preview_play(uint64_t asset_id, int64_t start_frame, float gain, float rate, bool solo) {
+    AssetRef asset;
+    {
+        std::lock_guard lock(assets_mutex_);
+        auto it = assets_.find(asset_id);
+        if (it == assets_.end()) return SE_ERR_NOT_FOUND;
+        asset = it->second;
+    }
+    std::lock_guard lock(preview_mutex_);
+    reclaim_previews_locked();
+    TransportCommand cmd;
+    cmd.type = TransportCommand::Type::PreviewPlay;
+    cmd.asset = asset.get();
+    cmd.seq = ++preview_seq_;
+    cmd.frame = std::clamp<int64_t>(start_frame, 0, static_cast<int64_t>(asset->frames));
+    cmd.gain = gain;
+    cmd.rate = rate;
+    cmd.enabled = solo;
+    preview_held_.emplace_back(cmd.seq, std::move(asset));
+    return push_command(cmd);
+}
+
+int32_t Engine::preview_stop() {
+    std::lock_guard lock(preview_mutex_);
+    reclaim_previews_locked();
+    TransportCommand cmd;
+    cmd.type = TransportCommand::Type::PreviewStop;
+    return push_command(cmd);
+}
+
+int32_t Engine::preview_set(float gain, float rate, bool solo) {
+    TransportCommand cmd;
+    cmd.type = TransportCommand::Type::PreviewSet;
+    cmd.gain = gain;
+    cmd.rate = rate;
+    cmd.enabled = solo;
+    return push_command(cmd);
+}
+
+void Engine::preview_get(se_preview_info* out) noexcept {
+    *out = se_preview_info{};
+    out->asset_id = pub_pv_asset_.load(std::memory_order_relaxed);
+    out->playing = out->asset_id != 0 ? 1 : 0;
+    out->position = pub_pv_pos_.load(std::memory_order_relaxed);
+    out->frames = pub_pv_frames_.load(std::memory_order_relaxed);
+    out->peak_l = pv_peak_l_.exchange(0.0f, std::memory_order_relaxed);
+    out->peak_r = pv_peak_r_.exchange(0.0f, std::memory_order_relaxed);
+    if (std::unique_lock lock(preview_mutex_, std::try_to_lock); lock.owns_lock()) reclaim_previews_locked();
 }
 
 // ============================================================ recording

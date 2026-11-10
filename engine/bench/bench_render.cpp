@@ -81,7 +81,8 @@ struct Result {
 // SaineTestLatency (N = `latency`) on track 1 only, delay compensation
 // `pdc` on/off.
 Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std::vector<std::string>& files,
-           bool features, int plugins = 0, uint32_t latency = 0, bool pdc = true, bool automation = false) {
+           bool features, int plugins = 0, uint32_t latency = 0, bool pdc = true, bool automation = false,
+           float preview_rate = 0.0f, const std::string& preview_file = {}) {
     se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
     se_engine* e = se_engine_create(&cfg);
     if (!e) {
@@ -227,6 +228,14 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
     std::vector<float> buf(kBlock * 2);
     for (int i = 0; i < 50; ++i) se_render_offline(e, buf.data(), kBlock); // warm-up
     se_transport_seek(e, 0);
+    if (preview_rate > 0.0f) {
+        se_asset_info pi{};
+        if (se_asset_load_file(e, preview_file.c_str(), &pi) != SE_OK ||
+            se_preview_play(e, pi.asset_id, 0, 1.0f, preview_rate, 0) != SE_OK) {
+            std::fprintf(stderr, "preview failed: %s\n", se_last_error());
+            std::exit(1);
+        }
+    }
 
     std::vector<double> times(blocks);
     const auto t_all = std::chrono::steady_clock::now();
@@ -520,6 +529,33 @@ int main(int argc, char** argv) {
         std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", automation ? "32 x 4 lanes" : "none (same session)",
                     r.us_per_block_avg, r.us_per_block_p99, r.us_per_block_max, r.rt_ratio);
     }
+    std::printf("\nBrowser preview voice: 32 audio tracks x %u clips, plus one stereo preview sounding in every block\n",
+                clips_per_track);
+    std::printf("%22s %14s %14s %14s %16s\n", "preview", "avg us/block", "p99 us/block", "max us/block",
+                "realtime ratio");
+    // A preview long enough to sound through every timed block at the fastest rate.
+    const std::size_t pv_frames = static_cast<std::size_t>(1.5 * blocks * kBlock) + 4 * kBlock;
+    std::vector<float> pv_l(pv_frames), pv_r(pv_frames);
+    for (std::size_t i = 0; i < pv_frames; ++i) {
+        pv_l[i] = static_cast<float>(0.2 * std::sin(0.013 * static_cast<double>(i)));
+        pv_r[i] = static_cast<float>(0.2 * std::sin(0.017 * static_cast<double>(i)));
+    }
+    const std::string pv_path = saine::os::path_to_utf8(dir / "saine_bench_preview.wav");
+    if (!write_float_wav(pv_path, pv_l, pv_r)) {
+        std::fprintf(stderr, "cannot write %s\n", pv_path.c_str());
+        return 1;
+    }
+    for (const float rate : {0.0f, 1.0f, 1.5f}) {
+        const Result r = run(32, clips_per_track, blocks, files, features, 0, 0, true, false, rate, pv_path);
+        char name[32];
+        if (rate == 0.0f)
+            std::snprintf(name, sizeof name, "none (baseline)");
+        else
+            std::snprintf(name, sizeof name, "rate %.1f", static_cast<double>(rate));
+        std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name, r.us_per_block_avg, r.us_per_block_p99,
+                    r.us_per_block_max, r.rt_ratio);
+    }
+    std::filesystem::remove(pv_path);
     for (const auto& f : files) std::filesystem::remove(f);
 
     // Expensive patch: 4-voice unison, cross FM, sub + noise, resonant

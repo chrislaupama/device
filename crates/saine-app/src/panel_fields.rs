@@ -462,10 +462,9 @@ fn wash(c: &mut Canvas, live: &Live, color: Color, x_of: &dyn Fn(f32) -> f32, bo
         pts.push((x_of(hz(b)), bottom - ((db + 72.0) / 72.0).clamp(0.0, 1.0) * height * 0.85));
     }
     pts.push((x_of(hz(WASH_BANDS - 1)), bottom));
-    let mut area = String::new();
-    polyline(&mut area, &pts);
-    area.push('Z');
-    c.fill(area, color);
+    let (first, last) = (pts[0], pts[pts.len() - 1]);
+    let curve = crate::device_panel::smooth(&pts[1..pts.len() - 1], true);
+    c.fill(format!("M{:.1} {:.1}{curve} L{:.1} {:.1} Z", first.0, first.1, last.0, last.1), color);
 }
 
 pub(crate) fn field_name(def: &DeviceDef) -> Option<&'static str> {

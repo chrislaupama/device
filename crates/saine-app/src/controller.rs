@@ -197,6 +197,8 @@ pub enum JobResult {
     PluginScan(Result<saine_engine::ScanReport, String>),
     /// Transients of an engine asset (warped clips, src/warpedit.rs).
     Onsets { engine_asset: u64, result: Result<Vec<saine_engine::Onset>, String>, tempo: Option<f64> },
+    /// A file clicked in Browser › Files, decoded for the preview voice (src/files.rs).
+    Auditioned { path: PathBuf, result: Result<AssetInfo, String> },
 }
 
 /// Blocking decode + peak analysis. Runs on a worker thread.
@@ -245,6 +247,8 @@ pub enum MenuAction {
     Bounce,
     Delete,
     Disable,
+    Enable,
+    ShowInFinder,
     Rename,
     Export,
     Transpose,
@@ -322,6 +326,7 @@ pub struct Controller {
     section_label_model: Rc<VecModel<crate::SectionLabel>>,
     clips_model: Rc<VecModel<ClipLabel>>,
     ruler_key: (i64, i64, i64),
+    pub(crate) mm: crate::minimap::State,
     pub clip_vis: Vec<ClipVis>,
     pub track_vis: Vec<TrackVis>,
     pub(crate) clip_ids: Vec<ClipId>,
@@ -434,6 +439,7 @@ impl Controller {
             meter_t: None,
             tracks_model: Rc::new(VecModel::default()),
             ruler_model: Rc::new(VecModel::default()),
+            mm: crate::minimap::State::new(),
             section_label_model: Rc::new(VecModel::default()),
             clips_model: Rc::new(VecModel::default()),
             ruler_key: (i64::MIN, 0, 0),
@@ -507,6 +513,7 @@ impl Controller {
         let s = app.global::<Studio>();
         s.set_tracks(ModelRc::from(self.tracks_model.clone()));
         s.set_ruler_labels(ModelRc::from(self.ruler_model.clone()));
+        s.set_minimap_bars(ModelRc::from(self.mm.model.clone()));
         s.set_section_labels(ModelRc::from(self.section_label_model.clone()));
         s.set_clip_labels(ModelRc::from(self.clip_ids_model()));
         s.set_strips(ModelRc::from(self.strips_model.clone()));
@@ -928,6 +935,7 @@ impl Controller {
                 JobResult::TestTone(r) => self.finish_test_tone(r),
                 JobResult::PluginScan(r) => self.finish_plugin_scan(r),
                 JobResult::Onsets { engine_asset, result, tempo } => self.finish_onsets(engine_asset, result, tempo),
+                JobResult::Auditioned { path, result } => self.finish_audition(path, result),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
                     if doc_epoch != self.doc_epoch {
                         if let Ok((info, _)) = result {
@@ -998,7 +1006,7 @@ impl Controller {
         let clip_id = ClipId(alloc());
         cmds.push(Command::AddClip {
             track: track_id,
-            clip: Clip { id: clip_id, asset: asset_id, name, start: at.max(0), source_offset: 0, source_length: native_frames, gain: 1.0, warp: Default::default() },
+            clip: Clip { id: clip_id, asset: asset_id, name, start: at.max(0), source_offset: 0, source_length: native_frames, gain: 1.0, warp: Default::default(), disabled: false },
         });
         // Engine asset must be known before the snapshot is published.
         self.peaks.insert(info.asset_id, pyr);
@@ -1371,7 +1379,7 @@ impl Controller {
                     len_beats,
                     color: track_color(t.color),
                     selected: Some(c.id) == self.selected_clip,
-                    muted: t.mute,
+                    muted: t.mute || c.disabled,
                     name: c.name.clone(),
                     wave,
                     midi: None,
@@ -1398,7 +1406,7 @@ impl Controller {
                     len_beats: len as f64 / PPQ as f64,
                     color: track_color(t.color),
                     selected: Some(c.id) == self.selected_clip,
-                    muted: t.mute,
+                    muted: t.mute || c.disabled,
                     name: c.name.clone(),
                     wave: None,
                     midi: Some(mini_notes(&notes, shift, len)),
@@ -1491,6 +1499,9 @@ impl Controller {
         if s.get_metronome_on() != self.metronome_on {
             s.set_metronome_on(self.metronome_on);
         }
+
+        let previewing = self.push_audition(&s);
+        self.files.audition.animating = previewing;
 
         // Meters (master first, then tracks).
         self.engine.peek_meters(&mut self.meters, 256);
@@ -1586,6 +1597,7 @@ impl Controller {
         self.view.clamp_scroll(self.project().tracks.len(), self.lanes_size.1);
         s.set_scroll_y(self.view.scroll_y as f32);
         self.update_labels();
+        self.update_minimap(app);
         s.set_section_add_x(self.section_add_x());
         self.update_auto_labels();
         if self.auto_any_active() {
@@ -1595,7 +1607,7 @@ impl Controller {
         if s.get_recording() != self.rec.recording {
             s.set_recording(self.rec.recording);
         }
-        tp.playing || metering || highlighting || self.pending_jobs > 0 || self.drag.is_some() || self.pr_animating() || self.rec.recording || self.test_tone_active()
+        tp.playing || previewing || metering || highlighting || self.pending_jobs > 0 || self.drag.is_some() || self.pr_animating() || self.rec.recording || self.test_tone_active()
     }
 
     fn push_models(&mut self, app: &AppWindow) {

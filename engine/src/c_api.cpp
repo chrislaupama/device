@@ -799,6 +799,37 @@ int32_t se_device_status_get(se_engine* engine, se_device_status* out) {
     });
 }
 
+static bool preview_args_ok(float gain, float rate) {
+    return std::isfinite(gain) && gain >= 0.0f && gain <= 2.0f && std::isfinite(rate) && rate >= 0.25f && rate <= 4.0f;
+}
+
+int32_t se_preview_play(se_engine* engine, uint64_t asset_id, int64_t start_frame, float gain, float rate, uint8_t solo) {
+    SE_REQUIRE_ENGINE(engine);
+    if (!preview_args_ok(gain, rate)) return fail(SE_ERR_INVALID_ARG, "preview gain must be 0..2 and rate 0.25..4");
+    return guarded([&] {
+        const int32_t rc = engine->impl->preview_play(asset_id, start_frame, gain, rate, solo != 0);
+        return rc == SE_ERR_NOT_FOUND ? fail(rc, "unknown asset") : rc;
+    });
+}
+
+int32_t se_preview_stop(se_engine* engine) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&] { return engine->impl->preview_stop(); });
+}
+
+int32_t se_preview_set(se_engine* engine, float gain, float rate, uint8_t solo) {
+    SE_REQUIRE_ENGINE(engine);
+    if (!preview_args_ok(gain, rate)) return fail(SE_ERR_INVALID_ARG, "preview gain must be 0..2 and rate 0.25..4");
+    return guarded([&] { return engine->impl->preview_set(gain, rate, solo != 0); });
+}
+
+int32_t se_preview_get(se_engine* engine, se_preview_info* out) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    engine->impl->preview_get(out);
+    return SE_OK;
+}
+
 int32_t se_input_set_muted(se_engine* engine, uint8_t muted) {
     SE_REQUIRE_ENGINE(engine);
     engine->impl->set_input_muted(muted != 0);
