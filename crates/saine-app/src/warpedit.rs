@@ -107,12 +107,19 @@ fn anchored(c: &Clip, rate: f64) -> ClipWarp {
 
 /// Shift-drag: slide the audio under the marker at \`source\` to \`to\`. A
 /// reversed clip starts at its window's source end, so that end is pinned
-/// first; otherwise the slide would move the clip's start and length.
+/// first (also when a trim left markers past it) and the slide stays inside
+/// the window; otherwise it would move the clip's start and length.
 fn slide(c: &Clip, w: &ClipWarp, source: u64, to: u64, rate: f64) -> Option<ClipWarp> {
     let mut w = w.clone();
     let end = c.source_offset + c.source_length;
-    if w.reverse && w.markers.last().is_some_and(|k| k.source < end) {
-        w.set_marker(end, w.beat_at(end as f64, rate));
+    let mut to = to;
+    if w.reverse {
+        if !w.markers.iter().any(|k| k.source == end) {
+            w.set_marker(end, w.beat_at(end as f64, rate));
+        }
+        if source < end {
+            to = to.min(end - 1);
+        }
     }
     w.slide_marker(source, to).then_some(w)
 }
@@ -290,6 +297,7 @@ impl Controller {
         self.ui_dirty = true;
         match phase {
             0 if Self::ac_transpose_editable(&c) => {
+                self.doc.seal_coalescing();
                 let start = c.warp.transpose;
                 self.pr.ac_drag = Some(AcDrag { view: self.pr_view(), clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Transpose { start }, moved: false });
             }
@@ -384,6 +392,7 @@ impl Controller {
         self.ui_dirty = true;
         match phase {
             0 => {
+                self.doc.seal_coalescing();
                 let start = self.ac_original_bpm(&c).round();
                 self.pr.ac_drag = Some(AcDrag { view: self.pr_view(), clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Bpm { start }, moved: false });
             }
@@ -455,6 +464,8 @@ impl Controller {
         match kind {
             0 => {
                 self.menu_close();
+                // Each press is its own undo step; only its drag coalesces.
+                self.doc.seal_coalescing();
                 let now = Instant::now();
                 let double = self.pr.ac_last_down.is_some_and(|(t, lx, ly)| now - t < DOUBLE_CLICK && (lx - x).abs() < 4.0 && (ly - y).abs() < 4.0);
                 self.pr.ac_last_down = Some((now, x, y));
@@ -639,5 +650,20 @@ mod tests {
         assert!((m2.mirror.unwrap() - len).abs() < 1e-9, "clip length {} vs {len}", m2.mirror.unwrap());
         assert!((m2.clip_beat(120_000.0) - at).abs() < 1e-9, "the marker stays at clip beat {at}");
         assert_eq!(w.markers.last().map(|k| k.source), Some(4 * 48_000), "the window end is pinned");
+    }
+
+    #[test]
+    fn sliding_inside_a_trimmed_reversed_clip_keeps_the_clip_length() {
+        // A trim left the last marker (240000) past the window end (192000).
+        let rate = 48_000.0;
+        let c = reversed_clip(&[(0, 0.0), (96_000, 4.0), (240_000, 10.0)]);
+        let m = super::Map::new(&c, &c.warp, rate);
+        let (len, at) = (m.mirror.unwrap(), m.clip_beat(96_000.0));
+        let w = super::slide(&c, &c.warp, 96_000, 300_000, rate).unwrap();
+        let m2 = super::Map::new(&c, &w, rate);
+        assert!((m2.mirror.unwrap() - len).abs() < 1e-9, "clip length {} vs {len}", m2.mirror.unwrap());
+        let moved = w.markers.iter().find(|k| k.beat == 4.0).unwrap().source;
+        assert_eq!(moved, 4 * 48_000 - 1, "the slide stops inside the window");
+        assert!((m2.clip_beat(moved as f64) - at).abs() < 1e-9);
     }
 }
