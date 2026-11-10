@@ -88,6 +88,22 @@ fn speed_and_original_bpm_scale_the_footprint() {
 }
 
 #[test]
+fn source_and_ticks_convert_both_ways_for_trims() {
+    let (mut d, c, _) = doc();
+    for w in [ClipWarp::default(), ClipWarp { enabled: true, original_bpm: 90.0, speed: 1.5, ..ClipWarp::default() }] {
+        set(&mut d, c, w, "Set clip speed");
+        let p = d.project();
+        let clip = p.clip(c).unwrap();
+        assert!(p.clip_source_at(clip, 0.0).abs() < 1e-6);
+        let end = p.clip_length_ticks(clip) as f64;
+        assert!((p.clip_source_at(clip, end) - clip.source_length as f64).abs() < 50.0, "the clip end plays the last source frame");
+        for t in [-960.0, 100.0, 5000.0] {
+            assert!((p.clip_ticks_at(clip, p.clip_source_at(clip, t)) - t).abs() < 1e-6);
+        }
+    }
+}
+
+#[test]
 fn markers_pin_source_frames_to_beats() {
     let mut w = ClipWarp { enabled: true, original_bpm: 120.0, ..ClipWarp::default() };
     // Source second 1 (beat 2) pinned to beat 3: the first second stretches.
