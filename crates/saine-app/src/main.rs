@@ -1405,7 +1405,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 done.set(true);
             }
             if let Some(cl) = clip.filter(|cl| warp && !cl.warp.enabled) {
-                let mut w = saine_core::ClipWarp { enabled: true, mode: saine_core::WarpMode::Drums, speed: 1.5, original_bpm: 120.0, ..Default::default() };
+                let mut w = saine_core::ClipWarp { enabled: true, mode: saine_core::WarpMode::Drums, speed: 1.5, original_bpm: 120.0, transpose: 3, ..Default::default() };
                 w.set_marker(0, 0.0);
                 w.set_marker(4 * 44_100, 9.0);
                 c.execute(saine_core::Command::SetClipWarp { clip: cl.id, warp: w, label: "Set clip speed".into() });
