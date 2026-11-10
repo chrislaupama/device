@@ -14,5 +14,9 @@ thiserror.workspace = true
 tempfile.workspace = true
 
 [[bench]]
+name = "steps"
+harness = false
+
+[[bench]]
 name = "warp"
 harness = false

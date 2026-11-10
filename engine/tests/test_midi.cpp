@@ -716,3 +716,59 @@ TEST_CASE(rt_dense_midi_with_republish_does_not_allocate) {
     CHECK(publishes.load() > 10);
     for (float v : buf) CHECK(std::isfinite(v));
 }
+
+// Step-sequencer patterns as saine-core publishes them: every step of a bar
+// on 16 pad notes, each step split into repeats with the 0.02-beat gate gap,
+// the bar repeated, republished while it plays (each step edit republishes).
+// Nothing allocates on the render path, and every step window sounds.
+TEST_CASE(rt_step_pattern_repeats_do_not_allocate) {
+    EngineHandle e(kRate, 256);
+    constexpr int64_t kBar = 96000; // 4/4 at 120 BPM
+    auto make = [](uint32_t steps, uint32_t repeat) {
+        const double step = static_cast<double>(kBar) / steps, span = step / repeat;
+        const double gate = repeat > 1 ? std::max(span * 0.5, span - 480.0) : step;
+        std::vector<se_note_desc> notes;
+        for (int64_t bar = 0; bar < 4 * kBar; bar += kBar)
+            for (uint32_t s = 0; s < steps; ++s)
+                for (uint32_t k = 0; k < repeat; ++k)
+                    for (uint8_t row = 0; row < 16; ++row) {
+                        const auto start = bar + static_cast<int64_t>(s * step + k * span);
+                        notes.push_back(note(start, start + static_cast<int64_t>(gate), static_cast<uint8_t>(36 + row), 90));
+                    }
+        MidiSession s;
+        s.add(1, true, std::move(notes), 0.2f);
+        return s;
+    };
+    MidiSession s0 = make(16, 4);
+    REQUIRE(s0.publish(e) == SE_OK);
+    REQUIRE(se_transport_play(e) == SE_OK);
+    std::vector<float> buf(2 * 256);
+    REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK); // warm-up
+
+    std::atomic<bool> stop{false};
+    std::thread publisher([&] {
+        std::vector<MidiSession> sessions = {make(16, 4), make(32, 2), make(64, 16), make(16, 1)};
+        int i = 0;
+        while (!stop.load()) {
+            sessions[static_cast<std::size_t>(i++ % 4)].publish(e);
+            std::this_thread::yield();
+        }
+    });
+    const long allocs_before = rt_alloc_count();
+    const long frees_before = rt_free_count();
+    std::vector<float> peak_per_window(64, 0.0f); // 1/16 windows over 4 bars
+    for (int64_t at = 256; at < 4 * kBar; at += 256) {
+        RtAllocGuard g;
+        if (se_render_offline(e, buf.data(), 256) != SE_OK) {
+            CHECK(false);
+            break;
+        }
+        float& peak = peak_per_window[static_cast<std::size_t>(at / 6000) % 64];
+        for (float v : buf) peak = std::max(peak, std::fabs(v));
+    }
+    stop = true;
+    publisher.join();
+    CHECK_EQ(rt_alloc_count() - allocs_before, 0);
+    CHECK_EQ(rt_free_count() - frees_before, 0);
+    for (float p : peak_per_window) CHECK(p > 1e-3f && std::isfinite(p));
+}
