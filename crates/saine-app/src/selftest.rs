@@ -6813,7 +6813,7 @@ fn live_import_steps() -> Vec<Step> {
             ctl.borrow_mut().import_live_set_request(als);
         })),
         Check("live import: unsaved changes are asked about first", Box::new(|c, a| {
-            (c.unsaved_open && c.pending_import.is_some() && a.global::<Studio>().get_unsaved_open()).then_some(()).ok_or(format!("prompt {} pending {:?}", c.unsaved_open, c.pending_import))
+            (c.unsaved_open && c.pending_import.is_some() && a.global::<Studio>().get_unsaved_open()).then_some(()).ok_or(format!("prompt {} pending {}", c.unsaved_open, c.pending_import.is_some()))
         })),
         Do("live import: Don't Save", Box::new(|a| a.global::<Studio>().invoke_unsaved_dont_save())),
         Check("live import: the set replaced the project (tempo, tracks, warped clip with its markers and sample loaded, MIDI notes)", Box::new(move |c, _| {

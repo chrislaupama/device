@@ -1608,6 +1608,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aw = app.as_weak();
         studio.on_menu_action(move |id| {
             if id == "file.import_ableton" {
+                // Like every menu action, nothing while a dialog is open.
+                if ctl.borrow().modal_open() {
+                    return;
+                }
                 if let Some(file) = rfd::FileDialog::new().set_title("Import Ableton Live Set").add_filter("Ableton Live Set", &["als"]).pick_file() {
                     ctl.borrow_mut().import_live_set_request(file);
                 }

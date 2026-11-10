@@ -313,8 +313,13 @@ pub fn build(set: &ParsedSet, name: &str, sample: &dyn Fn(&SampleRef) -> Option<
                 Some((_, a)) => *a,
                 None => {
                     let a = sample(&c.sample).map(|s| {
+                        let path = s.path.to_string_lossy().into_owned();
+                        // Two refs (relative and absolute) can name one file: one asset for it.
+                        if let Some(a) = p.assets.iter().find(|a| a.absolute_path == path) {
+                            return (a.id, a.sample_rate, a.frames);
+                        }
                         let id = AssetId(p.alloc_id());
-                        p.assets.push(Asset { id, relative_path: None, absolute_path: s.path.to_string_lossy().into_owned(), sample_rate: s.sample_rate, channels: s.channels.max(1), frames: s.frames });
+                        p.assets.push(Asset { id, relative_path: None, absolute_path: path, sample_rate: s.sample_rate, channels: s.channels.max(1), frames: s.frames });
                         files.push((id, s.path));
                         (id, s.sample_rate, s.frames)
                     });
@@ -391,20 +396,33 @@ pub fn build(set: &ParsedSet, name: &str, sample: &dyn Fn(&SampleRef) -> Option<
     (p, files, report)
 }
 
-type Loaded = Vec<(SampleRef, PathBuf, saine_engine::AssetInfo, crate::peaks::Pyramid)>;
+/// Each sample file the set uses, decoded once, and the file each of the set's refs found.
+pub struct Loaded {
+    pub files: Vec<(PathBuf, saine_engine::AssetInfo, crate::peaks::Pyramid)>,
+    pub refs: Vec<(SampleRef, PathBuf)>,
+}
 
-/// A read set and the samples found and decoded for it (worker thread).
+/// A read set and the samples found and decoded for it (worker thread). `revision` is the
+/// document's when the import started.
 pub struct LiveSetJob {
     pub file: PathBuf,
     pub doc_epoch: u64,
+    pub revision: u64,
     pub result: Result<(ParsedSet, Loaded), String>,
+}
+
+/// An import waiting on the unsaved-changes prompt: a set still to read, or one read while the
+/// project was edited.
+pub enum PendingImport {
+    File(PathBuf),
+    Loaded(Box<LiveSetJob>),
 }
 
 impl crate::controller::Controller {
     /// File › Import Ableton Live Set…: replaces the open project, asking to save changes first.
     pub fn import_live_set_request(&mut self, file: PathBuf) {
         if self.doc.is_dirty() {
-            self.pending_import = Some(file);
+            self.pending_import = Some(PendingImport::File(file));
             self.unsaved_open = true;
             self.ui_dirty = true;
         } else {
@@ -415,42 +433,64 @@ impl crate::controller::Controller {
     pub fn import_live_set(&mut self, file: PathBuf) {
         let engine = self.engine.clone();
         let tx = self.jobs_tx.clone();
-        let doc_epoch = self.doc_epoch;
+        let (doc_epoch, revision) = (self.doc_epoch, self.doc.revision());
         self.pending_jobs += 1;
         std::thread::Builder::new()
             .name("live-set".into())
             .spawn(move || {
                 let result = read_file(&file).map(|set| {
                     let dir = file.parent().unwrap_or(Path::new(".")).to_path_buf();
-                    let mut refs: Vec<&SampleRef> = Vec::new();
+                    let mut loaded = Loaded { files: Vec::new(), refs: Vec::new() };
                     for c in set.tracks.iter().flat_map(|t| &t.audio) {
-                        if !refs.contains(&&c.sample) {
-                            refs.push(&c.sample);
+                        if loaded.refs.iter().any(|(r, _)| *r == c.sample) {
+                            continue;
                         }
+                        let Some(p) = find_sample(&dir, &c.sample) else { continue };
+                        if !loaded.files.iter().any(|f| f.0 == p) {
+                            let Ok((info, pyr)) = crate::controller::load_and_analyse(&engine, &p) else { continue };
+                            loaded.files.push((p.clone(), info, pyr));
+                        }
+                        loaded.refs.push((c.sample.clone(), p));
                     }
-                    let loaded = refs
-                        .into_iter()
-                        .filter_map(|r| {
-                            let p = find_sample(&dir, r)?;
-                            let (info, pyr) = crate::controller::load_and_analyse(&engine, &p).ok()?;
-                            Some((r.clone(), p, info, pyr))
-                        })
-                        .collect();
                     (set, loaded)
                 });
-                let _ = tx.send(crate::controller::JobResult::LiveSet(Box::new(LiveSetJob { file, doc_epoch, result })));
+                let _ = tx.send(crate::controller::JobResult::LiveSet(Box::new(LiveSetJob { file, doc_epoch, revision, result })));
             })
             .expect("spawn live set thread");
         self.set_status("Importing Live set…", 30);
     }
 
+    pub(crate) fn release_live_set(&mut self, job: LiveSetJob) {
+        if let Ok((_, loaded)) = job.result {
+            for (_, info, _) in loaded.files {
+                let _ = self.engine.release_asset(info.asset_id);
+            }
+        }
+    }
+
+    /// A finished read: replace the project, unless it was edited meanwhile, which asks first.
     pub(crate) fn finish_live_set(&mut self, job: LiveSetJob) {
-        let (set, loaded) = match job.result {
-            Ok(r) => r,
-            Err(e) => return self.set_status(format!("Import failed: {e}"), 6),
-        };
+        if let Err(e) = &job.result {
+            return self.set_status(format!("Import failed: {e}"), 6);
+        }
         if job.doc_epoch != self.doc_epoch {
-            for (_, _, info, _) in loaded {
+            return self.release_live_set(job);
+        }
+        if self.doc.revision() != job.revision && self.doc.is_dirty() {
+            if let Some(PendingImport::Loaded(old)) = self.pending_import.replace(PendingImport::Loaded(Box::new(job))) {
+                self.release_live_set(*old);
+            }
+            self.unsaved_open = true;
+            self.ui_dirty = true;
+            return;
+        }
+        self.apply_live_set(job);
+    }
+
+    pub(crate) fn apply_live_set(&mut self, job: LiveSetJob) {
+        let Ok((set, loaded)) = job.result else { return };
+        if job.doc_epoch != self.doc_epoch {
+            for (_, info, _) in loaded.files {
                 let _ = self.engine.release_asset(info.asset_id);
             }
             return;
@@ -458,7 +498,8 @@ impl crate::controller::Controller {
         let name = job.file.file_stem().map_or_else(|| "Live Set".into(), |s| s.to_string_lossy().into_owned());
         let rate = self.rate;
         let (project, files, report) = build(&set, &name, &|r| {
-            loaded.iter().find(|l| l.0 == *r).map(|(_, p, info, _)| Sample {
+            let path = &loaded.refs.iter().find(|l| l.0 == *r)?.1;
+            loaded.files.iter().find(|f| f.0 == *path).map(|(p, info, _)| Sample {
                 path: p.clone(),
                 sample_rate: info.source_sample_rate,
                 channels: info.channels,
@@ -473,7 +514,7 @@ impl crate::controller::Controller {
         self.project_dir = None;
         self.view = Default::default();
         self.replace_project(project);
-        for (_, p, info, pyr) in loaded {
+        for (p, info, pyr) in loaded.files {
             match files.iter().find(|f| f.1 == p) {
                 Some(&(asset, _)) => {
                     self.peaks.insert(info.asset_id, pyr);
@@ -600,6 +641,21 @@ mod tests {
         assert!(p.tracks[0].clips.is_empty() && p.assets.is_empty());
         assert_eq!((report.group_tracks, report.return_tracks, report.missing_samples.len()), (1, 1, 1));
         assert_eq!(report.summary("Set"), "Imported Set: 2 tracks, 1 clip. Left out: 1 sample not found, 1 group track, 1 return track");
+    }
+
+    #[test]
+    fn two_refs_to_one_file_share_its_asset() {
+        let mut s = set();
+        if let SetContent::Audio(clips) = &mut s.tracks[0].content {
+            let c = &clips[0];
+            let other = SetAudioClip { name: "again".into(), start: 12.0, length: c.length, relative_path: "Elsewhere/break.wav".into(), absolute_path: c.absolute_path.clone(), file_size: 1, frames: c.frames, sample_rate: c.sample_rate, markers: Vec::new() };
+            clips.push(other);
+        }
+        let any = |_: &SampleRef| Some(Sample { path: "/s/break.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 192_000 });
+        let (p, files, _) = build(&parse(&to_xml(&s)).unwrap(), "Set", &any);
+        let clips = &p.tracks[0].clips;
+        assert_eq!((p.assets.len(), files.len(), clips.len()), (1, 1, 2));
+        assert_eq!(clips[0].asset, clips[1].asset);
     }
 
     #[test]

@@ -317,7 +317,7 @@ pub struct Controller {
     pub clip_render: crate::clip_render::ClipRender,
     pub unsaved_open: bool,
     /// A Live set to import once the unsaved-changes prompt is answered.
-    pub(crate) pending_import: Option<PathBuf>,
+    pub(crate) pending_import: Option<crate::live_import::PendingImport>,
     /// Options › Check for Updates… dialog.
     pub updates_open: bool,
     /// Settings › General › Playhead on stop: where the last playback started, whether the
