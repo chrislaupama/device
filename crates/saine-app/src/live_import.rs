@@ -115,11 +115,16 @@ fn sample_ref(file: roxmltree::Node) -> SampleRef {
     SampleRef { relative, absolute: value(file, "Path").unwrap_or("").to_string() }
 }
 
+/// A finite number, so a corrupt value (NaN, inf) falls back to its default.
+fn num(n: roxmltree::Node, p: &str) -> Option<f64> {
+    number(n, p).ok().filter(|v| v.is_finite())
+}
+
 /// A Drum Rack's pads. Live stores a pad's note as 128 − note (BranchInfo/ReceivingNote).
 fn drums(rack: roxmltree::Node) -> ParsedDrums {
     let mut out = ParsedDrums::default();
     for b in path(rack, "Branches").into_iter().flat_map(elements).filter(|b| b.has_tag_name("DrumBranch")) {
-        let note = 128 - number(b, "BranchInfo/ReceivingNote").unwrap_or(0.0) as i32;
+        let note = 128 - num(b, "BranchInfo/ReceivingNote").unwrap_or(0.0) as i32;
         if !(saine_core::builtin::drum_rack::FIRST_NOTE as i32..saine_core::builtin::drum_rack::FIRST_NOTE as i32 + saine_core::builtin::drum_rack::PADS as i32).contains(&note) {
             out.outside += 1;
             continue;
@@ -134,33 +139,33 @@ fn drums(rack: roxmltree::Node) -> ParsedDrums {
             out.other += 1;
             continue;
         };
-        if parts.len() > 1 || number(*s, "Globals/PlaybackMode").is_ok_and(|m| m == 2.0) || out.pads.iter().any(|p| p.note == note as u8) {
+        if parts.len() > 1 || num(*s, "Globals/PlaybackMode").is_some_and(|m| m == 2.0) || out.pads.iter().any(|p| p.note == note as u8) {
             out.other += 1;
             continue;
         }
-        if number(b, "BranchInfo/ChokeGroup").unwrap_or(0.0) > 0.0 {
+        if num(b, "BranchInfo/ChokeGroup").unwrap_or(0.0) > 0.0 {
             out.choked += 1;
         }
-        let frames = number(*part, "SampleRef/DefaultDuration").unwrap_or(0.0).max(1.0);
-        let rate = number(*part, "SampleRef/DefaultSampleRate").unwrap_or(44_100.0).max(1.0);
-        let start = (number(*part, "SampleStart").unwrap_or(0.0) / frames).clamp(0.0, 1.0);
-        let end = ((number(*part, "SampleEnd").unwrap_or(frames) + 1.0) / frames).clamp(start, 1.0);
+        let frames = num(*part, "SampleRef/DefaultDuration").unwrap_or(0.0).max(1.0);
+        let rate = num(*part, "SampleRef/DefaultSampleRate").unwrap_or(44_100.0).max(1.0);
+        let start = (num(*part, "SampleStart").unwrap_or(0.0) / frames).clamp(0.0, 1.0);
+        let end = ((num(*part, "SampleEnd").unwrap_or(frames) + 1.0) / frames).clamp(start, 1.0);
         let window_ms = ((end - start) * frames / rate * 1000.0).max(1e-3);
-        let fade = |p: &str| (number(*s, p).unwrap_or(0.0) / window_ms * 100.0).clamp(0.0, 100.0) as f32;
-        let one_shot = number(*s, "Globals/PlaybackMode").is_ok_and(|m| m == 1.0);
-        let mixer_gain = number(b, "MixerDevice/Volume/Manual").unwrap_or(1.0).max(1e-6);
+        let fade = |p: &str| (num(*s, p).unwrap_or(0.0) / window_ms * 100.0).clamp(0.0, 100.0) as f32;
+        let one_shot = num(*s, "Globals/PlaybackMode").is_some_and(|m| m == 1.0);
+        let mixer_gain = num(b, "MixerDevice/Volume/Manual").unwrap_or(1.0).max(1e-6);
         out.pads.push(ParsedPad {
             note: note as u8,
             on: value(b, "MixerDevice/Speaker/Manual").map_or(true, |v| v == "true") && value(*s, "On/Manual").map_or(true, |v| v == "true"),
-            gain_db: (number(*s, "VolumeAndPan/Volume/Manual").unwrap_or(0.0) + 20.0 * mixer_gain.log10()) as f32,
-            pan: (number(*s, "VolumeAndPan/Panorama/Manual").unwrap_or(0.0) + number(b, "MixerDevice/Panorama/Manual").unwrap_or(0.0)) as f32,
-            transpose: (number(*s, "Pitch/TransposeKey/Manual").unwrap_or(0.0) + number(*s, "Pitch/TransposeFine/Manual").unwrap_or(0.0) / 100.0).round() as f32,
+            gain_db: (num(*s, "VolumeAndPan/Volume/Manual").unwrap_or(0.0) + 20.0 * mixer_gain.log10()) as f32,
+            pan: (num(*s, "VolumeAndPan/Panorama/Manual").unwrap_or(0.0) + num(b, "MixerDevice/Panorama/Manual").unwrap_or(0.0)) as f32,
+            transpose: (num(*s, "Pitch/TransposeKey/Manual").unwrap_or(0.0) + num(*s, "Pitch/TransposeFine/Manual").unwrap_or(0.0) / 100.0).round() as f32,
             start: start as f32,
             end: end as f32,
             fade_in: if one_shot { fade("VolumeAndPan/OneShotEnvelope/FadeInTime/Manual") } else { 0.0 },
             fade_out: if one_shot { fade("VolumeAndPan/OneShotEnvelope/FadeOutTime/Manual") } else { 0.0 },
             reverse: flag(*s, "Player/Reverse/Manual"),
-            gate: !one_shot || number(*s, "VolumeAndPan/OneShotEnvelope/SustainMode/Manual").is_ok_and(|m| m == 1.0),
+            gate: !one_shot || num(*s, "VolumeAndPan/OneShotEnvelope/SustainMode/Manual").is_some_and(|m| m == 1.0),
             sample: sample_ref(file),
         });
     }
@@ -833,6 +838,14 @@ mod tests {
         assert_eq!((report.drum_pads, report.choked_pads, report.missing_samples.len(), report.devices), (2, 1, 1, 0));
         let summary = report.summary("Set");
         assert!(summary.contains("2 Drum Rack pads") && summary.contains("choke groups on 1 pad"), "{summary}");
+    }
+
+    #[test]
+    fn a_corrupt_pad_number_falls_back() {
+        let rack = format!(r#"<DrumGroupDevice Id="0"><Branches>{}</Branches></DrumGroupDevice>"#, pad(36, 0, 1, "Samples/break.wav", 1).replace(r#"<SampleStart Value="0" />"#, r#"<SampleStart Value="NaN" />"#));
+        let doc = roxmltree::Document::parse(&rack).unwrap();
+        let d = drums(doc.root_element());
+        assert_eq!((d.pads[0].start, d.pads[0].end), (0.0, 0.5));
     }
 
     #[test]
