@@ -1463,6 +1463,7 @@ impl Controller {
         }
 
         let previewing = self.push_audition(&s);
+        self.files.audition.animating = previewing;
 
         // Meters (master first, then tracks).
         self.engine.peek_meters(&mut self.meters, 256);

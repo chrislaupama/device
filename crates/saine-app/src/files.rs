@@ -129,6 +129,8 @@ pub struct Audition {
     /// Displayed preview peaks (with fall-off) and the time of the last update.
     pub meter: (f32, f32),
     pub meter_t: Option<std::time::Instant>,
+    /// The last frame's push_audition result: the bar still needs redraws.
+    pub animating: bool,
 }
 
 #[derive(Debug, Clone)]
