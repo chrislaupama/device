@@ -253,10 +253,24 @@ running jackd without PipeWire.
   close box), covered by `SaineTestGui.clap` +
   `plugin_editor_window_win32_open_resize_close`, which runs in
   every Windows CI job; per-monitor DPI scaling is
-  not handled yet. Linux: not implemented (X11 embedding needs an X event
-  loop plus the plugins' `posix-fd`/`timer` support for CLAP and
-  `IRunLoop` for VST3); opening an editor returns
-  `SE_ERR_UNSUPPORTED_FORMAT` with that explanation.
+  not handled yet. Linux: `plugin_editor_x11.cpp` (an X11 top-level window
+  with WM_DELETE_WINDOW, size hints and `_NET_WM_NAME`; the plugin embeds
+  its own child window, `kPlatformTypeX11EmbedWindowID` / `CLAP_WINDOW_API_X11`).
+  Linux has no system event loop for plugins, so the host runs one:
+  `src/platform/run_loop.{hpp,cpp}` polls the plugins' file descriptors and
+  fires their timers from `se_plugin_idle` (VST3 `Linux::IRunLoop` through
+  the editor's `IPlugFrame`; CLAP `clap.posix-fd-support` and
+  `clap.timer-support`). Timer resolution is the idle rate: the app idles
+  every 16 ms while a plugin window is open. `saine_run_loop_bench` measures
+  one dispatch (about 0.2 µs with 1 to 16 idle fds and timers on a 2.1 GHz
+  Xeon), on the main thread only.
+  `SaineTestGui.clap` registers an fd and a timer on Linux, and
+  `plugin_editor_window_x11_open_resize_close` checks both, the window size,
+  the close box and re-opening; it skips without `DISPLAY` and runs under
+  Xvfb in the Linux CI job. Dragonfly Room (CLAP and VST3) and an LSP CLAP
+  were checked by hand with `plugin_editor_check_linux`. Configure with
+  `-DSAINE_ENGINE_X11=OFF` (or `SAINE_ENGINE_X11=OFF` for cargo) to build
+  without libX11; opening an editor then returns `SE_ERR_UNSUPPORTED_FORMAT`.
 
 ## Layout
 
@@ -289,6 +303,8 @@ running jackd without PipeWire.
 | `src/plugins/plugin_modules.{hpp,cpp}` | VST3 / CLAP bundle loading (CFBundle), shared per path |
 | `src/plugins/plugin_scan.{hpp,cpp}` | Inspecting one AU / bundle (used only by the scanner process) |
 | `src/platform/plugin_editor_mac.mm` | Editor windows (NSWindow; AU Cocoa view / AUGenericView, VST3 IPlugView, CLAP gui) |
+| `src/platform/plugin_editor_win.cpp`, `plugin_editor_x11.cpp` | Editor windows on Windows (HWND) and Linux (X11) |
+| `src/platform/run_loop.{hpp,cpp}` | Linux main-thread run loop for plugins (fds and timers, run from `se_plugin_idle`) |
 | `scanner/scanner_main.cpp` | `saine_plugin_scanner`: out-of-process scan coordinator + per-plugin child |
 | `scanner/cache_json.hpp` | The scanner's cache JSON reader (shared with the benchmark) |
 | `test_plugins/` | Original test plugins: `SaineTestGain.vst3`, `SaineTestGain.clap`, `SaineTestSine.clap`, `SaineTestLatency.clap`/`.vst3`, `SaineTestCrash.clap` |
@@ -1419,8 +1435,9 @@ queries.
   devices); no ASIO, no WASAPI exclusive mode or `IAudioClient3` low-latency
   periods, no native JACK; device-change notifications are not handled on
   any platform.
-* **Linux plugin editors** are not implemented (`SE_ERR_UNSUPPORTED_FORMAT`);
-  Windows editors ignore per-monitor DPI.
+* **Plugin editors:** Windows editors ignore per-monitor DPI. Linux editors
+  are X11 only (Wayland desktops run them through XWayland); no HiDPI scale
+  is passed to plugins, and plugin timers run at the idle rate (16 ms in the app).
 * Core Audio: no handling of default-device changes, device hot-unplug or
   externally triggered rate changes while running (the stream just keeps
   whatever Core Audio does). **The duplex/aggregate input path has not been

@@ -1,4 +1,4 @@
-// Native plugin editor windows (implemented in src/platform/plugin_editor_mac.mm).
+// Native plugin editor windows (src/platform/plugin_editor_mac.mm, _win.cpp, _x11.cpp).
 // Every function here is MAIN THREAD ONLY.
 #pragma once
 
@@ -44,5 +44,15 @@ public:
 std::unique_ptr<PluginEditor> create_clap_editor(const clap_plugin* plugin, const clap_plugin_gui* gui,
                                                  const std::string& title, std::function<void(ClapEditorHost*)> attach,
                                                  std::string& err);
+
+#if defined(__linux__)
+// Main-thread plugin housekeeping that Linux needs from the host: runs the
+// plugin run loop (fds and timers, platform/run_loop.hpp) and the editor
+// windows' X events. Called from PluginHost::idle (se_plugin_idle).
+void platform_plugin_idle();
+#else
+// macOS and Windows plugins use the system event loop.
+inline void platform_plugin_idle() {}
+#endif
 
 } // namespace saine

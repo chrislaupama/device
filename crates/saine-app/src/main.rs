@@ -1259,6 +1259,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+    // Linux plugin windows: plugins there have no system event loop, so the
+    // engine runs their X11 fds and timers from se_plugin_idle. While a
+    // window is open, idle at ~60 Hz so their input and repaints keep up.
+    #[cfg(target_os = "linux")]
+    let _editor_timer = {
+        let t = slint::Timer::default();
+        let ctl = ctl.clone();
+        t.start(slint::TimerMode::Repeated, Duration::from_millis(16), move || {
+            if let Ok(c) = ctl.try_borrow()
+                && c.has_open_editors()
+            {
+                c.engine.plugin_idle();
+            }
+        });
+        t
+    };
 
     // ---- rendering notifier: the wgpu integration point (ADR 0001) ----
     let frame = Rc::new(RefCell::new(Frame {

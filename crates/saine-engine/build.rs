@@ -10,7 +10,7 @@
 
 /// Configures and builds the engine with CMake, then emits the link lines for
 /// the target OS: system frameworks on macOS, libpipewire (unless
-/// `SAINE_ENGINE_PIPEWIRE` is off), libstdc++ and libdl on Linux, and the COM,
+/// `SAINE_ENGINE_PIPEWIRE` is off), libX11 (unless `SAINE_ENGINE_X11` is off), libstdc++ and libdl on Linux, and the COM,
 /// shell, MMCSS and user32 libraries on Windows.
 fn main() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -24,12 +24,19 @@ fn main() {
     // Linux audio backend: ON unless SAINE_ENGINE_PIPEWIRE=OFF (then the
     // engine renders offline only and libpipewire is not linked).
     // Falsy as CMake reads it: OFF/0/FALSE/NO/N/IGNORE/NOTFOUND/"" or *-NOTFOUND.
-    let pipewire = std::env::var("SAINE_ENGINE_PIPEWIRE")
-        .map(|v| {
-            let v = v.trim().to_ascii_uppercase();
-            !(matches!(v.as_str(), "" | "0" | "OFF" | "FALSE" | "NO" | "N" | "IGNORE" | "NOTFOUND") || v.ends_with("-NOTFOUND"))
-        })
-        .unwrap_or(true);
+    let cmake_on = |var: &str| {
+        std::env::var(var)
+            .map(|v| {
+                let v = v.trim().to_ascii_uppercase();
+                !(matches!(v.as_str(), "" | "0" | "OFF" | "FALSE" | "NO" | "N" | "IGNORE" | "NOTFOUND") || v.ends_with("-NOTFOUND"))
+            })
+            .unwrap_or(true)
+    };
+    let pipewire = cmake_on("SAINE_ENGINE_PIPEWIRE");
+    // Linux plugin editor windows: ON unless SAINE_ENGINE_X11=OFF (then
+    // opening a plugin editor reports that the build has no X11).
+    println!("cargo:rerun-if-env-changed=SAINE_ENGINE_X11");
+    let x11 = cmake_on("SAINE_ENGINE_X11");
     let profile = if std::env::var("PROFILE").as_deref() == Ok("release") { "Release" } else { "RelWithDebInfo" };
     let third_party = match std::env::var_os("CARGO_TARGET_DIR") {
         Some(dir) if std::path::Path::new(&dir).is_absolute() => std::path::PathBuf::from(dir),
@@ -46,6 +53,7 @@ fn main() {
         .define("SAINE_ENGINE_BUILD_TEST_PLUGINS", "ON")
         .define("FETCHCONTENT_BASE_DIR", third_party.to_string_lossy().as_ref())
         .define("SAINE_ENGINE_PIPEWIRE", if pipewire { "ON" } else { "OFF" })
+        .define("SAINE_ENGINE_X11", if x11 { "ON" } else { "OFF" })
         .build_target("saine_engine_rust");
     for var in ["FETCHCONTENT_SOURCE_DIR_SAINE_CLAP", "FETCHCONTENT_SOURCE_DIR_SAINE_VST3SDK"] {
         if let Ok(v) = std::env::var(var) {
@@ -85,6 +93,9 @@ fn main() {
                     }
                 }
                 println!("cargo:rustc-link-lib=pipewire-0.3");
+            }
+            if x11 {
+                println!("cargo:rustc-link-lib=X11");
             }
             println!("cargo:rustc-link-lib=stdc++");
             println!("cargo:rustc-link-lib=dl");

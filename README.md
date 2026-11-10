@@ -150,7 +150,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Piano roll and MIDI | 🚧 | Velocity lane, note audition |
 | Built-in instruments | ✅ | |
 | Built-in effects | ✅ | More devices are planned |
-| Plugin hosting | 🚧 | Plugin editor windows on Linux |
+| Plugin hosting | ✅ | Linux editor windows use X11 (XWayland on Wayland desktops) |
 | Recording | 🚧 | Per-device manual recording offset |
 | Mixer | ✅ | |
 | Automation | ✅ | |
@@ -168,7 +168,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 |---|---|---|---|
 | macOS | Apple silicon | Core Audio | AU, VST3, CLAP |
 | Windows | Windows x64 | WASAPI (shared mode) | VST3, CLAP |
-| Linux | x64, X11 or Wayland | PipeWire | VST3, CLAP (no editor windows yet) |
+| Linux | x64, X11 or Wayland | PipeWire | VST3, CLAP |
 
 Every change is built and tested on a Mac with a real audio device, and on Windows and Linux hosted runners. The
 Linux job runs a headless PipeWire server, so playback and recording go through real PipeWire streams there; Windows

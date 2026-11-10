@@ -44,7 +44,7 @@ jobs:
             libpipewire-0.3-dev libasound2-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libx11-xcb-dev \
             libxcursor-dev libxrandr-dev libxi-dev libfontconfig1-dev libfreetype-dev libudev-dev \
-            pipewire pipewire-bin wireplumber dbus
+            pipewire pipewire-bin wireplumber dbus xvfb
       - name: Install Ninja (macOS)
         if: runner.os == 'macOS'
         run: brew install ninja
@@ -160,6 +160,12 @@ jobs:
       - name: Engine — PipeWire device tests, verbose (Linux)
         if: runner.os == 'Linux' && !cancelled()
         run: ctest --test-dir engine/build-ci -V -R "^(device_|transport_commands_across_device)"
+      # Plugin editor windows (X11): the main test run has no display, so the
+      # editor test skips there; here it opens the GUI test plugin's window on
+      # Xvfb and checks its size, its timer and fd callbacks, and closing.
+      - name: Engine — plugin editor windows on Xvfb (Linux)
+        if: runner.os == 'Linux' && !cancelled()
+        run: xvfb-run -a ctest --test-dir engine/build-ci --output-on-failure -R "^plugin_editor_window_x11"
 
       # The Rust steps run even when the engine tests failed (both results
       # are reported; the job still fails).

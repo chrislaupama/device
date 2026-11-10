@@ -180,8 +180,8 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Audio: WASAPI shared/event/float32 backend (separate capture client + drift-tolerant
   `FrameRing`, MMCSS) and PipeWire backend (playback/capture streams). **Neither has run on real
   audio hardware** (CI runners have none); ASIO is future work (licence).
-- Editors: Windows HWND host (tested in CI with `SaineTestGui.clap`); Linux returns
-  `SE_ERR_UNSUPPORTED_FORMAT` (X11 embedding not written).
+- Editors: Windows HWND host and Linux X11 host (both tested in CI with `SaineTestGui.clap`; Linux
+  under Xvfb, with the host run loop for plugin fds and timers).
 - App: builds on all three; macOS-only winit hook stays cfg-gated; per-OS plugin folders. Off macOS
   the self-test reports its Audio Unit devices section as skipped.
 - macOS-visible changes: two hardware-/compiler-dependent tests relaxed (PDC golden hashes only on
@@ -217,5 +217,10 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Export: ⌘⇧E (`file.export_audio`) renders the song (start to last clip end + 2 s tail) to a 32-bit
   float WAV through `se_export_wav`; the device is stopped for the export and restarted. Self-test
   check added.
+- Linux plugin editor windows (X11): `plugin_editor_x11.cpp` plus a main-thread run loop
+  (`run_loop.cpp`) dispatched from `se_plugin_idle`, serving VST3 `Linux::IRunLoop` and CLAP
+  `posix-fd-support` / `timer-support`. `SaineTestGui.clap` is cross-platform now; the Xvfb test checks
+  size, timer and fd callbacks, close box, re-open and retire. Dragonfly Room (CLAP, VST3) and an LSP
+  CLAP open and run by hand. The app's "Open device window" button is enabled on Linux.
 - Still open: WASAPI has never run against an audio device (the hosted Windows runner has none);
-  Linux plugin editor windows (X11) are not implemented.
+  Linux editors pass no HiDPI scale to plugins.

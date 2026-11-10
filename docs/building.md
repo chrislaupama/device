@@ -11,7 +11,7 @@ only in `engine/src/platform/`; everything else is portable.
 |---|---|---|---|
 | Audio backend | Core Audio | WASAPI (shared mode) | PipeWire |
 | Plugin formats | AU, VST3, CLAP | VST3, CLAP | VST3, CLAP |
-| Plugin editor windows | yes | yes | not yet |
+| Plugin editor windows | yes | yes | yes (X11; XWayland on Wayland) |
 | Built and tested in CI | every run (self-hosted Mac) | every run (hosted runner) | every run (hosted runner) |
 | Audio streams run in CI | yes, real device | no (no audio endpoint) | yes, a headless PipeWire server |
 | Tested on real audio hardware | yes | **no** | **no** |
@@ -115,8 +115,12 @@ the engine itself needs only `pkg-config` and `libpipewire-0.3-dev`.
   with `-DSAINE_ENGINE_PIPEWIRE=OFF`, or set `SAINE_ENGINE_PIPEWIRE=OFF` in the
   environment for a cargo build.
 
-Plugin editor windows are not implemented on Linux yet; opening one reports
-that it is unsupported.
+Plugin editor windows on Linux use X11 (libX11, from `libx11-dev`), which
+Wayland desktops provide through XWayland. To build without it, configure
+CMake with `-DSAINE_ENGINE_X11=OFF` or set `SAINE_ENGINE_X11=OFF` for a cargo
+build; opening a plugin window then reports that it is unsupported. The
+editor test (`plugin_editor_window_x11_open_resize_close`) needs a display:
+run it under `xvfb-run` on a headless machine.
 
 ## Running the app
 

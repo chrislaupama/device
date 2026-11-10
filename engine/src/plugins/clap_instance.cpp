@@ -22,6 +22,9 @@
 #if defined(__APPLE__)
 #include <dispatch/dispatch.h>
 #endif
+#if defined(__linux__)
+#include "../platform/run_loop.hpp"
+#endif
 
 namespace saine {
 
@@ -324,6 +327,9 @@ public:
         activated_ = false;
         plugin_->destroy(plugin_);
         plugin_ = nullptr;
+#if defined(__linux__)
+        run_loop::remove_all(this); // fds and timers the plugin left registered
+#endif
         mod_.reset();
     }
 
@@ -463,6 +469,13 @@ private:
     }
 
     static ClapInstance* self_of(const clap_host* h) { return static_cast<ClapInstance*>(h->host_data); }
+#if defined(__linux__)
+    // clap.posix-fd-support flags -> run loop events.
+    static uint32_t to_run_loop(clap_posix_fd_flags_t f) {
+        return ((f & CLAP_POSIX_FD_READ) != 0 ? run_loop::kRead : 0u) |
+               ((f & CLAP_POSIX_FD_WRITE) != 0 ? run_loop::kWrite : 0u);
+    }
+#endif
 
     static const void* host_get_extension(const clap_host* h, const char* id) {
         static const clap_host_thread_check_t thread_check{
@@ -493,6 +506,48 @@ private:
         if (s == CLAP_EXT_STATE) return &state;
         if (s == CLAP_EXT_PARAMS) return &params;
         if (s == CLAP_EXT_GUI) return &gui;
+#if defined(__linux__)
+        // Linux has no system event loop: plugins hand the host their fds
+        // (their X connection) and timers, run from se_plugin_idle.
+        static const clap_host_timer_support_t timers{
+            [](const clap_host* host, uint32_t period_ms, clap_id* out_id) {
+                auto* self = self_of(host);
+                if (out_id == nullptr || self->plugin_ == nullptr) return false;
+                const uint32_t t = run_loop::add_timer(self, period_ms, [self](uint32_t tid) {
+                    if (self->plugin_ == nullptr) return;
+                    if (self->timer_ext_ == nullptr)
+                        self->timer_ext_ = static_cast<const clap_plugin_timer_support_t*>(
+                            self->plugin_->get_extension(self->plugin_, CLAP_EXT_TIMER_SUPPORT));
+                    if (self->timer_ext_ != nullptr) self->timer_ext_->on_timer(self->plugin_, tid);
+                });
+                *out_id = t;
+                return t != 0;
+            },
+            [](const clap_host* host, clap_id timer) { return run_loop::remove_timer(self_of(host), timer); }};
+        static const clap_host_posix_fd_support_t fds{
+            [](const clap_host* host, int fd, clap_posix_fd_flags_t flags) {
+                auto* self = self_of(host);
+                if (self->plugin_ == nullptr) return false;
+                return run_loop::add_fd(self, fd, to_run_loop(flags), [self](int f, uint32_t ready) {
+                    if (self->plugin_ == nullptr) return;
+                    if (self->fd_ext_ == nullptr)
+                        self->fd_ext_ = static_cast<const clap_plugin_posix_fd_support_t*>(
+                            self->plugin_->get_extension(self->plugin_, CLAP_EXT_POSIX_FD_SUPPORT));
+                    if (self->fd_ext_ == nullptr) return;
+                    clap_posix_fd_flags_t got = 0;
+                    if ((ready & run_loop::kRead) != 0) got |= CLAP_POSIX_FD_READ;
+                    if ((ready & run_loop::kWrite) != 0) got |= CLAP_POSIX_FD_WRITE;
+                    if ((ready & run_loop::kError) != 0) got |= CLAP_POSIX_FD_ERROR;
+                    self->fd_ext_->on_fd(self->plugin_, f, got);
+                });
+            },
+            [](const clap_host* host, int fd, clap_posix_fd_flags_t flags) {
+                return run_loop::modify_fd(self_of(host), fd, to_run_loop(flags));
+            },
+            [](const clap_host* host, int fd) { return run_loop::remove_fd(self_of(host), fd); }};
+        if (s == CLAP_EXT_TIMER_SUPPORT) return &timers;
+        if (s == CLAP_EXT_POSIX_FD_SUPPORT) return &fds;
+#endif
         (void)h;
         return nullptr;
     }
@@ -546,6 +601,11 @@ private:
     std::thread::id main_thread_;
     std::atomic<bool> callback_requested_{false};
     ClapEditorHost* editor_host_ = nullptr; // main thread
+#if defined(__linux__)
+    // The plugin's timer and fd callbacks (looked up on first use).
+    const clap_plugin_timer_support_t* timer_ext_ = nullptr;
+    const clap_plugin_posix_fd_support_t* fd_ext_ = nullptr;
+#endif
     // RT-owned
     bool processing_ = false;
     bool failed_ = false;

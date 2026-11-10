@@ -1,4 +1,5 @@
 #include "plugin_host.hpp"
+#include "plugin_editor.hpp"
 
 #include "../devices/builtin.hpp"
 
@@ -113,6 +114,7 @@ void PluginHost::collect(uint64_t rt_active) {
 
 void PluginHost::idle(uint64_t rt_active) {
     collect(rt_active);
+    platform_plugin_idle(); // Linux: plugin fds/timers and editor window events
     for (auto& [id, e] : entries_)
         if (e.inst) e.inst->on_main_thread();
     for (auto it = editors_.begin(); it != editors_.end();)
