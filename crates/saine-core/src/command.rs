@@ -20,6 +20,8 @@ pub enum EditError {
     TrackNotFound(TrackId),
     #[error("clip {0:?} not found")]
     ClipNotFound(ClipId),
+    #[error("section {0:?} not found")]
+    SectionNotFound(SectionId),
     #[error("asset {0:?} not found")]
     AssetNotFound(AssetId),
     #[error("invalid value for {field}: {reason}")]
@@ -44,6 +46,14 @@ pub enum Command {
     AddTrack { index: Option<usize>, track: Track },
     RemoveTrack { track: TrackId },
     RenameTrack { track: TrackId, name: String },
+    /// Insert a section at `index` (end when `None`). If `section.id` is 0 a fresh id is allocated.
+    InsertSection { index: Option<usize>, section: Section },
+    RemoveSection { section: SectionId },
+    RenameSection { section: SectionId, name: String },
+    /// Length in ticks, at least one beat. Later sections move with its end.
+    SetSectionLength { section: SectionId, length: Ticks },
+    /// Move a section to `index` in the list (sections stay contiguous).
+    MoveSection { section: SectionId, index: usize },
     SetTrackGain { track: TrackId, gain: f32 },
     SetTrackPan { track: TrackId, pan: f32 },
     SetTrackMute { track: TrackId, mute: bool },
@@ -141,6 +151,11 @@ impl Command {
             Command::AddTrack { track, .. } => format!("Add {} Track", kind_name(track.kind)),
             Command::RemoveTrack { .. } => "Delete Track".into(),
             Command::RenameTrack { .. } => "Rename Track".into(),
+            Command::InsertSection { .. } => "Add Section".into(),
+            Command::RemoveSection { .. } => "Delete Section".into(),
+            Command::RenameSection { .. } => "Rename Section".into(),
+            Command::SetSectionLength { .. } => "Resize Section".into(),
+            Command::MoveSection { .. } => "Move Section".into(),
             Command::SetTrackGain { .. } => "Track Volume Change".into(),
             Command::SetTrackPan { .. } => "Track Pan Change".into(),
             Command::SetTrackMute { .. } => "Mute Change".into(),
@@ -246,6 +261,61 @@ impl Command {
                 let idx = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
                 let t = p.tracks.remove(idx);
                 Ok(Command::AddTrack { index: Some(idx), track: t })
+            }
+            Command::InsertSection { index, mut section } => {
+                let name = section.name.trim().to_string();
+                if name.is_empty() || name.chars().count() > 128 {
+                    return Err(invalid("name", "must be 1..=128 characters"));
+                }
+                if section.length < PPQ {
+                    return Err(invalid("length", "at least one beat"));
+                }
+                if section.color > 0xff_ffff {
+                    return Err(invalid("color", "0xRRGGBB"));
+                }
+                if section.id.0 == 0 {
+                    section.id = SectionId(p.alloc_id());
+                } else if p.section_index(section.id).is_some() {
+                    return Err(EditError::DuplicateId(section.id.0));
+                } else {
+                    p.next_id = p.next_id.max(section.id.0 + 1);
+                }
+                section.name = name;
+                let id = section.id;
+                let at = index.unwrap_or(p.sections.len()).min(p.sections.len());
+                p.sections.insert(at, section);
+                Ok(Command::RemoveSection { section: id })
+            }
+            Command::RemoveSection { section } => {
+                let i = p.section_index(section).ok_or(EditError::SectionNotFound(section))?;
+                let s = p.sections.remove(i);
+                Ok(Command::InsertSection { index: Some(i), section: s })
+            }
+            Command::RenameSection { section, name } => {
+                let name = name.trim().to_string();
+                if name.is_empty() || name.chars().count() > 128 {
+                    return Err(invalid("name", "must be 1..=128 characters"));
+                }
+                let i = p.section_index(section).ok_or(EditError::SectionNotFound(section))?;
+                let old = std::mem::replace(&mut p.sections[i].name, name);
+                Ok(Command::RenameSection { section, name: old })
+            }
+            Command::SetSectionLength { section, length } => {
+                if length < PPQ {
+                    return Err(invalid("length", "at least one beat"));
+                }
+                let i = p.section_index(section).ok_or(EditError::SectionNotFound(section))?;
+                let old = std::mem::replace(&mut p.sections[i].length, length);
+                Ok(Command::SetSectionLength { section, length: old })
+            }
+            Command::MoveSection { section, index } => {
+                let i = p.section_index(section).ok_or(EditError::SectionNotFound(section))?;
+                if index >= p.sections.len() {
+                    return Err(invalid("index", format!("{index} past the last section")));
+                }
+                let s = p.sections.remove(i);
+                p.sections.insert(index, s);
+                Ok(Command::MoveSection { section, index: i })
             }
             Command::RenameTrack { track, name } => {
                 let name = name.trim().to_string();

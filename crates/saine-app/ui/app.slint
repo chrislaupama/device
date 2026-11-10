@@ -20,7 +20,7 @@ import { Panel, Icon, Icons, Pill, IconButton, SmallButton, HSlider, Knob, Switc
 
 export { Tokens }
 
-import { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow } from "studio.slint";
+import { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, SectionLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow } from "studio.slint";
 import { ClipSidebar, PianoRoll, ClipEmpty, ContextMenu, DropMenu } from "pianoroll.slint";
 import { MixerPanel } from "mixer.slint";
 import { StripMetrics, StripCanvas, StripReadout, StripButton } from "channel_strip.slint";
@@ -32,7 +32,7 @@ import { PluginCard, AddDeviceCard, DevMenuList } from "devices.slint";
 import { BuiltinCard } from "device_panel.slint";
 import { TrackHeaderRow, MasterHeaderRow, AutoPill } from "track_header.slint";
 
-export { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow }
+export { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, SectionLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow }
 
 // ------------------------------------------------------------------ header
 component Header inherits Rectangle {
@@ -331,7 +331,12 @@ component Timeline inherits Panel {
         for l in Studio.ruler-labels: Text {
             x: l.x + 4.5px; y: 0px; height: 11px; text: l.text; color: #bdbdbd; font-size: 7.75px; font-weight: 600; vertical-alignment: center;
         }
-        Icon { x: 3px; y: 26.5px; width: 11px; height: 11px; d: Icons.plus; ink: Tokens.text-tertiary; }
+        Icon { x: Studio.section-add-x - 5.5px; y: 26.5px; width: 11px; height: 11px; d: Icons.plus; ink: Tokens.text-tertiary; }
+        // Section names: 10 px weight 600, -0.04 em, in a dark shade of the block's hue.
+        for l in Studio.section-labels: Text {
+            x: l.x; y: 25.85px; width: l.w; height: 11.9px; text: l.text; color: l.ink;
+            font-size: 8.5px; font-weight: 600; letter-spacing: -0.34px; vertical-alignment: center; overflow: elide;
+        }
         for c in Studio.clip-labels: Text {
             x: c.x + 5px; y: c.y; width: max(0px, c.w - 8px); height: 17px;
             text: c.text; color: Studio.auto-shown ? #191b24 : #15161a; font-size: 7.75px; font-weight: 500; vertical-alignment: center; overflow: elide;
@@ -355,6 +360,7 @@ component Timeline inherits Panel {
                 }
             }
             moved => { Studio.lane-pointer(1, self.mouse-x, self.mouse-y, false, false, false); }
+            double-clicked => { Studio.lane-double(self.mouse-x, self.mouse-y); }
             changed mouse-x => { if (!self.pressed) { Studio.lane-hover(self.mouse-x, self.mouse-y); } }
             changed mouse-y => { if (!self.pressed) { Studio.lane-hover(self.mouse-x, self.mouse-y); } }
             scroll-event(e) => {
@@ -803,7 +809,7 @@ export component AppWindow inherits Window {
                 x: (root.width - 260px) / 2; y: 220px; width: 260px; height: 66px; border-radius: 8px;
                 background: Tokens.bg-raised; border-width: 0.5px; border-color: #3a3b40;
                 TouchArea { }
-                Text { x: 12px; y: 8px; height: 14px; text: "Rename clip"; color: Tokens.text-bright; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+                Text { x: 12px; y: 8px; height: 14px; text: Studio.rename-title; color: Tokens.text-bright; font-size: 10px; font-weight: 600; vertical-alignment: center; }
                 Rectangle {
                     x: 12px; y: 30px; width: parent.width - 24px; height: 24px; border-radius: 5px; background: Tokens.bg-input;
                     border-width: 0.5px; border-color: Tokens.accent;

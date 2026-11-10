@@ -249,6 +249,12 @@ pub enum MenuAction {
     Quantize,
     Humanize,
     Ask,
+    Paste,
+    SectionRename,
+    SectionColor,
+    SectionInsert,
+    SectionDelete,
+    SectionClear,
 }
 
 #[derive(Debug, Default)]
@@ -256,6 +262,7 @@ pub struct MenuState {
     pub open: bool,
     pub pos: (f32, f32),
     pub clip: Option<ClipId>,
+    pub section: Option<saine_core::SectionId>,
     pub items: Vec<(MenuAction, bool)>,
     pub sub_open: bool,
 }
@@ -298,6 +305,7 @@ pub struct Controller {
     // models (kept to update in place)
     pub(crate) tracks_model: Rc<VecModel<TrackRow>>,
     ruler_model: Rc<VecModel<RulerLabel>>,
+    section_label_model: Rc<VecModel<crate::SectionLabel>>,
     clips_model: Rc<VecModel<ClipLabel>>,
     ruler_key: (i64, i64, i64),
     pub clip_vis: Vec<ClipVis>,
@@ -312,6 +320,10 @@ pub struct Controller {
     pub clipboard: Option<ClipboardItem>,
     /// Rename popup open for this clip.
     pub rename: Option<ClipId>,
+    pub rename_section: Option<saine_core::SectionId>,
+    pub selected_section: Option<saine_core::SectionId>,
+    pub(crate) section_drag: Option<crate::sections::SectionDrag>,
+    pub(crate) section_vis: Vec<crate::sections::SectionVis>,
     pub(crate) pr_bar_model: Rc<VecModel<RulerLabel>>,
     pub(crate) pr_key_model: Rc<VecModel<YLabel>>,
     pub(crate) menu_model: Rc<VecModel<MenuItem>>,
@@ -392,6 +404,7 @@ impl Controller {
             meter_t: None,
             tracks_model: Rc::new(VecModel::default()),
             ruler_model: Rc::new(VecModel::default()),
+            section_label_model: Rc::new(VecModel::default()),
             clips_model: Rc::new(VecModel::default()),
             ruler_key: (i64::MIN, 0, 0),
             clip_vis: Vec::new(),
@@ -403,6 +416,10 @@ impl Controller {
             menu: MenuState::default(),
             clipboard: None,
             rename: None,
+            rename_section: None,
+            selected_section: None,
+            section_drag: None,
+            section_vis: Vec::new(),
             pr_bar_model: Rc::new(VecModel::default()),
             pr_key_model: Rc::new(VecModel::default()),
             menu_model: Rc::new(VecModel::default()),
@@ -451,6 +468,7 @@ impl Controller {
         let s = app.global::<Studio>();
         s.set_tracks(ModelRc::from(self.tracks_model.clone()));
         s.set_ruler_labels(ModelRc::from(self.ruler_model.clone()));
+        s.set_section_labels(ModelRc::from(self.section_label_model.clone()));
         s.set_clip_labels(ModelRc::from(self.clip_ids_model()));
         s.set_strips(ModelRc::from(self.strips_model.clone()));
         s.set_strip_meters(ModelRc::from(self.strip_meters_model.clone()));
@@ -529,6 +547,9 @@ impl Controller {
             && !p.clip_id_in_use(c)
         {
             self.selected_clip = None;
+        }
+        if self.selected_section.is_some_and(|s| p.section_index(s).is_none()) {
+            self.selected_section = None;
         }
         if self.menu.clip.is_some_and(|c| !p.clip_id_in_use(c)) {
             self.menu_close();
@@ -667,6 +688,7 @@ impl Controller {
 
     pub fn select_track(&mut self, id: TrackId) {
         if self.selected_track != Some(id) {
+            self.selected_section = None;
             self.selected_track = Some(id);
             if let Some(c) = self.selected_clip
                 && self.clip_track(c) != Some(id)
@@ -699,7 +721,9 @@ impl Controller {
     }
 
     pub fn delete_selection(&mut self) {
-        if let Some(c) = self.selected_clip.take() {
+        if let Some(s) = self.selected_section.filter(|s| self.project().section_index(*s).is_some()) {
+            self.delete_section(s);
+        } else if let Some(c) = self.selected_clip.take() {
             let cmd = if self.project().find_midi_clip(c).is_some() { Command::RemoveMidiClip { clip: c } } else { Command::RemoveClip { clip: c } };
             self.execute(cmd);
         } else if let Some(t) = self.selected_track {
@@ -1035,6 +1059,12 @@ impl Controller {
 
     /// Lane pointer with modifiers: automation rows take it while lanes are shown.
     pub fn pointer_mods(&mut self, kind: i32, x: f32, y: f32, shift: bool, alt: bool) {
+        if self.drag.is_none() && self.section_pointer(kind, x, y) {
+            return;
+        }
+        if kind == 0 && self.selected_section.take().is_some() {
+            self.ui_dirty = true;
+        }
         if self.drag.is_none() && self.auto_pointer(kind, x, y, shift, alt) {
             return;
         }
@@ -1172,6 +1202,8 @@ impl Controller {
         self.auto_sync_view();
         let p = self.doc.project();
         self.track_vis = p.tracks.iter().map(|t| TrackVis { selected: Some(t.id) == self.selected_track }).collect();
+        self.section_vis = self.build_section_vis();
+        let p = self.doc.project();
         self.clip_vis.clear();
         self.clip_ids.clear();
         for (ti, t) in p.tracks.iter().enumerate() {
@@ -1245,6 +1277,9 @@ impl Controller {
     /// Select a clip (or none). Selecting a MIDI clip opens the Clip tab (piano roll).
     pub fn select_clip(&mut self, id: Option<ClipId>) {
         self.selected_clip = id;
+        if id.is_some() {
+            self.selected_section = None;
+        }
         if id.is_some_and(|c| self.project().find_midi_clip(c).is_some()) {
             self.bottom_tab = BottomTab::Clip;
         }
@@ -1274,6 +1309,7 @@ impl Controller {
             beats_per_bar: self.beats_per_bar(),
             frames_per_beat: self.rate * 60.0 / tr.bpm,
             auto: None,
+            sections: &self.section_vis,
         }
     }
 
@@ -1409,6 +1445,7 @@ impl Controller {
         self.view.clamp_scroll(self.project().tracks.len(), self.lanes_size.1);
         s.set_scroll_y(self.view.scroll_y as f32);
         self.update_labels();
+        s.set_section_add_x(self.section_add_x());
         self.update_auto_labels();
         if self.auto_any_active() {
             self.push_auto_feedback(&s);
@@ -1517,6 +1554,23 @@ impl Controller {
 
     fn update_labels(&mut self) {
         let v = self.view.clone();
+        // Section names: 6 reference px in, hidden under 10 px of room (sections.rs).
+        let w = self.lanes_size.0;
+        let section_labels: Vec<crate::SectionLabel> = self
+            .section_vis
+            .iter()
+            .filter_map(|s| {
+                let x0 = v.x_of(s.start_beats);
+                let x1 = v.x_of(s.start_beats + s.len_beats);
+                let lx = (x0 + 5.1).max(3.4);
+                let room = x1 - 5.1 - lx;
+                (room >= 8.5 && x1 > 0.0 && x0 < w).then(|| {
+                    let ink = crate::sections::label_ink(crate::sections::lift(s.color, s.state));
+                    crate::SectionLabel { x: lx, w: room, text: s.name.clone().into(), ink: slint::Color::from_rgb_f32(ink[0], ink[1], ink[2]) }
+                })
+            })
+            .collect();
+        crate::controller::sync_model(&self.section_label_model, section_labels);
         let key = ((v.start_beats * 4096.0) as i64, (v.px_per_beat * 4096.0) as i64, self.lanes_size.0 as i64);
         if key != self.ruler_key {
             self.ruler_key = key;
