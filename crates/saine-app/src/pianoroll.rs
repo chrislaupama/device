@@ -894,6 +894,15 @@ impl Controller {
         self.pr_set_scale(|s, key| s.key = Some(ScaleKey { root: root.min(scale::ROOTS.len() - 1) as u8, kind: key.kind }));
     }
 
+    /// Root note (menu 8) or Scale type (menu 9) from the keyboard: `step` entries on, clamped
+    /// to the list (Home and End step past either end).
+    pub fn pr_scale_step(&mut self, menu: i32, step: i32) {
+        let Some((_, key)) = self.pr_scale() else { return };
+        let (cur, n) = if menu == 8 { (key.root as i64, scale::ROOTS.len() as i64) } else { (key.kind as i64, scale::SCALES.len() as i64) };
+        let i = (cur + step as i64).clamp(0, n - 1) as usize;
+        if menu == 8 { self.pr_scale_root(i) } else { self.pr_scale_kind(i) }
+    }
+
     pub fn pr_scale_kind(&mut self, kind: usize) {
         self.pr_set_scale(|s, key| s.key = Some(ScaleKey { root: key.root, kind: kind.min(scale::SCALES.len() - 1) as u8 }));
     }
