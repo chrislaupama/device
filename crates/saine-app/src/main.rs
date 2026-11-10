@@ -123,6 +123,7 @@ struct Args {
     /// an empty projects folder (compare z100-browser-files-projects.png), with a generated
     /// "audio" folder of two WAVs open (compare z100-files-audio-folder-expanded.png), and with a
     /// saved project open to its tracks, audio files and MIDI clips (no reference).
+    /// review-files-sort: the audio folder with the sort menu open.
     files_review: u8,
     /// review-section-added / review-sections-two: one new 8-bar section (compare
     /// z100-marker-after-plus-click.png), or two with the second selected.
@@ -292,7 +293,8 @@ fn parse_args() -> Result<Args, String> {
                         "review-files-projects" => 1,
                         "review-files-folders" => 2,
                         "review-files-project" => 3,
-                        _ => return Err(format!("unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project)")),
+                        "review-files-sort" => 5,
+                        _ => return Err(format!("unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project, review-files-sort)")),
                     };
                 }
                 "review-automation" => {
@@ -506,7 +508,7 @@ fn app_text_focused(aw: &slint::Weak<AppWindow>) -> bool {
 }
 
 fn pick_import() -> Vec<PathBuf> {
-    rfd::FileDialog::new().set_title("Import audio").add_filter("WAV audio", &["wav", "WAV"]).pick_files().unwrap_or_default()
+    rfd::FileDialog::new().set_title("Import audio").add_filter("Audio", &crate::files::dialog_exts()).pick_files().unwrap_or_default()
 }
 
 fn pick_project_dir(save: bool) -> Option<PathBuf> {
@@ -910,9 +912,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.browser_section(files::SECTION_FILES);
             c.files_tab(files::TAB_PROJECTS);
             c.files_expand(files::FileItem::Project(song));
-        } else if args.files_review == 2 {
+        } else if args.files_review == 2 || args.files_review == 5 {
             c.files_add_folder(&audio);
             c.files_expand(files::FileItem::Folder(audio));
+            c.files.sort_open = args.files_review == 5;
         } else {
             c.browser_section(files::SECTION_FILES);
             c.files_tab(files::TAB_PROJECTS);
@@ -1383,7 +1386,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_browser_back, |c| c.browser_back());
     on!(on_browser_forward, |c| c.browser_forward());
     on!(on_files_tab_select, |c, i: i32| c.files_tab(i.max(0) as usize));
-    on!(on_files_sort_toggle, |c| c.files_sort_toggle());
+    on!(on_files_sort_open_menu, |c, open: bool| c.files_sort_open_menu(open));
+    on!(on_files_sort_pick, |c, i: i32| c.files_sort_pick(i.max(0) as usize));
     on!(on_files_click, |c, i: i32, chevron: bool| c.files_click(i.max(0) as usize, chevron));
     on!(on_files_activate, |c, i: i32| c.files_activate(i.max(0) as usize));
     on!(on_files_drag, |c, i: i32, phase: i32, x: f32, y: f32| c.files_drag(i.max(0) as usize, phase, x, y));
@@ -1455,7 +1459,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         studio.on_sampler_load(move |id| {
             let target = ctl.borrow().sampler_load_target(saine_core::DeviceId(id as u64));
             let Some(target) = target else { return };
-            if let Some(file) = rfd::FileDialog::new().set_title("Choose audio file").add_filter("WAV audio", &["wav", "WAV"]).pick_file() {
+            if let Some(file) = rfd::FileDialog::new().set_title("Choose audio file").add_filter("Audio", &crate::files::dialog_exts()).pick_file() {
                 ctl.borrow_mut().import_files(vec![file], target, None);
             }
         });

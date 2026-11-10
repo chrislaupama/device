@@ -2,7 +2,8 @@
 //!
 //! Projects lists the `.saineproj` folders in the projects folder; a project expands to the
 //! tracks, audio files and MIDI clips it held when last saved. Folders lists folders the user
-//! added (kept in the preferences) and the WAV files and subfolders inside them. Rows are laid
+//! added (kept in the preferences) and the audio files (WAV, AIFF, FLAC, Ogg, MP3) and subfolders
+//! inside them. Rows are laid
 //! out here, in design units, so the UI only draws them (research-findings: findings/files.md).
 
 use crate::controller::{Controller, ImportTarget, sync_model};
@@ -31,7 +32,9 @@ pub const PAD_BOTTOM: f32 = 10.2;
 pub const INDENT: f32 = 6.8;
 pub const ROW_X: f32 = 10.2;
 
-pub const AUDIO_EXT: &[&str] = &["wav"];
+/// Extensions Folders lists and import accepts (the engine decodes by content: WAV, AIFF,
+/// FLAC, Ogg Vorbis, MP3).
+pub const AUDIO_EXT: &[&str] = &["wav", "aif", "aiff", "aifc", "flac", "ogg", "oga", "mp3"];
 
 /// A browser location: section and that section's tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +122,7 @@ pub struct FilesUi {
     pub section: usize,
     pub tab: usize,
     pub sort_name: bool,
+    pub sort_open: bool,
     pub search: String,
     pub projects_dir: Option<PathBuf>,
     /// Projects found in `projects_dir` with their modification time.
@@ -145,6 +149,7 @@ impl Default for FilesUi {
             section: SECTION_DEVICES,
             tab: TAB_PROJECTS,
             sort_name: false,
+            sort_open: false,
             search: String::new(),
             projects_dir,
             projects: Vec::new(),
@@ -164,11 +169,16 @@ fn file_name(p: &Path) -> String {
     p.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string())
 }
 
-fn is_audio(p: &Path) -> bool {
+/// Extensions for file dialogs, in both cases (some platforms match them case-sensitively).
+pub fn dialog_exts() -> Vec<String> {
+    AUDIO_EXT.iter().flat_map(|e| [e.to_string(), e.to_uppercase()]).collect()
+}
+
+pub fn is_audio(p: &Path) -> bool {
     p.extension().and_then(|e| e.to_str()).is_some_and(|e| AUDIO_EXT.iter().any(|a| e.eq_ignore_ascii_case(a)))
 }
 
-/// Subfolders then WAV files of `dir`, by name; hidden entries skipped.
+/// Subfolders then audio files of `dir`, by name; hidden entries skipped.
 pub fn list_folder(dir: &Path) -> Result<Vec<(String, bool)>, String> {
     let mut out: Vec<(String, bool)> = std::fs::read_dir(dir)
         .map_err(|_| "That couldn’t be read.".to_string())?
@@ -449,8 +459,16 @@ impl Controller {
         }
     }
 
-    pub fn files_sort_toggle(&mut self) {
-        self.files.sort_name = !self.files.sort_name;
+    /// Sort button: open or close the menu of Recent and Name.
+    pub fn files_sort_open_menu(&mut self, open: bool) {
+        self.files.sort_open = open;
+        self.ui_dirty = true;
+    }
+
+    /// Sort menu pick: 0 Recent, 1 Name. Closes the menu.
+    pub fn files_sort_pick(&mut self, i: usize) {
+        self.files.sort_name = i == 1;
+        self.files.sort_open = false;
         self.ui_dirty = true;
     }
 
@@ -623,6 +641,8 @@ impl Controller {
         let (one, many) = if self.files.tab == TAB_PROJECTS { ("project", "projects") } else { ("folder", "folders") };
         s.set_files_meta(if total == 0 { String::new() } else { format!("{} {}", built.count, if built.count == 1 { one } else { many }) }.into());
         s.set_files_sort(if self.files.sort_name { "Name" } else { "Recent" }.into());
+        s.set_files_sort_index(self.files.sort_name as i32);
+        s.set_files_sort_open(self.files.sort_open && self.files.section == SECTION_FILES && s.get_files_meta() != "");
         let q = self.files.search.trim();
         let (title, hint) = if total == 0 && self.files.tab == TAB_PROJECTS {
             ("No projects yet".to_string(), "Projects you save show up here.")
@@ -690,11 +710,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("saine-files-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("kit/drums")).unwrap();
-        for f in ["kit/b.wav", "kit/A.WAV", "kit/notes.txt", "kit/.hidden.wav", "kit/drums/kick.wav"] {
+        for f in ["kit/b.wav", "kit/A.WAV", "kit/c.flac", "kit/d.MP3", "kit/e.ogg", "kit/f.aif", "kit/notes.txt", "kit/.hidden.wav", "kit/drums/kick.wav"] {
             std::fs::write(dir.join(f), b"").unwrap();
         }
         let kit = dir.join("kit");
-        assert_eq!(list_folder(&kit).unwrap(), vec![("drums".to_string(), true), ("A.WAV".to_string(), false), ("b.wav".to_string(), false)]);
+        let names: Vec<_> = list_folder(&kit).unwrap().into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["drums", "A.WAV", "b.wav", "c.flac", "d.MP3", "e.ogg", "f.aif"]);
         let mut ui = FilesUi { tab: TAB_FOLDERS, projects_dir: None, ..Default::default() };
         let folders = vec![dir.join("other").to_string_lossy().into_owned(), kit.to_string_lossy().into_owned()];
         let b = build(&ui, &folders);
@@ -708,7 +729,8 @@ mod tests {
         assert_eq!(labels[0], (0, 0, "kit".into(), String::new()));
         assert_eq!(labels[1], (0, 1, "drums".into(), String::new()));
         assert_eq!(labels[2], (0, 1, "A.WAV".into(), "wav".into()));
-        assert_eq!(labels[4].2, "other");
+        assert_eq!(labels[4], (0, 1, "c.flac".into(), "flac".into()));
+        assert_eq!(labels.last().unwrap().2, "other");
         assert!((b.rows[1].y - (PAD_TOP + ROW_H + GAP)).abs() < 1e-3);
         assert!((b.rows[2].y - b.rows[1].y - ROW_H - GAP).abs() < 1e-3);
         assert_eq!(b.guides.len(), 1);

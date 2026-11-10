@@ -207,13 +207,13 @@ int32_t decode_wav_memory(const uint8_t* data, std::size_t size, DecodedAudio& o
     return SE_OK;
 }
 
-int32_t decode_wav_file(const char* utf8_path, DecodedAudio& out, std::string& err) {
+int32_t read_file_bytes(const char* utf8_path, std::vector<uint8_t>& bytes, std::string& err) {
     std::FILE* f = os::fopen_utf8(utf8_path, "rb"); // _wfopen on Windows
     if (f == nullptr) {
         err = std::string("cannot open file: ") + utf8_path;
         return SE_ERR_IO;
     }
-    std::vector<uint8_t> bytes;
+    bytes.clear();
     if (std::fseek(f, 0, SEEK_END) == 0) {
         const long len = std::ftell(f);
         if (len > 0) bytes.resize(static_cast<std::size_t>(len));
@@ -226,7 +226,13 @@ int32_t decode_wav_file(const char* utf8_path, DecodedAudio& out, std::string& e
         err = std::string("read error: ") + utf8_path;
         return SE_ERR_IO;
     }
-    return decode_wav_memory(bytes.data(), bytes.size(), out, err);
+    return SE_OK;
+}
+
+int32_t decode_wav_file(const char* utf8_path, DecodedAudio& out, std::string& err) {
+    std::vector<uint8_t> bytes;
+    const int32_t rc = read_file_bytes(utf8_path, bytes, err);
+    return rc != SE_OK ? rc : decode_wav_memory(bytes.data(), bytes.size(), out, err);
 }
 
 // ---------------------------------------------------------------- writer
