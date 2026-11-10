@@ -6,7 +6,7 @@
 //!   cargo bench -p saine-core --bench library
 
 use saine_core::library::{self, PartType};
-use saine_core::shape::{self, Shape};
+use saine_core::shape::{self, Curve, Shape, ShapeKey};
 use saine_core::PPQ;
 use std::hint::black_box;
 use std::time::Instant;
@@ -40,16 +40,30 @@ fn main() {
 
     println!("{:<30} {:>10} {:>10}", "Shape (4 bars)", "median us", "p99 us");
     let clip = 16 * PPQ;
+    let curve = |k: ShapeKey| Curve { key: k, points: (0..shape::curve_len(clip)).map(|i| ((i % 4) as f32 - 1.5) / 4.0).collect() };
     for (name, part, f) in [
         ("Chords: octave, density, length", PartType::Chords, (|s: Shape| Shape { octave: 1, density: 0.6, length: 0.3, ..s }) as fn(Shape) -> Shape),
         ("Chords: repeat 16", PartType::Chords, |s| Shape { repeat: 3, ..s }),
         ("Chords: arp 1/16", PartType::Chords, |s| Shape { arp: 3, ..s }),
+        ("Chords: air, sub, tension, spread", PartType::Chords, |s| Shape { air: 0.67, sub: 0.34, tension: 0.4, spread: 0.5, ..s }),
+        ("Chords: density, vary", PartType::Chords, |s| Shape { density: 0.5, vary: 0.5, ..s }),
         ("Lead: 3 voices, nudge", PartType::Lead, |s| Shape { voices: 3, nudge: 0.6, ..s }),
     ] {
         let notes = library::create_set(part, 3, None, 1, clip, 4 * PPQ).remove(0).notes;
         let s = f(Shape::neutral(Some(part)));
         let (m, p) = median_us(2000, || {
-            black_box(shape::apply(&notes, s, Some(part), None, clip));
+            black_box(shape::apply(&notes, &s, Some(part), None, clip));
+        });
+        println!("{:<30} {m:>10.1} {p:>10.1}", format!("{name} ({} notes)", notes.len()));
+    }
+    let notes = library::create_set(PartType::Chords, 3, None, 1, clip, 4 * PPQ).remove(0).notes;
+    let curves = Shape {
+        curves: [ShapeKey::Velocity, ShapeKey::Density, ShapeKey::Length, ShapeKey::Nudge, ShapeKey::Air, ShapeKey::Tension].map(curve).to_vec(),
+        ..Shape::neutral(Some(PartType::Chords))
+    };
+    for (name, s) in [("Chords: six drawn curves", curves.clone()), ("Chords: six curves, arp 1/16", Shape { arp: 3, ..curves })] {
+        let (m, p) = median_us(2000, || {
+            black_box(shape::apply(&notes, &s, Some(PartType::Chords), None, clip));
         });
         println!("{:<30} {m:>10.1} {p:>10.1}", format!("{name} ({} notes)", notes.len()));
     }

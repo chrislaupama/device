@@ -257,3 +257,15 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   `reference/findings/step-sequencer.md`.
 - Review states: `--state review-patterns-3` (Shape on a lead) and `review-patterns-4` (the Genre menu).
 - Next: Shape option A, the full rack with drawn curves and the remaining transforms.
+
+### 2026-11-10: Shape rack, full (SAIN-37, PR C)
+
+- `saine_core::shape` now has all 16 controls: Octave, Voices, Density, Length, Velocity, Vary, Nudge, Repeat,
+  Air, Sub, Spread, Tension, Inversion, Arp, and the arp's Pattern and Octaves. Each one has a base value and a
+  drawn curve (one offset per beat), and the transforms follow the reference wherever its behaviour could be
+  read (SQ-16..SQ-18). Shapes saved before this change load unchanged.
+- `shape_rack.rs` holds the rack rows (click a label to choose the curve to edit). The piano roll toolbar has
+  Shape (draw), the Pencil, Steps and Ramp brushes, and Reset. The curves are drawn into the piano roll's wgpu
+  draw list. A stroke or a slider drag is one undo step.
+- Review states: `review-patterns-5` (Velocity and Density curves) and `review-patterns-6` (Air, a Tension
+  curve, and the arp).

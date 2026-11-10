@@ -547,21 +547,30 @@ impl Controller {
         s.set_composer_create_text(v.create_label.into());
         s.set_composer_shape_ok(v.shape_ok);
         s.set_composer_shape_tab(v.shape_tab);
+        s.set_shape_drawing(self.shape_ui.drawing);
+        s.set_shape_brush(self.shape_ui.brush as i32);
+        s.set_shape_has_curves(self.shape_has_curves());
         if *self.composer_shape_shown.borrow() != v.shape_rows {
             *self.composer_shape_shown.borrow_mut() = v.shape_rows.clone();
             let rows: Vec<ShapeRow> = v
                 .shape_rows
                 .into_iter()
-                .map(|r| ShapeRow {
-                    label: r.label.into(),
-                    value: r.value.into(),
-                    kind: r.kind as i32,
-                    norm: r.norm,
-                    bipolar: r.bipolar,
-                    segs: r.segs,
-                    seg: r.seg,
-                    enabled: r.enabled,
-                    tip: r.tip.into(),
+                .map(|r| {
+                    let c = r.key.color();
+                    ShapeRow {
+                        label: r.key.label().into(),
+                        value: r.value.into(),
+                        kind: r.kind as i32,
+                        norm: r.norm,
+                        bipolar: r.bipolar,
+                        segs: r.segs,
+                        seg: r.seg,
+                        enabled: r.enabled,
+                        tip: r.tip.into(),
+                        selected: r.selected,
+                        curved: r.curved,
+                        color: slint::Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8),
+                    }
                 })
                 .collect();
             self.composer_shape_model.set_vec(rows);
