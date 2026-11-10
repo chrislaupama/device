@@ -115,8 +115,8 @@ POSIX signal or Windows NTSTATUS exception code).
 | Scanner children | `posix_spawn` | `CreateProcessW` (no WER dialogs in the child) | `posix_spawn` |
 | Test plugins | `.clap`/`.vst3` bundles | `.clap` DLL, `.vst3/Contents/x86_64-win/*.vst3`, + `SaineTestGui.clap` | `.clap` .so, `.vst3/Contents/x86_64-linux/*.so` |
 | Built with warnings as errors | yes (clang, `-Werror`), every CI run | yes (`/W4 /WX`), every CI run | yes (GCC, `-Werror`), every CI run |
-| ctest | all tests, every CI run, on the self-hosted Mac's real audio device | all tests, every CI run; AU tests and device tests skip (no audio endpoint) | all tests, every CI run; AU tests and device tests skip (no PipeWire server) |
-| Tested on real audio hardware | yes (Core Audio output + duplex, see below) | **no** | **no** |
+| ctest | all tests, every CI run, on the self-hosted Mac's real audio device | all tests, every CI run; AU tests and device tests skip (no audio endpoint) | all tests, every CI run, against a headless PipeWire server (null sink + loopback); AU tests skip |
+| Tested on real audio hardware | yes (Core Audio output + duplex, see below) | **no** | **no** (real PipeWire streams in CI, no sound card) |
 
 **CI** (`.github/workflows/ci.yml`) runs one job per OS: macOS on the
 self-hosted runner (one Apple silicon Mac mini, with a real audio device),
@@ -137,11 +137,20 @@ Debug builds of the app abort at exit on every OS (pre-existing: wgpu-core's
 debug-only lock tracing runs in a TLS destructor when Slint's thread-local
 backend drops the wgpu queue), so CI uses a release build. Screenshots and logs are uploaded as artifacts.
 
-What the hosted jobs cannot cover: the hosted runners have no audio devices (Windows: no
-endpoint; Linux: no PipeWire server), so the WASAPI and PipeWire streaming
-code (open, callbacks, duplex ring in a live stream, latency values) is
-compiled and its enumeration/validation "no device" paths run, but it has
-**never been run against real hardware**. Tests that need a device skip
+**Linux runs real audio streams in CI.** The hosted runner has no sound card,
+but the job starts a headless PipeWire graph (`tools/ci/headless-pipewire.sh`):
+a null sink, driven by the system clock like a device, and `pw-loopback` from
+its monitor to a virtual source. The device tests then open real PipeWire
+streams, `device_duplex_loopback_take_lands_on_the_clicks` plays a click track
+and records it back through that loopback (every click must land on its
+timeline position; on PipeWire they land sample-exact), and the app runs
+`--self-test-audio` with the device running.
+
+What the hosted jobs cannot cover: the Windows runner has no audio endpoint,
+so the WASAPI streaming code (open, callbacks, duplex ring in a live stream,
+latency values) is compiled and its enumeration/validation "no device" paths
+run, but it has **never been run against an audio device**; and neither OS has
+run on physical sound cards. Tests that need a device skip
 with `SKIPPED: <reason>` (CTest shows "Skipped"; the harness exits 77 =
 `SKIP_RETURN_CODE`). The duplex FIFO itself (`FrameRing`) is unit-tested on
 every OS. The PDC golden hashes are compared only on Apple clang/arm64
@@ -204,6 +213,17 @@ running jackd without PipeWire.
   (`clock.rate`, `clock.allowed-rates`). One short-lived connection with two
   round trips and a 2 s watchdog; no stream is opened. No server → no
   devices; `start()` → `SE_ERR_DEVICE`.
+* **One clock.** Both streams carry the same `node.group`, so PipeWire
+  schedules them from one driver (and resamples the other device when input
+  and output are different hardware). The ring's fill therefore cannot drift;
+  a lasting change means a glitch (one stream missed a cycle), which would
+  shift every later recording by a quantum. The ring re-syncs: it watches the
+  end-of-cycle fill over windows of 32 cycles and skips or inserts the
+  difference once a whole window is off by more than half a quantum
+  (`FrameRing` re-sync, `frame_ring.hpp`). `saine_frame_ring_bench` measures
+  the ring: ~0.2 µs per 256-frame stereo cycle with or without re-sync.
+* **Sources.** `Audio/Source` and `Audio/Source/Virtual` nodes (filter chains
+  such as noise suppression, loopbacks) are listed as inputs.
 * **Rates and buffers.** `device_rate` requests a graph rate (`node.rate`,
   must be in `clock.allowed-rates`); `buffer_size` (default: the engine
   block, ≥ 256) requests a quantum (`node.latency`). PipeWire may not honour

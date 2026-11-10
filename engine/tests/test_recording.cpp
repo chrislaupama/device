@@ -9,7 +9,9 @@
 #include "platform/os.hpp"
 #include "wav.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstdio>
 #include <cmath>
 #include <cstring>
@@ -827,4 +829,112 @@ TEST_CASE(device_output_only_named_device_and_restart) {
     CHECK_EQ(st.running, 1);
     check_reported_buffer(st.buffer_size, 256u);
     REQUIRE(se_device_stop(e) == SE_OK);
+}
+
+// ------------------------------------------------------------ real duplex loopback (opt-in)
+
+// Plays a click track through a real output device and records it back through
+// a real input that carries that output (a loopback), then checks the take
+// lands where the clicks are on the timeline. This runs the whole duplex
+// device path: the platform backend's output and input streams, the input
+// ring, the reported latencies and the recorder.
+//
+// Opt-in, because it needs a loopback: set SAINE_TEST_LOOPBACK_INPUT to the
+// uid of an input that hears the output (and SAINE_TEST_LOOPBACK_OUTPUT to the
+// output uid; default output otherwise). Linux CI runs it on a headless
+// PipeWire graph: a null sink plus pw-loopback from its monitor to a virtual
+// source (see .github/workflows/ci.yml). On real hardware, use a cable from
+// an output to an input. SAINE_TEST_LOOPBACK_TOLERANCE (frames, default 64)
+// bounds the error, which is the latency the backend failed to report (0 on
+// the PipeWire loopback; a hardware converter adds latency of its own).
+TEST_CASE(device_duplex_loopback_take_lands_on_the_clicks) {
+    const char* in_uid = std::getenv("SAINE_TEST_LOOPBACK_INPUT");
+    if (in_uid == nullptr || *in_uid == '\0') SKIP("set SAINE_TEST_LOOPBACK_INPUT to an input that hears the output");
+    const char* out_uid = std::getenv("SAINE_TEST_LOOPBACK_OUTPUT");
+    const char* tol_env = std::getenv("SAINE_TEST_LOOPBACK_TOLERANCE");
+    const long tolerance = tol_env != nullptr ? std::atol(tol_env) : 64;
+
+    constexpr uint32_t kRate = 48000;
+    constexpr std::size_t kPeriod = 4800; // a click every 100 ms
+    constexpr std::size_t kFirst = 2400;
+    constexpr std::size_t kLength = 3 * kRate;
+    EngineHandle e(kRate, 256);
+    std::vector<float> clicks(kLength, 0.0f);
+    for (std::size_t k = kFirst; k < kLength; k += kPeriod) clicks[k] = 0.5f;
+    const uint64_t a = load_asset(e, {clicks, clicks}, kRate);
+
+    TrackIn player;
+    player.id = 1;
+    player.clips = {clip(1, a, 0, 0, static_cast<int64_t>(kLength))};
+    TrackIn rec;
+    rec.id = 2;
+    rec.arm = true;
+    rec.mode = SE_INPUT_MONO;
+    rec.channel = 0; // not monitored: the output carries the clicks only
+    REQUIRE(publish_v4(e, {player, rec}) == SE_OK);
+
+    se_device_config dc{};
+    dc.output_uid = out_uid != nullptr && *out_uid != '\0' ? out_uid : nullptr;
+    dc.input_uid = in_uid;
+    dc.input_enabled = 1;
+    dc.buffer_size = 256;
+    REQUIRE(se_device_configure(e, &dc) == SE_OK);
+    REQUIRE(se_device_start(e) == SE_OK);
+    se_device_status st{};
+    REQUIRE(se_device_status_get(e, &st) == SE_OK);
+    std::fprintf(stderr, "  output %s, input %s (%s), %.0f Hz, buffer %u, latency in %u + out %u frames\n",
+                 st.output_name, st.input_name, st.input_open ? "open" : st.input_error, st.sample_rate,
+                 st.buffer_size, st.input_latency_frames, st.output_latency_frames);
+    REQUIRE(st.input_open == 1);
+    // Let the graph settle first, as it has long before anyone presses record:
+    // a sound server can still be changing its quantum for the new streams
+    // (PipeWire), and a loopback re-buffers when it does.
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    TempDir dir;
+    REQUIRE(se_transport_seek(e, 0) == SE_OK);
+    REQUIRE(se_record_start(e, dir.path.c_str()) == SE_OK);
+    REQUIRE(se_transport_play(e) == SE_OK);
+    CHECK(wait_until(
+        [&] {
+            se_transport_info ti{};
+            se_transport_get(e, &ti);
+            return ti.position >= static_cast<int64_t>(kLength - kRate / 4);
+        },
+        10000));
+    REQUIRE(se_transport_pause(e) == SE_OK);
+    const auto takes = stop_takes(e);
+    REQUIRE(se_device_stop(e) == SE_OK);
+    REQUIRE(takes.size() == 1);
+
+    saine::DecodedAudio got;
+    std::string err;
+    REQUIRE(saine::decode_wav_file(takes[0].path, got, err) == SE_OK);
+    REQUIRE(got.channels == 1);
+    // Each recorded click, mapped to the timeline, against the nearest click.
+    std::vector<long> errors;
+    for (uint64_t i = 1; i + 1 < got.frames; ++i) {
+        const float x = got.planar[0][i];
+        if (x < 0.25f || x < got.planar[0][i - 1] || x < got.planar[0][i + 1]) continue;
+        const long t = static_cast<long>(takes[0].start_frame) + static_cast<long>(i);
+        const long rel = t - static_cast<long>(kFirst);
+        const long nearest = static_cast<long>(kFirst) +
+                             std::lround(static_cast<double>(rel) / kPeriod) * static_cast<long>(kPeriod);
+        errors.push_back(t - nearest);
+    }
+    std::fprintf(stderr, "  take starts at %lld, %zu clicks found, error (frames):",
+                 static_cast<long long>(takes[0].start_frame), errors.size());
+    for (long x : errors) std::fprintf(stderr, " %ld", x);
+    std::fprintf(stderr, "\n");
+    // Nearly all of the clicks in the take (one comes before the take starts).
+    CHECK(errors.size() >= 25u);
+    // Every click lands within the tolerance, except right after a glitch: an
+    // xrun (likely on a busy CI machine without real-time scheduling) shifts
+    // the input by a cycle until the input ring re-syncs, within two windows
+    // of 32 cycles (at most 4 clicks here). The last clicks must be aligned.
+    std::size_t off = 0;
+    for (long x : errors) off += std::labs(x) > tolerance ? 1u : 0u;
+    CHECK(off <= 4u);
+    for (std::size_t i = errors.size() >= 5 ? errors.size() - 5 : 0; i < errors.size(); ++i)
+        CHECK(std::labs(errors[i]) <= tolerance);
 }
