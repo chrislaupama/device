@@ -824,10 +824,11 @@ impl Controller {
             self.stopped_at = Some(t.position);
             self.engine.pause()
         } else {
-            if let Some(start) = return_to(self.settings.prefs.general.stop_in_place, self.play_start, self.stopped_at, t.position) {
-                let _ = self.engine.seek(start);
-            }
-            self.play_start = Some(self.engine.transport().position);
+            let resume = return_to(self.settings.prefs.general.stop_in_place, self.play_start, self.stopped_at, t.position);
+            self.play_start = Some(match resume {
+                Some(start) if self.engine.seek(start).is_ok() => start,
+                _ => self.engine.transport().position,
+            });
             self.engine.play()
         };
         if let Err(e) = r {

@@ -2064,7 +2064,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(10.0);
     }
     // Settings › General › Always load last session.
-    if use_prefs && args.import.is_empty() {
+    if use_prefs && args.import.is_empty() && args.open.is_none() && !args.demo {
         let last = ctl.borrow().settings.prefs.general.load_last_session.then(|| ctl.borrow().settings.prefs.recent_projects.first().cloned()).flatten();
         if let Some(dir) = last {
             ctl.borrow_mut().open_recent(0);
