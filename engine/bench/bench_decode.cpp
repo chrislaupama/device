@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <numbers>
 #include <string>
 #include <vector>
 
@@ -53,7 +54,7 @@ std::vector<uint8_t> make(const char* kind, uint32_t frames) {
     for (uint32_t f = 0; f < frames; ++f) {
         const double t = f / 48000.0;
         for (double hz : {220.0, 330.0}) {
-            const int32_t s = static_cast<int32_t>(std::lround(std::sin(2.0 * M_PI * hz * t) * 0.5 * 8388607.0));
+            const int32_t s = static_cast<int32_t>(std::lround(std::sin(2.0 * std::numbers::pi * hz * t) * 0.5 * 8388607.0));
             b.push_back(static_cast<uint8_t>(s));
             b.push_back(static_cast<uint8_t>(s >> 8));
             b.push_back(static_cast<uint8_t>(s >> 16));
