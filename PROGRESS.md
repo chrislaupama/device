@@ -201,3 +201,14 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   file landed on the newly selected track. The target track is now resolved when the import starts.
 - Windows app self-test: 125/125 pass; the process still exits 0x87A afterwards (step stays
   informational, as before).
+
+### 2026-11-10: step sequencer, part 1: pattern clips in core and engine (SAIN-37)
+
+- Core (`steps.rs`): a pattern clip is a MIDI clip with a step grid (`MidiClip.pattern`): rate 1/1 to 1/32T,
+  8 to 64 steps, swing, and Velocity, Offset, Repeat and Tie per cell. Step edits bake the notes
+  (`Command::SetStepPattern`); piano-roll edits read only the changed rows back into the grid; `None` converts
+  the clip to plain MIDI (its repeats become notes). The snapshot repeats the pattern over the clip. Old project
+  files load unchanged. Findings SQ-1..SQ-7 in `reference/research-findings.md`.
+- Engine: patterns play as ordinary notes; a new ctest checks that dense repeats republished while playing
+  don't allocate, and bench_render has a Pattern table. `cargo bench -p saine-core --bench steps` times bake,
+  read-back and snapshot builds.

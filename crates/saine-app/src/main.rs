@@ -727,14 +727,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.auto_toggle_shown();
     }
     if args.live_state {
-        // The capture's tracks drew palette entries 4 and 5 (pink, orange); the reference picks
-        // the first track's colour at random.
         let mut c = ctl.borrow_mut();
-        let mut p = c.project().clone();
-        for (t, k) in p.tracks.iter_mut().zip([4u8, 5]) {
-            t.color = saine_core::ColorIndex(k);
-        }
-        c.replace_project(p);
         let first = c.project().tracks[0].id;
         c.select_track(first);
         c.auto_toggle_shown();

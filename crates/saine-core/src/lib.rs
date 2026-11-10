@@ -19,6 +19,7 @@ pub mod model;
 pub mod modulation;
 pub mod persist;
 pub mod snapshot;
+pub mod steps;
 
 pub use command::{Command, EditError};
 pub use history::{Document, Origin};
@@ -26,4 +27,5 @@ pub use automation::{AutoPoint, AutomationLane, AutomationTarget, SynthParam};
 pub use device::{Device, DeviceId, DeviceSample, ModLink, ModParam, PluginFormat, PluginKind, PluginRef, Slice};
 pub use instrument::SynthParams;
 pub use midi::{MidiClip, Note};
+pub use steps::{StepCell, StepLane, StepPattern, StepRate, StepRows};
 pub use model::*;
