@@ -378,6 +378,11 @@ impl Controller {
                     self.set_status(format!("Too long for a step pattern: {} steps at most", saine_core::steps::STEP_LIMIT), 3);
                     return;
                 }
+                // Notes kept past the clip end would be dropped by the pattern.
+                if c.notes.iter().any(|n| n.start >= p.length()) {
+                    self.set_status("Notes past the clip end: lengthen the clip first", 3);
+                    return;
+                }
                 Some(p)
             }
         };
