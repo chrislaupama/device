@@ -1,10 +1,10 @@
 // Fader + meter column shared by the mixer strips and the track inspector.
-// Geometry from the reference's strip canvas (reference/research-findings.md, "Channel strip
-// fader"): a 92 pt wide column; tick labels right-aligned in its first 26 pt, a 14 pt rail at
+// Geometry:
+// a 92 pt wide column; tick labels right-aligned in its first 26 pt, a 14 pt rail at
 // x 38, two 5 pt meters at x 64 and x 71 with 5 x 3 clip lights on top. The handle travels
 // between 18 pt and h - 14 pt (12 pt in from each end of a rail that starts 6 pt down and stops
-// 2 pt short of the bottom). Lengths are written in reference points times `u` (our design
-// units are 85 % of the reference's points, see zoom.rs).
+// 2 pt short of the bottom). Lengths are written in points times `u` (our design
+// units are 85 % of a point at 100 % zoom, see zoom.rs).
 import { Tokens } from "tokens.slint";
 
 export global StripMetrics {

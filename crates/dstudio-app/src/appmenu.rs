@@ -2,7 +2,7 @@
 //! Quit) and builds it again whenever the menu bar changes, with no way to add items to it.
 //! The first menu of our MenuBar ("Device Studio") holds the items that belong there
 //! (Settings…). After each rebuild, a copy of each goes into the app menu below About,
-//! followed by a separator, and the holder is hidden, so the bar reads as the reference app's does. A
+//! followed by a separator, and the holder is hidden. A
 //! copy targets the original item, so choosing it runs the original's Slint callback; the
 //! originals stay in the holder because the next rebuild removes them from there.
 

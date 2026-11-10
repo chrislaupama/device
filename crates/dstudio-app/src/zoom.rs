@@ -1,27 +1,24 @@
-//! Interface zoom (View › Zoom In / Zoom Out / Reset Zoom in the reference).
+//! Interface zoom (View › Zoom In / Zoom Out / Reset Zoom).
 //!
-//! The geometry in `ui/*.slint` and the Rust-side layout constants were measured
-//! from reference captures taken at the reference's **85 %** interface zoom (found
-//! on 2026-11-09 by comparing a live capture at its default zoom with our render:
-//! the best whole-UI scale was 1.175 ≈ 1 / 0.85, and three 5 % Zoom Out steps from
-//! the default reproduce the old captures). So our design units are "85 % units",
-//! and 100 % — the reference's default — draws them `1 / 0.85` larger.
+//! The geometry in `ui/*.slint` and the Rust-side layout constants are laid out
+//! at an **85 %** interface zoom. So the design units are "85 % units",
+//! and 100 % — the default — draws them `1 / 0.85` larger.
 //!
 //! Zoom is applied as a Slint scale factor: `native display scale × level / 0.85`.
 //! Everything (Slint layout, input mapping and the wgpu timeline/piano-roll
 //! textures, which all read `window().scale_factor()`) follows it, and the OS
-//! window keeps its size, so content reflows exactly like the reference's zoom.
+//! window keeps its size, so content reflows with the zoom.
 
 use slint::platform::WindowEvent;
 
-/// Interface zoom our design units were measured at.
+/// Interface zoom the design units are laid out at.
 pub const DESIGN_LEVEL: f32 = 0.85;
-/// Default level (the reference's Reset Zoom).
+/// Default level (Reset Zoom).
 pub const DEFAULT_PERCENT: u32 = 100;
-/// One Zoom In / Zoom Out step (the reference's step, measured from track-row heights
+/// One Zoom In / Zoom Out step (track-row heights
 /// 88 → 83.5 → 79 pt).
 pub const STEP_PERCENT: u32 = 5;
-/// Our bounds (the reference's limits are unmeasured).
+/// Zoom bounds.
 pub const MIN_PERCENT: u32 = 50;
 pub const MAX_PERCENT: u32 = 200;
 

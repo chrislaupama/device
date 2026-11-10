@@ -7,8 +7,8 @@
 //! per-device state, and [Controller::analyzer_canvas] turns that state into a
 //! [PanelCanvas] (paths and texts in well coordinates; boxes are rounded-rect
 //! paths) that
-//! ui/device_panel.slint draws. Lengths are the reference's 100%-zoom card
-//! measurements (handoffs/device-specs/<device>.md) times [Z].
+//! ui/device_panel.slint draws. Lengths are the 100%-zoom card
+//! measurements times [Z].
 
 use crate::controller::Controller;
 use crate::device_panel::{polyline, DIAL_Y, Z};
@@ -21,7 +21,7 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-/// Dial-row arrangement of an analyzer card (reference measurements, pt);
+/// Dial-row arrangement of an analyzer card (pt);
 /// the card width is the definition's `Layout::fixed_width`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ViewMetrics {
@@ -227,7 +227,7 @@ pub fn note_name(midi: i32) -> String {
     format!("{}{}", NOTES[midi.rem_euclid(12) as usize], midi.div_euclid(12) - 1)
 }
 
-/// Spectrum bin smoothing as the reference card: asymmetric one-pole
+/// Spectrum bin smoothing: asymmetric one-pole
 /// averaging over frames, then a gaussian blur across bins.
 pub fn average_bins(avg: &mut Vec<f32>, frame: &[f32], averaging: f32) {
     let rise = 0.8 - 0.25 * averaging;
@@ -630,7 +630,7 @@ mod tests {
 
     #[test]
     fn knob_rows_spread_like_the_reference() {
-        // Pitch Corrector: four 76 pt cells around free space (centres 52.9 .. 322.1 measured 53 .. 321.5).
+        // Pitch Corrector: four 76 pt cells around free space (centres 52.9 .. 322.1).
         let m = metrics("pitch-trace").unwrap();
         let c: Vec<f32> = (0..4).map(|i| spread_x(&m, dstudio_core::builtin::find("pitch-corrector").unwrap().layout.width(), i, 4) + m.cell / 2.0).collect();
         assert!((c[0] - 52.9).abs() < 0.1 && (c[3] - 322.1).abs() < 0.1, "{c:?}");

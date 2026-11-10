@@ -1,7 +1,6 @@
-//! Echo (reference: the reference app's built-in "Echo"): a tape-loop, magnetic-drum
-//! and cartridge echo with several playback heads. Parameter ids, ranges,
-//! defaults, tapers, the machine constants and the panel arrangement are
-//! taken from the reference as facts; factory preset names and values are our own.
+//! Echo: a tape-loop, magnetic-drum and cartridge echo with several playback
+//! heads. Defines the parameter ids, ranges, defaults, tapers, the machine
+//! constants, the panel arrangement and the factory presets.
 
 use super::*;
 use crate::device::PluginKind;
@@ -232,7 +231,7 @@ pub fn picture(def: &DeviceDef, d: &Device, bpm: f64) -> Picture {
 }
 
 /// Parameter writes that turn the current heads into authored (user-pinned) heads with
-/// head `dragged` (index into `pic.heads`) moved to `ms` (the reference's head drag).
+/// head `dragged` (index into `pic.heads`) moved to `ms` (a head drag).
 pub fn authored_patch(pic: &Picture, dragged: usize, ms: f32) -> Vec<(&'static str, f32)> {
     let spec = MACHINE_SPECS[pic.machine as usize];
     let span = (spec.loop_mm - spec.gap_mm - 1.1).max(1.0);

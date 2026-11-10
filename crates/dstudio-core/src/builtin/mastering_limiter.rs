@@ -1,6 +1,5 @@
-//! Mastering Limiter (reference: the reference app's built-in "Mastering Limiter"). Parameter ids,
-//! ranges, defaults, tapers and the panel arrangement are taken from the
-//! reference as facts; the factory preset names and values are our own.
+//! Mastering Limiter: parameter ids, ranges, defaults, tapers, the panel
+//! arrangement and the factory presets.
 
 use super::*;
 use crate::device::PluginKind;
@@ -12,7 +11,7 @@ const OVERSAMPLING: &[&str] = &["1x", "2x", "4x", "8x"];
 const DITHER_BITS: &[&str] = &["Off", "24", "20", "16"];
 const DITHER_SHAPE: &[&str] = &["Flat", "Light", "Normal", "Strong"];
 
-/// What each style sets with it (reference behaviour: picking a style rewrites
+/// What each style sets with it (picking a style rewrites
 /// these, one undo step).
 const STYLE_OVERLAYS: &[&[(&str, f32)]] = &[
     &[("lookahead", 2.0), ("attack", 10.0), ("release", 150.0), ("auto_release", 1.0), ("transient_link", 75.0), ("release_link", 100.0)],

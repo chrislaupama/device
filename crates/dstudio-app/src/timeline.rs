@@ -1,27 +1,26 @@
 //! Timeline geometry: view transform, hit-testing and the per-frame draw list.
 //!
 //! Coordinates here are *lane-local logical points*: origin at the top-left of
-//! the lanes surface (window x 453, y 105.5 at the reference size), i.e. the
-//! ruler is at the top, track 0 starts at `RULER_H`. Measured from
-//! reference/screenshots/01-main-default.png (see FIDELITY.md).
+//! the lanes surface (window x 453, y 105.5 at the default window size), i.e. the
+//! ruler is at the top, track 0 starts at `RULER_H`.
 
 use crate::gpu::{DrawList, RectInst};
 use crate::peaks::{self, Slot, WaveSeg};
 
 pub const RULER_H: f32 = 39.0;
-/// Track rows are 88 px at the reference's default zoom (88 × 0.85), including a 0.5 pt rule.
+/// Track rows are 88 px at the default zoom (88 × 0.85), including a 0.5 pt rule.
 pub const TRACK_PITCH: f32 = 74.8;
 pub const TRACK_H: f32 = 74.3;
-/// Shortest row: the reference's 20 px floor.
+/// Shortest row: a 20 px floor at the default zoom.
 pub const MIN_TRACK_PITCH: f32 = 17.0;
 
-/// Row pitch for a track height scale (the reference's `max(88 × scale, 20)` px).
+/// Row pitch for a track height scale (`max(88 × scale, 20)` px at the default zoom).
 pub fn pitch_for_scale(scale: f32) -> f32 {
     (TRACK_PITCH * scale).max(MIN_TRACK_PITCH)
 }
 /// Master row: 36 px, its top rule included.
 pub const MASTER_H: f32 = 30.6;
-/// Master row height while automation lanes are shown (60-automation-lanes.png: separator at
+/// Master row height while automation lanes are shown (separator at
 /// window y 439.5, lanes bottom 504).
 pub const MASTER_H_AUTO: f32 = 64.6;
 pub const CLIP_HEADER: f32 = 17.0;
@@ -29,29 +28,29 @@ pub const EDGE_GRAB: f32 = 5.0;
 /// Zoom limits, in logical points per beat.
 pub const MIN_PX_PER_BEAT: f64 = 0.5;
 pub const MAX_PX_PER_BEAT: f64 = 2000.0;
-/// Default zoom: 51.03 pt per 4/4 bar (measured: bar 20 line at x 1422.5, bar 1 at 453).
+/// Default zoom: 51.03 pt per 4/4 bar (bar 20 line at x 1422.5, bar 1 at 453).
 pub const DEFAULT_PX_PER_BEAT: f64 = 969.5 / 76.0;
 
-/// Design units per reference px (our drawings are 0.85 of the reference app's px); the thresholds below
-/// are in reference px (S65).
+/// Design units per 100%-zoom px (drawings are laid out at 0.85); the thresholds below
+/// are in 100%-zoom px.
 pub const REF: f64 = 0.85;
-/// Pixels between two labelled bars before the label step stops doubling (S65).
+/// Pixels between two labelled bars before the label step stops doubling.
 const LABEL_MIN_PX: f64 = 50.0;
-/// Fewest pixels between grid lines inside a bar, and between bar-or-longer grid lines (S66).
+/// Fewest pixels between grid lines inside a bar, and between bar-or-longer grid lines.
 const GRID_MIN_PX: f64 = 16.0;
 const GRID_BAR_MIN_PX: f64 = 6.0;
-/// Fewest pixels a bar-shading group may span (S66).
+/// Fewest pixels a bar-shading group may span.
 const BAND_MIN_PX: f64 = 80.0;
 /// Shortest grid step, in beats, and the longest, in beats.
 const GRID_MIN_BEATS: f64 = 1.0 / 16.0;
 const GRID_MAX_BEATS: f64 = 128.0;
 /// Ticks closer than this many pixels are not drawn.
 const TICK_MIN_PX: f64 = 4.0;
-/// A fixed grid size is doubled until it is this wide (S76).
+/// A fixed grid size is doubled until it is this wide.
 const FIXED_MIN_PX: f64 = 6.0;
 const EPS: f64 = 1e-6;
 
-/// The grid sizes of the toolbar's snap menu (S76); `None` in a [RulerSteps] is "Auto".
+/// The grid sizes of the toolbar's snap menu; `None` in a [RulerSteps] is "Auto".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GridSize {
     Bar,
@@ -121,7 +120,7 @@ impl GridSize {
 
 /// Which bars get a label and a full-height tick, where lanes get grid lines, and how long a
 /// shaded group is, at one zoom. Steps in bars are whole bars; steps in beats are quarter notes.
-/// Rules read from the reference app's ruler painter (reference/findings/ruler.md, S65-S67).
+/// Ruler rules.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RulerSteps {
     /// A bar number every this many bars (a power of two).
@@ -136,14 +135,14 @@ pub struct RulerSteps {
     pub band_beats: f64,
     pub beats_per_bar: f64,
     pub beat_len: f64,
-    /// Whether the tick step is wide enough (4 reference px) to draw short ticks.
+    /// Whether the tick step is wide enough (4 px at 100% zoom) to draw short ticks.
     pub ticks_visible: bool,
 }
 
-/// The step a clip editor's note edits snap to (W2-19): a fixed size as `RulerSteps` widens it, or
+/// The step a clip editor's note edits snap to: a fixed size as `RulerSteps` widens it, or
 /// for Auto (and a triplet that does not fit the bar) a step by the zoom: 4 or 2 bars while a bar
 /// is under 6 or 12 px, then a bar, a beat, 1/2, 1/4 and 1/8 beat at 5, 12, 30 and 60 px per beat.
-/// `px_per_beat` is in reference px; beats are quarter notes.
+/// `px_per_beat` is in 100%-zoom px; beats are quarter notes.
 pub fn note_snap_beats(px_per_beat: f64, beats_per_bar: f64, grid: Option<GridSize>) -> f64 {
     if let Some(s) = grid.and_then(|g| RulerSteps::fixed_step(g, beats_per_bar, px_per_beat)) {
         return s;
@@ -473,8 +472,8 @@ impl Px {
     }
 }
 
-/// Grid line strength by weight: bar, beat, sub-beat (the reference app's .075 / .027 / .011 scaled by the
-/// measured .775 of our lane ink).
+/// Grid line strength by weight: bar, beat, sub-beat (.075 / .027 / .011 scaled by the
+/// .775 of the lane ink).
 fn grid_alpha(s: &RulerSteps, beat: f64) -> f32 {
     if RulerSteps::on(beat, s.beats_per_bar) {
         0.058
@@ -501,10 +500,10 @@ fn bands_and_grid(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, y0: f32, y1: f32
         out.push(px.rect(x0.max(0.0), y0, x1 - x0.max(0.0), y1 - y0, rgba(rgb(colors[(k.rem_euclid(2)) as usize]), 1.0)));
         k += 1;
     }
-    // Grid lines: bar, beat and sub-beat weights at the step the reference app picks for this zoom (S66).
+    // Grid lines: bar, beat and sub-beat weights at the step picked for this zoom.
     let step = sc.steps.line_beats;
     let first = (v.start_beats / step).floor() as i64;
-    let lw = 1.0 / px.s; // one physical pixel (0.5 pt on Retina, as measured)
+    let lw = 1.0 / px.s; // one physical pixel (0.5 pt on Retina)
     let mut i = first;
     loop {
         let beat = i as f64 * step;
@@ -597,10 +596,10 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     let o = &mut dl.over;
     o.push(px.rect(0.0, 0.0, w, RULER_H, rgba(rgb(0x1a1b1e), 1.0)));
     let lw = 1.0 / sc.scale;
-    // One reference px (0.85 units), at least one physical pixel: 2 px on Retina, 1 px at 1x.
+    // One 100%-zoom px (0.85 units), at least one physical pixel: 2 px on Retina, 1 px at 1x.
     let mark = 0.85f32.max(lw);
     // Full-height ticks every `tick_bars` bars; between them, ticks standing on the row's
-    // bottom at the grid step: 6 reference px on a beat, 4 off it (S65).
+    // bottom at the grid step: 6 px (at 100% zoom) on a beat, 4 off it.
     let st = &sc.steps;
     let bar = st.beats_per_bar;
     let first_bar = ((v.start_beats / bar).floor() as i64).div_euclid(st.tick_bars) * st.tick_bars;
@@ -639,7 +638,7 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
         let color = if sc.loop_on { rgb(0xefb259) } else { rgb(0x4d4d4f) };
         o.push(px.rect(lx0.max(0.0), 17.6, lx1.min(w) - lx0.max(0.0), 6.8, rgba(color, 1.0)));
     }
-    // Sections: rounded blocks inset half a reference px at each end; selected and dragged
+    // Sections: rounded blocks inset half a 100%-zoom px at each end; selected and dragged
     // blocks lift and get a white rim (38 % / 1 px, 70 % / 1.5 px).
     use crate::sections::{BLOCK_H, BLOCK_Y, RADIUS, lift};
     for s in sc.sections {
@@ -689,7 +688,7 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
 }
 
 /// One automation row: the dimming overlay (track lanes: clips and grid are dimmed under the
-/// line, 60-automation-lanes.png), a separator under expanded rows, the curve as merged
+/// line), a separator under expanded rows, the curve as merged
 /// per-column rects (1 pt line) and the point handles.
 fn automation_row(out: &mut Vec<RectInst>, px: &Px, w: f32, row: &crate::automation::RowDraw) {
     use crate::automation::OVERLAY;
@@ -732,18 +731,18 @@ fn automation_row(out: &mut Vec<RectInst>, px: &Px, w: f32, row: &crate::automat
     }
 }
 
-/// MIDI clip: track-colour title strip, light lavender body (the reference draws it
+/// MIDI clip: track-colour title strip, light lavender body (drawn
 /// the same selected or not), grid lines inside the body and a mini note view.
 fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &[[f32; 4]], (x, y, cw, ch): (f32, f32, f32, f32)) {
     let r = 3.0;
-    // On a track that isn't selected the reference draws the body in the plain track colour
-    // with a darker line under the title and no grid (50-input-selector-open.png); on the
-    // selected track it is the light lavender body with grid lines (33/34-*.png).
+    // On a track that isn't selected the body is drawn in the plain track colour
+    // with a darker line under the title and no grid; on the
+    // selected track it is the light lavender body with grid lines.
     // A muted track's clips are grey with no selection tint, like audio clips.
     let track_selected = !c.muted && sc.tracks.get(c.track_index).is_some_and(|t| t.selected);
     let head = if c.muted { rgb(0xa8a8a8) } else { c.color };
     let body = if c.muted { rgb(0x6b6b6b) } else if track_selected { mix(c.color, WHITE, 0.67) } else { c.color };
-    // 0.5 pt outline (greyish in the reference), then title strip and body inset by it.
+    // 0.5 pt outline (greyish), then title strip and body inset by it.
     out.push(px.rounded(x, y, cw, ch, r, rgba(mix(body, rgb(0x4a4c58), 0.45), 1.0)));
     out.push(px.rounded(x + 0.5, y + 0.5, cw - 1.0, ch - 1.0, r - 0.5, rgba(head, 1.0)));
     let by = y + CLIP_HEADER + 0.5;
@@ -953,7 +952,7 @@ mod tests {
 
     #[test]
     fn thresholds_are_in_reference_pixels() {
-        // the reference app's default is 15 px per beat; one beat is 16 px wide from 16 / 15 of that zoom.
+        // The default is 15 px per beat (100%-zoom px); one beat is 16 px wide from 16 / 15 of that zoom.
         let ppb = |create_px: f64| create_px * REF;
         assert_eq!(steps(ppb(15.9)).tick_beats, 2.0);
         assert_eq!(steps(ppb(16.1)).tick_beats, 1.0);

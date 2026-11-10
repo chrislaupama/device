@@ -1,5 +1,5 @@
 //! Clip sidebar, Patterns tab: Type and Genre fields, the pattern list and the
-//! Create pill, backed by DStudio's own library (`dstudio_core::library`; no online service
+//! Create pill, backed by DStudio's own library (`dstudio_core::library`; no online
 //! service is called). Every action is one `SetComposer` command, so one undo step.
 //!
 //! A MIDI clip lists the Type's set (Chords, Bass, Lead, Arp); a pattern clip

@@ -218,7 +218,7 @@ inline float cos2pi(float p) noexcept { return sin2pi(p + 0.25f); }
 // Unit LFO shapes over a phase in cycles, -1..1.
 inline float tri(float p) noexcept { return 1.0f - 4.0f * std::fabs(wrap01(p + 0.25f) - 0.5f); } // 0 at p = 0, rising
 
-// Note values of a synced LFO in quarter notes: the reference's LFO_DIVISION
+// Note values of a synced LFO in quarter notes: the division
 // table (8/1 ... 1/32, then 1/64., 1/64, 1/64T) in parameter index order.
 inline constexpr float kDivisionQuarters[] = {32.0f, 16.0f, 8.0f, 4.0f, 3.0f, 2.0f, 4.0f / 3.0f, 1.5f, 1.0f, 2.0f / 3.0f,
                                               0.75f, 0.5f, 1.0f / 3.0f, 0.375f, 0.25f, 1.0f / 6.0f, 0.125f, 0.09375f, 0.0625f, 1.0f / 24.0f};
@@ -351,7 +351,7 @@ struct Wander {
     }
 };
 
-// Equal-power style dry / wet gains of the reference's mix law with a
+// Equal-power style dry / wet gains of the mix law with a
 // correlation term: d = 1 - m, n = sqrt(d^2 + m^2 + 2 m d c).
 inline void mix_gains(float mix, float correlation, float& dry, float& wet) noexcept {
     const float m = std::clamp(mix, 0.0f, 1.0f), d = 1.0f - m;

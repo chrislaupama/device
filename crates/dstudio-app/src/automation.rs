@@ -1,4 +1,4 @@
-//! Automation lanes (ADR 0005, reference/ui-inventory.md §12).
+//! Automation lanes (ADR 0005).
 //!
 //! UI state only lives here: whether lanes are shown, Draw mode, the Automation Arm, which
 //! parameter each track shows (NOT saved: `AutoUi::targets`), the expanded tracks, the
@@ -7,13 +7,13 @@
 //! Automation"); drags preview through `AutoUi::pending`, which both the renderer and the
 //! engine snapshot (`Controller::current_snapshot`) use instead of the model lane.
 //!
-//! Layout (our design where the reference shows nothing): the shown lane of a track is drawn
-//! OVER the track lane (as in 60-automation-lanes.png). The "Show N automated lanes"
+//! Layout: the shown lane of a track is drawn
+//! OVER the track lane. The "Show N automated lanes"
 //! disclosure expands the track's OTHER lanes that have points as extra rows of
 //! `EXTRA_H` below it (pill with power toggle + parameter; clicking the name makes it the
 //! shown lane). The master row grows to `MASTER_H_AUTO` and has a volume lane.
 //!
-//! Vertical mapping (ours, fitted to the reference: 0 dB at 0.557 of the lane height from the
+//! Vertical mapping (0 dB at 0.557 of the lane height from the
 //! top in both the 74 pt track rows and the 63.5 pt master row): `y = top + h·(PAD_T + (1 −
 //! norm)·(1 − PAD_T − PAD_B))`, where volume `norm` is linear amplitude over 0..+6 dB, pan
 //! is linear, synth parameters linear (geometric for cutoff / LFO rate) and plugin
@@ -56,7 +56,7 @@ pub enum LineStyle {
     Active,
     /// No lane / no points yet: the parameter's dim hue.
     Inactive,
-    /// Lane switched off with the power toggle (ORIGINAL grey).
+    /// Lane switched off with the power toggle (grey).
     Disabled,
 }
 
@@ -65,12 +65,11 @@ fn hex(h: u32, a: f32) -> [f32; 4] {
     [c[0], c[1], c[2], a]
 }
 
-/// Lane colour of an automated parameter (reference/ui-inventory.md §12, research-findings.md).
-/// The reference keys every parameter as "<device>/<parameter>" (track parameters use the device
+/// Lane colour of an automated parameter.
+/// Every parameter is keyed as "<device>/<parameter>" (track parameters use the device
 /// "Channel"): a few track keys have fixed colours (Volume gold), everything else takes
 /// `PALETTE[fnv1a32(key) % 8]`. Each hue has a bright form (lane enabled) and a dim form (no
-/// points / power off), both measured from 2x captures of the reference's power-on and
-/// power-off lanes (the reference darkens its base palette on the timeline).
+/// points / power off).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hue {
     Gold,
@@ -85,7 +84,7 @@ pub enum Hue {
 }
 
 impl Hue {
-    /// The hashed palette, in the reference's order (Gold is reserved for Volume).
+    /// The hashed palette, in order (Gold is reserved for Volume).
     pub const PALETTE: [Hue; 8] = [Hue::Blue, Hue::Magenta, Hue::Green, Hue::Purple, Hue::Orange, Hue::Coral, Hue::Teal, Hue::Indigo];
 
     /// (bright, dim) as 0xRRGGBB.
@@ -134,7 +133,7 @@ impl Hue {
                 _ => {}
             }
         }
-        // 32-bit FNV-1a over the UTF-16 code units (the reference hashes JavaScript strings).
+        // 32-bit FNV-1a over the UTF-16 code units.
         let key = format!("{device}/{param}");
         let h = key.encode_utf16().fold(0x811c_9dc5u32, |h, u| (h ^ u as u32).wrapping_mul(0x0100_0193));
         Hue::PALETTE[(h % Hue::PALETTE.len() as u32) as usize]
@@ -1487,7 +1486,7 @@ mod tests {
         let c = AutomationTarget::Synth { param: SynthParam::FilterCutoff };
         assert!((value_of(&c, 0.5) - 632.46).abs() < 1.0);
         let row = Row { key: None, target: v.clone(), y0: 0.0, h: 74.0, master: false, extra: false };
-        // 0 dB at 0.557 of the lane height (60-automation-lanes.png).
+        // 0 dB at 0.557 of the lane height.
         assert!((row.y_of(norm_of(&v, 0.0)) / 74.0 - 0.557).abs() < 0.003);
         assert!((row.norm_at(row.y_of(0.3)) - 0.3).abs() < 1e-5);
     }
@@ -1528,7 +1527,7 @@ mod tests {
         assert_eq!(Hue::of(&AutomationTarget::Pan, none), Hue::Blue);
         assert_eq!(LineStyle::Active.line(Hue::Gold), hex(0xebc542, 1.0));
         assert_eq!(LineStyle::Inactive.line(Hue::Blue), hex(0x30525f, 1.0));
-        // The hashed rule reproduces colours sampled from the reference (ui-inventory.md §12).
+        // The hashed rule gives these colours.
         for (dev, param, hue) in [
             ("Synth", "Cutoff", Hue::Indigo),
             ("Synth", "Osc 1 Level", Hue::Orange),

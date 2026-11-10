@@ -1,10 +1,10 @@
-//! Devices minimap (reference/findings/minimap.md, S68-S70, S79-S80): the overview at the right end of the
+//! Devices minimap: the overview at the right end of the
 //! Clip / Devices strip. It shows while the selected track's device chain is wider than the panel.
 //! Each device is a small tile with a picture of its panel, a chain's tiles sit in a frame, and a
 //! window marks the part the panel shows. Tiles fade in when a device is added and glide when the
 //! layout changes ([Motion]); the strip redraws only while one runs. Drag to scroll, press outside the window to jump, wheel to scroll, Esc goes back.
 //!
-//! The metrics here are pure and work in the reference's own px (design units / 0.85); the
+//! The metrics here are pure and work in 100%-zoom px (design units / 0.85); the
 //! Controller methods at the bottom convert and keep the drag, the pointer and the Slint model.
 
 use crate::controller::{BottomTab, Controller, card_color, sync_model};
@@ -52,7 +52,7 @@ pub const BYPASS_OPACITY: f32 = 0.4;
 pub const FADE_S: f32 = 0.3;
 const EASE: [f32; 4] = [0.22, 1.0, 0.36, 1.0];
 /// Glide of the tiles' left edge and width: a critically damped spring whose rate lets it settle
-/// within the same 300 ms. A tile is at rest when it is within half a reference px of its target and
+/// within the same 300 ms. A tile is at rest when it is within half a 100%-zoom px of its target and
 /// slower than 20 px/s.
 const GLIDE_OMEGA: f32 = 19.0;
 const REST_POS: f32 = 0.5;
@@ -320,7 +320,7 @@ pub struct Placed {
     pub appear: f32,
 }
 
-/// The tiles' fade and glide (S80). A tile new to a layout fades in at its place; a tile whose place
+/// The tiles' fade and glide. A tile new to a layout fades in at its place; a tile whose place
 /// or width changed glides there. UI side only: the audio thread never sees it, and `busy` tells the
 /// frame loop when to keep redrawing.
 #[derive(Debug, Default)]
@@ -359,7 +359,7 @@ impl Motion {
     }
 }
 
-/// A drag in progress (positions in reference px).
+/// A drag in progress (positions in 100%-zoom px).
 #[derive(Debug, Clone)]
 pub struct Drag {
     /// Scroll before the press (Esc goes back to it).
@@ -396,7 +396,7 @@ impl Drag {
         (r > 0.0).then(|| chain.clamp(self.from + travel / r))
     }
 
-    /// Where the pointer goes on release (reference px in the strip): the pressed spot moved by how far
+    /// Where the pointer goes on release (100%-zoom px in the strip): the pressed spot moved by how far
     /// the window moved, kept inside the strip, on the pressed row.
     pub fn landing(&self, chain: &Chain, scroll: f32) -> (f32, f32) {
         let a = (scroll - self.from) * chain.ratio(self.strip);
@@ -418,7 +418,7 @@ pub struct State {
     bench: Option<DeviceId>,
     /// Pictures by shape: built once, cloned per frame.
     art: HashMap<Art, (slint::SharedString, slint::SharedString)>,
-    /// One device pixel in reference px (1 / (scale x 0.85)).
+    /// One device pixel in 100%-zoom px (1 / (scale x 0.85)).
     pub snap: f32,
 }
 

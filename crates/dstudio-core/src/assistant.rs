@@ -8,7 +8,7 @@
 //!
 //! * **Assist** mode: edits allowed (validated), plus highlights/explanations.
 //! * **Teach** mode: no edits at all; only highlights of real UI targets and
-//!   explanations. The reference app calls this "Point".
+//!   explanations. The UI calls this "Point".
 //!
 //! Network access, model choice and prompting live outside this crate, so
 //! the DAW works fully offline.
@@ -66,12 +66,12 @@ pub struct Plan {
     pub batch: Option<Command>,
     pub highlights: Vec<(String, String)>,
     pub explanations: Vec<String>,
-    /// Plain sentences describing each edit, like the reference's action log
+    /// Plain sentences describing each edit, as in the action log
     /// ("Added an audio track, Drums.").
     pub summary: Vec<String>,
 }
 
-/// Stable ids for highlightable UI elements (see reference/ui-inventory.md).
+/// Stable ids for highlightable UI elements.
 pub const UI_TARGETS: &[&str] = &[
     "header.sounds_toggle",
     "transport.rewind",

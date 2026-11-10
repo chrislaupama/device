@@ -3,9 +3,9 @@
 // formats every value; this file only draws them and forwards gestures as
 // Studio.panel-* callbacks (one undo step per gesture, see device_panel.rs).
 //
-// Geometry: the reference app's device cards are specified at 100% zoom (handoffs/device-specs);
-// the rest of our UI follows captures taken at 85%, so every measured length is
-// multiplied by PanelStyle.z. Colours are the measured card colours.
+// Geometry: the device cards are specified at 100% zoom;
+// the rest of the UI is in 85% units, so every length is
+// multiplied by PanelStyle.z.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
 import { Studio, DeviceCard, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelField, PanelBands, PanelBand, PanelXover, PanelCanvas, PanelZone, PanelButton, PanelEq, EqCell, ModCard, ModTarget, PanelSampler, PanelPad, PanelHandle } from "studio.slint";
@@ -124,7 +124,7 @@ component ValueEditor inherits FocusScope {
     }
 }
 
-// Latch: On/Off pill (reference fx latch): 20 pt, 10 pt / 600 text, dark at rest, filled with
+// Latch: On/Off pill (fx latch): 20 pt, 10 pt / 600 text, dark at rest, filled with
 // the track colour when on. Click toggles, Alt-click resets.
 component Latch inherits Rectangle {
     in property <string> label;
@@ -159,7 +159,7 @@ component Latch inherits Rectangle {
     }
 }
 
-// Knob cell: 32 px ring, value text, name (the reference app "xs" dial at 100%, scaled). Modulated
+// Knob cell: 32 px ring, value text, name (the "xs" dial at 100%, scaled). Modulated
 // parameters get a thin arc over the reach of their sources and a dot at the live value.
 // Plugin cards also use face 2 (on/off switch) and face 3 (stepped menu).
 export component KnobCell inherits Rectangle {
@@ -273,7 +273,7 @@ export component KnobCell inherits Rectangle {
             }
         }
         if root.k.face == 0 && root.k.mod-on: Rectangle {
-            // Radius 0.85 of the ring stroke (the reference app's knob-mod-dot).
+            // Radius 0.85 of the ring stroke (knob-mod-dot).
             x: root.rc * 1px + root.r-arc * 1px * sin(root.now-a * 1deg) - 1.5px * zm;
             y: root.rc * 1px - root.r-arc * 1px * cos(root.now-a * 1deg) - 1.5px * zm;
             width: 3px * zm; height: 3px * zm; border-radius: 1.5px * zm;
@@ -1487,7 +1487,7 @@ component MacroCell inherits Rectangle {
     }
 }
 
-// Header of every card (reference card header, 100 % values x zm): power switch, name with
+// Header of every card (100 % values x zm): power switch, name with
 // the swap chevron, then the assistant spark and the preset nav, a rule, and the trailing
 // open-window / fold / remove buttons. Drag to reorder, double-click folds.
 component HeadButton inherits Rectangle {
@@ -1735,7 +1735,7 @@ component BuiltinFace inherits Rectangle {
         opacity: root.card.enabled ? 1.0 : 0.55;
         HorizontalLayout {
             x: 8px * zm; y: 38px * zm; width: (root.card.modv.kind == 1 ? 260px * zm : root.width - 16px * zm); height: 20px * zm;
-            // the reference app's row: 16 pt between items; a flexible gap (margin-left: auto) adds none of its own.
+            // The row: 16 pt between items; a flexible gap (margin-left: auto) adds none of its own.
             spacing: 0;
             for p[i] in root.card.picks: PickItem { device: root.card.id; p: p; accent: root.card.accent; lead: i > 0 && p.kind != 4; }
         }

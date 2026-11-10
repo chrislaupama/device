@@ -1,4 +1,4 @@
-// Audio file import by content: our own WAV reader (wav.cpp) and, through pinned third-party
+// Audio file import by content: the engine's WAV reader (wav.cpp) and, through pinned third-party
 // decoders (decoders_impl.c), AIFF / AIFC, FLAC, Ogg Vorbis and MP3. Non-RT only.
 #include "wav.hpp"
 

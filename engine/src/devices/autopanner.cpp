@@ -10,7 +10,7 @@
 //   pos    (0.5 + 0.5 v) * pi / 2
 //   gains  L: 1 - mix + mix * sqrt(2) cos(pos), R: 1 - mix + mix * sqrt(2) sin(pos)
 // (an equal-power pan law with unity in the centre, blended with the dry
-// signal by Mix). This is the reference's preview law; Readout: LFO phase.
+// signal by Mix). The panel preview draws the same law. Readout: LFO phase.
 #include "builtin.hpp"
 #include "dsp.hpp"
 

@@ -1,15 +1,14 @@
 //! Custom bodies of built-in device cards (View::Custom). Each arm turns a
 //! device's current values into a PanelCanvas (path layers, texts, grip pills,
 //! drag zones) and, for grid bodies, freely placed knobs and buttons. The
-//! drawings follow the reference cards' field painters (device specs in the
-//! Captain drive); the curves come from the drawn models in dstudio_core.
+//! curves come from the drawn models in dstudio_core.
 //!
 //!   "wave"          shaper wave field: Distortion, Tape Saturation, Soft Clipper
 //!   "crush"         sample-and-hold picture: Bit Crusher
 //!   "stereo-field"  stereo image + width-over-frequency plot: Stereo Widener
 //!   "utility"       Input | Output grid: Utility
 //!
-//! Lengths are reference 100%-zoom values; everything handed to Slint is
+//! Lengths are 100%-zoom values; everything handed to Slint is
 //! multiplied by Z.
 
 use crate::controller::Controller;
@@ -138,7 +137,7 @@ fn circle_pts(cx: f32, cy: f32, r: f32) -> Vec<(f32, f32)> {
     }).collect()
 }
 
-/// Harmonic distortion of a transfer curve (the reference's "Harmonics"
+/// Harmonic distortion of a transfer curve (the "Harmonics"
 /// readout): one cycle of a full-scale sine, 256 points, harmonics 2..24
 /// against the fundamental, as a percentage.
 pub(crate) fn harmonics_percent(f: &dyn Fn(f32) -> f32) -> f32 {
@@ -289,8 +288,8 @@ fn wave_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, drag_param: i32, acce
     CustomBody { canvas: field, ..Default::default() }
 }
 
-/// Transient Shaper gain scope, as the reference app draws it: one bar per plot point
-/// (the reference app px) of the output peak, mirrored on a square-root amplitude law;
+/// Transient Shaper gain scope: one bar per plot point
+/// (100%-zoom px) of the output peak, mirrored on a square-root amplitude law;
 /// with Clip on, what the clipper removed above it; a dashed 0 dB line and
 /// the applied-gain trace (+-12 dB). `history` is None before the device
 /// published anything.
@@ -541,7 +540,7 @@ mod tests {
 
     #[test]
     fn harmonics_readout_matches_the_reference_defaults() {
-        // Reference captures at defaults: Distortion "Harmonics 30%", Tape "27%".
+        // At defaults: Distortion "Harmonics 30%", Tape "27%".
         let dist = |x: f32| builtin::distortion_transfer(x, 30.0, 0.0, 0.0, 100.0, 0.0, 0);
         assert_eq!(fmt_percent_readout(harmonics_percent(&dist)), "30%");
         let tape = |x: f32| builtin::tape_transfer(x, 30.0, 30.0, 100.0, 0.0, 0);

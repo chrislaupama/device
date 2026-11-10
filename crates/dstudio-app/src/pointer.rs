@@ -1,4 +1,4 @@
-//! Pointer hide and warp for minimap drags (reference/findings/minimap.md, S42 and S68).
+//! Pointer hide and warp for minimap drags.
 //!
 //! While the user drags a minimap window the pointer is hidden, and on release it is put back
 //! on the strip where the grabbed spot ended up. Slint has no pointer warp, so the controller

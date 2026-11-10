@@ -1,6 +1,5 @@
-//! Stereo Widener (reference: the reference app's built-in "Stereo Widener"). Parameter
-//! ids, ranges, defaults, tapers and the panel arrangement are taken from the
-//! reference as facts; the factory presets are our own.
+//! Stereo Widener: parameter ids, ranges, defaults, tapers, the panel
+//! arrangement and the factory presets.
 
 use super::*;
 use crate::device::PluginKind;

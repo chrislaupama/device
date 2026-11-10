@@ -1,9 +1,8 @@
 //! Export dialog (mixdown or stems to WAV) and the unsaved-changes prompt shown before
-//! File › New Project. Layout values come from the reference app's export and unsaved-changes
-//! modals (reference/findings/dialogs.md); DStudio renders with the engine's offline
+//! File › New Project. DStudio renders with the engine's offline
 //! render at the engine sample rate. A stem is one track played alone: DStudio has no
-//! returns, groups or master devices, so that matches the reference app's post-effects track
-//! render with the master devices bypassed.
+//! returns, groups or master devices, so that is the post-effects track
+//! render.
 use crate::Studio;
 use crate::controller::{Controller, sync_model};
 use crate::wavgen;
@@ -34,7 +33,7 @@ pub enum Recipe {
     Project,
 }
 
-/// Which tracks Stems renders (the reference app's Tracks picker).
+/// Which tracks Stems renders (the Tracks picker).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StemsPick {
     /// One file per heard track that has clips.
@@ -714,7 +713,7 @@ mod tests {
 
     #[test]
     fn estimate_matches_the_reference_readout() {
-        // The reference app: 6 bars at 120 BPM + tail, 44.1 kHz, 24-bit → "3.7 MB • 0:14".
+        // 6 bars at 120 BPM + tail, 44.1 kHz, 24-bit → "3.7 MB • 0:14".
         assert_eq!(estimate_text(14 * 44_100, 44_100.0, 24, 1), "3.7 MB • 0:14");
         assert_eq!(estimate_text(14 * 44_100, 44_100.0, 24, 2), "7.4 MB • 0:14");
     }

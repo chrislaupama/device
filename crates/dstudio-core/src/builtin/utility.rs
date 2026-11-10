@@ -1,10 +1,9 @@
-//! Utility (reference: the reference app's built-in "Utility"). Parameter ids, ranges,
-//! defaults, tapers and the panel arrangement are taken from the reference as
-//! facts; the factory presets are our own.
+//! Utility: parameter ids, ranges, defaults, tapers, the panel arrangement
+//! and the factory presets.
 //!
 //! The card is a two-column grid (Input | Output) drawn by the "utility"
 //! custom view; Bass Mono, its frequency and its audition switch have no
-//! control on the card (as in the reference) and are reached through presets,
+//! control on the card and are reached through presets,
 //! automation and the parameter list.
 
 use super::*;

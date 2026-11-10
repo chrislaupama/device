@@ -371,7 +371,7 @@ fn midi_steps() -> Vec<Step> {
             n.iter().any(|n| n.pitch == 59 && n.start == 1920 && n.length == 960).then_some(()).ok_or(format!("{n:?}"))
         })),
         DoC("snap 1/32, draw an off-grid note at beat 3.375, snap back to 1/16", Box::new(|a, ctl| {
-            // Notes snap to the toolbar's snap size (W2-19); the footer Grid is the Quantize grid.
+            // Notes snap to the toolbar's snap size; the footer Grid is the Quantize grid.
             ctl.borrow_mut().snap.grid = Some(crate::timeline::GridSize::ThirtySecond);
             let (x, y) = pr_xy(ctl, 3.375 + 0.03, 52);
             click(a, x, y);
@@ -1354,7 +1354,7 @@ fn steps() -> Vec<Step> {
         bottom_y()
     }
     // Mixer strip fader travel (ui/channel_strip.slint): the 200 pt canvas sits 234 pt above the
-    // strip bottom; its handle travels 168 pt starting 18 pt down (reference points * 0.85).
+    // strip bottom; its handle travels 168 pt starting 18 pt down (100%-zoom points * 0.85).
     const MIXER_TRAVEL_TOP: f32 = 390.0 - (234.0 - 18.0) * 0.85;
     const MIXER_TRAVEL: f32 = 168.0 * 0.85;
     let bx = |b: f64| lane_x() + (b * crate::timeline::DEFAULT_PX_PER_BEAT) as f32;
@@ -2280,7 +2280,7 @@ fn in_row0() -> (f32, f32) {
 fn record_btn() -> (f32, f32) {
     (geo().transport_x + 423.0 + 14.0, 38.0 + 14.0)
 }
-/// Settings panel origin (the reference app's 960 x 820 pt window at x 255, y 6.5, in 85 % units) and width.
+/// Settings panel origin (a 960 x 820 pt window at x 255, y 6.5, in 85 % units) and width.
 fn set_x() -> f32 {
     geo().settings_x
 }
@@ -4330,7 +4330,7 @@ fn value_of(c: &Controller, device: &str, param: &str) -> Option<f32> {
     Some(def.value(d, def.param(param)?))
 }
 
-/// A pointer event on a custom view at a card-relative reference point (pt at 100%).
+/// A pointer event on a custom view at a card-relative point (pt at 100%).
 fn field_event(a: &AppWindow, ctl: &Ctl, device: &str, kind: i32, x: f32, y: f32) {
     let Some(id) = device_of(&ctl.borrow(), device).map(|d| d.id.0 as i32) else { return };
     let z = crate::device_panel::Z;
@@ -4346,7 +4346,7 @@ fn focus_trance_gate(a: &AppWindow) {
     }
 }
 
-/// Trance Gate ring: reference point in the middle of step i of 16.
+/// Trance Gate ring: card point (pt at 100%) in the middle of step i of 16.
 fn ring_xy(i: usize) -> (f32, f32) {
     let a = std::f32::consts::TAU * (i as f32 + 0.5) / 16.0;
     let r = 0.8 * 83.0;
@@ -6109,7 +6109,7 @@ fn general_settings_steps() -> Vec<Step> {
             c.open_settings();
             c.settings_page(0);
         })),
-        Check("general: the reference app's defaults (Return to start; third-party windows and on top on)", Box::new(|c, a| {
+        Check("general: defaults (Return to start; third-party windows and on top on)", Box::new(|c, a| {
             let s = a.global::<Studio>();
             let on: Vec<bool> = s.get_general_on().iter().collect();
             (s.get_settings_page() == 0 && on == [false, true, false, true] && !s.get_general_stop_in_place() && c.settings.prefs.general == crate::prefs::GeneralPrefs::default())
@@ -6650,7 +6650,7 @@ fn devminimap_steps() -> Vec<Step> {
     ]
 }
 
-/// Snap readout and menu in the timeline toolbar (src/snap.rs, S76): Auto, a fixed size, Off.
+/// Snap readout and menu in the timeline toolbar (src/snap.rs): Auto, a fixed size, Off.
 fn snap_steps() -> Vec<Step> {
     use Step::*;
     vec![
@@ -6690,7 +6690,7 @@ fn snap_steps() -> Vec<Step> {
     ]
 }
 
-/// The timeline ruler's bar labels at several zooms: the reference app's rule (S65) is a label every
+/// The timeline ruler's bar labels at several zooms: the rule is a label every
 /// power-of-two bars once the bars are 50 px apart, starting at bar 1.
 fn ruler_zoom_steps() -> Vec<Step> {
     use Step::*;
@@ -7564,7 +7564,7 @@ fn pattern_library_steps() -> Vec<Step> {
 pub fn start(app: &AppWindow, ctl: Ctl) {
     APP.with(|a| *a.borrow_mut() = Some(app.as_weak()));
     let mut all = steps();
-    // Auto snap follows the ruler step (S76: two beats at the default zoom); the sections below that
+    // Auto snap follows the ruler step (two beats at the default zoom); the sections below that
     // drag clips to beats pin the grid to a beat (1/4), and snap_steps puts Auto back.
     all.insert(0, Step::DoC("snap: pin the grid to a beat for the drag sections", Box::new(|_, ctl| ctl.borrow_mut().snap.grid = Some(crate::timeline::GridSize::Quarter))));
     all.extend(synth_steps());

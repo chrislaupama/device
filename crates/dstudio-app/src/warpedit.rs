@@ -2,7 +2,7 @@
 //! Original BPM drag, warp markers (handle band) and transients (lane), and
 //! the onset analysis that feeds Drums / Auto slicing.
 //!
-//! Every edit is one `Command::SetClipWarp` named like the reference app's undo steps;
+//! Every edit is one `Command::SetClipWarp` named as an undo step;
 //! drags commit live and coalesce into one step per gesture kind.
 
 use crate::controller::{Controller, JobResult};
@@ -49,7 +49,7 @@ pub enum AcEdit {
     Transpose,
 }
 
-/// Semitones per point of Transpose drag (the reference app: 48 st over 200 pt).
+/// Semitones per point of Transpose drag (48 st over 200 pt).
 const TRANSPOSE_PER_PT: f32 = 48.0 / 200.0;
 
 /// "0 st", "+3 st", "-1.5 st" (whole semitones bare, others to one decimal).
@@ -62,7 +62,7 @@ pub fn format_semitones(st: f64) -> String {
     if st.fract() == 0.0 { format!("{sign}{st:.0} st") } else { format!("{sign}{st:.1} st") }
 }
 
-/// "2x", "0.75x", "1.33x" (the reference app's speed format).
+/// "2x", "0.75x", "1.33x" (the speed format).
 pub fn format_speed(speed: f64) -> String {
     let s = format!("{:.2}", (speed * 100.0).round() / 100.0);
     format!("{}x", s.trim_end_matches('0').trim_end_matches('.'))
@@ -234,13 +234,13 @@ impl Controller {
         self.asset_map.get(&asset).and_then(|ea| self.tempos.get(ea).copied().flatten())
     }
 
-    /// Original BPM of a clip whose tempo was never set: the detected tempo
-    /// (the reference app uses a sample's tempo metadata), else the project tempo.
+    /// Original BPM of a clip whose tempo was never set: the detected tempo,
+    /// else the project tempo.
     fn default_original_bpm(&self, c: &Clip) -> f64 {
         self.detected_bpm(c.asset).unwrap_or(self.project().transport.bpm)
     }
 
-    /// The open audio clip's warp, switched on the way the reference app does it: the
+    /// The open audio clip's warp, switched on: the
     /// first time at the clip's own tempo (`default_original_bpm`).
     fn warp_on(&self, c: &Clip) -> ClipWarp {
         let mut w = c.warp.clone();
@@ -454,7 +454,7 @@ impl Controller {
 
     /// Pointer in the audio clip editor (kind 0 down, 1 move, 2 up).
     /// Handle band (upper half): a press on a transient pins it with a warp
-    /// marker and drags that marker on (one undo step, as in the reference app); a click
+    /// marker and drags that marker on (one undo step); a click
     /// elsewhere adds a marker; a marker drags, and a click on it without
     /// dragging removes it. Lane: drag a transient to move it, double-click to
     /// add or remove one. Ruler: move the playhead. Markers and transients need

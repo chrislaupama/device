@@ -1,9 +1,8 @@
-//! Character Mod (reference: the reference app's built-in "Character Mod"): one card,
-//! eleven modulation circuits (BBD choruses, ensemble, tape, photocell,
-//! flanger, phaser, tremolo, rotary speaker, panner), each with its own modes
-//! and artifacts. Parameter ids, ranges, defaults, tapers, the per-circuit
-//! defaults and the panel arrangement are taken from the reference as facts;
-//! the factory presets (names and values) and the circuits' sound are our own.
+//! Character Mod: one card, eleven modulation circuits (BBD choruses,
+//! ensemble, tape, photocell, flanger, phaser, tremolo, rotary speaker,
+//! panner), each with its own modes and artifacts. Defines the parameter ids,
+//! ranges, defaults, tapers, the per-circuit defaults, the panel arrangement
+//! and the factory presets.
 
 use super::*;
 
@@ -186,7 +185,7 @@ pub static CHARACTER_MOD: DeviceDef = DeviceDef {
     samples: 0,
 };
 
-/// Circuit switch writes (reference behaviour): changing the circuit or its
+/// Circuit switch writes: changing the circuit or its
 /// mode moves every artifact that still sits within 0.01 of the old
 /// circuit's default to the new circuit's default, and Rate when it sits
 /// within 0.001 of the old circuit's own rate. Edited values stay.

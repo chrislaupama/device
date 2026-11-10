@@ -1,6 +1,5 @@
-//! Gate (reference: the reference app's built-in "Gate"). Parameter ids,
-//! ranges, defaults, tapers and the panel arrangement are taken from the
-//! reference as facts; the factory preset names and values are our own.
+//! Gate: parameter ids, ranges, defaults, tapers, the panel arrangement and
+//! the factory presets.
 
 use super::*;
 use crate::device::PluginKind;

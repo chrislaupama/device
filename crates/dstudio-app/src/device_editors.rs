@@ -5,9 +5,8 @@
 //! DeviceCanvas in ui/device_panel.slint) with `interactive` set: Rust builds
 //! paths and texts in canvas coordinates and the canvas sends every pointer
 //! event back to [Controller::panel_editor], where hit testing, gestures and
-//! menus live. Lengths are the reference's 100%-zoom card
-//! measurements (pt, card relative: handoffs/device-specs/<device>.md and the
-//! captures in renders/reference); [Z] scales them to our 85% UI.
+//! menus live. Lengths are the 100%-zoom card
+//! measurements (pt, card relative); [Z] scales them to the 85% UI.
 //!
 //! Gestures follow the generic panel: while a gesture runs its values go to
 //! the engine live (se_builtin_set_param) and the release commits ONE undo
@@ -53,7 +52,7 @@ pub struct CanvasEvent {
 }
 
 impl CanvasEvent {
-    /// Card-relative reference coordinates (pt at 100%).
+    /// Card-relative coordinates (pt at 100%).
     fn pt(&self) -> (f32, f32) {
         (self.x / Z, (self.y + FIELD_Y) / Z)
     }
@@ -173,7 +172,7 @@ fn vgrad(top: Color, bottom: Color) -> Color {
     alpha(top, a)
 }
 
-/// Field x / y (px) of a card-relative reference coordinate (pt).
+/// Field x / y (px) of a card-relative coordinate (pt at 100%).
 fn fx(x: f32) -> f32 {
     x * Z
 }
@@ -181,7 +180,7 @@ fn fy(y: f32) -> f32 {
     y * Z - FIELD_Y
 }
 
-/// SVG path data in field px from reference coordinates.
+/// SVG path data in field px from card coordinates (pt at 100%).
 #[derive(Default)]
 struct PathData(String);
 
@@ -194,7 +193,7 @@ impl PathData {
         let _ = write!(self.0, "L{:.2} {:.2} ", fx(x), fy(y));
         self
     }
-    /// Arc to (x, y) with radius r (reference units); sweep = clockwise on screen.
+    /// Arc to (x, y) with radius r (card units); sweep = clockwise on screen.
     fn a(mut self, r: f32, large: bool, sweep: bool, x: f32, y: f32) -> Self {
         let _ = write!(self.0, "A{:.2} {:.2} 0 {} {} {:.2} {:.2} ", r * Z, r * Z, large as u8, sweep as u8, fx(x), fy(y));
         self
@@ -239,7 +238,7 @@ impl Canvas {
     fn stroke(&mut self, d: PathData, c: Color, w: f32) {
         self.path(d, c, w, none());
     }
-    /// Text in a box (reference units); align 0 left, 1 centre, 2 right.
+    /// Text in a box (card units); align 0 left, 1 centre, 2 right.
     #[allow(clippy::too_many_arguments)]
     fn text(&mut self, x: f32, y: f32, w: f32, h: f32, text: impl Into<SharedString>, color: Color, size: f32, weight: i32, align: i32) {
         self.texts.push(PanelText { x: fx(x), y: fy(y), w: w * Z, h: h * Z, text: text.into(), color, size: size * Z, weight, align });
@@ -400,7 +399,7 @@ fn env_span(e: &Adsr, step_ms: f32) -> (f32, f32) {
     (gate, ((raw / grid).ceil() * grid).max(300.0))
 }
 
-// Trance Gate geometry (reference pt, card relative).
+// Trance Gate geometry (pt at 100%, card relative).
 const TG_W: f32 = 528.0;
 const TG_CX: f32 = 98.0;
 const TG_CY: f32 = 157.5;
@@ -425,7 +424,7 @@ fn sector(r0: f32, r1: f32, a0: f32, a1: f32) -> PathData {
 
 // ---------------------------------------------------------------- shaper model
 
-// Shaper geometry (reference pt, card relative).
+// Shaper geometry (pt at 100%, card relative).
 const SH_W: f32 = 501.0;
 const SH_TABS_Y: f32 = 50.0;
 const SH_TAB_X: [f32; 7] = [16.0, 95.5, 161.0, 232.5, 291.5, 357.0, 428.0];
@@ -449,7 +448,7 @@ fn sh_y_of(py: f32) -> f32 {
     ((SH_PLOT.3 - py) / (SH_PLOT.3 - SH_PLOT.1)).clamp(0.0, 1.0)
 }
 
-/// The Crush lane's strip controls from the row start x (reference pt):
+/// The Crush lane's strip controls from the row start x (pt at 100%):
 /// label and (x, width) of the Bits and Decimate pills. Compact once the band
 /// split pill takes its room, so the row ends inside the curve well (x 493).
 struct CrushRow {
@@ -468,7 +467,7 @@ fn crush_row(x: f32, compact: bool) -> CrushRow {
     }
 }
 
-/// Lane value text at curve height y (the reference's readouts).
+/// Lane value text at curve height y.
 /// `max_beats`: the Time lane's longest repeat at the project tempo
 /// ([sh::TIME_MAX_SECONDS]); a deeper point reads as that limit.
 #[allow(clippy::too_many_arguments)]

@@ -1,4 +1,4 @@
-//! Timeline snap (reference/findings/ruler.md, S76): the toolbar readout and its menu (Off, Auto
+//! Timeline snap: the toolbar readout and its menu (Off, Auto
 //! and the grid sizes), and the beat a clip drag snaps to. Auto follows the ruler's step for the
 //! zoom; a fixed size overrides it (finer sizes only, triplets always). Holding Cmd as a drag
 //! starts moves clips off the grid.
@@ -9,7 +9,7 @@ use crate::{ChoiceItem, Studio};
 use slint::VecModel;
 use std::rc::Rc;
 
-/// Menu metrics in design units (the reference app's 22 px rows and 4 px padding x 0.85).
+/// Menu metrics in design units (22 px rows and 4 px padding x 0.85).
 const ROW_H: f32 = 18.7;
 const PAD: f32 = 3.4;
 const RULE_GAP: f32 = 6.8;
