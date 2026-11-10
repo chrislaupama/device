@@ -5298,6 +5298,55 @@ fn minimap_steps() -> Vec<Step> {
 }
 
 
+/// The timeline ruler's bar labels at several zooms: the reference app's rule (S65) is a label every
+/// power-of-two bars once the bars are 50 px apart, starting at bar 1.
+fn ruler_zoom_steps() -> Vec<Step> {
+    use Step::*;
+    let saved = Rc::new(Cell::new((0.0f64, 0.0f64)));
+    let save = saved.clone();
+    let mut v: Vec<Step> = vec![DoC("ruler: remember the view", Box::new(move |_, ctl| {
+        let c = ctl.borrow();
+        save.set((c.view.start_beats, c.view.px_per_beat));
+    }))];
+    let zooms: [(&'static str, &'static str, f64, i64); 5] = [
+        ("ruler: zoom out to 12.5 %", "labels every 8 bars at 12.5 %", 0.125, 8),
+        ("ruler: zoom out to 25 %", "labels every 4 bars at 25 %", 0.25, 4),
+        ("ruler: default zoom", "a label on every bar at 100 %", 1.0, 1),
+        ("ruler: zoom in to 400 %", "a label on every bar at 400 %", 4.0, 1),
+        ("ruler: zoom in to 1500 %", "a label on every bar at 1500 %", 15.0, 1),
+    ];
+    for (name, check, factor, want_bars) in zooms {
+        v.push(DoC(name, Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.view.start_beats = 0.0;
+            c.view.px_per_beat = crate::timeline::DEFAULT_PX_PER_BEAT * factor;
+            c.ui_dirty = true;
+        })));
+        v.push(Check(check, Box::new(move |c, a| {
+            let labels = a.global::<Studio>().get_ruler_labels();
+            let rows: Vec<(f32, String)> = (0..slint::Model::row_count(&labels)).filter_map(|i| slint::Model::row_data(&labels, i)).map(|l| (l.x, l.text.to_string())).collect();
+            let gap = want_bars as f64 * 4.0 * c.view.px_per_beat;
+            let ok = !rows.is_empty()
+                && rows[0].1 == "1"
+                && rows.windows(2).all(|w| {
+                    let (n0, n1): (i64, i64) = (w[0].1.parse().unwrap_or(0), w[1].1.parse().unwrap_or(0));
+                    n1 - n0 == want_bars && ((w[1].0 - w[0].0) as f64 - gap).abs() < 0.5 && gap >= 49.0
+                });
+            ok.then_some(()).ok_or(format!("labels {rows:?} want every {want_bars} bars"))
+        })));
+    }
+    let saved_check = saved.clone();
+    v.push(DoC("ruler: restore the view", Box::new(move |_, ctl| {
+        let mut c = ctl.borrow_mut();
+        let (s, p) = saved.get();
+        c.view.start_beats = s;
+        c.view.px_per_beat = p;
+        c.ui_dirty = true;
+    })));
+    v.push(Check("ruler: view restored", Box::new(move |c, _| approx(c.view.px_per_beat as f32, saved_check.get().1 as f32, 0.01).then_some(()).ok_or(format!("ppb {}", c.view.px_per_beat)))));
+    v
+}
+
 fn clip_menu_steps() -> Vec<Step> {
     use Step::*;
     use saine_core::{Asset, AssetId, Clip, ClipId, Command, MidiClip, Track, TrackId};
@@ -5554,6 +5603,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(section_steps());
     all.extend(minimap_steps());
     all.extend(clip_menu_steps());
+    all.extend(ruler_zoom_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));

@@ -32,6 +32,96 @@ pub const MAX_PX_PER_BEAT: f64 = 2000.0;
 /// Default zoom: 51.03 pt per 4/4 bar (measured: bar 20 line at x 1422.5, bar 1 at 453).
 pub const DEFAULT_PX_PER_BEAT: f64 = 969.5 / 76.0;
 
+/// Pixels between two labelled bars before the label step stops doubling (S65).
+const LABEL_MIN_PX: f64 = 50.0;
+/// Fewest pixels between grid lines inside a bar, and between bar-or-longer grid lines (S66).
+const GRID_MIN_PX: f64 = 16.0;
+const GRID_BAR_MIN_PX: f64 = 6.0;
+/// Fewest pixels a bar-shading group may span (S66).
+const BAND_MIN_PX: f64 = 80.0;
+/// Shortest grid step, in beats, and the longest, in beats.
+const GRID_MIN_BEATS: f64 = 1.0 / 16.0;
+const GRID_MAX_BEATS: f64 = 128.0;
+/// Ticks closer than this many pixels are not drawn.
+const TICK_MIN_PX: f64 = 4.0;
+const EPS: f64 = 1e-6;
+
+/// Which bars get a label and a full-height tick, where lanes get grid lines, and how long a
+/// shaded group is, at one zoom. Steps in bars are whole bars; steps in beats are quarter notes.
+/// Rules read from the reference app's ruler painter (reference/findings/ruler.md, S65-S67).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RulerSteps {
+    /// A bar number every this many bars (a power of two).
+    pub label_bars: i64,
+    /// A full-height tick every this many bars (half the label step, at least 1).
+    pub tick_bars: i64,
+    /// Sub-bar and long-bar tick step, in beats (the grid step before it is widened).
+    pub tick_beats: f64,
+    /// Grid line step in the lanes and clips, in beats.
+    pub line_beats: f64,
+    /// Length in beats of one shaded group (shading alternates group by group).
+    pub band_beats: f64,
+    pub beats_per_bar: f64,
+    pub beat_len: f64,
+}
+
+impl RulerSteps {
+    /// `beats_per_bar` and `beat_len` are in quarter notes (4/4: 4 and 1; 6/8: 3 and 0.5).
+    pub fn new(px_per_beat: f64, beats_per_bar: f64, beat_len: f64) -> Self {
+        let bar_px = px_per_beat * beats_per_bar;
+        let mut label_bars = 1i64;
+        while bar_px > 0.0 && bar_px * (label_bars as f64) < LABEL_MIN_PX && label_bars < 1024 {
+            label_bars *= 2;
+        }
+        let tick_bars = (label_bars / 2).max(1);
+        let numerator = (beats_per_bar / beat_len).round().max(1.0) as i64;
+
+        // Candidate grid steps, ascending: beat halvings down to 1/16 beat, the beat
+        // multiples that divide the bar, then 2, 4, 8 ... bars up to 128 beats.
+        let mut cand = [0.0f64; 40];
+        let mut n = 0;
+        let mut s = beat_len;
+        while s / 2.0 >= GRID_MIN_BEATS - EPS {
+            s /= 2.0;
+        }
+        while s < beat_len - EPS {
+            cand[n] = s;
+            n += 1;
+            s *= 2.0;
+        }
+        cand[n] = beat_len;
+        n += 1;
+        for k in 2..=numerator {
+            if numerator % k == 0 {
+                cand[n] = beat_len * k as f64;
+                n += 1;
+            }
+        }
+        let mut s = beats_per_bar * 2.0;
+        while s <= GRID_MAX_BEATS && n < cand.len() {
+            cand[n] = s;
+            n += 1;
+            s *= 2.0;
+        }
+        let tick_beats = (0..n)
+            .map(|i| cand[i])
+            .find(|&c| c * px_per_beat >= if c >= beats_per_bar - EPS { GRID_BAR_MIN_PX } else { GRID_MIN_PX })
+            .unwrap_or(cand[n - 1]);
+        let line_beats = if tick_beats < beats_per_bar - EPS { tick_beats } else { tick_beats.max(tick_bars as f64 * beats_per_bar) };
+
+        let bar = beats_per_bar;
+        let mut bands = [beat_len, bar, numerator as f64 * bar, 4.0 * numerator as f64 * bar];
+        bands.sort_by(f64::total_cmp);
+        let band_beats = bands.into_iter().find(|&b| b * px_per_beat >= BAND_MIN_PX).unwrap_or(bands[3]);
+        RulerSteps { label_bars, tick_bars, tick_beats, line_beats, band_beats, beats_per_bar, beat_len }
+    }
+
+    /// Whether `beat` is a multiple of `unit` (to within a millionth of a beat).
+    pub fn on(beat: f64, unit: f64) -> bool {
+        (beat - (beat / unit).round() * unit).abs() < EPS
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct View {
     pub start_beats: f64,
@@ -152,6 +242,8 @@ pub struct Scene<'a> {
     pub loop_beats: (f64, f64),
     pub loop_on: bool,
     pub beats_per_bar: f64,
+    /// Tick, label, grid and band steps for the current zoom (see [RulerSteps]).
+    pub steps: RulerSteps,
     /// Automation overlay (src/automation.rs) while lanes are shown.
     pub auto: Option<&'a crate::automation::AutoScene>,
     /// Arrangement sections in the ruler's section lane (src/sections.rs).
@@ -238,11 +330,23 @@ impl Px {
     }
 }
 
-/// Lane background (alternating 4-bar bands) and grid for the band y0..y1.
+/// Grid line strength by weight: bar, beat, sub-beat (the reference app's .075 / .027 / .011 scaled by the
+/// measured .775 of our lane ink).
+fn grid_alpha(s: &RulerSteps, beat: f64) -> f32 {
+    if RulerSteps::on(beat, s.beats_per_bar) {
+        0.058
+    } else if RulerSteps::on(beat, s.beat_len) {
+        0.021
+    } else {
+        0.0085
+    }
+}
+
+/// Lane background (alternating bands of `band_beats`) and grid for the band y0..y1.
 fn bands_and_grid(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, y0: f32, y1: f32, colors: [u32; 2]) {
     let v = &sc.view;
     let w = sc.size.0;
-    let band = sc.beats_per_bar * 4.0;
+    let band = sc.steps.band_beats;
     let first = (v.start_beats / band).floor() as i64;
     let mut k = first;
     loop {
@@ -254,14 +358,8 @@ fn bands_and_grid(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, y0: f32, y1: f32
         out.push(px.rect(x0.max(0.0), y0, x1 - x0.max(0.0), y1 - y0, rgba(rgb(colors[(k.rem_euclid(2)) as usize]), 1.0)));
         k += 1;
     }
-    // Grid: half-bar lines at the default zoom (reference), coarser when zoomed out.
-    let mut step = sc.beats_per_bar / 2.0;
-    while step * v.px_per_beat < 10.0 {
-        step *= 2.0;
-    }
-    while step * v.px_per_beat > 80.0 && step > 0.25 {
-        step /= 2.0;
-    }
+    // Grid lines: bar, beat and sub-beat weights at the step the reference app picks for this zoom (S66).
+    let step = sc.steps.line_beats;
     let first = (v.start_beats / step).floor() as i64;
     let lw = 1.0 / px.s; // one physical pixel (0.5 pt on Retina, as measured)
     let mut i = first;
@@ -272,9 +370,7 @@ fn bands_and_grid(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, y0: f32, y1: f32
             break;
         }
         if x >= -1.0 {
-            let on_bar = (beat / sc.beats_per_bar).fract().abs() < 1e-9;
-            let a = if on_bar { 0.058 } else { 0.021 };
-            out.push(px.rect(x, y0, lw, y1 - y0, rgba(WHITE, a)));
+            out.push(px.rect(x, y0, lw, y1 - y0, rgba(WHITE, grid_alpha(&sc.steps, beat))));
         }
         i += 1;
     }
@@ -328,17 +424,17 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
         dl.base.push(px.rect(x, y + CLIP_HEADER, cw, ch - CLIP_HEADER - r, rgba(body, 1.0)));
         dl.base.push(px.rounded(x, y + ch - 2.0 * r, cw, 2.0 * r, r, rgba(body, 1.0)));
         dl.base.push(px.rect(x, y + CLIP_HEADER, cw, 1.0 / sc.scale, rgba(BLACK, 0.4)));
-        let half_bar = sc.beats_per_bar / 2.0;
+        let step = sc.steps.line_beats;
         let gw = 0.85f32.max(1.0 / sc.scale);
-        let mut k = (c.start_beats.max(v.start_beats) / half_bar).floor() as i64 + 1;
-        while half_bar * v.px_per_beat >= 10.0 {
-            let beat = k as f64 * half_bar;
+        let mut k = (c.start_beats.max(v.start_beats) / step).floor() as i64 + 1;
+        loop {
+            let beat = k as f64 * step;
             let gx = v.x_of(beat);
             if beat >= c.start_beats + c.len_beats || gx > w {
                 break;
             }
             if gx >= 0.0 {
-                let a = if k % 2 == 0 { 0.2 } else { 0.125 };
+                let a = if RulerSteps::on(beat, sc.beats_per_bar) { 0.2 } else { 0.125 };
                 dl.base.push(px.rect(gx, y + CLIP_HEADER + 1.0 / sc.scale, gw, ch - CLIP_HEADER - 1.0 / sc.scale, rgba(BLACK, a)));
             }
             k += 1;
@@ -360,26 +456,35 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     let lw = 1.0 / sc.scale;
     // One reference px (0.85 units), at least one physical pixel: 2 px on Retina, 1 px at 1x.
     let mark = 0.85f32.max(lw);
-    let bar_px = sc.beats_per_bar * v.px_per_beat;
-    let mut label_step = 1i64;
-    while (label_step as f64) * bar_px < 24.0 {
-        label_step *= 2;
-    }
-    let first_bar = (v.start_beats / sc.beats_per_bar).floor() as i64;
+    // Full-height ticks every `tick_bars` bars; between them, ticks standing on the row's
+    // bottom at the grid step: 6 reference px on a beat, 4 off it (S65).
+    let st = &sc.steps;
+    let bar = st.beats_per_bar;
+    let first_bar = ((v.start_beats / bar).floor() as i64).div_euclid(st.tick_bars) * st.tick_bars;
     let mut b = first_bar;
     loop {
-        let x = v.x_of(b as f64 * sc.beats_per_bar);
+        let x = v.x_of(b as f64 * bar);
         if x > w {
             break;
         }
-        if b % label_step == 0 {
-            o.push(px.rect(x - 0.5 * mark, 0.0, mark, 16.5, rgba(rgb(0x4c4d4f), 1.0)));
+        o.push(px.rect(x - 0.5 * mark, 0.0, mark, 16.5, rgba(rgb(0x4c4d4f), 1.0)));
+        b += st.tick_bars;
+    }
+    if st.tick_beats * v.px_per_beat >= TICK_MIN_PX {
+        let full = st.tick_bars as f64 * bar;
+        let mut i = (v.start_beats / st.tick_beats).floor() as i64;
+        loop {
+            let beat = i as f64 * st.tick_beats;
+            let x = v.x_of(beat);
+            if x > w {
+                break;
+            }
+            if beat >= 0.0 && x >= 0.0 && !RulerSteps::on(beat, full) {
+                let h = if RulerSteps::on(beat, st.beat_len) { 5.1 } else { 3.4 };
+                o.push(px.rect(x - 0.5 * mark, 16.5 - h, mark, h, rgba(rgb(0x38393c), 1.0)));
+            }
+            i += 1;
         }
-        if bar_px >= 24.0 && sc.beats_per_bar.round() as i64 % 2 == 0 {
-            let xq = v.x_of((b as f64 + 0.5) * sc.beats_per_bar);
-            o.push(px.rect(xq - 0.5 * mark, 16.5 - 5.1, mark, 5.1, rgba(rgb(0x38393c), 1.0)));
-        }
-        b += 1;
     }
     for y in [16.5, 25.0, 38.0] {
         o.push(px.rect(0.0, y, w, 1.0, rgba(rgb(0x2c2d30), 1.0)));
@@ -505,13 +610,7 @@ fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &
     if !track_selected {
         out.push(px.rect(x + 0.5, by - 0.5, cw - 1.0, 0.5, rgba(mix(head, BLACK, 0.4), 1.0)));
     }
-    let mut step = sc.beats_per_bar / 2.0;
-    while step * v.px_per_beat < 10.0 {
-        step *= 2.0;
-    }
-    while step * v.px_per_beat > 80.0 && step > 0.25 {
-        step /= 2.0;
-    }
+    let step = sc.steps.line_beats;
     let mut b = (c.start_beats / step).floor() * step + step;
     while track_selected && b < c.start_beats + c.len_beats - 1e-6 {
         let lx = v.x_of(b);
@@ -569,12 +668,8 @@ fn live_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis) {
 }
 
 /// Bar-number labels for the ruler (Slint text over the texture).
-pub fn ruler_labels(v: &View, w: f32, beats_per_bar: f64) -> Vec<(f32, String)> {
-    let bar_px = beats_per_bar * v.px_per_beat;
-    let mut step = 1i64;
-    while (step as f64) * bar_px < 24.0 {
-        step *= 2;
-    }
+pub fn ruler_labels(v: &View, w: f32, steps: &RulerSteps) -> Vec<(f32, String)> {
+    let (beats_per_bar, step) = (steps.beats_per_bar, steps.label_bars);
     let mut out = Vec::new();
     let mut b = ((v.start_beats / beats_per_bar).floor() as i64).div_euclid(step) * step;
     loop {
@@ -593,6 +688,117 @@ pub fn ruler_labels(v: &View, w: f32, beats_per_bar: f64) -> Vec<(f32, String)> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn steps(ppb: f64) -> RulerSteps {
+        RulerSteps::new(ppb, 4.0, 1.0)
+    }
+
+    #[test]
+    fn ruler_steps_at_several_zooms() {
+        // (px per beat, label bars, tick bars, tick beats, line beats, band beats)
+        let rows = [
+            (MIN_PX_PER_BEAT, 32, 16, 16.0, 64.0, 64.0),
+            (DEFAULT_PX_PER_BEAT / 8.0, 8, 4, 4.0, 16.0, 64.0),
+            (DEFAULT_PX_PER_BEAT / 4.0, 4, 2, 4.0, 8.0, 64.0),
+            (DEFAULT_PX_PER_BEAT / 2.0, 2, 1, 4.0, 4.0, 16.0),
+            (DEFAULT_PX_PER_BEAT, 1, 1, 2.0, 2.0, 16.0),
+            (DEFAULT_PX_PER_BEAT * 2.0, 1, 1, 1.0, 1.0, 4.0),
+            (DEFAULT_PX_PER_BEAT * 4.0, 1, 1, 0.5, 0.5, 4.0),
+            (200.0, 1, 1, 0.125, 0.125, 1.0),
+            (MAX_PX_PER_BEAT, 1, 1, 0.0625, 0.0625, 1.0),
+        ];
+        for (ppb, label, tick, tick_beats, line, band) in rows {
+            let s = steps(ppb);
+            assert_eq!((s.label_bars, s.tick_bars, s.tick_beats, s.line_beats, s.band_beats), (label, tick, tick_beats, line, band), "ppb {ppb}");
+        }
+    }
+
+    #[test]
+    fn ruler_steps_keep_their_minimum_spacing() {
+        let mut ppb = MIN_PX_PER_BEAT;
+        while ppb <= MAX_PX_PER_BEAT {
+            let s = steps(ppb);
+            assert!(s.label_bars as f64 * 4.0 * ppb >= LABEL_MIN_PX - 1e-9 || s.label_bars == 1024, "labels at {ppb}");
+            assert!(s.line_beats * ppb >= GRID_BAR_MIN_PX, "grid at {ppb}");
+            assert!(s.line_beats >= s.tick_beats && s.tick_bars * 2 >= s.label_bars, "ticks at {ppb}");
+            assert!(s.band_beats * ppb >= BAND_MIN_PX || s.band_beats == 64.0, "band at {ppb}");
+            ppb *= 1.07;
+        }
+    }
+
+    #[test]
+    fn ruler_steps_follow_the_time_signature() {
+        let s = RulerSteps::new(DEFAULT_PX_PER_BEAT, 3.0, 0.5);
+        assert_eq!((s.label_bars, s.tick_bars, s.tick_beats, s.line_beats), (2, 1, 1.5, 1.5));
+        let s = RulerSteps::new(DEFAULT_PX_PER_BEAT, 3.0, 1.0);
+        assert_eq!((s.label_bars, s.tick_beats, s.line_beats), (2, 3.0, 3.0));
+    }
+
+    #[test]
+    fn ruler_ticks_in_the_draw_list_follow_the_steps() {
+        let w = 969.5f32;
+        let count = |ppb: f64| -> (usize, usize, usize) {
+            let view = View { px_per_beat: ppb, ..View::default() };
+            let sc = Scene {
+                steps: steps(ppb),
+                view,
+                size: (w, 300.0),
+                scale: 2.0,
+                tracks: &[],
+                clips: &[],
+                live: &[],
+                playhead_beats: 0.0,
+                loop_beats: (0.0, 0.0),
+                loop_on: false,
+                beats_per_bar: 4.0,
+                auto: None,
+                sections: &[],
+            };
+            let mut dl = DrawList::default();
+            build(&mut dl, &sc);
+            let by = |grey: u32, h: f32| dl.over.iter().filter(|r| (r.color[0] * 255.0).round() as u32 == grey && r.rect[3] == h).count();
+            (by(0x4c, 33.0), by(0x38, 10.0), by(0x38, 7.0))
+        };
+        let expect = |ppb: f64| -> (usize, usize, usize) {
+            let s = steps(ppb);
+            let reach = w as f64 / ppb;
+            let full = s.tick_bars as f64 * 4.0;
+            let fulls = (reach / full).floor() as usize + 1;
+            if s.tick_beats * ppb < TICK_MIN_PX {
+                return (fulls, 0, 0);
+            }
+            let (mut beat, mut sub) = (0, 0);
+            let mut i = 0;
+            while i as f64 * s.tick_beats <= reach {
+                let b = i as f64 * s.tick_beats;
+                i += 1;
+                if RulerSteps::on(b, full) {
+                    continue;
+                }
+                if RulerSteps::on(b, 1.0) {
+                    beat += 1;
+                } else {
+                    sub += 1;
+                }
+            }
+            (fulls, beat, sub)
+        };
+        for ppb in [DEFAULT_PX_PER_BEAT / 8.0, DEFAULT_PX_PER_BEAT / 2.0, DEFAULT_PX_PER_BEAT, DEFAULT_PX_PER_BEAT * 4.0, DEFAULT_PX_PER_BEAT * 16.0] {
+            assert_eq!(count(ppb), expect(ppb), "ppb {ppb}");
+        }
+    }
+
+    #[test]
+    fn ruler_labels_thin_out_with_zoom() {
+        let label_nums = |ppb: f64| -> Vec<String> {
+            let v = View { px_per_beat: ppb, ..View::default() };
+            ruler_labels(&v, 1000.0, &steps(ppb)).into_iter().map(|(_, t)| t).collect()
+        };
+        assert_eq!(&label_nums(DEFAULT_PX_PER_BEAT)[..4], ["1", "2", "3", "4"]);
+        assert_eq!(&label_nums(DEFAULT_PX_PER_BEAT / 4.0)[..4], ["1", "5", "9", "13"]);
+        assert_eq!(&label_nums(DEFAULT_PX_PER_BEAT * 8.0)[..3], ["1", "2", "3"]);
+    }
+
     #[test]
     fn view_roundtrip_and_hits() {
         let v = View::default();

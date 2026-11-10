@@ -14,6 +14,7 @@
 //!              [--hold-note <0..127>  (with a synth state: hold the note and render 0.75 s offline first)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
 //!              [--window-width <pt>  (OS window width, default 1440)] [--assistant-width <px>  (saved docked-assistant width, 297..600)]
+//!              [--timeline-zoom <percent>  (horizontal timeline zoom, 100 = default; 100 is 12.76 pt per beat)]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
 //!              [--clip-menu <0|1|3|4|5>  (open a clip editor dropdown after --state: Speed, Warp, Grid, Type, Genre; 2, Mode, is disabled)]
 //!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
@@ -179,6 +180,8 @@ struct Args {
     /// --ac-edit N: with review-warp, open the typed-value box (0 Original BPM, 1 Transpose).
     ac_edit: Option<i32>,
     frame_stats: bool,
+    /// --timeline-zoom <percent>: horizontal timeline zoom at start (100 = the default).
+    timeline_zoom: Option<f64>,
     /// --render-bench N: offscreen, render the state N times and print the mean / median /
     /// p95 milliseconds per full window render (Slint + wgpu surfaces + readback), then exit.
     render_bench: u32,
@@ -429,6 +432,7 @@ fn parse_args() -> Result<Args, String> {
             "--ac-edit" => a.ac_edit = Some(value(&mut i)?.parse().map_err(|e| format!("--ac-edit: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
+            "--timeline-zoom" => a.timeline_zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--timeline-zoom: {e}"))?),
             "--drag-bench" => {
                 let v = value(&mut i)?;
                 if v != "track" && v != "bottom" {
@@ -1271,6 +1275,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     ctl.borrow_mut().update_ui(&app);
     if args.reference_default || args.screenshot.is_some() {
         ctl.borrow_mut().show_status = !args.reference_default;
+    }
+    if let Some(pct) = args.timeline_zoom {
+        let mut c = ctl.borrow_mut();
+        c.view.px_per_beat = (timeline::DEFAULT_PX_PER_BEAT * pct / 100.0).clamp(timeline::MIN_PX_PER_BEAT, timeline::MAX_PX_PER_BEAT);
+        c.ui_dirty = true;
     }
     if let Some(e) = &prefs_error {
         ctl.borrow_mut().set_status(e.clone(), 8);
