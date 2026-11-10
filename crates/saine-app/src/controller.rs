@@ -519,6 +519,26 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    /// App menu bar items without a shortcut (`Studio.menu-action`). Settings and the
+    /// dialogs are modal, so the menu does nothing while one is open.
+    pub fn menu_action(&mut self, id: &str) {
+        if self.settings.open || self.export.open || self.unsaved_open {
+            return;
+        }
+        match id {
+            "options.audio_midi" => self.open_settings(),
+            "options.check_plugins" => self.start_plugin_scan(false),
+            "options.rescan_plugins" => self.start_plugin_scan(true),
+            "file.show_in_finder" => {
+                let Some(dir) = &self.project_dir else { return };
+                if let Err(e) = std::process::Command::new("open").arg("-R").arg(dir).spawn() {
+                    self.set_status(format!("Show in Finder failed: {e}"), 3);
+                }
+            }
+            other => self.set_status(format!("{other}: not implemented yet"), 3),
+        }
+    }
+
     // ---------------------------------------------------------------- core glue
 
     pub fn execute(&mut self, cmd: Command) -> bool {
@@ -1473,6 +1493,12 @@ impl Controller {
             self.tracks_model.set_vec(rows);
         }
         s.set_project_name(p.name.clone().into());
+        s.set_undo_text(self.doc.undo_label().map_or("Undo".into(), |l| format!("Undo {l}")).into());
+        s.set_redo_text(self.doc.redo_label().map_or("Redo".into(), |l| format!("Redo {l}")).into());
+        s.set_can_undo(self.doc.can_undo());
+        s.set_can_redo(self.doc.can_redo());
+        s.set_can_copy(self.selected_clip.is_some());
+        s.set_project_on_disk(self.project_dir.is_some());
         s.set_bpm_text(format!("{}", p.transport.bpm.round() as i64).into());
         s.set_loop_enabled(p.transport.loop_enabled);
         s.set_sig_text(format!("{}/{}", p.transport.time_signature.numerator, p.transport.time_signature.denominator).into());
