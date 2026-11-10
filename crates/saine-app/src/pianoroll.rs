@@ -170,8 +170,12 @@ pub struct PrState {
     last_down: Option<(Instant, f32, f32)>,
     pub size: (f32, f32),
     humanize_count: u64,
+    /// Step sequencer view of a pattern clip (src/stepseq.rs).
+    pub seq: crate::stepseq::SeqState,
     /// Audio clip editor gesture (warp marker / transient), see `warpedit`.
     pub ac_drag: Option<crate::warpedit::AcDrag>,
+    /// Audio clip editor value being typed in (double-click), and its clip.
+    pub ac_edit: Option<(crate::warpedit::AcEdit, ClipId)>,
     pub ac_last_down: Option<(Instant, f32, f32)>,
 }
 
@@ -193,7 +197,9 @@ impl Default for PrState {
             last_down: None,
             size: (1174.5, 281.0),
             humanize_count: 0,
+            seq: Default::default(),
             ac_drag: None,
+            ac_edit: None,
             ac_last_down: None,
         }
     }
@@ -473,6 +479,7 @@ impl Controller {
             self.pr.drag = None;
             self.pr.value_drag = None;
             self.pr.scroll = DEFAULT_SCROLL;
+            self.pr.seq = crate::stepseq::SeqState::opened(self.pr_clip().and_then(|c| c.pattern.as_ref()));
             // A clip with notes opens centred on its pitch range (empty clips: C4 as in the reference).
             if let Some(c) = self.pr_clip()
                 && !c.notes.is_empty()
@@ -482,6 +489,10 @@ impl Controller {
                 let mid = (lo + hi) / 2.0;
                 self.pr.scroll = (127.0 - mid) * ROW_H + ROW_H / 2.0 - (self.pr.size.1 - GRID_Y) / 2.0;
             }
+        }
+        let pattern = self.pr_clip().and_then(|c| c.pattern.as_ref());
+        if pattern.is_some() != self.pr.seq.pattern {
+            self.pr.seq = crate::stepseq::SeqState::opened(pattern);
         }
         if let Some(c) = self.pr_clip() {
             let ids: BTreeSet<u32> = c.notes.iter().map(|n| n.id).collect();
