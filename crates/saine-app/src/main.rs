@@ -109,6 +109,8 @@ struct Args {
     /// review-audio-clip-loop: review-warp with the clip looping its second quarter out to
     /// twice its content.
     audio_loop_state: bool,
+    /// review-audio-loop-drag: the audio loop state with the loop bar mid-drag, an eighth later.
+    audio_loop_drag: bool,
     /// review-reverse: review-warp with the clip reversed.
     reverse_state: bool,
     /// review-warp-stereo: review-warp from a stereo file (hits on the left only).
@@ -307,11 +309,12 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.audio_clip_state = true;
                 }
-                s @ ("review-warp" | "review-reverse" | "review-warp-stereo" | "review-audio-clip-loop") => {
+                s @ ("review-warp" | "review-reverse" | "review-warp-stereo" | "review-audio-clip-loop" | "review-audio-loop-drag") => {
                     a.reference_default = true;
                     a.audio_clip_state = true;
                     a.warp_state = true;
-                    a.audio_loop_state = s == "review-audio-clip-loop";
+                    a.audio_loop_state = s == "review-audio-clip-loop" || s == "review-audio-loop-drag";
+                    a.audio_loop_drag = s == "review-audio-loop-drag";
                     a.reverse_state = s == "review-reverse";
                     a.stereo_state = s == "review-warp-stereo";
                 }
@@ -469,7 +472,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-pr-zoom, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-audio-loop-drag, review-pr-zoom, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -2229,6 +2232,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let warp = args.warp_state;
         let reverse = args.reverse_state;
         let looped = args.audio_loop_state;
+        let mut loop_drag = args.audio_loop_drag;
         let mut menu = args.clip_menu.filter(|_| warp);
         let mut edit = args.ac_edit.filter(|_| warp);
         // Selects the clip once, after the import lands; later tab changes are the user's.
@@ -2251,6 +2255,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let content = c.project().content_length_ticks(&cl);
                 let l = saine_core::model::AudioLoop { on: true, start: content / 4, end: content / 2, length: 2 * content };
                 c.execute(saine_core::Command::SetClipLoop { clip: cl.id, clip_loop: Some(l) });
+            }
+            if let Some(l) = c.ac_clip().and_then(|cl| cl.clip_loop).filter(|_| loop_drag) {
+                // REVIEW STATE: press the middle of the loop bar and drag it an eighth of the content later.
+                loop_drag = false;
+                let content = c.ac_clip().map_or(0, |cl| c.project().content_length_ticks(cl));
+                let v = c.pr_view();
+                let mid = (l.start + l.end) / 2;
+                if c.pr_loop_press(&v, v.x_of(mid as f64 / saine_core::PPQ as f64), 20.5, mid) {
+                    c.pr_loop_move(mid + content / 8);
+                }
             }
             // review-warp + --clip-menu: open the dropdown once the warped clip is shown.
             if c.ac_clip().is_some_and(|cl| cl.warp.enabled)

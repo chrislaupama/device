@@ -140,10 +140,10 @@ pub struct RulerSteps {
     pub ticks_visible: bool,
 }
 
-/// The step a clip editor's note edits snap to (W2-19): a fixed size as \`RulerSteps\` widens it, or
+/// The step a clip editor's note edits snap to (W2-19): a fixed size as `RulerSteps` widens it, or
 /// for Auto (and a triplet that does not fit the bar) a step by the zoom: 4 or 2 bars while a bar
 /// is under 6 or 12 px, then a bar, a beat, 1/2, 1/4 and 1/8 beat at 5, 12, 30 and 60 px per beat.
-/// \`px_per_beat\` is in reference px; beats are quarter notes.
+/// `px_per_beat` is in reference px; beats are quarter notes.
 pub fn note_snap_beats(px_per_beat: f64, beats_per_bar: f64, grid: Option<GridSize>) -> f64 {
     if let Some(s) = grid.and_then(|g| RulerSteps::fixed_step(g, beats_per_bar, px_per_beat)) {
         return s;

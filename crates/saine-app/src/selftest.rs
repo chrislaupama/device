@@ -28,6 +28,8 @@ enum Step {
 thread_local! {
     /// Audio loop start before the footer Position drag (audio loop section).
     static AUDIO_LOOP_START: Cell<i64> = const { Cell::new(0) };
+    /// Undo history length before the audio loop bar drags.
+    static AUDIO_LOOP_HISTORY: Cell<usize> = const { Cell::new(0) };
 }
 
 fn press(app: &AppWindow, x: f32, y: f32) {
@@ -1514,6 +1516,7 @@ fn steps() -> Vec<Step> {
             c.execute(saine_core::Command::SetClipLoop { clip: clip.id, clip_loop: Some(l) });
         })),
         DoC("audio loop: drag the loop bar's end from half to three quarters of the content", Box::new(|a, ctl| {
+            AUDIO_LOOP_HISTORY.with(|h| h.set(ctl.borrow().doc.history_labels().len()));
             let (x0, x1) = {
                 let c = ctl.borrow();
                 let Some(clip) = c.ac_clip() else { return };
@@ -1524,11 +1527,12 @@ fn steps() -> Vec<Step> {
             let y = PR_ORIGIN.1 + 20.5;
             drag(a, x0, y, x1, y);
         })),
-        Check("the loop ends near three quarters (on the 1/16 grid), its start kept, one \"Clip Loop\" step", Box::new(|c, _| {
+        Check("the loop ends near three quarters (on the snap step), its start kept, one \"Clip Loop\" step", Box::new(|c, _| {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
             let content = c.project().content_length_ticks(clip);
             let l = clip.clip_loop.ok_or("no loop")?;
-            (l.on && l.start == content / 4 && (l.end - content * 3 / 4).abs() <= 240 && l.end % 240 == 0 && c.doc.undo_label().as_deref() == Some("Clip Loop"))
+            let g = c.pr_snap_ticks(&c.pr_view());
+            (l.on && l.start == content / 4 && (l.end - content * 3 / 4).abs() <= g && (l.end % g == 0 || l.end == content) && c.doc.undo_label().as_deref() == Some("Clip Loop"))
                 .then_some(())
                 .ok_or(format!("{l:?} content {content}"))
         })),
@@ -1549,7 +1553,8 @@ fn steps() -> Vec<Step> {
             let content = c.project().content_length_ticks(clip);
             let l = clip.clip_loop.ok_or("no loop")?;
             let d = l.start - content / 4;
-            (d > 0 && d % 240 == 0 && (d - content / 8).abs() <= 240 && (l.end - l.start - (content * 3 / 4 - content / 4)).abs() <= 240 && l.end <= content)
+            let g = c.pr_snap_ticks(&c.pr_view());
+            (d > 0 && (d % g == 0 || l.end == content) && (d - content / 8).abs() <= g && (l.end - l.start - (content * 3 / 4 - content / 4)).abs() <= g && l.end <= content)
                 .then_some(())
                 .ok_or(format!("{l:?} content {content}"))
         })),
@@ -1572,7 +1577,7 @@ fn steps() -> Vec<Step> {
         })),
         DoC("audio loop: undo the bar and Position drags", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
-            for _ in 0..3 {
+            while c.doc.history_labels().len() > AUDIO_LOOP_HISTORY.with(|h| h.get()) {
                 c.undo();
             }
         })),
