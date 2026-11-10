@@ -55,7 +55,9 @@ fn finish_run(failed: usize) {
         let _ = std::fs::remove_file(&tmp);
     }
     if failed == 0 {
-        let _ = std::fs::remove_dir_all(dir);
+        if let Err(e) = std::fs::remove_dir_all(dir) {
+            println!("self-test: could not remove the scratch folder {}: {e}", dir.display());
+        }
     } else {
         println!("self-test: scratch files kept in {}", dir.display());
     }
