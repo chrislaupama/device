@@ -785,7 +785,7 @@ impl Controller {
 
     pub fn layout(&self) -> Layout {
         let (w, h) = self.devices.win;
-        Layout { w, h, sounds: self.devices.sounds, mixer: self.mixer_open, assistant: self.assistant_open, clip_tab: self.bottom_tab == BottomTab::Clip, scroll_y: self.view.scroll_y as f32, bottom: self.bottom_h() }
+        Layout { w, h, sounds: self.devices.sounds, mixer: self.mixer_open, assistant: self.assistant_open, chat_w: self.chat_w_at(w, self.devices.sounds), clip_tab: self.bottom_tab == BottomTab::Clip, scroll_y: self.view.scroll_y as f32, bottom: self.bottom_h() }
     }
 
     /// Browser row drag: phase 0 press, 1 move, 2 release (window coordinates).
