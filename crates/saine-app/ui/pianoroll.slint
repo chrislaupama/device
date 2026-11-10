@@ -47,42 +47,69 @@ export component ClipSidebar inherits Rectangle {
         }
     }
     if Studio.pr-visible: Rectangle {
-        // clip chip + Patterns / Shape card
+        // clip chip + Patterns / Shape card (a drum pattern clip: the chip alone)
         Rectangle {
-            x: 10.5px; y: 38px; width: 234px; height: 60.5px; border-radius: 8px; background: #212227;
+            x: 10.5px; y: 38px; width: 234px; height: Studio.composer-drums ? 30.5px : 60.5px; border-radius: 8px; background: #212227;
             Rectangle {
                 x: 0; y: 0; width: parent.width; height: 30.5px; border-radius: 8px; background: Studio.clip-color;
                 Rectangle { y: parent.height - 8px; height: 8px; background: Studio.clip-color; }
                 Icon { x: 11px; y: 9px; width: 13px; height: 13px; d: Icons.keys; ink: Studio.clip-ink; stroke-width: 1.4px; }
                 Text { x: 42px; text: Studio.clip-name; color: Studio.clip-ink; font-size: 10px; font-weight: 500; vertical-alignment: center; }
+                // Original: the clip's kept notes, shown while a pattern plays in their place.
+                if Studio.composer-original: Rectangle {
+                    x: parent.width - 8px - self.width; y: 7px; width: ot.preferred-width + 26px; height: 16.5px; border-radius: 8.25px;
+                    border-width: 1px; border-color: Studio.clip-ink; background: ota.has-hover ? #00000014 : transparent;
+                    Icon { x: 6px; y: 4.25px; width: 8px; height: 8px; d: "M6 4L3 7l3 3 M3 7h7a3 3 0 0 0 0-6"; ink: Studio.clip-ink; stroke-width: 1.4px; }
+                    ot := Text { x: 17px; text: "Original"; color: Studio.clip-ink; font-size: 8.5px; font-weight: 600; vertical-alignment: center; }
+                    ota := TouchArea { clicked => { Studio.composer-original-pick(); } }
+                }
             }
-            Rectangle {
+            if !Studio.composer-drums: Rectangle {
                 x: 5px; y: 35.5px; width: 110.5px; height: 20px; border-radius: 10px; background: #484a4f;
                 Text { text: "Patterns"; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
             }
-            Text { x: 120px; y: 35.5px; width: 110px; height: 20px; text: "Shape"; color: #6c6e74; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+            if !Studio.composer-drums: Text { x: 120px; y: 35.5px; width: 110px; height: 20px; text: "Shape"; color: #6c6e74; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
         }
-        Text { x: 17.5px; y: 104px; height: 17px; text: "Type"; color: #6c6e74; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
-        Rectangle {
+        // Type / Genre (a drum clip: Genre alone, under the chip)
+        property <length> fy: Studio.composer-drums ? 71.5px : 104px;
+        if !Studio.composer-drums: Text { x: 17.5px; y: 104px; height: 17px; text: "Type"; color: #6c6e74; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+        if !Studio.composer-drums: Rectangle {
             x: 46.5px; y: 104px; width: 63px; height: 17px; border-radius: 8.5px; background: #2a2b30;
-            Text { x: 7.5px; text: "Chords"; color: #d6d6d9; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+            Text { x: 7.5px; text: Studio.composer-part-text; color: #d6d6d9; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
             Icon { x: parent.width - 14px; y: 4.5px; width: 8px; height: 8px; d: Icons.chevron-down; ink: #9a9ba0; }
             TouchArea { clicked => { Studio.clip-menu-open(4); } }
         }
-        Text { x: 117.5px; y: 104px; height: 17px; text: "Genre"; color: #6c6e74; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+        Text { x: Studio.composer-drums ? 17.5px : 117.5px; y: parent.fy; height: 17px; text: "Genre"; color: #6c6e74; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
         Rectangle {
-            x: 151.5px; y: 104px; width: 89.5px; height: 17px; border-radius: 8.5px; background: #2a2b30;
-            Text { x: 7.5px; text: "Any"; color: #d6d6d9; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
+            x: Studio.composer-drums ? 52px : 151.5px; y: parent.fy; width: 89.5px; height: 17px; border-radius: 8.5px; background: #2a2b30;
+            Text { x: 7.5px; width: parent.width - 22px; text: Studio.composer-genre-text; overflow: elide; color: #d6d6d9; font-size: 9.5px; font-weight: 500; vertical-alignment: center; }
             Icon { x: parent.width - 14px; y: 4.5px; width: 8px; height: 8px; d: Icons.chevron-down; ink: #9a9ba0; }
             TouchArea { clicked => { Studio.clip-menu-open(5); } }
         }
-        Text { x: 0; y: 193.5px; width: root.width; height: 15px; text: "No patterns"; color: #a5a6aa; font-size: 9.75px; horizontal-alignment: center; vertical-alignment: center; }
-        Text { x: 0; y: 210.5px; width: root.width; height: 14px; text: "Create some with the button below."; color: #6c6e74; font-size: 8.75px; horizontal-alignment: center; vertical-alignment: center; }
+        if Studio.composer-rows.length == 0: Rectangle {
+            Text { x: 0; y: 193.5px; width: root.width; height: 15px; text: "No patterns"; color: #a5a6aa; font-size: 9.75px; horizontal-alignment: center; vertical-alignment: center; }
+            Text { x: 0; y: 210.5px; width: root.width; height: 14px; text: "Create some with the button below."; color: #6c6e74; font-size: 8.75px; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        // Pattern list: six rows, each named, with its notes in miniature; the playing one is lit.
+        for row[i] in Studio.composer-rows: Rectangle {
+            x: 10.5px; y: parent.fy + 25px + i * 35px; width: 234px; height: 32px; border-radius: 6px;
+            background: row.playing ? #2c2d32 : rta.has-hover ? #222328 : transparent;
+            border-width: row.playing ? 1px : 0; border-color: Studio.clip-color;
+            Text { x: 10px; width: 112px; text: row.name; overflow: elide; color: row.playing ? #ffffff : #c9c9cc; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+            Rectangle {
+                x: 126px; y: 6px; width: 100px; height: 20px; border-radius: 3px; background: #1a1b1e; clip: true;
+                for n in row.notes: Rectangle {
+                    x: n.x * parent.width; y: 2px + n.y * (parent.height - 6px); width: max(1.5px, n.w * parent.width - 0.5px); height: 2px;
+                    background: row.playing ? Studio.clip-color : #6b6c70;
+                }
+            }
+            rta := TouchArea { clicked => { Studio.composer-load(i); } }
+        }
         Rectangle {
             x: 10.5px; y: 352.5px; width: 234px; height: 27px; border-radius: 13.5px; background: Studio.clip-color;
-            Text { x: 12px; text: "Create chords"; color: Studio.clip-ink; font-size: 10px; font-weight: 500; vertical-alignment: center; }
+            Text { x: 12px; text: Studio.composer-create-text; color: Studio.clip-ink; font-size: 10px; font-weight: 500; vertical-alignment: center; }
             Icon { x: parent.width - 21.5px; y: 7px; width: 13px; height: 13px; d: Icons.sparkle; ink: Studio.clip-ink; stroke-width: 1.1px; }
-            TouchArea { clicked => { Studio.chat-placeholder("Create chords"); } }
+            TouchArea { clicked => { Studio.composer-create(); } }
         }
     }
 }
@@ -120,10 +147,10 @@ component FooterValue inherits Rectangle {
         moved => { if (!root.cycle) { Studio.pr-value(root.field, 1, (self.mouse-y - self.pressed-y) / 1px); } }
     }
 }
-component FooterLabel inherits Text {
+export component FooterLabel inherits Text {
     height: 14px; color: #63656c; font-size: 9.75px; font-weight: 500; vertical-alignment: center;
 }
-component FooterTitle inherits Text {
+export component FooterTitle inherits Text {
     height: 14px; color: Tokens.text-bright; font-size: 10px; font-weight: 600; vertical-alignment: center;
 }
 component FooterSwitch inherits Rectangle {
@@ -134,6 +161,25 @@ component FooterSwitch inherits Rectangle {
 }
 
 // Audio clip toolbar entry: grey label, clip-coloured value, optional menu chevron.
+// Typed value (double-click on Original BPM or Transpose): Enter or focus loss commits, Escape cancels.
+component AcEditBox inherits Rectangle {
+    in property <length> font-size;
+    y: -2px; width: 30px; height: 18px; border-radius: 4px; background: #26272b;
+    border-width: 0.5px; border-color: Studio.clip-color;
+    input := TextInput {
+        x: 3px; width: parent.width - 6px; height: parent.height;
+        text: Studio.ac-edit-text; color: #ffffff; font-size: root.font-size; font-weight: 600;
+        vertical-alignment: center; single-line: true;
+        init => { self.focus(); self.select-all(); }
+        accepted => { Studio.ac-edit-commit(self.text); }
+        changed has-focus => { if (!self.has-focus) { Studio.ac-edit-commit(self.text); } }
+        key-pressed(e) => {
+            if (e.text == Key.Escape) { Studio.ac-edit-cancel(); return accept; }
+            reject
+        }
+    }
+}
+
 component AcField inherits Rectangle {
     in property <string> label;
     in property <string> value;
@@ -167,8 +213,11 @@ component AcField inherits Rectangle {
             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.ac-bpm-drag(2, 0, 0); }
         }
         moved => { Studio.ac-bpm-drag(1, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+        double-clicked => { Studio.ac-edit-start(0); }
     }
+    if root.bpm-drag && Studio.ac-edit-field == 0: AcEditBox { x: root.value-x - 3px; font-size: 9.75px; }
 }
+
 
 // Clip editor dropdown (Studio.clip-menu-items). the reference app's toolbar menu: #212227, 8 px radius,
 // 4 px padding, 11 px semibold rows with 4 / 12 px padding, the active row tinted (ink 7 %);
@@ -309,7 +358,9 @@ export component PianoRoll inherits Rectangle {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.ac-transpose-drag(2, 0, 0); }
             }
             moved => { Studio.ac-transpose-drag(1, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+            double-clicked => { Studio.ac-edit-start(1); }
         }
+        if Studio.ac-edit-field == 1: AcEditBox { x: 515.5px; y: root.r2 - 2px; font-size: 10px; }
     }
     if !Studio.ac-visible: Rectangle {
     FooterTitle { x: 362px; y: root.r1; text: "Quantize"; }

@@ -1,7 +1,8 @@
 //! Snapshot cost of warped clips: `snapshot::build_with_transients` for a
 //! project of N audio tracks, each with one 8-bar clip, unwarped vs warped
 //! (Auto, 8 warp markers, 400 detected transients), and the cost of one
-//! `SetClipWarp` edit with its undo. Prints measurements only.
+//! `SetClipWarp` edit with its undo, and tempo detection (warp::estimate_bpm).
+//! Prints measurements only.
 //!
 //! usage: cargo bench -p saine-core --bench warp
 
@@ -63,5 +64,16 @@ fn main() {
             warped.undo().unwrap();
         });
         println!("| {tracks} | {a:.1} | {b:.1} | {:.2} | {e:.1} |", (b - a) / tracks as f64);
+    }
+    println!();
+    println!("| transients | estimate_bpm ms |");
+    println!("|---:|---:|");
+    for n in [100u64, 400, 2000] {
+        // Eighth notes at 123 BPM with every fourth one a softer ghost note.
+        let tr: Vec<Transient> = (0..n).map(|i| Transient { source: (i as f64 * 44_100.0 * 30.0 / 123.0) as u64, strength: if i % 4 == 3 { 0.3 } else { 1.0 }, percussive: true }).collect();
+        let ms = time(20, || {
+            black_box(saine_core::warp::estimate_bpm(&tr, 44_100.0));
+        }) / 1000.0;
+        println!("| {n} | {ms:.2} |");
     }
 }

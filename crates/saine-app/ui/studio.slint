@@ -287,6 +287,16 @@ export struct HighlightRect { x: length, y: length, w: length, h: length, r: len
 
 // ---- clip editor / piano roll / context menu ----
 export struct YLabel { y: length, text: string }
+// Step sequencer (src/stepseq.rs), editor-local. SeqCell state: 0 past the pattern end, 1 off,
+// 2 on; lane: 0 Steps, 1 Velocity, 2 Offset, 3 Repeat, 4 Tie; bar: the lane value as 0..1
+// (Velocity fill, Offset line); marks: Repeat hits; label: value while it is dragged.
+export struct SeqRow { y: length, number: string, name: string, muted: bool, soloed: bool, audible: bool }
+export struct SeqCell { x: length, y: length, w: length, state: int, lane: int, bar: float, marks: int, label: string, dim: bool }
+export struct SeqNum { x: length, text: string, beat: bool, active: bool }
+// Clip sidebar pattern list (src/composer.rs): a row and its notes in miniature (x, y, w as
+// fractions of the preview box).
+export struct PreviewNote { x: float, y: float, w: float }
+export struct PatternRow { name: string, playing: bool, notes: [PreviewNote] }
 // separator: a line is drawn above the item; y: row top inside the menu.
 // ---- synth device (src/synth.rs) ----
 // One parameter of the Synth device: control position 0..1, readout with units.
@@ -510,6 +520,11 @@ export global Studio {
     in property <string> ac-transpose-text: "0 st";
     in property <bool> ac-transpose-enabled: true;  // off in Re-pitch (pitch follows speed)
     callback ac-transpose-drag(int, length, length); // Transpose drag, like ac-bpm-drag
+    in property <int> ac-edit-field: -1;     // typing into: 0 Original BPM, 1 Transpose
+    in property <string> ac-edit-text;       // the value the field starts with
+    callback ac-edit-start(int);             // double-click
+    callback ac-edit-commit(string);         // Enter or focus loss
+    callback ac-edit-cancel();               // Escape
     in property <string> clip-name: "MIDI";
     in property <color> clip-color: Tokens.track-instrument;
     in property <color> clip-ink: #1d2142;   // text and icons on clip-colour fills
@@ -523,6 +538,38 @@ export global Studio {
     callback clip-menu-open(int);
     callback clip-menu-pick(int);
     callback pr-value(int, int, float);                     // field, phase 0/1/2, dy since press
+    // ---- step sequencer (pattern clips; src/stepseq.rs) ----
+    in property <bool> seq-tabs;             // the open clip is a pattern: Sequencer / Piano roll tabs
+    in property <bool> seq-visible;          // the Sequencer tab is shown
+    in property <int> seq-lane;              // 0 Steps, 1 Velocity, 2 Offset, 3 Repeat, 4 Tie
+    in property <[SeqRow]> seq-rows;
+    in property <[SeqCell]> seq-cells;
+    in property <[SeqNum]> seq-nums;
+    in property <length> seq-col-pitch: 25.5px;
+    in property <length> seq-cell-w: 23px;
+    in property <int> seq-cols: 32;
+    in property <int> seq-row-count: 16;
+    in property <length> seq-scroll-y;
+    in property <bool> seq-can-double: true;
+    in property <string> seq-length-text: "16";
+    in property <string> seq-rate-text: "1/16";
+    in property <string> seq-swing-text: "0%";
+    callback seq-tab(bool);                                 // true: Piano roll
+    callback seq-lane-pick(int);
+    callback seq-action(string);                            // double|clear
+    callback seq-pointer(int, length, length);              // kind 0 down 1 move 2 up, editor-local x, y
+    callback seq-scroll(float);
+    callback seq-swing(int, float);                         // phase 0/1/2, dy since press
+    // ---- clip sidebar pattern list (src/composer.rs; Saine's own library, no service) ----
+    in property <bool> composer-drums;       // pattern clip: Genre only, drum grooves
+    in property <string> composer-part-text: "Chords";
+    in property <string> composer-genre-text: "Any";
+    in property <[PatternRow]> composer-rows;
+    in property <bool> composer-original;    // a pattern plays in place of the kept notes
+    in property <string> composer-create-text: "Create chords";
+    callback composer-create();
+    callback composer-load(int);
+    callback composer-original-pick();
     // ---- clip context menu + rename ----
     callback lane-context(length, length, length, length);  // lane x, y, window x, y
     in property <bool> menu-open;

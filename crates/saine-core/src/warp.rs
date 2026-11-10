@@ -263,6 +263,54 @@ fn interp(points: &[(f64, f64)], at: f64, inverse: bool) -> f64 {
     y0 + (at - x0) * (y1 - y0) / (x1 - x0)
 }
 
+/// Tempo search range: one octave, so a tempo and its double never compete.
+pub const DETECT_MIN_BPM: f64 = 80.0;
+pub const DETECT_MAX_BPM: f64 = 160.0;
+
+/// Estimate the tempo of audio from its transients (asset frames at `rate`).
+/// Every pair of transients up to 8 beats apart votes for the beat periods
+/// it is a whole multiple of (Gaussian, 12 ms wide), weighted by both
+/// strengths; votes are divided by the 8-beat window so slow and fast
+/// candidates compare fairly. The best period in 80..160 BPM is refined to
+/// 0.05 BPM and snapped to a whole BPM within 0.15. None with fewer than 8
+/// transients or when no period beats the average by 1.5x (no steady pulse).
+pub fn estimate_bpm(transients: &[Transient], rate: f64) -> Option<f64> {
+    if transients.len() < 8 || rate <= 0.0 {
+        return None;
+    }
+    let t: Vec<(f64, f64)> = transients.iter().map(|x| (x.source as f64 / rate, x.strength.clamp(0.05, 1.0) as f64)).collect();
+    const SIGMA: f64 = 0.012;
+    let score = |bpm: f64| {
+        let period = 60.0 / bpm;
+        let window = 8.0 * period;
+        let mut s = 0.0;
+        for (i, &(a, wa)) in t.iter().enumerate() {
+            for &(b, wb) in &t[i + 1..] {
+                let d = b - a;
+                if d > window {
+                    break;
+                }
+                let k = (d / period).round();
+                if k < 1.0 {
+                    continue;
+                }
+                let e = d - k * period;
+                s += wa * wb * (-(e * e) / (2.0 * SIGMA * SIGMA)).exp();
+            }
+        }
+        s / window
+    };
+    let coarse: Vec<(f64, f64)> = (0..=((DETECT_MAX_BPM - DETECT_MIN_BPM) * 2.0) as usize).map(|i| DETECT_MIN_BPM + i as f64 * 0.5).map(|b| (b, score(b))).collect();
+    let mean = coarse.iter().map(|c| c.1).sum::<f64>() / coarse.len() as f64;
+    let &(best, top) = coarse.iter().max_by(|a, b| a.1.total_cmp(&b.1))?;
+    if top <= 0.0 || top < 1.5 * mean {
+        return None;
+    }
+    let fine = (0..=20).map(|i| best - 0.5 + i as f64 * 0.05).filter(|b| (DETECT_MIN_BPM..=DETECT_MAX_BPM).contains(b)).max_by(|a, b| score(*a).total_cmp(&score(*b)))?;
+    let whole = fine.round();
+    Some(if (fine - whole).abs() <= 0.15 { whole } else { (fine * 100.0).round() / 100.0 })
+}
+
 /// Engine mode for a model mode (`SE_WARP_*`).
 pub fn engine_mode(mode: WarpMode) -> u8 {
     match mode {

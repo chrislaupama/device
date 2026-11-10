@@ -4,8 +4,9 @@
 
 use crate::controller::{BottomTab, ClipboardItem, Controller, MenuAction, sync_model, track_color};
 use crate::pianoroll::{self, GRID_Y, ROW_H};
-use crate::{MenuItem, RulerLabel, Studio, YLabel};
+use crate::{MenuItem, PatternRow, PreviewNote, RulerLabel, SeqCell, SeqNum, SeqRow, Studio, YLabel};
 use saine_core::midi::{self, MidiClip};
+use saine_core::steps::StepPattern;
 use saine_core::{ClipId, Command, PPQ, Ticks, TrackKind};
 
 /// Context-menu geometry (window points), measured from `35-clip-context-menu.png`.
@@ -16,15 +17,18 @@ pub const MENU_SEP: f32 = 10.6;
 
 /// Clip editor dropdowns, in `Studio.clip-menu` order: Speed, Warp, Mode (audio toolbar),
 /// Grid (piano roll footer), Type, Genre (clip sidebar). Speed, Warp and Mode edit the clip's
-/// warp (`saine_core::warp`, presets and modes in the same order); Type and Genre are not modelled.
+/// warp (`saine_core::warp`, presets and modes in the same order); Type and Genre pick the
+/// sidebar's library part (saine_core::library::GENRES has a feel for each).
 /// Genre lists the entries visible in the reference capture (its full list is catalogue data).
-const CLIP_MENUS: [&[&str]; 6] = [
+const CLIP_MENUS: [&[&str]; 8] = [
     &["0.5x", "0.75x", "1x", "1.25x", "1.5x", "2x"],
     &["On", "Off"],
     &["Auto", "Drums", "Melody", "Vocal", "Re-pitch"],
     &["1/4", "1/8", "1/16", "1/32", "1/4T", "1/8T", "1/16T", "1/32T"],
     &["Chords", "Bass", "Lead", "Arp"],
-    &["Any", "Afrobeats", "Ambient", "Drill", "Drum & bass", "EDM", "Electronic", "Experimental", "Folk", "Future bass", "Hip-hop"],
+    &saine_core::library::GENRES,
+    &["8", "12", "16", "24", "32", "36", "48", "64"],
+    &["1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/8T", "1/16T", "1/32T"],
 ];
 const GRID_DENOMS: [u32; 8] = [4, 8, 16, 32, 6, 12, 24, 48];
 
@@ -54,6 +58,8 @@ impl MenuAction {
             MenuAction::Transpose => "Transpose",
             MenuAction::Quantize => "Quantize",
             MenuAction::Humanize => "Humanize",
+            MenuAction::ToPattern => "Convert to Step Pattern",
+            MenuAction::ToMidi => "Convert to MIDI Clip",
             MenuAction::Ask => "Ask",
             MenuAction::Paste => "Paste",
             MenuAction::SectionRename => "Rename…",
@@ -124,9 +130,11 @@ impl Controller {
             return None;
         }
         let track = t.id;
+        let rack = t.instrument_plugin.as_ref().is_some_and(crate::stepseq::is_drum_rack);
         let start = ((self.playhead_ticks() as f64 / PPQ as f64).round() as Ticks * PPQ).max(0);
         let id = ClipId(p.next_id);
-        let mut clip = MidiClip::empty(start, p.ticks_per_bar());
+        // On a Drum Rack track the new clip is a one-bar drum pattern (reference: "Create drum pattern").
+        let mut clip = if rack { MidiClip::empty_pattern(start, saine_core::steps::StepRows::Pads) } else { MidiClip::empty(start, p.ticks_per_bar()) };
         clip.id = id;
         if self.execute(Command::AddMidiClip { track, clip }) {
             self.set_bottom_tab(BottomTab::Clip);
@@ -329,10 +337,15 @@ impl Controller {
         self.select_clip(Some(id));
         let p = self.project();
         let midi = p.find_midi_clip(id).is_some();
+        let pattern = p.midi_clip(id).is_some_and(|c| c.pattern.is_some());
         let disabled = p.find_clip(id).map(|(t, c)| p.tracks[t].clips[c].disabled).or_else(|| p.midi_clip(id).map(|c| c.disabled)).unwrap_or(false);
         let splittable = self.can_split(id);
         use MenuAction::*;
-        let items = [Cut, Copy, Duplicate, Split, Consolidate, Bounce, Delete, if disabled { Enable } else { Disable }, Rename, ShowInFinder, Export, Transpose, Quantize, Humanize, Ask];
+        let mut items = vec![Cut, Copy, Duplicate, Split, Consolidate, Bounce, Delete, if disabled { Enable } else { Disable }, Rename, ShowInFinder, Export, Transpose, Quantize, Humanize];
+        if midi {
+            items.push(if pattern { ToMidi } else { ToPattern });
+        }
+        items.push(Ask);
         // PLACEHOLDER entries (disabled): Consolidate, Bounce, Export, Ask.
         self.menu.items = items
             .iter()
@@ -341,7 +354,7 @@ impl Controller {
                     Cut | Copy | Duplicate | Delete | Rename | Disable | Enable => true,
                     Split => splittable,
                     ShowInFinder => !midi,
-                    Transpose | Quantize | Humanize => midi,
+                    Transpose | Quantize | Humanize | ToPattern | ToMidi => midi,
                     _ => false,
                 };
                 (a, enabled)
@@ -416,8 +429,27 @@ impl Controller {
                 let seed = id.0 ^ self.doc.revision();
                 self.menu_midi(id, |_, c| Some(midi::humanize(&c.notes, a, seed)), "Humanize Notes");
             }
+            MenuAction::ToPattern | MenuAction::ToMidi => self.convert_clip(id),
             _ => self.set_status(format!("{}: not implemented yet", action.label()), 3),
         }
+    }
+
+    /// A pattern clip becomes plain MIDI (its repeats become notes); a MIDI clip becomes a
+    /// pattern read from its notes (pads on a Drum Rack track, else pitch rows).
+    pub fn convert_clip(&mut self, id: ClipId) {
+        let Some(c) = self.project().midi_clip(id).cloned() else { return };
+        let pattern = match c.pattern {
+            Some(_) => None,
+            None => {
+                let p = StepPattern::from_notes(&c.notes, c.length, self.seq_rows_for(&c));
+                if c.length > p.length() || c.notes.iter().any(|n| n.start >= p.length()) {
+                    self.set_status(format!("Too long for a step pattern: {} steps at most", saine_core::steps::MAX_STEPS), 3);
+                    return;
+                }
+                Some(p)
+            }
+        };
+        self.execute(Command::SetStepPattern { clip: id, pattern });
     }
 
     pub fn submenu_activate(&mut self, index: usize) {
@@ -441,7 +473,13 @@ impl Controller {
     /// The editor that owns the dropdown is on screen: the audio clip editor for Speed / Warp /
     /// Mode, the piano roll for Grid, Type and Genre.
     pub(crate) fn clip_menu_shown(&self, menu: i32) -> bool {
-        self.bottom_tab == BottomTab::Clip && if menu <= 2 { self.ac_clip().is_some() } else { self.pr_visible() }
+        self.bottom_tab == BottomTab::Clip
+            && match menu {
+                ..=2 => self.ac_clip().is_some(),
+                6 | 7 => self.seq_visible(),
+                4 => self.pr_visible() && !self.composer_is_drums(),
+                _ => self.pr_visible(),
+            }
     }
 
     fn clip_menu_active(&self, menu: i32) -> i32 {
@@ -451,6 +489,8 @@ impl Controller {
             1 => if warp.enabled { 0 } else { 1 },
             2 => saine_core::WarpMode::ALL.iter().position(|&m| m == warp.mode).map_or(-1, |i| i as i32),
             3 => GRID_DENOMS.iter().position(|&d| d == self.pr.grid).map_or(-1, |i| i as i32),
+            6 | 7 => self.seq_menu_active(menu == 7),
+            4 | 5 => self.composer_menu_active(menu == 5),
             _ => 0,
         }
     }
@@ -467,18 +507,80 @@ impl Controller {
         if menu < 0 || index < 0 || index == self.clip_menu_active(menu) {
             return;
         }
+        let i = index.max(0) as usize;
         match menu {
-            0 => self.warp_pick_speed(index as usize),
+            4 => return self.composer_type(i),
+            5 => return self.composer_genre(i),
+            6 => return self.seq_set_length(i),
+            7 => return self.seq_set_rate(i),
+            _ => {}
+        }
+        match menu {
+            0 => self.warp_pick_speed(i),
             1 => self.warp_pick_enabled(index == 0),
-            2 => self.warp_pick_mode(index as usize),
-            _ => {
-                let what = ["", "", "", "", "Pattern type", "Pattern genre"][menu as usize];
-                self.set_status(format!("{what}: not in Saine yet"), 3);
-            }
+            2 => self.warp_pick_mode(i),
+            _ => {}
         }
     }
 
+    fn push_composer(&self, s: &Studio) {
+        let Some(v) = self.sidebar_view() else { return };
+        s.set_composer_drums(v.drums);
+        s.set_composer_part_text(CLIP_MENUS[4].get(v.part as usize).copied().unwrap_or("Chords").into());
+        s.set_composer_genre_text(CLIP_MENUS[5].get(v.genre as usize).copied().unwrap_or("Any").into());
+        s.set_composer_original(v.original);
+        s.set_composer_create_text(v.create_label.into());
+        if *self.composer_rows_shown.borrow() == v.rows {
+            return;
+        }
+        *self.composer_rows_shown.borrow_mut() = v.rows.clone();
+        let rows: Vec<PatternRow> = v
+            .rows
+            .into_iter()
+            .map(|r| PatternRow {
+                name: r.name.into(),
+                playing: r.playing,
+                notes: slint::ModelRc::new(slint::VecModel::from(r.preview.into_iter().map(|(x, y, w)| PreviewNote { x, y, w }).collect::<Vec<_>>())),
+            })
+            .collect();
+        self.composer_row_model.set_vec(rows);
+    }
+
+    fn push_step_sequencer(&self, s: &Studio) {
+        s.set_seq_tabs(self.pr_clip().is_some_and(|c| c.pattern.is_some()));
+        s.set_seq_visible(self.seq_visible());
+        let Some(v) = self.seq_view() else { return };
+        s.set_seq_lane(match self.pr.seq.lane {
+            None => 0,
+            Some(l) => saine_core::steps::StepLane::ALL.iter().position(|&a| a == l).map_or(0, |i| i as i32 + 1),
+        });
+        if let Some((len, rate, swing)) = self.seq_footer() {
+            s.set_seq_length_text(len.into());
+            s.set_seq_rate_text(rate.into());
+            s.set_seq_swing_text(swing.into());
+        }
+        let g = v.geom;
+        s.set_seq_col_pitch(g.pitch);
+        s.set_seq_cell_w(g.cell_w);
+        s.set_seq_cols(g.cols as i32);
+        s.set_seq_row_count(g.rows as i32);
+        s.set_seq_scroll_y(g.scroll);
+        s.set_seq_can_double(self.seq_pattern().is_some_and(|p| p.doubled().is_some()));
+        sync_model(&self.seq_row_model, v.rows.into_iter().map(|r| SeqRow { y: r.y, number: r.number.into(), name: r.name.into(), muted: r.muted, soloed: r.soloed, audible: r.audible }).collect());
+        sync_model(
+            &self.seq_cell_model,
+            v.cells.into_iter().map(|c| SeqCell { x: c.x, y: c.y, w: c.w, state: c.state, lane: c.lane, bar: c.bar, marks: c.marks, label: c.label.into(), dim: c.dim }).collect(),
+        );
+        sync_model(&self.seq_num_model, v.nums.into_iter().map(|n| SeqNum { x: n.x, text: n.text.into(), beat: n.beat, active: n.active }).collect());
+    }
+
     pub fn push_clip_editor(&mut self, s: &Studio) {
+        if self.ac_clip().is_some() {
+            self.request_onsets();
+        }
+        if self.pr.ac_edit.is_some_and(|(_, id)| self.ac_clip().map(|c| c.id) != Some(id)) {
+            self.pr.ac_edit = None;
+        }
         if self.pr.menu >= 0 && !self.clip_menu_shown(self.pr.menu) {
             self.pr.menu = -1;
         }
@@ -510,6 +612,15 @@ impl Controller {
                 s.set_ac_reversed(c.warp.reverse);
                 s.set_ac_transpose_text(self.ac_transpose_text(c).into());
                 s.set_ac_transpose_enabled(Self::ac_transpose_editable(c));
+                let edit = match self.pr.ac_edit.map(|e| e.0) {
+                    Some(crate::warpedit::AcEdit::OriginalBpm) => 0,
+                    Some(crate::warpedit::AcEdit::Transpose) => 1,
+                    None => -1,
+                };
+                if edit != s.get_ac_edit_field() {
+                    s.set_ac_edit_text(self.ac_edit_initial(c).into());
+                    s.set_ac_edit_field(edit);
+                }
                 Some((c.name.clone(), p.clip_length_ticks(c), p.find_clip(c.id).map(|(t, _)| t)))
             }
             _ => None,
@@ -558,6 +669,8 @@ impl Controller {
                 .collect();
             sync_model(&self.pr_key_model, keys);
         }
+        self.push_step_sequencer(s);
+        self.push_composer(s);
         // Context menu.
         s.set_menu_open(self.menu.open);
         if self.menu.open {
