@@ -372,6 +372,12 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             const int64_t from = std::max(clip->timeline_start, block_start);
             const int64_t to = std::min(clip->timeline_end, block_end);
             const auto out_off = static_cast<uint32_t>(from - block_start);
+            if (clip->warp >= 0) {
+                const int32_t v = graph->warps[static_cast<std::size_t>(clip->warp)].voice;
+                WarpVoice* const voice = v >= 0 && inst.warp_voices != nullptr ? inst.warp_voices[v] : nullptr;
+                render_warped_clip(*graph, *clip, voice, from, to, tl + out_off, tr + out_off);
+                continue;
+            }
             const auto n = static_cast<uint32_t>(to - from);
             const int64_t src = clip->source_offset + (from - clip->timeline_start);
             kernel_add_scaled(tl + out_off, clip->src_l + src, clip->gain, n);

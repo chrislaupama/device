@@ -50,6 +50,16 @@ fn cpath(p: &Path) -> Result<CString, EngineError> {
     CString::new(p.to_string_lossy().as_bytes()).map_err(|_| EngineError { code: ffi::SE_ERR_INVALID_ARG, kind: "invalid argument", message: "path contains NUL".into() })
 }
 
+/// A transient found by [`Engine::detect_onsets`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Onset {
+    pub frame: i64,
+    /// 0..1 relative to the strongest onset of the asset.
+    pub strength: f32,
+    /// The audio up to the next onset decays like a hit.
+    pub percussive: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
     pub sample_rate: f64,
@@ -155,6 +165,26 @@ impl Engine {
         check(unsafe { ffi::se_asset_compute_peaks(self.raw, id, start_frame, frames_per_peak, buf.as_mut_ptr(), max_pairs, &mut n) })?;
         buf.truncate(n * 2);
         Ok(buf.chunks_exact(2).map(|c| [c[0], c[1]]).collect())
+    }
+
+    /// Transients of a loaded asset (engine-rate frames, sorted), for warp
+    /// markers and Auto warping. CPU-bound: tens of ms per minute of audio.
+    pub fn detect_onsets(&self, id: u64) -> Result<Vec<Onset>, EngineError> {
+        let mut n = 0usize;
+        check(unsafe { ffi::se_asset_detect_onsets(self.raw, id, std::ptr::null_mut(), 0, &mut n) })?;
+        let mut buf = vec![ffi::se_onset::default(); n];
+        check(unsafe { ffi::se_asset_detect_onsets(self.raw, id, buf.as_mut_ptr(), buf.len(), &mut n) })?;
+        buf.truncate(n);
+        Ok(buf.into_iter().map(|o| Onset { frame: o.frame, strength: o.strength, percussive: o.percussive != 0 }).collect())
+    }
+
+    /// Background warp renders still queued or running; [`Engine::plugin_idle`]
+    /// attaches the finished ones.
+    pub fn warp_renders_pending(&self) -> usize {
+        let mut n = 0usize;
+        // SAFETY: valid handle and out pointer.
+        unsafe { ffi::se_warp_renders_pending(self.raw, &mut n) };
+        n
     }
 
     /// Publish an immutable session snapshot to the audio thread

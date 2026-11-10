@@ -78,6 +78,10 @@ struct InstrumentInputs {
     DelayLine* const* lines = nullptr;
     uint64_t pdc_gen = 0;
     const TimeHistory* history = nullptr;
+    // Stretch voices of warped clips, parallel to graph->warp_voice_keys
+    // (graph->warp_voices live, private ones for export); null = warped clips
+    // in the stretch modes fall back to varispeed.
+    WarpVoice* const* warp_voices = nullptr;
 };
 
 // Device input for one render_block() call: `count` channel pointers, each
