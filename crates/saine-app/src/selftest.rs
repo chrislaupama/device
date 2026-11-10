@@ -4756,19 +4756,52 @@ fn step_sequencer_steps() -> Vec<Step> {
             let m = c.pr_clip().ok_or("clip closed")?;
             (m.pattern.is_none() && !m.notes.is_empty() && !a.global::<Studio>().get_seq_tabs()).then_some(()).ok_or("still a pattern".into())
         })),
-        DoC("seq: stretch the plain clip to 20 beats (notes in the first bar only), convert to a pattern", Box::new(|_, ctl| {
+        DoC("seq: stretch the plain clip to 20 beats (notes in the first bar only), convert to a pattern", Box::new(|a, ctl| {
             let mut c = ctl.borrow_mut();
             let Some(m) = c.pr_clip().cloned() else { return };
             c.execute(saine_core::Command::ResizeMidiClip { clip: m.id, start: m.start, length: 20 * PPQ });
             c.convert_clip(m.id);
+            c.ui_dirty = true;
+            c.update_ui(a);
         })),
-        Check("seq: conversion refused (the clip is longer than 64 steps would repeat), notes unchanged; undo the resize", Box::new(|c, _| {
+        Check("seq: the 80-step clip converts with its own step count (no 64-step cap) and pages: 3 pages of 32, page 1 shown, pager on", Box::new(|c, a| {
             let m = c.pr_clip().ok_or("clip closed")?;
-            let ok = m.pattern.is_none() && m.length == 20 * PPQ && !m.notes.is_empty() && c.status_text().is_some_and(|s| s.starts_with("Too long"));
-            ok.then_some(()).ok_or(format!("pattern {} status {:?}", m.pattern.is_some(), c.status_text()))
+            let p = m.pattern.as_ref().ok_or("conversion refused")?;
+            let s = a.global::<Studio>();
+            let ok = m.length == 20 * PPQ && p.steps == 80 && !p.cells.is_empty() && s.get_seq_pages() == 3 && s.get_seq_page() == 0 && s.get_seq_follow() && s.get_seq_play_col() == -1;
+            ok.then_some(()).ok_or(format!("steps {} pages {} page {}", p.steps, s.get_seq_pages(), s.get_seq_page()))
         })),
-        DoC("seq: undo the resize", Box::new(|a, ctl| {
+        DoC("seq: play from beat 17 of the clip (step 69)", Box::new(|a, ctl| {
+            {
+                let c = ctl.borrow();
+                let start = c.pr_clip().map_or(0, |m| m.start);
+                let f = c.project().ticks_to_frames(start + 17 * PPQ, c.rate);
+                let _ = c.engine.seek(f);
+                let _ = c.engine.play();
+            }
+            ctl.borrow_mut().update_ui(a);
+            ctl.borrow_mut().update_ui(a);
+        })),
+        Check("seq: Follow playhead turned to page 3; the ring is on its 5th column", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let step = c.seq_play_step();
+            (step == Some(68) && s.get_seq_page() == 2 && s.get_seq_play_col() == 4).then_some(()).ok_or(format!("step {step:?} page {} col {}", s.get_seq_page(), s.get_seq_play_col()))
+        })),
+        DoC("seq: stop; click page tab 1, then Follow playhead", Box::new(|a, ctl| {
+            let _ = ctl.borrow().engine.stop();
+            ctl.borrow_mut().update_ui(a);
+            let w = ctl.borrow().pr.size.0;
+            click(a, 260.0 + w - 23.4 - 2.0 * 36.6, 452.0 + 13.5);
+            click(a, 260.0 + w - 23.4 - 2.0 * 36.6 - 36.8, 452.0 + 13.5);
+        })),
+        Check("seq: page 1 shown, no ring while stopped, Follow playhead off", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let ok = s.get_seq_page() == 0 && s.get_seq_play_col() == -1 && !s.get_seq_follow() && c.pr.seq.follow_off;
+            ok.then_some(()).ok_or(format!("page {} col {} follow {}", s.get_seq_page(), s.get_seq_play_col(), s.get_seq_follow()))
+        })),
+        DoC("seq: undo the conversion and the resize", Box::new(|a, ctl| {
             let mut c = ctl.borrow_mut();
+            let _ = c.doc.undo();
             let _ = c.doc.undo();
             c.ui_dirty = true;
             c.update_ui(a);

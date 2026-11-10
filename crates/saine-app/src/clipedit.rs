@@ -442,8 +442,13 @@ impl Controller {
             Some(_) => None,
             None => {
                 let p = StepPattern::from_notes(&c.notes, c.length, self.seq_rows_for(&c));
-                if c.length > p.length() || c.notes.iter().any(|n| n.start >= p.length()) {
-                    self.set_status(format!("Too long for a step pattern: {} steps at most", saine_core::steps::MAX_STEPS), 3);
+                if c.length > p.length() {
+                    self.set_status(format!("Too long for a step pattern: {} steps at most", saine_core::steps::STEP_LIMIT), 3);
+                    return;
+                }
+                // Notes kept past the clip end would be dropped by the pattern.
+                if c.notes.iter().any(|n| n.start >= p.length()) {
+                    self.set_status("Notes past the clip end: lengthen the clip first", 3);
                     return;
                 }
                 Some(p)
@@ -566,6 +571,10 @@ impl Controller {
         s.set_seq_row_count(g.rows as i32);
         s.set_seq_scroll_y(g.scroll);
         s.set_seq_can_double(self.seq_pattern().is_some_and(|p| p.doubled().is_some()));
+        s.set_seq_can_clear(self.seq_pattern().is_some_and(|p| !p.cells.is_empty()));
+        s.set_seq_page(g.page as i32);
+        s.set_seq_pages(g.pages as i32);
+        s.set_seq_follow(!self.pr.seq.follow_off);
         sync_model(&self.seq_row_model, v.rows.into_iter().map(|r| SeqRow { y: r.y, number: r.number.into(), name: r.name.into(), muted: r.muted, soloed: r.soloed, audible: r.audible }).collect());
         sync_model(
             &self.seq_cell_model,
