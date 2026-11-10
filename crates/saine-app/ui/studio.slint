@@ -392,6 +392,8 @@ export global Studio {
     in property <length> files-list-y: 81px;   // rule above the rows (96 with the count row)
     in property <string> files-meta;           // "2 folders"; empty hides the count row
     in property <string> files-sort: "Recent";
+    in property <int> files-sort-index;        // 0 Recent, 1 Name
+    in property <bool> files-sort-open;        // the sort menu is open
     in property <string> files-empty-title;
     in property <string> files-empty-hint;
     callback browser-section-select(int);
@@ -399,7 +401,8 @@ export global Studio {
     callback browser-forward();
     callback files-tab-select(int);
     callback files-add-folder();
-    callback files-sort-toggle();
+    callback files-sort-open-menu(bool);       // open / close the sort menu
+    callback files-sort-pick(int);             // 0 Recent, 1 Name
     callback files-click(int, bool);           // row, on the chevron
     callback files-activate(int);              // double-click
     callback files-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y

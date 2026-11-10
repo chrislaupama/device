@@ -4890,6 +4890,31 @@ fn files_steps() -> Vec<Step> {
             let s = a.global::<Studio>();
             (files_labels(a) == ["kit"] && s.get_files_meta() == "1 folder" && s.get_files_sort() == "Recent").then_some(()).ok_or(format!("{:?} {:?}", files_labels(a), s.get_files_meta()))
         })),
+        DoC("files: click the sort button", Box::new(|a, _| {
+            let y = 78.2 + a.global::<Studio>().get_files_list_y() - 10.2;
+            click(a, 247.25 - 12.0, y);
+        })),
+        Check("files: the sort menu opens on Recent", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.files.sort_open && s.get_files_sort_open() && s.get_files_sort_index() == 0).then_some(()).ok_or(format!("open {} index {}", s.get_files_sort_open(), s.get_files_sort_index()))
+        })),
+        DoC("files: pick Name in the sort menu", Box::new(|a, _| {
+            let y = 78.2 + a.global::<Studio>().get_files_list_y() + 3.4 + 3.4 + 18.7 * 1.5;
+            click(a, 247.25 - 15.0, y);
+        })),
+        Check("files: sorted by Name, menu closed", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.files.sort_name && !s.get_files_sort_open() && s.get_files_sort() == "Name").then_some(()).ok_or(format!("sort {:?} open {}", s.get_files_sort(), s.get_files_sort_open()))
+        })),
+        DoC("files: open the menu and click outside it", Box::new(|a, ctl| {
+            ctl.borrow_mut().files_sort_open_menu(true);
+            ctl.borrow_mut().update_ui(a);
+            click(a, 600.0, 400.0);
+        })),
+        Check("files: a click outside closes the menu and keeps Name", Box::new(|c, _| {
+            (!c.files.sort_open && c.files.sort_name).then_some(()).ok_or(format!("open {} name {}", c.files.sort_open, c.files.sort_name))
+        })),
+        DoC("files: back to Recent", Box::new(|_, ctl| ctl.borrow_mut().files_sort_pick(0))),
         DoC("files: click the folder row", Box::new(|a, _| {
             let Some((x, y)) = files_row_xy(a, 0) else { return };
             click(a, x, y);

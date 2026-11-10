@@ -207,18 +207,26 @@ int32_t decode_wav_memory(const uint8_t* data, std::size_t size, DecodedAudio& o
     return SE_OK;
 }
 
-int32_t decode_wav_file(const char* utf8_path, DecodedAudio& out, std::string& err) {
+int32_t read_file_bytes(const char* utf8_path, std::vector<uint8_t>& bytes, std::string& err) {
     std::FILE* f = os::fopen_utf8(utf8_path, "rb"); // _wfopen on Windows
     if (f == nullptr) {
         err = std::string("cannot open file: ") + utf8_path;
         return SE_ERR_IO;
     }
-    std::vector<uint8_t> bytes;
-    if (std::fseek(f, 0, SEEK_END) == 0) {
-        const long len = std::ftell(f);
-        if (len > 0) bytes.resize(static_cast<std::size_t>(len));
-        std::fseek(f, 0, SEEK_SET);
+    bytes.clear();
+    constexpr long kMaxImportBytes = 0x7fffffffL;
+    const long len = std::fseek(f, 0, SEEK_END) == 0 ? std::ftell(f) : -1L;
+    if (len < 0 || std::fseek(f, 0, SEEK_SET) != 0) {
+        std::fclose(f);
+        err = std::string("cannot read file size: ") + utf8_path;
+        return SE_ERR_IO;
     }
+    if (len >= kMaxImportBytes) {
+        std::fclose(f);
+        err = std::string("file is larger than 2 GB: ") + utf8_path;
+        return SE_ERR_IO;
+    }
+    if (len > 0) bytes.resize(static_cast<std::size_t>(len));
     const std::size_t got = bytes.empty() ? 0 : std::fread(bytes.data(), 1, bytes.size(), f);
     const bool io_error = std::ferror(f) != 0;
     std::fclose(f);
@@ -226,7 +234,13 @@ int32_t decode_wav_file(const char* utf8_path, DecodedAudio& out, std::string& e
         err = std::string("read error: ") + utf8_path;
         return SE_ERR_IO;
     }
-    return decode_wav_memory(bytes.data(), bytes.size(), out, err);
+    return SE_OK;
+}
+
+int32_t decode_wav_file(const char* utf8_path, DecodedAudio& out, std::string& err) {
+    std::vector<uint8_t> bytes;
+    const int32_t rc = read_file_bytes(utf8_path, bytes, err);
+    return rc != SE_OK ? rc : decode_wav_memory(bytes.data(), bytes.size(), out, err);
 }
 
 // ---------------------------------------------------------------- writer
