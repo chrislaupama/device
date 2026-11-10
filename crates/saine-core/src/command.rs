@@ -480,6 +480,9 @@ impl Command {
                 }
                 let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
                 let c = &mut p.tracks[ti].midi_clips[ci];
+                if pattern.is_none() && c.pattern.is_none() {
+                    return Err(invalid("pattern", "the clip is not a pattern clip"));
+                }
                 let notes = match &pattern {
                     Some(pat) => steps::bake_into(pat, &c.notes),
                     None => c.playing_notes(),
