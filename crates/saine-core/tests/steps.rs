@@ -174,3 +174,29 @@ fn muted_and_soloed_rows_keep_their_notes_but_do_not_play() {
     assert!(bad.validate().is_err());
 }
 
+#[test]
+fn converting_a_plain_clip_is_refused() {
+    let mut d = Document::new(Project::default());
+    let inst = d.project().tracks[1].id;
+    d.execute(Command::AddMidiClip { track: inst, clip: MidiClip::empty(0, 4 * PPQ) }, Origin::User).unwrap();
+    let c = d.project().tracks[1].midi_clips[0].id;
+    let before = d.history_labels().len();
+    assert!(d.execute(Command::SetStepPattern { clip: c, pattern: None }, Origin::User).is_err());
+    assert_eq!(d.history_labels().len(), before);
+}
+
+#[test]
+fn an_invalid_saved_pattern_loads_as_plain_midi() {
+    let (mut d, c) = doc_with_pattern_clip();
+    d.execute(Command::SetStepPattern { clip: c, pattern: Some(beat()) }, Origin::User).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    persist::save(d.project(), dir.path()).unwrap();
+    let file = dir.path().join(persist::PROJECT_FILE);
+    let json = std::fs::read_to_string(&file).unwrap().replacen("\"steps\": 16", "\"steps\": 0", 1);
+    std::fs::write(&file, json).unwrap();
+    let loaded = persist::load(dir.path()).unwrap();
+    let m = loaded.project.midi_clip(c).unwrap();
+    assert!(m.pattern.is_none());
+    assert_eq!(m.notes.len(), 6, "the notes survive");
+}
+
