@@ -97,6 +97,8 @@ struct Args {
     warp_state: bool,
     /// review-reverse: review-warp with the clip reversed.
     reverse_state: bool,
+    /// review-warp-stereo: review-warp from a stereo file (hits on the left only).
+    stereo_state: bool,
     /// reference-synth (32): Instrument track selected, Devices tab, test-state synth preset.
     synth_state: bool,
     /// --synth-page N: open that category page of the synth device (review screenshots).
@@ -137,6 +139,8 @@ struct Args {
     /// an empty projects folder (compare z100-browser-files-projects.png), with a generated
     /// "audio" folder of two WAVs open (compare z100-files-audio-folder-expanded.png), and with a
     /// saved project open to its tracks, audio files and MIDI clips (no reference).
+    /// review-files-preview: the audio folder with sine-a440-pulsed.wav playing in the preview
+    /// bar (compare z100-files-row-preview-playing.png).
     /// review-files-sort: the audio folder with the sort menu open.
     files_review: u8,
     /// review-section-added / review-sections-two: one new 8-bar section (compare
@@ -242,11 +246,12 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.audio_clip_state = true;
                 }
-                s @ ("review-warp" | "review-reverse") => {
+                s @ ("review-warp" | "review-reverse" | "review-warp-stereo") => {
                     a.reference_default = true;
                     a.audio_clip_state = true;
                     a.warp_state = true;
                     a.reverse_state = s == "review-reverse";
+                    a.stereo_state = s == "review-warp-stereo";
                 }
                 "reference-synth" => {
                     a.reference_default = true;
@@ -332,8 +337,9 @@ fn parse_args() -> Result<Args, String> {
                         "review-files-projects" => 1,
                         "review-files-folders" => 2,
                         "review-files-project" => 3,
+                        "review-files-preview" => 4,
                         "review-files-sort" => 5,
-                        _ => return Err(format!("unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project, review-files-sort)")),
+                        _ => return Err(format!("unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project, review-files-preview, review-files-sort)")),
                     };
                 }
                 "review-automation" => {
@@ -957,7 +963,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 for (key, step) in [(36, 0), (36, 4), (36, 8), (36, 12), (37, 4), (38, 8)] {
                     p = p.toggled(key, step);
                 }
-                if lane > 0 {
+                if lane == 5 {
+                    // An 80-step pattern (a 20-beat clip converted past the 64-step Length choices),
+                    // playing on step 69: Follow playhead shows page 3 with the ring on step 69.
+                    let mut long = saine_core::steps::StepPattern { steps: 80, ..p.clone() };
+                    for bar in 1..5 {
+                        for c in &p.cells {
+                            long = long.toggled(c.key, c.step + bar * 16);
+                        }
+                    }
+                    p = long.toggled(42, 68).toggled(42, 70);
+                    if let Some(m) = c.project().midi_clip(id).cloned() {
+                        c.execute(saine_core::Command::ResizeMidiClip { clip: id, start: m.start, length: p.length() });
+                    }
+                }
+                if (1..5).contains(&lane) || lane == 6 {
                     p = p.toggled(42, 2).toggled(42, 6).toggled(42, 10).toggled(42, 14).with_row_flag(39, false);
                     p = p.with_lane(42, 2, StepLane::Velocity, 60).with_lane(42, 10, StepLane::Velocity, 30);
                     p = p.with_lane(42, 6, StepLane::Offset, 25).with_lane(42, 14, StepLane::Offset, -20);
@@ -965,7 +985,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 c.execute(saine_core::Command::SetStepPattern { clip: id, pattern: Some(p) });
                 c.select_clip(Some(id));
-                c.seq_lane(lane);
+                c.seq_lane(match lane {
+                    5 => 0,
+                    6 => 1,
+                    l => l,
+                });
+                if lane == 5 {
+                    c.seek_beats(16.0 + 17.0);
+                    let _ = c.engine.play();
+                }
+                if lane == 6 {
+                    // The Velocity tab's tooltip, as after a second of hover.
+                    let s = app.global::<Studio>();
+                    s.set_seq_tip(StepLane::Velocity.spec().tip.into());
+                    s.set_seq_tip_ax(208.0 - 13.35);
+                    s.set_seq_tip_ay(24.0);
+                    s.set_seq_tip_on(true);
+                }
             }
         }
     }
@@ -1033,10 +1069,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.browser_section(files::SECTION_FILES);
             c.files_tab(files::TAB_PROJECTS);
             c.files_expand(files::FileItem::Project(song));
-        } else if args.files_review == 2 || args.files_review == 5 {
+        } else if args.files_review >= 2 {
             c.files_add_folder(&audio);
-            c.files_expand(files::FileItem::Folder(audio));
+            c.files_expand(files::FileItem::Folder(audio.clone()));
             c.files.sort_open = args.files_review == 5;
+            if args.files_review == 4 {
+                // Preview of the pulsed file, shown 30 % in (no audio device: the voice never advances).
+                let path = audio.join("sine-a440-pulsed.wav");
+                let loaded = c.engine.load_file(&path).map_err(|e| e.to_string());
+                c.files.selected = Some(path.to_string_lossy().into_owned());
+                c.files.audition.loading = Some(path.clone());
+                c.finish_audition(path, loaded);
+                if let Some((id, frames)) = c.files.audition.asset {
+                    c.audition_play(id, frames * 3 / 10);
+                }
+            }
         } else {
             c.browser_section(files::SECTION_FILES);
             c.files_tab(files::TAB_PROJECTS);
@@ -1486,6 +1533,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_seq_pointer, |c, kind: i32, x: f32, y: f32| c.seq_pointer(kind, x, y));
     on!(on_seq_scroll, |c, dy: f32| c.seq_scroll(dy));
     on!(on_seq_swing, |c, phase: i32, dy: f32| c.seq_swing(phase, dy));
+    on!(on_seq_page_pick, |c, i: i32| c.seq_page(i));
+    on!(on_seq_follow_toggle, |c| c.seq_follow());
     on!(on_composer_create, |c| c.composer_create());
     on!(on_composer_load, |c, i: i32| c.composer_load(i.max(0) as usize));
     on!(on_composer_original_pick, |c| c.composer_original());
@@ -1536,6 +1585,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_files_activate, |c, i: i32| c.files_activate(i.max(0) as usize));
     on!(on_files_drag, |c, i: i32, phase: i32, x: f32, y: f32| c.files_drag(i.max(0) as usize, phase, x, y));
     on!(on_files_scroll_by, |c, dy: f32| c.files_scroll_by(dy));
+    on!(on_preview_toggle, |c| c.audition_toggle());
+    on!(on_preview_step, |c, dir: i32| c.audition_step(dir));
+    on!(on_preview_volume_moved, |c, p: f32| c.audition_volume(p));
+    on!(on_preview_volume_done, |c| c.save_prefs());
+    on!(on_preview_solo_toggle, |c| c.audition_solo());
+    on!(on_preview_reveal, |c| c.audition_reveal());
     {
         // The folder dialog runs with the controller NOT borrowed (its modal loop keeps rendering).
         let ctl = ctl.clone();
@@ -1825,7 +1880,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let path = dir.join("sine-a220-steady.wav");
         let hit = |i: usize| if args.warp_state { (-((i % 22_050) as f32) / 900.0).exp() * (std::f32::consts::TAU * 90.0 * (i % 22_050) as f32 / 44_100.0).sin() * 0.6 } else { 0.0 };
         let samples: Vec<f32> = (0..8 * 44_100).map(|i| (std::f32::consts::TAU * 220.0 * i as f32 / 44_100.0).sin() * if args.warp_state { 0.15 } else { 0.5 } + hit(i)).collect();
-        wavgen::write_wav(&path, 44_100, 1, &samples)?;
+        if args.stereo_state {
+            let lr: Vec<f32> = samples.iter().enumerate().flat_map(|(i, &s)| [s, s - hit(i)]).collect();
+            wavgen::write_wav(&path, 44_100, 2, &lr)?;
+        } else {
+            wavgen::write_wav(&path, 44_100, 1, &samples)?;
+        }
         let mut c = ctl.borrow_mut();
         c.import_files(vec![path], ImportTarget::Selected, Some(12 * saine_core::PPQ));
         c.seek_beats(20.0);
@@ -2030,7 +2090,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         f.slint.0.push((now - t).as_secs_f64() * 1e3);
                     }
                     let (animating, ready) = match ctl.try_borrow() {
-                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || !c.assistant.highlights.is_empty() || c.rec.recording, c.pending_jobs == 0 && want_menu.is_none_or(|m| c.pr.menu == m)),
+                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || c.files.audition.animating || !c.assistant.highlights.is_empty() || c.rec.recording, c.pending_jobs == 0 && want_menu.is_none_or(|m| c.pr.menu == m)),
                         Err(_) => (true, false),
                     };
                     if ready {

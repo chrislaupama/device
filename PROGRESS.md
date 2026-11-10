@@ -213,6 +213,17 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   don't allocate, and bench_render has a Pattern table. `cargo bench -p saine-core --bench steps` times bake,
   read-back and snapshot builds.
 
+### 2026-11-10: step sequencer, gaps closed (SAIN-37)
+
+- Paging as in the reference: the grid shows 16 or 32 steps at a time (by width), with page tabs and a Follow
+  playhead button at the right of the toolbar. A MIDI clip longer than 64 steps now converts with its own step
+  count (up to `STEP_LIMIT`, 4096) instead of being refused; Length and Double still stop at 64.
+- While the transport plays inside the clip, the playing step's column has a white ring and the cells it hits
+  flash (230 ms, Steps lane).
+- Toolbar tooltips (Double, Clear, the lane tabs, Follow playhead) with the reference's 1 s hover delay; Clear is
+  disabled when the pattern has no cells.
+- Value lanes use the reference's palette: empty steps dark, Velocity filled from the bottom on a lighter base.
+  Findings SQ-8..SQ-11.
 ### 2026-11-10: pattern library, Genre list and Shape tab (SAIN-37, PR B)
 
 - Genre now lists Any and the reference's 21 genres. The ten new ones come after the old eleven, because saved

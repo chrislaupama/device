@@ -241,7 +241,8 @@ component FilesPane inherits Rectangle {
 
 // ------------------------------------------------------------------ browser
 // Sections Devices and Files are real (src/devices.rs, src/files.rs); Search and Library have no
-// content (PLACEHOLDER: no catalog), and the preview bar is an inert PLACEHOLDER.
+// content (PLACEHOLDER: no catalog). The preview bar plays the file last clicked in Files
+// (Link: PLACEHOLDER, it ties catalog loops to the arrangement).
 // Devices › Chains is PLACEHOLDER data. Back / Forward step through visited sections and tabs.
 component Browser inherits Panel {
     // Section tabs: 12 px weight 700, -0.04 em, 8 px apart from 12 px in; rest #63656d, active white.
@@ -338,19 +339,53 @@ component Browser inherits Panel {
         }
     }
     if Studio.browser-section == 3: FilesPane { x: 0; y: 59px; width: root.width; height: root.height - 59px - 33px; }
-    // Preview bar (inert placeholder)
+    // Preview bar (the reference app px × 0.85): sound icon, previous / play-pause / next, volume with the
+    // preview's stereo meter (#abfcb6 bars) under the handle, Solo (#f5950a on #1a1a1a), Link.
+    // A 1.7 px progress line sits on its top edge while a file is loaded: 6 % white, #1253ff fill.
     Rectangle {
         x: 0; y: root.height - 33px; width: root.width; height: 33px; background: Tokens.bg-panel;
-        Icon { x: 8px; y: 8.5px; width: 17px; height: 17px; d: Icons.wave; ink: #6a6b6f; }
-        Icon { x: 42.5px; y: 9.5px; width: 13px; height: 14px; d: Icons.skip-back; ink: #55565c; stroke-width: 1.6px; }
-        Icon { x: 56.5px; y: 9.5px; width: 13px; height: 14px; d: Icons.play; ink: #55565c; filled: true; }
-        Icon { x: 71.5px; y: 9.5px; width: 13px; height: 14px; d: Icons.skip-fwd; ink: #55565c; stroke-width: 1.6px; }
-        Inset { x: 94.5px; y: 13px; width: 62.5px; height: 7px; border-radius: 3.5px; bottom: #3f4044; }
-        Rectangle { x: 142.5px; y: 13px; width: 7px; height: 7px; border-radius: 3.5px; background: Tokens.handle; }
-        Rectangle { x: 164px; y: 11px; width: 11px; height: 11px; border-radius: 2px; background: #2f3032;
-            Text { text: "S"; font-size: 5.5px; font-weight: 700; color: #acacad; horizontal-alignment: center; vertical-alignment: center; } }
-        Rectangle { x: 179px; y: 11px; width: 15px; height: 11px; border-radius: 2px; background: #2f3032;
-            Text { text: "1×"; font-size: 5.5px; font-weight: 700; color: #acacad; horizontal-alignment: center; vertical-alignment: center; } }
+        if Studio.preview-active: Rectangle {
+            x: 0; y: -1.7px; width: parent.width; height: 1.7px; background: #ffffff0f;
+            Rectangle { x: 0; width: parent.width * Studio.preview-progress; background: #1253ff; }
+        }
+        Icon { x: 8px; y: 8.5px; width: 17px; height: 17px; d: Icons.wave; ink: #6a6b6f;
+            accessible-role: button; accessible-label: "Show the previewed file";
+            TouchArea { clicked => { Studio.preview-toggle(); } double-clicked => { Studio.preview-reveal(); } } }
+        Icon { x: 42.5px; y: 9.5px; width: 13px; height: 14px; d: Icons.skip-back; ink: #55565c; stroke-width: 1.6px;
+            accessible-role: button; accessible-label: "Previous file";
+            TouchArea { x: -1px; y: -3px; width: 14px; height: 20px; clicked => { Studio.preview-step(-1); } } }
+        Icon { x: 56.5px; y: 9.5px; width: 13px; height: 14px; d: Studio.preview-playing ? Icons.pause : Icons.play; filled: true;
+            ink: Studio.preview-playing ? #f0f0f2 : #55565c;
+            accessible-role: button; accessible-label: Studio.preview-playing ? "Pause preview" : "Play preview";
+            TouchArea { x: -1px; y: -3px; width: 14px; height: 20px; clicked => { Studio.preview-toggle(); } } }
+        Icon { x: 71.5px; y: 9.5px; width: 13px; height: 14px; d: Icons.skip-fwd; ink: #55565c; stroke-width: 1.6px;
+            accessible-role: button; accessible-label: "Next file";
+            TouchArea { x: -1px; y: -3px; width: 14px; height: 20px; clicked => { Studio.preview-step(1); } } }
+        Rectangle {
+            x: 94.5px; y: 13px; width: 66.5px; height: 7px;
+            accessible-role: slider; accessible-label: "Preview volume"; accessible-value: Studio.preview-volume;
+            accessible-action-increment => { Studio.preview-volume-moved(min(1, Studio.preview-volume + 0.05)); Studio.preview-volume-done(); }
+            accessible-action-decrement => { Studio.preview-volume-moved(max(0, Studio.preview-volume - 0.05)); Studio.preview-volume-done(); }
+            Inset { width: parent.width; height: parent.height; border-radius: 3.5px; bottom: #3f4044; }
+            Rectangle { x: 1px; y: 1.1px; width: (parent.width - 2px) * Studio.preview-meter-l; height: 2.2px; border-radius: 1.1px; background: #abfcb6; }
+            Rectangle { x: 1px; y: 3.7px; width: (parent.width - 2px) * Studio.preview-meter-r; height: 2.2px; border-radius: 1.1px; background: #abfcb6; }
+            Rectangle { x: Studio.preview-volume * (parent.width - 7px); width: 7px; height: 7px; border-radius: 3.5px; background: Tokens.handle; }
+            TouchArea {
+                y: -4px; height: 15px;
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                        Studio.preview-volume-moved(max(0, min(1, (self.mouse-x - 3.5px) / (parent.width - 7px))));
+                    }
+                    if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) { Studio.preview-volume-done(); }
+                }
+                moved => { if (self.pressed) { Studio.preview-volume-moved(max(0, min(1, (self.mouse-x - 3.5px) / (parent.width - 7px)))); } }
+                double-clicked => { Studio.preview-volume-moved(Tokens.slider-zero-db); Studio.preview-volume-done(); }
+            }
+        }
+        Rectangle { x: 168.5px; y: 11px; width: 11px; height: 11px; border-radius: 2px; background: Studio.preview-solo ? #f5950a : #2f3032;
+            accessible-role: button; accessible-label: "Solo preview"; accessible-checked: Studio.preview-solo;
+            Text { text: "S"; font-size: 5.5px; font-weight: 700; color: Studio.preview-solo ? #1a1a1a : #acacad; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { Studio.preview-solo-toggle(); } } }
         Icon { x: 227px; y: 9.5px; width: 16px; height: 15px; d: Icons.link; ink: Tokens.text-tertiary; }
     }
 }

@@ -241,8 +241,23 @@ int32_t se_asset_compute_peaks(const se_engine* engine, uint64_t asset_id, uint6
     if (frames_per_peak == 0) return fail(SE_ERR_INVALID_ARG, "frames_per_peak must be > 0");
     if (capacity > 0 && out_minmax == nullptr) return fail(SE_ERR_INVALID_ARG, "out_minmax is NULL");
     return guarded([&] {
-        const int32_t rc = engine->impl->asset_compute_peaks(asset_id, start_frame, frames_per_peak, out_minmax,
+        const int32_t rc = engine->impl->asset_compute_peaks(asset_id, -1, start_frame, frames_per_peak, out_minmax,
                                                              capacity, out_count);
+        return rc == SE_OK ? SE_OK : fail(rc, "unknown asset id " + std::to_string(asset_id));
+    });
+}
+
+int32_t se_asset_compute_channel_peaks(const se_engine* engine, uint64_t asset_id, uint32_t channel,
+                                       uint64_t start_frame, uint32_t frames_per_peak, float* out_minmax,
+                                       size_t capacity, size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (frames_per_peak == 0) return fail(SE_ERR_INVALID_ARG, "frames_per_peak must be > 0");
+    if (capacity > 0 && out_minmax == nullptr) return fail(SE_ERR_INVALID_ARG, "out_minmax is NULL");
+    if (channel > 1) return fail(SE_ERR_INVALID_ARG, "channel must be 0 or 1");
+    return guarded([&] {
+        const int32_t rc = engine->impl->asset_compute_peaks(asset_id, static_cast<int32_t>(channel), start_frame,
+                                                             frames_per_peak, out_minmax, capacity, out_count);
+        if (rc == SE_ERR_INVALID_ARG) return fail(rc, "asset " + std::to_string(asset_id) + " has no channel " + std::to_string(channel));
         return rc == SE_OK ? SE_OK : fail(rc, "unknown asset id " + std::to_string(asset_id));
     });
 }
@@ -782,6 +797,37 @@ int32_t se_device_status_get(se_engine* engine, se_device_status* out) {
         engine->impl->device_status(out);
         return int32_t{SE_OK};
     });
+}
+
+static bool preview_args_ok(float gain, float rate) {
+    return std::isfinite(gain) && gain >= 0.0f && gain <= 2.0f && std::isfinite(rate) && rate >= 0.25f && rate <= 4.0f;
+}
+
+int32_t se_preview_play(se_engine* engine, uint64_t asset_id, int64_t start_frame, float gain, float rate, uint8_t solo) {
+    SE_REQUIRE_ENGINE(engine);
+    if (!preview_args_ok(gain, rate)) return fail(SE_ERR_INVALID_ARG, "preview gain must be 0..2 and rate 0.25..4");
+    return guarded([&] {
+        const int32_t rc = engine->impl->preview_play(asset_id, start_frame, gain, rate, solo != 0);
+        return rc == SE_ERR_NOT_FOUND ? fail(rc, "unknown asset") : rc;
+    });
+}
+
+int32_t se_preview_stop(se_engine* engine) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&] { return engine->impl->preview_stop(); });
+}
+
+int32_t se_preview_set(se_engine* engine, float gain, float rate, uint8_t solo) {
+    SE_REQUIRE_ENGINE(engine);
+    if (!preview_args_ok(gain, rate)) return fail(SE_ERR_INVALID_ARG, "preview gain must be 0..2 and rate 0.25..4");
+    return guarded([&] { return engine->impl->preview_set(gain, rate, solo != 0); });
+}
+
+int32_t se_preview_get(se_engine* engine, se_preview_info* out) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    engine->impl->preview_get(out);
+    return SE_OK;
 }
 
 int32_t se_input_set_muted(se_engine* engine, uint8_t muted) {

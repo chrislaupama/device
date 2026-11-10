@@ -3,13 +3,15 @@
 //! Projects lists the `.saineproj` folders in the projects folder; a project expands to the
 //! tracks, audio files and MIDI clips it held when last saved. Folders lists folders the user
 //! added (kept in the preferences) and the audio files (WAV, AIFF, FLAC, Ogg, MP3) and subfolders
-//! inside them. Rows are laid
+//! inside them. Clicking an audio file plays it in the browser's preview bar (the engine's preview
+//! voice, `Audition`). Rows are laid
 //! out here, in design units, so the UI only draws them (research-findings: findings/files.md).
 
-use crate::controller::{Controller, ImportTarget, sync_model};
+use crate::controller::{Controller, ImportTarget, JobResult, gain_from_slider, header_meter, slider_from_gain, sync_model};
+use saine_engine::AssetInfo;
 use crate::{FileGuide, FileRow, Studio};
 use slint::Model;
-use saine_core::{ClipId, Command, MidiClip, Project, Ticks, Track, TrackId, TrackKind, persist};
+use saine_core::{ClipId, Command, MidiClip, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, persist};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -107,6 +109,30 @@ impl FileItem {
     }
 }
 
+/// The browser preview (audition) voice: the file in the preview bar and its playback.
+#[derive(Debug, Default)]
+pub struct Audition {
+    /// The file in the bar (the last one clicked that loaded).
+    pub path: Option<PathBuf>,
+    /// Engine asset of `path` and its length in frames.
+    pub asset: Option<(u64, i64)>,
+    /// A clicked file still being decoded; it plays when it arrives.
+    pub loading: Option<PathBuf>,
+    pub playing: bool,
+    /// Set once the engine reports the voice, so its end can be told from "not started yet".
+    pub heard: bool,
+    /// When the last play was asked for (redraws wait this long for the engine to report it).
+    pub started: Option<std::time::Instant>,
+    /// Where Play continues after a pause, in frames.
+    pub resume: i64,
+    pub solo: bool,
+    /// Displayed preview peaks (with fall-off) and the time of the last update.
+    pub meter: (f32, f32),
+    pub meter_t: Option<std::time::Instant>,
+    /// The last frame's push_audition result: the bar still needs redraws.
+    pub animating: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct FileDrag {
     pub item: FileItem,
@@ -135,6 +161,7 @@ pub struct FilesUi {
     pub items: Vec<Option<FileItem>>,
     pub content_h: f32,
     pub drag: Option<FileDrag>,
+    pub audition: Audition,
     listings: HashMap<PathBuf, Result<Vec<(String, bool)>, String>>,
     project_cache: HashMap<PathBuf, Result<Project, String>>,
 }
@@ -159,6 +186,7 @@ impl Default for FilesUi {
             items: Vec::new(),
             content_h: 0.0,
             drag: None,
+            audition: Audition::default(),
             listings: HashMap::new(),
             project_cache: HashMap::new(),
         }
@@ -245,6 +273,9 @@ struct Builder<'a> {
 impl Builder<'_> {
     fn push(&mut self, kind: i32, depth: i32, h: f32, label: String, detail: String, glyph: i32, expander: i32, item: Option<FileItem>) {
         let selected = item.as_ref().is_some_and(|i| self.ui.selected.as_deref() == Some(i.key().as_str()));
+        let a = &self.ui.audition;
+        let playing = a.playing && matches!((&item, &a.path), (Some(FileItem::Audio(p)), Some(q)) if p == q);
+        let detail = if playing { "Playing".to_string() } else { detail };
         self.out.rows.push(FileRow { kind, depth, y: self.y, h, label: label.into(), detail: detail.into(), glyph, expander, selected });
         self.out.items.push(item);
         self.y += h;
@@ -494,6 +525,9 @@ impl Controller {
         let Some(Some(item)) = self.files.items.get(i).cloned() else { return };
         let key = item.key();
         self.files.selected = Some(key.clone());
+        if let FileItem::Audio(p) = &item {
+            self.audition(p.clone());
+        }
         if matches!(item, FileItem::Folder(_)) || (chevron && item.expandable()) {
             if !self.files.expanded.remove(&key) {
                 self.files.expanded.insert(key);
@@ -627,6 +661,178 @@ impl Controller {
         let track = self.view.track_at(y - top + crate::timeline::RULER_H).and_then(|i| self.project().tracks.get(i)).map(|t| t.id);
         let beat = self.view.beat_at(x - tx).max(0.0).round();
         Some((track, (beat * saine_core::PPQ as f64) as Ticks))
+    }
+
+    fn preview_gain(&self) -> f32 {
+        self.settings.prefs.preview_volume.unwrap_or(1.0).clamp(0.0, 2.0)
+    }
+
+    /// Click on an audio file: decode it on a worker thread, then play it from its start.
+    pub fn audition(&mut self, path: PathBuf) {
+        let a = &mut self.files.audition;
+        if a.path.as_ref() == Some(&path)
+            && let Some((id, _)) = a.asset
+        {
+            a.loading = None;
+            self.audition_play(id, 0);
+            return;
+        }
+        a.loading = Some(path.clone());
+        let engine = self.engine.clone();
+        let tx = self.jobs_tx.clone();
+        self.pending_jobs += 1;
+        std::thread::spawn(move || {
+            let result = engine.load_file(&path).map_err(|e| e.to_string());
+            let _ = tx.send(JobResult::Auditioned { path, result });
+        });
+    }
+
+    /// A clicked file is decoded: it replaces the one in the bar unless another click came since.
+    pub(crate) fn finish_audition(&mut self, path: PathBuf, result: Result<AssetInfo, String>) {
+        let current = self.files.audition.loading.as_ref() == Some(&path);
+        let info = match result {
+            Ok(info) if current => info,
+            Ok(info) => {
+                let _ = self.engine.release_asset(info.asset_id);
+                return;
+            }
+            Err(e) => {
+                if current {
+                    self.files.audition.loading = None;
+                    self.set_status(format!("Can't preview {}: {e}", file_name(&path)), 6);
+                }
+                return;
+            }
+        };
+        let a = &mut self.files.audition;
+        a.loading = None;
+        a.path = Some(path);
+        // The engine keeps the old asset alive until its crossfade is over.
+        if let Some((old, _)) = a.asset.replace((info.asset_id, info.frames as i64)) {
+            let _ = self.engine.release_asset(old);
+        }
+        self.audition_play(info.asset_id, 0);
+    }
+
+    pub(crate) fn audition_play(&mut self, id: u64, start: i64) {
+        let gain = self.preview_gain();
+        let a = &mut self.files.audition;
+        if self.engine.preview_play(id, start, gain, 1.0, a.solo).is_ok() {
+            a.playing = true;
+            a.heard = false;
+            a.started = Some(std::time::Instant::now());
+            a.resume = start;
+        }
+        self.ui_dirty = true;
+    }
+
+    /// Preview bar Play / Pause: pause keeps the position, Play continues from it.
+    pub fn audition_toggle(&mut self) {
+        let a = &mut self.files.audition;
+        let Some((id, frames)) = a.asset else { return };
+        if a.playing {
+            let st = self.engine.preview();
+            a.resume = if st.asset_id == Some(id) { st.position } else { 0 };
+            a.playing = false;
+            let _ = self.engine.preview_stop();
+            self.ui_dirty = true;
+        } else {
+            let start = if a.resume >= frames { 0 } else { a.resume };
+            self.audition_play(id, start);
+        }
+    }
+
+    /// Preview bar previous / next: the audio file before or after the current one in the list.
+    pub fn audition_step(&mut self, dir: i32) {
+        let items = &self.files.items;
+        let audio = |i: usize| match items.get(i) {
+            Some(Some(FileItem::Audio(p))) => Some(p.clone()),
+            _ => None,
+        };
+        let key = self.files.audition.path.as_ref().map(|p| p.to_string_lossy().into_owned()).or_else(|| self.files.selected.clone());
+        let at = items.iter().position(|i| i.as_ref().is_some_and(|i| Some(i.key()) == key));
+        let found = if dir < 0 {
+            (0..at.unwrap_or(items.len())).rev().find_map(audio)
+        } else {
+            (at.map_or(0, |i| i + 1)..items.len()).find_map(audio)
+        };
+        if let Some(p) = found {
+            self.files.selected = Some(p.to_string_lossy().into_owned());
+            self.audition(p);
+        }
+    }
+
+    /// Preview volume slider (header-slider taper, linear gain 0..2 like the reference).
+    pub fn audition_volume(&mut self, pos: f32) {
+        let gain = gain_from_slider(pos).clamp(0.0, 2.0);
+        self.settings.prefs.preview_volume = Some(gain);
+        let _ = self.engine.preview_set(gain, 1.0, self.files.audition.solo);
+    }
+
+    pub fn audition_solo(&mut self) {
+        let a = &mut self.files.audition;
+        a.solo = !a.solo;
+        let _ = self.engine.preview_set(self.settings.prefs.preview_volume.unwrap_or(1.0).clamp(0.0, 2.0), 1.0, a.solo);
+    }
+
+    /// Double-click on the bar's sound icon: select the file it plays.
+    pub fn audition_reveal(&mut self) {
+        if let Some(p) = &self.files.audition.path {
+            self.files.selected = Some(p.to_string_lossy().into_owned());
+            self.ui_dirty = true;
+        }
+    }
+
+    /// Every frame: follow the engine's preview voice (its end, position and peaks).
+    /// True while the UI needs further frames for it.
+    pub(crate) fn push_audition(&mut self, s: &Studio) -> bool {
+        let st = self.engine.preview();
+        let gain = self.preview_gain();
+        let a = &mut self.files.audition;
+        let ours = a.asset.map(|(id, _)| id);
+        let sounding = ours.is_some() && st.asset_id == ours;
+        if a.playing && sounding {
+            a.heard = true;
+        } else if a.playing && a.heard {
+            a.playing = false;
+            a.heard = false;
+            a.resume = 0;
+            self.ui_dirty = true;
+        }
+        let frames = a.asset.map_or(0, |(_, f)| f).max(1) as f32;
+        let progress = if sounding { st.position as f32 / frames } else { a.resume as f32 / frames }.clamp(0.0, 1.0);
+        let now = std::time::Instant::now();
+        let dt = a.meter_t.map_or(0.0, |t| (now - t).as_secs_f32()).min(0.25);
+        a.meter_t = Some(now);
+        let fall = db_to_gain(-24.0 * dt);
+        let decay = |shown: f32, peak: f32| {
+            let v = peak.max(shown * fall);
+            if v < 1e-5 { 0.0 } else { v }
+        };
+        a.meter = (decay(a.meter.0, if sounding { st.peak_l } else { 0.0 }), decay(a.meter.1, if sounding { st.peak_r } else { 0.0 }));
+        let (ml, mr) = (header_meter(a.meter.0), header_meter(a.meter.1));
+        let set = |old: f32, new: f32, f: &dyn Fn(f32)| {
+            if (old - new).abs() > 1e-4 {
+                f(new)
+            }
+        };
+        set(s.get_preview_progress(), progress, &|v| s.set_preview_progress(v));
+        set(s.get_preview_meter_l(), ml, &|v| s.set_preview_meter_l(v));
+        set(s.get_preview_meter_r(), mr, &|v| s.set_preview_meter_r(v));
+        set(s.get_preview_volume(), slider_from_gain(gain), &|v| s.set_preview_volume(v));
+        if s.get_preview_active() != a.asset.is_some() {
+            s.set_preview_active(a.asset.is_some());
+        }
+        if s.get_preview_playing() != a.playing {
+            s.set_preview_playing(a.playing);
+        }
+        if s.get_preview_solo() != a.solo {
+            s.set_preview_solo(a.solo);
+        }
+        // Redraw while it sounds or its meter falls, and briefly while a play waits for the
+        // engine (without a running device it never starts, and nothing changes on screen).
+        let waiting = a.playing && !a.heard && a.started.is_some_and(|t| t.elapsed().as_secs_f32() < 1.0);
+        sounding || waiting || a.meter.0 > 0.0 || a.meter.1 > 0.0
     }
 
     pub(crate) fn push_files(&mut self, s: &Studio) {

@@ -44,7 +44,7 @@ double source_at(const WarpSegment* s, uint32_t n, int64_t t) noexcept {
     return g.source + static_cast<double>(t - g.frame) * g.slope;
 }
 
-// Inverse map: the (fractional) timeline frame where the map reaches \`source\`.
+// Inverse map: the (fractional) timeline frame where the map reaches `source`.
 double frame_at(const WarpSegment* s, uint32_t n, double source) noexcept {
     uint32_t lo = 0, hi = n;
     while (hi - lo > 1) {

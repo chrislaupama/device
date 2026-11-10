@@ -415,6 +415,7 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/test_automation.cpp
     tests/test_frame_ring.cpp
     tests/test_warp.cpp
+    tests/test_preview.cpp
     tests/test_decode.cpp
     tests/devices/test_builtin.cpp
     tests/devices/test_compressor.cpp

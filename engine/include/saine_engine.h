@@ -92,6 +92,12 @@ int32_t se_asset_compute_peaks(const se_engine* engine, uint64_t asset_id,
                                uint64_t start_frame, uint32_t frames_per_peak,
                                float* out_minmax, size_t capacity, size_t* out_count);
 
+/* The same for one channel (0 left, 1 right), for editors that draw a lane
+ * per channel. A channel the asset lacks -> SE_ERR_INVALID_ARG. */
+int32_t se_asset_compute_channel_peaks(const se_engine* engine, uint64_t asset_id, uint32_t channel,
+                                       uint64_t start_frame, uint32_t frames_per_peak,
+                                       float* out_minmax, size_t capacity, size_t* out_count);
+
 /* ---- session snapshots -------------------------------------------------- */
 typedef struct se_clip_desc {
     uint64_t clip_id;
@@ -1224,6 +1230,32 @@ int32_t se_mod_base(se_engine* engine, uint64_t device_id, uint32_t param_id, fl
  * instrument -> SE_ERR_NOT_FOUND; pitch > 127 or velocity > 127 ->
  * SE_ERR_INVALID_ARG. */
 int32_t se_builtin_note(se_engine* engine, uint64_t device_id, uint8_t pitch, uint8_t velocity);
+
+/* ---- Preview (browser audition) voice -------------------------------------
+ * One voice that plays a loaded asset from start_frame (clamped into the
+ * asset; 0 = its start, used to resume after a stop), independent of the
+ * transport, mixed into the master output after the master meters' track
+ * sum (it shows on the master meters) and never into exports. A new play
+ * replaces the sounding one with a short crossfade; the voice stops by
+ * itself at the asset's end. gain: linear 0..2. rate: playback speed
+ * 0.25..4 (1 = as recorded; varispeed, pitch follows). solo: while the
+ * preview sounds, the arrangement is silent. Lock-free hand-over, applied
+ * at the next block. MAIN THREAD. Unknown asset -> SE_ERR_NOT_FOUND; gain
+ * or rate out of range or not finite -> SE_ERR_INVALID_ARG. */
+int32_t se_preview_play(se_engine* engine, uint64_t asset_id, int64_t start_frame, float gain, float rate, uint8_t solo);
+int32_t se_preview_stop(se_engine* engine); /* fades out */
+int32_t se_preview_set(se_engine* engine, float gain, float rate, uint8_t solo);
+
+typedef struct se_preview_info {
+    uint8_t playing;     /* 1 while a voice sounds (not counting a fade-out) */
+    uint8_t reserved[7];
+    uint64_t asset_id;   /* asset of the sounding voice, 0 when none */
+    int64_t position;    /* frames into the asset */
+    int64_t frames;      /* asset length in frames */
+    float peak_l;        /* preview-only peaks since the previous call */
+    float peak_r;
+} se_preview_info; /* 40 bytes, align 8 */
+int32_t se_preview_get(se_engine* engine, se_preview_info* out);
 
 #ifdef __cplusplus
 }

@@ -176,8 +176,8 @@ impl Geo {
 /// Graph rectangle on the card (pt, card relative): below the picker row when
 /// there is one (the reference view row), else where the picker row would be.
 fn placement(def: &DeviceDef) -> (f32, f32, f32, f32) {
-    let y = if def.layout.picker.is_empty() { 37.0 } else { 63.0 };
-    (8.0, y, def.layout.width() - 16.0, 214.0 - y)
+    let y = if def.layout.picker.is_empty() { 38.5 } else { 63.0 };
+    (8.0, y, def.layout.width() - 16.0, 216.5 - y)
 }
 
 fn geo(kind: Kind, def: &DeviceDef) -> Geo {
@@ -343,19 +343,24 @@ pub(crate) fn deesser_db(f0: f32, q: f32, reduction: f32, listen: bool, mix: f32
     (20.0 * h.max(1e-9).log10()) as f32
 }
 
-/// The edges of the De-Esser band: centre angle +- sin(w0) / (2Q), in Hz.
+/// The edges of the De-Esser band, where the band-pass is 3 dB down, in Hz: with
+/// a = sin(w0) / (2Q), the edges sit at acos(cos(w0) / sqrt(1 + a²)) -+ atan(a), as
+/// The reference app draws them (reference/research-findings.md, row 38).
 pub(crate) fn deesser_edges(f0: f32, q: f32) -> (f32, f32) {
     let w0 = 2.0 * PI * f0 as f64 / DRAW_RATE;
-    let off = w0.sin() / (2.0 * q.max(1e-3) as f64);
-    let hz = |w: f64| (w.max(1e-6) * DRAW_RATE / (2.0 * PI)) as f32;
-    (hz(w0 - off), hz(w0 + off))
+    let a = w0.sin() / (2.0 * q.max(1e-4) as f64);
+    let centre = (w0.cos() / (1.0 + a * a).sqrt()).clamp(-1.0, 1.0).acos();
+    let hz = |w: f64| (w * DRAW_RATE / (2.0 * PI)) as f32;
+    (hz((centre - a.atan()).max(0.001)), hz((centre + a.atan()).min(PI * 0.9999)))
 }
 
-/// Q that puts a band edge at edge_hz (inverse of [deesser_edges]).
+/// Q that puts a band edge at edge_hz (inverse of [deesser_edges]): at an edge w,
+/// |cos(w0) - cos(w)| / sin(w) = sin(w0) / (2Q).
 pub(crate) fn deesser_q_for_edge(f0: f32, edge_hz: f32) -> f32 {
     let w0 = 2.0 * PI * f0 as f64 / DRAW_RATE;
-    let off = (2.0 * PI * edge_hz as f64 / DRAW_RATE - w0).abs().max(1e-6);
-    (w0.sin() / (2.0 * off)) as f32
+    let w = (2.0 * PI * edge_hz.max(1.0) as f64 / DRAW_RATE).min(PI * 0.9999);
+    let k = (w0.cos() - w.cos()).abs() / w.sin().max(1e-9);
+    (w0.sin() / (2.0 * k.max(1e-9))) as f32
 }
 
 /// De-Hummer response in dB at f: the notch product blended with the dry.
@@ -457,8 +462,9 @@ impl Controller {
                 let (f0, q, red, listen, mix) = (v("frequency"), v("bandwidth"), v("reduction"), v("listen") >= 0.5, v("mix") / 100.0);
                 rungs(&mut hrules, &[0.0, -10.0, -20.0, -30.0]);
                 grid(&mut vrules, &[(2000.0, "2k"), (5000.0, "5k"), (10000.0, "10k")]);
+                let (lo, hi) = deesser_edges(f0, q);
                 let mut fs = log_points(g.lo, g.hi, 160);
-                fs.push(f0);
+                fs.extend([f0, lo, hi]);
                 fs.sort_by(f32::total_cmp);
                 let db_at = |f: f32| deesser_db(f0, q, red, listen, mix, f).clamp(g.bottom, 0.0);
                 let pts: Vec<(f32, f32)> = fs.iter().map(|&f| (g.x_of(f), g.y_of(db_at(f)))).collect();
@@ -473,7 +479,6 @@ impl Controller {
                     }
                 }
                 layers.push(layer(polyline(&pts), ink(1.0), 1.5, none()));
-                let (lo, hi) = deesser_edges(f0, q);
                 for (hz, z) in [(lo, Zone::EdgeLo), (hi, Zone::EdgeHi)] {
                     if hz > g.lo && hz < g.hi {
                         let ex = g.x_of(hz);
@@ -889,8 +894,8 @@ mod tests {
 
     #[test]
     fn graph_placement_follows_the_picker_row() {
-        assert_eq!(placement(def("declipper")), (8.0, 63.0, 228.0, 151.0));
-        assert_eq!(placement(def("deesser")), (8.0, 37.0, 455.0, 177.0));
+        assert_eq!(placement(def("declipper")), (8.0, 63.0, 228.0, 153.5));
+        assert_eq!(placement(def("deesser")), (8.0, 38.5, 455.0, 178.0));
     }
 
     #[test]

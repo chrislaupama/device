@@ -19,6 +19,8 @@ const MARKER_BAND: (f32, f32) = (BAND_Y, 40.5);
 const MARKER_HIT: f32 = 6.0;
 const TRANSIENT_HIT: f32 = 4.0;
 const TRANSIENT_SNAP: f32 = 8.0;
+/// Undo label of a press on a transient: the marker it places and its drag.
+const PLACE_LABEL: &str = "Add warp marker at transient";
 
 #[derive(Debug, Clone)]
 pub struct AcDrag {
@@ -32,8 +34,9 @@ pub struct AcDrag {
 
 #[derive(Debug, Clone, Copy)]
 pub enum AcDragKind {
-    /// \`slide\` (Shift): the marker keeps its beat and the audio moves under it.
-    Marker { source: u64, slide: bool },
+    /// `slide` (Shift): the marker keeps its beat and the audio moves under it.
+    /// `placed`: the press put it on a transient, so releasing in place keeps it.
+    Marker { source: u64, slide: bool, placed: bool },
     Transient { from: u64, to: u64 },
     Bpm { start: f64 },
     Transpose { start: i32 },
@@ -105,7 +108,7 @@ fn anchored(c: &Clip, rate: f64) -> ClipWarp {
     w
 }
 
-/// Shift-drag: slide the audio under the marker at \`source\` to \`to\`. A
+/// Shift-drag: slide the audio under the marker at `source` to `to`. A
 /// reversed clip starts at its window's source end, so that end is pinned
 /// first (also when a trim left markers past it) and the slide stays inside
 /// the window; otherwise it would move the clip's start and length.
@@ -238,7 +241,7 @@ impl Controller {
     }
 
     /// The open audio clip's warp, switched on the way the reference app does it: the
-    /// first time at the clip's own tempo (\`default_original_bpm\`).
+    /// first time at the clip's own tempo (`default_original_bpm`).
     fn warp_on(&self, c: &Clip) -> ClipWarp {
         let mut w = c.warp.clone();
         if !w.enabled && w.tempo_is_default() {
@@ -450,13 +453,14 @@ impl Controller {
     }
 
     /// Pointer in the audio clip editor (kind 0 down, 1 move, 2 up).
-    /// Handle band (upper half): click adds a warp marker (snapped to a
-    /// transient unless Alt), drag moves one, click without dragging removes
-    /// it. Lane: drag a transient to move it, double-click to add or remove
-    /// one. Ruler: move the playhead. Markers and transients need warp on.
-    /// Modifiers: \`shift\` slides the audio under a dragged marker, \`alt\`
-    /// places a marker without snapping to transients, \`command\` (Cmd or
-    /// Ctrl) on a transient adds markers there and at its two neighbours.
+    /// Handle band (upper half): a press on a transient pins it with a warp
+    /// marker and drags that marker on (one undo step, as in the reference app); a click
+    /// elsewhere adds a marker; a marker drags, and a click on it without
+    /// dragging removes it. Lane: drag a transient to move it, double-click to
+    /// add or remove one. Ruler: move the playhead. Markers and transients need
+    /// warp on. Modifiers: `shift` slides the audio under a dragged marker or,
+    /// on a transient, moves the transient; `alt` ignores transients;
+    /// `command` (Cmd or Ctrl) on a transient also pins its two neighbours.
     pub fn ac_pointer(&mut self, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool) {
         let Some(c) = self.ac_clip().cloned() else { return };
         self.ui_dirty = true;
@@ -486,26 +490,33 @@ impl Controller {
                         let d = |s: u64| (view.x_of(m.clip_beat(s as f64)) - x).abs();
                         d(a.source).total_cmp(&d(b.source))
                     }) {
-                        self.pr.ac_drag = Some(AcDrag { view, clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Marker { source: k.source, slide: shift }, moved: false });
+                        self.pr.ac_drag = Some(AcDrag { view, clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Marker { source: k.source, slide: shift, placed: false }, moved: false });
                         return;
                     }
                     let tr: Vec<u64> = transients.iter().map(|t| t.source).collect();
-                    if command && let Some(i) = tr.iter().position(|&s| near(s, TRANSIENT_SNAP)) {
-                        // Pin the transient and its neighbours where they play now.
+                    let hit = if alt { None } else { (0..tr.len()).filter(|&i| near(tr[i], TRANSIENT_SNAP)).min_by_key(|&i| (view.x_of(m.clip_beat(tr[i] as f64)) - x).abs() as i64) };
+                    if let Some(i) = hit {
+                        let s = tr[i];
+                        if shift {
+                            self.pr.ac_drag = Some(AcDrag { view, clip: c.id, warp: c.warp.clone(), kind: AcDragKind::Transient { from: s, to: s }, moved: false });
+                            return;
+                        }
+                        // Pin it where it plays now (Cmd: with its neighbours) and drag it on: one undo step.
                         let mut w = anchored(&c, rate);
                         let inside = |s: u64| s > c.source_offset && s < c.source_offset + c.source_length;
+                        let picks = if command { &tr[i.saturating_sub(1)..(i + 2).min(tr.len())] } else { &tr[i..=i] };
                         let mut added = false;
-                        for &s in tr[i.saturating_sub(1)..(i + 2).min(tr.len())].iter().filter(|&&s| inside(s)) {
-                            added |= w.set_marker(s, c.warp.beat_at(s as f64, rate));
+                        for &p in picks.iter().filter(|&&p| inside(p)) {
+                            added |= w.set_marker(p, c.warp.beat_at(p as f64, rate));
                         }
-                        if added {
-                            self.set_clip_warp(c.id, w, "Add warp markers at transients");
+                        if !added || !w.markers.iter().any(|k| k.source == s) {
+                            return;
                         }
+                        self.set_clip_warp(c.id, w.clone(), PLACE_LABEL);
+                        self.pr.ac_drag = Some(AcDrag { view, clip: c.id, warp: w, kind: AcDragKind::Marker { source: s, slide: false, placed: true }, moved: false });
                         return;
                     }
-                    let beat = view.beat_at(x);
-                    let snapped = if alt { None } else { transients.iter().map(|t| t.source).filter(|&s| near(s, TRANSIENT_SNAP)).min_by_key(|&s| (view.x_of(m.clip_beat(s as f64)) - x).abs() as i64) };
-                    let source = snapped.unwrap_or_else(|| m.source(beat).round().max(0.0) as u64);
+                    let source = m.source(view.beat_at(x)).round().max(0.0) as u64;
                     if source <= c.source_offset || source >= c.source_offset + c.source_length {
                         return;
                     }
@@ -543,7 +554,7 @@ impl Controller {
                 let m = Map::new(&c, &d.warp, rate);
                 let beat = d.view.beat_at(x);
                 match d.kind {
-                    AcDragKind::Marker { source, slide: true } => {
+                    AcDragKind::Marker { source, slide: true, .. } => {
                         // The audio moves at the local rate of the map, the marker stays put.
                         let b0 = m.clip_beat(source as f64);
                         let slope = (m.source(b0) - m.source(b0 - 1e-3)) / 1e-3;
@@ -555,14 +566,14 @@ impl Controller {
                         let clip = d.clip;
                         self.set_clip_warp(clip, w, "Move warp marker");
                     }
-                    AcDragKind::Marker { source, slide: false } => {
+                    AcDragKind::Marker { source, slide: false, placed } => {
                         let mut w = d.warp.clone();
                         if !w.set_marker(source, m.original_beat(beat)) {
                             return;
                         }
                         d.moved = true;
                         let clip = d.clip;
-                        self.set_clip_warp(clip, w, "Move warp marker");
+                        self.set_clip_warp(clip, w, if placed { PLACE_LABEL } else { "Move warp marker" });
                     }
                     AcDragKind::Transient { from, .. } => {
                         let to = m.source(beat).round().clamp(c.source_offset as f64, (c.source_offset + c.source_length - 1) as f64) as u64;
@@ -575,7 +586,7 @@ impl Controller {
             _ => {
                 let Some(d) = self.pr.ac_drag.take() else { return };
                 match d.kind {
-                    AcDragKind::Marker { source, .. } if !d.moved => {
+                    AcDragKind::Marker { source, placed: false, .. } if !d.moved => {
                         let mut w = d.warp.clone();
                         if let Some(i) = w.markers.iter().position(|k| k.source == source)
                             && w.remove_marker(i)

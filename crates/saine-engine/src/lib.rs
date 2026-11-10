@@ -81,6 +81,17 @@ pub struct TransportState {
     pub playing: bool,
 }
 
+/// The browser audition voice, from [`Engine::preview`].
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PreviewState {
+    /// Asset of the sounding voice; `None` when nothing plays.
+    pub asset_id: Option<u64>,
+    pub position: i64,
+    pub frames: i64,
+    pub peak_l: f32,
+    pub peak_r: f32,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Meter {
     pub track_id: u64,
@@ -152,7 +163,7 @@ impl Engine {
         check(unsafe { ffi::se_asset_release(self.raw, id) })
     }
 
-    /// A new asset with \`id\`'s audio back to front (reversed clips). Copies
+    /// A new asset with `id`'s audio back to front (reversed clips). Copies
     /// the audio: a few ms per minute, off the audio thread.
     pub fn reverse_asset(&self, id: u64) -> Result<AssetInfo, EngineError> {
         let mut info = AssetInfo::default();
@@ -171,6 +182,15 @@ impl Engine {
         let mut buf = vec![0f32; max_pairs * 2];
         let mut n = 0usize;
         check(unsafe { ffi::se_asset_compute_peaks(self.raw, id, start_frame, frames_per_peak, buf.as_mut_ptr(), max_pairs, &mut n) })?;
+        buf.truncate(n * 2);
+        Ok(buf.chunks_exact(2).map(|c| [c[0], c[1]]).collect())
+    }
+
+    /// Min/max pairs of one channel (0 left, 1 right) for per-channel lanes.
+    pub fn channel_peaks(&self, id: u64, channel: u32, start_frame: u64, frames_per_peak: u32, max_pairs: usize) -> Result<Vec<[f32; 2]>, EngineError> {
+        let mut buf = vec![0f32; max_pairs * 2];
+        let mut n = 0usize;
+        check(unsafe { ffi::se_asset_compute_channel_peaks(self.raw, id, channel, start_frame, frames_per_peak, buf.as_mut_ptr(), max_pairs, &mut n) })?;
         buf.truncate(n * 2);
         Ok(buf.chunks_exact(2).map(|c| [c[0], c[1]]).collect())
     }
@@ -916,6 +936,38 @@ impl Engine {
         let mut st = ffi::se_device_status::default();
         unsafe { ffi::se_device_status_get(self.raw, &mut st) };
         Some(c_chars_to_string(&st.input_error)).filter(|s| !s.is_empty())
+    }
+
+    /// Audition an asset from `start_frame` (0 = its start), independent of the transport. It
+    /// mixes into master after the track sum (so the master meters show it),
+    /// never reaches exports, replaces any running preview with a short
+    /// crossfade and stops at the asset's end. `gain` 0..2, `rate`
+    /// 0.25..4 (1 = original speed and pitch); `solo` silences the
+    /// arrangement while the preview sounds.
+    pub fn preview_play(&self, asset_id: u64, start_frame: i64, gain: f32, rate: f32, solo: bool) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_preview_play(self.raw, asset_id, start_frame, gain, rate, solo as u8) })
+    }
+
+    /// Fade the preview out.
+    pub fn preview_stop(&self) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_preview_stop(self.raw) })
+    }
+
+    pub fn preview_set(&self, gain: f32, rate: f32, solo: bool) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_preview_set(self.raw, gain, rate, solo as u8) })
+    }
+
+    /// Current preview voice; the peaks reset on each call.
+    pub fn preview(&self) -> PreviewState {
+        let mut p = ffi::se_preview_info::default();
+        unsafe { ffi::se_preview_get(self.raw, &mut p) };
+        PreviewState {
+            asset_id: (p.playing != 0).then_some(p.asset_id),
+            position: p.position,
+            frames: p.frames,
+            peak_l: p.peak_l,
+            peak_r: p.peak_r,
+        }
     }
 
     /// Silence all device input (Settings › "Mute audio input"): monitoring,
