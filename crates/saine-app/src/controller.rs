@@ -245,6 +245,8 @@ pub enum MenuAction {
     Bounce,
     Delete,
     Disable,
+    Enable,
+    ShowInFinder,
     Rename,
     Export,
     Transpose,
@@ -998,7 +1000,7 @@ impl Controller {
         let clip_id = ClipId(alloc());
         cmds.push(Command::AddClip {
             track: track_id,
-            clip: Clip { id: clip_id, asset: asset_id, name, start: at.max(0), source_offset: 0, source_length: native_frames, gain: 1.0, warp: Default::default() },
+            clip: Clip { id: clip_id, asset: asset_id, name, start: at.max(0), source_offset: 0, source_length: native_frames, gain: 1.0, warp: Default::default(), disabled: false },
         });
         // Engine asset must be known before the snapshot is published.
         self.peaks.insert(info.asset_id, pyr);
@@ -1336,7 +1338,7 @@ impl Controller {
                     len_beats,
                     color: track_color(t.color),
                     selected: Some(c.id) == self.selected_clip,
-                    muted: t.mute,
+                    muted: t.mute || c.disabled,
                     name: c.name.clone(),
                     wave,
                     midi: None,
@@ -1363,7 +1365,7 @@ impl Controller {
                     len_beats: len as f64 / PPQ as f64,
                     color: track_color(t.color),
                     selected: Some(c.id) == self.selected_clip,
-                    muted: t.mute,
+                    muted: t.mute || c.disabled,
                     name: c.name.clone(),
                     wave: None,
                     midi: Some(mini_notes(&notes, shift, len)),

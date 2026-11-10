@@ -228,6 +228,7 @@ impl Keymap {
                 b("clip.split_at_range", &["primary+e"], RangeSelected),
                 b("clip.split_at_marker", &["primary+e"], ClipSelected),
                 b("clip.reverse", &["primary+r"], ClipSelected),
+                b("clip.disable", &["0"], ClipsSelected),
                 b("clip.consolidate", &["primary+j"], ClipsSelected),
                 b("clip.bounce_to_track", &["primary+b"], ClipsSelected),
                 b("fx.duplicate", &["primary+d"], FxSlotSelected),

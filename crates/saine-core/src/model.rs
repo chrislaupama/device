@@ -148,6 +148,9 @@ pub struct Clip {
     pub gain: f32,
     #[serde(default, skip_serializing_if = "ClipWarp::is_default")]
     pub warp: ClipWarp,
+    /// Disabled clips stay on the timeline but make no sound (the Disable menu entry).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
 }
 
 /// External media reference. Media is never copied into the project unless

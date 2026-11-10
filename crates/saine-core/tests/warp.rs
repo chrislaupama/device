@@ -16,7 +16,7 @@ fn doc() -> (Document, ClipId, AssetId) {
     let asset = Asset { id: AssetId(0), relative_path: None, absolute_path: "/nonexistent/loop.wav".into(), sample_rate: 44_100.0, channels: 2, frames: 44_100 * 8 };
     d.execute(Command::AddAsset { asset }, Origin::User).unwrap();
     let a = d.project().assets[0].id;
-    let clip = Clip { id: ClipId(0), asset: a, name: "loop".into(), start: PPQ * 4, source_offset: 0, source_length: 44_100 * 4, gain: 1.0, warp: ClipWarp::default() };
+    let clip = Clip { id: ClipId(0), asset: a, name: "loop".into(), start: PPQ * 4, source_offset: 0, source_length: 44_100 * 4, gain: 1.0, warp: ClipWarp::default(), disabled: false };
     d.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
     let id = d.project().tracks[0].clips[0].id;
     (d, id, a)

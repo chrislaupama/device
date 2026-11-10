@@ -46,7 +46,7 @@ impl Rig {
         doc.execute(Command::AddAsset { asset: Asset { id: AssetId(0), relative_path: None, absolute_path: path.to_string_lossy().into(), sample_rate: RATE, channels: 2, frames } }, Origin::User).unwrap();
         let asset = doc.project().assets[0].id;
         let track = doc.project().tracks[0].id;
-        let clip = Clip { id: ClipId(0), asset, name: "tone".into(), start: 0, source_offset: 0, source_length: frames, gain: 1.0, warp: ClipWarp::default() };
+        let clip = Clip { id: ClipId(0), asset, name: "tone".into(), start: 0, source_offset: 0, source_length: frames, gain: 1.0, warp: ClipWarp::default(), disabled: false };
         doc.execute(Command::AddClip { track, clip }, Origin::User).unwrap();
         let clip = doc.project().tracks[0].clips[0].id;
         Rig { engine, doc, map: HashMap::from([(asset, info.asset_id)]), clip, asset }

@@ -93,6 +93,13 @@ pub enum Command {
     /// Set the visible region of a clip (left/right trim).
     TrimClip { clip: ClipId, start: Ticks, source_offset: u64, source_length: u64 },
     SetClipGain { clip: ClipId, gain: f32 },
+    /// Cut an audio or MIDI clip in two at the absolute timeline position at.
+    /// The left part keeps the clip's id; the right part gets new_id (0 means
+    /// allocate) and the same name. MIDI notes that cross the cut are cut in
+    /// two. Refused for warped or reversed audio clips and for pattern clips.
+    SplitClip { clip: ClipId, at: Ticks, new_id: ClipId },
+    /// Disable or re-enable an audio or MIDI clip (it stays on the timeline but is silent).
+    SetClipEnabled { clip: ClipId, enabled: bool },
     /// Replace a clip's warp settings. `label` names the edit for undo
     /// ("Set clip speed", "Move warp marker", …); successive edits with the
     /// same label on the same clip coalesce (drags).
@@ -201,6 +208,8 @@ impl Command {
             Command::MoveClip { .. } => "Move Clip".into(),
             Command::TrimClip { .. } => "Trim Clip".into(),
             Command::SetClipGain { .. } => "Clip Gain Change".into(),
+            Command::SplitClip { .. } => "Split Clip".into(),
+            Command::SetClipEnabled { enabled, .. } => (if *enabled { "Enable Clip" } else { "Disable Clip" }).into(),
             Command::SetClipWarp { label, .. } => label.clone(),
             Command::SetTempo { .. } => "Tempo Change".into(),
             Command::SetTimeSignature { .. } => "Time Signature Change".into(),
@@ -474,6 +483,16 @@ impl Command {
                 let (ti, ci) = p.find_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
                 let old = std::mem::replace(&mut p.tracks[ti].clips[ci].gain, gain);
                 Ok(Command::SetClipGain { clip, gain: old })
+            }
+            Command::SplitClip { clip, at, new_id } => split_clip(p, clip, at, new_id),
+            Command::SetClipEnabled { clip, enabled } => {
+                if let Some((ti, ci)) = p.find_clip(clip) {
+                    let was = !std::mem::replace(&mut p.tracks[ti].clips[ci].disabled, !enabled);
+                    return Ok(Command::SetClipEnabled { clip, enabled: was });
+                }
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let was = !std::mem::replace(&mut p.tracks[ti].midi_clips[ci].disabled, !enabled);
+                Ok(Command::SetClipEnabled { clip, enabled: was })
             }
             Command::SetClipWarp { clip, warp, label } => {
                 let (ti, ci) = p.find_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
@@ -1090,6 +1109,71 @@ fn validate_pan(pan: f32) -> Result<(), EditError> {
         return Err(invalid("pan", format!("{pan} outside -1..=1")));
     }
     Ok(())
+}
+
+fn split_clip(p: &mut Project, clip: ClipId, at: Ticks, new_id: ClipId) -> Result<Command, EditError> {
+    if new_id.0 != 0 && p.clip_id_in_use(new_id) {
+        return Err(EditError::DuplicateId(new_id.0));
+    }
+    if let Some((ti, ci)) = p.find_clip(clip) {
+        let c = p.tracks[ti].clips[ci].clone();
+        if c.warp.enabled || c.warp.reverse {
+            return Err(invalid("clip", "warped or reversed clips cannot be split"));
+        }
+        if at <= c.start || at >= c.start + p.clip_length_ticks(&c) {
+            return Err(invalid("at", "must fall inside the clip"));
+        }
+        let cut = (p.clip_source_at(&c, (at - c.start) as f64).round() as u64).clamp(c.source_offset + 1, c.source_offset + c.source_length - 1);
+        let new_id = if new_id.0 == 0 { ClipId(p.alloc_id()) } else { new_id };
+        p.next_id = p.next_id.max(new_id.0 + 1);
+        let right = Clip { id: new_id, start: at, source_offset: cut, source_length: c.source_offset + c.source_length - cut, ..c.clone() };
+        let t = &mut p.tracks[ti];
+        t.clips[ci].source_length = cut - c.source_offset;
+        t.clips.push(right);
+        t.clips.sort_by_key(|c| (c.start, c.id));
+        return Ok(Command::Batch {
+            label: "Split Clip".into(),
+            commands: vec![Command::RemoveClip { clip: new_id }, Command::TrimClip { clip, start: c.start, source_offset: c.source_offset, source_length: c.source_length }],
+        });
+    }
+    let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+    let c = p.tracks[ti].midi_clips[ci].clone();
+    if c.pattern.is_some() {
+        return Err(invalid("clip", "pattern clips cannot be split"));
+    }
+    if at <= c.start || at >= c.end() {
+        return Err(invalid("at", "must fall inside the clip"));
+    }
+    let rel = at - c.start;
+    let mut left_notes = Vec::new();
+    let mut right_notes = Vec::new();
+    for n in c.notes.iter().filter(|n| n.start < c.length) {
+        let end = (n.start + n.length).min(c.length);
+        if end <= rel {
+            left_notes.push(*n);
+        } else if n.start >= rel {
+            right_notes.push(Note { start: n.start - rel, length: end - n.start, ..*n });
+        } else {
+            left_notes.push(Note { length: rel - n.start, ..*n });
+            right_notes.push(Note { start: 0, length: end - rel, ..*n });
+        }
+    }
+    let new_id = if new_id.0 == 0 { ClipId(p.alloc_id()) } else { new_id };
+    p.next_id = p.next_id.max(new_id.0 + 1);
+    let right = MidiClip { id: new_id, start: at, length: c.length - rel, notes: right_notes, ..c.clone() };
+    let t = &mut p.tracks[ti];
+    t.midi_clips[ci].length = rel;
+    t.midi_clips[ci].notes = left_notes;
+    t.midi_clips.push(right);
+    t.midi_clips.sort_by_key(|c| (c.start, c.id));
+    Ok(Command::Batch {
+        label: "Split Clip".into(),
+        commands: vec![
+            Command::RemoveMidiClip { clip: new_id },
+            Command::SetMidiContent { clip, notes: c.notes.clone(), pattern: None },
+            Command::ResizeMidiClip { clip, start: c.start, length: c.length },
+        ],
+    })
 }
 
 fn validate_midi_clip(c: &MidiClip) -> Result<(), EditError> {

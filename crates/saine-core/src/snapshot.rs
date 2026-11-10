@@ -141,6 +141,7 @@ pub fn build_full(
             clips: t
                 .clips
                 .iter()
+                .filter(|c| !c.disabled)
                 .filter_map(|c| {
                     let (Some(&ea), Some(asset)) = (engine_assets.get(&c.asset), project.asset(c.asset)) else {
                         skipped.push(c.id.0);
@@ -193,6 +194,7 @@ pub fn build_full(
                 let mut v: Vec<NoteSnapshot> = t
                     .midi_clips
                     .iter()
+                    .filter(|c| !c.disabled)
                     .flat_map(|c| c.playing_notes().into_iter().map(move |n| (c.start + n.start, c.start + n.start + n.length, n.pitch, n.velocity)))
                     .map(|(s, e, pitch, velocity)| NoteSnapshot {
                         start: project.ticks_to_frames(s, engine_rate),
