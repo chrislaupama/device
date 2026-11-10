@@ -20,11 +20,14 @@
 //! ```
 
 static CLIP_MENU_AUDIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// With `review-clip-bounce-menu`: the audio clip menu opens with its Bounce submenu showing.
+static CLIP_MENU_BOUNCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 mod analyzer_views;
 mod assistant_panel;
 mod assistant_provider;
 mod automation;
+mod clip_render;
 mod clipedit;
 mod composer;
 mod controller;
@@ -298,6 +301,11 @@ fn parse_args() -> Result<Args, String> {
                 "review-clip-menu" => {
                     a.reference_default = true;
                     a.clip_menu_audio = true;
+                }
+                "review-clip-bounce-menu" => {
+                    a.reference_default = true;
+                    a.clip_menu_audio = true;
+                    CLIP_MENU_BOUNCE.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
                 "reference-settings-audio" => {
                     a.reference_default = true;
@@ -608,6 +616,11 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "clip.split_at_marker" => ctl.borrow_mut().split_clip(),
         "clip.disable" => ctl.borrow_mut().toggle_clip_disabled(),
         "clip.cut" => ctl.borrow_mut().cut_clip(),
+        "clip.consolidate" | "clip.bounce_to_track" => {
+            let mut c = ctl.borrow_mut();
+            let Some(id) = c.selected_clip else { return true };
+            if action == "clip.consolidate" { c.consolidate_clip(id) } else { c.bounce_clip(id) }
+        }
         "edit.copy" => {
             ctl.borrow_mut().copy_clip();
         }
@@ -1488,7 +1501,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_composer_create, |c| c.composer_create());
     on!(on_composer_load, |c, i: i32| c.composer_load(i.max(0) as usize));
     on!(on_composer_original_pick, |c| c.composer_original());
-    on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
+    // Export audio asks for a file with the controller NOT borrowed.
+    {
+        let ctl = ctl.clone();
+        let aw = app.as_weak();
+        studio.on_menu_activate(move |i: i32| {
+            ctl.borrow_mut().menu_activate(i.max(0) as usize);
+            let request = ctl.borrow_mut().clip_render.dialog_request.take();
+            if let Some((id, name)) = request {
+                let start = ctl.borrow().export.dir.clone();
+                let picked = rfd::FileDialog::new().set_title("Export audio").add_filter("WAV", &["wav"]).set_file_name(name).set_directory(&start).save_file();
+                if let Some(path) = picked {
+                    ctl.borrow_mut().export_clip(id, &path.with_extension("wav"), true);
+                }
+            }
+            if let Some(a) = aw.upgrade() {
+                ctl.borrow_mut().update_ui(&a);
+                a.window().request_redraw();
+            }
+        });
+    }
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
     on!(on_menu_dismiss, |c| c.menu_close());
     on!(on_rename_commit, |c, t: slint::SharedString| {
@@ -1970,6 +2002,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             CLIP_MENU_AUDIO.store(false, std::sync::atomic::Ordering::Relaxed);
                             c.seek_beats((start + len / 2) as f64 / saine_core::PPQ as f64);
                             c.open_clip_menu(id, 700.0, 215.0, (10_000.0, 10_000.0));
+                            if CLIP_MENU_BOUNCE.load(std::sync::atomic::Ordering::Relaxed) {
+                                c.menu.sub_open = true;
+                                c.menu.sub_for = Some(controller::MenuAction::Bounce);
+                            }
                         }
                     }
                     c.lanes_size = (app.get_lanes_width(), app.get_lanes_height());

@@ -199,6 +199,8 @@ pub enum JobResult {
     Onsets { engine_asset: u64, result: Result<Vec<saine_engine::Onset>, String>, tempo: Option<f64> },
     /// A file clicked in Browser › Files, decoded for the preview voice (src/files.rs).
     Auditioned { path: PathBuf, result: Result<AssetInfo, String> },
+    /// A Consolidate, Bounce or Export render written and loaded (src/clip_render.rs).
+    ClipRendered(Box<crate::clip_render::ClipRendered>),
 }
 
 /// Blocking decode + peak analysis. Runs on a worker thread.
@@ -274,6 +276,8 @@ pub struct MenuState {
     pub section: Option<saine_core::SectionId>,
     pub items: Vec<(MenuAction, bool)>,
     pub sub_open: bool,
+    /// The entry whose submenu `sub_open` shows (Transpose or Bounce).
+    pub sub_for: Option<MenuAction>,
 }
 
 // ------------------------------------------------------------------ controller
@@ -306,6 +310,7 @@ pub struct Controller {
     pub project_dir: Option<PathBuf>,
     /// Export dialog and the unsaved-changes prompt (src/dialogs.rs).
     pub export: crate::dialogs::ExportUi,
+    pub clip_render: crate::clip_render::ClipRender,
     pub unsaved_open: bool,
     pub(crate) jobs_tx: Sender<JobResult>,
     jobs_rx: Receiver<JobResult>,
@@ -425,6 +430,7 @@ impl Controller {
             status: None,
             project_dir: None,
             export: Default::default(),
+            clip_render: Default::default(),
             unsaved_open: false,
             jobs_tx,
             jobs_rx,
@@ -936,6 +942,7 @@ impl Controller {
                 JobResult::PluginScan(r) => self.finish_plugin_scan(r),
                 JobResult::Onsets { engine_asset, result, tempo } => self.finish_onsets(engine_asset, result, tempo),
                 JobResult::Auditioned { path, result } => self.finish_audition(path, result),
+                JobResult::ClipRendered(r) => self.finish_clip_render(*r),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
                     if doc_epoch != self.doc_epoch {
                         if let Ok((info, _)) = result {
