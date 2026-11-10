@@ -115,6 +115,19 @@ pub fn build_with_transients(
     engine_assets: &HashMap<AssetId, u64>,
     transients: &HashMap<AssetId, Vec<Transient>>,
 ) -> (SessionSnapshot, Vec<u64>) {
+    build_full(project, engine_rate, engine_assets, &HashMap::new(), transients)
+}
+
+/// [\`build_with_transients\`] with the engine's reversed copies of assets
+/// (\`se_asset_reverse\`), which reversed clips play. A reversed clip whose copy
+/// is missing is skipped.
+pub fn build_full(
+    project: &Project,
+    engine_rate: f64,
+    engine_assets: &HashMap<AssetId, u64>,
+    reversed_assets: &HashMap<AssetId, u64>,
+    transients: &HashMap<AssetId, Vec<Transient>>,
+) -> (SessionSnapshot, Vec<u64>) {
     let mut skipped = Vec::new();
     let tracks = project
         .tracks
@@ -134,8 +147,16 @@ pub fn build_with_transients(
                         return None;
                     };
                     let ratio = engine_rate / asset.sample_rate;
+                    let reversed = match (c.warp.reverse, reversed_assets.get(&c.asset)) {
+                        (false, _) => None,
+                        (true, Some(&r)) => Some(r),
+                        (true, None) => {
+                            skipped.push(c.id.0);
+                            return None;
+                        }
+                    };
                     let varispeed = !c.warp.enabled && c.warp.transpose != 0;
-                    Some(ClipSnapshot {
+                    let cs = ClipSnapshot {
                         clip_id: c.id.0,
                         engine_asset: ea,
                         timeline_start: project.ticks_to_frames(c.start, engine_rate),
@@ -151,6 +172,11 @@ pub fn build_with_transients(
                         } else {
                             c.warp.enabled.then(|| warp_snapshot(project, c, asset.sample_rate, engine_rate, transients.get(&c.asset).map_or(&[][..], |v| v)))
                         },
+                    };
+                    let frames = asset.frames as f64 * ratio;
+                    Some(match reversed {
+                        Some(r) => mirror(cs, r, frames - (c.source_offset + c.source_length) as f64 * ratio, frames),
+                        None => cs,
                     })
                 })
                 .collect(),
@@ -167,13 +193,7 @@ pub fn build_with_transients(
                 let mut v: Vec<NoteSnapshot> = t
                     .midi_clips
                     .iter()
-                    .flat_map(|c| {
-                        c.notes.iter().filter(|n| n.start < c.length).map(move |n| {
-                            let s = c.start + n.start;
-                            let e = c.start + (n.start + n.length).min(c.length);
-                            (s, e, n.pitch, n.velocity)
-                        })
-                    })
+                    .flat_map(|c| c.playing_notes().into_iter().map(move |n| (c.start + n.start, c.start + n.start + n.length, n.pitch, n.velocity)))
                     .map(|(s, e, pitch, velocity)| NoteSnapshot {
                         start: project.ticks_to_frames(s, engine_rate),
                         end: project.ticks_to_frames(e, engine_rate),
@@ -196,6 +216,25 @@ pub fn build_with_transients(
         .filter_map(|s| Some((s.asset, *engine_assets.get(&s.asset)?)))
         .collect();
     (SessionSnapshot { tracks, master_gain: project.master_gain, master_automation, device_assets }, skipped)
+}
+
+/// A clip playing the engine's reversed copy (\`frames\` long, engine rate) of
+/// its asset: the source window and the warp map mirrored, so timeline frame
+/// start + length - t plays what the forward clip plays at t, back to front.
+/// \`start\` is the window's first frame in the copy.
+fn mirror(mut cs: ClipSnapshot, engine_asset: u64, start: f64, frames: f64) -> ClipSnapshot {
+    cs.engine_asset = engine_asset;
+    cs.source_offset = start.round() as i64;
+    let ends = 2 * cs.timeline_start + cs.length;
+    if let Some(w) = &mut cs.warp {
+        w.points = w.points.iter().rev().map(|&(t, s)| (ends - t, frames - s)).collect();
+        // Slice i of the copy holds forward slice i - 1 backwards, so it takes that slice's flag.
+        if let Some(&(_, last)) = w.slices.last() {
+            let fwd = std::mem::take(&mut w.slices);
+            w.slices = std::iter::once((start, last)).chain((1..fwd.len()).rev().map(|i| (frames - fwd[i].0, fwd[i - 1].1))).collect();
+        }
+    }
+    cs
 }
 
 fn warp_snapshot(project: &Project, c: &Clip, asset_rate: f64, engine_rate: f64, detected: &[Transient]) -> WarpSnapshot {

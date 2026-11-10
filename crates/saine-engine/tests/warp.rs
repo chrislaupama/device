@@ -160,6 +160,32 @@ fn onsets_drive_drum_slices() {
 }
 
 #[test]
+fn reversed_clip_plays_back_to_front() {
+    // 1 s of 440 Hz then 1 s of silence; reversed, the silence comes first.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("half.wav");
+    write_wav(&path, 96_000, |i| if i < 48_000 { 0.5 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / RATE).sin() } else { 0.0 });
+    let mut rig = Rig::new(&path);
+    rig.warp(ClipWarp { reverse: true, ..ClipWarp::default() });
+    let ea = rig.map[&rig.asset];
+    let rev = rig.engine.reverse_asset(ea).unwrap();
+    let (snap, skipped) = snapshot::build_full(rig.doc.project(), RATE, &rig.map, &HashMap::from([(rig.asset, rev.asset_id)]), &HashMap::new());
+    assert!(skipped.is_empty());
+    rig.engine.publish(&snap).unwrap();
+    rig.engine.seek(0).unwrap();
+    rig.engine.play().unwrap();
+    let mut out = vec![0f32; 96_000 * 2];
+    for chunk in out.chunks_mut(512 * 2) {
+        rig.engine.render_offline(chunk).unwrap();
+    }
+    rig.engine.stop().unwrap();
+    let l: Vec<f32> = out.chunks_exact(2).map(|c| c[0]).collect();
+    assert!(rms(&l[2_000..46_000]) < 1e-4, "silence first");
+    assert!(rms(&l[50_000..94_000]) > 0.2, "then the tone");
+    assert!((frequency(&l[50_000..94_000]) - 440.0).abs() < 1.0);
+}
+
+#[test]
 fn transpose_shifts_the_pitch_and_varispeeds_unwarped_clips() {
     let (mut rig, _dir) = tone_rig();
     let none = HashMap::new();
@@ -178,4 +204,23 @@ fn transpose_shifts_the_pitch_and_varispeeds_unwarped_clips() {
     assert!(rms(&out[80_000..90_000]) > 0.2, "still 2 s long");
     let f = frequency(&out[10_000..80_000]);
     assert!((f - 220.0).abs() < 2.2, "{f} Hz, want 220");
+}
+
+#[test]
+fn tempo_is_detected_from_the_engine_onsets() {
+    // Kick-like hits on every beat and softer ones on the off-beats at 128 BPM.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("beat.wav");
+    let beat = RATE * 60.0 / 128.0;
+    write_wav(&path, (RATE * 12.0) as u32, |i| {
+        let half = beat / 2.0;
+        let k = (i as f64 / half).floor();
+        let t = (i as f64 - k * half) / RATE;
+        let amp = if k as i64 % 2 == 0 { 0.8 } else { 0.35 };
+        amp * (-t * 40.0).exp() * (2.0 * std::f64::consts::PI * 70.0 * t).sin()
+    });
+    let rig = Rig::new(&path);
+    let onsets = rig.engine.detect_onsets(rig.map[&rig.asset]).unwrap();
+    let tr: Vec<Transient> = onsets.iter().map(|o| Transient { source: o.frame as u64, strength: o.strength, percussive: o.percussive }).collect();
+    assert_eq!(saine_core::warp::estimate_bpm(&tr, RATE), Some(128.0), "{} onsets", tr.len());
 }

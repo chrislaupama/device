@@ -240,6 +240,72 @@ fn warp_settings_persist_and_old_projects_load_unwarped() {
     assert_eq!((partial.speed, partial.original_bpm, partial.mode), (1.0, 120.0, WarpMode::Auto));
 }
 
+fn snap_full(d: &Document, c: ClipId, reversed: &HashMap<AssetId, u64>, transients: &HashMap<AssetId, Vec<Transient>>) -> (snapshot::SessionSnapshot, Vec<u64>) {
+    let a = d.project().clip(c).unwrap().asset;
+    snapshot::build_full(d.project(), RATE, &HashMap::from([(a, 7)]), reversed, transients)
+}
+
+#[test]
+fn reversed_clip_plays_the_mirrored_window_of_the_reversed_copy() {
+    let (mut d, c, a) = doc();
+    // Window 1 s .. 3 s of the 8 s asset.
+    d.execute(Command::TrimClip { clip: c, start: PPQ * 4, source_offset: 44_100, source_length: 44_100 * 2 }, Origin::User).unwrap();
+    set(&mut d, c, ClipWarp { reverse: true, ..ClipWarp::default() }, "Toggle clip reverse");
+    let (_, skipped) = snap_full(&d, c, &HashMap::new(), &HashMap::new());
+    assert_eq!(skipped, vec![c.0], "no reversed copy yet: skipped, not played forwards");
+    let (s, skipped) = snap_full(&d, c, &HashMap::from([(a, 8)]), &HashMap::new());
+    assert!(skipped.is_empty());
+    let cs = &s.tracks[0].clips[0];
+    assert_eq!((cs.engine_asset, cs.timeline_start, cs.source_offset, cs.length, cs.warp.is_none()), (8, 96_000, 5 * 48_000, 2 * 48_000, true));
+    d.undo().unwrap();
+    assert!(!warp(&d, c).reverse);
+}
+
+#[test]
+fn reversed_warped_clip_mirrors_its_map_and_slices() {
+    let (mut d, c, a) = doc();
+    let mut w = ClipWarp { enabled: true, mode: WarpMode::Drums, original_bpm: 120.0, reverse: true, ..ClipWarp::default() };
+    assert!(w.set_marker(0, 0.0));
+    assert!(w.set_marker(44_100, 3.0));
+    set(&mut d, c, w.clone(), "Set clip speed");
+    let detected = HashMap::from([(a, vec![Transient { source: 22_050, strength: 1.0, percussive: false }, Transient { source: 88_200, strength: 1.0, percussive: true }])]);
+    set(&mut d, c, ClipWarp { reverse: false, ..w.clone() }, "Toggle clip reverse");
+    let (_, _, fwd) = snap_warp(&d, c, &detected);
+    let fwd = fwd.unwrap();
+    set(&mut d, c, w, "Toggle clip reverse");
+    let (s, _) = snap_full(&d, c, &HashMap::from([(a, 8)]), &detected);
+    let cs = &s.tracks[0].clips[0];
+    let rev = cs.warp.clone().unwrap();
+    let frames = 8.0 * 48_000.0;
+    let (t0, t1) = (cs.timeline_start, cs.timeline_start + cs.length);
+    assert_eq!(rev.points.len(), fwd.points.len());
+    for (r, f) in rev.points.iter().zip(fwd.points.iter().rev()) {
+        assert_eq!(r.0, t0 + t1 - f.0);
+        assert!((r.1 - (frames - f.1)).abs() < 1e-9);
+    }
+    assert!(rev.points.windows(2).all(|p| p[1].0 > p[0].0 && p[1].1 > p[0].1), "{:?}", rev.points);
+    assert_eq!(rev.points[0].0, t0);
+    // Forward slices: clip start (in a non-percussive passage), 22050, 88200 (asset frames).
+    // Mirrored: the window start in the copy takes the last slice's flag, then each boundary the flag before it.
+    let r = 48_000.0 / 44_100.0;
+    assert_eq!(fwd.slices, vec![(0.0, true), (22_050.0 * r, false), (88_200.0 * r, true)]);
+    let want = [(frames - 176_400.0 * r, true), (frames - 88_200.0 * r, false), (frames - 22_050.0 * r, true)];
+    assert_eq!(rev.slices.len(), 3);
+    for (g, w) in rev.slices.iter().zip(want) {
+        assert!((g.0 - w.0).abs() < 1e-6 && g.1 == w.1, "{:?} vs {want:?}", rev.slices);
+    }
+}
+
+#[test]
+fn reverse_persists() {
+    let (mut d, c, _) = doc();
+    set(&mut d, c, ClipWarp { reverse: true, ..ClipWarp::default() }, "Toggle clip reverse");
+    let dir = tempfile::tempdir().unwrap();
+    persist::save(d.project(), dir.path()).unwrap();
+    assert!(persist::load(dir.path()).unwrap().project.clip(c).unwrap().warp.reverse);
+    assert!(ClipWarp { reverse: true, ..ClipWarp::default() }.tempo_is_default());
+}
+
 #[test]
 fn transpose_with_warp_off_varispeeds_the_clip() {
     let (mut d, c, _) = doc();
@@ -282,4 +348,45 @@ fn transpose_is_validated_and_persisted() {
     assert_eq!(persist::load(dir.path()).unwrap().project.clip(c).unwrap().warp.transpose, -24);
     assert!(!ClipWarp { transpose: 3, ..ClipWarp::default() }.is_default());
     assert!(ClipWarp { transpose: 3, ..ClipWarp::default() }.tempo_is_default());
+}
+
+fn pulse(bpm: f64, bars: usize, sub: usize, jitter_ms: f64) -> Vec<Transient> {
+    let rate = 44_100.0;
+    let step = 60.0 / bpm / sub as f64;
+    let mut seed = 7u64;
+    (0..bars * 4 * sub)
+        .map(|i| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let j = ((seed >> 33) as f64 / (1u64 << 31) as f64 - 0.5) * 2.0 * jitter_ms / 1000.0;
+            let t = (0.25 + i as f64 * step + j).max(0.0);
+            Transient { source: (t * rate) as u64, strength: if i % sub == 0 { 1.0 } else { 0.4 }, percussive: true }
+        })
+        .collect()
+}
+
+#[test]
+fn tempo_detection_finds_the_beat() {
+    use saine_core::warp::estimate_bpm;
+    assert_eq!(estimate_bpm(&pulse(123.0, 16, 2, 3.0), 44_100.0), Some(123.0), "eighths with jitter");
+    assert_eq!(estimate_bpm(&pulse(140.0, 16, 1, 0.0), 44_100.0), Some(140.0), "quarters");
+    assert_eq!(estimate_bpm(&pulse(128.0, 8, 4, 2.0), 44_100.0), Some(128.0), "sixteenths");
+    let b = estimate_bpm(&pulse(97.5, 16, 2, 1.0), 44_100.0).unwrap();
+    assert!((b - 97.5).abs() <= 0.1, "{b}");
+    assert_eq!(estimate_bpm(&pulse(75.0, 16, 1, 0.0), 44_100.0), Some(150.0), "folded into 80..160");
+}
+
+#[test]
+fn tempo_detection_declines_without_a_pulse() {
+    use saine_core::warp::estimate_bpm;
+    assert_eq!(estimate_bpm(&pulse(120.0, 1, 1, 0.0), 44_100.0), None, "four hits are too few");
+    let mut seed = 3u64;
+    let mut t = 0.0;
+    let scattered: Vec<Transient> = (0..120)
+        .map(|_| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            t += 0.05 + (seed >> 33) as f64 / (1u64 << 31) as f64 * 0.6;
+            Transient { source: (t * 44_100.0) as u64, strength: 1.0, percussive: true }
+        })
+        .collect();
+    assert_eq!(estimate_bpm(&scattered, 44_100.0), None);
 }

@@ -794,12 +794,86 @@ fn steps() -> Vec<Step> {
         Check("mix.wav written: stereo 24-bit at the engine rate, the full length, not silent; dialog closed", Box::new(|c, a| {
             let path = c.export.dir.join("mix.wav");
             let (rate, ch, s) = crate::wavgen::read_wav(&path)?;
-            let _ = std::fs::remove_dir_all(&c.export.dir);
             let peak = s.iter().fold(0f32, |m, v| m.max(v.abs()));
             let frames = s.len() / 2;
             (rate as f64 == c.engine.sample_rate() && ch == 2 && frames as u64 == c.export_frames() && peak > 0.01 && !a.global::<Studio>().get_export_open())
                 .then_some(())
                 .ok_or(format!("rate {rate} ch {ch} frames {frames} vs {} peak {peak}", c.export_frames()))
+        })),
+        Do("⇧⌘E again", Box::new(|a| key(a, "E", true, true))),
+        Check("export dialog open again", Box::new(|_c, a| a.global::<Studio>().get_export_open().then_some(()).ok_or("not open".into()))),
+        Do("click the Stems card", Box::new(|a| click(a, (1440.0 - 442.0) / 2.0 + 17.0 + 131.47 + 6.8 + 65.0, (820.0 - 340.4) / 2.0 + 44.2 + 22.0))),
+        Check("Stems picked: Tracks row, one file per heard track with clips, Folder label", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let n = crate::dialogs::stem_tracks(c.project(), crate::dialogs::StemsPick::AllTracks, None).len();
+            (s.get_export_recipe() == 1 && n > 0 && s.get_export_stems_text() == format!("{n} WAV file{}", if n == 1 { "" } else { "s" }) && s.get_export_name_label() == "Folder" && s.get_export_tracks_label() == "All individual tracks")
+                .then_some(())
+                .ok_or(format!("recipe {} files {n} text {} label {}", s.get_export_recipe(), s.get_export_stems_text(), s.get_export_name_label()))
+        })),
+        Do("click the Tracks picker", Box::new(|a| click(a, (1440.0 - 442.0) / 2.0 + 71.4 + 30.0, (820.0 - 340.4) / 2.0 + 105.4 + 10.2))),
+        Check("Tracks menu lists both choices, a gap and every track", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let rows = s.get_export_tracks_items().row_count();
+            (s.get_export_tracks_menu_open() && rows == 3 + c.project().tracks.len()).then_some(()).ok_or(format!("open {} rows {rows}", s.get_export_tracks_menu_open()))
+        })),
+        Do("Escape", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("Escape closed the menu, not the dialog", Box::new(|_c, a| {
+            let s = a.global::<Studio>();
+            (s.get_export_open() && !s.get_export_tracks_menu_open()).then_some(()).ok_or("menu or dialog state".into())
+        })),
+        DoC("name the stems mix and click Export", Box::new(|a, ctl| {
+            ctl.borrow_mut().export.name = "mix".into();
+            click(a, (1440.0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (820.0 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
+        })),
+        Check("'mix Stems' holds one 'NN Name.wav' per track, full length, summing to the mixdown", Box::new(|c, a| {
+            let p = c.project();
+            let tracks = crate::dialogs::stem_tracks(p, crate::dialogs::StemsPick::AllTracks, None);
+            let folder = c.export.dir.join("mix Stems");
+            let (_, _, mix) = crate::wavgen::read_wav(&c.export.dir.join("mix.wav"))?;
+            let mut sum = vec![0f32; mix.len()];
+            for (i, id) in tracks.iter().enumerate() {
+                let name = crate::dialogs::stem_file_name(i, &p.track(*id).map_or(String::new(), |t| t.name.clone()));
+                let (rate, ch, s) = crate::wavgen::read_wav(&folder.join(&name))?;
+                if rate as f64 != c.engine.sample_rate() || ch != 2 || s.len() != mix.len() {
+                    return Err(format!("{name}: rate {rate} ch {ch} len {} vs {}", s.len(), mix.len()));
+                }
+                sum.iter_mut().zip(&s).for_each(|(a, b)| *a += b);
+            }
+            let files = std::fs::read_dir(&folder).map_or(0, |d| d.count());
+            let _ = std::fs::remove_dir_all(&c.export.dir);
+            let err = sum.iter().zip(&mix).fold(0f32, |m, (a, b)| m.max((a - b).abs()));
+            let peak = mix.iter().fold(0f32, |m, v| m.max(v.abs()));
+            (files == tracks.len() && err < 1e-3 && peak > 0.01 && !a.global::<Studio>().get_export_open())
+                .then_some(())
+                .ok_or(format!("files {files} of {} max error {err} peak {peak}", tracks.len()))
+        })),
+        Do("⇧⌘E for the Project export", Box::new(|a| key(a, "E", true, true))),
+        Check("export dialog open for Project", Box::new(|_c, a| a.global::<Studio>().get_export_open().then_some(()).ok_or("not open".into()))),
+        DoC("click the Project card, name it set, click Export", Box::new(|a, ctl| {
+            click(a, (1440.0 - 442.0) / 2.0 + 17.0 + 2.0 * (131.47 + 6.8) + 65.0, (820.0 - 340.4) / 2.0 + 44.2 + 22.0);
+            let mut c = ctl.borrow_mut();
+            c.export.dir = std::env::temp_dir().join(format!("saine-selftest-project-{}", std::process::id()));
+            c.export.name = "set".into();
+        })),
+        Check("Project picked: recipe 2, Name label", Box::new(|_c, a| {
+            let s = a.global::<Studio>();
+            (s.get_export_recipe() == 2 && s.get_export_name_label() == "Name").then_some(()).ok_or(format!("recipe {}", s.get_export_recipe()))
+        })),
+        Do("click Export", Box::new(|a| click(a, (1440.0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (820.0 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05))),
+        Check("'set Project' holds set.als that passes the Live structure check, its renders and the notes", Box::new(|c, a| {
+            let folder = c.export.dir.join("set Project");
+            let gz = std::fs::read(folder.join("set.als")).map_err(|e| format!("set.als: {e}"))?;
+            let mut xml = String::new();
+            std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(&gz[..]), &mut xml).map_err(|e| e.to_string())?;
+            let sum = crate::live_set::validate(&xml, Some(&folder))?;
+            let p = c.project();
+            let with_clips = p.tracks.iter().filter(|t| !t.clips.is_empty() || !t.midi_clips.is_empty()).count();
+            let midi: usize = p.tracks.iter().map(|t| t.midi_clips.len()).sum();
+            let notes = folder.join("Saine Export Notes.txt").is_file();
+            let _ = std::fs::remove_dir_all(&c.export.dir);
+            (sum.audio_clips == with_clips && sum.midi_clips == midi && notes && !a.global::<Studio>().get_export_open())
+                .then_some(())
+                .ok_or(format!("{sum:?} vs {with_clips} rendered, {midi} MIDI clips; notes {notes}"))
         })),
         Do("⌘N (file.new) with unsaved changes", Box::new(|a| key(a, "n", true, false))),
         Check("Save changes? prompt open, project untouched", Box::new(|c, a| {
@@ -1001,6 +1075,35 @@ fn steps() -> Vec<Step> {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
             clip.warp.is_default().then_some(()).ok_or(format!("warp {:?}", clip.warp))
         })),
+        DoC("reverse: toolbar Reverse -> On", Box::new(|_, ctl| ctl.borrow_mut().ac_reverse_toggle())),
+        Check("reversed: toolbar On, the engine's reversed copy exists and the editor draws it, one undo step", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let rev = c.reversed_assets.get(&clip.asset).copied().ok_or("no reversed copy")?;
+            let slot = c.clip_wave(clip).map(|w| w.0.base);
+            (clip.warp.reverse && a.global::<Studio>().get_ac_reversed() && slot == c.peaks.slot(rev).map(|s| s.base) && c.doc.undo_label() == Some("Toggle clip reverse"))
+                .then_some(())
+                .ok_or(format!("reverse {} ui {} slot {slot:?} undo {:?}", clip.warp.reverse, a.global::<Studio>().get_ac_reversed(), c.doc.undo_label()))
+        })),
+        Do("reversed: drag clip 1 left edge right by 1 beat", Box::new(move |a| drag(a, bx(9.0) + 1.5, TRACK0_Y + 40.0, bx(10.0) + 1.5, TRACK0_Y + 40.0))),
+        Check("reversed left trim cuts the window's end: start 10, offset still 0.5 s, 4 beats", Box::new(|c, _| {
+            let p = c.project();
+            let cl = &p.tracks[0].clips[0];
+            let a = p.asset(cl.asset).unwrap();
+            let off_s = cl.source_offset as f64 / a.sample_rate;
+            let beats = p.clip_length_ticks(cl) as f64 / PPQ as f64;
+            ((cl.start as f64 / PPQ as f64 - 10.0).abs() < 1e-6 && (off_s - 0.5).abs() < 1e-3 && (beats - 4.0).abs() < 0.01)
+                .then_some(())
+                .ok_or(format!("start {} off {off_s}s len {beats}", cl.start))
+        })),
+        DoC("reverse: undo the trim and the toggle", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.undo();
+            c.undo();
+        })),
+        Check("reverse undone", Box::new(|c, a| {
+            let cl = &c.project().tracks[0].clips[0];
+            (!cl.warp.reverse && !a.global::<Studio>().get_ac_reversed() && cl.start == 9 * PPQ).then_some(()).ok_or(format!("reverse {} start {}", cl.warp.reverse, cl.start))
+        })),
         DoC("transpose: drag the Transpose value 50 pt right", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
             c.ac_transpose_drag(0, 0.0, 0.0);
@@ -1035,6 +1138,67 @@ fn steps() -> Vec<Step> {
         Check("transpose undone", Box::new(|c, a| {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
             (clip.warp.is_default() && a.global::<Studio>().get_ac_transpose_text() == "0 st").then_some(()).ok_or(format!("warp {:?}", clip.warp))
+        })),
+        DoC("original BPM: double-click to type", Box::new(|_, ctl| ctl.borrow_mut().ac_edit_start(crate::warpedit::AcEdit::OriginalBpm))),
+        Check("Original BPM edit box open with the shown value", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_ac_edit_field() == 0 && s.get_ac_edit_text() == "120").then_some(()).ok_or(format!("field {} text {}", s.get_ac_edit_field(), s.get_ac_edit_text()))
+        })),
+        DoC("original BPM: type 96.5, Enter, then reopen it (shows 97) and click away", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.ac_edit_commit("96.5");
+            c.ac_edit_start(crate::warpedit::AcEdit::OriginalBpm);
+            let shown = c.ac_clip().cloned().map(|clip| c.ac_edit_initial(&clip)).unwrap_or_default();
+            c.ac_edit_commit(&shown);
+        })),
+        Check("typed BPM turns warp on at 96.5: the clip follows 120 BPM (longer), one undo step", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let p = c.project();
+            let secs = clip.source_length as f64 / p.asset(clip.asset).unwrap().sample_rate;
+            let beats = p.clip_length_ticks(clip) as f64 / PPQ as f64;
+            (clip.warp.enabled && clip.warp.original_bpm == 96.5 && (beats - secs * 96.5 / 60.0).abs() < 0.01 && a.global::<Studio>().get_ac_edit_field() == -1 && c.doc.undo_label() == Some("Set original BPM"))
+                .then_some(())
+                .ok_or(format!("warp {:?} beats {beats} undo {:?}", clip.warp, c.doc.undo_label()))
+        })),
+        DoC("original BPM: clear the field, Enter", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.ac_edit_start(crate::warpedit::AcEdit::OriginalBpm);
+            c.ac_edit_commit("");
+        })),
+        Check("an empty BPM turns warp off (Clear original BPM)", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            (!clip.warp.enabled && c.doc.undo_label() == Some("Clear original BPM")).then_some(()).ok_or(format!("warp {:?} undo {:?}", clip.warp, c.doc.undo_label()))
+        })),
+        DoC("transpose: type -7, then nonsense, then Escape, then Enter on an edit opened for another clip", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.ac_edit_start(crate::warpedit::AcEdit::Transpose);
+            c.ac_edit_commit("-7");
+            c.ac_edit_start(crate::warpedit::AcEdit::Transpose);
+            c.ac_edit_commit("abc");
+            c.ac_edit_start(crate::warpedit::AcEdit::Transpose);
+            c.ac_edit_cancel();
+            c.ac_edit_start(crate::warpedit::AcEdit::Transpose);
+            if let Some(e) = c.pr.ac_edit.as_mut() {
+                e.1 = saine_core::ClipId(u64::MAX);
+            }
+            c.ac_edit_commit("5");
+        })),
+        Check("typed transpose -7 st; nonsense, Escape and another clip's edit change nothing", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let s = a.global::<Studio>();
+            (clip.warp.transpose == -7 && s.get_ac_transpose_text() == "-7 st" && s.get_ac_edit_field() == -1 && c.doc.undo_label() == Some("Set clip pitch shift"))
+                .then_some(())
+                .ok_or(format!("transpose {} text {} field {} undo {:?}", clip.warp.transpose, s.get_ac_transpose_text(), s.get_ac_edit_field(), c.doc.undo_label()))
+        })),
+        DoC("typed values: undo three times", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            for _ in 0..3 {
+                c.undo();
+            }
+        })),
+        Check("typed values undone", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            clip.warp.is_default().then_some(()).ok_or(format!("warp {:?}", clip.warp))
         })),
         DoC("back to the Devices tab", Box::new(|_, ctl| ctl.borrow_mut().set_bottom_tab(BottomTab::Devices))),
         Do("select clip 1 and press Delete", Box::new(move |a| {
@@ -4343,6 +4507,200 @@ fn field_device_steps() -> Vec<Step> {
     ]
 }
 
+/// Window point at the centre of step-sequencer cell (row, step): editor at window (260, 452).
+fn seq_xy(a: &AppWindow, row: u16, step: u16) -> (f32, f32) {
+    let s = a.global::<Studio>();
+    let (pitch, w, scroll) = (s.get_seq_col_pitch(), s.get_seq_cell_w(), s.get_seq_scroll_y());
+    (260.0 + crate::stepseq::COL_X0 + step as f32 * pitch + w / 2.0, 452.0 + crate::stepseq::ROW_Y0 + row as f32 * crate::stepseq::ROW_PITCH + 9.75 - scroll)
+}
+
+fn seq_clip(c: &Controller) -> Option<saine_core::MidiClip> {
+    c.pr_clip().filter(|m| m.pattern.is_some()).cloned()
+}
+
+fn seq_cells(c: &Controller) -> Vec<(u8, u16)> {
+    seq_clip(c).and_then(|m| m.pattern).map(|p| p.cells.iter().map(|x| (x.key, x.step)).collect()).unwrap_or_default()
+}
+
+/// Step sequencer: a Drum Rack track makes pattern clips; cells, lanes, M / S, footer menus,
+/// Double, the Piano roll tab and conversion, each one undo step. Restores the track's
+/// instrument and removes its clip at the end.
+fn step_sequencer_steps() -> Vec<Step> {
+    use Step::*;
+    let hist = Rc::new(Cell::new(0usize));
+    let prev: Rc<RefCell<Option<saine_core::Device>>> = Rc::new(RefCell::new(None));
+    fn one(hc: &Rc<Cell<usize>>, c: &Controller, label: &str) -> Result<(), String> {
+        let n = c.doc.history_labels().len();
+        let was = hc.get();
+        hc.set(n);
+        (n == was + 1 && c.doc.undo_label() == Some(label)).then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want {label})", c.doc.undo_label()))
+    }
+    let h = |_: u8| hist.clone();
+    let (h0, h1, h2, h3, h4, h5, h6, h7, h8, h9) = (h(0), h(1), h(2), h(3), h(4), h(5), h(6), h(7), h(8), h(9));
+    let (p0, p1) = (prev.clone(), prev);
+    vec![
+        Do("seq: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("seq: instrument track gets a Drum Rack; Cmd+Shift+M at bar 60 makes a pattern clip; select it", Box::new(move |a, ctl| {
+            let mut c = ctl.borrow_mut();
+            let Some(t) = track_of(&c, TrackKind::Instrument).map(|i| c.project().tracks[i].id) else { return };
+            c.select_track(t);
+            *p0.borrow_mut() = c.project().track(t).and_then(|t| t.instrument_plugin.clone());
+            c.execute(saine_core::Command::SetInstrumentPlugin { track: t, device: Some(saine_core::builtin::drum_rack::DRUM_RACK.instantiate()) });
+            c.seek_beats(236.0);
+            h0.set(c.doc.history_labels().len());
+            if let Some(id) = c.insert_midi_clip() {
+                c.select_clip(Some(id));
+            }
+            c.update_ui(a);
+        })),
+        Check("seq: one-bar 'Pattern' clip of 16 1/16 steps on pads; Sequencer tab shown with 16 pad rows", Box::new(move |c, a| {
+            one(&h1, c, "Insert MIDI Clip")?;
+            let m = seq_clip(c).ok_or("no pattern clip open")?;
+            let p = m.pattern.clone().unwrap_or_default();
+            let s = a.global::<Studio>();
+            let names: Vec<String> = slint::Model::iter(&s.get_seq_rows()).map(|r| r.name.to_string()).collect();
+            let ok = m.name == "Pattern" && m.length == 4 * PPQ && p.steps == 16 && p.rows == saine_core::steps::StepRows::Pads && s.get_seq_visible() && s.get_seq_tabs() && names.first().map(String::as_str) == Some("Pad 1") && s.get_seq_row_count() == 16;
+            ok.then_some(()).ok_or(format!("{} len {} steps {} rows {names:?} visible {}", m.name, m.length, p.steps, s.get_seq_visible()))
+        })),
+        Do("seq: click Pad 1 steps 1 and 5", Box::new(|a| {
+            for s in [0, 4] {
+                let (x, y) = seq_xy(a, 0, s);
+                click(a, x, y);
+            }
+        })),
+        Check("seq: two cells, two notes (C1 at 0 and 1 beat), two undo steps 'Edit Step Sequencer'", Box::new(move |c, _| {
+            let n = c.doc.history_labels().len();
+            let ok = seq_cells(c) == vec![(36, 0), (36, 4)] && n == h2.get() + 2 && c.doc.undo_label() == Some("Edit Step Sequencer");
+            let notes: Vec<(u8, i64)> = seq_clip(c).map(|m| m.notes.iter().map(|n| (n.pitch, n.start)).collect()).unwrap_or_default();
+            h2.set(n);
+            (ok && notes == vec![(36, 0), (36, PPQ)]).then_some(()).ok_or(format!("cells {:?} notes {notes:?}", seq_cells(c)))
+        })),
+        Do("seq: drag across Pad 2 steps 1..4 (paint)", Box::new(|a| {
+            let (x0, y) = seq_xy(a, 1, 0);
+            let (x1, _) = seq_xy(a, 1, 3);
+            drag(a, x0, y, x1, y);
+        })),
+        Check("seq: Pad 2 painted on steps 1..4 in one undo step", Box::new(move |c, _| {
+            one(&h3, c, "Edit Step Sequencer")?;
+            let pad2: Vec<u16> = seq_cells(c).into_iter().filter(|x| x.0 == 37).map(|x| x.1).collect();
+            (pad2 == vec![0, 1, 2, 3]).then_some(()).ok_or(format!("pad 2 {pad2:?}"))
+        })),
+        Do("seq: Velocity tab, drag Pad 1 step 1 down 60 pt", Box::new(|a| {
+            click(a, 260.0 + 220.0, 452.0 + 13.5);
+            let (x, y) = seq_xy(a, 0, 0);
+            drag(a, x, y, x, y + 60.0);
+        })),
+        Check("seq: Velocity lane shown; Pad 1 step 1 softer (one undo step), its note follows", Box::new(move |c, a| {
+            one(&h4, c, "Edit Step Sequencer")?;
+            let p = seq_clip(c).and_then(|m| m.pattern).ok_or("no pattern")?;
+            let v = p.cell(36, 0).map(|x| x.velocity).unwrap_or(0);
+            let nv = seq_clip(c).and_then(|m| m.notes.iter().find(|n| n.start == 0 && n.pitch == 36).map(|n| n.velocity)).unwrap_or(0);
+            (a.global::<Studio>().get_seq_lane() == 1 && v < 60 && v >= 1 && nv == v).then_some(()).ok_or(format!("lane {} velocity {v} note {nv}", a.global::<Studio>().get_seq_lane()))
+        })),
+        Do("seq: Tie tab, drag Pad 1 step 5 two steps right", Box::new(|a| {
+            click(a, 260.0 + 404.0, 452.0 + 13.5);
+            let (x, y) = seq_xy(a, 0, 4);
+            let (x2, _) = seq_xy(a, 0, 6);
+            drag(a, x, y, x2, y);
+        })),
+        Check("seq: Pad 1 step 5 ties two steps (note three steps long, less the gate gap)", Box::new(move |c, _| {
+            one(&h5, c, "Edit Step Sequencer")?;
+            let p = seq_clip(c).and_then(|m| m.pattern).ok_or("no pattern")?;
+            let len = seq_clip(c).and_then(|m| m.notes.iter().find(|n| n.start == PPQ && n.pitch == 36).map(|n| n.length)).unwrap_or(0);
+            (p.cell(36, 4).map(|x| x.tie) == Some(2) && len > 2 * PPQ / 4 && len <= 3 * PPQ / 4).then_some(()).ok_or(format!("tie {:?} length {len}", p.cell(36, 4).map(|x| x.tie)))
+        })),
+        Do("seq: click Pad 2's M", Box::new(|a| {
+            let s = a.global::<Studio>();
+            click(a, 260.0 + 101.0, 452.0 + crate::stepseq::ROW_Y0 + crate::stepseq::ROW_PITCH + 9.75 - s.get_seq_scroll_y());
+        })),
+        Check("seq: Pad 2 muted (one undo step): its notes stay, playback leaves them out", Box::new(move |c, a| {
+            one(&h6, c, "Edit Step Sequencer")?;
+            let m = seq_clip(c).ok_or("no pattern")?;
+            let muted = slint::Model::row_data(&a.global::<Studio>().get_seq_rows(), 1).is_some_and(|r| r.muted && !r.audible);
+            let ok = muted && m.notes.iter().any(|n| n.pitch == 37) && m.playing_notes().iter().all(|n| n.pitch != 37);
+            ok.then_some(()).ok_or(format!("muted {muted}"))
+        })),
+        DoC("seq: footer Length 32, Rate 1/8; Double", Box::new(|a, ctl| {
+            {
+                let mut c = ctl.borrow_mut();
+                c.clip_menu_open(6);
+                c.clip_menu_pick(4);
+                c.clip_menu_open(7);
+                c.clip_menu_pick(3);
+                c.update_ui(a);
+            }
+            click(a, 260.0 + 20.0, 452.0 + 13.5);
+        })),
+        Check("seq: 64 steps of 1/8 (three undo steps); the footer reads 64 / 1/8; Double is now disabled", Box::new(move |c, a| {
+            let n = c.doc.history_labels().len();
+            let was = h7.get();
+            h7.set(n);
+            let p = seq_clip(c).and_then(|m| m.pattern).ok_or("no pattern")?;
+            let s = a.global::<Studio>();
+            let ok = n == was + 3 && p.steps == 64 && p.rate == saine_core::steps::StepRate::Eighth && s.get_seq_length_text() == "64" && s.get_seq_rate_text() == "1/8" && !s.get_seq_can_double();
+            ok.then_some(()).ok_or(format!("history +{} steps {} rate {:?}", n - was, p.steps, p.rate))
+        })),
+        Do("seq: Piano roll tab", Box::new(|a| click(a, 5.0 + 420.0, 425.0 + 13.5))),
+        Check("seq: piano roll shown for the pattern clip", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (!s.get_seq_visible() && s.get_seq_tabs() && s.get_pr_visible() && !c.seq_visible()).then_some(()).ok_or("sequencer still shown".into())
+        })),
+        DoC("seq: convert the clip to plain MIDI", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            if let Some(id) = c.pr_clip().map(|m| m.id) {
+                c.convert_clip(id);
+            }
+        })),
+        Check("seq: plain MIDI clip with the pattern's notes (one undo step); no sequencer tabs", Box::new(move |c, a| {
+            one(&h8, c, "Convert to MIDI Clip")?;
+            let m = c.pr_clip().ok_or("clip closed")?;
+            (m.pattern.is_none() && !m.notes.is_empty() && !a.global::<Studio>().get_seq_tabs()).then_some(()).ok_or("still a pattern".into())
+        })),
+        DoC("seq: stretch the plain clip to 20 beats (notes in the first bar only), convert to a pattern", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let Some(m) = c.pr_clip().cloned() else { return };
+            c.execute(saine_core::Command::ResizeMidiClip { clip: m.id, start: m.start, length: 20 * PPQ });
+            c.convert_clip(m.id);
+        })),
+        Check("seq: conversion refused (the clip is longer than 64 steps would repeat), notes unchanged; undo the resize", Box::new(|c, _| {
+            let m = c.pr_clip().ok_or("clip closed")?;
+            let ok = m.pattern.is_none() && m.length == 20 * PPQ && !m.notes.is_empty() && c.status_text().is_some_and(|s| s.starts_with("Too long"));
+            ok.then_some(()).ok_or(format!("pattern {} status {:?}", m.pattern.is_some(), c.status_text()))
+        })),
+        DoC("seq: undo the resize", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            let _ = c.doc.undo();
+            c.ui_dirty = true;
+            c.update_ui(a);
+        })),
+        DoC("seq: Cmd+Z, then remove the clip and restore the instrument", Box::new(move |a, ctl| {
+            {
+                let mut c = ctl.borrow_mut();
+                let _ = c.doc.undo();
+                c.ui_dirty = true;
+                c.update_ui(a);
+                h9.set(seq_clip(&c).is_some() as usize);
+                if let Some(id) = c.pr_clip().map(|m| m.id) {
+                    c.execute(saine_core::Command::RemoveMidiClip { clip: id });
+                }
+                if let Some(t) = track_of(&c, TrackKind::Instrument).map(|i| c.project().tracks[i].id) {
+                    let d = p1.borrow_mut().take();
+                    c.execute(saine_core::Command::SetInstrumentPlugin { track: t, device: d });
+                }
+                c.select_clip(None);
+                c.pr.focused = false;
+                c.set_bottom_tab(crate::controller::BottomTab::Devices);
+                c.seek_beats(0.0);
+            }
+        })),
+        Check("seq: undo brought the pattern back; clip removed, instrument restored", Box::new(move |c, _| {
+            let rack = track_of(c, TrackKind::Instrument).and_then(|i| c.project().tracks[i].instrument_plugin.as_ref()).is_some_and(crate::stepseq::is_drum_rack);
+            let left = track_of(c, TrackKind::Instrument).map_or(0, |i| c.project().tracks[i].midi_clips.iter().filter(|m| m.start >= 236 * PPQ).count());
+            (hist.get() == 1 && !rack && left == 0).then_some(()).ok_or(format!("undo restored {} rack {rack} clips left {left}", hist.get()))
+        })),
+    ]
+}
+
 /// Track height handle and timeline / bottom-panel splitter (appended last; restores both).
 fn splitter_steps() -> Vec<Step> {
     use Step::*;
@@ -4791,6 +5149,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(time_fx_steps());
     all.extend(automation_steps());
     all.extend(field_device_steps());
+    all.extend(step_sequencer_steps());
     all.extend(splitter_steps());
     all.extend(files_steps());
     all.extend(section_steps());

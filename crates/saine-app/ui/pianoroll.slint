@@ -120,10 +120,10 @@ component FooterValue inherits Rectangle {
         moved => { if (!root.cycle) { Studio.pr-value(root.field, 1, (self.mouse-y - self.pressed-y) / 1px); } }
     }
 }
-component FooterLabel inherits Text {
+export component FooterLabel inherits Text {
     height: 14px; color: #63656c; font-size: 9.75px; font-weight: 500; vertical-alignment: center;
 }
-component FooterTitle inherits Text {
+export component FooterTitle inherits Text {
     height: 14px; color: Tokens.text-bright; font-size: 10px; font-weight: 600; vertical-alignment: center;
 }
 component FooterSwitch inherits Rectangle {
@@ -134,6 +134,25 @@ component FooterSwitch inherits Rectangle {
 }
 
 // Audio clip toolbar entry: grey label, clip-coloured value, optional menu chevron.
+// Typed value (double-click on Original BPM or Transpose): Enter or focus loss commits, Escape cancels.
+component AcEditBox inherits Rectangle {
+    in property <length> font-size;
+    y: -2px; width: 30px; height: 18px; border-radius: 4px; background: #26272b;
+    border-width: 0.5px; border-color: Studio.clip-color;
+    input := TextInput {
+        x: 3px; width: parent.width - 6px; height: parent.height;
+        text: Studio.ac-edit-text; color: #ffffff; font-size: root.font-size; font-weight: 600;
+        vertical-alignment: center; single-line: true;
+        init => { self.focus(); self.select-all(); }
+        accepted => { Studio.ac-edit-commit(self.text); }
+        changed has-focus => { if (!self.has-focus) { Studio.ac-edit-commit(self.text); } }
+        key-pressed(e) => {
+            if (e.text == Key.Escape) { Studio.ac-edit-cancel(); return accept; }
+            reject
+        }
+    }
+}
+
 component AcField inherits Rectangle {
     in property <string> label;
     in property <string> value;
@@ -142,6 +161,7 @@ component AcField inherits Rectangle {
     in property <bool> enabled: true;
     in property <int> menu: -1;   // Studio.clip-menu index this field opens
     in property <bool> bpm-drag;  // the value drags (Original BPM)
+    in property <bool> toggle;    // a press toggles it (Reverse)
     height: 14px;
     // Content width, so the menu TouchArea covers this field only.
     width: max(v.x + v.preferred-width, root.chevron-x + 8px);
@@ -152,6 +172,12 @@ component AcField inherits Rectangle {
         ink: root.enabled ? Studio.clip-color : #3c3d43; stroke-width: 1.4px;
     }
     if root.menu >= 0 && root.enabled: TouchArea { x: 0; width: root.chevron-x + 10px; clicked => { Studio.clip-menu-open(root.menu); } }
+    if root.toggle: TouchArea {
+        x: 0; width: root.value-x + 20px;
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.ac-reverse-toggle(); }
+        }
+    }
     if root.bpm-drag: TouchArea {
         x: root.value-x - 2px; width: 30px;
         mouse-cursor: MouseCursor.ew-resize;
@@ -160,8 +186,11 @@ component AcField inherits Rectangle {
             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.ac-bpm-drag(2, 0, 0); }
         }
         moved => { Studio.ac-bpm-drag(1, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+        double-clicked => { Studio.ac-edit-start(0); }
     }
+    if root.bpm-drag && Studio.ac-edit-field == 0: AcEditBox { x: root.value-x - 3px; font-size: 9.75px; }
 }
+
 
 // Clip editor dropdown (Studio.clip-menu-items). the reference app's toolbar menu: #212227, 8 px radius,
 // 4 px padding, 11 px semibold rows with 4 / 12 px padding, the active row tinted (ink 7 %);
@@ -215,7 +244,7 @@ export component PianoRoll inherits Rectangle {
     // Audio toolbar: Original BPM (drag), Speed, Warp and Mode edit the clip's warp;
     // Reverse is a PLACEHOLDER (no reverse in the clip model yet).
     if Studio.ac-visible: Rectangle {
-        AcField { x: 7px; y: 7px; label: "Reverse"; value: "Off"; value-x: 42px; }
+        AcField { x: 7px; y: 7px; label: "Reverse"; value: Studio.ac-reversed ? "On" : "Off"; value-x: 42px; toggle: true; }
         AcField { x: 74.8px; y: 7px; label: "Original BPM"; value: Studio.ac-bpm-text; value-x: 65.4px; bpm-drag: true; }
         AcField { x: 170px; y: 7px; label: "Speed"; value: Studio.ac-speed-text; value-x: 36.2px; chevron-x: 55.2px; menu: 0; }
         AcField { x: 243.95px; y: 7px; label: "Warp"; value: Studio.ac-warped ? "On" : "Off"; value-x: 30px; chevron-x: 53.6px; menu: 1; }
@@ -302,7 +331,9 @@ export component PianoRoll inherits Rectangle {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.ac-transpose-drag(2, 0, 0); }
             }
             moved => { Studio.ac-transpose-drag(1, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+            double-clicked => { Studio.ac-edit-start(1); }
         }
+        if Studio.ac-edit-field == 1: AcEditBox { x: 515.5px; y: root.r2 - 2px; font-size: 10px; }
     }
     if !Studio.ac-visible: Rectangle {
     FooterTitle { x: 362px; y: root.r1; text: "Quantize"; }

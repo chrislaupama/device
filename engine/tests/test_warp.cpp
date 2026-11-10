@@ -462,3 +462,27 @@ TEST_CASE(onsets_find_hits_and_classify_them) {
     CHECK(on[0].percussive == 0);
     CHECK(se_asset_detect_onsets(e, 12345, on.data(), on.size(), &n) == SE_ERR_NOT_FOUND);
 }
+
+TEST_CASE(asset_reverse_plays_back_to_front) {
+    EngineHandle e;
+    const std::vector<float> l = ramp(1000, 1e-3f), r = constant(1000, 0.25f);
+    const uint64_t a = load_asset(e, {l, r});
+    se_asset_info info{};
+    REQUIRE(se_asset_reverse(e, a, &info) == SE_OK);
+    CHECK(info.asset_id != a);
+    CHECK(info.frames == 1000);
+    CHECK(info.channels == 2);
+    CHECK(se_asset_reverse(e, 9999, nullptr) == SE_ERR_NOT_FOUND);
+    // Play the copy: the left channel is the ramp backwards.
+    WarpSession s;
+    s.add(1, info.asset_id, 0, 1000);
+    REQUIRE(s.publish(e) == SE_OK);
+    REQUIRE(se_transport_play(e) == SE_OK);
+    const std::vector<float> out = render(e, 1000, 250);
+    for (std::size_t f : {0u, 1u, 500u, 999u}) CHECK_NEAR(out[2 * f] / kCentre, l[999 - f], 1e-6);
+    CHECK_NEAR(out[1] / kCentre, 0.25, 1e-6);
+    // The original is untouched, and the copy is released on its own.
+    CHECK(se_asset_release(e, info.asset_id) == SE_OK);
+    se_asset_info orig{};
+    CHECK(se_asset_get_info(e, a, &orig) == SE_OK);
+}

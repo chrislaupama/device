@@ -7,6 +7,8 @@
 // with recording off and on (the recording writer thread runs concurrently).
 //   features=1: also enable a 48 001-frame loop (odd length, so the wrap
 //   lands mid-block) and the metronome at 120 BPM.
+// A pattern table renders instrument tracks playing step-sequencer patterns
+// (4 to 16 rows, up to 64 steps a bar split into 16 repeats each).
 // A second table renders MIDI: instrument tracks (no clips) with 8 notes
 // held for the whole run plus one short note retriggered every 100 ms, so
 // 8-9 synth voices sound on every track in every block.
@@ -311,6 +313,75 @@ Result run_midi(uint32_t tracks, uint32_t blocks, const se_synth_params* params)
     return r;
 }
 
+// Pattern: `tracks` instrument tracks playing a step pattern as saine-core
+// bakes and repeats it (one bar of 4/4 at 120 BPM): `rows` keys, a hit on
+// every one of `steps` steps per bar, each split into `repeat` hits with
+// the gate gap, repeated for the whole run. This is the note density the step
+// sequencer can publish; the engine plays it as ordinary notes.
+Result run_pattern(uint32_t tracks, uint32_t blocks, uint32_t rows, uint32_t steps, uint32_t repeat) {
+    se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
+    se_engine* e = se_engine_create(&cfg);
+    if (!e) {
+        std::fprintf(stderr, "create failed: %s\n", se_last_error());
+        std::exit(1);
+    }
+    const int64_t total = static_cast<int64_t>(blocks) * kBlock;
+    const double bar = 2.0 * kRate;
+    const double step = bar / steps;
+    const double span = step / repeat;
+    const double gap = 0.02 * kRate / 2.0; // 0.02 beat at 120 BPM
+    const double gate = repeat > 1 ? std::max(span * 0.5, span - gap) : step;
+    std::vector<std::vector<se_note_desc>> notes(tracks);
+    std::vector<se_track_desc_v3> tds(tracks);
+    for (uint32_t t = 0; t < tracks; ++t) {
+        for (double b0 = 0; b0 < static_cast<double>(total); b0 += bar) {
+            for (uint32_t s = 0; s < steps; ++s) {
+                for (uint32_t k = 0; k < repeat; ++k) {
+                    for (uint32_t row = 0; row < rows; ++row) {
+                        se_note_desc n{};
+                        n.start = static_cast<int64_t>(b0 + s * step + k * span);
+                        n.end = n.start + static_cast<int64_t>(gate);
+                        n.pitch = static_cast<uint8_t>(36 + row);
+                        n.velocity = static_cast<uint8_t>(70 + (s * 7 + row) % 50);
+                        notes[t].push_back(n);
+                    }
+                }
+            }
+        }
+        std::sort(notes[t].begin(), notes[t].end(), [](const se_note_desc& a, const se_note_desc& b) { return a.start < b.start; });
+        se_track_desc_v3& td = tds[t];
+        td = se_track_desc_v3{};
+        td.track_id = t + 1;
+        td.gain = 0.25f;
+        td.instrument = 1;
+        td.notes = notes[t].data();
+        td.note_count = static_cast<uint32_t>(notes[t].size());
+    }
+    se_session_desc_v3 sd{tds.data(), tracks, 0.5f};
+    if (se_session_publish_v3(e, &sd) != SE_OK) {
+        std::fprintf(stderr, "publish failed: %s\n", se_last_error());
+        std::exit(1);
+    }
+    se_transport_play(e);
+    std::vector<float> buf(kBlock * 2);
+    std::vector<double> times(blocks);
+    const auto t_all = std::chrono::steady_clock::now();
+    for (uint32_t b = 0; b < blocks; ++b) {
+        const auto t0 = std::chrono::steady_clock::now();
+        se_render_offline(e, buf.data(), kBlock);
+        times[b] = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+    }
+    const double wall_us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t_all).count();
+    se_engine_destroy(e);
+    std::sort(times.begin(), times.end());
+    Result r{};
+    r.us_per_block_avg = wall_us / blocks;
+    r.us_per_block_p99 = times[static_cast<std::size_t>(0.99 * (blocks - 1))];
+    r.us_per_block_max = times.back();
+    r.rt_ratio = static_cast<double>(blocks) * kBlock / kRate * 1e6 / wall_us;
+    return r;
+}
+
 // Input: `tracks` armed + monitored audio tracks (mono inputs spread over 8
 // injected channels, every 3rd one stereo), optionally recording to a temp
 // dir, rendered through se_render_offline_with_input.
@@ -482,6 +553,22 @@ int main(int argc, char** argv) {
         for (uint32_t tracks : {8u, 32u, 128u}) {
             const Result r = run_midi(tracks, blocks, patch.params);
             std::printf("%8u %14.2f %14.2f %14.2f %15.1fx\n", tracks, r.us_per_block_avg, r.us_per_block_p99,
+                        r.us_per_block_max, r.rt_ratio);
+        }
+    }
+
+    std::printf("\nPattern: instrument tracks (default synth) playing a step pattern, 1 bar at 120 BPM repeated\n");
+    std::printf("%8s %22s %14s %14s %14s %16s\n", "tracks", "rows x steps x repeat", "avg us/block", "p99 us/block",
+                "max us/block", "realtime ratio");
+    const struct {
+        uint32_t rows, steps, repeat;
+    } patterns[] = {{4, 16, 1}, {16, 16, 1}, {16, 32, 4}, {16, 64, 16}};
+    for (uint32_t tracks : {8u, 32u}) {
+        for (const auto& p : patterns) {
+            const Result r = run_pattern(tracks, blocks, p.rows, p.steps, p.repeat);
+            char shape[32];
+            std::snprintf(shape, sizeof shape, "%u x %u x %u", p.rows, p.steps, p.repeat);
+            std::printf("%8u %22s %14.2f %14.2f %14.2f %15.1fx\n", tracks, shape, r.us_per_block_avg, r.us_per_block_p99,
                         r.us_per_block_max, r.rt_ratio);
         }
     }

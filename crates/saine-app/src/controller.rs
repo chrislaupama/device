@@ -13,7 +13,7 @@ use crate::assistant_provider::Provider;
 use crate::mixer::{self, Ballistics, MASTER_METER_ID};
 use crate::pianoroll::{self, PrState};
 use crate::synth::SynthUi;
-use crate::{AppWindow, AutoExtra, AutoLabel, ChatEntry, ChoiceItem, ClipLabel, DeviceCard, HighlightRect, MenuItem, MixerStrip, PluginRow, RulerLabel, StripMeter, Studio, SynthDisplay, SynthParam, TrackLevel, TrackRow, TreeRow, YLabel};
+use crate::{AppWindow, AutoExtra, AutoLabel, ChatEntry, ChoiceItem, ClipLabel, DeviceCard, HighlightRect, MenuItem, MixerStrip, PluginRow, RulerLabel, SeqCell, SeqNum, SeqRow, StripMeter, Studio, SynthDisplay, SynthParam, TrackLevel, TrackRow, TreeRow, YLabel};
 use saine_core::{
     Asset, AssetId, Clip, ClipId, ColorIndex, Command, Document, MidiClip, Origin, PPQ, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, gain_to_db, persist, snapshot,
 };
@@ -196,7 +196,7 @@ pub enum JobResult {
     /// Plugin catalogue scan finished (src/devices.rs).
     PluginScan(Result<saine_engine::ScanReport, String>),
     /// Transients of an engine asset (warped clips, src/warpedit.rs).
-    Onsets { engine_asset: u64, result: Result<Vec<saine_engine::Onset>, String> },
+    Onsets { engine_asset: u64, result: Result<Vec<saine_engine::Onset>, String>, tempo: Option<f64> },
 }
 
 /// Blocking decode + peak analysis. Runs on a worker thread.
@@ -250,6 +250,9 @@ pub enum MenuAction {
     Transpose,
     Quantize,
     Humanize,
+    /// Saine extension: plain MIDI clip to a step pattern, and back.
+    ToPattern,
+    ToMidi,
     Ask,
     Paste,
     SectionRename,
@@ -276,9 +279,13 @@ pub struct Controller {
     pub engine: Arc<Engine>,
     pub rate: f64,
     pub(crate) asset_map: HashMap<AssetId, u64>,
+    /// The engine's reversed copies of assets that reversed clips play (src/warpedit.rs).
+    pub(crate) reversed_assets: HashMap<AssetId, u64>,
     /// Detected transients per engine asset (asset frames), and those being analysed.
     pub(crate) onsets: HashMap<u64, Vec<saine_core::Transient>>,
     pub(crate) onsets_pending: std::collections::HashSet<u64>,
+    /// Tempo detected from each analysed engine asset's transients (\`warp::estimate_bpm\`).
+    pub(crate) tempos: HashMap<u64, Option<f64>>,
     pub peaks: PeakStore,
     pub selected_track: Option<TrackId>,
     pub selected_clip: Option<ClipId>,
@@ -334,6 +341,9 @@ pub struct Controller {
     pub(crate) section_vis: Vec<crate::sections::SectionVis>,
     pub(crate) pr_bar_model: Rc<VecModel<RulerLabel>>,
     pub(crate) pr_key_model: Rc<VecModel<YLabel>>,
+    pub(crate) seq_row_model: Rc<VecModel<SeqRow>>,
+    pub(crate) seq_cell_model: Rc<VecModel<SeqCell>>,
+    pub(crate) seq_num_model: Rc<VecModel<SeqNum>>,
     pub(crate) menu_model: Rc<VecModel<MenuItem>>,
     pub(crate) sub_model: Rc<VecModel<MenuItem>>,
     /// Metronome on/off (app preference, not saved in the project).
@@ -359,6 +369,7 @@ pub struct Controller {
     pub rec: crate::recording::RecState,
     pub settings: crate::settings::SettingsState,
     pub(crate) input_menu_model: Rc<VecModel<ChoiceItem>>,
+    pub(crate) export_tracks_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) settings_menu_model: Rc<VecModel<ChoiceItem>>,
     // ---- plugin devices (src/devices.rs) ----
     pub devices: crate::devices::DevicesUi,
@@ -391,8 +402,10 @@ impl Controller {
             engine,
             rate,
             asset_map: HashMap::new(),
+            reversed_assets: HashMap::new(),
             onsets: HashMap::new(),
             onsets_pending: std::collections::HashSet::new(),
+            tempos: HashMap::new(),
             peaks: PeakStore::default(),
             selected_track: None,
             selected_clip: None,
@@ -438,6 +451,9 @@ impl Controller {
             section_vis: Vec::new(),
             pr_bar_model: Rc::new(VecModel::default()),
             pr_key_model: Rc::new(VecModel::default()),
+            seq_row_model: Rc::new(VecModel::default()),
+            seq_cell_model: Rc::new(VecModel::default()),
+            seq_num_model: Rc::new(VecModel::default()),
             menu_model: Rc::new(VecModel::default()),
             sub_model: Rc::new(VecModel::default()),
             metronome_on: false,
@@ -459,6 +475,7 @@ impl Controller {
             rec: Default::default(),
             settings: Default::default(),
             input_menu_model: Rc::new(VecModel::default()),
+            export_tracks_model: Rc::new(VecModel::default()),
             settings_menu_model: Rc::new(VecModel::default()),
             devices: Default::default(),
             tree_model: Rc::new(VecModel::default()),
@@ -497,12 +514,16 @@ impl Controller {
         s.set_highlights(ModelRc::from(self.highlights_model.clone()));
         s.set_pr_bar_labels(ModelRc::from(self.pr_bar_model.clone()));
         s.set_pr_key_labels(ModelRc::from(self.pr_key_model.clone()));
+        s.set_seq_rows(ModelRc::from(self.seq_row_model.clone()));
+        s.set_seq_cells(ModelRc::from(self.seq_cell_model.clone()));
+        s.set_seq_nums(ModelRc::from(self.seq_num_model.clone()));
         s.set_menu_items(ModelRc::from(self.menu_model.clone()));
         s.set_sub_items(ModelRc::from(self.sub_model.clone()));
         s.set_synth_params(ModelRc::from(self.synth_params_model.clone()));
         s.set_synth_displays(ModelRc::from(self.synth_displays_model.clone()));
         s.set_synth_menu_items(ModelRc::from(self.synth_menu_model.clone()));
         s.set_input_menu_items(ModelRc::from(self.input_menu_model.clone()));
+        s.set_export_tracks_items(ModelRc::from(self.export_tracks_model.clone()));
         s.set_settings_menu_items(ModelRc::from(self.settings_menu_model.clone()));
         s.set_tree(ModelRc::from(self.tree_model.clone()));
         s.set_files(ModelRc::from(self.files_model.clone()));
@@ -607,7 +628,7 @@ impl Controller {
     /// The session the engine should play right now: the document plus any
     /// automation lane being edited.
     pub fn current_snapshot(&self) -> snapshot::SessionSnapshot {
-        let (mut snap, _skipped) = snapshot::build_with_transients(self.doc.project(), self.rate, &self.asset_map, &self.transients_by_asset());
+        let (mut snap, _skipped) = snapshot::build_full(self.doc.project(), self.rate, &self.asset_map, &self.reversed_assets, &self.transients_by_asset());
         // Automation drag / write preview: the pending lane replaces the model lane.
         if let Some((key, lane)) = &self.auto.pending {
             let p = self.doc.project();
@@ -628,6 +649,7 @@ impl Controller {
 
     pub fn publish(&mut self) {
         self.request_onsets();
+        self.ensure_reversed_assets();
         let snap = self.current_snapshot();
         if let Err(e) = self.engine.publish(&snap) {
             self.set_status(format!("Engine rejected the session: {e}"), 6);
@@ -902,7 +924,7 @@ impl Controller {
                 JobResult::Recorded { doc_epoch, takes } => self.finish_recorded(doc_epoch, takes),
                 JobResult::TestTone(r) => self.finish_test_tone(r),
                 JobResult::PluginScan(r) => self.finish_plugin_scan(r),
-                JobResult::Onsets { engine_asset, result } => self.finish_onsets(engine_asset, result),
+                JobResult::Onsets { engine_asset, result, tempo } => self.finish_onsets(engine_asset, result, tempo),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
                     if doc_epoch != self.doc_epoch {
                         if let Ok((info, _)) = result {
@@ -992,6 +1014,7 @@ impl Controller {
     pub fn replace_project(&mut self, project: Project) {
         self.close_all_editors();
         self.onsets.clear();
+        self.tempos.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
         self.doc = Document::new(project);
@@ -1029,10 +1052,11 @@ impl Controller {
         };
         self.stop_return();
         self.close_all_editors();
-        for (_, ea) in self.asset_map.drain() {
+        for (_, ea) in self.asset_map.drain().chain(self.reversed_assets.drain()) {
             let _ = self.engine.release_asset(ea);
         }
         self.onsets.clear();
+        self.tempos.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
         self.doc = Document::new(loaded.project);
@@ -1191,6 +1215,18 @@ impl Controller {
                         let p = self.project();
                         let Some(c) = p.clip(clip) else { return };
                         let (s0, off0, len0) = orig;
+                        if c.warp.reverse {
+                            // Reversed: the left edge plays the window's end, so it trims (or extends) that.
+                            let l0 = p.clip_ticks_at(c, (off0 + len0) as f64);
+                            let frames = p.asset(c.asset).map_or(off0 + len0, |a| a.frames);
+                            let min_start = s0 + (l0 - p.clip_ticks_at(c, frames as f64)).ceil() as Ticks;
+                            let max_start = s0 + l0 as Ticks - PPQ / 4;
+                            let start = snap(beat).clamp(min_start.max(0), max_start.max(s0));
+                            let end = p.clip_source_at(c, l0 - (start - s0) as f64).round().clamp((off0 + 1) as f64, frames as f64) as u64;
+                            self.drag = Some(Drag::TrimLeft { clip, orig, cur: (start, off0, end - off0) });
+                            self.ui_dirty = true;
+                            return;
+                        }
                         let at = |t: Ticks| p.clip_source_at(c, (t - s0) as f64);
                         let mut start = snap(beat);
                         // Source material before the current offset (warped clips follow their map).
@@ -1212,10 +1248,19 @@ impl Controller {
                     }
                     Drag::TrimRight { clip, orig, .. } => {
                         let Some((_, _, _, _, _, frames)) = self.clip_region(clip) else { return };
-                        let (s0, off0, _) = orig;
+                        let (s0, off0, len0) = orig;
                         let p = self.project();
                         let Some(c) = p.clip(clip) else { return };
                         let end = snap(beat).max(s0 + PPQ / 4);
+                        if c.warp.reverse {
+                            // Reversed: the right edge plays the window's start.
+                            let l0 = p.clip_ticks_at(c, (off0 + len0) as f64);
+                            let end = end.min((s0 + (l0 - p.clip_ticks_at(c, 0.0)).floor() as Ticks).max(s0 + PPQ / 4));
+                            let off = p.clip_source_at(c, l0 - (end - s0) as f64).round().clamp(0.0, (off0 + len0 - 1) as f64) as u64;
+                            self.drag = Some(Drag::TrimRight { clip, orig, cur: (s0, off, off0 + len0 - off) });
+                            self.ui_dirty = true;
+                            return;
+                        }
                         let len = (p.clip_source_at(c, (end - s0) as f64) - off0 as f64).round().max(1.0) as u64;
                         let len = len.clamp(1, frames - off0);
                         self.drag = Some(Drag::TrimRight { clip, orig, cur: (s0, off0, len) });
@@ -1252,7 +1297,8 @@ impl Controller {
 
     /// Waveform of an audio clip: its pyramid slot (once the peaks exist) and its pieces.
     pub fn clip_wave(&self, clip: &Clip) -> Option<(crate::peaks::Slot, Vec<crate::peaks::WaveSeg>)> {
-        let slot = self.asset_map.get(&clip.asset).and_then(|ea| self.peaks.slot(*ea))?;
+        let assets = if clip.warp.reverse { &self.reversed_assets } else { &self.asset_map };
+        let slot = assets.get(&clip.asset).and_then(|ea| self.peaks.slot(*ea))?;
         Some((slot, crate::peaks::wave_segments(self.project(), clip, self.rate)))
     }
 
