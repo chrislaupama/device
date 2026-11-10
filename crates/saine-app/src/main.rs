@@ -23,6 +23,7 @@ mod assistant_panel;
 mod assistant_provider;
 mod automation;
 mod clipedit;
+mod composer;
 mod controller;
 mod device_canvas;
 mod device_mod;
@@ -100,6 +101,8 @@ struct Args {
     clip_menu_state: bool,
     /// Step sequencer review state: lane tab shown (0 Steps .. 4 Tie), or None.
     seq_state: Option<i32>,
+    /// Clip sidebar pattern list review: 0 empty MIDI clip, 1 chords made, 2 drum patterns made.
+    patterns_state: Option<i32>,
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
     /// 1 export dialog, 2 unsaved-changes prompt, 3 export dialog on Stems, 4 with its Tracks menu open, 5 on Project.
@@ -232,6 +235,10 @@ fn parse_args() -> Result<Args, String> {
                 "reference-input-menu" => {
                     a.reference_default = true;
                     a.input_menu_state = true;
+                }
+                s if s.starts_with("review-patterns-") => {
+                    a.reference_default = true;
+                    a.patterns_state = s.rsplit('-').next().and_then(|l| l.parse().ok());
                 }
                 s if s.starts_with("review-step-sequencer") => {
                     a.reference_default = true;
@@ -856,6 +863,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    if let Some(state) = args.patterns_state {
+        let mut c = ctl.borrow_mut();
+        if let Some(inst) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id) {
+            c.select_track(inst);
+            if state == 2 {
+                c.execute(saine_core::Command::SetInstrumentPlugin { track: inst, device: Some(saine_core::builtin::drum_rack::DRUM_RACK.instantiate()) });
+            }
+            c.seek_beats(20.0);
+            if let Some(id) = c.insert_midi_clip() {
+                c.select_clip(Some(id));
+                if state >= 1 {
+                    c.composer_create();
+                }
+            }
+        }
+    }
     if let Some(lane) = args.seq_state {
         // Drum Rack track with a one-bar drum pattern (reference z100-clip-pattern-sequencer-*:
         // Pad 1 on steps 1, 5, 9, 13, Pad 2 on 5, Pad 3 on 9), plus lane values to show.
@@ -1389,6 +1412,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_seq_pointer, |c, kind: i32, x: f32, y: f32| c.seq_pointer(kind, x, y));
     on!(on_seq_scroll, |c, dy: f32| c.seq_scroll(dy));
     on!(on_seq_swing, |c, phase: i32, dy: f32| c.seq_swing(phase, dy));
+    on!(on_composer_create, |c| c.composer_create());
+    on!(on_composer_load, |c, i: i32| c.composer_load(i.max(0) as usize));
+    on!(on_composer_original_pick, |c| c.composer_original());
     on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
     on!(on_menu_dismiss, |c| c.menu_close());

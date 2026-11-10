@@ -928,6 +928,7 @@ export component AppWindow inherits Window {
         if Studio.clip-menu >= 0: cm := Rectangle {
             property <length> bp-y: root.height - 5px - root.bottom-h;
             property <int> m: Studio.clip-menu;
+            property <length> fy: Studio.composer-drums ? 71.5px : 104px;   // sidebar Type / Genre row
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.clip-menu-open(-1); } } }
             DropMenu {
@@ -937,10 +938,10 @@ export component AppWindow inherits Window {
                 section: cm.m == 3 ? 4 : cm.m == 7 ? 6 : -1;
                 width: cm.m <= 1 ? 47.6px : cm.m == 2 ? 56px : cm.m == 3 ? 108px : cm.m == 4 ? 61px : cm.m == 5 ? 104px : 72px;
                 x: cm.m == 0 ? 260px + 206.2px : cm.m == 1 ? 260px + 273.95px : cm.m == 2 ? 260px + 347.6px : cm.m == 3 ? 260px + 387px : cm.m == 4 ? 5px + 48px
-                    : cm.m == 6 ? 260px + 211.5px : cm.m == 7 ? 260px + 264px : 5px + 153px;
+                    : cm.m == 6 ? 260px + 211.5px : cm.m == 7 ? 260px + 264px : Studio.composer-drums ? 5px + 53.5px : 5px + 153px;
                 y: cm.m <= 2 ? cm.bp-y + 27px + 24.4px
                     : cm.m == 3 || cm.m >= 6 ? root.height - 5px - 24.5px + 7px - 10.2px - self.height
-                    : cm.bp-y + 124.4px + self.height <= root.height - 5px ? cm.bp-y + 124.4px : cm.bp-y + 104px - 5.1px - self.height;
+                    : cm.bp-y + cm.fy + 20.4px + self.height <= root.height - 5px ? cm.bp-y + cm.fy + 20.4px : cm.bp-y + cm.fy - 5.1px - self.height;
                 picked(i) => { Studio.clip-menu-pick(i); }
             }
         }

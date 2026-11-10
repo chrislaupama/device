@@ -13,7 +13,7 @@ use crate::assistant_provider::Provider;
 use crate::mixer::{self, Ballistics, MASTER_METER_ID};
 use crate::pianoroll::{self, PrState};
 use crate::synth::SynthUi;
-use crate::{AppWindow, AutoExtra, AutoLabel, ChatEntry, ChoiceItem, ClipLabel, DeviceCard, HighlightRect, MenuItem, MixerStrip, PluginRow, RulerLabel, SeqCell, SeqNum, SeqRow, StripMeter, Studio, SynthDisplay, SynthParam, TrackLevel, TrackRow, TreeRow, YLabel};
+use crate::{AppWindow, AutoExtra, AutoLabel, ChatEntry, ChoiceItem, ClipLabel, DeviceCard, HighlightRect, MenuItem, MixerStrip, PluginRow, RulerLabel, PatternRow, SeqCell, SeqNum, SeqRow, StripMeter, Studio, SynthDisplay, SynthParam, TrackLevel, TrackRow, TreeRow, YLabel};
 use saine_core::{
     Asset, AssetId, Clip, ClipId, ColorIndex, Command, Document, MidiClip, Origin, PPQ, Project, Ticks, Track, TrackId, TrackKind, db_to_gain, gain_to_db, persist, snapshot,
 };
@@ -341,6 +341,9 @@ pub struct Controller {
     pub(crate) seq_row_model: Rc<VecModel<SeqRow>>,
     pub(crate) seq_cell_model: Rc<VecModel<SeqCell>>,
     pub(crate) seq_num_model: Rc<VecModel<SeqNum>>,
+    pub(crate) composer_row_model: Rc<VecModel<PatternRow>>,
+    /// The rows last pushed to `composer_row_model` (rebuilt only when they change).
+    pub(crate) composer_rows_shown: std::cell::RefCell<Vec<crate::composer::RowView>>,
     pub(crate) menu_model: Rc<VecModel<MenuItem>>,
     pub(crate) sub_model: Rc<VecModel<MenuItem>>,
     /// Metronome on/off (app preference, not saved in the project).
@@ -449,6 +452,8 @@ impl Controller {
             seq_row_model: Rc::new(VecModel::default()),
             seq_cell_model: Rc::new(VecModel::default()),
             seq_num_model: Rc::new(VecModel::default()),
+            composer_row_model: Rc::new(VecModel::default()),
+            composer_rows_shown: Default::default(),
             menu_model: Rc::new(VecModel::default()),
             sub_model: Rc::new(VecModel::default()),
             metronome_on: false,
@@ -511,6 +516,7 @@ impl Controller {
         s.set_seq_rows(ModelRc::from(self.seq_row_model.clone()));
         s.set_seq_cells(ModelRc::from(self.seq_cell_model.clone()));
         s.set_seq_nums(ModelRc::from(self.seq_num_model.clone()));
+        s.set_composer_rows(ModelRc::from(self.composer_row_model.clone()));
         s.set_menu_items(ModelRc::from(self.menu_model.clone()));
         s.set_sub_items(ModelRc::from(self.sub_model.clone()));
         s.set_synth_params(ModelRc::from(self.synth_params_model.clone()));

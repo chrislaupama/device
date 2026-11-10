@@ -97,6 +97,10 @@ pub fn load(dir: &Path) -> Result<Loaded, PersistError> {
         if c.pattern.as_ref().is_some_and(|p| p.validate().is_err()) {
             c.pattern = None;
         }
+        // Likewise a pattern list the sidebar can't show: the clip keeps the notes it plays.
+        if c.composer.as_ref().is_some_and(|k| k.validate().is_err()) {
+            c.composer = None;
+        }
     }
     // Resolve media: prefer the project-relative path (project was moved
     // together with its media), fall back to the absolute path.
