@@ -234,6 +234,19 @@ fn merge_midi_moves_notes_to_the_span_start_and_cuts_at_each_clip_end() {
 }
 
 #[test]
+fn render_project_leaves_plugin_devices_off_the_other_tracks() {
+    let (mut d, track) = overlap_doc();
+    let clap = PluginRef { format: PluginFormat::Clap, id: "test.plugin".into(), path: None, name: "Test".into(), vendor: String::new(), version: String::new(), kind: PluginKind::Effect };
+    let inst = d.project().tracks[1].id;
+    d.execute(Command::AddDevice { track: inst, index: None, device: Device::new(clap) }, Origin::User).unwrap();
+    let span = render_plan::consolidate_group(d.project(), ClipId(101)).unwrap();
+    assert_eq!(span.track, track);
+    let r = render_plan::render_project(d.project(), &span, render_plan::RenderMode::Bounce);
+    assert!(r.track(inst).unwrap().devices.is_empty() && r.track(inst).unwrap().mute, "the muted instrument track keeps no plugin");
+    assert_eq!(d.project().track(inst).unwrap().devices.len(), 1, "the project itself is not touched");
+}
+
+#[test]
 fn merge_midi_plays_pattern_clips_repeated_and_without_muted_rows() {
     let mut d = Document::new(Project::default());
     let inst = d.project().tracks[1].id;

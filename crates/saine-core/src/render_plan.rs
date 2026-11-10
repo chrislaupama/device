@@ -5,6 +5,7 @@
 //! [`render_project`]; nothing here touches the engine.
 
 use crate::automation::AutomationTarget;
+use crate::builtin;
 use crate::midi::{self, MidiClip};
 use crate::{ClipId, Project, Ticks, TrackId, TrackKind};
 
@@ -83,13 +84,18 @@ pub fn consolidate_group(p: &Project, id: ClipId) -> Option<ClipSpan> {
 }
 
 /// A copy of `p` for one render: `span.track` unmuted with only the span's clips, every
-/// other track muted, and the track and master settings `mode` asks for.
+/// other track muted (and without plugin devices: they are silent, and a render does not
+/// instantiate plugins, see saine_engine::offline), and the track and master settings `mode` asks for.
 pub fn render_project(p: &Project, span: &ClipSpan, mode: RenderMode) -> Project {
     let mut r = p.clone();
     for t in &mut r.tracks {
         t.solo = false;
         if t.id != span.track {
             t.mute = true;
+            t.devices.retain(|d| builtin::def_of(d).is_some());
+            if t.instrument_plugin.as_ref().is_some_and(|d| builtin::def_of(d).is_none()) {
+                t.instrument_plugin = None;
+            }
             if mode == RenderMode::Material {
                 t.clips.clear();
                 t.midi_clips.clear();

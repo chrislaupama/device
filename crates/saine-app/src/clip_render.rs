@@ -22,6 +22,7 @@ use crate::dialogs::{TAIL_S, create_free_file, file_safe};
 use crate::peaks::Pyramid;
 use crate::wavgen;
 use saine_core::render_plan::{self, ClipSpan, RenderMode};
+use saine_core::automation::AutomationTarget;
 use saine_core::{Asset, AssetId, Clip, ClipId, Command, MidiClip, Track, TrackId, TrackKind};
 use saine_engine::offline::{self, OfflineError, OfflineRender};
 use saine_engine::{AssetInfo, Engine};
@@ -453,6 +454,7 @@ impl Controller {
                 let id = TrackId(alloc());
                 let mut t = Track::new(id, TrackKind::Audio, &format!("{} (Bounce)", src.name.trim()), src.color);
                 (t.gain, t.pan) = (src.gain, src.pan);
+                t.automation = src.automation.iter().filter(|l| matches!(l.target, AutomationTarget::Volume | AutomationTarget::Pan)).cloned().collect();
                 t.clips.push(new_clip(name, span.start));
                 cmds.push(Command::AddTrack { index: Some(index + 1), track: t });
                 cmds.push(Command::SetClipEnabled { clip: *source, enabled: false });

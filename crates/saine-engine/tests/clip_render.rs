@@ -193,6 +193,18 @@ fn a_track_with_a_plugin_device_is_refused_before_any_engine_is_made() {
 }
 
 #[test]
+fn a_plugin_on_another_track_does_not_stop_a_render() {
+    let mut r = rig(1.0);
+    let (a, inst) = (r.doc.project().tracks[0].id, r.doc.project().tracks[1].id);
+    let clap = PluginRef { format: PluginFormat::Clap, id: "test.plugin".into(), path: None, name: "Test".into(), vendor: String::new(), version: String::new(), kind: PluginKind::Effect };
+    r.doc.execute(Command::AddDevice { track: a, index: None, device: Device::new(clap) }, Origin::User).unwrap();
+    r.doc.execute(Command::AddMidiClip { track: inst, clip: midi_clip(0, 1, 60) }, Origin::User).unwrap();
+    let id = r.doc.project().tracks[1].midi_clips[0].id;
+    let span = render_plan::clip_span(r.doc.project(), id).unwrap();
+    assert!(peak(&r.render(&span, RenderMode::Bounce, 0.0)) > 0.02);
+}
+
+#[test]
 #[ignore]
 fn bench_four_bar_clip_render() {
     let mut r = rig(8.0);

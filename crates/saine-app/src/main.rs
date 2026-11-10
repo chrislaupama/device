@@ -676,7 +676,11 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
-            if c.devmm_cancel() || c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) || c.cancel_clip_render() {
+            if c.devmm_cancel() || c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
+                return true;
+            }
+            let popup_open = c.settings.open || c.settings.menu.is_some() || c.menu.open || c.rec.input_menu.is_some() || c.synth.menu.is_some() || c.devices.menu.is_some() || c.auto.picker.is_some() || c.rename.is_some() || c.rename_section.is_some() || c.pr.menu >= 0;
+            if !popup_open && c.cancel_clip_render() {
                 return true;
             }
             if c.settings.menu.is_some() {
@@ -1601,7 +1605,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let start = ctl.borrow().export.dir.clone();
                 let picked = rfd::FileDialog::new().set_title("Export audio").add_filter("WAV", &["wav"]).set_file_name(name).set_directory(&start).save_file();
                 if let Some(path) = picked {
-                    ctl.borrow_mut().export_clip(id, &path.with_extension("wav"), true);
+                    let is_wav = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav"));
+                    let path = if is_wav {
+                        path
+                    } else {
+                        let mut name = path.into_os_string();
+                        name.push(".wav");
+                        name.into()
+                    };
+                    ctl.borrow_mut().export_clip(id, &path, true);
                 }
             }
             if let Some(a) = aw.upgrade() {

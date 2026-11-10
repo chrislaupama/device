@@ -5827,7 +5827,8 @@ fn clip_render_steps() -> Vec<Step> {
             clip.name = "bounce me".into();
             clip.notes = vec![Note { id: 1, pitch: 60, start: 0, length: 2 * PPQ, velocity: 110 }, Note { id: 2, pitch: 67, start: 2 * PPQ, length: PPQ, velocity: 110 }];
             let track = Track::new(TrackId(id), TrackKind::Instrument, "Render synth", saine_core::ColorIndex::FIRST);
-            c.execute(Command::Batch { label: "clip render test".into(), commands: vec![Command::AddTrack { index: None, track }, Command::AddMidiClip { track: TrackId(id), clip }] });
+            let fader = saine_core::automation::AutomationLane { target: saine_core::automation::AutomationTarget::Volume, enabled: true, points: vec![saine_core::automation::AutoPoint { time: 4 * PPQ, value: -6.0, curve: 0.0 }] };
+            c.execute(Command::Batch { label: "clip render test".into(), commands: vec![Command::AddTrack { index: None, track }, Command::AddMidiClip { track: TrackId(id), clip }, Command::SetAutomationLane { track: Some(TrackId(id)), target: fader.target.clone(), lane: Some(fader) }] });
             s.midi_track = id;
             s.midi_clip = id + 1;
             let ids: Vec<u64> = c.project().track(TrackId(s.audio_track)).map(|t| t.clips.iter().map(|k| k.id.0).collect()).unwrap_or_default();
@@ -5908,7 +5909,7 @@ fn clip_render_steps() -> Vec<Step> {
             let i = p.track_index(TrackId(s.midi_track)).ok_or("no instrument track")?;
             let t = p.tracks.get(i + 1).ok_or("no track below")?;
             let k = t.clips.first().ok_or("no clip")?;
-            let ok = t.kind == TrackKind::Audio && t.name == "Render synth (Bounce)" && k.start == 4 * PPQ && (96_000..=192_001).contains(&k.source_length) && p.midi_clip(ClipId(s.midi_clip)).is_some_and(|m| m.disabled) && c.doc.undo_label() == Some("Bounce to New Track") && c.selected_track == Some(t.id);
+            let ok = t.kind == TrackKind::Audio && t.name == "Render synth (Bounce)" && k.start == 4 * PPQ && (96_000..=192_001).contains(&k.source_length) && t.automation.iter().any(|l| l.target == saine_core::automation::AutomationTarget::Volume) && p.midi_clip(ClipId(s.midi_clip)).is_some_and(|m| m.disabled) && c.doc.undo_label() == Some("Bounce to New Track") && c.selected_track == Some(t.id);
             ok.then_some(()).ok_or(format!("{} {:?} {:?}", t.name, t.clips.first().map(|k| (k.start, k.source_length)), c.doc.undo_label()))
         })),
         Check("clip render: the bounced file has sound (the synth was rendered)", Box::new(|c, _| {
