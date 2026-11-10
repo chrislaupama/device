@@ -124,6 +124,11 @@ int main(int argc, char** argv) {
             // a parallel ctest run (-j) can't see that change mid-test.
             if (std::strncmp(t.name, "plugin_scanner_", 15) == 0)
                 std::fprintf(f, "set_tests_properties(\"%s\" PROPERTIES RESOURCE_LOCK saine_test_plugins)\n", t.name);
+            // The duplex loopback test checks real-time capture timing; with
+            // CPU-heavy tests beside it on a small CI runner the streams miss
+            // cycle after cycle and clicks drop out. Run it on its own.
+            if (std::strcmp(t.name, "device_duplex_loopback_take_lands_on_the_clicks") == 0)
+                std::fprintf(f, "set_tests_properties(\"%s\" PROPERTIES RUN_SERIAL TRUE)\n", t.name);
         }
         std::fclose(f);
         return 0;
