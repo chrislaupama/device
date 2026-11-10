@@ -477,9 +477,12 @@ impl crate::controller::Controller {
             return self.release_live_set(job);
         }
         if self.doc.revision() != job.revision && self.doc.is_dirty() {
-            if let Some(PendingImport::Loaded(old)) = self.pending_import.replace(PendingImport::Loaded(Box::new(job))) {
-                self.release_live_set(*old);
+            // The prompt already asks on behalf of something the user chose since: that wins.
+            if self.unsaved_open {
+                self.release_live_set(job);
+                return self.set_status("Live set import cancelled", 4);
             }
+            self.pending_import = Some(PendingImport::Loaded(Box::new(job)));
             self.unsaved_open = true;
             self.ui_dirty = true;
             return;
