@@ -389,6 +389,9 @@ fn parse_args() -> Result<Args, String> {
             }
             "--assistant-width" => {
                 let w: f32 = value(&mut i)?.parse().map_err(|e| format!("--assistant-width: {e}"))?;
+                if !w.is_finite() {
+                    return Err(format!("--assistant-width: {w} is not a width"));
+                }
                 a.assistant_width = Some(w.clamp(297.0, 600.0));
             }
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),

@@ -145,7 +145,7 @@ impl Controller {
 
     pub fn chat_w_at(&self, win_w: f32, sounds: bool) -> f32 {
         match self.chat_drag {
-            Some(d) => d.w,
+            Some(d) => d.w.min(chat_drag_max(win_w, sounds)),
             None => chat_width(self.chat_saved_w(), win_w, sounds),
         }
     }
