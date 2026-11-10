@@ -21,6 +21,8 @@ pub enum EditError {
     TrackNotFound(TrackId),
     #[error("clip {0:?} not found")]
     ClipNotFound(ClipId),
+    #[error("section {0:?} not found")]
+    SectionNotFound(SectionId),
     #[error("asset {0:?} not found")]
     AssetNotFound(AssetId),
     #[error("invalid value for {field}: {reason}")]
@@ -45,6 +47,14 @@ pub enum Command {
     AddTrack { index: Option<usize>, track: Track },
     RemoveTrack { track: TrackId },
     RenameTrack { track: TrackId, name: String },
+    /// Insert a section at `index` (end when `None`). If `section.id` is 0 a fresh id is allocated.
+    InsertSection { index: Option<usize>, section: Section },
+    RemoveSection { section: SectionId },
+    RenameSection { section: SectionId, name: String },
+    /// Length in ticks, at least one beat. Later sections move with its end.
+    SetSectionLength { section: SectionId, length: Ticks },
+    /// Move a section to `index` in the list (sections stay contiguous).
+    MoveSection { section: SectionId, index: usize },
     SetTrackGain { track: TrackId, gain: f32 },
     SetTrackPan { track: TrackId, pan: f32 },
     SetTrackMute { track: TrackId, mute: bool },
@@ -61,6 +71,10 @@ pub enum Command {
     /// Set the visible region of a clip (left/right trim).
     TrimClip { clip: ClipId, start: Ticks, source_offset: u64, source_length: u64 },
     SetClipGain { clip: ClipId, gain: f32 },
+    /// Replace a clip's warp settings. `label` names the edit for undo
+    /// ("Set clip speed", "Move warp marker", …); successive edits with the
+    /// same label on the same clip coalesce (drags).
+    SetClipWarp { clip: ClipId, warp: crate::warp::ClipWarp, label: String },
     SetTempo { bpm: f64 },
     SetTimeSignature { numerator: u8, denominator: u8 },
     SetLoop { enabled: bool, start: Ticks, end: Ticks },
@@ -145,6 +159,11 @@ impl Command {
             Command::AddTrack { track, .. } => format!("Add {} Track", kind_name(track.kind)),
             Command::RemoveTrack { .. } => "Delete Track".into(),
             Command::RenameTrack { .. } => "Rename Track".into(),
+            Command::InsertSection { .. } => "Add Section".into(),
+            Command::RemoveSection { .. } => "Delete Section".into(),
+            Command::RenameSection { .. } => "Rename Section".into(),
+            Command::SetSectionLength { .. } => "Resize Section".into(),
+            Command::MoveSection { .. } => "Move Section".into(),
             Command::SetTrackGain { .. } => "Track Volume Change".into(),
             Command::SetTrackPan { .. } => "Track Pan Change".into(),
             Command::SetTrackMute { .. } => "Mute Change".into(),
@@ -157,6 +176,7 @@ impl Command {
             Command::MoveClip { .. } => "Move Clip".into(),
             Command::TrimClip { .. } => "Trim Clip".into(),
             Command::SetClipGain { .. } => "Clip Gain Change".into(),
+            Command::SetClipWarp { label, .. } => label.clone(),
             Command::SetTempo { .. } => "Tempo Change".into(),
             Command::SetTimeSignature { .. } => "Time Signature Change".into(),
             Command::SetLoop { .. } => "Loop Change".into(),
@@ -212,6 +232,7 @@ impl Command {
             Command::SetTrackPan { track, .. } => Some(format!("pan:{}", track.0)),
             Command::SetMasterGain { .. } => Some("master_gain".into()),
             Command::SetClipGain { clip, .. } => Some(format!("clipgain:{}", clip.0)),
+            Command::SetClipWarp { clip, label, .. } => Some(format!("clipwarp:{}:{label}", clip.0)),
             Command::SetTempo { .. } => Some("tempo".into()),
             Command::SetSynthParams { track, params } => Some(format!("synth:{}:{}", track.0, params.preset)),
             Command::SetDeviceParam { device, param, .. } => Some(format!("devparam:{}:{param}", device.0)),
@@ -230,6 +251,10 @@ impl Command {
                     return Err(EditError::DuplicateId(track.id.0));
                 } else {
                     p.next_id = p.next_id.max(track.id.0 + 1);
+                }
+                let inner = track.clips.iter().map(|c| c.id.0).chain(track.midi_clips.iter().map(|c| c.id.0)).chain(track.devices.iter().chain(track.instrument_plugin.as_ref()).map(|d| d.id.0)).max();
+                if let Some(id) = inner {
+                    p.next_id = p.next_id.max(id + 1);
                 }
                 validate_gain("gain", track.gain)?;
                 validate_pan(track.pan)?;
@@ -250,6 +275,61 @@ impl Command {
                 let idx = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
                 let t = p.tracks.remove(idx);
                 Ok(Command::AddTrack { index: Some(idx), track: t })
+            }
+            Command::InsertSection { index, mut section } => {
+                let name = section.name.trim().to_string();
+                if name.is_empty() || name.chars().count() > 128 {
+                    return Err(invalid("name", "must be 1..=128 characters"));
+                }
+                if section.length < PPQ {
+                    return Err(invalid("length", "at least one beat"));
+                }
+                if section.color > 0xff_ffff {
+                    return Err(invalid("color", "0xRRGGBB"));
+                }
+                if section.id.0 == 0 {
+                    section.id = SectionId(p.alloc_id());
+                } else if p.section_index(section.id).is_some() {
+                    return Err(EditError::DuplicateId(section.id.0));
+                } else {
+                    p.next_id = p.next_id.max(section.id.0 + 1);
+                }
+                section.name = name;
+                let id = section.id;
+                let at = index.unwrap_or(p.sections.len()).min(p.sections.len());
+                p.sections.insert(at, section);
+                Ok(Command::RemoveSection { section: id })
+            }
+            Command::RemoveSection { section } => {
+                let i = p.section_index(section).ok_or(EditError::SectionNotFound(section))?;
+                let s = p.sections.remove(i);
+                Ok(Command::InsertSection { index: Some(i), section: s })
+            }
+            Command::RenameSection { section, name } => {
+                let name = name.trim().to_string();
+                if name.is_empty() || name.chars().count() > 128 {
+                    return Err(invalid("name", "must be 1..=128 characters"));
+                }
+                let i = p.section_index(section).ok_or(EditError::SectionNotFound(section))?;
+                let old = std::mem::replace(&mut p.sections[i].name, name);
+                Ok(Command::RenameSection { section, name: old })
+            }
+            Command::SetSectionLength { section, length } => {
+                if length < PPQ {
+                    return Err(invalid("length", "at least one beat"));
+                }
+                let i = p.section_index(section).ok_or(EditError::SectionNotFound(section))?;
+                let old = std::mem::replace(&mut p.sections[i].length, length);
+                Ok(Command::SetSectionLength { section, length: old })
+            }
+            Command::MoveSection { section, index } => {
+                let i = p.section_index(section).ok_or(EditError::SectionNotFound(section))?;
+                if index >= p.sections.len() {
+                    return Err(invalid("index", format!("{index} past the last section")));
+                }
+                let s = p.sections.remove(i);
+                p.sections.insert(index, s);
+                Ok(Command::MoveSection { section, index: i })
             }
             Command::RenameTrack { track, name } => {
                 let name = name.trim().to_string();
@@ -371,6 +451,14 @@ impl Command {
                 let (ti, ci) = p.find_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
                 let old = std::mem::replace(&mut p.tracks[ti].clips[ci].gain, gain);
                 Ok(Command::SetClipGain { clip, gain: old })
+            }
+            Command::SetClipWarp { clip, warp, label } => {
+                let (ti, ci) = p.find_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let mut probe = p.tracks[ti].clips[ci].clone();
+                probe.warp = warp;
+                validate_clip(p, &probe)?;
+                let old = std::mem::replace(&mut p.tracks[ti].clips[ci].warp, probe.warp);
+                Ok(Command::SetClipWarp { clip, warp: old, label })
             }
             Command::SetTempo { bpm } => {
                 if !(MIN_BPM..=MAX_BPM).contains(&bpm) {
@@ -771,7 +859,7 @@ impl Command {
                 Ok(Command::SetMacroName { device, index, name: old })
             }
             Command::SetDeviceView { device, folded, collapsed } => {
-                let d = insert_mut(p, device)?;
+                let d = insert_or_instrument_mut(p, device)?;
                 let old = (std::mem::replace(&mut d.folded, folded), std::mem::replace(&mut d.collapsed, collapsed));
                 Ok(Command::SetDeviceView { device, folded: old.0, collapsed: old.1 })
             }
@@ -987,5 +1075,6 @@ fn validate_clip(p: &Project, c: &Clip) -> Result<(), EditError> {
     if c.source_offset.checked_add(c.source_length).is_none_or(|end| end > a.frames) {
         return Err(invalid("source_region", format!("offset {} + length {} exceeds asset length {}", c.source_offset, c.source_length, a.frames)));
     }
+    c.warp.validate(a).map_err(|r| invalid("warp", r))?;
     validate_gain("clip_gain", c.gain)
 }
