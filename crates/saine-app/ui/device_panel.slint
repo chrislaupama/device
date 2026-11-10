@@ -434,8 +434,8 @@ component DeviceCanvas inherits Rectangle {
     }
     if root.f.well: HorizontalLayout {
         x: 0; y: 0; height: 16px * zm; spacing: 5px * zm; alignment: start;
-        Text { text: root.f.caption; color: PanelStyle.caption; font-size: 11.5px * zm; font-weight: 500; letter-spacing: -0.02 * 11.5px * zm; vertical-alignment: center; }
-        Text { text: root.f.readout; color: root.f.readout-accent ? root.accent : PanelStyle.ink; font-size: 11.5px * zm; font-weight: 650; letter-spacing: -0.04 * 11.5px * zm; vertical-alignment: center; }
+        Text { text: root.f.caption; color: PanelStyle.caption; font-size: 12px * zm; font-weight: 500; letter-spacing: -0.02 * 12px * zm; vertical-alignment: center; }
+        Text { text: root.f.readout; color: root.f.readout-accent ? root.accent : PanelStyle.ink; font-size: 12px * zm; font-weight: 650; letter-spacing: -0.04 * 12px * zm; vertical-alignment: center; }
     }
     Rectangle {
         y: root.f.well-y; height: root.height - root.f.well-y;
@@ -443,6 +443,11 @@ component DeviceCanvas inherits Rectangle {
         background: root.f.well ? @linear-gradient(180deg, #212125 0%, #18191d 100%) : transparent;
         clip: root.f.well;
         accessible-role: groupbox; accessible-label: root.f.caption; accessible-value: root.f.value != "" ? root.f.value : root.f.readout;
+        for w in Studio.field-washes: Image {
+            visible: w.device == root.device;
+            x: w.x; y: w.y; width: w.w; height: w.h;
+            source: w.img; image-fit: fill; image-rendering: smooth;
+        }
         for p in root.f.paths: Path {
             viewbox-width: parent.width / 1px; viewbox-height: parent.height / 1px;
             commands: p.commands; stroke: p.stroke; stroke-width: p.width; fill: p.fill2 == p.fill ? p.fill : @linear-gradient(180deg, p.fill 0%, p.fill2 100%);
@@ -483,6 +488,7 @@ component DeviceCanvas inherits Rectangle {
             mouse-cursor: root.mouse-cursor;
             pointer-event(e) => {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { keys.focus(); Studio.panel-graph(root.device, 0, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
+                if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) { Studio.panel-graph-menu(root.device, self.mouse-x / 1px, self.mouse-y / 1px, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
                 if (e.kind == PointerEventKind.move) { Studio.panel-graph(root.device, self.pressed ? 1 : 4, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-graph(root.device, 2, self.mouse-x / 1px, self.mouse-y / 1px, false, false); }
                 if (e.kind == PointerEventKind.cancel) { Studio.panel-graph(root.device, 3, 0, 0, false, false); }
@@ -535,11 +541,11 @@ component PickItem inherits HorizontalLayout {
     // 16 pt gap before this item (rows without spacing: every item but the first and a flexible gap).
     in property <bool> lead;
     property <float> zm: PanelStyle.z;
-    spacing: 6px * zm;
+    spacing: 8px * zm;
     padding-left: root.lead ? 16px * zm : 0;
     horizontal-stretch: root.p.kind == 4 ? 1 : 0;
     if root.p.kind == 4: Rectangle { horizontal-stretch: 1; }
-    if root.p.kind != 4 && root.p.kind < 5 && root.p.label != "": Text {
+    if root.p.kind != 4 && (root.p.kind < 5 || root.p.kind == 7) && root.p.label != "": Text {
         horizontal-stretch: 0;
         text: root.p.label; color: PanelStyle.caption; font-size: 10px * zm; font-weight: 500; letter-spacing: 0.02 * 10px * zm;
         vertical-alignment: center; opacity: root.p.enabled ? 1 : 0.55;
@@ -550,7 +556,8 @@ component PickItem inherits HorizontalLayout {
         HorizontalLayout {
             padding: 2px * zm;
             for c[i] in root.p.choices: Rectangle {
-                min-width: seg-text.preferred-width + 18px * zm;
+                // Every segment is as wide as the longest choice + 12 (src/device_panel.rs segment_width).
+                width: root.p.width > 0 ? root.p.width : seg-text.preferred-width + 18px * zm;
                 border-radius: self.height / 2;
                 background: i == root.p.selected ? root.accent : seg-ta.has-hover ? #ffffff0a : transparent;
                 accessible-role: tab; accessible-label: c; accessible-item-selected: i == root.p.selected;
@@ -598,6 +605,7 @@ component PickItem inherits HorizontalLayout {
         }
     }
     if root.p.kind == 5: Latch {
+        width: root.p.width > 0 ? root.p.width : self.min-width;
         label: root.p.label; on: root.p.selected == 1; accent: root.accent;
         clicked => { Studio.panel-choice(root.device, root.p.param, root.p.selected == 1 ? 0 : 1); }
         reset => { Studio.panel-reset(root.device, root.p.param); }
@@ -651,8 +659,8 @@ component DynamicsStrip inherits Rectangle {
     property <string> grip: "M0.6 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 0.6m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 3.5m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M0.6 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M3.5 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0 M6.4 6.4m-0.6 0a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0";
     HorizontalLayout {
         x: 0; y: 0; height: 16px * zm; spacing: 5px * zm; alignment: start;
-        Text { text: root.s.caption; color: PanelStyle.caption; font-size: 11.5px * zm; font-weight: 500; letter-spacing: -0.02 * 11.5px * zm; vertical-alignment: center; }
-        Text { text: root.s.readout; color: PanelStyle.ink; font-size: 11.5px * zm; font-weight: 650; letter-spacing: -0.04 * 11.5px * zm; vertical-alignment: center; }
+        Text { text: root.s.caption; color: PanelStyle.caption; font-size: 12px * zm; font-weight: 500; letter-spacing: -0.02 * 12px * zm; vertical-alignment: center; }
+        Text { text: root.s.readout; color: PanelStyle.ink; font-size: 12px * zm; font-weight: 650; letter-spacing: -0.04 * 12px * zm; vertical-alignment: center; }
     }
     well := Rectangle {
         y: root.s.well-y; height: root.height - root.s.well-y;
@@ -1082,8 +1090,8 @@ component FieldView inherits Rectangle {
     property <bool> hot: root.dragging || field-ta.has-hover;
     if root.f.caption != "": HorizontalLayout {
         x: 0; y: 0; height: 16px * zm; spacing: 5px * zm; alignment: start;
-        Text { text: root.f.caption; color: PanelStyle.caption; font-size: 11.5px * zm; font-weight: 500; letter-spacing: -0.02 * 11.5px * zm; vertical-alignment: center; }
-        Text { text: root.f.readout; color: PanelStyle.ink; font-size: 11.5px * zm; font-weight: 650; letter-spacing: -0.04 * 11.5px * zm; vertical-alignment: center; }
+        Text { text: root.f.caption; color: PanelStyle.caption; font-size: 12px * zm; font-weight: 500; letter-spacing: -0.02 * 12px * zm; vertical-alignment: center; }
+        Text { text: root.f.readout; color: PanelStyle.ink; font-size: 12px * zm; font-weight: 650; letter-spacing: -0.04 * 12px * zm; vertical-alignment: center; }
     }
     Rectangle {
         y: root.f.well-y; height: root.height - root.f.well-y;
@@ -1507,8 +1515,9 @@ export component CardHeader inherits Rectangle {
     property <bool> fx: root.card.builtin && root.card.modv.kind == 0 && !root.card.sampler.visible;
     // Cards up to 256 pt show the preset icon instead of the label and the step arrows.
     property <bool> narrow: root.card.width < 256px * zm;
-    property <bool> fold: !root.card.instrument;
-    property <bool> window: root.fx || (!root.card.builtin && root.card.has-editor);
+    // Every card folds (instruments too); built-in instruments have no device window.
+    property <bool> fold: true;
+    property <bool> window: (root.fx && !root.card.instrument) || (!root.card.builtin && root.card.has-editor);
     property <length> remove-x: root.width - 23px * zm;
     property <length> fold-x: root.remove-x - 18px * zm;
     property <length> end-x: root.fold ? root.fold-x : root.remove-x;
@@ -1556,7 +1565,7 @@ export component CardHeader inherits Rectangle {
     name := Rectangle {
         x: 44px * zm; y: 0; height: root.height;
         width: min(name-text.preferred-width + (root.card.swappable ? 20px * zm : 0px), root.lead-right - self.x);
-        accessible-role: button; accessible-label: root.card.swappable ? "Choose effect plugin" : root.card.name;
+        accessible-role: button; accessible-label: !root.card.swappable ? root.card.name : root.card.instrument ? "Choose instrument" : "Choose effect plugin";
         name-text := Text {
             x: 0; width: parent.width - (root.card.swappable ? 20px * zm : 0px); visible: !root.renaming;
             text: root.card.name; color: !root.card.enabled ? #ffffff99 : root.chain && !name-ta.has-hover ? #81838a : #ffffff;
@@ -1568,7 +1577,11 @@ export component CardHeader inherits Rectangle {
         }
         name-ta := TouchArea {
             enabled: !root.renaming;
-            clicked => { if (root.card.swappable) { Studio.device-swap-menu(root.card.id, self.absolute-position.x, self.absolute-position.y + self.height); } }
+            clicked => {
+                if (!root.card.swappable) { return; }
+                if (root.card.instrument) { Studio.open-inst-menu(self.absolute-position.x, self.absolute-position.y + self.height); }
+                else { Studio.device-swap-menu(root.card.id, self.absolute-position.x, self.absolute-position.y + self.height); }
+            }
             double-clicked => { if (root.chain) { root.renaming = true; } }
         }
         if root.renaming: Rectangle {
@@ -1608,7 +1621,10 @@ export component CardHeader inherits Rectangle {
             x: 2px * zm; y: 2px * zm; width: 12px * zm; height: 12px * zm; d: Icons.presets; filled: true;
             ink: preset-ta.has-hover ? #ffffffb3 : #81838a;
         }
-        preset-ta := TouchArea { clicked => { Studio.panel-menu(root.card.id, -2, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
+        preset-ta := TouchArea { clicked => {
+            if (root.card.instrument) { Studio.synth-pill(1, 0, self.absolute-position.x + self.width - 180px, self.absolute-position.y + self.height + 2px, 180px); }
+            else { Studio.panel-menu(root.card.id, -2, self.absolute-position.x, self.absolute-position.y + self.height + 2px); }
+        } }
     }
     if root.fx && !root.narrow: Rectangle {
         x: root.prev-x; y: 0; width: 33px * zm; height: root.height;
@@ -1619,7 +1635,7 @@ export component CardHeader inherits Rectangle {
                 x: i == 0 ? parent.width - 10px * zm : 0; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm;
                 d: i == 0 ? Icons.chevron-left : Icons.chevron-right; ink: step-ta.has-hover ? #ffffffb3 : #81838a; stroke-width: 1.04px * zm;
             }
-            step-ta := TouchArea { clicked => { Studio.panel-preset-step(root.card.id, dir); } }
+            step-ta := TouchArea { clicked => { if (root.card.instrument) { Studio.synth-preset-step(dir); } else { Studio.panel-preset-step(root.card.id, dir); } } }
         }
     }
     if root.fx: Rectangle { x: root.rule-x; y: (root.height - 20px * zm) / 2; width: 1px * zm; height: 20px * zm; background: #ffffff14; }

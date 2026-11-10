@@ -52,6 +52,12 @@ export struct ClipLabel { x: length, y: length, w: length, text: string, selecte
 // Browser tree row (Devices tab; src/devices.rs). icon: 0 folder, 1 instrument (keys), 2 effect.
 // expander: 0 none, 1 closed, 2 open. leaf: a device (double-click / drag adds it).
 export struct TreeRow { depth: int, label: string, count: string, icon: int, expander: int, selected: bool, leaf: bool }
+// Browser › Files row (src/files.rs): kind 0 row, 1 group label, 2 note; y and h in list
+// coordinates; glyph 0 folder, 1 audio file, 2 project, 3 audio track, 4 instrument track,
+// 5 MIDI clip; expander 0 none, 1 closed, 2 open.
+export struct FileRow { kind: int, depth: int, y: length, h: length, label: string, detail: string, glyph: int, expander: int, selected: bool }
+// Vertical guide beside an open row's contents (list coordinates).
+export struct FileGuide { x: length, y: length, h: length }
 
 // One plugin card in the bottom-panel device chain (src/devices.rs). x is bottom-panel relative
 // and already includes the chain scroll and a drag offset.
@@ -118,6 +124,10 @@ export struct PanelCanvas {
     // track colour. label / value: the pointer well's accessible name and value.
     pointer: bool, interactive: bool, cursor: int, readout-accent: bool, label: string, value: string,
 }
+// Intensity image of a field well (Reverb tail), stretched (bilinear) over the box x/y/w/h in
+// well coordinates under the paths. Kept out of PanelCanvas: an image field in that struct
+// doubled the first frames' render cost of every card.
+export struct PanelWash { device: int, img: image, x: length, y: length, w: length, h: length }
 // Freely placed control (custom card bodies): kind 0 latch (On/Off parameter), 1 menu pill
 // (choice parameter, opens a menu of its choices).
 export struct PanelButton { kind: int, param: int, x: length, y: length, w: length, label: string, on: bool }
@@ -361,6 +371,29 @@ export global Studio {
     callback tree-activate(int);               // double-click: add to the selected track
     callback tree-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
     callback tree-scroll-by(float);
+    // ---- browser sections, Back / Forward and the Files section (src/files.rs) ----
+    in property <int> browser-section: 2;      // 2 Devices, 3 Files (Search and Library have no content)
+    in property <bool> browser-can-back;
+    in property <bool> browser-can-forward;
+    in property <int> files-tab;               // 0 Projects, 1 Folders
+    in property <[FileRow]> files;
+    in property <[FileGuide]> files-guides;
+    in property <length> files-scroll;
+    in property <length> files-list-y: 81px;   // rule above the rows (96 with the count row)
+    in property <string> files-meta;           // "2 folders"; empty hides the count row
+    in property <string> files-sort: "Recent";
+    in property <string> files-empty-title;
+    in property <string> files-empty-hint;
+    callback browser-section-select(int);
+    callback browser-back();
+    callback browser-forward();
+    callback files-tab-select(int);
+    callback files-add-folder();
+    callback files-sort-toggle();
+    callback files-click(int, bool);           // row, on the chevron
+    callback files-activate(int);              // double-click
+    callback files-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
+    callback files-scroll-by(float);
     // Drag and drop of a browser device (ghost + drop target, window coordinates).
     in property <bool> dnd-active;
     in property <bool> dnd-ok;
@@ -468,6 +501,13 @@ export global Studio {
     in property <bool> ac-visible;           // an audio clip is open in the clip editor
     in property <string> ac-gain-text: "0.0 dB";
     in property <string> ac-bpm-text: "120";
+    in property <string> ac-speed-text: "1x";
+    in property <bool> ac-warped;            // Warp on: Mode is enabled, markers and transients edit
+    in property <string> ac-mode-text: "Auto";
+    callback ac-bpm-drag(int, length, length); // Original BPM drag: phase 0 press, 1 move, 2 release; offset from the press
+    in property <string> ac-transpose-text: "0 st";
+    in property <bool> ac-transpose-enabled: true;  // off in Re-pitch (pitch follows speed)
+    callback ac-transpose-drag(int, length, length); // Transpose drag, like ac-bpm-drag
     in property <string> clip-name: "MIDI";
     in property <color> clip-color: Tokens.track-instrument;
     in property <color> clip-ink: #1d2142;   // text and icons on clip-colour fills
@@ -506,6 +546,7 @@ export global Studio {
     in property <int> synth-page;                // index into the category list
     in property <string> synth-preset: "Init";
     in property <bool> synth-enabled: true;
+    in property <DeviceCard> synth-card;                     // the Synth as a device card (shared header, folded strip)
     in property <[SynthParam]> synth-params;     // indexed like the device definition
     in property <[SynthDisplay]> synth-displays; // indexed by synth::disp
     in property <[SynthLabel]> synth-labels;
@@ -690,6 +731,8 @@ export global Studio {
     callback sampler-well(int, int, float, float, bool);     // phase, x fraction, grab distance (fraction), alt
     callback sampler-handle(int, int, int, length, length);  // picture handle i: phase, x, y (picture px)
     callback panel-graph(int, int, float, float, bool, bool); // canvas pointer (PanelCanvas.pointer): phase (0 press, 1 drag, 2 release, 3 cancel, 4 hover, 5 leave, 6 double-click), well x, y (px), shift, alt
+    in property <[PanelWash]> field-washes;                  // src/panel_fields.rs: wash images of field wells
+    callback panel-graph-menu(int, float, float, length, length); // canvas right press: well x, y (px), window x, y: the handle's parameter menu
     callback panel-graph-wheel(int, float, float, float) -> bool; // canvas wheel: x, y, wheel dy (px, up +): used
     callback panel-graph-key(int, string, bool, bool) -> bool;     // canvas key: text, shift, alt: accepted
     callback panel-eq(int, int, int);                        // action 0 select band / 1 toggle On / 2 type choice / 3 reset type; value
