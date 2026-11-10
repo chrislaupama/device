@@ -95,6 +95,28 @@ impl<'a> Map<'a> {
     }
 }
 
+/// The clip's warp with a marker pinning the window's source start where it
+/// plays now, when there are no markers yet (the first marker added needs it).
+fn anchored(c: &Clip, rate: f64) -> ClipWarp {
+    let mut w = c.warp.clone();
+    if w.markers.is_empty() {
+        w.set_marker(c.source_offset, c.warp.beat_at(c.source_offset as f64, rate));
+    }
+    w
+}
+
+/// Shift-drag: slide the audio under the marker at \`source\` to \`to\`. A
+/// reversed clip starts at its window's source end, so that end is pinned
+/// first; otherwise the slide would move the clip's start and length.
+fn slide(c: &Clip, w: &ClipWarp, source: u64, to: u64, rate: f64) -> Option<ClipWarp> {
+    let mut w = w.clone();
+    let end = c.source_offset + c.source_length;
+    if w.reverse && w.markers.last().is_some_and(|k| k.source < end) {
+        w.set_marker(end, w.beat_at(end as f64, rate));
+    }
+    w.slide_marker(source, to).then_some(w)
+}
+
 impl Controller {
     fn asset_rate(&self, asset: AssetId) -> f64 {
         self.project().asset(asset).map_or(48_000.0, |a| a.sample_rate)
@@ -459,10 +481,7 @@ impl Controller {
                     let tr: Vec<u64> = transients.iter().map(|t| t.source).collect();
                     if command && let Some(i) = tr.iter().position(|&s| near(s, TRANSIENT_SNAP)) {
                         // Pin the transient and its neighbours where they play now.
-                        let mut w = c.warp.clone();
-                        if w.markers.is_empty() {
-                            w.set_marker(c.source_offset, m.original_beat(0.0));
-                        }
+                        let mut w = anchored(&c, rate);
                         let inside = |s: u64| s > c.source_offset && s < c.source_offset + c.source_length;
                         let mut added = false;
                         for &s in tr[i.saturating_sub(1)..(i + 2).min(tr.len())].iter().filter(|&&s| inside(s)) {
@@ -479,10 +498,7 @@ impl Controller {
                     if source <= c.source_offset || source >= c.source_offset + c.source_length {
                         return;
                     }
-                    let mut w = c.warp.clone();
-                    if w.markers.is_empty() {
-                        w.set_marker(c.source_offset, m.original_beat(0.0));
-                    }
+                    let mut w = anchored(&c, rate);
                     if w.set_marker(source, c.warp.beat_at(source as f64, rate)) {
                         self.set_clip_warp(c.id, w, "Add warp marker");
                     }
@@ -523,10 +539,7 @@ impl Controller {
                         let lo = d.warp.markers.iter().rev().find(|k| k.source < source).map_or(c.source_offset as f64, |k| k.source as f64 + 1.0);
                         let hi = d.warp.markers.iter().find(|k| k.source > source).map_or((c.source_offset + c.source_length) as f64, |k| k.source as f64 - 1.0);
                         let to = (source as f64 + (beat - b0) * slope).clamp(lo, hi.max(lo)).round() as u64;
-                        let mut w = d.warp.clone();
-                        if !w.slide_marker(source, to) {
-                            return;
-                        }
+                        let Some(w) = slide(&c, &d.warp, source, to, rate) else { return };
                         d.moved = true;
                         let clip = d.clip;
                         self.set_clip_warp(clip, w, "Move warp marker");
@@ -595,5 +608,36 @@ mod tests {
         assert_eq!(format_semitones(-12.0), "-12 st");
         assert_eq!(format_semitones(4.98), "+5 st");
         assert_eq!(format_semitones(-1.53), "-1.5 st");
+    }
+
+    fn reversed_clip(markers: &[(u64, f64)]) -> saine_core::Clip {
+        // 4 s at 120 BPM: 8 beats, played back to front.
+        let mut warp = saine_core::ClipWarp { enabled: true, reverse: true, original_bpm: 120.0, ..Default::default() };
+        for &(s, b) in markers {
+            assert!(warp.set_marker(s, b));
+        }
+        saine_core::Clip { id: saine_core::ClipId(1), asset: saine_core::AssetId(1), name: String::new(), start: 0, source_offset: 0, source_length: 4 * 48_000, gain: 1.0, warp }
+    }
+
+    #[test]
+    fn markers_at_transients_anchor_a_reversed_clip_at_its_source_start() {
+        let c = reversed_clip(&[]);
+        let mut w = super::anchored(&c, 48_000.0);
+        assert_eq!(w.markers.len(), 1);
+        assert_eq!((w.markers[0].source, w.markers[0].beat), (0, 0.0));
+        assert!(w.set_marker(24_000, c.warp.beat_at(24_000.0, 48_000.0)), "an interior transient can be pinned");
+    }
+
+    #[test]
+    fn sliding_a_reversed_clips_last_marker_keeps_the_marker_and_the_clip_length() {
+        let rate = 48_000.0;
+        let c = reversed_clip(&[(0, 0.0), (96_000, 4.0)]);
+        let m = super::Map::new(&c, &c.warp, rate);
+        let (len, at) = (m.mirror.unwrap(), m.clip_beat(96_000.0));
+        let w = super::slide(&c, &c.warp, 96_000, 120_000, rate).unwrap();
+        let m2 = super::Map::new(&c, &w, rate);
+        assert!((m2.mirror.unwrap() - len).abs() < 1e-9, "clip length {} vs {len}", m2.mirror.unwrap());
+        assert!((m2.clip_beat(120_000.0) - at).abs() < 1e-9, "the marker stays at clip beat {at}");
+        assert_eq!(w.markers.last().map(|k| k.source), Some(4 * 48_000), "the window end is pinned");
     }
 }
