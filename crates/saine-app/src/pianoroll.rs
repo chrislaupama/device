@@ -781,7 +781,7 @@ impl Controller {
                 wave: self.clip_lanes(c),
                 key: None,
                 curves: Vec::new(),
-                clip_loop: None,
+                clip_loop: self.pr_loop_preview().map(|l| (l.start as f64 / PPQ as f64, l.end as f64 / PPQ as f64, l.on)),
             });
         }
         let clip = self.pr_clip()?;
@@ -817,6 +817,10 @@ impl Controller {
 
     /// The open MIDI clip's loop (pattern clips repeat their pattern instead).
     pub(crate) fn pr_loop(&self) -> Option<ClipLoop> {
+        if let Some(c) = self.ac_clip() {
+            let l = c.clip_loop.unwrap_or(saine_core::model::AudioLoop { on: false, start: 0, end: self.project().content_length_ticks(c), length: 0 });
+            return Some(ClipLoop { on: l.on, start: l.start, end: l.end, span: 0 });
+        }
         self.pr_clip().filter(|c| c.pattern.is_none()).and_then(|c| c.clip_loop)
     }
 
@@ -840,6 +844,22 @@ impl Controller {
     /// The footer Loop switch. On: the kept loop range (else the whole clip) and the length
     /// the clip had while it last looped. Off: the clip plays once, to the loop end.
     pub fn pr_loop_toggle(&mut self) {
+        if let Some(c) = self.ac_clip().cloned() {
+            // Audio: off plays the source window once; on brings the kept range and looped
+            // length back (else the whole content loops once over).
+            let content = self.project().content_length_ticks(&c);
+            let l = match c.clip_loop {
+                Some(l) if l.on => saine_core::model::AudioLoop { on: false, ..l },
+                kept => {
+                    let whole = saine_core::model::AudioLoop { on: true, start: 0, end: content, length: content };
+                    let l = kept.filter(|l| l.validate().is_ok() && l.start < content && l.end.min(content) - l.start > PPQ / 4).unwrap_or(whole);
+                    saine_core::model::AudioLoop { on: true, end: l.end.min(content), ..l }
+                }
+            };
+            self.execute(Command::SetClipLoop { clip: c.id, clip_loop: Some(l) });
+            self.ui_dirty = true;
+            return;
+        }
         let Some(clip) = self.pr_clip().filter(|c| c.pattern.is_none()).cloned() else { return };
         let (clip_loop, length) = match clip.clip_loop {
             Some(l) if l.on => (ClipLoop { on: false, span: if clip.length > l.end { clip.length } else { 0 }, ..l }, l.end),

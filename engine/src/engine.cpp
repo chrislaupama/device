@@ -448,15 +448,21 @@ int32_t Engine::publish(const se_session_desc_v6& desc, std::string& err) {
     return publish(d7, err);
 }
 
-int32_t Engine::publish(const se_session_desc_v7& desc7, std::string& err) {
-    const se_session_desc_v6& desc = desc7.v6;
+int32_t Engine::publish(const se_session_desc_v7& desc, std::string& err) {
+    se_session_desc_v8 d8{};
+    d8.v7 = desc;
+    return publish(d8, err);
+}
+
+int32_t Engine::publish(const se_session_desc_v8& desc8, std::string& err) {
+    const se_session_desc_v6& desc = desc8.v7.v6;
     std::unique_ptr<RenderGraph> built;
     const AssetLookup lookup = [this](uint64_t id) -> AssetRef {
         std::lock_guard lock(assets_mutex_);
         auto it = assets_.find(id);
         return it == assets_.end() ? nullptr : it->second;
     };
-    const int32_t rc = build_render_graph(desc7, lookup, built, err);
+    const int32_t rc = build_render_graph(desc8, lookup, built, err);
     if (rc != SE_OK) return rc;
     built->sample_rate = sample_rate_;
     warp_renderer_.resolve(*built);

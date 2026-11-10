@@ -961,6 +961,39 @@ typedef struct se_session_desc_v7 {
 /* MAIN THREAD (like se_session_publish_v5). */
 int32_t se_session_publish_v7(se_engine* engine, const se_session_desc_v7* session);
 
+/* ---- audio clip looping (ABI v1 addition) -------------------------------
+ * See engine/README.md ("Clip looping").
+ *
+ * se_session_publish_v8 is se_session_publish_v7 plus clip loops. A clip
+ * listed there (by clip_id, which must name a clip of the session, once)
+ * loops. Content frame c is the clip-relative frame the clip would play
+ * without the loop: 1:1 clips read source_offset + c, warped clips read the
+ * map at timeline_start + c. At clip-relative frame r the clip plays content
+ * frame r while r < loop_end, then loop_start + (r - loop_end) mod
+ * (loop_end - loop_start), until timeline_start + length. So the first pass
+ * runs from the clip start to the loop end, and the loop repeats after it.
+ * A looped 1:1 clip's length is not clamped to the asset; loop_end is (and
+ * to length). A loop left empty by the clamps is dropped. A warped clip's
+ * render covers frames below loop_end only. Wraps are hard cuts, and a
+ * stretch voice restarts at each wrap. Rendering never allocates or locks.
+ * Validation (else SE_ERR_INVALID_ARG): loops non-NULL when counted,
+ * 0 <= loop_start < loop_end, clip ids known and unique. */
+typedef struct se_clip_loop_desc {
+    uint64_t clip_id;
+    int64_t loop_start; /* content frames from the clip start */
+    int64_t loop_end;
+} se_clip_loop_desc; /* 24 bytes, align 8 */
+
+typedef struct se_session_desc_v8 {
+    se_session_desc_v7 v7;
+    const se_clip_loop_desc* loops;
+    uint32_t loop_count;
+    uint32_t _pad;
+} se_session_desc_v8; /* 64 bytes, align 8 */
+
+/* MAIN THREAD (like se_session_publish_v5). */
+int32_t se_session_publish_v8(se_engine* engine, const se_session_desc_v8* session);
+
 /* Warp renders queued or running (0 = every stretch-mode clip of the latest
  * publish has its render; call se_plugin_idle to attach finished ones). Any
  * thread. */

@@ -76,6 +76,10 @@ static_assert(offsetof(se_clip_warp_desc, mode) == 8 && offsetof(se_clip_warp_de
               offsetof(se_clip_warp_desc, slice_count) == 28 && offsetof(se_clip_warp_desc, slices) == 32);
 static_assert(sizeof(se_session_desc_v7) == 48 && offsetof(se_session_desc_v7, warps) == 32 &&
               offsetof(se_session_desc_v7, warp_count) == 40);
+static_assert(sizeof(se_clip_loop_desc) == 24 && alignof(se_clip_loop_desc) == 8 &&
+              offsetof(se_clip_loop_desc, loop_end) == 16);
+static_assert(sizeof(se_session_desc_v8) == 64 && offsetof(se_session_desc_v8, loops) == 48 &&
+              offsetof(se_session_desc_v8, loop_count) == 56);
 #endif
 static_assert(sizeof(se_warp_point) == 16 && alignof(se_warp_point) == 8 && offsetof(se_warp_point, source) == 8);
 static_assert(sizeof(se_warp_slice) == 16 && offsetof(se_warp_slice, percussive) == 8);
@@ -432,6 +436,15 @@ int32_t se_session_publish_v6(se_engine* engine, const se_session_desc_v6* sessi
 }
 
 int32_t se_session_publish_v7(se_engine* engine, const se_session_desc_v7* session) {
+    SE_REQUIRE_ENGINE(engine);
+    if (session == nullptr) return fail(SE_ERR_INVALID_ARG, "session is NULL");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->publish(*session, err), err);
+    });
+}
+
+int32_t se_session_publish_v8(se_engine* engine, const se_session_desc_v8* session) {
     SE_REQUIRE_ENGINE(engine);
     if (session == nullptr) return fail(SE_ERR_INVALID_ARG, "session is NULL");
     return guarded([&] {

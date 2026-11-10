@@ -415,6 +415,7 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/test_automation.cpp
     tests/test_frame_ring.cpp
     tests/test_warp.cpp
+    tests/test_clip_loop.cpp
     tests/test_preview.cpp
     tests/test_decode.cpp
     tests/devices/test_builtin.cpp
@@ -485,6 +486,9 @@ if(SAINE_ENGINE_BUILD_BENCH)
   add_executable(saine_warp_bench bench/bench_warp.cpp)
   target_include_directories(saine_warp_bench PRIVATE src)
   target_link_libraries(saine_warp_bench PRIVATE saine_engine saine_engine_warnings)
+  add_executable(saine_clip_loop_bench bench/bench_clip_loop.cpp)
+  target_include_directories(saine_clip_loop_bench PRIVATE src)
+  target_link_libraries(saine_clip_loop_bench PRIVATE saine_engine saine_engine_warnings)
   add_executable(saine_decode_bench bench/bench_decode.cpp)
   target_include_directories(saine_decode_bench PRIVATE src)
   target_link_libraries(saine_decode_bench PRIVATE saine_engine saine_engine_warnings)

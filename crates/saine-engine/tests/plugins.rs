@@ -101,7 +101,7 @@ fn clap_gain_from_the_model_halves_the_signal_and_survives_undo_and_persist() {
     let mut rig = Rig::new(Project::default());
     let asset = rig.import(&wav);
     let track = rig.doc.project().tracks[0].id;
-    rig.doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "dc".into(), start: 0, source_offset: 0, source_length: 9600, gain: 1.0, warp: Default::default(), disabled: false } }, Origin::User).unwrap();
+    rig.doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "dc".into(), start: 0, source_offset: 0, source_length: 9600, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None } }, Origin::User).unwrap();
     rig.publish();
     let dry = rig.render_left(4800);
     assert!((dry[100] - 0.5 * PAN_C).abs() < 1e-4, "dry {}", dry[100]);
