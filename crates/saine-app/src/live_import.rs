@@ -124,7 +124,7 @@ fn num(n: roxmltree::Node, p: &str) -> Option<f64> {
 fn drums(rack: roxmltree::Node) -> ParsedDrums {
     let mut out = ParsedDrums::default();
     for b in path(rack, "Branches").into_iter().flat_map(elements).filter(|b| b.has_tag_name("DrumBranch")) {
-        let note = 128 - num(b, "BranchInfo/ReceivingNote").unwrap_or(0.0) as i32;
+        let note = 128i32.saturating_sub(num(b, "BranchInfo/ReceivingNote").unwrap_or(0.0) as i32);
         if !(saine_core::builtin::drum_rack::FIRST_NOTE as i32..saine_core::builtin::drum_rack::FIRST_NOTE as i32 + saine_core::builtin::drum_rack::PADS as i32).contains(&note) {
             out.outside += 1;
             continue;
