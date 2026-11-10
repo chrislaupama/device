@@ -2705,6 +2705,26 @@ fn card_named(a: &AppWindow, name: &str) -> Option<crate::DeviceCard> {
     cards(a).into_iter().find(|c| c.name == name)
 }
 
+/// The named card after scrolling the chain until the whole card is on screen.
+fn card_in_view(a: &AppWindow, ctl: &Ctl, name: &str) -> Option<crate::DeviceCard> {
+    let refresh = || {
+        if let Ok(mut c) = ctl.try_borrow_mut() {
+            c.update_ui(a);
+        }
+    };
+    refresh();
+    let cd = card_named(a, name)?;
+    let left = crate::devices::CHAIN_AREA_X + 8.0 - cd.x;
+    let over = cd.x + cd.width + 5.0 - geo().bottom_w;
+    if left > 0.0 {
+        ctl.borrow_mut().chain_scroll_by(left);
+    } else if over > 0.0 {
+        ctl.borrow_mut().chain_scroll_by(-over);
+    }
+    refresh();
+    card_named(a, name)
+}
+
 /// Card-relative point -> window point.
 fn card_xy(c: &crate::DeviceCard, x: f32, y: f32) -> (f32, f32) {
     (5.0 + c.x + x, bottom_y() + 34.0 + y)
@@ -4129,8 +4149,8 @@ fn modulation_steps() -> Vec<Step> {
             let cd = card_named(a, "LFO").ok_or("no card")?;
             (cd.folded && approx(cd.width, crate::device_mod::FOLDED_W, 0.01)).then_some(()).ok_or(format!("folded {} width {}", cd.folded, cd.width))
         })),
-        Do("modulation: click the folded strip", Box::new(|a| {
-            if let Some(cd) = card_named(a, "LFO") {
+        DoC("modulation: click the folded strip", Box::new(|a, ctl| {
+            if let Some(cd) = card_in_view(a, ctl, "LFO") {
                 let (x, y) = card_xy(&cd, 15.0, 150.0);
                 click(a, x, y);
             }
@@ -5716,10 +5736,13 @@ fn splitter_steps() -> Vec<Step> {
 /// Docked assistant width splitter: drag, narrowing to the header's room, double-click reset
 /// (appended last; restores the panel state and the saved width).
 fn chat_dock_steps() -> Vec<Step> {
-    use crate::splitters::{CHAT_GAP, CHAT_MAX_W, CHAT_MIN_W};
+    use crate::splitters::{chat_drag_max, chat_room, CHAT_GAP, CHAT_MAX_W, CHAT_MIN_W};
     use Step::*;
     fn split_x(c: &Controller) -> f32 {
         win().0 - 5.0 - c.chat_w() - CHAT_GAP / 2.0
+    }
+    fn sliders_hidden() -> bool {
+        chat_room(win().0, true) < CHAT_MIN_W
     }
     let was_open = Rc::new(Cell::new(false));
     let (w1, w2) = (was_open.clone(), was_open.clone());
@@ -5734,29 +5757,29 @@ fn chat_dock_steps() -> Vec<Step> {
             c.settings.prefs.assistant_width = 0.0;
             c.ui_dirty = true;
         })),
-        Check("default width 297 px, zoom sliders shown", Box::new(|c, a| {
-            let ok = approx(c.chat_w(), CHAT_MIN_W, 0.01) && approx(a.global::<Studio>().get_assistant_pref_w(), CHAT_MIN_W, 0.01) && !a.get_header_zoom_hidden();
+        Check("default width 297 px, zoom sliders shown when the header has room", Box::new(|c, a| {
+            let ok = approx(c.chat_w(), CHAT_MIN_W, 0.01) && approx(a.global::<Studio>().get_assistant_pref_w(), CHAT_MIN_W, 0.01) && a.get_header_zoom_hidden() == sliders_hidden();
             ok.then_some(()).ok_or(format!("w {} hidden {}", c.chat_w(), a.get_header_zoom_hidden()))
         })),
         DoC("drag the splitter 60 pt left", Box::new(|a, ctl| {
             let x = split_x(&ctl.borrow());
             drag(a, x, track0_y() + 155.5, x - 60.0, track0_y() + 155.5);
         })),
-        Check("chat 60 pt wider, saved as a preference, timeline narrower, not an undo step", Box::new(move |c, a| {
+        Check("chat 60 pt wider (as far as the header's room allows), saved as a preference, timeline narrower, not an undo step", Box::new(move |c, a| {
             let w = c.chat_w();
             let saved = c.settings.prefs.assistant_width;
             let lanes = a.get_lanes_width();
-            let ok = approx(w, CHAT_MIN_W + 60.0, 0.6) && approx(saved, w, 0.01) && approx(lanes, win().0 - geo().timeline_x - 5.0 - 5.0 - w - 191.0, 1.0) && c.doc.undo_depth() == u2.get();
+            let ok = approx(w, (CHAT_MIN_W + 60.0).min(chat_drag_max(win().0, true)), 0.6) && approx(saved, w, 0.01) && approx(lanes, win().0 - geo().timeline_x - 5.0 - 5.0 - w - 191.0, 1.0) && c.doc.undo_depth() == u2.get();
             ok.then_some(()).ok_or(format!("w {w} saved {saved} lanes {lanes}"))
         })),
         DoC("drag the splitter far left: stops at the room that keeps the sliders", Box::new(|a, ctl| {
             let x = split_x(&ctl.borrow());
             drag(a, x, track0_y() + 155.5, tracks_x() - 62.65, track0_y() + 155.5);
         })),
-        Check("chat narrowed to the header's room (below 600 px), sliders still shown", Box::new(|c, a| {
+        Check("chat narrowed to the header's room (below 600 px, never below the minimum), sliders shown when they fit", Box::new(|c, a| {
             let room = crate::splitters::chat_room(win().0, true);
             let w = c.chat_w();
-            let ok = room < CHAT_MAX_W && approx(w, room, 0.01) && !a.get_header_zoom_hidden() && approx(a.get_lanes_width(), win().0 - geo().timeline_x - 5.0 - 5.0 - room - 191.0, 1.0);
+            let ok = room < CHAT_MAX_W && approx(w, chat_drag_max(win().0, true), 0.01) && a.get_header_zoom_hidden() == sliders_hidden() && approx(a.get_lanes_width(), win().0 - geo().timeline_x - 5.0 - 5.0 - w - 191.0, 1.0);
             ok.then_some(()).ok_or(format!("w {w} room {room} hidden {}", a.get_header_zoom_hidden()))
         })),
         DoC("drag the splitter right: stops at the minimum", Box::new(|a, ctl| {
@@ -6204,6 +6227,11 @@ fn section_steps() -> Vec<Step> {
         let bpb = c.project().ticks_per_bar() as f64 / PPQ as f64;
         lane_x() + c.view.x_of(bar * bpb)
     }
+    fn visible_x(c: &Controller, from: f64, to: f64) -> f32 {
+        let lo = bar_x(c, from).max(lane_x());
+        let hi = bar_x(c, to).min(lane_x() + c.lanes_size.0 - 10.0);
+        (lo + hi) / 2.0
+    }
     fn names(c: &Controller) -> Vec<String> {
         c.project().sections.iter().map(|s| s.name.clone()).collect()
     }
@@ -6275,7 +6303,7 @@ fn section_steps() -> Vec<Step> {
             (names(c) == ["Section 2", "Section 1"] && c.doc.undo_label() == Some("Move Section")).then_some(()).ok_or(format!("{:?}", names(c)))
         })),
         DoC("double-click Section 1", Box::new(|a, ctl| {
-            let x = bar_x(&ctl.borrow(), 10.0);
+            let x = visible_x(&ctl.borrow(), 8.0, 12.0);
             double_click(a, x, row_y());
         })),
         Check("rename popup open for the section", Box::new(move |c, a| {
@@ -6291,7 +6319,7 @@ fn section_steps() -> Vec<Step> {
             (names(c) == ["Section 2", "Chorus"] && c.doc.undo_label() == Some("Rename Section")).then_some(()).ok_or(format!("{:?} {:?}", names(c), c.doc.undo_label()))
         })),
         DoC("right-click Chorus", Box::new(|a, ctl| {
-            let x = bar_x(&ctl.borrow(), 10.0);
+            let x = visible_x(&ctl.borrow(), 8.0, 12.0);
             right_click(a, x, row_y());
         })),
         Check("section menu: Duplicate, Rename, Delete section, Clear all sections", Box::new(|_, a| {
@@ -6477,9 +6505,9 @@ fn devminimap_steps() -> Vec<Step> {
             let mut c = ctl.borrow_mut();
             let t = c.project().tracks[i].id;
             c.set_bottom_tab(BottomTab::Devices);
-            for id in ["compressor", "channeleq", "delay", "reverb", "limiter", "gate", "glue-compressor", "phaser"] {
+            for id in ["compressor", "channeleq", "delay", "reverb", "limiter", "gate", "glue-compressor", "phaser"].iter().cycle().take(16) {
                 c.update_ui(a);
-                if c.devmm_chain_for_test().is_some_and(|ch| ch.scrollable()) {
+                if c.devmm_chain_for_test().is_some_and(|ch| ch.scrollable() && ch.window(0.0, dm::WIDTH).1 <= dm::WIDTH / 2.0) {
                     break;
                 }
                 if let Some(def) = saine_core::builtin::find(id) {
@@ -6883,6 +6911,18 @@ fn clip_render_steps() -> Vec<Step> {
         let (x, y, w, h) = c.clip_vis[i].rect(&c.view);
         (lane_x() + x + w / 2.0, lane_y0() + y + h * 0.7)
     }
+    /// The clip's point after scrolling the lanes until it is above their bottom edge.
+    fn clip_in_view(a: &AppWindow, ctl: &Ctl, id: ClipId) -> (f32, f32) {
+        let (x, y) = clip_xy(&ctl.borrow(), id);
+        let over = y + 45.0 - (lane_y0() + ctl.borrow().lanes_size.1);
+        if over <= 0.0 {
+            return (x, y);
+        }
+        let mut c = ctl.borrow_mut();
+        c.view.scroll_y += f64::from(over);
+        c.update_ui(a);
+        clip_xy(&c, id)
+    }
     fn sine(secs: f32, hz: f32, amp: f32) -> Vec<f32> {
         (0..(48_000.0 * secs) as usize).map(|i| amp * (std::f32::consts::TAU * hz * i as f32 / 48_000.0).sin()).collect()
     }
@@ -7010,7 +7050,7 @@ fn clip_render_steps() -> Vec<Step> {
         })),
         DoC("clip render: right-click the MIDI clip", Box::new(move |a, ctl| {
             let id = ClipId(s10.borrow().midi_clip);
-            let (x, y) = clip_xy(&ctl.borrow(), id);
+            let (x, y) = clip_in_view(a, ctl, id);
             right_click(a, x, y);
         })),
         Do("clip render: open Bounce", Box::new(|a| click_entry(a, "Bounce"))),
@@ -7053,7 +7093,7 @@ fn clip_render_steps() -> Vec<Step> {
             s13.borrow_mut().undo_before_export = ctl.borrow().doc.undo_label().map(str::to_string);
             ctl.borrow_mut().clip_render.export_path = Some(dir().join("export").join("clip.wav"));
             std::fs::create_dir_all(dir().join("export")).unwrap();
-            let (x, y) = clip_xy(&ctl.borrow(), id);
+            let (x, y) = clip_in_view(a, ctl, id);
             right_click(a, x, y);
         })),
         Do("clip render: choose Export audio to Finder", Box::new(|a| click_entry(a, "Export audio to Finder"))),
