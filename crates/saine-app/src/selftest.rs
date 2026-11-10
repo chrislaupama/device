@@ -794,12 +794,86 @@ fn steps() -> Vec<Step> {
         Check("mix.wav written: stereo 24-bit at the engine rate, the full length, not silent; dialog closed", Box::new(|c, a| {
             let path = c.export.dir.join("mix.wav");
             let (rate, ch, s) = crate::wavgen::read_wav(&path)?;
-            let _ = std::fs::remove_dir_all(&c.export.dir);
             let peak = s.iter().fold(0f32, |m, v| m.max(v.abs()));
             let frames = s.len() / 2;
             (rate as f64 == c.engine.sample_rate() && ch == 2 && frames as u64 == c.export_frames() && peak > 0.01 && !a.global::<Studio>().get_export_open())
                 .then_some(())
                 .ok_or(format!("rate {rate} ch {ch} frames {frames} vs {} peak {peak}", c.export_frames()))
+        })),
+        Do("⇧⌘E again", Box::new(|a| key(a, "E", true, true))),
+        Check("export dialog open again", Box::new(|_c, a| a.global::<Studio>().get_export_open().then_some(()).ok_or("not open".into()))),
+        Do("click the Stems card", Box::new(|a| click(a, (1440.0 - 442.0) / 2.0 + 17.0 + 131.47 + 6.8 + 65.0, (820.0 - 340.4) / 2.0 + 44.2 + 22.0))),
+        Check("Stems picked: Tracks row, one file per heard track with clips, Folder label", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let n = crate::dialogs::stem_tracks(c.project(), crate::dialogs::StemsPick::AllTracks, None).len();
+            (s.get_export_recipe() == 1 && n > 0 && s.get_export_stems_text() == format!("{n} WAV file{}", if n == 1 { "" } else { "s" }) && s.get_export_name_label() == "Folder" && s.get_export_tracks_label() == "All individual tracks")
+                .then_some(())
+                .ok_or(format!("recipe {} files {n} text {} label {}", s.get_export_recipe(), s.get_export_stems_text(), s.get_export_name_label()))
+        })),
+        Do("click the Tracks picker", Box::new(|a| click(a, (1440.0 - 442.0) / 2.0 + 71.4 + 30.0, (820.0 - 340.4) / 2.0 + 105.4 + 10.2))),
+        Check("Tracks menu lists both choices, a gap and every track", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let rows = s.get_export_tracks_items().row_count();
+            (s.get_export_tracks_menu_open() && rows == 3 + c.project().tracks.len()).then_some(()).ok_or(format!("open {} rows {rows}", s.get_export_tracks_menu_open()))
+        })),
+        Do("Escape", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("Escape closed the menu, not the dialog", Box::new(|_c, a| {
+            let s = a.global::<Studio>();
+            (s.get_export_open() && !s.get_export_tracks_menu_open()).then_some(()).ok_or("menu or dialog state".into())
+        })),
+        DoC("name the stems mix and click Export", Box::new(|a, ctl| {
+            ctl.borrow_mut().export.name = "mix".into();
+            click(a, (1440.0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (820.0 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
+        })),
+        Check("'mix Stems' holds one 'NN Name.wav' per track, full length, summing to the mixdown", Box::new(|c, a| {
+            let p = c.project();
+            let tracks = crate::dialogs::stem_tracks(p, crate::dialogs::StemsPick::AllTracks, None);
+            let folder = c.export.dir.join("mix Stems");
+            let (_, _, mix) = crate::wavgen::read_wav(&c.export.dir.join("mix.wav"))?;
+            let mut sum = vec![0f32; mix.len()];
+            for (i, id) in tracks.iter().enumerate() {
+                let name = crate::dialogs::stem_file_name(i, &p.track(*id).map_or(String::new(), |t| t.name.clone()));
+                let (rate, ch, s) = crate::wavgen::read_wav(&folder.join(&name))?;
+                if rate as f64 != c.engine.sample_rate() || ch != 2 || s.len() != mix.len() {
+                    return Err(format!("{name}: rate {rate} ch {ch} len {} vs {}", s.len(), mix.len()));
+                }
+                sum.iter_mut().zip(&s).for_each(|(a, b)| *a += b);
+            }
+            let files = std::fs::read_dir(&folder).map_or(0, |d| d.count());
+            let _ = std::fs::remove_dir_all(&c.export.dir);
+            let err = sum.iter().zip(&mix).fold(0f32, |m, (a, b)| m.max((a - b).abs()));
+            let peak = mix.iter().fold(0f32, |m, v| m.max(v.abs()));
+            (files == tracks.len() && err < 1e-3 && peak > 0.01 && !a.global::<Studio>().get_export_open())
+                .then_some(())
+                .ok_or(format!("files {files} of {} max error {err} peak {peak}", tracks.len()))
+        })),
+        Do("⇧⌘E for the Project export", Box::new(|a| key(a, "E", true, true))),
+        Check("export dialog open for Project", Box::new(|_c, a| a.global::<Studio>().get_export_open().then_some(()).ok_or("not open".into()))),
+        DoC("click the Project card, name it set, click Export", Box::new(|a, ctl| {
+            click(a, (1440.0 - 442.0) / 2.0 + 17.0 + 2.0 * (131.47 + 6.8) + 65.0, (820.0 - 340.4) / 2.0 + 44.2 + 22.0);
+            let mut c = ctl.borrow_mut();
+            c.export.dir = std::env::temp_dir().join(format!("saine-selftest-project-{}", std::process::id()));
+            c.export.name = "set".into();
+        })),
+        Check("Project picked: recipe 2, Name label", Box::new(|_c, a| {
+            let s = a.global::<Studio>();
+            (s.get_export_recipe() == 2 && s.get_export_name_label() == "Name").then_some(()).ok_or(format!("recipe {}", s.get_export_recipe()))
+        })),
+        Do("click Export", Box::new(|a| click(a, (1440.0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (820.0 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05))),
+        Check("'set Project' holds set.als that passes the Live structure check, its renders and the notes", Box::new(|c, a| {
+            let folder = c.export.dir.join("set Project");
+            let gz = std::fs::read(folder.join("set.als")).map_err(|e| format!("set.als: {e}"))?;
+            let mut xml = String::new();
+            std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(&gz[..]), &mut xml).map_err(|e| e.to_string())?;
+            let sum = crate::live_set::validate(&xml, Some(&folder))?;
+            let p = c.project();
+            let with_clips = p.tracks.iter().filter(|t| !t.clips.is_empty() || !t.midi_clips.is_empty()).count();
+            let midi: usize = p.tracks.iter().map(|t| t.midi_clips.len()).sum();
+            let notes = folder.join("Saine Export Notes.txt").is_file();
+            let _ = std::fs::remove_dir_all(&c.export.dir);
+            (sum.audio_clips == with_clips && sum.midi_clips == midi && notes && !a.global::<Studio>().get_export_open())
+                .then_some(())
+                .ok_or(format!("{sum:?} vs {with_clips} rendered, {midi} MIDI clips; notes {notes}"))
         })),
         Do("⌘N (file.new) with unsaved changes", Box::new(|a| key(a, "n", true, false))),
         Check("Save changes? prompt open, project untouched", Box::new(|c, a| {
@@ -1000,6 +1074,35 @@ fn steps() -> Vec<Step> {
         Check("warp undone", Box::new(|c, _| {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
             clip.warp.is_default().then_some(()).ok_or(format!("warp {:?}", clip.warp))
+        })),
+        DoC("reverse: toolbar Reverse -> On", Box::new(|_, ctl| ctl.borrow_mut().ac_reverse_toggle())),
+        Check("reversed: toolbar On, the engine's reversed copy exists and the editor draws it, one undo step", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let rev = c.reversed_assets.get(&clip.asset).copied().ok_or("no reversed copy")?;
+            let slot = c.clip_wave(clip).map(|w| w.0.base);
+            (clip.warp.reverse && a.global::<Studio>().get_ac_reversed() && slot == c.peaks.slot(rev).map(|s| s.base) && c.doc.undo_label() == Some("Toggle clip reverse"))
+                .then_some(())
+                .ok_or(format!("reverse {} ui {} slot {slot:?} undo {:?}", clip.warp.reverse, a.global::<Studio>().get_ac_reversed(), c.doc.undo_label()))
+        })),
+        Do("reversed: drag clip 1 left edge right by 1 beat", Box::new(move |a| drag(a, bx(9.0) + 1.5, TRACK0_Y + 40.0, bx(10.0) + 1.5, TRACK0_Y + 40.0))),
+        Check("reversed left trim cuts the window's end: start 10, offset still 0.5 s, 4 beats", Box::new(|c, _| {
+            let p = c.project();
+            let cl = &p.tracks[0].clips[0];
+            let a = p.asset(cl.asset).unwrap();
+            let off_s = cl.source_offset as f64 / a.sample_rate;
+            let beats = p.clip_length_ticks(cl) as f64 / PPQ as f64;
+            ((cl.start as f64 / PPQ as f64 - 10.0).abs() < 1e-6 && (off_s - 0.5).abs() < 1e-3 && (beats - 4.0).abs() < 0.01)
+                .then_some(())
+                .ok_or(format!("start {} off {off_s}s len {beats}", cl.start))
+        })),
+        DoC("reverse: undo the trim and the toggle", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.undo();
+            c.undo();
+        })),
+        Check("reverse undone", Box::new(|c, a| {
+            let cl = &c.project().tracks[0].clips[0];
+            (!cl.warp.reverse && !a.global::<Studio>().get_ac_reversed() && cl.start == 9 * PPQ).then_some(()).ok_or(format!("reverse {} start {}", cl.warp.reverse, cl.start))
         })),
         DoC("transpose: drag the Transpose value 50 pt right", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
