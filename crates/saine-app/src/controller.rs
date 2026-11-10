@@ -630,8 +630,7 @@ impl Controller {
             return;
         }
         let Some(path) = self.settings.prefs.recent_projects.get(i).map(PathBuf::from) else { return };
-        self.open(&path);
-        if self.project_dir.as_ref() != Some(&path) {
+        if !self.open(&path) {
             self.settings.prefs.recent_projects.remove(i);
             self.save_prefs();
         }
@@ -1108,12 +1107,13 @@ impl Controller {
         }
     }
 
-    pub fn open(&mut self, dir: &Path) {
+    /// Open the project in `dir`; false (with a status message) when it can't be read.
+    pub fn open(&mut self, dir: &Path) -> bool {
         let loaded = match persist::load(dir) {
             Ok(l) => l,
             Err(e) => {
                 self.set_status(format!("Open failed: {e}"), 6);
-                return;
+                return false;
             }
         };
         self.stop_return();
@@ -1146,6 +1146,7 @@ impl Controller {
         } else if self.pending_jobs > 0 {
             self.set_status("Loading media…", 30);
         }
+        true
     }
 
     /// Load a project asset into the engine on a worker thread (finishes in `poll_jobs`).
