@@ -7,6 +7,8 @@
 // with recording off and on (the recording writer thread runs concurrently).
 //   features=1: also enable a 48 001-frame loop (odd length, so the wrap
 //   lands mid-block) and the metronome at 120 BPM.
+// A pattern table renders instrument tracks playing step-sequencer patterns
+// (4 to 16 rows, up to 64 steps a bar split into 16 repeats each).
 // A second table renders MIDI: instrument tracks (no clips) with 8 notes
 // held for the whole run plus one short note retriggered every 100 ms, so
 // 8-9 synth voices sound on every track in every block.
@@ -21,6 +23,8 @@
 // inserts and 4 lanes per track (volume, pan, and the gain parameter of each
 // insert), each with a curved point every 100 ms (se_session_publish_v6),
 // against the same session without lanes.
+// A note preview table renders 32 CLAP instrument tracks with piano-roll
+// preview notes (se_preview_note) queued between blocks, against none.
 #include "platform/os.hpp"
 #include "saine_engine.h"
 
@@ -79,7 +83,8 @@ struct Result {
 // SaineTestLatency (N = `latency`) on track 1 only, delay compensation
 // `pdc` on/off.
 Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std::vector<std::string>& files,
-           bool features, int plugins = 0, uint32_t latency = 0, bool pdc = true, bool automation = false) {
+           bool features, int plugins = 0, uint32_t latency = 0, bool pdc = true, bool automation = false,
+           float preview_rate = 0.0f, const std::string& preview_file = {}) {
     se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
     se_engine* e = se_engine_create(&cfg);
     if (!e) {
@@ -225,6 +230,14 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
     std::vector<float> buf(kBlock * 2);
     for (int i = 0; i < 50; ++i) se_render_offline(e, buf.data(), kBlock); // warm-up
     se_transport_seek(e, 0);
+    if (preview_rate > 0.0f) {
+        se_asset_info pi{};
+        if (se_asset_load_file(e, preview_file.c_str(), &pi) != SE_OK ||
+            se_preview_play(e, pi.asset_id, 0, 1.0f, preview_rate, 0) != SE_OK) {
+            std::fprintf(stderr, "preview failed: %s\n", se_last_error());
+            std::exit(1);
+        }
+    }
 
     std::vector<double> times(blocks);
     const auto t_all = std::chrono::steady_clock::now();
@@ -244,6 +257,93 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
     r.us_per_block_max = sorted.empty() ? 0.0 : sorted.back();
     const double audio_us = static_cast<double>(blocks) * kBlock / kRate * 1e6;
     r.rt_ratio = audio_us / wall_us;
+    return r;
+}
+
+// Piano-roll note preview (se_preview_note): 32 instrument tracks, each with
+// the SaineTestSine CLAP instrument playing 8 held notes and a note
+// retriggered every 100 ms. mode 0: no previews; 1: one key held and
+// released every 100 ms on track 1 (a person clicking keys); 2: a preview
+// note on and off on every track in every block (a stress figure). The
+// previews are queued between the timed renders, as the UI thread would.
+Result run_preview_notes(uint32_t tracks, uint32_t blocks, int mode) {
+    se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
+    se_engine* e = se_engine_create(&cfg);
+    if (!e) {
+        std::fprintf(stderr, "create failed: %s\n", se_last_error());
+        std::exit(1);
+    }
+    const int64_t total = static_cast<int64_t>(blocks) * kBlock;
+    const std::string sine = std::string(SAINE_TEST_PLUGIN_DIR) + "/SaineTestSine.clap";
+    std::vector<std::vector<se_note_desc>> notes(tracks);
+    std::vector<se_device_desc> insts(tracks);
+    std::vector<se_track_desc_v5> tds(tracks);
+    for (uint32_t t = 0; t < tracks; ++t) {
+        for (uint32_t v = 0; v < 8; ++v) {
+            se_note_desc n{};
+            n.start = static_cast<int64_t>(v) * 7;
+            n.end = total + 48000;
+            n.pitch = static_cast<uint8_t>(36 + (t * 5 + v * 7) % 48);
+            n.velocity = static_cast<uint8_t>(60 + v * 8);
+            notes[t].push_back(n);
+        }
+        for (int64_t s = 4800; s < total; s += 4800) {
+            se_note_desc n{};
+            n.start = s + t;
+            n.end = s + t + 1200;
+            n.pitch = static_cast<uint8_t>(72 + t % 12);
+            n.velocity = 90;
+            notes[t].push_back(n);
+        }
+        se_device_desc& d = insts[t];
+        d = se_device_desc{};
+        d.device_id = 1000 + t;
+        d.format = SE_PLUGIN_CLAP;
+        d.path = sine.c_str();
+        d.plugin_id = "studio.saine.test.sine";
+        d.enabled = 1;
+        se_track_desc_v5& td = tds[t];
+        td = se_track_desc_v5{};
+        td.track_id = t + 1;
+        td.gain = 0.25f;
+        td.pan = std::sin(static_cast<float>(t));
+        td.instrument = 1;
+        td.notes = notes[t].data();
+        td.note_count = static_cast<uint32_t>(notes[t].size());
+        td.instrument_plugin = &insts[t];
+        td.track_name = "Track";
+    }
+    se_session_desc_v5 sd{};
+    sd.tracks = tds.data();
+    sd.track_count = tracks;
+    sd.master_gain = 0.5f;
+    if (se_session_publish_v5(e, &sd) != SE_OK) {
+        std::fprintf(stderr, "publish failed: %s\n", se_last_error());
+        std::exit(1);
+    }
+    std::vector<float> buf(2 * kBlock);
+    se_transport_play(e);
+    for (int i = 0; i < 16; ++i) se_render_offline(e, buf.data(), kBlock); // warm-up
+    const uint32_t every = static_cast<uint32_t>(kRate / 10 / kBlock);   // ~100 ms
+    std::vector<double> times(blocks);
+    double wall_us = 0.0;
+    for (uint32_t b = 0; b < blocks; ++b) {
+        if (mode == 1 && b % every == 0) se_preview_note(e, 1000, static_cast<uint8_t>(48 + (b / every) % 24), (b / every) % 2 ? 0 : 102);
+        if (mode == 2)
+            for (uint32_t t = 0; t < tracks; ++t) se_preview_note(e, 1000 + t, static_cast<uint8_t>(60 + t % 12), b % 2 ? 0 : 102);
+        const auto t0 = std::chrono::steady_clock::now();
+        se_render_offline(e, buf.data(), kBlock);
+        times[b] = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+        wall_us += times[b];
+    }
+    se_engine_destroy(e);
+    std::vector<double> sorted = times;
+    std::sort(sorted.begin(), sorted.end());
+    Result r{};
+    r.us_per_block_avg = wall_us / blocks;
+    r.us_per_block_p99 = sorted[static_cast<std::size_t>(0.99 * (blocks - 1))];
+    r.us_per_block_max = sorted.back();
+    r.rt_ratio = static_cast<double>(blocks) * kBlock / kRate * 1e6 / wall_us;
     return r;
 }
 
@@ -301,12 +401,82 @@ Result run_midi(uint32_t tracks, uint32_t blocks, const se_synth_params* params)
     }
     const double wall_us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t_all).count();
     se_engine_destroy(e);
+    if (times.empty()) return Result{}; // also tells GCC -Wnull-dereference that back() is safe
     std::vector<double> sorted = times;
     std::sort(sorted.begin(), sorted.end());
     Result r{};
     r.us_per_block_avg = wall_us / blocks;
     r.us_per_block_p99 = sorted[static_cast<std::size_t>(0.99 * (blocks - 1))];
     r.us_per_block_max = sorted.back();
+    r.rt_ratio = static_cast<double>(blocks) * kBlock / kRate * 1e6 / wall_us;
+    return r;
+}
+
+// Pattern: `tracks` instrument tracks playing a step pattern as saine-core
+// bakes and repeats it (one bar of 4/4 at 120 BPM): `rows` keys, a hit on
+// every one of `steps` steps per bar, each split into `repeat` hits with
+// the gate gap, repeated for the whole run. This is the note density the step
+// sequencer can publish; the engine plays it as ordinary notes.
+Result run_pattern(uint32_t tracks, uint32_t blocks, uint32_t rows, uint32_t steps, uint32_t repeat) {
+    se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
+    se_engine* e = se_engine_create(&cfg);
+    if (!e) {
+        std::fprintf(stderr, "create failed: %s\n", se_last_error());
+        std::exit(1);
+    }
+    const int64_t total = static_cast<int64_t>(blocks) * kBlock;
+    const double bar = 2.0 * kRate;
+    const double step = bar / steps;
+    const double span = step / repeat;
+    const double gap = 0.02 * kRate / 2.0; // 0.02 beat at 120 BPM
+    const double gate = repeat > 1 ? std::max(span * 0.5, span - gap) : step;
+    std::vector<std::vector<se_note_desc>> notes(tracks);
+    std::vector<se_track_desc_v3> tds(tracks);
+    for (uint32_t t = 0; t < tracks; ++t) {
+        for (double b0 = 0; b0 < static_cast<double>(total); b0 += bar) {
+            for (uint32_t s = 0; s < steps; ++s) {
+                for (uint32_t k = 0; k < repeat; ++k) {
+                    for (uint32_t row = 0; row < rows; ++row) {
+                        se_note_desc n{};
+                        n.start = static_cast<int64_t>(b0 + s * step + k * span);
+                        n.end = n.start + static_cast<int64_t>(gate);
+                        n.pitch = static_cast<uint8_t>(36 + row);
+                        n.velocity = static_cast<uint8_t>(70 + (s * 7 + row) % 50);
+                        notes[t].push_back(n);
+                    }
+                }
+            }
+        }
+        std::sort(notes[t].begin(), notes[t].end(), [](const se_note_desc& a, const se_note_desc& b) { return a.start < b.start; });
+        se_track_desc_v3& td = tds[t];
+        td = se_track_desc_v3{};
+        td.track_id = t + 1;
+        td.gain = 0.25f;
+        td.instrument = 1;
+        td.notes = notes[t].data();
+        td.note_count = static_cast<uint32_t>(notes[t].size());
+    }
+    se_session_desc_v3 sd{tds.data(), tracks, 0.5f};
+    if (se_session_publish_v3(e, &sd) != SE_OK) {
+        std::fprintf(stderr, "publish failed: %s\n", se_last_error());
+        std::exit(1);
+    }
+    se_transport_play(e);
+    std::vector<float> buf(kBlock * 2);
+    std::vector<double> times(blocks);
+    const auto t_all = std::chrono::steady_clock::now();
+    for (uint32_t b = 0; b < blocks; ++b) {
+        const auto t0 = std::chrono::steady_clock::now();
+        se_render_offline(e, buf.data(), kBlock);
+        times[b] = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+    }
+    const double wall_us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t_all).count();
+    se_engine_destroy(e);
+    std::sort(times.begin(), times.end());
+    Result r{};
+    r.us_per_block_avg = wall_us / blocks;
+    r.us_per_block_p99 = times[static_cast<std::size_t>(0.99 * (blocks - 1))];
+    r.us_per_block_max = times.back();
     r.rt_ratio = static_cast<double>(blocks) * kBlock / kRate * 1e6 / wall_us;
     return r;
 }
@@ -372,6 +542,7 @@ Result run_input(uint32_t tracks, uint32_t blocks, bool record) {
         std::filesystem::remove_all(dir);
     }
     se_engine_destroy(e);
+    if (times.empty()) return Result{}; // also tells GCC -Wnull-dereference that back() is safe
     std::vector<double> sorted = times;
     std::sort(sorted.begin(), sorted.end());
     Result r{};
@@ -449,6 +620,42 @@ int main(int argc, char** argv) {
         std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", automation ? "32 x 4 lanes" : "none (same session)",
                     r.us_per_block_avg, r.us_per_block_p99, r.us_per_block_max, r.rt_ratio);
     }
+    std::printf("\nBrowser preview voice: 32 audio tracks x %u clips, plus one stereo preview sounding in every block\n",
+                clips_per_track);
+    std::printf("%22s %14s %14s %14s %16s\n", "preview", "avg us/block", "p99 us/block", "max us/block",
+                "realtime ratio");
+    // A preview long enough to sound through every timed block at the fastest rate.
+    const std::size_t pv_frames = static_cast<std::size_t>(1.5 * blocks * kBlock) + 4 * kBlock;
+    std::vector<float> pv_l(pv_frames), pv_r(pv_frames);
+    for (std::size_t i = 0; i < pv_frames; ++i) {
+        pv_l[i] = static_cast<float>(0.2 * std::sin(0.013 * static_cast<double>(i)));
+        pv_r[i] = static_cast<float>(0.2 * std::sin(0.017 * static_cast<double>(i)));
+    }
+    const std::string pv_path = saine::os::path_to_utf8(dir / "saine_bench_preview.wav");
+    if (!write_float_wav(pv_path, pv_l, pv_r)) {
+        std::fprintf(stderr, "cannot write %s\n", pv_path.c_str());
+        return 1;
+    }
+    for (const float rate : {0.0f, 1.0f, 1.5f}) {
+        const Result r = run(32, clips_per_track, blocks, files, features, 0, 0, true, false, rate, pv_path);
+        char name[32];
+        if (rate == 0.0f)
+            std::snprintf(name, sizeof name, "none (baseline)");
+        else
+            std::snprintf(name, sizeof name, "rate %.1f", static_cast<double>(rate));
+        std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name, r.us_per_block_avg, r.us_per_block_p99,
+                    r.us_per_block_max, r.rt_ratio);
+    }
+    std::filesystem::remove(pv_path);
+    std::printf("\nPiano-roll note preview: 32 instrument tracks, SaineTestSine CLAP instrument, 8-9 notes each\n");
+    std::printf("%22s %14s %14s %14s %16s\n", "previews", "avg us/block", "p99 us/block", "max us/block",
+                "realtime ratio");
+    for (const int mode : {0, 1, 2}) {
+        const Result r = run_preview_notes(32, blocks, mode);
+        const char* name = mode == 0 ? "none (baseline)" : mode == 1 ? "a key every 100 ms" : "32 per block";
+        std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name, r.us_per_block_avg, r.us_per_block_p99,
+                    r.us_per_block_max, r.rt_ratio);
+    }
     for (const auto& f : files) std::filesystem::remove(f);
 
     // Expensive patch: 4-voice unison, cross FM, sub + noise, resonant
@@ -482,6 +689,22 @@ int main(int argc, char** argv) {
         for (uint32_t tracks : {8u, 32u, 128u}) {
             const Result r = run_midi(tracks, blocks, patch.params);
             std::printf("%8u %14.2f %14.2f %14.2f %15.1fx\n", tracks, r.us_per_block_avg, r.us_per_block_p99,
+                        r.us_per_block_max, r.rt_ratio);
+        }
+    }
+
+    std::printf("\nPattern: instrument tracks (default synth) playing a step pattern, 1 bar at 120 BPM repeated\n");
+    std::printf("%8s %22s %14s %14s %14s %16s\n", "tracks", "rows x steps x repeat", "avg us/block", "p99 us/block",
+                "max us/block", "realtime ratio");
+    const struct {
+        uint32_t rows, steps, repeat;
+    } patterns[] = {{4, 16, 1}, {16, 16, 1}, {16, 32, 4}, {16, 64, 16}};
+    for (uint32_t tracks : {8u, 32u}) {
+        for (const auto& p : patterns) {
+            const Result r = run_pattern(tracks, blocks, p.rows, p.steps, p.repeat);
+            char shape[32];
+            std::snprintf(shape, sizeof shape, "%u x %u x %u", p.rows, p.steps, p.repeat);
+            std::printf("%8u %22s %14.2f %14.2f %14.2f %15.1fx\n", tracks, shape, r.us_per_block_avg, r.us_per_block_p99,
                         r.us_per_block_max, r.rt_ratio);
         }
     }

@@ -61,6 +61,8 @@ pub struct SettingsState {
     pub prefs: Preferences,
     /// None = never persist (self-test, screenshot states).
     pub prefs_path: Option<PathBuf>,
+    /// Self-test and screenshot runs: never open native plugin windows on their own.
+    pub headless: bool,
     /// SCREENSHOT-ONLY: use `recording::screenshot_fake_devices()` and never touch the device.
     pub fake_devices: bool,
     pub menu: Option<(Field, Vec<(String, Choice)>)>,
@@ -125,7 +127,7 @@ impl Controller {
         }
     }
 
-    fn save_prefs(&mut self) {
+    pub(crate) fn save_prefs(&mut self) {
         if let Some(path) = self.settings.prefs_path.clone()
             && let Err(e) = prefs::save(&path, &self.settings.prefs)
         {
@@ -162,6 +164,33 @@ impl Controller {
     pub fn close_settings(&mut self) {
         self.settings.open = false;
         self.settings.menu = None;
+        self.ui_dirty = true;
+    }
+
+    /// Settings › General switches, in page order: 0 Always load last session, 1 Auto-show
+    /// third-party effect windows, 2 Auto-show built-in effect windows, 3 Keep plugin windows
+    /// on top. Saved at once.
+    pub fn general_toggle(&mut self, i: i32) {
+        let g = &mut self.settings.prefs.general;
+        let flag = match i {
+            0 => &mut g.load_last_session,
+            1 => &mut g.show_plugin_windows,
+            2 => &mut g.show_builtin_windows,
+            3 => &mut g.plugin_windows_on_top,
+            _ => return,
+        };
+        *flag = !*flag;
+        if i == 3 {
+            crate::devices::set_plugin_windows_on_top(self.settings.prefs.general.plugin_windows_on_top);
+        }
+        self.save_prefs();
+        self.ui_dirty = true;
+    }
+
+    /// Settings › General › Playhead on stop: Return to start (false) or Stop in place (true).
+    pub fn general_stop_in_place(&mut self, on: bool) {
+        self.settings.prefs.general.stop_in_place = on;
+        self.save_prefs();
         self.ui_dirty = true;
     }
 
@@ -435,7 +464,7 @@ impl Controller {
                 pan: 0.0,
                 mute: false,
                 solo: false,
-                clips: vec![ClipSnapshot { clip_id: TONE_TRACK_ID, engine_asset: info.asset_id, timeline_start: pos, source_offset: 0, length: info.frames as i64, gain: 1.0 }],
+                clips: vec![ClipSnapshot { clip_id: TONE_TRACK_ID, engine_asset: info.asset_id, timeline_start: pos, source_offset: 0, length: info.frames as i64, gain: 1.0, warp: None, clip_loop: None }],
                 instrument: false,
                 notes: vec![],
                 arm: false,
@@ -492,6 +521,13 @@ impl Controller {
         s.set_set_buffer_text(if b > 0 { fmt_buffer(b, self.current_rate()) } else { "Device default".into() }.into());
         s.set_set_input_muted(self.settings.prefs.audio.input_muted);
         s.set_set_pdc_on(!self.settings.prefs.audio.pdc_off);
+        let g = &self.settings.prefs.general;
+        let on = [g.load_last_session, g.show_plugin_windows, g.show_builtin_windows, g.plugin_windows_on_top];
+        let shown = s.get_general_on();
+        if (0..on.len()).any(|i| slint::Model::row_data(&shown, i) != Some(on[i])) {
+            s.set_general_on(slint::ModelRc::new(slint::VecModel::from(on.to_vec())));
+        }
+        s.set_general_stop_in_place(g.stop_in_place);
         s.set_set_latency_text(self.latency_text().into());
         s.set_settings_note(self.settings.note.clone().into());
         match &self.settings.menu {

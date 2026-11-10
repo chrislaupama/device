@@ -23,10 +23,14 @@ compensation `SE_PDC_MAX_DELAY_FRAMES`, `se_pdc_set_enabled`,
 `se_auto_lane_desc`, `se_track_desc_v6`, `se_session_desc_v6` +
 `se_session_publish_v6`, `se_automation_eval`, `se_plugin_params`,
 `se_plugin_param_value`, `se_plugin_param_text`, `se_plugin_param_change` +
-`se_plugin_take_param_changes`). Plugin hosting (AU, VST3, CLAP) is
+`se_plugin_take_param_changes`, and for clip warping `se_warp_point`,
+`se_warp_slice`, `se_clip_warp_desc`, `se_session_desc_v7` +
+`se_session_publish_v7`, `se_warp_renders_pending`, `se_onset` +
+`se_asset_detect_onsets`). Plugin hosting (AU, VST3, CLAP) is
 described in [Plugins](#plugins), delay compensation in
 [Plugin delay compensation](#plugin-delay-compensation), automation in
-[Automation](#automation).
+[Automation](#automation), clip warping in [Clip warping](#clip-warping), clip
+looping in [Clip looping](#clip-looping).
 
 ## Build, test, bench
 
@@ -601,6 +605,21 @@ pausing mid-note does not click.
 mixed), so unmuting mid-note continues the note exactly as if it had never
 been muted. This costs CPU for muted instrument tracks.
 
+### Preview notes (`se_preview_note`)
+
+The browser's preview voice (`se_preview_play`) plays an asset. `se_preview_note`
+is its MIDI side: it plays a note through a track's instrument device, built-in
+or plugin, for the piano roll's keys and for notes being drawn or moved. The
+note goes into the device's live note queue, the same lock-free 256-event SPSC
+queue that `se_builtin_note` uses. The RT side drains that queue at the start of
+the next block and puts the notes at offset 0, ahead of the track's own events.
+Built-in instruments drain it in `process()`, and plugin instruments in the
+processor's instrument path, so the notes go through the track's chain and
+mixer. The main thread keeps the held (device, pitch) pairs, so
+`se_preview_stop` can release them and `se_preview_info.notes` can count them.
+Nothing on the audio thread allocates or locks. `saine_engine_bench` has a
+table for it.
+
 ### Export
 
 `se_export_wav` renders `[start, end)` linearly with its private transport:
@@ -1008,6 +1027,41 @@ destroy queued instances when
   instances: it takes the RT ownership (fails with `SE_ERR_STATE` while the
   device runs) and pins its graph with the hazard marker; instrument plugins
   get all-notes-off before and after.
+
+### Plugins in offline renders (private engine on a worker thread)
+
+The app's clip renders (Consolidate, Bounce, Export audio) render on a private, device-less engine
+on a worker thread, while the main thread has to stay free. Plugins want the main thread for
+creation, state, latency and teardown (CLAP calls the creating thread its main thread, VST3 and AU
+instantiate there, and `publish` creates), but their `process()` may run on any thread. So a
+render with plugins is split:
+
+1. **Main thread, one device per UI tick:** `se_plugin_prepare` creates the instance now, with the
+   state the caller passes (the app reads the live instance's current state with
+   `se_plugin_save_state`, one device per call, the same bytes a project save would store). A
+   plugin that fails to load returns `SE_ERR_NOT_FOUND` with the plugin's reason, and the render
+   stops before any audio or file exists. Instances are reused by the later publish when the
+   device id, plugin and role (insert or instrument) match.
+2. **Worker:** `se_plugin_set_detached(engine, 1)`, then publish and `se_render_offline`. A detached
+   engine never instantiates a third-party plugin (a device that was not prepared reports "not
+   prepared on the main thread" in `se_plugin_load_errors` and passes through), never services restarts,
+   polls latency, calls `on_main_thread` or destroys instances; `se_plugin_idle` only attaches finished
+   warp renders. Built-in devices have no thread affinity and are created as usual. The latency each plugin
+   reported when it was prepared feeds delay compensation; the Rust side renders `L` frames more than
+   asked and drops the first `L`, so the file lines up with the timeline like the audible playback.
+3. **Main thread:** `se_engine_destroy` tears the instances down once the worker is done with the engine
+   (Rust: the `offline::Session` travels back to the UI thread with the result and is dropped there).
+
+Plugins run in real-time process mode, as in playback (no VST3 `kOffline` or AU offline flag): a
+plugin that sounds different when it knows it is offline would make the file differ from what the user
+hears. The project's tempo is set on the private engine (metronome off) so tempo-synced plugins see it.
+Limits: a plugin's own restart request (CLAP `request_restart`, VST3 `restartComponent`) is ignored for
+the length of a render (its latency stays as prepared); on Windows and Linux, CLAP `request_callback`
+is only served by `se_plugin_idle`, which a detached engine skips (macOS dispatches it to the main queue).
+Tests: `offline_*` in `tests/test_plugins.cpp` (a worker render of prepared CLAP, VST3, AU and instrument
+plugins equals the main-thread render bit for bit with zero RT allocations; detached engines never
+instantiate; load failures; one-instance state save; latency in the plan), benchmark
+`build/saine_offline_plugin_bench`.
 
 ### State
 
@@ -1427,6 +1481,92 @@ lane on a DC clip follows `value_at` (worst 4.9e-6), a disabled lane renders
 bit-identically to no lane, undo restores the static output bit-exactly;
 master lane; a CLAP gain lane through the document and the parameter
 queries.
+
+## Clip warping
+
+`se_session_publish_v7` adds a warp description per audio clip: a map of
+(timeline frame, source frame) points and one of five modes. The header has
+the exact rules; this section explains how the engine runs them.
+
+* **Re-pitch** reads the source at the map's position with the same
+  band-limited interpolator as rate-converted clips: pitch follows speed.
+* **Slice** (drums) plays each transient slice at the frame where the map
+  reaches it, at the transpose rate, with 2 ms fades and crossfades. No
+  stretching, so hits stay sharp.
+* **Stretch** and **Stretch + formant** run signalsmith-stretch (MIT, fetched
+  by CMake, see `third_party_licenses.md`). We never wrote our own stretcher.
+* **Auto** slices passages whose slices are flagged percussive and stretches
+  the rest, crossfading over 3 ms where the choice changes.
+
+### Real-time safety (`src/warp.cpp`)
+
+`WarpVoice` wraps one stretcher per (track, clip slot, channel count). All
+its buffers are sized at publish time for the largest block and the slowest
+rate, so `process` only reads and writes reserved memory. The tests
+`warp_render_path_does_not_allocate` and `warp_render_swap_does_not_allocate`
+count allocations on the render path. Voices move across republishes by key,
+so editing gain or another track keeps them running. A voice restarts with
+`seek` (no pre-roll latency) at a clip start, after a transport jump, or when
+the map moves the source under it.
+
+### Background renders
+
+Live stretching costs about 25–45 µs per track per block (bench below), and a
+restart costs one full analysis window. So a background thread
+(`WarpRenderer`) renders every stretch-mode clip ahead of time, in large
+blocks, keyed by an FNV-1a hash of asset, mode, transpose, map and slices
+relative to the clip start. Moving a clip or changing its gain reuses the
+render. `se_plugin_idle` swaps finished renders into the live graph, and the
+first block after a swap crossfades from the voice. A rendered clip then
+costs a copy (about 0.3–0.5 µs per track per block), and a transport jump
+costs nothing extra. Renders nobody uses are dropped after 32 newer ones.
+A render is limited to 10 minutes of audio. A longer clip keeps stretching
+live. `se_export_wav` uses the attached renders and private voices for the
+rest.
+
+### Onsets
+
+`se_asset_detect_onsets` finds transients by spectral flux with adaptive
+peak picking, then moves each one back to the start of its attack. A slice
+is flagged percussive when its tail sits 12 dB under its head, smoothed over
+neighbouring slices. The UI uses it for warp markers and the Auto mode.
+
+### Benchmark (`build/saine_warp_bench`, 20 s stereo loop, map 112/120)
+
+| Mode | µs per track per block, live | rendered | render time per track-minute |
+|---|---:|---:|---:|
+| unwarped 1:1 | 0.1–0.4 | – | – |
+| Re-pitch | 1.9–3.8 | – | – |
+| Slice | 0.9–1.8 | – | – |
+| Stretch | 24–47 | 0.3–0.6 | ≈ 0.5 s |
+| Stretch + formant | 24–75 | 0.3–0.6 | ≈ 0.6 s |
+| Auto (3/4 percussive) | 7–19 | 0.4–0.5 | ≈ 0.3 s |
+
+Thirty-two stretch tracks with a transport jump every 50 blocks average
+11 µs per block rendered and 2.3 ms live. Onset detection takes 35–85 ms
+per minute of audio. Ranges cover two runs on a MacBook Air shared with
+other builds.
+
+## Clip looping
+
+`se_session_publish_v8` adds a loop window to any audio clip, warped or not
+(`se_clip_loop_desc`: clip id, loop start and loop end in content frames).
+Content frame c is what the clip plays at `timeline_start + c` without the
+loop: `source_offset + c` for a 1:1 clip, the warp map at
+`timeline_start + c` for a warped one. At clip-relative frame r a looped
+clip plays content frame `r` while `r < loop_end`, then
+`loop_start + (r - loop_end) mod (loop_end - loop_start)`, until
+`timeline_start + length` (`clip_content` in render_graph.hpp).
+
+- The process path splits a clip's run in a block at each wrap and reads each
+  piece as before (`kernel_add_scaled` for 1:1 clips, `render_warped_clip`
+  at the folded timeline frames for warped ones). It doesn't allocate or lock.
+- A looped 1:1 clip's length is not clamped to the asset; its loop end is
+  (and to the clip length). A loop the clamps leave empty is dropped.
+- A warped clip's background render covers frames below the loop end only,
+  so a long looped clip renders no more than its content. Live stretch voices
+  restart at every wrap (the folded position jumps).
+- Wraps are hard cuts with no crossfade, like the transport loop.
 
 ## Placeholders and known gaps
 

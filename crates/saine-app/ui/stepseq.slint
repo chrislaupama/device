@@ -1,0 +1,265 @@
+// Step sequencer of a pattern clip (Clip tab > Sequencer): toolbar (Double, Clear, lane
+// tabs), step numbers, pad / pitch rows with M / S, the cell grid and the Sequence footer.
+// Rows, cells and numbers come from src/stepseq.rs (visible rows only, editor-local
+// geometry); pointer gestures go back to Rust, which previews and commits one
+// SetStepPattern per gesture. Measured from z100-clip-pattern-sequencer-*.png.
+import { Tokens } from "tokens.slint";
+import { Icon, Icons } from "widgets.slint";
+import { Studio } from "studio.slint";
+import { FooterLabel, FooterTitle } from "pianoroll.slint";
+
+component SeqTool inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked();
+    callback hover(bool);
+    callback press();
+    height: 14px;
+    width: t.preferred-width;
+    t := Text {
+        x: 0; text: root.text;
+        color: root.enabled ? (ta.has-hover ? #e5e5e8 : #a6a8ac) : #63656c;
+        font-size: 9.75px; font-weight: 500; vertical-alignment: center;
+    }
+    ta := TouchArea {
+        changed has-hover => { root.hover(self.has-hover); }
+        pointer-event(e) => { if (e.kind == PointerEventKind.down) { root.press(); } }
+        clicked => { if (root.enabled) { root.clicked(); } }
+    }
+}
+
+// Pager tab: one steps page.
+component PageTab inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    in property <bool> enabled;
+    in property <bool> group-enabled;
+    callback clicked();
+    width: 23px; height: 21px; border-radius: 10.5px;
+    background: root.active && root.group-enabled ? #2651f5 : (ta.has-hover && root.enabled ? #ffffff0d : transparent);
+    Text {
+        text: root.text; font-size: 10.2px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center;
+        color: !root.group-enabled ? #303236 : root.active ? #ffffff : root.enabled ? (ta.has-hover ? #ffffff : #a6a8ad) : #4a4b50;
+    }
+    ta := TouchArea { clicked => { if (root.enabled) { root.clicked(); } } }
+}
+
+// Footer value in the clip colour: a menu (click) or a drag value.
+component SeqValue inherits Rectangle {
+    in property <string> text;
+    in property <int> menu: -1;
+    in property <bool> drag;
+    in property <color> ink: Studio.clip-color;
+    height: 14px;
+    width: t.preferred-width;
+    t := Text { x: 0; text: root.text; color: root.ink; font-size: 10px; font-weight: 600; letter-spacing: 0.45px; vertical-alignment: center; }
+    if root.menu >= 0: TouchArea { clicked => { Studio.clip-menu-open(root.menu); } }
+    if root.drag: TouchArea {
+        mouse-cursor: MouseCursor.ns-resize;
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.seq-swing(0, 0); }
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.seq-swing(2, (self.mouse-y - self.pressed-y) / 1px); }
+        }
+        moved => { Studio.seq-swing(1, (self.mouse-y - self.pressed-y) / 1px); }
+    }
+}
+
+component RowButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> on;
+    in property <color> on-fill;
+    in property <color> on-ink;
+    width: 12px; height: 12px; border-radius: 2.5px;
+    background: root.on ? root.on-fill : #232426;
+    Text { text: root.text; color: root.on ? root.on-ink : #63656c; font-size: 7px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+}
+
+export component StepSequencer inherits Rectangle {
+    property <length> row-y0: 55px;
+    property <length> row-pitch: 22px;
+    property <length> cell-h: 19.5px;
+    property <length> col-x0: 136.5px;
+    property <length> grid-h: root.height - root.row-y0 - 54.5px;
+
+    // ---- tooltips (reference: shown after 1 s of hover, at once while another tip is up
+    // or within 0.5 s of one, hidden on press until the pointer leaves) ----
+    property <duration> tip-gone: -1s;
+    property <string> tip-pressed;
+    function tip-hover(on: bool, text: string, ax: length, ay: length) {
+        if (on) {
+            if (text == root.tip-pressed || text == "") { return; }
+            Studio.seq-tip-on = Studio.seq-tip-on || animation-tick() - root.tip-gone < 500ms;
+            Studio.seq-tip = text;
+            Studio.seq-tip-ax = ax;
+            Studio.seq-tip-ay = ay;
+        } else {
+            if (Studio.seq-tip == text) {
+                if (Studio.seq-tip-on) { root.tip-gone = animation-tick(); }
+                Studio.seq-tip = "";
+                Studio.seq-tip-on = false;
+            }
+            if (root.tip-pressed == text) { root.tip-pressed = ""; }
+        }
+    }
+    function tip-press(text: string) {
+        if (Studio.seq-tip == text) {
+            Studio.seq-tip = "";
+            Studio.seq-tip-on = false;
+        }
+        root.tip-pressed = text;
+    }
+    Timer { interval: 1000ms; running: Studio.seq-tip != "" && !Studio.seq-tip-on; triggered => { Studio.seq-tip-on = true; } }
+
+    // ---- toolbar (y 0..27) ----
+    property <string> double-tip: Studio.seq-can-double ? "Double the pattern (up to 64 steps)" : "Pattern already at max length";
+    SeqTool {
+        x: 7px; y: 7px; text: "Double"; enabled: Studio.seq-can-double; clicked => { Studio.seq-action("double"); }
+        hover(on) => { root.tip-hover(on, root.double-tip, self.x, self.y + self.height); }
+        press => { root.tip-press(root.double-tip); }
+    }
+    SeqTool {
+        x: 46px; y: 7px; text: "Clear"; enabled: Studio.seq-can-clear; clicked => { Studio.seq-action("clear"); }
+        hover(on) => { root.tip-hover(on, "Clear all cells", self.x, self.y + self.height); }
+        press => { root.tip-press("Clear all cells"); }
+    }
+    for name[i] in ["Steps", "Velocity", "Offset", "Repeat", "Tie"]: Rectangle {
+        x: [150px, 208px, 276px, 336px, 400px][i] - 13.35px; y: 3px;
+        width: lt.preferred-width + 26.7px; height: 21px; border-radius: 10.5px;
+        background: Studio.seq-lane == i ? #2651f5 : transparent;
+        lt := Text {
+            x: 13.35px; text: name; color: Studio.seq-lane == i ? #ffffff : (pta.has-hover ? #ffffff : #d0d0d1);
+            font-size: 10.2px; font-weight: 600; vertical-alignment: center;
+        }
+        pta := TouchArea {
+            changed has-hover => { root.tip-hover(self.has-hover, Studio.seq-lane-tips[i], parent.x, parent.y + parent.height); }
+            pointer-event(e) => { if (e.kind == PointerEventKind.down) { root.tip-press(Studio.seq-lane-tips[i]); } }
+            clicked => { Studio.seq-lane-pick(i); }
+        }
+    }
+    // Pager (right end): Follow playhead, then one tab per steps page (at least two); all
+    // disabled while the pattern fits one page.
+    property <bool> paged: Studio.seq-pages > 1;
+    property <int> tabs: max(2, Studio.seq-pages);
+    follow := Rectangle {
+        x: root.width - 23.4px - (root.tabs - 1) * 36.6px - 36.8px - 13.65px; y: 0; width: 27.3px; height: 27px;
+        Icon {
+            width: 20.5px; height: 20.5px; d: "M3 3.5V5.5M3 7V9M3 10.5V12.5M6 8H13M10 5L13 8L10 11"; stroke-width: 1.4px;
+            ink: !root.paged ? #303236 : Studio.seq-follow ? #e5e5e8 : fta.has-hover ? #b3b4b6 : #63656d;
+        }
+        fta := TouchArea {
+            changed has-hover => { root.tip-hover(self.has-hover, "Follow playhead", parent.x, parent.y + parent.height); }
+            pointer-event(e) => { if (e.kind == PointerEventKind.down) { root.tip-press("Follow playhead"); } }
+            clicked => { if (root.paged) { Studio.seq-follow-toggle(); } }
+        }
+    }
+    for k in root.tabs: PageTab {
+        x: root.width - 23.4px - (root.tabs - 1 - k) * 36.6px - self.width / 2; y: 3px;
+        text: k + 1; active: k == Studio.seq-page; enabled: k < Studio.seq-pages; group-enabled: root.paged;
+        clicked => { Studio.seq-page-pick(k); }
+    }
+    Rectangle { x: 0; y: 27px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
+
+    // ---- step numbers ----
+    for n in Studio.seq-nums: Text {
+        x: n.x; y: 39px; width: Studio.seq-cell-w; height: 14px; text: n.text;
+        color: n.beat && n.active ? #e5e5e8 : #6b6c70; font-size: 8.5px; font-weight: 600;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+
+    // ---- rows and cells (y relative to the first row's top) ----
+    grid := Rectangle {
+        x: 0; y: root.row-y0; width: root.width; height: root.grid-h;
+        clip: true;
+        for r in Studio.seq-rows: Rectangle {
+            x: 0; y: r.y - root.row-y0; width: root.col-x0; height: root.row-pitch;
+            Rectangle { x: 0.5px; y: 2.25px; width: 3px; height: 15px; border-radius: 1.5px; background: r.audible ? #63656c : #3c3d43; }
+            Text { x: 11px; y: 0; height: root.cell-h; text: r.number; color: #6c6e74; font-size: 9px; font-weight: 500; vertical-alignment: center; }
+            Text {
+                x: 20px; y: 0; width: 68px; height: root.cell-h; text: r.name; overflow: elide;
+                color: r.audible ? #8e8f93 : #4a4b50; font-size: 9.5px; font-weight: 600; horizontal-alignment: right; vertical-alignment: center;
+            }
+            RowButton { x: 95px; y: 3.75px; text: "M"; on: r.muted; on-fill: #1253ff; on-ink: #ffffff; }
+            RowButton { x: 112px; y: 3.75px; text: "S"; on: r.soloed; on-fill: #f1f607; on-ink: #1a1b1e; }
+        }
+        for c in Studio.seq-cells: Rectangle {
+            x: c.x; y: c.y - root.row-y0; width: c.w; height: root.cell-h;
+            border-radius: 3px; clip: true;
+            opacity: c.dim ? 0.45 : 1;
+            // Value lanes (reference): empty steps as dark as past the end; Velocity and Offset
+            // cells on a lighter base, Velocity filled from the bottom (value / 127).
+            background: c.state == 0 ? #212225 : c.state == 1 ? (c.lane == 0 ? #28292c : #212225) : (c.lane == 1 || c.lane == 2 ? #28292c : #353639);
+            if c.state == 2 && c.lane == 1: Rectangle { x: 0; y: parent.height * (1 - c.bar); width: parent.width; height: parent.height * c.bar; background: #424345; }
+            if c.state == 2 && c.lane == 2: Rectangle { x: Studio.seq-cell-w * c.bar - 1px; y: 4px; width: 2px; height: parent.height - 8px; border-radius: 1px; background: #9a9ba0; }
+            if c.state == 2 && c.lane == 3: Rectangle {
+                for k in c.marks - 1: Rectangle { x: (k + 1) * Studio.seq-cell-w / c.marks; y: 0; width: 1px; height: parent.height; background: #1a1b1e; }
+            }
+            if c.state == 2 && c.lane == 4: Icon { x: parent.width - 13px; y: (parent.height - 10px) / 2; width: 10px; height: 10px; d: Icons.chevron-right; ink: #e5e5e8; stroke-width: 1.6px; }
+            if c.label != "": Text { text: c.label; color: #ffffff; font-size: 8.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        // playing step: a white ring on its column while the transport plays, and a short
+        // flash on the cells it hits (Steps lane)
+        property <length> play-x: root.col-x0 + Studio.seq-play-col * Studio.seq-col-pitch;
+        property <float> flash-ease: 1 - (1 - Studio.seq-flash) * (1 - Studio.seq-flash);
+        if Studio.seq-lane == 0 && Studio.seq-flash < 1 && Studio.seq-play-col >= 0: Rectangle {
+            for fy in Studio.seq-flash-rows: Rectangle {
+                x: grid.play-x - 2.5px * grid.flash-ease; y: fy - root.row-y0 - 2.5px * grid.flash-ease;
+                width: Studio.seq-cell-w + 5px * grid.flash-ease; height: root.cell-h + 5px * grid.flash-ease;
+                border-radius: 3px + 2.5px * grid.flash-ease;
+                background: transparent; border-width: 1px; border-color: rgba(255, 255, 255, 0.4 * (1 - grid.flash-ease));
+                Rectangle {
+                    x: 2.5px * grid.flash-ease; y: 2.5px * grid.flash-ease; width: Studio.seq-cell-w; height: root.cell-h; border-radius: 3px;
+                    background: rgba(255, 255, 255, Studio.seq-flash <= 0.35 ? 0.18 - 0.12 * Studio.seq-flash / 0.35 : 0.06 * (1 - (Studio.seq-flash - 0.35) / 0.65));
+                    border-width: 2px - 1px * grid.flash-ease; border-color: rgba(255, 255, 255, 1 - grid.flash-ease);
+                }
+            }
+        }
+        if Studio.seq-play-col >= 0: Rectangle {
+            for r in Studio.seq-rows: Rectangle {
+                x: grid.play-x; y: r.y - root.row-y0; width: Studio.seq-cell-w; height: root.cell-h;
+                border-radius: 3px; border-width: 1px; border-color: #ffffff;
+            }
+        }
+        // hovered cell
+        property <int> hc: floor((ta.mouse-x - root.col-x0) / Studio.seq-col-pitch);
+        property <int> hr: floor((ta.mouse-y + Studio.seq-scroll-y) / root.row-pitch);
+        if ta.has-hover && !ta.pressed && ta.mouse-x >= root.col-x0 && grid.hc < Studio.seq-cols && grid.hr >= 0 && grid.hr < Studio.seq-row-count: Rectangle {
+            x: root.col-x0 + grid.hc * Studio.seq-col-pitch; y: grid.hr * root.row-pitch - Studio.seq-scroll-y;
+            width: Studio.seq-cell-w; height: root.cell-h; border-radius: 3px; background: #ffffff0a;
+        }
+        ta := TouchArea {
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.seq-pointer(0, self.mouse-x, self.mouse-y + root.row-y0); }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.seq-pointer(2, self.mouse-x, self.mouse-y + root.row-y0); }
+            }
+            moved => { Studio.seq-pointer(1, self.mouse-x, self.mouse-y + root.row-y0); }
+            scroll-event(e) => { Studio.seq-scroll(e.delta-y / 1px); accept }
+        }
+    }
+
+    // ---- footer ----
+    Rectangle { x: 0; y: root.height - 54.5px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
+    property <length> r1: root.height - 54.5px + 13px;
+    property <length> r2: root.height - 54.5px + 30px;
+    FooterTitle { x: 13.5px; y: root.r1; text: "Clip"; }
+    FooterLabel { x: 13.5px; y: root.r2; text: "Start"; }
+    SeqValue { x: 42.5px; y: root.r2; text: Studio.pr-start-text; }
+    FooterLabel { x: 86px; y: root.r2; text: "End"; }
+    SeqValue { x: 110px; y: root.r2; text: Studio.pr-end-text; }
+    FooterTitle { x: 174px; y: root.r1; text: "Sequence"; }
+    FooterLabel { x: 174px; y: root.r2; text: "Length"; }
+    SeqValue { x: 211.5px; y: root.r2; text: Studio.seq-length-text; menu: 6; }
+    FooterLabel { x: 237.5px; y: root.r2; text: "Rate"; }
+    SeqValue { x: 264px; y: root.r2; text: Studio.seq-rate-text; menu: 7; }
+    FooterLabel { x: 306.5px; y: root.r2; text: "Swing"; }
+    SeqValue { x: 340px; y: root.r2; text: Studio.seq-swing-text; drag: true; }
+
+    // tooltip bubble: under the hovered control, left-aligned with it
+    if Studio.seq-tip-on && Studio.seq-tip != "": Rectangle {
+        x: min(max(5px, Studio.seq-tip-ax), root.width - self.width - 5px);
+        y: Studio.seq-tip-ay + 5px;
+        width: tt.preferred-width + 11.9px; height: 18.7px; border-radius: 5.1px;
+        background: #212227; border-width: 0.5px; border-color: #ffffff33;
+        drop-shadow-blur: 20px; drop-shadow-offset-y: 7px; drop-shadow-color: #00000066;
+        tt := Text { x: 5.95px; text: Studio.seq-tip; color: #ffffff; font-size: 9.35px; vertical-alignment: center; }
+    }
+}

@@ -12,3 +12,19 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[[bench]]
+name = "steps"
+harness = false
+
+[[bench]]
+name = "warp"
+harness = false
+
+[[bench]]
+name = "library"
+harness = false
+
+[[bench]]
+name = "clip_loop"
+harness = false

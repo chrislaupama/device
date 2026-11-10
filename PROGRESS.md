@@ -202,7 +202,83 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Windows app self-test: 125/125 pass; the process still exits 0x87A afterwards (step stays
   informational, as before).
 
-### 2026-11-09: Linux audio runs in CI; export from the app
+### 2026-11-10: step sequencer, part 1: pattern clips in core and engine (SAIN-37)
+
+- Core (`steps.rs`): a pattern clip is a MIDI clip with a step grid (`MidiClip.pattern`): rate 1/1 to 1/32T,
+  8 to 64 steps, swing, and Velocity, Offset, Repeat and Tie per cell. Step edits bake the notes
+  (`Command::SetStepPattern`); piano-roll edits read only the changed rows back into the grid; `None` converts
+  the clip to plain MIDI (its repeats become notes). The snapshot repeats the pattern over the clip. Old project
+  files load unchanged. Findings SQ-1..SQ-7 in `reference/research-findings.md`.
+- Engine: patterns play as ordinary notes; a new ctest checks that dense repeats republished while playing
+  don't allocate, and bench_render has a Pattern table. `cargo bench -p saine-core --bench steps` times bake,
+  read-back and snapshot builds.
+
+### 2026-11-10: minimap pointer hide and Devices minimap (SAIN-33)
+
+- Header minimap drags (window and zoom grabs) hide the pointer and put it back on the grabbed spot on release
+  (`src/pointer.rs`: NSCursor + winit warp; self-test records the requests). Findings S68.
+- Devices minimap at the right of the Clip / Devices strip (`src/devminimap.rs`, `DevMinimap` in `ui/app.slint`):
+  tiles with glyphs, chain frames, window, jump / drag / wheel, Esc restores. Findings S69, S70. Not done: the hover name.
+
+### 2026-11-10: grid size and snap, clip-editor rulers, minimap pictures and motion (SAIN-33)
+
+- Timeline toolbar snap control (`src/snap.rs`): the readout toggles snapping, the chevron opens Off / Auto / 1 Bar ...
+  1/32 / triplet sizes. Auto follows the ruler step for the zoom (two beats at the default zoom, as the reference app's rule), a
+  fixed size overrides it when finer (doubled to 6 px), Cmd at the press drags off the grid. Findings S76.
+- Piano roll and audio clip editor rulers and grids use the same `RulerSteps` rules (bar labels by power-of-two
+  steps, ticks, 16 / 8 reference px sub and beat lines). Findings S77, S78.
+- Devices minimap tiles show pictures we draw from each device's own layout (`Art`), and fade in (300 ms) and glide
+  (spring) when the chain changes; the strip redraws only while they run. Findings S79, S80. `--drag-bench devmm`
+  benchmarks it; `--state review-snap-menu` shows the menu.
+
+### 2026-11-10: step sequencer, gaps closed (SAIN-37)
+
+- Paging as in the reference: the grid shows 16 or 32 steps at a time (by width), with page tabs and a Follow
+  playhead button at the right of the toolbar. A MIDI clip longer than 64 steps now converts with its own step
+  count (up to `STEP_LIMIT`, 4096) instead of being refused; Length and Double still stop at 64.
+- While the transport plays inside the clip, the playing step's column has a white ring and the cells it hits
+  flash (230 ms, Steps lane).
+- Toolbar tooltips (Double, Clear, the lane tabs, Follow playhead) with the reference's 1 s hover delay; Clear is
+  disabled when the pattern has no cells.
+- Value lanes use the reference's palette: empty steps dark, Velocity filled from the bottom on a lighter base.
+  Findings SQ-8..SQ-11.
+### 2026-11-10: pattern library, Genre list and Shape tab (SAIN-37, PR B)
+
+- Genre now lists Any and the reference's 21 genres. The ten new ones come after the old eleven, because saved
+  clips store the index. Each new genre has its own feel (scale, grid, swing, density, octave, progressions) and
+  its own drum grooves, including two new grooves, Dembow and Warehouse pulse. Drum swing now follows the
+  genre's feel, which gives the same result as before for the old genres. The Genre menu shows 12 rows and
+  scrolls to the active one.
+- Shape tab (`saine_core::shape`, `composer.rs`): Octave, Voices, Density, Length, Velocity, Nudge, Repeat and
+  Arp reshape what the clip plays. The unshaped notes stay in `Composer::base`. Each part, and the kept
+  notes, keep their own Shape. A slider drag is one undo step ("Shape Change"). If you edit notes after they
+  were shaped, they play as edited under a neutral Shape. The other rack rows show disabled with the
+  reference's tips. Tab rules are in SQ-13. Findings are SQ-12..SQ-15 in
+  `reference/findings/step-sequencer.md`.
+- Review states: `--state review-patterns-3` (Shape on a lead) and `review-patterns-4` (the Genre menu).
+- Next: Shape option A, the full rack with drawn curves and the remaining transforms.
+
+### 2026-11-10: Shape rack, full (SAIN-37, PR C)
+
+- `saine_core::shape` now has all 16 controls: Octave, Voices, Density, Length, Velocity, Vary, Nudge, Repeat,
+  Air, Sub, Spread, Tension, Inversion, Arp, and the arp's Pattern and Octaves. Each one has a base value and a
+  drawn curve (one offset per beat), and the transforms follow the reference wherever its behaviour could be
+  read (SQ-16..SQ-18). Shapes saved before this change load unchanged.
+- `shape_rack.rs` holds the rack rows (click a label to choose the curve to edit). The piano roll toolbar has
+  Shape (draw), the Pencil, Steps and Ramp brushes, and Reset. The curves are drawn into the piano roll's wgpu
+  draw list. A stroke or a slider drag is one undo step.
+- Review states: `review-patterns-5` (Velocity and Density curves) and `review-patterns-6` (Air, a Tension
+  curve, and the arp).
+
+### 2026-11-11: Clip renders through plugins (CHR-38)
+- Consolidate's sibling renders (Bounce to new track, Export audio) now render tracks with VST3, AU and CLAP plugins
+  and instrument plugins. The UI thread prepares the instances in the private engine, one per tick, from the live
+  instances' current state; the worker renders; the engine is dropped on the UI thread. New engine entry points
+  `se_plugin_prepare`, `se_plugin_save_state`, `se_plugin_set_detached` (engine/README.md "Plugins in offline renders").
+- The render honours plugin delay compensation (renders L more frames, drops the first L) and the project tempo.
+- Self-test section "clip render plugin", ctest `offline_*`, `tests/clip_render.rs`, `saine_offline_plugin_bench`.
+
+### 2026-11-10: Linux audio runs in CI; Linux plugin windows; Windows CI GPU memory
 
 - Linux CI starts a headless PipeWire graph (`tools/ci/headless-pipewire.sh`: null sink + `pw-loopback`
   to a virtual source). The device tests now open real PipeWire streams instead of skipping, and the
@@ -214,9 +290,6 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   share a `node.group` (one clock), and `FrameRing` re-syncs after a window of 32 cycles that is off
   by more than half a quantum (`saine_frame_ring_bench`: no measurable cost). WASAPI keeps the old
   policy (separate clocks; re-sync off).
-- Export: ⌘⇧E (`file.export_audio`) renders the song (start to last clip end + 2 s tail) to a 32-bit
-  float WAV through `se_export_wav`; the device is stopped for the export and restarted. Self-test
-  check added.
 - Linux plugin editor windows (X11): `plugin_editor_x11.cpp` plus a main-thread run loop
   (`run_loop.cpp`) dispatched from `se_plugin_idle`, serving VST3 `Linux::IRunLoop` and CLAP
   `posix-fd-support` / `timer-support`. `SaineTestGui.clap` is cross-platform now; the Xvfb test checks

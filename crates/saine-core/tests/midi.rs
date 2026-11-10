@@ -58,7 +58,7 @@ fn clip_move_resize_delete_undo_and_ids() {
     d.execute(Command::AddAsset { asset: Asset { id: AssetId(0), relative_path: None, absolute_path: "/x.wav".into(), sample_rate: 48_000.0, channels: 1, frames: 100 } }, Origin::User).unwrap();
     let a = d.project().assets[0].id;
     let audio = d.project().tracks[0].id;
-    let dup = Clip { id: c, asset: a, name: "x".into(), start: 0, source_offset: 0, source_length: 10, gain: 1.0 };
+    let dup = Clip { id: c, asset: a, name: "x".into(), start: 0, source_offset: 0, source_length: 10, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None };
     assert_eq!(d.execute(Command::AddClip { track: audio, clip: dup }, Origin::User), Err(EditError::DuplicateId(c.0)));
 }
 

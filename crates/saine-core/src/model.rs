@@ -5,6 +5,7 @@ use crate::automation::AutomationLane;
 use crate::device::{Device, DeviceId};
 use crate::instrument::SynthParams;
 use crate::midi::MidiClip;
+use crate::warp::ClipWarp;
 use serde::{Deserialize, Serialize};
 
 /// Pulses per quarter note for musical positions.
@@ -25,6 +26,22 @@ pub struct ClipId(pub u64);
 #[serde(transparent)]
 pub struct AssetId(pub u64);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SectionId(pub u64);
+
+/// A named, coloured arrangement range. Like the reference's sections, they tile the
+/// timeline from bar 1 in list order: a section starts where the previous one ends.
+/// Labels only: editing sections never moves clips.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Section {
+    pub id: SectionId,
+    pub name: String,
+    /// 0xRRGGBB (the reference's section palette, before display tinting).
+    pub color: u32,
+    pub length: Ticks,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrackKind {
@@ -37,6 +54,12 @@ pub enum TrackKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ColorIndex(pub u8);
+
+impl ColorIndex {
+    /// Colour of a new project's first track: the reference's pink (palette index 4). Later
+    /// tracks follow the cycle from there (orange, then teal, ...).
+    pub const FIRST: ColorIndex = ColorIndex(4);
+}
 
 /// Which device input feeds a track (reference "In" selector: "None",
 /// "Input 1 (Mono)", ...). Channels are 0-based device input channels.
@@ -88,6 +111,17 @@ pub struct Track {
     /// Automation lanes (at most one per target).
     #[serde(default)]
     pub automation: Vec<AutomationLane>,
+    /// Row height as a multiple of the default 88 px row ([Track::HEIGHT_RANGE]).
+    #[serde(default = "unit_height", skip_serializing_if = "is_unit_height")]
+    pub height: f32,
+}
+
+fn unit_height() -> f32 {
+    1.0
+}
+
+fn is_unit_height(h: &f32) -> bool {
+    *h == 1.0
 }
 
 /// Where a device sits on its track.
@@ -101,7 +135,8 @@ pub enum DeviceSlot {
 ///
 /// Timeline placement is musical (`start`, ticks) so clips follow tempo
 /// changes; the played source region is in source frames at the asset's
-/// native sample rate (no time-stretching in milestone 1).
+/// native sample rate. With warp on, the region follows the project tempo
+/// (see [`crate::warp`]); with warp off it plays 1:1.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Clip {
     pub id: ClipId,
@@ -111,6 +146,37 @@ pub struct Clip {
     pub source_offset: u64,
     pub source_length: u64,
     pub gain: f32,
+    #[serde(default, skip_serializing_if = "ClipWarp::is_default")]
+    pub warp: ClipWarp,
+    /// Disabled clips stay on the timeline but make no sound (the Disable menu entry).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
+    /// Clip looping (the editor's Loop switch). Clips saved before it existed load without it.
+    #[serde(default, rename = "loop", skip_serializing_if = "Option::is_none")]
+    pub clip_loop: Option<AudioLoop>,
+}
+
+/// An audio clip's loop, like a MIDI clip's: the range of the clip's content that repeats,
+/// in ticks from the clip start, where content is what the clip plays without the loop. The
+/// clip plays from its start to the loop end, then repeats the range until it ends. The range
+/// (and the looped length) is kept while looping is off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioLoop {
+    pub on: bool,
+    pub start: Ticks,
+    pub end: Ticks,
+    /// The clip's length on the timeline while it loops.
+    pub length: Ticks,
+}
+
+impl AudioLoop {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.start < 0 || self.end - self.start < crate::midi::ClipLoop::MIN_LEN || self.length <= 0 {
+            Err(format!("loop {}..{} (length {}) is shorter than {} ticks or before the clip", self.start, self.end, self.length, crate::midi::ClipLoop::MIN_LEN))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 /// External media reference. Media is never copied into the project unless
@@ -165,6 +231,13 @@ pub struct Project {
     /// Master bus automation (volume only).
     #[serde(default)]
     pub master_automation: Vec<AutomationLane>,
+    /// Bottom panel height (window points) per panel kind ("devices", "clip", "mixer") after the
+    /// user dragged the splitter; absent kinds use the default height. Not an undo step.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub bottom_panel_heights: std::collections::BTreeMap<String, f32>,
+    /// Arrangement sections in timeline order (see [Section]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<Section>,
 }
 
 impl Default for Project {
@@ -186,11 +259,13 @@ impl Default for Project {
             assets: Vec::new(),
             next_id: 1,
             master_automation: Vec::new(),
+            bottom_panel_heights: Default::default(),
+            sections: Vec::new(),
         };
         let a = p.alloc_id();
-        p.tracks.push(Track::new(TrackId(a), TrackKind::Audio, "Audio", ColorIndex(0)));
+        p.tracks.push(Track::new(TrackId(a), TrackKind::Audio, "Audio", ColorIndex::FIRST));
         let b = p.alloc_id();
-        p.tracks.push(Track::new(TrackId(b), TrackKind::Instrument, "Instrument", ColorIndex(1)));
+        p.tracks.push(Track::new(TrackId(b), TrackKind::Instrument, "Instrument", ColorIndex(ColorIndex::FIRST.0 + 1)));
         crate::builtin::synth_v2::upgrade_project(&mut p);
         p
     }
@@ -198,8 +273,11 @@ impl Default for Project {
 
 impl Track {
     pub fn new(id: TrackId, kind: TrackKind, name: &str, color: ColorIndex) -> Self {
-        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, arm: false, monitor: false, input: None, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default(), devices: Vec::new(), instrument_plugin: None, automation: Vec::new() }
+        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, arm: false, monitor: false, input: None, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default(), devices: Vec::new(), instrument_plugin: None, automation: Vec::new(), height: 1.0 }
     }
+
+    /// Row height scale limits (the reference's per-track height scale).
+    pub const HEIGHT_RANGE: (f32, f32) = (0.25, 6.0);
 }
 
 impl Project {
@@ -222,6 +300,15 @@ impl Project {
 
     pub fn track_mut(&mut self, id: TrackId) -> Option<&mut Track> {
         self.tracks.iter_mut().find(|t| t.id == id)
+    }
+
+    pub fn section_index(&self, id: SectionId) -> Option<usize> {
+        self.sections.iter().position(|s| s.id == id)
+    }
+
+    /// Start of section `i` (the sum of the lengths before it).
+    pub fn section_start(&self, i: usize) -> Ticks {
+        self.sections[..i.min(self.sections.len())].iter().map(|s| s.length).sum()
     }
 
     pub fn track_index(&self, id: TrackId) -> Option<usize> {
@@ -295,26 +382,22 @@ impl Project {
         self.seconds_to_ticks(frames as f64 / rate)
     }
 
-    /// Duration of a clip in ticks at the current tempo (audio clips keep
-    /// their real-time duration when the tempo changes in milestone 1).
+    /// Duration of a clip in ticks at the current tempo: warped clips cover
+    /// their beats, the others keep their real-time duration.
     pub fn clip_length_ticks(&self, clip: &Clip) -> Ticks {
-        let rate = self.asset(clip.asset).map(|a| a.sample_rate).unwrap_or(48_000.0);
-        self.seconds_to_ticks(clip.source_length as f64 / rate)
+        match clip.clip_loop {
+            Some(l) if l.on => l.length,
+            _ => self.content_length_ticks(clip),
+        }
     }
 
-    /// Where the last audio or MIDI clip ends (ticks); 0 for an empty project.
-    /// Export renders up to here (plus a release tail).
-    pub fn content_end_ticks(&self) -> Ticks {
-        self.tracks
-            .iter()
-            .flat_map(|t| {
-                let audio = t.clips.iter().map(|c| c.start + self.clip_length_ticks(c));
-                let midi = t.midi_clips.iter().map(|c| c.start + c.length);
-                audio.chain(midi)
-            })
-            .max()
-            .unwrap_or(0)
-            .max(0)
+    /// What the clip plays without its loop: the source window at the clip's speed.
+    pub fn content_length_ticks(&self, clip: &Clip) -> Ticks {
+        if clip.warp.enabled {
+            return crate::warp::beats_to_ticks(self.warped_clip_beats(clip));
+        }
+        let rate = self.asset(clip.asset).map(|a| a.sample_rate).unwrap_or(48_000.0);
+        self.seconds_to_ticks(clip.source_length as f64 / rate / clip.warp.varispeed())
     }
 }
 

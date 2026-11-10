@@ -5,6 +5,7 @@
 //! lives entirely inside the C++ library.
 
 pub mod ffi;
+pub mod offline;
 
 use saine_core::automation::{AutomationTarget, SynthParam};
 use saine_core::instrument::{FilterMode, SynthParams, Waveform};
@@ -50,6 +51,16 @@ fn cpath(p: &Path) -> Result<CString, EngineError> {
     CString::new(p.to_string_lossy().as_bytes()).map_err(|_| EngineError { code: ffi::SE_ERR_INVALID_ARG, kind: "invalid argument", message: "path contains NUL".into() })
 }
 
+/// A transient found by [`Engine::detect_onsets`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Onset {
+    pub frame: i64,
+    /// 0..1 relative to the strongest onset of the asset.
+    pub strength: f32,
+    /// The audio up to the next onset decays like a hit.
+    pub percussive: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
     pub sample_rate: f64,
@@ -69,6 +80,19 @@ pub type Stats = ffi::se_stats;
 pub struct TransportState {
     pub position: i64,
     pub playing: bool,
+}
+
+/// The browser audition voice, from [`Engine::preview`].
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PreviewState {
+    /// Asset of the sounding voice; `None` when nothing plays.
+    pub asset_id: Option<u64>,
+    pub position: i64,
+    pub frames: i64,
+    pub peak_l: f32,
+    pub peak_r: f32,
+    /// Preview notes held (`preview_note`).
+    pub notes: u8,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -142,6 +166,14 @@ impl Engine {
         check(unsafe { ffi::se_asset_release(self.raw, id) })
     }
 
+    /// A new asset with `id`'s audio back to front (reversed clips). Copies
+    /// the audio: a few ms per minute, off the audio thread.
+    pub fn reverse_asset(&self, id: u64) -> Result<AssetInfo, EngineError> {
+        let mut info = AssetInfo::default();
+        check(unsafe { ffi::se_asset_reverse(self.raw, id, &mut info) })?;
+        Ok(info)
+    }
+
     pub fn asset_info(&self, id: u64) -> Result<AssetInfo, EngineError> {
         let mut info = AssetInfo::default();
         check(unsafe { ffi::se_asset_get_info(self.raw, id, &mut info) })?;
@@ -157,8 +189,37 @@ impl Engine {
         Ok(buf.chunks_exact(2).map(|c| [c[0], c[1]]).collect())
     }
 
+    /// Min/max pairs of one channel (0 left, 1 right) for per-channel lanes.
+    pub fn channel_peaks(&self, id: u64, channel: u32, start_frame: u64, frames_per_peak: u32, max_pairs: usize) -> Result<Vec<[f32; 2]>, EngineError> {
+        let mut buf = vec![0f32; max_pairs * 2];
+        let mut n = 0usize;
+        check(unsafe { ffi::se_asset_compute_channel_peaks(self.raw, id, channel, start_frame, frames_per_peak, buf.as_mut_ptr(), max_pairs, &mut n) })?;
+        buf.truncate(n * 2);
+        Ok(buf.chunks_exact(2).map(|c| [c[0], c[1]]).collect())
+    }
+
+    /// Transients of a loaded asset (engine-rate frames, sorted), for warp
+    /// markers and Auto warping. CPU-bound: tens of ms per minute of audio.
+    pub fn detect_onsets(&self, id: u64) -> Result<Vec<Onset>, EngineError> {
+        let mut n = 0usize;
+        check(unsafe { ffi::se_asset_detect_onsets(self.raw, id, std::ptr::null_mut(), 0, &mut n) })?;
+        let mut buf = vec![ffi::se_onset::default(); n];
+        check(unsafe { ffi::se_asset_detect_onsets(self.raw, id, buf.as_mut_ptr(), buf.len(), &mut n) })?;
+        buf.truncate(n);
+        Ok(buf.into_iter().map(|o| Onset { frame: o.frame, strength: o.strength, percussive: o.percussive != 0 }).collect())
+    }
+
+    /// Background warp renders still queued or running; [`Engine::plugin_idle`]
+    /// attaches the finished ones.
+    pub fn warp_renders_pending(&self) -> usize {
+        let mut n = 0usize;
+        // SAFETY: valid handle and out pointer.
+        unsafe { ffi::se_warp_renders_pending(self.raw, &mut n) };
+        n
+    }
+
     /// Publish an immutable session snapshot to the audio thread
-    /// (`se_session_publish_v6`: audio clips plus, on instrument tracks,
+    /// (`se_session_publish_v8`: audio clips, warped ones with their map, looped ones with their loop, plus, on instrument tracks,
     /// MIDI notes rendered by the engine's built-in synth with the track's
     /// [`SynthParams`] (`synth: None` uses the engine defaults, which equal
     /// `SynthParams::default()`) or by the track's instrument plugin; each
@@ -249,16 +310,51 @@ impl Engine {
                 _pad3: 0,
             })
             .collect();
-        let desc = ffi::se_session_desc_v6 {
-            tracks: tracks.as_ptr(),
-            track_count: tracks.len() as u32,
-            master_gain: s.master_gain,
-            master_lanes: master_descs.as_ptr(),
-            master_lane_count: master_descs.len() as u32,
+        // Warped clips: points and slices first, then the descriptors.
+        let warped: Vec<(u64, &saine_core::snapshot::WarpSnapshot)> =
+            s.tracks.iter().flat_map(|t| t.clips.iter().filter_map(|c| c.warp.as_ref().map(|w| (c.clip_id, w)))).collect();
+        let warp_points: Vec<Vec<ffi::se_warp_point>> = warped.iter().map(|(_, w)| w.points.iter().map(|&(frame, source)| ffi::se_warp_point { frame, source }).collect()).collect();
+        let warp_slices: Vec<Vec<ffi::se_warp_slice>> =
+            warped.iter().map(|(_, w)| w.slices.iter().map(|&(source, percussive)| ffi::se_warp_slice { source, percussive: percussive as u8, _pad: [0; 7] }).collect()).collect();
+        let warp_descs: Vec<ffi::se_clip_warp_desc> = warped
+            .iter()
+            .zip(warp_points.iter().zip(&warp_slices))
+            .map(|((id, w), (pts, sl))| ffi::se_clip_warp_desc {
+                clip_id: *id,
+                mode: w.mode,
+                _pad: [0; 3],
+                transpose: w.transpose,
+                points: pts.as_ptr(),
+                point_count: pts.len() as u32,
+                slice_count: sl.len() as u32,
+                slices: if sl.is_empty() { std::ptr::null() } else { sl.as_ptr() },
+            })
+            .collect();
+        let loop_descs: Vec<ffi::se_clip_loop_desc> = s
+            .tracks
+            .iter()
+            .flat_map(|t| t.clips.iter().filter_map(|c| c.clip_loop.map(|(loop_start, loop_end)| ffi::se_clip_loop_desc { clip_id: c.clip_id, loop_start, loop_end })))
+            .collect();
+        let desc = ffi::se_session_desc_v8 {
+            v7: ffi::se_session_desc_v7 {
+                v6: ffi::se_session_desc_v6 {
+                    tracks: tracks.as_ptr(),
+                    track_count: tracks.len() as u32,
+                    master_gain: s.master_gain,
+                    master_lanes: master_descs.as_ptr(),
+                    master_lane_count: master_descs.len() as u32,
+                    _pad: 0,
+                },
+                warps: warp_descs.as_ptr(),
+                warp_count: warp_descs.len() as u32,
+                _pad: 0,
+            },
+            loops: loop_descs.as_ptr(),
+            loop_count: loop_descs.len() as u32,
             _pad: 0,
         };
         // SAFETY: all pointers stay valid for the duration of the call; the engine copies.
-        check(unsafe { ffi::se_session_publish_v6(self.raw, &desc) })
+        check(unsafe { ffi::se_session_publish_v8(self.raw, &desc) })
     }
 
     fn device_store(
@@ -268,7 +364,6 @@ impl Engine {
         instrument: Option<&saine_core::Device>,
         assets: &std::collections::HashMap<saine_core::AssetId, u64>,
     ) -> Result<DeviceStore, EngineError> {
-        let cs = |s: &str| CString::new(s).map_err(|_| nul_error());
         // SAFETY: plain query on a valid handle.
         let state = if let Some(def) = saine_core::builtin::def_of(d) {
             let sidechain = d.sidechain.map_or(0, |t| t.0);
@@ -284,20 +379,7 @@ impl Engine {
         } else {
             d.state.as_deref().and_then(saine_core::device::b64::decode)
         };
-        Ok(DeviceStore {
-            id: d.id.0,
-            name: cs(&d.plugin.name)?,
-            plugin_id: cs(&d.plugin.id)?,
-            path: d.plugin.path.as_deref().map(cs).transpose()?,
-            state,
-            format: match d.plugin.format {
-                saine_core::PluginFormat::AudioUnit => ffi::SE_PLUGIN_AU,
-                saine_core::PluginFormat::Vst3 => ffi::SE_PLUGIN_VST3,
-                saine_core::PluginFormat::Clap => ffi::SE_PLUGIN_CLAP,
-                saine_core::PluginFormat::Builtin => ffi::SE_PLUGIN_BUILTIN,
-            },
-            enabled: d.enabled,
-        })
+        store_of(d, state)
     }
 
     pub fn play(&self) -> Result<(), EngineError> {
@@ -431,6 +513,24 @@ impl Engine {
         let p = cpath(path)?;
         check(unsafe { ffi::se_export_wav(self.raw, p.as_ptr(), start, end) })
     }
+}
+
+fn store_of(d: &saine_core::Device, state: Option<Vec<u8>>) -> Result<DeviceStore, EngineError> {
+    let cs = |s: &str| CString::new(s).map_err(|_| nul_error());
+    Ok(DeviceStore {
+        id: d.id.0,
+        name: cs(&d.plugin.name)?,
+        plugin_id: cs(&d.plugin.id)?,
+        path: d.plugin.path.as_deref().map(cs).transpose()?,
+        state,
+        format: match d.plugin.format {
+            saine_core::PluginFormat::AudioUnit => ffi::SE_PLUGIN_AU,
+            saine_core::PluginFormat::Vst3 => ffi::SE_PLUGIN_VST3,
+            saine_core::PluginFormat::Clap => ffi::SE_PLUGIN_CLAP,
+            saine_core::PluginFormat::Builtin => ffi::SE_PLUGIN_BUILTIN,
+        },
+        enabled: d.enabled,
+    })
 }
 
 /// Owned storage behind one `se_device_desc` during a publish.
@@ -855,6 +955,45 @@ impl Engine {
         Some(c_chars_to_string(&st.input_error)).filter(|s| !s.is_empty())
     }
 
+    /// Audition an asset from `start_frame` (0 = its start), independent of the transport. It
+    /// mixes into master after the track sum (so the master meters show it),
+    /// never reaches exports, replaces any running preview with a short
+    /// crossfade and stops at the asset's end. `gain` 0..2, `rate`
+    /// 0.25..4 (1 = original speed and pitch); `solo` silences the
+    /// arrangement while the preview sounds.
+    pub fn preview_play(&self, asset_id: u64, start_frame: i64, gain: f32, rate: f32, solo: bool) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_preview_play(self.raw, asset_id, start_frame, gain, rate, solo as u8) })
+    }
+
+    /// Fade the preview out.
+    pub fn preview_stop(&self) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_preview_stop(self.raw) })
+    }
+
+    pub fn preview_set(&self, gain: f32, rate: f32, solo: bool) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_preview_set(self.raw, gain, rate, solo as u8) })
+    }
+
+    /// Current preview voice; the peaks reset on each call.
+    pub fn preview(&self) -> PreviewState {
+        let mut p = ffi::se_preview_info::default();
+        unsafe { ffi::se_preview_get(self.raw, &mut p) };
+        PreviewState {
+            asset_id: (p.playing != 0).then_some(p.asset_id),
+            position: p.position,
+            frames: p.frames,
+            peak_l: p.peak_l,
+            peak_r: p.peak_r,
+            notes: p.notes,
+        }
+    }
+
+    /// Preview a note through a track's instrument device (velocity 0 = off);
+    /// `preview_stop` releases every held one.
+    pub fn preview_note(&self, device_id: u64, pitch: u8, velocity: u8) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_preview_note(self.raw, device_id, pitch, velocity) })
+    }
+
     /// Silence all device input (Settings › "Mute audio input"): monitoring,
     /// input meters and recordings get zeros (recordings keep their timing).
     pub fn set_input_muted(&self, muted: bool) {
@@ -1097,6 +1236,46 @@ impl Engine {
             }
         }
         out
+    }
+
+    /// The current state of one live plugin instance (the bytes a save would
+    /// store, before base64), or `None` when the device has no live instance.
+    /// An instance that fails to save is an error. MAIN THREAD, like
+    /// [`Engine::plugin_states`], but one instance per call.
+    pub fn plugin_state_of(&self, device: saine_core::DeviceId) -> Result<Option<Vec<u8>>, EngineError> {
+        // SAFETY: valid handle.
+        match unsafe { ffi::se_plugin_save_state(self.raw, device.0) } {
+            ffi::SE_ERR_NOT_FOUND => return Ok(None),
+            rc => check(rc)?,
+        }
+        let (mut id, mut data, mut len) = (0u64, std::ptr::null::<u8>(), 0usize);
+        // SAFETY: out pointers are valid; the data stays valid until the next save call (we copy it now).
+        check(unsafe { ffi::se_plugin_saved_state(self.raw, 0, &mut id, &mut data, &mut len) })?;
+        Ok(Some(if len == 0 { Vec::new() } else { unsafe { std::slice::from_raw_parts(data, len) }.to_vec() }))
+    }
+
+    /// Instantiates a plugin device now with `state` (its saved state, or the
+    /// live instance's current one), so that a later [`Engine::publish`] of a
+    /// session with this device from another thread reuses the instance
+    /// instead of creating it. `instrument`: the device is a track's
+    /// instrument plugin. MAIN THREAD. A plugin that fails to load is an
+    /// error with the plugin's reason. See [`Engine::set_plugin_detached`].
+    pub fn prepare_plugin(&self, device: &saine_core::Device, instrument: bool, state: Option<Vec<u8>>) -> Result<(), EngineError> {
+        let store = store_of(device, state)?;
+        let desc = store.desc();
+        // SAFETY: valid handle; `desc` points into `store`, which outlives the call; the engine copies.
+        check(unsafe { ffi::se_plugin_prepare(self.raw, &desc, instrument as u8) })
+    }
+
+    /// Detaches publish and housekeeping from the main thread (engine/README.md,
+    /// "Plugins in offline renders"): after this the engine never instantiates,
+    /// restarts or destroys plugin instances on whichever thread publishes or
+    /// renders it; a device that was not prepared fails to load. The instances
+    /// are torn down when the engine is dropped, which then has to happen on
+    /// the main thread.
+    pub fn set_plugin_detached(&self, detached: bool) {
+        // SAFETY: valid handle.
+        unsafe { ffi::se_plugin_set_detached(self.raw, detached as u8) };
     }
 
     /// Devices whose plugin could not be instantiated (missing, failed to

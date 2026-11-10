@@ -180,10 +180,8 @@ jobs:
       # screenshot and the scripted self-test (--no-audio), on a software
       # renderer (Linux: Xvfb + Mesa lavapipe Vulkan; Windows: WARP via DX12).
       # The self-test prints "self-test: P / N checks passed"; P must equal N
-      # (skipped checks are not counted in N). Release build: debug builds
-      # abort at exit on every OS (wgpu-core's debug-only lock tracing runs
-      # in a TLS destructor when Slint's thread-local backend drops the
-      # wgpu queue).
+      # (skipped checks are not counted in N). Release build: the build users
+      # run.
       - name: App — release build (smoke tests)
         if: ${{ !cancelled() }}
         run: cargo build --release -p saine-app --locked

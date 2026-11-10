@@ -22,6 +22,8 @@ export struct TrackRow {
     // the "Show N automated lanes" count, and controls following automation.
     y: length,
     h: length,
+    // Track row height without its 0.5 pt rule (height scale × 88 px row; src/timeline.rs).
+    row-h: length,
     auto-cat: string,
     auto-param: string,
     auto-state: int,
@@ -32,6 +34,9 @@ export struct TrackRow {
     pan-auto: bool,
 }
 
+// Track-header meter: 0 (silent, below -50 dB) .. 1 (0 dB), clip latched.
+export struct TrackLevel { l: float, r: float, clip: bool }
+
 // Value label at the left of an automation row (lane-local). state, accent, dim: as TrackRow.auto-*.
 export struct AutoLabel { x: length, y: length, text: string, state: int, accent: color, dim: color }
 // Expanded automation row in the track header column (content y).
@@ -39,11 +44,26 @@ export struct AutoExtra { track-id: int, index: int, y: length, cat: string, par
 
 export struct RulerLabel { x: length, text: string }
 
+// Section name in the ruler's section lane (src/sections.rs): x and room in lane points, ink per block.
+export struct SectionLabel { x: length, w: length, text: string, ink: color }
+
+// Minimap bar (src/minimap.rs): x and w are fractions of the strip width.
+export struct MiniBar { x: float, w: float, y: length, h: length, color: color }
+
+// Devices minimap tile (src/devminimap.rs): strip-local px; frame draws a chain's frame; glyph is a stroke path in a 24 x 14 box.
+export struct DevTile { x: length, y: length, w: length, h: length, frame: bool, art: string, art-accent: string, bg: color, art-fill: color, ink: color, opacity: float, name: string }
+
 export struct ClipLabel { x: length, y: length, w: length, text: string, selected: bool }
 
 // Browser tree row (Devices tab; src/devices.rs). icon: 0 folder, 1 instrument (keys), 2 effect.
 // expander: 0 none, 1 closed, 2 open. leaf: a device (double-click / drag adds it).
 export struct TreeRow { depth: int, label: string, count: string, icon: int, expander: int, selected: bool, leaf: bool }
+// Browser › Files row (src/files.rs): kind 0 row, 1 group label, 2 note; y and h in list
+// coordinates; glyph 0 folder, 1 audio file, 2 project, 3 audio track, 4 instrument track,
+// 5 MIDI clip; expander 0 none, 1 closed, 2 open.
+export struct FileRow { kind: int, depth: int, y: length, h: length, label: string, detail: string, glyph: int, expander: int, selected: bool }
+// Vertical guide beside an open row's contents (list coordinates).
+export struct FileGuide { x: length, y: length, h: length }
 
 // One plugin card in the bottom-panel device chain (src/devices.rs). x is bottom-panel relative
 // and already includes the chain scroll and a drag offset.
@@ -78,7 +98,7 @@ export struct ChainFrame { x: length, w: length, armed: bool, color: color, empt
 // choice menu), 3 value box, 4 flexible gap, 5 latch (On/Off parameter; label shows the state,
 // selected 0 / 1), 6 action button, 7 view switch / tabs (choices = view names, selected = shown view; UI state). dim: a menu pill shown at 60% until hovered
 // (values that follow the project, e.g. the Pitch Corrector's key while Follow is Project).
-export struct PanelPick { kind: int, param: int, label: string, choices: [string], selected: int, value: string, enabled: bool, width: length, dim: bool }
+export struct PanelPick { kind: int, param: int, label: string, label-w: length, choices: [string], selected: int, value: string, enabled: bool, width: length, dim: bool }
 // Vertical slider column (x = column left, card relative).
 // zero: normalised position the fill starts from (0 = bottom; 0 dB on a range through zero).
 export struct PanelSlider { param: int, x: length, label: string, value: string, norm: float, zero: float }
@@ -110,6 +130,10 @@ export struct PanelCanvas {
     // track colour. label / value: the pointer well's accessible name and value.
     pointer: bool, interactive: bool, cursor: int, readout-accent: bool, label: string, value: string,
 }
+// Intensity image of a field well (Reverb tail), stretched (bilinear) over the box x/y/w/h in
+// well coordinates under the paths. Kept out of PanelCanvas: an image field in that struct
+// doubled the first frames' render cost of every card.
+export struct PanelWash { device: int, img: image, x: length, y: length, w: length, h: length }
 // Freely placed control (custom card bodies): kind 0 latch (On/Off parameter), 1 menu pill
 // (choice parameter, opens a menu of its choices).
 export struct PanelButton { kind: int, param: int, x: length, y: length, w: length, label: string, on: bool }
@@ -202,16 +226,19 @@ export struct DeviceCard {
     has-editor: bool,
     editor-supported: bool, // the host can open plugin windows on this OS
     editor-open: bool,
+    win-dx: length,        // device window: drag offset from its default spot (src/devices.rs window_at)
+    win-dy: length,
     dragging: bool,
     // Built-in devices (src/device_panel.rs, ui/device_panel.slint): the panel generated
     // from the device definition. Unused (empty) on plugin cards.
     builtin: bool,
     width: length,
     accent: color,
+    accent-text: color,    // value text: the accent as a light OKLCH tint (L .87, chroma at most .11)
+    accent-light: bool,    // the accent needs dark ink on it (switch thumb, selected segment text)
     preset: string,
     knobs: [PanelKnob],
     picks: [PanelPick],
-    tight-picks: bool,     // no gap around the flexible gap in the picks row (analyzer cards)
     sliders: [PanelSlider],
     slider-top: length,
     strip: PanelStrip,
@@ -252,16 +279,33 @@ export struct MixerStrip {
     pan: float,
     pan-text: string,
     fader: float,   // 0 (top, +6 dB) .. 1 (bottom, -inf)
+    gain-text: string, // gain readout: "0.0", "+1.5", "−12.0", "−∞" at or below -60 dB
 }
 export struct StripMeter { l: float, r: float, peak: string }   // 0 (top) .. 1 (silent)
 
 // ---- assistant panel ----
 // kind: 0 user, 1 assistant reply, 2 error, 3 pending
-export struct ChatEntry { kind: int, text: string, lines: [string], worked: string, expanded: bool }
-export struct HighlightRect { x: length, y: length, w: length, h: length, note: string }
+// kind: 0 user, 1 reply, 2 error, 3 live row. point: sent in Point mode. fresh: added since the last rebuild (entry pop).
+export struct ChatEntry { kind: int, text: string, lines: [string], worked: string, expanded: bool, point: bool, fresh: bool }
+// Point ring (x, y, w, h, corner radius r) and its bubble anchor (bx; by is the bubble's top, or its bottom when above).
+export struct HighlightRect { x: length, y: length, w: length, h: length, r: length, bx: length, by: length, above: bool, title: string, note: string }
 
 // ---- clip editor / piano roll / context menu ----
 export struct YLabel { y: length, text: string }
+// Step sequencer (src/stepseq.rs), editor-local. SeqCell state: 0 past the pattern end, 1 off,
+// 2 on; lane: 0 Steps, 1 Velocity, 2 Offset, 3 Repeat, 4 Tie; bar: the lane value as 0..1
+// (Velocity fill, Offset line); marks: Repeat hits; label: value while it is dragged.
+export struct SeqRow { y: length, number: string, name: string, muted: bool, soloed: bool, audible: bool }
+export struct SeqCell { x: length, y: length, w: length, state: int, lane: int, bar: float, marks: int, label: string, dim: bool }
+export struct SeqNum { x: length, text: string, beat: bool, active: bool }
+// Clip sidebar pattern list (src/composer.rs): a row and its notes in miniature (x, y, w as
+// fractions of the preview box).
+export struct PreviewNote { x: float, y: float, w: float }
+export struct PatternRow { name: string, playing: bool, notes: [PreviewNote] }
+// One Shape rack row. kind 0 slider (norm 0..1, bipolar fills from the middle),
+// 1 stepper (‹ value ›), 2 segments (segs, seg lit); tip shows on a disabled row.
+// selected: the row whose curve the piano roll edits; curved: a curve is drawn on it.
+export struct ShapeRow { label: string, value: string, kind: int, norm: float, bipolar: bool, segs: int, seg: int, enabled: bool, tip: string, selected: bool, curved: bool, color: color }
 // separator: a line is drawn above the item; y: row top inside the menu.
 // ---- synth device (src/synth.rs) ----
 // One parameter of the Synth device: control position 0..1, readout with units.
@@ -273,7 +317,7 @@ export struct SynthDisplay { line: string, fill: string, ghost: string, dots: st
 export struct SynthLabel { slot: int, x: length, y: length, text: string, align: int, accent: bool }
 // Page elements (card coordinates; knobs, latches: centre of the dial; faders: centre x, groove top).
 export struct SynthArc { d: string, c: color }
-export struct SynthKnobItem { idx: int, x: length, y: length, label: string, accent: color, dim: bool, lit: bool, arcs: [SynthArc], dots: [color] }
+export struct SynthKnobItem { idx: int, x: length, y: length, label: string, accent: color, dim: bool, lit: bool, arcs: [SynthArc], dots: [color], band-on: bool, band-lo: float, band-hi: float, dot-on: bool, dot: float }
 export struct SynthFaderItem { idx: int, x: length, y: length, label: string }
 export struct SynthPillItem { x: length, y: length, w: length, label: string, value: string, action: int, arg: int, ring: int, ring-idx: int, outline: bool, chevron: bool }
 export struct SynthTextItem { x: length, y: length, w: length, text: string, style: int, align: int }
@@ -285,6 +329,8 @@ export struct SynthMapRow { heading: bool, slot: int, y: length, label: string, 
 
 // Checkable popup row ("In" selector, Settings dropdowns). hint: a grey wrapped note row.
 export struct ChoiceItem { label: string, checked: bool, hint: bool, y: length, h: length }
+// Edit › Undo History row; state 0 applied, 1 current, 2 undone.
+export struct UndoHistoryRow { number: int, label: string, date: string, time: string, state: int }
 
 export struct MenuItem { label: string, shortcut: string, enabled: bool, separator: bool, submenu: bool, y: length }
 
@@ -292,6 +338,11 @@ export global Studio {
     // ---- project / status ----
     in property <string> project-name: "Untitled";
     in property <string> status-text;
+    // A clip render (Consolidate, Bounce, Export audio) runs on a worker: label with percent, bar fill 0..1, Cancel.
+    in property <bool> render-busy;
+    in property <string> render-label;
+    in property <float> render-progress;
+    callback render-cancel();
     // ---- transport (driven by engine.transport() every frame) ----
     in property <bool> playing;
     in property <string> bar-text: "001";
@@ -307,10 +358,26 @@ export global Studio {
     callback toggle-metronome();
     // ---- timeline ----
     in property <[TrackRow]> tracks;
+    in property <[TrackLevel]> track-levels;    // by track index
+    in property <TrackLevel> master-level;
     in property <length> scroll-y;
     in property <image> timeline-image;
     in property <[RulerLabel]> ruler-labels;
+    in property <[SectionLabel]> section-labels;
+    in property <length> section-add-x: 8.5px;     // centre of the section lane's "+"
+    callback lane-double(length, length);          // lane x, y
     in property <[ClipLabel]> clip-labels;
+    // Header minimap: bars, the visible window (fractions of the whole-song map), playhead (< 0 hidden).
+    in property <[MiniBar]> minimap-bars;
+    in property <float> minimap-win-x;
+    in property <float> minimap-win-w;
+    in property <float> minimap-playhead: -1;
+    in-out property <length> minimap-width;   // set by the strip (for the self-test)
+    // A minimap drag hides the pointer (src/pointer.rs); Slint's own cursor follows for the strip under it.
+    in property <bool> pointer-hidden;
+    callback minimap-pointer(int, length, length, length, length, length);
+    callback minimap-double();
+    callback minimap-scroll(float, float, length, length, bool);
     in property <int> lane-cursor; // 0 default, 1 ew-resize (trim), 2 move (clip body)
     // ---- inspector (selected track) ----
     in property <bool> has-selection;
@@ -341,6 +408,46 @@ export global Studio {
     callback tree-activate(int);               // double-click: add to the selected track
     callback tree-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
     callback tree-scroll-by(float);
+    // ---- browser sections, Back / Forward and the Files section (src/files.rs) ----
+    in property <int> browser-section: 2;      // 2 Devices, 3 Files (Search and Library have no content)
+    in property <bool> browser-can-back;
+    in property <bool> browser-can-forward;
+    in property <int> files-tab;               // 0 Projects, 1 Folders
+    in property <[FileRow]> files;
+    in property <[FileGuide]> files-guides;
+    in property <length> files-scroll;
+    in property <length> files-list-y: 81px;   // rule above the rows (96 with the count row)
+    in property <string> files-meta;           // "2 folders"; empty hides the count row
+    in property <string> files-sort: "Recent";
+    in property <int> files-sort-index;        // 0 Recent, 1 Name
+    in property <bool> files-sort-open;        // the sort menu is open
+    in property <string> files-empty-title;
+    in property <string> files-empty-hint;
+    callback browser-section-select(int);
+    callback browser-back();
+    callback browser-forward();
+    callback files-tab-select(int);
+    callback files-add-folder();
+    callback files-sort-open-menu(bool);       // open / close the sort menu
+    callback files-sort-pick(int);             // 0 Recent, 1 Name
+    callback files-click(int, bool);           // row, on the chevron
+    callback files-activate(int);              // double-click
+    callback files-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
+    callback files-scroll-by(float);
+    // Browser preview bar (src/files.rs Audition): the file last clicked in Files.
+    in property <bool> preview-active;          // a file is loaded in the bar
+    in property <bool> preview-playing;
+    in property <float> preview-progress;       // 0..1 of the file
+    in property <float> preview-volume: 0.8;    // slider pos (header-slider taper)
+    in property <float> preview-meter-l;        // 0..1, -50..0 dB
+    in property <float> preview-meter-r;
+    in property <bool> preview-solo;
+    callback preview-toggle();
+    callback preview-step(int);                 // -1 previous, 1 next file
+    callback preview-volume-moved(float);
+    callback preview-volume-done();
+    callback preview-solo-toggle();
+    callback preview-reveal();
     // Drag and drop of a browser device (ghost + drop target, window coordinates).
     in property <bool> dnd-active;
     in property <bool> dnd-ok;
@@ -364,25 +471,52 @@ export global Studio {
     callback track-solo(int);
     callback track-volume(int, float);
     callback track-pan(int, float);
+    callback track-pan-text(int, string);       // inline pan entry in the track header
     callback gesture-end();
+    // ---- splitters (src/splitters.rs): phase 0 press, 1 move, 2 release; window y ----
+    in property <length> bottom-h: 306px;
+    callback bottom-resize(int, length);
+    callback track-resize(int, int, length);                // track id, phase, window y
     callback master-volume(float);
     callback sel-fader-moved(float);
     callback lane-pointer(int, length, length, bool, bool, bool); // kind 0=down 1=move 2=up, x, y, shift, cmd, alt
     callback lane-hover(length, length);
     callback lane-scroll(float, float, length, bool);      // dx, dy, x, zoom
     callback key(string, bool, bool, bool, bool) -> bool;   // text, primary (Cmd on macOS), shift, alt, ctrl
+    // ---- app menu bar (AppWindow MenuBar) ----
+    // Items with a shortcut replay that key (text, primary, shift) into the window, so they act
+    // exactly like the keystroke; the others call menu-action with an id.
+    callback menu-key(string, bool, bool);
+    callback menu-action(string);
+    in property <[string]> recent-projects;                 // File › Open Recent, newest first
+    callback open-recent(int);
+    // True while menu-key replays its key: the shortcut items are disabled so the replay
+    // reaches the widgets instead of activating the menu item again.
+    in property <bool> menu-replay;
+    in property <string> undo-text: "Undo";
+    in property <string> redo-text: "Redo";
+    in property <bool> can-undo;
+    in property <bool> can-redo;
+    in property <bool> can-copy;
+    in property <bool> project-on-disk;
     // ---- panels (owned by the controller) ----
     in property <bool> mixer-open;
     in property <bool> assistant-open;
+    // Saved docked-assistant width (or the live drag); AppWindow narrows it to the room the
+    // timeline header leaves (src/splitters.rs mirrors the rule).
+    in property <length> assistant-pref-w: 252.45px;
+    callback chat-resize(int, length);                       // phase 0/1/2, window x
+    callback chat-resize-reset();
     callback toggle-mixer();
     callback toggle-assistant();
     // ---- mixer ----
     in property <[MixerStrip]> strips;
     in property <[StripMeter]> strip-meters;
-    in property <float> master-fader: 0.1126;
+    in property <float> master-fader: 0.2;
     in property <float> master-meter-l: 1;
     in property <float> master-meter-r: 1;
     in property <string> master-peak-text: "−∞";
+    in property <string> master-gain-text: "0.0";
     callback mixer-fader(int, float);      // track id, fader fraction
     callback master-fader-moved(float);
     callback reset-peaks();
@@ -402,7 +536,7 @@ export global Studio {
     in property <[HighlightRect]> highlights;
     callback chat-send(string);
     callback chat-new();
-    callback chat-set-mode(bool);          // true = Teach
+    callback chat-set-mode(bool);          // true = Point (Mode::Teach)
     callback chat-dismiss-notice();
     callback chat-toggle-entry(int);
     callback chat-remove-context();
@@ -415,24 +549,117 @@ export global Studio {
     in property <image> pr-image;            // wgpu note grid + keyboard (src/pianoroll.rs)
     in property <bool> pr-pen;
     in property <bool> pr-has-notes;
+    // Footer Scale: the switch (highlight), the Scale button above the keys (scale rows), root and type.
+    in property <bool> pr-scale-on;
+    in property <bool> pr-scale-fold;
+    in property <string> pr-scale-root: "C";
+    in property <string> pr-scale-type: "Major";
     in property <[RulerLabel]> pr-bar-labels;
     in property <[YLabel]> pr-key-labels;
     in property <string> pr-start-text: "1.1.0";
     in property <string> pr-end-text: "2.1.0";
     in property <string> pr-position-text: "1.1.0";
+    // Footer Loop: the switch (pr-loop-on), live for MIDI clips other than patterns (pr-loop-enabled).
+    in property <bool> pr-loop-on: true;
+    in property <bool> pr-loop-enabled: true;
+    // Footer control with keyboard focus (FooterKeys): 0 Loop, 1 Scale, 2 Root note, 3 Scale type; -1 none.
+    in-out property <int> footer-focus: -1;
+    callback pr-scale-step(int, int);                       // menu (8 root, 9 type), step (-1 up, 1 down, -1000 Home, 1000 End)
     in property <string> pr-length-text: "1.0.0";
     in property <string> pr-grid-text: "1/16";
     in property <string> pr-quant-text: "100%";
     in property <string> pr-human-text: "50%";
     in property <string> pr-vel-text: "100";
-    in property <string> clip-empty-title: "No clip selected";
-    in property <string> clip-empty-text: "Select a clip to edit it.";
+    in property <bool> ac-visible;           // an audio clip is open in the clip editor
+    in property <string> ac-gain-text: "0.0 dB";
+    in property <string> ac-bpm-text: "120";
+    in property <string> ac-speed-text: "1x";
+    in property <bool> ac-warped;            // Warp on: Mode is enabled, markers and transients edit
+    in property <string> ac-mode-text: "Auto";
+    callback ac-bpm-drag(int, length, length); // Original BPM drag: phase 0 press, 1 move, 2 release; offset from the press
+    in property <bool> ac-reversed;
+    callback ac-reverse-toggle();
+    in property <string> ac-transpose-text: "0 st";
+    in property <bool> ac-transpose-enabled: true;  // off in Re-pitch (pitch follows speed)
+    callback ac-transpose-drag(int, length, length); // Transpose drag, like ac-bpm-drag
+    in property <int> ac-edit-field: -1;     // typing into: 0 Original BPM, 1 Transpose
+    in property <string> ac-edit-text;       // the value the field starts with
+    callback ac-edit-start(int);             // double-click
+    callback ac-edit-commit(string);         // Enter or focus loss
+    callback ac-edit-cancel();               // Escape
     in property <string> clip-name: "MIDI";
     in property <color> clip-color: Tokens.track-instrument;
-    callback pr-pointer(int, length, length, bool, bool);   // kind 0 down 1 move 2 up, x, y, shift, alt
-    callback pr-scroll(float);
+    in property <color> clip-ink: #1d2142;   // text and icons on clip-colour fills
+    callback pr-pointer(int, length, length, bool, bool, bool);   // kind 0 down 1 move 2 up, x, y, shift, alt, command (Cmd or Ctrl)
+    callback pr-scroll(float, float);
+    callback pr-zoom(int, float);                           // 0 vertical, 1 horizontal; 0..1
+    in property <float> pr-vzoom: 0.49;
+    in property <float> pr-hzoom;
     callback pr-action(string);                             // quantize|humanize|reverse|legato|double|pen|smart_quantize|velocity_lane
+    // Clip editor dropdowns: 0 Speed, 1 Warp, 2 Mode, 3 Grid, 4 Type, 5 Genre; -1 when closed.
+    in property <int> clip-menu: -1;
+    in property <[string]> clip-menu-items;
+    in property <int> clip-menu-active: -1;
+    callback clip-menu-open(int);
+    callback clip-menu-pick(int);
     callback pr-value(int, int, float);                     // field, phase 0/1/2, dy since press
+    // ---- step sequencer (pattern clips; src/stepseq.rs) ----
+    in property <bool> seq-tabs;             // the open clip is a pattern: Sequencer / Piano roll tabs
+    in property <bool> seq-visible;          // the Sequencer tab is shown
+    in property <int> seq-lane;              // 0 Steps, 1 Velocity, 2 Offset, 3 Repeat, 4 Tie
+    in property <[SeqRow]> seq-rows;
+    in property <[SeqCell]> seq-cells;
+    in property <[SeqNum]> seq-nums;
+    in property <length> seq-col-pitch: 25.5px;
+    in property <length> seq-cell-w: 23px;
+    in property <int> seq-cols: 32;
+    in property <int> seq-row-count: 16;
+    in property <length> seq-scroll-y;
+    in property <bool> seq-can-double: true;
+    in property <bool> seq-can-clear: true;
+    in property <int> seq-page;                 // steps page shown (0-based)
+    in property <int> seq-pages: 1;
+    in property <bool> seq-follow: true;        // Follow playhead
+    in property <int> seq-play-col: -1;         // column of the playing step on this page, -1 none
+    in property <float> seq-flash: 1;           // hit flash phase 0..1 (1: over)
+    in property <[length]> seq-flash-rows;      // row tops of the cells the playing step hits
+    in property <[string]> seq-lane-tips;       // tooltips of Steps, Velocity .. Tie
+    in-out property <string> seq-tip;           // tooltip of the hovered toolbar control
+    in-out property <length> seq-tip-ax;        // its left edge and bottom (editor-local)
+    in-out property <length> seq-tip-ay;
+    in-out property <bool> seq-tip-on;          // shown (after the hover delay)
+    in property <string> seq-length-text: "16";
+    in property <string> seq-rate-text: "1/16";
+    in property <string> seq-swing-text: "0%";
+    callback seq-tab(bool);                                 // true: Piano roll
+    callback seq-lane-pick(int);
+    callback seq-action(string);                            // double|clear
+    callback seq-pointer(int, length, length);              // kind 0 down 1 move 2 up, editor-local x, y
+    callback seq-scroll(float);
+    callback seq-swing(int, float);                         // phase 0/1/2, dy since press
+    callback seq-page-pick(int);
+    callback seq-follow-toggle();
+    // ---- clip sidebar pattern list (src/composer.rs; Saine's own library, no service) ----
+    in property <bool> composer-drums;       // pattern clip: Genre only, drum grooves
+    in property <string> composer-part-text: "Chords";
+    in property <string> composer-genre-text: "Any";
+    in property <[PatternRow]> composer-rows;
+    in property <bool> composer-original;    // a pattern plays in place of the kept notes
+    in property <string> composer-create-text: "Create chords";
+    callback composer-create();
+    callback composer-load(int);
+    callback composer-original-pick();
+    in property <bool> composer-shape-ok;    // a MIDI clip with notes: Shape can open
+    in property <bool> composer-shape-tab;   // the Shape tab is showing
+    in property <[ShapeRow]> composer-shape-rows;
+    callback composer-tab(bool);                            // true: Shape
+    callback composer-shape(int, int, float);               // row, op (src/shape_rack.rs shape_op), value
+    in property <bool> shape-drawing;        // piano roll toolbar Shape: draw curves
+    in property <int> shape-brush;           // 0 Pencil, 1 Steps, 2 Ramp
+    in property <bool> shape-has-curves;     // Reset is live
+    callback shape-draw-toggle();
+    callback shape-brush-pick(int);
+    callback shape-reset();
     // ---- clip context menu + rename ----
     callback lane-context(length, length, length, length);  // lane x, y, window x, y
     in property <bool> menu-open;
@@ -448,6 +675,7 @@ export global Studio {
     callback sub-activate(int);
     callback menu-dismiss();
     in property <bool> rename-open;
+    in property <string> rename-title: "Rename clip";
     in-out property <string> rename-text;
     callback rename-commit(string);
     callback rename-cancel();
@@ -457,6 +685,7 @@ export global Studio {
     in property <int> synth-page;                // index into the category list
     in property <string> synth-preset: "Init";
     in property <bool> synth-enabled: true;
+    in property <DeviceCard> synth-card;                     // the Synth as a device card (shared header, folded strip)
     in property <[SynthParam]> synth-params;     // indexed like the device definition
     in property <[SynthDisplay]> synth-displays; // indexed by synth::disp
     in property <[SynthLabel]> synth-labels;
@@ -510,6 +739,20 @@ export global Studio {
     in property <bool> sel-arm;
     in property <bool> sel-monitor;
     in property <string> sel-input-text: "Select audio input";
+    // Timeline snap: the readout ("Off", "Auto", "1/16" ...), its menu (Off, grid sizes) and where it opens.
+    in property <string> snap-text: "Auto";
+    in property <bool> snap-menu-open;
+    in property <[ChoiceItem]> snap-menu-items;
+    in property <length> snap-menu-h: 100px;
+    in property <length> snap-menu-w: 108.8px;
+    in property <length> snap-menu-x;
+    in property <length> snap-menu-y;
+    in property <length> snap-menu-rule1;
+    in property <length> snap-menu-rule2;
+    callback snap-toggle();
+    callback snap-menu-toggle(length, length);
+    callback snap-menu-pick(int);
+    callback snap-menu-dismiss();
     in property <bool> input-menu-open;
     in property <[ChoiceItem]> input-menu-items;
     in property <length> input-menu-h: 48px;
@@ -519,6 +762,49 @@ export global Studio {
     callback open-input-menu();
     callback input-menu-pick(int);              // SetTrackInput
     callback input-menu-dismiss();
+    // ---- export dialog and unsaved-changes prompt (src/dialogs.rs, ui/dialogs.slint) ----
+    in property <bool> export-open;
+    in property <bool> export-bits24: true;
+    in property <bool> export-rate48: true;      // the engine rate (the render rate)
+    in property <string> export-recipe-text: "WAV 24-bit";
+    in property <string> export-bars-text: "Bars 1–1";
+    in property <string> export-name: "Untitled.wav";
+    in property <string> export-dir;
+    in property <string> export-estimate;
+    in property <int> export-recipe;             // 0 Mixdown, 1 Stems
+    in property <string> export-stems-text: "0 WAV files";
+    in property <string> export-files-text: "0 files";   // footer label on Stems
+    in property <string> export-name-label: "Name"; // "Folder" when stems go into a folder
+    in property <string> export-tracks-label: "All individual tracks";
+    in property <bool> export-tracks-menu-open;
+    in property <length> export-tracks-menu-h;
+    in property <[ChoiceItem]> export-tracks-items;
+    callback export-pick-recipe(int);
+    callback export-toggle-tracks();
+    callback export-pick-tracks(int);
+    callback export-close();
+    callback export-run();
+    callback export-choose-dir();
+    callback export-bits(bool);                 // true = 24-bit
+    callback export-name-edited(string);
+    in property <bool> unsaved-open;
+    // Settings › General (src/settings.rs general_toggle): Always load last session, Auto-show
+    // third-party effect windows, Auto-show built-in effect windows, Keep plugin windows on top.
+    in property <[bool]> general-on: [false, true, false, true];
+    in property <bool> general-stop-in-place;
+    callback general-toggle(int);
+    callback general-stop-mode(bool);                       // true = Stop in place
+    in property <bool> updates-open;                        // Options › Check for Updates…
+    in property <string> app-version;
+    in property <bool> undo-history-open;                   // Edit › Undo History…
+    in property <[UndoHistoryRow]> undo-history-rows;
+    in property <int> undo-history-current;                 // row index of the current state
+    callback undo-history-travel(int);
+    callback undo-history-close();
+    callback updates-close();
+    callback unsaved-cancel();
+    callback unsaved-dont-save();
+    callback unsaved-save();
     // ---- settings window (src/settings.rs, ui/settings.slint) ----
     in property <bool> settings-open;
     in property <int> settings-page: 1;
@@ -547,6 +833,7 @@ export global Studio {
 
     // ---- device chain (Devices tab; src/devices.rs, ui/devices.slint) ----
     in property <[DeviceCard]> device-cards;
+    in property <[DeviceCard]> device-window-cards;          // built-in cards open in a device window (any track)
     in property <length> chain-scroll;          // horizontal scroll of the chain (synth card included)
     in property <length> add-device-x: 265px;   // bottom-panel relative
     in property <bool> chain-marker-visible;    // insertion marker while dragging a card or a device
@@ -560,6 +847,16 @@ export global Studio {
     callback device-use-synth();                // SetInstrumentPlugin(None)
     callback device-drag(int, int, length);     // card id, phase 0/1/2, window x (MoveDevice on release)
     callback chain-scroll-by(float);
+    // Devices minimap (src/devminimap.rs): shown while the chain is wider than the panel. Tiles are strip-local;
+    // the window is (x, w) in strip px; the strip reports its width for the self-test.
+    in property <bool> devmm-visible;
+    in property <[DevTile]> devmm-tiles;
+    in property <length> devmm-win-x;
+    in property <length> devmm-win-w;
+    in property <bool> devmm-dragging;
+    in-out property <length> devmm-width;
+    callback devmm-pointer(int, length, length, length, length);
+    callback devmm-scroll(float, float);
     // Built-in device panels: device id, parameter index (definition order).
     callback panel-drag-pair(int, int, int, int, float, float, bool); // device, line param, other line param, then as panel-drag
     callback panel-drag(int, int, int, float, float, bool); // phase 0 press / 1 move / 2 release / 3 cancel, dy since last event (px, up +), norm per px, fine
@@ -582,6 +879,9 @@ export global Studio {
     // Bumped when the chain's cards change (added, removed, moved, folded): a focused control
     // inside a rebuilt card is gone, so the window takes the keyboard back.
     in property <int> cards-epoch;
+    callback device-ask(int);                                // header spark: ask the assistant about this device
+    callback device-window-moved(int, length, length);       // device window dragged: its new offset, kept per device
+    callback device-window(int);                             // header arrow: open / close the device's floating window
     callback device-fold(int);                               // fold / unfold the card (header double-click, minus)
     callback device-collapse(int);                           // chain head: hide / show its members
     callback device-swap-menu(int, length, length);          // "Choose effect plugin" from the card name
@@ -608,6 +908,8 @@ export global Studio {
     callback sampler-well(int, int, float, float, bool);     // phase, x fraction, grab distance (fraction), alt
     callback sampler-handle(int, int, int, length, length);  // picture handle i: phase, x, y (picture px)
     callback panel-graph(int, int, float, float, bool, bool); // canvas pointer (PanelCanvas.pointer): phase (0 press, 1 drag, 2 release, 3 cancel, 4 hover, 5 leave, 6 double-click), well x, y (px), shift, alt
+    in property <[PanelWash]> field-washes;                  // src/panel_fields.rs: wash images of field wells
+    callback panel-graph-menu(int, float, float, length, length); // canvas right press: well x, y (px), window x, y: the handle's parameter menu
     callback panel-graph-wheel(int, float, float, float) -> bool; // canvas wheel: x, y, wheel dy (px, up +): used
     callback panel-graph-key(int, string, bool, bool) -> bool;     // canvas key: text, shift, alt: accepted
     callback panel-eq(int, int, int);                        // action 0 select band / 1 toggle On / 2 type choice / 3 reset type; value

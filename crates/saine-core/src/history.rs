@@ -1,8 +1,8 @@
 //! Undo/redo history built on invertible [`Command`]s.
 
 use crate::command::{Command, EditError};
-use crate::model::Project;
-use std::time::{Duration, Instant};
+use crate::model::{Project, TrackId};
+use std::time::{Duration, Instant, SystemTime};
 
 #[derive(Debug, Clone)]
 struct Entry {
@@ -13,6 +13,8 @@ struct Entry {
     undo: Command,
     coalesce_key: Option<String>,
     at: Instant,
+    /// Wall-clock time the edit was made (Undo History's Date and Time).
+    made: SystemTime,
 }
 
 /// Where an edit came from; used for logging, AI attribution and tests.
@@ -100,7 +102,7 @@ impl Document {
             last.at = now;
             return Ok(());
         }
-        self.undo.push(Entry { label, redo, undo, coalesce_key: key, at: now });
+        self.undo.push(Entry { label, redo, undo, coalesce_key: key, at: now, made: SystemTime::now() });
         if self.undo.len() > self.max_history {
             self.undo.remove(0);
         }
@@ -139,6 +141,38 @@ impl Document {
         }
     }
 
+    /// Remember the bottom panel height for a panel kind (splitter drag). Saved with the
+    /// project but not an undo step, like the reference's panel layout.
+    /// Track row height scale (1.0 = default). Like the reference, a view change: saved with
+    /// the project, never an undo step.
+    pub fn set_track_height(&mut self, track: TrackId, height: f32) -> Result<(), EditError> {
+        let (lo, hi) = crate::Track::HEIGHT_RANGE;
+        if !(lo..=hi).contains(&height) {
+            return Err(EditError::InvalidValue { field: "height", reason: format!("{height} outside {lo}..{hi}") });
+        }
+        let t = self.project.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
+        if t.height != height {
+            t.height = height;
+            self.revision += 1;
+        }
+        Ok(())
+    }
+
+    pub fn set_bottom_panel_height(&mut self, kind: &str, h: Option<f32>) {
+        let map = &mut self.project.bottom_panel_heights;
+        let changed = match h {
+            Some(h) => map.insert(kind.to_string(), h) != Some(h),
+            None => map.remove(kind).is_some(),
+        };
+        if changed {
+            self.revision += 1;
+        }
+    }
+
+    pub fn undo_depth(&self) -> usize {
+        self.undo.len()
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }
@@ -157,7 +191,13 @@ impl Document {
 
     pub fn undo(&mut self) -> Result<bool, EditError> {
         let Some(mut e) = self.undo.pop() else { return Ok(false) };
-        let redo = e.undo.clone().apply(&mut self.project)?;
+        let redo = match e.undo.clone().apply(&mut self.project) {
+            Ok(redo) => redo,
+            Err(err) => {
+                self.undo.push(e);
+                return Err(err);
+            }
+        };
         e.redo = redo;
         e.coalesce_key = None; // never coalesce into an entry that was undone
         self.revision += 1;
@@ -167,7 +207,13 @@ impl Document {
 
     pub fn redo(&mut self) -> Result<bool, EditError> {
         let Some(mut e) = self.redo.pop() else { return Ok(false) };
-        let undo = e.redo.clone().apply(&mut self.project)?;
+        let undo = match e.redo.clone().apply(&mut self.project) {
+            Ok(undo) => undo,
+            Err(err) => {
+                self.redo.push(e);
+                return Err(err);
+            }
+        };
         e.undo = undo;
         self.revision += 1;
         self.undo.push(e);
@@ -177,6 +223,48 @@ impl Document {
     /// Labels of the undo stack, oldest first (for an "Undo History" view).
     pub fn history_labels(&self) -> Vec<String> {
         self.undo.iter().map(|e| e.label.clone()).collect()
+    }
+
+    /// Every step Edit › Undo History lists, oldest first: the undo stack, then the redo stack
+    /// with the next redo first. The first `undo_depth()` of them are applied.
+    pub fn history_steps(&self) -> Vec<(&str, SystemTime)> {
+        self.undo.iter().chain(self.redo.iter().rev()).map(|e| (e.label.as_str(), e.made)).collect()
+    }
+}
+
+/// An edit label as the reference app shows it in Undo / Redo: sentence case ("Track Volume Change" →
+/// "Track volume change"). Words written in capitals (MIDI, EQ, LFO) keep them, also inside
+/// hyphenated words ("MIDI-to-Audio" → "MIDI-to-audio").
+pub fn sentence_case(label: &str) -> String {
+    let mut first = true;
+    label
+        .split(' ')
+        .map(|w| {
+            w.split('-')
+                .map(|part| {
+                    let acronym = part.chars().filter(|c| c.is_alphabetic()).count() > 1 && !part.chars().any(|c| c.is_lowercase());
+                    let keep = std::mem::take(&mut first) || acronym;
+                    if keep { part.to_string() } else { part.to_lowercase() }
+                })
+                .collect::<Vec<_>>()
+                .join("-")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(test)]
+mod sentence_case_tests {
+    #[test]
+    fn labels_read_in_sentence_case() {
+        use super::sentence_case;
+        assert_eq!(sentence_case("Track Volume Change"), "Track volume change");
+        assert_eq!(sentence_case("Insert MIDI Clip"), "Insert MIDI clip");
+        assert_eq!(sentence_case("Move Effect into Chain"), "Move effect into chain");
+        assert_eq!(sentence_case("Use Built-in Synth"), "Use built-in synth");
+        assert_eq!(sentence_case("Mute"), "Mute");
+        assert_eq!(sentence_case("Convert MIDI-to-Audio"), "Convert MIDI-to-audio");
+        assert_eq!(sentence_case("Re-Pitch Clip"), "Re-pitch clip");
     }
 }
 

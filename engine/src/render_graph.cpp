@@ -297,10 +297,60 @@ void plan_sidechains(RenderGraph& g) {
 
 int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err) {
+    se_session_desc_v7 d7{};
+    d7.v6 = desc;
+    return build_render_graph(d7, lookup, out, err);
+}
+
+int32_t build_render_graph(const se_session_desc_v7& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err) {
+    se_session_desc_v8 d8{};
+    d8.v7 = desc;
+    return build_render_graph(d8, lookup, out, err);
+}
+
+int32_t build_render_graph(const se_session_desc_v8& desc8, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err) {
+    const se_session_desc_v7& desc7 = desc8.v7;
+    const se_session_desc_v6& desc = desc7.v6;
     if (desc.track_count > 0 && desc.tracks == nullptr) {
         err = "session has track_count > 0 but tracks == NULL";
         return SE_ERR_INVALID_ARG;
     }
+    if (desc7.warp_count > 0 && desc7.warps == nullptr) {
+        err = "session has warp_count > 0 but warps == NULL";
+        return SE_ERR_INVALID_ARG;
+    }
+    std::unordered_map<uint64_t, const se_clip_warp_desc*> warp_of;
+    for (uint32_t i = 0; i < desc7.warp_count; ++i) {
+        const se_clip_warp_desc& w = desc7.warps[i];
+        if (const char* why = validate_warp(w)) {
+            err = "clip " + std::to_string(w.clip_id) + " warp: " + why;
+            return SE_ERR_INVALID_ARG;
+        }
+        if (!warp_of.emplace(w.clip_id, &w).second) {
+            err = "clip " + std::to_string(w.clip_id) + " is warped more than once";
+            return SE_ERR_INVALID_ARG;
+        }
+    }
+    std::unordered_map<uint64_t, uint32_t> warp_hits; // clip id -> clips carrying it
+    if (desc8.loop_count > 0 && desc8.loops == nullptr) {
+        err = "session has loop_count > 0 but loops == NULL";
+        return SE_ERR_INVALID_ARG;
+    }
+    std::unordered_map<uint64_t, const se_clip_loop_desc*> loop_of;
+    for (uint32_t i = 0; i < desc8.loop_count; ++i) {
+        const se_clip_loop_desc& l = desc8.loops[i];
+        if (l.loop_start < 0 || l.loop_end <= l.loop_start) {
+            err = "clip " + std::to_string(l.clip_id) + " loop: needs 0 <= loop_start < loop_end";
+            return SE_ERR_INVALID_ARG;
+        }
+        if (!loop_of.emplace(l.clip_id, &l).second) {
+            err = "clip " + std::to_string(l.clip_id) + " is looped more than once";
+            return SE_ERR_INVALID_ARG;
+        }
+    }
+    std::unordered_map<uint64_t, uint32_t> loop_hits;
     if (desc.master_lane_count > 0 && desc.master_lanes == nullptr) {
         err = "session has master_lane_count > 0 but master_lanes == NULL";
         return SE_ERR_INVALID_ARG;
@@ -425,10 +475,41 @@ int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lo
                 used.emplace(cd.asset_id, asset);
             }
 
-            // Clamp the played range to the asset; drop empty clips.
             const auto asset_frames = static_cast<int64_t>(asset->frames);
+            // The loop end, clamped to the content there is; 0 = plays once.
+            const se_clip_loop_desc* loop = nullptr;
+            if (auto lt = loop_of.find(cd.clip_id); lt != loop_of.end()) {
+                ++loop_hits[cd.clip_id];
+                loop = lt->second;
+            }
+            const auto loop_end_within = [&](int64_t content) {
+                if (loop == nullptr) return int64_t{0};
+                const int64_t end = std::min({loop->loop_end, content, cd.length});
+                return end > loop->loop_start ? end : int64_t{0};
+            };
+            if (auto wt = warp_of.find(cd.clip_id); wt != warp_of.end()) {
+                // Warped: the clip covers its timeline frames; the map says what plays.
+                ++warp_hits[cd.clip_id];
+                if (cd.length <= 0 || asset_frames == 0) continue;
+                ClipNode clip;
+                clip.src_l = asset->channel(0);
+                clip.src_r = asset->channel(1);
+                clip.timeline_start = cd.timeline_start;
+                clip.timeline_end = cd.timeline_start + cd.length;
+                clip.source_offset = cd.source_offset;
+                clip.gain = cd.gain;
+                clip.source_frames = asset_frames;
+                if ((clip.loop_end = loop_end_within(cd.length)) > 0) clip.loop_start = loop->loop_start;
+                // A looped clip only ever plays (and renders) content below its loop end.
+                clip.warp = add_warp(*g, *wt->second, asset, cd.timeline_start,
+                                     clip.loop_end > 0 ? clip.loop_end : cd.length);
+                g->clips.push_back(clip);
+                continue;
+            }
+            // Clamp the played range to the asset (a looped clip: its loop); drop empty clips.
             if (cd.source_offset >= asset_frames) continue;
-            const int64_t len = std::min(cd.length, asset_frames - cd.source_offset);
+            const int64_t loop_end = loop_end_within(asset_frames - cd.source_offset);
+            const int64_t len = loop_end > 0 ? cd.length : std::min(cd.length, asset_frames - cd.source_offset);
             if (len <= 0) continue;
 
             ClipNode clip;
@@ -438,6 +519,8 @@ int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lo
             clip.timeline_end = cd.timeline_start + len;
             clip.source_offset = cd.source_offset;
             clip.gain = cd.gain;
+            clip.source_frames = asset_frames;
+            if ((clip.loop_end = loop_end) > 0) clip.loop_start = loop->loop_start;
             g->clips.push_back(clip);
         }
 
@@ -613,6 +696,33 @@ int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lo
     g->assets.reserve(used.size());
     for (auto& [id, ref] : used) g->assets.push_back(std::move(ref));
 
+    // Every warp must name exactly one clip of the session.
+    for (const auto& [id, w] : warp_of) {
+        const auto hit = warp_hits.find(id);
+        if (hit == warp_hits.end()) {
+            err = "warp names unknown clip " + std::to_string(id);
+            return SE_ERR_INVALID_ARG;
+        }
+        if (hit->second > 1) {
+            err = "warped clip id " + std::to_string(id) + " is used by more than one clip";
+            return SE_ERR_INVALID_ARG;
+        }
+    }
+    for (const auto& [id, l] : loop_of) {
+        const auto hit = loop_hits.find(id);
+        if (hit == loop_hits.end()) {
+            err = "loop names unknown clip " + std::to_string(id);
+            return SE_ERR_INVALID_ARG;
+        }
+        if (hit->second > 1) {
+            err = "looped clip id " + std::to_string(id) + " is used by more than one clip";
+            return SE_ERR_INVALID_ARG;
+        }
+    }
+    assign_warp_voices(*g);
+    g->warp_voice_refs.resize(g->warp_voice_keys.size());
+    g->warp_voices.assign(g->warp_voice_keys.size(), nullptr);
+
     g->synth_refs.resize(g->tracks.size());
     g->synths.assign(g->tracks.size(), nullptr);
     plan_sidechains(*g);
@@ -666,6 +776,13 @@ std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g) {
     c->pdc = g.pdc;
     c->line_refs = g.line_refs;
     c->lines = g.lines;
+    c->sample_rate = g.sample_rate;
+    c->warps = g.warps;
+    c->warp_segments = g.warp_segments;
+    c->warp_slices = g.warp_slices;
+    c->warp_voice_keys = g.warp_voice_keys;
+    c->warp_voice_refs = g.warp_voice_refs;
+    c->warp_voices = g.warp_voices;
     return c;
 }
 

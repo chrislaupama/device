@@ -233,8 +233,7 @@ public:
     void bind_samples(const AssetLookup& lookup);
     // Main thread: free the sample set the RT side has stopped using.
     void reclaim() noexcept;
-    // Main thread: queue a live note (velocity 0 = off). False when full.
-    bool push_note(uint8_t pitch, uint8_t velocity) noexcept;
+    bool plays_notes() const noexcept override { return desc_.instrument; }
     bool instrument() const noexcept { return desc_.instrument; }
     float value(uint32_t index) const noexcept;
     // Main thread: latest readouts.
@@ -275,7 +274,6 @@ public:
     BuiltinProcessor& processor() noexcept { return *proc_; }
     ~BuiltinInstance() override;
 
-    static constexpr uint32_t kLiveEvents = 256;
 
 private:
     struct SampleEntry {
@@ -298,7 +296,6 @@ private:
     std::atomic<SampleSet*> pending_{nullptr};
     std::atomic<SampleSet*> retired_{nullptr};
     SampleSet* active_ = nullptr; // RT owned
-    SpscQueue<MidiEvent, kLiveEvents> live_;
     std::vector<MidiEvent> merged_;  // RT scratch: live + sequenced events
     const BuiltinDescriptor& desc_;
     std::unique_ptr<BuiltinProcessor> proc_;

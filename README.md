@@ -58,8 +58,6 @@ wgpu.
   macros.
 - **Plugins.** Hosts AU (macOS), VST3 and CLAP plugins. Plugins are scanned in a separate process, so a crashing plugin
   is blocklisted instead of taking the app down, and their editors open in their own windows.
-- **Export.** Render the whole song to a WAV file (⌘⇧E, or Ctrl+Shift+E on Windows and Linux), mixed exactly as it
-  plays, with a short tail so reverbs and releases ring out.
 - **Delay compensation.** Plugin latency is compensated across every track, the metronome, recording and export, and
   can be switched off.
 - **Automation.** Draw volume, pan, built-in device and plugin parameters as lanes with points, curves or freehand, or
@@ -155,7 +153,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Mixer | ✅ | |
 | Automation | ✅ | |
 | Delay compensation | ✅ | |
-| Export | ✅ | WAV only (32-bit float, the whole song) |
+| Export | 🚧 | The engine renders to WAV; export from the app isn't wired up yet |
 | Assistant | 🚧 | Tested only with a fixture provider, not yet against the live API |
 | Windows and Linux audio | 🚧 | Linux streams run in CI on a headless PipeWire server; neither has run on a physical sound card; no ASIO |
 | Releases and branding | ⏳ | Signed builds, original icons |

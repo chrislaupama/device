@@ -52,6 +52,50 @@ pub struct Preferences {
     /// Interface zoom in percent (View › Zoom In / Out / Reset); 0 = default (100).
     #[serde(default)]
     pub interface_zoom: u32,
+    /// Browser › Files › Folders: folders the user added, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub browser_folders: Vec<String>,
+    /// Browser preview volume, linear gain 0..2 (None = 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_volume: Option<f32>,
+    /// Docked assistant width in design units (drag its splitter); 0 = default.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub assistant_width: f32,
+    /// File › Open Recent: project folders, newest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_projects: Vec<String>,
+    /// Canonical form of each `recent_projects` entry, resolved once when it was added,
+    /// so de-duplication never touches the disk. Empty for entries saved before this field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_resolved: Vec<String>,
+    #[serde(default)]
+    pub general: GeneralPrefs,
+}
+
+/// Settings › General, with the reference app's defaults.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GeneralPrefs {
+    /// Startup: reopen the most recent project at launch.
+    pub load_last_session: bool,
+    /// Transport › Playhead on stop: false = Return to start, true = Stop in place.
+    pub stop_in_place: bool,
+    /// Plugin windows: open a third-party effect's window when it is added.
+    pub show_plugin_windows: bool,
+    /// Plugin windows: open a built-in effect's device window when it is added.
+    pub show_builtin_windows: bool,
+    /// Plugin windows: keep plugin windows above the main window.
+    pub plugin_windows_on_top: bool,
+}
+
+impl Default for GeneralPrefs {
+    fn default() -> Self {
+        GeneralPrefs { load_last_session: false, stop_in_place: false, show_plugin_windows: true, show_builtin_windows: false, plugin_windows_on_top: true }
+    }
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
 }
 
 /// The app's support directory (see the module docs), shared by the preferences
@@ -112,14 +156,17 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("saine-prefs-test-{}", std::process::id()));
         let path = dir.join("preferences.json");
         assert_eq!(load(&path).unwrap(), None);
-        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110 };
+        let p = Preferences { audio: AudioPrefs { output: Some("out-uid".into()), buffer_size: 256, input_muted: true, ..Default::default() }, interface_zoom: 110, browser_folders: vec!["/tmp/kit".into()], preview_volume: Some(0.5), assistant_width: 400.0, recent_projects: vec!["/tmp/Song.saineproj".into()], recent_resolved: vec!["/private/tmp/Song.saineproj".into()], general: GeneralPrefs { load_last_session: true, stop_in_place: true, ..GeneralPrefs::default() } };
         save(&path, &p).unwrap();
         assert_eq!(load(&path).unwrap(), Some(p.clone()));
         assert!(p.audio.is_custom());
         assert!(!AudioPrefs::default().is_custom());
         // Unknown/missing fields are tolerated.
         std::fs::write(&path, r#"{"audio":{"buffer_size":512},"future":1}"#).unwrap();
-        assert_eq!(load(&path).unwrap().unwrap().audio.buffer_size, 512);
+        let loaded = load(&path).unwrap().unwrap();
+        assert_eq!(loaded.audio.buffer_size, 512);
+        assert_eq!(loaded.general, GeneralPrefs::default(), "files without General get the reference app's defaults");
+        assert!(loaded.general.show_plugin_windows && loaded.general.plugin_windows_on_top);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

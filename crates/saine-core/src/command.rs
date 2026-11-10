@@ -11,8 +11,33 @@ use crate::device::{Device, DeviceId, DeviceSample, ModLink, PluginKind};
 use crate::instrument::SynthParams;
 use crate::midi::{self, MidiClip, Note};
 use crate::model::*;
+use crate::steps::{self, StepPattern};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+/// What a `SetComposer` does (its undo label).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ComposerEdit {
+    Create,
+    Load,
+    Original,
+    Type,
+    Genre,
+    Shape,
+}
+
+impl ComposerEdit {
+    pub fn label(self) -> &'static str {
+        match self {
+            ComposerEdit::Create => "Create Patterns",
+            ComposerEdit::Load => "Load Pattern",
+            ComposerEdit::Original => "Load Original",
+            ComposerEdit::Type => "Pattern Type Change",
+            ComposerEdit::Genre => "Pattern Genre Change",
+            ComposerEdit::Shape => "Shape Change",
+        }
+    }
+}
 
 #[derive(Debug, Error, PartialEq)]
 pub enum EditError {
@@ -20,6 +45,8 @@ pub enum EditError {
     TrackNotFound(TrackId),
     #[error("clip {0:?} not found")]
     ClipNotFound(ClipId),
+    #[error("section {0:?} not found")]
+    SectionNotFound(SectionId),
     #[error("asset {0:?} not found")]
     AssetNotFound(AssetId),
     #[error("invalid value for {field}: {reason}")]
@@ -44,6 +71,14 @@ pub enum Command {
     AddTrack { index: Option<usize>, track: Track },
     RemoveTrack { track: TrackId },
     RenameTrack { track: TrackId, name: String },
+    /// Insert a section at `index` (end when `None`). If `section.id` is 0 a fresh id is allocated.
+    InsertSection { index: Option<usize>, section: Section },
+    RemoveSection { section: SectionId },
+    RenameSection { section: SectionId, name: String },
+    /// Length in ticks, at least one beat. Later sections move with its end.
+    SetSectionLength { section: SectionId, length: Ticks },
+    /// Move a section to `index` in the list (sections stay contiguous).
+    MoveSection { section: SectionId, index: usize },
     SetTrackGain { track: TrackId, gain: f32 },
     SetTrackPan { track: TrackId, pan: f32 },
     SetTrackMute { track: TrackId, mute: bool },
@@ -60,6 +95,17 @@ pub enum Command {
     /// Set the visible region of a clip (left/right trim).
     TrimClip { clip: ClipId, start: Ticks, source_offset: u64, source_length: u64 },
     SetClipGain { clip: ClipId, gain: f32 },
+    /// Cut an audio or MIDI clip in two at the absolute timeline position at.
+    /// The left part keeps the clip's id; the right part gets new_id (0 means
+    /// allocate) and the same name. MIDI notes that cross the cut are cut in
+    /// two. Refused for warped or reversed audio clips and for pattern clips.
+    SplitClip { clip: ClipId, at: Ticks, new_id: ClipId },
+    /// Disable or re-enable an audio or MIDI clip (it stays on the timeline but is silent).
+    SetClipEnabled { clip: ClipId, enabled: bool },
+    /// Replace a clip's warp settings. `label` names the edit for undo
+    /// ("Set clip speed", "Move warp marker", …); successive edits with the
+    /// same label on the same clip coalesce (drags).
+    SetClipWarp { clip: ClipId, warp: crate::warp::ClipWarp, label: String },
     SetTempo { bpm: f64 },
     SetTimeSignature { numerator: u8, denominator: u8 },
     SetLoop { enabled: bool, start: Ticks, end: Ticks },
@@ -75,9 +121,25 @@ pub enum Command {
     /// Replace all notes of a MIDI clip (draw, erase, move, resize, velocity,
     /// quantize, transpose... each editor gesture is one of these).
     SetMidiNotes { clip: ClipId, notes: Vec<Note> },
+    /// Make a MIDI clip a pattern clip, or change its pattern (its notes are
+    /// re-baked from the grid; notes on keys that aren't rows stay), or with
+    /// `None` make it a plain MIDI clip again (the repeats become notes).
+    SetStepPattern { clip: ClipId, pattern: Option<StepPattern> },
+    /// Replace a MIDI clip's notes and pattern as they are (the exact inverse
+    /// of the two commands above).
+    SetMidiContent { clip: ClipId, notes: Vec<Note>, pattern: Option<StepPattern> },
+    /// The clip sidebar's pattern list: its state and the clip content it loads
+    /// (`crate::library`). The inverse is the same command with the old values.
+    SetComposer { clip: ClipId, edit: ComposerEdit, composer: Option<crate::library::Composer>, notes: Vec<Note>, pattern: Option<StepPattern> },
     /// Replace an instrument track's synth parameters (knob drags coalesce
     /// per track; loading a preset is one step).
     SetSynthParams { track: TrackId, params: SynthParams },
+    /// A MIDI clip's loop (Loop switch, Position, Length, loop bar) and its length.
+    SetMidiLoop { clip: ClipId, clip_loop: Option<midi::ClipLoop>, length: Ticks },
+    /// An audio clip's loop (Loop switch, timeline right edge while looping).
+    SetClipLoop { clip: ClipId, clip_loop: Option<AudioLoop> },
+    /// The piano roll's scale view of a MIDI clip (root, type, highlight, scale rows).
+    SetClipScale { clip: ClipId, scale: Option<crate::scale::ClipScale> },
     SetTrackArm { track: TrackId, arm: bool },
     SetTrackMonitor { track: TrackId, monitor: bool },
     SetTrackInput { track: TrackId, input: Option<InputSource> },
@@ -137,6 +199,11 @@ impl Command {
             Command::AddTrack { track, .. } => format!("Add {} Track", kind_name(track.kind)),
             Command::RemoveTrack { .. } => "Delete Track".into(),
             Command::RenameTrack { .. } => "Rename Track".into(),
+            Command::InsertSection { .. } => "Add Section".into(),
+            Command::RemoveSection { .. } => "Delete Section".into(),
+            Command::RenameSection { .. } => "Rename Section".into(),
+            Command::SetSectionLength { .. } => "Resize Section".into(),
+            Command::MoveSection { .. } => "Move Section".into(),
             Command::SetTrackGain { .. } => "Track Volume Change".into(),
             Command::SetTrackPan { .. } => "Track Pan Change".into(),
             Command::SetTrackMute { .. } => "Mute Change".into(),
@@ -149,6 +216,9 @@ impl Command {
             Command::MoveClip { .. } => "Move Clip".into(),
             Command::TrimClip { .. } => "Trim Clip".into(),
             Command::SetClipGain { .. } => "Clip Gain Change".into(),
+            Command::SplitClip { .. } => "Split Clip".into(),
+            Command::SetClipEnabled { enabled, .. } => (if *enabled { "Enable Clip" } else { "Disable Clip" }).into(),
+            Command::SetClipWarp { label, .. } => label.clone(),
             Command::SetTempo { .. } => "Tempo Change".into(),
             Command::SetTimeSignature { .. } => "Time Signature Change".into(),
             Command::SetLoop { .. } => "Loop Change".into(),
@@ -157,8 +227,13 @@ impl Command {
             Command::RemoveMidiClip { .. } => "Delete Clip".into(),
             Command::MoveMidiClip { .. } => "Move Clip".into(),
             Command::ResizeMidiClip { .. } => "Resize Clip".into(),
-            Command::SetMidiNotes { .. } => "Edit Notes".into(),
+            Command::SetMidiNotes { .. } | Command::SetMidiContent { .. } => "Edit Notes".into(),
+            Command::SetComposer { edit, .. } => edit.label().into(),
+            Command::SetStepPattern { pattern: Some(_), .. } => "Edit Step Sequencer".into(),
+            Command::SetStepPattern { pattern: None, .. } => "Convert to MIDI Clip".into(),
             Command::SetSynthParams { .. } => "Synth Parameter Change".into(),
+            Command::SetMidiLoop { .. } | Command::SetClipLoop { .. } => "Clip Loop".into(),
+            Command::SetClipScale { .. } => "Clip Scale".into(),
             Command::SetTrackArm { arm, .. } => (if *arm { "Arm Track" } else { "Disarm Track" }).into(),
             Command::SetTrackMonitor { .. } => "Input Monitoring Change".into(),
             Command::SetTrackInput { .. } => "Input Change".into(),
@@ -202,10 +277,12 @@ impl Command {
             Command::SetTrackPan { track, .. } => Some(format!("pan:{}", track.0)),
             Command::SetMasterGain { .. } => Some("master_gain".into()),
             Command::SetClipGain { clip, .. } => Some(format!("clipgain:{}", clip.0)),
+            Command::SetClipWarp { clip, label, .. } => Some(format!("clipwarp:{}:{label}", clip.0)),
             Command::SetTempo { .. } => Some("tempo".into()),
             Command::SetSynthParams { track, params } => Some(format!("synth:{}:{}", track.0, params.preset)),
             Command::SetDeviceParam { device, param, .. } => Some(format!("devparam:{}:{param}", device.0)),
             Command::SetModLink { source, index, .. } => Some(format!("modlink:{}:{index}", source.0)),
+            Command::SetComposer { clip, edit: ComposerEdit::Shape, .. } => Some(format!("shape:{}", clip.0)),
             _ => None,
         }
     }
@@ -214,12 +291,8 @@ impl Command {
     pub fn apply(self, p: &mut Project) -> Result<Command, EditError> {
         match self {
             Command::AddTrack { index, mut track } => {
-                if track.id.0 == 0 {
-                    track.id = TrackId(p.alloc_id());
-                } else if p.track(track.id).is_some() {
+                if track.id.0 != 0 && p.track(track.id).is_some() {
                     return Err(EditError::DuplicateId(track.id.0));
-                } else {
-                    p.next_id = p.next_id.max(track.id.0 + 1);
                 }
                 validate_gain("gain", track.gain)?;
                 validate_pan(track.pan)?;
@@ -230,6 +303,11 @@ impl Command {
                 if idx > p.tracks.len() {
                     return Err(invalid("index", format!("{idx} > {}", p.tracks.len())));
                 }
+                if track.id.0 == 0 {
+                    track.id = TrackId(p.alloc_id());
+                }
+                let ids = track.clips.iter().map(|c| c.id.0).chain(track.midi_clips.iter().map(|c| c.id.0)).chain(track.devices.iter().chain(track.instrument_plugin.as_ref()).map(|d| d.id.0));
+                p.next_id = ids.chain([track.id.0]).fold(p.next_id, |n, id| n.max(id + 1));
                 let id = track.id;
                 p.tracks.insert(idx, track);
                 // A new instrument track plays the built-in Synth.
@@ -240,6 +318,61 @@ impl Command {
                 let idx = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
                 let t = p.tracks.remove(idx);
                 Ok(Command::AddTrack { index: Some(idx), track: t })
+            }
+            Command::InsertSection { index, mut section } => {
+                let name = section.name.trim().to_string();
+                if name.is_empty() || name.chars().count() > 128 {
+                    return Err(invalid("name", "must be 1..=128 characters"));
+                }
+                if section.length < PPQ {
+                    return Err(invalid("length", "at least one beat"));
+                }
+                if section.color > 0xff_ffff {
+                    return Err(invalid("color", "0xRRGGBB"));
+                }
+                if section.id.0 == 0 {
+                    section.id = SectionId(p.alloc_id());
+                } else if p.section_index(section.id).is_some() {
+                    return Err(EditError::DuplicateId(section.id.0));
+                } else {
+                    p.next_id = p.next_id.max(section.id.0 + 1);
+                }
+                section.name = name;
+                let id = section.id;
+                let at = index.unwrap_or(p.sections.len()).min(p.sections.len());
+                p.sections.insert(at, section);
+                Ok(Command::RemoveSection { section: id })
+            }
+            Command::RemoveSection { section } => {
+                let i = p.section_index(section).ok_or(EditError::SectionNotFound(section))?;
+                let s = p.sections.remove(i);
+                Ok(Command::InsertSection { index: Some(i), section: s })
+            }
+            Command::RenameSection { section, name } => {
+                let name = name.trim().to_string();
+                if name.is_empty() || name.chars().count() > 128 {
+                    return Err(invalid("name", "must be 1..=128 characters"));
+                }
+                let i = p.section_index(section).ok_or(EditError::SectionNotFound(section))?;
+                let old = std::mem::replace(&mut p.sections[i].name, name);
+                Ok(Command::RenameSection { section, name: old })
+            }
+            Command::SetSectionLength { section, length } => {
+                if length < PPQ {
+                    return Err(invalid("length", "at least one beat"));
+                }
+                let i = p.section_index(section).ok_or(EditError::SectionNotFound(section))?;
+                let old = std::mem::replace(&mut p.sections[i].length, length);
+                Ok(Command::SetSectionLength { section, length: old })
+            }
+            Command::MoveSection { section, index } => {
+                let i = p.section_index(section).ok_or(EditError::SectionNotFound(section))?;
+                if index >= p.sections.len() {
+                    return Err(invalid("index", format!("{index} past the last section")));
+                }
+                let s = p.sections.remove(i);
+                p.sections.insert(index, s);
+                Ok(Command::MoveSection { section, index: i })
             }
             Command::RenameTrack { track, name } => {
                 let name = name.trim().to_string();
@@ -356,11 +489,37 @@ impl Command {
                 p.tracks[ti].clips.sort_by_key(|c| (c.start, c.id));
                 Ok(inv)
             }
+            Command::SetClipLoop { clip, clip_loop } => {
+                if let Some(l) = &clip_loop {
+                    l.validate().map_err(|r| invalid("loop", r))?;
+                }
+                let (ti, ci) = p.find_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let old = std::mem::replace(&mut p.tracks[ti].clips[ci].clip_loop, clip_loop);
+                Ok(Command::SetClipLoop { clip, clip_loop: old })
+            }
             Command::SetClipGain { clip, gain } => {
                 validate_gain("clip_gain", gain)?;
                 let (ti, ci) = p.find_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
                 let old = std::mem::replace(&mut p.tracks[ti].clips[ci].gain, gain);
                 Ok(Command::SetClipGain { clip, gain: old })
+            }
+            Command::SplitClip { clip, at, new_id } => split_clip(p, clip, at, new_id),
+            Command::SetClipEnabled { clip, enabled } => {
+                if let Some((ti, ci)) = p.find_clip(clip) {
+                    let was = !std::mem::replace(&mut p.tracks[ti].clips[ci].disabled, !enabled);
+                    return Ok(Command::SetClipEnabled { clip, enabled: was });
+                }
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let was = !std::mem::replace(&mut p.tracks[ti].midi_clips[ci].disabled, !enabled);
+                Ok(Command::SetClipEnabled { clip, enabled: was })
+            }
+            Command::SetClipWarp { clip, warp, label } => {
+                let (ti, ci) = p.find_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let mut probe = p.tracks[ti].clips[ci].clone();
+                probe.warp = warp;
+                validate_clip(p, &probe)?;
+                let old = std::mem::replace(&mut p.tracks[ti].clips[ci].warp, probe.warp);
+                Ok(Command::SetClipWarp { clip, warp: old, label })
             }
             Command::SetTempo { bpm } => {
                 if !(MIN_BPM..=MAX_BPM).contains(&bpm) {
@@ -454,8 +613,82 @@ impl Command {
                 midi::validate_notes(&notes).map_err(|r| invalid("notes", r))?;
                 let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
                 midi::sort_notes(&mut notes);
-                let old = std::mem::replace(&mut p.tracks[ti].midi_clips[ci].notes, notes);
-                Ok(Command::SetMidiNotes { clip, notes: old })
+                let c = &mut p.tracks[ti].midi_clips[ci];
+                let Some(pattern) = c.pattern.take() else {
+                    let old = std::mem::replace(&mut c.notes, notes);
+                    return Ok(Command::SetMidiNotes { clip, notes: old });
+                };
+                // A piano-roll edit of a pattern clip: the rows it touched are read back into the grid.
+                c.pattern = Some(steps::rederive(&pattern, &c.notes, &notes));
+                let old = std::mem::replace(&mut c.notes, notes);
+                Ok(Command::SetMidiContent { clip, notes: old, pattern: Some(pattern) })
+            }
+            Command::SetStepPattern { clip, pattern } => {
+                if let Some(pat) = &pattern {
+                    pat.validate().map_err(|r| invalid("pattern", r))?;
+                }
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let c = &mut p.tracks[ti].midi_clips[ci];
+                if pattern.is_none() && c.pattern.is_none() {
+                    return Err(invalid("pattern", "the clip is not a pattern clip"));
+                }
+                let notes = match &pattern {
+                    Some(pat) => steps::bake_into(pat, &c.notes),
+                    None => c.tiled_notes(),
+                };
+                let old_notes = std::mem::replace(&mut c.notes, notes);
+                let old_pattern = std::mem::replace(&mut c.pattern, pattern);
+                Ok(Command::SetMidiContent { clip, notes: old_notes, pattern: old_pattern })
+            }
+            Command::SetMidiLoop { clip, clip_loop, length } => {
+                if let Some(l) = &clip_loop {
+                    l.validate().map_err(|r| invalid("loop", r))?;
+                }
+                if length <= 0 {
+                    return Err(invalid("clip", "requires length > 0"));
+                }
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let c = &mut p.tracks[ti].midi_clips[ci];
+                let inv = Command::SetMidiLoop { clip, clip_loop: c.clip_loop, length: c.length };
+                c.clip_loop = clip_loop;
+                c.length = length;
+                Ok(inv)
+            }
+            Command::SetClipScale { clip, scale } => {
+                if let Some(s) = &scale {
+                    s.validate().map_err(|r| invalid("scale", r))?;
+                }
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let old = std::mem::replace(&mut p.tracks[ti].midi_clips[ci].scale, scale);
+                Ok(Command::SetClipScale { clip, scale: old })
+            }
+            Command::SetComposer { clip, edit, composer, mut notes, pattern } => {
+                midi::validate_notes(&notes).map_err(|r| invalid("notes", r))?;
+                if let Some(pat) = &pattern {
+                    pat.validate().map_err(|r| invalid("pattern", r))?;
+                }
+                if let Some(c) = &composer {
+                    c.validate().map_err(|r| invalid("composer", r))?;
+                }
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                midi::sort_notes(&mut notes);
+                let c = &mut p.tracks[ti].midi_clips[ci];
+                let old_notes = std::mem::replace(&mut c.notes, notes);
+                let old_pattern = std::mem::replace(&mut c.pattern, pattern);
+                let old_composer = std::mem::replace(&mut c.composer, composer);
+                Ok(Command::SetComposer { clip, edit, composer: old_composer, notes: old_notes, pattern: old_pattern })
+            }
+            Command::SetMidiContent { clip, mut notes, pattern } => {
+                midi::validate_notes(&notes).map_err(|r| invalid("notes", r))?;
+                if let Some(pat) = &pattern {
+                    pat.validate().map_err(|r| invalid("pattern", r))?;
+                }
+                let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                midi::sort_notes(&mut notes);
+                let c = &mut p.tracks[ti].midi_clips[ci];
+                let old_notes = std::mem::replace(&mut c.notes, notes);
+                let old_pattern = std::mem::replace(&mut c.pattern, pattern);
+                Ok(Command::SetMidiContent { clip, notes: old_notes, pattern: old_pattern })
             }
             Command::SetSynthParams { track, params } => {
                 params.validate().map_err(|r| invalid("synth", r))?;
@@ -725,7 +958,7 @@ impl Command {
                 Ok(Command::SetMacroName { device, index, name: old })
             }
             Command::SetDeviceView { device, folded, collapsed } => {
-                let d = insert_mut(p, device)?;
+                let d = insert_or_instrument_mut(p, device)?;
                 let old = (std::mem::replace(&mut d.folded, folded), std::mem::replace(&mut d.collapsed, collapsed));
                 Ok(Command::SetDeviceView { device, folded: old.0, collapsed: old.1 })
             }
@@ -919,11 +1152,80 @@ fn validate_pan(pan: f32) -> Result<(), EditError> {
     Ok(())
 }
 
+fn split_clip(p: &mut Project, clip: ClipId, at: Ticks, new_id: ClipId) -> Result<Command, EditError> {
+    if new_id.0 != 0 && p.clip_id_in_use(new_id) {
+        return Err(EditError::DuplicateId(new_id.0));
+    }
+    if let Some((ti, ci)) = p.find_clip(clip) {
+        let c = p.tracks[ti].clips[ci].clone();
+        if c.warp.enabled || c.warp.reverse {
+            return Err(invalid("clip", "warped or reversed clips cannot be split"));
+        }
+        if at <= c.start || at >= c.start + p.clip_length_ticks(&c) {
+            return Err(invalid("at", "must fall inside the clip"));
+        }
+        let cut = (p.clip_source_at(&c, (at - c.start) as f64).round() as u64).clamp(c.source_offset + 1, c.source_offset + c.source_length - 1);
+        let new_id = if new_id.0 == 0 { ClipId(p.alloc_id()) } else { new_id };
+        p.next_id = p.next_id.max(new_id.0 + 1);
+        let right = Clip { id: new_id, start: at, source_offset: cut, source_length: c.source_offset + c.source_length - cut, ..c.clone() };
+        let t = &mut p.tracks[ti];
+        t.clips[ci].source_length = cut - c.source_offset;
+        t.clips.push(right);
+        t.clips.sort_by_key(|c| (c.start, c.id));
+        return Ok(Command::Batch {
+            label: "Split Clip".into(),
+            commands: vec![Command::RemoveClip { clip: new_id }, Command::TrimClip { clip, start: c.start, source_offset: c.source_offset, source_length: c.source_length }],
+        });
+    }
+    let (ti, ci) = p.find_midi_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+    let c = p.tracks[ti].midi_clips[ci].clone();
+    if c.pattern.is_some() {
+        return Err(invalid("clip", "pattern clips cannot be split"));
+    }
+    if at <= c.start || at >= c.end() {
+        return Err(invalid("at", "must fall inside the clip"));
+    }
+    let rel = at - c.start;
+    let mut left_notes = Vec::new();
+    let mut right_notes = Vec::new();
+    for n in c.notes.iter().filter(|n| n.start < c.length) {
+        let end = (n.start + n.length).min(c.length);
+        if end <= rel {
+            left_notes.push(*n);
+        } else if n.start >= rel {
+            right_notes.push(Note { start: n.start - rel, length: end - n.start, ..*n });
+        } else {
+            left_notes.push(Note { length: rel - n.start, ..*n });
+            right_notes.push(Note { start: 0, length: end - rel, ..*n });
+        }
+    }
+    let new_id = if new_id.0 == 0 { ClipId(p.alloc_id()) } else { new_id };
+    p.next_id = p.next_id.max(new_id.0 + 1);
+    let right = MidiClip { id: new_id, start: at, length: c.length - rel, notes: right_notes, ..c.clone() };
+    let t = &mut p.tracks[ti];
+    t.midi_clips[ci].length = rel;
+    t.midi_clips[ci].notes = left_notes;
+    t.midi_clips.push(right);
+    t.midi_clips.sort_by_key(|c| (c.start, c.id));
+    Ok(Command::Batch {
+        label: "Split Clip".into(),
+        commands: vec![
+            Command::RemoveMidiClip { clip: new_id },
+            Command::SetMidiContent { clip, notes: c.notes.clone(), pattern: None },
+            Command::ResizeMidiClip { clip, start: c.start, length: c.length },
+        ],
+    })
+}
+
 fn validate_midi_clip(c: &MidiClip) -> Result<(), EditError> {
     if c.start < 0 || c.length <= 0 {
         return Err(invalid("clip", "requires start >= 0 and length > 0"));
     }
-    midi::validate_notes(&c.notes).map_err(|r| invalid("notes", r))
+    midi::validate_notes(&c.notes).map_err(|r| invalid("notes", r))?;
+    match &c.pattern {
+        Some(p) => p.validate().map_err(|r| invalid("pattern", r)),
+        None => Ok(()),
+    }
 }
 
 fn validate_clip(p: &Project, c: &Clip) -> Result<(), EditError> {
@@ -937,5 +1239,6 @@ fn validate_clip(p: &Project, c: &Clip) -> Result<(), EditError> {
     if c.source_offset.checked_add(c.source_length).is_none_or(|end| end > a.frames) {
         return Err(invalid("source_region", format!("offset {} + length {} exceeds asset length {}", c.source_offset, c.source_length, a.frames)));
     }
+    c.warp.validate(a).map_err(|r| invalid("warp", r))?;
     validate_gain("clip_gain", c.gain)
 }

@@ -261,6 +261,18 @@ TEST_CASE(asset_peaks_for_waveforms) {
     CHECK_EQ(n, 0u);
     CHECK_EQ(se_asset_compute_peaks(e, a, 0, 0, mm, 3, &n), SE_ERR_INVALID_ARG);
     CHECK_EQ(se_asset_compute_peaks(e, 999, 0, 10, mm, 3, &n), SE_ERR_NOT_FOUND);
+    // One channel at a time (stereo lanes).
+    REQUIRE(se_asset_compute_channel_peaks(e, a, 0, 0, 100, mm, 16, &n) == SE_OK);
+    CHECK_EQ(n, 10u);
+    CHECK_NEAR(mm[0], 0.1f, 1e-7);
+    CHECK_NEAR(mm[1], 0.8f, 1e-7);
+    REQUIRE(se_asset_compute_channel_peaks(e, a, 1, 0, 100, mm, 16, &n) == SE_OK);
+    CHECK_NEAR(mm[0], -0.6f, 1e-7);
+    CHECK_NEAR(mm[1], 0.1f, 1e-7);
+    CHECK_EQ(se_asset_compute_channel_peaks(e, a, 2, 0, 100, mm, 16, &n), SE_ERR_INVALID_ARG);
+    const uint64_t mono = load_asset(e, {l});
+    CHECK_EQ(se_asset_compute_channel_peaks(e, mono, 1, 0, 100, mm, 16, &n), SE_ERR_INVALID_ARG);
+    CHECK_EQ(se_asset_compute_channel_peaks(e, 999, 0, 0, 10, mm, 3, &n), SE_ERR_NOT_FOUND);
 }
 
 TEST_CASE(api_argument_validation) {

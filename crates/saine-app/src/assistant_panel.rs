@@ -31,7 +31,10 @@ pub struct Entry {
     /// Action log (plan summary lines, then highlight notes).
     pub lines: Vec<String>,
     pub secs: f32,
+    /// Step log open (replies start collapsed, as in the reference).
     pub expanded: bool,
+    /// User prompt sent in Point mode (shows the mode tag).
+    pub point: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -52,11 +55,13 @@ pub struct AssistantState {
     pub context_removed: Option<(Option<u64>, Option<u64>)>,
     /// Bumped when entries change, so the Slint model is rebuilt only then.
     pub rev: u64,
+    /// Entries from this index on are new since the last model rebuild (entry animation).
+    pub fresh_from: usize,
 }
 
 impl Default for AssistantState {
     fn default() -> Self {
-        AssistantState { mode: Mode::Assist, entries: Vec::new(), notice_visible: true, busy: None, highlights: Vec::new(), context_removed: None, rev: 0 }
+        AssistantState { mode: Mode::Assist, entries: Vec::new(), notice_visible: true, busy: None, highlights: Vec::new(), context_removed: None, rev: 0, fresh_from: 0 }
     }
 }
 
@@ -67,19 +72,24 @@ impl AssistantState {
 
     fn push(&mut self, e: Entry) {
         self.entries.retain(|e| e.kind != EntryKind::Pending);
+        self.fresh_from = self.fresh_from.min(self.entries.len());
         self.entries.push(e);
         self.rev += 1;
     }
 
+    /// Slint rows. A reply shows its explanation; without one, its action lines stand in.
     pub fn to_model(&self) -> Vec<ChatEntry> {
         self.entries
             .iter()
-            .map(|e| ChatEntry {
+            .enumerate()
+            .map(|(i, e)| ChatEntry {
                 kind: e.kind as i32,
-                text: e.text.clone().into(),
+                text: if e.kind == EntryKind::Reply && e.text.is_empty() { e.lines.join("\n\n").into() } else { e.text.clone().into() },
                 lines: ModelRc::new(VecModel::from(e.lines.iter().map(|l| SharedString::from(l.as_str())).collect::<Vec<_>>())),
-                worked: format!("Worked for {:.1}s", e.secs).into(),
+                worked: worked_label(e.secs, e.lines.len()).into(),
                 expanded: e.expanded,
+                point: e.point,
+                fresh: i >= self.fresh_from,
             })
             .collect()
     }
@@ -122,6 +132,7 @@ impl Controller {
         self.assistant.entries.clear();
         self.assistant.busy = None;
         self.assistant.highlights.clear();
+        self.assistant.fresh_from = 0;
         self.assistant.rev += 1;
         self.ui_dirty = true;
     }
@@ -203,8 +214,9 @@ impl Controller {
         let mut state = assistant::describe_state(self.project());
         state["next_id_hint"] = serde_json::json!(self.project().next_id);
         let req = crate::assistant_provider::Request { mode: self.assistant.mode, prompt: prompt.clone(), state, selection: self.selection_description(), history: self.assistant.history() };
-        self.assistant.push(Entry { kind: EntryKind::User, text: prompt, lines: Vec::new(), secs: 0.0, expanded: true });
-        self.assistant.entries.push(Entry { kind: EntryKind::Pending, text: "Working…".into(), lines: Vec::new(), secs: 0.0, expanded: true });
+        let point = self.assistant.mode == Mode::Teach;
+        self.assistant.push(Entry { kind: EntryKind::User, text: prompt, lines: Vec::new(), secs: 0.0, expanded: false, point });
+        self.assistant.entries.push(Entry { kind: EntryKind::Pending, text: "Reasoning".into(), lines: Vec::new(), secs: 0.0, expanded: false, point: false });
         self.assistant.rev += 1;
         let started = Instant::now();
         self.assistant.busy = Some(started);
@@ -219,7 +231,7 @@ impl Controller {
         if let Err(e) = spawned {
             self.pending_jobs -= 1;
             self.assistant.busy = None;
-            self.assistant.push(Entry { kind: EntryKind::Error, text: format!("Could not start the request: {e}"), lines: Vec::new(), secs: 0.0, expanded: true });
+            self.assistant.push(Entry { kind: EntryKind::Error, text: format!("Could not start the request: {e}"), lines: Vec::new(), secs: 0.0, expanded: false, point: false });
         }
         self.ui_dirty = true;
         true
@@ -234,7 +246,7 @@ impl Controller {
         let secs = started.elapsed().as_secs_f32();
         self.ui_dirty = true;
         let error = |s: &mut Self, msg: String| {
-            s.assistant.push(Entry { kind: EntryKind::Error, text: msg, lines: Vec::new(), secs, expanded: true });
+            s.assistant.push(Entry { kind: EntryKind::Error, text: msg, lines: Vec::new(), secs, expanded: false, point: false });
         };
         let raw = match result {
             Ok(r) => r,
@@ -260,15 +272,55 @@ impl Controller {
         self.assistant.highlights = plan.highlights.iter().map(|(t, n)| Highlight { target: t.clone(), note: n.clone(), until }).collect();
         let mut lines = plan.summary.clone();
         lines.extend(plan.highlights.iter().map(|(t, n)| if n.is_empty() { format!("Look at {}.", target_label(t)) } else { format!("{}: {n}", target_label(t)) }));
-        let text = plan.explanations.join("\n\n");
+        let mut text = plan.explanations.join("\n\n");
         if text.is_empty() && lines.is_empty() {
-            lines.push("No changes were needed.".into());
+            text = "No changes were needed.".into();
         }
-        self.assistant.push(Entry { kind: EntryKind::Reply, text, lines, secs, expanded: true });
+        self.assistant.push(Entry { kind: EntryKind::Reply, text, lines, secs, expanded: false, point: false });
+    }
+
+    /// TEST seam for the reference/review renders (`--state reference-assistant`,
+    /// `review-assistant-<name>`): a canned transcript in one of the panel's states. Our own copy.
+    pub fn assistant_demo(&mut self, name: &str) -> Result<(), String> {
+        let entry = |kind, text: &str, lines: &[&str], secs, expanded, point| Entry {
+            kind,
+            text: text.into(),
+            lines: lines.iter().map(|l| l.to_string()).collect(),
+            secs,
+            expanded,
+            point,
+        };
+        let point = matches!(name, "point" | "highlight");
+        self.assistant.mode = if point { Mode::Teach } else { Mode::Assist };
+        let ask = if point { "How do I change the tempo?" } else { "Make me a short plucky synth lead" };
+        let steps = ["Added an instrument track, Synth.", "Loaded Synth on Synth."];
+        let reply = if point { "The tempo lives in the transport bar. Double-click it and type a new value." } else { "Added an instrument track, Synth, and gave it a short plucky lead sound." };
+        let mut e = vec![entry(EntryKind::User, ask, &[], 0.0, false, point)];
+        match name {
+            "empty" => e.clear(),
+            "turn" | "point" | "draft" => e.push(entry(EntryKind::Reply, reply, if point { &[] } else { &steps }, 4.8, false, false)),
+            "steps" => e.push(entry(EntryKind::Reply, reply, &steps, 4.8, true, false)),
+            "error" => e.push(entry(EntryKind::Error, "Nothing was changed: Point mode cannot modify the project (action 1).", &[], 1.2, false, false)),
+            "busy" => {
+                e.push(entry(EntryKind::Pending, "Reasoning", &[], 0.0, false, false));
+                self.assistant.busy = Some(Instant::now());
+            }
+            "highlight" => {
+                e.push(entry(EntryKind::Reply, reply, &[], 2.1, false, false));
+                let until = Instant::now() + Duration::from_secs(3600);
+                self.assistant.highlights = vec![Highlight { target: "transport.bpm".into(), note: "Double-click the tempo and type a new value.".into(), until }];
+            }
+            _ => return Err(format!("unknown assistant demo {name} (empty, turn, point, draft, steps, error, busy, highlight)")),
+        }
+        self.assistant.entries = e;
+        self.assistant.fresh_from = self.assistant.entries.len();
+        self.assistant.rev += 1;
+        self.ui_dirty = true;
+        Ok(())
     }
 
     pub fn highlight_layout(&self, w: f32, h: f32, sounds: bool) -> Layout {
-        Layout { w, h, sounds, mixer: self.mixer_open, assistant: self.assistant_open, clip_tab: self.bottom_tab == crate::controller::BottomTab::Clip, scroll_y: self.view.scroll_y as f32 }
+        Layout { w, h, sounds, mixer: self.mixer_open, assistant: self.assistant_open, chat_w: self.chat_w_at(w, sounds), clip_tab: self.bottom_tab == crate::controller::BottomTab::Clip, scroll_y: self.view.scroll_y as f32, bottom: self.bottom_h() }
     }
 
     /// Current highlight rects (expired ones dropped). Unknown-to-layout targets are skipped.
@@ -284,11 +336,25 @@ impl Controller {
             .highlights
             .iter()
             .filter_map(|h| {
-                let r = highlight::target_rect(layout, &h.target, |id| p.track_index(saine_core::TrackId(id)))?;
-                Some(HighlightRect { x: r.0, y: r.1, w: r.2, h: r.3, note: h.note.clone().into() })
+                let t = highlight::target_rect(layout, &h.target, |id| p.track_index(saine_core::TrackId(id)).map(|i| (self.view.track_offset(i), self.view.pitch(i) - 0.5)))?;
+                let r = highlight::ring(t, layout.w, layout.h);
+                let (bx, by, above) = highlight::bubble_anchor(r, layout.h);
+                Some(HighlightRect { x: r.0, y: r.1, w: r.2, h: r.3, r: r.4, bx, by, above, title: target_label(&h.target).into(), note: h.note.clone().into() })
             })
             .collect()
     }
+}
+
+/// Step-log label: "Worked for 4.8s" (or "1m 5s" past a minute); "N steps" without a duration.
+pub fn worked_label(secs: f32, steps: usize) -> String {
+    if secs > 0.0 {
+        if secs < 60.0 {
+            return format!("Worked for {secs:.1}s");
+        }
+        let s = secs.round() as u32;
+        return format!("Worked for {}m {}s", s / 60, s % 60);
+    }
+    format!("{steps} {}", if steps == 1 { "step" } else { "steps" })
 }
 
 /// Friendly name for a target id in the action log.
@@ -327,12 +393,31 @@ mod tests {
         assert_eq!(target_label("track:3:volume"), "Track volume");
     }
     #[test]
+    fn worked_labels() {
+        assert_eq!(worked_label(4.8, 2), "Worked for 4.8s");
+        assert_eq!(worked_label(65.4, 2), "Worked for 1m 5s");
+        assert_eq!(worked_label(0.0, 1), "1 step");
+        assert_eq!(worked_label(0.0, 3), "3 steps");
+    }
+    #[test]
+    fn fresh_marks_only_new_entries() {
+        let mut s = AssistantState::default();
+        s.push(Entry { kind: EntryKind::User, text: "a".into(), lines: vec![], secs: 0.0, expanded: true, point: false });
+        s.entries.push(Entry { kind: EntryKind::Pending, text: "Reasoning".into(), lines: vec![], secs: 0.0, expanded: true, point: false });
+        assert!(s.to_model().iter().all(|r| r.fresh));
+        s.fresh_from = s.entries.len();
+        s.push(Entry { kind: EntryKind::Reply, text: "".into(), lines: vec!["Did x.".into()], secs: 1.0, expanded: false, point: false });
+        let m = s.to_model();
+        assert_eq!((m.len(), m[0].fresh, m[1].fresh), (2, false, true));
+        assert_eq!(m[1].text, "Did x.");
+    }
+    #[test]
     fn history_pairs_user_and_reply() {
         let mut s = AssistantState::default();
-        s.push(Entry { kind: EntryKind::User, text: "a".into(), lines: vec![], secs: 0.0, expanded: true });
-        s.push(Entry { kind: EntryKind::Reply, text: "".into(), lines: vec!["Did x.".into()], secs: 1.0, expanded: true });
-        s.push(Entry { kind: EntryKind::User, text: "b".into(), lines: vec![], secs: 0.0, expanded: true });
-        s.push(Entry { kind: EntryKind::Error, text: "e".into(), lines: vec![], secs: 0.0, expanded: true });
+        s.push(Entry { kind: EntryKind::User, text: "a".into(), lines: vec![], secs: 0.0, expanded: true, point: false });
+        s.push(Entry { kind: EntryKind::Reply, text: "".into(), lines: vec!["Did x.".into()], secs: 1.0, expanded: true, point: false });
+        s.push(Entry { kind: EntryKind::User, text: "b".into(), lines: vec![], secs: 0.0, expanded: true, point: false });
+        s.push(Entry { kind: EntryKind::Error, text: "e".into(), lines: vec![], secs: 0.0, expanded: true, point: false });
         assert_eq!(s.history(), vec![("a".to_string(), "Did x.".to_string())]);
     }
 }

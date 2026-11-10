@@ -70,7 +70,20 @@ static_assert(offsetof(se_track_desc_v6, lanes) == 88 && offsetof(se_track_desc_
               offsetof(se_track_desc_v6, _pad3) == 100);
 static_assert(sizeof(se_session_desc_v6) == 32 && offsetof(se_session_desc_v6, master_lanes) == 16 &&
               offsetof(se_session_desc_v6, master_lane_count) == 24);
+static_assert(sizeof(se_clip_warp_desc) == 40 && alignof(se_clip_warp_desc) == 8);
+static_assert(offsetof(se_clip_warp_desc, mode) == 8 && offsetof(se_clip_warp_desc, transpose) == 12 &&
+              offsetof(se_clip_warp_desc, points) == 16 && offsetof(se_clip_warp_desc, point_count) == 24 &&
+              offsetof(se_clip_warp_desc, slice_count) == 28 && offsetof(se_clip_warp_desc, slices) == 32);
+static_assert(sizeof(se_session_desc_v7) == 48 && offsetof(se_session_desc_v7, warps) == 32 &&
+              offsetof(se_session_desc_v7, warp_count) == 40);
+static_assert(sizeof(se_clip_loop_desc) == 24 && alignof(se_clip_loop_desc) == 8 &&
+              offsetof(se_clip_loop_desc, loop_end) == 16);
+static_assert(sizeof(se_session_desc_v8) == 64 && offsetof(se_session_desc_v8, loops) == 48 &&
+              offsetof(se_session_desc_v8, loop_count) == 56);
 #endif
+static_assert(sizeof(se_warp_point) == 16 && alignof(se_warp_point) == 8 && offsetof(se_warp_point, source) == 8);
+static_assert(sizeof(se_warp_slice) == 16 && offsetof(se_warp_slice, percussive) == 8);
+static_assert(sizeof(se_onset) == 16 && offsetof(se_onset, strength) == 8 && offsetof(se_onset, percussive) == 12);
 static_assert(sizeof(se_plugin_param_info) == 272 && alignof(se_plugin_param_info) == 4);
 static_assert(offsetof(se_plugin_param_info, default_normalized) == 8 &&
               offsetof(se_plugin_param_info, automatable) == 12 && offsetof(se_plugin_param_info, name) == 16 &&
@@ -209,6 +222,14 @@ int32_t se_asset_release(se_engine* engine, uint64_t asset_id) {
     });
 }
 
+int32_t se_asset_reverse(se_engine* engine, uint64_t asset_id, se_asset_info* out_info) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&] {
+        const int32_t rc = engine->impl->asset_reverse(asset_id, out_info);
+        return rc == SE_OK ? SE_OK : fail(rc, "unknown asset id " + std::to_string(asset_id));
+    });
+}
+
 int32_t se_asset_get_info(const se_engine* engine, uint64_t asset_id, se_asset_info* out_info) {
     SE_REQUIRE_ENGINE(engine);
     if (out_info == nullptr) return fail(SE_ERR_INVALID_ARG, "out_info is NULL");
@@ -224,8 +245,23 @@ int32_t se_asset_compute_peaks(const se_engine* engine, uint64_t asset_id, uint6
     if (frames_per_peak == 0) return fail(SE_ERR_INVALID_ARG, "frames_per_peak must be > 0");
     if (capacity > 0 && out_minmax == nullptr) return fail(SE_ERR_INVALID_ARG, "out_minmax is NULL");
     return guarded([&] {
-        const int32_t rc = engine->impl->asset_compute_peaks(asset_id, start_frame, frames_per_peak, out_minmax,
+        const int32_t rc = engine->impl->asset_compute_peaks(asset_id, -1, start_frame, frames_per_peak, out_minmax,
                                                              capacity, out_count);
+        return rc == SE_OK ? SE_OK : fail(rc, "unknown asset id " + std::to_string(asset_id));
+    });
+}
+
+int32_t se_asset_compute_channel_peaks(const se_engine* engine, uint64_t asset_id, uint32_t channel,
+                                       uint64_t start_frame, uint32_t frames_per_peak, float* out_minmax,
+                                       size_t capacity, size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (frames_per_peak == 0) return fail(SE_ERR_INVALID_ARG, "frames_per_peak must be > 0");
+    if (capacity > 0 && out_minmax == nullptr) return fail(SE_ERR_INVALID_ARG, "out_minmax is NULL");
+    if (channel > 1) return fail(SE_ERR_INVALID_ARG, "channel must be 0 or 1");
+    return guarded([&] {
+        const int32_t rc = engine->impl->asset_compute_peaks(asset_id, static_cast<int32_t>(channel), start_frame,
+                                                             frames_per_peak, out_minmax, capacity, out_count);
+        if (rc == SE_ERR_INVALID_ARG) return fail(rc, "asset " + std::to_string(asset_id) + " has no channel " + std::to_string(channel));
         return rc == SE_OK ? SE_OK : fail(rc, "unknown asset id " + std::to_string(asset_id));
     });
 }
@@ -399,6 +435,41 @@ int32_t se_session_publish_v6(se_engine* engine, const se_session_desc_v6* sessi
     });
 }
 
+int32_t se_session_publish_v7(se_engine* engine, const se_session_desc_v7* session) {
+    SE_REQUIRE_ENGINE(engine);
+    if (session == nullptr) return fail(SE_ERR_INVALID_ARG, "session is NULL");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->publish(*session, err), err);
+    });
+}
+
+int32_t se_session_publish_v8(se_engine* engine, const se_session_desc_v8* session) {
+    SE_REQUIRE_ENGINE(engine);
+    if (session == nullptr) return fail(SE_ERR_INVALID_ARG, "session is NULL");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->publish(*session, err), err);
+    });
+}
+
+int32_t se_warp_renders_pending(const se_engine* engine, size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out_count == nullptr) return fail(SE_ERR_INVALID_ARG, "out_count is NULL");
+    *out_count = engine->impl->warp_renders_pending();
+    return SE_OK;
+}
+
+int32_t se_asset_detect_onsets(se_engine* engine, uint64_t asset_id, se_onset* out, size_t capacity,
+                               size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out == nullptr && capacity > 0) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    return guarded([&] {
+        const int32_t rc = engine->impl->asset_detect_onsets(asset_id, out, capacity, out_count);
+        return rc == SE_OK ? rc : fail(rc, "unknown asset");
+    });
+}
+
 int32_t se_automation_eval(const se_auto_lane_desc* lane, const int64_t* frames, size_t count, float* out_values) {
     if (lane == nullptr || (count > 0 && (frames == nullptr || out_values == nullptr)))
         return fail(SE_ERR_INVALID_ARG, "NULL argument");
@@ -461,6 +532,14 @@ int32_t se_plugin_saved_state(se_engine* engine, size_t index, uint64_t* out_dev
     });
 }
 
+int32_t se_plugin_save_state(se_engine* engine, uint64_t device_id) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&]() -> int32_t {
+        std::string err;
+        return check(engine->impl->plugin_save_state_of(device_id, err), err);
+    });
+}
+
 #define SE_REQUIRE_MAIN_THREAD()                                                                                       \
     do {                                                                                                               \
         if (!saine::on_platform_main_thread()) return fail(SE_ERR_STATE, "plugin editors are main-thread only");      \
@@ -509,6 +588,26 @@ int32_t se_plugin_idle(se_engine* engine) {
     SE_REQUIRE_ENGINE(engine);
     return guarded([&]() -> int32_t {
         engine->impl->plugin_idle();
+        return SE_OK;
+    });
+}
+
+int32_t se_plugin_prepare(se_engine* engine, const se_device_desc* device, uint8_t instrument) {
+    SE_REQUIRE_ENGINE(engine);
+    if (device == nullptr) return fail(SE_ERR_INVALID_ARG, "device is NULL");
+    if (device->device_id == 0 || device->plugin_id == nullptr || device->format > SE_PLUGIN_CLAP ||
+        (device->state == nullptr && device->state_len > 0))
+        return fail(SE_ERR_INVALID_ARG, "invalid plugin device description");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->plugin_prepare(*device, instrument != 0, nullptr, err), err);
+    });
+}
+
+int32_t se_plugin_set_detached(se_engine* engine, uint8_t detached) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&]() -> int32_t {
+        engine->impl->plugin_set_detached(detached != 0);
         return SE_OK;
     });
 }
@@ -741,6 +840,47 @@ int32_t se_device_status_get(se_engine* engine, se_device_status* out) {
     });
 }
 
+static bool preview_args_ok(float gain, float rate) {
+    return std::isfinite(gain) && gain >= 0.0f && gain <= 2.0f && std::isfinite(rate) && rate >= 0.25f && rate <= 4.0f;
+}
+
+int32_t se_preview_play(se_engine* engine, uint64_t asset_id, int64_t start_frame, float gain, float rate, uint8_t solo) {
+    SE_REQUIRE_ENGINE(engine);
+    if (!preview_args_ok(gain, rate)) return fail(SE_ERR_INVALID_ARG, "preview gain must be 0..2 and rate 0.25..4");
+    return guarded([&] {
+        const int32_t rc = engine->impl->preview_play(asset_id, start_frame, gain, rate, solo != 0);
+        return rc == SE_ERR_NOT_FOUND ? fail(rc, "unknown asset") : rc;
+    });
+}
+
+int32_t se_preview_stop(se_engine* engine) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&] { return engine->impl->preview_stop(); });
+}
+
+int32_t se_preview_note(se_engine* engine, uint64_t device_id, uint8_t pitch, uint8_t velocity) {
+    SE_REQUIRE_ENGINE(engine);
+    if (pitch > 127 || velocity > 127) return fail(SE_ERR_INVALID_ARG, "pitch and velocity must be 0..127");
+    return guarded([&] {
+        const int32_t rc = engine->impl->preview_note(device_id, pitch, velocity);
+        if (rc == SE_ERR_NOT_FOUND) return fail(rc, "unknown device, or one that plays no notes");
+        return rc == SE_ERR_STATE ? fail(rc, "live note queue full") : rc;
+    });
+}
+
+int32_t se_preview_set(se_engine* engine, float gain, float rate, uint8_t solo) {
+    SE_REQUIRE_ENGINE(engine);
+    if (!preview_args_ok(gain, rate)) return fail(SE_ERR_INVALID_ARG, "preview gain must be 0..2 and rate 0.25..4");
+    return guarded([&] { return engine->impl->preview_set(gain, rate, solo != 0); });
+}
+
+int32_t se_preview_get(se_engine* engine, se_preview_info* out) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    engine->impl->preview_get(out);
+    return SE_OK;
+}
+
 int32_t se_input_set_muted(se_engine* engine, uint8_t muted) {
     SE_REQUIRE_ENGINE(engine);
     engine->impl->set_input_muted(muted != 0);
@@ -834,6 +974,7 @@ void set_device_factory(se_engine* e, std::function<std::unique_ptr<AudioDevice>
 void set_record_writer_stalled(se_engine* e, bool stalled) { e->impl->set_record_writer_stalled(stalled); }
 void set_record_ring_frames(se_engine* e, std::size_t frames) { e->impl->set_record_ring_frames(frames); }
 uint64_t plugin_instantiations(se_engine* e) { return e->impl->plugin_instantiations(); }
+void set_warp_renders_enabled(se_engine* e, bool enabled) { e->impl->set_warp_renders_enabled(enabled); }
 bool plugin_set_parameter(se_engine* e, uint64_t device_id, uint32_t param_id, double value) {
     return e->impl->plugin_set_parameter(device_id, param_id, value);
 }

@@ -1,7 +1,7 @@
 // Settings window as an in-app modal panel (see src/settings.rs for why), drawn at the
-// reference window rect: x 255, y 7, 960 pt wide, running off the bottom of the main
-// window (14-settings-audio.png). Sidebar 187 pt; the Audio and Plugins pages are real, the
-// other pages are PLACEHOLDERS ("Not available yet").
+// reference window rect: x 255, y 6.5, 960 pt wide (216.75 / 5.5 / 816 in 85 % units), running
+// off the bottom of the main window (z100-settings-*.png). Sidebar 187; the Audio and Plugins
+// pages are real, General is laid out with PLACEHOLDER controls, the rest say "Not available yet".
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
 import { Studio, ChoiceItem, PluginRow } from "studio.slint";
@@ -50,7 +50,7 @@ component Dropdown inherits Rectangle {
     accessible-value: root.text;
     Text { x: 10.5px; text: root.text; color: #ececee; font-size: 11px; font-weight: 400; vertical-alignment: center; letter-spacing: 0.2px; }
     Icon { x: parent.width - 21.5px; y: (parent.height - 10px) / 2; width: 10px; height: 10px; d: Icons.chevron-down; ink: #b5b5b8; stroke-width: 1.5px; }
-    TouchArea { clicked => { Studio.settings-dropdown(root.field); } }
+    if root.field >= 0: TouchArea { clicked => { Studio.settings-dropdown(root.field); } }
 }
 
 component FieldLabel inherits Text {
@@ -59,6 +59,104 @@ component FieldLabel inherits Text {
     font-weight: 600;
     vertical-alignment: center;
     height: 14px;
+}
+
+// Toggle switch (Settings). The owner keeps `on`, so it survives page changes.
+component Switch inherits Rectangle {
+    in property <bool> on;
+    in property <bool> enabled: true;
+    callback toggled();
+    in property <string> label;
+    width: 20.5px; height: 10px; border-radius: 5px;
+    background: root.on ? #2752f5 : #4a4b4f;
+    opacity: root.enabled ? 1 : 0.4;
+    accessible-role: checkbox; accessible-label: root.label; accessible-checked: root.on; accessible-enabled: root.enabled;
+    accessible-action-default => { if (root.enabled) { root.toggled(); } }
+    Rectangle { x: root.on ? parent.width - self.width - 1px : 1px; y: 1px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; }
+    TouchArea { enabled: root.enabled; clicked => { root.toggled(); } }
+}
+
+// Setting row label with the reference app's info badge after it.
+component RowLabel inherits Rectangle {
+    in property <string> text;
+    in property <bool> heading;
+    // A setting Saine can't back (shown disabled).
+    in property <bool> dim;
+    height: 14px;
+    opacity: root.dim ? 0.4 : 1;
+    t := Text {
+        x: 0; text: root.text; color: root.heading ? #ececee : #e5e5e8; font-size: root.heading ? 10px : 10.25px;
+        font-weight: root.heading ? 600 : 400; vertical-alignment: center; letter-spacing: root.heading ? 0 : 0.15px;
+    }
+    Rectangle {
+        x: t.preferred-width + 6px; y: 2.75px; width: 8.5px; height: 8.5px; border-radius: 4.25px;
+        border-width: 0.75px; border-color: #767678;
+        Text { text: "i"; color: #767678; font-size: 6px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+    }
+}
+
+component SmallSelect inherits Rectangle {
+    in property <string> text;
+    width: 117.5px; height: 17.25px; border-radius: 8.6px; background: #292a2f;
+    Text { x: 9.5px; text: root.text; color: #d0d0d1; font-size: 10px; font-weight: 500; vertical-alignment: center; }
+    Icon { x: parent.width - 16px; y: (parent.height - 8px) / 2; width: 8px; height: 8px; d: Icons.chevron-down; ink: #a6a8ac; stroke-width: 1.4px; }
+}
+
+// General page (the reference app z100-settings-general). Startup, Playhead on stop and the three plugin
+// window switches work (prefs.general). Sample licensing, Sections move clips and the
+// Assistant section are shown off and disabled: Saine has no licensing, section-moves-clips
+// mode, audio-listening assistant or voice input.
+component GeneralPage inherits Rectangle {
+    property <length> sw-x: root.width - 20.5px - 22.5px;
+    FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "General"; font-size: 17.25px; font-weight: 700; }
+    for s in [
+        { t: "Startup", y: 71.3px }, { t: "Transport", y: 125.8px }, { t: "Sample licensing", y: 185.8px },
+        { t: "Timeline annotations", y: 240.2px }, { t: "Plugin windows", y: 294.7px }, { t: "Assistant", y: 389.6px },
+    ]: FieldLabel { x: 20.5px; y: s.y; text: s.t; }
+    for y in [115.7px, 175.6px, 230.1px, 284.6px, 378.8px]: Rectangle { x: 20.5px; y: y; width: root.width - 41px; height: 0.75px; background: #2c2d30; }
+    // k: index into Studio.general-on, -1 = not available in Saine (off, disabled).
+    for r in [
+        { t: "Always load last session", y: 88.4px, k: 0 }, { t: "License samples when you use them", y: 202.9px, k: -1 },
+        { t: "Sections move clips", y: 257.4px, k: -1 }, { t: "Auto-show third-party effect windows", y: 311.8px, k: 1 },
+        { t: "Auto-show built-in effect windows", y: 331.4px, k: 2 }, { t: "Keep plugin windows on top", y: 351.6px, k: 3 },
+        { t: "Let the assistant listen to audio", y: 406.7px, k: -1 }, { t: "Hold talk key to record", y: 474.6px, k: -1 },
+        { t: "Auto-send", y: 494.8px, k: -1 },
+    ]: Rectangle {
+        x: 0; y: r.y; width: root.width; height: 14px;
+        RowLabel { x: 20.5px; y: 0; text: r.t; dim: r.k < 0; }
+        Switch { x: root.sw-x; y: 2px; on: r.k >= 0 && Studio.general-on[r.k]; enabled: r.k >= 0; label: r.t; toggled => { Studio.general-toggle(r.k); } }
+    }
+    RowLabel { x: 20.5px; y: 145.4px; text: "Playhead on stop"; }
+    Rectangle {
+        x: root.width - 20.5px - 172.5px; y: 143.8px; width: 172.5px; height: 17.25px; border-radius: 8.6px; background: #292a2f;
+        for t[i] in ["Return to start", "Stop in place"]: Rectangle {
+            property <bool> active: Studio.general-stop-in-place == (i == 1);
+            x: i == 0 ? 2px : 87px; y: 1.5px; width: i == 0 ? 85px : parent.width - 87px - 2px; height: parent.height - 3px; border-radius: 7.1px;
+            background: self.active ? #2752f5 : transparent;
+            accessible-role: tab; accessible-label: t; accessible-checked: self.active;
+            Text { text: t; color: parent.active ? #ffffff : #a6a8ac; font-size: 10px; font-weight: parent.active ? 600 : 500; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { Studio.general-stop-mode(i == 1); } }
+        }
+    }
+    Icon { x: 20.5px + 1px; y: 430.4px; width: 12px; height: 12px; d: Icons.mic; ink: #e5e5e8; stroke-width: 1.2px; }
+    FieldLabel { x: 20.5px + 17px; y: 429.4px; text: "Voice"; }
+    RowLabel { x: 20.5px; y: 452px; text: "Talk key"; dim: true; }
+    for k[i] in ["⌃", "⌥"]: Rectangle {
+        x: root.width - 20.5px - 42.75px + i * 21.75px; y: 450.5px; width: 21px; height: 17px; border-radius: 6px; background: #292a2f; opacity: 0.4;
+        Text { text: k; color: #e5e5e8; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+    }
+    RowLabel { x: 20.5px; y: 517.4px; text: "Input"; dim: true; }
+    SmallSelect { x: root.width - 20.5px - 117.5px; y: 515.9px; text: "Input 1"; opacity: 0.4; }
+    RowLabel { x: 20.5px; y: 543.1px; text: "Language"; dim: true; }
+    SmallSelect { x: root.width - 20.5px - 117.5px; y: 541.6px; text: "English"; opacity: 0.4; }
+}
+
+// MIDI page (the reference app z100-settings-midi): default instrument for new instrument tracks.
+// PLACEHOLDER: new instrument tracks always get the built-in Synth.
+component MidiPage inherits Rectangle {
+    FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "MIDI"; font-size: 17.25px; font-weight: 700; }
+    RowLabel { x: 20.5px; y: 71.5px; text: "Default instrument"; heading: true; }
+    Dropdown { x: 20.5px; y: 90px; width: root.width - 20.5px - 20.5px; text: "Synth"; field: -1; }
 }
 
 component AudioPage inherits Rectangle {
@@ -145,9 +243,13 @@ component PluginsPage inherits Rectangle {
         for d[i] in Studio.scan-dirs: Rectangle {
             x: 0; y: i * 30.5px; width: parent.width; height: 25px; border-radius: 5px; background: #222326;
             accessible-role: text; accessible-label: d.name + (d.warn ? " (missing)" : "");
-            path := Text { x: 9px; text: d.name; color: d.warn ? #6f7074 : #d9d9dc; font-size: 10px; vertical-alignment: center; }
-            if d.warn: Rectangle { x: 9px; y: parent.height / 2; width: path.preferred-width; height: 0.75px; background: #6f7074; }
-            b1 := Badge { x: 9px + path.preferred-width + 8px; y: 4.5px; text: d.badge; }
+            // A long path is elided so its badges stay in the row; the full path is the accessible label.
+            path := Text {
+                x: 9px; width: min(self.preferred-width, parent.width - 9px - 8px - b1.width - (d.warn ? 6px + 52px : 0) - 9px);
+                text: d.name; overflow: elide; color: d.warn ? #6f7074 : #d9d9dc; font-size: 10px; vertical-alignment: center;
+            }
+            if d.warn: Rectangle { x: 9px; y: parent.height / 2; width: path.width; height: 0.75px; background: #6f7074; }
+            b1 := Badge { x: 9px + path.width + 8px; y: 4.5px; text: d.badge; }
             if d.warn: Badge { x: b1.x + b1.width + 6px; y: 4.5px; text: "Missing"; warn: true; }
         }
     }
@@ -240,7 +342,9 @@ export component SettingsPanel inherits Rectangle {
     // ---- content ----
     if Studio.settings-page == 1: AudioPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
     if Studio.settings-page == 3: PluginsPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
-    if Studio.settings-page != 1 && Studio.settings-page != 3: Rectangle {
+    if Studio.settings-page == 0: GeneralPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
+    if Studio.settings-page == 2: MidiPage { x: 187px; y: 0; width: root.width - 187px; height: root.height; }
+    if Studio.settings-page > 3: Rectangle {
         x: 187px; y: 0; width: root.width - 187px; height: root.height;
         Text { x: 20.5px; y: 33px; height: 24px; text: Studio.settings-pages[Studio.settings-page]; color: #ececee; font-size: 17.25px; font-weight: 700; vertical-alignment: center; }
         // PLACEHOLDER pages

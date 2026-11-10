@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(saine_engine VERSION 0.1.0 LANGUAGES CXX)
+project(saine_engine VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -45,7 +45,37 @@ FetchContent_Declare(saine_vst3sdk
   GIT_SHALLOW TRUE
   GIT_SUBMODULES pluginterfaces public.sdk
   SOURCE_SUBDIR _saine_sources_only)
-FetchContent_MakeAvailable(saine_clap saine_vst3sdk)
+# Time stretching for warped audio clips (src/warp.cpp): signalsmith-stretch
+# and the FFT / STFT library it is built on. Header-only.
+set(SAINE_STRETCH_TAG 1.4.0)
+set(SAINE_LINEAR_TAG 0.6.4)
+FetchContent_Declare(saine_signalsmith_stretch
+  GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git
+  GIT_TAG ${SAINE_STRETCH_TAG}
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR _saine_headers_only)
+FetchContent_Declare(saine_signalsmith_linear
+  GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git
+  GIT_TAG ${SAINE_LINEAR_TAG}
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR _saine_headers_only)
+# Compressed audio import (src/decode.cpp): dr_mp3, dr_flac and dr_wav (AIFF only) from
+# dr_libs, stb_vorbis from stb. Single-file C libraries, pinned by commit (neither repository
+# tags all of its files). dr_libs at the wav-0.14.6 tag, which also holds mp3-0.7.4 and
+# flac-0.13.4; stb at the commit noted in third_party_licenses.md (stb_vorbis 1.22).
+set(SAINE_DR_LIBS_COMMIT 35b5c392cc15456736c440a68dbe073178bbffe0)
+set(SAINE_STB_COMMIT 4e9b368bfc071e97206ea5c6adba68dd0cbf8897)
+FetchContent_Declare(saine_dr_libs
+  GIT_REPOSITORY https://github.com/mackron/dr_libs.git
+  GIT_TAG ${SAINE_DR_LIBS_COMMIT}
+  SOURCE_SUBDIR _saine_headers_only)
+FetchContent_Declare(saine_stb
+  GIT_REPOSITORY https://github.com/nothings/stb.git
+  GIT_TAG ${SAINE_STB_COMMIT}
+  SOURCE_SUBDIR _saine_headers_only)
+FetchContent_MakeAvailable(saine_clap saine_vst3sdk saine_signalsmith_stretch saine_signalsmith_linear saine_dr_libs saine_stb)
+set(SAINE_DECODER_INCLUDE "${saine_dr_libs_SOURCE_DIR}" "${saine_stb_SOURCE_DIR}")
+set(SAINE_STRETCH_INCLUDE "${saine_signalsmith_stretch_SOURCE_DIR}" "${saine_signalsmith_linear_SOURCE_DIR}/include")
 set(SAINE_CLAP_INCLUDE "${saine_clap_SOURCE_DIR}/include")
 set(SAINE_VST3SDK_DIR "${saine_vst3sdk_SOURCE_DIR}")
 # IID definitions every VST3 module needs (host and test plugin).
@@ -70,6 +100,11 @@ add_library(saine_vst3_host OBJECT ${SAINE_VST3_HOST_SOURCES})
 target_include_directories(saine_vst3_host SYSTEM PRIVATE ${SAINE_VST3SDK_DIR})
 target_compile_features(saine_vst3_host PRIVATE cxx_std_23)
 set_target_properties(saine_vst3_host PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# The decoder implementations, also without our warnings.
+add_library(saine_decoders OBJECT src/decoders_impl.c)
+target_include_directories(saine_decoders SYSTEM PRIVATE ${SAINE_DECODER_INCLUDE})
+target_compile_options(saine_decoders PRIVATE "$<IF:$<C_COMPILER_ID:MSVC>,/w,-w>")
+set_target_properties(saine_decoders PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # ---------------------------------------------------------------- warnings
 add_library(saine_engine_warnings INTERFACE)
@@ -107,7 +142,9 @@ add_library(saine_engine STATIC
   src/render_graph.cpp
   src/resampler.cpp
   src/synth.cpp
+  src/warp.cpp
   src/wav.cpp
+  src/decode.cpp
   src/plugins/plugin_common.cpp
   src/plugins/plugin_host.cpp
   src/plugins/plugin_modules.cpp
@@ -165,6 +202,7 @@ add_library(saine_engine STATIC
   src/devices/shaper.cpp
   src/devices/trance_gate.cpp
   $<TARGET_OBJECTS:saine_vst3_host>
+  $<TARGET_OBJECTS:saine_decoders>
   # Platform backends: each file is compile-guarded so exactly one is active.
   src/platform/audio_device.cpp
   src/platform/coreaudio_device.cpp
@@ -193,7 +231,11 @@ target_include_directories(saine_engine
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # SDK headers are third-party: include them as system headers (no warnings).
-target_include_directories(saine_engine SYSTEM PRIVATE ${SAINE_CLAP_INCLUDE} ${SAINE_VST3SDK_DIR})
+target_include_directories(saine_engine SYSTEM PRIVATE ${SAINE_CLAP_INCLUDE} ${SAINE_VST3SDK_DIR} ${SAINE_STRETCH_INCLUDE} ${SAINE_DECODER_INCLUDE})
+if(APPLE)
+  # vDSP FFTs for signalsmith-linear (Accelerate is linked below).
+  set_property(SOURCE src/warp.cpp APPEND PROPERTY COMPILE_DEFINITIONS SIGNALSMITH_USE_ACCELERATE ACCELERATE_NEW_LAPACK)
+endif()
 target_compile_features(saine_engine PUBLIC cxx_std_23)
 set_target_properties(saine_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(saine_engine PRIVATE $<BUILD_INTERFACE:saine_engine_warnings>)
@@ -206,7 +248,7 @@ endif()
 if(APPLE)
   target_link_libraries(saine_engine PUBLIC
     "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreAudio" "-framework CoreFoundation"
-    "-framework CoreAudioKit" "-framework AppKit" "-framework Foundation")
+    "-framework CoreAudioKit" "-framework AppKit" "-framework Foundation" "-framework Accelerate")
 endif()
 if(WIN32)
   # ole32: COM (WASAPI, MMDevice); shell32: CommandLineToArgvW; avrt: MMCSS;
@@ -389,6 +431,10 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/test_pdc.cpp
     tests/test_automation.cpp
     tests/test_frame_ring.cpp
+    tests/test_warp.cpp
+    tests/test_clip_loop.cpp
+    tests/test_preview.cpp
+    tests/test_decode.cpp
     tests/devices/test_builtin.cpp
     tests/devices/test_compressor.cpp
     tests/devices/test_eq.cpp
@@ -468,6 +514,22 @@ if(SAINE_ENGINE_BUILD_BENCH)
     target_include_directories(saine_run_loop_bench PRIVATE src)
     target_link_libraries(saine_run_loop_bench PRIVATE saine_engine_warnings)
   endif()
+  add_executable(saine_offline_plugin_bench bench/bench_offline_plugins.cpp)
+  target_include_directories(saine_offline_plugin_bench PRIVATE src)
+  target_link_libraries(saine_offline_plugin_bench PRIVATE saine_engine saine_engine_warnings)
+  target_compile_definitions(saine_offline_plugin_bench PRIVATE SAINE_TEST_PLUGIN_DIR="${SAINE_TEST_PLUGIN_DIR}")
+  if(TARGET saine_test_plugins)
+    add_dependencies(saine_offline_plugin_bench saine_test_plugins)
+  endif()
+  add_executable(saine_warp_bench bench/bench_warp.cpp)
+  target_include_directories(saine_warp_bench PRIVATE src)
+  target_link_libraries(saine_warp_bench PRIVATE saine_engine saine_engine_warnings)
+  add_executable(saine_clip_loop_bench bench/bench_clip_loop.cpp)
+  target_include_directories(saine_clip_loop_bench PRIVATE src)
+  target_link_libraries(saine_clip_loop_bench PRIVATE saine_engine saine_engine_warnings)
+  add_executable(saine_decode_bench bench/bench_decode.cpp)
+  target_include_directories(saine_decode_bench PRIVATE src)
+  target_link_libraries(saine_decode_bench PRIVATE saine_engine saine_engine_warnings)
   add_executable(saine_device_bench bench/bench_devices.cpp)
   target_include_directories(saine_device_bench PRIVATE src)
   target_link_libraries(saine_device_bench PRIVATE saine_engine saine_engine_warnings)

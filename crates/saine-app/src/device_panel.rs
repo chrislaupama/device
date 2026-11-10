@@ -29,10 +29,11 @@
 //! parameter says so); reversed parameters draw and drag their ring the other
 //! way; inert parameters (Layout::inert_when) are dimmed and ignore gestures.
 
-use crate::controller::{slint_color, track_color, Controller};
+use crate::controller::{card_color, Controller};
 use crate::devices::{DevMenu, MenuPick};
 use crate::device_canvas::{EQ_SLIDER_BOTTOM, EQ_SLIDER_TOP};
 use crate::device_fields::{self, Fill, Live, Style};
+use crate::text_measure::{choice_width, name_width, value_width};
 use crate::{DeviceCard, PanelCanvas, PanelEq, PanelField, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelTick};
 use saine_core::builtin::{Control, DeviceDef, Face, Field, ParamDef, Strip, Transfer, View, CLUSTER_GAP, KNOB_CELL, KNOB_GAP};
 use saine_core::{Command, Device, DeviceId, TrackId};
@@ -63,8 +64,6 @@ pub(crate) const HISTORY: usize = 240;
 const SILENT_DB: f32 = -120.0;
 /// Custom view: scrolling output waveform with the applied-gain trace (transient shaper).
 const GAIN_SCOPE: &str = "gain-scope";
-/// Level under which the gain scope reads as silence (linear, -48 dB).
-const SCOPE_SILENT: f32 = 0.004;
 /// Picker index of a card's view selector (not a parameter, e.g. the
 /// multiband band tabs): \`panel_choice\` with it changes the view state.
 pub(crate) const VIEW_SELECT: i32 = -3;
@@ -127,6 +126,9 @@ pub struct PanelState {
     drag: Option<ParamDrag>,
     field: Option<FieldDrag>,
     meters: HashMap<DeviceId, MeterHistory>,
+    /// Gain scope histories (transient shaper) and the clock they run on.
+    pub(crate) scopes: HashMap<DeviceId, crate::gain_scope::ScopeHistory>,
+    scope_clock: Option<std::time::Instant>,
     /// Momentary latch held down: (device, param index).
     held: Option<(DeviceId, usize)>,
     pub fields: crate::panel_fields::FieldState,
@@ -167,10 +169,19 @@ fn labels_model(def: &DeviceDef, p: &ParamDef, labels: &[&str]) -> ModelRc<Share
     STATIC_MODELS.with(|m| m.borrow_mut().entry(format!("{}/{}/{}", def.id, p.id, labels.join("|"))).or_insert_with(|| model(labels.iter().map(|c| s(*c)).collect())).clone())
 }
 
-/// Width of a dropdown pill: its longest choice, the padding and the chevron (pt).
+/// Width of one segment of a choice track (pt): every segment is as wide as the
+/// longest choice plus 12, at least 20.
+pub(crate) fn segment_width(labels: &[&str]) -> f32 {
+    let longest = labels.iter().map(|c| choice_width(c)).fold(0.0, f32::max);
+    (longest + 12.0).ceil().max(20.0)
+}
+
+/// Width of a dropdown pill (pt): its longest choice measured in the 10 pt
+/// semibold value face (tracking -0.4 per character), plus 30 for the left
+/// padding and the chevron, rounded up.
 fn dropdown_width(p: &ParamDef) -> f32 {
-    let longest = p.choices.iter().map(|c| pill_text(c).chars().count()).max().unwrap_or(4);
-    longest as f32 * 6.3 + 30.0
+    let longest = p.choices.iter().map(|c| value_width(pill_text(c))).fold(0.0, f32::max);
+    (30.0 + longest).ceil()
 }
 
 /// Off / on labels of a latch.
@@ -238,13 +249,16 @@ fn snap_to_detent(p: &ParamDef, detents: &[f32], norm: f32, fine: bool) -> Optio
     detents.iter().copied().map(|v| (v, (p.to_normalized(v) - norm).abs())).filter(|(_, d)| *d <= reach).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(v, _)| v)
 }
 
-/// Detent tick marks across a knob ring (32 x 32 view box).
+/// Detent tick marks just outside a knob ring (44 x 44 view box centred on the
+/// 32 pt ring): from one ring stroke (1.76) to 2.5 strokes past the ring's centre line.
 fn detent_ticks(p: &ParamDef, detents: &[f32]) -> String {
+    const R: f32 = 16.0 - 0.88;
+    let (inner, outer) = (R + 1.76, R + 1.76 * 2.5);
     let mut out = String::new();
     for v in detents {
         let a = (-135.0 + p.to_normalized(*v) * 270.0).to_radians();
         let (s, c) = a.sin_cos();
-        out.push_str(&format!("M{:.2} {:.2} L{:.2} {:.2} ", 16.0 + 13.0 * s, 16.0 - 13.0 * c, 16.0 + 16.0 * s, 16.0 - 16.0 * c));
+        out.push_str(&format!("M{:.2} {:.2} L{:.2} {:.2} ", 22.0 + inner * s, 22.0 - inner * c, 22.0 + outer * s, 22.0 - outer * c));
     }
     out
 }
@@ -321,6 +335,25 @@ pub(crate) fn polyline(pts: &[(f32, f32)]) -> String {
     let mut out = String::with_capacity(pts.len() * 16);
     for (i, (x, y)) in pts.iter().enumerate() {
         let _ = write!(out, "{}{x:.1} {y:.1}", if i == 0 { "M" } else { " L" });
+    }
+    out
+}
+
+/// A smooth curve as the reference app draws meter traces and field curves: from the first point,
+/// each inner point is the control of a quadratic to the midpoint after it, then a line
+/// to the last point. `join` continues an open path with a line to the first point
+/// instead of a move.
+pub(crate) fn smooth(pts: &[(f32, f32)], join: bool) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(pts.len() * 24);
+    let Some(&(x0, y0)) = pts.first() else { return out };
+    let _ = write!(out, "{}{x0:.1} {y0:.1}", if join { " L" } else { "M" });
+    for w in pts.windows(2).skip(1) {
+        let ((cx, cy), (nx, ny)) = (w[0], w[1]);
+        let _ = write!(out, " Q{cx:.1} {cy:.1} {:.1} {:.1}", (cx + nx) / 2.0, (cy + ny) / 2.0);
+    }
+    if let Some(&(x, y)) = pts.last().filter(|_| pts.len() > 1) {
+        let _ = write!(out, " L{x:.1} {y:.1}");
     }
     out
 }
@@ -408,9 +441,17 @@ fn face_law(face: Face, num: impl Fn(&str) -> f32) -> Option<(Box<dyn Fn(f32) ->
 
 /// Transfer-face paths in a 32 x 32 box: (curve, knee highlight, dashed unity line).
 /// The input axis spans 12 dB below `at` to 24 dB above it (at least to 0 dB).
-fn law_face(law: &dyn Fn(f32) -> f32, at: f32, (knee_lo, knee_hi): (f32, f32)) -> (String, String, String) {
-    let lo = at - 12.0;
-    let hi = (at + 24.0).max(0.0);
+fn law_face(law: &dyn Fn(f32) -> f32, at: f32, knee: (f32, f32)) -> (String, String, String) {
+    law_face_in(law, at - 12.0, (at + 24.0).max(0.0), knee)
+}
+
+/// A brick wall's face: 24 dB below the ceiling up to just above it (at least 0 dB), so
+/// the curve runs up the diagonal and flattens near the top (Inference from the captures).
+fn wall_face(law: &dyn Fn(f32) -> f32, ceiling: f32, knee: (f32, f32)) -> (String, String, String) {
+    law_face_in(law, ceiling - 24.0, (ceiling + 1.0).max(0.0), knee)
+}
+
+fn law_face_in(law: &dyn Fn(f32) -> f32, lo: f32, hi: f32, (knee_lo, knee_hi): (f32, f32)) -> (String, String, String) {
     let (pad, span) = (3.0, 26.0);
     let px = |db: f32| pad + (db - lo) / (hi - lo) * span;
     let py = |db: f32| 32.0 - pad - ((db - lo) / (hi - lo) * span).clamp(-pad, span + pad);
@@ -456,21 +497,24 @@ fn strip_paths(slots: &VecDeque<(f32, f32, f32)>, strip: Strip, w: f32, wh: f32)
     let y_of = |db: f32| ((strip.top_db - db) / span).clamp(0.0, 1.0) * wh;
     let n = slots.len();
     let x_of = |i: usize| w - (n - 1 - i) as f32 * w / (HISTORY - 1) as f32;
-    let input: Vec<(f32, f32)> = slots.iter().enumerate().map(|(i, s)| (x_of(i), y_of(s.0))).collect();
-    let output: Vec<(f32, f32)> = slots.iter().enumerate().map(|(i, s)| (x_of(i), y_of(s.1))).collect();
+    // Curves through every 3 pt or so (the newest point always kept): denser cubic traces cost
+    // render time without a visible difference.
+    let step = ((3.0 * Z) / (w / (HISTORY - 1) as f32)).ceil().max(1.0) as usize;
+    let kept = |i: usize| (n - 1 - i) % step == 0 || i == 0;
+    let input: Vec<(f32, f32)> = slots.iter().enumerate().filter(|(i, _)| kept(*i)).map(|(i, s)| (x_of(i), y_of(s.0))).collect();
+    let output: Vec<(f32, f32)> = slots.iter().enumerate().filter(|(i, _)| kept(*i)).map(|(i, s)| (x_of(i), y_of(s.1))).collect();
     let audible = |v: &[(f32, f32)]| v.iter().any(|p| p.1 < wh - 0.5);
     let (mut in_fill, mut in_line, mut gr_fill, mut out_line) = (String::new(), String::new(), String::new(), String::new());
     if n > 1 && audible(&input) {
-        in_line = polyline(&input);
-        in_fill = format!("{in_line} L{:.2} {wh:.2} L{:.2} {wh:.2} Z", input[n - 1].0, input[0].0);
+        in_line = smooth(&input, false);
+        in_fill = format!("{in_line} L{:.2} {wh:.2} L{:.2} {wh:.2} Z", input[input.len() - 1].0, input[0].0);
     }
     if n > 1 && slots.iter().any(|s| s.2 < -0.1) {
-        let mut area = input.clone();
-        area.extend(slots.iter().enumerate().rev().map(|(i, s)| (x_of(i), y_of(s.0 + s.2))));
-        gr_fill = format!("{} Z", polyline(&area));
+        let floor: Vec<(f32, f32)> = slots.iter().enumerate().rev().filter(|(i, _)| kept(*i)).map(|(i, s)| (x_of(i), y_of(s.0 + s.2))).collect();
+        gr_fill = format!("{}{} Z", smooth(&input, false), smooth(&floor, true));
     }
     if n > 1 && audible(&output) {
-        out_line = polyline(&output);
+        out_line = smooth(&output, false);
     } else if in_line.is_empty() {
         // Silence: the level trace rests on the floor.
         in_line = polyline(&[(30.0 * Z, wh - 0.5), (w, wh - 0.5)]);
@@ -530,7 +574,7 @@ impl Controller {
     /// Track colour of the card (reference fallback teal).
     pub(crate) fn card_accent(&self, d: &Device) -> slint::Color {
         let track = self.project().find_device(d.id).map(|(ti, _)| &self.project().tracks[ti]);
-        track.map_or(slint::Color::from_rgb_u8(0x43, 0x9b, 0x94), |t| slint_color(track_color(t.color)))
+        track.map_or(slint::Color::from_rgb_u8(0x43, 0x9b, 0x94), |t| card_color(t.color))
     }
 
     pub(crate) fn panel_value_of(&self, d: &Device, def: &DeviceDef, p: &ParamDef) -> f32 {
@@ -559,7 +603,6 @@ impl Controller {
     /// The card of a built-in device (generic panel).
     pub(crate) fn builtin_card(&self, d: &Device, def: &'static DeviceDef) -> DeviceCard {
         let width = def.layout.width();
-        let analyzer = matches!(def.layout.view, Some(View::Custom(v)) if crate::analyzer_views::metrics(v).is_some());
         // Key and Scale that follow the project key are shown dimmed with the project's values.
         let followed = saine_core::builtin::followed_key(def, d, self.project().transport.key);
         let accent = self.card_accent(d);
@@ -588,8 +631,7 @@ impl Controller {
                         value: s(pill_text(&text)),
                         selected: v.round() as i32,
                         enabled: true,
-                        // Analyzer cards size the pill to its value, as the reference cards do.
-                        width: if analyzer { 0.0 } else { dropdown_width(p) * Z },
+                        width: dropdown_width(p) * Z,
                         dim: follow.is_some(),
                         ..Default::default()
                     });
@@ -609,11 +651,15 @@ impl Controller {
                         picks.push(PanelPick { kind: 4, ..Default::default() });
                     }
                     let on = self.panel_value(d, def, p) >= 0.5;
-                    let label = match p.latch {
-                        Some((off, on_text)) => (if on { on_text } else { off }).to_string(),
-                        None => format!("{} {}", p.label, if on { "On" } else { "Off" }),
+                    let (off_text, on_text) = match p.latch {
+                        Some((off, on_text)) => (off.to_string(), on_text.to_string()),
+                        None => (format!("{} Off", p.label), format!("{} On", p.label)),
                     };
-                    picks.push(PanelPick { kind: 5, param: idx(p.id), label: s(label), selected: on as i32, enabled: true, ..Default::default() });
+                    // As wide as its wider state label + 16.76, rounded up (the reference app's latch rule; it stacks both labels).
+                    // Reverb's Dry latch has a fixed 54 pt basis in the reference app.
+                    let width = if def.id == "reverb" { 54.0 } else { (value_width(&off_text).max(value_width(&on_text)) + 16.76).ceil() } * Z;
+                    let label = if on { on_text } else { off_text };
+                    picks.push(PanelPick { kind: 5, param: idx(p.id), label: s(label), selected: on as i32, enabled: true, width, ..Default::default() });
                 }
                 (Control::Views, _) => picks.push(PanelPick {
                     kind: 7,
@@ -622,6 +668,7 @@ impl Controller {
                     choices: views_model(def),
                     selected: self.card_view(d.id) as i32,
                     enabled: true,
+                    width: segment_width(def.layout.views) * Z,
                     ..Default::default()
                 }),
                 (Control::Menu(_), Some(p)) => picks.push(PanelPick {
@@ -631,6 +678,8 @@ impl Controller {
                     choices: choices_model(def, p),
                     selected: self.panel_value(d, def, p).round() as i32,
                     enabled: true,
+                    // Glue's sidechain filter is a switch bank: every position as wide as "Auto".
+                    width: segment_width(if def.id == "glue-compressor" { &["Auto"] } else { p.choices }) * Z,
                     ..Default::default()
                 }),
                 (Control::Sidechain, _) => {
@@ -639,8 +688,18 @@ impl Controller {
                         None => "None".to_string(),
                         Some(t) => self.project().track(t).map_or_else(|| "Removed".to_string(), |t| t.name.clone()),
                     };
-                    // Without a value box after it the source pill takes the room (reference).
-                    let w = if def.layout.picker[ci + 1..].is_empty() { 140.0 } else { 80.0 };
+                    // The reference app sizes the pill per card, not by the track names: at most 140, less
+                    // where the row leaves less room. Other cards: the longest option + 30.
+                    let w = match def.id {
+                        "character-compressor" | "glue-compressor" => 140.0,
+                        "echo" => 130.0,
+                        "compressor" => 79.0,
+                        _ => {
+                            let own = self.project().find_device(d.id).map(|(ti, _)| self.project().tracks[ti].id);
+                            let longest = self.project().tracks.iter().filter(|t| Some(t.id) != own).map(|t| value_width(&t.name)).fold(value_width("None").max(value_width(&source)), f32::max);
+                            (30.0 + longest).ceil()
+                        }
+                    };
                     picks.push(PanelPick { kind: 2, param: -1, label: s("Sidechain"), value: s(source), enabled: true, width: w * Z, ..Default::default() });
                 }
                 (Control::Segments(_, labels), Some(p)) => picks.push(PanelPick {
@@ -650,6 +709,7 @@ impl Controller {
                     choices: labels_model(def, p, labels),
                     selected: self.panel_value(d, def, p).round() as i32,
                     enabled: true,
+                    width: segment_width(labels) * Z,
                     ..Default::default()
                 }),
                 (Control::Gap, _) => picks.push(PanelPick { kind: 4, ..Default::default() }),
@@ -667,7 +727,8 @@ impl Controller {
                     value: s(def.text(live, p, self.panel_value(d, def, p))),
                     // A pill after the sidechain picker scales the key: inert without a source.
                     enabled: d.sidechain.is_some() || !def.layout.picker[..ci].contains(&Control::Sidechain),
-                    width: 60.0 * Z,
+                    // Wide enough for either end of the range, plus 18.
+                    width: (18.0 + choice_width(&p.format(p.min)).max(choice_width(&p.format(p.max)))).ceil() * Z,
                     ..Default::default()
                 }),
                 _ => {}
@@ -679,6 +740,10 @@ impl Controller {
         // Without a gap the row's items stay on the left.
         if !picks.iter().any(|p| p.kind == 4) {
             picks.push(PanelPick { kind: 4, ..Default::default() });
+        }
+        // Captions take the reference app's measured width (rounded up), not the rendered text's.
+        for p in &mut picks {
+            p.label_w = name_width(&p.label).ceil() * Z;
         }
 
         // Slider column (an EQ's Output slider comes from its view).
@@ -770,7 +835,7 @@ impl Controller {
                     norm: if p.reversed { 1.0 - n } else { n },
                     cell: body.cell * Z,
                     origin: p.origin(),
-                    ticks: s(detent_ticks(p, &if detents.is_empty() && p.choices.len() > 2 { (0..p.choices.len()).map(|i| i as f32).collect::<Vec<_>>() } else { detents.to_vec() })),
+                    ticks: s(detent_ticks(p, detents)),
                     dim: body.dim.contains(&id),
                     latch,
                     on: latch && v >= 0.5,
@@ -799,8 +864,9 @@ impl Controller {
                         }
                     }
                     Some(face) => {
+                        let wall = matches!(face, Face::BrickWall { .. });
                         let Some((law, at, knee)) = face_law(face, number) else { return Some(k) };
-                        let (curve, bend, unity) = law_face(&law, at, knee);
+                        let (curve, bend, unity) = if wall { wall_face(&law, at, knee) } else { law_face(&law, at, knee) };
                         k.face = 1;
                         k.face_curve = s(curve);
                         k.face_bend = s(bend);
@@ -838,7 +904,6 @@ impl Controller {
             preset: s(preset),
             knobs: model(knobs),
             picks: model(picks),
-            tight_picks: analyzer,
             sliders: model(sliders),
             strip,
             field,
@@ -924,10 +989,6 @@ impl Controller {
         }
     }
 
-    /// Polled readout history of a device (oldest first), for custom views.
-    pub(crate) fn panel_meter_frames(&self, id: DeviceId) -> Vec<(f32, f32, f32)> {
-        self.devices.panel.meters.get(&id).map(|h| h.slots.iter().copied().collect()).unwrap_or_default()
-    }
 
     /// The first of a field axis' parameters that is shown (Rate or Rate Sync).
     fn field_axis(d: &Device, def: &DeviceDef, ids: &[&'static str]) -> Option<usize> {
@@ -971,15 +1032,17 @@ impl Controller {
         };
         let ticks: Vec<PanelTick> = plot.ticks.iter().map(|(y, text)| PanelTick { y: at(0.0, *y).1, text: s(text.as_str()), rule: true }).collect();
         let (mut live, mut dot, mut dot_x, mut dot_y) = (String::new(), false, 0.0, 0.0);
+        // At rest only the phase dot shows; the live curve and the dot's trail follow playback.
+        let playing = self.engine.transport().playing;
         match &plot.live {
-            Some(Live::Curve(ys)) => live = polyline(&points(ys)),
+            Some(Live::Curve(ys)) if playing => live = polyline(&points(ys)),
             Some(Live::Dot { x, y, trail }) => {
                 (dot, (dot_x, dot_y)) = (true, at(*x, *y));
-                if trail.len() > 1 {
+                if playing && trail.len() > 1 {
                     live = polyline(&trail.iter().map(|(x, y)| at(*x, *y)).collect::<Vec<_>>());
                 }
             }
-            None => {}
+            _ => {}
         }
         let xi = Self::field_axis(d, def, f.x);
         let yi = Self::field_axis(d, def, f.y);
@@ -1020,15 +1083,14 @@ impl Controller {
     /// the selected track's built-in devices (every poll tick, ~30 ms).
     pub(crate) fn panel_poll_meters(&mut self) {
         self.sampler_poll();
+        self.synth_poll();
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else { return };
         let strips: Vec<(DeviceId, Strip)> =
             t.devices.iter().filter_map(|d| saine_core::builtin::def_of(d).and_then(|def| def.layout.view).and_then(|v| v.strip()).map(|st| (d.id, st))).collect();
-        // Field devices: follow the LFO phase readout while the transport plays.
-        let fields: Vec<DeviceId> = if self.engine.transport().playing {
-            t.devices.iter().filter(|d| saine_core::builtin::def_of(d).is_some_and(|def| matches!(def.layout.view, Some(View::Field(_))))).map(|d| d.id).collect()
-        } else {
-            Vec::new()
-        };
+        // Field devices: follow the LFO phase readout; at rest the dot stays where the phase is.
+        let playing = self.engine.transport().playing;
+        let fields: Vec<DeviceId> =
+            t.devices.iter().filter(|d| saine_core::builtin::def_of(d).is_some_and(|def| matches!(def.layout.view, Some(View::Field(_))))).map(|d| d.id).collect();
         let views: Vec<DeviceId> = t
             .devices
             .iter()
@@ -1043,7 +1105,8 @@ impl Controller {
             .collect();
         let scopes: Vec<DeviceId> =
             t.devices.iter().filter(|d| saine_core::builtin::def_of(d).is_some_and(|def| def.layout.view == Some(View::Custom(GAIN_SCOPE)))).map(|d| d.id).collect();
-        self.devices.panel.meters.retain(|id, _| strips.iter().any(|(s, _)| s == id) || scopes.contains(id));
+        self.devices.panel.meters.retain(|id, _| strips.iter().any(|(s, _)| s == id));
+        self.devices.panel.scopes.retain(|id, _| scopes.contains(id));
         let mut out = Vec::new();
         self.devices.panel.canvas.readouts.retain(|id, _| canvases.contains(id));
         for id in canvases {
@@ -1052,23 +1115,27 @@ impl Controller {
                 self.ui_dirty = true;
             }
         }
+        let now_ms = self.devices.panel.scope_clock.get_or_insert_with(std::time::Instant::now).elapsed().as_secs_f64() * 1e3;
         for id in scopes {
-            // Raw frames (output peak, pre-clip peak, gain dB); parked after silence.
-            let next = match self.engine.builtin_readouts(id.0, &mut out) {
-                Ok(()) if out.len() >= 3 => (out[0], out[1], out[2]),
-                _ => (0.0, 0.0, 0.0),
-            };
-            let h = self.devices.panel.meters.entry(id).or_default();
-            let silent = |s: (f32, f32, f32)| s.0 < SCOPE_SILENT && s.1 < SCOPE_SILENT && s.2.abs() < 0.05;
-            if silent(next) && h.slots.iter().all(|s| silent(*s)) {
-                h.slots.clear();
-                continue;
+            // Merge the newest column frame; the head moves while there is something to show.
+            let seq = self.engine.builtin_analysis(id.0, &mut out).unwrap_or(0);
+            let h = self.devices.panel.scopes.entry(id).or_default();
+            let fresh = seq != 0 && seq != h.seq;
+            if fresh {
+                h.seq = seq;
+                h.push(&out, now_ms, playing);
             }
-            if h.slots.len() == HISTORY {
-                h.slots.pop_front();
+            let rests = h.rests(playing);
+            let moving = !rests && !h.empty();
+            if !rests && (fresh || moving) {
+                h.advance(now_ms);
             }
-            h.slots.push_back(next);
-            self.ui_dirty = true;
+            if fresh || moving {
+                self.ui_dirty = true;
+            }
+            if !moving {
+                h.park();
+            }
         }
         for (id, st) in strips {
             // Readout order of a strip device: input dB, output dB, gain reduction dB.
@@ -1105,7 +1172,12 @@ impl Controller {
         for id in fields {
             let Ok(()) = self.engine.builtin_readouts(id.0, &mut out) else { continue };
             let Some(phase) = out.first().copied().filter(|p| p.is_finite()) else { continue };
+            // At rest the phase is read once, so the dot holds still and the panel is not rebuilt.
+            let fresh = !self.devices.panel.lfo.contains_key(&id);
             let l = self.devices.panel.lfo.entry(id).or_insert((phase, phase as f64));
+            if !fresh && (!playing || l.0 == phase) {
+                continue;
+            }
             // Polled every ~30 ms: the forward step since the last poll (under one cycle).
             l.1 += (phase - l.0).rem_euclid(1.0) as f64;
             l.0 = phase;

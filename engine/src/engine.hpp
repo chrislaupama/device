@@ -29,10 +29,13 @@ namespace saine {
 // trivially copyable command (queued while the device runs, applied inline
 // otherwise; see Engine::push_command()).
 struct TransportCommand {
-    enum class Type : uint8_t { Play, Pause, Stop, Seek, SetLoop, SetMetronome };
+    enum class Type : uint8_t { Play, Pause, Stop, Seek, SetLoop, SetMetronome, PreviewPlay, PreviewStop, PreviewSet };
     Type type = Type::Play;
-    bool enabled = false;   // SetLoop, SetMetronome
-    float gain = 0.0f;      // SetMetronome
+    bool enabled = false;   // SetLoop, SetMetronome; Preview*: solo
+    float gain = 0.0f;      // SetMetronome, PreviewPlay, PreviewSet
+    float rate = 1.0f;      // PreviewPlay, PreviewSet
+    const struct Asset* asset = nullptr; // PreviewPlay (kept alive by Engine::preview_held_)
+    uint64_t seq = 0;       // PreviewPlay
     uint32_t beats_per_bar = 0; // SetMetronome
     int64_t frame = 0;      // Seek target, SetLoop start
     int64_t frame2 = 0;     // SetLoop end
@@ -69,8 +72,13 @@ public:
     int32_t asset_load_file(const char* path, se_asset_info* out, std::string& err);
     int32_t asset_release(uint64_t id);
     int32_t asset_get_info(uint64_t id, se_asset_info* out) const;
-    int32_t asset_compute_peaks(uint64_t id, uint64_t start_frame, uint32_t frames_per_peak, float* out_minmax,
-                                std::size_t capacity, std::size_t* out_count) const;
+    int32_t asset_reverse(uint64_t id, se_asset_info* out);
+    // channel < 0: both channels mixed to mono.
+    int32_t asset_compute_peaks(uint64_t id, int32_t channel, uint64_t start_frame, uint32_t frames_per_peak,
+                                float* out_minmax, std::size_t capacity, std::size_t* out_count) const;
+    int32_t asset_detect_onsets(uint64_t id, se_onset* out, std::size_t capacity, std::size_t* out_count) const;
+    std::size_t warp_renders_pending() const { return warp_renderer_.pending(); }
+    void set_warp_renders_enabled(bool enabled) { warp_renderer_.set_enabled(enabled); }
     // Registers already-decoded audio (resampling to the engine rate if needed).
     int32_t asset_add_decoded(DecodedAudio&& audio, se_asset_info* out, std::string& err);
 
@@ -81,12 +89,18 @@ public:
     int32_t publish(const se_session_desc_v4& desc, std::string& err);
     int32_t publish(const se_session_desc_v5& desc, std::string& err);
     int32_t publish(const se_session_desc_v6& desc, std::string& err);
+    int32_t publish(const se_session_desc_v7& desc, std::string& err);
+    int32_t publish(const se_session_desc_v8& desc, std::string& err);
 
     // ---- plugins (see saine_engine.h; main thread where documented)
     bool plugin_is_live(uint64_t device_id);
     void plugin_load_errors(std::vector<std::pair<uint64_t, std::string>>& out);
     std::size_t plugin_save_states();
     bool plugin_saved_state(std::size_t index, uint64_t& id, const uint8_t*& data, std::size_t& len);
+    // Offline renders on a worker (see "Plugins in offline renders" in the README).
+    int32_t plugin_save_state_of(uint64_t device_id, std::string& err);
+    int32_t plugin_prepare(const se_device_desc& d, bool instrument, const char* track_name, std::string& err);
+    void plugin_set_detached(bool detached);
     int32_t plugin_editor_open(uint64_t device_id, std::string& err);
     void plugin_editor_close(uint64_t device_id);
     bool plugin_editor_is_open(uint64_t device_id);
@@ -128,6 +142,13 @@ public:
     // owns the RT path, otherwise queued for the next block.
     int32_t push_command(const TransportCommand& cmd);
     void transport_get(se_transport_info* out) const noexcept;
+
+    // ---- preview (browser audition) voice, see se_preview_play
+    int32_t preview_play(uint64_t asset_id, int64_t start_frame, float gain, float rate, bool solo);
+    int32_t preview_stop();
+    int32_t preview_note(uint64_t device_id, uint8_t pitch, uint8_t velocity);
+    int32_t preview_set(float gain, float rate, bool solo);
+    void preview_get(se_preview_info* out) noexcept;
 
     // ---- meters / stats
     int32_t meters_read(se_meter* out, std::size_t capacity, std::size_t* out_count);
@@ -181,6 +202,9 @@ private:
     void plan_pdc(RenderGraph& g) const;
     // Re-plans the current graph (clone + install). Requires plugins_.mutex().
     void replan_pdc_locked();
+    // Installs a copy of the current graph with the warp renders that finished
+    // since (clone + install). Requires plugins_.mutex().
+    void attach_warp_renders_locked();
     // Assigns synth states (reusing the previous graph's by track_id) and
     // publishes the graph to the RT side. Returns the graph's seq.
     uint64_t install_graph(std::unique_ptr<RenderGraph> built);
@@ -209,6 +233,11 @@ private:
     // r == nullptr: mono (l only).
     void mix_metronome(float* l, float* r, int64_t position, uint32_t frames) noexcept;
     void start_click(const float* buf, uint32_t offset, float* l, float* r, uint32_t frames) noexcept;
+    // Adds the preview voices to l/r (silencing them first when soloed);
+    // returns true when anything was added.
+    bool mix_preview(float* l, float* r, uint32_t frames) noexcept;
+    // Drops held preview assets the RT side can no longer reach. Requires preview_mutex_.
+    void reclaim_previews_locked();
 
     const double sample_rate_;
     const uint32_t max_block_;
@@ -284,6 +313,36 @@ private:
     std::array<ClickVoice, kMaxClickVoices> rt_voices_{}; // RT-owned
     std::size_t rt_voice_count_ = 0;    // RT-owned
 
+    // -- preview voice. The non-RT side holds every asset a queued or sounding
+    // voice may read (by play seq); the RT side publishes the lowest seq it may
+    // still read, and everything below it is dropped (off the RT thread).
+    struct PreviewVoice {
+        const Asset* asset = nullptr;
+        uint64_t seq = 0;
+        double pos = 0.0;
+        float fade = 0.0f; // 0..1 envelope
+        float step = 0.0f; // per frame; < 0 fades out
+    };
+    static constexpr float kPreviewFadeFrames = 96.0f;
+    std::mutex preview_mutex_;
+    std::vector<std::pair<uint64_t, AssetRef>> preview_held_; // guarded by preview_mutex_
+    uint64_t preview_seq_ = 0;                                // guarded by preview_mutex_
+    std::vector<std::pair<uint64_t, uint8_t>> preview_notes_; // held (device, pitch), guarded by preview_mutex_
+    std::atomic<uint32_t> pub_pv_notes_{0};
+    std::atomic<uint64_t> rt_preview_floor_{0};
+    PreviewVoice rt_pv_[2];             // RT-owned: [0] current, [1] fading out
+    float rt_pv_gain_ = 1.0f;           // RT-owned: target
+    float rt_pv_gain_cur_ = 1.0f;       // RT-owned: smoothed
+    float rt_pv_rate_ = 1.0f;           // RT-owned
+    bool rt_pv_solo_ = false;           // RT-owned
+    uint64_t rt_pv_applied_ = 0;        // RT-owned: newest PreviewPlay seq applied
+    std::atomic<uint64_t> pub_pv_asset_{0};
+    std::atomic<int64_t> pub_pv_pos_{0};
+    std::atomic<int64_t> pub_pv_frames_{0};
+    std::atomic<bool> pub_pv_solo_{false};
+    std::atomic<float> pv_peak_l_{0.0f};
+    std::atomic<float> pv_peak_r_{0.0f};
+
     // -- meters (master; track meters live in the graph)
     std::atomic<float> master_peak_l_{0.0f};
     std::atomic<float> master_peak_r_{0.0f};
@@ -327,6 +386,11 @@ private:
     RenderContext live_ctx_;
     std::vector<float> in_scratch_; // kMaxInjectedInputChannels x max_block (deinterleaved injected input)
     std::vector<float> click_scratch_; // max_block, metronome before its delay line
+
+    // -- warped clips rendered ahead of time (resolve / evict under
+    // plugins_.mutex(), like every graph install). Declared last: its worker
+    // stops first.
+    WarpRenderer warp_renderer_;
 };
 
 } // namespace saine

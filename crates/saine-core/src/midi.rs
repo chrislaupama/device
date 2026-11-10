@@ -5,6 +5,7 @@
 //! validated, invertible undo step.
 
 use crate::model::{ClipId, Ticks, PPQ};
+use crate::steps::{StepPattern, StepRows};
 use serde::{Deserialize, Serialize};
 
 /// A note inside a MIDI clip. `start` is relative to the clip start.
@@ -29,12 +30,120 @@ pub struct MidiClip {
     /// Clip duration (ticks). Notes beyond it are kept but not played.
     pub length: Ticks,
     pub notes: Vec<Note>,
+    /// Set on a pattern clip: the step grid its notes are baked from (the
+    /// clip repeats it). See `crate::steps`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<StepPattern>,
+    /// Disabled clips stay on the timeline but play no notes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
+    /// The sidebar's pattern list (Type, Genre, made sets, kept notes). See `crate::library`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composer: Option<crate::library::Composer>,
+    /// The piano roll's scale view for this clip (root, type, highlight, scale rows).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<crate::scale::ClipScale>,
+    /// Clip looping (the editor's Loop switch, Position and Length). Clips saved before it
+    /// existed load without it and play once.
+    #[serde(default, rename = "loop", skip_serializing_if = "Option::is_none")]
+    pub clip_loop: Option<ClipLoop>,
+}
+
+/// A MIDI clip's loop: the content range that repeats (clip-relative ticks). The clip plays
+/// from its start to the loop end, then repeats the loop until the clip ends; repeats are
+/// drawn dimmer on the timeline. The range is kept while looping is off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClipLoop {
+    pub on: bool,
+    pub start: Ticks,
+    pub end: Ticks,
+    /// Clip length to return to when looping is turned back on (0 = none).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub span: Ticks,
+}
+
+fn is_zero(t: &Ticks) -> bool {
+    *t == 0
+}
+
+impl ClipLoop {
+    /// Looping on over the whole clip, as a new clip starts.
+    pub fn whole(length: Ticks) -> Self {
+        ClipLoop { on: true, start: 0, end: length, span: 0 }
+    }
+
+    pub fn len(&self) -> Ticks {
+        self.end - self.start
+    }
+
+    /// The shortest loop: below the finest grid step (1/48), so every snapped range fits,
+    /// and long enough that unrolling stays small.
+    pub const MIN_LEN: Ticks = crate::PPQ / 16;
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.start < 0 || self.len() < Self::MIN_LEN || self.span < 0 { Err(format!("loop {}..{} is shorter than {} ticks or before the clip", self.start, self.end, Self::MIN_LEN)) } else { Ok(()) }
+    }
+
+    /// Notes as they play over a clip of this length: the first pass to the loop end, then
+    /// the loop again and again, each cut at the loop end and at the clip end. The flag
+    /// marks repeats.
+    pub fn unroll(&self, notes: &[Note], length: Ticks) -> Vec<(Note, bool)> {
+        let mut out = Vec::new();
+        let first = self.end.min(length);
+        for n in notes.iter().filter(|n| n.start >= 0 && n.start < first) {
+            out.push((Note { length: n.length.min(first - n.start), ..*n }, false));
+        }
+        let period = self.len();
+        if period < Self::MIN_LEN {
+            return out;
+        }
+        let looped: Vec<&Note> = notes.iter().filter(|n| n.start >= self.start && n.start < self.end).collect();
+        let mut at = self.end;
+        while at < length && !looped.is_empty() {
+            for n in &looped {
+                let t = at + (n.start - self.start);
+                if t < length {
+                    out.push((Note { start: t, length: n.length.min(self.end - n.start).min(length - t), ..**n }, true));
+                }
+            }
+            at += period;
+        }
+        out
+    }
 }
 
 impl MidiClip {
     /// Reference default: "Insert empty MIDI clip" creates a 1-bar clip named "MIDI".
     pub fn empty(start: Ticks, length: Ticks) -> Self {
-        MidiClip { id: ClipId(0), name: "MIDI".into(), start, length, notes: Vec::new() }
+        MidiClip { id: ClipId(0), name: "MIDI".into(), start, length, notes: Vec::new(), pattern: None, disabled: false, composer: None, scale: None, clip_loop: Some(ClipLoop::whole(length)) }
+    }
+
+    /// Reference default for a Drum Rack track: an empty one-bar "Pattern"
+    /// clip of 16 steps at 1/16.
+    pub fn empty_pattern(start: Ticks, rows: StepRows) -> Self {
+        let pattern = StepPattern::new(rows);
+        MidiClip { id: ClipId(0), name: "Pattern".into(), start, length: pattern.length(), notes: Vec::new(), pattern: Some(pattern), disabled: false, composer: None, scale: None, clip_loop: None }
+    }
+
+    /// Notes as they play inside the clip (a pattern repeats without its
+    /// muted rows; notes are cut at the clip end).
+    pub fn playing_notes(&self) -> Vec<Note> {
+        let mut notes = self.tiled_notes();
+        if let Some(p) = &self.pattern {
+            notes.retain(|n| p.audible(n.pitch));
+        }
+        notes
+    }
+
+    /// Notes over the whole clip: a pattern repeated (every row), cut at the clip end.
+    pub fn tiled_notes(&self) -> Vec<Note> {
+        match &self.pattern {
+            Some(p) => crate::steps::tile(&self.notes, p.length(), self.length),
+            None => match self.clip_loop.filter(|l| l.on) {
+                Some(l) => l.unroll(&self.notes, self.length).into_iter().map(|(n, _)| n).collect(),
+                None => self.notes.iter().filter(|n| n.start < self.length).map(|n| Note { length: n.length.min(self.length - n.start), ..*n }).collect(),
+            },
+        }
     }
 
     pub fn end(&self) -> Ticks {
@@ -168,6 +277,16 @@ mod tests {
 
     fn n(id: u32, pitch: u8, start: Ticks, length: Ticks) -> Note {
         Note { id, pitch, start, length, velocity: 100 }
+    }
+
+    #[test]
+    fn loop_unrolls_first_pass_then_repeats() {
+        let notes = [n(1, 60, 0, 240), n(2, 62, 480, 960), n(3, 64, 1440, 480)];
+        let l = ClipLoop { on: true, start: 480, end: 1920, span: 0 };
+        let out: Vec<(Ticks, Ticks, u8, bool)> = l.unroll(&notes, 4000).iter().map(|(n, r)| (n.start, n.length, n.pitch, *r)).collect();
+        assert_eq!(out, vec![(0, 240, 60, false), (480, 960, 62, false), (1440, 480, 64, false), (1920, 960, 62, true), (2880, 480, 64, true), (3360, 640, 62, true)]);
+        assert_eq!(l.unroll(&notes, 1000).len(), 2);
+        assert!(ClipLoop { on: true, start: 960, end: 960, span: 0 }.validate().is_err());
     }
 
     #[test]

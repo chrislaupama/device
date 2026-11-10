@@ -72,17 +72,31 @@ typedef struct se_asset_info {
     double source_sample_rate;
 } se_asset_info;
 
-/* Decode an audio file (WAV PCM 16/24/32, float 32) into engine memory.
- * Blocking; call from a worker thread. Resamples to the engine rate. */
+/* Decode an audio file into engine memory, recognised by its content: WAV
+ * (PCM 8/16/24/32, float 32/64), AIFF / AIFC, FLAC, Ogg Vorbis or MP3; mono
+ * or stereo. Blocking; call from a worker thread. Resamples to the engine
+ * rate. Anything else -> SE_ERR_UNSUPPORTED_FORMAT. */
 int32_t se_asset_load_file(se_engine* engine, const char* utf8_path, se_asset_info* out_info);
 int32_t se_asset_release(se_engine* engine, uint64_t asset_id);
 int32_t se_asset_get_info(const se_engine* engine, uint64_t asset_id, se_asset_info* out_info);
+
+/* A new asset holding asset_id's audio back to front (for reversed clips):
+ * frame f of the copy is frame frames - 1 - f of the original. Same rate,
+ * channels and source rate; release it like any asset. Copies the audio:
+ * call from a non-audio thread. Unknown asset -> SE_ERR_NOT_FOUND. */
+int32_t se_asset_reverse(se_engine* engine, uint64_t asset_id, se_asset_info* out_info);
 
 /* Min/max peak pairs for waveform drawing, mixed to mono.
  * Writes up to `capacity` pairs (2 floats each) into out_minmax. */
 int32_t se_asset_compute_peaks(const se_engine* engine, uint64_t asset_id,
                                uint64_t start_frame, uint32_t frames_per_peak,
                                float* out_minmax, size_t capacity, size_t* out_count);
+
+/* The same for one channel (0 left, 1 right), for editors that draw a lane
+ * per channel. A channel the asset lacks -> SE_ERR_INVALID_ARG. */
+int32_t se_asset_compute_channel_peaks(const se_engine* engine, uint64_t asset_id, uint32_t channel,
+                                       uint64_t start_frame, uint32_t frames_per_peak,
+                                       float* out_minmax, size_t capacity, size_t* out_count);
 
 /* ---- session snapshots -------------------------------------------------- */
 typedef struct se_clip_desc {
@@ -655,6 +669,42 @@ int32_t se_plugin_save_states(se_engine* engine, size_t* out_count);
 int32_t se_plugin_saved_state(se_engine* engine, size_t index, uint64_t* out_device_id, const uint8_t** out_data,
                               size_t* out_len);
 
+/* Saves the state of ONE live instance (same formats as se_plugin_save_states)
+ * into the engine-owned buffer, replacing its contents: afterwards
+ * se_plugin_saved_state(index 0) reads it. MAIN THREAD. SE_ERR_NOT_FOUND: no
+ * live instance for the device; SE_ERR_STATE: the plugin failed to save (the
+ * reason is the last error). A clip render calls it once per UI tick so the
+ * main thread is never held for the whole chain. */
+int32_t se_plugin_save_state(se_engine* engine, uint64_t device_id);
+
+/* ---- plugins in offline renders on a worker thread (ABI v1 addition)
+ * See engine/README.md ("Plugins in offline renders").
+ *
+ * A private engine without a device renders a project on a worker thread, but
+ * plugins want their creation, state, latency and teardown on the main thread
+ * (CLAP calls the creating thread its main thread, and publish creates). So
+ * the main thread prepares the instances ahead of the publish and the worker
+ * only publishes and renders:
+ *   1. MAIN THREAD (like se_session_publish_v5, which creates instances the
+ *      same way), per device, one device per UI tick: se_plugin_prepare
+ *      (instantiates now with `state`, the live instance's current state,
+ *      stereo in/out at the engine rate and max block size, the saved state
+ *      applied, activated). SE_ERR_NOT_FOUND = the plugin failed to load; the
+ *      reason is the last error. `instrument` is 1 for a track's instrument
+ *      plugin (as in se_track_desc_v5.instrument_plugin), 0 for an insert.
+ *   2. se_plugin_set_detached(engine, 1) before the worker publishes.
+ *   3. WORKER: se_session_publish_* finds the prepared instances by device_id
+ *      (same plugin, same role) and reuses them; se_render_offline processes
+ *      them (process() may run on any thread). Detached, the engine never
+ *      instantiates (a device id that was not prepared fails to load: pass-
+ *      through / silent instrument, reported by se_plugin_load_errors), never
+ *      restarts, polls, calls back or destroys instances, and se_plugin_idle
+ *      only attaches finished warp renders.
+ *   4. MAIN THREAD: se_engine_destroy tears the instances down once the
+ *      worker is done with the engine. */
+int32_t se_plugin_prepare(se_engine* engine, const se_device_desc* device, uint8_t instrument);
+int32_t se_plugin_set_detached(se_engine* engine, uint8_t detached);
+
 /* Native editor windows (macOS: NSWindow titled "<plugin>: <track>").
  * MAIN THREAD ONLY (else SE_ERR_STATE). Opening an open editor brings its
  * window to the front. Unknown/failed device -> SE_ERR_NOT_FOUND; a plugin
@@ -857,6 +907,151 @@ int32_t se_session_publish_v6(se_engine* engine, const se_session_desc_v6* sessi
 /* TESTING: evaluates `lane` (validated like a published lane) at `count`
  * timeline frames with the engine's evaluation code. Any thread. */
 int32_t se_automation_eval(const se_auto_lane_desc* lane, const int64_t* frames, size_t count, float* out_values);
+
+/* ---- audio clip warping (ABI v1 addition) --------------------------------
+ * See engine/README.md ("Clip warping").
+ *
+ * se_session_publish_v7 is a superset of se_session_publish_v6: the session
+ * carries v6 unchanged plus a list of warped clips. A clip listed there
+ * (by clip_id, which must name a clip of the session, once) is no longer
+ * played 1:1 from its asset: its timeline_start and length still give the
+ * timeline frames it covers (length is NOT clamped to the asset, and
+ * source_offset is ignored), and the warp map gives the source position of
+ * every timeline frame. Clips not listed play as in v6.
+ *
+ * Warp map: points (timeline frame, source frame at the engine rate,
+ * fractional) with strictly increasing frames and sources, at least two.
+ * source(t) is linear between points and extends the first / last segment
+ * beyond them.
+ *
+ * Modes:
+ *   SE_WARP_REPITCH          varispeed: reads source(t) with band-limited
+ *                            interpolation, so pitch follows the local rate.
+ *                            transpose is ignored.
+ *   SE_WARP_SLICE            transient slicing for drums: each slice (from
+ *                            slices[k].source to the next slice or the asset
+ *                            end) starts at the timeline frame where the map
+ *                            reaches its source and plays at the transpose
+ *                            rate (2^(transpose/12)), with a 2 ms fade where it
+ *                            runs out and a 2 ms crossfade where the next slice
+ *                            cuts it.
+ *   SE_WARP_STRETCH          phase-vocoder time stretch (signalsmith-stretch)
+ *                            following the map, pitch kept, then transposed.
+ *   SE_WARP_STRETCH_FORMANT  SE_WARP_STRETCH with formant compensation, so a
+ *                            transposed voice keeps its character.
+ *   SE_WARP_AUTO             per passage: slices flagged percussive play as
+ *                            SE_WARP_SLICE, the others as SE_WARP_STRETCH, with
+ *                            a 3 ms crossfade where the choice changes.
+ * The stretch modes run on per-track voices the engine allocates at publish
+ * time and keeps across republishes; rendering never allocates or locks.
+ * A voice restarts (aligned, without pre-roll latency) at a clip start,
+ * whenever playback jumps, and when a republished map moves the source under
+ * it. Meanwhile a background thread renders each stretch-mode clip ahead of
+ * time (renders are reused for any clip with the same asset, mode, transpose,
+ * map and slices relative to its start, so moving a clip or changing its gain
+ * keeps them); se_plugin_idle swaps a finished render in, after which the clip
+ * plays it at the cost of a copy (crossfading from the voice over one block
+ * when it is playing). se_export_wav uses the renders that are attached and
+ * private voices for the rest. Validation (else SE_ERR_INVALID_ARG): mode <= SE_WARP_AUTO,
+ * transpose finite in -48..48, point and slice arrays non-NULL when counted,
+ * point_count >= 2, frames strictly increasing, sources finite and strictly
+ * increasing, slice sources finite and strictly increasing, clip ids known
+ * and unique. */
+enum {
+    SE_WARP_REPITCH = 0,
+    SE_WARP_SLICE = 1,
+    SE_WARP_STRETCH = 2,
+    SE_WARP_STRETCH_FORMANT = 3,
+    SE_WARP_AUTO = 4
+};
+
+typedef struct se_warp_point {
+    int64_t frame;  /* timeline frame */
+    double source;  /* source frame (engine rate, fractional) */
+} se_warp_point;    /* 16 bytes, align 8 */
+
+typedef struct se_warp_slice {
+    double source;      /* source frame where the slice starts (a transient) */
+    uint8_t percussive; /* SE_WARP_AUTO: play this slice by slicing */
+    uint8_t _pad[7];
+} se_warp_slice;        /* 16 bytes, align 8 */
+
+typedef struct se_clip_warp_desc {
+    uint64_t clip_id;
+    uint8_t mode;     /* SE_WARP_* */
+    uint8_t _pad[3];
+    float transpose;  /* semitones */
+    const se_warp_point* points;
+    uint32_t point_count;
+    uint32_t slice_count;
+    const se_warp_slice* slices; /* SE_WARP_SLICE / SE_WARP_AUTO, sorted by source */
+} se_clip_warp_desc; /* 40 bytes, align 8 */
+
+typedef struct se_session_desc_v7 {
+    se_session_desc_v6 v6;
+    const se_clip_warp_desc* warps;
+    uint32_t warp_count;
+    uint32_t _pad;
+} se_session_desc_v7; /* 48 bytes, align 8 */
+
+/* MAIN THREAD (like se_session_publish_v5). */
+int32_t se_session_publish_v7(se_engine* engine, const se_session_desc_v7* session);
+
+/* ---- audio clip looping (ABI v1 addition) -------------------------------
+ * See engine/README.md ("Clip looping").
+ *
+ * se_session_publish_v8 is se_session_publish_v7 plus clip loops. A clip
+ * listed there (by clip_id, which must name a clip of the session, once)
+ * loops. Content frame c is the clip-relative frame the clip would play
+ * without the loop: 1:1 clips read source_offset + c, warped clips read the
+ * map at timeline_start + c. At clip-relative frame r the clip plays content
+ * frame r while r < loop_end, then loop_start + (r - loop_end) mod
+ * (loop_end - loop_start), until timeline_start + length. So the first pass
+ * runs from the clip start to the loop end, and the loop repeats after it.
+ * A looped 1:1 clip's length is not clamped to the asset; loop_end is (and
+ * to length). A loop left empty by the clamps is dropped. A warped clip's
+ * render covers frames below loop_end only. Wraps are hard cuts, and a
+ * stretch voice restarts at each wrap. Rendering never allocates or locks.
+ * Validation (else SE_ERR_INVALID_ARG): loops non-NULL when counted,
+ * 0 <= loop_start < loop_end, clip ids known and unique. */
+typedef struct se_clip_loop_desc {
+    uint64_t clip_id;
+    int64_t loop_start; /* content frames from the clip start */
+    int64_t loop_end;
+} se_clip_loop_desc; /* 24 bytes, align 8 */
+
+typedef struct se_session_desc_v8 {
+    se_session_desc_v7 v7;
+    const se_clip_loop_desc* loops;
+    uint32_t loop_count;
+    uint32_t _pad;
+} se_session_desc_v8; /* 64 bytes, align 8 */
+
+/* MAIN THREAD (like se_session_publish_v5). */
+int32_t se_session_publish_v8(se_engine* engine, const se_session_desc_v8* session);
+
+/* Warp renders queued or running (0 = every stretch-mode clip of the latest
+ * publish has its render; call se_plugin_idle to attach finished ones). Any
+ * thread. */
+int32_t se_warp_renders_pending(const se_engine* engine, size_t* out_count);
+
+/* Transient (onset) detection on a loaded asset, for warp markers and
+ * slicing. Spectral-flux onsets with adaptive peak picking, each moved to
+ * the start of its attack. strength: 0..1 relative to the strongest onset.
+ * percussive: the audio from this onset to the next decays like a hit (its
+ * tail sits at least 12 dB under its attack; smoothed over neighbours).
+ * Writes up to `capacity` onsets sorted by frame (engine-rate frames);
+ * *out_count = total found. CPU-bound: call from a worker thread, never
+ * from the audio thread. Unknown asset -> SE_ERR_NOT_FOUND. */
+typedef struct se_onset {
+    int64_t frame;
+    float strength;
+    uint8_t percussive;
+    uint8_t _pad[3];
+} se_onset; /* 16 bytes, align 8 */
+
+int32_t se_asset_detect_onsets(se_engine* engine, uint64_t asset_id, se_onset* out, size_t capacity,
+                               size_t* out_count);
 
 /* ---- plugin parameters ---------------------------------------------------
  * MAIN THREAD, i.e. the thread that publishes sessions (VST3/CLAP parameter
@@ -1104,6 +1299,45 @@ int32_t se_mod_base(se_engine* engine, uint64_t device_id, uint32_t param_id, fl
  * instrument -> SE_ERR_NOT_FOUND; pitch > 127 or velocity > 127 ->
  * SE_ERR_INVALID_ARG. */
 int32_t se_builtin_note(se_engine* engine, uint64_t device_id, uint8_t pitch, uint8_t velocity);
+
+/* ---- Preview (browser audition) voice -------------------------------------
+ * One voice that plays a loaded asset from start_frame (clamped into the
+ * asset; 0 = its start, used to resume after a stop), independent of the
+ * transport, mixed into the master output after the master meters' track
+ * sum (it shows on the master meters) and never into exports. A new play
+ * replaces the sounding one with a short crossfade; the voice stops by
+ * itself at the asset's end. gain: linear 0..2. rate: playback speed
+ * 0.25..4 (1 = as recorded; varispeed, pitch follows). solo: while the
+ * preview sounds, the arrangement is silent. Lock-free hand-over, applied
+ * at the next block. MAIN THREAD. Unknown asset -> SE_ERR_NOT_FOUND; gain
+ * or rate out of range or not finite -> SE_ERR_INVALID_ARG. */
+int32_t se_preview_play(se_engine* engine, uint64_t asset_id, int64_t start_frame, float gain, float rate, uint8_t solo);
+int32_t se_preview_stop(se_engine* engine); /* fades out; also releases held preview notes */
+int32_t se_preview_set(se_engine* engine, float gain, float rate, uint8_t solo);
+/* Preview a note through a track's instrument (piano-roll keys, drawn and
+ * moved notes): device_id is the track's instrument device, built-in or
+ * plugin. velocity 1..127 = note on, 0 = note off. The note plays at the
+ * start of the next block on top of the track's own notes, whether the
+ * transport runs or not, and goes through the track's chain and mixer like
+ * them (never into exports, which render their own session). The engine
+ * remembers the held notes: se_preview_stop releases them, and
+ * se_preview_info.notes counts them. Lock-free hand-over (the live note
+ * queue the device shares with se_builtin_note, 256 events). MAIN THREAD.
+ * Unknown device, or one that plays no notes (an effect) -> SE_ERR_NOT_FOUND;
+ * pitch or velocity > 127 -> SE_ERR_INVALID_ARG; queue full -> SE_ERR_STATE. */
+int32_t se_preview_note(se_engine* engine, uint64_t device_id, uint8_t pitch, uint8_t velocity);
+
+typedef struct se_preview_info {
+    uint8_t playing;     /* 1 while a voice sounds (not counting a fade-out) */
+    uint8_t notes;       /* preview notes held (se_preview_note), at most 255 */
+    uint8_t reserved[6];
+    uint64_t asset_id;   /* asset of the sounding voice, 0 when none */
+    int64_t position;    /* frames into the asset */
+    int64_t frames;      /* asset length in frames */
+    float peak_l;        /* preview-only peaks since the previous call */
+    float peak_r;
+} se_preview_info; /* 40 bytes, align 8 */
+int32_t se_preview_get(se_engine* engine, se_preview_info* out);
 
 #ifdef __cplusplus
 }

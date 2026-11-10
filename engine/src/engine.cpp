@@ -14,6 +14,7 @@
 #include <map>
 #include <numbers>
 #include <thread>
+#include <tuple>
 
 namespace saine {
 
@@ -47,7 +48,7 @@ int64_t floor_mod(int64_t a, int64_t m) noexcept {
 
 Engine::Engine(double sample_rate, uint32_t max_block, uint32_t channels)
     : sample_rate_(sample_rate), max_block_(max_block), channels_(channels), plugins_(sample_rate, max_block),
-      live_ctx_(max_block) {
+      live_ctx_(max_block), warp_renderer_(sample_rate, max_block) {
     // Preallocated here so neither se_metronome_set nor the callback allocates.
     const auto len = static_cast<std::size_t>(std::llround(0.015 * sample_rate));
     click_down_ = make_click(sample_rate, 1200.0, len);
@@ -264,7 +265,7 @@ int32_t Engine::asset_add_decoded(DecodedAudio&& audio, se_asset_info* out, std:
 
 int32_t Engine::asset_load_file(const char* path, se_asset_info* out, std::string& err) {
     DecodedAudio audio;
-    const int32_t rc = decode_wav_file(path, audio, err);
+    const int32_t rc = decode_audio_file(path, audio, err);
     if (rc != SE_OK) return rc;
     return asset_add_decoded(std::move(audio), out, err);
 }
@@ -284,6 +285,31 @@ int32_t Engine::asset_release(uint64_t id) {
     return SE_OK;
 }
 
+int32_t Engine::asset_reverse(uint64_t id, se_asset_info* out) {
+    AssetRef src;
+    {
+        std::lock_guard lock(assets_mutex_);
+        auto it = assets_.find(id);
+        if (it == assets_.end()) return SE_ERR_NOT_FOUND;
+        src = it->second;
+    }
+    auto asset = std::make_shared<Asset>();
+    asset->channels = src->channels;
+    asset->frames = src->frames;
+    asset->source_sample_rate = src->source_sample_rate;
+    for (uint32_t c = 0; c < src->channels; ++c) asset->planar[c].assign(src->planar[c].rbegin(), src->planar[c].rend());
+    std::lock_guard lock(assets_mutex_);
+    asset->id = next_asset_id_++;
+    if (out != nullptr) {
+        out->asset_id = asset->id;
+        out->frames = asset->frames;
+        out->channels = asset->channels;
+        out->source_sample_rate = asset->source_sample_rate;
+    }
+    assets_.emplace(asset->id, std::move(asset));
+    return SE_OK;
+}
+
 int32_t Engine::asset_get_info(uint64_t id, se_asset_info* out) const {
     std::lock_guard lock(assets_mutex_);
     auto it = assets_.find(id);
@@ -296,8 +322,8 @@ int32_t Engine::asset_get_info(uint64_t id, se_asset_info* out) const {
     return SE_OK;
 }
 
-int32_t Engine::asset_compute_peaks(uint64_t id, uint64_t start_frame, uint32_t frames_per_peak, float* out_minmax,
-                                    std::size_t capacity, std::size_t* out_count) const {
+int32_t Engine::asset_compute_peaks(uint64_t id, int32_t channel, uint64_t start_frame, uint32_t frames_per_peak,
+                                    float* out_minmax, std::size_t capacity, std::size_t* out_count) const {
     AssetRef asset;
     {
         std::lock_guard lock(assets_mutex_);
@@ -305,10 +331,11 @@ int32_t Engine::asset_compute_peaks(uint64_t id, uint64_t start_frame, uint32_t 
         if (it == assets_.end()) return SE_ERR_NOT_FOUND;
         asset = it->second;
     }
+    if (channel >= 0 && static_cast<uint32_t>(channel) >= asset->channels) return SE_ERR_INVALID_ARG;
     std::size_t count = 0;
-    const float* l = asset->channel(0);
+    const float* l = asset->channel(channel < 0 ? 0 : static_cast<uint32_t>(channel));
     const float* r = asset->channel(1);
-    const bool stereo = asset->channels == 2;
+    const bool stereo = channel < 0 && asset->channels == 2;
     for (uint64_t f = start_frame; count < capacity && f < asset->frames; f += frames_per_peak) {
         const uint64_t end = std::min<uint64_t>(asset->frames, f + frames_per_peak);
         float lo = std::numeric_limits<float>::infinity();
@@ -323,6 +350,21 @@ int32_t Engine::asset_compute_peaks(uint64_t id, uint64_t start_frame, uint32_t 
         ++count;
     }
     if (out_count != nullptr) *out_count = count;
+    return SE_OK;
+}
+
+int32_t Engine::asset_detect_onsets(uint64_t id, se_onset* out, std::size_t capacity, std::size_t* out_count) const {
+    AssetRef asset;
+    {
+        std::lock_guard lock(assets_mutex_);
+        auto it = assets_.find(id);
+        if (it == assets_.end()) return SE_ERR_NOT_FOUND;
+        asset = it->second;
+    }
+    std::vector<se_onset> found;
+    detect_onsets(*asset, sample_rate_, found);
+    if (out != nullptr) std::copy_n(found.begin(), std::min(capacity, found.size()), out);
+    if (out_count != nullptr) *out_count = found.size();
     return SE_OK;
 }
 
@@ -401,14 +443,29 @@ int32_t Engine::publish(const se_session_desc_v5& desc, std::string& err) {
 }
 
 int32_t Engine::publish(const se_session_desc_v6& desc, std::string& err) {
+    se_session_desc_v7 d7{};
+    d7.v6 = desc;
+    return publish(d7, err);
+}
+
+int32_t Engine::publish(const se_session_desc_v7& desc, std::string& err) {
+    se_session_desc_v8 d8{};
+    d8.v7 = desc;
+    return publish(d8, err);
+}
+
+int32_t Engine::publish(const se_session_desc_v8& desc8, std::string& err) {
+    const se_session_desc_v6& desc = desc8.v7.v6;
     std::unique_ptr<RenderGraph> built;
     const AssetLookup lookup = [this](uint64_t id) -> AssetRef {
         std::lock_guard lock(assets_mutex_);
         auto it = assets_.find(id);
         return it == assets_.end() ? nullptr : it->second;
     };
-    const int32_t rc = build_render_graph(desc, lookup, built, err);
+    const int32_t rc = build_render_graph(desc8, lookup, built, err);
     if (rc != SE_OK) return rc;
+    built->sample_rate = sample_rate_;
+    warp_renderer_.resolve(*built);
     // Resolve plugin instances (instantiating new device ids on this, the
     // main, thread), in the order build_render_graph created the slots.
     std::lock_guard plock(plugins_.mutex());
@@ -541,6 +598,29 @@ uint64_t Engine::install_graph(std::unique_ptr<RenderGraph> built) {
         next->synth_refs[i] = std::move(synth);
     }
 
+    // Warp voices: keep the current graph's voice for the same slot (track,
+    // slot, channels), so a clip keeps stretching across republishes.
+    {
+        std::map<std::tuple<uint64_t, uint32_t, uint32_t>, std::shared_ptr<WarpVoice>> previous_voices;
+        if (current_)
+            for (std::size_t i = 0; i < current_->warp_voice_keys.size(); ++i) {
+                const WarpVoiceKey& k = current_->warp_voice_keys[i];
+                if (current_->warp_voice_refs[i]) previous_voices.emplace(std::make_tuple(k.track_id, k.slot, k.channels), current_->warp_voice_refs[i]);
+            }
+        for (std::size_t i = 0; i < next->warp_voice_keys.size(); ++i) {
+            const WarpVoiceKey& k = next->warp_voice_keys[i];
+            std::shared_ptr<WarpVoice> voice;
+            if (auto it = previous_voices.find(std::make_tuple(k.track_id, k.slot, k.channels)); it != previous_voices.end()) {
+                voice = std::move(it->second);
+                previous_voices.erase(it);
+            } else {
+                voice = std::make_shared<WarpVoice>(sample_rate_, k.channels, max_block_);
+            }
+            next->warp_voices[i] = voice.get();
+            next->warp_voice_refs[i] = std::move(voice);
+        }
+    }
+
     // Delay lines: keep the current graph's line for the same track / device
     // (so delays continue across republishes) when it is big enough;
     // allocate the others here, never on the RT side.
@@ -586,6 +666,7 @@ uint64_t Engine::install_graph(std::unique_ptr<RenderGraph> built) {
     if (current_) retired_.push_back(std::move(current_));
     current_ = std::move(next);
     reclaim_locked();
+    warp_renderer_.evict(*current_);
     return seq;
 }
 
@@ -703,6 +784,29 @@ void Engine::apply_command(const TransportCommand& cmd) noexcept {
             rt_loop_start_ = cmd.frame;
             rt_loop_end_ = cmd.frame2;
         }
+        break;
+    case TransportCommand::Type::PreviewPlay:
+        if (rt_pv_[0].asset != nullptr) {
+            rt_pv_[1] = rt_pv_[0]; // the old voice fades out (a fading one is cut)
+            rt_pv_[1].step = -1.0f / kPreviewFadeFrames;
+        }
+        rt_pv_[0] = PreviewVoice{cmd.asset, cmd.seq, static_cast<double>(cmd.frame), 0.0f, 1.0f / kPreviewFadeFrames};
+        rt_pv_applied_ = cmd.seq;
+        rt_pv_gain_ = cmd.gain;
+        rt_pv_rate_ = cmd.rate;
+        rt_pv_solo_ = cmd.enabled;
+        break;
+    case TransportCommand::Type::PreviewStop:
+        if (rt_pv_[0].asset != nullptr) {
+            rt_pv_[1] = rt_pv_[0];
+            rt_pv_[1].step = -1.0f / kPreviewFadeFrames;
+            rt_pv_[0] = PreviewVoice{};
+        }
+        break;
+    case TransportCommand::Type::PreviewSet:
+        rt_pv_gain_ = cmd.gain;
+        rt_pv_rate_ = cmd.rate;
+        rt_pv_solo_ = cmd.enabled;
         break;
     case TransportCommand::Type::SetMetronome:
         if (std::isfinite(cmd.frames_per_beat) && cmd.frames_per_beat >= 1.0) rt_tempo_fpb_ = cmd.frames_per_beat;
@@ -859,9 +963,18 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
         transport.sample_rate = sample_rate_;
         transport.tempo_bpm = rt_tempo_fpb_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpb_ : 120.0;
         DelayLine* const* const lines = graph != nullptr && !graph->lines.empty() ? graph->lines.data() : nullptr;
-        const InstrumentInputs inst{graph != nullptr ? graph->synths.data() : nullptr, rt_synth_gen_, &transport,
-                                    lines, rt_pdc_gen_, &rt_history_};
-        const BlockPeaks p = render_block(graph, rt_position_, rt_playing_, n, live_ctx_, true, slot, inst, iv);
+        const InstrumentInputs inst{graph != nullptr ? graph->synths.data() : nullptr,
+                                    rt_synth_gen_,
+                                    &transport,
+                                    lines,
+                                    rt_pdc_gen_,
+                                    &rt_history_,
+                                    graph != nullptr && !graph->warp_voices.empty() ? graph->warp_voices.data() : nullptr};
+        BlockPeaks p = render_block(graph, rt_position_, rt_playing_, n, live_ctx_, true, slot, inst, iv);
+        if (mix_preview(live_ctx_.master_l(), live_ctx_.master_r(), n)) {
+            p.l = kernel_peak(live_ctx_.master_l(), n);
+            p.r = kernel_peak(live_ctx_.master_r(), n);
+        }
         rt_history_.append(rt_position_, n, rt_playing_);
         // The performer hears the mix L (delay compensation) + output latency
         // late, so takes are placed that much earlier too.
@@ -905,6 +1018,17 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
     }
 
     // 4. Release the graph, publish state.
+    {
+        const PreviewVoice& v = rt_pv_[0];
+        pub_pv_asset_.store(v.asset != nullptr ? v.asset->id : 0, std::memory_order_relaxed);
+        pub_pv_pos_.store(static_cast<int64_t>(v.pos), std::memory_order_relaxed);
+        pub_pv_frames_.store(v.asset != nullptr ? static_cast<int64_t>(v.asset->frames) : 0, std::memory_order_relaxed);
+        pub_pv_solo_.store(rt_pv_solo_, std::memory_order_relaxed);
+        uint64_t floor = rt_pv_applied_ + 1;
+        for (const PreviewVoice& w : rt_pv_)
+            if (w.asset != nullptr) floor = std::min(floor, w.seq);
+        rt_preview_floor_.store(floor, std::memory_order_release);
+    }
     rt_active_seq_.store(kIdle, std::memory_order_seq_cst);
     rec_in_use_.store(false, std::memory_order_release);
     publish_transport();
@@ -1039,6 +1163,135 @@ int32_t Engine::render_offline_impl(const RtInput& input, float* out_interleaved
     });
     release_rt_owner(); // also applies commands queued during the render
     return SE_OK;
+}
+
+// ============================================================ preview
+
+bool Engine::mix_preview(float* l, float* r, uint32_t frames) noexcept {
+    if (rt_pv_[0].asset == nullptr && rt_pv_[1].asset == nullptr) {
+        rt_pv_gain_cur_ = rt_pv_gain_;
+        return false;
+    }
+    if (rt_pv_solo_ && rt_pv_[0].asset != nullptr) {
+        std::memset(l, 0, sizeof(float) * frames);
+        std::memset(r, 0, sizeof(float) * frames);
+    }
+    const float g0 = rt_pv_gain_cur_;
+    const float dg = (rt_pv_gain_ - g0) / static_cast<float>(frames);
+    const double rate = static_cast<double>(rt_pv_rate_);
+    float pk_l = 0.0f, pk_r = 0.0f;
+    for (PreviewVoice& v : rt_pv_) {
+        if (v.asset == nullptr) continue;
+        const Asset& a = *v.asset;
+        const float* sl = a.channel(0);
+        const float* sr = a.channel(a.channels > 1 ? 1 : 0);
+        const double last = a.frames > 0 ? static_cast<double>(a.frames - 1) : 0.0;
+        for (uint32_t i = 0; i < frames; ++i) {
+            if (v.pos >= last) {
+                v.asset = nullptr;
+                break;
+            }
+            const auto k = static_cast<uint64_t>(v.pos);
+            const float t = static_cast<float>(v.pos - static_cast<double>(k));
+            const float g = (g0 + dg * static_cast<float>(i)) * v.fade;
+            const float yl = g * (sl[k] + t * (sl[k + 1] - sl[k]));
+            const float yr = g * (sr[k] + t * (sr[k + 1] - sr[k]));
+            l[i] += yl;
+            r[i] += yr;
+            pk_l = std::max(pk_l, std::fabs(yl));
+            pk_r = std::max(pk_r, std::fabs(yr));
+            v.pos += rate;
+            v.fade = std::min(1.0f, v.fade + v.step);
+            if (v.fade <= 0.0f) {
+                v.asset = nullptr;
+                break;
+            }
+        }
+    }
+    rt_pv_gain_cur_ = rt_pv_gain_;
+    atomic_store_max(pv_peak_l_, pk_l);
+    atomic_store_max(pv_peak_r_, pk_r);
+    return true;
+}
+
+void Engine::reclaim_previews_locked() {
+    const uint64_t floor = rt_preview_floor_.load(std::memory_order_acquire);
+    std::erase_if(preview_held_, [floor](const auto& h) { return h.first < floor; });
+}
+
+int32_t Engine::preview_play(uint64_t asset_id, int64_t start_frame, float gain, float rate, bool solo) {
+    AssetRef asset;
+    {
+        std::lock_guard lock(assets_mutex_);
+        auto it = assets_.find(asset_id);
+        if (it == assets_.end()) return SE_ERR_NOT_FOUND;
+        asset = it->second;
+    }
+    std::lock_guard lock(preview_mutex_);
+    reclaim_previews_locked();
+    TransportCommand cmd;
+    cmd.type = TransportCommand::Type::PreviewPlay;
+    cmd.asset = asset.get();
+    cmd.seq = ++preview_seq_;
+    cmd.frame = std::clamp<int64_t>(start_frame, 0, static_cast<int64_t>(asset->frames));
+    cmd.gain = gain;
+    cmd.rate = rate;
+    cmd.enabled = solo;
+    preview_held_.emplace_back(cmd.seq, std::move(asset));
+    return push_command(cmd);
+}
+
+int32_t Engine::preview_stop() {
+    std::lock_guard lock(preview_mutex_);
+    reclaim_previews_locked();
+    if (!preview_notes_.empty()) {
+        std::lock_guard pl(plugins_.mutex());
+        for (const auto& [device, pitch] : preview_notes_)
+            if (PluginInstance* inst = plugins_.instance(device)) inst->push_note(pitch, 0);
+        preview_notes_.clear();
+        pub_pv_notes_.store(0, std::memory_order_relaxed);
+    }
+    TransportCommand cmd;
+    cmd.type = TransportCommand::Type::PreviewStop;
+    return push_command(cmd);
+}
+
+int32_t Engine::preview_set(float gain, float rate, bool solo) {
+    TransportCommand cmd;
+    cmd.type = TransportCommand::Type::PreviewSet;
+    cmd.gain = gain;
+    cmd.rate = rate;
+    cmd.enabled = solo;
+    return push_command(cmd);
+}
+
+int32_t Engine::preview_note(uint64_t device_id, uint8_t pitch, uint8_t velocity) {
+    if (pitch > 127 || velocity > 127) return SE_ERR_INVALID_ARG;
+    std::lock_guard lock(preview_mutex_);
+    {
+        std::lock_guard pl(plugins_.mutex());
+        PluginInstance* inst = plugins_.instance(device_id);
+        if (inst == nullptr || !inst->plays_notes()) return SE_ERR_NOT_FOUND;
+        if (!inst->push_note(pitch, velocity)) return SE_ERR_STATE;
+    }
+    const std::pair<uint64_t, uint8_t> key{device_id, pitch};
+    const auto held = std::find(preview_notes_.begin(), preview_notes_.end(), key);
+    if (velocity > 0 && held == preview_notes_.end()) preview_notes_.push_back(key);
+    if (velocity == 0 && held != preview_notes_.end()) preview_notes_.erase(held);
+    pub_pv_notes_.store(static_cast<uint32_t>(preview_notes_.size()), std::memory_order_relaxed);
+    return SE_OK;
+}
+
+void Engine::preview_get(se_preview_info* out) noexcept {
+    *out = se_preview_info{};
+    out->asset_id = pub_pv_asset_.load(std::memory_order_relaxed);
+    out->playing = out->asset_id != 0 ? 1 : 0;
+    out->position = pub_pv_pos_.load(std::memory_order_relaxed);
+    out->frames = pub_pv_frames_.load(std::memory_order_relaxed);
+    out->notes = static_cast<uint8_t>(std::min<uint32_t>(pub_pv_notes_.load(std::memory_order_relaxed), 255));
+    out->peak_l = pv_peak_l_.exchange(0.0f, std::memory_order_relaxed);
+    out->peak_r = pv_peak_r_.exchange(0.0f, std::memory_order_relaxed);
+    if (std::unique_lock lock(preview_mutex_, std::try_to_lock); lock.owns_lock()) reclaim_previews_locked();
 }
 
 // ============================================================ recording
@@ -1222,8 +1475,17 @@ int32_t Engine::export_wav(const char* path, int64_t start_frame, int64_t end_fr
     transport.sample_rate = sample_rate_;
     transport.playing = true;
     transport.tempo_bpm = rt_tempo_fpb_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpb_ : 120.0;
+    // Warped clips: private stretch voices (the live ones keep their state).
+    std::vector<std::unique_ptr<WarpVoice>> own_voices;
+    std::vector<WarpVoice*> voice_ptrs;
+    if (graph)
+        for (const WarpVoiceKey& k : graph->warp_voice_keys) {
+            own_voices.push_back(std::make_unique<WarpVoice>(sample_rate_, k.channels, max_block_));
+            voice_ptrs.push_back(own_voices.back().get());
+        }
     InstrumentInputs inst{synth_ptrs.empty() ? nullptr : synth_ptrs.data(), plugins ? rt_synth_gen_ : 0,
                           plugins ? &transport : nullptr, line_ptrs.empty() ? nullptr : line_ptrs.data(), 0};
+    inst.warp_voices = voice_ptrs.empty() ? nullptr : voice_ptrs.data();
     ScopedFlushDenormals ftz;
     const int64_t render_end = end_frame + pdc_total;
     const int64_t first_kept = start_frame + pdc_total;
@@ -1271,6 +1533,30 @@ bool Engine::plugin_saved_state(std::size_t index, uint64_t& id, const uint8_t*&
     return plugins_.saved_state(index, id, data, len);
 }
 
+int32_t Engine::plugin_save_state_of(uint64_t device_id, std::string& err) {
+    std::lock_guard lock(plugins_.mutex());
+    return plugins_.save_state_of(device_id, err);
+}
+
+int32_t Engine::plugin_prepare(const se_device_desc& d, bool instrument, const char* track_name, std::string& err) {
+    std::lock_guard lock(plugins_.mutex());
+    if (plugins_.detached()) {
+        err = "the engine is detached from the main thread";
+        return SE_ERR_STATE;
+    }
+    PluginInstance* inst = plugins_.prepare(d, instrument, track_name, err);
+    if (inst == nullptr) {
+        if (err.empty()) err = "could not load the plugin";
+        return SE_ERR_NOT_FOUND;
+    }
+    return SE_OK;
+}
+
+void Engine::plugin_set_detached(bool detached) {
+    std::lock_guard lock(plugins_.mutex());
+    plugins_.set_detached(detached);
+}
+
 int32_t Engine::plugin_editor_open(uint64_t device_id, std::string& err) {
     std::lock_guard lock(plugins_.mutex());
     plugins_.collect(rt_active_seq_.load(std::memory_order_seq_cst));
@@ -1296,6 +1582,7 @@ void Engine::plugin_idle() {
     std::lock_guard lock(plugins_.mutex());
     plugins_.idle(rt_active_seq_.load(std::memory_order_seq_cst));
     if (plugins_.service_latencies()) replan_pdc_locked();
+    if (warp_renderer_.take_finished()) attach_warp_renders_locked();
     // CLAP parameter flushes requested while nothing processes: run them
     // here with the RT path held (a running device or offline render
     // processes the plugin instead, which delivers the same events).
@@ -1438,6 +1725,18 @@ void Engine::replan_pdc_locked() {
     if (!current) return;
     auto next = clone_render_graph(*current);
     plan_pdc(*next);
+    install_graph(std::move(next));
+}
+
+void Engine::attach_warp_renders_locked() {
+    std::shared_ptr<RenderGraph> current;
+    {
+        std::lock_guard lock(control_mutex_);
+        current = current_;
+    }
+    if (!current) return;
+    auto next = clone_render_graph(*current);
+    warp_renderer_.resolve(*next);
     install_graph(std::move(next));
 }
 

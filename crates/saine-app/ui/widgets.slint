@@ -101,10 +101,10 @@ export global Icons {
     out property <string> rewind: "M3 3h2.2v10H3z M13.5 3v10L6 8z";
     out property <string> play: "M4.5 2.5v11l9-5.5z";
     out property <string> pause: "M4 3h3v10H4z M9 3h3v10H9z";
-    out property <string> record: "M8 3a5 5 0 1 1 0 10a5 5 0 1 1 0-10z";
+    out property <string> record: "M8 3a5 5 0 1 1 0 10a5 5 0 1 1 0-10z M8 6.1a1.9 1.9 0 1 0 0 3.8a1.9 1.9 0 1 0 0-3.8z";
     out property <string> loop: "M3 8V6.5A2 2 0 0 1 5 4.5h7.5 M10.5 2.5l2 2-2 2 M13 8v1.5a2 2 0 0 1-2 2H3.5 M5.5 13.5l-2-2 2-2";
     out property <string> automation: "M2 9h2.5l1.5-5 2 9 1.5-6 1 2H14";
-    out property <string> metronome: "M5 14h6.5L9.6 2.5H6.9z M8 11l4.5-7";
+    out property <string> metronome: "M3.5 14h9L10.3 2.5H5.7z M7.41 10.63L12.21 3.03L13.39 3.77L8.59 11.37z";
     out property <string> sparkle: "M8 1.5v4 M8 10.5v4 M1.5 8h4 M10.5 8h4 M3.4 3.4l2.2 2.2 M10.4 10.4l2.2 2.2 M12.6 3.4l-2.2 2.2 M5.6 10.4l-2.2 2.2";
     out property <string> mixer: "M4 2.5v11 M8 2.5v11 M12 2.5v11 M2.5 10.5h3 M6.5 5.5h3 M10.5 8.5h3";
     out property <string> panel-bottom: "M2 3.5h12v9H2z M2 9h12";
@@ -114,6 +114,8 @@ export global Icons {
     out property <string> chevron-left: "M10 4l-4 4 4 4";
     out property <string> chevron-down: "M4 6l4 4 4-4";
     out property <string> folder: "M2 4h4.2l1.4 1.5H14v7H2z";
+    out property <string> track-audio: "M2 7v2 M3.75 5.5v5 M5.5 3.5v9 M7.25 6v4 M9 2.5v11 M10.75 5v6 M12.5 3.5v9 M14.25 6.5v3";
+    out property <string> track-instrument: "M2 2.5H4.6V9H5.45V13.5H2z M7.2 2.5H8.8V9H9.75V13.5H6.25V9H7.2z M11.4 2.5H14V13.5H10.55V9H11.4z";
     out property <string> keys: "M2.5 2.5h11v11h-11z M5.5 2.5v6.5 M8 2.5v11 M10.5 2.5v6.5";
     out property <string> wave: "M2 7v2 M4 5v6 M6 3v10 M8 6v4 M10 4v8 M12 6v4 M14 7v2";
     out property <string> returns: "M2.5 5.5h10.5 M10.5 3l2.5 2.5-2.5 2.5 M13.5 10.5H3 M5.5 8L3 10.5 5.5 13";
@@ -157,6 +159,8 @@ export global Icons {
     out property <string> window: "M2 3h12v10H2z M2 5.8h12";
     out property <string> effect: "M8 3a5 5 0 1 1 0 10a5 5 0 1 1 0-10z M8 8l2.6-2.6";
     out property <string> grip: "M6 4h.1 M10 4h.1 M6 8h.1 M10 8h.1 M6 12h.1 M10 12h.1";
+    // Presets (ORIGINAL drawing): two slider rods with their caps, filled.
+    out property <string> presets: "M4.5 2h1.5v3.2a2.3 2.3 0 0 1 0 4.4V14H4.5V9.6a2.3 2.3 0 0 1 0-4.4z M10 2h1.5v4.4a2.3 2.3 0 0 1 0 4.4V14H10v-3.2a2.3 2.3 0 0 1 0-4.4z";
     out property <string> teach: "M1.5 6.5L8 3.5l6.5 3L8 9.5z M4.5 8v3c1 1 2.2 1.5 3.5 1.5s2.5-.5 3.5-1.5V8 M14.5 6.5v4";
 }
 
@@ -167,6 +171,7 @@ export component Pill inherits Raised {
     in property <int> weight: 600;
     in property <bool> active: false;
     in property <length> font-size: 9px;
+    in property <length> letter-spacing: 0;
     in property <color> text-color: active ? Tokens.on-accent : #c9c9cc;
     callback clicked;
     border-radius: self.height / 2;
@@ -179,7 +184,7 @@ export component Pill inherits Raised {
             width: 12px;
             Icon { d: root.icon; width: 12px; height: 12px; ink: root.text-color; }
         }
-        Text { text: root.text; color: root.text-color; font-size: root.font-size; font-weight: root.weight; vertical-alignment: center; }
+        Text { text: root.text; color: root.text-color; font-size: root.font-size; font-weight: root.weight; letter-spacing: root.letter-spacing; vertical-alignment: center; }
     }
     TouchArea { clicked => { root.clicked(); } }
 }
@@ -269,6 +274,7 @@ export component Knob inherits Rectangle {
     /// carries the value arc (overrides `ring`). Bipolar knobs get a centre marker.
     in property <bool> groove: false;
     in property <float> groove-radius: 12.5;
+    in property <color> groove-color: Tokens.knob-groove;
     in property <color> tick-color: #b9d3e4;
     in property <color> arc-color: Tokens.value-blue;
     in property <brush> ring-brush: @radial-gradient(circle, #111214 55%, #1c1d20 100%);
@@ -290,7 +296,7 @@ export component Knob inherits Rectangle {
     if root.groove: Path {
         width: root.width; height: root.height;
         viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
-        stroke: Tokens.knob-groove; stroke-width: 1.5px; fill: transparent;
+        stroke: root.groove-color; stroke-width: 1.5px; fill: transparent;
         MoveTo { x: root.cx + root.groove-radius * sin(-135deg); y: root.cy - root.groove-radius * cos(-135deg); }
         ArcTo { x: root.cx + root.groove-radius * sin(135deg); y: root.cy - root.groove-radius * cos(135deg); radius-x: root.groove-radius; radius-y: root.groove-radius; large-arc: true; sweep: true; }
     }
@@ -387,76 +393,3 @@ export component Label inherits Text {
     height: 14.5px; // fallback system font sits ~0.75 pt higher than Inter when centred in 13 pt
 }
 
-// Track-header pan knob, drawn to the reference at its default (100 %) zoom
-// (live capture 2026-11-09, sampled at 2×; values below are pt ÷ 1.1765 = our units):
-// a flat #2f3032 body (r 6.8), a thin dark gap, a 270° groove ring (r 7.65–9.35, open at
-// the bottom), a white value tick (r 3.8–6.0), and a bipolar value arc in the track's
-// colour on the ring with a short centre marker at 12 o'clock (r 8.1–10.2).
-export component PanKnob inherits Rectangle {
-    in property <float> value-angle: 0;   // degrees, 0 = up, ±135 = ends
-    in property <color> accent: #c670f7;
-    in property <float> value;
-    in property <float> min-value: -1;
-    in property <float> max-value: 1;
-    in property <float> sensitivity: 150;
-    callback value-changed(float);
-    callback released();
-    callback reset();
-    property <float> start-value;
-    property <float> cx: self.width / 1px / 2;
-    property <float> cy: self.height / 1px / 2;
-    property <float> rr: 8.5;    // groove/arc centre radius
-    // groove (270°, from -135° through 0° to +135°)
-    Path {
-        width: root.width; height: root.height;
-        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
-        stroke: #2d2e32; stroke-width: 1.7px; fill: transparent;
-        MoveTo { x: root.cx + root.rr * sin(-135deg); y: root.cy - root.rr * cos(-135deg); }
-        ArcTo { x: root.cx + root.rr * sin(135deg); y: root.cy - root.rr * cos(135deg); radius-x: root.rr; radius-y: root.rr; large-arc: true; sweep: true; }
-    }
-    // dark gap / contact shadow around the body
-    Rectangle { width: 15.3px; height: 15.3px; border-radius: self.width / 2; background: #1d1e21; }
-    // body, lifted off the panel by a soft shadow that falls below it
-    Rectangle { width: 13.6px; height: 13.6px; border-radius: self.width / 2; background: #2f3032; border-width: 0.45px; border-color: #313235;
-        drop-shadow-offset-y: 1.2px; drop-shadow-blur: 3.5px; drop-shadow-color: #00000080; }
-    // value arc (bipolar, from centre)
-    if abs(root.value-angle) > 0.5: Path {
-        width: root.width; height: root.height;
-        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
-        stroke: root.accent; stroke-width: 1.7px; fill: transparent;
-        MoveTo { x: root.cx; y: root.cy - root.rr; }
-        ArcTo {
-            x: root.cx + root.rr * sin(root.value-angle * 1deg); y: root.cy - root.rr * cos(root.value-angle * 1deg);
-            radius-x: root.rr; radius-y: root.rr; large-arc: false; sweep: root.value-angle > 0;
-        }
-    }
-    // centre marker
-    Path {
-        width: root.width; height: root.height;
-        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
-        stroke: root.accent; stroke-width: 0.95px;
-        MoveTo { x: root.cx; y: root.cy - 7.9; }
-        LineTo { x: root.cx; y: root.cy - 11.0; }
-    }
-    // value tick
-    Path {
-        width: root.width; height: root.height;
-        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
-        stroke: #ffffff; stroke-width: 0.95px;
-        MoveTo { x: root.cx + 3.5 * sin(root.value-angle * 1deg); y: root.cy - 3.5 * cos(root.value-angle * 1deg); }
-        LineTo { x: root.cx + 6.1 * sin(root.value-angle * 1deg); y: root.cy - 6.1 * cos(root.value-angle * 1deg); }
-    }
-    accessible-role: slider; accessible-value: root.value;
-    TouchArea {
-        mouse-cursor: ns-resize;
-        pointer-event(e) => {
-            if (e.kind == PointerEventKind.down) { root.start-value = root.value; }
-            if (e.kind == PointerEventKind.up) { root.released(); }
-        }
-        moved => {
-            root.value-changed(max(root.min-value, min(root.max-value,
-                root.start-value + (self.pressed-y - self.mouse-y) / 1px / root.sensitivity * (root.max-value - root.min-value))));
-        }
-        double-clicked => { root.reset(); }
-    }
-}

@@ -5,20 +5,265 @@
 //! ruler is at the top, track 0 starts at `RULER_H`. Measured from
 //! reference/screenshots/01-main-default.png (see FIDELITY.md).
 
-use crate::gpu::{DrawList, RectInst, WaveInst};
-use crate::peaks::Slot;
+use crate::gpu::{DrawList, RectInst};
+use crate::peaks::{self, Slot, WaveSeg};
 
 pub const RULER_H: f32 = 39.0;
-pub const TRACK_PITCH: f32 = 74.5;
-pub const TRACK_H: f32 = 74.0;
-pub const MASTER_H: f32 = 30.5;
+/// Track rows are 88 px at the reference's default zoom (88 × 0.85), including a 0.5 pt rule.
+pub const TRACK_PITCH: f32 = 74.8;
+pub const TRACK_H: f32 = 74.3;
+/// Shortest row: the reference's 20 px floor.
+pub const MIN_TRACK_PITCH: f32 = 17.0;
+
+/// Row pitch for a track height scale (the reference's `max(88 × scale, 20)` px).
+pub fn pitch_for_scale(scale: f32) -> f32 {
+    (TRACK_PITCH * scale).max(MIN_TRACK_PITCH)
+}
+/// Master row: 36 px, its top rule included.
+pub const MASTER_H: f32 = 30.6;
 /// Master row height while automation lanes are shown (60-automation-lanes.png: separator at
 /// window y 439.5, lanes bottom 504).
-pub const MASTER_H_AUTO: f32 = 64.5;
+pub const MASTER_H_AUTO: f32 = 64.6;
 pub const CLIP_HEADER: f32 = 17.0;
 pub const EDGE_GRAB: f32 = 5.0;
+/// Zoom limits, in logical points per beat.
+pub const MIN_PX_PER_BEAT: f64 = 0.5;
+pub const MAX_PX_PER_BEAT: f64 = 2000.0;
 /// Default zoom: 51.03 pt per 4/4 bar (measured: bar 20 line at x 1422.5, bar 1 at 453).
 pub const DEFAULT_PX_PER_BEAT: f64 = 969.5 / 76.0;
+
+/// Design units per reference px (our drawings are 0.85 of the reference app's px); the thresholds below
+/// are in reference px (S65).
+pub const REF: f64 = 0.85;
+/// Pixels between two labelled bars before the label step stops doubling (S65).
+const LABEL_MIN_PX: f64 = 50.0;
+/// Fewest pixels between grid lines inside a bar, and between bar-or-longer grid lines (S66).
+const GRID_MIN_PX: f64 = 16.0;
+const GRID_BAR_MIN_PX: f64 = 6.0;
+/// Fewest pixels a bar-shading group may span (S66).
+const BAND_MIN_PX: f64 = 80.0;
+/// Shortest grid step, in beats, and the longest, in beats.
+const GRID_MIN_BEATS: f64 = 1.0 / 16.0;
+const GRID_MAX_BEATS: f64 = 128.0;
+/// Ticks closer than this many pixels are not drawn.
+const TICK_MIN_PX: f64 = 4.0;
+/// A fixed grid size is doubled until it is this wide (S76).
+const FIXED_MIN_PX: f64 = 6.0;
+const EPS: f64 = 1e-6;
+
+/// The grid sizes of the toolbar's snap menu (S76); `None` in a [RulerSteps] is "Auto".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridSize {
+    Bar,
+    HalfBar,
+    Quarter,
+    Eighth,
+    Sixteenth,
+    ThirtySecond,
+    QuarterTriplet,
+    EighthTriplet,
+    SixteenthTriplet,
+    ThirtySecondTriplet,
+}
+
+impl GridSize {
+    /// Menu order: straight sizes, then the triplets (a rule between them).
+    pub const ALL: [GridSize; 10] = [
+        GridSize::Bar,
+        GridSize::HalfBar,
+        GridSize::Quarter,
+        GridSize::Eighth,
+        GridSize::Sixteenth,
+        GridSize::ThirtySecond,
+        GridSize::QuarterTriplet,
+        GridSize::EighthTriplet,
+        GridSize::SixteenthTriplet,
+        GridSize::ThirtySecondTriplet,
+    ];
+    /// Number of straight entries (after "Auto") before the rule.
+    pub const STRAIGHT: usize = 6;
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GridSize::Bar => "1 Bar",
+            GridSize::HalfBar => "1/2",
+            GridSize::Quarter => "1/4",
+            GridSize::Eighth => "1/8",
+            GridSize::Sixteenth => "1/16",
+            GridSize::ThirtySecond => "1/32",
+            GridSize::QuarterTriplet => "1/4T",
+            GridSize::EighthTriplet => "1/8T",
+            GridSize::SixteenthTriplet => "1/16T",
+            GridSize::ThirtySecondTriplet => "1/32T",
+        }
+    }
+
+    pub fn is_triplet(self) -> bool {
+        self as usize >= GridSize::QuarterTriplet as usize
+    }
+
+    /// Length in beats (quarter notes); a "1/2" is two beats whatever the signature.
+    pub fn beats(self, beats_per_bar: f64) -> f64 {
+        match self {
+            GridSize::Bar => beats_per_bar,
+            GridSize::HalfBar => 2.0,
+            GridSize::Quarter => 1.0,
+            GridSize::Eighth => 0.5,
+            GridSize::Sixteenth => 0.25,
+            GridSize::ThirtySecond => 0.125,
+            GridSize::QuarterTriplet => 2.0 / 3.0,
+            GridSize::EighthTriplet => 1.0 / 3.0,
+            GridSize::SixteenthTriplet => 1.0 / 6.0,
+            GridSize::ThirtySecondTriplet => 1.0 / 12.0,
+        }
+    }
+}
+
+/// Which bars get a label and a full-height tick, where lanes get grid lines, and how long a
+/// shaded group is, at one zoom. Steps in bars are whole bars; steps in beats are quarter notes.
+/// Rules read from the reference app's ruler painter (reference/findings/ruler.md, S65-S67).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RulerSteps {
+    /// A bar number every this many bars (a power of two).
+    pub label_bars: i64,
+    /// A full-height tick every this many bars (half the label step, at least 1).
+    pub tick_bars: i64,
+    /// Sub-bar and long-bar tick step, in beats (the grid step before it is widened).
+    pub tick_beats: f64,
+    /// Grid line step in the lanes and clips, in beats.
+    pub line_beats: f64,
+    /// Length in beats of one shaded group (shading alternates group by group).
+    pub band_beats: f64,
+    pub beats_per_bar: f64,
+    pub beat_len: f64,
+    /// Whether the tick step is wide enough (4 reference px) to draw short ticks.
+    pub ticks_visible: bool,
+}
+
+/// The step a clip editor's note edits snap to (W2-19): a fixed size as `RulerSteps` widens it, or
+/// for Auto (and a triplet that does not fit the bar) a step by the zoom: 4 or 2 bars while a bar
+/// is under 6 or 12 px, then a bar, a beat, 1/2, 1/4 and 1/8 beat at 5, 12, 30 and 60 px per beat.
+/// `px_per_beat` is in reference px; beats are quarter notes.
+pub fn note_snap_beats(px_per_beat: f64, beats_per_bar: f64, grid: Option<GridSize>) -> f64 {
+    if let Some(s) = grid.and_then(|g| RulerSteps::fixed_step(g, beats_per_bar, px_per_beat)) {
+        return s;
+    }
+    let bar_px = px_per_beat * beats_per_bar;
+    match () {
+        _ if bar_px < 6.0 => 4.0 * beats_per_bar,
+        _ if bar_px < 12.0 => 2.0 * beats_per_bar,
+        _ if px_per_beat < 5.0 => beats_per_bar,
+        _ if px_per_beat < 12.0 => 1.0,
+        _ if px_per_beat < 30.0 => 0.5,
+        _ if px_per_beat < 60.0 => 0.25,
+        _ => 0.125,
+    }
+}
+
+impl RulerSteps {
+    /// `beats_per_bar` and `beat_len` are in quarter notes (4/4: 4 and 1; 6/8: 3 and 0.5).
+    pub fn new(px_per_beat: f64, beats_per_bar: f64, beat_len: f64, grid: Option<GridSize>) -> Self {
+        let px_per_beat = px_per_beat / REF;
+        let bar_px = px_per_beat * beats_per_bar;
+        let mut label_bars = 1i64;
+        while bar_px > 0.0 && bar_px * (label_bars as f64) < LABEL_MIN_PX && label_bars < 1024 {
+            label_bars *= 2;
+        }
+        let tick_bars = (label_bars / 2).max(1);
+        let numerator = (beats_per_bar / beat_len).round().max(1.0) as i64;
+
+        // Candidate grid steps, ascending: beat halvings down to 1/16 beat, the beat
+        // multiples that divide the bar, then 2, 4, 8 ... bars up to 128 beats.
+        let mut cand = [0.0f64; 40];
+        let mut n = 0;
+        let mut s = beat_len;
+        while s / 2.0 >= GRID_MIN_BEATS - EPS {
+            s /= 2.0;
+        }
+        while s < beat_len - EPS {
+            cand[n] = s;
+            n += 1;
+            s *= 2.0;
+        }
+        cand[n] = beat_len;
+        n += 1;
+        for k in 2..=numerator {
+            if numerator % k == 0 {
+                cand[n] = beat_len * k as f64;
+                n += 1;
+            }
+        }
+        let mut s = beats_per_bar * 2.0;
+        while s <= GRID_MAX_BEATS && n < cand.len() {
+            cand[n] = s;
+            n += 1;
+            s *= 2.0;
+        }
+        let mut tick_beats = (0..n)
+            .map(|i| cand[i])
+            .find(|&c| c * px_per_beat >= if c >= beats_per_bar - EPS { GRID_BAR_MIN_PX } else { GRID_MIN_PX })
+            .unwrap_or(cand[n - 1]);
+        if let Some(g) = grid {
+            if let Some(fixed) = Self::fixed_step(g, beats_per_bar, px_per_beat) {
+                if g.is_triplet() || fixed < tick_beats {
+                    tick_beats = fixed;
+                }
+            }
+        }
+        let line_beats = if tick_beats < beats_per_bar - EPS { tick_beats } else { tick_beats.max(tick_bars as f64 * beats_per_bar) };
+
+        let bar = beats_per_bar;
+        let mut bands = [beat_len, bar, numerator as f64 * bar, 4.0 * numerator as f64 * bar];
+        bands.sort_by(f64::total_cmp);
+        let band_beats = bands.into_iter().find(|&b| b * px_per_beat >= BAND_MIN_PX).unwrap_or(bands[3]);
+        RulerSteps { label_bars, tick_bars, tick_beats, line_beats, band_beats, beats_per_bar, beat_len, ticks_visible: tick_beats * px_per_beat >= TICK_MIN_PX }
+    }
+
+    /// A fixed grid size at this zoom: doubled until 6 px wide (or 128 beats); a triplet that
+    /// stops fitting the bar when doubled is not used (`None`).
+    pub(crate) fn fixed_step(g: GridSize, beats_per_bar: f64, px_per_beat: f64) -> Option<f64> {
+        let widen = |mut s: f64| {
+            while s * px_per_beat < FIXED_MIN_PX && s < GRID_MAX_BEATS {
+                s *= 2.0;
+            }
+            s
+        };
+        if !g.is_triplet() {
+            return Some(widen(g.beats(beats_per_bar)));
+        }
+        let unit = {
+            let (mut a, mut b) = ((beats_per_bar * 4.0).round() as i64, 8i64);
+            while b != 0 {
+                (a, b) = (b, a % b);
+            }
+            a as f64 / 4.0
+        };
+        let mut s = g.beats(beats_per_bar);
+        while !Self::on(unit, s) && s > 0.0625 / 4.0 {
+            s /= 2.0;
+        }
+        let s = widen(s);
+        Self::on(unit, s).then_some(s)
+    }
+
+    /// The beat a pointer position snaps to on this grid, never before 0.
+    pub fn snap(&self, beat: f64) -> f64 {
+        ((beat / self.tick_beats).round() * self.tick_beats).max(0.0)
+    }
+
+    /// Dragging a clip: the grid position or, for a clip that sits off the grid, the position
+    /// that keeps its own offset, whichever is nearer (`orig` is the clip's start before the drag).
+    pub fn snap_move(&self, beat: f64, orig: f64) -> f64 {
+        let on_grid = (beat / self.tick_beats).round() * self.tick_beats;
+        let kept = orig + ((beat - orig) / self.tick_beats).round() * self.tick_beats;
+        (if (kept - beat).abs() < (on_grid - beat).abs() { kept } else { on_grid }).max(0.0)
+    }
+
+    /// Whether `beat` is a multiple of `unit` (to within a millionth of a beat).
+    pub fn on(beat: f64, unit: f64) -> bool {
+        (beat - (beat / unit).round() * unit).abs() < EPS
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct View {
@@ -27,13 +272,16 @@ pub struct View {
     pub scroll_y: f64,
     /// Extra height below each track (expanded automation lanes, src/automation.rs), by track index.
     pub extra: Vec<f32>,
+    /// Row pitch of each track (its height scale × [TRACK_PITCH]), by track index; missing
+    /// entries use [TRACK_PITCH].
+    pub pitches: Vec<f32>,
     /// Height of the master row pinned to the bottom (taller while automation is shown).
     pub master_h: f32,
 }
 
 impl Default for View {
     fn default() -> Self {
-        View { start_beats: 0.0, px_per_beat: DEFAULT_PX_PER_BEAT, scroll_y: 0.0, extra: Vec::new(), master_h: MASTER_H }
+        View { start_beats: 0.0, px_per_beat: DEFAULT_PX_PER_BEAT, scroll_y: 0.0, extra: Vec::new(), pitches: Vec::new(), master_h: MASTER_H }
     }
 }
 
@@ -44,13 +292,17 @@ impl View {
     pub fn beat_at(&self, x: f32) -> f64 {
         self.start_beats + x as f64 / self.px_per_beat
     }
+    /// Row pitch of track `i` (lane plus its 0.5 pt rule), without automation rows.
+    pub fn pitch(&self, i: usize) -> f32 {
+        self.pitches.get(i).copied().unwrap_or(TRACK_PITCH)
+    }
     /// Content offset of track `i` (sum of the rows above it, without the ruler or scroll).
     pub fn track_offset(&self, i: usize) -> f32 {
-        i as f32 * TRACK_PITCH + self.extra.iter().take(i).sum::<f32>()
+        (0..i).map(|k| self.track_span(k)).sum()
     }
     /// Total height of track `i` including its expanded automation rows.
     pub fn track_span(&self, i: usize) -> f32 {
-        TRACK_PITCH + self.extra.get(i).copied().unwrap_or(0.0)
+        self.pitch(i) + self.extra.get(i).copied().unwrap_or(0.0)
     }
     pub fn track_top(&self, i: usize) -> f32 {
         RULER_H + self.track_offset(i) - self.scroll_y as f32
@@ -61,18 +313,19 @@ impl View {
         if y < top {
             return None;
         }
-        for (i, e) in self.extra.iter().enumerate() {
-            let h = TRACK_PITCH + e;
+        let n = self.extra.len().max(self.pitches.len());
+        for i in 0..n {
+            let h = self.track_span(i);
             if y < top + h {
                 return Some(i);
             }
             top += h;
         }
-        Some(self.extra.len() + ((y - top) / TRACK_PITCH).floor() as usize)
+        Some(n + ((y - top) / TRACK_PITCH).floor() as usize)
     }
     pub fn zoom_at(&mut self, factor: f64, x: f32) {
         let anchor = self.beat_at(x);
-        self.px_per_beat = (self.px_per_beat * factor).clamp(0.5, 2000.0);
+        self.px_per_beat = (self.px_per_beat * factor).clamp(MIN_PX_PER_BEAT, MAX_PX_PER_BEAT);
         self.start_beats = anchor - x as f64 / self.px_per_beat;
         self.clamp();
     }
@@ -98,12 +351,14 @@ pub struct ClipVis {
     pub len_beats: f64,
     pub color: [f32; 3],
     pub selected: bool,
+    /// Clip on a muted track: drawn grey, without the selection tint.
+    pub muted: bool,
     pub name: String,
-    /// Waveform source: pyramid slot, first frame (engine rate), frame count.
-    pub wave: Option<(Slot, f64, f64)>,
+    /// Waveform: pyramid slot and the clip's pieces (`peaks::wave_segments`).
+    pub wave: Option<(Slot, Vec<WaveSeg>)>,
     /// MIDI clip: mini note view as (relative start 0..1, relative length, relative
     /// pitch 0 = top .. 1 = bottom). `None` for audio clips.
-    pub midi: Option<Vec<[f32; 3]>>,
+    pub midi: Option<Vec<[f32; 4]>>,
     /// Take being recorded: live min/max peaks from `Engine::recording_peaks`
     /// (one pair every `.1` logical points from the clip start), drawn with the
     /// recording tint.
@@ -114,7 +369,7 @@ impl ClipVis {
     pub fn rect(&self, v: &View) -> (f32, f32, f32, f32) {
         let x = v.x_of(self.start_beats);
         let w = (self.len_beats * v.px_per_beat) as f32;
-        (x, v.track_top(self.track_index) + 0.5, w.max(1.0), TRACK_H - 1.0)
+        (x, v.track_top(self.track_index) + 0.5, w.max(1.0), v.pitch(self.track_index) - 1.5)
     }
 }
 
@@ -128,10 +383,14 @@ pub struct Scene<'a> {
     pub live: &'a [ClipVis],
     pub playhead_beats: f64,
     pub loop_beats: (f64, f64),
+    pub loop_on: bool,
     pub beats_per_bar: f64,
-    pub frames_per_beat: f64,
+    /// Tick, label, grid and band steps for the current zoom (see [RulerSteps]).
+    pub steps: RulerSteps,
     /// Automation overlay (src/automation.rs) while lanes are shown.
     pub auto: Option<&'a crate::automation::AutoScene>,
+    /// Arrangement sections in the ruler's section lane (src/sections.rs).
+    pub sections: &'a [crate::sections::SectionVis],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -172,7 +431,7 @@ pub fn hit_test(v: &View, size: (f32, f32), tracks: usize, clips: &[ClipVis], x:
         }
     }
     match v.track_at(y) {
-        Some(t) if t < tracks && y < v.track_top(t) + TRACK_H => Hit::Track(t),
+        Some(t) if t < tracks && y < v.track_top(t) + v.pitch(t) - 0.5 => Hit::Track(t),
         _ => Hit::Empty,
     }
 }
@@ -214,11 +473,23 @@ impl Px {
     }
 }
 
-/// Lane background (alternating 4-bar bands) and grid for the band y0..y1.
+/// Grid line strength by weight: bar, beat, sub-beat (the reference app's .075 / .027 / .011 scaled by the
+/// measured .775 of our lane ink).
+fn grid_alpha(s: &RulerSteps, beat: f64) -> f32 {
+    if RulerSteps::on(beat, s.beats_per_bar) {
+        0.058
+    } else if RulerSteps::on(beat, s.beat_len) {
+        0.021
+    } else {
+        0.0085
+    }
+}
+
+/// Lane background (alternating bands of `band_beats`) and grid for the band y0..y1.
 fn bands_and_grid(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, y0: f32, y1: f32, colors: [u32; 2]) {
     let v = &sc.view;
     let w = sc.size.0;
-    let band = sc.beats_per_bar * 4.0;
+    let band = sc.steps.band_beats;
     let first = (v.start_beats / band).floor() as i64;
     let mut k = first;
     loop {
@@ -230,14 +501,8 @@ fn bands_and_grid(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, y0: f32, y1: f32
         out.push(px.rect(x0.max(0.0), y0, x1 - x0.max(0.0), y1 - y0, rgba(rgb(colors[(k.rem_euclid(2)) as usize]), 1.0)));
         k += 1;
     }
-    // Grid: half-bar lines at the default zoom (reference), coarser when zoomed out.
-    let mut step = sc.beats_per_bar / 2.0;
-    while step * v.px_per_beat < 10.0 {
-        step *= 2.0;
-    }
-    while step * v.px_per_beat > 80.0 && step > 0.25 {
-        step /= 2.0;
-    }
+    // Grid lines: bar, beat and sub-beat weights at the step the reference app picks for this zoom (S66).
+    let step = sc.steps.line_beats;
     let first = (v.start_beats / step).floor() as i64;
     let lw = 1.0 / px.s; // one physical pixel (0.5 pt on Retina, as measured)
     let mut i = first;
@@ -248,9 +513,7 @@ fn bands_and_grid(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, y0: f32, y1: f32
             break;
         }
         if x >= -1.0 {
-            let on_bar = (beat / sc.beats_per_bar).fract().abs() < 1e-9;
-            let a = if on_bar { 0.058 } else { 0.021 };
-            out.push(px.rect(x, y0, lw, y1 - y0, rgba(WHITE, a)));
+            out.push(px.rect(x, y0, lw, y1 - y0, rgba(WHITE, grid_alpha(&sc.steps, beat))));
         }
         i += 1;
     }
@@ -269,14 +532,15 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     bands_and_grid(&mut dl.base, sc, &px, RULER_H, lanes_bottom, LANE);
     for (i, t) in sc.tracks.iter().enumerate() {
         let top = v.track_top(i);
-        if top > lanes_bottom || top + TRACK_PITCH < RULER_H {
+        let row_h = v.pitch(i) - 0.5;
+        if top > lanes_bottom || top + row_h + 0.5 < RULER_H {
             continue;
         }
         if t.selected {
-            bands_and_grid(&mut dl.base, sc, &px, top, top + TRACK_H, LANE_SEL);
+            bands_and_grid(&mut dl.base, sc, &px, top, top + row_h, LANE_SEL);
         }
         let sep = if t.selected { 0x2c2d30 } else { 0x26272a };
-        dl.base.push(px.rect(0.0, top + TRACK_H - 0.5, w, 1.0, rgba(rgb(sep), 1.0)));
+        dl.base.push(px.rect(0.0, top + row_h - 0.5, w, 1.0, rgba(rgb(sep), 1.0)));
     }
 
     // ---- clips ----
@@ -290,31 +554,37 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
             midi_clip(&mut dl.base, sc, &px, c, notes, (x, y, cw, ch));
             continue;
         }
-        let (body, wave) = if c.selected {
-            (mix(c.color, WHITE, 0.72), rgba(mix(c.color, BLACK, 0.55), 1.0))
+        let (head, body) = if c.muted {
+            (rgb(0xa8a8a8), rgb(0x6b6b6b))
+        } else if c.selected {
+            (c.color, mix(c.color, [0.91; 3], 0.69))
         } else {
-            (mix(rgb(0x131417), c.color, 0.30), rgba(mix(c.color, WHITE, 0.15), 1.0))
+            (c.color, c.color)
         };
+        let wave = rgba(mix(body, BLACK, 0.92), 0.89);
         // Clip outline = rounded rect in the header colour; body drawn over it.
-        dl.base.push(px.rounded(x, y, cw, ch, r, rgba(c.color, 1.0)));
+        dl.base.push(px.rounded(x, y, cw, ch, r, rgba(head, 1.0)));
         dl.base.push(px.rect(x, y + CLIP_HEADER, cw, ch - CLIP_HEADER - r, rgba(body, 1.0)));
         dl.base.push(px.rounded(x, y + ch - 2.0 * r, cw, 2.0 * r, r, rgba(body, 1.0)));
-        if let Some((slot, first_frame, frames)) = c.wave {
-            let vx0 = x.max(0.0);
-            let vx1 = (x + cw).min(w);
-            if vx1 > vx0 {
-                let fpp = sc.frames_per_beat / (v.px_per_beat * sc.scale as f64);
-                let p0 = (vx0 * sc.scale).floor();
-                let frame_at = first_frame + (p0 as f64 - (x * sc.scale) as f64) * fpp;
-                let wy = y + CLIP_HEADER + 2.0;
-                let wh = ch - CLIP_HEADER - 4.0;
-                dl.waves.push(WaveInst {
-                    rect: [p0, (wy * sc.scale).round(), ((vx1 * sc.scale).ceil() - p0).max(1.0), (wh * sc.scale).round()],
-                    color: wave,
-                    params: [frame_at as f32, fpp as f32, (first_frame + frames) as f32, 0.0],
-                    src: [slot.base, slot.len0, slot.levels, 0],
-                });
+        dl.base.push(px.rect(x, y + CLIP_HEADER, cw, 1.0 / sc.scale, rgba(BLACK, 0.4)));
+        let step = sc.steps.line_beats;
+        let gw = 0.85f32.max(1.0 / sc.scale);
+        let mut k = (c.start_beats.max(v.start_beats) / step).floor() as i64 + 1;
+        loop {
+            let beat = k as f64 * step;
+            let gx = v.x_of(beat);
+            if beat >= c.start_beats + c.len_beats || gx > w {
+                break;
             }
+            if gx >= 0.0 {
+                let a = if RulerSteps::on(beat, sc.beats_per_bar) { 0.2 } else { 0.125 };
+                dl.base.push(px.rect(gx, y + CLIP_HEADER + 1.0 / sc.scale, gw, ch - CLIP_HEADER - 1.0 / sc.scale, rgba(BLACK, a)));
+            }
+            k += 1;
+        }
+        if let Some((slot, segs)) = &c.wave {
+            let (wy, wh) = (y + CLIP_HEADER + 2.0, ch - CLIP_HEADER - 4.0);
+            peaks::push_wave(&mut dl.waves, *slot, segs, |b| v.x_of(c.start_beats + b), (x.max(0.0), (x + cw).min(w)), (wy, wh), sc.scale, wave);
         }
     }
 
@@ -327,29 +597,37 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     let o = &mut dl.over;
     o.push(px.rect(0.0, 0.0, w, RULER_H, rgba(rgb(0x1a1b1e), 1.0)));
     let lw = 1.0 / sc.scale;
-    let bar_px = sc.beats_per_bar * v.px_per_beat;
-    let mut label_step = 1i64;
-    while (label_step as f64) * bar_px < 24.0 {
-        label_step *= 2;
-    }
-    let first_bar = (v.start_beats / sc.beats_per_bar).floor() as i64;
+    // One reference px (0.85 units), at least one physical pixel: 2 px on Retina, 1 px at 1x.
+    let mark = 0.85f32.max(lw);
+    // Full-height ticks every `tick_bars` bars; between them, ticks standing on the row's
+    // bottom at the grid step: 6 reference px on a beat, 4 off it (S65).
+    let st = &sc.steps;
+    let bar = st.beats_per_bar;
+    let first_bar = ((v.start_beats / bar).floor() as i64).div_euclid(st.tick_bars) * st.tick_bars;
     let mut b = first_bar;
     loop {
-        let x = v.x_of(b as f64 * sc.beats_per_bar);
+        let x = v.x_of(b as f64 * bar);
         if x > w {
             break;
         }
-        if b % label_step == 0 {
-            o.push(px.rect(x, 0.0, lw, 16.5, rgba(rgb(0x4c4d4f), 1.0)));
-        }
-        if bar_px >= 24.0 {
-            for q in 1..(sc.beats_per_bar.round() as i64) {
-                let xq = v.x_of(b as f64 * sc.beats_per_bar + q as f64);
-                let tall = if (q as f64) * 2.0 == sc.beats_per_bar { 4.0 } else { 2.5 };
-                o.push(px.rect(xq, 16.5 - tall, lw, tall, rgba(rgb(0x3a3b3e), 1.0)));
+        o.push(px.rect(x - 0.5 * mark, 0.0, mark, 16.5, rgba(rgb(0x4c4d4f), 1.0)));
+        b += st.tick_bars;
+    }
+    if st.ticks_visible {
+        let full = st.tick_bars as f64 * bar;
+        let mut i = (v.start_beats / st.tick_beats).floor() as i64;
+        loop {
+            let beat = i as f64 * st.tick_beats;
+            let x = v.x_of(beat);
+            if x > w {
+                break;
             }
+            if beat >= 0.0 && x >= 0.0 && !RulerSteps::on(beat, full) {
+                let h = if RulerSteps::on(beat, st.beat_len) { 5.1 } else { 3.4 };
+                o.push(px.rect(x - 0.5 * mark, 16.5 - h, mark, h, rgba(rgb(0x38393c), 1.0)));
+            }
+            i += 1;
         }
-        b += 1;
     }
     for y in [16.5, 25.0, 38.0] {
         o.push(px.rect(0.0, y, w, 1.0, rgba(rgb(0x2c2d30), 1.0)));
@@ -358,7 +636,29 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     let lx0 = v.x_of(sc.loop_beats.0);
     let lx1 = v.x_of(sc.loop_beats.1);
     if lx1 > 0.0 && lx0 < w {
-        o.push(px.rect(lx0.max(0.0), 18.0, lx1.min(w) - lx0.max(0.0), 6.0, rgba(rgb(0x4d4d4f), 1.0)));
+        let color = if sc.loop_on { rgb(0xefb259) } else { rgb(0x4d4d4f) };
+        o.push(px.rect(lx0.max(0.0), 17.6, lx1.min(w) - lx0.max(0.0), 6.8, rgba(color, 1.0)));
+    }
+    // Sections: rounded blocks inset half a reference px at each end; selected and dragged
+    // blocks lift and get a white rim (38 % / 1 px, 70 % / 1.5 px).
+    use crate::sections::{BLOCK_H, BLOCK_Y, RADIUS, lift};
+    for s in sc.sections {
+        let x0 = v.x_of(s.start_beats) + 0.425;
+        let bw = (s.len_beats * v.px_per_beat) as f32 - 0.85;
+        if bw <= 0.0 || x0 > w || x0 + bw < 0.0 {
+            continue;
+        }
+        o.push(px.rounded(x0, BLOCK_Y, bw, BLOCK_H, RADIUS, rgba(lift(s.color, s.state), 1.0)));
+        let (a, t) = match s.state {
+            1 => (0.38, 0.85),
+            2 => (0.7, 1.275),
+            _ => continue,
+        };
+        let rim = rgba(WHITE, a);
+        o.push(px.rect(x0 + RADIUS, BLOCK_Y, bw - 2.0 * RADIUS, t, rim));
+        o.push(px.rect(x0 + RADIUS, BLOCK_Y + BLOCK_H - t, bw - 2.0 * RADIUS, t, rim));
+        o.push(px.rect(x0, BLOCK_Y + RADIUS, t, BLOCK_H - 2.0 * RADIUS, rim));
+        o.push(px.rect(x0 + bw - t, BLOCK_Y + RADIUS, t, BLOCK_H - 2.0 * RADIUS, rim));
     }
 
     // ---- master lane (over, pinned to the bottom) ----
@@ -384,7 +684,7 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     // ---- playhead ----
     let phx = v.x_of(sc.playhead_beats);
     if phx >= -1.0 && phx <= w {
-        dl.over.push(px.rect(phx, 0.0, lw, h, rgba(rgb(0x949495), 1.0)));
+        dl.over.push(px.rect(phx - 0.5 * mark, 0.0, mark, h, rgba(rgb(0xb3b3b3), 0.8)));
     }
 }
 
@@ -434,30 +734,26 @@ fn automation_row(out: &mut Vec<RectInst>, px: &Px, w: f32, row: &crate::automat
 
 /// MIDI clip: track-colour title strip, light lavender body (the reference draws it
 /// the same selected or not), grid lines inside the body and a mini note view.
-fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &[[f32; 3]], (x, y, cw, ch): (f32, f32, f32, f32)) {
+fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &[[f32; 4]], (x, y, cw, ch): (f32, f32, f32, f32)) {
     let r = 3.0;
     // On a track that isn't selected the reference draws the body in the plain track colour
     // with a darker line under the title and no grid (50-input-selector-open.png); on the
     // selected track it is the light lavender body with grid lines (33/34-*.png).
-    let track_selected = sc.tracks.get(c.track_index).is_some_and(|t| t.selected);
-    let body = if track_selected { mix(c.color, WHITE, 0.67) } else { c.color };
+    // A muted track's clips are grey with no selection tint, like audio clips.
+    let track_selected = !c.muted && sc.tracks.get(c.track_index).is_some_and(|t| t.selected);
+    let head = if c.muted { rgb(0xa8a8a8) } else { c.color };
+    let body = if c.muted { rgb(0x6b6b6b) } else if track_selected { mix(c.color, WHITE, 0.67) } else { c.color };
     // 0.5 pt outline (greyish in the reference), then title strip and body inset by it.
     out.push(px.rounded(x, y, cw, ch, r, rgba(mix(body, rgb(0x4a4c58), 0.45), 1.0)));
-    out.push(px.rounded(x + 0.5, y + 0.5, cw - 1.0, ch - 1.0, r - 0.5, rgba(c.color, 1.0)));
+    out.push(px.rounded(x + 0.5, y + 0.5, cw - 1.0, ch - 1.0, r - 0.5, rgba(head, 1.0)));
     let by = y + CLIP_HEADER + 0.5;
     out.push(px.rect(x + 0.5, by, cw - 1.0, ch - CLIP_HEADER - 0.5 - r, rgba(body, 1.0)));
     out.push(px.rounded(x + 0.5, y + ch - 2.0 * r, cw - 1.0, 2.0 * r - 0.5, r - 0.5, rgba(body, 1.0)));
     let v = &sc.view;
     if !track_selected {
-        out.push(px.rect(x + 0.5, by - 0.5, cw - 1.0, 0.5, rgba(mix(c.color, BLACK, 0.4), 1.0)));
+        out.push(px.rect(x + 0.5, by - 0.5, cw - 1.0, 0.5, rgba(mix(head, BLACK, 0.4), 1.0)));
     }
-    let mut step = sc.beats_per_bar / 2.0;
-    while step * v.px_per_beat < 10.0 {
-        step *= 2.0;
-    }
-    while step * v.px_per_beat > 80.0 && step > 0.25 {
-        step /= 2.0;
-    }
+    let step = sc.steps.line_beats;
     let mut b = (c.start_beats / step).floor() * step + step;
     while track_selected && b < c.start_beats + c.len_beats - 1e-6 {
         let lx = v.x_of(b);
@@ -468,14 +764,14 @@ fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &
     }
     let nh = ch - CLIP_HEADER - 6.0;
     let bar_h = (nh / 24.0).clamp(1.5, 3.0);
-    let ink = rgba(mix(c.color, BLACK, 0.45), 1.0);
+    let ink = mix(head, BLACK, 0.45);
     for n in notes {
         let nx = x + n[0] * cw;
         let nw = (n[1] * cw).max(1.0).min(x + cw - nx);
         if nw <= 0.0 {
             continue;
         }
-        out.push(px.rect(nx, by + 2.5 + n[2] * (nh - bar_h), nw, bar_h, ink));
+        out.push(px.rect(nx, by + 2.5 + n[2] * (nh - bar_h), nw, bar_h, rgba(ink, n[3])));
     }
 }
 
@@ -515,12 +811,8 @@ fn live_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis) {
 }
 
 /// Bar-number labels for the ruler (Slint text over the texture).
-pub fn ruler_labels(v: &View, w: f32, beats_per_bar: f64) -> Vec<(f32, String)> {
-    let bar_px = beats_per_bar * v.px_per_beat;
-    let mut step = 1i64;
-    while (step as f64) * bar_px < 24.0 {
-        step *= 2;
-    }
+pub fn ruler_labels(v: &View, w: f32, steps: &RulerSteps) -> Vec<(f32, String)> {
+    let (beats_per_bar, step) = (steps.beats_per_bar, steps.label_bars);
     let mut out = Vec::new();
     let mut b = ((v.start_beats / beats_per_bar).floor() as i64).div_euclid(step) * step;
     loop {
@@ -538,7 +830,189 @@ pub fn ruler_labels(v: &View, w: f32, beats_per_bar: f64) -> Vec<(f32, String)> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn note_snap_auto_by_zoom_and_fixed_sizes() {
+        let b = 4.0;
+        assert_eq!(note_snap_beats(1.0, b, None), 16.0);
+        assert_eq!(note_snap_beats(2.0, b, None), 8.0);
+        assert_eq!(note_snap_beats(4.0, b, None), 4.0);
+        assert_eq!(note_snap_beats(11.9, b, None), 1.0);
+        assert_eq!(note_snap_beats(29.0, b, None), 0.5);
+        assert_eq!(note_snap_beats(59.0, b, None), 0.25);
+        assert_eq!(note_snap_beats(155.0, b, None), 0.125);
+        assert_eq!(note_snap_beats(155.0, b, Some(GridSize::Eighth)), 0.5);
+        assert_eq!(note_snap_beats(155.0, b, Some(GridSize::Bar)), 4.0);
+        assert_eq!(note_snap_beats(20.0, b, Some(GridSize::ThirtySecond)), 0.5);
+    }
+
     use super::*;
+
+    fn steps(ppb: f64) -> RulerSteps {
+        RulerSteps::new(ppb, 4.0, 1.0, None)
+    }
+
+    fn fixed(ppb: f64, g: GridSize) -> RulerSteps {
+        RulerSteps::new(ppb, 4.0, 1.0, Some(g))
+    }
+
+    #[test]
+    fn ruler_steps_at_several_zooms() {
+        // (px per beat, label bars, tick bars, tick beats, line beats, band beats)
+        let rows = [
+            (MIN_PX_PER_BEAT, 32, 16, 16.0, 64.0, 64.0),
+            (DEFAULT_PX_PER_BEAT / 8.0, 8, 4, 4.0, 16.0, 64.0),
+            (DEFAULT_PX_PER_BEAT / 4.0, 4, 2, 4.0, 8.0, 64.0),
+            (DEFAULT_PX_PER_BEAT / 2.0, 2, 1, 4.0, 4.0, 16.0),
+            (DEFAULT_PX_PER_BEAT, 1, 1, 2.0, 2.0, 16.0),
+            (DEFAULT_PX_PER_BEAT * 2.0, 1, 1, 1.0, 1.0, 4.0),
+            (DEFAULT_PX_PER_BEAT * 4.0, 1, 1, 0.5, 0.5, 4.0),
+            (200.0, 1, 1, 0.125, 0.125, 1.0),
+            (MAX_PX_PER_BEAT, 1, 1, 0.0625, 0.0625, 1.0),
+        ];
+        for (ppb, label, tick, tick_beats, line, band) in rows {
+            let s = steps(ppb);
+            assert_eq!((s.label_bars, s.tick_bars, s.tick_beats, s.line_beats, s.band_beats), (label, tick, tick_beats, line, band), "ppb {ppb}");
+        }
+    }
+
+    #[test]
+    fn ruler_steps_keep_their_minimum_spacing() {
+        let mut ppb = MIN_PX_PER_BEAT;
+        while ppb <= MAX_PX_PER_BEAT {
+            let s = steps(ppb);
+            let ref_px = ppb / REF;
+            assert!(s.label_bars as f64 * 4.0 * ref_px >= LABEL_MIN_PX - 1e-9 || s.label_bars == 1024, "labels at {ppb}");
+            assert!(s.line_beats * ref_px >= GRID_BAR_MIN_PX, "grid at {ppb}");
+            assert!(s.line_beats >= s.tick_beats && s.tick_bars * 2 >= s.label_bars, "ticks at {ppb}");
+            assert!(s.band_beats * ref_px >= BAND_MIN_PX || s.band_beats == 64.0, "band at {ppb}");
+            ppb *= 1.07;
+        }
+    }
+
+    #[test]
+    fn ruler_steps_follow_the_time_signature() {
+        let s = RulerSteps::new(DEFAULT_PX_PER_BEAT, 3.0, 0.5, None);
+        assert_eq!((s.label_bars, s.tick_bars, s.tick_beats, s.line_beats), (2, 1, 1.5, 1.5));
+        let s = RulerSteps::new(DEFAULT_PX_PER_BEAT, 3.0, 1.0, None);
+        assert_eq!((s.label_bars, s.tick_beats, s.line_beats), (2, 3.0, 3.0));
+    }
+
+    #[test]
+    fn ruler_ticks_in_the_draw_list_follow_the_steps() {
+        let w = 969.5f32;
+        let count = |ppb: f64| -> (usize, usize, usize) {
+            let view = View { px_per_beat: ppb, ..View::default() };
+            let sc = Scene {
+                steps: steps(ppb),
+                view,
+                size: (w, 300.0),
+                scale: 2.0,
+                tracks: &[],
+                clips: &[],
+                live: &[],
+                playhead_beats: 0.0,
+                loop_beats: (0.0, 0.0),
+                loop_on: false,
+                beats_per_bar: 4.0,
+                auto: None,
+                sections: &[],
+            };
+            let mut dl = DrawList::default();
+            build(&mut dl, &sc);
+            let by = |grey: u32, h: f32| dl.over.iter().filter(|r| (r.color[0] * 255.0).round() as u32 == grey && r.rect[3] == h).count();
+            (by(0x4c, 33.0), by(0x38, 10.0), by(0x38, 7.0))
+        };
+        let expect = |ppb: f64| -> (usize, usize, usize) {
+            let s = steps(ppb);
+            let reach = w as f64 / ppb;
+            let full = s.tick_bars as f64 * 4.0;
+            let fulls = (reach / full).floor() as usize + 1;
+            if !s.ticks_visible {
+                return (fulls, 0, 0);
+            }
+            let (mut beat, mut sub) = (0, 0);
+            let mut i = 0;
+            while i as f64 * s.tick_beats <= reach {
+                let b = i as f64 * s.tick_beats;
+                i += 1;
+                if RulerSteps::on(b, full) {
+                    continue;
+                }
+                if RulerSteps::on(b, 1.0) {
+                    beat += 1;
+                } else {
+                    sub += 1;
+                }
+            }
+            (fulls, beat, sub)
+        };
+        for ppb in [DEFAULT_PX_PER_BEAT / 8.0, DEFAULT_PX_PER_BEAT / 2.0, DEFAULT_PX_PER_BEAT, DEFAULT_PX_PER_BEAT * 4.0, DEFAULT_PX_PER_BEAT * 16.0] {
+            assert_eq!(count(ppb), expect(ppb), "ppb {ppb}");
+        }
+    }
+
+    #[test]
+    fn thresholds_are_in_reference_pixels() {
+        // the reference app's default is 15 px per beat; one beat is 16 px wide from 16 / 15 of that zoom.
+        let ppb = |create_px: f64| create_px * REF;
+        assert_eq!(steps(ppb(15.9)).tick_beats, 2.0);
+        assert_eq!(steps(ppb(16.1)).tick_beats, 1.0);
+        assert_eq!(steps(ppb(12.4)).label_bars, 2, "a 4/4 bar of 49.6 px");
+        assert_eq!(steps(ppb(12.6)).label_bars, 1, "a bar of 50.4 px");
+    }
+
+    #[test]
+    fn a_fixed_grid_overrides_auto_when_finer() {
+        let z = DEFAULT_PX_PER_BEAT;
+        assert_eq!(steps(z).tick_beats, 2.0);
+        assert_eq!(fixed(z, GridSize::Quarter).tick_beats, 1.0);
+        assert_eq!(fixed(z, GridSize::Eighth).tick_beats, 0.5);
+        assert_eq!(fixed(z, GridSize::HalfBar).tick_beats, 2.0);
+        assert_eq!(fixed(z, GridSize::Bar).tick_beats, 2.0, "coarser than auto: auto stays");
+        assert_eq!(fixed(z, GridSize::Quarter).line_beats, 1.0);
+        assert_eq!(fixed(z * 8.0, GridSize::Sixteenth).tick_beats, 0.25);
+    }
+
+    #[test]
+    fn a_fixed_grid_too_dense_is_doubled_to_six_px() {
+        let z = DEFAULT_PX_PER_BEAT;
+        assert_eq!(fixed(z, GridSize::ThirtySecond).tick_beats, 0.5);
+        assert_eq!(fixed(z, GridSize::Sixteenth).tick_beats, 0.5);
+        assert_eq!(fixed(z / 8.0, GridSize::Bar).tick_beats, 4.0);
+    }
+
+    #[test]
+    fn triplets_override_and_stay_on_the_bar() {
+        let z = DEFAULT_PX_PER_BEAT * 8.0;
+        let third = fixed(z, GridSize::QuarterTriplet);
+        assert!((third.tick_beats - 2.0 / 3.0).abs() < 1e-9);
+        assert!((fixed(z, GridSize::SixteenthTriplet).tick_beats - 1.0 / 6.0).abs() < 1e-9);
+        assert!((fixed(DEFAULT_PX_PER_BEAT, GridSize::EighthTriplet).tick_beats - 2.0 / 3.0).abs() < 1e-9, "doubled once to 6 px");
+        assert!((RulerSteps::new(z, 3.0, 1.0, Some(GridSize::QuarterTriplet)).tick_beats - 1.0 / 3.0).abs() < 1e-9, "3/4 is not a whole number of 2/3 beats: halved to 1/3");
+    }
+
+    #[test]
+    fn snap_rounds_to_the_step_and_moves_keep_an_off_grid_offset() {
+        let s = fixed(DEFAULT_PX_PER_BEAT, GridSize::Quarter);
+        assert_eq!(s.snap(3.4), 3.0);
+        assert_eq!(s.snap(3.6), 4.0);
+        assert_eq!(s.snap(-2.0), 0.0);
+        assert_eq!(s.snap_move(5.2, 4.0), 5.0);
+        assert!((s.snap_move(5.4, 4.25) - 5.25).abs() < 1e-9, "a clip that started 0.25 off the grid keeps that offset");
+        assert_eq!(s.snap_move(5.9, 4.25), 6.0, "nearer to the grid than to the kept offset");
+    }
+
+    #[test]
+    fn ruler_labels_thin_out_with_zoom() {
+        let label_nums = |ppb: f64| -> Vec<String> {
+            let v = View { px_per_beat: ppb, ..View::default() };
+            ruler_labels(&v, 1000.0, &steps(ppb)).into_iter().map(|(_, t)| t).collect()
+        };
+        assert_eq!(&label_nums(DEFAULT_PX_PER_BEAT)[..4], ["1", "2", "3", "4"]);
+        assert_eq!(&label_nums(DEFAULT_PX_PER_BEAT / 4.0)[..4], ["1", "5", "9", "13"]);
+        assert_eq!(&label_nums(DEFAULT_PX_PER_BEAT * 8.0)[..3], ["1", "2", "3"]);
+    }
+
     #[test]
     fn view_roundtrip_and_hits() {
         let v = View::default();
@@ -546,7 +1020,7 @@ mod tests {
         assert!((v.beat_at(v.x_of(4.0)) - 4.0).abs() < 1e-4);
         assert_eq!(v.track_at(RULER_H + 1.0), Some(0));
         assert_eq!(v.track_at(RULER_H + TRACK_PITCH + 1.0), Some(1));
-        let clips = vec![ClipVis { track_index: 0, start_beats: 4.0, len_beats: 4.0, color: [1.0; 3], selected: false, name: String::new(), wave: None, midi: None, live: None }];
+        let clips = vec![ClipVis { track_index: 0, start_beats: 4.0, len_beats: 4.0, color: [1.0; 3], selected: false, muted: false, name: String::new(), wave: None, midi: None, live: None }];
         let size = (900.0, 400.0);
         assert_eq!(hit_test(&v, size, 2, &clips, 10.0, 5.0), Hit::Ruler);
         assert_eq!(hit_test(&v, size, 2, &clips, 70.0, 60.0), Hit::Clip { index: 0, zone: Zone::Body });

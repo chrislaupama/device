@@ -11,6 +11,10 @@ checkouts with `-DFETCHCONTENT_SOURCE_DIR_SAINE_CLAP=<dir>` and
 |---|---|---|---|---|
 | CLAP | https://github.com/free-audio/clap | `1.2.10` (`195b42a004144fab0b3cf95e9c067187d15365b7`, 2026-07-13) | MIT | Headers only (`include/clap/…`): hosting, scanner, test plugins |
 | VST 3 SDK | https://github.com/steinbergmedia/vst3sdk | `v3.8.1_build_84` (`3cdf9ca5d1f5b1b21e0a86832aa4abe55607bd96`, 2026-08-11); submodules `pluginterfaces` (`4f547e8e`), `public.sdk` (`586dc5e6`) | MIT (since VST 3.8) | `pluginterfaces` headers + IID definitions (`funknown.cpp`, `coreiids.cpp`, `vstinitiids.cpp`, `commoniids.cpp`); host helpers from `public.sdk/source/vst/hosting` (`hostclasses.cpp`, `pluginterfacesupport.cpp`) with `vst/utility/stringconvert.cpp` and `common/commonstringconvert.cpp` |
+| signalsmith-stretch | https://github.com/Signalsmith-Audio/signalsmith-stretch | `1.4.0` (`a670068d9aeb64913331d5cc29337b19a457a7df`, 2026-09-25) | MIT | Header-only time stretcher (`signalsmith-stretch.h`), wrapped by `src/warp.cpp` for warped audio clips |
+| signalsmith-linear | https://github.com/Signalsmith-Audio/linear | `0.6.4` (`de55e6a50ffcf6f8f43f649692d94691c7025151`, 2026-09-25) | MIT | Header-only FFT / STFT used by signalsmith-stretch (vDSP backend on macOS via Accelerate) |
+| dr_libs (dr_mp3, dr_flac, dr_wav) | https://github.com/mackron/dr_libs | commit `35b5c392cc15456736c440a68dbe073178bbffe0` (tag `wav-0.14.6`, 2026-10-31): dr_mp3 0.7.4, dr_flac 0.13.4, dr_wav 0.14.6 | Public domain (Unlicense) or MIT No Attribution; we use it under MIT-0. dr_mp3 embeds minimp3 (CC0) | Single-file decoders for MP3, FLAC and AIFF / AIFC import (`src/decode.cpp`, implementations in `src/decoders_impl.c`); dr_wav is used for AIFF only, WAV keeps our own reader |
+| stb_vorbis (stb) | https://github.com/nothings/stb | commit `4e9b368bfc071e97206ea5c6adba68dd0cbf8897` (2026-11-06), stb_vorbis 1.22 | MIT or public domain (Unlicense); we use it under MIT | Ogg Vorbis import (`src/decode.cpp`) |
 | Audio Units, CoreAudioKit, AppKit | Apple system frameworks | macOS SDK | Apple SDK terms | AU hosting (`AudioToolbox`), `AUGenericView` / `AUCocoaUIBase` editors, NSWindow |
 
 Notes:
@@ -68,6 +72,110 @@ in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## signalsmith-stretch — MIT License
+
+```
+MIT License
+
+Copyright (c) 2022 Geraint Luff / Signalsmith Audio Ltd.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## signalsmith-linear — MIT License
+
+```
+MIT License
+
+Copyright (c) 2025 Signalsmith Audio
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## dr_libs (dr_mp3, dr_flac, dr_wav): MIT No Attribution
+
+(Alternative 2 of each file's dual licence; the other is the Unlicense.)
+
+```
+Copyright 2023 David Reid
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+dr_mp3 is based on minimp3 (https://github.com/lieff/minimp3), dedicated to the
+public domain under CC0 1.0 by its authors.
+
+## stb_vorbis: MIT License
+
+(Alternative A of the file's dual licence; the other is the Unlicense.)
+
+```
+Copyright (c) 2017 Sean Barrett
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
 
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
