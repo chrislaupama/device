@@ -285,6 +285,31 @@ int32_t Engine::asset_release(uint64_t id) {
     return SE_OK;
 }
 
+int32_t Engine::asset_reverse(uint64_t id, se_asset_info* out) {
+    AssetRef src;
+    {
+        std::lock_guard lock(assets_mutex_);
+        auto it = assets_.find(id);
+        if (it == assets_.end()) return SE_ERR_NOT_FOUND;
+        src = it->second;
+    }
+    auto asset = std::make_shared<Asset>();
+    asset->channels = src->channels;
+    asset->frames = src->frames;
+    asset->source_sample_rate = src->source_sample_rate;
+    for (uint32_t c = 0; c < src->channels; ++c) asset->planar[c].assign(src->planar[c].rbegin(), src->planar[c].rend());
+    std::lock_guard lock(assets_mutex_);
+    asset->id = next_asset_id_++;
+    if (out != nullptr) {
+        out->asset_id = asset->id;
+        out->frames = asset->frames;
+        out->channels = asset->channels;
+        out->source_sample_rate = asset->source_sample_rate;
+    }
+    assets_.emplace(asset->id, std::move(asset));
+    return SE_OK;
+}
+
 int32_t Engine::asset_get_info(uint64_t id, se_asset_info* out) const {
     std::lock_guard lock(assets_mutex_);
     auto it = assets_.find(id);

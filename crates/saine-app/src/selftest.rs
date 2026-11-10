@@ -1001,6 +1001,35 @@ fn steps() -> Vec<Step> {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
             clip.warp.is_default().then_some(()).ok_or(format!("warp {:?}", clip.warp))
         })),
+        DoC("reverse: toolbar Reverse -> On", Box::new(|_, ctl| ctl.borrow_mut().ac_reverse_toggle())),
+        Check("reversed: toolbar On, the engine's reversed copy exists and the editor draws it, one undo step", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let rev = c.reversed_assets.get(&clip.asset).copied().ok_or("no reversed copy")?;
+            let slot = c.clip_wave(clip).map(|w| w.0.base);
+            (clip.warp.reverse && a.global::<Studio>().get_ac_reversed() && slot == c.peaks.slot(rev).map(|s| s.base) && c.doc.undo_label() == Some("Toggle clip reverse"))
+                .then_some(())
+                .ok_or(format!("reverse {} ui {} slot {slot:?} undo {:?}", clip.warp.reverse, a.global::<Studio>().get_ac_reversed(), c.doc.undo_label()))
+        })),
+        Do("reversed: drag clip 1 left edge right by 1 beat", Box::new(move |a| drag(a, bx(9.0) + 1.5, TRACK0_Y + 40.0, bx(10.0) + 1.5, TRACK0_Y + 40.0))),
+        Check("reversed left trim cuts the window's end: start 10, offset still 0.5 s, 4 beats", Box::new(|c, _| {
+            let p = c.project();
+            let cl = &p.tracks[0].clips[0];
+            let a = p.asset(cl.asset).unwrap();
+            let off_s = cl.source_offset as f64 / a.sample_rate;
+            let beats = p.clip_length_ticks(cl) as f64 / PPQ as f64;
+            ((cl.start as f64 / PPQ as f64 - 10.0).abs() < 1e-6 && (off_s - 0.5).abs() < 1e-3 && (beats - 4.0).abs() < 0.01)
+                .then_some(())
+                .ok_or(format!("start {} off {off_s}s len {beats}", cl.start))
+        })),
+        DoC("reverse: undo the trim and the toggle", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.undo();
+            c.undo();
+        })),
+        Check("reverse undone", Box::new(|c, a| {
+            let cl = &c.project().tracks[0].clips[0];
+            (!cl.warp.reverse && !a.global::<Studio>().get_ac_reversed() && cl.start == 9 * PPQ).then_some(()).ok_or(format!("reverse {} start {}", cl.warp.reverse, cl.start))
+        })),
         DoC("transpose: drag the Transpose value 50 pt right", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
             c.ac_transpose_drag(0, 0.0, 0.0);

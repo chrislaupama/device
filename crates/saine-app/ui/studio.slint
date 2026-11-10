@@ -505,6 +505,8 @@ export global Studio {
     in property <bool> ac-warped;            // Warp on: Mode is enabled, markers and transients edit
     in property <string> ac-mode-text: "Auto";
     callback ac-bpm-drag(int, length, length); // Original BPM drag: phase 0 press, 1 move, 2 release; offset from the press
+    in property <bool> ac-reversed;
+    callback ac-reverse-toggle();
     in property <string> ac-transpose-text: "0 st";
     in property <bool> ac-transpose-enabled: true;  // off in Re-pitch (pitch follows speed)
     callback ac-transpose-drag(int, length, length); // Transpose drag, like ac-bpm-drag
