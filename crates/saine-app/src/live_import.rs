@@ -28,6 +28,39 @@ pub struct ParsedTrack {
     pub pan: f32,
     pub audio: Vec<ParsedAudioClip>,
     pub midi_clips: Vec<ParsedMidiClip>,
+    /// The track's instrument when it is a Drum Rack.
+    pub drums: Option<ParsedDrums>,
+}
+
+/// A Drum Rack: its pads that play a Simpler sample, and what can't come in.
+#[derive(Default)]
+pub struct ParsedDrums {
+    pub pads: Vec<ParsedPad>,
+    /// Pads on notes outside Saine's sixteen (C1 to D#2).
+    pub outside: usize,
+    /// Pads in a choke group (Saine's Drum Rack has none).
+    pub choked: usize,
+    /// Pads that play something other than one Simpler sample.
+    pub other: usize,
+}
+
+/// A Drum Rack pad that plays a Simpler sample.
+pub struct ParsedPad {
+    pub note: u8,
+    pub on: bool,
+    /// Simpler volume plus the pad's mixer volume.
+    pub gain_db: f32,
+    pub pan: f32,
+    pub transpose: f32,
+    /// Sample window and fades as fractions of the sample and of the window.
+    pub start: f32,
+    pub end: f32,
+    pub fade_in: f32,
+    pub fade_out: f32,
+    pub reverse: bool,
+    /// Plays only while the note is held (Simpler's Classic mode, or One-Shot with Gate).
+    pub gate: bool,
+    pub sample: SampleRef,
 }
 
 /// Where a clip sits (arrangement beats) and which part of its content plays: Live's clip
@@ -75,6 +108,68 @@ fn flag(n: roxmltree::Node, p: &str) -> bool {
 
 fn elements<'a, 'i>(n: roxmltree::Node<'a, 'i>) -> impl Iterator<Item = roxmltree::Node<'a, 'i>> {
     n.children().filter(|c| c.is_element())
+}
+
+fn sample_ref(file: roxmltree::Node) -> SampleRef {
+    let relative = value(file, "RelativePath").ok().filter(|r| !r.is_empty() && value(file, "RelativePathType").is_ok_and(|t| t != "0")).map(str::to_string);
+    SampleRef { relative, absolute: value(file, "Path").unwrap_or("").to_string() }
+}
+
+/// A finite number, so a corrupt value (NaN, inf) falls back to its default.
+fn num(n: roxmltree::Node, p: &str) -> Option<f64> {
+    number(n, p).ok().filter(|v| v.is_finite())
+}
+
+/// A Drum Rack's pads. Live stores a pad's note as 128 − note (BranchInfo/ReceivingNote).
+fn drums(rack: roxmltree::Node) -> ParsedDrums {
+    let mut out = ParsedDrums::default();
+    for b in path(rack, "Branches").into_iter().flat_map(elements).filter(|b| b.has_tag_name("DrumBranch")) {
+        let note = 128i32.saturating_sub(num(b, "BranchInfo/ReceivingNote").unwrap_or(0.0) as i32);
+        if !(saine_core::builtin::drum_rack::FIRST_NOTE as i32..saine_core::builtin::drum_rack::FIRST_NOTE as i32 + saine_core::builtin::drum_rack::PADS as i32).contains(&note) {
+            out.outside += 1;
+            continue;
+        }
+        let devices: Vec<_> = path(b, "DeviceChain/MidiToAudioDeviceChain/Devices").into_iter().flat_map(elements).collect();
+        let (Some(s), 1) = (devices.iter().find(|d| d.has_tag_name("OriginalSimpler")), devices.len()) else {
+            out.other += 1;
+            continue;
+        };
+        let parts: Vec<_> = path(*s, "Player/MultiSampleMap/SampleParts").into_iter().flat_map(elements).collect();
+        let (Some(part), Some(file)) = (parts.first(), parts.first().and_then(|p| path(*p, "SampleRef/FileRef"))) else {
+            out.other += 1;
+            continue;
+        };
+        if parts.len() > 1 || num(*s, "Globals/PlaybackMode").is_some_and(|m| m == 2.0) || out.pads.iter().any(|p| p.note == note as u8) {
+            out.other += 1;
+            continue;
+        }
+        if num(b, "BranchInfo/ChokeGroup").unwrap_or(0.0) > 0.0 {
+            out.choked += 1;
+        }
+        let frames = num(*part, "SampleRef/DefaultDuration").unwrap_or(0.0).max(1.0);
+        let rate = num(*part, "SampleRef/DefaultSampleRate").unwrap_or(44_100.0).max(1.0);
+        let start = (num(*part, "SampleStart").unwrap_or(0.0) / frames).clamp(0.0, 1.0);
+        let end = ((num(*part, "SampleEnd").unwrap_or(frames) + 1.0) / frames).clamp(start, 1.0);
+        let window_ms = ((end - start) * frames / rate * 1000.0).max(1e-3);
+        let fade = |p: &str| (num(*s, p).unwrap_or(0.0) / window_ms * 100.0).clamp(0.0, 100.0) as f32;
+        let one_shot = num(*s, "Globals/PlaybackMode").is_some_and(|m| m == 1.0);
+        let mixer_gain = num(b, "MixerDevice/Volume/Manual").unwrap_or(1.0).max(1e-6);
+        out.pads.push(ParsedPad {
+            note: note as u8,
+            on: value(b, "MixerDevice/Speaker/Manual").map_or(true, |v| v == "true") && value(*s, "On/Manual").map_or(true, |v| v == "true"),
+            gain_db: (num(*s, "VolumeAndPan/Volume/Manual").unwrap_or(0.0) + 20.0 * mixer_gain.log10()) as f32,
+            pan: (num(*s, "VolumeAndPan/Panorama/Manual").unwrap_or(0.0) + num(b, "MixerDevice/Panorama/Manual").unwrap_or(0.0)) as f32,
+            transpose: (num(*s, "Pitch/TransposeKey/Manual").unwrap_or(0.0) + num(*s, "Pitch/TransposeFine/Manual").unwrap_or(0.0) / 100.0).round() as f32,
+            start: start as f32,
+            end: end as f32,
+            fade_in: if one_shot { fade("VolumeAndPan/OneShotEnvelope/FadeInTime/Manual") } else { 0.0 },
+            fade_out: if one_shot { fade("VolumeAndPan/OneShotEnvelope/FadeOutTime/Manual") } else { 0.0 },
+            reverse: flag(*s, "Player/Reverse/Manual"),
+            gate: !one_shot || num(*s, "VolumeAndPan/OneShotEnvelope/SustainMode/Manual").is_some_and(|m| m == 1.0),
+            sample: sample_ref(file),
+        });
+    }
+    out
 }
 
 fn span(c: roxmltree::Node) -> Result<Span, String> {
@@ -143,7 +238,9 @@ pub fn parse(xml: &str) -> Result<ParsedSet, String> {
         };
         out.session_clips += path(t, "DeviceChain/MainSequencer/ClipSlotList")
             .map_or(0, |l| l.descendants().filter(|n| n.has_tag_name("AudioClip") || n.has_tag_name("MidiClip")).count());
-        out.devices += path(t, "DeviceChain/DeviceChain/Devices").map_or(0, |d| elements(d).count());
+        let devices: Vec<_> = path(t, "DeviceChain/DeviceChain/Devices").into_iter().flat_map(elements).collect();
+        let rack = devices.iter().find(|d| midi && d.has_tag_name("DrumGroupDevice"));
+        out.devices += devices.len() - rack.is_some() as usize;
         let name = value(t, "Name/EffectiveName").or_else(|_| value(t, "Name/UserName")).unwrap_or("").trim().to_string();
         let mut track = ParsedTrack {
             name: if name.is_empty() { if midi { "MIDI" } else { "Audio" }.into() } else { name },
@@ -153,6 +250,7 @@ pub fn parse(xml: &str) -> Result<ParsedSet, String> {
             pan: number(t, "DeviceChain/Mixer/Pan/Manual").unwrap_or(0.0) as f32,
             audio: Vec::new(),
             midi_clips: Vec::new(),
+            drums: rack.map(|r| drums(*r)),
         };
         let events = if midi { "DeviceChain/MainSequencer/ClipTimeable/ArrangerAutomation/Events" } else { "DeviceChain/MainSequencer/Sample/ArrangerAutomation/Events" };
         for c in path(t, events).into_iter().flat_map(elements) {
@@ -161,7 +259,6 @@ pub fn parse(xml: &str) -> Result<ParsedSet, String> {
             match (midi, c.tag_name().name()) {
                 (false, "AudioClip") => {
                     let file = path(c, "SampleRef/FileRef").ok_or("an audio clip has no file")?;
-                    let relative = value(file, "RelativePath").ok().filter(|r| !r.is_empty() && value(file, "RelativePathType").is_ok_and(|t| t != "0")).map(str::to_string);
                     let mut markers: Vec<(f64, f64)> = path(c, "WarpMarkers")
                         .into_iter()
                         .flat_map(elements)
@@ -176,7 +273,7 @@ pub fn parse(xml: &str) -> Result<ParsedSet, String> {
                         warp_mode: number(c, "WarpMode").unwrap_or(0.0) as u32,
                         markers,
                         gain: number(c, "SampleVolume").unwrap_or(1.0) as f32,
-                        sample: SampleRef { relative, absolute: value(file, "Path").unwrap_or("").to_string() },
+                        sample: sample_ref(file),
                     });
                 }
                 (true, "MidiClip") => {
@@ -247,6 +344,10 @@ pub struct Report {
     pub return_tracks: usize,
     pub session_clips: usize,
     pub devices: usize,
+    /// Drum Rack pads outside C1–D#2 or playing something other than one Simpler sample.
+    pub drum_pads: usize,
+    /// Drum Rack pads in a choke group (they come in without it).
+    pub choked_pads: usize,
 }
 
 impl Report {
@@ -267,6 +368,12 @@ impl Report {
         }
         if self.devices > 0 {
             left.push(plural(self.devices, "device"));
+        }
+        if self.drum_pads > 0 {
+            left.push(plural(self.drum_pads, "Drum Rack pad"));
+        }
+        if self.choked_pads > 0 {
+            left.push(format!("choke groups on {}", plural(self.choked_pads, "pad")));
         }
         let head = format!("Imported {name}: {}, {}", plural(self.tracks, "track"), plural(self.clips, "clip"));
         if left.is_empty() { head } else { format!("{head}. Left out: {}", left.join(", ")) }
@@ -290,6 +397,64 @@ fn warp_mode(live: u32) -> WarpMode {
 
 /// The Saine project for a parsed set. `sample` gives the decoded file for a clip's sample
 /// ref (None when it is missing). Returns the project and, per asset, the file it loads.
+type Found = Option<(AssetId, f64, u64)>;
+
+/// The asset for a sample ref, made the first time a file is used (two refs, relative and
+/// absolute, can name one file). None, and listed as missing, when it wasn't found.
+fn asset_for(p: &mut Project, assets: &mut Vec<(SampleRef, Found)>, files: &mut Vec<(AssetId, PathBuf)>, report: &mut Report, sample: &dyn Fn(&SampleRef) -> Option<Sample>, r: &SampleRef) -> Found {
+    if let Some((_, a)) = assets.iter().find(|(x, _)| x == r) {
+        return *a;
+    }
+    let a = sample(r).map(|s| {
+        let path = s.path.to_string_lossy().into_owned();
+        if let Some(a) = p.assets.iter().find(|a| a.absolute_path == path) {
+            return (a.id, a.sample_rate, a.frames);
+        }
+        let id = AssetId(p.alloc_id());
+        p.assets.push(Asset { id, relative_path: None, absolute_path: path, sample_rate: s.sample_rate, channels: s.channels.max(1), frames: s.frames });
+        files.push((id, s.path));
+        (id, s.sample_rate, s.frames)
+    });
+    if a.is_none() {
+        report.missing_samples.push(r.relative.clone().unwrap_or_else(|| r.absolute.clone()));
+    }
+    assets.push((r.clone(), a));
+    a
+}
+
+/// Saine's Drum Rack for a Live one: pad n plays the Live pad on note 35 + n, its sample in the
+/// pad's first slot.
+fn drum_rack(p: &mut Project, assets: &mut Vec<(SampleRef, Found)>, files: &mut Vec<(AssetId, PathBuf)>, report: &mut Report, sample: &dyn Fn(&SampleRef) -> Option<Sample>, d: &ParsedDrums) -> saine_core::Device {
+    use saine_core::builtin::drum_rack::{DRUM_RACK, FIRST_NOTE};
+    let mut dev = DRUM_RACK.instantiate();
+    dev.id = saine_core::DeviceId(p.alloc_id());
+    report.drum_pads += d.outside + d.other;
+    report.choked_pads += d.choked;
+    for pad in &d.pads {
+        let n = (pad.note - FIRST_NOTE) as u32 + 1;
+        let Some((asset, _, _)) = asset_for(p, assets, files, report, sample, &pad.sample) else { continue };
+        let name = pad.sample.relative.as_deref().unwrap_or(&pad.sample.absolute).rsplit(['/', '\\']).next().unwrap_or("").rsplit_once('.').map_or("Sample", |(stem, _)| stem).to_string();
+        dev.samples.push(saine_core::DeviceSample { slot: (n - 1) * saine_core::builtin::pad_sampler::LAYERS, asset, name, slices: Vec::new() });
+        let flag = |b: bool| if b { 1.0 } else { 0.0 };
+        for (k, v) in [
+            ("on", flag(pad.on)),
+            ("gain", pad.gain_db.clamp(-60.0, 12.0)),
+            ("pan", pad.pan.clamp(-1.0, 1.0)),
+            ("transpose", pad.transpose.clamp(-24.0, 24.0)),
+            ("fadeIn", pad.fade_in),
+            ("fadeOut", pad.fade_out),
+            ("start", pad.start),
+            ("end", pad.end),
+            ("reverse", flag(pad.reverse)),
+            ("gate", flag(pad.gate)),
+        ] {
+            dev.params.insert(format!("p{n}_{k}"), v);
+        }
+    }
+    dev.samples.sort_by_key(|s| s.slot);
+    dev
+}
+
 pub fn build(set: &ParsedSet, name: &str, sample: &dyn Fn(&SampleRef) -> Option<Sample>) -> (Project, Vec<(AssetId, PathBuf)>, Report) {
     let mut p = Project::empty(name);
     p.transport.bpm = set.bpm.clamp(20.0, 999.0);
@@ -309,28 +474,7 @@ pub fn build(set: &ParsedSet, name: &str, sample: &dyn Fn(&SampleRef) -> Option<
         track.pan = t.pan.clamp(-1.0, 1.0);
         track.mute = !t.on;
         for c in &t.audio {
-            let found = match assets.iter().find(|(r, _)| *r == c.sample) {
-                Some((_, a)) => *a,
-                None => {
-                    let a = sample(&c.sample).map(|s| {
-                        let path = s.path.to_string_lossy().into_owned();
-                        // Two refs (relative and absolute) can name one file: one asset for it.
-                        if let Some(a) = p.assets.iter().find(|a| a.absolute_path == path) {
-                            return (a.id, a.sample_rate, a.frames);
-                        }
-                        let id = AssetId(p.alloc_id());
-                        p.assets.push(Asset { id, relative_path: None, absolute_path: path, sample_rate: s.sample_rate, channels: s.channels.max(1), frames: s.frames });
-                        files.push((id, s.path));
-                        (id, s.sample_rate, s.frames)
-                    });
-                    if a.is_none() {
-                        report.missing_samples.push(c.sample.relative.clone().unwrap_or_else(|| c.sample.absolute.clone()));
-                    }
-                    assets.push((c.sample.clone(), a));
-                    a
-                }
-            };
-            let Some((asset, rate, frames)) = found else { continue };
+            let Some((asset, rate, frames)) = asset_for(&mut p, &mut assets, &mut files, &mut report, sample, &c.sample) else { continue };
             let mut warp = ClipWarp::default();
             let scale = if c.warped {
                 let mut last = (-1.0f64, f64::NEG_INFINITY);
@@ -388,6 +532,9 @@ pub fn build(set: &ParsedSet, name: &str, sample: &dyn Fn(&SampleRef) -> Option<
             track.midi_clips.push(MidiClip { id, name: c.name.clone(), start: ticks(s.start), length, notes, pattern: None, disabled: c.disabled, composer: None, scale: None, clip_loop });
             report.clips += 1;
         }
+        if let Some(d) = &t.drums {
+            track.instrument_plugin = Some(drum_rack(&mut p, &mut assets, &mut files, &mut report, sample, d));
+        }
         track.clips.sort_by_key(|c| c.start);
         track.midi_clips.sort_by_key(|c| c.start);
         p.tracks.push(track);
@@ -441,16 +588,17 @@ impl crate::controller::Controller {
                 let result = read_file(&file).map(|set| {
                     let dir = file.parent().unwrap_or(Path::new(".")).to_path_buf();
                     let mut loaded = Loaded { files: Vec::new(), refs: Vec::new() };
-                    for c in set.tracks.iter().flat_map(|t| &t.audio) {
-                        if loaded.refs.iter().any(|(r, _)| *r == c.sample) {
+                    let pads = set.tracks.iter().flat_map(|t| t.drums.iter().flat_map(|d| d.pads.iter().map(|p| &p.sample)));
+                    for r in set.tracks.iter().flat_map(|t| t.audio.iter().map(|c| &c.sample)).chain(pads) {
+                        if loaded.refs.iter().any(|(x, _)| x == r) {
                             continue;
                         }
-                        let Some(p) = find_sample(&dir, &c.sample) else { continue };
+                        let Some(p) = find_sample(&dir, r) else { continue };
                         if !loaded.files.iter().any(|f| f.0 == p) {
                             let Ok((info, pyr)) = crate::controller::load_and_analyse(&engine, &p) else { continue };
                             loaded.files.push((p.clone(), info, pyr));
                         }
-                        loaded.refs.push((c.sample.clone(), p));
+                        loaded.refs.push((r.clone(), p));
                     }
                     (set, loaded)
                 });
@@ -659,6 +807,45 @@ mod tests {
         let clips = &p.tracks[0].clips;
         assert_eq!((p.assets.len(), files.len(), clips.len()), (1, 1, 2));
         assert_eq!(clips[0].asset, clips[1].asset);
+    }
+
+    fn pad(note: u8, choke: u8, mode: u8, file: &str, devices: usize) -> String {
+        let simpler = format!(
+            r#"<OriginalSimpler Id="0"><On><Manual Value="true" /></On><Player><MultiSampleMap><SampleParts><MultiSamplePart Id="0"><SampleStart Value="0" /><SampleEnd Value="23999" /><SampleRef><FileRef><RelativePathType Value="3" /><RelativePath Value="{file}" /><Path Value="/nowhere/{file}" /></FileRef><DefaultDuration Value="48000" /><DefaultSampleRate Value="48000" /></SampleRef></MultiSamplePart></SampleParts></MultiSampleMap><Reverse><Manual Value="true" /></Reverse></Player><Pitch><TransposeKey><Manual Value="3" /></TransposeKey><TransposeFine><Manual Value="0" /></TransposeFine></Pitch><VolumeAndPan><Volume><Manual Value="-6" /></Volume><Panorama><Manual Value="0.2" /></Panorama><OneShotEnvelope><FadeInTime><Manual Value="10" /></FadeInTime><SustainMode><Manual Value="0" /></SustainMode><FadeOutTime><Manual Value="20" /></FadeOutTime></OneShotEnvelope></VolumeAndPan><Globals><PlaybackMode Value="{mode}" /></Globals></OriginalSimpler>"#
+        );
+        format!(
+            r#"<DrumBranch Id="0"><BranchInfo><ReceivingNote Value="{}" /><ChokeGroup Value="{choke}" /></BranchInfo><DeviceChain><MidiToAudioDeviceChain><Devices>{}</Devices></MidiToAudioDeviceChain></DeviceChain><MixerDevice><Speaker><Manual Value="true" /></Speaker><Volume><Manual Value="0.5" /></Volume><Panorama><Manual Value="0.1" /></Panorama></MixerDevice></DrumBranch>"#,
+            128 - note as u32,
+            simpler.repeat(devices)
+        )
+    }
+
+    #[test]
+    fn a_drum_rack_becomes_ours() {
+        let branches = [pad(36, 0, 1, "Samples/break.wav", 1), pad(37, 1, 0, "Samples/gone.wav", 1), pad(60, 0, 1, "Samples/break.wav", 1), pad(38, 0, 1, "Samples/break.wav", 2)].concat();
+        let rack = format!(r#"<Devices><DrumGroupDevice Id="0"><Branches>{branches}</Branches></DrumGroupDevice></Devices>"#);
+        let xml = to_xml(&set());
+        let at = xml.find("<MidiTrack").unwrap();
+        let at = at + xml[at..].find("<Devices />").unwrap();
+        let (p, report) = import(&format!("{}{rack}{}", &xml[..at], &xml[at + "<Devices />".len()..]));
+        let dev = p.tracks[1].instrument_plugin.as_ref().expect("a Drum Rack");
+        assert_eq!(dev.samples.iter().map(|s| (s.slot, s.asset, s.name.as_str())).collect::<Vec<_>>(), [(0, p.assets[0].id, "break")]);
+        let param = |k: &str| dev.params[k];
+        assert!((param("p1_gain") + 12.02).abs() < 0.01, "Simpler -6 dB and a pad mixer at half gain");
+        assert!((param("p1_pan") - 0.3).abs() < 1e-6);
+        assert_eq!([param("p1_on"), param("p1_transpose"), param("p1_start"), param("p1_end"), param("p1_reverse"), param("p1_gate")], [1.0, 3.0, 0.0, 0.5, 1.0, 0.0]);
+        assert!((param("p1_fadeIn") - 2.0).abs() < 1e-3 && (param("p1_fadeOut") - 4.0).abs() < 1e-3, "10 and 20 ms of a 500 ms window");
+        assert_eq!((report.drum_pads, report.choked_pads, report.missing_samples.len(), report.devices), (2, 1, 1, 0));
+        let summary = report.summary("Set");
+        assert!(summary.contains("2 Drum Rack pads") && summary.contains("choke groups on 1 pad"), "{summary}");
+    }
+
+    #[test]
+    fn a_corrupt_pad_number_falls_back() {
+        let rack = format!(r#"<DrumGroupDevice Id="0"><Branches>{}</Branches></DrumGroupDevice>"#, pad(36, 0, 1, "Samples/break.wav", 1).replace(r#"<SampleStart Value="0" />"#, r#"<SampleStart Value="NaN" />"#));
+        let doc = roxmltree::Document::parse(&rack).unwrap();
+        let d = drums(doc.root_element());
+        assert_eq!((d.pads[0].start, d.pads[0].end), (0.0, 0.5));
     }
 
     #[test]
