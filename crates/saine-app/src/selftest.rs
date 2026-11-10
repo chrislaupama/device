@@ -893,6 +893,16 @@ fn steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("ac {} pr {} gain {} bars {}", s.get_ac_visible(), s.get_pr_visible(), s.get_ac_gain_text(), s.get_pr_bar_labels().row_count()))
         })),
+        Check("audio clip editor draws the clip waveform across the clip", Box::new(|c, _| {
+            let sc = c.pr_scene(1.0, &[]).ok_or("no clip editor scene")?;
+            let mut dl = crate::gpu::DrawList::default();
+            crate::pianoroll::build(&mut dl, &sc);
+            let (x0, x1) = (sc.view.x_of(sc.range.0), sc.view.x_of(sc.range.1).min(sc.view.w));
+            let span = dl.waves.iter().map(|w| w.rect[2]).sum::<f32>();
+            (dl.waves.len() == 1 && (span - (x1 - x0)).abs() <= 1.0)
+                .then_some(())
+                .ok_or(format!("waves {} span {span} want {}", dl.waves.len(), x1 - x0))
+        })),
         // ---- warp (SAIN-38): Speed / Warp / Mode menus, Original BPM drag, a warp marker ----
         DoC("warp: Warp menu -> On", Box::new(|a, ctl| {
             ctl.borrow_mut().clip_menu_open(1);
@@ -957,6 +967,16 @@ fn steps() -> Vec<Step> {
             (clip.warp.markers.len() == 2 && beats.len() == 2 && beats[0].abs() < 1e-6 && (beats[1] - 1.0).abs() < 0.05 && c.doc.undo_label() == Some("Add warp marker"))
                 .then_some(())
                 .ok_or(format!("markers {:?} beats {beats:?}", clip.warp.markers))
+        })),
+        Check("the clip editor waveform bends at the warp marker", Box::new(|c, _| {
+            let sc = c.pr_scene(1.0, &[]).ok_or("no clip editor scene")?;
+            let segs = sc.wave.as_ref().map(|w| w.1.clone()).unwrap_or_default();
+            let marker = c.ac_marker_beats().get(1).copied().unwrap_or(f64::NAN);
+            let mut dl = crate::gpu::DrawList::default();
+            crate::pianoroll::build(&mut dl, &sc);
+            (segs.len() == 2 && dl.waves.len() == 2 && (segs[0].beats.1 - marker).abs() < 1e-6 && dl.waves[0].rect[0] + dl.waves[0].rect[2] == dl.waves[1].rect[0])
+                .then_some(())
+                .ok_or(format!("segs {segs:?} marker {marker} waves {}", dl.waves.len()))
         })),
         DoC("warp: Warp menu -> Off", Box::new(|a, ctl| {
             ctl.borrow_mut().clip_menu_open(1);

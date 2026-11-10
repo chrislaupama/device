@@ -1816,6 +1816,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                     Err(e) => eprintln!("piano roll texture import failed: {e}"),
                                 }
                             }
+                            r.sync_peaks(c.peaks.generation, &c.peaks.data);
                             pianoroll::build(&mut f.pr_dl, &sc);
                             r.render(&f.pr_dl);
                         }

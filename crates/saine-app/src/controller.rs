@@ -1244,6 +1244,12 @@ impl Controller {
 
     // ---------------------------------------------------------------- per-frame
 
+    /// Waveform of an audio clip: its pyramid slot (once the peaks exist) and its pieces.
+    pub fn clip_wave(&self, clip: &Clip) -> Option<(crate::peaks::Slot, Vec<crate::peaks::WaveSeg>)> {
+        let slot = self.asset_map.get(&clip.asset).and_then(|ea| self.peaks.slot(*ea))?;
+        Some((slot, crate::peaks::wave_segments(self.project(), clip, self.rate)))
+    }
+
     /// Rebuild the clip/track visuals (positions include in-progress drag previews).
     pub fn rebuild_vis(&mut self) {
         self.auto_sync_view();
@@ -1266,11 +1272,9 @@ impl Controller {
                     }
                     _ => {}
                 }
-                let rate = p.asset(c.asset).map(|a| a.sample_rate).unwrap_or(self.rate);
                 let shown = saine_core::Clip { source_offset: off, source_length: len, ..c.clone() };
                 let len_beats = p.clip_length_ticks(&shown) as f64 / PPQ as f64;
-                let ratio = self.rate / rate;
-                let wave = self.asset_map.get(&c.asset).and_then(|ea| self.peaks.slot(*ea)).map(|slot| (slot, off as f64 * ratio, len as f64 * ratio));
+                let wave = self.clip_wave(&shown);
                 self.clip_vis.push(ClipVis {
                     track_index,
                     start_beats: start as f64 / PPQ as f64,
@@ -1355,7 +1359,6 @@ impl Controller {
             loop_beats: (tr.loop_start as f64 / PPQ as f64, tr.loop_end as f64 / PPQ as f64),
             loop_on: tr.loop_enabled,
             beats_per_bar: self.beats_per_bar(),
-            frames_per_beat: self.rate * 60.0 / tr.bpm,
             auto: None,
             sections: &self.section_vis,
         }
