@@ -141,6 +141,7 @@ component AcField inherits Rectangle {
     in property <length> chevron-x: -1px;
     in property <bool> enabled: true;
     in property <int> menu: -1;   // Studio.clip-menu index this field opens
+    in property <bool> bpm-drag;  // the value drags (Original BPM)
     height: 14px;
     // Content width, so the menu TouchArea covers this field only.
     width: max(v.x + v.preferred-width, root.chevron-x + 8px);
@@ -150,7 +151,16 @@ component AcField inherits Rectangle {
         x: root.chevron-x; y: 3px; width: 8px; height: 8px; d: Icons.chevron-down;
         ink: root.enabled ? Studio.clip-color : #3c3d43; stroke-width: 1.4px;
     }
-    if root.menu >= 0 && root.enabled: TouchArea { clicked => { Studio.clip-menu-open(root.menu); } }
+    if root.menu >= 0 && root.enabled: TouchArea { x: 0; width: root.chevron-x + 10px; clicked => { Studio.clip-menu-open(root.menu); } }
+    if root.bpm-drag: TouchArea {
+        x: root.value-x - 2px; width: 30px;
+        mouse-cursor: MouseCursor.ew-resize;
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.ac-bpm-drag(0, 0, 0); }
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.ac-bpm-drag(2, 0, 0); }
+        }
+        moved => { Studio.ac-bpm-drag(1, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+    }
 }
 
 // Clip editor dropdown (Studio.clip-menu-items). the reference app's toolbar menu: #212227, 8 px radius,
@@ -202,14 +212,14 @@ export component PianoRoll inherits Rectangle {
         ToolText { x: 232px; y: 7px; text: "Legato"; action: "legato"; }
         ToolText { x: 270.5px; y: 7px; text: "Double"; action: "double"; }
     }
-    // Audio toolbar: PLACEHOLDERS (no reverse, warp or speed in the clip model yet);
-    // Original BPM shows the project tempo.
+    // Audio toolbar: Original BPM (drag), Speed, Warp and Mode edit the clip's warp;
+    // Reverse is a PLACEHOLDER (no reverse in the clip model yet).
     if Studio.ac-visible: Rectangle {
         AcField { x: 7px; y: 7px; label: "Reverse"; value: "Off"; value-x: 42px; }
-        AcField { x: 74.8px; y: 7px; label: "Original BPM"; value: Studio.ac-bpm-text; value-x: 65.4px; }
-        AcField { x: 170px; y: 7px; label: "Speed"; value: "1x"; value-x: 36.2px; chevron-x: 55.2px; menu: 0; }
-        AcField { x: 243.95px; y: 7px; label: "Warp"; value: "Off"; value-x: 30px; chevron-x: 53.6px; menu: 1; }
-        AcField { x: 315.35px; y: 7px; label: "Mode"; value: "Auto"; value-x: 32.25px; chevron-x: 63px; enabled: false; }
+        AcField { x: 74.8px; y: 7px; label: "Original BPM"; value: Studio.ac-bpm-text; value-x: 65.4px; bpm-drag: true; }
+        AcField { x: 170px; y: 7px; label: "Speed"; value: Studio.ac-speed-text; value-x: 36.2px; chevron-x: 55.2px; menu: 0; }
+        AcField { x: 243.95px; y: 7px; label: "Warp"; value: Studio.ac-warped ? "On" : "Off"; value-x: 30px; chevron-x: 53.6px; menu: 1; }
+        AcField { x: 315.35px; y: 7px; label: "Mode"; value: Studio.ac-mode-text; value-x: 32.25px; chevron-x: 63px; menu: 2; enabled: Studio.ac-warped; }
     }
     // pencil (pen tool B/E) is real; velocity, zoom sliders and snap are PLACEHOLDERS
     if !Studio.ac-visible: Rectangle {

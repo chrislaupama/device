@@ -195,6 +195,8 @@ pub enum JobResult {
     TestTone(Result<AssetInfo, String>),
     /// Plugin catalogue scan finished (src/devices.rs).
     PluginScan(Result<saine_engine::ScanReport, String>),
+    /// Transients of an engine asset (warped clips, src/warpedit.rs).
+    Onsets { engine_asset: u64, result: Result<Vec<saine_engine::Onset>, String> },
 }
 
 /// Blocking decode + peak analysis. Runs on a worker thread.
@@ -274,6 +276,9 @@ pub struct Controller {
     pub engine: Arc<Engine>,
     pub rate: f64,
     pub(crate) asset_map: HashMap<AssetId, u64>,
+    /// Detected transients per engine asset (asset frames), and those being analysed.
+    pub(crate) onsets: HashMap<u64, Vec<saine_core::Transient>>,
+    pub(crate) onsets_pending: std::collections::HashSet<u64>,
     pub peaks: PeakStore,
     pub selected_track: Option<TrackId>,
     pub selected_clip: Option<ClipId>,
@@ -379,6 +384,8 @@ impl Controller {
             engine,
             rate,
             asset_map: HashMap::new(),
+            onsets: HashMap::new(),
+            onsets_pending: std::collections::HashSet::new(),
             peaks: PeakStore::default(),
             selected_track: None,
             selected_clip: None,
@@ -585,7 +592,7 @@ impl Controller {
     /// The session the engine should play right now: the document plus any
     /// automation lane being edited.
     pub fn current_snapshot(&self) -> snapshot::SessionSnapshot {
-        let (mut snap, _skipped) = snapshot::build(self.doc.project(), self.rate, &self.asset_map);
+        let (mut snap, _skipped) = snapshot::build_with_transients(self.doc.project(), self.rate, &self.asset_map, &self.transients_by_asset());
         // Automation drag / write preview: the pending lane replaces the model lane.
         if let Some((key, lane)) = &self.auto.pending {
             let p = self.doc.project();
@@ -605,6 +612,7 @@ impl Controller {
     }
 
     pub fn publish(&mut self) {
+        self.request_onsets();
         let snap = self.current_snapshot();
         if let Err(e) = self.engine.publish(&snap) {
             self.set_status(format!("Engine rejected the session: {e}"), 6);
@@ -879,6 +887,7 @@ impl Controller {
                 JobResult::Recorded { doc_epoch, takes } => self.finish_recorded(doc_epoch, takes),
                 JobResult::TestTone(r) => self.finish_test_tone(r),
                 JobResult::PluginScan(r) => self.finish_plugin_scan(r),
+                JobResult::Onsets { engine_asset, result } => self.finish_onsets(engine_asset, result),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
                     if doc_epoch != self.doc_epoch {
                         if let Ok((info, _)) = result {
@@ -967,6 +976,7 @@ impl Controller {
     /// Start over with `project` (no undo history). Used by `--state` setups.
     pub fn replace_project(&mut self, project: Project) {
         self.close_all_editors();
+        self.onsets.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
         self.doc = Document::new(project);
@@ -1006,6 +1016,7 @@ impl Controller {
         for (_, ea) in self.asset_map.drain() {
             let _ = self.engine.release_asset(ea);
         }
+        self.onsets.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
         self.doc = Document::new(loaded.project);
@@ -1156,16 +1167,16 @@ impl Controller {
                         self.drag = Some(Drag::Move { clip, grab_beats, orig_track, orig_start, track, start });
                     }
                     Drag::TrimLeft { clip, orig, .. } => {
-                        let Some((_, _, _, _, rate, _)) = self.clip_region(clip) else { return };
-                        let (s0, off0, len0) = orig;
                         let p = self.project();
+                        let Some(c) = p.clip(clip) else { return };
+                        let (s0, off0, len0) = orig;
+                        let at = |t: Ticks| p.clip_source_at(c, (t - s0) as f64);
                         let mut start = snap(beat);
-                        // Frames of source material before the current offset.
-                        let min_start = s0 - p.seconds_to_ticks(off0 as f64 / rate);
-                        let max_start = s0 + p.seconds_to_ticks(len0 as f64 / rate) - PPQ / 4;
+                        // Source material before the current offset (warped clips follow their map).
+                        let min_start = s0 + p.clip_ticks_at(c, 0.0).ceil() as Ticks;
+                        let max_start = s0 + p.clip_ticks_at(c, (off0 + len0) as f64) as Ticks - PPQ / 4;
                         start = start.clamp(min_start.max(0), max_start.max(s0));
-                        let delta = ((p.ticks_to_seconds(start - s0)) * rate).round() as i64;
-                        let off = (off0 as i64 + delta).max(0) as u64;
+                        let off = at(start).round().max(0.0) as u64;
                         let len = (len0 as i64 - (off as i64 - off0 as i64)).max(1) as u64;
                         self.drag = Some(Drag::TrimLeft { clip, orig, cur: (start, off, len) });
                     }
@@ -1179,11 +1190,12 @@ impl Controller {
                         self.drag = Some(Drag::MidiRight { clip, orig, cur: (orig.0, end - orig.0) });
                     }
                     Drag::TrimRight { clip, orig, .. } => {
-                        let Some((_, _, _, _, rate, frames)) = self.clip_region(clip) else { return };
+                        let Some((_, _, _, _, _, frames)) = self.clip_region(clip) else { return };
                         let (s0, off0, _) = orig;
                         let p = self.project();
+                        let Some(c) = p.clip(clip) else { return };
                         let end = snap(beat).max(s0 + PPQ / 4);
-                        let len = ((p.ticks_to_seconds(end - s0)) * rate).round() as u64;
+                        let len = (p.clip_source_at(c, (end - s0) as f64) - off0 as f64).round().max(1.0) as u64;
                         let len = len.clamp(1, frames - off0);
                         self.drag = Some(Drag::TrimRight { clip, orig, cur: (s0, off0, len) });
                     }
@@ -1240,7 +1252,8 @@ impl Controller {
                     _ => {}
                 }
                 let rate = p.asset(c.asset).map(|a| a.sample_rate).unwrap_or(self.rate);
-                let len_beats = p.seconds_to_ticks(len as f64 / rate) as f64 / PPQ as f64;
+                let shown = saine_core::Clip { source_offset: off, source_length: len, ..c.clone() };
+                let len_beats = p.clip_length_ticks(&shown) as f64 / PPQ as f64;
                 let ratio = self.rate / rate;
                 let wave = self.asset_map.get(&c.asset).and_then(|ea| self.peaks.slot(*ea)).map(|slot| (slot, off as f64 * ratio, len as f64 * ratio));
                 self.clip_vis.push(ClipVis {
