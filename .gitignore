@@ -10,3 +10,4 @@ reference/screenshots/
 tools/reference/bin/
 # Diff heatmaps embed traces of the reference UI (logo/icons); keep local.
 crates/saine-app/fidelity/*-diff.png
+__pycache__/

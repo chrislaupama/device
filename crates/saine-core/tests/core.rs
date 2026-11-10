@@ -7,7 +7,7 @@ fn asset(frames: u64, rate: f64) -> Asset {
 }
 
 fn clip(asset: AssetId, start: Ticks, len: u64) -> Clip {
-    Clip { id: ClipId(0), asset, name: "c".into(), start, source_offset: 0, source_length: len, gain: 1.0 }
+    Clip { id: ClipId(0), asset, name: "c".into(), start, source_offset: 0, source_length: len, gain: 1.0, warp: Default::default() }
 }
 
 fn doc_with_asset() -> (Document, TrackId, AssetId) {
@@ -233,6 +233,111 @@ fn seal_coalescing_starts_a_new_undo_step() {
 }
 
 #[test]
+fn track_and_panel_heights_are_view_changes_not_undo_steps() {
+    let mut d = Document::new(Project::default());
+    let track = d.project().tracks[0].id;
+    assert!(d.set_track_height(track, 0.1).is_err());
+    assert!(d.set_track_height(track, f32::NAN).is_err());
+    assert!(d.set_track_height(TrackId(999), 1.0).is_err());
+    let rev = d.revision();
+    d.set_track_height(track, 2.0).unwrap();
+    assert_eq!(d.project().track(track).unwrap().height, 2.0);
+    assert!(d.revision() > rev, "a track height marks the project dirty");
+    assert!(!d.can_undo(), "but is not an undo step");
+
+    let rev = d.revision();
+    d.set_bottom_panel_height("devices", Some(420.0));
+    assert!(d.revision() > rev, "a panel height marks the project dirty");
+    assert!(!d.can_undo(), "but is not an undo step");
+    d.set_bottom_panel_height("devices", None);
+    assert!(d.project().bottom_panel_heights.is_empty());
+}
+
+#[test]
+fn track_and_panel_heights_persist_and_default_when_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = Document::new(Project::default());
+    let track = d.project().tracks[1].id;
+    d.set_track_height(track, 0.5).unwrap();
+    d.set_bottom_panel_height("mixer", Some(500.0));
+    persist::save(d.project(), dir.path()).unwrap();
+    let loaded = persist::load(dir.path()).unwrap().project;
+    assert_eq!(loaded.track(track).unwrap().height, 0.5);
+    assert_eq!(loaded.bottom_panel_heights.get("mixer"), Some(&500.0));
+
+    let json = serde_json::to_string(&Project::default()).unwrap();
+    assert!(!json.contains("\"height\"") && !json.contains("bottom_panel_heights"), "defaults are not written");
+    let old: Project = serde_json::from_str(&json).unwrap();
+    assert!(old.tracks.iter().all(|t| t.height == 1.0));
+}
+
+fn section(name: &str, bars: i64) -> Section {
+    Section { id: SectionId(0), name: name.into(), color: 0x68a8c0, length: bars * 4 * PPQ }
+}
+
+#[test]
+fn sections_tile_from_bar_one_and_undo() {
+    let mut d = Document::new(Project::default());
+    d.execute(Command::InsertSection { index: None, section: section("Section 1", 8) }, Origin::User).unwrap();
+    d.execute(Command::InsertSection { index: None, section: section("Section 2", 4) }, Origin::User).unwrap();
+    let (a, b) = (d.project().sections[0].id, d.project().sections[1].id);
+    assert_eq!(d.project().section_start(1), 8 * 4 * PPQ);
+
+    d.execute(Command::SetSectionLength { section: a, length: 2 * 4 * PPQ }, Origin::User).unwrap();
+    assert_eq!(d.project().section_start(1), 2 * 4 * PPQ, "a later section moves with the end");
+    d.execute(Command::MoveSection { section: b, index: 0 }, Origin::User).unwrap();
+    assert_eq!(d.project().sections[0].id, b);
+    d.execute(Command::RenameSection { section: a, name: " Chorus ".into() }, Origin::User).unwrap();
+    assert_eq!(d.project().sections[1].name, "Chorus");
+    d.execute(Command::RemoveSection { section: b }, Origin::User).unwrap();
+    assert_eq!(d.undo_label(), Some("Delete Section"));
+
+    for _ in 0..4 {
+        d.undo().unwrap();
+    }
+    let p = d.project();
+    assert_eq!((p.sections[0].id, p.sections[1].id), (a, b));
+    assert_eq!((p.sections[0].length, p.sections[0].name.as_str()), (8 * 4 * PPQ, "Section 1"));
+    for _ in 0..4 {
+        d.redo().unwrap();
+    }
+    assert_eq!(d.project().sections.len(), 1);
+    assert_eq!(d.project().sections[0].id, a, "redo keeps ids");
+}
+
+#[test]
+fn section_validation_and_clear_all_batch() {
+    let mut d = Document::new(Project::default());
+    assert!(d.execute(Command::InsertSection { index: None, section: section(" ", 8) }, Origin::User).is_err());
+    assert!(d.execute(Command::InsertSection { index: None, section: Section { length: PPQ - 1, ..section("A", 1) } }, Origin::User).is_err());
+    assert!(d.execute(Command::RemoveSection { section: SectionId(999) }, Origin::User).is_err());
+    for n in ["A", "B", "C"] {
+        d.execute(Command::InsertSection { index: None, section: section(n, 8) }, Origin::User).unwrap();
+    }
+    let a = d.project().sections[0].id;
+    assert!(d.execute(Command::SetSectionLength { section: a, length: 0 }, Origin::User).is_err());
+    assert!(d.execute(Command::MoveSection { section: a, index: 3 }, Origin::User).is_err());
+    let commands = d.project().sections.iter().map(|s| Command::RemoveSection { section: s.id }).collect();
+    d.execute(Command::Batch { label: "Clear All Sections".into(), commands }, Origin::User).unwrap();
+    assert!(d.project().sections.is_empty());
+    d.undo().unwrap();
+    let names: Vec<_> = d.project().sections.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["A", "B", "C"]);
+}
+
+#[test]
+fn sections_persist_and_old_projects_have_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = Document::new(Project::default());
+    d.execute(Command::InsertSection { index: None, section: section("Intro", 8) }, Origin::User).unwrap();
+    persist::save(d.project(), dir.path()).unwrap();
+    assert_eq!(persist::load(dir.path()).unwrap().project.sections, d.project().sections);
+    let json = serde_json::to_string(&Project::default()).unwrap();
+    assert!(!json.contains("sections"));
+    assert!(serde_json::from_str::<Project>(&json).unwrap().sections.is_empty());
+}
+
+#[test]
 fn arm_monitor_input_commands() {
     let mut d = Document::new(Project::default());
     let (audio, inst) = (d.project().tracks[0].id, d.project().tracks[1].id);
@@ -251,3 +356,43 @@ fn arm_monitor_input_commands() {
     let t = d.project().track(audio).unwrap();
     assert!(!t.arm && !t.monitor && t.input.is_none());
 }
+
+#[test]
+fn import_track_gives_fresh_ids_and_keeps_references() {
+    let mut src = Project::default();
+    let t = src.tracks[0].id;
+    let a = AssetId(500);
+    src.assets.push(Asset { id: a, relative_path: Some("media/x.wav".into()), absolute_path: "/media/x.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 48_000 });
+    let mut c = clip(a, 0, 48_000);
+    c.id = ClipId(501);
+    src.tracks[0].clips.push(c);
+    let lfo = Device { id: DeviceId(502), links: vec![ModLink { slot: 0, target: DeviceId(503), param: ModParam::Builtin("gain".into()), min: 0.0, max: 1.0 }], ..Device::new(PluginRef { format: PluginFormat::Builtin, id: "lfo".into(), name: "LFO".into(), path: None, vendor: String::new(), version: String::new(), kind: PluginKind::Effect }) };
+    let gain = Device { id: DeviceId(503), chain: Some(DeviceId(502)), sidechain: Some(TrackId(9)), ..Device::new(PluginRef { format: PluginFormat::Builtin, id: "gain".into(), name: "Gain".into(), path: None, vendor: String::new(), version: String::new(), kind: PluginKind::Effect }) };
+    src.tracks[0].devices = vec![lfo, gain];
+    src.tracks[0].automation.push(AutomationLane::new(AutomationTarget::Builtin { device: DeviceId(503), device_type: "gain".into(), param: "gain".into() }));
+    src.tracks[0].solo = true;
+
+    let mut d = Document::new(Project::default());
+    let mut next = d.project().next_id;
+    let (track, assets) = saine_core::import::import_track(&src, t, &mut next).unwrap();
+    assert!(saine_core::import::import_track(&src, TrackId(12345), &mut next.clone()).is_none());
+    assert_eq!(assets.len(), 1);
+    assert_eq!(assets[0].relative_path, None);
+    assert_eq!(assets[0].absolute_path, "/media/x.wav");
+    assert_eq!(track.clips[0].asset, assets[0].id);
+    let (lfo, gain) = (&track.devices[0], &track.devices[1]);
+    assert_eq!(lfo.links[0].target, gain.id);
+    assert_eq!(gain.chain, Some(lfo.id));
+    assert_eq!(gain.sidechain, None);
+    assert!(matches!(&track.automation[0].target, AutomationTarget::Builtin { device, .. } if *device == gain.id));
+    assert!(!track.solo);
+    let used = [track.id.0, track.clips[0].id.0, lfo.id.0, gain.id.0, assets[0].id.0];
+    assert!(used.iter().all(|&id| id >= d.project().next_id && id < next), "{used:?}");
+    let id = track.id;
+    let mut commands: Vec<Command> = assets.into_iter().map(|asset| Command::AddAsset { asset }).collect();
+    commands.push(Command::AddTrack { index: None, track });
+    d.execute(Command::Batch { label: "Add Track".into(), commands }, Origin::User).unwrap();
+    assert_eq!(d.project().tracks.last().map(|t| t.id), Some(id));
+    assert!(d.project().next_id >= next, "next_id {} < {next}", d.project().next_id);
+}
+

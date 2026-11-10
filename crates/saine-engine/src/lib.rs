@@ -50,6 +50,16 @@ fn cpath(p: &Path) -> Result<CString, EngineError> {
     CString::new(p.to_string_lossy().as_bytes()).map_err(|_| EngineError { code: ffi::SE_ERR_INVALID_ARG, kind: "invalid argument", message: "path contains NUL".into() })
 }
 
+/// A transient found by [`Engine::detect_onsets`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Onset {
+    pub frame: i64,
+    /// 0..1 relative to the strongest onset of the asset.
+    pub strength: f32,
+    /// The audio up to the next onset decays like a hit.
+    pub percussive: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
     pub sample_rate: f64,
@@ -142,6 +152,14 @@ impl Engine {
         check(unsafe { ffi::se_asset_release(self.raw, id) })
     }
 
+    /// A new asset with \`id\`'s audio back to front (reversed clips). Copies
+    /// the audio: a few ms per minute, off the audio thread.
+    pub fn reverse_asset(&self, id: u64) -> Result<AssetInfo, EngineError> {
+        let mut info = AssetInfo::default();
+        check(unsafe { ffi::se_asset_reverse(self.raw, id, &mut info) })?;
+        Ok(info)
+    }
+
     pub fn asset_info(&self, id: u64) -> Result<AssetInfo, EngineError> {
         let mut info = AssetInfo::default();
         check(unsafe { ffi::se_asset_get_info(self.raw, id, &mut info) })?;
@@ -157,8 +175,28 @@ impl Engine {
         Ok(buf.chunks_exact(2).map(|c| [c[0], c[1]]).collect())
     }
 
+    /// Transients of a loaded asset (engine-rate frames, sorted), for warp
+    /// markers and Auto warping. CPU-bound: tens of ms per minute of audio.
+    pub fn detect_onsets(&self, id: u64) -> Result<Vec<Onset>, EngineError> {
+        let mut n = 0usize;
+        check(unsafe { ffi::se_asset_detect_onsets(self.raw, id, std::ptr::null_mut(), 0, &mut n) })?;
+        let mut buf = vec![ffi::se_onset::default(); n];
+        check(unsafe { ffi::se_asset_detect_onsets(self.raw, id, buf.as_mut_ptr(), buf.len(), &mut n) })?;
+        buf.truncate(n);
+        Ok(buf.into_iter().map(|o| Onset { frame: o.frame, strength: o.strength, percussive: o.percussive != 0 }).collect())
+    }
+
+    /// Background warp renders still queued or running; [`Engine::plugin_idle`]
+    /// attaches the finished ones.
+    pub fn warp_renders_pending(&self) -> usize {
+        let mut n = 0usize;
+        // SAFETY: valid handle and out pointer.
+        unsafe { ffi::se_warp_renders_pending(self.raw, &mut n) };
+        n
+    }
+
     /// Publish an immutable session snapshot to the audio thread
-    /// (`se_session_publish_v6`: audio clips plus, on instrument tracks,
+    /// (`se_session_publish_v7`: audio clips, warped ones with their map, plus, on instrument tracks,
     /// MIDI notes rendered by the engine's built-in synth with the track's
     /// [`SynthParams`] (`synth: None` uses the engine defaults, which equal
     /// `SynthParams::default()`) or by the track's instrument plugin; each
@@ -249,16 +287,41 @@ impl Engine {
                 _pad3: 0,
             })
             .collect();
-        let desc = ffi::se_session_desc_v6 {
-            tracks: tracks.as_ptr(),
-            track_count: tracks.len() as u32,
-            master_gain: s.master_gain,
-            master_lanes: master_descs.as_ptr(),
-            master_lane_count: master_descs.len() as u32,
+        // Warped clips: points and slices first, then the descriptors.
+        let warped: Vec<(u64, &saine_core::snapshot::WarpSnapshot)> =
+            s.tracks.iter().flat_map(|t| t.clips.iter().filter_map(|c| c.warp.as_ref().map(|w| (c.clip_id, w)))).collect();
+        let warp_points: Vec<Vec<ffi::se_warp_point>> = warped.iter().map(|(_, w)| w.points.iter().map(|&(frame, source)| ffi::se_warp_point { frame, source }).collect()).collect();
+        let warp_slices: Vec<Vec<ffi::se_warp_slice>> =
+            warped.iter().map(|(_, w)| w.slices.iter().map(|&(source, percussive)| ffi::se_warp_slice { source, percussive: percussive as u8, _pad: [0; 7] }).collect()).collect();
+        let warp_descs: Vec<ffi::se_clip_warp_desc> = warped
+            .iter()
+            .zip(warp_points.iter().zip(&warp_slices))
+            .map(|((id, w), (pts, sl))| ffi::se_clip_warp_desc {
+                clip_id: *id,
+                mode: w.mode,
+                _pad: [0; 3],
+                transpose: w.transpose,
+                points: pts.as_ptr(),
+                point_count: pts.len() as u32,
+                slice_count: sl.len() as u32,
+                slices: if sl.is_empty() { std::ptr::null() } else { sl.as_ptr() },
+            })
+            .collect();
+        let desc = ffi::se_session_desc_v7 {
+            v6: ffi::se_session_desc_v6 {
+                tracks: tracks.as_ptr(),
+                track_count: tracks.len() as u32,
+                master_gain: s.master_gain,
+                master_lanes: master_descs.as_ptr(),
+                master_lane_count: master_descs.len() as u32,
+                _pad: 0,
+            },
+            warps: warp_descs.as_ptr(),
+            warp_count: warp_descs.len() as u32,
             _pad: 0,
         };
         // SAFETY: all pointers stay valid for the duration of the call; the engine copies.
-        check(unsafe { ffi::se_session_publish_v6(self.raw, &desc) })
+        check(unsafe { ffi::se_session_publish_v7(self.raw, &desc) })
     }
 
     fn device_store(

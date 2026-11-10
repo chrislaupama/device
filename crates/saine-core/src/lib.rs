@@ -5,6 +5,7 @@
 //! * [`history`]: undo/redo document wrapper
 //! * [`persist`]: versioned project files with external media references
 //! * [`snapshot`]: derivation of immutable engine session descriptions
+//! * [`warp`]: audio clip warping (tempo following, speed, markers, transients)
 
 pub mod assistant;
 pub mod automation;
@@ -12,6 +13,7 @@ pub mod builtin;
 pub mod command;
 pub mod device;
 pub mod history;
+pub mod import;
 pub mod instrument;
 pub mod keymap;
 pub mod midi;
@@ -20,6 +22,7 @@ pub mod modulation;
 pub mod persist;
 pub mod snapshot;
 pub mod steps;
+pub mod warp;
 
 pub use command::{Command, EditError};
 pub use history::{Document, Origin};
@@ -29,3 +32,4 @@ pub use instrument::SynthParams;
 pub use midi::{MidiClip, Note};
 pub use steps::{StepCell, StepLane, StepPattern, StepRate, StepRows};
 pub use model::*;
+pub use warp::{ClipWarp, Transient, WarpMarker, WarpMode};

@@ -21,6 +21,7 @@
 #include "automation.hpp"
 #include "saine_engine.h"
 #include "synth.hpp"
+#include "warp.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -113,6 +114,8 @@ struct ClipNode {
     int64_t timeline_end = 0;     // one past the last frame (clamped to asset end)
     int64_t source_offset = 0;    // asset frame played at timeline_start
     float gain = 1.0f;
+    int64_t source_frames = 0;    // asset length (warped clips read anywhere in it)
+    int32_t warp = -1;            // index into RenderGraph::warps; -1 = plays 1:1
 };
 
 struct TrackNode {
@@ -197,6 +200,7 @@ struct TrackMeter {
 
 struct RenderGraph {
     uint64_t seq = 0; // publication sequence number, assigned when published
+    double sample_rate = 48000.0; // the engine's, set when published
     float master_gain = 1.0f;
     // Some track routes device input (input set and armed or monitoring):
     // render_block() only looks at the input when this is set.
@@ -252,6 +256,16 @@ struct RenderGraph {
     PdcPlan pdc;
     std::vector<std::shared_ptr<DelayLine>> line_refs;
     std::vector<DelayLine*> lines;
+    // Warped clips (se_session_publish_v7): per clip its map segments and
+    // slices; the stretch voice slots, and the voices for live playback
+    // (same order as warp_voice_keys, assigned by Engine::install_graph and
+    // kept across republishes like synths; null until then).
+    std::vector<WarpClip> warps;
+    std::vector<WarpSegment> warp_segments;
+    std::vector<WarpSlice> warp_slices;
+    std::vector<WarpVoiceKey> warp_voice_keys;
+    std::vector<std::shared_ptr<WarpVoice>> warp_voice_refs;
+    std::vector<WarpVoice*> warp_voices;
 };
 
 // Lane view for evaluation.
@@ -277,6 +291,8 @@ void constant_power_pan(float pan, float& left, float& right) noexcept;
 // Synth states are not assigned here (see RenderGraph::synth_refs); `synths`
 // is sized and null. Plugin slots are created with null instances (the
 // engine resolves them in the same track/device order).
+int32_t build_render_graph(const se_session_desc_v7& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v6& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v5& desc, const AssetLookup& lookup,

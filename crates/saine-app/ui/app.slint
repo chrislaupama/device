@@ -20,18 +20,19 @@ import { Panel, Icon, Icons, Pill, IconButton, SmallButton, HSlider, Knob, Switc
 
 export { Tokens }
 
-import { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow } from "studio.slint";
-import { ClipSidebar, PianoRoll, ClipEmpty, ContextMenu } from "pianoroll.slint";
+import { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, SectionLabel, ClipLabel, TreeRow, FileRow, FileGuide, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow } from "studio.slint";
+import { ClipSidebar, PianoRoll, ClipEmpty, ContextMenu, DropMenu } from "pianoroll.slint";
 import { MixerPanel } from "mixer.slint";
 import { StripMetrics, StripCanvas, StripReadout, StripButton } from "channel_strip.slint";
 import { AssistantPanel, HighlightOverlay } from "assistant.slint";
 import { SynthDevice, SynthMenuList } from "synth.slint";
 import { SettingsPanel, ChoiceList } from "settings.slint";
+import { ExportModal, UnsavedPrompt } from "dialogs.slint";
 import { PluginCard, AddDeviceCard, DevMenuList } from "devices.slint";
-import { BuiltinCard } from "device_panel.slint";
+import { BuiltinCard, FoldedStrip } from "device_panel.slint";
 import { TrackHeaderRow, MasterHeaderRow, AutoPill } from "track_header.slint";
 
-export { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, ClipLabel, TreeRow, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow }
+export { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, SectionLabel, ClipLabel, TreeRow, FileRow, FileGuide, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow }
 
 // ------------------------------------------------------------------ header
 component Header inherits Rectangle {
@@ -136,41 +137,153 @@ component Header inherits Rectangle {
         ink: Studio.settings-open ? #e5e5e8 : #767678; clicked => { Studio.toggle-settings(); } }
 }
 
-// ------------------------------------------------------------------ browser
-// Section tabs, back/forward and the preview bar are PLACEHOLDERS (only the Devices section
-// exists). Devices › Instruments / Effects list the scanned plugin catalogue (src/devices.rs);
-// Devices › Chains is PLACEHOLDER data.
-component Browser inherits Panel {
-    // Section tabs (static: only "Devices" content exists)
-    // 12 px weight 700, -0.04 em, 8 px apart from 12 px in; rest #63656d, active white.
+// Browser › Files (src/files.rs lays the rows out). reference px × 0.85: tabs like Devices', a 24 px
+// count row (10 px weight 500 #81838a) with the sort button, 24 px rows 2 px apart indented 8 px
+// per level, 11 px weight 600 names at 72 % white (selected: white on a 7 % white fill), 11 px
+// #63656d details, 11 px #63656d group labels and notes.
+component FilesPane inherits Rectangle {
+    property <length> list-y: Studio.files-list-y - 59px;
     HorizontalLayout {
-        x: 10.2px; y: 0; width: self.preferred-width; height: 27.2px; spacing: 6.8px;
-        for t in ["Search", "Library", "Devices", "Files"]: Text {
-            text: t; color: t == "Devices" ? #ffffff : #63656d;
-            font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; vertical-alignment: center;
+        x: 10.2px; y: 0; width: self.preferred-width; height: 16.7px; spacing: 10.2px;
+        for t[i] in ["Projects", "Folders"]: Rectangle {
+            width: label.preferred-width;
+            accessible-role: tab; accessible-label: t; accessible-checked: Studio.files-tab == i;
+            label := Text {
+                x: 0; y: 0; height: 15px; text: t; color: Studio.files-tab == i ? #ffffff : #63656d;
+                font-size: 9.35px; font-weight: 600; letter-spacing: -0.28px; vertical-alignment: center;
+            }
+            if Studio.files-tab == i: Rectangle { x: 0; y: 15px; width: parent.width; height: 1.7px; background: #ffffff; }
+            TouchArea { clicked => { Studio.files-tab-select(i); } }
         }
     }
-    Icon { x: 218px; y: 6.5px; width: 13px; height: 13px; d: Icons.chevron-left; ink: Tokens.icon; }
-    Icon { x: 234px; y: 6.5px; width: 13px; height: 13px; d: Icons.chevron-right; ink: Tokens.icon; }
+    // "+ Add folder": 10 px weight 500 #81838a, an 8 px plus 4 px before it, 12 px from the right.
+    if Studio.files-tab == 1: Rectangle {
+        x: root.width - 10.2px - self.width; y: 0; width: add-label.preferred-width + 10.2px; height: 15px;
+        accessible-role: button; accessible-label: "Add folder";
+        Path { x: 0; y: (parent.height - 6.8px) / 2 + 0.85px; width: 6.8px; height: 6.8px; viewbox-width: 8; viewbox-height: 8;
+            commands: "M4 1v6M1 4h6"; stroke: add-ta.has-hover ? #a6a8ad : #81838a; stroke-width: 1.06px; stroke-line-cap: round; }
+        add-label := Text { x: 10.2px; y: 0.85px; height: parent.height; text: "Add folder"; color: add-ta.has-hover ? #a6a8ad : #81838a;
+            font-size: 8.5px; font-weight: 500; letter-spacing: -0.17px; vertical-alignment: center; }
+        add-ta := TouchArea { clicked => { Studio.files-add-folder(); } }
+    }
+    // Count row and sort button (shown once the tab has items).
+    if Studio.files-meta != "": Rectangle {
+        x: 0; y: root.list-y - 20.4px; width: root.width; height: 20.4px;
+        Text { x: 10.2px; text: Studio.files-meta; color: #81838a; font-size: 8.5px; font-weight: 500; letter-spacing: -0.17px; vertical-alignment: center; }
+        Rectangle {
+            x: parent.width - 10.2px - self.width; width: sort-label.preferred-width + 3.4px + 8.5px;
+            accessible-role: button; accessible-label: "Sort: " + Studio.files-sort;
+            sort-label := Text { x: 0; text: Studio.files-sort; color: #81838a; font-size: 8.5px; font-weight: 500; letter-spacing: -0.17px; vertical-alignment: center; }
+            Icon { x: sort-label.preferred-width + 3.4px; y: (parent.height - 8.5px) / 2; width: 8.5px; height: 8.5px; d: Icons.chevron-down; ink: #81838a; stroke-width: 1.4px; }
+            TouchArea { clicked => { Studio.files-sort-toggle(); } }
+        }
+    }
+    Rectangle { x: 0; y: root.list-y; width: root.width; height: 0.5px; background: Tokens.line-separator; }
+
+    Rectangle {
+        x: 0; y: root.list-y + 0.5px; width: root.width; height: root.height - root.list-y - 0.5px;
+        clip: true;
+        TouchArea { scroll-event(e) => { Studio.files-scroll-by(e.delta-y / 1px); accept } }
+        // Empty tab: a centred title (11 px weight 600 #81838a) over a hint (11 px weight 500 #63656d).
+        if Studio.files-empty-title != "": Rectangle {
+            Text { y: parent.height / 2 - 8.7px - 6.3px; height: 16px; width: parent.width; horizontal-alignment: center; vertical-alignment: center;
+                text: Studio.files-empty-title; color: #81838a; font-size: 9.35px; font-weight: 600; letter-spacing: -0.28px; }
+            Text { y: parent.height / 2 + 8.7px - 6.3px; height: 16px; x: 10.2px; width: parent.width - 20.4px; horizontal-alignment: center; vertical-alignment: center;
+                text: Studio.files-empty-hint; color: #63656d; font-size: 9.35px; font-weight: 500; letter-spacing: -0.19px; wrap: word-wrap; }
+        }
+        for g in Studio.files-guides: Rectangle { x: g.x; y: g.y - Studio.files-scroll; width: 0.85px; height: g.h; background: #2c2d30; }
+        for row[i] in Studio.files: Rectangle {
+            property <length> inset: 10.2px + row.depth * 6.8px;
+            x: 0; y: row.y - Studio.files-scroll; width: parent.width; height: row.h;
+            accessible-role: list-item;
+            accessible-label: row.label;
+            if row.kind == 0 && (row.selected || ta.has-hover): Rectangle { background: #ffffff12; }
+            if row.kind == 0 && row.expander != 0: Icon {
+                x: parent.inset; y: (parent.height - 8.5px) / 2; width: 8.5px; height: 8.5px;
+                d: row.expander == 2 ? Icons.chevron-down : Icons.chevron-right; ink: parent.ink; stroke-width: 1.6px;
+            }
+            property <color> ink: row.selected ? #ffffff : ta.has-hover ? #ffffffeb : #ffffffb8;
+            if row.kind == 0: Icon {
+                x: parent.inset + 13.6px; y: (parent.height - 13.6px) / 2; width: 13.6px; height: 13.6px; ink: parent.ink; stroke-width: 1.2px;
+                d: row.glyph == 1 ? Icons.wave : row.glyph == 2 ? Icons.window : row.glyph == 3 ? Icons.track-audio : row.glyph == 4 ? Icons.keys : row.glyph == 5 ? Icons.piano : Icons.folder;
+            }
+            if row.kind == 0: Text {
+                x: parent.inset + 32.3px; width: parent.width - self.x - 10.2px - (row.detail == "" ? 0 : detail.preferred-width + 6.8px);
+                text: row.label; color: parent.ink; font-size: 9.35px; font-weight: 600; letter-spacing: -0.28px; vertical-alignment: center; overflow: elide;
+            }
+            detail := Text {
+                visible: row.kind == 0 && row.detail != "";
+                x: parent.width - 10.2px - self.preferred-width; text: row.detail; color: #63656d;
+                font-size: 9.35px; font-weight: 600; letter-spacing: -0.28px; vertical-alignment: center;
+            }
+            // Group labels sit 16 px past their row's inset; notes one level deeper.
+            if row.kind != 0: Text {
+                x: parent.inset + 13.6px + (row.kind == 2 ? 6.8px : 0); y: row.kind == 1 ? 3.4px : 0; height: row.kind == 1 ? 13.6px : parent.height;
+                text: row.label; color: #63656d; font-size: 9.35px; font-weight: 600; letter-spacing: -0.28px; vertical-alignment: center;
+            }
+            ta := TouchArea {
+                enabled: row.kind == 0;
+                clicked => { Studio.files-click(i, self.mouse-x < parent.inset + 11px); }
+                double-clicked => { Studio.files-activate(i); }
+                pointer-event(e) => {
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.files-drag(i, 0, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.files-drag(i, 2, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+                }
+                moved => { Studio.files-drag(i, 1, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+            }
+        }
+    }
+}
+
+
+// ------------------------------------------------------------------ browser
+// Sections Devices and Files are real (src/devices.rs, src/files.rs); Search and Library have no
+// content (PLACEHOLDER: no catalog), and the preview bar is an inert PLACEHOLDER.
+// Devices › Chains is PLACEHOLDER data. Back / Forward step through visited sections and tabs.
+component Browser inherits Panel {
+    // Section tabs: 12 px weight 700, -0.04 em, 8 px apart from 12 px in; rest #63656d, active white.
+    HorizontalLayout {
+        x: 10.2px; y: 0; width: self.preferred-width; height: 27.2px; spacing: 6.8px;
+        for t[i] in ["Search", "Library", "Devices", "Files"]: Rectangle {
+            width: section-label.preferred-width;
+            accessible-role: tab; accessible-label: t; accessible-checked: Studio.browser-section == i;
+            section-label := Text {
+                x: 0; height: parent.height; text: t; color: Studio.browser-section == i ? #ffffff : #63656d;
+                font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; vertical-alignment: center;
+            }
+            TouchArea { clicked => { Studio.browser-section-select(i); } }
+        }
+    }
+    // Back / Forward: white when there is somewhere to go, else #63656d.
+    Icon {
+        x: 218px; y: 6.5px; width: 13px; height: 13px; d: Icons.chevron-left; ink: Studio.browser-can-back ? #ffffff : #63656d;
+        accessible-role: button; accessible-label: "Back";
+        TouchArea { x: -2px; y: -4px; width: 16px; height: 20px; clicked => { Studio.browser-back(); } }
+    }
+    Icon {
+        x: 234px; y: 6.5px; width: 13px; height: 13px; d: Icons.chevron-right; ink: Studio.browser-can-forward ? #ffffff : #63656d;
+        accessible-role: button; accessible-label: "Forward";
+        TouchArea { x: -2px; y: -4px; width: 16px; height: 20px; clicked => { Studio.browser-forward(); } }
+    }
     // Section separator (01/05/06: 0.5 pt at panel y 27).
     Rectangle { x: 0; y: 27px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
     // Search field (real: filters the tree)
     Field {
         x: 8.5px; y: 34px; width: 235px; height: 20px; border-radius: 10px;
         Icon { x: 8px; width: 13px; height: 13px; d: Icons.search; ink: #b0b0b3; }
-        if Studio.browser-search == "": Text { x: 27px; text: "Search devices"; color: #a5a5a8; font-size: 9px; vertical-alignment: center; }
+        if Studio.browser-search == "": Text { x: 27px; text: Studio.browser-section == 3 ? "Search files" : "Search devices"; color: #a5a5a8; font-size: 9px; vertical-alignment: center; }
         TextInput {
             x: 27px; width: parent.width - 34px; height: parent.height;
             text: Studio.browser-search; color: Tokens.text-primary; font-size: 9px; vertical-alignment: center;
             single-line: true;
-            accessible-label: "Search devices";
+            accessible-label: Studio.browser-section == 3 ? "Search files" : "Search devices";
             edited => { Studio.browser-search = self.text; Studio.browser-search-edited(self.text); }
             changed has-focus => { Studio.search-focused = self.has-focus; }
         }
     }
     // Sub-tabs (real): 11 px weight 600, -0.03 em, 12 px apart; rest #63656d, active white with
     // a 2 px underline.
-    HorizontalLayout {
+    if Studio.browser-section == 2: HorizontalLayout {
         x: 10.2px; y: 59px; width: self.preferred-width; height: 16.7px; spacing: 10.2px;
         for t[i] in ["Instruments", "Effects", "Chains"]: Rectangle {
             width: label.preferred-width;
@@ -183,10 +296,10 @@ component Browser inherits Panel {
             TouchArea { clicked => { Studio.browser-tab-select(i); } }
         }
     }
-    Rectangle { x: 0; y: 80px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
+    if Studio.browser-section == 2: Rectangle { x: 0; y: 80px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
 
     // Tree (rows supplied by Rust; scrolls with the wheel).
-    Rectangle {
+    if Studio.browser-section == 2: Rectangle {
         x: 0; y: 81px; width: root.width; height: root.height - 81px - 36px;
         clip: true;
         TouchArea { scroll-event(e) => { Studio.tree-scroll-by(e.delta-y / 1px); accept } }
@@ -221,6 +334,7 @@ component Browser inherits Panel {
             }
         }
     }
+    if Studio.browser-section == 3: FilesPane { x: 0; y: 59px; width: root.width; height: root.height - 59px - 33px; }
     // Preview bar (inert placeholder)
     Rectangle {
         x: 0; y: root.height - 33px; width: root.width; height: 33px; background: Tokens.bg-panel;
@@ -330,7 +444,12 @@ component Timeline inherits Panel {
         for l in Studio.ruler-labels: Text {
             x: l.x + 4.5px; y: 0px; height: 11px; text: l.text; color: #bdbdbd; font-size: 7.75px; font-weight: 600; vertical-alignment: center;
         }
-        Icon { x: 3px; y: 26.5px; width: 11px; height: 11px; d: Icons.plus; ink: Tokens.text-tertiary; }
+        Icon { x: Studio.section-add-x - 5.5px; y: 26.5px; width: 11px; height: 11px; d: Icons.plus; ink: Tokens.text-tertiary; }
+        // Section names: 10 px weight 600, -0.04 em, in a dark shade of the block's hue.
+        for l in Studio.section-labels: Text {
+            x: l.x; y: 25.85px; width: l.w; height: 11.9px; text: l.text; color: l.ink;
+            font-size: 8.5px; font-weight: 600; letter-spacing: -0.34px; vertical-alignment: center; overflow: elide;
+        }
         for c in Studio.clip-labels: Text {
             x: c.x + 5px; y: c.y; width: max(0px, c.w - 8px); height: 17px;
             text: c.text; color: Studio.auto-shown ? #191b24 : #15161a; font-size: 7.75px; font-weight: 500; vertical-alignment: center; overflow: elide;
@@ -354,6 +473,7 @@ component Timeline inherits Panel {
                 }
             }
             moved => { Studio.lane-pointer(1, self.mouse-x, self.mouse-y, false, false, false); }
+            double-clicked => { Studio.lane-double(self.mouse-x, self.mouse-y); }
             changed mouse-x => { if (!self.pressed) { Studio.lane-hover(self.mouse-x, self.mouse-y); } }
             changed mouse-y => { if (!self.pressed) { Studio.lane-hover(self.mouse-x, self.mouse-y); } }
             scroll-event(e) => {
@@ -374,8 +494,18 @@ component Timeline inherits Panel {
         }
         for t[i] in Studio.tracks: Rectangle {
             x: 0; y: t.y - Studio.scroll-y; width: parent.width; height: t.h;
-            TrackHeaderRow { x: 0; y: 0; width: parent.width; height: Tokens.track-h; t: t; automation: Studio.auto-shown; level: Studio.track-levels[i]; edit-done => { root.focus-main(); } }
-            Rectangle { y: Tokens.track-h; height: Tokens.track-pitch - Tokens.track-h; background: t.selected ? #353639 : Tokens.line-separator; }
+            TrackHeaderRow { x: 0; y: 0; width: parent.width; height: t.row-h; row-h: t.row-h; t: t; automation: Studio.auto-shown; level: Studio.track-levels[i]; edit-done => { root.focus-main(); } }
+            Rectangle { y: t.row-h; height: Tokens.track-pitch - Tokens.track-h; background: t.selected ? #353639 : Tokens.line-separator; }
+            // Height handle: 6 px at the row's bottom edge.
+            TouchArea {
+                y: t.row-h + 0.5px - 5.1px; height: 5.1px;
+                mouse-cursor: row-resize;
+                pointer-event(e) => {
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.track-resize(t.id, 0, self.absolute-position.y + self.mouse-y); }
+                    if (e.kind == PointerEventKind.move && self.pressed) { Studio.track-resize(t.id, 1, self.absolute-position.y + self.mouse-y); }
+                    if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.track-resize(t.id, 2, self.absolute-position.y + self.mouse-y); }
+                }
+            }
         }
         // Expanded automation rows (src/automation.rs, EXTRA_H + separator): well fill, a 1 px
         // white 5 % top rule, and the pill 48 px in.
@@ -538,7 +668,8 @@ component BottomPanel inherits Panel {
         TouchArea {
             scroll-event(e) => { Studio.chain-scroll-by(e.delta-x != 0 ? e.delta-x / 1px : e.delta-y / 1px); accept }
         }
-        if Studio.synth-visible: SynthDevice { x: 263.5px - 255px - Studio.chain-scroll; y: 34px - 27px; }
+        if Studio.synth-visible && !Studio.synth-card.folded: SynthDevice { x: 263.5px - 255px - Studio.chain-scroll; y: 34px - 27px; }
+        if Studio.synth-visible && Studio.synth-card.folded: FoldedStrip { x: 263.5px - 255px - Studio.chain-scroll; y: 34px - 27px; card: Studio.synth-card; }
         // Chain heads frame their members; an empty chain offers "Add effect".
         for f in Studio.chain-frames: Rectangle {
             x: f.x - 255px; y: 34px - 27px - 5px; width: f.w; height: 265px + 10px; border-radius: 9px;
@@ -609,10 +740,59 @@ export component AppWindow inherits Window {
     default-font-size: 9.5px;
     default-font-family: Tokens.font-ui;
 
+    // Native menu bar on macOS (the app menu with About/Services/Hide/Quit comes from the backend).
+    // Shortcut items are disabled while menu-key replays their key (see Studio.menu-replay).
+    MenuBar {
+        Menu {
+            title: "File";
+            MenuItem { title: "New Project"; enabled: !Studio.menu-replay; shortcut: @keys(Control + N); activated => { Studio.menu-key("n", true, false); } }
+            MenuSeparator { }
+            MenuItem { title: "Save Project"; enabled: !Studio.menu-replay; shortcut: @keys(Control + S); activated => { Studio.menu-key("s", true, false); } }
+            MenuItem { title: "Save Project As…"; enabled: !Studio.menu-replay; shortcut: @keys(Control + Shift + S); activated => { Studio.menu-key("s", true, true); } }
+            MenuSeparator { }
+            MenuItem { title: "Open Project…"; enabled: !Studio.menu-replay; shortcut: @keys(Control + O); activated => { Studio.menu-key("o", true, false); } }
+            Menu {
+                title: "Open Recent";
+                MenuItem { title: "Clear Menu"; enabled: false; }
+            }
+            MenuItem { title: "Show Project in Finder"; enabled: Studio.project-on-disk; activated => { Studio.menu-action("file.show_in_finder"); } }
+            MenuSeparator { }
+            MenuItem { title: "Export Audio…"; enabled: !Studio.menu-replay; shortcut: @keys(Control + Shift + E); activated => { Studio.menu-key("e", true, true); } }
+            MenuItem { title: "Export Project for Ableton Live…"; activated => { Studio.menu-action("file.export_ableton"); } }
+            MenuItem { title: "Import Ableton Live Set…"; activated => { Studio.menu-action("file.import_ableton"); } }
+        }
+        Menu {
+            title: "Edit";
+            MenuItem { title: Studio.undo-text; enabled: Studio.can-undo && !Studio.menu-replay; shortcut: @keys(Control + Z); activated => { Studio.menu-key("z", true, false); } }
+            MenuItem { title: Studio.redo-text; enabled: Studio.can-redo && !Studio.menu-replay; shortcut: @keys(Control + Shift + Z); activated => { Studio.menu-key("z", true, true); } }
+            MenuItem { title: "Undo History…"; activated => { Studio.menu-action("edit.undo_history"); } }
+            MenuSeparator { }
+            MenuItem { title: "Cut"; enabled: Studio.can-copy && !Studio.menu-replay; shortcut: @keys(Control + X); activated => { Studio.menu-key("x", true, false); } }
+            MenuItem { title: "Copy"; enabled: Studio.can-copy && !Studio.menu-replay; shortcut: @keys(Control + C); activated => { Studio.menu-key("c", true, false); } }
+            MenuItem { title: "Paste"; enabled: !Studio.menu-replay; shortcut: @keys(Control + V); activated => { Studio.menu-key("v", true, false); } }
+            MenuItem { title: "Delete"; activated => { Studio.menu-key(Key.Delete, false, false); } }
+        }
+        Menu {
+            title: "View";
+            MenuItem { title: "Zoom In"; enabled: !Studio.menu-replay; shortcut: @keys(Control + "="); activated => { Studio.menu-key("=", true, false); } }
+            MenuItem { title: "Zoom Out"; enabled: !Studio.menu-replay; shortcut: @keys(Control + "-"); activated => { Studio.menu-key("-", true, false); } }
+            MenuItem { title: "Reset Zoom"; enabled: !Studio.menu-replay; shortcut: @keys(Control + "0"); activated => { Studio.menu-key("0", true, false); } }
+        }
+        Menu {
+            title: "Options";
+            MenuItem { title: "Audio/MIDI Settings…"; activated => { Studio.menu-action("options.audio_midi"); } }
+            MenuSeparator { }
+            MenuItem { title: "Check for New Plugins…"; activated => { Studio.menu-action("options.check_plugins"); } }
+            MenuItem { title: "Rescan All Plugins…"; activated => { Studio.menu-action("options.rescan_plugins"); } }
+            MenuSeparator { }
+            MenuItem { title: "Check for Updates…"; activated => { Studio.menu-action("options.check_updates"); } }
+        }
+    }
+
     out property <length> lanes-width: timeline.lanes-width;
     out property <length> lanes-height: timeline.lanes-height;
     // Panel geometry (mirrored in src/highlight.rs `Layout`).
-    property <length> bottom-h: Studio.mixer-open || Studio.bottom-tab == 1 ? 390px : 306px;
+    property <length> bottom-h: Studio.bottom-h;
     // Top row y 78.2 / browser width 252.45 / timeline x 262.65: the reference's 92 pt, 297 pt and
     // 309 pt at its default (100 %) zoom, in our 85 % units (AX dump, reference/data/ax-main-100.tsv).
     property <length> top-h: root.height - 88.4px - self.bottom-h;
@@ -620,6 +800,13 @@ export component AppWindow inherits Window {
 
     property <int> cards-epoch: Studio.cards-epoch;
     changed cards-epoch => { fs.focus(); }
+    // The key handler gets the focus back when a modal dialog closes.
+    property <bool> modal-open: Studio.export-open || Studio.unsaved-open;
+    changed modal-open => {
+        if (!self.modal-open) {
+            fs.focus();
+        }
+    }
     fs := FocusScope {
         init => { self.focus(); }
         key-pressed(e) => {
@@ -642,6 +829,17 @@ export component AppWindow inherits Window {
         // Bottom panel: inspector + devices, or the mixer (taller; the row above shrinks).
         if !Studio.mixer-open: BottomPanel { x: 5px; y: root.height - 5px - root.bottom-h; width: root.width - 10px; height: root.bottom-h; }
         if Studio.mixer-open: MixerPanel { x: 5px; y: root.height - 5px - root.bottom-h; width: root.width - 10px; height: root.bottom-h; }
+        // Timeline / bottom-panel splitter: an invisible 14 px strip across the gap, 8 px of it
+        // above the panel's top edge (the reference's resize handle).
+        TouchArea {
+            x: 5px; y: root.height - 5px - root.bottom-h - 6.8px; width: root.width - 10px; height: 11.9px;
+            mouse-cursor: row-resize;
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.bottom-resize(0, self.absolute-position.y + self.mouse-y); }
+                if (e.kind == PointerEventKind.move && self.pressed) { Studio.bottom-resize(1, self.absolute-position.y + self.mouse-y); }
+                if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.bottom-resize(2, self.absolute-position.y + self.mouse-y); }
+            }
+        }
         HighlightOverlay { x: 0; y: 0; width: root.width; height: root.height; }
         // Device windows: a built-in card opened from its header arrow floats above the
         // arrangement (the card stays in the chain too) and stays up across track changes;
@@ -705,6 +903,27 @@ export component AppWindow inherits Window {
                 picked(i) => { Studio.input-menu-pick(i); }
             }
         }
+        // Clip editor dropdowns (click outside dismisses). Anchored below the field's value in
+        // the audio toolbar (PianoRoll at window x 260, bottom panel y + 27), above the Grid footer
+        // value, and below the Type / Genre pickers of the clip sidebar (above when it does not fit).
+        if Studio.clip-menu >= 0: cm := Rectangle {
+            property <length> bp-y: root.height - 5px - root.bottom-h;
+            property <int> m: Studio.clip-menu;
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.clip-menu-open(-1); } } }
+            DropMenu {
+                row-h: cm.m <= 2 ? 18.7px : 20.4px;
+                text-size: cm.m <= 2 ? 9.35px : 10.2px;
+                check: cm.m == 3;
+                section: cm.m == 3 ? 4 : -1;
+                width: cm.m <= 1 ? 47.6px : cm.m == 2 ? 56px : cm.m == 3 ? 108px : cm.m == 4 ? 61px : 104px;
+                x: cm.m == 0 ? 260px + 206.2px : cm.m == 1 ? 260px + 273.95px : cm.m == 2 ? 260px + 347.6px : cm.m == 3 ? 260px + 387px : cm.m == 4 ? 5px + 48px : 5px + 153px;
+                y: cm.m <= 2 ? cm.bp-y + 27px + 24.4px
+                    : cm.m == 3 ? root.height - 5px - 24.5px + 7px - 10.2px - self.height
+                    : cm.bp-y + 124.4px + self.height <= root.height - 5px ? cm.bp-y + 124.4px : cm.bp-y + 104px - 5.1px - self.height;
+                picked(i) => { Studio.clip-menu-pick(i); }
+            }
+        }
         // Device popup list: Add device submenus, instrument selector (click outside dismisses).
         if Studio.devmenu-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height;
@@ -753,7 +972,7 @@ export component AppWindow inherits Window {
                 x: (root.width - 260px) / 2; y: 220px; width: 260px; height: 66px; border-radius: 8px;
                 background: Tokens.bg-raised; border-width: 0.5px; border-color: #3a3b40;
                 TouchArea { }
-                Text { x: 12px; y: 8px; height: 14px; text: "Rename clip"; color: Tokens.text-bright; font-size: 10px; font-weight: 600; vertical-alignment: center; }
+                Text { x: 12px; y: 8px; height: 14px; text: Studio.rename-title; color: Tokens.text-bright; font-size: 10px; font-weight: 600; vertical-alignment: center; }
                 Rectangle {
                     x: 12px; y: 30px; width: parent.width - 24px; height: 24px; border-radius: 5px; background: Tokens.bg-input;
                     border-width: 0.5px; border-color: Tokens.accent;
@@ -772,7 +991,19 @@ export component AppWindow inherits Window {
         if Studio.settings-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { clicked => { Studio.close-settings(); fs.focus(); } }
-            SettingsPanel { x: max(0px, min(255px, root.width - 960px)); y: 7px; width: min(960px, root.width); height: root.height - 7px + 12px; }
+            SettingsPanel { x: max(0px, min(216.75px, root.width - 816px)); y: 5.5px; width: min(816px, root.width); height: root.height - 5.5px + 12px; }
+        }
+        // Export dialog (centred) and the unsaved-changes prompt (over the timeline, as in the
+        // reference); both are modal: clicks outside them are swallowed.
+        if Studio.export-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { }
+            ExportModal { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
+        }
+        if Studio.unsaved-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { }
+            UnsavedPrompt { x: max(0px, min(438px, parent.width - self.width)); y: max(0px, min(295px, parent.height - self.height)); }
         }
         // Status line (engine/device/import messages); empty most of the time.
         if Studio.status-text != "": Rectangle {

@@ -125,7 +125,7 @@ impl Controller {
         }
     }
 
-    fn save_prefs(&mut self) {
+    pub(crate) fn save_prefs(&mut self) {
         if let Some(path) = self.settings.prefs_path.clone()
             && let Err(e) = prefs::save(&path, &self.settings.prefs)
         {
@@ -435,7 +435,7 @@ impl Controller {
                 pan: 0.0,
                 mute: false,
                 solo: false,
-                clips: vec![ClipSnapshot { clip_id: TONE_TRACK_ID, engine_asset: info.asset_id, timeline_start: pos, source_offset: 0, length: info.frames as i64, gain: 1.0 }],
+                clips: vec![ClipSnapshot { clip_id: TONE_TRACK_ID, engine_asset: info.asset_id, timeline_start: pos, source_offset: 0, length: info.frames as i64, gain: 1.0, warp: None }],
                 instrument: false,
                 notes: vec![],
                 arm: false,

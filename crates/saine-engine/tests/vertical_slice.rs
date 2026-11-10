@@ -93,8 +93,8 @@ fn two_tracks_sum_with_sample_accurate_placement() {
     s.doc.execute(Command::AddTrack { index: None, track: Track::new(TrackId(0), TrackKind::Audio, "Audio 2", ColorIndex(2)) }, Origin::User).unwrap();
     let t2 = s.doc.project().tracks[2].id;
     // Clip A at bar 1 beat 1; clip B one beat later (0.5 s = 24000 frames at 120 BPM).
-    s.doc.execute(Command::AddClip { track: t1, clip: Clip { id: ClipId(0), asset: aa, name: "a".into(), start: 0, source_offset: 0, source_length: 4800, gain: 1.0 } }, Origin::User).unwrap();
-    s.doc.execute(Command::AddClip { track: t2, clip: Clip { id: ClipId(0), asset: ab, name: "b".into(), start: PPQ / 8, source_offset: 0, source_length: 4800, gain: 1.0 } }, Origin::User).unwrap();
+    s.doc.execute(Command::AddClip { track: t1, clip: Clip { id: ClipId(0), asset: aa, name: "a".into(), start: 0, source_offset: 0, source_length: 4800, gain: 1.0, warp: Default::default() } }, Origin::User).unwrap();
+    s.doc.execute(Command::AddClip { track: t2, clip: Clip { id: ClipId(0), asset: ab, name: "b".into(), start: PPQ / 8, source_offset: 0, source_length: 4800, gain: 1.0, warp: Default::default() } }, Origin::User).unwrap();
     s.publish();
     s.engine.play().unwrap();
     let out = s.render(12_000);
@@ -117,7 +117,7 @@ fn mute_solo_volume_and_pan_reach_the_engine() {
     write_dc_wav(&a, 48_000, 48_000, HALF, HALF);
     let aa = s.import(&a);
     let t1 = s.doc.project().tracks[0].id;
-    s.doc.execute(Command::AddClip { track: t1, clip: Clip { id: ClipId(0), asset: aa, name: "a".into(), start: 0, source_offset: 0, source_length: 48_000, gain: 1.0 } }, Origin::User).unwrap();
+    s.doc.execute(Command::AddClip { track: t1, clip: Clip { id: ClipId(0), asset: aa, name: "a".into(), start: 0, source_offset: 0, source_length: 48_000, gain: 1.0, warp: Default::default() } }, Origin::User).unwrap();
     s.engine.play().unwrap();
 
     s.doc.execute(Command::SetTrackPan { track: t1, pan: 1.0 }, Origin::User).unwrap();
@@ -153,7 +153,7 @@ fn transport_seek_stop_and_trim() {
     write_dc_wav(&a, 48_000, 48_000, HALF, HALF);
     let aa = s.import(&a);
     let t1 = s.doc.project().tracks[0].id;
-    s.doc.execute(Command::AddClip { track: t1, clip: Clip { id: ClipId(0), asset: aa, name: "a".into(), start: 0, source_offset: 0, source_length: 48_000, gain: 1.0 } }, Origin::User).unwrap();
+    s.doc.execute(Command::AddClip { track: t1, clip: Clip { id: ClipId(0), asset: aa, name: "a".into(), start: 0, source_offset: 0, source_length: 48_000, gain: 1.0, warp: Default::default() } }, Origin::User).unwrap();
     let c = s.doc.project().tracks[0].clips[0].id;
     // Trim to 1000 frames starting at source frame 100.
     s.doc.execute(Command::TrimClip { clip: c, start: 0, source_offset: 100, source_length: 1000 }, Origin::User).unwrap();
@@ -187,7 +187,7 @@ fn waveform_peaks_and_export_round_trip() {
 
     let t1 = s.doc.project().tracks[0].id;
     let len = s.doc.project().asset(aa).unwrap().frames;
-    s.doc.execute(Command::AddClip { track: t1, clip: Clip { id: ClipId(0), asset: aa, name: "a".into(), start: 0, source_offset: 0, source_length: len, gain: 1.0 } }, Origin::User).unwrap();
+    s.doc.execute(Command::AddClip { track: t1, clip: Clip { id: ClipId(0), asset: aa, name: "a".into(), start: 0, source_offset: 0, source_length: len, gain: 1.0, warp: Default::default() } }, Origin::User).unwrap();
     s.publish();
     let out_path = dir.path().join("export.wav");
     s.engine.export_wav(&out_path, 0, 4800).unwrap();

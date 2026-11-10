@@ -20,6 +20,8 @@ void set_device_factory(se_engine* e, std::function<std::unique_ptr<AudioDevice>
 void set_record_writer_stalled(se_engine* e, bool stalled);
 // Ring size (frames per track) for the next se_record_start; 0 = default (2 s).
 void set_record_ring_frames(se_engine* e, std::size_t frames);
+// Background warp renders on/off (off: warped clips always stretch live).
+void set_warp_renders_enabled(se_engine* e, bool enabled);
 // Plugin instances created so far (successful or not).
 uint64_t plugin_instantiations(se_engine* e);
 // Queue a parameter change for a live device (AU: parameter id + plain

@@ -476,6 +476,59 @@ pub struct se_session_desc_v6 {
     pub _pad: u32,
 }
 
+// ---- audio clip warping (se_session_publish_v7)
+pub const SE_WARP_REPITCH: u8 = 0;
+pub const SE_WARP_SLICE: u8 = 1;
+pub const SE_WARP_STRETCH: u8 = 2;
+pub const SE_WARP_STRETCH_FORMANT: u8 = 3;
+pub const SE_WARP_AUTO: u8 = 4;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct se_warp_point {
+    pub frame: i64,
+    pub source: f64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct se_warp_slice {
+    pub source: f64,
+    pub percussive: u8,
+    pub _pad: [u8; 7],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_clip_warp_desc {
+    pub clip_id: u64,
+    pub mode: u8,
+    pub _pad: [u8; 3],
+    pub transpose: f32,
+    pub points: *const se_warp_point,
+    pub point_count: u32,
+    pub slice_count: u32,
+    pub slices: *const se_warp_slice,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct se_session_desc_v7 {
+    pub v6: se_session_desc_v6,
+    pub warps: *const se_clip_warp_desc,
+    pub warp_count: u32,
+    pub _pad: u32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct se_onset {
+    pub frame: i64,
+    pub strength: f32,
+    pub percussive: u8,
+    pub _pad: [u8; 3],
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct se_plugin_param_info {
@@ -639,6 +692,7 @@ unsafe extern "C" {
     pub fn se_asset_load_file(engine: *mut se_engine, path: *const c_char, out: *mut se_asset_info) -> i32;
     pub fn se_asset_release(engine: *mut se_engine, asset_id: u64) -> i32;
     pub fn se_asset_get_info(engine: *const se_engine, asset_id: u64, out: *mut se_asset_info) -> i32;
+    pub fn se_asset_reverse(engine: *mut se_engine, asset_id: u64, out: *mut se_asset_info) -> i32;
     pub fn se_asset_compute_peaks(
         engine: *const se_engine,
         asset_id: u64,
@@ -704,6 +758,11 @@ unsafe extern "C" {
 
     // automation and plugin parameters
     pub fn se_session_publish_v6(engine: *mut se_engine, session: *const se_session_desc_v6) -> i32;
+
+    // clip warping
+    pub fn se_session_publish_v7(engine: *mut se_engine, session: *const se_session_desc_v7) -> i32;
+    pub fn se_warp_renders_pending(engine: *const se_engine, out_count: *mut usize) -> i32;
+    pub fn se_asset_detect_onsets(engine: *mut se_engine, asset_id: u64, out: *mut se_onset, capacity: usize, out_count: *mut usize) -> i32;
     pub fn se_automation_eval(lane: *const se_auto_lane_desc, frames: *const i64, count: usize, out_values: *mut f32) -> i32;
     pub fn se_plugin_params(engine: *mut se_engine, device_id: u64, out: *mut se_plugin_param_info, capacity: usize, out_count: *mut usize) -> i32;
     pub fn se_plugin_param_value(engine: *mut se_engine, device_id: u64, param_id: u32, out_normalized: *mut f32) -> i32;
@@ -1030,6 +1089,22 @@ mod abi_layout {
         );
         assert_eq!((size_of::<se_session_desc_v6>(), align_of::<se_session_desc_v6>()), (32, 8));
         assert_eq!([offset_of!(se_session_desc_v6, master_lanes), offset_of!(se_session_desc_v6, master_lane_count), offset_of!(se_session_desc_v6, _pad)], [16, 24, 28]);
+        assert_eq!((size_of::<se_warp_point>(), size_of::<se_warp_slice>(), size_of::<se_onset>()), (16, 16, 16));
+        assert_eq!((size_of::<se_clip_warp_desc>(), align_of::<se_clip_warp_desc>()), (40, 8));
+        assert_eq!(
+            [
+                offset_of!(se_clip_warp_desc, mode),
+                offset_of!(se_clip_warp_desc, transpose),
+                offset_of!(se_clip_warp_desc, points),
+                offset_of!(se_clip_warp_desc, point_count),
+                offset_of!(se_clip_warp_desc, slice_count),
+                offset_of!(se_clip_warp_desc, slices),
+            ],
+            [8, 12, 16, 24, 28, 32]
+        );
+        assert_eq!((size_of::<se_session_desc_v7>(), align_of::<se_session_desc_v7>()), (48, 8));
+        assert_eq!([offset_of!(se_session_desc_v7, warps), offset_of!(se_session_desc_v7, warp_count)], [32, 40]);
+        assert_eq!([offset_of!(se_onset, strength), offset_of!(se_onset, percussive)], [8, 12]);
         assert_eq!((size_of::<se_plugin_param_info>(), align_of::<se_plugin_param_info>()), (272, 4));
         assert_eq!(
             [offset_of!(se_plugin_param_info, steps), offset_of!(se_plugin_param_info, default_normalized), offset_of!(se_plugin_param_info, automatable), offset_of!(se_plugin_param_info, name), offset_of!(se_plugin_param_info, group)],

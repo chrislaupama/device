@@ -45,7 +45,22 @@ FetchContent_Declare(saine_vst3sdk
   GIT_SHALLOW TRUE
   GIT_SUBMODULES pluginterfaces public.sdk
   SOURCE_SUBDIR _saine_sources_only)
-FetchContent_MakeAvailable(saine_clap saine_vst3sdk)
+# Time stretching for warped audio clips (src/warp.cpp): signalsmith-stretch
+# and the FFT / STFT library it is built on. Header-only.
+set(SAINE_STRETCH_TAG 1.4.0)
+set(SAINE_LINEAR_TAG 0.6.4)
+FetchContent_Declare(saine_signalsmith_stretch
+  GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git
+  GIT_TAG ${SAINE_STRETCH_TAG}
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR _saine_headers_only)
+FetchContent_Declare(saine_signalsmith_linear
+  GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git
+  GIT_TAG ${SAINE_LINEAR_TAG}
+  GIT_SHALLOW TRUE
+  SOURCE_SUBDIR _saine_headers_only)
+FetchContent_MakeAvailable(saine_clap saine_vst3sdk saine_signalsmith_stretch saine_signalsmith_linear)
+set(SAINE_STRETCH_INCLUDE "${saine_signalsmith_stretch_SOURCE_DIR}" "${saine_signalsmith_linear_SOURCE_DIR}/include")
 set(SAINE_CLAP_INCLUDE "${saine_clap_SOURCE_DIR}/include")
 set(SAINE_VST3SDK_DIR "${saine_vst3sdk_SOURCE_DIR}")
 # IID definitions every VST3 module needs (host and test plugin).
@@ -107,6 +122,7 @@ add_library(saine_engine STATIC
   src/render_graph.cpp
   src/resampler.cpp
   src/synth.cpp
+  src/warp.cpp
   src/wav.cpp
   src/plugins/plugin_common.cpp
   src/plugins/plugin_host.cpp
@@ -190,7 +206,11 @@ target_include_directories(saine_engine
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # SDK headers are third-party: include them as system headers (no warnings).
-target_include_directories(saine_engine SYSTEM PRIVATE ${SAINE_CLAP_INCLUDE} ${SAINE_VST3SDK_DIR})
+target_include_directories(saine_engine SYSTEM PRIVATE ${SAINE_CLAP_INCLUDE} ${SAINE_VST3SDK_DIR} ${SAINE_STRETCH_INCLUDE})
+if(APPLE)
+  # vDSP FFTs for signalsmith-linear (Accelerate is linked below).
+  set_property(SOURCE src/warp.cpp APPEND PROPERTY COMPILE_DEFINITIONS SIGNALSMITH_USE_ACCELERATE ACCELERATE_NEW_LAPACK)
+endif()
 target_compile_features(saine_engine PUBLIC cxx_std_23)
 set_target_properties(saine_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(saine_engine PRIVATE $<BUILD_INTERFACE:saine_engine_warnings>)
@@ -203,7 +223,7 @@ endif()
 if(APPLE)
   target_link_libraries(saine_engine PUBLIC
     "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreAudio" "-framework CoreFoundation"
-    "-framework CoreAudioKit" "-framework AppKit" "-framework Foundation")
+    "-framework CoreAudioKit" "-framework AppKit" "-framework Foundation" "-framework Accelerate")
 endif()
 if(WIN32)
   # ole32: COM (WASAPI, MMDevice); shell32: CommandLineToArgvW; avrt: MMCSS;
@@ -372,6 +392,7 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/test_pdc.cpp
     tests/test_automation.cpp
     tests/test_frame_ring.cpp
+    tests/test_warp.cpp
     tests/devices/test_builtin.cpp
     tests/devices/test_compressor.cpp
     tests/devices/test_eq.cpp
@@ -437,6 +458,9 @@ if(SAINE_ENGINE_BUILD_BENCH)
   if(TARGET saine_test_plugins)
     add_dependencies(saine_engine_bench saine_test_plugins)
   endif()
+  add_executable(saine_warp_bench bench/bench_warp.cpp)
+  target_include_directories(saine_warp_bench PRIVATE src)
+  target_link_libraries(saine_warp_bench PRIVATE saine_engine saine_engine_warnings)
   add_executable(saine_device_bench bench/bench_devices.cpp)
   target_include_directories(saine_device_bench PRIVATE src)
   target_link_libraries(saine_device_bench PRIVATE saine_engine saine_engine_warnings)

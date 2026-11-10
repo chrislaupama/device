@@ -70,7 +70,16 @@ static_assert(offsetof(se_track_desc_v6, lanes) == 88 && offsetof(se_track_desc_
               offsetof(se_track_desc_v6, _pad3) == 100);
 static_assert(sizeof(se_session_desc_v6) == 32 && offsetof(se_session_desc_v6, master_lanes) == 16 &&
               offsetof(se_session_desc_v6, master_lane_count) == 24);
+static_assert(sizeof(se_clip_warp_desc) == 40 && alignof(se_clip_warp_desc) == 8);
+static_assert(offsetof(se_clip_warp_desc, mode) == 8 && offsetof(se_clip_warp_desc, transpose) == 12 &&
+              offsetof(se_clip_warp_desc, points) == 16 && offsetof(se_clip_warp_desc, point_count) == 24 &&
+              offsetof(se_clip_warp_desc, slice_count) == 28 && offsetof(se_clip_warp_desc, slices) == 32);
+static_assert(sizeof(se_session_desc_v7) == 48 && offsetof(se_session_desc_v7, warps) == 32 &&
+              offsetof(se_session_desc_v7, warp_count) == 40);
 #endif
+static_assert(sizeof(se_warp_point) == 16 && alignof(se_warp_point) == 8 && offsetof(se_warp_point, source) == 8);
+static_assert(sizeof(se_warp_slice) == 16 && offsetof(se_warp_slice, percussive) == 8);
+static_assert(sizeof(se_onset) == 16 && offsetof(se_onset, strength) == 8 && offsetof(se_onset, percussive) == 12);
 static_assert(sizeof(se_plugin_param_info) == 272 && alignof(se_plugin_param_info) == 4);
 static_assert(offsetof(se_plugin_param_info, default_normalized) == 8 &&
               offsetof(se_plugin_param_info, automatable) == 12 && offsetof(se_plugin_param_info, name) == 16 &&
@@ -205,6 +214,14 @@ int32_t se_asset_release(se_engine* engine, uint64_t asset_id) {
     SE_REQUIRE_ENGINE(engine);
     return guarded([&] {
         const int32_t rc = engine->impl->asset_release(asset_id);
+        return rc == SE_OK ? SE_OK : fail(rc, "unknown asset id " + std::to_string(asset_id));
+    });
+}
+
+int32_t se_asset_reverse(se_engine* engine, uint64_t asset_id, se_asset_info* out_info) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&] {
+        const int32_t rc = engine->impl->asset_reverse(asset_id, out_info);
         return rc == SE_OK ? SE_OK : fail(rc, "unknown asset id " + std::to_string(asset_id));
     });
 }
@@ -396,6 +413,32 @@ int32_t se_session_publish_v6(se_engine* engine, const se_session_desc_v6* sessi
     return guarded([&] {
         std::string err;
         return check(engine->impl->publish(*session, err), err);
+    });
+}
+
+int32_t se_session_publish_v7(se_engine* engine, const se_session_desc_v7* session) {
+    SE_REQUIRE_ENGINE(engine);
+    if (session == nullptr) return fail(SE_ERR_INVALID_ARG, "session is NULL");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->publish(*session, err), err);
+    });
+}
+
+int32_t se_warp_renders_pending(const se_engine* engine, size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out_count == nullptr) return fail(SE_ERR_INVALID_ARG, "out_count is NULL");
+    *out_count = engine->impl->warp_renders_pending();
+    return SE_OK;
+}
+
+int32_t se_asset_detect_onsets(se_engine* engine, uint64_t asset_id, se_onset* out, size_t capacity,
+                               size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out == nullptr && capacity > 0) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    return guarded([&] {
+        const int32_t rc = engine->impl->asset_detect_onsets(asset_id, out, capacity, out_count);
+        return rc == SE_OK ? rc : fail(rc, "unknown asset");
     });
 }
 
@@ -834,6 +877,7 @@ void set_device_factory(se_engine* e, std::function<std::unique_ptr<AudioDevice>
 void set_record_writer_stalled(se_engine* e, bool stalled) { e->impl->set_record_writer_stalled(stalled); }
 void set_record_ring_frames(se_engine* e, std::size_t frames) { e->impl->set_record_ring_frames(frames); }
 uint64_t plugin_instantiations(se_engine* e) { return e->impl->plugin_instantiations(); }
+void set_warp_renders_enabled(se_engine* e, bool enabled) { e->impl->set_warp_renders_enabled(enabled); }
 bool plugin_set_parameter(se_engine* e, uint64_t device_id, uint32_t param_id, double value) {
     return e->impl->plugin_set_parameter(device_id, param_id, value);
 }
