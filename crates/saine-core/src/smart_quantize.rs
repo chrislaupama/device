@@ -19,8 +19,9 @@ const CAPTURE: f64 = 0.85;
 const WINDOW_SEC: f64 = 0.03;
 /// Fewer onsets than this keep the 1/16 grid.
 const MIN_NOTES: usize = 3;
-/// A common offset of the notes from the grid is kept when they agree on it this
-/// strongly and it is under 90 ms and 0.126 beats.
+/// A common offset of the notes from the grid (a late or early feel) is allowed for when
+/// rounding, so each note goes to the step it was played for, when the notes agree on it
+/// this strongly and it is under 90 ms and 0.126 beats. The result sits on the plain grid.
 const PHASE_AGREEMENT: f64 = 0.75;
 const PHASE_MAX_SEC: f64 = 0.09;
 const PHASE_MAX_BEATS: f64 = 0.126;
@@ -291,6 +292,14 @@ mod tests {
         let c: Vec<&Note> = out.notes.iter().filter(|n| n.pitch == 60).collect();
         assert_eq!(c[0].id, 2);
         assert!(c[0].start + c[0].length <= c[1].start);
+    }
+
+    #[test]
+    fn a_late_feel_rounds_each_note_to_the_step_it_was_played_for() {
+        let late: Vec<Note> = (0..8).map(|i| n(i + 1, 60, i as Ticks * PPQ / 4 + if i % 2 == 0 { 125 } else { 86 }, PPQ / 4, 100)).collect();
+        let out = smart_quantize(&late, 120.0);
+        assert_eq!(out.grid, "1/16");
+        assert_eq!(out.notes.iter().map(|n| n.start).collect::<Vec<_>>(), (0..8).map(|i| i * PPQ / 4).collect::<Vec<_>>(), "not pushed a step later");
     }
 
     #[test]
