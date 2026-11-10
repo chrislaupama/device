@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! saine-studio [--open <dir>] [--import <wav>...] [--save-to <dir>] [--no-audio]
-//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-settings-audio|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-device-chain|review-settings-plugins]
+//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-clip-menu|reference-settings-audio|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-device-chain|review-settings-plugins]
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
@@ -84,6 +84,8 @@ struct Args {
     synth_page: Option<usize>,
     /// reference-input-menu (50): Instrument + Audio tracks, Audio selected, "In" popup open.
     input_menu_state: bool,
+    /// reference-clip-menu: Instrument track with a 1-bar MIDI clip at bar 6, its context menu open.
+    clip_menu_state: bool,
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
@@ -189,6 +191,10 @@ fn parse_args() -> Result<Args, String> {
                 "reference-input-menu" => {
                     a.reference_default = true;
                     a.input_menu_state = true;
+                }
+                "reference-clip-menu" => {
+                    a.reference_default = true;
+                    a.clip_menu_state = true;
                 }
                 "reference-settings-audio" => {
                     a.reference_default = true;
@@ -704,6 +710,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(22.0);
         c.open_input_menu();
+    }
+    if args.clip_menu_state {
+        let mut c = ctl.borrow_mut();
+        if let Some(inst) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id) {
+            c.select_track(inst);
+            c.seek_beats(20.0);
+            if let Some(id) = c.insert_midi_clip() {
+                c.open_clip_menu(id, 700.0, 215.0, (10_000.0, 10_000.0));
+            }
+        }
     }
     if args.automation_state {
         // Reference 60: same project layout as 50 (Instrument 1 with a MIDI clip at bar 6, Audio 2
