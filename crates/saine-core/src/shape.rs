@@ -658,14 +658,14 @@ fn add_voices(v: &[Note], shape: &Shape, scale: Scale) -> Vec<Note> {
 /// scale thirds on top; Inversion lifts the lowest notes an octave; Spread moves the
 /// outer notes apart by octaves. New notes take the timing of the chord's notes in order.
 fn harmonise(v: &[Note], shape: &Shape, scale: Scale) -> Vec<Note> {
-    let mut beats: BTreeMap<i64, Vec<Note>> = BTreeMap::new();
+    let mut chords: BTreeMap<Ticks, Vec<Note>> = BTreeMap::new();
     for n in v {
-        beats.entry(n.start.div_euclid(PPQ)).or_default().push(*n);
+        chords.entry(n.start).or_default().push(*n);
     }
     let mut out = Vec::with_capacity(v.len());
-    for (b, mut notes) in beats {
+    for (start, mut notes) in chords {
         notes.sort_by_key(|n| n.pitch);
-        let at = |k: ShapeKey| shape.at(k, b as f64);
+        let at = |k: ShapeKey| shape.at(k, beat(start));
         let mut keys: Vec<i32> = notes.iter().map(|n| n.pitch as i32).collect();
         let pcs: Vec<i32> = keys.iter().map(|k| k.rem_euclid(12)).collect();
         let extend = |keys: &mut Vec<i32>, count: usize, up: bool| {
@@ -799,7 +799,7 @@ fn set_lengths(v: &mut Vec<Note>, shape: &Shape, clip: Ticks) {
         let new = if t < 0.5 {
             (l * t / 0.5).max(MIN_TICKS as f64)
         } else {
-            let next_onset = starts.iter().copied().find(|&s| s > n.start).unwrap_or(clip.max(n.start + n.length)) - n.start;
+            let next_onset = (starts.iter().copied().find(|&s| s > n.start).unwrap_or(clip).min(clip).min(n.start + MAX_HOLD) - n.start).max(0);
             let next_same = snapshot.iter().filter(|o| o.pitch == n.pitch && o.start > n.start).map(|o| o.start - MIN_TICKS).min().unwrap_or(clip);
             let hold = (next_same.min(clip).min(n.start + MAX_HOLD) - n.start).max(0);
             let target = l.max(next_onset as f64).max(hold as f64);
@@ -1039,6 +1039,18 @@ mod tests {
         let json = r#"{"octave":1,"voices":1,"density":1.0,"length":0.5,"velocity":0.8,"nudge":0.5,"repeat":0,"arp":0}"#;
         let s: Shape = serde_json::from_str(json).unwrap();
         assert_eq!(s, with(None, |s| s.octave = 1));
+    }
+
+    #[test]
+    fn chord_controls_work_on_each_onset_and_holds_stay_capped() {
+        let mut pulses: Vec<Note> = [60, 64, 67].iter().map(|&p| note(p, 0.0, 0.5)).collect();
+        pulses.extend([60, 64, 67].iter().map(|&p| note(p, 0.5, 0.5)));
+        let inv = apply(&numbered(pulses), &with(CHORDS, |s| s.inversion = 1), CHORDS, C_MAJOR, BAR2);
+        assert_eq!(pitches_at(&inv, 0.0), vec![64, 67, 72]);
+        assert_eq!(pitches_at(&inv, 0.5), vec![64, 67, 72], "two onsets in one beat stay two chords");
+        let sparse = numbered(vec![note(60, 0.0, 0.25), note(62, 8.0, 0.25)]);
+        let held = apply(&sparse, &with(None, |s| s.length = 1.0), None, None, 4 * BAR2);
+        assert_eq!(held[0].length, MAX_HOLD, "at most 4 beats, even before a far onset");
     }
 
     #[test]

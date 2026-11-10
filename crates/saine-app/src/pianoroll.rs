@@ -651,7 +651,7 @@ impl Controller {
             self.ac_pointer(kind, x, y, shift, alt, command);
             return;
         }
-        if self.shape_drawing() && (kind != 0 || (x >= GRID_X && y >= GRID_Y)) {
+        if self.shape_drawing() && self.pr.drag.is_none() && (kind != 0 || (x >= GRID_X && y >= GRID_Y)) {
             self.shape_draw(kind, x, y);
             return;
         }
