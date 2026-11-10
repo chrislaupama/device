@@ -399,6 +399,16 @@ export component PianoRoll inherits Rectangle {
             moved => { Studio.pr-pointer(1, self.mouse-x, self.mouse-y, false, false, false); }
             scroll-event(e) => { Studio.pr-scroll(e.delta-y / 1px); accept }
         }
+        // Scale button above the keys (footer Scale on): only scale rows, plus rows holding notes.
+        if Studio.pr-scale-on && !Studio.ac-visible: Rectangle {
+            x: 6.5px; y: 30px; width: 38px; height: 16px; border-radius: 8px;
+            background: Studio.pr-scale-fold ? Studio.clip-color : #2f3036;
+            Text {
+                width: parent.width; height: parent.height; text: "Scale"; font-size: 9px; font-weight: 600;
+                color: Studio.pr-scale-fold ? Studio.clip-ink : #c9c9cc; horizontal-alignment: center; vertical-alignment: center;
+            }
+            TouchArea { clicked => { Studio.pr-action("scale_fold"); } }
+        }
     }
 
     // ---- footer (y height-54.5 ..) ----
@@ -449,11 +459,14 @@ export component PianoRoll inherits Rectangle {
     FooterTitle { x: 635.5px; y: root.r1; text: "Velocity"; }
     FooterLabel { x: 635.5px; y: root.r2; text: "Value"; }
     FooterValue { x: 667px; y: root.r2; text: Studio.pr-vel-text; field: 3; }
-    // Scale: PLACEHOLDER (no scale highlighting yet)
+    // Scale: the switch highlights in-scale rows and keys; Root note and Scale type open menus.
     FooterTitle { x: 720px; y: root.r1; text: "Scale"; }
-    FooterSwitch { x: 751px; y: root.r1 + 2px; on: false; }
-    FooterValue { x: 720px; y: root.r2; text: "C"; }
-    FooterValue { x: 732px; y: root.r2; text: "Major"; }
+    FooterSwitch { x: 751px; y: root.r1 + 2px; on: Studio.pr-scale-on; }
+    TouchArea { x: 749px; y: root.r1; width: 25px; height: 14px; clicked => { Studio.pr-action("scale_highlight"); } }
+    scale-root := FooterValue { x: 720px; y: root.r2; text: Studio.pr-scale-root; }
+    TouchArea { x: 720px; y: root.r2; width: scale-root.width; height: 14px; clicked => { Studio.clip-menu-open(8); } }
+    scale-type := FooterValue { x: 720px + scale-root.width + 4px; y: root.r2; text: Studio.pr-scale-type; }
+    TouchArea { x: scale-type.x; y: root.r2; width: scale-type.width; height: 14px; clicked => { Studio.clip-menu-open(9); } }
     }
 }
 

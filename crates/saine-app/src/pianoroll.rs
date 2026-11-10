@@ -16,6 +16,7 @@ use crate::controller::{BottomTab, Controller};
 use crate::gpu::{DrawList, RectInst};
 use crate::timeline::{Px, REF, RulerSteps, rgb};
 use saine_core::midi::{self, MidiClip, Note};
+use saine_core::scale::{self, ClipScale, ScaleKey};
 use saine_core::{Clip, ClipId, Command, PPQ, Ticks};
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
@@ -50,6 +51,58 @@ pub struct PrView {
     /// Clip-relative beat at x = GRID_X.
     pub start: f64,
     pub scroll: f32,
+    pub rows: Rows,
+}
+
+/// The pitch rows the piano roll shows, top first: all 128, or (scale view) the scale
+/// pitches plus those holding notes. A hidden pitch sits on the row of the nearest shown
+/// pitch above it.
+#[derive(Debug, Clone, Copy)]
+pub struct Rows {
+    row: [u8; 128],
+    pitch: [u8; 128],
+    n: u16,
+}
+
+impl Rows {
+    pub const ALL: Rows = {
+        let mut r = Rows { row: [0; 128], pitch: [0; 128], n: 128 };
+        let mut i = 0;
+        while i < 128 {
+            r.row[i] = (127 - i) as u8;
+            r.pitch[i] = (127 - i) as u8;
+            i += 1;
+        }
+        r
+    };
+
+    /// Rows for these pitches, given top first.
+    pub fn only(pitches: &[u8]) -> Rows {
+        if pitches.is_empty() {
+            return Rows::ALL;
+        }
+        let mut r = Rows { row: [0; 128], pitch: [0; 128], n: pitches.len().min(128) as u16 };
+        for (i, &p) in pitches.iter().take(128).enumerate() {
+            r.pitch[i] = p & 127;
+        }
+        let (mut at, mut k) = (0usize, 0usize);
+        for p in (0..128u8).rev() {
+            while k < r.n as usize && r.pitch[k] >= p {
+                at = k;
+                k += 1;
+            }
+            r.row[p as usize] = at as u8;
+        }
+        r
+    }
+
+    pub fn len(&self) -> usize {
+        self.n as usize
+    }
+
+    pub fn folded(&self) -> bool {
+        self.n < 128
+    }
 }
 
 impl PrView {
@@ -60,7 +113,7 @@ impl PrView {
     pub fn fit_from(gx: f32, size: (f32, f32), clip_beats: f64, scroll: f32) -> Self {
         let beats = clip_beats.max(0.25);
         let ppb = (size.0 - gx).max(40.0) as f64 / (beats * (1.0 + 2.0 * FIT_PAD));
-        PrView { gx, w: size.0, h: size.1, ppb, start: -FIT_PAD * beats, scroll }
+        PrView { gx, w: size.0, h: size.1, ppb, start: -FIT_PAD * beats, scroll, rows: Rows::ALL }
     }
     pub fn x_of(&self, beat: f64) -> f32 {
         self.gx + ((beat - self.start) * self.ppb) as f32
@@ -69,13 +122,28 @@ impl PrView {
         self.start + (x - self.gx) as f64 / self.ppb
     }
     pub fn y_of(&self, pitch: i32) -> f32 {
-        GRID_Y + (127 - pitch) as f32 * ROW_H - self.scroll
+        let row = if (0..128).contains(&pitch) { self.rows.row[pitch as usize] as i32 } else { 127 - pitch };
+        GRID_Y + row as f32 * ROW_H - self.scroll
     }
     pub fn pitch_at(&self, y: f32) -> i32 {
-        127 - ((y - GRID_Y + self.scroll) / ROW_H).floor() as i32
+        let r = ((y - GRID_Y + self.scroll) / ROW_H).floor() as i32;
+        let n = self.rows.len() as i32;
+        if r < 0 {
+            self.rows.pitch[0] as i32 - r
+        } else if r >= n {
+            self.rows.pitch[n as usize - 1] as i32 - (r - n + 1)
+        } else {
+            self.rows.pitch[r as usize] as i32
+        }
     }
     pub fn max_scroll(&self) -> f32 {
-        (128.0 * ROW_H - (self.h - GRID_Y)).max(0.0)
+        (self.rows.len() as f32 * ROW_H - (self.h - GRID_Y)).max(0.0)
+    }
+    /// Pitches of the rows on screen, top first.
+    pub fn visible(&self) -> impl Iterator<Item = i32> + '_ {
+        let first = ((self.scroll / ROW_H).floor() as i32).max(0);
+        let last = (((self.h - GRID_Y + self.scroll) / ROW_H).ceil() as i32).min(self.rows.len() as i32 - 1);
+        (first..=last).map(|r| self.rows.pitch[r as usize] as i32)
     }
     pub fn note_rect(&self, n: &Note) -> (f32, f32, f32, f32) {
         let x0 = self.x_of(n.start as f64 / PPQ as f64);
@@ -229,6 +297,8 @@ pub struct PrScene<'a> {
     pub transients: Vec<f64>,
     /// Audio clip editor: the clip's waveform, one lane per channel (`Controller::clip_lanes`).
     pub wave: Option<(Vec<crate::peaks::Slot>, Vec<crate::peaks::WaveSeg>)>,
+    /// The clip's scale while the footer's Scale switch is on: in-scale rows and keys are tinted.
+    pub key: Option<ScaleKey>,
 }
 
 fn rgba(c: [f32; 3], a: f32) -> [f32; 4] {
@@ -313,15 +383,16 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
     let b = &mut dl.base;
 
     // ---- rows (the audio clip editor has one plain lane) ----
-    let top = v.pitch_at(GRID_Y).min(127);
-    let bottom = v.pitch_at(h - 0.01).max(0);
     if sc.audio {
         b.push(px.rect(gx, GRID_Y, w - gx, h - GRID_Y, rgba(rgb(0x141518), 1.0)));
     } else {
-        for p in (bottom..=top).rev() {
+        for p in v.visible() {
             let y = v.y_of(p);
             let c = if is_black(p) { 0x151619 } else { 0x191a1d };
             b.push(px.rect(gx, y, w - gx, ROW_H, rgba(rgb(c), 1.0)));
+            if let Some(k) = sc.key.filter(|k| k.contains(p)) {
+                b.push(px.rect(gx, y, w - gx, ROW_H, rgba(sc.color, if k.is_root(p) { 0.22 } else { 0.08 })));
+            }
             if p.rem_euclid(12) == 0 {
                 b.push(px.rect(gx, y + ROW_H - 1.0, w - gx, 1.0, rgba(rgb(0x252629), 1.0)));
             }
@@ -392,7 +463,7 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
     if !sc.audio {
         b.push(px.rect(0.0, GRID_Y, gx, h - GRID_Y, rgba(rgb(0x1a1b1e), 1.0)));
         b.push(px.rect(0.5, GRID_Y, 49.5, h - GRID_Y, rgba(WHITE, 1.0)));
-        for p in (bottom..=top).rev() {
+        for p in v.visible() {
             let y = v.y_of(p);
             let line = rgba(rgb(0x555555), 1.0);
             if is_black(p) {
@@ -400,8 +471,12 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
                 b.push(px.rect(0.5, y, 30.0, ROW_H, rgba(rgb(0x1a1a1a), 1.0)));
                 b.push(px.rect(0.5, y, 30.0, 1.0, rgba(rgb(0x3c3c3c), 1.0)));
                 b.push(px.rect(0.5, y + ROW_H - 1.0, 30.0, 1.0, rgba(rgb(0x0d0d0d), 1.0)));
-            } else if matches!(p.rem_euclid(12), 0 | 5) {
+            } else if matches!(p.rem_euclid(12), 0 | 5) || v.rows.folded() {
                 b.push(px.rect(0.5, y + ROW_H - 1.0, 49.5, 1.0, line));
+            }
+            if let Some(k) = sc.key.filter(|k| k.contains(p)) {
+                let sw = if k.is_root(p) { 6.0 } else { 3.0 };
+                b.push(px.rect(50.0 - sw, y, sw, ROW_H, rgba(sc.color, 1.0)));
             }
         }
         b.push(px.rect(50.0, GRID_Y, 1.0, h - GRID_Y, rgba(rgb(0x333333), 1.0)));
@@ -557,10 +632,11 @@ impl Controller {
             if let Some(c) = self.pr_clip()
                 && !c.notes.is_empty()
             {
-                let lo = c.notes.iter().map(|n| n.pitch).min().unwrap_or(60) as f32;
-                let hi = c.notes.iter().map(|n| n.pitch).max().unwrap_or(60) as f32;
-                let mid = (lo + hi) / 2.0;
-                self.pr.scroll = (127.0 - mid) * ROW_H + ROW_H / 2.0 - (self.pr.size.1 - GRID_Y) / 2.0;
+                let lo = c.notes.iter().map(|n| n.pitch).min().unwrap_or(60) as i32;
+                let hi = c.notes.iter().map(|n| n.pitch).max().unwrap_or(60) as i32;
+                self.pr.scroll = 0.0;
+                let v = self.pr_view();
+                self.pr.scroll = (v.y_of(lo) + v.y_of(hi)) / 2.0 - GRID_Y + ROW_H / 2.0 - (self.pr.size.1 - GRID_Y) / 2.0;
             }
         }
         let pattern = self.pr_clip().and_then(|c| c.pattern.as_ref());
@@ -588,6 +664,10 @@ impl Controller {
         }
         let len = self.pr_clip().map(|c| c.length).unwrap_or(self.project().ticks_per_bar());
         let mut v = PrView::fit(self.pr.size, len as f64 / PPQ as f64, self.pr.scroll);
+        if let Some((_, key)) = self.pr_scale().filter(|(s, _)| s.highlight && s.fold) {
+            let notes = self.pr_clip().map(|c| c.notes.iter().map(|n| n.pitch).collect::<Vec<_>>()).unwrap_or_default();
+            v.rows = Rows::only(&scale::fold_rows(key, notes));
+        }
         v.scroll = v.scroll.clamp(0.0, v.max_scroll());
         v
     }
@@ -644,6 +724,7 @@ impl Controller {
                 warp_markers: self.ac_marker_beats(),
                 transients: self.ac_transient_beats(),
                 wave: self.clip_lanes(c),
+                key: None,
             });
         }
         let clip = self.pr_clip()?;
@@ -669,7 +750,41 @@ impl Controller {
             warp_markers: Vec::new(),
             transients: Vec::new(),
             wave: None,
+            key: self.pr_scale().filter(|(s, _)| s.highlight).map(|(_, k)| k),
         })
+    }
+
+    /// The open MIDI clip's scale view and the key it shows (its own, else the project key).
+    pub(crate) fn pr_scale(&self) -> Option<(ClipScale, ScaleKey)> {
+        let c = self.pr_clip()?;
+        Some((c.scale.unwrap_or_default(), ClipScale::key_or(c.scale.as_ref(), self.project().transport.key)))
+    }
+
+    /// Change the open clip's scale view (one undo step), keeping the pitch at the middle of the
+    /// view in place when the rows change.
+    fn pr_set_scale(&mut self, f: impl FnOnce(&mut ClipScale, ScaleKey)) {
+        let Some(id) = self.pr_clip().map(|c| c.id) else { return };
+        let Some((old, key)) = self.pr_scale() else { return };
+        let mut s = old;
+        f(&mut s, key);
+        if s == old {
+            return;
+        }
+        let before = self.pr_view();
+        let mid = GRID_Y + (before.h - GRID_Y) / 2.0;
+        let centre = before.pitch_at(mid).clamp(0, 127);
+        self.execute(Command::SetClipScale { clip: id, scale: (s != ClipScale::default()).then_some(s) });
+        let after = self.pr_view();
+        self.pr.scroll = (before.scroll + after.y_of(centre) - before.y_of(centre)).clamp(0.0, after.max_scroll());
+        self.ui_dirty = true;
+    }
+
+    pub fn pr_scale_root(&mut self, root: usize) {
+        self.pr_set_scale(|s, key| s.key = Some(ScaleKey { root: root.min(scale::ROOTS.len() - 1) as u8, kind: key.kind }));
+    }
+
+    pub fn pr_scale_kind(&mut self, kind: usize) {
+        self.pr_set_scale(|s, key| s.key = Some(ScaleKey { root: key.root, kind: kind.min(scale::SCALES.len() - 1) as u8 }));
     }
 
     fn commit_notes(&mut self, clip: ClipId, mut notes: Vec<Note>, label: Option<&str>) -> bool {
@@ -864,6 +979,15 @@ impl Controller {
         if action == "pen" {
             self.pr.pen = !self.pr.pen;
             return;
+        }
+        if action == "scale_highlight" {
+            return self.pr_set_scale(|s, _| {
+                s.highlight = !s.highlight;
+                s.fold &= s.highlight;
+            });
+        }
+        if action == "scale_fold" {
+            return self.pr_set_scale(|s, _| s.fold = s.highlight && !s.fold);
         }
         if action == "smart_quantize" || action == "velocity_lane" {
             self.set_status(format!("{}: not implemented yet", if action == "smart_quantize" { "Smart Quantize" } else { "Velocity lane" }), 3);
@@ -1061,7 +1185,7 @@ mod tests {
 
     #[test]
     fn left_resize_keeps_note_timeline_positions() {
-        let clip = MidiClip { id: ClipId(5), name: "MIDI".into(), start: 3840, length: 3840, notes: vec![Note { id: 1, pitch: 60, start: 960, length: 480, velocity: 100 }], pattern: None, disabled: false, composer: None };
+        let clip = MidiClip { id: ClipId(5), name: "MIDI".into(), start: 3840, length: 3840, notes: vec![Note { id: 1, pitch: 60, start: 960, length: 480, velocity: 100 }], pattern: None, disabled: false, composer: None, scale: None };
         let Some(Command::Batch { commands, .. }) = midi_left_resize(&clip, 3840 + 480) else { panic!() };
         assert_eq!(commands[0], Command::ResizeMidiClip { clip: ClipId(5), start: 4320, length: 3360 });
         assert_eq!(commands[1], Command::SetMidiNotes { clip: ClipId(5), notes: vec![Note { id: 1, pitch: 60, start: 480, length: 480, velocity: 100 }] });

@@ -259,6 +259,18 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.midi_state = 2;
                 }
+                "review-scale" => {
+                    a.reference_default = true;
+                    a.midi_state = 5;
+                }
+                "review-scale-fold" => {
+                    a.reference_default = true;
+                    a.midi_state = 6;
+                }
+                "review-scale-menu" => {
+                    a.reference_default = true;
+                    a.midi_state = 7;
+                }
                 "reference-audio-clip" => {
                     a.reference_default = true;
                     a.audio_clip_state = true;
@@ -921,6 +933,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if args.midi_state == 2 {
             c.select_clip(clip);
             c.seek_beats(22.0); // 00:11.000, as captured
+        }
+        if let (5..=7, Some(id)) = (args.midi_state, clip) {
+            // REVIEW STATE: an E minor line with one out-of-scale note (F4), the clip's scale set
+            // to E Minor with the footer Scale on; 6 adds scale rows, 7 opens the Scale type menu.
+            let line = [(64u8, 0i64), (67, 1), (71, 2), (69, 3), (67, 4), (65, 5), (66, 6), (64, 7), (59, 8), (62, 10), (64, 12), (71, 14)];
+            let notes = line.iter().enumerate().map(|(i, &(pitch, s))| saine_core::midi::Note { id: i as u32 + 1, pitch, start: s * 240, length: 220, velocity: 96 }).collect();
+            c.execute(saine_core::Command::SetMidiNotes { clip: id, notes });
+            c.execute(saine_core::Command::SetClipScale { clip: id, scale: Some(saine_core::scale::ClipScale { key: Some(saine_core::scale::ScaleKey { root: 6, kind: 1 }), highlight: true, fold: false }) });
+            c.select_clip(clip);
+            c.seek_beats(22.0);
+            c.pr_sync_clip();
+            if args.midi_state == 6 {
+                c.pr_action("scale_fold");
+            }
+            if args.midi_state == 7 {
+                c.clip_menu_open(9);
+            }
         }
     }
     if args.synth_state {
