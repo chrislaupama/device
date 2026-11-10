@@ -61,11 +61,8 @@ mod recording;
 mod sampler_panel;
 mod selftest;
 mod settings;
-<<<<<<< HEAD
 mod shape_rack;
-=======
 mod snap;
->>>>>>> origin/main
 mod stepseq;
 mod sections;
 mod splitters;
@@ -1692,13 +1689,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     on!(on_composer_tab, |c, shape: bool| c.composer_tab(shape));
     on!(on_composer_shape, |c, row: i32, op: i32, value: f32| c.composer_shape(row, op, value));
-<<<<<<< HEAD
     on!(on_shape_draw_toggle, |c| c.shape_draw_toggle());
     on!(on_shape_brush_pick, |c, brush: i32| c.shape_brush(brush));
     on!(on_shape_reset, |c| c.shape_reset());
-    on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
-=======
->>>>>>> origin/main
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
     on!(on_menu_dismiss, |c| c.menu_close());
     on!(on_rename_commit, |c, t: slint::SharedString| {
