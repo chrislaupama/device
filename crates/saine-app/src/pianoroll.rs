@@ -170,6 +170,8 @@ pub struct PrState {
     last_down: Option<(Instant, f32, f32)>,
     pub size: (f32, f32),
     humanize_count: u64,
+    /// Step sequencer view of a pattern clip (src/stepseq.rs).
+    pub seq: crate::stepseq::SeqState,
 }
 
 impl Default for PrState {
@@ -190,6 +192,7 @@ impl Default for PrState {
             last_down: None,
             size: (1174.5, 281.0),
             humanize_count: 0,
+            seq: Default::default(),
         }
     }
 }
@@ -434,6 +437,7 @@ impl Controller {
             self.pr.drag = None;
             self.pr.value_drag = None;
             self.pr.scroll = DEFAULT_SCROLL;
+            self.pr.seq = crate::stepseq::SeqState::opened(self.pr_clip().and_then(|c| c.pattern.as_ref()));
             // A clip with notes opens centred on its pitch range (empty clips: C4 as in the reference).
             if let Some(c) = self.pr_clip()
                 && !c.notes.is_empty()

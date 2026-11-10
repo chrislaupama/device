@@ -49,9 +49,18 @@ impl MidiClip {
         MidiClip { id: ClipId(0), name: "Pattern".into(), start, length: pattern.length(), notes: Vec::new(), pattern: Some(pattern) }
     }
 
-    /// Notes as they play inside the clip (a pattern repeats; notes are cut
-    /// at the clip end).
+    /// Notes as they play inside the clip (a pattern repeats without its
+    /// muted rows; notes are cut at the clip end).
     pub fn playing_notes(&self) -> Vec<Note> {
+        let mut notes = self.tiled_notes();
+        if let Some(p) = &self.pattern {
+            notes.retain(|n| p.audible(n.pitch));
+        }
+        notes
+    }
+
+    /// Notes over the whole clip: a pattern repeated (every row), cut at the clip end.
+    pub fn tiled_notes(&self) -> Vec<Note> {
         match &self.pattern {
             Some(p) => crate::steps::tile(&self.notes, p.length(), self.length),
             None => self.notes.iter().filter(|n| n.start < self.length).map(|n| Note { length: n.length.min(self.length - n.start), ..*n }).collect(),

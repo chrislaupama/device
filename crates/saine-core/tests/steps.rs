@@ -152,3 +152,25 @@ fn step_commands_round_trip_as_json() {
     assert!(json.contains("\"1/16\""));
     assert_eq!(serde_json::from_str::<Command>(&json).unwrap(), cmd);
 }
+
+#[test]
+fn muted_and_soloed_rows_keep_their_notes_but_do_not_play() {
+    let (mut d, c) = doc_with_pattern_clip();
+    let muted = beat().with_row_flag(SNARE, false);
+    d.execute(Command::SetStepPattern { clip: c, pattern: Some(muted.clone()) }, Origin::User).unwrap();
+    let m = clip(&d, c);
+    assert_eq!(m.notes.len(), 6, "the muted row's notes stay in the clip");
+    assert!(m.playing_notes().iter().all(|n| n.pitch == KICK));
+    let soloed = muted.with_row_flag(SNARE, false).with_row_flag(SNARE, true);
+    assert!(soloed.muted.is_empty());
+    d.execute(Command::SetStepPattern { clip: c, pattern: Some(soloed) }, Origin::User).unwrap();
+    assert!(clip(&d, c).playing_notes().iter().all(|n| n.pitch == SNARE));
+    d.execute(Command::SetStepPattern { clip: c, pattern: None }, Origin::User).unwrap();
+    assert_eq!(clip(&d, c).notes.len(), 6, "converting keeps every row");
+    let json = serde_json::to_string(&beat()).unwrap();
+    assert!(!json.contains("muted"), "empty lists are not written");
+    let mut bad = beat();
+    bad.muted.push(60);
+    assert!(bad.validate().is_err());
+}
+

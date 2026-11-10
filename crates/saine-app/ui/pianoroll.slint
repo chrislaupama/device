@@ -120,10 +120,10 @@ component FooterValue inherits Rectangle {
         moved => { if (!root.cycle) { Studio.pr-value(root.field, 1, (self.mouse-y - self.pressed-y) / 1px); } }
     }
 }
-component FooterLabel inherits Text {
+export component FooterLabel inherits Text {
     height: 14px; color: #63656c; font-size: 9.75px; font-weight: 500; vertical-alignment: center;
 }
-component FooterTitle inherits Text {
+export component FooterTitle inherits Text {
     height: 14px; color: Tokens.text-bright; font-size: 10px; font-weight: 600; vertical-alignment: center;
 }
 component FooterSwitch inherits Rectangle {
