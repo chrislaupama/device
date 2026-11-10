@@ -525,8 +525,8 @@ component BottomPanel inherits Panel {
         color: Studio.bottom-tab == 0 ? Tokens.text-bright : Tokens.text-tertiary; font-size: 10px; font-weight: Studio.bottom-tab == 0 ? 600 : 500;
         TouchArea { clicked => { Studio.set-bottom-tab(0); } }
     }
-    if Studio.bottom-tab == 1 && Studio.pr-visible: PianoRoll { x: 255px; y: 27px; width: root.width - 255px; height: root.height - 27px; }
-    if Studio.bottom-tab == 1 && !Studio.pr-visible: ClipEmpty { x: 255px; y: 27px; width: root.width - 255px; height: root.height - 27px; }
+    if Studio.bottom-tab == 1 && (Studio.pr-visible || Studio.ac-visible): PianoRoll { x: 255px; y: 27px; width: root.width - 255px; height: root.height - 27px; }
+    if Studio.bottom-tab == 1 && !Studio.pr-visible && !Studio.ac-visible: ClipEmpty { x: 255px; y: 27px; width: root.width - 255px; height: root.height - 27px; }
     IconButton { x: root.width - 53px; y: 3px; width: 21px; height: 21px; icon: Icons.panel-bottom; ink: #6b6c70; icon-size: 14px; }
     IconButton { x: root.width - 29px; y: 3px; width: 21px; height: 21px; icon: Icons.download; ink: #6b6c70; icon-size: 14px; }
     // Device chain (Devices tab): built-in Synth card (instrument tracks without an instrument
