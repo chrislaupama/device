@@ -415,7 +415,7 @@ TEST_CASE(warp_render_swap_does_not_allocate) {
     WarpSession s;
     for (uint64_t i = 0; i < 4; ++i) {
         s.add(i + 1, a, 0, 90000);
-        s.warp(i + 1, i % 2 ? SE_WARP_AUTO : SE_WARP_STRETCH, line(0, 0.0, 0.9 + 0.05 * static_cast<double>(i), 90000),
+        s.warp(i + 1, static_cast<uint8_t>(i % 2 ? SE_WARP_AUTO : SE_WARP_STRETCH), line(0, 0.0, 0.9 + 0.05 * static_cast<double>(i), 90000),
                {{0.0, 1, {}}, {20000.0, 0, {}}});
     }
     REQUIRE(s.publish(e) == SE_OK);
