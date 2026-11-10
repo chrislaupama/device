@@ -173,7 +173,7 @@ impl Controller {
     /// The Shape tab is showing (a MIDI clip with notes, Shape picked or opening first).
     pub(crate) fn shape_tab_shown(&self) -> bool {
         let Some(c) = self.pr_clip() else { return false };
-        !Self::is_drum_clip(c) && !c.notes.is_empty() && self.composer_shape_tab.unwrap_or(c.composer.as_ref().is_none_or(|k| k.playing.is_none()))
+        c.pattern.is_none() && !c.notes.is_empty() && self.composer_shape_tab.unwrap_or(c.composer.as_ref().is_none_or(|k| k.playing.is_none()))
     }
 
     /// Drawing curves in the piano roll (the toolbar's Shape button, on the Shape tab).
@@ -189,7 +189,7 @@ impl Controller {
 
     fn shape_target(&self) -> Option<(MidiClip, Vec<Note>, Option<PartType>, Shape)> {
         let c = self.composer_clip()?;
-        if Self::is_drum_clip(&c) || c.notes.is_empty() {
+        if c.pattern.is_some() || c.notes.is_empty() {
             return None;
         }
         let (base, source, s) = self.shape_state(&c);
