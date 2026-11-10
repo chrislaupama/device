@@ -795,7 +795,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let ctl = ctl.clone();
         // Opens after its editor has been on screen for 10 ticks, so the editor is drawn first.
         let shown_ticks = std::cell::Cell::new(0u32);
+        let started = Instant::now();
         clip_menu_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
+            if shown_ticks.get() < 10 && started.elapsed() > Duration::from_secs(3) {
+                eprintln!("saine-studio: --clip-menu {m}: its editor never appeared; use a --state that shows it (0, 1: an audio clip; 3, 4, 5: a MIDI clip)");
+                std::process::exit(2);
+            }
             let Ok(mut c) = ctl.try_borrow_mut() else { return };
             if shown_ticks.get() > 10 || !c.clip_menu_shown(m) {
                 shown_ticks.set(if c.clip_menu_shown(m) { shown_ticks.get() } else { 0 });
