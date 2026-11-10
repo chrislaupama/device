@@ -32,6 +32,8 @@ pollster = "=0.4.0"
 rfd = "0.15"
 ureq = { version = "3", features = ["json"] }
 flate2 = "1.1"
+# Already in the tree; local date and time for Edit › Undo History.
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 roxmltree = "0.21"
 serde_json.workspace = true
 serde.workspace = true

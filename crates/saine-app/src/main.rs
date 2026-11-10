@@ -126,7 +126,7 @@ struct Args {
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
     /// 1 export dialog, 2 unsaved-changes prompt, 3 export dialog on Stems, 4 with its Tracks menu open, 5 on Project,
-    /// 6 Check for Updates.
+    /// 6 Check for Updates, 7 Undo History (after a few edits, the last one undone).
     dialog_state: u8,
     settings_general_state: bool,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
@@ -332,6 +332,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-check-updates" => {
                     a.reference_default = true;
                     a.dialog_state = 6;
+                }
+                "review-undo-history" => {
+                    a.reference_default = true;
+                    a.dialog_state = 7;
                 }
                 "reference-settings-general" => {
                     a.reference_default = true;
@@ -1575,6 +1579,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_updates_close, |c| c.dialogs_close());
     on!(on_general_toggle, |c, i: i32| c.general_toggle(i));
     on!(on_general_stop_mode, |c, on: bool| c.general_stop_in_place(on));
+    on!(on_undo_history_close, |c| c.dialogs_close());
+    on!(on_undo_history_travel, |c, row: i32| c.undo_history_travel(row));
     {
         // A menu item with a shortcut takes that keystroke away from the window (macOS key
         // equivalents), so replay it: a focused text field, the modal gating and the keymap
@@ -2003,7 +2009,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // The export dialog and the unsaved-changes prompt are modal: Escape closes them (Cancel).
             {
                 let mut c = ctl.borrow_mut();
-                if c.export.open || c.unsaved_open || c.updates_open {
+                if c.export.open || c.unsaved_open || c.updates_open || c.undo_history_open {
                     if action == "view.escape" && c.export.tracks_menu {
                         c.export_toggle_tracks_menu();
                     } else if action == "view.escape" {
@@ -2094,6 +2100,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if imported && !c.modal_open() {
                 if state == 6 {
                     c.menu_action("options.check_updates");
+                } else if state == 7 {
+                    let tracks: Vec<_> = c.project().tracks.iter().map(|t| t.id).collect();
+                    for t in tracks {
+                        c.toggle_solo(t);
+                    }
+                    c.undo();
+                    c.menu_action("edit.undo_history");
                 } else if state != 2 {
                     c.export_open();
                     if state >= 3 {
@@ -2304,7 +2317,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     if pr_vis {
                         // The step sequencer draws in Slint; the texture keeps its size for the piano roll tab.
                         let win = app.window().size();
-                        let size = ((win.width as f32 / scale) - 10.0 - pianoroll::PANEL_ORIGIN.0 - 0.5, pianoroll::CLIP_PANEL_H - pianoroll::PANEL_ORIGIN.1 - pianoroll::FOOTER_H);
+                        let size = ((win.width as f32 / scale) - 10.0 - pianoroll::PANEL_ORIGIN.0 - 0.5, (c.bottom_h() - pianoroll::PANEL_ORIGIN.1 - pianoroll::FOOTER_H).max(1.0));
                         if c.pr.size != size {
                             c.pr.size = size;
                             c.ui_dirty = true;

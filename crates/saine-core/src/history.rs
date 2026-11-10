@@ -2,7 +2,7 @@
 
 use crate::command::{Command, EditError};
 use crate::model::{Project, TrackId};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 #[derive(Debug, Clone)]
 struct Entry {
@@ -13,6 +13,8 @@ struct Entry {
     undo: Command,
     coalesce_key: Option<String>,
     at: Instant,
+    /// Wall-clock time the edit was made (Undo History's Date and Time).
+    made: SystemTime,
 }
 
 /// Where an edit came from; used for logging, AI attribution and tests.
@@ -100,7 +102,7 @@ impl Document {
             last.at = now;
             return Ok(());
         }
-        self.undo.push(Entry { label, redo, undo, coalesce_key: key, at: now });
+        self.undo.push(Entry { label, redo, undo, coalesce_key: key, at: now, made: SystemTime::now() });
         if self.undo.len() > self.max_history {
             self.undo.remove(0);
         }
@@ -189,7 +191,13 @@ impl Document {
 
     pub fn undo(&mut self) -> Result<bool, EditError> {
         let Some(mut e) = self.undo.pop() else { return Ok(false) };
-        let redo = e.undo.clone().apply(&mut self.project)?;
+        let redo = match e.undo.clone().apply(&mut self.project) {
+            Ok(redo) => redo,
+            Err(err) => {
+                self.undo.push(e);
+                return Err(err);
+            }
+        };
         e.redo = redo;
         e.coalesce_key = None; // never coalesce into an entry that was undone
         self.revision += 1;
@@ -199,7 +207,13 @@ impl Document {
 
     pub fn redo(&mut self) -> Result<bool, EditError> {
         let Some(mut e) = self.redo.pop() else { return Ok(false) };
-        let undo = e.redo.clone().apply(&mut self.project)?;
+        let undo = match e.redo.clone().apply(&mut self.project) {
+            Ok(undo) => undo,
+            Err(err) => {
+                self.redo.push(e);
+                return Err(err);
+            }
+        };
         e.undo = undo;
         self.revision += 1;
         self.undo.push(e);
@@ -209,6 +223,12 @@ impl Document {
     /// Labels of the undo stack, oldest first (for an "Undo History" view).
     pub fn history_labels(&self) -> Vec<String> {
         self.undo.iter().map(|e| e.label.clone()).collect()
+    }
+
+    /// Every step Edit › Undo History lists, oldest first: the undo stack, then the redo stack
+    /// with the next redo first. The first `undo_depth()` of them are applied.
+    pub fn history_steps(&self) -> Vec<(&str, SystemTime)> {
+        self.undo.iter().chain(self.redo.iter().rev()).map(|e| (e.label.as_str(), e.made)).collect()
     }
 }
 

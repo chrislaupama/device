@@ -318,6 +318,9 @@ pub struct Controller {
     /// stopped (Space).
     play_start: Option<i64>,
     stopped_at: Option<i64>,
+    /// Edit › Undo History… dialog.
+    pub undo_history_open: bool,
+    pub(crate) undo_history_model: Rc<VecModel<crate::UndoHistoryRow>>,
     pub(crate) jobs_tx: Sender<JobResult>,
     jobs_rx: Receiver<JobResult>,
     pub pending_jobs: usize,
@@ -454,6 +457,8 @@ impl Controller {
             updates_open: false,
             play_start: None,
             stopped_at: None,
+            undo_history_open: false,
+            undo_history_model: Rc::new(VecModel::default()),
             jobs_tx,
             jobs_rx,
             pending_jobs: 0,
@@ -576,6 +581,7 @@ impl Controller {
         s.set_synth_menu_items(ModelRc::from(self.synth_menu_model.clone()));
         s.set_input_menu_items(ModelRc::from(self.input_menu_model.clone()));
         s.set_export_tracks_items(ModelRc::from(self.export_tracks_model.clone()));
+        s.set_undo_history_rows(ModelRc::from(self.undo_history_model.clone()));
         s.set_settings_menu_items(ModelRc::from(self.settings_menu_model.clone()));
         s.set_tree(ModelRc::from(self.tree_model.clone()));
         s.set_files(ModelRc::from(self.files_model.clone()));
@@ -627,6 +633,10 @@ impl Controller {
         }
         match id {
             "options.audio_midi" => self.open_settings(),
+            "edit.undo_history" => {
+                self.undo_history_open = true;
+                self.ui_dirty = true;
+            }
             "options.check_updates" => {
                 self.updates_open = true;
                 self.ui_dirty = true;
@@ -654,7 +664,7 @@ impl Controller {
     }
 
     pub fn modal_open(&self) -> bool {
-        self.settings.open || self.export.open || self.unsaved_open || self.updates_open
+        self.settings.open || self.export.open || self.unsaved_open || self.updates_open || self.undo_history_open
     }
 
     /// File › Open Recent item `i` (newest first). A project that no longer opens leaves the list.

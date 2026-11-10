@@ -231,6 +231,7 @@ impl Controller {
         self.export.tracks_menu = false;
         self.unsaved_open = false;
         self.updates_open = false;
+        self.undo_history_open = false;
         self.ui_dirty = true;
     }
 
@@ -561,6 +562,46 @@ impl Controller {
         (written, restarted)
     }
 
+    /// Edit › Undo History rows: "Open Project" (the state before any edit), then every edit in
+    /// sentence case like the Undo and Redo items, undone ones last. State 0 applied, 1
+    /// current, 2 undone.
+    fn undo_history_rows(&self) -> Vec<crate::UndoHistoryRow> {
+        let depth = self.doc.undo_depth();
+        let state = |i: usize| if i < depth { 0 } else if i == depth { 1 } else { 2 };
+        let base = crate::UndoHistoryRow { number: 1, label: "Open Project".into(), date: "—".into(), time: "—".into(), state: state(0) };
+        let steps = self.doc.history_steps().into_iter().enumerate().map(|(i, (label, made))| {
+            let made = chrono::DateTime::<chrono::Local>::from(made);
+            crate::UndoHistoryRow {
+                number: i as i32 + 2,
+                label: saine_core::history::sentence_case(label).into(),
+                date: made.format("%b %-d, %Y").to_string().into(),
+                time: made.format("%-I:%M:%S %p").to_string().into(),
+                state: state(i + 1),
+            }
+        });
+        std::iter::once(base).chain(steps).collect()
+    }
+
+    /// Undo History: undo or redo until row `row` (0 = Open Project) is the current state.
+    pub fn undo_history_travel(&mut self, row: i32) {
+        let target = row.max(0) as usize;
+        while self.doc.undo_depth() > target && self.doc.can_undo() {
+            let depth = self.doc.undo_depth();
+            self.undo();
+            if self.doc.undo_depth() == depth {
+                break;
+            }
+        }
+        while self.doc.undo_depth() < target && self.doc.can_redo() {
+            let depth = self.doc.undo_depth();
+            self.redo();
+            if self.doc.undo_depth() == depth {
+                break;
+            }
+        }
+        self.ui_dirty = true;
+    }
+
     /// File › New Project: ask first when the project has unsaved changes.
     pub fn new_project_request(&mut self) {
         if self.doc.is_dirty() {
@@ -587,6 +628,11 @@ impl Controller {
         s.set_unsaved_open(self.unsaved_open);
         s.set_updates_open(self.updates_open);
         s.set_app_version(env!("CARGO_PKG_VERSION").into());
+        s.set_undo_history_open(self.undo_history_open);
+        s.set_undo_history_current(self.doc.undo_depth() as i32);
+        if self.undo_history_open {
+            sync_model(&self.undo_history_model, self.undo_history_rows());
+        }
         use slint::Model as _;
         let recent = &self.settings.prefs.recent_projects;
         let names = s.get_recent_projects();

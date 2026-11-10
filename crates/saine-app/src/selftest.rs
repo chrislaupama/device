@@ -86,8 +86,10 @@ fn clip_start_beats(c: &Controller, track: usize) -> Option<f64> {
     c.project().tracks.get(track)?.clips.first().map(|cl| cl.start as f64 / PPQ as f64)
 }
 
-/// Piano-roll texture origin in the window (bottom panel 390 pt at y 425, x 5 + 255).
-const PR_ORIGIN: (f32, f32) = (260.0, 820.0 - 5.0 - 390.0 + 54.5);
+/// Top of the bottom panel while the Clip tab is open (same height as Devices).
+const CLIP_Y: f32 = 820.0 - 5.0 - crate::highlight::DEFAULT_BOTTOM_H;
+/// Piano-roll texture origin in the window (x 5 + 255).
+const PR_ORIGIN: (f32, f32) = (260.0, CLIP_Y + 54.5);
 
 /// Window point at the centre of a piano-roll cell (beat is clip-relative).
 fn pr_xy(ctl: &Ctl, beat: f64, pitch: i32) -> (f32, f32) {
@@ -160,6 +162,9 @@ fn midi_steps() -> Vec<Step> {
             let id = instrument_clip(c).map(|m| m.id);
             (c.selected_clip == id && a.global::<Studio>().get_pr_visible() && c.pr_visible()).then_some(()).ok_or(format!("sel {:?} vs {id:?}", c.selected_clip))
         })),
+        // The default view shows about ten rows below C4; put B3 (59) on the top row so the
+        // notes drawn below (D3..B3) are all on screen.
+        DoC("scroll the piano roll to B3 at the top", Box::new(|_, ctl| ctl.borrow_mut().pr.scroll = 68.0 * crate::pianoroll::ROW_H)),
         DoC("click empty grid (focus) and press B (pen)", Box::new(|a, ctl| {
             let (x, y) = pr_xy(ctl, 3.5, 50);
             click(a, x, y);
@@ -221,7 +226,7 @@ fn midi_steps() -> Vec<Step> {
             n.iter().any(|n| n.pitch == 59 && n.start == 1920 && n.length == 960).then_some(()).ok_or(format!("{n:?}"))
         })),
         DoC("Grid 1/32, draw an off-grid note at beat 3.375, Grid back to 1/16", Box::new(|a, ctl| {
-            let (gx, gy) = (260.0 + 387.0 + 8.0, 452.0 + (390.0 - 27.0) - 54.5 + 30.0 + 7.0);
+            let (gx, gy) = (260.0 + 387.0 + 8.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 30.0 + 7.0);
             // Grid menu above the value: 8 rows of 20.4 with 3.4 padding and a 10.2 gap before the triplets.
             let item = |i: usize| (gx + 22.0, gy - 10.2 - (8.0 * 20.4 + 6.8 + 10.2) + 3.4 + i as f32 * 20.4 + 10.2);
             click(a, gx, gy);
@@ -240,9 +245,9 @@ fn midi_steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("grid {} {n:?}", c.pr.grid))
         })),
-        Do("click Quantize (selection = the new note)", Box::new(|a| click(a, 267.0 + 15.0, 466.0))),
+        Do("click Quantize (selection = the new note)", Box::new(|a| click(a, 267.0 + 15.0, CLIP_Y + 41.0))),
         DoC("Grid menu: pick 1/8T", Box::new(|a, _| {
-            let (gx, gy) = (260.0 + 387.0 + 8.0, 452.0 + (390.0 - 27.0) - 54.5 + 30.0 + 7.0);
+            let (gx, gy) = (260.0 + 387.0 + 8.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 30.0 + 7.0);
             click(a, gx, gy);
             click(a, gx + 22.0, gy - 10.2 - (8.0 * 20.4 + 6.8 + 10.2) + 3.4 + 5.0 * 20.4 + 10.2 + 10.2);
         })),
@@ -261,7 +266,7 @@ fn midi_steps() -> Vec<Step> {
             one_step(h5.clone(), "Quantize Notes")(c)?;
             (n.iter().all(|n| n.start % 240 == 0) && n.iter().any(|n| n.start == 3360 && n.pitch == 52)).then_some(()).ok_or(format!("{n:?}"))
         })),
-        Do("click Smart Quantize", Box::new(|a| click(a, 260.0 + 55.0 + 30.0, 466.0))),
+        Do("click Smart Quantize", Box::new(|a| click(a, 260.0 + 55.0 + 30.0, CLIP_Y + 41.0))),
         Check("Smart Quantize ran: one undo step, or no change to notes already on the grid", Box::new(|c, _| {
             let label = c.doc.undo_label();
             label.as_deref().is_some_and(|l| l.starts_with("Smart Quantize") || l.starts_with("Quantize Notes")).then_some(()).ok_or(format!("last {label:?}"))
@@ -296,7 +301,7 @@ fn midi_steps() -> Vec<Step> {
             (n.iter().any(|n| n.start == 0 && n.pitch == 65) && !c.pr.pen && c.pr.selected.is_empty()).then_some(()).ok_or(format!("{n:?}"))
         })),
         DoC("Scale: click the root note in the footer, pick Eb", Box::new(|a, _| {
-            click(a, 260.0 + 720.0 + 3.0, 452.0 + (390.0 - 27.0) - 54.5 + 30.0 + 7.0);
+            click(a, 260.0 + 720.0 + 3.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 30.0 + 7.0);
             a.global::<Studio>().invoke_clip_menu_pick(5);
         })),
         Check("the clip keeps Eb (scale type from the project key: Major), one undo step, footer reads Eb Major", Box::new(|c, a| {
@@ -307,12 +312,12 @@ fn midi_steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("{scale:?} {:?} {} {}", c.doc.undo_label(), s.get_pr_scale_root(), s.get_pr_scale_type()))
         })),
-        Do("click the footer Scale switch", Box::new(|a| click(a, 260.0 + 751.0 + 10.0, 452.0 + (390.0 - 27.0) - 54.5 + 13.0 + 7.0))),
+        Do("click the footer Scale switch", Box::new(|a| click(a, 260.0 + 751.0 + 10.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 13.0 + 7.0))),
         Check("Scale highlight on, the Scale button shows above the keys, rows unchanged", Box::new(|c, a| {
             let on = instrument_clip(c).and_then(|m| m.scale).is_some_and(|s| s.highlight && !s.fold);
             (on && a.global::<Studio>().get_pr_scale_on() && !c.pr_view().rows.folded()).then_some(()).ok_or(format!("{:?}", instrument_clip(c).map(|m| m.scale)))
         })),
-        Do("click Scale above the keys", Box::new(|a| click(a, 260.0 + 6.5 + 19.0, 452.0 + 27.5 + 30.0 + 8.0))),
+        Do("click Scale above the keys", Box::new(|a| click(a, 260.0 + 6.5 + 19.0, CLIP_Y + 27.0 + 27.5 + 30.0 + 8.0))),
         Check("scale rows: only Eb Major pitches plus rows holding notes", Box::new(|c, _| {
             let m = instrument_clip(c).ok_or("clip gone")?;
             let v = c.pr_view();
@@ -324,7 +329,7 @@ fn midi_steps() -> Vec<Step> {
                 && m.notes.iter().all(|n| shown.contains(&(n.pitch as i32)));
             ok.then_some(()).ok_or(format!("{} rows", v.rows.len()))
         })),
-        Do("click the footer Scale switch again", Box::new(|a| click(a, 260.0 + 751.0 + 10.0, 452.0 + (390.0 - 27.0) - 54.5 + 13.0 + 7.0))),
+        Do("click the footer Scale switch again", Box::new(|a| click(a, 260.0 + 751.0 + 10.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 13.0 + 7.0))),
         Check("Scale off restores chromatic rows and resets the Scale button", Box::new(|c, a| {
             let s = instrument_clip(c).and_then(|m| m.scale).unwrap_or_default();
             (!s.highlight && !s.fold && !c.pr_view().rows.folded() && !a.global::<Studio>().get_pr_scale_on()).then_some(()).ok_or(format!("{s:?}"))
@@ -335,7 +340,7 @@ fn midi_steps() -> Vec<Step> {
             }
         })),
         Check("undo cleared the clip's scale view", Box::new(|c, _| instrument_clip(c).is_some_and(|m| m.scale.is_none()).then_some(()).ok_or("scale still set".into()))),
-        Do("click Double", Box::new(|a| click(a, 260.0 + 270.5 + 10.0, 466.0))),
+        Do("click Double", Box::new(|a| click(a, 260.0 + 270.5 + 10.0, CLIP_Y + 41.0))),
         Check("Double: 2x notes and 2x clip length in ONE undo step", Box::new(move |c, _| {
             let (before, len) = sv2.borrow().clone();
             let m = instrument_clip(c).ok_or("clip gone")?;
@@ -1624,7 +1629,7 @@ fn recording_steps() -> Vec<Step> {
             let sy = ctl.borrow().view.scroll_y as f32;
             click(a, 300.0, TRACK0_Y + 10.0 - sy);
             if ctl.borrow().bottom_tab == crate::controller::BottomTab::Clip {
-                click(a, 5.0 + 286.0 + 15.0, 820.0 - 5.0 - 390.0 + 14.0);
+                click(a, 5.0 + 286.0 + 15.0, CLIP_Y + 14.0);
             }
         })),
         Check("rec: nothing armed with an input; record history", Box::new(move |c, a| {
@@ -2077,7 +2082,7 @@ fn device_steps() -> Vec<Step> {
             let i = track_of(&ctl.borrow(), TrackKind::Audio).unwrap_or(0);
             click_track_header(a, ctl, i);
             if ctl.borrow().bottom_tab == crate::controller::BottomTab::Clip {
-                click(a, 5.0 + 286.0 + 15.0, 820.0 - 5.0 - 390.0 + 14.0);
+                click(a, 5.0 + 286.0 + 15.0, CLIP_Y + 14.0);
             }
             click(a, EFFECTS_TAB.0, EFFECTS_TAB.1);
         })),
@@ -2845,7 +2850,7 @@ fn builtin_device_steps() -> Vec<Step> {
             let i = track_of(&ctl.borrow(), TrackKind::Audio).unwrap_or(0);
             click_track_header(a, ctl, i);
             if ctl.borrow().bottom_tab == crate::controller::BottomTab::Clip {
-                click(a, 5.0 + 286.0 + 15.0, 820.0 - 5.0 - 390.0 + 14.0);
+                click(a, 5.0 + 286.0 + 15.0, CLIP_Y + 14.0);
             }
             h0.set(ctl.borrow().doc.history_labels().len());
             if let Ok(mut c) = ctl.try_borrow_mut() {
@@ -4685,7 +4690,7 @@ fn field_device_steps() -> Vec<Step> {
 fn seq_xy(a: &AppWindow, row: u16, step: u16) -> (f32, f32) {
     let s = a.global::<Studio>();
     let (pitch, w, scroll) = (s.get_seq_col_pitch(), s.get_seq_cell_w(), s.get_seq_scroll_y());
-    (260.0 + crate::stepseq::COL_X0 + step as f32 * pitch + w / 2.0, 452.0 + crate::stepseq::ROW_Y0 + row as f32 * crate::stepseq::ROW_PITCH + 9.75 - scroll)
+    (260.0 + crate::stepseq::COL_X0 + step as f32 * pitch + w / 2.0, CLIP_Y + 27.0 + crate::stepseq::ROW_Y0 + row as f32 * crate::stepseq::ROW_PITCH + 9.75 - scroll)
 }
 
 fn seq_clip(c: &Controller) -> Option<saine_core::MidiClip> {
@@ -4760,7 +4765,7 @@ fn step_sequencer_steps() -> Vec<Step> {
             (pad2 == vec![0, 1, 2, 3]).then_some(()).ok_or(format!("pad 2 {pad2:?}"))
         })),
         Do("seq: Velocity tab, drag Pad 1 step 1 down 60 pt", Box::new(|a| {
-            click(a, 260.0 + 220.0, 452.0 + 13.5);
+            click(a, 260.0 + 220.0, CLIP_Y + 27.0 + 13.5);
             let (x, y) = seq_xy(a, 0, 0);
             drag(a, x, y, x, y + 60.0);
         })),
@@ -4772,7 +4777,7 @@ fn step_sequencer_steps() -> Vec<Step> {
             (a.global::<Studio>().get_seq_lane() == 1 && v < 60 && v >= 1 && nv == v).then_some(()).ok_or(format!("lane {} velocity {v} note {nv}", a.global::<Studio>().get_seq_lane()))
         })),
         Do("seq: Tie tab, drag Pad 1 step 5 two steps right", Box::new(|a| {
-            click(a, 260.0 + 404.0, 452.0 + 13.5);
+            click(a, 260.0 + 404.0, CLIP_Y + 27.0 + 13.5);
             let (x, y) = seq_xy(a, 0, 4);
             let (x2, _) = seq_xy(a, 0, 6);
             drag(a, x, y, x2, y);
@@ -4785,7 +4790,7 @@ fn step_sequencer_steps() -> Vec<Step> {
         })),
         Do("seq: click Pad 2's M", Box::new(|a| {
             let s = a.global::<Studio>();
-            click(a, 260.0 + 101.0, 452.0 + crate::stepseq::ROW_Y0 + crate::stepseq::ROW_PITCH + 9.75 - s.get_seq_scroll_y());
+            click(a, 260.0 + 101.0, CLIP_Y + 27.0 + crate::stepseq::ROW_Y0 + crate::stepseq::ROW_PITCH + 9.75 - s.get_seq_scroll_y());
         })),
         Check("seq: Pad 2 muted (one undo step): its notes stay, playback leaves them out", Box::new(move |c, a| {
             one(&h6, c, "Edit Step Sequencer")?;
@@ -4803,7 +4808,7 @@ fn step_sequencer_steps() -> Vec<Step> {
                 c.clip_menu_pick(3);
                 c.update_ui(a);
             }
-            click(a, 260.0 + 20.0, 452.0 + 13.5);
+            click(a, 260.0 + 20.0, CLIP_Y + 27.0 + 13.5);
         })),
         Check("seq: 64 steps of 1/8 (three undo steps); the footer reads 64 / 1/8; Double is now disabled", Box::new(move |c, a| {
             let n = c.doc.history_labels().len();
@@ -4814,7 +4819,7 @@ fn step_sequencer_steps() -> Vec<Step> {
             let ok = n == was + 3 && p.steps == 64 && p.rate == saine_core::steps::StepRate::Eighth && s.get_seq_length_text() == "64" && s.get_seq_rate_text() == "1/8" && !s.get_seq_can_double();
             ok.then_some(()).ok_or(format!("history +{} steps {} rate {:?}", n - was, p.steps, p.rate))
         })),
-        Do("seq: Piano roll tab", Box::new(|a| click(a, 5.0 + 420.0, 425.0 + 13.5))),
+        Do("seq: Piano roll tab", Box::new(|a| click(a, 5.0 + 420.0, CLIP_Y + 13.5))),
         Check("seq: piano roll shown for the pattern clip", Box::new(|c, a| {
             let s = a.global::<Studio>();
             (!s.get_seq_visible() && s.get_seq_tabs() && s.get_pr_visible() && !c.seq_visible()).then_some(()).ok_or("sequencer still shown".into())
@@ -4865,8 +4870,8 @@ fn step_sequencer_steps() -> Vec<Step> {
             let _ = ctl.borrow().engine.stop();
             ctl.borrow_mut().update_ui(a);
             let w = ctl.borrow().pr.size.0;
-            click(a, 260.0 + w - 23.4 - 2.0 * 36.6, 452.0 + 13.5);
-            click(a, 260.0 + w - 23.4 - 2.0 * 36.6 - 36.8, 452.0 + 13.5);
+            click(a, 260.0 + w - 23.4 - 2.0 * 36.6, CLIP_Y + 27.0 + 13.5);
+            click(a, 260.0 + w - 23.4 - 2.0 * 36.6 - 36.8, CLIP_Y + 27.0 + 13.5);
         })),
         Check("seq: page 1 shown, no ring while stopped, Follow playhead off", Box::new(|c, a| {
             let s = a.global::<Studio>();
@@ -5261,6 +5266,44 @@ fn menu_bar_steps() -> Vec<Step> {
             (s.get_export_open() && s.get_export_recipe() == 2).then_some(()).ok_or(format!("open {} recipe {}", s.get_export_open(), s.get_export_recipe()))
         })),
         Do("menu: Escape closes the export dialog", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("menu: solo track 1 twice (two edits); Edit › Undo History…", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = c.project().tracks[0].id;
+            c.toggle_solo(t);
+            c.toggle_solo(t);
+            c.menu_action("edit.undo_history");
+        })),
+        Check("menu: Undo History lists Open Project and every edit, the last one current", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let rows: Vec<_> = s.get_undo_history_rows().iter().collect();
+            let n = c.doc.history_steps().len();
+            let last = rows.last();
+            (s.get_undo_history_open() && rows.len() == n + 1 && rows[0].label == "Open Project" && last.is_some_and(|r| r.state == 1 && r.label == "Solo change" && r.time.contains(':')))
+                .then_some(())
+                .ok_or(format!("open {} rows {} steps {n}", s.get_undo_history_open(), rows.len()))
+        })),
+        DoC("menu: pick the row two above the current one", Box::new(|_, ctl| {
+            let depth = ctl.borrow().doc.undo_depth() as i32;
+            ctl.borrow_mut().undo_history_travel(depth - 2);
+        })),
+        Check("menu: both solo edits are undone and still listed", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let rows: Vec<_> = s.get_undo_history_rows().iter().collect();
+            let undone = rows.iter().filter(|r| r.state == 2).count();
+            (!c.project().tracks[0].solo && undone == 2 && c.doc.can_redo()).then_some(()).ok_or(format!("solo {} undone rows {undone}", c.project().tracks[0].solo))
+        })),
+        DoC("menu: Redo button (one step)", Box::new(|a, ctl| {
+            let cur = a.global::<Studio>().get_undo_history_current();
+            ctl.borrow_mut().undo_history_travel(cur + 1);
+        })),
+        Check("menu: the first solo edit is back", Box::new(|c, _| c.project().tracks[0].solo.then_some(()).ok_or("not soloed".into()))),
+        DoC("menu: undo it; Escape closes Undo History", Box::new(|a, ctl| {
+            ctl.borrow_mut().undo();
+            key(a, Key::Escape, false, false);
+        })),
+        Check("menu: Undo History closed, track 1 not soloed", Box::new(|c, a| {
+            (!c.undo_history_open && !a.global::<Studio>().get_undo_history_open() && !c.project().tracks[0].solo).then_some(()).ok_or("still open or soloed".into())
+        })),
         DoC("menu: save the project, then forget its folder", Box::new(move |_, ctl| {
             let mut c = ctl.borrow_mut();
             c.settings.prefs.recent_projects.clear();
@@ -6338,7 +6381,7 @@ fn pattern_library_steps() -> Vec<Step> {
             let s = a.global::<Studio>();
             (slint::Model::row_count(&s.get_composer_rows()) == 0 && s.get_composer_create_text() == "Create chords").then_some(()).ok_or(format!("{:?}", s.get_composer_create_text()))
         })),
-        Do("patterns: click Create chords", Box::new(|a| click(a, 5.0 + 60.0, 425.0 + 352.5 + 13.5))),
+        Do("patterns: click Create chords", Box::new(|a| click(a, 5.0 + 60.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 37.5 + 13.5))),
         Check("patterns: six chord patterns, the first plays in the clip (one undo step 'Create Patterns')", Box::new(move |c, a| {
             one(&h1, c, "Create Patterns")?;
             let k = comp(c).ok_or("no composer")?;
@@ -6347,12 +6390,12 @@ fn pattern_library_steps() -> Vec<Step> {
             let ok = k.playing == Some(0) && slint::Model::row_count(&s.get_composer_rows()) == 6 && notes > 0 && s.get_composer_create_text() == "Create new chords" && s.get_composer_original();
             ok.then_some(()).ok_or(format!("playing {:?} notes {notes}", k.playing))
         })),
-        Do("patterns: click the third row", Box::new(|a| click(a, 5.0 + 60.0, 425.0 + 104.0 + 25.0 + 2.0 * 35.0 + 16.0))),
+        Do("patterns: click the third row", Box::new(|a| click(a, 5.0 + 60.0, CLIP_Y + 104.0 + 25.0 + 2.0 * 35.0 + 16.0))),
         Check("patterns: row 3 plays (one undo step 'Load Pattern')", Box::new(move |c, _| {
             one(&h2, c, "Load Pattern")?;
             (comp(c).and_then(|k| k.playing) == Some(2)).then_some(()).ok_or("row 3 not playing".into())
         })),
-        Do("patterns: click Original on the clip chip", Box::new(|a| click(a, 5.0 + 10.5 + 234.0 - 8.0 - 20.0, 425.0 + 38.0 + 15.25))),
+        Do("patterns: click Original on the clip chip", Box::new(|a| click(a, 5.0 + 10.5 + 234.0 - 8.0 - 20.0, CLIP_Y + 38.0 + 15.25))),
         Check("patterns: the clip's own (empty) notes are back (one undo step 'Load Original')", Box::new(move |c, a| {
             one(&h3, c, "Load Original")?;
             let ok = comp(c).is_some_and(|k| k.playing.is_none()) && c.pr_clip().is_some_and(|m| m.notes.is_empty()) && !a.global::<Studio>().get_composer_original();
@@ -6392,7 +6435,7 @@ fn pattern_library_steps() -> Vec<Step> {
         })),
         Do("patterns: Escape; click the Shape tab", Box::new(|a| {
             key(a, Key::Escape, false, false);
-            click(a, 5.0 + 10.5 + 119.5 + 55.0, 425.0 + 38.0 + 45.5);
+            click(a, 5.0 + 10.5 + 119.5 + 55.0, CLIP_Y + 38.0 + 45.5);
         })),
         Check("patterns: Shape shows 14 rows, Voices disabled on a bassline", Box::new(|_, a| {
             let s = a.global::<Studio>();
@@ -6401,7 +6444,7 @@ fn pattern_library_steps() -> Vec<Step> {
             let ok = s.get_composer_shape_tab() && slint::Model::row_count(&rows) == 14 && !voices.enabled && voices.tip == "This pattern has no extra voices to add";
             ok.then_some(()).ok_or(format!("tab {} rows {}", s.get_composer_shape_tab(), slint::Model::row_count(&rows)))
         })),
-        Do("patterns: Octave ›", Box::new(|a| click(a, 5.0 + 10.5 + 72.0 + 120.0, 425.0 + 104.0 + 26.0 + 7.5))),
+        Do("patterns: Octave ›", Box::new(|a| click(a, 5.0 + 10.5 + 72.0 + 120.0, CLIP_Y + 104.0 + 26.0 + 7.5))),
         Check("patterns: the bassline plays an octave up over its kept base (one undo step 'Shape Change')", Box::new(move |c, a| {
             one(&h6, c, "Shape Change")?;
             let (base, notes) = shaped(c).ok_or("no clip")?;
@@ -6409,7 +6452,7 @@ fn pattern_library_steps() -> Vec<Step> {
             let octave = slint::Model::row_data(&a.global::<Studio>().get_composer_shape_rows(), 0).map(|r| r.value.to_string());
             (ok && octave.as_deref() == Some("+1")).then_some(()).ok_or(format!("{} base, {} notes, octave {octave:?}", base.len(), notes.len()))
         })),
-        Do("patterns: click Density at a quarter", Box::new(|a| click(a, 5.0 + 10.5 + 72.0 + 0.25 * 118.0, 425.0 + 104.0 + 26.0 + 2.0 * 17.5 + 7.5))),
+        Do("patterns: click Density at a quarter", Box::new(|a| click(a, 5.0 + 10.5 + 72.0 + 0.25 * 118.0, CLIP_Y + 104.0 + 26.0 + 2.0 * 17.5 + 7.5))),
         Check("patterns: Density thins the notes (one undo step 'Shape Change')", Box::new(move |c, _| {
             one(&h7, c, "Shape Change")?;
             let (base, notes) = shaped(c).ok_or("no clip")?;
@@ -6430,7 +6473,7 @@ fn pattern_library_steps() -> Vec<Step> {
             let ok = k.shapes.is_empty() && k.base.is_empty() && c.pr_clip().is_some_and(|m| m.notes == first.notes);
             ok.then_some(()).ok_or("shape not undone".into())
         })),
-        Do("patterns: click the Patterns tab", Box::new(|a| click(a, 5.0 + 10.5 + 5.0 + 55.0, 425.0 + 38.0 + 45.5))),
+        Do("patterns: click the Patterns tab", Box::new(|a| click(a, 5.0 + 10.5 + 5.0 + 55.0, CLIP_Y + 38.0 + 45.5))),
         Check("patterns: the list shows again", Box::new(|_, a| {
             let s = a.global::<Studio>();
             (!s.get_composer_shape_tab() && slint::Model::row_count(&s.get_composer_rows()) == 6).then_some(()).ok_or("still on Shape".into())
@@ -6476,7 +6519,11 @@ fn pattern_library_steps() -> Vec<Step> {
             let k = comp(c).ok_or("no composer")?;
             (k.shapes.is_empty() && k.base.is_empty() && !a.global::<Studio>().get_shape_has_curves()).then_some(()).ok_or("curves left".into())
         })),
-        Do("patterns: Arp ›", Box::new(|a| click(a, 5.0 + 10.5 + 72.0 + 120.0, 425.0 + 104.0 + 26.0 + 13.0 * 17.5 + 7.5))),
+        Do("patterns: scroll the Shape rack to its last row; Arp ›", Box::new(|a| {
+            let x = 5.0 + 10.5 + 72.0 + 120.0;
+            a.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(x, CLIP_Y + 200.0), delta_x: 0.0, delta_y: -1000.0 });
+            click(a, x, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 8.0 - 17.5 + 7.5);
+        })),
         Check("patterns: Arp 1/8 plays and the Pattern and Octaves rows join (one undo step 'Shape Change')", Box::new(move |c, a| {
             one(&h11, c, "Shape Change")?;
             let rows = shape_rows(a);
