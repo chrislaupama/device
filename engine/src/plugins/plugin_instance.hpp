@@ -269,7 +269,7 @@ public:
         return live_.push(e);
     }
     virtual bool plays_notes() const noexcept { return spec_.instrument; }
-    // RT: moves queued live notes to \`out\` (at most \`cap\`); returns the count.
+    // RT: moves queued live notes to `out` (at most `cap`); returns the count.
     uint32_t take_live(MidiEvent* out, uint32_t cap) noexcept {
         uint32_t n = 0;
         while (n < cap && live_.pop(out[n])) ++n;

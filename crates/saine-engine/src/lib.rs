@@ -91,7 +91,7 @@ pub struct PreviewState {
     pub frames: i64,
     pub peak_l: f32,
     pub peak_r: f32,
-    /// Preview notes held (\`preview_note\`).
+    /// Preview notes held (`preview_note`).
     pub notes: u8,
 }
 
@@ -985,7 +985,7 @@ impl Engine {
     }
 
     /// Preview a note through a track's instrument device (velocity 0 = off);
-    /// \`preview_stop\` releases every held one.
+    /// `preview_stop` releases every held one.
     pub fn preview_note(&self, device_id: u64, pitch: u8, velocity: u8) -> Result<(), EngineError> {
         check(unsafe { ffi::se_preview_note(self.raw, device_id, pitch, velocity) })
     }

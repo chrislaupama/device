@@ -666,8 +666,8 @@ impl Controller {
         self.pr_visible() || self.ac_clip().is_some()
     }
 
-    /// Preview \`note\` (pitch, velocity) through the clip's track instrument, releasing the one
-    /// sounding before; \`None\` releases it. One note at a time, as in the reference (W2-20).
+    /// Preview `note` (pitch, velocity) through the clip's track instrument, releasing the one
+    /// sounding before; `None` releases it. One note at a time, as in the reference (W2-20).
     pub fn pr_preview(&mut self, note: Option<(u8, u8)>) {
         let p = self.project();
         let device = self.pr_clip().and_then(|c| p.find_midi_clip(c.id)).and_then(|(t, _)| p.tracks[t].instrument_plugin.as_ref()).map(|d| d.id.0);
