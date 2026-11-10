@@ -141,7 +141,7 @@ fn volume_lane_from_a_document_shapes_the_output_and_undo_restores_it() {
     let asset = doc.project().assets.last().unwrap().id;
     let map = HashMap::from([(asset, info.asset_id)]);
     let track = doc.project().tracks.iter().find(|t| t.kind == TrackKind::Audio).unwrap().id;
-    doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "dc".into(), start: 0, source_offset: 0, source_length: 72_000, gain: 1.0 } }, Origin::User).unwrap();
+    doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "dc".into(), start: 0, source_offset: 0, source_length: 72_000, gain: 1.0, warp: Default::default() } }, Origin::User).unwrap();
     doc.execute(Command::SetTrackPan { track, pan: -1.0 }, Origin::User).unwrap(); // left = the fader gain
 
     let render = |doc: &Document, frames: usize| -> Vec<f32> {
@@ -214,7 +214,7 @@ fn master_volume_lane_reaches_the_engine() {
     .unwrap();
     let asset = doc.project().assets.last().unwrap().id;
     let track = doc.project().tracks.iter().find(|t| t.kind == TrackKind::Audio).unwrap().id;
-    doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "dc".into(), start: 0, source_offset: 0, source_length: 24_000, gain: 1.0 } }, Origin::User).unwrap();
+    doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "dc".into(), start: 0, source_offset: 0, source_length: 24_000, gain: 1.0, warp: Default::default() } }, Origin::User).unwrap();
     doc.execute(Command::SetTrackPan { track, pan: -1.0 }, Origin::User).unwrap();
     let lane = AutomationLane { target: AutomationTarget::Volume, enabled: true, points: vec![AutoPoint { time: 0, value: -6.0, curve: 0.0 }] };
     doc.execute(Command::SetAutomationLane { track: None, target: AutomationTarget::Volume, lane: Some(lane) }, Origin::User).unwrap();
@@ -243,7 +243,7 @@ fn plugin_lane_and_parameter_queries_through_the_document() {
     let asset = doc.project().assets.last().unwrap().id;
     let map = HashMap::from([(asset, info.asset_id)]);
     let track = doc.project().tracks.iter().find(|t| t.kind == TrackKind::Audio).unwrap().id;
-    doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "dc".into(), start: 0, source_offset: 0, source_length: 24_000, gain: 1.0 } }, Origin::User).unwrap();
+    doc.execute(Command::AddClip { track, clip: Clip { id: ClipId(0), asset, name: "dc".into(), start: 0, source_offset: 0, source_length: 24_000, gain: 1.0, warp: Default::default() } }, Origin::User).unwrap();
     doc.execute(Command::SetTrackPan { track, pan: -1.0 }, Origin::User).unwrap();
     let gain = PluginRef {
         format: PluginFormat::Clap,

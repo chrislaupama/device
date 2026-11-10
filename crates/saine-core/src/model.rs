@@ -5,6 +5,7 @@ use crate::automation::AutomationLane;
 use crate::device::{Device, DeviceId};
 use crate::instrument::SynthParams;
 use crate::midi::MidiClip;
+use crate::warp::ClipWarp;
 use serde::{Deserialize, Serialize};
 
 /// Pulses per quarter note for musical positions.
@@ -134,7 +135,8 @@ pub enum DeviceSlot {
 ///
 /// Timeline placement is musical (`start`, ticks) so clips follow tempo
 /// changes; the played source region is in source frames at the asset's
-/// native sample rate (no time-stretching in milestone 1).
+/// native sample rate. With warp on, the region follows the project tempo
+/// (see [`crate::warp`]); with warp off it plays 1:1.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Clip {
     pub id: ClipId,
@@ -144,6 +146,8 @@ pub struct Clip {
     pub source_offset: u64,
     pub source_length: u64,
     pub gain: f32,
+    #[serde(default, skip_serializing_if = "ClipWarp::is_default")]
+    pub warp: ClipWarp,
 }
 
 /// External media reference. Media is never copied into the project unless
@@ -349,9 +353,12 @@ impl Project {
         self.seconds_to_ticks(frames as f64 / rate)
     }
 
-    /// Duration of a clip in ticks at the current tempo (audio clips keep
-    /// their real-time duration when the tempo changes in milestone 1).
+    /// Duration of a clip in ticks at the current tempo: warped clips cover
+    /// their beats, the others keep their real-time duration.
     pub fn clip_length_ticks(&self, clip: &Clip) -> Ticks {
+        if clip.warp.enabled {
+            return crate::warp::beats_to_ticks(self.warped_clip_beats(clip));
+        }
         let rate = self.asset(clip.asset).map(|a| a.sample_rate).unwrap_or(48_000.0);
         self.seconds_to_ticks(clip.source_length as f64 / rate)
     }

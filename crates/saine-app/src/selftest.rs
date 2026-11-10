@@ -222,12 +222,16 @@ fn midi_steps() -> Vec<Step> {
         })),
         DoC("Grid 1/32, draw an off-grid note at beat 3.375, Grid back to 1/16", Box::new(|a, ctl| {
             let (gx, gy) = (260.0 + 387.0 + 8.0, 452.0 + (390.0 - 27.0) - 54.5 + 30.0 + 7.0);
-            click(a, gx, gy); // 1/16 -> 1/32
+            // Grid menu above the value: 8 rows of 20.4 with 3.4 padding and a 10.2 gap before the triplets.
+            let item = |i: usize| (gx + 22.0, gy - 10.2 - (8.0 * 20.4 + 6.8 + 10.2) + 3.4 + i as f32 * 20.4 + 10.2);
+            click(a, gx, gy);
+            let (ix, iy) = item(3);
+            click(a, ix, iy); // 1/32
             let (x, y) = pr_xy(ctl, 3.375 + 0.03, 52);
             click(a, x, y);
-            for _ in 0..3 {
-                click(a, gx, gy); // 1/32 -> 1/4 -> 1/8 -> 1/16
-            }
+            click(a, gx, gy);
+            let (ix, iy) = item(2);
+            click(a, ix, iy); // back to 1/16
         })),
         Check("off-grid note drawn at 3240 ticks, grid back at 1/16", Box::new(move |c, a| {
             let n = notes_of(c);
@@ -237,6 +241,21 @@ fn midi_steps() -> Vec<Step> {
                 .ok_or(format!("grid {} {n:?}", c.pr.grid))
         })),
         Do("click Quantize (selection = the new note)", Box::new(|a| click(a, 267.0 + 15.0, 466.0))),
+        DoC("Grid menu: pick 1/8T", Box::new(|a, _| {
+            let (gx, gy) = (260.0 + 387.0 + 8.0, 452.0 + (390.0 - 27.0) - 54.5 + 30.0 + 7.0);
+            click(a, gx, gy);
+            click(a, gx + 22.0, gy - 10.2 - (8.0 * 20.4 + 6.8 + 10.2) + 3.4 + 5.0 * 20.4 + 10.2 + 10.2);
+        })),
+        Check("Grid 1/8T (1/12 note), menu closed", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.pr.grid == 12 && s.get_pr_grid_text() == "1/8T" && s.get_clip_menu() == -1)
+                .then_some(())
+                .ok_or(format!("grid {} {:?} menu {}", c.pr.grid, s.get_pr_grid_text(), s.get_clip_menu()))
+        })),
+        DoC("Grid back to 1/16 (menu pick)", Box::new(|a, ctl| {
+            ctl.borrow_mut().clip_menu_open(3);
+            a.global::<Studio>().invoke_clip_menu_pick(2);
+        })),
         Check("Quantize snapped it to the 1/16 grid (3360), one undo step", Box::new(move |c, _| {
             let n = notes_of(c);
             one_step(h5.clone(), "Quantize Notes")(c)?;
@@ -708,6 +727,42 @@ fn steps() -> Vec<Step> {
         Check("undo restored mute=false", Box::new(|c, _| (!c.project().tracks[0].mute).then_some(()).ok_or("still muted".into()))),
         Do("Cmd+Shift+Z", Box::new(|a| key(a, "Z", true, true))),
         Check("redo muted again", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("redo failed".into()))),
+        Do("⇧⌘E (file.export_audio)", Box::new(|a| key(a, "E", true, true))),
+        Check("export dialog open with a range and a size estimate", Box::new(|_c, a| {
+            let s = a.global::<Studio>();
+            (s.get_export_open() && s.get_export_bars_text().starts_with("Bars 1–") && s.get_export_estimate().contains("MB"))
+                .then_some(())
+                .ok_or(format!("open {} bars {} est {}", s.get_export_open(), s.get_export_bars_text(), s.get_export_estimate()))
+        })),
+        DoC("export into a temp folder: click Export", Box::new(|a, ctl| {
+            {
+                let mut c = ctl.borrow_mut();
+                c.export.dir = std::env::temp_dir().join(format!("saine-selftest-export-{}", std::process::id()));
+                c.export.name = "mix".into();
+            }
+            // Export window centred in the 1440 x 820 window: 442 x 340.4, Export button 52.2 x 22.1.
+            click(a, (1440.0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (820.0 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
+        })),
+        Check("mix.wav written: stereo 24-bit at the engine rate, the full length, not silent; dialog closed", Box::new(|c, a| {
+            let path = c.export.dir.join("mix.wav");
+            let (rate, ch, s) = crate::wavgen::read_wav(&path)?;
+            let _ = std::fs::remove_dir_all(&c.export.dir);
+            let peak = s.iter().fold(0f32, |m, v| m.max(v.abs()));
+            let frames = s.len() / 2;
+            (rate as f64 == c.engine.sample_rate() && ch == 2 && frames as u64 == c.export_frames() && peak > 0.01 && !a.global::<Studio>().get_export_open())
+                .then_some(())
+                .ok_or(format!("rate {rate} ch {ch} frames {frames} vs {} peak {peak}", c.export_frames()))
+        })),
+        Do("⌘N (file.new) with unsaved changes", Box::new(|a| key(a, "n", true, false))),
+        Check("Save changes? prompt open, project untouched", Box::new(|c, a| {
+            let n: usize = c.project().tracks.iter().map(|t| t.clips.len()).sum();
+            (a.global::<Studio>().get_unsaved_open() && n == 2).then_some(()).ok_or(format!("prompt {} clips {n}", a.global::<Studio>().get_unsaved_open()))
+        })),
+        Do("Escape (Cancel)", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("prompt closed, project kept", Box::new(|c, a| {
+            let n: usize = c.project().tracks.iter().map(|t| t.clips.len()).sum();
+            (!a.global::<Studio>().get_unsaved_open() && !c.unsaved_open && n == 2).then_some(()).ok_or(format!("clips {n}"))
+        })),
         Do("drag track 1 volume slider left", Box::new(|a| drag(a, 262.65 + 115.7 + 5.95 + 0.8 * 56.1, TRACK0_Y + 47.6, 262.65 + 140.0, TRACK0_Y + 47.6))),
         Check("track 1 gain lowered, one coalesced undo step", Box::new(|c, _| {
             let g = c.project().tracks[0].gain;
@@ -998,9 +1053,13 @@ const INSP_IN: (f32, f32) = (5.0 + 80.0, 509.0 + 37.0 + 9.5);
 /// "In" popup (window x 16, y 568): centre of row 0.
 const IN_ROW0: (f32, f32) = (60.0, 568.0 + crate::recording::IN_PAD + crate::recording::IN_ROW / 2.0);
 const RECORD_BTN: (f32, f32) = (423.0 + 14.0, 38.0 + 14.0);
-/// Settings panel at (255, 7): sidebar row centres.
+/// Settings panel origin (the reference app's 960 x 820 pt window at x 255, y 6.5, in 85 % units) and width.
+const SET_X: f32 = 216.75;
+const SET_Y: f32 = 5.5;
+const SET_W: f32 = 816.0;
+/// Settings panel sidebar row centres.
 fn settings_row(i: usize) -> (f32, f32) {
-    (255.0 + 10.0 + 83.0, 7.0 + 94.75 + i as f32 * 27.25 + 12.75)
+    (SET_X + 10.0 + 83.0, SET_Y + 94.75 + i as f32 * 27.25 + 12.75)
 }
 
 /// Injected test input: 1 s of a 440 Hz sine at -6 dBFS, mono.
@@ -1167,7 +1226,7 @@ fn recording_steps() -> Vec<Step> {
                 && !s.get_set_input_muted();
             ok.then_some(()).ok_or(format!("open {} page {} out {:?} in {:?} rate {:?}", s.get_settings_open(), s.get_settings_page(), s.get_set_output_text(), s.get_set_input_text(), s.get_set_rate_text()))
         })),
-        Do("settings: click the Buffer size dropdown", Box::new(|a| click(a, 255.0 + 187.0 + 300.0, 7.0 + 312.0 + 14.0))),
+        Do("settings: click the Buffer size dropdown", Box::new(|a| click(a, SET_X + 187.0 + 300.0, SET_Y + 312.0 + 14.0))),
         Check("settings: buffer list 64..2048 with ms readouts", Box::new(|_, a| {
             let s = a.global::<Studio>();
             let items = s.get_settings_menu_items();
@@ -1204,14 +1263,14 @@ fn recording_steps() -> Vec<Step> {
             let ok_txt = if max == 0 { txt == "Plugin latency: none" } else { txt.contains(&format!("({max} samples)")) };
             (c.engine.delay_compensation_enabled() && s.get_set_pdc_on() && ok_txt).then_some(()).ok_or(format!("enabled {} ui {} text {txt:?} max {max}", c.engine.delay_compensation_enabled(), s.get_set_pdc_on()))
         })),
-        Do("pdc: click the Plugin delay compensation switch", Box::new(|a| click(a, 255.0 + 187.0 + 773.0 - 41.0 + 10.25, 7.0 + 355.0 + 5.0))),
+        Do("pdc: click the Plugin delay compensation switch", Box::new(|a| click(a, SET_X + SET_W - 41.0 + 10.25, SET_Y + 355.0 + 5.0))),
         Check("pdc: switched off in the engine, the UI and the (in-memory) preferences", Box::new(|c, a| {
             (!c.engine.delay_compensation_enabled() && !a.global::<Studio>().get_set_pdc_on() && c.settings.prefs.audio.pdc_off)
                 .then_some(())
                 .ok_or(format!("engine {} ui {} pref_off {}", c.engine.delay_compensation_enabled(), a.global::<Studio>().get_set_pdc_on(), c.settings.prefs.audio.pdc_off))
         })),
         Do("pdc: click the switch again, then Escape", Box::new(|a| {
-            click(a, 255.0 + 187.0 + 773.0 - 41.0 + 10.25, 7.0 + 355.0 + 5.0);
+            click(a, SET_X + SET_W - 41.0 + 10.25, SET_Y + 355.0 + 5.0);
             key(a, Key::Escape, false, false);
         })),
         Check("pdc: back on; Settings closed", Box::new(|c, a| {
@@ -1750,10 +1809,10 @@ fn device_steps() -> Vec<Step> {
         })),
         Do("settings: click “Rescan all plugins”", Box::new(|a| {
             let dirs = slint::Model::row_count(&a.global::<Studio>().get_scan_dirs()).min(8) as f32; // list is at most 8 rows tall
-            let content_w = 960.0 - 187.0;
+            let content_w = SET_W - 187.0;
             let card_x = 20.5 + ((content_w - 41.0) / 2.0 + 4.5);
             let card_y = 91.0 + dirs * 30.5 + 86.0;
-            click(a, 255.0 + 187.0 + card_x + 10.5 + 30.0, 7.0 + card_y + 31.0 + 13.0);
+            click(a, SET_X + 187.0 + card_x + 10.5 + 30.0, SET_Y + card_y + 31.0 + 13.0);
         })),
         Check("settings: a forced rescan ran (scan_plugins with rescan = true) and finished", Box::new(move |c, _| {
             let st = &c.devices.catalog.state;

@@ -460,6 +460,12 @@ export global Studio {
     callback pr-pointer(int, length, length, bool, bool);   // kind 0 down 1 move 2 up, x, y, shift, alt
     callback pr-scroll(float);
     callback pr-action(string);                             // quantize|humanize|reverse|legato|double|pen|smart_quantize|velocity_lane
+    // Clip editor dropdowns: 0 Speed, 1 Warp, 2 Mode, 3 Grid, 4 Type, 5 Genre; -1 when closed.
+    in property <int> clip-menu: -1;
+    in property <[string]> clip-menu-items;
+    in property <int> clip-menu-active: -1;
+    callback clip-menu-open(int);
+    callback clip-menu-pick(int);
     callback pr-value(int, int, float);                     // field, phase 0/1/2, dy since press
     // ---- clip context menu + rename ----
     callback lane-context(length, length, length, length);  // lane x, y, window x, y
@@ -548,6 +554,24 @@ export global Studio {
     callback open-input-menu();
     callback input-menu-pick(int);              // SetTrackInput
     callback input-menu-dismiss();
+    // ---- export dialog and unsaved-changes prompt (src/dialogs.rs, ui/dialogs.slint) ----
+    in property <bool> export-open;
+    in property <bool> export-bits24: true;
+    in property <bool> export-rate48: true;      // the engine rate (the render rate)
+    in property <string> export-recipe-text: "WAV 24-bit";
+    in property <string> export-bars-text: "Bars 1–1";
+    in property <string> export-name: "Untitled.wav";
+    in property <string> export-dir;
+    in property <string> export-estimate;
+    callback export-close();
+    callback export-run();
+    callback export-choose-dir();
+    callback export-bits(bool);                 // true = 24-bit
+    callback export-name-edited(string);
+    in property <bool> unsaved-open;
+    callback unsaved-cancel();
+    callback unsaved-dont-save();
+    callback unsaved-save();
     // ---- settings window (src/settings.rs, ui/settings.slint) ----
     in property <bool> settings-open;
     in property <int> settings-page: 1;

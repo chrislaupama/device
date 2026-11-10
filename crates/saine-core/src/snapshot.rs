@@ -6,7 +6,8 @@
 //! the real-time thread never deals with tempo math.
 
 use crate::device::Device;
-use crate::model::{AssetId, Project};
+use crate::model::{AssetId, Clip, Project};
+use crate::warp::{Transient, WarpMode, engine_mode};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -17,6 +18,19 @@ pub struct ClipSnapshot {
     pub source_offset: i64,
     pub length: i64,
     pub gain: f32,
+    /// Warp on: how the clip follows the tempo (`se_clip_warp_desc`).
+    pub warp: Option<WarpSnapshot>,
+}
+
+/// A warped clip in engine frames.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WarpSnapshot {
+    /// `SE_WARP_*`.
+    pub mode: u8,
+    /// (timeline frame, source frame), strictly increasing, at least two.
+    pub points: Vec<(i64, f64)>,
+    /// Slices (source frame, percussive) for Drums and Auto, sorted.
+    pub slices: Vec<(f64, bool)>,
 }
 
 /// A note as absolute engine frames: [start, end) with the clip boundary
@@ -87,6 +101,18 @@ pub struct SessionSnapshot {
 /// assets; clips whose asset isn't loaded (missing media, still importing)
 /// are skipped and reported in the second return value.
 pub fn build(project: &Project, engine_rate: f64, engine_assets: &HashMap<AssetId, u64>) -> (SessionSnapshot, Vec<u64>) {
+    build_with_transients(project, engine_rate, engine_assets, &HashMap::new())
+}
+
+/// [`build`] with the detected transients of each asset (asset frames), which
+/// warped clips in Drums and Auto mode slice at. Without them Drums plays the
+/// clip as one slice and Auto stretches.
+pub fn build_with_transients(
+    project: &Project,
+    engine_rate: f64,
+    engine_assets: &HashMap<AssetId, u64>,
+    transients: &HashMap<AssetId, Vec<Transient>>,
+) -> (SessionSnapshot, Vec<u64>) {
     let mut skipped = Vec::new();
     let tracks = project
         .tracks
@@ -111,8 +137,13 @@ pub fn build(project: &Project, engine_rate: f64, engine_assets: &HashMap<AssetI
                         engine_asset: ea,
                         timeline_start: project.ticks_to_frames(c.start, engine_rate),
                         source_offset: (c.source_offset as f64 * ratio).round() as i64,
-                        length: (c.source_length as f64 * ratio).round() as i64,
+                        length: if c.warp.enabled {
+                            project.ticks_to_frames(c.start + project.clip_length_ticks(c), engine_rate) - project.ticks_to_frames(c.start, engine_rate)
+                        } else {
+                            (c.source_length as f64 * ratio).round() as i64
+                        },
                         gain: c.gain,
+                        warp: c.warp.enabled.then(|| warp_snapshot(project, c, asset.sample_rate, engine_rate, transients.get(&c.asset).map_or(&[][..], |v| v))),
                     })
                 })
                 .collect(),
@@ -158,4 +189,24 @@ pub fn build(project: &Project, engine_rate: f64, engine_assets: &HashMap<AssetI
         .filter_map(|s| Some((s.asset, *engine_assets.get(&s.asset)?)))
         .collect();
     (SessionSnapshot { tracks, master_gain: project.master_gain, master_automation, device_assets }, skipped)
+}
+
+fn warp_snapshot(project: &Project, c: &Clip, asset_rate: f64, engine_rate: f64, detected: &[Transient]) -> WarpSnapshot {
+    let mut mode = c.warp.mode;
+    let mut slices = Vec::new();
+    if matches!(mode, WarpMode::Drums | WarpMode::Auto) {
+        let ratio = engine_rate / asset_rate;
+        let all = c.warp.transients(detected, asset_rate);
+        let start = c.source_offset;
+        let end = c.source_offset + c.source_length;
+        // The clip start is a slice boundary, in the passage it falls in.
+        let head = all.iter().rev().find(|t| t.source <= start).is_none_or(|t| t.percussive);
+        slices.push((start as f64 * ratio, head));
+        slices.extend(all.iter().filter(|t| t.source > start && t.source < end).map(|t| (t.source as f64 * ratio, t.percussive)));
+        if mode == WarpMode::Auto && all.is_empty() {
+            mode = WarpMode::Melody;
+            slices.clear();
+        }
+    }
+    WarpSnapshot { mode: engine_mode(mode), points: project.warp_map(c, engine_rate), slices }
 }

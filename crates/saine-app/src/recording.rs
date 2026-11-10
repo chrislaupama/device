@@ -347,7 +347,7 @@ impl Controller {
                 frames,
             };
             let start = self.project().frames_to_ticks(take.start_frame.max(0), rate);
-            let clip = Clip { id: ClipId(alloc()), asset: asset_id, name, start, source_offset: skip, source_length: frames - skip, gain: 1.0 };
+            let clip = Clip { id: ClipId(alloc()), asset: asset_id, name, start, source_offset: skip, source_length: frames - skip, gain: 1.0, warp: Default::default() };
             cmds.push(Command::AddAsset { asset });
             cmds.push(Command::AddClip { track, clip });
             loaded.push((asset_id, info.asset_id, pyr));
@@ -405,6 +405,7 @@ impl Controller {
                 len_beats: len_beats.max(0.0),
                 color: crate::controller::RECORD_RED,
                 selected: false,
+                muted: false,
                 name: "Recording".into(),
                 wave: None,
                 midi: None,

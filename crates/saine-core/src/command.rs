@@ -70,6 +70,10 @@ pub enum Command {
     /// Set the visible region of a clip (left/right trim).
     TrimClip { clip: ClipId, start: Ticks, source_offset: u64, source_length: u64 },
     SetClipGain { clip: ClipId, gain: f32 },
+    /// Replace a clip's warp settings. `label` names the edit for undo
+    /// ("Set clip speed", "Move warp marker", …); successive edits with the
+    /// same label on the same clip coalesce (drags).
+    SetClipWarp { clip: ClipId, warp: crate::warp::ClipWarp, label: String },
     SetTempo { bpm: f64 },
     SetTimeSignature { numerator: u8, denominator: u8 },
     SetLoop { enabled: bool, start: Ticks, end: Ticks },
@@ -164,6 +168,7 @@ impl Command {
             Command::MoveClip { .. } => "Move Clip".into(),
             Command::TrimClip { .. } => "Trim Clip".into(),
             Command::SetClipGain { .. } => "Clip Gain Change".into(),
+            Command::SetClipWarp { label, .. } => label.clone(),
             Command::SetTempo { .. } => "Tempo Change".into(),
             Command::SetTimeSignature { .. } => "Time Signature Change".into(),
             Command::SetLoop { .. } => "Loop Change".into(),
@@ -217,6 +222,7 @@ impl Command {
             Command::SetTrackPan { track, .. } => Some(format!("pan:{}", track.0)),
             Command::SetMasterGain { .. } => Some("master_gain".into()),
             Command::SetClipGain { clip, .. } => Some(format!("clipgain:{}", clip.0)),
+            Command::SetClipWarp { clip, label, .. } => Some(format!("clipwarp:{}:{label}", clip.0)),
             Command::SetTempo { .. } => Some("tempo".into()),
             Command::SetSynthParams { track, params } => Some(format!("synth:{}:{}", track.0, params.preset)),
             Command::SetDeviceParam { device, param, .. } => Some(format!("devparam:{}:{param}", device.0)),
@@ -431,6 +437,14 @@ impl Command {
                 let (ti, ci) = p.find_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
                 let old = std::mem::replace(&mut p.tracks[ti].clips[ci].gain, gain);
                 Ok(Command::SetClipGain { clip, gain: old })
+            }
+            Command::SetClipWarp { clip, warp, label } => {
+                let (ti, ci) = p.find_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let mut probe = p.tracks[ti].clips[ci].clone();
+                probe.warp = warp;
+                validate_clip(p, &probe)?;
+                let old = std::mem::replace(&mut p.tracks[ti].clips[ci].warp, probe.warp);
+                Ok(Command::SetClipWarp { clip, warp: old, label })
             }
             Command::SetTempo { bpm } => {
                 if !(MIN_BPM..=MAX_BPM).contains(&bpm) {
@@ -1007,5 +1021,6 @@ fn validate_clip(p: &Project, c: &Clip) -> Result<(), EditError> {
     if c.source_offset.checked_add(c.source_length).is_none_or(|end| end > a.frames) {
         return Err(invalid("source_region", format!("offset {} + length {} exceeds asset length {}", c.source_offset, c.source_length, a.frames)));
     }
+    c.warp.validate(a).map_err(|r| invalid("warp", r))?;
     validate_gain("clip_gain", c.gain)
 }

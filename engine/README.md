@@ -23,10 +23,13 @@ compensation `SE_PDC_MAX_DELAY_FRAMES`, `se_pdc_set_enabled`,
 `se_auto_lane_desc`, `se_track_desc_v6`, `se_session_desc_v6` +
 `se_session_publish_v6`, `se_automation_eval`, `se_plugin_params`,
 `se_plugin_param_value`, `se_plugin_param_text`, `se_plugin_param_change` +
-`se_plugin_take_param_changes`). Plugin hosting (AU, VST3, CLAP) is
+`se_plugin_take_param_changes`, and for clip warping `se_warp_point`,
+`se_warp_slice`, `se_clip_warp_desc`, `se_session_desc_v7` +
+`se_session_publish_v7`, `se_warp_renders_pending`, `se_onset` +
+`se_asset_detect_onsets`). Plugin hosting (AU, VST3, CLAP) is
 described in [Plugins](#plugins), delay compensation in
 [Plugin delay compensation](#plugin-delay-compensation), automation in
-[Automation](#automation).
+[Automation](#automation), clip warping in [Clip warping](#clip-warping).
 
 ## Build, test, bench
 
@@ -1391,6 +1394,71 @@ lane on a DC clip follows `value_at` (worst 4.9e-6), a disabled lane renders
 bit-identically to no lane, undo restores the static output bit-exactly;
 master lane; a CLAP gain lane through the document and the parameter
 queries.
+
+## Clip warping
+
+`se_session_publish_v7` adds a warp description per audio clip: a map of
+(timeline frame, source frame) points and one of five modes. The header has
+the exact rules; this section explains how the engine runs them.
+
+* **Re-pitch** reads the source at the map's position with the same
+  band-limited interpolator as rate-converted clips: pitch follows speed.
+* **Slice** (drums) plays each transient slice at the frame where the map
+  reaches it, at the transpose rate, with 2 ms fades and crossfades. No
+  stretching, so hits stay sharp.
+* **Stretch** and **Stretch + formant** run signalsmith-stretch (MIT, fetched
+  by CMake, see `third_party_licenses.md`). We never wrote our own stretcher.
+* **Auto** slices passages whose slices are flagged percussive and stretches
+  the rest, crossfading over 3 ms where the choice changes.
+
+### Real-time safety (`src/warp.cpp`)
+
+`WarpVoice` wraps one stretcher per (track, clip slot, channel count). All
+its buffers are sized at publish time for the largest block and the slowest
+rate, so `process` only reads and writes reserved memory. The tests
+`warp_render_path_does_not_allocate` and `warp_render_swap_does_not_allocate`
+count allocations on the render path. Voices move across republishes by key,
+so editing gain or another track keeps them running. A voice restarts with
+`seek` (no pre-roll latency) at a clip start, after a transport jump, or when
+the map moves the source under it.
+
+### Background renders
+
+Live stretching costs about 25–45 µs per track per block (bench below), and a
+restart costs one full analysis window. So a background thread
+(`WarpRenderer`) renders every stretch-mode clip ahead of time, in large
+blocks, keyed by an FNV-1a hash of asset, mode, transpose, map and slices
+relative to the clip start. Moving a clip or changing its gain reuses the
+render. `se_plugin_idle` swaps finished renders into the live graph, and the
+first block after a swap crossfades from the voice. A rendered clip then
+costs a copy (about 0.3–0.5 µs per track per block), and a transport jump
+costs nothing extra. Renders nobody uses are dropped after 32 newer ones.
+A render is limited to 10 minutes of audio. A longer clip keeps stretching
+live. `se_export_wav` uses the attached renders and private voices for the
+rest.
+
+### Onsets
+
+`se_asset_detect_onsets` finds transients by spectral flux with adaptive
+peak picking, then moves each one back to the start of its attack. A slice
+is flagged percussive when its tail sits 12 dB under its head, smoothed over
+neighbouring slices. The UI uses it for warp markers and the Auto mode.
+
+### Benchmark (`build/saine_warp_bench`, 20 s stereo loop, map 112/120)
+
+| Mode | µs per track per block, live | rendered | render time per track-minute |
+|---|---:|---:|---:|
+| unwarped 1:1 | 0.1–0.4 | – | – |
+| Re-pitch | 1.9–3.8 | – | – |
+| Slice | 0.9–1.8 | – | – |
+| Stretch | 24–47 | 0.3–0.6 | ≈ 0.5 s |
+| Stretch + formant | 24–75 | 0.3–0.6 | ≈ 0.6 s |
+| Auto (3/4 percussive) | 7–19 | 0.4–0.5 | ≈ 0.3 s |
+
+Thirty-two stretch tracks with a transport jump every 50 blocks average
+11 µs per block rendered and 2.3 ms live. Onset detection takes 35–85 ms
+per minute of audio. Ranges cover two runs on a MacBook Air shared with
+other builds.
 
 ## Placeholders and known gaps
 

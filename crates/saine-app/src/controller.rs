@@ -286,6 +286,9 @@ pub struct Controller {
     pub(crate) bottom_drag: Option<crate::splitters::BottomDrag>,
     status: Option<(String, Instant, Duration)>,
     pub project_dir: Option<PathBuf>,
+    /// Export dialog and the unsaved-changes prompt (src/dialogs.rs).
+    pub export: crate::dialogs::ExportUi,
+    pub unsaved_open: bool,
     pub(crate) jobs_tx: Sender<JobResult>,
     jobs_rx: Receiver<JobResult>,
     pub pending_jobs: usize,
@@ -386,6 +389,8 @@ impl Controller {
             bottom_drag: None,
             status: None,
             project_dir: None,
+            export: Default::default(),
+            unsaved_open: false,
             jobs_tx,
             jobs_rx,
             pending_jobs: 0,
@@ -591,7 +596,7 @@ impl Controller {
 
     /// Push loop region and metronome grid (both derived from the project
     /// transport) to the engine. Cheap; called after every publish.
-    fn sync_loop_and_click(&mut self) {
+    pub(crate) fn sync_loop_and_click(&mut self) {
         let p = self.doc.project();
         let tr = &p.transport;
         let (start, end) = (p.ticks_to_frames(tr.loop_start, self.rate), p.ticks_to_frames(tr.loop_end, self.rate));
@@ -924,7 +929,7 @@ impl Controller {
         let clip_id = ClipId(alloc());
         cmds.push(Command::AddClip {
             track: track_id,
-            clip: Clip { id: clip_id, asset: asset_id, name, start: at.max(0), source_offset: 0, source_length: native_frames, gain: 1.0 },
+            clip: Clip { id: clip_id, asset: asset_id, name, start: at.max(0), source_offset: 0, source_length: native_frames, gain: 1.0, warp: Default::default() },
         });
         // Engine asset must be known before the snapshot is published.
         self.peaks.insert(info.asset_id, pyr);
@@ -1224,6 +1229,7 @@ impl Controller {
                     len_beats,
                     color: track_color(t.color),
                     selected: Some(c.id) == self.selected_clip,
+                    muted: t.mute,
                     name: c.name.clone(),
                     wave,
                     midi: None,
@@ -1250,6 +1256,7 @@ impl Controller {
                     len_beats: len as f64 / PPQ as f64,
                     color: track_color(t.color),
                     selected: Some(c.id) == self.selected_clip,
+                    muted: t.mute,
                     name: c.name.clone(),
                     wave: None,
                     midi: Some(mini_notes(&notes, shift, len)),
@@ -1298,6 +1305,7 @@ impl Controller {
             live: &self.rec.live_vis,
             playhead_beats: self.playhead_ticks() as f64 / PPQ as f64,
             loop_beats: (tr.loop_start as f64 / PPQ as f64, tr.loop_end as f64 / PPQ as f64),
+            loop_on: tr.loop_enabled,
             beats_per_bar: self.beats_per_bar(),
             frames_per_beat: self.rate * 60.0 / tr.bpm,
             auto: None,
@@ -1535,6 +1543,7 @@ impl Controller {
         self.push_synth(&s);
         self.push_recording(&s);
         self.push_settings(&s);
+        self.push_dialogs(&s);
         self.push_devices(&s);
         self.push_automation(&s);
         s.set_bottom_h(self.bottom_h());
