@@ -49,6 +49,7 @@ mod files;
 mod panel_multiband;
 mod gpu;
 mod highlight;
+mod live_import;
 mod live_set;
 mod minimap;
 mod mixer;
@@ -281,6 +282,11 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.midi_state = 10;
                 }
+                "review-pr-zoom" => {
+                    a.reference_default = true;
+                    a.midi_state = 11;
+                }
+
                 "review-clip-loop" => {
                     a.reference_default = true;
                     a.midi_state = 8;
@@ -463,7 +469,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-pr-zoom, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -970,7 +976,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.select_clip(clip);
             c.seek_beats(22.0); // 00:11.000, as captured
         }
-        if let (5..=7 | 10, Some(id)) = (args.midi_state, clip) {
+        if let (5..=7 | 10..=11, Some(id)) = (args.midi_state, clip) {
             // REVIEW STATE: an E minor line with one out-of-scale note (F4), the clip's scale set
             // to E Minor with the footer Scale on; 6 adds scale rows, 7 opens the Scale type menu.
             let line = [(64u8, 0i64), (67, 1), (71, 2), (69, 3), (67, 4), (65, 5), (66, 6), (64, 7), (59, 8), (62, 10), (64, 12), (71, 14)];
@@ -986,6 +992,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if args.midi_state == 7 {
                 c.clip_menu_open(9);
             }
+            if args.midi_state == 11 {
+                // REVIEW STATE: zoomed in with both toolbar sliders, panned a beat in, snap 1/8.
+                c.snap_menu_pick(5);
+                c.pr_zoom(1, 0.45);
+                c.pr_zoom(0, 0.8);
+                c.pr.hstart += 1.0;
+            }
+
         }
         if let (8..=9, Some(id)) = (args.midi_state, clip) {
             // REVIEW STATE: a one-bar line in a four-bar clip that loops beats 2 to 4 of the
@@ -1588,7 +1602,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_export_pick_tracks, |c, i: i32| c.export_pick_tracks(i));
     on!(on_export_name_edited, |c, t: slint::SharedString| c.export_set_name(t.as_str()));
     on!(on_unsaved_cancel, |c| c.dialogs_close());
-    on!(on_unsaved_dont_save, |c| c.new_project());
+    on!(on_unsaved_dont_save, |c| c.unsaved_continue());
     // Folder picker and Save run their native dialogs with the controller NOT borrowed.
     {
         let ctl = ctl.clone();
@@ -1612,7 +1626,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let mut c = ctl.borrow_mut();
                 c.save_to(&dir);
                 if !c.doc.is_dirty() {
-                    c.new_project();
+                    c.unsaved_continue();
                 }
             }
             if let Some(a) = aw.upgrade() {
@@ -1620,7 +1634,30 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
-    on!(on_menu_action, |c, id: slint::SharedString| c.menu_action(&id));
+    // Import Ableton Live Set… runs its file dialog with the controller NOT borrowed.
+    {
+        let ctl = ctl.clone();
+        let aw = app.as_weak();
+        studio.on_menu_action(move |id| {
+            if id == "file.import_ableton" {
+                // Like every menu action, nothing while a dialog is open.
+                if ctl.borrow().modal_open() {
+                    return;
+                }
+                if let Some(file) = rfd::FileDialog::new().set_title("Import Ableton Live Set").add_filter("Ableton Live Set", &["als"]).pick_file() {
+                    ctl.borrow_mut().import_live_set_request(file);
+                }
+            } else {
+                ctl.borrow_mut().menu_action(&id);
+            }
+            if let Some(a) = aw.upgrade() {
+                if let Ok(mut c) = ctl.try_borrow_mut() {
+                    c.update_ui(&a);
+                }
+                a.window().request_redraw();
+            }
+        });
+    }
     on!(on_open_recent, |c, i: i32| c.open_recent(i as usize));
     on!(on_updates_close, |c| c.dialogs_close());
     on!(on_general_toggle, |c, i: i32| c.general_toggle(i));
@@ -1757,7 +1794,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(tab)
     });
     on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool| c.pr_pointer(kind, x, y, shift, alt, command));
-    on!(on_pr_scroll, |c, dy: f32| c.pr_scroll(dy));
+    on!(on_pr_scroll, |c, dx: f32, dy: f32| c.pr_scroll(dx, dy));
+    on!(on_pr_zoom, |c, axis: i32, z: f32| c.pr_zoom(axis, z));
     on!(on_pr_action, |c, a: slint::SharedString| c.pr_action(a.as_str()));
     on!(on_clip_menu_open, |c, m: i32| c.clip_menu_open(m));
     on!(on_pr_scale_step, |c, m: i32, s: i32| c.pr_scale_step(m, s));

@@ -650,6 +650,9 @@ impl Controller {
         let pr = self.pr_clip().cloned();
         s.set_pr_visible(pr.is_some());
         s.set_pr_pen(self.pr.pen);
+        let (vz, hz) = self.pr_zoom_values();
+        s.set_pr_vzoom(vz);
+        s.set_pr_hzoom(hz);
         let ac = self.ac_clip().cloned();
         s.set_ac_visible(ac.is_some());
         // Clip header, range readouts and colour: shared by the piano roll and the audio clip editor.

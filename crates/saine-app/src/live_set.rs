@@ -60,6 +60,8 @@ pub struct SetAudioClip {
     pub file_size: u64,
     pub frames: u64,
     pub sample_rate: u32,
+    /// Warp markers as (seconds into the file, beat); empty plays the file unstretched.
+    pub markers: Vec<(f64, f64)>,
 }
 
 pub struct SetMidiClip {
@@ -380,13 +382,14 @@ impl Xml {
         self.v("PitchCoarse", 0);
         self.v("PitchFine", 0);
         self.v("SampleVolume", 1);
-        // Two markers fix the file's tempo at the set tempo: the file plays unstretched.
+        // Without markers, two fix the file's tempo at the set tempo: the file plays unstretched.
         let beat_sec = 60.0 / set.bpm;
+        let unstretched = [(0.0, 0.0), (0.03125 * beat_sec, 0.03125)];
         self.open("WarpMarkers", &[]);
-        let a = self.id();
-        self.empty("WarpMarker", &[("Id", a.to_string()), ("SecTime", "0".into()), ("BeatTime", "0".into())]);
-        let b = self.id();
-        self.empty("WarpMarker", &[("Id", b.to_string()), ("SecTime", num(0.03125 * beat_sec)), ("BeatTime", "0.03125".into())]);
+        for &(sec, beat) in if c.markers.is_empty() { &unstretched[..] } else { &c.markers[..] } {
+            let id = self.id();
+            self.empty("WarpMarker", &[("Id", id.to_string()), ("SecTime", num(sec)), ("BeatTime", num(beat))]);
+        }
         self.close("WarpMarkers");
         self.empty("SavedWarpMarkersForStretched", &[]);
         self.v("MarkersGenerated", false);
@@ -908,19 +911,19 @@ pub struct SetSummary {
     pub notes: usize,
 }
 
-fn child<'a, 'i>(n: roxmltree::Node<'a, 'i>, tag: &str) -> Option<roxmltree::Node<'a, 'i>> {
+pub(crate) fn child<'a, 'i>(n: roxmltree::Node<'a, 'i>, tag: &str) -> Option<roxmltree::Node<'a, 'i>> {
     n.children().find(|c| c.has_tag_name(tag))
 }
 
-fn path<'a, 'i>(n: roxmltree::Node<'a, 'i>, p: &str) -> Option<roxmltree::Node<'a, 'i>> {
+pub(crate) fn path<'a, 'i>(n: roxmltree::Node<'a, 'i>, p: &str) -> Option<roxmltree::Node<'a, 'i>> {
     p.split('/').try_fold(n, |n, t| child(n, t))
 }
 
-fn value<'a>(n: roxmltree::Node<'a, '_>, p: &str) -> Result<&'a str, String> {
+pub(crate) fn value<'a>(n: roxmltree::Node<'a, '_>, p: &str) -> Result<&'a str, String> {
     path(n, p).and_then(|e| e.attribute("Value")).ok_or_else(|| format!("{} is missing {p}", n.tag_name().name()))
 }
 
-fn number(n: roxmltree::Node, p: &str) -> Result<f64, String> {
+pub(crate) fn number(n: roxmltree::Node, p: &str) -> Result<f64, String> {
     value(n, p)?.parse::<f64>().map_err(|e| format!("{p}: {e}"))
 }
 
@@ -1100,6 +1103,7 @@ mod tests {
                         file_size: 1000,
                         frames: 672_000,
                         sample_rate: 48_000,
+                        markers: Vec::new(),
                     }]),
                 },
                 SetTrack {
