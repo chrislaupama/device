@@ -140,6 +140,26 @@ pub struct RulerSteps {
     pub ticks_visible: bool,
 }
 
+/// The step a clip editor's note edits snap to (W2-19): a fixed size as \`RulerSteps\` widens it, or
+/// for Auto (and a triplet that does not fit the bar) a step by the zoom: 4 or 2 bars while a bar
+/// is under 6 or 12 px, then a bar, a beat, 1/2, 1/4 and 1/8 beat at 5, 12, 30 and 60 px per beat.
+/// \`px_per_beat\` is in reference px; beats are quarter notes.
+pub fn note_snap_beats(px_per_beat: f64, beats_per_bar: f64, grid: Option<GridSize>) -> f64 {
+    if let Some(s) = grid.and_then(|g| RulerSteps::fixed_step(g, beats_per_bar, px_per_beat)) {
+        return s;
+    }
+    let bar_px = px_per_beat * beats_per_bar;
+    match () {
+        _ if bar_px < 6.0 => 4.0 * beats_per_bar,
+        _ if bar_px < 12.0 => 2.0 * beats_per_bar,
+        _ if px_per_beat < 5.0 => beats_per_bar,
+        _ if px_per_beat < 12.0 => 1.0,
+        _ if px_per_beat < 30.0 => 0.5,
+        _ if px_per_beat < 60.0 => 0.25,
+        _ => 0.125,
+    }
+}
+
 impl RulerSteps {
     /// `beats_per_bar` and `beat_len` are in quarter notes (4/4: 4 and 1; 6/8: 3 and 0.5).
     pub fn new(px_per_beat: f64, beats_per_bar: f64, beat_len: f64, grid: Option<GridSize>) -> Self {
@@ -201,7 +221,7 @@ impl RulerSteps {
 
     /// A fixed grid size at this zoom: doubled until 6 px wide (or 128 beats); a triplet that
     /// stops fitting the bar when doubled is not used (`None`).
-    fn fixed_step(g: GridSize, beats_per_bar: f64, px_per_beat: f64) -> Option<f64> {
+    pub(crate) fn fixed_step(g: GridSize, beats_per_bar: f64, px_per_beat: f64) -> Option<f64> {
         let widen = |mut s: f64| {
             while s * px_per_beat < FIXED_MIN_PX && s < GRID_MAX_BEATS {
                 s *= 2.0;
@@ -810,6 +830,21 @@ pub fn ruler_labels(v: &View, w: f32, steps: &RulerSteps) -> Vec<(f32, String)> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn note_snap_auto_by_zoom_and_fixed_sizes() {
+        let b = 4.0;
+        assert_eq!(note_snap_beats(1.0, b, None), 16.0);
+        assert_eq!(note_snap_beats(2.0, b, None), 8.0);
+        assert_eq!(note_snap_beats(4.0, b, None), 4.0);
+        assert_eq!(note_snap_beats(11.9, b, None), 1.0);
+        assert_eq!(note_snap_beats(29.0, b, None), 0.5);
+        assert_eq!(note_snap_beats(59.0, b, None), 0.25);
+        assert_eq!(note_snap_beats(155.0, b, None), 0.125);
+        assert_eq!(note_snap_beats(155.0, b, Some(GridSize::Eighth)), 0.5);
+        assert_eq!(note_snap_beats(155.0, b, Some(GridSize::Bar)), 4.0);
+        assert_eq!(note_snap_beats(20.0, b, Some(GridSize::ThirtySecond)), 0.5);
+    }
+
     use super::*;
 
     fn steps(ppb: f64) -> RulerSteps {

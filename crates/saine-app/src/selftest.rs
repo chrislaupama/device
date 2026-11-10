@@ -148,7 +148,16 @@ fn midi_steps() -> Vec<Step> {
         }
     };
     let [h0, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15] = <[Rc<Cell<usize>>; 16]>::try_from(hs).ok().unwrap();
+    // Toolbar zoom sliders: (left x, width, y) of the vertical (0) and horizontal (1) track.
+    let zoom_track = |ctl: &Ctl, axis: usize| -> (f32, f32, f32) {
+        let right = PR_ORIGIN.0 + ctl.borrow().pr.size.0 + 0.5;
+        let y = CLIP_Y + 41.0;
+        if axis == 0 { (right - 224.0, 67.5, y) } else { (right - 132.5, 74.0, y) }
+    };
+    let zoom_mem: Rc<Cell<(f32, i32, f64)>> = Rc::new(Cell::new((0.0, 0, 0.0)));
+    let (zm1, zm2, zm3, zm4, zm5) = (zoom_mem.clone(), zoom_mem.clone(), zoom_mem.clone(), zoom_mem.clone(), zoom_mem.clone());
     vec![
+        DoC("snap: pin 1/16 for the piano-roll sections (their notes snap to the toolbar size)", Box::new(|_, ctl| ctl.borrow_mut().snap.grid = Some(crate::timeline::GridSize::Sixteenth))),
         Do("Enter (playhead to 0)", Box::new(|a| key(a, Key::Return, false, false))),
         DoC("wheel back to the start of the timeline", Box::new(|a, _| {
             let w = a.window();
@@ -240,20 +249,14 @@ fn midi_steps() -> Vec<Step> {
             one_step(h4.clone(), "Edit Notes")(c)?;
             n.iter().any(|n| n.pitch == 59 && n.start == 1920 && n.length == 960).then_some(()).ok_or(format!("{n:?}"))
         })),
-        DoC("Grid 1/32, draw an off-grid note at beat 3.375, Grid back to 1/16", Box::new(|a, ctl| {
-            let (gx, gy) = (260.0 + 387.0 + 8.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 30.0 + 7.0);
-            // Grid menu above the value: 8 rows of 20.4 with 3.4 padding and a 10.2 gap before the triplets.
-            let item = |i: usize| (gx + 22.0, gy - 10.2 - (8.0 * 20.4 + 6.8 + 10.2) + 3.4 + i as f32 * 20.4 + 10.2);
-            click(a, gx, gy);
-            let (ix, iy) = item(3);
-            click(a, ix, iy); // 1/32
+        DoC("snap 1/32, draw an off-grid note at beat 3.375, snap back to 1/16", Box::new(|a, ctl| {
+            // Notes snap to the toolbar's snap size (W2-19); the footer Grid is the Quantize grid.
+            ctl.borrow_mut().snap.grid = Some(crate::timeline::GridSize::ThirtySecond);
             let (x, y) = pr_xy(ctl, 3.375 + 0.03, 52);
             click(a, x, y);
-            click(a, gx, gy);
-            let (ix, iy) = item(2);
-            click(a, ix, iy); // back to 1/16
+            ctl.borrow_mut().snap.grid = Some(crate::timeline::GridSize::Sixteenth);
         })),
-        Check("off-grid note drawn at 3240 ticks, grid back at 1/16", Box::new(move |c, a| {
+        Check("off-grid note drawn at 3240 ticks, footer Grid still 1/16", Box::new(move |c, a| {
             let n = notes_of(c);
             h13.set(c.doc.history_labels().len());
             (n.iter().any(|n| n.start == 3240 && n.pitch == 52) && c.pr.grid == 16 && a.global::<Studio>().get_pr_grid_text() == "1/16")
@@ -291,6 +294,90 @@ fn midi_steps() -> Vec<Step> {
             if stepped {
                 key(a, "z", true, false);
             }
+        })),
+        DoC("zoom: remember the scroll and the pitch in the middle of the view", Box::new(move |_, ctl| {
+            let c = ctl.borrow();
+            let v = c.pr_view();
+            zm1.set((c.pr.scroll, v.pitch_at(crate::pianoroll::GRID_Y + (v.h - crate::pianoroll::GRID_Y) / 2.0), v.start));
+        })),
+        Check("zoom: horizontal slider at fit (0), vertical at the default row height, snap readout 1/16", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let v = c.pr_view();
+            let (lo, hi) = crate::pianoroll::row_h_range(&v);
+            let want = (crate::pianoroll::ROW_H - lo) / (hi - lo);
+            (s.get_pr_hzoom() == 0.0 && approx(s.get_pr_vzoom(), want, 1e-3) && s.get_snap_text() == "1/16")
+                .then_some(())
+                .ok_or(format!("h {} v {} (want {want}) snap {}", s.get_pr_hzoom(), s.get_pr_vzoom(), s.get_snap_text()))
+        })),
+        DoC("zoom: drag the horizontal slider from its left end to the middle", Box::new(move |a, ctl| {
+            let (x, w, y) = zoom_track(ctl, 1);
+            drag(a, x + 1.0, y, x + w / 2.0, y);
+        })),
+        Check("zoom: horizontal at 0.5 (points per beat halfway between fit and 1 ref px per tick on a log scale), left edge kept", Box::new(move |c, a| {
+            let v = c.pr_view();
+            let len = instrument_clip(c).map_or(0, |m| m.length) as f64 / saine_core::PPQ as f64;
+            let fit = crate::pianoroll::PrView::fit(c.pr.size, len, 0.0).ppb;
+            let want = (fit * saine_core::PPQ as f64 * crate::timeline::REF).sqrt();
+            let ok = approx(a.global::<Studio>().get_pr_hzoom(), 0.5, 1e-3) && ((v.ppb - want) / want).abs() < 1e-3 && (v.start - zm2.get().2).abs() < 1e-6;
+            ok.then_some(()).ok_or(format!("hzoom {} ppb {} want {want} start {}", c.pr.hzoom, v.ppb, v.start))
+        })),
+        DoC("zoom: trackpad scroll 100 pt to the right", Box::new(|a, _| {
+            let w = a.window();
+            let p = LogicalPosition::new(PR_ORIGIN.0 + 400.0, PR_ORIGIN.1 + 60.0);
+            w.dispatch_event(WindowEvent::PointerMoved { position: p });
+            w.dispatch_event(WindowEvent::PointerScrolled { position: p, delta_x: -100.0, delta_y: 0.0 });
+        })),
+        Check("zoom: the zoomed piano roll panned 100 pt later in the clip", Box::new(move |c, _| {
+            let v = c.pr_view();
+            let d = (v.start - zm3.get().2) * v.ppb;
+            ((d - 100.0).abs() < 0.5).then_some(()).ok_or(format!("moved {d} pt"))
+        })),
+        DoC("zoom: click the vertical slider near its right end", Box::new(move |a, ctl| {
+            let (x, w, y) = zoom_track(ctl, 0);
+            click(a, x + w - 1.0, y);
+        })),
+        Check("zoom: rows near 32 ref px tall, the middle pitch kept", Box::new(move |c, _| {
+            let v = c.pr_view();
+            let mid = v.pitch_at(crate::pianoroll::GRID_Y + (v.h - crate::pianoroll::GRID_Y) / 2.0);
+            let ok = v.row_h > 26.0 && v.row_h <= 32.0 * 0.85 + 1e-3 && mid == zm4.get().1;
+            ok.then_some(()).ok_or(format!("row {} mid {mid} want {}", v.row_h, zm4.get().1))
+        })),
+        DoC("snap: click the piano roll's snap readout", Box::new(|a, ctl| {
+            let right = PR_ORIGIN.0 + ctl.borrow().pr.size.0 + 0.5;
+            click(a, right - 36.0, CLIP_Y + 41.0);
+        })),
+        Check("snap: off, the readout says Off", Box::new(|c, a| {
+            let t = a.global::<Studio>().get_snap_text();
+            (!c.snap.on && t == "Off").then_some(()).ok_or(format!("on {} text {t}", c.snap.on))
+        })),
+        DoC("snap: click it again, then the chevron", Box::new(|a, ctl| {
+            let right = PR_ORIGIN.0 + ctl.borrow().pr.size.0 + 0.5;
+            click(a, right - 36.0, CLIP_Y + 41.0);
+            click(a, right - 17.0, CLIP_Y + 41.0);
+        })),
+        Check("snap: on again, the shared snap menu open under the chevron", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.snap.on && s.get_snap_menu_open()).then_some(()).ok_or(format!("on {} open {}", c.snap.on, s.get_snap_menu_open()))
+        })),
+        DoC("snap: pick 1/8 in the menu", Box::new(|a, ctl| {
+            let (x, y, row) = {
+                let c = ctl.borrow();
+                let (x, y) = c.snap.menu.unwrap_or_default();
+                (x, y, c.snap.rows().0[5].clone())
+            };
+            click(a, x - crate::snap::MENU_W / 2.0, y + 5.1 + row.y + row.h / 2.0);
+        })),
+        Check("snap: 1/8 chosen for the piano roll and the timeline alike, menu closed", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.snap.grid == Some(crate::timeline::GridSize::Eighth) && s.get_snap_text() == "1/8" && !s.get_snap_menu_open())
+                .then_some(())
+                .ok_or(format!("grid {:?} text {} open {}", c.snap.grid, s.get_snap_text(), s.get_snap_menu_open()))
+        })),
+        DoC("zoom: back to fit, default rows and 1/16 snap", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            (c.pr.hzoom, c.pr.vzoom, c.pr.scroll) = (0.0, None, zm5.get().0);
+            c.snap.grid = Some(crate::timeline::GridSize::Sixteenth);
+            c.ui_dirty = true;
         })),
         DoC("click the E3 note at beat 0, press Up", Box::new(|a, ctl| {
             let (x, y) = pr_xy(ctl, 0.1, 52);
@@ -496,6 +583,7 @@ fn midi_steps() -> Vec<Step> {
             let n = notes_of(c);
             (instrument_clip(c).is_some() && n.len() == 4).then_some(()).ok_or(format!("{} notes", n.len()))
         })),
+        DoC("snap: the beat pin again for the sections after", Box::new(|_, ctl| ctl.borrow_mut().snap.grid = Some(crate::timeline::GridSize::Quarter))),
     ]
 }
 
@@ -6936,20 +7024,32 @@ fn live_import_steps() -> Vec<Step> {
                     },
                 ],
             };
+            let kick = d.join("Samples/kick.wav");
+            let hit: Vec<f32> = (0..4_800).map(|i| 0.5 * (1.0 - i as f32 / 4_800.0)).collect();
+            crate::wavgen::write_wav(&kick, 48_000, 1, &hit).unwrap();
+            let rack = format!(
+                r#"<Devices><DrumGroupDevice Id="0"><Branches><DrumBranch Id="0"><BranchInfo><ReceivingNote Value="92" /></BranchInfo><DeviceChain><MidiToAudioDeviceChain><Devices><OriginalSimpler Id="0"><Player><MultiSampleMap><SampleParts><MultiSamplePart Id="0"><SampleRef><FileRef><RelativePathType Value="3" /><RelativePath Value="Samples/kick.wav" /><Path Value="{}" /></FileRef><DefaultDuration Value="4800" /></SampleRef></MultiSamplePart></SampleParts></MultiSampleMap></Player><Globals><PlaybackMode Value="1" /></Globals></OriginalSimpler></Devices></MidiToAudioDeviceChain></DeviceChain></DrumBranch></Branches></DrumGroupDevice></Devices>"#,
+                kick.display()
+            );
+            let xml = crate::live_set::to_xml(&set);
+            let at = xml.find("<MidiTrack").unwrap();
+            let at = at + xml[at..].find("<Devices />").unwrap();
+            let xml = format!("{}{rack}{}", &xml[..at], &xml[at + "<Devices />".len()..]);
             let als = d.join("Imported Set.als");
-            std::fs::write(&als, crate::live_set::gzip(&crate::live_set::to_xml(&set)).unwrap()).unwrap();
+            std::fs::write(&als, crate::live_set::gzip(&xml).unwrap()).unwrap();
             ctl.borrow_mut().import_live_set_request(als);
         })),
         Check("live import: unsaved changes are asked about first", Box::new(|c, a| {
             (c.unsaved_open && c.pending_import.is_some() && a.global::<Studio>().get_unsaved_open()).then_some(()).ok_or(format!("prompt {} pending {}", c.unsaved_open, c.pending_import.is_some()))
         })),
         Do("live import: Don't Save", Box::new(|a| a.global::<Studio>().invoke_unsaved_dont_save())),
-        Check("live import: the set replaced the project (tempo, tracks, warped clip with its markers and sample loaded, MIDI notes)", Box::new(move |c, _| {
+        Check("live import: the set replaced the project (tempo, tracks, warped clip with its markers and sample loaded, MIDI notes, Drum Rack pad with its sample loaded)", Box::new(move |c, _| {
             let p = c.project();
             let names: Vec<&str> = p.tracks.iter().map(|t| t.name.as_str()).collect();
             let clip = p.tracks.first().and_then(|t| t.clips.first()).ok_or(format!("tracks {names:?}"))?;
             let markers: Vec<(u64, f64)> = clip.warp.markers.iter().map(|m| (m.source, m.beat)).collect();
             let notes = p.tracks.get(1).map_or(0, |t| t.midi_clips.iter().map(|m| m.notes.len()).sum::<usize>());
+            let pad = p.tracks.get(1).and_then(|t| t.instrument_plugin.as_ref()).filter(|d| d.plugin.id == "drum-rack").and_then(|d| d.samples.first()).map(|s| (s.slot, s.name.clone(), c.asset_map.contains_key(&s.asset)));
             let ok = p.name == "Imported Set"
                 && p.transport.bpm == 100.0
                 && names == ["Loop", "Keys"]
@@ -6959,10 +7059,11 @@ fn live_import_steps() -> Vec<Step> {
                 && clip.start == 4 * PPQ
                 && c.asset_map.contains_key(&clip.asset)
                 && notes == 1
+                && pad == Some((0, "kick".into(), true))
                 && !c.unsaved_open
                 && c.project_dir.is_none();
             let _ = std::fs::remove_dir_all(dir());
-            ok.then_some(()).ok_or(format!("{} {} {names:?} {markers:?} start {} loaded {} notes {notes}", p.name, p.transport.bpm, clip.start, c.asset_map.contains_key(&clip.asset)))
+            ok.then_some(()).ok_or(format!("{} {} {names:?} {markers:?} start {} loaded {} notes {notes} pad {pad:?}", p.name, p.transport.bpm, clip.start, c.asset_map.contains_key(&clip.asset)))
         })),
     ]
 }
