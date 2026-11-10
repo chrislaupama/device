@@ -354,9 +354,11 @@ pub struct Controller {
     /// The rows last pushed to `composer_row_model` (rebuilt only when they change).
     pub(crate) composer_rows_shown: std::cell::RefCell<Vec<crate::composer::RowView>>,
     pub(crate) composer_shape_model: Rc<VecModel<ShapeRow>>,
-    pub(crate) composer_shape_shown: std::cell::RefCell<Vec<crate::composer::ShapeRowView>>,
+    pub(crate) composer_shape_shown: std::cell::RefCell<Vec<crate::shape_rack::ShapeRowView>>,
     /// The clip sidebar tab picked (true: Shape); None until one is picked.
     pub(crate) composer_shape_tab: Option<bool>,
+    /// Shape tab: the curve the piano roll edits, draw mode, brush.
+    pub(crate) shape_ui: crate::shape_rack::ShapeUi,
     pub(crate) menu_model: Rc<VecModel<MenuItem>>,
     pub(crate) sub_model: Rc<VecModel<MenuItem>>,
     /// Metronome on/off (app preference, not saved in the project).
@@ -473,6 +475,7 @@ impl Controller {
             composer_shape_model: Rc::new(VecModel::default()),
             composer_shape_shown: Default::default(),
             composer_shape_tab: None,
+            shape_ui: Default::default(),
             menu_model: Rc::new(VecModel::default()),
             sub_model: Rc::new(VecModel::default()),
             metronome_on: false,

@@ -54,6 +54,7 @@ mod recording;
 mod sampler_panel;
 mod selftest;
 mod settings;
+mod shape_rack;
 mod stepseq;
 mod sections;
 mod splitters;
@@ -946,6 +947,30 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 if state == 4 {
                     c.clip_menu_open(5);
                 }
+                if state == 5 {
+                    // Shape curves on chords: Velocity ramps up (edited), Density drawn beat by beat.
+                    use saine_core::shape::ShapeKey;
+                    c.composer_tab(true);
+                    c.shape_draw_toggle();
+                    c.shape_stroke(ShapeKey::Density, 1, &[(0.0, 1.0), (1.0, 0.55), (2.0, 0.9), (3.0, 0.4), (3.9, 0.4)]);
+                    c.shape_stroke(ShapeKey::Velocity, 2, &[(0.0, 0.3), (2.0, 0.6), (4.0, 1.0)]);
+                }
+                if state == 6 {
+                    // Chord controls and the arp: Air, Tension drawn per beat, a sixteenth arp.
+                    use saine_core::shape::ShapeKey;
+                    c.composer_tab(true);
+                    c.composer_shape(8, 0, 0.67);
+                    c.composer_shape(8, 2, 0.0);
+                    for _ in 0..3 {
+                        c.composer_shape(13, 3, 1.0);
+                    }
+                    c.shape_draw_toggle();
+                    c.shape_stroke(ShapeKey::Tension, 1, &[(0.0, 0.0), (1.0, 0.0), (2.0, 0.5), (3.0, 0.9), (3.9, 0.9)]);
+                    if let Some(mid) = c.pr_clip().filter(|m| !m.notes.is_empty()).map(|m| m.notes.iter().map(|n| n.pitch as f32).sum::<f32>() / m.notes.len() as f32) {
+                        use crate::pianoroll::{GRID_Y, ROW_H};
+                        c.pr.scroll = (127.0 - mid) * ROW_H + ROW_H / 2.0 - (c.pr.size.1 - GRID_Y) / 2.0;
+                    }
+                }
             }
         }
     }
@@ -1540,6 +1565,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_composer_original_pick, |c| c.composer_original());
     on!(on_composer_tab, |c, shape: bool| c.composer_tab(shape));
     on!(on_composer_shape, |c, row: i32, op: i32, value: f32| c.composer_shape(row, op, value));
+    on!(on_shape_draw_toggle, |c| c.shape_draw_toggle());
+    on!(on_shape_brush_pick, |c, brush: i32| c.shape_brush(brush));
+    on!(on_shape_reset, |c| c.shape_reset());
     on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
     on!(on_menu_dismiss, |c| c.menu_close());
