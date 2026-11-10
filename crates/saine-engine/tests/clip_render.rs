@@ -147,15 +147,17 @@ fn a_cancelled_render_returns_cancelled_and_stops_early() {
     assert_eq!(offline::render(&job, &AtomicBool::new(true), &done), Err(OfflineError::Cancelled));
     assert_eq!(done.load(Ordering::Relaxed), 0);
     // Cancelled once a tenth of the audio is rendered.
-    let (cancel, done) = (AtomicBool::new(false), AtomicUsize::new(0));
+    let (cancel, done, finished) = (AtomicBool::new(false), AtomicUsize::new(0), AtomicBool::new(false));
     let result = std::thread::scope(|s| {
         s.spawn(|| {
-            while done.load(Ordering::Relaxed) < job.frames / 10 {
+            while done.load(Ordering::Relaxed) < job.frames / 10 && !finished.load(Ordering::Relaxed) {
                 std::thread::yield_now();
             }
             cancel.store(true, Ordering::Relaxed);
         });
-        offline::render(&job, &cancel, &done)
+        let r = offline::render(&job, &cancel, &done);
+        finished.store(true, Ordering::Relaxed);
+        r
     });
     assert_eq!(result, Err(OfflineError::Cancelled));
     assert!(done.load(Ordering::Relaxed) < job.frames, "stopped before the end: {} of {}", done.load(Ordering::Relaxed), job.frames);
@@ -173,6 +175,21 @@ fn a_missing_audio_file_fails_the_render_and_names_the_file() {
         Err(OfflineError::Failed(msg)) => assert!(msg.contains("s.wav"), "{msg}"),
         other => panic!("expected a failure, got {:?}", other.map(|v| v.len())),
     }
+}
+
+#[test]
+fn a_track_with_a_plugin_device_is_refused_before_any_engine_is_made() {
+    let mut r = rig(1.0);
+    let inst = r.doc.project().tracks[1].id;
+    let clap = PluginRef { format: PluginFormat::Clap, id: "test.plugin".into(), path: None, name: "Test".into(), vendor: String::new(), version: String::new(), kind: PluginKind::Effect };
+    r.doc.execute(Command::AddDevice { track: inst, index: None, device: Device::new(clap) }, Origin::User).unwrap();
+    r.doc.execute(Command::AddMidiClip { track: inst, clip: midi_clip(0, 1, 60) }, Origin::User).unwrap();
+    let id = r.doc.project().tracks[1].midi_clips[0].id;
+    let span = render_plan::clip_span(r.doc.project(), id).unwrap();
+    let job = r.job(&span, RenderMode::Bounce, 0.0);
+    assert_eq!(offline::render(&job, &AtomicBool::new(false), &AtomicUsize::new(0)), Err(OfflineError::Failed(offline::PLUGINS_REFUSED.into())));
+    let material = r.job(&span, RenderMode::Material, 0.0);
+    assert!(material.project.track(inst).unwrap().devices.is_empty(), "Material renders without devices, so it is not refused");
 }
 
 #[test]

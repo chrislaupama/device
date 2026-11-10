@@ -3,9 +3,9 @@
 //!
 //! The engine of the running app is never touched: the render makes its own [`Engine`] without
 //! an audio device, loads the project's audio files into it, publishes the project and plays it
-//! through [`Engine::render_offline`] in chunks. Plugin devices are instantiated by that engine
-//! from their saved state (`Device::state`); a caller that wants a live plugin's current sound
-//! copies [`Engine::plugin_states`] into the project first.
+//! through [`Engine::render_offline`] in chunks. A project with plugin devices (VST3, AU, CLAP) is
+//! refused: [`Engine::publish`] instantiates them on its own thread and documents that as the
+//! main thread, which a worker is not.
 
 use crate::{Config, Engine, EngineError};
 use saine_core::snapshot;
@@ -21,6 +21,9 @@ pub const CHUNK: usize = 4096;
 /// How long a render waits for the engine's background warp renders (a warped clip is silent
 /// until its render is attached).
 const WARP_WAIT: Duration = Duration::from_secs(60);
+
+/// The failure message for a project with plugin devices.
+pub const PLUGINS_REFUSED: &str = "plugin devices (VST3, AU, CLAP) are not rendered in the background yet";
 
 /// What to render: `frames` stereo frames of `project` from timeline frame `start`.
 pub struct OfflineRender {
@@ -51,6 +54,9 @@ impl From<EngineError> for OfflineError {
 pub fn render(job: &OfflineRender, cancel: &AtomicBool, progress: &AtomicUsize) -> Result<Vec<f32>, OfflineError> {
     let check = || if cancel.load(Ordering::Relaxed) { Err(OfflineError::Cancelled) } else { Ok(()) };
     check()?;
+    if job.project.tracks.iter().flat_map(|t| t.devices.iter().chain(t.instrument_plugin.iter())).any(|d| saine_core::builtin::def_of(d).is_none()) {
+        return Err(OfflineError::Failed(PLUGINS_REFUSED.into()));
+    }
     let engine = Engine::new(Config { sample_rate: job.rate, ..Config::default() })?;
     let p = &job.project;
 

@@ -201,16 +201,8 @@ impl Controller {
         let start = p.ticks_to_frames(span.start, rate);
         let body = (p.ticks_to_frames(span.end, rate) - start).max(1) as usize;
         let tail = if render_plan::rings_out(p, span.track, mode) { (TAIL_S * rate) as usize } else { 0 };
-        let mut project = render_plan::render_project(p, span, mode);
+        let project = render_plan::render_project(p, span, mode);
         let sources: Vec<Source> = span.clips.iter().filter_map(|&c| p.clip(c).cloned().map(Source::Audio).or_else(|| p.midi_clip(c).cloned().map(Source::Midi))).collect();
-        if project.tracks.iter().flat_map(|t| t.devices.iter().chain(t.instrument_plugin.iter())).any(|d| saine_core::builtin::def_of(d).is_none()) {
-            let live = self.engine.plugin_states();
-            for d in project.tracks.iter_mut().flat_map(|t| t.devices.iter_mut().chain(t.instrument_plugin.iter_mut())) {
-                if let Some((_, state)) = live.iter().find(|(id, _)| *id == d.id) {
-                    d.state = Some(state.clone());
-                }
-            }
-        }
         let job = OfflineRender { project, rate, transients: self.transients_by_asset(), start, frames: body + tail };
         let (cancel, progress) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicUsize::new(0)));
         let (engine, tx, doc_epoch) = (self.engine.clone(), self.jobs_tx.clone(), self.doc_epoch);
