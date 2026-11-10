@@ -90,6 +90,18 @@ pub struct FieldState {
     pub views: HashMap<DeviceId, usize>,
     /// Selected repeat-EQ band per delay.
     bands: HashMap<DeviceId, usize>,
+    /// Wash image and its well box per device (Reverb tail), set while its card is built.
+    pub(crate) washes: std::cell::RefCell<HashMap<DeviceId, Wash>>,
+    /// A wash was added, redrawn or removed since the last push to the UI.
+    pub(crate) washes_dirty: std::cell::Cell<bool>,
+}
+
+/// Field wash image, its box in well coordinates, and the inputs it was drawn from (bits).
+#[derive(Debug, Clone)]
+pub(crate) struct Wash {
+    pub img: slint::Image,
+    pub rect: [f32; 4],
+    key: Vec<u32>,
 }
 
 // ------------------------------------------------------------------ drawing helpers
@@ -109,6 +121,8 @@ struct Canvas {
     paths: Vec<PanelPath>,
     texts: Vec<PanelText>,
     pills: Vec<PanelGrip>,
+    /// Intensity image, its box (x, y, w, h) in well coordinates and the inputs it was drawn from.
+    wash: Option<Wash>,
 }
 
 impl Canvas {
@@ -523,6 +537,15 @@ impl Controller {
             (None, "echo") => 3,
             _ => 0,
         };
+        let mut washes = fields.washes.borrow_mut();
+        let changed = match c.wash.take() {
+            Some(w) => washes.insert(d.id, w.clone()).is_none_or(|old| old.key != w.key),
+            None => washes.remove(&d.id).is_some(),
+        };
+        drop(washes);
+        if changed {
+            fields.washes_dirty.set(true);
+        }
         PanelCanvas { visible: true, well: true, x, y, w, h, well_y, caption: s(caption), readout: s(value), paths: model(c.paths), texts: model(c.texts), grips: model(c.pills), pointer: true, cursor, ..Default::default() }
     }
 
@@ -643,45 +666,45 @@ impl Controller {
         let arrivals: Vec<f32> = (1..=8).map(|i| FIRST_ARRIVAL[mode] * (0.6 + size) / 1.1 + ARRIVAL_SPACING[mode] * (i as f32).powf(1.1) * (0.4 + 1.2 * size)).collect();
         let first = arrivals[0];
 
-        // Cells: 2 px columns x 24 bands; alpha quantised into 32 steps, equal neighbours merged.
-        const STEPS: usize = 32;
-        let col = 2.0 * Z;
-        let cols = ((right - left) / col) as usize;
-        let mut levels: Vec<String> = vec![String::new(); STEPS];
-        for b in 0..BANDS {
-            let f = band_hz(b as f32 + 0.5);
-            let t60 = reverb_t60(decay, damping, f).max(0.01);
-            let filt = 10f32.powf(reverb_filter_db(low, high, f) / 20.0);
-            let (y0, y1) = (y_of(band_hz(b as f32 + 1.0)), y_of(band_hz(b as f32)));
-            let level_at = |ci: usize| -> usize {
-                let t = ci as f32 * col / (right - left) * span;
-                let intensity = if t < pre {
-                    0.0
-                } else if t < pre + first {
-                    let u = (t - pre) / first.max(1e-4);
-                    0.25 + 0.75 * u * u * (3.0 - 2.0 * u)
-                } else {
-                    let k = (1.0 - (t - pre - first) / t60).max(0.0).powi(2);
-                    if k < 0.01 { 0.0 } else { k }
+        // Wash: WASH_COLS columns x 24 bands of accent at the tail's intensity, drawn smoothed
+        // (bilinear) over the plot like the reference app's low-resolution reverb field.
+        const WASH_COLS: usize = 128;
+        let key: Vec<u32> = [decay, damping, pre, mode as f32, size, span, low, high, left, top, right, bottom, shimmer]
+            .iter()
+            .map(|v| v.to_bits())
+            .chain([u32::from_be_bytes([accent.red(), accent.green(), accent.blue(), accent.alpha()])])
+            .collect();
+        if let Some(w) = self.devices.panel.fields.washes.borrow().get(&d.id).filter(|w| w.key == key) {
+            c.wash = Some(w.clone());
+        }
+        if c.wash.is_none() {
+            let mut px = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(WASH_COLS as u32, BANDS as u32);
+            let (ar, ag, ab) = (accent.red(), accent.green(), accent.blue());
+            let pixels = px.make_mut_slice();
+            for b in 0..BANDS {
+                let f = band_hz(b as f32 + 0.5);
+                let t60 = reverb_t60(decay, damping, f).max(0.01);
+                let filt = 10f32.powf(reverb_filter_db(low, high, f) / 20.0);
+                let level_at = |ci: usize| -> f32 {
+                    let t = (ci as f32 + 0.5) / WASH_COLS as f32 * span;
+                    let intensity = if t < pre {
+                        0.0
+                    } else if t < pre + first {
+                        let u = (t - pre) / first.max(1e-4);
+                        0.25 + 0.75 * u * u * (3.0 - 2.0 * u)
+                    } else {
+                        let k = (1.0 - (t - pre - first) / t60).max(0.0).powi(2);
+                        if k < 0.01 { 0.0 } else { k }
+                    };
+                    let x2 = (ci as f32 + 0.5) * (right - left) / WASH_COLS as f32 / (2.0 * Z);
+                    (intensity * 0.85 * (1.0 + shimmer * 0.3 * (0.45 * x2 + 1.3 * b as f32).sin()) * filt).clamp(0.0, 0.9)
                 };
-                let a = (intensity * 0.85 * (1.0 + shimmer * 0.3 * (0.45 * ci as f32 + 1.3 * b as f32).sin()) * filt).clamp(0.0, 0.9);
-                (a / 0.9 * STEPS as f32).round() as usize
-            };
-            let mut start = 0;
-            let mut cur = level_at(0);
-            for ci in 1..=cols {
-                let q = if ci == cols { usize::MAX } else { level_at(ci) };
-                if q != cur {
-                    if cur > 0 {
-                        rect(&mut levels[cur - 1], left + start as f32 * col, y0, (ci - start) as f32 * col, y1 - y0);
-                    }
-                    start = ci;
-                    cur = q;
+                let row = &mut pixels[(BANDS - 1 - b) * WASH_COLS..][..WASH_COLS];
+                for (ci, p) in row.iter_mut().enumerate() {
+                    *p = slint::Rgba8Pixel { r: ar, g: ag, b: ab, a: (level_at(ci) * 255.0).round() as u8 };
                 }
             }
-        }
-        for (i, l) in levels.into_iter().enumerate() {
-            c.fill(l, accent.with_alpha((i as f32 + 1.0) / STEPS as f32 * 0.9));
+            c.wash = Some(Wash { img: slint::Image::from_rgba8(px), rect: [left, top, right - left, bottom - top], key });
         }
 
         // Axes.
@@ -953,6 +976,16 @@ impl Controller {
 
     /// Pointer on a field (Studio.panel-graph): 0 down, 1 move, 2 up, 3 cancel, 4 hover, 5 leave, 6 double-click.
     #[allow(clippy::too_many_arguments)]
+    /// Parameter under (x, y) in a field well: the first one its handle moves.
+    pub(crate) fn field_param_at(&self, device: DeviceId, x: f32, y: f32) -> Option<usize> {
+        let d = self.project().device(device)?;
+        let def = saine_core::builtin::def_of(d)?;
+        let name = field_name(def)?;
+        let (_, _, w, fh, well_y) = field_rect(def, crate::device_panel::view_right(def));
+        let grab = self.field_hit(d, def, name, w, fh - well_y, x, y)?;
+        self.grab_params(def, d, grab).into_iter().filter(|id| !id.ends_with("Enabled")).find_map(|id| def.index_of(id))
+    }
+
     pub fn panel_field_pointer(&mut self, device: DeviceId, phase: i32, x: f32, y: f32, shift: bool, alt: bool) {
         let Some(d) = self.project().device(device).cloned() else { return };
         let Some(def) = saine_core::builtin::def_of(&d) else { return };

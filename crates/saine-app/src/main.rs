@@ -1375,6 +1375,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let id = saine_core::DeviceId(id as u64);
         if c.is_canvas_device(id) { c.panel_canvas(id, phase, x, y, alt, fine) } else { c.panel_graph(id, phase, x, y, fine, alt) }
     });
+    on!(on_panel_graph_menu, |c, id: i32, x: f32, y: f32, wx: f32, wy: f32| {
+        let id = saine_core::DeviceId(id as u64);
+        if !c.is_canvas_device(id) {
+            c.panel_graph_menu(id, x, y, wx, wy);
+        }
+    });
     on!(on_panel_eq, |c, id: i32, action: i32, value: i32| c.panel_eq(saine_core::DeviceId(id as u64), action, value));
     {
         // Canvas wheel / keys (EQ, Auto Filter) answer whether they used the event, so they cannot go through on!.

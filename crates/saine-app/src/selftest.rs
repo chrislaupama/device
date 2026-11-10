@@ -393,6 +393,8 @@ fn factory_values(n: usize) -> Vec<f32> {
 fn synth_steps() -> Vec<Step> {
     let bright_low = Rc::new(Cell::new(-1f32));
     let bright_low2 = bright_low.clone();
+    let fold_hist = Rc::new(Cell::new(0usize));
+    let fold_hist2 = fold_hist.clone();
     use Step::*;
     #[derive(Default)]
     struct Rec {
@@ -404,8 +406,8 @@ fn synth_steps() -> Vec<Step> {
     }
     let rec = Rc::new(RefCell::new(Rec::default()));
     let r = |n: usize| -> Vec<Rc<RefCell<Rec>>> { (0..n).map(|_| rec.clone()).collect() };
-    let rs = r(17);
-    let [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16] = <[Rc<RefCell<Rec>>; 17]>::try_from(rs).ok().unwrap();
+    let rs = r(18);
+    let [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r16b] = <[Rc<RefCell<Rec>>; 18]>::try_from(rs).ok().unwrap();
     // One new undo step with this label since the last record; re-records.
     fn one_step(rc: &Rc<RefCell<Rec>>, c: &Controller, label: &str) -> Result<(), String> {
         let n = c.doc.history_labels().len();
@@ -439,7 +441,7 @@ fn synth_steps() -> Vec<Step> {
             ok.then_some(()).ok_or(format!("visible {} tab {} page {}", s.get_synth_visible(), s.get_bottom_tab(), s.get_synth_page()))
         })),
         Do("click preset ›", Box::new(|a| {
-            let (x, y) = synth_xy(726.5, 13.0);
+            let (x, y) = synth_xy(crate::devices::SYNTH_W - 45.0, 16.0);
             click(a, x, y);
         })),
         Check("synth: preset › loaded the first factory sound in one undo step", Box::new(move |c, a| {
@@ -449,7 +451,7 @@ fn synth_steps() -> Vec<Step> {
             (v == factory_values(0) && name.as_deref() == Some(want) && a.global::<Studio>().get_synth_preset() == want).then_some(()).ok_or(format!("preset {name:?}"))
         })),
         Do("click the preset name, pick the 4th sound in the list", Box::new(|a| {
-            let (x, y) = synth_xy(690.0, 13.0);
+            let (x, y) = synth_xy(crate::devices::SYNTH_W - 74.0, 16.0);
             click(a, x, y);
             let (x, y) = synth_menu_row(a, 4);
             click(a, x, y);
@@ -637,6 +639,44 @@ fn synth_steps() -> Vec<Step> {
         })),
         Check("synth: every synth edit undone -> starting parameters exactly", Box::new(move |c, _| {
             let start = r16.borrow().start.clone().ok_or("no record")?;
+            (inst_synth(c).as_ref() == Some(&start)).then_some(()).ok_or(format!("preset {:?}", inst_synth(c).map(|p| p.1)))
+        })),
+        DoC("click the Synth header's fold button", Box::new(move |a, ctl| {
+            fold_hist.set(ctl.borrow().doc.history_labels().len());
+            let (x, y) = synth_xy(crate::devices::SYNTH_W - 27.5, 16.0);
+            click(a, x, y);
+        })),
+        Check("synth: folds to the 30 pt strip in one undo step", Box::new(move |c, a| {
+            let card = a.global::<Studio>().get_synth_card();
+            let n = c.doc.history_labels().len();
+            (n == fold_hist2.get() + 1 && card.folded && card.width == crate::device_mod::FOLDED_W).then_some(()).ok_or(format!("history {} -> {n}, folded {} width {}", fold_hist2.get(), card.folded, card.width))
+        })),
+        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("synth: undo unfolds it to full width", Box::new(move |_, a| {
+            let card = a.global::<Studio>().get_synth_card();
+            (!card.folded && card.width == crate::devices::SYNTH_W).then_some(()).ok_or(format!("folded {} width {}", card.folded, card.width))
+        })),
+        Do("click the Synth header's remove button", Box::new(|a| {
+            let (x, y) = synth_xy(crate::devices::SYNTH_W - 9.5, 16.0);
+            click(a, x, y);
+        })),
+        Check("synth: removed, the slot is empty", Box::new(|c, a| {
+            (c.synth_device().is_none() && !a.global::<Studio>().get_synth_visible()).then_some(()).ok_or("the Synth is still there".to_string())
+        })),
+        DoC("choose Synth for the empty slot", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = c.selected_track.expect("selected track");
+            c.add_item_to_track(&crate::devices::Item::BuiltinSynth, t, None);
+        })),
+        Check("synth: choosing Synth restores it", Box::new(|c, a| {
+            (c.synth_device().is_some() && a.global::<Studio>().get_synth_visible()).then_some(()).ok_or("no Synth".to_string())
+        })),
+        Do("Cmd+Z x2 (add, remove)", Box::new(|a| {
+            key(a, "z", true, false);
+            key(a, "z", true, false);
+        })),
+        Check("synth: undo brings back the original Synth", Box::new(move |c, _| {
+            let start = r16b.borrow().start.clone().ok_or("no record")?;
             (inst_synth(c).as_ref() == Some(&start)).then_some(()).ok_or(format!("preset {:?}", inst_synth(c).map(|p| p.1)))
         })),
     ]
