@@ -233,6 +233,17 @@ impl ClipWarp {
         true
     }
 
+    /// Slide the audio under the marker at \`from\`: it keeps its beat and
+    /// pins source \`to\` instead. Refused when \`to\` would reach a neighbour.
+    pub fn slide_marker(&mut self, from: u64, to: u64) -> bool {
+        let Some(i) = self.markers.iter().position(|m| m.source == from) else { return false };
+        if (i > 0 && self.markers[i - 1].source >= to) || self.markers.get(i + 1).is_some_and(|m| m.source <= to) {
+            return false;
+        }
+        self.markers[i].source = to;
+        true
+    }
+
     pub fn remove_marker(&mut self, index: usize) -> bool {
         if index >= self.markers.len() {
             return false;

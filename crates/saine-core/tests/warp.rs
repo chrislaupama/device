@@ -324,3 +324,18 @@ fn tempo_detection_declines_without_a_pulse() {
         .collect();
     assert_eq!(estimate_bpm(&scattered, 44_100.0), None);
 }
+
+#[test]
+fn sliding_a_marker_keeps_its_beat_and_stays_between_neighbours() {
+    let mut w = ClipWarp { enabled: true, ..ClipWarp::default() };
+    for (s, b) in [(0, 0.0), (44_100, 2.0), (88_200, 4.0)] {
+        assert!(w.set_marker(s, b));
+    }
+    assert!(w.slide_marker(44_100, 50_000));
+    assert_eq!(w.markers[1].source, 50_000);
+    assert_eq!(w.markers[1].beat, 2.0);
+    assert!(!w.slide_marker(50_000, 88_200), "would reach the next marker");
+    assert!(!w.slide_marker(50_000, 0), "would reach the previous marker");
+    assert!(!w.slide_marker(12_345, 20_000), "no marker there");
+    assert_eq!(w.markers[1].source, 50_000);
+}

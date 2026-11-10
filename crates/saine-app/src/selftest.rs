@@ -864,8 +864,8 @@ fn steps() -> Vec<Step> {
         DoC("warp: click the handle band at beat 1 (add a warp marker)", Box::new(|_, ctl| {
             let x = ctl.borrow().pr_view().x_of(1.0);
             let mut c = ctl.borrow_mut();
-            c.pr_pointer(0, x, 30.0, false, true);
-            c.pr_pointer(2, x, 30.0, false, true);
+            c.pr_pointer(0, x, 30.0, false, true, false);
+            c.pr_pointer(2, x, 30.0, false, true, false);
         })),
         Check("warp marker added (with the clip-start anchor)", Box::new(|c, _| {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
@@ -873,6 +873,52 @@ fn steps() -> Vec<Step> {
             (clip.warp.markers.len() == 2 && beats.len() == 2 && beats[0].abs() < 1e-6 && (beats[1] - 1.0).abs() < 0.05 && c.doc.undo_label() == Some("Add warp marker"))
                 .then_some(())
                 .ok_or(format!("markers {:?} beats {beats:?}", clip.warp.markers))
+        })),
+        DoC("warp: Shift-drag the marker half a beat right (slide the audio)", Box::new(|_, ctl| {
+            let (x0, x1) = { let c = ctl.borrow(); let v = c.pr_view(); (v.x_of(1.0), v.x_of(1.5)) };
+            let mut c = ctl.borrow_mut();
+            c.pr_pointer(0, x0, 30.0, true, false, false);
+            c.pr_pointer(1, x1, 30.0, false, false, false);
+            c.pr_pointer(2, x1, 30.0, true, false, false);
+        })),
+        Check("slid: the marker stays at beat 1 and pins audio half a beat later", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let beats = c.ac_marker_beats();
+            let rate = c.project().asset(clip.asset).unwrap().sample_rate;
+            let per_beat = rate * 60.0 / clip.warp.original_bpm * clip.warp.speed;
+            let src = clip.warp.markers.get(1).map_or(0.0, |m| m.source as f64);
+            let want = clip.source_offset as f64 + 1.5 * per_beat;
+            ((beats.get(1).copied().unwrap_or(f64::NAN) - 1.0).abs() < 0.05 && (src - want).abs() < 0.02 * per_beat && c.doc.undo_label() == Some("Move warp marker"))
+                .then_some(())
+                .ok_or(format!("beats {beats:?} source {src} want {want} undo {:?}", c.doc.undo_label()))
+        })),
+        DoC("warp: three transients, Cmd-click the middle one in the handle band", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let Some(clip) = c.ac_clip().cloned() else { return };
+            let rate = c.project().asset(clip.asset).unwrap().sample_rate;
+            let per_beat = rate * 60.0 / clip.warp.original_bpm * clip.warp.speed;
+            let at = |b: f64| (clip.source_offset as f64 + b * per_beat) as u64;
+            let warp = saine_core::ClipWarp { transients_added: vec![at(2.25), at(2.5), at(2.75)], ..clip.warp.clone() };
+            c.execute(saine_core::Command::SetClipWarp { clip: clip.id, warp, label: "Add transient".into() });
+            drop(c);
+            let x = ctl.borrow().ac_transient_beats().get(1).map(|&b| ctl.borrow().pr_view().x_of(b)).unwrap_or(0.0);
+            let mut c = ctl.borrow_mut();
+            c.pr_pointer(0, x, 30.0, false, false, true);
+            c.pr_pointer(2, x, 30.0, false, false, true);
+        })),
+        Check("Add warp markers at transients: the transient and both neighbours, where they play", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let marks = c.ac_marker_beats();
+            let tr = c.ac_transient_beats();
+            let pinned = tr.iter().filter(|t| marks.iter().any(|m| (m - *t).abs() < 1e-6)).count();
+            (clip.warp.markers.len() == 5 && pinned == 3 && c.doc.undo_label() == Some("Add warp markers at transients"))
+                .then_some(())
+                .ok_or(format!("markers {marks:?} transients {tr:?} undo {:?}", c.doc.undo_label()))
+        })),
+        DoC("warp: undo the markers and the transients", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.undo();
+            c.undo();
         })),
         DoC("warp: Warp menu -> Off", Box::new(|a, ctl| {
             ctl.borrow_mut().clip_menu_open(1);
@@ -888,8 +934,8 @@ fn steps() -> Vec<Step> {
         })),
         DoC("warp: Mode menu stays closed with warp off", Box::new(|_, ctl| ctl.borrow_mut().clip_menu_open(2))),
         Check("mode menu closed", Box::new(|c, _| (c.pr.menu == -1).then_some(()).ok_or(format!("menu {}", c.pr.menu)))),
-        Do("Cmd+Z x6 (back to the unwarped clip)", Box::new(|a| {
-            for _ in 0..6 {
+        Do("Cmd+Z x7 (back to the unwarped clip)", Box::new(|a| {
+            for _ in 0..7 {
                 key(a, "z", true, false);
             }
         })),

@@ -585,9 +585,9 @@ impl Controller {
     }
 
     /// Pointer in the piano roll texture (kind 0 down, 1 move, 2 up).
-    pub fn pr_pointer(&mut self, kind: i32, x: f32, y: f32, shift: bool, alt: bool) {
+    pub fn pr_pointer(&mut self, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool) {
         if self.ac_clip().is_some() {
-            self.ac_pointer(kind, x, y, alt);
+            self.ac_pointer(kind, x, y, shift, alt, command);
             return;
         }
         let Some(clip) = self.pr_clip().cloned() else { return };
