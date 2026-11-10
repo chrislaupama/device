@@ -341,6 +341,8 @@ pub struct Controller {
     pub(crate) seq_row_model: Rc<VecModel<SeqRow>>,
     pub(crate) seq_cell_model: Rc<VecModel<SeqCell>>,
     pub(crate) seq_num_model: Rc<VecModel<SeqNum>>,
+    /// Row tops of the cells the playing step hits (the step sequencer's flash).
+    pub(crate) seq_flash_model: Rc<VecModel<f32>>,
     pub(crate) composer_row_model: Rc<VecModel<PatternRow>>,
     /// The rows last pushed to `composer_row_model` (rebuilt only when they change).
     pub(crate) composer_rows_shown: std::cell::RefCell<Vec<crate::composer::RowView>>,
@@ -452,6 +454,7 @@ impl Controller {
             seq_row_model: Rc::new(VecModel::default()),
             seq_cell_model: Rc::new(VecModel::default()),
             seq_num_model: Rc::new(VecModel::default()),
+            seq_flash_model: Rc::new(VecModel::default()),
             composer_row_model: Rc::new(VecModel::default()),
             composer_rows_shown: Default::default(),
             menu_model: Rc::new(VecModel::default()),
@@ -516,6 +519,9 @@ impl Controller {
         s.set_seq_rows(ModelRc::from(self.seq_row_model.clone()));
         s.set_seq_cells(ModelRc::from(self.seq_cell_model.clone()));
         s.set_seq_nums(ModelRc::from(self.seq_num_model.clone()));
+        s.set_seq_flash_rows(ModelRc::from(self.seq_flash_model.clone()));
+        let tips: Vec<SharedString> = std::iter::once("Turn steps on and off").chain(saine_core::steps::StepLane::ALL.iter().map(|l| l.spec().tip)).map(Into::into).collect();
+        s.set_seq_lane_tips(ModelRc::new(VecModel::from(tips)));
         s.set_composer_rows(ModelRc::from(self.composer_row_model.clone()));
         s.set_menu_items(ModelRc::from(self.menu_model.clone()));
         s.set_sub_items(ModelRc::from(self.sub_model.clone()));
@@ -1536,6 +1542,7 @@ impl Controller {
             self.ui_dirty = true;
         }
 
+        self.seq_tick(&s);
         if self.ui_rev != Some(self.doc.revision()) {
             self.ui_dirty = true;
         }

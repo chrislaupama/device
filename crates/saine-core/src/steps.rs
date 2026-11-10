@@ -96,7 +96,11 @@ impl StepRate {
 
 /// The reference's "Length" choices (steps).
 pub const STEP_COUNTS: [u16; 8] = [8, 12, 16, 24, 32, 36, 48, 64];
+/// Longest Length choice and the longest pattern Double makes.
 pub const MAX_STEPS: u16 = 64;
+/// Longest pattern: a clip longer than MAX_STEPS converts with its own step
+/// count (the reference keeps it and pages through it in the editor).
+pub const STEP_LIMIT: u16 = 4096;
 /// Default for a new pattern clip: 16 steps of 1/16 (one bar of 4/4).
 pub const DEFAULT_STEPS: u16 = 16;
 /// Gap left between repeated hits and before a following hit (0.02 beat).
@@ -205,7 +209,7 @@ impl StepRows {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StepPattern {
     pub rate: StepRate,
-    /// Pattern length in steps (1..=64; the editor offers STEP_COUNTS).
+    /// Pattern length in steps (1..=STEP_LIMIT; the editor offers STEP_COUNTS).
     pub steps: u16,
     /// 0..=1: every second step is pushed late by swing x 49 % of a step.
     #[serde(default)]
@@ -240,8 +244,8 @@ impl StepPattern {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.steps == 0 || self.steps > MAX_STEPS {
-            return Err(format!("steps {} outside 1..={MAX_STEPS}", self.steps));
+        if self.steps == 0 || self.steps > STEP_LIMIT {
+            return Err(format!("steps {} outside 1..={STEP_LIMIT}", self.steps));
         }
         if !self.swing.is_finite() || !(0.0..=1.0).contains(&self.swing) {
             return Err(format!("swing {} outside 0..=1", self.swing));
@@ -376,7 +380,7 @@ impl StepPattern {
 
     /// Change the length: cells past the new end are dropped, new steps are empty.
     pub fn resized(&self, steps: u16) -> StepPattern {
-        let steps = steps.clamp(1, MAX_STEPS);
+        let steps = steps.clamp(1, STEP_LIMIT);
         let mut p = self.clone();
         p.steps = steps;
         p.cells.retain(|c| c.step < steps);
@@ -448,7 +452,7 @@ impl StepPattern {
     /// that are not rows, at or past the pattern end, or on a step already
     /// taken are left out.
     pub fn derive(notes: &[Note], rate: StepRate, steps: u16, swing: f32, rows: StepRows) -> StepPattern {
-        let mut p = StepPattern { rate, steps: steps.clamp(1, MAX_STEPS), swing, ..StepPattern::new(rows) };
+        let mut p = StepPattern { rate, steps: steps.clamp(1, STEP_LIMIT), swing, ..StepPattern::new(rows) };
         let mut keys: Vec<u8> = notes.iter().map(|n| n.pitch).filter(|&k| rows.contains(k)).collect();
         keys.sort_unstable();
         keys.dedup();
@@ -609,11 +613,12 @@ impl StepPattern {
     }
 
     /// A plain MIDI clip's notes as a new pattern (rate 1/16, the shortest
-    /// length choice that covers the clip, at most 64 steps).
+    /// length choice that covers the clip; a clip longer than 64 steps keeps
+    /// its own step count, up to STEP_LIMIT).
     pub fn from_notes(notes: &[Note], clip_length: Ticks, rows: StepRows) -> StepPattern {
         let rate = StepRate::default();
         let need = (clip_length + rate.ticks() - 1) / rate.ticks();
-        let steps = STEP_COUNTS.into_iter().find(|&c| c as Ticks >= need).unwrap_or(MAX_STEPS);
+        let steps = STEP_COUNTS.into_iter().find(|&c| c as Ticks >= need).unwrap_or(need.min(STEP_LIMIT as Ticks) as u16);
         StepPattern::derive(notes, rate, steps, 0.0, rows)
     }
 }
@@ -859,6 +864,19 @@ mod tests {
         let n = bake_into(&four_on_floor(), &[odd]);
         assert_eq!(n.len(), 7);
         assert!(n.iter().any(|x| x.pitch == 60 && x.start == 100));
+    }
+
+    #[test]
+    fn a_clip_longer_than_64_steps_keeps_its_own_step_count() {
+        let s = PPQ / 4;
+        let notes = [Note { id: 1, pitch: pad(0), start: 0, length: s, velocity: 90 }, Note { id: 2, pitch: pad(1), start: 100 * s, length: s, velocity: 70 }];
+        let p = StepPattern::from_notes(&notes, 25 * PPQ + 1, StepRows::Pads);
+        assert_eq!(p.steps, 101, "no snapping past 64 steps");
+        assert!(p.validate().is_ok());
+        assert_eq!(p.cell(pad(1), 100).map(|c| c.velocity), Some(70));
+        assert!(p.doubled().is_none(), "Double stays within 64 steps");
+        assert_eq!(StepPattern::from_notes(&notes, 9000 * PPQ, StepRows::Pads).steps, STEP_LIMIT);
+        assert_eq!(StepPattern::from_notes(&notes, 9 * PPQ, StepRows::Pads).steps, 36, "a short clip still takes a Length choice");
     }
 
     #[test]

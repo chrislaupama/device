@@ -893,7 +893,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 for (key, step) in [(36, 0), (36, 4), (36, 8), (36, 12), (37, 4), (38, 8)] {
                     p = p.toggled(key, step);
                 }
-                if lane > 0 {
+                if lane == 5 {
+                    // An 80-step pattern (a 20-beat clip converted past the 64-step Length choices),
+                    // playing on step 69: Follow playhead shows page 3 with the ring on step 69.
+                    let mut long = saine_core::steps::StepPattern { steps: 80, ..p.clone() };
+                    for bar in 1..5 {
+                        for c in &p.cells {
+                            long = long.toggled(c.key, c.step + bar * 16);
+                        }
+                    }
+                    p = long.toggled(42, 68).toggled(42, 70);
+                    if let Some(m) = c.project().midi_clip(id).cloned() {
+                        c.execute(saine_core::Command::ResizeMidiClip { clip: id, start: m.start, length: p.length() });
+                    }
+                }
+                if (1..5).contains(&lane) || lane == 6 {
                     p = p.toggled(42, 2).toggled(42, 6).toggled(42, 10).toggled(42, 14).with_row_flag(39, false);
                     p = p.with_lane(42, 2, StepLane::Velocity, 60).with_lane(42, 10, StepLane::Velocity, 30);
                     p = p.with_lane(42, 6, StepLane::Offset, 25).with_lane(42, 14, StepLane::Offset, -20);
@@ -901,7 +915,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 c.execute(saine_core::Command::SetStepPattern { clip: id, pattern: Some(p) });
                 c.select_clip(Some(id));
-                c.seq_lane(lane);
+                c.seq_lane(match lane {
+                    5 => 0,
+                    6 => 1,
+                    l => l,
+                });
+                if lane == 5 {
+                    c.seek_beats(16.0 + 17.0);
+                    let _ = c.engine.play();
+                }
+                if lane == 6 {
+                    // The Velocity tab's tooltip, as after a second of hover.
+                    let s = app.global::<Studio>();
+                    s.set_seq_tip(StepLane::Velocity.spec().tip.into());
+                    s.set_seq_tip_ax(208.0 - 13.35);
+                    s.set_seq_tip_ay(24.0);
+                    s.set_seq_tip_on(true);
+                }
             }
         }
     }
@@ -1412,6 +1442,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_seq_pointer, |c, kind: i32, x: f32, y: f32| c.seq_pointer(kind, x, y));
     on!(on_seq_scroll, |c, dy: f32| c.seq_scroll(dy));
     on!(on_seq_swing, |c, phase: i32, dy: f32| c.seq_swing(phase, dy));
+    on!(on_seq_page_pick, |c, i: i32| c.seq_page(i));
+    on!(on_seq_follow_toggle, |c| c.seq_follow());
     on!(on_composer_create, |c| c.composer_create());
     on!(on_composer_load, |c, i: i32| c.composer_load(i.max(0) as usize));
     on!(on_composer_original_pick, |c| c.composer_original());

@@ -8,6 +8,7 @@
 //! Geometry is editor-local (the editor sits at bottom panel (255, 27), like the
 //! piano roll), measured from `z100-clip-pattern-sequencer-*.png`.
 
+use crate::Studio;
 use crate::controller::Controller;
 use saine_core::builtin::{self, drum_rack, pad_sampler};
 use saine_core::midi::{self, MidiClip};
@@ -18,8 +19,13 @@ use saine_core::{ClipId, Command, PPQ};
 pub const COL_X0: f32 = 136.5;
 pub const COL_PITCH: f32 = 25.5;
 const COL_GAP: f32 = 2.5;
-/// Columns shown at least (the pattern's steps light up, the rest stay dim).
-const MIN_COLS: u16 = 32;
+/// Paging: the reference fits 16 or 32 step columns of at least 24 px after
+/// 182 px of row labels; in editor units (1 unit = 1.173 px there) that is
+/// 20.5 and 155. Steps past the pattern end on the last page stay dim.
+const PAGE_MIN_PITCH: f32 = 20.5;
+const PAGE_LABELS_W: f32 = 155.0;
+/// Length of the hit flash on the playing step (reference: 230 ms).
+const FLASH: std::time::Duration = std::time::Duration::from_millis(230);
 /// First row top and row pitch.
 pub const ROW_Y0: f32 = 55.0;
 pub const ROW_PITCH: f32 = 22.0;
@@ -58,19 +64,40 @@ pub struct SeqState {
     preview: Option<StepPattern>,
     /// Opened for a pattern clip (a conversion either way reopens the view).
     pub pattern: bool,
+    /// Steps page shown (0-based; clamped to the pattern's pages when drawn).
+    pub page: u16,
+    /// Follow playhead switched off (the reference has it on by default).
+    pub follow_off: bool,
+    /// Step the playhead is on, and when it got there (the hit flash).
+    play: Option<(u16, std::time::Instant)>,
 }
 
 impl SeqState {
-    /// State for a newly opened clip: Sequencer tab, Steps lane, scrolled to the pattern.
+    /// State for a newly opened clip: Sequencer tab, Steps lane, first page, scrolled to the pattern.
     pub fn opened(p: Option<&StepPattern>) -> Self {
         SeqState { scroll: p.map_or(0.0, initial_scroll), pattern: p.is_some(), ..Default::default() }
     }
 }
 
+/// Step columns per page for an editor this wide: 16 or 32.
+pub fn steps_per_page(width: f32) -> u16 {
+    let fit = ((width - PAGE_LABELS_W) / PAGE_MIN_PITCH).floor().max(0.0) as u16;
+    (fit / 16 * 16).clamp(16, 32)
+}
+
+/// Pages a pattern of `steps` takes.
+pub fn page_count(width: f32, steps: u16) -> u16 {
+    steps.div_ceil(steps_per_page(width)).max(1)
+}
+
 /// Visible geometry of the grid.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SeqGeom {
+    /// Columns of one page, the page shown, its first step, and the page count.
     pub cols: u16,
+    pub page: u16,
+    pub first: u16,
+    pub pages: u16,
     pub pitch: f32,
     pub cell_w: f32,
     pub rows: u16,
@@ -79,8 +106,10 @@ pub struct SeqGeom {
 }
 
 impl SeqGeom {
-    pub fn new(width: f32, steps: u16, rows: StepRows, scroll: f32) -> Self {
-        let cols = steps.max(MIN_COLS);
+    pub fn new(width: f32, steps: u16, rows: StepRows, scroll: f32, page: u16) -> Self {
+        let cols = steps_per_page(width);
+        let pages = page_count(width, steps);
+        let page = page.min(pages - 1);
         let pitch = ((width - COL_X0 - 8.0) / cols as f32).min(COL_PITCH).max(6.0);
         let rows = match rows {
             StepRows::Pads => drum_rack::PADS as u16,
@@ -88,11 +117,17 @@ impl SeqGeom {
         };
         let view_h = EDITOR_H - FOOTER_H - ROW_Y0;
         let max = (rows as f32 * ROW_PITCH - view_h + 4.0).max(0.0);
-        SeqGeom { cols, pitch, cell_w: (pitch - COL_GAP).max(3.0), rows, scroll: scroll.clamp(0.0, max), view_h }
+        SeqGeom { cols, page, first: page * cols, pages, pitch, cell_w: (pitch - COL_GAP).max(3.0), rows, scroll: scroll.clamp(0.0, max), view_h }
     }
 
-    pub fn col_x(&self, step: u16) -> f32 {
-        COL_X0 + step as f32 * self.pitch
+    /// Left edge of a column of the page.
+    pub fn col_x(&self, col: u16) -> f32 {
+        COL_X0 + col as f32 * self.pitch
+    }
+
+    /// Column of a step, when the step is on the page shown.
+    pub fn col_of(&self, step: u16) -> Option<u16> {
+        step.checked_sub(self.first).filter(|&c| c < self.cols)
     }
 
     pub fn row_y(&self, row: u16) -> f32 {
@@ -111,9 +146,10 @@ impl SeqGeom {
         (y >= ROW_Y0 && y < ROW_Y0 + self.view_h && r >= 0.0 && (r as u16) < self.rows).then_some(r as u16)
     }
 
+    /// Step under an editor x (on the page shown).
     fn step_at(&self, x: f32) -> Option<u16> {
         let s = ((x - COL_X0) / self.pitch).floor();
-        (x >= COL_X0 && s >= 0.0 && (s as u16) < self.cols).then_some(s as u16)
+        (x >= COL_X0 && s >= 0.0 && (s as u16) < self.cols).then_some(self.first + s as u16)
     }
 }
 
@@ -170,10 +206,12 @@ fn lane_index(lane: Option<StepLane>) -> i32 {
     lane.map_or(0, |l| StepLane::ALL.iter().position(|&a| a == l).unwrap_or(0) as i32 + 1)
 }
 
-/// The grid's view model: visible rows only, background cells first, then the
-/// active cells on top (a tied cell spans the steps it holds).
-pub fn build_view(p: &StepPattern, width: f32, scroll: f32, lane: Option<StepLane>, names: &dyn Fn(u8) -> String, dragging: Option<(u8, u16)>) -> SeqView {
-    let g = SeqGeom::new(width, p.steps, p.rows, scroll);
+/// The grid's view model for one page: visible rows only, background cells
+/// first, then the active cells on top (a tied cell spans the steps it holds,
+/// cut at the page edges).
+pub fn build_view(p: &StepPattern, width: f32, scroll: f32, page: u16, lane: Option<StepLane>, names: &dyn Fn(u8) -> String, dragging: Option<(u8, u16)>) -> SeqView {
+    let g = SeqGeom::new(width, p.steps, p.rows, scroll, page);
+    let last = g.first + g.cols - 1;
     let mut rows = Vec::new();
     let mut cells = Vec::with_capacity(g.visible_rows().len() * (g.cols as usize + 4));
     let li = lane_index(lane);
@@ -190,11 +228,15 @@ pub fn build_view(p: &StepPattern, width: f32, scroll: f32, lane: Option<StepLan
             soloed: p.soloed.contains(&key),
             audible,
         });
-        for s in 0..g.cols {
-            let state = if s < p.steps { 1 } else { 0 };
-            cells.push(CellView { x: g.col_x(s), y, w: g.cell_w, state, lane: li, bar: 0.0, marks: 0, label: String::new(), dim: false });
+        for col in 0..g.cols {
+            let state = if g.first + col < p.steps { 1 } else { 0 };
+            cells.push(CellView { x: g.col_x(col), y, w: g.cell_w, state, lane: li, bar: 0.0, marks: 0, label: String::new(), dim: false });
         }
         for (c, tie) in p.sounding(key) {
+            let (a, b) = (c.step.max(g.first), (c.step + tie).min(last));
+            if a > b {
+                continue;
+            }
             let (bar, marks) = match lane {
                 Some(StepLane::Velocity) => (c.velocity as f32 / 127.0, 0),
                 Some(StepLane::Offset) => ((p.effective_offset(&c) as f32 + 49.0) / 98.0, 0),
@@ -205,14 +247,17 @@ pub fn build_view(p: &StepPattern, width: f32, scroll: f32, lane: Option<StepLan
                 (Some(l), Some(at)) if at == (key, c.step) => l.format(c.get(l)),
                 _ => String::new(),
             };
-            cells.push(CellView { x: g.col_x(c.step), y, w: g.cell_w + tie as f32 * g.pitch, state: 2, lane: li, bar, marks, label, dim: !audible });
+            cells.push(CellView { x: g.col_x(a - g.first), y, w: g.cell_w + (b - a) as f32 * g.pitch, state: 2, lane: li, bar, marks, label, dim: !audible });
         }
     }
     let steps_per_beat = p.rate.steps_per_beat();
     let every = if g.pitch >= 18.0 { 1 } else { steps_per_beat.round().max(1.0) as u16 };
     let nums = (0..g.cols)
-        .filter(|s| s % every == 0)
-        .map(|s| NumView { x: g.col_x(s), text: format!("{}", s + 1), beat: is_beat(p.rate, s), active: s < p.steps })
+        .filter(|col| (g.first + col) % every == 0)
+        .map(|col| {
+            let s = g.first + col;
+            NumView { x: g.col_x(col), text: format!("{}", s + 1), beat: is_beat(p.rate, s), active: s < p.steps }
+        })
         .collect();
     SeqView { geom: g, rows, cells, nums }
 }
@@ -252,7 +297,7 @@ impl Controller {
             Some(SeqDrag::Value { key, step, .. }) => Some((*key, *step)),
             _ => None,
         };
-        Some(build_view(&p, self.pr.size.0, self.pr.seq.scroll, self.pr.seq.lane, &|k| self.seq_row_name(p.rows, k), dragging))
+        Some(build_view(&p, self.pr.size.0, self.pr.seq.scroll, self.pr.seq.page, self.pr.seq.lane, &|k| self.seq_row_name(p.rows, k), dragging))
     }
 
     fn seq_clip(&self) -> Option<(ClipId, StepPattern)> {
@@ -305,6 +350,64 @@ impl Controller {
         self.seq_commit(id, &p, StepPattern { rate, ..p.clone() });
     }
 
+    /// Pager tab: show steps page `index` (0-based).
+    pub fn seq_page(&mut self, index: i32) {
+        let Some(p) = self.seq_pattern() else { return };
+        if let Ok(i) = u16::try_from(index)
+            && i < page_count(self.pr.size.0, p.steps)
+        {
+            self.pr.seq.page = i;
+            self.ui_dirty = true;
+        }
+    }
+
+    /// Pager's Follow playhead button.
+    pub fn seq_follow(&mut self) {
+        self.pr.seq.follow_off = !self.pr.seq.follow_off;
+        self.ui_dirty = true;
+    }
+
+    /// Pattern step under the playhead while the transport plays inside the open clip.
+    pub fn seq_play_step(&self) -> Option<u16> {
+        let c = self.pr_clip()?;
+        let p = c.pattern.as_ref()?;
+        let at = self.playhead_ticks() - c.start;
+        if !self.engine.transport().playing || at < 0 || at >= c.length {
+            return None;
+        }
+        Some(((at % p.length()) / p.rate.ticks()) as u16)
+    }
+
+    /// Every frame: the playing step's ring column and hit flash, and Follow
+    /// playhead turning the page when the playhead moves to another one.
+    pub fn seq_tick(&mut self, s: &Studio) {
+        let step = if self.seq_visible() { self.seq_play_step() } else { None };
+        if step != self.pr.seq.play.map(|(st, _)| st) {
+            self.pr.seq.play = step.map(|st| (st, std::time::Instant::now()));
+            if let Some(st) = step.filter(|_| !self.pr.seq.follow_off) {
+                let page = st / steps_per_page(self.pr.size.0);
+                if page != self.pr.seq.page {
+                    self.pr.seq.page = page;
+                    self.ui_dirty = true;
+                }
+            }
+        }
+        let shown = self.pr.seq.play.zip(self.seq_pattern()).and_then(|((st, t0), p)| {
+            let g = SeqGeom::new(self.pr.size.0, p.steps, p.rows, self.pr.seq.scroll, self.pr.seq.page);
+            let col = g.col_of(st)?;
+            let hits: Vec<f32> = g.visible_rows().filter(|&r| p.cell(row_key(p.rows, r), st).is_some()).map(|r| g.row_y(r)).collect();
+            Some((col as i32, hits, (t0.elapsed().as_secs_f32() / FLASH.as_secs_f32()).min(1.0)))
+        });
+        let (col, hits, flash) = shown.unwrap_or((-1, Vec::new(), 1.0));
+        if s.get_seq_play_col() != col {
+            s.set_seq_play_col(col);
+        }
+        if s.get_seq_flash() != flash {
+            s.set_seq_flash(flash);
+        }
+        crate::controller::sync_model(&self.seq_flash_model, hits);
+    }
+
     /// Footer Swing: drag up to raise (phase 0 press, 1 move, 2 release; dy since press).
     pub fn seq_swing(&mut self, phase: i32, dy: f32) {
         let Some((id, p)) = self.seq_clip() else { return };
@@ -322,7 +425,7 @@ impl Controller {
 
     pub fn seq_scroll(&mut self, dy: f32) {
         let Some(p) = self.seq_pattern() else { return };
-        self.pr.seq.scroll = SeqGeom::new(self.pr.size.0, p.steps, p.rows, self.pr.seq.scroll - dy).scroll;
+        self.pr.seq.scroll = SeqGeom::new(self.pr.size.0, p.steps, p.rows, self.pr.seq.scroll - dy, self.pr.seq.page).scroll;
         self.ui_dirty = true;
     }
 
@@ -330,7 +433,7 @@ impl Controller {
     pub fn seq_pointer(&mut self, kind: i32, x: f32, y: f32) {
         let Some((id, base)) = self.seq_clip() else { return };
         let shown = self.pr.seq.preview.clone().unwrap_or_else(|| base.clone());
-        let g = SeqGeom::new(self.pr.size.0, shown.steps, shown.rows, self.pr.seq.scroll);
+        let g = SeqGeom::new(self.pr.size.0, shown.steps, shown.rows, self.pr.seq.scroll, self.pr.seq.page);
         let hit = g.row_at(y).map(|r| (row_key(shown.rows, r), g.step_at(x).filter(|&s| s < shown.steps)));
         match kind {
             0 => {
@@ -445,14 +548,15 @@ mod tests {
     }
 
     #[test]
-    fn geometry_matches_the_reference_and_shrinks_for_long_patterns() {
-        let g = SeqGeom::new(1174.5, 16, StepRows::Pads, 0.0);
-        assert_eq!((g.cols, g.pitch, g.rows), (32, COL_PITCH, 16));
+    fn geometry_matches_the_reference_and_pages_long_patterns() {
+        let g = SeqGeom::new(1174.5, 16, StepRows::Pads, 0.0, 0);
+        assert_eq!((g.cols, g.pitch, g.rows, g.pages), (32, COL_PITCH, 16, 1));
         assert_eq!(g.visible_rows(), 0..12);
-        let long = SeqGeom::new(1174.5, 64, StepRows::Pads, 0.0);
-        assert_eq!(long.cols, 64);
-        assert!(long.col_x(63) + long.cell_w <= 1174.5 - 8.0 + 0.01);
-        let pitches = SeqGeom::new(1174.5, 16, StepRows::Pitches, 1e9);
+        let long = SeqGeom::new(1174.5, 100, StepRows::Pads, 0.0, 9);
+        assert_eq!((long.cols, long.pages, long.page, long.first), (32, 4, 3, 96), "the page clamps to the last one");
+        assert_eq!((long.col_of(97), long.col_of(95), long.step_at(COL_X0 + 1.0)), (Some(1), None, Some(96)));
+        assert_eq!((steps_per_page(1174.5), steps_per_page(700.0), steps_per_page(100.0), steps_per_page(4000.0)), (32, 16, 16, 32));
+        let pitches = SeqGeom::new(1174.5, 16, StepRows::Pitches, 1e9, 0);
         assert_eq!(pitches.visible_rows().end, 128, "scroll clamps to the last row");
         assert_eq!(row_key(StepRows::Pitches, 0), 127);
         assert_eq!(row_key(StepRows::Pads, 15), 51);
@@ -461,7 +565,7 @@ mod tests {
     #[test]
     fn view_draws_ties_lanes_and_muted_rows() {
         let p = beat();
-        let v = build_view(&p, 1174.5, 0.0, Some(StepLane::Velocity), &|k| format!("k{k}"), Some((36, 4)));
+        let v = build_view(&p, 1174.5, 0.0, 0, Some(StepLane::Velocity), &|k| format!("k{k}"), Some((36, 4)));
         assert_eq!(v.rows.len(), 12);
         assert_eq!(v.rows[0].name, "k36");
         assert!(!v.rows[2].audible && v.rows[2].muted);
@@ -474,6 +578,18 @@ mod tests {
         assert_eq!(v.cells.iter().filter(|c| c.state == 0).count(), 12 * 16);
         let beats: Vec<&str> = v.nums.iter().filter(|n| n.beat && n.active).map(|n| n.text.as_str()).collect();
         assert_eq!(beats, ["1", "5", "9", "13"]);
+    }
+
+    #[test]
+    fn a_later_page_shows_its_steps_and_cuts_ties_at_the_edges() {
+        let p = StepPattern { steps: 80, ..StepPattern::default() }.toggled(36, 30).with_lane(36, 30, StepLane::Tie, 4).toggled(37, 70);
+        let v = build_view(&p, 1174.5, 0.0, 1, None, &|k| format!("k{k}"), None);
+        assert_eq!((v.nums[0].text.as_str(), v.nums.len()), ("33", 32));
+        let on: Vec<&CellView> = v.cells.iter().filter(|c| c.state == 2).collect();
+        assert_eq!(on.len(), 1, "step 71 is on page 3");
+        assert_eq!((on[0].x, on[0].w), (COL_X0, v.geom.cell_w + 2.0 * v.geom.pitch), "the tie from step 31 shows its last three steps");
+        let last = build_view(&p, 1174.5, 0.0, 2, None, &|k| format!("k{k}"), None);
+        assert_eq!(last.cells.iter().filter(|c| c.y == last.rows[0].y && c.state == 1).count(), 16, "steps 65..80 in the pattern, the rest past its end");
     }
 
     /// Cost of the grid's view model, built on every UI update while the sequencer is open.
@@ -491,7 +607,7 @@ mod tests {
             let mut t: Vec<f64> = (0..2000)
                 .map(|_| {
                     let s = std::time::Instant::now();
-                    std::hint::black_box(build_view(&p, 1174.5, 0.0, lane, &|k| format!("Pad {}", k - 35), None));
+                    std::hint::black_box(build_view(&p, 1174.5, 0.0, 0, lane, &|k| format!("Pad {}", k - 35), None));
                     s.elapsed().as_secs_f64() * 1e6
                 })
                 .collect();
