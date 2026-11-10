@@ -14,6 +14,7 @@
   <img alt="Platforms: macOS, Windows, Linux" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-4b8be0?style=flat-square">
   <img alt="Engine: C++23" src="https://img.shields.io/badge/engine-C%2B%2B23-6e6e6e?style=flat-square">
   <img alt="App: Rust 2024" src="https://img.shields.io/badge/app-Rust%202024-b7410e?style=flat-square">
+  <a href="LICENSE"><img alt="License: AGPL-3.0-or-later" src="https://img.shields.io/badge/license-AGPL--3.0--or--later-4b8be0?style=flat-square"></a>
 </p>
 
 <p>
@@ -253,7 +254,12 @@ problems privately as described in [SECURITY.md](SECURITY.md), not in a public i
 
 ## License
 
-All rights reserved. How Device Studio will be licensed has not been decided yet.
+Device Studio is free software: you can redistribute it and/or modify it under the terms of the
+[GNU Affero General Public License](LICENSE), version 3 or (at your option) any later version. It comes with no
+warranty. In short, you may use, study, change and share it, and if you distribute a modified version, or let people
+use one over a network, you must make its source available under the same licence.
 
-Third-party code keeps its own license: the VST3 SDK and CLAP headers (MIT) are fetched at build time, and the bundled
-Inter font is under the SIL Open Font License.
+Third-party code keeps its own license: the VST3 SDK, CLAP headers and Signalsmith libraries (MIT), dr_libs and
+stb_vorbis (public domain or MIT) are fetched at build time, Slint is used under its GPL-3.0 licence (compatible with
+the AGPL), and the bundled Inter font is under the SIL Open Font License. See
+[engine/third_party_licenses.md](engine/third_party_licenses.md).
