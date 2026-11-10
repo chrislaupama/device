@@ -166,6 +166,22 @@ fn free_folder(dir: &Path, name: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| "no free folder name".into())
 }
 
+/// Saine lets MIDI clips overlap on a track and a Live track can't, so overlapping clips are
+/// spread over lanes (one Live track each): in start order, each clip takes the first lane that
+/// is free at its start.
+pub fn midi_lanes(clips: &[saine_core::MidiClip]) -> Vec<Vec<&saine_core::MidiClip>> {
+    let mut sorted: Vec<&saine_core::MidiClip> = clips.iter().collect();
+    sorted.sort_by_key(|c| c.start);
+    let mut lanes: Vec<Vec<&saine_core::MidiClip>> = Vec::new();
+    for c in sorted {
+        match lanes.iter_mut().find(|l| l.last().is_some_and(|last| last.end() <= c.start)) {
+            Some(lane) => lane.push(c),
+            None => lanes.push(vec![c]),
+        }
+    }
+    lanes
+}
+
 /// What one render pass writes.
 struct Pass {
     /// None: the mix; Some: that track alone.
@@ -328,10 +344,19 @@ impl Controller {
     /// so the set sounds like the project), and "Saine Export Notes.txt". Instrument tracks keep
     /// their MIDI clips on a second track next to the audio, turned off. The set is checked
     /// against Live's structure before it is written. Returns the set's path.
+    /// A failed export removes its folder (it was new or empty), so no half-written project stays.
     fn export_project(&mut self, name: &str) -> Result<(Vec<PathBuf>, Result<(), String>), String> {
+        let folder = free_folder(&self.export.dir, &format!("{name} Project"))?;
+        let written = self.write_project(name, &folder);
+        if written.is_err() {
+            let _ = std::fs::remove_dir_all(&folder);
+        }
+        written
+    }
+
+    fn write_project(&mut self, name: &str, folder: &Path) -> Result<(Vec<PathBuf>, Result<(), String>), String> {
         use crate::live_set::{self, LiveSet, SetAudioClip, SetContent, SetMidiClip, SetNote, SetTrack};
         const RENDERS: &str = "Samples/Processed/Saine";
-        let folder = free_folder(&self.export.dir, &format!("{name} Project"))?;
         let has_clips = |t: &saine_core::Track| !t.clips.is_empty() || !t.midi_clips.is_empty();
         let rendered: Vec<(TrackId, String)> = self
             .project()
@@ -382,8 +407,8 @@ impl Controller {
             let (volume, pan) = if render.is_some() { (1.0, 0.0) } else { (t.gain, t.pan) };
             tracks.push(SetTrack { name: t.name.clone(), color, on: !t.mute, volume, pan, content });
             if render.is_some() && !t.midi_clips.is_empty() {
-                let clips = t
-                    .midi_clips
+                for (k, lane) in midi_lanes(&t.midi_clips).iter().enumerate() {
+                let clips = lane
                     .iter()
                     .map(|c| SetMidiClip {
                         name: c.name.clone(),
@@ -397,7 +422,9 @@ impl Controller {
                             .collect(),
                     })
                     .collect();
-                tracks.push(SetTrack { name: format!("{} (MIDI)", t.name), color, on: false, volume: t.gain, pan: t.pan, content: SetContent::Midi(clips) });
+                let label = if k == 0 { format!("{} (MIDI)", t.name) } else { format!("{} (MIDI {})", t.name, k + 1) };
+                tracks.push(SetTrack { name: label, color, on: false, volume: t.gain, pan: t.pan, content: SetContent::Midi(clips) });
+                }
             }
         }
         let tr = &p.transport;
@@ -411,7 +438,7 @@ impl Controller {
             tracks,
         };
         let xml = live_set::to_xml(&set);
-        live_set::validate(&xml, Some(&folder)).map_err(|e| format!("the Live set failed its structure check: {e}"))?;
+        live_set::validate(&xml, Some(folder)).map_err(|e| format!("the Live set failed its structure check: {e}"))?;
         let als = folder.join(format!("{name}.als"));
         let bytes = live_set::gzip(&xml).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
@@ -611,6 +638,17 @@ mod tests {
         // The reference app: 6 bars at 120 BPM + tail, 44.1 kHz, 24-bit → "3.7 MB • 0:14".
         assert_eq!(estimate_text(14 * 44_100, 44_100.0, 24, 1), "3.7 MB • 0:14");
         assert_eq!(estimate_text(14 * 44_100, 44_100.0, 24, 2), "7.4 MB • 0:14");
+    }
+
+    #[test]
+    fn overlapping_midi_clips_get_their_own_lanes() {
+        use saine_core::MidiClip;
+        let bar = 4 * saine_core::PPQ;
+        let clips = [MidiClip::empty(0, 2 * bar), MidiClip::empty(bar, bar), MidiClip::empty(2 * bar, bar), MidiClip::empty(bar, 3 * bar)];
+        let lanes = midi_lanes(&clips);
+        let starts: Vec<Vec<i64>> = lanes.iter().map(|l| l.iter().map(|c| c.start / bar).collect()).collect();
+        assert_eq!(starts, vec![vec![0, 2], vec![1], vec![1]]);
+        assert!(lanes.iter().all(|l| l.windows(2).all(|w| w[0].end() <= w[1].start)));
     }
 
     #[test]
