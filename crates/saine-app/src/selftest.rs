@@ -729,6 +729,7 @@ fn steps() -> Vec<Step> {
     let rec_rev = Rc::new(Cell::new(0u64));
     let rec_vol_steps = Rc::new(Cell::new(0usize));
     let rec_mute = Rc::new(Cell::new(false));
+    let (press_beat, press_beat2) = { let b = Rc::new(Cell::new(0f64)); (b.clone(), b) };
     let (rt1, rt2, rt3, rt4, rt5) = (rec_tracks.clone(), rec_tracks.clone(), rec_tracks.clone(), rec_tracks.clone(), rec_tracks.clone());
     let (rg1, rg2) = (rec_gain.clone(), rec_gain.clone());
     let (rr1, rr2) = (rec_rev.clone(), rec_rev.clone());
@@ -1048,9 +1049,41 @@ fn steps() -> Vec<Step> {
             let marker = c.ac_marker_beats().get(1).copied().unwrap_or(f64::NAN);
             let mut dl = crate::gpu::DrawList::default();
             crate::pianoroll::build(&mut dl, &sc);
-            (segs.len() == 2 && dl.waves.len() == 2 && (segs[0].beats.1 - marker).abs() < 1e-6 && dl.waves[0].rect[0] + dl.waves[0].rect[2] == dl.waves[1].rect[0])
+            let lanes = sc.wave.as_ref().map_or(0, |w| w.0.len());
+            (segs.len() == 2 && dl.waves.len() == 2 * lanes && (segs[0].beats.1 - marker).abs() < 1e-6 && dl.waves[0].rect[0] + dl.waves[0].rect[2] == dl.waves[1].rect[0])
                 .then_some(())
                 .ok_or(format!("segs {segs:?} marker {marker} waves {}", dl.waves.len()))
+        })),
+        Check("a mono clip keeps one lane", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let lanes = c.clip_lanes(clip).map_or(0, |l| l.0.len());
+            (c.project().asset(clip.asset).is_some_and(|a| a.channels == 1) && lanes == 1).then_some(()).ok_or(format!("lanes {lanes}"))
+        })),
+        DoC("open the demo's stereo noise clip in the Clip tab", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let p = c.project();
+            let id = p.tracks.iter().flat_map(|t| &t.clips).find(|cl| p.asset(cl.asset).is_some_and(|a| a.channels == 2)).map(|cl| cl.id);
+            c.select_clip(id);
+            c.set_bottom_tab(BottomTab::Clip);
+        })),
+        Check("a stereo clip draws a lane per channel: left above right, each from its own peaks", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let stereo = c.project().asset(clip.asset).is_some_and(|a| a.channels == 2);
+            let (slots, _) = c.clip_lanes(clip).ok_or("no waveform")?;
+            let ea = *c.asset_map.get(&clip.asset).ok_or("no engine asset")?;
+            let sc = c.pr_scene(1.0, &[]).ok_or("no clip editor scene")?;
+            let mut dl = crate::gpu::DrawList::default();
+            crate::pianoroll::build(&mut dl, &sc);
+            let (top, bottom) = (dl.waves.first().map(|w| w.rect[1]), dl.waves.last().map(|w| w.rect[1]));
+            (stereo && slots.len() == 2 && Some(slots) == c.peaks.channel_slots(ea).map(|s| s.to_vec()) && top < bottom)
+                .then_some(())
+                .ok_or(format!("stereo {stereo} lanes {} tops {top:?} {bottom:?}", c.clip_lanes(clip).map_or(0, |l| l.0.len())))
+        })),
+        DoC("back to clip 1 in the Clip tab", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let id = c.project().tracks[0].clips.first().map(|cl| cl.id);
+            c.select_clip(id);
+            c.set_bottom_tab(BottomTab::Clip);
         })),
         DoC("warp: Shift-drag the marker half a beat right (slide the audio)", Box::new(|_, ctl| {
             let (x0, x1) = { let c = ctl.borrow(); let v = c.pr_view(); (v.x_of(1.0), v.x_of(1.5)) };
@@ -1089,15 +1122,36 @@ fn steps() -> Vec<Step> {
             let marks = c.ac_marker_beats();
             let tr = c.ac_transient_beats();
             let pinned = tr.iter().filter(|t| marks.iter().any(|m| (m - *t).abs() < 1e-6)).count();
-            (clip.warp.markers.len() == 5 && pinned == 3 && c.doc.undo_label() == Some("Add warp markers at transients"))
+            (clip.warp.markers.len() == 5 && pinned == 3 && c.doc.undo_label() == Some("Add warp marker at transient"))
                 .then_some(())
                 .ok_or(format!("markers {marks:?} transients {tr:?} undo {:?}", c.doc.undo_label()))
         })),
-        DoC("warp: undo the markers and the transients", Box::new(|_, ctl| {
+        DoC("warp: undo, then press the first transient and drag a quarter beat right in one gesture", Box::new(move |_, ctl| {
+            ctl.borrow_mut().undo();
+            let b = ctl.borrow().ac_transient_beats().first().copied().unwrap_or(0.0);
+            press_beat.set(b);
+            let (x0, x1) = { let c = ctl.borrow(); let v = c.pr_view(); (v.x_of(b), v.x_of(b + 0.25)) };
             let mut c = ctl.borrow_mut();
-            c.undo();
-            c.undo();
+            c.pr_pointer(0, x0, 30.0, false, false, false);
+            c.pr_pointer(1, x1, 30.0, false, false, false);
+            c.pr_pointer(2, x1, 30.0, false, false, false);
         })),
+        Check("the press pinned the transient and the drag moved its marker: one undo step", Box::new(move |c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let marks = c.ac_marker_beats();
+            let tr = c.ac_transient_beats();
+            let pinned = tr.first().is_some_and(|t| marks.iter().any(|m| (m - t).abs() < 1e-6));
+            let want = press_beat2.get() + 0.25;
+            (clip.warp.markers.len() == 3 && pinned && (tr[0] - want).abs() < 0.02 && c.doc.undo_label() == Some("Add warp marker at transient"))
+                .then_some(())
+                .ok_or(format!("markers {marks:?} transients {tr:?} undo {:?}", c.doc.undo_label()))
+        })),
+        DoC("warp: undo once", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check("one undo removes the placed and dragged marker", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            (clip.warp.markers.len() == 2).then_some(()).ok_or(format!("markers {:?}", clip.warp.markers))
+        })),
+        DoC("warp: undo the transients", Box::new(|_, ctl| ctl.borrow_mut().undo())),
         DoC("warp: Warp menu -> Off", Box::new(|a, ctl| {
             ctl.borrow_mut().clip_menu_open(1);
             a.global::<Studio>().invoke_clip_menu_pick(1);

@@ -70,8 +70,9 @@ public:
     int32_t asset_release(uint64_t id);
     int32_t asset_get_info(uint64_t id, se_asset_info* out) const;
     int32_t asset_reverse(uint64_t id, se_asset_info* out);
-    int32_t asset_compute_peaks(uint64_t id, uint64_t start_frame, uint32_t frames_per_peak, float* out_minmax,
-                                std::size_t capacity, std::size_t* out_count) const;
+    // channel < 0: both channels mixed to mono.
+    int32_t asset_compute_peaks(uint64_t id, int32_t channel, uint64_t start_frame, uint32_t frames_per_peak,
+                                float* out_minmax, std::size_t capacity, std::size_t* out_count) const;
     int32_t asset_detect_onsets(uint64_t id, se_onset* out, std::size_t capacity, std::size_t* out_count) const;
     std::size_t warp_renders_pending() const { return warp_renderer_.pending(); }
     void set_warp_renders_enabled(bool enabled) { warp_renderer_.set_enabled(enabled); }

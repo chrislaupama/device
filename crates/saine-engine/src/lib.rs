@@ -152,7 +152,7 @@ impl Engine {
         check(unsafe { ffi::se_asset_release(self.raw, id) })
     }
 
-    /// A new asset with \`id\`'s audio back to front (reversed clips). Copies
+    /// A new asset with `id`'s audio back to front (reversed clips). Copies
     /// the audio: a few ms per minute, off the audio thread.
     pub fn reverse_asset(&self, id: u64) -> Result<AssetInfo, EngineError> {
         let mut info = AssetInfo::default();
@@ -171,6 +171,15 @@ impl Engine {
         let mut buf = vec![0f32; max_pairs * 2];
         let mut n = 0usize;
         check(unsafe { ffi::se_asset_compute_peaks(self.raw, id, start_frame, frames_per_peak, buf.as_mut_ptr(), max_pairs, &mut n) })?;
+        buf.truncate(n * 2);
+        Ok(buf.chunks_exact(2).map(|c| [c[0], c[1]]).collect())
+    }
+
+    /// Min/max pairs of one channel (0 left, 1 right) for per-channel lanes.
+    pub fn channel_peaks(&self, id: u64, channel: u32, start_frame: u64, frames_per_peak: u32, max_pairs: usize) -> Result<Vec<[f32; 2]>, EngineError> {
+        let mut buf = vec![0f32; max_pairs * 2];
+        let mut n = 0usize;
+        check(unsafe { ffi::se_asset_compute_channel_peaks(self.raw, id, channel, start_frame, frames_per_peak, buf.as_mut_ptr(), max_pairs, &mut n) })?;
         buf.truncate(n * 2);
         Ok(buf.chunks_exact(2).map(|c| [c[0], c[1]]).collect())
     }

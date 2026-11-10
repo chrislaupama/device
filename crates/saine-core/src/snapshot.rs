@@ -118,8 +118,8 @@ pub fn build_with_transients(
     build_full(project, engine_rate, engine_assets, &HashMap::new(), transients)
 }
 
-/// [\`build_with_transients\`] with the engine's reversed copies of assets
-/// (\`se_asset_reverse\`), which reversed clips play. A reversed clip whose copy
+/// [`build_with_transients`] with the engine's reversed copies of assets
+/// (`se_asset_reverse`), which reversed clips play. A reversed clip whose copy
 /// is missing is skipped.
 pub fn build_full(
     project: &Project,
@@ -218,10 +218,10 @@ pub fn build_full(
     (SessionSnapshot { tracks, master_gain: project.master_gain, master_automation, device_assets }, skipped)
 }
 
-/// A clip playing the engine's reversed copy (\`frames\` long, engine rate) of
+/// A clip playing the engine's reversed copy (`frames` long, engine rate) of
 /// its asset: the source window and the warp map mirrored, so timeline frame
 /// start + length - t plays what the forward clip plays at t, back to front.
-/// \`start\` is the window's first frame in the copy.
+/// `start` is the window's first frame in the copy.
 fn mirror(mut cs: ClipSnapshot, engine_asset: u64, start: f64, frames: f64) -> ClipSnapshot {
     cs.engine_asset = engine_asset;
     cs.source_offset = start.round() as i64;

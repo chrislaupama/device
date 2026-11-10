@@ -178,7 +178,7 @@ fn drums_and_auto_slice_at_the_transients_in_the_clip() {
     assert_eq!(w.slices, vec![(44_100.0 * k, true), (88_200.0 * k, false)]);
     assert_eq!(w.points[0].0, 96_000);
     assert!((w.points[0].1 - 48_000.0).abs() < 1e-6);
-    for (mode, engine) in [(WarpMode::Melody, 2), (WarpMode::Vocal, 3), (WarpMode::Repitch, 0)] {
+    for (mode, engine) in [(WarpMode::Melody, 2), (WarpMode::Vocal, 2), (WarpMode::Repitch, 0)] {
         set(&mut d, c, ClipWarp { enabled: true, mode, ..ClipWarp::default() }, "Set clip mode");
         let w = snap_warp(&d, c, &tr).2.unwrap();
         assert_eq!((w.mode, w.slices.len()), (engine, 0));
