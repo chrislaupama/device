@@ -619,12 +619,12 @@ impl crate::controller::Controller {
         if job.doc_epoch != self.doc_epoch {
             return self.release_live_set(job);
         }
+        // The prompt already asks on behalf of something the user chose since: that wins.
+        if self.unsaved_open {
+            self.release_live_set(job);
+            return self.set_status("Live set import cancelled", 4);
+        }
         if self.doc.revision() != job.revision && self.doc.is_dirty() {
-            // The prompt already asks on behalf of something the user chose since: that wins.
-            if self.unsaved_open {
-                self.release_live_set(job);
-                return self.set_status("Live set import cancelled", 4);
-            }
             self.pending_import = Some(PendingImport::Loaded(Box::new(job)));
             self.unsaved_open = true;
             self.ui_dirty = true;
