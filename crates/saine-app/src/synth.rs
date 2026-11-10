@@ -346,7 +346,8 @@ fn mod_band(v: &[f32], i: usize, c: &Ctx) -> Option<(f32, f32, Option<f32>)> {
         }
     }
     let t = target?;
-    let now = c.live.mods.get(t).map(|&m| (base + mod_offset(v[i], i, t, m)).clamp(0.0, 1.0));
+    let depth = sv::TARGET_DEPTH[t];
+    let now = c.live.mods.get(t).filter(|_| depth != 0.0).map(|&m| (base + mod_offset(v[i], i, t, m / depth)).clamp(0.0, 1.0));
     Some(((base - down).clamp(0.0, 1.0), (base + up).clamp(0.0, 1.0), now))
 }
 
