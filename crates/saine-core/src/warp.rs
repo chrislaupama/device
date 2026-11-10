@@ -8,6 +8,9 @@
 //! original beat, so 2x plays the source twice as fast (half the footprint).
 //! The engine gets the map as (timeline frame, source frame) points.
 //!
+//! \`reverse\` plays the clip's source window back to front, warped or not.
+//! Markers and transients stay in source frames; the engine plays a reversed
+//! copy of the asset along the mirrored map.
 //! \`transpose\` shifts the pitch in semitones. With warp on the stretcher
 //! keeps the timing (Re-pitch ignores it: its pitch follows speed); with warp
 //! off the clip varispeeds, so it also plays 2^(st/12) times as fast.
@@ -81,13 +84,15 @@ pub struct ClipWarp {
     /// User edits on top of the detected transients (asset frames, sorted).
     pub transients_added: Vec<u64>,
     pub transients_removed: Vec<u64>,
+    /// Play the source window back to front (see the module docs).
+    pub reverse: bool,
     /// Semitones, -24..=24 (see the module docs).
     pub transpose: i32,
 }
 
 impl Default for ClipWarp {
     fn default() -> Self {
-        ClipWarp { enabled: false, mode: WarpMode::Auto, original_bpm: 120.0, speed: 1.0, markers: Vec::new(), transients_added: Vec::new(), transients_removed: Vec::new(), transpose: 0 }
+        ClipWarp { enabled: false, mode: WarpMode::Auto, original_bpm: 120.0, speed: 1.0, markers: Vec::new(), transients_added: Vec::new(), transients_removed: Vec::new(), reverse: false, transpose: 0 }
     }
 }
 
@@ -124,9 +129,9 @@ impl ClipWarp {
         interp(&self.points(rate), beat, true)
     }
 
-    /// Warp settings untouched apart from transpose (a fresh clip).
+    /// Warp settings untouched apart from reverse and transpose (a fresh clip).
     pub fn tempo_is_default(&self) -> bool {
-        ClipWarp { transpose: 0, ..self.clone() }.is_default()
+        ClipWarp { reverse: false, transpose: 0, ..self.clone() }.is_default()
     }
 
     /// Playback rate of an unwarped clip: 2^(transpose / 12) (1 with warp on).

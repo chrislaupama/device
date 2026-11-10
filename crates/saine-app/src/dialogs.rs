@@ -1,29 +1,108 @@
-//! Export dialog (mixdown to WAV) and the unsaved-changes prompt shown before
+//! Export dialog (mixdown or stems to WAV) and the unsaved-changes prompt shown before
 //! File › New Project. Layout values come from the reference app's export and unsaved-changes
-//! modals (reference/research-findings.md, W2-D rows); Saine renders the mixdown with
-//! the engine's offline render at the engine sample rate.
+//! modals (reference/findings/dialogs.md); Saine renders with the engine's offline
+//! render at the engine sample rate. A stem is one track played alone: Saine has no
+//! returns, groups or master devices, so that matches the reference app's post-effects track
+//! render with the master devices bypassed.
 use crate::Studio;
-use crate::controller::Controller;
+use crate::controller::{Controller, sync_model};
 use crate::wavgen;
-use saine_core::{Project, Ticks};
-use std::path::PathBuf;
+use crate::ChoiceItem;
+use saine_core::{Project, Ticks, TrackId};
+use std::path::{Path, PathBuf};
 
 /// Silence rendered after the last bar so reverb and delay tails ring out.
 pub const TAIL_S: f64 = 2.0;
 const CHUNK: usize = 4096;
+/// Tracks menu rows (window points): item row, separator gap, top/bottom padding.
+const MENU_ROW: f32 = 21.0;
+const MENU_GAP: f32 = 7.0;
+const MENU_PAD: f32 = 3.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Recipe {
+    #[default]
+    Mixdown,
+    Stems,
+}
+
+/// Which tracks Stems renders (the reference app's Tracks picker).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StemsPick {
+    /// One file per heard track that has clips.
+    #[default]
+    AllTracks,
+    /// The selected track (Saine selects one track at a time).
+    Selected,
+    Track(TrackId),
+}
 
 pub struct ExportUi {
     pub open: bool,
+    pub recipe: Recipe,
+    pub stems: StemsPick,
+    pub tracks_menu: bool,
     pub bits24: bool,
+    /// The Name field: "<name>.wav" when one file is written, the stems folder base otherwise.
     pub name: String,
     pub dir: PathBuf,
+    /// The name the dialog filled in; while the field still holds it, picking one track
+    /// renames it after that track.
+    auto_name: String,
+    default_name: String,
 }
 
 impl Default for ExportUi {
     fn default() -> Self {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-        ExportUi { open: false, bits24: true, name: "Untitled.wav".into(), dir: home.join("Music").join("Saine Exports") }
+        ExportUi {
+            open: false,
+            recipe: Recipe::Mixdown,
+            stems: StemsPick::AllTracks,
+            tracks_menu: false,
+            bits24: true,
+            name: "Untitled.wav".into(),
+            dir: home.join("Music").join("Saine Exports"),
+            auto_name: "Untitled".into(),
+            default_name: "Untitled".into(),
+        }
     }
+}
+
+impl ExportUi {
+    /// Stems written into a folder (all tracks, selected tracks) rather than as one file.
+    pub fn writes_folder(&self) -> bool {
+        self.recipe == Recipe::Stems && !matches!(self.stems, StemsPick::Track(_))
+    }
+
+    /// The Name field without a ".wav" ending, trimmed, with characters a file name can't hold
+    /// replaced.
+    pub fn base_name(&self) -> String {
+        let n = self.name.trim();
+        let n = if n.to_lowercase().ends_with(".wav") { &n[..n.len() - 4] } else { n };
+        file_safe(n, usize::MAX)
+    }
+
+    fn normalize_name(&mut self) {
+        let base = self.base_name();
+        if !base.is_empty() {
+            self.name = if self.writes_folder() { base } else { format!("{base}.wav") };
+        }
+    }
+}
+
+/// A file or folder name: path separators, reserved and control characters become "_",
+/// cut to "max" characters; empty stays empty.
+pub fn file_safe(name: &str, max: usize) -> String {
+    let s: String = name.chars().map(|c| if "<>:\"/\\|?*".contains(c) || c.is_control() { '_' } else { c }).take(max).collect();
+    s.trim().to_string()
+}
+
+/// "NN Name.wav": the 1-based position in the export, two digits, then the track name (60
+/// characters at most, "Track" when it has none).
+pub fn stem_file_name(index: usize, track_name: &str) -> String {
+    let name = file_safe(track_name, 60);
+    format!("{:02} {}.wav", index + 1, if name.is_empty() { "Track" } else { &name })
 }
 
 /// Bars covered by the export: up to the bar that holds the end of the last clip (at least one).
@@ -38,11 +117,58 @@ pub fn export_bars(p: &Project) -> i64 {
     ((end + tpb - 1) / tpb).max(1)
 }
 
-/// "3.7 MB • 0:14" for `frames` of stereo PCM at `bits`.
-pub fn estimate_text(frames: u64, rate: f64, bits: u32) -> String {
-    let mb = frames as f64 * 2.0 * (bits / 8) as f64 / 1e6;
+/// Tracks the stems export renders, in track order. All tracks: every track that is heard
+/// (not muted, soloed when any track is) and has clips. Selected or one track: that track when
+/// it has clips.
+pub fn stem_tracks(p: &Project, pick: StemsPick, selected: Option<TrackId>) -> Vec<TrackId> {
+    let any_solo = p.tracks.iter().any(|t| t.solo);
+    p.tracks
+        .iter()
+        .filter(|t| !t.clips.is_empty() || !t.midi_clips.is_empty())
+        .filter(|t| match pick {
+            StemsPick::AllTracks => !t.mute && (!any_solo || t.solo),
+            StemsPick::Selected => selected == Some(t.id),
+            StemsPick::Track(id) => t.id == id,
+        })
+        .map(|t| t.id)
+        .collect()
+}
+
+/// "3.7 MB • 0:14" for "files" stereo PCM files of "frames" each at "bits".
+pub fn estimate_text(frames: u64, rate: f64, bits: u32, files: usize) -> String {
+    let mb = files as f64 * frames as f64 * 2.0 * (bits / 8) as f64 / 1e6;
     let secs = (frames as f64 / rate).round() as u64;
     format!("{mb:.1} MB • {}:{:02}", secs / 60, secs % 60)
+}
+
+/// Opens "dir/<stem>.wav", or "<stem> 2.wav", "<stem> 3.wav", … when taken; never an existing file.
+fn create_free_file(dir: &Path, stem: &str) -> Result<(PathBuf, std::fs::File), String> {
+    (1..1000)
+        .find_map(|n| {
+            let path = dir.join(if n == 1 { format!("{stem}.wav") } else { format!("{stem} {n}.wav") });
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(f) => Some(Ok((path, f))),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(e) => Some(Err(e.to_string())),
+            }
+        })
+        .unwrap_or_else(|| Err("no free file name".into()))
+}
+
+/// "dir/<name>", or "<name> 2", "<name> 3", … : the first that doesn't exist or is empty.
+fn free_folder(dir: &Path, name: &str) -> Result<PathBuf, String> {
+    (1..1000)
+        .map(|n| dir.join(if n == 1 { name.to_string() } else { format!("{name} {n}") }))
+        .find(|p| std::fs::read_dir(p).map_or(true, |mut d| d.next().is_none()))
+        .ok_or_else(|| "no free folder name".into())
+}
+
+/// What one render pass writes.
+struct Pass {
+    /// None: the mix; Some: that track alone.
+    track: Option<TrackId>,
+    path: PathBuf,
+    file: std::fs::File,
 }
 
 impl Controller {
@@ -52,9 +178,24 @@ impl Controller {
         (secs * self.engine.sample_rate()).round() as u64
     }
 
+    fn export_stem_tracks(&self) -> Vec<TrackId> {
+        stem_tracks(self.project(), self.export.stems, self.selected_track)
+    }
+
     pub fn export_open(&mut self) {
         let stem = self.project_dir.as_ref().and_then(|d| d.file_stem()).map(|s| s.to_string_lossy().into_owned());
-        self.export.name = format!("{}.wav", stem.as_deref().unwrap_or("Untitled"));
+        let base = stem.unwrap_or_else(|| "Untitled".into());
+        self.export.default_name = base.clone();
+        self.export.auto_name = base.clone();
+        self.export.name = base;
+        self.export.recipe = Recipe::Mixdown;
+        self.export.tracks_menu = false;
+        if let StemsPick::Track(id) = self.export.stems
+            && self.project().track(id).is_none()
+        {
+            self.export.stems = StemsPick::AllTracks;
+        }
+        self.export.normalize_name();
         self.export.open = true;
         self.ui_dirty = true;
     }
@@ -62,8 +203,57 @@ impl Controller {
     /// Close the export dialog and the unsaved-changes prompt (Close, ×, Cancel, Escape).
     pub fn dialogs_close(&mut self) {
         self.export.open = false;
+        self.export.tracks_menu = false;
         self.unsaved_open = false;
         self.ui_dirty = true;
+    }
+
+    /// Recipe cards: 0 Mixdown, 1 Stems (Project is a placeholder in the dialog).
+    pub fn export_pick_recipe(&mut self, recipe: i32) {
+        self.export.recipe = if recipe == 1 { Recipe::Stems } else { Recipe::Mixdown };
+        self.export.tracks_menu = false;
+        self.export_follow_auto_name();
+        self.ui_dirty = true;
+    }
+
+    pub fn export_toggle_tracks_menu(&mut self) {
+        self.export.tracks_menu = !self.export.tracks_menu;
+        self.ui_dirty = true;
+    }
+
+    /// Tracks menu rows: 0 all individual tracks, 1 selected track, then one per track (the
+    /// separator row between them is not clickable).
+    pub fn export_pick_tracks(&mut self, row: i32) {
+        let p = self.project();
+        let pick = match row {
+            0 => Some(StemsPick::AllTracks),
+            1 => self.selected_track.map(|_| StemsPick::Selected),
+            r => p.tracks.get((r - 3).max(0) as usize).filter(|_| r >= 3).map(|t| StemsPick::Track(t.id)),
+        };
+        if let Some(pick) = pick {
+            self.export.stems = pick;
+        }
+        self.export.tracks_menu = false;
+        self.export_follow_auto_name();
+        self.ui_dirty = true;
+    }
+
+    /// Keep the Name field's form in step with what is written ("name.wav" or a folder base),
+    /// and rename it after the picked track while it still holds the dialog's own name.
+    fn export_follow_auto_name(&mut self) {
+        if self.export.base_name() == self.export.auto_name {
+            let track = match (self.export.recipe, self.export.stems) {
+                (Recipe::Stems, StemsPick::Track(id)) => self.project().track(id).map(|t| t.name.trim().to_string()),
+                _ => None,
+            };
+            let auto = match track {
+                Some(t) if !t.is_empty() => file_safe(&format!("{} {t}", self.export.default_name), usize::MAX),
+                _ => self.export.default_name.clone(),
+            };
+            self.export.auto_name = auto.clone();
+            self.export.name = auto;
+        }
+        self.export.normalize_name();
     }
 
     pub fn export_set_bits(&mut self, bits24: bool) {
@@ -81,84 +271,139 @@ impl Controller {
         self.ui_dirty = true;
     }
 
-    /// Render the whole project offline and write it as stereo PCM WAV. The audio
-    /// device is paused for the render and restarted afterwards.
+    /// Render and write the picked recipe: the mixdown as one file, stems as one file per track
+    /// (in a "<name> Stems" folder unless one track is picked).
     pub fn export_run(&mut self) {
-        let name = if self.export.name.to_lowercase().ends_with(".wav") { self.export.name.clone() } else { format!("{}.wav", self.export.name) };
         self.ui_dirty = true;
-        match self.render_mixdown(&name) {
-            Ok((path, restart)) => {
+        let base = self.export.base_name();
+        let base = if base.is_empty() { "Untitled".to_string() } else { base };
+        let result = match self.export.recipe {
+            Recipe::Mixdown => self.export_plan(&self.export.dir.clone(), &[(None, base)]),
+            Recipe::Stems => {
+                let tracks = self.export_stem_tracks();
+                if tracks.is_empty() {
+                    self.set_status("Export failed: no track to export has clips", 6);
+                    return;
+                }
+                if self.export.writes_folder() {
+                    let p = self.project();
+                    let names: Vec<(Option<TrackId>, String)> = tracks
+                        .iter()
+                        .enumerate()
+                        .map(|(i, id)| (Some(*id), stem_file_name(i, p.track(*id).map_or("", |t| t.name.as_str())).trim_end_matches(".wav").to_string()))
+                        .collect();
+                    free_folder(&self.export.dir, &format!("{base} Stems")).and_then(|dir| self.export_plan(&dir, &names))
+                } else {
+                    self.export_plan(&self.export.dir.clone(), &[(Some(tracks[0]), base)])
+                }
+            }
+        };
+        match result {
+            Ok((written, restart)) => {
                 self.export.open = false;
+                self.export.tracks_menu = false;
+                let what = match written.as_slice() {
+                    [one] => one.display().to_string(),
+                    many => format!("{} files to {}", many.len(), many[0].parent().map_or(String::new(), |d| d.display().to_string())),
+                };
                 match restart {
-                    Ok(()) => self.set_status(format!("Exported {}", path.display()), 4),
-                    Err(e) => self.set_status(format!("Exported {}, but the audio device did not restart: {e}", path.display()), 8),
+                    Ok(()) => self.set_status(format!("Exported {what}"), 4),
+                    Err(e) => self.set_status(format!("Exported {what}, but the audio device did not restart: {e}"), 8),
                 }
             }
             Err(e) => self.set_status(format!("Export failed: {e}"), 6),
         }
     }
 
-    /// Returns the written file (never an existing one: a taken name gets " 2", " 3", …)
-    /// and the device restart result, which does not undo a written export.
-    fn render_mixdown(&mut self, name: &str) -> Result<(PathBuf, Result<(), String>), String> {
-        std::fs::create_dir_all(&self.export.dir).map_err(|e| e.to_string())?;
+    /// Opens every destination file first (never an existing one), then renders and writes each
+    /// pass. Returns the written files and the device restart result, which does not undo them.
+    fn export_plan(&mut self, dir: &Path, files: &[(Option<TrackId>, String)]) -> Result<(Vec<PathBuf>, Result<(), String>), String> {
         let frames = self.export_frames() as usize;
         // WAV sizes are 32-bit: refuse before rendering rather than after.
         if frames as u64 * 2 * if self.export.bits24 { 3 } else { 2 } > (u32::MAX - 36) as u64 {
             return Err("too long for a WAV file (4 GB limit)".into());
         }
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        let mut passes = Vec::with_capacity(files.len());
+        for (track, stem) in files {
+            match create_free_file(dir, stem) {
+                Ok((path, file)) => passes.push(Pass { track: *track, path, file }),
+                Err(e) => {
+                    for p in &passes {
+                        let _ = std::fs::remove_file(&p.path);
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        let paths: Vec<PathBuf> = passes.iter().map(|p| p.path.clone()).collect();
+        let (written, restarted) = self.render_passes(passes, frames);
+        match (written, restarted) {
+            (Ok(()), restarted) => Ok((paths, restarted)),
+            (Err(e), restarted) => {
+                for p in &paths {
+                    let _ = std::fs::remove_file(p);
+                }
+                Err(match restarted {
+                    Ok(()) => e,
+                    Err(r) => format!("{e}; the audio device also did not restart: {r}"),
+                })
+            }
+        }
+    }
+
+    /// Plays the arrangement once per pass (no loop, no click) and writes it as stereo PCM.
+    /// The audio device is paused for the renders; transport, mutes and the device are
+    /// restored afterwards.
+    fn render_passes(&mut self, passes: Vec<Pass>, frames: usize) -> (Result<(), String>, Result<(), String>) {
         let rate = self.engine.sample_rate();
+        let bits = if self.export.bits24 { 24 } else { 16 };
         let restore = self.project().ticks_to_frames(self.playhead_ticks(), rate);
+        let solo_passes = passes.iter().any(|p| p.track.is_some());
         let e = self.engine.clone();
         let was_running = e.device_running();
-        if was_running {
-            e.stop_device().map_err(|e| e.to_string())?;
+        if was_running
+            && let Err(err) = e.stop_device()
+        {
+            return (Err(err.to_string()), Ok(()));
         }
-        // The mixdown plays the arrangement once: no loop, no click. Restored below.
         let metronome_was = std::mem::replace(&mut self.metronome_on, false);
         self.sync_loop_and_click();
         let mut out = vec![0f32; frames * 2];
-        let rendered = (|| {
-            e.set_loop(false, 0, 0).map_err(|e| e.to_string())?;
-            e.stop().map_err(|e| e.to_string())?;
-            e.seek(0).map_err(|e| e.to_string())?;
-            e.play().map_err(|e| e.to_string())?;
-            for chunk in out.chunks_mut(CHUNK * 2) {
-                e.render_offline(chunk).map_err(|e| e.to_string())?;
+        let mix = self.current_snapshot();
+        let written = (|| {
+            for pass in passes {
+                if let Some(id) = pass.track {
+                    let mut snap = mix.clone();
+                    for t in &mut snap.tracks {
+                        t.solo = false;
+                        t.mute = t.track_id != id.0;
+                    }
+                    e.publish(&snap).map_err(|e| e.to_string())?;
+                } else if solo_passes {
+                    e.publish(&mix).map_err(|e| e.to_string())?;
+                }
+                e.set_loop(false, 0, 0).map_err(|e| e.to_string())?;
+                e.stop().map_err(|e| e.to_string())?;
+                e.seek(0).map_err(|e| e.to_string())?;
+                e.play().map_err(|e| e.to_string())?;
+                for chunk in out.chunks_mut(CHUNK * 2) {
+                    e.render_offline(chunk).map_err(|e| e.to_string())?;
+                }
+                e.stop().map_err(|e| e.to_string())?;
+                wavgen::encode_wav_pcm(pass.file, rate.round() as u32, 2, bits, &out).map_err(|e| e.to_string())?;
             }
             Ok::<(), String>(())
         })();
         let _ = e.stop();
+        if solo_passes {
+            self.publish();
+        }
         let _ = e.seek(restore);
         self.metronome_on = metronome_was;
         self.sync_loop_and_click();
         let restarted = if was_running { e.start_device().map_err(|e| e.to_string()) } else { Ok(()) };
-        match (self.write_mixdown(name, rendered.map(|_| out)), restarted) {
-            (Ok(path), restarted) => Ok((path, restarted)),
-            (Err(e), Ok(())) => Err(e),
-            (Err(e), Err(r)) => Err(format!("{e}; the audio device also did not restart: {r}")),
-        }
-    }
-
-    fn write_mixdown(&self, name: &str, rendered: Result<Vec<f32>, String>) -> Result<PathBuf, String> {
-        let out = rendered?;
-        let rate = self.engine.sample_rate();
-        let stem = name.strip_suffix(".wav").or_else(|| name.strip_suffix(".WAV")).unwrap_or(name);
-        let (path, file) = (1..1000)
-            .find_map(|n| {
-                let path = self.export.dir.join(if n == 1 { format!("{stem}.wav") } else { format!("{stem} {n}.wav") });
-                match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-                    Ok(f) => Some(Ok((path, f))),
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => None,
-                    Err(e) => Some(Err(e.to_string())),
-                }
-            })
-            .unwrap_or_else(|| Err("no free file name".into()))?;
-        if let Err(e) = wavgen::encode_wav_pcm(file, rate.round() as u32, 2, if self.export.bits24 { 24 } else { 16 }, &out) {
-            let _ = std::fs::remove_file(&path);
-            return Err(e.to_string());
-        }
-        Ok(path)
+        (written, restarted)
     }
 
     /// File › New Project: ask first when the project has unsaved changes.
@@ -174,7 +419,7 @@ impl Controller {
     pub fn new_project(&mut self) {
         self.dialogs_close();
         self.stop_return();
-        for (_, ea) in self.asset_map.drain() {
+        for (_, ea) in self.asset_map.drain().chain(self.reversed_assets.drain()) {
             let _ = self.engine.release_asset(ea);
         }
         self.project_dir = None;
@@ -190,13 +435,45 @@ impl Controller {
         }
         let bits = if self.export.bits24 { 24 } else { 16 };
         let rate = self.engine.sample_rate();
+        let p = self.project();
+        let stems = self.export.recipe == Recipe::Stems;
+        let files = if stems { self.export_stem_tracks().len() } else { stem_tracks(p, StemsPick::AllTracks, None).len() };
+        s.set_export_recipe(if stems { 1 } else { 0 });
         s.set_export_bits24(self.export.bits24);
         s.set_export_rate48(rate >= 47_000.0);
         s.set_export_recipe_text(format!("WAV {bits}-bit").into());
-        s.set_export_bars_text(format!("Bars 1–{}", export_bars(self.project())).into());
+        let plural = if files == 1 { "file" } else { "files" };
+        s.set_export_stems_text(format!("{files} WAV {plural}").into());
+        s.set_export_files_text(format!("{files} {plural}").into());
+        s.set_export_bars_text(format!("Bars 1–{}", export_bars(p)).into());
         s.set_export_name(self.export.name.clone().into());
+        s.set_export_name_label(if self.export.writes_folder() { "Folder" } else { "Name" }.into());
         s.set_export_dir(self.export.dir.display().to_string().into());
-        s.set_export_estimate(estimate_text(self.export_frames(), rate, bits).into());
+        s.set_export_estimate(estimate_text(self.export_frames(), rate, bits, if stems { files } else { 1 }).into());
+        let tracks_label = match self.export.stems {
+            StemsPick::AllTracks => "All individual tracks".to_string(),
+            StemsPick::Selected => "Selected tracks only".to_string(),
+            StemsPick::Track(id) => p.track(id).map(|t| t.name.trim()).filter(|n| !n.is_empty()).unwrap_or("Track").to_string(),
+        };
+        s.set_export_tracks_label(tracks_label.into());
+        s.set_export_tracks_menu_open(self.export.tracks_menu);
+        if self.export.tracks_menu {
+            let mut y = MENU_PAD;
+            let mut rows = Vec::new();
+            let mut row = |label: String, checked: bool, hint: bool, h: f32, rows: &mut Vec<ChoiceItem>| {
+                rows.push(ChoiceItem { label: label.into(), checked, hint, y, h });
+                y += h;
+            };
+            row("All individual tracks".into(), self.export.stems == StemsPick::AllTracks, false, MENU_ROW, &mut rows);
+            row("Selected tracks only".into(), self.export.stems == StemsPick::Selected, self.selected_track.is_none(), MENU_ROW, &mut rows);
+            row(String::new(), false, true, MENU_GAP, &mut rows);
+            for t in &p.tracks {
+                let name = t.name.trim();
+                row(if name.is_empty() { "Track".into() } else { name.into() }, self.export.stems == StemsPick::Track(t.id), false, MENU_ROW, &mut rows);
+            }
+            s.set_export_tracks_menu_h(y + MENU_PAD);
+            sync_model(&self.export_tracks_model, rows);
+        }
     }
 }
 
@@ -207,7 +484,30 @@ mod tests {
     #[test]
     fn estimate_matches_the_reference_readout() {
         // The reference app: 6 bars at 120 BPM + tail, 44.1 kHz, 24-bit → "3.7 MB • 0:14".
-        assert_eq!(estimate_text(14 * 44_100, 44_100.0, 24), "3.7 MB • 0:14");
+        assert_eq!(estimate_text(14 * 44_100, 44_100.0, 24, 1), "3.7 MB • 0:14");
+        assert_eq!(estimate_text(14 * 44_100, 44_100.0, 24, 2), "7.4 MB • 0:14");
+    }
+
+    #[test]
+    fn stem_files_are_numbered_and_safe() {
+        assert_eq!(stem_file_name(0, "Bass"), "01 Bass.wav");
+        assert_eq!(stem_file_name(11, " Vox/Lead: 2 "), "12 Vox_Lead_ 2.wav");
+        assert_eq!(stem_file_name(2, ""), "03 Track.wav");
+        assert_eq!(stem_file_name(0, &"x".repeat(80)).len(), "01 .wav".len() + 60);
+    }
+
+    #[test]
+    fn all_tracks_skips_unheard_and_empty_tracks() {
+        let mut p = Project::default();
+        let (a, b) = (p.tracks[0].id, p.tracks[1].id);
+        assert!(stem_tracks(&p, StemsPick::AllTracks, None).is_empty(), "no clips, no stems");
+        p.tracks[1].midi_clips.push(saine_core::MidiClip::empty(0, 4 * saine_core::PPQ));
+        assert_eq!(stem_tracks(&p, StemsPick::AllTracks, None), vec![b]);
+        assert_eq!(stem_tracks(&p, StemsPick::Selected, Some(a)), vec![]);
+        assert_eq!(stem_tracks(&p, StemsPick::Track(b), None), vec![b]);
+        p.tracks[1].mute = true;
+        assert!(stem_tracks(&p, StemsPick::AllTracks, None).is_empty(), "muted tracks are not heard");
+        assert_eq!(stem_tracks(&p, StemsPick::Track(b), None), vec![b], "a picked track renders even when muted");
     }
 
     #[test]

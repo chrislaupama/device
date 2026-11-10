@@ -69,6 +69,7 @@ public:
     int32_t asset_load_file(const char* path, se_asset_info* out, std::string& err);
     int32_t asset_release(uint64_t id);
     int32_t asset_get_info(uint64_t id, se_asset_info* out) const;
+    int32_t asset_reverse(uint64_t id, se_asset_info* out);
     int32_t asset_compute_peaks(uint64_t id, uint64_t start_frame, uint32_t frames_per_peak, float* out_minmax,
                                 std::size_t capacity, std::size_t* out_count) const;
     int32_t asset_detect_onsets(uint64_t id, se_onset* out, std::size_t capacity, std::size_t* out_count) const;

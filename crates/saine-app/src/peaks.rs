@@ -94,11 +94,18 @@ pub fn wave_segments(p: &Project, clip: &Clip, engine_rate: f64) -> Vec<WaveSeg>
     }
     sources.push(s1);
     let beat = |s: f64| p.clip_ticks_at(clip, s) / PPQ as f64;
-    sources
+    let segs: Vec<WaveSeg> = sources
         .windows(2)
         .map(|w| WaveSeg { beats: (beat(w[0]), beat(w[1])), frames: (w[0] * ratio, w[1] * ratio) })
         .filter(|s| s.beats.1 > s.beats.0)
-        .collect()
+        .collect();
+    if !clip.warp.reverse {
+        return segs;
+    }
+    // Reversed: the engine's back-to-front copy, read along the mirrored pieces.
+    let len = segs.last().map_or(0.0, |s| s.beats.1);
+    let frames = p.asset(clip.asset).map_or(0.0, |a| a.frames as f64 * ratio);
+    segs.iter().rev().map(|s| WaveSeg { beats: (len - s.beats.1, len - s.beats.0), frames: (frames - s.frames.1, frames - s.frames.0) }).collect()
 }
 
 /// Wave instances for `segs`: `x_of` maps clip-relative beats to logical x,
@@ -182,5 +189,19 @@ mod tests {
         assert!((out[0].params[0] as f64 - 20.0 * fpp).abs() < 0.5, "{:?}", out[0].params);
         assert!((out[1].params[1] as f64 - 3000.0 / (2.7 * 33.3 * 2.0)).abs() < 1e-3);
         assert_eq!(out[1].params[2], 4000.0);
+    }
+    #[test]
+    fn reversed_clip_reads_the_mirrored_pieces() {
+        let mut w = ClipWarp { enabled: true, mode: WarpMode::Drums, original_bpm: 120.0, reverse: true, ..Default::default() };
+        w.set_marker(0, 0.0);
+        w.set_marker(4 * 44_100, 6.0);
+        let (p, c) = project_with_clip(Some(w));
+        let segs = wave_segments(&p, &c, 44_100.0);
+        let total = p.warped_clip_beats(&c);
+        assert_eq!(segs.len(), 2, "{segs:?}");
+        // The last forward piece (beats 6.., frames 4 s .. 8 s) plays first, from the copy's start.
+        assert!(segs[0].beats.0.abs() < 1e-9 && (segs[0].beats.1 - (total - 6.0)).abs() < 1e-6, "{segs:?}");
+        assert!(segs[0].frames.0.abs() < 1e-6 && (segs[0].frames.1 - 4.0 * 44_100.0).abs() < 1e-6, "{segs:?}");
+        assert!((segs[1].beats.1 - total).abs() < 1e-6 && (segs[1].frames.1 - 8.0 * 44_100.0).abs() < 1e-6, "{segs:?}");
     }
 }

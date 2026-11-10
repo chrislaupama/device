@@ -444,6 +444,7 @@ impl Controller {
                 s.set_ac_speed_text(crate::warpedit::format_speed(c.warp.effective_speed()).into());
                 s.set_ac_warped(c.warp.enabled);
                 s.set_ac_mode_text(c.warp.mode.label().into());
+                s.set_ac_reversed(c.warp.reverse);
                 s.set_ac_transpose_text(self.ac_transpose_text(c).into());
                 s.set_ac_transpose_enabled(Self::ac_transpose_editable(c));
                 let edit = match self.pr.ac_edit {

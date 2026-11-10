@@ -221,6 +221,20 @@ int main(int argc, char** argv) {
         const Result r = run(e, info.asset_id, 32, SE_WARP_STRETCH, blocks, rendered, 50);
         std::printf("| %s | %.1f | %.1f | %.1f |\n", rendered ? "rendered" : "live", r.avg, r.p99, r.max);
     }
+    {
+        se_asset_info rev{};
+        const auto r0 = std::chrono::steady_clock::now();
+        se_asset_reverse(e, info.asset_id, &rev);
+        const double rms_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - r0).count();
+        std::printf("\nReversed copy (se_asset_reverse, stereo): %.2f ms for 20 s (%.1f ms per minute)\n", rms_, rms_ * 3.0);
+        std::printf("\n| clips | forward avg us/block | reversed copy avg us/block | forward p99 | reversed p99 |\n|---:|---:|---:|---:|---:|\n");
+        for (uint32_t tracks : {8u, 64u}) {
+            const Result f = run(e, info.asset_id, tracks, -1, blocks, false);
+            const Result r = run(e, rev.asset_id, tracks, -1, blocks, false);
+            std::printf("| %u | %.1f | %.1f | %.1f | %.1f |\n", tracks, f.avg, r.avg, f.p99, r.p99);
+        }
+        se_asset_release(e, rev.asset_id);
+    }
     std::printf("\nClip transpose (32 tracks): 0 vs +7 st (Re-pitch ignores transpose; an unwarped transposed clip "
                 "plays as Re-pitch)\n\n");
     std::printf("| mode | case | 0 st avg us/block | +7 st avg us/block | 0 st p99 | +7 st p99 | +7 st render ms |\n"

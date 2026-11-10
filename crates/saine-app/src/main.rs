@@ -86,6 +86,8 @@ struct Args {
     audio_clip_state: bool,
     /// review-warp: the audio clip state with drum hits, warped (Drums, 1.5x, one marker).
     warp_state: bool,
+    /// review-reverse: review-warp with the clip reversed.
+    reverse_state: bool,
     /// reference-synth (32): Instrument track selected, Devices tab, test-state synth preset.
     synth_state: bool,
     /// --synth-page N: open that category page of the synth device (review screenshots).
@@ -96,7 +98,7 @@ struct Args {
     clip_menu_state: bool,
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
-    /// 1 export dialog, 2 unsaved-changes prompt.
+    /// 1 export dialog, 2 unsaved-changes prompt, 3 export dialog on Stems, 4 with its Tracks menu open.
     dialog_state: u8,
     settings_general_state: bool,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
@@ -213,10 +215,11 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.audio_clip_state = true;
                 }
-                "review-warp" => {
+                s @ ("review-warp" | "review-reverse") => {
                     a.reference_default = true;
                     a.audio_clip_state = true;
                     a.warp_state = true;
+                    a.reverse_state = s == "review-reverse";
                 }
                 "reference-synth" => {
                     a.reference_default = true;
@@ -233,6 +236,14 @@ fn parse_args() -> Result<Args, String> {
                 "reference-unsaved" => {
                     a.reference_default = true;
                     a.dialog_state = 2;
+                }
+                "review-export-stems" => {
+                    a.reference_default = true;
+                    a.dialog_state = 3;
+                }
+                "review-export-stems-menu" => {
+                    a.reference_default = true;
+                    a.dialog_state = 4;
                 }
                 "reference-settings-general" => {
                     a.reference_default = true;
@@ -1174,6 +1185,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_export_close, |c| c.dialogs_close());
     on!(on_export_run, |c| c.export_run());
     on!(on_export_bits, |c, b: bool| c.export_set_bits(b));
+    on!(on_export_pick_recipe, |c, i: i32| c.export_pick_recipe(i));
+    on!(on_export_toggle_tracks, |c| c.export_toggle_tracks_menu());
+    on!(on_export_pick_tracks, |c, i: i32| c.export_pick_tracks(i));
     on!(on_export_name_edited, |c, t: slint::SharedString| c.export_set_name(t.as_str()));
     on!(on_unsaved_cancel, |c| c.dialogs_close());
     on!(on_unsaved_dont_save, |c| c.new_project());
@@ -1325,6 +1339,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_clip_menu_open, |c, m: i32| c.clip_menu_open(m));
     on!(on_clip_menu_pick, |c, i: i32| c.clip_menu_pick(i));
     on!(on_ac_bpm_drag, |c, phase: i32, dx: f32, dy: f32| c.ac_bpm_drag(phase, dx, dy));
+    on!(on_ac_reverse_toggle, |c| c.ac_reverse_toggle());
     on!(on_ac_transpose_drag, |c, phase: i32, dx: f32, dy: f32| c.ac_transpose_drag(phase, dx, dy));
     on!(on_ac_edit_start, |c, f: i32| c.ac_edit_start(if f == 0 { warpedit::AcEdit::OriginalBpm } else { warpedit::AcEdit::Transpose }));
     on!(on_ac_edit_commit, |c, text: slint::SharedString| c.ac_edit_commit(&text));
@@ -1568,7 +1583,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let mut c = ctl.borrow_mut();
                 if c.export.open || c.unsaved_open {
-                    if action == "view.escape" {
+                    if action == "view.escape" && c.export.tracks_menu {
+                        c.export_toggle_tracks_menu();
+                    } else if action == "view.escape" {
                         c.dialogs_close();
                     }
                     drop(c);
@@ -1638,8 +1655,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let Ok(mut c) = ctl.try_borrow_mut() else { return };
             let imported = c.project().tracks.iter().any(|t| !t.clips.is_empty());
             if imported && !c.export.open && !c.unsaved_open {
-                if state == 1 {
+                if state != 2 {
                     c.export_open();
+                    if state >= 3 {
+                        c.export_pick_recipe(1);
+                    }
+                    if state == 4 {
+                        c.export_toggle_tracks_menu();
+                    }
                 } else {
                     c.new_project_request();
                 }
@@ -1662,6 +1685,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         drop(c);
         let ctl = ctl.clone();
         let warp = args.warp_state;
+        let reverse = args.reverse_state;
         let mut menu = args.clip_menu.filter(|_| warp);
         let mut edit = args.ac_edit.filter(|_| warp);
         // Selects the clip once, after the import lands; later tab changes are the user's.
@@ -1675,7 +1699,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 done.set(true);
             }
             if let Some(cl) = clip.filter(|cl| warp && !cl.warp.enabled) {
-                let mut w = saine_core::ClipWarp { enabled: true, mode: saine_core::WarpMode::Drums, speed: 1.5, original_bpm: 120.0, transpose: 3, ..Default::default() };
+                let mut w = saine_core::ClipWarp { enabled: true, mode: saine_core::WarpMode::Drums, speed: 1.5, original_bpm: 120.0, reverse, transpose: 3, ..Default::default() };
                 w.set_marker(0, 0.0);
                 w.set_marker(4 * 44_100, 9.0);
                 c.execute(saine_core::Command::SetClipWarp { clip: cl.id, warp: w, label: "Set clip speed".into() });
