@@ -212,7 +212,7 @@ bool scan_clap_bundle(const std::string& path, std::vector<ScannedPlugin>& out, 
     clap_host_t host{};
     host.clap_version = CLAP_VERSION;
     host.name = "Device Studio scanner";
-    host.vendor = "DStudio";
+    host.vendor = "Device Studio";
     host.url = "";
     host.version = "0.1.0";
     host.get_extension = [](const clap_host*, const char*) -> const void* { return nullptr; };

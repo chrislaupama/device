@@ -20,7 +20,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <dict>
     <key>CFBundleName</key><string>Device Studio</string>
     <key>CFBundleDisplayName</key><string>Device Studio</string>
-    <key>CFBundleIdentifier</key><string>com.devicestudio.app</string>
+    <key>CFBundleIdentifier</key><string>com.dstudio.studio</string>
     <key>CFBundleExecutable</key><string>device-studio</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$version</string>

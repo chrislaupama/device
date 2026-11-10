@@ -210,6 +210,27 @@ fn load_rejects_newer_schema_and_foreign_files() {
 }
 
 #[test]
+fn load_opens_projects_saved_before_the_rename() {
+    let (mut d, track, _) = doc_with_asset();
+    let device = dstudio_core::builtin::find("compressor").unwrap().instantiate();
+    d.execute(Command::AddDevice { track, index: None, device }, Origin::User).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let old = dir.path().join("Song.saineproj");
+    persist::save(d.project(), &old).unwrap();
+    let json = std::fs::read_to_string(old.join("project.json")).unwrap();
+    assert!(json.contains(&format!("\"format\": \"{}\"", persist::FORMAT)));
+    let legacy = json.replace(persist::FORMAT, persist::LEGACY_FORMATS[0]).replace(dstudio_core::builtin::VENDOR, "Saine Studio");
+    assert!(legacy.contains("\"vendor\": \"Saine Studio\""));
+    std::fs::write(old.join("project.json"), legacy).unwrap();
+    let loaded = persist::load(&old).unwrap();
+    // Built-in devices get the current vendor name; nothing else changes.
+    assert_eq!(loaded.project.tracks, d.project().tracks);
+    // Saving again writes the current format tag.
+    persist::save(&loaded.project, &old).unwrap();
+    assert!(std::fs::read_to_string(old.join("project.json")).unwrap().contains(persist::FORMAT));
+}
+
+#[test]
 fn snapshot_converts_musical_time_to_engine_frames() {
     let (mut d, track, a) = doc_with_asset();
     // Asset at 44.1k played by a 48k engine.

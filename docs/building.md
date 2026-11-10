@@ -143,9 +143,8 @@ runners (`windows-latest`, `ubuntu-latest`). Each job:
 1. configures and builds the engine with warnings as errors, and runs ctest;
 2. builds and tests the Rust workspace (`--locked`);
 3. builds the app in release mode and runs `device-studio --self-test
-   --no-audio`, which must report every check passed (on Windows this step is
-   informational);
-4. uploads the screenshots and self-test logs as an artifact.
+   --no-audio`, which must report every check passed;
+4. uploads the self-test logs as an artifact.
 
 Linux also starts a headless PipeWire graph first
 ([`tools/ci/headless-pipewire.sh`](../tools/ci/headless-pipewire.sh)): the

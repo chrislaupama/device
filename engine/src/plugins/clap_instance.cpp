@@ -59,7 +59,7 @@ public:
         host_.clap_version = CLAP_VERSION;
         host_.host_data = this;
         host_.name = "Device Studio";
-        host_.vendor = "DStudio";
+        host_.vendor = "Device Studio";
         host_.url = "";
         host_.version = "0.1.0";
         host_.get_extension = &ClapInstance::host_get_extension;

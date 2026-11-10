@@ -278,6 +278,23 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - The render honours plugin delay compensation (renders L more frames, drops the first L) and the project tempo.
 - Self-test section "clip render plugin", ctest `offline_*`, `tests/clip_render.rs`, `dstudio_offline_plugin_bench`.
 
+### 2026-11-09: Renamed to Device Studio (user-facing)
+
+- Window title, binary (`device-studio`), built-in device vendor, preferences folder
+  (`Device Studio` / `device-studio`), recording temp folder, CLAP host name, Core Audio aggregate and
+  PipeWire stream names, assistant prompt and README/docs now say Device Studio.
+- Projects save as `Name.dsproj/` with format `device-studio-project`; `.saineproj` / `saine-project`
+  projects still open (built-in device vendor is updated on load). The old `Saine Studio` support folder
+  is moved to the new location on first launch (`prefs::migrate_legacy_support_dir`). The Files browser
+  lists old `.saineproj` / `saine-project` folders too, and uses `~/Documents/Saine Studio` until `~/Documents/Device Studio`
+  exists. The macOS bundle id is `com.devicestudio.app` (microphone permission is asked again once).
+- Internal names renamed too: `saine` -> `dstudio` (`dstudio-*` crates, `dstudio::` namespace,
+  `dstudio_engine.h`, `DSTUDIO_*` CMake options and env vars, `DStudioTest*` test plugins,
+  `studio.dstudio.test.*` ids). Not `device`: it already names the effects/instruments concept.
+  `tools/rename/remove_saine.py` does the rename and is idempotent; branches started before it run it,
+  then merge main. `--check` lists anything left. The only `saine` strings kept are the legacy
+  project/settings names above and links to the GitHub repo (still `sainestudio`).
+
 ### 2026-11-10: Linux audio runs in CI; Linux plugin windows; Windows CI GPU memory
 
 - Linux CI starts a headless PipeWire graph (`tools/ci/headless-pipewire.sh`: null sink + `pw-loopback`

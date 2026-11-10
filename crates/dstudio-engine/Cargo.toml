@@ -1,6 +1,6 @@
 [package]
 name = "dstudio-engine"
-description = "Safe Rust bindings to the DStudio C++23 real-time audio engine (engine/include/dstudio_engine.h)"
+description = "Safe Rust bindings to the Device Studio C++23 real-time audio engine (engine/include/dstudio_engine.h)"
 edition.workspace = true
 version.workspace = true
 license.workspace = true

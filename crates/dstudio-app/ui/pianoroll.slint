@@ -434,7 +434,7 @@ export component PianoRoll inherits Rectangle {
         }
     }
     // Audio toolbar: Original BPM (drag), Speed, Warp and Mode edit the clip's warp;
-    // Reverse is a PLACEHOLDER (no reverse in the clip model yet).
+    // Reverse is real (warp.reverse plays the clip back to front); the field toggles it.
     if Studio.ac-visible: Rectangle {
         AcField { x: 7px; y: 7px; label: "Reverse"; value: Studio.ac-reversed ? "On" : "Off"; value-x: 42px; toggle: true; }
         AcField { x: 74.8px; y: 7px; label: "Original BPM"; value: Studio.ac-bpm-text; value-x: 65.4px; bpm-drag: true; }
@@ -490,7 +490,16 @@ export component PianoRoll inherits Rectangle {
                 }
             }
             moved => { Studio.pr-pointer(1, self.mouse-x, self.mouse-y, false, false, false); }
-            scroll-event(e) => { Studio.pr-scroll(e.delta-x / 1px, e.delta-y / 1px); accept }
+            scroll-event(e) => { Studio.pr-scroll(e.delta-x / 1px, e.delta-y / 1px, self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.alt, e.modifiers.control); accept }
+        }
+        // Trackpad pinch (macOS): each update zooms time by the change since the last one.
+        ScaleRotateGestureHandler {
+            property <float> last: 1;
+            started => { self.last = 1; }
+            updated => {
+                Studio.pr-pinch(self.scale / self.last, self.center.x, self.center.y);
+                self.last = self.scale;
+            }
         }
         // Scale button above the keys (footer Scale on): only scale rows, plus rows holding notes.
         if Studio.pr-scale-on && !Studio.ac-visible: Rectangle {

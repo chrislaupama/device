@@ -107,8 +107,8 @@ behind it. [docs/devices.md](docs/devices.md) explains how they work and how to 
 
 ### Project files
 
-A project is a `Name.saineproj/` folder holding a versioned JSON document, so it diffs cleanly and is easy to keep in
-version control. Plugin state is saved inside it. Audio files stay where they are: the project references each one by a
+A project is a `Name.dsproj/` folder holding a versioned JSON document, so it diffs cleanly and is easy to keep in
+version control. Projects saved before the rename to Device Studio (`Name.saineproj/`) still open. Plugin state is saved inside it. Audio files stay where they are: the project references each one by a
 path relative to the project (when both are on the same drive) and by its absolute path. To move a project, move its
 media with it and keep the same layout around the project folder, or leave the media at its original absolute path
 (always the case for media on another Windows drive). A backup of the project folder alone
@@ -214,6 +214,11 @@ cargo run --release -p dstudio-app -- --self-test --no-audio     # drive the app
 | `docs/` | Architecture, ADRs, built-in devices, build guide |
 | `reference/`, `tools/` | Research notes and inspection tooling |
 | `ui-spike/` | The Slint and wgpu interop spike behind ADR 0001 |
+
+The app was called Saine Studio until November 2026. Internal names use `dstudio` (`dstudio-*` crates, the `dstudio::`
+namespace, `DSTUDIO_*` build options and environment variables), never `device`, which already names effects and
+instruments throughout the code. A branch started before the rename can run `python3 tools/rename/remove_saine.py`
+before merging main.
 
 ```sh
 cargo test --workspace                     # core, FFI and end-to-end tests

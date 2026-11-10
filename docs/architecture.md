@@ -70,7 +70,7 @@ the AI assistant:
 
 ## Persistence
 
-- Project = directory `Name.saineproj/` containing `project.json`
+- Project = directory `Name.dsproj/` containing `project.json`
   `{format, schema_version, saved_with, project}`. Atomic save (temp + fsync + rename).
 - Media referenced externally by project-relative *and* absolute path. On load the relative path wins
   (project moved with its media), then the absolute path, and anything missing is reported.
