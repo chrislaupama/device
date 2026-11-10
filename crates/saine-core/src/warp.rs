@@ -244,6 +244,27 @@ pub fn engine_mode(mode: WarpMode) -> u8 {
 }
 
 impl Project {
+    /// Source frame (asset rate, unclamped) that plays `ticks` after the clip
+    /// start, warped or not. Timeline trims use it.
+    pub fn clip_source_at(&self, clip: &Clip, ticks: f64) -> f64 {
+        let rate = self.asset(clip.asset).map_or(48_000.0, |a| a.sample_rate);
+        let w = &clip.warp;
+        if !w.enabled {
+            return clip.source_offset as f64 + ticks / PPQ as f64 * 60.0 / self.transport.bpm * rate;
+        }
+        w.source_at(w.beat_at(clip.source_offset as f64, rate) + ticks / PPQ as f64 * w.speed, rate)
+    }
+
+    /// Ticks after the clip start at which `source` (asset frame) plays.
+    pub fn clip_ticks_at(&self, clip: &Clip, source: f64) -> f64 {
+        let rate = self.asset(clip.asset).map_or(48_000.0, |a| a.sample_rate);
+        let w = &clip.warp;
+        if !w.enabled {
+            return (source - clip.source_offset as f64) / rate * self.transport.bpm / 60.0 * PPQ as f64;
+        }
+        (w.beat_at(source, rate) - w.beat_at(clip.source_offset as f64, rate)) / w.speed * PPQ as f64
+    }
+
     /// Timeline beats a warped clip covers.
     pub fn warped_clip_beats(&self, clip: &Clip) -> f64 {
         let rate = self.asset(clip.asset).map_or(48_000.0, |a| a.sample_rate);
