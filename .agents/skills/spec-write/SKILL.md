@@ -11,8 +11,9 @@ example in `specs/001-agent-skills-and-specs/`.
 
 ## 1. Decide whether this needs a spec
 
-Typos, doc edits, obvious small fixes and behaviour-free refactors don't: make the change. Bugs go
-through `bug-fix`. Everything else gets a spec. If unsure, ask, or write a short one.
+Typos, doc edits, obvious small fixes and behaviour-free refactors don't: make the change. Bugs
+start with `bug-fix`; when `bug-fix` sends a bug here because its cause or fix is not obvious, carry
+on below. Everything else gets a spec. If unsure, ask, or write a short one.
 
 ## 2. Learn the area before writing
 

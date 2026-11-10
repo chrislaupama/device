@@ -48,7 +48,7 @@ def named_paths(text, top_level):
         token = token.strip().rstrip(".,;:")
         if any(c in token for c in "<>*{}$ ") or "::" in token:
             continue
-        if token.startswith(("-", "/", "~", ".", "http", "origin/")):
+        if token.startswith(("-", "/", "~", "./", "../", "http", "origin/")):
             continue
         if "/" in token:
             yield token

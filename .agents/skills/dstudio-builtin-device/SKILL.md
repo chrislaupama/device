@@ -13,13 +13,16 @@ nothing in it is missed. Start from the closest existing device and mirror it (g
 
 ## The parts
 
+Below, `<id>` is the device id (kebab-case, such as `auto-filter`) and `<module>` is the same
+name in snake case (`auto_filter`), which is what file names use.
+
 | Part | Where | Notes |
 |---|---|---|
-| Definition | `crates/dstudio-core/src/builtin/<id>.rs`, listed in `builtin::all()` (`crates/dstudio-core/src/builtin/mod.rs`) | parameters, layout, factory presets, behaviour |
-| DSP kernel | `engine/src/devices/<id>.cpp`, registered in `kBuiltinRegistry` (`engine/src/devices/builtin.cpp`), added to `engine/CMakeLists.txt` | a `BuiltinProcessor` plus a `BuiltinDescriptor` |
+| Definition | `crates/dstudio-core/src/builtin/<module>.rs`, listed in `builtin::all()` (`crates/dstudio-core/src/builtin/mod.rs`) | parameters, layout, factory presets, behaviour |
+| DSP kernel | `engine/src/devices/<module>.cpp`, registered in `kBuiltinRegistry` (`engine/src/devices/builtin.cpp`), added to `engine/CMakeLists.txt` | a `BuiltinProcessor` plus a `BuiltinDescriptor` |
 | Standard card | derived by `crates/dstudio-app/src/device_panel.rs`, drawn by `crates/dstudio-app/ui/device_panel.slint` | nothing to write unless the layout needs a new control kind |
 | Custom view | `View::Custom("<name>")`: `device_views.rs` (`custom_body`), `device_canvas.rs`, `panel_graph.rs`, `device_editors.rs` in `crates/dstudio-app/src/` | only when the standard card can't express it |
-| Engine test | `engine/tests/devices/test_<id>.cpp` with `DeviceRig` / `DeviceSession` from `device_harness.hpp` | behaviour, not just "it runs" |
+| Engine test | `engine/tests/devices/test_<module>.cpp` with `DeviceRig` / `DeviceSession` from `device_harness.hpp` | behaviour, not just "it runs" |
 | Benchmark row | `engine/bench/bench_devices.cpp` (`dstudio_device_bench`) | numbers go in the pull request |
 
 ## Rules that bite
