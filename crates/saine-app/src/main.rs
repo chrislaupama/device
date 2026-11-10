@@ -91,7 +91,7 @@ struct Args {
     clip_menu_state: bool,
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
-    /// 1 export dialog, 2 unsaved-changes prompt.
+    /// 1 export dialog, 2 unsaved-changes prompt, 3 export dialog on Stems, 4 with its Tracks menu open.
     dialog_state: u8,
     settings_general_state: bool,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
@@ -213,6 +213,14 @@ fn parse_args() -> Result<Args, String> {
                 "reference-unsaved" => {
                     a.reference_default = true;
                     a.dialog_state = 2;
+                }
+                "review-export-stems" => {
+                    a.reference_default = true;
+                    a.dialog_state = 3;
+                }
+                "review-export-stems-menu" => {
+                    a.reference_default = true;
+                    a.dialog_state = 4;
                 }
                 "reference-settings-general" => {
                     a.reference_default = true;
@@ -1075,6 +1083,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_export_close, |c| c.dialogs_close());
     on!(on_export_run, |c| c.export_run());
     on!(on_export_bits, |c, b: bool| c.export_set_bits(b));
+    on!(on_export_pick_recipe, |c, i: i32| c.export_pick_recipe(i));
+    on!(on_export_toggle_tracks, |c| c.export_toggle_tracks_menu());
+    on!(on_export_pick_tracks, |c, i: i32| c.export_pick_tracks(i));
     on!(on_export_name_edited, |c, t: slint::SharedString| c.export_set_name(t.as_str()));
     on!(on_unsaved_cancel, |c| c.dialogs_close());
     on!(on_unsaved_dont_save, |c| c.new_project());
@@ -1405,7 +1416,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let mut c = ctl.borrow_mut();
                 if c.export.open || c.unsaved_open {
-                    if action == "view.escape" {
+                    if action == "view.escape" && c.export.tracks_menu {
+                        c.export_toggle_tracks_menu();
+                    } else if action == "view.escape" {
                         c.dialogs_close();
                     }
                     drop(c);
@@ -1475,8 +1488,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let Ok(mut c) = ctl.try_borrow_mut() else { return };
             let imported = c.project().tracks.iter().any(|t| !t.clips.is_empty());
             if imported && !c.export.open && !c.unsaved_open {
-                if state == 1 {
+                if state != 2 {
                     c.export_open();
+                    if state >= 3 {
+                        c.export_pick_recipe(1);
+                    }
+                    if state == 4 {
+                        c.export_toggle_tracks_menu();
+                    }
                 } else {
                     c.new_project_request();
                 }

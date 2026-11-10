@@ -746,12 +746,59 @@ fn steps() -> Vec<Step> {
         Check("mix.wav written: stereo 24-bit at the engine rate, the full length, not silent; dialog closed", Box::new(|c, a| {
             let path = c.export.dir.join("mix.wav");
             let (rate, ch, s) = crate::wavgen::read_wav(&path)?;
-            let _ = std::fs::remove_dir_all(&c.export.dir);
             let peak = s.iter().fold(0f32, |m, v| m.max(v.abs()));
             let frames = s.len() / 2;
             (rate as f64 == c.engine.sample_rate() && ch == 2 && frames as u64 == c.export_frames() && peak > 0.01 && !a.global::<Studio>().get_export_open())
                 .then_some(())
                 .ok_or(format!("rate {rate} ch {ch} frames {frames} vs {} peak {peak}", c.export_frames()))
+        })),
+        Do("⇧⌘E again, click the Stems card", Box::new(|a| {
+            key(a, "E", true, true);
+            click(a, (1440.0 - 442.0) / 2.0 + 17.0 + 131.47 + 6.8 + 65.0, (820.0 - 340.4) / 2.0 + 44.2 + 22.0);
+        })),
+        Check("Stems picked: Tracks row, one file per heard track with clips, Folder label", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let n = crate::dialogs::stem_tracks(c.project(), crate::dialogs::StemsPick::AllTracks, None).len();
+            (s.get_export_recipe() == 1 && n > 0 && s.get_export_stems_text() == format!("{n} WAV file{}", if n == 1 { "" } else { "s" }) && s.get_export_name_label() == "Folder" && s.get_export_tracks_label() == "All individual tracks")
+                .then_some(())
+                .ok_or(format!("recipe {} files {n} text {} label {}", s.get_export_recipe(), s.get_export_stems_text(), s.get_export_name_label()))
+        })),
+        Do("click the Tracks picker", Box::new(|a| click(a, (1440.0 - 442.0) / 2.0 + 71.4 + 30.0, (820.0 - 340.4) / 2.0 + 105.4 + 10.2))),
+        Check("Tracks menu lists both choices, a gap and every track", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let rows = s.get_export_tracks_items().row_count();
+            (s.get_export_tracks_menu_open() && rows == 3 + c.project().tracks.len()).then_some(()).ok_or(format!("open {} rows {rows}", s.get_export_tracks_menu_open()))
+        })),
+        Do("Escape", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("Escape closed the menu, not the dialog", Box::new(|_c, a| {
+            let s = a.global::<Studio>();
+            (s.get_export_open() && !s.get_export_tracks_menu_open()).then_some(()).ok_or("menu or dialog state".into())
+        })),
+        DoC("name the stems mix and click Export", Box::new(|a, ctl| {
+            ctl.borrow_mut().export.name = "mix".into();
+            click(a, (1440.0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (820.0 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
+        })),
+        Check("'mix Stems' holds one 'NN Name.wav' per track, full length, summing to the mixdown", Box::new(|c, a| {
+            let p = c.project();
+            let tracks = crate::dialogs::stem_tracks(p, crate::dialogs::StemsPick::AllTracks, None);
+            let folder = c.export.dir.join("mix Stems");
+            let (_, _, mix) = crate::wavgen::read_wav(&c.export.dir.join("mix.wav"))?;
+            let mut sum = vec![0f32; mix.len()];
+            for (i, id) in tracks.iter().enumerate() {
+                let name = crate::dialogs::stem_file_name(i, &p.track(*id).map_or(String::new(), |t| t.name.clone()));
+                let (rate, ch, s) = crate::wavgen::read_wav(&folder.join(&name))?;
+                if rate as f64 != c.engine.sample_rate() || ch != 2 || s.len() != mix.len() {
+                    return Err(format!("{name}: rate {rate} ch {ch} len {} vs {}", s.len(), mix.len()));
+                }
+                sum.iter_mut().zip(&s).for_each(|(a, b)| *a += b);
+            }
+            let files = std::fs::read_dir(&folder).map_or(0, |d| d.count());
+            let _ = std::fs::remove_dir_all(&c.export.dir);
+            let err = sum.iter().zip(&mix).fold(0f32, |m, (a, b)| m.max((a - b).abs()));
+            let peak = mix.iter().fold(0f32, |m, v| m.max(v.abs()));
+            (files == tracks.len() && err < 1e-3 && peak > 0.01 && !a.global::<Studio>().get_export_open())
+                .then_some(())
+                .ok_or(format!("files {files} of {} max error {err} peak {peak}", tracks.len()))
         })),
         Do("⌘N (file.new) with unsaved changes", Box::new(|a| key(a, "n", true, false))),
         Check("Save changes? prompt open, project untouched", Box::new(|c, a| {

@@ -339,6 +339,7 @@ pub struct Controller {
     pub rec: crate::recording::RecState,
     pub settings: crate::settings::SettingsState,
     pub(crate) input_menu_model: Rc<VecModel<ChoiceItem>>,
+    pub(crate) export_tracks_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) settings_menu_model: Rc<VecModel<ChoiceItem>>,
     // ---- plugin devices (src/devices.rs) ----
     pub devices: crate::devices::DevicesUi,
@@ -426,6 +427,7 @@ impl Controller {
             rec: Default::default(),
             settings: Default::default(),
             input_menu_model: Rc::new(VecModel::default()),
+            export_tracks_model: Rc::new(VecModel::default()),
             settings_menu_model: Rc::new(VecModel::default()),
             devices: Default::default(),
             tree_model: Rc::new(VecModel::default()),
@@ -465,6 +467,7 @@ impl Controller {
         s.set_synth_displays(ModelRc::from(self.synth_displays_model.clone()));
         s.set_synth_menu_items(ModelRc::from(self.synth_menu_model.clone()));
         s.set_input_menu_items(ModelRc::from(self.input_menu_model.clone()));
+        s.set_export_tracks_items(ModelRc::from(self.export_tracks_model.clone()));
         s.set_settings_menu_items(ModelRc::from(self.settings_menu_model.clone()));
         s.set_tree(ModelRc::from(self.tree_model.clone()));
         s.set_device_cards(ModelRc::from(self.cards_model.clone()));
