@@ -271,6 +271,72 @@ fn track_and_panel_heights_persist_and_default_when_absent() {
     assert!(old.tracks.iter().all(|t| t.height == 1.0));
 }
 
+fn section(name: &str, bars: i64) -> Section {
+    Section { id: SectionId(0), name: name.into(), color: 0x68a8c0, length: bars * 4 * PPQ }
+}
+
+#[test]
+fn sections_tile_from_bar_one_and_undo() {
+    let mut d = Document::new(Project::default());
+    d.execute(Command::InsertSection { index: None, section: section("Section 1", 8) }, Origin::User).unwrap();
+    d.execute(Command::InsertSection { index: None, section: section("Section 2", 4) }, Origin::User).unwrap();
+    let (a, b) = (d.project().sections[0].id, d.project().sections[1].id);
+    assert_eq!(d.project().section_start(1), 8 * 4 * PPQ);
+
+    d.execute(Command::SetSectionLength { section: a, length: 2 * 4 * PPQ }, Origin::User).unwrap();
+    assert_eq!(d.project().section_start(1), 2 * 4 * PPQ, "a later section moves with the end");
+    d.execute(Command::MoveSection { section: b, index: 0 }, Origin::User).unwrap();
+    assert_eq!(d.project().sections[0].id, b);
+    d.execute(Command::RenameSection { section: a, name: " Chorus ".into() }, Origin::User).unwrap();
+    assert_eq!(d.project().sections[1].name, "Chorus");
+    d.execute(Command::RemoveSection { section: b }, Origin::User).unwrap();
+    assert_eq!(d.undo_label(), Some("Delete Section"));
+
+    for _ in 0..4 {
+        d.undo().unwrap();
+    }
+    let p = d.project();
+    assert_eq!((p.sections[0].id, p.sections[1].id), (a, b));
+    assert_eq!((p.sections[0].length, p.sections[0].name.as_str()), (8 * 4 * PPQ, "Section 1"));
+    for _ in 0..4 {
+        d.redo().unwrap();
+    }
+    assert_eq!(d.project().sections.len(), 1);
+    assert_eq!(d.project().sections[0].id, a, "redo keeps ids");
+}
+
+#[test]
+fn section_validation_and_clear_all_batch() {
+    let mut d = Document::new(Project::default());
+    assert!(d.execute(Command::InsertSection { index: None, section: section(" ", 8) }, Origin::User).is_err());
+    assert!(d.execute(Command::InsertSection { index: None, section: Section { length: PPQ - 1, ..section("A", 1) } }, Origin::User).is_err());
+    assert!(d.execute(Command::RemoveSection { section: SectionId(999) }, Origin::User).is_err());
+    for n in ["A", "B", "C"] {
+        d.execute(Command::InsertSection { index: None, section: section(n, 8) }, Origin::User).unwrap();
+    }
+    let a = d.project().sections[0].id;
+    assert!(d.execute(Command::SetSectionLength { section: a, length: 0 }, Origin::User).is_err());
+    assert!(d.execute(Command::MoveSection { section: a, index: 3 }, Origin::User).is_err());
+    let commands = d.project().sections.iter().map(|s| Command::RemoveSection { section: s.id }).collect();
+    d.execute(Command::Batch { label: "Clear All Sections".into(), commands }, Origin::User).unwrap();
+    assert!(d.project().sections.is_empty());
+    d.undo().unwrap();
+    let names: Vec<_> = d.project().sections.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["A", "B", "C"]);
+}
+
+#[test]
+fn sections_persist_and_old_projects_have_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = Document::new(Project::default());
+    d.execute(Command::InsertSection { index: None, section: section("Intro", 8) }, Origin::User).unwrap();
+    persist::save(d.project(), dir.path()).unwrap();
+    assert_eq!(persist::load(dir.path()).unwrap().project.sections, d.project().sections);
+    let json = serde_json::to_string(&Project::default()).unwrap();
+    assert!(!json.contains("sections"));
+    assert!(serde_json::from_str::<Project>(&json).unwrap().sections.is_empty());
+}
+
 #[test]
 fn arm_monitor_input_commands() {
     let mut d = Document::new(Project::default());
