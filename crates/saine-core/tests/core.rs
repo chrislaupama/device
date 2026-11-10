@@ -290,3 +290,42 @@ fn arm_monitor_input_commands() {
     let t = d.project().track(audio).unwrap();
     assert!(!t.arm && !t.monitor && t.input.is_none());
 }
+
+#[test]
+fn import_track_gives_fresh_ids_and_keeps_references() {
+    let mut src = Project::default();
+    let t = src.tracks[0].id;
+    let a = AssetId(500);
+    src.assets.push(Asset { id: a, relative_path: Some("media/x.wav".into()), absolute_path: "/media/x.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 48_000 });
+    let mut c = clip(a, 0, 48_000);
+    c.id = ClipId(501);
+    src.tracks[0].clips.push(c);
+    let lfo = Device { id: DeviceId(502), links: vec![ModLink { slot: 0, target: DeviceId(503), param: ModParam::Builtin("gain".into()), min: 0.0, max: 1.0 }], ..Device::new(PluginRef { format: PluginFormat::Builtin, id: "lfo".into(), name: "LFO".into(), path: None, vendor: String::new(), version: String::new(), kind: PluginKind::Effect }) };
+    let gain = Device { id: DeviceId(503), chain: Some(DeviceId(502)), sidechain: Some(TrackId(9)), ..Device::new(PluginRef { format: PluginFormat::Builtin, id: "gain".into(), name: "Gain".into(), path: None, vendor: String::new(), version: String::new(), kind: PluginKind::Effect }) };
+    src.tracks[0].devices = vec![lfo, gain];
+    src.tracks[0].automation.push(AutomationLane::new(AutomationTarget::Builtin { device: DeviceId(503), device_type: "gain".into(), param: "gain".into() }));
+    src.tracks[0].solo = true;
+
+    let mut d = Document::new(Project::default());
+    let mut next = d.project().next_id;
+    let (track, assets) = saine_core::import::import_track(&src, t, &mut next).unwrap();
+    assert!(saine_core::import::import_track(&src, TrackId(12345), &mut next.clone()).is_none());
+    assert_eq!(assets.len(), 1);
+    assert_eq!(assets[0].relative_path, None);
+    assert_eq!(assets[0].absolute_path, "/media/x.wav");
+    assert_eq!(track.clips[0].asset, assets[0].id);
+    let (lfo, gain) = (&track.devices[0], &track.devices[1]);
+    assert_eq!(lfo.links[0].target, gain.id);
+    assert_eq!(gain.chain, Some(lfo.id));
+    assert_eq!(gain.sidechain, None);
+    assert!(matches!(&track.automation[0].target, AutomationTarget::Builtin { device, .. } if *device == gain.id));
+    assert!(!track.solo);
+    let used = [track.id.0, track.clips[0].id.0, lfo.id.0, gain.id.0, assets[0].id.0];
+    assert!(used.iter().all(|&id| id >= d.project().next_id && id < next), "{used:?}");
+    let id = track.id;
+    let mut commands: Vec<Command> = assets.into_iter().map(|asset| Command::AddAsset { asset }).collect();
+    commands.push(Command::AddTrack { index: None, track });
+    d.execute(Command::Batch { label: "Add Track".into(), commands }, Origin::User).unwrap();
+    assert_eq!(d.project().tracks.last().map(|t| t.id), Some(id));
+}
+

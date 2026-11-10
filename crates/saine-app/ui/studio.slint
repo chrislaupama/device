@@ -49,6 +49,12 @@ export struct ClipLabel { x: length, y: length, w: length, text: string, selecte
 // Browser tree row (Devices tab; src/devices.rs). icon: 0 folder, 1 instrument (keys), 2 effect.
 // expander: 0 none, 1 closed, 2 open. leaf: a device (double-click / drag adds it).
 export struct TreeRow { depth: int, label: string, count: string, icon: int, expander: int, selected: bool, leaf: bool }
+// Browser › Files row (src/files.rs): kind 0 row, 1 group label, 2 note; y and h in list
+// coordinates; glyph 0 folder, 1 audio file, 2 project, 3 audio track, 4 instrument track,
+// 5 MIDI clip; expander 0 none, 1 closed, 2 open.
+export struct FileRow { kind: int, depth: int, y: length, h: length, label: string, detail: string, glyph: int, expander: int, selected: bool }
+// Vertical guide beside an open row's contents (list coordinates).
+export struct FileGuide { x: length, y: length, h: length }
 
 // One plugin card in the bottom-panel device chain (src/devices.rs). x is bottom-panel relative
 // and already includes the chain scroll and a drag offset.
@@ -355,6 +361,29 @@ export global Studio {
     callback tree-activate(int);               // double-click: add to the selected track
     callback tree-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
     callback tree-scroll-by(float);
+    // ---- browser sections, Back / Forward and the Files section (src/files.rs) ----
+    in property <int> browser-section: 2;      // 2 Devices, 3 Files (Search and Library have no content)
+    in property <bool> browser-can-back;
+    in property <bool> browser-can-forward;
+    in property <int> files-tab;               // 0 Projects, 1 Folders
+    in property <[FileRow]> files;
+    in property <[FileGuide]> files-guides;
+    in property <length> files-scroll;
+    in property <length> files-list-y: 81px;   // rule above the rows (96 with the count row)
+    in property <string> files-meta;           // "2 folders"; empty hides the count row
+    in property <string> files-sort: "Recent";
+    in property <string> files-empty-title;
+    in property <string> files-empty-hint;
+    callback browser-section-select(int);
+    callback browser-back();
+    callback browser-forward();
+    callback files-tab-select(int);
+    callback files-add-folder();
+    callback files-sort-toggle();
+    callback files-click(int, bool);           // row, on the chevron
+    callback files-activate(int);              // double-click
+    callback files-drag(int, int, length, length); // row, phase 0 down / 1 move / 2 up, window x, y
+    callback files-scroll-by(float);
     // Drag and drop of a browser device (ghost + drop target, window coordinates).
     in property <bool> dnd-active;
     in property <bool> dnd-ok;

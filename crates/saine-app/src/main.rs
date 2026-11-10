@@ -31,6 +31,7 @@ mod device_editors;
 mod panel_graph;
 mod device_views;
 mod devices;
+mod files;
 mod panel_multiband;
 mod gpu;
 mod highlight;
@@ -107,6 +108,11 @@ struct Args {
     /// height; the second instead collapses the bottom panel to its tab row (compare
     /// z100-arr-resize-timeline-taller.png).
     splitters_review: u8,
+    /// review-files-projects / review-files-folders / review-files-project: Browser › Files with
+    /// an empty projects folder (compare z100-browser-files-projects.png), with a generated
+    /// "audio" folder of two WAVs open (compare z100-files-audio-folder-expanded.png), and with a
+    /// saved project open to its tracks, audio files and MIDI clips (no reference).
+    files_review: u8,
     /// reference-devices-effects (05): browser Devices › Effects sub-tab.
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
@@ -230,6 +236,15 @@ fn parse_args() -> Result<Args, String> {
                 "review-bottom-collapsed" => {
                     a.reference_default = true;
                     a.splitters_review = 2;
+                }
+                s if s.starts_with("review-files-") => {
+                    a.reference_default = true;
+                    a.files_review = match s {
+                        "review-files-projects" => 1,
+                        "review-files-folders" => 2,
+                        "review-files-project" => 3,
+                        _ => return Err(format!("unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project)")),
+                    };
                 }
                 "review-automation" => {
                     a.reference_default = true;
@@ -441,7 +456,13 @@ fn pick_import() -> Vec<PathBuf> {
 fn pick_project_dir(save: bool) -> Option<PathBuf> {
     if save {
         // A project is a directory; ask for its name and create it.
-        rfd::FileDialog::new().set_title("Save project").set_file_name(format!("Untitled.{}", saine_core::persist::EXTENSION)).save_file()
+        // Start in the projects folder Browser › Files › Projects lists.
+        let dialog = rfd::FileDialog::new().set_title("Save project").set_file_name(format!("Untitled.{}", saine_core::persist::EXTENSION));
+        let dialog = match crate::files::FilesUi::default().projects_dir.filter(|d| std::fs::create_dir_all(d).is_ok()) {
+            Some(d) => dialog.set_directory(d),
+            None => dialog,
+        };
+        dialog.save_file()
     } else {
         rfd::FileDialog::new().set_title("Open project folder (.saineproj)").pick_folder()
     }
@@ -782,6 +803,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.splitters_review == 2 {
         ctl.borrow_mut().doc.set_bottom_panel_height("devices", Some(0.0));
+    }
+    if args.files_review > 0 {
+        // Generated media and projects in a temporary folder, never the user's own files.
+        let root = std::env::temp_dir().join(format!("saine-review-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let projects = root.join("Projects");
+        let _ = std::fs::create_dir_all(&projects);
+        let audio = root.join("audio");
+        let _ = std::fs::create_dir_all(&audio);
+        let rate = 48_000;
+        let steady: Vec<f32> = (0..rate * 2).map(|i| 0.5 * (std::f32::consts::TAU * 220.0 * i as f32 / rate as f32).sin()).collect();
+        let _ = wavgen::write_wav(&audio.join("sine-a220-steady.wav"), rate as u32, 1, &steady);
+        let _ = wavgen::write_wav(&audio.join("sine-a440-pulsed.wav"), rate as u32, 1, &wavgen::sine_bursts(rate as u32));
+        let mut c = ctl.borrow_mut();
+        c.files.projects_dir = Some(projects.clone());
+        if args.files_review == 3 {
+            let mut p = c.project().clone();
+            p.assets.push(saine_core::Asset { id: saine_core::AssetId(p.next_id), relative_path: None, absolute_path: audio.join("sine-a220-steady.wav").to_string_lossy().into_owned(), sample_rate: rate as f64, channels: 1, frames: rate as u64 * 2 });
+            p.next_id += 1;
+            p.tracks[1].midi_clips.push(saine_core::MidiClip::empty(0, 4 * saine_core::PPQ));
+            let song = projects.join(format!("Song.{}", saine_core::persist::EXTENSION));
+            let _ = saine_core::persist::save(&p, &song);
+            c.browser_section(files::SECTION_FILES);
+            c.files_tab(files::TAB_PROJECTS);
+            c.files_expand(files::FileItem::Project(song));
+        } else if args.files_review == 2 {
+            c.files_add_folder(&audio);
+            c.files_expand(files::FileItem::Folder(audio));
+        } else {
+            c.browser_section(files::SECTION_FILES);
+            c.files_tab(files::TAB_PROJECTS);
+        }
     }
     if args.automation_review > 0 {
         use saine_core::{AutoPoint, AutomationLane, AutomationTarget, SynthParam};
@@ -1141,6 +1194,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_tree_activate, |c, i: i32| c.tree_activate(i.max(0) as usize));
     on!(on_tree_drag, |c, i: i32, phase: i32, x: f32, y: f32| c.tree_drag(i.max(0) as usize, phase, x, y));
     on!(on_tree_scroll_by, |c, dy: f32| c.tree_scroll_by(dy));
+    // ---- browser sections, Back / Forward, Files (src/files.rs) ----
+    on!(on_browser_section_select, |c, i: i32| c.browser_section(i.max(0) as usize));
+    on!(on_browser_back, |c| c.browser_back());
+    on!(on_browser_forward, |c| c.browser_forward());
+    on!(on_files_tab_select, |c, i: i32| c.files_tab(i.max(0) as usize));
+    on!(on_files_sort_toggle, |c| c.files_sort_toggle());
+    on!(on_files_click, |c, i: i32, chevron: bool| c.files_click(i.max(0) as usize, chevron));
+    on!(on_files_activate, |c, i: i32| c.files_activate(i.max(0) as usize));
+    on!(on_files_drag, |c, i: i32, phase: i32, x: f32, y: f32| c.files_drag(i.max(0) as usize, phase, x, y));
+    on!(on_files_scroll_by, |c, dy: f32| c.files_scroll_by(dy));
+    {
+        // The folder dialog runs with the controller NOT borrowed (its modal loop keeps rendering).
+        let ctl = ctl.clone();
+        studio.on_files_add_folder(move || {
+            if let Some(dir) = rfd::FileDialog::new().set_title("Add folder").pick_folder() {
+                ctl.borrow_mut().files_add_folder(&dir);
+            }
+        });
+    }
     on!(on_device_power, |c, id: i32| c.device_power(saine_core::DeviceId(id as u64)));
     on!(on_device_edit, |c, id: i32| c.device_edit(saine_core::DeviceId(id as u64)));
     on!(on_device_remove, |c, id: i32| c.device_remove(saine_core::DeviceId(id as u64)));

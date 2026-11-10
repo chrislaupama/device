@@ -4163,6 +4163,151 @@ fn splitter_steps() -> Vec<Step> {
     ]
 }
 
+/// Window centre of Browser › Files row `i` (rows as pushed to the UI).
+fn files_row_xy(a: &AppWindow, i: usize) -> (f32, f32) {
+    let s = a.global::<Studio>();
+    let r = s.get_files().row_data(i).expect("files row");
+    (120.0, 78.2 + s.get_files_list_y() + 0.5 + r.y - s.get_files_scroll() + r.h / 2.0)
+}
+
+fn files_labels(a: &AppWindow) -> Vec<String> {
+    let m = a.global::<Studio>().get_files();
+    (0..m.row_count()).filter_map(|i| m.row_data(i)).map(|r| r.label.to_string()).collect()
+}
+
+fn files_row_of(a: &AppWindow, label: &str) -> Option<usize> {
+    let m = a.global::<Studio>().get_files();
+    (0..m.row_count()).find(|&i| m.row_data(i).is_some_and(|r| r.kind == 0 && r.label == label))
+}
+
+/// Browser sections, Back / Forward, and Files › Folders and Projects on generated files.
+fn files_steps() -> Vec<Step> {
+    use crate::files::{SECTION_DEVICES, SECTION_FILES, TAB_FOLDERS, TAB_PROJECTS};
+    use Step::*;
+    let root = std::env::temp_dir().join(format!("saine-selftest-files-{}", std::process::id()));
+    let kit = root.join("kit");
+    let (r1, k1, k2) = (root.clone(), kit.clone(), kit.clone());
+    let tracks = Rc::new(Cell::new(0usize));
+    let (t1, t2, t3, t4) = (tracks.clone(), tracks.clone(), tracks.clone(), tracks.clone());
+    vec![
+        DoC("files: generated projects folder and sample folder; Devices section", Box::new(move |_, ctl| {
+            let _ = std::fs::remove_dir_all(&r1);
+            let _ = std::fs::create_dir_all(k1.join("loops"));
+            let _ = std::fs::create_dir_all(r1.join("Projects"));
+            let _ = crate::wavgen::write_wav(&k1.join("kick.wav"), 48_000, 1, &crate::wavgen::sine_bursts(48_000));
+            let mut c = ctl.borrow_mut();
+            c.files.projects_dir = Some(r1.join("Projects"));
+            c.browser_section(SECTION_DEVICES);
+            t1.set(c.project().tracks.len());
+        })),
+        Do("files: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
+        Do("files: click the Files section tab", Box::new(|a| click(a, 150.0, 92.0))),
+        Check("files: Files › Projects is empty, Back is enabled", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let ok = c.files.section == SECTION_FILES && c.files.tab == TAB_PROJECTS && s.get_browser_can_back() && !s.get_browser_can_forward() && s.get_files_empty_title() == "No projects yet" && s.get_files_meta() == "";
+            ok.then_some(()).ok_or(format!("section {} tab {} title {:?}", c.files.section, c.files.tab, s.get_files_empty_title()))
+        })),
+        Do("files: click the Folders sub-tab", Box::new(|a| click(a, 76.0, 144.7))),
+        Check("files: Folders is empty with its hint", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.files.tab == TAB_FOLDERS && s.get_files_empty_title() == "No folders yet").then_some(()).ok_or(format!("tab {} title {:?}", c.files.tab, s.get_files_empty_title()))
+        })),
+        DoC("files: add the sample folder", Box::new(move |_, ctl| ctl.borrow_mut().files_add_folder(&k2))),
+        Check("files: one folder row and the count row", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (files_labels(a) == ["kit"] && s.get_files_meta() == "1 folder" && s.get_files_sort() == "Recent").then_some(()).ok_or(format!("{:?} {:?}", files_labels(a), s.get_files_meta()))
+        })),
+        DoC("files: click the folder row", Box::new(|a, _| {
+            let (x, y) = files_row_xy(a, 0);
+            click(a, x, y);
+        })),
+        Check("files: the folder opens to its subfolder and WAV", Box::new(|_, a| {
+            let m = a.global::<Studio>().get_files();
+            let wav = (0..m.row_count()).filter_map(|i| m.row_data(i)).find(|r| r.label == "kick.wav");
+            let ok = files_labels(a) == ["kit", "loops", "kick.wav"] && wav.is_some_and(|r| r.depth == 1 && r.detail == "wav") && a.global::<Studio>().get_files_guides().row_count() == 1;
+            ok.then_some(()).ok_or(format!("{:?}", files_labels(a)))
+        })),
+        Do("files: Back (chevron)", Box::new(|a| click(a, 229.5, 91.2))),
+        Check("files: Back returns to Projects with Forward enabled", Box::new(|c, a| {
+            (c.files.section == SECTION_FILES && c.files.tab == TAB_PROJECTS && a.global::<Studio>().get_browser_can_forward()).then_some(()).ok_or(format!("section {} tab {}", c.files.section, c.files.tab))
+        })),
+        Do("files: Back again", Box::new(|a| click(a, 229.5, 91.2))),
+        Check("files: Back reaches Devices", Box::new(|c, a| {
+            (c.files.section == SECTION_DEVICES && a.global::<Studio>().get_browser_section() == SECTION_DEVICES as i32).then_some(()).ok_or(format!("section {}", c.files.section))
+        })),
+        DoC("files: Forward, then the Devices › Effects sub-tab", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.browser_forward();
+            c.browser_tab(1);
+        })),
+        Check("files: a new location drops the Forward entries", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.files.section == SECTION_DEVICES && c.devices.tab == 1 && !s.get_browser_can_forward() && s.get_browser_can_back()).then_some(()).ok_or(format!("section {} tab {}", c.files.section, c.devices.tab))
+        })),
+        DoC("files: Folders again, search \"KICK\"", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.browser_tab(0);
+            c.files_tab(TAB_FOLDERS);
+            c.browser_search("KICK");
+        })),
+        Check("files: search keeps the folder and its match only", Box::new(|c, a| {
+            let shown = a.global::<Studio>().get_browser_search();
+            let ok = files_labels(a) == ["kit", "kick.wav"] && shown == "KICK" && c.files.search == "KICK";
+            ok.then_some(()).ok_or(format!("{:?} field {shown:?} devices {:?}", files_labels(a), c.devices.search))
+        })),
+        DoC("files: clear the search; double-click kick.wav", Box::new(|a, ctl| {
+            ctl.borrow_mut().browser_search("");
+            ctl.borrow_mut().update_ui(a);
+            let Some(i) = files_row_of(a, "kick.wav") else { return };
+            let (x, y) = files_row_xy(a, i);
+            double_click(a, x, y);
+        })),
+        Check("files: the WAV lands on a new audio track", Box::new(move |c, _| {
+            let p = c.project();
+            let last = p.tracks.last();
+            let ok = p.tracks.len() == t2.get() + 1 && last.is_some_and(|t| t.kind == TrackKind::Audio && t.clips.first().is_some_and(|k| k.name == "kick"));
+            ok.then_some(()).ok_or(format!("{} tracks (was {})", p.tracks.len(), t2.get()))
+        })),
+        DoC("files: undo; save the project into the projects folder; open Projects", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.undo();
+            let dir = c.files.projects_dir.clone().unwrap_or_default().join("Song.saineproj");
+            c.save_to(&dir);
+            c.files_tab(TAB_PROJECTS);
+        })),
+        Check("files: the saved project is listed", Box::new(|_, a| {
+            (files_labels(a) == ["Song"] && a.global::<Studio>().get_files_meta() == "1 project").then_some(()).ok_or(format!("{:?}", files_labels(a)))
+        })),
+        DoC("files: open the project with its chevron", Box::new(|a, _| {
+            let (_, y) = files_row_xy(a, 0);
+            click(a, 5.0 + 10.2 + 4.0, y);
+        })),
+        Check("files: the project lists its tracks and MIDI clips", Box::new(|_, a| {
+            let l = files_labels(a);
+            (l.first().map(String::as_str) == Some("Song") && l.contains(&"Tracks".to_string()) && files_row_of(a, "Instrument").is_some()).then_some(()).ok_or(format!("{l:?}"))
+        })),
+        DoC("files: double-click the project's Instrument track", Box::new(move |a, ctl| {
+            t3.set(ctl.borrow().project().tracks.len());
+            let Some(i) = files_row_of(a, "Instrument") else { return };
+            let (x, y) = files_row_xy(a, i);
+            double_click(a, x, y);
+        })),
+        Check("files: the track is added as a new track (one undo step)", Box::new(move |c, _| {
+            let p = c.project();
+            let ok = p.tracks.len() == t4.get() + 1 && p.tracks.last().is_some_and(|t| t.kind == TrackKind::Instrument) && c.doc.undo_label() == Some("Add Track");
+            ok.then_some(()).ok_or(format!("{} tracks, undo {:?}", p.tracks.len(), c.doc.undo_label()))
+        })),
+        DoC("files: undo; back to Devices; forget the folder", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.undo();
+            c.settings.prefs.browser_folders.clear();
+            c.browser_section(SECTION_DEVICES);
+            c.project_dir = None;
+            let _ = std::fs::remove_dir_all(&root);
+        })),
+    ]
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
@@ -4184,6 +4329,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(automation_steps());
     all.extend(field_device_steps());
     all.extend(splitter_steps());
+    all.extend(files_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));
