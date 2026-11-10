@@ -230,6 +230,9 @@ impl Controller {
         self.export.open = false;
         self.export.tracks_menu = false;
         self.unsaved_open = false;
+        if let Some(crate::live_import::PendingImport::Loaded(job)) = self.pending_import.take() {
+            self.release_live_set(*job);
+        }
         self.updates_open = false;
         self.undo_history_open = false;
         self.ui_dirty = true;
@@ -403,6 +406,7 @@ impl Controller {
                         file_size: std::fs::metadata(&path).map_or(0, |m| m.len()),
                         frames,
                         sample_rate: rate.round() as u32,
+                        markers: Vec::new(),
                     }])
                 }
                 (None, saine_core::TrackKind::Audio) => SetContent::Audio(Vec::new()),
@@ -608,6 +612,19 @@ impl Controller {
             self.ui_dirty = true;
         } else {
             self.new_project();
+        }
+    }
+
+    /// The unsaved-changes prompt was answered with Save or Don't Save: go on with what asked.
+    pub fn unsaved_continue(&mut self) {
+        use crate::live_import::PendingImport;
+        match self.pending_import.take() {
+            Some(PendingImport::File(file)) => {
+                self.dialogs_close();
+                self.import_live_set(file);
+            }
+            Some(PendingImport::Loaded(job)) => self.apply_live_set(*job),
+            None => self.new_project(),
         }
     }
 

@@ -34,8 +34,10 @@ pub const ROW_H: f32 = 176.5 / 12.0;
 /// Space left and right of the clip when it is fitted to the view, as a fraction of
 /// the clip length (the reference app shows 1.06 clip lengths, measured in both clip editors).
 pub const FIT_PAD: f64 = 0.03;
-/// Texture origin inside the bottom panel, and the panel height while the Clip tab is open.
+/// Texture origin inside the bottom panel.
 pub const PANEL_ORIGIN: (f32, f32) = (255.0, 54.5);
+/// The Clip tab's default panel height; the app sizes the editors from the live height.
+#[cfg(test)]
 pub const CLIP_PANEL_H: f32 = crate::highlight::DEFAULT_BOTTOM_H;
 pub const FOOTER_H: f32 = 54.5;
 /// C4 row top at y 106.5 (window 670 with the default panel) in the reference.

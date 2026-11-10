@@ -6740,6 +6740,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(snap_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());
+    all.extend(live_import_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));
@@ -6809,4 +6810,85 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     });
     // Keep the timer alive for the lifetime of the event loop.
     std::mem::forget(timer);
+}
+
+/// File › Import Ableton Live Set…: a set written by our own exporter (a warped audio clip on a
+/// generated WAV, a MIDI clip) replaces the project after the unsaved-changes prompt.
+fn live_import_steps() -> Vec<Step> {
+    use crate::live_set::{LiveSet, SetAudioClip, SetContent, SetMidiClip, SetNote, SetTrack};
+    use Step::*;
+    let dir = || std::env::temp_dir().join(format!("saine-selftest-live-{}", std::process::id()));
+    vec![
+        DoC("live import: write a set and its sample, then File › Import Ableton Live Set…", Box::new(move |_, ctl| {
+            let d = dir();
+            let _ = std::fs::remove_dir_all(&d);
+            std::fs::create_dir_all(d.join("Samples")).unwrap();
+            let wav = d.join("Samples/loop.wav");
+            let samples: Vec<f32> = (0..48_000 * 4).map(|i| 0.3 * (std::f32::consts::TAU * 220.0 * i as f32 / 48_000.0).sin()).collect();
+            crate::wavgen::write_wav(&wav, 48_000, 1, &samples).unwrap();
+            let set = LiveSet {
+                bpm: 100.0,
+                numerator: 4,
+                denominator: 4,
+                loop_on: false,
+                loop_start: 0.0,
+                loop_length: 16.0,
+                tracks: vec![
+                    SetTrack {
+                        name: "Loop".into(),
+                        color: 3,
+                        on: true,
+                        volume: 0.5,
+                        pan: 0.0,
+                        content: SetContent::Audio(vec![SetAudioClip {
+                            name: "loop".into(),
+                            start: 4.0,
+                            length: 4.0,
+                            relative_path: "Samples/loop.wav".into(),
+                            absolute_path: wav.display().to_string(),
+                            file_size: std::fs::metadata(&wav).map_or(0, |m| m.len()),
+                            frames: 192_000,
+                            sample_rate: 48_000,
+                            markers: vec![(0.0, 0.0), (1.0, 2.0), (3.0, 4.0)],
+                        }]),
+                    },
+                    SetTrack {
+                        name: "Keys".into(),
+                        color: 9,
+                        on: true,
+                        volume: 1.0,
+                        pan: 0.0,
+                        content: SetContent::Midi(vec![SetMidiClip { name: "keys".into(), start: 0.0, length: 4.0, notes: vec![SetNote { pitch: 60, time: 0.0, duration: 1.0, velocity: 100 }] }]),
+                    },
+                ],
+            };
+            let als = d.join("Imported Set.als");
+            std::fs::write(&als, crate::live_set::gzip(&crate::live_set::to_xml(&set)).unwrap()).unwrap();
+            ctl.borrow_mut().import_live_set_request(als);
+        })),
+        Check("live import: unsaved changes are asked about first", Box::new(|c, a| {
+            (c.unsaved_open && c.pending_import.is_some() && a.global::<Studio>().get_unsaved_open()).then_some(()).ok_or(format!("prompt {} pending {}", c.unsaved_open, c.pending_import.is_some()))
+        })),
+        Do("live import: Don't Save", Box::new(|a| a.global::<Studio>().invoke_unsaved_dont_save())),
+        Check("live import: the set replaced the project (tempo, tracks, warped clip with its markers and sample loaded, MIDI notes)", Box::new(move |c, _| {
+            let p = c.project();
+            let names: Vec<&str> = p.tracks.iter().map(|t| t.name.as_str()).collect();
+            let clip = p.tracks.first().and_then(|t| t.clips.first()).ok_or(format!("tracks {names:?}"))?;
+            let markers: Vec<(u64, f64)> = clip.warp.markers.iter().map(|m| (m.source, m.beat)).collect();
+            let notes = p.tracks.get(1).map_or(0, |t| t.midi_clips.iter().map(|m| m.notes.len()).sum::<usize>());
+            let ok = p.name == "Imported Set"
+                && p.transport.bpm == 100.0
+                && names == ["Loop", "Keys"]
+                && p.tracks[1].kind == TrackKind::Instrument
+                && clip.warp.enabled
+                && markers == [(0, 0.0), (48_000, 2.0), (144_000, 4.0)]
+                && clip.start == 4 * PPQ
+                && c.asset_map.contains_key(&clip.asset)
+                && notes == 1
+                && !c.unsaved_open
+                && c.project_dir.is_none();
+            let _ = std::fs::remove_dir_all(dir());
+            ok.then_some(()).ok_or(format!("{} {} {names:?} {markers:?} start {} loaded {} notes {notes}", p.name, p.transport.bpm, clip.start, c.asset_map.contains_key(&clip.asset)))
+        })),
+    ]
 }

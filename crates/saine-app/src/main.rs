@@ -49,6 +49,7 @@ mod files;
 mod panel_multiband;
 mod gpu;
 mod highlight;
+mod live_import;
 mod live_set;
 mod minimap;
 mod mixer;
@@ -1588,7 +1589,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_export_pick_tracks, |c, i: i32| c.export_pick_tracks(i));
     on!(on_export_name_edited, |c, t: slint::SharedString| c.export_set_name(t.as_str()));
     on!(on_unsaved_cancel, |c| c.dialogs_close());
-    on!(on_unsaved_dont_save, |c| c.new_project());
+    on!(on_unsaved_dont_save, |c| c.unsaved_continue());
     // Folder picker and Save run their native dialogs with the controller NOT borrowed.
     {
         let ctl = ctl.clone();
@@ -1612,7 +1613,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let mut c = ctl.borrow_mut();
                 c.save_to(&dir);
                 if !c.doc.is_dirty() {
-                    c.new_project();
+                    c.unsaved_continue();
                 }
             }
             if let Some(a) = aw.upgrade() {
@@ -1620,7 +1621,30 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
-    on!(on_menu_action, |c, id: slint::SharedString| c.menu_action(&id));
+    // Import Ableton Live Set… runs its file dialog with the controller NOT borrowed.
+    {
+        let ctl = ctl.clone();
+        let aw = app.as_weak();
+        studio.on_menu_action(move |id| {
+            if id == "file.import_ableton" {
+                // Like every menu action, nothing while a dialog is open.
+                if ctl.borrow().modal_open() {
+                    return;
+                }
+                if let Some(file) = rfd::FileDialog::new().set_title("Import Ableton Live Set").add_filter("Ableton Live Set", &["als"]).pick_file() {
+                    ctl.borrow_mut().import_live_set_request(file);
+                }
+            } else {
+                ctl.borrow_mut().menu_action(&id);
+            }
+            if let Some(a) = aw.upgrade() {
+                if let Ok(mut c) = ctl.try_borrow_mut() {
+                    c.update_ui(&a);
+                }
+                a.window().request_redraw();
+            }
+        });
+    }
     on!(on_open_recent, |c, i: i32| c.open_recent(i as usize));
     on!(on_updates_close, |c| c.dialogs_close());
     on!(on_general_toggle, |c, i: i32| c.general_toggle(i));

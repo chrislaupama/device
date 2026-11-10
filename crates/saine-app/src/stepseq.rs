@@ -34,7 +34,6 @@ const MUTE_X: f32 = 95.0;
 const SOLO_X: f32 = 112.0;
 const BTN_W: f32 = 12.0;
 /// Editor height while the Clip tab is open, and the footer below the grid.
-const FOOTER_H: f32 = crate::pianoroll::FOOTER_H;
 /// Pitch rows open with C5 (72) on the top row.
 const PITCH_TOP: u8 = 72;
 /// Vertical drag distance (pt) for a lane's full range.
