@@ -476,14 +476,12 @@ pub fn apply(notes: &[Note], shape: &Shape, part: Option<PartType>, key: Option<
         v = thin(&v, shape, part == Some(PartType::Chords) || (part.is_none() && polyphonic(&v)));
     }
     let base_vel = neutral_velocity(part);
-    v.retain_mut(|n| {
+    for n in &mut v {
         let b = beat(n.start);
-        let p = n.pitch as i32 + 12 * (shape.index_at(ShapeKey::Octave, b) as i32 - MAX_OCTAVE as i32);
-        n.pitch = p.clamp(0, 127) as u8;
+        n.pitch = fold(n.pitch as i32 + 12 * (shape.index_at(ShapeKey::Octave, b) as i32 - MAX_OCTAVE as i32));
         let vel = n.velocity as f32 * shape.at(ShapeKey::Velocity, b) / base_vel;
         n.velocity = vel.round().clamp(6.0, 127.0) as u8;
-        (0..=127).contains(&p)
-    });
+    }
     if on(ShapeKey::Voices) && has_voices(&v, part) {
         v = add_voices(&v, shape, scale);
     }
@@ -500,7 +498,7 @@ pub fn apply(notes: &[Note], shape: &Shape, part: Option<PartType>, key: Option<
     if on(ShapeKey::Nudge) {
         for n in &mut v {
             let shift = (shape.at(ShapeKey::Nudge, beat(n.start)) as f64 - 0.5) * 2.0 * NUDGE_BEATS * PPQ as f64;
-            n.start = (n.start + shift.round() as Ticks).max(0);
+            n.start = nudged(n.start, shift.round() as Ticks, clip);
         }
     }
     v.retain(|n| n.start < clip.max(1));
@@ -510,6 +508,22 @@ pub fn apply(notes: &[Note], shape: &Shape, part: Option<PartType>, key: Option<
         n.id = i as u32 + 1;
     }
     v
+}
+
+/// A pitch moved back by octaves into the MIDI range, so Octave never loses a note.
+fn fold(mut p: i32) -> u8 {
+    while p > 127 {
+        p -= 12;
+    }
+    while p < 0 {
+        p += 12;
+    }
+    p as u8
+}
+
+/// A start moved by Nudge, kept inside the clip when it was inside.
+fn nudged(start: Ticks, shift: Ticks, clip: Ticks) -> Ticks {
+    if start < clip { (start + shift).clamp(0, clip - 1) } else { (start + shift).max(0) }
 }
 
 fn onsets(v: &[Note]) -> BTreeMap<Ticks, Vec<usize>> {
@@ -1014,6 +1028,15 @@ mod tests {
         let json = r#"{"octave":1,"voices":1,"density":1.0,"length":0.5,"velocity":0.8,"nudge":0.5,"repeat":0,"arp":0}"#;
         let s: Shape = serde_json::from_str(json).unwrap();
         assert_eq!(s, with(None, |s| s.octave = 1));
+    }
+
+    #[test]
+    fn octave_and_nudge_never_lose_notes() {
+        let top = numbered(vec![note(120, 3.75, 0.25)]);
+        let out = apply(&top, &with(None, |s| (s.octave, s.nudge) = (2, 1.0)), None, None, 4 * PPQ);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].pitch, 120, "folded back an octave at a time into range");
+        assert!(out[0].start < 4 * PPQ);
     }
 
     #[test]
