@@ -138,7 +138,7 @@ impl Controller {
         thread_local! {
             static NAMES: ModelRc<SharedString> = ModelRc::from(Rc::new(VecModel::from(BAND_NAMES.iter().map(|n| SharedString::from(*n)).collect::<Vec<_>>())));
         }
-        Some(PanelPick { kind: 1, param: VIEW_SELECT, label: s("Band"), choices: NAMES.with(|n| n.clone()), selected: self.view_state(d.id).band as i32, enabled: true, ..Default::default() })
+        Some(PanelPick { kind: 1, param: VIEW_SELECT, label: s("Band"), choices: NAMES.with(|n| n.clone()), selected: self.view_state(d.id).band as i32, enabled: true, width: crate::device_panel::segment_width(&BAND_NAMES) * crate::device_panel::Z, ..Default::default() })
     }
 
     /// The parameter a dial-row slot edits: the multiband card's knobs are

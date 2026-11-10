@@ -73,8 +73,8 @@ pub const FX_WAVE_W: f32 = 418.0;
 
 /// Module origins, the separator and the rows of the two-module pages.
 const M1: f32 = 117.5;
-const M2: f32 = 433.0;
-const SPLIT: f32 = 423.5;
+const M2: f32 = 434.5;
+const SPLIT: f32 = 424.5;
 const HEAD_Y: f32 = 32.0;
 const PIC_Y: f32 = 57.5;
 const KNOB_Y: f32 = 212.0;
@@ -175,6 +175,8 @@ struct RailDrag {
 
 /// First live-modulation readout of the synth (one per modulation target).
 const RO_MOD: usize = 20;
+/// Source value readouts follow the per-target ones: Env 2 through Random.
+const SOURCES: usize = 9;
 
 #[derive(Debug, Default)]
 pub struct SynthUi {
@@ -195,6 +197,8 @@ pub struct SynthUi {
     models: Option<Models>,
     /// Live modulation per target (engine readouts), empty at rest.
     mods: Vec<f32>,
+    /// Each source's live value (engine readouts, Env 2 first), empty at rest.
+    srcs: Vec<f32>,
     /// What the pictures were last drawn from (values with live modulation, page, slot, bpm).
     drawn: Option<(Vec<f32>, usize, usize, u32)>,
 }
@@ -256,46 +260,107 @@ pub fn mappings(v: &[f32]) -> Vec<(usize, usize, usize, f32, f32)> {
         .collect()
 }
 
-/// Normalized ranges a parameter swings over, one per modulator (source
-/// colour, low, high): routes first, then its macro.
-fn mod_ranges(v: &[f32], i: usize, routes: &[(usize, usize, usize, f32, bool)], maps: &[(usize, usize, usize, f32, f32)], fx: [usize; 4]) -> Vec<(u32, f32, f32)> {
+/// One ring around a dial: a modulator's colour, the normalized span it
+/// sweeps and where it holds the parameter now (live, else the knob's value).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Ring {
+    color: u32,
+    lo: f32,
+    hi: f32,
+    at: f32,
+}
+
+/// Live modulation the dials draw: summed per target and each source's value
+/// (engine readouts; empty at rest).
+#[derive(Debug, Default, Clone, Copy)]
+struct LiveMod<'a> {
+    mods: &'a [f32],
+    srcs: &'a [f32],
+}
+
+/// Normalized offset of x (amount x source) on target t for parameter i at plain
+/// value v: octaves on log targets, the plain range otherwise.
+fn mod_offset(v: f32, i: usize, t: usize, x: f32) -> f32 {
     let p = pdef(i);
-    let base = p.to_normalized(v[i]);
-    let mut out = Vec::new();
-    for &(_, s, t, a, on) in routes {
-        if !on || s == 0 || target_index(t, fx) != Some(i) {
+    let depth = sv::TARGET_DEPTH[t];
+    if depth == 1.0 || p.min <= 0.0 {
+        let span = if depth == 1.0 { 1.0 } else { depth / (p.max - p.min) };
+        x * span
+    } else {
+        p.to_normalized((v * 2f32.powf(x * depth)).clamp(p.min, p.max)) - p.to_normalized(v)
+    }
+}
+
+/// The rings of parameter i as the reference app draws them: one per source (its routes
+/// to i summed), in source order, then its macro; at most three.
+fn mod_rings(v: &[f32], i: usize, c: &Ctx) -> Vec<Ring> {
+    let base = pdef(i).to_normalized(v[i]);
+    let mut by_source: Vec<(usize, usize, f32)> = Vec::new();
+    for &(_, s, t, a, on) in &c.routes {
+        if !on || s == 0 || target_index(t, c.fx) != Some(i) {
             continue;
         }
-        let depth = sv::TARGET_DEPTH[t];
-        // Offset in the normalized domain: octaves on log targets, the plain range otherwise.
-        let off = |x: f32| -> f32 {
-            if depth == 1.0 || p.min <= 0.0 {
-                let span = if depth == 1.0 { 1.0 } else { depth / (p.max - p.min) };
-                x * span
-            } else {
-                p.to_normalized((v[i] * 2f32.powf(x * depth)).clamp(p.min, p.max)) - base
-            }
-        };
-        let (d0, d1) = if sv::bipolar_source(s) { (off(-a.abs()), off(a.abs())) } else { (0.0, off(a)) };
-        out.push((SOURCE_COLORS[s.min(9)], (base + d0.min(d1)).clamp(0.0, 1.0), (base + d0.max(d1)).clamp(0.0, 1.0)));
+        match by_source.iter_mut().find(|e| e.0 == s) {
+            Some(e) => e.2 += a,
+            None => by_source.push((s, t, a)),
+        }
     }
-    for &(_, _, t, from, to) in maps {
+    by_source.sort_by_key(|e| e.0);
+    let mut out: Vec<Ring> = by_source
+        .iter()
+        .map(|&(s, t, a)| {
+            let off = |x: f32| mod_offset(v[i], i, t, x);
+            let (d0, d1) = if sv::bipolar_source(s) { (off(-a.abs()), off(a.abs())) } else { (0.0, off(a)) };
+            let at = c.live.srcs.get(s - 1).map_or(base, |&x| base + off(a * x));
+            Ring { color: SOURCE_COLORS[s.min(9)], lo: (base + d0.min(d1)).clamp(0.0, 1.0), hi: (base + d0.max(d1)).clamp(0.0, 1.0), at: at.clamp(0.0, 1.0) }
+        })
+        .collect();
+    for &(_, m, t, from, to) in &c.maps {
         if t == i {
-            out.push((MACRO_COLOR, from.min(to), from.max(to)));
+            let held = v[ix("macro1") + m - 1].clamp(0.0, 1.0);
+            out.push(Ring { color: MACRO_COLOR, lo: from.min(to), hi: from.max(to), at: from + (to - from) * held });
         }
     }
     out.truncate(sv::MAX_SOURCES_PER_TARGET);
     out
 }
 
-/// Ring of a modulation range around a dial (knob-local coordinates, centre
-/// (30, 19)), radius r.
+/// The span the routes to parameter i sweep together and, while the engine
+/// reports modulation, where they hold it now (the reference app's band and dot on the
+/// dial's own ring).
+fn mod_band(v: &[f32], i: usize, c: &Ctx) -> Option<(f32, f32, Option<f32>)> {
+    let base = pdef(i).to_normalized(v[i]);
+    let (mut up, mut down, mut target) = (0.0f32, 0.0f32, None);
+    for &(_, s, t, a, on) in &c.routes {
+        if !on || s == 0 || target_index(t, c.fx) != Some(i) {
+            continue;
+        }
+        target = Some(t);
+        if sv::bipolar_source(s) {
+            up += mod_offset(v[i], i, t, a.abs());
+            down -= mod_offset(v[i], i, t, -a.abs());
+        } else if a > 0.0 {
+            up += mod_offset(v[i], i, t, a);
+        } else {
+            down -= mod_offset(v[i], i, t, a);
+        }
+    }
+    let t = target?;
+    let depth = sv::TARGET_DEPTH[t];
+    let now = c.live.mods.get(t).filter(|_| depth != 0.0).map(|&m| (base + mod_offset(v[i], i, t, m / depth)).clamp(0.0, 1.0));
+    Some(((base - down).clamp(0.0, 1.0), (base + up).clamp(0.0, 1.0), now))
+}
+
+/// Arc around a dial (knob-local coordinates, centre (30, 19)) from lo to hi
+/// at radius r; empty when the span is.
 fn knob_arc(lo: f32, hi: f32, r: f32) -> String {
+    if hi - lo < 0.002 {
+        return String::new();
+    }
     let pt = |n: f32| {
         let a = (-135.0 + 270.0 * n).to_radians();
         (30.0 + r * a.sin(), 19.0 - r * a.cos())
     };
-    let hi = if hi - lo < 0.01 { lo + 0.01 } else { hi };
     let (p0, p1) = (pt(lo), pt(hi));
     let large = (hi - lo) * 270.0 > 180.0;
     format!("M{:.2} {:.2} A{r} {r} 0 {} 1 {:.2} {:.2}", p0.0, p0.1, large as u8, p1.0, p1.1)
@@ -1260,7 +1325,13 @@ struct Ctx<'a> {
     fx: [usize; 4],
     accent: Color,
     lit: usize,
+    live: LiveMod<'a>,
 }
+
+/// Radius of a dial's own ring centre line (32 pt ring, 1.76 pt stroke) and the
+/// step out to each modulation ring (1.7 strokes), at the card's 776.5 / 920 scale.
+const RING_R: f32 = 12.76;
+const RING_STEP: f32 = 2.525;
 
 /// Pill menu actions (ui/synth.slint Studio.synth-pill).
 pub mod act {
@@ -1283,9 +1354,25 @@ const CAPTION: i32 = 1;
 
 impl Page {
     fn knob_at(&mut self, c: &Ctx, i: usize, x: f32, y: f32, label: &str, accent: Color) {
-        let ranges = mod_ranges(c.v, i, &c.routes, &c.maps, c.fx);
-        let arcs: Vec<SynthArc> = ranges.iter().enumerate().map(|(k, &(col, lo, hi))| SynthArc { d: knob_arc(lo, hi, 16.0 + 2.25 * k as f32).into(), c: rgb(col) }).collect();
-        let dots: Vec<Color> = ranges.iter().map(|r| rgb(r.0)).collect();
+        let rings = mod_rings(c.v, i, c);
+        // Per ring (the reference app's ringed "xs" dial): the groove, the reach at 30 %, and a fill from
+        // the dial's origin to where the source holds it now. Rings sit 1.7 strokes apart.
+        let origin: f32 = if pdef(i).is_bipolar() { 0.5 } else { 0.0 };
+        let arcs: Vec<SynthArc> = rings
+            .iter()
+            .enumerate()
+            .flat_map(|(k, r)| {
+                let radius = RING_R + RING_STEP * (k + 1) as f32;
+                let col = rgb(r.color);
+                [
+                    SynthArc { d: knob_arc(0.0, 1.0, radius).into(), c: Color::from_argb_u8(0x0d, 0xff, 0xff, 0xff) },
+                    SynthArc { d: knob_arc(r.lo, r.hi, radius).into(), c: col.with_alpha(0.3) },
+                    SynthArc { d: knob_arc(origin.min(r.at), origin.max(r.at), radius).into(), c: col },
+                ]
+            })
+            .collect();
+        let dots: Vec<Color> = rings.iter().map(|r| rgb(r.color)).collect();
+        let band = mod_band(c.v, i, c);
         let lit = c.lit > 0 && c.routes.iter().any(|&(_, s, t, _, _)| s == c.lit && target_index(t, c.fx) == Some(i));
         self.knobs.push(SynthKnobItem {
             idx: i as i32,
@@ -1297,6 +1384,11 @@ impl Page {
             lit,
             arcs: ModelRc::new(VecModel::from(arcs)),
             dots: ModelRc::new(VecModel::from(dots)),
+            band_on: band.is_some_and(|b| b.1 - b.0 > 0.002),
+            band_lo: band.map_or(0.0, |b| b.0),
+            band_hi: band.map_or(0.0, |b| b.1),
+            dot_on: band.is_some_and(|b| b.2.is_some()),
+            dot: band.and_then(|b| b.2).unwrap_or(0.0),
         });
     }
 
@@ -2351,16 +2443,22 @@ impl Controller {
     pub(crate) fn synth_poll(&mut self) {
         let Some(id) = self.synth_device() else {
             self.synth.mods.clear();
+            self.synth.srcs.clear();
             return;
         };
         let mut out = Vec::new();
-        let mods: Vec<f32> = match self.engine.builtin_readouts(id.0, &mut out) {
-            Ok(()) if out.len() >= RO_MOD + sv::MOD_TARGETS.len() => out[RO_MOD..RO_MOD + sv::MOD_TARGETS.len()].iter().map(|m| (m * 1000.0).round() / 1000.0).collect(),
-            _ => Vec::new(),
+        let ro_src = RO_MOD + sv::MOD_TARGETS.len();
+        let quantize = |r: &[f32]| -> Vec<f32> {
+            let q: Vec<f32> = r.iter().map(|m| (m * 1000.0).round() / 1000.0).collect();
+            if q.iter().all(|m| *m == 0.0) { Vec::new() } else { q }
         };
-        let mods = if mods.iter().all(|m| *m == 0.0) { Vec::new() } else { mods };
-        if mods != self.synth.mods {
+        let (mods, srcs) = match self.engine.builtin_readouts(id.0, &mut out) {
+            Ok(()) if out.len() >= ro_src + SOURCES => (quantize(&out[RO_MOD..ro_src]), quantize(&out[ro_src..ro_src + SOURCES])),
+            _ => (Vec::new(), Vec::new()),
+        };
+        if mods != self.synth.mods || srcs != self.synth.srcs {
             self.synth.mods = mods;
+            self.synth.srcs = srcs;
             self.ui_dirty = true;
         }
     }
@@ -2411,7 +2509,9 @@ impl Controller {
         let (enabled, preset) = (d.enabled, d.preset.clone());
         let accent = self.project().find_device(device).map_or(rgb(0x439b94), |(ti, _)| card_color(self.project().tracks[ti].color));
         let bpm = self.project().transport.bpm as f32;
-        let key = (v.clone(), [self.synth.page, self.synth.fx_slot, self.synth.macro_sel, self.synth.lit], accent.as_argb_encoded(), preset.clone(), bpm.to_bits());
+        // The dials' rings follow the live modulation, so it is part of what the page is built from.
+        let built_from: Vec<f32> = v.iter().chain(&self.synth.mods).chain(&self.synth.srcs).copied().chain([self.synth.mods.len() as f32, self.synth.srcs.len() as f32]).collect();
+        let key = (built_from, [self.synth.page, self.synth.fx_slot, self.synth.macro_sel, self.synth.lit], accent.as_argb_encoded(), preset.clone(), bpm.to_bits());
         if self.synth.pushed.as_ref() != Some(&key) {
             let modified = preset.as_deref().and_then(|name| SYNTH_V2.factory.iter().find(|f| f.name == name)).is_some_and(|f| {
                 let want = DevicePreset::factory(&SYNTH_V2, f).load_values(&SYNTH_V2);
@@ -2424,7 +2524,8 @@ impl Controller {
             });
             let params: Vec<SynthParam> = SYNTH_V2.params.iter().zip(&v).map(|(p, &x)| SynthParam { norm: p.to_normalized(x), text: p.format(x).into(), bipolar: p.is_bipolar(), auto: false }).collect();
             sync_model(&self.synth_params_model, params);
-            let c = Ctx { v: &v, routes: routes(&v), maps: mappings(&v), fx: fx_types(&v), accent, lit: self.synth.lit };
+            let live = LiveMod { mods: &self.synth.mods, srcs: &self.synth.srcs };
+            let c = Ctx { v: &v, routes: routes(&v), maps: mappings(&v), fx: fx_types(&v), accent, lit: self.synth.lit, live };
             let g = layout(&c, self.synth.page, self.synth.fx_slot, self.synth.macro_sel);
             let labels = self.synth_pictures(&v, bpm);
             self.synth.knob_pos = g.knobs.iter().map(|k| (k.idx as usize, k.x, k.y)).chain(g.faders.iter().map(|f| (f.idx as usize, f.x, f.y + 45.0))).collect();
@@ -2514,7 +2615,7 @@ mod tests {
     }
 
     fn ctx(v: &[f32]) -> Ctx<'_> {
-        Ctx { v, routes: routes(v), maps: mappings(v), fx: fx_types(v), accent: rgb(0x439b94), lit: 0 }
+        Ctx { v, routes: routes(v), maps: mappings(v), fx: fx_types(v), accent: rgb(0x439b94), lit: 0, live: LiveMod::default() }
     }
 
     #[test]

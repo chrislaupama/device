@@ -14,6 +14,7 @@
 
 use crate::controller::Controller;
 use crate::device_panel::{CAPTION_H, Z};
+use crate::gain_scope::ScopeHistory;
 use crate::{PanelButton, PanelCanvas, PanelGrip, PanelPath, PanelText, PanelZone};
 use saine_core::builtin::{self, DeviceDef};
 use saine_core::Device;
@@ -66,10 +67,36 @@ fn text(x: f32, y: f32, w: f32, t: impl Into<SharedString>, color: Color, size: 
 /// "M x y L x y ..." (coordinates already scaled).
 pub(crate) fn poly(pts: &[(f32, f32)]) -> String {
     let mut out = String::with_capacity(pts.len() * 16);
-    for (i, (x, y)) in pts.iter().enumerate() {
-        let _ = write!(out, "{}{x:.2} {y:.2}", if i == 0 { "M" } else { " L" });
+    for (i, &(x, y)) in pts.iter().enumerate() {
+        out.push_str(if i == 0 { "M" } else { " L" });
+        num(&mut out, x);
+        out.push(' ');
+        num(&mut out, y);
     }
     out
+}
+
+/// Appends `v` with two decimals (as `{:.2}` does, without the float formatter's cost).
+fn num(out: &mut String, v: f32) {
+    let c = (v as f64 * 100.0).round() as i64;
+    if c < 0 {
+        out.push('-');
+    }
+    let c = c.unsigned_abs();
+    let mut digits = [b'0'; 20];
+    let (mut i, mut whole) = (digits.len(), c / 100);
+    loop {
+        i -= 1;
+        digits[i] = b'0' + (whole % 10) as u8;
+        whole /= 10;
+        if whole == 0 {
+            break;
+        }
+    }
+    out.push_str(std::str::from_utf8(&digits[i..]).unwrap_or("0"));
+    out.push('.');
+    out.push((b'0' + (c % 100 / 10) as u8) as char);
+    out.push((b'0' + (c % 10) as u8) as char);
 }
 
 /// A polyline drawn as dashes of \`dash\` / \`gap\` length along its arc length.
@@ -160,7 +187,7 @@ impl Controller {
             "stereo-field" => stereo_body(def, &value, idx("width2"), idx("sidegain"), idx("lowcut"), accent, rect),
             "utility" => utility_body(def, &value, &idx),
             "pitch-trace" | "tuner" | "spectrum" => self.analyzer_body(d, def, name, accent),
-            "gain-scope" => scope_body(&self.panel_meter_frames(d.id), crate::device_panel::HISTORY, accent, rect),
+            "gain-scope" => scope_body(self.devices.panel.scopes.get(&d.id), value("clip") >= 0.5, accent, rect),
             "declipper-wave" | "deesser-graph" | "dehummer-graph" | "denoiser-graph" => CustomBody { canvas: self.graph_canvas(d, def, accent), ..Default::default() },
             _ => CustomBody::default(),
         }
@@ -262,35 +289,41 @@ fn wave_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, drag_param: i32, acce
     CustomBody { canvas: field, ..Default::default() }
 }
 
-/// Transient Shaper gain scope: the output as mirrored bars (square-root
-/// amplitude law), what the clipper removed above them, a dashed 0 dB line and
-/// the applied-gain trace (+-12 dB, flat at 0 dB at rest). `frames` are the
-/// polled readouts (output peak, pre-clip peak, gain dB), oldest first; `cap`
-/// frames span the well.
-fn scope_body(frames: &[(f32, f32, f32)], cap: usize, accent: Color, rect: (f32, f32, f32, f32)) -> CustomBody {
+/// Transient Shaper gain scope, as the reference app draws it: one bar per plot point
+/// (the reference app px) of the output peak, mirrored on a square-root amplitude law;
+/// with Clip on, what the clipper removed above it; a dashed 0 dB line and
+/// the applied-gain trace (+-12 dB). `history` is None before the device
+/// published anything.
+fn scope_body(history: Option<&ScopeHistory>, clip: bool, accent: Color, rect: (f32, f32, f32, f32)) -> CustomBody {
     let (mut field, w, h) = frame(rect, "Output", "Applied Gain".into());
-    let (mid, x0, n) = (h / 2.0, 6.0 * Z, frames.len());
-    let x_of = |i: usize| w - (n - 1 - i) as f32 * (w - x0) / (cap.max(2) - 1) as f32;
-    let r_of = |peak: f32| (peak.abs().min(1.41) / 1.41).sqrt() * mid;
-    let out_r = |i: usize| r_of(frames[i].0);
-    let pre_r = |i: usize| r_of(frames[i].1).max(out_r(i));
-    let band = |outer: &dyn Fn(usize) -> f32, inner: &dyn Fn(usize) -> f32, sign: f32| {
-        let mut pts: Vec<(f32, f32)> = (0..n).map(|i| (x_of(i), mid - sign * outer(i))).collect();
-        pts.extend((0..n).rev().map(|i| (x_of(i), mid - sign * inner(i))));
+    let bars = ((w / Z).floor() - 12.0).max(1.0);
+    let (x0, x1) = (6.0 * Z, (6.0 + bars) * Z);
+    let mid = h / 2.0;
+    let reach = mid - Z;
+    let r_of = |peak: f32| (peak.abs().min(1.41) / 1.41).sqrt() * reach;
+    let y_of = |db: f32| mid - db.clamp(-12.0, 12.0) / 12.0 * (reach - 4.0 * Z);
+    let mut paths = vec![stroke(dashed(&[(x0, mid), (x1, mid)], 3.0 * Z, 4.0 * Z), ink(0.14), 1.0)];
+    let Some(px) = history.map(|h| h.pixels(bars, 2.0)) else {
+        paths.push(stroke(poly(&[(x0, mid), (x1, mid)]), accent, 2.0));
+        field.paths = model(paths);
+        return CustomBody { canvas: field, ..Default::default() };
+    };
+    let n = px.out.len();
+    let x_of = |t: usize| ((5.5 + t as f32 + px.offset) * Z).clamp(x0, x1);
+    let band = |outer: &dyn Fn(usize) -> f32, inner: &dyn Fn(usize) -> f32| {
+        let mut pts: Vec<(f32, f32)> = (0..n).map(|t| (x_of(t), mid - outer(t))).collect();
+        pts.extend((0..n).rev().map(|t| (x_of(t), mid - inner(t))));
         format!("{} Z", poly(&pts))
     };
-    let y_of = |db: f32| 4.0 * Z + (12.0 - db.clamp(-12.0, 12.0)) / 24.0 * (h - 8.0 * Z);
-    let mut paths = vec![stroke(dashed(&[(x0, mid), (w, mid)], 3.0 * Z, 4.0 * Z), ink(0.14), 1.0)];
-    let gain = if n > 1 {
-        paths.push(fill(format!("{} {}", band(&out_r, &|_| 0.0, 1.0), band(&out_r, &|_| 0.0, -1.0)), ink(0.3)));
-        if frames.iter().any(|f| f.1 > f.0 * 1.005) {
-            paths.push(fill(format!("{} {}", band(&pre_r, &out_r, 1.0), band(&pre_r, &out_r, -1.0)), ink(0.11)));
-        }
-        poly(&frames.iter().enumerate().map(|(i, f)| (x_of(i), y_of(f.2))).collect::<Vec<_>>())
-    } else {
-        poly(&[(x0, mid), (w, mid)])
-    };
-    paths.push(stroke(gain, accent, 2.0));
+    let out_r = |t: usize| r_of(px.out[t]);
+    paths.push(fill(band(&out_r, &|t| -out_r(t)), ink(0.3)));
+    if clip && (0..n).any(|t| px.pre[t] > px.out[t] * 1.005) {
+        let pre_r = |t: usize| if px.pre[t] > px.out[t] * 1.005 { r_of(px.pre[t]) } else { out_r(t) };
+        paths.push(fill(format!("{} {}", band(&pre_r, &out_r), band(&|t| -out_r(t), &|t| -pre_r(t))), ink(0.11)));
+    }
+    let mut gain: Vec<(f32, f32)> = (0..n).map(|t| (x_of(t), y_of(px.gain[t]))).collect();
+    gain.push((x1, y_of(px.gain[n - 1])));
+    paths.push(stroke(poly(&gain), accent, 2.0));
     field.paths = model(paths);
     CustomBody { canvas: field, ..Default::default() }
 }
@@ -471,6 +504,40 @@ fn utility_body(def: &DeviceDef, value: &dyn Fn(&str) -> f32, idx: &dyn Fn(&str)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Per-refresh cost of a full gain scope (4 s of columns, Clip on, card at
+    /// 100 %): `cargo test -p saine-app --release bench_gain_scope -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn bench_gain_scope() {
+        let mut h = ScopeHistory::default();
+        let mut total = 0i64;
+        for k in 0..200 {
+            total += 22;
+            let cols: Vec<f32> = (total - 256..total)
+                .flat_map(|i| {
+                    let t = i as f32 / 750.0;
+                    let out = 0.6 * (t * 4.0).fract().powi(2);
+                    [1.0 - out, 1.2 - out, -6.0 * (t * 4.0).fract()]
+                })
+                .collect();
+            let frame: Vec<f32> = [(total >> 20) as f32, (total & 0xFFFFF) as f32].into_iter().chain(cols).collect();
+            h.push(&frame, k as f64 * 30.0, true);
+            h.advance(k as f64 * 30.0);
+        }
+        let n = 2000;
+        let t0 = std::time::Instant::now();
+        for _ in 0..n {
+            std::hint::black_box(scope_body(Some(std::hint::black_box(&h)), true, Color::from_rgb_u8(0x43, 0x9b, 0x94), (0.0, 0.0, 440.0, 160.0)));
+        }
+        let body = t0.elapsed().as_secs_f64() * 1e6 / n as f64;
+        let t0 = std::time::Instant::now();
+        for _ in 0..n {
+            std::hint::black_box(std::hint::black_box(&h).pixels(362.0, 2.0));
+        }
+        let px = t0.elapsed().as_secs_f64() * 1e6 / n as f64;
+        println!("gain scope: pixels (3000 columns -> 362 bars) {px:.2} us, whole view model {body:.2} us per refresh");
+    }
 
     #[test]
     fn harmonics_readout_matches_the_reference_defaults() {
