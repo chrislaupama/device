@@ -848,11 +848,13 @@ TEST_CASE(device_output_only_named_device_and_restart) {
 // bounds the error, which is the latency the backend failed to report (0 on
 // the PipeWire loopback; a hardware converter adds latency of its own).
 TEST_CASE(device_duplex_loopback_take_lands_on_the_clicks) {
-    const char* in_uid = std::getenv("DSTUDIO_TEST_LOOPBACK_INPUT");
-    if (in_uid == nullptr || *in_uid == '\0') SKIP("set DSTUDIO_TEST_LOOPBACK_INPUT to an input that hears the output");
-    const char* out_uid = std::getenv("DSTUDIO_TEST_LOOPBACK_OUTPUT");
-    const char* tol_env = std::getenv("DSTUDIO_TEST_LOOPBACK_TOLERANCE");
-    const long tolerance = tol_env != nullptr ? std::atol(tol_env) : 64;
+    std::string in_env, out_env, tol_env;
+    if (!dstudio::os::get_env("DSTUDIO_TEST_LOOPBACK_INPUT", in_env) || in_env.empty())
+        SKIP("set DSTUDIO_TEST_LOOPBACK_INPUT to an input that hears the output");
+    const char* in_uid = in_env.c_str();
+    const char* out_uid = dstudio::os::get_env("DSTUDIO_TEST_LOOPBACK_OUTPUT", out_env) ? out_env.c_str() : nullptr;
+    const long tolerance =
+        dstudio::os::get_env("DSTUDIO_TEST_LOOPBACK_TOLERANCE", tol_env) ? std::atol(tol_env.c_str()) : 64;
 
     constexpr uint32_t kRate = 48000;
     constexpr std::size_t kPeriod = 4800; // a click every 100 ms
