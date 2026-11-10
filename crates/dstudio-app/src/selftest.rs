@@ -32,6 +32,14 @@ pub fn run_dir() -> &'static std::path::Path {
     })
 }
 
+/// Whether an asset's stored path lies in `dir`. Assets keep canonical paths, and on Windows
+/// the canonical form (`\\?\C:\Users\runneradmin\...`) differs from the temp folder's
+/// (`C:\Users\RUNNER~1\...`), so compare against both spellings of the folder.
+fn in_dir(asset_path: &str, dir: &std::path::Path) -> bool {
+    let canon = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    asset_path.contains(&*dir.to_string_lossy()) || asset_path.contains(&*canon.to_string_lossy())
+}
+
 /// The plugin scan cache the self-tests share between runs (so a run does not rescan every
 /// plugin). A run works on its own copy and puts it back atomically when it ends.
 pub fn shared_plugin_cache() -> std::path::PathBuf {
@@ -7168,7 +7176,7 @@ fn clip_render_steps() -> Vec<Step> {
             let mut c = ctl.borrow_mut();
             let s = s15.borrow();
             let mut commands: Vec<Command> = [s.audio_track, s.midi_track].iter().map(|&t| Command::RemoveTrack { track: TrackId(t) }).collect();
-            commands.extend(c.project().assets.iter().filter(|a| a.absolute_path.contains(&*dir().to_string_lossy())).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
+            commands.extend(c.project().assets.iter().filter(|a| in_dir(&a.absolute_path, &dir())).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
             c.execute(Command::Batch { label: "clip render cleanup".into(), commands });
             c.select_clip(None);
             c.clip_render.dir_override = Some(run_dir().join("renders"));
@@ -7334,7 +7342,7 @@ fn clip_render_plugin_steps() -> Vec<Step> {
             let mut c = ctl.borrow_mut();
             let s = s10.borrow();
             let mut commands = vec![Command::RemoveTrack { track: TrackId(s.track) }];
-            commands.extend(c.project().assets.iter().filter(|a| a.absolute_path.contains(&*dir().to_string_lossy())).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
+            commands.extend(c.project().assets.iter().filter(|a| in_dir(&a.absolute_path, &dir())).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
             c.execute(Command::Batch { label: "clip render plugin cleanup".into(), commands });
             c.select_clip(None);
             c.clip_render.dir_override = None;
