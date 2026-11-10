@@ -1171,7 +1171,7 @@ bool Engine::mix_preview(float* l, float* r, uint32_t frames) noexcept {
     }
     const float g0 = rt_pv_gain_cur_;
     const float dg = (rt_pv_gain_ - g0) / static_cast<float>(frames);
-    const double rate = rt_pv_rate_;
+    const double rate = static_cast<double>(rt_pv_rate_);
     float pk_l = 0.0f, pk_r = 0.0f;
     for (PreviewVoice& v : rt_pv_) {
         if (v.asset == nullptr) continue;

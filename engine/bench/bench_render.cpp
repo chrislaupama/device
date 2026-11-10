@@ -531,7 +531,7 @@ int main(int argc, char** argv) {
         if (rate == 0.0f)
             std::snprintf(name, sizeof name, "none (baseline)");
         else
-            std::snprintf(name, sizeof name, "rate %.1f", rate);
+            std::snprintf(name, sizeof name, "rate %.1f", static_cast<double>(rate));
         std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name, r.us_per_block_avg, r.us_per_block_p99,
                     r.us_per_block_max, r.rt_ratio);
     }
