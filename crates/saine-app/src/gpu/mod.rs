@@ -350,6 +350,13 @@ pub fn make_wgpu_config() -> Result<(slint::wgpu_30::WGPUConfiguration, String),
         trace: wgpu::Trace::Off,
     }))
     .map_err(|e| format!("request_device: {e}"))?;
+    // Slint keeps this queue in its thread-local context, which is dropped by the main thread's
+    // TLS destructors at exit, and dropping a queue takes the device's snatch lock. In debug
+    // builds wgpu-core traces that lock in a thread local of its own, and TLS destructors run in
+    // reverse order of first use: touched only later (first frame), the trace slot is gone before
+    // Slint's context drops the queue, and the process aborts. One empty submit here (it takes
+    // the snatch lock) touches the trace slot before Slint's context exists, so it outlives it.
+    queue.submit([]);
     Ok((
         slint::wgpu_30::WGPUConfiguration::Manual { instance, adapter, device, queue },
         format!("{} ({:?}, {:?})", info.name, info.backend, info.device_type),
