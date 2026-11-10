@@ -138,15 +138,15 @@ pub fn merged_name(first: &str) -> String {
 
 /// The consolidated clip of a MIDI span: every clip's notes moved to the span start and cut at
 /// the end of their clip (notes past a clip's end are not played). Pattern clips merge as the
-/// notes they play; the result is a plain MIDI clip.
+/// notes they play (repeated over the clip, without muted rows); the result is a plain MIDI clip.
 pub fn merge_midi(p: &Project, span: &ClipSpan) -> Option<MidiClip> {
     let t = p.track(span.track)?;
     let clips: Vec<&MidiClip> = span.clips.iter().filter_map(|id| t.midi_clips.iter().find(|c| c.id == *id)).collect();
     let first = clips.first()?;
     let mut notes = Vec::new();
     for c in &clips {
-        for n in c.notes.iter().filter(|n| n.start >= 0 && n.start < c.length) {
-            let mut m = n.clone();
+        for n in c.playing_notes().into_iter().filter(|n| n.start >= 0 && n.start < c.length) {
+            let mut m = n;
             m.length = n.length.min(c.length - n.start).max(1);
             m.start = n.start + c.start - span.start;
             notes.push(m);

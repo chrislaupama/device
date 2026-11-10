@@ -234,6 +234,29 @@ fn merge_midi_moves_notes_to_the_span_start_and_cuts_at_each_clip_end() {
 }
 
 #[test]
+fn merge_midi_plays_pattern_clips_repeated_and_without_muted_rows() {
+    let mut d = Document::new(Project::default());
+    let inst = d.project().tracks[1].id;
+    let mut clip = MidiClip::empty_pattern(0, StepRows::default());
+    let mut pat = clip.pattern.take().unwrap();
+    pat.cells = vec![StepCell::new(36, 0), StepCell::new(38, 2)];
+    pat.muted = vec![38];
+    let period = pat.length();
+    clip.notes = pat.bake();
+    clip.length = 2 * period;
+    clip.pattern = Some(pat);
+    assert!(clip.notes.iter().any(|n| n.pitch == 38), "the baked pass keeps the muted row's notes");
+    d.execute(Command::AddMidiClip { track: inst, clip }, Origin::User).unwrap();
+    let id = d.project().tracks[1].midi_clips[0].id;
+    let span = render_plan::consolidate_group(d.project(), id).unwrap();
+    let m = render_plan::merge_midi(d.project(), &span).unwrap();
+    let got: Vec<(u8, Ticks)> = m.notes.iter().map(|n| (n.pitch, n.start)).collect();
+    assert_eq!(got.len(), 2, "{got:?}");
+    assert!(got.iter().all(|n| n.0 == 36), "the muted row is left out: {got:?}");
+    assert_eq!((got[0].1, got[1].1), (0, period), "the pattern repeats over the clip");
+}
+
+#[test]
 fn consolidate_and_bounce_batches_are_one_undo_step() {
     let (mut d, track) = overlap_doc();
     let before = d.project().clone();

@@ -110,11 +110,14 @@ fn bounce_of_a_midi_clip_plays_that_clip_only_and_rings_into_its_tail() {
     let id = r.doc.project().tracks[1].midi_clips[0].id;
     let span = render_plan::clip_span(r.doc.project(), id).unwrap();
     assert!(render_plan::rings_out(r.doc.project(), inst, RenderMode::Bounce));
-    let out = r.render(&span, RenderMode::Bounce, 2.0);
-    let body = 24_000usize;
+    let out = r.render(&span, RenderMode::Bounce, 6.0);
+    let (body, beat8) = (24_000usize, 8 * 24_000usize);
+    assert_eq!(out.len() / 2, body + 6 * 48_000);
     assert!(peak(&out[..body * 2]) > 0.02, "the clip sounds");
-    assert!(peak(&out[2 * (body + 4 * 24_000)..]) < 1e-3 || out.len() / 2 < body + 4 * 24_000, "nothing of the clip at beat 8 leaks in");
-    assert!(peak(&out[body * 2..]) > 0.0, "the release rings past the clip end");
+    assert!(peak(&out[body * 2..2 * (body + 24_000)]) > 0.0, "the release rings past the clip end");
+    assert!(peak(&out[2 * beat8..2 * (beat8 + 24_000)]) < 1e-3, "nothing of the clip at beat 8 leaks in");
+    let other = render_plan::clip_span(r.doc.project(), r.doc.project().tracks[1].midi_clips[1].id).unwrap();
+    assert!(peak(&r.render(&other, RenderMode::Bounce, 0.0)[..48_000]) > 0.02, "the clip at beat 8 does sound when it is the one rendered");
 }
 
 #[test]

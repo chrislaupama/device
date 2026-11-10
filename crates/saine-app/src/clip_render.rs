@@ -359,6 +359,9 @@ impl Controller {
         if self.clip_render.busy() {
             return self.set_status("Still rendering. One moment.", 3);
         }
+        if let Some(why) = self.render_block(id, true) {
+            return self.set_status(format!("Export: {why}"), 4);
+        }
         let Some(span) = render_plan::clip_span(self.project(), id) else { return };
         let bits = if self.export.bits24 { 24 } else { 16 };
         self.start_render(ClipOp::Export { reveal }, &span, RenderMode::Stem, Output::Export { path: path.to_path_buf(), bits }, "Exporting Audio");
