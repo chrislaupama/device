@@ -325,7 +325,7 @@ int32_t build_render_graph(const se_session_desc_v7& desc7, const AssetLookup& l
             return SE_ERR_INVALID_ARG;
         }
     }
-    std::size_t warps_used = 0;
+    std::unordered_map<uint64_t, uint32_t> warp_hits; // clip id -> clips carrying it
     if (desc.master_lane_count > 0 && desc.master_lanes == nullptr) {
         err = "session has master_lane_count > 0 but master_lanes == NULL";
         return SE_ERR_INVALID_ARG;
@@ -453,7 +453,7 @@ int32_t build_render_graph(const se_session_desc_v7& desc7, const AssetLookup& l
             const auto asset_frames = static_cast<int64_t>(asset->frames);
             if (auto wt = warp_of.find(cd.clip_id); wt != warp_of.end()) {
                 // Warped: the clip covers its timeline frames; the map says what plays.
-                ++warps_used;
+                ++warp_hits[cd.clip_id];
                 if (cd.length <= 0 || asset_frames == 0) continue;
                 ClipNode clip;
                 clip.src_l = asset->channel(0);
@@ -655,18 +655,17 @@ int32_t build_render_graph(const se_session_desc_v7& desc7, const AssetLookup& l
     g->assets.reserve(used.size());
     for (auto& [id, ref] : used) g->assets.push_back(std::move(ref));
 
-    // Every warp must name a clip of the session (once; clip ids are unique per warp).
-    if (warps_used != warp_of.size()) {
-        std::unordered_map<uint64_t, int> seen;
-        for (uint32_t t = 0; t < desc.track_count; ++t)
-            for (uint32_t c = 0; c < desc.tracks[t].clip_count; ++c) seen[desc.tracks[t].clips[c].clip_id]++;
-        for (const auto& [id, w] : warp_of)
-            if (seen.find(id) == seen.end()) {
-                err = "warp names unknown clip " + std::to_string(id);
-                return SE_ERR_INVALID_ARG;
-            }
-        err = "a warped clip id is used by more than one clip";
-        return SE_ERR_INVALID_ARG;
+    // Every warp must name exactly one clip of the session.
+    for (const auto& [id, w] : warp_of) {
+        const auto hit = warp_hits.find(id);
+        if (hit == warp_hits.end()) {
+            err = "warp names unknown clip " + std::to_string(id);
+            return SE_ERR_INVALID_ARG;
+        }
+        if (hit->second > 1) {
+            err = "warped clip id " + std::to_string(id) + " is used by more than one clip";
+            return SE_ERR_INVALID_ARG;
+        }
     }
     assign_warp_voices(*g);
     g->warp_voice_refs.resize(g->warp_voice_keys.size());
