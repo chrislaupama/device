@@ -83,7 +83,8 @@ pub struct se_transport_info {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct se_preview_info {
     pub playing: u8,
-    pub reserved: [u8; 7],
+    pub notes: u8,
+    pub reserved: [u8; 6],
     pub asset_id: u64,
     pub position: i64,
     pub frames: i64,
@@ -824,6 +825,7 @@ unsafe extern "C" {
     pub fn se_preview_stop(engine: *mut se_engine) -> i32;
     pub fn se_preview_set(engine: *mut se_engine, gain: f32, rate: f32, solo: u8) -> i32;
     pub fn se_preview_get(engine: *mut se_engine, out: *mut se_preview_info) -> i32;
+    pub fn se_preview_note(engine: *mut se_engine, device_id: u64, pitch: u8, velocity: u8) -> i32;
 }
 
 /// Guards the hand-written declarations against drift from saine_engine.h.

@@ -436,14 +436,18 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             float* const pr = ctx.plugin_r();
             std::memset(pl, 0, sizeof(float) * frames);
             std::memset(pr, 0, sizeof(float) * frames);
-            const uint32_t ne = iplug->feeder().build(graph->notes.data() + track.note_begin, track.note_count,
-                                                      graph->seq, inst.transport_gen, position, frames, playing,
-                                                      iplug->event_scratch(), PluginInstance::kMaxEvents);
+            // Live notes (se_preview_note) at the first frame, ahead of the track's notes; built-in
+            // instruments take theirs inside process().
+            MidiEvent* const ev = iplug->event_scratch();
+            const uint32_t nl = iplug->as_builtin() != nullptr ? 0 : iplug->take_live(ev, PluginInstance::kMaxEvents);
+            const uint32_t ne = nl + iplug->feeder().build(graph->notes.data() + track.note_begin, track.note_count,
+                                                           graph->seq, inst.transport_gen, position, frames, playing,
+                                                           ev + nl, PluginInstance::kMaxEvents - nl);
             const ModTarget* const im = track.imod_count > 0 ? graph->mod_targets.data() + track.imod_begin : nullptr;
             uint32_t np = track.iplug_lane_count > 0 ? plugin_events(track.iplug_lane_begin, track.iplug_lane_count, 0, im, track.imod_count) : 0;
             if (track.imod_count > 0) np = plugin_mod_events(track.imod_begin, track.imod_count, np, 0);
             np = add_restores(track.instrument_device_id, np);
-            iplug->run(pl, pr, frames, iplug->event_scratch(), ne, *inst.transport, ctx.param_events(), np);
+            iplug->run(pl, pr, frames, ev, ne, *inst.transport, ctx.param_events(), np);
             if (track.audible) {
                 if (any) {
                     kernel_add_scaled(tl, pl, 1.0f, frames);

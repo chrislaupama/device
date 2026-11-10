@@ -448,6 +448,59 @@ TEST_CASE(plugin_instrument_clap_sine_onset_and_pitch) {
     CHECK(crossings >= 43 && crossings <= 45); // 440 Hz * 0.1 s
 }
 
+namespace {
+uint8_t preview_notes(se_engine* e) {
+    se_preview_info i{};
+    se_preview_get(e, &i);
+    return i.notes;
+}
+std::vector<float> stopped_render(se_engine* e, uint32_t frames, uint32_t block = 256) {
+    std::vector<float> out(2 * static_cast<std::size_t>(frames));
+    for (uint32_t at = 0; at < frames; at += block) se_render_offline(e, out.data() + 2 * at, std::min(block, frames - at));
+    return out;
+}
+float peak(const std::vector<float>& v, std::size_t from = 0) {
+    float p = 0.0f;
+    for (std::size_t i = from; i < v.size(); ++i) p = std::max(p, std::fabs(v[i]));
+    return p;
+}
+} // namespace
+
+TEST_CASE(preview_note_plays_through_a_plugin_instrument_with_transport_stopped) {
+    EngineHandle e(48000, 256);
+    const se_device_desc sine_plug = clap(30, kClapSine, "studio.saine.test.sine");
+    Session5 s;
+    s.instrument(1, {}, &sine_plug, {clap_gain(31)});
+    REQUIRE(s.publish(e) == SE_OK);
+    CHECK(peak(stopped_render(e, 1024)) == 0.0f);
+    REQUIRE(se_preview_note(e, 30, 69, 127) == SE_OK);
+    CHECK_EQ(preview_notes(e), 1);
+    const auto l = left(stopped_render(e, 4800));
+    // At the first frame of the next block, through the track's gain plugin (x0.5).
+    CHECK_NEAR(l[0], 0.125, 1e-6);
+    int crossings = 0;
+    for (std::size_t i = 1; i < 4800; ++i) crossings += l[i - 1] < 0.0f && l[i] >= 0.0f;
+    CHECK(crossings >= 43 && crossings <= 45); // A4 over 0.1 s
+    REQUIRE(se_preview_note(e, 30, 69, 0) == SE_OK);
+    CHECK_EQ(preview_notes(e), 0);
+    CHECK(peak(stopped_render(e, 512)) == 0.0f);
+    // se_preview_stop releases held preview notes.
+    REQUIRE(se_preview_note(e, 30, 60, 100) == SE_OK);
+    REQUIRE(se_preview_note(e, 30, 64, 100) == SE_OK);
+    REQUIRE(se_preview_note(e, 30, 64, 100) == SE_OK);
+    CHECK_EQ(preview_notes(e), 2);
+    CHECK(peak(stopped_render(e, 512)) > 0.1f);
+    REQUIRE(se_preview_stop(e) == SE_OK);
+    CHECK_EQ(preview_notes(e), 0);
+    CHECK(peak(stopped_render(e, 512)) == 0.0f);
+    // Errors: unknown device, an effect, bad pitch or velocity.
+    CHECK(se_preview_note(e, 999, 60, 100) == SE_ERR_NOT_FOUND);
+    CHECK(se_preview_note(e, 31, 60, 100) == SE_ERR_NOT_FOUND);
+    CHECK(se_preview_note(e, 30, 128, 100) == SE_ERR_INVALID_ARG);
+    CHECK(se_preview_note(e, 30, 60, 128) == SE_ERR_INVALID_ARG);
+    CHECK_EQ(preview_notes(e), 0);
+}
+
 TEST_CASE(plugin_instrument_dls_onset) {
     if (!kHaveAu) SKIP(kNoAu);
     EngineHandle e(48000, 256);
@@ -658,6 +711,35 @@ TEST_CASE(plugin_rt_render_does_not_allocate) {
         REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK);
     }
     CHECK_EQ(rt_alloc_count() - before, 0L);
+}
+
+TEST_CASE(preview_note_rt_render_does_not_allocate) {
+    // Preview notes on a plugin instrument, on and off between blocks of
+    // every size, with the transport stopped and running (built-in
+    // instruments: test_sampler.cpp).
+    EngineHandle e(48000, 256);
+    const se_device_desc sine_plug = clap(50, kClapSine, "studio.saine.test.sine");
+    Session5 s;
+    std::vector<se_note_desc> notes;
+    for (int i = 0; i < 100; ++i) notes.push_back(note(i * 400, i * 400 + 900, static_cast<uint8_t>(48 + i % 24)));
+    s.instrument(1, notes, &sine_plug, {clap_gain(52)});
+    REQUIRE(s.publish(e) == SE_OK);
+    CHECK_EQ(error_count(e), std::size_t{0});
+    std::vector<float> buf(2 * 8192);
+    REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK); // warm-up
+    const long before = rt_alloc_count();
+    const long freed = rt_free_count();
+    const uint32_t sizes[] = {256, 1, 333, 8192, 64, 255};
+    for (int i = 0; i < 600; ++i) {
+        if (i == 300) REQUIRE(se_transport_play(e) == SE_OK);
+        const auto pitch = static_cast<uint8_t>(36 + i % 48);
+        REQUIRE(se_preview_note(e, 50, pitch, static_cast<uint8_t>(i % 3 == 0 ? 0 : 100)) == SE_OK);
+        if (i % 50 == 49) REQUIRE(se_preview_stop(e) == SE_OK);
+        RtAllocGuard g;
+        REQUIRE(se_render_offline(e, buf.data(), sizes[i % 6]) == SE_OK);
+    }
+    CHECK_EQ(rt_alloc_count() - before, 0L);
+    CHECK_EQ(rt_free_count() - freed, 0L);
 }
 
 // ---------------------------------------------------------------- editor windows (Windows)

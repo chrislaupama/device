@@ -214,6 +214,62 @@ TEST_CASE(sampler_far_above_four_times_does_not_alias) {
     CHECK(db(rms(p, 1000, 4000)) > db(0.5 / std::sqrt(2.0)) - 1.0);
 }
 
+TEST_CASE(sampler_plays_preview_notes_without_allocating) {
+    // se_preview_note through a built-in instrument: the live note queue it
+    // shares with se_builtin_note, held notes released by se_preview_stop.
+    EngineHandle e(48000, 256);
+    const uint64_t asset = load_asset(e, {sine(48000, 440.0, 48000.0, 0.5)});
+    std::vector<float> values = sampler_defaults();
+    std::vector<TestSample> table(1);
+    table[0].slot = 0;
+    auto blob = state_blob_v2(values, table, asset);
+    se_device_desc inst{};
+    inst.device_id = 77;
+    inst.plugin_id = "sampler-steam";
+    inst.format = SE_PLUGIN_BUILTIN;
+    inst.enabled = 1;
+    inst.state = blob.data();
+    inst.state_len = blob.size();
+    se_track_desc_v6 t{};
+    t.track_id = 1;
+    t.gain = 1.0f;
+    t.instrument = 1;
+    t.instrument_plugin = &inst;
+    se_session_desc_v6 s{};
+    s.tracks = &t;
+    s.track_count = 1;
+    s.master_gain = 1.0f;
+    REQUIRE(se_session_publish_v6(e, &s) == SE_OK);
+    const auto peak = [](const std::vector<float>& v) {
+        double p = 0;
+        for (float x : v) p = std::max(p, static_cast<double>(std::fabs(x)));
+        return p;
+    };
+    const auto held = [&] {
+        se_preview_info i{};
+        se_preview_get(e, &i);
+        return i.notes;
+    };
+    REQUIRE(se_preview_note(e, 77, 60, 102) == SE_OK);
+    CHECK(held() == 1);
+    CHECK(peak(render(e, 4800, 256)) > 0.1);
+    REQUIRE(se_preview_stop(e) == SE_OK);
+    CHECK(held() == 0);
+    render(e, 48000, 256); // release tail (or the one-second sample ends)
+    CHECK(peak(render(e, 2400, 256)) < 1e-4);
+    std::vector<float> buf(2 * 4096);
+    REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK);
+    const long before = rt_alloc_count();
+    const uint32_t sizes[] = {256, 1, 333, 4096, 64};
+    for (int i = 0; i < 300; ++i) {
+        REQUIRE(se_preview_note(e, 77, static_cast<uint8_t>(48 + i % 24), static_cast<uint8_t>(i % 3 == 0 ? 0 : 100)) == SE_OK);
+        if (i % 40 == 39) REQUIRE(se_preview_stop(e) == SE_OK);
+        RtAllocGuard g;
+        REQUIRE(se_render_offline(e, buf.data(), sizes[i % 5]) == SE_OK);
+    }
+    CHECK(rt_alloc_count() - before == 0);
+}
+
 TEST_CASE(sampler_plays_in_the_instrument_slot_with_live_notes) {
     EngineHandle e(48000, 256);
     const uint64_t asset = load_asset(e, {sine(48000, 440.0, 48000.0, 0.5)});

@@ -142,6 +142,7 @@ public:
     // ---- preview (browser audition) voice, see se_preview_play
     int32_t preview_play(uint64_t asset_id, int64_t start_frame, float gain, float rate, bool solo);
     int32_t preview_stop();
+    int32_t preview_note(uint64_t device_id, uint8_t pitch, uint8_t velocity);
     int32_t preview_set(float gain, float rate, bool solo);
     void preview_get(se_preview_info* out) noexcept;
 
@@ -322,6 +323,8 @@ private:
     std::mutex preview_mutex_;
     std::vector<std::pair<uint64_t, AssetRef>> preview_held_; // guarded by preview_mutex_
     uint64_t preview_seq_ = 0;                                // guarded by preview_mutex_
+    std::vector<std::pair<uint64_t, uint8_t>> preview_notes_; // held (device, pitch), guarded by preview_mutex_
+    std::atomic<uint32_t> pub_pv_notes_{0};
     std::atomic<uint64_t> rt_preview_floor_{0};
     PreviewVoice rt_pv_[2];             // RT-owned: [0] current, [1] fading out
     float rt_pv_gain_ = 1.0f;           // RT-owned: target

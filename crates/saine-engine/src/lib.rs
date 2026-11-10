@@ -91,6 +91,8 @@ pub struct PreviewState {
     pub frames: i64,
     pub peak_l: f32,
     pub peak_r: f32,
+    /// Preview notes held (\`preview_note\`).
+    pub notes: u8,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -978,7 +980,14 @@ impl Engine {
             frames: p.frames,
             peak_l: p.peak_l,
             peak_r: p.peak_r,
+            notes: p.notes,
         }
+    }
+
+    /// Preview a note through a track's instrument device (velocity 0 = off);
+    /// \`preview_stop\` releases every held one.
+    pub fn preview_note(&self, device_id: u64, pitch: u8, velocity: u8) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_preview_note(self.raw, device_id, pitch, velocity) })
     }
 
     /// Silence all device input (Settings › "Mute audio input"): monitoring,

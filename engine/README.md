@@ -569,6 +569,21 @@ pausing mid-note does not click.
 mixed), so unmuting mid-note continues the note exactly as if it had never
 been muted. This costs CPU for muted instrument tracks.
 
+### Preview notes (\`se_preview_note\`)
+
+The browser's preview voice (\`se_preview_play\`) plays an asset. \`se_preview_note\`
+is its MIDI side: it plays a note through a track's instrument device, built-in
+or plugin, for the piano roll's keys and for notes being drawn or moved. The
+note goes into the device's live note queue, the same lock-free 256-event SPSC
+queue that \`se_builtin_note\` uses. The RT side drains that queue at the start of
+the next block and puts the notes at offset 0, ahead of the track's own events.
+Built-in instruments drain it in \`process()\`, and plugin instruments in the
+processor's instrument path, so the notes go through the track's chain and
+mixer. The main thread keeps the held (device, pitch) pairs, so
+\`se_preview_stop\` can release them and \`se_preview_info.notes\` can count them.
+Nothing on the audio thread allocates or locks. \`saine_engine_bench\` has a
+table for it.
+
 ### Export
 
 `se_export_wav` renders `[start, end)` linearly with its private transport:

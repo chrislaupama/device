@@ -143,6 +143,8 @@ fn midi_steps() -> Vec<Step> {
         }
     };
     let [h0, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15] = <[Rc<Cell<usize>>; 16]>::try_from(hs).ok().unwrap();
+    let hp = Rc::new(Cell::new(0usize));
+    let (hp0, hp1, hp2) = (hp.clone(), hp.clone(), hp.clone());
     vec![
         Do("Enter (playhead to 0)", Box::new(|a| key(a, Key::Return, false, false))),
         DoC("wheel back to the start of the timeline", Box::new(|a, _| {
@@ -286,6 +288,36 @@ fn midi_steps() -> Vec<Step> {
             if stepped {
                 key(a, "z", true, false);
             }
+        })),
+        DoC("preview: press the G3 key on the piano roll keyboard", Box::new(move |a, ctl| {
+            hp0.set(ctl.borrow().doc.history_labels().len());
+            let (_, y) = pr_xy(ctl, 0.0, 55);
+            press(a, PR_ORIGIN.0 + 20.0, y);
+        })),
+        Check("preview: G3 sounds through the track's instrument (one held preview note), no edit", Box::new(move |c, _| {
+            let dev = track_of(c, TrackKind::Instrument).and_then(|t| c.project().tracks[t].instrument_plugin.as_ref()).map(|d| d.id.0).ok_or("no instrument")?;
+            let held = c.engine.preview().notes;
+            (c.pr.preview == Some((dev, 55)) && held == 1 && c.doc.history_labels().len() == hp1.get())
+                .then_some(())
+                .ok_or(format!("preview {:?} held {held} history {} -> {}", c.pr.preview, hp1.get(), c.doc.history_labels().len()))
+        })),
+        DoC("preview: slide up to A3 with the button held", Box::new(|a, ctl| {
+            let (_, y) = pr_xy(ctl, 0.0, 57);
+            a.window().dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(PR_ORIGIN.0 + 20.0, y) });
+        })),
+        Check("preview: A3 replaced G3 (still one note held)", Box::new(|c, _| {
+            let held = c.engine.preview().notes;
+            (c.pr.preview.map(|p| p.1) == Some(57) && held == 1).then_some(()).ok_or(format!("preview {:?} held {held}", c.pr.preview))
+        })),
+        DoC("preview: release the key", Box::new(|a, ctl| {
+            let (_, y) = pr_xy(ctl, 0.0, 57);
+            release(a, PR_ORIGIN.0 + 20.0, y);
+        })),
+        Check("preview: released, no note held, the clip unchanged", Box::new(move |c, _| {
+            let held = c.engine.preview().notes;
+            (c.pr.preview.is_none() && held == 0 && c.doc.history_labels().len() == hp2.get())
+                .then_some(())
+                .ok_or(format!("preview {:?} held {held}", c.pr.preview))
         })),
         DoC("click the E3 note at beat 0, press Up", Box::new(|a, ctl| {
             let (x, y) = pr_xy(ctl, 0.1, 52);
