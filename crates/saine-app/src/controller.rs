@@ -661,8 +661,9 @@ impl Controller {
 
     fn remember_recent(&mut self, dir: &Path) {
         let path = dir.to_string_lossy().into_owned();
+        let resolved = std::fs::canonicalize(dir).ok();
         let list = &mut self.settings.prefs.recent_projects;
-        list.retain(|p| *p != path);
+        list.retain(|p| *p != path && (resolved.is_none() || std::fs::canonicalize(p).ok() != resolved));
         list.insert(0, path);
         list.truncate(10);
         self.save_prefs();
