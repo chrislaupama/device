@@ -840,7 +840,7 @@ impl Controller {
         let (clip_loop, length) = match clip.clip_loop {
             Some(l) if l.on => (ClipLoop { on: false, span: if clip.length > l.end { clip.length } else { 0 }, ..l }, l.end),
             kept => {
-                let l = kept.filter(|l| l.validate().is_ok()).unwrap_or(ClipLoop::whole(clip.length));
+                let l = kept.filter(|l| l.validate().is_ok() && l.len() > PPQ / 4).unwrap_or(ClipLoop::whole(clip.length));
                 (ClipLoop { on: true, span: 0, ..l }, if l.span > clip.length { l.span } else { clip.length })
             }
         };
@@ -1050,7 +1050,7 @@ impl Controller {
                                 let d = snap(raw - anchor).max(-orig.start);
                                 ClipLoop { start: orig.start + d, end: orig.end + d, ..orig }
                             }
-                            Some(false) => ClipLoop { start: snap(raw).clamp(0, orig.end - g), ..orig },
+                            Some(false) => ClipLoop { start: snap(raw).clamp(0, (orig.end - g).max(0)), ..orig },
                             Some(true) => ClipLoop { end: snap(raw).max(orig.start + g), ..orig },
                         };
                         self.pr.drag = Some(PrDrag::Loop { edge, orig, anchor, cur });
