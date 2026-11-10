@@ -321,8 +321,6 @@ pub struct Controller {
     clips_model: Rc<VecModel<ClipLabel>>,
     ruler_key: (i64, i64, i64),
     pub(crate) mm: crate::minimap::State,
-    /// Bumped whenever clip_vis is rebuilt.
-    pub(crate) vis_gen: u64,
     pub clip_vis: Vec<ClipVis>,
     pub track_vis: Vec<TrackVis>,
     pub(crate) clip_ids: Vec<ClipId>,
@@ -432,7 +430,6 @@ impl Controller {
             tracks_model: Rc::new(VecModel::default()),
             ruler_model: Rc::new(VecModel::default()),
             mm: crate::minimap::State::new(),
-            vis_gen: 0,
             section_label_model: Rc::new(VecModel::default()),
             clips_model: Rc::new(VecModel::default()),
             ruler_key: (i64::MIN, 0, 0),
@@ -1309,7 +1306,6 @@ impl Controller {
         self.track_vis = p.tracks.iter().map(|t| TrackVis { selected: Some(t.id) == self.selected_track }).collect();
         self.section_vis = self.build_section_vis();
         let p = self.doc.project();
-        self.vis_gen += 1;
         self.clip_vis.clear();
         self.clip_ids.clear();
         for (ti, t) in p.tracks.iter().enumerate() {

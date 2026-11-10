@@ -397,7 +397,7 @@ component Minimap inherits Rectangle {
             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
                 Studio.minimap-pointer(0, self.mouse-x, self.mouse-y, root.width);
             }
-            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) {
+            if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) {
                 Studio.minimap-pointer(2, self.mouse-x, self.mouse-y, root.width);
             }
         }

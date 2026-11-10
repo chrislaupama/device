@@ -10,6 +10,8 @@
 //! All geometry below is in the reference's own px (CSS); the Controller methods convert the
 //! design units (0.85 x reference px) that Slint sends.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use crate::controller::{Controller, track_color};
 use crate::timeline::{ClipVis, MAX_PX_PER_BEAT, MIN_PX_PER_BEAT};
 use crate::{AppWindow, MiniBar, Studio};
@@ -307,15 +309,16 @@ impl Drag {
 pub struct State {
     pub drag: Option<Drag>,
     pub model: Rc<VecModel<MiniBar>>,
-    /// vis_gen and map length the bars were built for.
-    built: (u64, u64),
+    /// Hash of the clip, track and map-length inputs the bars were built for.
+    built: Option<u64>,
     content_end: f64,
-    content_gen: u64,
+    /// Hash of the clip positions content_end was computed from.
+    content_key: Option<u64>,
 }
 
 impl State {
     pub fn new() -> State {
-        State { drag: None, model: Rc::new(VecModel::default()), built: (u64::MAX, 0), content_end: 0.0, content_gen: u64::MAX }
+        State { drag: None, model: Rc::new(VecModel::default()), built: None, content_end: 0.0, content_key: None }
     }
 }
 
@@ -325,8 +328,13 @@ impl Controller {
     }
 
     fn minimap_content_end(&mut self) -> f64 {
-        if self.mm.content_gen != self.vis_gen {
-            self.mm.content_gen = self.vis_gen;
+        let mut h = DefaultHasher::new();
+        for c in &self.clip_vis {
+            (c.track_index, c.start_beats.to_bits(), c.len_beats.to_bits()).hash(&mut h);
+        }
+        let key = Some(h.finish());
+        if self.mm.content_key != key {
+            self.mm.content_key = key;
             self.mm.content_end = content_end(&self.clip_vis);
         }
         self.mm.content_end
@@ -398,12 +406,17 @@ impl Controller {
         }
         let s = app.global::<Studio>();
         let m = self.minimap_metrics();
-        let key = (self.vis_gen, m.map_end.to_bits());
+        let p = self.doc.project();
+        let any_solo = p.tracks.iter().any(|t| t.solo);
+        let tracks: Vec<TrackInfo> = p.tracks.iter().map(|t| TrackInfo { color: track_color(t.color), dim: t.mute || (any_solo && !t.solo) }).collect();
+        let mut h = DefaultHasher::new();
+        (self.mm.content_key, m.map_end.to_bits()).hash(&mut h);
+        for t in &tracks {
+            (t.color.map(f32::to_bits), t.dim).hash(&mut h);
+        }
+        let key = Some(h.finish());
         if key != self.mm.built {
             self.mm.built = key;
-            let p = self.doc.project();
-            let any_solo = p.tracks.iter().any(|t| t.solo);
-            let tracks: Vec<TrackInfo> = p.tracks.iter().map(|t| TrackInfo { color: track_color(t.color), dim: t.mute || (any_solo && !t.solo) }).collect();
             let rows: Vec<MiniBar> = bars(&tracks, &self.clip_vis, m.map_end)
                 .into_iter()
                 .map(|b| MiniBar { x: b.x, w: b.w, y: b.y, h: b.h, color: slint::Color::from_argb_f32(b.alpha, b.color[0], b.color[1], b.color[2]) })
