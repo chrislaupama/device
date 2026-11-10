@@ -727,6 +727,42 @@ fn steps() -> Vec<Step> {
         Check("undo restored mute=false", Box::new(|c, _| (!c.project().tracks[0].mute).then_some(()).ok_or("still muted".into()))),
         Do("Cmd+Shift+Z", Box::new(|a| key(a, "Z", true, true))),
         Check("redo muted again", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("redo failed".into()))),
+        Do("⇧⌘E (file.export_audio)", Box::new(|a| key(a, "E", true, true))),
+        Check("export dialog open with a range and a size estimate", Box::new(|_c, a| {
+            let s = a.global::<Studio>();
+            (s.get_export_open() && s.get_export_bars_text().starts_with("Bars 1–") && s.get_export_estimate().contains("MB"))
+                .then_some(())
+                .ok_or(format!("open {} bars {} est {}", s.get_export_open(), s.get_export_bars_text(), s.get_export_estimate()))
+        })),
+        DoC("export into a temp folder: click Export", Box::new(|a, ctl| {
+            {
+                let mut c = ctl.borrow_mut();
+                c.export.dir = std::env::temp_dir().join(format!("saine-selftest-export-{}", std::process::id()));
+                c.export.name = "mix".into();
+            }
+            // Export window centred in the 1440 x 820 window: 442 x 340.4, Export button 52.2 x 22.1.
+            click(a, (1440.0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (820.0 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
+        })),
+        Check("mix.wav written: stereo 24-bit at the engine rate, the full length, not silent; dialog closed", Box::new(|c, a| {
+            let path = c.export.dir.join("mix.wav");
+            let (rate, ch, s) = crate::wavgen::read_wav(&path)?;
+            let _ = std::fs::remove_dir_all(&c.export.dir);
+            let peak = s.iter().fold(0f32, |m, v| m.max(v.abs()));
+            let frames = s.len() / 2;
+            (rate as f64 == c.engine.sample_rate() && ch == 2 && frames as u64 == c.export_frames() && peak > 0.01 && !a.global::<Studio>().get_export_open())
+                .then_some(())
+                .ok_or(format!("rate {rate} ch {ch} frames {frames} vs {} peak {peak}", c.export_frames()))
+        })),
+        Do("⌘N (file.new) with unsaved changes", Box::new(|a| key(a, "n", true, false))),
+        Check("Save changes? prompt open, project untouched", Box::new(|c, a| {
+            let n: usize = c.project().tracks.iter().map(|t| t.clips.len()).sum();
+            (a.global::<Studio>().get_unsaved_open() && n == 2).then_some(()).ok_or(format!("prompt {} clips {n}", a.global::<Studio>().get_unsaved_open()))
+        })),
+        Do("Escape (Cancel)", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("prompt closed, project kept", Box::new(|c, a| {
+            let n: usize = c.project().tracks.iter().map(|t| t.clips.len()).sum();
+            (!a.global::<Studio>().get_unsaved_open() && !c.unsaved_open && n == 2).then_some(()).ok_or(format!("clips {n}"))
+        })),
         Do("drag track 1 volume slider left", Box::new(|a| drag(a, 262.65 + 115.7 + 5.95 + 0.8 * 56.1, TRACK0_Y + 47.6, 262.65 + 140.0, TRACK0_Y + 47.6))),
         Check("track 1 gain lowered, one coalesced undo step", Box::new(|c, _| {
             let g = c.project().tracks[0].gain;

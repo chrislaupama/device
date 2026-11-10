@@ -1,0 +1,139 @@
+// Export dialog and the unsaved-changes prompt (src/dialogs.rs). Geometry from the reference app's
+// export and unsaved-changes modals at 100 % zoom, in our 85 % units (520 x 400.5 pt export
+// window centred in the main window; 440 x 149 pt prompt at x 515, y 347 over the timeline).
+import { Tokens } from "tokens.slint";
+import { Icon, Icons } from "widgets.slint";
+import { Studio } from "studio.slint";
+
+global DialogTokens {
+    out property <color> surface: #232426;
+    out property <color> pill: #292a2f;
+    out property <color> pill-text: #d0d0d1;
+    out property <color> label: #818389;
+    out property <color> accent: #2752f5;
+    out property <color> rule: #2c2c2e;
+}
+
+component PillButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary;
+    in property <length> font-size: 10.2px;
+    callback clicked();
+    border-radius: self.height / 2;
+    background: root.primary ? (ta.has-hover ? #2a66ff : DialogTokens.accent) : (ta.has-hover ? #2e2f34 : DialogTokens.pill);
+    drop-shadow-blur: 2.5px; drop-shadow-offset-y: 0.65px; drop-shadow-color: #00000040;
+    accessible-role: button; accessible-label: root.text;
+    Text { text: root.text; color: root.primary ? #ffffff : DialogTokens.pill-text; font-size: root.font-size; font-weight: 600; letter-spacing: -0.2px; horizontal-alignment: center; vertical-alignment: center; }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+// Two-option segmented control; `index` is the selected option.
+component Segments inherits Rectangle {
+    in property <string> a;
+    in property <string> b;
+    in property <length> a-w;
+    in property <int> index;
+    callback picked(int);
+    height: 18.7px; border-radius: self.height / 2; background: DialogTokens.pill;
+    for t[i] in [root.a, root.b]: Rectangle {
+        x: i == 0 ? 1.7px : 1.7px + root.a-w; y: 1.7px; width: i == 0 ? root.a-w : root.width - 3.4px - root.a-w; height: parent.height - 3.4px;
+        border-radius: self.height / 2; background: root.index == i ? DialogTokens.accent : transparent;
+        accessible-role: tab; accessible-label: t; accessible-checked: root.index == i;
+        Text { text: t; color: root.index == i ? #ffffff : #a6a8ac; font-size: 10.2px; font-weight: 600; letter-spacing: -0.2px; horizontal-alignment: center; vertical-alignment: center; }
+        TouchArea { clicked => { root.picked(i); } }
+    }
+}
+
+component RowLabel inherits Text {
+    height: 20.4px; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center;
+}
+
+// Export (File › Export…, ⇧⌘E). Mixdown renders to WAV; Stems, Project, MP3 and the other
+// sample rate are PLACEHOLDERS (status line), the range is always the full project.
+export component ExportModal inherits Rectangle {
+    width: 442px; height: 340.4px;
+    border-radius: 10.2px; background: DialogTokens.surface;
+    border-width: 0.5px; border-color: #ffffff12;
+    drop-shadow-blur: 21px; drop-shadow-offset-y: 6.8px; drop-shadow-color: #00000080;
+    accessible-role: groupbox; accessible-label: "Export";
+    TouchArea { }
+    // ---- header ----
+    Icon { x: 17px; y: 15.3px; width: 13.6px; height: 13.6px; d: Icons.download; ink: #ffffff; stroke-width: 1.4px; }
+    Text { x: 37.4px; y: 12.4px; height: 19.4px; text: "Export"; color: #ffffff; font-size: 13.6px; font-weight: 700; letter-spacing: -0.54px; vertical-alignment: center; }
+    Rectangle {
+        x: root.width - 17px - 13.6px; y: 15.3px; width: 13.6px; height: 13.6px; border-radius: 6.8px;
+        accessible-role: button; accessible-label: "Close";
+        Icon { x: 2.3px; y: 2.3px; width: 9px; height: 9px; d: Icons.close; ink: close-ta.has-hover ? #ffffff : #bebebe; stroke-width: 1.4px; }
+        close-ta := TouchArea { clicked => { Studio.export-close(); } }
+    }
+    // ---- recipes ----
+    for r[i] in [
+        { name: "Mixdown", value: Studio.export-recipe-text },
+        { name: "Stems", value: "1 WAV file" },
+        { name: "Project", value: "Ableton Live" },
+    ]: Rectangle {
+        x: 17px + i * (131.47px + 6.8px); y: 44.2px; width: 131.47px; height: 44.2px; border-radius: 8.5px;
+        background: i == 0 ? DialogTokens.accent : (rta.has-hover ? #2e2f34 : DialogTokens.pill);
+        accessible-role: tab; accessible-label: r.name; accessible-checked: i == 0;
+        Text { x: 10.2px; y: 7.9px; height: 13.6px; text: r.name; color: i == 0 ? #ffffff : DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+        Text { x: 10.2px; y: 23.4px; height: 11.9px; text: r.value; color: i == 0 ? #ffffffb8 : #d0d0d1b8; font-size: 9.35px; font-weight: 500; letter-spacing: -0.19px; vertical-alignment: center; }
+        rta := TouchArea { clicked => { if (i > 0) { Studio.chat-placeholder("Export " + r.name); } } }
+    }
+    // ---- form ----
+    RowLabel { x: 17px; y: 105.4px; text: "Range"; }
+    Rectangle {
+        x: 71.4px; y: 105.4px; width: 81.6px; height: 20.4px; border-radius: 10.2px; background: DialogTokens.pill;
+        Text { x: 11.9px; text: "Full project"; color: DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+        Icon { x: parent.width - 18.7px; y: 6.2px; width: 8px; height: 8px; d: Icons.chevron-down; ink: DialogTokens.label; stroke-width: 1.4px; }
+    }
+    Text { x: 71.4px + 81.6px + 8.5px; y: 105.4px; height: 20.4px; text: Studio.export-bars-text; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+    RowLabel { x: 17px; y: 136px; text: "Format"; }
+    Segments { x: 71.4px; y: 136.85px; width: 85.9px; a: "WAV"; b: "MP3"; a-w: 40px; index: 0; picked(i) => { if (i == 1) { Studio.chat-placeholder("MP3 export"); } } }
+    Segments { x: 71.4px + 91.8px; y: 136.85px; width: 97.3px; a: "16-bit"; b: "24-bit"; a-w: 48.4px; index: Studio.export-bits24 ? 1 : 0; picked(i) => { Studio.export-bits(i == 1); } }
+    Segments {
+        x: 71.4px + 197.7px; y: 136.85px; width: 117.3px; a: "44.1 kHz"; b: "48 kHz"; a-w: 56.3px; index: Studio.export-rate48 ? 1 : 0;
+        picked(i) => { if ((i == 1) != Studio.export-rate48) { Studio.chat-placeholder("Export at another sample rate"); } }
+    }
+    Rectangle { x: 17px; y: 170px; width: root.width - 34px; height: 0.45px; background: DialogTokens.rule; }
+    RowLabel { x: 17px; y: 184.2px; text: "Name"; }
+    Rectangle {
+        x: 71.4px; y: 184.2px; width: root.width - 17px - 71.4px; height: 20.4px; border-radius: 6.8px; background: DialogTokens.pill;
+        border-width: 0.3px; border-color: name-in.has-focus ? DialogTokens.accent : #ffffff17;
+        name-in := TextInput {
+            x: 10.2px; width: parent.width - 20.4px; height: parent.height; text: Studio.export-name; color: #ffffff;
+            font-size: 9.35px; font-weight: 500; letter-spacing: -0.28px; vertical-alignment: center; single-line: true;
+            edited => { Studio.export-name-edited(self.text); }
+        }
+    }
+    RowLabel { x: 17px; y: 214.8px; text: "Save in"; }
+    Rectangle {
+        x: 71.4px; y: 214.8px; width: 279.7px; height: 20.4px; border-radius: 6.8px; background: DialogTokens.pill;
+        border-width: 0.3px; border-color: #ffffff17;
+        Text { x: 10.2px; width: parent.width - 20.4px; text: Studio.export-dir; color: #ffffff; font-size: 9.35px; font-weight: 500; letter-spacing: -0.28px; vertical-alignment: center; overflow: elide; }
+    }
+    PillButton { x: root.width - 17px - 65.1px; y: 214.8px; width: 65.1px; height: 20.4px; text: "Choose..."; clicked => { Studio.export-choose-dir(); } }
+    // ---- footer ----
+    Rectangle { x: 0; y: root.height - 57.8px; width: root.width; height: 0.45px; background: DialogTokens.rule; }
+    Text { x: 17px; y: root.height - 57.8px + 13.6px + 4.25px; height: 13.6px; text: "Size"; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+    Text { x: 17px + 25.5px; y: root.height - 57.8px + 13.6px + 4.25px; height: 13.6px; text: Studio.export-estimate; color: #e5e5e8; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+    PillButton { x: root.width - 17px - 52.2px - 6.8px - 46.75px; y: root.height - 57.8px + 16.15px; width: 46.75px; height: 22.1px; text: "Close"; clicked => { Studio.export-close(); } }
+    PillButton { x: root.width - 17px - 52.2px; y: root.height - 57.8px + 16.15px; width: 52.2px; height: 22.1px; text: "Export"; primary: true; clicked => { Studio.export-run(); } }
+}
+
+// "Save changes?" before File › New Project (⌘N) replaces a project with unsaved changes.
+export component UnsavedPrompt inherits Rectangle {
+    width: 374px; height: 126.6px;
+    border-radius: 10.2px; background: Tokens.bg-panel;
+    drop-shadow-blur: 21px; drop-shadow-offset-y: 6.8px; drop-shadow-color: #00000080;
+    accessible-role: groupbox; accessible-label: "Save changes?";
+    TouchArea { }
+    Text { x: 20.4px; y: 16.3px; height: 16.3px; text: "Save changes?"; color: #ffffff; font-size: 13.6px; font-weight: 700; letter-spacing: -0.54px; vertical-alignment: center; }
+    Text {
+        x: 20.4px; y: 37.4px; width: root.width - 40.8px; height: 27.2px; wrap: word-wrap;
+        text: "Your current project has unsaved changes. Would you like to save your changes?";
+        color: #c8c9cc; font-size: 10.2px; font-weight: 500; letter-spacing: -0.2px; vertical-alignment: top;
+    }
+    PillButton { x: root.width - 20.4px - 51.4px - 6.8px - 78.2px - 6.8px - 60.9px; y: 79px; width: 60.9px; height: 27.2px; text: "Cancel"; clicked => { Studio.unsaved-cancel(); } }
+    PillButton { x: root.width - 20.4px - 51.4px - 6.8px - 78.2px; y: 79px; width: 78.2px; height: 27.2px; text: "Don't Save"; clicked => { Studio.unsaved-dont-save(); } }
+    PillButton { x: root.width - 20.4px - 51.4px; y: 79px; width: 51.4px; height: 27.2px; text: "Save"; primary: true; clicked => { Studio.unsaved-save(); } }
+}

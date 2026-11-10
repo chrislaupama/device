@@ -27,6 +27,7 @@ import { StripMetrics, StripCanvas, StripReadout, StripButton } from "channel_st
 import { AssistantPanel, HighlightOverlay } from "assistant.slint";
 import { SynthDevice, SynthMenuList } from "synth.slint";
 import { SettingsPanel, ChoiceList } from "settings.slint";
+import { ExportModal, UnsavedPrompt } from "dialogs.slint";
 import { PluginCard, AddDeviceCard, DevMenuList } from "devices.slint";
 import { BuiltinCard } from "device_panel.slint";
 import { TrackHeaderRow, MasterHeaderRow, AutoPill } from "track_header.slint";
@@ -630,6 +631,13 @@ export component AppWindow inherits Window {
 
     property <int> cards-epoch: Studio.cards-epoch;
     changed cards-epoch => { fs.focus(); }
+    // The key handler gets the focus back when a modal dialog closes.
+    property <bool> modal-open: Studio.export-open || Studio.unsaved-open;
+    changed modal-open => {
+        if (!self.modal-open) {
+            fs.focus();
+        }
+    }
     fs := FocusScope {
         init => { self.focus(); }
         key-pressed(e) => {
@@ -815,6 +823,18 @@ export component AppWindow inherits Window {
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { clicked => { Studio.close-settings(); fs.focus(); } }
             SettingsPanel { x: max(0px, min(216.75px, root.width - 816px)); y: 5.5px; width: min(816px, root.width); height: root.height - 5.5px + 12px; }
+        }
+        // Export dialog (centred) and the unsaved-changes prompt (over the timeline, as in the
+        // reference); both are modal: clicks outside them are swallowed.
+        if Studio.export-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { }
+            ExportModal { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
+        }
+        if Studio.unsaved-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { }
+            UnsavedPrompt { x: max(0px, min(438px, parent.width - self.width)); y: max(0px, min(295px, parent.height - self.height)); }
         }
         // Status line (engine/device/import messages); empty most of the time.
         if Studio.status-text != "": Rectangle {
