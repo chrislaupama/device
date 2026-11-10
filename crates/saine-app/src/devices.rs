@@ -42,7 +42,7 @@ pub const ADD_X_ALONE: f32 = 265.0;
 pub const ADD_W: f32 = 182.5;
 /// Bottom panel x (window) and its device area start (after the inspector).
 const PANEL_X: f32 = 5.0;
-const CHAIN_AREA_X: f32 = 255.0;
+pub(crate) const CHAIN_AREA_X: f32 = 255.0;
 /// Browser tree: area top (window) and row pitch.
 pub const TREE_Y: f32 = 78.0 + 81.0;
 pub const TREE_TOP: f32 = 4.0;
@@ -856,13 +856,13 @@ impl Controller {
 
     // ---------------------------------------------------------------- chain
 
-    fn chain_view_w(&self) -> f32 {
+    pub(crate) fn chain_view_w(&self) -> f32 {
         (self.devices.win.0 - 2.0 * PANEL_X - CHAIN_AREA_X).max(100.0)
     }
 
     /// Cards of the selected track WITHOUT scroll or drag offsets:
     /// ((x, card), add_x, synth_visible). x is bottom-panel relative.
-    fn chain_layout_unscrolled(&self) -> (Vec<(f32, DeviceCard)>, f32, bool) {
+    pub(crate) fn chain_layout_unscrolled(&self) -> (Vec<(f32, DeviceCard)>, f32, bool) {
         let synth = self.synth_track().is_some();
         let mut out = Vec::new();
         let Some(t) = self.selected_track.and_then(|t| self.project().track(t)) else { return (out, ADD_X_ALONE, synth) };
@@ -971,7 +971,7 @@ impl Controller {
         self.ui_dirty = true;
     }
 
-    fn clamp_chain_scroll(&mut self) {
+    pub(crate) fn clamp_chain_scroll(&mut self) {
         let (_, add_x, _) = self.chain_layout_unscrolled();
         let content = add_x + ADD_W + 8.0 - CHAIN_AREA_X;
         let max = (content - self.chain_view_w()).max(0.0);
@@ -1292,6 +1292,7 @@ impl Controller {
         self.clamp_chain_scroll();
         let scroll = self.devices.chain_scroll;
         let (cards, add_x, _) = self.chain_layout_unscrolled();
+        self.devmm_sync_chain(&cards, add_x);
         let frames: Vec<crate::ChainFrame> = self
             .chain_frames(&cards)
             .into_iter()

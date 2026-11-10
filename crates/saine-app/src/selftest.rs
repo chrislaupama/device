@@ -5313,6 +5313,9 @@ fn minimap_steps() -> Vec<Step> {
     let before = Rc::new(Cell::new((0.0f64, 0.0f64)));
     let moved_from = Rc::new(Cell::new((0.0f64, 0.0f64)));
     let (b1, b2, b3) = (before.clone(), moved_from.clone(), moved_from.clone());
+    let landing = Rc::new(Cell::new(0.0f32));
+    let (l1, l2) = (landing.clone(), landing.clone());
+    let moved_start = moved_from.clone();
     fn width(a: &AppWindow) -> f32 {
         a.global::<Studio>().get_minimap_width()
     }
@@ -5321,6 +5324,7 @@ fn minimap_steps() -> Vec<Step> {
     }
     vec![
         DoC("minimap: view at beat 200", Box::new(move |_, ctl| {
+            crate::pointer::take_log();
             let mut c = ctl.borrow_mut();
             b1.set((c.view.start_beats, c.view.px_per_beat));
             c.view.start_beats = 200.0;
@@ -5341,7 +5345,18 @@ fn minimap_steps() -> Vec<Step> {
                 let c = ctl.borrow();
                 b2.set((c.view.start_beats, c.view.px_per_beat));
             }
+            l1.set(STRIP_X + x0);
             drag(a, STRIP_X + x0, STRIP_Y, STRIP_X + x0 - 40.0, STRIP_Y);
+        })),
+        Check("the drag hid the pointer and put it back on the grabbed spot (the window moved that far on the strip), same row, shown again", Box::new(move |c, a| {
+            use crate::pointer::Op;
+            let ops = crate::pointer::take_log();
+            let (start0, _) = moved_start.get();
+            let span = c.lanes_size.0 as f64 / c.view.px_per_beat;
+            let map = (200.0 + span).max(c.minimap_content_end_for_test());
+            let want = l2.get() - ((start0 - c.view.start_beats) / map) as f32 * a.global::<Studio>().get_minimap_width();
+            let ok = matches!(ops.as_slice(), [Op::Hide, Op::Warp(x, y), Op::Show] if approx(*x, want, 2.0) && approx(*y, STRIP_Y, 1.0)) && !a.global::<Studio>().get_pointer_hidden();
+            ok.then_some(()).ok_or(format!("{ops:?} want x {want}"))
         })),
         Check("the view scrolled back (at most 40 px of map), at the same zoom", Box::new(move |c, a| {
             let (start0, ppb0) = b3.get();
@@ -5384,6 +5399,196 @@ fn minimap_steps() -> Vec<Step> {
     ]
 }
 
+
+/// Devices minimap: shown while the chain is wider than the panel; jump, drag (pointer hidden, put back), Esc,
+/// wheel (src/devminimap.rs, src/pointer.rs). Selects the audio track, adds built-in effects until the chain
+/// scrolls and removes them again.
+fn devminimap_steps() -> Vec<Step> {
+    use Step::*;
+    use crate::devminimap as dm;
+    use crate::pointer::Op;
+    // The strip in the window: the bottom panel (x 5, 1430 wide) less 252.45 from its right edge; mid-height.
+    const STRIP_X: f32 = 5.0 + (1440.0 - 10.0) - dm::X_FROM_RIGHT;
+    const STRIP_Y: f32 = BOTTOM_Y + dm::Y + 10.2;
+    const CSS: f32 = crate::minimap::CSS;
+    fn clear(a: &AppWindow, ctl: &Ctl) {
+        let Some(i) = track_of(&ctl.borrow(), TrackKind::Audio) else { return };
+        click_track_header(a, ctl, i);
+        let mut c = ctl.borrow_mut();
+        let ids: Vec<saine_core::DeviceId> = c.project().tracks[i].devices.iter().map(|d| d.id).collect();
+        for d in ids {
+            c.execute(saine_core::Command::RemoveDevice { device: d });
+        }
+        c.devices.chain_scroll = 0.0;
+        c.update_ui(a);
+    }
+    fn window_mid(a: &AppWindow) -> f32 {
+        let s = a.global::<Studio>();
+        STRIP_X + s.get_devmm_win_x() + s.get_devmm_win_w() / 2.0
+    }
+    fn wait_chain(c: &Controller) -> Result<&dm::Chain, String> {
+        c.devmm_chain_for_test().ok_or("no chain".to_string())
+    }
+    let before = Rc::new(Cell::new(0.0f32));
+    let press_at = Rc::new(Cell::new(0.0f32));
+    let (b1, b2, p1, p2) = (before.clone(), before.clone(), press_at.clone(), press_at.clone());
+    vec![
+        DoC("devices minimap: select the audio track, clear its chain, add effects until the chain scrolls", Box::new(|a, ctl| {
+            key(a, Key::Escape, false, false);
+            clear(a, ctl);
+            let Some(i) = track_of(&ctl.borrow(), TrackKind::Audio) else { return };
+            let mut c = ctl.borrow_mut();
+            let t = c.project().tracks[i].id;
+            c.set_bottom_tab(BottomTab::Devices);
+            for id in ["compressor", "channeleq", "delay", "reverb", "limiter", "gate", "glue-compressor", "phaser"] {
+                c.update_ui(a);
+                if c.devmm_chain_for_test().is_some_and(|ch| ch.scrollable()) {
+                    break;
+                }
+                if let Some(def) = saine_core::builtin::find(id) {
+                    c.add_item_to_track(&crate::devices::Item::Builtin(def), t, None);
+                }
+            }
+            c.devices.chain_scroll = 0.0;
+            c.update_ui(a);
+            crate::pointer::take_log();
+        })),
+        Check("devices minimap: shown, one tile per device, 227 reference px wide, the window at the start", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let ch = wait_chain(c)?;
+            let n = c.project().track(c.selected_track.ok_or("no track")?).map_or(0, |t| t.devices.len());
+            let (_, w) = ch.window(0.0, dm::WIDTH);
+            let ok = s.get_devmm_visible()
+                && ch.scrollable()
+                && approx(s.get_devmm_width(), dm::WIDTH * CSS, 0.05)
+                && s.get_devmm_tiles().row_count() == n
+                && approx(s.get_devmm_win_x(), 0.0, 0.01)
+                && approx(s.get_devmm_win_w(), w * CSS, 0.05);
+            ok.then_some(()).ok_or(format!("visible {} width {} tiles {} of {n} window {} {}", s.get_devmm_visible(), s.get_devmm_width(), s.get_devmm_tiles().row_count(), s.get_devmm_win_x(), s.get_devmm_win_w()))
+        })),
+        DoC("devices minimap: click the strip's far end (the window jumps there)", Box::new(|a, _| click(a, STRIP_X + 190.0, STRIP_Y))),
+        Check("the chain scrolled so the window is centred on the click, and the pointer was not hidden", Box::new(|c, _| {
+            let ch = wait_chain(c)?;
+            let want = ch.scroll_at(190.0 / CSS, dm::WIDTH) * CSS;
+            let ok = approx(c.devices.chain_scroll, want, 1.0) && c.devices.chain_scroll > 10.0 && crate::pointer::take_log().is_empty() && c.dm.drag.is_none();
+            ok.then_some(()).ok_or(format!("scroll {} want {want}", c.devices.chain_scroll))
+        })),
+        DoC("devices minimap: back to the start, drag the window 60 px right", Box::new(move |a, ctl| {
+            {
+                let mut c = ctl.borrow_mut();
+                c.devices.chain_scroll = 0.0;
+                c.update_ui(a);
+            }
+            let x0 = window_mid(a);
+            p1.set(x0);
+            drag(a, x0, STRIP_Y, x0 + 60.0, STRIP_Y);
+        })),
+        Check("the chain followed the pointer one to one (in strip px) and the drag is over", Box::new(|c, _| {
+            let ch = wait_chain(c)?;
+            let want = 60.0 / ch.ratio(dm::WIDTH);
+            let ok = approx(c.devices.chain_scroll, want, 2.0) && c.dm.drag.is_none();
+            ok.then_some(()).ok_or(format!("scroll {} want {want}", c.devices.chain_scroll))
+        })),
+        Check("the drag hid the pointer and put it back on the window's spot, same row, shown again", Box::new(move |_, a| {
+            let ops = crate::pointer::take_log();
+            let ok = matches!(ops.as_slice(), [Op::Hide, Op::Warp(x, y), Op::Show] if approx(*x, p2.get() + 60.0, 2.0) && approx(*y, STRIP_Y, 1.0)) && !a.global::<Studio>().get_pointer_hidden();
+            ok.then_some(()).ok_or(format!("{ops:?} want x {}", p2.get() + 60.0))
+        })),
+        DoC("devices minimap: press the window, drag 50 px, press Esc", Box::new(move |a, ctl| {
+            let x0 = window_mid(a);
+            b1.set(ctl.borrow().devices.chain_scroll);
+            let w = a.window();
+            press(a, x0, STRIP_Y);
+            for i in 1..=6 {
+                w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x0 + 50.0 * i as f32 / 6.0, STRIP_Y) });
+            }
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.update_ui(a);
+            }
+            key(a, Key::Escape, false, false);
+        })),
+        Check("Esc put the chain back, ended the drag and put the pointer on the pressed spot", Box::new(move |c, a| {
+            let ops = crate::pointer::take_log();
+            let ok = approx(c.devices.chain_scroll, b2.get(), 0.01)
+                && c.dm.drag.is_none()
+                && matches!(ops.as_slice(), [Op::Hide, Op::Warp(_, y), Op::Show] if approx(*y, STRIP_Y, 1.0))
+                && !a.global::<Studio>().get_pointer_hidden();
+            ok.then_some(()).ok_or(format!("scroll {} was {} ops {ops:?}", c.devices.chain_scroll, b2.get()))
+        })),
+        DoC("devices minimap: the held button keeps moving after Esc, then is released", Box::new(|a, _| {
+            let w = a.window();
+            w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(STRIP_X + 150.0, STRIP_Y) });
+            release(a, STRIP_X + 150.0, STRIP_Y);
+        })),
+        Check("nothing scrolled after Esc", Box::new(move |c, _| approx(c.devices.chain_scroll, before.get(), 0.01).then_some(()).ok_or(format!("scroll {}", c.devices.chain_scroll)))),
+        DoC("devices minimap: from the start, wheel over the strip", Box::new(|a, ctl| {
+            {
+                let mut c = ctl.borrow_mut();
+                c.devices.chain_scroll = 0.0;
+                c.update_ui(a);
+            }
+            a.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(STRIP_X + 80.0, STRIP_Y), delta_x: 0.0, delta_y: -20.0 });
+        })),
+        Check("the wheel scrolled the chain forward by the same strip distance", Box::new(|c, _| {
+            let want = 20.0 / wait_chain(c)?.ratio(dm::WIDTH);
+            approx(c.devices.chain_scroll, want, 2.0).then_some(()).ok_or(format!("scroll {} want {want}", c.devices.chain_scroll))
+        })),
+        DoC("devices minimap: remove the effects again", Box::new(|a, ctl| clear(a, ctl))),
+        Check("the chain is empty again and the strip is hidden", Box::new(|c, a| {
+            let n = c.selected_track.and_then(|t| c.project().track(t)).map_or(1, |t| t.devices.len());
+            (n == 0 && !a.global::<Studio>().get_devmm_visible() && c.devices.chain_scroll == 0.0).then_some(()).ok_or(format!("devices {n}"))
+        })),
+    ]
+}
+
+/// The timeline ruler's bar labels at several zooms: the reference app's rule (S65) is a label every
+/// power-of-two bars once the bars are 50 px apart, starting at bar 1.
+fn ruler_zoom_steps() -> Vec<Step> {
+    use Step::*;
+    let saved = Rc::new(Cell::new((0.0f64, 0.0f64)));
+    let save = saved.clone();
+    let mut v: Vec<Step> = vec![DoC("ruler: remember the view", Box::new(move |_, ctl| {
+        let c = ctl.borrow();
+        save.set((c.view.start_beats, c.view.px_per_beat));
+    }))];
+    let zooms: [(&'static str, &'static str, f64, i64); 5] = [
+        ("ruler: zoom out to 12.5 %", "labels every 8 bars at 12.5 %", 0.125, 8),
+        ("ruler: zoom out to 25 %", "labels every 4 bars at 25 %", 0.25, 4),
+        ("ruler: default zoom", "a label on every bar at 100 %", 1.0, 1),
+        ("ruler: zoom in to 400 %", "a label on every bar at 400 %", 4.0, 1),
+        ("ruler: zoom in to 1500 %", "a label on every bar at 1500 %", 15.0, 1),
+    ];
+    for (name, check, factor, want_bars) in zooms {
+        v.push(DoC(name, Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.view.start_beats = 0.0;
+            c.view.px_per_beat = crate::timeline::DEFAULT_PX_PER_BEAT * factor;
+            c.ui_dirty = true;
+        })));
+        v.push(Check(check, Box::new(move |c, a| {
+            let labels = a.global::<Studio>().get_ruler_labels();
+            let rows: Vec<(f32, String)> = (0..slint::Model::row_count(&labels)).filter_map(|i| slint::Model::row_data(&labels, i)).map(|l| (l.x, l.text.to_string())).collect();
+            let gap = want_bars as f64 * 4.0 * c.view.px_per_beat;
+            let ok = !rows.is_empty()
+                && rows[0].1 == "1"
+                && rows.windows(2).all(|w| {
+                    let (n0, n1): (i64, i64) = (w[0].1.parse().unwrap_or(0), w[1].1.parse().unwrap_or(0));
+                    n1 - n0 == want_bars && ((w[1].0 - w[0].0) as f64 - gap).abs() < 0.5 && gap >= 49.0
+                });
+            ok.then_some(()).ok_or(format!("labels {rows:?} want every {want_bars} bars"))
+        })));
+    }
+    let saved_check = saved.clone();
+    v.push(DoC("ruler: restore the view", Box::new(move |_, ctl| {
+        let mut c = ctl.borrow_mut();
+        let (s, p) = saved.get();
+        c.view.start_beats = s;
+        c.view.px_per_beat = p;
+        c.ui_dirty = true;
+    })));
+    v.push(Check("ruler: view restored", Box::new(move |c, _| approx(c.view.px_per_beat as f32, saved_check.get().1 as f32, 0.01).then_some(()).ok_or(format!("ppb {}", c.view.px_per_beat)))));
+    v
+}
 
 fn clip_menu_steps() -> Vec<Step> {
     use Step::*;
@@ -5757,7 +5962,9 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(files_steps());
     all.extend(section_steps());
     all.extend(minimap_steps());
+    all.extend(devminimap_steps());
     all.extend(clip_menu_steps());
+    all.extend(ruler_zoom_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));
