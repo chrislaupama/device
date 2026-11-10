@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! saine-studio [--open <dir>] [--import <wav>...] [--save-to <dir>] [--no-audio]
-//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-clip-menu|reference-settings-audio|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-device-chain|review-settings-plugins]
+//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-clip-menu|review-clip-menu|reference-settings-audio|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-device-chain|review-settings-plugins]
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
@@ -18,6 +18,8 @@
 //!              [--clip-menu <0|1|3|4|5>  (open a clip editor dropdown after --state: Speed, Warp, Grid, Type, Genre; 2, Mode, is disabled)]
 //!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
 //! ```
+
+static CLIP_MENU_AUDIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 mod analyzer_views;
 mod assistant_panel;
@@ -100,6 +102,8 @@ struct Args {
     input_menu_state: bool,
     /// reference-clip-menu: Instrument track with a 1-bar MIDI clip at bar 6, its context menu open.
     clip_menu_state: bool,
+    /// review-clip-menu: the first audio clip's menu open with the playhead inside it.
+    clip_menu_audio: bool,
     /// Step sequencer review state: lane tab shown (0 Steps .. 4 Tie), or None.
     seq_state: Option<i32>,
     /// Clip sidebar pattern list review: 0 empty MIDI clip, 1 chords made, 2 drum patterns made.
@@ -132,6 +136,7 @@ struct Args {
     /// saved project open to its tracks, audio files and MIDI clips (no reference).
     /// review-files-preview: the audio folder with sine-a440-pulsed.wav playing in the preview
     /// bar (compare z100-files-row-preview-playing.png).
+    /// review-files-sort: the audio folder with the sort menu open.
     files_review: u8,
     /// review-section-added / review-sections-two: one new 8-bar section (compare
     /// z100-marker-after-plus-click.png), or two with the second selected.
@@ -287,6 +292,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.clip_menu_state = true;
                 }
+                "review-clip-menu" => {
+                    a.reference_default = true;
+                    a.clip_menu_audio = true;
+                }
                 "reference-settings-audio" => {
                     a.reference_default = true;
                     a.settings_state = true;
@@ -323,7 +332,8 @@ fn parse_args() -> Result<Args, String> {
                         "review-files-folders" => 2,
                         "review-files-project" => 3,
                         "review-files-preview" => 4,
-                        _ => return Err(format!("unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project, review-files-preview)")),
+                        "review-files-sort" => 5,
+                        _ => return Err(format!("unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project, review-files-preview, review-files-sort)")),
                     };
                 }
                 "review-automation" => {
@@ -552,7 +562,7 @@ fn app_text_focused(aw: &slint::Weak<AppWindow>) -> bool {
 }
 
 fn pick_import() -> Vec<PathBuf> {
-    rfd::FileDialog::new().set_title("Import audio").add_filter("WAV audio", &["wav", "WAV"]).pick_files().unwrap_or_default()
+    rfd::FileDialog::new().set_title("Import audio").add_filter("Audio", &crate::files::dialog_exts()).pick_files().unwrap_or_default()
 }
 
 fn pick_project_dir(save: bool) -> Option<PathBuf> {
@@ -592,6 +602,8 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             ctl.borrow_mut().insert_midi_clip();
         }
         "clip.duplicate" => ctl.borrow_mut().duplicate_clip(),
+        "clip.split_at_marker" => ctl.borrow_mut().split_clip(),
+        "clip.disable" => ctl.borrow_mut().toggle_clip_disabled(),
         "clip.cut" => ctl.borrow_mut().cut_clip(),
         "edit.copy" => {
             ctl.borrow_mut().copy_clip();
@@ -885,6 +897,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(22.0);
         c.open_input_menu();
     }
+    CLIP_MENU_AUDIO.store(args.clip_menu_audio, std::sync::atomic::Ordering::Relaxed);
     if args.clip_menu_state {
         let mut c = ctl.borrow_mut();
         if let Some(inst) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id) {
@@ -1004,6 +1017,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         } else if args.files_review >= 2 {
             c.files_add_folder(&audio);
             c.files_expand(files::FileItem::Folder(audio.clone()));
+            c.files.sort_open = args.files_review == 5;
             if args.files_review == 4 {
                 // Preview of the pulsed file, shown 30 % in (no audio device: the voice never advances).
                 let path = audio.join("sine-a440-pulsed.wav");
@@ -1011,7 +1025,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 c.files.selected = Some(path.to_string_lossy().into_owned());
                 c.files.audition.loading = Some(path.clone());
                 c.finish_audition(path, loaded);
-                c.files.audition.resume = c.files.audition.asset.map_or(0, |(_, f)| f * 3 / 10);
+                if let Some((id, frames)) = c.files.audition.asset {
+                    c.audition_play(id, frames * 3 / 10);
+                }
             }
         } else {
             c.browser_section(files::SECTION_FILES);
@@ -1437,7 +1453,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let tab = if c.bottom_tab == BottomTab::Clip { BottomTab::Devices } else { BottomTab::Clip };
         c.set_bottom_tab(tab)
     });
-    on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool| c.pr_pointer(kind, x, y, shift, alt));
+    on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool| c.pr_pointer(kind, x, y, shift, alt, command));
     on!(on_pr_scroll, |c, dy: f32| c.pr_scroll(dy));
     on!(on_pr_action, |c, a: slint::SharedString| c.pr_action(a.as_str()));
     on!(on_clip_menu_open, |c, m: i32| c.clip_menu_open(m));
@@ -1497,7 +1513,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_browser_back, |c| c.browser_back());
     on!(on_browser_forward, |c| c.browser_forward());
     on!(on_files_tab_select, |c, i: i32| c.files_tab(i.max(0) as usize));
-    on!(on_files_sort_toggle, |c| c.files_sort_toggle());
+    on!(on_files_sort_open_menu, |c, open: bool| c.files_sort_open_menu(open));
+    on!(on_files_sort_pick, |c, i: i32| c.files_sort_pick(i.max(0) as usize));
     on!(on_files_click, |c, i: i32, chevron: bool| c.files_click(i.max(0) as usize, chevron));
     on!(on_files_activate, |c, i: i32| c.files_activate(i.max(0) as usize));
     on!(on_files_drag, |c, i: i32, phase: i32, x: f32, y: f32| c.files_drag(i.max(0) as usize, phase, x, y));
@@ -1575,7 +1592,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         studio.on_sampler_load(move |id| {
             let target = ctl.borrow().sampler_load_target(saine_core::DeviceId(id as u64));
             let Some(target) = target else { return };
-            if let Some(file) = rfd::FileDialog::new().set_title("Choose audio file").add_filter("WAV audio", &["wav", "WAV"]).pick_file() {
+            if let Some(file) = rfd::FileDialog::new().set_title("Choose audio file").add_filter("Audio", &crate::files::dialog_exts()).pick_file() {
                 ctl.borrow_mut().import_files(vec![file], target, None);
             }
         });
@@ -1933,6 +1950,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     f.last_before = Some(t0);
                     c.poll_jobs();
+                    if c.pending_jobs == 0 && CLIP_MENU_AUDIO.load(std::sync::atomic::Ordering::Relaxed) {
+                        let found = c.project().tracks.iter().find_map(|t| t.clips.first().map(|k| (k.id, k.start, c.project().clip_length_ticks(k))));
+                        if let Some((id, start, len)) = found {
+                            CLIP_MENU_AUDIO.store(false, std::sync::atomic::Ordering::Relaxed);
+                            c.seek_beats((start + len / 2) as f64 / saine_core::PPQ as f64);
+                            c.open_clip_menu(id, 700.0, 215.0, (10_000.0, 10_000.0));
+                        }
+                    }
                     c.lanes_size = (app.get_lanes_width(), app.get_lanes_height());
                     c.update_ui(&app);
                     c.rebuild_vis();
