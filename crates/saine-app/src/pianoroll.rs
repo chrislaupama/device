@@ -57,7 +57,7 @@ pub struct PrView {
 /// The pitch rows the piano roll shows, top first: all 128, or (scale view) the scale
 /// pitches plus those holding notes. A hidden pitch sits on the row of the nearest shown
 /// pitch above it.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rows {
     row: [u8; 128],
     pitch: [u8; 128],
@@ -245,6 +245,9 @@ pub struct PrState {
     /// Audio clip editor value being typed in (double-click), and its clip.
     pub ac_edit: Option<(crate::warpedit::AcEdit, ClipId)>,
     pub ac_last_down: Option<(Instant, f32, f32)>,
+    /// The rows the view last showed: when they change (Scale rows on or off, a new scale,
+    /// undo or redo) the pitch in the middle of the view stays in place.
+    pub rows: Rows,
 }
 
 impl Default for PrState {
@@ -269,6 +272,7 @@ impl Default for PrState {
             ac_drag: None,
             ac_edit: None,
             ac_last_down: None,
+            rows: Rows::ALL,
         }
     }
 }
@@ -660,6 +664,18 @@ impl Controller {
                 let v = self.pr_view();
                 self.pr.scroll = (v.y_of(lo) + v.y_of(hi)) / 2.0 - GRID_Y + ROW_H / 2.0 - (self.pr.size.1 - GRID_Y) / 2.0;
             }
+            self.pr.rows = self.pr_view().rows;
+        } else {
+            let v = self.pr_view();
+            if v.rows != self.pr.rows {
+                let mid = GRID_Y + (v.h - GRID_Y) / 2.0;
+                let mut old = PrView { rows: self.pr.rows, scroll: self.pr.scroll, ..v };
+                old.scroll = old.scroll.clamp(0.0, old.max_scroll());
+                let centre = old.pitch_at(mid);
+                let top = PrView { scroll: 0.0, ..v };
+                self.pr.scroll = (top.y_of(centre) + ROW_H / 2.0 - mid).clamp(0.0, v.max_scroll());
+                self.pr.rows = v.rows;
+            }
         }
         let pattern = self.pr_clip().and_then(|c| c.pattern.as_ref());
         if pattern.is_some() != self.pr.seq.pattern {
@@ -786,8 +802,7 @@ impl Controller {
         Some((c.scale.unwrap_or_default(), ClipScale::key_or(c.scale.as_ref(), self.project().transport.key)))
     }
 
-    /// Change the open clip's scale view (one undo step), keeping the pitch at the middle of the
-    /// view in place when the rows change.
+    /// Change the open clip's scale view (one undo step).
     fn pr_set_scale(&mut self, f: impl FnOnce(&mut ClipScale, ScaleKey)) {
         let Some(id) = self.pr_clip().map(|c| c.id) else { return };
         let Some((old, key)) = self.pr_scale() else { return };
@@ -796,12 +811,8 @@ impl Controller {
         if s == old {
             return;
         }
-        let before = self.pr_view();
-        let mid = GRID_Y + (before.h - GRID_Y) / 2.0;
-        let centre = before.pitch_at(mid).clamp(0, 127);
         self.execute(Command::SetClipScale { clip: id, scale: (s != ClipScale::default()).then_some(s) });
-        let after = self.pr_view();
-        self.pr.scroll = (before.scroll + after.y_of(centre) - before.y_of(centre)).clamp(0.0, after.max_scroll());
+        self.pr_sync_clip();
         self.ui_dirty = true;
     }
 
