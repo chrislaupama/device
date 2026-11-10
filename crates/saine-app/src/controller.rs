@@ -325,7 +325,7 @@ pub struct Controller {
     ruler_model: Rc<VecModel<RulerLabel>>,
     section_label_model: Rc<VecModel<crate::SectionLabel>>,
     clips_model: Rc<VecModel<ClipLabel>>,
-    ruler_key: (i64, i64, i64),
+    ruler_key: (i64, i64, i64, i64),
     pub(crate) mm: crate::minimap::State,
     /// Devices minimap (src/devminimap.rs) and the pointer hide / warp requests of minimap drags (src/pointer.rs).
     pub(crate) dm: crate::devminimap::State,
@@ -449,7 +449,7 @@ impl Controller {
             ptr: crate::pointer::Queue::default(),
             section_label_model: Rc::new(VecModel::default()),
             clips_model: Rc::new(VecModel::default()),
-            ruler_key: (i64::MIN, 0, 0),
+            ruler_key: (i64::MIN, 0, 0, 0),
             clip_vis: Vec::new(),
             track_vis: Vec::new(),
             clip_ids: Vec::new(),
@@ -1137,6 +1137,11 @@ impl Controller {
         self.project().ticks_per_bar() as f64 / PPQ as f64
     }
 
+    fn ruler_steps(&self) -> timeline::RulerSteps {
+        let beat_len = 4.0 / self.project().transport.time_signature.denominator as f64;
+        timeline::RulerSteps::new(self.view.px_per_beat, self.beats_per_bar(), beat_len)
+    }
+
     pub fn hover(&self, x: f32, y: f32) -> i32 {
         if self.auto.shown && y >= timeline::RULER_H {
             return 0;
@@ -1469,6 +1474,7 @@ impl Controller {
             loop_beats: (tr.loop_start as f64 / PPQ as f64, tr.loop_end as f64 / PPQ as f64),
             loop_on: tr.loop_enabled,
             beats_per_bar: self.beats_per_bar(),
+            steps: self.ruler_steps(),
             auto: None,
             sections: &self.section_vis,
         }
@@ -1750,10 +1756,10 @@ impl Controller {
             })
             .collect();
         crate::controller::sync_model(&self.section_label_model, section_labels);
-        let key = ((v.start_beats * 4096.0) as i64, (v.px_per_beat * 4096.0) as i64, self.lanes_size.0 as i64);
+        let key = ((v.start_beats * 4096.0) as i64, (v.px_per_beat * 4096.0) as i64, self.lanes_size.0 as i64, (self.beats_per_bar() * 1024.0) as i64);
         if key != self.ruler_key {
             self.ruler_key = key;
-            let labels = timeline::ruler_labels(&v, self.lanes_size.0, self.beats_per_bar());
+            let labels = timeline::ruler_labels(&v, self.lanes_size.0, &self.ruler_steps());
             self.ruler_model.set_vec(labels.into_iter().map(|(x, t)| RulerLabel { x, text: t.into() }).collect::<Vec<_>>());
         }
         let w = self.lanes_size.0;
