@@ -3,7 +3,7 @@
 //! and checks the resulting `Document` / engine state. Does not touch the
 //! system cursor or keyboard. Coordinates are window points at 1440x820.
 
-use crate::controller::Controller;
+use crate::controller::{BottomTab, Controller};
 use crate::{AppWindow, Studio};
 use crate::assistant_panel::EntryKind;
 use saine_core::assistant::Mode;
@@ -11,7 +11,7 @@ use saine_core::builtin::synth_v2::SYNTH_V2;
 use saine_core::{PPQ, TrackKind, db_to_gain};
 use std::cell::Cell;
 use slint::platform::{Key, PointerEventButton, WindowEvent};
-use slint::{ComponentHandle, LogicalPosition, SharedString};
+use slint::{ComponentHandle, LogicalPosition, Model, SharedString};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -778,6 +778,19 @@ fn steps() -> Vec<Step> {
         })),
         Do("click metronome button again", Box::new(|a| click(a, 992.0, 52.0))),
         Check("metronome off", Box::new(|c, _| (!c.metronome_on).then_some(()).ok_or("still on".into()))),
+        DoC("select clip 1 and open the Clip tab", Box::new(move |a, ctl| {
+            click(a, bx(11.0), TRACK0_Y + 40.0);
+            ctl.borrow_mut().set_bottom_tab(BottomTab::Clip);
+        })),
+        Check("audio clip editor open: gain readout, no piano roll, clip-length ruler", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let bars = (c.project().clip_length_ticks(clip) as f64 / c.project().ticks_per_bar() as f64).ceil() as usize;
+            (s.get_ac_visible() && !s.get_pr_visible() && s.get_ac_gain_text() == "0.0 dB" && s.get_pr_bar_labels().row_count() >= bars && c.pr_view().gx == 0.0)
+                .then_some(())
+                .ok_or(format!("ac {} pr {} gain {} bars {}", s.get_ac_visible(), s.get_pr_visible(), s.get_ac_gain_text(), s.get_pr_bar_labels().row_count()))
+        })),
+        DoC("back to the Devices tab", Box::new(|_, ctl| ctl.borrow_mut().set_bottom_tab(BottomTab::Devices))),
         Do("select clip 1 and press Delete", Box::new(move |a| {
             click(a, bx(11.0), TRACK0_Y + 40.0);
             key(a, Key::Delete, false, false)

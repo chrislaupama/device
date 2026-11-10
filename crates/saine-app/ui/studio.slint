@@ -445,10 +445,12 @@ export global Studio {
     in property <string> pr-quant-text: "100%";
     in property <string> pr-human-text: "50%";
     in property <string> pr-vel-text: "100";
-    in property <string> clip-empty-title: "No clip selected";
-    in property <string> clip-empty-text: "Select a clip to edit it.";
+    in property <bool> ac-visible;           // an audio clip is open in the clip editor
+    in property <string> ac-gain-text: "0.0 dB";
+    in property <string> ac-bpm-text: "120";
     in property <string> clip-name: "MIDI";
     in property <color> clip-color: Tokens.track-instrument;
+    in property <color> clip-ink: #1d2142;   // text and icons on clip-colour fills
     callback pr-pointer(int, length, length, bool, bool);   // kind 0 down 1 move 2 up, x, y, shift, alt
     callback pr-scroll(float);
     callback pr-action(string);                             // quantize|humanize|reverse|legato|double|pen|smart_quantize|velocity_lane
