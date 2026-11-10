@@ -760,10 +760,9 @@ fn steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("rate {rate} ch {ch} frames {frames} vs {} peak {peak}", c.export_frames()))
         })),
-        Do("⇧⌘E again, click the Stems card", Box::new(|a| {
-            key(a, "E", true, true);
-            click(a, (1440.0 - 442.0) / 2.0 + 17.0 + 131.47 + 6.8 + 65.0, (820.0 - 340.4) / 2.0 + 44.2 + 22.0);
-        })),
+        Do("⇧⌘E again", Box::new(|a| key(a, "E", true, true))),
+        Check("export dialog open again", Box::new(|_c, a| a.global::<Studio>().get_export_open().then_some(()).ok_or("not open".into()))),
+        Do("click the Stems card", Box::new(|a| click(a, (1440.0 - 442.0) / 2.0 + 17.0 + 131.47 + 6.8 + 65.0, (820.0 - 340.4) / 2.0 + 44.2 + 22.0))),
         Check("Stems picked: Tracks row, one file per heard track with clips, Folder label", Box::new(|c, a| {
             let s = a.global::<Studio>();
             let n = crate::dialogs::stem_tracks(c.project(), crate::dialogs::StemsPick::AllTracks, None).len();
