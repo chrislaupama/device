@@ -118,6 +118,8 @@ pub struct Audition {
     pub playing: bool,
     /// Set once the engine reports the voice, so its end can be told from "not started yet".
     pub heard: bool,
+    /// When the last play was asked for (redraws wait this long for the engine to report it).
+    pub started: Option<std::time::Instant>,
     /// Where Play continues after a pause, in frames.
     pub resume: i64,
     pub solo: bool,
@@ -691,6 +693,7 @@ impl Controller {
         if self.engine.preview_play(id, start, gain, 1.0, a.solo).is_ok() {
             a.playing = true;
             a.heard = false;
+            a.started = Some(std::time::Instant::now());
             a.resume = start;
         }
         self.ui_dirty = true;
@@ -754,7 +757,7 @@ impl Controller {
     }
 
     /// Every frame: follow the engine's preview voice (its end, position and peaks).
-    /// True while it plays or its meter falls.
+    /// True while the UI needs further frames for it.
     pub(crate) fn push_audition(&mut self, s: &Studio) -> bool {
         let st = self.engine.preview();
         let gain = self.preview_gain();
@@ -799,7 +802,10 @@ impl Controller {
         if s.get_preview_solo() != a.solo {
             s.set_preview_solo(a.solo);
         }
-        a.playing || a.meter.0 > 0.0 || a.meter.1 > 0.0
+        // Redraw while it sounds or its meter falls, and briefly while a play waits for the
+        // engine (without a running device it never starts, and nothing changes on screen).
+        let waiting = a.playing && !a.heard && a.started.is_some_and(|t| t.elapsed().as_secs_f32() < 1.0);
+        sounding || waiting || a.meter.0 > 0.0 || a.meter.1 > 0.0
     }
 
     pub(crate) fn push_files(&mut self, s: &Studio) {

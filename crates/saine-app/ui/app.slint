@@ -362,6 +362,8 @@ component Browser inherits Panel {
         Rectangle {
             x: 94.5px; y: 13px; width: 66.5px; height: 7px;
             accessible-role: slider; accessible-label: "Preview volume"; accessible-value: Studio.preview-volume;
+            accessible-action-increment => { Studio.preview-volume-moved(min(1, Studio.preview-volume + 0.05)); Studio.preview-volume-done(); }
+            accessible-action-decrement => { Studio.preview-volume-moved(max(0, Studio.preview-volume - 0.05)); Studio.preview-volume-done(); }
             Inset { width: parent.width; height: parent.height; border-radius: 3.5px; bottom: #3f4044; }
             Rectangle { x: 1px; y: 1.1px; width: (parent.width - 2px) * Studio.preview-meter-l; height: 2.2px; border-radius: 1.1px; background: #abfcb6; }
             Rectangle { x: 1px; y: 3.7px; width: (parent.width - 2px) * Studio.preview-meter-r; height: 2.2px; border-radius: 1.1px; background: #abfcb6; }
@@ -372,7 +374,7 @@ component Browser inherits Panel {
                     if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
                         Studio.preview-volume-moved(max(0, min(1, (self.mouse-x - 3.5px) / (parent.width - 7px))));
                     }
-                    if (e.kind == PointerEventKind.up) { Studio.preview-volume-done(); }
+                    if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) { Studio.preview-volume-done(); }
                 }
                 moved => { if (self.pressed) { Studio.preview-volume-moved(max(0, min(1, (self.mouse-x - 3.5px) / (parent.width - 7px)))); } }
                 double-clicked => { Studio.preview-volume-moved(Tokens.slider-zero-db); Studio.preview-volume-done(); }
