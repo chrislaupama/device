@@ -5190,6 +5190,44 @@ fn menu_bar_steps() -> Vec<Step> {
             (s.get_export_open() && s.get_export_recipe() == 2).then_some(()).ok_or(format!("open {} recipe {}", s.get_export_open(), s.get_export_recipe()))
         })),
         Do("menu: Escape closes the export dialog", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("menu: solo track 1 twice (two edits); Edit › Undo History…", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = c.project().tracks[0].id;
+            c.toggle_solo(t);
+            c.toggle_solo(t);
+            c.menu_action("edit.undo_history");
+        })),
+        Check("menu: Undo History lists Open Project and every edit, the last one current", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let rows: Vec<_> = s.get_undo_history_rows().iter().collect();
+            let n = c.doc.history_steps().len();
+            let last = rows.last();
+            (s.get_undo_history_open() && rows.len() == n + 1 && rows[0].label == "Open Project" && last.is_some_and(|r| r.state == 1 && r.label == "Solo Change" && r.time.contains(':')))
+                .then_some(())
+                .ok_or(format!("open {} rows {} steps {n}", s.get_undo_history_open(), rows.len()))
+        })),
+        DoC("menu: pick the row two above the current one", Box::new(|_, ctl| {
+            let depth = ctl.borrow().doc.undo_depth() as i32;
+            ctl.borrow_mut().undo_history_travel(depth - 2);
+        })),
+        Check("menu: both solo edits are undone and still listed", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let rows: Vec<_> = s.get_undo_history_rows().iter().collect();
+            let undone = rows.iter().filter(|r| r.state == 2).count();
+            (!c.project().tracks[0].solo && undone == 2 && c.doc.can_redo()).then_some(()).ok_or(format!("solo {} undone rows {undone}", c.project().tracks[0].solo))
+        })),
+        DoC("menu: Redo button (one step)", Box::new(|a, ctl| {
+            let cur = a.global::<Studio>().get_undo_history_current();
+            ctl.borrow_mut().undo_history_travel(cur + 1);
+        })),
+        Check("menu: the first solo edit is back", Box::new(|c, _| c.project().tracks[0].solo.then_some(()).ok_or("not soloed".into()))),
+        DoC("menu: undo it; Escape closes Undo History", Box::new(|a, ctl| {
+            ctl.borrow_mut().undo();
+            key(a, Key::Escape, false, false);
+        })),
+        Check("menu: Undo History closed, track 1 not soloed", Box::new(|c, a| {
+            (!c.undo_history_open && !a.global::<Studio>().get_undo_history_open() && !c.project().tracks[0].solo).then_some(()).ok_or("still open or soloed".into())
+        })),
         DoC("menu: save the project, then forget its folder", Box::new(move |_, ctl| {
             let mut c = ctl.borrow_mut();
             c.settings.prefs.recent_projects.clear();

@@ -48,6 +48,21 @@ fn add_and_delete_track_undo_redo() {
 }
 
 #[test]
+fn history_steps_list_undone_edits_after_the_applied_ones() {
+    let (mut d, track, a) = doc_with_asset();
+    d.execute(Command::AddClip { track, clip: clip(a, 0, 48_000) }, Origin::User).unwrap();
+    let c = d.project().tracks[0].clips[0].id;
+    d.execute(Command::MoveClip { clip: c, track, start: 4 * PPQ }, Origin::User).unwrap();
+    let before: Vec<String> = d.history_steps().iter().map(|(l, _)| l.to_string()).collect();
+    d.undo().unwrap();
+    let after: Vec<String> = d.history_steps().iter().map(|(l, _)| l.to_string()).collect();
+    assert_eq!(after, before, "an undone edit stays listed in place");
+    assert_eq!(d.undo_depth(), before.len() - 1);
+    let times: Vec<_> = d.history_steps().iter().map(|(_, t)| *t).collect();
+    assert!(times.windows(2).all(|w| w[0] <= w[1]));
+}
+
+#[test]
 fn validation_rejects_and_leaves_state_unchanged() {
     let (mut d, track, a) = doc_with_asset();
     let before = d.project().clone();

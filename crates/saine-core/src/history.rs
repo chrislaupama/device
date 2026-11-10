@@ -2,7 +2,7 @@
 
 use crate::command::{Command, EditError};
 use crate::model::{Project, TrackId};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 #[derive(Debug, Clone)]
 struct Entry {
@@ -13,6 +13,8 @@ struct Entry {
     undo: Command,
     coalesce_key: Option<String>,
     at: Instant,
+    /// Wall-clock time the edit was made (Undo History's Date and Time).
+    made: SystemTime,
 }
 
 /// Where an edit came from; used for logging, AI attribution and tests.
@@ -100,7 +102,7 @@ impl Document {
             last.at = now;
             return Ok(());
         }
-        self.undo.push(Entry { label, redo, undo, coalesce_key: key, at: now });
+        self.undo.push(Entry { label, redo, undo, coalesce_key: key, at: now, made: SystemTime::now() });
         if self.undo.len() > self.max_history {
             self.undo.remove(0);
         }
@@ -209,6 +211,12 @@ impl Document {
     /// Labels of the undo stack, oldest first (for an "Undo History" view).
     pub fn history_labels(&self) -> Vec<String> {
         self.undo.iter().map(|e| e.label.clone()).collect()
+    }
+
+    /// Every step Edit › Undo History lists, oldest first: the undo stack, then the redo stack
+    /// with the next redo first. The first `undo_depth()` of them are applied.
+    pub fn history_steps(&self) -> Vec<(&str, SystemTime)> {
+        self.undo.iter().chain(self.redo.iter().rev()).map(|e| (e.label.as_str(), e.made)).collect()
     }
 }
 

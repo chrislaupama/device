@@ -197,3 +197,64 @@ export component UpdatesModal inherits Rectangle {
     }
     PillButton { x: root.width - 17px - 40.8px; y: root.height - 17px - 27.2px; width: 40.8px; height: 27.2px; text: "OK"; primary: true; clicked => { Studio.updates-close(); } }
 }
+
+component HistoryButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled;
+    callback clicked();
+    width: label.preferred-width + 27.2px; height: 27.2px; border-radius: 13.6px;
+    background: ta.has-hover && root.enabled ? #ffffff1f : #ffffff14;
+    accessible-role: button; accessible-label: root.text; accessible-enabled: root.enabled;
+    label := Text { text: root.text; color: root.enabled ? #e5e5e8 : #ffffff4d; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; horizontal-alignment: center; vertical-alignment: center; }
+    ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
+}
+
+// Edit › Undo History…. the reference app's modal: 640 pt wide, 20/20/16 pt padding, 14 pt between head,
+// table and buttons; 28 pt rows (Number 56 pt right-aligned, Action, Date 108 pt, Time 92 pt,
+// 12 pt gaps, 10 pt side padding), the list at most 60 % of the window tall. A click on a row
+// undoes or redoes up to it; Undo and Redo step once.
+export component UndoHistoryModal inherits Rectangle {
+    in property <length> max-h;
+    property <length> row-h: 23.8px;
+    property <length> list-h: min(Studio.undo-history-rows.length * self.row-h, (root.max-h + 81.6px) * 0.6, root.max-h - 113.9px);
+    width: 544px; height: 17px + 17px + 11.9px + self.row-h + self.list-h + 11.9px + 27.2px + 13.6px;
+    border-radius: 20.4px; background: DialogTokens.surface;
+    border-width: 0.45px; border-color: #ffffff22;
+    drop-shadow-blur: 21px; drop-shadow-offset-y: 6.8px; drop-shadow-color: #00000080;
+    accessible-role: groupbox; accessible-label: "Undo history";
+    TouchArea { }
+    Text { x: 17px; y: 17px; height: 17px; text: "Undo history"; color: #ffffff; font-size: 13.6px; font-weight: 700; letter-spacing: -0.54px; vertical-alignment: center; }
+    Rectangle {
+        x: root.width - 17px - 20.4px + 3.4px; y: 17px + (17px - 20.4px) / 2; width: 20.4px; height: 20.4px; border-radius: 3.4px;
+        accessible-role: button; accessible-label: "Close";
+        Text { text: "×"; color: close-ta.has-hover ? #ffffffb3 : #ffffff8c; font-size: 17px; horizontal-alignment: center; vertical-alignment: center; }
+        close-ta := TouchArea { clicked => { Studio.undo-history-close(); } }
+    }
+    // Header row with its rule.
+    Rectangle {
+        x: 17px; y: 45.9px; width: root.width - 34px; height: root.row-h;
+        for c[i] in [{ t: "Number", x: 8.5px, w: 47.6px, right: true }, { t: "Action", x: 66.3px, w: root.width - 34px - 66.3px - 8.5px - 78.2px - 10.2px - 91.8px - 10.2px, right: false }, { t: "Date", x: root.width - 34px - 8.5px - 78.2px - 10.2px - 91.8px, w: 91.8px, right: false }, { t: "Time", x: root.width - 34px - 8.5px - 78.2px, w: 78.2px, right: false }]: Text {
+            x: c.x; width: c.w; text: c.t; color: #ffffff66; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px;
+            horizontal-alignment: c.right ? right : left; vertical-alignment: center;
+        }
+        Rectangle { y: parent.height - 1px; height: 1px; background: #ffffff14; }
+    }
+    Flickable {
+        x: 17px; y: 45.9px + root.row-h; width: root.width - 34px; height: root.list-h;
+        viewport-height: Studio.undo-history-rows.length * root.row-h;
+        for r[i] in Studio.undo-history-rows: Rectangle {
+            y: i * root.row-h; height: root.row-h; border-radius: 5.1px;
+            background: r.state == 1 ? #ffffff1f : (ta.has-hover ? #ffffff12 : transparent);
+            property <color> ink: r.state == 1 ? #ffffff : (r.state == 2 ? #ffffff59 : #e5e5e8);
+            property <color> dim: r.state == 2 ? #ffffff59 : #ffffff66;
+            accessible-role: list-item; accessible-label: r.label; accessible-checked: r.state == 1;
+            Text { x: 8.5px; width: 47.6px; text: r.number; color: parent.ink; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; horizontal-alignment: right; vertical-alignment: center; }
+            Text { x: 66.3px; width: parent.width - 66.3px - 8.5px - 78.2px - 10.2px - 91.8px - 10.2px; text: r.label; color: parent.ink; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; overflow: elide; vertical-alignment: center; }
+            Text { x: parent.width - 8.5px - 78.2px - 10.2px - 91.8px; width: 91.8px; text: r.date; color: parent.dim; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; vertical-alignment: center; }
+            Text { x: parent.width - 8.5px - 78.2px; width: 78.2px; text: r.time; color: parent.dim; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; vertical-alignment: center; }
+            ta := TouchArea { clicked => { Studio.undo-history-travel(i); } }
+        }
+    }
+    redo := HistoryButton { x: root.width - 17px - self.width; y: root.height - 13.6px - 27.2px; text: "Redo"; enabled: Studio.can-redo; clicked => { Studio.undo-history-travel(Studio.undo-history-current + 1); } }
+    HistoryButton { x: redo.x - 6.8px - self.width; y: redo.y; text: "Undo"; enabled: Studio.can-undo; clicked => { Studio.undo-history-travel(Studio.undo-history-current - 1); } }
+}

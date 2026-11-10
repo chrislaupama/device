@@ -28,7 +28,7 @@ import { StripMetrics, StripCanvas, StripReadout, StripButton } from "channel_st
 import { AssistantPanel, HighlightOverlay } from "assistant.slint";
 import { SynthDevice, SynthMenuList } from "synth.slint";
 import { SettingsPanel, ChoiceList } from "settings.slint";
-import { ExportModal, UnsavedPrompt, UpdatesModal } from "dialogs.slint";
+import { ExportModal, UnsavedPrompt, UpdatesModal, UndoHistoryModal } from "dialogs.slint";
 import { PluginCard, AddDeviceCard, DevMenuList } from "devices.slint";
 import { BuiltinCard, FoldedStrip } from "device_panel.slint";
 import { TrackHeaderRow, MasterHeaderRow, AutoPill } from "track_header.slint";
@@ -956,7 +956,7 @@ export component AppWindow inherits Window {
     property <int> ac-edit-field: Studio.ac-edit-field;
     changed ac-edit-field => { if (self.ac-edit-field < 0) { fs.focus(); } }
     // The key handler gets the focus back when a modal dialog closes.
-    property <bool> modal-open: Studio.export-open || Studio.unsaved-open || Studio.updates-open;
+    property <bool> modal-open: Studio.export-open || Studio.unsaved-open || Studio.updates-open || Studio.undo-history-open;
     changed modal-open => {
         if (!self.modal-open) {
             fs.focus();
@@ -1204,6 +1204,14 @@ export component AppWindow inherits Window {
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { clicked => { Studio.updates-close(); } }
             UpdatesModal { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; }
+        }
+        if Studio.undo-history-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { clicked => { Studio.undo-history-close(); } }
+            UndoHistoryModal {
+                max-h: parent.height - 81.6px;
+                x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            }
         }
         // Status line (engine/device/import messages); empty most of the time.
         if Studio.status-text != "": Rectangle {
