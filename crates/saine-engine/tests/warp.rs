@@ -205,3 +205,22 @@ fn transpose_shifts_the_pitch_and_varispeeds_unwarped_clips() {
     let f = frequency(&out[10_000..80_000]);
     assert!((f - 220.0).abs() < 2.2, "{f} Hz, want 220");
 }
+
+#[test]
+fn tempo_is_detected_from_the_engine_onsets() {
+    // Kick-like hits on every beat and softer ones on the off-beats at 128 BPM.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("beat.wav");
+    let beat = RATE * 60.0 / 128.0;
+    write_wav(&path, (RATE * 12.0) as u32, |i| {
+        let half = beat / 2.0;
+        let k = (i as f64 / half).floor();
+        let t = (i as f64 - k * half) / RATE;
+        let amp = if k as i64 % 2 == 0 { 0.8 } else { 0.35 };
+        amp * (-t * 40.0).exp() * (2.0 * std::f64::consts::PI * 70.0 * t).sin()
+    });
+    let rig = Rig::new(&path);
+    let onsets = rig.engine.detect_onsets(rig.map[&rig.asset]).unwrap();
+    let tr: Vec<Transient> = onsets.iter().map(|o| Transient { source: o.frame as u64, strength: o.strength, percussive: o.percussive }).collect();
+    assert_eq!(saine_core::warp::estimate_bpm(&tr, RATE), Some(128.0), "{} onsets", tr.len());
+}

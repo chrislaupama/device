@@ -161,6 +161,25 @@ component FooterSwitch inherits Rectangle {
 }
 
 // Audio clip toolbar entry: grey label, clip-coloured value, optional menu chevron.
+// Typed value (double-click on Original BPM or Transpose): Enter or focus loss commits, Escape cancels.
+component AcEditBox inherits Rectangle {
+    in property <length> font-size;
+    y: -2px; width: 30px; height: 18px; border-radius: 4px; background: #26272b;
+    border-width: 0.5px; border-color: Studio.clip-color;
+    input := TextInput {
+        x: 3px; width: parent.width - 6px; height: parent.height;
+        text: Studio.ac-edit-text; color: #ffffff; font-size: root.font-size; font-weight: 600;
+        vertical-alignment: center; single-line: true;
+        init => { self.focus(); self.select-all(); }
+        accepted => { Studio.ac-edit-commit(self.text); }
+        changed has-focus => { if (!self.has-focus) { Studio.ac-edit-commit(self.text); } }
+        key-pressed(e) => {
+            if (e.text == Key.Escape) { Studio.ac-edit-cancel(); return accept; }
+            reject
+        }
+    }
+}
+
 component AcField inherits Rectangle {
     in property <string> label;
     in property <string> value;
@@ -194,8 +213,11 @@ component AcField inherits Rectangle {
             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.ac-bpm-drag(2, 0, 0); }
         }
         moved => { Studio.ac-bpm-drag(1, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+        double-clicked => { Studio.ac-edit-start(0); }
     }
+    if root.bpm-drag && Studio.ac-edit-field == 0: AcEditBox { x: root.value-x - 3px; font-size: 9.75px; }
 }
+
 
 // Clip editor dropdown (Studio.clip-menu-items). the reference app's toolbar menu: #212227, 8 px radius,
 // 4 px padding, 11 px semibold rows with 4 / 12 px padding, the active row tinted (ink 7 %);
@@ -336,7 +358,9 @@ export component PianoRoll inherits Rectangle {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.ac-transpose-drag(2, 0, 0); }
             }
             moved => { Studio.ac-transpose-drag(1, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+            double-clicked => { Studio.ac-edit-start(1); }
         }
+        if Studio.ac-edit-field == 1: AcEditBox { x: 515.5px; y: root.r2 - 2px; font-size: 10px; }
     }
     if !Studio.ac-visible: Rectangle {
     FooterTitle { x: 362px; y: root.r1; text: "Quantize"; }

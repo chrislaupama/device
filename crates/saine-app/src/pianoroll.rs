@@ -174,6 +174,8 @@ pub struct PrState {
     pub seq: crate::stepseq::SeqState,
     /// Audio clip editor gesture (warp marker / transient), see `warpedit`.
     pub ac_drag: Option<crate::warpedit::AcDrag>,
+    /// Audio clip editor value being typed in (double-click), and its clip.
+    pub ac_edit: Option<(crate::warpedit::AcEdit, ClipId)>,
     pub ac_last_down: Option<(Instant, f32, f32)>,
 }
 
@@ -197,6 +199,7 @@ impl Default for PrState {
             humanize_count: 0,
             seq: Default::default(),
             ac_drag: None,
+            ac_edit: None,
             ac_last_down: None,
         }
     }

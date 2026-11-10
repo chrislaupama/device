@@ -9,6 +9,7 @@ use crate::controller::{Controller, sync_model};
 use crate::wavgen;
 use crate::ChoiceItem;
 use saine_core::{Project, Ticks, TrackId};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 /// Silence rendered after the last bar so reverb and delay tails ring out.
@@ -24,6 +25,8 @@ pub enum Recipe {
     #[default]
     Mixdown,
     Stems,
+    /// An Ableton Live set (src/live_set.rs).
+    Project,
 }
 
 /// Which tracks Stems renders (the reference app's Tracks picker).
@@ -86,7 +89,7 @@ impl ExportUi {
     fn normalize_name(&mut self) {
         let base = self.base_name();
         if !base.is_empty() {
-            self.name = if self.writes_folder() { base } else { format!("{base}.wav") };
+            self.name = if self.writes_folder() || self.recipe == Recipe::Project { base } else { format!("{base}.wav") };
         }
     }
 }
@@ -163,6 +166,22 @@ fn free_folder(dir: &Path, name: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| "no free folder name".into())
 }
 
+/// Saine lets MIDI clips overlap on a track and a Live track can't, so overlapping clips are
+/// spread over lanes (one Live track each): in start order, each clip takes the first lane that
+/// is free at its start.
+pub fn midi_lanes(clips: &[saine_core::MidiClip]) -> Vec<Vec<&saine_core::MidiClip>> {
+    let mut sorted: Vec<&saine_core::MidiClip> = clips.iter().collect();
+    sorted.sort_by_key(|c| c.start);
+    let mut lanes: Vec<Vec<&saine_core::MidiClip>> = Vec::new();
+    for c in sorted {
+        match lanes.iter_mut().find(|l| l.last().is_some_and(|last| last.end() <= c.start)) {
+            Some(lane) => lane.push(c),
+            None => lanes.push(vec![c]),
+        }
+    }
+    lanes
+}
+
 /// What one render pass writes.
 struct Pass {
     /// None: the mix; Some: that track alone.
@@ -208,9 +227,13 @@ impl Controller {
         self.ui_dirty = true;
     }
 
-    /// Recipe cards: 0 Mixdown, 1 Stems (Project is a placeholder in the dialog).
+    /// Recipe cards: 0 Mixdown, 1 Stems, 2 Project.
     pub fn export_pick_recipe(&mut self, recipe: i32) {
-        self.export.recipe = if recipe == 1 { Recipe::Stems } else { Recipe::Mixdown };
+        self.export.recipe = match recipe {
+            1 => Recipe::Stems,
+            2 => Recipe::Project,
+            _ => Recipe::Mixdown,
+        };
         self.export.tracks_menu = false;
         self.export_follow_auto_name();
         self.ui_dirty = true;
@@ -272,7 +295,7 @@ impl Controller {
     }
 
     /// Render and write the picked recipe: the mixdown as one file, stems as one file per track
-    /// (in a "<name> Stems" folder unless one track is picked).
+    /// (in a "<name> Stems" folder unless one track is picked), or a Live set.
     pub fn export_run(&mut self) {
         self.ui_dirty = true;
         let base = self.export.base_name();
@@ -297,6 +320,7 @@ impl Controller {
                     self.export_plan(&self.export.dir.clone(), &[(Some(tracks[0]), base)])
                 }
             }
+            Recipe::Project => self.export_project(&base),
         };
         match result {
             Ok((written, restart)) => {
@@ -313,6 +337,130 @@ impl Controller {
             }
             Err(e) => self.set_status(format!("Export failed: {e}"), 6),
         }
+    }
+
+    /// Export › Project: a "<name> Project" folder holding "<name>.als", every track with clips
+    /// rendered after its devices into Samples/Processed/Saine (Live can't load Saine's devices,
+    /// so the set sounds like the project), and "Saine Export Notes.txt". Instrument tracks keep
+    /// their MIDI clips on a second track next to the audio, turned off. The set is checked
+    /// against Live's structure before it is written. Returns the set's path.
+    /// A failed export removes its folder (it was new or empty), so no half-written project stays.
+    fn export_project(&mut self, name: &str) -> Result<(Vec<PathBuf>, Result<(), String>), String> {
+        let folder = free_folder(&self.export.dir, &format!("{name} Project"))?;
+        let written = self.write_project(name, &folder);
+        if written.is_err() {
+            let _ = std::fs::remove_dir_all(&folder);
+        }
+        written
+    }
+
+    fn write_project(&mut self, name: &str, folder: &Path) -> Result<(Vec<PathBuf>, Result<(), String>), String> {
+        use crate::live_set::{self, LiveSet, SetAudioClip, SetContent, SetMidiClip, SetNote, SetTrack};
+        const RENDERS: &str = "Samples/Processed/Saine";
+        let has_clips = |t: &saine_core::Track| !t.clips.is_empty() || !t.midi_clips.is_empty();
+        let rendered: Vec<(TrackId, String)> = self
+            .project()
+            .tracks
+            .iter()
+            .filter(|t| has_clips(t))
+            .enumerate()
+            .map(|(i, t)| (t.id, stem_file_name(i, &t.name)))
+            .collect();
+        let restart = if rendered.is_empty() {
+            Ok(())
+        } else {
+            let files: Vec<(Option<TrackId>, String)> = rendered.iter().map(|(id, f)| (Some(*id), f.trim_end_matches(".wav").to_string())).collect();
+            self.export_plan(&folder.join(RENDERS), &files)?.1
+        };
+        let p = self.project();
+        let rate = self.engine.sample_rate();
+        let frames = self.export_frames();
+        let beats = |ticks: i64| ticks as f64 / saine_core::PPQ as f64;
+        let render_beats = frames as f64 / rate * p.transport.bpm / 60.0;
+        let mut tracks = Vec::new();
+        let mut notes = String::new();
+        let mut off = Vec::new();
+        for t in &p.tracks {
+            let color = t.color.0 as u32 % 70;
+            let render = rendered.iter().find(|(id, _)| *id == t.id).map(|(_, f)| f);
+            let content = match (render, t.kind) {
+                (Some(file), _) => {
+                    let path = folder.join(RENDERS).join(file);
+                    SetContent::Audio(vec![SetAudioClip {
+                        name: t.name.clone(),
+                        start: 0.0,
+                        length: render_beats,
+                        relative_path: format!("{RENDERS}/{file}"),
+                        absolute_path: path.display().to_string(),
+                        file_size: std::fs::metadata(&path).map_or(0, |m| m.len()),
+                        frames,
+                        sample_rate: rate.round() as u32,
+                    }])
+                }
+                (None, saine_core::TrackKind::Audio) => SetContent::Audio(Vec::new()),
+                (None, saine_core::TrackKind::Instrument) => SetContent::Midi(Vec::new()),
+            };
+            if t.mute {
+                off.push(t.name.clone());
+            }
+            // A rendered track already carries its volume and pan.
+            let (volume, pan) = if render.is_some() { (1.0, 0.0) } else { (t.gain, t.pan) };
+            tracks.push(SetTrack { name: t.name.clone(), color, on: !t.mute, volume, pan, content });
+            if render.is_some() && !t.midi_clips.is_empty() {
+                for (k, lane) in midi_lanes(&t.midi_clips).iter().enumerate() {
+                let clips = lane
+                    .iter()
+                    .map(|c| SetMidiClip {
+                        name: c.name.clone(),
+                        start: beats(c.start),
+                        length: beats(c.length),
+                        notes: c
+                            .notes
+                            .iter()
+                            .filter(|n| n.start >= 0 && n.start < c.length && n.length > 0)
+                            .map(|n| SetNote { pitch: n.pitch.min(127), time: beats(n.start), duration: beats(n.length.min(c.length - n.start)), velocity: n.velocity.clamp(1, 127) })
+                            .collect(),
+                    })
+                    .collect();
+                let label = if k == 0 { format!("{} (MIDI)", t.name) } else { format!("{} (MIDI {})", t.name, k + 1) };
+                tracks.push(SetTrack { name: label, color, on: false, volume: t.gain, pan: t.pan, content: SetContent::Midi(clips) });
+                }
+            }
+        }
+        let tr = &p.transport;
+        let set = LiveSet {
+            bpm: tr.bpm,
+            numerator: tr.time_signature.numerator as u32,
+            denominator: tr.time_signature.denominator as u32,
+            loop_on: tr.loop_enabled,
+            loop_start: beats(tr.loop_start),
+            loop_length: beats(tr.loop_end - tr.loop_start),
+            tracks,
+        };
+        let xml = live_set::to_xml(&set);
+        live_set::validate(&xml, Some(folder)).map_err(|e| format!("the Live set failed its structure check: {e}"))?;
+        let als = folder.join(format!("{name}.als"));
+        let bytes = live_set::gzip(&xml).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+        std::fs::write(&als, bytes).map_err(|e| e.to_string())?;
+        let _ = writeln!(notes, "Exported from Saine Studio for Ableton Live 11 or later.\n");
+        if rendered.is_empty() {
+            let _ = writeln!(notes, "No track has clips, so the set has empty tracks only.");
+        } else {
+            let _ = writeln!(
+                notes,
+                "Live can't load Saine's instruments and effects, so {} rendered as audio after {} devices, into {RENDERS}. The set sounds like the Saine project.",
+                if rendered.len() == 1 { "1 track was".to_string() } else { format!("{} tracks were", rendered.len()) },
+                if rendered.len() == 1 { "its" } else { "their" }
+            );
+            let _ = writeln!(notes, "Instrument tracks keep their MIDI clips on a second track next to the audio, turned off.");
+        }
+        if !off.is_empty() {
+            let _ = writeln!(notes, "\nMuted in Saine, so turned off in the set: {}.", off.join(", "));
+        }
+        let _ = writeln!(notes, "\nNot carried over: automation and device settings. Track colours are not matched to Live's palette.");
+        std::fs::write(folder.join("Saine Export Notes.txt"), notes).map_err(|e| e.to_string())?;
+        Ok((vec![als], restart))
     }
 
     /// Opens every destination file first (never an existing one), then renders and writes each
@@ -438,7 +586,11 @@ impl Controller {
         let p = self.project();
         let stems = self.export.recipe == Recipe::Stems;
         let files = if stems { self.export_stem_tracks().len() } else { stem_tracks(p, StemsPick::AllTracks, None).len() };
-        s.set_export_recipe(if stems { 1 } else { 0 });
+        s.set_export_recipe(match self.export.recipe {
+            Recipe::Mixdown => 0,
+            Recipe::Stems => 1,
+            Recipe::Project => 2,
+        });
         s.set_export_bits24(self.export.bits24);
         s.set_export_rate48(rate >= 47_000.0);
         s.set_export_recipe_text(format!("WAV {bits}-bit").into());
@@ -486,6 +638,17 @@ mod tests {
         // The reference app: 6 bars at 120 BPM + tail, 44.1 kHz, 24-bit → "3.7 MB • 0:14".
         assert_eq!(estimate_text(14 * 44_100, 44_100.0, 24, 1), "3.7 MB • 0:14");
         assert_eq!(estimate_text(14 * 44_100, 44_100.0, 24, 2), "7.4 MB • 0:14");
+    }
+
+    #[test]
+    fn overlapping_midi_clips_get_their_own_lanes() {
+        use saine_core::MidiClip;
+        let bar = 4 * saine_core::PPQ;
+        let clips = [MidiClip::empty(0, 2 * bar), MidiClip::empty(bar, bar), MidiClip::empty(2 * bar, bar), MidiClip::empty(bar, 3 * bar)];
+        let lanes = midi_lanes(&clips);
+        let starts: Vec<Vec<i64>> = lanes.iter().map(|l| l.iter().map(|c| c.start / bar).collect()).collect();
+        assert_eq!(starts, vec![vec![0, 2], vec![1], vec![1]]);
+        assert!(lanes.iter().all(|l| l.windows(2).all(|w| w[0].end() <= w[1].start)));
     }
 
     #[test]

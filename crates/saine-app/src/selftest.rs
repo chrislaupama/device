@@ -847,6 +847,34 @@ fn steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("files {files} of {} max error {err} peak {peak}", tracks.len()))
         })),
+        Do("⇧⌘E for the Project export", Box::new(|a| key(a, "E", true, true))),
+        Check("export dialog open for Project", Box::new(|_c, a| a.global::<Studio>().get_export_open().then_some(()).ok_or("not open".into()))),
+        DoC("click the Project card, name it set, click Export", Box::new(|a, ctl| {
+            click(a, (1440.0 - 442.0) / 2.0 + 17.0 + 2.0 * (131.47 + 6.8) + 65.0, (820.0 - 340.4) / 2.0 + 44.2 + 22.0);
+            let mut c = ctl.borrow_mut();
+            c.export.dir = std::env::temp_dir().join(format!("saine-selftest-project-{}", std::process::id()));
+            c.export.name = "set".into();
+        })),
+        Check("Project picked: recipe 2, Name label", Box::new(|_c, a| {
+            let s = a.global::<Studio>();
+            (s.get_export_recipe() == 2 && s.get_export_name_label() == "Name").then_some(()).ok_or(format!("recipe {}", s.get_export_recipe()))
+        })),
+        Do("click Export", Box::new(|a| click(a, (1440.0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (820.0 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05))),
+        Check("'set Project' holds set.als that passes the Live structure check, its renders and the notes", Box::new(|c, a| {
+            let folder = c.export.dir.join("set Project");
+            let gz = std::fs::read(folder.join("set.als")).map_err(|e| format!("set.als: {e}"))?;
+            let mut xml = String::new();
+            std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(&gz[..]), &mut xml).map_err(|e| e.to_string())?;
+            let sum = crate::live_set::validate(&xml, Some(&folder))?;
+            let p = c.project();
+            let with_clips = p.tracks.iter().filter(|t| !t.clips.is_empty() || !t.midi_clips.is_empty()).count();
+            let midi: usize = p.tracks.iter().map(|t| t.midi_clips.len()).sum();
+            let notes = folder.join("Saine Export Notes.txt").is_file();
+            let _ = std::fs::remove_dir_all(&c.export.dir);
+            (sum.audio_clips == with_clips && sum.midi_clips == midi && notes && !a.global::<Studio>().get_export_open())
+                .then_some(())
+                .ok_or(format!("{sum:?} vs {with_clips} rendered, {midi} MIDI clips; notes {notes}"))
+        })),
         Do("⌘N (file.new) with unsaved changes", Box::new(|a| key(a, "n", true, false))),
         Check("Save changes? prompt open, project untouched", Box::new(|c, a| {
             let n: usize = c.project().tracks.iter().map(|t| t.clips.len()).sum();
@@ -1110,6 +1138,67 @@ fn steps() -> Vec<Step> {
         Check("transpose undone", Box::new(|c, a| {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
             (clip.warp.is_default() && a.global::<Studio>().get_ac_transpose_text() == "0 st").then_some(()).ok_or(format!("warp {:?}", clip.warp))
+        })),
+        DoC("original BPM: double-click to type", Box::new(|_, ctl| ctl.borrow_mut().ac_edit_start(crate::warpedit::AcEdit::OriginalBpm))),
+        Check("Original BPM edit box open with the shown value", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_ac_edit_field() == 0 && s.get_ac_edit_text() == "120").then_some(()).ok_or(format!("field {} text {}", s.get_ac_edit_field(), s.get_ac_edit_text()))
+        })),
+        DoC("original BPM: type 96.5, Enter, then reopen it (shows 97) and click away", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.ac_edit_commit("96.5");
+            c.ac_edit_start(crate::warpedit::AcEdit::OriginalBpm);
+            let shown = c.ac_clip().cloned().map(|clip| c.ac_edit_initial(&clip)).unwrap_or_default();
+            c.ac_edit_commit(&shown);
+        })),
+        Check("typed BPM turns warp on at 96.5: the clip follows 120 BPM (longer), one undo step", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let p = c.project();
+            let secs = clip.source_length as f64 / p.asset(clip.asset).unwrap().sample_rate;
+            let beats = p.clip_length_ticks(clip) as f64 / PPQ as f64;
+            (clip.warp.enabled && clip.warp.original_bpm == 96.5 && (beats - secs * 96.5 / 60.0).abs() < 0.01 && a.global::<Studio>().get_ac_edit_field() == -1 && c.doc.undo_label() == Some("Set original BPM"))
+                .then_some(())
+                .ok_or(format!("warp {:?} beats {beats} undo {:?}", clip.warp, c.doc.undo_label()))
+        })),
+        DoC("original BPM: clear the field, Enter", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.ac_edit_start(crate::warpedit::AcEdit::OriginalBpm);
+            c.ac_edit_commit("");
+        })),
+        Check("an empty BPM turns warp off (Clear original BPM)", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            (!clip.warp.enabled && c.doc.undo_label() == Some("Clear original BPM")).then_some(()).ok_or(format!("warp {:?} undo {:?}", clip.warp, c.doc.undo_label()))
+        })),
+        DoC("transpose: type -7, then nonsense, then Escape, then Enter on an edit opened for another clip", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.ac_edit_start(crate::warpedit::AcEdit::Transpose);
+            c.ac_edit_commit("-7");
+            c.ac_edit_start(crate::warpedit::AcEdit::Transpose);
+            c.ac_edit_commit("abc");
+            c.ac_edit_start(crate::warpedit::AcEdit::Transpose);
+            c.ac_edit_cancel();
+            c.ac_edit_start(crate::warpedit::AcEdit::Transpose);
+            if let Some(e) = c.pr.ac_edit.as_mut() {
+                e.1 = saine_core::ClipId(u64::MAX);
+            }
+            c.ac_edit_commit("5");
+        })),
+        Check("typed transpose -7 st; nonsense, Escape and another clip's edit change nothing", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let s = a.global::<Studio>();
+            (clip.warp.transpose == -7 && s.get_ac_transpose_text() == "-7 st" && s.get_ac_edit_field() == -1 && c.doc.undo_label() == Some("Set clip pitch shift"))
+                .then_some(())
+                .ok_or(format!("transpose {} text {} field {} undo {:?}", clip.warp.transpose, s.get_ac_transpose_text(), s.get_ac_edit_field(), c.doc.undo_label()))
+        })),
+        DoC("typed values: undo three times", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            for _ in 0..3 {
+                c.undo();
+            }
+        })),
+        Check("typed values undone", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            clip.warp.is_default().then_some(()).ok_or(format!("warp {:?}", clip.warp))
         })),
         DoC("back to the Devices tab", Box::new(|_, ctl| ctl.borrow_mut().set_bottom_tab(BottomTab::Devices))),
         Do("select clip 1 and press Delete", Box::new(move |a| {
