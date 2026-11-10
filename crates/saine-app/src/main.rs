@@ -293,7 +293,13 @@ fn parse_args() -> Result<Args, String> {
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
-            "--drag-bench" => a.drag_bench = Some(value(&mut i)?.to_string()),
+            "--drag-bench" => {
+                let v = value(&mut i)?;
+                if v != "track" && v != "bottom" {
+                    return Err(format!("--drag-bench: want track or bottom, got {v:?}"));
+                }
+                a.drag_bench = Some(v.to_string());
+            }
             "--render-bench" => {
                 a.render_bench = value(&mut i)?.parse().map_err(|e| format!("--render-bench: {e}"))?;
                 if a.render_bench == 0 {
