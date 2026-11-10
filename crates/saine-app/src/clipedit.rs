@@ -413,7 +413,8 @@ impl Controller {
     pub fn push_clip_editor(&mut self, s: &Studio) {
         if self.ac_clip().is_some() {
             self.request_onsets();
-        } else {
+        }
+        if self.pr.ac_edit.is_some_and(|(_, id)| self.ac_clip().map(|c| c.id) != Some(id)) {
             self.pr.ac_edit = None;
         }
         if self.pr.menu >= 0 && !self.clip_menu_shown(self.pr.menu) {
@@ -447,7 +448,7 @@ impl Controller {
                 s.set_ac_reversed(c.warp.reverse);
                 s.set_ac_transpose_text(self.ac_transpose_text(c).into());
                 s.set_ac_transpose_enabled(Self::ac_transpose_editable(c));
-                let edit = match self.pr.ac_edit {
+                let edit = match self.pr.ac_edit.map(|e| e.0) {
                     Some(crate::warpedit::AcEdit::OriginalBpm) => 0,
                     Some(crate::warpedit::AcEdit::Transpose) => 1,
                     None => -1,

@@ -304,13 +304,13 @@ impl Controller {
         if field == AcEdit::Transpose && !Self::ac_transpose_editable(c) {
             return;
         }
-        self.pr.ac_edit = Some(field);
+        self.pr.ac_edit = Some((field, c.id));
         self.ui_dirty = true;
     }
 
     /// Text the edit field starts with: the shown value.
     pub fn ac_edit_initial(&self, c: &Clip) -> String {
-        match self.pr.ac_edit {
+        match self.pr.ac_edit.map(|e| e.0) {
             Some(AcEdit::OriginalBpm) => format!("{}", self.ac_original_bpm(c).round()),
             Some(AcEdit::Transpose) => c.warp.transpose.to_string(),
             None => String::new(),
@@ -326,8 +326,11 @@ impl Controller {
     /// warp on, and an empty (or unreadable) value turns warp off ("Clear
     /// original BPM"). Transpose: whole semitones, -24..24; unreadable is ignored.
     pub fn ac_edit_commit(&mut self, text: &str) {
-        let (Some(field), Some(c)) = (self.pr.ac_edit.take(), self.ac_clip().cloned()) else { return };
+        let (Some((field, id)), Some(c)) = (self.pr.ac_edit.take(), self.ac_clip().cloned()) else { return };
         self.ui_dirty = true;
+        if c.id != id {
+            return;
+        }
         let v: f64 = text.trim().parse().unwrap_or(f64::NAN);
         match field {
             AcEdit::OriginalBpm if !v.is_finite() => {

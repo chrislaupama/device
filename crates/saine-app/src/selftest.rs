@@ -1135,7 +1135,7 @@ fn steps() -> Vec<Step> {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
             (!clip.warp.enabled && c.doc.undo_label() == Some("Clear original BPM")).then_some(()).ok_or(format!("warp {:?} undo {:?}", clip.warp, c.doc.undo_label()))
         })),
-        DoC("transpose: type -7, then nonsense, then Escape", Box::new(|_, ctl| {
+        DoC("transpose: type -7, then nonsense, then Escape, then Enter on an edit opened for another clip", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
             c.ac_edit_start(crate::warpedit::AcEdit::Transpose);
             c.ac_edit_commit("-7");
@@ -1143,8 +1143,13 @@ fn steps() -> Vec<Step> {
             c.ac_edit_commit("abc");
             c.ac_edit_start(crate::warpedit::AcEdit::Transpose);
             c.ac_edit_cancel();
+            c.ac_edit_start(crate::warpedit::AcEdit::Transpose);
+            if let Some(e) = c.pr.ac_edit.as_mut() {
+                e.1 = saine_core::ClipId(u64::MAX);
+            }
+            c.ac_edit_commit("5");
         })),
-        Check("typed transpose -7 st; nonsense and Escape change nothing", Box::new(|c, a| {
+        Check("typed transpose -7 st; nonsense, Escape and another clip's edit change nothing", Box::new(|c, a| {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
             let s = a.global::<Studio>();
             (clip.warp.transpose == -7 && s.get_ac_transpose_text() == "-7 st" && s.get_ac_edit_field() == -1 && c.doc.undo_label() == Some("Set clip pitch shift"))
