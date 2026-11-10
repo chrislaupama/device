@@ -327,5 +327,6 @@ fn import_track_gives_fresh_ids_and_keeps_references() {
     commands.push(Command::AddTrack { index: None, track });
     d.execute(Command::Batch { label: "Add Track".into(), commands }, Origin::User).unwrap();
     assert_eq!(d.project().tracks.last().map(|t| t.id), Some(id));
+    assert!(d.project().next_id >= next, "next_id {} < {next}", d.project().next_id);
 }
 

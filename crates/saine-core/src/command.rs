@@ -227,6 +227,10 @@ impl Command {
                 } else {
                     p.next_id = p.next_id.max(track.id.0 + 1);
                 }
+                let inner = track.clips.iter().map(|c| c.id.0).chain(track.midi_clips.iter().map(|c| c.id.0)).chain(track.devices.iter().chain(track.instrument_plugin.as_ref()).map(|d| d.id.0)).max();
+                if let Some(id) = inner {
+                    p.next_id = p.next_id.max(id + 1);
+                }
                 validate_gain("gain", track.gain)?;
                 validate_pan(track.pan)?;
                 for c in &track.clips {
