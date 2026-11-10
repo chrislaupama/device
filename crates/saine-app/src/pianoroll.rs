@@ -58,7 +58,7 @@ pub struct PrView {
     pub start: f64,
     pub scroll: f32,
     pub rows: Rows,
-    /// Row height: \`ROW_H\` until the vertical zoom slider moves.
+    /// Row height: `ROW_H` until the vertical zoom slider moves.
     pub row_h: f32,
 }
 
@@ -160,7 +160,7 @@ impl PrView {
     }
 }
 
-/// Points per beat at horizontal slider position \`z\`: from the fitted zoom (0) to one reference
+/// Points per beat at horizontal slider position `z`: from the fitted zoom (0) to one reference
 /// px per tick (1), on a log scale.
 pub fn zoom_ppb(fit: f64, z: f32) -> f64 {
     let max = PPQ as f64 * REF;
@@ -774,7 +774,7 @@ impl Controller {
 
     /// The step note edits snap to: the toolbar's snap size (shared with the timeline, S76) at
     /// the editor's zoom. Also the length of a drawn note and the shortest edit while snap is off.
-    fn pr_snap_ticks(&self, v: &PrView) -> Ticks {
+    pub(crate) fn pr_snap_ticks(&self, v: &PrView) -> Ticks {
         let bar = self.project().ticks_per_bar() as f64 / PPQ as f64;
         let beats = crate::timeline::note_snap_beats(v.ppb / REF, bar, self.snap.grid);
         ((beats * PPQ as f64).round() as Ticks).max(1)
@@ -824,7 +824,7 @@ impl Controller {
         (vz, self.pr.hzoom)
     }
 
-    /// A zoom slider moved to \`z\` (0..1). Vertical (\`axis\` 0) keeps the row in the middle of the
+    /// A zoom slider moved to `z` (0..1). Vertical (`axis` 0) keeps the row in the middle of the
     /// view in place; horizontal keeps the grid's left edge, as in the reference.
     pub fn pr_zoom(&mut self, axis: i32, z: f32) {
         let z = z.clamp(0.0, 1.0);
@@ -1076,19 +1076,8 @@ impl Controller {
                         return;
                     }
                     let (x0, x1) = (v.x_of(0.0), v.x_of(clip.length as f64 / PPQ as f64));
-                    if let Some(l) = self.pr_loop().filter(|l| l.on && y >= BAR_Y.0 && y < BAR_Y.1) {
-                        let (lx0, lx1) = (v.x_of(l.start as f64 / PPQ as f64), v.x_of(l.end as f64 / PPQ as f64));
-                        let edge = if (x - lx1).abs() <= 6.0 {
-                            Some(Some(true))
-                        } else if (x - lx0).abs() <= 6.0 {
-                            Some(Some(false))
-                        } else {
-                            (x > lx0 && x < lx1).then_some(None)
-                        };
-                        if let Some(edge) = edge {
-                            self.pr.drag = Some(PrDrag::Loop { edge, orig: l, anchor: raw, cur: l });
-                            return;
-                        }
+                    if self.pr_loop_press(&v, x, y, raw) {
+                        return;
                     }
                     if y >= BAND_Y && (x - x1).abs() <= 6.0 {
                         self.pr.drag = Some(PrDrag::ClipEnd { end: clip.length });
@@ -1199,17 +1188,7 @@ impl Controller {
                         let start = snap(raw).clamp(-clip.start, (clip.length - g).max(0));
                         self.pr.drag = Some(PrDrag::ClipStart { start });
                     }
-                    PrDrag::Loop { edge, orig, anchor, .. } => {
-                        let cur = match edge {
-                            None => {
-                                let d = snap(raw - anchor).max(-orig.start);
-                                ClipLoop { start: orig.start + d, end: orig.end + d, ..orig }
-                            }
-                            Some(false) => ClipLoop { start: snap(raw).clamp(0, (orig.end - g).max(0)), ..orig },
-                            Some(true) => ClipLoop { end: snap(raw).max(orig.start + g), ..orig },
-                        };
-                        self.pr.drag = Some(PrDrag::Loop { edge, orig, anchor, cur });
-                    }
+                    PrDrag::Loop { .. } => self.pr_loop_move(raw),
                 }
             }
             _ => match self.pr.drag.take().inspect(|_| self.pr_preview(None)) {
@@ -1360,6 +1339,42 @@ impl Controller {
         }
     }
 
+    /// Loop bar press at (x, y) in either clip editor: drag the whole range (inside it) or an
+    /// edge (within 6 pt). `raw` is the clip tick under the pointer. False when it misses.
+    pub(crate) fn pr_loop_press(&mut self, v: &PrView, x: f32, y: f32, raw: Ticks) -> bool {
+        let Some(l) = self.pr_loop().filter(|l| l.on && y >= BAR_Y.0 && y < BAR_Y.1) else { return false };
+        let (lx0, lx1) = (v.x_of(l.start as f64 / PPQ as f64), v.x_of(l.end as f64 / PPQ as f64));
+        let edge = if (x - lx1).abs() <= 6.0 {
+            Some(Some(true))
+        } else if (x - lx0).abs() <= 6.0 {
+            Some(Some(false))
+        } else {
+            (x > lx0 && x < lx1).then_some(None)
+        };
+        let Some(edge) = edge else { return false };
+        self.pr.drag = Some(PrDrag::Loop { edge, orig: l, anchor: raw, cur: l });
+        true
+    }
+
+    /// Loop bar drag to clip tick `raw`, snapped as note edits are (`pr_snap_ticks`). An audio loop stays inside the clip's
+    /// content (the source window), where its end may land off the grid.
+    pub(crate) fn pr_loop_move(&mut self, raw: Ticks) {
+        let Some(PrDrag::Loop { edge, orig, anchor, .. }) = self.pr.drag.clone() else { return };
+        let g = self.pr_snap_ticks(&self.pr_view());
+        let sg = if self.snap.on { g } else { 1 };
+        let snap = |t: Ticks| ((t as f64 / sg as f64).round() as Ticks) * sg;
+        let max_end = self.ac_clip().map_or(Ticks::MAX, |c| self.project().content_length_ticks(c).max(orig.end));
+        let cur = match edge {
+            None => {
+                let d = snap(raw - anchor).clamp(-orig.start, max_end - orig.end);
+                ClipLoop { start: orig.start + d, end: orig.end + d, ..orig }
+            }
+            Some(false) => ClipLoop { start: snap(raw).clamp(0, (orig.end - g).max(0)), ..orig },
+            Some(true) => ClipLoop { end: snap(raw).max(orig.start + g).min(max_end), ..orig },
+        };
+        self.pr.drag = Some(PrDrag::Loop { edge, orig, anchor, cur });
+    }
+
     /// Footer value controls: phase 0 press, 1 drag (dy = points moved since press, down positive), 2 release.
     pub fn pr_value(&mut self, field: i32, phase: i32, dy: f32) {
         let Some(field) = Field::from_i32(field) else { return };
@@ -1367,6 +1382,26 @@ impl Controller {
         if field == Field::Grid {
             if phase == 2 {
                 self.clip_menu_open(3);
+            }
+            return;
+        }
+        if let Some(c) = self.ac_clip().cloned() {
+            // Audio clip editor: the loop's Position, a beat per 8 pt, kept inside the content.
+            let Some(l) = c.clip_loop.filter(|l| l.on && field == Field::LoopPosition) else { return };
+            let last = (self.project().content_length_ticks(&c) - (l.end - l.start)).max(0);
+            match phase {
+                0 => self.pr.value_drag = Some(ValueDrag { orig: l.start as f64, preview: None, length: None, position: None }),
+                1 => {
+                    if let Some(d) = self.pr.value_drag.as_mut() {
+                        let beats = (d.orig / PPQ as f64 - dy as f64 / 8.0).round().max(0.0);
+                        d.position = Some(((beats * PPQ as f64) as Ticks).min(last));
+                    }
+                }
+                _ => {
+                    if let Some(p) = self.pr.value_drag.take().and_then(|d| d.position).filter(|&p| p != l.start) {
+                        self.execute(Command::SetClipLoop { clip: c.id, clip_loop: Some(saine_core::model::AudioLoop { start: p, end: p + l.end - l.start, ..l }) });
+                    }
+                }
             }
             return;
         }

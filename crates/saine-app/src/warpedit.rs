@@ -474,6 +474,9 @@ impl Controller {
                 let double = self.pr.ac_last_down.is_some_and(|(t, lx, ly)| now - t < DOUBLE_CLICK && (lx - x).abs() < 4.0 && (ly - y).abs() < 4.0);
                 self.pr.ac_last_down = Some((now, x, y));
                 let view = self.pr_view();
+                if self.pr_loop_press(&view, x, y, (view.beat_at(x) * saine_core::PPQ as f64).round() as saine_core::Ticks) {
+                    return;
+                }
                 if y < BAND_Y {
                     self.seek_beats((c.start as f64 / saine_core::PPQ as f64) + view.beat_at(x).max(0.0));
                     return;
@@ -550,6 +553,11 @@ impl Controller {
                 }
             }
             1 => {
+                if matches!(self.pr.drag, Some(crate::pianoroll::PrDrag::Loop { .. })) {
+                    let raw = (self.pr_view().beat_at(x) * saine_core::PPQ as f64).round() as saine_core::Ticks;
+                    self.pr_loop_move(raw);
+                    return;
+                }
                 let Some(d) = self.pr.ac_drag.as_mut() else { return };
                 let m = Map::new(&c, &d.warp, rate);
                 let beat = d.view.beat_at(x);
@@ -584,6 +592,12 @@ impl Controller {
                 }
             }
             _ => {
+                if let Some(crate::pianoroll::PrDrag::Loop { orig, cur, .. }) = self.pr.drag.take() {
+                    if let Some(l) = c.clip_loop.filter(|_| orig != cur) {
+                        self.execute(Command::SetClipLoop { clip: c.id, clip_loop: Some(saine_core::model::AudioLoop { start: cur.start, end: cur.end, ..l }) });
+                    }
+                    return;
+                }
                 let Some(d) = self.pr.ac_drag.take() else { return };
                 match d.kind {
                     AcDragKind::Marker { source, placed: false, .. } if !d.moved => {
