@@ -660,7 +660,7 @@ impl Composer {
     }
 
     pub fn shape_of(&self, source: Option<PartType>) -> Shape {
-        self.shapes.iter().find(|s| s.part == source).map_or(Shape::neutral(source), |s| s.shape)
+        self.shapes.iter().find(|s| s.part == source).map_or_else(|| Shape::neutral(source), |s| s.shape.clone())
     }
 
     /// Store a source's Shape (a neutral one is dropped).
