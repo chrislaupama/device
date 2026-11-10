@@ -100,6 +100,8 @@ pub struct ClipVis {
     pub len_beats: f64,
     pub color: [f32; 3],
     pub selected: bool,
+    /// Clip on a muted track: drawn grey, without the selection tint.
+    pub muted: bool,
     pub name: String,
     /// Waveform source: pyramid slot, first frame (engine rate), frame count.
     pub wave: Option<(Slot, f64, f64)>,
@@ -292,15 +294,34 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
             midi_clip(&mut dl.base, sc, &px, c, notes, (x, y, cw, ch));
             continue;
         }
-        let (body, wave) = if c.selected {
-            (mix(c.color, WHITE, 0.72), rgba(mix(c.color, BLACK, 0.55), 1.0))
+        let (head, body) = if c.muted {
+            (rgb(0xa8a8a8), rgb(0x6b6b6b))
+        } else if c.selected {
+            (c.color, mix(c.color, [0.91; 3], 0.69))
         } else {
-            (mix(rgb(0x131417), c.color, 0.30), rgba(mix(c.color, WHITE, 0.15), 1.0))
+            (c.color, c.color)
         };
+        let wave = rgba(mix(body, BLACK, 0.92), 0.89);
         // Clip outline = rounded rect in the header colour; body drawn over it.
-        dl.base.push(px.rounded(x, y, cw, ch, r, rgba(c.color, 1.0)));
+        dl.base.push(px.rounded(x, y, cw, ch, r, rgba(head, 1.0)));
         dl.base.push(px.rect(x, y + CLIP_HEADER, cw, ch - CLIP_HEADER - r, rgba(body, 1.0)));
         dl.base.push(px.rounded(x, y + ch - 2.0 * r, cw, 2.0 * r, r, rgba(body, 1.0)));
+        dl.base.push(px.rect(x, y + CLIP_HEADER, cw, 1.0 / sc.scale, rgba(BLACK, 0.4)));
+        let half_bar = sc.beats_per_bar / 2.0;
+        let gw = 0.85f32.max(1.0 / sc.scale);
+        let mut k = (c.start_beats.max(v.start_beats) / half_bar).floor() as i64 + 1;
+        while half_bar * v.px_per_beat >= 10.0 {
+            let beat = k as f64 * half_bar;
+            let gx = v.x_of(beat);
+            if beat >= c.start_beats + c.len_beats || gx > w {
+                break;
+            }
+            if gx >= 0.0 {
+                let a = if k % 2 == 0 { 0.2 } else { 0.125 };
+                dl.base.push(px.rect(gx, y + CLIP_HEADER + 1.0 / sc.scale, gw, ch - CLIP_HEADER - 1.0 / sc.scale, rgba(BLACK, a)));
+            }
+            k += 1;
+        }
         if let Some((slot, first_frame, frames)) = c.wave {
             let vx0 = x.max(0.0);
             let vx1 = (x + cw).min(w);
@@ -440,17 +461,19 @@ fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &
     // On a track that isn't selected the reference draws the body in the plain track colour
     // with a darker line under the title and no grid (50-input-selector-open.png); on the
     // selected track it is the light lavender body with grid lines (33/34-*.png).
-    let track_selected = sc.tracks.get(c.track_index).is_some_and(|t| t.selected);
-    let body = if track_selected { mix(c.color, WHITE, 0.67) } else { c.color };
+    // A muted track's clips are grey with no selection tint, like audio clips.
+    let track_selected = !c.muted && sc.tracks.get(c.track_index).is_some_and(|t| t.selected);
+    let head = if c.muted { rgb(0xa8a8a8) } else { c.color };
+    let body = if c.muted { rgb(0x6b6b6b) } else if track_selected { mix(c.color, WHITE, 0.67) } else { c.color };
     // 0.5 pt outline (greyish in the reference), then title strip and body inset by it.
     out.push(px.rounded(x, y, cw, ch, r, rgba(mix(body, rgb(0x4a4c58), 0.45), 1.0)));
-    out.push(px.rounded(x + 0.5, y + 0.5, cw - 1.0, ch - 1.0, r - 0.5, rgba(c.color, 1.0)));
+    out.push(px.rounded(x + 0.5, y + 0.5, cw - 1.0, ch - 1.0, r - 0.5, rgba(head, 1.0)));
     let by = y + CLIP_HEADER + 0.5;
     out.push(px.rect(x + 0.5, by, cw - 1.0, ch - CLIP_HEADER - 0.5 - r, rgba(body, 1.0)));
     out.push(px.rounded(x + 0.5, y + ch - 2.0 * r, cw - 1.0, 2.0 * r - 0.5, r - 0.5, rgba(body, 1.0)));
     let v = &sc.view;
     if !track_selected {
-        out.push(px.rect(x + 0.5, by - 0.5, cw - 1.0, 0.5, rgba(mix(c.color, BLACK, 0.4), 1.0)));
+        out.push(px.rect(x + 0.5, by - 0.5, cw - 1.0, 0.5, rgba(mix(head, BLACK, 0.4), 1.0)));
     }
     let mut step = sc.beats_per_bar / 2.0;
     while step * v.px_per_beat < 10.0 {
@@ -469,7 +492,7 @@ fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &
     }
     let nh = ch - CLIP_HEADER - 6.0;
     let bar_h = (nh / 24.0).clamp(1.5, 3.0);
-    let ink = rgba(mix(c.color, BLACK, 0.45), 1.0);
+    let ink = rgba(mix(head, BLACK, 0.45), 1.0);
     for n in notes {
         let nx = x + n[0] * cw;
         let nw = (n[1] * cw).max(1.0).min(x + cw - nx);
@@ -547,7 +570,7 @@ mod tests {
         assert!((v.beat_at(v.x_of(4.0)) - 4.0).abs() < 1e-4);
         assert_eq!(v.track_at(RULER_H + 1.0), Some(0));
         assert_eq!(v.track_at(RULER_H + TRACK_PITCH + 1.0), Some(1));
-        let clips = vec![ClipVis { track_index: 0, start_beats: 4.0, len_beats: 4.0, color: [1.0; 3], selected: false, name: String::new(), wave: None, midi: None, live: None }];
+        let clips = vec![ClipVis { track_index: 0, start_beats: 4.0, len_beats: 4.0, color: [1.0; 3], selected: false, muted: false, name: String::new(), wave: None, midi: None, live: None }];
         let size = (900.0, 400.0);
         assert_eq!(hit_test(&v, size, 2, &clips, 10.0, 5.0), Hit::Ruler);
         assert_eq!(hit_test(&v, size, 2, &clips, 70.0, 60.0), Hit::Clip { index: 0, zone: Zone::Body });
