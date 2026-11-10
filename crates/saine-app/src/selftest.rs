@@ -1116,7 +1116,13 @@ fn steps() -> Vec<Step> {
             let s = a.global::<Studio>();
             (s.get_ac_edit_field() == 0 && s.get_ac_edit_text() == "120").then_some(()).ok_or(format!("field {} text {}", s.get_ac_edit_field(), s.get_ac_edit_text()))
         })),
-        DoC("original BPM: type 96.5, Enter", Box::new(|_, ctl| ctl.borrow_mut().ac_edit_commit("96.5"))),
+        DoC("original BPM: type 96.5, Enter, then reopen it (shows 97) and click away", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.ac_edit_commit("96.5");
+            c.ac_edit_start(crate::warpedit::AcEdit::OriginalBpm);
+            let shown = c.ac_clip().cloned().map(|clip| c.ac_edit_initial(&clip)).unwrap_or_default();
+            c.ac_edit_commit(&shown);
+        })),
         Check("typed BPM turns warp on at 96.5: the clip follows 120 BPM (longer), one undo step", Box::new(|c, a| {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
             let p = c.project();

@@ -324,8 +324,11 @@ impl Controller {
 
     /// Enter or focus loss. Original BPM: 20..300, two decimals; it turns
     /// warp on, and an empty (or unreadable) value turns warp off ("Clear
-    /// original BPM"). Transpose: whole semitones, -24..24; unreadable is ignored.
+    /// original BPM"). The shown BPM is rounded, so committing it unchanged on a
+    /// warped clip keeps the stored value. Transpose: whole semitones, -24..24;
+    /// unreadable is ignored.
     pub fn ac_edit_commit(&mut self, text: &str) {
+        let unchanged = self.ac_clip().is_some_and(|c| text.trim() == self.ac_edit_initial(c));
         let (Some((field, id)), Some(c)) = (self.pr.ac_edit.take(), self.ac_clip().cloned()) else { return };
         self.ui_dirty = true;
         if c.id != id {
@@ -338,6 +341,7 @@ impl Controller {
                     self.set_clip_warp(c.id, ClipWarp { enabled: false, speed: 1.0, ..c.warp.clone() }, "Clear original BPM");
                 }
             }
+            AcEdit::OriginalBpm if unchanged && c.warp.enabled => {}
             AcEdit::OriginalBpm => {
                 let bpm = ((v * 100.0).round() / 100.0).clamp(saine_core::warp::MIN_ORIGINAL_BPM, saine_core::warp::MAX_ORIGINAL_BPM);
                 self.set_clip_warp(c.id, ClipWarp { original_bpm: bpm, ..self.warp_on(&c) }, "Set original BPM");
