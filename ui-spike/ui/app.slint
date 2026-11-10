@@ -1,4 +1,4 @@
-// Saine Studio UI spike shell.
+// Device Studio UI spike shell.
 // The Slint side owns layout, chrome, text and input. The timeline and the
 // meter bridge are either custom wgpu textures (`wgpu` mode) or pure Slint
 // elements (`path` mode, the baseline).
@@ -28,7 +28,7 @@ component Panel inherits Rectangle {
 }
 
 export component AppWindow inherits Window {
-    title: "Saine Studio - UI spike";
+    title: "Device Studio - UI spike";
     preferred-width: 1440px;
     preferred-height: 820px;
     background: #121316;
@@ -75,7 +75,7 @@ export component AppWindow inherits Window {
                 padding-left: 14px;
                 padding-right: 14px;
                 spacing: 18px;
-                Text { text: "SAINE STUDIO"; color: #e6e6e6; font-size: 13px; font-weight: 700; vertical-alignment: center; }
+                Text { text: "DEVICE STUDIO"; color: #e6e6e6; font-size: 13px; font-weight: 700; vertical-alignment: center; }
                 Rectangle {
                     width: 84px; height: 24px; y: 8px;
                     border-radius: 4px; background: #2f6bff;

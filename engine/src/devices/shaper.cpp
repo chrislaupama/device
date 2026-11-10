@@ -1,10 +1,10 @@
 // Shaper: seven tempo-synced curve lanes. Parameters in the order of
-// saine_core::builtin::shaper (checked by a Rust test): 11 globals, then per
+// dstudio_core::builtin::shaper (checked by a Rust test): 11 globals, then per
 // lane (Volume, Time, Width, Pan, Filter, Crush, Pitch) on, rate, depth,
 // band, split, points and 16 x (x, y, bend).
 //
 // Curves: points (x, y) with an exponential bend per segment, evaluated the
-// same way as the panel draws them (saine_core::builtin::shaper::segment).
+// same way as the panel draws them (dstudio_core::builtin::shaper::segment).
 // Depth scales the curve around the lane's rest value: v = rest + depth *
 // (y - rest), so Depth 0 is neutral for every lane.
 //
@@ -45,7 +45,7 @@
 #include <memory>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -777,7 +777,7 @@ std::unique_ptr<BuiltinProcessor> create_shaper() { return std::make_unique<Shap
 
 } // namespace
 
-// The definition's defaults (saine_core::builtin::shaper), in parameter order:
+// The definition's defaults (dstudio_core::builtin::shaper), in parameter order:
 // the globals, then per lane on, rate, depth, band, split, points and 16
 // points (unused points parked at x = 1 on the lane's rest height).
 const std::array<float, kParamCount> kDefaults = [] {
@@ -813,4 +813,4 @@ const std::array<float, kParamCount> kDefaults = [] {
 extern const BuiltinDescriptor kShaperDescriptor;
 const BuiltinDescriptor kShaperDescriptor{"shaper", kParamIds, {}, &create_shaper, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

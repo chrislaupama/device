@@ -14,7 +14,7 @@ namespace Steinberg {
 class IPluginFactory;
 }
 
-namespace saine {
+namespace dstudio {
 
 struct ClapModule {
     std::string path;
@@ -39,4 +39,4 @@ std::shared_ptr<Vst3Module> load_vst3_module(const std::string& path, std::strin
 std::string vst3_uid_to_string(const char uid[16]);
 bool vst3_uid_from_string(const std::string& s, char uid[16]);
 
-} // namespace saine
+} // namespace dstudio

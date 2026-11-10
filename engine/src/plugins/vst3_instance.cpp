@@ -29,7 +29,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace saine {
+namespace dstudio {
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -744,4 +744,4 @@ std::shared_ptr<PluginInstance> create_vst3_instance(const PluginSpec& spec, dou
     return inst;
 }
 
-} // namespace saine
+} // namespace dstudio

@@ -8,11 +8,11 @@
 #include <cstring>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 struct RtTransport;
 }
 
-namespace saine::dsp {
+namespace dstudio::dsp {
 
 constexpr float kLog2_10_over_20 = 0.166096404744368f; // dB -> log2(gain)
 constexpr float kDbPerLog2 = 6.020599913279624f;        // log2(gain) -> dB
@@ -380,4 +380,4 @@ private:
     int up_pos_ = 0, dn_pos_ = 0;
 };
 
-} // namespace saine::dsp
+} // namespace dstudio::dsp

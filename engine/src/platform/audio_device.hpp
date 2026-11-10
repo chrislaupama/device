@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 // Most device input channels handed to the engine (more are ignored).
 inline constexpr uint32_t kMaxDeviceInputChannels = 64;
@@ -107,4 +107,4 @@ double query_default_output_sample_rate();
 inline constexpr double kStandardRates[] = {8000,  11025, 16000, 22050, 32000,  44100,  48000, 64000,
                                             88200, 96000, 128000, 176400, 192000, 352800, 384000, 768000};
 
-} // namespace saine
+} // namespace dstudio

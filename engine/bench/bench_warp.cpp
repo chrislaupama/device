@@ -2,7 +2,7 @@
 // whole run, through se_render_offline (the device-callback process path) at
 // 48 kHz / 256 frames. Prints measurements only; no pass/fail thresholds.
 //
-// usage: saine_warp_bench [blocks=4000]
+// usage: dstudio_warp_bench [blocks=4000]
 //
 // Table 1: per mode (and unwarped 1:1 playback for reference), the average,
 // 99th-percentile and worst block time, the cost per warped track and block,
@@ -16,7 +16,7 @@
 // rendered, which is the worst case for a single block.
 // Table 4: onset detection time per minute of audio.
 #include "platform/os.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 #include "test_hooks.hpp"
 
 #include <algorithm>
@@ -36,7 +36,7 @@ constexpr uint32_t kBlock = 256;
 constexpr double kSlope = 112.0 / 120.0;
 
 bool write_float_wav(const std::string& path, const std::vector<float>& l, const std::vector<float>& r) {
-    std::FILE* f = saine::os::fopen_utf8(path.c_str(), "wb");
+    std::FILE* f = dstudio::os::fopen_utf8(path.c_str(), "wb");
     if (!f) return false;
     const auto frames = static_cast<uint32_t>(l.size());
     const uint32_t data = frames * 8;
@@ -136,7 +136,7 @@ Result run(se_engine* e, uint64_t asset, uint32_t tracks, int mode, uint32_t blo
             warps.push_back(w);
         }
     }
-    saine::testing::set_warp_renders_enabled(e, rendered);
+    dstudio::testing::set_warp_renders_enabled(e, rendered);
     se_session_desc_v7 d{};
     d.v6 = se_session_desc_v6{tds.data(), tracks, 0.5f, nullptr, 0, 0};
     d.warps = warps.empty() ? nullptr : warps.data();

@@ -10,10 +10,10 @@
 //   plugin_editor_check au "aufx dely appl"
 //   plugin_editor_check clap <bundle.clap> <plugin id>
 //   plugin_editor_check vst3 <bundle.vst3> <class uid>
-//   SAINE_EDITOR_SECONDS=3 plugin_editor_check ...   keep each window up longer
+//   DSTUDIO_EDITOR_SECONDS=3 plugin_editor_check ...   keep each window up longer
 #import <Cocoa/Cocoa.h>
 
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "usage: plugin_editor_check [au <id> | clap <bundle> <id> | vst3 <bundle> <uid>]\n");
             return 64;
         }
-        const double secs = std::getenv("SAINE_EDITOR_SECONDS") ? std::atof(std::getenv("SAINE_EDITOR_SECONDS")) : 1.0;
+        const double secs = std::getenv("DSTUDIO_EDITOR_SECONDS") ? std::atof(std::getenv("DSTUDIO_EDITOR_SECONDS")) : 1.0;
 
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];

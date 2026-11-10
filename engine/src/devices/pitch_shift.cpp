@@ -4,7 +4,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace saine::dsp {
+namespace dstudio::dsp {
 
 namespace {
 constexpr float kTwoPiF = 6.28318530717958647692f;
@@ -145,4 +145,4 @@ void PitchShifter::frame() noexcept {
     std::memmove(in_fifo_.data(), in_fifo_.data() + hop_, (n_ - hop_) * sizeof(float));
 }
 
-} // namespace saine::dsp
+} // namespace dstudio::dsp

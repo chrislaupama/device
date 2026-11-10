@@ -1,5 +1,5 @@
 // Parametric EQ sections shared by the EQ kernels (Channel EQ, Character EQ)
-// and the Auto Filter. The design mirrors saine_core::builtin::eq (Rust), so
+// and the Auto Filter. The design mirrors dstudio_core::builtin::eq (Rust), so
 // the curve the panel draws is the response the engine applies:
 //
 //  - every section is a trapezoidal (TPT, "zero-delay feedback") state
@@ -18,7 +18,7 @@
 #include <cmath>
 #include <cstdint>
 
-namespace saine::eq {
+namespace dstudio::eq {
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kMaxCorner = 0.49; // highest corner as a fraction of fs
@@ -314,7 +314,7 @@ struct Cascade {
     void run(float* l, float* r, uint32_t frames) const noexcept {
         if (n == 0) return;
         if (n == 1) {
-            saine::eq::run(*c[0], *s[0], l, r, frames);
+            dstudio::eq::run(*c[0], *s[0], l, r, frames);
             return;
         }
         for (uint32_t i = 0; i < frames; ++i) {
@@ -471,4 +471,4 @@ struct BandRunner {
     }
 };
 
-} // namespace saine::eq
+} // namespace dstudio::eq

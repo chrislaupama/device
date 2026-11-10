@@ -2,10 +2,10 @@
 
 Nothing listed here is vendored into git. CMake fetches the SDKs at configure
 time (`FetchContent`, see `engine/CMakeLists.txt`) into the build tree
-(`engine/build*/_deps/`, or `target/saine-third-party/` for cargo builds),
+(`engine/build*/_deps/`, or `target/dstudio-third-party/` for cargo builds),
 both of which are git-ignored. Offline builds can point CMake at local
-checkouts with `-DFETCHCONTENT_SOURCE_DIR_SAINE_CLAP=<dir>` and
-`-DFETCHCONTENT_SOURCE_DIR_SAINE_VST3SDK=<dir>`.
+checkouts with `-DFETCHCONTENT_SOURCE_DIR_DSTUDIO_CLAP=<dir>` and
+`-DFETCHCONTENT_SOURCE_DIR_DSTUDIO_VST3SDK=<dir>`.
 
 | Component | Source | Pinned tag (commit) | License | What we use |
 |---|---|---|---|---|

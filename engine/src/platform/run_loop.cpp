@@ -9,7 +9,7 @@
 #include <cstddef>
 #include <vector>
 
-namespace saine::run_loop {
+namespace dstudio::run_loop {
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -146,4 +146,4 @@ std::size_t dispatch() {
 std::size_t fd_count() { return g_fds.size(); }
 std::size_t timer_count() { return g_timers.size(); }
 
-} // namespace saine::run_loop
+} // namespace dstudio::run_loop

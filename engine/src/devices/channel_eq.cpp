@@ -1,10 +1,10 @@
 // Channel EQ: eight bands (each Bell, Low Shelf, High Shelf, Notch, High
 // Pass or Low Pass), shared high- and low-pass slopes (12..48 dB/oct), an
 // output gain and a band listen (solo) switch. Parameters in the order of
-// saine_core::builtin::channel_eq (checked by a Rust test).
+// dstudio_core::builtin::channel_eq (checked by a Rust test).
 //
 // Each band is a cascade of TPT state-variable sections designed exactly as
-// the panel's curve (eq_sections.hpp mirrors saine_core::builtin::eq). Band
+// the panel's curve (eq_sections.hpp mirrors dstudio_core::builtin::eq). Band
 // settings glide over ~20 ms, updated every 16 samples while moving, so
 // sweeps and automation stay smooth; settled bands run whole blocks.
 #include "builtin.hpp"
@@ -14,7 +14,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -130,4 +130,4 @@ constexpr float kDefaults[kParamCount] = {20.0f, 0.0f, 0.71f, 0.0f, 75.0f, 0.0f,
 extern const BuiltinDescriptor kChannelEqDescriptor;
 const BuiltinDescriptor kChannelEqDescriptor{"channeleq", kParamIds, {}, &create_channel_eq, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

@@ -11,7 +11,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace saine {
+namespace dstudio {
 namespace {
 
 using namespace sampler;
@@ -170,13 +170,13 @@ std::unique_ptr<BuiltinProcessor> create_pad_sampler() { return std::make_unique
 
 constexpr uint32_t kRackBlock = kPadParams + 1; // on + pad settings
 
-#define SAINE_PAD_IDS(n) "p" #n "_on", "p" #n "_gain", "p" #n "_pan", "p" #n "_transpose", "p" #n "_fadeIn", \
+#define DSTUDIO_PAD_IDS(n) "p" #n "_on", "p" #n "_gain", "p" #n "_pan", "p" #n "_transpose", "p" #n "_fadeIn", \
     "p" #n "_fadeOut", "p" #n "_start", "p" #n "_end", "p" #n "_reverse", "p" #n "_gate", "p" #n "_warp"
-constexpr const char* kRackIds[] = {SAINE_PAD_IDS(1),  SAINE_PAD_IDS(2),  SAINE_PAD_IDS(3),  SAINE_PAD_IDS(4),
-                                    SAINE_PAD_IDS(5),  SAINE_PAD_IDS(6),  SAINE_PAD_IDS(7),  SAINE_PAD_IDS(8),
-                                    SAINE_PAD_IDS(9),  SAINE_PAD_IDS(10), SAINE_PAD_IDS(11), SAINE_PAD_IDS(12),
-                                    SAINE_PAD_IDS(13), SAINE_PAD_IDS(14), SAINE_PAD_IDS(15), SAINE_PAD_IDS(16)};
-#undef SAINE_PAD_IDS
+constexpr const char* kRackIds[] = {DSTUDIO_PAD_IDS(1),  DSTUDIO_PAD_IDS(2),  DSTUDIO_PAD_IDS(3),  DSTUDIO_PAD_IDS(4),
+                                    DSTUDIO_PAD_IDS(5),  DSTUDIO_PAD_IDS(6),  DSTUDIO_PAD_IDS(7),  DSTUDIO_PAD_IDS(8),
+                                    DSTUDIO_PAD_IDS(9),  DSTUDIO_PAD_IDS(10), DSTUDIO_PAD_IDS(11), DSTUDIO_PAD_IDS(12),
+                                    DSTUDIO_PAD_IDS(13), DSTUDIO_PAD_IDS(14), DSTUDIO_PAD_IDS(15), DSTUDIO_PAD_IDS(16)};
+#undef DSTUDIO_PAD_IDS
 static_assert(sizeof(kRackIds) / sizeof(kRackIds[0]) == kPads * kRackBlock);
 constexpr auto kRackDefaults = [] {
     std::array<float, kPads * kRackBlock> v{};
@@ -187,12 +187,12 @@ constexpr auto kRackDefaults = [] {
     return v;
 }();
 
-#define SAINE_PAD_RO(p) "lvl" #p, "pos" #p, "layer" #p
-constexpr const char* kRackReadouts[] = {SAINE_PAD_RO(0),  SAINE_PAD_RO(1),  SAINE_PAD_RO(2),  SAINE_PAD_RO(3),
-                                         SAINE_PAD_RO(4),  SAINE_PAD_RO(5),  SAINE_PAD_RO(6),  SAINE_PAD_RO(7),
-                                         SAINE_PAD_RO(8),  SAINE_PAD_RO(9),  SAINE_PAD_RO(10), SAINE_PAD_RO(11),
-                                         SAINE_PAD_RO(12), SAINE_PAD_RO(13), SAINE_PAD_RO(14), SAINE_PAD_RO(15)};
-#undef SAINE_PAD_RO
+#define DSTUDIO_PAD_RO(p) "lvl" #p, "pos" #p, "layer" #p
+constexpr const char* kRackReadouts[] = {DSTUDIO_PAD_RO(0),  DSTUDIO_PAD_RO(1),  DSTUDIO_PAD_RO(2),  DSTUDIO_PAD_RO(3),
+                                         DSTUDIO_PAD_RO(4),  DSTUDIO_PAD_RO(5),  DSTUDIO_PAD_RO(6),  DSTUDIO_PAD_RO(7),
+                                         DSTUDIO_PAD_RO(8),  DSTUDIO_PAD_RO(9),  DSTUDIO_PAD_RO(10), DSTUDIO_PAD_RO(11),
+                                         DSTUDIO_PAD_RO(12), DSTUDIO_PAD_RO(13), DSTUDIO_PAD_RO(14), DSTUDIO_PAD_RO(15)};
+#undef DSTUDIO_PAD_RO
 constexpr float kRackIdle[] = {0, -1, -1, 0, -1, -1, 0, -1, -1, 0, -1, -1, 0, -1, -1, 0, -1, -1, 0, -1, -1, 0, -1, -1,
                                0, -1, -1, 0, -1, -1, 0, -1, -1, 0, -1, -1, 0, -1, -1, 0, -1, -1, 0, -1, -1, 0, -1, -1};
 static_assert(sizeof(kRackReadouts) / sizeof(kRackReadouts[0]) == 3 * kPads);
@@ -256,4 +256,4 @@ extern const BuiltinDescriptor kDrumRackDescriptor;
 const BuiltinDescriptor kPadSamplerDescriptor{"pad-sampler", kPadIds, kPadReadouts, &create_pad_sampler, kPadIdle, kPadDefaults, true, kLayers};
 const BuiltinDescriptor kDrumRackDescriptor{"drum-rack", kRackIds, kRackReadouts, &create_drum_rack, kRackIdle, kRackDefaults, true, kPads * kLayers};
 
-} // namespace saine
+} // namespace dstudio

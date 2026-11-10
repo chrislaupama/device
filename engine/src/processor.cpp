@@ -16,7 +16,7 @@
 #include <emmintrin.h>
 #endif
 
-namespace saine {
+namespace dstudio {
 
 RenderContext::RenderContext(uint32_t max_block)
     : max_block_(max_block), track_l_(max_block), track_r_(max_block), master_l_(max_block), master_r_(max_block),
@@ -596,4 +596,4 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
     return {kernel_peak(ml, frames), kernel_peak(mr, frames)};
 }
 
-} // namespace saine
+} // namespace dstudio

@@ -1,7 +1,7 @@
 #include "recorder.hpp"
 
 #include "platform/os.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <algorithm>
 #include <chrono>
@@ -10,7 +10,7 @@
 #include <filesystem>
 #include <limits>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 std::size_t next_pow2(std::size_t v) {
@@ -333,4 +333,4 @@ RecordStats Recorder::stats() const {
     return s;
 }
 
-} // namespace saine
+} // namespace dstudio

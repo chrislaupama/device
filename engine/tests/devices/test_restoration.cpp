@@ -39,7 +39,7 @@ Signal soft_noise(std::size_t n, double rms_level, uint32_t seed) {
 // ---------------------------------------------------------------- spectral helpers
 
 TEST_CASE(real_fft_round_trips_and_finds_a_bin) {
-    saine::dsp::RealFft fft;
+    dstudio::dsp::RealFft fft;
     fft.prepare(256);
     const Signal x = noise(256, 1.0f, 9);
     std::vector<float> re(129), im(129), y(256);
@@ -58,20 +58,20 @@ TEST_CASE(real_fft_round_trips_and_finds_a_bin) {
 }
 
 TEST_CASE(spectrum_tap_reads_a_full_scale_sine_at_0_db) {
-    saine::dsp::SpectrumTap tap;
+    dstudio::dsp::SpectrumTap tap;
     tap.prepare(kRate);
     const Signal x = tone(16384, 1000.0, kRate, 1.0);
     tap.push(x.data(), x.data(), static_cast<uint32_t>(x.size()));
-    float bands[saine::dsp::kSpectrumBands];
+    float bands[dstudio::dsp::kSpectrumBands];
     tap.write(bands);
     uint32_t best = 0;
-    for (uint32_t b = 0; b < saine::dsp::kSpectrumBands; ++b)
+    for (uint32_t b = 0; b < dstudio::dsp::kSpectrumBands; ++b)
         if (bands[b] > bands[best]) best = b;
-    const float hz = saine::dsp::spectrum_band_hz(best);
+    const float hz = dstudio::dsp::spectrum_band_hz(best);
     CHECK(hz > 850.0f && hz < 1180.0f);
     CHECK_NEAR(bands[best], 0.0, 1.5);
     CHECK(bands[0] < -60.0f);
-    CHECK(bands[saine::dsp::kSpectrumBands - 1] < -60.0f);
+    CHECK(bands[dstudio::dsp::kSpectrumBands - 1] < -60.0f);
 }
 
 // ---------------------------------------------------------------- De-Esser
@@ -138,11 +138,11 @@ TEST_CASE(deesser_reports_the_input_spectrum) {
     DeviceRig r("deesser", kDeEsser, kRate);
     (void)r.run_mono(tone(24000, 7000.0, kRate, 0.5));
     const auto ro = r.readouts();
-    REQUIRE(ro.size() == 1 + saine::dsp::kSpectrumBands);
+    REQUIRE(ro.size() == 1 + dstudio::dsp::kSpectrumBands);
     uint32_t best = 0;
-    for (uint32_t b = 0; b < saine::dsp::kSpectrumBands; ++b)
+    for (uint32_t b = 0; b < dstudio::dsp::kSpectrumBands; ++b)
         if (ro[1 + b] > ro[1 + best]) best = b;
-    CHECK(std::fabs(std::log2(saine::dsp::spectrum_band_hz(best) / 7000.0)) < 0.15);
+    CHECK(std::fabs(std::log2(dstudio::dsp::spectrum_band_hz(best) / 7000.0)) < 0.15);
     CHECK_NEAR(ro[1 + best], db(0.5), 1.5);
 }
 

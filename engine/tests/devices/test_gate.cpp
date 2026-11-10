@@ -6,7 +6,7 @@ using namespace devtest;
 
 namespace {
 
-// Defaults of saine_core::builtin::gate, registry order: threshold, ratio,
+// Defaults of dstudio_core::builtin::gate, registry order: threshold, ratio,
 // attack, hold, release, lookahead, sidechain_hpf, mix.
 const std::vector<float> kDefaults = {-40.f, 10.f, 0.5f, 50.f, 100.f, 5.f, 80.f, 100.f};
 constexpr double kRate = 48000.0;

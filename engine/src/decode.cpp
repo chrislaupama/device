@@ -2,7 +2,7 @@
 // decoders (decoders_impl.c), AIFF / AIFC, FLAC, Ogg Vorbis and MP3. Non-RT only.
 #include "wav.hpp"
 
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <climits>
 #include <cstring>
@@ -18,7 +18,7 @@
 #define STB_VORBIS_HEADER_ONLY
 #include "stb_vorbis.c"
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -145,4 +145,4 @@ int32_t decode_audio_file(const char* utf8_path, DecodedAudio& out, std::string&
     return rc != SE_OK ? rc : decode_audio_memory(bytes.data(), bytes.size(), out, err);
 }
 
-} // namespace saine
+} // namespace dstudio

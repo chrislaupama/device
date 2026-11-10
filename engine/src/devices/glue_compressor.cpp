@@ -2,7 +2,7 @@
 // compressor, with stepped ratio / attack / release, Auto release, a
 // reduction range, detector high-pass, external sidechain, Color
 // saturation, makeup, mix and output. Parameters in the order of
-// saine_core::builtin::glue_compressor (checked by a Rust test).
+// dstudio_core::builtin::glue_compressor (checked by a Rust test).
 //
 //   detector   own signal or sidechain, high-passed (SC HPF, 12 dB/oct),
 //              max(|L|, |R|) in dB (stereo linked)
@@ -26,7 +26,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -193,4 +193,4 @@ constexpr float kIdleReadouts[] = {-120.0f, -120.0f, 0.0f};
 constexpr float kDefaults[] = {-15.f, 1.f, 5.f, 4.f, 0.f, 100.f, 50.f, 24.f, 0.f, 0.f, 0.f};
 const BuiltinDescriptor kGlueCompressorDescriptor{"glue-compressor", kParamIds, kReadoutIds, &create_glue, kIdleReadouts, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

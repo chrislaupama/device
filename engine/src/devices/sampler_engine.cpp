@@ -3,7 +3,7 @@
 #include <cstring>
 #include <limits>
 
-namespace saine::sampler {
+namespace dstudio::sampler {
 
 namespace {
 
@@ -442,4 +442,4 @@ void VoicePool::render(const VoiceSettings& vs, const BuiltinSample* samples, ui
     }
 }
 
-} // namespace saine::sampler
+} // namespace dstudio::sampler

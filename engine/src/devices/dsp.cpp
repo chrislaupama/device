@@ -3,7 +3,7 @@
 
 #include "../plugins/plugin_instance.hpp"
 
-namespace saine::dsp {
+namespace dstudio::dsp {
 
 void LfoClock::begin(float hz, bool synced, float quarters, const RtTransport* tr, uint32_t offset,
                      double sample_rate) noexcept {
@@ -91,4 +91,4 @@ float Oversampler2x::down(float y0, float y1) noexcept {
     return acc;
 }
 
-} // namespace saine::dsp
+} // namespace dstudio::dsp

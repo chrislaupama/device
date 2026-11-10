@@ -16,7 +16,7 @@
 #include <unordered_set>
 #include <utility>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -745,4 +745,4 @@ void detect_onsets(const Asset& asset, double sample_rate, std::vector<se_onset>
     }
 }
 
-} // namespace saine
+} // namespace dstudio

@@ -285,8 +285,8 @@ TEST_CASE(midi_velocity_scales_amplitude) {
 // ---------------------------------------------------------------- polyphony / stealing
 
 TEST_CASE(midi_synth_polyphony_limit_and_slots) {
-    saine::Synth synth(kRate);
-    std::vector<saine::NoteEvent> notes;
+    dstudio::Synth synth(kRate);
+    std::vector<dstudio::NoteEvent> notes;
     for (int i = 0; i < 24; ++i)
         notes.push_back({i * 100, 1000000, static_cast<uint8_t>(40 + i), 100});
     std::vector<float> buf(64);
@@ -296,18 +296,18 @@ TEST_CASE(midi_synth_polyphony_limit_and_slots) {
         max_notes = std::max(max_notes, synth.note_voices());
         max_slots = std::max(max_slots, synth.active_slots());
     }
-    CHECK_EQ(max_notes, saine::Synth::kMaxNotes);
-    CHECK(max_slots <= saine::Synth::kSlots);
+    CHECK_EQ(max_notes, dstudio::Synth::kMaxNotes);
+    CHECK(max_slots <= dstudio::Synth::kSlots);
     // After the fades (5 ms) only the 16 newest notes remain.
-    CHECK_EQ(synth.note_voices(), saine::Synth::kMaxNotes);
-    CHECK_EQ(synth.active_slots(), saine::Synth::kMaxNotes);
+    CHECK_EQ(synth.note_voices(), dstudio::Synth::kMaxNotes);
+    CHECK_EQ(synth.active_slots(), dstudio::Synth::kMaxNotes);
     // 40 notes at the same frame: still bounded.
-    saine::Synth burst(kRate);
-    std::vector<saine::NoteEvent> chord;
+    dstudio::Synth burst(kRate);
+    std::vector<dstudio::NoteEvent> chord;
     for (int i = 0; i < 40; ++i) chord.push_back({0, 48000, static_cast<uint8_t>(30 + i), 90});
     burst.render(chord.data(), 40, nullptr, 1, 0, 0, 64, true, buf.data());
-    CHECK_EQ(burst.note_voices(), saine::Synth::kMaxNotes);
-    CHECK(burst.active_slots() <= saine::Synth::kSlots);
+    CHECK_EQ(burst.note_voices(), dstudio::Synth::kMaxNotes);
+    CHECK(burst.active_slots() <= dstudio::Synth::kSlots);
     for (float v : buf) CHECK(std::isfinite(v));
 }
 
@@ -456,7 +456,7 @@ TEST_CASE(midi_republish_mid_note_keeps_voice) {
 TEST_CASE(midi_loop_wrap_and_seek_release_voices) {
     // A: at the loop start; B: held across the loop end.
     const std::vector<se_note_desc> notes = {note(0, 6000, 40), note(20000, 50000, 43)};
-    const auto fade = static_cast<std::size_t>(saine::Synth::kFadeSeconds * kRate);
+    const auto fade = static_cast<std::size_t>(dstudio::Synth::kFadeSeconds * kRate);
     {
         EngineHandle e(kRate, 256);
         MidiSession s = single(notes);
@@ -717,7 +717,7 @@ TEST_CASE(rt_dense_midi_with_republish_does_not_allocate) {
     for (float v : buf) CHECK(std::isfinite(v));
 }
 
-// Step-sequencer patterns as saine-core publishes them: every step of a bar
+// Step-sequencer patterns as dstudio-core publishes them: every step of a bar
 // on 16 pad notes, each step split into repeats with the 0.02-beat gate gap,
 // the bar repeated, republished while it plays (each step edit republishes).
 // Nothing allocates on the render path, and every step window sounds.

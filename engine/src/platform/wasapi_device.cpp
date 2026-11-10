@@ -36,7 +36,7 @@
 #include "audio_device.hpp"
 #include "frame_ring.hpp"
 #include "os.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -60,7 +60,7 @@
 #include <future>
 #include <thread>
 
-namespace saine {
+namespace dstudio {
 namespace {
 
 using Microsoft::WRL::ComPtr;
@@ -661,6 +661,6 @@ double query_default_output_sample_rate() {
     return d && mix_info(d.Get(), mix) ? mix.rate : 0.0;
 }
 
-} // namespace saine
+} // namespace dstudio
 
 #endif // _WIN32

@@ -18,7 +18,7 @@ namespace Steinberg {
 class IPlugView;
 }
 
-namespace saine {
+namespace dstudio {
 
 #if defined(__APPLE__)
 // Hosts the AU's Cocoa view (kAudioUnitProperty_CocoaUI), else AUGenericView.
@@ -55,4 +55,4 @@ void platform_plugin_idle();
 inline void platform_plugin_idle() {}
 #endif
 
-} // namespace saine
+} // namespace dstudio

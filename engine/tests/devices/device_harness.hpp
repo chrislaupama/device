@@ -168,7 +168,7 @@ inline std::vector<uint8_t> route_blob(const std::vector<float>& values, const s
     return state_blob_v2(values, {}, 0, sidechain, routes);
 }
 
-inline uint32_t param_index(const saine::BuiltinDescriptor& d, const char* id) {
+inline uint32_t param_index(const dstudio::BuiltinDescriptor& d, const char* id) {
     for (std::size_t i = 0; i < d.params.size(); ++i)
         if (std::strcmp(d.params[i], id) == 0) return static_cast<uint32_t>(i);
     std::fprintf(stderr, "unknown parameter %s of %s\n", id, d.id);
@@ -181,15 +181,15 @@ public:
     // defaults; each device test keeps its own copy).
     DeviceRig(const char* id, std::vector<float> defaults, double rate = 48000.0, uint32_t block = 256)
         : rate_(rate), block_(block), values_(std::move(defaults)) {
-        saine::PluginSpec spec;
+        dstudio::PluginSpec spec;
         spec.device_id = 1;
-        spec.format = saine::PluginFormat::Builtin;
+        spec.format = dstudio::PluginFormat::Builtin;
         spec.plugin_id = id;
         spec.state = state_blob(values_);
-        const saine::BuiltinDescriptor* d = saine::find_builtin(id);
+        const dstudio::BuiltinDescriptor* d = dstudio::find_builtin(id);
         spec.instrument = d != nullptr && d->instrument;
         std::string err;
-        inst_ = saine::create_builtin_instance(spec, rate, block, err);
+        inst_ = dstudio::create_builtin_instance(spec, rate, block, err);
         if (!inst_) {
             std::fprintf(stderr, "create_builtin_instance(%s): %s\n", id, err.c_str());
             std::abort();
@@ -199,8 +199,8 @@ public:
         sc_r_.assign(block, 0.0f);
     }
 
-    saine::BuiltinInstance& instance() { return *b_; }
-    const saine::BuiltinDescriptor& desc() const { return b_->descriptor(); }
+    dstudio::BuiltinInstance& instance() { return *b_; }
+    const dstudio::BuiltinDescriptor& desc() const { return b_->descriptor(); }
     double rate() const { return rate_; }
     uint32_t block() const { return block_; }
 
@@ -224,22 +224,22 @@ public:
     // are instrument events at absolute frames (sorted by offset).
     std::pair<Signal, Signal> run(Signal l, Signal r, const Signal* sc_l = nullptr, const Signal* sc_r = nullptr,
                                   const std::vector<std::pair<std::size_t, std::pair<uint32_t, float>>>& events = {},
-                                  const std::vector<saine::MidiEvent>& midi = {}) {
-        std::vector<saine::MidiEvent> block_midi;
-        block_midi.reserve(saine::PluginInstance::kMaxEvents);
+                                  const std::vector<dstudio::MidiEvent>& midi = {}) {
+        std::vector<dstudio::MidiEvent> block_midi;
+        block_midi.reserve(dstudio::PluginInstance::kMaxEvents);
         std::size_t mi = 0;
-        saine::RtTransport tr;
+        dstudio::RtTransport tr;
         tr.sample_rate = rate_;
         tr.playing = playing_;
         tr.tempo_bpm = bpm_;
-        std::vector<saine::ParamEvent> ev;
-        ev.reserve(saine::PluginInstance::kMaxParamEvents);
+        std::vector<dstudio::ParamEvent> ev;
+        ev.reserve(dstudio::PluginInstance::kMaxParamEvents);
         std::size_t ei = 0;
         for (std::size_t pos = 0; pos < l.size(); pos += block_) {
             const auto n = static_cast<uint32_t>(std::min<std::size_t>(block_, l.size() - pos));
             ev.clear();
             while (ei < events.size() && events[ei].first < pos + n) {
-                ev.push_back(saine::ParamEvent{static_cast<uint32_t>(events[ei].first - pos), events[ei].second.first,
+                ev.push_back(dstudio::ParamEvent{static_cast<uint32_t>(events[ei].first - pos), events[ei].second.first,
                                                events[ei].second.second});
                 ++ei;
             }
@@ -250,7 +250,7 @@ public:
             }
             block_midi.clear();
             while (mi < midi.size() && midi[mi].offset < pos + n) {
-                saine::MidiEvent m = midi[mi++];
+                dstudio::MidiEvent m = midi[mi++];
                 m.offset -= static_cast<uint32_t>(pos);
                 block_midi.push_back(m);
             }
@@ -267,7 +267,7 @@ public:
         samples_ = std::move(samples);
         assets_.clear();
         for (std::size_t i = 0; i < samples_.size(); ++i) {
-            auto a = std::make_shared<saine::Asset>();
+            auto a = std::make_shared<dstudio::Asset>();
             a->id = 1000 + i;
             a->channels = samples_[i].r.empty() ? 1 : 2;
             a->frames = samples_[i].l.size();
@@ -278,7 +278,7 @@ public:
         }
         const auto blob = state_blob_v2(values_, samples_, 1000);
         b_->update_state(blob.data(), blob.size());
-        b_->bind_samples([this](uint64_t id) -> saine::AssetRef {
+        b_->bind_samples([this](uint64_t id) -> dstudio::AssetRef {
             return id >= 1000 && id < 1000 + assets_.size() ? assets_[id - 1000] : nullptr;
         });
     }
@@ -286,16 +286,16 @@ public:
     // Instruments: render n frames with note events (absolute frames).
     std::pair<Signal, Signal> play(std::size_t n, const std::vector<NoteAt>& notes, double tempo = 120.0) {
         Signal l(n, 0.0f), r(n, 0.0f);
-        saine::RtTransport tr;
+        dstudio::RtTransport tr;
         tr.sample_rate = rate_;
         tr.tempo_bpm = tempo;
-        std::vector<saine::MidiEvent> ev;
+        std::vector<dstudio::MidiEvent> ev;
         std::size_t ni = 0;
         for (std::size_t pos = 0; pos < n; pos += block_) {
             const auto len = static_cast<uint32_t>(std::min<std::size_t>(block_, n - pos));
             ev.clear();
             while (ni < notes.size() && notes[ni].frame < pos + len) {
-                saine::MidiEvent e;
+                dstudio::MidiEvent e;
                 e.offset = static_cast<uint32_t>(notes[ni].frame > pos ? notes[ni].frame - pos : 0);
                 e.status = notes[ni].status;
                 e.data1 = notes[ni].data1;
@@ -338,11 +338,11 @@ private:
     bool playing_ = false;
     double bpm_ = 120.0;
     int64_t start_ = 0;
-    std::shared_ptr<saine::PluginInstance> inst_;
-    saine::BuiltinInstance* b_ = nullptr;
+    std::shared_ptr<dstudio::PluginInstance> inst_;
+    dstudio::BuiltinInstance* b_ = nullptr;
     Signal sc_l_, sc_r_;
     std::vector<TestSample> samples_;
-    std::vector<saine::AssetRef> assets_;
+    std::vector<dstudio::AssetRef> assets_;
 };
 
 // v6 session builder for tracks that play a clip through built-in devices.

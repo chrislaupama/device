@@ -17,7 +17,7 @@
 #include <AudioToolbox/AudioToolbox.h>
 #endif
 
-namespace saine {
+namespace dstudio {
 
 #if defined(__APPLE__)
 
@@ -211,8 +211,8 @@ bool scan_clap_bundle(const std::string& path, std::vector<ScannedPlugin>& out, 
     }
     clap_host_t host{};
     host.clap_version = CLAP_VERSION;
-    host.name = "Saine Studio scanner";
-    host.vendor = "Saine";
+    host.name = "Device Studio scanner";
+    host.vendor = "DStudio";
     host.url = "";
     host.version = "0.1.0";
     host.get_extension = [](const clap_host*, const char*) -> const void* { return nullptr; };
@@ -266,4 +266,4 @@ bool scan_clap_bundle(const std::string& path, std::vector<ScannedPlugin>& out, 
     return true;
 }
 
-} // namespace saine
+} // namespace dstudio

@@ -1,5 +1,5 @@
 // De-Noiser: a linked-stereo spectral gate. Parameters in the order of
-// saine_core::builtin::denoiser (checked by a Rust test).
+// dstudio_core::builtin::denoiser (checked by a Rust test).
 //
 // STFT: 1024-point frames at 48 kHz (the length follows the sample rate so
 // the resolution in Hz stays put), hop N/4, square-root Hann analysis and
@@ -30,7 +30,7 @@
 #include <cstring>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -225,4 +225,4 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<DeNoiser>()
 extern const BuiltinDescriptor kDeNoiserDescriptor;
 const BuiltinDescriptor kDeNoiserDescriptor{"denoiser", kParamIds, kReadouts.ids, &create, kIdle.v, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

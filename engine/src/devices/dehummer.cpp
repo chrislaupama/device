@@ -1,6 +1,6 @@
 // De-Hummer: a cascade of up to 8 depth-limited notches at the hum
 // fundamental and its multiples. Parameters in the order of
-// saine_core::builtin::dehummer (checked by a Rust test).
+// dstudio_core::builtin::dehummer (checked by a Rust test).
 //
 // Stage k (frequency k * f, Q = notch width): y = x - a_k * BP_k(x), with
 // BP_k a TPT state-variable band-pass (0 dB at the centre), so the stage is
@@ -16,7 +16,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -128,4 +128,4 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<DeHummer>()
 extern const BuiltinDescriptor kDeHummerDescriptor;
 const BuiltinDescriptor kDeHummerDescriptor{"dehummer", kParamIds, dsp::kSpectrumIds, &create, kIdle.v, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

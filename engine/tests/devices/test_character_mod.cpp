@@ -13,7 +13,7 @@ constexpr const char* kModeIds[] = {"mode_single", "mode_crossed", "mode_twin", 
 constexpr int kModeCounts[] = {2, 4, 3, 1, 3, 2, 3, 5, 3, 3, 2};
 
 DeviceRig rig() {
-    const saine::BuiltinDescriptor* d = saine::find_builtin("character-mod");
+    const dstudio::BuiltinDescriptor* d = dstudio::find_builtin("character-mod");
     if (d == nullptr || d->defaults.size() != d->params.size()) {
         std::fprintf(stderr, "no character-mod defaults\n");
         std::abort();

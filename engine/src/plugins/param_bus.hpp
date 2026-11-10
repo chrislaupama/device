@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace saine {
+namespace dstudio {
 
 struct ParamChangeRecord {
     uint64_t device_id = 0;
@@ -89,4 +89,4 @@ private:
     const std::atomic<int64_t>* position_ = nullptr;
 };
 
-} // namespace saine
+} // namespace dstudio

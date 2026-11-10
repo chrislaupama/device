@@ -1,5 +1,5 @@
 // Default values (registry order) of the sampler devices: their descriptors'
-// defaults (equal to the Rust definitions, checked by saine-engine's tests).
+// defaults (equal to the Rust definitions, checked by dstudio-engine's tests).
 #pragma once
 
 #include "devices/builtin.hpp"
@@ -9,7 +9,7 @@
 namespace devtest {
 
 inline std::vector<float> builtin_defaults(const char* id) {
-    const auto d = saine::find_builtin(id)->defaults;
+    const auto d = dstudio::find_builtin(id)->defaults;
     return {d.begin(), d.end()};
 }
 

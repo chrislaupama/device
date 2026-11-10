@@ -1,7 +1,7 @@
 // Tremolo: gain modulation by an LFO (Sine, Triangle, soft-edged Square,
 // Saw Down), depth, dry/wet mix, a right-channel phase offset (Stereo
 // Phase) and tempo sync. Parameters in the order of
-// saine_core::builtin::tremolo (checked by a Rust test).
+// dstudio_core::builtin::tremolo (checked by a Rust test).
 //
 // Per channel and sample:
 //   w      unit shape of the LFO phase (0 = bottom of the dip, 1 = top)
@@ -19,7 +19,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -118,4 +118,4 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Tremolo>();
 extern const BuiltinDescriptor kTremoloDescriptor;
 const BuiltinDescriptor kTremoloDescriptor{"tremolo", kParamIds, kReadoutIds, &create, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

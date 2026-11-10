@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(saine_engine VERSION 0.1.0 LANGUAGES C CXX)
+project(dstudio_engine VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,13 +10,13 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-option(SAINE_ENGINE_BUILD_TESTS "Build engine tests" ${PROJECT_IS_TOP_LEVEL})
-option(SAINE_ENGINE_BUILD_BENCH "Build engine benchmark" ${PROJECT_IS_TOP_LEVEL})
-option(SAINE_ENGINE_BUILD_TOOLS "Build manual check tools" ${PROJECT_IS_TOP_LEVEL})
-option(SAINE_ENGINE_SANITIZE "Build everything with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
-option(SAINE_ENGINE_WERROR "Treat warnings as errors" OFF)
-option(SAINE_ENGINE_BUILD_SCANNER "Build the out-of-process plugin scanner" ON)
-option(SAINE_ENGINE_BUILD_TEST_PLUGINS "Build the test plugin bundles (SaineTest*.vst3/.clap)" ${PROJECT_IS_TOP_LEVEL})
+option(DSTUDIO_ENGINE_BUILD_TESTS "Build engine tests" ${PROJECT_IS_TOP_LEVEL})
+option(DSTUDIO_ENGINE_BUILD_BENCH "Build engine benchmark" ${PROJECT_IS_TOP_LEVEL})
+option(DSTUDIO_ENGINE_BUILD_TOOLS "Build manual check tools" ${PROJECT_IS_TOP_LEVEL})
+option(DSTUDIO_ENGINE_SANITIZE "Build everything with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
+option(DSTUDIO_ENGINE_WERROR "Treat warnings as errors" OFF)
+option(DSTUDIO_ENGINE_BUILD_SCANNER "Build the out-of-process plugin scanner" ON)
+option(DSTUDIO_ENGINE_BUILD_TEST_PLUGINS "Build the test plugin bundles (DStudioTest*.vst3/.clap)" ${PROJECT_IS_TOP_LEVEL})
 
 if(APPLE)
   enable_language(OBJCXX)
@@ -32,109 +32,109 @@ endif()
 # Set FETCHCONTENT_BASE_DIR to share one download between build trees, or
 # FETCHCONTENT_SOURCE_DIR_<NAME> to use a local checkout (offline builds).
 include(FetchContent)
-set(SAINE_CLAP_TAG 1.2.10)
-set(SAINE_VST3SDK_TAG v3.8.1_build_84)
-FetchContent_Declare(saine_clap
+set(DSTUDIO_CLAP_TAG 1.2.10)
+set(DSTUDIO_VST3SDK_TAG v3.8.1_build_84)
+FetchContent_Declare(dstudio_clap
   GIT_REPOSITORY https://github.com/free-audio/clap.git
-  GIT_TAG ${SAINE_CLAP_TAG}
+  GIT_TAG ${DSTUDIO_CLAP_TAG}
   GIT_SHALLOW TRUE
-  SOURCE_SUBDIR _saine_headers_only)
-FetchContent_Declare(saine_vst3sdk
+  SOURCE_SUBDIR _dstudio_headers_only)
+FetchContent_Declare(dstudio_vst3sdk
   GIT_REPOSITORY https://github.com/steinbergmedia/vst3sdk.git
-  GIT_TAG ${SAINE_VST3SDK_TAG}
+  GIT_TAG ${DSTUDIO_VST3SDK_TAG}
   GIT_SHALLOW TRUE
   GIT_SUBMODULES pluginterfaces public.sdk
-  SOURCE_SUBDIR _saine_sources_only)
+  SOURCE_SUBDIR _dstudio_sources_only)
 # Time stretching for warped audio clips (src/warp.cpp): signalsmith-stretch
 # and the FFT / STFT library it is built on. Header-only.
-set(SAINE_STRETCH_TAG 1.4.0)
-set(SAINE_LINEAR_TAG 0.6.4)
-FetchContent_Declare(saine_signalsmith_stretch
+set(DSTUDIO_STRETCH_TAG 1.4.0)
+set(DSTUDIO_LINEAR_TAG 0.6.4)
+FetchContent_Declare(dstudio_signalsmith_stretch
   GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git
-  GIT_TAG ${SAINE_STRETCH_TAG}
+  GIT_TAG ${DSTUDIO_STRETCH_TAG}
   GIT_SHALLOW TRUE
-  SOURCE_SUBDIR _saine_headers_only)
-FetchContent_Declare(saine_signalsmith_linear
+  SOURCE_SUBDIR _dstudio_headers_only)
+FetchContent_Declare(dstudio_signalsmith_linear
   GIT_REPOSITORY https://github.com/Signalsmith-Audio/linear.git
-  GIT_TAG ${SAINE_LINEAR_TAG}
+  GIT_TAG ${DSTUDIO_LINEAR_TAG}
   GIT_SHALLOW TRUE
-  SOURCE_SUBDIR _saine_headers_only)
+  SOURCE_SUBDIR _dstudio_headers_only)
 # Compressed audio import (src/decode.cpp): dr_mp3, dr_flac and dr_wav (AIFF only) from
 # dr_libs, stb_vorbis from stb. Single-file C libraries, pinned by commit (neither repository
 # tags all of its files). dr_libs at the wav-0.14.6 tag, which also holds mp3-0.7.4 and
 # flac-0.13.4; stb at the commit noted in third_party_licenses.md (stb_vorbis 1.22).
-set(SAINE_DR_LIBS_COMMIT 35b5c392cc15456736c440a68dbe073178bbffe0)
-set(SAINE_STB_COMMIT 4e9b368bfc071e97206ea5c6adba68dd0cbf8897)
-FetchContent_Declare(saine_dr_libs
+set(DSTUDIO_DR_LIBS_COMMIT 35b5c392cc15456736c440a68dbe073178bbffe0)
+set(DSTUDIO_STB_COMMIT 4e9b368bfc071e97206ea5c6adba68dd0cbf8897)
+FetchContent_Declare(dstudio_dr_libs
   GIT_REPOSITORY https://github.com/mackron/dr_libs.git
-  GIT_TAG ${SAINE_DR_LIBS_COMMIT}
-  SOURCE_SUBDIR _saine_headers_only)
-FetchContent_Declare(saine_stb
+  GIT_TAG ${DSTUDIO_DR_LIBS_COMMIT}
+  SOURCE_SUBDIR _dstudio_headers_only)
+FetchContent_Declare(dstudio_stb
   GIT_REPOSITORY https://github.com/nothings/stb.git
-  GIT_TAG ${SAINE_STB_COMMIT}
-  SOURCE_SUBDIR _saine_headers_only)
-FetchContent_MakeAvailable(saine_clap saine_vst3sdk saine_signalsmith_stretch saine_signalsmith_linear saine_dr_libs saine_stb)
-set(SAINE_DECODER_INCLUDE "${saine_dr_libs_SOURCE_DIR}" "${saine_stb_SOURCE_DIR}")
-set(SAINE_STRETCH_INCLUDE "${saine_signalsmith_stretch_SOURCE_DIR}" "${saine_signalsmith_linear_SOURCE_DIR}/include")
-set(SAINE_CLAP_INCLUDE "${saine_clap_SOURCE_DIR}/include")
-set(SAINE_VST3SDK_DIR "${saine_vst3sdk_SOURCE_DIR}")
+  GIT_TAG ${DSTUDIO_STB_COMMIT}
+  SOURCE_SUBDIR _dstudio_headers_only)
+FetchContent_MakeAvailable(dstudio_clap dstudio_vst3sdk dstudio_signalsmith_stretch dstudio_signalsmith_linear dstudio_dr_libs dstudio_stb)
+set(DSTUDIO_DECODER_INCLUDE "${dstudio_dr_libs_SOURCE_DIR}" "${dstudio_stb_SOURCE_DIR}")
+set(DSTUDIO_STRETCH_INCLUDE "${dstudio_signalsmith_stretch_SOURCE_DIR}" "${dstudio_signalsmith_linear_SOURCE_DIR}/include")
+set(DSTUDIO_CLAP_INCLUDE "${dstudio_clap_SOURCE_DIR}/include")
+set(DSTUDIO_VST3SDK_DIR "${dstudio_vst3sdk_SOURCE_DIR}")
 # IID definitions every VST3 module needs (host and test plugin).
-set(SAINE_VST3_IID_SOURCES
-  ${SAINE_VST3SDK_DIR}/pluginterfaces/base/funknown.cpp
-  ${SAINE_VST3SDK_DIR}/pluginterfaces/base/coreiids.cpp
-  ${SAINE_VST3SDK_DIR}/public.sdk/source/vst/vstinitiids.cpp
-  ${SAINE_VST3SDK_DIR}/public.sdk/source/common/commoniids.cpp)
+set(DSTUDIO_VST3_IID_SOURCES
+  ${DSTUDIO_VST3SDK_DIR}/pluginterfaces/base/funknown.cpp
+  ${DSTUDIO_VST3SDK_DIR}/pluginterfaces/base/coreiids.cpp
+  ${DSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/vstinitiids.cpp
+  ${DSTUDIO_VST3SDK_DIR}/public.sdk/source/common/commoniids.cpp)
 # SDK host helpers (IHostApplication / IMessage / IAttributeList).
-set(SAINE_VST3_HOST_SOURCES
-  ${SAINE_VST3_IID_SOURCES}
-  ${SAINE_VST3SDK_DIR}/public.sdk/source/vst/hosting/hostclasses.cpp
-  ${SAINE_VST3SDK_DIR}/public.sdk/source/vst/hosting/pluginterfacesupport.cpp
-  ${SAINE_VST3SDK_DIR}/public.sdk/source/vst/utility/stringconvert.cpp
-  ${SAINE_VST3SDK_DIR}/public.sdk/source/common/commonstringconvert.cpp)
+set(DSTUDIO_VST3_HOST_SOURCES
+  ${DSTUDIO_VST3_IID_SOURCES}
+  ${DSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/hosting/hostclasses.cpp
+  ${DSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/hosting/pluginterfacesupport.cpp
+  ${DSTUDIO_VST3SDK_DIR}/public.sdk/source/vst/utility/stringconvert.cpp
+  ${DSTUDIO_VST3SDK_DIR}/public.sdk/source/common/commonstringconvert.cpp)
 # Third-party code is compiled without our warning set: the host helpers
 # in their own object library (no /W4 to override), the IID files of the
 # test plugins with warnings off.
-set_source_files_properties(${SAINE_VST3_HOST_SOURCES} PROPERTIES COMPILE_OPTIONS
+set_source_files_properties(${DSTUDIO_VST3_HOST_SOURCES} PROPERTIES COMPILE_OPTIONS
   "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>")
-add_library(saine_vst3_host OBJECT ${SAINE_VST3_HOST_SOURCES})
-target_include_directories(saine_vst3_host SYSTEM PRIVATE ${SAINE_VST3SDK_DIR})
-target_compile_features(saine_vst3_host PRIVATE cxx_std_23)
-set_target_properties(saine_vst3_host PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_library(dstudio_vst3_host OBJECT ${DSTUDIO_VST3_HOST_SOURCES})
+target_include_directories(dstudio_vst3_host SYSTEM PRIVATE ${DSTUDIO_VST3SDK_DIR})
+target_compile_features(dstudio_vst3_host PRIVATE cxx_std_23)
+set_target_properties(dstudio_vst3_host PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # The decoder implementations, also without our warnings.
-add_library(saine_decoders OBJECT src/decoders_impl.c)
-target_include_directories(saine_decoders SYSTEM PRIVATE ${SAINE_DECODER_INCLUDE})
-target_compile_options(saine_decoders PRIVATE "$<IF:$<C_COMPILER_ID:MSVC>,/w,-w>")
-set_target_properties(saine_decoders PROPERTIES POSITION_INDEPENDENT_CODE ON)
+add_library(dstudio_decoders OBJECT src/decoders_impl.c)
+target_include_directories(dstudio_decoders SYSTEM PRIVATE ${DSTUDIO_DECODER_INCLUDE})
+target_compile_options(dstudio_decoders PRIVATE "$<IF:$<C_COMPILER_ID:MSVC>,/w,-w>")
+set_target_properties(dstudio_decoders PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # ---------------------------------------------------------------- warnings
-add_library(saine_engine_warnings INTERFACE)
+add_library(dstudio_engine_warnings INTERFACE)
 if(MSVC)
   # C4324 "structure was padded due to alignment specifier" is the intended
   # effect of alignas(64) on the lock-free queues (false-sharing padding).
-  target_compile_options(saine_engine_warnings INTERFACE /W4 /permissive- /wd4324)
-  if(SAINE_ENGINE_WERROR)
-    target_compile_options(saine_engine_warnings INTERFACE /WX)
+  target_compile_options(dstudio_engine_warnings INTERFACE /W4 /permissive- /wd4324)
+  if(DSTUDIO_ENGINE_WERROR)
+    target_compile_options(dstudio_engine_warnings INTERFACE /WX)
   endif()
 else()
-  target_compile_options(saine_engine_warnings INTERFACE
+  target_compile_options(dstudio_engine_warnings INTERFACE
     -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wno-sign-conversion
     -Wnon-virtual-dtor -Wold-style-cast -Wcast-align -Woverloaded-virtual
     -Wnull-dereference -Wimplicit-fallthrough)
-  if(SAINE_ENGINE_WERROR)
-    target_compile_options(saine_engine_warnings INTERFACE -Werror)
+  if(DSTUDIO_ENGINE_WERROR)
+    target_compile_options(dstudio_engine_warnings INTERFACE -Werror)
   endif()
 endif()
 
-if(SAINE_ENGINE_SANITIZE)
+if(DSTUDIO_ENGINE_SANITIZE)
   if(MSVC)
-    message(FATAL_ERROR "SAINE_ENGINE_SANITIZE is only wired up for clang/gcc")
+    message(FATAL_ERROR "DSTUDIO_ENGINE_SANITIZE is only wired up for clang/gcc")
   endif()
   add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
   add_link_options(-fsanitize=address,undefined)
 endif()
 
 # ---------------------------------------------------------------- library
-add_library(saine_engine STATIC
+add_library(dstudio_engine STATIC
   src/c_api.cpp
   src/engine.cpp
   src/processor.cpp
@@ -201,8 +201,8 @@ add_library(saine_engine STATIC
   src/devices/tuner.cpp
   src/devices/shaper.cpp
   src/devices/trance_gate.cpp
-  $<TARGET_OBJECTS:saine_vst3_host>
-  $<TARGET_OBJECTS:saine_decoders>
+  $<TARGET_OBJECTS:dstudio_vst3_host>
+  $<TARGET_OBJECTS:dstudio_decoders>
   # Platform backends: each file is compile-guarded so exactly one is active.
   src/platform/audio_device.cpp
   src/platform/coreaudio_device.cpp
@@ -211,144 +211,144 @@ add_library(saine_engine STATIC
   src/platform/os.cpp
 )
 if(WIN32)
-  target_sources(saine_engine PRIVATE src/platform/plugin_editor_win.cpp)
+  target_sources(dstudio_engine PRIVATE src/platform/plugin_editor_win.cpp)
 elseif(NOT APPLE)
-  # Linux: the plugin run loop always; X11 editor windows unless SAINE_ENGINE_X11
+  # Linux: the plugin run loop always; X11 editor windows unless DSTUDIO_ENGINE_X11
   # is OFF (then the stub reports that editors need X11).
-  target_sources(saine_engine PRIVATE src/platform/run_loop.cpp src/platform/plugin_editor_stub.cpp
+  target_sources(dstudio_engine PRIVATE src/platform/run_loop.cpp src/platform/plugin_editor_stub.cpp
     src/platform/plugin_editor_x11.cpp)
 endif()
 if(APPLE)
-  target_sources(saine_engine PRIVATE src/platform/plugin_editor_mac.mm)
+  target_sources(dstudio_engine PRIVATE src/platform/plugin_editor_mac.mm)
   # ARC; bridging casts are C-style by necessity.
   set_source_files_properties(src/platform/plugin_editor_mac.mm PROPERTIES
     COMPILE_OPTIONS "-fobjc-arc;-Wno-old-style-cast;-Wno-cast-align")
 endif()
-target_include_directories(saine_engine
+target_include_directories(dstudio_engine
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # SDK headers are third-party: include them as system headers (no warnings).
-target_include_directories(saine_engine SYSTEM PRIVATE ${SAINE_CLAP_INCLUDE} ${SAINE_VST3SDK_DIR} ${SAINE_STRETCH_INCLUDE} ${SAINE_DECODER_INCLUDE})
+target_include_directories(dstudio_engine SYSTEM PRIVATE ${DSTUDIO_CLAP_INCLUDE} ${DSTUDIO_VST3SDK_DIR} ${DSTUDIO_STRETCH_INCLUDE} ${DSTUDIO_DECODER_INCLUDE})
 if(APPLE)
   # vDSP FFTs for signalsmith-linear (Accelerate is linked below).
   set_property(SOURCE src/warp.cpp APPEND PROPERTY COMPILE_DEFINITIONS SIGNALSMITH_USE_ACCELERATE ACCELERATE_NEW_LAPACK)
 endif()
-target_compile_features(saine_engine PUBLIC cxx_std_23)
-set_target_properties(saine_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(saine_engine PRIVATE $<BUILD_INTERFACE:saine_engine_warnings>)
+target_compile_features(dstudio_engine PUBLIC cxx_std_23)
+set_target_properties(dstudio_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(dstudio_engine PRIVATE $<BUILD_INTERFACE:dstudio_engine_warnings>)
 if(NOT MSVC)
   # DSP code: flag accidental float->double promotion (slow paths, surprises).
   # Not applied to tests/bench/tools, which compare in double on purpose.
-  target_compile_options(saine_engine PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wdouble-promotion>)
+  target_compile_options(dstudio_engine PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wdouble-promotion>)
 endif()
 
 if(APPLE)
-  target_link_libraries(saine_engine PUBLIC
+  target_link_libraries(dstudio_engine PUBLIC
     "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreAudio" "-framework CoreFoundation"
     "-framework CoreAudioKit" "-framework AppKit" "-framework Foundation" "-framework Accelerate")
 endif()
 if(WIN32)
   # ole32: COM (WASAPI, MMDevice); shell32: CommandLineToArgvW; avrt: MMCSS;
   # user32: plugin editor windows.
-  target_link_libraries(saine_engine PUBLIC ole32 shell32 avrt user32)
+  target_link_libraries(dstudio_engine PUBLIC ole32 shell32 avrt user32)
 elseif(NOT APPLE)
-  target_link_libraries(saine_engine PUBLIC ${CMAKE_DL_LIBS})
+  target_link_libraries(dstudio_engine PUBLIC ${CMAKE_DL_LIBS})
 endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   # Audio backend (src/platform/pipewire_device.cpp). OFF builds an engine
   # without device I/O (offline rendering only).
-  option(SAINE_ENGINE_PIPEWIRE "Build the PipeWire audio backend (needs libpipewire-0.3 development files)" ON)
-  if(SAINE_ENGINE_PIPEWIRE)
+  option(DSTUDIO_ENGINE_PIPEWIRE "Build the PipeWire audio backend (needs libpipewire-0.3 development files)" ON)
+  if(DSTUDIO_ENGINE_PIPEWIRE)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
-    target_link_libraries(saine_engine PUBLIC PkgConfig::PIPEWIRE)
-    target_compile_definitions(saine_engine PRIVATE SAINE_HAVE_PIPEWIRE=1)
+    target_link_libraries(dstudio_engine PUBLIC PkgConfig::PIPEWIRE)
+    target_compile_definitions(dstudio_engine PRIVATE DSTUDIO_HAVE_PIPEWIRE=1)
   endif()
   # Plugin editor windows (src/platform/plugin_editor_x11.cpp). Every Linux
   # plugin GUI is X11; on Wayland they run through XWayland.
-  option(SAINE_ENGINE_X11 "Build Linux plugin editor windows (needs libX11 development files)" ON)
-  if(SAINE_ENGINE_X11)
+  option(DSTUDIO_ENGINE_X11 "Build Linux plugin editor windows (needs libX11 development files)" ON)
+  if(DSTUDIO_ENGINE_X11)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
-    target_link_libraries(saine_engine PUBLIC PkgConfig::X11)
-    target_compile_definitions(saine_engine PRIVATE SAINE_HAVE_X11=1)
+    target_link_libraries(dstudio_engine PUBLIC PkgConfig::X11)
+    target_compile_definitions(dstudio_engine PRIVATE DSTUDIO_HAVE_X11=1)
   endif()
 endif()
 find_package(Threads REQUIRED)
-target_link_libraries(saine_engine PUBLIC Threads::Threads)
+target_link_libraries(dstudio_engine PUBLIC Threads::Threads)
 
 # Installed layout for the Rust `cmake` crate (it runs the install target):
-#   <prefix>/lib/libsaine_engine.a, <prefix>/include/saine_engine.h
-install(TARGETS saine_engine ARCHIVE DESTINATION lib)
-install(FILES include/saine_engine.h DESTINATION include)
+#   <prefix>/lib/libdstudio_engine.a, <prefix>/include/dstudio_engine.h
+install(TARGETS dstudio_engine ARCHIVE DESTINATION lib)
+install(FILES include/dstudio_engine.h DESTINATION include)
 
 # ---------------------------------------------------------------- plugin scanner
 # Out-of-process scanner (see README "Plugins > Scanning"). The Rust crate
-# finds it at the path baked in by build.rs, or via SAINE_PLUGIN_SCANNER.
-if(SAINE_ENGINE_BUILD_SCANNER)
-  add_executable(saine_plugin_scanner scanner/scanner_main.cpp)
-  target_include_directories(saine_plugin_scanner PRIVATE src)
-  target_include_directories(saine_plugin_scanner SYSTEM PRIVATE ${SAINE_CLAP_INCLUDE} ${SAINE_VST3SDK_DIR})
-  target_link_libraries(saine_plugin_scanner PRIVATE saine_engine saine_engine_warnings)
+# finds it at the path baked in by build.rs, or via DSTUDIO_PLUGIN_SCANNER.
+if(DSTUDIO_ENGINE_BUILD_SCANNER)
+  add_executable(dstudio_plugin_scanner scanner/scanner_main.cpp)
+  target_include_directories(dstudio_plugin_scanner PRIVATE src)
+  target_include_directories(dstudio_plugin_scanner SYSTEM PRIVATE ${DSTUDIO_CLAP_INCLUDE} ${DSTUDIO_VST3SDK_DIR})
+  target_link_libraries(dstudio_plugin_scanner PRIVATE dstudio_engine dstudio_engine_warnings)
 endif()
 
 # ---------------------------------------------------------------- test plugins
 # Minimal original plugins, built as proper bundles into <build>/test_plugins:
-# SaineTestGain.vst3, SaineTestGain.clap, SaineTestSine.clap,
-# SaineTestLatency.clap/.vst3 (delay by N frames, report latency N) and
-# SaineTestCrash.clap (crashes in clap_entry.init; scanner blocklist test).
-set(SAINE_TEST_PLUGIN_DIR "${CMAKE_CURRENT_BINARY_DIR}/test_plugins")
-if(SAINE_ENGINE_BUILD_TEST_PLUGINS AND APPLE)
-  function(saine_test_bundle target output ext)
+# DStudioTestGain.vst3, DStudioTestGain.clap, DStudioTestSine.clap,
+# DStudioTestLatency.clap/.vst3 (delay by N frames, report latency N) and
+# DStudioTestCrash.clap (crashes in clap_entry.init; scanner blocklist test).
+set(DSTUDIO_TEST_PLUGIN_DIR "${CMAKE_CURRENT_BINARY_DIR}/test_plugins")
+if(DSTUDIO_ENGINE_BUILD_TEST_PLUGINS AND APPLE)
+  function(dstudio_test_bundle target output ext)
     add_library(${target} MODULE ${ARGN})
     set_target_properties(${target} PROPERTIES
       BUNDLE TRUE
       BUNDLE_EXTENSION ${ext}
       OUTPUT_NAME ${output}
-      LIBRARY_OUTPUT_DIRECTORY "${SAINE_TEST_PLUGIN_DIR}"
+      LIBRARY_OUTPUT_DIRECTORY "${DSTUDIO_TEST_PLUGIN_DIR}"
       MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/test_plugins/Info.plist.in"
       MACOSX_BUNDLE_BUNDLE_NAME ${output}
-      MACOSX_BUNDLE_GUI_IDENTIFIER "studio.saine.test.${output}.${ext}"
+      MACOSX_BUNDLE_GUI_IDENTIFIER "studio.dstudio.test.${output}.${ext}"
       CXX_VISIBILITY_PRESET hidden
       VISIBILITY_INLINES_HIDDEN ON)
     target_link_libraries(${target} PRIVATE "-framework CoreFoundation")
   endfunction()
-  saine_test_bundle(SaineTestGainClap SaineTestGain clap test_plugins/saine_test_clap.cpp)
-  target_compile_definitions(SaineTestGainClap PRIVATE SAINE_TEST_CLAP_GAIN=1)
-  saine_test_bundle(SaineTestSineClap SaineTestSine clap test_plugins/saine_test_clap.cpp)
-  target_compile_definitions(SaineTestSineClap PRIVATE SAINE_TEST_CLAP_SINE=1)
-  saine_test_bundle(SaineTestCrashClap SaineTestCrash clap test_plugins/saine_test_crash.cpp)
-  saine_test_bundle(SaineTestLatencyClap SaineTestLatency clap test_plugins/saine_test_latency_clap.cpp)
-  foreach(t SaineTestGainClap SaineTestSineClap SaineTestCrashClap SaineTestLatencyClap)
-    target_include_directories(${t} SYSTEM PRIVATE ${SAINE_CLAP_INCLUDE})
+  dstudio_test_bundle(DStudioTestGainClap DStudioTestGain clap test_plugins/dstudio_test_clap.cpp)
+  target_compile_definitions(DStudioTestGainClap PRIVATE DSTUDIO_TEST_CLAP_GAIN=1)
+  dstudio_test_bundle(DStudioTestSineClap DStudioTestSine clap test_plugins/dstudio_test_clap.cpp)
+  target_compile_definitions(DStudioTestSineClap PRIVATE DSTUDIO_TEST_CLAP_SINE=1)
+  dstudio_test_bundle(DStudioTestCrashClap DStudioTestCrash clap test_plugins/dstudio_test_crash.cpp)
+  dstudio_test_bundle(DStudioTestLatencyClap DStudioTestLatency clap test_plugins/dstudio_test_latency_clap.cpp)
+  foreach(t DStudioTestGainClap DStudioTestSineClap DStudioTestCrashClap DStudioTestLatencyClap)
+    target_include_directories(${t} SYSTEM PRIVATE ${DSTUDIO_CLAP_INCLUDE})
   endforeach()
-  saine_test_bundle(SaineTestGainVst3 SaineTestGain vst3 test_plugins/saine_test_vst3.cpp ${SAINE_VST3_IID_SOURCES})
-  target_include_directories(SaineTestGainVst3 SYSTEM PRIVATE ${SAINE_VST3SDK_DIR})
-  saine_test_bundle(SaineTestLatencyVst3 SaineTestLatency vst3 test_plugins/saine_test_latency_vst3.cpp
-    ${SAINE_VST3_IID_SOURCES})
-  target_include_directories(SaineTestLatencyVst3 SYSTEM PRIVATE ${SAINE_VST3SDK_DIR})
-  add_custom_target(saine_test_plugins DEPENDS SaineTestGainClap SaineTestSineClap SaineTestCrashClap SaineTestGainVst3
-    SaineTestLatencyClap SaineTestLatencyVst3)
-elseif(SAINE_ENGINE_BUILD_TEST_PLUGINS)
+  dstudio_test_bundle(DStudioTestGainVst3 DStudioTestGain vst3 test_plugins/dstudio_test_vst3.cpp ${DSTUDIO_VST3_IID_SOURCES})
+  target_include_directories(DStudioTestGainVst3 SYSTEM PRIVATE ${DSTUDIO_VST3SDK_DIR})
+  dstudio_test_bundle(DStudioTestLatencyVst3 DStudioTestLatency vst3 test_plugins/dstudio_test_latency_vst3.cpp
+    ${DSTUDIO_VST3_IID_SOURCES})
+  target_include_directories(DStudioTestLatencyVst3 SYSTEM PRIVATE ${DSTUDIO_VST3SDK_DIR})
+  add_custom_target(dstudio_test_plugins DEPENDS DStudioTestGainClap DStudioTestSineClap DStudioTestCrashClap DStudioTestGainVst3
+    DStudioTestLatencyClap DStudioTestLatencyVst3)
+elseif(DSTUDIO_ENGINE_BUILD_TEST_PLUGINS)
   # Windows / Linux: a CLAP is a single shared library named *.clap; a VST3
   # is a bundle folder <name>.vst3/Contents/<arch>-win/<name>.vst3 (DLL) or
   # <name>.vst3/Contents/<arch>-linux/<name>.so. "$<1:...>" keeps
   # multi-config generators from appending a per-config subfolder.
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64|amd64|x64)$")
-    set(_saine_vst3_arch x86_64)
+    set(_dstudio_vst3_arch x86_64)
   elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
     if(WIN32)
-      set(_saine_vst3_arch arm64)
+      set(_dstudio_vst3_arch arm64)
     else()
-      set(_saine_vst3_arch aarch64)
+      set(_dstudio_vst3_arch aarch64)
     endif()
   else()
-    set(_saine_vst3_arch ${CMAKE_SYSTEM_PROCESSOR})
+    set(_dstudio_vst3_arch ${CMAKE_SYSTEM_PROCESSOR})
   endif()
-  function(saine_test_module target output dir suffix)
+  function(dstudio_test_module target output dir suffix)
     add_library(${target} MODULE ${ARGN})
     set_target_properties(${target} PROPERTIES
       PREFIX ""
@@ -362,57 +362,57 @@ elseif(SAINE_ENGINE_BUILD_TEST_PLUGINS)
       target_link_options(${target} PRIVATE /NOIMPLIB /NOEXP)
     endif()
   endfunction()
-  function(saine_test_clap target output)
-    saine_test_module(${target} ${output} "${SAINE_TEST_PLUGIN_DIR}" ".clap" ${ARGN})
-    target_include_directories(${target} SYSTEM PRIVATE ${SAINE_CLAP_INCLUDE})
+  function(dstudio_test_clap target output)
+    dstudio_test_module(${target} ${output} "${DSTUDIO_TEST_PLUGIN_DIR}" ".clap" ${ARGN})
+    target_include_directories(${target} SYSTEM PRIVATE ${DSTUDIO_CLAP_INCLUDE})
   endfunction()
-  function(saine_test_vst3 target output)
+  function(dstudio_test_vst3 target output)
     if(WIN32)
-      set(_dir "${SAINE_TEST_PLUGIN_DIR}/${output}.vst3/Contents/${_saine_vst3_arch}-win")
+      set(_dir "${DSTUDIO_TEST_PLUGIN_DIR}/${output}.vst3/Contents/${_dstudio_vst3_arch}-win")
       set(_suffix ".vst3")
     else()
-      set(_dir "${SAINE_TEST_PLUGIN_DIR}/${output}.vst3/Contents/${_saine_vst3_arch}-linux")
+      set(_dir "${DSTUDIO_TEST_PLUGIN_DIR}/${output}.vst3/Contents/${_dstudio_vst3_arch}-linux")
       set(_suffix ".so")
     endif()
-    saine_test_module(${target} ${output} "${_dir}" "${_suffix}" ${ARGN} ${SAINE_VST3_IID_SOURCES})
-    target_include_directories(${target} SYSTEM PRIVATE ${SAINE_VST3SDK_DIR})
+    dstudio_test_module(${target} ${output} "${_dir}" "${_suffix}" ${ARGN} ${DSTUDIO_VST3_IID_SOURCES})
+    target_include_directories(${target} SYSTEM PRIVATE ${DSTUDIO_VST3SDK_DIR})
   endfunction()
-  saine_test_clap(SaineTestGainClap SaineTestGain test_plugins/saine_test_clap.cpp)
-  target_compile_definitions(SaineTestGainClap PRIVATE SAINE_TEST_CLAP_GAIN=1)
-  saine_test_clap(SaineTestSineClap SaineTestSine test_plugins/saine_test_clap.cpp)
-  target_compile_definitions(SaineTestSineClap PRIVATE SAINE_TEST_CLAP_SINE=1)
-  saine_test_clap(SaineTestCrashClap SaineTestCrash test_plugins/saine_test_crash.cpp)
-  saine_test_clap(SaineTestLatencyClap SaineTestLatency test_plugins/saine_test_latency_clap.cpp)
-  saine_test_vst3(SaineTestGainVst3 SaineTestGain test_plugins/saine_test_vst3.cpp)
-  saine_test_vst3(SaineTestLatencyVst3 SaineTestLatency test_plugins/saine_test_latency_vst3.cpp)
-  add_custom_target(saine_test_plugins DEPENDS SaineTestGainClap SaineTestSineClap SaineTestCrashClap SaineTestGainVst3
-    SaineTestLatencyClap SaineTestLatencyVst3)
+  dstudio_test_clap(DStudioTestGainClap DStudioTestGain test_plugins/dstudio_test_clap.cpp)
+  target_compile_definitions(DStudioTestGainClap PRIVATE DSTUDIO_TEST_CLAP_GAIN=1)
+  dstudio_test_clap(DStudioTestSineClap DStudioTestSine test_plugins/dstudio_test_clap.cpp)
+  target_compile_definitions(DStudioTestSineClap PRIVATE DSTUDIO_TEST_CLAP_SINE=1)
+  dstudio_test_clap(DStudioTestCrashClap DStudioTestCrash test_plugins/dstudio_test_crash.cpp)
+  dstudio_test_clap(DStudioTestLatencyClap DStudioTestLatency test_plugins/dstudio_test_latency_clap.cpp)
+  dstudio_test_vst3(DStudioTestGainVst3 DStudioTestGain test_plugins/dstudio_test_vst3.cpp)
+  dstudio_test_vst3(DStudioTestLatencyVst3 DStudioTestLatency test_plugins/dstudio_test_latency_vst3.cpp)
+  add_custom_target(dstudio_test_plugins DEPENDS DStudioTestGainClap DStudioTestSineClap DStudioTestCrashClap DStudioTestGainVst3
+    DStudioTestLatencyClap DStudioTestLatencyVst3)
   if(WIN32)
     # Win32 clap.gui for the editor host test (plugin_editor_window_win32_*).
-    saine_test_clap(SaineTestGuiClap SaineTestGui test_plugins/saine_test_gui_clap.cpp)
-    target_link_libraries(SaineTestGuiClap PRIVATE user32)
-    add_dependencies(saine_test_plugins SaineTestGuiClap)
+    dstudio_test_clap(DStudioTestGuiClap DStudioTestGui test_plugins/dstudio_test_gui_clap.cpp)
+    target_link_libraries(DStudioTestGuiClap PRIVATE user32)
+    add_dependencies(dstudio_test_plugins DStudioTestGuiClap)
   elseif(TARGET PkgConfig::X11)
     # X11 clap.gui (+ timer and fd support) for plugin_editor_window_x11_*.
-    saine_test_clap(SaineTestGuiClap SaineTestGui test_plugins/saine_test_gui_clap.cpp)
-    target_link_libraries(SaineTestGuiClap PRIVATE PkgConfig::X11)
-    add_dependencies(saine_test_plugins SaineTestGuiClap)
+    dstudio_test_clap(DStudioTestGuiClap DStudioTestGui test_plugins/dstudio_test_gui_clap.cpp)
+    target_link_libraries(DStudioTestGuiClap PRIVATE PkgConfig::X11)
+    add_dependencies(dstudio_test_plugins DStudioTestGuiClap)
   endif()
 endif()
 
 # What the Rust crate builds (build.rs): library, scanner, CLAP test gain.
-add_custom_target(saine_engine_rust ALL DEPENDS saine_engine)
-if(SAINE_ENGINE_BUILD_SCANNER)
-  add_dependencies(saine_engine_rust saine_plugin_scanner)
+add_custom_target(dstudio_engine_rust ALL DEPENDS dstudio_engine)
+if(DSTUDIO_ENGINE_BUILD_SCANNER)
+  add_dependencies(dstudio_engine_rust dstudio_plugin_scanner)
 endif()
-if(TARGET saine_test_plugins)
-  add_dependencies(saine_engine_rust saine_test_plugins)
+if(TARGET dstudio_test_plugins)
+  add_dependencies(dstudio_engine_rust dstudio_test_plugins)
 endif()
 
 # ---------------------------------------------------------------- tests
-if(SAINE_ENGINE_BUILD_TESTS)
+if(DSTUDIO_ENGINE_BUILD_TESTS)
   enable_testing()
-  add_executable(saine_engine_tests
+  add_executable(dstudio_engine_tests
     tests/test_main.cpp
     tests/test_util.cpp
     tests/test_wav.cpp
@@ -463,100 +463,100 @@ if(SAINE_ENGINE_BUILD_TESTS)
     tests/devices/test_tuner.cpp
     tests/devices/test_shaper.cpp
     tests/devices/test_trance_gate.cpp)
-  target_include_directories(saine_engine_tests PRIVATE src tests)
-  target_link_libraries(saine_engine_tests PRIVATE saine_engine saine_engine_warnings)
+  target_include_directories(dstudio_engine_tests PRIVATE src tests)
+  target_link_libraries(dstudio_engine_tests PRIVATE dstudio_engine dstudio_engine_warnings)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     # GCC 13 -O2 false positive (free-nonheap-object) on std::vector range
     # construction in test_plugins.cpp after constant-folding a loop bound.
-    target_compile_options(saine_engine_tests PRIVATE -Wno-free-nonheap-object)
+    target_compile_options(dstudio_engine_tests PRIVATE -Wno-free-nonheap-object)
   endif()
-  target_compile_definitions(saine_engine_tests PRIVATE
-    SAINE_TEST_PLUGIN_DIR="${SAINE_TEST_PLUGIN_DIR}"
-    SAINE_PLUGIN_SCANNER_PATH="$<TARGET_FILE:saine_plugin_scanner>")
-  if(TARGET saine_test_plugins)
-    add_dependencies(saine_engine_tests saine_test_plugins saine_plugin_scanner)
+  target_compile_definitions(dstudio_engine_tests PRIVATE
+    DSTUDIO_TEST_PLUGIN_DIR="${DSTUDIO_TEST_PLUGIN_DIR}"
+    DSTUDIO_PLUGIN_SCANNER_PATH="$<TARGET_FILE:dstudio_plugin_scanner>")
+  if(TARGET dstudio_test_plugins)
+    add_dependencies(dstudio_engine_tests dstudio_test_plugins dstudio_plugin_scanner)
   endif()
-  if(TARGET SaineTestGuiClap AND NOT WIN32)
+  if(TARGET DStudioTestGuiClap AND NOT WIN32)
     # plugin_editor_window_x11_*: inspects the editor windows over Xlib.
-    target_link_libraries(saine_engine_tests PRIVATE PkgConfig::X11)
-    target_compile_definitions(saine_engine_tests PRIVATE SAINE_TEST_X11_EDITOR=1)
+    target_link_libraries(dstudio_engine_tests PRIVATE PkgConfig::X11)
+    target_compile_definitions(dstudio_engine_tests PRIVATE DSTUDIO_TEST_X11_EDITOR=1)
   endif()
 
   # Each TEST_CASE becomes its own CTest test. The list is produced by the
   # test binary itself after every build (cf. gtest_discover_tests).
-  set(_list "${CMAKE_CURRENT_BINARY_DIR}/saine_engine_tests_list.cmake")
-  set(_wrapper "${CMAKE_CURRENT_BINARY_DIR}/saine_engine_tests_include.cmake")
-  add_custom_command(TARGET saine_engine_tests POST_BUILD
-    COMMAND saine_engine_tests --write-ctest "${_list}" "$<TARGET_FILE:saine_engine_tests>"
+  set(_list "${CMAKE_CURRENT_BINARY_DIR}/dstudio_engine_tests_list.cmake")
+  set(_wrapper "${CMAKE_CURRENT_BINARY_DIR}/dstudio_engine_tests_include.cmake")
+  add_custom_command(TARGET dstudio_engine_tests POST_BUILD
+    COMMAND dstudio_engine_tests --write-ctest "${_list}" "$<TARGET_FILE:dstudio_engine_tests>"
     BYPRODUCTS "${_list}"
-    COMMENT "Discovering saine_engine_tests test cases")
+    COMMENT "Discovering dstudio_engine_tests test cases")
   file(WRITE "${_wrapper}"
     "if(EXISTS \"${_list}\")\n  include(\"${_list}\")\nelse()\n"
-    "  add_test(saine_engine_tests_NOT_BUILT saine_engine_tests_NOT_BUILT)\nendif()\n")
+    "  add_test(dstudio_engine_tests_NOT_BUILT dstudio_engine_tests_NOT_BUILT)\nendif()\n")
   set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES "${_wrapper}")
 endif()
 
 # ---------------------------------------------------------------- bench
-if(SAINE_ENGINE_BUILD_BENCH)
-  add_executable(saine_engine_bench bench/bench_render.cpp)
-  target_include_directories(saine_engine_bench PRIVATE src)
-  target_link_libraries(saine_engine_bench PRIVATE saine_engine saine_engine_warnings)
-  target_compile_definitions(saine_engine_bench PRIVATE SAINE_TEST_PLUGIN_DIR="${SAINE_TEST_PLUGIN_DIR}")
-  if(TARGET saine_test_plugins)
-    add_dependencies(saine_engine_bench saine_test_plugins)
+if(DSTUDIO_ENGINE_BUILD_BENCH)
+  add_executable(dstudio_engine_bench bench/bench_render.cpp)
+  target_include_directories(dstudio_engine_bench PRIVATE src)
+  target_link_libraries(dstudio_engine_bench PRIVATE dstudio_engine dstudio_engine_warnings)
+  target_compile_definitions(dstudio_engine_bench PRIVATE DSTUDIO_TEST_PLUGIN_DIR="${DSTUDIO_TEST_PLUGIN_DIR}")
+  if(TARGET dstudio_test_plugins)
+    add_dependencies(dstudio_engine_bench dstudio_test_plugins)
   endif()
-  add_executable(saine_frame_ring_bench bench/bench_frame_ring.cpp)
-  target_include_directories(saine_frame_ring_bench PRIVATE src)
-  target_link_libraries(saine_frame_ring_bench PRIVATE saine_engine_warnings)
+  add_executable(dstudio_frame_ring_bench bench/bench_frame_ring.cpp)
+  target_include_directories(dstudio_frame_ring_bench PRIVATE src)
+  target_link_libraries(dstudio_frame_ring_bench PRIVATE dstudio_engine_warnings)
 
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    add_executable(saine_run_loop_bench bench/bench_run_loop.cpp src/platform/run_loop.cpp)
-    target_include_directories(saine_run_loop_bench PRIVATE src)
-    target_link_libraries(saine_run_loop_bench PRIVATE saine_engine_warnings)
+    add_executable(dstudio_run_loop_bench bench/bench_run_loop.cpp src/platform/run_loop.cpp)
+    target_include_directories(dstudio_run_loop_bench PRIVATE src)
+    target_link_libraries(dstudio_run_loop_bench PRIVATE dstudio_engine_warnings)
   endif()
-  add_executable(saine_offline_plugin_bench bench/bench_offline_plugins.cpp)
-  target_include_directories(saine_offline_plugin_bench PRIVATE src)
-  target_link_libraries(saine_offline_plugin_bench PRIVATE saine_engine saine_engine_warnings)
-  target_compile_definitions(saine_offline_plugin_bench PRIVATE SAINE_TEST_PLUGIN_DIR="${SAINE_TEST_PLUGIN_DIR}")
-  if(TARGET saine_test_plugins)
-    add_dependencies(saine_offline_plugin_bench saine_test_plugins)
+  add_executable(dstudio_offline_plugin_bench bench/bench_offline_plugins.cpp)
+  target_include_directories(dstudio_offline_plugin_bench PRIVATE src)
+  target_link_libraries(dstudio_offline_plugin_bench PRIVATE dstudio_engine dstudio_engine_warnings)
+  target_compile_definitions(dstudio_offline_plugin_bench PRIVATE DSTUDIO_TEST_PLUGIN_DIR="${DSTUDIO_TEST_PLUGIN_DIR}")
+  if(TARGET dstudio_test_plugins)
+    add_dependencies(dstudio_offline_plugin_bench dstudio_test_plugins)
   endif()
-  add_executable(saine_warp_bench bench/bench_warp.cpp)
-  target_include_directories(saine_warp_bench PRIVATE src)
-  target_link_libraries(saine_warp_bench PRIVATE saine_engine saine_engine_warnings)
-  add_executable(saine_clip_loop_bench bench/bench_clip_loop.cpp)
-  target_include_directories(saine_clip_loop_bench PRIVATE src)
-  target_link_libraries(saine_clip_loop_bench PRIVATE saine_engine saine_engine_warnings)
-  add_executable(saine_decode_bench bench/bench_decode.cpp)
-  target_include_directories(saine_decode_bench PRIVATE src)
-  target_link_libraries(saine_decode_bench PRIVATE saine_engine saine_engine_warnings)
-  add_executable(saine_device_bench bench/bench_devices.cpp)
-  target_include_directories(saine_device_bench PRIVATE src)
-  target_link_libraries(saine_device_bench PRIVATE saine_engine saine_engine_warnings)
+  add_executable(dstudio_warp_bench bench/bench_warp.cpp)
+  target_include_directories(dstudio_warp_bench PRIVATE src)
+  target_link_libraries(dstudio_warp_bench PRIVATE dstudio_engine dstudio_engine_warnings)
+  add_executable(dstudio_clip_loop_bench bench/bench_clip_loop.cpp)
+  target_include_directories(dstudio_clip_loop_bench PRIVATE src)
+  target_link_libraries(dstudio_clip_loop_bench PRIVATE dstudio_engine dstudio_engine_warnings)
+  add_executable(dstudio_decode_bench bench/bench_decode.cpp)
+  target_include_directories(dstudio_decode_bench PRIVATE src)
+  target_link_libraries(dstudio_decode_bench PRIVATE dstudio_engine dstudio_engine_warnings)
+  add_executable(dstudio_device_bench bench/bench_devices.cpp)
+  target_include_directories(dstudio_device_bench PRIVATE src)
+  target_link_libraries(dstudio_device_bench PRIVATE dstudio_engine dstudio_engine_warnings)
   # Plugin-cache parse benchmark (the scanner's JSON reader only).
-  add_executable(saine_scan_cache_bench bench/bench_scan_cache.cpp)
-  target_include_directories(saine_scan_cache_bench PRIVATE scanner)
-  target_link_libraries(saine_scan_cache_bench PRIVATE saine_engine_warnings)
+  add_executable(dstudio_scan_cache_bench bench/bench_scan_cache.cpp)
+  target_include_directories(dstudio_scan_cache_bench PRIVATE scanner)
+  target_link_libraries(dstudio_scan_cache_bench PRIVATE dstudio_engine_warnings)
 endif()
 
 # ---------------------------------------------------------------- tools
-if(SAINE_ENGINE_BUILD_TOOLS)
+if(DSTUDIO_ENGINE_BUILD_TOOLS)
   add_executable(play_sine_or_wav tools/play_sine_or_wav.cpp)
   target_include_directories(play_sine_or_wav PRIVATE src)
-  target_link_libraries(play_sine_or_wav PRIVATE saine_engine saine_engine_warnings)
+  target_link_libraries(play_sine_or_wav PRIVATE dstudio_engine dstudio_engine_warnings)
   add_executable(record_check tools/record_check.cpp)
   target_include_directories(record_check PRIVATE src)
-  target_link_libraries(record_check PRIVATE saine_engine saine_engine_warnings)
+  target_link_libraries(record_check PRIVATE dstudio_engine dstudio_engine_warnings)
   if(APPLE)
     # Manual: opens and closes an AU editor window (needs a GUI session).
     add_executable(plugin_editor_check tools/plugin_editor_check.mm)
     set_source_files_properties(tools/plugin_editor_check.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wno-old-style-cast")
     target_include_directories(plugin_editor_check PRIVATE src)
-    target_link_libraries(plugin_editor_check PRIVATE saine_engine saine_engine_warnings)
+    target_link_libraries(plugin_editor_check PRIVATE dstudio_engine dstudio_engine_warnings)
   endif()
   if(TARGET PkgConfig::X11)
     # Manual: opens a real plugin's X11 editor (needs DISPLAY).
     add_executable(plugin_editor_check_linux tools/plugin_editor_check_linux.cpp)
-    target_link_libraries(plugin_editor_check_linux PRIVATE saine_engine saine_engine_warnings)
+    target_link_libraries(plugin_editor_check_linux PRIVATE dstudio_engine dstudio_engine_warnings)
   endif()
 endif()

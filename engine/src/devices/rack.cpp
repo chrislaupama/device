@@ -7,7 +7,7 @@
 
 #include <algorithm>
 
-namespace saine {
+namespace dstudio {
 namespace {
 
 constexpr const char* kParams[] = {"macro1", "macro2", "macro3", "macro4", "macro5", "macro6", "macro7", "macro8"};
@@ -35,4 +35,4 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Rack>(); }
 extern const BuiltinDescriptor kRackDescriptor;
 const BuiltinDescriptor kRackDescriptor{"device-rack", kParams, {}, &create, {}, kDefaults, false, 0, true};
 
-} // namespace saine
+} // namespace dstudio

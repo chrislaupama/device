@@ -65,19 +65,19 @@ double distortion_db(const Signal& y, double hz, std::size_t from) {
     return 10.0 * std::log10(std::max(res, 1e-30) / std::max(e, 1e-30));
 }
 
-double design_db(const saine::eq::Band& b, double f) {
-    const saine::eq::Design d = saine::eq::design(b, kRate);
+double design_db(const dstudio::eq::Band& b, double f) {
+    const dstudio::eq::Design d = dstudio::eq::design(b, kRate);
     double m2 = 1.0;
-    for (int i = 0; i < d.n; ++i) m2 *= saine::eq::mag2(d.s[i], f, kRate);
+    for (int i = 0; i < d.n; ++i) m2 *= dstudio::eq::mag2(d.s[i], f, kRate);
     return 10.0 * std::log10(m2);
 }
 
 } // namespace
 
 TEST_CASE(eq_design_matches_the_panel_model) {
-    // The same points as saine_core::builtin::eq::tests::engine_contract_points.
-    using saine::eq::Band;
-    using saine::eq::Shape;
+    // The same points as dstudio_core::builtin::eq::tests::engine_contract_points.
+    using dstudio::eq::Band;
+    using dstudio::eq::Shape;
     Band a{Shape::LowShelf, 200.f, 9.f, 0.7071f, 18.f, false, 0.5f, 0.f};
     Band b{Shape::HighPass, 1000.f, 0.f, 2.f, 36.f, false, 0.f, 0.f};
     Band c{Shape::DualLow, 60.f, 8.f, 0.7071f, 12.f, false, 0.f, 6.f};
@@ -114,7 +114,7 @@ TEST_CASE(channel_eq_bands_measure_as_designed) {
         r.set("band0_enabled", 1.f);
         r.set("band0_freq", 1000.f);
         r.set("hp_slope", 3.f); // 48 dB/oct
-        const saine::eq::Band hp{saine::eq::Shape::HighPass, 1000.f, 0.f, 0.71f, 48.f, false, 0.f, 0.f};
+        const dstudio::eq::Band hp{dstudio::eq::Shape::HighPass, 1000.f, 0.f, 0.71f, 48.f, false, 0.f, 0.f};
         CHECK_NEAR(gain_at(r, 1000.0), design_db(hp, 1000.0), 0.05);
         CHECK_NEAR(design_db(hp, 1000.0), -3.0, 0.1);
         CHECK_NEAR(gain_at(r, 500.0), -48.0, 1.5);
@@ -125,7 +125,7 @@ TEST_CASE(channel_eq_bands_measure_as_designed) {
         auto r = channel();
         r.set("band6_gain2", -9.f);
         r.set("band6_freq", 3000.f);
-        saine::eq::Band b{saine::eq::Shape::HighShelf, 3000.f, -9.f, 1.f, 12.f, false, 0.f, 0.f};
+        dstudio::eq::Band b{dstudio::eq::Shape::HighShelf, 3000.f, -9.f, 1.f, 12.f, false, 0.f, 0.f};
         for (double f : {1000.0, 3000.0, 9000.0}) CHECK_NEAR(gain_at(r, f), design_db(b, f), 0.05);
     }
     {
@@ -189,10 +189,10 @@ TEST_CASE(character_eq_defaults_are_a_clean_delay) {
 TEST_CASE(character_eq_bands_match_the_design) {
     struct Case {
         float type, freq, gain, q, slope, propq, overshoot, atten;
-        saine::eq::Band band;
+        dstudio::eq::Band band;
         double at[2];
     };
-    using saine::eq::Shape;
+    using dstudio::eq::Shape;
     const Case cases[] = {
         {1.f, 200.f, 9.f, 0.7071f, 2.f, 0.f, 50.f, 0.f, {Shape::LowShelf, 200.f, 9.f, 0.7071f, 18.f, false, 0.5f, 0.f}, {100.0, 330.0}},
         {3.f, 1000.f, 0.f, 2.f, 4.f, 0.f, 0.f, 0.f, {Shape::HighPass, 1000.f, 0.f, 2.f, 36.f, false, 0.f, 0.f}, {900.0, 1500.0}},

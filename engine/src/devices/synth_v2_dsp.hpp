@@ -9,7 +9,7 @@
 #include <numbers>
 #include <vector>
 
-namespace saine::synth_v2 {
+namespace dstudio::synth_v2 {
 
 constexpr float kPi = std::numbers::pi_v<float>;
 constexpr float kTwoPi = 2.0f * std::numbers::pi_v<float>;
@@ -291,4 +291,4 @@ inline float lfo_shape(int shape, float p, float a, float b) noexcept {
     }
 }
 
-} // namespace saine::synth_v2
+} // namespace dstudio::synth_v2

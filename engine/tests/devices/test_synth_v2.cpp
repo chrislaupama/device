@@ -11,10 +11,10 @@ namespace {
 
 constexpr double kRate = 48000.0;
 
-std::vector<float> defaults() { return {std::begin(saine::synth_v2::kDefaults), std::end(saine::synth_v2::kDefaults)}; }
+std::vector<float> defaults() { return {std::begin(dstudio::synth_v2::kDefaults), std::end(dstudio::synth_v2::kDefaults)}; }
 
-saine::MidiEvent on(uint32_t at, uint8_t note, uint8_t vel = 100) { return {at, 0x90, note, vel, 0}; }
-saine::MidiEvent off(uint32_t at, uint8_t note) { return {at, 0x80, note, 0, 0}; }
+dstudio::MidiEvent on(uint32_t at, uint8_t note, uint8_t vel = 100) { return {at, 0x90, note, vel, 0}; }
+dstudio::MidiEvent off(uint32_t at, uint8_t note) { return {at, 0x80, note, 0, 0}; }
 
 // A plain voice: one sine oscillator, no sub / noise / unison / drift,
 // open filter, instant envelopes, every effect off.
@@ -40,7 +40,7 @@ DeviceRig plain_rig() {
     return rig;
 }
 
-Signal play(DeviceRig& rig, std::size_t n, const std::vector<saine::MidiEvent>& midi) {
+Signal play(DeviceRig& rig, std::size_t n, const std::vector<dstudio::MidiEvent>& midi) {
     return rig.run(Signal(n, 0.0f), Signal(n, 0.0f), nullptr, nullptr, {}, midi).first;
 }
 
@@ -166,7 +166,7 @@ TEST_CASE(synth_v2_effect_slots_run_every_type) {
 
 TEST_CASE(synth_v2_default_patch_is_deterministic_and_in_range) {
     DeviceRig a("synth-v2", defaults(), kRate, 256), b("synth-v2", defaults(), kRate, 256);
-    const std::vector<saine::MidiEvent> chord = {on(0, 48), on(5, 55), on(9, 64), off(30000, 48), off(30000, 55), off(30000, 64)};
+    const std::vector<dstudio::MidiEvent> chord = {on(0, 48), on(5, 55), on(9, 64), off(30000, 48), off(30000, 55), off(30000, 64)};
     const auto [al, ar] = a.run(Signal(48000, 0.0f), Signal(48000, 0.0f), nullptr, nullptr, {}, chord);
     const auto [bl, br] = b.run(Signal(48000, 0.0f), Signal(48000, 0.0f), nullptr, nullptr, {}, chord);
     CHECK(all_finite(al) && all_finite(ar));

@@ -8,7 +8,7 @@ using namespace testutil;
 
 namespace {
 
-// Defaults of saine_core::builtin::pitch_corrector, registry order:
+// Defaults of dstudio_core::builtin::pitch_corrector, registry order:
 // speed, key, scale, retune_speed_ms, humanize, mix, key_follow.
 const std::vector<float> kDefaults = {50.f, 0.f, 0.f, 50.f, 20.f, 100.f, 1.f};
 constexpr double kRate = 48000.0;

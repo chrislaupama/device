@@ -18,7 +18,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace saine::dsp {
+namespace dstudio::dsp {
 
 class PitchShifter {
 public:
@@ -47,4 +47,4 @@ private:
     std::vector<int32_t> peaks_;
 };
 
-} // namespace saine::dsp
+} // namespace dstudio::dsp

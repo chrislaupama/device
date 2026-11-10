@@ -1,14 +1,14 @@
 // Distortion: a 4x oversampled waveshaper with four curves (Overdrive, Fuzz,
 // Tube, Hard Clip), bias, a tone low-pass on the distorted signal, wet gain,
 // dry/wet mix and output gain. Parameters in the order of
-// saine_core::builtin::distortion (checked by a Rust test).
+// dstudio_core::builtin::distortion (checked by a Rust test).
 //
 // Signal flow (per channel):
 //   wet  = 4x[ f(x * g + o) - f(o) ]       g = 1 + 10 * drive, o = 0.5 * bias
 //          (f with first-order antiderivative anti-aliasing on top of 4x)
 //   wet  = DC block (10 Hz) -> 12 dB/oct low-pass at Tone -> * Gain
 //   out  = (dry * (1 - mix) + wet * mix) * Output
-// The curves are the ones the panel draws (saine_core distortion_transfer).
+// The curves are the ones the panel draws (dstudio_core distortion_transfer).
 // The dry path is delayed by the oversampler latency so Mix never combs; the
 // latency (40 frames) is reported for delay compensation.
 #include "builtin.hpp"
@@ -18,7 +18,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -235,4 +235,4 @@ extern const BuiltinDescriptor kDistortionDescriptor;
 constexpr float kDefaults[] = {30.f, 4000.f, 100.f, 0.f, 0.f, 0.f, 0.f};
 const BuiltinDescriptor kDistortionDescriptor{"distortion", kParamIds, {}, &create_distortion, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

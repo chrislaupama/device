@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 
-using saine::FrameRing;
+using dstudio::FrameRing;
 
 namespace {
 

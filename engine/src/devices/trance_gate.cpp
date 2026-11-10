@@ -1,5 +1,5 @@
 // Trance Gate: a tempo-synced step gate. Parameters in the order of
-// saine_core::builtin::trance_gate (checked by a Rust test).
+// dstudio_core::builtin::trance_gate (checked by a Rust test).
 //
 // Timing: a step lasts the Rate's note value; step k of the timeline starts
 // at k steps, every odd step delayed by swing x half a step. The pattern
@@ -22,7 +22,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -164,7 +164,7 @@ std::unique_ptr<BuiltinProcessor> create_trance_gate() { return std::make_unique
 
 } // namespace
 
-// The definition's defaults (saine_core::builtin::trance_gate), in parameter order.
+// The definition's defaults (dstudio_core::builtin::trance_gate), in parameter order.
 constexpr float kDefaults[] = {0.f,  7.f,  3.f,     160.f, 60.f, 40.f,    0.f,  100.f, 16.f, 23387.f, 0.f,  16.f, 21845.f, 0.f,  16.f, 46967.f,
                                0.f,  16.f, 19983.f, 0.f,   12.f, 2779.f,  0.f,  32.f,  44397.f, 30125.f, 16.f, 18761.f, 0.f,  16.f, 56669.f, 0.f};
 static_assert(sizeof kDefaults / sizeof kDefaults[0] == sizeof kParamIds / sizeof kParamIds[0]);
@@ -172,4 +172,4 @@ static_assert(sizeof kDefaults / sizeof kDefaults[0] == sizeof kParamIds / sizeo
 extern const BuiltinDescriptor kTranceGateDescriptor;
 const BuiltinDescriptor kTranceGateDescriptor{"trance-gate", kParamIds, {}, &create_trance_gate, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

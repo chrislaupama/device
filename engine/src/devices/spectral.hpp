@@ -16,7 +16,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace saine::dsp {
+namespace dstudio::dsp {
 
 constexpr double kPiD = 3.14159265358979323846;
 
@@ -266,4 +266,4 @@ inline float fill_window(Window kind, uint32_t n, float* w) noexcept {
     return n > 0 ? static_cast<float>(sum / n) : 1.0f;
 }
 
-} // namespace saine::dsp
+} // namespace dstudio::dsp

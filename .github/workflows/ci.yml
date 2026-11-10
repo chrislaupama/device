@@ -79,13 +79,13 @@ jobs:
             target="$GITHUB_WORKSPACE/target"
             deps="$GITHUB_WORKSPACE/.deps"
           else
-            base="$HOME/.cache/sainestudio-ci/$RUNNER_NAME"
+            base="$HOME/.cache/devicestudio-ci/$RUNNER_NAME"
             target="$base/target"
             deps="$base/deps"
           fi
           mkdir -p "$target" "$deps"
           echo "CARGO_TARGET_DIR=$target" >> "$GITHUB_ENV"
-          echo "SAINE_DEPS_DIR=$deps" >> "$GITHUB_ENV"
+          echo "DSTUDIO_DEPS_DIR=$deps" >> "$GITHUB_ENV"
           echo "target: $target"
           echo "deps:   $deps"
       - name: Cache SDK downloads
@@ -114,7 +114,7 @@ jobs:
         shell: bash
         run: |
           target=$(cd "$CARGO_TARGET_DIR" && pwd -P)
-          deps=$(cd "$SAINE_DEPS_DIR" && pwd -P)
+          deps=$(cd "$DSTUDIO_DEPS_DIR" && pwd -P)
           find "$target" "$deps" -name CMakeCache.txt > "$RUNNER_TEMP/cmake-caches.txt"
           while IFS= read -r cache; do
             [ -f "$cache" ] || continue
@@ -123,25 +123,25 @@ jobs:
             if [ -d "$made" ]; then made=$(cd "$made" && pwd -P); fi
             [ "$made" = "$here" ] && continue
             case "$here" in
-              "$target"/saine-third-party/*) stale="$target/saine-third-party" ;;
+              "$target"/dstudio-third-party/*) stale="$target/dstudio-third-party" ;;
               "$deps"/*) stale="$deps" ;;
               *) stale="$here" ;;
             esac
             echo "Removing $stale (its CMakeCache.txt was made in $made)"
             rm -rf "$stale"
           done < "$RUNNER_TEMP/cmake-caches.txt"
-      # The target dir (persistent or restored) can hold saine-engine's build-script output
+      # The target dir (persistent or restored) can hold dstudio-engine's build-script output
       # (out/lib) and fingerprints saved from another commit; cargo would then
       # skip CMake and link that old engine library. Cleaning the package
       # forces build.rs (and so CMake) to run on every run. The shared
-      # FetchContent tree in $CARGO_TARGET_DIR/saine-third-party is kept.
+      # FetchContent tree in $CARGO_TARGET_DIR/dstudio-third-party is kept.
       - name: Force the engine build script to rerun
         run: |
-          cargo clean -p saine-engine --locked
-          cargo clean -p saine-engine --release --locked
+          cargo clean -p dstudio-engine --locked
+          cargo clean -p dstudio-engine --release --locked
 
       - name: Engine — configure
-        run: cmake -S engine -B engine/build-ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSAINE_ENGINE_WERROR=ON "-DFETCHCONTENT_BASE_DIR=${{ env.SAINE_DEPS_DIR }}"
+        run: cmake -S engine -B engine/build-ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDSTUDIO_ENGINE_WERROR=ON "-DFETCHCONTENT_BASE_DIR=${{ env.DSTUDIO_DEPS_DIR }}"
       - name: Engine — build
         run: cmake --build engine/build-ci -- -k 0
       # Linux has no sound card on the hosted runner, but it can run a real
@@ -154,7 +154,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           tools/ci/headless-pipewire.sh | sed -e "s/^export //" -e "s/'//g" >> "$GITHUB_ENV"
-          echo "SAINE_TEST_LOOPBACK_INPUT=saine-loop-source" >> "$GITHUB_ENV"
+          echo "DSTUDIO_TEST_LOOPBACK_INPUT=dstudio-loop-source" >> "$GITHUB_ENV"
       - name: Engine — test
         run: ctest --test-dir engine/build-ci --output-on-failure -j 4
       - name: Engine — PipeWire device tests, verbose (Linux)
@@ -184,14 +184,14 @@ jobs:
       # run.
       - name: App — release build (smoke tests)
         if: ${{ !cancelled() }}
-        run: cargo build --release -p saine-app --locked
+        run: cargo build --release -p dstudio-app --locked
       - name: App — self-test (macOS)
         if: runner.os == 'macOS' && !cancelled()
         env:
           RUST_BACKTRACE: "1"
         run: |
           status=0
-          "$CARGO_TARGET_DIR/release/saine-studio" --self-test --no-audio > selftest-macos.txt 2> selftest-macos-stderr.txt || status=$?
+          "$CARGO_TARGET_DIR/release/device-studio" --self-test --no-audio > selftest-macos.txt 2> selftest-macos-stderr.txt || status=$?
           echo "self-test exit status: $status"
           grep -E "^(FAIL|SKIP)" selftest-macos.txt || true
           line=$(grep -E "^self-test: [0-9]+ / [0-9]+ checks passed" selftest-macos.txt) || { tail -30 selftest-macos-stderr.txt; exit 1; }
@@ -206,10 +206,10 @@ jobs:
           RUST_BACKTRACE: "1"
         run: |
           sudo apt-get install -y --no-install-recommends xvfb mesa-vulkan-drivers
-          xvfb-run -a -s "-screen 0 1600x1000x24" "$CARGO_TARGET_DIR/release/saine-studio" --state reference-default --screenshot app-linux.png
+          xvfb-run -a -s "-screen 0 1600x1000x24" "$CARGO_TARGET_DIR/release/device-studio" --state reference-default --screenshot app-linux.png
           test -s app-linux.png
           status=0
-          xvfb-run -a -s "-screen 0 1600x1000x24" "$CARGO_TARGET_DIR/release/saine-studio" --self-test --no-audio > selftest-linux.txt 2> selftest-linux-stderr.txt || status=$?
+          xvfb-run -a -s "-screen 0 1600x1000x24" "$CARGO_TARGET_DIR/release/device-studio" --self-test --no-audio > selftest-linux.txt 2> selftest-linux-stderr.txt || status=$?
           echo "self-test exit status: $status"
           grep -E "^(FAIL|SKIP)" selftest-linux.txt || true
           line=$(grep -E "^self-test: [0-9]+ / [0-9]+ checks passed" selftest-linux.txt) || { tail -30 selftest-linux-stderr.txt; exit 1; }
@@ -219,7 +219,7 @@ jobs:
           # Again with the audio device: the app plays, records and exports
           # through the headless PipeWire graph (a real output stream).
           status=0
-          xvfb-run -a -s "-screen 0 1600x1000x24" "$CARGO_TARGET_DIR/release/saine-studio" --self-test-audio > selftest-linux-audio.txt 2> selftest-linux-audio-stderr.txt || status=$?
+          xvfb-run -a -s "-screen 0 1600x1000x24" "$CARGO_TARGET_DIR/release/device-studio" --self-test-audio > selftest-linux-audio.txt 2> selftest-linux-audio-stderr.txt || status=$?
           echo "self-test (audio) exit status: $status"
           grep -E "^(FAIL|SKIP)" selftest-linux-audio.txt || true
           line=$(grep -E "^self-test: [0-9]+ / [0-9]+ checks passed" selftest-linux-audio.txt) || { tail -30 selftest-linux-audio-stderr.txt; exit 1; }
@@ -240,7 +240,7 @@ jobs:
           SLINT_WGPU_CPU: "1" # Slint refuses CPU adapters (WARP) unless allowed
           RUST_BACKTRACE: "1"
         run: |
-          $exe = Join-Path $env:CARGO_TARGET_DIR "release\saine-studio.exe"
+          $exe = Join-Path $env:CARGO_TARGET_DIR "release\device-studio.exe"
           $p = Start-Process -FilePath $exe -ArgumentList '--state','reference-default','--screenshot','app-windows.png' -NoNewWindow -Wait -PassThru -RedirectStandardError shot-windows-stderr.txt
           Get-Content shot-windows-stderr.txt
           "screenshot run exit code: 0x{0:X8}" -f $p.ExitCode

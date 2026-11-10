@@ -124,9 +124,9 @@ TEST_CASE(export_ignores_the_preview) {
     REQUIRE(pv(e).playing == 1);
     TempFile f("export_preview.wav");
     REQUIRE(se_export_wav(e, f.path.c_str(), 0, 4000) == SE_OK);
-    saine::DecodedAudio d;
+    dstudio::DecodedAudio d;
     std::string err;
-    REQUIRE(saine::decode_wav_file(f.path.c_str(), d, err) == SE_OK);
+    REQUIRE(dstudio::decode_wav_file(f.path.c_str(), d, err) == SE_OK);
     REQUIRE(d.frames == 4000);
     bool same = true;
     for (std::size_t i = 0; i < 4000; ++i) same = same && d.planar[0][i] == src[i] && d.planar[1][i] == 0.0f;

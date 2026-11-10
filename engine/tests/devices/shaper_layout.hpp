@@ -1,4 +1,4 @@
-// Shaper parameter layout (saine_core::builtin::shaper) and registry defaults
+// Shaper parameter layout (dstudio_core::builtin::shaper) and registry defaults
 // for the device tests and the benchmark.
 #pragma once
 
@@ -11,7 +11,7 @@ namespace devtest {
 
 // A registered device's default plain values in parameter order.
 inline std::vector<float> builtin_defaults(const char* id) {
-    const saine::BuiltinDescriptor* d = saine::find_builtin(id);
+    const dstudio::BuiltinDescriptor* d = dstudio::find_builtin(id);
     return {d->defaults.begin(), d->defaults.end()};
 }
 

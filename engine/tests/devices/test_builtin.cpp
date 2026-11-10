@@ -17,14 +17,14 @@ namespace {
 // Neutral starting values for the generic checks: the middle of nothing is
 // known here, so every device starts from all zeros except what the
 // device-specific defaults table gives (devices must clamp anything).
-std::vector<float> defaults_for(const saine::BuiltinDescriptor& d) {
+std::vector<float> defaults_for(const dstudio::BuiltinDescriptor& d) {
     return {d.defaults.begin(), d.defaults.end()};
 }
 
 // Instruments with sample slots get a short loud sample in every slot so the
 // generic checks exercise their voices.
 void load_test_samples(DeviceRig& rig) {
-    const saine::BuiltinDescriptor& d = rig.desc();
+    const dstudio::BuiltinDescriptor& d = rig.desc();
     std::vector<TestSample> s;
     for (uint32_t slot = 0; slot < d.sample_slots; ++slot) {
         TestSample t;
@@ -59,17 +59,17 @@ TEST_CASE(builtin_registry_is_consistent) {
     std::set<std::string> ids;
     std::size_t n = 0;
     const se_builtin_desc* c = se_builtin_registry(&n);
-    REQUIRE(n == saine::builtin_registry().size());
+    REQUIRE(n == dstudio::builtin_registry().size());
     REQUIRE(n > 0);
     for (std::size_t i = 0; i < n; ++i) {
         CHECK(ids.insert(c[i].id).second);
         CHECK(c[i].param_count > 0);
         std::set<std::string> params;
         for (uint32_t p = 0; p < c[i].param_count; ++p) CHECK(params.insert(c[i].param_ids[p]).second);
-        CHECK(saine::find_builtin(c[i].id) != nullptr);
-        CHECK(defaults_for(saine::builtin_registry()[i]).size() == c[i].param_count);
+        CHECK(dstudio::find_builtin(c[i].id) != nullptr);
+        CHECK(defaults_for(dstudio::builtin_registry()[i]).size() == c[i].param_count);
     }
-    CHECK(saine::find_builtin("no-such-device") == nullptr);
+    CHECK(dstudio::find_builtin("no-such-device") == nullptr);
 }
 
 TEST_CASE(builtin_state_blobs_are_validated) {
@@ -77,33 +77,33 @@ TEST_CASE(builtin_state_blobs_are_validated) {
     uint32_t count = 0;
     uint64_t sc = 0;
     auto ok = state_blob({1.f, 2.f}, 7);
-    CHECK(saine::parse_builtin_state(ok.data(), ok.size(), v, count, sc) == nullptr);
+    CHECK(dstudio::parse_builtin_state(ok.data(), ok.size(), v, count, sc) == nullptr);
     CHECK(count == 2 && sc == 7);
-    CHECK(saine::parse_builtin_state(nullptr, 0, v, count, sc) == nullptr);
+    CHECK(dstudio::parse_builtin_state(nullptr, 0, v, count, sc) == nullptr);
     auto short_blob = ok;
     short_blob.resize(10);
-    CHECK(saine::parse_builtin_state(short_blob.data(), short_blob.size(), v, count, sc) != nullptr);
+    CHECK(dstudio::parse_builtin_state(short_blob.data(), short_blob.size(), v, count, sc) != nullptr);
     auto bad_len = ok;
     bad_len.push_back(0);
-    CHECK(saine::parse_builtin_state(bad_len.data(), bad_len.size(), v, count, sc) != nullptr);
+    CHECK(dstudio::parse_builtin_state(bad_len.data(), bad_len.size(), v, count, sc) != nullptr);
     auto bad_magic = ok;
     bad_magic[0] ^= 1;
-    CHECK(saine::parse_builtin_state(bad_magic.data(), bad_magic.size(), v, count, sc) != nullptr);
+    CHECK(dstudio::parse_builtin_state(bad_magic.data(), bad_magic.size(), v, count, sc) != nullptr);
     auto nan = state_blob({1.f, std::nanf("")});
-    CHECK(saine::parse_builtin_state(nan.data(), nan.size(), v, count, sc) != nullptr);
+    CHECK(dstudio::parse_builtin_state(nan.data(), nan.size(), v, count, sc) != nullptr);
 }
 
 // Every registered device: finite output for silence, impulses, loud noise
 // and extreme parameter values; no heap use on the process path at any
 // block size, with automation events splitting blocks.
 TEST_CASE(every_builtin_is_rt_safe_and_robust) {
-    for (const saine::BuiltinDescriptor& d : saine::builtin_registry()) {
+    for (const dstudio::BuiltinDescriptor& d : dstudio::builtin_registry()) {
         DeviceRig rig(d.id, defaults_for(d), 48000.0, 512);
         const std::size_t n = 48000;
         if (d.sample_slots > 0) load_test_samples(rig);
         // Instruments play a chord with overlapping notes, pitch bend and
         // the sustain pedal through every check.
-        std::vector<saine::MidiEvent> notes;
+        std::vector<dstudio::MidiEvent> notes;
         if (d.instrument)
             for (uint32_t k = 0; k < 12; ++k) {
                 const auto at = k * 4000;
@@ -113,8 +113,8 @@ TEST_CASE(every_builtin_is_rt_safe_and_robust) {
                 notes.push_back({at + 3500, 0x80, static_cast<uint8_t>(36 + 7 * k), 0, 0});
             }
         const auto midi = [&](std::size_t frames) {
-            std::vector<saine::MidiEvent> m;
-            for (const saine::MidiEvent& e : notes)
+            std::vector<dstudio::MidiEvent> m;
+            for (const dstudio::MidiEvent& e : notes)
                 if (e.offset < frames) m.push_back(e);
             return m;
         };
@@ -140,9 +140,9 @@ TEST_CASE(every_builtin_is_rt_safe_and_robust) {
 
         // Allocation-free processing, odd block sizes and automation events.
         std::vector<float> l(512), r(512), scl(512, 0.25f), scr(512, 0.25f);
-        std::vector<saine::ParamEvent> ev;
-        for (uint32_t i = 0; i < 8; ++i) ev.push_back(saine::ParamEvent{i * 37, 0, static_cast<double>(defaults_for(d)[0])});
-        saine::RtTransport tr;
+        std::vector<dstudio::ParamEvent> ev;
+        for (uint32_t i = 0; i < 8; ++i) ev.push_back(dstudio::ParamEvent{i * 37, 0, static_cast<double>(defaults_for(d)[0])});
+        dstudio::RtTransport tr;
         const long before = rt_alloc_count();
         {
             RtAllocGuard g;
@@ -151,9 +151,9 @@ TEST_CASE(every_builtin_is_rt_safe_and_robust) {
                 const uint32_t frames = sizes[k % 6];
                 for (uint32_t i = 0; i < frames; ++i) l[i] = r[i] = 0.5f * std::sin(0.05f * static_cast<float>(i + k));
                 if (k % 3 == 0) rig.instance().set_sidechain(scl.data(), scr.data());
-                const auto ne = static_cast<uint32_t>(std::count_if(ev.begin(), ev.end(), [&](const saine::ParamEvent& e) { return e.offset < frames; }));
+                const auto ne = static_cast<uint32_t>(std::count_if(ev.begin(), ev.end(), [&](const dstudio::ParamEvent& e) { return e.offset < frames; }));
                 tr.playing = k % 4 < 2; // tempo-synced devices: playing and stopped transport
-                const saine::MidiEvent play[2] = {{0, static_cast<uint8_t>(k % 4 < 2 ? 0x90 : 0x80), static_cast<uint8_t>(40 + k % 24), 90, 0},
+                const dstudio::MidiEvent play[2] = {{0, static_cast<uint8_t>(k % 4 < 2 ? 0x90 : 0x80), static_cast<uint8_t>(40 + k % 24), 90, 0},
                                                   {frames - 1, 0x90, static_cast<uint8_t>(64 + k % 12), 70, 0}};
                 if (d.instrument && k % 4 == 1) {
                     rig.instance().push_note(60, 90);

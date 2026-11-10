@@ -1,11 +1,11 @@
 // Parameter ids of the synth-v2 instrument in definition order (the same
-// table as saine_core::builtin::synth_v2; the Rust test
+// table as dstudio_core::builtin::synth_v2; the Rust test
 // engine_registry_matches_core_definitions checks that they agree).
 #pragma once
 
 #include <cstdint>
 
-namespace saine::synth_v2 {
+namespace dstudio::synth_v2 {
 
 enum P : uint16_t {
     osc1_wave, osc1_shape, osc1_octave, osc1_semi, osc1_fine, osc1_level, osc2_wave, osc2_shape, osc2_octave,
@@ -865,4 +865,4 @@ inline constexpr float kDefaults[kParamCount] = {
     0.0f,
 };
 
-} // namespace saine::synth_v2
+} // namespace dstudio::synth_v2

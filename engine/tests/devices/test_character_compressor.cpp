@@ -1,5 +1,5 @@
 // Character Compressor (engine/src/devices/character_compressor.cpp): the six
-// model curves (values from saine_core::builtin::character_transfer),
+// model curves (values from dstudio_core::builtin::character_transfer),
 // timing, Range, Hold, Adapt, lookahead and oversampling latency, saturation
 // and aliasing, stereo link, M/S, sidechain and its filters, listen / delta /
 // bypass, mix up to 200 %, auto gain, the level rider and readouts.
@@ -9,7 +9,7 @@ using namespace devtest;
 
 namespace {
 
-// Defaults of saine_core::builtin::character_compressor, registry order.
+// Defaults of dstudio_core::builtin::character_compressor, registry order.
 const std::vector<float> kDefaults = {
     0.f,  -18.f, 4.f, 6.f,  10.f, 200.f, 0.f, 0.f,   24.f, 1.f,    100.f, 0.f, 0.f, 0.f, 0.f, 100.f, //
     0.f,  0.f,   0.f, 80.f, 1000.f, 0.f, 1.f, 0.f,   0.f,  0.f,    50.f,  8.f, 0.f,                  //

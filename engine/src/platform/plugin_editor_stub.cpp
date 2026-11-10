@@ -5,14 +5,14 @@
 // run loop (fds and timers) still runs.
 // macOS: plugin_editor_mac.mm; Windows: plugin_editor_win.cpp; Linux with
 // X11: plugin_editor_x11.cpp.
-#if !defined(__APPLE__) && !defined(_WIN32) && !defined(SAINE_HAVE_X11)
+#if !defined(__APPLE__) && !defined(_WIN32) && !defined(DSTUDIO_HAVE_X11)
 
 #include "plugins/plugin_editor.hpp"
 #include "run_loop.hpp"
 
 #include <pluginterfaces/gui/iplugview.h>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 constexpr const char* kUnsupported =
@@ -39,6 +39,6 @@ std::unique_ptr<PluginEditor> create_clap_editor(const clap_plugin*, const clap_
 void platform_plugin_idle() { run_loop::dispatch(); }
 #endif
 
-} // namespace saine
+} // namespace dstudio
 
 #endif

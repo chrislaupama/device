@@ -16,7 +16,7 @@
 #include <thread>
 #include <tuple>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -1835,4 +1835,4 @@ bool Engine::plugin_set_parameter(uint64_t device_id, uint32_t param_id, double 
     return inst != nullptr && inst->set_parameter(param_id, value);
 }
 
-} // namespace saine
+} // namespace dstudio

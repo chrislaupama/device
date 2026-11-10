@@ -3995,7 +3995,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
-name = "saine-app"
+name = "dstudio-app"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
@@ -4007,8 +4007,8 @@ dependencies = [
  "pollster",
  "rfd",
  "roxmltree",
- "saine-core",
- "saine-engine",
+ "dstudio-core",
+ "dstudio-engine",
  "serde",
  "serde_json",
  "slint",
@@ -4018,7 +4018,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "saine-core"
+name = "dstudio-core"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -4028,11 +4028,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "saine-engine"
+name = "dstudio-engine"
 version = "0.1.0"
 dependencies = [
  "cmake",
- "saine-core",
+ "dstudio-core",
  "serde",
  "serde_json",
  "tempfile",

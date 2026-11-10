@@ -67,7 +67,7 @@ struct WarpSession {
 
 // An engine whose warped clips always stretch live (no background renders).
 struct LiveEngine : EngineHandle {
-    LiveEngine() { saine::testing::set_warp_renders_enabled(e, false); }
+    LiveEngine() { dstudio::testing::set_warp_renders_enabled(e, false); }
 };
 
 // Waits for the background renders, then attaches them (se_plugin_idle).
@@ -355,9 +355,9 @@ TEST_CASE(warp_export_renders_warped_clips) {
     const std::vector<float> live = left(render(e, 60000, 256));
     TempFile f("warp_export");
     REQUIRE(se_export_wav(e, f.path.c_str(), 0, 60000) == SE_OK);
-    saine::DecodedAudio d;
+    dstudio::DecodedAudio d;
     std::string err;
-    REQUIRE(saine::decode_wav_file(f.path.c_str(), d, err) == SE_OK);
+    REQUIRE(dstudio::decode_wav_file(f.path.c_str(), d, err) == SE_OK);
     REQUIRE(d.frames == 60000);
     float diff = 0.0f;
     for (std::size_t i = 0; i < 60000; ++i) diff = std::max(diff, std::fabs(d.planar[0][i] - live[i]));
@@ -410,7 +410,7 @@ TEST_CASE(warp_renders_take_over_from_live_stretching) {
 
 TEST_CASE(warp_render_swap_does_not_allocate) {
     EngineHandle e;
-    saine::testing::set_warp_renders_enabled(e, false);
+    dstudio::testing::set_warp_renders_enabled(e, false);
     const uint64_t a = load_asset(e, {sine(96000, 220.0, kRate, 0.3), sine(96000, 330.0, kRate, 0.3)});
     WarpSession s;
     for (uint64_t i = 0; i < 4; ++i) {
@@ -422,7 +422,7 @@ TEST_CASE(warp_render_swap_does_not_allocate) {
     std::vector<float> buf(2 * 8192);
     REQUIRE(se_transport_play(e) == SE_OK);
     REQUIRE(se_render_offline(e, buf.data(), 256) == SE_OK);
-    saine::testing::set_warp_renders_enabled(e, true);
+    dstudio::testing::set_warp_renders_enabled(e, true);
     REQUIRE(s.publish(e) == SE_OK); // queues the renders; the voices keep playing
     const long before = rt_alloc_count();
     for (int i = 0; i < 40; ++i) {

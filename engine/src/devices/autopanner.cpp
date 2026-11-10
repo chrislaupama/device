@@ -1,5 +1,5 @@
 // Auto-Panner: an LFO moves the signal between the speakers. Parameters in
-// the order of saine_core::builtin::autopanner (checked by a Rust test).
+// the order of dstudio_core::builtin::autopanner (checked by a Rust test).
 //
 // Per sample:
 //   v      LFO position -1 (left) .. +1 (right): Sine and Triangle start in
@@ -17,7 +17,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -101,4 +101,4 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Autopanner>
 extern const BuiltinDescriptor kAutopannerDescriptor;
 const BuiltinDescriptor kAutopannerDescriptor{"autopanner", kParamIds, kReadoutIds, &create, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

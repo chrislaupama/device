@@ -1,4 +1,4 @@
-# PROGRESS: Saine Studio
+# PROGRESS: Device Studio
 
 Living handoff document for future agent sessions. Read this first, then `docs/architecture.md`.
 
@@ -20,10 +20,10 @@ Development › Keeping this README up to date.
 | `reference/data/` | Raw accessibility dumps (geometry source of truth) | Reference research |
 | `reference/bundle-contents.md` | What is in the reference app (`dist/` web UI, resources), where each feature lives, rules for reading it (understand, never copy) | Reference research |
 | `tools/reference/` | `ui.sh` (pin/click/snap), `ax_dump.js` (AX tree), `mouse.swift` (CGEvent pointer), `sample.py`/`scan.py`/`montage.py` (pixel tools), `dist.py` (search the reference app's `dist/`) | Reference research |
-| `engine/` | C++23 real-time engine, C ABI `engine/include/saine_engine.h` | Audio engineering |
-| `crates/saine-core` | Model, commands, undo/redo, persistence, snapshots | App architecture |
-| `crates/saine-engine` | Safe Rust FFI wrapper + end-to-end tests | App architecture |
-| `crates/saine-app` | Desktop app (Slint shell + wgpu surfaces) | UI engineering |
+| `engine/` | C++23 real-time engine, C ABI `engine/include/dstudio_engine.h` | Audio engineering |
+| `crates/dstudio-core` | Model, commands, undo/redo, persistence, snapshots | App architecture |
+| `crates/dstudio-engine` | Safe Rust FFI wrapper + end-to-end tests | App architecture |
+| `crates/dstudio-app` | Desktop app (Slint shell + wgpu surfaces) | UI engineering |
 | `ui-spike/` | Slint ↔ wgpu interop spike (standalone workspace) | UI engineering |
 | `docs/` | Architecture spec, ADRs | Lead |
 
@@ -67,11 +67,11 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - UI rendering decision: Slint 1.18.1 + wgpu 30.0.1, offscreen texture via `Image::try_from` (ADR 0001):
   ≈0.15 ms CPU/frame for 8,192 clips at a locked 60 fps.
 
-- App (`crates/saine-app`, binary `saine-studio`): reference-geometry shell + wgpu timeline with real waveforms,
+- App (`crates/dstudio-app`, binary `device-studio`): reference-geometry shell + wgpu timeline with real waveforms,
   wired to core/engine (transport, mixer controls, import, clip move/trim, undo/redo, save/open).
-  `--self-test` 21/21; full-window screenshot MAE 1.96/255 vs reference (`crates/saine-app/FIDELITY.md`);
+  `--self-test` 21/21; full-window screenshot MAE 1.96/255 vs reference (`crates/dstudio-app/FIDELITY.md`);
   60 fps with ≈0.06 ms of our render CPU per frame.
-  Run: `cargo run --release -p saine-app -- --demo`.
+  Run: `cargo run --release -p dstudio-app -- --demo`.
 
 **Known gaps / next steps**
 1. Note preview/audition, velocity lane, clip loop, synth bypass + modulation/macros/effects; SIMD unison;
@@ -89,16 +89,16 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   (sample-accurate wrap), `se_metronome_set` (+ `se_metronome_desc`); transport commands now apply immediately
   when no device runs (race-free ownership hand-off; see engine/README.md). 46/46 ctest in default and ASan;
   bench unchanged (128 tracks ≈12.4 µs/block).
-- App: Inter 4.1 bundled (OFL, `crates/saine-app/ui/fonts/`), sizes ×0.91 after a sweep → full-window MAE 1.96 → 1.65.
+- App: Inter 4.1 bundled (OFL, `crates/dstudio-app/ui/fonts/`), sizes ×0.91 after a sweep → full-window MAE 1.96 → 1.65.
   Loop (⌘L, button, `SetLoop` undoable) and metronome wired; offline-seek workaround removed; meters use peek.
   `--self-test` 26/26 offline and with Core Audio.
 
 ### 2026-11-08: session 1, round 3 (mixer + assistant panels)
 - Mixer (header toggle / ⇧⌘X): per-track strips with real fader, pan, stereo `peek_meters`, M/S, peak hold;
   Master strip; add-track column. Fidelity full MAE 1.46 (`--state reference-mixer`).
-- Assistant panel (header toggle / ⇧⌘A): Assist/Teach over `saine_core::assistant`, one undo step per turn,
+- Assistant panel (header toggle / ⇧⌘A): Assist/Teach over `dstudio_core::assistant`, one undo step per turn,
   highlight overlay (`src/highlight.rs`), Anthropic Messages API provider (`src/assistant_provider.rs`, key from
-  `ANTHROPIC_API_KEY` only, model `SAINE_ASSISTANT_MODEL`, default `claude-opus-5-5`). **No live API call has been
+  `ANTHROPIC_API_KEY` only, model `DSTUDIO_ASSISTANT_MODEL`, default `claude-opus-5-5`). **No live API call has been
   exercised yet** (no key in the dev environment); the pipeline is covered by the labelled TEST provider
   `--assistant-fixture`. Fidelity full MAE 1.87 (`--state reference-assistant`, transcript masked).
 - Self-test 42/42 offline and with Core Audio; workspace tests 49 pass; default state unchanged (1.65).
@@ -131,11 +131,11 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   routing + monitoring, disk recording via SPSC rings + writer thread, latency-compensated takes, input-injected
   offline render. 94/94 ctest (default + ASan). Input opens ONLY when a device is configured by name/default.
 - App: R/I buttons, In popup, record transport, live recording clip, Settings › Audio panel with saved preferences
-  (`~/Library/Application Support/Saine Studio/preferences.json`). Self-test 99/99 both modes (recording checks via
+  (`~/Library/Application Support/Device Studio/preferences.json`). Self-test 99/99 both modes (recording checks via
   injected input). The session rate is fixed at 48 kHz; the Audio page says so when a different device rate is picked.
 - Real microphone verified (2026-11-08, with the user's permission): MacBook Air mic via the private aggregate
   device, 3 s take, 0 overruns, real room signal. An acoustic loopback test (metronome → speakers → mic,
-  `SAINE_TEST_REAL_INPUT=1 cargo test -p saine-engine --test real_loopback -- --ignored --nocapture`) found the
+  `DSTUDIO_TEST_REAL_INPUT=1 cargo test -p dstudio-engine --test real_loopback -- --ignored --nocapture`) found the
   latency compensation 18.5 ms too early (an extra IO buffer per side); fixed, residual now +2.7..6.2 ms late.
   Next: per-device manual recording offset (calibration) in Settings › Audio.
 
@@ -180,7 +180,7 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Audio: WASAPI shared/event/float32 backend (separate capture client + drift-tolerant
   `FrameRing`, MMCSS) and PipeWire backend (playback/capture streams). **Neither has run on real
   audio hardware** (CI runners have none); ASIO is future work (licence).
-- Editors: Windows HWND host and Linux X11 host (both tested in CI with `SaineTestGui.clap`; Linux
+- Editors: Windows HWND host and Linux X11 host (both tested in CI with `DStudioTestGui.clap`; Linux
   under Xvfb, with the host run loop for plugin fds and timers).
 - App: builds on all three; macOS-only winit hook stays cfg-gated; per-OS plugin folders. Off macOS
   the self-test reports its Audio Unit devices section as skipped.
@@ -210,7 +210,7 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   the clip to plain MIDI (its repeats become notes). The snapshot repeats the pattern over the clip. Old project
   files load unchanged. Findings SQ-1..SQ-7 in `reference/research-findings.md`.
 - Engine: patterns play as ordinary notes; a new ctest checks that dense repeats republished while playing
-  don't allocate, and bench_render has a Pattern table. `cargo bench -p saine-core --bench steps` times bake,
+  don't allocate, and bench_render has a Pattern table. `cargo bench -p dstudio-core --bench steps` times bake,
   read-back and snapshot builds.
 
 ### 2026-11-10: minimap pointer hide and Devices minimap (SAIN-33)
@@ -249,7 +249,7 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   its own drum grooves, including two new grooves, Dembow and Warehouse pulse. Drum swing now follows the
   genre's feel, which gives the same result as before for the old genres. The Genre menu shows 12 rows and
   scrolls to the active one.
-- Shape tab (`saine_core::shape`, `composer.rs`): Octave, Voices, Density, Length, Velocity, Nudge, Repeat and
+- Shape tab (`dstudio_core::shape`, `composer.rs`): Octave, Voices, Density, Length, Velocity, Nudge, Repeat and
   Arp reshape what the clip plays. The unshaped notes stay in `Composer::base`. Each part, and the kept
   notes, keep their own Shape. A slider drag is one undo step ("Shape Change"). If you edit notes after they
   were shaped, they play as edited under a neutral Shape. The other rack rows show disabled with the
@@ -260,7 +260,7 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 
 ### 2026-11-10: Shape rack, full (SAIN-37, PR C)
 
-- `saine_core::shape` now has all 16 controls: Octave, Voices, Density, Length, Velocity, Vary, Nudge, Repeat,
+- `dstudio_core::shape` now has all 16 controls: Octave, Voices, Density, Length, Velocity, Vary, Nudge, Repeat,
   Air, Sub, Spread, Tension, Inversion, Arp, and the arp's Pattern and Octaves. Each one has a base value and a
   drawn curve (one offset per beat), and the transforms follow the reference wherever its behaviour could be
   read (SQ-16..SQ-18). Shapes saved before this change load unchanged.
@@ -276,7 +276,7 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   instances' current state; the worker renders; the engine is dropped on the UI thread. New engine entry points
   `se_plugin_prepare`, `se_plugin_save_state`, `se_plugin_set_detached` (engine/README.md "Plugins in offline renders").
 - The render honours plugin delay compensation (renders L more frames, drops the first L) and the project tempo.
-- Self-test section "clip render plugin", ctest `offline_*`, `tests/clip_render.rs`, `saine_offline_plugin_bench`.
+- Self-test section "clip render plugin", ctest `offline_*`, `tests/clip_render.rs`, `dstudio_offline_plugin_bench`.
 
 ### 2026-11-10: Linux audio runs in CI; Linux plugin windows; Windows CI GPU memory
 
@@ -288,11 +288,11 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Fix found by the loopback test: when one PipeWire stream missed a cycle (an xrun), the duplex input
   ring kept the extra cycle forever, so every later take landed one quantum late. Both streams now
   share a `node.group` (one clock), and `FrameRing` re-syncs after a window of 32 cycles that is off
-  by more than half a quantum (`saine_frame_ring_bench`: no measurable cost). WASAPI keeps the old
+  by more than half a quantum (`dstudio_frame_ring_bench`: no measurable cost). WASAPI keeps the old
   policy (separate clocks; re-sync off).
 - Linux plugin editor windows (X11): `plugin_editor_x11.cpp` plus a main-thread run loop
   (`run_loop.cpp`) dispatched from `se_plugin_idle`, serving VST3 `Linux::IRunLoop` and CLAP
-  `posix-fd-support` / `timer-support`. `SaineTestGui.clap` is cross-platform now; the Xvfb test checks
+  `posix-fd-support` / `timer-support`. `DStudioTestGui.clap` is cross-platform now; the Xvfb test checks
   size, timer and fd callbacks, close box, re-open and retire. Dragonfly Room (CLAP, VST3) and an LSP
   CLAP open and run by hand. The app's "Open device window" button is enabled on Linux.
 - Windows CI self-test crashed out of GPU memory (WARP) partway through: the runner's window is

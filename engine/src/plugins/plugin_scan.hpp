@@ -8,10 +8,10 @@
 #include <string>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 struct ScannedPlugin {
-    std::string format; // "audio_unit" | "vst3" | "clap" (saine_core PluginFormat serde names)
+    std::string format; // "audio_unit" | "vst3" | "clap" (dstudio_core PluginFormat serde names)
     std::string id;     // AU "type subtype manufacturer" / VST3 class UID hex / CLAP id
     std::string path;   // bundle path ("" for AU)
     std::string name;
@@ -38,4 +38,4 @@ bool scan_audio_unit(const std::string& id, std::vector<ScannedPlugin>& out, std
 bool scan_vst3_bundle(const std::string& path, std::vector<ScannedPlugin>& out, std::string& err);
 bool scan_clap_bundle(const std::string& path, std::vector<ScannedPlugin>& out, std::string& err);
 
-} // namespace saine
+} // namespace dstudio

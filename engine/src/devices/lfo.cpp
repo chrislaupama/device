@@ -16,7 +16,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 namespace {
 
 constexpr const char* kParams[] = {"shape", "sync", "rate", "rateSync", "depth", "phase"};
@@ -83,4 +83,4 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Lfo>(); }
 extern const BuiltinDescriptor kLfoDescriptor;
 const BuiltinDescriptor kLfoDescriptor{"lfo", kParams, kReadouts, &create, kIdle, kDefaults, false, 0, true};
 
-} // namespace saine
+} // namespace dstudio

@@ -23,7 +23,7 @@
 #include <cstring>
 #include <vector>
 
-namespace saine::dsp {
+namespace dstudio::dsp {
 
 // Modified Bessel function of the first kind, order 0 (window design only).
 inline double bessel_i0(double x) noexcept {
@@ -193,4 +193,4 @@ private:
     float z_[2] = {0.0f, 0.0f};
 };
 
-} // namespace saine::dsp
+} // namespace dstudio::dsp

@@ -8,7 +8,7 @@ using namespace devtest;
 
 namespace {
 
-// LFO defaults (saine_core::builtin::lfo): shape, sync, rate, rateSync, depth, phase.
+// LFO defaults (dstudio_core::builtin::lfo): shape, sync, rate, rateSync, depth, phase.
 const std::vector<float> kLfo = {0.f, 1.f, 1.f, 8.f, 100.f, 0.f};
 const std::vector<float> kRack(8, 0.0f);
 const std::vector<float> kComp = {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};
@@ -34,7 +34,7 @@ se_mod_route makeup_route(uint64_t target, float min, float max, bool absolute =
 // Values of output `o` at every grid point over `frames` (blocks of 256).
 std::vector<float> lfo_points(DeviceRig& rig, std::size_t frames, bool playing, double tempo = 120.0, int64_t start = 0) {
     std::vector<float> out;
-    saine::RtTransport tr;
+    dstudio::RtTransport tr;
     tr.sample_rate = rig.rate();
     tr.playing = playing;
     tr.tempo_bpm = tempo;
@@ -56,7 +56,7 @@ double peak_l(const std::vector<float>& out, std::size_t from, std::size_t to) {
 } // namespace
 
 TEST_CASE(lfo_shapes_follow_the_spec) {
-    using namespace saine::lfo;
+    using namespace dstudio::lfo;
     CHECK_NEAR(wave(kSine, 0.25), 1.0, 1e-5);
     CHECK_NEAR(wave(kTriangle, 0.25), 1.0, 1e-6);
     CHECK_NEAR(wave(kTriangle, 0.75), -1.0, 1e-6);
@@ -67,7 +67,7 @@ TEST_CASE(lfo_shapes_follow_the_spec) {
     CHECK(wave(kRandom, 3.5) == wave(kRandom, 4096.0 + 3.5));
     CHECK_NEAR(wave(kSmoothRandom, 7.0), cycle_random(7), 1e-6);
     for (int64_t c = -5; c < 5000; ++c) CHECK(cycle_random(c) >= -1.0f && cycle_random(c) <= 1.0f);
-    // The same hash as saine_core::modulation::cycle_random (pinned values).
+    // The same hash as dstudio_core::modulation::cycle_random (pinned values).
     CHECK(cycle_random(0) == cycle_random(4096));
 }
 
@@ -111,13 +111,13 @@ TEST_CASE(lfo_free_rate_and_synced_clock) {
 TEST_CASE(rack_macros_are_outputs) {
     DeviceRig rig("device-rack", kRack);
     rig.set("macro3", 75.f);
-    saine::RtTransport tr;
+    dstudio::RtTransport tr;
     rig.instance().run_modulation(64, tr, nullptr, 0);
     CHECK(rig.instance().mod_outputs() == 8);
     CHECK_NEAR(rig.instance().mod_point(1, 2)[0], 0.75, 1e-6);
     CHECK(rig.instance().mod_point(1, 2)[1] == 1.0f);
     // Automation events land on their grid point.
-    const saine::ParamEvent ev[] = {{64, 0, 50.0}};
+    const dstudio::ParamEvent ev[] = {{64, 0, 50.0}};
     rig.instance().run_modulation(128, tr, ev, 1);
     CHECK(rig.instance().mod_point(1, 0)[0] == 0.0f);
     CHECK_NEAR(rig.instance().mod_point(2, 0)[0], 0.5, 1e-6);
@@ -127,29 +127,29 @@ TEST_CASE(rack_macros_are_outputs) {
 }
 
 TEST_CASE(state_v2_blobs_carry_routes) {
-    saine::BuiltinStateView v;
+    dstudio::BuiltinStateView v;
     auto ok = route_blob(kLfo, {makeup_route(7, -0.2f, 0.2f)});
-    CHECK(saine::parse_builtin_state(ok.data(), ok.size(), v) == nullptr);
+    CHECK(dstudio::parse_builtin_state(ok.data(), ok.size(), v) == nullptr);
     CHECK(v.value_count == 6 && v.route_count == 1 && v.routes != nullptr);
     auto bad = route_blob(kLfo, {makeup_route(7, std::nanf(""), 0.2f)});
-    CHECK(saine::parse_builtin_state(bad.data(), bad.size(), v) != nullptr);
+    CHECK(dstudio::parse_builtin_state(bad.data(), bad.size(), v) != nullptr);
     auto kind = makeup_route(7, 0.f, 0.f);
     kind.kind = 9;
     auto bad2 = route_blob(kLfo, {kind});
-    CHECK(saine::parse_builtin_state(bad2.data(), bad2.size(), v) != nullptr);
+    CHECK(dstudio::parse_builtin_state(bad2.data(), bad2.size(), v) != nullptr);
     auto cut = ok;
     cut.pop_back();
-    CHECK(saine::parse_builtin_state(cut.data(), cut.size(), v) != nullptr);
+    CHECK(dstudio::parse_builtin_state(cut.data(), cut.size(), v) != nullptr);
 }
 
 TEST_CASE(norm_conversions_match_the_core_codec) {
-    saine::BuiltinMod log{0, true, 1.f, 1000.f, 1.f, 0.f, nullptr, nullptr};
-    CHECK_NEAR(saine::mod_from_norm(log, 0.5f), std::sqrt(1000.0), 1e-2);
-    CHECK_NEAR(saine::mod_to_norm(log, 10.f), 1.0 / 3.0, 1e-5);
-    saine::BuiltinMod stepped{0, false, 0.f, 6.f, 1.f, 1.f, nullptr, nullptr};
-    CHECK(saine::mod_from_norm(stepped, 0.49f) == 3.0f);
-    saine::BuiltinMod skew{0, false, 0.f, 100.f, 2.f, 0.f, nullptr, nullptr};
-    CHECK_NEAR(saine::mod_from_norm(skew, saine::mod_to_norm(skew, 30.f)), 30.0, 1e-3);
+    dstudio::BuiltinMod log{0, true, 1.f, 1000.f, 1.f, 0.f, nullptr, nullptr};
+    CHECK_NEAR(dstudio::mod_from_norm(log, 0.5f), std::sqrt(1000.0), 1e-2);
+    CHECK_NEAR(dstudio::mod_to_norm(log, 10.f), 1.0 / 3.0, 1e-5);
+    dstudio::BuiltinMod stepped{0, false, 0.f, 6.f, 1.f, 1.f, nullptr, nullptr};
+    CHECK(dstudio::mod_from_norm(stepped, 0.49f) == 3.0f);
+    dstudio::BuiltinMod skew{0, false, 0.f, 100.f, 2.f, 0.f, nullptr, nullptr};
+    CHECK_NEAR(dstudio::mod_from_norm(skew, dstudio::mod_to_norm(skew, 30.f)), 30.0, 1e-3);
 }
 
 TEST_CASE(lfo_moves_a_builtin_parameter_in_the_engine) {
@@ -235,7 +235,7 @@ TEST_CASE(an_lfo_without_targets_keeps_running) {
 }
 
 TEST_CASE(lfo_moves_a_plugin_parameter_and_restores_its_base) {
-    const std::string clap_gain = std::string(SAINE_TEST_PLUGIN_DIR) + "/SaineTestGain.clap";
+    const std::string clap_gain = std::string(DSTUDIO_TEST_PLUGIN_DIR) + "/DStudioTestGain.clap";
     EngineHandle e(48000, 256);
     const uint64_t a = load_asset(e, {sine(48000, 400.0, 48000.0, 0.5), sine(48000, 400.0, 48000.0, 0.5)});
     std::vector<float> lfo = kLfo;
@@ -251,7 +251,7 @@ TEST_CASE(lfo_moves_a_plugin_parameter_and_restores_its_base) {
         DeviceSession s;
         auto& t = s.add_track(1, a, 48000);
         DeviceSession::add_device_state(t, 30, "lfo", route_blob(lfo, routed ? std::vector<se_mod_route>{r} : std::vector<se_mod_route>{}));
-        DeviceSession::add_clap(t, 31, clap_gain, "studio.saine.test.gain");
+        DeviceSession::add_clap(t, 31, clap_gain, "studio.dstudio.test.gain");
         REQUIRE(s.publish(e) == SE_OK);
     };
     session(true);

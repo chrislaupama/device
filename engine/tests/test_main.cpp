@@ -113,7 +113,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (argc >= 4 && std::strcmp(argv[1], "--write-ctest") == 0) {
-        std::FILE* f = saine::os::fopen_utf8(argv[2], "w");
+        std::FILE* f = dstudio::os::fopen_utf8(argv[2], "w");
         if (f == nullptr) return 1;
         for (auto& t : tests) {
             std::fprintf(f, "add_test(\"%s\" \"%s\" --run \"%s\")\n", t.name, argv[3], t.name);
@@ -123,7 +123,7 @@ int main(int argc, char** argv) {
             // changes a bundle's modification time. Run them one at a time so
             // a parallel ctest run (-j) can't see that change mid-test.
             if (std::strncmp(t.name, "plugin_scanner_", 15) == 0)
-                std::fprintf(f, "set_tests_properties(\"%s\" PROPERTIES RESOURCE_LOCK saine_test_plugins)\n", t.name);
+                std::fprintf(f, "set_tests_properties(\"%s\" PROPERTIES RESOURCE_LOCK dstudio_test_plugins)\n", t.name);
             // The duplex loopback test checks real-time capture timing; with
             // CPU-heavy tests beside it on a small CI runner the streams miss
             // cycle after cycle and clicks drop out. Run it on its own.

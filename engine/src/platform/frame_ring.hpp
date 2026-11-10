@@ -44,7 +44,7 @@
 #include <cstring>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 // Single-producer, single-consumer frame FIFO with drift handling (see the
 // file comment).
@@ -228,4 +228,4 @@ private:
     std::atomic<uint64_t> underruns_{0}, dropped_{0}, overflows_{0}, inserted_{0};
 };
 
-} // namespace saine
+} // namespace dstudio

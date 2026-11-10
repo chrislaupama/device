@@ -12,7 +12,7 @@
 #include <cstring>
 #include <vector>
 
-namespace saine::dsp {
+namespace dstudio::dsp {
 
 constexpr double kPiD = 3.14159265358979323846;
 
@@ -424,4 +424,4 @@ struct HeldSigned {
     void reset() noexcept { cur = shown = 0.0f, count = 0; }
 };
 
-} // namespace saine::dsp
+} // namespace dstudio::dsp

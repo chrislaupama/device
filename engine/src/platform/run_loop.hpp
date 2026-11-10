@@ -16,7 +16,7 @@
 #include <cstdint>
 #include <functional>
 
-namespace saine::run_loop {
+namespace dstudio::run_loop {
 
 // Who registered an entry (a plugin instance or editor), so everything it
 // registered can be removed at once.
@@ -51,4 +51,4 @@ std::size_t dispatch();
 std::size_t fd_count();
 std::size_t timer_count();
 
-} // namespace saine::run_loop
+} // namespace dstudio::run_loop

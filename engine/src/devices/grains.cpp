@@ -1,5 +1,5 @@
 // Grains: a live granular processor. Parameters in the order of
-// saine_core::builtin::grains (checked by a Rust test).
+// dstudio_core::builtin::grains (checked by a Rust test).
 //
 //   input (+ grain feedback) -> 20 s stereo capture buffer (stops while frozen)
 //   scheduler: Cloud = scattered onsets at Density per second (exponential
@@ -26,7 +26,7 @@
 #include <array>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -420,4 +420,4 @@ constexpr float kDefaults[kParamCount] = {0.f, 0.f, 250.f, 3.f, 120.f, 100.f, 24
                                           0.f, 50.f, 50.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 50.f, 0.f, 0.f};
 const BuiltinDescriptor kGrainsDescriptor{"grains", kParamIds, kReadoutIds, &create, kIdle, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

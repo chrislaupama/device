@@ -15,7 +15,7 @@
 #include <mutex>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 struct Asset {
     Asset() noexcept { live_count_.fetch_add(1, std::memory_order_relaxed); }
@@ -108,4 +108,4 @@ using AssetRef = std::shared_ptr<const Asset>;
 // Resolves an engine asset id (null when unknown). Main thread.
 using AssetLookup = std::function<AssetRef(uint64_t asset_id)>;
 
-} // namespace saine
+} // namespace dstudio

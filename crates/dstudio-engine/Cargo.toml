@@ -1,0 +1,20 @@
+[package]
+name = "dstudio-engine"
+description = "Safe Rust bindings to the DStudio C++23 real-time audio engine (engine/include/dstudio_engine.h)"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+links = "dstudio_engine"
+build = "build.rs"
+
+[dependencies]
+dstudio-core = { path = "../dstudio-core" }
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+cmake = "0.1"
+
+[dev-dependencies]
+tempfile.workspace = true

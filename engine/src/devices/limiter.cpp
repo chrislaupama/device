@@ -1,6 +1,6 @@
 // Limiter: input gain, lookahead peak limiter with an optional true-peak
 // (inter-sample) detector, release, dry/wet mix and output gain. Parameters
-// in the order of saine_core::builtin::limiter (checked by a Rust test).
+// in the order of dstudio_core::builtin::limiter (checked by a Rust test).
 //
 // Gain computer (stereo linked, in log2 gain units so the fade is smooth):
 //   need[n]   = min(0, log2(ceiling / peak[n]))        peak: sample or 4x true peak
@@ -20,7 +20,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -128,4 +128,4 @@ constexpr float kIdleReadouts[] = {-120.0f, -120.0f, 0.0f};
 constexpr float kDefaults[] = {-0.3f, 100.f, 5.f, 1.f, 100.f, 0.f, 0.f};
 const BuiltinDescriptor kLimiterDescriptor{"limiter", kParamIds, kReadoutIds, &create_limiter, kIdleReadouts, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

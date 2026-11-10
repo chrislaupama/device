@@ -10,7 +10,7 @@ playing". A Draw mode (B) pencil exists. See reference/ui-inventory.md §12. Poi
 write behaviour were not observed (U).
 
 ## Decision
-- **Model (saine-core `automation.rs`):** `Track.automation: Vec<AutomationLane>` and `Project.master_automation`
+- **Model (dstudio-core `automation.rs`):** `Track.automation: Vec<AutomationLane>` and `Project.master_automation`
   (volume only). A lane has a `target` (Volume dB −60..+6, Pan −1..1, Synth{param} in SynthParams units,
   Plugin{device, param} normalized), `enabled`, and `points: Vec<AutoPoint{time ticks, value, curve −1..1}>`.
 - **Evaluation contract:** hold the first/last value outside the points; between points

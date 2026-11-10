@@ -1,6 +1,6 @@
 // Multiband Compressor (engine/src/devices/multiband_compressor.cpp): flat
 // crossover sum, band isolation, downward and upward laws (values from
-// saine_core::builtin::multiband_gain), silence handling, Depth / Downward /
+// dstudio_core::builtin::multiband_gain), silence handling, Depth / Downward /
 // Time / Mix / band input, and readouts.
 #include "device_harness.hpp"
 
@@ -8,7 +8,7 @@ using namespace devtest;
 
 namespace {
 
-// Defaults of saine_core::builtin::multiband_compressor, registry order.
+// Defaults of dstudio_core::builtin::multiband_compressor, registry order.
 const std::vector<float> kDefaults = {
     120.f, 2500.f,                          //
     -18.f, 2.5f, 30.f, 200.f, 0.f,          // low

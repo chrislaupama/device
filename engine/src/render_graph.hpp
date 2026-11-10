@@ -19,7 +19,7 @@
 
 #include "asset.hpp"
 #include "automation.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 #include "synth.hpp"
 #include "warp.hpp"
 
@@ -30,7 +30,7 @@
 #include <string>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 class PluginInstance;
 class DelayLine;
@@ -318,4 +318,4 @@ int32_t build_render_graph(const se_session_desc_v2& desc, const AssetLookup& lo
 int32_t build_render_graph(const se_session_desc& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err);
 
-} // namespace saine
+} // namespace dstudio

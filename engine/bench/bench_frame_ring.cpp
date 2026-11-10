@@ -2,7 +2,7 @@
 // write plus one render read of a stereo cycle, as the WASAPI and PipeWire
 // duplex paths do on their audio threads.
 //
-//   saine_frame_ring_bench [cycles=2000000]
+//   dstudio_frame_ring_bench [cycles=2000000]
 #include "platform/frame_ring.hpp"
 
 #include <algorithm>
@@ -15,7 +15,7 @@ namespace {
 
 // Average ns per write+read cycle of `frames` stereo frames.
 double run(uint32_t frames, uint32_t cycles, uint32_t tolerance) {
-    saine::FrameRing ring;
+    dstudio::FrameRing ring;
     ring.reset(2, 8 * 8192, 2 * frames, 4 * frames, tolerance);
     std::vector<float> in(static_cast<std::size_t>(frames) * 2, 0.25f);
     std::vector<float> l(frames), r(frames);
@@ -36,7 +36,7 @@ double run(uint32_t frames, uint32_t cycles, uint32_t tolerance) {
 
 int main(int argc, char** argv) {
     const uint32_t cycles = argc > 1 ? static_cast<uint32_t>(std::atoi(argv[1])) : 2000000;
-    std::printf("saine_frame_ring_bench: %u cycles, stereo, ns per write + read (best of 5)\n", cycles);
+    std::printf("dstudio_frame_ring_bench: %u cycles, stereo, ns per write + read (best of 5)\n", cycles);
     std::printf("%8s %16s %16s\n", "frames", "re-sync off", "re-sync on");
     for (uint32_t frames : {64u, 256u, 1024u}) {
         double off = 1e30, on = 1e30;

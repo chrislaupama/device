@@ -1,0 +1,285 @@
+//! Assistant providers: turn a user prompt + project context into raw
+//! `AssistantTurn` JSON. Runs on a worker thread; never touches the
+//! `Document` (the controller validates the result with
+//! `dstudio_core::assistant::plan` before anything is executed).
+//!
+//! * [`Provider::Anthropic`]: the Anthropic Messages API over HTTPS (`ureq`).
+//!   The key is read from `ANTHROPIC_API_KEY` only, kept in memory, sent only
+//!   in the `x-api-key` header and never logged or displayed.
+//! * [`Provider::Fixture`]: **TEST provider** (`--assistant-fixture <file>`,
+//!   and the built-in self-test fixture). It returns canned `AssistantTurn`
+//!   JSON in order and makes no network calls. It exists so the full
+//!   prompt → plan → commit → undo pipeline can be exercised offline; it is
+//!   not a user-facing feature.
+//! * [`Provider::Unavailable`]: no key and no fixture. The UI disables
+//!   sending; the rest of the DAW is unaffected.
+
+use dstudio_core::assistant::{Mode, tool_schema};
+use serde_json::{Value, json};
+use std::sync::Mutex;
+use std::time::Duration;
+
+/// Default model (claude-api skill: "ALWAYS use `claude-opus-5-5` unless the
+/// user explicitly names a different model"). Override with `DSTUDIO_ASSISTANT_MODEL`.
+pub const DEFAULT_MODEL: &str = "claude-opus-5-5";
+const API_URL: &str = "https://api.anthropic.com/v1/messages";
+const API_VERSION: &str = "2026-10-21";
+const TOOL_NAME: &str = "daw_turn";
+
+pub enum Provider {
+    Anthropic { key: String, model: String },
+    /// TEST provider: canned turns, returned in order (the last one repeats).
+    Fixture { turns: Vec<String>, next: Mutex<usize>, label: String },
+    Unavailable,
+}
+
+impl std::fmt::Debug for Provider {
+    // Hand-written so the API key can never end up in a debug print.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Provider::Anthropic { model, .. } => write!(f, "Anthropic({model})"),
+            Provider::Fixture { label, turns, .. } => write!(f, "Fixture({label}, {} turns)", turns.len()),
+            Provider::Unavailable => write!(f, "Unavailable"),
+        }
+    }
+}
+
+/// Everything the provider needs for one request (plain data, `Send`).
+#[derive(Debug, Clone)]
+pub struct Request {
+    pub mode: Mode,
+    pub prompt: String,
+    /// `assistant::describe_state(project)`.
+    pub state: Value,
+    /// Human-readable selection context, e.g. `track 1 "Audio" (id 1)`.
+    pub selection: Option<String>,
+    /// Earlier turns as (user prompt, assistant reply text), oldest first.
+    pub history: Vec<(String, String)>,
+}
+
+impl Provider {
+    /// Environment-based provider: Anthropic if `ANTHROPIC_API_KEY` is set.
+    pub fn from_env() -> Provider {
+        match std::env::var("ANTHROPIC_API_KEY") {
+            Ok(key) if !key.trim().is_empty() => {
+                let model = std::env::var("DSTUDIO_ASSISTANT_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| DEFAULT_MODEL.into());
+                Provider::Anthropic { key: key.trim().to_string(), model }
+            }
+            _ => Provider::Unavailable,
+        }
+    }
+
+    /// TEST provider from JSON text: one `AssistantTurn` object or an array of them.
+    pub fn fixture_from_json(text: &str, label: &str) -> Result<Provider, String> {
+        let v: Value = serde_json::from_str(text).map_err(|e| format!("fixture {label}: {e}"))?;
+        let turns = match v {
+            Value::Array(items) => items.iter().map(|t| t.to_string()).collect::<Vec<_>>(),
+            obj @ Value::Object(_) => vec![obj.to_string()],
+            _ => return Err(format!("fixture {label}: expected an object or an array")),
+        };
+        if turns.is_empty() {
+            return Err(format!("fixture {label}: empty"));
+        }
+        Ok(Provider::Fixture { turns, next: Mutex::new(0), label: label.into() })
+    }
+
+    pub fn available(&self) -> bool {
+        !matches!(self, Provider::Unavailable)
+    }
+
+    pub fn is_fixture(&self) -> bool {
+        matches!(self, Provider::Fixture { .. })
+    }
+
+    /// Blocking: call on a worker thread. Returns raw `AssistantTurn` JSON.
+    pub fn complete(&self, req: &Request) -> Result<String, String> {
+        match self {
+            Provider::Unavailable => Err("Set ANTHROPIC_API_KEY to enable the assistant".into()),
+            Provider::Fixture { turns, next, .. } => {
+                let mut n = next.lock().map_err(|_| "fixture lock poisoned".to_string())?;
+                let t = turns[(*n).min(turns.len() - 1)].clone();
+                *n += 1;
+                Ok(t)
+            }
+            Provider::Anthropic { key, model } => call_anthropic(key, model, req),
+        }
+    }
+}
+
+/// System prompt: what the DAW is, the turn format and the current mode's rules.
+pub fn system_prompt(mode: Mode) -> String {
+    let mode_rules = match mode {
+        Mode::Assist => {
+            "MODE: ASSIST. You may change the project with `edit` and `set_track_volume_db` actions. \
+             All edits in one turn are validated together and applied as ONE undo step; if any edit is invalid, nothing is applied. \
+             Use real ids from the project state. To refer to a track you create in the same turn, give it an explicit id equal to \
+             `next_id_hint` (then +1 for each further new object) instead of 0. You may also highlight controls and explain."
+        }
+        Mode::Teach => {
+            "MODE: TEACH. You must NEVER change the project: do not emit `edit` or `set_track_volume_db` actions (they are rejected and \
+             the whole turn fails). Only `highlight` the controls the user should use (each with a short note on what to do) and \
+             `explain` the steps in plain language, so the user learns to do it themselves."
+        }
+    };
+    format!(
+        "You are the assistant inside Device Studio, a desktop digital audio workstation (DAW). The window has a header with a \
+         transport bar (play, loop, bar/time readouts, BPM, key, time signature, metronome, master volume), a sound browser on the \
+         left, a timeline with track headers (mute, solo, arm, pan knob, volume slider) and lanes holding audio clips, a master row, \
+         and a bottom panel with the track inspector and devices, which can switch to a mixer. Time positions are in ticks (960 per \
+         quarter note). Volumes in the state are in dB.\n\n\
+         Always answer by calling the `{TOOL_NAME}` tool exactly once with the actions to perform; put any prose for the user in \
+         `explain` actions. Keep explanations short (one to three sentences). Highlight targets must be ids from the tool schema \
+         (`UI target` list) or `track:<id>:<header|mute|solo|arm|pan|volume|lane>` for an existing track.\n\n{mode_rules}"
+    )
+}
+
+fn user_content(req: &Request) -> String {
+    let mut s = String::new();
+    s.push_str("Project state (JSON):\n");
+    s.push_str(&req.state.to_string());
+    s.push_str("\n\nCurrent selection: ");
+    s.push_str(req.selection.as_deref().unwrap_or("nothing selected"));
+    s.push_str("\n\nRequest: ");
+    s.push_str(&req.prompt);
+    s
+}
+
+/// Models that reject forced `tool_choice` (`any`/`tool`) with a 400, per the
+/// claude-api skill. For those we use `auto` + the system-prompt instruction.
+fn rejects_forced_tool_choice(model: &str) -> bool {
+    ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-mythos-5-1"].iter().any(|m| model.starts_with(m))
+}
+
+/// Models that accept the server-side `fallbacks: "default"` parameter.
+fn supports_default_fallback(model: &str) -> bool {
+    ["claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5"].contains(&model)
+}
+
+/// Request body for the Messages API (pure; unit-tested).
+pub fn build_body(model: &str, req: &Request) -> Value {
+    let mut messages = Vec::new();
+    for (u, a) in &req.history {
+        messages.push(json!({"role": "user", "content": u}));
+        messages.push(json!({"role": "assistant", "content": a}));
+    }
+    messages.push(json!({"role": "user", "content": user_content(req)}));
+    let tool_choice = if rejects_forced_tool_choice(model) {
+        json!({"type": "auto", "disable_parallel_tool_use": true})
+    } else {
+        json!({"type": "tool", "name": TOOL_NAME})
+    };
+    let mut body = json!({
+        "model": model,
+        "max_tokens": 16000,
+        "system": system_prompt(req.mode),
+        "tools": [{
+            "name": TOOL_NAME,
+            "description": "Perform one assistant turn in the DAW: a list of edits (Assist mode only), UI highlights and explanations.",
+            "input_schema": tool_schema(),
+        }],
+        "tool_choice": tool_choice,
+        "messages": messages,
+    });
+    if model.starts_with("claude-opus-5") || model.starts_with("claude-sonnet-5-5") || model.starts_with("claude-fable-5") {
+        // Thinking stays adaptive (default); effort set explicitly (Opus 5.5 defaults to medium).
+        body["output_config"] = json!({"effort": "medium"});
+    }
+    if supports_default_fallback(model) {
+        body["fallbacks"] = json!("default");
+    }
+    body
+}
+
+/// Extract the turn from a Messages API response (pure; unit-tested).
+pub fn parse_response(v: &Value) -> Result<String, String> {
+    if let Some(err) = v.get("error") {
+        return Err(format!("API error: {}", err.get("message").and_then(Value::as_str).unwrap_or("unknown")));
+    }
+    let stop = v.get("stop_reason").and_then(Value::as_str).unwrap_or("");
+    if stop == "refusal" {
+        return Err("The model declined this request.".into());
+    }
+    let content = v.get("content").and_then(Value::as_array).cloned().unwrap_or_default();
+    if let Some(tu) = content.iter().find(|b| b.get("type").and_then(Value::as_str) == Some("tool_use") && b.get("name").and_then(Value::as_str) == Some(TOOL_NAME)) {
+        let input = tu.get("input").cloned().unwrap_or(Value::Null);
+        return Ok(input.to_string());
+    }
+    if stop == "max_tokens" {
+        return Err("The response was cut off (max_tokens).".into());
+    }
+    // No tool call (possible with tool_choice auto): treat the text as an explanation only.
+    let text: Vec<&str> = content.iter().filter(|b| b.get("type").and_then(Value::as_str) == Some("text")).filter_map(|b| b.get("text").and_then(Value::as_str)).collect();
+    let text = text.join("\n").trim().to_string();
+    if text.is_empty() {
+        return Err("The model returned no actions.".into());
+    }
+    Ok(json!({"actions": [{"type": "explain", "text": text}]}).to_string())
+}
+
+fn call_anthropic(key: &str, model: &str, req: &Request) -> Result<String, String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).timeout_global(Some(Duration::from_secs(180))).build().into();
+    let mut builder = agent.post(API_URL).header("x-api-key", key).header("anthropic-version", API_VERSION).header("content-type", "application/json");
+    if supports_default_fallback(model) {
+        builder = builder.header("anthropic-beta", "server-side-fallback-2026-07-01");
+    }
+    let body = build_body(model, req);
+    let mut resp = builder.send_json(&body).map_err(|e| format!("Network error: {e}"))?;
+    let status = resp.status().as_u16();
+    let text = resp.body_mut().read_to_string().map_err(|e| format!("Network error reading the response: {e}"))?;
+    let v: Value = serde_json::from_str(&text).map_err(|_| format!("Unexpected response from the API (HTTP {status})"))?;
+    if status != 200 {
+        let msg = v.pointer("/error/message").and_then(Value::as_str).unwrap_or("request failed");
+        return Err(format!("API error (HTTP {status}): {msg}"));
+    }
+    parse_response(&v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req(mode: Mode) -> Request {
+        Request { mode, prompt: "make it faster".into(), state: json!({"tempo_bpm": 120}), selection: Some("track 1".into()), history: vec![("hi".into(), "Hello.".into())] }
+    }
+
+    #[test]
+    fn body_shape_for_default_model() {
+        let b = build_body(DEFAULT_MODEL, &req(Mode::Teach));
+        assert_eq!(b["model"], DEFAULT_MODEL);
+        assert_eq!(b["tools"][0]["name"], TOOL_NAME);
+        assert_eq!(b["tools"][0]["input_schema"], tool_schema());
+        // Opus 5.5 rejects forced tool use: auto + one call at most.
+        assert_eq!(b["tool_choice"]["type"], "auto");
+        assert_eq!(b["fallbacks"], "default");
+        assert!(b["system"].as_str().unwrap().contains("MODE: TEACH"));
+        assert_eq!(b["messages"].as_array().unwrap().len(), 3);
+        assert!(b.get("temperature").is_none());
+    }
+
+    #[test]
+    fn older_models_get_forced_tool_choice() {
+        let b = build_body("claude-opus-4-8", &req(Mode::Assist));
+        assert_eq!(b["tool_choice"], json!({"type": "tool", "name": TOOL_NAME}));
+        assert!(b.get("fallbacks").is_none());
+    }
+
+    #[test]
+    fn response_parsing() {
+        let ok = json!({"stop_reason": "tool_use", "content": [{"type": "text", "text": "x"}, {"type": "tool_use", "id": "t", "name": TOOL_NAME, "input": {"actions": []}}]});
+        assert_eq!(parse_response(&ok).unwrap(), r#"{"actions":[]}"#);
+        let refusal = json!({"stop_reason": "refusal", "content": []});
+        assert!(parse_response(&refusal).is_err());
+        let text = json!({"stop_reason": "end_turn", "content": [{"type": "text", "text": "Use the BPM field."}]});
+        assert!(parse_response(&text).unwrap().contains("explain"));
+    }
+
+    #[test]
+    fn fixture_returns_turns_in_order() {
+        let p = Provider::fixture_from_json(r#"[{"actions":[]},{"actions":[{"type":"explain","text":"b"}]}]"#, "t").unwrap();
+        let r = req(Mode::Assist);
+        assert_eq!(p.complete(&r).unwrap(), r#"{"actions":[]}"#);
+        assert!(p.complete(&r).unwrap().contains("\"b\""));
+        assert!(p.complete(&r).unwrap().contains("\"b\""), "last turn repeats");
+        assert!(format!("{:?}", Provider::Anthropic { key: "secret".into(), model: "m".into() }).find("secret").is_none());
+    }
+}

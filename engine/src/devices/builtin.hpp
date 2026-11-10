@@ -5,7 +5,7 @@
 //    reset() and process() run on the RT path and must not allocate, lock,
 //    block or do I/O.
 //  - a BuiltinDescriptor: registry id (the same id as the Rust definition in
-//    saine_core::builtin), parameter ids in definition order, readout ids, and
+//    dstudio_core::builtin), parameter ids in definition order, readout ids, and
 //    a factory. Registered in kBuiltinRegistry (builtin.cpp).
 //  - nothing else: BuiltinInstance adapts every processor to the plugin host
 //    (PluginInstance), so chains, bypass, delay compensation, automation
@@ -19,7 +19,7 @@
 #include "../asset.hpp"
 #include "../plugins/plugin_instance.hpp"
 #include "../spsc_queue.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <atomic>
 #include <cstdint>
@@ -28,7 +28,7 @@
 #include <string_view>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 // Bulk analysis output of a built-in (spectra, traces): a lock-free triple
 // buffer of float frames. The audio thread fills begin() and publish()es a
@@ -158,7 +158,7 @@ struct BuiltinMod {
     const float* abs = nullptr;
 };
 
-// Normalisation of saine_core::builtin::ParamDef (to_normalized /
+// Normalisation of dstudio_core::builtin::ParamDef (to_normalized /
 // from_normalized + snap), used to apply modulation in the 0..1 domain.
 float mod_to_norm(const BuiltinMod& m, float v) noexcept;
 float mod_from_norm(const BuiltinMod& m, float n) noexcept;
@@ -320,4 +320,4 @@ private:
 std::shared_ptr<PluginInstance> create_builtin_instance(const PluginSpec& spec, double sample_rate, uint32_t max_block,
                                                         std::string& err);
 
-} // namespace saine
+} // namespace dstudio

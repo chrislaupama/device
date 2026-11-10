@@ -23,7 +23,7 @@
 #include <dlfcn.h>
 #endif
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -109,7 +109,7 @@ void* open_library(const std::string& path, std::string& err) {
 #if defined(_WIN32)
     // Altered search path: the plugin's own folder is searched for the DLLs
     // it depends on.
-    // The flag is undefined for relative paths (e.g. relative SAINE_PLUGIN_PATH
+    // The flag is undefined for relative paths (e.g. relative DSTUDIO_PLUGIN_PATH
     // entries), so resolve first and refuse rather than pass a relative path.
     std::error_code ec;
     const std::filesystem::path abs = std::filesystem::absolute(os::path_from_utf8(path), ec);
@@ -357,4 +357,4 @@ bool vst3_uid_from_string(const std::string& s, char uid[16]) {
     return true;
 }
 
-} // namespace saine
+} // namespace dstudio

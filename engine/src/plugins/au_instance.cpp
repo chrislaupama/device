@@ -17,7 +17,7 @@
 #include <memory>
 #include <mutex>
 
-namespace saine {
+namespace dstudio {
 
 bool parse_au_id(const std::string& id, AudioComponentDescription& d) {
     // "type subtype manufacturer": three four-char codes separated by spaces.
@@ -446,7 +446,7 @@ private:
     // Parameter changes and begin/end gestures from AU views (AUParameterSet,
     // AUEventListenerNotify) arrive on a private serial dispatch queue.
     void start_listening() {
-        static dispatch_queue_t queue = dispatch_queue_create("studio.saine.au-param-events", DISPATCH_QUEUE_SERIAL);
+        static dispatch_queue_t queue = dispatch_queue_create("studio.dstudio.au-param-events", DISPATCH_QUEUE_SERIAL);
         listen_ = std::make_shared<ListenState>();
         listen_->self = this;
         std::shared_ptr<ListenState> state = listen_;
@@ -599,15 +599,15 @@ std::shared_ptr<PluginInstance> create_au_instance(const PluginSpec& spec, doubl
     return inst;
 }
 
-} // namespace saine
+} // namespace dstudio
 
 #else
 
-namespace saine {
+namespace dstudio {
 std::shared_ptr<PluginInstance> create_au_instance(const PluginSpec&, double, uint32_t, std::string& err) {
     err = "Audio Units are only available on macOS";
     return nullptr;
 }
-} // namespace saine
+} // namespace dstudio
 
 #endif

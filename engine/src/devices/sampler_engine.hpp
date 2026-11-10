@@ -27,7 +27,7 @@
 #include <cmath>
 #include <cstdint>
 
-namespace saine::sampler {
+namespace dstudio::sampler {
 
 constexpr float kPi = 3.14159265358979323846f;
 
@@ -432,4 +432,4 @@ inline uint64_t sample_token(const BuiltinSample& s) noexcept {
     return s.frames == 0 ? 0 : (reinterpret_cast<uintptr_t>(s.ch[0]) ^ (s.frames << 1));
 }
 
-} // namespace saine::sampler
+} // namespace dstudio::sampler

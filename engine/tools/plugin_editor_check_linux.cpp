@@ -5,10 +5,10 @@
 //
 //   plugin_editor_check_linux clap|vst3 <bundle path> <plugin id> [seconds=5]
 //
-// Find the id with `saine_plugin_scanner --scan-one clap|vst3 <path>`. Needs an
+// Find the id with `dstudio_plugin_scanner --scan-one clap|vst3 <path>`. Needs an
 // X server (DISPLAY); under Xvfb, take a screenshot meanwhile with
 // `import -window root shot.png`.
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <chrono>
 #include <cstdio>

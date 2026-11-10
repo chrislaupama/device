@@ -3,7 +3,7 @@
 // se_last_error() is set only by failing calls (like errno): success paths
 // never touch the thread-local, so the RT-adjacent se_render_offline success
 // path cannot trigger a lazy TLS allocation.
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include "engine.hpp"
 #include "devices/builtin.hpp"
@@ -16,11 +16,11 @@
 #include <string>
 
 struct se_engine {
-    std::unique_ptr<saine::Engine> impl;
+    std::unique_ptr<dstudio::Engine> impl;
 };
 
 // ABI layout guards for the recording/device additions (64-bit targets;
-// also checked from Rust in crates/saine-engine/src/ffi.rs).
+// also checked from Rust in crates/dstudio-engine/src/ffi.rs).
 #if UINTPTR_MAX == 0xffffffffffffffffu
 static_assert(sizeof(se_track_desc_v4) == 56 && alignof(se_track_desc_v4) == 8);
 static_assert(offsetof(se_track_desc_v4, arm) == 19 && offsetof(se_track_desc_v4, monitor) == 20 &&
@@ -159,7 +159,7 @@ se_engine* se_engine_create(const se_config* config) {
     }
     try {
         std::string err;
-        auto impl = saine::Engine::create(*config, err);
+        auto impl = dstudio::Engine::create(*config, err);
         if (!impl) {
             fail(SE_ERR_INVALID_ARG, err);
             return nullptr;
@@ -296,37 +296,37 @@ int32_t se_session_publish_v3(se_engine* engine, const se_session_desc_v3* sessi
 }
 
 void se_synth_params_default(se_synth_params* out) {
-    if (out != nullptr) *out = saine::default_synth_params();
+    if (out != nullptr) *out = dstudio::default_synth_params();
 }
 
 // ---- transport
 
-static int32_t push_cmd(se_engine* engine, const saine::TransportCommand& cmd) {
+static int32_t push_cmd(se_engine* engine, const dstudio::TransportCommand& cmd) {
     SE_REQUIRE_ENGINE(engine);
     const int32_t rc = engine->impl->push_command(cmd);
     return rc == SE_OK ? SE_OK : fail(rc, "transport command queue is full");
 }
 
-static int32_t push(se_engine* engine, saine::TransportCommand::Type type, int64_t frame) {
-    saine::TransportCommand cmd;
+static int32_t push(se_engine* engine, dstudio::TransportCommand::Type type, int64_t frame) {
+    dstudio::TransportCommand cmd;
     cmd.type = type;
     cmd.frame = frame;
     return push_cmd(engine, cmd);
 }
 
-int32_t se_transport_play(se_engine* engine) { return push(engine, saine::TransportCommand::Type::Play, 0); }
-int32_t se_transport_pause(se_engine* engine) { return push(engine, saine::TransportCommand::Type::Pause, 0); }
-int32_t se_transport_stop(se_engine* engine) { return push(engine, saine::TransportCommand::Type::Stop, 0); }
+int32_t se_transport_play(se_engine* engine) { return push(engine, dstudio::TransportCommand::Type::Play, 0); }
+int32_t se_transport_pause(se_engine* engine) { return push(engine, dstudio::TransportCommand::Type::Pause, 0); }
+int32_t se_transport_stop(se_engine* engine) { return push(engine, dstudio::TransportCommand::Type::Stop, 0); }
 int32_t se_transport_seek(se_engine* engine, int64_t frame) {
-    return push(engine, saine::TransportCommand::Type::Seek, frame);
+    return push(engine, dstudio::TransportCommand::Type::Seek, frame);
 }
 
 int32_t se_transport_set_loop(se_engine* engine, uint8_t enabled, int64_t start_frame, int64_t end_frame) {
     SE_REQUIRE_ENGINE(engine);
     if (enabled != 0 && !(start_frame < end_frame))
         return fail(SE_ERR_INVALID_ARG, "loop start must be before loop end");
-    saine::TransportCommand cmd;
-    cmd.type = saine::TransportCommand::Type::SetLoop;
+    dstudio::TransportCommand cmd;
+    cmd.type = dstudio::TransportCommand::Type::SetLoop;
     cmd.enabled = enabled != 0;
     cmd.frame = start_frame;
     cmd.frame2 = end_frame;
@@ -336,8 +336,8 @@ int32_t se_transport_set_loop(se_engine* engine, uint8_t enabled, int64_t start_
 int32_t se_metronome_set(se_engine* engine, const se_metronome_desc* desc) {
     SE_REQUIRE_ENGINE(engine);
     if (desc == nullptr) return fail(SE_ERR_INVALID_ARG, "desc is NULL");
-    saine::TransportCommand cmd;
-    cmd.type = saine::TransportCommand::Type::SetMetronome;
+    dstudio::TransportCommand cmd;
+    cmd.type = dstudio::TransportCommand::Type::SetMetronome;
     cmd.enabled = desc->enabled != 0;
     if (cmd.enabled) {
         if (!std::isfinite(desc->gain) || desc->gain < 0.0f)
@@ -473,13 +473,13 @@ int32_t se_asset_detect_onsets(se_engine* engine, uint64_t asset_id, se_onset* o
 int32_t se_automation_eval(const se_auto_lane_desc* lane, const int64_t* frames, size_t count, float* out_values) {
     if (lane == nullptr || (count > 0 && (frames == nullptr || out_values == nullptr)))
         return fail(SE_ERR_INVALID_ARG, "NULL argument");
-    if (const char* why = saine::validate_lane(*lane)) return fail(SE_ERR_INVALID_ARG, why);
+    if (const char* why = dstudio::validate_lane(*lane)) return fail(SE_ERR_INVALID_ARG, why);
     if (lane->point_count == 0) return fail(SE_ERR_INVALID_ARG, "lane has no points");
-    std::vector<saine::AutoPoint> pts(lane->point_count);
+    std::vector<dstudio::AutoPoint> pts(lane->point_count);
     for (size_t i = 0; i < lane->point_count; ++i)
-        pts[i] = saine::AutoPoint{lane->points[i].frame, lane->points[i].value, lane->points[i].curve};
-    const saine::LaneView v{pts.data(), lane->point_count, lane->logarithmic != 0};
-    for (size_t i = 0; i < count; ++i) out_values[i] = saine::auto_eval(v, frames[i]);
+        pts[i] = dstudio::AutoPoint{lane->points[i].frame, lane->points[i].value, lane->points[i].curve};
+    const dstudio::LaneView v{pts.data(), lane->point_count, lane->logarithmic != 0};
+    for (size_t i = 0; i < count; ++i) out_values[i] = dstudio::auto_eval(v, frames[i]);
     return SE_OK;
 }
 
@@ -542,7 +542,7 @@ int32_t se_plugin_save_state(se_engine* engine, uint64_t device_id) {
 
 #define SE_REQUIRE_MAIN_THREAD()                                                                                       \
     do {                                                                                                               \
-        if (!saine::on_platform_main_thread()) return fail(SE_ERR_STATE, "plugin editors are main-thread only");      \
+        if (!dstudio::on_platform_main_thread()) return fail(SE_ERR_STATE, "plugin editors are main-thread only");      \
     } while (0)
 
 int32_t se_plugin_editor_open(se_engine* engine, uint64_t device_id) {
@@ -629,7 +629,7 @@ int32_t se_plugin_params(se_engine* engine, uint64_t device_id, se_plugin_param_
     SE_REQUIRE_ENGINE(engine);
     if (capacity > 0 && out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
     return guarded([&]() -> int32_t {
-        std::vector<saine::ParamInfo> list;
+        std::vector<dstudio::ParamInfo> list;
         std::string err;
         if (const int32_t rc = engine->impl->plugin_params(device_id, list, err); rc != SE_OK) return check(rc, err);
         for (std::size_t i = 0; i < list.size() && i < capacity; ++i) {
@@ -682,7 +682,7 @@ int32_t se_plugin_take_param_changes(se_engine* engine, se_plugin_param_change* 
 
 const se_builtin_desc* se_builtin_registry(size_t* out_count) {
     std::size_t n = 0;
-    const se_builtin_desc* list = saine::builtin_registry_c(n);
+    const se_builtin_desc* list = dstudio::builtin_registry_c(n);
     if (out_count != nullptr) *out_count = n;
     return list;
 }
@@ -794,12 +794,12 @@ int32_t se_transport_audible_position(const se_engine* engine, int64_t* out_fram
 int32_t se_device_list(se_device_info* out, size_t capacity, size_t* out_count) {
     if (capacity > 0 && out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
     return guarded([&]() -> int32_t {
-        std::vector<saine::DeviceInfo> list;
+        std::vector<dstudio::DeviceInfo> list;
         std::string err;
-        const int32_t rc = saine::list_audio_devices(list, err);
+        const int32_t rc = dstudio::list_audio_devices(list, err);
         if (rc != SE_OK) return fail_from_err(rc, err);
         for (std::size_t i = 0; i < list.size() && i < capacity; ++i) {
-            const saine::DeviceInfo& d = list[i];
+            const dstudio::DeviceInfo& d = list[i];
             se_device_info& o = out[i];
             o = se_device_info{};
             std::snprintf(o.uid, sizeof o.uid, "%s", d.uid.c_str());
@@ -820,7 +820,7 @@ int32_t se_device_configure(se_engine* engine, const se_device_config* config) {
     SE_REQUIRE_ENGINE(engine);
     if (config == nullptr) return fail(SE_ERR_INVALID_ARG, "config is NULL");
     return guarded([&] {
-        saine::AudioDevice::Config c;
+        dstudio::AudioDevice::Config c;
         c.output_uid = config->output_uid != nullptr ? config->output_uid : "";
         c.input_enabled = config->input_enabled != 0;
         c.input_uid = c.input_enabled && config->input_uid != nullptr ? config->input_uid : "";
@@ -919,7 +919,7 @@ int32_t se_record_state(se_engine* engine, uint8_t* out_active, se_live_take* ou
     if (capacity > 0 && out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
     return guarded([&] {
         bool active = false;
-        std::vector<saine::LiveTakeInfo> takes;
+        std::vector<dstudio::LiveTakeInfo> takes;
         engine->impl->record_state(active, takes);
         if (out_active != nullptr) *out_active = active ? 1 : 0;
         for (std::size_t i = 0; i < takes.size() && i < capacity; ++i)
@@ -945,7 +945,7 @@ int32_t se_record_stats_get(se_engine* engine, se_record_stats* out) {
     SE_REQUIRE_ENGINE(engine);
     if (out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
     return guarded([&] {
-        const saine::RecordStats s = engine->impl->record_stats();
+        const dstudio::RecordStats s = engine->impl->record_stats();
         *out = se_record_stats{s.overruns, s.dropped_frames, s.write_errors, s.takes};
         return int32_t{SE_OK};
     });
@@ -966,7 +966,7 @@ int32_t se_render_offline_with_input(se_engine* engine, const float* input_inter
 
 } // extern "C"
 
-namespace saine::testing {
+namespace dstudio::testing {
 
 void set_device_factory(se_engine* e, std::function<std::unique_ptr<AudioDevice>()> factory) {
     e->impl->set_device_factory(std::move(factory));
@@ -982,4 +982,4 @@ bool plugin_simulate_gesture(se_engine* e, uint64_t device_id, uint32_t param_id
     return e->impl->plugin_simulate_gesture(device_id, param_id, normalized);
 }
 
-} // namespace saine::testing
+} // namespace dstudio::testing

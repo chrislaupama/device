@@ -10,9 +10,9 @@ namespace {
 
 constexpr double kRate = 48000.0;
 constexpr double kPi = 3.14159265358979323846;
-constexpr std::size_t kLat = saine::dsp::Oversampler4x::kLatency;
+constexpr std::size_t kLat = dstudio::dsp::Oversampler4x::kLatency;
 
-// Defaults of the saine_core definitions, registry order.
+// Defaults of the dstudio_core definitions, registry order.
 const std::vector<float> kDistortion = {30.f, 4000.f, 100.f, 0.f, 0.f, 0.f, 0.f};
 const std::vector<float> kTape = {30.f, 40.f, 30.f, -60.f, 100.f, 0.f, 0.f};
 const std::vector<float> kClipper = {0.f, 0.f, 50.f, 0.f, 0.f, 100.f, 0.f};
@@ -69,7 +69,7 @@ double distortion_model(double x, double drive, double bias, int mode) {
 // ---------------------------------------------------------------- oversampler
 
 TEST_CASE(oversampler_round_trip_is_a_pure_delay) {
-    saine::dsp::Oversampler4x os;
+    dstudio::dsp::Oversampler4x os;
     os.prepare(256);
     const Signal x = tone(9600, 1000.0, kRate, 0.8);
     Signal l = x, r = x;

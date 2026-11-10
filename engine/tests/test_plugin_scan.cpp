@@ -1,5 +1,5 @@
 // Out-of-process scanner: finds Apple's AUs and the test plugins (via
-// SAINE_PLUGIN_PATH), blocklists SaineTestCrash.clap (crashes in its
+// DSTUDIO_PLUGIN_PATH), blocklists DStudioTestCrash.clap (crashes in its
 // entry) while the scan completes, serves unchanged entries from the cache,
 // re-scans a bundle whose modification time changed, and --rescan clears
 // the blocklist.
@@ -16,7 +16,7 @@
 #include <string>
 
 using namespace testutil;
-namespace os = saine::os;
+namespace os = dstudio::os;
 
 namespace {
 
@@ -28,15 +28,15 @@ std::string slurp(const std::string& path) {
 }
 
 // A private copy of the test plugin folder, removed by the destructor. CTest
-// runs test cases in parallel and they share SAINE_TEST_PLUGIN_DIR, so a test
+// runs test cases in parallel and they share DSTUDIO_TEST_PLUGIN_DIR, so a test
 // that changes a bundle's modification time works on its own copy.
 struct PluginDirCopy {
     PluginDirCopy() {
         static int counter = 0;
         const auto dir = std::filesystem::temp_directory_path() /
-                         ("saine_test_" + std::to_string(os::process_id()) + "_" + std::to_string(counter++) + "_plugins");
+                         ("dstudio_test_" + std::to_string(os::process_id()) + "_" + std::to_string(counter++) + "_plugins");
         std::error_code ec;
-        std::filesystem::copy(os::path_from_utf8(SAINE_TEST_PLUGIN_DIR), dir,
+        std::filesystem::copy(os::path_from_utf8(DSTUDIO_TEST_PLUGIN_DIR), dir,
                               std::filesystem::copy_options::recursive | std::filesystem::copy_options::copy_symlinks,
                               ec);
         if (!ec) path = os::path_to_utf8(dir);
@@ -50,19 +50,19 @@ struct PluginDirCopy {
     std::string path;
 };
 
-// Runs the scanner coordinator (stdout captured) with SAINE_PLUGIN_PATH set
+// Runs the scanner coordinator (stdout captured) with DSTUDIO_PLUGIN_PATH set
 // to `plugin_dir`.
 std::string run_scan(const std::string& cache, bool rescan, int* exit_code,
-                     const std::string& plugin_dir = SAINE_TEST_PLUGIN_DIR) {
-    os::set_env("SAINE_PLUGIN_PATH", plugin_dir.c_str());
-    os::set_env("SAINE_PLUGIN_SCAN_TIMEOUT_MS", "8000");
+                     const std::string& plugin_dir = DSTUDIO_TEST_PLUGIN_DIR) {
+    os::set_env("DSTUDIO_PLUGIN_PATH", plugin_dir.c_str());
+    os::set_env("DSTUDIO_PLUGIN_SCAN_TIMEOUT_MS", "8000");
     TempFile out("scan.out"), err("scan.err");
     std::vector<std::string> args = {"--scan", "--cache", cache};
     if (rescan) args.push_back("--rescan");
     os::ChildProcess p;
     std::string spawn_err;
     if (exit_code != nullptr) *exit_code = -1;
-    if (!p.spawn(SAINE_PLUGIN_SCANNER_PATH, args, out.path, err.path, spawn_err)) {
+    if (!p.spawn(DSTUDIO_PLUGIN_SCANNER_PATH, args, out.path, err.path, spawn_err)) {
         std::fprintf(stderr, "  spawn failed: %s\n", spawn_err.c_str());
         return {};
     }
@@ -100,12 +100,12 @@ TEST_CASE(plugin_scanner_finds_plugins_and_blocklists_crashes) {
     std::fprintf(stderr, "  (Audio Unit checks skipped: Audio Units are macOS-only)\n");
 #endif
     // Test plugins, with their kinds.
-    CHECK(has(r1, "\"id\":\"studio.saine.test.gain\""));
-    CHECK(has(r1, "\"id\":\"studio.saine.test.sine\",\"path\""));
+    CHECK(has(r1, "\"id\":\"studio.dstudio.test.gain\""));
+    CHECK(has(r1, "\"id\":\"studio.dstudio.test.sine\",\"path\""));
     CHECK(has(r1, "\"id\":\"5A17E5A16E0000018A1E7E576A170001\""));
-    CHECK(has(r1, "\"name\":\"Saine Test Sine\",\"vendor\":\"Saine\",\"version\":\"1.0.0\",\"kind\":\"instrument\""));
+    CHECK(has(r1, "\"name\":\"DStudio Test Sine\",\"vendor\":\"DStudio\",\"version\":\"1.0.0\",\"kind\":\"instrument\""));
     // The crashing bundle is reported and blocklisted; the scan completed.
-    CHECK(has(r1, "SaineTestCrash.clap\",\"format\":\"clap\",\"reason\":\"crashed"));
+    CHECK(has(r1, "DStudioTestCrash.clap\",\"format\":\"clap\",\"reason\":\"crashed"));
     CHECK(has(r1, "\"from_cache\":false"));
     const long first = scanned(r1);
     CHECK(first > 5);
@@ -115,12 +115,12 @@ TEST_CASE(plugin_scanner_finds_plugins_and_blocklists_crashes) {
     REQUIRE(rc == 0);
     CHECK_EQ(scanned(r2), 0L);
     CHECK(has(r2, "\"from_cache\":true"));
-    CHECK(has(r2, "SaineTestCrash.clap\",\"format\":\"clap\",\"reason\":\"crashed"));
-    CHECK(has(r2, "\"id\":\"studio.saine.test.gain\""));
+    CHECK(has(r2, "DStudioTestCrash.clap\",\"format\":\"clap\",\"reason\":\"crashed"));
+    CHECK(has(r2, "\"id\":\"studio.dstudio.test.gain\""));
 
     // Touch the gain bundle: only it is re-scanned.
     // (macOS: the bundle folder; Windows/Linux: the single-file .clap.)
-    const std::string bundle_utf8 = plugins.path + "/SaineTestGain.clap";
+    const std::string bundle_utf8 = plugins.path + "/DStudioTestGain.clap";
     const auto bundle = os::path_from_utf8(bundle_utf8);
     const int64_t before = os::file_mtime_ns(bundle_utf8);
     std::error_code ec;
@@ -135,13 +135,13 @@ TEST_CASE(plugin_scanner_finds_plugins_and_blocklists_crashes) {
     REQUIRE(rc == 0);
     CHECK_EQ(scanned(r3), 1L);
     if (scanned(r3) != 1L) std::fprintf(stderr, "  report after touching:\n%s\n", r3.c_str());
-    CHECK(has(r3, "\"id\":\"studio.saine.test.gain\""));
+    CHECK(has(r3, "\"id\":\"studio.dstudio.test.gain\""));
 
     // --rescan scans everything again (the crash is retried and fails again).
     const std::string r4 = run_scan(cache.path, true, &rc, plugins.path);
     REQUIRE(rc == 0);
     CHECK_EQ(scanned(r4), first);
-    CHECK(has(r4, "SaineTestCrash.clap\",\"format\":\"clap\",\"reason\":\"crashed"));
+    CHECK(has(r4, "DStudioTestCrash.clap\",\"format\":\"clap\",\"reason\":\"crashed"));
 }
 
 namespace {

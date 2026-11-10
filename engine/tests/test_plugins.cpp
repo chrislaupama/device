@@ -24,15 +24,15 @@ using namespace testutil;
 
 namespace {
 
-const std::string kPluginDir = SAINE_TEST_PLUGIN_DIR;
-const std::string kClapGain = kPluginDir + "/SaineTestGain.clap";
-const std::string kClapSine = kPluginDir + "/SaineTestSine.clap";
-const std::string kVst3Gain = kPluginDir + "/SaineTestGain.vst3";
+const std::string kPluginDir = DSTUDIO_TEST_PLUGIN_DIR;
+const std::string kClapGain = kPluginDir + "/DStudioTestGain.clap";
+const std::string kClapSine = kPluginDir + "/DStudioTestSine.clap";
+const std::string kVst3Gain = kPluginDir + "/DStudioTestGain.vst3";
 const char* const kVst3GainUid = "5A17E5A16E0000018A1E7E576A170001";
 const char* const kAuLowpass = "aufx lpas appl";
 const char* const kAuDistortion = "aufx dist appl";
 const char* const kAuDls = "aumu dls  appl";
-const std::string kClapLatency = kPluginDir + "/SaineTestLatency.clap";
+const std::string kClapLatency = kPluginDir + "/DStudioTestLatency.clap";
 
 // Audio Units exist only on macOS. Tests that need an AU's own behaviour
 // skip elsewhere; tests that only need "some third plugin" use a portable
@@ -65,13 +65,13 @@ se_device_desc clap(uint64_t id, const std::string& path, const char* plugin_id,
     return d;
 }
 
-se_device_desc clap_gain(uint64_t id, bool enabled = true) { return clap(id, kClapGain, "studio.saine.test.gain", enabled); }
+se_device_desc clap_gain(uint64_t id, bool enabled = true) { return clap(id, kClapGain, "studio.dstudio.test.gain", enabled); }
 
 // A third, format-distinct effect: Apple's AULowpass on macOS, elsewhere
-// SaineTestLatency.clap (latency 0: a pass-through).
+// DStudioTestLatency.clap (latency 0: a pass-through).
 se_device_desc native_effect(uint64_t id, bool enabled = true) {
     if constexpr (kHaveAu) return au(id, kAuLowpass, enabled);
-    return clap(id, kClapLatency, "studio.saine.test.latency", enabled);
+    return clap(id, kClapLatency, "studio.dstudio.test.latency", enabled);
 }
 
 se_device_desc vst3_gain(uint64_t id, bool enabled = true) {
@@ -258,7 +258,7 @@ TEST_CASE(plugin_chain_order_matters) {
         const auto out_ab = left(play_render(e, 24000), 4800);
         REQUIRE(ba.publish(e) == SE_OK); // same device ids, reordered: instances are kept
         const auto out_ba = left(play_render(e, 24000), 4800);
-        CHECK_EQ(saine::testing::plugin_instantiations(e), uint64_t{2});
+        CHECK_EQ(dstudio::testing::plugin_instantiations(e), uint64_t{2});
         double diff = 0;
         for (std::size_t i = 0; i < out_ab.size(); ++i)
             diff = std::max(diff, static_cast<double>(std::fabs(out_ab[i] - out_ba[i])));
@@ -286,7 +286,7 @@ TEST_CASE(plugin_instances_survive_republish) {
     Session5 s;
     s.audio(1, {clip(1, a, 0, 0, 4800)}, {clap_gain(10), vst3_gain(11), native_effect(12)});
     REQUIRE(s.publish(e) == SE_OK);
-    CHECK_EQ(saine::testing::plugin_instantiations(e), uint64_t{3});
+    CHECK_EQ(dstudio::testing::plugin_instantiations(e), uint64_t{3});
     for (int i = 0; i < 6; ++i) {
         s.tracks[0].d.gain = 0.5f + 0.1f * static_cast<float>(i);
         s.tracks[0].devices[1].enabled = static_cast<uint8_t>(i % 2);
@@ -300,7 +300,7 @@ TEST_CASE(plugin_instances_survive_republish) {
     s.tracks[0].devices.pop_back();
     s.tracks[1].devices.push_back(moved);
     REQUIRE(s.publish(e) == SE_OK);
-    CHECK_EQ(saine::testing::plugin_instantiations(e), uint64_t{3});
+    CHECK_EQ(dstudio::testing::plugin_instantiations(e), uint64_t{3});
     CHECK(se_plugin_is_live(e, 12) == 1);
     // Removing retires; re-adding (undo) creates a new instance.
     s.tracks[1].devices.clear();
@@ -308,11 +308,11 @@ TEST_CASE(plugin_instances_survive_republish) {
     CHECK(se_plugin_is_live(e, 12) == 0);
     s.tracks[1].devices.push_back(moved);
     REQUIRE(s.publish(e) == SE_OK);
-    CHECK_EQ(saine::testing::plugin_instantiations(e), uint64_t{4});
+    CHECK_EQ(dstudio::testing::plugin_instantiations(e), uint64_t{4});
     // Same id, different plugin: replaced.
     s.tracks[1].devices[0] = clap_gain(12);
     REQUIRE(s.publish(e) == SE_OK);
-    CHECK_EQ(saine::testing::plugin_instantiations(e), uint64_t{5});
+    CHECK_EQ(dstudio::testing::plugin_instantiations(e), uint64_t{5});
     // A v4 publish (no devices) retires everything.
     se_session_desc_v4 empty{};
     REQUIRE(se_session_publish_v4(e, &empty) == SE_OK);
@@ -337,7 +337,7 @@ TEST_CASE(plugin_publish_v5_validation) {
     st.audio(1, {}, {clap_gain(5)});
     st.tracks[0].devices[0].state_len = 4;
     CHECK(st.publish(e) == SE_ERR_INVALID_ARG);
-    CHECK_EQ(saine::testing::plugin_instantiations(e), uint64_t{0}); // nothing instantiated on rejected publishes
+    CHECK_EQ(dstudio::testing::plugin_instantiations(e), uint64_t{0}); // nothing instantiated on rejected publishes
 }
 
 // ---------------------------------------------------------------- state
@@ -352,7 +352,7 @@ TEST_CASE(plugin_state_round_trip_clap_and_vst3) {
             Session5 s;
             s.audio(1, {clip(1, a, 0, 0, 2048)}, {fmt == 0 ? clap_gain(10) : vst3_gain(10)});
             REQUIRE(s.publish(e) == SE_OK);
-            REQUIRE(saine::testing::plugin_set_parameter(e, 10, 0, 0.25));
+            REQUIRE(dstudio::testing::plugin_set_parameter(e, 10, 0, 0.25));
             out1 = play_render(e, 1024);
             CHECK_NEAR(out1[2 * 100], 0.8 * 0.25, 1e-6);
             std::size_t n = 0;
@@ -401,7 +401,7 @@ TEST_CASE(plugin_state_round_trip_audio_unit) {
             s.tracks[0].devices[0].state_len = state->size();
         }
         if (s.publish(e) != SE_OK || error_count(e) != 0) return std::vector<float>{};
-        if (cutoff > 0) saine::testing::plugin_set_parameter(e, 10, 0, cutoff);
+        if (cutoff > 0) dstudio::testing::plugin_set_parameter(e, 10, 0, cutoff);
         auto out = left(play_render(e, 24000));
         if (save != nullptr) {
             std::size_t n = 0;
@@ -428,7 +428,7 @@ TEST_CASE(plugin_state_round_trip_audio_unit) {
 
 TEST_CASE(plugin_instrument_clap_sine_onset_and_pitch) {
     EngineHandle e(48000, 256);
-    const se_device_desc sine_plug = clap(30, kClapSine, "studio.saine.test.sine");
+    const se_device_desc sine_plug = clap(30, kClapSine, "studio.dstudio.test.sine");
     Session5 s;
     s.instrument(1, {note(4800, 14400, 69, 127), note(20000, 22000, 81, 127)}, &sine_plug);
     REQUIRE(s.publish(e) == SE_OK);
@@ -470,7 +470,7 @@ float peak(const std::vector<float>& v, std::size_t from = 0) {
 
 TEST_CASE(preview_note_plays_through_a_plugin_instrument_with_transport_stopped) {
     EngineHandle e(48000, 256);
-    const se_device_desc sine_plug = clap(30, kClapSine, "studio.saine.test.sine");
+    const se_device_desc sine_plug = clap(30, kClapSine, "studio.dstudio.test.sine");
     Session5 s;
     s.instrument(1, {}, &sine_plug, {clap_gain(31)});
     REQUIRE(s.publish(e) == SE_OK);
@@ -523,7 +523,7 @@ TEST_CASE(plugin_instrument_dls_onset) {
 }
 
 TEST_CASE(plugin_instrument_seek_and_stop_send_all_notes_off) {
-    const se_device_desc sine_plug = clap(30, kClapSine, "studio.saine.test.sine");
+    const se_device_desc sine_plug = clap(30, kClapSine, "studio.dstudio.test.sine");
     const se_device_desc dls = au(31, kAuDls);
     if (!kHaveAu) std::fprintf(stderr, "  (DLSMusicDevice half skipped: %s)\n", kNoAu);
     for (int which = 0; which < (kHaveAu ? 2 : 1); ++which) {
@@ -572,7 +572,7 @@ TEST_CASE(plugin_instrument_seek_and_stop_send_all_notes_off) {
 TEST_CASE(plugin_instrument_with_insert_chain_and_loop) {
     // Instrument plugin -> CLAP gain insert; loop wraps retrigger the note at the loop start.
     EngineHandle e(48000, 256);
-    const se_device_desc sine_plug = clap(30, kClapSine, "studio.saine.test.sine");
+    const se_device_desc sine_plug = clap(30, kClapSine, "studio.dstudio.test.sine");
     Session5 s;
     s.instrument(1, {note(1000, 3000, 69, 127)}, &sine_plug, {clap_gain(40)});
     REQUIRE(s.publish(e) == SE_OK);
@@ -615,9 +615,9 @@ TEST_CASE(plugin_missing_is_load_error_and_passes_through) {
     const auto out = play_render(e, 4800);
     CHECK(out == ref); // inserts pass through, the missing instrument is silent
     // Not retried on republish while published with the same plugin.
-    const uint64_t count = saine::testing::plugin_instantiations(e);
+    const uint64_t count = dstudio::testing::plugin_instantiations(e);
     REQUIRE(broken.publish(e) == SE_OK);
-    CHECK_EQ(saine::testing::plugin_instantiations(e), count);
+    CHECK_EQ(dstudio::testing::plugin_instantiations(e), count);
     CHECK(se_plugin_is_live(e, 11) == 1);
     uint32_t lat = 7;
     CHECK(se_plugin_latency(e, 11, &lat) == SE_ERR_NOT_FOUND && lat == 0);
@@ -656,7 +656,7 @@ TEST_CASE(plugin_export_uses_the_chain) {
     REQUIRE(se_export_wav(e, f.path.c_str(), 0, 4800) == SE_OK);
     std::vector<uint8_t> bytes;
     {
-        FILE* fp = saine::os::fopen_utf8(f.path.c_str(), "rb");
+        FILE* fp = dstudio::os::fopen_utf8(f.path.c_str(), "rb");
         REQUIRE(fp != nullptr);
         bytes.resize(44 + 4800 * 8 + 64);
         bytes.resize(std::fread(bytes.data(), 1, bytes.size(), fp));
@@ -675,7 +675,7 @@ TEST_CASE(plugin_rt_render_does_not_allocate) {
     // are used here (third-party plugins may allocate; out of our control).
     EngineHandle e(48000, 256);
     const uint64_t a = load_asset(e, {sine(48000, 330.0, 48000.0, 0.3), sine(48000, 220.0, 48000.0, 0.3)});
-    const se_device_desc sine_plug = clap(100, kClapSine, "studio.saine.test.sine");
+    const se_device_desc sine_plug = clap(100, kClapSine, "studio.dstudio.test.sine");
     Session5 s;
     for (uint64_t t = 0; t < 8; ++t)
         s.audio(t + 1, {clip(1, a, static_cast<int64_t>(t) * 100, 0, 40000)},
@@ -698,8 +698,8 @@ TEST_CASE(plugin_rt_render_does_not_allocate) {
             se_transport_play(e);
         }
         if (i % 200 == 100) {
-            saine::testing::plugin_set_parameter(e, 10, 0, 0.3);
-            saine::testing::plugin_set_parameter(e, 11, 0, 0.7);
+            dstudio::testing::plugin_set_parameter(e, 10, 0, 0.3);
+            dstudio::testing::plugin_set_parameter(e, 11, 0, 0.7);
         }
         const uint32_t n = sizes[i % 6];
         RtAllocGuard g;
@@ -720,7 +720,7 @@ TEST_CASE(preview_note_rt_render_does_not_allocate) {
     // every size, with the transport stopped and running (built-in
     // instruments: test_sampler.cpp).
     EngineHandle e(48000, 256);
-    const se_device_desc sine_plug = clap(50, kClapSine, "studio.saine.test.sine");
+    const se_device_desc sine_plug = clap(50, kClapSine, "studio.dstudio.test.sine");
     Session5 s;
     std::vector<se_note_desc> notes;
     for (int i = 0; i < 100; ++i) notes.push_back(note(i * 400, i * 400 + 900, static_cast<uint8_t>(48 + i % 24)));
@@ -762,7 +762,7 @@ struct WorkerChain {
     std::vector<uint8_t> gain_state = f32_state(0.25f);
     se_device_desc inserts[3];
     std::size_t insert_count = 0;
-    se_device_desc instrument = clap(20, kClapSine, "studio.saine.test.sine");
+    se_device_desc instrument = clap(20, kClapSine, "studio.dstudio.test.sine");
     se_device_desc inst_fx = clap_gain(21);
     WorkerChain() {
         inserts[insert_count] = clap_gain(10);
@@ -802,13 +802,13 @@ TEST_CASE(offline_worker_render_of_prepared_plugins_equals_the_main_thread_rende
     Session5 sp;
     chain.fill(sp, load_asset(priv, {source}));
     const std::size_t plugins = prepare_chain(priv, chain);
-    CHECK_EQ(saine::testing::plugin_instantiations(priv), uint64_t{plugins});
+    CHECK_EQ(dstudio::testing::plugin_instantiations(priv), uint64_t{plugins});
     REQUIRE(se_plugin_set_detached(priv, 1) == SE_OK);
     std::vector<float> out;
     long allocs = -1;
     bool on_main = true;
     std::thread worker([&] {
-        on_main = saine::on_platform_main_thread();
+        on_main = dstudio::on_platform_main_thread();
         int32_t rc = sp.publish(priv);
         se_plugin_idle(priv);
         se_transport_seek(priv, 0);
@@ -825,7 +825,7 @@ TEST_CASE(offline_worker_render_of_prepared_plugins_equals_the_main_thread_rende
     worker.join();
     CHECK(!on_main);
     CHECK_EQ(error_count(priv), std::size_t{0});
-    CHECK_EQ(saine::testing::plugin_instantiations(priv), uint64_t{plugins}); // the worker created nothing
+    CHECK_EQ(dstudio::testing::plugin_instantiations(priv), uint64_t{plugins}); // the worker created nothing
     CHECK_EQ(allocs, 0L);
     REQUIRE(out.size() == expected.size());
     CHECK(out == expected);
@@ -841,7 +841,7 @@ TEST_CASE(offline_detached_engine_never_instantiates_and_reports_the_unprepared_
     std::thread worker([&] { rc = s.publish(e); });
     worker.join();
     REQUIRE(rc == SE_OK);
-    CHECK_EQ(saine::testing::plugin_instantiations(e), uint64_t{0});
+    CHECK_EQ(dstudio::testing::plugin_instantiations(e), uint64_t{0});
     std::vector<se_plugin_message> msgs(4);
     std::size_t n = 0;
     REQUIRE(se_plugin_load_errors(e, msgs.data(), msgs.size(), &n) == SE_OK);
@@ -864,7 +864,7 @@ TEST_CASE(offline_prepare_reports_load_failures_and_validates_the_description) {
     const se_device_desc ok = clap_gain(12);
     CHECK(se_plugin_prepare(e, &ok, 0) == SE_OK);
     CHECK(se_plugin_prepare(e, &ok, 0) == SE_OK); // already prepared: reused
-    CHECK_EQ(saine::testing::plugin_instantiations(e), uint64_t{3});
+    CHECK_EQ(dstudio::testing::plugin_instantiations(e), uint64_t{3});
     se_device_desc invalid = ok;
     invalid.plugin_id = nullptr;
     CHECK(se_plugin_prepare(e, &invalid, 0) == SE_ERR_INVALID_ARG);
@@ -877,7 +877,7 @@ TEST_CASE(offline_one_instance_state_is_saved_and_prepared_into_a_private_engine
     Session5 s;
     s.audio(1, {clip(1, a, 0, 0, 2048)}, {clap_gain(10), vst3_gain(11)});
     REQUIRE(s.publish(live) == SE_OK);
-    REQUIRE(saine::testing::plugin_set_parameter(live, 10, 0, 0.25));
+    REQUIRE(dstudio::testing::plugin_set_parameter(live, 10, 0, 0.25));
     const auto expected = play_render(live, 1024);
     CHECK_NEAR(expected[2 * 100], 0.8 * 0.25 * 0.5, 1e-6);
 
@@ -912,7 +912,7 @@ TEST_CASE(offline_one_instance_state_is_saved_and_prepared_into_a_private_engine
 TEST_CASE(offline_prepared_latency_reaches_the_delay_compensation_plan) {
     constexpr uint32_t kN = 1000;
     std::vector<uint8_t> st = {kN & 0xff, kN >> 8, 0, 0};
-    se_device_desc lat = clap(10, kClapLatency, "studio.saine.test.latency");
+    se_device_desc lat = clap(10, kClapLatency, "studio.dstudio.test.latency");
     lat.state = st.data();
     lat.state_len = st.size();
     EngineHandle e(48000, 256);
@@ -940,7 +940,7 @@ TEST_CASE(offline_prepared_latency_reaches_the_delay_compensation_plan) {
 }
 
 // ---------------------------------------------------------------- editor windows (Windows)
-// SaineTestGui.clap (Windows-only test plugin) has a Win32 clap.gui; this
+// DStudioTestGui.clap (Windows-only test plugin) has a Win32 clap.gui; this
 // drives the HWND editor host end to end: open, the plugin's
 // request_resize, bring-to-front, closing with the close box (WM_CLOSE) and
 // closing through the API. macOS editors are exercised manually
@@ -966,15 +966,15 @@ void pump_messages() {
 
 TEST_CASE(plugin_editor_window_win32_open_resize_close) {
     EngineHandle e(48000, 256);
-    const std::string gui_path = kPluginDir + "/SaineTestGui.clap";
+    const std::string gui_path = kPluginDir + "/DStudioTestGui.clap";
     Session5 s;
-    s.audio(1, {}, {clap(20, gui_path, "studio.saine.test.gui")});
+    s.audio(1, {}, {clap(20, gui_path, "studio.dstudio.test.gui")});
     REQUIRE(s.publish(e) == SE_OK);
     REQUIRE(error_count(e) == 0);
     REQUIRE(se_plugin_editor_open(e, 20) == SE_OK);
     pump_messages();
     CHECK(se_plugin_editor_is_open(e, 20) == 1);
-    HWND w = FindWindowW(L"SaineStudioPluginEditor", nullptr);
+    HWND w = FindWindowW(L"DeviceStudioPluginEditor", nullptr);
     REQUIRE(w != nullptr);
     RECT rc{};
     GetClientRect(w, &rc);
@@ -983,7 +983,7 @@ TEST_CASE(plugin_editor_window_win32_open_resize_close) {
     CHECK(FindWindowExW(w, nullptr, L"STATIC", nullptr) != nullptr); // the plugin's child window
     // Opening again brings the same window to the front.
     CHECK(se_plugin_editor_open(e, 20) == SE_OK);
-    CHECK(FindWindowW(L"SaineStudioPluginEditor", nullptr) == w);
+    CHECK(FindWindowW(L"DeviceStudioPluginEditor", nullptr) == w);
     // The close box: WM_CLOSE through the message loop.
     PostMessageW(w, WM_CLOSE, 0, 0);
     pump_messages();
@@ -994,7 +994,7 @@ TEST_CASE(plugin_editor_window_win32_open_resize_close) {
     CHECK(se_plugin_editor_is_open(e, 20) == 1);
     REQUIRE(se_plugin_editor_close(e, 20) == SE_OK);
     CHECK(se_plugin_editor_is_open(e, 20) == 0);
-    CHECK(FindWindowW(L"SaineStudioPluginEditor", nullptr) == nullptr);
+    CHECK(FindWindowW(L"DeviceStudioPluginEditor", nullptr) == nullptr);
     // Retiring the device with an open editor closes it.
     REQUIRE(se_plugin_editor_open(e, 20) == SE_OK);
     Session5 empty;
@@ -1002,7 +1002,7 @@ TEST_CASE(plugin_editor_window_win32_open_resize_close) {
     REQUIRE(empty.publish(e) == SE_OK);
     REQUIRE(se_plugin_idle(e) == SE_OK);
     pump_messages();
-    CHECK(FindWindowW(L"SaineStudioPluginEditor", nullptr) == nullptr);
+    CHECK(FindWindowW(L"DeviceStudioPluginEditor", nullptr) == nullptr);
 }
 #else
 TEST_CASE(plugin_editor_window_win32_open_resize_close) {
@@ -1012,11 +1012,11 @@ TEST_CASE(plugin_editor_window_win32_open_resize_close) {
 
 // ---------------------------------------------------------------- editor windows (Linux, X11)
 // The X11 editor host (platform/plugin_editor_x11.cpp) and the plugin run
-// loop (platform/run_loop.cpp), end to end with SaineTestGui.clap: it opens
+// loop (platform/run_loop.cpp), end to end with DStudioTestGui.clap: it opens
 // its own X connection, registers its fd and a 10 ms timer with the host and
 // names its child window after the callback counts. Needs an X server: CI
 // runs it under Xvfb.
-#if defined(SAINE_TEST_X11_EDITOR)
+#if defined(DSTUDIO_TEST_X11_EDITOR)
 #include "platform/run_loop.hpp"
 
 #include <X11/Xlib.h>
@@ -1030,7 +1030,7 @@ struct XView {
     ~XView() {
         if (d != nullptr) XCloseDisplay(d);
     }
-    // Top-level windows whose WM_CLASS class is SaineStudioPluginEditor.
+    // Top-level windows whose WM_CLASS class is DeviceStudioPluginEditor.
     std::vector<Window> editors() const {
         XSync(d, False);
         std::vector<Window> out;
@@ -1040,7 +1040,7 @@ struct XView {
         for (unsigned i = 0; i < n; ++i) {
             XClassHint h{};
             if (XGetClassHint(d, kids[i], &h) != 0) {
-                if (h.res_class != nullptr && std::string(h.res_class) == "SaineStudioPluginEditor") out.push_back(kids[i]);
+                if (h.res_class != nullptr && std::string(h.res_class) == "DeviceStudioPluginEditor") out.push_back(kids[i]);
                 if (h.res_name != nullptr) XFree(h.res_name);
                 if (h.res_class != nullptr) XFree(h.res_class);
             }
@@ -1108,7 +1108,7 @@ void idle_for(se_engine* e, int ms) {
     }
 }
 
-// "Saine Test GUI timer=N fd=M" -> {N, M}.
+// "DStudio Test GUI timer=N fd=M" -> {N, M}.
 std::pair<long, long> counts(const std::string& name) {
     const auto t = name.find("timer="), f = name.find("fd=");
     if (t == std::string::npos || f == std::string::npos) return {-1, -1};
@@ -1121,9 +1121,9 @@ TEST_CASE(plugin_editor_window_x11_open_resize_close) {
     XView x;
     if (x.d == nullptr) SKIP("no X server (DISPLAY): run under Xvfb");
     EngineHandle e(48000, 256);
-    const std::string gui_path = kPluginDir + "/SaineTestGui.clap";
+    const std::string gui_path = kPluginDir + "/DStudioTestGui.clap";
     Session5 s;
-    s.audio(1, {}, {clap(20, gui_path, "studio.saine.test.gui")});
+    s.audio(1, {}, {clap(20, gui_path, "studio.dstudio.test.gui")});
     REQUIRE(s.publish(e) == SE_OK);
     REQUIRE(error_count(e) == 0);
     REQUIRE(se_plugin_editor_open(e, 20) == SE_OK);
@@ -1147,8 +1147,8 @@ TEST_CASE(plugin_editor_window_x11_open_resize_close) {
     std::fprintf(stderr, "  child window: \"%s\"\n", name.c_str());
     CHECK(timer_calls >= 5);
     CHECK(fd_calls >= 1);
-    CHECK(saine::run_loop::timer_count() == 1u);
-    CHECK(saine::run_loop::fd_count() == 1u);
+    CHECK(dstudio::run_loop::timer_count() == 1u);
+    CHECK(dstudio::run_loop::fd_count() == 1u);
     // Opening again brings the same window to the front.
     CHECK(se_plugin_editor_open(e, 20) == SE_OK);
     idle_for(e, 20);
@@ -1159,8 +1159,8 @@ TEST_CASE(plugin_editor_window_x11_open_resize_close) {
     CHECK(se_plugin_editor_is_open(e, 20) == 0);
     CHECK(x.editors().empty());
     // The plugin's fd and timer went with its GUI.
-    CHECK(saine::run_loop::timer_count() == 0u);
-    CHECK(saine::run_loop::fd_count() == 0u);
+    CHECK(dstudio::run_loop::timer_count() == 0u);
+    CHECK(dstudio::run_loop::fd_count() == 0u);
     // Re-open, then close through the API.
     REQUIRE(se_plugin_editor_open(e, 20) == SE_OK);
     idle_for(e, 50);
@@ -1177,8 +1177,8 @@ TEST_CASE(plugin_editor_window_x11_open_resize_close) {
     REQUIRE(empty.publish(e) == SE_OK);
     idle_for(e, 50);
     CHECK(x.editors().empty());
-    CHECK(saine::run_loop::timer_count() == 0u);
-    CHECK(saine::run_loop::fd_count() == 0u);
+    CHECK(dstudio::run_loop::timer_count() == 0u);
+    CHECK(dstudio::run_loop::fd_count() == 0u);
 }
 #else
 TEST_CASE(plugin_editor_window_x11_open_resize_close) {

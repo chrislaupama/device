@@ -2,9 +2,9 @@
 // 24 dB/oct) with input drive, an envelope follower and an LFO that move the
 // cutoff, a dry/wet mix, and a DJ mode where one position sweeps a low-pass
 // (left of centre) or a high-pass (right). Parameters in the order of
-// saine_core::builtin::auto_filter (checked by a Rust test).
+// dstudio_core::builtin::auto_filter (checked by a Rust test).
 //
-// The filter stages are those of saine_core::builtin::auto_filter::
+// The filter stages are those of dstudio_core::builtin::auto_filter::
 // filter_stages (the panel's curve): TPT state-variable sections, a
 // resonance-to-Q map (0.5 .. ~40), a second fixed-Q stage for 24 dB/oct and
 // a level correction that keeps resonant peaks in check. Cutoff modulation:
@@ -21,7 +21,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -59,7 +59,7 @@ constexpr double kQuarters[14] = {4.0,       2.0,  3.0,   4.0 / 3.0, 1.0,  1.5, 
                                   0.5,       0.75, 1.0 / 3.0, 0.25, 0.375, 1.0 / 6.0, 0.125};
 
 constexpr uint32_t kControl = 8;
-constexpr double kSecondStageQ = 0.54; // saine_core auto_filter::SECOND_STAGE_Q
+constexpr double kSecondStageQ = 0.54; // dstudio_core auto_filter::SECOND_STAGE_Q
 constexpr float kDjDeadZone = 0.06f;
 
 inline int choice(float v, int count) noexcept { return std::clamp(static_cast<int>(std::lround(v)), 0, count - 1); }
@@ -306,4 +306,4 @@ constexpr float kDefaults[kParamCount] = {0.0f, 0.0f, 20000.0f, 0.0f, 0.0f, 0.0f
 extern const BuiltinDescriptor kAutoFilterDescriptor;
 const BuiltinDescriptor kAutoFilterDescriptor{"auto-filter", kParamIds, kReadoutIds, &create_auto_filter, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

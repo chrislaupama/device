@@ -1,5 +1,5 @@
 // Flanger: a short modulated delay with feedback, mixed with the dry signal,
-// in three modes. Parameters in the order of saine_core::builtin::flanger
+// in three modes. Parameters in the order of dstudio_core::builtin::flanger
 // (checked by a Rust test).
 //
 // LFO phase p (sine), per channel (right channel at p + width / 2):
@@ -20,7 +20,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -124,4 +124,4 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Flanger>();
 extern const BuiltinDescriptor kFlangerDescriptor;
 const BuiltinDescriptor kFlangerDescriptor{"flanger", kParamIds, kReadoutIds, &create, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

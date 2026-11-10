@@ -1,6 +1,6 @@
 // Phaser: a cascade of 2, 4, 6 or 12 first-order all-pass sections swept by
 // an LFO, with feedback, stereo width, dry/wet mix and output gain.
-// Parameters in the order of saine_core::builtin::phaser (checked by a Rust
+// Parameters in the order of dstudio_core::builtin::phaser (checked by a Rust
 // test).
 //
 // LFO phase p (sine), per channel (right channel at p + width / 2):
@@ -19,7 +19,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -129,4 +129,4 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Phaser>(); 
 extern const BuiltinDescriptor kPhaserDescriptor;
 const BuiltinDescriptor kPhaserDescriptor{"phaser", kParamIds, kReadoutIds, &create, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

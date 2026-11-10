@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<h1>Saine Studio</h1>
+<h1>Device Studio</h1>
 
 <h3>Built for real time.</h3>
 
@@ -25,22 +25,22 @@
 
 <br>
 
-<img alt="Saine Studio with automation lanes over an audio track, an instrument track and the master, and the Synth open below" src="docs/assets/screenshot.png" width="900">
+<img alt="Device Studio with automation lanes over an audio track, an instrument track and the master, and the Synth open below" src="docs/assets/screenshot.png" width="900">
 
 </div>
 
 ---
 
-## What is Saine Studio?
+## What is Device Studio?
 
-Saine Studio is a linear, track-based music production program. You record or import audio, write parts in the piano
+Device Studio is a linear, track-based music production program. You record or import audio, write parts in the piano
 roll, shape sounds with the built-in instruments and effects or your own AU, VST3 and CLAP plugins, automate anything,
 and mix in the mixer. The audio engine is written in C++23 and never allocates or locks on the audio thread; the
 interface is written in Rust with Slint, and the timeline, waveforms, piano roll and meters are drawn on the GPU with
 wgpu.
 
 > [!WARNING]
-> **Saine Studio is pre-alpha.** There are no releases yet, features are missing, and the project format may still
+> **Device Studio is pre-alpha.** There are no releases yet, features are missing, and the project format may still
 > change. macOS is the platform it's developed and tested on every day; Windows and Linux build, but their audio
 > backends have never run on a physical sound card (Linux runs real PipeWire streams in CI). Keep copies of anything you care about.
 
@@ -85,11 +85,11 @@ wgpu.
   </tr>
 </table>
 
-<sub>Screenshots are rendered by the app itself (<code>saine-studio --screenshot</code>) on Linux with a software GPU.</sub>
+<sub>Screenshots are rendered by the app itself (<code>device-studio --screenshot</code>) on Linux with a software GPU.</sub>
 
 ### Built-in devices
 
-Saine Studio comes with 44 devices of its own. Each one is a single declarative definition (parameters, panel layout and
+Device Studio comes with 44 devices of its own. Each one is a single declarative definition (parameters, panel layout and
 factory presets) that the model, undo, saving, automation, engine and panel all derive from, with a C++ DSP kernel
 behind it. [docs/devices.md](docs/devices.md) explains how they work and how to add one.
 
@@ -117,10 +117,10 @@ does not include the audio, so back up the media too. The format is versioned, b
 ## Under the hood
 
 ```
- Rust app (Slint shell + wgpu surfaces)      crates/saine-app
+ Rust app (Slint shell + wgpu surfaces)      crates/dstudio-app
         │  validated commands       ▲ change notifications
         ▼                           │
- Rust core (model, undo, save)               crates/saine-core
+ Rust core (model, undo, save)               crates/dstudio-core
         │  immutable session snapshot over a C ABI
         ▼
  C++23 real-time engine                      engine/
@@ -160,7 +160,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 
 [PROGRESS.md](PROGRESS.md) has the dated, round-by-round log.
 
-## Get Saine Studio
+## Get Device Studio
 
 | System | You need | Audio | Plugins |
 |---|---|---|---|
@@ -185,7 +185,7 @@ On Linux, install the packages listed in the [build guide](docs/building.md#linu
 ```sh
 git clone https://github.com/chrislaupama/sainestudio.git
 cd sainestudio
-cargo run --release -p saine-app -- --demo
+cargo run --release -p dstudio-app -- --demo
 ```
 
 `cargo` builds the engine too, so that's all it takes. `--demo` opens the app with a small demo project; leave it out
@@ -197,20 +197,20 @@ CMake build and tests, and how CI runs.
 ### Useful options
 
 ```sh
-cargo run --release -p saine-app -- --help                     # every option
-cargo run --release -p saine-app -- --open My.saineproj        # open a project
-cargo run --release -p saine-app -- --no-audio                 # run without an audio device
-cargo run --release -p saine-app -- --self-test --no-audio     # drive the app through its own checks
+cargo run --release -p dstudio-app -- --help                     # every option
+cargo run --release -p dstudio-app -- --open My.dsproj        # open a project
+cargo run --release -p dstudio-app -- --no-audio                 # run without an audio device
+cargo run --release -p dstudio-app -- --self-test --no-audio     # drive the app through its own checks
 ```
 
 ## Development
 
 | Path | What |
 |---|---|
-| `engine/` | C++23 real-time audio engine, C ABI in `engine/include/saine_engine.h` |
-| `crates/saine-core` | Model, commands, undo/redo, persistence, snapshots, built-in device definitions |
-| `crates/saine-engine` | Safe Rust wrapper over the engine, end-to-end tests |
-| `crates/saine-app` | Desktop app (binary `saine-studio`) |
+| `engine/` | C++23 real-time audio engine, C ABI in `engine/include/dstudio_engine.h` |
+| `crates/dstudio-core` | Model, commands, undo/redo, persistence, snapshots, built-in device definitions |
+| `crates/dstudio-engine` | Safe Rust wrapper over the engine, end-to-end tests |
+| `crates/dstudio-app` | Desktop app (binary `device-studio`) |
 | `docs/` | Architecture, ADRs, built-in devices, build guide |
 | `reference/`, `tools/` | Research notes and inspection tooling |
 | `ui-spike/` | The Slint and wgpu interop spike behind ADR 0001 |
@@ -234,16 +234,16 @@ finishes something it describes, the same pull request updates it:
 
 - **Features** and **Built-in devices** when a feature or device lands or is removed (the device count too).
 - **Status** when an area moves between 🚧 and ✅, or a "still missing" item is done.
-- **Get Saine Studio** and **Build from source** when platform support, requirements or build steps change, along
+- **Get Device Studio** and **Build from source** when platform support, requirements or build steps change, along
   with [docs/building.md](docs/building.md).
 - **Under the hood** when the benchmark numbers in [engine/README.md](engine/README.md) change noticeably.
 - **Screenshots** in `docs/assets/` when the part of the interface they show changes visibly. Render them with the
-  app itself, e.g. `saine-studio --no-audio --state review-automation --screenshot docs/assets/screenshot.png
+  app itself, e.g. `device-studio --no-audio --state review-automation --screenshot docs/assets/screenshot.png
   --exit-after-frames 5`; the states used are listed in each image's pull request.
 
 ## License
 
-All rights reserved. How Saine Studio will be licensed has not been decided yet.
+All rights reserved. How Device Studio will be licensed has not been decided yet.
 
 Third-party code keeps its own license: the VST3 SDK and CLAP headers (MIT) are fetched at build time, and the bundled
 Inter font is under the SIL Open Font License.

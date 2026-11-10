@@ -70,9 +70,9 @@ std::vector<uint8_t> make_wav(const WavSpec& s, const std::vector<uint8_t>& data
     return out;
 }
 
-int32_t decode(const std::vector<uint8_t>& bytes, saine::DecodedAudio& out) {
+int32_t decode(const std::vector<uint8_t>& bytes, dstudio::DecodedAudio& out) {
     std::string err;
-    return saine::decode_wav_memory(bytes.data(), bytes.size(), out, err);
+    return dstudio::decode_wav_memory(bytes.data(), bytes.size(), out, err);
 }
 
 } // namespace
@@ -94,9 +94,9 @@ TEST_CASE(wav_float32_roundtrip_bit_exact) {
 
     TempFile f("roundtrip.wav");
     write_float_wav(f.path, planar, 44100);
-    saine::DecodedAudio d;
+    dstudio::DecodedAudio d;
     std::string err;
-    REQUIRE(saine::decode_wav_file(f.path.c_str(), d, err) == SE_OK);
+    REQUIRE(dstudio::decode_wav_file(f.path.c_str(), d, err) == SE_OK);
     CHECK_EQ(d.channels, 2u);
     CHECK_EQ(d.frames, frames);
     CHECK(d.sample_rate == 44100.0);
@@ -114,7 +114,7 @@ TEST_CASE(wav_decode_pcm16_stereo) {
     WavSpec spec;
     spec.channels = 2;
     spec.bits = 16;
-    saine::DecodedAudio d;
+    dstudio::DecodedAudio d;
     REQUIRE(decode(make_wav(spec, data), d) == SE_OK);
     CHECK_EQ(d.frames, 3u);
     CHECK(d.planar[0][0] == 0.0f);
@@ -136,7 +136,7 @@ TEST_CASE(wav_decode_pcm24_mono_with_padding_chunk) {
     WavSpec spec;
     spec.bits = 24;
     spec.junk_chunk_first = true;
-    saine::DecodedAudio d;
+    dstudio::DecodedAudio d;
     REQUIRE(decode(make_wav(spec, data), d) == SE_OK); // 15 data bytes: odd, padded
     CHECK_EQ(d.frames, 5u);
     CHECK(d.planar[0][1] == -1.0f);
@@ -152,7 +152,7 @@ TEST_CASE(wav_decode_pcm32_and_8bit) {
         put32(data, static_cast<uint32_t>(1 << 30));
         WavSpec spec;
         spec.bits = 32;
-        saine::DecodedAudio d;
+        dstudio::DecodedAudio d;
         REQUIRE(decode(make_wav(spec, data), d) == SE_OK);
         CHECK(d.planar[0][0] == -1.0f);
         CHECK(d.planar[0][1] == 0.5f);
@@ -161,7 +161,7 @@ TEST_CASE(wav_decode_pcm32_and_8bit) {
         std::vector<uint8_t> data = {128, 0, 192};
         WavSpec spec;
         spec.bits = 8;
-        saine::DecodedAudio d;
+        dstudio::DecodedAudio d;
         REQUIRE(decode(make_wav(spec, data), d) == SE_OK);
         CHECK(d.planar[0][0] == 0.0f);
         CHECK(d.planar[0][1] == -1.0f);
@@ -181,7 +181,7 @@ TEST_CASE(wav_decode_extensible_and_float64) {
         spec.valid_bits = 24;
         spec.extensible = true;
         spec.tag = 1;
-        saine::DecodedAudio d;
+        dstudio::DecodedAudio d;
         REQUIRE(decode(make_wav(spec, data), d) == SE_OK);
         CHECK_EQ(d.frames, 1u);
         CHECK(d.planar[0][0] == 0.5f);
@@ -196,7 +196,7 @@ TEST_CASE(wav_decode_extensible_and_float64) {
         spec.tag = 3;
         spec.bits = 64;
         spec.extensible = true;
-        saine::DecodedAudio d;
+        dstudio::DecodedAudio d;
         REQUIRE(decode(make_wav(spec, data), d) == SE_OK);
         CHECK(d.planar[0][0] == -0.25f);
     }
@@ -204,7 +204,7 @@ TEST_CASE(wav_decode_extensible_and_float64) {
 
 TEST_CASE(wav_rejects_unsupported_and_malformed) {
     std::vector<uint8_t> data(12, 0);
-    saine::DecodedAudio d;
+    dstudio::DecodedAudio d;
     {
         WavSpec spec;
         spec.channels = 3; // >2 channels are rejected (documented)
@@ -264,9 +264,9 @@ TEST_CASE(export_wav_matches_offline_render) {
     REQUIRE(se_transport_play(e) == SE_OK);
     const auto ref = render(e, static_cast<uint32_t>(end - start), 333);
 
-    saine::DecodedAudio d;
+    dstudio::DecodedAudio d;
     std::string err;
-    REQUIRE(saine::decode_wav_file(f.path.c_str(), d, err) == SE_OK);
+    REQUIRE(dstudio::decode_wav_file(f.path.c_str(), d, err) == SE_OK);
     REQUIRE(d.frames == static_cast<uint64_t>(end - start));
     CHECK_EQ(d.channels, 2u);
     CHECK(d.sample_rate == 48000.0);
@@ -332,13 +332,13 @@ TEST_CASE(wav_decode_rf64_and_bw64_match_riff) {
     spec.bits = 16;
     spec.junk_chunk_first = true;
     const std::vector<uint8_t> riff = make_wav(spec, data);
-    saine::DecodedAudio want;
+    dstudio::DecodedAudio want;
     REQUIRE(decode(riff, want) == SE_OK);
     for (const char* kind : {"RF64", "BW64"}) {
         for (bool wide_list : {false, true}) {
-            saine::DecodedAudio d;
+            dstudio::DecodedAudio d;
             std::string err;
-            REQUIRE(saine::decode_audio_memory(to_wide(riff, kind, wide_list).data(), to_wide(riff, kind, wide_list).size(), d, err) == SE_OK);
+            REQUIRE(dstudio::decode_audio_memory(to_wide(riff, kind, wide_list).data(), to_wide(riff, kind, wide_list).size(), d, err) == SE_OK);
             CHECK_EQ(d.frames, 4u);
             CHECK_EQ(d.channels, 2u);
             CHECK(d.planar[0] == want.planar[0] && d.planar[1] == want.planar[1]);
@@ -358,7 +358,7 @@ TEST_CASE(wav_decode_rf64_with_32_bit_data_size) {
             break;
         }
     }
-    saine::DecodedAudio d;
+    dstudio::DecodedAudio d;
     REQUIRE(decode(bytes, d) == SE_OK);
     CHECK_EQ(d.frames, 3u);
     CHECK(d.planar[0][2] == 200.0f / 32768.0f);
@@ -367,8 +367,8 @@ TEST_CASE(wav_decode_rf64_with_32_bit_data_size) {
 TEST_CASE(wav_decode_rf64_without_ds64_is_rejected) {
     std::vector<uint8_t> bytes = make_wav(WavSpec{}, {0, 0, 1, 0});
     std::memcpy(bytes.data(), "RF64", 4);
-    saine::DecodedAudio d;
+    dstudio::DecodedAudio d;
     std::string err;
-    CHECK_EQ(saine::decode_wav_memory(bytes.data(), bytes.size(), d, err), SE_ERR_UNSUPPORTED_FORMAT);
+    CHECK_EQ(dstudio::decode_wav_memory(bytes.data(), bytes.size(), d, err), SE_ERR_UNSUPPORTED_FORMAT);
     CHECK(err.find("ds64") != std::string::npos);
 }

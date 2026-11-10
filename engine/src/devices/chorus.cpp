@@ -1,6 +1,6 @@
 // Chorus: 1-4 modulated delay voices per channel, spread evenly over the
 // LFO cycle, with a band-limited wet path, feedback, stereo width, dry/wet
-// mix and output gain. Parameters in the order of saine_core::builtin::chorus
+// mix and output gain. Parameters in the order of dstudio_core::builtin::chorus
 // (checked by a Rust test).
 //
 // Per channel and sample (v voices, LFO phase p, channel offset o):
@@ -20,7 +20,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -120,4 +120,4 @@ std::unique_ptr<BuiltinProcessor> create() { return std::make_unique<Chorus>(); 
 extern const BuiltinDescriptor kChorusDescriptor;
 const BuiltinDescriptor kChorusDescriptor{"chorus", kParamIds, kReadoutIds, &create, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

@@ -5,7 +5,7 @@
 #include <cstring>
 #include <vector>
 
-namespace saine::synth_v2 {
+namespace dstudio::synth_v2 {
 
 namespace {
 
@@ -913,4 +913,4 @@ void FxSlot::process(float* l, float* r, uint32_t n, const float* p, const FxClo
     }
 }
 
-} // namespace saine::synth_v2
+} // namespace dstudio::synth_v2

@@ -2,7 +2,7 @@
 //
 //   record_check                         list devices (enumeration only: opens
 //                                        nothing, never prompts for the mic)
-//   SAINE_TEST_REAL_INPUT=1 record_check [seconds=2] [input_uid]
+//   DSTUDIO_TEST_REAL_INPUT=1 record_check [seconds=2] [input_uid]
 //                                        ALSO opens the default (or given)
 //                                        input with the default output, records
 //                                        ~2 s on one armed, unmonitored track
@@ -13,7 +13,7 @@
 // host application (Terminal, iTerm, ...) the first time. Automated tests
 // never do this; run the real-input mode only by hand.
 #include "platform/os.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <chrono>
 #include <cmath>
@@ -26,7 +26,7 @@
 #include <vector>
 
 #if defined(__APPLE__)
-namespace saine {
+namespace dstudio {
 long coreaudio_microphone_authorization();
 }
 #endif
@@ -54,7 +54,7 @@ int list_devices() {
     std::printf("  (I = default input, O = default output)\n");
 #if defined(__APPLE__)
     static const char* kAuth[] = {"not determined", "restricted", "denied", "authorized"};
-    const long a = saine::coreaudio_microphone_authorization();
+    const long a = dstudio::coreaudio_microphone_authorization();
     std::printf("microphone permission for this host app: %s\n", a >= 0 && a <= 3 ? kAuth[a] : "unknown");
 #endif
     return 0;
@@ -101,8 +101,8 @@ int real_input(double seconds, const char* input_uid) {
     se_session_desc_v4 sd{&t, 1, 1.0f};
     se_session_publish_v4(e, &sd);
 
-    const auto dir = std::filesystem::temp_directory_path() / "saine_record_check";
-    if (se_record_start(e, saine::os::path_to_utf8(dir).c_str()) != SE_OK) {
+    const auto dir = std::filesystem::temp_directory_path() / "dstudio_record_check";
+    if (se_record_start(e, dstudio::os::path_to_utf8(dir).c_str()) != SE_OK) {
         std::fprintf(stderr, "record start failed: %s\n", se_last_error());
         se_engine_destroy(e);
         return 1;
@@ -150,8 +150,8 @@ int real_input(double seconds, const char* input_uid) {
 int main(int argc, char** argv) {
     const int rc = list_devices();
     std::string env;
-    if (!saine::os::get_env("SAINE_TEST_REAL_INPUT", env) || env != "1") {
-        std::printf("\n(set SAINE_TEST_REAL_INPUT=1 to record from the real input; this opens the microphone)\n");
+    if (!dstudio::os::get_env("DSTUDIO_TEST_REAL_INPUT", env) || env != "1") {
+        std::printf("\n(set DSTUDIO_TEST_REAL_INPUT=1 to record from the real input; this opens the microphone)\n");
         return rc;
     }
     const double seconds = argc > 1 ? std::atof(argv[1]) : 2.0;

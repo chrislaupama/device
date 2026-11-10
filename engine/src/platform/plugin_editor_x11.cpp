@@ -20,7 +20,7 @@
 //
 // Not handled yet: XEmbed focus negotiation, HiDPI scaling (the window is
 // created at the plugin's pixel size).
-#if defined(__linux__) && defined(SAINE_HAVE_X11)
+#if defined(__linux__) && defined(DSTUDIO_HAVE_X11)
 
 #include "plugins/plugin_editor.hpp"
 #include "run_loop.hpp"
@@ -42,10 +42,10 @@
 
 #pragma GCC diagnostic ignored "-Wold-style-cast" // Xlib macros (DefaultRootWindow, ...)
 
-namespace saine {
+namespace dstudio {
 namespace {
 
-constexpr const char* kWindowClass = "SaineStudioPluginEditor";
+constexpr const char* kWindowClass = "DeviceStudioPluginEditor";
 
 class X11Editor;
 
@@ -68,7 +68,7 @@ int on_x_error(Display* d, XErrorEvent* e) {
     if (d == h.dpy) {
         char text[128] = {};
         XGetErrorText(d, e->error_code, text, sizeof text);
-        std::fprintf(stderr, "saine: X error in a plugin editor window: %s (request %d)\n", text, e->request_code);
+        std::fprintf(stderr, "dstudio: X error in a plugin editor window: %s (request %d)\n", text, e->request_code);
         return 0;
     }
     return h.previous != nullptr ? h.previous(d, e) : 0;
@@ -179,7 +179,7 @@ protected:
         XChangeProperty(d, win_, xh.net_wm_name, xh.utf8, 8, PropModeReplace,
                         reinterpret_cast<const unsigned char*>(name.data()), static_cast<int>(name.size()));
         XClassHint cls{};
-        std::string res_name = "saine-studio", res_class = kWindowClass;
+        std::string res_name = "device-studio", res_class = kWindowClass;
         cls.res_name = res_name.data();
         cls.res_class = res_class.data();
         XSetClassHint(d, win_, &cls);
@@ -523,6 +523,6 @@ void platform_plugin_idle() {
     pump_events();
 }
 
-} // namespace saine
+} // namespace dstudio
 
-#endif // __linux__ && SAINE_HAVE_X11
+#endif // __linux__ && DSTUDIO_HAVE_X11

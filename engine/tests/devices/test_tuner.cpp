@@ -7,7 +7,7 @@ using namespace testutil;
 
 namespace {
 
-// Defaults of saine_core::builtin::tuner, registry order: reference, tuning, mute_output.
+// Defaults of dstudio_core::builtin::tuner, registry order: reference, tuning, mute_output.
 const std::vector<float> kDefaults = {0.f, 0.f, 0.f};
 constexpr double kRate = 48000.0;
 enum { kVoiced, kNote, kCents, kInTune, kString, kHolding };

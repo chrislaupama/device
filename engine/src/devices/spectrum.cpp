@@ -1,5 +1,5 @@
 // Spectrum: real-time frequency analyser; audio passes through unchanged.
-// Parameters in the order of saine_core::builtin::spectrum (checked by a
+// Parameters in the order of dstudio_core::builtin::spectrum (checked by a
 // Rust test).
 //
 // Every hop (~21 ms at 48 kHz, at most half the FFT) the last FFT Size
@@ -28,7 +28,7 @@
 #include <cmath>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -256,4 +256,4 @@ extern const BuiltinDescriptor kSpectrumDescriptor;
 constexpr float kDefaults[] = {3.0f, 0.0f, 0.0f, 30.0f, 4.5f, 0.0f, 90.0f, 1.0f, 30.0f, 50.0f, 1.0f, 0.0f, 3.0f};
 const BuiltinDescriptor kSpectrumDescriptor{"spectrum", kParamIds, {}, &create_spectrum, {}, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

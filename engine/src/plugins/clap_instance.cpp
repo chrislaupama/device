@@ -26,7 +26,7 @@
 #include "../platform/run_loop.hpp"
 #endif
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -58,8 +58,8 @@ public:
           event_store_(kMaxEvents + kMaxParamEvents + PluginInstance::kMaxParamEvents) {
         host_.clap_version = CLAP_VERSION;
         host_.host_data = this;
-        host_.name = "Saine Studio";
-        host_.vendor = "Saine";
+        host_.name = "Device Studio";
+        host_.vendor = "DStudio";
         host_.url = "";
         host_.version = "0.1.0";
         host_.get_extension = &ClapInstance::host_get_extension;
@@ -628,4 +628,4 @@ std::shared_ptr<PluginInstance> create_clap_instance(const PluginSpec& spec, dou
     return inst;
 }
 
-} // namespace saine
+} // namespace dstudio

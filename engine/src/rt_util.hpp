@@ -9,7 +9,7 @@
 #include <xmmintrin.h>
 #endif
 
-namespace saine {
+namespace dstudio {
 
 // Enables flush-to-zero / denormals-are-zero for the scope, restoring the
 // previous FP control state on exit. Denormals in decaying signals can cost
@@ -55,4 +55,4 @@ inline void atomic_store_max(std::atomic<float>& a, float v) noexcept {
     }
 }
 
-} // namespace saine
+} // namespace dstudio

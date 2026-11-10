@@ -8,11 +8,11 @@
 // pdc_off_is_bit_identical_to_the_pre_pdc_engine.
 //
 // Only the public C ABI and test_util are used, so the same file compiles
-// against the old library. `with_latency` adds SaineTestLatency instances
+// against the old library. `with_latency` adds DStudioTestLatency instances
 // (CLAP N=1000 enabled, N=500 bypassed, VST3 N=300, N=3000 on a muted track).
 #pragma once
 
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 #include "test_util.hpp"
 
 #include <cmath>
@@ -67,11 +67,11 @@ uint64_t run(const std::string& plugin_dir, bool with_latency, Configure&& confi
     for (std::size_t i = 0; i < imp.size(); i += 997) imp[i] = 0.5f - static_cast<float>(i % 7) * 0.05f;
     const uint64_t b = load_asset(e, {imp});
 
-    const std::string clap_gain = plugin_dir + "/SaineTestGain.clap";
-    const std::string clap_sine = plugin_dir + "/SaineTestSine.clap";
-    const std::string clap_lat = plugin_dir + "/SaineTestLatency.clap";
-    const std::string vst3_gain = plugin_dir + "/SaineTestGain.vst3";
-    const std::string vst3_lat = plugin_dir + "/SaineTestLatency.vst3";
+    const std::string clap_gain = plugin_dir + "/DStudioTestGain.clap";
+    const std::string clap_sine = plugin_dir + "/DStudioTestSine.clap";
+    const std::string clap_lat = plugin_dir + "/DStudioTestLatency.clap";
+    const std::string vst3_gain = plugin_dir + "/DStudioTestGain.vst3";
+    const std::string vst3_lat = plugin_dir + "/DStudioTestLatency.vst3";
     const char* const vst3_gain_uid = "5A17E5A16E0000018A1E7E576A170001";
     const char* const vst3_lat_uid = "5A17E5A16E0000038A1E7E576A170003";
     const uint8_t n1000[4] = {0xE8, 0x03, 0, 0}, n500[4] = {0xF4, 0x01, 0, 0}, n300[4] = {0x2C, 0x01, 0, 0},
@@ -81,20 +81,20 @@ uint64_t run(const std::string& plugin_dir, bool with_latency, Configure&& confi
     const uint8_t vst3_n300[] = {'S', 'V', 'S', '3', 1, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, n300[0], n300[1], n300[2], n300[3],
                                  0, 0, 0, 0, 0, 0, 0, 0};
     std::vector<std::vector<se_device_desc>> devs(6);
-    devs[0] = {dev(10, SE_PLUGIN_CLAP, "studio.saine.test.gain", clap_gain)};
+    devs[0] = {dev(10, SE_PLUGIN_CLAP, "studio.dstudio.test.gain", clap_gain)};
     devs[1] = {dev(11, SE_PLUGIN_VST3, vst3_gain_uid, vst3_gain)};
-    devs[2] = {dev(13, SE_PLUGIN_CLAP, "studio.saine.test.gain", clap_gain)};
+    devs[2] = {dev(13, SE_PLUGIN_CLAP, "studio.dstudio.test.gain", clap_gain)};
     devs[3] = {};
     devs[4] = {};
     devs[5] = {};
     if (with_latency) {
-        devs[1].push_back(dev(12, SE_PLUGIN_CLAP, "studio.saine.test.latency", clap_lat, true, n1000, 4));
-        devs[2].push_back(dev(14, SE_PLUGIN_CLAP, "studio.saine.test.latency", clap_lat, false, n500, 4));
+        devs[1].push_back(dev(12, SE_PLUGIN_CLAP, "studio.dstudio.test.latency", clap_lat, true, n1000, 4));
+        devs[2].push_back(dev(14, SE_PLUGIN_CLAP, "studio.dstudio.test.latency", clap_lat, false, n500, 4));
         devs[3].push_back(dev(16, SE_PLUGIN_VST3, vst3_lat_uid, vst3_lat, true, vst3_n300, sizeof vst3_n300));
-        devs[4].push_back(dev(17, SE_PLUGIN_CLAP, "studio.saine.test.latency", clap_lat, true, n200, 4));
-        devs[5].push_back(dev(18, SE_PLUGIN_CLAP, "studio.saine.test.latency", clap_lat, true, n3000, 4));
+        devs[4].push_back(dev(17, SE_PLUGIN_CLAP, "studio.dstudio.test.latency", clap_lat, true, n200, 4));
+        devs[5].push_back(dev(18, SE_PLUGIN_CLAP, "studio.dstudio.test.latency", clap_lat, true, n3000, 4));
     }
-    const se_device_desc sine_plug = dev(15, SE_PLUGIN_CLAP, "studio.saine.test.sine", clap_sine);
+    const se_device_desc sine_plug = dev(15, SE_PLUGIN_CLAP, "studio.dstudio.test.sine", clap_sine);
 
     std::vector<std::vector<se_clip_desc>> clips = {
         {clip(1, a, 0, 0, 25000), clip(2, a, 30000, 1000, 20000)},
@@ -180,7 +180,7 @@ uint64_t run(const std::string& plugin_dir, bool with_latency, Configure&& confi
 
     // Recording (injected input: 0 device latency).
     const std::string dir =
-        (std::filesystem::temp_directory_path() / ("saine_pdc_golden_" + std::to_string(with_latency))).string();
+        (std::filesystem::temp_directory_path() / ("dstudio_pdc_golden_" + std::to_string(with_latency))).string();
     std::filesystem::remove_all(dir);
     se_transport_set_loop(e, 0, 0, 0);
     se_transport_seek(e, 12000);

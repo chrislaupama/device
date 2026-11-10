@@ -129,7 +129,7 @@ struct TempDir {
     TempDir() {
         static int counter = 0;
         path = (std::filesystem::temp_directory_path() /
-                ("saine_rec_test_" + std::to_string(saine::os::process_id()) + "_" + std::to_string(++counter)))
+                ("dstudio_rec_test_" + std::to_string(dstudio::os::process_id()) + "_" + std::to_string(++counter)))
                    .string();
         std::filesystem::remove_all(path);
     }
@@ -144,9 +144,9 @@ struct TempDir {
 // with k = first_k + i.
 void check_take(const se_recorded_take& t, const std::vector<uint32_t>& in_channels, std::size_t first_k,
                 const std::function<float(uint32_t, std::size_t)>& f = ramp_val) {
-    saine::DecodedAudio a;
+    dstudio::DecodedAudio a;
     std::string err;
-    REQUIRE(saine::decode_wav_file(t.path, a, err) == SE_OK);
+    REQUIRE(dstudio::decode_wav_file(t.path, a, err) == SE_OK);
     CHECK_EQ(a.channels, static_cast<uint32_t>(in_channels.size()));
     CHECK_EQ(a.frames, t.frames);
     CHECK_EQ(a.sample_rate, t.sample_rate);
@@ -440,9 +440,9 @@ TEST_CASE(record_seek_starts_new_take_loop_writes_linearly) {
     CHECK_EQ(takes[1].start_frame, 50000);
     CHECK_EQ(takes[1].frames, 700u);
     // 500 frames from k = 3000, then 200 from k = 3800.
-    saine::DecodedAudio d;
+    dstudio::DecodedAudio d;
     std::string err;
-    REQUIRE(saine::decode_wav_file(takes[1].path, d, err) == SE_OK);
+    REQUIRE(dstudio::decode_wav_file(takes[1].path, d, err) == SE_OK);
     REQUIRE(d.frames == 700);
     CHECK(d.planar[0][0] == ramp_val(0, 3000));
     CHECK(d.planar[0][499] == ramp_val(0, 3499));
@@ -485,22 +485,22 @@ TEST_CASE(record_overrun_when_writer_stalls_keeps_takes_aligned_and_valid) {
     t.arm = true;
     t.mode = SE_INPUT_MONO;
     REQUIRE(publish_v4(e, {t}) == SE_OK);
-    saine::testing::set_record_ring_frames(e, 4096);
+    dstudio::testing::set_record_ring_frames(e, 4096);
     REQUIRE(se_record_start(e, dir.path.c_str()) == SE_OK);
-    saine::testing::set_record_writer_stalled(e, true);
+    dstudio::testing::set_record_writer_stalled(e, true);
     render_in(e, 1, 80 * 256, 0, {256}); // 16 blocks fit, 64 overrun
     se_record_stats st{};
     se_record_stats_get(e, &st);
     CHECK_EQ(st.overruns, 64u);
     CHECK_EQ(st.dropped_frames, 64u * 256u);
-    saine::testing::set_record_writer_stalled(e, false);
+    dstudio::testing::set_record_writer_stalled(e, false);
     CHECK(wait_until([&] {
         auto v = live_takes(e);
         return v.size() == 1 && v[0].frames == 4096;
     }));
     render_in(e, 1, 1000, 80 * 256, {256});
     // Stall again so stop has to drain a backlog itself.
-    saine::testing::set_record_writer_stalled(e, true);
+    dstudio::testing::set_record_writer_stalled(e, true);
     render_in(e, 1, 512, 80 * 256 + 1000, {256});
     const auto takes = stop_takes(e);
     REQUIRE(takes.size() == 2);
@@ -560,7 +560,7 @@ TEST_CASE(record_and_monitor_do_not_allocate_on_the_audio_path) {
 namespace {
 
 // Fake platform device: the test drives callbacks with pump().
-class FakeDevice final : public saine::AudioDevice {
+class FakeDevice final : public dstudio::AudioDevice {
 public:
     bool fail_input = false;
     Config last{};
@@ -611,10 +611,10 @@ private:
 
 FakeDevice* install_fake(se_engine* e) {
     auto* holder = new FakeDevice*(nullptr);
-    saine::testing::set_device_factory(e, [holder] {
+    dstudio::testing::set_device_factory(e, [holder] {
         auto d = std::make_unique<FakeDevice>();
         *holder = d.get();
-        return std::unique_ptr<saine::AudioDevice>(std::move(d));
+        return std::unique_ptr<dstudio::AudioDevice>(std::move(d));
     });
     se_device_config dc{}; // output only: creates the device object without starting it
     REQUIRE(se_device_configure(e, &dc) == SE_OK);
@@ -839,19 +839,19 @@ TEST_CASE(device_output_only_named_device_and_restart) {
 // device path: the platform backend's output and input streams, the input
 // ring, the reported latencies and the recorder.
 //
-// Opt-in, because it needs a loopback: set SAINE_TEST_LOOPBACK_INPUT to the
-// uid of an input that hears the output (and SAINE_TEST_LOOPBACK_OUTPUT to the
+// Opt-in, because it needs a loopback: set DSTUDIO_TEST_LOOPBACK_INPUT to the
+// uid of an input that hears the output (and DSTUDIO_TEST_LOOPBACK_OUTPUT to the
 // output uid; default output otherwise). Linux CI runs it on a headless
 // PipeWire graph: a null sink plus pw-loopback from its monitor to a virtual
 // source (see .github/workflows/ci.yml). On real hardware, use a cable from
-// an output to an input. SAINE_TEST_LOOPBACK_TOLERANCE (frames, default 64)
+// an output to an input. DSTUDIO_TEST_LOOPBACK_TOLERANCE (frames, default 64)
 // bounds the error, which is the latency the backend failed to report (0 on
 // the PipeWire loopback; a hardware converter adds latency of its own).
 TEST_CASE(device_duplex_loopback_take_lands_on_the_clicks) {
-    const char* in_uid = std::getenv("SAINE_TEST_LOOPBACK_INPUT");
-    if (in_uid == nullptr || *in_uid == '\0') SKIP("set SAINE_TEST_LOOPBACK_INPUT to an input that hears the output");
-    const char* out_uid = std::getenv("SAINE_TEST_LOOPBACK_OUTPUT");
-    const char* tol_env = std::getenv("SAINE_TEST_LOOPBACK_TOLERANCE");
+    const char* in_uid = std::getenv("DSTUDIO_TEST_LOOPBACK_INPUT");
+    if (in_uid == nullptr || *in_uid == '\0') SKIP("set DSTUDIO_TEST_LOOPBACK_INPUT to an input that hears the output");
+    const char* out_uid = std::getenv("DSTUDIO_TEST_LOOPBACK_OUTPUT");
+    const char* tol_env = std::getenv("DSTUDIO_TEST_LOOPBACK_TOLERANCE");
     const long tolerance = tol_env != nullptr ? std::atol(tol_env) : 64;
 
     constexpr uint32_t kRate = 48000;
@@ -907,9 +907,9 @@ TEST_CASE(device_duplex_loopback_take_lands_on_the_clicks) {
     REQUIRE(se_device_stop(e) == SE_OK);
     REQUIRE(takes.size() == 1);
 
-    saine::DecodedAudio got;
+    dstudio::DecodedAudio got;
     std::string err;
-    REQUIRE(saine::decode_wav_file(takes[0].path, got, err) == SE_OK);
+    REQUIRE(dstudio::decode_wav_file(takes[0].path, got, err) == SE_OK);
     REQUIRE(got.channels == 1);
     // Each recorded click, mapped to the timeline, against the nearest click.
     std::vector<long> errors;

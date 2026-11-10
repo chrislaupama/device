@@ -3,7 +3,7 @@
 // runtime latency changes, seek/stop/pause/loop semantics, the cap, RT
 // safety, and bit-identity with the pre-PDC engine when switched off.
 //
-// Uses SaineTestLatency (.clap / .vst3): delays by exactly N frames and
+// Uses DStudioTestLatency (.clap / .vst3): delays by exactly N frames and
 // reports N. Tracks are panned hard left so the left channel carries the
 // track signal unscaled.
 #include "pdc_golden_scenario.hpp"
@@ -24,10 +24,10 @@ using namespace testutil;
 
 namespace {
 
-const std::string kPluginDir = SAINE_TEST_PLUGIN_DIR;
-const std::string kClapLatency = kPluginDir + "/SaineTestLatency.clap";
-const std::string kVst3Latency = kPluginDir + "/SaineTestLatency.vst3";
-const std::string kClapSine = kPluginDir + "/SaineTestSine.clap";
+const std::string kPluginDir = DSTUDIO_TEST_PLUGIN_DIR;
+const std::string kClapLatency = kPluginDir + "/DStudioTestLatency.clap";
+const std::string kVst3Latency = kPluginDir + "/DStudioTestLatency.vst3";
+const std::string kClapSine = kPluginDir + "/DStudioTestSine.clap";
 const char* const kVst3LatencyUid = "5A17E5A16E0000038A1E7E576A170003";
 constexpr double kVst3MaxLatency = 1048576.0; // normalized parameter = N / 2^20
 
@@ -54,7 +54,7 @@ se_device_desc clap_latency(uint64_t id, uint32_t n, bool enabled = true) {
     se_device_desc d{};
     d.device_id = id;
     d.name = "Latency";
-    d.plugin_id = "studio.saine.test.latency";
+    d.plugin_id = "studio.dstudio.test.latency";
     d.path = kClapLatency.c_str();
     d.format = SE_PLUGIN_CLAP;
     d.enabled = enabled ? 1 : 0;
@@ -328,7 +328,7 @@ TEST_CASE(pdc_bypass_keeps_timing_and_chains_align) {
 }
 
 TEST_CASE(pdc_instrument_plugin_track_aligns_with_audio) {
-    // SaineTestSine onsets exactly on the note frame (cosine at full
+    // DStudioTestSine onsets exactly on the note frame (cosine at full
     // amplitude); with an insert of latency 200 on it and another track at
     // 1000, the onset lands at t + 1000 like the audio impulse.
     EngineHandle e(48000, 256);
@@ -340,7 +340,7 @@ TEST_CASE(pdc_instrument_plugin_track_aligns_with_audio) {
     inst.notes = {se_note_desc{3000, 3500, 69, 127, {}}};
     inst.instrument.device_id = 12;
     inst.instrument.name = "Sine";
-    inst.instrument.plugin_id = "studio.saine.test.sine";
+    inst.instrument.plugin_id = "studio.dstudio.test.sine";
     inst.instrument.path = kClapSine.c_str();
     inst.instrument.format = SE_PLUGIN_CLAP;
     inst.instrument.enabled = 1;
@@ -359,7 +359,7 @@ TEST_CASE(pdc_instrument_plugin_track_aligns_with_audio) {
 }
 
 TEST_CASE(pdc_clips_on_a_latent_instrument_track_line_up_with_its_output) {
-    // SaineTestLatency used as the instrument plugin: silent (it delays its
+    // DStudioTestLatency used as the instrument plugin: silent (it delays its
     // empty input) but reports latency 1000, so the clips on that track are
     // delayed by 1000 to line up with the instrument's output, and the
     // other track by L - 0 = 1000.
@@ -435,9 +435,9 @@ TEST_CASE(pdc_export_is_timeline_aligned) {
         REQUIRE(s.publish(e) == SE_OK);
         TempFile f("pdc_export.wav");
         REQUIRE(se_export_wav(e, f.path.c_str(), 1000, 7000) == SE_OK);
-        saine::DecodedAudio d;
+        dstudio::DecodedAudio d;
         std::string err;
-        REQUIRE(saine::decode_wav_file(f.path.c_str(), d, err) == SE_OK);
+        REQUIRE(dstudio::decode_wav_file(f.path.c_str(), d, err) == SE_OK);
         CHECK_EQ(d.frames, uint64_t{6000});
         const auto nz = nonzero(d.planar[0]);
         if (pdc) {
@@ -495,7 +495,7 @@ TEST_CASE(pdc_recorded_take_is_placed_L_earlier) {
         s.audio(2, {clip(1, a, 4000, 0, 4000)}, {clap_latency(10, 1000)});
         REQUIRE(s.publish(e) == SE_OK);
         const std::string dir = (std::filesystem::temp_directory_path() /
-                                 ("saine_pdc_rec_" + std::to_string(saine::os::process_id()) + (pdc ? "_on" : "_off")))
+                                 ("dstudio_pdc_rec_" + std::to_string(dstudio::os::process_id()) + (pdc ? "_on" : "_off")))
                                     .string();
         std::filesystem::remove_all(dir);
         se_transport_seek(e, 0);
@@ -511,9 +511,9 @@ TEST_CASE(pdc_recorded_take_is_placed_L_earlier) {
         se_recorded_take t{};
         REQUIRE(se_record_get_take(e, 0, &t) == SE_OK);
         CHECK_EQ(t.start_frame, pdc ? int64_t{-1000} : int64_t{0});
-        saine::DecodedAudio d;
+        dstudio::DecodedAudio d;
         std::string err;
-        REQUIRE(saine::decode_wav_file(t.path, d, err) == SE_OK);
+        REQUIRE(dstudio::decode_wav_file(t.path, d, err) == SE_OK);
         const auto nz = nonzero(d.planar[0]);
         REQUIRE(nz.size() == 1);
         // With PDC the input lands on the clip impulse's timeline frame.
@@ -532,13 +532,13 @@ TEST_CASE(pdc_change_of_L_while_recording_starts_a_new_take) {
     s.audio(2, {}, {clap_latency(10, 1000)});
     REQUIRE(s.publish(e) == SE_OK);
     const std::string dir =
-        (std::filesystem::temp_directory_path() / ("saine_pdc_rec_change_" + std::to_string(saine::os::process_id()))).string();
+        (std::filesystem::temp_directory_path() / ("dstudio_pdc_rec_change_" + std::to_string(dstudio::os::process_id()))).string();
     std::filesystem::remove_all(dir);
     se_transport_seek(e, 0);
     REQUIRE(se_record_start(e, dir.c_str()) == SE_OK);
     const std::vector<float> input(10000, 0.1f);
     render_with_input(e, 4000, 0, input);
-    REQUIRE(saine::testing::plugin_set_parameter(e, 10, 0, 2000.0));
+    REQUIRE(dstudio::testing::plugin_set_parameter(e, 10, 0, 2000.0));
     render_with_input(e, 256, 4000, input); // delivers the parameter; the plugin asks for a restart
     REQUIRE(se_plugin_idle(e) == SE_OK);    // L: 1000 -> 2000
     CHECK_EQ(report(e).total_frames, 2000u);
@@ -579,7 +579,7 @@ TEST_CASE(pdc_latency_change_at_runtime_resizes_and_realigns) {
     // CLAP: the parameter reaches the plugin at the next block, which asks
     // for a restart; se_plugin_idle restarts it and re-plans (lines grow
     // from 2048 to 4096 frames).
-    REQUIRE(saine::testing::plugin_set_parameter(e, 10, 0, 2500.0));
+    REQUIRE(dstudio::testing::plugin_set_parameter(e, 10, 0, 2500.0));
     out = left(render(e, 256, 256));
     CHECK_EQ(report(e).total_frames, 1000u); // not yet: restart pending
     REQUIRE(se_plugin_idle(e) == SE_OK);
@@ -596,7 +596,7 @@ TEST_CASE(pdc_latency_change_at_runtime_resizes_and_realigns) {
     CHECK_EQ(out[8500], 1.5f);
 
     // VST3: restartComponent(kLatencyChanged) from the controller.
-    REQUIRE(saine::testing::plugin_set_parameter(e, 11, 0, 4000.0 / kVst3MaxLatency));
+    REQUIRE(dstudio::testing::plugin_set_parameter(e, 11, 0, 4000.0 / kVst3MaxLatency));
     render(e, 256, 256);
     REQUIRE(se_plugin_idle(e) == SE_OK);
     se_plugin_latency(e, 11, &lat);
@@ -615,8 +615,8 @@ TEST_CASE(pdc_latency_change_at_runtime_resizes_and_realigns) {
     CHECK_EQ(out[10000], 1.5f);
 
     // Shrinking back to 0 (CLAP 0, VST3 0): no compensation, no lines.
-    REQUIRE(saine::testing::plugin_set_parameter(e, 10, 0, 0.0));
-    REQUIRE(saine::testing::plugin_set_parameter(e, 11, 0, 0.0));
+    REQUIRE(dstudio::testing::plugin_set_parameter(e, 10, 0, 0.0));
+    REQUIRE(dstudio::testing::plugin_set_parameter(e, 11, 0, 0.0));
     render(e, 256, 256);
     REQUIRE(se_plugin_idle(e) == SE_OK);
     CHECK_EQ(report(e).total_frames, 0u);
@@ -761,8 +761,8 @@ TEST_CASE(pdc_rt_render_does_not_allocate) {
             se_transport_play(e);
         }
         if (i % 120 == 60) { // latency changes: restart + re-plan on the main thread (not under the guard)
-            saine::testing::plugin_set_parameter(e, 10, 0, 1000.0 + i);
-            saine::testing::plugin_set_parameter(e, 13, 0, (300.0 + i) / kVst3MaxLatency);
+            dstudio::testing::plugin_set_parameter(e, 10, 0, 1000.0 + i);
+            dstudio::testing::plugin_set_parameter(e, 13, 0, (300.0 + i) / kVst3MaxLatency);
             REQUIRE(se_render_offline_with_input(e, in.data(), 1, buf.data(), 64) == SE_OK);
             REQUIRE(se_plugin_idle(e) == SE_OK);
         }

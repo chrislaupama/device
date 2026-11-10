@@ -3,7 +3,7 @@ name = "ui-spike"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Saine Studio UI rendering spike: Slint shell + custom wgpu timeline/meters"
+description = "Device Studio UI rendering spike: Slint shell + custom wgpu timeline/meters"
 
 # Standalone workspace: intentionally not part of any parent workspace.
 [workspace]

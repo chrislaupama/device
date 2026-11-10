@@ -32,11 +32,11 @@
 
 #include <algorithm>
 
-namespace saine {
+namespace dstudio {
 namespace {
 
 // Window class shared by every editor window.
-constexpr wchar_t kWindowClass[] = L"SaineStudioPluginEditor";
+constexpr wchar_t kWindowClass[] = L"DeviceStudioPluginEditor";
 
 // Base of the Win32 editor windows: owns the top-level window and routes
 // its close and resize messages to the plugin-specific subclass.
@@ -376,6 +376,6 @@ std::unique_ptr<PluginEditor> create_clap_editor(const clap_plugin* plugin, cons
     return e;
 }
 
-} // namespace saine
+} // namespace dstudio
 
 #endif // _WIN32

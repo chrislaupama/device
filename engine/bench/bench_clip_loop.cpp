@@ -5,9 +5,9 @@
 // (one or two wraps in every block), 1:1 and Re-pitch warped (identity map).
 // Prints measurements only; no pass/fail thresholds.
 //
-// usage: saine_clip_loop_bench [blocks=4000]
+// usage: dstudio_clip_loop_bench [blocks=4000]
 #include "platform/os.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <algorithm>
 #include <chrono>
@@ -27,7 +27,7 @@ constexpr uint32_t kTracks = 32;
 constexpr uint32_t kClips = 4;
 
 bool write_float_wav(const std::string& path, const std::vector<float>& l, const std::vector<float>& r) {
-    std::FILE* f = saine::os::fopen_utf8(path.c_str(), "wb");
+    std::FILE* f = dstudio::os::fopen_utf8(path.c_str(), "wb");
     if (!f) return false;
     const auto frames = static_cast<uint32_t>(l.size());
     const uint32_t data = frames * 8;
@@ -69,7 +69,7 @@ Result run(const std::string& file, uint32_t blocks, int64_t loop_len, bool warp
         std::fprintf(stderr, "load failed: %s\n", se_last_error());
         std::exit(1);
     }
-    // Back-to-back clips covering the whole rendered range, as in saine_engine_bench.
+    // Back-to-back clips covering the whole rendered range, as in dstudio_engine_bench.
     const int64_t total = static_cast<int64_t>(blocks) * kBlock;
     const int64_t clip_len = total / kClips + 1024;
     std::vector<std::vector<se_clip_desc>> clips(kTracks);
@@ -151,12 +151,12 @@ int main(int argc, char** argv) {
         l[i] = static_cast<float>(0.3 * std::sin(2 * std::numbers::pi * 110.0 * t));
         r[i] = static_cast<float>(0.3 * std::sin(2 * std::numbers::pi * 165.0 * t));
     }
-    const std::string path = saine::os::path_to_utf8(std::filesystem::temp_directory_path() / "saine_clip_loop_bench.wav");
+    const std::string path = dstudio::os::path_to_utf8(std::filesystem::temp_directory_path() / "dstudio_clip_loop_bench.wav");
     if (!write_float_wav(path, l, r)) {
         std::fprintf(stderr, "cannot write %s\n", path.c_str());
         return 1;
     }
-    std::printf("saine_clip_loop_bench: %u tracks x %u clips, %u blocks x %u frames @ %.0f Hz (deadline %.1f us/block)\n",
+    std::printf("dstudio_clip_loop_bench: %u tracks x %u clips, %u blocks x %u frames @ %.0f Hz (deadline %.1f us/block)\n",
                 kTracks, kClips, blocks, kBlock, kRate, kBlock / kRate * 1e6);
     std::printf("%30s %14s %14s %14s\n", "clips", "avg us/block", "p99 us/block", "max us/block");
     const struct {

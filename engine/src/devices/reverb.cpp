@@ -1,5 +1,5 @@
 // Reverb: six algorithms on one engine. Parameters in the order of
-// saine_core::builtin::reverb (checked by a Rust test).
+// dstudio_core::builtin::reverb (checked by a Rust test).
 //
 //   input -> pre-delay line (also feeds the early-reflection taps)
 //         -> input diffusion (4 allpasses per side; longer and denser in Haze)
@@ -30,7 +30,7 @@
 #include <array>
 #include <cmath>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -418,4 +418,4 @@ constexpr IdleReadouts kIdle{};
 constexpr float kDefaults[kParamCount] = {50.f, 2.f, 50.f, 10.f, 30.f, 100.f, 1.f, 12000.f, 20.f, 1.f, 20.f, 1.f, 7.f, 10.f, 60.f, 50.f};
 const BuiltinDescriptor kReverbDescriptor{"reverb", kParamIds, kReadouts.ids, &create, kIdle.v, kDefaults};
 
-} // namespace saine
+} // namespace dstudio

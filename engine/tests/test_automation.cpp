@@ -22,10 +22,10 @@ using namespace testutil;
 
 namespace {
 
-const std::string kPluginDir = SAINE_TEST_PLUGIN_DIR;
-const std::string kClapGain = kPluginDir + "/SaineTestGain.clap";
-const std::string kVst3Gain = kPluginDir + "/SaineTestGain.vst3";
-const std::string kClapLatency = kPluginDir + "/SaineTestLatency.clap";
+const std::string kPluginDir = DSTUDIO_TEST_PLUGIN_DIR;
+const std::string kClapGain = kPluginDir + "/DStudioTestGain.clap";
+const std::string kVst3Gain = kPluginDir + "/DStudioTestGain.vst3";
+const std::string kClapLatency = kPluginDir + "/DStudioTestLatency.clap";
 const char* const kVst3GainUid = "5A17E5A16E0000018A1E7E576A170001";
 const char* const kAuLowpass = "aufx lpas appl";
 #if defined(__APPLE__)
@@ -157,7 +157,7 @@ se_device_desc clap_dev(uint64_t id, const std::string& path, const char* plugin
     d.enabled = 1;
     return d;
 }
-se_device_desc clap_gain(uint64_t id) { return clap_dev(id, kClapGain, "studio.saine.test.gain"); }
+se_device_desc clap_gain(uint64_t id) { return clap_dev(id, kClapGain, "studio.dstudio.test.gain"); }
 se_device_desc vst3_gain(uint64_t id) {
     se_device_desc d{};
     d.device_id = id;
@@ -181,7 +181,7 @@ std::vector<std::vector<uint8_t>> g_blobs; // state blobs outlive the descs
 se_device_desc clap_latency(uint64_t id, uint32_t n) {
     g_blobs.push_back({static_cast<uint8_t>(n), static_cast<uint8_t>(n >> 8), static_cast<uint8_t>(n >> 16),
                        static_cast<uint8_t>(n >> 24)});
-    se_device_desc d = clap_dev(id, kClapLatency, "studio.saine.test.latency");
+    se_device_desc d = clap_dev(id, kClapLatency, "studio.dstudio.test.latency");
     d.state = g_blobs.back().data();
     d.state_len = g_blobs.back().size();
     return d;
@@ -238,7 +238,7 @@ std::vector<se_plugin_param_change> take_changes(se_engine* e) {
 // ---------------------------------------------------------------- evaluation
 
 TEST_CASE(automation_eval_contract) {
-    // Same cases as saine_core::automation's tests, through se_automation_eval.
+    // Same cases as dstudio_core::automation's tests, through se_automation_eval.
     Lane l = lane(SE_AUTO_VOLUME, {{100, -12.0f, 0.0f}, {200, 0.0f, 0.0f}, {200, -6.0f, 0.0f}});
     l.d.points = l.points.data();
     l.d.point_count = 3;
@@ -582,13 +582,13 @@ TEST_CASE(automation_take_plugin_param_changes_reports_editor_gestures) {
 
     // VST3: the controller's IComponentHandler begin/perform/end (main thread).
     se_transport_seek(e, 4321);
-    REQUIRE(saine::testing::plugin_set_parameter(e, 2, 1000, 0.3));
+    REQUIRE(dstudio::testing::plugin_set_parameter(e, 2, 1000, 0.3));
     check_gesture(take_changes(e), 2, 0, 0.5f, 0.3f, 4321);
 
     // CLAP, from process(): output events, stamped sample-accurately.
     se_transport_seek(e, 1000);
     se_transport_play(e);
-    REQUIRE(saine::testing::plugin_set_parameter(e, 1, 1000, 0.7));
+    REQUIRE(dstudio::testing::plugin_set_parameter(e, 1, 1000, 0.7));
     render(e, 256, 256);
     check_gesture(take_changes(e), 1, 0, 0.5f, 0.7f, 1000);
     // The gesture changed the gain (the plugin applies it; the VST3 gain
@@ -598,7 +598,7 @@ TEST_CASE(automation_take_plugin_param_changes_reports_editor_gestures) {
     // CLAP, outside process(): request_callback -> request_flush -> flush in
     // se_plugin_idle (nothing processes in between).
     se_transport_pause(e);
-    REQUIRE(saine::testing::plugin_set_parameter(e, 1, 1001, 0.2));
+    REQUIRE(dstudio::testing::plugin_set_parameter(e, 1, 1001, 0.2));
     render(e, 64, 64); // delivers the hook event (paused: chains still run)
     CHECK(take_changes(e).empty());
     REQUIRE(se_plugin_idle(e) == SE_OK);
@@ -607,7 +607,7 @@ TEST_CASE(automation_take_plugin_param_changes_reports_editor_gestures) {
     // AU: begin gesture, AUParameterSet, end gesture (what AU views do),
     // delivered on a dispatch queue.
     if (kHaveAu) {
-        REQUIRE(saine::testing::plugin_simulate_gesture(e, 3, 0, 0.5f));
+        REQUIRE(dstudio::testing::plugin_simulate_gesture(e, 3, 0, 0.5f));
         std::vector<se_plugin_param_change> au;
         for (int i = 0; i < 200 && au.size() < 3; ++i) {
             const auto c = take_changes(e);
@@ -707,9 +707,9 @@ TEST_CASE(automation_export_renders_lanes) {
     REQUIRE(s.publish(e) == SE_OK);
     TempFile f("auto_export.wav");
     REQUIRE(se_export_wav(e, f.path.c_str(), 1000, 25000) == SE_OK);
-    saine::DecodedAudio d;
+    dstudio::DecodedAudio d;
     std::string err;
-    REQUIRE(saine::decode_wav_file(f.path.c_str(), d, err) == SE_OK);
+    REQUIRE(dstudio::decode_wav_file(f.path.c_str(), d, err) == SE_OK);
     REQUIRE(d.frames == 24000);
     double max_err = 0;
     for (std::size_t i = 0; i < d.frames; ++i) {

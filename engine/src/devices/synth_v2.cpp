@@ -1,5 +1,5 @@
 // Synth (synth-v2): the built-in polyphonic subtractive instrument.
-// Parameters in the order of saine_core::builtin::synth_v2 (checked by a
+// Parameters in the order of dstudio_core::builtin::synth_v2 (checked by a
 // Rust test); the DSP is our own design.
 //
 // Per voice: two oscillators (Sine, Triangle, Saw, Square, Sync, FM; each
@@ -34,7 +34,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace saine {
+namespace dstudio {
 
 namespace {
 
@@ -57,7 +57,7 @@ enum Target : int {
     kTgtDetune, kTgtLfo1Rate, kTgtLfo2Rate, kTgtLfo1Depth, kTgtLfo2Depth, kTgtFxMix1, kTgtFxAmount1 = kTgtFxMix1 + 4,
     kTargetCount = kTgtFxAmount1 + 4
 };
-// The same table as saine_core::builtin::synth_v2::TARGET_DEPTH.
+// The same table as dstudio_core::builtin::synth_v2::TARGET_DEPTH.
 constexpr float kTargetDepth[kTargetCount] = {0.0f, 24.0f, 24.0f, 24.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
                                               1.0f, 8.0f,  1.0f,  1.0f,  6.0f, 1.0f, 1.0f, 1.0f, 4.0f, 4.0f,
                                               1.0f, 1.0f,  1.0f,  1.0f,  1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
@@ -86,7 +86,7 @@ constexpr const char* kReadoutIds[kReadoutCount] = {
     "src_env2", "src_amp_env", "src_lfo1", "src_lfo2", "src_velocity", "src_key", "src_wheel", "src_aftertouch", "src_random"};
 constexpr float kIdleReadouts[kReadoutCount] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -120.0f};
 
-// Normalized <-> plain, the codec of saine_core::builtin (log tapers are
+// Normalized <-> plain, the codec of dstudio_core::builtin (log tapers are
 // geometric, linear ones use n^(1/skew); discrete values round).
 float to_norm(uint32_t i, float v) noexcept {
     const Range& g = kRanges[i];
@@ -1105,4 +1105,4 @@ extern const BuiltinDescriptor kSynthV2Descriptor;
 const BuiltinDescriptor kSynthV2Descriptor{"synth-v2", synth_v2::kParamIds, kReadoutIds, &create_synth_v2, kIdleReadouts,
                                            synth_v2::kDefaults, true};
 
-} // namespace saine
+} // namespace dstudio

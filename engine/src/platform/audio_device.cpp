@@ -3,9 +3,9 @@
 #if !defined(__APPLE__) && !defined(_WIN32) && !defined(__linux__)
 
 #include "audio_device.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
-namespace saine {
+namespace dstudio {
 namespace {
 
 class NullDevice final : public AudioDevice {
@@ -29,6 +29,6 @@ int32_t list_audio_devices(std::vector<DeviceInfo>& out, std::string&) {
 }
 double query_default_output_sample_rate() { return 0.0; }
 
-} // namespace saine
+} // namespace dstudio
 
 #endif

@@ -14,7 +14,7 @@ and CLAP) installed; the automated tests only rely on Apple's AUs and our own te
 SDKs are fetched at a pinned tag at configure time (CMake FetchContent) and never vendored into git.
 
 ## Decision
-- **Model (saine-core `device.rs`):** `Track.devices` (insert effects, in order) and `Track.instrument_plugin`
+- **Model (dstudio-core `device.rs`):** `Track.devices` (insert effects, in order) and `Track.instrument_plugin`
   (instrument tracks; replaces the built-in synth). `Device { id, plugin: PluginRef, enabled, state (base64) }`.
   Commands: `AddDevice`, `RemoveDevice`, `MoveDevice`, `SetDeviceEnabled`, `SetInstrumentPlugin`.
 - **Instance lifetime:** the engine keeps plugin instances keyed by `DeviceId` across republishes. `state` is
@@ -36,10 +36,10 @@ SDKs are fetched at a pinned tag at configure time (CMake FetchContent) and neve
 ## Implementation notes (engine, 2026-11-08)
 Details in engine/README.md "Plugins". Where the implementation refines or deviates from the decision above:
 - **SDK pins:** CLAP `1.2.10`, VST 3 SDK `v3.8.1_build_84` (only the `pluginterfaces` and `public.sdk`
-  submodules). Fetched into the build tree (`engine/build*/_deps`, `target/saine-third-party` for cargo).
+  submodules). Fetched into the build tree (`engine/build*/_deps`, `target/dstudio-third-party` for cargo).
 - **ABI:** `se_session_publish_v5` (per-track `devices`, `instrument_plugin`, `track_name`) plus
   `se_plugin_*` functions; `SE_ABI_VERSION` stays 1 (append-only).
-- **Scanning orchestration lives in the scanner executable,** not in Rust: `saine_plugin_scanner --scan`
+- **Scanning orchestration lives in the scanner executable,** not in Rust: `dstudio_plugin_scanner --scan`
   is a coordinator that enumerates, consults/writes the JSON cache, and spawns itself once per AU / bundle
   (`--scan-one`) with a timeout. Rust's `scan_plugins` only runs the coordinator and parses its report. This
   keeps the C++ scan test self-contained and still keeps all plugin code out of the app process.

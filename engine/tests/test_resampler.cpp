@@ -46,9 +46,9 @@ TEST_CASE(resampler_length_and_frequency_44k1_to_48k) {
     const std::size_t n = 44100;
     const auto in = sine(n, f, src, 0.5);
     std::vector<float> out;
-    saine::SincResampler(src, dst).process(in.data(), n, out);
+    dstudio::SincResampler(src, dst).process(in.data(), n, out);
     CHECK_EQ(out.size(), static_cast<std::size_t>(48000));
-    CHECK_EQ(saine::resampled_length(n, src, dst), 48000u);
+    CHECK_EQ(dstudio::resampled_length(n, src, dst), 48000u);
     // Away from the edges (kernel half-width ~34 samples).
     const double est = estimate_frequency(out, 1000, out.size() - 1000, dst);
     CHECK_NEAR(est, f, 0.01);
@@ -71,7 +71,7 @@ TEST_CASE(resampler_downsample_96k_to_48k_rejects_alias) {
     const auto hi = sine(n, 30000.0, src, 0.4);
     for (std::size_t i = 0; i < n; ++i) in[i] += hi[i];
     std::vector<float> out;
-    saine::SincResampler(src, dst).process(in.data(), n, out);
+    dstudio::SincResampler(src, dst).process(in.data(), n, out);
     CHECK_EQ(out.size(), static_cast<std::size_t>(48000));
     CHECK_NEAR(tone_amplitude(out, 2000, 32768, 5000.0, dst), 0.4, 0.002);
     const double alias = tone_amplitude(out, 2000, 32768, 18000.0, dst);
@@ -81,11 +81,11 @@ TEST_CASE(resampler_downsample_96k_to_48k_rejects_alias) {
 TEST_CASE(resampler_odd_ratio_lengths) {
     std::vector<float> out;
     const auto in = sine(12345, 300.0, 22050.0);
-    saine::SincResampler(22050.0, 48000.0).process(in.data(), in.size(), out);
+    dstudio::SincResampler(22050.0, 48000.0).process(in.data(), in.size(), out);
     CHECK_EQ(out.size(), static_cast<std::size_t>(std::llround(12345.0 * 48000.0 / 22050.0)));
-    saine::SincResampler(48000.0, 44100.0).process(in.data(), in.size(), out);
+    dstudio::SincResampler(48000.0, 44100.0).process(in.data(), in.size(), out);
     CHECK_EQ(out.size(), static_cast<std::size_t>(std::llround(12345.0 * 44100.0 / 48000.0)));
-    saine::SincResampler(48000.0, 44100.0).process(in.data(), 0, out);
+    dstudio::SincResampler(48000.0, 44100.0).process(in.data(), 0, out);
     CHECK(out.empty());
 }
 

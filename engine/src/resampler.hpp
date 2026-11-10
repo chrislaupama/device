@@ -16,7 +16,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 uint64_t resampled_length(uint64_t input_frames, double src_rate, double dst_rate) noexcept;
 
@@ -35,4 +35,4 @@ private:
     std::vector<float> table_; // kernel sampled at x = k / kPhases, k = 0..half_width*kPhases+1
 };
 
-} // namespace saine
+} // namespace dstudio

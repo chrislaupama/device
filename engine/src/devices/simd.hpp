@@ -5,16 +5,16 @@
 
 #if defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(_M_ARM64)
 #include <arm_neon.h>
-#define SAINE_SIMD_NEON 1
+#define DSTUDIO_SIMD_NEON 1
 #elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
 #include <emmintrin.h>
-#define SAINE_SIMD_SSE 1
+#define DSTUDIO_SIMD_SSE 1
 #endif
 
-namespace saine::dsp {
+namespace dstudio::dsp {
 
 struct f32x4 {
-#if defined(SAINE_SIMD_NEON)
+#if defined(DSTUDIO_SIMD_NEON)
     float32x4_t v;
     static f32x4 zero() noexcept { return {vdupq_n_f32(0.0f)}; }
     static f32x4 set1(float x) noexcept { return {vdupq_n_f32(x)}; }
@@ -26,7 +26,7 @@ struct f32x4 {
     // a + b * c
     static f32x4 madd(f32x4 a, f32x4 b, f32x4 c) noexcept { return {vfmaq_f32(a.v, b.v, c.v)}; }
     float sum() const noexcept { return vaddvq_f32(v); }
-#elif defined(SAINE_SIMD_SSE)
+#elif defined(DSTUDIO_SIMD_SSE)
     __m128 v;
     static f32x4 zero() noexcept { return {_mm_setzero_ps()}; }
     static f32x4 set1(float x) noexcept { return {_mm_set1_ps(x)}; }
@@ -68,4 +68,4 @@ inline float dot4(const float* a, const float* b, int n) noexcept {
     return (acc0 + acc1).sum();
 }
 
-} // namespace saine::dsp
+} // namespace dstudio::dsp

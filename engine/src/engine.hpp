@@ -8,7 +8,7 @@
 #include "processor.hpp"
 #include "recorder.hpp"
 #include "render_graph.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 #include "spsc_queue.hpp"
 #include "wav.hpp"
 
@@ -23,7 +23,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 // Everything that changes RT-owned playback state goes through this one
 // trivially copyable command (queued while the device runs, applied inline
@@ -92,7 +92,7 @@ public:
     int32_t publish(const se_session_desc_v7& desc, std::string& err);
     int32_t publish(const se_session_desc_v8& desc, std::string& err);
 
-    // ---- plugins (see saine_engine.h; main thread where documented)
+    // ---- plugins (see dstudio_engine.h; main thread where documented)
     bool plugin_is_live(uint64_t device_id);
     void plugin_load_errors(std::vector<std::pair<uint64_t, std::string>>& out);
     std::size_t plugin_save_states();
@@ -107,7 +107,7 @@ public:
     bool plugin_latency(uint64_t device_id, uint32_t& frames);
     void plugin_idle();
 
-    // ---- plugin parameters (main thread; see saine_engine.h)
+    // ---- plugin parameters (main thread; see dstudio_engine.h)
     int32_t plugin_params(uint64_t device_id, std::vector<ParamInfo>& out, std::string& err);
     int32_t plugin_param_value(uint64_t device_id, uint32_t param_id, float& out, std::string& err);
     int32_t plugin_param_text(uint64_t device_id, uint32_t param_id, float normalized, std::string& out,
@@ -129,7 +129,7 @@ public:
     int32_t builtin_set_param(uint64_t device_id, uint32_t index, float value);
     int32_t builtin_readouts(uint64_t device_id, float* out, std::size_t capacity, std::size_t& count);
     int32_t builtin_analysis(uint64_t device_id, float* out, std::size_t capacity, std::size_t& count, uint64_t& seq);
-    // Plugin card controls and modulation bases (main thread; see saine_engine.h).
+    // Plugin card controls and modulation bases (main thread; see dstudio_engine.h).
     int32_t plugin_set_param(uint64_t device_id, uint32_t param_id, float normalized);
     int32_t mod_base(uint64_t device_id, uint32_t param_id, float& out);
     int32_t builtin_note(uint64_t device_id, uint8_t pitch, uint8_t velocity);
@@ -393,4 +393,4 @@ private:
     WarpRenderer warp_renderer_;
 };
 
-} // namespace saine
+} // namespace dstudio

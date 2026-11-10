@@ -42,9 +42,9 @@
 #if defined(__linux__)
 
 #include "audio_device.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
-#if defined(SAINE_HAVE_PIPEWIRE)
+#if defined(DSTUDIO_HAVE_PIPEWIRE)
 
 #include "frame_ring.hpp"
 
@@ -71,7 +71,7 @@
 #include <mutex>
 #include <thread>
 
-namespace saine {
+namespace dstudio {
 namespace {
 
 constexpr uint32_t kMaxDeviceChannels = 16;
@@ -431,7 +431,7 @@ public:
         for (uint32_t c = 0; c < out_channels_; ++c)
             out_ptrs_[c] = out_planar_.data() + static_cast<std::size_t>(c) * kMaxCycleFrames;
 
-        loop_ = pw_thread_loop_new("saine-pipewire", nullptr);
+        loop_ = pw_thread_loop_new("dstudio-pipewire", nullptr);
         if (loop_ == nullptr) return fail("pw_thread_loop_new failed", err);
         context_ = pw_context_new(pw_thread_loop_get_loop(loop_), nullptr, 0);
         if (context_ == nullptr) return fail("pw_context_new failed", err);
@@ -596,17 +596,17 @@ private:
             std::to_string(requested_quantum()) + "/" + std::to_string(static_cast<long>(config_.sample_rate));
         pw_properties* props = pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY,
                                                  playback ? "Playback" : "Capture", PW_KEY_MEDIA_ROLE, "Production",
-                                                 PW_KEY_APP_NAME, "Saine Studio", PW_KEY_NODE_LATENCY, latency.c_str(),
+                                                 PW_KEY_APP_NAME, "Device Studio", PW_KEY_NODE_LATENCY, latency.c_str(),
                                                  nullptr);
         if (!target.empty()) pw_properties_set(props, PW_KEY_TARGET_OBJECT, target.c_str());
         // One group for both streams: PipeWire runs them from the same driver
         // (resampling the other device if input and output are different
         // hardware), so the input ring sees one clock and never drifts.
-        pw_properties_setf(props, PW_KEY_NODE_GROUP, "saine-studio-%p", static_cast<const void*>(this));
+        pw_properties_setf(props, PW_KEY_NODE_GROUP, "device-studio-%p", static_cast<const void*>(this));
         if (config_.device_rate > 0.0)
             pw_properties_set(props, PW_KEY_NODE_RATE,
                               ("1/" + std::to_string(static_cast<long>(std::lround(config_.device_rate)))).c_str());
-        s.stream = pw_stream_new(core_, playback ? "Saine Studio output" : "Saine Studio input", props);
+        s.stream = pw_stream_new(core_, playback ? "Device Studio output" : "Device Studio input", props);
         if (s.stream == nullptr) {
             err = std::string("pw_stream_new failed: ") + std::strerror(errno);
             return s;
@@ -830,12 +830,12 @@ double query_default_output_sample_rate() {
     return s.connected ? s.clock_rate : 0.0;
 }
 
-} // namespace saine
+} // namespace dstudio
 
-#else // !SAINE_HAVE_PIPEWIRE
+#else // !DSTUDIO_HAVE_PIPEWIRE
 
 // Built without the PipeWire development files: offline rendering only.
-namespace saine {
+namespace dstudio {
 namespace {
 
 // Stand-in device for builds without libpipewire: every start fails.
@@ -872,7 +872,7 @@ int32_t list_audio_devices(std::vector<DeviceInfo>& out, std::string&) {
 // No default rate without PipeWire.
 double query_default_output_sample_rate() { return 0.0; }
 
-} // namespace saine
+} // namespace dstudio
 
-#endif // SAINE_HAVE_PIPEWIRE
+#endif // DSTUDIO_HAVE_PIPEWIRE
 #endif // __linux__

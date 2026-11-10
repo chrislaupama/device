@@ -14,7 +14,7 @@
 #pragma once
 
 #include "asset.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <condition_variable>
 #include <cstdint>
@@ -25,7 +25,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace saine {
+namespace dstudio {
 
 struct RenderGraph;
 struct ClipNode;
@@ -181,4 +181,4 @@ private:
 // Onset detection for se_asset_detect_onsets. Non-RT.
 void detect_onsets(const Asset& asset, double sample_rate, std::vector<se_onset>& out);
 
-} // namespace saine
+} // namespace dstudio

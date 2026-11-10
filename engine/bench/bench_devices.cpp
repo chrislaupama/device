@@ -4,12 +4,12 @@
 // parameter update paths, and a 32-track session with two compressors per
 // track, with and without an LFO moving both thresholds.
 //
-//   saine_device_bench [blocks]      (Release build; numbers in us per 256-frame block)
+//   dstudio_device_bench [blocks]      (Release build; numbers in us per 256-frame block)
 #include "../tests/devices/shaper_layout.hpp"
 #include "devices/builtin.hpp"
 #include "devices/synth_v2_params.hpp"
 #include "platform/os.hpp"
-#include "saine_engine.h"
+#include "dstudio_engine.h"
 
 #include <algorithm>
 #include <chrono>
@@ -30,7 +30,7 @@ namespace {
 constexpr double kRate = 48000.0;
 constexpr uint32_t kBlock = 256;
 const std::vector<float> kCompressor = {-24.f, 4.f, 10.f, 100.f, 6.f, 0.f, 100.f, 0.f, 0.f, 0.f, 0.f};
-// Defaults of the dynamics devices (registry order), see saine_core::builtin.
+// Defaults of the dynamics devices (registry order), see dstudio_core::builtin.
 const std::vector<float> kLimiter = {-0.3f, 100.f, 5.f, 1.f, 100.f, 0.f, 0.f};
 const std::vector<float> kGate = {-40.f, 10.f, 0.5f, 50.f, 100.f, 5.f, 80.f, 100.f};
 const std::vector<float> kGlue = {-15.f, 1.f, 5.f, 4.f, 0.f, 100.f, 50.f, 24.f, 0.f, 0.f, 0.f};
@@ -41,7 +41,7 @@ std::vector<float> with(std::vector<float> v, std::initializer_list<std::pair<st
     for (auto [i, x] : set) v[i] = x;
     return v;
 }
-// saine_core::builtin::character_compressor / multiband_compressor defaults.
+// dstudio_core::builtin::character_compressor / multiband_compressor defaults.
 const std::vector<float> kCharacter = {0.f,  -18.f, 4.f, 6.f,  10.f, 200.f, 0.f, 0.f,   24.f, 1.f,    100.f, 0.f, 0.f, 0.f,    0.f, 100.f,
                                        0.f,  0.f,   0.f, 80.f, 1000.f, 0.f, 1.f, 0.f,   0.f,  0.f,    50.f,  8.f, 0.f, 0.f,    150.f, 1.f,
                                        0.f,  0.f,   600.f, 1.f, 0.f,  0.f,  2500.f, 1.f, 0.f,  0.f,    8000.f, 1.f, 0.f, 0.f};
@@ -150,7 +150,7 @@ std::vector<uint8_t> blob(const std::vector<float>& v, uint64_t sc = 0) {
 }
 
 bool write_float_wav(const std::string& path, const std::vector<float>& l, const std::vector<float>& r) {
-    std::FILE* f = saine::os::fopen_utf8(path.c_str(), "wb");
+    std::FILE* f = dstudio::os::fopen_utf8(path.c_str(), "wb");
     if (!f) return false;
     const auto frames = static_cast<uint32_t>(l.size());
     const uint32_t data = frames * 8;
@@ -195,17 +195,17 @@ double us(Clock::duration d) { return std::chrono::duration<double, std::micro>(
 // tone: a harmonic line (A3 with 5 Hz vibrato, 8 partials) instead of noise,
 // so pitch-tracking devices run their voiced path.
 Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, uint32_t events_per_block,
-                   const std::vector<saine::MidiEvent>& notes = {}, uint32_t event_param = 0, double base = -30.0,
+                   const std::vector<dstudio::MidiEvent>& notes = {}, uint32_t event_param = 0, double base = -30.0,
                    double step = 1.0, bool tone = false) {
-    saine::PluginSpec spec;
+    dstudio::PluginSpec spec;
     spec.device_id = 1;
-    spec.format = saine::PluginFormat::Builtin;
+    spec.format = dstudio::PluginFormat::Builtin;
     spec.plugin_id = id;
     spec.state = blob(values);
-    const saine::BuiltinDescriptor* d = saine::find_builtin(id);
+    const dstudio::BuiltinDescriptor* d = dstudio::find_builtin(id);
     spec.instrument = d != nullptr && d->instrument;
     std::string err;
-    auto inst = saine::create_builtin_instance(spec, kRate, kBlock, err);
+    auto inst = dstudio::create_builtin_instance(spec, kRate, kBlock, err);
     if (!inst) {
         std::fprintf(stderr, "%s: %s\n", id, err.c_str());
         std::exit(1);
@@ -214,10 +214,10 @@ Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, u
     uint32_t seed = 7;
     double phase = 0.0;
     uint64_t frame = 0;
-    std::vector<saine::ParamEvent> ev;
+    std::vector<dstudio::ParamEvent> ev;
     for (uint32_t i = 0; i < events_per_block; ++i)
-        ev.push_back(saine::ParamEvent{i * (kBlock / std::max(1u, events_per_block)), event_param, base + step * i});
-    saine::RtTransport tr;
+        ev.push_back(dstudio::ParamEvent{i * (kBlock / std::max(1u, events_per_block)), event_param, base + step * i});
+    dstudio::RtTransport tr;
     std::vector<double> t;
     t.reserve(blocks);
     for (uint32_t b = 0; b < blocks + 200; ++b) {
@@ -247,19 +247,19 @@ Stats bench_kernel(const char* id, std::vector<float> values, uint32_t blocks, u
 
 // Modulation source cost: run_modulation per block (the grid of source outputs).
 Stats bench_source(const char* id, std::vector<float> values, uint32_t blocks) {
-    saine::PluginSpec spec;
+    dstudio::PluginSpec spec;
     spec.device_id = 1;
-    spec.format = saine::PluginFormat::Builtin;
+    spec.format = dstudio::PluginFormat::Builtin;
     spec.plugin_id = id;
     spec.state = blob(values);
     std::string err;
-    auto inst = saine::create_builtin_instance(spec, kRate, kBlock, err);
+    auto inst = dstudio::create_builtin_instance(spec, kRate, kBlock, err);
     if (!inst) {
         std::fprintf(stderr, "%s: %s\n", id, err.c_str());
         std::exit(1);
     }
-    auto* b = static_cast<saine::BuiltinInstance*>(inst.get());
-    saine::RtTransport tr;
+    auto* b = static_cast<dstudio::BuiltinInstance*>(inst.get());
+    dstudio::RtTransport tr;
     tr.sample_rate = kRate;
     tr.playing = true;
     tr.tempo_bpm = 120.0;
@@ -279,20 +279,20 @@ Stats bench_source(const char* id, std::vector<float> values, uint32_t blocks) {
 // note-ons from notes (cycled) so about voices voices keep sounding.
 Stats bench_instrument(const char* id, std::vector<float> values, uint32_t blocks, const std::vector<uint8_t>& notes,
                        uint32_t hits_every) {
-    const saine::BuiltinDescriptor* d = saine::find_builtin(id);
-    saine::PluginSpec spec;
+    const dstudio::BuiltinDescriptor* d = dstudio::find_builtin(id);
+    dstudio::PluginSpec spec;
     spec.device_id = 1;
-    spec.format = saine::PluginFormat::Builtin;
+    spec.format = dstudio::PluginFormat::Builtin;
     spec.plugin_id = id;
     spec.instrument = true;
     spec.state = blob(values);
     std::string err;
-    auto inst = saine::create_builtin_instance(spec, kRate, kBlock, err);
+    auto inst = dstudio::create_builtin_instance(spec, kRate, kBlock, err);
     if (!inst || d == nullptr) {
         std::fprintf(stderr, "%s: %s\n", id, err.c_str());
         std::exit(1);
     }
-    auto asset = std::make_shared<saine::Asset>();
+    auto asset = std::make_shared<dstudio::Asset>();
     asset->id = 1;
     asset->channels = 2;
     asset->frames = 4 * 48000;
@@ -314,21 +314,21 @@ Stats bench_instrument(const char* id, std::vector<float> values, uint32_t block
         se_builtin_sample e{1, s, 0};
         std::memcpy(st.data() + sizeof h + 4 * values.size() + sizeof e * s, &e, sizeof e);
     }
-    saine::BuiltinInstance* b = inst->as_builtin();
+    dstudio::BuiltinInstance* b = inst->as_builtin();
     b->update_state(st.data(), st.size());
-    b->bind_samples([&](uint64_t) { return saine::AssetRef(asset); });
+    b->bind_samples([&](uint64_t) { return dstudio::AssetRef(asset); });
     std::vector<float> l(kBlock), r(kBlock);
-    saine::RtTransport tr;
+    dstudio::RtTransport tr;
     std::vector<double> t;
     t.reserve(blocks);
     std::size_t next = 0;
     for (uint32_t blk = 0; blk < blocks + 200; ++blk) {
-        saine::MidiEvent ev[2];
+        dstudio::MidiEvent ev[2];
         uint32_t ne = 0;
         if (blk % hits_every == 0) {
             const uint8_t note = notes[next++ % notes.size()];
-            ev[ne++] = saine::MidiEvent{0, 0x80, note, 64, 0};
-            ev[ne++] = saine::MidiEvent{17, 0x90, note, 110, 0};
+            ev[ne++] = dstudio::MidiEvent{0, 0x80, note, 64, 0};
+            ev[ne++] = dstudio::MidiEvent{17, 0x90, note, 110, 0};
         }
         std::memset(l.data(), 0, 4 * kBlock);
         std::memset(r.data(), 0, 4 * kBlock);
@@ -342,7 +342,7 @@ Stats bench_instrument(const char* id, std::vector<float> values, uint32_t block
 
 // Sampler values in registry order (sampler-steam definition defaults).
 std::vector<float> sampler_values() {
-    const auto d = saine::find_builtin("sampler-steam")->defaults;
+    const auto d = dstudio::find_builtin("sampler-steam")->defaults;
     return {d.begin(), d.end()};
 }
 
@@ -351,7 +351,7 @@ std::vector<float> sampler_values() {
 int main(int argc, char** argv) {
     const uint32_t blocks = argc > 1 ? static_cast<uint32_t>(std::atoi(argv[1])) : 20000;
     const double deadline = 1e6 * kBlock / kRate;
-    std::printf("saine_device_bench: %u blocks x %u frames @ %.0f Hz (deadline %.1f us/block), stereo noise in\n\n", blocks,
+    std::printf("dstudio_device_bench: %u blocks x %u frames @ %.0f Hz (deadline %.1f us/block), stereo noise in\n\n", blocks,
                 kBlock, kRate, deadline);
     std::printf("%-34s %12s %12s %12s %14s\n", "device", "avg us", "p99 us", "max us", "x real-time");
     const auto row = [&](const char* name, Stats s) {
@@ -454,11 +454,11 @@ int main(int argc, char** argv) {
     row("utility (width, bass mono, DC)", bench_kernel("utility", {-3.f, 10.f, 150.f, 0.f, 0.f, 1.f, 0.f, 1.f, 120.f, 0.f, 0.f, 1.f}, blocks, 0));
     // Modulation devices at their defaults, then the heavier settings.
     const auto defaults = [](const char* id) {
-        const saine::BuiltinDescriptor* d = saine::find_builtin(id);
+        const dstudio::BuiltinDescriptor* d = dstudio::find_builtin(id);
         return std::vector<float>(d->defaults.begin(), d->defaults.end());
     };
     const auto tweak = [&](const char* id, std::initializer_list<std::pair<const char*, float>> set) {
-        const saine::BuiltinDescriptor* d = saine::find_builtin(id);
+        const dstudio::BuiltinDescriptor* d = dstudio::find_builtin(id);
         std::vector<float> v = defaults(id);
         for (const auto& [p, x] : set)
             for (std::size_t i = 0; i < d->params.size(); ++i)
@@ -503,10 +503,10 @@ int main(int argc, char** argv) {
         row("shaper (all 7 lanes, band split)", bench_kernel("shaper", all, blocks, 0));
     }
     // Synth: notes held from the first block (sustain keeps every voice busy).
-    const std::vector<float> synth(std::begin(saine::synth_v2::kDefaults), std::end(saine::synth_v2::kDefaults));
+    const std::vector<float> synth(std::begin(dstudio::synth_v2::kDefaults), std::end(dstudio::synth_v2::kDefaults));
     const auto chord = [](uint32_t n) {
-        std::vector<saine::MidiEvent> v;
-        for (uint32_t i = 0; i < n; ++i) v.push_back(saine::MidiEvent{0, 0x90, static_cast<uint8_t>(36 + 5 * i), 100, 0});
+        std::vector<dstudio::MidiEvent> v;
+        for (uint32_t i = 0; i < n; ++i) v.push_back(dstudio::MidiEvent{0, 0x90, static_cast<uint8_t>(36 + 5 * i), 100, 0});
         return v;
     };
     row("synth-v2 (idle, sleeping)", bench_kernel("synth-v2", synth, blocks, 0));
@@ -594,7 +594,7 @@ int main(int argc, char** argv) {
 
     // Parameter update paths and session cost: 32 tracks, one clip and two
     // compressors each.
-    const std::string wav = (std::filesystem::temp_directory_path() / "saine_device_bench.wav").string();
+    const std::string wav = (std::filesystem::temp_directory_path() / "dstudio_device_bench.wav").string();
     {
         std::vector<float> l(8 * 48000), r(8 * 48000);
         uint32_t seed = 3;

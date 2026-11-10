@@ -1,4 +1,4 @@
-//! Saine Studio UI rendering spike.
+//! Device Studio UI rendering spike.
 //!
 //! Slint shell (FemtoVG on wgpu 30) + custom wgpu-rendered timeline & meters,
 //! sharing Slint's wgpu Device/Queue and composited as `slint::Image`s.
@@ -219,7 +219,7 @@ fn make_wgpu_config(manual: bool) -> (slint::wgpu_30::WGPUConfiguration, String)
         .expect("no wgpu adapter");
         let info = adapter.get_info();
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("saine-ui"),
+            label: Some("dstudio-ui"),
             required_features: wgpu::Features::empty(),
             required_limits: adapter.limits(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
