@@ -302,6 +302,9 @@ export struct SeqNum { x: length, text: string, beat: bool, active: bool }
 // fractions of the preview box).
 export struct PreviewNote { x: float, y: float, w: float }
 export struct PatternRow { name: string, playing: bool, notes: [PreviewNote] }
+// One Shape rack row. kind 0 slider (norm 0..1, bipolar fills from the middle),
+// 1 stepper (‹ value ›), 2 segments (segs, seg lit); tip shows on a disabled row.
+export struct ShapeRow { label: string, value: string, kind: int, norm: float, bipolar: bool, segs: int, seg: int, enabled: bool, tip: string }
 // separator: a line is drawn above the item; y: row top inside the menu.
 // ---- synth device (src/synth.rs) ----
 // One parameter of the Synth device: control position 0..1, readout with units.
@@ -626,6 +629,11 @@ export global Studio {
     callback composer-create();
     callback composer-load(int);
     callback composer-original-pick();
+    in property <bool> composer-shape-ok;    // a MIDI clip with notes: Shape can open
+    in property <bool> composer-shape-tab;   // the Shape tab is showing
+    in property <[ShapeRow]> composer-shape-rows;
+    callback composer-tab(bool);                            // true: Shape
+    callback composer-shape(int, int, float);               // row, op (src/composer.rs shape_op), value
     // ---- clip context menu + rename ----
     callback lane-context(length, length, length, length);  // lane x, y, window x, y
     in property <bool> menu-open;

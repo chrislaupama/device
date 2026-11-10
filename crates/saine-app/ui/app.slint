@@ -1111,6 +1111,7 @@ export component AppWindow inherits Window {
                 row-h: cm.m <= 2 ? 18.7px : 20.4px;
                 text-size: cm.m <= 2 ? 9.35px : 10.2px;
                 check: cm.m == 3 || cm.m >= 6;
+                max-rows: cm.m == 5 ? 12 : 99;
                 section: cm.m == 3 ? 4 : cm.m == 7 ? 6 : -1;
                 width: cm.m <= 1 ? 47.6px : cm.m == 2 ? 56px : cm.m == 3 ? 108px : cm.m == 4 ? 61px : cm.m == 5 ? 104px : 72px;
                 x: cm.m == 0 ? 260px + 206.2px : cm.m == 1 ? 260px + 273.95px : cm.m == 2 ? 260px + 347.6px : cm.m == 3 ? 260px + 387px : cm.m == 4 ? 5px + 48px
