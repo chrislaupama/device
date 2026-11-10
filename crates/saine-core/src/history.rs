@@ -212,6 +212,37 @@ impl Document {
     }
 }
 
+/// An edit label as the reference app shows it in Undo / Redo: sentence case ("Track Volume Change" →
+/// "Track volume change"). Words written in capitals (MIDI, EQ, LFO) keep them.
+pub fn sentence_case(label: &str) -> String {
+    label
+        .split(' ')
+        .enumerate()
+        .map(|(i, w)| {
+            let acronym = w.chars().filter(|c| c.is_alphabetic()).count() > 1 && !w.chars().any(|c| c.is_lowercase());
+            if i == 0 || acronym {
+                w.to_string()
+            } else {
+                w.to_lowercase()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(test)]
+mod sentence_case_tests {
+    #[test]
+    fn labels_read_in_sentence_case() {
+        use super::sentence_case;
+        assert_eq!(sentence_case("Track Volume Change"), "Track volume change");
+        assert_eq!(sentence_case("Insert MIDI Clip"), "Insert MIDI clip");
+        assert_eq!(sentence_case("Move Effect into Chain"), "Move effect into chain");
+        assert_eq!(sentence_case("Use Built-in Synth"), "Use built-in synth");
+        assert_eq!(sentence_case("Mute"), "Mute");
+    }
+}
+
 /// Replace zero ids with freshly allocated ones, recursively.
 pub fn assign_ids(cmd: &mut Command, p: &mut Project) {
     use crate::model::{AssetId, ClipId, TrackId};

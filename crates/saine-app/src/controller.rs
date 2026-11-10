@@ -1647,8 +1647,9 @@ impl Controller {
             self.tracks_model.set_vec(rows);
         }
         s.set_project_name(p.name.clone().into());
-        s.set_undo_text(self.doc.undo_label().map_or("Undo".into(), |l| format!("Undo {l}")).into());
-        s.set_redo_text(self.doc.redo_label().map_or("Redo".into(), |l| format!("Redo {l}")).into());
+        let sentence = saine_core::history::sentence_case;
+        s.set_undo_text(self.doc.undo_label().map_or("Undo".into(), |l| format!("Undo {}", sentence(l))).into());
+        s.set_redo_text(self.doc.redo_label().map_or("Redo".into(), |l| format!("Redo {}", sentence(l))).into());
         s.set_can_undo(self.doc.can_undo());
         s.set_can_redo(self.doc.can_redo());
         s.set_can_copy(self.selected_clip.is_some());
