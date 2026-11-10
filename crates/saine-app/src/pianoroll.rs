@@ -487,6 +487,10 @@ impl Controller {
                 self.pr.scroll = (127.0 - mid) * ROW_H + ROW_H / 2.0 - (self.pr.size.1 - GRID_Y) / 2.0;
             }
         }
+        let pattern = self.pr_clip().and_then(|c| c.pattern.as_ref());
+        if pattern.is_some() != self.pr.seq.pattern {
+            self.pr.seq = crate::stepseq::SeqState::opened(pattern);
+        }
         if let Some(c) = self.pr_clip() {
             let ids: BTreeSet<u32> = c.notes.iter().map(|n| n.id).collect();
             self.pr.selected.retain(|i| ids.contains(i));

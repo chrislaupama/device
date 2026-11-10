@@ -371,11 +371,16 @@ impl Controller {
         let Some(c) = self.project().midi_clip(id).cloned() else { return };
         let pattern = match c.pattern {
             Some(_) => None,
-            None => Some(StepPattern::from_notes(&c.notes, c.length, self.seq_rows_for(&c))),
+            None => {
+                let p = StepPattern::from_notes(&c.notes, c.length, self.seq_rows_for(&c));
+                if c.notes.iter().any(|n| p.rows.contains(n.pitch) && n.start >= p.length()) {
+                    self.set_status(format!("Too long for a step pattern: {} steps at most", saine_core::steps::MAX_STEPS), 3);
+                    return;
+                }
+                Some(p)
+            }
         };
-        if self.execute(Command::SetStepPattern { clip: id, pattern }) {
-            self.pr.seq.piano = false;
-        }
+        self.execute(Command::SetStepPattern { clip: id, pattern });
     }
 
     pub fn submenu_activate(&mut self, index: usize) {

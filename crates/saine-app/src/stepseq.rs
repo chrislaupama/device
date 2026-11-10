@@ -56,12 +56,14 @@ pub struct SeqState {
     drag: Option<SeqDrag>,
     /// The pattern as shown during a gesture.
     preview: Option<StepPattern>,
+    /// Opened for a pattern clip (a conversion either way reopens the view).
+    pub pattern: bool,
 }
 
 impl SeqState {
     /// State for a newly opened clip: Sequencer tab, Steps lane, scrolled to the pattern.
     pub fn opened(p: Option<&StepPattern>) -> Self {
-        SeqState { scroll: p.map_or(0.0, initial_scroll), ..Default::default() }
+        SeqState { scroll: p.map_or(0.0, initial_scroll), pattern: p.is_some(), ..Default::default() }
     }
 }
 

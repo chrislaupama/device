@@ -4567,6 +4567,27 @@ fn step_sequencer_steps() -> Vec<Step> {
             let m = c.pr_clip().ok_or("clip closed")?;
             (m.pattern.is_none() && !m.notes.is_empty() && !a.global::<Studio>().get_seq_tabs()).then_some(()).ok_or("still a pattern".into())
         })),
+        DoC("seq: stretch the plain clip to 20 beats with a kick at beat 17, convert to a pattern", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let Some(m) = c.pr_clip().cloned() else { return };
+            let mut notes = m.notes.clone();
+            notes.push(saine_core::Note { id: notes.iter().map(|n| n.id).max().unwrap_or(0) + 1, pitch: 36, start: 17 * PPQ, length: PPQ / 4, velocity: 100 });
+            c.execute(saine_core::Command::ResizeMidiClip { clip: m.id, start: m.start, length: 20 * PPQ });
+            c.execute(saine_core::Command::SetMidiNotes { clip: m.id, notes });
+            c.convert_clip(m.id);
+        })),
+        Check("seq: conversion refused (past 64 steps), nothing lost; undo the two edits", Box::new(|c, _| {
+            let m = c.pr_clip().ok_or("clip closed")?;
+            let ok = m.pattern.is_none() && m.notes.iter().any(|n| n.start == 17 * PPQ) && c.status_text().is_some_and(|s| s.starts_with("Too long"));
+            ok.then_some(()).ok_or(format!("pattern {} status {:?}", m.pattern.is_some(), c.status_text()))
+        })),
+        DoC("seq: undo the note and resize", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            let _ = c.doc.undo();
+            let _ = c.doc.undo();
+            c.ui_dirty = true;
+            c.update_ui(a);
+        })),
         DoC("seq: Cmd+Z, then remove the clip and restore the instrument", Box::new(move |a, ctl| {
             {
                 let mut c = ctl.borrow_mut();
