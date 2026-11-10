@@ -178,7 +178,7 @@ impl Controller {
         } else {
             format!("Create new {}", comp.part.plural())
         };
-        let shape_ok = !drums && !c.notes.is_empty();
+        let shape_ok = !drums && !c.notes.is_empty() && c.pattern.is_none();
         let (base, source, shape) = self.shape_state(&c);
         Some(SidebarView {
             drums,
@@ -219,7 +219,7 @@ impl Controller {
                 let source = comp.shape_source();
                 let shape = comp.shape_of(source);
                 comp.base.clear();
-                if Self::is_drum_clip(c) || shape == Shape::neutral(source) {
+                if lp.pattern.is_some() || shape == Shape::neutral(source) {
                     (lp.notes, lp.pattern)
                 } else {
                     let notes = self.shaped(&lp.notes, shape, source, c);
@@ -264,7 +264,7 @@ impl Controller {
             return;
         }
         let Some(c) = self.composer_clip() else { return };
-        if Self::is_drum_clip(&c) || c.notes.is_empty() {
+        if c.pattern.is_some() || c.notes.is_empty() {
             return;
         }
         let (base, source, old) = self.shape_state(&c);
