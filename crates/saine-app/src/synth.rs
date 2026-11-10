@@ -471,34 +471,39 @@ fn sin_t(t: f32) -> f32 {
     (2.0 * PI * t).sin()
 }
 
-/// One oscillator sample of the drawing model (phase in turns); pm in turns.
+/// One oscillator sample as the reference app's Synth pictures draw it (phase in turns; pm in turns):
+/// Sine folds into a sine of itself, Triangle leans into a saw, Saw thickens with two offset
+/// copies, Square narrows its pulse (DC removed), Sync replays the saw 2^(3·shape) times
+/// a cycle and FM bends the phase by a sine (reference/research-findings.md, row 38).
 pub fn osc_sample(wave: usize, shape: f32, ph: f32, pm: f32) -> f32 {
     let t = (ph + pm).rem_euclid(1.0);
     let sh = shape.clamp(0.0, 1.0);
     match wave {
-        0 => sin_t(t + 0.18 * sh * sin_t(t)),
+        0 => {
+            let y = sin_t(t);
+            if sh <= 5e-4 {
+                return y;
+            }
+            let folded = (0.5 * PI * (1.0 + 4.5 * sh) * y).sin();
+            y + (3.0 * sh).min(1.0) * (folded - y)
+        }
         1 => {
-            let k = 0.5 + 0.47 * sh;
-            let u = (t + 0.25 * k / 0.5).rem_euclid(1.0);
-            if u < k { -1.0 + 2.0 * u / k } else { 1.0 - 2.0 * (u - k) / (1.0 - k) }
+            let tri = if t < 0.5 { 4.0 * t - 1.0 } else { 3.0 - 4.0 * t };
+            tri + sh * (saw(t) - tri)
         }
         2 => {
+            if sh <= 5e-4 {
+                return saw(t);
+            }
             let mix = 0.7 * sh;
             (saw(t) + mix * (saw((t + 0.37).rem_euclid(1.0)) + saw((t + 0.71).rem_euclid(1.0)))) / (1.0 + 1.1 * mix)
         }
         3 => {
             let w = 0.5 - 0.45 * sh;
-            ((if t < w { 1.0 } else { -1.0 }) - (2.0 * w - 1.0)) / (2.0 - 2.0 * w)
+            (if t < w { 1.0 } else { -1.0 }) - (2.0 * w - 1.0)
         }
         4 => saw((t * 2f32.powf(3.0 * sh)).rem_euclid(1.0)),
-        _ => {
-            let b = 0.35 * sh;
-            let mut y = sin_t(t);
-            for _ in 0..4 {
-                y = sin_t(t + b * y);
-            }
-            y
-        }
+        _ => sin_t(t + 2.2 * sh * sin_t(t) * 0.25),
     }
 }
 
@@ -518,9 +523,11 @@ fn osc_display(v: &[f32], k: usize) -> SynthDisplay {
     };
     let ratio = 2f32.powf((note(2) - note(1)) / 12.0);
     let (w2, s2) = (v[ix("osc2_wave")].round() as usize, v[ix("osc2_shape")]);
+    // The reference app scales the trace by the level (at least 4 %) inside a 10 px inset (card scale).
+    let amp = (DISP_H / 2.0 - 10.0 * 0.844) * level.clamp(0.04, 1.0) / (DISP_H / 2.0 * 0.8);
     let mut d = display(
-        &wave_points(DISP_W, DISP_H, 2.0, 1.0, |ph| {
-            let pm = if xfm > 0.0 { xfm * xfm * 0.4 * osc_sample(w2, s2, ph * ratio, 0.0) } else { 0.0 };
+        &wave_points(DISP_W, DISP_H, 2.0, amp, |ph| {
+            let pm = if xfm > 0.0 { xfm * xfm * 0.8 * osc_sample(w2, s2, ph * ratio, 0.0) } else { 0.0 };
             osc_sample(wave, shape, ph, pm)
         }),
         DISP_H / 2.0,
@@ -2757,7 +2764,9 @@ mod tests {
             for s in [0.0, 0.5, 1.0] {
                 for i in 0..200 {
                     let x = osc_sample(w, s, i as f32 / 200.0, 0.0);
-                    assert!((-1.6..=1.6).contains(&x), "wave {w} shape {s}: {x}");
+                    // A full-shape Square keeps its DC offset removed, so it reaches 1.9; the
+                    // picture clips at 1.2.
+                    assert!((-1.95..=1.95).contains(&x), "wave {w} shape {s}: {x}");
                 }
             }
         }
