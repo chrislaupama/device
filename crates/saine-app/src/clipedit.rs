@@ -411,6 +411,7 @@ impl Controller {
                 s.set_ac_speed_text(crate::warpedit::format_speed(c.warp.effective_speed()).into());
                 s.set_ac_warped(c.warp.enabled);
                 s.set_ac_mode_text(c.warp.mode.label().into());
+                s.set_ac_reversed(c.warp.reverse);
                 Some((c.name.clone(), p.clip_length_ticks(c), p.find_clip(c.id).map(|(t, _)| t)))
             }
             _ => None,

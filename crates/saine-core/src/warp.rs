@@ -8,6 +8,10 @@
 //! original beat, so 2x plays the source twice as fast (half the footprint).
 //! The engine gets the map as (timeline frame, source frame) points.
 //!
+//! \`reverse\` plays the clip's source window back to front, warped or not.
+//! Markers and transients stay in source frames; the engine plays a reversed
+//! copy of the asset along the mirrored map.
+//!
 //! Transients are detected by the engine (`se_asset_detect_onsets`) and are
 //! not stored; the user's additions and removals are, in source frames.
 
@@ -75,11 +79,13 @@ pub struct ClipWarp {
     /// User edits on top of the detected transients (asset frames, sorted).
     pub transients_added: Vec<u64>,
     pub transients_removed: Vec<u64>,
+    /// Play the source window back to front (see the module docs).
+    pub reverse: bool,
 }
 
 impl Default for ClipWarp {
     fn default() -> Self {
-        ClipWarp { enabled: false, mode: WarpMode::Auto, original_bpm: 120.0, speed: 1.0, markers: Vec::new(), transients_added: Vec::new(), transients_removed: Vec::new() }
+        ClipWarp { enabled: false, mode: WarpMode::Auto, original_bpm: 120.0, speed: 1.0, markers: Vec::new(), transients_added: Vec::new(), transients_removed: Vec::new(), reverse: false }
     }
 }
 
@@ -114,6 +120,11 @@ impl ClipWarp {
     /// Source frame (asset rate) at an original beat.
     pub fn source_at(&self, beat: f64, rate: f64) -> f64 {
         interp(&self.points(rate), beat, true)
+    }
+
+    /// Warp settings untouched apart from reverse (a fresh clip).
+    pub fn tempo_is_default(&self) -> bool {
+        ClipWarp { reverse: false, ..self.clone() }.is_default()
     }
 
     /// Speed shown in the editor: 1 when warp is off.

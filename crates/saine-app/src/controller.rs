@@ -269,6 +269,8 @@ pub struct Controller {
     pub engine: Arc<Engine>,
     pub rate: f64,
     pub(crate) asset_map: HashMap<AssetId, u64>,
+    /// The engine's reversed copies of assets that reversed clips play (src/warpedit.rs).
+    pub(crate) reversed_assets: HashMap<AssetId, u64>,
     /// Detected transients per engine asset (asset frames), and those being analysed.
     pub(crate) onsets: HashMap<u64, Vec<saine_core::Transient>>,
     pub(crate) onsets_pending: std::collections::HashSet<u64>,
@@ -369,6 +371,7 @@ impl Controller {
             engine,
             rate,
             asset_map: HashMap::new(),
+            reversed_assets: HashMap::new(),
             onsets: HashMap::new(),
             onsets_pending: std::collections::HashSet::new(),
             peaks: PeakStore::default(),
@@ -546,7 +549,7 @@ impl Controller {
     /// The session the engine should play right now: the document plus any
     /// automation lane being edited.
     pub fn current_snapshot(&self) -> snapshot::SessionSnapshot {
-        let (mut snap, _skipped) = snapshot::build_with_transients(self.doc.project(), self.rate, &self.asset_map, &self.transients_by_asset());
+        let (mut snap, _skipped) = snapshot::build_full(self.doc.project(), self.rate, &self.asset_map, &self.reversed_assets, &self.transients_by_asset());
         // Automation drag / write preview: the pending lane replaces the model lane.
         if let Some((key, lane)) = &self.auto.pending {
             let p = self.doc.project();
@@ -567,6 +570,7 @@ impl Controller {
 
     pub fn publish(&mut self) {
         self.request_onsets();
+        self.ensure_reversed_assets();
         let snap = self.current_snapshot();
         if let Err(e) = self.engine.publish(&snap) {
             self.set_status(format!("Engine rejected the session: {e}"), 6);
@@ -963,7 +967,7 @@ impl Controller {
         };
         self.stop_return();
         self.close_all_editors();
-        for (_, ea) in self.asset_map.drain() {
+        for (_, ea) in self.asset_map.drain().chain(self.reversed_assets.drain()) {
             let _ = self.engine.release_asset(ea);
         }
         self.onsets.clear();
@@ -1114,6 +1118,18 @@ impl Controller {
                         let p = self.project();
                         let Some(c) = p.clip(clip) else { return };
                         let (s0, off0, len0) = orig;
+                        if c.warp.reverse {
+                            // Reversed: the left edge plays the window's end, so it trims (or extends) that.
+                            let l0 = p.clip_ticks_at(c, (off0 + len0) as f64);
+                            let frames = p.asset(c.asset).map_or(off0 + len0, |a| a.frames);
+                            let min_start = s0 + (l0 - p.clip_ticks_at(c, frames as f64)).ceil() as Ticks;
+                            let max_start = s0 + l0 as Ticks - PPQ / 4;
+                            let start = snap(beat).clamp(min_start.max(0), max_start.max(s0));
+                            let end = p.clip_source_at(c, l0 - (start - s0) as f64).round().clamp((off0 + 1) as f64, frames as f64) as u64;
+                            self.drag = Some(Drag::TrimLeft { clip, orig, cur: (start, off0, end - off0) });
+                            self.ui_dirty = true;
+                            return;
+                        }
                         let at = |t: Ticks| p.clip_source_at(c, (t - s0) as f64);
                         let mut start = snap(beat);
                         // Source material before the current offset (warped clips follow their map).
@@ -1135,10 +1151,19 @@ impl Controller {
                     }
                     Drag::TrimRight { clip, orig, .. } => {
                         let Some((_, _, _, _, _, frames)) = self.clip_region(clip) else { return };
-                        let (s0, off0, _) = orig;
+                        let (s0, off0, len0) = orig;
                         let p = self.project();
                         let Some(c) = p.clip(clip) else { return };
                         let end = snap(beat).max(s0 + PPQ / 4);
+                        if c.warp.reverse {
+                            // Reversed: the right edge plays the window's start.
+                            let l0 = p.clip_ticks_at(c, (off0 + len0) as f64);
+                            let end = end.min((s0 + (l0 - p.clip_ticks_at(c, 0.0)).floor() as Ticks).max(s0 + PPQ / 4));
+                            let off = p.clip_source_at(c, l0 - (end - s0) as f64).round().clamp(0.0, (off0 + len0 - 1) as f64) as u64;
+                            self.drag = Some(Drag::TrimRight { clip, orig, cur: (s0, off, off0 + len0 - off) });
+                            self.ui_dirty = true;
+                            return;
+                        }
                         let len = (p.clip_source_at(c, (end - s0) as f64) - off0 as f64).round().max(1.0) as u64;
                         let len = len.clamp(1, frames - off0);
                         self.drag = Some(Drag::TrimRight { clip, orig, cur: (s0, off0, len) });
@@ -1175,7 +1200,8 @@ impl Controller {
 
     /// Waveform of an audio clip: its pyramid slot (once the peaks exist) and its pieces.
     pub fn clip_wave(&self, clip: &Clip) -> Option<(crate::peaks::Slot, Vec<crate::peaks::WaveSeg>)> {
-        let slot = self.asset_map.get(&clip.asset).and_then(|ea| self.peaks.slot(*ea))?;
+        let assets = if clip.warp.reverse { &self.reversed_assets } else { &self.asset_map };
+        let slot = assets.get(&clip.asset).and_then(|ea| self.peaks.slot(*ea))?;
         Some((slot, crate::peaks::wave_segments(self.project(), clip, self.rate)))
     }
 

@@ -158,3 +158,29 @@ fn onsets_drive_drum_slices() {
         assert!(rms(&out[at..at + 800]) > 0.1, "hit at {at}");
     }
 }
+
+#[test]
+fn reversed_clip_plays_back_to_front() {
+    // 1 s of 440 Hz then 1 s of silence; reversed, the silence comes first.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("half.wav");
+    write_wav(&path, 96_000, |i| if i < 48_000 { 0.5 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / RATE).sin() } else { 0.0 });
+    let mut rig = Rig::new(&path);
+    rig.warp(ClipWarp { reverse: true, ..ClipWarp::default() });
+    let ea = rig.map[&rig.asset];
+    let rev = rig.engine.reverse_asset(ea).unwrap();
+    let (snap, skipped) = snapshot::build_full(rig.doc.project(), RATE, &rig.map, &HashMap::from([(rig.asset, rev.asset_id)]), &HashMap::new());
+    assert!(skipped.is_empty());
+    rig.engine.publish(&snap).unwrap();
+    rig.engine.seek(0).unwrap();
+    rig.engine.play().unwrap();
+    let mut out = vec![0f32; 96_000 * 2];
+    for chunk in out.chunks_mut(512 * 2) {
+        rig.engine.render_offline(chunk).unwrap();
+    }
+    rig.engine.stop().unwrap();
+    let l: Vec<f32> = out.chunks_exact(2).map(|c| c[0]).collect();
+    assert!(rms(&l[2_000..46_000]) < 1e-4, "silence first");
+    assert!(rms(&l[50_000..94_000]) > 0.2, "then the tone");
+    assert!((frequency(&l[50_000..94_000]) - 440.0).abs() < 1.0);
+}
