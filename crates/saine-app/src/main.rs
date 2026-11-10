@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! saine-studio [--open <dir>] [--import <wav>...] [--save-to <dir>] [--no-audio]
-//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-settings-audio|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-device-chain|review-settings-plugins]
+//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-clip-menu|reference-settings-audio|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-device-chain|review-settings-plugins]
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
@@ -45,6 +45,7 @@ mod recording;
 mod sampler_panel;
 mod selftest;
 mod settings;
+mod splitters;
 mod synth;
 mod timeline;
 mod warpedit;
@@ -88,8 +89,11 @@ struct Args {
     synth_page: Option<usize>,
     /// reference-input-menu (50): Instrument + Audio tracks, Audio selected, "In" popup open.
     input_menu_state: bool,
+    /// reference-clip-menu: Instrument track with a 1-bar MIDI clip at bar 6, its context menu open.
+    clip_menu_state: bool,
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
+    settings_general_state: bool,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
     /// the live recording clip. Not a reference capture (the reference recording UI was not captured).
     recording_review: bool,
@@ -103,6 +107,10 @@ struct Args {
     /// an expanded extra lane, master) for review; the second also opens the picker with the
     /// Synth submenu. No reference capture.
     automation_review: u8,
+    /// review-track-heights / review-bottom-collapsed: the demo tracks at 0.25x, 0.5x and 2x
+    /// height; the second instead collapses the bottom panel to its tab row (compare
+    /// z100-arr-resize-timeline-taller.png).
+    splitters_review: u8,
     /// reference-devices-effects (05): browser Devices › Effects sub-tab.
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
@@ -135,6 +143,9 @@ struct Args {
     /// --render-bench N: offscreen, render the state N times and print the mean / median /
     /// p95 milliseconds per full window render (Slint + wgpu surfaces + readback), then exit.
     render_bench: u32,
+    /// --drag-bench track|bottom: with --render-bench, move a track-height or splitter drag
+    /// one step (controller update + view-model sync) before each render.
+    drag_bench: Option<String>,
     self_test: bool,
 }
 
@@ -200,6 +211,15 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.input_menu_state = true;
                 }
+                "reference-settings-general" => {
+                    a.reference_default = true;
+                    a.settings_state = true;
+                    a.settings_general_state = true;
+                }
+                "reference-clip-menu" => {
+                    a.reference_default = true;
+                    a.clip_menu_state = true;
+                }
                 "reference-settings-audio" => {
                     a.reference_default = true;
                     a.settings_state = true;
@@ -212,6 +232,14 @@ fn parse_args() -> Result<Args, String> {
                 "reference-automation" => {
                     a.reference_default = true;
                     a.automation_state = true;
+                }
+                "review-track-heights" => {
+                    a.reference_default = true;
+                    a.splitters_review = 1;
+                }
+                "review-bottom-collapsed" => {
+                    a.reference_default = true;
+                    a.splitters_review = 2;
                 }
                 "review-automation" => {
                     a.reference_default = true;
@@ -282,6 +310,13 @@ fn parse_args() -> Result<Args, String> {
             "--clip-menu" => a.clip_menu = Some(value(&mut i)?.parse().map_err(|e| format!("--clip-menu: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
+            "--drag-bench" => {
+                let v = value(&mut i)?;
+                if v != "track" && v != "bottom" {
+                    return Err(format!("--drag-bench: want track or bottom, got {v:?}"));
+                }
+                a.drag_bench = Some(v.to_string());
+            }
             "--render-bench" => {
                 a.render_bench = value(&mut i)?.parse().map_err(|e| format!("--render-bench: {e}"))?;
                 if a.render_bench == 0 {
@@ -717,6 +752,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(22.0);
         c.open_input_menu();
     }
+    if args.clip_menu_state {
+        let mut c = ctl.borrow_mut();
+        if let Some(inst) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id) {
+            c.select_track(inst);
+            c.seek_beats(20.0);
+            if let Some(id) = c.insert_midi_clip() {
+                c.open_clip_menu(id, 700.0, 215.0, (10_000.0, 10_000.0));
+            }
+        }
+    }
     if args.automation_state {
         // Reference 60: same project layout as 50 (Instrument 1 with a MIDI clip at bar 6, Audio 2
         // selected, playhead 00:11.000, Devices tab) with the automation lanes shown.
@@ -739,6 +784,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let first = c.project().tracks[0].id;
         c.select_track(first);
         c.auto_toggle_shown();
+    }
+    if args.splitters_review == 1 {
+        let mut c = ctl.borrow_mut();
+        let ids: Vec<_> = c.project().tracks.iter().map(|t| t.id).collect();
+        for (track, height) in ids.into_iter().zip([0.25, 0.5, 2.0]) {
+            let _ = c.doc.set_track_height(track, height);
+        }
+    }
+    if args.splitters_review == 2 {
+        ctl.borrow_mut().doc.set_bottom_panel_height("devices", Some(0.0));
     }
     if args.automation_review > 0 {
         use saine_core::{AutoPoint, AutomationLane, AutomationTarget, SynthParam};
@@ -773,7 +828,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         ctl.borrow_mut().clip_menu_open(m);
     }
     if args.settings_state {
-        ctl.borrow_mut().open_settings();
+        let mut c = ctl.borrow_mut();
+        c.open_settings();
+        if args.settings_general_state {
+            c.settings_page(0);
+        }
     }
     if args.plugins_page_review {
         let mut c = ctl.borrow_mut();
@@ -1011,6 +1070,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.auto_write_end(|w| matches!(w.target, saine_core::AutomationTarget::Volume | saine_core::AutomationTarget::Pan));
         c.ui_dirty = true
     });
+    on!(on_bottom_resize, |c, phase: i32, y: f32| c.bottom_resize(phase, y));
+    on!(on_track_resize, |c, id: i32, phase: i32, y: f32| c.track_resize_drag(id, phase, y));
     on!(on_auto_toggle_shown, |c| c.auto_toggle_shown());
     on!(on_auto_toggle_draw, |c| c.auto_toggle_draw());
     on!(on_auto_toggle_arm, |c| c.auto_toggle_arm());
@@ -1332,12 +1393,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let ctl = ctl.clone();
         let warp = args.warp_state;
         let mut menu = args.clip_menu.filter(|_| warp);
+        // Selects the clip once, after the import lands; later tab changes are the user's.
+        let done = std::cell::Cell::new(false);
         audio_clip_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
             let Ok(mut c) = ctl.try_borrow_mut() else { return };
             let clip = c.project().tracks.iter().flat_map(|t| t.clips.iter()).next().cloned();
-            if clip.is_some() && c.bottom_tab != BottomTab::Clip {
+            if clip.is_some() && !done.get() {
                 c.select_clip(clip.as_ref().map(|cl| cl.id));
                 c.set_bottom_tab(BottomTab::Clip);
+                done.set(true);
             }
             if let Some(cl) = clip.filter(|cl| warp && !cl.warp.enabled) {
                 let mut w = saine_core::ClipWarp { enabled: true, mode: saine_core::WarpMode::Drums, speed: 1.5, original_bpm: 120.0, ..Default::default() };
@@ -1593,12 +1657,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aw = app.as_weak();
         let zm = zoom.clone();
         let n = args.render_bench as usize;
+        let drag = args.drag_bench.clone();
+        let dc = ctl.clone();
         slint::Timer::single_shot(Duration::from_secs(4), move || {
             let Some(a) = aw.upgrade() else { return };
             zm.borrow_mut().sync(a.window());
             let mut ms = Vec::with_capacity(n);
+            let track = dc.borrow().project().tracks[0].id.0 as i32;
+            match drag.as_deref() {
+                Some("track") => dc.borrow_mut().track_resize_drag(track, 0, 200.0),
+                Some("bottom") => dc.borrow_mut().bottom_resize(0, 500.0),
+                _ => {}
+            }
             for i in 0..n + 5 {
                 let t = Instant::now();
+                let dy = (i % 40) as f32 * 2.0;
+                match drag.as_deref() {
+                    Some("track") => dc.borrow_mut().track_resize_drag(track, 1, 200.0 + dy),
+                    Some("bottom") => dc.borrow_mut().bottom_resize(1, 500.0 - dy),
+                    _ => {}
+                }
+                if drag.is_some() {
+                    dc.borrow_mut().update_ui(&a);
+                }
                 if let Err(e) = a.window().take_snapshot() {
                     eprintln!("--render-bench: snapshot failed: {e}");
                     std::process::exit(1);

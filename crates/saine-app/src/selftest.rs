@@ -1105,9 +1105,13 @@ const INSP_IN: (f32, f32) = (5.0 + 80.0, 509.0 + 37.0 + 9.5);
 /// "In" popup (window x 16, y 568): centre of row 0.
 const IN_ROW0: (f32, f32) = (60.0, 568.0 + crate::recording::IN_PAD + crate::recording::IN_ROW / 2.0);
 const RECORD_BTN: (f32, f32) = (423.0 + 14.0, 38.0 + 14.0);
-/// Settings panel at (255, 7): sidebar row centres.
+/// Settings panel origin (the reference app's 960 x 820 pt window at x 255, y 6.5, in 85 % units) and width.
+const SET_X: f32 = 216.75;
+const SET_Y: f32 = 5.5;
+const SET_W: f32 = 816.0;
+/// Settings panel sidebar row centres.
 fn settings_row(i: usize) -> (f32, f32) {
-    (255.0 + 10.0 + 83.0, 7.0 + 94.75 + i as f32 * 27.25 + 12.75)
+    (SET_X + 10.0 + 83.0, SET_Y + 94.75 + i as f32 * 27.25 + 12.75)
 }
 
 /// Injected test input: 1 s of a 440 Hz sine at -6 dBFS, mono.
@@ -1274,7 +1278,7 @@ fn recording_steps() -> Vec<Step> {
                 && !s.get_set_input_muted();
             ok.then_some(()).ok_or(format!("open {} page {} out {:?} in {:?} rate {:?}", s.get_settings_open(), s.get_settings_page(), s.get_set_output_text(), s.get_set_input_text(), s.get_set_rate_text()))
         })),
-        Do("settings: click the Buffer size dropdown", Box::new(|a| click(a, 255.0 + 187.0 + 300.0, 7.0 + 312.0 + 14.0))),
+        Do("settings: click the Buffer size dropdown", Box::new(|a| click(a, SET_X + 187.0 + 300.0, SET_Y + 312.0 + 14.0))),
         Check("settings: buffer list 64..2048 with ms readouts", Box::new(|_, a| {
             let s = a.global::<Studio>();
             let items = s.get_settings_menu_items();
@@ -1311,14 +1315,14 @@ fn recording_steps() -> Vec<Step> {
             let ok_txt = if max == 0 { txt == "Plugin latency: none" } else { txt.contains(&format!("({max} samples)")) };
             (c.engine.delay_compensation_enabled() && s.get_set_pdc_on() && ok_txt).then_some(()).ok_or(format!("enabled {} ui {} text {txt:?} max {max}", c.engine.delay_compensation_enabled(), s.get_set_pdc_on()))
         })),
-        Do("pdc: click the Plugin delay compensation switch", Box::new(|a| click(a, 255.0 + 187.0 + 773.0 - 41.0 + 10.25, 7.0 + 355.0 + 5.0))),
+        Do("pdc: click the Plugin delay compensation switch", Box::new(|a| click(a, SET_X + SET_W - 41.0 + 10.25, SET_Y + 355.0 + 5.0))),
         Check("pdc: switched off in the engine, the UI and the (in-memory) preferences", Box::new(|c, a| {
             (!c.engine.delay_compensation_enabled() && !a.global::<Studio>().get_set_pdc_on() && c.settings.prefs.audio.pdc_off)
                 .then_some(())
                 .ok_or(format!("engine {} ui {} pref_off {}", c.engine.delay_compensation_enabled(), a.global::<Studio>().get_set_pdc_on(), c.settings.prefs.audio.pdc_off))
         })),
         Do("pdc: click the switch again, then Escape", Box::new(|a| {
-            click(a, 255.0 + 187.0 + 773.0 - 41.0 + 10.25, 7.0 + 355.0 + 5.0);
+            click(a, SET_X + SET_W - 41.0 + 10.25, SET_Y + 355.0 + 5.0);
             key(a, Key::Escape, false, false);
         })),
         Check("pdc: back on; Settings closed", Box::new(|c, a| {
@@ -1857,10 +1861,10 @@ fn device_steps() -> Vec<Step> {
         })),
         Do("settings: click “Rescan all plugins”", Box::new(|a| {
             let dirs = slint::Model::row_count(&a.global::<Studio>().get_scan_dirs()).min(8) as f32; // list is at most 8 rows tall
-            let content_w = 960.0 - 187.0;
+            let content_w = SET_W - 187.0;
             let card_x = 20.5 + ((content_w - 41.0) / 2.0 + 4.5);
             let card_y = 91.0 + dirs * 30.5 + 86.0;
-            click(a, 255.0 + 187.0 + card_x + 10.5 + 30.0, 7.0 + card_y + 31.0 + 13.0);
+            click(a, SET_X + 187.0 + card_x + 10.5 + 30.0, SET_Y + card_y + 31.0 + 13.0);
         })),
         Check("settings: a forced rescan ran (scan_plugins with rescan = true) and finished", Box::new(move |c, _| {
             let st = &c.devices.catalog.state;
@@ -4200,6 +4204,72 @@ fn field_device_steps() -> Vec<Step> {
     ]
 }
 
+/// Track height handle and timeline / bottom-panel splitter (appended last; restores both).
+fn splitter_steps() -> Vec<Step> {
+    use Step::*;
+    fn edge_y(c: &Controller) -> f32 {
+        TRACK0_Y + c.view.pitch(0) - 2.5 - c.view.scroll_y as f32
+    }
+    fn splitter_y(c: &Controller) -> f32 {
+        820.0 - 5.0 - c.bottom_h() - 1.0
+    }
+    let base_h = Rc::new(Cell::new(0f32));
+    let (b1, b2) = (base_h.clone(), base_h.clone());
+    let undo_n = Rc::new(Cell::new(0usize));
+    let (u1, u2) = (undo_n.clone(), undo_n.clone());
+    vec![
+        Check("record the undo depth", Box::new(move |c, _| {
+            u1.set(c.doc.undo_depth());
+            Ok(())
+        })),
+        DoC("drag track 1's bottom edge down half a row", Box::new(|a, ctl| {
+            let y = edge_y(&ctl.borrow());
+            drag(a, 300.0, y, 300.0, y + PITCH / 2.0);
+        })),
+        Check("track 1 is 1.5x tall in the model and the view, not an undo step", Box::new(move |c, _| {
+            let h = c.project().tracks[0].height;
+            let ok = approx(h, 1.5, 0.02) && approx(c.view.pitch(0), PITCH * h, 0.5) && c.doc.undo_depth() == u2.get();
+            ok.then_some(()).ok_or(format!("height {h} pitch {} undo depth {} vs {}", c.view.pitch(0), c.doc.undo_depth(), u2.get()))
+        })),
+        DoC("reset track 1's height", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = c.project().tracks[0].id;
+            let _ = c.doc.set_track_height(t, 1.0);
+            c.ui_dirty = true;
+        })),
+        Check("track 1 back to its default height", Box::new(|c, _| {
+            let h = c.project().tracks[0].height;
+            (h == 1.0 && approx(c.view.pitch(0), PITCH, 0.01)).then_some(()).ok_or(format!("height {h}"))
+        })),
+        DoC("drag the bottom-panel splitter up 100 pt", Box::new(move |a, ctl| {
+            let (y, h) = { let c = ctl.borrow(); (splitter_y(&c), c.bottom_h()) };
+            b1.set(h);
+            drag(a, 700.0, y, 700.0, y - 100.0);
+        })),
+        Check("bottom panel 100 pt taller and saved with the project", Box::new(move |c, a| {
+            let h = c.bottom_h();
+            let saved = c.project().bottom_panel_heights.values().copied().next();
+            let ok = approx(h, b2.get() + 100.0, 0.5) && saved == Some(h) && approx(a.global::<Studio>().get_bottom_h(), h, 0.01);
+            ok.then_some(()).ok_or(format!("h {h} base {} saved {saved:?}", b2.get()))
+        })),
+        DoC("drag the splitter to the bottom edge", Box::new(|a, ctl| {
+            let y = splitter_y(&ctl.borrow());
+            drag(a, 700.0, y, 700.0, 815.0);
+        })),
+        Check("bottom panel collapses to its tab row", Box::new(|c, _| {
+            approx(c.bottom_h(), crate::splitters::BOTTOM_COLLAPSED_H, 0.01).then_some(()).ok_or(format!("h {}", c.bottom_h()))
+        })),
+        DoC("restore the default panel height", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let kinds: Vec<String> = c.project().bottom_panel_heights.keys().cloned().collect();
+            for k in kinds {
+                c.doc.set_bottom_panel_height(&k, None);
+            }
+            c.ui_dirty = true;
+        })),
+    ]
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
@@ -4220,6 +4290,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(time_fx_steps());
     all.extend(automation_steps());
     all.extend(field_device_steps());
+    all.extend(splitter_steps());
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));

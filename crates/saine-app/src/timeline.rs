@@ -12,6 +12,13 @@ pub const RULER_H: f32 = 39.0;
 /// Track rows are 88 px at the reference's default zoom (88 × 0.85), including a 0.5 pt rule.
 pub const TRACK_PITCH: f32 = 74.8;
 pub const TRACK_H: f32 = 74.3;
+/// Shortest row: the reference's 20 px floor.
+pub const MIN_TRACK_PITCH: f32 = 17.0;
+
+/// Row pitch for a track height scale (the reference's `max(88 × scale, 20)` px).
+pub fn pitch_for_scale(scale: f32) -> f32 {
+    (TRACK_PITCH * scale).max(MIN_TRACK_PITCH)
+}
 /// Master row: 36 px, its top rule included.
 pub const MASTER_H: f32 = 30.6;
 /// Master row height while automation lanes are shown (60-automation-lanes.png: separator at
@@ -29,13 +36,16 @@ pub struct View {
     pub scroll_y: f64,
     /// Extra height below each track (expanded automation lanes, src/automation.rs), by track index.
     pub extra: Vec<f32>,
+    /// Row pitch of each track (its height scale × [TRACK_PITCH]), by track index; missing
+    /// entries use [TRACK_PITCH].
+    pub pitches: Vec<f32>,
     /// Height of the master row pinned to the bottom (taller while automation is shown).
     pub master_h: f32,
 }
 
 impl Default for View {
     fn default() -> Self {
-        View { start_beats: 0.0, px_per_beat: DEFAULT_PX_PER_BEAT, scroll_y: 0.0, extra: Vec::new(), master_h: MASTER_H }
+        View { start_beats: 0.0, px_per_beat: DEFAULT_PX_PER_BEAT, scroll_y: 0.0, extra: Vec::new(), pitches: Vec::new(), master_h: MASTER_H }
     }
 }
 
@@ -46,13 +56,17 @@ impl View {
     pub fn beat_at(&self, x: f32) -> f64 {
         self.start_beats + x as f64 / self.px_per_beat
     }
+    /// Row pitch of track `i` (lane plus its 0.5 pt rule), without automation rows.
+    pub fn pitch(&self, i: usize) -> f32 {
+        self.pitches.get(i).copied().unwrap_or(TRACK_PITCH)
+    }
     /// Content offset of track `i` (sum of the rows above it, without the ruler or scroll).
     pub fn track_offset(&self, i: usize) -> f32 {
-        i as f32 * TRACK_PITCH + self.extra.iter().take(i).sum::<f32>()
+        (0..i).map(|k| self.track_span(k)).sum()
     }
     /// Total height of track `i` including its expanded automation rows.
     pub fn track_span(&self, i: usize) -> f32 {
-        TRACK_PITCH + self.extra.get(i).copied().unwrap_or(0.0)
+        self.pitch(i) + self.extra.get(i).copied().unwrap_or(0.0)
     }
     pub fn track_top(&self, i: usize) -> f32 {
         RULER_H + self.track_offset(i) - self.scroll_y as f32
@@ -63,14 +77,15 @@ impl View {
         if y < top {
             return None;
         }
-        for (i, e) in self.extra.iter().enumerate() {
-            let h = TRACK_PITCH + e;
+        let n = self.extra.len().max(self.pitches.len());
+        for i in 0..n {
+            let h = self.track_span(i);
             if y < top + h {
                 return Some(i);
             }
             top += h;
         }
-        Some(self.extra.len() + ((y - top) / TRACK_PITCH).floor() as usize)
+        Some(n + ((y - top) / TRACK_PITCH).floor() as usize)
     }
     pub fn zoom_at(&mut self, factor: f64, x: f32) {
         let anchor = self.beat_at(x);
@@ -100,6 +115,8 @@ pub struct ClipVis {
     pub len_beats: f64,
     pub color: [f32; 3],
     pub selected: bool,
+    /// Clip on a muted track: drawn grey, without the selection tint.
+    pub muted: bool,
     pub name: String,
     /// Waveform source: pyramid slot, first frame (engine rate), frame count.
     pub wave: Option<(Slot, f64, f64)>,
@@ -116,7 +133,7 @@ impl ClipVis {
     pub fn rect(&self, v: &View) -> (f32, f32, f32, f32) {
         let x = v.x_of(self.start_beats);
         let w = (self.len_beats * v.px_per_beat) as f32;
-        (x, v.track_top(self.track_index) + 0.5, w.max(1.0), TRACK_H - 1.0)
+        (x, v.track_top(self.track_index) + 0.5, w.max(1.0), v.pitch(self.track_index) - 1.5)
     }
 }
 
@@ -130,6 +147,7 @@ pub struct Scene<'a> {
     pub live: &'a [ClipVis],
     pub playhead_beats: f64,
     pub loop_beats: (f64, f64),
+    pub loop_on: bool,
     pub beats_per_bar: f64,
     pub frames_per_beat: f64,
     /// Automation overlay (src/automation.rs) while lanes are shown.
@@ -174,7 +192,7 @@ pub fn hit_test(v: &View, size: (f32, f32), tracks: usize, clips: &[ClipVis], x:
         }
     }
     match v.track_at(y) {
-        Some(t) if t < tracks && y < v.track_top(t) + TRACK_H => Hit::Track(t),
+        Some(t) if t < tracks && y < v.track_top(t) + v.pitch(t) - 0.5 => Hit::Track(t),
         _ => Hit::Empty,
     }
 }
@@ -271,14 +289,15 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     bands_and_grid(&mut dl.base, sc, &px, RULER_H, lanes_bottom, LANE);
     for (i, t) in sc.tracks.iter().enumerate() {
         let top = v.track_top(i);
-        if top > lanes_bottom || top + TRACK_PITCH < RULER_H {
+        let row_h = v.pitch(i) - 0.5;
+        if top > lanes_bottom || top + row_h + 0.5 < RULER_H {
             continue;
         }
         if t.selected {
-            bands_and_grid(&mut dl.base, sc, &px, top, top + TRACK_H, LANE_SEL);
+            bands_and_grid(&mut dl.base, sc, &px, top, top + row_h, LANE_SEL);
         }
         let sep = if t.selected { 0x2c2d30 } else { 0x26272a };
-        dl.base.push(px.rect(0.0, top + TRACK_H - 0.5, w, 1.0, rgba(rgb(sep), 1.0)));
+        dl.base.push(px.rect(0.0, top + row_h - 0.5, w, 1.0, rgba(rgb(sep), 1.0)));
     }
 
     // ---- clips ----
@@ -292,15 +311,34 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
             midi_clip(&mut dl.base, sc, &px, c, notes, (x, y, cw, ch));
             continue;
         }
-        let (body, wave) = if c.selected {
-            (mix(c.color, WHITE, 0.72), rgba(mix(c.color, BLACK, 0.55), 1.0))
+        let (head, body) = if c.muted {
+            (rgb(0xa8a8a8), rgb(0x6b6b6b))
+        } else if c.selected {
+            (c.color, mix(c.color, [0.91; 3], 0.69))
         } else {
-            (mix(rgb(0x131417), c.color, 0.30), rgba(mix(c.color, WHITE, 0.15), 1.0))
+            (c.color, c.color)
         };
+        let wave = rgba(mix(body, BLACK, 0.92), 0.89);
         // Clip outline = rounded rect in the header colour; body drawn over it.
-        dl.base.push(px.rounded(x, y, cw, ch, r, rgba(c.color, 1.0)));
+        dl.base.push(px.rounded(x, y, cw, ch, r, rgba(head, 1.0)));
         dl.base.push(px.rect(x, y + CLIP_HEADER, cw, ch - CLIP_HEADER - r, rgba(body, 1.0)));
         dl.base.push(px.rounded(x, y + ch - 2.0 * r, cw, 2.0 * r, r, rgba(body, 1.0)));
+        dl.base.push(px.rect(x, y + CLIP_HEADER, cw, 1.0 / sc.scale, rgba(BLACK, 0.4)));
+        let half_bar = sc.beats_per_bar / 2.0;
+        let gw = 0.85f32.max(1.0 / sc.scale);
+        let mut k = (c.start_beats.max(v.start_beats) / half_bar).floor() as i64 + 1;
+        while half_bar * v.px_per_beat >= 10.0 {
+            let beat = k as f64 * half_bar;
+            let gx = v.x_of(beat);
+            if beat >= c.start_beats + c.len_beats || gx > w {
+                break;
+            }
+            if gx >= 0.0 {
+                let a = if k % 2 == 0 { 0.2 } else { 0.125 };
+                dl.base.push(px.rect(gx, y + CLIP_HEADER + 1.0 / sc.scale, gw, ch - CLIP_HEADER - 1.0 / sc.scale, rgba(BLACK, a)));
+            }
+            k += 1;
+        }
         if let Some((slot, first_frame, frames)) = c.wave {
             let vx0 = x.max(0.0);
             let vx1 = (x + cw).min(w);
@@ -359,7 +397,8 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     let lx0 = v.x_of(sc.loop_beats.0);
     let lx1 = v.x_of(sc.loop_beats.1);
     if lx1 > 0.0 && lx0 < w {
-        o.push(px.rect(lx0.max(0.0), 18.0, lx1.min(w) - lx0.max(0.0), 6.0, rgba(rgb(0x4d4d4f), 1.0)));
+        let color = if sc.loop_on { rgb(0xefb259) } else { rgb(0x4d4d4f) };
+        o.push(px.rect(lx0.max(0.0), 17.6, lx1.min(w) - lx0.max(0.0), 6.8, rgba(color, 1.0)));
     }
 
     // ---- master lane (over, pinned to the bottom) ----
@@ -440,17 +479,19 @@ fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &
     // On a track that isn't selected the reference draws the body in the plain track colour
     // with a darker line under the title and no grid (50-input-selector-open.png); on the
     // selected track it is the light lavender body with grid lines (33/34-*.png).
-    let track_selected = sc.tracks.get(c.track_index).is_some_and(|t| t.selected);
-    let body = if track_selected { mix(c.color, WHITE, 0.67) } else { c.color };
+    // A muted track's clips are grey with no selection tint, like audio clips.
+    let track_selected = !c.muted && sc.tracks.get(c.track_index).is_some_and(|t| t.selected);
+    let head = if c.muted { rgb(0xa8a8a8) } else { c.color };
+    let body = if c.muted { rgb(0x6b6b6b) } else if track_selected { mix(c.color, WHITE, 0.67) } else { c.color };
     // 0.5 pt outline (greyish in the reference), then title strip and body inset by it.
     out.push(px.rounded(x, y, cw, ch, r, rgba(mix(body, rgb(0x4a4c58), 0.45), 1.0)));
-    out.push(px.rounded(x + 0.5, y + 0.5, cw - 1.0, ch - 1.0, r - 0.5, rgba(c.color, 1.0)));
+    out.push(px.rounded(x + 0.5, y + 0.5, cw - 1.0, ch - 1.0, r - 0.5, rgba(head, 1.0)));
     let by = y + CLIP_HEADER + 0.5;
     out.push(px.rect(x + 0.5, by, cw - 1.0, ch - CLIP_HEADER - 0.5 - r, rgba(body, 1.0)));
     out.push(px.rounded(x + 0.5, y + ch - 2.0 * r, cw - 1.0, 2.0 * r - 0.5, r - 0.5, rgba(body, 1.0)));
     let v = &sc.view;
     if !track_selected {
-        out.push(px.rect(x + 0.5, by - 0.5, cw - 1.0, 0.5, rgba(mix(c.color, BLACK, 0.4), 1.0)));
+        out.push(px.rect(x + 0.5, by - 0.5, cw - 1.0, 0.5, rgba(mix(head, BLACK, 0.4), 1.0)));
     }
     let mut step = sc.beats_per_bar / 2.0;
     while step * v.px_per_beat < 10.0 {
@@ -469,7 +510,7 @@ fn midi_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis, notes: &
     }
     let nh = ch - CLIP_HEADER - 6.0;
     let bar_h = (nh / 24.0).clamp(1.5, 3.0);
-    let ink = rgba(mix(c.color, BLACK, 0.45), 1.0);
+    let ink = rgba(mix(head, BLACK, 0.45), 1.0);
     for n in notes {
         let nx = x + n[0] * cw;
         let nw = (n[1] * cw).max(1.0).min(x + cw - nx);
@@ -547,7 +588,7 @@ mod tests {
         assert!((v.beat_at(v.x_of(4.0)) - 4.0).abs() < 1e-4);
         assert_eq!(v.track_at(RULER_H + 1.0), Some(0));
         assert_eq!(v.track_at(RULER_H + TRACK_PITCH + 1.0), Some(1));
-        let clips = vec![ClipVis { track_index: 0, start_beats: 4.0, len_beats: 4.0, color: [1.0; 3], selected: false, name: String::new(), wave: None, midi: None, live: None }];
+        let clips = vec![ClipVis { track_index: 0, start_beats: 4.0, len_beats: 4.0, color: [1.0; 3], selected: false, muted: false, name: String::new(), wave: None, midi: None, live: None }];
         let size = (900.0, 400.0);
         assert_eq!(hit_test(&v, size, 2, &clips, 10.0, 5.0), Hit::Ruler);
         assert_eq!(hit_test(&v, size, 2, &clips, 70.0, 60.0), Hit::Clip { index: 0, zone: Zone::Body });

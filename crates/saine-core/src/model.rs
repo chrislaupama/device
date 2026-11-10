@@ -95,6 +95,17 @@ pub struct Track {
     /// Automation lanes (at most one per target).
     #[serde(default)]
     pub automation: Vec<AutomationLane>,
+    /// Row height as a multiple of the default 88 px row ([Track::HEIGHT_RANGE]).
+    #[serde(default = "unit_height", skip_serializing_if = "is_unit_height")]
+    pub height: f32,
+}
+
+fn unit_height() -> f32 {
+    1.0
+}
+
+fn is_unit_height(h: &f32) -> bool {
+    *h == 1.0
 }
 
 /// Where a device sits on its track.
@@ -175,6 +186,10 @@ pub struct Project {
     /// Master bus automation (volume only).
     #[serde(default)]
     pub master_automation: Vec<AutomationLane>,
+    /// Bottom panel height (window points) per panel kind ("devices", "clip", "mixer") after the
+    /// user dragged the splitter; absent kinds use the default height. Not an undo step.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub bottom_panel_heights: std::collections::BTreeMap<String, f32>,
 }
 
 impl Default for Project {
@@ -196,6 +211,7 @@ impl Default for Project {
             assets: Vec::new(),
             next_id: 1,
             master_automation: Vec::new(),
+            bottom_panel_heights: Default::default(),
         };
         let a = p.alloc_id();
         p.tracks.push(Track::new(TrackId(a), TrackKind::Audio, "Audio", ColorIndex::FIRST));
@@ -208,8 +224,11 @@ impl Default for Project {
 
 impl Track {
     pub fn new(id: TrackId, kind: TrackKind, name: &str, color: ColorIndex) -> Self {
-        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, arm: false, monitor: false, input: None, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default(), devices: Vec::new(), instrument_plugin: None, automation: Vec::new() }
+        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, arm: false, monitor: false, input: None, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default(), devices: Vec::new(), instrument_plugin: None, automation: Vec::new(), height: 1.0 }
     }
+
+    /// Row height scale limits (the reference's per-track height scale).
+    pub const HEIGHT_RANGE: (f32, f32) = (0.25, 6.0);
 }
 
 impl Project {

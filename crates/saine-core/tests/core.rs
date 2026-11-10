@@ -233,6 +233,45 @@ fn seal_coalescing_starts_a_new_undo_step() {
 }
 
 #[test]
+fn track_and_panel_heights_are_view_changes_not_undo_steps() {
+    let mut d = Document::new(Project::default());
+    let track = d.project().tracks[0].id;
+    assert!(d.set_track_height(track, 0.1).is_err());
+    assert!(d.set_track_height(track, f32::NAN).is_err());
+    assert!(d.set_track_height(TrackId(999), 1.0).is_err());
+    let rev = d.revision();
+    d.set_track_height(track, 2.0).unwrap();
+    assert_eq!(d.project().track(track).unwrap().height, 2.0);
+    assert!(d.revision() > rev, "a track height marks the project dirty");
+    assert!(!d.can_undo(), "but is not an undo step");
+
+    let rev = d.revision();
+    d.set_bottom_panel_height("devices", Some(420.0));
+    assert!(d.revision() > rev, "a panel height marks the project dirty");
+    assert!(!d.can_undo(), "but is not an undo step");
+    d.set_bottom_panel_height("devices", None);
+    assert!(d.project().bottom_panel_heights.is_empty());
+}
+
+#[test]
+fn track_and_panel_heights_persist_and_default_when_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = Document::new(Project::default());
+    let track = d.project().tracks[1].id;
+    d.set_track_height(track, 0.5).unwrap();
+    d.set_bottom_panel_height("mixer", Some(500.0));
+    persist::save(d.project(), dir.path()).unwrap();
+    let loaded = persist::load(dir.path()).unwrap().project;
+    assert_eq!(loaded.track(track).unwrap().height, 0.5);
+    assert_eq!(loaded.bottom_panel_heights.get("mixer"), Some(&500.0));
+
+    let json = serde_json::to_string(&Project::default()).unwrap();
+    assert!(!json.contains("\"height\"") && !json.contains("bottom_panel_heights"), "defaults are not written");
+    let old: Project = serde_json::from_str(&json).unwrap();
+    assert!(old.tracks.iter().all(|t| t.height == 1.0));
+}
+
+#[test]
 fn arm_monitor_input_commands() {
     let mut d = Document::new(Project::default());
     let (audio, inst) = (d.project().tracks[0].id, d.project().tracks[1].id);
