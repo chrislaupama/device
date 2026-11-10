@@ -100,6 +100,8 @@ struct Args {
     clip_menu_state: bool,
     /// Step sequencer review state: lane tab shown (0 Steps .. 4 Tie), or None.
     seq_state: Option<i32>,
+    /// Clip sidebar pattern list review: 0 empty MIDI clip, 1 chords made, 2 drum patterns made.
+    patterns_state: Option<i32>,
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
     /// 1 export dialog, 2 unsaved-changes prompt, 3 export dialog on Stems, 4 with its Tracks menu open.
@@ -230,6 +232,10 @@ fn parse_args() -> Result<Args, String> {
                 "reference-input-menu" => {
                     a.reference_default = true;
                     a.input_menu_state = true;
+                }
+                s if s.starts_with("review-patterns-") => {
+                    a.reference_default = true;
+                    a.patterns_state = s.rsplit('-').next().and_then(|l| l.parse().ok());
                 }
                 s if s.starts_with("review-step-sequencer") => {
                     a.reference_default = true;
@@ -846,6 +852,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.seek_beats(20.0);
             if let Some(id) = c.insert_midi_clip() {
                 c.open_clip_menu(id, 700.0, 215.0, (10_000.0, 10_000.0));
+            }
+        }
+    }
+    if let Some(state) = args.patterns_state {
+        let mut c = ctl.borrow_mut();
+        if let Some(inst) = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id) {
+            c.select_track(inst);
+            if state == 2 {
+                c.execute(saine_core::Command::SetInstrumentPlugin { track: inst, device: Some(saine_core::builtin::drum_rack::DRUM_RACK.instantiate()) });
+            }
+            c.seek_beats(20.0);
+            if let Some(id) = c.insert_midi_clip() {
+                c.select_clip(Some(id));
+                if state >= 1 {
+                    c.composer_create();
+                }
             }
         }
     }

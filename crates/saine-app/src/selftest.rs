@@ -4964,6 +4964,97 @@ fn section_steps() -> Vec<Step> {
     ]
 }
 
+/// Clip sidebar pattern list (Saine's local library): Create, load a row, Original,
+/// Type and Genre, each one undo step. Removes its clip at the end.
+fn pattern_library_steps() -> Vec<Step> {
+    use Step::*;
+    let hist = Rc::new(Cell::new(0usize));
+    fn one(hc: &Rc<Cell<usize>>, c: &Controller, label: &str) -> Result<(), String> {
+        let n = c.doc.history_labels().len();
+        let was = hc.get();
+        hc.set(n);
+        (n == was + 1 && c.doc.undo_label() == Some(label)).then_some(()).ok_or(format!("history {was} -> {n}, last {:?} (want {label})", c.doc.undo_label()))
+    }
+    fn comp(c: &Controller) -> Option<saine_core::library::Composer> {
+        c.pr_clip().and_then(|m| m.composer.clone())
+    }
+    let h = |_: u8| hist.clone();
+    let (h0, h1, h2, h3, h4, h5) = (h(0), h(1), h(2), h(3), h(4), h(5));
+    vec![
+        Do("patterns: Escape (close menus)", Box::new(|a| key(a, Key::Escape, false, false))),
+        DoC("patterns: Cmd+Shift+M on the instrument track at bar 61; select the clip", Box::new(move |a, ctl| {
+            let mut c = ctl.borrow_mut();
+            let Some(t) = track_of(&c, TrackKind::Instrument).map(|i| c.project().tracks[i].id) else { return };
+            c.select_track(t);
+            c.seek_beats(240.0);
+            if let Some(id) = c.insert_midi_clip() {
+                c.select_clip(Some(id));
+            }
+            h0.set(c.doc.history_labels().len());
+            c.update_ui(a);
+        })),
+        Check("patterns: empty list, 'Create chords' pill", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (slint::Model::row_count(&s.get_composer_rows()) == 0 && s.get_composer_create_text() == "Create chords").then_some(()).ok_or(format!("{:?}", s.get_composer_create_text()))
+        })),
+        Do("patterns: click Create chords", Box::new(|a| click(a, 5.0 + 60.0, 425.0 + 352.5 + 13.5))),
+        Check("patterns: six chord patterns, the first plays in the clip (one undo step 'Create Patterns')", Box::new(move |c, a| {
+            one(&h1, c, "Create Patterns")?;
+            let k = comp(c).ok_or("no composer")?;
+            let s = a.global::<Studio>();
+            let notes = c.pr_clip().map_or(0, |m| m.notes.len());
+            let ok = k.playing == Some(0) && slint::Model::row_count(&s.get_composer_rows()) == 6 && notes > 0 && s.get_composer_create_text() == "Create new chords" && s.get_composer_original();
+            ok.then_some(()).ok_or(format!("playing {:?} notes {notes}", k.playing))
+        })),
+        Do("patterns: click the third row", Box::new(|a| click(a, 5.0 + 60.0, 425.0 + 104.0 + 25.0 + 2.0 * 35.0 + 16.0))),
+        Check("patterns: row 3 plays (one undo step 'Load Pattern')", Box::new(move |c, _| {
+            one(&h2, c, "Load Pattern")?;
+            (comp(c).and_then(|k| k.playing) == Some(2)).then_some(()).ok_or("row 3 not playing".into())
+        })),
+        Do("patterns: click Original on the clip chip", Box::new(|a| click(a, 5.0 + 10.5 + 234.0 - 8.0 - 20.0, 425.0 + 38.0 + 15.25))),
+        Check("patterns: the clip's own (empty) notes are back (one undo step 'Load Original')", Box::new(move |c, a| {
+            one(&h3, c, "Load Original")?;
+            let ok = comp(c).is_some_and(|k| k.playing.is_none()) && c.pr_clip().is_some_and(|m| m.notes.is_empty()) && !a.global::<Studio>().get_composer_original();
+            ok.then_some(()).ok_or("original not restored".into())
+        })),
+        DoC("patterns: Type menu › Bass", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.clip_menu_open(4);
+            c.clip_menu_pick(1);
+            c.update_ui(a);
+        })),
+        Check("patterns: Bass set made and playing (one undo step 'Pattern Type Change')", Box::new(move |c, a| {
+            one(&h4, c, "Pattern Type Change")?;
+            let k = comp(c).ok_or("no composer")?;
+            let ok = k.part == saine_core::library::PartType::Bass && k.playing == Some(0) && a.global::<Studio>().get_composer_part_text() == "Bass";
+            ok.then_some(()).ok_or(format!("{:?} playing {:?}", k.part, k.playing))
+        })),
+        DoC("patterns: Genre menu › Drill", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.clip_menu_open(5);
+            c.clip_menu_pick(3);
+            c.update_ui(a);
+        })),
+        Check("patterns: Genre reads Drill (one undo step 'Pattern Genre Change')", Box::new(move |c, a| {
+            one(&h5, c, "Pattern Genre Change")?;
+            (a.global::<Studio>().get_composer_genre_text() == "Drill").then_some(()).ok_or("genre not set".into())
+        })),
+        DoC("patterns: remove the clip", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            if let Some(id) = c.pr_clip().map(|m| m.id) {
+                c.execute(saine_core::Command::RemoveMidiClip { clip: id });
+            }
+            c.select_clip(None);
+            c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            c.seek_beats(0.0);
+        })),
+        Check("patterns: clip removed", Box::new(|c, _| {
+            let left = track_of(c, TrackKind::Instrument).map_or(0, |i| c.project().tracks[i].midi_clips.iter().filter(|m| m.start >= 240 * PPQ).count());
+            (left == 0).then_some(()).ok_or(format!("{left} clips left"))
+        })),
+    ]
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     let mut all = steps();
@@ -4985,6 +5076,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(automation_steps());
     all.extend(field_device_steps());
     all.extend(step_sequencer_steps());
+    all.extend(pattern_library_steps());
     all.extend(splitter_steps());
     all.extend(files_steps());
     all.extend(section_steps());

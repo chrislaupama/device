@@ -440,7 +440,8 @@ pub fn create_set(part: PartType, genre: usize, key: Option<ProjectKey>, set: u3
             let fe = feel(genre);
             let mut c = Ctx { scale: Scale::new(key, fe.minor), feel: fe, chords: spans(prog, clip, ticks_per_bar), rng, out: Vec::new() };
             play(&mut c);
-            let mut notes: Vec<Note> = c.out.into_iter().filter(|n| n.start < clip.max(PPQ)).collect();
+            let end = clip.max(PPQ);
+            let mut notes: Vec<Note> = c.out.into_iter().filter(|n| n.start < end).map(|n| Note { length: n.length.min(end - n.start), ..n }).collect();
             midi::sort_notes(&mut notes);
             for (id, n) in notes.iter_mut().enumerate() {
                 n.id = id as u32 + 1;
