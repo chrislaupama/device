@@ -45,6 +45,8 @@ pub const DEFAULT_SCROLL: f32 = GRID_Y + 67.0 * ROW_H - 106.5;
 const DOUBLE_CLICK: Duration = Duration::from_millis(350);
 /// Velocity of a key preview: 0.8 of full scale, as in the reference.
 pub const KEY_VELOCITY: u8 = 102;
+/// One zoom command step on the toolbar sliders' 0..1 range (the reference app's clip-editor zoom command).
+pub const ZOOM_STEP: f32 = 0.1;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PrView {
@@ -354,6 +356,8 @@ pub struct PrScene<'a> {
     pub curves: Vec<crate::shape_rack::CurveDraw>,
     /// MIDI clip loop bar: range in clip-relative beats and whether looping is on.
     pub clip_loop: Option<(f64, f64, bool)>,
+    /// Keyboard keys drawn as pressed (bit = pitch): the previewed note and the typed ones.
+    pub lit: u128,
 }
 
 fn rgba(c: [f32; 3], a: f32) -> [f32; 4] {
@@ -538,12 +542,21 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
     if !sc.audio {
         b.push(px.rect(0.0, GRID_Y, gx, h - GRID_Y, rgba(rgb(0x1a1b1e), 1.0)));
         b.push(px.rect(0.5, GRID_Y, 49.5, h - GRID_Y, rgba(WHITE, 1.0)));
+        // A pressed key takes the preview colour (white #b0b0b0, black #444). A white key spans
+        // its own row plus half of a black neighbour's row, as the separators below show.
+        let lit = |p: i32| (0..128).contains(&p) && sc.lit >> p & 1 == 1;
+        for p in v.visible().filter(|&p| lit(p) && !is_black(p)) {
+            let y = v.y_of(p);
+            let top = if is_black(p + 1) && !v.rows.folded() { y - v.row_h / 2.0 } else { y };
+            let bottom = if is_black(p - 1) && !v.rows.folded() { y + 1.5 * v.row_h } else { y + v.row_h };
+            b.push(px.rect(0.5, top, 49.5, bottom - top, rgba(rgb(0xb0b0b0), 1.0)));
+        }
         for p in v.visible() {
             let y = v.y_of(p);
             let line = rgba(rgb(0x555555), 1.0);
             if is_black(p) {
                 b.push(px.rect(30.5, y + v.row_h / 2.0 - 1.0, 19.5, 1.0, line));
-                b.push(px.rect(0.5, y, 30.0, v.row_h, rgba(rgb(0x1a1a1a), 1.0)));
+                b.push(px.rect(0.5, y, 30.0, v.row_h, rgba(rgb(if lit(p) { 0x444444 } else { 0x1a1a1a }), 1.0)));
                 b.push(px.rect(0.5, y, 30.0, 1.0, rgba(rgb(0x3c3c3c), 1.0)));
                 b.push(px.rect(0.5, y + v.row_h - 1.0, 30.0, 1.0, rgba(rgb(0x0d0d0d), 1.0)));
             } else if matches!(p.rem_euclid(12), 0 | 5) || v.rows.folded() {
@@ -697,12 +710,16 @@ impl Controller {
         self.pr_visible() || self.ac_clip().is_some()
     }
 
+    /// The instrument device of the open MIDI clip's track: what previews and typed notes play.
+    pub(crate) fn pr_device(&self) -> Option<u64> {
+        let p = self.project();
+        self.pr_clip().and_then(|c| p.find_midi_clip(c.id)).and_then(|(t, _)| p.tracks[t].instrument_plugin.as_ref()).map(|d| d.id.0)
+    }
+
     /// Preview `note` (pitch, velocity) through the clip's track instrument, releasing the one
     /// sounding before; `None` releases it. One note at a time, as in the reference (W2-20).
     pub fn pr_preview(&mut self, note: Option<(u8, u8)>) {
-        let p = self.project();
-        let device = self.pr_clip().and_then(|c| p.find_midi_clip(c.id)).and_then(|(t, _)| p.tracks[t].instrument_plugin.as_ref()).map(|d| d.id.0);
-        let want = note.zip(device).map(|((pitch, vel), d)| (d, pitch, vel));
+        let want = note.zip(self.pr_device()).map(|((pitch, vel), d)| (d, pitch, vel));
         if self.pr.preview == want.map(|(d, pitch, _)| (d, pitch)) {
             return;
         }
@@ -728,6 +745,7 @@ impl Controller {
         let cur = self.pr_clip().map(|c| c.id);
         if cur != self.pr.clip {
             self.pr_preview(None);
+            self.typing_release_all();
             self.pr.clip = cur;
             self.pr.selected.clear();
             self.pr.drag = None;
@@ -761,6 +779,9 @@ impl Controller {
         let pattern = self.pr_clip().and_then(|c| c.pattern.as_ref());
         if pattern.is_some() != self.pr.seq.pattern {
             self.pr.seq = crate::stepseq::SeqState::opened(pattern);
+        }
+        if self.typing.is_holding() && !(self.pr_visible() && self.pr.focused) {
+            self.typing_release_all();
         }
         if let Some(c) = self.pr_clip() {
             let ids: BTreeSet<u32> = c.notes.iter().map(|n| n.id).collect();
@@ -897,6 +918,7 @@ impl Controller {
                 key: None,
                 curves: Vec::new(),
                 clip_loop: self.pr_loop_preview().map(|l| (l.start as f64 / PPQ as f64, l.end as f64 / PPQ as f64, l.on)),
+                lit: 0,
             });
         }
         let clip = self.pr_clip()?;
@@ -927,6 +949,7 @@ impl Controller {
             key: self.pr_scale().filter(|(s, _)| s.highlight).map(|(_, k)| k),
             curves,
             clip_loop: self.pr_loop_preview().map(|l| (l.start as f64 / PPQ as f64, l.end as f64 / PPQ as f64, l.on)),
+            lit: self.pr.preview.map_or(0, |(_, pitch)| 1u128 << pitch) | self.typing.lit(),
         })
     }
 
@@ -1220,6 +1243,66 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    /// A wheel or trackpad scroll over the grid at (`x`, `y`) (view coordinates), with the reference app's
+    /// gesture rules: Ctrl (a trackpad pinch arrives this way) zooms time by `max(0.1, 1 - d * 0.02)`
+    /// (`d` = the browser's wheel delta, the opposite sign of Slint's); Alt + Shift zooms time and
+    /// Alt alone zooms the pitch rows (or time when the scroll is mostly sideways), both by
+    /// `1 + d * 0.001`; anything else pans. Zoom keeps the point under the pointer in place.
+    pub fn pr_wheel(&mut self, dx: f32, dy: f32, x: f32, y: f32, shift: bool, alt: bool, ctrl: bool) {
+        if ctrl {
+            return self.pr_zoom_at((1.0 + dy as f64 * 0.02).max(0.1), 1.0, x, y);
+        }
+        if !alt || (dx == 0.0 && dy == 0.0) {
+            return self.pr_scroll(dx, dy);
+        }
+        let (delta, sideways) = if dx.abs() > dy.abs() { (dx, true) } else { (dy, false) };
+        let f = 1.0 - delta as f64 * 0.001;
+        if shift || sideways { self.pr_zoom_at(f, 1.0, x, y) } else { self.pr_zoom_at(1.0, f, x, y) }
+    }
+
+    /// Fit zoom of the open editor (slider position 0): points per beat showing the whole clip.
+    fn pr_fit_ppb(&self) -> f64 {
+        let (gx, beats) = match self.ac_clip() {
+            Some(c) => (0.0, self.project().clip_length_ticks(c)),
+            None => (GRID_X, self.pr_clip().map(|c| c.length).unwrap_or(self.project().ticks_per_bar())),
+        };
+        PrView::fit_from(gx, self.pr.size, beats as f64 / PPQ as f64, 0.0).ppb
+    }
+
+    /// Multiply the horizontal (`fx`) and vertical (`fy`) zoom, keeping the beat and the pitch row
+    /// under (`x`, `y`) in place. Horizontal stays between the fit and one reference px per tick,
+    /// rows between the slider's limits: the same range the toolbar sliders cover.
+    pub fn pr_zoom_at(&mut self, fx: f64, fy: f64, x: f32, y: f32) {
+        let v = self.pr_view();
+        if fx != 1.0 {
+            let fit = self.pr_fit_ppb();
+            let max = PPQ as f64 * REF;
+            if fit < max {
+                let ppb = (v.ppb * fx).clamp(fit, max);
+                let at = v.beat_at(x);
+                self.pr.hzoom = ((ppb / fit).ln() / (max / fit).ln()).clamp(0.0, 1.0) as f32;
+                self.pr.hstart = at - (x - v.gx) as f64 / zoom_ppb(fit, self.pr.hzoom);
+            }
+        }
+        if fy != 1.0 && self.ac_clip().is_none() {
+            let (lo, hi) = row_h_range(&v);
+            let rh = (v.row_h * fy as f32).clamp(lo, hi);
+            let anchor = (y - GRID_Y).max(0.0);
+            self.pr.vzoom = Some(rh);
+            self.pr.scroll = ((v.scroll + anchor) / v.row_h * rh - anchor).max(0.0);
+        }
+        self.ui_dirty = true;
+    }
+
+    /// the reference app's clip-editor zoom command: one step of 0.1 on the slider's 0..1 range, in or out,
+    /// on one axis (0 vertical, 1 horizontal), clamped at both ends. Like the sliders, vertical
+    /// keeps the middle row in place and horizontal keeps the grid's left edge.
+    pub fn pr_zoom_step(&mut self, zoom_in: bool, axis: i32) {
+        let (vz, hz) = self.pr_zoom_values();
+        let now = if axis == 0 { vz } else { hz };
+        self.pr_zoom(axis, (now + if zoom_in { ZOOM_STEP } else { -ZOOM_STEP }).clamp(0.0, 1.0));
+    }
+
     fn pr_target(&self) -> (MidiClip, Vec<Note>) {
         let clip = self.pr_clip().cloned().expect("piano roll clip");
         let sel: Vec<Note> = clip.notes.iter().filter(|n| self.pr.selected.contains(&n.id)).copied().collect();
@@ -1270,7 +1353,7 @@ impl Controller {
                 let seed = clip.id.0.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ self.pr.humanize_count;
                 ("Humanize Notes", Self::replace_notes(&clip, &midi::humanize(&target, self.pr.humanize_amount, seed)))
             }
-            "reverse" => ("Reverse Notes", Self::replace_notes(&clip, &midi::reverse(&target, clip.length))),
+            "reverse" => ("Reverse Notes", Self::replace_notes(&clip, &midi::reverse(&target))),
             "legato" => ("Legato", Self::replace_notes(&clip, &midi::legato(&target, clip.length))),
             "smart_quantize" => {
                 let done = saine_core::smart_quantize::smart_quantize(&target, self.project().transport.bpm);
