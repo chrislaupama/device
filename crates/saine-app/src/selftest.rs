@@ -4163,6 +4163,11 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
             let skipped = if skips.get() > 0 { format!(" ({} skipped)", skips.get()) } else { String::new() };
             let fixture = ctl.try_borrow().map(|c| c.devices.catalog.fixture.is_some()).unwrap_or(false);
             let note = if fixture { " [plugin catalogue from a TEST fixture: the plugin checks did not exercise the engine scanner]" } else { "" };
+            eprintln!(
+                "self-test: {} frames waited for the GPU (at most {} in flight)",
+                crate::gpu::THROTTLED_FRAMES.load(std::sync::atomic::Ordering::Relaxed),
+                crate::gpu::MAX_FRAMES_IN_FLIGHT
+            );
             println!("self-test: {} / {n} checks passed{skipped}{note}", n - fails.get());
             t2.stop();
             let _ = slint::quit_event_loop();

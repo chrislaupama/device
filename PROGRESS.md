@@ -222,5 +222,10 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   `posix-fd-support` / `timer-support`. `SaineTestGui.clap` is cross-platform now; the Xvfb test checks
   size, timer and fd callbacks, close box, re-open and retire. Dragonfly Room (CLAP, VST3) and an LSP
   CLAP open and run by hand. The app's "Open device window" button is enabled on Linux.
+- Windows CI self-test crashed out of GPU memory (WARP) partway through: the runner's window is
+  occluded, so presenting never blocks and frames queued faster than WARP drew them. The app now keeps
+  at most 2 frames in flight (`gpu::Renderer::end_frame`, after each Slint frame); the self-test
+  prints how many frames had to wait. No cost when the GPU keeps up (0 waits on Linux, frame times
+  unchanged).
 - Still open: WASAPI has never run against an audio device (the hosted Windows runner has none);
   Linux editors pass no HiDPI scale to plugins.

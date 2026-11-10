@@ -250,6 +250,7 @@ jobs:
           $p = Start-Process -FilePath $exe -ArgumentList '--self-test','--no-audio' -NoNewWindow -Wait -PassThru -RedirectStandardOutput selftest-windows.txt -RedirectStandardError selftest-windows-stderr.txt
           "self-test exit code: 0x{0:X8}" -f $p.ExitCode
           Select-String -Path selftest-windows.txt -Pattern '^(FAIL|SKIP)' | ForEach-Object { $_.Line }
+          Select-String -Path selftest-windows-stderr.txt -Pattern 'frames waited for the GPU' | ForEach-Object { $_.Line }
           $line = (Select-String -Path selftest-windows.txt -Pattern '^self-test: (\d+) / (\d+) checks passed').Matches | Select-Object -First 1
           if (-not $line) { Get-Content selftest-windows-stderr.txt -Tail 30; throw "no self-test summary" }
           $line.Value
