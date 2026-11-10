@@ -288,6 +288,8 @@ pub struct PrState {
     pub vzoom: Option<f32>,
     /// The note previewed through the track's instrument: (device, pitch).
     pub preview: Option<(u64, u8)>,
+    /// Note-offs the engine rejected while its live queue was full, sent again once it drains.
+    pub preview_offs: Vec<(u64, u8)>,
 }
 
 impl Default for PrState {
@@ -317,6 +319,7 @@ impl Default for PrState {
             hstart: 0.0,
             vzoom: None,
             preview: None,
+            preview_offs: Vec::new(),
         }
     }
 }
@@ -703,14 +706,21 @@ impl Controller {
         if self.pr.preview == want.map(|(d, pitch, _)| (d, pitch)) {
             return;
         }
-        if let Some((d, pitch)) = self.pr.preview.take() {
-            let _ = self.engine.preview_note(d, pitch, 0);
+        if let Some(off) = self.pr.preview.take() {
+            self.pr.preview_offs.push(off);
         }
+        self.pr_retry_note_offs();
         if let Some((d, pitch, vel)) = want
             && self.engine.preview_note(d, pitch, vel).is_ok()
         {
             self.pr.preview = Some((d, pitch));
         }
+    }
+
+    /// Sends the held note-offs; a queue-full rejection keeps the note for the next try.
+    pub fn pr_retry_note_offs(&mut self) {
+        let engine = &self.engine;
+        self.pr.preview_offs.retain(|&(d, pitch)| engine.preview_note(d, pitch, 0).is_err_and(|e| e.code == saine_engine::ffi::SE_ERR_STATE));
     }
 
     /// Reset per-clip view state when another clip is opened.

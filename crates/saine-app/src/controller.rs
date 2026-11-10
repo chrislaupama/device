@@ -1051,6 +1051,9 @@ impl Controller {
 
     /// Drain finished background jobs (called from a UI timer and each frame).
     pub fn poll_jobs(&mut self) {
+        if !self.pr.preview_offs.is_empty() {
+            self.pr_retry_note_offs();
+        }
         self.clip_render_tick();
         while let Ok(job) = self.jobs_rx.try_recv() {
             self.pending_jobs = self.pending_jobs.saturating_sub(1);
