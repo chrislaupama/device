@@ -136,6 +136,8 @@ pub enum Command {
     SetSynthParams { track: TrackId, params: SynthParams },
     /// A MIDI clip's loop (Loop switch, Position, Length, loop bar) and its length.
     SetMidiLoop { clip: ClipId, clip_loop: Option<midi::ClipLoop>, length: Ticks },
+    /// An audio clip's loop (Loop switch, timeline right edge while looping).
+    SetClipLoop { clip: ClipId, clip_loop: Option<AudioLoop> },
     /// The piano roll's scale view of a MIDI clip (root, type, highlight, scale rows).
     SetClipScale { clip: ClipId, scale: Option<crate::scale::ClipScale> },
     SetTrackArm { track: TrackId, arm: bool },
@@ -230,7 +232,7 @@ impl Command {
             Command::SetStepPattern { pattern: Some(_), .. } => "Edit Step Sequencer".into(),
             Command::SetStepPattern { pattern: None, .. } => "Convert to MIDI Clip".into(),
             Command::SetSynthParams { .. } => "Synth Parameter Change".into(),
-            Command::SetMidiLoop { .. } => "Clip Loop".into(),
+            Command::SetMidiLoop { .. } | Command::SetClipLoop { .. } => "Clip Loop".into(),
             Command::SetClipScale { .. } => "Clip Scale".into(),
             Command::SetTrackArm { arm, .. } => (if *arm { "Arm Track" } else { "Disarm Track" }).into(),
             Command::SetTrackMonitor { .. } => "Input Monitoring Change".into(),
@@ -486,6 +488,14 @@ impl Command {
                 *c = probe;
                 p.tracks[ti].clips.sort_by_key(|c| (c.start, c.id));
                 Ok(inv)
+            }
+            Command::SetClipLoop { clip, clip_loop } => {
+                if let Some(l) = &clip_loop {
+                    l.validate().map_err(|r| invalid("loop", r))?;
+                }
+                let (ti, ci) = p.find_clip(clip).ok_or(EditError::ClipNotFound(clip))?;
+                let old = std::mem::replace(&mut p.tracks[ti].clips[ci].clip_loop, clip_loop);
+                Ok(Command::SetClipLoop { clip, clip_loop: old })
             }
             Command::SetClipGain { clip, gain } => {
                 validate_gain("clip_gain", gain)?;

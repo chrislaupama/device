@@ -1350,6 +1350,67 @@ fn steps() -> Vec<Step> {
             let clip = c.ac_clip().ok_or("no audio clip open")?;
             (clip.warp.is_default() && a.global::<Studio>().get_ac_transpose_text() == "0 st").then_some(()).ok_or(format!("warp {:?}", clip.warp))
         })),
+        Do("audio loop: click the footer Loop switch", Box::new(|a| click(a, 260.0 + 202.0 + 10.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 13.0 + 7.0))),
+        Check("Loop on over the whole content: same length, one \"Clip Loop\" step, footer Loop on", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let content = c.project().content_length_ticks(clip);
+            let l = clip.clip_loop.ok_or("no loop")?;
+            (l.on && l.start == 0 && l.end == content && l.length == content && c.project().clip_length_ticks(clip) == content && c.doc.undo_label().as_deref() == Some("Clip Loop") && a.global::<Studio>().get_pr_loop_on())
+                .then_some(())
+                .ok_or(format!("{l:?} content {content} {:?}", c.doc.undo_label()))
+        })),
+        DoC("audio loop: loop the second quarter of the content", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let Some(clip) = c.ac_clip().cloned() else { return };
+            let content = c.project().content_length_ticks(&clip);
+            let l = saine_core::model::AudioLoop { on: true, start: content / 4, end: content / 2, length: content };
+            c.execute(saine_core::Command::SetClipLoop { clip: clip.id, clip_loop: Some(l) });
+        })),
+        DoC("audio loop: drag the clip's right edge out to twice its content", Box::new(move |a, ctl| {
+            let (x0, x1, y) = {
+                let c = ctl.borrow();
+                let Some(clip) = c.ac_clip() else { return };
+                let (s, content) = (clip.start as f64 / PPQ as f64, c.project().content_length_ticks(clip) as f64 / PPQ as f64);
+                (LANE_X + c.view.x_of(s + content), LANE_X + c.view.x_of(s + 2.0 * content), TRACK0_Y + 40.0 - c.view.scroll_y as f32)
+            };
+            drag(a, x0 - 2.0, y, x1 - 2.0, y);
+        })),
+        Check("the clip loops out to about twice its content in one step; waveform and footer follow", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let content = c.project().content_length_ticks(clip);
+            let len = c.project().clip_length_ticks(clip);
+            let i = c.clip_ids.iter().position(|&id| id == clip.id).ok_or("clip not drawn")?;
+            let segs = crate::peaks::wave_segments(c.project(), clip, c.rate);
+            let last = segs.last().map_or(0.0, |s| s.beats.1);
+            let s = a.global::<Studio>();
+            let tpb = c.project().ticks_per_bar();
+            let ok = (len - 2 * content).abs() <= PPQ / 2
+                && clip.clip_loop.is_some_and(|l| l.on && l.length == len)
+                && c.doc.undo_label().as_deref() == Some("Clip Loop")
+                && (c.clip_vis[i].len_beats - len as f64 / PPQ as f64).abs() < 1e-6
+                && (last - len as f64 / PPQ as f64).abs() < 1e-6
+                && segs.len() > 2
+                && s.get_pr_position_text() == crate::pianoroll::fmt_pos(content / 4, tpb)
+                && s.get_pr_length_text() == crate::pianoroll::fmt_len(content / 2 - content / 4, tpb);
+            ok.then_some(()).ok_or(format!("len {len} of {content}, {} pieces to {last}, pos {} length {} {:?}", segs.len(), s.get_pr_position_text(), s.get_pr_length_text(), c.doc.undo_label()))
+        })),
+        Do("audio loop: click the Loop switch off", Box::new(|a| click(a, 260.0 + 202.0 + 10.0, CLIP_Y + crate::highlight::DEFAULT_BOTTOM_H - 54.5 + 13.0 + 7.0))),
+        Check("Loop off: the source window plays once; the range and looped length are kept", Box::new(|c, a| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            let content = c.project().content_length_ticks(clip);
+            let l = clip.clip_loop.ok_or("no loop")?;
+            (!l.on && l.length > content && l.start == content / 4 && c.project().clip_length_ticks(clip) == content && !a.global::<Studio>().get_pr_loop_on()).then_some(()).ok_or(format!("{l:?}"))
+        })),
+        DoC("audio loop: undo the four loop edits", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            for _ in 0..4 {
+                c.undo();
+            }
+        })),
+        Check("audio loop undone", Box::new(|c, _| {
+            let clip = c.ac_clip().ok_or("no audio clip open")?;
+            clip.clip_loop.is_none().then_some(()).ok_or(format!("{:?}", clip.clip_loop))
+        })),
         DoC("original BPM: double-click to type", Box::new(|_, ctl| ctl.borrow_mut().ac_edit_start(crate::warpedit::AcEdit::OriginalBpm))),
         Check("Original BPM edit box open with the shown value", Box::new(|_, a| {
             let s = a.global::<Studio>();
