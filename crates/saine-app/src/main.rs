@@ -155,6 +155,8 @@ struct Args {
     exit_after_frames: Option<u64>,
     zoom: Option<u32>,
     clip_menu: Option<i32>,
+    /// --ac-edit N: with review-warp, open the typed-value box (0 Original BPM, 1 Transpose).
+    ac_edit: Option<i32>,
     frame_stats: bool,
     /// --render-bench N: offscreen, render the state N times and print the mean / median /
     /// p95 milliseconds per full window render (Slint + wgpu surfaces + readback), then exit.
@@ -368,6 +370,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 a.clip_menu = Some(m);
             }
+            "--ac-edit" => a.ac_edit = Some(value(&mut i)?.parse().map_err(|e| format!("--ac-edit: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
             "--drag-bench" => {
@@ -1343,6 +1346,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_ac_bpm_drag, |c, phase: i32, dx: f32, dy: f32| c.ac_bpm_drag(phase, dx, dy));
     on!(on_ac_reverse_toggle, |c| c.ac_reverse_toggle());
     on!(on_ac_transpose_drag, |c, phase: i32, dx: f32, dy: f32| c.ac_transpose_drag(phase, dx, dy));
+    on!(on_ac_edit_start, |c, f: i32| c.ac_edit_start(if f == 0 { warpedit::AcEdit::OriginalBpm } else { warpedit::AcEdit::Transpose }));
+    on!(on_ac_edit_commit, |c, text: slint::SharedString| c.ac_edit_commit(&text));
+    on!(on_ac_edit_cancel, |c| c.ac_edit_cancel());
     on!(on_pr_value, |c, f: i32, phase: i32, dy: f32| c.pr_value(f, phase, dy));
     on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
@@ -1686,6 +1692,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let warp = args.warp_state;
         let reverse = args.reverse_state;
         let mut menu = args.clip_menu.filter(|_| warp);
+        let mut edit = args.ac_edit.filter(|_| warp);
         // Selects the clip once, after the import lands; later tab changes are the user's.
         let done = std::cell::Cell::new(false);
         audio_clip_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
@@ -1707,6 +1714,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 && let Some(m) = menu.take()
             {
                 c.clip_menu_open(m);
+            }
+            if c.ac_clip().is_some_and(|cl| cl.warp.enabled)
+                && let Some(f) = edit.take()
+            {
+                c.ac_edit_start(if f == 0 { warpedit::AcEdit::OriginalBpm } else { warpedit::AcEdit::Transpose });
             }
         });
     }
