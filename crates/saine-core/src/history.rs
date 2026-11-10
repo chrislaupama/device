@@ -191,7 +191,13 @@ impl Document {
 
     pub fn undo(&mut self) -> Result<bool, EditError> {
         let Some(mut e) = self.undo.pop() else { return Ok(false) };
-        let redo = e.undo.clone().apply(&mut self.project)?;
+        let redo = match e.undo.clone().apply(&mut self.project) {
+            Ok(redo) => redo,
+            Err(err) => {
+                self.undo.push(e);
+                return Err(err);
+            }
+        };
         e.redo = redo;
         e.coalesce_key = None; // never coalesce into an entry that was undone
         self.revision += 1;
@@ -201,7 +207,13 @@ impl Document {
 
     pub fn redo(&mut self) -> Result<bool, EditError> {
         let Some(mut e) = self.redo.pop() else { return Ok(false) };
-        let undo = e.redo.clone().apply(&mut self.project)?;
+        let undo = match e.redo.clone().apply(&mut self.project) {
+            Ok(undo) => undo,
+            Err(err) => {
+                self.redo.push(e);
+                return Err(err);
+            }
+        };
         e.undo = undo;
         self.revision += 1;
         self.undo.push(e);

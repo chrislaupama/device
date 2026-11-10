@@ -425,3 +425,15 @@ fn rejected_add_track_leaves_next_id_alone() {
     assert!(p.next_id > before + 100, "next_id {}", p.next_id);
 }
 
+
+#[test]
+fn a_failed_undo_keeps_its_history_entry() {
+    let mut p = Project::default();
+    p.tracks[0].name = String::new();
+    let track = p.tracks[0].id;
+    let mut d = Document::new(p);
+    d.execute(Command::RenameTrack { track, name: "Lead".into() }, Origin::User).unwrap();
+    assert!(d.undo().is_err(), "an empty old name cannot be restored");
+    assert_eq!((d.undo_depth(), d.undo_label(), d.can_redo()), (1, Some("Rename Track"), false));
+    assert_eq!(d.project().tracks[0].name, "Lead");
+}
