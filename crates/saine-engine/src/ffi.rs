@@ -692,6 +692,7 @@ unsafe extern "C" {
     pub fn se_asset_load_file(engine: *mut se_engine, path: *const c_char, out: *mut se_asset_info) -> i32;
     pub fn se_asset_release(engine: *mut se_engine, asset_id: u64) -> i32;
     pub fn se_asset_get_info(engine: *const se_engine, asset_id: u64, out: *mut se_asset_info) -> i32;
+    pub fn se_asset_reverse(engine: *mut se_engine, asset_id: u64, out: *mut se_asset_info) -> i32;
     pub fn se_asset_compute_peaks(
         engine: *const se_engine,
         asset_id: u64,

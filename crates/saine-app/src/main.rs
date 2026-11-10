@@ -33,6 +33,7 @@ mod panel_graph;
 mod device_views;
 mod devices;
 mod dialogs;
+mod files;
 mod panel_multiband;
 mod gpu;
 mod highlight;
@@ -51,6 +52,7 @@ mod sections;
 mod splitters;
 mod synth;
 mod timeline;
+mod warpedit;
 mod wavgen;
 mod zoom;
 
@@ -83,6 +85,10 @@ struct Args {
     /// 1 = reference-midi-clip (33), 2 = reference-pianoroll (34).
     midi_state: u8,
     audio_clip_state: bool,
+    /// review-warp: the audio clip state with drum hits, warped (Drums, 1.5x, one marker).
+    warp_state: bool,
+    /// review-reverse: review-warp with the clip reversed.
+    reverse_state: bool,
     /// reference-synth (32): Instrument track selected, Devices tab, test-state synth preset.
     synth_state: bool,
     /// --synth-page N: open that category page of the synth device (review screenshots).
@@ -113,6 +119,11 @@ struct Args {
     /// height; the second instead collapses the bottom panel to its tab row (compare
     /// z100-arr-resize-timeline-taller.png).
     splitters_review: u8,
+    /// review-files-projects / review-files-folders / review-files-project: Browser › Files with
+    /// an empty projects folder (compare z100-browser-files-projects.png), with a generated
+    /// "audio" folder of two WAVs open (compare z100-files-audio-folder-expanded.png), and with a
+    /// saved project open to its tracks, audio files and MIDI clips (no reference).
+    files_review: u8,
     /// review-section-added / review-sections-two: one new 8-bar section (compare
     /// z100-marker-after-plus-click.png), or two with the second selected.
     sections_review: u8,
@@ -203,6 +214,12 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.audio_clip_state = true;
                 }
+                s @ ("review-warp" | "review-reverse") => {
+                    a.reference_default = true;
+                    a.audio_clip_state = true;
+                    a.warp_state = true;
+                    a.reverse_state = s == "review-reverse";
+                }
                 "reference-synth" => {
                     a.reference_default = true;
                     a.synth_state = true;
@@ -268,6 +285,15 @@ fn parse_args() -> Result<Args, String> {
                 "review-bottom-collapsed" => {
                     a.reference_default = true;
                     a.splitters_review = 2;
+                }
+                s if s.starts_with("review-files-") => {
+                    a.reference_default = true;
+                    a.files_review = match s {
+                        "review-files-projects" => 1,
+                        "review-files-folders" => 2,
+                        "review-files-project" => 3,
+                        _ => return Err(format!("unknown state {s} (supported: review-files-projects, review-files-folders, review-files-project)")),
+                    };
                 }
                 "review-automation" => {
                     a.reference_default = true;
@@ -486,7 +512,13 @@ fn pick_import() -> Vec<PathBuf> {
 fn pick_project_dir(save: bool) -> Option<PathBuf> {
     if save {
         // A project is a directory; ask for its name and create it.
-        rfd::FileDialog::new().set_title("Save project").set_file_name(format!("Untitled.{}", saine_core::persist::EXTENSION)).save_file()
+        // Start in the projects folder Browser › Files › Projects lists.
+        let dialog = rfd::FileDialog::new().set_title("Save project").set_file_name(format!("Untitled.{}", saine_core::persist::EXTENSION));
+        let dialog = match crate::files::FilesUi::default().projects_dir.filter(|d| std::fs::create_dir_all(d).is_ok()) {
+            Some(d) => dialog.set_directory(d),
+            None => dialog,
+        };
+        dialog.save_file()
     } else {
         rfd::FileDialog::new().set_title("Open project folder (.saineproj)").pick_folder()
     }
@@ -853,6 +885,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.splitters_review == 2 {
         ctl.borrow_mut().doc.set_bottom_panel_height("devices", Some(0.0));
+    }
+    if args.files_review > 0 {
+        // Generated media and projects in a temporary folder, never the user's own files.
+        let root = std::env::temp_dir().join(format!("saine-review-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let projects = root.join("Projects");
+        let _ = std::fs::create_dir_all(&projects);
+        let audio = root.join("audio");
+        let _ = std::fs::create_dir_all(&audio);
+        let rate = 48_000;
+        let steady: Vec<f32> = (0..rate * 2).map(|i| 0.5 * (std::f32::consts::TAU * 220.0 * i as f32 / rate as f32).sin()).collect();
+        let _ = wavgen::write_wav(&audio.join("sine-a220-steady.wav"), rate as u32, 1, &steady);
+        let _ = wavgen::write_wav(&audio.join("sine-a440-pulsed.wav"), rate as u32, 1, &wavgen::sine_bursts(rate as u32));
+        let mut c = ctl.borrow_mut();
+        c.files.projects_dir = Some(projects.clone());
+        if args.files_review == 3 {
+            let mut p = c.project().clone();
+            p.assets.push(saine_core::Asset { id: saine_core::AssetId(p.next_id), relative_path: None, absolute_path: audio.join("sine-a220-steady.wav").to_string_lossy().into_owned(), sample_rate: rate as f64, channels: 1, frames: rate as u64 * 2 });
+            p.next_id += 1;
+            p.tracks[1].midi_clips.push(saine_core::MidiClip::empty(0, 4 * saine_core::PPQ));
+            let song = projects.join(format!("Song.{}", saine_core::persist::EXTENSION));
+            let _ = saine_core::persist::save(&p, &song);
+            c.browser_section(files::SECTION_FILES);
+            c.files_tab(files::TAB_PROJECTS);
+            c.files_expand(files::FileItem::Project(song));
+        } else if args.files_review == 2 {
+            c.files_add_folder(&audio);
+            c.files_expand(files::FileItem::Folder(audio));
+        } else {
+            c.browser_section(files::SECTION_FILES);
+            c.files_tab(files::TAB_PROJECTS);
+        }
     }
     if args.automation_review > 0 {
         use saine_core::{AutoPoint, AutomationLane, AutomationTarget, SynthParam};
@@ -1276,6 +1340,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_pr_action, |c, a: slint::SharedString| c.pr_action(a.as_str()));
     on!(on_clip_menu_open, |c, m: i32| c.clip_menu_open(m));
     on!(on_clip_menu_pick, |c, i: i32| c.clip_menu_pick(i));
+    on!(on_ac_bpm_drag, |c, phase: i32, dx: f32, dy: f32| c.ac_bpm_drag(phase, dx, dy));
+    on!(on_ac_reverse_toggle, |c| c.ac_reverse_toggle());
+    on!(on_ac_transpose_drag, |c, phase: i32, dx: f32, dy: f32| c.ac_transpose_drag(phase, dx, dy));
     on!(on_pr_value, |c, f: i32, phase: i32, dy: f32| c.pr_value(f, phase, dy));
     on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
@@ -1311,6 +1378,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_tree_activate, |c, i: i32| c.tree_activate(i.max(0) as usize));
     on!(on_tree_drag, |c, i: i32, phase: i32, x: f32, y: f32| c.tree_drag(i.max(0) as usize, phase, x, y));
     on!(on_tree_scroll_by, |c, dy: f32| c.tree_scroll_by(dy));
+    // ---- browser sections, Back / Forward, Files (src/files.rs) ----
+    on!(on_browser_section_select, |c, i: i32| c.browser_section(i.max(0) as usize));
+    on!(on_browser_back, |c| c.browser_back());
+    on!(on_browser_forward, |c| c.browser_forward());
+    on!(on_files_tab_select, |c, i: i32| c.files_tab(i.max(0) as usize));
+    on!(on_files_sort_toggle, |c| c.files_sort_toggle());
+    on!(on_files_click, |c, i: i32, chevron: bool| c.files_click(i.max(0) as usize, chevron));
+    on!(on_files_activate, |c, i: i32| c.files_activate(i.max(0) as usize));
+    on!(on_files_drag, |c, i: i32, phase: i32, x: f32, y: f32| c.files_drag(i.max(0) as usize, phase, x, y));
+    on!(on_files_scroll_by, |c, dy: f32| c.files_scroll_by(dy));
+    {
+        // The folder dialog runs with the controller NOT borrowed (its modal loop keeps rendering).
+        let ctl = ctl.clone();
+        studio.on_files_add_folder(move || {
+            if let Some(dir) = rfd::FileDialog::new().set_title("Add folder").pick_folder() {
+                ctl.borrow_mut().files_add_folder(&dir);
+            }
+        });
+    }
     on!(on_device_power, |c, id: i32| c.device_power(saine_core::DeviceId(id as u64)));
     on!(on_device_edit, |c, id: i32| c.device_edit(saine_core::DeviceId(id as u64)));
     on!(on_device_remove, |c, id: i32| c.device_remove(saine_core::DeviceId(id as u64)));
@@ -1390,6 +1476,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_panel_graph, |c, id: i32, phase: i32, x: f32, y: f32, fine: bool, alt: bool| {
         let id = saine_core::DeviceId(id as u64);
         if c.is_canvas_device(id) { c.panel_canvas(id, phase, x, y, alt, fine) } else { c.panel_graph(id, phase, x, y, fine, alt) }
+    });
+    on!(on_panel_graph_menu, |c, id: i32, x: f32, y: f32, wx: f32, wy: f32| {
+        let id = saine_core::DeviceId(id as u64);
+        if !c.is_canvas_device(id) {
+            c.panel_graph_menu(id, x, y, wx, wy);
+        }
     });
     on!(on_panel_eq, |c, id: i32, action: i32, value: i32| c.panel_eq(saine_core::DeviceId(id as u64), action, value));
     {
@@ -1583,25 +1675,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let dir = std::env::temp_dir().join(format!("saine-ref-{}", std::process::id()));
         std::fs::create_dir_all(&dir)?;
         let path = dir.join("sine-a220-steady.wav");
-        let samples: Vec<f32> = (0..8 * 44_100).map(|i| (std::f32::consts::TAU * 220.0 * i as f32 / 44_100.0).sin() * 0.5).collect();
+        let hit = |i: usize| if args.warp_state { (-((i % 22_050) as f32) / 900.0).exp() * (std::f32::consts::TAU * 90.0 * (i % 22_050) as f32 / 44_100.0).sin() * 0.6 } else { 0.0 };
+        let samples: Vec<f32> = (0..8 * 44_100).map(|i| (std::f32::consts::TAU * 220.0 * i as f32 / 44_100.0).sin() * if args.warp_state { 0.15 } else { 0.5 } + hit(i)).collect();
         wavgen::write_wav(&path, 44_100, 1, &samples)?;
         let mut c = ctl.borrow_mut();
         c.import_files(vec![path], ImportTarget::Selected, Some(12 * saine_core::PPQ));
         c.seek_beats(20.0);
         drop(c);
         let ctl = ctl.clone();
+        let warp = args.warp_state;
+        let reverse = args.reverse_state;
+        let mut menu = args.clip_menu.filter(|_| warp);
         // Selects the clip once, after the import lands; later tab changes are the user's.
         let done = std::cell::Cell::new(false);
         audio_clip_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
-            if done.get() {
-                return;
-            }
             let Ok(mut c) = ctl.try_borrow_mut() else { return };
-            let clip = c.project().tracks.iter().flat_map(|t| t.clips.iter()).next().map(|cl| cl.id);
-            if clip.is_some() {
-                c.select_clip(clip);
+            let clip = c.project().tracks.iter().flat_map(|t| t.clips.iter()).next().cloned();
+            if clip.is_some() && !done.get() {
+                c.select_clip(clip.as_ref().map(|cl| cl.id));
                 c.set_bottom_tab(BottomTab::Clip);
                 done.set(true);
+            }
+            if let Some(cl) = clip.filter(|cl| warp && !cl.warp.enabled) {
+                let mut w = saine_core::ClipWarp { enabled: true, mode: saine_core::WarpMode::Drums, speed: 1.5, original_bpm: 120.0, reverse, transpose: 3, ..Default::default() };
+                w.set_marker(0, 0.0);
+                w.set_marker(4 * 44_100, 9.0);
+                c.execute(saine_core::Command::SetClipWarp { clip: cl.id, warp: w, label: "Set clip speed".into() });
+            }
+            // review-warp + --clip-menu: open the dropdown once the warped clip is shown.
+            if c.ac_clip().is_some_and(|cl| cl.warp.enabled)
+                && let Some(m) = menu.take()
+            {
+                c.clip_menu_open(m);
             }
         });
     }
@@ -1741,6 +1846,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                                     Err(e) => eprintln!("piano roll texture import failed: {e}"),
                                 }
                             }
+                            r.sync_peaks(c.peaks.generation, &c.peaks.data);
                             pianoroll::build(&mut f.pr_dl, &sc);
                             r.render(&f.pr_dl);
                         }

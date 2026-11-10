@@ -195,6 +195,8 @@ pub enum JobResult {
     TestTone(Result<AssetInfo, String>),
     /// Plugin catalogue scan finished (src/devices.rs).
     PluginScan(Result<saine_engine::ScanReport, String>),
+    /// Transients of an engine asset (warped clips, src/warpedit.rs).
+    Onsets { engine_asset: u64, result: Result<Vec<saine_engine::Onset>, String> },
 }
 
 /// Blocking decode + peak analysis. Runs on a worker thread.
@@ -274,6 +276,11 @@ pub struct Controller {
     pub engine: Arc<Engine>,
     pub rate: f64,
     pub(crate) asset_map: HashMap<AssetId, u64>,
+    /// The engine's reversed copies of assets that reversed clips play (src/warpedit.rs).
+    pub(crate) reversed_assets: HashMap<AssetId, u64>,
+    /// Detected transients per engine asset (asset frames), and those being analysed.
+    pub(crate) onsets: HashMap<u64, Vec<saine_core::Transient>>,
+    pub(crate) onsets_pending: std::collections::HashSet<u64>,
     pub peaks: PeakStore,
     pub selected_track: Option<TrackId>,
     pub selected_clip: Option<ClipId>,
@@ -356,6 +363,10 @@ pub struct Controller {
     // ---- plugin devices (src/devices.rs) ----
     pub devices: crate::devices::DevicesUi,
     pub(crate) tree_model: Rc<VecModel<TreeRow>>,
+    // ---- browser Files section and Back / Forward (src/files.rs) ----
+    pub files: crate::files::FilesUi,
+    pub(crate) files_model: Rc<VecModel<crate::FileRow>>,
+    pub(crate) files_guides_model: Rc<VecModel<crate::FileGuide>>,
     pub(crate) cards_model: Rc<VecModel<DeviceCard>>,
     pub(crate) window_cards_model: Rc<VecModel<DeviceCard>>,
     pub(crate) add_results_model: Rc<VecModel<MenuItem>>,
@@ -380,6 +391,9 @@ impl Controller {
             engine,
             rate,
             asset_map: HashMap::new(),
+            reversed_assets: HashMap::new(),
+            onsets: HashMap::new(),
+            onsets_pending: std::collections::HashSet::new(),
             peaks: PeakStore::default(),
             selected_track: None,
             selected_clip: None,
@@ -448,6 +462,9 @@ impl Controller {
             settings_menu_model: Rc::new(VecModel::default()),
             devices: Default::default(),
             tree_model: Rc::new(VecModel::default()),
+            files: Default::default(),
+            files_model: Rc::new(VecModel::default()),
+            files_guides_model: Rc::new(VecModel::default()),
             cards_model: Rc::new(VecModel::default()),
             window_cards_model: Rc::new(VecModel::default()),
             add_results_model: Rc::new(VecModel::default()),
@@ -488,6 +505,8 @@ impl Controller {
         s.set_export_tracks_items(ModelRc::from(self.export_tracks_model.clone()));
         s.set_settings_menu_items(ModelRc::from(self.settings_menu_model.clone()));
         s.set_tree(ModelRc::from(self.tree_model.clone()));
+        s.set_files(ModelRc::from(self.files_model.clone()));
+        s.set_files_guides(ModelRc::from(self.files_guides_model.clone()));
         s.set_device_cards(ModelRc::from(self.cards_model.clone()));
         s.set_device_window_cards(ModelRc::from(self.window_cards_model.clone()));
         s.set_add_results(ModelRc::from(self.add_results_model.clone()));
@@ -588,7 +607,7 @@ impl Controller {
     /// The session the engine should play right now: the document plus any
     /// automation lane being edited.
     pub fn current_snapshot(&self) -> snapshot::SessionSnapshot {
-        let (mut snap, _skipped) = snapshot::build(self.doc.project(), self.rate, &self.asset_map);
+        let (mut snap, _skipped) = snapshot::build_full(self.doc.project(), self.rate, &self.asset_map, &self.reversed_assets, &self.transients_by_asset());
         // Automation drag / write preview: the pending lane replaces the model lane.
         if let Some((key, lane)) = &self.auto.pending {
             let p = self.doc.project();
@@ -608,6 +627,8 @@ impl Controller {
     }
 
     pub fn publish(&mut self) {
+        self.request_onsets();
+        self.ensure_reversed_assets();
         let snap = self.current_snapshot();
         if let Err(e) = self.engine.publish(&snap) {
             self.set_status(format!("Engine rejected the session: {e}"), 6);
@@ -882,6 +903,7 @@ impl Controller {
                 JobResult::Recorded { doc_epoch, takes } => self.finish_recorded(doc_epoch, takes),
                 JobResult::TestTone(r) => self.finish_test_tone(r),
                 JobResult::PluginScan(r) => self.finish_plugin_scan(r),
+                JobResult::Onsets { engine_asset, result } => self.finish_onsets(engine_asset, result),
                 JobResult::Reloaded { asset, doc_epoch, result } => {
                     if doc_epoch != self.doc_epoch {
                         if let Ok((info, _)) = result {
@@ -970,6 +992,7 @@ impl Controller {
     /// Start over with `project` (no undo history). Used by `--state` setups.
     pub fn replace_project(&mut self, project: Project) {
         self.close_all_editors();
+        self.onsets.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
         self.doc = Document::new(project);
@@ -991,6 +1014,7 @@ impl Controller {
                 self.doc.mark_saved();
                 self.project_dir = Some(dir.to_path_buf());
                 self.set_status(format!("Saved {}", dir.display()), 3);
+                self.files_refresh();
             }
             Err(e) => self.set_status(format!("Save failed: {e}"), 6),
         }
@@ -1006,9 +1030,10 @@ impl Controller {
         };
         self.stop_return();
         self.close_all_editors();
-        for (_, ea) in self.asset_map.drain() {
+        for (_, ea) in self.asset_map.drain().chain(self.reversed_assets.drain()) {
             let _ = self.engine.release_asset(ea);
         }
+        self.onsets.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
         self.doc = Document::new(loaded.project);
@@ -1022,23 +1047,28 @@ impl Controller {
         self.devices_after_open();
         let missing: std::collections::HashSet<String> = loaded.missing_media.into_iter().collect();
         for a in self.project().assets.clone() {
-            if missing.contains(&a.absolute_path) {
-                continue;
+            if !missing.contains(&a.absolute_path) {
+                self.load_asset(&a);
             }
-            let engine = self.engine.clone();
-            let tx = self.jobs_tx.clone();
-            let epoch = self.doc_epoch;
-            self.pending_jobs += 1;
-            std::thread::spawn(move || {
-                let result = load_and_analyse(&engine, Path::new(&a.absolute_path));
-                let _ = tx.send(JobResult::Reloaded { asset: a.id, doc_epoch: epoch, result });
-            });
         }
         if !missing.is_empty() {
             self.set_status(format!("{} media file(s) missing", missing.len()), 6);
         } else if self.pending_jobs > 0 {
             self.set_status("Loading media…", 30);
         }
+    }
+
+    /// Load a project asset into the engine on a worker thread (finishes in `poll_jobs`).
+    pub(crate) fn load_asset(&mut self, a: &Asset) {
+        let engine = self.engine.clone();
+        let tx = self.jobs_tx.clone();
+        let epoch = self.doc_epoch;
+        let (id, path) = (a.id, a.absolute_path.clone());
+        self.pending_jobs += 1;
+        std::thread::spawn(move || {
+            let result = load_and_analyse(&engine, Path::new(&path));
+            let _ = tx.send(JobResult::Reloaded { asset: id, doc_epoch: epoch, result });
+        });
     }
 
     // ---------------------------------------------------------------- view
@@ -1159,16 +1189,28 @@ impl Controller {
                         self.drag = Some(Drag::Move { clip, grab_beats, orig_track, orig_start, track, start });
                     }
                     Drag::TrimLeft { clip, orig, .. } => {
-                        let Some((_, _, _, _, rate, _)) = self.clip_region(clip) else { return };
-                        let (s0, off0, len0) = orig;
                         let p = self.project();
+                        let Some(c) = p.clip(clip) else { return };
+                        let (s0, off0, len0) = orig;
+                        if c.warp.reverse {
+                            // Reversed: the left edge plays the window's end, so it trims (or extends) that.
+                            let l0 = p.clip_ticks_at(c, (off0 + len0) as f64);
+                            let frames = p.asset(c.asset).map_or(off0 + len0, |a| a.frames);
+                            let min_start = s0 + (l0 - p.clip_ticks_at(c, frames as f64)).ceil() as Ticks;
+                            let max_start = s0 + l0 as Ticks - PPQ / 4;
+                            let start = snap(beat).clamp(min_start.max(0), max_start.max(s0));
+                            let end = p.clip_source_at(c, l0 - (start - s0) as f64).round().clamp((off0 + 1) as f64, frames as f64) as u64;
+                            self.drag = Some(Drag::TrimLeft { clip, orig, cur: (start, off0, end - off0) });
+                            self.ui_dirty = true;
+                            return;
+                        }
+                        let at = |t: Ticks| p.clip_source_at(c, (t - s0) as f64);
                         let mut start = snap(beat);
-                        // Frames of source material before the current offset.
-                        let min_start = s0 - p.seconds_to_ticks(off0 as f64 / rate);
-                        let max_start = s0 + p.seconds_to_ticks(len0 as f64 / rate) - PPQ / 4;
+                        // Source material before the current offset (warped clips follow their map).
+                        let min_start = s0 + p.clip_ticks_at(c, 0.0).ceil() as Ticks;
+                        let max_start = s0 + p.clip_ticks_at(c, (off0 + len0) as f64) as Ticks - PPQ / 4;
                         start = start.clamp(min_start.max(0), max_start.max(s0));
-                        let delta = ((p.ticks_to_seconds(start - s0)) * rate).round() as i64;
-                        let off = (off0 as i64 + delta).max(0) as u64;
+                        let off = at(start).round().max(0.0) as u64;
                         let len = (len0 as i64 - (off as i64 - off0 as i64)).max(1) as u64;
                         self.drag = Some(Drag::TrimLeft { clip, orig, cur: (start, off, len) });
                     }
@@ -1182,11 +1224,21 @@ impl Controller {
                         self.drag = Some(Drag::MidiRight { clip, orig, cur: (orig.0, end - orig.0) });
                     }
                     Drag::TrimRight { clip, orig, .. } => {
-                        let Some((_, _, _, _, rate, frames)) = self.clip_region(clip) else { return };
-                        let (s0, off0, _) = orig;
+                        let Some((_, _, _, _, _, frames)) = self.clip_region(clip) else { return };
+                        let (s0, off0, len0) = orig;
                         let p = self.project();
+                        let Some(c) = p.clip(clip) else { return };
                         let end = snap(beat).max(s0 + PPQ / 4);
-                        let len = ((p.ticks_to_seconds(end - s0)) * rate).round() as u64;
+                        if c.warp.reverse {
+                            // Reversed: the right edge plays the window's start.
+                            let l0 = p.clip_ticks_at(c, (off0 + len0) as f64);
+                            let end = end.min((s0 + (l0 - p.clip_ticks_at(c, 0.0)).floor() as Ticks).max(s0 + PPQ / 4));
+                            let off = p.clip_source_at(c, l0 - (end - s0) as f64).round().clamp(0.0, (off0 + len0 - 1) as f64) as u64;
+                            self.drag = Some(Drag::TrimRight { clip, orig, cur: (s0, off, off0 + len0 - off) });
+                            self.ui_dirty = true;
+                            return;
+                        }
+                        let len = (p.clip_source_at(c, (end - s0) as f64) - off0 as f64).round().max(1.0) as u64;
                         let len = len.clamp(1, frames - off0);
                         self.drag = Some(Drag::TrimRight { clip, orig, cur: (s0, off0, len) });
                     }
@@ -1220,6 +1272,13 @@ impl Controller {
 
     // ---------------------------------------------------------------- per-frame
 
+    /// Waveform of an audio clip: its pyramid slot (once the peaks exist) and its pieces.
+    pub fn clip_wave(&self, clip: &Clip) -> Option<(crate::peaks::Slot, Vec<crate::peaks::WaveSeg>)> {
+        let assets = if clip.warp.reverse { &self.reversed_assets } else { &self.asset_map };
+        let slot = assets.get(&clip.asset).and_then(|ea| self.peaks.slot(*ea))?;
+        Some((slot, crate::peaks::wave_segments(self.project(), clip, self.rate)))
+    }
+
     /// Rebuild the clip/track visuals (positions include in-progress drag previews).
     pub fn rebuild_vis(&mut self) {
         self.auto_sync_view();
@@ -1242,10 +1301,9 @@ impl Controller {
                     }
                     _ => {}
                 }
-                let rate = p.asset(c.asset).map(|a| a.sample_rate).unwrap_or(self.rate);
-                let len_beats = p.seconds_to_ticks(len as f64 / rate) as f64 / PPQ as f64;
-                let ratio = self.rate / rate;
-                let wave = self.asset_map.get(&c.asset).and_then(|ea| self.peaks.slot(*ea)).map(|slot| (slot, off as f64 * ratio, len as f64 * ratio));
+                let shown = saine_core::Clip { source_offset: off, source_length: len, ..c.clone() };
+                let len_beats = p.clip_length_ticks(&shown) as f64 / PPQ as f64;
+                let wave = self.clip_wave(&shown);
                 self.clip_vis.push(ClipVis {
                     track_index,
                     start_beats: start as f64 / PPQ as f64,
@@ -1330,7 +1388,6 @@ impl Controller {
             loop_beats: (tr.loop_start as f64 / PPQ as f64, tr.loop_end as f64 / PPQ as f64),
             loop_on: tr.loop_enabled,
             beats_per_bar: self.beats_per_bar(),
-            frames_per_beat: self.rate * 60.0 / tr.bpm,
             auto: None,
             sections: &self.section_vis,
         }
@@ -1574,6 +1631,7 @@ impl Controller {
         self.push_settings(&s);
         self.push_dialogs(&s);
         self.push_devices(&s);
+        self.push_files(&s);
         self.push_automation(&s);
         s.set_bottom_h(self.bottom_h());
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };

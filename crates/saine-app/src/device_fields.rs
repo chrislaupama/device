@@ -11,7 +11,9 @@
 //! Character Mod's sweep frames come from the reference engine, which is not
 //! readable, so its model is our own picture of what our kernel does
 //! (engine/src/devices/character_mod.cpp): the modulated delay, frequency,
-//! gain or position over three LFO cycles (the reference capture's span).
+//! gain or position over 3.35 LFO cycles (the span measured on the reference
+//! capture at the default 0.51 Hz; the reference engine sends the span with each
+//! frame, so its law is not readable).
 
 use saine_core::builtin::character_mod::{CIRCUITS, CROSSED, ENSEMBLE, FLANGER, MODE_PARAMS, PANNER, PHASER, PHOTOCELL, ROTARY, SINGLE, TAPE, TREMOLO, TWIN};
 use saine_core::builtin::{synced_hz, DIVISION_QUARTERS};
@@ -517,7 +519,7 @@ fn num(v: f32) -> String {
 }
 
 fn character_mod(i: &Input) -> Plot {
-    const SPAN: f32 = 3.0;
+    const SPAN: f32 = 3.35;
     let circuit = i.idx("model").min(CIRCUITS.len() - 1) as u32;
     let mode = MODE_PARAMS[circuit as usize].map_or(0, |p| i.idx(p));
     let amt = i.get("depth") / 50.0;
@@ -666,7 +668,7 @@ fn character_mod(i: &Input) -> Plot {
     };
     let traces: Vec<Trace> = values.iter().zip(&series).map(|(v, (_, style))| Trace { ys: v.iter().map(|x| y_of(*x)).collect(), style: *style }).collect();
     let live = i.cycles.zip(series.first()).map(|(c, (f, _))| {
-        let p = c.rem_euclid(SPAN as f64) as f32;
+        let p = c.rem_euclid(SPAN.floor() as f64) as f32;
         let x = p / SPAN;
         let t0 = (x - 0.12).max(0.0);
         let trail = (0..=24).map(|k| t0 + (x - t0) * k as f32 / 24.0).map(|tx| (tx, y_of(f(tx * SPAN)))).collect();

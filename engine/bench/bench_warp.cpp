@@ -100,8 +100,9 @@ double attach_renders(se_engine* e) {
 
 // mode < 0: unwarped. rendered: wait for the background renders before
 // measuring, else stretch live. restart_every > 0: seek every that many blocks.
+// transpose: semitones for every warped clip.
 Result run(se_engine* e, uint64_t asset, uint32_t tracks, int mode, uint32_t blocks, bool rendered,
-           uint32_t restart_every = 0) {
+           uint32_t restart_every = 0, float transpose = 0.0f) {
     static uint32_t salt = 0;
     ++salt;
     const int64_t total = static_cast<int64_t>(blocks) * kBlock;
@@ -127,6 +128,7 @@ Result run(se_engine* e, uint64_t asset, uint32_t tracks, int mode, uint32_t blo
             se_clip_warp_desc w{};
             w.clip_id = t + 1;
             w.mode = static_cast<uint8_t>(mode);
+            w.transpose = transpose;
             w.points = points[t].data();
             w.point_count = 2;
             w.slices = slices.data();
@@ -219,6 +221,32 @@ int main(int argc, char** argv) {
         const Result r = run(e, info.asset_id, 32, SE_WARP_STRETCH, blocks, rendered, 50);
         std::printf("| %s | %.1f | %.1f | %.1f |\n", rendered ? "rendered" : "live", r.avg, r.p99, r.max);
     }
+    {
+        se_asset_info rev{};
+        const auto r0 = std::chrono::steady_clock::now();
+        se_asset_reverse(e, info.asset_id, &rev);
+        const double rms_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - r0).count();
+        std::printf("\nReversed copy (se_asset_reverse, stereo): %.2f ms for 20 s (%.1f ms per minute)\n", rms_, rms_ * 3.0);
+        std::printf("\n| clips | forward avg us/block | reversed copy avg us/block | forward p99 | reversed p99 |\n|---:|---:|---:|---:|---:|\n");
+        for (uint32_t tracks : {8u, 64u}) {
+            const Result f = run(e, info.asset_id, tracks, -1, blocks, false);
+            const Result r = run(e, rev.asset_id, tracks, -1, blocks, false);
+            std::printf("| %u | %.1f | %.1f | %.1f | %.1f |\n", tracks, f.avg, r.avg, f.p99, r.p99);
+        }
+        se_asset_release(e, rev.asset_id);
+    }
+    std::printf("\nClip transpose (32 tracks): 0 vs +7 st (Re-pitch ignores transpose; an unwarped transposed clip "
+                "plays as Re-pitch)\n\n");
+    std::printf("| mode | case | 0 st avg us/block | +7 st avg us/block | 0 st p99 | +7 st p99 | +7 st render ms |\n"
+                "|---|---|---:|---:|---:|---:|---:|\n");
+    for (int mode : {int{SE_WARP_SLICE}, int{SE_WARP_STRETCH}, int{SE_WARP_STRETCH_FORMANT}})
+        for (bool rendered : {false, true}) {
+            if (rendered && mode == SE_WARP_SLICE) continue;
+            const Result a = run(e, info.asset_id, 32, mode, blocks, rendered, 0, 0.0f);
+            const Result b = run(e, info.asset_id, 32, mode, blocks, rendered, 0, 7.0f);
+            std::printf("| %s | %s | %.1f | %.1f | %.1f | %.1f | %.0f |\n", mode_name(mode), rendered ? "rendered" : "live",
+                        a.avg, b.avg, a.p99, b.p99, b.render_ms);
+        }
     const auto t0 = std::chrono::steady_clock::now();
     std::size_t count = 0;
     se_asset_detect_onsets(e, info.asset_id, nullptr, 0, &count);

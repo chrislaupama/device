@@ -158,3 +158,50 @@ fn onsets_drive_drum_slices() {
         assert!(rms(&out[at..at + 800]) > 0.1, "hit at {at}");
     }
 }
+
+#[test]
+fn reversed_clip_plays_back_to_front() {
+    // 1 s of 440 Hz then 1 s of silence; reversed, the silence comes first.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("half.wav");
+    write_wav(&path, 96_000, |i| if i < 48_000 { 0.5 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / RATE).sin() } else { 0.0 });
+    let mut rig = Rig::new(&path);
+    rig.warp(ClipWarp { reverse: true, ..ClipWarp::default() });
+    let ea = rig.map[&rig.asset];
+    let rev = rig.engine.reverse_asset(ea).unwrap();
+    let (snap, skipped) = snapshot::build_full(rig.doc.project(), RATE, &rig.map, &HashMap::from([(rig.asset, rev.asset_id)]), &HashMap::new());
+    assert!(skipped.is_empty());
+    rig.engine.publish(&snap).unwrap();
+    rig.engine.seek(0).unwrap();
+    rig.engine.play().unwrap();
+    let mut out = vec![0f32; 96_000 * 2];
+    for chunk in out.chunks_mut(512 * 2) {
+        rig.engine.render_offline(chunk).unwrap();
+    }
+    rig.engine.stop().unwrap();
+    let l: Vec<f32> = out.chunks_exact(2).map(|c| c[0]).collect();
+    assert!(rms(&l[2_000..46_000]) < 1e-4, "silence first");
+    assert!(rms(&l[50_000..94_000]) > 0.2, "then the tone");
+    assert!((frequency(&l[50_000..94_000]) - 440.0).abs() < 1.0);
+}
+
+#[test]
+fn transpose_shifts_the_pitch_and_varispeeds_unwarped_clips() {
+    let (mut rig, _dir) = tone_rig();
+    let none = HashMap::new();
+    // Warp off, +12: an octave up and twice as fast (1 s of the 2 s tone).
+    rig.warp(ClipWarp { transpose: 12, ..ClipWarp::default() });
+    assert_eq!(rig.doc.project().clip_length_ticks(rig.doc.project().clip(rig.clip).unwrap()), 2 * PPQ);
+    let out = rig.render(72_000, &none);
+    assert!(rms(&out[8_000..40_000]) > 0.2);
+    assert!(rms(&out[52_000..72_000]) < 1e-3, "and then it ends");
+    let f = frequency(&out[8_000..40_000]);
+    assert!((f - 880.0).abs() < 8.8, "{f} Hz, want 880");
+    // Warp on (Melody), -12: an octave down, same length.
+    rig.warp(ClipWarp { enabled: true, original_bpm: 120.0, mode: WarpMode::Melody, transpose: -12, ..ClipWarp::default() });
+    assert_eq!(rig.doc.project().clip_length_ticks(rig.doc.project().clip(rig.clip).unwrap()), 4 * PPQ);
+    let out = rig.render(120_000, &none);
+    assert!(rms(&out[80_000..90_000]) > 0.2, "still 2 s long");
+    let f = frequency(&out[10_000..80_000]);
+    assert!((f - 220.0).abs() < 2.2, "{f} Hz, want 220");
+}

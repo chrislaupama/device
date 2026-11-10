@@ -540,7 +540,7 @@ impl Controller {
     pub fn new_project(&mut self) {
         self.dialogs_close();
         self.stop_return();
-        for (_, ea) in self.asset_map.drain() {
+        for (_, ea) in self.asset_map.drain().chain(self.reversed_assets.drain()) {
             let _ = self.engine.release_asset(ea);
         }
         self.project_dir = None;

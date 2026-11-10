@@ -8,6 +8,13 @@
 //! original beat, so 2x plays the source twice as fast (half the footprint).
 //! The engine gets the map as (timeline frame, source frame) points.
 //!
+//! \`reverse\` plays the clip's source window back to front, warped or not.
+//! Markers and transients stay in source frames; the engine plays a reversed
+//! copy of the asset along the mirrored map.
+//! \`transpose\` shifts the pitch in semitones. With warp on the stretcher
+//! keeps the timing (Re-pitch ignores it: its pitch follows speed); with warp
+//! off the clip varispeeds, so it also plays 2^(st/12) times as fast.
+//!
 //! Transients are detected by the engine (`se_asset_detect_onsets`) and are
 //! not stored; the user's additions and removals are, in source frames.
 
@@ -49,6 +56,8 @@ pub const MIN_ORIGINAL_BPM: f64 = 20.0;
 pub const MAX_ORIGINAL_BPM: f64 = 300.0;
 pub const MIN_SPEED: f64 = 0.125;
 pub const MAX_SPEED: f64 = 8.0;
+/// Clip transpose range in semitones.
+pub const MAX_TRANSPOSE: i32 = 24;
 /// Transients closer than this are the same transient.
 pub const TRANSIENT_TOLERANCE_S: f64 = 0.001;
 
@@ -75,11 +84,15 @@ pub struct ClipWarp {
     /// User edits on top of the detected transients (asset frames, sorted).
     pub transients_added: Vec<u64>,
     pub transients_removed: Vec<u64>,
+    /// Play the source window back to front (see the module docs).
+    pub reverse: bool,
+    /// Semitones, -24..=24 (see the module docs).
+    pub transpose: i32,
 }
 
 impl Default for ClipWarp {
     fn default() -> Self {
-        ClipWarp { enabled: false, mode: WarpMode::Auto, original_bpm: 120.0, speed: 1.0, markers: Vec::new(), transients_added: Vec::new(), transients_removed: Vec::new() }
+        ClipWarp { enabled: false, mode: WarpMode::Auto, original_bpm: 120.0, speed: 1.0, markers: Vec::new(), transients_added: Vec::new(), transients_removed: Vec::new(), reverse: false, transpose: 0 }
     }
 }
 
@@ -116,6 +129,21 @@ impl ClipWarp {
         interp(&self.points(rate), beat, true)
     }
 
+    /// Warp settings untouched apart from reverse and transpose (a fresh clip).
+    pub fn tempo_is_default(&self) -> bool {
+        ClipWarp { reverse: false, transpose: 0, ..self.clone() }.is_default()
+    }
+
+    /// Playback rate of an unwarped clip: 2^(transpose / 12) (1 with warp on).
+    pub fn varispeed(&self) -> f64 {
+        if self.enabled { 1.0 } else { (self.transpose as f64 / 12.0).exp2() }
+    }
+
+    /// Transpose the stretcher applies: none with warp off (varispeed) or in Re-pitch.
+    pub fn stretch_transpose(&self) -> f32 {
+        if self.enabled && self.mode != WarpMode::Repitch { self.transpose as f32 } else { 0.0 }
+    }
+
     /// Speed shown in the editor: 1 when warp is off.
     pub fn effective_speed(&self) -> f64 {
         if self.enabled { self.speed } else { 1.0 }
@@ -127,6 +155,9 @@ impl ClipWarp {
         }
         if !self.speed.is_finite() || !(MIN_SPEED..=MAX_SPEED).contains(&self.speed) {
             return Err(format!("speed {} outside {MIN_SPEED}..={MAX_SPEED}", self.speed));
+        }
+        if self.transpose.abs() > MAX_TRANSPOSE {
+            return Err(format!("transpose {} outside -{MAX_TRANSPOSE}..={MAX_TRANSPOSE}", self.transpose));
         }
         if self.markers.iter().any(|m| !m.beat.is_finite() || m.source > asset.frames) {
             return Err("warp marker outside the source".into());
@@ -250,7 +281,7 @@ impl Project {
         let rate = self.asset(clip.asset).map_or(48_000.0, |a| a.sample_rate);
         let w = &clip.warp;
         if !w.enabled {
-            return clip.source_offset as f64 + ticks / PPQ as f64 * 60.0 / self.transport.bpm * rate;
+            return clip.source_offset as f64 + ticks / PPQ as f64 * 60.0 / self.transport.bpm * rate * w.varispeed();
         }
         w.source_at(w.beat_at(clip.source_offset as f64, rate) + ticks / PPQ as f64 * w.speed, rate)
     }
@@ -260,7 +291,7 @@ impl Project {
         let rate = self.asset(clip.asset).map_or(48_000.0, |a| a.sample_rate);
         let w = &clip.warp;
         if !w.enabled {
-            return (source - clip.source_offset as f64) / rate * self.transport.bpm / 60.0 * PPQ as f64;
+            return (source - clip.source_offset as f64) / rate / w.varispeed() * self.transport.bpm / 60.0 * PPQ as f64;
         }
         (w.beat_at(source, rate) - w.beat_at(clip.source_offset as f64, rate)) / w.speed * PPQ as f64
     }
