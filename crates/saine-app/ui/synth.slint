@@ -8,7 +8,7 @@
 // pictures and texts come from Rust; edits leave through Studio callbacks.
 // Icons are ORIGINAL line drawings.
 import { Tokens } from "tokens.slint";
-import { Icon, Icons, Knob } from "widgets.slint";
+import { Icon, Icons } from "widgets.slint";
 import { CardHeader } from "device_panel.slint";
 import { Studio, MenuItem, SynthKnobItem, SynthFaderItem, SynthSegItem, SynthScopeItem, SynthLatchItem } from "studio.slint";
 
@@ -66,7 +66,7 @@ component Pill inherits Rectangle {
     border-radius: 10px;
     background: SynthStyle.control;
     border-width: root.outline ? 1px : 0;
-    border-color: Studio.sel-color;
+    border-color: Studio.synth-card.accent;
     drop-shadow-blur: 3px;
     drop-shadow-color: #00000040;
     property <length> lead: root.ring >= 0 ? 24px : root.glyph > 0 ? 25px : 7.5px;
@@ -76,8 +76,8 @@ component Pill inherits Rectangle {
     }
     if root.ring >= 0: Rectangle {
         x: 6px; y: 3px; width: 14px; height: 14px; border-radius: 7px;
-        border-width: 1.2px; border-color: root.ring == 1 ? Studio.sel-color : #8a8b90;
-        if root.ring == 1: Rectangle { x: 3.5px; y: 3.5px; width: 7px; height: 7px; border-radius: 3.5px; background: Studio.sel-color; }
+        border-width: 1.2px; border-color: root.ring == 1 ? Studio.synth-card.accent : #8a8b90;
+        if root.ring == 1: Rectangle { x: 3.5px; y: 3.5px; width: 7px; height: 7px; border-radius: 3.5px; background: Studio.synth-card.accent; }
         TouchArea { clicked => { root.ring-clicked(); } }
     }
     if root.glyph > 0: SourceGlyph { x: 7px; y: 3.5px; src: root.glyph; }
@@ -94,6 +94,12 @@ component SynthKnobView inherits Rectangle {
     in property <SynthKnobItem> k;
     property <float> norm: Studio.synth-params[root.k.idx].norm;
     property <bool> bip: Studio.synth-params[root.k.idx].bipolar;
+    property <float> r: 12.76;
+    property <float> angle: -135 + root.norm * 270;
+    property <float> from: root.bip ? 0 : -135;
+    property <float> lo-a: -135 + root.k.band-lo * 270;
+    property <float> hi-a: -135 + root.k.band-hi * 270;
+    property <float> dot-a: -135 + root.k.dot * 270;
     property <float> start;
     property <bool> moved;
     width: 60px; height: 66px;
@@ -102,21 +108,59 @@ component SynthKnobView inherits Rectangle {
         x: 30px - 15px; y: 19px - 15px; width: 30px; height: 30px; border-radius: 15px;
         border-width: 1px; border-color: Studio.synth-lit-color;
     }
+    // Modulation rings (Rust): per source a groove, its reach and a fill to where it holds the dial.
     for a in root.k.arcs: Path {
         x: 0; y: 0; width: root.width; height: root.height;
         viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
-        commands: a.d; stroke: a.c; stroke-width: 1.5px; fill: transparent; stroke-line-cap: round;
+        commands: a.d; stroke: a.c; stroke-width: 1.49px; fill: transparent; stroke-line-cap: butt;
     }
-    Knob {
-        x: 11px; y: 0; width: 38px; height: 38px; body: 20.5px; arc-gap: 3;
-        body-brush: #232426;
-        ring-brush: @radial-gradient(circle, #1c1d21 78%, #2a2b30 96%, #26272b 100%);
-        value: root.norm; min-value: 0; max-value: 1;
-        value-angle: -135 + root.norm * 270;
-        show-arc: root.bip ? abs(root.norm - 0.5) > 0.004 : root.norm > 0.004;
-        arc-from: root.bip ? 0 : -135;
-        arc-color: root.k.accent;
-        tick-color: #f2f2f4;
+    // The dial: the reference app's "xs" knob centred at (30, 19), at the card's 776.5 / 920 scale: a 270
+    // degree groove at r 15.12, a flat 24 pt body with a soft shadow, the value arc and the pointer.
+    Path {
+        x: 0; y: 0; width: root.width; height: root.height;
+        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        stroke: #ffffff0d; stroke-width: 1.49px; fill: transparent; stroke-line-cap: butt;
+        MoveTo { x: 30 + root.r * sin(-135deg); y: 19 - root.r * cos(-135deg); }
+        ArcTo { x: 30 + root.r * sin(135deg); y: 19 - root.r * cos(135deg); radius-x: root.r; radius-y: root.r; large-arc: true; sweep: true; }
+    }
+    Rectangle {
+        x: 19.87px; y: 8.87px; width: 20.26px; height: 20.26px;
+        border-radius: 10.13px; background: #232426; border-width: 0.25px; border-color: #ffffff0d;
+        drop-shadow-offset-y: 2.03px; drop-shadow-blur: 6.08px; drop-shadow-color: #00000080;
+    }
+    if abs(root.angle - root.from) > 0.5: Path {
+        x: 0; y: 0; width: root.width; height: root.height;
+        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        stroke: root.k.accent; stroke-width: 1.49px; fill: transparent; stroke-line-cap: butt;
+        MoveTo { x: 30 + root.r * sin(root.from * 1deg); y: 19 - root.r * cos(root.from * 1deg); }
+        ArcTo {
+            x: 30 + root.r * sin(root.angle * 1deg); y: 19 - root.r * cos(root.angle * 1deg);
+            radius-x: root.r; radius-y: root.r; large-arc: abs(root.angle - root.from) > 180; sweep: root.angle > root.from;
+        }
+    }
+    // What the routes sweep together, at 38 % of the track colour, and the live dot.
+    if root.k.band-on: Path {
+        x: 0; y: 0; width: root.width; height: root.height;
+        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        stroke: root.k.accent.with-alpha(0.38); stroke-width: 1.49px; fill: transparent; stroke-line-cap: butt;
+        MoveTo { x: 30 + root.r * sin(root.lo-a * 1deg); y: 19 - root.r * cos(root.lo-a * 1deg); }
+        ArcTo {
+            x: 30 + root.r * sin(root.hi-a * 1deg); y: 19 - root.r * cos(root.hi-a * 1deg);
+            radius-x: root.r; radius-y: root.r; large-arc: root.hi-a - root.lo-a > 180; sweep: true;
+        }
+    }
+    Path {
+        x: 0; y: 0; width: root.width; height: root.height;
+        viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        stroke: #ffffff; stroke-width: 1.27px; stroke-line-cap: round;
+        MoveTo { x: 30 + 6.72 * sin(root.angle * 1deg); y: 19 - 6.72 * cos(root.angle * 1deg); }
+        LineTo { x: 30 + 9.70 * sin(root.angle * 1deg); y: 19 - 9.70 * cos(root.angle * 1deg); }
+    }
+    if root.k.dot-on: Rectangle {
+        x: (30 + root.r * sin(root.dot-a * 1deg)) * 1px - 1.27px;
+        y: (19 - root.r * cos(root.dot-a * 1deg)) * 1px - 1.27px;
+        width: 2.53px; height: 2.53px; border-radius: 1.27px;
+        background: #fffffff2; border-width: 0.63px; border-color: #0000008c;
     }
     ta := TouchArea {
         x: 6px; y: -4px; width: 48px; height: 46px;
@@ -161,10 +205,10 @@ component SynthFaderView inherits Rectangle {
     Rectangle { x: 18.75px; y: 0; width: 2.5px; height: root.travel; border-radius: 1.25px; background: #3e3f43; }
     Rectangle {
         x: 18.75px; y: (1 - root.norm) * root.travel; width: 2.5px; height: root.norm * root.travel; border-radius: 1.25px;
-        background: Studio.sel-color;
+        background: Studio.synth-card.accent;
     }
     Rectangle { x: 14px; y: (1 - root.norm) * root.travel - 1.25px; width: 12px; height: 2.5px; border-radius: 1.25px; background: #ffffff; }
-    Text { x: -14px; y: 94.5px; width: root.width + 28px; height: 14px; text: Studio.synth-params[root.f.idx].text; color: Studio.sel-color; font-size: 10.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: -14px; y: 94.5px; width: root.width + 28px; height: 14px; text: Studio.synth-params[root.f.idx].text; color: Studio.synth-card.accent; font-size: 10.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     Text { x: -14px; y: 110px; width: root.width + 28px; height: 14px; text: root.f.label; color: SynthStyle.caption; font-size: 9.75px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     TouchArea {
         x: 0; y: -6px; width: root.width; height: root.travel + 12px;
@@ -190,7 +234,7 @@ component Segmented inherits Rectangle {
     property <length> cell: (root.width - 4px) / max(1, root.s.options.length);
     for o[i] in root.s.options: Rectangle {
         x: 2px + i * root.cell; y: 2px; width: root.cell; height: 16px; border-radius: 8px;
-        background: i == root.s.sel ? Studio.sel-color : transparent;
+        background: i == root.s.sel ? Studio.synth-card.accent : transparent;
         Text {
             text: o; color: i == root.s.sel ? SynthStyle.ink-on-accent : SynthStyle.value;
             font-size: 8.75px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center;
@@ -219,33 +263,33 @@ component Scope inherits Rectangle {
         width: root.width; height: root.height;
         viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
         commands: Studio.synth-displays[root.slot].fill;
-        fill: Studio.sel-color.transparentize(Studio.synth-displays[root.slot].dim ? 95% : 85%);
+        fill: Studio.synth-card.accent.transparentize(Studio.synth-displays[root.slot].dim ? 95% : 85%);
         stroke: transparent;
     }
     Path {
         width: root.width; height: root.height;
         viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
         commands: Studio.synth-displays[root.slot].ghost;
-        stroke: Studio.sel-color.transparentize(55%); stroke-width: 1px; fill: transparent;
+        stroke: Studio.synth-card.accent.transparentize(55%); stroke-width: 1px; fill: transparent;
     }
     Path {
         width: root.width; height: root.height;
         viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
         commands: Studio.synth-displays[root.slot].line;
-        stroke: Studio.sel-color.transparentize(Studio.synth-displays[root.slot].dim ? 60% : 0%);
+        stroke: Studio.synth-card.accent.transparentize(Studio.synth-displays[root.slot].dim ? 60% : 0%);
         stroke-width: 1.5px; stroke-line-join: round; fill: transparent;
     }
     Path {
         width: root.width; height: root.height;
         viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
         commands: Studio.synth-displays[root.slot].dots;
-        stroke: Studio.sel-color; stroke-width: 1.3px; fill: #1b1c20;
+        stroke: Studio.synth-card.accent; stroke-width: 1.3px; fill: #1b1c20;
     }
     for l in Studio.synth-labels: Rectangle {
         x: 0; y: 0; width: root.width; height: root.height;
         if l.slot == root.slot: Text {
             x: l.align == 0 ? l.x : l.align == 1 ? l.x - 30px : l.x - 60px; y: l.y; width: l.align == 0 ? 120px : 60px; height: 13px;
-            text: l.text; color: l.accent ? Studio.sel-color : #8e8f94;
+            text: l.text; color: l.accent ? Studio.synth-card.accent : #8e8f94;
             font-size: 7.75px; font-weight: 600; vertical-alignment: center;
             horizontal-alignment: l.align == 0 ? TextHorizontalAlignment.left : l.align == 1 ? TextHorizontalAlignment.center : TextHorizontalAlignment.right;
         }
@@ -265,7 +309,7 @@ component Latch inherits Rectangle {
     width: 60px; height: 66px;
     Rectangle {
         x: 17.5px; y: 10.5px; width: 25px; height: 17px; border-radius: 8.5px;
-        background: root.l.on ? Studio.sel-color : SynthStyle.control;
+        background: root.l.on ? Studio.synth-card.accent : SynthStyle.control;
         Text { text: root.l.on ? "On" : "Off"; color: root.l.on ? SynthStyle.ink-on-accent : SynthStyle.dim; font-size: 8.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
         TouchArea { clicked => { Studio.synth-toggle(root.l.idx); } }
     }
@@ -346,8 +390,8 @@ export component SynthDevice inherits Rectangle {
             Text { x: 4px; width: 12px; text: r.slot; color: SynthStyle.dim; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
             Rectangle {
                 x: 27px; y: 3px; width: 14px; height: 14px; border-radius: 7px;
-                border-width: 1.2px; border-color: r.on ? Studio.sel-color : #8a8b90;
-                if r.on: Rectangle { x: 3.5px; y: 3.5px; width: 7px; height: 7px; border-radius: 3.5px; background: Studio.sel-color; }
+                border-width: 1.2px; border-color: r.on ? Studio.synth-card.accent : #8a8b90;
+                if r.on: Rectangle { x: 3.5px; y: 3.5px; width: 7px; height: 7px; border-radius: 3.5px; background: Studio.synth-card.accent; }
                 TouchArea { clicked => { Studio.synth-toggle(r.on-idx); } }
             }
             Pill {
@@ -368,7 +412,7 @@ export component SynthDevice inherits Rectangle {
             Rectangle { x: parent.bar-x + parent.bar-w / 2 - 0.25px; y: 5px; width: 0.5px; height: 10px; background: #6a6b70; }
             Rectangle {
                 x: parent.bar-x + parent.bar-w / 2 + min(0, r.amount) * parent.bar-w / 2; y: 8px;
-                width: abs(r.amount) * parent.bar-w / 2; height: 4px; border-radius: 1px; background: Studio.sel-color;
+                width: abs(r.amount) * parent.bar-w / 2; height: 4px; border-radius: 1px; background: Studio.synth-card.accent;
             }
             TouchArea {
                 x: parent.bar-x - 4px; width: parent.bar-w + 8px; mouse-cursor: ew-resize;
@@ -376,7 +420,7 @@ export component SynthDevice inherits Rectangle {
                 moved => { if (self.pressed) { Studio.synth-param(r.amount-idx, max(0, min(1, (self.mouse-x - 4px) / parent.bar-w))); } }
                 double-clicked => { Studio.synth-param-reset(r.amount-idx); }
             }
-            Text { x: 560px; width: 34px; text: r.text; color: Studio.sel-color; font-size: 10px; font-weight: 600; horizontal-alignment: right; vertical-alignment: center; }
+            Text { x: 560px; width: 34px; text: r.text; color: Studio.synth-card.accent; font-size: 10px; font-weight: 600; horizontal-alignment: right; vertical-alignment: center; }
             if row-ta.has-hover || rm-ta.has-hover: Icon {
                 x: 602px; y: 5px; width: 10px; height: 10px; d: Icons.close; ink: SynthStyle.dim; stroke-width: 1.3px;
             }

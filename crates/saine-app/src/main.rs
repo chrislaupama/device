@@ -31,6 +31,7 @@ mod device_panel;
 mod device_editors;
 mod panel_graph;
 mod device_views;
+mod gain_scope;
 mod devices;
 mod dialogs;
 mod panel_multiband;
@@ -49,6 +50,7 @@ mod settings;
 mod sections;
 mod splitters;
 mod synth;
+mod text_measure;
 mod timeline;
 mod wavgen;
 mod zoom;
@@ -595,6 +597,24 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
     true
 }
 
+/// Synth test state read off the reference captures (osc 2 FM, LFO 1 slow, 2 routes, one macro
+/// mapping, Tape off / Chorus / Delay / Reverb); not a factory sound.
+fn synth_test_state(device: saine_core::DeviceId) -> saine_core::Command {
+    let params = [
+        ("osc1_wave", 1.0), ("osc1_shape", 0.1), ("osc1_level", 0.8), ("osc2_wave", 5.0), ("osc2_shape", 0.25), ("osc2_octave", 3.0), ("osc2_fine", 7.0), ("osc2_level", 0.3),
+        ("sub_level", 0.0), ("cutoff", 2400.0), ("resonance", 0.1), ("filter_drive", 0.2), ("filter_env", 0.25), ("filter_velocity", 0.35), ("env2_attack", 0.002),
+        ("amp_attack", 0.004), ("amp_decay", 0.9 * 1.0), ("amp_sustain", 0.35), ("amp_release", 1.1), ("volume", -0.74), ("env2_decay", 0.9), ("env2_sustain", 0.1),
+        ("lfo1_rate", 0.18), ("lfo2_rate", 5.0), ("unison_voices", 2.0), ("unison_detune", 0.18), ("unison_spread", 0.8),
+        ("mod1_source", 3.0), ("mod1_target", 5.0), ("mod1_amount", 0.2), ("mod2_source", 7.0), ("mod2_target", 11.0), ("mod2_amount", 0.35), ("mod3_source", 0.0), ("mod3_target", 0.0), ("mod3_amount", 0.0),
+        ("macro1_name", 12.0), ("macro2_name", 18.0), ("macro3_name", 7.0), ("macro4_name", 6.0), ("map1_macro", 1.0), ("map1_param", 22.0), ("map1_from", 0.693), ("map1_to", 0.943),
+        ("fx1_on", 0.0), ("fx3_type", 7.0), ("fx3_on", 1.0), ("fx4_type", 8.0), ("fx4_on", 1.0),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect();
+    saine_core::Command::SetDeviceParams { device, params, preset: Some("Test: reference-synth".into()) }
+}
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("saine-studio: {e}");
@@ -741,23 +761,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let inst = c.project().tracks.iter().find(|t| t.kind == saine_core::TrackKind::Instrument).map(|t| t.id);
         if let Some(t) = inst {
             c.select_track(t);
-            // Values read off the reference captures (osc 2 FM, LFO 1 slow, 2 routes,
-            // one macro mapping, Tape off / Chorus / Delay / Reverb); not a factory sound.
             let device = c.project().track(t).and_then(|t| t.instrument_plugin.as_ref()).map(|d| d.id);
             if let Some(device) = device {
-                let params: std::collections::BTreeMap<String, f32> = [
-                    ("osc1_wave", 1.0), ("osc1_shape", 0.1), ("osc1_level", 0.8), ("osc2_wave", 5.0), ("osc2_shape", 0.0), ("osc2_octave", 3.0), ("osc2_fine", 7.0), ("osc2_level", 0.3),
-                    ("sub_level", 0.0), ("cutoff", 2400.0), ("resonance", 0.1), ("filter_drive", 0.2), ("filter_env", 0.25), ("filter_velocity", 0.35), ("env2_attack", 0.002),
-                    ("amp_attack", 0.004), ("amp_decay", 0.9 * 1.0), ("amp_sustain", 0.35), ("amp_release", 1.1), ("volume", -0.7), ("env2_decay", 0.9), ("env2_sustain", 0.1),
-                    ("lfo1_rate", 0.18), ("lfo2_rate", 5.0), ("unison_voices", 2.0), ("unison_detune", 0.18), ("unison_spread", 0.8),
-                    ("mod1_source", 3.0), ("mod1_target", 5.0), ("mod1_amount", 0.2), ("mod2_source", 7.0), ("mod2_target", 11.0), ("mod2_amount", 0.35), ("mod3_source", 0.0), ("mod3_target", 0.0), ("mod3_amount", 0.0),
-                    ("macro1_name", 12.0), ("macro2_name", 18.0), ("macro3_name", 7.0), ("macro4_name", 6.0), ("map1_macro", 1.0), ("map1_param", 22.0), ("map1_from", 0.693), ("map1_to", 0.943),
-                    ("fx1_on", 0.0), ("fx3_type", 7.0), ("fx3_on", 1.0), ("fx4_type", 8.0), ("fx4_on", 1.0),
-                ]
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
-                c.execute(saine_core::Command::SetDeviceParams { device, params, preset: Some("Test: reference-synth".into()) });
+                c.execute(synth_test_state(device));
             }
         }
         c.set_bottom_tab(BottomTab::Devices);
@@ -939,6 +945,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(t) = c.project().tracks.iter().find(|t| t.kind == kind).map(|t| t.id) {
             c.select_track(t);
             c.add_item_to_track(&devices::Item::Builtin(def), t, None);
+            let added = c.project().track(t).and_then(|t| t.instrument_plugin.as_ref().filter(|_| id == "synth-v2")).map(|d| d.id);
+            if let Some(device) = added {
+                c.execute(synth_test_state(device));
+            }
         }
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(8.0);

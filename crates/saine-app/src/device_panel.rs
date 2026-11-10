@@ -33,6 +33,7 @@ use crate::controller::{card_color, Controller};
 use crate::devices::{DevMenu, MenuPick};
 use crate::device_canvas::{EQ_SLIDER_BOTTOM, EQ_SLIDER_TOP};
 use crate::device_fields::{self, Fill, Live, Style};
+use crate::text_measure::{choice_width, name_width, value_width};
 use crate::{DeviceCard, PanelCanvas, PanelEq, PanelField, PanelKnob, PanelPick, PanelSlider, PanelStrip, PanelTick};
 use saine_core::builtin::{Control, DeviceDef, Face, Field, ParamDef, Strip, Transfer, View, CLUSTER_GAP, KNOB_CELL, KNOB_GAP};
 use saine_core::{Command, Device, DeviceId, TrackId};
@@ -63,8 +64,6 @@ pub(crate) const HISTORY: usize = 240;
 const SILENT_DB: f32 = -120.0;
 /// Custom view: scrolling output waveform with the applied-gain trace (transient shaper).
 const GAIN_SCOPE: &str = "gain-scope";
-/// Level under which the gain scope reads as silence (linear, -48 dB).
-const SCOPE_SILENT: f32 = 0.004;
 /// Picker index of a card's view selector (not a parameter, e.g. the
 /// multiband band tabs): \`panel_choice\` with it changes the view state.
 pub(crate) const VIEW_SELECT: i32 = -3;
@@ -127,6 +126,9 @@ pub struct PanelState {
     drag: Option<ParamDrag>,
     field: Option<FieldDrag>,
     meters: HashMap<DeviceId, MeterHistory>,
+    /// Gain scope histories (transient shaper) and the clock they run on.
+    pub(crate) scopes: HashMap<DeviceId, crate::gain_scope::ScopeHistory>,
+    scope_clock: Option<std::time::Instant>,
     /// Momentary latch held down: (device, param index).
     held: Option<(DeviceId, usize)>,
     pub fields: crate::panel_fields::FieldState,
@@ -167,23 +169,10 @@ fn labels_model(def: &DeviceDef, p: &ParamDef, labels: &[&str]) -> ModelRc<Share
     STATIC_MODELS.with(|m| m.borrow_mut().entry(format!("{}/{}/{}", def.id, p.id, labels.join("|"))).or_insert_with(|| model(labels.iter().map(|c| s(*c)).collect())).clone())
 }
 
-/// Advance width (pt) of `text` in Inter SemiBold at `size` pt, plus `tracking` per character.
-pub(crate) fn text_width(text: &str, size: f32, tracking: f32) -> f32 {
-    thread_local! {
-        static FACE: ttf_parser::Face<'static> =
-            ttf_parser::Face::parse(include_bytes!("../ui/fonts/Inter-SemiBold.ttf"), 0).expect("bundled Inter SemiBold parses");
-    }
-    FACE.with(|f| {
-        let scale = size / f.units_per_em() as f32;
-        let missing = f.glyph_index('M').and_then(|g| f.glyph_hor_advance(g)).unwrap_or(0);
-        text.chars().map(|c| f.glyph_index(c).and_then(|g| f.glyph_hor_advance(g)).unwrap_or(missing) as f32 * scale + tracking).sum()
-    })
-}
-
 /// Width of one segment of a choice track (pt): every segment is as wide as the
-/// longest choice in the 10 pt semibold face plus 12, at least 20.
-fn segment_width(labels: &[&str]) -> f32 {
-    let longest = labels.iter().map(|c| text_width(c, 10.0, -0.4)).fold(0.0, f32::max);
+/// longest choice plus 12, at least 20.
+pub(crate) fn segment_width(labels: &[&str]) -> f32 {
+    let longest = labels.iter().map(|c| choice_width(c)).fold(0.0, f32::max);
     (longest + 12.0).ceil().max(20.0)
 }
 
@@ -191,7 +180,7 @@ fn segment_width(labels: &[&str]) -> f32 {
 /// semibold value face (tracking -0.4 per character), plus 30 for the left
 /// padding and the chevron, rounded up.
 fn dropdown_width(p: &ParamDef) -> f32 {
-    let longest = p.choices.iter().map(|c| text_width(pill_text(c), 10.0, -0.4)).fold(0.0, f32::max);
+    let longest = p.choices.iter().map(|c| value_width(pill_text(c))).fold(0.0, f32::max);
     (30.0 + longest).ceil()
 }
 
@@ -350,19 +339,21 @@ pub(crate) fn polyline(pts: &[(f32, f32)]) -> String {
     out
 }
 
-/// A smooth curve through the points (Catmull-Rom as cubic Béziers), for meter traces.
-/// `join` continues an open path with a line to the first point instead of a move.
+/// A smooth curve as the reference app draws meter traces and field curves: from the first point,
+/// each inner point is the control of a quadratic to the midpoint after it, then a line
+/// to the last point. `join` continues an open path with a line to the first point
+/// instead of a move.
 pub(crate) fn smooth(pts: &[(f32, f32)], join: bool) -> String {
     use std::fmt::Write;
-    let mut out = String::with_capacity(pts.len() * 40);
+    let mut out = String::with_capacity(pts.len() * 24);
     let Some(&(x0, y0)) = pts.first() else { return out };
     let _ = write!(out, "{}{x0:.1} {y0:.1}", if join { " L" } else { "M" });
-    for i in 1..pts.len() {
-        let (p0, p1, p2) = (pts[i.saturating_sub(2)], pts[i - 1], pts[i]);
-        let p3 = pts[(i + 1).min(pts.len() - 1)];
-        let (c1x, c1y) = (p1.0 + (p2.0 - p0.0) / 6.0, p1.1 + (p2.1 - p0.1) / 6.0);
-        let (c2x, c2y) = (p2.0 - (p3.0 - p1.0) / 6.0, p2.1 - (p3.1 - p1.1) / 6.0);
-        let _ = write!(out, " C{c1x:.1} {c1y:.1} {c2x:.1} {c2y:.1} {:.1} {:.1}", p2.0, p2.1);
+    for w in pts.windows(2).skip(1) {
+        let ((cx, cy), (nx, ny)) = (w[0], w[1]);
+        let _ = write!(out, " Q{cx:.1} {cy:.1} {:.1} {:.1}", (cx + nx) / 2.0, (cy + ny) / 2.0);
+    }
+    if let Some(&(x, y)) = pts.last().filter(|_| pts.len() > 1) {
+        let _ = write!(out, " L{x:.1} {y:.1}");
     }
     out
 }
@@ -612,7 +603,6 @@ impl Controller {
     /// The card of a built-in device (generic panel).
     pub(crate) fn builtin_card(&self, d: &Device, def: &'static DeviceDef) -> DeviceCard {
         let width = def.layout.width();
-        let analyzer = matches!(def.layout.view, Some(View::Custom(v)) if crate::analyzer_views::metrics(v).is_some());
         // Key and Scale that follow the project key are shown dimmed with the project's values.
         let followed = saine_core::builtin::followed_key(def, d, self.project().transport.key);
         let accent = self.card_accent(d);
@@ -641,8 +631,7 @@ impl Controller {
                         value: s(pill_text(&text)),
                         selected: v.round() as i32,
                         enabled: true,
-                        // Analyzer cards size the pill to its value, as the reference cards do.
-                        width: if analyzer { 0.0 } else { dropdown_width(p) * Z },
+                        width: dropdown_width(p) * Z,
                         dim: follow.is_some(),
                         ..Default::default()
                     });
@@ -666,8 +655,9 @@ impl Controller {
                         Some((off, on_text)) => (off.to_string(), on_text.to_string()),
                         None => (format!("{} Off", p.label), format!("{} On", p.label)),
                     };
-                    // As wide as its wider state label, padded 8 each side (the reference stacks both labels).
-                    let width = (text_width(&off_text, 10.0, -0.4).max(text_width(&on_text, 10.0, -0.4)) + 16.0).ceil() * Z;
+                    // As wide as its wider state label + 16.76, rounded up (the reference app's latch rule; it stacks both labels).
+                    // Reverb's Dry latch has a fixed 54 pt basis in the reference app.
+                    let width = if def.id == "reverb" { 54.0 } else { (value_width(&off_text).max(value_width(&on_text)) + 16.76).ceil() } * Z;
                     let label = if on { on_text } else { off_text };
                     picks.push(PanelPick { kind: 5, param: idx(p.id), label: s(label), selected: on as i32, enabled: true, width, ..Default::default() });
                 }
@@ -688,7 +678,8 @@ impl Controller {
                     choices: choices_model(def, p),
                     selected: self.panel_value(d, def, p).round() as i32,
                     enabled: true,
-                    width: segment_width(p.choices) * Z,
+                    // Glue's sidechain filter is a switch bank: every position as wide as "Auto".
+                    width: segment_width(if def.id == "glue-compressor" { &["Auto"] } else { p.choices }) * Z,
                     ..Default::default()
                 }),
                 (Control::Sidechain, _) => {
@@ -697,10 +688,18 @@ impl Controller {
                         None => "None".to_string(),
                         Some(t) => self.project().track(t).map_or_else(|| "Removed".to_string(), |t| t.name.clone()),
                     };
-                    // As wide as its longest option (None or another track's name), as a dropdown.
-                    let own = self.project().find_device(d.id).map(|(ti, _)| self.project().tracks[ti].id);
-                    let longest = self.project().tracks.iter().filter(|t| Some(t.id) != own).map(|t| text_width(&t.name, 10.0, -0.4)).fold(text_width("None", 10.0, -0.4).max(text_width(&source, 10.0, -0.4)), f32::max);
-                    let w = (30.0 + longest).ceil();
+                    // The reference app sizes the pill per card, not by the track names: at most 140, less
+                    // where the row leaves less room. Other cards: the longest option + 30.
+                    let w = match def.id {
+                        "character-compressor" | "glue-compressor" => 140.0,
+                        "echo" => 130.0,
+                        "compressor" => 79.0,
+                        _ => {
+                            let own = self.project().find_device(d.id).map(|(ti, _)| self.project().tracks[ti].id);
+                            let longest = self.project().tracks.iter().filter(|t| Some(t.id) != own).map(|t| value_width(&t.name)).fold(value_width("None").max(value_width(&source)), f32::max);
+                            (30.0 + longest).ceil()
+                        }
+                    };
                     picks.push(PanelPick { kind: 2, param: -1, label: s("Sidechain"), value: s(source), enabled: true, width: w * Z, ..Default::default() });
                 }
                 (Control::Segments(_, labels), Some(p)) => picks.push(PanelPick {
@@ -728,7 +727,8 @@ impl Controller {
                     value: s(def.text(live, p, self.panel_value(d, def, p))),
                     // A pill after the sidechain picker scales the key: inert without a source.
                     enabled: d.sidechain.is_some() || !def.layout.picker[..ci].contains(&Control::Sidechain),
-                    width: 60.0 * Z,
+                    // Wide enough for either end of the range, plus 18.
+                    width: (18.0 + choice_width(&p.format(p.min)).max(choice_width(&p.format(p.max)))).ceil() * Z,
                     ..Default::default()
                 }),
                 _ => {}
@@ -740,6 +740,10 @@ impl Controller {
         // Without a gap the row's items stay on the left.
         if !picks.iter().any(|p| p.kind == 4) {
             picks.push(PanelPick { kind: 4, ..Default::default() });
+        }
+        // Captions take the reference app's measured width (rounded up), not the rendered text's.
+        for p in &mut picks {
+            p.label_w = name_width(&p.label).ceil() * Z;
         }
 
         // Slider column (an EQ's Output slider comes from its view).
@@ -900,7 +904,6 @@ impl Controller {
             preset: s(preset),
             knobs: model(knobs),
             picks: model(picks),
-            tight_picks: analyzer,
             sliders: model(sliders),
             strip,
             field,
@@ -986,10 +989,6 @@ impl Controller {
         }
     }
 
-    /// Polled readout history of a device (oldest first), for custom views.
-    pub(crate) fn panel_meter_frames(&self, id: DeviceId) -> Vec<(f32, f32, f32)> {
-        self.devices.panel.meters.get(&id).map(|h| h.slots.iter().copied().collect()).unwrap_or_default()
-    }
 
     /// The first of a field axis' parameters that is shown (Rate or Rate Sync).
     fn field_axis(d: &Device, def: &DeviceDef, ids: &[&'static str]) -> Option<usize> {
@@ -1106,7 +1105,8 @@ impl Controller {
             .collect();
         let scopes: Vec<DeviceId> =
             t.devices.iter().filter(|d| saine_core::builtin::def_of(d).is_some_and(|def| def.layout.view == Some(View::Custom(GAIN_SCOPE)))).map(|d| d.id).collect();
-        self.devices.panel.meters.retain(|id, _| strips.iter().any(|(s, _)| s == id) || scopes.contains(id));
+        self.devices.panel.meters.retain(|id, _| strips.iter().any(|(s, _)| s == id));
+        self.devices.panel.scopes.retain(|id, _| scopes.contains(id));
         let mut out = Vec::new();
         self.devices.panel.canvas.readouts.retain(|id, _| canvases.contains(id));
         for id in canvases {
@@ -1115,23 +1115,27 @@ impl Controller {
                 self.ui_dirty = true;
             }
         }
+        let now_ms = self.devices.panel.scope_clock.get_or_insert_with(std::time::Instant::now).elapsed().as_secs_f64() * 1e3;
         for id in scopes {
-            // Raw frames (output peak, pre-clip peak, gain dB); parked after silence.
-            let next = match self.engine.builtin_readouts(id.0, &mut out) {
-                Ok(()) if out.len() >= 3 => (out[0], out[1], out[2]),
-                _ => (0.0, 0.0, 0.0),
-            };
-            let h = self.devices.panel.meters.entry(id).or_default();
-            let silent = |s: (f32, f32, f32)| s.0 < SCOPE_SILENT && s.1 < SCOPE_SILENT && s.2.abs() < 0.05;
-            if silent(next) && h.slots.iter().all(|s| silent(*s)) {
-                h.slots.clear();
-                continue;
+            // Merge the newest column frame; the head moves while there is something to show.
+            let seq = self.engine.builtin_analysis(id.0, &mut out).unwrap_or(0);
+            let h = self.devices.panel.scopes.entry(id).or_default();
+            let fresh = seq != 0 && seq != h.seq;
+            if fresh {
+                h.seq = seq;
+                h.push(&out, now_ms, playing);
             }
-            if h.slots.len() == HISTORY {
-                h.slots.pop_front();
+            let rests = h.rests(playing);
+            let moving = !rests && !h.empty();
+            if !rests && (fresh || moving) {
+                h.advance(now_ms);
             }
-            h.slots.push_back(next);
-            self.ui_dirty = true;
+            if fresh || moving {
+                self.ui_dirty = true;
+            }
+            if !moving {
+                h.park();
+            }
         }
         for (id, st) in strips {
             // Readout order of a strip device: input dB, output dB, gain reduction dB.

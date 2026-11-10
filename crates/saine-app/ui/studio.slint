@@ -86,7 +86,7 @@ export struct ChainFrame { x: length, w: length, armed: bool, color: color, empt
 // choice menu), 3 value box, 4 flexible gap, 5 latch (On/Off parameter; label shows the state,
 // selected 0 / 1), 6 action button, 7 view switch / tabs (choices = view names, selected = shown view; UI state). dim: a menu pill shown at 60% until hovered
 // (values that follow the project, e.g. the Pitch Corrector's key while Follow is Project).
-export struct PanelPick { kind: int, param: int, label: string, choices: [string], selected: int, value: string, enabled: bool, width: length, dim: bool }
+export struct PanelPick { kind: int, param: int, label: string, label-w: length, choices: [string], selected: int, value: string, enabled: bool, width: length, dim: bool }
 // Vertical slider column (x = column left, card relative).
 // zero: normalised position the fill starts from (0 = bottom; 0 dB on a range through zero).
 export struct PanelSlider { param: int, x: length, label: string, value: string, norm: float, zero: float }
@@ -227,7 +227,6 @@ export struct DeviceCard {
     preset: string,
     knobs: [PanelKnob],
     picks: [PanelPick],
-    tight-picks: bool,     // no gap around the flexible gap in the picks row (analyzer cards)
     sliders: [PanelSlider],
     slider-top: length,
     strip: PanelStrip,
@@ -292,7 +291,7 @@ export struct SynthDisplay { line: string, fill: string, ghost: string, dots: st
 export struct SynthLabel { slot: int, x: length, y: length, text: string, align: int, accent: bool }
 // Page elements (card coordinates; knobs, latches: centre of the dial; faders: centre x, groove top).
 export struct SynthArc { d: string, c: color }
-export struct SynthKnobItem { idx: int, x: length, y: length, label: string, accent: color, dim: bool, lit: bool, arcs: [SynthArc], dots: [color] }
+export struct SynthKnobItem { idx: int, x: length, y: length, label: string, accent: color, dim: bool, lit: bool, arcs: [SynthArc], dots: [color], band-on: bool, band-lo: float, band-hi: float, dot-on: bool, dot: float }
 export struct SynthFaderItem { idx: int, x: length, y: length, label: string }
 export struct SynthPillItem { x: length, y: length, w: length, label: string, value: string, action: int, arg: int, ring: int, ring-idx: int, outline: bool, chevron: bool }
 export struct SynthTextItem { x: length, y: length, w: length, text: string, style: int, align: int }

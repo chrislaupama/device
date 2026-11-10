@@ -427,7 +427,7 @@ impl Controller {
             value: s(p.format(v)),
             enabled: true,
             width: width * Z,
-            dim: false,
+            ..Default::default()
         })
     }
 
@@ -678,15 +678,10 @@ impl Controller {
                 let g = n("glide");
                 let x1 = 8.0 + g * (w - 16.0);
                 let (y0, y1) = (h * 0.78, h * 0.22);
-                let mut pts = vec![(0.0, y0), (8.0, y0)];
-                for i in 1..=24 {
-                    let t = i as f32 / 24.0;
-                    let k = (1.0 - (-5.0 * t).exp()) / (1.0 - (-5.0f32).exp());
-                    pts.push((8.0 + (x1 - 8.0) * t, y0 + (y1 - y0) * k));
-                }
-                pts.push((w, y1));
+                // An S-curve (cubic, both controls at the horizontal middle), as the reference app draws it.
+                let mx = 8.0 + (x1 - 8.0) * 0.5;
                 handles.push(PanelHandle { x: x1, y: y1, active: g > 0.0 });
-                let line = polyline(&pts);
+                let line = format!("M0 {y0:.1} L8 {y0:.1} C{mx:.1} {y0:.1} {mx:.1} {y1:.1} {x1:.1} {y1:.1} L{w:.1} {y1:.1}");
                 (format!("{line} L{w:.1} {h:.1} L0 {h:.1} Z"), line)
             }
             2 if !self.sp().env_view.contains(&d.id) => {
