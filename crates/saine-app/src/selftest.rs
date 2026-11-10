@@ -4104,17 +4104,28 @@ fn splitter_steps() -> Vec<Step> {
     }
     let base_h = Rc::new(Cell::new(0f32));
     let (b1, b2) = (base_h.clone(), base_h.clone());
+    let undo_n = Rc::new(Cell::new(0usize));
+    let (u1, u2) = (undo_n.clone(), undo_n.clone());
     vec![
+        Check("record the undo depth", Box::new(move |c, _| {
+            u1.set(c.doc.undo_depth());
+            Ok(())
+        })),
         DoC("drag track 1's bottom edge down half a row", Box::new(|a, ctl| {
             let y = edge_y(&ctl.borrow());
             drag(a, 300.0, y, 300.0, y + PITCH / 2.0);
         })),
-        Check("track 1 is 1.5x tall in the model and the view, one undo step", Box::new(|c, _| {
+        Check("track 1 is 1.5x tall in the model and the view, not an undo step", Box::new(move |c, _| {
             let h = c.project().tracks[0].height;
-            let ok = approx(h, 1.5, 0.02) && approx(c.view.pitch(0), PITCH * h, 0.5) && c.doc.undo_label() == Some("Track Height Change");
-            ok.then_some(()).ok_or(format!("height {h} pitch {} undo {:?}", c.view.pitch(0), c.doc.undo_label()))
+            let ok = approx(h, 1.5, 0.02) && approx(c.view.pitch(0), PITCH * h, 0.5) && c.doc.undo_depth() == u2.get();
+            ok.then_some(()).ok_or(format!("height {h} pitch {} undo depth {} vs {}", c.view.pitch(0), c.doc.undo_depth(), u2.get()))
         })),
-        Do("undo the height change", Box::new(|a| key(a, "z", true, false))),
+        DoC("reset track 1's height", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = c.project().tracks[0].id;
+            let _ = c.doc.set_track_height(t, 1.0);
+            c.ui_dirty = true;
+        })),
         Check("track 1 back to its default height", Box::new(|c, _| {
             let h = c.project().tracks[0].height;
             (h == 1.0 && approx(c.view.pitch(0), PITCH, 0.01)).then_some(()).ok_or(format!("height {h}"))

@@ -1,11 +1,11 @@
 //! Splitters: the timeline / bottom-panel splitter and per-track height handles.
-//! Both preview while dragging and commit on release: a track height is one undoable
-//! `SetTrackHeight`, the panel height is saved with the project without an undo step.
+//! Both preview while dragging and commit on release. Like the reference, both are view
+//! changes: saved with the project, never undo steps.
 
 use crate::controller::{BottomTab, Controller};
 use crate::highlight::{DEFAULT_BOTTOM_H, MIXER_BOTTOM_H};
 use crate::timeline::{MIN_TRACK_PITCH, TRACK_PITCH};
-use saine_core::{Command, Track, TrackId};
+use saine_core::{Track, TrackId};
 
 /// Bottom panel collapsed to its tab row (26.5 pt row plus its rule).
 pub const BOTTOM_COLLAPSED_H: f32 = 27.0;
@@ -103,10 +103,7 @@ impl Controller {
             }
             _ => {
                 if let Some(r) = self.track_resize.take() {
-                    if self.project().track(r.track).is_some_and(|t| t.height != r.scale) {
-                        self.execute(Command::SetTrackHeight { track: r.track, height: r.scale });
-                        self.doc.seal_coalescing();
-                    }
+                    let _ = self.doc.set_track_height(r.track, r.scale);
                     self.ui_dirty = true;
                 }
             }

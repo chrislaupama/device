@@ -765,7 +765,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut c = ctl.borrow_mut();
         let ids: Vec<_> = c.project().tracks.iter().map(|t| t.id).collect();
         for (track, height) in ids.into_iter().zip([0.25, 0.5, 2.0]) {
-            c.execute(saine_core::Command::SetTrackHeight { track, height });
+            let _ = c.doc.set_track_height(track, height);
         }
     }
     if args.splitters_review == 2 {

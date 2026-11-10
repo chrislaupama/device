@@ -1,7 +1,7 @@
 //! Undo/redo history built on invertible [`Command`]s.
 
 use crate::command::{Command, EditError};
-use crate::model::Project;
+use crate::model::{Project, TrackId};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -141,6 +141,21 @@ impl Document {
 
     /// Remember the bottom panel height for a panel kind (splitter drag). Saved with the
     /// project but not an undo step, like the reference's panel layout.
+    /// Track row height scale (1.0 = default). Like the reference, a view change: saved with
+    /// the project, never an undo step.
+    pub fn set_track_height(&mut self, track: TrackId, height: f32) -> Result<(), EditError> {
+        let (lo, hi) = crate::Track::HEIGHT_RANGE;
+        if !(lo..=hi).contains(&height) {
+            return Err(EditError::InvalidValue { field: "height", reason: format!("{height} outside {lo}..{hi}") });
+        }
+        let t = self.project.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
+        if t.height != height {
+            t.height = height;
+            self.revision += 1;
+        }
+        Ok(())
+    }
+
     pub fn set_bottom_panel_height(&mut self, kind: &str, h: Option<f32>) {
         let map = &mut self.project.bottom_panel_heights;
         let changed = match h {
@@ -150,6 +165,10 @@ impl Document {
         if changed {
             self.revision += 1;
         }
+    }
+
+    pub fn undo_depth(&self) -> usize {
+        self.undo.len()
     }
 
     pub fn can_undo(&self) -> bool {
