@@ -14,6 +14,7 @@
 //!              [--hold-note <0..127>  (with a synth state: hold the note and render 0.75 s offline first)]
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
 //!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
+//!              [--clip-menu <0|1|3|4|5>  (open a clip editor dropdown after --state: Speed, Warp, Grid, Type, Genre; 2, Mode, is disabled)]
 //!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
 //! ```
 
@@ -31,6 +32,7 @@ mod device_editors;
 mod panel_graph;
 mod device_views;
 mod devices;
+mod dialogs;
 mod files;
 mod panel_multiband;
 mod gpu;
@@ -90,6 +92,8 @@ struct Args {
     clip_menu_state: bool,
     /// reference-settings-audio (14): Settings open on the Audio page.
     settings_state: bool,
+    /// 1 export dialog, 2 unsaved-changes prompt.
+    dialog_state: u8,
     settings_general_state: bool,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
     /// the live recording clip. Not a reference capture (the reference recording UI was not captured).
@@ -140,6 +144,7 @@ struct Args {
     screenshot: Option<PathBuf>,
     exit_after_frames: Option<u64>,
     zoom: Option<u32>,
+    clip_menu: Option<i32>,
     frame_stats: bool,
     /// --render-bench N: offscreen, render the state N times and print the mean / median /
     /// p95 milliseconds per full window render (Slint + wgpu surfaces + readback), then exit.
@@ -206,6 +211,14 @@ fn parse_args() -> Result<Args, String> {
                 "reference-input-menu" => {
                     a.reference_default = true;
                     a.input_menu_state = true;
+                }
+                "reference-export" => {
+                    a.reference_default = true;
+                    a.dialog_state = 1;
+                }
+                "reference-unsaved" => {
+                    a.reference_default = true;
+                    a.dialog_state = 2;
                 }
                 "reference-settings-general" => {
                     a.reference_default = true;
@@ -312,6 +325,13 @@ fn parse_args() -> Result<Args, String> {
             "--hold-note" => a.hold_note = Some(value(&mut i)?.parse().map_err(|e| format!("--hold-note: {e}"))?),
             "--sampler-tab" => a.sampler_tab = Some(value(&mut i)?.parse().map_err(|e| format!("--sampler-tab: {e}"))?),
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
+            "--clip-menu" => {
+                let m: i32 = value(&mut i)?.parse().map_err(|e| format!("--clip-menu: {e}"))?;
+                if ![0, 1, 3, 4, 5].contains(&m) {
+                    return Err(format!("--clip-menu: want 0, 1, 3, 4 or 5 (2, Mode, is disabled), got {m}"));
+                }
+                a.clip_menu = Some(m);
+            }
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
             "--drag-bench" => {
@@ -523,6 +543,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.devmenu_dismiss();
             c.auto_picker_close();
             c.rename = None;
+            c.pr.menu = -1;
             c.ui_dirty = true;
         }
         a if a.starts_with("clip.") || a == "assistant.ask" => ctl.borrow_mut().set_status(format!("{a}: not implemented yet"), 3),
@@ -575,6 +596,8 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
                 ctl.borrow_mut().open(&dir);
             }
         }
+        "file.new" => ctl.borrow_mut().new_project_request(),
+        "file.export_audio" => ctl.borrow_mut().export_open(),
         _ => return false,
     }
     true
@@ -865,6 +888,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.auto_picker_pick(1);
         }
     }
+    // The dropdown opens once its editor is on screen (the audio clip state imports first).
+    let clip_menu_timer = slint::Timer::default();
+    if let Some(m) = args.clip_menu {
+        let ctl = ctl.clone();
+        // Opens after its editor has been on screen for 10 ticks, so the editor is drawn first.
+        let shown_ticks = std::cell::Cell::new(0u32);
+        let started = Instant::now();
+        clip_menu_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
+            if shown_ticks.get() < 10 && started.elapsed() > Duration::from_secs(3) {
+                eprintln!("saine-studio: --clip-menu {m}: its editor never appeared; use a --state that shows it (0, 1: an audio clip; 3, 4, 5: a MIDI clip)");
+                std::process::exit(2);
+            }
+            let Ok(mut c) = ctl.try_borrow_mut() else { return };
+            if shown_ticks.get() > 10 || !c.clip_menu_shown(m) {
+                shown_ticks.set(if c.clip_menu_shown(m) { shown_ticks.get() } else { 0 });
+                return;
+            }
+            shown_ticks.set(shown_ticks.get() + 1);
+            if shown_ticks.get() == 10 {
+                c.clip_menu_open(m);
+            }
+        });
+    }
     if args.settings_state {
         let mut c = ctl.borrow_mut();
         c.open_settings();
@@ -1079,6 +1125,43 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_input_menu_dismiss, |c| c.input_menu_close());
     on!(on_toggle_settings, |c| c.toggle_settings());
     on!(on_close_settings, |c| c.close_settings());
+    on!(on_export_close, |c| c.dialogs_close());
+    on!(on_export_run, |c| c.export_run());
+    on!(on_export_bits, |c, b: bool| c.export_set_bits(b));
+    on!(on_export_name_edited, |c, t: slint::SharedString| c.export_set_name(t.as_str()));
+    on!(on_unsaved_cancel, |c| c.dialogs_close());
+    on!(on_unsaved_dont_save, |c| c.new_project());
+    // Folder picker and Save run their native dialogs with the controller NOT borrowed.
+    {
+        let ctl = ctl.clone();
+        let aw = app.as_weak();
+        studio.on_export_choose_dir(move || {
+            let start = ctl.borrow().export.dir.clone();
+            if let Some(dir) = rfd::FileDialog::new().set_title("Export to").set_directory(&start).pick_folder() {
+                ctl.borrow_mut().export_set_dir(dir);
+            }
+            if let Some(a) = aw.upgrade() {
+                ctl.borrow_mut().update_ui(&a);
+            }
+        });
+    }
+    {
+        let ctl = ctl.clone();
+        let aw = app.as_weak();
+        studio.on_unsaved_save(move || {
+            let existing = ctl.borrow().project_dir.clone();
+            if let Some(dir) = existing.or_else(|| pick_project_dir(true)) {
+                let mut c = ctl.borrow_mut();
+                c.save_to(&dir);
+                if !c.doc.is_dirty() {
+                    c.new_project();
+                }
+            }
+            if let Some(a) = aw.upgrade() {
+                ctl.borrow_mut().update_ui(&a);
+            }
+        });
+    }
     on!(on_settings_page_select, |c, i: i32| c.settings_page(i.max(0) as usize));
     on!(on_settings_dropdown, |c, f: i32| c.settings_dropdown(f));
     on!(on_settings_menu_pick, |c, i: i32| c.settings_menu_pick(i.max(0) as usize));
@@ -1162,6 +1245,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool| c.pr_pointer(kind, x, y, shift, alt));
     on!(on_pr_scroll, |c, dy: f32| c.pr_scroll(dy));
     on!(on_pr_action, |c, a: slint::SharedString| c.pr_action(a.as_str()));
+    on!(on_clip_menu_open, |c, m: i32| c.clip_menu_open(m));
+    on!(on_clip_menu_pick, |c, i: i32| c.clip_menu_pick(i));
     on!(on_pr_value, |c, f: i32, phase: i32, dy: f32| c.pr_value(f, phase, dy));
     on!(on_menu_activate, |c, i: i32| c.menu_activate(i.max(0) as usize));
     on!(on_sub_activate, |c, i: i32| c.submenu_activate(i.max(0) as usize));
@@ -1388,6 +1473,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if ctl.borrow().settings.open && action != "view.escape" && action != "app.settings" {
                 return true;
             }
+            // The export dialog and the unsaved-changes prompt are modal: Escape closes them (Cancel).
+            {
+                let mut c = ctl.borrow_mut();
+                if c.export.open || c.unsaved_open {
+                    if action == "view.escape" {
+                        c.dialogs_close();
+                    }
+                    drop(c);
+                    if let Some(a) = aw.upgrade()
+                        && let Ok(mut c) = ctl.try_borrow_mut()
+                    {
+                        c.update_ui(&a);
+                    }
+                    return true;
+                }
+            }
             let handled = run_action(&ctl, &action);
             if let Some(a) = aw.upgrade() {
                 if let Ok(mut c) = ctl.try_borrow_mut() {
@@ -1429,6 +1530,30 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if !args.import.is_empty() {
         ctl.borrow_mut().import_files(args.import.clone(), ImportTarget::Selected, None);
+    }
+    // Reference z100-modal-export-audio-mixdown / -save-changes-on-new-project: an 8 s sine clip
+    // at bar 3 of the Audio track (the export covers bars 1–6), then the dialog.
+    let dialog_timer = slint::Timer::default();
+    if args.dialog_state > 0 {
+        let dir = std::env::temp_dir().join(format!("saine-ref-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("sine-a220-steady.wav");
+        let samples: Vec<f32> = (0..8 * 44_100).map(|i| (std::f32::consts::TAU * 220.0 * i as f32 / 44_100.0).sin() * 0.5).collect();
+        wavgen::write_wav(&path, 44_100, 1, &samples)?;
+        ctl.borrow_mut().import_files(vec![path], ImportTarget::Selected, Some(8 * saine_core::PPQ));
+        let ctl = ctl.clone();
+        let state = args.dialog_state;
+        dialog_timer.start(slint::TimerMode::Repeated, Duration::from_millis(20), move || {
+            let Ok(mut c) = ctl.try_borrow_mut() else { return };
+            let imported = c.project().tracks.iter().any(|t| !t.clips.is_empty());
+            if imported && !c.export.open && !c.unsaved_open {
+                if state == 1 {
+                    c.export_open();
+                } else {
+                    c.new_project_request();
+                }
+            }
+        });
     }
     // Reference z100-inspector-audio-clip-tab-warp-off: a 4-bar 220 Hz sine clip at bar 4 on the
     // Audio track, opened in the Clip tab once the import lands; playhead at bar 6.
@@ -1515,6 +1640,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let measure = args.demo || args.frame_stats || args.exit_after_frames.is_some();
     let screenshot = args.screenshot.clone();
     let exit_after = args.exit_after_frames;
+    let want_menu = args.clip_menu;
     let save_to = args.save_to.clone();
     {
         let aw = app.as_weak();
@@ -1614,7 +1740,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         f.slint.0.push((now - t).as_secs_f64() * 1e3);
                     }
                     let (animating, ready) = match ctl.try_borrow() {
-                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || !c.assistant.highlights.is_empty() || c.rec.recording, c.pending_jobs == 0),
+                        Ok(c) => (c.pending_jobs > 0 || c.engine.transport().playing || !c.assistant.highlights.is_empty() || c.rec.recording, c.pending_jobs == 0 && want_menu.is_none_or(|m| c.pr.menu == m)),
                         Err(_) => (true, false),
                     };
                     if ready {

@@ -222,12 +222,16 @@ fn midi_steps() -> Vec<Step> {
         })),
         DoC("Grid 1/32, draw an off-grid note at beat 3.375, Grid back to 1/16", Box::new(|a, ctl| {
             let (gx, gy) = (260.0 + 387.0 + 8.0, 452.0 + (390.0 - 27.0) - 54.5 + 30.0 + 7.0);
-            click(a, gx, gy); // 1/16 -> 1/32
+            // Grid menu above the value: 8 rows of 20.4 with 3.4 padding and a 10.2 gap before the triplets.
+            let item = |i: usize| (gx + 22.0, gy - 10.2 - (8.0 * 20.4 + 6.8 + 10.2) + 3.4 + i as f32 * 20.4 + 10.2);
+            click(a, gx, gy);
+            let (ix, iy) = item(3);
+            click(a, ix, iy); // 1/32
             let (x, y) = pr_xy(ctl, 3.375 + 0.03, 52);
             click(a, x, y);
-            for _ in 0..3 {
-                click(a, gx, gy); // 1/32 -> 1/4 -> 1/8 -> 1/16
-            }
+            click(a, gx, gy);
+            let (ix, iy) = item(2);
+            click(a, ix, iy); // back to 1/16
         })),
         Check("off-grid note drawn at 3240 ticks, grid back at 1/16", Box::new(move |c, a| {
             let n = notes_of(c);
@@ -237,6 +241,21 @@ fn midi_steps() -> Vec<Step> {
                 .ok_or(format!("grid {} {n:?}", c.pr.grid))
         })),
         Do("click Quantize (selection = the new note)", Box::new(|a| click(a, 267.0 + 15.0, 466.0))),
+        DoC("Grid menu: pick 1/8T", Box::new(|a, _| {
+            let (gx, gy) = (260.0 + 387.0 + 8.0, 452.0 + (390.0 - 27.0) - 54.5 + 30.0 + 7.0);
+            click(a, gx, gy);
+            click(a, gx + 22.0, gy - 10.2 - (8.0 * 20.4 + 6.8 + 10.2) + 3.4 + 5.0 * 20.4 + 10.2 + 10.2);
+        })),
+        Check("Grid 1/8T (1/12 note), menu closed", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.pr.grid == 12 && s.get_pr_grid_text() == "1/8T" && s.get_clip_menu() == -1)
+                .then_some(())
+                .ok_or(format!("grid {} {:?} menu {}", c.pr.grid, s.get_pr_grid_text(), s.get_clip_menu()))
+        })),
+        DoC("Grid back to 1/16 (menu pick)", Box::new(|a, ctl| {
+            ctl.borrow_mut().clip_menu_open(3);
+            a.global::<Studio>().invoke_clip_menu_pick(2);
+        })),
         Check("Quantize snapped it to the 1/16 grid (3360), one undo step", Box::new(move |c, _| {
             let n = notes_of(c);
             one_step(h5.clone(), "Quantize Notes")(c)?;
@@ -708,6 +727,42 @@ fn steps() -> Vec<Step> {
         Check("undo restored mute=false", Box::new(|c, _| (!c.project().tracks[0].mute).then_some(()).ok_or("still muted".into()))),
         Do("Cmd+Shift+Z", Box::new(|a| key(a, "Z", true, true))),
         Check("redo muted again", Box::new(|c, _| c.project().tracks[0].mute.then_some(()).ok_or("redo failed".into()))),
+        Do("⇧⌘E (file.export_audio)", Box::new(|a| key(a, "E", true, true))),
+        Check("export dialog open with a range and a size estimate", Box::new(|_c, a| {
+            let s = a.global::<Studio>();
+            (s.get_export_open() && s.get_export_bars_text().starts_with("Bars 1–") && s.get_export_estimate().contains("MB"))
+                .then_some(())
+                .ok_or(format!("open {} bars {} est {}", s.get_export_open(), s.get_export_bars_text(), s.get_export_estimate()))
+        })),
+        DoC("export into a temp folder: click Export", Box::new(|a, ctl| {
+            {
+                let mut c = ctl.borrow_mut();
+                c.export.dir = std::env::temp_dir().join(format!("saine-selftest-export-{}", std::process::id()));
+                c.export.name = "mix".into();
+            }
+            // Export window centred in the 1440 x 820 window: 442 x 340.4, Export button 52.2 x 22.1.
+            click(a, (1440.0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (820.0 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
+        })),
+        Check("mix.wav written: stereo 24-bit at the engine rate, the full length, not silent; dialog closed", Box::new(|c, a| {
+            let path = c.export.dir.join("mix.wav");
+            let (rate, ch, s) = crate::wavgen::read_wav(&path)?;
+            let _ = std::fs::remove_dir_all(&c.export.dir);
+            let peak = s.iter().fold(0f32, |m, v| m.max(v.abs()));
+            let frames = s.len() / 2;
+            (rate as f64 == c.engine.sample_rate() && ch == 2 && frames as u64 == c.export_frames() && peak > 0.01 && !a.global::<Studio>().get_export_open())
+                .then_some(())
+                .ok_or(format!("rate {rate} ch {ch} frames {frames} vs {} peak {peak}", c.export_frames()))
+        })),
+        Do("⌘N (file.new) with unsaved changes", Box::new(|a| key(a, "n", true, false))),
+        Check("Save changes? prompt open, project untouched", Box::new(|c, a| {
+            let n: usize = c.project().tracks.iter().map(|t| t.clips.len()).sum();
+            (a.global::<Studio>().get_unsaved_open() && n == 2).then_some(()).ok_or(format!("prompt {} clips {n}", a.global::<Studio>().get_unsaved_open()))
+        })),
+        Do("Escape (Cancel)", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("prompt closed, project kept", Box::new(|c, a| {
+            let n: usize = c.project().tracks.iter().map(|t| t.clips.len()).sum();
+            (!a.global::<Studio>().get_unsaved_open() && !c.unsaved_open && n == 2).then_some(()).ok_or(format!("clips {n}"))
+        })),
         Do("drag track 1 volume slider left", Box::new(|a| drag(a, 262.65 + 115.7 + 5.95 + 0.8 * 56.1, TRACK0_Y + 47.6, 262.65 + 140.0, TRACK0_Y + 47.6))),
         Check("track 1 gain lowered, one coalesced undo step", Box::new(|c, _| {
             let g = c.project().tracks[0].gain;
