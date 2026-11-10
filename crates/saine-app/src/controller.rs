@@ -543,6 +543,9 @@ impl Controller {
         {
             self.selected_clip = None;
         }
+        if self.selected_section.is_some_and(|s| p.section_index(s).is_none()) {
+            self.selected_section = None;
+        }
         if self.menu.clip.is_some_and(|c| !p.clip_id_in_use(c)) {
             self.menu_close();
         }
@@ -680,6 +683,7 @@ impl Controller {
 
     pub fn select_track(&mut self, id: TrackId) {
         if self.selected_track != Some(id) {
+            self.selected_section = None;
             self.selected_track = Some(id);
             if let Some(c) = self.selected_clip
                 && self.clip_track(c) != Some(id)
@@ -712,7 +716,7 @@ impl Controller {
     }
 
     pub fn delete_selection(&mut self) {
-        if let Some(s) = self.selected_section {
+        if let Some(s) = self.selected_section.filter(|s| self.project().section_index(*s).is_some()) {
             self.delete_section(s);
         } else if let Some(c) = self.selected_clip.take() {
             let cmd = if self.project().find_midi_clip(c).is_some() { Command::RemoveMidiClip { clip: c } } else { Command::RemoveClip { clip: c } };
