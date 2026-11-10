@@ -168,8 +168,8 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Windows | Windows x64 | WASAPI (shared mode) | VST3, CLAP |
 | Linux | x64, X11 or Wayland | PipeWire | VST3, CLAP (no editor windows yet) |
 
-Every change is built and tested on a Mac with a real audio device. Windows and Linux were last built and tested on
-hosted runners, without audio hardware.
+Every change is built and tested on all three systems in CI, on hosted runners without audio hardware. Real audio
+hardware is tested by hand on a Mac.
 
 ### Download
 
@@ -244,6 +244,12 @@ finishes something it describes, the same pull request updates it:
 - **Screenshots** in `docs/assets/` when the part of the interface they show changes visibly. Render them with the
   app itself, e.g. `device-studio --no-audio --state review-automation --screenshot docs/assets/screenshot.png
   --exit-after-frames 5`; the states used are listed in each image's pull request.
+
+## Contributing
+
+Bug reports, testing on Windows and Linux audio hardware, and small pull requests are all welcome. Read
+[CONTRIBUTING.md](CONTRIBUTING.md) first, and follow the [Code of Conduct](CODE_OF_CONDUCT.md). Please report security
+problems privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
 
 ## License
 

@@ -1,0 +1,9 @@
+# Keeps the actions used by CI up to date. Cargo and the C++ SDKs are pinned on
+# purpose (see crates/dstudio-app/Cargo.toml and engine/CMakeLists.txt), so they
+# are updated by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

@@ -12,7 +12,7 @@ only in `engine/src/platform/`; everything else is portable.
 | Audio backend | Core Audio | WASAPI (shared mode) | PipeWire |
 | Plugin formats | AU, VST3, CLAP | VST3, CLAP | VST3, CLAP |
 | Plugin editor windows | yes | yes | not yet |
-| Built and tested in CI | every run (self-hosted Mac) | last hosted run only | last hosted run only |
+| Built and tested in CI | every run | every run | every run |
 | Tested on real audio hardware | yes | **no** | **no** |
 
 macOS is the primary platform. The WASAPI and PipeWire streaming code compiles
@@ -121,22 +121,20 @@ issue in wgpu-core's debug-only lock tracing).
 ## Continuous integration
 
 CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs on every push
-and pull request on a **self-hosted runner**: one Apple silicon Mac mini, so
-the tests run on real hardware with a real audio device. Each run:
+to main and every pull request, including pull requests from forks. It has one
+job per system, all on GitHub-hosted runners (`macos-latest`, `windows-latest`,
+`ubuntu-latest`). Each job:
 
 1. configures and builds the engine with warnings as errors, and runs ctest;
 2. builds and tests the Rust workspace (`--locked`);
 3. builds the app in release mode and runs `device-studio --self-test
-   --no-audio`, which must report every check passed;
-4. uploads the self-test logs as an artifact.
+   --no-audio`, which must report every check passed (Linux under Xvfb with
+   Mesa lavapipe; Windows under WARP, informational for now);
+4. uploads the screenshots and self-test logs as an artifact.
 
-Windows and Linux are **not built in CI** at the moment. Their steps stay in
-the workflow, gated on `runner.os` (Linux: Xvfb + Mesa lavapipe screenshot and
-self-test; Windows: WARP, informational), but they run only when the job lands
-on a runner of that OS. The workflow has a single `runs-on: self-hosted` job
-and no platform matrix, so adding a Windows or Linux runner alone would not
-test every platform on each run: that runner could pick up the job instead of
-the Mac. Covering all three needs runner labels per OS and a matrix or one job
-per OS. The Windows and Linux results above come from the last run on
-GitHub-hosted runners, before that matrix was dropped; later changes are not
-compiled on those systems.
+The hosted runners have no audio device and no GPU, so the engine's device
+tests skip there. Tests against real audio hardware (Core Audio duplex, the
+acoustic loopback test) are run by hand on a Mac.
+
+The workflow never uses a self-hosted runner, has no secrets and gives its
+token read-only access, so running it on a stranger's pull request is safe.
