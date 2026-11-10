@@ -44,6 +44,7 @@ mod recording;
 mod sampler_panel;
 mod selftest;
 mod settings;
+mod splitters;
 mod synth;
 mod timeline;
 mod wavgen;
@@ -102,6 +103,10 @@ struct Args {
     /// an expanded extra lane, master) for review; the second also opens the picker with the
     /// Synth submenu. No reference capture.
     automation_review: u8,
+    /// review-track-heights / review-bottom-collapsed: the demo tracks at 0.25x, 0.5x and 2x
+    /// height; the second instead collapses the bottom panel to its tab row (compare
+    /// z100-arr-resize-timeline-taller.png).
+    splitters_review: u8,
     /// reference-devices-effects (05): browser Devices › Effects sub-tab.
     devices_effects_state: bool,
     /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
@@ -133,6 +138,9 @@ struct Args {
     /// --render-bench N: offscreen, render the state N times and print the mean / median /
     /// p95 milliseconds per full window render (Slint + wgpu surfaces + readback), then exit.
     render_bench: u32,
+    /// --drag-bench track|bottom: with --render-bench, move a track-height or splitter drag
+    /// one step (controller update + view-model sync) before each render.
+    drag_bench: Option<String>,
     self_test: bool,
 }
 
@@ -215,6 +223,14 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.automation_state = true;
                 }
+                "review-track-heights" => {
+                    a.reference_default = true;
+                    a.splitters_review = 1;
+                }
+                "review-bottom-collapsed" => {
+                    a.reference_default = true;
+                    a.splitters_review = 2;
+                }
                 "review-automation" => {
                     a.reference_default = true;
                     a.automation_review = 1;
@@ -283,6 +299,13 @@ fn parse_args() -> Result<Args, String> {
             "--exit-after-frames" => a.exit_after_frames = Some(value(&mut i)?.parse().map_err(|e| format!("--exit-after-frames: {e}"))?),
             "--zoom" => a.zoom = Some(value(&mut i)?.trim_end_matches('%').parse().map_err(|e| format!("--zoom: {e}"))?),
             "--frame-stats" => a.frame_stats = true,
+            "--drag-bench" => {
+                let v = value(&mut i)?;
+                if v != "track" && v != "bottom" {
+                    return Err(format!("--drag-bench: want track or bottom, got {v:?}"));
+                }
+                a.drag_bench = Some(v.to_string());
+            }
             "--render-bench" => {
                 a.render_bench = value(&mut i)?.parse().map_err(|e| format!("--render-bench: {e}"))?;
                 if a.render_bench == 0 {
@@ -750,6 +773,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.select_track(first);
         c.auto_toggle_shown();
     }
+    if args.splitters_review == 1 {
+        let mut c = ctl.borrow_mut();
+        let ids: Vec<_> = c.project().tracks.iter().map(|t| t.id).collect();
+        for (track, height) in ids.into_iter().zip([0.25, 0.5, 2.0]) {
+            let _ = c.doc.set_track_height(track, height);
+        }
+    }
+    if args.splitters_review == 2 {
+        ctl.borrow_mut().doc.set_bottom_panel_height("devices", Some(0.0));
+    }
     if args.automation_review > 0 {
         use saine_core::{AutoPoint, AutomationLane, AutomationTarget, SynthParam};
         let pt = |beat: i64, value: f32, curve: f32| AutoPoint { time: beat * saine_core::PPQ, value, curve };
@@ -1022,6 +1055,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.auto_write_end(|w| matches!(w.target, saine_core::AutomationTarget::Volume | saine_core::AutomationTarget::Pan));
         c.ui_dirty = true
     });
+    on!(on_bottom_resize, |c, phase: i32, y: f32| c.bottom_resize(phase, y));
+    on!(on_track_resize, |c, id: i32, phase: i32, y: f32| c.track_resize_drag(id, phase, y));
     on!(on_auto_toggle_shown, |c| c.auto_toggle_shown());
     on!(on_auto_toggle_draw, |c| c.auto_toggle_draw());
     on!(on_auto_toggle_arm, |c| c.auto_toggle_arm());
@@ -1592,12 +1627,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aw = app.as_weak();
         let zm = zoom.clone();
         let n = args.render_bench as usize;
+        let drag = args.drag_bench.clone();
+        let dc = ctl.clone();
         slint::Timer::single_shot(Duration::from_secs(4), move || {
             let Some(a) = aw.upgrade() else { return };
             zm.borrow_mut().sync(a.window());
             let mut ms = Vec::with_capacity(n);
+            let track = dc.borrow().project().tracks[0].id.0 as i32;
+            match drag.as_deref() {
+                Some("track") => dc.borrow_mut().track_resize_drag(track, 0, 200.0),
+                Some("bottom") => dc.borrow_mut().bottom_resize(0, 500.0),
+                _ => {}
+            }
             for i in 0..n + 5 {
                 let t = Instant::now();
+                let dy = (i % 40) as f32 * 2.0;
+                match drag.as_deref() {
+                    Some("track") => dc.borrow_mut().track_resize_drag(track, 1, 200.0 + dy),
+                    Some("bottom") => dc.borrow_mut().bottom_resize(1, 500.0 - dy),
+                    _ => {}
+                }
+                if drag.is_some() {
+                    dc.borrow_mut().update_ui(&a);
+                }
                 if let Err(e) = a.window().take_snapshot() {
                     eprintln!("--render-bench: snapshot failed: {e}");
                     std::process::exit(1);

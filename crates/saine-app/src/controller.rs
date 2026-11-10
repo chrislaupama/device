@@ -273,6 +273,10 @@ pub struct Controller {
     pub view: View,
     pub lanes_size: (f32, f32),
     drag: Option<Drag>,
+    /// Track-height drag preview (src/splitters.rs).
+    pub(crate) track_resize: Option<crate::splitters::TrackResize>,
+    /// Timeline / bottom-panel splitter drag (src/splitters.rs).
+    pub(crate) bottom_drag: Option<crate::splitters::BottomDrag>,
     status: Option<(String, Instant, Duration)>,
     pub project_dir: Option<PathBuf>,
     pub(crate) jobs_tx: Sender<JobResult>,
@@ -366,6 +370,8 @@ impl Controller {
             view: View::default(),
             lanes_size: (983.0, 398.5),
             drag: None,
+            track_resize: None,
+            bottom_drag: None,
             status: None,
             project_dir: None,
             jobs_tx,
@@ -1497,6 +1503,7 @@ impl Controller {
         self.push_settings(&s);
         self.push_devices(&s);
         self.push_automation(&s);
+        s.set_bottom_h(self.bottom_h());
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };
         s.set_status_text(status.into());
         self.ruler_key.0 = i64::MIN; // force label refresh

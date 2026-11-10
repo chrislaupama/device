@@ -12,6 +12,13 @@ pub const RULER_H: f32 = 39.0;
 /// Track rows are 88 px at the reference's default zoom (88 × 0.85), including a 0.5 pt rule.
 pub const TRACK_PITCH: f32 = 74.8;
 pub const TRACK_H: f32 = 74.3;
+/// Shortest row: the reference's 20 px floor.
+pub const MIN_TRACK_PITCH: f32 = 17.0;
+
+/// Row pitch for a track height scale (the reference's `max(88 × scale, 20)` px).
+pub fn pitch_for_scale(scale: f32) -> f32 {
+    (TRACK_PITCH * scale).max(MIN_TRACK_PITCH)
+}
 /// Master row: 36 px, its top rule included.
 pub const MASTER_H: f32 = 30.6;
 /// Master row height while automation lanes are shown (60-automation-lanes.png: separator at
@@ -29,13 +36,16 @@ pub struct View {
     pub scroll_y: f64,
     /// Extra height below each track (expanded automation lanes, src/automation.rs), by track index.
     pub extra: Vec<f32>,
+    /// Row pitch of each track (its height scale × [TRACK_PITCH]), by track index; missing
+    /// entries use [TRACK_PITCH].
+    pub pitches: Vec<f32>,
     /// Height of the master row pinned to the bottom (taller while automation is shown).
     pub master_h: f32,
 }
 
 impl Default for View {
     fn default() -> Self {
-        View { start_beats: 0.0, px_per_beat: DEFAULT_PX_PER_BEAT, scroll_y: 0.0, extra: Vec::new(), master_h: MASTER_H }
+        View { start_beats: 0.0, px_per_beat: DEFAULT_PX_PER_BEAT, scroll_y: 0.0, extra: Vec::new(), pitches: Vec::new(), master_h: MASTER_H }
     }
 }
 
@@ -46,13 +56,17 @@ impl View {
     pub fn beat_at(&self, x: f32) -> f64 {
         self.start_beats + x as f64 / self.px_per_beat
     }
+    /// Row pitch of track `i` (lane plus its 0.5 pt rule), without automation rows.
+    pub fn pitch(&self, i: usize) -> f32 {
+        self.pitches.get(i).copied().unwrap_or(TRACK_PITCH)
+    }
     /// Content offset of track `i` (sum of the rows above it, without the ruler or scroll).
     pub fn track_offset(&self, i: usize) -> f32 {
-        i as f32 * TRACK_PITCH + self.extra.iter().take(i).sum::<f32>()
+        (0..i).map(|k| self.track_span(k)).sum()
     }
     /// Total height of track `i` including its expanded automation rows.
     pub fn track_span(&self, i: usize) -> f32 {
-        TRACK_PITCH + self.extra.get(i).copied().unwrap_or(0.0)
+        self.pitch(i) + self.extra.get(i).copied().unwrap_or(0.0)
     }
     pub fn track_top(&self, i: usize) -> f32 {
         RULER_H + self.track_offset(i) - self.scroll_y as f32
@@ -63,14 +77,15 @@ impl View {
         if y < top {
             return None;
         }
-        for (i, e) in self.extra.iter().enumerate() {
-            let h = TRACK_PITCH + e;
+        let n = self.extra.len().max(self.pitches.len());
+        for i in 0..n {
+            let h = self.track_span(i);
             if y < top + h {
                 return Some(i);
             }
             top += h;
         }
-        Some(self.extra.len() + ((y - top) / TRACK_PITCH).floor() as usize)
+        Some(n + ((y - top) / TRACK_PITCH).floor() as usize)
     }
     pub fn zoom_at(&mut self, factor: f64, x: f32) {
         let anchor = self.beat_at(x);
@@ -118,7 +133,7 @@ impl ClipVis {
     pub fn rect(&self, v: &View) -> (f32, f32, f32, f32) {
         let x = v.x_of(self.start_beats);
         let w = (self.len_beats * v.px_per_beat) as f32;
-        (x, v.track_top(self.track_index) + 0.5, w.max(1.0), TRACK_H - 1.0)
+        (x, v.track_top(self.track_index) + 0.5, w.max(1.0), v.pitch(self.track_index) - 1.5)
     }
 }
 
@@ -177,7 +192,7 @@ pub fn hit_test(v: &View, size: (f32, f32), tracks: usize, clips: &[ClipVis], x:
         }
     }
     match v.track_at(y) {
-        Some(t) if t < tracks && y < v.track_top(t) + TRACK_H => Hit::Track(t),
+        Some(t) if t < tracks && y < v.track_top(t) + v.pitch(t) - 0.5 => Hit::Track(t),
         _ => Hit::Empty,
     }
 }
@@ -274,14 +289,15 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
     bands_and_grid(&mut dl.base, sc, &px, RULER_H, lanes_bottom, LANE);
     for (i, t) in sc.tracks.iter().enumerate() {
         let top = v.track_top(i);
-        if top > lanes_bottom || top + TRACK_PITCH < RULER_H {
+        let row_h = v.pitch(i) - 0.5;
+        if top > lanes_bottom || top + row_h + 0.5 < RULER_H {
             continue;
         }
         if t.selected {
-            bands_and_grid(&mut dl.base, sc, &px, top, top + TRACK_H, LANE_SEL);
+            bands_and_grid(&mut dl.base, sc, &px, top, top + row_h, LANE_SEL);
         }
         let sep = if t.selected { 0x2c2d30 } else { 0x26272a };
-        dl.base.push(px.rect(0.0, top + TRACK_H - 0.5, w, 1.0, rgba(rgb(sep), 1.0)));
+        dl.base.push(px.rect(0.0, top + row_h - 0.5, w, 1.0, rgba(rgb(sep), 1.0)));
     }
 
     // ---- clips ----

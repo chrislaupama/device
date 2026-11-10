@@ -320,7 +320,7 @@ impl Controller {
     }
 
     pub fn highlight_layout(&self, w: f32, h: f32, sounds: bool) -> Layout {
-        Layout { w, h, sounds, mixer: self.mixer_open, assistant: self.assistant_open, clip_tab: self.bottom_tab == crate::controller::BottomTab::Clip, scroll_y: self.view.scroll_y as f32 }
+        Layout { w, h, sounds, mixer: self.mixer_open, assistant: self.assistant_open, clip_tab: self.bottom_tab == crate::controller::BottomTab::Clip, scroll_y: self.view.scroll_y as f32, bottom: self.bottom_h() }
     }
 
     /// Current highlight rects (expired ones dropped). Unknown-to-layout targets are skipped.
@@ -336,7 +336,7 @@ impl Controller {
             .highlights
             .iter()
             .filter_map(|h| {
-                let t = highlight::target_rect(layout, &h.target, |id| p.track_index(saine_core::TrackId(id)))?;
+                let t = highlight::target_rect(layout, &h.target, |id| p.track_index(saine_core::TrackId(id)).map(|i| (self.view.track_offset(i), self.view.pitch(i) - 0.5)))?;
                 let r = highlight::ring(t, layout.w, layout.h);
                 let (bx, by, above) = highlight::bubble_anchor(r, layout.h);
                 Some(HighlightRect { x: r.0, y: r.1, w: r.2, h: r.3, r: r.4, bx, by, above, title: target_label(&h.target).into(), note: h.note.clone().into() })
