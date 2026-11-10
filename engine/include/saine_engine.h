@@ -78,6 +78,12 @@ int32_t se_asset_load_file(se_engine* engine, const char* utf8_path, se_asset_in
 int32_t se_asset_release(se_engine* engine, uint64_t asset_id);
 int32_t se_asset_get_info(const se_engine* engine, uint64_t asset_id, se_asset_info* out_info);
 
+/* A new asset holding asset_id's audio back to front (for reversed clips):
+ * frame f of the copy is frame frames - 1 - f of the original. Same rate,
+ * channels and source rate; release it like any asset. Copies the audio:
+ * call from a non-audio thread. Unknown asset -> SE_ERR_NOT_FOUND. */
+int32_t se_asset_reverse(se_engine* engine, uint64_t asset_id, se_asset_info* out_info);
+
 /* Min/max peak pairs for waveform drawing, mixed to mono.
  * Writes up to `capacity` pairs (2 floats each) into out_minmax. */
 int32_t se_asset_compute_peaks(const se_engine* engine, uint64_t asset_id,

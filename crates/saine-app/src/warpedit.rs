@@ -6,6 +6,7 @@
 //! drags commit live and coalesce into one step per gesture kind.
 
 use crate::controller::{Controller, JobResult};
+use crate::peaks::{L0_FRAMES, Pyramid};
 use crate::pianoroll::{BAND_Y, GRID_Y, PrView};
 use saine_core::warp::{ClipWarp, SPEED_PRESETS, Transient, WarpMode};
 use saine_core::{AssetId, Clip, ClipId, Command};
@@ -56,22 +57,30 @@ pub fn format_speed(speed: f64) -> String {
     format!("{}x", s.trim_end_matches('0').trim_end_matches('.'))
 }
 
-/// Conversions between clip-relative beats and source frames of one clip.
+/// Conversions between clip-relative beats and source frames of one clip
+/// (mirrored when the clip plays reversed).
 struct Map<'a> {
     w: &'a ClipWarp,
     rate: f64,
     first: f64,
+    /// Reversed clips: their length in beats.
+    mirror: Option<f64>,
 }
 
 impl<'a> Map<'a> {
     fn new(c: &'a Clip, w: &'a ClipWarp, rate: f64) -> Self {
-        Map { w, rate, first: w.beat_at(c.source_offset as f64, rate) }
+        let first = w.beat_at(c.source_offset as f64, rate);
+        let mirror = w.reverse.then(|| (w.beat_at((c.source_offset + c.source_length) as f64, rate) - first) / w.speed);
+        Map { w, rate, first, mirror }
+    }
+    fn flip(&self, clip_beat: f64) -> f64 {
+        self.mirror.map_or(clip_beat, |len| len - clip_beat)
     }
     fn clip_beat(&self, source: f64) -> f64 {
-        (self.w.beat_at(source, self.rate) - self.first) / self.w.speed
+        self.flip((self.w.beat_at(source, self.rate) - self.first) / self.w.speed)
     }
     fn original_beat(&self, clip_beat: f64) -> f64 {
-        self.first + clip_beat * self.w.speed
+        self.first + self.flip(clip_beat) * self.w.speed
     }
     fn source(&self, clip_beat: f64) -> f64 {
         self.w.source_at(self.original_beat(clip_beat), self.rate)
@@ -81,6 +90,40 @@ impl<'a> Map<'a> {
 impl Controller {
     fn asset_rate(&self, asset: AssetId) -> f64 {
         self.project().asset(asset).map_or(48_000.0, |a| a.sample_rate)
+    }
+
+    /// Make the engine's reversed copy (and its peaks) of every asset a
+    /// reversed clip plays. A copy is a few ms per minute of audio.
+    pub fn ensure_reversed_assets(&mut self) {
+        let wanted: Vec<(AssetId, u64)> = self
+            .project()
+            .tracks
+            .iter()
+            .flat_map(|t| &t.clips)
+            .filter(|c| c.warp.reverse && !self.reversed_assets.contains_key(&c.asset))
+            .filter_map(|c| Some((c.asset, *self.asset_map.get(&c.asset)?)))
+            .collect();
+        for (asset, ea) in wanted {
+            if self.reversed_assets.contains_key(&asset) {
+                continue;
+            }
+            match self.engine.reverse_asset(ea) {
+                Ok(info) => {
+                    let pairs = (info.frames / L0_FRAMES as u64 + 1) as usize;
+                    if let Ok(l0) = self.engine.peaks(info.asset_id, 0, L0_FRAMES, pairs) {
+                        self.peaks.insert(info.asset_id, Pyramid::from_level0(l0));
+                    }
+                    self.reversed_assets.insert(asset, info.asset_id);
+                }
+                Err(e) => self.set_status(format!("Reverse failed: {e}"), 6),
+            }
+        }
+    }
+
+    /// Reverse toggle in the clip editor toolbar (one undo step).
+    pub fn ac_reverse_toggle(&mut self) {
+        let Some(c) = self.ac_clip().cloned() else { return };
+        self.set_clip_warp(c.id, ClipWarp { reverse: !c.warp.reverse, ..c.warp.clone() }, "Toggle clip reverse");
     }
 
     /// Detected transients of a model asset (empty until analysed).

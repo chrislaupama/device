@@ -163,6 +163,14 @@ impl Engine {
         check(unsafe { ffi::se_asset_release(self.raw, id) })
     }
 
+    /// A new asset with \`id\`'s audio back to front (reversed clips). Copies
+    /// the audio: a few ms per minute, off the audio thread.
+    pub fn reverse_asset(&self, id: u64) -> Result<AssetInfo, EngineError> {
+        let mut info = AssetInfo::default();
+        check(unsafe { ffi::se_asset_reverse(self.raw, id, &mut info) })?;
+        Ok(info)
+    }
+
     pub fn asset_info(&self, id: u64) -> Result<AssetInfo, EngineError> {
         let mut info = AssetInfo::default();
         check(unsafe { ffi::se_asset_get_info(self.raw, id, &mut info) })?;

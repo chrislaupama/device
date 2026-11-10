@@ -218,6 +218,14 @@ int32_t se_asset_release(se_engine* engine, uint64_t asset_id) {
     });
 }
 
+int32_t se_asset_reverse(se_engine* engine, uint64_t asset_id, se_asset_info* out_info) {
+    SE_REQUIRE_ENGINE(engine);
+    return guarded([&] {
+        const int32_t rc = engine->impl->asset_reverse(asset_id, out_info);
+        return rc == SE_OK ? SE_OK : fail(rc, "unknown asset id " + std::to_string(asset_id));
+    });
+}
+
 int32_t se_asset_get_info(const se_engine* engine, uint64_t asset_id, se_asset_info* out_info) {
     SE_REQUIRE_ENGINE(engine);
     if (out_info == nullptr) return fail(SE_ERR_INVALID_ARG, "out_info is NULL");

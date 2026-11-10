@@ -519,6 +519,8 @@ export global Studio {
     in property <bool> ac-warped;            // Warp on: Mode is enabled, markers and transients edit
     in property <string> ac-mode-text: "Auto";
     callback ac-bpm-drag(int, length, length); // Original BPM drag: phase 0 press, 1 move, 2 release; offset from the press
+    in property <bool> ac-reversed;
+    callback ac-reverse-toggle();
     in property <string> ac-transpose-text: "0 st";
     in property <bool> ac-transpose-enabled: true;  // off in Re-pitch (pitch follows speed)
     callback ac-transpose-drag(int, length, length); // Transpose drag, like ac-bpm-drag
@@ -632,6 +634,17 @@ export global Studio {
     in property <string> export-name: "Untitled.wav";
     in property <string> export-dir;
     in property <string> export-estimate;
+    in property <int> export-recipe;             // 0 Mixdown, 1 Stems
+    in property <string> export-stems-text: "0 WAV files";
+    in property <string> export-files-text: "0 files";   // footer label on Stems
+    in property <string> export-name-label: "Name"; // "Folder" when stems go into a folder
+    in property <string> export-tracks-label: "All individual tracks";
+    in property <bool> export-tracks-menu-open;
+    in property <length> export-tracks-menu-h;
+    in property <[ChoiceItem]> export-tracks-items;
+    callback export-pick-recipe(int);
+    callback export-toggle-tracks();
+    callback export-pick-tracks(int);
     callback export-close();
     callback export-run();
     callback export-choose-dir();

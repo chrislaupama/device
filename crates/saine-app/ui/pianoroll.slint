@@ -142,6 +142,7 @@ component AcField inherits Rectangle {
     in property <bool> enabled: true;
     in property <int> menu: -1;   // Studio.clip-menu index this field opens
     in property <bool> bpm-drag;  // the value drags (Original BPM)
+    in property <bool> toggle;    // a press toggles it (Reverse)
     height: 14px;
     // Content width, so the menu TouchArea covers this field only.
     width: max(v.x + v.preferred-width, root.chevron-x + 8px);
@@ -152,6 +153,12 @@ component AcField inherits Rectangle {
         ink: root.enabled ? Studio.clip-color : #3c3d43; stroke-width: 1.4px;
     }
     if root.menu >= 0 && root.enabled: TouchArea { x: 0; width: root.chevron-x + 10px; clicked => { Studio.clip-menu-open(root.menu); } }
+    if root.toggle: TouchArea {
+        x: 0; width: root.value-x + 20px;
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.ac-reverse-toggle(); }
+        }
+    }
     if root.bpm-drag: TouchArea {
         x: root.value-x - 2px; width: 30px;
         mouse-cursor: MouseCursor.ew-resize;
@@ -215,7 +222,7 @@ export component PianoRoll inherits Rectangle {
     // Audio toolbar: Original BPM (drag), Speed, Warp and Mode edit the clip's warp;
     // Reverse is a PLACEHOLDER (no reverse in the clip model yet).
     if Studio.ac-visible: Rectangle {
-        AcField { x: 7px; y: 7px; label: "Reverse"; value: "Off"; value-x: 42px; }
+        AcField { x: 7px; y: 7px; label: "Reverse"; value: Studio.ac-reversed ? "On" : "Off"; value-x: 42px; toggle: true; }
         AcField { x: 74.8px; y: 7px; label: "Original BPM"; value: Studio.ac-bpm-text; value-x: 65.4px; bpm-drag: true; }
         AcField { x: 170px; y: 7px; label: "Speed"; value: Studio.ac-speed-text; value-x: 36.2px; chevron-x: 55.2px; menu: 0; }
         AcField { x: 243.95px; y: 7px; label: "Warp"; value: Studio.ac-warped ? "On" : "Off"; value-x: 30px; chevron-x: 53.6px; menu: 1; }
