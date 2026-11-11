@@ -113,6 +113,7 @@ export component ExportModal inherits Rectangle {
         x: 71.4px; y: 105.4px + root.dy; width: range-text.preferred-width + 11.9px + 22.1px; height: 20.4px; border-radius: 10.2px;
         background: range-ta.has-hover || Studio.export-range-menu-open ? #2e2f34 : DialogTokens.pill;
         accessible-role: combobox; accessible-label: "Range"; accessible-value: Studio.export-range-label;
+        accessible-action-default => { Studio.export-toggle-range(); }
         range-text := Text { x: 11.9px; text: Studio.export-range-label; color: DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
         Icon { x: parent.width - 18.7px; y: 6.2px; width: 8px; height: 8px; d: Icons.chevron-down; ink: DialogTokens.label; stroke-width: 1.4px; }
         range-ta := TouchArea { clicked => { Studio.export-toggle-range(); } }

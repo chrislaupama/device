@@ -233,10 +233,11 @@ struct Pass {
 
 impl Controller {
     /// The range Mixdown and Stems render: the one picked, unless it is the loop region and
-    /// there is none any more.
+    /// there is none any more. A Project export (Live set) always covers the whole arrangement:
+    /// its audio has to line up with the clips it places from bar 1.
     pub fn export_range(&self) -> ExportRange {
         match self.export.range {
-            ExportRange::Loop if loop_region(self.project()).is_some() => ExportRange::Loop,
+            ExportRange::Loop if self.export.recipe != Recipe::Project && loop_region(self.project()).is_some() => ExportRange::Loop,
             _ => ExportRange::Project,
         }
     }
@@ -972,6 +973,10 @@ mod tests {
         c.export_pick_range(1);
         assert!(!c.export.range_menu, "picking closes the menu");
         assert_eq!(c.export_range(), ExportRange::Loop);
+        c.export_pick_recipe(2);
+        assert_eq!((c.export_range(), c.export_span()), (ExportRange::Project, full), "a Live set always covers the whole project");
+        c.export_pick_recipe(0);
+        assert_eq!(c.export_range(), ExportRange::Loop, "the pick comes back with Mixdown");
         let p = c.project();
         let (start, frames) = c.export_span();
         assert_eq!(start, p.ticks_to_frames(2 * tpb, rate));
