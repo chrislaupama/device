@@ -1,8 +1,11 @@
 # Contributing to Device Studio
 
-Thanks for your interest. Device Studio is pre-alpha and moves quickly, so the most useful contributions right now are
-bug reports with clear steps, testing on Windows and Linux audio hardware (which we have never run on), and small,
-focused pull requests.
+Thanks for your interest. **Device Studio is not accepting outside contributions yet.** The code is open to read,
+build and fork under the [licence](LICENSE), but issues, pull requests and comments are limited to the maintainer for
+now while the project is pre-alpha and changing quickly. This page will say when that changes. Security problems can
+still be reported privately at any time through [SECURITY.md](SECURITY.md).
+
+The rest of this guide describes how contributions will work once they open.
 
 By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). To report a security problem, follow
 [SECURITY.md](SECURITY.md) instead of opening a public issue.
