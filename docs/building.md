@@ -280,7 +280,8 @@ installable packages:
 | Windows x64 | `DeviceStudio-<version>-windows-x64-setup.exe` (installer) and a portable `.zip` |
 | Linux x86_64, aarch64 | `DeviceStudio-<version>-linux-<arch>.tar.gz` (run `install.sh`) |
 
-Each package carries the plugin scanner next to the app, where the app looks
+The macOS app's two architectures build side by side on separate runners and
+are joined with `lipo` in a third job. Each package carries the plugin scanner next to the app, where the app looks
 for it first, and is smoke-tested on its runner (installed, then started to
 render a screenshot). Pushing a tag `vX.Y.Z` builds them from `main` and
 creates a **draft** GitHub release with generated notes, a `SHA256SUMS.txt` and

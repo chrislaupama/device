@@ -53,6 +53,7 @@ jobs:
   version:
     name: Check version
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
@@ -84,17 +85,29 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Version: $version"
 
-  macos:
-    name: Package macOS (universal)
+  # The two architectures build side by side on their own runners (each is a full release
+  # build of the app and the engine, about 13 minutes); the macos job joins them with lipo.
+  macos-build:
+    name: Build macOS (${{ matrix.arch }})
     needs: version
+    strategy:
+      matrix:
+        include:
+          - arch: aarch64
+            triple: aarch64-apple-darwin
+            cmake_arch: arm64
+          - arch: x86_64
+            triple: x86_64-apple-darwin
+            cmake_arch: x86_64
     runs-on: macos-15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Rust toolchain (stable, both macOS targets)
+      - name: Rust toolchain (stable, ${{ matrix.triple }})
         run: |
-          rustup toolchain install stable --profile minimal --no-self-update --target aarch64-apple-darwin --target x86_64-apple-darwin
+          rustup toolchain install stable --profile minimal --no-self-update --target ${{ matrix.triple }}
           rustup default stable
       - name: Install Ninja
         run: brew install ninja
@@ -105,18 +118,53 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
           key: release-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-      # The engine's C++ is built by build.rs (CMake). Each target gets its own build, so the
-      # x86_64 engine is cross-compiled on this Apple silicon runner.
-      - name: Build (Apple silicon)
+      # The engine's C++ is built by build.rs (CMake). The x86_64 engine is cross-compiled on
+      # this Apple silicon runner.
+      - name: Build
         env:
           MACOSX_DEPLOYMENT_TARGET: '13.0'
-        run: cargo build --release --locked -p dstudio-app --target aarch64-apple-darwin
-      - name: Build (Intel)
-        env:
-          MACOSX_DEPLOYMENT_TARGET: '13.0'
-          CMAKE_OSX_ARCHITECTURES: x86_64
-        run: cargo build --release --locked -p dstudio-app --target x86_64-apple-darwin
+          CMAKE_OSX_ARCHITECTURES: ${{ matrix.cmake_arch }}
+        run: cargo build --release --locked -p dstudio-app --target ${{ matrix.triple }}
+      - name: Collect the app and the plugin scanner
+        run: |
+          set -euo pipefail
+          mkdir -p "build/macos-${{ matrix.arch }}"
+          cp "target/${{ matrix.triple }}/release/device-studio" "build/macos-${{ matrix.arch }}/"
+          scanners=(target/${{ matrix.triple }}/release/build/dstudio-engine-*/out/build/dstudio_plugin_scanner)
+          if [ "${#scanners[@]}" -ne 1 ] || [ ! -f "${scanners[0]}" ]; then
+            echo "expected one plugin scanner, found: ${scanners[*]}" >&2
+            exit 1
+          fi
+          cp "${scanners[0]}" "build/macos-${{ matrix.arch }}/"
+          lipo -info "build/macos-${{ matrix.arch }}"/*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-build-${{ matrix.arch }}
+          path: build/macos-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 1
+
+  macos:
+    name: Package macOS (universal)
+    needs: [version, macos-build]
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: macos-build-aarch64
+          path: build/macos-aarch64
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: macos-build-x86_64
+          path: build/macos-x86_64
       - name: Bundle the universal app
+        env:
+          DSTUDIO_MACOS_ARM_DIR: build/macos-aarch64
+          DSTUDIO_MACOS_X86_DIR: build/macos-x86_64
         run: |
           bash tools/release/package-macos.sh build/macos
           ditto -c -k --keepParent "build/macos/Device Studio.app" build/macos/DeviceStudio-app.zip
@@ -151,6 +199,7 @@ jobs:
     needs: [version, macos]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: macos-15
+    timeout-minutes: 60
     environment: release
     env:
       HAS_SIGNING_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE != '' }}
@@ -215,6 +264,7 @@ jobs:
     name: Package Windows (x64)
     needs: version
     runs-on: windows-2025
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -286,6 +336,7 @@ jobs:
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -339,6 +390,7 @@ jobs:
     needs: [version, macos-sign, windows, linux]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write # create the release and upload the packages
       id-token: write # sign the build provenance (Sigstore, through GitHub's OIDC token)
