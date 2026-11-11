@@ -276,6 +276,17 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   audio thread, built-in devices, UI, benchmarks, pull requests, plus the spec phases and bug fixing).
   `python3 tools/agents/check_skills.py` fails when a skill names a file that no longer exists.
 
+### 2026-11-11: return tracks and sends, part 1: core (spec 002)
+
+- Spec `specs/002-return-tracks-and-sends/` (spec, plan, tasks). Return tracks are `TrackKind::Return` in
+  `Project::tracks`, always after the ordinary tracks (at most 16); `Track::sends` (`TrackSend`: return, level 0..+6 dB,
+  pre/post fader) and `Track::output` (a return, or the master). Commands `SetSends` (level drags coalesce per track)
+  and `SetTrackOutput`; removing a return removes the sends to it and resets outputs to it in one undo step. Clips,
+  input, arm, monitor and instrument plugins are refused on returns. Old projects load unchanged; damaged routing is
+  repaired on load. The snapshot carries the routing; single-track renders stay dry.
+- Not yet: the engine ignores the routing (returns publish as empty tracks) and the app has no UI for it. Next: engine
+  (spec 002 T4-T8), then the UI (T9).
+
 ### 2026-11-11: transport bar tempo, time signature and key
 
 - The transport bar's BPM, TAP, Key and Sig fields were display-only; they now edit the project
