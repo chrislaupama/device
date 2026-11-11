@@ -9,7 +9,7 @@
 <p>A desktop digital audio workstation with a real-time C++ engine and a GPU-drawn Rust interface, for macOS, Windows and Linux.</p>
 
 <p>
-  <a href="https://github.com/chrislaupama/sainestudio/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/chrislaupama/sainestudio/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/chrislaupama/device/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/chrislaupama/device/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <a href="https://github.com/chrislaupama/device/actions/workflows/perf.yml"><img alt="Performance" src="https://github.com/chrislaupama/device/actions/workflows/perf.yml/badge.svg?branch=main"></a>
   <img alt="Status: pre-alpha" src="https://img.shields.io/badge/status-pre--alpha-e0a84b?style=flat-square">
   <img alt="Platforms: macOS, Windows, Linux" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-4b8be0?style=flat-square">
@@ -187,8 +187,8 @@ Visual Studio 2022 or GCC 13). The first build downloads the CLAP headers and th
 On Linux, install the packages listed in the [build guide](docs/building.md#linux) first.
 
 ```sh
-git clone https://github.com/chrislaupama/sainestudio.git
-cd sainestudio
+git clone https://github.com/chrislaupama/device.git
+cd device
 cargo run --release -p dstudio-app -- --demo
 ```
 
