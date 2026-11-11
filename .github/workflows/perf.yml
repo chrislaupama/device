@@ -168,6 +168,10 @@ jobs:
           if grep -q "row(s) over the limit" build/perf/report.md 2>/dev/null; then
             echo "::warning title=Benchmarks slower on ${{ matrix.name }}::$(grep 'row(s) over the limit' build/perf/report.md | head -1) See the run summary."
           fi
+          # A benchmark that crashed on one side is only a note in the time report.
+          if grep -q '` failed: base ' build/perf/report.md 2>/dev/null; then
+            echo "::warning title=Benchmark failed on ${{ matrix.name }}::$(grep '` failed: base ' build/perf/report.md | head -1 | tr -d '`') See the run summary."
+          fi
       - name: Warn if the timing run failed
         if: ${{ !cancelled() && (steps.compare.outcome == 'failure' || steps.compare_windows.outcome == 'failure') }}
         shell: bash
