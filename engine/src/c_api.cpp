@@ -964,6 +964,78 @@ int32_t se_render_offline_with_input(se_engine* engine, const float* input_inter
     });
 }
 
+/* ---- MIDI input ---- */
+
+static_assert(sizeof(se_midi_input_info) == 528 && alignof(se_midi_input_info) == 8);
+static_assert(sizeof(se_midi_captured) == 16 && alignof(se_midi_captured) == 8);
+static_assert(sizeof(se_midi_stats) == 32);
+
+int32_t se_midi_inputs_list(se_engine* engine, se_midi_input_info* out, size_t capacity, size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (capacity > 0 && out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    return guarded([&]() -> int32_t {
+        std::vector<dstudio::MidiPortState> ports;
+        engine->impl->midi().list(ports);
+        for (std::size_t i = 0; i < ports.size() && i < capacity; ++i) {
+            se_midi_input_info& o = out[i];
+            o = se_midi_input_info{};
+            std::snprintf(o.id, sizeof o.id, "%s", ports[i].info.id.c_str());
+            std::snprintf(o.name, sizeof o.name, "%s", ports[i].info.name.c_str());
+            o.events = ports[i].events;
+            o.open = ports[i].open ? 1 : 0;
+        }
+        if (out_count != nullptr) *out_count = ports.size();
+        return SE_OK;
+    });
+}
+
+int32_t se_midi_inputs_open(se_engine* engine, const char* const* ids, size_t count) {
+    SE_REQUIRE_ENGINE(engine);
+    if (count > 0 && ids == nullptr) return fail(SE_ERR_INVALID_ARG, "ids is NULL");
+    return guarded([&]() -> int32_t {
+        std::vector<std::string> v;
+        for (size_t i = 0; i < count; ++i) {
+            if (ids[i] == nullptr) return fail(SE_ERR_INVALID_ARG, "an id is NULL");
+            v.emplace_back(ids[i]);
+        }
+        std::string err;
+        return check(engine->impl->midi_open(v, err), err);
+    });
+}
+
+int32_t se_midi_inject(se_engine* engine, uint8_t status, uint8_t data1, uint8_t data2) {
+    SE_REQUIRE_ENGINE(engine);
+    if (status < 0x80 || status >= 0xF0 || data1 > 127 || data2 > 127)
+        return fail(SE_ERR_INVALID_ARG, "not a MIDI channel message");
+    return engine->impl->midi().inject(status, data1, data2) ? SE_OK : fail(SE_ERR_STATE, "MIDI input queue is full");
+}
+
+int32_t se_midi_set_focus(se_engine* engine, uint64_t track_id) {
+    SE_REQUIRE_ENGINE(engine);
+    engine->impl->midi().set_focus(track_id);
+    return SE_OK;
+}
+
+int32_t se_midi_capture_enable(se_engine* engine, uint8_t enabled) {
+    SE_REQUIRE_ENGINE(engine);
+    engine->impl->midi().capture_enable(enabled != 0);
+    return SE_OK;
+}
+
+int32_t se_midi_capture_read(se_engine* engine, se_midi_captured* out, size_t capacity, size_t* out_count) {
+    SE_REQUIRE_ENGINE(engine);
+    if ((capacity > 0 && out == nullptr) || out_count == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    *out_count = engine->impl->midi().capture_read(out, capacity);
+    return SE_OK;
+}
+
+int32_t se_midi_stats_get(se_engine* engine, se_midi_stats* out) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");
+    engine->impl->midi().stats(out);
+    return SE_OK;
+}
+
 } // extern "C"
 
 namespace dstudio::testing {
@@ -981,5 +1053,7 @@ bool plugin_set_parameter(se_engine* e, uint64_t device_id, uint32_t param_id, d
 bool plugin_simulate_gesture(se_engine* e, uint64_t device_id, uint32_t param_id, float normalized) {
     return e->impl->plugin_simulate_gesture(device_id, param_id, normalized);
 }
+
+void set_midi_backend(se_engine* e, std::unique_ptr<MidiBackend> backend) { e->impl->set_midi_backend(std::move(backend)); }
 
 } // namespace dstudio::testing

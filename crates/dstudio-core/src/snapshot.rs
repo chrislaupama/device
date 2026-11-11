@@ -79,7 +79,7 @@ pub struct TrackSnapshot {
     pub notes: Vec<NoteSnapshot>,
     /// Enabled, non-empty automation lanes.
     pub automation: Vec<LaneSnapshot>,
-    /// Recording/monitoring state (audio tracks).
+    /// Recording/monitoring state (audio tracks: their input; instrument tracks: MIDI input).
     pub arm: bool,
     pub monitor: bool,
     pub input: Option<crate::model::InputSource>,

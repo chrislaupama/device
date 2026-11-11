@@ -303,3 +303,17 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   and its increment / decrement step one BPM. A typed tempo takes an optional "bpm" suffix and refuses other text;
   typing or dragging the tempo ends a tap series.
 - Self-test section `transport_fields_steps`; review states `review-transport-sig` and `review-transport-key`.
+
+### 2026-11-11: MIDI input, engine side (spec 003)
+
+- Spec `specs/003-midi-input-and-recording/` (spec, plan, tasks). This first part is the engine and the C ABI; the
+  app side (R/I on instrument tracks, Settings › MIDI inputs, recorded MIDI clips) follows.
+- Engine: MIDI input backends (Core MIDI, Windows `midiIn*`, ALSA sequencer, stub) behind `MidiBackend`;
+  `MidiInputHub` (per-port SPSC queues, normalisation, held-note release on close); routing in `render_block` to
+  armed/monitoring instrument tracks, else the focus track; `LiveSynth` plays the built-in Synth live; capture ring
+  with latency compensation and loop folding. `se_midi_*` in the header, `Engine::midi_inputs` and friends in Rust.
+- Core: `SetTrackArm` / `SetTrackMonitor` accept instrument tracks.
+- Tests: `engine/tests/test_midi_input.cpp`, `crates/dstudio-engine/tests/midi_input.rs`; bench: "MIDI input"
+  table in `dstudio_engine_bench`.
+- Not verified on hardware yet: Core MIDI with a real keyboard (Mac mini), WinMM (CI build only).
+

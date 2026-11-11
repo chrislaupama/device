@@ -583,6 +583,52 @@ mixer. The main thread keeps the held (device, pitch) pairs, so
 Nothing on the audio thread allocates or locks. `dstudio_engine_bench` has a
 table for it.
 
+### MIDI input (`se_midi_*`)
+
+Spec: [specs/003-midi-input-and-recording](../specs/003-midi-input-and-recording/spec.md).
+A MIDI keyboard plays instrument tracks live, and what was played is captured
+for recording.
+
+* **Backends** (`src/platform/midi_backend.hpp`): Core MIDI on macOS (one
+  client, one MIDI 1.0 protocol input port; ids are the source's unique id),
+  the multimedia `midiIn*` API on Windows (ids are product names, `#2` for
+  repeats), the ALSA sequencer on Linux (one reader thread; ids are
+  "client:port" names; libasound is loaded with dlopen on first use, so
+  programs that never use MIDI don't load it; CMake option
+  `DSTUDIO_ENGINE_ALSA_MIDI`, default ON),
+  and a stub with no ports elsewhere. The MIDI system is first touched by
+  `se_midi_inputs_list` / `se_midi_inputs_open`, so engines that never use MIDI
+  never start it. Only channel messages are passed on.
+* **To the audio thread** (`src/midi_input.hpp`, `MidiInputHub`): one slot per
+  open port (16) plus one for `se_midi_inject`, each with a 1024-message SPSC
+  queue whose single producer is that port's callback. Slots (and the capture
+  ring) are allocated on the main thread when first needed, so an engine that
+  never uses MIDI allocates nothing for it and its callback skips the hub. The
+  RT owner drains every slot once per callback (at most 256 messages; the rest
+  wait), folds channels onto channel 1, turns note-on velocity 0 into note-off,
+  drops program changes and note-offs with no held note-on, and delivers the
+  messages at offset 0 of the callback's first segment (timing is accurate to
+  one buffer). A closed port's slot sends note-offs for the keys it still held
+  before it is reused.
+* **Routing** (`render_block`): if any instrument track is armed or monitoring
+  (`RenderGraph::midi_explicit`), those tracks receive the input; otherwise the
+  track set with `se_midi_set_focus` (the selected track). Each instrument track
+  has a `TrackMidi` kept across republishes by track id (like its Synth) with
+  the keys it holds: a track that stops receiving gets note-offs for them, so no
+  note hangs. Instrument devices get the messages ahead of the track's own
+  events (after preview notes). The built-in Synth has no live entry point, so
+  a second `Synth` per track (`LiveSynth`) plays the keys through the same
+  `render()` interface on its own free-running clock: a held key is a note
+  that started "now" and has not ended, and a key release removes it.
+* **Capture** (`se_midi_capture_enable` / `se_midi_capture_read`): while
+  enabled and the transport plays, note-ons and note-offs go into a 4096-event
+  ring (RT producer, main-thread consumer) with the timeline frame they were
+  heard at: block position minus output latency and delay compensation
+  (offline renders: no latency), folded back into the loop after a loop wrap
+  (`midi_capture_frame`). The app turns them into MIDI clips.
+* Tests: `tests/test_midi_input.cpp` (fake backend and injection, no hardware);
+  bench: the "MIDI input" table of `dstudio_engine_bench`.
+
 ### Export
 
 `se_export_wav` renders `[start, end)` linearly with its private transport:
