@@ -222,7 +222,7 @@ impl Controller {
         self.ui_dirty = true;
     }
 
-    fn set_clip_warp(&mut self, clip: ClipId, warp: ClipWarp, label: &str) -> bool {
+    pub(crate) fn set_clip_warp(&mut self, clip: ClipId, warp: ClipWarp, label: &str) -> bool {
         if self.project().clip(clip).is_none_or(|c| c.warp == warp) {
             return false;
         }

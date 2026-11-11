@@ -121,8 +121,8 @@ Status per platform, what CI covers and what is untested on real hardware:
 - Plugins: AU (macOS only), VST3 and CLAP everywhere; libraries loaded with CFBundle /
   `LoadLibraryExW` / `dlopen`, standard per-OS folders, VST3 class ids stored in the canonical
   text form on every OS. Editors: NSWindow (macOS), a top-level HWND hosting the plugin's child
-  window (Windows); Linux X11 embedding is not implemented yet (`SE_ERR_UNSUPPORTED_FORMAT`;
-  Wayland would go through XWayland for most plugins).
+  window (Windows), an X11 window the plugin embeds into (Linux; XWayland on Wayland desktops), with a
+  host run loop for the plugins' fds and timers (`src/platform/run_loop.cpp`, run from `se_plugin_idle`).
 - App: Slint (winit backend) + wgpu 30 build on all three; Linux needs the X11/Wayland,
   xkbcommon, fontconfig, udev, PipeWire and ALSA development packages (see the CI workflow).
 - CI (`.github/workflows/ci.yml`): one job per OS, all on GitHub-hosted runners
