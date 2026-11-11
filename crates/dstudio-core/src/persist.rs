@@ -91,6 +91,7 @@ pub fn load(dir: &Path) -> Result<Loaded, PersistError> {
     }
     let value = migrate(env.schema_version, env.project);
     let mut project: Project = serde_json::from_value(value)?;
+    project.sanitize_routing();
     // Instrument tracks saved with the classic synth get the Synth device.
     crate::builtin::synth_v2::upgrade_project(&mut project);
     // A step pattern the editor can't hold (hand-edited or damaged file) is dropped: the

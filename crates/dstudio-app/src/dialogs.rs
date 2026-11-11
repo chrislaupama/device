@@ -128,10 +128,11 @@ pub fn export_bars(p: &Project) -> i64 {
 /// (not muted, soloed when any track is) and has clips. Selected or one track: that track when
 /// it has clips.
 pub fn stem_tracks(p: &Project, pick: StemsPick, selected: Option<TrackId>) -> Vec<TrackId> {
-    let any_solo = p.tracks.iter().any(|t| t.solo);
+    // A soloed return doesn't silence the ordinary tracks' stems (stems are dry).
+    let any_solo = p.tracks.iter().any(|t| t.solo && !t.is_return());
     p.tracks
         .iter()
-        .filter(|t| !t.clips.is_empty() || !t.midi_clips.is_empty())
+        .filter(|t| !t.is_return() && (!t.clips.is_empty() || !t.midi_clips.is_empty()))
         .filter(|t| match pick {
             StemsPick::AllTracks => !t.mute && (!any_solo || t.solo),
             StemsPick::Selected => selected == Some(t.id),
@@ -261,7 +262,7 @@ impl Controller {
         let pick = match row {
             0 => Some(StemsPick::AllTracks),
             1 => self.selected_track.map(|_| StemsPick::Selected),
-            r => p.tracks.get((r - 3).max(0) as usize).filter(|_| r >= 3).map(|t| StemsPick::Track(t.id)),
+            r => p.tracks.iter().filter(|t| !t.is_return()).nth((r - 3).max(0) as usize).filter(|_| r >= 3).map(|t| StemsPick::Track(t.id)),
         };
         if let Some(pick) = pick {
             self.export.stems = pick;
@@ -410,6 +411,8 @@ impl Controller {
                 }
                 (None, dstudio_core::TrackKind::Audio) => SetContent::Audio(Vec::new()),
                 (None, dstudio_core::TrackKind::Instrument) => SetContent::Midi(Vec::new()),
+                // Return tracks have no material of their own (track renders are dry).
+                (None, dstudio_core::TrackKind::Return) => continue,
             };
             if t.mute {
                 off.push(t.name.clone());
@@ -697,7 +700,8 @@ impl Controller {
             row("All individual tracks".into(), self.export.stems == StemsPick::AllTracks, false, MENU_ROW, &mut rows);
             row("Selected tracks only".into(), self.export.stems == StemsPick::Selected, self.selected_track.is_none(), MENU_ROW, &mut rows);
             row(String::new(), false, true, MENU_GAP, &mut rows);
-            for t in &p.tracks {
+            // Returns hold no clips of their own, so they are never a stem.
+            for t in p.tracks.iter().filter(|t| !t.is_return()) {
                 let name = t.name.trim();
                 row(if name.is_empty() { "Track".into() } else { name.into() }, self.export.stems == StemsPick::Track(t.id), false, MENU_ROW, &mut rows);
             }
@@ -751,6 +755,20 @@ mod tests {
         p.tracks[1].mute = true;
         assert!(stem_tracks(&p, StemsPick::AllTracks, None).is_empty(), "muted tracks are not heard");
         assert_eq!(stem_tracks(&p, StemsPick::Track(b), None), vec![b], "a picked track renders even when muted");
+    }
+
+    #[test]
+    fn a_soloed_return_is_not_a_stem_and_does_not_hide_the_tracks() {
+        use dstudio_core::{ColorIndex, Track, TrackKind};
+        let mut p = Project::default();
+        let b = p.tracks[1].id;
+        p.tracks[1].midi_clips.push(dstudio_core::MidiClip::empty(0, 4 * dstudio_core::PPQ));
+        let r = TrackId(p.alloc_id());
+        let mut ret = Track::new(r, TrackKind::Return, "Return A", ColorIndex(9));
+        ret.solo = true;
+        p.tracks.push(ret);
+        assert_eq!(stem_tracks(&p, StemsPick::AllTracks, None), vec![b]);
+        assert!(stem_tracks(&p, StemsPick::Track(r), None).is_empty());
     }
 
     #[test]
