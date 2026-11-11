@@ -4,7 +4,7 @@ Living handoff document for future agent sessions. Read this first, then `docs/a
 
 **Keep the README current.** `README.md` is the public front page. Any change that adds, finishes or removes a
 feature, device, platform or build step, or visibly changes the screens it shows, updates the README (and
-`docs/building.md`, re-rendered `docs/assets/` screenshots) in the same PR. The checklist is in README.md ›
+`docs/building.md`, re-rendered `docs/assets/art/` artwork) in the same PR. The checklist is in README.md ›
 Development › Keeping this README up to date.
 
 ## Current milestone
@@ -19,7 +19,6 @@ Development › Keeping this README up to date.
 | `crates/dstudio-core` | Model, commands, undo/redo, persistence, snapshots | App architecture |
 | `crates/dstudio-engine` | Safe Rust FFI wrapper + end-to-end tests | App architecture |
 | `crates/dstudio-app` | Desktop app (Slint shell + wgpu surfaces) | UI engineering |
-| `ui-spike/` | Slint ↔ wgpu interop spike (standalone workspace) | UI engineering |
 | `docs/` | Architecture spec, ADRs | Lead |
 
 ## How to build and test
