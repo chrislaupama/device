@@ -292,4 +292,9 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Double-click a track's name in its header, in the Devices tab's inspector or in the Clip tab's title to rename it
   (`TrackName` in `ui/track_header.slint`, `Controller::rename_track`): Enter or clicking away commits, Escape
   cancels, surrounding spaces are dropped and an empty name keeps the old one. `Command::RenameTrack` already existed.
+- The field commits to the track it opened on, also when the selection moves first, and a press in the lanes or a
+  clip editor commits it (`Controller::press_epoch` moves the focus back to the shortcuts). The name's accessible
+  default action opens the field.
+- Undo of a rename is `Command::RestoreTrackName`, which puts the old name back exactly (an imported name over the
+  128-character limit included). It is never deserialized, so the assistant cannot send one.
 - Self-test section `track_rename_steps` drives the inspector name with real double-clicks and keys.

@@ -1796,6 +1796,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, cmd: bool, alt: bool| {
         if kind == 0 {
+            c.press_epoch = c.press_epoch.wrapping_add(1);
             c.snap.bypass = cmd;
         }
         c.pointer_mods(kind, x, y, shift, alt)
@@ -1835,7 +1836,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let tab = if c.bottom_tab == BottomTab::Clip { BottomTab::Devices } else { BottomTab::Clip };
         c.set_bottom_tab(tab)
     });
-    on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool| c.pr_pointer(kind, x, y, shift, alt, command));
+    on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool| {
+        if kind == 0 {
+            c.press_epoch = c.press_epoch.wrapping_add(1);
+        }
+        c.pr_pointer(kind, x, y, shift, alt, command)
+    });
     on!(on_pr_scroll, |c, dx: f32, dy: f32, x: f32, y: f32, shift: bool, alt: bool, ctrl: bool| c.pr_wheel(dx, dy, x, y, shift, alt, ctrl));
     on!(on_pr_pinch, |c, scale: f32, x: f32, y: f32| c.pr_zoom_at(scale as f64, 1.0, x, y));
     on!(on_typing_release, |c| c.typing_release_all());
@@ -1870,7 +1876,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_seq_tab, |c, piano: bool| c.seq_tab(piano));
     on!(on_seq_lane_pick, |c, i: i32| c.seq_lane(i));
     on!(on_seq_action, |c, a: slint::SharedString| c.seq_action(a.as_str()));
-    on!(on_seq_pointer, |c, kind: i32, x: f32, y: f32| c.seq_pointer(kind, x, y));
+    on!(on_seq_pointer, |c, kind: i32, x: f32, y: f32| {
+        if kind == 0 {
+            c.press_epoch = c.press_epoch.wrapping_add(1);
+        }
+        c.seq_pointer(kind, x, y)
+    });
     on!(on_seq_scroll, |c, dy: f32| c.seq_scroll(dy));
     on!(on_seq_swing, |c, phase: i32, dy: f32| c.seq_swing(phase, dy));
     on!(on_seq_page_pick, |c, i: i32| c.seq_page(i));

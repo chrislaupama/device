@@ -28,11 +28,12 @@ component ZoomSlider inherits Rectangle {
 }
 
 export component TrackTitle inherits Rectangle {
+    callback focus-main();
     Rectangle { x: 0.5px; y: 15px; width: 3px; height: 15px; border-radius: 1.5px; background: Studio.sel-color; }
     Text { visible: Studio.has-selection; x: 10.5px; y: 7px; height: 13px; text: Studio.sel-number; color: Tokens.text-bright; font-size: 9px; font-weight: 700; vertical-alignment: center; }
     Icon { visible: Studio.has-selection; x: 21px; y: 8px; width: 11px; height: 11px; d: Studio.sel-instrument ? Icons.keys : Icons.wave; ink: #a8a8ab; stroke-width: 1.1px; }
     if !Studio.has-selection: Label { x: 37px; y: 7px; text: "No track selected"; color: Tokens.text-bright; font-size: 10px; }
-    if Studio.has-selection: TrackName { x: 37px; y: 7px; width: 120px; height: 14.5px; track-id: Studio.sel-id; text: Studio.sel-name; text-color: Tokens.text-bright; font-size: 10px; font-weight: 600; letter-spacing: 0; }
+    if Studio.has-selection: TrackName { x: 37px; y: 7px; width: 120px; height: 14.5px; track-id: Studio.sel-id; text: Studio.sel-name; text-color: Tokens.text-bright; font-size: 10px; font-weight: 600; letter-spacing: 0; edit-done => { root.focus-main(); } }
 }
 
 // One Shape rack row (src/composer.rs SHAPE_ROWS): label, then a slider, stepper or
@@ -98,7 +99,8 @@ component ShapeRack inherits Rectangle {
 // Left column of the Clip tab. The card's Patterns tab lists DStudio's library patterns
 // (src/composer.rs); its Shape tab holds the Shape rack.
 export component ClipSidebar inherits Rectangle {
-    TrackTitle { x: 0; y: 0; width: root.width; height: 26px; }
+    callback focus-main();
+    TrackTitle { x: 0; y: 0; width: root.width; height: 26px; focus-main => { root.focus-main(); } }
     if !Studio.pr-visible && !Studio.ac-visible: Rectangle {
         Text { x: 0; y: 193px; width: root.width; height: 15px; text: "Patterns"; color: #a5a6aa; font-size: 9.75px; horizontal-alignment: center; vertical-alignment: center; }
         Text { x: 0; y: 210px; width: root.width; height: 14px; text: "Select a clip to create some patterns."; color: #6c6e74; font-size: 8.75px; horizontal-alignment: center; vertical-alignment: center; }

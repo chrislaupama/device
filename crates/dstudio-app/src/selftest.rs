@@ -6721,9 +6721,12 @@ fn track_rename_steps() -> Vec<Step> {
     use Step::*;
     let name0 = |c: &Controller| c.project().tracks.first().map(|t| t.name.clone()).unwrap_or_default();
     let name_xy = || (bottom_x() + 60.0, bottom_y() + 14.25);
+    let original: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+    let (o0, o1) = (original.clone(), original.clone());
     vec![
-        DoC("rename: select track 1, Devices tab, mixer closed", Box::new(|_, ctl| {
+        DoC("rename: select track 1, Devices tab, mixer closed", Box::new(move |_, ctl| {
             let mut c = ctl.borrow_mut();
+            *o0.borrow_mut() = c.project().tracks[0].name.clone();
             if c.mixer_open {
                 c.toggle_mixer();
             }
@@ -6766,11 +6769,42 @@ fn track_rename_steps() -> Vec<Step> {
             s.invoke_track_rename(s.get_sel_id(), "  Bass  ".into());
         })),
         Check("rename: trimmed to Bass", Box::new(move |c, _| (name0(c) == "Bass").then_some(()).ok_or(format!("name {:?}", name0(c))))),
-        DoC("rename: undo twice", Box::new(|_, ctl| {
-            ctl.borrow_mut().undo();
-            ctl.borrow_mut().undo();
+        Do("rename: double-click, type Drums, then press in the lanes", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+            type_text(a, "Drums");
+            let p = lanes_point();
+            click(a, p.x, p.y);
         })),
-        Check("rename: the original name is back", Box::new(move |c, _| (name0(c) != "Bass" && name0(c) != "Lead vox").then_some(()).ok_or(format!("name {:?}", name0(c))))),
+        Do("rename: let the focus move", Box::new(|_| {})),
+        Check("rename: the press in the lanes committed Drums", Box::new(move |c, _| (name0(c) == "Drums").then_some(()).ok_or(format!("name {:?}", name0(c))))),
+        DoC("rename: select track 1 again", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            let id = c.project().tracks[0].id;
+            c.select_track(id);
+        })),
+        Do("rename: double-click, type Keys, then select track 2", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+            type_text(a, "Keys");
+        })),
+        DoC("rename: select track 2 while the field is open", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let id = c.project().tracks[1].id;
+            c.select_track(id);
+        })),
+        Do("rename: let the field see the new selection", Box::new(|_| {})),
+        Check("rename: Keys went to track 1, track 2 kept its name", Box::new(move |c, _| {
+            let t = &c.project().tracks;
+            (t[0].name == "Keys" && t[1].name != "Keys").then_some(()).ok_or(format!("names {:?} / {:?}", t[0].name, t[1].name))
+        })),
+        DoC("rename: undo four times", Box::new(|_, ctl| {
+            for _ in 0..4 {
+                ctl.borrow_mut().undo();
+            }
+        })),
+        Check("rename: the original name is back", Box::new(move |c, _| (name0(c) == *o1.borrow()).then_some(()).ok_or(format!("name {:?} want {:?}", name0(c), o1.borrow())))),
     ]
 }
 

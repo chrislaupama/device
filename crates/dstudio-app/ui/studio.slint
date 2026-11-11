@@ -473,7 +473,8 @@ export global Studio {
     callback track-pan(int, float);
     callback track-pan-text(int, string);       // inline pan entry in the track header
     callback track-rename(int, string);         // track id, typed name (double-click a track name)
-    in property <bool> review-rename;           // review-track-rename: the inspector name field starts open
+    in property <bool> review-rename;
+    in property <int> press-epoch;   // bumps on each press in the lanes and clip editors (src/controller.rs)           // review-track-rename: the inspector name field starts open
     callback gesture-end();
     // ---- splitters (src/splitters.rs): phase 0 press, 1 move, 2 release; window y ----
     in property <length> bottom-h: 306px;

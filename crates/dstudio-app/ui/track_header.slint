@@ -6,9 +6,10 @@ import { Tokens } from "tokens.slint";
 import { Icon, Icons, Inset } from "widgets.slint";
 import { Studio, TrackRow, TrackLevel } from "studio.slint";
 
-// A track's name that renames on double-click (Studio.track-rename): Enter or focus loss
-// commits, Escape cancels, an empty name keeps the old one. A single click passes through as
-// `clicked`.
+// A track's name that renames on double-click (Studio.track-rename): Enter, focus loss or the
+// field switching to another track commits, Escape cancels, an empty name keeps the old one. The
+// rename goes to the track the field opened on. A single click passes through as `clicked`.
+// Keyboard and assistive technology: the name's default action opens the field.
 export component TrackName inherits Rectangle {
     in property <int> track-id;
     in property <string> text;
@@ -22,8 +23,15 @@ export component TrackName inherits Rectangle {
     callback clicked();
     callback edit-done();
     property <bool> editing: root.review-edit;
-    accessible-role: AccessibleRole.text;
+    // The track being renamed (follows `track-id` until a field opens).
+    property <int> edit-id: root.track-id;
+    property <string> draft-text;
+    accessible-role: AccessibleRole.button;
     accessible-label: root.text;
+    accessible-description: "Rename track";
+    accessible-action-default => { if (root.enabled) { root.edit-id = root.track-id; root.editing = true; } }
+    // The field shows another track's name now (the selection moved): keep what was typed.
+    changed track-id => { if (root.editing && root.track-id != root.edit-id) { root.editing = false; Studio.track-rename(root.edit-id, root.draft-text); root.edit-done(); } }
     if !root.editing: Text {
         width: root.width; height: root.height;
         text: root.text; color: root.text-color; font-size: root.font-size; font-weight: root.font-weight; letter-spacing: root.letter-spacing;
@@ -32,7 +40,7 @@ export component TrackName inherits Rectangle {
     if !root.editing: TouchArea {
         enabled: root.enabled;
         clicked => { root.clicked(); }
-        double-clicked => { root.editing = true; }
+        double-clicked => { root.edit-id = root.track-id; root.editing = true; }
     }
     if root.editing: Rectangle {
         x: -2.55px; width: min(root.width + 5.1px, 136px); height: root.height + 3.4px; y: -1.7px;
@@ -42,13 +50,14 @@ export component TrackName inherits Rectangle {
             text: root.text; color: #ffffff; font-size: root.font-size; font-weight: root.font-weight; letter-spacing: root.letter-spacing;
             vertical-alignment: center; single-line: true; selection-background-color: #ffffff47;
             accessible-label: "Track name";
-            init => { self.focus(); self.select-all(); }
-            accepted => { root.editing = false; Studio.track-rename(root.track-id, self.text); root.edit-done(); }
+            init => { root.draft-text = self.text; self.focus(); self.select-all(); }
+            edited => { root.draft-text = self.text; }
+            accepted => { root.editing = false; Studio.track-rename(root.edit-id, self.text); root.edit-done(); }
             key-pressed(e) => {
                 if (e.text == Key.Escape) { root.editing = false; root.edit-done(); return accept; }
                 reject
             }
-            changed has-focus => { if (!self.has-focus && root.editing) { root.editing = false; Studio.track-rename(root.track-id, self.text); } }
+            changed has-focus => { if (!self.has-focus && root.editing) { root.editing = false; Studio.track-rename(root.edit-id, self.text); } }
         }
     }
 }

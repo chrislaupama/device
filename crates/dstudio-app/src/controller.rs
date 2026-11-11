@@ -366,6 +366,9 @@ pub struct Controller {
     /// Rename popup open for this clip.
     pub rename: Option<ClipId>,
     pub rename_section: Option<dstudio_core::SectionId>,
+    /// Counts presses on the lanes and the clip editors; the UI moves the keyboard focus back to
+    /// the shortcuts on each, so an open name field commits (Studio.press-epoch).
+    pub press_epoch: i32,
     pub selected_section: Option<dstudio_core::SectionId>,
     pub(crate) section_drag: Option<crate::sections::SectionDrag>,
     pub(crate) section_vis: Vec<crate::sections::SectionVis>,
@@ -499,6 +502,7 @@ impl Controller {
             clipboard: None,
             rename: None,
             rename_section: None,
+            press_epoch: 0,
             selected_section: None,
             section_drag: None,
             section_vis: Vec::new(),
@@ -1783,6 +1787,7 @@ impl Controller {
         self.update_minimap(app);
         self.update_devmm(app);
         self.push_snap(&s);
+        s.set_press_epoch(self.press_epoch);
         crate::pointer::apply(app, self.ptr.take());
         s.set_section_add_x(self.section_add_x());
         self.update_auto_labels();

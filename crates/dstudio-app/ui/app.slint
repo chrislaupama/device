@@ -775,7 +775,7 @@ component Inspector inherits Rectangle {
 component BottomPanel inherits Panel {
     callback focus-main();
     if Studio.bottom-tab == 0: Inspector { x: 0; y: 0; width: 254.5px; height: root.height; focus-main => { root.focus-main(); } }
-    if Studio.bottom-tab == 1: ClipSidebar { x: 0; y: 0; width: 254.5px; height: root.height; }
+    if Studio.bottom-tab == 1: ClipSidebar { x: 0; y: 0; width: 254.5px; height: root.height; focus-main => { root.focus-main(); } }
     Rectangle { x: 254.5px; y: 0; width: 0.5px; height: root.height; background: Tokens.line-separator; }
     Rectangle { x: 0; y: 26.5px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
     // Clip / Devices tabs (real: switch the bottom panel content)
@@ -1003,6 +1003,10 @@ export component AppWindow inherits Window {
 
     property <int> cards-epoch: Studio.cards-epoch;
     changed cards-epoch => { fs.focus(); }
+    // A press in the lanes or a clip editor takes the focus back, so an open track-name field
+    // commits (TrackName commits when it loses the focus).
+    property <int> press-epoch: Studio.press-epoch;
+    changed press-epoch => { fs.focus(); }
     // A clip editor value stopped taking typing: keys go back to the shortcuts.
     property <int> ac-edit-field: Studio.ac-edit-field;
     changed ac-edit-field => { if (self.ac-edit-field < 0) { fs.focus(); } }
