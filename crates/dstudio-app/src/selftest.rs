@@ -2350,7 +2350,7 @@ fn recording_steps() -> Vec<Step> {
     fn offline(c: &Controller) -> bool {
         !c.engine.device_running()
     }
-    vec![
+    let mut v = vec![
         Do("Enter; Escape (close menus)", Box::new(|a| {
             key(a, Key::Return, false, false);
             key(a, Key::Escape, false, false);
@@ -2414,14 +2414,27 @@ fn recording_steps() -> Vec<Step> {
             one(&h8, c, "Input Monitoring Change")?;
             (!c.project().tracks[0].monitor).then_some(()).ok_or("monitor on".into())
         })),
-        DoC("rec: click R on the Instrument track's header (placeholder)", Box::new(|a, ctl| {
+        DoC("rec: click R on the Instrument track's header", Box::new(|a, ctl| {
             let i = ctl.borrow().project().tracks.iter().position(|t| t.kind == TrackKind::Instrument).unwrap_or(1);
             let (x, y) = header_r(ctl, i);
             click(a, x, y);
         })),
-        Check("rec: instrument R reports MIDI recording not implemented, no undo step", Box::new(move |c, a| {
-            let st = status(a);
-            (st.starts_with("MIDI recording is not implemented") && c.doc.history_labels().len() == h9.get()).then_some(()).ok_or(format!("status {st:?}"))
+        Check("rec: instrument R armed it (SetTrackArm, one undo step), it is a MIDI recording track", Box::new({
+            let h9 = h9.clone();
+            move |c, _| {
+                one(&h9, c, "Arm Track")?;
+                let inst = c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument).ok_or("no instrument track")?;
+                (inst.arm && c.armed_midi() == vec![inst.id]).then_some(()).ok_or("instrument track not armed".into())
+            }
+        })),
+        DoC("rec: click the Instrument track's R again", Box::new(|a, ctl| {
+            let i = ctl.borrow().project().tracks.iter().position(|t| t.kind == TrackKind::Instrument).unwrap_or(1);
+            let (x, y) = header_r(ctl, i);
+            click(a, x, y);
+        })),
+        Check("rec: second R disarmed it, one undo step", Box::new(move |c, _| {
+            one(&h9, c, "Disarm Track")?;
+            c.armed_midi().is_empty().then_some(()).ok_or("still armed".into())
         })),
         DoC("rec: re-select track 1, click the inspector In field", Box::new(|a, ctl| {
             let sy = ctl.borrow().view.scroll_y as f32;
@@ -2675,6 +2688,115 @@ fn recording_steps() -> Vec<Step> {
             (t.clips.len() == rn3.get() && c.doc.history_labels().len() == ph2.get() && c.doc.undo_label() != Some("Record"))
                 .then_some(())
                 .ok_or(format!("{} clips, undo {:?}", t.clips.len(), c.doc.undo_label()))
+        })),
+    ];
+    v.extend(midi_recording_steps());
+    v
+}
+
+/// MIDI recording (spec 002): arm the Instrument track, play injected notes during a
+/// pass, stop: one "Record" step adds a MIDI clip with those notes; undo removes it.
+/// Offline only (injected MIDI is rendered with `render_offline`).
+fn midi_recording_steps() -> Vec<Step> {
+    use Step::*;
+    let before = Rc::new(Cell::new(usize::MAX)); // instrument track clip count, history length
+    let hist = Rc::new(Cell::new(0usize));
+    let (b1, b2, b3, h1, h2) = (before.clone(), before.clone(), before.clone(), hist.clone(), hist.clone());
+    fn offline(c: &Controller) -> bool {
+        !c.engine.device_running()
+    }
+    fn inst(c: &Controller) -> Option<&dstudio_core::Track> {
+        c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument)
+    }
+    fn render(c: &Controller, frames: usize) -> Result<(), String> {
+        let mut out = vec![0f32; 2 * frames];
+        c.engine.render_offline(&mut out).map_err(|e| e.to_string())
+    }
+    vec![
+        DoC("midi rec: disarm audio track 1, arm the Instrument track, select it, playhead at beat 4", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let audio = c.project().tracks[0].id;
+            if c.project().tracks[0].arm {
+                c.toggle_arm(audio);
+            }
+            if let Some(t) = inst(&c).map(|t| t.id) {
+                c.toggle_arm(t);
+                c.select_track(t);
+            }
+            c.seek_beats(4.0);
+            c.midi_tick();
+        })),
+        Check("midi rec: only the Instrument track is armed, record button ready", Box::new(move |c, a| {
+            let t = inst(c).ok_or("no instrument track")?;
+            b1.set(t.midi_clips.len());
+            h1.set(c.doc.history_labels().len());
+            (c.armed_with_input().is_empty() && c.armed_midi() == vec![t.id] && a.global::<Studio>().get_record_ready())
+                .then_some(())
+                .ok_or(format!("armed audio {:?}, midi {:?}", c.armed_with_input(), c.armed_midi()))
+        })),
+        Do("midi rec: press R (transport.record)", Box::new(|a| key(a, "r", false, false))),
+        Check("midi rec: recording a MIDI-only pass (transport playing, no audio takes)", Box::new(|c, a| {
+            if !offline(c) {
+                return Ok(());
+            }
+            (c.rec.recording && !c.rec.audio && c.midi_in.pass.is_some() && c.engine.transport().playing && a.global::<Studio>().get_recording())
+                .then_some(())
+                .ok_or(format!("recording {} audio {} status {:?}", c.rec.recording, c.rec.audio, a.global::<Studio>().get_status_text()))
+        })),
+        DoC("midi rec: play C4 for a beat, then E4 held until stop (injected MIDI, 1 s rendered)", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            if !offline(&c) || !c.rec.recording {
+                return;
+            }
+            let _ = c.engine.midi_inject(0x90, 60, 100);
+            let _ = render(&c, 24_000);
+            let _ = c.engine.midi_inject(0x80, 60, 0);
+            let _ = c.engine.midi_inject(0x90, 64, 90);
+            let _ = render(&c, 24_000);
+            c.midi_tick();
+            c.rebuild_vis();
+        })),
+        Check("midi rec: a red \"Recording\" clip with both notes grows on the Instrument track", Box::new(|c, _| {
+            if !offline(c) {
+                return Ok(());
+            }
+            let ti = c.project().tracks.iter().position(|t| t.kind == TrackKind::Instrument).ok_or("no instrument track")?;
+            let v = c.rec.live_vis.iter().find(|v| v.track_index == ti).ok_or("no live MIDI clip")?;
+            let notes = v.midi.as_ref().map(|m| m.len()).unwrap_or(0);
+            (v.name == "Recording" && notes == 2 && (v.start_beats - 4.0).abs() < 1e-6 && (v.len_beats - 2.0).abs() < 0.01)
+                .then_some(())
+                .ok_or(format!("{notes} notes, start {} len {}", v.start_beats, v.len_beats))
+        })),
+        Do("midi rec: press R (stop)", Box::new(|a| key(a, "r", false, false))),
+        Check("midi rec: one \"Record\" undo step added a 1-bar MIDI clip at bar 2 with C4 and E4", Box::new(move |c, _| {
+            if !offline(c) {
+                return Ok(());
+            }
+            let t = inst(c).ok_or("no instrument track")?;
+            let n = c.doc.history_labels().len();
+            if n != h2.get() + 1 || c.doc.undo_label() != Some("Record") {
+                return Err(format!("history {} -> {n}, last {:?}", h2.get(), c.doc.undo_label()));
+            }
+            let clip = t.midi_clips.iter().max_by_key(|cl| cl.id.0).ok_or("no clip")?;
+            let got: Vec<_> = clip.notes.iter().map(|n| (n.pitch, n.start, n.length, n.velocity)).collect();
+            (t.midi_clips.len() == b2.get() + 1 && clip.start == 4 * PPQ && clip.length == 4 * PPQ && clip.name == t.name && got == vec![(60, 0, PPQ, 100), (64, PPQ, PPQ, 90)])
+                .then_some(())
+                .ok_or(format!("{} clips (was {}), newest at {} len {} notes {got:?}", t.midi_clips.len(), b2.get(), clip.start, clip.length))
+        })),
+        Do("midi rec: Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("midi rec: ⌘Z removed the recorded MIDI clip", Box::new(move |c, _| {
+            if !offline(c) {
+                return Ok(());
+            }
+            let t = inst(c).ok_or("no instrument track")?;
+            (t.midi_clips.len() == b3.get() && c.doc.undo_label() != Some("Record")).then_some(()).ok_or(format!("{} clips, undo {:?}", t.midi_clips.len(), c.doc.undo_label()))
+        })),
+        DoC("midi rec: stop the transport, disarm the Instrument track", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let _ = c.engine.stop();
+            if let Some(t) = inst(&c).filter(|t| t.arm).map(|t| t.id) {
+                c.toggle_arm(t);
+            }
         })),
     ]
 }

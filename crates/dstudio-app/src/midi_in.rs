@@ -1,0 +1,244 @@
+//! MIDI input in the app (spec 002): which ports are open (Settings › MIDI),
+//! which instrument track plays the keyboard when none is armed or monitoring
+//! (the selected one), and the MIDI side of a recording pass.
+//!
+//! Playing happens entirely in the engine (routing on the audio thread from
+//! the snapshot's arm / monitor flags plus the focus track set here). The app
+//! only opens ports, keeps the focus up to date and, while recording, drains
+//! the engine's capture ring and turns it into clips with
+//! `dstudio_core::midi_record` when the pass stops.
+
+use crate::controller::Controller;
+use crate::MidiInputRow;
+use dstudio_core::midi_record::{self, CapturedEvent, Pass};
+use dstudio_core::{Command, TrackId, TrackKind};
+use std::time::{Duration, Instant};
+
+/// How often the port list is rescanned (new keyboards show up within this).
+const RESCAN: Duration = Duration::from_secs(2);
+/// Rescan rate while Settings › MIDI is showing (activity lights).
+const RESCAN_PAGE: Duration = Duration::from_millis(100);
+/// How long an activity light stays lit after a message.
+const LIT: Duration = Duration::from_millis(180);
+/// Settings page index of "MIDI".
+pub const MIDI_PAGE: usize = 2;
+
+/// One row of Settings › MIDI › MIDI inputs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PortRow {
+    pub id: String,
+    pub name: String,
+    pub events: u64,
+    pub lit_until: Option<Instant>,
+}
+
+/// The MIDI side of the recording pass in progress (frames at the engine rate).
+#[derive(Debug, Clone, Default)]
+pub struct MidiPass {
+    pub start: i64,
+    pub last_pos: i64,
+    pub wrapped: bool,
+    pub events: Vec<CapturedEvent>,
+}
+
+#[derive(Debug, Default)]
+pub struct MidiInState {
+    pub ports: Vec<PortRow>,
+    /// Port ids the engine was last asked to open (None = never asked).
+    opened: Option<Vec<String>>,
+    last_scan: Option<Instant>,
+    /// Focus last sent to the engine (None = never sent).
+    focus: Option<Option<u64>>,
+    pub pass: Option<MidiPass>,
+    /// SCREENSHOT-ONLY: a fixed port list; the engine is never asked to list or open ports.
+    pub fake_ports: bool,
+    /// Last port error shown, so a failing port is reported once.
+    last_error: Option<String>,
+}
+
+/// SCREENSHOT-ONLY port list for `--state review-settings-midi`.
+pub fn screenshot_fake_ports() -> Vec<PortRow> {
+    vec![
+        PortRow { id: "fake:keys".into(), name: "USB Keyboard".into(), events: 0, lit_until: None },
+        PortRow { id: "fake:pads".into(), name: "Pad Controller".into(), events: 0, lit_until: None },
+    ]
+}
+
+/// Ports to open: every present port except the ones switched off.
+pub fn wanted_ports(ports: &[PortRow], disabled: &[String]) -> Vec<String> {
+    ports.iter().filter(|p| !disabled.contains(&p.id)).map(|p| p.id.clone()).collect()
+}
+
+impl Controller {
+    /// Called every UI tick: focus, port rescans and the recording pass.
+    pub fn midi_tick(&mut self) {
+        // The selected instrument track plays the keyboard while no track is armed or monitoring.
+        let focus = self.selected_track.and_then(|t| self.project().track(t)).filter(|t| t.kind == TrackKind::Instrument).map(|t| t.id.0);
+        if self.midi_in.focus != Some(focus) {
+            self.engine.set_midi_focus(focus);
+            self.midi_in.focus = Some(focus);
+        }
+        self.midi_scan(false);
+        self.midi_poll_pass();
+    }
+
+    /// Rescan the MIDI ports (every 2 s, or 10 times a second while Settings › MIDI shows,
+    /// for the activity lights) and open the ones that are on. Self-test and screenshot
+    /// runs never touch real ports.
+    pub fn midi_scan(&mut self, force: bool) {
+        if self.settings.headless || self.midi_in.fake_ports {
+            return;
+        }
+        let page_open = self.settings.open && self.settings.page == MIDI_PAGE;
+        let every = if page_open { RESCAN_PAGE } else { RESCAN };
+        let now = Instant::now();
+        if !force && self.midi_in.last_scan.is_some_and(|t| now.duration_since(t) < every) {
+            return;
+        }
+        self.midi_in.last_scan = Some(now);
+        let Ok(list) = self.engine.midi_inputs() else { return };
+        let mut rows = Vec::with_capacity(list.len());
+        for p in list {
+            let old = self.midi_in.ports.iter().find(|r| r.id == p.id);
+            let mut lit_until = old.and_then(|r| r.lit_until).filter(|t| *t > now);
+            if old.is_some_and(|r| p.events > r.events) {
+                lit_until = Some(now + LIT);
+            }
+            rows.push(PortRow { id: p.id, name: p.name, events: p.events, lit_until });
+        }
+        if rows != self.midi_in.ports {
+            self.midi_in.ports = rows;
+            if page_open {
+                self.ui_dirty = true;
+            }
+        }
+        let want = wanted_ports(&self.midi_in.ports, &self.settings.prefs.midi.disabled_inputs);
+        if self.midi_in.opened.as_ref() != Some(&want) {
+            match self.engine.open_midi_inputs(&want) {
+                Ok(()) => self.midi_in.last_error = None,
+                Err(e) => {
+                    let msg = format!("MIDI input: {e}");
+                    if self.midi_in.last_error.as_ref() != Some(&msg) {
+                        self.set_status(msg.clone(), 6);
+                        self.midi_in.last_error = Some(msg);
+                    }
+                }
+            }
+            self.midi_in.opened = Some(want);
+        }
+    }
+
+    /// Settings › MIDI switch: turn an input on or off (an app preference).
+    pub fn midi_toggle_input(&mut self, row: usize) {
+        let Some(id) = self.midi_in.ports.get(row).map(|r| r.id.clone()) else { return };
+        let off = &mut self.settings.prefs.midi.disabled_inputs;
+        if let Some(i) = off.iter().position(|d| *d == id) {
+            off.remove(i);
+        } else {
+            off.push(id);
+        }
+        self.save_prefs();
+        self.midi_scan(true);
+        self.ui_dirty = true;
+    }
+
+    /// Settings › MIDI rows: (name, on, lit).
+    pub fn midi_rows(&self) -> Vec<(String, bool, bool)> {
+        let now = Instant::now();
+        let off = &self.settings.prefs.midi.disabled_inputs;
+        self.midi_in.ports.iter().map(|p| (p.name.clone(), !off.contains(&p.id), p.lit_until.is_some_and(|t| t > now))).collect()
+    }
+
+    // ---------------------------------------------------------------- recording pass
+
+    /// Armed instrument tracks: the tracks a recording pass records MIDI on.
+    pub fn armed_midi(&self) -> Vec<TrackId> {
+        midi_record::armed_instrument_tracks(self.project())
+    }
+
+    /// Start capturing what the armed instrument tracks hear (the transport is started
+    /// by the caller).
+    pub(crate) fn midi_pass_start(&mut self) {
+        self.engine.set_midi_capture(true);
+        let start = self.audible_frames();
+        self.midi_in.pass = Some(MidiPass { start, last_pos: start, wrapped: false, events: Vec::new() });
+    }
+
+    /// Drain the capture ring and notice loop wraps (the playhead jumping back).
+    fn midi_poll_pass(&mut self) {
+        if self.midi_in.pass.is_none() {
+            return;
+        }
+        let pos = self.audible_frames();
+        let looping = self.project().transport.loop_enabled;
+        let got = self.engine.read_midi_capture();
+        let Some(pass) = self.midi_in.pass.as_mut() else { return };
+        absorb(pass, got.into_iter().map(|n| CapturedEvent { frame: n.frame, on: n.on, pitch: n.pitch, velocity: n.velocity }), looping);
+        if looping && pos < pass.last_pos {
+            pass.wrapped = true;
+        }
+        pass.last_pos = pos;
+    }
+
+    /// The pass's frame range so far (or at stop), as `midi_record` takes it.
+    pub(crate) fn midi_pass_bounds(&self, pass: &MidiPass, stop: i64) -> Pass {
+        let p = self.project();
+        let looped = p.transport.loop_enabled && (pass.wrapped || stop < pass.start);
+        let wrapped_loop = looped.then(|| (p.ticks_to_frames(p.transport.loop_start, self.rate), p.ticks_to_frames(p.transport.loop_end, self.rate)));
+        Pass { start: pass.start, stop, wrapped_loop }
+    }
+
+    /// End the MIDI side of the pass: one `AddMidiClip` per armed instrument track that
+    /// received notes (for the pass's "Record" batch).
+    pub(crate) fn midi_pass_finish(&mut self) -> Vec<Command> {
+        if self.midi_in.pass.is_none() {
+            return Vec::new();
+        }
+        self.engine.set_midi_capture(false);
+        self.midi_poll_pass();
+        let Some(pass) = self.midi_in.pass.take() else { return Vec::new() };
+        let stop = self.audible_frames();
+        let bounds = self.midi_pass_bounds(&pass, stop);
+        midi_record::record_commands(self.project(), self.rate, &pass.events, &bounds)
+    }
+
+    pub(crate) fn push_midi_settings(&self) {
+        let rows: Vec<MidiInputRow> = self.midi_rows().into_iter().map(|(name, on, lit)| MidiInputRow { name: name.into(), on, lit }).collect();
+        crate::controller::sync_model(&self.midi_inputs_model, rows);
+    }
+}
+
+/// Append captured events; a frame earlier than the previous one in a looping pass
+/// means playback wrapped.
+fn absorb(pass: &mut MidiPass, events: impl Iterator<Item = CapturedEvent>, looping: bool) {
+    for e in events {
+        if looping && pass.events.last().is_some_and(|l| e.frame < l.frame) {
+            pass.wrapped = true;
+        }
+        pass.events.push(e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn wanted_skips_disabled() {
+        let ports = screenshot_fake_ports();
+        assert_eq!(wanted_ports(&ports, &[]), ["fake:keys", "fake:pads"]);
+        assert_eq!(wanted_ports(&ports, &["fake:keys".into()]), ["fake:pads"]);
+        assert!(wanted_ports(&[], &[]).is_empty());
+    }
+    #[test]
+    fn absorb_detects_wrap() {
+        let ev = |frame| CapturedEvent { frame, on: true, pitch: 60, velocity: 100 };
+        let mut p = MidiPass::default();
+        absorb(&mut p, [ev(10), ev(20)].into_iter(), true);
+        assert!(!p.wrapped);
+        absorb(&mut p, [ev(5)].into_iter(), false);
+        assert!(!p.wrapped, "no loop: a seek, not a wrap");
+        absorb(&mut p, [ev(1)].into_iter(), true);
+        assert!(p.wrapped);
+        assert_eq!(p.events.len(), 4);
+    }
+}

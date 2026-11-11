@@ -197,6 +197,9 @@ impl Controller {
     pub fn settings_page(&mut self, i: usize) {
         self.settings.page = i.min(PAGES.len() - 1);
         self.settings.menu = None;
+        if self.settings.page == crate::midi_in::MIDI_PAGE {
+            self.midi_scan(true);
+        }
         self.ui_dirty = true;
     }
 
@@ -521,6 +524,9 @@ impl Controller {
         s.set_set_buffer_text(if b > 0 { fmt_buffer(b, self.current_rate()) } else { "Device default".into() }.into());
         s.set_set_input_muted(self.settings.prefs.audio.input_muted);
         s.set_set_pdc_on(!self.settings.prefs.audio.pdc_off);
+        if self.settings.page == crate::midi_in::MIDI_PAGE {
+            self.push_midi_settings();
+        }
         let g = &self.settings.prefs.general;
         let on = [g.load_last_session, g.show_plugin_windows, g.show_builtin_windows, g.plugin_windows_on_top];
         let shown = s.get_general_on();

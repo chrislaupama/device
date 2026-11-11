@@ -2,11 +2,13 @@
 //! clip (docs/adr/0002-recording.md).
 //!
 //! Every project change is a `dstudio_core::Command`: R = `SetTrackArm`,
-//! I = `SetTrackMonitor`, the inspector "In" popup = `SetTrackInput`, and a
-//! finished recording pass = ONE `Batch` "Record" (`AddAsset` + `AddClip` per
-//! take; with one armed track that is exactly one take). Device I/O goes through
-//! the engine's recording API; while it is unimplemented, every engine error is
-//! shown as a status message.
+//! I = `SetTrackMonitor` (audio and instrument tracks), the inspector "In"
+//! popup = `SetTrackInput` (audio tracks), and a finished recording pass = ONE
+//! `Batch` "Record": `AddAsset` + `AddClip` per audio take (with one armed
+//! track that is exactly one take), then one `AddMidiClip` per armed
+//! instrument track that received notes (`midi_in.rs`, spec 002). Device I/O
+//! goes through the engine's recording API; every engine error is shown as a
+//! status message.
 //!
 //! Where takes are written (`Controller::recording_dir`): `<project dir>/media/`
 //! when the project has been saved, else `<system temp dir>/Device Studio/Unsaved
@@ -47,6 +49,10 @@ pub struct RecState {
     pub live_vis: Vec<ClipVis>,
     /// Label of the last finished pass (self-test reads it).
     pub last_pass: Option<String>,
+    /// The engine is recording audio takes in this pass (MIDI-only passes don't).
+    pub audio: bool,
+    /// MIDI clips of the pass, waiting for its audio takes to load (one "Record" batch).
+    pub pending_midi: Vec<Command>,
 }
 
 /// Rows of the "In" selector: "None", then "Input k (Mono)" per device input
@@ -141,28 +147,19 @@ impl Controller {
         self.project().track(id).filter(|t| t.kind == TrackKind::Audio)
     }
 
-    /// R button: `SetTrackArm` on audio tracks (one undo step). Instrument tracks:
-    /// PLACEHOLDER (no MIDI recording).
+    /// R button: `SetTrackArm` (one undo step). An armed instrument track also plays
+    /// the MIDI keyboard and records it.
     pub fn toggle_arm(&mut self, id: TrackId) {
-        match self.project().track(id) {
-            Some(t) if t.kind == TrackKind::Audio => {
-                let arm = !t.arm;
-                self.execute(Command::SetTrackArm { track: id, arm });
-            }
-            Some(_) => self.set_status("MIDI recording is not implemented yet", 3),
-            None => {}
+        if let Some(arm) = self.project().track(id).map(|t| !t.arm) {
+            self.execute(Command::SetTrackArm { track: id, arm });
         }
     }
 
-    /// I button: `SetTrackMonitor` on audio tracks. Instrument tracks: PLACEHOLDER.
+    /// I button: `SetTrackMonitor`. On an instrument track: plays the MIDI keyboard
+    /// without arming it.
     pub fn toggle_monitor(&mut self, id: TrackId) {
-        match self.project().track(id) {
-            Some(t) if t.kind == TrackKind::Audio => {
-                let monitor = !t.monitor;
-                self.execute(Command::SetTrackMonitor { track: id, monitor });
-            }
-            Some(_) => self.set_status("MIDI recording is not implemented yet (no input monitoring on instrument tracks)", 3),
-            None => {}
+        if let Some(monitor) = self.project().track(id).map(|t| !t.monitor) {
+            self.execute(Command::SetTrackMonitor { track: id, monitor });
         }
     }
 
@@ -222,41 +219,63 @@ impl Controller {
         if self.rec.recording { self.stop_recording() } else { self.start_recording() }
     }
 
+    /// Starts a pass: audio takes on armed audio tracks with an input, MIDI on armed
+    /// instrument tracks. When audio can't be recorded but MIDI can, records MIDI only.
     pub fn start_recording(&mut self) {
-        if self.armed_with_input().is_empty() {
-            self.set_status("Nothing to record: arm an audio track (R) and choose its input (In)", 5);
+        let audio = !self.armed_with_input().is_empty();
+        let midi = !self.armed_midi().is_empty();
+        if !audio && !midi {
+            self.set_status("Nothing to record: arm a track (R); audio tracks also need an input (In)", 5);
             return;
         }
         match self.rec.policy {
-            InputPolicy::Device => {
-                if !self.engine.device_running() {
-                    self.set_status("Can't record: no audio device (offline mode)", 5);
-                    return;
-                }
-                if self.engine.device_status().input_name.is_none() {
-                    let why = self.engine.input_error().map(|e| format!(" ({e})")).unwrap_or_default();
-                    self.set_status(format!("Can't record: no audio input device{why}. Choose one in Settings › Audio"), 6);
-                    return;
-                }
+            InputPolicy::Device if !self.engine.device_running() => {
+                self.set_status("Can't record: no audio device (offline mode)", 5);
+                return;
             }
-            InputPolicy::InjectedOnly => {
-                if self.engine.device_running() {
-                    self.set_status("Can't record: injected-input recording needs the offline engine (--no-audio)", 5);
-                    return;
+            InputPolicy::InjectedOnly if self.engine.device_running() => {
+                self.set_status("Can't record: injected-input recording needs the offline engine (--no-audio)", 5);
+                return;
+            }
+            _ => {}
+        }
+        let mut audio_err = None;
+        if audio && self.rec.policy == InputPolicy::Device && self.engine.device_status().input_name.is_none() {
+            let why = self.engine.input_error().map(|e| format!(" ({e})")).unwrap_or_default();
+            audio_err = Some(format!("no audio input device{why}. Choose one in Settings › Audio"));
+        }
+        let mut audio_started = false;
+        if audio && audio_err.is_none() {
+            let dir = self.recording_dir();
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                audio_err = Some(format!("{}: {e}", dir.display()));
+            } else {
+                match self.engine.start_recording(&dir) {
+                    Ok(()) => audio_started = true,
+                    Err(e) => audio_err = Some(format!("recording failed: {e}")),
                 }
             }
         }
-        let dir = self.recording_dir();
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            self.set_status(format!("Can't record: {}: {e}", dir.display()), 6);
+        if let Some(e) = &audio_err
+            && !midi
+        {
+            self.set_status(format!("Can't record: {e}"), 6);
+            self.ui_dirty = true;
             return;
         }
-        match self.engine.start_recording(&dir) {
-            Ok(()) => {
-                self.rec.recording = true;
-                self.set_status("Recording…", 2);
+        if midi {
+            // The engine starts the transport for audio takes; a MIDI-only pass starts it here.
+            if !audio_started && let Err(e) = self.engine.play() {
+                self.set_status(format!("Can't record: {e}"), 6);
+                return;
             }
-            Err(e) => self.set_status(format!("Recording failed: {e}"), 6),
+            self.midi_pass_start();
+        }
+        self.rec.recording = true;
+        self.rec.audio = audio_started;
+        match audio_err {
+            Some(e) => self.set_status(format!("Recording MIDI only: {e}"), 6),
+            None => self.set_status("Recording…", 2),
         }
         self.ui_dirty = true;
     }
@@ -265,17 +284,28 @@ impl Controller {
         self.rec.recording = false;
         self.rec.live_vis.clear();
         self.ui_dirty = true;
+        let midi = self.midi_pass_finish();
+        if !std::mem::take(&mut self.rec.audio) {
+            self.finish_midi_only(midi);
+            return;
+        }
         let takes = match self.engine.stop_recording() {
             Ok(t) => t,
             Err(e) => {
                 self.set_status(format!("Stopping the recording failed: {e}"), 6);
+                self.finish_midi_only(midi);
                 return;
             }
         };
         if takes.is_empty() {
-            self.set_status("Recording stopped: no takes", 3);
+            if midi.is_empty() {
+                self.set_status("Recording stopped: no takes", 3);
+            } else {
+                self.finish_midi_only(midi);
+            }
             return;
         }
+        self.rec.pending_midi = midi;
         // Decode + analyse on a worker thread, as imports do; the "Record" batch is
         // executed when the engine assets exist (JobResult::Recorded).
         let engine = self.engine.clone();
@@ -292,8 +322,23 @@ impl Controller {
         self.set_status("Loading recording…", 30);
     }
 
-    /// Worker finished loading the takes of one pass: ONE undoable `Batch` "Record".
+    /// A pass without audio takes: its MIDI clips are the "Record" step.
+    fn finish_midi_only(&mut self, midi: Vec<Command>) {
+        if midi.is_empty() {
+            self.set_status("Recording stopped: nothing was played", 3);
+            return;
+        }
+        let n = midi.len();
+        if self.execute(Command::Batch { label: "Record".into(), commands: midi }) {
+            self.rec.last_pass = Some("Record".into());
+            self.set_status(format!("Recorded {n} MIDI clip{}", if n == 1 { "" } else { "s" }), 3);
+        }
+    }
+
+    /// Worker finished loading the takes of one pass: ONE undoable `Batch` "Record"
+    /// (audio takes, then the pass's MIDI clips).
     pub(crate) fn finish_recorded(&mut self, doc_epoch: u64, takes: Vec<(RecordedTake, Result<(AssetInfo, Pyramid), String>)>) {
+        let midi = std::mem::take(&mut self.rec.pending_midi);
         if doc_epoch != self.doc_epoch {
             for (_, r) in takes {
                 if let Ok((info, _)) = r {
@@ -353,19 +398,27 @@ impl Controller {
             loaded.push((asset_id, info.asset_id, pyr));
         }
         if cmds.is_empty() {
-            self.set_status(format!("Recording produced no usable takes{}", if errors.is_empty() { String::new() } else { format!(": {}", errors.join("; ")) }), 6);
+            if midi.is_empty() {
+                self.set_status(format!("Recording produced no usable takes{}", if errors.is_empty() { String::new() } else { format!(": {}", errors.join("; ")) }), 6);
+            } else {
+                self.finish_midi_only(midi);
+            }
             return;
         }
+        // MIDI clips last: they take their ids when the batch runs, after the takes' ids.
+        let midi_clips = midi.len();
+        cmds.extend(midi);
         for (asset_id, ea, pyr) in &loaded {
             self.peaks.insert(*ea, pyr.clone());
             self.asset_map.insert(*asset_id, *ea);
         }
         if self.execute(Command::Batch { label: "Record".into(), commands: cmds }) {
             self.rec.last_pass = Some("Record".into());
+            let extra = if midi_clips > 0 { format!(" and {midi_clips} MIDI clip(s)") } else { String::new() };
             if errors.is_empty() {
-                self.set_status(format!("Recorded {} take(s)", loaded.len()), 3);
+                self.set_status(format!("Recorded {} take(s){extra}", loaded.len()), 3);
             } else {
-                self.set_status(format!("Recorded {} take(s); skipped: {}", loaded.len(), errors.join("; ")), 6);
+                self.set_status(format!("Recorded {} take(s){extra}; skipped: {}", loaded.len(), errors.join("; ")), 6);
             }
         } else {
             for (asset_id, ea, _) in loaded {
@@ -412,6 +465,7 @@ impl Controller {
                 live: Some((peaks, (fpp as f64 / frames_per_pt) as f32)),
             });
         }
+        self.rebuild_live_midi();
         // Follow the playhead: page forward when it nears the right edge.
         let ph = self.playhead_ticks() as f64 / PPQ as f64;
         let x = self.view.x_of(ph);
@@ -421,9 +475,47 @@ impl Controller {
         }
     }
 
+    /// The growing "Recording" clip of each armed instrument track, with the notes so far.
+    fn rebuild_live_midi(&mut self) {
+        let Some(pass) = &self.midi_in.pass else { return };
+        let now = self.audible_frames();
+        let bounds = self.midi_pass_bounds(pass, now);
+        let notes = dstudio_core::midi_record::pair_notes(&pass.events, &bounds);
+        let p = self.doc.project();
+        let bar = p.ticks_per_bar().max(1);
+        let ticks = |f: i64| p.frames_to_ticks(f.max(0), self.rate);
+        let (mut from, mut to) = (ticks(bounds.start), ticks(now).max(ticks(bounds.start)));
+        if let Some((ls, le)) = bounds.wrapped_loop {
+            from = from.min(ticks(ls));
+            to = to.max(ticks(le));
+        }
+        from = from.div_euclid(bar) * bar;
+        let len = (to - from).max(1);
+        let rel: Vec<(dstudio_core::Note, bool)> = notes
+            .iter()
+            .map(|n| (dstudio_core::Note { id: 0, pitch: n.pitch, start: ticks(n.start) - from, length: (ticks(n.end) - ticks(n.start)).max(1), velocity: n.velocity }, false))
+            .collect();
+        let mini = crate::controller::mini_notes(&rel, 0, len);
+        for t in self.armed_midi() {
+            let Some(ti) = p.track_index(t) else { continue };
+            self.rec.live_vis.push(ClipVis {
+                track_index: ti,
+                start_beats: from as f64 / PPQ as f64,
+                len_beats: len as f64 / PPQ as f64,
+                color: crate::controller::RECORD_RED,
+                selected: false,
+                muted: false,
+                name: "Recording".into(),
+                wave: None,
+                midi: Some(mini.clone()),
+                live: None,
+            });
+        }
+    }
+
     pub(crate) fn push_recording(&self, s: &Studio) {
         s.set_recording(self.rec.recording);
-        s.set_record_ready(!self.armed_with_input().is_empty());
+        s.set_record_ready(!self.armed_with_input().is_empty() || !self.armed_midi().is_empty());
         let sel = self.selected_track.and_then(|t| self.project().track(t));
         s.set_sel_arm(sel.is_some_and(|t| t.arm));
         s.set_sel_monitor(sel.is_some_and(|t| t.monitor));

@@ -587,7 +587,7 @@ pub fn build(dl: &mut DrawList, sc: &Scene) {
         }
     }
 
-    // ---- takes being recorded: red-tinted growing clips with a live waveform ----
+    // ---- takes being recorded: red-tinted growing clips with a live waveform (audio) or notes (MIDI) ----
     for c in sc.live {
         live_clip(&mut dl.base, sc, &px, c);
     }
@@ -788,6 +788,20 @@ fn live_clip(out: &mut Vec<RectInst>, sc: &Scene, px: &Px, c: &ClipVis) {
     out.push(px.rounded(x, y, cw, ch, r, rgba(c.color, 1.0)));
     out.push(px.rect(x, y + CLIP_HEADER, cw, ch - CLIP_HEADER - r, rgba(body, 1.0)));
     out.push(px.rounded(x, y + ch - 2.0 * r, cw, 2.0 * r, r, rgba(body, 1.0)));
+    // MIDI being recorded: the notes played so far, as on a MIDI clip.
+    if let Some(notes) = &c.midi {
+        let by = y + CLIP_HEADER + 0.5;
+        let nh = ch - CLIP_HEADER - 6.0;
+        let bar_h = (nh / 24.0).clamp(1.5, 3.0);
+        let ink = mix(c.color, WHITE, 0.35);
+        for n in notes {
+            let nx = x + n[0] * cw;
+            let nw = (n[1] * cw).max(1.0).min(x + cw - nx);
+            if nw > 0.0 {
+                out.push(px.rect(nx, by + 2.5 + n[2] * (nh - bar_h), nw, bar_h, rgba(ink, n[3])));
+            }
+        }
+    }
     let Some((peaks, step)) = &c.live else { return };
     let wy = y + CLIP_HEADER + 2.0;
     let wh = ch - CLIP_HEADER - 4.0;
