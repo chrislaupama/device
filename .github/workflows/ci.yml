@@ -427,9 +427,11 @@ jobs:
         run: tools/ci/self-test.sh macos "$CARGO_TARGET_DIR/release/device-studio" --self-test --no-audio
       # Two self-tests: --no-audio (offline rendering and export, like macOS and
       # Windows) and --self-test-audio (plays, records and exports through the
-      # headless PipeWire graph: a real output stream). Each takes about five
+      # headless PipeWire graph: a real output stream). Each takes about six
       # minutes under lavapipe and they share nothing (each run has its own
-      # scratch folder), so they run side by side on two X servers.
+      # scratch folder), so they run side by side on their own X servers, with
+      # the screenshot: 6.3 minutes for both instead of 12.3 back to back on a
+      # 4-core machine, both passing.
       - name: Headless PipeWire graph (Linux)
         if: runner.os == 'Linux' && steps.changes.outputs.run == 'true'
         run: tools/ci/headless-pipewire.sh | sed -e "s/^export //" -e "s/'//g" >> "$GITHUB_ENV"
@@ -441,17 +443,20 @@ jobs:
           RUST_BACKTRACE: "1"
         run: |
           app="$CARGO_TARGET_DIR/release/device-studio"
-          xvfb-run -n 90 -s "-screen 0 1600x1000x24" "$app" --state reference-default --screenshot app-linux.png
-          test -s app-linux.png
+          xvfb-run -n 90 -s "-screen 0 1600x1000x24" "$app" --state reference-default --screenshot app-linux.png > "$RUNNER_TEMP/screenshot.log" 2>&1 &
+          shot=$!
           tools/ci/self-test.sh linux xvfb-run -n 91 -s "-screen 0 1600x1000x24" "$app" --self-test --no-audio > "$RUNNER_TEMP/selftest.log" 2>&1 &
           plain=$!
           tools/ci/self-test.sh linux-audio xvfb-run -n 92 -s "-screen 0 1600x1000x24" "$app" --self-test-audio > "$RUNNER_TEMP/selftest-audio.log" 2>&1 &
           audio=$!
+          shot_status=0; wait "$shot" || shot_status=$?
           plain_status=0; wait "$plain" || plain_status=$?
           audio_status=0; wait "$audio" || audio_status=$?
+          echo "::group::screenshot (exit status $shot_status)"; cat "$RUNNER_TEMP/screenshot.log"; echo "::endgroup::"
           echo "::group::self-test --no-audio"; cat "$RUNNER_TEMP/selftest.log"; echo "::endgroup::"
           echo "::group::self-test --self-test-audio"; cat "$RUNNER_TEMP/selftest-audio.log"; echo "::endgroup::"
-          grep -h -E "^(self-test|::error)" "$RUNNER_TEMP/selftest.log" "$RUNNER_TEMP/selftest-audio.log"
+          grep -h -E "^self-test" "$RUNNER_TEMP/selftest.log" "$RUNNER_TEMP/selftest-audio.log"
+          if [ "$shot_status" -ne 0 ] || [ ! -s app-linux.png ]; then echo "::error title=Screenshot failed (Linux)::exit status $shot_status"; exit 1; fi
           [ "$plain_status" -eq 0 ] && [ "$audio_status" -eq 0 ]
       # Windows exits with code 0x87A after a run that passed (not yet
       # explained, see engine/README.md), so the exit code is printed but not
