@@ -19,4 +19,4 @@ Tick a task only when its verification passed.
   track entries — verify: self-test, review states
 - [x] T10. Docs: README, PROGRESS.md, engine/README.md, ADR 0004 note — verify: read them against
   the change
-- [ ] T11. Evidence: screenshots and benchmark numbers for the pull requests — verify: `spec-verify`
+- [x] T11. Evidence: screenshots and benchmark numbers for the pull requests — verify: `spec-verify`
