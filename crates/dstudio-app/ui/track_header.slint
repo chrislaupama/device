@@ -179,7 +179,7 @@ export component AutoPill inherits Rectangle {
         y: 0.32px; width: root.width; height: root.height - 0.32px; border-radius: root.border-radius;
         background: root.hot ? #2f3035 : #292a2f;
     }
-    ta := TouchArea { clicked => { root.open(self.absolute-position.x, self.absolute-position.y + root.height); } }
+    ta := TouchArea { clicked => { root.open(self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + root.height); } }
     power-ta := TouchArea {
         x: 0.85px; width: 15.3px;
         accessible-role: checkbox; accessible-label: root.state == 1 ? "Bypass automation" : "Enable automation"; accessible-checked: root.state == 1;

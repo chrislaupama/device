@@ -72,7 +72,7 @@ component Pill inherits Rectangle {
     property <length> lead: root.ring >= 0 ? 24px : root.glyph > 0 ? 25px : 7.5px;
     Rectangle { x: 6px; y: 0; width: parent.width - 12px; height: 0.5px; background: SynthStyle.control-edge; }
     TouchArea {
-        clicked => { root.open(root.absolute-position.x, root.absolute-position.y + root.height + 2px, root.width); }
+        clicked => { root.open(root.absolute-position.x, (root.absolute-position.y - Studio.menu-dy) + root.height + 2px, root.width); }
     }
     if root.ring >= 0: Rectangle {
         x: 6px; y: 3px; width: 14px; height: 14px; border-radius: 7px;
@@ -168,7 +168,7 @@ component SynthKnobView inherits Rectangle {
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { root.start = root.norm; root.moved = false; }
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
-                Studio.synth-knob-menu(root.k.idx, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                Studio.synth-knob-menu(root.k.idx, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y);
             }
             if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) { Studio.synth-param-end(root.k.idx, root.moved); }
         }
@@ -216,7 +216,7 @@ component SynthFaderView inherits Rectangle {
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) { root.start = root.norm; }
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
-                Studio.synth-knob-menu(root.f.idx, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                Studio.synth-knob-menu(root.f.idx, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y);
             }
             if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) { Studio.synth-param-end(root.f.idx, true); }
         }
@@ -430,7 +430,7 @@ export component SynthDevice inherits Rectangle {
             x: 4px; y: Studio.synth-add-y; width: 110px; height: 20px;
             Text { x: 0; text: "+"; color: SynthStyle.dim; font-size: 13px; font-weight: 500; vertical-alignment: center; }
             Text { x: 15px; text: "Add modulation"; color: add-ta.has-hover ? SynthStyle.value : SynthStyle.dim; font-size: 10px; font-weight: 600; vertical-alignment: center; }
-            add-ta := TouchArea { clicked => { Studio.synth-pill(8, 0, self.absolute-position.x, self.absolute-position.y + 22px, 160px); } }
+            add-ta := TouchArea { clicked => { Studio.synth-pill(8, 0, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + 22px, 160px); } }
         }
         if !Studio.synth-add-show: Text { x: 4px; y: Studio.synth-add-y; height: 20px; text: "Slots: Full"; color: SynthStyle.dim; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
     }
@@ -447,7 +447,7 @@ export component SynthDevice inherits Rectangle {
         // Macro names: click opens the name list.
         for i in 8: TouchArea {
             x: 117.7px + mod(i, 4) * 75.5px + 4px; y: 80px + floor(i / 4) * 81px + 54px; width: 60px; height: 15px;
-            clicked => { Studio.synth-macro-select(i); Studio.synth-pill(4, i, self.absolute-position.x - 4px, self.absolute-position.y + 17px, 150px); }
+            clicked => { Studio.synth-macro-select(i); Studio.synth-pill(4, i, self.absolute-position.x - 4px, (self.absolute-position.y - Studio.menu-dy) + 17px, 150px); }
         }
         Rectangle { x: 433px; y: 55.5px; width: 295px; height: 0.5px; background: SynthStyle.line; }
         Flickable {
@@ -490,7 +490,7 @@ export component SynthDevice inherits Rectangle {
                 x: 0; y: Studio.synth-add-y; width: 110px; height: 20px;
                 Text { x: 0; text: "+"; color: SynthStyle.dim; font-size: 13px; font-weight: 500; vertical-alignment: center; }
                 Text { x: 15px; text: "Add mapping"; color: madd-ta.has-hover ? SynthStyle.value : SynthStyle.dim; font-size: 10px; font-weight: 600; vertical-alignment: center; }
-                madd-ta := TouchArea { clicked => { Studio.synth-pill(5, 0, self.absolute-position.x, self.absolute-position.y + 22px, 200px); } }
+                madd-ta := TouchArea { clicked => { Studio.synth-pill(5, 0, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + 22px, 200px); } }
             }
             if !Studio.synth-add-show: Text { x: 0; y: Studio.synth-add-y; height: 20px; text: "Mappings: Full"; color: SynthStyle.dim; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
         }
@@ -515,15 +515,15 @@ export component SynthDevice inherits Rectangle {
                 mouse-cursor: grab;
                 pointer-event(e) => {
                     if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
-                        Studio.synth-rail(i + 1, 0, self.absolute-position.x - root.absolute-position.x + self.mouse-x, self.absolute-position.y - root.absolute-position.y + self.mouse-y);
+                        Studio.synth-rail(i + 1, 0, self.absolute-position.x - root.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) - (root.absolute-position.y - Studio.menu-dy) + self.mouse-y);
                     }
                     if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) {
-                        Studio.synth-rail(i + 1, 2, self.absolute-position.x - root.absolute-position.x + self.mouse-x, self.absolute-position.y - root.absolute-position.y + self.mouse-y);
+                        Studio.synth-rail(i + 1, 2, self.absolute-position.x - root.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) - (root.absolute-position.y - Studio.menu-dy) + self.mouse-y);
                     }
                 }
                 moved => {
                     if (self.pressed) {
-                        Studio.synth-rail(i + 1, 1, self.absolute-position.x - root.absolute-position.x + self.mouse-x, self.absolute-position.y - root.absolute-position.y + self.mouse-y);
+                        Studio.synth-rail(i + 1, 1, self.absolute-position.x - root.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) - (root.absolute-position.y - Studio.menu-dy) + self.mouse-y);
                     }
                 }
             }

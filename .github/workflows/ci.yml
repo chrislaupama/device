@@ -24,7 +24,7 @@ jobs:
       matrix:
         include:
           - name: macOS
-            runner: self-hosted
+            runner: macos-latest
           - name: Windows
             runner: windows-latest
           - name: Linux

@@ -41,19 +41,19 @@ component ParamDrag inherits TouchArea {
     mouse-cursor: ns-resize;
     pointer-event(e) => {
         if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
-            Studio.mod-menu(root.device, root.param, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            Studio.mod-menu(root.device, root.param, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y);
             return;
         }
         if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
             root.grabbed();
             if (e.modifiers.alt) { Studio.panel-reset(root.device, root.param); return; }
-            root.last-y = self.absolute-position.y + self.mouse-y;
+            root.last-y = (self.absolute-position.y - Studio.menu-dy) + self.mouse-y;
             Studio.panel-drag(root.device, root.param, 0, 0, root.rate, e.modifiers.shift);
         }
         // Window coordinates: a handle that moves with its value must not feed its own motion back.
         if (e.kind == PointerEventKind.move && self.pressed) {
-            Studio.panel-drag(root.device, root.param, 1, (root.last-y - self.absolute-position.y - self.mouse-y) / 1px, root.rate, e.modifiers.shift);
-            root.last-y = self.absolute-position.y + self.mouse-y;
+            Studio.panel-drag(root.device, root.param, 1, (root.last-y - (self.absolute-position.y - Studio.menu-dy) - self.mouse-y) / 1px, root.rate, e.modifiers.shift);
+            root.last-y = (self.absolute-position.y - Studio.menu-dy) + self.mouse-y;
         }
         if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-drag(root.device, root.param, 2, 0, root.rate, false); }
         if (e.kind == PointerEventKind.cancel) { Studio.panel-drag(root.device, root.param, 3, 0, root.rate, false); }
@@ -385,7 +385,7 @@ component ButtonCell inherits Rectangle {
             font-size: 10px * zm; font-weight: 600; letter-spacing: -0.04 * 10px * zm; vertical-alignment: center; overflow: elide;
         }
         Icon { x: parent.width - 17px * zm; y: (parent.height - 9px * zm) / 2; width: 9px * zm; height: 9px * zm; d: Icons.chevron-down; ink: #a0a0a3; stroke-width: 1.3px; }
-        pick-ta := TouchArea { clicked => { Studio.panel-menu(root.device, root.b.param, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
+        pick-ta := TouchArea { clicked => { Studio.panel-menu(root.device, root.b.param, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height + 2px); } }
     }
 }
 
@@ -489,7 +489,7 @@ component DeviceCanvas inherits Rectangle {
             mouse-cursor: root.mouse-cursor;
             pointer-event(e) => {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { keys.focus(); Studio.panel-graph(root.device, 0, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
-                if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) { Studio.panel-graph-menu(root.device, self.mouse-x / 1px, self.mouse-y / 1px, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+                if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) { Studio.panel-graph-menu(root.device, self.mouse-x / 1px, self.mouse-y / 1px, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
                 if (e.kind == PointerEventKind.move) { Studio.panel-graph(root.device, self.pressed ? 1 : 4, self.mouse-x / 1px, self.mouse-y / 1px, e.modifiers.shift, e.modifiers.alt); }
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.panel-graph(root.device, 2, self.mouse-x / 1px, self.mouse-y / 1px, false, false); }
                 if (e.kind == PointerEventKind.cancel) { Studio.panel-graph(root.device, 3, 0, 0, false, false); }
@@ -509,19 +509,19 @@ component DeviceCanvas inherits Rectangle {
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
                 keys.focus();
-                Studio.panel-editor(root.device, 0, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+                Studio.panel-editor(root.device, 0, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
             } else if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
-                Studio.panel-editor(root.device, 5, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+                Studio.panel-editor(root.device, 5, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
             } else if (e.kind == PointerEventKind.move) {
-                Studio.panel-editor(root.device, self.pressed ? 1 : 4, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+                Studio.panel-editor(root.device, self.pressed ? 1 : 4, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
             } else if (e.kind == PointerEventKind.up && e.button == PointerEventButton.left) {
-                Studio.panel-editor(root.device, 2, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
+                Studio.panel-editor(root.device, 2, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y, e.modifiers.shift, e.modifiers.alt, 0);
             } else if (e.kind == PointerEventKind.cancel) {
                 Studio.panel-editor(root.device, 3, self.mouse-x, self.mouse-y, 0, 0, false, false, 0);
             }
         }
         double-clicked => {
-            Studio.panel-editor(root.device, 6, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y, false, false, 0);
+            Studio.panel-editor(root.device, 6, self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y, false, false, 0);
         }
         scroll-event(e) => {
             if (e.delta-y == 0) { return reject; }
@@ -605,7 +605,7 @@ component PickItem inherits HorizontalLayout {
                     if (self.alt-down) { Studio.panel-reset(root.device, root.p.param); }
                 }
             }
-            clicked => { if (!self.alt-down) { Studio.panel-menu(root.device, root.p.param, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
+            clicked => { if (!self.alt-down) { Studio.panel-menu(root.device, root.p.param, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height + 2px); } }
         }
     }
     if root.p.kind == 5: Latch {
@@ -1255,7 +1255,7 @@ component EqChrome inherits Rectangle {
             font-size: 11px * zm; font-weight: 600; letter-spacing: -0.04 * 11px * zm; vertical-alignment: center; overflow: elide;
         }
         Icon { x: parent.width - 18px * zm; y: (parent.height - 10px * zm) / 2; width: 10px * zm; height: 10px * zm; d: Icons.chevron-down; ink: #a0a0a3; stroke-width: 1.3px; }
-        bank-ta := TouchArea { clicked => { Studio.panel-menu(root.device, root.e.bank-param, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
+        bank-ta := TouchArea { clicked => { Studio.panel-menu(root.device, root.e.bank-param, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height + 2px); } }
     }
     // ---- editor row ----
     Text {
@@ -1427,7 +1427,7 @@ component TargetList inherits Rectangle {
     }
     HeaderButton {
         x: root.width - 20px * zm; y: 1.5px * zm; icon: Icons.plus; label: "Add target";
-        clicked => { Studio.mod-add-menu(root.device, root.m.slot, self.absolute-position.x, self.absolute-position.y + self.height + 2px); }
+        clicked => { Studio.mod-add-menu(root.device, root.m.slot, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height + 2px); }
     }
     if root.m.targets.length == 0: Text {
         x: 0; y: 26px * zm; width: root.width; text: "Press Map, then click a control on this track, or use +."; wrap: word-wrap;
@@ -1582,8 +1582,8 @@ export component CardHeader inherits Rectangle {
             enabled: !root.renaming;
             clicked => {
                 if (!root.card.swappable) { return; }
-                if (root.card.instrument) { Studio.open-inst-menu(self.absolute-position.x, self.absolute-position.y + self.height); }
-                else { Studio.device-swap-menu(root.card.id, self.absolute-position.x, self.absolute-position.y + self.height); }
+                if (root.card.instrument) { Studio.open-inst-menu(self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height); }
+                else { Studio.device-swap-menu(root.card.id, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height); }
             }
             double-clicked => { if (root.chain) { root.renaming = true; } }
         }
@@ -1625,8 +1625,8 @@ export component CardHeader inherits Rectangle {
             ink: preset-ta.has-hover ? #ffffffb3 : #81838a;
         }
         preset-ta := TouchArea { clicked => {
-            if (root.card.instrument) { Studio.synth-pill(1, 0, self.absolute-position.x + self.width - 180px, self.absolute-position.y + self.height + 2px, 180px); }
-            else { Studio.panel-menu(root.card.id, -2, self.absolute-position.x, self.absolute-position.y + self.height + 2px); }
+            if (root.card.instrument) { Studio.synth-pill(1, 0, self.absolute-position.x + self.width - 180px, (self.absolute-position.y - Studio.menu-dy) + self.height + 2px, 180px); }
+            else { Studio.panel-menu(root.card.id, -2, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height + 2px); }
         } }
     }
     if root.fx && !root.narrow: Rectangle {
