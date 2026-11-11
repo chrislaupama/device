@@ -103,6 +103,7 @@ public:
     int32_t publish(const se_session_desc_v6& desc, std::string& err);
     int32_t publish(const se_session_desc_v7& desc, std::string& err);
     int32_t publish(const se_session_desc_v8& desc, std::string& err);
+    int32_t publish(const se_session_desc_v9& desc, std::string& err);
 
     // ---- plugins (see dstudio_engine.h; main thread where documented)
     bool plugin_is_live(uint64_t device_id);

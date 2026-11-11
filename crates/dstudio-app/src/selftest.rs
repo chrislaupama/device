@@ -1437,14 +1437,96 @@ fn steps() -> Vec<Step> {
             // Export window centred in the window: 442 x 340.4, Export button 52.2 x 22.1.
             click(a, (win().0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (win().1 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
         })),
-        Check("mix.wav written: stereo 24-bit at the engine rate, the full length, not silent; dialog closed", Box::new(|c, a| {
+        Check("mix.wav written: stereo 24-bit at the dialog's rate, the full length, not silent; dialog closed", Box::new(|c, a| {
             let path = c.export.dir.join("mix.wav");
             let (rate, ch, s) = crate::wavgen::read_wav(&path)?;
             let peak = s.iter().fold(0f32, |m, v| m.max(v.abs()));
             let frames = s.len() / 2;
-            (rate as f64 == c.engine.sample_rate() && ch == 2 && frames as u64 == c.export_frames() && peak > 0.01 && !a.global::<Studio>().get_export_open())
+            (rate == c.export_rate() && ch == 2 && frames as u64 == c.export_out_frames() && peak > 0.01 && !a.global::<Studio>().get_export_open())
                 .then_some(())
-                .ok_or(format!("rate {rate} ch {ch} frames {frames} vs {} peak {peak}", c.export_frames()))
+                .ok_or(format!("rate {rate} ch {ch} frames {frames} vs {} peak {peak}", c.export_out_frames()))
+        })),
+        Do("⇧⌘E for an export at the other sample rate", Box::new(|a| key(a, "E", true, true))),
+        DoC("click the other rate (44.1 kHz when the engine runs at 48)", Box::new(|a, ctl| {
+            let to48 = ctl.borrow().export_rate() != 48_000;
+            // Rate segments: 71.4 + 197.7 from the window's left, 136.85 from its top, 56.3 wide each.
+            let x = 71.4 + 197.7 + 1.7 + if to48 { 56.3 + 28.8 } else { 28.15 };
+            click(a, (win().0 - 442.0) / 2.0 + x, (win().1 - 340.4) / 2.0 + 136.85 + 9.35);
+        })),
+        Check("the other rate is picked; the size estimate follows it", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let other = if c.engine.sample_rate() >= 47_000.0 { 44_100 } else { 48_000 };
+            let est = crate::dialogs::estimate_text(c.export_out_frames(), other as f64, if c.export.bits24 { 24 } else { 16 }, 1);
+            (c.export_rate() == other && s.get_export_rate48() == (other == 48_000) && s.get_export_estimate() == est.as_str())
+                .then_some(())
+                .ok_or(format!("rate {} est {} vs {est}", c.export_rate(), s.get_export_estimate()))
+        })),
+        DoC("export it as mix-other: click Export", Box::new(|a, ctl| {
+            ctl.borrow_mut().export.name = "mix-other".into();
+            click(a, (win().0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (win().1 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
+        })),
+        Check("mix-other.wav is at the other rate, as long in seconds as mix.wav and as loud", Box::new(|c, _| {
+            let (rate, ch, s) = crate::wavgen::read_wav(&c.export.dir.join("mix-other.wav"))?;
+            let (mix_rate, _, mix) = crate::wavgen::read_wav(&c.export.dir.join("mix.wav"))?;
+            let rms = |v: &[f32]| (v.iter().map(|x| x * x).sum::<f32>() / v.len().max(1) as f32).sqrt();
+            let secs = |n: usize, r: u32| n as f64 / 2.0 / r as f64;
+            let (a, b) = (rms(&s), rms(&mix));
+            let ok = rate == c.export_rate() && rate != mix_rate && ch == 2 && (s.len() / 2) as u64 == c.export_out_frames()
+                && (secs(s.len(), rate) - secs(mix.len(), mix_rate)).abs() < 1e-3 && b > 0.0 && (a / b - 1.0).abs() < 0.02;
+            ok.then_some(()).ok_or(format!("rate {rate} vs {mix_rate} frames {} rms {a} vs {b}", s.len() / 2))
+        })),
+        DoC("back to the default rate for the next exports", Box::new(|_, ctl| {
+            let _ = std::fs::remove_file(ctl.borrow().export.dir.join("mix-other.wav"));
+            ctl.borrow_mut().export.rate = None;
+        })),
+        DoC("loop region over bars 2-3", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let tpb = c.project().ticks_per_bar();
+            let enabled = c.project().transport.loop_enabled;
+            let _ = c.doc.execute(dstudio_core::Command::SetLoop { enabled, start: tpb, end: 3 * tpb }, dstudio_core::Origin::User);
+            c.after_change();
+        })),
+        Do("⇧⌘E for a loop-region export", Box::new(|a| key(a, "E", true, true))),
+        Do("click the Range picker", Box::new(|a| click(a, (win().0 - 442.0) / 2.0 + 71.4 + 30.0, (win().1 - 340.4) / 2.0 + 105.4 + 10.2))),
+        Check("Range menu: Full project (checked) and Loop region", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let rows: Vec<_> = (0..s.get_export_range_items().row_count()).filter_map(|i| s.get_export_range_items().row_data(i)).collect();
+            let ok = s.get_export_range_menu_open() && rows.len() == 2 && rows[0].checked && !rows[1].checked && !rows[1].hint
+                && c.export_range() == crate::dialogs::ExportRange::Project;
+            ok.then_some(()).ok_or(format!("open {} rows {}", s.get_export_range_menu_open(), rows.len()))
+        })),
+        // The menu sits 3.4 below the picker; rows are 21 tall after 3 of padding.
+        Do("pick Loop region", Box::new(|a| click(a, (win().0 - 442.0) / 2.0 + 71.4 + 40.0, (win().1 - 340.4) / 2.0 + 105.4 + 20.4 + 3.4 + 3.0 + 21.0 + 10.5))),
+        Check("the range reads Loop region, Bars 2–3, and the estimate covers two bars", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let est = crate::dialogs::estimate_text(c.export_out_frames(), c.export_rate() as f64, if c.export.bits24 { 24 } else { 16 }, 1);
+            let p = c.project();
+            let two_bars = p.ticks_to_seconds(2 * p.ticks_per_bar());
+            let secs = c.export_out_frames() as f64 / c.export_rate() as f64;
+            let ok = !s.get_export_range_menu_open() && s.get_export_range_label() == "Loop region" && s.get_export_bars_text() == "Bars 2–3"
+                && s.get_export_estimate() == est.as_str() && (secs - two_bars).abs() < 1e-3;
+            ok.then_some(()).ok_or(format!("label {} bars {} est {} secs {secs} vs {two_bars}", s.get_export_range_label(), s.get_export_bars_text(), s.get_export_estimate()))
+        })),
+        DoC("export it as loop: click Export", Box::new(|a, ctl| {
+            ctl.borrow_mut().export.name = "loop".into();
+            click(a, (win().0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (win().1 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
+        })),
+        Check("loop.wav is the two loop bars, with sound where the mix has it", Box::new(|c, a| {
+            let (rate, ch, s) = crate::wavgen::read_wav(&c.export.dir.join("loop.wav"))?;
+            let (_, _, mix) = crate::wavgen::read_wav(&c.export.dir.join("mix.wav"))?;
+            let p = c.project();
+            let start = (p.ticks_to_seconds(p.ticks_per_bar()) * rate as f64).round() as usize * 2;
+            let peak = |v: &[f32]| v.iter().fold(0f32, |m, x| m.max(x.abs()));
+            let mix_peak = peak(mix.get(start..(start + s.len()).min(mix.len())).unwrap_or(&[]));
+            let ok = rate == c.export_rate() && ch == 2 && (s.len() / 2) as u64 == c.export_out_frames()
+                && (mix_peak < 0.01 || peak(&s) > 0.001) && !a.global::<Studio>().get_export_open();
+            ok.then_some(()).ok_or(format!("rate {rate} frames {} vs {} peak {} mix {mix_peak}", s.len() / 2, c.export_out_frames(), peak(&s)))
+        })),
+        DoC("back to the full project and the old loop region", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let _ = std::fs::remove_file(c.export.dir.join("loop.wav"));
+            c.export.range = crate::dialogs::ExportRange::Project;
+            c.undo();
         })),
         Do("⇧⌘E again", Box::new(|a| key(a, "E", true, true))),
         Check("export dialog open again", Box::new(|_c, a| a.global::<Studio>().get_export_open().then_some(()).ok_or("not open".into()))),
@@ -6955,6 +7037,201 @@ fn snap_steps() -> Vec<Step> {
     ]
 }
 
+/// The transport bar's project fields: tempo drag (one undo step), typed tempo, tap tempo (one
+/// undo step per series), the Sig menu and the key picker. Puts 120 BPM, 4/4 and no key back.
+fn transport_fields_steps() -> Vec<Step> {
+    use Step::*;
+    let bpm = |c: &Controller| c.project().transport.bpm;
+    vec![
+        Check("transport: starts at 120 BPM, 4/4, no key", Box::new(move |c, a| {
+            let s = a.global::<Studio>();
+            let t = &c.project().transport;
+            (bpm(c) == 120.0 && (t.time_signature.numerator, t.time_signature.denominator) == (4, 4) && t.key.is_none() && s.get_bpm_text() == "120" && s.get_key_text() == "")
+                .then_some(())
+                .ok_or(format!("bpm {} sig {}/{} key {:?}", bpm(c), t.time_signature.numerator, t.time_signature.denominator, t.key))
+        })),
+        Do("transport: drag the tempo 25 points (right and up), pausing past the merge window", Box::new(|a| {
+            let s = a.global::<Studio>();
+            s.invoke_tempo_drag(0, 0.0, 0.0);
+            s.invoke_tempo_drag(1, 10.0, 0.0);
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            s.invoke_tempo_drag(1, 20.0, -5.0);
+            s.invoke_tempo_drag(2, 20.0, -5.0);
+        })),
+        Check("transport: 145 BPM, readout follows", Box::new(move |c, a| {
+            let t = a.global::<Studio>().get_bpm_text();
+            (bpm(c) == 145.0 && t == "145" && c.doc.undo_label() == Some("Tempo Change")).then_some(()).ok_or(format!("bpm {} text {t}", bpm(c)))
+        })),
+        DoC("transport: one undo takes the whole drag back", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check("transport: 120 BPM again", Box::new(move |c, _| (bpm(c) == 120.0).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        Do("transport: type 97.5", Box::new(|a| a.global::<Studio>().invoke_tempo_text("97.5".into()))),
+        Check("transport: 97.5 BPM shown with its decimal", Box::new(move |c, a| {
+            let t = a.global::<Studio>().get_bpm_text();
+            (bpm(c) == 97.5 && t == "97.5").then_some(()).ok_or(format!("bpm {} text {t}", bpm(c)))
+        })),
+        DoC("transport: tap four times half a second apart", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            for t in [500.0, 500.5, 501.0, 501.5] {
+                c.tap_tempo_at(t);
+            }
+        })),
+        Check("transport: taps set 120 BPM", Box::new(move |c, _| (bpm(c) == 120.0).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: one undo takes the tap series back", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check("transport: 97.5 BPM again", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: start a fresh tap series", Box::new(|_, ctl| ctl.borrow_mut().tf.taps.clear())),
+        Do("transport: press Shift+T, then hold it (two auto-repeats)", Box::new(|a| {
+            let w = a.window();
+            dispatch(w, WindowEvent::KeyPressed { text: Key::Shift.into() });
+            dispatch(w, WindowEvent::KeyPressed { text: "T".into() });
+            dispatch(w, WindowEvent::KeyPressRepeated { text: "T".into() });
+            dispatch(w, WindowEvent::KeyPressRepeated { text: "T".into() });
+            dispatch(w, WindowEvent::KeyReleased { text: "T".into() });
+            dispatch(w, WindowEvent::KeyReleased { text: Key::Shift.into() });
+        })),
+        Check("transport: the held key counted as one tap, the tempo is unchanged", Box::new(move |c, _| {
+            (c.tf.taps.len() == 1 && bpm(c) == 97.5).then_some(()).ok_or(format!("taps {} bpm {}", c.tf.taps.len(), bpm(c)))
+        })),
+        DoC("transport: end that series", Box::new(|_, ctl| ctl.borrow_mut().tf.taps.clear())),
+        DoC("transport: tap at 120 BPM, then twice as fast", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            for t in [600.0, 600.5, 601.0, 601.25] {
+                c.tap_tempo_at(t);
+            }
+        })),
+        Check("transport: the faster taps set 240 BPM", Box::new(move |c, _| (bpm(c) == 240.0).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: undo once", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check("transport: the change of pace was its own step: 120 BPM", Box::new(move |c, _| (bpm(c) == 120.0).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: undo again", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check("transport: 97.5 BPM before the taps", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        Do("transport: drag the tempo 3 points right from 97.5", Box::new(|a| {
+            let s = a.global::<Studio>();
+            s.invoke_tempo_drag(0, 0.0, 0.0);
+            s.invoke_tempo_drag(1, 3.0, 0.0);
+            s.invoke_tempo_drag(2, 3.0, 0.0);
+        })),
+        Check("transport: the drag keeps the half beat: 100.5 BPM", Box::new(move |c, _| (bpm(c) == 100.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: undo the drag", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check("transport: 97.5 BPM after the drag's undo", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        Do("transport: open the Sig menu", Box::new(|a| a.global::<Studio>().invoke_sig_menu_toggle())),
+        Check("transport: the Sig menu lists twelve signatures, 4/4 checked", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            let rows = s.get_sig_menu_items();
+            let checked: Vec<String> = (0..rows.row_count()).filter_map(|i| rows.row_data(i)).filter(|r| r.checked).map(|r| r.label.to_string()).collect();
+            (s.get_sig_menu_open() && rows.row_count() == 12 && checked == ["4/4"]).then_some(()).ok_or(format!("open {} rows {} checked {checked:?}", s.get_sig_menu_open(), rows.row_count()))
+        })),
+        Do("transport: pick 6/8", Box::new(|a| a.global::<Studio>().invoke_sig_menu_pick(8))),
+        Check("transport: 6/8, menu closed, bars are three beats", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (s.get_sig_text() == "6/8" && !s.get_sig_menu_open() && c.project().ticks_per_bar() == 3 * dstudio_core::PPQ)
+                .then_some(())
+                .ok_or(format!("sig {} open {}", s.get_sig_text(), s.get_sig_menu_open()))
+        })),
+        Do("transport: open the key picker, choose Minor, then A", Box::new(|a| {
+            let s = a.global::<Studio>();
+            s.invoke_key_menu_toggle();
+            s.invoke_key_mode(true);
+            s.invoke_key_pick(9);
+        })),
+        Check("transport: A minor, readout Am, picker still open", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let k = c.project().transport.key;
+            (k == Some(dstudio_core::model::ProjectKey { root: 9, minor: true }) && s.get_key_text() == "Am" && s.get_key_menu_open() && s.get_key_root() == 9)
+                .then_some(())
+                .ok_or(format!("key {k:?} text {} open {}", s.get_key_text(), s.get_key_menu_open()))
+        })),
+        Do("transport: switch to Major", Box::new(|a| a.global::<Studio>().invoke_key_mode(false))),
+        Check("transport: A major", Box::new(|c, a| {
+            let k = c.project().transport.key;
+            (k == Some(dstudio_core::model::ProjectKey { root: 9, minor: false }) && a.global::<Studio>().get_key_text() == "A").then_some(()).ok_or(format!("key {k:?}"))
+        })),
+        Do("transport: No key", Box::new(|a| a.global::<Studio>().invoke_key_clear())),
+        Check("transport: no key, dash shown, picker closed", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.project().transport.key.is_none() && s.get_key_text() == "" && !s.get_key_menu_open()).then_some(()).ok_or(format!("key {:?}", c.project().transport.key))
+        })),
+        Do("transport: open the Sig menu, Down, Enter", Box::new(|a| {
+            a.global::<Studio>().invoke_sig_menu_toggle();
+            key(a, Key::DownArrow, false, false);
+        })),
+        Check("transport: the highlight moved from 6/8 to 7/8", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_sig_menu_open() && s.get_sig_menu_active() == 9).then_some(()).ok_or(format!("open {} active {}", s.get_sig_menu_open(), s.get_sig_menu_active()))
+        })),
+        Do("transport: Enter picks it", Box::new(|a| key(a, Key::Return, false, false))),
+        Check("transport: 7/8 from the keyboard, menu closed", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_sig_text() == "7/8" && !s.get_sig_menu_open()).then_some(()).ok_or(format!("sig {} open {}", s.get_sig_text(), s.get_sig_menu_open()))
+        })),
+        Do("transport: key picker from the keyboard: Right, Right, Down, Enter, M", Box::new(|a| {
+            a.global::<Studio>().invoke_key_menu_toggle();
+            key(a, Key::RightArrow, false, false);
+            key(a, Key::RightArrow, false, false);
+            key(a, Key::DownArrow, false, false);
+            key(a, Key::Return, false, false);
+            key(a, "m", false, false);
+        })),
+        Check("transport: F# minor, picker open", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let k = c.project().transport.key;
+            (k == Some(dstudio_core::model::ProjectKey { root: 6, minor: true }) && s.get_key_text() == "F#m" && s.get_key_menu_open())
+                .then_some(())
+                .ok_or(format!("key {k:?} open {}", s.get_key_menu_open()))
+        })),
+        Do("transport: Backspace is No key", Box::new(|a| key(a, Key::Backspace, false, false))),
+        Check("transport: no key after Backspace, picker closed", Box::new(|c, a| {
+            (c.project().transport.key.is_none() && !a.global::<Studio>().get_key_menu_open()).then_some(()).ok_or(format!("key {:?}", c.project().transport.key))
+        })),
+        Do("transport: type 120slow", Box::new(|a| a.global::<Studio>().invoke_tempo_text("120slow".into()))),
+        Check("transport: text after the number is refused, still 97.5", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: three taps at 120, type 97.5, one more tap", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            for t in [700.0, 700.5, 701.0] {
+                c.tap_tempo_at(t);
+            }
+            c.tempo_text("97.5");
+            c.tap_tempo_at(701.5);
+        })),
+        Check("transport: typing ended the tap series: still 97.5", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: type 97.5 again (ends the series)", Box::new(|_, ctl| ctl.borrow_mut().tempo_text("97.5"))),
+        // The key press is checked for routing only; the second tap gets a timestamp half a
+        // second after it, so the tempo does not depend on how fast the runner is.
+        Do("transport: Shift+T", Box::new(|a| key(a, "T", false, true))),
+        Check("transport: Shift+T started a tap series, the tempo is unchanged", Box::new(move |c, _| {
+            (c.tf.taps.len() == 1 && bpm(c) == 97.5).then_some(()).ok_or(format!("taps {} bpm {}", c.tf.taps.len(), bpm(c)))
+        })),
+        DoC("transport: a second tap half a second after the key press", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = c.tf.taps.first().copied().unwrap_or(0.0) + 0.5;
+            c.tap_tempo_at(t);
+        })),
+        Check("transport: the two taps set 120 BPM", Box::new(move |c, _| (bpm(c) == 120.0).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: back to 97.5, then Settings open with the Sig menu", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.tempo_text("97.5");
+            c.sig_menu_toggle();
+            c.toggle_settings();
+        })),
+        Do("transport: Down and Enter behind Settings", Box::new(|a| {
+            key(a, Key::DownArrow, false, false);
+            key(a, Key::Return, false, false);
+        })),
+        Check("transport: the signature did not change behind Settings", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_sig_text() == "7/8").then_some(()).ok_or(format!("sig {}", s.get_sig_text()))
+        })),
+        DoC("transport: close Settings and the menu", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.toggle_settings();
+            c.transport_menus_dismiss();
+        })),
+        DoC("transport: back to 120 BPM and 4/4", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.execute(dstudio_core::Command::SetTempo { bpm: 120.0 });
+            c.execute(dstudio_core::Command::SetTimeSignature { numerator: 4, denominator: 4 });
+        })),
+    ]
+}
+
 /// Track rename: double-click the selected track's name in the inspector, type, Enter. An
 /// empty name and Escape leave the name alone; undo restores it.
 fn track_rename_steps() -> Vec<Step> {
@@ -8250,6 +8527,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(clip_render_plugin_steps());
     all.extend(ruler_zoom_steps());
     all.extend(snap_steps());
+    all.extend(transport_fields_steps());
     all.extend(track_rename_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());

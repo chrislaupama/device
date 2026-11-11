@@ -80,6 +80,14 @@ static_assert(sizeof(se_clip_loop_desc) == 24 && alignof(se_clip_loop_desc) == 8
               offsetof(se_clip_loop_desc, loop_end) == 16);
 static_assert(sizeof(se_session_desc_v8) == 64 && offsetof(se_session_desc_v8, loops) == 48 &&
               offsetof(se_session_desc_v8, loop_count) == 56);
+static_assert(sizeof(se_track_route) == 24 && alignof(se_track_route) == 8 && offsetof(se_track_route, is_return) == 16,
+              "se_track_route layout");
+static_assert(sizeof(se_send_desc) == 24 && offsetof(se_send_desc, gain) == 16 && offsetof(se_send_desc, pre_fader) == 20,
+              "se_send_desc layout");
+static_assert(sizeof(se_session_desc_v9) == 88 && offsetof(se_session_desc_v9, routes) == 64 &&
+                  offsetof(se_session_desc_v9, route_count) == 72 && offsetof(se_session_desc_v9, send_count) == 76 &&
+                  offsetof(se_session_desc_v9, sends) == 80,
+              "se_session_desc_v9 layout");
 #endif
 static_assert(sizeof(se_warp_point) == 16 && alignof(se_warp_point) == 8 && offsetof(se_warp_point, source) == 8);
 static_assert(sizeof(se_warp_slice) == 16 && offsetof(se_warp_slice, percussive) == 8);
@@ -445,6 +453,15 @@ int32_t se_session_publish_v7(se_engine* engine, const se_session_desc_v7* sessi
 }
 
 int32_t se_session_publish_v8(se_engine* engine, const se_session_desc_v8* session) {
+    SE_REQUIRE_ENGINE(engine);
+    if (session == nullptr) return fail(SE_ERR_INVALID_ARG, "session is NULL");
+    return guarded([&] {
+        std::string err;
+        return check(engine->impl->publish(*session, err), err);
+    });
+}
+
+int32_t se_session_publish_v9(se_engine* engine, const se_session_desc_v9* session) {
     SE_REQUIRE_ENGINE(engine);
     if (session == nullptr) return fail(SE_ERR_INVALID_ARG, "session is NULL");
     return guarded([&] {

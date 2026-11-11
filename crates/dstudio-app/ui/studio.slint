@@ -312,7 +312,7 @@ export struct ShapeRow { label: string, value: string, kind: int, norm: float, b
 export struct SynthParam { norm: float, text: string, bipolar: bool, auto: bool }
 // A picture: SVG paths (viewbox = element size in points) of the curve, its filled area,
 // secondary curves, handles and grid lines; dim = the part is silent.
-export struct SynthDisplay { line: string, fill: string, ghost: string, dots: string, grid: string, dim: bool }
+export struct SynthDisplay { line: string, fill: string, ghost: string, dots: string, grid: string, marks: string, dim: bool }
 // Axis / value text drawn inside picture slot; align 0 left, 1 centre, 2 right of x.
 export struct SynthLabel { slot: int, x: length, y: length, text: string, align: int, accent: bool }
 // Page elements (card coordinates; knobs, latches: centre of the dial; faders: centre x, groove top).
@@ -351,6 +351,29 @@ export global Studio {
     in property <string> time-text: "00:00.000";
     in property <string> bpm-text: "120";
     in property <string> sig-text: "4/4";
+    // ---- transport bar tempo / signature / key fields (src/transport_fields.rs) ----
+    in property <string> key-text;                 // "C", "F#m"; empty: no key
+    in property <int> key-root: -1;                // 0 = C .. 11 = B; -1 no key
+    in property <bool> key-minor;                  // the key picker's Major / Minor
+    in property <bool> key-menu-open;
+    in property <bool> sig-menu-open;
+    in property <int> sig-menu-active: -1;  // keyboard highlight row in the Sig menu
+    in property <int> key-active: -1;       // keyboard highlight root in the key picker
+    in property <[ChoiceItem]> sig-menu-items;
+    in property <length> sig-menu-h: 100px;
+    in property <length> sig-menu-w: 74.8px;
+    in property <length> sig-menu-rule;
+    callback tempo-drag(int, length, length);      // phase 0 press, 1 move, 2 release; offset from the press
+    callback tempo-text(string);                   // typed tempo (double-click the readout)
+    callback tempo-step(int);                     // the tempo field's accessible increment (+1) / decrement (-1)
+    callback tap-tempo();
+    callback sig-menu-toggle();
+    callback sig-menu-pick(int);
+    callback key-menu-toggle();
+    callback key-pick(int);                        // root 0..11
+    callback key-mode(bool);                       // minor
+    callback key-clear();
+    callback transport-menus-dismiss();
     in property <float> master-pos: 0.85;
     in-out property <bool> sounds-visible: true;
     // Loop (project transport) and metronome (app preference), both real engine features.
@@ -497,7 +520,7 @@ export global Studio {
     callback lane-pointer(int, length, length, bool, bool, bool); // kind 0=down 1=move 2=up, x, y, shift, cmd, alt
     callback lane-hover(length, length);
     callback lane-scroll(float, float, length, bool);      // dx, dy, x, zoom
-    callback key(string, bool, bool, bool, bool) -> bool;   // text, primary (Cmd on macOS), shift, alt, ctrl
+    callback key(string, bool, bool, bool, bool, bool) -> bool;   // text, primary (Cmd on macOS), shift, alt, ctrl, auto-repeat
     // ---- app menu bar (AppWindow MenuBar) ----
     // Items with a shortcut replay that key (text, primary, shift) into the window, so they act
     // exactly like the keystroke; the others call menu-action with an id.
@@ -788,7 +811,7 @@ export global Studio {
     // ---- export dialog and unsaved-changes prompt (src/dialogs.rs, ui/dialogs.slint) ----
     in property <bool> export-open;
     in property <bool> export-bits24: true;
-    in property <bool> export-rate48: true;      // the engine rate (the render rate)
+    in property <bool> export-rate48: true;      // the file's rate: 48 kHz (true) or 44.1 kHz
     in property <string> export-recipe-text: "WAV 24-bit";
     in property <string> export-bars-text: "Bars 1–1";
     in property <string> export-name: "Untitled.wav";
@@ -802,13 +825,20 @@ export global Studio {
     in property <bool> export-tracks-menu-open;
     in property <length> export-tracks-menu-h;
     in property <[ChoiceItem]> export-tracks-items;
+    in property <string> export-range-label: "Full project";
+    in property <bool> export-range-menu-open;
+    in property <length> export-range-menu-h;
+    in property <[ChoiceItem]> export-range-items;
     callback export-pick-recipe(int);
     callback export-toggle-tracks();
     callback export-pick-tracks(int);
+    callback export-toggle-range();
+    callback export-pick-range(int);             // 0 full project, 1 loop region
     callback export-close();
     callback export-run();
     callback export-choose-dir();
     callback export-bits(bool);                 // true = 24-bit
+    callback export-rate(bool);                 // true = 48 kHz, false = 44.1 kHz
     callback export-name-edited(string);
     in property <bool> unsaved-open;
     // Settings › General (src/settings.rs general_toggle): Always load last session, Auto-show

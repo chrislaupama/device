@@ -30,11 +30,13 @@ cd engine && cmake --preset default && cmake --build --preset default && ctest -
 cargo run --release -p dstudio-app -- --self-test --no-audio   # drive the real UI through its checks
 ```
 
-CI runs the tests and the self-test (not the interactive `--demo`) on macOS, Windows and Linux for every pull request.
-Its runners have no audio device, so the self-test runs with `--no-audio` and anything that needs audio hardware has to
-be tested by hand. On Windows the self-test step is informational
-for now (`continue-on-error`), so a green Windows job does not mean the self-test passed: open that step's output to
-check. The engine is built with warnings as errors on
+CI runs the tests and the self-test (not the interactive `--demo`) on macOS, Windows and Linux. A pull request runs the
+parts its changes reach: documentation-only changes run none, engine-test-only changes skip the Rust tests and the app,
+and anything CI can't classify runs everything (the rules are in docs/building.md).
+Its runners have no audio device, so the self-test runs with `--no-audio` (Linux also runs it against a headless
+PipeWire server) and anything that needs audio hardware has to be tested by hand. The Windows self-test takes about
+30 minutes under the software renderer, so pull requests that change the app run it only with the `windows-self-test` label; main and
+the nightly run always run it, and a failure fails the job. The engine is built with warnings as errors on
 clang, MSVC and GCC, so please build on more than one compiler if you can, or check the CI result.
 
 ## Pull requests
@@ -44,6 +46,7 @@ clang, MSVC and GCC, so please build on more than one compiler if you can, or ch
   prefer a handful of well-aimed tests to a large number of shallow ones.
 - **Screenshots:** any visible change includes before and after screenshots in the description. The app can render
   itself: `cargo run --release -p dstudio-app -- --no-audio --state reference-default --screenshot out.png --exit-after-frames 5`.
+  Attach the images to the description (drag them into it on GitHub) rather than committing them.
 - **Performance:** anything that could affect performance (especially the audio thread) includes benchmark results
   before and after. Extend the existing benchmarks (`engine/bench`, `crates/*/benches`) if none cover your change. The
   audio thread must never allocate, lock or wait.

@@ -4,7 +4,7 @@ Living handoff document for future agent sessions. Read this first, then `docs/a
 
 **Keep the README current.** `README.md` is the public front page. Any change that adds, finishes or removes a
 feature, device, platform or build step, or visibly changes the screens it shows, updates the README (and
-`docs/building.md`, re-rendered `docs/assets/` screenshots) in the same PR. The checklist is in README.md ›
+`docs/building.md`, re-rendered `docs/assets/art/` artwork) in the same PR. The checklist is in README.md ›
 Development › Keeping this README up to date.
 
 ## Current milestone
@@ -19,7 +19,6 @@ Development › Keeping this README up to date.
 | `crates/dstudio-core` | Model, commands, undo/redo, persistence, snapshots | App architecture |
 | `crates/dstudio-engine` | Safe Rust FFI wrapper + end-to-end tests | App architecture |
 | `crates/dstudio-app` | Desktop app (Slint shell + wgpu surfaces) | UI engineering |
-| `ui-spike/` | Slint ↔ wgpu interop spike (standalone workspace) | UI engineering |
 | `docs/` | Architecture spec, ADRs | Lead |
 
 ## How to build and test
@@ -312,6 +311,36 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Not yet: the engine ignores the routing (returns publish as empty tracks) and the app has no UI for it. Next: engine
   (spec 002 T4-T8), then the UI (T9).
 
+### 2026-11-11: transport bar tempo, time signature and key
+
+- The transport bar's BPM, TAP, Key and Sig fields were display-only; they now edit the project
+  (`src/transport_fields.rs`, `ui/transport.slint`). Tempo: drag right or up (1 BPM per point), double-click to type
+  (two decimals kept, shown when not whole), or tap (the average of up to eight taps; a pause over 2 s or a sudden
+  change of pace starts over). A drag or a tap series is one "Tempo Change" undo step whatever its length. Sig opens a
+  menu of twelve common signatures; Key opens a picker (Major / Minor, twelve roots, No key) that sets
+  `Command::SetProjectKey`, which the composer, Shape and key-following devices already read.
+- A change of pace while tapping starts a new undo step. Keyboard: in the open Sig menu Up/Down and Enter or Space;
+  in the open key picker the arrows move over the roots, Enter or Space picks, M switches Major / Minor, Delete or
+  Backspace is No key (not while Settings or a dialog is open). Both openers and every choice have accessible default
+  actions. Opening or replacing the project drops a tempo gesture in progress.
+- Shift+T taps the tempo (`transport.tap_tempo`). The tempo field's accessible default action opens the typed editor
+  and its increment / decrement step one BPM. A typed tempo takes an optional "bpm" suffix and refuses other text;
+  typing or dragging the tempo ends a tap series.
+- Self-test section `transport_fields_steps`; review states `review-transport-sig` and `review-transport-key`.
+
+### 2026-11-11: return tracks and sends, part 2: engine (spec 002)
+
+- `se_session_publish_v9` (v8 + `se_track_route`, `se_send_desc`, `SE_MAX_RETURNS` 16); `Engine::publish` in Rust
+  now publishes v9. Each return owns a preallocated stereo bus; sends tap pre-fader (after the chain) or post-fader,
+  outputs replace the master path. Order is a topological sort over routing and sidechain edges (only sidechain
+  edges are cut on a cycle). Mute/solo: muted tracks send nothing, soloing tracks keeps returns playing, soloing a
+  return plays only soloed returns.
+- Delay compensation aligns every input of every bus (ADR 0004 note): main line to the earliest destination, edge
+  lines for later ones. Without latent returns no edge line exists; sessions without routing render bit-identically.
+- Tests: `engine/tests/test_routing.cpp` (9), `crates/dstudio-engine/tests/routing.rs` (2). Bench: "Returns" table in
+  `dstudio_engine_bench`.
+- Next: the UI (spec 002 T9): Returns pill and rows, return strips, Sends sections, Out menu.
+
 ### 2026-11-11: track rename
 
 - Double-click a track's name in its header, in the Devices tab's inspector or in the Clip tab's title to rename it
@@ -386,3 +415,29 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - The collapse button in the bottom panel header (Clip/Devices and the mixer) shuts the panel to its tab row and reopens
   it at the height it had (`Controller::toggle_bottom_collapse`, src/splitters.rs). Like the splitter it is a view
   change saved with the project, not an undo step; a panel shut by dragging reopens at its default height.
+
+### 2026-11-11: export at 44.1 or 48 kHz
+
+- The Export dialog's 44.1 kHz / 48 kHz switch now sets the rate of the Mixdown and Stems files; before, it showed a
+  placeholder and every file had the engine's rate. The default is the rate nearest the engine's (48 kHz at 47 kHz
+  and up). The size estimate follows the picked rate. Project exports stay at the engine rate, which the Live set
+  records.
+- `src/resample.rs`: a polyphase Kaiser-windowed sinc converter (128 taps, about 85 dB stopband, cutoff at 93 % of the
+  lower Nyquist frequency) for rate pairs whose ratio reduces to at most 2048 output steps (44.1 / 48 kHz and their
+  multiples). The render happens at the engine rate and is converted once per file.
+- Tests: `resample::tests` (pitch and level both ways, 18 kHz passes, 23 kHz stopped going to 44.1 kHz, channels
+  stay apart, odd ratios refused) and `the_export_rate_follows_the_engine_until_one_is_picked`. The self-test exports
+  the mix again at the other rate and checks its rate, length in seconds and level against the first file. Review
+  state `review-export-44k`.
+
+### 2026-11-11: export the loop region
+
+- The Export dialog's Range pill is now a menu: Full project (bar 1 to the end of the last clip, plus the 2 s tail, as
+  before) or Loop region. The loop region renders from its start for exactly its length, with no tail, so the file
+  loops seamlessly; it can be exported whether or not looping is on. The bars readout ("Bars 3–4") and the size
+  estimate follow the range, and Stems use it too. A project without a loop region falls back to the full project.
+- Escape or a click outside closes the menu without closing the dialog.
+- Tests: `the_range_text_counts_the_bars_the_loop_touches` and
+  `the_loop_range_renders_the_loop_exactly_and_falls_back_without_one`. The self-test sets a loop over bars 2-3, picks
+  Loop region in the menu, checks the readout and estimate, exports it and checks the file's length and sound. Review
+  state `review-export-range`.

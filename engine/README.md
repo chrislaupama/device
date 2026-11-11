@@ -118,24 +118,27 @@ POSIX signal or Windows NTSTATUS exception code).
 | Plugin editors | NSWindow (AU/VST3/CLAP) | top-level HWND hosting the plugin child window (VST3 `kPlatformTypeHWND`, CLAP `win32`) | X11 top-level window hosting the plugin window (VST3 `kPlatformTypeX11EmbedWindowID`, CLAP `x11`), XWayland on Wayland; see [Plugins on Windows and Linux](#plugins-on-windows-and-linux) |
 | Scanner children | `posix_spawn` | `CreateProcessW` (no WER dialogs in the child) | `posix_spawn` |
 | Test plugins | `.clap`/`.vst3` bundles | `.clap` DLL, `.vst3/Contents/x86_64-win/*.vst3`, + `DStudioTestGui.clap` | `.clap` .so, `.vst3/Contents/x86_64-linux/*.so` |
-| Built with warnings as errors | yes (clang, `-Werror`), every CI run | yes (`/W4 /WX`), every CI run | yes (GCC, `-Werror`), every CI run |
-| ctest | all tests, every CI run; device tests skip on the hosted runner (no audio device), run by hand on a Mac | all tests, every CI run; AU tests and device tests skip (no audio endpoint) | all tests, every CI run, against a headless PipeWire server (null sink + loopback); AU tests skip |
+| Built with warnings as errors | yes (clang, `-Werror`) in CI | yes (`/W4 /WX`) in CI | yes (GCC, `-Werror`) in CI |
+| ctest | all tests in CI; device tests skip on the hosted runner (no audio device), run by hand on a Mac | all tests in CI; AU tests and device tests skip (no audio endpoint) | all tests in CI, against a headless PipeWire server (null sink + loopback); AU tests skip |
 | Tested on real audio hardware | yes (Core Audio output + duplex, see below) | **no** | **no** (real PipeWire streams in CI, no sound card) |
 
-**CI** (`.github/workflows/ci.yml`) runs one job per OS, all on GitHub-hosted
-runners (`macos-latest`, `windows-latest`, `ubuntu-latest`), none with an
-audio device. Each job builds the engine with warnings as errors, runs
+**CI** (`.github/workflows/ci.yml`) runs on GitHub-hosted runners
+(`macos-latest`, `windows-latest`, `ubuntu-latest`), none with an audio
+device. On each system it builds the engine with warnings as errors, runs
 ctest, builds and tests the Rust workspace and runs the app's
-`--self-test --no-audio`.
+`--self-test --no-audio`. Pushes to main and the nightly run do all of it;
+a pull request runs the parts its changes reach (see docs/building.md).
 
 The app (`crates/dstudio-app`) builds on all three. The hosted jobs run it
 without a GPU or audio device: on Linux under Xvfb with Mesa lavapipe (software Vulkan;
 `SLINT_WGPU_CPU=1`), a `--state reference-default` screenshot and the full `--self-test
 --no-audio` (125 checks pass; the 21 checks of the Audio Unit devices section
 are reported as skipped off macOS), as a required step; on Windows with WARP
-(DX12 software adapter) the same, as an informational step: the screenshot
-renders and the self-test passes (125, 21 skipped), but the process exits
-with code 0x87A after the run (not yet explained; macOS/Linux exit 0).
+(DX12 software adapter) the same, also failing the job when a check fails (the
+full self-test runs on main, nightly and labelled pull requests that change
+the app; see docs/building.md): the screenshot renders and the self-test passes, but the
+process exits with code 0x87A after the run (not yet explained; macOS/Linux
+exit 0), so CI prints that exit code and checks the summary line instead.
 Debug builds of the app abort at exit on every OS (pre-existing: wgpu-core's
 debug-only lock tracing runs in a TLS destructor when Slint's thread-local
 backend drops the wgpu queue), so CI uses a release build. Screenshots and logs are uploaded as artifacts.
@@ -356,7 +359,8 @@ Semantics:
   For stereo material it acts as a balance control (L gain on the L channel).
 * **Mute/solo**: if any track is soloed, only soloed tracks are audible.
   Mute always wins (a soloed and muted track is silent).
-* **Master**: sum of tracks × `master_gain`. No limiter/clipper — output can
+* **Master**: sum of tracks (and return tracks, see
+  [Return tracks and sends](#return-tracks-and-sends)) × `master_gain`. No limiter/clipper — output can
   exceed ±1.0.
 * **Instrument tracks** (`se_session_publish_v2`, `instrument != 0`): the
   track's notes render through its `Synth` (mono), summed with the track's
@@ -1257,7 +1261,10 @@ Summary: per track `lat_i` = Σ insert latencies (**bypassed inserts
 included**) + instrument plugin latency; `L = max lat_i` over all tracks
 (**muted / soloed-out included**); each track is delayed by `L − lat_i`, so
 the whole mix (and the metronome) is `L` late. On by default
-(`se_pdc_set_enabled` / Rust `set_delay_compensation`).
+(`se_pdc_set_enabled` / Rust `set_delay_compensation`). This formula and the
+diagram below describe sessions without routing; with return tracks a return
+also adds its own chain to the latency of what feeds it, see
+[Return tracks and sends](#return-tracks-and-sends).
 
 ```
 per track (render_block), PDC lines only where the plan needs them:
@@ -1347,6 +1354,63 @@ keeps timing. Manual (not run): `real_loopback.rs`
 loopback test above opens the microphone and was not run), third-party
 plugins that change latency at runtime, AU latency changes (polled, but no
 test AU changes latency).
+
+## Return tracks and sends
+
+Spec: [002](../specs/002-return-tracks-and-sends/spec.md). ABI: `se_session_publish_v9` = v8 plus
+`se_track_route { track_id, output_track_id, is_return }` (one per return track and per track whose output is
+not the master) and `se_send_desc { track_id, return_track_id, gain, pre_fader }`. At most `SE_MAX_RETURNS` (16)
+returns. A session without routes and sends publishes exactly as v8 and renders bit-identically.
+
+**Validation** (`apply_routing`, `SE_ERR_INVALID_ARG`): unknown track ids, a send or output to a track that is not
+a return, a send from a return, a track routed twice, a return routed anywhere but the master, a send to itself,
+duplicate sends to the same return, gains outside 0..4 or not finite, clips, notes, the instrument flag, input, arm
+or monitor on a return, more than 16 returns.
+
+**Buses.** Each return owns a stereo bus in `RenderContext` (`SE_MAX_RETURNS` buses and one send scratch,
+preallocated). A bus is cleared lazily, the first time a block writes to it. A return's source is its bus; from
+there it runs like any track: insert chain, fader, pan, meters, automation.
+
+```
+ordinary track:
+  source ─ chain ─ [main line] ─┬─ pre-fader sends ─[edge line]─▶ return bus
+                                └─ fader/pan ─┬─ post-fader sends ─[edge line]─▶ return bus
+                                              └─ output ─[edge line]─▶ master or a return bus
+return track:
+  bus ─ chain ─ [main line] ─ fader/pan ─▶ master
+```
+
+**Order.** Processing order is a topological sort over routing edges (track → return) and sidechain edges.
+Routing edges are fixed; on a cycle only sidechain edges are cut, as before. Every return renders after every
+track that feeds it. The graph code is general (any acyclic set of buses), so group tracks and return-to-return
+sends need only looser validation.
+
+**Mute and solo** collapse at publish time into `main_on` (the track's own path to its destination) and
+`send_live` (its sends feed returns):
+
+* ordinary track: `send_live = !mute && (!any_track_solo || solo)`; `main_on` = `send_live` when its output is a
+  return, else `!mute && ((!any_track_solo && !any_return_solo) || solo)`;
+* return: `main_on = !mute && (!any_return_solo || solo)`.
+
+So soloing ordinary tracks keeps the returns playing (fed by the soloed tracks only), and soloing a return plays
+only the soloed returns, still fed by every live track.
+
+**Delay compensation across buses.** ADR 0004 aligned every track at the master; with buses it aligns every input
+of every bus. With `lat_t` the chain latency of track `t`, a return `r` receives at `in_r = max lat_s` over its
+feeders and reaches the master at `in_r + lat_r`. `L` is the latest master arrival. Each track is delayed by its
+main line to its earliest destination; every later destination gets an edge line for the difference (one per
+send, one per routed output). An edge delay is non-zero only when a track's destinations receive at different
+times (for example a latent track that feeds the master but not a return other tracks send to); with no plugin
+latency anywhere every delay is 0 and no edge line runs. Edge
+lines carry across republishes keyed by (track id, destination id). Sidechains reading a return are not
+compensated (as for every sidechain).
+
+**Cost** (`dstudio_engine_bench`, "Returns" table, 32 tracks, 64 sends into 2 returns): see the engine PR for
+numbers on the CI machine class. A session without returns pays nothing (one branch per track).
+
+**Tests:** `tests/test_routing.cpp` (levels pre/post, output to a return, mute/solo, validation, PDC alignment with
+`DStudioTestLatency.clap` on a return, export = live, no allocation on the audio thread);
+`crates/dstudio-engine/tests/routing.rs` (end to end through the Rust wrapper).
 
 ## Automation
 

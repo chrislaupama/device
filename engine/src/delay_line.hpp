@@ -40,16 +40,25 @@ public:
 
     // In place: x[0..n) becomes the input delayed by `d` frames (d + n <=
     // capacity). Frames from before the last flush read as zeros.
-    void process(float* l, float* r, uint32_t n, uint32_t d, uint64_t gen) noexcept {
+    // `silent_input`: the caller feeds silence to drain the tail, which
+    // leaves the idle boundary where it was so the line goes idle once the
+    // tail has played.
+    void process(float* l, float* r, uint32_t n, uint32_t d, uint64_t gen, bool silent_input = false) noexcept {
         sync(gen);
         write(0, l, n);
         if (channels_ > 1) write(1, r, n);
         read(0, l, n, d);
         if (channels_ > 1) read(1, r, n, d);
         w_ += n;
+        if (!silent_input) signal_end_ = w_;
+    }
+    void process_mono(float* x, uint32_t n, uint32_t d, uint64_t gen) noexcept {
+        sync(gen);
+        write(0, x, n);
+        read(0, x, n, d);
+        w_ += n;
         signal_end_ = w_;
     }
-    void process_mono(float* x, uint32_t n, uint32_t d, uint64_t gen) noexcept { process(x, nullptr, n, d, gen); }
 
     // True when the next output of a `d`-frame delay fed with silence is
     // silent (nothing written since the last flush is still pending).

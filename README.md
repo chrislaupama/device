@@ -40,10 +40,11 @@ wgpu.
 
 ## Features
 
-- **Timeline.** Import audio, move and trim clips, loop a range, and play against a metronome. Waveforms, clips and the
-  playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips. Shortcuts cover the common
-  moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected clip or section, ⌘D
-  duplicates the selected clip or section.
+- **Timeline.** Import audio, move and trim clips, loop a range, and play against a metronome. Set the tempo in the
+  transport bar by dragging, typing or tapping it, and pick the time signature and the project's key there too.
+  Waveforms, clips and the playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips.
+  Shortcuts cover the common moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected
+  clip or section, ⌘D duplicates the selected clip or section.
 - **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them. A velocity lane under the
   notes lets you drag one note's velocity, or sweep across several to paint them.
 - **Recording.** Arm tracks, pick inputs, monitor, and record takes that land where you played them: latency
@@ -61,6 +62,9 @@ wgpu.
   can be switched off.
 - **Automation.** Draw volume, pan, built-in device and plugin parameters as lanes with points, curves or freehand, or
   record your moves with touch-write.
+- **Export.** Mix down the arrangement, or export each track as its own stem, as 16- or 24-bit WAV at 44.1 or 48 kHz
+  (converted from the engine's rate), over the whole project or just the loop region (an exact-length file that loops
+  seamlessly), or export the project as an Ableton Live set.
 - **Undo for everything.** Every edit is a validated, invertible command, so undo and redo cover the whole project.
 - **Assistant.** An optional side panel that can explain the app (Teach) or make edits for you (Assist), each turn as
   one undo step. It uses your own Anthropic API key.
@@ -76,7 +80,7 @@ wgpu.
 <p align="center"><img alt="Modulation: make anything move. An LFO that drives any device parameter, Chains that put a group of effects under eight macros, and automation for the rest. Shown: an LFO in sync mode driving a Compressor parameter." src="docs/assets/art/feature-modulation.png" width="100%"></p>
 
 <sub>The app's views are rendered by the app itself (<code>device-studio --screenshot</code>) on Linux with a software GPU, then
-framed by <code>tools/art/render.mjs</code>. More screenshots are in <a href="docs/assets/">docs/assets</a>.</sub>
+framed by <code>tools/art/render.mjs</code>.</sub>
 
 ### Built-in devices
 
@@ -151,7 +155,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Mixer | ✅ | |
 | Automation | ✅ | |
 | Delay compensation | ✅ | |
-| Export | 🚧 | The engine renders to WAV; export from the app isn't wired up yet |
+| Export | 🚧 | MP3 |
 | Assistant | 🚧 | Tested only with a fixture provider, not yet against the live API |
 | Windows and Linux audio | 🚧 | Linux streams run in CI on a headless PipeWire server; neither has run on a physical sound card; no ASIO |
 | Releases and branding | 🚧 | Packages are built (unsigned); code signing, original icons, a first tagged release |
@@ -215,8 +219,7 @@ cargo run --release -p dstudio-app -- --self-test --no-audio     # drive the app
 | `docs/` | Architecture, ADRs, built-in devices, build guide |
 | `specs/` | Specs for non-trivial work, their templates and the project's principles |
 | `.agents/skills/`, `AGENTS.md` | Skills and a guide for coding agents working on this codebase |
-| `tools/` | macOS app bundle script, the artwork renderer and the skills checker |
-| `ui-spike/` | The Slint and wgpu interop spike behind ADR 0001 |
+| `tools/` | Release packaging and the macOS app bundle script, the CI and benchmark helpers, the artwork renderer and the skills checker |
 
 Internal names use `dstudio` (`dstudio-*` crates, the `dstudio::` namespace, `DSTUDIO_*` build options and
 environment variables), never `device`, which already names effects and instruments throughout the code.
@@ -231,10 +234,12 @@ interface end to end, from importing audio to checking that notes drawn in the p
 Pull requests with visual changes include before and after screenshots, and anything that could affect performance
 comes with benchmark results.
 
-Three GitHub Actions workflows check every change: **CI** builds and tests the engine, the workspace and the app on
+Four GitHub Actions workflows check every change: **CI** builds and tests the engine, the workspace and the app on
 macOS, Windows and Linux; **Performance** builds the benchmarks at the base commit and with the change and fails a
 pull request when any benchmark row needs more than 1 % more CPU instructions (timings on all three systems are
-reported too); **Release** builds the installable packages and drafts a GitHub release for a `vX.Y.Z` tag. See
+reported too); **Security** reviews new dependencies and checks `Cargo.lock` against the RustSec advisories every
+week; **Release** builds the installable packages, attests their build provenance and drafts a GitHub release for a
+`vX.Y.Z` tag. See
 [Continuous integration](docs/building.md#continuous-integration) for the details and how to run the performance
 comparison locally.
 
@@ -262,9 +267,6 @@ finishes something it describes, the same pull request updates it:
   [docs/art/](docs/art/); edit one and run `node tools/art/render.mjs` (it needs Playwright: `npm install --no-save
   playwright && npx playwright install chromium`). The social preview is uploaded by hand in the repository's Settings,
   General, Social preview.
-- **Screenshots** in `docs/assets/` when the part of the interface they show changes visibly. Render them with the
-  app itself, e.g. `device-studio --no-audio --state review-automation --screenshot docs/assets/screenshot.png
-  --exit-after-frames 5`; the states used are listed in each image's pull request.
 
 ## Contributing
 

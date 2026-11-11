@@ -352,6 +352,8 @@ pub struct Controller {
     pub(crate) mm: crate::minimap::State,
     /// Timeline snap toggle, grid size and menu (src/snap.rs).
     pub(crate) snap: crate::snap::State,
+    /// Transport bar tempo, signature and key fields (src/transport_fields.rs).
+    pub(crate) tf: crate::transport_fields::State,
     /// Devices minimap (src/devminimap.rs) and the pointer hide / warp requests of minimap drags (src/pointer.rs).
     pub(crate) dm: crate::devminimap::State,
     pub(crate) ptr: crate::pointer::Queue,
@@ -424,6 +426,7 @@ pub struct Controller {
     pub settings: crate::settings::SettingsState,
     pub(crate) input_menu_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) export_tracks_model: Rc<VecModel<ChoiceItem>>,
+    pub(crate) export_range_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) settings_menu_model: Rc<VecModel<ChoiceItem>>,
     // ---- MIDI input (src/midi_in.rs) ----
     pub midi_in: crate::midi_in::MidiInState,
@@ -500,6 +503,7 @@ impl Controller {
             ruler_model: Rc::new(VecModel::default()),
             mm: crate::minimap::State::new(),
             snap: crate::snap::State::new(),
+            tf: crate::transport_fields::State::new(),
             dm: crate::devminimap::State::new(),
             ptr: crate::pointer::Queue::default(),
             section_label_model: Rc::new(VecModel::default()),
@@ -557,6 +561,7 @@ impl Controller {
             settings: Default::default(),
             input_menu_model: Rc::new(VecModel::default()),
             export_tracks_model: Rc::new(VecModel::default()),
+            export_range_model: Rc::new(VecModel::default()),
             settings_menu_model: Rc::new(VecModel::default()),
             midi_in: Default::default(),
             midi_inputs_model: Rc::new(VecModel::default()),
@@ -590,6 +595,7 @@ impl Controller {
         s.set_minimap_bars(ModelRc::from(self.mm.model.clone()));
         s.set_devmm_tiles(ModelRc::from(self.dm.model.clone()));
         s.set_snap_menu_items(ModelRc::from(self.snap.model.clone()));
+        s.set_sig_menu_items(ModelRc::from(self.tf.sig_model.clone()));
         s.set_section_labels(ModelRc::from(self.section_label_model.clone()));
         s.set_clip_labels(ModelRc::from(self.clip_ids_model()));
         s.set_strips(ModelRc::from(self.strips_model.clone()));
@@ -614,6 +620,7 @@ impl Controller {
         s.set_synth_menu_items(ModelRc::from(self.synth_menu_model.clone()));
         s.set_input_menu_items(ModelRc::from(self.input_menu_model.clone()));
         s.set_export_tracks_items(ModelRc::from(self.export_tracks_model.clone()));
+        s.set_export_range_items(ModelRc::from(self.export_range_model.clone()));
         s.set_undo_history_rows(ModelRc::from(self.undo_history_model.clone()));
         s.set_settings_menu_items(ModelRc::from(self.settings_menu_model.clone()));
         s.set_midi_inputs(ModelRc::from(self.midi_inputs_model.clone()));
@@ -1301,6 +1308,7 @@ impl Controller {
         self.tempos.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
+        self.tf.reset_project_gestures();
         self.rename_draft = None;
         self.bottom_restore.clear();
         self.doc = Document::new(project);
@@ -1347,6 +1355,7 @@ impl Controller {
         self.tempos.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
+        self.tf.reset_project_gestures();
         self.rename_draft = None;
         self.bottom_restore.clear();
         self.doc = Document::new(loaded.project);
@@ -1912,6 +1921,7 @@ impl Controller {
         self.update_minimap(app);
         self.update_devmm(app);
         self.push_snap(&s);
+        self.push_transport_fields(&s);
         s.set_press_epoch(self.press_epoch);
         s.set_doc_epoch(self.doc_epoch as i32);
         s.set_rename_open_id(self.selected_track.map_or(-1, |t| t.0 as i32));
@@ -1960,7 +1970,6 @@ impl Controller {
         s.set_can_redo(self.doc.can_redo());
         s.set_can_copy(self.selected_clip.is_some());
         s.set_project_on_disk(self.project_dir.is_some());
-        s.set_bpm_text(format!("{}", p.transport.bpm.round() as i64).into());
         s.set_loop_enabled(p.transport.loop_enabled);
         s.set_sig_text(format!("{}/{}", p.transport.time_signature.numerator, p.transport.time_signature.denominator).into());
         s.set_master_pos(slider_from_gain(p.master_gain));

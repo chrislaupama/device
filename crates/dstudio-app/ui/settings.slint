@@ -12,6 +12,7 @@ export component ChoiceList inherits Rectangle {
     in property <length> font-size: 10px;
     in property <length> text-x: 10px;
     in property <length> check-x: 20.5px; // from the right edge
+    in property <int> active: -1;          // keyboard highlight row
     callback picked(int);
     border-radius: 6px;
     background: Tokens.bg-raised;
@@ -26,7 +27,8 @@ export component ChoiceList inherits Rectangle {
         accessible-role: button;
         accessible-label: it.label;
         accessible-checked: it.checked;
-        if !it.hint: Rectangle { border-radius: 4px; background: ta.has-hover ? Tokens.accent : transparent; }
+        accessible-action-default => { if (!it.hint) { root.picked(i); } }
+        if !it.hint: Rectangle { border-radius: 4px; background: ta.has-hover || i == root.active ? Tokens.accent : transparent; }
         Text {
             x: root.text-x - 3px; width: parent.width - root.text-x - root.check-x;
             text: it.label; color: it.hint ? Tokens.text-secondary : #ffffff;
