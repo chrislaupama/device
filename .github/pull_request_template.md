@@ -4,7 +4,7 @@
 
 ## Screenshots
 
-<!-- Visual changes: before and after. -->
+<!-- Visual changes: before and after. Media goes on the pr-screenshots branch, linked by commit: see docs/pr-media.md. -->
 
 ## Benchmarks
 

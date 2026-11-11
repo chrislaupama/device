@@ -46,7 +46,8 @@ clang, MSVC and GCC, so please build on more than one compiler if you can, or ch
   prefer a handful of well-aimed tests to a large number of shallow ones.
 - **Screenshots:** any visible change includes before and after screenshots in the description. The app can render
   itself: `cargo run --release -p dstudio-app -- --no-audio --state reference-default --screenshot out.png --exit-after-frames 5`.
-  Attach the images to the description (drag them into it on GitHub) rather than committing them.
+  Attach the images to the description (drag them into it on GitHub) rather than committing them. The maintainer
+  keeps pull request media on the `pr-screenshots` branch instead; see [docs/pr-media.md](docs/pr-media.md).
 - **Performance:** anything that could affect performance (especially the audio thread) includes benchmark results
   before and after. Extend the existing benchmarks (`engine/bench`, `crates/*/benches`) if none cover your change. The
   audio thread must never allocate, lock or wait.

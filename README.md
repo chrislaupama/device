@@ -214,7 +214,7 @@ cargo run --release -p dstudio-app -- --self-test --no-audio     # drive the app
 | `crates/dstudio-core` | Model, commands, undo/redo, persistence, snapshots, built-in device definitions |
 | `crates/dstudio-engine` | Safe Rust wrapper over the engine, end-to-end tests |
 | `crates/dstudio-app` | Desktop app (binary `device-studio`) |
-| `docs/` | Architecture, ADRs, built-in devices, build guide |
+| `docs/` | Architecture, ADRs, built-in devices, build guide, [pull request media](docs/pr-media.md) |
 | `specs/` | Specs for non-trivial work, their templates and the project's principles |
 | `.agents/skills/`, `AGENTS.md` | Skills and a guide for coding agents working on this codebase |
 | `tools/` | Release packaging and the macOS app bundle script, the CI and benchmark helpers, the artwork renderer and the skills checker |
