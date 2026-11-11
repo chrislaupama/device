@@ -45,11 +45,23 @@ pub enum StemsPick {
     Track(TrackId),
 }
 
+/// What Mixdown and Stems render.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ExportRange {
+    /// Bar 1 to the end of the last clip, plus a tail for releases and reverb.
+    #[default]
+    Project,
+    /// The loop region exactly (no tail), so the file loops seamlessly.
+    Loop,
+}
+
 pub struct ExportUi {
     pub open: bool,
     pub recipe: Recipe,
     pub stems: StemsPick,
     pub tracks_menu: bool,
+    pub range: ExportRange,
+    pub range_menu: bool,
     pub bits24: bool,
     /// The file's sample rate as picked in the dialog (44.1 or 48 kHz); None until then, which
     /// means the one nearest the engine's.
@@ -71,6 +83,8 @@ impl Default for ExportUi {
             recipe: Recipe::Mixdown,
             stems: StemsPick::AllTracks,
             tracks_menu: false,
+            range: ExportRange::Project,
+            range_menu: false,
             bits24: true,
             rate: None,
             name: "Untitled.wav".into(),
@@ -127,6 +141,23 @@ pub fn export_bars(p: &Project) -> i64 {
         .unwrap_or(0);
     let tpb = p.ticks_per_bar();
     ((end + tpb - 1) / tpb).max(1)
+}
+
+/// The loop region, when it covers any time (it can be exported whether or not looping is on).
+pub fn loop_region(p: &Project) -> Option<(Ticks, Ticks)> {
+    let tr = &p.transport;
+    (tr.loop_end > tr.loop_start && tr.loop_start >= 0).then_some((tr.loop_start, tr.loop_end))
+}
+
+/// The bars a range covers, as the dialog shows them: "Bars 1–6", or "Bars 3–4" for a loop
+/// from bar 3 to the start of bar 5 (a loop that ends inside a bar counts that bar).
+pub fn range_bars_text(p: &Project, range: ExportRange) -> String {
+    let tpb = p.ticks_per_bar();
+    let (first, last) = match (range, loop_region(p)) {
+        (ExportRange::Loop, Some((a, b))) => (a / tpb + 1, (b + tpb - 1) / tpb),
+        _ => (1, export_bars(p)),
+    };
+    format!("Bars {first}–{}", last.max(first))
 }
 
 /// Tracks the stems export renders, in track order. All tracks: every track that is heard
@@ -201,10 +232,34 @@ struct Pass {
 }
 
 impl Controller {
-    pub fn export_frames(&self) -> u64 {
+    /// The range Mixdown and Stems render: the one picked, unless it is the loop region and
+    /// there is none any more.
+    pub fn export_range(&self) -> ExportRange {
+        match self.export.range {
+            ExportRange::Loop if loop_region(self.project()).is_some() => ExportRange::Loop,
+            _ => ExportRange::Project,
+        }
+    }
+
+    /// Where the render starts and how long it runs, in engine frames.
+    pub fn export_span(&self) -> (i64, u64) {
         let p = self.project();
-        let secs = p.ticks_to_seconds(export_bars(p) * p.ticks_per_bar()) + TAIL_S;
-        (secs * self.engine.sample_rate()).round() as u64
+        let rate = self.engine.sample_rate();
+        match (self.export_range(), loop_region(p)) {
+            (ExportRange::Loop, Some((a, b))) => {
+                let start = p.ticks_to_frames(a, rate);
+                (start, (p.ticks_to_frames(b, rate) - start).max(1) as u64)
+            }
+            _ => {
+                let secs = p.ticks_to_seconds(export_bars(p) * p.ticks_per_bar()) + TAIL_S;
+                (0, (secs * rate).round() as u64)
+            }
+        }
+    }
+
+    /// Engine frames in each render.
+    pub fn export_frames(&self) -> u64 {
+        self.export_span().1
     }
 
     /// The sample rate Mixdown and Stems write: the one picked in the dialog, else 48 kHz when
@@ -238,6 +293,7 @@ impl Controller {
         self.export.name = base;
         self.export.recipe = Recipe::Mixdown;
         self.export.tracks_menu = false;
+        self.export.range_menu = false;
         if let StemsPick::Track(id) = self.export.stems
             && self.project().track(id).is_none()
         {
@@ -253,6 +309,7 @@ impl Controller {
     pub fn dialogs_close(&mut self) {
         self.export.open = false;
         self.export.tracks_menu = false;
+        self.export.range_menu = false;
         self.unsaved_open = false;
         if let Some(crate::live_import::PendingImport::Loaded(job)) = self.pending_import.take() {
             self.release_live_set(*job);
@@ -270,12 +327,40 @@ impl Controller {
             _ => Recipe::Mixdown,
         };
         self.export.tracks_menu = false;
+        self.export.range_menu = false;
         self.export_follow_auto_name();
         self.ui_dirty = true;
     }
 
     pub fn export_toggle_tracks_menu(&mut self) {
         self.export.tracks_menu = !self.export.tracks_menu;
+        self.export.range_menu = false;
+        self.ui_dirty = true;
+    }
+
+    pub fn export_toggle_range_menu(&mut self) {
+        self.export.range_menu = !self.export.range_menu;
+        self.export.tracks_menu = false;
+        self.ui_dirty = true;
+    }
+
+    /// Escape inside the dialog: closes an open menu and reports whether there was one.
+    pub fn export_close_menu(&mut self) -> bool {
+        let open = self.export.tracks_menu || self.export.range_menu;
+        self.export.tracks_menu = false;
+        self.export.range_menu = false;
+        self.ui_dirty |= open;
+        open
+    }
+
+    /// Range menu rows: 0 the full project, 1 the loop region (only when there is one).
+    pub fn export_pick_range(&mut self, row: i32) {
+        match row {
+            0 => self.export.range = ExportRange::Project,
+            1 if loop_region(self.project()).is_some() => self.export.range = ExportRange::Loop,
+            _ => {}
+        }
+        self.export.range_menu = false;
         self.ui_dirty = true;
     }
 
@@ -292,6 +377,7 @@ impl Controller {
             self.export.stems = pick;
         }
         self.export.tracks_menu = false;
+        self.export.range_menu = false;
         self.export_follow_auto_name();
         self.ui_dirty = true;
     }
@@ -361,6 +447,7 @@ impl Controller {
             Ok((written, restart)) => {
                 self.export.open = false;
                 self.export.tracks_menu = false;
+        self.export.range_menu = false;
                 let what = match written.as_slice() {
                     [one] => one.display().to_string(),
                     many => format!("{} files to {}", many.len(), many[0].parent().map_or(String::new(), |d| d.display().to_string())),
@@ -506,7 +593,8 @@ impl Controller {
     /// pass at `rate` Hz. Returns the written files and the device restart result, which does not
     /// undo them.
     fn export_plan(&mut self, dir: &Path, files: &[(Option<TrackId>, String)], rate: u32) -> Result<(Vec<PathBuf>, Result<(), String>), String> {
-        let frames = self.export_frames() as usize;
+        let (start, frames) = self.export_span();
+        let frames = frames as usize;
         let engine_rate = self.engine.sample_rate().round() as u32;
         let resampler = Resampler::new(engine_rate, rate).ok_or_else(|| format!("can't convert {engine_rate} Hz to {rate} Hz"))?;
         // WAV sizes are 32-bit: refuse before rendering rather than after.
@@ -527,7 +615,7 @@ impl Controller {
             }
         }
         let paths: Vec<PathBuf> = passes.iter().map(|p| p.path.clone()).collect();
-        let (written, restarted) = self.render_passes(passes, frames, rate, &resampler);
+        let (written, restarted) = self.render_passes(passes, start, frames, rate, &resampler);
         match (written, restarted) {
             (Ok(()), restarted) => Ok((paths, restarted)),
             (Err(e), restarted) => {
@@ -542,10 +630,11 @@ impl Controller {
         }
     }
 
-    /// Plays the arrangement once per pass (no loop, no click) and writes it as stereo PCM at
-    /// `out_rate` Hz, converted by `resampler` when the engine runs at another rate. The audio
-    /// device is paused for the renders; transport, mutes and the device are restored afterwards.
-    fn render_passes(&mut self, passes: Vec<Pass>, frames: usize, out_rate: u32, resampler: &Resampler) -> (Result<(), String>, Result<(), String>) {
+    /// Plays `frames` of the arrangement from engine frame `start` once per pass (no loop, no
+    /// click) and writes it as stereo PCM at `out_rate` Hz, converted by `resampler` when the
+    /// engine runs at another rate. The audio device is paused for the renders; transport, mutes
+    /// and the device are restored afterwards.
+    fn render_passes(&mut self, passes: Vec<Pass>, start: i64, frames: usize, out_rate: u32, resampler: &Resampler) -> (Result<(), String>, Result<(), String>) {
         let rate = self.engine.sample_rate();
         let bits = if self.export.bits24 { 24 } else { 16 };
         let restore = self.project().ticks_to_frames(self.playhead_ticks(), rate);
@@ -575,7 +664,7 @@ impl Controller {
                 }
                 e.set_loop(false, 0, 0).map_err(|e| e.to_string())?;
                 e.stop().map_err(|e| e.to_string())?;
-                e.seek(0).map_err(|e| e.to_string())?;
+                e.seek(start).map_err(|e| e.to_string())?;
                 e.play().map_err(|e| e.to_string())?;
                 for chunk in out.chunks_mut(CHUNK * 2) {
                     e.render_offline(chunk).map_err(|e| e.to_string())?;
@@ -713,7 +802,21 @@ impl Controller {
         let plural = if files == 1 { "file" } else { "files" };
         s.set_export_stems_text(format!("{files} WAV {plural}").into());
         s.set_export_files_text(format!("{files} {plural}").into());
-        s.set_export_bars_text(format!("Bars 1–{}", export_bars(p)).into());
+        let range = self.export_range();
+        s.set_export_bars_text(range_bars_text(p, range).into());
+        s.set_export_range_label(match range {
+            ExportRange::Project => "Full project",
+            ExportRange::Loop => "Loop region",
+        }.into());
+        s.set_export_range_menu_open(self.export.range_menu);
+        if self.export.range_menu {
+            let rows = vec![
+                ChoiceItem { label: "Full project".into(), checked: range == ExportRange::Project, hint: false, y: MENU_PAD, h: MENU_ROW },
+                ChoiceItem { label: "Loop region".into(), checked: range == ExportRange::Loop, hint: loop_region(p).is_none(), y: MENU_PAD + MENU_ROW, h: MENU_ROW },
+            ];
+            s.set_export_range_menu_h(MENU_PAD * 2.0 + MENU_ROW * 2.0);
+            sync_model(&self.export_range_model, rows);
+        }
         s.set_export_name(self.export.name.clone().into());
         s.set_export_name_label(if self.export.writes_folder() { "Folder" } else { "Name" }.into());
         s.set_export_dir(self.export.dir.display().to_string().into());
@@ -835,5 +938,52 @@ mod tests {
     #[test]
     fn empty_project_exports_one_bar() {
         assert_eq!(export_bars(&Project::default()), 1);
+    }
+
+    #[test]
+    fn the_range_text_counts_the_bars_the_loop_touches() {
+        let mut p = Project::default();
+        let tpb = p.ticks_per_bar();
+        p.tracks[1].midi_clips.push(dstudio_core::MidiClip::empty(0, 6 * tpb));
+        assert_eq!(range_bars_text(&p, ExportRange::Project), "Bars 1–6");
+        p.transport.loop_start = 2 * tpb;
+        p.transport.loop_end = 4 * tpb;
+        assert_eq!(range_bars_text(&p, ExportRange::Loop), "Bars 3–4");
+        p.transport.loop_end = 4 * tpb + 1;
+        assert_eq!(range_bars_text(&p, ExportRange::Loop), "Bars 3–5", "a loop that ends inside a bar counts it");
+        p.transport.loop_end = p.transport.loop_start;
+        assert_eq!(loop_region(&p), None);
+        assert_eq!(range_bars_text(&p, ExportRange::Loop), "Bars 1–6", "no loop region: the full project");
+    }
+
+    #[test]
+    fn the_loop_range_renders_the_loop_exactly_and_falls_back_without_one() {
+        let engine = std::sync::Arc::new(dstudio_engine::Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut p = Project::default();
+        let tpb = p.ticks_per_bar();
+        p.transport.loop_start = 2 * tpb;
+        p.transport.loop_end = 4 * tpb;
+        let mut c = Controller::new(engine, p);
+        let rate = c.engine.sample_rate();
+        let full = c.export_span();
+        assert_eq!(full.0, 0);
+        c.export_toggle_range_menu();
+        assert!(c.export.range_menu);
+        c.export_pick_range(1);
+        assert!(!c.export.range_menu, "picking closes the menu");
+        assert_eq!(c.export_range(), ExportRange::Loop);
+        let p = c.project();
+        let (start, frames) = c.export_span();
+        assert_eq!(start, p.ticks_to_frames(2 * tpb, rate));
+        assert_eq!(frames as i64, p.ticks_to_frames(4 * tpb, rate) - start, "no tail on a loop");
+        c.export_toggle_range_menu();
+        assert!(c.export_close_menu() && !c.export.range_menu);
+        assert!(!c.export_close_menu(), "nothing left to close");
+        // A project without a loop region (an old file, say) renders the full project.
+        let mut p = c.project().clone();
+        p.transport.loop_end = p.transport.loop_start;
+        let mut c = Controller::new(c.engine.clone(), p);
+        c.export_pick_range(1);
+        assert_eq!((c.export_range(), c.export_span()), (ExportRange::Project, full));
     }
 }

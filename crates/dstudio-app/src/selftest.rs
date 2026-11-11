@@ -1479,6 +1479,55 @@ fn steps() -> Vec<Step> {
             let _ = std::fs::remove_file(ctl.borrow().export.dir.join("mix-other.wav"));
             ctl.borrow_mut().export.rate = None;
         })),
+        DoC("loop region over bars 2-3", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let tpb = c.project().ticks_per_bar();
+            let enabled = c.project().transport.loop_enabled;
+            let _ = c.doc.execute(dstudio_core::Command::SetLoop { enabled, start: tpb, end: 3 * tpb }, dstudio_core::Origin::User);
+            c.after_change();
+        })),
+        Do("⇧⌘E for a loop-region export", Box::new(|a| key(a, "E", true, true))),
+        Do("click the Range picker", Box::new(|a| click(a, (win().0 - 442.0) / 2.0 + 71.4 + 30.0, (win().1 - 340.4) / 2.0 + 105.4 + 10.2))),
+        Check("Range menu: Full project (checked) and Loop region", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let rows: Vec<_> = (0..s.get_export_range_items().row_count()).filter_map(|i| s.get_export_range_items().row_data(i)).collect();
+            let ok = s.get_export_range_menu_open() && rows.len() == 2 && rows[0].checked && !rows[1].checked && !rows[1].hint
+                && c.export_range() == crate::dialogs::ExportRange::Project;
+            ok.then_some(()).ok_or(format!("open {} rows {}", s.get_export_range_menu_open(), rows.len()))
+        })),
+        // The menu sits 3.4 below the picker; rows are 21 tall after 3 of padding.
+        Do("pick Loop region", Box::new(|a| click(a, (win().0 - 442.0) / 2.0 + 71.4 + 40.0, (win().1 - 340.4) / 2.0 + 105.4 + 20.4 + 3.4 + 3.0 + 21.0 + 10.5))),
+        Check("the range reads Loop region, Bars 2–3, and the estimate covers two bars", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let est = crate::dialogs::estimate_text(c.export_out_frames(), c.export_rate() as f64, if c.export.bits24 { 24 } else { 16 }, 1);
+            let p = c.project();
+            let two_bars = p.ticks_to_seconds(2 * p.ticks_per_bar());
+            let secs = c.export_out_frames() as f64 / c.export_rate() as f64;
+            let ok = !s.get_export_range_menu_open() && s.get_export_range_label() == "Loop region" && s.get_export_bars_text() == "Bars 2–3"
+                && s.get_export_estimate() == est.as_str() && (secs - two_bars).abs() < 1e-3;
+            ok.then_some(()).ok_or(format!("label {} bars {} est {} secs {secs} vs {two_bars}", s.get_export_range_label(), s.get_export_bars_text(), s.get_export_estimate()))
+        })),
+        DoC("export it as loop: click Export", Box::new(|a, ctl| {
+            ctl.borrow_mut().export.name = "loop".into();
+            click(a, (win().0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (win().1 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
+        })),
+        Check("loop.wav is the two loop bars, with sound where the mix has it", Box::new(|c, a| {
+            let (rate, ch, s) = crate::wavgen::read_wav(&c.export.dir.join("loop.wav"))?;
+            let (_, _, mix) = crate::wavgen::read_wav(&c.export.dir.join("mix.wav"))?;
+            let p = c.project();
+            let start = (p.ticks_to_seconds(p.ticks_per_bar()) * rate as f64).round() as usize * 2;
+            let peak = |v: &[f32]| v.iter().fold(0f32, |m, x| m.max(x.abs()));
+            let mix_peak = peak(mix.get(start..(start + s.len()).min(mix.len())).unwrap_or(&[]));
+            let ok = rate == c.export_rate() && ch == 2 && (s.len() / 2) as u64 == c.export_out_frames()
+                && (mix_peak < 0.01 || peak(&s) > 0.001) && !a.global::<Studio>().get_export_open();
+            ok.then_some(()).ok_or(format!("rate {rate} frames {} vs {} peak {} mix {mix_peak}", s.len() / 2, c.export_out_frames(), peak(&s)))
+        })),
+        DoC("back to the full project and the old loop region", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let _ = std::fs::remove_file(c.export.dir.join("loop.wav"));
+            c.export.range = crate::dialogs::ExportRange::Project;
+            c.undo();
+        })),
         Do("⇧⌘E again", Box::new(|a| key(a, "E", true, true))),
         Check("export dialog open again", Box::new(|_c, a| a.global::<Studio>().get_export_open().then_some(()).ok_or("not open".into()))),
         Do("click the Stems card", Box::new(|a| click(a, (win().0 - 442.0) / 2.0 + 17.0 + 131.47 + 6.8 + 65.0, (win().1 - 340.4) / 2.0 + 44.2 + 22.0))),
