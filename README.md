@@ -281,7 +281,7 @@ binary), you must offer its complete source under the same licence; if you modif
 network, you must offer them the modified source too.
 
 Third-party code keeps its own license. The engine's dependencies, the VST3 SDK, CLAP headers and Signalsmith libraries
-(MIT), dr_libs and stb_vorbis (public domain or MIT), are fetched at build time and listed in
+(MIT), dr_libs (public domain or MIT-0) and stb_vorbis (public domain or MIT), are fetched at build time and listed in
 [engine/third_party_licenses.md](engine/third_party_licenses.md). The app uses Slint under its
 [GPL-3.0 licence](https://github.com/slint-ui/slint/blob/master/LICENSE.md) (compatible with the AGPL), and the bundled
 Inter font is under the SIL Open Font License.
