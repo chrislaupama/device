@@ -10,6 +10,7 @@
 
 <p>
   <a href="https://github.com/chrislaupama/sainestudio/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/chrislaupama/sainestudio/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/chrislaupama/device/actions/workflows/perf.yml"><img alt="Performance" src="https://github.com/chrislaupama/device/actions/workflows/perf.yml/badge.svg?branch=main"></a>
   <img alt="Status: pre-alpha" src="https://img.shields.io/badge/status-pre--alpha-e0a84b?style=flat-square">
   <img alt="Platforms: macOS, Windows, Linux" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-4b8be0?style=flat-square">
   <img alt="Engine: C++23" src="https://img.shields.io/badge/engine-C%2B%2B23-6e6e6e?style=flat-square">
@@ -156,7 +157,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Export | 🚧 | The engine renders to WAV; export from the app isn't wired up yet |
 | Assistant | 🚧 | Tested only with a fixture provider, not yet against the live API |
 | Windows and Linux audio | 🚧 | Never run on real audio hardware; no ASIO |
-| Releases and branding | ⏳ | Signed builds, original icons |
+| Releases and branding | 🚧 | Packages are built (unsigned); code signing, original icons, a first tagged release |
 
 [PROGRESS.md](PROGRESS.md) has the dated, round-by-round log.
 
@@ -173,7 +174,10 @@ hosted runners, without audio hardware.
 
 ### Download
 
-**No builds have been released yet.** For now, build it from source.
+**No builds have been released yet.** For now, build it from source. Release packages for macOS (`.dmg`), Windows
+(installer and `.zip`) and Linux (`.tar.gz`) are built by the Release workflow and will appear on the
+[releases page](https://github.com/chrislaupama/device/releases) once a version is tagged; see
+[Release packages](docs/building.md#release-packages).
 
 ### Build from source
 
@@ -228,6 +232,13 @@ The engine has its own tests (run under ASan and UBSan too) and a benchmark. The
 interface end to end, from importing audio to checking that notes drawn in the piano roll sound on the instrument.
 Pull requests with visual changes include before and after screenshots, and anything that could affect performance
 comes with benchmark results.
+
+Three GitHub Actions workflows check every change: **CI** builds and tests the engine, the workspace and the app on
+macOS, Windows and Linux; **Performance** builds the benchmarks at the base commit and with the change and fails a
+pull request when any benchmark row needs more than 1 % more CPU instructions (timings on all three systems are
+reported too); **Release** builds the installable packages and drafts a GitHub release for a `vX.Y.Z` tag. See
+[Continuous integration](docs/building.md#continuous-integration) for the details and how to run the performance
+comparison locally.
 
 Start with [PROGRESS.md](PROGRESS.md), then [docs/architecture.md](docs/architecture.md).
 
