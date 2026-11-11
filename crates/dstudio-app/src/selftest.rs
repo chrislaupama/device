@@ -7608,6 +7608,10 @@ fn velocity_lane_steps() -> Vec<Step> {
     let vels = |c: &Controller, id: Option<dstudio_core::ClipId>| -> Vec<u8> {
         id.and_then(|id| c.project().midi_clip(id)).map(|m| m.notes.iter().map(|n| n.velocity).collect()).unwrap_or_default()
     };
+    // Centre of the toolbar's velocity button (ui/pianoroll.slint: 280 from the panel's right edge).
+    fn vel_button(ctl: &Ctl) -> (f32, f32) {
+        (pr_origin().0 + ctl.borrow().pr.size.0 + 0.5 - 270.0, bottom_y() + 41.0)
+    }
     // Window point on note `beat`'s stem at velocity `vel`.
     fn stem(ctl: &Ctl, beat: f64, vel: u8) -> (f32, f32) {
         let v = ctl.borrow().pr_view();
@@ -7643,16 +7647,19 @@ fn velocity_lane_steps() -> Vec<Step> {
             let open = c.pr_clip().map(|m| m.id) == c1.get() && c1.get().is_some();
             (open && !c.pr.vel_lane && !a.global::<Studio>().get_pr_vel_lane()).then_some(()).ok_or(format!("pr clip {:?} lane {}", c.pr_clip().map(|m| m.id), c.pr.vel_lane))
         })),
-        DoC("velocity: the toolbar's velocity button", Box::new(|a, _| a.global::<Studio>().invoke_pr_action("velocity_lane".into()))),
+        DoC("velocity: click the toolbar's velocity button", Box::new(|a, ctl| {
+            let (x, y) = vel_button(ctl);
+            click(a, x, y);
+        })),
         Check("velocity: the lane is open and the grid gave it its height", Box::new(move |c, a| {
             h1.set(c.doc.history_labels().len());
             let v = c.pr_view();
-            let ok = c.pr.vel_lane && a.global::<Studio>().get_pr_vel_lane() && (v.h + VEL_H - c.pr.size.1).abs() < 1.0;
+            let ok = c.pr.vel_lane && a.global::<Studio>().get_pr_vel_lane() && v.lane == VEL_H && (v.h + v.lane - c.pr.size.1).abs() < 1.0;
             ok.then_some(()).ok_or(format!("lane {} grid h {} texture h {}", c.pr.vel_lane, v.h, c.pr.size.1))
         })),
         DoC("velocity: drag note 2's stem up by 20", Box::new(|a, ctl| {
             let (x, y) = stem(ctl, 1.0, 100);
-            let dy = 20.0 / 127.0 * (VEL_H - 12.0);
+            let dy = 20.0 / 127.0 * (ctl.borrow().pr_view().lane - 12.0);
             drag(a, x, y, x, y - dy);
         })),
         Check("velocity: note 2 at 120, the rest at 100, note 2 selected, one Note Velocity step", Box::new(move |c, _| {
@@ -7684,7 +7691,10 @@ fn velocity_lane_steps() -> Vec<Step> {
             let got = vels(c, c4.get());
             (got == [100, 100, 100, 100]).then_some(()).ok_or(format!("vels {got:?}"))
         })),
-        DoC("velocity: the toolbar button again", Box::new(|a, _| a.global::<Studio>().invoke_pr_action("velocity_lane".into()))),
+        DoC("velocity: click the toolbar button again", Box::new(|a, ctl| {
+            let (x, y) = vel_button(ctl);
+            click(a, x, y);
+        })),
         Check("velocity: the lane is closed and the grid has its height back", Box::new(move |c, a| {
             let v = c.pr_view();
             let ok = !c.pr.vel_lane && !a.global::<Studio>().get_pr_vel_lane() && (v.h - c.pr.size.1).abs() < 1.0 && c5.get().is_some();

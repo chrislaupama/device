@@ -46,8 +46,9 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(350);
 pub const KEY_VELOCITY: u8 = 102;
 /// One zoom command step on the toolbar sliders' 0..1 range (the clip-editor zoom command).
 pub const ZOOM_STEP: f32 = 0.1;
-/// Velocity lane (toolbar toggle): its height under the note grid, and the insets of its value
-/// range (velocity 127 at the top inset, 0 at the bottom one).
+/// Velocity lane (toolbar toggle): its height under the note grid (less when the panel is too
+/// short to keep two note rows above it), and the insets of its value range (velocity 127 at the
+/// top inset, 0 at the bottom one).
 pub const VEL_H: f32 = 68.0;
 const VEL_TOP: f32 = 8.0;
 const VEL_BOTTOM: f32 = 4.0;
@@ -60,13 +61,18 @@ pub fn vel_lane_y(v: &PrView) -> f32 {
 }
 /// Lane y of velocity `vel`.
 pub fn vel_y(v: &PrView, vel: u8) -> f32 {
-    let (top, bottom) = (v.h + VEL_TOP, v.h + VEL_H - VEL_BOTTOM);
-    bottom - (bottom - top) * vel as f32 / 127.0
+    let (bottom, span) = vel_range(v);
+    bottom - span * vel as f32 / 127.0
+}
+/// Lane y of velocity 0 and the height of the value range (at least one point).
+fn vel_range(v: &PrView) -> (f32, f32) {
+    let bottom = v.h + v.lane - VEL_BOTTOM;
+    (bottom, (bottom - v.h - VEL_TOP).max(1.0))
 }
 /// Velocity at lane y (1..=127: a note can't be silenced from the lane).
 pub fn vel_at(v: &PrView, y: f32) -> u8 {
-    let (top, bottom) = (v.h + VEL_TOP, v.h + VEL_H - VEL_BOTTOM);
-    ((bottom - y) / (bottom - top) * 127.0).round().clamp(1.0, 127.0) as u8
+    let (bottom, span) = vel_range(v);
+    ((bottom - y) / span * 127.0).round().clamp(1.0, 127.0) as u8
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -83,6 +89,8 @@ pub struct PrView {
     pub rows: Rows,
     /// Row height: `ROW_H` until the vertical zoom slider moves.
     pub row_h: f32,
+    /// Height of the velocity lane under the grid (0 when it is closed).
+    pub lane: f32,
 }
 
 /// The pitch rows the piano roll shows, top first: all 128, or (scale view) the scale
@@ -144,7 +152,7 @@ impl PrView {
     pub fn fit_from(gx: f32, size: (f32, f32), clip_beats: f64, scroll: f32) -> Self {
         let beats = clip_beats.max(0.25);
         let ppb = (size.0 - gx).max(40.0) as f64 / (beats * (1.0 + 2.0 * FIT_PAD));
-        PrView { gx, w: size.0, h: size.1, ppb, start: -FIT_PAD * beats, scroll, rows: Rows::ALL, row_h: ROW_H }
+        PrView { gx, w: size.0, h: size.1, ppb, start: -FIT_PAD * beats, scroll, rows: Rows::ALL, row_h: ROW_H, lane: 0.0 }
     }
     pub fn x_of(&self, beat: f64) -> f32 {
         self.gx + ((beat - self.start) * self.ppb) as f32
@@ -232,7 +240,7 @@ pub enum PrDrag {
     /// Velocity lane. `grab`: the notes in `ids` move together by the pointer's vertical
     /// travel from their velocities at the press. Otherwise the pointer paints: each note in
     /// `ids` whose stem it crosses takes the velocity under it. `last_x` is the previous pointer x.
-    Velocity { grab: bool, ids: Vec<u32>, y0: f32, last_x: f32, preview: Vec<Note> },
+    Velocity { grab: bool, ids: BTreeSet<u32>, y0: f32, last_x: f32, preview: Vec<Note> },
 }
 
 /// Footer value fields (drag vertically; Grid cycles on click).
@@ -693,7 +701,7 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
     // ---- playhead ----
     let phx = v.x_of(sc.playhead);
     if phx >= gx && phx <= w {
-        let bottom = if sc.vel_lane { h + VEL_H } else { h };
+        let bottom = h + v.lane;
         o.push(px.rect(phx - 0.5, 14.0, 1.0, bottom - 14.0, rgba(rgb(0x8a8a8b), 1.0)));
     }
     // ---- marquee ----
@@ -714,16 +722,20 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
 fn vel_lane(o: &mut Vec<RectInst>, sc: &PrScene, px: &Px) {
     let v = &sc.view;
     let (w, gx, y0) = (v.w, v.gx, vel_lane_y(v));
-    o.push(px.rect(0.0, y0, w, VEL_H, rgba(rgb(0x141518), 1.0)));
+    let lane = v.lane;
+    if lane < 1.0 {
+        return;
+    }
+    o.push(px.rect(0.0, y0, w, lane, rgba(rgb(0x141518), 1.0)));
     let mut tmp = Vec::new();
-    vlines(&mut tmp, sc, px, y0 + 1.0, y0 + VEL_H, gx);
+    vlines(&mut tmp, sc, px, y0 + 1.0, y0 + lane, gx);
     o.extend(tmp);
     for vel in [32u8, 64, 96, 127] {
         o.push(px.rect(gx, vel_y(v, vel) - 0.25, w - gx, 0.5, rgba(WHITE, if vel == 127 { 0.08 } else { 0.04 })));
     }
     o.push(px.rect(0.0, y0, w, 1.0, rgba(rgb(0x2c2d30), 1.0)));
-    o.push(px.rect(gx - 1.0, y0 + 1.0, 1.0, VEL_H - 1.0, rgba(rgb(0x333333), 1.0)));
-    let floor = y0 + VEL_H - VEL_BOTTOM;
+    o.push(px.rect(gx - 1.0, y0 + 1.0, 1.0, lane - 1.0, rgba(rgb(0x333333), 1.0)));
+    let floor = vel_range(v).0;
     for pass in [false, true] {
         for n in sc.notes.iter().filter(|n| sc.selected.contains(&n.id) == pass) {
             let (x, _, nw, _) = v.note_rect(n);
@@ -744,7 +756,7 @@ fn vel_lane(o: &mut Vec<RectInst>, sc: &PrScene, px: &Px) {
 
 /// Velocity lane paint: the notes in `ids` whose stems lie between x `a` and `b` (either order,
 /// with the grab reach around a single point) take `vel`.
-fn paint_velocity(notes: &mut [Note], ids: &[u32], v: &PrView, a: f32, b: f32, vel: u8) {
+fn paint_velocity(notes: &mut [Note], ids: &BTreeSet<u32>, v: &PrView, a: f32, b: f32, vel: u8) {
     let (lo, hi) = (a.min(b) - VEL_GRAB, a.max(b) + VEL_GRAB);
     for n in notes.iter_mut().filter(|n| ids.contains(&n.id)) {
         let x = v.x_of(n.start as f64 / PPQ as f64);
@@ -891,9 +903,9 @@ impl Controller {
         }
         let len = self.pr_clip().map(|c| c.length).unwrap_or(self.project().ticks_per_bar());
         let mut size = self.pr.size;
-        if self.pr.vel_lane {
-            size.1 = (size.1 - VEL_H).max(GRID_Y + 2.0 * ROW_H);
-        }
+        // The lane gives up height first so it always stays inside the texture.
+        let lane = if self.pr.vel_lane { VEL_H.min(size.1 - GRID_Y - 2.0 * ROW_H).max(0.0) } else { 0.0 };
+        size.1 -= lane;
         let mut v = PrView::fit(size, len as f64 / PPQ as f64, self.pr.scroll);
         if let Some((_, key)) = self.pr_scale().filter(|(s, _)| s.highlight && s.fold) {
             let notes = self.pr_clip().map(|c| c.notes.iter().map(|n| n.pitch).collect::<Vec<_>>()).unwrap_or_default();
@@ -905,6 +917,7 @@ impl Controller {
             v.row_h = rh.clamp(lo, hi);
         }
         v.scroll = v.scroll.clamp(0.0, v.max_scroll());
+        v.lane = lane;
         v
     }
 
@@ -1346,23 +1359,24 @@ impl Controller {
                 let hit = clip
                     .notes
                     .iter()
-                    .filter(|n| (stem(n) - x).abs() <= VEL_GRAB)
+                    // Within reach of the stem across, and between its cap and the lane floor.
+                    .filter(|n| (stem(n) - x).abs() <= VEL_GRAB && y >= vel_y(&v, n.velocity) - 2.5 && y <= vel_range(&v).0 + 1.0)
                     .min_by(|a, b| {
                         let key = |n: &Note| ((stem(n) - x).abs(), !self.pr.selected.contains(&n.id));
                         key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal)
                     })
                     .copied();
-                let (grab, ids): (bool, Vec<u32>) = match hit {
+                let (grab, ids): (bool, BTreeSet<u32>) = match hit {
                     Some(n) => {
                         if shift {
                             self.pr.selected.insert(n.id);
                         } else if !self.pr.selected.contains(&n.id) {
                             self.pr.selected = [n.id].into();
                         }
-                        (true, self.pr.selected.iter().copied().collect())
+                        (true, self.pr.selected.clone())
                     }
                     None if self.pr.selected.is_empty() => (false, clip.notes.iter().map(|n| n.id).collect()),
-                    None => (false, self.pr.selected.iter().copied().collect()),
+                    None => (false, self.pr.selected.clone()),
                 };
                 let mut preview = clip.notes.clone();
                 if !grab {
@@ -1373,7 +1387,7 @@ impl Controller {
             1 => {
                 let Some(PrDrag::Velocity { grab, ids, y0, last_x, mut preview }) = self.pr.drag.take() else { return };
                 if grab {
-                    let dv = ((y0 - y) / (VEL_H - VEL_TOP - VEL_BOTTOM) * 127.0).round() as i32;
+                    let dv = ((y0 - y) / vel_range(&v).1 * 127.0).round() as i32;
                     for (p, n) in preview.iter_mut().zip(&clip.notes) {
                         if ids.contains(&n.id) {
                             p.velocity = (n.velocity as i32 + dv).clamp(1, 127) as u8;
@@ -1789,7 +1803,7 @@ mod tests {
 
     #[test]
     fn velocity_lane_maps_and_paints() {
-        let v = PrView::fit((1174.5, 281.0 - VEL_H), 4.0, DEFAULT_SCROLL);
+        let v = PrView { lane: VEL_H, ..PrView::fit((1174.5, 281.0 - VEL_H), 4.0, DEFAULT_SCROLL) };
         assert!((vel_y(&v, 127) - (v.h + VEL_TOP)).abs() < 1e-3);
         assert!((vel_y(&v, 0) - (v.h + VEL_H - VEL_BOTTOM)).abs() < 1e-3);
         for vel in [1u8, 40, 64, 100, 127] {
@@ -1800,12 +1814,15 @@ mod tests {
         let note = |id: u32, beat: i64| Note { id, pitch: 60, start: beat * PPQ, length: 240, velocity: 100 };
         let mut notes = vec![note(1, 0), note(2, 1), note(3, 2), note(4, 3)];
         // A sweep from beat 1.5 to 3 sets notes 3 and 4; note 4 is not in `ids`, so only 3 changes.
-        paint_velocity(&mut notes, &[1, 2, 3], &v, v.x_of(1.5), v.x_of(3.0), 40);
+        paint_velocity(&mut notes, &[1, 2, 3].into(), &v, v.x_of(1.5), v.x_of(3.0), 40);
         let got: Vec<u8> = notes.iter().map(|n| n.velocity).collect();
         assert_eq!(got, [100, 100, 40, 100]);
         // A single point reaches a stem within the grab distance.
-        paint_velocity(&mut notes, &[1, 2, 3, 4], &v, v.x_of(1.0) + VEL_GRAB - 0.5, v.x_of(1.0) + VEL_GRAB - 0.5, 7);
+        paint_velocity(&mut notes, &[1, 2, 3, 4].into(), &v, v.x_of(1.0) + VEL_GRAB - 0.5, v.x_of(1.0) + VEL_GRAB - 0.5, 7);
         assert_eq!(notes[1].velocity, 7);
+        // A lane squeezed to nothing still maps inside itself without dividing by zero.
+        let flat = PrView { lane: 0.0, ..v };
+        assert!(vel_y(&flat, 127) <= flat.h && vel_at(&flat, flat.h) >= 1);
     }
 
     #[test]

@@ -454,6 +454,7 @@ export component PianoRoll inherits Rectangle {
             x: root.width - 280px; y: 4px; width: 20px; height: 20px; border-radius: 4px;
             background: Studio.pr-vel-lane ? #2f3036 : vel-ta.has-hover ? #ffffff0d : transparent;
             accessible-role: checkbox; accessible-label: "Velocity lane"; accessible-checked: Studio.pr-vel-lane;
+            accessible-action-default => { Studio.pr-action("velocity_lane"); }
             Icon { x: 3.5px; y: 3.5px; width: 13px; height: 13px; d: "M3.5 13V8 M6.5 13V4 M9.5 13V6 M12.5 13V9"; ink: Studio.pr-vel-lane ? #e5e5e8 : #8e8f93; stroke-width: 1.8px; }
             vel-ta := TouchArea { clicked => { Studio.pr-action("velocity_lane"); } }
         }
