@@ -70,6 +70,9 @@ pub struct Preferences {
     pub recent_resolved: Vec<String>,
     #[serde(default)]
     pub general: GeneralPrefs,
+    /// Timeline › Returns pill off: return track rows hidden (view state, not project state).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hide_returns: bool,
 }
 
 /// Settings › General, with its defaults.

@@ -394,6 +394,25 @@ component Browser inherits Panel {
 }
 
 // ------------------------------------------------------------------ timeline
+// One track header row with its bottom rule and height handle (scrolling list or pinned band).
+component TrackRowItem inherits Rectangle {
+    in property <TrackRow> t;
+    in property <TrackLevel> level;
+    callback edit-done();
+    TrackHeaderRow { x: 0; y: 0; width: parent.width; height: root.t.row-h; row-h: root.t.row-h; t: root.t; automation: Studio.auto-shown; level: root.level; edit-done => { root.edit-done(); } }
+    Rectangle { y: root.t.row-h; height: Tokens.track-pitch - Tokens.track-h; background: root.t.selected ? #353639 : Tokens.line-separator; }
+    // Height handle: 6 px at the row's bottom edge.
+    TouchArea {
+        y: root.t.row-h + 0.5px - 5.1px; height: 5.1px;
+        mouse-cursor: row-resize;
+        pointer-event(e) => {
+            if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.track-resize(root.t.id, 0, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+            if (e.kind == PointerEventKind.move && self.pressed) { Studio.track-resize(root.t.id, 1, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+            if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.track-resize(root.t.id, 2, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+        }
+    }
+}
+
 // "Add track" row: 12 px plus (1.6 px stroke) and a 12 px bold label, 12 px from the left,
 // white 40 % (70 % on hover).
 component AddTrackButton inherits Rectangle {
@@ -404,7 +423,8 @@ component AddTrackButton inherits Rectangle {
         commands: "M6 1.75V10.25M1.75 6H10.25"; stroke: root.ink; stroke-width: 1.36px; stroke-line-cap: round;
     }
     Text { x: 25.5px; text: "Add track"; color: root.ink; font-size: 10.2px; font-weight: 700; letter-spacing: -0.408px; vertical-alignment: center; }
-    ta := TouchArea { clicked => { Studio.add-track(); } }
+    // Opens the Add track menu (Audio, Instrument or Return track) under the label.
+    ta := TouchArea { clicked => { Studio.open-add-track-menu(root.absolute-position.x + 8px, (root.absolute-position.y - Studio.menu-dy) + root.height / 2 + 9px); } }
 }
 
 // Header minimap: clip bars per track, the visible-window outline with a scrim outside it,
@@ -508,9 +528,15 @@ component Timeline inherits Panel {
     // and the docked chat is already at its minimum width (AppWindow decides).
     in property <bool> zoom-hidden;
     Text { x: 6.8px; y: 0; height: 27.2px; text: "Timeline"; color: Tokens.text-bright; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; vertical-alignment: center; }
-    // Returns: PLACEHOLDER (no return tracks yet). Master pill: shows the master row (static on).
+    // Returns: shows or hides the return track rows (view state, src/routing.rs). Master pill:
+    // shows the master row (static on).
     // Header-row x positions/widths below are the values at 100 % zoom.
-    Pill { x: 60.35px; y: 5px; width: 59.5px; height: 18px; text: "Returns"; icon: Icons.returns; font-size: 8.75px; text-color: #a0a1a5; }
+    Pill {
+        x: 60.35px; y: 5px; width: 59.5px; height: 18px; text: "Returns"; icon: Icons.returns; font-size: 8.75px;
+        active: Studio.returns-shown; text-color: Studio.returns-shown ? Tokens.on-accent : #a0a1a5;
+        accessible-role: checkbox; accessible-label: Studio.returns-shown ? "Hide return tracks" : "Show return tracks"; accessible-checked: Studio.returns-shown;
+        clicked => { Studio.toggle-returns(); }
+    }
     Pill { x: 124.1px; y: 5px; width: 59.5px; height: 18px; text: "Master"; icon: Icons.master; active: true; font-size: 8.75px; }
     // Minimap: fills the space up to the right group (src/minimap.rs).
     Minimap { x: 200.6px; y: 5.1px; width: max(0px, rgroup.x - 10.2px - self.x); height: 17px; }
@@ -618,25 +644,16 @@ component Timeline inherits Panel {
     AddTrackButton { x: 0; y: 27.5px; width: 184px; height: 39px; }
     Rectangle { x: 0; y: 66px; width: Tokens.lane-x; height: 0.5px; background: Tokens.line-separator; }
     track-area := Rectangle {
-        x: 0; y: 66.5px; width: Tokens.lane-x - 0.5px; height: root.height - 66.5px - Studio.master-h - 0.5px;
+        x: 0; y: 66.5px; width: Tokens.lane-x - 0.5px; height: root.height - 66.5px - Studio.master-h - 0.5px - Studio.pinned-h;
         clip: true;
         TouchArea {
             scroll-event(e) => { Studio.lane-scroll(0, e.delta-y / 1px, 0, false); accept }
         }
-        for t[i] in Studio.tracks: Rectangle {
+        for t[i] in Studio.tracks: TrackRowItem {
+            visible: !t.pinned;
             x: 0; y: t.y - Studio.scroll-y; width: parent.width; height: t.h;
-            TrackHeaderRow { x: 0; y: 0; width: parent.width; height: t.row-h; row-h: t.row-h; t: t; automation: Studio.auto-shown; level: Studio.track-levels[i]; edit-done => { root.focus-main(); } }
-            Rectangle { y: t.row-h; height: Tokens.track-pitch - Tokens.track-h; background: t.selected ? #353639 : Tokens.line-separator; }
-            // Height handle: 6 px at the row's bottom edge.
-            TouchArea {
-                y: t.row-h + 0.5px - 5.1px; height: 5.1px;
-                mouse-cursor: row-resize;
-                pointer-event(e) => {
-                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.track-resize(t.id, 0, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
-                    if (e.kind == PointerEventKind.move && self.pressed) { Studio.track-resize(t.id, 1, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
-                    if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.track-resize(t.id, 2, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
-                }
-            }
+            t: t; level: Studio.track-levels[i];
+            edit-done => { root.focus-main(); }
         }
         // Expanded automation rows (src/automation.rs, EXTRA_H + separator): well fill, a 1 px
         // white 5 % top rule, and the pill 48 px in.
@@ -659,6 +676,20 @@ component Timeline inherits Panel {
             height: max(Tokens.track-pitch, parent.height + Studio.master-h + 0.5px - parent.tracks-end);
         }
     }
+    // ---- pinned return track rows (src/routing.rs): their own group above the master row ----
+    if Studio.pinned-h > 0: Rectangle {
+        x: 0; y: root.height - Studio.master-h - 0.5px - Studio.pinned-h; width: Tokens.lane-x - 0.5px; height: Studio.pinned-h;
+        clip: true;
+        background: Tokens.bg-panel;
+        for t[i] in Studio.tracks: TrackRowItem {
+            visible: t.pinned;
+            x: 0; y: t.y; width: parent.width; height: t.h;
+            t: t; level: Studio.track-levels[i];
+            edit-done => { root.focus-main(); }
+        }
+        // Group divider above the first return row.
+        Rectangle { y: 0; height: 1.5px; background: #5a5b60; }
+    }
     Rectangle { x: Tokens.lane-x - 0.5px; y: 27.5px; width: 0.5px; height: root.height - 27.5px; background: Tokens.line-separator; }
 
     // ---- master row (36 px; 76 px with the automation row) ----
@@ -679,14 +710,19 @@ component Inspector inherits Rectangle {
     // inspector header
     // Colour tab flush with the panel edge: 4 x 19 pt at y 6.5 pt (100 % zoom).
     Rectangle { x: 0px; y: 5.5px; width: 3.4px; height: 16.15px; border-radius: 1.7px; background: Studio.sel-color; }
-    Text { visible: Studio.has-selection; x: 10.5px; y: 7px; height: 13px; text: Studio.sel-number; color: Tokens.text-bright; font-size: 9px; font-weight: 700; vertical-alignment: center; }
-    Icon { visible: Studio.has-selection; x: 21px; y: 8px; width: 11px; height: 11px; d: Studio.sel-instrument ? Icons.keys : Icons.wave; ink: #a8a8ab; stroke-width: 1.1px; }
+    Text { visible: Studio.has-selection; x: 10.5px; y: 7px; height: 13px; text: Studio.sel-return ? Studio.sel-letter : Studio.sel-number; color: Tokens.text-bright; font-size: 9px; font-weight: 700; vertical-alignment: center; }
+    Icon { visible: Studio.has-selection; x: 21px; y: 8px; width: 11px; height: 11px; d: Studio.sel-return ? Icons.returns : Studio.sel-instrument ? Icons.keys : Icons.wave; ink: #a8a8ab; stroke-width: 1.1px; }
     Label { x: 37px; y: 7px; text: Studio.has-selection ? Studio.sel-name : "No track selected"; color: Tokens.text-bright; font-size: 10px; }
 
     // In: audio tracks open the input selector (SetTrackInput; popup drawn by AppWindow). Instrument
     // tracks open the instrument selector (built-in Synth or an instrument plugin: SetInstrumentPlugin).
-    // Out: PLACEHOLDER (fixed routing to Master).
-    Raised {
+    // Return tracks have no input: a "Return" label instead.
+    // Out: Master or a return track (SetTrackOutput, src/routing.rs); fixed to Master on returns.
+    if Studio.sel-return: Raised {
+        x: 10px; y: 37px; width: 149px; height: 19px; border-radius: 9.5px;
+        Text { x: 7.5px; text: "Return"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
+    }
+    if !Studio.sel-return: Raised {
         x: 10px; y: 37px; width: 149px; height: 19px; border-radius: 9.5px;
         Text { x: 7.5px; text: Studio.sel-instrument ? "Inst" : "In"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
         Text { x: Studio.sel-instrument ? 29.5px : 21px; width: 134px - self.x - 4px; text: Studio.sel-instrument ? Studio.sel-inst-text : Studio.sel-input-text; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; overflow: elide; }
@@ -697,22 +733,62 @@ component Inspector inherits Rectangle {
     Raised {
         x: 10px; y: 63px; width: 149px; height: 18px; border-radius: 9px;
         Text { x: 7.5px; text: "Out"; color: Tokens.text-tertiary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
-        Text { x: 29.5px; text: "Master"; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
-        Icon { x: 134px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #a0a0a3; }
+        Text { x: 29.5px; width: 134px - self.x - 4px; text: Studio.sel-out-text; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; overflow: elide; }
+        if Studio.sel-can-send: Icon { x: 134px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #a0a0a3; }
+        accessible-role: combobox; accessible-label: "Out"; accessible-value: Studio.sel-out-text;
+        TouchArea { clicked => { if (Studio.sel-can-send) { Studio.open-out-menu(parent.absolute-position.x + 1px, (parent.absolute-position.y - Studio.menu-dy) + parent.height + 3px); } } }
     }
     // Input / Sends tabs: 24 pt row, 12 pt bold, centred 24 pt apart; the Sends tab adds a "+"
-    // (add a send) after its label. View state only.
-    property <int> tab: 0;
+    // (add a send) after its label. View state only (Studio.strip-tab, so review states can open
+    // the Sends tab).
+    property <int> tab <=> Studio.strip-tab;
     for t[i] in [ {label: "Input", x: 56}, {label: "Sends", x: 108} ]: Text {
         x: t.x * StripMetrics.u; y: 104 * StripMetrics.u; height: 24 * StripMetrics.u;
         text: t.label; font-size: 12 * StripMetrics.u; font-weight: 700; letter-spacing: -0.48 * StripMetrics.u; vertical-alignment: center;
         color: root.tab == i ? #ffffff : tab-ta.has-hover ? #ffffffb3 : #63656d;
         tab-ta := TouchArea { clicked => { root.tab = i; } }
     }
-    if root.tab == 1: Rectangle {
+    if root.tab == 1 && Studio.sel-can-send: Rectangle {
         x: 146 * StripMetrics.u; y: 108 * StripMetrics.u; width: 16 * StripMetrics.u; height: 16 * StripMetrics.u;
         Icon { x: 3 * StripMetrics.u; y: 3 * StripMetrics.u; width: 10 * StripMetrics.u; height: 10 * StripMetrics.u; d: Icons.plus; ink: send-add.has-hover ? #ffffffb3 : #63656d; stroke-width: 1.4px; }
-        send-add := TouchArea { clicked => { Studio.chat-placeholder("Add send"); } }
+        send-add := TouchArea {
+            clicked => { Studio.open-send-menu(Studio.sel-id, parent.absolute-position.x, (parent.absolute-position.y - Studio.menu-dy) + parent.height + 2px); }
+            accessible-role: button; accessible-label: "Add send";
+        }
+    }
+    // Sends tab: one row per send (return colour and name, level knob with its dB readout, Pre
+    // switch, remove). Double-clicking the knob resets to 0 dB.
+    if root.tab == 1: Rectangle {
+        x: 0; y: 128 * StripMetrics.u; width: 170px; height: 324 * StripMetrics.u - self.y - 4px;
+        clip: true;
+        if !Studio.sel-can-send: Text {
+            x: 10px; y: 10px; width: 150px; text: Studio.has-selection ? "Return tracks have no sends." : ""; color: #63656d; font-size: 9.5px; font-weight: 600; wrap: word-wrap;
+        }
+        if Studio.sel-can-send && Studio.sel-sends.length == 0: Text {
+            x: 10px; y: 10px; width: 150px; text: "No sends. Use + to send this track to a return track."; color: #63656d; font-size: 9.5px; font-weight: 600; wrap: word-wrap;
+        }
+        for r[k] in Studio.sel-sends: Rectangle {
+            x: 0; y: k * 42px; width: parent.width; height: 42px;
+            Rectangle { x: 10px; y: 9px; width: 3.4px; height: 24px; border-radius: 1.7px; background: r.color; }
+            Text { x: 18px; y: 6px; width: 64px; height: 13px; text: r.name; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; overflow: elide; }
+            Text { x: 18px; y: 21px; width: 64px; height: 13px; text: r.db-text; color: r.color.mix(#7d7e80, 0.62); font-size: 9px; font-weight: 600; vertical-alignment: center; }
+            Knob {
+                x: 82px; y: 2px; width: 38px; height: 38px; body: 20.5px; groove: true; show-arc: true; arc-from: -135;
+                min-value: 0; max-value: 1; value: r.pos; value-angle: -135 + r.pos * 270; tick-color: #ffffff; arc-color: r.color.mix(#7d7e80, 0.62);
+                value-changed(v) => { Studio.send-pos(r.track, r.target, v); }
+                released => { Studio.send-gesture-end(); }
+                reset => { Studio.send-reset(r.track, r.target); }
+                accessible-role: slider; accessible-label: "Send to " + r.name; accessible-value: r.db-text;
+            }
+            Text { x: 124px; y: 6px; width: 20px; height: 12px; text: "Pre"; color: Tokens.text-tertiary; font-size: 8.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+            Switch { x: 124px; y: 21px; on: r.pre; toggled => { Studio.send-toggle-pre(r.track, r.target); } }
+            Rectangle {
+                x: 149px; y: 13px; width: 16px; height: 16px;
+                Icon { x: 3px; y: 3px; width: 10px; height: 10px; d: Icons.close; ink: rm-ta.has-hover ? #ffffffb3 : #63656d; stroke-width: 1.4px; }
+                rm-ta := TouchArea { clicked => { Studio.send-remove(r.track, r.target); } accessible-role: button; accessible-label: "Remove send to " + r.name; }
+            }
+            Rectangle { x: 10px; y: 41.5px; width: 150px; height: 0.5px; background: #ffffff0d; }
+        }
     }
     Rectangle { x: 10px; y: 128 * StripMetrics.u - 0.5px; width: 150px; height: 0.5px; background: #ffffff14; }
 
@@ -744,6 +820,7 @@ component Inspector inherits Rectangle {
     // instrument tracks). 22 x 20 pt, 4 pt apart, on the peak box's row.
     for b[i] in [ {t: "M", on: Studio.sel-mute}, {t: "S", on: Studio.sel-solo}, {t: "R", on: Studio.sel-arm}, {t: "I", on: Studio.sel-monitor} ]: StripButton {
         x: (50 + i * 26) * StripMetrics.u; y: 324 * StripMetrics.u; big: true; text: b.t; kind: i; on: b.on;
+        visible: i < 2 || !Studio.sel-return;   // return tracks: M / S only
         clicked => {
             if (i == 0) { Studio.track-mute(Studio.sel-id); }
             if (i == 1) { Studio.track-solo(Studio.sel-id); }
@@ -1130,6 +1207,19 @@ export component AppWindow inherits Window {
                 picked(i) => { Studio.snap-menu-pick(i); }
                 Rectangle { x: 3px; y: Studio.snap-menu-rule1; width: parent.width - 6px; height: 0.5px; background: #ffffff1c; }
                 Rectangle { x: 3px; y: Studio.snap-menu-rule2; width: parent.width - 6px; height: 0.5px; background: #ffffff1c; }
+            }
+        }
+        // Routing menu (src/routing.rs): add send, Out, Add track. Anchored at the control that
+        // opened it, kept inside the window.
+        if Studio.route-menu-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.route-menu-dismiss(); } } }
+            ChoiceList {
+                x: max(4px, min(Studio.route-menu-x, root.width - self.width - 4px));
+                y: Studio.route-menu-y + self.height > root.height - 4px ? max(4px, Studio.route-menu-y - self.height - 26px) : Studio.route-menu-y;
+                width: Studio.route-menu-w; height: Studio.route-menu-h;
+                items: Studio.route-menu-items;
+                picked(i) => { Studio.route-menu-pick(i); }
             }
         }
         // Inspector "In" selector (audio tracks): below the In field (bottom panel y + 59, x 5 + 11).

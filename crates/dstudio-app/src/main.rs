@@ -60,6 +60,7 @@ mod placeholder;
 mod pointer;
 mod prefs;
 mod recording;
+mod routing;
 mod sampler_panel;
 mod selftest;
 mod settings;
@@ -171,6 +172,10 @@ struct Args {
     devices_minimap_review: bool,
     /// review-snap-menu: the timeline's snap menu open, with 1/8 chosen.
     snap_menu_review: bool,
+    /// review-returns: the default project with two return tracks (Audio sends to A post-fader
+    /// and B pre-fader, Instrument to A), the mixer open with the Sends sections expanded.
+    /// review-returns-strip: the same project, Audio selected, channel strip on its Sends tab.
+    returns_review: u8,
     /// reference-<built-in device id>: that device alone in an audio track's chain (an instrument on an instrument track).
     device_state: Option<&'static str>,
     /// Files loaded as if dropped on the window (after the state is set up).
@@ -448,6 +453,15 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.devices_minimap_review = true;
                 }
+                "review-returns" => {
+                    a.reference_default = true;
+                    a.open_mixer = true;
+                    a.returns_review = 1;
+                }
+                "review-returns-strip" => {
+                    a.reference_default = true;
+                    a.returns_review = 2;
+                }
                 "review-snap-menu" => {
                     a.reference_default = true;
                     a.snap_menu_review = true;
@@ -480,7 +494,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-snap-menu, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -757,7 +771,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             if c.devmm_cancel() || c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
                 return true;
             }
-            let popup_open = c.settings.open || c.settings.menu.is_some() || c.menu.open || c.rec.input_menu.is_some() || c.synth.menu.is_some() || c.devices.menu.is_some() || c.auto.picker.is_some() || c.rename.is_some() || c.rename_section.is_some() || c.pr.menu >= 0;
+            let popup_open = c.settings.open || c.settings.menu.is_some() || c.menu.open || c.rec.input_menu.is_some() || c.routing.menu.is_some() || c.synth.menu.is_some() || c.devices.menu.is_some() || c.auto.picker.is_some() || c.rename.is_some() || c.rename_section.is_some() || c.pr.menu >= 0;
             if !popup_open && c.cancel_clip_render() {
                 return true;
             }
@@ -767,6 +781,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
                 c.close_settings();
             }
             c.input_menu_close();
+            c.route_menu_close();
             c.menu_close();
             c.synth_menu_dismiss();
             c.devmenu_dismiss();
@@ -1552,6 +1567,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.sampler_tab(d, tab);
         }
     }
+    if args.returns_review > 0 {
+        let mut c = ctl.borrow_mut();
+        let ids: Vec<_> = c.project().tracks.iter().map(|t| t.id).collect();
+        if let [audio, inst, ..] = ids[..] {
+            let a = c.new_return_with_send(audio);
+            let b = c.new_return_with_send(audio);
+            if let (Some(a), Some(b)) = (a, b) {
+                c.set_send_level(audio, a, dstudio_core::db_to_gain(-6.0));
+                c.set_send_level(audio, b, dstudio_core::db_to_gain(-12.0));
+                c.toggle_send_pre(audio, b);
+                c.add_send(inst, a);
+                c.set_send_level(inst, a, dstudio_core::db_to_gain(-3.5));
+                c.set_track_gain(b, dstudio_core::db_to_gain(-4.0));
+            }
+            c.select_track(audio);
+            c.routing.sends_open = args.returns_review == 1;
+            if args.returns_review == 2 {
+                app.global::<Studio>().set_strip_tab(1);
+            }
+        }
+    }
     if args.recording_review {
         // Offline engine + injected input (no input device): track 1 armed on Input 1,
         // recording from bar 2 with 3 s of a decaying 220 Hz tone rendered so far.
@@ -1618,6 +1654,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_track_arm, |c, id: i32| c.toggle_arm(TrackId(id as u64)));
     on!(on_track_monitor, |c, id: i32| c.toggle_monitor(TrackId(id as u64)));
     on!(on_open_input_menu, |c| c.open_input_menu());
+    // Return tracks, sends and Out (src/routing.rs).
+    on!(on_toggle_returns, |c| c.toggle_returns());
+    on!(on_toggle_sends_open, |c| c.toggle_sends_open());
+    on!(on_open_send_menu, |c, id: i32, x: f32, y: f32| c.open_send_menu(TrackId(id as u64), x, y));
+    on!(on_open_out_menu, |c, x: f32, y: f32| c.open_out_menu(x, y));
+    on!(on_open_add_track_menu, |c, x: f32, y: f32| c.open_add_track_menu(x, y));
+    on!(on_route_menu_pick, |c, i: i32| c.route_menu_pick(i.max(0) as usize));
+    on!(on_route_menu_dismiss, |c| c.route_menu_close());
+    on!(on_send_pos, |c, id: i32, target: i32, p: f32| {
+        c.set_send_pos(TrackId(id as u64), TrackId(target as u64), p);
+    });
+    on!(on_send_reset, |c, id: i32, target: i32| {
+        c.set_send_level(TrackId(id as u64), TrackId(target as u64), 1.0);
+        c.send_gesture_end();
+    });
+    on!(on_send_toggle_pre, |c, id: i32, target: i32| {
+        c.toggle_send_pre(TrackId(id as u64), TrackId(target as u64));
+    });
+    on!(on_send_remove, |c, id: i32, target: i32| {
+        c.remove_send(TrackId(id as u64), TrackId(target as u64));
+    });
+    on!(on_send_gesture_end, |c| c.send_gesture_end());
     on!(on_input_menu_pick, |c, i: i32| c.input_menu_pick(i.max(0) as usize));
     on!(on_input_menu_dismiss, |c| c.input_menu_close());
     on!(on_toggle_settings, |c| c.toggle_settings());

@@ -300,3 +300,16 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   `dstudio_engine_bench`.
 - Next: the UI (spec 002 T9): Returns pill and rows, return strips, Sends sections, Out menu.
 
+### 2026-11-11: return tracks and sends, part 3: app (spec 002)
+
+- `crates/dstudio-app/src/routing.rs`: the Returns pill (view state, saved as `hide_returns` in the preferences),
+  the Add track menu (Audio, Instrument, Return track; the timeline and mixer buttons open it, Cmd+T still adds an
+  audio track), the add-send menu (existing returns, then "New return track"), the Out menu, send edits.
+- Timeline: return rows are pinned above the master row (`View::pinned_from` / `pinned_h`; the pinned band is cut
+  off in a very short timeline, leaving half a track row of scrolling lanes). They have no R button and no expanded
+  automation rows, and take no clips.
+- Mixer: return strips after the track strips with a divider; the Sends chevron expands every strip's Sends section
+  (one slider per send). Channel strip: the Sends tab (knob, Pre switch, remove), Out lists Master and the returns,
+  In reads "Return" on a return track. `Studio.strip-tab` makes the strip tab reachable from review states.
+- Review states `review-returns` and `review-returns-strip`; self-test section `returns_steps`.
+

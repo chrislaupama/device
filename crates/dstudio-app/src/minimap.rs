@@ -431,7 +431,7 @@ impl Controller {
         let m = self.minimap_metrics();
         let p = self.doc.project();
         let any_solo = p.tracks.iter().any(|t| t.solo);
-        let tracks: Vec<TrackInfo> = p.tracks.iter().map(|t| TrackInfo { color: track_color(t.color), dim: t.mute || (any_solo && !t.solo) }).collect();
+        let tracks: Vec<TrackInfo> = p.tracks.iter().take(p.ordinary_track_count()).map(|t| TrackInfo { color: track_color(t.color), dim: t.mute || (any_solo && !t.solo) }).collect();
         let mut h = DefaultHasher::new();
         (self.mm.content_key, m.map_end.to_bits()).hash(&mut h);
         for t in &tracks {

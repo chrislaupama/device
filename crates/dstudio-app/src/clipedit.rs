@@ -318,7 +318,7 @@ impl Controller {
         if self.section_context(x, y, wx, wy, win) {
             return;
         }
-        let hit = hit_test(&self.view, self.lanes_size, self.project().tracks.len(), &self.clip_vis, x, y);
+        let hit = hit_test(&self.view, self.lanes_size, self.lane_tracks(), &self.clip_vis, x, y);
         let Hit::Clip { index, .. } = hit else {
             self.menu_close();
             return;

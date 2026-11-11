@@ -190,6 +190,8 @@ pub struct Row {
     pub h: f32,
     pub master: bool,
     pub extra: bool,
+    /// A pinned return track row (drawn and hit over the scrolling lanes, like the master).
+    pub pinned: bool,
 }
 
 impl Row {
@@ -209,6 +211,7 @@ impl Row {
 pub struct RowDraw {
     pub y0: f32,
     pub h: f32,
+    /// Master or pinned row: drawn in the unscissored layer over the lanes.
     pub master: bool,
     pub overlay: bool,
     pub extra: bool,
@@ -518,8 +521,11 @@ impl Controller {
 
     /// Mirror the row layout into the view (expanded rows, master height).
     pub fn auto_sync_view(&mut self) {
+        let n = self.lane_tracks();
+        // Return tracks are pinned above the master row while they show (src/routing.rs).
+        let pinned_from = self.project().ordinary_track_count().min(n);
         let extra: Vec<f32> = if self.auto.shown {
-            let ids: Vec<TrackId> = self.project().tracks.iter().map(|t| t.id).collect();
+            let ids: Vec<TrackId> = self.project().tracks.iter().take(pinned_from).map(|t| t.id).collect();
             ids.iter().map(|id| if self.auto.expanded.contains(id) { self.extra_targets(*id).len() as f32 * EXTRA_PITCH } else { 0.0 }).collect()
         } else {
             Vec::new()
@@ -530,9 +536,17 @@ impl Controller {
             .project()
             .tracks
             .iter()
+            .take(n)
             .map(|t| timeline::pitch_for_scale(preview.filter(|(id, _)| *id == t.id).map_or(t.height, |(_, s)| s)))
             .collect();
         self.view.master_h = if self.auto.shown { timeline::MASTER_H_AUTO } else { timeline::MASTER_H };
+        self.view.pinned_from = if pinned_from < n { pinned_from } else { usize::MAX };
+        // In a short timeline the pinned band leaves half a track row of scrolling lanes; return
+        // rows that don't fit are cut off (the mixer still shows them, the pill hides the band).
+        let full: f32 = (pinned_from..n).map(|i| self.view.pitch(i)).sum();
+        let room = (self.lanes_size.1 - timeline::RULER_H - self.view.master_h - timeline::TRACK_PITCH * 0.5).max(0.0);
+        self.view.pinned_h = full.min(room);
+        self.view.height = self.lanes_size.1;
     }
 
     /// All automation rows (lane-local), track rows first, master last.
@@ -542,18 +556,18 @@ impl Controller {
         }
         let v = &self.view;
         let mut rows = Vec::new();
-        for (i, t) in self.project().tracks.iter().enumerate() {
+        for (i, t) in self.project().tracks.iter().take(self.lane_tracks()).enumerate() {
             let key = Some(t.id);
             let top = v.track_top(i);
-            rows.push(Row { key, target: self.auto_target(key), y0: top, h: v.pitch(i) - 0.5, master: false, extra: false });
-            if self.auto.expanded.contains(&t.id) {
+            rows.push(Row { key, target: self.auto_target(key), y0: top, h: v.pitch(i) - 0.5, master: false, extra: false, pinned: v.is_pinned(i) });
+            if self.auto.expanded.contains(&t.id) && !v.is_pinned(i) {
                 for (k, target) in self.extra_targets(t.id).into_iter().enumerate() {
-                    rows.push(Row { key, target, y0: top + v.pitch(i) + k as f32 * EXTRA_PITCH, h: EXTRA_H, master: false, extra: true });
+                    rows.push(Row { key, target, y0: top + v.pitch(i) + k as f32 * EXTRA_PITCH, h: EXTRA_H, master: false, extra: true, pinned: false });
                 }
             }
         }
         let h = self.lanes_size.1;
-        rows.push(Row { key: None, target: AutomationTarget::Volume, y0: h - v.master_h + 1.0, h: v.master_h - 1.0, master: true, extra: false });
+        rows.push(Row { key: None, target: AutomationTarget::Volume, y0: h - v.master_h + 1.0, h: v.master_h - 1.0, master: true, extra: false, pinned: false });
         rows
     }
 
@@ -602,7 +616,7 @@ impl Controller {
             let empty = lane.as_ref().is_none_or(|l| l.points.is_empty());
             let x0 = v.x_of(0.0);
             let start_dot = (empty && x0 > -3.0 && x0 < w).then(|| (x0, row.y_of(norm_of(&row.target, stat))));
-            out.rows.push(RowDraw { y0: row.y0, h: row.h, master: row.master, overlay: !row.master, extra: row.extra, style, hue: self.lane_hue(&row.target), poly, handles, start_dot });
+            out.rows.push(RowDraw { y0: row.y0, h: row.h, master: row.master || row.pinned, overlay: !row.master, extra: row.extra, style, hue: self.lane_hue(&row.target), poly, handles, start_dot });
         }
         if let Some(Gesture::Marquee { x0, y0, x1, y1, .. }) = &self.auto.gesture {
             out.marquee = Some([x0.min(*x1), y0.min(*y1), (x1 - x0).abs(), (y1 - y0).abs()]);
@@ -613,11 +627,11 @@ impl Controller {
     /// Value labels at the left of every visible row (Slint text over the texture).
     pub fn auto_labels(&self) -> Vec<AutoLabel> {
         let v = &self.view;
-        let bottom = self.lanes_size.1 - v.master_h;
+        let bottom = self.lanes_size.1 - v.footer_h();
         let t0 = (v.beat_at(0.0) * PPQ as f64).round() as Ticks;
         self.auto_rows()
             .into_iter()
-            .filter(|r| r.master || (r.y0 >= timeline::RULER_H - 1.0 && r.y0 + 12.0 <= bottom))
+            .filter(|r| r.master || r.pinned || (r.y0 >= timeline::RULER_H - 1.0 && r.y0 + 12.0 <= bottom))
             .map(|r| {
                 let val = self.lane(r.key, &r.target).and_then(|l| l.value_at(t0)).unwrap_or_else(|| self.static_value(r.key, &r.target));
                 let ly = r.y_of(norm_of(&r.target, val));
@@ -794,8 +808,9 @@ impl Controller {
             return None;
         }
         let rows = self.auto_rows();
-        let master = rows.iter().find(|r| r.master && r.contains(y)).cloned();
-        master.or_else(|| rows.into_iter().find(|r| !r.master && r.contains(y) && y < self.lanes_size.1 - self.view.master_h))
+        let fixed = rows.iter().find(|r| (r.master || r.pinned) && r.contains(y)).cloned();
+        let bottom = self.lanes_size.1 - self.view.footer_h();
+        fixed.or_else(|| rows.into_iter().find(|r| !r.master && !r.pinned && r.contains(y) && y < bottom))
     }
 
     fn ticks_at(&self, x: f32, snap: bool) -> Ticks {
@@ -1223,7 +1238,7 @@ impl Controller {
     /// Controls that follow automation (display only) + their "automated" style.
     pub fn push_auto_feedback(&mut self, s: &Studio) {
         let p = self.project();
-        let ids: Vec<TrackId> = p.tracks.iter().map(|t| t.id).collect();
+        let ids: Vec<TrackId> = p.tracks.iter().take(self.lane_tracks()).map(|t| t.id).collect();
         for (i, id) in ids.iter().enumerate() {
             let (gain, va, pan, pa) = self.track_feedback(*id);
             if let Some(r) = self.tracks_model.row_data(i) {
@@ -1298,8 +1313,10 @@ impl Controller {
     /// Track header rows (controls, automation pill, row geometry).
     pub fn track_rows(&self) -> Vec<TrackRow> {
         let p = self.project();
+        let first_return = p.ordinary_track_count();
         p.tracks
             .iter()
+            .take(self.lane_tracks())
             .enumerate()
             .map(|(i, t)| {
                 let target = self.auto_target(Some(t.id));
@@ -1308,6 +1325,8 @@ impl Controller {
                 TrackRow {
                     id: t.id.0 as i32,
                     number: i as i32 + 1,
+                    is_return: t.is_return(),
+                    letter: if t.is_return() { dstudio_core::return_letter(i - first_return).to_string().into() } else { Default::default() },
                     name: t.name.clone().into(),
                     instrument: t.kind == TrackKind::Instrument,
                     color: crate::controller::slint_color(crate::controller::track_color(t.color)),
@@ -1318,7 +1337,9 @@ impl Controller {
                     monitor: t.monitor,
                     volume_pos: slider_from_gain(gain),
                     pan,
-                    y: self.view.track_offset(i),
+                    // Pinned rows (return tracks) are placed inside the pinned band.
+                    y: if self.view.is_pinned(i) { self.view.track_offset(i) - self.view.track_offset(self.view.pinned_from) } else { self.view.track_offset(i) },
+                    pinned: self.view.is_pinned(i),
                     h: self.view.track_span(i),
                     row_h: self.view.pitch(i) - 0.5,
                     auto_cat: cat.into(),
@@ -1342,8 +1363,9 @@ impl Controller {
         s.set_auto_armed(self.auto.armed);
         // Slint's master row excludes the 0.5 pt separator above it.
         s.set_master_h(self.view.master_h - 0.5);
-        s.set_tracks_height(self.view.track_offset(self.project().tracks.len()));
-        let n = self.project().tracks.len();
+        let n = self.lane_tracks().min(self.view.pinned_from);
+        s.set_tracks_height(self.view.track_offset(n));
+        s.set_pinned_h(self.view.pinned_h);
         let mut extras = Vec::new();
         if self.auto.shown {
             for i in 0..n {
@@ -1485,7 +1507,7 @@ mod tests {
         assert_eq!(value_of(&v, 0.0), VOLUME_MIN_DB);
         let c = AutomationTarget::Synth { param: SynthParam::FilterCutoff };
         assert!((value_of(&c, 0.5) - 632.46).abs() < 1.0);
-        let row = Row { key: None, target: v.clone(), y0: 0.0, h: 74.0, master: false, extra: false };
+        let row = Row { key: None, target: v.clone(), y0: 0.0, h: 74.0, master: false, extra: false, pinned: false };
         // 0 dB at 0.557 of the lane height.
         assert!((row.y_of(norm_of(&v, 0.0)) / 74.0 - 0.557).abs() < 0.003);
         assert!((row.norm_at(row.y_of(0.3)) - 0.3).abs() < 1e-5);

@@ -6,6 +6,10 @@ import { Tokens } from "tokens.slint";
 export struct TrackRow {
     id: int,
     number: int,
+    // Return tracks (src/routing.rs): lettered A, B, C ... instead of numbered.
+    is-return: bool,
+    letter: string,
+    pinned: bool,       // drawn in the pinned band above the master row (y relative to it)
     name: string,
     instrument: bool,
     color: color,
@@ -272,6 +276,8 @@ export struct MixerStrip {
     id: int,
     name: string,
     instrument: bool,
+    is-return: bool,     // return strip: no R / I, no Sends section
+    group-start: bool,   // first return strip (divider before it)
     color: color,
     selected: bool,
     mute: bool,
@@ -282,6 +288,9 @@ export struct MixerStrip {
     gain-text: string, // gain readout: "0.0", "+1.5", "−12.0", "−∞" at or below -60 dB
 }
 export struct StripMeter { l: float, r: float, peak: string }   // 0 (top) .. 1 (silent)
+// One send (src/routing.rs): sender track id, its row among the sender's sends, the return
+// (id, letter, name, colour), level as a volume-slider position 0..1 with readouts, pre-fader.
+export struct SendRow { track: int, row: int, target: int, letter: string, name: string, color: color, pos: float, db-text: string, short-text: string, pre: bool }
 
 // ---- assistant panel ----
 // kind: 0 user, 1 assistant reply, 2 error, 3 pending
@@ -758,6 +767,36 @@ export global Studio {
     callback snap-menu-toggle(length, length);
     callback snap-menu-pick(int);
     callback snap-menu-dismiss();
+    // ---- return tracks, sends and Out (src/routing.rs) ----
+    in-out property <int> strip-tab;               // channel strip tab: 0 Input, 1 Sends (view state)
+    in property <bool> returns-shown;             // Timeline Returns pill lit (return rows show)
+    in property <length> pinned-h;                 // height of the pinned return rows
+    in property <bool> sends-open;                 // mixer Sends sections expanded
+    in property <[SendRow]> strip-sends;           // every strip's sends (rows name their sender)
+    in property <int> strip-sends-max;             // most sends on one track (expanded section rows)
+    in property <bool> sel-return;                 // the selected track is a return track
+    in property <string> sel-letter;
+    in property <string> sel-out-text: "Master";
+    in property <[SendRow]> sel-sends;             // channel strip Sends tab
+    in property <bool> sel-can-send;
+    in property <bool> route-menu-open;            // add send / Out / Add track menu
+    in property <[ChoiceItem]> route-menu-items;
+    in property <length> route-menu-x;
+    in property <length> route-menu-y;
+    in property <length> route-menu-w: 120px;
+    in property <length> route-menu-h: 48px;
+    callback toggle-returns();
+    callback toggle-sends-open();
+    callback open-send-menu(int, length, length);  // track id, anchor x, y (window)
+    callback open-out-menu(length, length);
+    callback open-add-track-menu(length, length);
+    callback route-menu-pick(int);
+    callback route-menu-dismiss();
+    callback send-pos(int, int, float);            // track, return, slider position 0..1
+    callback send-reset(int, int);                 // level back to 0 dB
+    callback send-toggle-pre(int, int);
+    callback send-remove(int, int);
+    callback send-gesture-end();
     in property <bool> input-menu-open;
     in property <[ChoiceItem]> input-menu-items;
     in property <length> input-menu-h: 48px;

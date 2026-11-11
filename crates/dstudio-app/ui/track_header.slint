@@ -281,7 +281,7 @@ export component TrackHeaderRow inherits Rectangle {
     property <length> top-y: root.minimal ? (root.row-h - 13.6px) / 2 : (root.show-auto ? 8.5px : 21.25px) + root.centre-shift;
     property <length> bottom-y: root.top-y + 18.7px;
     accessible-role: list-item;
-    accessible-label: "Track " + root.t.number + " " + root.t.name;
+    accessible-label: root.t.is-return ? "Return track " + root.t.letter + " " + root.t.name : "Track " + root.t.number + " " + root.t.name;
     ta := TouchArea { clicked => { Studio.select-track(root.t.id); } }
     Rectangle {
         height: root.row-h;
@@ -295,12 +295,12 @@ export component TrackHeaderRow inherits Rectangle {
     }
     Text {
         x: 8.5px; y: (root.row-h - 13.6px) / 2; width: 13.6px; height: 13.6px;
-        text: root.t.number; color: #ffffff; font-size: 8.5px; font-weight: 700; letter-spacing: -0.34px;
+        text: root.t.is-return ? root.t.letter : root.t.number; color: #ffffff; font-size: 8.5px; font-weight: 700; letter-spacing: -0.34px;
         horizontal-alignment: center; vertical-alignment: center;
     }
     Icon {
         x: 27.2px; y: root.top-y; width: 13.6px; height: 13.6px;
-        d: root.t.instrument ? Icons.track-instrument : Icons.track-audio;
+        d: root.t.is-return ? Icons.returns : root.t.instrument ? Icons.track-instrument : Icons.track-audio;
         filled: root.t.instrument; stroke-width: 1.1px; ink: Tokens.text-tertiary;
     }
     Text {
@@ -316,7 +316,8 @@ export component TrackHeaderRow inherits Rectangle {
         x: 41.65px; y: root.bottom-y + 1.7px; text: "S"; label: root.t.solo ? "Unsolo track" : "Solo track";
         on: root.t.solo; on-color: Tokens.track-solo-on; on-text: #1a1a1a; pressed => { Studio.track-solo(root.t.id); }
     }
-    if !root.minimal: TrackButton {
+    // Return tracks record nothing: no R.
+    if !root.minimal && !root.t.is-return: TrackButton {
         x: 55.25px; y: root.bottom-y + 1.7px; text: "R"; label: root.t.arm ? "Disarm track for recording" : "Arm track for recording";
         on: root.t.arm; on-color: Tokens.track-arm-on; pressed => { Studio.track-arm(root.t.id); }
     }
