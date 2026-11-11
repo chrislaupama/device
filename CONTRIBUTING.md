@@ -27,7 +27,9 @@ cd engine && cmake --preset default && cmake --build --preset default && ctest -
 cargo run --release -p dstudio-app -- --self-test --no-audio   # drive the real UI through its checks
 ```
 
-CI runs all of these on macOS, Windows and Linux for every pull request. On Windows the self-test step is informational
+CI runs the tests and the self-test (not the interactive `--demo`) on macOS, Windows and Linux for every pull request.
+Its runners have no audio device, so the self-test runs with `--no-audio` and anything that needs audio hardware has to
+be tested by hand. On Windows the self-test step is informational
 for now (`continue-on-error`), so a green Windows job does not mean the self-test passed: open that step's output to
 check. The engine is built with warnings as errors on
 clang, MSVC and GCC, so please build on more than one compiler if you can, or check the CI result.

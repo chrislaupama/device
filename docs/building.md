@@ -139,7 +139,7 @@ clicks through the speakers and records them with the microphone, so it is
 ignored by default and gated on an environment variable:
 
 ```sh
-DSTUDIO_TEST_REAL_INPUT=1 cargo test -p dstudio-engine --test real_loopback -- --ignored --nocapture
+DSTUDIO_TEST_REAL_INPUT=1 cargo test -p dstudio-engine --test real_loopback -- --ignored --nocapture --test-threads=1
 ```
 
 The workflow never uses a self-hosted runner, has no secrets and gives its
