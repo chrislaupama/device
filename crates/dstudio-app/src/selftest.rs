@@ -2767,7 +2767,7 @@ fn midi_recording_steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("{notes} notes, start {} len {}", v.start_beats, v.len_beats))
         })),
-        DoC("midi rec: try to disarm the Instrument track (R, then undo of its arm) while recording", Box::new(|_, ctl| {
+        DoC("midi rec: try to disarm the Instrument track (R) while recording", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
             if !offline(&c) || !c.rec.recording {
                 return;
@@ -2775,14 +2775,26 @@ fn midi_recording_steps() -> Vec<Step> {
             if let Some(t) = c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument).map(|t| t.id) {
                 c.toggle_arm(t);
             }
-            c.undo();
         })),
-        Check("midi rec: the Instrument track stays armed until the pass stops", Box::new(|c, _| {
+        Check("midi rec: R leaves the Instrument track armed during the pass", Box::new(|c, _| {
             if !offline(c) || !c.rec.recording {
                 return Ok(());
             }
             let t = c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument).ok_or("no instrument track")?;
             t.arm.then_some(()).ok_or("disarmed during the pass".into())
+        })),
+        DoC("midi rec: try to undo the Instrument track's arm while recording", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            if offline(&c) && c.rec.recording {
+                c.undo();
+            }
+        })),
+        Check("midi rec: undo waits, the Instrument track stays armed until the pass stops", Box::new(|c, _| {
+            if !offline(c) || !c.rec.recording {
+                return Ok(());
+            }
+            let t = c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument).ok_or("no instrument track")?;
+            (t.arm && c.doc.undo_label().is_some()).then_some(()).ok_or(format!("arm {} undo {:?}", t.arm, c.doc.undo_label()))
         })),
         Do("midi rec: press R (stop)", Box::new(|a| key(a, "r", false, false))),
         Check("midi rec: one \"Record\" undo step added a 1-bar MIDI clip at bar 2 with C4 and E4", Box::new(move |c, _| {

@@ -43,6 +43,9 @@ pub struct MidiPass {
     /// The loop range (frames) when the pass first wrapped: kept for the rest of the
     /// pass, so turning the loop off after a wrap still folds notes held across it.
     pub wrap_loop: Option<(i64, i64)>,
+    /// The loop range at the previous poll: a wrap followed by the loop being turned
+    /// off before the next poll is still read in the loop it happened in.
+    pub last_loop: Option<(i64, i64)>,
     pub events: Vec<CapturedEvent>,
     /// The instrument tracks armed when the pass started: the ones it records on.
     pub tracks: Vec<TrackId>,
@@ -185,7 +188,8 @@ impl Controller {
         self.engine.set_midi_capture(true);
         let start = self.audible_frames();
         let tracks = self.armed_midi();
-        self.midi_in.pass = Some(MidiPass { start, last_pos: start, wrapped: false, wrap_loop: None, events: Vec::new(), tracks });
+        let last_loop = self.loop_frames();
+        self.midi_in.pass = Some(MidiPass { start, last_pos: start, wrapped: false, wrap_loop: None, last_loop, events: Vec::new(), tracks });
     }
 
     /// Drain the capture ring and notice loop wraps (the playhead jumping back).
@@ -194,10 +198,13 @@ impl Controller {
             return;
         }
         let pos = self.audible_frames();
-        let current = self.loop_frames();
-        let looping = current.is_some();
+        let now_loop = self.loop_frames();
         let got = self.engine.read_midi_capture();
         let Some(pass) = self.midi_in.pass.as_mut() else { return };
+        // The loop in force since the last poll: the current one, or the one just turned off.
+        let current = now_loop.or(pass.last_loop);
+        pass.last_loop = now_loop;
+        let looping = current.is_some();
         absorb(pass, got.into_iter().map(|n| CapturedEvent { frame: n.frame, on: n.on, pitch: n.pitch, velocity: n.velocity }), looping);
         if looping && pos < pass.last_pos {
             pass.wrapped = true;
@@ -296,6 +303,16 @@ mod tests {
         p.wrapped = true;
         p.wrap_loop = l;
         assert_eq!(pass_bounds(&p, 6000, None).wrapped_loop, l, "loop turned off after the wrap");
+    }
+    #[test]
+    fn a_wrap_just_before_the_loop_is_turned_off_still_counts() {
+        // Events of the poll after the loop was turned off: the playhead had wrapped.
+        let ev = |frame, on| CapturedEvent { frame, on, pitch: 60, velocity: if on { 100 } else { 0 } };
+        let mut p = MidiPass { start: 1000, last_loop: Some((1000, 5000)), ..Default::default() };
+        absorb(&mut p, [ev(4800, true)].into_iter(), true);
+        let current = None.or(p.last_loop);
+        absorb(&mut p, [ev(1200, false)].into_iter(), current.is_some());
+        assert!(p.wrapped);
     }
     #[test]
     fn absorb_detects_wrap() {
