@@ -3,6 +3,7 @@
 #pragma once
 
 #include "devices/builtin.hpp"
+#include "midi_input.hpp"
 #include "plugins/plugin_instance.hpp"
 #include "render_graph.hpp"
 
@@ -23,6 +24,10 @@ public:
     float* track_l() noexcept { return track_l_.data(); }
     float* track_r() noexcept { return track_r_.data(); }
     float* synth() noexcept { return synth_.data(); } // mono instrument scratch
+    float* live_synth() noexcept { return live_.data(); } // mono live-input synth scratch
+    // MIDI input events of one track (kMidiScratch).
+    static constexpr uint32_t kMidiScratch = MidiInputHub::kMaxBlockEvents + 128;
+    MidiEvent* midi_scratch() noexcept { return midi_.data(); }
     float* plugin_l() noexcept { return plugin_l_.data(); } // instrument plugin output
     float* plugin_r() noexcept { return plugin_r_.data(); }
     const float* zeros() const noexcept { return zeros_.data(); } // max_block zeros (missing input channels)
@@ -54,6 +59,8 @@ private:
     uint32_t mod_points_;
     std::vector<float> mod_;
     std::vector<BuiltinMod> mod_binds_;
+    std::vector<float> live_;
+    std::vector<MidiEvent> midi_;
     se_synth_params synth_params_{};
 };
 
@@ -82,6 +89,8 @@ struct InstrumentInputs {
     // (graph->warp_voices live, private ones for export); null = warped clips
     // in the stretch modes fall back to varispeed.
     WarpVoice* const* warp_voices = nullptr;
+    // MIDI input (live path only; see MidiBlock and graph->midi_tracks).
+    const MidiBlock* midi = nullptr;
 };
 
 // Device input for one render_block() call: `count` channel pointers, each

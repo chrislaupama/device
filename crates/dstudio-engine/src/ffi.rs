@@ -637,6 +637,44 @@ impl Default for se_device_info {
     }
 }
 
+/// One MIDI input port (se_midi_inputs_list).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct se_midi_input_info {
+    pub id: [c_char; SE_DEVICE_STRING_MAX],
+    pub name: [c_char; SE_DEVICE_STRING_MAX],
+    pub events: u64,
+    pub open: u8,
+    pub _pad: [u8; 7],
+}
+
+impl Default for se_midi_input_info {
+    fn default() -> Self {
+        // SAFETY: plain-old-data; all-zero is a valid value.
+        unsafe { std::mem::zeroed() }
+    }
+}
+
+/// One captured note event (se_midi_capture_read).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct se_midi_captured {
+    pub frame: i64,
+    pub status: u8,
+    pub data1: u8,
+    pub data2: u8,
+    pub _pad: [u8; 5],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct se_midi_stats {
+    pub received: u64,
+    pub delivered: u64,
+    pub dropped: u64,
+    pub capture_dropped: u64,
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct se_device_config {
@@ -829,6 +867,13 @@ unsafe extern "C" {
     pub fn se_preview_set(engine: *mut se_engine, gain: f32, rate: f32, solo: u8) -> i32;
     pub fn se_preview_get(engine: *mut se_engine, out: *mut se_preview_info) -> i32;
     pub fn se_preview_note(engine: *mut se_engine, device_id: u64, pitch: u8, velocity: u8) -> i32;
+    pub fn se_midi_inputs_list(engine: *mut se_engine, out: *mut se_midi_input_info, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_midi_inputs_open(engine: *mut se_engine, ids: *const *const c_char, count: usize) -> i32;
+    pub fn se_midi_inject(engine: *mut se_engine, status: u8, data1: u8, data2: u8) -> i32;
+    pub fn se_midi_set_focus(engine: *mut se_engine, track_id: u64) -> i32;
+    pub fn se_midi_capture_enable(engine: *mut se_engine, enabled: u8) -> i32;
+    pub fn se_midi_capture_read(engine: *mut se_engine, out: *mut se_midi_captured, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_midi_stats_get(engine: *mut se_engine, out: *mut se_midi_stats) -> i32;
 }
 
 /// Guards the hand-written declarations against drift from dstudio_engine.h.
@@ -1015,6 +1060,11 @@ mod abi_layout {
             ),
             (256, 512, 516, 520, 521, 524, 528)
         );
+        assert_eq!((size_of::<se_midi_input_info>(), align_of::<se_midi_input_info>()), (528, 8));
+        assert_eq!((offset_of!(se_midi_input_info, name), offset_of!(se_midi_input_info, events), offset_of!(se_midi_input_info, open)), (256, 512, 520));
+        assert_eq!((size_of::<se_midi_captured>(), align_of::<se_midi_captured>()), (16, 8));
+        assert_eq!((offset_of!(se_midi_captured, status), offset_of!(se_midi_captured, data1), offset_of!(se_midi_captured, data2)), (8, 9, 10));
+        assert_eq!((size_of::<se_midi_stats>(), align_of::<se_midi_stats>()), (32, 8));
         assert_eq!((size_of::<se_device_config>(), align_of::<se_device_config>()), (32, 8));
         assert_eq!(
             (offset_of!(se_device_config, input_uid), offset_of!(se_device_config, sample_rate), offset_of!(se_device_config, buffer_size), offset_of!(se_device_config, input_enabled)),

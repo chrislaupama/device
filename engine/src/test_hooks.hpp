@@ -3,6 +3,7 @@
 #pragma once
 
 #include "platform/audio_device.hpp"
+#include "platform/midi_backend.hpp"
 #include "dstudio_engine.h"
 
 #include <cstddef>
@@ -32,5 +33,7 @@ bool plugin_set_parameter(se_engine* e, uint64_t device_id, uint32_t param_id, d
 // where the format has no host-side path (VST3/CLAP: use the test plugins'
 // hidden gesture parameters instead).
 bool plugin_simulate_gesture(se_engine* e, uint64_t device_id, uint32_t param_id, float normalized);
+// Replace the MIDI backend (fake ports). Call before any se_midi_* call.
+void set_midi_backend(se_engine* e, std::unique_ptr<MidiBackend> backend);
 
 } // namespace dstudio::testing

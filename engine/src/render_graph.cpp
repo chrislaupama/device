@@ -725,6 +725,10 @@ int32_t build_render_graph(const se_session_desc_v8& desc8, const AssetLookup& l
 
     g->synth_refs.resize(g->tracks.size());
     g->synths.assign(g->tracks.size(), nullptr);
+    g->midi_refs.resize(g->tracks.size());
+    g->midi_tracks.assign(g->tracks.size(), nullptr);
+    g->midi_explicit = std::any_of(g->tracks.begin(), g->tracks.end(),
+                                   [](const TrackNode& t) { return t.instrument && (t.arm || t.monitor); });
     plan_sidechains(*g);
 
     g->meter_count = g->tracks.size();
@@ -760,6 +764,9 @@ std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g) {
     c->assets = g.assets;
     c->synth_refs = g.synth_refs;
     c->synths = g.synths;
+    c->midi_refs = g.midi_refs;
+    c->midi_tracks = g.midi_tracks;
+    c->midi_explicit = g.midi_explicit;
     c->meter_count = g.meter_count;
     c->meters = std::make_unique<TrackMeter[]>(c->meter_count);
     for (std::size_t i = 0; i < c->meter_count; ++i) {
