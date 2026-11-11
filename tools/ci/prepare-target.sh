@@ -33,8 +33,8 @@ set -euo pipefail
 profile=${1:?usage: prepare-target.sh debug|release}
 target=${CARGO_TARGET_DIR:?CARGO_TARGET_DIR is not set}
 case "$profile" in
-    debug) other=release release_flag=() ;;
-    release) other=debug release_flag=(--release) ;;
+    debug) other=release ;;
+    release) other=debug ;;
     *) echo "unknown profile $profile" >&2; exit 2 ;;
 esac
 mkdir -p "$target"
@@ -72,5 +72,9 @@ if [ "${RUNNER_OS:-}" != "Windows" ]; then
     done < <(find "${dirs[@]}" -name CMakeCache.txt 2>/dev/null)
 fi
 
-# 4.
-cargo clean -p dstudio-engine --locked "${release_flag[@]}"
+# 4. (No empty-array expansion: macOS runs bash 3.2, where that fails under `set -u`.)
+if [ "$profile" = release ]; then
+    cargo clean -p dstudio-engine --locked --release
+else
+    cargo clean -p dstudio-engine --locked
+fi
