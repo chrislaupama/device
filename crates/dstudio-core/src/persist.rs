@@ -3,9 +3,7 @@
 //! A project is a directory `Name.dsproj/` (portable, VCS-friendly) holding
 //! `project.json`. Media stays where it is and is referenced by both a
 //! project-relative and an absolute path. The JSON envelope carries a schema
-//! version; `migrate` upgrades older documents step by step. Projects saved
-//! before the Device Studio rename (`Name.saineproj/`, format `saine-project`)
-//! still open; they are written back in the current format.
+//! version; `migrate` upgrades older documents step by step.
 //!
 //! SQLite is reserved for large, query-heavy metadata (sample library index,
 //! analysis caches), not for the project document itself. See docs/architecture.md.
@@ -18,13 +16,9 @@ use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
 pub const FORMAT: &str = "device-studio-project";
-/// Format tags written by earlier builds that `load` still accepts.
-pub const LEGACY_FORMATS: &[&str] = &["saine-project"];
 pub const SCHEMA_VERSION: u32 = 1;
 pub const PROJECT_FILE: &str = "project.json";
 pub const EXTENSION: &str = "dsproj";
-/// Project folder extension used before the Device Studio rename.
-pub const LEGACY_EXTENSION: &str = "saineproj";
 
 #[derive(Debug, Error)]
 pub enum PersistError {
@@ -32,7 +26,7 @@ pub enum PersistError {
     Io { path: PathBuf, source: std::io::Error },
     #[error("malformed project file: {0}")]
     Format(#[from] serde_json::Error),
-    #[error("not a Device Studio project (format = {0:?})")]
+    #[error("not a Device Studio project (format = {0:?}); a project saved before the app was renamed has to be opened in an earlier build and saved again with Save As under a .dsproj name")]
     WrongFormat(String),
     #[error("project schema {found} is newer than supported {supported}")]
     TooNew { found: u32, supported: u32 },
@@ -83,20 +77,19 @@ pub fn save(project: &Project, dir: &Path) -> Result<(), PersistError> {
     Ok(())
 }
 
+/// Loads the project folder at `dir`: reads its envelope, rejects anything that is not the current
+/// format or is newer than this build, migrates older schemas, and returns the project with any missing media files.
 pub fn load(dir: &Path) -> Result<Loaded, PersistError> {
     let path = dir.join(PROJECT_FILE);
     let bytes = fs::read(&path).map_err(io(&path))?;
     let env: Envelope = serde_json::from_slice(&bytes)?;
-    if env.format != FORMAT && !LEGACY_FORMATS.contains(&env.format.as_str()) {
+    if env.format != FORMAT {
         return Err(PersistError::WrongFormat(env.format));
     }
     if env.schema_version > SCHEMA_VERSION {
         return Err(PersistError::TooNew { found: env.schema_version, supported: SCHEMA_VERSION });
     }
-    let mut value = migrate(env.schema_version, env.project);
-    if env.format != FORMAT {
-        rename_builtin_vendor(&mut value);
-    }
+    let value = migrate(env.schema_version, env.project);
     let mut project: Project = serde_json::from_value(value)?;
     // Instrument tracks saved with the classic synth get the Synth device.
     crate::builtin::synth_v2::upgrade_project(&mut project);
@@ -132,22 +125,6 @@ fn migrate(from: u32, value: serde_json::Value) -> serde_json::Value {
     match from {
         // v1 is current. Future: `0 => migrate(1, v0_to_v1(value))`.
         _ => value,
-    }
-}
-
-/// Built-in devices saved before the Device Studio rename carry the old vendor
-/// name in their `PluginRef`; give them the current one (any nesting depth, so
-/// rack chains and instrument slots are covered too).
-fn rename_builtin_vendor(v: &mut serde_json::Value) {
-    match v {
-        serde_json::Value::Object(map) => {
-            if map.get("format").and_then(|f| f.as_str()) == Some("builtin") && map.get("vendor").and_then(|f| f.as_str()) == Some("Saine Studio") {
-                map.insert("vendor".into(), crate::builtin::VENDOR.into());
-            }
-            map.values_mut().for_each(rename_builtin_vendor);
-        }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(rename_builtin_vendor),
-        _ => {}
     }
 }
 

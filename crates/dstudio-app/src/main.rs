@@ -882,13 +882,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // App preferences (Settings › Audio): never read or written by self-tests and
     // `--state` / screenshot runs, so those can never open a real input device.
     let use_prefs = !args.self_test && !args.reference_default && args.screenshot.is_none() && args.exit_after_frames.is_none();
-    if use_prefs {
-        match prefs::migrate_legacy_support_dir() {
-            Ok(Some(dir)) => eprintln!("prefs: moved settings from the Saine Studio folder to {}", dir.display()),
-            Ok(None) => {}
-            Err(e) => eprintln!("prefs: could not move the Saine Studio folder ({e}); starting with defaults"),
-        }
-    }
     let prefs_path = if use_prefs { prefs::default_path() } else { None };
     let mut saved_prefs = prefs::Preferences::default();
     let mut prefs_error = None;

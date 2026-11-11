@@ -6,9 +6,6 @@
 //! - Linux: `$XDG_CONFIG_HOME/device-studio/preferences.json` (or `~/.config/...`)
 //! - Windows: `%APPDATA%\Device Studio\preferences.json`
 //!
-//! The directory was called `Saine Studio` (`saine-studio` on Linux) before the
-//! rename; `migrate_legacy_support_dir` moves it over on first launch.
-//!
 //! `DSTUDIO_PREFS_PATH` overrides the location. `--self-test` and the
 //! `--state`/`--screenshot` runs never read or write this file.
 
@@ -107,11 +104,6 @@ pub fn support_dir() -> Option<PathBuf> {
     support_dir_named("Device Studio", "device-studio")
 }
 
-/// The support directory used before the Device Studio rename.
-fn legacy_support_dir() -> Option<PathBuf> {
-    support_dir_named("Saine Studio", "saine-studio")
-}
-
 fn support_dir_named(name: &str, linux_name: &str) -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     Some(if cfg!(target_os = "macos") {
@@ -121,28 +113,6 @@ fn support_dir_named(name: &str, linux_name: &str) -> Option<PathBuf> {
     } else {
         std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| home.map(|h| h.join(".config")))?.join(linux_name)
     })
-}
-
-/// Moves the pre-rename support directory (preferences, plugin cache) to the
-/// current location, once: only when the old one exists and the new one does
-/// not. Failures are reported and leave both directories as they were, so the
-/// app simply starts with defaults.
-pub fn migrate_legacy_support_dir() -> Result<Option<PathBuf>, String> {
-    match (legacy_support_dir(), support_dir()) {
-        (Some(old), Some(new)) => migrate_dir(&old, &new),
-        _ => Ok(None),
-    }
-}
-
-fn migrate_dir(old: &Path, new: &Path) -> Result<Option<PathBuf>, String> {
-    if !old.is_dir() || new.exists() {
-        return Ok(None);
-    }
-    if let Some(parent) = new.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    }
-    std::fs::rename(old, new).map_err(|e| format!("moving {} to {}: {e}", old.display(), new.display()))?;
-    Ok(Some(new.to_path_buf()))
 }
 
 /// Default preferences file location (see the module docs).
@@ -202,23 +172,5 @@ mod tests {
         assert_eq!(loaded.general, GeneralPrefs::default(), "files without General get the defaults");
         assert!(loaded.general.show_plugin_windows && loaded.general.plugin_windows_on_top);
         let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn legacy_support_dir_moves_once() {
-        let root = std::env::temp_dir().join(format!("dstudio-prefs-migrate-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let (old, new) = (root.join("Saine Studio"), root.join("Device Studio"));
-        // Nothing to move.
-        assert_eq!(migrate_dir(&old, &new).unwrap(), None);
-        std::fs::create_dir_all(&old).unwrap();
-        std::fs::write(old.join("preferences.json"), "{}").unwrap();
-        assert_eq!(migrate_dir(&old, &new).unwrap(), Some(new.clone()));
-        assert!(new.join("preferences.json").is_file() && !old.exists());
-        // An existing new directory is never overwritten.
-        std::fs::create_dir_all(&old).unwrap();
-        assert_eq!(migrate_dir(&old, &new).unwrap(), None);
-        assert!(old.exists());
-        let _ = std::fs::remove_dir_all(root);
     }
 }
