@@ -140,10 +140,13 @@ jobs:
           key: perf-time-${{ runner.os }}-${{ github.sha }}
           restore-keys: perf-time-${{ runner.os }}-
       - name: Compare with the base
-        shell: bash
-        run: |
-          py=$(command -v python3 || command -v python)
-          "$py" tools/perf/bench_gate.py all --base "$BASE_REF" --mode time --work build/perf --deps .perf-deps
+        if: runner.os != 'Windows'
+        run: python3 tools/perf/bench_gate.py all --base "$BASE_REF" --mode time --work build/perf --deps .perf-deps
+      # PowerShell, not bash: Git's bash puts its own link.exe ahead of MSVC's on PATH.
+      - name: Compare with the base (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python tools/perf/bench_gate.py all --base "$env:BASE_REF" --mode time --work build/perf --deps .perf-deps
       - name: Warn about slower rows
         if: ${{ !cancelled() }}
         shell: bash

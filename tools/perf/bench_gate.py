@@ -125,6 +125,14 @@ def build(src: Path, out: Path, deps: Path | None) -> Path:
     with open(out / "cargo-build.log", "w") as err:
         r = subprocess.run(cargo, cwd=src, env=env, stdout=subprocess.PIPE, stderr=err, text=True)
     if r.returncode != 0:
+        # With --message-format=json the compiler's errors are on stdout.
+        for line in r.stdout.splitlines():
+            try:
+                m = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if m.get("reason") == "compiler-message" and m["message"].get("level") == "error":
+                log(m["message"].get("rendered") or m["message"].get("message", ""))
         log((out / "cargo-build.log").read_text(errors="replace")[-4000:])
         raise subprocess.CalledProcessError(r.returncode, cargo)
     for line in r.stdout.splitlines():
