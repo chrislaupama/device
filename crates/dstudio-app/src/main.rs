@@ -58,6 +58,7 @@ mod peaks;
 mod pianoroll;
 mod placeholder;
 mod pointer;
+mod resample;
 mod prefs;
 mod recording;
 mod sampler_panel;
@@ -138,7 +139,7 @@ struct Args {
     /// reference-settings-audio: Settings open on the Audio page.
     settings_state: bool,
     /// 1 export dialog, 2 unsaved-changes prompt, 3 export dialog on Stems, 4 with its Tracks menu open, 5 on Project,
-    /// 6 Check for Updates, 7 Undo History (after a few edits, the last one undone).
+    /// 6 Check for Updates, 7 Undo History (after a few edits, the last one undone), 8 export dialog at 44.1 kHz.
     dialog_state: u8,
     settings_general_state: bool,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
@@ -388,6 +389,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-check-updates" => {
                     a.reference_default = true;
                     a.dialog_state = 6;
+                }
+                "review-export-44k" => {
+                    a.reference_default = true;
+                    a.dialog_state = 8;
                 }
                 "review-undo-history" => {
                     a.reference_default = true;
@@ -1713,6 +1718,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_export_close, |c| c.dialogs_close());
     on!(on_export_run, |c| c.export_run());
     on!(on_export_bits, |c, b: bool| c.export_set_bits(b));
+    on!(on_export_rate, |c, b: bool| c.export_set_rate(b));
     on!(on_export_pick_recipe, |c, i: i32| c.export_pick_recipe(i));
     on!(on_export_toggle_tracks, |c| c.export_toggle_tracks_menu());
     on!(on_export_pick_tracks, |c, i: i32| c.export_pick_tracks(i));
@@ -2398,11 +2404,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     c.menu_action("edit.undo_history");
                 } else if state != 2 {
                     c.export_open();
-                    if state >= 3 {
+                    if (3..=5).contains(&state) {
                         c.export_pick_recipe(if state == 5 { 2 } else { 1 });
                     }
                     if state == 4 {
                         c.export_toggle_tracks_menu();
+                    }
+                    if state == 8 {
+                        c.export_set_rate(false);
                     }
                 } else {
                     c.new_project_request();

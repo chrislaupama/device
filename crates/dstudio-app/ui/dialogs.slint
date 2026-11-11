@@ -52,8 +52,8 @@ component RowLabel inherits Text {
 
 // Export (File › Export…, ⇧⌘E). Mixdown and Stems render to WAV, Project writes an Ableton
 // Live set (Open in + Effects rows in place of Range + Format; Effects is always Render, Convert
-// is a PLACEHOLDER). MP3 and the other sample rate are PLACEHOLDERS (status line), the range is
-// always the full project. Stems adds
+// is a PLACEHOLDER). MP3 is a PLACEHOLDER (status line); 44.1 / 48 kHz sets the file's rate
+// (converted from the engine's). The range is always the full project. Stems adds
 // the Tracks row above Range (one form row, 30.6px: 24 pt rows 12 pt apart); the
 // window keeps its height.
 export component ExportModal inherits Rectangle {
@@ -119,7 +119,7 @@ export component ExportModal inherits Rectangle {
     if Studio.export-recipe != 2: Segments { x: 71.4px + 91.8px; y: 136.85px + root.dy; width: 97.3px; a: "16-bit"; b: "24-bit"; a-w: 48.4px; index: Studio.export-bits24 ? 1 : 0; picked(i) => { Studio.export-bits(i == 1); } }
     if Studio.export-recipe != 2: Segments {
         x: 71.4px + 197.7px; y: 136.85px + root.dy; width: 117.3px; a: "44.1 kHz"; b: "48 kHz"; a-w: 56.3px; index: Studio.export-rate48 ? 1 : 0;
-        picked(i) => { if ((i == 1) != Studio.export-rate48) { Studio.chat-placeholder("Export at another sample rate"); } }
+        picked(i) => { Studio.export-rate(i == 1); }
     }
     Rectangle { x: 17px; y: 170px + root.dy; width: root.width - 34px; height: 0.45px; background: DialogTokens.rule; }
     RowLabel { x: 17px; y: 184.2px + root.dy; text: Studio.export-name-label; }
