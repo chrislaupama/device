@@ -1004,11 +1004,11 @@ impl Controller {
         self.view.clamp_scroll(self.project().tracks.len(), self.lanes_size.1);
     }
 
-    /// Commit a name typed in a field that is about to disappear with its panel.
-    fn commit_rename_draft(&mut self) {
-        if let Some((id, name)) = self.rename_draft.take() {
-            self.rename_track(id, &name);
-        }
+    /// Commit a name typed in a field that is about to disappear with its panel; true when there was one.
+    fn commit_rename_draft(&mut self) -> bool {
+        let Some((id, name)) = self.rename_draft.take() else { return false };
+        self.rename_track(id, &name);
+        true
     }
 
     pub fn toggle_solo(&mut self, id: TrackId) {
@@ -1834,6 +1834,7 @@ impl Controller {
         self.update_devmm(app);
         self.push_snap(&s);
         s.set_press_epoch(self.press_epoch);
+        s.set_doc_epoch(self.doc_epoch as i32);
         s.set_rename_open_id(self.selected_track.map_or(-1, |t| t.0 as i32));
         s.set_rename_open_epoch(self.rename_open_epoch);
         crate::pointer::apply(app, self.ptr.take());
@@ -1853,8 +1854,9 @@ impl Controller {
         // The bottom panel's name field goes away with the panel (tab switch, mixer, selection
         // cleared) without seeing its focus loss: commit what it held first.
         let panel = (self.bottom_tab, self.mixer_open, self.selected_track.is_some());
-        if self.rename_panel.is_some_and(|p| p != panel) {
-            self.commit_rename_draft();
+        if self.rename_panel.is_some_and(|p| p != panel) && self.commit_rename_draft() {
+            // The field held the keyboard focus: give it back to the shortcuts.
+            self.press_epoch += 1;
         }
         self.rename_panel = Some(panel);
         self.rebuild_vis();

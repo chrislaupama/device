@@ -12,6 +12,8 @@ import { Studio, TrackRow, TrackLevel } from "studio.slint";
 // Keyboard: track.rename (⌘R with a track selected) opens the header row's field; assistive
 // technology: the name's default action opens the field. The typed text is mirrored to Rust
 // (track-rename-draft) so it is committed even when the panel holding the field goes away.
+// Both calls carry the project the field opened in (Studio.doc-epoch): a field left open while
+// another project replaces the open one closes without renaming anything.
 export component TrackName inherits Rectangle {
     in property <int> track-id;
     in property <string> text;
@@ -25,19 +27,23 @@ export component TrackName inherits Rectangle {
     /// Opens on the keyboard rename request (Studio.rename-open-epoch) for this track.
     in property <bool> keyboard-target;
     property <int> open-epoch: root.keyboard-target ? Studio.rename-open-epoch : 0;
-    changed open-epoch => { if (root.enabled && Studio.rename-open-id == root.track-id && !root.editing) { root.edit-id = root.track-id; root.editing = true; } }
+    changed open-epoch => { if (root.enabled && Studio.rename-open-id == root.track-id && !root.editing) { root.edit-id = root.track-id; root.edit-epoch = Studio.doc-epoch; root.editing = true; } }
     callback clicked();
     callback edit-done();
     property <bool> editing: root.review-edit;
     // The track being renamed (follows `track-id` until a field opens).
     property <int> edit-id: root.track-id;
+    // The project the field opened in.
+    property <int> edit-epoch: Studio.doc-epoch;
+    property <int> doc-epoch: Studio.doc-epoch;
+    changed doc-epoch => { if (root.editing) { root.editing = false; root.edit-done(); } }
     property <string> draft-text;
     accessible-role: AccessibleRole.button;
     accessible-label: root.text;
     accessible-description: "Rename track";
-    accessible-action-default => { if (root.enabled) { root.edit-id = root.track-id; root.editing = true; } }
+    accessible-action-default => { if (root.enabled) { root.edit-id = root.track-id; root.edit-epoch = Studio.doc-epoch; root.editing = true; } }
     // The field shows another track's name now (the selection moved): keep what was typed.
-    changed track-id => { if (root.editing && root.track-id != root.edit-id) { root.editing = false; Studio.track-rename(root.edit-id, root.draft-text); root.edit-done(); } }
+    changed track-id => { if (root.editing && root.track-id != root.edit-id) { root.editing = false; Studio.track-rename(root.edit-id, root.draft-text, root.edit-epoch); root.edit-done(); } }
     if !root.editing: Text {
         width: root.width; height: root.height;
         text: root.text; color: root.text-color; font-size: root.font-size; font-weight: root.font-weight; letter-spacing: root.letter-spacing;
@@ -46,7 +52,7 @@ export component TrackName inherits Rectangle {
     if !root.editing: TouchArea {
         enabled: root.enabled;
         clicked => { root.clicked(); }
-        double-clicked => { root.edit-id = root.track-id; root.editing = true; }
+        double-clicked => { root.edit-id = root.track-id; root.edit-epoch = Studio.doc-epoch; root.editing = true; }
     }
     if root.editing: Rectangle {
         x: -2.55px; width: min(root.width + 5.1px, 136px); height: root.height + 3.4px; y: -1.7px;
@@ -57,13 +63,13 @@ export component TrackName inherits Rectangle {
             vertical-alignment: center; single-line: true; selection-background-color: #ffffff47;
             accessible-label: "Track name";
             init => { root.draft-text = self.text; self.focus(); self.select-all(); }
-            edited => { root.draft-text = self.text; Studio.track-rename-draft(root.edit-id, self.text); }
-            accepted => { root.editing = false; Studio.track-rename(root.edit-id, self.text); root.edit-done(); }
+            edited => { root.draft-text = self.text; Studio.track-rename-draft(root.edit-id, self.text, root.edit-epoch); }
+            accepted => { root.editing = false; Studio.track-rename(root.edit-id, self.text, root.edit-epoch); root.edit-done(); }
             key-pressed(e) => {
                 if (e.text == Key.Escape) { root.editing = false; Studio.track-rename-cancel(); root.edit-done(); return accept; }
                 reject
             }
-            changed has-focus => { if (!self.has-focus && root.editing) { root.editing = false; Studio.track-rename(root.edit-id, self.text); } }
+            changed has-focus => { if (!self.has-focus && root.editing) { root.editing = false; Studio.track-rename(root.edit-id, self.text, root.edit-epoch); } }
         }
     }
 }

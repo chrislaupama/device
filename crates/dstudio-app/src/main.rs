@@ -1746,13 +1746,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_track_solo, |c, id: i32| c.toggle_solo(TrackId(id as u64)));
     on!(on_track_volume, |c, id: i32, p: f32| c.set_track_gain(TrackId(id as u64), gain_from_slider(p)));
     on!(on_track_pan, |c, id: i32, p: f32| c.set_track_pan(TrackId(id as u64), p));
-    on!(on_track_rename, |c, id: i32, t: slint::SharedString| c.rename_track(TrackId(id as u64), t.as_str()));
+    // A field opened in a project that has since been replaced renames nothing.
+    on!(on_track_rename, |c, id: i32, t: slint::SharedString, epoch: i32| {
+        if epoch == c.doc_epoch as i32 {
+            c.rename_track(TrackId(id as u64), t.as_str());
+        }
+    });
     {
         // Typing in a name field only records the draft: no model push per keystroke.
         let ctl2 = ctl.clone();
-        studio.on_track_rename_draft(move |id, t| {
+        studio.on_track_rename_draft(move |id, t, epoch| {
             if let Ok(mut c) = ctl2.try_borrow_mut() {
-                c.rename_draft = Some((TrackId(id as u64), t.to_string()));
+                if epoch == c.doc_epoch as i32 {
+                    c.rename_draft = Some((TrackId(id as u64), t.to_string()));
+                }
             }
         });
         let ctl2 = ctl.clone();

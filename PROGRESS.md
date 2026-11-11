@@ -298,6 +298,8 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   header field, scrolled into view.
 - The open field mirrors its text to `Controller::rename_draft`; when the bottom panel holding it goes away (tab
   switch, mixer, selection cleared) `push_models` commits the draft, since the field never sees its focus loss.
+- Rename and draft calls carry the `doc_epoch` the field opened in (`Studio.doc-epoch`): when another project
+  replaces the open one (Open, Live Set import) the field closes and a late commit from it renames nothing.
 - Undo of a rename is `Command::RestoreTrackName`, which puts the old name back exactly (an imported name over the
   128-character limit included). It is never deserialized, so the assistant cannot send one.
 - Self-test section `track_rename_steps` drives the inspector name with real double-clicks and keys.

@@ -6722,7 +6722,7 @@ fn track_rename_steps() -> Vec<Step> {
     let name0 = |c: &Controller| c.project().tracks.first().map(|t| t.name.clone()).unwrap_or_default();
     let name_xy = || (bottom_x() + 60.0, bottom_y() + 14.25);
     let original: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
-    let (o0, o1) = (original.clone(), original.clone());
+    let (o0, o1, o2) = (original.clone(), original.clone(), original.clone());
     vec![
         DoC("rename: select track 1, Devices tab, mixer closed", Box::new(move |_, ctl| {
             let mut c = ctl.borrow_mut();
@@ -6766,7 +6766,7 @@ fn track_rename_steps() -> Vec<Step> {
         Check("rename: still Lead vox", Box::new(move |c, _| (name0(c) == "Lead vox").then_some(()).ok_or(format!("name {:?}", name0(c))))),
         Do("rename: rename through the callback with spaces around", Box::new(|a| {
             let s = a.global::<Studio>();
-            s.invoke_track_rename(s.get_sel_id(), "  Bass  ".into());
+            s.invoke_track_rename(s.get_sel_id(), "  Bass  ".into(), s.get_doc_epoch());
         })),
         Check("rename: trimmed to Bass", Box::new(move |c, _| (name0(c) == "Bass").then_some(()).ok_or(format!("name {:?}", name0(c))))),
         Do("rename: double-click, type Drums, then press in the lanes", Box::new(move |a| {
@@ -6835,6 +6835,15 @@ fn track_rename_steps() -> Vec<Step> {
             }
         })),
         Check("rename: the original name is back", Box::new(move |c, _| (name0(c) == *o1.borrow()).then_some(()).ok_or(format!("name {:?} want {:?}", name0(c), o1.borrow())))),
+        Do("rename: a field opened before the project was replaced types and commits", Box::new(|a| {
+            let s = a.global::<Studio>();
+            let stale = s.get_doc_epoch() - 1;
+            s.invoke_track_rename_draft(s.get_sel_id(), "Stale".into(), stale);
+            s.invoke_track_rename(s.get_sel_id(), "Stale".into(), stale);
+        })),
+        Check("rename: the stale field renamed nothing and left no draft", Box::new(move |c, _| {
+            (name0(c) == *o2.borrow() && c.rename_draft.is_none()).then_some(()).ok_or(format!("name {:?} draft {:?}", name0(c), c.rename_draft))
+        })),
     ]
 }
 
