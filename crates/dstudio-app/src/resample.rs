@@ -2,6 +2,8 @@
 //! between two rates whose ratio reduces to small whole numbers, such as 48 kHz and 44.1 kHz
 //! (160 : 147) and their multiples.
 
+use std::borrow::Cow;
+
 /// Half the kernel length, in input samples.
 const HALF_TAPS: usize = 64;
 /// Kaiser window shape: about 85 dB of stopband attenuation.
@@ -85,12 +87,13 @@ impl Resampler {
     }
 
     /// Converts interleaved `input` with `channels` channels. Samples outside the input count
-    /// as silence.
-    pub fn process(&self, input: &[f32], channels: usize) -> Vec<f32> {
+    /// as silence. When the rates match, the input is handed back as it is, without a copy (a long
+    /// export holds one full buffer, not two).
+    pub fn process<'a>(&self, input: &'a [f32], channels: usize) -> Cow<'a, [f32]> {
         let channels = channels.max(1);
         let frames = input.len() / channels;
         if self.up == self.down {
-            return input[..frames * channels].to_vec();
+            return Cow::Borrowed(&input[..frames * channels]);
         }
         let out_frames = self.out_frames(frames);
         let mut out = vec![0f32; out_frames * channels];
@@ -118,7 +121,7 @@ impl Resampler {
                 out[k * channels + c] = acc;
             }
         }
-        out
+        Cow::Owned(out)
     }
 }
 
@@ -148,7 +151,9 @@ mod tests {
     fn the_same_rate_copies_the_input() {
         let r = Resampler::new(48_000, 48_000).unwrap();
         let input = sine(48_000, 1000.0, 1000);
-        assert_eq!(r.process(&input, 1), input);
+        let out = r.process(&input, 1);
+        assert!(matches!(out, Cow::Borrowed(_)), "the same rate made a copy");
+        assert_eq!(out, input);
         assert_eq!(r.out_frames(1000), 1000);
     }
 
