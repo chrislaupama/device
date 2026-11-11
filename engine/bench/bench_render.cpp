@@ -23,6 +23,8 @@
 // inserts and 4 lanes per track (volume, pan, and the gain parameter of each
 // insert), each with a curved point every 100 ms (se_session_publish_v6),
 // against the same session without lanes.
+// A MIDI input table renders built-in synth tracks with live input injected
+// (se_midi_inject) to none, the focus track, or every track.
 // A note preview table renders 32 CLAP instrument tracks with piano-roll
 // preview notes (se_preview_note) queued between blocks, against none.
 #include "platform/os.hpp"
@@ -462,6 +464,74 @@ Result run_midi(uint32_t tracks, uint32_t blocks, const se_synth_params* params)
     return r;
 }
 
+// MIDI input: `tracks` built-in synth tracks with 8 held sequenced voices
+// each (as run_midi, default params), plus live input: a 4-note chord
+// injected every 10 blocks and released 5 blocks later.
+//   mode 0: no input at all (the baseline: MIDI input code idle)
+//   mode 1: input to the focus track only (one track plays live notes)
+//   mode 2: every track monitoring (each track plays the live chord too)
+Result run_midi_input(uint32_t tracks, uint32_t blocks, int mode) {
+    se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
+    se_engine* e = se_engine_create(&cfg);
+    if (!e) {
+        std::fprintf(stderr, "create failed: %s\n", se_last_error());
+        std::exit(1);
+    }
+    const int64_t total = static_cast<int64_t>(blocks) * kBlock;
+    std::vector<std::vector<se_note_desc>> notes(tracks);
+    std::vector<se_track_desc_v4> tds(tracks);
+    for (uint32_t t = 0; t < tracks; ++t) {
+        for (uint32_t v = 0; v < 8; ++v) {
+            se_note_desc n{};
+            n.start = static_cast<int64_t>(v) * 7;
+            n.end = total + 48000;
+            n.pitch = static_cast<uint8_t>(36 + (t * 5 + v * 7) % 48);
+            n.velocity = static_cast<uint8_t>(60 + v * 8);
+            notes[t].push_back(n);
+        }
+        se_track_desc_v4& td = tds[t];
+        td = se_track_desc_v4{};
+        td.track_id = t + 1;
+        td.gain = 0.25f;
+        td.pan = std::sin(static_cast<float>(t));
+        td.instrument = 1;
+        td.monitor = mode == 2 ? 1 : 0;
+        td.notes = notes[t].data();
+        td.note_count = static_cast<uint32_t>(notes[t].size());
+    }
+    se_session_desc_v4 sd{tds.data(), tracks, 0.5f};
+    if (se_session_publish_v4(e, &sd) != SE_OK) {
+        std::fprintf(stderr, "publish failed: %s\n", se_last_error());
+        std::exit(1);
+    }
+    se_midi_set_focus(e, mode == 1 ? 1 : 0);
+    se_transport_play(e);
+    std::vector<float> buf(kBlock * 2);
+    std::vector<double> times(blocks);
+    const uint8_t chord[4] = {60, 64, 67, 71};
+    double wall_us = 0.0; // render time only: injecting (the MIDI thread's work) is not timed
+    for (uint32_t b = 0; b < blocks; ++b) {
+        if (mode != 0 && b % 10 == 0)
+            for (uint8_t p : chord) se_midi_inject(e, 0x90, p, 100);
+        if (mode != 0 && b % 10 == 5)
+            for (uint8_t p : chord) se_midi_inject(e, 0x80, p, 0);
+        const auto t0 = std::chrono::steady_clock::now();
+        se_render_offline(e, buf.data(), kBlock);
+        times[b] = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+        wall_us += times[b];
+    }
+    se_engine_destroy(e);
+    if (times.empty()) return Result{};
+    std::vector<double> sorted = times;
+    std::sort(sorted.begin(), sorted.end());
+    Result r{};
+    r.us_per_block_avg = wall_us / blocks;
+    r.us_per_block_p99 = sorted[static_cast<std::size_t>(0.99 * (blocks - 1))];
+    r.us_per_block_max = sorted.back();
+    r.rt_ratio = static_cast<double>(blocks) * kBlock / kRate * 1e6 / wall_us;
+    return r;
+}
+
 // Pattern: `tracks` instrument tracks playing a step pattern as dstudio-core
 // bakes and repeats it (one bar of 4/4 at 120 BPM): `rows` keys, a hit on
 // every one of `steps` steps per bar, each split into `repeat` hits with
@@ -750,6 +820,18 @@ int main(int argc, char** argv) {
             const Result r = run_midi(tracks, blocks, patch.params);
             std::printf("%8u %14.2f %14.2f %14.2f %15.1fx\n", tracks, r.us_per_block_avg, r.us_per_block_p99,
                         r.us_per_block_max, r.rt_ratio);
+        }
+    }
+
+    std::printf("\nMIDI input: built-in synth tracks x 8 held voices, a live 4-note chord every 10 blocks (5 held)\n");
+    std::printf("%8s %22s %14s %14s %14s %16s\n", "tracks", "live input", "avg us/block", "p99 us/block",
+                "max us/block", "realtime ratio");
+    for (uint32_t tracks : {8u, 32u}) {
+        for (int mode : {0, 1, 2}) {
+            const Result r = run_midi_input(tracks, blocks, mode);
+            const char* name = mode == 0 ? "none" : mode == 1 ? "focus track" : "every track monitors";
+            std::printf("%8u %22s %14.2f %14.2f %14.2f %15.1fx\n", tracks, name, r.us_per_block_avg,
+                        r.us_per_block_p99, r.us_per_block_max, r.rt_ratio);
         }
     }
 
