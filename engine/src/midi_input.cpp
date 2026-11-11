@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <bit>
+#include <chrono>
 #include <cstring>
 #include <limits>
+#include <thread>
 
 namespace dstudio {
 
@@ -42,7 +44,10 @@ void MidiInputHub::receive(void* ctx, const uint8_t* msg, uint32_t len) noexcept
     m.data1 = msg[1] & 0x7F;
     m.data2 = len > 2 ? static_cast<uint8_t>(msg[2] & 0x7F) : 0;
     s->received.fetch_add(1, std::memory_order_relaxed);
-    if (!s->queue.push(m)) s->dropped.fetch_add(1, std::memory_order_relaxed);
+    if (!s->queue.push(m)) {
+        s->dropped.fetch_add(1, std::memory_order_relaxed);
+        s->overflowed.store(true, std::memory_order_release); // maybe a lost note-off: drain releases the slot's keys
+    }
 }
 
 void MidiInputHub::list(std::vector<MidiPortState>& out) {
@@ -72,7 +77,7 @@ void MidiInputHub::close_slot(Slot& s) {
     s.state.store(kClosing, std::memory_order_release);
 }
 
-int32_t MidiInputHub::open_only(const std::vector<std::string>& ids, std::string& err) {
+int32_t MidiInputHub::open_only(const std::vector<std::string>& ids, std::string& err, const Reclaim& reclaim) {
     std::lock_guard lock(ports_mutex_);
     MidiBackend& be = backend();
     std::vector<MidiPortInfo> present;
@@ -99,12 +104,25 @@ int32_t MidiInputHub::open_only(const std::vector<std::string>& ids, std::string
             if (Slot* s = slot(i); s != nullptr && s->state.load(std::memory_order_acquire) == kOpen && s->id == id)
                 is_open = true;
         if (is_open) continue;
-        // A free slot (a Closing one is freed by the audio thread once its notes are off).
+        // A free slot. A Closing one is freed by the renderer once its notes
+        // are off; with no renderer, `reclaim` frees it here.
         Slot* free_slot = nullptr;
-        for (uint32_t i = 0; i < kDeviceSlots && free_slot == nullptr; ++i) {
-            Slot* s = slot(i);
-            if (s == nullptr) free_slot = &ensure_slot(i);
-            else if (s->state.load(std::memory_order_acquire) == kFree) free_slot = s;
+        bool reclaimed = false;
+        for (int attempt = 0; free_slot == nullptr; ++attempt) {
+            bool closing = false;
+            for (uint32_t i = 0; i < kDeviceSlots && free_slot == nullptr; ++i) {
+                Slot* s = slot(i);
+                const uint8_t st = s == nullptr ? uint8_t{kFree} : s->state.load(std::memory_order_acquire);
+                if (s == nullptr) free_slot = &ensure_slot(i);
+                else if (st == kFree) free_slot = s;
+                else if (st == kClosing) closing = true;
+            }
+            if (free_slot != nullptr || !closing || attempt >= 100) break;
+            if (!reclaimed && reclaim) {
+                reclaimed = true;
+                if (reclaim()) continue;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1)); // a renderer frees it within a block
         }
         if (free_slot == nullptr) {
             failed(id + ": too many MIDI inputs open (at most " + std::to_string(kDeviceSlots) + ")");
@@ -136,31 +154,43 @@ bool MidiInputHub::inject(uint8_t status, uint8_t data1, uint8_t data2) noexcept
 }
 
 void MidiInputHub::capture_enable(bool on) noexcept {
-    capture_on_.store(false, std::memory_order_release);
-    if (!on) return;
-    if (!capture_) capture_ = std::make_unique<SpscQueue<se_midi_captured, kCaptureSize>>();
-    se_midi_captured c;
+    const uint32_t pass = capture_state_.load(std::memory_order_relaxed) >> 1;
+    if (!on) {
+        capture_state_.store(pass << 1, std::memory_order_release);
+        return;
+    }
+    if (!capture_) capture_ = std::make_unique<SpscQueue<Captured, kCaptureSize>>();
+    Captured c;
     while (capture_->pop(c)) {
     }
     capture_restart_.store(true, std::memory_order_release);
-    capture_on_.store(true, std::memory_order_release);
+    // A new pass number: an event the audio thread captured for the previous
+    // pass but pushes only now is skipped by capture_read(). 0 means "off".
+    uint32_t next = (pass + 1) & 0x7FFFFFFFu;
+    if (next == 0) next = 1;
+    capture_state_.store((next << 1) | 1u, std::memory_order_release);
 }
 
 std::size_t MidiInputHub::capture_read(se_midi_captured* out, std::size_t capacity) noexcept {
     std::size_t n = 0;
     if (!capture_) return 0;
-    while (n < capacity && capture_->pop(out[n])) ++n;
+    const uint32_t pass = capture_state_.load(std::memory_order_acquire) >> 1;
+    Captured c;
+    while (n < capacity && capture_->pop(c))
+        if (c.pass == pass) out[n++] = c.event;
     return n;
 }
 
-void MidiInputHub::capture(const MidiEvent& e, int64_t frame) noexcept {
+void MidiInputHub::capture(const MidiEvent& e, int64_t frame, uint32_t pass) noexcept {
     const uint8_t kind = e.status & 0xF0;
-    if (kind != 0x90 && kind != 0x80) return;
-    se_midi_captured c{};
-    c.frame = frame;
-    c.status = kind;
-    c.data1 = e.data1;
-    c.data2 = e.data2;
+    if (pass == 0 || (kind != 0x90 && kind != 0x80)) return;
+    Captured c;
+    c.event = se_midi_captured{};
+    c.event.frame = frame;
+    c.event.status = kind;
+    c.event.data1 = e.data1;
+    c.event.data2 = e.data2;
+    c.pass = pass;
     if (!capture_->push(c)) capture_dropped_.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -176,30 +206,86 @@ void MidiInputHub::stats(se_midi_stats* out) const noexcept {
     out->capture_dropped = capture_dropped_.load(std::memory_order_relaxed);
 }
 
+void MidiInputHub::release(Slot& s, uint8_t pitch, uint8_t velocity, MidiEvent* out, uint32_t& n, uint32_t cap) noexcept {
+    if (!s.held[pitch]) return;
+    s.held[pitch] = false;
+    if (holders_[pitch] > 0 && --holders_[pitch] > 0) return; // another port still holds it
+    if (n < cap) {
+        MidiEvent e{};
+        e.status = 0x80;
+        e.data1 = pitch;
+        e.data2 = velocity;
+        out[n++] = e;
+    } else if (!owed_off_[pitch]) {
+        owed_off_[pitch] = true;
+        ++owed_count_;
+    }
+}
+
+void MidiInputHub::release_all(Slot& s, MidiEvent* out, uint32_t& n, uint32_t cap) noexcept {
+    for (uint32_t p = 0; p < 128; ++p)
+        if (s.held[p]) release(s, static_cast<uint8_t>(p), 64, out, n, cap);
+}
+
+void MidiInputHub::reclaim_closing() noexcept {
+    uint32_t n = 0;
+    for (uint32_t mask = allocated_.load(std::memory_order_acquire) & ((1u << kDeviceSlots) - 1); mask != 0;
+         mask &= mask - 1) {
+        Slot& s = *slots_[static_cast<uint32_t>(std::countr_zero(mask))].load(std::memory_order_acquire);
+        if (s.state.load(std::memory_order_acquire) != kClosing) continue;
+        Msg m;
+        while (s.queue.pop(m)) { // never delivered: keys it pressed are released like the rest
+            const uint8_t kind = m.status & 0xF0;
+            if (kind == 0x90 && m.data2 > 0 && !s.held[m.data1]) {
+                s.held[m.data1] = true;
+                ++holders_[m.data1];
+            }
+        }
+        release_all(s, nullptr, n, 0); // all owed: sent by the next drain
+        s.overflowed.store(false, std::memory_order_relaxed);
+        s.state.store(kFree, std::memory_order_release);
+    }
+}
+
 uint32_t MidiInputHub::drain(MidiEvent* out, uint32_t cap) noexcept {
     uint32_t mask = allocated_.load(std::memory_order_acquire);
     if (mask == 0) return 0; // MIDI never used: nothing to look at
     uint32_t n = 0;
+    if (owed_count_ > 0) {
+        for (uint32_t p = 0; p < 128 && n < cap; ++p) {
+            if (!owed_off_[p]) continue;
+            owed_off_[p] = false;
+            --owed_count_;
+            MidiEvent e{};
+            e.status = 0x80;
+            e.data1 = static_cast<uint8_t>(p);
+            e.data2 = 64;
+            out[n++] = e;
+        }
+    }
     for (; mask != 0; mask &= mask - 1) {
         Slot& s = *slots_[static_cast<uint32_t>(std::countr_zero(mask))].load(std::memory_order_acquire);
         const uint8_t state = s.state.load(std::memory_order_acquire);
         if (state == kFree) continue;
+        // A dropped message may have been a note-off: let go of everything
+        // this port holds rather than leave a note hanging.
+        if (s.overflowed.load(std::memory_order_relaxed) && s.overflowed.exchange(false, std::memory_order_acq_rel))
+            release_all(s, out, n, cap);
         Msg m;
         while (n < cap && s.queue.pop(m)) {
             const uint8_t kind = m.status & 0xF0;
-            MidiEvent e;
-            e.offset = 0;
+            MidiEvent e{};
             if (kind == 0x90 && m.data2 > 0) {
-                s.held[m.data1] = true;
+                if (!s.held[m.data1]) {
+                    s.held[m.data1] = true;
+                    ++holders_[m.data1];
+                }
                 e.status = 0x90;
                 e.data1 = m.data1;
                 e.data2 = m.data2;
             } else if (kind == 0x80 || kind == 0x90) {
-                if (!s.held[m.data1]) continue; // nothing to release
-                s.held[m.data1] = false;
-                e.status = 0x80;
-                e.data1 = m.data1;
-                e.data2 = kind == 0x80 ? m.data2 : 64;
+                release(s, m.data1, kind == 0x80 ? m.data2 : 64, out, n, cap); // nothing when not held
+                continue;
             } else if (kind == 0xC0) {
                 continue; // program changes would switch plugin programs behind the project's back
             } else {
@@ -210,22 +296,10 @@ uint32_t MidiInputHub::drain(MidiEvent* out, uint32_t cap) noexcept {
             out[n++] = e;
         }
         if (state == kClosing && s.queue.empty()) {
-            // Release what the port still held, then free the slot.
-            bool done = true;
-            for (uint32_t p = 0; p < 128; ++p) {
-                if (!s.held[p]) continue;
-                if (n == cap) {
-                    done = false;
-                    break;
-                }
-                s.held[p] = false;
-                MidiEvent e;
-                e.status = 0x80;
-                e.data1 = static_cast<uint8_t>(p);
-                e.data2 = 64;
-                out[n++] = e;
-            }
-            if (done) s.state.store(kFree, std::memory_order_release);
+            // Release what the port still held (owed when out is full), then free the slot.
+            release_all(s, out, n, cap);
+            s.overflowed.store(false, std::memory_order_relaxed);
+            s.state.store(kFree, std::memory_order_release);
         }
     }
     if (n > 0) delivered_.fetch_add(n, std::memory_order_relaxed);
@@ -290,7 +364,7 @@ uint32_t TrackMidi::events_for(const MidiEvent* in, uint32_t n, bool routed, Mid
         if (!held[p]) continue;
         held[p] = false;
         --held_count;
-        MidiEvent e;
+        MidiEvent e{};
         e.status = 0x80;
         e.data1 = static_cast<uint8_t>(p);
         e.data2 = 64;

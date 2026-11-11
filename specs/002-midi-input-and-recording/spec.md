@@ -86,7 +86,7 @@ pass. A track that received no notes gets no clip.
 ## Acceptance checks
 
 - A1 (R1): engine test: listing works with no MIDI system present (CI); a manual check on a Mac
-  with a USB keyboard lists and plays it (done on the maintainer's Mac mini).
+  with a USB keyboard lists and plays it (pending, task T9).
 - A2 (R2, R4): engine tests in `engine/tests/test_midi_input.cpp`: injected note-on sounds in the
   next block on the built-in Synth, a built-in instrument and a test instrument plugin; the render
   path allocates nothing (`RtAllocGuard`); a full queue counts drops; disarming with a key held

@@ -469,8 +469,9 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             // Live notes (se_preview_note) at the first frame, ahead of the track's notes; built-in
             // instruments take theirs inside process().
             MidiEvent* const ev = iplug->event_scratch();
-            // MIDI input follows them, also at the first frame.
-            uint32_t nl = iplug->as_builtin() != nullptr ? 0 : iplug->take_live(ev, PluginInstance::kMaxEvents);
+            // MIDI input follows them, also at the first frame; live notes leave it room.
+            const uint32_t live_cap = PluginInstance::kMaxEvents - std::min(n_midi, PluginInstance::kMaxEvents);
+            uint32_t nl = iplug->as_builtin() != nullptr ? 0 : iplug->take_live(ev, live_cap);
             const uint32_t ni = std::min(n_midi, PluginInstance::kMaxEvents - nl);
             if (ni > 0) std::memcpy(ev + nl, midi_ev, sizeof(MidiEvent) * ni);
             nl += ni;

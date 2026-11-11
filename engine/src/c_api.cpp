@@ -999,7 +999,7 @@ int32_t se_midi_inputs_open(se_engine* engine, const char* const* ids, size_t co
             v.emplace_back(ids[i]);
         }
         std::string err;
-        return check(engine->impl->midi().open_only(v, err), err);
+        return check(engine->impl->midi_open(v, err), err);
     });
 }
 

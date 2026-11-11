@@ -284,6 +284,145 @@ TEST_CASE(midi_capture_records_note_positions_while_playing) {
     CHECK(n == 0);
 }
 
+namespace {
+// Hub over a fake backend with `ports` ports "fake:0".."fake:N-1".
+struct HubRig {
+    FakeMidi* port = nullptr;
+    std::unique_ptr<dstudio::MidiInputHub> hub;
+    explicit HubRig(int ports) {
+        auto fake = std::make_unique<FakeMidi>();
+        port = fake.get();
+        for (int i = 0; i < ports; ++i) port->present.push_back({"fake:" + std::to_string(i), "Fake " + std::to_string(i)});
+        hub = std::make_unique<dstudio::MidiInputHub>(std::move(fake));
+    }
+    int32_t open(std::vector<std::string> ids, const dstudio::MidiInputHub::Reclaim& reclaim = {}) {
+        std::string err;
+        return hub->open_only(ids, err, reclaim);
+    }
+    std::vector<dstudio::MidiEvent> drain() {
+        std::vector<dstudio::MidiEvent> out(dstudio::MidiInputHub::kMaxBlockEvents);
+        out.resize(hub->drain(out.data(), static_cast<uint32_t>(out.size())));
+        return out;
+    }
+};
+bool is(const dstudio::MidiEvent& e, uint8_t status, uint8_t pitch) { return e.status == status && e.data1 == pitch; }
+} // namespace
+
+TEST_CASE(midi_input_same_key_on_two_ports_ends_with_the_last_release) {
+    HubRig r(2);
+    REQUIRE(r.open({"fake:0", "fake:1"}) == SE_OK);
+    REQUIRE(r.port->send("fake:0", 0x90, 60, 100));
+    REQUIRE(r.port->send("fake:1", 0x91, 60, 90)); // another port, another channel, same key
+    auto ev = r.drain();
+    REQUIRE(ev.size() == 2);
+    CHECK(is(ev[0], 0x90, 60) && is(ev[1], 0x90, 60));
+    REQUIRE(r.port->send("fake:0", 0x80, 60, 0));
+    CHECK(r.drain().empty()); // still held on the other port
+    REQUIRE(r.port->send("fake:1", 0x90, 60, 0)); // note-on velocity 0
+    ev = r.drain();
+    REQUIRE(ev.size() == 1);
+    CHECK(is(ev[0], 0x80, 60) && ev[0].offset == 0);
+}
+
+TEST_CASE(midi_input_queue_overflow_releases_the_ports_keys) {
+    HubRig r(0);
+    REQUIRE(r.hub->inject(0x90, 60, 100));
+    REQUIRE(r.drain().size() == 1);
+    // A burst fills the queue; whatever was dropped (maybe the note-off) is lost.
+    for (std::size_t i = 0; i <= dstudio::MidiInputHub::kQueueSize; ++i) r.hub->inject(0xB0, 1, 0);
+    CHECK(!r.hub->inject(0x80, 60, 0));
+    const auto ev = r.drain();
+    REQUIRE(!ev.empty());
+    CHECK(is(ev[0], 0x80, 60)); // released before the queued messages
+    // Only once: the flag is cleared.
+    for (int i = 0; i < 8; ++i) r.drain();
+    REQUIRE(r.hub->inject(0x90, 62, 100));
+    const auto ev2 = r.drain();
+    REQUIRE(ev2.size() == 1);
+    CHECK(is(ev2[0], 0x90, 62));
+}
+
+TEST_CASE(midi_input_reuses_a_closed_ports_slot_while_nothing_renders) {
+    using Hub = dstudio::MidiInputHub;
+    HubRig r(static_cast<int>(Hub::kDeviceSlots) + 1);
+    std::vector<std::string> first, second;
+    for (uint32_t i = 0; i < Hub::kDeviceSlots; ++i) first.push_back("fake:" + std::to_string(i));
+    for (uint32_t i = 1; i <= Hub::kDeviceSlots; ++i) second.push_back("fake:" + std::to_string(i));
+    REQUIRE(r.open(first) == SE_OK);
+    REQUIRE(r.port->send("fake:0", 0x90, 64, 100));
+    REQUIRE(r.drain().size() == 1);
+    REQUIRE(r.port->send("fake:0", 0x90, 65, 100)); // still queued when the port closes
+    // No renderer and no way to reclaim: the closed slot stays busy.
+    CHECK(r.open(second) == SE_ERR_DEVICE);
+    // With the RT role free, the slot is reclaimed at once; the held key's note-off waits for the next block.
+    int reclaims = 0;
+    CHECK(r.open(second, [&] {
+        ++reclaims;
+        r.hub->reclaim_closing();
+        return true;
+    }) == SE_OK);
+    CHECK(reclaims == 1);
+    const auto ev = r.drain();
+    REQUIRE(ev.size() == 2);
+    CHECK(is(ev[0], 0x80, 64) && is(ev[1], 0x80, 65));
+    REQUIRE(r.port->send("fake:16", 0x90, 70, 100));
+    const auto ev2 = r.drain();
+    REQUIRE(ev2.size() == 1);
+    CHECK(is(ev2[0], 0x90, 70));
+}
+
+TEST_CASE(midi_input_engine_frees_closed_slots_without_a_device) {
+    using Hub = dstudio::MidiInputHub;
+    Rig rig;
+    auto fake = std::make_unique<FakeMidi>();
+    FakeMidi* port = fake.get();
+    for (uint32_t i = 0; i <= Hub::kDeviceSlots; ++i) port->present.push_back({"fake:" + std::to_string(i), "Fake"});
+    dstudio::testing::set_midi_backend(rig.e, std::move(fake));
+    rig.add(1, 0.0f).d.arm = 1;
+    rig.publish();
+    std::vector<const char*> ids;
+    std::vector<std::string> names;
+    for (uint32_t i = 0; i <= Hub::kDeviceSlots; ++i) names.push_back("fake:" + std::to_string(i));
+    for (uint32_t i = 0; i < Hub::kDeviceSlots; ++i) ids.push_back(names[i].c_str());
+    REQUIRE(se_midi_inputs_open(rig.e, ids.data(), ids.size()) == SE_OK);
+    REQUIRE(port->send("fake:0", 0x90, 72, 100));
+    CHECK(rig.peaks(4800).first > 0.05);
+    ids.erase(ids.begin());
+    ids.push_back(names[Hub::kDeviceSlots].c_str());
+    REQUIRE(se_midi_inputs_open(rig.e, ids.data(), ids.size()) == SE_OK); // nothing rendered in between
+    rig.peaks(96000);
+    CHECK(rig.peaks(4800).first < 1e-5); // the closed port's note was released
+}
+
+TEST_CASE(midi_capture_skips_events_of_an_earlier_pass) {
+    HubRig r(0);
+    r.hub->capture_enable(true);
+    const uint32_t first = r.hub->capture_pass();
+    CHECK(first != 0);
+    dstudio::MidiEvent on{};
+    on.status = 0x90;
+    on.data1 = 60;
+    on.data2 = 100;
+    r.hub->capture_enable(false);
+    CHECK(r.hub->capture_pass() == 0);
+    r.hub->capture_enable(true);
+    const uint32_t second = r.hub->capture_pass();
+    CHECK(second != first);
+    // The audio thread read the pass before the restart and pushes late.
+    r.hub->capture(on, 100, first);
+    on.data1 = 62;
+    r.hub->capture(on, 200, second);
+    se_midi_captured c[4]{};
+    REQUIRE(r.hub->capture_read(c, 4) == 1);
+    CHECK(c[0].data1 == 62 && c[0].frame == 200);
+    // Read after the pass stops: its events are still there.
+    on.data1 = 64;
+    r.hub->capture(on, 300, second);
+    r.hub->capture_enable(false);
+    REQUIRE(r.hub->capture_read(c, 4) == 1);
+    CHECK(c[0].data1 == 64);
+}
+
 TEST_CASE(midi_capture_frame_compensates_latency_and_folds_into_the_loop) {
     using dstudio::midi_capture_frame;
     CHECK(midi_capture_frame(10000, 480, false, false, 0, 0) == 9520);

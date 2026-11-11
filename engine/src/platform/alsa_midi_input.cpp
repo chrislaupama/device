@@ -9,11 +9,15 @@
 // source subscribes that port to the source; closing unsubscribes. One
 // reader thread waits on the sequencer's poll descriptors plus a wake pipe
 // and turns events into channel messages for the source's receiver, so the
-// receiver of each source sees calls from this single thread only.
+// receiver of each source sees calls from this single thread only. Listing
+// and looking up ports use a second sequencer handle, so a slow scan never
+// holds up the reader.
 //
 // Ids are "client name:port name", which stay the same when a device is
-// unplugged and plugged back in (client numbers do not). Without a
-// sequencer (/dev/snd/seq missing, e.g. in containers) there are no ports.
+// unplugged and plugged back in (client numbers do not). Identical devices
+// share that name, so the second one listed gets "#2" appended, the third
+// "#3", and so on (as on Windows). Without a sequencer (/dev/snd/seq
+// missing, e.g. in containers) there are no ports.
 //
 // libasound is loaded with dlopen on first use rather than linked: programs
 // that never touch MIDI don't pay for loading it, and the engine still runs
@@ -32,6 +36,7 @@
 #include <map>
 #include <mutex>
 #include <poll.h>
+#include <string>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -99,15 +104,19 @@ public:
             seq_ = nullptr;
             return;
         }
+        if (a_->snd_seq_open(&query_, "default", SND_SEQ_OPEN_OUTPUT, 0) < 0) query_ = nullptr;
         a_->snd_seq_set_client_name(seq_, "Device Studio");
         port_ = a_->snd_seq_create_simple_port(seq_, "MIDI in", SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
-                                           SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
-        if (port_ < 0 || pipe(wake_) != 0) {
+                                               SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
+        if (query_ == nullptr || port_ < 0 || pipe(wake_) != 0) {
+            if (query_ != nullptr) a_->snd_seq_close(query_);
             a_->snd_seq_close(seq_);
-            seq_ = nullptr;
+            seq_ = query_ = nullptr;
             return;
         }
+        a_->snd_seq_set_client_name(query_, "Device Studio (ports)");
         self_ = a_->snd_seq_client_id(seq_);
+        query_self_ = a_->snd_seq_client_id(query_);
         thread_ = std::thread([this] { run(); });
     }
 
@@ -119,35 +128,17 @@ public:
         thread_.join();
         ::close(wake_[0]);
         ::close(wake_[1]);
+        a_->snd_seq_close(query_);
         a_->snd_seq_close(seq_);
     }
 
     void list(std::vector<MidiPortInfo>& out) override {
         out.clear();
         if (seq_ == nullptr) return;
-        std::lock_guard lock(mutex_);
-        SeqInfos infos(*a_);
-        snd_seq_client_info_t* const ci = infos.ci;
-        snd_seq_port_info_t* const pi = infos.pi;
-        a_->snd_seq_client_info_set_client(ci, -1);
-        while (a_->snd_seq_query_next_client(seq_, ci) >= 0) {
-            const int client = a_->snd_seq_client_info_get_client(ci);
-            if (client == self_ || client == SND_SEQ_CLIENT_SYSTEM) continue;
-            const std::string cname = a_->snd_seq_client_info_get_name(ci);
-            a_->snd_seq_port_info_set_client(pi, client);
-            a_->snd_seq_port_info_set_port(pi, -1);
-            while (a_->snd_seq_query_next_port(seq_, pi) >= 0) {
-                const unsigned caps = a_->snd_seq_port_info_get_capability(pi);
-                const unsigned want = SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ;
-                if ((caps & want) != want || (caps & SND_SEQ_PORT_CAP_NO_EXPORT) != 0) continue;
-                if ((a_->snd_seq_port_info_get_type(pi) & SND_SEQ_PORT_TYPE_MIDI_GENERIC) == 0) continue;
-                const std::string pname = a_->snd_seq_port_info_get_name(pi);
-                MidiPortInfo p;
-                p.id = cname + ":" + pname;
-                p.name = pname == cname || pname.rfind(cname, 0) == 0 ? pname : cname + " " + pname;
-                out.push_back(std::move(p));
-            }
-        }
+        enumerate([&](std::string id, std::string name, int, int) {
+            out.push_back(MidiPortInfo{std::move(id), std::move(name)});
+            return false;
+        });
     }
 
     bool open(const std::string& id, Receive rx, void* ctx, std::string& err) override {
@@ -156,52 +147,85 @@ public:
             return false;
         }
         int client = -1, port = -1;
-        if (!find(id, client, port)) {
+        enumerate([&](const std::string& pid, const std::string&, int c, int p) {
+            if (pid != id) return false;
+            client = c;
+            port = p;
+            return true;
+        });
+        if (client < 0) {
             err = "not present";
             return false;
         }
-        std::lock_guard lock(mutex_);
-        const int rc = a_->snd_seq_connect_from(seq_, port_, client, port);
+        // Registered before connecting, so the first event already finds it.
+        {
+            std::lock_guard lock(sources_mutex_);
+            sources_[id] = Source{client, port, rx, ctx};
+        }
+        int rc;
+        {
+            std::lock_guard lock(seq_mutex_);
+            rc = a_->snd_seq_connect_from(seq_, port_, client, port);
+        }
         if (rc < 0) {
+            std::lock_guard lock(sources_mutex_);
+            sources_.erase(id);
             err = a_->snd_strerror(rc);
             return false;
         }
-        sources_[id] = Source{client, port, rx, ctx};
         return true;
     }
 
     void close(const std::string& id) override {
         if (seq_ == nullptr) return;
-        std::lock_guard lock(mutex_); // the reader holds it while delivering
-        auto it = sources_.find(id);
-        if (it == sources_.end()) return;
-        a_->snd_seq_disconnect_from(seq_, port_, it->second.client, it->second.port);
-        sources_.erase(it);
+        Source src;
+        {
+            std::lock_guard lock(sources_mutex_); // the reader holds it while delivering
+            auto it = sources_.find(id);
+            if (it == sources_.end()) return;
+            src = it->second;
+            sources_.erase(it);
+        }
+        std::lock_guard lock(seq_mutex_);
+        a_->snd_seq_disconnect_from(seq_, port_, src.client, src.port);
     }
 
 private:
-    bool find(const std::string& id, int& client, int& port) {
-        std::lock_guard lock(mutex_);
+    // Calls f(id, name, client, port) for every listable input port, in
+    // sequencer order, until it returns true. Ids are made unique here
+    // ("#2", "#3" for identical names), so list() and open() agree.
+    template <class F>
+    void enumerate(F&& f) {
+        std::lock_guard lock(query_mutex_);
         SeqInfos infos(*a_);
         snd_seq_client_info_t* const ci = infos.ci;
         snd_seq_port_info_t* const pi = infos.pi;
+        std::map<std::string, int> seen;
         a_->snd_seq_client_info_set_client(ci, -1);
-        while (a_->snd_seq_query_next_client(seq_, ci) >= 0) {
-            const int c = a_->snd_seq_client_info_get_client(ci);
+        while (a_->snd_seq_query_next_client(query_, ci) >= 0) {
+            const int client = a_->snd_seq_client_info_get_client(ci);
+            if (client == self_ || client == query_self_ || client == SND_SEQ_CLIENT_SYSTEM) continue;
             const std::string cname = a_->snd_seq_client_info_get_name(ci);
-            if (id.rfind(cname + ":", 0) != 0) continue;
-            a_->snd_seq_port_info_set_client(pi, c);
+            a_->snd_seq_port_info_set_client(pi, client);
             a_->snd_seq_port_info_set_port(pi, -1);
-            while (a_->snd_seq_query_next_port(seq_, pi) >= 0)
-                if (cname + ":" + a_->snd_seq_port_info_get_name(pi) == id) {
-                    client = c;
-                    port = a_->snd_seq_port_info_get_port(pi);
-                    return true;
+            while (a_->snd_seq_query_next_port(query_, pi) >= 0) {
+                const unsigned caps = a_->snd_seq_port_info_get_capability(pi);
+                const unsigned want = SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ;
+                if ((caps & want) != want || (caps & SND_SEQ_PORT_CAP_NO_EXPORT) != 0) continue;
+                if ((a_->snd_seq_port_info_get_type(pi) & SND_SEQ_PORT_TYPE_MIDI_GENERIC) == 0) continue;
+                const std::string pname = a_->snd_seq_port_info_get_name(pi);
+                std::string id = cname + ":" + pname;
+                std::string name = pname == cname || pname.rfind(cname, 0) == 0 ? pname : cname + " " + pname;
+                if (const int k = ++seen[id]; k > 1) {
+                    id += "#" + std::to_string(k);
+                    name += " " + std::to_string(k);
                 }
+                if (f(std::move(id), std::move(name), client, a_->snd_seq_port_info_get_port(pi))) return;
+            }
         }
-        return false;
     }
 
+    // Requires sources_mutex_.
     void deliver(const snd_seq_event_t& ev) {
         uint8_t msg[3] = {0, 0, 0};
         uint32_t len = 3;
@@ -253,19 +277,31 @@ private:
         while (!stop_.load(std::memory_order_acquire)) {
             if (poll(fds.data(), fds.size(), -1) < 0 && errno != EINTR) break;
             if (stop_.load(std::memory_order_acquire)) break;
-            std::lock_guard lock(mutex_);
-            snd_seq_event_t* ev = nullptr;
-            while (a_->snd_seq_event_input(seq_, &ev) >= 0 && ev != nullptr) deliver(*ev);
+            for (;;) {
+                snd_seq_event_t ev;
+                {
+                    std::lock_guard lock(seq_mutex_); // only for the read: connects/disconnects use seq_ too
+                    snd_seq_event_t* p = nullptr;
+                    if (a_->snd_seq_event_input(seq_, &p) < 0 || p == nullptr) break;
+                    ev = *p; // channel events carry their data inline
+                }
+                std::lock_guard lock(sources_mutex_);
+                deliver(ev);
+            }
         }
     }
 
     const Alsa* const a_; // null without libasound (then seq_ stays null)
-    snd_seq_t* seq_ = nullptr;
+    snd_seq_t* seq_ = nullptr;   // input port and subscriptions; read by the reader thread
+    snd_seq_t* query_ = nullptr; // port enumeration (list, open)
     int port_ = -1;
     int self_ = -1;
+    int query_self_ = -1;
     int wake_[2] = {-1, -1};
-    std::mutex mutex_;
-    std::map<std::string, Source> sources_; // guarded by mutex_
+    std::mutex seq_mutex_;     // seq_ calls
+    std::mutex query_mutex_;   // query_ calls
+    std::mutex sources_mutex_; // sources_; held while a receiver runs
+    std::map<std::string, Source> sources_;
     std::thread thread_;
     std::atomic<bool> stop_{false};
 };

@@ -86,7 +86,8 @@ CMake must be 3.25 or newer. Ubuntu 24.04 and Debian 13 ship one; on Ubuntu 22.0
 first, for example `pip install --user cmake` or Kitware's APT repository (apt.kitware.com), and check `cmake --version`.
 
 The X11, Wayland, xkbcommon, fontconfig and udev packages are for the app;
-the engine itself needs only `pkg-config` and `libpipewire-0.3-dev`.
+the engine itself needs only `pkg-config`, `libpipewire-0.3-dev` and the `libasound2-dev` headers
+(for MIDI input; leave them out with `-DDSTUDIO_ENGINE_ALSA_MIDI=OFF`).
 
 #### PipeWire notes
 

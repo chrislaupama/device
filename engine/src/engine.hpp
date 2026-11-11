@@ -71,6 +71,9 @@ public:
 
     // ---- MIDI input (midi_input.hpp; se_midi_*)
     MidiInputHub& midi() noexcept { return *midi_; }
+    // MidiInputHub::open_only, freeing closed ports' slots right away when
+    // nothing renders.
+    int32_t midi_open(const std::vector<std::string>& ids, std::string& err);
     // Test hook: a new hub over `backend` (call before any MIDI use, while
     // nothing renders).
     void set_midi_backend(std::unique_ptr<MidiBackend> backend) {

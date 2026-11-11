@@ -12,7 +12,14 @@
 // backend calls for one port never overlap, and injection is serialised by
 // a mutex on the main side. Closing a port marks its slot Closing; the audio
 // thread then sends note-offs for the notes that slot still holds and frees
-// the slot, so closing an input never leaves a note hanging.
+// the slot, so closing an input never leaves a note hanging. While nothing
+// renders, open_only() frees Closing slots itself under the RT role
+// (reclaim_closing()), and the note-offs wait for the next block.
+//
+// Several ports can hold the same key: the hub counts holders per key and
+// passes a note-off on only when the last one lets go. A slot whose queue
+// overflowed may have lost a note-off, so the next drain releases every key
+// that slot holds.
 //
 // Nothing here allocates, locks or blocks on the RT side. See
 // specs/002-midi-input-and-recording/plan.md.
@@ -27,6 +34,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -61,13 +69,18 @@ public:
     void list(std::vector<MidiPortState>& out);
     // Opens exactly the listed ports that exist (others are closed). Returns
     // SE_OK, or SE_ERR_DEVICE with `err` naming the ports that failed (the
-    // rest are still opened).
-    int32_t open_only(const std::vector<std::string>& ids, std::string& err);
+    // rest are still opened). When every slot is taken and some are Closing,
+    // `reclaim` is called: it runs reclaim_closing() if it can take the RT
+    // role (nothing renders) and returns true; false means a renderer will
+    // free them, and open_only waits briefly for it.
+    using Reclaim = std::function<bool()>;
+    int32_t open_only(const std::vector<std::string>& ids, std::string& err, const Reclaim& reclaim = {});
     // Queues one channel message as if a port had sent it. False when the
     // message is not a channel message or the queue is full.
     bool inject(uint8_t status, uint8_t data1, uint8_t data2) noexcept;
     void set_focus(uint64_t track_id) noexcept { focus_.store(track_id, std::memory_order_relaxed); }
-    // Capture ring: enabling empties it first; reading pops (one consumer).
+    // Capture ring: enabling starts a new pass (events captured for an
+    // earlier pass are never read); reading pops (one consumer).
     void capture_enable(bool on) noexcept;
     std::size_t capture_read(se_midi_captured* out, std::size_t capacity) noexcept;
     void stats(se_midi_stats* out) const noexcept;
@@ -78,11 +91,19 @@ public:
     // and program changes are dropped. Frees Closing slots after sending
     // note-offs for what they held.
     uint32_t drain(MidiEvent* out, uint32_t cap) noexcept;
+    // RT owner with nothing rendering (open_only's `reclaim`): frees Closing
+    // slots now. Their note-offs go out with the next drain.
+    void reclaim_closing() noexcept;
     uint64_t focus() const noexcept { return focus_.load(std::memory_order_relaxed); }
-    bool capturing() const noexcept { return capture_on_.load(std::memory_order_acquire); }
-    // Records `e` heard at timeline `frame` (notes only). Dropped and counted
-    // when the ring is full.
-    void capture(const MidiEvent& e, int64_t frame) noexcept;
+    // The capture pass in progress: 0 = not capturing.
+    uint32_t capture_pass() const noexcept {
+        const uint32_t st = capture_state_.load(std::memory_order_acquire);
+        return (st & 1u) != 0 ? st >> 1 : 0;
+    }
+    // Records `e` heard at timeline `frame` (notes only) for `pass`
+    // (capture_pass() read before the events were captured). Dropped and
+    // counted when the ring is full.
+    void capture(const MidiEvent& e, int64_t frame, uint32_t pass) noexcept;
     // True once per capture_enable(true): the RT side resets its per-pass
     // state (loop folding) when it sees it.
     bool take_capture_restart() noexcept { return capture_restart_.exchange(false, std::memory_order_acq_rel); }
@@ -95,13 +116,23 @@ private:
     struct Slot {
         SpscQueue<Msg, kQueueSize> queue;
         std::atomic<uint8_t> state{kFree};
+        std::atomic<bool> overflowed{false}; // a message was dropped since the last drain
         std::atomic<uint64_t> received{0};
         std::atomic<uint64_t> dropped{0};
         std::array<bool, 128> held{}; // RT-owned
         std::string id;               // main-owned (ports_mutex_)
         MidiInputHub* hub = nullptr;
     };
+    struct Captured {
+        se_midi_captured event;
+        uint32_t pass = 0;
+    };
     static void receive(void* ctx, const uint8_t* msg, uint32_t len) noexcept;
+    // RT: one key of slot `s` goes up. A note-off is due when no other port
+    // still holds the key: written to out[n] while there is room, else kept
+    // for the next drain.
+    void release(Slot& s, uint8_t pitch, uint8_t velocity, MidiEvent* out, uint32_t& n, uint32_t cap) noexcept;
+    void release_all(Slot& s, MidiEvent* out, uint32_t& n, uint32_t cap) noexcept;
     MidiBackend& backend(); // requires ports_mutex_
     void close_slot(Slot& s); // requires ports_mutex_
     // The slot, allocated on first use (main thread, under ports_mutex_ or
@@ -118,13 +149,19 @@ private:
     std::mutex alloc_mutex_;
     std::mutex inject_mutex_;
     std::atomic<uint64_t> focus_{0};
+    // RT-owned: ports holding each key, and note-offs owed (no room last drain,
+    // or slots reclaimed while nothing rendered).
+    std::array<uint8_t, 128> holders_{};
+    std::array<bool, 128> owed_off_{};
+    uint32_t owed_count_ = 0;
 
-    std::atomic<bool> capture_on_{false};
+    // bit 0: capturing; bits 1..: the pass number (bumped by capture_enable(true)).
+    std::atomic<uint32_t> capture_state_{0};
     std::atomic<bool> capture_restart_{false};
     std::atomic<uint64_t> capture_dropped_{0};
     std::atomic<uint64_t> delivered_{0};
-    // Allocated by the first capture_enable(true), published by capture_on_.
-    std::unique_ptr<SpscQueue<se_midi_captured, kCaptureSize>> capture_;
+    // Allocated by the first capture_enable(true), published by capture_state_.
+    std::unique_ptr<SpscQueue<Captured, kCaptureSize>> capture_;
 };
 
 // The built-in Synth played live. The Synth renders notes from a timeline

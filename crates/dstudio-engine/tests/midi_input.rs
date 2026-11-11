@@ -75,3 +75,11 @@ fn focus_track_plays_until_another_track_is_armed() {
     engine.midi_inject(0x90, 60, 100).unwrap();
     assert!(peak(&engine, 4096) < 1e-3, "only what is left of the earlier note's tail");
 }
+
+#[test]
+fn opening_a_midi_input_id_with_nul_is_an_invalid_argument() {
+    let engine = Engine::new(Config { sample_rate: RATE, max_block_size: 512 }).unwrap();
+    let err = engine.open_midi_inputs(&["keys\0x".to_string()]).unwrap_err();
+    assert_eq!(err.kind, "invalid argument");
+    engine.open_midi_inputs(&["not present".to_string()]).unwrap();
+}

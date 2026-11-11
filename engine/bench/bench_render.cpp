@@ -459,7 +459,7 @@ Result run_midi_input(uint32_t tracks, uint32_t blocks, int mode) {
     std::vector<float> buf(kBlock * 2);
     std::vector<double> times(blocks);
     const uint8_t chord[4] = {60, 64, 67, 71};
-    const auto t_all = std::chrono::steady_clock::now();
+    double wall_us = 0.0; // render time only: injecting (the MIDI thread's work) is not timed
     for (uint32_t b = 0; b < blocks; ++b) {
         if (mode != 0 && b % 10 == 0)
             for (uint8_t p : chord) se_midi_inject(e, 0x90, p, 100);
@@ -468,8 +468,8 @@ Result run_midi_input(uint32_t tracks, uint32_t blocks, int mode) {
         const auto t0 = std::chrono::steady_clock::now();
         se_render_offline(e, buf.data(), kBlock);
         times[b] = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+        wall_us += times[b];
     }
-    const double wall_us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t_all).count();
     se_engine_destroy(e);
     if (times.empty()) return Result{};
     std::vector<double> sorted = times;

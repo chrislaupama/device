@@ -1047,9 +1047,14 @@ impl Engine {
 
     /// Opens exactly these MIDI input ports (ids that are not present are
     /// ignored) and closes the others; notes they held are released. An
-    /// error names the ports that failed; the rest are open.
+    /// error names the ports that failed; the rest are open. An id with a
+    /// NUL byte is an invalid argument (nothing is opened or closed).
     pub fn open_midi_inputs(&self, ids: &[String]) -> Result<(), EngineError> {
-        let c: Vec<CString> = ids.iter().filter_map(|i| CString::new(i.as_str()).ok()).collect();
+        let c = ids
+            .iter()
+            .map(|i| CString::new(i.as_str()))
+            .collect::<Result<Vec<CString>, _>>()
+            .map_err(|_| EngineError { code: ffi::SE_ERR_INVALID_ARG, kind: "invalid argument", message: "MIDI input id contains NUL".into() })?;
         let ptrs: Vec<*const std::os::raw::c_char> = c.iter().map(|s| s.as_ptr()).collect();
         check(unsafe { ffi::se_midi_inputs_open(self.raw, ptrs.as_ptr(), ptrs.len()) })
     }
