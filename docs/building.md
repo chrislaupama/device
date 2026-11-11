@@ -212,6 +212,24 @@ The workflow never uses a self-hosted runner, has no secrets, gives its token
 read-only access and pins every action to a commit, so running it on a
 stranger's pull request is safe.
 
+### Supply-chain checks
+
+[`.github/workflows/security.yml`](../.github/workflows/security.yml) runs on
+pull requests that change `Cargo.lock`, a `Cargo.toml` or a workflow, on
+pushes to main that change `Cargo.lock`, and every Monday:
+
+- **Dependency review** (pull requests): fails when the change adds a
+  dependency or action with a known vulnerability of moderate severity or
+  worse, from GitHub's advisory database.
+- **RustSec advisories**: `cargo audit` checks every crate in `Cargo.lock`
+  against the RustSec database and fails on a vulnerability (unmaintained or
+  yanked crates are warnings). The weekly run catches advisories published
+  after a dependency was added.
+
+Every action in every workflow is pinned to a commit hash; Dependabot moves the
+hashes in one grouped pull request a week. Cargo crates and the engine's C++
+SDKs are updated by hand (Dependabot opens security fixes only).
+
 ### Performance checks
 
 [`.github/workflows/perf.yml`](../.github/workflows/perf.yml) runs on pull
@@ -265,7 +283,9 @@ installable packages:
 Each package carries the plugin scanner next to the app, where the app looks
 for it first, and is smoke-tested on its runner (installed, then started to
 render a screenshot). Pushing a tag `vX.Y.Z` builds them from `main` and
-creates a **draft** GitHub release with generated notes; the tag must match the
+creates a **draft** GitHub release with generated notes, a `SHA256SUMS.txt` and
+a signed build provenance attestation for every package (check a download with
+`gh attestation verify <file> --repo chrislaupama/device`); the tag must match the
 `version` in the root `Cargo.toml`. A manual run (Actions › Release › Run
 workflow) or a pull request that changes the packaging builds the packages as
 run artifacts without releasing anything.

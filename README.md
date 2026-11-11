@@ -229,10 +229,12 @@ interface end to end, from importing audio to checking that notes drawn in the p
 Pull requests with visual changes include before and after screenshots, and anything that could affect performance
 comes with benchmark results.
 
-Three GitHub Actions workflows check every change: **CI** builds and tests the engine, the workspace and the app on
+Four GitHub Actions workflows check every change: **CI** builds and tests the engine, the workspace and the app on
 macOS, Windows and Linux; **Performance** builds the benchmarks at the base commit and with the change and fails a
 pull request when any benchmark row needs more than 1 % more CPU instructions (timings on all three systems are
-reported too); **Release** builds the installable packages and drafts a GitHub release for a `vX.Y.Z` tag. See
+reported too); **Security** reviews new dependencies and checks `Cargo.lock` against the RustSec advisories every
+week; **Release** builds the installable packages, attests their build provenance and drafts a GitHub release for a
+`vX.Y.Z` tag. See
 [Continuous integration](docs/building.md#continuous-integration) for the details and how to run the performance
 comparison locally.
 
