@@ -2114,6 +2114,30 @@ mod tests {
         assert_eq!(c.bottom_restore.get("mixer"), Some(&Some(400.0)));
         assert!(!c.bottom_restore.contains_key("devices"));
     }
+    /// Two quick reverses of one audio clip are two undo steps: one Undo leaves it reversed.
+    #[test]
+    fn each_reverse_is_its_own_undo_step() {
+        let engine = Arc::new(Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        let (asset, clip, track) = (AssetId(9001), ClipId(9002), TrackId(9003));
+        c.execute(Command::Batch {
+            label: "Fixture".into(),
+            commands: vec![
+                Command::AddAsset { asset: Asset { id: asset, relative_path: None, absolute_path: "fixture.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 48_000 } },
+                Command::AddTrack { index: None, track: Track::new(track, TrackKind::Audio, "Audio", next_track_color(c.project())) },
+                Command::AddClip {
+                    track,
+                    clip: Clip { id: clip, asset, name: "Loop".into(), start: 0, source_offset: 0, source_length: 48_000, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None },
+                },
+            ],
+        });
+        c.select_clip(Some(clip));
+        c.reverse_clip();
+        c.reverse_clip();
+        assert!(!c.project().clip(clip).unwrap().warp.reverse, "reversed twice");
+        c.undo();
+        assert!(c.project().clip(clip).unwrap().warp.reverse, "one Undo goes back to after the first reverse");
+    }
     /// A master volume lane being drawn must not bring a muted master back.
     #[test]
     fn a_muted_master_ignores_a_lane_being_drawn() {

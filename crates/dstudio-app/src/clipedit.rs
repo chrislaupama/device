@@ -154,6 +154,8 @@ impl Controller {
     /// clip ends. A step pattern is left alone (its steps are reversed in the step editor).
     pub fn reverse_clip(&mut self) {
         let Some(id) = self.selected_clip else { return };
+        // Each press is its own undo step: two quick reverses of one audio clip must not merge.
+        self.doc.seal_coalescing();
         let p = self.project();
         if let Some(m) = p.midi_clip(id) {
             if m.pattern.is_some() {
