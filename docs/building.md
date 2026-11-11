@@ -140,3 +140,62 @@ the Mac. Covering all three needs runner labels per OS and a matrix or one job
 per OS. The Windows and Linux results above come from the last run on
 GitHub-hosted runners, before that matrix was dropped; later changes are not
 compiled on those systems.
+
+### Performance checks
+
+[`.github/workflows/perf.yml`](../.github/workflows/perf.yml) runs on pull
+requests that touch `engine/`, `crates/dstudio-core/` or `Cargo.lock`, and on
+pushes to `main`. It builds every engine benchmark (`engine/bench/`) and the
+core's Rust benchmarks (`crates/dstudio-core/benches/`) twice on the same
+runner, at the base commit and with the change, and compares them row by row
+with [`tools/perf/bench_gate.py`](../tools/perf/bench_gate.py):
+
+- **Instructions** (Linux, the gate): each benchmark runs under Valgrind's
+  Callgrind, which starts a new count every time the benchmark prints a line,
+  so every table row gets the CPU instructions (all threads) spent producing
+  it. Counts repeat almost exactly between runs, so a row more than **1 %**
+  above the base fails the check.
+- **Time** (Linux, macOS, Windows, a warning only): the benchmarks run
+  natively, base and head interleaved for three rounds, fastest round per
+  row. A row more than **15 %** slower is re-timed and reported as a warning:
+  hosted runners are too noisy for a timing gate, but this catches what
+  instruction counts cannot (cache misses, denormals, platform code).
+
+The comparison tables are on each run's summary page. A regression that is
+worth it is accepted with the `perf-regression-accepted` label on the pull
+request: the check passes and the report still lists it. New benchmarks and new
+rows are picked up without changes to the script, as long as they print tables
+(a row is a line ending in numbers, under a header naming the columns).
+
+Run the same comparison locally (instructions need Linux and Valgrind):
+
+```sh
+python3 tools/perf/bench_gate.py all --base origin/main              # instructions + time
+python3 tools/perf/bench_gate.py all --base origin/main --mode time  # time only (macOS, Windows)
+```
+
+### Release packages
+
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) builds the
+installable packages:
+
+| System | Package |
+|---|---|
+| macOS 13+ | `DeviceStudio-<version>-macos-universal.dmg` (Apple silicon + Intel) |
+| Windows x64 | `DeviceStudio-<version>-windows-x64-setup.exe` (installer) and a portable `.zip` |
+| Linux x86_64, aarch64 | `DeviceStudio-<version>-linux-<arch>.tar.gz` (run `install.sh`) |
+
+Each package carries the plugin scanner next to the app, where the app looks
+for it first, and is smoke-tested on its runner (installed, then started to
+render a screenshot). Pushing a tag `vX.Y.Z` builds them from `main` and
+creates a **draft** GitHub release with generated notes; the tag must match the
+`version` in the root `Cargo.toml`. A manual run (Actions › Release › Run
+workflow) or a pull request that changes the packaging builds the packages as
+run artifacts without releasing anything.
+
+The macOS app is signed and notarised when the repository has the secrets
+listed at the top of the workflow (a Developer ID certificate and an Apple ID
+app password); without them it is signed ad hoc and macOS asks the user to
+allow it on first launch. The Windows packages are not signed yet, so
+SmartScreen warns on first run. The packaging scripts are in
+[`tools/release/`](../tools/release/).

@@ -1,0 +1,162 @@
+name: Performance
+
+# Benchmark regression checks (tools/perf/bench_gate.py). Builds the engine and core
+# benchmarks twice on the same runner, at the base commit and with the change, runs both and
+# compares them row by row:
+#
+#   Instructions (Linux): every benchmark under Valgrind's Callgrind, which counts the CPU
+#     instructions behind each printed row, all engine threads included. The counts repeat
+#     almost exactly between runs, so the limit is tight: a row more than 1 % above the
+#     base fails the check. This is the gate.
+#   Time (Linux, macOS, Windows): the benchmarks natively, base and head interleaved over
+#     three rounds, fastest round per row. Hosted runners are shared machines, so a row more
+#     than 15 % slower (re-timed with more rounds first) is reported as a warning only. It
+#     catches what instruction counts cannot see: cache misses, denormals, thread hand-offs,
+#     platform-specific code.
+#
+# Both write their table to the run's summary page and upload it as an artifact.
+# A regression that is worth it (more work for a new feature, say) is accepted by adding the
+# `perf-regression-accepted` label to the pull request: the check passes and the report still
+# lists it. On pushes to main each commit is compared with the one before it.
+#
+# Locally: python3 tools/perf/bench_gate.py all --base origin/main
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    paths:
+      - 'engine/**'
+      - 'crates/dstudio-core/**'
+      - 'Cargo.lock'
+      - 'tools/perf/**'
+      - '.github/workflows/perf.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'engine/**'
+      - 'crates/dstudio-core/**'
+      - 'Cargo.lock'
+      - 'tools/perf/**'
+      - '.github/workflows/perf.yml'
+  workflow_dispatch:
+    inputs:
+      base:
+        description: 'Commit, branch or tag to compare against'
+        default: 'origin/main'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The commit to compare against: the PR's base, the previous main commit, or the input.
+  BASE_REF: ${{ github.event.pull_request.base.sha || inputs.base || github.event.before }}
+  PERF_ACCEPT: ${{ contains(github.event.pull_request.labels.*.name, 'perf-regression-accepted') && '1' || '' }}
+
+jobs:
+  instructions:
+    name: Instructions (Linux, Callgrind)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the base commit is built from a worktree
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install build tools and Valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache valgrind \
+            libpipewire-0.3-dev libasound2-dev
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/ccache
+            .perf-deps
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+          key: perf-instructions-${{ github.sha }}
+          restore-keys: perf-instructions-
+      - name: Compare with the base
+        run: python3 tools/perf/bench_gate.py all --base "$BASE_REF" --mode instructions --work build/perf --deps .perf-deps
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: perf-instructions
+          path: |
+            build/perf/report.md
+            build/perf/instructions-*.json
+            build/perf/*/*.log
+          if-no-files-found: ignore
+
+  time:
+    name: Time (${{ matrix.name }})
+    # Adding or removing the accept label only matters to the gate above.
+    if: github.event.action != 'labeled' && github.event.action != 'unlabeled'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux, os: ubuntu-24.04 }
+          - { name: macOS, os: macos-15 }
+          - { name: Windows, os: windows-2025 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache libpipewire-0.3-dev libasound2-dev
+      - name: Install build tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja ccache
+      - name: MSVC developer environment (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "no Visual Studio with the C++ x64 tools" }
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+          }
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/ccache
+            ~/Library/Caches/ccache
+            .perf-deps
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+          key: perf-time-${{ runner.os }}-${{ github.sha }}
+          restore-keys: perf-time-${{ runner.os }}-
+      - name: Compare with the base
+        shell: bash
+        run: |
+          py=$(command -v python3 || command -v python)
+          "$py" tools/perf/bench_gate.py all --base "$BASE_REF" --mode time --work build/perf --deps .perf-deps
+      - name: Warn about slower rows
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          if grep -q "row(s) over the limit" build/perf/report.md 2>/dev/null; then
+            echo "::warning title=Benchmarks slower on ${{ matrix.name }}::$(grep 'row(s) over the limit' build/perf/report.md | head -1) See the run summary."
+          fi
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: perf-time-${{ matrix.name }}
+          path: |
+            build/perf/report.md
+            build/perf/time-*.json
+            build/perf/*/*.log
+          if-no-files-found: ignore
