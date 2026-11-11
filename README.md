@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img alt="Device Studio. Built for real time. An open-source DAW with a C++ engine and a GPU-drawn interface, for macOS, Windows and Linux, hosting AU, VST3 and CLAP, with 44 built-in devices." src="docs/assets/art/hero.png" width="100%">
+<h1><img alt="Device Studio. Built for real time. An open-source DAW with a C++ engine and a GPU-drawn interface, for macOS, Windows and Linux, hosting AU, VST3 and CLAP, with 44 built-in devices." src="docs/assets/art/hero.png" width="100%"></h1>
 
 <p>
   <a href="https://github.com/chrislaupama/device/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/chrislaupama/device/actions/workflows/ci.yml/badge.svg?branch=main"></a>
@@ -62,13 +62,13 @@ wgpu.
 
 ### A closer look
 
-<p align="center"><img alt="Timeline: arrange, record and automate. Automation lanes for track volume, pan and a synth's cutoff over an audio track, an instrument track and the master." src="docs/assets/art/feature-timeline.png" width="100%"></p>
+<p align="center"><img alt="Timeline: arrange, record and automate. Clips, waveforms and automation lanes are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips. Shown: automation lanes for track volume, pan and a synth's cutoff over an audio track, an instrument track and the master." src="docs/assets/art/feature-timeline.png" width="100%"></p>
 
-<p align="center"><img alt="Instruments: four instruments, built in. The Synth's two oscillators with their waveform displays." src="docs/assets/art/feature-instruments.png" width="100%"></p>
+<p align="center"><img alt="Instruments: four instruments, built in. A synth, a sampler, a drum rack and a pad sampler, each one declarative definition that automation, presets, undo and saving all derive from. Shown: the Synth's two oscillators with their waveform displays." src="docs/assets/art/feature-instruments.png" width="100%"></p>
 
-<p align="center"><img alt="Effects: from compression to restoration. Pitch Corrector, Tuner and Spectrum side by side in a track's device chain." src="docs/assets/art/feature-effects.png" width="100%"></p>
+<p align="center"><img alt="Effects: from compression to restoration. Dynamics, EQ, saturation, modulation, delay, reverb, pitch and repair tools, plus your own AU, VST3 and CLAP plugins. Shown: Pitch Corrector, Tuner and Spectrum side by side in a track's device chain." src="docs/assets/art/feature-effects.png" width="100%"></p>
 
-<p align="center"><img alt="Modulation: make anything move. An LFO in sync mode driving a Compressor parameter." src="docs/assets/art/feature-modulation.png" width="100%"></p>
+<p align="center"><img alt="Modulation: make anything move. An LFO that drives any device parameter, Chains that put a group of effects under eight macros, and automation for the rest. Shown: an LFO in sync mode driving a Compressor parameter." src="docs/assets/art/feature-modulation.png" width="100%"></p>
 
 <sub>The app's views are rendered by the app itself (<code>device-studio --screenshot</code>) on Linux with a software GPU, then
 framed by <code>tools/art/render.mjs</code>. More screenshots are in <a href="docs/assets/">docs/assets</a>.</sub>

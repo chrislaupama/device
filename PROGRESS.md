@@ -257,8 +257,9 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Window title, binary (`device-studio`), built-in device vendor, preferences folder
   (`Device Studio` / `device-studio`), recording temp folder, CLAP host name, Core Audio aggregate and
   PipeWire stream names, assistant prompt and README/docs now say Device Studio.
-- Projects save as `Name.dsproj/` with format `device-studio-project`; projects and the support folder from
-  before the rename still open and are moved over on first launch (`prefs::migrate_legacy_support_dir`).
+- Projects save as `Name.dsproj/` with format `device-studio-project`; projects from before the rename still open, and
+  the old support folder is moved over on first launch unless a new one already exists, in which case the old
+  one is left in place (`prefs::migrate_legacy_support_dir`).
   The macOS bundle id is `com.devicestudio.app` (microphone permission is asked again once).
 - Internal names use `dstudio` (`dstudio-*` crates, `dstudio::` namespace, `dstudio_engine.h`,
   `DSTUDIO_*` CMake options and env vars, `DStudioTest*` test plugins, `studio.dstudio.test.*` ids).

@@ -27,14 +27,16 @@ menu bar (the top 88 pixels) cropped off:
 ```sh
 SLINT_SCALE_FACTOR=2 SLINT_WGPU_CPU=1 WGPU_BACKEND=vulkan xvfb-run -a -s "-screen 0 3200x2000x24" \
   target/release/device-studio --no-audio --zoom 85 --state review-automation \
-  --screenshot automation.png --exit-after-frames 5
+  --screenshot /tmp/automation.png --exit-after-frames 5
+magick /tmp/automation.png -gravity north -chop 0x88 docs/art/shots/automation.png
 ```
 
-| Shot | `--state` |
+| Cropped shot | `--state` |
 |---|---|
-| `automation.png` | `review-automation` |
-| `analyzers.png` | `review-analyzers` |
-| `lfo.png` | `reference-lfo` |
+| `docs/art/shots/automation.png` | `review-automation` |
+| `docs/art/shots/analyzers.png` | `review-analyzers` |
+| `docs/art/shots/lfo.png` | `reference-lfo` |
 
-`--zoom 85` makes the interface scale exactly 2, so the layout matches a 1440×820 window. When a view changes
-visibly, render its shot again, crop it the same way and re-run `render.mjs`.
+`--zoom 85` makes the interface scale exactly 2, so the layout matches a 1440×820 window. For the other shots, swap the
+`--state` and file names from the table. When a view changes visibly, render its shot again, crop it into
+`docs/art/shots/` the same way and re-run `render.mjs`.
