@@ -267,7 +267,7 @@ fn track_name(p: &Project, id: TrackId) -> String {
 /// Plain-language sentence for an applied command.
 fn describe(cmd: &Command, before: &Project, after: &Project) -> String {
     match cmd {
-        Command::AddTrack { track, .. } => format!("Added an {} track, {}.", match track.kind { TrackKind::Audio => "audio", TrackKind::Instrument => "instrument" }, track.name),
+        Command::AddTrack { track, .. } => format!("Added {} track, {}.", match track.kind { TrackKind::Audio => "an audio", TrackKind::Instrument => "an instrument", TrackKind::Return => "a return" }, track.name),
         Command::RemoveTrack { track } => format!("Deleted {}.", track_name(before, *track)),
         Command::RenameTrack { track, name } => format!("Renamed {} to {}.", track_name(before, *track), name),
         Command::SetTrackGain { track, gain } => format!("Set {} volume to {:.1} dB.", track_name(after, *track), gain_to_db(*gain)),

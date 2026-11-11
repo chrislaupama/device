@@ -47,6 +47,9 @@ fn loopback(pdc_latency: Option<u32>) {
 
     let track = TrackSnapshot {
         track_id: 1,
+        is_return: false,
+        output: None,
+        sends: Vec::new(),
         gain: 1.0,
         pan: 0.0,
         mute: false,
