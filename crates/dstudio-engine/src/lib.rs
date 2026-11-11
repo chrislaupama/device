@@ -1136,13 +1136,31 @@ struct RawReport {
     from_cache: bool,
 }
 
-/// Path of the out-of-process scanner: `$DSTUDIO_PLUGIN_SCANNER` if set,
-/// else the executable built next to the engine library by build.rs.
+/// File name of the out-of-process scanner executable.
+pub const PLUGIN_SCANNER_NAME: &str = if cfg!(windows) { "dstudio_plugin_scanner.exe" } else { "dstudio_plugin_scanner" };
+
+/// Path of the out-of-process scanner: `$DSTUDIO_PLUGIN_SCANNER` if set, else
+/// the scanner next to the running executable (where the release packages
+/// put it: the install folder, or `Contents/MacOS` in the app bundle), else
+/// the executable built next to the engine library by build.rs (a build run
+/// from its target directory).
 pub fn plugin_scanner_path() -> PathBuf {
-    match std::env::var_os("DSTUDIO_PLUGIN_SCANNER") {
-        Some(p) if !p.is_empty() => PathBuf::from(p),
-        _ => PathBuf::from(env!("DSTUDIO_PLUGIN_SCANNER_BUILT")),
+    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
+    resolve_plugin_scanner(
+        std::env::var_os("DSTUDIO_PLUGIN_SCANNER").map(PathBuf::from),
+        exe_dir.as_deref(),
+        Path::new(env!("DSTUDIO_PLUGIN_SCANNER_BUILT")),
+    )
+}
+
+fn resolve_plugin_scanner(env: Option<PathBuf>, exe_dir: Option<&Path>, built: &Path) -> PathBuf {
+    if let Some(p) = env.filter(|p| !p.as_os_str().is_empty()) {
+        return p;
     }
+    if let Some(sibling) = exe_dir.map(|d| d.join(PLUGIN_SCANNER_NAME)).filter(|p| p.is_file()) {
+        return sibling;
+    }
+    built.to_path_buf()
 }
 
 /// Directory holding the test plugin bundles built with the engine
@@ -1537,6 +1555,23 @@ impl Drop for Engine {
 mod tests {
     use super::*;
     use dstudio_core::instrument::{factory_presets, Adsr, Filter, Lfo, Osc, Voice};
+
+    #[test]
+    fn plugin_scanner_resolution_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let built = Path::new("/build/out/dstudio_plugin_scanner");
+        // No scanner next to the executable: the build-time path.
+        assert_eq!(resolve_plugin_scanner(None, Some(dir.path()), built), built);
+        assert_eq!(resolve_plugin_scanner(None, None, built), built);
+        // A packaged scanner next to the executable wins over the build path.
+        let sibling = dir.path().join(PLUGIN_SCANNER_NAME);
+        std::fs::write(&sibling, b"").unwrap();
+        assert_eq!(resolve_plugin_scanner(None, Some(dir.path()), built), sibling);
+        // $DSTUDIO_PLUGIN_SCANNER wins over both; an empty value is ignored.
+        let custom = PathBuf::from("/custom/scanner");
+        assert_eq!(resolve_plugin_scanner(Some(custom.clone()), Some(dir.path()), built), custom);
+        assert_eq!(resolve_plugin_scanner(Some(PathBuf::new()), Some(dir.path()), built), sibling);
+    }
 
     #[test]
     fn default_synth_params_map_to_engine_defaults() {

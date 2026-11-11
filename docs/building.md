@@ -12,8 +12,8 @@ only in `engine/src/platform/`; everything else is portable.
 | Audio backend | Core Audio | WASAPI (shared mode) | PipeWire |
 | Plugin formats | AU, VST3, CLAP | VST3, CLAP | VST3, CLAP |
 | Plugin editor windows | yes | yes | yes (X11; XWayland on Wayland) |
-| Built and tested in CI | every run (self-hosted Mac) | every run (hosted runner) | every run (hosted runner) |
-| Audio streams run in CI | yes, real device | no (no audio endpoint) | yes, a headless PipeWire server |
+| Built and tested in CI | every run | every run | every run |
+| Audio streams run in CI | no (hosted runner, no audio device) | no (no audio endpoint) | yes, a headless PipeWire server |
 | Tested on real audio hardware | yes | **no** | **no** |
 
 macOS is the primary platform. On Linux, CI runs a real PipeWire server with a
@@ -136,20 +136,99 @@ issue in wgpu-core's debug-only lock tracing).
 ## Continuous integration
 
 CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs on every push
-and pull request, one job per OS: macOS on a **self-hosted runner** (one Apple
-silicon Mac mini, with a real audio device), Windows and Linux on GitHub-hosted
-runners (`windows-latest`, `ubuntu-latest`). Each job:
+to main and every pull request, including pull requests from forks. It has one
+job per system, all on GitHub-hosted runners (`macos-latest`, `windows-latest`,
+`ubuntu-latest`). Each job:
 
 1. configures and builds the engine with warnings as errors, and runs ctest;
 2. builds and tests the Rust workspace (`--locked`);
 3. builds the app in release mode and runs `device-studio --self-test
-   --no-audio`, which must report every check passed;
-4. uploads the self-test logs as an artifact.
+   --no-audio`, which must report every check passed (Linux under Xvfb with
+   Mesa lavapipe; Windows under WARP, informational for now);
+4. uploads the screenshots and self-test logs as an artifact.
 
-Linux also starts a headless PipeWire graph first
-([`tools/ci/headless-pipewire.sh`](../tools/ci/headless-pipewire.sh)): the
-engine's device tests then open real PipeWire streams, the duplex loopback test
-records what the engine plays and checks every click lands on its timeline
-position, and the app runs its self-test a second time with audio
-(`--self-test-audio`). The hosted Windows runner has no audio endpoint, so the
-WASAPI device tests skip there.
+The hosted runners have no audio device and no GPU. On macOS and Windows the
+engine's device tests skip there. The Linux job starts a headless PipeWire
+server (`tools/ci/headless-pipewire.sh`), so the device tests, the PipeWire
+loopback test and `device-studio --self-test-audio` run against real PipeWire
+streams. Tests against real audio hardware (Core Audio duplex, the
+acoustic loopback test) are run by hand on a Mac. The loopback test plays
+clicks through the speakers and records them with the microphone, so it is
+ignored by default and gated on an environment variable:
+
+```sh
+DSTUDIO_TEST_REAL_INPUT=1 cargo test -p dstudio-engine --test real_loopback -- --ignored --nocapture --test-threads=1
+```
+
+The workflow never uses a self-hosted runner, has no secrets and gives its
+token read-only access, so running it on a stranger's pull request is safe.
+
+### Performance checks
+
+[`.github/workflows/perf.yml`](../.github/workflows/perf.yml) runs on pull
+requests that touch `engine/`, `crates/dstudio-core/`, `Cargo.lock`,
+`tools/perf/` or the workflow itself, and on
+pushes to `main`. It builds every engine benchmark (`engine/bench/`) and the
+core's Rust benchmarks (`crates/dstudio-core/benches/`) twice on the same
+runner, at the base commit and with the change, and compares them row by row
+with [`tools/perf/bench_gate.py`](../tools/perf/bench_gate.py):
+
+- **Instructions** (Linux, the gate): each benchmark runs under Valgrind's
+  Callgrind, which starts a new count every time the benchmark prints a line,
+  so every table row gets the CPU instructions (all threads) spent producing
+  it. Counts repeat almost exactly between runs, so a row more than **1 %**
+  above the base fails the check.
+- **Time** (Linux, macOS, Windows, a warning only): the benchmarks run
+  natively, base and head interleaved for three rounds, fastest round per
+  row. A row more than **15 %** slower is re-timed and reported as a warning:
+  hosted runners are too noisy for a timing gate, but this catches what
+  instruction counts cannot (cache misses, denormals, platform code).
+
+The comparison tables are on each run's summary page. A regression that is
+worth it is accepted with the `perf-regression-accepted` label on the pull
+request: the check passes and the report still lists it. A benchmark that
+cannot be measured with the change (it crashes, or Callgrind records nothing)
+fails the check even with the label. New benchmarks and new
+rows are picked up without changes to the script, as long as they print tables
+(a row is a line ending in numbers, under a header naming the columns).
+
+Run the same comparison locally (instructions need Linux and Valgrind):
+
+```sh
+python3 tools/perf/bench_gate.py all --base origin/main              # instructions + time
+python3 tools/perf/bench_gate.py all --base origin/main --mode time  # time only (macOS, Windows)
+```
+
+### Release packages
+
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) builds the
+installable packages:
+
+| System | Package |
+|---|---|
+| macOS 13+ | `DeviceStudio-<version>-macos-universal.dmg` (Apple silicon + Intel) |
+| Windows x64 | `DeviceStudio-<version>-windows-x64-setup.exe` (installer) and a portable `.zip` |
+| Linux x86_64, aarch64 | `DeviceStudio-<version>-linux-<arch>.tar.gz` (run `install.sh`) |
+
+Each package carries the plugin scanner next to the app, where the app looks
+for it first, and is smoke-tested on its runner (installed, then started to
+render a screenshot). Pushing a tag `vX.Y.Z` builds them from `main` and
+creates a **draft** GitHub release with generated notes; the tag must match the
+`version` in the root `Cargo.toml`. A manual run (Actions › Release › Run
+workflow) or a pull request that changes the packaging builds the packages as
+run artifacts without releasing anything.
+
+Only release tags are signed with a Developer ID and notarised, in a separate
+`macos-sign` job that runs in the protected `release` environment; its secrets
+(listed at the top of the workflow) are environment secrets, which pull
+requests, manual runs and every other job cannot read. Notarisation uses an
+App Store Connect API key, not an Apple ID password. Before adding the secrets,
+protect the environment (Settings › Environments › `release`: a required
+reviewer, deployments from `v*` tags only) and restrict who can create `v*`
+tags with a tag ruleset: a signing run then waits for the maintainer's
+approval. A tagged release without the secrets fails rather than ship
+unsigned, unless the repository variable `ALLOW_UNSIGNED_MACOS` is `true`.
+Every other build is signed ad hoc, and macOS asks the user to allow it on
+first launch. The Windows packages are not signed yet,
+so SmartScreen warns on first run. The packaging scripts are in
+[`tools/release/`](../tools/release/).

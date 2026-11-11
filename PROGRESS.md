@@ -293,3 +293,12 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   unchanged).
 - Still open: WASAPI has never run against an audio device (the hosted Windows runner has none);
   Linux editors pass no HiDPI scale to plugins.
+
+### 2026-11-10: spec-driven workflow and agent skills
+
+- `specs/` holds specs for non-trivial work (`specs/README.md`: write, plan, build, verify, with a stop for agreement
+  after the spec and after the plan), templates in `specs/_template/`, and `specs/principles.md`. Spec 001 is the
+  worked example.
+- `AGENTS.md` is the entry point for coding agents; codebase skills live in `.agents/skills/` (commands, C ABI and
+  audio thread, built-in devices, UI, benchmarks, pull requests, plus the spec phases and bug fixing).
+  `python3 tools/agents/check_skills.py` fails when a skill names a file that no longer exists.

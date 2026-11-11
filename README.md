@@ -10,10 +10,12 @@
 
 <p>
   <a href="https://github.com/chrislaupama/sainestudio/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/chrislaupama/sainestudio/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/chrislaupama/device/actions/workflows/perf.yml"><img alt="Performance" src="https://github.com/chrislaupama/device/actions/workflows/perf.yml/badge.svg?branch=main"></a>
   <img alt="Status: pre-alpha" src="https://img.shields.io/badge/status-pre--alpha-e0a84b?style=flat-square">
   <img alt="Platforms: macOS, Windows, Linux" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-4b8be0?style=flat-square">
   <img alt="Engine: C++23" src="https://img.shields.io/badge/engine-C%2B%2B23-6e6e6e?style=flat-square">
   <img alt="App: Rust 2024" src="https://img.shields.io/badge/app-Rust%202024-b7410e?style=flat-square">
+  <a href="LICENSE"><img alt="License: AGPL-3.0-or-later" src="https://img.shields.io/badge/license-AGPL--3.0--or--later-4b8be0?style=flat-square"></a>
 </p>
 
 <p>
@@ -156,7 +158,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Export | 🚧 | The engine renders to WAV; export from the app isn't wired up yet |
 | Assistant | 🚧 | Tested only with a fixture provider, not yet against the live API |
 | Windows and Linux audio | 🚧 | Linux streams run in CI on a headless PipeWire server; neither has run on a physical sound card; no ASIO |
-| Releases and branding | ⏳ | Signed builds, original icons |
+| Releases and branding | 🚧 | Packages are built (unsigned); code signing, original icons, a first tagged release |
 
 [PROGRESS.md](PROGRESS.md) has the dated, round-by-round log.
 
@@ -168,13 +170,16 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Windows | Windows x64 | WASAPI (shared mode) | VST3, CLAP |
 | Linux | x64, X11 or Wayland | PipeWire | VST3, CLAP |
 
-Every change is built and tested on a Mac with a real audio device, and on Windows and Linux hosted runners. The
-Linux job runs a headless PipeWire server, so playback and recording go through real PipeWire streams there; Windows
-runs without an audio device.
+Every change is built and tested on all three systems in CI, on hosted runners without audio hardware. The Linux
+job runs a headless PipeWire server, so playback and recording go through real PipeWire streams there. Real audio
+hardware is tested by hand on a Mac.
 
 ### Download
 
-**No builds have been released yet.** For now, build it from source.
+**No builds have been released yet.** For now, build it from source. Release packages for macOS (`.dmg`), Windows
+(installer and `.zip`) and Linux (`.tar.gz`) are built by the Release workflow and will appear on the
+[releases page](https://github.com/chrislaupama/device/releases) once a version is tagged; see
+[Release packages](docs/building.md#release-packages).
 
 ### Build from source
 
@@ -212,7 +217,9 @@ cargo run --release -p dstudio-app -- --self-test --no-audio     # drive the app
 | `crates/dstudio-engine` | Safe Rust wrapper over the engine, end-to-end tests |
 | `crates/dstudio-app` | Desktop app (binary `device-studio`) |
 | `docs/` | Architecture, ADRs, built-in devices, build guide |
-| `tools/` | macOS app bundle script and the rename helper |
+| `specs/` | Specs for non-trivial work, their templates and the project's principles |
+| `.agents/skills/`, `AGENTS.md` | Skills and a guide for coding agents working on this codebase |
+| `tools/` | macOS app bundle script, the rename helper and the skills checker |
 | `ui-spike/` | The Slint and wgpu interop spike behind ADR 0001 |
 
 The app was called Saine Studio until November 2026. Internal names use `dstudio` (`dstudio-*` crates, the `dstudio::`
@@ -230,7 +237,21 @@ interface end to end, from importing audio to checking that notes drawn in the p
 Pull requests with visual changes include before and after screenshots, and anything that could affect performance
 comes with benchmark results.
 
+Three GitHub Actions workflows check every change: **CI** builds and tests the engine, the workspace and the app on
+macOS, Windows and Linux; **Performance** builds the benchmarks at the base commit and with the change and fails a
+pull request when any benchmark row needs more than 1 % more CPU instructions (timings on all three systems are
+reported too); **Release** builds the installable packages and drafts a GitHub release for a `vX.Y.Z` tag. See
+[Continuous integration](docs/building.md#continuous-integration) for the details and how to run the performance
+comparison locally.
+
 Start with [PROGRESS.md](PROGRESS.md), then [docs/architecture.md](docs/architecture.md).
+
+Non-trivial work is spec-driven: a feature, a behaviour change or a hard bug starts with a short spec in `specs/`
+(what and why, then the plan and tasks), agreed before the code is written, and the spec ships with the change.
+[specs/README.md](specs/README.md) explains the workflow and when to skip it, and
+[specs/principles.md](specs/principles.md) lists the rules every change follows. If you work with a coding agent,
+[AGENTS.md](AGENTS.md) points it at the skills in `.agents/skills/`, which describe how each part of the codebase is
+changed; after editing a skill, run `python3 tools/agents/check_skills.py`.
 
 ### Keeping this README up to date
 
@@ -246,9 +267,22 @@ finishes something it describes, the same pull request updates it:
   app itself, e.g. `device-studio --no-audio --state review-automation --screenshot docs/assets/screenshot.png
   --exit-after-frames 5`; the states used are listed in each image's pull request.
 
+## Contributing
+
+Bug reports, testing on Windows and Linux audio hardware, and small pull requests are all welcome. Read
+[CONTRIBUTING.md](CONTRIBUTING.md) first, and follow the [Code of Conduct](CODE_OF_CONDUCT.md). Please report security
+problems privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
+
 ## License
 
-All rights reserved. How Device Studio will be licensed has not been decided yet.
+Device Studio is free software: you can redistribute it and/or modify it under the terms of the
+[GNU Affero General Public License](LICENSE), version 3 or (at your option) any later version. It comes with no
+warranty. In short, you may use, study, change and share it. If you distribute it, modified or not (including as a
+binary), you must offer its complete source under the same licence; if you modify it and let people use it over a
+network, you must offer them the modified source too.
 
-Third-party code keeps its own license: the VST3 SDK and CLAP headers (MIT) are fetched at build time, and the bundled
+Third-party code keeps its own license. The engine's dependencies, the VST3 SDK, CLAP headers and Signalsmith libraries
+(MIT), dr_libs (public domain or MIT-0) and stb_vorbis (public domain or MIT), are fetched at build time and listed in
+[engine/third_party_licenses.md](engine/third_party_licenses.md). The app uses Slint under its
+[GPL-3.0 licence](https://github.com/slint-ui/slint/blob/master/LICENSE.md) (compatible with the AGPL), and the bundled
 Inter font is under the SIL Open Font License.

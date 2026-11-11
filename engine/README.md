@@ -119,13 +119,12 @@ POSIX signal or Windows NTSTATUS exception code).
 | Scanner children | `posix_spawn` | `CreateProcessW` (no WER dialogs in the child) | `posix_spawn` |
 | Test plugins | `.clap`/`.vst3` bundles | `.clap` DLL, `.vst3/Contents/x86_64-win/*.vst3`, + `DStudioTestGui.clap` | `.clap` .so, `.vst3/Contents/x86_64-linux/*.so` |
 | Built with warnings as errors | yes (clang, `-Werror`), every CI run | yes (`/W4 /WX`), every CI run | yes (GCC, `-Werror`), every CI run |
-| ctest | all tests, every CI run, on the self-hosted Mac's real audio device | all tests, every CI run; AU tests and device tests skip (no audio endpoint) | all tests, every CI run, against a headless PipeWire server (null sink + loopback); AU tests skip |
+| ctest | all tests, every CI run; device tests skip on the hosted runner (no audio device), run by hand on a Mac | all tests, every CI run; AU tests and device tests skip (no audio endpoint) | all tests, every CI run, against a headless PipeWire server (null sink + loopback); AU tests skip |
 | Tested on real audio hardware | yes (Core Audio output + duplex, see below) | **no** | **no** (real PipeWire streams in CI, no sound card) |
 
-**CI** (`.github/workflows/ci.yml`) runs one job per OS: macOS on the
-self-hosted runner (one Apple silicon Mac mini, with a real audio device),
-Windows and Linux on GitHub-hosted runners (`windows-latest`,
-`ubuntu-latest`). Each job builds the engine with warnings as errors, runs
+**CI** (`.github/workflows/ci.yml`) runs one job per OS, all on GitHub-hosted
+runners (`macos-latest`, `windows-latest`, `ubuntu-latest`), none with an
+audio device. Each job builds the engine with warnings as errors, runs
 ctest, builds and tests the Rust workspace and runs the app's
 `--self-test --no-audio`.
 

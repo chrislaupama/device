@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.25)
 project(dstudio_engine VERSION 0.1.0 LANGUAGES C CXX)
 
+# With a compiler launcher (CI sets CMAKE_<LANG>_COMPILER_LAUNCHER=ccache),
+# MSVC debug info goes into each object (/Z7) rather than a shared .pdb
+# (/Zi), which ccache cannot cache. Must be set before any target.
+if(MSVC AND CMAKE_CXX_COMPILER_LAUNCHER)
+  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
+endif()
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

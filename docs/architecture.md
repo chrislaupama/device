@@ -119,9 +119,9 @@ Status per platform, what CI covers and what is untested on real hardware:
   host run loop for the plugins' fds and timers (`src/platform/run_loop.cpp`, run from `se_plugin_idle`).
 - App: Slint (winit backend) + wgpu 30 build on all three; Linux needs the X11/Wayland,
   xkbcommon, fontconfig, udev and PipeWire development packages (see the CI workflow).
-- CI (`.github/workflows/ci.yml`): one job per OS. macOS on the self-hosted runner (an Apple
-  silicon Mac mini, full ctest suite on a real audio device); Windows and Linux on GitHub-hosted
-  `windows-latest` and `ubuntu-latest` (no audio device: device tests skip). Each job builds the
+- CI (`.github/workflows/ci.yml`): one job per OS, all on GitHub-hosted runners
+  (`macos-latest`, `windows-latest`, `ubuntu-latest`; no audio device, so device tests skip).
+  Real-hardware audio tests are run by hand on a Mac. Each job builds the
   engine with warnings as errors and runs ctest, `cargo build` / `cargo test --workspace` and the
   app self-test (`engine/README.md` › Platforms).
 
