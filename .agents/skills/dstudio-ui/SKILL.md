@@ -69,5 +69,5 @@ before and after a change to anything that draws every frame (`dstudio-bench`).
 
 ## Docs
 
-A visible change to what the README screenshots show means re-rendering `docs/assets/` (README ›
-Keeping this README up to date has the command and the states).
+A visible change to what the README screenshots show means re-rendering the artwork in `docs/assets/art/`
+(`docs/art/README.md` has the states and the commands).
