@@ -329,6 +329,19 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   typing or dragging the tempo ends a tap series.
 - Self-test section `transport_fields_steps`; review states `review-transport-sig` and `review-transport-key`.
 
+### 2026-11-11: return tracks and sends, part 2: engine (spec 002)
+
+- `se_session_publish_v9` (v8 + `se_track_route`, `se_send_desc`, `SE_MAX_RETURNS` 16); `Engine::publish` in Rust
+  now publishes v9. Each return owns a preallocated stereo bus; sends tap pre-fader (after the chain) or post-fader,
+  outputs replace the master path. Order is a topological sort over routing and sidechain edges (only sidechain
+  edges are cut on a cycle). Mute/solo: muted tracks send nothing, soloing tracks keeps returns playing, soloing a
+  return plays only soloed returns.
+- Delay compensation aligns every input of every bus (ADR 0004 note): main line to the earliest destination, edge
+  lines for later ones. Without latent returns no edge line exists; sessions without routing render bit-identically.
+- Tests: `engine/tests/test_routing.cpp` (9), `crates/dstudio-engine/tests/routing.rs` (2). Bench: "Returns" table in
+  `dstudio_engine_bench`.
+- Next: the UI (spec 002 T9): Returns pill and rows, return strips, Sends sections, Out menu.
+
 ### 2026-11-11: track rename
 
 - Double-click a track's name in its header, in the Devices tab's inspector or in the Clip tab's title to rename it
