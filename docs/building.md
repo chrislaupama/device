@@ -11,13 +11,16 @@ only in `engine/src/platform/`; everything else is portable.
 |---|---|---|---|
 | Audio backend | Core Audio | WASAPI (shared mode) | PipeWire |
 | Plugin formats | AU, VST3, CLAP | VST3, CLAP | VST3, CLAP |
-| Plugin editor windows | yes | yes | not yet |
+| Plugin editor windows | yes | yes | yes (X11; XWayland on Wayland) |
 | Built and tested in CI | every run | every run | every run |
+| Audio streams run in CI | no (hosted runner, no audio device) | no (no audio endpoint) | yes, a headless PipeWire server |
 | Tested on real audio hardware | yes | **no** | **no** |
 
-macOS is the primary platform. The WASAPI and PipeWire streaming code compiles
-and its "no device" paths are tested, but it has never been run against a real
-audio device. See [engine/README.md › Platforms](../engine/README.md#platforms)
+macOS is the primary platform. On Linux, CI runs a real PipeWire server with a
+null sink and a loopback, so the PipeWire streams, duplex recording and the
+app's audio self-test run on every change; only physical sound cards are
+missing. The WASAPI streaming code compiles and its "no device" paths are
+tested, but it has never been run against an audio device. See [engine/README.md › Platforms](../engine/README.md#platforms)
 for the full matrix, the WASAPI notes and plugin folders on each system.
 
 ## Building
@@ -85,9 +88,10 @@ cmake --preset default && cmake --build --preset default && ctest --preset defau
 CMake must be 3.25 or newer. Ubuntu 24.04 and Debian 13 ship one; on Ubuntu 22.04 (CMake 3.22) install a newer one
 first, for example `pip install --user cmake` or Kitware's APT repository (apt.kitware.com), and check `cmake --version`.
 
-The X11, Wayland, xkbcommon, fontconfig and udev packages are for the app;
-the engine itself needs only `pkg-config`, `libpipewire-0.3-dev` and the `libasound2-dev` headers
-(for MIDI input; leave them out with `-DDSTUDIO_ENGINE_ALSA_MIDI=OFF`).
+The Wayland, xkbcommon, fontconfig and udev packages are for the app;
+the engine itself needs only `pkg-config`, `libpipewire-0.3-dev`, the `libasound2-dev` headers
+(for MIDI input; leave them out with `-DDSTUDIO_ENGINE_ALSA_MIDI=OFF`) and the `libx11-dev`
+headers (for plugin windows; leave them out with `-DDSTUDIO_ENGINE_X11=OFF`).
 
 #### PipeWire notes
 
@@ -96,6 +100,20 @@ the engine itself needs only `pkg-config`, `libpipewire-0.3-dev` and the `libaso
   also serves JACK clients; a native JACK backend is possible future work.
 * Without a running PipeWire server the engine lists no devices and starting
   audio fails; device tests skip. Run the app with `--no-audio` in that case.
+* No sound card (a container, a headless box)? Install the server, then start
+  it from the repository root with a null sink and a loopback source, as CI
+  does. The loopback test then runs against the preset's build (`engine/build`),
+  and the app runs with audio:
+
+  ```sh
+  sudo apt-get install -y pipewire pipewire-bin wireplumber dbus
+  eval "$(tools/ci/headless-pipewire.sh)"
+  DSTUDIO_TEST_LOOPBACK_INPUT=dstudio-loop-source ctest --test-dir engine/build
+  ```
+* Input and output streams share one `node.group`, so PipeWire drives them from
+  one clock (resampling the other device when they are different hardware), and
+  recordings stay sample-aligned. After a glitch that shifts the input by a
+  cycle, the input ring re-syncs within about 64 cycles.
 * A requested sample rate must be in the server's `clock.allowed-rates`, and
   the buffer size is a request for a quantum (`node.latency`); PipeWire may not
   honour either, and the device status reports what it actually chose.
@@ -104,15 +122,20 @@ the engine itself needs only `pkg-config`, `libpipewire-0.3-dev` and the `libaso
 * To build without PipeWire (an engine with no device I/O): configure CMake
   with `-DDSTUDIO_ENGINE_PIPEWIRE=OFF`, or set `DSTUDIO_ENGINE_PIPEWIRE=OFF` in the
   environment for a cargo build.
-
 * MIDI input uses the ALSA sequencer (`libasound2-dev`, already in the package
   list above, for the headers; the library is loaded at run time, so a system
   without libasound runs with no MIDI inputs). Without a sequencer (no `/dev/snd/seq`, as in most containers)
   the MIDI input list is empty. To build without ALSA: `-DDSTUDIO_ENGINE_ALSA_MIDI=OFF`,
   or `DSTUDIO_ENGINE_ALSA_MIDI=OFF` in the environment for a cargo build.
 
-Plugin editor windows are not implemented on Linux yet; opening one reports
-that it is unsupported.
+Plugin editor windows on Linux use X11, which Wayland desktops provide
+through XWayland. The build needs the libX11 headers (`libx11-dev`); the
+engine loads libX11 itself when the first plugin window opens, so it is not
+linked and a system without it only loses plugin windows. To build without it, configure
+CMake with `-DDSTUDIO_ENGINE_X11=OFF` or set `DSTUDIO_ENGINE_X11=OFF` for a cargo
+build; opening a plugin window then reports that it is unsupported. The
+editor test (`plugin_editor_window_x11_open_resize_close`) needs a display:
+run it under `xvfb-run` on a headless machine.
 
 ## Running the app
 
@@ -139,8 +162,11 @@ job per system, all on GitHub-hosted runners (`macos-latest`, `windows-latest`,
    Mesa lavapipe; Windows under WARP, informational for now);
 4. uploads the screenshots and self-test logs as an artifact.
 
-The hosted runners have no audio device and no GPU, so the engine's device
-tests skip there. Tests against real audio hardware (Core Audio duplex, the
+The hosted runners have no audio device and no GPU. On macOS and Windows the
+engine's device tests skip there. The Linux job starts a headless PipeWire
+server (`tools/ci/headless-pipewire.sh`), so the device tests, the PipeWire
+loopback test and `device-studio --self-test-audio` run against real PipeWire
+streams. Tests against real audio hardware (Core Audio duplex, the
 acoustic loopback test) are run by hand on a Mac. The loopback test plays
 clicks through the speakers and records them with the microphone, so it is
 ignored by default and gated on an environment variable:

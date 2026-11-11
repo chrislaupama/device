@@ -115,12 +115,12 @@ POSIX signal or Windows NTSTATUS exception code).
 | Audio backend | Core Audio (AUHAL; private aggregate for duplex) | WASAPI shared mode, event-driven, float32 (`wasapi_device.cpp`) | PipeWire streams (`pipewire_device.cpp`) |
 | Duplex input | aggregate device, HAL drift compensation | separate capture client → `FrameRing` | capture stream → `FrameRing` |
 | Plugin formats | AU, VST3, CLAP | VST3, CLAP | VST3, CLAP |
-| Plugin editors | NSWindow (AU/VST3/CLAP) | top-level HWND hosting the plugin child window (VST3 `kPlatformTypeHWND`, CLAP `win32`) | not implemented: `SE_ERR_UNSUPPORTED_FORMAT` |
+| Plugin editors | NSWindow (AU/VST3/CLAP) | top-level HWND hosting the plugin child window (VST3 `kPlatformTypeHWND`, CLAP `win32`) | X11 top-level window hosting the plugin window (VST3 `kPlatformTypeX11EmbedWindowID`, CLAP `x11`), XWayland on Wayland; see [Plugins on Windows and Linux](#plugins-on-windows-and-linux) |
 | Scanner children | `posix_spawn` | `CreateProcessW` (no WER dialogs in the child) | `posix_spawn` |
 | Test plugins | `.clap`/`.vst3` bundles | `.clap` DLL, `.vst3/Contents/x86_64-win/*.vst3`, + `DStudioTestGui.clap` | `.clap` .so, `.vst3/Contents/x86_64-linux/*.so` |
 | Built with warnings as errors | yes (clang, `-Werror`), every CI run | yes (`/W4 /WX`), every CI run | yes (GCC, `-Werror`), every CI run |
-| ctest | all tests, every CI run; device tests skip on the hosted runner (no audio device), run by hand on a Mac | all tests, every CI run; AU tests and device tests skip (no audio endpoint) | all tests, every CI run; AU tests and device tests skip (no PipeWire server) |
-| Tested on real audio hardware | yes (Core Audio output + duplex, see below) | **no** | **no** |
+| ctest | all tests, every CI run; device tests skip on the hosted runner (no audio device), run by hand on a Mac | all tests, every CI run; AU tests and device tests skip (no audio endpoint) | all tests, every CI run, against a headless PipeWire server (null sink + loopback); AU tests skip |
+| Tested on real audio hardware | yes (Core Audio output + duplex, see below) | **no** | **no** (real PipeWire streams in CI, no sound card) |
 
 **CI** (`.github/workflows/ci.yml`) runs one job per OS, all on GitHub-hosted
 runners (`macos-latest`, `windows-latest`, `ubuntu-latest`), none with an
@@ -140,11 +140,20 @@ Debug builds of the app abort at exit on every OS (pre-existing: wgpu-core's
 debug-only lock tracing runs in a TLS destructor when Slint's thread-local
 backend drops the wgpu queue), so CI uses a release build. Screenshots and logs are uploaded as artifacts.
 
-What the hosted jobs cannot cover: the hosted runners have no audio devices (Windows: no
-endpoint; Linux: no PipeWire server), so the WASAPI and PipeWire streaming
-code (open, callbacks, duplex ring in a live stream, latency values) is
-compiled and its enumeration/validation "no device" paths run, but it has
-**never been run against real hardware**. Tests that need a device skip
+**Linux runs real audio streams in CI.** The hosted runner has no sound card,
+but the job starts a headless PipeWire graph (`tools/ci/headless-pipewire.sh`):
+a null sink, driven by the system clock like a device, and `pw-loopback` from
+its monitor to a virtual source. The device tests then open real PipeWire
+streams, `device_duplex_loopback_take_lands_on_the_clicks` plays a click track
+and records it back through that loopback (every click must land on its
+timeline position; on PipeWire they land sample-exact), and the app runs
+`--self-test-audio` with the device running.
+
+What the hosted jobs cannot cover: the Windows runner has no audio endpoint,
+so the WASAPI streaming code (open, callbacks, duplex ring in a live stream,
+latency values) is compiled and its enumeration/validation "no device" paths
+run, but it has **never been run against an audio device**; and neither OS has
+run on physical sound cards. Tests that need a device skip
 with `SKIPPED: <reason>` (CTest shows "Skipped"; the harness exits 77 =
 `SKIP_RETURN_CODE`). The duplex FIFO itself (`FrameRing`) is unit-tested on
 every OS. The PDC golden hashes are compared only on Apple clang/arm64
@@ -207,6 +216,20 @@ running jackd without PipeWire.
   (`clock.rate`, `clock.allowed-rates`). One short-lived connection with two
   round trips and a 2 s watchdog; no stream is opened. No server → no
   devices; `start()` → `SE_ERR_DEVICE`.
+* **One clock.** Both streams carry the same `node.group`, so PipeWire
+  schedules them from one driver (and resamples the other device when input
+  and output are different hardware). The ring's fill therefore cannot drift;
+  a lasting change means a glitch (one stream missed a cycle), which would
+  shift every later recording by a quantum. The ring re-syncs: it watches the
+  end-of-cycle fill over windows of 32 cycles and skips or inserts the
+  difference once a whole window is off by more than half a quantum
+  (`FrameRing` re-sync, `frame_ring.hpp`). Both streams tag their ring
+  access with the cycle's time (`pw_time.now`), so the fill is measured as
+  if capture had already run: the two streams swapping order, even for good,
+  is not mistaken for a lost cycle. `dstudio_frame_ring_bench` measures
+  the ring: ~0.2 µs per 256-frame stereo cycle with or without re-sync.
+* **Sources.** `Audio/Source` and `Audio/Source/Virtual` nodes (filter chains
+  such as noise suppression, loopbacks) are listed as inputs.
 * **Rates and buffers.** `device_rate` requests a graph rate (`node.rate`,
   must be in `clock.allowed-rates`); `buffer_size` (default: the engine
   block, ≥ 256) requests a quantum (`node.latency`). PipeWire may not honour
@@ -236,10 +259,25 @@ running jackd without PipeWire.
   close box), covered by `DStudioTestGui.clap` +
   `plugin_editor_window_win32_open_resize_close`, which runs in
   every Windows CI job; per-monitor DPI scaling is
-  not handled yet. Linux: not implemented (X11 embedding needs an X event
-  loop plus the plugins' `posix-fd`/`timer` support for CLAP and
-  `IRunLoop` for VST3); opening an editor returns
-  `SE_ERR_UNSUPPORTED_FORMAT` with that explanation.
+  not handled yet. Linux: `plugin_editor_x11.cpp` (an X11 top-level window
+  with WM_DELETE_WINDOW, size hints and `_NET_WM_NAME`; the plugin embeds
+  its own child window, `kPlatformTypeX11EmbedWindowID` / `CLAP_WINDOW_API_X11`).
+  Linux has no system event loop for plugins, so the host runs one:
+  `src/platform/run_loop.{hpp,cpp}` polls the plugins' file descriptors and
+  fires their timers from `se_plugin_idle` (VST3 `Linux::IRunLoop` through
+  the editor's `IPlugFrame`; CLAP `clap.posix-fd-support` and
+  `clap.timer-support`). Timer resolution is the idle rate: the app idles
+  every 16 ms while a plugin window is open. `dstudio_run_loop_bench` measures
+  one dispatch (about 0.2 µs with 1 to 16 idle fds and timers on a 2.1 GHz
+  Xeon), on the main thread only.
+  `DStudioTestGui.clap` registers an fd and a timer on Linux, and
+  `plugin_editor_window_x11_open_resize_close` checks both, the window size,
+  the close box and re-opening; it skips without `DISPLAY` and runs under
+  Xvfb in the Linux CI job. Dragonfly Room (CLAP and VST3) and an LSP CLAP
+  were checked by hand with `plugin_editor_check_linux`. Configure with
+  `-DDSTUDIO_ENGINE_X11=OFF` (or `DSTUDIO_ENGINE_X11=OFF` for cargo) to build
+  without the libX11 headers (libX11 itself is loaded with `dlopen` when the
+  first editor opens, never linked); opening an editor then returns `SE_ERR_UNSUPPORTED_FORMAT`.
 
 ## Layout
 
@@ -258,7 +296,7 @@ running jackd without PipeWire.
 | `src/delay_line.hpp` | Delay line for plugin delay compensation (memcpy ring, lazy flush) |
 | `src/automation.hpp` | Automation: lane evaluation (the core contract), ramp fill, timeline history (PDC alignment), synth parameter map |
 | `src/plugins/param_bus.hpp` | Lock-free MPMC queue of plugin editor parameter changes |
-| `src/platform/` | `AudioDevice` interface + backends (Core Audio real; WASAPI/ASIO, PipeWire/JACK stubs) |
+| `src/platform/` | `AudioDevice` interface + backends (Core Audio, WASAPI, PipeWire), `FrameRing`, Linux plugin run loop and X11 editor windows |
 | `tests/` | Self-contained harness (`test_harness.hpp`), tests, allocation-tracking `operator new` |
 | `bench/bench_render.cpp` | Offline render benchmark |
 | `bench/bench_scan_cache.cpp` | Plugin-cache parse benchmark (`dstudio_scan_cache_bench`) |
@@ -272,6 +310,8 @@ running jackd without PipeWire.
 | `src/plugins/plugin_modules.{hpp,cpp}` | VST3 / CLAP bundle loading (CFBundle), shared per path |
 | `src/plugins/plugin_scan.{hpp,cpp}` | Inspecting one AU / bundle (used only by the scanner process) |
 | `src/platform/plugin_editor_mac.mm` | Editor windows (NSWindow; AU Cocoa view / AUGenericView, VST3 IPlugView, CLAP gui) |
+| `src/platform/plugin_editor_win.cpp`, `plugin_editor_x11.cpp` | Editor windows on Windows (HWND) and Linux (X11) |
+| `src/platform/run_loop.{hpp,cpp}` | Linux main-thread run loop for plugins (fds and timers, run from `se_plugin_idle`) |
 | `scanner/scanner_main.cpp` | `dstudio_plugin_scanner`: out-of-process scan coordinator + per-plugin child |
 | `scanner/cache_json.hpp` | The scanner's cache JSON reader (shared with the benchmark) |
 | `test_plugins/` | Original test plugins: `DStudioTestGain.vst3`, `DStudioTestGain.clap`, `DStudioTestSine.clap`, `DStudioTestLatency.clap`/`.vst3`, `DStudioTestCrash.clap` |
@@ -1645,8 +1685,9 @@ clip plays content frame `r` while `r < loop_end`, then
   devices); no ASIO, no WASAPI exclusive mode or `IAudioClient3` low-latency
   periods, no native JACK; device-change notifications are not handled on
   any platform.
-* **Linux plugin editors** are not implemented (`SE_ERR_UNSUPPORTED_FORMAT`);
-  Windows editors ignore per-monitor DPI.
+* **Plugin editors:** Windows editors ignore per-monitor DPI. Linux editors
+  are X11 only (Wayland desktops run them through XWayland); no HiDPI scale
+  is passed to plugins, and plugin timers run at the idle rate (16 ms in the app).
 * Core Audio: no handling of default-device changes, device hot-unplug or
   externally triggered rate changes while running (the stream just keeps
   whatever Core Audio does). **The duplex/aggregate input path has not been

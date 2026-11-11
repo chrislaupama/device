@@ -176,3 +176,104 @@ TEST_CASE(frame_ring_chunked_cycle_is_contiguous_and_not_trimmed) {
     CHECK_EQ(ring.dropped(), 0u);
     CHECK_EQ(ring.underruns(), 0u);
 }
+
+namespace {
+
+// One device cycle of a same-clock duplex pair: the capture side writes a
+// cycle (unless it misses it), the render side reads one (unless it misses
+// it). Returns the first value read, or -1 when nothing was read.
+// With `tagged`, both sides pass the driver cycle, as the PipeWire backend
+// does.
+struct SameClock {
+    FrameRing ring;
+    Planar out{2, 64};
+    uint64_t written = 0;
+    uint64_t now = 0; // driver cycle
+    bool tagged = true;
+    void cycle(bool capture = true, bool render = true, bool capture_first = true) {
+        ++now;
+        const uint64_t tag = tagged ? now : 0;
+        if (capture && capture_first) put(tag);
+        if (render) ring.read(out.ptrs.data(), 2, 64, 0, tag);
+        if (capture && !capture_first) put(tag);
+    }
+    void put(uint64_t tag) {
+        ring.write(frames_from(written, 64).data(), 64, tag);
+        written += 64;
+    }
+    // The input frame index the reader is at, minus the writer's: the
+    // latency of the input path in frames (constant while aligned).
+    int64_t lag() const { return static_cast<int64_t>(out.data[0][63]) - static_cast<int64_t>(written); }
+};
+
+} // namespace
+
+TEST_CASE(frame_ring_resync_restores_alignment_after_a_missed_render_cycle) {
+    SameClock s;
+    s.ring.reset(2, 4096, 128, 1024, 32);
+    for (int k = 0; k < 3 * 32; ++k) s.cycle();
+    const int64_t lag = s.lag();
+    // The render side misses one cycle (an output xrun): the input path is a
+    // cycle longer from then on, until the ring re-syncs.
+    s.cycle(true, false);
+    s.cycle();
+    CHECK_EQ(s.lag(), lag - 64);
+    for (uint32_t k = 0; k < 2 * FrameRing::kResyncWindow; ++k) s.cycle();
+    CHECK_EQ(s.lag(), lag);
+    CHECK_EQ(s.ring.dropped(), uint64_t{64});
+    CHECK_EQ(s.ring.underruns(), uint64_t{0});
+}
+
+TEST_CASE(frame_ring_resync_inserts_silence_after_a_missed_capture_cycle) {
+    SameClock s;
+    s.ring.reset(2, 4096, 128, 1024, 32);
+    for (int k = 0; k < 3 * 32; ++k) s.cycle();
+    const int64_t lag = s.lag();
+    s.cycle(false, true); // capture misses a cycle: input arrives a cycle early
+    s.cycle();
+    CHECK_EQ(s.lag(), lag + 64);
+    for (uint32_t k = 0; k < 2 * FrameRing::kResyncWindow; ++k) s.cycle();
+    CHECK_EQ(s.lag(), lag);
+    CHECK_EQ(s.ring.inserted(), uint64_t{64});
+    CHECK_EQ(s.ring.dropped(), uint64_t{0});
+}
+
+TEST_CASE(frame_ring_resync_ignores_the_streams_changing_order) {
+    // The two streams' order within a cycle flips now and then: the fill
+    // alternates between two levels, which is not a glitch.
+    SameClock s;
+    s.ring.reset(2, 4096, 128, 1024, 32);
+    for (int k = 0; k < 2000; ++k) s.cycle(true, true, k % 7 != 3 && k % 50 < 40);
+    CHECK_EQ(s.ring.dropped(), uint64_t{0});
+    CHECK_EQ(s.ring.inserted(), uint64_t{0});
+    CHECK_EQ(s.ring.underruns(), uint64_t{0});
+}
+
+TEST_CASE(frame_ring_resync_ignores_a_lasting_change_of_stream_order) {
+    // Capture first for a few windows, then render first for good (and
+    // back): the fill read after rendering drops by a cycle, but no cycle
+    // was lost, so the input path's latency must not change.
+    for (const bool start_capture_first : {true, false}) {
+        SameClock s;
+        s.ring.reset(2, 4096, 128, 1024, 32);
+        for (uint32_t k = 0; k < 4 * FrameRing::kResyncWindow; ++k) s.cycle(true, true, start_capture_first);
+        const int64_t lag = s.lag();
+        for (uint32_t k = 0; k < 4 * FrameRing::kResyncWindow; ++k) s.cycle(true, true, !start_capture_first);
+        CHECK_EQ(s.lag(), lag);
+        for (uint32_t k = 0; k < 4 * FrameRing::kResyncWindow; ++k) s.cycle(true, true, start_capture_first);
+        CHECK_EQ(s.lag(), lag);
+        CHECK_EQ(s.ring.dropped(), uint64_t{0});
+        CHECK_EQ(s.ring.inserted(), uint64_t{0});
+        CHECK_EQ(s.ring.underruns(), uint64_t{0});
+    }
+}
+
+TEST_CASE(frame_ring_resync_off_keeps_the_old_policy) {
+    SameClock s;
+    s.ring.reset(2, 4096, 128, 1024); // tolerance 0: no re-sync
+    for (int k = 0; k < 100; ++k) s.cycle();
+    s.cycle(true, false);
+    for (int k = 0; k < 200; ++k) s.cycle();
+    CHECK_EQ(s.ring.dropped(), uint64_t{0});
+    CHECK_EQ(s.ring.inserted(), uint64_t{0});
+}

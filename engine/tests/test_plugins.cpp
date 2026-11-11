@@ -13,6 +13,7 @@
 #include "plugins/plugin_instance.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -968,7 +969,7 @@ TEST_CASE(offline_prepared_latency_reaches_the_delay_compensation_plan) {
 // drives the HWND editor host end to end: open, the plugin's
 // request_resize, bring-to-front, closing with the close box (WM_CLOSE) and
 // closing through the API. macOS editors are exercised manually
-// (tools/plugin_editor_check); Linux has no editor host yet.
+// (tools/plugin_editor_check); Linux: plugin_editor_window_x11_* below.
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -1030,6 +1031,200 @@ TEST_CASE(plugin_editor_window_win32_open_resize_close) {
 }
 #else
 TEST_CASE(plugin_editor_window_win32_open_resize_close) {
-    SKIP("Win32 editor host test (DStudioTestGui.clap is built on Windows only)");
+    SKIP("Win32 editor host test (Windows only)");
+}
+#endif
+
+// ---------------------------------------------------------------- editor windows (Linux, X11)
+// The X11 editor host (platform/plugin_editor_x11.cpp) and the plugin run
+// loop (platform/run_loop.cpp), end to end with DStudioTestGui.clap: it opens
+// its own X connection, registers its fd and a 10 ms timer with the host and
+// names its child window after the callback counts. Needs an X server: CI
+// runs it under Xvfb.
+#if defined(DSTUDIO_TEST_X11_EDITOR)
+#include "platform/run_loop.hpp"
+
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+
+namespace {
+
+// The test's own X connection, as a window manager or a user would see things.
+struct XView {
+    Display* d = XOpenDisplay(nullptr);
+    ~XView() {
+        if (d != nullptr) XCloseDisplay(d);
+    }
+    // Top-level windows whose WM_CLASS class is DeviceStudioPluginEditor.
+    std::vector<Window> editors() const {
+        XSync(d, False);
+        std::vector<Window> out;
+        Window root = 0, parent = 0, *kids = nullptr;
+        unsigned n = 0;
+        if (XQueryTree(d, DefaultRootWindow(d), &root, &parent, &kids, &n) == 0) return out;
+        for (unsigned i = 0; i < n; ++i) {
+            XClassHint h{};
+            if (XGetClassHint(d, kids[i], &h) != 0) {
+                if (h.res_class != nullptr && std::string(h.res_class) == "DeviceStudioPluginEditor") out.push_back(kids[i]);
+                if (h.res_name != nullptr) XFree(h.res_name);
+                if (h.res_class != nullptr) XFree(h.res_class);
+            }
+        }
+        if (kids != nullptr) XFree(kids);
+        return out;
+    }
+    // Width x height of a window.
+    std::pair<int, int> size(Window w) const {
+        XWindowAttributes a{};
+        XGetWindowAttributes(d, w, &a);
+        return {a.width, a.height};
+    }
+    // The name of the window's first child ("" if none).
+    std::string child_name(Window w) const {
+        Window root = 0, parent = 0, *kids = nullptr;
+        unsigned n = 0;
+        std::string name;
+        if (XQueryTree(d, w, &root, &parent, &kids, &n) != 0 && n > 0) {
+            char* s = nullptr;
+            if (XFetchName(d, kids[0], &s) != 0 && s != nullptr) {
+                name = s;
+                XFree(s);
+            }
+        }
+        if (kids != nullptr) XFree(kids);
+        return name;
+    }
+    // Sends an Expose event to the window's first child (the plugin's), which
+    // arrives on the plugin's own X connection.
+    void poke_child(Window w) const {
+        Window root = 0, parent = 0, *kids = nullptr;
+        unsigned n = 0;
+        if (XQueryTree(d, w, &root, &parent, &kids, &n) != 0 && n > 0) {
+            XEvent ev{};
+            ev.xexpose.type = Expose;
+            ev.xexpose.window = kids[0];
+            ev.xexpose.width = 1;
+            ev.xexpose.height = 1;
+            XSendEvent(d, kids[0], False, ExposureMask, &ev);
+            XSync(d, False);
+        }
+        if (kids != nullptr) XFree(kids);
+    }
+    // The close box: what a window manager sends.
+    void send_close(Window w) const {
+        XEvent ev{};
+        ev.xclient.type = ClientMessage;
+        ev.xclient.window = w;
+        ev.xclient.message_type = XInternAtom(d, "WM_PROTOCOLS", False);
+        ev.xclient.format = 32;
+        ev.xclient.data.l[0] = static_cast<long>(XInternAtom(d, "WM_DELETE_WINDOW", False));
+        ev.xclient.data.l[1] = CurrentTime;
+        XSendEvent(d, w, False, NoEventMask, &ev);
+        XSync(d, False);
+    }
+};
+
+// Runs se_plugin_idle every 5 ms for `ms` (the app does it from its UI timer).
+void idle_for(se_engine* e, int ms) {
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    while (std::chrono::steady_clock::now() < end) {
+        se_plugin_idle(e);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
+// "DStudio Test GUI timer=N fd=M" -> {N, M}.
+std::pair<long, long> counts(const std::string& name) {
+    const auto t = name.find("timer="), f = name.find("fd=");
+    if (t == std::string::npos || f == std::string::npos) return {-1, -1};
+    return {std::atol(name.c_str() + t + 6), std::atol(name.c_str() + f + 3)};
+}
+
+} // namespace
+
+TEST_CASE(plugin_editor_window_x11_open_resize_close) {
+    XView x;
+    if (x.d == nullptr) SKIP("no X server (DISPLAY): run under Xvfb");
+    EngineHandle e(48000, 256);
+    const std::string gui_path = kPluginDir + "/DStudioTestGui.clap";
+    Session5 s;
+    s.audio(1, {}, {clap(20, gui_path, "studio.dstudio.test.gui")});
+    REQUIRE(s.publish(e) == SE_OK);
+    REQUIRE(error_count(e) == 0);
+    REQUIRE(se_plugin_editor_open(e, 20) == SE_OK);
+    CHECK(se_plugin_editor_is_open(e, 20) == 1);
+    idle_for(e, 300);
+    auto wins = x.editors();
+    REQUIRE(wins.size() == 1u);
+    const Window w = wins[0];
+    CHECK(x.size(w) == std::make_pair(400, 250)); // the plugin's request_resize(400, 250)
+    // The plugin's child window, and its fd and timer running on the host's run
+    // loop. Xlib can read the window's first events into its queue while the
+    // plugin flushes from its timer, leaving nothing for the fd, so new events
+    // are sent until the fd reports one.
+    std::string name = x.child_name(w);
+    for (int i = 0; i < 40 && counts(name).second < 1; ++i) {
+        x.poke_child(w);
+        idle_for(e, 25);
+        name = x.child_name(w);
+    }
+    const auto [timer_calls, fd_calls] = counts(name);
+    std::fprintf(stderr, "  child window: \"%s\"\n", name.c_str());
+    CHECK(timer_calls >= 5);
+    CHECK(fd_calls >= 1);
+    CHECK(dstudio::run_loop::timer_count() == 1u);
+    CHECK(dstudio::run_loop::fd_count() == 1u);
+    // Opening again brings the same window to the front.
+    CHECK(se_plugin_editor_open(e, 20) == SE_OK);
+    idle_for(e, 20);
+    CHECK(x.editors() == wins);
+    // The close box (WM_DELETE_WINDOW), handled on the next idle.
+    x.send_close(w);
+    idle_for(e, 50);
+    CHECK(se_plugin_editor_is_open(e, 20) == 0);
+    CHECK(x.editors().empty());
+    // The plugin's fd and timer went with its GUI.
+    CHECK(dstudio::run_loop::timer_count() == 0u);
+    CHECK(dstudio::run_loop::fd_count() == 0u);
+    // Re-open, then close through the API.
+    REQUIRE(se_plugin_editor_open(e, 20) == SE_OK);
+    idle_for(e, 50);
+    CHECK(x.editors().size() == 1u);
+    REQUIRE(se_plugin_editor_close(e, 20) == SE_OK);
+    CHECK(se_plugin_editor_is_open(e, 20) == 0);
+    CHECK(x.editors().empty());
+    // Retiring the device with an open editor closes it, and the instance's
+    // run-loop entries go with it.
+    REQUIRE(se_plugin_editor_open(e, 20) == SE_OK);
+    idle_for(e, 50);
+    Session5 empty;
+    empty.audio(1, {}, {});
+    REQUIRE(empty.publish(e) == SE_OK);
+    idle_for(e, 50);
+    CHECK(x.editors().empty());
+    CHECK(dstudio::run_loop::timer_count() == 0u);
+    CHECK(dstudio::run_loop::fd_count() == 0u);
+}
+
+TEST_CASE(clap_init_failure_drops_the_plugins_run_loop_entries) {
+    // The plugin registers a timer in init() and then fails it: the failed
+    // load must not leave a timer that calls into the freed instance.
+    EngineHandle e(48000, 256);
+    const std::string gui_path = kPluginDir + "/DStudioTestGui.clap";
+    Session5 s;
+    s.audio(1, {}, {clap(21, gui_path, "studio.dstudio.test.gui.init-fails")});
+    REQUIRE(s.publish(e) == SE_OK);
+    // The fixture only fails init() once its timer is registered.
+    se_plugin_message msg{};
+    std::size_t n = 0;
+    REQUIRE(se_plugin_load_errors(e, &msg, 1, &n) == SE_OK);
+    REQUIRE(n == 1);
+    CHECK(std::strstr(msg.message, "init failed") != nullptr);
+    CHECK(dstudio::run_loop::timer_count() == 0u);
+    se_plugin_idle(e); // nothing left to call
+}
+#else
+TEST_CASE(plugin_editor_window_x11_open_resize_close) {
+    SKIP("X11 editor host test (Linux with libX11 only)");
 }
 #endif

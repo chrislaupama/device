@@ -6,6 +6,74 @@ import { Tokens } from "tokens.slint";
 import { Icon, Icons, Inset } from "widgets.slint";
 import { Studio, TrackRow, TrackLevel } from "studio.slint";
 
+// A track's name that renames on double-click (Studio.track-rename): Enter, focus loss or the
+// field switching to another track commits, Escape cancels, an empty name keeps the old one. The
+// rename goes to the track the field opened on. A single click passes through as `clicked`.
+// Keyboard: track.rename (⌘R with a track selected) opens the header row's field; assistive
+// technology: the name's default action opens the field. The typed text is mirrored to Rust
+// (track-rename-draft) so it is committed even when the panel holding the field goes away.
+// Both calls carry the project the field opened in (Studio.doc-epoch): a field left open while
+// another project replaces the open one closes without renaming anything.
+export component TrackName inherits Rectangle {
+    in property <int> track-id;
+    in property <string> text;
+    in property <color> text-color: Tokens.text-primary;
+    in property <length> font-size: 9.35px;
+    in property <int> font-weight: 700;
+    in property <length> letter-spacing: -0.374px;
+    in property <bool> enabled: true;
+    /// Review state only: start with the field open.
+    in property <bool> review-edit;
+    /// Opens on the keyboard rename request (Studio.rename-open-epoch) for this track.
+    in property <bool> keyboard-target;
+    property <int> open-epoch: root.keyboard-target ? Studio.rename-open-epoch : 0;
+    changed open-epoch => { if (root.enabled && Studio.rename-open-id == root.track-id && !root.editing) { root.edit-id = root.track-id; root.edit-epoch = Studio.doc-epoch; root.editing = true; } }
+    callback clicked();
+    callback edit-done();
+    property <bool> editing: root.review-edit;
+    // The track being renamed (follows `track-id` until a field opens).
+    property <int> edit-id: root.track-id;
+    // The project the field opened in.
+    property <int> edit-epoch: Studio.doc-epoch;
+    property <int> doc-epoch: Studio.doc-epoch;
+    changed doc-epoch => { if (root.editing) { root.editing = false; root.edit-done(); } }
+    property <string> draft-text;
+    accessible-role: AccessibleRole.button;
+    accessible-label: root.text;
+    accessible-description: "Rename track";
+    accessible-action-default => { if (root.enabled) { root.edit-id = root.track-id; root.edit-epoch = Studio.doc-epoch; root.editing = true; } }
+    // The field shows another track's name now (the selection moved): keep what was typed.
+    changed track-id => { if (root.editing && root.track-id != root.edit-id) { root.editing = false; Studio.track-rename(root.edit-id, root.draft-text, root.edit-epoch); root.edit-done(); } }
+    if !root.editing: Text {
+        width: root.width; height: root.height;
+        text: root.text; color: root.text-color; font-size: root.font-size; font-weight: root.font-weight; letter-spacing: root.letter-spacing;
+        vertical-alignment: center; overflow: elide;
+    }
+    if !root.editing: TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+        double-clicked => { root.edit-id = root.track-id; root.edit-epoch = Studio.doc-epoch; root.editing = true; }
+    }
+    if root.editing: Rectangle {
+        x: -2.55px; width: min(root.width + 5.1px, 136px); height: root.height + 3.4px; y: -1.7px;
+        border-radius: 2.55px; background: #ffffff1a; border-width: 0.85px; border-color: #ffffff59;
+        TextInput {
+            x: 2.55px; width: parent.width - 5.1px; height: parent.height;
+            text: root.text; color: #ffffff; font-size: root.font-size; font-weight: root.font-weight; letter-spacing: root.letter-spacing;
+            vertical-alignment: center; single-line: true; selection-background-color: #ffffff47;
+            accessible-label: "Track name";
+            init => { root.draft-text = self.text; Studio.track-rename-draft(root.edit-id, self.text, root.edit-epoch); self.focus(); self.select-all(); }
+            edited => { root.draft-text = self.text; Studio.track-rename-draft(root.edit-id, self.text, root.edit-epoch); }
+            accepted => { root.editing = false; Studio.track-rename(root.edit-id, self.text, root.edit-epoch); root.edit-done(); }
+            key-pressed(e) => {
+                if (e.text == Key.Escape) { root.editing = false; Studio.track-rename-cancel(); root.edit-done(); return accept; }
+                reject
+            }
+            changed has-focus => { if (!self.has-focus && root.editing) { root.editing = false; Studio.track-rename(root.edit-id, self.text, root.edit-epoch); } }
+        }
+    }
+}
+
 // M / S / R / I: 12 px squares, white 9 % fill and 60 % letter at rest, 15 % fill and a white
 // letter on hover, solid state colour when on. Acts on press.
 export component TrackButton inherits Rectangle {
@@ -303,10 +371,11 @@ export component TrackHeaderRow inherits Rectangle {
         d: root.t.instrument ? Icons.track-instrument : Icons.track-audio;
         filled: root.t.instrument; stroke-width: 1.1px; ink: Tokens.text-tertiary;
     }
-    Text {
+    TrackName {
         x: 43.35px; y: root.top-y; width: root.width - self.x - 6.8px; height: 13.6px;
-        text: root.t.name; color: Tokens.text-primary; font-size: 9.35px; font-weight: 700; letter-spacing: -0.374px;
-        vertical-alignment: center; overflow: elide;
+        track-id: root.t.id; text: root.t.name; keyboard-target: true;
+        clicked => { Studio.select-track(root.t.id); }
+        edit-done => { root.edit-done(); }
     }
     if !root.minimal: TrackButton {
         x: 28.05px; y: root.bottom-y + 1.7px; text: "M"; label: root.t.mute ? "Unmute track" : "Mute track";

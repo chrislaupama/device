@@ -32,6 +32,14 @@ pub fn run_dir() -> &'static std::path::Path {
     })
 }
 
+/// Whether an asset's stored path lies in `dir`. Assets keep canonical paths, and on Windows
+/// the canonical form (`\\?\C:\Users\runneradmin\...`) differs from the temp folder's
+/// (`C:\Users\RUNNER~1\...`), so compare against both spellings of the folder.
+fn in_dir(asset_path: &str, dir: &std::path::Path) -> bool {
+    let canon = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    asset_path.contains(&*dir.to_string_lossy()) || asset_path.contains(&*canon.to_string_lossy())
+}
+
 /// The plugin scan cache the self-tests share between runs (so a run does not rescan every
 /// plugin). A run works on its own copy and puts it back atomically when it ends.
 pub fn shared_plugin_cache() -> std::path::PathBuf {
@@ -5666,7 +5674,11 @@ fn step_sequencer_steps() -> Vec<Step> {
         Check("seq: Follow playhead turned to page 3; the ring is on its 5th column", Box::new(|c, a| {
             let s = a.global::<Studio>();
             let step = c.seq_play_step();
-            (step == Some(68) && s.get_seq_page() == 2 && s.get_seq_play_col() == 4).then_some(()).ok_or(format!("step {step:?} page {} col {}", s.get_seq_page(), s.get_seq_play_col()))
+            // With a device running the playhead keeps moving between the two steps, so it may
+            // already be further on: anywhere on page 3, with the ring on the step it shows.
+            let last = if c.engine.device_running() { 95 } else { 68 };
+            let ok = step.is_some_and(|k| (68..=last).contains(&k) && s.get_seq_play_col() == k as i32 - 64) && s.get_seq_page() == 2;
+            ok.then_some(()).ok_or(format!("step {step:?} page {} col {}", s.get_seq_page(), s.get_seq_play_col()))
         })),
         DoC("seq: stop; click page tab 1, then Follow playhead", Box::new(|a, ctl| {
             let _ = ctl.borrow().engine.stop();
@@ -6763,6 +6775,171 @@ fn snap_steps() -> Vec<Step> {
     ]
 }
 
+/// Track rename: double-click the selected track's name in the inspector, type, Enter. An
+/// empty name and Escape leave the name alone; undo restores it.
+fn track_rename_steps() -> Vec<Step> {
+    use Step::*;
+    let name0 = |c: &Controller| c.project().tracks.first().map(|t| t.name.clone()).unwrap_or_default();
+    let name_xy = || (bottom_x() + 60.0, bottom_y() + 14.25);
+    let original: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+    let (o0, o1, o2, o3) = (original.clone(), original.clone(), original.clone(), original.clone());
+    let e0 = Rc::new(std::cell::Cell::new(0));
+    let e1 = e0.clone();
+    let rev0 = Rc::new(std::cell::Cell::new(0u64));
+    let rev1 = rev0.clone();
+    vec![
+        DoC("rename: select track 1, Devices tab, mixer closed", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            *o0.borrow_mut() = c.project().tracks[0].name.clone();
+            if c.mixer_open {
+                c.toggle_mixer();
+            }
+            c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            let id = c.project().tracks[0].id;
+            c.select_track(id);
+        })),
+        Do("rename: double-click the name in the inspector", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+        })),
+        Do("rename: type a new name and press Enter", Box::new(|a| {
+            type_text(a, "Lead vox");
+            key(a, Key::Return, false, false);
+        })),
+        Check("rename: track 1 is Lead vox, one undo step, shown in the inspector", Box::new(move |c, a| {
+            let n = name0(c);
+            (n == "Lead vox" && c.doc.undo_label() == Some("Rename Track") && a.global::<Studio>().get_sel_name() == "Lead vox").then_some(()).ok_or(format!("name {n:?} undo {:?}", c.doc.undo_label()))
+        })),
+        Do("rename: double-click, clear the name, Enter", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+        })),
+        Do("rename: an empty name", Box::new(|a| {
+            key(a, Key::Backspace, false, false);
+            key(a, Key::Return, false, false);
+        })),
+        Check("rename: an empty name keeps Lead vox", Box::new(move |c, _| (name0(c) == "Lead vox").then_some(()).ok_or(format!("name {:?}", name0(c))))),
+        Do("rename: double-click, type, Escape", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+        })),
+        Do("rename: Escape cancels", Box::new(|a| {
+            type_text(a, "Nope");
+            key(a, Key::Escape, false, false);
+        })),
+        Check("rename: still Lead vox", Box::new(move |c, _| (name0(c) == "Lead vox").then_some(()).ok_or(format!("name {:?}", name0(c))))),
+        Do("rename: rename through the callback with spaces around", Box::new(|a| {
+            let s = a.global::<Studio>();
+            s.invoke_track_rename(s.get_sel_id(), "  Bass  ".into(), s.get_doc_epoch());
+        })),
+        Check("rename: trimmed to Bass", Box::new(move |c, _| (name0(c) == "Bass").then_some(()).ok_or(format!("name {:?}", name0(c))))),
+        Do("rename: double-click, type Drums, then press in the lanes", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+            type_text(a, "Drums");
+            let p = lanes_point();
+            click(a, p.x, p.y);
+        })),
+        Do("rename: let the focus move", Box::new(|_| {})),
+        Check("rename: the press in the lanes committed Drums", Box::new(move |c, _| (name0(c) == "Drums").then_some(()).ok_or(format!("name {:?}", name0(c))))),
+        DoC("rename: select track 1 again", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            let id = c.project().tracks[0].id;
+            c.select_track(id);
+        })),
+        Do("rename: double-click, type Keys, then select track 2", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+            type_text(a, "Keys");
+        })),
+        DoC("rename: select track 2 while the field is open", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let id = c.project().tracks[1].id;
+            c.select_track(id);
+        })),
+        Do("rename: let the field see the new selection", Box::new(|_| {})),
+        Check("rename: Keys went to track 1, track 2 kept its name", Box::new(move |c, _| {
+            let t = &c.project().tracks;
+            (t[0].name == "Keys" && t[1].name != "Keys").then_some(()).ok_or(format!("names {:?} / {:?}", t[0].name, t[1].name))
+        })),
+        DoC("rename: select track 1, Devices tab", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            let id = c.project().tracks[0].id;
+            c.select_track(id);
+        })),
+        Do("rename: double-click, type Pads, then click the Clip tab", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+            type_text(a, "Pads");
+            click(a, bottom_x() + 261.0 + 8.0, bottom_y() + 14.0);
+        })),
+        Check("rename: switching tabs committed Pads", Box::new(move |c, _| {
+            (name0(c) == "Pads" && c.bottom_tab == crate::controller::BottomTab::Clip && c.rename_draft.is_none()).then_some(()).ok_or(format!("name {:?} tab {:?}", name0(c), c.bottom_tab))
+        })),
+        DoC("rename: track 1 selected, no clip", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let id = c.project().tracks[0].id;
+            c.select_track(id);
+            c.selected_clip = None;
+            c.ui_dirty = true;
+        })),
+        Do("rename: ⌘R (track.rename)", Box::new(|a| key(a, "r", true, false))),
+        Do("rename: type Strings and press Enter", Box::new(|a| {
+            type_text(a, "Strings");
+            key(a, Key::Return, false, false);
+        })),
+        Check("rename: the keyboard opened the header field and Strings was committed", Box::new(move |c, _| {
+            (name0(c) == "Strings" && c.doc.undo_label() == Some("Rename Track")).then_some(()).ok_or(format!("name {:?} undo {:?}", name0(c), c.doc.undo_label()))
+        })),
+        DoC("rename: undo six times", Box::new(|_, ctl| {
+            for _ in 0..6 {
+                ctl.borrow_mut().undo();
+            }
+        })),
+        Check("rename: the original name is back", Box::new(move |c, _| (name0(c) == *o1.borrow()).then_some(()).ok_or(format!("name {:?} want {:?}", name0(c), o1.borrow())))),
+        Do("rename: a field opened before the project was replaced types and commits", Box::new(|a| {
+            let s = a.global::<Studio>();
+            let stale = s.get_doc_epoch() - 1;
+            s.invoke_track_rename_draft(s.get_sel_id(), "Stale".into(), stale);
+            s.invoke_track_rename(s.get_sel_id(), "Stale".into(), stale);
+        })),
+        Check("rename: the stale field renamed nothing and left no draft", Box::new(move |c, _| {
+            (name0(c) == *o2.borrow() && c.rename_draft.is_none()).then_some(()).ok_or(format!("name {:?} draft {:?}", name0(c), c.rename_draft))
+        })),
+        DoC("rename: track 1 selected, Devices tab (again)", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            let id = c.project().tracks[0].id;
+            c.select_track(id);
+            rev0.set(c.doc.revision());
+        })),
+        Do("rename: double-click the name and type nothing", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+        })),
+        Check("rename: the open field holds a draft of the current name", Box::new(move |c, _| {
+            let want = (c.project().tracks[0].id, name0(c));
+            (c.rename_draft.as_ref() == Some(&want)).then_some(()).ok_or(format!("draft {:?}", c.rename_draft))
+        })),
+        Do("rename: click the Clip tab with the untouched field open", Box::new(|a| click(a, bottom_x() + 261.0 + 8.0, bottom_y() + 14.0))),
+        Do("rename: ⌘R right after", Box::new(move |a| {
+            e0.set(a.global::<Studio>().get_rename_open_epoch());
+            key(a, "r", true, false);
+        })),
+        Check("rename: the shortcuts had the keyboard back (⌘R reached the app), no rename step", Box::new(move |c, a| {
+            let e = a.global::<Studio>().get_rename_open_epoch();
+            let rev = c.doc.revision();
+            (e == e1.get() + 1 && name0(c) == *o3.borrow() && c.rename_draft.is_some() && rev == rev1.get())
+                .then_some(())
+                .ok_or(format!("epoch {e} (was {}) name {:?} draft {:?} revision {rev} (was {})", e1.get(), name0(c), c.rename_draft, rev1.get()))
+        })),
+        Do("rename: Escape closes the header field", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("rename: closed without a draft", Box::new(|c, _| c.rename_draft.is_none().then_some(()).ok_or(format!("draft {:?}", c.rename_draft)))),
+    ]
+}
+
 /// The timeline ruler's bar labels at several zooms: the rule is a label every
 /// power-of-two bars once the bars are 50 px apart, starting at bar 1.
 fn ruler_zoom_steps() -> Vec<Step> {
@@ -6914,14 +7091,14 @@ fn clip_menu_steps() -> Vec<Step> {
             let v = audio_clips(c);
             (v.len() == 2 && !v[0].3 && !v[1].3).then_some(()).ok_or(format!("{v:?}"))
         })),
-        DoC("right-click the MIDI clip and choose Split (playhead beat 8 → beat 6 is outside, so move it first)", Box::new(move |a, ctl| {
-            let mid = {
-                let mut c = ctl.borrow_mut();
-                let t = c.project().tracks[1].id;
-                c.select_track(t);
-                c.seek_beats(6.0);
-                ClipId(i4.get().2)
-            };
+        DoC("move the playhead to beat 6 (beat 8 is outside the MIDI clip); a running device applies it at its next block", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = c.project().tracks[1].id;
+            c.select_track(t);
+            c.seek_beats(6.0);
+        })),
+        DoC("right-click the MIDI clip and choose Split", Box::new(move |a, ctl| {
+            let mid = ClipId(i4.get().2);
             let (x, y) = clip_xy(&ctl.borrow(), mid);
             right_click(a, x, y);
             click_entry(a, "Split");
@@ -7175,7 +7352,9 @@ fn clip_render_steps() -> Vec<Step> {
             let p = peak(&s, 0, s.len() / 2);
             eprintln!("clip-render: export render {:.1} ms", c.clip_render.last_ms);
             let same = c.doc.undo_label().map(str::to_string) == s14.borrow().undo_before_export;
-            (rate == 48_000 && ch == 2 && p > 0.02 && (96_000..=192_000).contains(&(s.len() / 2)) && same && !c.clip_render.busy()).then_some(()).ok_or(format!("rate {rate} ch {ch} frames {} peak {p} same {same}", s.len() / 2))
+            // A stem goes through the master fader: the --self-test-audio run keeps it at -40 dB.
+            let floor = 0.02 * c.project().master_gain.min(1.0);
+            (rate == 48_000 && ch == 2 && p > floor && (96_000..=192_000).contains(&(s.len() / 2)) && same && !c.clip_render.busy()).then_some(()).ok_or(format!("rate {rate} ch {ch} frames {} peak {p} (floor {floor}) same {same}", s.len() / 2))
         })),
         DoC("clip render: select the audio track; Consolidate its first clip and Cancel at once", Box::new(move |_, ctl| {
             let mut c = ctl.borrow_mut();
@@ -7241,7 +7420,7 @@ fn clip_render_steps() -> Vec<Step> {
             let mut c = ctl.borrow_mut();
             let s = s15.borrow();
             let mut commands: Vec<Command> = [s.audio_track, s.midi_track].iter().map(|&t| Command::RemoveTrack { track: TrackId(t) }).collect();
-            commands.extend(c.project().assets.iter().filter(|a| a.absolute_path.contains(&*dir().to_string_lossy())).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
+            commands.extend(c.project().assets.iter().filter(|a| in_dir(&a.absolute_path, &dir())).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
             c.execute(Command::Batch { label: "clip render cleanup".into(), commands });
             c.select_clip(None);
             c.clip_render.dir_override = Some(run_dir().join("renders"));
@@ -7417,7 +7596,7 @@ fn clip_render_plugin_steps() -> Vec<Step> {
             let mut c = ctl.borrow_mut();
             let s = s10.borrow();
             let mut commands = vec![Command::RemoveTrack { track: TrackId(s.track) }];
-            commands.extend(c.project().assets.iter().filter(|a| a.absolute_path.contains(&*dir().to_string_lossy())).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
+            commands.extend(c.project().assets.iter().filter(|a| in_dir(&a.absolute_path, &dir())).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
             c.execute(Command::Batch { label: "clip render plugin cleanup".into(), commands });
             c.select_clip(None);
             c.clip_render.dir_override = None;
@@ -7643,6 +7822,109 @@ fn pattern_library_steps() -> Vec<Step> {
     ]
 }
 
+/// Timeline shortcuts: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip (MIDI notes
+/// mirrored, audio played backwards), ⌘L loops the selected clip or section, ⌘D duplicates the
+/// selected section. Real key presses through the keymap.
+fn shortcut_steps() -> Vec<Step> {
+    use Step::*;
+    let tracks = Rc::new(Cell::new(0usize));
+    let (t0, t1) = (tracks.clone(), tracks.clone());
+    let clip: Rc<Cell<Option<dstudio_core::ClipId>>> = Rc::new(Cell::new(None));
+    let (c0, c1, c2) = (clip.clone(), clip.clone(), clip.clone());
+    let audio: Rc<Cell<Option<(dstudio_core::ClipId, bool)>>> = Rc::new(Cell::new(None));
+    let (a0, a1, a2) = (audio.clone(), audio.clone(), audio.clone());
+    let sections = Rc::new(Cell::new(0usize));
+    let (s0, s1) = (sections.clone(), sections.clone());
+    let unfocus = |c: &mut Controller| {
+        c.pr.focused = false;
+        c.mixer_open = false;
+    };
+    vec![
+        DoC("shortcuts: count the tracks, focus the timeline", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            unfocus(&mut c);
+            c.select_clip(None);
+            c.selected_section = None;
+            t0.set(c.project().tracks.len());
+        })),
+        Do("shortcuts: Cmd+Shift+T", Box::new(|a| key(a, "T", true, true))),
+        Check("shortcuts: a new Instrument track, selected, one undo step", Box::new(move |c, _| {
+            let p = c.project();
+            let t = p.tracks.iter().rev().find(|t| t.kind == TrackKind::Instrument).ok_or("no instrument track")?;
+            let ok = p.tracks.len() == t1.get() + 1 && t.name == "Instrument" && c.selected_track == Some(t.id) && c.doc.undo_label() == Some("Add Instrument Track");
+            ok.then_some(()).ok_or(format!("tracks {} -> {} name {} selected {:?} last {:?}", t1.get(), p.tracks.len(), t.name, c.selected_track, c.doc.undo_label()))
+        })),
+        DoC("shortcuts: a one-bar MIDI clip on it at beat 96 with notes at 0 and 1 beat, selected", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.seek_beats(96.0);
+            let id = c.insert_midi_clip();
+            if let Some(id) = id {
+                let n = |i: u32, start: i64| dstudio_core::Note { id: i, pitch: 60, start, length: PPQ / 2, velocity: 100 };
+                c.execute(dstudio_core::Command::SetMidiNotes { clip: id, notes: vec![n(1, 0), n(2, PPQ)] });
+            }
+            c.select_clip(id);
+            unfocus(&mut c);
+            c0.set(id);
+        })),
+        Do("shortcuts: Cmd+R", Box::new(|a| key(a, "r", true, false))),
+        Check("shortcuts: the notes are mirrored in the bar, one Reverse Clip step", Box::new(move |c, _| {
+            let m = c1.get().and_then(|id| c.project().midi_clip(id)).ok_or("no clip")?;
+            // Notes are kept in start order: the mirrored second note comes first.
+            let got: Vec<(u32, i64)> = m.notes.iter().map(|n| (n.id, n.start)).collect();
+            let want = vec![(2, 3 * PPQ - PPQ / 2), (1, 4 * PPQ - PPQ / 2)];
+            (got == want && c.doc.undo_label() == Some("Reverse Clip")).then_some(()).ok_or(format!("notes {got:?} want {want:?} last {:?}", c.doc.undo_label()))
+        })),
+        Do("shortcuts: Cmd+L", Box::new(|a| key(a, "l", true, false))),
+        Check("shortcuts: the loop is the clip's bar, on", Box::new(move |c, _| {
+            let m = c2.get().and_then(|id| c.project().midi_clip(id)).ok_or("no clip")?;
+            let tr = &c.project().transport;
+            (tr.loop_enabled && tr.loop_start == m.start && tr.loop_end == m.end()).then_some(()).ok_or(format!("loop {} {}..{} clip {}..{}", tr.loop_enabled, tr.loop_start, tr.loop_end, m.start, m.end()))
+        })),
+        DoC("shortcuts: select an audio clip", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let found = c.project().tracks.iter().flat_map(|t| t.clips.iter()).next().map(|cl| (cl.id, cl.warp.reverse));
+            if let Some((id, _)) = found {
+                if let Some(t) = c.clip_track(id) {
+                    c.select_track(t);
+                }
+                c.select_clip(Some(id));
+            }
+            unfocus(&mut c);
+            a0.set(found);
+        })),
+        Do("shortcuts: Cmd+R on it", Box::new(|a| key(a, "r", true, false))),
+        Check("shortcuts: the audio clip plays backwards", Box::new(move |c, _| {
+            let Some((id, was)) = a1.get() else { return Ok(()) };
+            let now = c.project().clip(id).map(|cl| cl.warp.reverse);
+            (now == Some(!was) && c.doc.undo_label() == Some("Reverse Clip")).then_some(()).ok_or(format!("reverse {now:?} (was {was}) last {:?}", c.doc.undo_label()))
+        })),
+        DoC("shortcuts: undo the audio reverse", Box::new(move |_, ctl| {
+            if a2.get().is_some() {
+                ctl.borrow_mut().undo();
+            }
+        })),
+        DoC("shortcuts: add a section and select it", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.select_clip(None);
+            c.insert_section(None);
+            unfocus(&mut c);
+            s0.set(c.project().sections.len());
+        })),
+        Do("shortcuts: Cmd+D, then Cmd+L", Box::new(|a| {
+            key(a, "d", true, false);
+            key(a, "l", true, false);
+        })),
+        Check("shortcuts: the section was duplicated and the loop is the copy", Box::new(move |c, _| {
+            let p = c.project();
+            let i = c.selected_section.and_then(|s| p.section_index(s)).ok_or("no section selected")?;
+            let (start, end) = (p.section_start(i), p.section_start(i) + p.sections[i].length);
+            let tr = &p.transport;
+            let ok = p.sections.len() == s1.get() + 1 && tr.loop_enabled && (tr.loop_start, tr.loop_end) == (start, end);
+            ok.then_some(()).ok_or(format!("sections {} -> {} loop {}..{} section {start}..{end}", s1.get(), p.sections.len(), tr.loop_start, tr.loop_end))
+        })),
+    ]
+}
+
 /// Piano-roll velocity lane: the toolbar toggle opens it under the grid; dragging a stem moves
 /// the note's velocity, a sweep across empty lane paints the stems it passes; each gesture is one
 /// undo step.
@@ -7788,10 +8070,12 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(clip_render_plugin_steps());
     all.extend(ruler_zoom_steps());
     all.extend(snap_steps());
+    all.extend(track_rename_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());
     all.extend(add_search_steps());
     all.extend(live_import_steps());
+    all.extend(shortcut_steps());
     all.extend(velocity_lane_steps());
     // The checks aim at a 1440×820 pt window. A window opened larger than the screen is shrunk to
     // fit when it is shown (macOS; GitHub's Mac runners have a 1024×768 display), so ask again
@@ -7835,6 +8119,11 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
             let skipped = if skips.get() > 0 { format!(" ({} skipped)", skips.get()) } else { String::new() };
             let fixture = ctl.try_borrow().map(|c| c.devices.catalog.fixture.is_some()).unwrap_or(false);
             let note = if fixture { " [plugin catalogue from a TEST fixture: the plugin checks did not exercise the engine scanner]" } else { "" };
+            eprintln!(
+                "self-test: {} frames waited for the GPU (at most {} in flight)",
+                crate::gpu::THROTTLED_FRAMES.load(std::sync::atomic::Ordering::Relaxed),
+                crate::gpu::MAX_FRAMES_IN_FLIGHT
+            );
             println!("self-test: {} / {n} checks passed{skipped}{note}", n - fails.get());
             finish_run(fails.get());
             t2.stop();

@@ -93,7 +93,17 @@ pub struct Renderer {
     wave_buf: wgpu::Buffer,
     wave_cap: usize,
     pub last_counts: (usize, usize, usize),
+    /// Frames submitted but maybe not finished, oldest first (see [`Renderer::end_frame`]).
+    in_flight: std::collections::VecDeque<wgpu::SubmissionIndex>,
+    /// Frames whose [`Renderer::end_frame`] had to wait, and the total wait.
+    pub throttled: (u64, std::time::Duration),
 }
+
+/// Frames that waited in [`Renderer::end_frame`], over all renderers (the self-test reports it).
+pub static THROTTLED_FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Frames the GPU may lag behind the CPU before [`Renderer::end_frame`] waits.
+pub const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
 fn vbuf(device: &wgpu::Device, label: &str, bytes: u64) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
@@ -179,6 +189,8 @@ impl Renderer {
             wave_buf: vbuf(device, "waves", 1024 * 64),
             wave_cap: 1024,
             last_counts: (0, 0, 0),
+            in_flight: Default::default(),
+            throttled: (0, std::time::Duration::ZERO),
         }
     }
 
@@ -240,6 +252,39 @@ impl Renderer {
         self.target = Some(Target { view, size, globals });
         self.bind_group = None;
         Some(texture)
+    }
+
+    /// Call once per frame after Slint has rendered: keeps the GPU at most
+    /// [`MAX_FRAMES_IN_FLIGHT`] frames behind. A presenting swapchain normally
+    /// throttles the CPU, but an occluded window (a locked CI desktop) presents
+    /// nothing and so never blocks; with a slow software adapter (WARP) every
+    /// frame's command buffers and bind groups then pile up until the device
+    /// runs out of memory. On a real GPU the frame waited for is long done, so
+    /// this returns at once.
+    pub fn end_frame(&mut self) {
+        // An empty submit marks the end of everything queued so far (Slint's
+        // frame included; the queue runs submissions in order).
+        self.in_flight.push_back(self.queue.submit(std::iter::empty()));
+        while self.in_flight.len() > MAX_FRAMES_IN_FLIGHT {
+            let Some(idx) = self.in_flight.pop_front() else { break };
+            let t0 = std::time::Instant::now();
+            // A timed-out wait means the frame is still running, so keep
+            // waiting: moving on would let unfinished frames pile up again,
+            // the very thing this cap prevents. Give up only on a GPU that
+            // has made no progress for half a minute (hung or lost).
+            for _ in 0..15 {
+                match self.device.poll(wgpu::PollType::Wait { submission_index: Some(idx.clone()), timeout: Some(std::time::Duration::from_secs(2)) }) {
+                    Err(wgpu::PollError::Timeout) => continue,
+                    _ => break,
+                }
+            }
+            let waited = t0.elapsed();
+            if waited >= std::time::Duration::from_micros(500) {
+                self.throttled.0 += 1;
+                self.throttled.1 += waited;
+                THROTTLED_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
     }
 
     pub fn target_size(&self) -> (u32, u32) {
