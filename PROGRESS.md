@@ -257,17 +257,12 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Window title, binary (`device-studio`), built-in device vendor, preferences folder
   (`Device Studio` / `device-studio`), recording temp folder, CLAP host name, Core Audio aggregate and
   PipeWire stream names, assistant prompt and README/docs now say Device Studio.
-- Projects save as `Name.dsproj/` with format `device-studio-project`; `.saineproj` / `saine-project`
-  projects still open (built-in device vendor is updated on load). The old `Saine Studio` support folder
-  is moved to the new location on first launch (`prefs::migrate_legacy_support_dir`). The Files browser
-  lists old `.saineproj` / `saine-project` folders too, and uses `~/Documents/Saine Studio` until `~/Documents/Device Studio`
-  exists. The macOS bundle id is `com.devicestudio.app` (microphone permission is asked again once).
-- Internal names renamed too: `saine` -> `dstudio` (`dstudio-*` crates, `dstudio::` namespace,
-  `dstudio_engine.h`, `DSTUDIO_*` CMake options and env vars, `DStudioTest*` test plugins,
-  `studio.dstudio.test.*` ids). Not `device`: it already names the effects/instruments concept.
-  `tools/rename/remove_saine.py` does the rename and is idempotent; branches started before it run it,
-  then merge main. `--check` lists anything left. The only `saine` strings kept are the legacy
-  project/settings names above and the history notes; the GitHub repo is now `chrislaupama/device`.
+- Projects save as `Name.dsproj/` with format `device-studio-project`; projects and the support folder from
+  before the rename still open and are moved over on first launch (`prefs::migrate_legacy_support_dir`).
+  The macOS bundle id is `com.devicestudio.app` (microphone permission is asked again once).
+- Internal names use `dstudio` (`dstudio-*` crates, `dstudio::` namespace, `dstudio_engine.h`,
+  `DSTUDIO_*` CMake options and env vars, `DStudioTest*` test plugins, `studio.dstudio.test.*` ids).
+  Not `device`: it already names the effects/instruments concept. The GitHub repo is `chrislaupama/device`.
 
 ### 2026-11-10: spec-driven workflow and agent skills
 
