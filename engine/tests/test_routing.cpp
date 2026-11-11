@@ -8,6 +8,8 @@
 #include "test_util.hpp"
 #include "wav.hpp"
 
+#include "delay_line.hpp"
+
 #include <cmath>
 #include <string>
 #include <vector>
@@ -241,6 +243,66 @@ TEST_CASE(routing_delay_compensation_aligns_direct_and_return_paths) {
     CHECK_NEAR(off[2000], 0.5f, 1e-6f); // track 1 direct
     CHECK_NEAR(off[2700], 0.5f, 1e-6f); // track 1 through the return
     CHECK_NEAR(off[3000], 1.0f, 1e-6f); // track 3 through its chain and the return
+}
+
+// A line fed silence only to play out its tail goes idle once the tail has
+// played (so a track whose clips ended stops paying for its lines).
+TEST_CASE(routing_delay_line_goes_idle_after_its_tail) {
+    constexpr uint32_t kDelay = 100, kBlock = 64;
+    dstudio::DelayLine line(dstudio::DelayLine::capacity_for(kDelay, kBlock), 2);
+    std::vector<float> l(kBlock, 1.0f), r(kBlock, 1.0f);
+    line.process(l.data(), r.data(), kBlock, kDelay, 0);
+    CHECK(!line.idle(kDelay, 0));
+    int blocks = 0;
+    float heard = 0.0f;
+    while (!line.idle(kDelay, 0) && blocks < 10) {
+        std::fill(l.begin(), l.end(), 0.0f);
+        std::fill(r.begin(), r.end(), 0.0f);
+        line.process(l.data(), r.data(), kBlock, kDelay, 0, /*silent_input=*/true);
+        for (float x : l) heard += x;
+        ++blocks;
+    }
+    CHECK(line.idle(kDelay, 0));
+    CHECK_EQ(blocks, 2);                 // 100 frames of delay: two 64-frame blocks
+    CHECK_NEAR(heard, 64.0f, 1e-6f);     // the whole block came out
+}
+
+// An output edge line belongs to its destination: moving the output to
+// another return drops what the line still held for the old one.
+TEST_CASE(routing_output_edge_line_does_not_follow_a_new_destination) {
+    EngineHandle e;
+    std::vector<float> imp(4000, 0.0f);
+    imp[0] = 0.5f;
+    const uint64_t a = load_asset(e, {imp});
+    RSession s;
+    s.audio(1, {clip(1, a, 2000, 0, 4000)});
+    s.ret(2);        // A: track 1's output
+    s.ret(3);        // B: track 1's send
+    s.ret(4, 0.25f); // C: track 1's output after the republish
+    // A silent track 700 frames late into A and C: those receive 700 frames
+    // after B, so track 1's output reaches them through a 700-frame edge line.
+    s.audio(5, {}).devices = {clap_latency(50, 700)};
+    s.out(5, 2);
+    s.send(5, 4, 1.0f);
+    s.send(1, 3, 1.0f);
+    s.out(1, 2);
+    REQUIRE(s.publish(e) == SE_OK);
+    se_transport_seek(e, 0);
+    se_transport_play(e);
+    const std::vector<float> first = render(e, 2304, 256); // the impulse (2000) is in the edge line
+    float early = 0.0f;
+    for (std::size_t i = 0; i < first.size(); i += 2) early += std::fabs(first[i]);
+    CHECK_EQ(early, 0.0f);
+    s.routes.back() = se_track_route{1, 4, 0, {}};
+    REQUIRE(s.publish(e) == SE_OK);
+    const std::vector<float> rest = render(e, 768, 256);
+    std::vector<std::size_t> nz;
+    for (std::size_t i = 0; i < rest.size(); i += 2)
+        if (rest[i] != 0.0f) nz.push_back(2304 + i / 2);
+    // Only the send through B, at 2000 + 700; nothing replayed into C.
+    REQUIRE(nz.size() == 1u);
+    CHECK_EQ(nz[0], std::size_t{2700});
+    CHECK_NEAR(rest[2 * (2700 - 2304)], 0.5f, 1e-6f);
 }
 
 TEST_CASE(routing_export_matches_the_live_render_and_does_not_allocate) {

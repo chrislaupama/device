@@ -23,7 +23,7 @@ RenderContext::RenderContext(uint32_t max_block)
       synth_(max_block), zeros_(max_block, 0.0f), plugin_l_(max_block), plugin_r_(max_block), gain_l_(max_block),
       gain_r_(max_block), auto_a_(max_block), auto_b_(max_block), param_events_(PluginInstance::kMaxParamEvents),
       sc_(std::size_t{2} * SE_BUILTIN_MAX_SIDECHAINS * max_block, 0.0f),
-      bus_(std::size_t{2} * SE_MAX_RETURNS * max_block, 0.0f), send_l_(max_block), send_r_(max_block), mod_points_(max_block / SE_MOD_GRID_FRAMES + 2),
+      bus_(new float[std::size_t{2} * SE_MAX_RETURNS * max_block]), send_(new float[std::size_t{2} * max_block]), mod_points_(max_block / SE_MOD_GRID_FRAMES + 2),
       mod_(std::size_t{2} * kMaxModTargets * mod_points_, 0.0f), mod_binds_(kMaxModTargets) {}
 
 void kernel_add_scaled(float* __restrict dst, const float* __restrict src, float gain, uint32_t n) noexcept {
@@ -167,7 +167,8 @@ struct Router {
     // or the automated gains gl/gr when `automated`) or pre-fader, times `s`,
     // through `line`.
     void mix(const TrackNode& track, const float* tl, const float* tr, bool automated, const float* gl,
-             const float* gr, float* dl, float* dr, bool post, float s, DelayLine* line, uint32_t d) const noexcept {
+             const float* gr, float* dl, float* dr, bool post, float s, DelayLine* line, uint32_t d,
+             bool silent) const noexcept {
         if (line == nullptr) {
             if (!post) {
                 kernel_add_scaled2(dl, dr, tl, tr, s, s, frames);
@@ -198,14 +199,15 @@ struct Router {
                 xr[i] = tr[i] * b;
             }
         }
-        line->process(xl, xr, frames, d, gen);
+        line->process(xl, xr, frames, d, gen, silent);
         kernel_add_scaled(dl, xl, 1.0f, frames);
         kernel_add_scaled(dr, xr, 1.0f, frames);
     }
     // Sends (pre-fader taps, then post-fader) and the output into the master
     // or a return's bus. Order doesn't matter: each lands in its own destination.
+    // `silent`: (tl, tr) is silence fed only to drain the edge lines' tails.
     DSTUDIO_NOINLINE void play(const TrackNode& track, std::size_t t, const float* tl, const float* tr, bool automated,
-                               const float* gl, const float* gr) const noexcept {
+                               const float* gl, const float* gr, bool silent) const noexcept {
         const auto run_sends = [&](bool pre) {
             for (uint32_t s = track.send_begin; s < track.send_begin + track.send_count; ++s) {
                 const SendNode& send = g.sends[s];
@@ -218,7 +220,7 @@ struct Router {
                 float* dl = nullptr;
                 float* dr = nullptr;
                 bus_dst(send.bus, dl, dr);
-                mix(track, tl, tr, automated, gl, gr, dl, dr, !pre, send.gain, line, send.edge_delay);
+                mix(track, tl, tr, automated, gl, gr, dl, dr, !pre, send.gain, line, send.edge_delay, silent);
             }
         };
         run_sends(true);
@@ -229,7 +231,7 @@ struct Router {
             float* dl = ml;
             float* dr = mr;
             if (track.out_bus >= 0) bus_dst(track.out_bus, dl, dr);
-            mix(track, tl, tr, automated, gl, gr, dl, dr, true, 1.0f, line, track.out_delay);
+            mix(track, tl, tr, automated, gl, gr, dl, dr, true, 1.0f, line, track.out_delay, silent);
         }
         run_sends(false);
     }
@@ -502,7 +504,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                 std::memset(tl, 0, sizeof(float) * frames);
                 std::memset(tr, 0, sizeof(float) * frames);
                 any = true;
-                line->process(tl, tr, frames, d, gen);
+                line->process(tl, tr, frames, d, gen, /*silent_input=*/true);
             } else {
                 line->discard(frames, gen);
             }
@@ -681,10 +683,11 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             }
         }
         if (main_line != nullptr && !track.pdc_pre) delay_track(main_line, track.pdc_delay);
-        if (!any && edge_pending) { // an edge line still has a tail to give
+        bool tail_only = false; // silence fed through the edge lines to drain their tails
+        if (!any && edge_pending) {
             std::memset(tl, 0, sizeof(float) * frames);
             std::memset(tr, 0, sizeof(float) * frames);
-            any = true;
+            any = tail_only = true;
         }
         if (!any || !track.audible) {
             if (!plain) router.discard_edges(track, t);
@@ -736,7 +739,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             meter_gl = kernel_peak(gl, frames);
             meter_gr = kernel_peak(gr, frames);
         }
-        if (!plain) router.play(track, t, tl, tr, automated, gl, gr);
+        if (!plain) router.play(track, t, tl, tr, automated, gl, gr, tail_only);
         if (update_meters) {
             TrackMeter& m = graph->meters[t];
             const float pl = kernel_peak(tl, frames) * meter_gl;

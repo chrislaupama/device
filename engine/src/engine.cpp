@@ -634,7 +634,8 @@ uint64_t Engine::install_graph(std::unique_ptr<RenderGraph> built) {
     next->line_refs.clear();
     next->lines.clear();
     if (!next->pdc.need.empty()) {
-        // kind (0 main, 1 source, 2 bypass, 3 metronome, 4 send, 5 output edge), ids
+        // kind (0 main, 1 source, 2 bypass, 3 metronome, 4 send, 5 output edge), ids (sends and
+        // output edges also by destination, so a line never plays into a new destination)
         using Key = std::tuple<int, uint64_t, uint64_t>;
         const auto key_of = [](const RenderGraph& g, std::size_t i) -> Key {
             const std::size_t t = g.tracks.size();
@@ -650,7 +651,12 @@ uint64_t Engine::install_graph(std::unique_ptr<RenderGraph> built) {
                 while (from + 1 < t && g.tracks[from].send_begin + g.tracks[from].send_count <= s) ++from;
                 return {4, g.tracks[from].track_id, g.sends[s].return_id};
             }
-            return {5, g.tracks[s - g.sends.size()].track_id, 0};
+            // the output's destination: the return whose bus it plays into (0: the master)
+            const TrackNode& from = g.tracks[s - g.sends.size()];
+            uint64_t to = 0;
+            for (const TrackNode& r : g.tracks)
+                if (from.out_bus >= 0 && r.is_return && r.bus == from.out_bus) to = r.track_id;
+            return {5, from.track_id, to};
         };
         std::map<Key, std::shared_ptr<DelayLine>> previous_lines;
         if (current_)
