@@ -281,9 +281,26 @@ void plan_sidechains(RenderGraph& g) {
             break;
         }
         if (progressed) continue;
-        // Cycle: take the lowest remaining track that reads a sidechain from
-        // a remaining track and cut those sidechains (a cycle always has
-        // one: routing alone is acyclic).
+        // Cycle: take the lowest remaining track that reads a sidechain on a
+        // cycle (its source is reachable from the reader) and cut those
+        // sidechains (a cycle always has one: routing alone is acyclic).
+        // A sidechain that only depends on a cycle is kept.
+        const auto reaches = [&](uint32_t from, uint32_t to) {
+            std::vector<bool> seen(n, false);
+            std::vector<uint32_t> stack{from};
+            seen[from] = true;
+            while (!stack.empty()) {
+                const uint32_t at = stack.back();
+                stack.pop_back();
+                if (at == to) return true;
+                for (uint32_t r : readers[at])
+                    if (!done[r] && !seen[r]) {
+                        seen[r] = true;
+                        stack.push_back(r);
+                    }
+            }
+            return false;
+        };
         bool cut = false;
         for (uint32_t t = 0; t < n && !cut; ++t) {
             if (done[t]) continue;
@@ -292,7 +309,7 @@ void plan_sidechains(RenderGraph& g) {
                 FxSlot& slot = g.fx[node.fx_begin + i];
                 if (slot.sc_source == 0) continue;
                 const uint32_t s = index.at(slot.sc_source);
-                if (!done[s]) {
+                if (!done[s] && reaches(t, s)) {
                     auto& rs = readers[s];
                     if (auto at = std::find(rs.begin(), rs.end(), t); at != rs.end()) rs.erase(at);
                     slot.sc_source = 0;

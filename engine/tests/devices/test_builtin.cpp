@@ -303,6 +303,25 @@ TEST_CASE(builtin_sidechain_follows_source_track) {
     DeviceSession::add_device(t2, 12, "compressor", v, true, 1);
     CHECK(cyc.publish(e) == SE_OK);
     render(e, 2048, 256);
+    // Only a sidechain on the cycle is cut: track 1 reads track 2, which is
+    // in a cycle with track 3, and keeps its sidechain.
+    {
+        DeviceSession dep;
+        auto& r = dep.add_track(1, quiet, 48000);
+        DeviceSession::add_device(r, 21, "compressor", v, true, 2);
+        auto& a = dep.add_track(2, loud, 48000);
+        DeviceSession::add_device(a, 22, "compressor", v, true, 3);
+        auto& b = dep.add_track(3, quiet, 48000);
+        DeviceSession::add_device(b, 23, "compressor", v, true, 2);
+        REQUIRE(dep.publish(e) == SE_OK);
+        REQUIRE(se_transport_seek(e, 0) == SE_OK);
+        REQUIRE(se_transport_play(e) == SE_OK);
+        render(e, 12000, 256);
+        float ro[3] = {};
+        size_t n = 0;
+        REQUIRE(se_builtin_readouts(e, 21, ro, 3, &n) == SE_OK);
+        CHECK(ro[2] < -10.0f);
+    }
     // A rejected source (unknown track, or the device's own track) reads
     // silence: the loud track's own audio must not drive the detector.
     for (uint64_t source : {99u, 2u}) {
