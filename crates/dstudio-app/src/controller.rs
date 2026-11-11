@@ -306,6 +306,9 @@ pub struct Controller {
     pub(crate) track_resize: Option<crate::splitters::TrackResize>,
     /// Timeline / bottom-panel splitter drag (src/splitters.rs).
     pub(crate) bottom_drag: Option<crate::splitters::BottomDrag>,
+    /// Saved height (None = default) each bottom panel kind had before its collapse button shut
+    /// it, restored when the button reopens it.
+    pub(crate) bottom_restore: std::collections::HashMap<&'static str, Option<f32>>,
     /// Docked-assistant width drag (src/splitters.rs).
     pub(crate) chat_drag: Option<crate::splitters::ChatDrag>,
     status: Option<(String, Instant, Duration)>,
@@ -455,6 +458,7 @@ impl Controller {
             drag: None,
             track_resize: None,
             bottom_drag: None,
+            bottom_restore: Default::default(),
             chat_drag: None,
             status: None,
             project_dir: None,
@@ -757,6 +761,8 @@ impl Controller {
             let p = self.doc.project();
             let ls = snapshot::LaneSnapshot { target: lane.target.clone(), points: lane.points.iter().map(|q| (p.ticks_to_frames(q.time, self.rate), q.value, q.curve)).collect() };
             let lanes = match key {
+                // A muted master stays silent: no volume lane, not even one being drawn.
+                None if p.master_mute => None,
                 None => Some(&mut snap.master_automation),
                 Some(t) => snap.tracks.iter_mut().find(|ts| ts.track_id == t.0).map(|ts| &mut ts.automation),
             };
@@ -989,6 +995,12 @@ impl Controller {
         }
     }
 
+    /// The master strip's M: silences the whole mix (the fader keeps its value). Undoable.
+    pub fn toggle_master_mute(&mut self) {
+        let mute = !self.project().master_mute;
+        self.execute(Command::SetMasterMute { mute });
+    }
+
     // ---------------------------------------------------------------- mixer
 
     pub fn toggle_mixer(&mut self) {
@@ -1165,6 +1177,7 @@ impl Controller {
         self.tempos.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
+        self.bottom_restore.clear();
         self.doc = Document::new(project);
         self.devices.modu.bases_pending = true;
         self.selected_track = self.project().tracks.first().map(|t| t.id);
@@ -1209,6 +1222,7 @@ impl Controller {
         self.tempos.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
+        self.bottom_restore.clear();
         self.doc = Document::new(loaded.project);
         self.devices.modu.bases_pending = true;
         self.project_dir = Some(dir.to_path_buf());
@@ -1853,6 +1867,7 @@ impl Controller {
             self.strip_meters_model.set_vec(vec![StripMeter { l: 1.0, r: 1.0, peak: "−∞".into() }; p.tracks.len()]);
         }
         s.set_master_fader(fader_from_db(gain_to_db(p.master_gain)));
+        s.set_master_mute(p.master_mute);
         // ---- assistant ----
         s.set_assistant_open(self.assistant_open);
         s.set_assistant_pref_w(match self.chat_drag {
@@ -1888,6 +1903,7 @@ impl Controller {
         self.push_files(&s);
         self.push_automation(&s);
         s.set_bottom_h(self.bottom_h());
+        s.set_bottom_collapsed(self.bottom_collapsed());
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };
         s.set_status_text(status.into());
         self.ruler_key.0 = i64::MIN; // force label refresh
@@ -2045,6 +2061,38 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let starts: Vec<Vec<Ticks>> = c.project().tracks.iter().map(|t| t.clips.iter().map(|k| k.start).collect()).collect();
         assert_eq!(starts, vec![vec![0], vec![], vec![10 * PPQ]]);
+    }
+    /// A splitter drag forgets only its own panel's collapse-button height: the mixer, shut by
+    /// the button at a custom height, still reopens there after the Devices panel is dragged.
+    #[test]
+    fn a_drag_keeps_another_panels_restore_height() {
+        let engine = Arc::new(Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        c.bottom_restore.insert("mixer", Some(400.0));
+        c.bottom_restore.insert("devices", None);
+        c.mixer_open = false;
+        c.bottom_tab = BottomTab::Devices;
+        c.bottom_resize(0, 500.0);
+        c.bottom_resize(1, 400.0);
+        c.bottom_resize(2, 400.0);
+        assert_eq!(c.bottom_restore.get("mixer"), Some(&Some(400.0)));
+        assert!(!c.bottom_restore.contains_key("devices"));
+    }
+    /// A master volume lane being drawn must not bring a muted master back.
+    #[test]
+    fn a_muted_master_ignores_a_lane_being_drawn() {
+        let engine = Arc::new(Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        let lane = dstudio_core::AutomationLane {
+            target: dstudio_core::AutomationTarget::Volume,
+            enabled: true,
+            points: vec![dstudio_core::AutoPoint { time: 0, value: 1.0, curve: 0.0 }],
+        };
+        c.auto.pending = Some((None, lane));
+        assert_eq!(c.current_snapshot().master_automation.len(), 1, "unmuted: the drawn lane plays");
+        c.execute(Command::SetMasterMute { mute: true });
+        let snap = c.current_snapshot();
+        assert!(snap.master_automation.is_empty() && snap.master_gain == 0.0);
     }
     #[test]
     fn pan_text() {

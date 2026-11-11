@@ -300,6 +300,16 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   `dstudio_engine_bench`.
 - Next: the UI (spec 002 T9): Returns pill and rows, return strips, Sends sections, Out menu.
 
+### 2026-11-11: piano roll velocity lane
+
+- The velocity button in the piano-roll toolbar opens a 68-unit lane under the note grid (the grid gives up that
+  height). Each note has a stem from the lane floor to its velocity (1 to 127). Dragging a stem moves the velocity
+  of that note, or of the whole selection when the note is selected; a press on empty lane paints the stems the
+  pointer sweeps across (the selection only, when there is one). Each gesture is one "Note Velocity" undo step.
+- Code: `pianoroll.rs` (`VEL_H`, `vel_y`/`vel_at`, `PrDrag::Velocity`, `pr_vel_pointer`, `paint_velocity`, the
+  `vel_lane` draw). Review state `review-pr-velocity`; self-test section "velocity"; unit test
+  `velocity_lane_maps_and_paints`.
+
 ### 2026-11-11: MIDI input, engine side (spec 003)
 
 - Spec `specs/003-midi-input-and-recording/` (spec, plan, tasks). This first part is the engine and the C ABI; the
@@ -313,3 +323,12 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   table in `dstudio_engine_bench`.
 - Not verified on hardware yet: Core MIDI with a real keyboard (Mac mini), WinMM (CI build only).
 
+
+### 2026-11-11: master mute and bottom panel collapse
+
+- `Project::master_mute` (saved only when on) and `Command::SetMasterMute` ("Master Mute Change"). The snapshot sends a
+  muted master as gain 0 with no master volume lane, so automation cannot bring it back; the fader keeps its value.
+  The mixer's master M toggles it, and the timeline's master row dims and reads "Master (muted)".
+- The collapse button in the bottom panel header (Clip/Devices and the mixer) shuts the panel to its tab row and reopens
+  it at the height it had (`Controller::toggle_bottom_collapse`, src/splitters.rs). Like the splitter it is a view
+  change saved with the project, not an undo step; a panel shut by dragging reopens at its default height.

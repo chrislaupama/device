@@ -256,6 +256,9 @@ pub struct Project {
     pub name: String,
     pub transport: Transport,
     pub master_gain: f32,
+    /// The master strip's M: the whole mix is silent (the fader keeps its value).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub master_mute: bool,
     pub tracks: Vec<Track>,
     pub assets: Vec<Asset>,
     /// Monotonic id allocator shared by tracks, clips and assets.
@@ -287,6 +290,7 @@ impl Default for Project {
                 key: None,
             },
             master_gain: 1.0,
+            master_mute: false,
             tracks: Vec::new(),
             assets: Vec::new(),
             next_id: 1,
