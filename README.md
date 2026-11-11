@@ -215,7 +215,9 @@ cargo run --release -p dstudio-app -- --self-test --no-audio     # drive the app
 | `crates/dstudio-engine` | Safe Rust wrapper over the engine, end-to-end tests |
 | `crates/dstudio-app` | Desktop app (binary `device-studio`) |
 | `docs/` | Architecture, ADRs, built-in devices, build guide |
-| `tools/` | macOS app bundle script and the rename helper |
+| `specs/` | Specs for non-trivial work, their templates and the project's principles |
+| `.agents/skills/`, `AGENTS.md` | Skills and a guide for coding agents working on this codebase |
+| `tools/` | macOS app bundle script, the rename helper and the skills checker |
 | `ui-spike/` | The Slint and wgpu interop spike behind ADR 0001 |
 
 The app was called Saine Studio until November 2026. Internal names use `dstudio` (`dstudio-*` crates, the `dstudio::`
@@ -241,6 +243,13 @@ reported too); **Release** builds the installable packages and drafts a GitHub r
 comparison locally.
 
 Start with [PROGRESS.md](PROGRESS.md), then [docs/architecture.md](docs/architecture.md).
+
+Non-trivial work is spec-driven: a feature, a behaviour change or a hard bug starts with a short spec in `specs/`
+(what and why, then the plan and tasks), agreed before the code is written, and the spec ships with the change.
+[specs/README.md](specs/README.md) explains the workflow and when to skip it, and
+[specs/principles.md](specs/principles.md) lists the rules every change follows. If you work with a coding agent,
+[AGENTS.md](AGENTS.md) points it at the skills in `.agents/skills/`, which describe how each part of the codebase is
+changed; after editing a skill, run `python3 tools/agents/check_skills.py`.
 
 ### Keeping this README up to date
 
