@@ -22,7 +22,10 @@
 #    moves the workspace), which CMake refuses to reuse. Not on Windows, whose paths CMake
 #    spells differently from Git Bash.
 #
-# 4. Removes the engine build script's output (`cargo clean -p dstudio-engine`), so its CMake
+# 4. Zeroes the ccache statistics (they are stored in the restored cache), so the job's
+#    `ccache --show-stats` counts this run's compiles only.
+#
+# 5. Removes the engine build script's output (`cargo clean -p dstudio-engine`), so its CMake
 #    build tree is configured from scratch. The rebuild itself does not depend on this (step 2
 #    already reruns build.rs), but a restored CMakeCache.txt pins the compiler's full path,
 #    which a runner image update (a new Xcode or MSVC version) removes, and keeps cache
@@ -72,7 +75,12 @@ if [ "${RUNNER_OS:-}" != "Windows" ]; then
     done < <(find "${dirs[@]}" -name CMakeCache.txt 2>/dev/null)
 fi
 
-# 4. (No empty-array expansion: macOS runs bash 3.2, where that fails under `set -u`.)
+# 4.
+if command -v ccache > /dev/null; then
+    ccache --zero-stats > /dev/null
+fi
+
+# 5. (No empty-array expansion: macOS runs bash 3.2, where that fails under `set -u`.)
 if [ "$profile" = release ]; then
     cargo clean -p dstudio-engine --locked --release
 else
