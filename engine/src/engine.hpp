@@ -3,6 +3,7 @@
 #pragma once
 
 #include "asset.hpp"
+#include "midi_input.hpp"
 #include "platform/audio_device.hpp"
 #include "plugins/plugin_host.hpp"
 #include "processor.hpp"
@@ -67,6 +68,17 @@ public:
     // Test hook: replaces the platform device (takes effect when no device
     // object exists yet, i.e. before the first start/configure).
     void set_device_factory(DeviceFactory f);
+
+    // ---- MIDI input (midi_input.hpp; se_midi_*)
+    MidiInputHub& midi() noexcept { return *midi_; }
+    // MidiInputHub::open_only, freeing closed ports' slots right away when
+    // nothing renders.
+    int32_t midi_open(const std::vector<std::string>& ids, std::string& err);
+    // Test hook: a new hub over `backend` (call before any MIDI use, while
+    // nothing renders).
+    void set_midi_backend(std::unique_ptr<MidiBackend> backend) {
+        midi_ = std::make_unique<MidiInputHub>(std::move(backend));
+    }
 
     // ---- assets
     int32_t asset_load_file(const char* path, se_asset_info* out, std::string& err);
@@ -372,6 +384,13 @@ private:
     std::size_t record_ring_frames_ = 0; // 0 = 2 s at the engine rate
     std::atomic<Recorder*> rec_live_{nullptr};
     std::atomic<bool> rec_in_use_{false};
+
+    // -- MIDI input (midi_input.hpp). The hub's queues are read by the RT
+    // owner; its ports are opened and closed on the main thread.
+    std::unique_ptr<MidiInputHub> midi_ = std::make_unique<MidiInputHub>();
+    std::array<MidiEvent, MidiInputHub::kMaxBlockEvents> rt_midi_{}; // RT-owned
+    bool rt_midi_wrapped_ = false; // RT-owned: a loop wrap happened since capture started
+    uint32_t rt_capture_pass_ = 0; // RT-owned: the capture pass rt_midi_wrapped_ belongs to
 
     // -- plugins (instances shared by every graph that references them)
     PluginHost plugins_;

@@ -873,6 +873,37 @@ pub struct RecordingState {
     pub takes: Vec<LiveTake>,
 }
 
+/// One MIDI input port ([`Engine::midi_inputs`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MidiInputInfo {
+    /// Stable id: what [`Engine::open_midi_inputs`] takes and preferences store.
+    pub id: String,
+    pub name: String,
+    pub open: bool,
+    /// Messages received since it was opened (an activity light compares two readings).
+    pub events: u64,
+}
+
+/// A note event heard while MIDI capture was on ([`Engine::read_midi_capture`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CapturedNote {
+    /// Timeline frame at the engine rate (latency compensated; may be < 0).
+    pub frame: i64,
+    /// True for note-on, false for note-off.
+    pub on: bool,
+    pub pitch: u8,
+    pub velocity: u8,
+}
+
+/// MIDI input counters ([`Engine::midi_stats`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MidiStats {
+    pub received: u64,
+    pub delivered: u64,
+    pub dropped: u64,
+    pub capture_dropped: u64,
+}
+
 /// Recording health counters ([`Engine::recording_stats`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RecordingStats {
@@ -1005,6 +1036,79 @@ impl Engine {
     /// `preview_stop` releases every held one.
     pub fn preview_note(&self, device_id: u64, pitch: u8, velocity: u8) -> Result<(), EngineError> {
         check(unsafe { ffi::se_preview_note(self.raw, device_id, pitch, velocity) })
+    }
+
+    /// MIDI input ports present now (rescans; the first call starts the
+    /// platform MIDI client). No MIDI system: an empty list.
+    pub fn midi_inputs(&self) -> Result<Vec<MidiInputInfo>, EngineError> {
+        let mut total = 0usize;
+        check(unsafe { ffi::se_midi_inputs_list(self.raw, std::ptr::null_mut(), 0, &mut total) })?;
+        loop {
+            let mut raw = vec![ffi::se_midi_input_info::default(); total];
+            let mut n = 0usize;
+            check(unsafe { ffi::se_midi_inputs_list(self.raw, raw.as_mut_ptr(), raw.len(), &mut n) })?;
+            if n > raw.len() {
+                total = n; // a port appeared in between: retry
+                continue;
+            }
+            return Ok(raw[..n]
+                .iter()
+                .map(|p| MidiInputInfo { id: c_chars_to_string(&p.id), name: c_chars_to_string(&p.name), open: p.open != 0, events: p.events })
+                .collect());
+        }
+    }
+
+    /// Opens exactly these MIDI input ports (ids that are not present are
+    /// ignored) and closes the others; notes they held are released. An
+    /// error names the ports that failed; the rest are open. An id with a
+    /// NUL byte is an invalid argument (nothing is opened or closed).
+    pub fn open_midi_inputs(&self, ids: &[String]) -> Result<(), EngineError> {
+        let c = ids
+            .iter()
+            .map(|i| CString::new(i.as_str()))
+            .collect::<Result<Vec<CString>, _>>()
+            .map_err(|_| EngineError { code: ffi::SE_ERR_INVALID_ARG, kind: "invalid argument", message: "MIDI input id contains NUL".into() })?;
+        let ptrs: Vec<*const std::os::raw::c_char> = c.iter().map(|s| s.as_ptr()).collect();
+        check(unsafe { ffi::se_midi_inputs_open(self.raw, ptrs.as_ptr(), ptrs.len()) })
+    }
+
+    /// Delivers a channel message as if a MIDI port had sent it (tests).
+    pub fn midi_inject(&self, status: u8, data1: u8, data2: u8) -> Result<(), EngineError> {
+        check(unsafe { ffi::se_midi_inject(self.raw, status, data1, data2) })
+    }
+
+    /// The instrument track that plays MIDI input while no instrument track
+    /// is armed or monitoring (the selected track); `None` = none.
+    pub fn set_midi_focus(&self, track_id: Option<u64>) {
+        unsafe { ffi::se_midi_set_focus(self.raw, track_id.unwrap_or(0)) };
+    }
+
+    /// MIDI capture for recording: enabling empties the capture ring.
+    pub fn set_midi_capture(&self, enabled: bool) {
+        unsafe { ffi::se_midi_capture_enable(self.raw, enabled as u8) };
+    }
+
+    /// Pops the notes captured since the last read, in order.
+    pub fn read_midi_capture(&self) -> Vec<CapturedNote> {
+        let mut out = Vec::new();
+        let mut buf = [ffi::se_midi_captured::default(); 256];
+        loop {
+            let mut n = 0usize;
+            if unsafe { ffi::se_midi_capture_read(self.raw, buf.as_mut_ptr(), buf.len(), &mut n) } != ffi::SE_OK {
+                break;
+            }
+            out.extend(buf[..n].iter().map(|c| CapturedNote { frame: c.frame, on: c.status == 0x90, pitch: c.data1, velocity: c.data2 }));
+            if n < buf.len() {
+                break;
+            }
+        }
+        out
+    }
+
+    pub fn midi_stats(&self) -> MidiStats {
+        let mut s = ffi::se_midi_stats::default();
+        unsafe { ffi::se_midi_stats_get(self.raw, &mut s) };
+        MidiStats { received: s.received, delivered: s.delivered, dropped: s.dropped, capture_dropped: s.capture_dropped }
     }
 
     /// Silence all device input (Settings › "Mute audio input"): monitoring,

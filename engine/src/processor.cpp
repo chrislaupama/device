@@ -24,7 +24,8 @@ RenderContext::RenderContext(uint32_t max_block)
       gain_r_(max_block), auto_a_(max_block), auto_b_(max_block), param_events_(PluginInstance::kMaxParamEvents),
       sc_(std::size_t{2} * SE_BUILTIN_MAX_SIDECHAINS * max_block, 0.0f),
       bus_(new float[std::size_t{2} * SE_MAX_RETURNS * max_block]), send_(new float[std::size_t{2} * max_block]), mod_points_(max_block / SE_MOD_GRID_FRAMES + 2),
-      mod_(std::size_t{2} * kMaxModTargets * mod_points_, 0.0f), mod_binds_(kMaxModTargets) {}
+      mod_(std::size_t{2} * kMaxModTargets * mod_points_, 0.0f), mod_binds_(kMaxModTargets), live_(max_block),
+      midi_(kMidiScratch) {}
 
 void kernel_add_scaled(float* __restrict dst, const float* __restrict src, float gain, uint32_t n) noexcept {
     for (uint32_t i = 0; i < n; ++i) dst[i] += src[i] * gain;
@@ -463,6 +464,17 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         PluginInstance* const iplug = plugins_on && track.instrument_plugin_enabled ? track.instrument_plugin : nullptr;
         const bool track_plugins = plugins_on && (track.fx_count > 0 || iplug != nullptr);
         const bool routed = live_input && track.input_mode != SE_INPUT_NONE && (track.monitor || track.arm);
+        // MIDI input (live path): this block's events when the track receives
+        // input, else note-offs for keys it still holds (routing changed).
+        TrackMidi* const tmidi = inst.midi != nullptr && t < graph->midi_tracks.size() ? graph->midi_tracks[t] : nullptr;
+        MidiEvent* const midi_ev = ctx.midi_scratch();
+        uint32_t n_midi = 0;
+        if (tmidi != nullptr && (inst.midi->count > 0 || tmidi->held_count > 0)) {
+            const bool midi_routed =
+                graph->midi_explicit ? (track.arm || track.monitor) : track.track_id == inst.midi->focus;
+            n_midi = tmidi->events_for(inst.midi->events, inst.midi->count, midi_routed, midi_ev,
+                                       RenderContext::kMidiScratch);
+        }
         // Delay compensation lines of this track (null when not needed).
         DelayLine* main_line = nullptr;
         DelayLine* src_line = nullptr;
@@ -579,6 +591,24 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                 i += n;
             }
         }
+        // Live input on the built-in Synth: its own LiveSynth, summed with the notes.
+        if (synth != nullptr && tmidi != nullptr && tmidi->live != nullptr) {
+            LiveSynth& live = *tmidi->live;
+            for (uint32_t i = 0; i < n_midi; ++i) {
+                const uint8_t kind = midi_ev[i].status & 0xF0;
+                if (kind == 0x90) live.note_on(midi_ev[i].data1, midi_ev[i].data2);
+                else if (kind == 0x80) live.note_off(midi_ev[i].data1);
+            }
+            float* const lb = ctx.live_synth();
+            if (live.render(&graph->synth_params[t], frames, lb)) {
+                if (synth_out) {
+                    kernel_add_scaled(sb, lb, 1.0f, frames);
+                } else {
+                    std::memcpy(sb, lb, sizeof(float) * frames);
+                    synth_out = true;
+                }
+            }
+        }
         if (synth_out && track.audible) {
             if (any) {
                 kernel_add_scaled(tl, sb, 1.0f, frames);
@@ -597,7 +627,12 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             // Live notes (se_preview_note) at the first frame, ahead of the track's notes; built-in
             // instruments take theirs inside process().
             MidiEvent* const ev = iplug->event_scratch();
-            const uint32_t nl = iplug->as_builtin() != nullptr ? 0 : iplug->take_live(ev, PluginInstance::kMaxEvents);
+            // MIDI input follows them, also at the first frame; live notes leave it room.
+            const uint32_t live_cap = PluginInstance::kMaxEvents - std::min(n_midi, PluginInstance::kMaxEvents);
+            uint32_t nl = iplug->as_builtin() != nullptr ? 0 : iplug->take_live(ev, live_cap);
+            const uint32_t ni = std::min(n_midi, PluginInstance::kMaxEvents - nl);
+            if (ni > 0) std::memcpy(ev + nl, midi_ev, sizeof(MidiEvent) * ni);
+            nl += ni;
             const uint32_t ne = nl + iplug->feeder().build(graph->notes.data() + track.note_begin, track.note_count,
                                                            graph->seq, inst.transport_gen, position, frames, playing,
                                                            ev + nl, PluginInstance::kMaxEvents - nl);

@@ -605,6 +605,33 @@ uint64_t Engine::install_graph(std::unique_ptr<RenderGraph> built) {
         next->synth_refs[i] = std::move(synth);
     }
 
+    // MIDI input state: kept by track_id like the synths, unless the track
+    // switched between the built-in Synth and an instrument device (then a
+    // fresh state: the old one may still be in use by the RT side).
+    {
+        std::unordered_map<uint64_t, std::shared_ptr<TrackMidi>> previous_midi;
+        if (current_ && current_->midi_refs.size() == current_->tracks.size())
+            for (std::size_t i = 0; i < current_->tracks.size(); ++i)
+                if (current_->midi_refs[i]) previous_midi.emplace(current_->tracks[i].track_id, current_->midi_refs[i]);
+        next->midi_refs.resize(next->tracks.size());
+        next->midi_tracks.assign(next->tracks.size(), nullptr);
+        for (std::size_t i = 0; i < next->tracks.size(); ++i) {
+            if (!next->tracks[i].instrument) continue;
+            const bool wants_live = !next->tracks[i].has_instrument_plugin;
+            std::shared_ptr<TrackMidi> m;
+            if (auto it = previous_midi.find(next->tracks[i].track_id);
+                it != previous_midi.end() && (it->second->live != nullptr) == wants_live) {
+                m = std::move(it->second);
+                previous_midi.erase(it);
+            } else {
+                m = std::make_shared<TrackMidi>();
+                if (wants_live) m->live = std::make_unique<LiveSynth>(sample_rate_);
+            }
+            next->midi_tracks[i] = m.get();
+            next->midi_refs[i] = std::move(m);
+        }
+    }
+
     // Warp voices: keep the current graph's voice for the same slot (track,
     // slot, channels), so a clip keeps stretching across republishes.
     {
@@ -747,6 +774,17 @@ std::size_t Engine::retired_graph_count() const {
 // observes the push and drains. A command can therefore never be stranded in
 // the queue with nobody owning the path. kOwnerControl is held only for the
 // few loads/stores of a drain; other claimants yield until it is gone.
+int32_t Engine::midi_open(const std::vector<std::string>& ids, std::string& err) {
+    // Closing slots are freed by whoever renders; with nobody rendering, take
+    // the RT role briefly and free them here.
+    return midi_->open_only(ids, err, [this] {
+        if (acquire_rt_owner(kOwnerControl) != kOwnerNone) return false;
+        midi_->reclaim_closing();
+        release_rt_owner();
+        return true;
+    });
+}
+
 int Engine::acquire_rt_owner(int who) noexcept {
     for (;;) {
         int expected = kOwnerNone;
@@ -950,10 +988,34 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
         std::min(input.channels, input.planar != nullptr ? kMaxDeviceInputChannels : kMaxInjectedInputChannels);
     const float* in_ptrs[kMaxDeviceInputChannels];
 
+    // MIDI input: drained once per callback, delivered in its first segment.
+    MidiInputHub& midi = *midi_;
+    // The capture pass, sampled once: a new pass starts with no loop wrap seen.
+    const uint32_t pass_now = midi.capture_pass();
+    if (pass_now != rt_capture_pass_) {
+        rt_capture_pass_ = pass_now;
+        rt_midi_wrapped_ = false;
+    }
+    const uint32_t midi_count = midi.drain(rt_midi_.data(), MidiInputHub::kMaxBlockEvents);
+
     // 2. Acquire the published graph (see reclaim_locked()).
     rt_active_seq_.store(kBusy, std::memory_order_seq_cst);
     const RenderGraph* graph = live_graph_.load(std::memory_order_seq_cst);
     if (graph != nullptr) rt_active_seq_.store(graph->seq, std::memory_order_seq_cst);
+
+    // Recording: what was played is captured at the position the performer
+    // heard, i.e. output latency (device; none offline) plus delay
+    // compensation earlier, folded back into the loop after a wrap.
+    const uint32_t capture_pass = midi_count > 0 && rt_playing_ ? pass_now : 0;
+    if (capture_pass != 0) {
+        const int64_t lat = (rt_owner_.load(std::memory_order_relaxed) == kOwnerOffline
+                                 ? 0
+                                 : device_out_latency_.load(std::memory_order_relaxed)) +
+                            (graph != nullptr && !graph->lines.empty() ? graph->pdc.total : 0);
+        const int64_t frame =
+            midi_capture_frame(rt_position_, lat, rt_midi_wrapped_, rt_loop_enabled_, rt_loop_start_, rt_loop_end_);
+        for (uint32_t i = 0; i < midi_count; ++i) midi.capture(rt_midi_[i], frame, capture_pass);
+    }
 
     // 3. Render in segments of at most max_block frames, additionally split
     //    at the loop end so the wrap is sample-accurate. render_block() is
@@ -986,13 +1048,15 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
         transport.sample_rate = sample_rate_;
         transport.tempo_bpm = rt_tempo_fpb_ > 0.0 ? 60.0 * sample_rate_ / rt_tempo_fpb_ : 120.0;
         DelayLine* const* const lines = graph != nullptr && !graph->lines.empty() ? graph->lines.data() : nullptr;
+        const MidiBlock midi_block{done == 0 ? rt_midi_.data() : nullptr, done == 0 ? midi_count : 0u, midi.focus()};
         const InstrumentInputs inst{graph != nullptr ? graph->synths.data() : nullptr,
                                     rt_synth_gen_,
                                     &transport,
                                     lines,
                                     rt_pdc_gen_,
                                     &rt_history_,
-                                    graph != nullptr && !graph->warp_voices.empty() ? graph->warp_voices.data() : nullptr};
+                                    graph != nullptr && !graph->warp_voices.empty() ? graph->warp_voices.data() : nullptr,
+                                    &midi_block};
         BlockPeaks p = render_block(graph, rt_position_, rt_playing_, n, live_ctx_, true, slot, inst, iv);
         if (mix_preview(live_ctx_.master_l(), live_ctx_.master_r(), n)) {
             p.l = kernel_peak(live_ctx_.master_l(), n);
@@ -1034,6 +1098,7 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
             if (looping && rt_position_ == rt_loop_end_) {
                 rt_position_ = rt_loop_start_;
                 if (rec != nullptr) rec->on_loop_wrap(rt_loop_start_); // takes continue linearly
+                rt_midi_wrapped_ = true;
                 ++rt_synth_gen_; // sounding notes fade; notes at loop start retrigger
             }
         }
