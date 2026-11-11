@@ -175,18 +175,20 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then cl 2>&1 | head -1; else c++ --version | head -1; fi
           echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target" >> "$GITHUB_ENV"
           echo "DSTUDIO_DEPS_DIR=$GITHUB_WORKSPACE/.deps" >> "$GITHUB_ENV"
-      - name: Cache SDK downloads
+      # The SDK downloads, the cargo target dir (debug builds only in this
+      # job) and the ccache store are restored on every run but saved only by
+      # pushes to main and the nightly run. Pull requests then start from
+      # main's latest build, and their own saves cannot fill the repository's
+      # 10 GB cache and evict main's.
+      - name: Restore SDK downloads
+        id: deps-cache
         if: steps.changes.outputs.engine == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .deps
           key: deps-${{ runner.os }}-${{ hashFiles('engine/CMakeLists.txt') }}
-      # The cargo target dir (debug builds only in this job) and the ccache
-      # store are restored on every run but saved only by pushes to main and
-      # the nightly run, under a new key each time. Pull requests then start
-      # from main's latest build, and their own saves cannot fill the
-      # repository's 10 GB cache and evict main's. The cargo-v2 fallback is the
-      # layout before the tests/app split (one cache with both profiles).
+      # The cargo and ccache keys are new on every save. The cargo-v2 fallback
+      # is the layout before the tests/app split (one cache with both profiles).
       - name: Restore cargo registry and target
         if: steps.changes.outputs.run == 'true'
         id: cargo-cache
@@ -259,6 +261,12 @@ jobs:
       - name: ccache statistics
         if: steps.changes.outputs.run == 'true' && !cancelled()
         run: ccache --show-stats
+      - name: Save SDK downloads
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.changes.outputs.engine == 'true' && steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .deps
+          key: ${{ steps.deps-cache.outputs.cache-primary-key }}
       - name: Save cargo registry and target
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.changes.outputs.run == 'true' && !cancelled()
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
