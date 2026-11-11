@@ -140,6 +140,8 @@ TEST_CASE(midi_input_goes_to_armed_or_monitoring_tracks_over_the_focus) {
     rig.tracks[1].d.arm = 0;
     rig.tracks[2].d.monitor = 1;
     rig.publish();
+    rig.peaks(96000); // track 2's release tail dies away first (same side as track 3)
+    CHECK(rig.peaks(4800).second < 1e-5);
     REQUIRE(se_midi_inject(rig.e, 0x90, 67, 100) == SE_OK);
     std::tie(l, r) = rig.peaks(4800);
     CHECK(l < 1e-6);
