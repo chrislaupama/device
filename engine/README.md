@@ -118,15 +118,16 @@ POSIX signal or Windows NTSTATUS exception code).
 | Plugin editors | NSWindow (AU/VST3/CLAP) | top-level HWND hosting the plugin child window (VST3 `kPlatformTypeHWND`, CLAP `win32`) | X11 top-level window hosting the plugin window (VST3 `kPlatformTypeX11EmbedWindowID`, CLAP `x11`), XWayland on Wayland; see [Plugins on Windows and Linux](#plugins-on-windows-and-linux) |
 | Scanner children | `posix_spawn` | `CreateProcessW` (no WER dialogs in the child) | `posix_spawn` |
 | Test plugins | `.clap`/`.vst3` bundles | `.clap` DLL, `.vst3/Contents/x86_64-win/*.vst3`, + `DStudioTestGui.clap` | `.clap` .so, `.vst3/Contents/x86_64-linux/*.so` |
-| Built with warnings as errors | yes (clang, `-Werror`), every CI run | yes (`/W4 /WX`), every CI run | yes (GCC, `-Werror`), every CI run |
-| ctest | all tests, every CI run; device tests skip on the hosted runner (no audio device), run by hand on a Mac | all tests, every CI run; AU tests and device tests skip (no audio endpoint) | all tests, every CI run, against a headless PipeWire server (null sink + loopback); AU tests skip |
+| Built with warnings as errors | yes (clang, `-Werror`) in CI | yes (`/W4 /WX`) in CI | yes (GCC, `-Werror`) in CI |
+| ctest | all tests in CI; device tests skip on the hosted runner (no audio device), run by hand on a Mac | all tests in CI; AU tests and device tests skip (no audio endpoint) | all tests in CI, against a headless PipeWire server (null sink + loopback); AU tests skip |
 | Tested on real audio hardware | yes (Core Audio output + duplex, see below) | **no** | **no** (real PipeWire streams in CI, no sound card) |
 
-**CI** (`.github/workflows/ci.yml`) runs one job per OS, all on GitHub-hosted
-runners (`macos-latest`, `windows-latest`, `ubuntu-latest`), none with an
-audio device. Each job builds the engine with warnings as errors, runs
+**CI** (`.github/workflows/ci.yml`) runs on GitHub-hosted runners
+(`macos-latest`, `windows-latest`, `ubuntu-latest`), none with an audio
+device. On each system it builds the engine with warnings as errors, runs
 ctest, builds and tests the Rust workspace and runs the app's
-`--self-test --no-audio`.
+`--self-test --no-audio`. Pushes to main and the nightly run do all of it;
+a pull request runs the parts its changes reach (see docs/building.md).
 
 The app (`crates/dstudio-app`) builds on all three. The hosted jobs run it
 without a GPU or audio device: on Linux under Xvfb with Mesa lavapipe (software Vulkan;
@@ -134,8 +135,8 @@ without a GPU or audio device: on Linux under Xvfb with Mesa lavapipe (software 
 --no-audio` (125 checks pass; the 21 checks of the Audio Unit devices section
 are reported as skipped off macOS), as a required step; on Windows with WARP
 (DX12 software adapter) the same, also failing the job when a check fails (the
-full self-test runs on main, nightly and labelled pull requests; see
-docs/building.md): the screenshot renders and the self-test passes, but the
+full self-test runs on main, nightly and labelled pull requests that change
+the app; see docs/building.md): the screenshot renders and the self-test passes, but the
 process exits with code 0x87A after the run (not yet explained; macOS/Linux
 exit 0), so CI prints that exit code and checks the summary line instead.
 Debug builds of the app abort at exit on every OS (pre-existing: wgpu-core's

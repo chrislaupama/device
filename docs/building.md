@@ -159,14 +159,16 @@ jobs that run side by side:
 - **tests (system)** configures and builds the engine with warnings as errors
   and runs ctest, then builds and tests the Rust workspace (`cargo test
   --workspace --locked`, debug).
-- **app (system)** builds the app in release mode and runs its smoke tests: a
-  reference-state screenshot and `device-studio --self-test`, which must report
-  every check passed (`tools/ci/self-test.sh`). macOS runs `--no-audio`; Linux
-  runs `--no-audio` and `--self-test-audio` side by side under Xvfb with Mesa
+- **app (system)** builds the app in release mode and runs its smoke tests.
+  `device-studio --self-test` must report every check passed
+  (`tools/ci/self-test.sh`). macOS runs `--self-test --no-audio` (no
+  screenshot); Linux takes a reference-state screenshot and runs `--no-audio`
+  and `--self-test-audio`, all three side by side under Xvfb with Mesa
   lavapipe; Windows takes the screenshot under WARP on every run, and runs the
   full self-test (about 30 minutes under WARP) on pushes to main, the nightly
-  run, manual runs, and pull requests labelled `windows-self-test`. The
-  screenshots and self-test logs are uploaded as an artifact.
+  run, manual runs, and pull requests labelled `windows-self-test` whose
+  changes reach the app. The screenshots and self-test logs are uploaded as an
+  artifact.
 
 A **lint** job checks the workflows (actionlint, which also runs shellcheck on
 their scripts), the scripts in `tools/`, the change detection below and the
@@ -188,9 +190,9 @@ main and the nightly run. A job with nothing to do still runs and passes, so
 the required checks always report.
 
 Caches: the cargo registry and target dir (one per system and job, so debug and
-release are restored separately) and the ccache store are restored on every run
-and saved only by main and the nightly run, so a pull request never writes a
-cache another run uses. Every C/C++ compile goes through ccache. Before
+release are restored separately), the ccache store and the engine's SDK
+downloads are restored on every run and saved only by main and the nightly run,
+so a pull request never writes a cache another run uses. Every C/C++ compile goes through ccache. Before
 building, [`tools/ci/prepare-target.sh`](../tools/ci/prepare-target.sh) makes
 every source newer than the restored build (so nothing restored is reused for
 changed code) and reconfigures the engine's CMake tree from scratch.
