@@ -585,7 +585,7 @@ table for it.
 
 ### MIDI input (`se_midi_*`)
 
-Spec: [specs/002-midi-input-and-recording](../specs/002-midi-input-and-recording/spec.md).
+Spec: [specs/003-midi-input-and-recording](../specs/003-midi-input-and-recording/spec.md).
 A MIDI keyboard plays instrument tracks live, and what was played is captured
 for recording.
 

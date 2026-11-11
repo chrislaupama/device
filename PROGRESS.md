@@ -287,9 +287,9 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Not yet: the engine ignores the routing (returns publish as empty tracks) and the app has no UI for it. Next: engine
   (spec 002 T4-T8), then the UI (T9).
 
-### 2026-11-11: MIDI input, engine side (spec 002)
+### 2026-11-11: MIDI input, engine side (spec 003)
 
-- Spec `specs/002-midi-input-and-recording/` (spec, plan, tasks). This first part is the engine and the C ABI; the
+- Spec `specs/003-midi-input-and-recording/` (spec, plan, tasks). This first part is the engine and the C ABI; the
   app side (R/I on instrument tracks, Settings › MIDI inputs, recorded MIDI clips) follows.
 - Engine: MIDI input backends (Core MIDI, Windows `midiIn*`, ALSA sequencer, stub) behind `MidiBackend`;
   `MidiInputHub` (per-port SPSC queues, normalisation, held-note release on close); routing in `render_block` to

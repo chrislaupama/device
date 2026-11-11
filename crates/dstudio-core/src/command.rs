@@ -740,13 +740,19 @@ impl Command {
             }
             Command::SetTrackArm { track, arm } => {
                 let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
-                // Audio tracks record their input; instrument tracks record MIDI.
+                // Audio tracks record their input; instrument tracks record MIDI; returns record nothing.
+                if arm && t.kind == TrackKind::Return {
+                    return Err(invalid("track", "return tracks cannot be armed"));
+                }
                 let old = std::mem::replace(&mut t.arm, arm);
                 Ok(Command::SetTrackArm { track, arm: old })
             }
             Command::SetTrackMonitor { track, monitor } => {
                 let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
-                // Audio tracks hear their input; instrument tracks hear MIDI input.
+                // Audio tracks hear their input; instrument tracks hear MIDI input; returns have no input.
+                if monitor && t.kind == TrackKind::Return {
+                    return Err(invalid("track", "return tracks have no input to monitor"));
+                }
                 let old = std::mem::replace(&mut t.monitor, monitor);
                 Ok(Command::SetTrackMonitor { track, monitor: old })
             }
