@@ -6776,38 +6776,6 @@ fn transport_fields_steps() -> Vec<Step> {
         Check("transport: the drag keeps the half beat: 100.5 BPM", Box::new(move |c, _| (bpm(c) == 100.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
         DoC("transport: undo the drag", Box::new(|_, ctl| ctl.borrow_mut().undo())),
         Check("transport: 97.5 BPM after the drag's undo", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
-        Do("transport: open the Sig menu, Down, Enter", Box::new(|a| {
-            a.global::<Studio>().invoke_sig_menu_toggle();
-            key(a, Key::DownArrow, false, false);
-        })),
-        Check("transport: the highlight moved from 4/4 to 5/4", Box::new(|_, a| {
-            let s = a.global::<Studio>();
-            (s.get_sig_menu_open() && s.get_sig_menu_active() == 3).then_some(()).ok_or(format!("open {} active {}", s.get_sig_menu_open(), s.get_sig_menu_active()))
-        })),
-        Do("transport: Enter picks it", Box::new(|a| key(a, Key::Return, false, false))),
-        Check("transport: 5/4 from the keyboard, menu closed", Box::new(|_, a| {
-            let s = a.global::<Studio>();
-            (s.get_sig_text() == "5/4" && !s.get_sig_menu_open()).then_some(()).ok_or(format!("sig {} open {}", s.get_sig_text(), s.get_sig_menu_open()))
-        })),
-        Do("transport: key picker from the keyboard: Right, Right, Down, Enter, M", Box::new(|a| {
-            a.global::<Studio>().invoke_key_menu_toggle();
-            key(a, Key::RightArrow, false, false);
-            key(a, Key::RightArrow, false, false);
-            key(a, Key::DownArrow, false, false);
-            key(a, Key::Return, false, false);
-            key(a, "m", false, false);
-        })),
-        Check("transport: F# minor, picker open", Box::new(|c, a| {
-            let s = a.global::<Studio>();
-            let k = c.project().transport.key;
-            (k == Some(dstudio_core::model::ProjectKey { root: 6, minor: true }) && s.get_key_text() == "F#m" && s.get_key_menu_open())
-                .then_some(())
-                .ok_or(format!("key {k:?} open {}", s.get_key_menu_open()))
-        })),
-        Do("transport: Backspace is No key", Box::new(|a| key(a, Key::Backspace, false, false))),
-        Check("transport: no key after Backspace, picker closed", Box::new(|c, a| {
-            (c.project().transport.key.is_none() && !a.global::<Studio>().get_key_menu_open()).then_some(()).ok_or(format!("key {:?}", c.project().transport.key))
-        })),
         Do("transport: open the Sig menu", Box::new(|a| a.global::<Studio>().invoke_sig_menu_toggle())),
         Check("transport: the Sig menu lists twelve signatures, 4/4 checked", Box::new(|_, a| {
             let s = a.global::<Studio>();
@@ -6844,6 +6812,38 @@ fn transport_fields_steps() -> Vec<Step> {
         Check("transport: no key, dash shown, picker closed", Box::new(|c, a| {
             let s = a.global::<Studio>();
             (c.project().transport.key.is_none() && s.get_key_text() == "" && !s.get_key_menu_open()).then_some(()).ok_or(format!("key {:?}", c.project().transport.key))
+        })),
+        Do("transport: open the Sig menu, Down, Enter", Box::new(|a| {
+            a.global::<Studio>().invoke_sig_menu_toggle();
+            key(a, Key::DownArrow, false, false);
+        })),
+        Check("transport: the highlight moved from 6/8 to 7/8", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_sig_menu_open() && s.get_sig_menu_active() == 9).then_some(()).ok_or(format!("open {} active {}", s.get_sig_menu_open(), s.get_sig_menu_active()))
+        })),
+        Do("transport: Enter picks it", Box::new(|a| key(a, Key::Return, false, false))),
+        Check("transport: 7/8 from the keyboard, menu closed", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_sig_text() == "7/8" && !s.get_sig_menu_open()).then_some(()).ok_or(format!("sig {} open {}", s.get_sig_text(), s.get_sig_menu_open()))
+        })),
+        Do("transport: key picker from the keyboard: Right, Right, Down, Enter, M", Box::new(|a| {
+            a.global::<Studio>().invoke_key_menu_toggle();
+            key(a, Key::RightArrow, false, false);
+            key(a, Key::RightArrow, false, false);
+            key(a, Key::DownArrow, false, false);
+            key(a, Key::Return, false, false);
+            key(a, "m", false, false);
+        })),
+        Check("transport: F# minor, picker open", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let k = c.project().transport.key;
+            (k == Some(dstudio_core::model::ProjectKey { root: 6, minor: true }) && s.get_key_text() == "F#m" && s.get_key_menu_open())
+                .then_some(())
+                .ok_or(format!("key {k:?} open {}", s.get_key_menu_open()))
+        })),
+        Do("transport: Backspace is No key", Box::new(|a| key(a, Key::Backspace, false, false))),
+        Check("transport: no key after Backspace, picker closed", Box::new(|c, a| {
+            (c.project().transport.key.is_none() && !a.global::<Studio>().get_key_menu_open()).then_some(()).ok_or(format!("key {:?}", c.project().transport.key))
         })),
         DoC("transport: back to 120 BPM and 4/4", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
