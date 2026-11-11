@@ -181,8 +181,8 @@ Pull requests run only what their changes can reach
 ([`tools/ci/changes.sh`](../tools/ci/changes.sh), tested by
 `tools/ci/test-changes.sh`): documentation alone builds nothing; Rust or UI
 changes skip the standalone engine build; engine tests or benchmarks alone skip
-the Rust tests and the app; packaging and benchmark tooling have their own
-workflows. Anything the script does not know (`Cargo.toml`, `Cargo.lock`, the
+the Rust tests and the app; packaging, benchmark tooling and the Security
+workflow have their own workflows. Anything the script does not know (`Cargo.toml`, `Cargo.lock`, the
 CI workflow, `tools/ci/`, a new folder) runs everything, and so do pushes to
 main and the nightly run. A job with nothing to do still runs and passes, so
 the required checks always report.

@@ -19,7 +19,7 @@ all="engine=true rust=true app=true"
 none="engine=false rust=false app=false"
 
 check "$none" README.md docs/building.md specs/003-midi/spec.md .agents/skills/x/SKILL.md LICENSE
-check "$none" tools/perf/bench_gate.py tools/release/make-dmg.sh .github/workflows/release.yml ui-spike/src/main.rs
+check "$none" tools/perf/bench_gate.py tools/release/make-dmg.sh .github/workflows/release.yml .github/workflows/security.yml ui-spike/src/main.rs
 check "engine=true rust=false app=false" engine/tests/test_pdc.cpp engine/bench/bench_main.cpp
 check "$all" engine/src/engine.cpp
 check "$all" engine/include/dstudio_engine.h README.md

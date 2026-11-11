@@ -21,7 +21,7 @@
 #   crates/ (anything else)                         rust, app
 #   tools/perf/, tools/release/, tools/art/,
 #     tools/agents/, tools/macos-bundle.sh,
-#     .github/workflows/{perf,release}.yml,
+#     .github/workflows/{perf,release,security}.yml,
 #     ui-spike/                                     nothing    (their own workflows, or no CI)
 #
 # Test it with tools/ci/test-changes.sh.
@@ -42,7 +42,7 @@ while IFS= read -r path || [ -n "$path" ]; do
         crates/*/tests/* | crates/*/benches/*) rust=true ;;
         crates/*) rust=true app=true ;;
         tools/perf/* | tools/release/* | tools/art/* | tools/agents/* | tools/macos-bundle.sh) ;;
-        .github/workflows/perf.yml | .github/workflows/release.yml | ui-spike/*) ;;
+        .github/workflows/perf.yml | .github/workflows/release.yml | .github/workflows/security.yml | ui-spike/*) ;;
         *) engine=true rust=true app=true ;;
     esac
 done
