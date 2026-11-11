@@ -12,8 +12,8 @@ before the rename can run it and then merge main with far fewer conflicts:
 
 Mapping: saine -> dstudio, Saine -> DStudio, SAINE -> DSTUDIO, and the product
 name Saine Studio -> Device Studio. The strings that let the app open projects
-and settings saved under the old name are kept (see KEEP), as are links to the
-GitHub repository, which is still called sainestudio.
+and settings saved under the old name are kept (see KEEP). The GitHub repository
+is now chrislaupama/device.
 """
 import os
 import re
@@ -46,11 +46,9 @@ KEEP = [
     "`Saine Studio` (`saine-studio` on Linux)",
     "`Saine Studio` support folder",
     "Saine Studio folder",
-    # History notes and the GitHub repository's own name.
+    # History notes.
     "called Saine Studio",
     "formerly Saine Studio",
-    "chrislaupama/sainestudio",
-    "cd sainestudio",
     "remove_saine.py",
     "`saine`",
     "`sainestudio`",
