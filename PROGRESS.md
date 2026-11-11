@@ -4,7 +4,7 @@ Living handoff document for future agent sessions. Read this first, then `docs/a
 
 **Keep the README current.** `README.md` is the public front page. Any change that adds, finishes or removes a
 feature, device, platform or build step, or visibly changes the screens it shows, updates the README (and
-`docs/building.md`, re-rendered `docs/assets/` screenshots) in the same PR. The checklist is in README.md ›
+`docs/building.md`, re-rendered `docs/assets/art/` artwork) in the same PR. The checklist is in README.md ›
 Development › Keeping this README up to date.
 
 ## Current milestone
@@ -19,7 +19,6 @@ Development › Keeping this README up to date.
 | `crates/dstudio-core` | Model, commands, undo/redo, persistence, snapshots | App architecture |
 | `crates/dstudio-engine` | Safe Rust FFI wrapper + end-to-end tests | App architecture |
 | `crates/dstudio-app` | Desktop app (Slint shell + wgpu surfaces) | UI engineering |
-| `ui-spike/` | Slint ↔ wgpu interop spike (standalone workspace) | UI engineering |
 | `docs/` | Architecture spec, ADRs | Lead |
 
 ## How to build and test
@@ -311,6 +310,23 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   repaired on load. The snapshot carries the routing; single-track renders stay dry.
 - Not yet: the engine ignores the routing (returns publish as empty tracks) and the app has no UI for it. Next: engine
   (spec 002 T4-T8), then the UI (T9).
+
+### 2026-11-11: transport bar tempo, time signature and key
+
+- The transport bar's BPM, TAP, Key and Sig fields were display-only; they now edit the project
+  (`src/transport_fields.rs`, `ui/transport.slint`). Tempo: drag right or up (1 BPM per point), double-click to type
+  (two decimals kept, shown when not whole), or tap (the average of up to eight taps; a pause over 2 s or a sudden
+  change of pace starts over). A drag or a tap series is one "Tempo Change" undo step whatever its length. Sig opens a
+  menu of twelve common signatures; Key opens a picker (Major / Minor, twelve roots, No key) that sets
+  `Command::SetProjectKey`, which the composer, Shape and key-following devices already read.
+- A change of pace while tapping starts a new undo step. Keyboard: in the open Sig menu Up/Down and Enter or Space;
+  in the open key picker the arrows move over the roots, Enter or Space picks, M switches Major / Minor, Delete or
+  Backspace is No key (not while Settings or a dialog is open). Both openers and every choice have accessible default
+  actions. Opening or replacing the project drops a tempo gesture in progress.
+- Shift+T taps the tempo (`transport.tap_tempo`). The tempo field's accessible default action opens the typed editor
+  and its increment / decrement step one BPM. A typed tempo takes an optional "bpm" suffix and refuses other text;
+  typing or dragging the tempo ends a tap series.
+- Self-test section `transport_fields_steps`; review states `review-transport-sig` and `review-transport-key`.
 
 ### 2026-11-11: return tracks and sends, part 2: engine (spec 002)
 

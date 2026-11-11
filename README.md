@@ -40,10 +40,11 @@ wgpu.
 
 ## Features
 
-- **Timeline.** Import audio, move and trim clips, loop a range, and play against a metronome. Waveforms, clips and the
-  playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips. Shortcuts cover the common
-  moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected clip or section, ⌘D
-  duplicates the selected clip or section.
+- **Timeline.** Import audio, move and trim clips, loop a range, and play against a metronome. Set the tempo in the
+  transport bar by dragging, typing or tapping it, and pick the time signature and the project's key there too.
+  Waveforms, clips and the playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips.
+  Shortcuts cover the common moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected
+  clip or section, ⌘D duplicates the selected clip or section.
 - **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them. A velocity lane under the
   notes lets you drag one note's velocity, or sweep across several to paint them.
 - **Recording.** Arm tracks, pick inputs, monitor, and record takes that land where you played them: latency
@@ -76,7 +77,7 @@ wgpu.
 <p align="center"><img alt="Modulation: make anything move. An LFO that drives any device parameter, Chains that put a group of effects under eight macros, and automation for the rest. Shown: an LFO in sync mode driving a Compressor parameter." src="docs/assets/art/feature-modulation.png" width="100%"></p>
 
 <sub>The app's views are rendered by the app itself (<code>device-studio --screenshot</code>) on Linux with a software GPU, then
-framed by <code>tools/art/render.mjs</code>. More screenshots are in <a href="docs/assets/">docs/assets</a>.</sub>
+framed by <code>tools/art/render.mjs</code>.</sub>
 
 ### Built-in devices
 
@@ -215,8 +216,7 @@ cargo run --release -p dstudio-app -- --self-test --no-audio     # drive the app
 | `docs/` | Architecture, ADRs, built-in devices, build guide |
 | `specs/` | Specs for non-trivial work, their templates and the project's principles |
 | `.agents/skills/`, `AGENTS.md` | Skills and a guide for coding agents working on this codebase |
-| `tools/` | macOS app bundle script, the artwork renderer and the skills checker |
-| `ui-spike/` | The Slint and wgpu interop spike behind ADR 0001 |
+| `tools/` | Release packaging and the macOS app bundle script, the CI and benchmark helpers, the artwork renderer and the skills checker |
 
 Internal names use `dstudio` (`dstudio-*` crates, the `dstudio::` namespace, `DSTUDIO_*` build options and
 environment variables), never `device`, which already names effects and instruments throughout the code.
@@ -262,9 +262,6 @@ finishes something it describes, the same pull request updates it:
   [docs/art/](docs/art/); edit one and run `node tools/art/render.mjs` (it needs Playwright: `npm install --no-save
   playwright && npx playwright install chromium`). The social preview is uploaded by hand in the repository's Settings,
   General, Social preview.
-- **Screenshots** in `docs/assets/` when the part of the interface they show changes visibly. Render them with the
-  app itself, e.g. `device-studio --no-audio --state review-automation --screenshot docs/assets/screenshot.png
-  --exit-after-frames 5`; the states used are listed in each image's pull request.
 
 ## Contributing
 

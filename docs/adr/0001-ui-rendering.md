@@ -1,6 +1,7 @@
 # ADR 0001: UI rendering architecture (Slint shell + custom wgpu surfaces)
 
-- Status: Proposed (backed by the spike in `ui-spike/`)
+- Status: Accepted (implemented in `crates/dstudio-app/src/gpu/`; the spike that backed it was removed from the
+  tree after it landed and is in the history at commit `148d66c`, folder `ui-spike/`)
 - Date: 2026-11-08
 - Spike environment: macOS 27.0.1, Apple M4 (Metal), built-in Retina panel at 60 Hz, scale factor 2.0, rustc 1.99.1
 
@@ -21,7 +22,7 @@ up under real numbers rather than in a demo.
 | c | Pure Slint: waveforms as `Path` elements, meters as `Rectangle`s | Works at low fidelity (128 points/clip at 60 fps, 5–6 ms CPU). **Falls off a cliff** at the fidelity a DAW needs (1024 points/clip: 47 fps avg and 52 ms p99 spikes while zooming; 2048 points: 32 fps). |
 | d | Separate native child surface (NSView/HWND/wl_subsurface) | Not built. (b) works, and (d) would bring per-platform compositing, z-order, input-routing and resize-sync problems that (b) avoids. Keep it only as the fallback if (b) ever regresses. |
 
-## Exact versions (pinned in `ui-spike/Cargo.toml`, resolved in `Cargo.lock`)
+## Exact versions (as pinned in the spike's `Cargo.toml` at the time)
 
 - `slint = "=1.18.1"` with `default-features = false` and features `std, backend-winit, renderer-femtovg-wgpu, unstable-wgpu-30, compat-1-2, accessibility`
 - `slint-build = "=1.18.1"` (build-dependency)
@@ -77,7 +78,7 @@ as `slint::wgpu_30::wgpu`. **Our `wgpu` version must exactly match the major ver
 
 Each run renders 600 frames after a 30-frame warmup, launched from the GUI session with
 `--frames 600 --exit`. Window 1440×801 logical (2880×1602 physical; macOS clamped the height),
-timeline texture 2478×1218 px, meter texture 2848×236 px. Raw JSON is in `ui-spike/bench/*.jsonl`.
+timeline texture 2478×1218 px, meter texture 2848×236 px. The raw JSON was in the spike's `bench/*.jsonl`.
 
 - **frame interval**: time between consecutive `BeforeRendering` calls. It is vsync-paced (`PresentMode::AutoVsync`, which Slint forces), so 16.67 ms means a solid 60 fps on this display.
 - **ours**: CPU time inside our `BeforeRendering` work: animation, culling, instance building, buffer upload, encoding and submit.
@@ -221,6 +222,8 @@ marginal for a full-screen timeline); (3) a native child surface (option d).
 
 ## How to reproduce
 
+Check out the spike from the history (`git checkout 148d66c -- ui-spike`), then:
+
 ```sh
 cd ui-spike
 cargo build --release
@@ -231,5 +234,5 @@ cargo build --release
 ./target/release/ui-spike --frames 200 --exit --screenshot screenshots/name --shot-frame 120
 ```
 
-Screenshots (on-screen `screencapture` plus Slint `take_snapshot`) are in `ui-spike/screenshots/`:
+Its screenshots (on-screen `screencapture` plus Slint `take_snapshot`) are in `ui-spike/screenshots/`:
 `wgpu-static-*`, `wgpu-zoomed-in-*`, `wgpu-zoomed-out-*` and `path-512pts-*`.

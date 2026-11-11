@@ -266,6 +266,13 @@ component Scope inherits Rectangle {
         fill: Studio.synth-card.accent.transparentize(Studio.synth-displays[root.slot].dim ? 95% : 85%);
         stroke: transparent;
     }
+    // Grey dotted guides (for example the cutoff in the filter envelope picture).
+    Path {
+        width: root.width; height: root.height;
+        viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        commands: Studio.synth-displays[root.slot].marks;
+        stroke: #ffffff38; stroke-width: 1px; fill: transparent;
+    }
     Path {
         width: root.width; height: root.height;
         viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
@@ -503,8 +510,10 @@ export component SynthDevice inherits Rectangle {
         background: SynthStyle.control;
         animate width { duration: 120ms; easing: ease-out; }
         rail-ta := TouchArea { }
-        Rectangle { x: 8px; y: 0; width: parent.width - 16px; height: 0.5px; background: #424347; }
         Text { x: 0; y: 5.5px; width: parent.width; height: 14px; text: "Mod"; color: #9f9fa2; font-size: 8.25px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+        // Full-width divider under the "Mod" label, centred in the gap between the label
+        // (ends at 19.5) and the first source row's highlight (starts at 28.5).
+        Rectangle { x: 0; y: 23.75px; width: parent.width; height: 0.5px; background: #424347; }
         for g[i] in 9: Rectangle {
             x: 0; y: 27.5px + i * 22px; width: rail.width; height: 22px;
             property <bool> lit: Studio.synth-lit == i + 1;
