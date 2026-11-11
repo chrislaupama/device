@@ -142,7 +142,9 @@ export component MixerPanel inherits Panel {
             width: strips.width * strips.width / strips.content-w; height: 2.5px; border-radius: 1.25px; background: #3a3b3f;
         }
     }
-    Strip {
+    // Not while the panel is shut to its tab row: the strip's controls would spill over the header
+    // (and its collapse button) above it.
+    if !Studio.bottom-collapsed: Strip {
         x: root.width - root.strip-w; y: 26.5px; height: root.height - 26.5px; master: true;
         s: { id: -1, name: "Master", color: Tokens.track-master, fader: Studio.master-fader, pan-text: "0.0" };
         m: { l: Studio.master-meter-l, r: Studio.master-meter-r, peak: Studio.master-peak-text };
