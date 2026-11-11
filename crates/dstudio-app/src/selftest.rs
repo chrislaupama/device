@@ -6722,7 +6722,9 @@ fn track_rename_steps() -> Vec<Step> {
     let name0 = |c: &Controller| c.project().tracks.first().map(|t| t.name.clone()).unwrap_or_default();
     let name_xy = || (bottom_x() + 60.0, bottom_y() + 14.25);
     let original: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
-    let (o0, o1, o2) = (original.clone(), original.clone(), original.clone());
+    let (o0, o1, o2, o3) = (original.clone(), original.clone(), original.clone(), original.clone());
+    let e0 = Rc::new(std::cell::Cell::new(0));
+    let e1 = e0.clone();
     vec![
         DoC("rename: select track 1, Devices tab, mixer closed", Box::new(move |_, ctl| {
             let mut c = ctl.borrow_mut();
@@ -6844,6 +6846,31 @@ fn track_rename_steps() -> Vec<Step> {
         Check("rename: the stale field renamed nothing and left no draft", Box::new(move |c, _| {
             (name0(c) == *o2.borrow() && c.rename_draft.is_none()).then_some(()).ok_or(format!("name {:?} draft {:?}", name0(c), c.rename_draft))
         })),
+        DoC("rename: track 1 selected, Devices tab (again)", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            let id = c.project().tracks[0].id;
+            c.select_track(id);
+        })),
+        Do("rename: double-click the name and type nothing", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+        })),
+        Check("rename: the open field holds a draft of the current name", Box::new(move |c, _| {
+            let want = (c.project().tracks[0].id, name0(c));
+            (c.rename_draft.as_ref() == Some(&want)).then_some(()).ok_or(format!("draft {:?}", c.rename_draft))
+        })),
+        Do("rename: click the Clip tab with the untouched field open", Box::new(|a| click(a, bottom_x() + 261.0 + 8.0, bottom_y() + 14.0))),
+        Do("rename: ⌘R right after", Box::new(move |a| {
+            e0.set(a.global::<Studio>().get_rename_open_epoch());
+            key(a, "r", true, false);
+        })),
+        Check("rename: the shortcuts had the keyboard back (⌘R reached the app), no rename step", Box::new(move |c, a| {
+            let e = a.global::<Studio>().get_rename_open_epoch();
+            (e == e1.get() + 1 && name0(c) == *o3.borrow() && c.rename_draft.is_some()).then_some(()).ok_or(format!("epoch {e} (was {}) name {:?} draft {:?}", e1.get(), name0(c), c.rename_draft))
+        })),
+        Do("rename: Escape closes the header field", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("rename: closed without a draft", Box::new(|c, _| c.rename_draft.is_none().then_some(()).ok_or(format!("draft {:?}", c.rename_draft)))),
     ]
 }
 

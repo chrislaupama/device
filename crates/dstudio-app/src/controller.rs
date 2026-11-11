@@ -990,13 +990,18 @@ impl Controller {
         self.ui_dirty = true;
     }
 
-    /// Scroll the timeline vertically so track `id`'s row is in view.
+    /// Scroll the timeline vertically so track `id`'s row (or, for a row taller than the lanes,
+    /// its middle) is in view.
     fn reveal_track(&mut self, id: TrackId) {
         let Some(i) = self.project().track_index(id) else { return };
         let (top, h) = (self.view.track_offset(i), self.view.pitch(i));
         let visible = self.lanes_size.1 - timeline::RULER_H - self.view.master_h;
         let y = self.view.scroll_y as f32;
-        if top < y {
+        if h > visible {
+            // Taller than the lanes: the header's controls (the name field with them) sit around
+            // the row's middle, so centre that.
+            self.view.scroll_y = (top + h / 2.0 - visible / 2.0).max(0.0) as f64;
+        } else if top < y {
             self.view.scroll_y = top as f64;
         } else if top + h > y + visible {
             self.view.scroll_y = (top + h - visible).max(0.0) as f64;

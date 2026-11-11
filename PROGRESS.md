@@ -295,9 +295,10 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - The field commits to the track it opened on, also when the selection moves first, and a press in the lanes or a
   clip editor commits it (`Controller::press_epoch` moves the focus back to the shortcuts). The name's accessible
   default action opens the field, and ⌘R (`track.rename`, a track selected and no clip) opens the selected track's
-  header field, scrolled into view.
+  header field, scrolled into view (a row taller than the lanes is centred).
 - The open field mirrors its text to `Controller::rename_draft`; when the bottom panel holding it goes away (tab
-  switch, mixer, selection cleared) `push_models` commits the draft, since the field never sees its focus loss.
+  switch, mixer, selection cleared) `push_models` commits the draft, since the field never sees its focus loss, and
+  gives the keyboard back to the shortcuts. A field records its draft as soon as it opens, so an untouched one counts.
 - Rename and draft calls carry the `doc_epoch` the field opened in (`Studio.doc-epoch`): when another project
   replaces the open one (Open, Live Set import) the field closes and a late commit from it renames nothing.
 - Undo of a rename is `Command::RestoreTrackName`, which puts the old name back exactly (an imported name over the

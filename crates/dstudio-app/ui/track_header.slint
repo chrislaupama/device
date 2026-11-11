@@ -62,7 +62,7 @@ export component TrackName inherits Rectangle {
             text: root.text; color: #ffffff; font-size: root.font-size; font-weight: root.font-weight; letter-spacing: root.letter-spacing;
             vertical-alignment: center; single-line: true; selection-background-color: #ffffff47;
             accessible-label: "Track name";
-            init => { root.draft-text = self.text; self.focus(); self.select-all(); }
+            init => { root.draft-text = self.text; Studio.track-rename-draft(root.edit-id, self.text, root.edit-epoch); self.focus(); self.select-all(); }
             edited => { root.draft-text = self.text; Studio.track-rename-draft(root.edit-id, self.text, root.edit-epoch); }
             accepted => { root.editing = false; Studio.track-rename(root.edit-id, self.text, root.edit-epoch); root.edit-done(); }
             key-pressed(e) => {
