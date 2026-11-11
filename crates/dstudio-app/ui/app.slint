@@ -232,10 +232,10 @@ component FilesPane inherits Rectangle {
                 clicked => { Studio.files-click(i, self.mouse-x < parent.inset + 11px); }
                 double-clicked => { Studio.files-activate(i); }
                 pointer-event(e) => {
-                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.files-drag(i, 0, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
-                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.files-drag(i, 2, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.files-drag(i, 0, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.files-drag(i, 2, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
                 }
-                moved => { Studio.files-drag(i, 1, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+                moved => { Studio.files-drag(i, 1, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
             }
         }
     }
@@ -334,10 +334,10 @@ component Browser inherits Panel {
                 clicked => { Studio.tree-click(i); }
                 double-clicked => { Studio.tree-activate(i); }
                 pointer-event(e) => {
-                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.tree-drag(i, 0, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
-                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.tree-drag(i, 2, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.tree-drag(i, 0, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.tree-drag(i, 2, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
                 }
-                moved => { Studio.tree-drag(i, 1, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+                moved => { Studio.tree-drag(i, 1, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
             }
         }
     }
@@ -435,13 +435,13 @@ component Minimap inherits Rectangle {
         mouse-cursor: Studio.pointer-hidden ? MouseCursor.none : (abs(self.mouse-x - root.wl) <= 4.25px || abs(self.mouse-x - root.wr) <= 4.25px) ? MouseCursor.ew-resize : MouseCursor.pointer;
         pointer-event(e) => {
             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
-                Studio.minimap-pointer(0, self.mouse-x, self.mouse-y, root.width, root.absolute-position.x, root.absolute-position.y);
+                Studio.minimap-pointer(0, self.mouse-x, self.mouse-y, root.width, root.absolute-position.x, (root.absolute-position.y - Studio.menu-dy));
             }
             if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) {
-                Studio.minimap-pointer(2, self.mouse-x, self.mouse-y, root.width, root.absolute-position.x, root.absolute-position.y);
+                Studio.minimap-pointer(2, self.mouse-x, self.mouse-y, root.width, root.absolute-position.x, (root.absolute-position.y - Studio.menu-dy));
             }
         }
-        moved => { if (self.pressed) { Studio.minimap-pointer(1, self.mouse-x, self.mouse-y, root.width, root.absolute-position.x, root.absolute-position.y); } }
+        moved => { if (self.pressed) { Studio.minimap-pointer(1, self.mouse-x, self.mouse-y, root.width, root.absolute-position.x, (root.absolute-position.y - Studio.menu-dy)); } }
         double-clicked => { Studio.minimap-double(); }
         scroll-event(e) => {
             Studio.minimap-scroll(e.delta-x / 1px, e.delta-y / 1px, self.mouse-x, root.width, e.modifiers.control || e.modifiers.alt);
@@ -484,13 +484,13 @@ component DevMinimap inherits Rectangle {
         mouse-cursor: Studio.pointer-hidden ? MouseCursor.none : MouseCursor.default;
         pointer-event(e) => {
             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
-                Studio.devmm-pointer(0, self.mouse-x, self.mouse-y, root.absolute-position.x, root.absolute-position.y);
+                Studio.devmm-pointer(0, self.mouse-x, self.mouse-y, root.absolute-position.x, (root.absolute-position.y - Studio.menu-dy));
             }
             if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) {
-                Studio.devmm-pointer(2, self.mouse-x, self.mouse-y, root.absolute-position.x, root.absolute-position.y);
+                Studio.devmm-pointer(2, self.mouse-x, self.mouse-y, root.absolute-position.x, (root.absolute-position.y - Studio.menu-dy));
             }
         }
-        moved => { if (self.pressed) { Studio.devmm-pointer(1, self.mouse-x, self.mouse-y, root.absolute-position.x, root.absolute-position.y); } }
+        moved => { if (self.pressed) { Studio.devmm-pointer(1, self.mouse-x, self.mouse-y, root.absolute-position.x, (root.absolute-position.y - Studio.menu-dy)); } }
         scroll-event(e) => { Studio.devmm-scroll(e.delta-x / 1px, e.delta-y / 1px); accept }
     }
 }
@@ -562,7 +562,7 @@ component Timeline inherits Panel {
             Text { x: 0; y: 7px; width: 28.9px; height: 14px; text: Studio.snap-text; color: Studio.snap-text == "Off" ? #8e8f93 : Tokens.text-bright; font-size: 9px; font-weight: 600; letter-spacing: -0.36px; vertical-alignment: center; horizontal-alignment: right; }
             Icon { x: 32.3px; y: 8px; width: 11.9px; height: 11px; d: Icons.chevron-down; ink: Studio.snap-menu-open ? #ffffff : #c9c9cc; }
             TouchArea { x: 0; width: 30px; clicked => { Studio.snap-toggle(); } }
-            TouchArea { x: 30px; width: 14.2px; clicked => { Studio.snap-menu-toggle(parent.absolute-position.x + parent.width, parent.absolute-position.y + parent.height); } }
+            TouchArea { x: 30px; width: 14.2px; clicked => { Studio.snap-menu-toggle(parent.absolute-position.x + parent.width, (parent.absolute-position.y - Studio.menu-dy) + parent.height); } }
         }
     }
     Rectangle { x: 0; y: 27px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
@@ -600,7 +600,7 @@ component Timeline inherits Panel {
                     Studio.lane-pointer(2, self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.control, e.modifiers.alt);
                 }
                 if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
-                    Studio.lane-context(self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                    Studio.lane-context(self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y);
                 }
             }
             moved => { Studio.lane-pointer(1, self.mouse-x, self.mouse-y, false, false, false); }
@@ -632,9 +632,9 @@ component Timeline inherits Panel {
                 y: t.row-h + 0.5px - 5.1px; height: 5.1px;
                 mouse-cursor: row-resize;
                 pointer-event(e) => {
-                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.track-resize(t.id, 0, self.absolute-position.y + self.mouse-y); }
-                    if (e.kind == PointerEventKind.move && self.pressed) { Studio.track-resize(t.id, 1, self.absolute-position.y + self.mouse-y); }
-                    if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.track-resize(t.id, 2, self.absolute-position.y + self.mouse-y); }
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.track-resize(t.id, 0, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+                    if (e.kind == PointerEventKind.move && self.pressed) { Studio.track-resize(t.id, 1, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+                    if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.track-resize(t.id, 2, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
                 }
             }
         }
@@ -692,7 +692,7 @@ component Inspector inherits Rectangle {
         Text { x: Studio.sel-instrument ? 29.5px : 21px; width: 134px - self.x - 4px; text: Studio.sel-instrument ? Studio.sel-inst-text : Studio.sel-input-text; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; overflow: elide; }
         Icon { x: 134px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #a0a0a3; }
         accessible-role: combobox; accessible-label: Studio.sel-instrument ? "Inst" : "In"; accessible-value: Studio.sel-instrument ? Studio.sel-inst-text : Studio.sel-input-text;
-        TouchArea { clicked => { if (Studio.sel-instrument) { Studio.open-inst-menu(parent.absolute-position.x + 1px, parent.absolute-position.y + parent.height + 3px); } else if (Studio.has-selection) { Studio.open-input-menu(); } } }
+        TouchArea { clicked => { if (Studio.sel-instrument) { Studio.open-inst-menu(parent.absolute-position.x + 1px, (parent.absolute-position.y - Studio.menu-dy) + parent.height + 3px); } else if (Studio.has-selection) { Studio.open-input-menu(); } } }
     }
     Raised {
         x: 10px; y: 63px; width: 149px; height: 18px; border-radius: 9px;
@@ -832,7 +832,7 @@ component BottomPanel inherits Panel {
                 Icon { y: (265px - 12px) / 2; width: 12px; height: 12px; d: Icons.plus; ink: #c5c5c8; stroke-width: 1.4px; }
                 Text { text: "Add effect"; color: #c5c5c8; font-size: 10px; font-weight: 600; vertical-alignment: center; }
             }
-            empty-ta := TouchArea { enabled: f.empty; clicked => { Studio.chain-add-effect(f.head, self.absolute-position.x + 20px, self.absolute-position.y + 120px); } }
+            empty-ta := TouchArea { enabled: f.empty; clicked => { Studio.chain-add-effect(f.head, self.absolute-position.x + 20px, (self.absolute-position.y - Studio.menu-dy) + 120px); } }
         }
         for card in Studio.device-cards: Rectangle {
             x: card.x - 255px; y: 34px - 27px; width: card.width; height: 265px;
@@ -979,6 +979,14 @@ export component AppWindow inherits Window {
     property <length> settings-y: 5.5px;
     property <length> settings-w: min(816px, root.width);
     // Where the panels are, in window units: the self-test aims its clicks from these.
+    // The content's top in window coordinates: the in-window menu bar's height (see Studio.menu-dy).
+    content-origin := Rectangle { x: 0; y: 0; width: 0; height: 0; }
+    property <length> menu-dy: content-origin.absolute-position.y;
+    changed menu-dy => { Studio.menu-dy = self.menu-dy; }
+    init => { Studio.menu-dy = self.menu-dy; }
+    // Content height (below the in-window menu bar on Linux; the whole window on macOS and
+    // Windows, whose menu bars are native). The self-test adds the difference to its pointer events.
+    out property <length> content-height: root.height;
     out property <LayoutAnchors> anchors: {
         transport-x: header.transport-x,
         timeline-x: timeline.x, timeline-y: timeline.y, timeline-w: timeline.width,
@@ -1053,9 +1061,9 @@ export component AppWindow inherits Window {
             x: 5px; y: root.height - 5px - root.bottom-h - 6.8px; width: root.width - 10px; height: 11.9px;
             mouse-cursor: row-resize;
             pointer-event(e) => {
-                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.bottom-resize(0, self.absolute-position.y + self.mouse-y); }
-                if (e.kind == PointerEventKind.move && self.pressed) { Studio.bottom-resize(1, self.absolute-position.y + self.mouse-y); }
-                if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.bottom-resize(2, self.absolute-position.y + self.mouse-y); }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.bottom-resize(0, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+                if (e.kind == PointerEventKind.move && self.pressed) { Studio.bottom-resize(1, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+                if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.bottom-resize(2, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
             }
         }
         HighlightOverlay { x: 0; y: 0; width: root.width; height: root.height; }

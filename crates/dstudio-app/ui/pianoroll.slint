@@ -462,7 +462,7 @@ export component PianoRoll inherits Rectangle {
     snap-chevron := Icon { x: root.width - 22.5px; y: 8.5px; width: 11px; height: 11px; d: Icons.chevron-down; ink: Studio.snap-menu-open ? #ffffff : #c9c9cc; }
     TouchArea {
         x: root.width - 23px; y: 4px; width: 18px; height: 20px;
-        clicked => { Studio.snap-menu-toggle(snap-chevron.absolute-position.x + snap-chevron.width, self.absolute-position.y + self.height); }
+        clicked => { Studio.snap-menu-toggle(snap-chevron.absolute-position.x + snap-chevron.width, (self.absolute-position.y - Studio.menu-dy) + self.height); }
     }
 
     // ---- note grid + keyboard (wgpu texture) ----
