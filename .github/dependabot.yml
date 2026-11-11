@@ -4,9 +4,11 @@
 #
 # Cargo dependencies and the C++ SDKs are pinned on purpose (see crates/dstudio-app/Cargo.toml
 # and engine/CMakeLists.txt), so version updates stay off (open-pull-requests-limit: 0) and
-# they are updated by hand. Security updates still arrive as pull requests when "Dependabot
-# security updates" is on in the repository settings, and the Security workflow checks
-# Cargo.lock against the RustSec advisory database every week.
+# they are updated by hand. For Cargo, security fixes still arrive as pull requests once
+# "Dependabot security updates" is on in the repository settings, and the Security workflow
+# checks Cargo.lock against the RustSec advisory database every week. Dependabot cannot see
+# the C++ SDKs that engine/CMakeLists.txt fetches, so nothing watches those automatically:
+# check their release notes and advisories by hand when updating them.
 version: 2
 updates:
   - package-ecosystem: github-actions

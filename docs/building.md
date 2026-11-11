@@ -228,7 +228,11 @@ pushes to main that change `Cargo.lock`, and every Monday:
 
 Every action in every workflow is pinned to a commit hash; Dependabot moves the
 hashes in one grouped pull request a week. Cargo crates and the engine's C++
-SDKs are updated by hand (Dependabot opens security fixes only).
+SDKs are updated by hand. For Cargo crates, Dependabot opens security-fix pull
+requests once "Dependabot security updates" is on in the repository settings
+(Settings › Code security). Dependabot does not see the SDKs that
+`engine/CMakeLists.txt` fetches, so their advisories are checked by hand when
+they are updated.
 
 ### Performance checks
 
