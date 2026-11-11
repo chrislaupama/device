@@ -36,7 +36,7 @@ wgpu.
 > [!WARNING]
 > **Device Studio is pre-alpha.** There are no releases yet, features are missing, and the project format may still
 > change. macOS is the platform it's developed and tested on every day; Windows and Linux build, but their audio
-> backends have never run on real hardware. Keep copies of anything you care about.
+> backends have never run on a physical sound card (Linux runs real PipeWire streams in CI). Keep copies of anything you care about.
 
 ## Features
 
@@ -142,14 +142,14 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Piano roll and MIDI | 🚧 | Note audition |
 | Built-in instruments | ✅ | |
 | Built-in effects | ✅ | More devices are planned |
-| Plugin hosting | 🚧 | Plugin editor windows on Linux |
+| Plugin hosting | ✅ | Linux editor windows use X11 (XWayland on Wayland desktops) |
 | Recording | 🚧 | Per-device manual recording offset |
 | Mixer | ✅ | |
 | Automation | ✅ | |
 | Delay compensation | ✅ | |
 | Export | 🚧 | The engine renders to WAV; export from the app isn't wired up yet |
 | Assistant | 🚧 | Tested only with a fixture provider, not yet against the live API |
-| Windows and Linux audio | 🚧 | Never run on real audio hardware; no ASIO |
+| Windows and Linux audio | 🚧 | Linux streams run in CI on a headless PipeWire server; neither has run on a physical sound card; no ASIO |
 | Releases and branding | 🚧 | Packages are built (unsigned); code signing, original icons, a first tagged release |
 
 [PROGRESS.md](PROGRESS.md) has the dated, round-by-round log.
@@ -160,9 +160,10 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 |---|---|---|---|
 | macOS | Apple silicon | Core Audio | AU, VST3, CLAP |
 | Windows | Windows x64 | WASAPI (shared mode) | VST3, CLAP |
-| Linux | x64, X11 or Wayland | PipeWire | VST3, CLAP (no editor windows yet) |
+| Linux | x64, X11 or Wayland | PipeWire | VST3, CLAP |
 
-Every change is built and tested on all three systems in CI, on hosted runners without audio hardware. Real audio
+Every change is built and tested on all three systems in CI, on hosted runners without audio hardware. The Linux
+job runs a headless PipeWire server, so playback and recording go through real PipeWire streams there. Real audio
 hardware is tested by hand on a Mac.
 
 ### Download

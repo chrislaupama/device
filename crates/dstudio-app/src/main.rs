@@ -2440,6 +2440,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+    // Linux plugin windows: plugins there have no system event loop, so the
+    // engine runs their X11 fds and timers from se_plugin_idle. While a
+    // window is open, idle at ~60 Hz so their input and repaints keep up.
+    #[cfg(target_os = "linux")]
+    let _editor_timer = {
+        let t = slint::Timer::default();
+        let ctl = ctl.clone();
+        t.start(slint::TimerMode::Repeated, Duration::from_millis(16), move || {
+            if let Ok(c) = ctl.try_borrow()
+                && c.has_open_editors()
+            {
+                c.engine.plugin_idle();
+            }
+        });
+        t
+    };
 
     // ---- rendering notifier: the wgpu integration point (ADR 0001) ----
     let frame = Rc::new(RefCell::new(Frame {
@@ -2582,6 +2598,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 slint::RenderingState::AfterRendering => {
                     let now = Instant::now();
                     let mut f = fr.borrow_mut();
+                    if let Some(r) = f.renderer.as_mut() {
+                        r.end_frame();
+                    }
                     if let Some(t) = f.slint_start.take()
                         && f.ready_frames > 2
                     {
@@ -2762,7 +2781,7 @@ fn stats_json(f: &Frame, app: &AppWindow) -> String {
     let sz = w.size();
     let rc = f.renderer.as_ref().map(|r| r.last_counts).unwrap_or((0, 0, 0));
     format!(
-        "{{\"adapter\":\"{}\",\"scale_factor\":{},\"window_physical\":[{},{}],\"timeline_tex\":[{},{}],\"instances\":{{\"base_rects\":{},\"waves\":{},\"over_rects\":{}}},\"frames\":{},\"frame_interval_ms\":{},\"our_cpu_ms\":{},\"slint_render_cpu_ms\":{}{}}}",
+        "{{\"adapter\":\"{}\",\"scale_factor\":{},\"window_physical\":[{},{}],\"timeline_tex\":[{},{}],\"instances\":{{\"base_rects\":{},\"waves\":{},\"over_rects\":{}}},\"frames\":{},\"frame_interval_ms\":{},\"our_cpu_ms\":{},\"slint_render_cpu_ms\":{},\"gpu_throttled_frames\":{},\"gpu_throttle_ms\":{:.1}{}}}",
         f.adapter,
         w.scale_factor(),
         sz.width,
@@ -2776,6 +2795,8 @@ fn stats_json(f: &Frame, app: &AppWindow) -> String {
         f.interval.summary(),
         f.ours.summary(),
         f.slint.summary(),
+        f.renderer.as_ref().map(|r| r.throttled.0).unwrap_or(0),
+        f.renderer.as_ref().map(|r| r.throttled.1.as_secs_f64() * 1e3).unwrap_or(0.0),
         if f.bench { phases_json(f) } else { String::new() }
     )
 }

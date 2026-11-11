@@ -157,8 +157,8 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Audio: WASAPI shared/event/float32 backend (separate capture client + drift-tolerant
   `FrameRing`, MMCSS) and PipeWire backend (playback/capture streams). **Neither has run on real
   audio hardware** (CI runners have none); ASIO is future work (licence).
-- Editors: Windows HWND host (tested in CI with `DStudioTestGui.clap`); Linux returns
-  `SE_ERR_UNSUPPORTED_FORMAT` (X11 embedding not written).
+- Editors: Windows HWND host and Linux X11 host (both tested in CI with `DStudioTestGui.clap`; Linux
+  under Xvfb, with the host run loop for plugin fds and timers).
 - App: builds on all three; macOS-only winit hook stays cfg-gated; per-OS plugin folders. Off macOS
   the self-test reports its Audio Unit devices section as skipped.
 - macOS-visible changes: two hardware-/compiler-dependent tests relaxed (PDC golden hashes only on
@@ -266,6 +266,31 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Internal names use `dstudio` (`dstudio-*` crates, `dstudio::` namespace, `dstudio_engine.h`,
   `DSTUDIO_*` CMake options and env vars, `DStudioTest*` test plugins, `studio.dstudio.test.*` ids).
   Not `device`: it already names the effects/instruments concept. The GitHub repo is `chrislaupama/device`.
+
+### 2026-11-10: Linux audio runs in CI; Linux plugin windows; Windows CI GPU memory
+
+- Linux CI starts a headless PipeWire graph (`tools/ci/headless-pipewire.sh`: null sink + `pw-loopback`
+  to a virtual source). The device tests now open real PipeWire streams instead of skipping, and the
+  new opt-in `device_duplex_loopback_take_lands_on_the_clicks` records a click track back through the
+  loopback: every click lands sample-exact on its timeline position. The app also runs
+  `--self-test-audio` there (265/265).
+- Fix found by the loopback test: when one PipeWire stream missed a cycle (an xrun), the duplex input
+  ring kept the extra cycle forever, so every later take landed one quantum late. Both streams now
+  share a `node.group` (one clock), and `FrameRing` re-syncs after a window of 32 cycles that is off
+  by more than half a quantum (`dstudio_frame_ring_bench`: no measurable cost). WASAPI keeps the old
+  policy (separate clocks; re-sync off).
+- Linux plugin editor windows (X11): `plugin_editor_x11.cpp` plus a main-thread run loop
+  (`run_loop.cpp`) dispatched from `se_plugin_idle`, serving VST3 `Linux::IRunLoop` and CLAP
+  `posix-fd-support` / `timer-support`. `DStudioTestGui.clap` is cross-platform now; the Xvfb test checks
+  size, timer and fd callbacks, close box, re-open and retire. Dragonfly Room (CLAP, VST3) and an LSP
+  CLAP open and run by hand. The app's "Open device window" button is enabled on Linux.
+- Windows CI self-test crashed out of GPU memory (WARP) partway through: the runner's window is
+  occluded, so presenting never blocks and frames queued faster than WARP drew them. The app now keeps
+  at most 2 frames in flight (`gpu::Renderer::end_frame`, after each Slint frame); the self-test
+  prints how many frames had to wait. No cost when the GPU keeps up (0 waits on Linux, frame times
+  unchanged).
+- Still open: WASAPI has never run against an audio device (the hosted Windows runner has none);
+  Linux editors pass no HiDPI scale to plugins.
 
 ### 2026-11-10: spec-driven workflow and agent skills
 

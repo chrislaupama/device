@@ -1452,7 +1452,9 @@ impl Engine {
 
     /// Main-thread housekeeping (optional; also done by `publish` and the
     /// other plugin calls): destroys retired instances the audio thread can
-    /// no longer reach and runs pending CLAP main-thread callbacks.
+    /// no longer reach and runs pending CLAP main-thread callbacks. On Linux
+    /// it also runs the plugins' fd and timer callbacks (their windows' event
+    /// loop), so call it at the rate a plugin window should repaint.
     pub fn plugin_idle(&self) {
         // SAFETY: valid handle.
         unsafe { ffi::se_plugin_idle(self.raw) };

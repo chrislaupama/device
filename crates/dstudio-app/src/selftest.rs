@@ -32,6 +32,14 @@ pub fn run_dir() -> &'static std::path::Path {
     })
 }
 
+/// Whether an asset's stored path lies in `dir`. Assets keep canonical paths, and on Windows
+/// the canonical form (`\\?\C:\Users\runneradmin\...`) differs from the temp folder's
+/// (`C:\Users\RUNNER~1\...`), so compare against both spellings of the folder.
+fn in_dir(asset_path: &str, dir: &std::path::Path) -> bool {
+    let canon = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    asset_path.contains(&*dir.to_string_lossy()) || asset_path.contains(&*canon.to_string_lossy())
+}
+
 /// The plugin scan cache the self-tests share between runs (so a run does not rescan every
 /// plugin). A run works on its own copy and puts it back atomically when it ends.
 pub fn shared_plugin_cache() -> std::path::PathBuf {
@@ -5666,7 +5674,11 @@ fn step_sequencer_steps() -> Vec<Step> {
         Check("seq: Follow playhead turned to page 3; the ring is on its 5th column", Box::new(|c, a| {
             let s = a.global::<Studio>();
             let step = c.seq_play_step();
-            (step == Some(68) && s.get_seq_page() == 2 && s.get_seq_play_col() == 4).then_some(()).ok_or(format!("step {step:?} page {} col {}", s.get_seq_page(), s.get_seq_play_col()))
+            // With a device running the playhead keeps moving between the two steps, so it may
+            // already be further on: anywhere on page 3, with the ring on the step it shows.
+            let last = if c.engine.device_running() { 95 } else { 68 };
+            let ok = step.is_some_and(|k| (68..=last).contains(&k) && s.get_seq_play_col() == k as i32 - 64) && s.get_seq_page() == 2;
+            ok.then_some(()).ok_or(format!("step {step:?} page {} col {}", s.get_seq_page(), s.get_seq_play_col()))
         })),
         DoC("seq: stop; click page tab 1, then Follow playhead", Box::new(|a, ctl| {
             let _ = ctl.borrow().engine.stop();
@@ -7079,14 +7091,14 @@ fn clip_menu_steps() -> Vec<Step> {
             let v = audio_clips(c);
             (v.len() == 2 && !v[0].3 && !v[1].3).then_some(()).ok_or(format!("{v:?}"))
         })),
-        DoC("right-click the MIDI clip and choose Split (playhead beat 8 → beat 6 is outside, so move it first)", Box::new(move |a, ctl| {
-            let mid = {
-                let mut c = ctl.borrow_mut();
-                let t = c.project().tracks[1].id;
-                c.select_track(t);
-                c.seek_beats(6.0);
-                ClipId(i4.get().2)
-            };
+        DoC("move the playhead to beat 6 (beat 8 is outside the MIDI clip); a running device applies it at its next block", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = c.project().tracks[1].id;
+            c.select_track(t);
+            c.seek_beats(6.0);
+        })),
+        DoC("right-click the MIDI clip and choose Split", Box::new(move |a, ctl| {
+            let mid = ClipId(i4.get().2);
             let (x, y) = clip_xy(&ctl.borrow(), mid);
             right_click(a, x, y);
             click_entry(a, "Split");
@@ -7340,7 +7352,9 @@ fn clip_render_steps() -> Vec<Step> {
             let p = peak(&s, 0, s.len() / 2);
             eprintln!("clip-render: export render {:.1} ms", c.clip_render.last_ms);
             let same = c.doc.undo_label().map(str::to_string) == s14.borrow().undo_before_export;
-            (rate == 48_000 && ch == 2 && p > 0.02 && (96_000..=192_000).contains(&(s.len() / 2)) && same && !c.clip_render.busy()).then_some(()).ok_or(format!("rate {rate} ch {ch} frames {} peak {p} same {same}", s.len() / 2))
+            // A stem goes through the master fader: the --self-test-audio run keeps it at -40 dB.
+            let floor = 0.02 * c.project().master_gain.min(1.0);
+            (rate == 48_000 && ch == 2 && p > floor && (96_000..=192_000).contains(&(s.len() / 2)) && same && !c.clip_render.busy()).then_some(()).ok_or(format!("rate {rate} ch {ch} frames {} peak {p} (floor {floor}) same {same}", s.len() / 2))
         })),
         DoC("clip render: select the audio track; Consolidate its first clip and Cancel at once", Box::new(move |_, ctl| {
             let mut c = ctl.borrow_mut();
@@ -7406,7 +7420,7 @@ fn clip_render_steps() -> Vec<Step> {
             let mut c = ctl.borrow_mut();
             let s = s15.borrow();
             let mut commands: Vec<Command> = [s.audio_track, s.midi_track].iter().map(|&t| Command::RemoveTrack { track: TrackId(t) }).collect();
-            commands.extend(c.project().assets.iter().filter(|a| a.absolute_path.contains(&*dir().to_string_lossy())).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
+            commands.extend(c.project().assets.iter().filter(|a| in_dir(&a.absolute_path, &dir())).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
             c.execute(Command::Batch { label: "clip render cleanup".into(), commands });
             c.select_clip(None);
             c.clip_render.dir_override = Some(run_dir().join("renders"));
@@ -7582,7 +7596,7 @@ fn clip_render_plugin_steps() -> Vec<Step> {
             let mut c = ctl.borrow_mut();
             let s = s10.borrow();
             let mut commands = vec![Command::RemoveTrack { track: TrackId(s.track) }];
-            commands.extend(c.project().assets.iter().filter(|a| a.absolute_path.contains(&*dir().to_string_lossy())).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
+            commands.extend(c.project().assets.iter().filter(|a| in_dir(&a.absolute_path, &dir())).map(|a| Command::RemoveAsset { asset: AssetId(a.id.0) }));
             c.execute(Command::Batch { label: "clip render plugin cleanup".into(), commands });
             c.select_clip(None);
             c.clip_render.dir_override = None;
@@ -8001,6 +8015,11 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
             let skipped = if skips.get() > 0 { format!(" ({} skipped)", skips.get()) } else { String::new() };
             let fixture = ctl.try_borrow().map(|c| c.devices.catalog.fixture.is_some()).unwrap_or(false);
             let note = if fixture { " [plugin catalogue from a TEST fixture: the plugin checks did not exercise the engine scanner]" } else { "" };
+            eprintln!(
+                "self-test: {} frames waited for the GPU (at most {} in flight)",
+                crate::gpu::THROTTLED_FRAMES.load(std::sync::atomic::Ordering::Relaxed),
+                crate::gpu::MAX_FRAMES_IN_FLIGHT
+            );
             println!("self-test: {} / {n} checks passed{skipped}{note}", n - fails.get());
             finish_run(fails.get());
             t2.stop();

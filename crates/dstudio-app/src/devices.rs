@@ -223,10 +223,11 @@ pub fn scan_dirs() -> Vec<PathBuf> {
     v
 }
 
-/// Whether the engine can host plugin editor windows here (macOS, Windows;
-/// Linux has no X11/Wayland embedding yet, see engine/README.md). The scanned
+/// Whether the engine can host plugin editor windows here: macOS (Cocoa),
+/// Windows (Win32) and Linux (X11, which also runs under XWayland). An engine
+/// built without libX11 says so when a window is opened. The scanned
 /// `has_editor` capability is kept as is.
-pub const EDITORS_SUPPORTED: bool = !cfg!(target_os = "linux");
+pub const EDITORS_SUPPORTED: bool = true;
 
 /// Settings › General › Keep plugin windows on top. The engine opens plugin editors as plain
 /// NSWindows; the main window and the file panels are subclasses, so only editors float.
@@ -1054,13 +1055,14 @@ impl Controller {
         }
     }
 
+    /// Whether any plugin window is open.
+    pub fn has_open_editors(&self) -> bool {
+        !self.devices.editors.is_empty()
+    }
+
     /// Open or close the plugin's own window (main thread).
     pub fn device_edit(&mut self, id: DeviceId) {
         if self.project().device(id).is_none() {
-            return;
-        }
-        if !EDITORS_SUPPORTED {
-            self.set_status("Plugin windows are not supported on Linux yet", 5);
             return;
         }
         if self.engine.plugin_editor_is_open(id) {
