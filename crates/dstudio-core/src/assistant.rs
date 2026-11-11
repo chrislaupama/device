@@ -278,6 +278,7 @@ fn describe(cmd: &Command, before: &Project, after: &Project) -> String {
         Command::SetTrackMute { track, mute } => format!("{} {}.", if *mute { "Muted" } else { "Unmuted" }, track_name(after, *track)),
         Command::SetTrackSolo { track, solo } => format!("{} {}.", if *solo { "Soloed" } else { "Unsoloed" }, track_name(after, *track)),
         Command::SetMasterGain { gain } => format!("Set master volume to {:.1} dB.", gain_to_db(*gain)),
+        Command::SetMasterMute { mute } => format!("{} the master.", if *mute { "Muted" } else { "Unmuted" }),
         Command::SetTempo { bpm } => format!("Changed tempo to {bpm} BPM."),
         Command::SetTimeSignature { numerator, denominator } => format!("Changed time signature to {numerator}/{denominator}."),
         Command::MoveClip { clip, track, start } => format!(

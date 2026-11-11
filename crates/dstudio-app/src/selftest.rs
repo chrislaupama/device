@@ -2269,6 +2269,29 @@ fn steps() -> Vec<Step> {
             let f = a.global::<Studio>().get_master_fader();
             ((db + 24.0).abs() < 0.3 && (f - 0.78).abs() < 0.01).then_some(()).ok_or(format!("{db} dB, fader {f}"))
         })),
+        Do("click M on the master strip", Box::new(|a| click(a, win().0 - 5.0 - 108.0 * 0.85 + 25.0 * 0.85, bottom_end() - 17.0 * 0.85))),
+        Check("master muted (SetMasterMute), fader untouched, header row says so", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let db = dstudio_core::gain_to_db(c.project().master_gain);
+            (c.project().master_mute && s.get_master_mute() && c.doc.undo_label() == Some("Master Mute Change") && (db + 24.0).abs() < 0.3)
+                .then_some(())
+                .ok_or(format!("mute {} ui {} undo {:?} {db} dB", c.project().master_mute, s.get_master_mute(), c.doc.undo_label()))
+        })),
+        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("undo unmuted the master", Box::new(|c, a| {
+            (!c.project().master_mute && !a.global::<Studio>().get_master_mute()).then_some(()).ok_or("still muted".into())
+        })),
+        Do("click the mixer's collapse button", Box::new(|a| click(a, win().0 - 5.0 - 29.0 + 10.5, mixer_y() + 3.0 + 10.5))),
+        Check("mixer shut to its tab row; the button now expands", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.mixer_open && c.bottom_collapsed() && s.get_bottom_collapsed() && (c.bottom_h() - crate::splitters::BOTTOM_COLLAPSED_H).abs() < 0.01)
+                .then_some(())
+                .ok_or(format!("h {} ui {}", c.bottom_h(), s.get_bottom_collapsed()))
+        })),
+        Do("click the expand button", Box::new(|a| click(a, win().0 - 5.0 - 29.0 + 10.5, mixer_y() + 3.0 + 10.5))),
+        Check("mixer back at its 390 pt height", Box::new(|c, a| {
+            ((c.bottom_h() - crate::highlight::MIXER_BOTTOM_H).abs() < 0.5 && !a.global::<Studio>().get_bottom_collapsed()).then_some(()).ok_or(format!("h {}", c.bottom_h()))
+        })),
         Do("click '+ Add track' in the mixer", Box::new(|a| click(a, bottom_x() + 3.0 * 108.0 * 0.85 + 46.0, mixer_y() + 210.0))),
         Check("mixer Add track added an audio track", Box::new(move |c, _| {
             let p = c.project();
@@ -5702,7 +5725,7 @@ fn splitter_steps() -> Vec<Step> {
         win().1 - 5.0 - c.bottom_h() - 1.0
     }
     let base_h = Rc::new(Cell::new(0f32));
-    let (b1, b2) = (base_h.clone(), base_h.clone());
+    let (b1, b2, b3, b4) = (base_h.clone(), base_h.clone(), base_h.clone(), base_h.clone());
     let undo_n = Rc::new(Cell::new(0usize));
     let (u1, u2) = (undo_n.clone(), undo_n.clone());
     vec![
@@ -5740,12 +5763,37 @@ fn splitter_steps() -> Vec<Step> {
             let ok = approx(h, b2.get() + 100.0, 0.5) && saved == Some(h) && approx(a.global::<Studio>().get_bottom_h(), h, 0.01);
             ok.then_some(()).ok_or(format!("h {h} base {} saved {saved:?}", b2.get()))
         })),
+        Do("click the panel's collapse button", Box::new(|a| click(a, win().0 - 5.0 - 29.0 + 10.5, bottom_y() + 3.0 + 10.5))),
+        Check("panel shut to its tab row (saved), the taller height remembered", Box::new(|c, a| {
+            let saved = c.project().bottom_panel_heights.values().copied().next();
+            (c.bottom_collapsed() && a.global::<Studio>().get_bottom_collapsed() && saved == Some(crate::splitters::BOTTOM_COLLAPSED_H))
+                .then_some(())
+                .ok_or(format!("h {} saved {saved:?}", c.bottom_h()))
+        })),
+        Do("click it again", Box::new(|a| click(a, win().0 - 5.0 - 29.0 + 10.5, bottom_y() + 3.0 + 10.5))),
+        Check("panel reopened at the height it had (100 pt above the default)", Box::new(move |c, a| {
+            let h = c.bottom_h();
+            (approx(h, b3.get() + 100.0, 0.5) && !a.global::<Studio>().get_bottom_collapsed()).then_some(()).ok_or(format!("h {h} base {}", b3.get()))
+        })),
+        Do("collapse it with the button again", Box::new(|a| click(a, win().0 - 5.0 - 29.0 + 10.5, bottom_y() + 3.0 + 10.5))),
+        DoC("drag the splitter up 200 pt from the tab row", Box::new(|a, ctl| {
+            let y = splitter_y(&ctl.borrow());
+            drag(a, lane_x() + 246.35, y, lane_x() + 246.35, y - 200.0);
+        })),
+        Check("the drag opened the panel and dropped the height the button kept", Box::new(|c, _| {
+            (!c.bottom_collapsed() && c.bottom_restore.is_empty()).then_some(()).ok_or(format!("h {} restore {:?}", c.bottom_h(), c.bottom_restore))
+        })),
         DoC("drag the splitter to the bottom edge", Box::new(|a, ctl| {
             let y = splitter_y(&ctl.borrow());
             drag(a, lane_x() + 246.35, y, lane_x() + 246.35, win().1 - 5.0);
         })),
         Check("bottom panel collapses to its tab row", Box::new(|c, _| {
             approx(c.bottom_h(), crate::splitters::BOTTOM_COLLAPSED_H, 0.01).then_some(()).ok_or(format!("h {}", c.bottom_h()))
+        })),
+        Do("click the expand button after a drag shut the panel", Box::new(|a| click(a, win().0 - 5.0 - 29.0 + 10.5, bottom_y() + 3.0 + 10.5))),
+        Check("the panel opens at its default height", Box::new(move |c, _| {
+            let h = c.bottom_h();
+            (approx(h, b4.get(), 0.5) && c.project().bottom_panel_heights.is_empty()).then_some(()).ok_or(format!("h {h} default {}", b4.get()))
         })),
         DoC("restore the default panel height", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();

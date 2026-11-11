@@ -110,6 +110,28 @@ impl Controller {
         if h < BOTTOM_SNAP_H { BOTTOM_COLLAPSED_H } else { h.min(max) }
     }
 
+    /// Whether the bottom panel is shut down to its tab row.
+    pub fn bottom_collapsed(&self) -> bool {
+        self.bottom_h() <= BOTTOM_COLLAPSED_H + 0.5
+    }
+
+    /// The panel header's collapse button: shut the panel to its tab row, or reopen it at the
+    /// height it had before (the default when it was shut by dragging or in an earlier session).
+    pub fn toggle_bottom_collapse(&mut self) {
+        self.bottom_drag = None;
+        let kind = self.bottom_kind();
+        if self.bottom_collapsed() {
+            let h = self.bottom_restore.remove(kind).flatten();
+            self.doc.set_bottom_panel_height(kind, h);
+        } else {
+            // Remember what was saved (None = the default), so reopening leaves no trace.
+            let saved = self.project().bottom_panel_heights.get(kind).copied();
+            self.bottom_restore.insert(kind, saved);
+            self.doc.set_bottom_panel_height(kind, Some(BOTTOM_COLLAPSED_H));
+        }
+        self.ui_dirty = true;
+    }
+
     /// Splitter drag (window y): phase 0 press, 1 move, 2 release.
     pub fn bottom_resize(&mut self, phase: i32, y: f32) {
         match phase {
@@ -127,6 +149,8 @@ impl Controller {
             _ => {
                 if let Some(d) = self.bottom_drag.take() {
                     let kind = self.bottom_kind();
+                    // A drag sets the height by hand: forget what the collapse button kept.
+                    self.bottom_restore.remove(kind);
                     self.doc.set_bottom_panel_height(kind, Some(d.h));
                     self.ui_dirty = true;
                 }

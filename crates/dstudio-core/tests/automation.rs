@@ -59,3 +59,31 @@ fn snapshot_has_enabled_nonempty_lanes_in_frames_and_master() {
     persist::save(d.project(), dir.path()).unwrap();
     assert_eq!(persist::load(dir.path()).unwrap().project, *d.project());
 }
+
+#[test]
+fn a_muted_master_sends_silence_and_undo_restores_it() {
+    let mut d = Document::new(Project::default());
+    d.execute(Command::SetMasterGain { gain: 0.5 }, Origin::User).unwrap();
+    d.execute(Command::SetAutomationLane { track: None, target: AutomationTarget::Volume, lane: Some(AutomationLane { target: AutomationTarget::Volume, enabled: true, points: pts(&[(0, -3.0)]) }) }, Origin::User).unwrap();
+    d.execute(Command::SetMasterMute { mute: true }, Origin::User).unwrap();
+    assert!(d.project().master_mute);
+    assert_eq!(d.project().master_gain, 0.5, "the fader keeps its value");
+    let (snap, _) = snapshot::build(d.project(), 48_000.0, &HashMap::new());
+    assert_eq!(snap.master_gain, 0.0);
+    assert!(snap.master_automation.is_empty(), "a volume lane must not bring a muted master back");
+    assert_eq!(d.undo_label(), Some("Master Mute Change"));
+    d.undo().unwrap();
+    assert!(!d.project().master_mute);
+    let (snap, _) = snapshot::build(d.project(), 48_000.0, &HashMap::new());
+    assert_eq!(snap.master_gain, 0.5);
+    assert_eq!(snap.master_automation.len(), 1);
+}
+
+#[test]
+fn master_mute_is_saved_only_when_on() {
+    let mut p = Project::default();
+    assert!(!serde_json::to_string(&p).unwrap().contains("master_mute"), "unmuted projects keep their old file shape");
+    p.master_mute = true;
+    let back: Project = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+    assert!(back.master_mute);
+}
