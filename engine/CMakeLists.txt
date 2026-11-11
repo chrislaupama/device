@@ -225,7 +225,10 @@ add_library(dstudio_engine STATIC
 if(WIN32)
   target_sources(dstudio_engine PRIVATE src/platform/plugin_editor_win.cpp)
 elseif(NOT APPLE)
-  target_sources(dstudio_engine PRIVATE src/platform/plugin_editor_stub.cpp)
+  # Linux: the plugin run loop always; X11 editor windows unless DSTUDIO_ENGINE_X11
+  # is OFF (then the stub reports that editors need X11).
+  target_sources(dstudio_engine PRIVATE src/platform/run_loop.cpp src/platform/plugin_editor_stub.cpp
+    src/platform/plugin_editor_x11.cpp)
 endif()
 if(APPLE)
   target_sources(dstudio_engine PRIVATE src/platform/plugin_editor_mac.mm)
@@ -276,6 +279,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
     target_link_libraries(dstudio_engine PUBLIC PkgConfig::PIPEWIRE)
     target_compile_definitions(dstudio_engine PRIVATE DSTUDIO_HAVE_PIPEWIRE=1)
+  endif()
+  # Plugin editor windows (src/platform/plugin_editor_x11.cpp). Every Linux
+  # plugin GUI is X11; on Wayland they run through XWayland.
+  option(DSTUDIO_ENGINE_X11 "Build Linux plugin editor windows (needs libX11 development files)" ON)
+  if(DSTUDIO_ENGINE_X11)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
+    # Headers only: plugin_editor_x11.cpp loads libX11 with dlopen when the
+    # first editor opens, so processes that never open one don't load it.
+    target_include_directories(dstudio_engine PRIVATE
+      $<TARGET_PROPERTY:PkgConfig::X11,INTERFACE_INCLUDE_DIRECTORIES>)
+    target_compile_definitions(dstudio_engine PRIVATE DSTUDIO_HAVE_X11=1)
   endif()
   # MIDI input (src/platform/alsa_midi_input.cpp). OFF builds an engine
   # without MIDI ports (se_midi_inject still works). Only the headers are
@@ -404,6 +419,11 @@ elseif(DSTUDIO_ENGINE_BUILD_TEST_PLUGINS)
     dstudio_test_clap(DStudioTestGuiClap DStudioTestGui test_plugins/dstudio_test_gui_clap.cpp)
     target_link_libraries(DStudioTestGuiClap PRIVATE user32)
     add_dependencies(dstudio_test_plugins DStudioTestGuiClap)
+  elseif(TARGET PkgConfig::X11)
+    # X11 clap.gui (+ timer and fd support) for plugin_editor_window_x11_*.
+    dstudio_test_clap(DStudioTestGuiClap DStudioTestGui test_plugins/dstudio_test_gui_clap.cpp)
+    target_link_libraries(DStudioTestGuiClap PRIVATE PkgConfig::X11)
+    add_dependencies(dstudio_test_plugins DStudioTestGuiClap)
   endif()
 endif()
 
@@ -485,6 +505,11 @@ if(DSTUDIO_ENGINE_BUILD_TESTS)
   if(TARGET dstudio_test_plugins)
     add_dependencies(dstudio_engine_tests dstudio_test_plugins dstudio_plugin_scanner)
   endif()
+  if(TARGET DStudioTestGuiClap AND NOT WIN32)
+    # plugin_editor_window_x11_*: inspects the editor windows over Xlib.
+    target_link_libraries(dstudio_engine_tests PRIVATE PkgConfig::X11)
+    target_compile_definitions(dstudio_engine_tests PRIVATE DSTUDIO_TEST_X11_EDITOR=1)
+  endif()
 
   # Each TEST_CASE becomes its own CTest test. The list is produced by the
   # test binary itself after every build (cf. gtest_discover_tests).
@@ -508,6 +533,15 @@ if(DSTUDIO_ENGINE_BUILD_BENCH)
   target_compile_definitions(dstudio_engine_bench PRIVATE DSTUDIO_TEST_PLUGIN_DIR="${DSTUDIO_TEST_PLUGIN_DIR}")
   if(TARGET dstudio_test_plugins)
     add_dependencies(dstudio_engine_bench dstudio_test_plugins)
+  endif()
+  add_executable(dstudio_frame_ring_bench bench/bench_frame_ring.cpp)
+  target_include_directories(dstudio_frame_ring_bench PRIVATE src)
+  target_link_libraries(dstudio_frame_ring_bench PRIVATE dstudio_engine_warnings)
+
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(dstudio_run_loop_bench bench/bench_run_loop.cpp src/platform/run_loop.cpp)
+    target_include_directories(dstudio_run_loop_bench PRIVATE src)
+    target_link_libraries(dstudio_run_loop_bench PRIVATE dstudio_engine_warnings)
   endif()
   add_executable(dstudio_offline_plugin_bench bench/bench_offline_plugins.cpp)
   target_include_directories(dstudio_offline_plugin_bench PRIVATE src)
@@ -548,5 +582,10 @@ if(DSTUDIO_ENGINE_BUILD_TOOLS)
     set_source_files_properties(tools/plugin_editor_check.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wno-old-style-cast")
     target_include_directories(plugin_editor_check PRIVATE src)
     target_link_libraries(plugin_editor_check PRIVATE dstudio_engine dstudio_engine_warnings)
+  endif()
+  if(TARGET PkgConfig::X11)
+    # Manual: opens a real plugin's X11 editor (needs DISPLAY).
+    add_executable(plugin_editor_check_linux tools/plugin_editor_check_linux.cpp)
+    target_link_libraries(plugin_editor_check_linux PRIVATE dstudio_engine dstudio_engine_warnings)
   endif()
 endif()

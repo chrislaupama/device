@@ -440,11 +440,29 @@ fn rejected_add_track_leaves_next_id_alone() {
 #[test]
 fn a_failed_undo_keeps_its_history_entry() {
     let mut p = Project::default();
-    p.tracks[0].name = String::new();
+    p.tracks[0].gain = -1.0;
     let track = p.tracks[0].id;
     let mut d = Document::new(p);
-    d.execute(Command::RenameTrack { track, name: "Lead".into() }, Origin::User).unwrap();
-    assert!(d.undo().is_err(), "an empty old name cannot be restored");
-    assert_eq!((d.undo_depth(), d.undo_label(), d.can_redo()), (1, Some("Rename Track"), false));
+    d.execute(Command::SetTrackGain { track, gain: 1.0 }, Origin::User).unwrap();
+    assert!(d.undo().is_err(), "an out-of-range old gain cannot be restored");
+    assert_eq!((d.undo_depth(), d.undo_label(), d.can_redo()), (1, Some("Track Volume Change"), false));
+    assert_eq!(d.project().tracks[0].gain, 1.0);
+}
+
+#[test]
+fn undoing_a_rename_restores_the_old_name_exactly() {
+    let mut p = Project::default();
+    let long = "x".repeat(200);
+    p.tracks[0].name = long.clone();
+    let track = p.tracks[0].id;
+    let mut d = Document::new(p);
+    d.execute(Command::RenameTrack { track, name: "  Lead  ".into() }, Origin::User).unwrap();
     assert_eq!(d.project().tracks[0].name, "Lead");
+    d.undo().unwrap();
+    assert_eq!(d.project().tracks[0].name, long, "an imported name over the limit comes back as it was");
+    d.redo().unwrap();
+    assert_eq!(d.project().tracks[0].name, "Lead");
+    assert!(d.execute(Command::RenameTrack { track, name: "   ".into() }, Origin::User).is_err());
+    let json = r#"{"op":"restore_track_name","track":1,"name":""}"#;
+    assert!(serde_json::from_str::<Command>(json).is_err(), "a restore is never taken from outside");
 }

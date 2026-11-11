@@ -369,6 +369,16 @@ pub struct Controller {
     /// Rename popup open for this clip.
     pub rename: Option<ClipId>,
     pub rename_section: Option<dstudio_core::SectionId>,
+    /// Counts presses on the lanes and the clip editors; the UI moves the keyboard focus back to
+    /// the shortcuts on each, so an open name field commits (Studio.press-epoch).
+    pub press_epoch: i32,
+    /// Text typed in an open track name field (Studio.track-rename-draft), committed when the
+    /// panel holding the field changes before the field commits itself.
+    pub rename_draft: Option<(TrackId, String)>,
+    /// Bottom panel state the last push showed (tab, mixer, a track selected).
+    rename_panel: Option<(BottomTab, bool, bool)>,
+    /// Keyboard rename requests (Studio.rename-open-epoch).
+    rename_open_epoch: i32,
     pub selected_section: Option<dstudio_core::SectionId>,
     pub(crate) section_drag: Option<crate::sections::SectionDrag>,
     pub(crate) section_vis: Vec<crate::sections::SectionVis>,
@@ -505,6 +515,10 @@ impl Controller {
             clipboard: None,
             rename: None,
             rename_section: None,
+            press_epoch: 0,
+            rename_draft: None,
+            rename_panel: None,
+            rename_open_epoch: 0,
             selected_section: None,
             section_drag: None,
             section_vis: Vec::new(),
@@ -940,6 +954,42 @@ impl Controller {
         None
     }
 
+    /// ⇧⌘T: a new instrument track at the end of the ordinary tracks, selected.
+    pub fn add_instrument_track(&mut self) -> Option<TrackId> {
+        let track = Track::new(TrackId(0), TrackKind::Instrument, "Instrument", next_track_color(self.project()));
+        if self.execute(Command::AddTrack { index: None, track }) {
+            let id = self.project().tracks.iter().rev().find(|t| t.kind == TrackKind::Instrument).map(|t| t.id);
+            if let Some(id) = id {
+                self.select_track(id);
+            }
+            return id;
+        }
+        None
+    }
+
+    /// ⌘L with a clip or a section selected: loop exactly that span and turn the loop on.
+    pub fn loop_selection(&mut self) {
+        let p = self.project();
+        let span = if let Some(i) = self.selected_section.and_then(|s| p.section_index(s)) {
+            let start = p.section_start(i);
+            Some((start, start + p.sections[i].length))
+        } else if let Some(id) = self.selected_clip {
+            p.midi_clip(id).map(|m| (m.start, m.end())).or_else(|| p.clip(id).map(|c| (c.start, c.start + p.clip_length_ticks(c))))
+        } else {
+            None
+        };
+        let Some((start, end)) = span.filter(|(s, e)| e > s) else {
+            self.toggle_loop();
+            return;
+        };
+        let tr = &p.transport;
+        if tr.loop_enabled && tr.loop_start == start && tr.loop_end == end {
+            return;
+        }
+        self.doc.seal_coalescing();
+        self.execute(Command::SetLoop { enabled: true, start, end });
+    }
+
     pub fn delete_selection(&mut self) {
         if let Some(s) = self.selected_section.filter(|s| self.project().section_index(*s).is_some()) {
             self.delete_section(s);
@@ -961,6 +1011,58 @@ impl Controller {
             let mute = !t.mute;
             self.execute(Command::SetTrackMute { track: id, mute });
         }
+    }
+
+    /// Rename a track (double-click its name). Surrounding spaces are dropped; an empty or
+    /// unchanged name leaves the track as it was (an untouched field keeps a loaded name's own
+    /// spaces too).
+    pub fn rename_track(&mut self, id: TrackId, name: &str) {
+        self.rename_draft = None;
+        let raw = name;
+        let name = name.trim();
+        if name.is_empty() || self.project().track(id).is_none_or(|t| t.name == raw || t.name == name) {
+            self.ui_dirty = true;
+            return;
+        }
+        self.execute(Command::RenameTrack { track: id, name: name.to_string() });
+    }
+
+    /// Keyboard rename (track.rename): open the selected track's name field in its header row,
+    /// scrolled into view.
+    pub fn open_rename_field(&mut self) {
+        let Some(id) = self.selected_track else { return };
+        if self.project().track(id).is_none() {
+            return;
+        }
+        self.reveal_track(id);
+        self.rename_open_epoch += 1;
+        self.ui_dirty = true;
+    }
+
+    /// Scroll the timeline vertically so track `id`'s row (or, for a row taller than the lanes,
+    /// its middle) is in view.
+    fn reveal_track(&mut self, id: TrackId) {
+        let Some(i) = self.project().track_index(id) else { return };
+        let (top, h) = (self.view.track_offset(i), self.view.pitch(i));
+        let visible = self.lanes_size.1 - timeline::RULER_H - self.view.master_h;
+        let y = self.view.scroll_y as f32;
+        if h > visible {
+            // Taller than the lanes: the header's controls (the name field with them) sit around
+            // the row's middle, so centre that.
+            self.view.scroll_y = (top + h / 2.0 - visible / 2.0).max(0.0) as f64;
+        } else if top < y {
+            self.view.scroll_y = top as f64;
+        } else if top + h > y + visible {
+            self.view.scroll_y = (top + h - visible).max(0.0) as f64;
+        }
+        self.view.clamp_scroll(self.project().tracks.len(), self.lanes_size.1);
+    }
+
+    /// Commit a name typed in a field that is about to disappear with its panel; true when there was one.
+    fn commit_rename_draft(&mut self) -> bool {
+        let Some((id, name)) = self.rename_draft.take() else { return false };
+        self.rename_track(id, &name);
+        true
     }
 
     pub fn toggle_solo(&mut self, id: TrackId) {
@@ -1182,6 +1284,7 @@ impl Controller {
         self.tempos.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
+        self.rename_draft = None;
         self.bottom_restore.clear();
         self.doc = Document::new(project);
         self.devices.modu.bases_pending = true;
@@ -1227,6 +1330,7 @@ impl Controller {
         self.tempos.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
+        self.rename_draft = None;
         self.bottom_restore.clear();
         self.doc = Document::new(loaded.project);
         self.devices.modu.bases_pending = true;
@@ -1792,6 +1896,10 @@ impl Controller {
         self.update_minimap(app);
         self.update_devmm(app);
         self.push_snap(&s);
+        s.set_press_epoch(self.press_epoch);
+        s.set_doc_epoch(self.doc_epoch as i32);
+        s.set_rename_open_id(self.selected_track.map_or(-1, |t| t.0 as i32));
+        s.set_rename_open_epoch(self.rename_open_epoch);
         crate::pointer::apply(app, self.ptr.take());
         s.set_section_add_x(self.section_add_x());
         self.update_auto_labels();
@@ -1806,6 +1914,14 @@ impl Controller {
     }
 
     fn push_models(&mut self, app: &AppWindow) {
+        // The bottom panel's name field goes away with the panel (tab switch, mixer, selection
+        // cleared) without seeing its focus loss: commit what it held first.
+        let panel = (self.bottom_tab, self.mixer_open, self.selected_track.is_some());
+        if self.rename_panel.is_some_and(|p| p != panel) && self.commit_rename_draft() {
+            // The field held the keyboard focus: give it back to the shortcuts.
+            self.press_epoch += 1;
+        }
+        self.rename_panel = Some(panel);
         self.rebuild_vis();
         let s = app.global::<Studio>();
         self.auto_sync_view();
@@ -2073,6 +2189,21 @@ mod tests {
         let starts: Vec<Vec<Ticks>> = c.project().tracks.iter().map(|t| t.clips.iter().map(|k| k.start).collect()).collect();
         assert_eq!(starts, vec![vec![0], vec![], vec![10 * PPQ]]);
     }
+    /// A loaded name with its own surrounding spaces: committing the field untouched keeps it and
+    /// adds no undo step; a real edit is trimmed.
+    #[test]
+    fn an_untouched_rename_keeps_a_loaded_name() {
+        let engine = Arc::new(Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut p = Project::default();
+        p.tracks[0].name = "  Bass  ".into();
+        let mut c = Controller::new(engine, p);
+        let (id, rev) = (c.project().tracks[0].id, c.doc.revision());
+        c.rename_track(id, "  Bass  ");
+        assert_eq!((c.project().tracks[0].name.as_str(), c.doc.revision()), ("  Bass  ", rev));
+        c.rename_track(id, "  Sub bass ");
+        assert_eq!(c.project().tracks[0].name, "Sub bass");
+        assert_ne!(c.doc.revision(), rev);
+    }
     /// A splitter drag forgets only its own panel's collapse-button height: the mixer, shut by
     /// the button at a custom height, still reopens there after the Devices panel is dragged.
     #[test]
@@ -2088,6 +2219,30 @@ mod tests {
         c.bottom_resize(2, 400.0);
         assert_eq!(c.bottom_restore.get("mixer"), Some(&Some(400.0)));
         assert!(!c.bottom_restore.contains_key("devices"));
+    }
+    /// Two quick reverses of one audio clip are two undo steps: one Undo leaves it reversed.
+    #[test]
+    fn each_reverse_is_its_own_undo_step() {
+        let engine = Arc::new(Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        let (asset, clip, track) = (AssetId(9001), ClipId(9002), TrackId(9003));
+        c.execute(Command::Batch {
+            label: "Fixture".into(),
+            commands: vec![
+                Command::AddAsset { asset: Asset { id: asset, relative_path: None, absolute_path: "fixture.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 48_000 } },
+                Command::AddTrack { index: None, track: Track::new(track, TrackKind::Audio, "Audio", next_track_color(c.project())) },
+                Command::AddClip {
+                    track,
+                    clip: Clip { id: clip, asset, name: "Loop".into(), start: 0, source_offset: 0, source_length: 48_000, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None },
+                },
+            ],
+        });
+        c.select_clip(Some(clip));
+        c.reverse_clip();
+        c.reverse_clip();
+        assert!(!c.project().clip(clip).unwrap().warp.reverse, "reversed twice");
+        c.undo();
+        assert!(c.project().clip(clip).unwrap().warp.reverse, "one Undo goes back to after the first reverse");
     }
     /// A master volume lane being drawn must not bring a muted master back.
     #[test]

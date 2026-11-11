@@ -180,6 +180,8 @@ struct Args {
     /// and B pre-fader, Instrument to A), the mixer open with the Sends sections expanded.
     /// review-returns-strip: the same project, Audio selected, channel strip on its Sends tab.
     returns_review: u8,
+    /// review-track-rename: track 1 renamed "Lead vox", the inspector's name field open.
+    track_rename_review: bool,
     /// reference-<built-in device id>: that device alone in an audio track's chain (an instrument on an instrument track).
     device_state: Option<&'static str>,
     /// Files loaded as if dropped on the window (after the state is set up).
@@ -479,6 +481,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.returns_review = 2;
                 }
+                "review-track-rename" => {
+                    a.reference_default = true;
+                    a.track_rename_review = true;
+                }
                 "review-snap-menu" => {
                     a.reference_default = true;
                     a.snap_menu_review = true;
@@ -511,7 +517,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-snap-menu, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-returns, review-returns-strip, review-snap-menu, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -683,7 +689,7 @@ pub fn app_keymap() -> Keymap {
     }
     // Arm / input monitoring on the selected track (the core preset has no bindings for them).
     // Added only if the core lacks them.
-    for (action, chord) in [("track.arm", "shift+r"), ("track.monitor", "shift+i")] {
+    for (action, chord) in [("track.arm", "shift+r"), ("track.monitor", "shift+i"), ("track.rename", "primary+r")] {
         if k.chords_for(action).is_empty() {
             k.bindings.push(Binding { action: action.into(), chords: vec![Chord::parse(chord).expect("valid chord")], when: Condition::TrackSelected });
         }
@@ -808,10 +814,22 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.pr.menu = -1;
             c.ui_dirty = true;
         }
+        "clip.reverse" => ctl.borrow_mut().reverse_clip(),
+        "transport.loop_selection" => ctl.borrow_mut().loop_selection(),
+        "track.add_instrument" => {
+            ctl.borrow_mut().add_instrument_track();
+        }
+        "section.duplicate" => {
+            let mut c = ctl.borrow_mut();
+            if let Some(s) = c.selected_section {
+                c.duplicate_section(s);
+            }
+        }
         a if a.starts_with("clip.") || a == "assistant.ask" => ctl.borrow_mut().set_status(format!("{a}: not implemented yet"), 3),
         "track.add_audio" => {
             ctl.borrow_mut().add_audio_track();
         }
+        "track.rename" => ctl.borrow_mut().open_rename_field(),
         "track.mute" => {
             let mut c = ctl.borrow_mut();
             if let Some(t) = c.selected_track {
@@ -1466,6 +1484,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(20.0);
     }
+    if args.track_rename_review {
+        let mut c = ctl.borrow_mut();
+        let id = c.project().tracks[0].id;
+        c.select_track(id);
+        c.rename_track(id, "Lead vox");
+        app.global::<Studio>().set_review_rename(true);
+    }
     if args.snap_menu_review {
         let mut c = ctl.borrow_mut();
         c.snap.pick(5);
@@ -1822,6 +1847,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_track_solo, |c, id: i32| c.toggle_solo(TrackId(id as u64)));
     on!(on_track_volume, |c, id: i32, p: f32| c.set_track_gain(TrackId(id as u64), gain_from_slider(p)));
     on!(on_track_pan, |c, id: i32, p: f32| c.set_track_pan(TrackId(id as u64), p));
+    // A field opened in a project that has since been replaced renames nothing.
+    on!(on_track_rename, |c, id: i32, t: slint::SharedString, epoch: i32| {
+        if epoch == c.doc_epoch as i32 {
+            c.rename_track(TrackId(id as u64), t.as_str());
+        }
+    });
+    {
+        // Typing in a name field only records the draft: no model push per keystroke.
+        let ctl2 = ctl.clone();
+        studio.on_track_rename_draft(move |id, t, epoch| {
+            if let Ok(mut c) = ctl2.try_borrow_mut() {
+                if epoch == c.doc_epoch as i32 {
+                    c.rename_draft = Some((TrackId(id as u64), t.to_string()));
+                }
+            }
+        });
+        let ctl2 = ctl.clone();
+        studio.on_track_rename_cancel(move || {
+            if let Ok(mut c) = ctl2.try_borrow_mut() {
+                c.rename_draft = None;
+            }
+        });
+    }
     on!(on_track_pan_text, |c, id: i32, t: slint::SharedString| {
         if let Some(p) = controller::parse_pan_text(&t) {
             c.set_track_pan(TrackId(id as u64), p);
@@ -1874,6 +1922,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, cmd: bool, alt: bool| {
         if kind == 0 {
+            c.press_epoch = c.press_epoch.wrapping_add(1);
             c.snap.bypass = cmd;
         }
         c.pointer_mods(kind, x, y, shift, alt)
@@ -1913,7 +1962,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let tab = if c.bottom_tab == BottomTab::Clip { BottomTab::Devices } else { BottomTab::Clip };
         c.set_bottom_tab(tab)
     });
-    on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool| c.pr_pointer(kind, x, y, shift, alt, command));
+    on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool| {
+        if kind == 0 {
+            c.press_epoch = c.press_epoch.wrapping_add(1);
+        }
+        c.pr_pointer(kind, x, y, shift, alt, command)
+    });
     on!(on_pr_scroll, |c, dx: f32, dy: f32, x: f32, y: f32, shift: bool, alt: bool, ctrl: bool| c.pr_wheel(dx, dy, x, y, shift, alt, ctrl));
     on!(on_pr_pinch, |c, scale: f32, x: f32, y: f32| c.pr_zoom_at(scale as f64, 1.0, x, y));
     on!(on_typing_release, |c| c.typing_release_all());
@@ -1948,7 +2002,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_seq_tab, |c, piano: bool| c.seq_tab(piano));
     on!(on_seq_lane_pick, |c, i: i32| c.seq_lane(i));
     on!(on_seq_action, |c, a: slint::SharedString| c.seq_action(a.as_str()));
-    on!(on_seq_pointer, |c, kind: i32, x: f32, y: f32| c.seq_pointer(kind, x, y));
+    on!(on_seq_pointer, |c, kind: i32, x: f32, y: f32| {
+        if kind == 0 {
+            c.press_epoch = c.press_epoch.wrapping_add(1);
+        }
+        c.seq_pointer(kind, x, y)
+    });
     on!(on_seq_scroll, |c, dy: f32| c.seq_scroll(dy));
     on!(on_seq_swing, |c, phase: i32, dy: f32| c.seq_swing(phase, dy));
     on!(on_seq_page_pick, |c, i: i32| c.seq_page(i));
@@ -2221,6 +2280,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     clips_selected: c.selected_clip.is_some() as usize,
                     midi_clip_selected: c.pr_visible(),
                     midi_editor_focused: c.pr_visible() && c.pr.focused,
+                    section_selected: c.selected_section.is_some(),
                     ..Default::default()
                 }
             };
@@ -2450,6 +2510,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+    // Linux plugin windows: plugins there have no system event loop, so the
+    // engine runs their X11 fds and timers from se_plugin_idle. While a
+    // window is open, idle at ~60 Hz so their input and repaints keep up.
+    #[cfg(target_os = "linux")]
+    let _editor_timer = {
+        let t = slint::Timer::default();
+        let ctl = ctl.clone();
+        t.start(slint::TimerMode::Repeated, Duration::from_millis(16), move || {
+            if let Ok(c) = ctl.try_borrow()
+                && c.has_open_editors()
+            {
+                c.engine.plugin_idle();
+            }
+        });
+        t
+    };
 
     // ---- rendering notifier: the wgpu integration point (ADR 0001) ----
     let frame = Rc::new(RefCell::new(Frame {
@@ -2592,6 +2668,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 slint::RenderingState::AfterRendering => {
                     let now = Instant::now();
                     let mut f = fr.borrow_mut();
+                    if let Some(r) = f.renderer.as_mut() {
+                        r.end_frame();
+                    }
                     if let Some(t) = f.slint_start.take()
                         && f.ready_frames > 2
                     {
@@ -2772,7 +2851,7 @@ fn stats_json(f: &Frame, app: &AppWindow) -> String {
     let sz = w.size();
     let rc = f.renderer.as_ref().map(|r| r.last_counts).unwrap_or((0, 0, 0));
     format!(
-        "{{\"adapter\":\"{}\",\"scale_factor\":{},\"window_physical\":[{},{}],\"timeline_tex\":[{},{}],\"instances\":{{\"base_rects\":{},\"waves\":{},\"over_rects\":{}}},\"frames\":{},\"frame_interval_ms\":{},\"our_cpu_ms\":{},\"slint_render_cpu_ms\":{}{}}}",
+        "{{\"adapter\":\"{}\",\"scale_factor\":{},\"window_physical\":[{},{}],\"timeline_tex\":[{},{}],\"instances\":{{\"base_rects\":{},\"waves\":{},\"over_rects\":{}}},\"frames\":{},\"frame_interval_ms\":{},\"our_cpu_ms\":{},\"slint_render_cpu_ms\":{},\"gpu_throttled_frames\":{},\"gpu_throttle_ms\":{:.1}{}}}",
         f.adapter,
         w.scale_factor(),
         sz.width,
@@ -2786,6 +2865,8 @@ fn stats_json(f: &Frame, app: &AppWindow) -> String {
         f.interval.summary(),
         f.ours.summary(),
         f.slint.summary(),
+        f.renderer.as_ref().map(|r| r.throttled.0).unwrap_or(0),
+        f.renderer.as_ref().map(|r| r.throttled.1.as_secs_f64() * 1e3).unwrap_or(0.0),
         if f.bench { phases_json(f) } else { String::new() }
     )
 }
@@ -2823,6 +2904,7 @@ mod tests {
         assert_eq!(k.chords_for("view.toggle_assistant").len(), 1);
         assert_eq!(k.chords_for("track.arm").len(), 1);
         assert_eq!(k.chords_for("track.monitor").len(), 1);
+        assert_eq!(k.chords_for("track.rename").len(), 1);
         assert_eq!(k.chords_for("transport.record").len(), 1);
         assert_eq!(k.chords_for("app.settings").len(), 1);
     }

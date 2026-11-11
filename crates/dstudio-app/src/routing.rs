@@ -103,18 +103,6 @@ impl Controller {
         None
     }
 
-    /// Add an instrument track (Add track › Instrument track).
-    pub fn add_instrument_track(&mut self) -> Option<TrackId> {
-        let p = self.project();
-        let id = TrackId(p.next_id);
-        let track = Track::new(id, TrackKind::Instrument, "Instrument", next_track_color(p));
-        if self.execute(Command::AddTrack { index: None, track }) {
-            self.select_track(id);
-            return Some(id);
-        }
-        None
-    }
-
     fn set_sends(&mut self, label: &str, track: TrackId, sends: Vec<TrackSend>) -> bool {
         self.doc.seal_coalescing();
         let ok = self.execute(Command::Batch { label: label.into(), commands: vec![Command::SetSends { track, sends }] });
