@@ -188,7 +188,7 @@ pub enum JobResult {
     /// Assistant provider reply (raw `AssistantTurn` JSON) for a request started at `started`.
     Assistant { started: Instant, mode: dstudio_core::assistant::Mode, result: Result<String, String> },
     /// Takes of one finished recording pass, loaded into the engine.
-    Recorded { doc_epoch: u64, takes: Vec<(dstudio_engine::RecordedTake, Result<(AssetInfo, Pyramid), String>)> },
+    Recorded { doc_epoch: u64, takes: Vec<(dstudio_engine::RecordedTake, Result<(AssetInfo, Pyramid), String>)>, midi: Vec<dstudio_core::Command> },
     /// Settings › Audio "Test" tone loaded into the engine.
     TestTone(Result<AssetInfo, String>),
     /// Plugin catalogue scan finished (src/devices.rs).
@@ -1072,7 +1072,7 @@ impl Controller {
                     Err(e) => self.set_status(format!("Import failed: {e}"), 6),
                 },
                 JobResult::Assistant { started, mode, result } => self.finish_assistant(started, mode, result),
-                JobResult::Recorded { doc_epoch, takes } => self.finish_recorded(doc_epoch, takes),
+                JobResult::Recorded { doc_epoch, takes, midi } => self.finish_recorded(doc_epoch, takes, midi),
                 JobResult::TestTone(r) => self.finish_test_tone(r),
                 JobResult::PluginScan(r) => self.finish_plugin_scan(r),
                 JobResult::Onsets { engine_asset, result, tempo } => self.finish_onsets(engine_asset, result, tempo),

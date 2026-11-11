@@ -2767,6 +2767,22 @@ fn midi_recording_steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("{notes} notes, start {} len {}", v.start_beats, v.len_beats))
         })),
+        DoC("midi rec: try to disarm the Instrument track while recording", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            if !offline(&c) || !c.rec.recording {
+                return;
+            }
+            if let Some(t) = c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument).map(|t| t.id) {
+                c.toggle_arm(t);
+            }
+        })),
+        Check("midi rec: the Instrument track stays armed until the pass stops", Box::new(|c, _| {
+            if !offline(c) || !c.rec.recording {
+                return Ok(());
+            }
+            let t = c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument).ok_or("no instrument track")?;
+            t.arm.then_some(()).ok_or("disarmed during the pass".into())
+        })),
         Do("midi rec: press R (stop)", Box::new(|a| key(a, "r", false, false))),
         Check("midi rec: one \"Record\" undo step added a 1-bar MIDI clip at bar 2 with C4 and E4", Box::new(move |c, _| {
             if !offline(c) {

@@ -51,8 +51,6 @@ pub struct RecState {
     pub last_pass: Option<String>,
     /// The engine is recording audio takes in this pass (MIDI-only passes don't).
     pub audio: bool,
-    /// MIDI clips of the pass, waiting for its audio takes to load (one "Record" batch).
-    pub pending_midi: Vec<Command>,
 }
 
 /// Rows of the "In" selector: "None", then "Input k (Mono)" per device input
@@ -149,10 +147,15 @@ impl Controller {
 
     /// R button: `SetTrackArm` (one undo step). An armed instrument track also plays
     /// the MIDI keyboard and records it.
+    /// While a MIDI pass records, instrument tracks keep their arm state: the pass
+    /// records on the tracks armed when it started, which are the ones hearing the keyboard.
     pub fn toggle_arm(&mut self, id: TrackId) {
-        if let Some(arm) = self.project().track(id).map(|t| !t.arm) {
-            self.execute(Command::SetTrackArm { track: id, arm });
+        let Some((kind, arm)) = self.project().track(id).map(|t| (t.kind, t.arm)) else { return };
+        if self.midi_in.pass.is_some() && kind == TrackKind::Instrument {
+            self.set_status("Stop recording to arm or disarm instrument tracks", 4);
+            return;
         }
+        self.execute(Command::SetTrackArm { track: id, arm: !arm });
     }
 
     /// I button: `SetTrackMonitor`. On an instrument track: plays the MIDI keyboard
@@ -286,14 +289,16 @@ impl Controller {
         self.ui_dirty = true;
         let midi = self.midi_pass_finish();
         if !std::mem::take(&mut self.rec.audio) {
-            self.finish_midi_only(midi);
+            self.finish_midi_only(midi, &[]);
             return;
         }
         let takes = match self.engine.stop_recording() {
             Ok(t) => t,
             Err(e) => {
                 self.set_status(format!("Stopping the recording failed: {e}"), 6);
-                self.finish_midi_only(midi);
+                if !midi.is_empty() {
+                    self.finish_midi_only(midi, &[format!("audio takes lost ({e})")]);
+                }
                 return;
             }
         };
@@ -301,11 +306,10 @@ impl Controller {
             if midi.is_empty() {
                 self.set_status("Recording stopped: no takes", 3);
             } else {
-                self.finish_midi_only(midi);
+                self.finish_midi_only(midi, &[]);
             }
             return;
         }
-        self.rec.pending_midi = midi;
         // Decode + analyse on a worker thread, as imports do; the "Record" batch is
         // executed when the engine assets exist (JobResult::Recorded).
         let engine = self.engine.clone();
@@ -316,29 +320,33 @@ impl Controller {
             .name("recorded-takes".into())
             .spawn(move || {
                 let takes = takes.into_iter().map(|t| { let r = load_and_analyse(&engine, &t.path); (t, r) }).collect();
-                let _ = tx.send(JobResult::Recorded { doc_epoch: epoch, takes });
+                let _ = tx.send(JobResult::Recorded { doc_epoch: epoch, takes, midi });
             })
             .expect("spawn take loader");
         self.set_status("Loading recording…", 30);
     }
 
-    /// A pass without audio takes: its MIDI clips are the "Record" step.
-    fn finish_midi_only(&mut self, midi: Vec<Command>) {
+    /// A pass without usable audio takes: its MIDI clips are the "Record" step.
+    /// `skipped` names audio takes that were lost, so the status still reports them.
+    fn finish_midi_only(&mut self, midi: Vec<Command>, skipped: &[String]) {
+        let midi = dstudio_core::midi_record::still_valid(self.project(), midi);
+        let skipped = if skipped.is_empty() { String::new() } else { format!("; skipped: {}", skipped.join("; ")) };
         if midi.is_empty() {
-            self.set_status("Recording stopped: nothing was played", 3);
+            let secs = if skipped.is_empty() { 3 } else { 6 };
+            self.set_status(format!("Recording stopped: nothing was played{skipped}"), secs);
             return;
         }
         let n = midi.len();
         if self.execute(Command::Batch { label: "Record".into(), commands: midi }) {
             self.rec.last_pass = Some("Record".into());
-            self.set_status(format!("Recorded {n} MIDI clip{}", if n == 1 { "" } else { "s" }), 3);
+            let secs = if skipped.is_empty() { 3 } else { 6 };
+            self.set_status(format!("Recorded {n} MIDI clip{}{skipped}", if n == 1 { "" } else { "s" }), secs);
         }
     }
 
     /// Worker finished loading the takes of one pass: ONE undoable `Batch` "Record"
     /// (audio takes, then the pass's MIDI clips).
-    pub(crate) fn finish_recorded(&mut self, doc_epoch: u64, takes: Vec<(RecordedTake, Result<(AssetInfo, Pyramid), String>)>) {
-        let midi = std::mem::take(&mut self.rec.pending_midi);
+    pub(crate) fn finish_recorded(&mut self, doc_epoch: u64, takes: Vec<(RecordedTake, Result<(AssetInfo, Pyramid), String>)>, midi: Vec<Command>) {
         if doc_epoch != self.doc_epoch {
             for (_, r) in takes {
                 if let Ok((info, _)) = r {
@@ -401,11 +409,14 @@ impl Controller {
             if midi.is_empty() {
                 self.set_status(format!("Recording produced no usable takes{}", if errors.is_empty() { String::new() } else { format!(": {}", errors.join("; ")) }), 6);
             } else {
-                self.finish_midi_only(midi);
+                self.finish_midi_only(midi, &errors);
             }
             return;
         }
         // MIDI clips last: they take their ids when the batch runs, after the takes' ids.
+        // A MIDI clip whose track was deleted while the takes loaded is dropped, so it
+        // can't fail the batch and lose the audio takes with it.
+        let midi = dstudio_core::midi_record::still_valid(self.project(), midi);
         let midi_clips = midi.len();
         cmds.extend(midi);
         for (asset_id, ea, pyr) in &loaded {
@@ -496,7 +507,7 @@ impl Controller {
             .map(|n| (dstudio_core::Note { id: 0, pitch: n.pitch, start: ticks(n.start) - from, length: (ticks(n.end) - ticks(n.start)).max(1), velocity: n.velocity }, false))
             .collect();
         let mini = crate::controller::mini_notes(&rel, 0, len);
-        for t in self.armed_midi() {
+        for &t in &pass.tracks {
             let Some(ti) = p.track_index(t) else { continue };
             self.rec.live_vis.push(ClipVis {
                 track_index: ti,

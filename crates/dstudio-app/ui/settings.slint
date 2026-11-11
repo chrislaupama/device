@@ -158,25 +158,32 @@ component GeneralPage inherits Rectangle {
 component MidiPage inherits Rectangle {
     property <length> list-y: 172px;
     property <length> row-h: 24px;
+    // The list scrolls when there are more inputs than fit above the note below it.
+    property <length> list-h: min(max(1, Studio.midi-inputs.length) * root.row-h, max(root.row-h, root.height - root.list-y - 48px));
     FieldLabel { x: 20.5px; y: 33px; height: 24px; text: "MIDI"; font-size: 17.25px; font-weight: 700; }
     RowLabel { x: 20.5px; y: 71.5px; text: "Default instrument"; heading: true; }
     Dropdown { x: 20.5px; y: 90px; width: root.width - 20.5px - 20.5px; text: "Synth"; field: -1; }
     Rectangle { x: 20.5px; y: 136px; width: root.width - 41px; height: 0.75px; background: #2c2d30; }
     FieldLabel { x: 20.5px; y: 150px; text: "MIDI inputs"; }
-    for r[i] in Studio.midi-inputs: Rectangle {
-        x: 20.5px; y: root.list-y + i * root.row-h; width: root.width - 41px; height: root.row-h;
-        // Activity light.
-        Rectangle {
-            x: 1px; y: (parent.height - self.height) / 2; width: 6px; height: 6px; border-radius: 3px;
-            background: r.lit ? #3ddc84 : #3a3b3f;
-            accessible-role: none;
+    Flickable {
+        x: 20.5px; y: root.list-y; width: root.width - 41px; height: root.list-h;
+        content-height: Studio.midi-inputs.length * root.row-h;
+        interactive: self.content-height > self.height;
+        for r[i] in Studio.midi-inputs: Rectangle {
+            x: 0; y: i * root.row-h; width: parent.width; height: root.row-h;
+            // Activity light.
+            Rectangle {
+                x: 1px; y: (parent.height - self.height) / 2; width: 6px; height: 6px; border-radius: 3px;
+                background: r.lit ? #3ddc84 : #3a3b3f;
+                accessible-role: none;
+            }
+            Text {
+                x: 15px; width: parent.width - 15px - 30px; text: r.name; color: r.on ? #e5e5e8 : #8b8c90;
+                font-size: 10.25px; vertical-alignment: center; overflow: elide;
+            }
+            Switch { x: parent.width - self.width - 2px; y: (parent.height - self.height) / 2; on: r.on; label: r.name; toggled => { Studio.settings-midi-toggle(i); } }
+            if i > 0: Rectangle { x: 15px; y: 0; width: parent.width - 15px; height: 0.5px; background: #26272a; }
         }
-        Text {
-            x: 15px; width: parent.width - 15px - 30px; text: r.name; color: r.on ? #e5e5e8 : #8b8c90;
-            font-size: 10.25px; vertical-alignment: center; overflow: elide;
-        }
-        Switch { x: parent.width - self.width - 2px; y: (parent.height - self.height) / 2; on: r.on; label: r.name; toggled => { Studio.settings-midi-toggle(i); } }
-        if i > 0: Rectangle { x: 15px; y: 0; width: parent.width - 15px; height: 0.5px; background: #26272a; }
     }
     if Studio.midi-inputs.length == 0: Text {
         x: 20.5px; y: root.list-y; width: root.width - 41px; height: root.row-h;
@@ -184,7 +191,7 @@ component MidiPage inherits Rectangle {
         font-size: 10px; vertical-alignment: center; overflow: elide;
     }
     Text {
-        x: 20.5px; y: root.list-y + max(1, Studio.midi-inputs.length) * root.row-h + 10px; width: root.width - 41px;
+        x: 20.5px; y: root.list-y + root.list-h + 10px; width: root.width - 41px;
         text: "Inputs play the selected instrument track, or every armed (R) and monitoring (I) one."; color: Tokens.text-tertiary;
         font-size: 9.5px; wrap: word-wrap;
     }

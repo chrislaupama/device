@@ -45,12 +45,15 @@ pub struct FrameNote {
 /// pitch that is already held ends the held note first. Notes still held at
 /// the end end at the stop position. In a looped pass a note held across the
 /// wrap (its note-off folded to before its note-on) ends at the loop end.
+/// A note whose on and off arrived in the same audio callback (same frame)
+/// is kept as the shortest note, one frame long.
 pub fn pair_notes(events: &[CapturedEvent], pass: &Pass) -> Vec<FrameNote> {
     let mut held: [Option<(i64, u8)>; 128] = [None; 128];
     let mut out = Vec::new();
     let close = |out: &mut Vec<FrameNote>, pitch: u8, (start, velocity): (i64, u8), end: i64| {
         let end = match pass.wrapped_loop {
-            Some((_, loop_end)) if end <= start => loop_end,
+            Some((_, loop_end)) if end < start => loop_end,
+            _ if end == start => start + 1,
             _ => end,
         };
         if end > start {
@@ -118,16 +121,30 @@ pub fn recorded_clip(project: &Project, rate: f64, name: &str, notes: &[FrameNot
     Some(clip)
 }
 
-/// One `AddMidiClip` per armed instrument track (in track order), each holding
-/// every note of the pass. Empty when nothing was played or no instrument
-/// track is armed. Clip ids are left at 0 so the batch assigns them.
-pub fn record_commands(project: &Project, rate: f64, events: &[CapturedEvent], pass: &Pass) -> Vec<Command> {
+/// One `AddMidiClip` per recording track (in track order), each holding every
+/// note of the pass. `tracks` are the instrument tracks that were armed when the
+/// pass started (the ones that received its notes); tracks deleted or no longer
+/// instrument tracks since are skipped. Empty when nothing was played. Clip ids
+/// are left at 0 so the batch assigns them.
+pub fn record_commands(project: &Project, rate: f64, tracks: &[TrackId], events: &[CapturedEvent], pass: &Pass) -> Vec<Command> {
     let notes = pair_notes(events, pass);
     project
         .tracks
         .iter()
-        .filter(|t| t.kind == TrackKind::Instrument && t.arm)
+        .filter(|t| t.kind == TrackKind::Instrument && tracks.contains(&t.id))
         .filter_map(|t| recorded_clip(project, rate, &t.name, &notes, pass).map(|clip| Command::AddMidiClip { track: t.id, clip }))
+        .collect()
+}
+
+/// The `AddMidiClip` commands whose track still exists as an instrument track
+/// (a track can be deleted while a pass's audio takes load).
+pub fn still_valid(project: &Project, commands: Vec<Command>) -> Vec<Command> {
+    commands
+        .into_iter()
+        .filter(|c| match c {
+            Command::AddMidiClip { track, .. } => project.track(*track).is_some_and(|t| t.kind == TrackKind::Instrument),
+            _ => true,
+        })
         .collect()
 }
 
@@ -174,6 +191,15 @@ mod tests {
     }
 
     #[test]
+    fn a_note_on_and_off_in_one_callback_is_the_shortest_note() {
+        // Same frame: kept, one frame long, looped pass or not (not stretched to the loop end).
+        let ev = [on(BAR + 10, 60, 100), off(BAR + 10, 60)];
+        assert_eq!(pair_notes(&ev, &pass(0, 2 * BAR)), vec![FrameNote { start: BAR + 10, end: BAR + 11, pitch: 60, velocity: 100 }]);
+        let looped = Pass { start: BAR, stop: BAR + BEAT, wrapped_loop: Some((BAR, 3 * BAR)) };
+        assert_eq!(pair_notes(&ev, &looped)[0].end, BAR + 11);
+    }
+
+    #[test]
     fn clip_spans_from_start_bar_to_bar_after_last_note() {
         let p = Project::default();
         // Record from beat 2 of bar 1 to beat 2 of bar 2; one note in bar 2 held past stop.
@@ -213,9 +239,17 @@ mod tests {
         doc.execute(Command::SetTrackArm { track: audio, arm: true }, Origin::User).unwrap();
         assert_eq!(armed_instrument_tracks(doc.project()), vec![inst]);
         let pa = pass(0, 2 * BAR);
-        let cmds = record_commands(doc.project(), RATE, &[on(BEAT, 60, 100), off(2 * BEAT, 60)], &pa);
+        let armed = armed_instrument_tracks(doc.project());
+        let cmds = record_commands(doc.project(), RATE, &armed, &[on(BEAT, 60, 100), off(2 * BEAT, 60)], &pa);
         assert_eq!(cmds.len(), 1);
-        assert!(record_commands(doc.project(), RATE, &[], &pa).is_empty());
+        assert!(record_commands(doc.project(), RATE, &armed, &[], &pa).is_empty());
+        // The tracks armed at the start record, even if disarmed since; audio tracks never do.
+        assert_eq!(record_commands(doc.project(), RATE, &[inst, audio], &[on(BEAT, 60, 100)], &pa).len(), 1);
+        assert!(record_commands(doc.project(), RATE, &[audio], &[on(BEAT, 60, 100)], &pa).is_empty());
+        // A track deleted before the commands run is dropped from them.
+        assert_eq!(still_valid(doc.project(), cmds.clone()).len(), 1);
+        let gone = still_valid(&Project { tracks: vec![], ..doc.project().clone() }, cmds.clone());
+        assert!(gone.is_empty());
         let before = doc.project().track(inst).unwrap().midi_clips.len();
         doc.execute(Command::Batch { label: "Record".into(), commands: cmds }, Origin::User).unwrap();
         let t = doc.project().track(inst).unwrap();

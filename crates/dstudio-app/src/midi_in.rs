@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 const RESCAN: Duration = Duration::from_secs(2);
 /// Rescan rate while Settings › MIDI is showing (activity lights).
 const RESCAN_PAGE: Duration = Duration::from_millis(100);
+/// How long to wait before asking the engine again for ports that failed to open.
+const RETRY: Duration = Duration::from_secs(5);
 /// How long an activity light stays lit after a message.
 const LIT: Duration = Duration::from_millis(180);
 /// Settings page index of "MIDI".
@@ -39,13 +41,17 @@ pub struct MidiPass {
     pub last_pos: i64,
     pub wrapped: bool,
     pub events: Vec<CapturedEvent>,
+    /// The instrument tracks armed when the pass started: the ones it records on.
+    pub tracks: Vec<TrackId>,
 }
 
 #[derive(Debug, Default)]
 pub struct MidiInState {
     pub ports: Vec<PortRow>,
-    /// Port ids the engine was last asked to open (None = never asked).
+    /// Port ids the engine last opened (None = never, or the last open failed).
     opened: Option<Vec<String>>,
+    /// After a failed open: no new attempt before this (unless the wanted set changes).
+    retry_at: Option<(Vec<String>, Instant)>,
     last_scan: Option<Instant>,
     /// Focus last sent to the engine (None = never sent).
     focus: Option<Option<u64>>,
@@ -113,18 +119,25 @@ impl Controller {
             }
         }
         let want = wanted_ports(&self.midi_in.ports, &self.settings.prefs.midi.disabled_inputs);
-        if self.midi_in.opened.as_ref() != Some(&want) {
+        if should_open(self.midi_in.opened.as_deref(), self.midi_in.retry_at.as_ref(), &want, now) {
             match self.engine.open_midi_inputs(&want) {
-                Ok(()) => self.midi_in.last_error = None,
+                Ok(()) => {
+                    self.midi_in.last_error = None;
+                    self.midi_in.retry_at = None;
+                    self.midi_in.opened = Some(want);
+                }
                 Err(e) => {
+                    // Not remembered as opened: tried again after RETRY (a keyboard that was
+                    // busy or still starting up comes back on its own).
                     let msg = format!("MIDI input: {e}");
                     if self.midi_in.last_error.as_ref() != Some(&msg) {
                         self.set_status(msg.clone(), 6);
                         self.midi_in.last_error = Some(msg);
                     }
+                    self.midi_in.opened = None;
+                    self.midi_in.retry_at = Some((want, now + RETRY));
                 }
             }
-            self.midi_in.opened = Some(want);
         }
     }
 
@@ -161,7 +174,8 @@ impl Controller {
     pub(crate) fn midi_pass_start(&mut self) {
         self.engine.set_midi_capture(true);
         let start = self.audible_frames();
-        self.midi_in.pass = Some(MidiPass { start, last_pos: start, wrapped: false, events: Vec::new() });
+        let tracks = self.armed_midi();
+        self.midi_in.pass = Some(MidiPass { start, last_pos: start, wrapped: false, events: Vec::new(), tracks });
     }
 
     /// Drain the capture ring and notice loop wraps (the playhead jumping back).
@@ -199,13 +213,20 @@ impl Controller {
         let Some(pass) = self.midi_in.pass.take() else { return Vec::new() };
         let stop = self.audible_frames();
         let bounds = self.midi_pass_bounds(&pass, stop);
-        midi_record::record_commands(self.project(), self.rate, &pass.events, &bounds)
+        midi_record::record_commands(self.project(), self.rate, &pass.tracks, &pass.events, &bounds)
     }
 
     pub(crate) fn push_midi_settings(&self) {
         let rows: Vec<MidiInputRow> = self.midi_rows().into_iter().map(|(name, on, lit)| MidiInputRow { name: name.into(), on, lit }).collect();
         crate::controller::sync_model(&self.midi_inputs_model, rows);
     }
+}
+
+/// Whether to ask the engine to open `want`: it differs from what is open, and it
+/// is not a set that just failed to open (those are retried after RETRY).
+fn should_open(opened: Option<&[String]>, retry_at: Option<&(Vec<String>, Instant)>, want: &[String], now: Instant) -> bool {
+    let waiting = retry_at.is_some_and(|(w, at)| w.as_slice() == want && now < *at);
+    opened != Some(want) && !waiting
 }
 
 /// Append captured events; a frame earlier than the previous one in a looping pass
@@ -228,6 +249,17 @@ mod tests {
         assert_eq!(wanted_ports(&ports, &[]), ["fake:keys", "fake:pads"]);
         assert_eq!(wanted_ports(&ports, &["fake:keys".into()]), ["fake:pads"]);
         assert!(wanted_ports(&[], &[]).is_empty());
+    }
+    #[test]
+    fn a_failed_open_is_retried_later() {
+        let now = Instant::now();
+        let want = vec!["keys".to_string()];
+        assert!(should_open(None, None, &want, now), "never opened");
+        assert!(!should_open(Some(&want), None, &want, now), "already open");
+        let failed = (want.clone(), now + RETRY);
+        assert!(!should_open(None, Some(&failed), &want, now), "waits after a failure");
+        assert!(should_open(None, Some(&failed), &want, now + RETRY), "then tries again");
+        assert!(should_open(None, Some(&failed), &["pads".to_string()], now), "a different set is tried at once");
     }
     #[test]
     fn absorb_detects_wrap() {
