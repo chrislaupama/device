@@ -28,7 +28,7 @@ use std::f32::consts::PI;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
-/// Category list (left column), in reference order.
+/// Category list (left column), in order.
 pub const PAGES: [&str; 9] = ["Oscillators", "Sub & Noise", "Filter", "Envelopes", "LFOs", "Modulation", "Macros", "Voice", "Effects"];
 
 pub mod page {
@@ -62,8 +62,8 @@ pub mod disp {
     pub const COUNT: usize = 14;
 }
 
-/// Picture sizes in points (path viewbox = element size). The card is the
-/// reference capture scaled by 0.844.
+/// Picture sizes in points (path viewbox = element size). The card is drawn
+/// at a scale of 0.844.
 pub const DISP_W: f32 = 245.0;
 pub const WIDE_W: f32 = 295.5;
 pub const DISP_H: f32 = 128.0;
@@ -291,7 +291,7 @@ fn mod_offset(v: f32, i: usize, t: usize, x: f32) -> f32 {
     }
 }
 
-/// The rings of parameter i as the reference app draws them: one per source (its routes
+/// The rings of parameter i: one per source (its routes
 /// to i summed), in source order, then its macro; at most three.
 fn mod_rings(v: &[f32], i: usize, c: &Ctx) -> Vec<Ring> {
     let base = pdef(i).to_normalized(v[i]);
@@ -326,7 +326,7 @@ fn mod_rings(v: &[f32], i: usize, c: &Ctx) -> Vec<Ring> {
 }
 
 /// The span the routes to parameter i sweep together and, while the engine
-/// reports modulation, where they hold it now (the reference app's band and dot on the
+/// reports modulation, where they hold it now (the band and dot on the
 /// dial's own ring).
 fn mod_band(v: &[f32], i: usize, c: &Ctx) -> Option<(f32, f32, Option<f32>)> {
     let base = pdef(i).to_normalized(v[i]);
@@ -471,10 +471,10 @@ fn sin_t(t: f32) -> f32 {
     (2.0 * PI * t).sin()
 }
 
-/// One oscillator sample as the reference app's Synth pictures draw it (phase in turns; pm in turns):
+/// One oscillator sample as the Synth pictures draw it (phase in turns; pm in turns):
 /// Sine folds into a sine of itself, Triangle leans into a saw, Saw thickens with two offset
 /// copies, Square narrows its pulse (DC removed), Sync replays the saw 2^(3·shape) times
-/// a cycle and FM bends the phase by a sine (reference/research-findings.md, row 38).
+/// a cycle and FM bends the phase by a sine.
 pub fn osc_sample(wave: usize, shape: f32, ph: f32, pm: f32) -> f32 {
     let t = (ph + pm).rem_euclid(1.0);
     let sh = shape.clamp(0.0, 1.0);
@@ -523,7 +523,7 @@ fn osc_display(v: &[f32], k: usize) -> SynthDisplay {
     };
     let ratio = 2f32.powf((note(2) - note(1)) / 12.0);
     let (w2, s2) = (v[ix("osc2_wave")].round() as usize, v[ix("osc2_shape")]);
-    // The reference app scales the trace by the level (at least 4 %) inside a 10 px inset (card scale).
+    // The trace is scaled by the level (at least 4 %) inside a 10 px inset (card scale).
     let amp = (DISP_H / 2.0 - 10.0 * 0.844) * level.clamp(0.04, 1.0) / (DISP_H / 2.0 * 0.8);
     let mut d = display(
         &wave_points(DISP_W, DISP_H, 2.0, amp, |ph| {
@@ -1362,7 +1362,7 @@ const CAPTION: i32 = 1;
 impl Page {
     fn knob_at(&mut self, c: &Ctx, i: usize, x: f32, y: f32, label: &str, accent: Color) {
         let rings = mod_rings(c.v, i, c);
-        // Per ring (the reference app's ringed "xs" dial): the groove, the reach at 30 %, and a fill from
+        // Per ring (the ringed "xs" dial): the groove, the reach at 30 %, and a fill from
         // the dial's origin to where the source holds it now. Rings sit 1.7 strokes apart.
         let origin: f32 = if pdef(i).is_bipolar() { 0.5 } else { 0.0 };
         let arcs: Vec<SynthArc> = rings

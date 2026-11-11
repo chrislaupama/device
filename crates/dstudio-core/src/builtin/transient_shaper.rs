@@ -1,6 +1,5 @@
-//! Transient Shaper (reference: the reference app's built-in "Transient Shaper"). Parameter ids,
-//! ranges, defaults, tapers and the panel arrangement are taken from the
-//! reference as facts; the factory preset names and values are our own.
+//! Transient Shaper: parameter ids, ranges, defaults, tapers, the panel
+//! arrangement and the factory presets.
 
 use super::*;
 use crate::device::PluginKind;

@@ -20,7 +20,7 @@
 //!   runs the processor registered under the same id (engine/src/devices);
 //! * UI: the generic device panel (crates/dstudio-app/src/device_panel.rs).
 //!
-//! Normalisation follows the reference: log parameters map 0..1 to
+//! Normalisation: log parameters map 0..1 to
 //! `min * (max / min)^n`, linear ones to `min + (max - min) * n^(1 / skew)`;
 //! stepped linear parameters snap in the plain domain. Discrete parameters
 //! store the choice index as their plain value (`min` = 0, `max` = choices - 1).
@@ -111,7 +111,7 @@ pub enum Format {
     Time,
     /// Hertz: "4.0 kHz" from 999.5 Hz, "440 Hz" from 10 Hz, one decimal from 1 Hz, else two.
     Hz,
-    /// The reference's generic Hz text: two decimals below 1 Hz ("0.50 Hz"),
+    /// The generic Hz text: two decimals below 1 Hz ("0.50 Hz"),
     /// one below 10 Hz ("5.0 Hz"), whole numbers below 999.5 Hz ("440 Hz"),
     /// then kilohertz with one decimal ("2.2 kHz"). LFO rates, carriers.
     Freq,
@@ -215,7 +215,7 @@ pub struct ParamDef {
     /// One-sentence description (tooltips, the assistant).
     pub help: &'static str,
     /// Knobs show and drag the reversed 0..1 position (note-length dials:
-    /// longer notes sit higher, as in the reference).
+    /// longer notes sit higher).
     pub reversed: bool,
     /// Latch texts (off, on) of a two-state parameter in the picker row,
     /// e.g. ("Dry Off", "Dry On"); None = the choice names.
@@ -329,8 +329,8 @@ impl ParamDef {
         self.min < 0.0 && self.max > 0.0 && (self.min + self.max).abs() <= 1e-6 * (self.max - self.min)
     }
 
-    /// Nearest valid plain value: clamped, stepped (round half up, as the
-    /// reference), discrete values rounded.
+    /// Nearest valid plain value: clamped, stepped (round half up),
+    /// discrete values rounded.
     pub fn snap(&self, v: f32) -> f32 {
         let v = if v.is_finite() { v.clamp(self.min, self.max) } else { self.default };
         if self.step <= 0.0 || self.taper == Taper::Log {
@@ -460,7 +460,7 @@ impl ParamDef {
 const MINUS: char = '\u{2212}';
 
 /// Display text for a value (shared by the panel, automation labels and presets).
-/// `range` (max - min) picks the decimals of `Format::Time` as the reference does.
+/// `range` (max - min) picks the decimals of `Format::Time`.
 pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range: f32) -> String {
     match format {
         Format::Db => {
@@ -610,7 +610,7 @@ pub fn format_value(format: Format, v: f32, unit: &str, choices: &[&str], range:
 
 const NOTE_NAMES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
-/// MIDI note name with middle C (60) = "C3", the reference's octave numbering.
+/// MIDI note name with middle C (60) = "C3".
 pub fn note_name(n: i32) -> String {
     format!("{}{}", NOTE_NAMES[n.rem_euclid(12) as usize], n.div_euclid(12) - 2)
 }
@@ -678,11 +678,11 @@ fn parse_balance(t: &str) -> Option<f32> {
 /// A control on the generic device panel.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Control {
-    /// Rotary knob: value above, label below (reference fx dial row).
+    /// Rotary knob: value above, label below (fx dial row).
     Knob(&'static str),
-    /// Vertical slider (reference fx slider column, 62 pt wide).
+    /// Vertical slider (fx slider column, 62 pt wide).
     Slider(&'static str),
-    /// Option pill with a menu (reference picker row): label + chosen value + chevron.
+    /// Option pill with a menu (picker row): label + chosen value + chevron.
     Menu(&'static str),
     /// Value pill dragged like a knob (picker row), e.g. sidechain gain.
     Pill(&'static str),
@@ -705,7 +705,7 @@ pub enum Control {
     /// One knob cell showing the first of these parameters that is shown
     /// (`Layout::shown_when`), e.g. Rate in Hz or Rate Sync as a note value.
     Swap(&'static [&'static str]),
-    /// Latch pill (reference fx latch) labelled with the parameter's label,
+    /// Latch pill (fx latch) labelled with the parameter's label,
     /// filled while the two-state parameter is on; click toggles.
     Latch(&'static str),
     /// Menu pill over two discrete parameters: the choices of \`param\`, then
@@ -739,7 +739,7 @@ impl Control {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum View {
     /// Scrolling level / gain-reduction strip with a draggable threshold
-    /// line bound to `threshold` (reference dynamics strip), plot 0..-36 dB.
+    /// line bound to `threshold` (dynamics strip), plot 0..-36 dB.
     /// Shorthand for `View::Strip(Strip::new(threshold))`.
     DynamicsStrip { threshold: &'static str },
     /// Dynamics strip with its own plot range and an optional second line.
@@ -750,12 +750,12 @@ pub enum View {
     /// Parametric EQ body (band tabs, response field with band nodes, type
     /// picker and value cells), described by an [`eq::EqView`].
     Eq(&'static eq::EqView),
-    /// Plot well with traces computed by the panel code (reference motion,
+    /// Plot well with traces computed by the panel code (motion,
     /// response and sweep fields) that edits two parameters by dragging.
     Field(Field),
 }
 
-/// A plotted field in the view row (reference `flow-fx-motion-field` and
+/// A plotted field in the view row (motion and
 /// response fields): caption strip, tick labels, up to three traces, a fill,
 /// an optional live LFO overlay, and an XY drag.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -768,7 +768,7 @@ pub struct Field {
     pub x: &'static [&'static str],
     /// Vertical drag: the first of these parameters that is shown.
     pub y: &'static [&'static str],
-    /// Width of the field in reference pt; the card is at least this plus
+    /// Width of the field in pt; the card is at least this plus
     /// the slider column and padding wide.
     pub width: f32,
 }
@@ -902,7 +902,7 @@ pub fn behavior(def: &DeviceDef) -> Option<&'static Behavior> {
 }
 
 /// Panel layout, top to bottom: picker row, view row (view + slider column),
-/// dial row (clusters of knobs). This is the reference fx card template;
+/// dial row (clusters of knobs). This is the fx card template;
 /// devices with a different body use `View::Custom`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Layout {
@@ -932,7 +932,7 @@ pub struct Layout {
     pub spread_dials: bool,
 }
 
-/// Reference dial row metrics (pt).
+/// Dial row metrics (pt).
 pub const KNOB_CELL: f32 = 62.0;
 pub const KNOB_GAP: f32 = 10.0;
 pub const CLUSTER_GAP: f32 = 21.0;
@@ -943,7 +943,7 @@ impl Layout {
     pub const EMPTY: Layout = Layout { picker: &[], view: None, sliders: &[], clusters: &[], faces: &[], min_height: 0.0, shown_when: &[], inert_when: &[], fixed_width: 0.0, views: &[], spread_dials: false };
 
     /// Card width from the dial clusters: cells * 62 + inner gaps * 10 +
-    /// cluster gaps * 21, plus 16 of padding (reference card sizing rule).
+    /// cluster gaps * 21, plus 16 of padding (the card sizing rule).
     /// With mode-dependent controls (`shown_when`) the card takes the width
     /// of its widest state, so it never changes size when the mode does.
     pub fn width(&self) -> f32 {
@@ -1100,7 +1100,7 @@ pub fn linked_writes(def: &DeviceDef, device: &Device, param: &str, value: f32) 
 
 // ---------------------------------------------------------------- tempo sync
 
-/// Note values of a synced LFO (reference value table LFO_DIVISION), slowest
+/// Note values of a synced LFO, slowest
 /// first; the plain value of a Rate Sync parameter is the index.
 pub const DIVISIONS: &[&str] = &["8/1", "4/1", "2/1", "1/1", "1/2.", "1/2", "1/2T", "1/4.", "1/4", "1/4T", "1/8.", "1/8", "1/8T", "1/16.", "1/16", "1/16T", "1/32", "1/64.", "1/64", "1/64T"];
 /// Length of each of [DIVISIONS] in quarter notes.
@@ -1108,7 +1108,7 @@ pub const DIVISION_QUARTERS: &[f32] =
     &[32.0, 16.0, 8.0, 4.0, 3.0, 2.0, 4.0 / 3.0, 1.5, 1.0, 2.0 / 3.0, 0.75, 0.5, 1.0 / 3.0, 0.375, 0.25, 1.0 / 6.0, 0.125, 0.093_75, 0.0625, 1.0 / 24.0];
 /// Index of 1/4 in [DIVISIONS].
 pub const DIVISION_QUARTER: u32 = 8;
-/// Character Mod's note table (reference MOD_NOTE), slowest first.
+/// Character Mod's note table, slowest first.
 pub const MOD_NOTES: &[&str] =
     &["2/1.", "2/1", "2/1T", "1/1.", "1/1", "1/1T", "1/2.", "1/2", "1/2T", "1/4.", "1/4", "1/4T", "1/8.", "1/8", "1/8T", "1/16.", "1/16", "1/16T", "1/32.", "1/32", "1/32T"];
 /// Length of each of [MOD_NOTES] in quarter notes.
@@ -1385,7 +1385,7 @@ pub struct ModTarget {
 }
 
 /// LFO / macro targets on a track: every automatable parameter of its
-/// built-in audio effects (the reference offers audio-effect parameters, not
+/// built-in audio effects (audio-effect parameters only, not
 /// instruments' or the LFO's own).
 pub fn mod_targets(track: &Track) -> Vec<ModTarget> {
     track
@@ -1397,8 +1397,8 @@ pub fn mod_targets(track: &Track) -> Vec<ModTarget> {
         .collect()
 }
 
-/// Apply a modulation offset (normalized units, -1..1) to a plain value the
-/// way the reference LFO does: in the normalized domain, clamped.
+/// Apply a modulation offset (normalized units, -1..1) to a plain value:
+/// in the normalized domain, clamped.
 pub fn modulate(p: &ParamDef, plain: f32, offset: f32) -> f32 {
     p.from_normalized((p.to_normalized(plain) + offset).clamp(0.0, 1.0))
 }
@@ -1694,7 +1694,7 @@ mod tests {
 
     #[test]
     fn restoration_defaults_match_the_reference_normalised_values() {
-        // Normalised defaults read from the reference's live control inventory.
+        // Normalised defaults.
         let cases: &[(&str, &str, f32)] = &[
             ("deesser", "frequency", 0.602_451_6),
             ("deesser", "bandwidth", 0.230_769_2),
@@ -1739,7 +1739,7 @@ mod tests {
         assert_eq!(find("widener").unwrap().layout.width(), 388.0);
         assert_eq!(find("utility").unwrap().layout.width(), 221.5);
         // Modulation sources (LFO, chain head) are not listed effects and show no presets;
-        // Tuner and Spectrum ship none (neither does the reference).
+        // Tuner and Spectrum ship none.
         for def in all().iter().filter(|d| listed(d) && !matches!(d.id, "tuner" | "spectrum")) {
             assert!(!def.factory.is_empty(), "{} has factory presets", def.id);
         }

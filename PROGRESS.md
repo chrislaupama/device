@@ -15,11 +15,6 @@ Development › Keeping this README up to date.
 
 | Path | What | Owner role |
 |---|---|---|
-| `reference/` | Reference audit, UI inventory, design tokens, interactions, parity matrix, research | Reference research |
-| `reference/screenshots/` | Captures of the reference app at 1440×820 (git-ignored: third-party art and personal library data) | Reference research |
-| `reference/data/` | Raw accessibility dumps (geometry source of truth) | Reference research |
-| `reference/bundle-contents.md` | What is in the reference app (`dist/` web UI, resources), where each feature lives, rules for reading it (understand, never copy) | Reference research |
-| `tools/reference/` | `ui.sh` (pin/click/snap), `ax_dump.js` (AX tree), `mouse.swift` (CGEvent pointer), `sample.py`/`scan.py`/`montage.py` (pixel tools), `dist.py` (search the reference app's `dist/`) | Reference research |
 | `engine/` | C++23 real-time engine, C ABI `engine/include/dstudio_engine.h` | Audio engineering |
 | `crates/dstudio-core` | Model, commands, undo/redo, persistence, snapshots | App architecture |
 | `crates/dstudio-engine` | Safe Rust FFI wrapper + end-to-end tests | App architecture |
@@ -39,25 +34,11 @@ Windows: from an x64 MSVC developer prompt with Ninja; Linux: needs `pkg-config`
 `libpipewire-0.3-dev` (plus the X11/Wayland/xkbcommon/fontconfig/udev dev packages for the app;
 see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platforms.
 
-## Reference-inspection rules (learned the hard way)
-
-- Window pinned at (0,33), 1440×820: `tools/reference/ui.sh pin`.
-- Use AX clicks only for buttons/toggles at coordinates taken from `ax_dump.js`. Use
-  `tools/reference/bin/mouse` (build: `xcrun swiftc -O tools/reference/mouse.swift -o tools/reference/bin/mouse`)
-  for lanes, clips, hover, drag and right-click.
-- **Never send keystrokes or clicks into Settings › Shortcuts.** A stray click once re-bound
-  "Consolidate clips". It was reverted with Edit › Undo Shortcut Change.
-- Don't send Rheo prompts (consumes the user's AI credits). Don't open or save the user's projects. Work in the
-  unsaved "Untitled" project.
-
 ## Status log
 
 ### 2026-11-08: session 1
 
 **Implemented and verified**
-- Reference baseline: the reference app identity, architecture inference (native C++ host + WKWebView UI), AX-measured
-  geometry of the main window, colour tokens, all browser tabs, Rheo panel, mixer, musical typing, 9 Settings pages,
-  menus, shortcut map, piano roll, clip context menu, instrument device panel (`reference/`).
 - Engine (C++23): 34/34 ctest (Release and ASan/UBSan), zero allocations on the audio path, Core Audio playback
   (manual tool), bench: 128 tracks × 4 clips = 12.4 µs per 256-frame block (≈430× real-time, one thread, M4).
 - Core (Rust): model, validated invertible commands, undo/redo with coalescing, persistence, snapshots,
@@ -67,9 +48,9 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - UI rendering decision: Slint 1.18.1 + wgpu 30.0.1, offscreen texture via `Image::try_from` (ADR 0001):
   ≈0.15 ms CPU/frame for 8,192 clips at a locked 60 fps.
 
-- App (`crates/dstudio-app`, binary `device-studio`): reference-geometry shell + wgpu timeline with real waveforms,
+- App (`crates/dstudio-app`, binary `device-studio`): app shell + wgpu timeline with real waveforms,
   wired to core/engine (transport, mixer controls, import, clip move/trim, undo/redo, save/open).
-  `--self-test` 21/21; full-window screenshot MAE 1.96/255 vs reference (`crates/dstudio-app/FIDELITY.md`);
+  `--self-test` 21/21;
   60 fps with ≈0.06 ms of our render CPU per frame.
   Run: `cargo run --release -p dstudio-app -- --demo`.
 
@@ -77,33 +58,29 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 1. Note preview/audition, velocity lane, clip loop, synth bypass + modulation/macros/effects; SIMD unison;
    splitters, track rename/resize, native menu bar.
    Engine: input/recording, loop crossfade, tempo map for the metronome.
-2. Reference capture still missing: audio clip appearance (needs a local WAV dropped onto a track), hover/pressed
-   states, animation timings, the rest of the shortcut bindings (scroll the Shortcuts page with mouse wheel events, not keys).
-3. Engine: device selection, input/recording, worker-pool parallel track rendering, WASAPI/ASIO and PipeWire/JACK backends.
-4. MIDI: model + piano roll + built-in instrument; plugin hosting (VST3/CLAP/AU) with an out-of-process scanner.
-5. Assistant: provider adapter (outside core), Rheo-equivalent panel, highlight overlay.
-6. Original branding and icons before any public release; the Söhne display face must not ship.
+2. Engine: device selection, input/recording, worker-pool parallel track rendering, WASAPI/ASIO and PipeWire/JACK backends.
+3. MIDI: model + piano roll + built-in instrument; plugin hosting (VST3/CLAP/AU) with an out-of-process scanner.
+4. Assistant: provider adapter (outside core), assistant panel, highlight overlay.
+5. Original branding and icons before any public release; the Söhne display face must not ship.
 
 ### 2026-11-08: session 1, round 2 (engine fixes + fonts)
 - Engine ABI v1 additions (append-only): `se_meters_peek` (non-destructive ~50 ms window), `se_transport_set_loop`
   (sample-accurate wrap), `se_metronome_set` (+ `se_metronome_desc`); transport commands now apply immediately
   when no device runs (race-free ownership hand-off; see engine/README.md). 46/46 ctest in default and ASan;
   bench unchanged (128 tracks ≈12.4 µs/block).
-- App: Inter 4.1 bundled (OFL, `crates/dstudio-app/ui/fonts/`), sizes ×0.91 after a sweep → full-window MAE 1.96 → 1.65.
+- App: Inter 4.1 bundled (OFL, `crates/dstudio-app/ui/fonts/`), sizes ×0.91 after a sweep.
   Loop (⌘L, button, `SetLoop` undoable) and metronome wired; offline-seek workaround removed; meters use peek.
   `--self-test` 26/26 offline and with Core Audio.
 
 ### 2026-11-08: session 1, round 3 (mixer + assistant panels)
 - Mixer (header toggle / ⇧⌘X): per-track strips with real fader, pan, stereo `peek_meters`, M/S, peak hold;
-  Master strip; add-track column. Fidelity full MAE 1.46 (`--state reference-mixer`).
+  Master strip; add-track column.
 - Assistant panel (header toggle / ⇧⌘A): Assist/Teach over `dstudio_core::assistant`, one undo step per turn,
   highlight overlay (`src/highlight.rs`), Anthropic Messages API provider (`src/assistant_provider.rs`, key from
   `ANTHROPIC_API_KEY` only, model `DSTUDIO_ASSISTANT_MODEL`, default `claude-opus-5-5`). **No live API call has been
   exercised yet** (no key in the dev environment); the pipeline is covered by the labelled TEST provider
-  `--assistant-fixture`. Fidelity full MAE 1.87 (`--state reference-assistant`, transcript masked).
-- Self-test 42/42 offline and with Core Audio; workspace tests 49 pass; default state unchanged (1.65).
-- Privacy: the reference Rheo AX dump had the owner's chat history; transcript strings are redacted in
-  `reference/data/ax-rheo.tsv`. Never commit reference chat content.
+  `--assistant-fixture`.
+- Self-test 42/42 offline and with Core Audio; workspace tests 49 pass.
 
 ### 2026-11-08: session 1, round 4 (MIDI + piano roll)
 - Core: MIDI clips/notes, commands (AddMidiClip/Remove/Move/Resize/SetMidiNotes), seeded note transforms, note
@@ -112,7 +89,7 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   pitch within ±0.5 Hz. Bench: 32 MIDI tracks × 8 voices ≈ 396 µs per 256-frame block (unoptimised).
 - App: MIDI clips on the timeline, piano roll (wgpu) with editing, toolbar transforms, footer, context menu.
   Self-test 60/60 offline and with Core Audio, incl. a check that notes drawn in the piano roll sound on the
-  instrument track. Fidelity: midi-clip 1.45, piano roll 2.16; earlier states unchanged.
+  instrument track.
 - Requested core API: RenameClip command, clip loop fields; engine: note audition call.
 
 ### 2026-11-08: session 1, round 5 (synth Devices panel)
@@ -121,7 +98,7 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   shape morph/fold, cross-FM, sub/noise, TPT SVF LP/HP/BP, ADSRs, LFO, mono legato/glide, unison) with 10 ms
   smoothing; 76/76 ctest (default + ASan). Bench 32 tracks: default patch 573 µs/block, heavy patch 3489 µs (65 % of
   deadline).
-- App: Synth device card at reference geometry (MAE 2.41), preset browser, 6 real pages, live displays derived from
+- App: Synth device card, preset browser, 6 real pages, live displays derived from
   the engine formulas; self-test 76/76 offline and with Core Audio, incl. a rendered-audio check that a panel cutoff
   change reaches the engine.
 
@@ -167,7 +144,7 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   (default + ASan). Bench: 32 tracks × 4 lanes ≈ 0.6 % of the deadline.
 - App: lanes toggle, header automation row with power + parameter picker, gold overlay lanes with labels,
   point/curve/marquee/freehand editing, Automation Arm touch-write, controls follow automation. Self-test 146/146
-  offline, 145/145 (+1 offline-only skip) with Core Audio. Fidelity `reference-automation` 1.94.
+  offline, 145/145 (+1 offline-only skip) with Core Audio.
 
 ### 2026-11-08: session 1, round 10 (Windows and Linux port, branch `port/windows-linux`)
 - CI green on macos-15, windows-2025 (MSVC /W4 /WX) and ubuntu-24.04 (GCC -Werror): engine build,
@@ -208,7 +185,7 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   8 to 64 steps, swing, and Velocity, Offset, Repeat and Tie per cell. Step edits bake the notes
   (`Command::SetStepPattern`); piano-roll edits read only the changed rows back into the grid; `None` converts
   the clip to plain MIDI (its repeats become notes). The snapshot repeats the pattern over the clip. Old project
-  files load unchanged. Findings SQ-1..SQ-7 in `reference/research-findings.md`.
+  files load unchanged.
 - Engine: patterns play as ordinary notes; a new ctest checks that dense repeats republished while playing
   don't allocate, and bench_render has a Pattern table. `cargo bench -p dstudio-core --bench steps` times bake,
   read-back and snapshot builds.
@@ -216,35 +193,34 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 ### 2026-11-10: minimap pointer hide and Devices minimap (SAIN-33)
 
 - Header minimap drags (window and zoom grabs) hide the pointer and put it back on the grabbed spot on release
-  (`src/pointer.rs`: NSCursor + winit warp; self-test records the requests). Findings S68.
+  (`src/pointer.rs`: NSCursor + winit warp; self-test records the requests).
 - Devices minimap at the right of the Clip / Devices strip (`src/devminimap.rs`, `DevMinimap` in `ui/app.slint`):
-  tiles with glyphs, chain frames, window, jump / drag / wheel, Esc restores. Findings S69, S70. Not done: the hover name.
+  tiles with glyphs, chain frames, window, jump / drag / wheel, Esc restores. Not done: the hover name.
 
 ### 2026-11-10: grid size and snap, clip-editor rulers, minimap pictures and motion (SAIN-33)
 
 - Timeline toolbar snap control (`src/snap.rs`): the readout toggles snapping, the chevron opens Off / Auto / 1 Bar ...
-  1/32 / triplet sizes. Auto follows the ruler step for the zoom (two beats at the default zoom, as the reference app's rule), a
-  fixed size overrides it when finer (doubled to 6 px), Cmd at the press drags off the grid. Findings S76.
+  1/32 / triplet sizes. Auto follows the ruler step for the zoom (two beats at the default zoom), a
+  fixed size overrides it when finer (doubled to 6 px), Cmd at the press drags off the grid.
 - Piano roll and audio clip editor rulers and grids use the same `RulerSteps` rules (bar labels by power-of-two
-  steps, ticks, 16 / 8 reference px sub and beat lines). Findings S77, S78.
+  steps, ticks, 16 / 8 px sub and beat lines).
 - Devices minimap tiles show pictures we draw from each device's own layout (`Art`), and fade in (300 ms) and glide
-  (spring) when the chain changes; the strip redraws only while they run. Findings S79, S80. `--drag-bench devmm`
+  (spring) when the chain changes; the strip redraws only while they run. `--drag-bench devmm`
   benchmarks it; `--state review-snap-menu` shows the menu.
 
 ### 2026-11-10: step sequencer, gaps closed (SAIN-37)
 
-- Paging as in the reference: the grid shows 16 or 32 steps at a time (by width), with page tabs and a Follow
+- Paging: the grid shows 16 or 32 steps at a time (by width), with page tabs and a Follow
   playhead button at the right of the toolbar. A MIDI clip longer than 64 steps now converts with its own step
   count (up to `STEP_LIMIT`, 4096) instead of being refused; Length and Double still stop at 64.
 - While the transport plays inside the clip, the playing step's column has a white ring and the cells it hits
   flash (230 ms, Steps lane).
-- Toolbar tooltips (Double, Clear, the lane tabs, Follow playhead) with the reference's 1 s hover delay; Clear is
+- Toolbar tooltips (Double, Clear, the lane tabs, Follow playhead) with a 1 s hover delay; Clear is
   disabled when the pattern has no cells.
-- Value lanes use the reference's palette: empty steps dark, Velocity filled from the bottom on a lighter base.
-  Findings SQ-8..SQ-11.
+- Value lanes: empty steps dark, Velocity filled from the bottom on a lighter base.
 ### 2026-11-10: pattern library, Genre list and Shape tab (SAIN-37, PR B)
 
-- Genre now lists Any and the reference's 21 genres. The ten new ones come after the old eleven, because saved
+- Genre now lists Any and 21 genres. The ten new ones come after the old eleven, because saved
   clips store the index. Each new genre has its own feel (scale, grid, swing, density, octave, progressions) and
   its own drum grooves, including two new grooves, Dembow and Warehouse pulse. Drum swing now follows the
   genre's feel, which gives the same result as before for the old genres. The Genre menu shows 12 rows and
@@ -252,9 +228,8 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Shape tab (`dstudio_core::shape`, `composer.rs`): Octave, Voices, Density, Length, Velocity, Nudge, Repeat and
   Arp reshape what the clip plays. The unshaped notes stay in `Composer::base`. Each part, and the kept
   notes, keep their own Shape. A slider drag is one undo step ("Shape Change"). If you edit notes after they
-  were shaped, they play as edited under a neutral Shape. The other rack rows show disabled with the
-  reference's tips. Tab rules are in SQ-13. Findings are SQ-12..SQ-15 in
-  `reference/findings/step-sequencer.md`.
+  were shaped, they play as edited under a neutral Shape. The other rack rows show disabled with
+  tips.
 - Review states: `--state review-patterns-3` (Shape on a lead) and `review-patterns-4` (the Genre menu).
 - Next: Shape option A, the full rack with drawn curves and the remaining transforms.
 
@@ -262,8 +237,7 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 
 - `dstudio_core::shape` now has all 16 controls: Octave, Voices, Density, Length, Velocity, Vary, Nudge, Repeat,
   Air, Sub, Spread, Tension, Inversion, Arp, and the arp's Pattern and Octaves. Each one has a base value and a
-  drawn curve (one offset per beat), and the transforms follow the reference wherever its behaviour could be
-  read (SQ-16..SQ-18). Shapes saved before this change load unchanged.
+  drawn curve (one offset per beat). Shapes saved before this change load unchanged.
 - `shape_rack.rs` holds the rack rows (click a label to choose the curve to edit). The piano roll toolbar has
   Shape (draw), the Pencil, Steps and Ramp brushes, and Reset. The curves are drawn into the piano roll's wgpu
   draw list. A stroke or a slider drag is one undo step.

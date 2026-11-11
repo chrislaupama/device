@@ -1,7 +1,7 @@
 //! Custom field views of the built-in device cards (View::Custom(name)):
 //! the delay's echo train and repeat EQ, the echo's tail, the reverb's tail
 //! picture and EQ wash, the pitch shifter's interval field and the grains
-//! capture field (handoffs/device-specs/<device>.md, "Panel, interactions").
+//! capture field.
 //!
 //! Rust draws everything as paths, texts and grip pills in well coordinates
 //! (ui/device_panel.slint FieldView only renders them) and handles every
@@ -19,7 +19,7 @@ use std::fmt::Write;
 use std::rc::Rc;
 use std::time::Instant;
 
-/// Card-relative field geometry (unscaled reference pt).
+/// Card-relative field geometry (unscaled pt at 100%).
 const PAD: f32 = 8.0;
 const FIELD_Y: f32 = 63.0;
 const FIELD_Y_NO_PICKER: f32 = 37.0;
@@ -666,7 +666,7 @@ impl Controller {
         let first = arrivals[0];
 
         // Wash: WASH_COLS columns x 24 bands of accent at the tail's intensity, drawn smoothed
-        // (bilinear) over the plot like the reference app's low-resolution reverb field.
+        // (bilinear) over the plot, a low-resolution reverb field.
         const WASH_COLS: usize = 128;
         let key: Vec<u32> = [decay, damping, pre, mode as f32, size, span, low, high, left, top, right, bottom, shimmer]
             .iter()
@@ -1526,7 +1526,7 @@ mod tests {
         assert!(reverb_t60(2.0, 1.0, 8000.0) < 1.0);
         assert!(reverb_filter_db(20.0, 20000.0, 1000.0).abs() < 0.02);
         assert!((reverb_filter_db(1000.0, 20000.0, 1000.0) + 3.01).abs() < 0.05);
-        // Hall defaults: 0.25 + 10 ms + 2 s * 1.1 = 2.46 s -> a 3 s span (the reference capture).
+        // Hall defaults: 0.25 + 10 ms + 2 s * 1.1 = 2.46 s -> a 3 s span.
         assert_eq!(reverb_span(2.0, 0.5, 0.01), 3.0);
     }
 

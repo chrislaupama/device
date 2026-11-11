@@ -2,7 +2,7 @@
 // piano roll (toolbar, wgpu note grid + keyboard from src/pianoroll.rs, footer),
 // the empty state, and the clip context menu.
 //
-// Geometry measured from reference/screenshots/33-*.png and 34-*.png. Panel-relative
+// Panel-relative
 // coordinates; the panel is as tall as the Devices tab's (306 pt by default).
 import { Tokens } from "tokens.slint";
 import { Icon, Icons, Label } from "widgets.slint";
@@ -254,7 +254,7 @@ export component FooterLabel inherits Text {
 export component FooterTitle inherits Text {
     height: 14px; color: Tokens.text-bright; font-size: 10px; font-weight: 600; vertical-alignment: center;
 }
-// Keyboard for a footer switch or select, like the buttons in the reference footer: Tab reaches
+// Keyboard for a footer switch or select: Tab reaches
 // it, Space or Return presses it, a select steps with Up / Down / Home / End; Escape hands the keys
 // back to the shortcuts and other keys stay shortcuts. A click doesn't focus it, so the ring
 // (2 pt, ink at 22 %) only marks keyboard focus.
@@ -349,7 +349,7 @@ component AcField inherits Rectangle {
 }
 
 
-// Clip editor dropdown (Studio.clip-menu-items). the reference app's toolbar menu: #212227, 8 px radius,
+// Clip editor dropdown (Studio.clip-menu-items). A toolbar menu: #212227, 8 px radius,
 // 4 px padding, 11 px semibold rows with 4 / 12 px padding, the active row tinted (ink 7 %);
 // the Grid list instead marks the active row with a check and has a rule before the triplets.
 export component DropMenu inherits Rectangle {
@@ -357,7 +357,7 @@ export component DropMenu inherits Rectangle {
     in property <length> text-size: 9.35px;
     in property <bool> check;
     in property <int> section: -1;
-    // Rows shown at most; a longer list scrolls (the Genre menu shows 12, as in the capture).
+    // Rows shown at most; a longer list scrolls (the Genre menu shows 12).
     in property <int> max-rows: 99;
     callback picked(int);
     property <length> pad: 3.4px;
@@ -393,7 +393,7 @@ export component DropMenu inherits Rectangle {
     }
 }
 
-// Clip editor: x 255 / y 27 inside the bottom panel (window 260, 452 at the reference size).
+// Clip editor: x 255 / y 27 inside the bottom panel (window 260, 452 at the design size).
 // The piano roll for MIDI clips; for audio clips (Studio.ac-visible) the same grid texture
 // without keyboard, the audio toolbar and the Mix / Tune footer.
 export component PianoRoll inherits Rectangle {
@@ -597,7 +597,7 @@ export component ClipEmpty inherits Rectangle {
     Text { x: 0; y: 183px; width: root.width; height: 14px; text: "Select a clip to edit it."; color: #6c6e74; font-size: 8.75px; horizontal-alignment: center; vertical-alignment: center; }
 }
 
-// Right-click clip menu (reference 35-clip-context-menu.png): 209 pt wide, 20.5 pt rows.
+// Right-click clip menu: 209 pt wide, 20.5 pt rows.
 export component ContextMenu inherits Rectangle {
     in property <[MenuItem]> items;
     callback activated(int);

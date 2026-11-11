@@ -21,9 +21,8 @@
 use crate::model::{Asset, Clip, PPQ, Project};
 use serde::{Deserialize, Serialize};
 
-/// The Mode menu (the reference app's names). The reference app stores them as auto, percussive,
-/// tonal, vocal and repitch, and hands its stretcher a content mode of auto,
-/// percussive or tonal, with vocal sent as tonal. So: Auto decides per
+/// The Mode menu. The stretcher takes a content mode of auto,
+/// percussive or tonal, with Vocal sent as tonal. So: Auto decides per
 /// passage, Drums keeps hits sharp, Melody and Vocal stretch tonally,
 /// Re-pitch lets pitch move with speed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -324,8 +323,8 @@ pub fn estimate_bpm(transients: &[Transient], rate: f64) -> Option<f64> {
     Some(if (fine - whole).abs() <= 0.15 { whole } else { (fine * 100.0).round() / 100.0 })
 }
 
-/// Engine mode for a model mode (`SE_WARP_*`). Vocal plays as Melody: the reference app
-/// sends vocal to its stretcher as the tonal content mode, with no formant step.
+/// Engine mode for a model mode (`SE_WARP_*`). Vocal plays as Melody: it
+/// goes to the stretcher as the tonal content mode, with no formant step.
 pub fn engine_mode(mode: WarpMode) -> u8 {
     match mode {
         WarpMode::Repitch => 0,

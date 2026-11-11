@@ -9,7 +9,7 @@ use dstudio_core::midi::{self, MidiClip};
 use dstudio_core::steps::StepPattern;
 use dstudio_core::{ClipId, Command, PPQ, Ticks, TrackKind};
 
-/// Context-menu geometry (window points), measured from `35-clip-context-menu.png`.
+/// Context-menu geometry (window points).
 pub const MENU_W: f32 = 209.0;
 pub const MENU_PAD: f32 = 3.4;
 pub const MENU_ROW: f32 = 20.4;
@@ -19,7 +19,7 @@ pub const MENU_SEP: f32 = 10.6;
 /// Grid (piano roll footer), Type, Genre (clip sidebar). Speed, Warp and Mode edit the clip's
 /// warp (`dstudio_core::warp`, presets and modes in the same order); Type and Genre pick the
 /// sidebar's library part (dstudio_core::library::GENRES has a feel for each).
-/// Genre lists the entries visible in the reference capture (its full list is catalogue data).
+/// Genre lists a fixed set of entries.
 const CLIP_MENUS: [&[&str]; 10] = [
     &["0.5x", "0.75x", "1x", "1.25x", "1.5x", "2x"],
     &["On", "Off"],
@@ -86,7 +86,7 @@ impl MenuAction {
             _ => "",
         }
     }
-    /// A separator is drawn above these entries (reference grouping).
+    /// A separator is drawn above these entries.
     fn separated(self) -> bool {
         matches!(
             self,
@@ -98,7 +98,7 @@ impl MenuAction {
     }
 }
 
-/// Bounce submenu: (label, shortcut text, enabled). the reference app's flyout has the same two entries;
+/// Bounce submenu: (label, shortcut text, enabled). Two entries;
 /// DStudio builds Bounce to new track. Bounce track in place needs a track that changes kind (MIDI to
 /// audio, its instrument and devices removed), which the model cannot do yet, so it stays greyed.
 const BOUNCE: [(&str, &str, bool); 2] = [("Bounce to new track", "⌘ B", true), ("Bounce track in place", "", false)];
@@ -124,8 +124,7 @@ impl Controller {
     // ---------------------------------------------------------------- clip commands
 
     /// ⌘⇧M: 1-bar empty MIDI clip at the playhead (snapped to the beat) on the
-    /// selected instrument track. Opens the Clip tab (the clip is not selected,
-    /// as in the reference).
+    /// selected instrument track. Opens the Clip tab (the clip is not selected).
     pub fn insert_midi_clip(&mut self) -> Option<ClipId> {
         let p = self.project();
         let Some(t) = self.selected_track.and_then(|t| p.track(t)) else {
@@ -140,7 +139,7 @@ impl Controller {
         let rack = t.instrument_plugin.as_ref().is_some_and(crate::stepseq::is_drum_rack);
         let start = ((self.playhead_ticks() as f64 / PPQ as f64).round() as Ticks * PPQ).max(0);
         let id = ClipId(p.next_id);
-        // On a Drum Rack track the new clip is a one-bar drum pattern (reference: "Create drum pattern").
+        // On a Drum Rack track the new clip is a one-bar drum pattern.
         let mut clip = if rack { MidiClip::empty_pattern(start, dstudio_core::steps::StepRows::Pads) } else { MidiClip::empty(start, p.ticks_per_bar()) };
         clip.id = id;
         if self.execute(Command::AddMidiClip { track, clip }) {
@@ -480,7 +479,7 @@ impl Controller {
 
     /// Clip tab, piano roll, context menu and rename popup → Slint.
     /// Open (or, when it is already open, close) a clip editor dropdown. Mode is
-    /// disabled with Warp off, as in the reference.
+    /// disabled with Warp off.
     pub fn clip_menu_open(&mut self, menu: i32) {
         let warped = self.ac_clip().is_some_and(|c| c.warp.enabled);
         self.pr.menu = if (0..CLIP_MENUS.len() as i32).contains(&menu) && (menu != 2 || warped) && self.pr.menu != menu && self.clip_menu_shown(menu) { menu } else { -1 };

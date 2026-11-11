@@ -114,8 +114,8 @@ pub fn target_rect(l: &Layout, target: &str, track_row: impl Fn(u64) -> Option<(
     Some(r)
 }
 
-/// Point ring around a target rect: (x, y, w, h, corner radius), our units (0.85 of the
-/// reference's CSS px). The reference pads small targets (<= 40 px) by 5 px and others by 6,
+/// Point ring around a target rect: (x, y, w, h, corner radius), design units (0.85 of
+/// 100%-zoom px). The ring pads small targets (<= 40 px) by 5 px and others by 6,
 /// draws near-square targets (<= 56 px, sides within 1.25:1) as a circle, gives other rings
 /// the target's radius (8 px when it has none) plus the padding, and keeps 2 px inside the window.
 pub fn ring(t: Rect, win_w: f32, win_h: f32) -> (f32, f32, f32, f32, f32) {

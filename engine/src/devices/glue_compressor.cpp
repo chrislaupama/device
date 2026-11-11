@@ -8,7 +8,7 @@
 //              max(|L|, |R|) in dB (stereo linked)
 //   curve      soft knee 4 dB wide, slope 1/ratio; the threshold sits
 //              3 * (10 - ratio) / 8 dB lower for the gentler ratios (as the
-//              reference draws it); reduction limited to Range
+//              panel draws it); reduction limited to Range
 //   ballistics in dB: attack while reduction grows, release while it shrinks;
 //              Auto = two release paths (fast 0.1 s, slow 1.2 s with a slow
 //              attack) and the deeper one wins, so short peaks recover fast

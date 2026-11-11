@@ -7,13 +7,10 @@
 //! (device_panel.rs) scales them to the well and builds the paths.
 //!
 //! The tremolo, auto-panner, chorus, flanger, phaser and ring-mod models
-//! follow the reference drawing laws (handoffs/device-specs/<device>.md).
-//! Character Mod's sweep frames come from the reference engine, which is not
-//! readable, so its model is our own picture of what our kernel does
+//! follow each device's drawing law.
+//! Character Mod's model is a picture of what the kernel does
 //! (engine/src/devices/character_mod.cpp): the modulated delay, frequency,
-//! gain or position over 3.35 LFO cycles (the span measured on the reference
-//! capture at the default 0.51 Hz; the reference engine sends the span with each
-//! frame, so its law is not readable).
+//! gain or position over 3.35 LFO cycles (the span at the default 0.51 Hz).
 
 use dstudio_core::builtin::character_mod::{CIRCUITS, CROSSED, ENSEMBLE, FLANGER, MODE_PARAMS, PANNER, PHASER, PHOTOCELL, ROTARY, SINGLE, TAPE, TREMOLO, TWIN};
 use dstudio_core::builtin::{synced_hz, DIVISION_QUARTERS};
@@ -22,7 +19,7 @@ use std::sync::OnceLock;
 
 const MINUS: char = '\u{2212}';
 
-/// Line style of a trace (dash lengths in reference pt).
+/// Line style of a trace (dash lengths in pt at 100%).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Style {
     Solid,

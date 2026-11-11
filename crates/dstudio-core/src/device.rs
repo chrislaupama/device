@@ -60,7 +60,7 @@ pub struct PluginRef {
 pub struct Device {
     pub id: DeviceId,
     pub plugin: PluginRef,
-    /// Bypass when false (reference device header power toggle).
+    /// Bypass when false (device header power toggle).
     pub enabled: bool,
     /// Opaque plugin state, base64 (AU class info plist / VST3 component +
     /// controller state / CLAP state stream, as produced by the engine).

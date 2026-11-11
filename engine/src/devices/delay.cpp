@@ -3,7 +3,7 @@
 // grit and a six-band EQ inside the feedback loop (it shapes the repeats,
 // never the dry path). Parameters in the order of dstudio_core::builtin::delay.
 //
-// Routing (the reference's echo model): with ping-pong amount a = (width -
+// Routing: with ping-pong amount a = (width -
 // 100%) / 100% (0 below 100%), the left line takes the input and the right
 // line (1 - a) of it; every repeat feeds its own side by (1 - a) and the
 // other side by a. Below 100% the repeats are narrowed (M/S).

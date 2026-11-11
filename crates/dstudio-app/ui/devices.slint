@@ -1,7 +1,7 @@
 // Device chain (bottom panel, Devices tab): plugin cards, the "Add device" card and the
-// device popup list (src/devices.rs). Card styling follows the Synth card header measured
-// from 32-real-dblclick-instrument-lane.png (power toggle at 9,8.25, name at 37.5, header
-// line at 26.5). Plugin cards show the controls the user adds (plugin-card spec); the header
+// device popup list (src/devices.rs). Card styling follows the Synth card header
+// (power toggle at 9,8.25, name at 37.5, header
+// line at 26.5). Plugin cards show the controls the user adds ; the header
 // is shared with the built-in cards (device_panel.slint CardHeader).
 import { Tokens } from "tokens.slint";
 import { Icon, Icons, Field } from "widgets.slint";
@@ -19,7 +19,7 @@ global CardStyle {
     out property <length> width: 220px;
 }
 
-// Plugin card (third-party plugin, handoffs/device-specs/plugin-card.md): the generic header
+// Plugin card (third-party plugin): the generic header
 // (power, name = effect picker, device window, fold, remove), then only the controls the user
 // added with "+ Add" plus any the plugin's macros, LFOs or automation move; nine per page.
 component PluginFace inherits Rectangle {
@@ -87,8 +87,8 @@ export component PluginCard inherits Rectangle {
     if !root.card.folded: PluginFace { card: root.card; }
 }
 
-// "Add device" card (reference 32: 182.5 x 264, rows 22 pt from y 56.5). The reference's rows are
-// Audio Units / VST3 / Chains; ours are Built-in / Audio Units / VST3 / CLAP / Chains.
+// "Add device" card (182.5 x 264, rows 22 pt from y 56.5).
+// Rows are Built-in / Audio Units / VST3 / CLAP / Chains.
 export component AddDeviceCard inherits Rectangle {
     width: 182.5px;
     height: 264px;

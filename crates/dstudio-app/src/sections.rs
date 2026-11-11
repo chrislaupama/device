@@ -9,18 +9,18 @@ use dstudio_core::{Command, PPQ, Section, SectionId, Ticks};
 /// Section lane rows in lane-local points (the ruler's third band, between its rules).
 pub const LANE_TOP: f32 = 25.0;
 pub const LANE_BOTTOM: f32 = 38.0;
-/// Block: 14 reference px tall, 1 px below the lane top, 2 px corner radius.
+/// Block: 14 px tall (lengths here are 100%-zoom px), 1 px below the lane top, 2 px corner radius.
 pub const BLOCK_Y: f32 = 25.85;
 pub const BLOCK_H: f32 = 11.9;
 pub const RADIUS: f32 = 1.7;
-/// Edge grab: 5 reference px inside the end of a section.
+/// Edge grab: 5 px inside the end of a section.
 const EDGE: f32 = 4.25;
-/// "+" centre: 12 reference px after the last section's end (8.5 pt in from bar 1 when empty).
+/// "+" centre: 12 px after the last section's end (8.5 pt in from bar 1 when empty).
 pub const ADD_OFFSET: f32 = 10.2;
 const ADD_HALF: f32 = 6.8;
 const NEW_BARS: i64 = 8;
 
-/// The reference's section palette (vivid enough for a dark label), before display tinting.
+/// The section palette (vivid enough for a dark label), before display tinting.
 pub const PALETTE: [u32; 13] = [
     0xc86040, 0xd0a050, 0xb8c040, 0xa0d050, 0x60d890, 0x50b8b0, 0x68a8c0, 0x7888c8, 0x9080d0, 0xb068d0, 0xd85088, 0xc07030, 0x30a098,
 ];
@@ -51,8 +51,7 @@ enum SectionHit {
     Empty,
 }
 
-/// Display colour: the palette colour saturated and lifted toward white (fitted to the
-/// reference's 100 % captures of its first two section colours, both selected, within 4/255).
+/// Display colour: the palette colour saturated and lifted toward white.
 pub fn display_rgb(c: u32) -> [f32; 3] {
     let rgb = crate::timeline::rgb(c);
     let y = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];

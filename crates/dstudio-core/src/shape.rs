@@ -5,8 +5,7 @@
 //!
 //! Every control has a base value and an optional drawn curve: one offset per
 //! beat from the clip start, added to the base. The rack's rows, ranges, neutral
-//! values and the transforms' behaviour follow the reference (findings SQ-13..SQ-18);
-//! the code is DStudio's own.
+//! values and the transforms' behaviour are defined here.
 
 use crate::library::PartType;
 use crate::midi::{self, Note};
@@ -21,7 +20,7 @@ pub const REPEAT_LABELS: [&str; 5] = ["Off", "¼", "⅛", "16", "32"];
 /// Arp: beats per step (0 = off) and labels.
 pub const ARP_BEATS: [f64; 6] = [0.0, 0.5, 1.0 / 3.0, 0.25, 1.0 / 6.0, 0.125];
 pub const ARP_LABELS: [&str; 6] = ["Off", "1/8", "1/8T", "1/16", "1/16T", "1/32"];
-/// Arp patterns, in the reference's order.
+/// Arp patterns, in menu order.
 pub const ARP_PATTERNS: [&str; 7] = ["Up", "Down", "Up & down", "Random", "Thumb", "Pinky", "Chord"];
 /// Arp ranges in octaves.
 pub const ARP_OCTAVES: [u8; 4] = [1, 2, 3, 4];

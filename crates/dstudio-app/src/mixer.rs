@@ -84,7 +84,7 @@ pub fn fmt_gain(db: f32) -> String {
     }
 }
 
-/// Peak-hold readout ("−∞" when silent), one decimal like the reference strip.
+/// Peak-hold readout ("−∞" when silent), one decimal.
 pub fn fmt_peak(g: f32) -> String {
     fmt_gain(gain_to_db(g))
 }

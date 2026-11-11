@@ -1,4 +1,4 @@
-// Pad Sampler and Drum Rack (reference: the reference app's built-in drum rack and the
+// Pad Sampler and Drum Rack (the drum rack and the
 // sampler inside each of its pads). A pad holds up to 8 sounds (layers) that
 // alternate hit by hit (round robin) and shares one set of settings: gain,
 // pan, transpose, fades, start / end, reverse, gate, warp. The Drum Rack is 16

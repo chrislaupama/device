@@ -1,12 +1,12 @@
 // Built-in "Synth" instrument card (bottom panel, Devices tab, instrument
-// tracks): the synth-v2 device. Geometry: the reference capture scaled to the
-// card size (776.5 x 265 pt; the capture's card is 920 x 317.5 pt).
+// tracks): the synth-v2 device. Geometry: a 920 x 317.5 pt design scaled to the
+// card size (776.5 x 265 pt).
 //
 // The pages are data: src/synth.rs lays out every knob, fader, pill, switch,
 // picture and label of the current page (Studio.synth-*), so this file only
 // draws the element kinds and the custom Modulation / Macros rows. Values,
 // pictures and texts come from Rust; edits leave through Studio callbacks.
-// Icons are ORIGINAL line drawings.
+// Icons are line drawings.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
 import { CardHeader } from "device_panel.slint";
@@ -114,7 +114,7 @@ component SynthKnobView inherits Rectangle {
         viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
         commands: a.d; stroke: a.c; stroke-width: 1.49px; fill: transparent; stroke-line-cap: butt;
     }
-    // The dial: the reference app's "xs" knob centred at (30, 19), at the card's 776.5 / 920 scale: a 270
+    // The dial: the "xs" knob centred at (30, 19), at the card's 776.5 / 920 scale: a 270
     // degree groove at r 15.12, a flat 24 pt body with a soft shadow, the value arc and the pointer.
     Path {
         x: 0; y: 0; width: root.width; height: root.height;

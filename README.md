@@ -213,7 +213,7 @@ cargo run --release -p dstudio-app -- --self-test --no-audio     # drive the app
 | `docs/` | Architecture, ADRs, built-in devices, build guide |
 | `specs/` | Specs for non-trivial work, their templates and the project's principles |
 | `.agents/skills/`, `AGENTS.md` | Skills and a guide for coding agents working on this codebase |
-| `reference/`, `tools/` | Research notes and inspection tooling |
+| `tools/` | macOS app bundle script, the rename helper and the skills checker |
 | `ui-spike/` | The Slint and wgpu interop spike behind ADR 0001 |
 
 The app was called Saine Studio until November 2026. Internal names use `dstudio` (`dstudio-*` crates, the `dstudio::`

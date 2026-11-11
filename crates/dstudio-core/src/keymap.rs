@@ -1,7 +1,6 @@
 //! Context-aware keyboard shortcuts.
 //!
-//! Modelled on the reference behaviour (reference/interaction-specification.md):
-//! every binding has a *condition*, several actions may share a chord, and the
+//! Every binding has a *condition*, several actions may share a chord, and the
 //! most specific satisfied condition wins (e.g. ⌘L = "Loop selection" when a
 //! clip is selected, otherwise "Loop on/off"). `primary` is ⌘ on macOS and
 //! Ctrl on Windows/Linux, so one preset serves every platform.
@@ -63,7 +62,7 @@ fn normalize_key(k: &str) -> Option<String> {
 }
 
 impl fmt::Display for Chord {
-    /// macOS-style glyphs, as shown in the reference's shortcut badges.
+    /// macOS-style glyphs, as shown in shortcut badges.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.ctrl {
             f.write_str("⌃")?;
@@ -81,7 +80,7 @@ impl fmt::Display for Chord {
     }
 }
 
-/// Conditions observed in the reference's shortcut editor.
+/// Conditions a binding can carry, as listed in the shortcut editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Condition {
@@ -203,9 +202,7 @@ impl Keymap {
         out
     }
 
-    /// Default preset. Chords marked (V) were read from the reference's
-    /// shortcut editor; others come from tooltips or are our own choices for
-    /// actions the reference leaves unmapped or that we haven't verified yet.
+    /// Default preset.
     pub fn default_preset() -> Keymap {
         let b = |action: &str, keys: &[&str], when: Condition| Binding {
             action: action.into(),
@@ -216,13 +213,13 @@ impl Keymap {
         Keymap {
             preset: "Default".into(),
             bindings: vec![
-                // Transport (V)
+                // Transport
                 b("transport.play_pause", &["space"], Always),
                 b("transport.stop_return", &["enter"], Always),
                 b("transport.record", &["r"], Always),
                 b("transport.loop_selection", &["primary+l"], ClipOrSectionSelected),
                 b("transport.loop_toggle", &["primary+l"], Always),
-                // Editing (V)
+                // Editing
                 b("edit.undo", &["primary+z"], Always),
                 b("edit.redo", &["primary+shift+z"], Always),
                 b("clip.split_at_range", &["primary+e"], RangeSelected),
@@ -241,7 +238,7 @@ impl Keymap {
                 b("edit.paste", &["primary+v"], Always),
                 b("tool.scissors", &["t"], Always),
                 b("midi.paint_pen", &["b", "e"], MidiEditorFocused),
-                // Tracks / project (ours; reference bindings unverified)
+                // Tracks / project
                 b("clip.delete", &["delete", "backspace"], ClipsSelected),
                 b("track.delete", &["delete", "backspace"], TrackHeaderSelected),
                 b("track.add_audio", &["primary+t"], Always),

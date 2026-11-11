@@ -3,9 +3,9 @@
 Status: accepted (2026-11-08). Implemented in the engine (real-input path not yet verified on hardware).
 
 ## Context
-The reference lets you arm audio tracks (R), choose a per-track input ("None", "Input 1 (Mono)", ...),
+The app needs to arm audio tracks (R), choose a per-track input ("None", "Input 1 (Mono)", ...),
 monitor input (I), record from the transport, and configure output/input device, sample rate and
-buffer size in Settings › Audio (reference/ui-inventory.md §11). Our engine was output-only.
+buffer size in Settings › Audio. Our engine was output-only.
 
 ## Decision
 - **Model (dstudio-core):** `Track.arm`, `Track.monitor`, `Track.input: Option<InputSource { channel, stereo }>`,

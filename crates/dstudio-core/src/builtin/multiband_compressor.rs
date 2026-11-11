@@ -1,6 +1,5 @@
-//! Multiband Compressor (reference: the reference app's built-in "Multiband Compressor").
-//! Parameter ids, ranges, defaults, tapers and the panel arrangement are taken
-//! from the device spec as facts; the factory preset names and values are our own.
+//! Multiband Compressor: parameter ids, ranges, defaults, tapers, the panel
+//! arrangement and the factory presets.
 //!
 //! Three bands split at two crossovers. Each band compresses downwards above
 //! its threshold and upwards below its floor (up threshold); Depth, Upward,

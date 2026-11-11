@@ -1,8 +1,7 @@
 //! Modulation and containers on every device card: the LFO and chain-head
 //! bodies, the plugin card for third-party plugins, the generic header
 //! actions (fold, swap, collapse, rename) and the per-control menu that
-//! aims LFOs and macros at a parameter (handoffs/device-specs/lfo.md,
-//! chain-head.md, plugin-card.md).
+//! aims LFOs and macros at a parameter.
 //!
 //! Model: a source (LFO or chain head, dstudio_core::modulation) owns its
 //! links; the engine applies them (se_mod_route). Every edit here is one
@@ -20,7 +19,7 @@ use slint::{ModelRc, SharedString, VecModel};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-/// LFO card (reference units): width, left block, wave picture.
+/// LFO card (pt at 100%): width, left block, wave picture.
 const LFO_W: f32 = 440.0;
 const LFO_LEFT_W: f32 = 276.0;
 const WAVE_X: f32 = 8.0;
@@ -39,7 +38,7 @@ pub const EMPTY_CHAIN_W: f32 = 182.5;
 /// Plugin card: columns x rows of controls per page.
 const CARD_COLS: usize = 3;
 const CARD_ROWS: usize = 3;
-/// Modulation colours by source order on a track (reference macro colours).
+/// Modulation colours by source order on a track (the macro colours).
 const SOURCE_COLORS: [u32; 4] = builtin::rack::MACRO_COLORS;
 
 /// Live state of a link amount drag.

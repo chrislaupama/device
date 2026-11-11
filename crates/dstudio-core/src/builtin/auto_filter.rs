@@ -1,10 +1,8 @@
-//! Auto Filter (reference: the reference app's built-in "Auto Filter"): a resonant
-//! low-pass / high-pass / band-pass / notch filter (12 or 24 dB/oct) with
-//! drive, an envelope follower and an LFO that move the cutoff, a dry/wet
-//! mix, and a DJ mode where one position control sweeps a low-pass (left)
-//! or a high-pass (right). Parameter ids, ranges, defaults, tapers and the
-//! panel arrangement are taken from the reference as facts; the factory
-//! presets are our own.
+//! Auto Filter: a resonant low-pass / high-pass / band-pass / notch filter
+//! (12 or 24 dB/oct) with drive, an envelope follower and an LFO that move
+//! the cutoff, a dry/wet mix, and a DJ mode where one position control sweeps
+//! a low-pass (left) or a high-pass (right). Defines the parameter ids,
+//! ranges, defaults, tapers, the panel arrangement and the factory presets.
 //!
 //! [`filter_response`] is the response the panel draws; the engine kernel
 //! (engine/src/devices/auto_filter.cpp) runs the same stages.

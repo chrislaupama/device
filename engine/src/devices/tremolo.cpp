@@ -7,7 +7,7 @@
 //   w      unit shape of the LFO phase (0 = bottom of the dip, 1 = top)
 //   gain   1 - mix + mix * (1 - depth * (1 - w))
 //   out    in * gain
-// The shapes follow the reference's drawing law: sine 0.5 + 0.5 sin, a
+// The shapes follow the panel's drawing law: sine 0.5 + 0.5 sin, a
 // triangle peaking at half a cycle, a square that is high for 48% of the
 // cycle with raised-cosine edges 4% of a cycle wide, and a falling ramp.
 // The ramp's reset and the square's edges are additionally rounded by a

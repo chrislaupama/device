@@ -1,4 +1,4 @@
-// Chain (device rack) head (handoffs/device-specs/chain-head.md): audio
+// Chain (device rack) head: audio
 // passes through; its eight macros are modulation outputs (value =
 // macro / 100, gain 1) that the engine applies to the members' parameters
 // as absolute routes. Bypassing the head bypasses its members (the app

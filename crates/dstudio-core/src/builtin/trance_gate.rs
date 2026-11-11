@@ -1,9 +1,7 @@
-//! Trance Gate (reference: the reference app's built-in "Trance Gate"): a tempo-synced
-//! step gate with eight stored patterns of up to 32 steps, shaped by an
-//! attack / decay / sustain / release envelope, with swing and dry/wet mix.
-//! Parameter ids, ranges, defaults, tapers and the panel arrangement are taken
-//! from the reference as facts; names of the factory presets and their
-//! values are our own.
+//! Trance Gate: a tempo-synced step gate with eight stored patterns of up to
+//! 32 steps, shaped by an attack / decay / sustain / release envelope, with
+//! swing and dry/wet mix. Defines the parameter ids, ranges, defaults,
+//! tapers, the panel arrangement and the factory presets.
 //!
 //! Pattern storage: pattern n keeps its length in `p{n}_steps` and its step
 //! bits in `p{n}_lo` (steps 1-16, bit i = step i + 1) and `p{n}_hi` (steps

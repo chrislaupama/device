@@ -1,8 +1,6 @@
-//! Pad Sampler (reference: the reference app's built-in pad sampler, the "Sampler" in
-//! each Drum Rack pad). One pad: up to 8 sounds that alternate hit by hit,
-//! with one set of settings. Ids, ranges and defaults follow the device spec
-//! (handoffs/device-specs/pad-sampler.md); presets are our own. The Drum
-//! Rack repeats these settings for each of its 16 pads (drum_rack.rs).
+//! Pad Sampler (the "Sampler" in each Drum Rack pad). One pad: up to 8 sounds
+//! that alternate hit by hit, with one set of settings. The Drum Rack repeats
+//! these settings for each of its 16 pads (drum_rack.rs).
 
 use super::sampler::{OFF_ON, WARP};
 use super::*;

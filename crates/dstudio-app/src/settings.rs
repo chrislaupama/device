@@ -1,12 +1,12 @@
-//! Settings window (in-app modal panel at the reference window geometry) and its
+//! Settings window (in-app modal panel with a window's geometry) and its
 //! Audio page. Audio and Plugins (src/devices.rs) are real; the other sidebar pages
 //! are PLACEHOLDERS.
 //!
-//! Why a panel and not a second OS window: the reference Settings is its own
-//! window, but a second Slint window would not be part of `take_snapshot()`
-//! (fidelity captures), would need its own wgpu/notifier wiring, and the
-//! self-test drives one window's event queue. The panel is drawn at the
-//! reference window rect (x 255, y 7, 960 pt wide) with its own traffic-light
+//! Why a panel and not a second OS window: a second Slint window would not
+//! be part of `take_snapshot()`
+//! (screenshots), would need its own wgpu/notifier wiring, and the
+//! self-test drives one window's event queue. The panel is drawn at a
+//! fixed window rect (x 255, y 7, 960 pt wide) with its own traffic-light
 //! close button, blocks the main window while open, and closes with Escape,
 //! ⌘, or the close button.
 //!
