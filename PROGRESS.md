@@ -275,3 +275,13 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - `AGENTS.md` is the entry point for coding agents; codebase skills live in `.agents/skills/` (commands, C ABI and
   audio thread, built-in devices, UI, benchmarks, pull requests, plus the spec phases and bug fixing).
   `python3 tools/agents/check_skills.py` fails when a skill names a file that no longer exists.
+
+### 2026-11-11: transport bar tempo, time signature and key
+
+- The transport bar's BPM, TAP, Key and Sig fields were display-only; they now edit the project
+  (`src/transport_fields.rs`, `ui/transport.slint`). Tempo: drag right or up (1 BPM per point), double-click to type
+  (two decimals kept, shown when not whole), or tap (the average of up to eight taps; a pause over 2 s or a sudden
+  change of pace starts over). A drag or a tap series is one "Tempo Change" undo step whatever its length. Sig opens a
+  menu of twelve common signatures; Key opens a picker (Major / Minor, twelve roots, No key) that sets
+  `Command::SetProjectKey`, which the composer, Shape and key-following devices already read.
+- Self-test section `transport_fields_steps`; review states `review-transport-sig` and `review-transport-key`.

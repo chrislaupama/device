@@ -349,6 +349,26 @@ export global Studio {
     in property <string> time-text: "00:00.000";
     in property <string> bpm-text: "120";
     in property <string> sig-text: "4/4";
+    // ---- transport bar tempo / signature / key fields (src/transport_fields.rs) ----
+    in property <string> key-text;                 // "C", "F#m"; empty: no key
+    in property <int> key-root: -1;                // 0 = C .. 11 = B; -1 no key
+    in property <bool> key-minor;                  // the key picker's Major / Minor
+    in property <bool> key-menu-open;
+    in property <bool> sig-menu-open;
+    in property <[ChoiceItem]> sig-menu-items;
+    in property <length> sig-menu-h: 100px;
+    in property <length> sig-menu-w: 74.8px;
+    in property <length> sig-menu-rule;
+    callback tempo-drag(int, length, length);      // phase 0 press, 1 move, 2 release; offset from the press
+    callback tempo-text(string);                   // typed tempo (double-click the readout)
+    callback tap-tempo();
+    callback sig-menu-toggle();
+    callback sig-menu-pick(int);
+    callback key-menu-toggle();
+    callback key-pick(int);                        // root 0..11
+    callback key-mode(bool);                       // minor
+    callback key-clear();
+    callback transport-menus-dismiss();
     in property <float> master-pos: 0.85;
     in-out property <bool> sounds-visible: true;
     // Loop (project transport) and metronome (app preference), both real engine features.

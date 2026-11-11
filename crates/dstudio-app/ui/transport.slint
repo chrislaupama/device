@@ -1,0 +1,65 @@
+// Transport bar popups (src/transport_fields.rs): the key picker. The Sig menu is a ChoiceList.
+import { Tokens } from "tokens.slint";
+import { Studio } from "studio.slint";
+
+component ModeTab inherits Rectangle {
+    in property <string> text;
+    in property <bool> on;
+    callback clicked;
+    border-radius: 3.4px;
+    background: root.on ? Tokens.accent : ta.has-hover ? #ffffff14 : transparent;
+    accessible-role: tab; accessible-label: root.text; accessible-checked: root.on;
+    Text { text: root.text; color: root.on ? Tokens.on-accent : Tokens.text-secondary; font-size: 9.35px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+// Key picker: Major / Minor, the twelve roots in a 4 x 3 grid, and No key. A root sets the
+// project's key at once and the picker stays open, so keys can be tried in turn.
+export component KeyPicker inherits Rectangle {
+    property <length> pad: 5.1px;
+    property <length> cell-w: 28.9px;
+    property <length> cell-h: 20.4px;
+    property <length> gap: 1.7px;
+    property <length> grid-y: root.pad + 18.7px + 5.1px;
+    width: 2 * root.pad + 4 * root.cell-w + 3 * root.gap;
+    height: root.grid-y + 3 * root.cell-h + 2 * root.gap + 11.9px + 18.7px + root.pad;
+    border-radius: 6px;
+    background: Tokens.bg-raised;
+    border-width: 0.5px;
+    border-color: @linear-gradient(180deg, Tokens.popup-border-top 0%, Tokens.popup-border 8%);
+    drop-shadow-blur: 10px;
+    drop-shadow-color: #00000070;
+    drop-shadow-offset-y: 2px;
+    TouchArea { }
+    // Major | Minor
+    Rectangle {
+        x: root.pad; y: root.pad; width: root.width - 2 * root.pad; height: 18.7px;
+        border-radius: 4.25px; background: Tokens.bg-knob;
+        ModeTab { x: 1.7px; y: 1.7px; width: (parent.width - 3.4px) / 2; height: parent.height - 3.4px; text: "Major"; on: !Studio.key-minor; clicked => { Studio.key-mode(false); } }
+        ModeTab { x: parent.width / 2; y: 1.7px; width: (parent.width - 3.4px) / 2; height: parent.height - 3.4px; text: "Minor"; on: Studio.key-minor; clicked => { Studio.key-mode(true); } }
+    }
+    for name[i] in ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]: Rectangle {
+        x: root.pad + mod(i, 4) * (root.cell-w + root.gap);
+        y: root.grid-y + floor(i / 4) * (root.cell-h + root.gap);
+        width: root.cell-w; height: root.cell-h;
+        border-radius: 4.25px;
+        background: Studio.key-root == i ? Tokens.accent : cell-ta.has-hover ? #ffffff14 : transparent;
+        accessible-role: button;
+        accessible-label: name + (Studio.key-minor ? " minor" : " major");
+        accessible-checked: Studio.key-root == i;
+        Text {
+            text: name + (Studio.key-minor ? "m" : "");
+            color: Studio.key-root == i ? Tokens.on-accent : #ffffff;
+            font-size: 9.35px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center;
+        }
+        cell-ta := TouchArea { clicked => { Studio.key-pick(i); } }
+    }
+    Rectangle { x: 3px; y: root.grid-y + 3 * root.cell-h + 2 * root.gap + 5.95px; width: root.width - 6px; height: 0.5px; background: #ffffff1c; }
+    Rectangle {
+        x: 3px; y: root.height - root.pad - 18.7px + 1.7px; width: root.width - 6px; height: 18.7px;
+        border-radius: 4px; background: none-ta.has-hover ? Tokens.accent : transparent;
+        accessible-role: button; accessible-label: "No key"; accessible-checked: Studio.key-root < 0;
+        Text { x: 7.2px; text: "No key"; color: #ffffff; font-size: 9.35px; font-weight: 500; vertical-alignment: center; }
+        none-ta := TouchArea { clicked => { Studio.key-clear(); } }
+    }
+}

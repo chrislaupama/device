@@ -65,6 +65,7 @@ mod selftest;
 mod settings;
 mod shape_rack;
 mod snap;
+mod transport_fields;
 mod stepseq;
 mod sections;
 mod splitters;
@@ -171,6 +172,9 @@ struct Args {
     devices_minimap_review: bool,
     /// review-snap-menu: the timeline's snap menu open, with 1/8 chosen.
     snap_menu_review: bool,
+    /// review-transport-sig / review-transport-key: tempo 97.5, 6/8 and A minor set, with the
+    /// transport bar's Sig menu (1) or key picker (2) open.
+    transport_review: u8,
     /// reference-<built-in device id>: that device alone in an audio track's chain (an instrument on an instrument track).
     device_state: Option<&'static str>,
     /// Files loaded as if dropped on the window (after the state is set up).
@@ -452,6 +456,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.snap_menu_review = true;
                 }
+                st @ ("review-transport-sig" | "review-transport-key") => {
+                    a.reference_default = true;
+                    a.transport_review = if st.ends_with("sig") { 1 } else { 2 };
+                }
                 "reference-lfo" => {
                     a.reference_default = true;
                     a.modulation_state = 1;
@@ -480,7 +488,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-transport-sig, review-transport-key, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -757,7 +765,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             if c.devmm_cancel() || c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
                 return true;
             }
-            let popup_open = c.settings.open || c.settings.menu.is_some() || c.menu.open || c.rec.input_menu.is_some() || c.synth.menu.is_some() || c.devices.menu.is_some() || c.auto.picker.is_some() || c.rename.is_some() || c.rename_section.is_some() || c.pr.menu >= 0;
+            let popup_open = c.settings.open || c.settings.menu.is_some() || c.menu.open || c.rec.input_menu.is_some() || c.synth.menu.is_some() || c.devices.menu.is_some() || c.auto.picker.is_some() || c.rename.is_some() || c.rename_section.is_some() || c.pr.menu >= 0 || c.tf.sig_menu || c.tf.key_menu;
             if !popup_open && c.cancel_clip_render() {
                 return true;
             }
@@ -771,6 +779,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.synth_menu_dismiss();
             c.devmenu_dismiss();
             c.auto_picker_close();
+            c.transport_menus_dismiss();
             c.rename = None;
             c.rename_section = None;
             c.pr.menu = -1;
@@ -1419,6 +1428,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(20.0);
     }
+    if args.transport_review > 0 {
+        // REVIEW STATE: the transport bar's project fields set, one of their popups open.
+        let mut c = ctl.borrow_mut();
+        c.tempo_text("97.5");
+        c.sig_menu_toggle();
+        c.sig_menu_pick(8);
+        c.key_menu_toggle();
+        c.key_mode(true);
+        c.key_pick(9);
+        if args.transport_review == 1 {
+            c.sig_menu_toggle();
+        }
+    }
     if args.snap_menu_review {
         let mut c = ctl.borrow_mut();
         c.snap.pick(5);
@@ -1792,6 +1814,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_snap_menu_dismiss, |c| {
         c.snap.menu = None;
         c.ui_dirty = true;
+    });
+    on!(on_tempo_drag, |c, phase: i32, dx: f32, dy: f32| c.tempo_drag(phase, dx, dy));
+    on!(on_tempo_text, |c, t: slint::SharedString| c.tempo_text(t.as_str()));
+    on!(on_tap_tempo, |c| c.tap_tempo());
+    on!(on_sig_menu_toggle, |c| c.sig_menu_toggle());
+    on!(on_sig_menu_pick, |c, i: i32| c.sig_menu_pick(i.max(0) as usize));
+    on!(on_key_menu_toggle, |c| c.key_menu_toggle());
+    on!(on_key_pick, |c, i: i32| c.key_pick(i.clamp(0, 11) as u8));
+    on!(on_key_mode, |c, minor: bool| c.key_mode(minor));
+    on!(on_key_clear, |c| c.key_clear());
+    on!(on_transport_menus_dismiss, |c| {
+        c.transport_menus_dismiss();
     });
     on!(on_minimap_pointer, |c, kind: i32, x: f32, y: f32, w: f32, ox: f32, oy: f32| c.minimap_pointer(kind, x, y, w, ox, oy));
     on!(on_devmm_pointer, |c, kind: i32, x: f32, y: f32, ox: f32, oy: f32| c.devmm_pointer(kind, x, y, ox, oy));
