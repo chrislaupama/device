@@ -459,6 +459,9 @@ def compare_time(base: dict, head: dict, limit: float) -> tuple[list[dict], list
         if "error" in b or "error" in h:
             notes.append(f"`{name}` failed: base {b.get('error', 'ok')}, head {h.get('error', 'ok')}")
             continue
+        if "retime_error" in b or "retime_error" in h:
+            notes.append(f"`{name}` failed: base {b.get('retime_error', 'ok')}, head {h.get('retime_error', 'ok')}"
+                         " (while re-timing; first-round rows kept)")
         for k, hr in h["rows"].items():
             br = b["rows"].get(k)
             if br is None:
@@ -628,8 +631,8 @@ def cmd_all(a) -> int:
                 for side in res:
                     for name, r in more[side].items():
                         acc = res[side].setdefault(name, {})
-                        if "error" in r:  # a crash while re-timing must still reach the report
-                            acc.setdefault("error", r["error"])
+                        if "error" in r:  # a crash while re-timing: keep the first rows, note the crash
+                            acc.setdefault("retime_error", r["error"])
                         for k, row in r.get("rows", {}).items():
                             if k in acc.get("rows", {}):
                                 acc["rows"][k]["rounds"] += row["rounds"]
