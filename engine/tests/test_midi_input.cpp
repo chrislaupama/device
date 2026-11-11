@@ -207,6 +207,27 @@ TEST_CASE(midi_input_closing_a_port_releases_its_notes) {
     CHECK(rig.peaks(4800).first > 0.05);
 }
 
+// The real platform backend (Core MIDI, WinMM, ALSA sequencer): listing and
+// opening work, or give an empty list, on machines without a MIDI system
+// (CI runners, containers); the engine still renders afterwards.
+TEST_CASE(midi_input_platform_backend_lists_without_a_midi_system) {
+    Rig rig;
+    rig.add(1, 0.0f).d.monitor = 1;
+    rig.publish();
+    size_t total = 0;
+    REQUIRE(se_midi_inputs_list(rig.e, nullptr, 0, &total) == SE_OK);
+    std::vector<se_midi_input_info> info(total + 1);
+    size_t n = 0;
+    REQUIRE(se_midi_inputs_list(rig.e, info.data(), info.size(), &n) == SE_OK);
+    CHECK(n <= info.size());
+    for (size_t i = 0; i < std::min(n, info.size()); ++i) CHECK(info[i].id[0] != 0);
+    const char* ids[] = {"no such MIDI input"};
+    CHECK(se_midi_inputs_open(rig.e, ids, 1) == SE_OK); // absent ids are ignored
+    CHECK(se_midi_inputs_open(rig.e, nullptr, 0) == SE_OK);
+    REQUIRE(se_midi_inject(rig.e, 0x90, 60, 100) == SE_OK);
+    CHECK(rig.peaks(4800).first > 0.05);
+}
+
 TEST_CASE(midi_input_drops_stray_note_offs_program_changes_and_overflow) {
     EngineHandle e(48000.0, kBlock);
     se_midi_stats st{};

@@ -10,8 +10,8 @@
 
 /// Configures and builds the engine with CMake, then emits the link lines for
 /// the target OS: system frameworks on macOS, libpipewire (unless
-/// `DSTUDIO_ENGINE_PIPEWIRE` is off), libasound (unless `DSTUDIO_ENGINE_ALSA_MIDI`
-/// is off), libstdc++ and libdl on Linux, and the COM, shell, MMCSS, user32 and
+/// `DSTUDIO_ENGINE_PIPEWIRE` is off), libstdc++ and libdl on Linux (libasound,
+/// for MIDI input, is loaded at run time), and the COM, shell, MMCSS, user32 and
 /// winmm libraries on Windows.
 fn main() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -95,9 +95,6 @@ fn main() {
                     }
                 }
                 println!("cargo:rustc-link-lib=pipewire-0.3");
-            }
-            if alsa_midi {
-                println!("cargo:rustc-link-lib=asound");
             }
             println!("cargo:rustc-link-lib=stdc++");
             println!("cargo:rustc-link-lib=dl");

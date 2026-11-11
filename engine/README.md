@@ -593,14 +593,18 @@ for recording.
   client, one MIDI 1.0 protocol input port; ids are the source's unique id),
   the multimedia `midiIn*` API on Windows (ids are product names, `#2` for
   repeats), the ALSA sequencer on Linux (one reader thread; ids are
-  "client:port" names; CMake option `DSTUDIO_ENGINE_ALSA_MIDI`, default ON),
+  "client:port" names; libasound is loaded with dlopen on first use, so
+  programs that never use MIDI don't load it; CMake option
+  `DSTUDIO_ENGINE_ALSA_MIDI`, default ON),
   and a stub with no ports elsewhere. The MIDI system is first touched by
   `se_midi_inputs_list` / `se_midi_inputs_open`, so engines that never use MIDI
   never start it. Only channel messages are passed on.
 * **To the audio thread** (`src/midi_input.hpp`, `MidiInputHub`): one slot per
-  open port (16) plus one for `se_midi_inject`, each with a preallocated
-  1024-message SPSC queue whose single producer is that port's callback. The RT
-  owner drains every slot once per callback (at most 256 messages; the rest
+  open port (16) plus one for `se_midi_inject`, each with a 1024-message SPSC
+  queue whose single producer is that port's callback. Slots (and the capture
+  ring) are allocated on the main thread when first needed, so an engine that
+  never uses MIDI allocates nothing for it and its callback skips the hub. The
+  RT owner drains every slot once per callback (at most 256 messages; the rest
   wait), folds channels onto channel 1, turns note-on velocity 0 into note-off,
   drops program changes and note-offs with no held note-on, and delivers the
   messages at offset 0 of the callback's first segment (timing is accurate to

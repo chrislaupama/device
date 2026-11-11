@@ -278,12 +278,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_compile_definitions(dstudio_engine PRIVATE DSTUDIO_HAVE_PIPEWIRE=1)
   endif()
   # MIDI input (src/platform/alsa_midi_input.cpp). OFF builds an engine
-  # without MIDI ports (se_midi_inject still works).
+  # without MIDI ports (se_midi_inject still works). Only the headers are
+  # needed: libasound is loaded with dlopen when MIDI is first used.
   option(DSTUDIO_ENGINE_ALSA_MIDI "Build ALSA sequencer MIDI input (needs libasound2 development files)" ON)
   if(DSTUDIO_ENGINE_ALSA_MIDI)
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa)
-    target_link_libraries(dstudio_engine PUBLIC PkgConfig::ALSA)
+    pkg_check_modules(ALSA REQUIRED alsa)
+    target_include_directories(dstudio_engine SYSTEM PRIVATE ${ALSA_INCLUDE_DIRS})
+    target_link_libraries(dstudio_engine PUBLIC ${CMAKE_DL_LIBS})
     target_compile_definitions(dstudio_engine PRIVATE DSTUDIO_HAVE_ALSA=1)
   endif()
 endif()

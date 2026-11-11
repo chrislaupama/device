@@ -104,10 +104,18 @@ private:
     static void receive(void* ctx, const uint8_t* msg, uint32_t len) noexcept;
     MidiBackend& backend(); // requires ports_mutex_
     void close_slot(Slot& s); // requires ports_mutex_
+    // The slot, allocated on first use (main thread, under ports_mutex_ or
+    // inject_mutex_). Slots are never freed before the hub, so an engine that
+    // never uses MIDI allocates nothing and its audio thread skips the hub.
+    Slot& ensure_slot(uint32_t i);
+    Slot* slot(uint32_t i) const noexcept { return slots_[i].load(std::memory_order_acquire); }
 
     std::mutex ports_mutex_;
     std::unique_ptr<MidiBackend> backend_;
-    std::array<std::unique_ptr<Slot>, kSlots> slots_;
+    std::array<std::atomic<Slot*>, kSlots> slots_{};
+    std::array<std::unique_ptr<Slot>, kSlots> owned_;
+    std::atomic<uint32_t> allocated_{0}; // bit i: slots_[i] exists
+    std::mutex alloc_mutex_;
     std::mutex inject_mutex_;
     std::atomic<uint64_t> focus_{0};
 
@@ -115,7 +123,8 @@ private:
     std::atomic<bool> capture_restart_{false};
     std::atomic<uint64_t> capture_dropped_{0};
     std::atomic<uint64_t> delivered_{0};
-    SpscQueue<se_midi_captured, kCaptureSize> capture_;
+    // Allocated by the first capture_enable(true), published by capture_on_.
+    std::unique_ptr<SpscQueue<se_midi_captured, kCaptureSize>> capture_;
 };
 
 // The built-in Synth played live. The Synth renders notes from a timeline
@@ -135,6 +144,7 @@ public:
 private:
     void remove(uint8_t pitch) noexcept;
     Synth synth_;
+    bool sounding_ = false; // the last render made sound (release tails still ring)
     std::array<NoteEvent, 128> notes_{}; // held keys, sorted by start
     uint32_t count_ = 0;
     int64_t clock_ = 0;

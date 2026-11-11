@@ -14,6 +14,11 @@
 // Ids are "client name:port name", which stay the same when a device is
 // unplugged and plugged back in (client numbers do not). Without a
 // sequencer (/dev/snd/seq missing, e.g. in containers) there are no ports.
+//
+// libasound is loaded with dlopen on first use rather than linked: programs
+// that never touch MIDI don't pay for loading it, and the engine still runs
+// (with no MIDI inputs) on a system without it. The ALSA headers are only
+// needed to build.
 #if defined(__linux__) && defined(DSTUDIO_HAVE_ALSA)
 
 #include "midi_backend.hpp"
@@ -22,6 +27,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <dlfcn.h>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -36,6 +42,48 @@
 namespace dstudio {
 namespace {
 
+// The libasound functions this backend uses, resolved from libasound.so.2.
+struct Alsa {
+#define DSTUDIO_ALSA_FNS(X)                                                                                         \
+    X(snd_seq_open) X(snd_seq_close) X(snd_seq_set_client_name) X(snd_seq_create_simple_port) X(snd_seq_client_id) \
+    X(snd_seq_client_info_sizeof) X(snd_seq_client_info_set_client) X(snd_seq_client_info_get_client)            \
+    X(snd_seq_client_info_get_name) X(snd_seq_query_next_client) X(snd_seq_port_info_sizeof)                       \
+    X(snd_seq_port_info_set_client) X(snd_seq_port_info_set_port) X(snd_seq_port_info_get_port)                   \
+    X(snd_seq_port_info_get_name) X(snd_seq_port_info_get_capability) X(snd_seq_port_info_get_type)               \
+    X(snd_seq_query_next_port) X(snd_seq_connect_from) X(snd_seq_disconnect_from) X(snd_seq_event_input)         \
+    X(snd_seq_poll_descriptors_count) X(snd_seq_poll_descriptors) X(snd_strerror)
+#define DSTUDIO_ALSA_FIELD(name) decltype(&::name) name = nullptr;
+    DSTUDIO_ALSA_FNS(DSTUDIO_ALSA_FIELD)
+#undef DSTUDIO_ALSA_FIELD
+};
+
+// Null when libasound (or one of its functions) is missing.
+const Alsa* alsa() {
+    static const Alsa* const loaded = []() -> const Alsa* {
+        void* lib = dlopen("libasound.so.2", RTLD_NOW | RTLD_LOCAL);
+        if (lib == nullptr) return nullptr;
+        static Alsa a;
+        bool ok = true;
+#define DSTUDIO_ALSA_LOAD(name)                                                  \
+    a.name = reinterpret_cast<decltype(a.name)>(dlsym(lib, #name));               \
+    ok = ok && a.name != nullptr;
+        DSTUDIO_ALSA_FNS(DSTUDIO_ALSA_LOAD)
+#undef DSTUDIO_ALSA_LOAD
+        return ok ? &a : nullptr; // the library stays loaded for the process
+    }();
+    return loaded;
+}
+
+// Zeroed, correctly sized info records (what the snd_*_alloca macros make).
+struct SeqInfos {
+    explicit SeqInfos(const Alsa& a)
+        : cbuf(a.snd_seq_client_info_sizeof(), 0), pbuf(a.snd_seq_port_info_sizeof(), 0),
+          ci(reinterpret_cast<snd_seq_client_info_t*>(cbuf.data())), pi(reinterpret_cast<snd_seq_port_info_t*>(pbuf.data())) {}
+    std::vector<unsigned char> cbuf, pbuf;
+    snd_seq_client_info_t* ci;
+    snd_seq_port_info_t* pi;
+};
+
 struct Source {
     int client = 0;
     int port = 0;
@@ -45,20 +93,21 @@ struct Source {
 
 class AlsaMidi final : public MidiBackend {
 public:
-    AlsaMidi() {
-        if (snd_seq_open(&seq_, "default", SND_SEQ_OPEN_INPUT, SND_SEQ_NONBLOCK) < 0) {
+    AlsaMidi() : a_(alsa()) {
+        if (a_ == nullptr) return; // no libasound: no MIDI inputs
+        if (a_->snd_seq_open(&seq_, "default", SND_SEQ_OPEN_INPUT, SND_SEQ_NONBLOCK) < 0) {
             seq_ = nullptr;
             return;
         }
-        snd_seq_set_client_name(seq_, "Device Studio");
-        port_ = snd_seq_create_simple_port(seq_, "MIDI in", SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
+        a_->snd_seq_set_client_name(seq_, "Device Studio");
+        port_ = a_->snd_seq_create_simple_port(seq_, "MIDI in", SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
                                            SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
         if (port_ < 0 || pipe(wake_) != 0) {
-            snd_seq_close(seq_);
+            a_->snd_seq_close(seq_);
             seq_ = nullptr;
             return;
         }
-        self_ = snd_seq_client_id(seq_);
+        self_ = a_->snd_seq_client_id(seq_);
         thread_ = std::thread([this] { run(); });
     }
 
@@ -70,30 +119,29 @@ public:
         thread_.join();
         ::close(wake_[0]);
         ::close(wake_[1]);
-        snd_seq_close(seq_);
+        a_->snd_seq_close(seq_);
     }
 
     void list(std::vector<MidiPortInfo>& out) override {
         out.clear();
         if (seq_ == nullptr) return;
         std::lock_guard lock(mutex_);
-        snd_seq_client_info_t* ci = nullptr;
-        snd_seq_port_info_t* pi = nullptr;
-        snd_seq_client_info_alloca(&ci);
-        snd_seq_port_info_alloca(&pi);
-        snd_seq_client_info_set_client(ci, -1);
-        while (snd_seq_query_next_client(seq_, ci) >= 0) {
-            const int client = snd_seq_client_info_get_client(ci);
+        SeqInfos infos(*a_);
+        snd_seq_client_info_t* const ci = infos.ci;
+        snd_seq_port_info_t* const pi = infos.pi;
+        a_->snd_seq_client_info_set_client(ci, -1);
+        while (a_->snd_seq_query_next_client(seq_, ci) >= 0) {
+            const int client = a_->snd_seq_client_info_get_client(ci);
             if (client == self_ || client == SND_SEQ_CLIENT_SYSTEM) continue;
-            const std::string cname = snd_seq_client_info_get_name(ci);
-            snd_seq_port_info_set_client(pi, client);
-            snd_seq_port_info_set_port(pi, -1);
-            while (snd_seq_query_next_port(seq_, pi) >= 0) {
-                const unsigned caps = snd_seq_port_info_get_capability(pi);
+            const std::string cname = a_->snd_seq_client_info_get_name(ci);
+            a_->snd_seq_port_info_set_client(pi, client);
+            a_->snd_seq_port_info_set_port(pi, -1);
+            while (a_->snd_seq_query_next_port(seq_, pi) >= 0) {
+                const unsigned caps = a_->snd_seq_port_info_get_capability(pi);
                 const unsigned want = SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ;
                 if ((caps & want) != want || (caps & SND_SEQ_PORT_CAP_NO_EXPORT) != 0) continue;
-                if ((snd_seq_port_info_get_type(pi) & SND_SEQ_PORT_TYPE_MIDI_GENERIC) == 0) continue;
-                const std::string pname = snd_seq_port_info_get_name(pi);
+                if ((a_->snd_seq_port_info_get_type(pi) & SND_SEQ_PORT_TYPE_MIDI_GENERIC) == 0) continue;
+                const std::string pname = a_->snd_seq_port_info_get_name(pi);
                 MidiPortInfo p;
                 p.id = cname + ":" + pname;
                 p.name = pname == cname || pname.rfind(cname, 0) == 0 ? pname : cname + " " + pname;
@@ -113,9 +161,9 @@ public:
             return false;
         }
         std::lock_guard lock(mutex_);
-        const int rc = snd_seq_connect_from(seq_, port_, client, port);
+        const int rc = a_->snd_seq_connect_from(seq_, port_, client, port);
         if (rc < 0) {
-            err = snd_strerror(rc);
+            err = a_->snd_strerror(rc);
             return false;
         }
         sources_[id] = Source{client, port, rx, ctx};
@@ -127,28 +175,27 @@ public:
         std::lock_guard lock(mutex_); // the reader holds it while delivering
         auto it = sources_.find(id);
         if (it == sources_.end()) return;
-        snd_seq_disconnect_from(seq_, port_, it->second.client, it->second.port);
+        a_->snd_seq_disconnect_from(seq_, port_, it->second.client, it->second.port);
         sources_.erase(it);
     }
 
 private:
     bool find(const std::string& id, int& client, int& port) {
         std::lock_guard lock(mutex_);
-        snd_seq_client_info_t* ci = nullptr;
-        snd_seq_port_info_t* pi = nullptr;
-        snd_seq_client_info_alloca(&ci);
-        snd_seq_port_info_alloca(&pi);
-        snd_seq_client_info_set_client(ci, -1);
-        while (snd_seq_query_next_client(seq_, ci) >= 0) {
-            const int c = snd_seq_client_info_get_client(ci);
-            const std::string cname = snd_seq_client_info_get_name(ci);
+        SeqInfos infos(*a_);
+        snd_seq_client_info_t* const ci = infos.ci;
+        snd_seq_port_info_t* const pi = infos.pi;
+        a_->snd_seq_client_info_set_client(ci, -1);
+        while (a_->snd_seq_query_next_client(seq_, ci) >= 0) {
+            const int c = a_->snd_seq_client_info_get_client(ci);
+            const std::string cname = a_->snd_seq_client_info_get_name(ci);
             if (id.rfind(cname + ":", 0) != 0) continue;
-            snd_seq_port_info_set_client(pi, c);
-            snd_seq_port_info_set_port(pi, -1);
-            while (snd_seq_query_next_port(seq_, pi) >= 0)
-                if (cname + ":" + snd_seq_port_info_get_name(pi) == id) {
+            a_->snd_seq_port_info_set_client(pi, c);
+            a_->snd_seq_port_info_set_port(pi, -1);
+            while (a_->snd_seq_query_next_port(seq_, pi) >= 0)
+                if (cname + ":" + a_->snd_seq_port_info_get_name(pi) == id) {
                     client = c;
-                    port = snd_seq_port_info_get_port(pi);
+                    port = a_->snd_seq_port_info_get_port(pi);
                     return true;
                 }
         }
@@ -199,19 +246,20 @@ private:
     }
 
     void run() {
-        const int n = snd_seq_poll_descriptors_count(seq_, POLLIN);
+        const int n = a_->snd_seq_poll_descriptors_count(seq_, POLLIN);
         std::vector<pollfd> fds(static_cast<std::size_t>(n) + 1);
-        snd_seq_poll_descriptors(seq_, fds.data(), static_cast<unsigned>(n), POLLIN);
+        a_->snd_seq_poll_descriptors(seq_, fds.data(), static_cast<unsigned>(n), POLLIN);
         fds[static_cast<std::size_t>(n)] = pollfd{wake_[0], POLLIN, 0};
         while (!stop_.load(std::memory_order_acquire)) {
             if (poll(fds.data(), fds.size(), -1) < 0 && errno != EINTR) break;
             if (stop_.load(std::memory_order_acquire)) break;
             std::lock_guard lock(mutex_);
             snd_seq_event_t* ev = nullptr;
-            while (snd_seq_event_input(seq_, &ev) >= 0 && ev != nullptr) deliver(*ev);
+            while (a_->snd_seq_event_input(seq_, &ev) >= 0 && ev != nullptr) deliver(*ev);
         }
     }
 
+    const Alsa* const a_; // null without libasound (then seq_ stays null)
     snd_seq_t* seq_ = nullptr;
     int port_ = -1;
     int self_ = -1;

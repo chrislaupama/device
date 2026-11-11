@@ -320,7 +320,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         TrackMidi* const tmidi = inst.midi != nullptr && t < graph->midi_tracks.size() ? graph->midi_tracks[t] : nullptr;
         MidiEvent* const midi_ev = ctx.midi_scratch();
         uint32_t n_midi = 0;
-        if (tmidi != nullptr) {
+        if (tmidi != nullptr && (inst.midi->count > 0 || tmidi->held_count > 0)) {
             const bool midi_routed =
                 graph->midi_explicit ? (track.arm || track.monitor) : track.track_id == inst.midi->focus;
             n_midi = tmidi->events_for(inst.midi->events, inst.midi->count, midi_routed, midi_ev,
