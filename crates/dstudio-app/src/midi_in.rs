@@ -43,8 +43,9 @@ pub struct MidiPass {
     /// The loop range (frames) when the pass first wrapped: kept for the rest of the
     /// pass, so turning the loop off after a wrap still folds notes held across it.
     pub wrap_loop: Option<(i64, i64)>,
-    /// The loop range at the previous poll: a wrap followed by the loop being turned
-    /// off before the next poll is still read in the loop it happened in.
+    /// The latest loop range seen during the pass. Kept after the loop is turned off,
+    /// so a wrap the engine reports after that (its capture can trail the UI by a
+    /// poll or more) is still read in the loop it happened in.
     pub last_loop: Option<(i64, i64)>,
     pub events: Vec<CapturedEvent>,
     /// The instrument tracks armed when the pass started: the ones it records on.
@@ -201,9 +202,11 @@ impl Controller {
         let now_loop = self.loop_frames();
         let got = self.engine.read_midi_capture();
         let Some(pass) = self.midi_in.pass.as_mut() else { return };
-        // The loop in force since the last poll: the current one, or the one just turned off.
-        let current = now_loop.or(pass.last_loop);
-        pass.last_loop = now_loop;
+        // The loop in force now, or the last one this pass played in.
+        if now_loop.is_some() {
+            pass.last_loop = now_loop;
+        }
+        let current = pass.last_loop;
         let looping = current.is_some();
         absorb(pass, got.into_iter().map(|n| CapturedEvent { frame: n.frame, on: n.on, pitch: n.pitch, velocity: n.velocity }), looping);
         if looping && pos < pass.last_pos {
@@ -223,7 +226,7 @@ impl Controller {
 
     /// The pass's frame range so far (or at stop), as `midi_record` takes it.
     pub(crate) fn midi_pass_bounds(&self, pass: &MidiPass, stop: i64) -> Pass {
-        pass_bounds(pass, stop, self.loop_frames())
+        pass_bounds(pass, stop, self.loop_frames().or(pass.last_loop))
     }
 
     /// End the MIDI side of the pass: one `AddMidiClip` per armed instrument track that
@@ -313,6 +316,11 @@ mod tests {
         let current = None.or(p.last_loop);
         absorb(&mut p, [ev(1200, false)].into_iter(), current.is_some());
         assert!(p.wrapped);
+        // Notes held across that wrap end at the loop end.
+        let b = pass_bounds(&p, 1300, current);
+        let notes = midi_record::pair_notes(&p.events, &b);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].end, 5000);
     }
     #[test]
     fn absorb_detects_wrap() {
