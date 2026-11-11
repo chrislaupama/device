@@ -1,5 +1,4 @@
-//! Assistant panel state and flow (the reference's AI panel, called
-//! "Assistant" here). The provider call runs on a worker thread
+//! Assistant panel state and flow. The provider call runs on a worker thread
 //! (`assistant_provider`); its result comes back through the controller's
 //! job channel and goes `parse_turn` → `plan(doc, mode, turn)` → (Assist)
 //! `commit` (one undo step, `Origin::Assistant`) → `after_change()`.
@@ -31,7 +30,7 @@ pub struct Entry {
     /// Action log (plan summary lines, then highlight notes).
     pub lines: Vec<String>,
     pub secs: f32,
-    /// Step log open (replies start collapsed, as in the reference).
+    /// Step log open (replies start collapsed).
     pub expanded: bool,
     /// User prompt sent in Point mode (shows the mode tag).
     pub point: bool,
@@ -279,8 +278,8 @@ impl Controller {
         self.assistant.push(Entry { kind: EntryKind::Reply, text, lines, secs, expanded: false, point: false });
     }
 
-    /// TEST seam for the reference/review renders (`--state reference-assistant`,
-    /// `review-assistant-<name>`): a canned transcript in one of the panel's states. Our own copy.
+    /// TEST seam for the `--state` renders (`--state reference-assistant`,
+    /// `review-assistant-<name>`): a canned transcript in one of the panel's states.
     pub fn assistant_demo(&mut self, name: &str) -> Result<(), String> {
         let entry = |kind, text: &str, lines: &[&str], secs, expanded, point| Entry {
             kind,

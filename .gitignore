@@ -3,11 +3,4 @@ build/
 *.DS_Store
 /engine/build*/
 /out/
-tools/.venv/
-# Reference screenshots contain third-party artwork, licensed sample names and personal library data.
-# Keep them local (internal fidelity testing only).
-reference/screenshots/
-tools/reference/bin/
-# Diff heatmaps embed traces of the reference UI (logo/icons); keep local.
-crates/dstudio-app/fidelity/*-diff.png
 __pycache__/

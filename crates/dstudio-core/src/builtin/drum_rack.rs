@@ -1,8 +1,6 @@
-//! Drum Rack (reference: the reference app's built-in drum rack). Sixteen pads on the
-//! notes C1 to D#2 (36..51); each pad is a Pad Sampler with up to eight
-//! sounds that alternate hit by hit, and can be switched off. Ids, ranges and
-//! defaults follow the device spec (handoffs/device-specs/drum-rack.md); the
-//! factory presets are our own. Sample slot = (pad - 1) * 8 + layer.
+//! Drum Rack. Sixteen pads on the notes C1 to D#2 (36..51); each pad is a Pad
+//! Sampler with up to eight sounds that alternate hit by hit, and can be
+//! switched off. Sample slot = (pad - 1) * 8 + layer.
 
 use super::pad_sampler::{end, fade_in, fade_out, gain, gate, pan, reverse, start, transpose, warp, LAYERS};
 use super::sampler::OFF_ON;

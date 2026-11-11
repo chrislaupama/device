@@ -5,10 +5,10 @@
 //         -> input diffusion (4 allpasses per side; longer and denser in Haze)
 //         -> 16-line feedback delay network, Hadamard mixing, per-line
 //            modulated reads and two-band absorption filters set from the
-//            reference's T60 law: T60(f) = Decay / (1 + damping * (b(f) - b(1 kHz)) * 0.85)
+//            T60 law: T60(f) = Decay / (1 + damping * (b(f) - b(1 kHz)) * 0.85)
 //         -> wet = late tail + early reflections (arrival times from the
-//            reference's tail model), width (M/S), low / high cut (1st order,
-//            the reference's filter law), mix with the dry signal.
+//            tail model), width (M/S), low / high cut (1st
+//            order), mix with the dry signal.
 //
 // Mode specifics: Room / Hall / Plate differ in line lengths, early
 // reflections, diffusion and modulation; Plate and Haze add an allpass in
@@ -65,7 +65,7 @@ struct ModeSpec {
     float loop_ap;              // in-loop allpass gain (0 = none)
     float mod_ms;               // modulation depth at Mod Depth 100%
     float mod_hz;               // modulation rate at Mod Rate 1x
-    float first_s, spacing_s;   // early-reflection model (reference tail model constants)
+    float first_s, spacing_s;   // early-reflection model (tail model constants)
     float gain;                 // wet level trim
 };
 constexpr ModeSpec kModes[6] = {
@@ -78,7 +78,7 @@ constexpr ModeSpec kModes[6] = {
 };
 constexpr float kMaxScale = 1.2f;
 
-// b(f) of the reference T60 law.
+// b(f) of the T60 law.
 inline float law_b(float f) noexcept { return 0.5f * std::log2(1.0f + (f / 250.0f) * (f / 250.0f)); }
 
 // 16-point fast Walsh-Hadamard transform, orthonormal (scale 1/4).
@@ -231,7 +231,7 @@ public:
         const float loop_ap_g = mode == kHaze ? 0.35f + 0.35f * diffusion : ms.loop_ap;
         const float diff_g = mode == kHaze ? 0.45f + 0.3f * diffusion : ms.diffusion;
         const float diff_len_scale = mode == kHaze ? 1.0f + 5.0f * diffusion : (0.6f + 0.6f * size);
-        // Early reflections: 8 arrivals per side (reference tail model).
+        // Early reflections: 8 arrivals per side (tail model).
         float er_t[8], er_g[8];
         for (int i = 0; i < 8; ++i) {
             const float t = ms.first_s * (0.6f + size) / 1.1f + ms.spacing_s * std::pow(static_cast<float>(i + 1), 1.1f) * (0.4f + 1.2f * size);
@@ -244,7 +244,7 @@ public:
         const float spring_disp = -0.55f - 0.15f * size;
         spring_lp_[0].set_hz(4200.0f - 2600.0f * damping, sr_);
         spring_lp_[1].a = spring_lp_[0].a;
-        // Output filters (the reference's first-order law); Low Cut at 20 Hz is off.
+        // Output filters (first order); Low Cut at 20 Hz is off.
         const bool lc_on = lc > 20.02f;
         for (auto& f : lc_) f.set_hz(lc, sr_);
         for (auto& f : hc_) f.set_hz(hc, sr_);

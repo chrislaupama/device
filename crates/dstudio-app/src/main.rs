@@ -15,9 +15,9 @@
 //!              [--screenshot <out.png>] [--offscreen] [--exit-after-frames N] [--frame-stats] [--render-bench N] [--self-test]
 //!              [--window-width <pt>  (OS window width, default 1440)] [--assistant-width <px>  (saved docked-assistant width, 297..600)]
 //!              [--timeline-zoom <percent>  (horizontal timeline zoom, 100 = default; 100 is 12.76 pt per beat)]
-//!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = our design units)]
+//!              [--zoom <percent>  (interface zoom, default 100 or the saved level; 85 = the design units)]
 //!              [--clip-menu <0|1|3|4|5>  (open a clip editor dropdown after --state: Speed, Warp, Grid, Type, Genre; 2, Mode, is disabled)]
-//!              [--card-accent <RRGGBB>  (device cards in that colour, as on the reference's Master track)]
+//!              [--card-accent <RRGGBB>  (device cards in that colour, e.g. white as on the Master track)]
 //! ```
 
 static CLIP_MENU_AUDIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -97,12 +97,12 @@ struct Args {
     audio: bool,
     demo: bool,
     reference_default: bool,
-    /// Extra panels for the reference states.
+    /// Extra panels for the `reference-*` states.
     open_mixer: bool,
     open_assistant: bool,
     /// reference-assistant / review-assistant-<name>: canned transcript (assistant_panel::assistant_demo).
     assistant_demo: Option<String>,
-    /// 1 = reference-midi-clip (33), 2 = reference-pianoroll (34).
+    /// 1 = reference-midi-clip, 2 = reference-pianoroll.
     midi_state: u8,
     audio_clip_state: bool,
     /// review-warp: the audio clip state with drum hits, warped (Drums, 1.5x, one marker).
@@ -116,11 +116,11 @@ struct Args {
     reverse_state: bool,
     /// review-warp-stereo: review-warp from a stereo file (hits on the left only).
     stereo_state: bool,
-    /// reference-synth (32): Instrument track selected, Devices tab, test-state synth preset.
+    /// reference-synth: Instrument track selected, Devices tab, test-state synth preset.
     synth_state: bool,
     /// --synth-page N: open that category page of the synth device (review screenshots).
     synth_page: Option<usize>,
-    /// reference-input-menu (50): Instrument + Audio tracks, Audio selected, "In" popup open.
+    /// reference-input-menu: Instrument + Audio tracks, Audio selected, "In" popup open.
     input_menu_state: bool,
     /// reference-clip-menu: Instrument track with a 1-bar MIDI clip at bar 6, its context menu open.
     clip_menu_state: bool,
@@ -130,43 +130,42 @@ struct Args {
     seq_state: Option<i32>,
     /// Clip sidebar pattern list review: 0 empty MIDI clip, 1 chords made, 2 drum patterns made.
     patterns_state: Option<i32>,
-    /// reference-settings-audio (14): Settings open on the Audio page.
+    /// reference-settings-audio: Settings open on the Audio page.
     settings_state: bool,
     /// 1 export dialog, 2 unsaved-changes prompt, 3 export dialog on Stems, 4 with its Tracks menu open, 5 on Project,
     /// 6 Check for Updates, 7 Undo History (after a few edits, the last one undone).
     dialog_state: u8,
     settings_general_state: bool,
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
-    /// the live recording clip. Not a reference capture (the reference recording UI was not captured).
+    /// the live recording clip.
     recording_review: bool,
-    /// reference-automation (60): Instrument track 1 (MIDI clip at bar 6), Audio track 2 selected,
+    /// reference-automation: Instrument track 1 (MIDI clip at bar 6), Audio track 2 selected,
     /// playhead at bar 6, automation lanes shown (Track Volume at +0.0).
     automation_state: bool,
-    /// reference-live (renders/reference/ui/z100-main-default.png, 100 % zoom): the default project
+    /// reference-live (100 % zoom): the default project
     /// with the assistant panel open and the automation lanes shown.
     live_state: bool,
     /// review-automation / review-automation-picker: lanes with points (active, disabled, curved,
     /// an expanded extra lane, master) for review; the second also opens the picker with the
-    /// Synth submenu. No reference capture.
+    /// Synth submenu.
     automation_review: u8,
     /// review-track-heights / review-bottom-collapsed: the demo tracks at 0.25x, 0.5x and 2x
-    /// height; the second instead collapses the bottom panel to its tab row (compare
-    /// z100-arr-resize-timeline-taller.png).
+    /// height; the second instead collapses the bottom panel to its tab row.
     splitters_review: u8,
     /// review-files-projects / review-files-folders / review-files-project: Browser › Files with
-    /// an empty projects folder (compare z100-browser-files-projects.png), with a generated
-    /// "audio" folder of two WAVs open (compare z100-files-audio-folder-expanded.png), and with a
-    /// saved project open to its tracks, audio files and MIDI clips (no reference).
+    /// an empty projects folder, with a generated
+    /// "audio" folder of two WAVs open, and with a
+    /// saved project open to its tracks, audio files and MIDI clips.
     /// review-files-preview: the audio folder with sine-a440-pulsed.wav playing in the preview
-    /// bar (compare z100-files-row-preview-playing.png).
+    /// bar.
     /// review-files-sort: the audio folder with the sort menu open.
     files_review: u8,
-    /// review-section-added / review-sections-two: one new 8-bar section (compare
-    /// z100-marker-after-plus-click.png), or two with the second selected.
+    /// review-section-added / review-sections-two: one new 8-bar section,
+    /// or two with the second selected.
     sections_review: u8,
-    /// reference-devices-effects (05): browser Devices › Effects sub-tab.
+    /// reference-devices-effects: browser Devices › Effects sub-tab.
     devices_effects_state: bool,
-    /// review-device-chain: Instrument track with the Synth and one AU effect (no reference).
+    /// review-device-chain: Instrument track with the Synth and one AU effect.
     device_chain_review: bool,
     /// review-devices-minimap: Instrument track with the Synth and a long chain of built-in effects (the Devices minimap shows).
     devices_minimap_review: bool,
@@ -183,12 +182,12 @@ struct Args {
     hold_note: Option<u8>,
     /// Never show the window (renders for --screenshot fall back to offscreen snapshots).
     offscreen: bool,
-    /// review-analyzers: Pitch Corrector, Tuner and Spectrum fed 2 s of a sung-like line (no reference).
+    /// review-analyzers: Pitch Corrector, Tuner and Spectrum fed 2 s of a sung-like line.
     analyzers_review: bool,
     /// reference-lfo / reference-chain: 1 an LFO aimed at a Compressor, 2 a chain head
     /// (macro panel open) holding a Compressor and the CLAP test plugin's card.
     modulation_state: u8,
-    /// review-settings-plugins: Settings open on the Plugins page (no reference comparison).
+    /// review-settings-plugins: Settings open on the Plugins page.
     plugins_page_review: bool,
     assistant_fixture: Option<PathBuf>,
     plugin_fixture: Option<PathBuf>,
@@ -197,7 +196,7 @@ struct Args {
     zoom: Option<u32>,
     /// --window-width <pt>: OS window width in points (default 1440), for narrow-window reviews.
     window_width: Option<f32>,
-    /// --assistant-width <px>: saved docked-assistant width in the reference's px (297..600), for reviews.
+    /// --assistant-width <px>: saved docked-assistant width in 100%-zoom px (297..600), for reviews.
     assistant_width: Option<f32>,
     clip_menu: Option<i32>,
     /// --ac-edit N: with review-warp, open the typed-value box (0 Original BPM, 1 Transpose).
@@ -615,7 +614,7 @@ struct Frame {
     saved: bool,
     tex: (u32, u32),
     /// --bench-clip-render: 0 before, 1 during, 2 after the render; frames of each phase
-    /// (interval, our cpu, slint render cpu).
+    /// (interval, timeline cpu, slint render cpu).
     phase: usize,
     phase_from: u64,
     phases: [[Series; 3]; 3],
@@ -644,15 +643,15 @@ fn key_name(text: &str) -> Option<String> {
 }
 
 /// The core default preset plus app-level view bindings that `dstudio_core::keymap`
-/// does not define (the reference's shortcuts for these are unverified; ours).
+/// does not define.
 pub fn app_keymap() -> Keymap {
     use dstudio_core::keymap::{Binding, Condition};
     let mut k = Keymap::default_preset();
     for (action, chord) in [("view.toggle_mixer", "primary+shift+x"), ("view.toggle_assistant", "primary+shift+a"), ("view.escape", "escape")] {
         k.bindings.push(Binding { action: action.into(), chords: vec![Chord::parse(chord).expect("valid chord")], when: Condition::Always });
     }
-    // Arm / input monitoring on the selected track (the core preset has no bindings for them;
-    // the reference's chords are unverified, these are ours). Added only if the core lacks them.
+    // Arm / input monitoring on the selected track (the core preset has no bindings for them).
+    // Added only if the core lacks them.
     for (action, chord) in [("track.arm", "shift+r"), ("track.monitor", "shift+i")] {
         if k.chords_for(action).is_empty() {
             k.bindings.push(Binding { action: action.into(), chords: vec![Chord::parse(chord).expect("valid chord")], when: Condition::TrackSelected });
@@ -660,8 +659,8 @@ pub fn app_keymap() -> Keymap {
     }
     // Musical typing: the tooltip reads "K / ⇧K"; the core preset has only K.
     k.bindings.push(Binding { action: "view.musical_typing".into(), chords: vec![Chord::parse("shift+k").expect("valid chord")], when: Condition::Always });
-    // Piano roll (the reference documents ↑/↓ transpose, Delete, B/E and the toolbar's R = Reverse;
-    // the other chords are ours). While typing is on, its keys are taken before these.
+    // Piano roll (↑/↓ transpose, Delete, B/E, the toolbar's R = Reverse
+    // and the other chords). While typing is on, its keys are taken before these.
     for (action, chords) in [
         ("midi.delete_notes", &["delete", "backspace"][..]),
         ("midi.transpose_up", &["up"][..]),
@@ -834,7 +833,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
     true
 }
 
-/// Synth test state read off the reference captures (osc 2 FM, LFO 1 slow, 2 routes, one macro
+/// Synth test state (osc 2 FM, LFO 1 slow, 2 routes, one macro
 /// mapping, Tape off / Chorus / Delay / Reverb); not a factory sound.
 fn synth_test_state(device: dstudio_core::DeviceId) -> dstudio_core::Command {
     let params = [
@@ -860,7 +859,7 @@ fn main() {
 }
 
 /// AppKit adds Start Dictation, Emoji & Symbols and Enter Full Screen to any Edit and View
-/// menus; the reference's menus have none of them. Registered (not saved) defaults.
+/// menus; these menus have none of them. Registered (not saved) defaults.
 #[cfg(target_os = "macos")]
 fn suppress_appkit_menu_items() {
     use objc2_foundation::{NSDictionary, NSNumber, NSUserDefaults, ns_string};
@@ -881,7 +880,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Arc::new(Engine::new(Config { sample_rate: 48_000.0, ..Config::default() })?);
     let mut device_error = None;
     // App preferences (Settings › Audio): never read or written by self-tests and
-    // reference/screenshot runs, so those can never open a real input device.
+    // `--state` / screenshot runs, so those can never open a real input device.
     let use_prefs = !args.self_test && !args.reference_default && args.screenshot.is_none() && args.exit_after_frames.is_none();
     if use_prefs {
         match prefs::migrate_legacy_support_dir() {
@@ -931,7 +930,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let studio = app.global::<Studio>();
 
     let ctl: Ctl = Rc::new(RefCell::new(Controller::new(engine.clone(), Project::default())));
-    // Interface zoom: --zoom, else the saved level, else 100 %. Self-tests keep our
+    // Interface zoom: --zoom, else the saved level, else 100 %. Self-tests keep the
     // design units (85 %) so their scripted geometry is unchanged.
     let zoom_percent = args.zoom.unwrap_or(if args.self_test { 85 } else if saved_prefs.interface_zoom > 0 { saved_prefs.interface_zoom } else { zoom::DEFAULT_PERCENT });
     let zoom = Rc::new(RefCell::new(zoom::Zoom::new(zoom_percent)));
@@ -990,7 +989,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.ui_dirty = true;
     }
     if args.midi_state > 0 {
-        // Reference 33/34: default project, Instrument track selected, 1-bar MIDI clip at bar 6.
+        // reference-midi-clip / reference-pianoroll: default project, Instrument track selected, 1-bar MIDI clip at bar 6.
         let mut c = ctl.borrow_mut();
         let inst = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id);
         if let Some(t) = inst {
@@ -1000,7 +999,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let clip = c.insert_midi_clip();
         if args.midi_state == 2 {
             c.select_clip(clip);
-            c.seek_beats(22.0); // 00:11.000, as captured
+            c.seek_beats(22.0); // 00:11.000
         }
         if let (5..=7 | 10..=13, Some(id)) = (args.midi_state, clip) {
             // REVIEW STATE: an E minor line with one out-of-scale note (F4), the clip's scale set
@@ -1091,9 +1090,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     if args.synth_state {
-        // Reference 32: default project, Instrument track selected (playhead at bar 6), Devices tab,
+        // reference-synth: default project, Instrument track selected (playhead at bar 6), Devices tab,
         // Oscillators page. The oscillator values come from a TEST-STATE preset built here (not a
-        // factory preset) so the displays are comparable with the reference capture.
+        // factory preset) so the displays show a fixed, known state.
         let mut c = ctl.borrow_mut();
         let inst = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id);
         if let Some(t) = inst {
@@ -1118,7 +1117,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         (a.sample_rate, a.buffer_size) = (48_000.0, 1024);
     }
     if args.input_menu_state {
-        // Reference 50: Instrument track 1 (1-bar MIDI clip at bar 6), Audio track 2 selected,
+        // reference-input-menu: Instrument track 1 (1-bar MIDI clip at bar 6), Audio track 2 selected,
         // playhead 00:11.000, Devices tab, "In" popup open ("None ✓", "Input 1 (Mono)").
         let mut p = Project::default();
         p.tracks.swap(0, 1);
@@ -1201,8 +1200,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if let Some(lane) = args.seq_state {
-        // Drum Rack track with a one-bar drum pattern (reference z100-clip-pattern-sequencer-*:
-        // Pad 1 on steps 1, 5, 9, 13, Pad 2 on 5, Pad 3 on 9), plus lane values to show.
+        // Drum Rack track with a one-bar drum pattern (Pad 1 on steps 1, 5, 9, 13, Pad 2 on 5, Pad 3 on 9), plus lane values to show.
         use dstudio_core::steps::StepLane;
         let mut c = ctl.borrow_mut();
         if let Some(inst) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id) {
@@ -1257,7 +1255,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if args.automation_state {
-        // Reference 60: same project layout as 50 (Instrument 1 with a MIDI clip at bar 6, Audio 2
+        // reference-automation: same project layout as reference-input-menu (Instrument 1 with a MIDI clip at bar 6, Audio 2
         // selected, playhead 00:11.000, Devices tab) with the automation lanes shown.
         let mut p = Project::default();
         p.tracks.swap(0, 1);
@@ -1405,11 +1403,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.settings_page(3);
     }
     if args.devices_effects_state {
-        // Reference 05: default project, browser Devices › Effects (the catalogue as scanned).
+        // reference-devices-effects: default project, browser Devices › Effects (the catalogue as scanned).
         ctl.borrow_mut().browser_tab(1);
     }
     if args.device_chain_review {
-        // Review only (no reference capture): Instrument track selected, Devices tab, the built-in
+        // Review only: Instrument track selected, Devices tab, the built-in
         // Synth followed by one Audio Unit effect (Apple's AULowpass, named by its AU identity).
         let mut c = ctl.borrow_mut();
         if let Some(t) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id) {
@@ -1450,7 +1448,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.seek_beats(20.0);
     }
     if let Some(id) = args.device_state {
-        // Compare with renders/reference/<id>.png (Captain drive): the built-in device at its
+        // reference-<id>: the built-in device at its
         // defaults, alone in an audio track's chain (an instrument on an instrument track),
         // transport stopped.
         let mut c = ctl.borrow_mut();
@@ -1512,8 +1510,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if args.modulation_state > 0 {
-        // No the reference app capture of an LFO card exists; compare the chain with
-        // renders/reference/chain-head.png (Captain drive).
+        // reference-lfo / reference-chain.
         let mut c = ctl.borrow_mut();
         if let Some(t) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Audio).map(|t| t.id) {
             c.select_track(t);
@@ -2105,7 +2102,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         studio.on_key(move |text, primary, shift, alt, ctrl| {
             let Some(key) = key_name(text.as_str()) else { return false };
             let chord = Chord { key, primary, shift, alt, ctrl };
-            // View › Zoom In (⌘= / ⌘+), Zoom Out (⌘-), Reset Zoom (⌘0), as in the reference.
+            // View › Zoom In (⌘= / ⌘+), Zoom Out (⌘-), Reset Zoom (⌘0).
             if primary && !alt && !ctrl {
                 let step = match chord.key.as_str() {
                     "=" | "+" => Some(1),
@@ -2221,7 +2218,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if !args.import.is_empty() {
         ctl.borrow_mut().import_files(args.import.clone(), ImportTarget::Selected, None);
     }
-    // Reference z100-modal-export-audio-mixdown / -save-changes-on-new-project: an 8 s sine clip
+    // Dialog states (reference-export, reference-unsaved, ...): an 8 s sine clip
     // at bar 3 of the Audio track (the export covers bars 1–6), then the dialog.
     let app_menu_timer = slint::Timer::default();
     app_menu_timer.start(slint::TimerMode::Repeated, Duration::from_millis(16), appmenu::adopt_items);
@@ -2262,7 +2259,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
-    // Reference z100-inspector-audio-clip-tab-warp-off: a 4-bar 220 Hz sine clip at bar 4 on the
+    // reference-audio-clip: a 4-bar 220 Hz sine clip at bar 4 on the
     // Audio track, opened in the Clip tab once the import lands; playhead at bar 6.
     let audio_clip_timer = slint::Timer::default();
     if args.audio_clip_state {
@@ -2683,8 +2680,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let _ = slint::quit_event_loop();
         });
     }
-    // The OS window is 1440×820 pt like the reference's; interface zoom then sets how much
-    // of our (85 %-unit) layout fits in it, see `zoom.rs`.
+    // The OS window is 1440×820 pt; interface zoom then sets how much
+    // of the (85 %-unit) layout fits in it, see `zoom.rs`.
     app.window().set_size(slint::LogicalSize::new(args.window_width.unwrap_or(1440.0), 820.0));
     app.run()?;
     if args.frame_stats && exit_after.is_none() {

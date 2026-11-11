@@ -5,7 +5,7 @@
 // so switching types on the audio thread never allocates; a type's state
 // is cleared when the slot switches to it.
 //
-// The designs are our own (the reference's DSP is not readable): saturating
+// The designs: saturating
 // stages use first-order antiderivative anti-aliasing (ADAA), modulated
 // delays read with cubic interpolation, the reverb is an 8-line feedback
 // delay network.

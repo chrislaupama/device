@@ -1,7 +1,5 @@
-//! Character Compressor (reference: the reference app's built-in "Character Compressor").
-//! Parameter ids, ranges, defaults, tapers, the model overlays, detents and
-//! the panel arrangement are taken from the device spec as facts; the factory
-//! preset names and values are our own.
+//! Character Compressor: parameter ids, ranges, defaults, tapers, the model
+//! overlays, detents, the panel arrangement and the factory presets.
 //!
 //! Six models share one parameter set. The model decides which knobs the card
 //! shows (`Layout::shown_when`), the static curve (`character_transfer`, also

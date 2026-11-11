@@ -1,7 +1,6 @@
-//! Transient Shaper gain scope history, at the reference app's resolution: the engine
+//! Transient Shaper gain scope history: the engine
 //! publishes 750 columns a second (output peak, pre-clip peak, applied gain
 //! dB), the plot spans 3000 of them (4 s), one bar per point of plot width.
-//! Values restated in reference/research-findings.md, row 36.
 //!
 //! Frames arrive with the device's running column count, so overlapping
 //! frames merge without repeats or gaps. The read head trails the newest

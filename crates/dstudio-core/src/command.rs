@@ -192,7 +192,7 @@ pub enum Command {
 }
 
 impl Command {
-    /// Human-readable label used for "Undo ⟨label⟩" (reference: Edit menu
+    /// Human-readable label used for "Undo ⟨label⟩" (the Edit menu
     /// titles the action, e.g. "Undo Shortcut Change").
     pub fn label(&self) -> String {
         match self {

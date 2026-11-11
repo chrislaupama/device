@@ -1,7 +1,5 @@
-//! Spectrum (reference: the reference app's built-in "Spectrum"). Parameter ids,
-//! ranges, defaults, units and the panel arrangement are taken from the
-//! reference as facts. The reference ships no factory presets for it, and
-//! neither do we.
+//! Spectrum: parameter ids, ranges, defaults, units and the panel
+//! arrangement. It ships no factory presets.
 
 use super::*;
 use crate::device::PluginKind;

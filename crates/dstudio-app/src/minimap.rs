@@ -1,14 +1,14 @@
-//! Timeline header minimap (reference/findings/minimap.md, S40-S42).
+//! Timeline header minimap.
 //!
 //! The strip shows the whole arrangement: one thin bar per clip, in the track's colour, one
 //! band per track, plus a window for the part of the song the lanes show and a playhead line.
-//! Rust builds the bars as a small model; Slint only places them. Interaction is ours too:
+//! Rust builds the bars as a small model; Slint only places them. Interaction is handled here too:
 //! drag the window to scroll, drag it sideways and vertically to scroll and zoom, drag an edge
 //! to resize it, press outside it to jump there (and keep dragging), double-click to fit the
 //! arrangement, wheel to scroll (zoom with Ctrl / Alt).
 //!
-//! All geometry below is in the reference's own px (CSS); the Controller methods convert the
-//! design units (0.85 x reference px) that Slint sends.
+//! All geometry below is in 100%-zoom px (CSS); the Controller methods convert the
+//! design units (0.85 x 100%-zoom px) that Slint sends.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -18,9 +18,9 @@ use crate::{AppWindow, MiniBar, Studio};
 use slint::{ComponentHandle, VecModel};
 use std::rc::Rc;
 
-/// Design units per reference px.
+/// Design units per 100%-zoom px.
 pub const CSS: f32 = 0.85;
-/// The strip is 20 reference px high.
+/// The strip is 20 px high (at 100% zoom).
 const HEIGHT: f32 = 20.0;
 /// Vertical padding the bands keep from the strip's top and bottom.
 const PAD: f32 = 2.0;
@@ -186,7 +186,7 @@ pub enum Grab {
     Jump,
 }
 
-/// A drag in progress (positions in reference px).
+/// A drag in progress (positions in 100%-zoom px).
 #[derive(Debug, Clone)]
 pub struct Drag {
     pub grab: Grab,

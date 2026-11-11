@@ -1,6 +1,5 @@
-//! Tremolo (reference: the reference app's built-in "Tremolo"). Parameter ids, ranges,
-//! defaults, tapers and the panel arrangement are taken from the reference
-//! as facts; the factory presets (names and values) are our own.
+//! Tremolo: parameter ids, ranges, defaults, tapers, the panel arrangement
+//! and the factory presets.
 
 use super::*;
 

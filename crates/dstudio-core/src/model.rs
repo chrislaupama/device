@@ -30,14 +30,14 @@ pub struct AssetId(pub u64);
 #[serde(transparent)]
 pub struct SectionId(pub u64);
 
-/// A named, coloured arrangement range. Like the reference's sections, they tile the
+/// A named, coloured arrangement range. Sections tile the
 /// timeline from bar 1 in list order: a section starts where the previous one ends.
 /// Labels only: editing sections never moves clips.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Section {
     pub id: SectionId,
     pub name: String,
-    /// 0xRRGGBB (the reference's section palette, before display tinting).
+    /// 0xRRGGBB (the section palette, before display tinting).
     pub color: u32,
     pub length: Ticks,
 }
@@ -49,19 +49,19 @@ pub enum TrackKind {
     Instrument,
 }
 
-/// Track colours observed in the reference (design-system.md). Index into the
+/// Track colour: an index into the
 /// UI palette; the model stores an index so palettes can be re-themed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ColorIndex(pub u8);
 
 impl ColorIndex {
-    /// Colour of a new project's first track: the reference's pink (palette index 4). Later
+    /// Colour of a new project's first track: pink (palette index 4). Later
     /// tracks follow the cycle from there (orange, then teal, ...).
     pub const FIRST: ColorIndex = ColorIndex(4);
 }
 
-/// Which device input feeds a track (reference "In" selector: "None",
+/// Which device input feeds a track (the "In" selector: "None",
 /// "Input 1 (Mono)", ...). Channels are 0-based device input channels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputSource {
@@ -83,10 +83,10 @@ pub struct Track {
     pub pan: f32,
     pub mute: bool,
     pub solo: bool,
-    /// Armed for recording (reference "R").
+    /// Armed for recording ("R").
     #[serde(default)]
     pub arm: bool,
-    /// Input monitoring on (reference "I"): the track's input is heard
+    /// Input monitoring on ("I"): the track's input is heard
     /// through its chain while armed or monitoring.
     #[serde(default)]
     pub monitor: bool,
@@ -205,7 +205,7 @@ pub struct Transport {
     pub loop_enabled: bool,
     pub loop_start: Ticks,
     pub loop_end: Ticks,
-    /// Project key (None = not set, the reference's "—"). Devices whose Key
+    /// Project key (None = not set, shown as "—"). Devices whose Key
     /// Follow is on use it (builtin::engine_device).
     #[serde(default)]
     pub key: Option<ProjectKey>,
@@ -241,8 +241,8 @@ pub struct Project {
 }
 
 impl Default for Project {
-    /// Mirrors the reference default project: one Audio and one Instrument
-    /// track, 120 BPM, 4/4, loop region bars 1–9 (observed, ui-inventory.md).
+    /// The default project: one Audio and one Instrument
+    /// track, 120 BPM, 4/4, loop region bars 1–9.
     fn default() -> Self {
         let mut p = Project {
             name: "Untitled".into(),
@@ -276,7 +276,7 @@ impl Track {
         Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, arm: false, monitor: false, input: None, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default(), devices: Vec::new(), instrument_plugin: None, automation: Vec::new(), height: 1.0 }
     }
 
-    /// Row height scale limits (the reference's per-track height scale).
+    /// Row height scale limits (the per-track height scale).
     pub const HEIGHT_RANGE: (f32, f32) = (0.25, 6.0);
 }
 

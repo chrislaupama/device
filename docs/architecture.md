@@ -64,7 +64,7 @@ the AI assistant:
   reproduces identical ids. Ids are never recycled.
 - **Coalescing**: continuous gestures (fader/pan/tempo drags) merge into one undo step within 750 ms
   per target.
-- **Labels** for "Undo ⟨action⟩" menu titles (matches the reference Edit menu behaviour).
+- **Labels** for "Undo ⟨action⟩" menu titles.
 - **Serialisation** (`{"op":"set_tempo","bpm":128}`) makes commands usable as AI tool calls and
   scripts, and replayable in tests.
 
@@ -86,8 +86,8 @@ the AI assistant:
   (list tracks, describe selection, transport state).
 - **Assist mode**: model output → `Command` (deserialised) → validation → preview/confirm policy →
   `Document::execute(cmd, Origin::Assistant)` → one undo step per assistant turn (a `Batch`).
-- **Teach mode** (the reference calls it "Point"): the model may only return *highlight* directives
-  (UI element ids from the design inventory) and explanations. Any `Command` it returns is rejected.
+- **Teach mode** ("Point" in the UI): the model may only return *highlight* directives
+  (stable UI element ids) and explanations. Any `Command` it returns is rejected.
 - Runs out of process or async. The DAW works fully offline. AI never touches engine memory.
 
 ## Cross-platform strategy

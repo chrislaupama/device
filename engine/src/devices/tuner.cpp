@@ -37,7 +37,7 @@ constexpr int kStrings[5][6] = {
     {38, 45, 50, 55, 57, 62}, // DADGAD
     {40, 45, 50, 55, 59, 64}, // Sweetened: Standard with the offsets below
 };
-// Sweetened tuning offsets in cents (our own temperament: the G and B
+// Sweetened tuning offsets in cents (the G and B
 // strings sit slightly flat so open major chords beat less).
 constexpr float kSweetened[6] = {0.0f, 0.0f, 0.0f, -1.0f, -2.0f, 0.0f};
 

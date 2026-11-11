@@ -3,7 +3,7 @@
 DStudio's own effects (Compressor; the dynamics family: Limiter, Gate, Glue
 Compressor, Transient Shaper, Mastering Limiter; the modulation family:
 Tremolo, Auto-Panner, Chorus, Flanger, Phaser, Ring Mod, Character Mod; more
-follow from the device specs) are
+follow) are
 **declarative**: one definition in Rust describes a device, and the model,
 undo, persistence, automation, engine and panel all derive from it. A device
 is made of up to three parts:
@@ -46,9 +46,9 @@ flowchart LR
   of `engine/include/dstudio_engine.h`.
 - **Panel.** `device_panel.rs` turns the definition's `Layout` into a
   `DeviceCard` (picker row, view row with slider column, dial row of knob
-  clusters) and `ui/device_panel.slint` draws it. Lengths are the reference's
+  clusters) and `ui/device_panel.slint` draws it. Lengths are
   100%-zoom card measurements times `device_panel::Z` (0.85, the zoom the rest
-  of the UI is built at). Card width follows the reference rule:
+  of the UI is built at). Card width follows one rule:
   knobs × 62 + inner gaps × 10 + cluster gaps × 21 + 16, taken from the
   widest `shown_when` state so the card never resizes when a mode changes.
   The knob cells are then spread evenly across the dial row (the clusters
@@ -150,10 +150,9 @@ system. Any built-in device can use them.
    - Parameter order is the engine order. Never reorder or remove parameters
      of a shipped device; append new ones (old projects keep loading because
      values are stored by id).
-   - Ids, ranges, defaults, units, tapers and the panel arrangement come from
-     the device spec (`handoffs/device-specs/<device>.md` in the Captain drive).
-     Those are facts; write descriptions in your own words. Never copy the
-     reference's code, CSS, images, audio or preset files.
+   - Ids, ranges, defaults, units, tapers and the panel arrangement are
+     defined here. Write descriptions in your own words. Never copy code,
+     CSS, images, audio or preset files from any other product.
    - `Layout`: `picker` (segmented `Menu`s, `Segments` with their own
      labels, `Dropdown` pills for long lists, `ModeDropdown` (a type menu
      whose last entry switches a mode parameter, e.g. Auto Filter's DJ),
@@ -168,7 +167,7 @@ system. Any built-in device can use them.
    - A card narrower than 240 pt hides the preset label and arrows and opens
      the preset menu from a chevron after the name. `Control::Toggle` on an
      Off/On choice draws a latch capsule in the dial row.
-   - `View::Field` is a plotted well (reference motion / response / sweep
+   - `View::Field` is a plotted well (motion / response / sweep
      fields): name a curve model in `crates/dstudio-app/src/device_fields.rs`
      (traces, fill or band, ticks, caption value, live overlay), the caption,
      the parameters dragged on x and y, and the field's width; the card is
@@ -176,7 +175,7 @@ system. Any built-in device can use them.
      row and space its knobs evenly. The live overlay follows the kernel's
      first readout as an LFO phase (0..1) while the transport plays.
    - Parameter extras: `preset_locked()` (presets never load or save it,
-     e.g. a random seed), `reset_on_load()`, `Format::Freq` (reference Hz
+     e.g. a random seed), `reset_on_load()`, `Format::Freq` (generic Hz
      text), `Format::SignedPercent`, `Format::DbCut` (a positive stored cut
      shown as −x.x dB), `Format::MsAuto`, `Format::Rate` (LFO rates,
      `1.00 Hz`), `Format::SignedBareZero(n)` (explicit sign, bare zero) and
@@ -305,8 +304,8 @@ system. Any built-in device can use them.
    (`dstudio_device_bench`, Release build) and put the numbers in the PR.
 7. **Render.** `--state reference-<id>` shows any built-in device at its
    defaults. Render it with `--offscreen --screenshot <png>` (a hidden
-   window, so it does not take over the screen) and compare it with the
-   reference capture. Add the device to the app self-test (the dynamics,
+   window, so it does not take over the screen) and check the
+   result. Add the device to the app self-test (the dynamics,
    modulation and restoration sections in `src/selftest.rs` add each device
    through Add device › Built-in).
    `--state review-analyzers` feeds a sung-like line through Pitch

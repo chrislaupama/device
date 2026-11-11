@@ -1,7 +1,5 @@
-//! Sampler (reference: the reference app's built-in "Sampler", thumbnail sampler-steam).
-//! Parameter ids, ranges, defaults and tapers follow the device spec
-//! (handoffs/device-specs/sampler-steam.md) as facts; descriptions, the
-//! factory presets and their values are our own. The panel is a custom view
+//! Sampler. Defines the parameter ids, ranges, defaults, tapers, descriptions
+//! and the factory presets. The panel is a custom view
 //! (crates/dstudio-app/src/sampler_panel.rs); the engine kernel is
 //! engine/src/devices/sampler.cpp on the shared sampler engine.
 

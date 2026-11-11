@@ -19,7 +19,7 @@
 //   readouts  output peak, pre-clip peak and applied gain (largest
 //             magnitude), each held for 1/30 s so a poll never misses a hit.
 //   scope     the same three per column, 750 columns a second (64 samples at
-//             48 kHz), as the reference app's gain scope reads them. Each analysis frame
+//             48 kHz), as the panel's gain scope reads them. Each analysis frame
 //             is the column count so far (two floats: count >> 20 and
 //             count & 0xFFFFF) and then the newest 256 columns, oldest first,
 //             3 floats each; the UI merges frames by that count.

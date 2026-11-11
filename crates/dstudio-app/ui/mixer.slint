@@ -1,9 +1,9 @@
 // Mixer panel: replaces the bottom panel when "Toggle mixer panel" is on.
-// Geometry from the reference's mixer strip module (reference/research-findings.md, "Mixer
-// strips"): 108 pt strips, padding 0 8 8, laid out from the bottom up: foot row (M/S + peak),
+// Geometry:
+// 108 pt strips, padding 0 8 8, laid out from the bottom up: foot row (M/S + peak),
 // the 200 pt fader canvas, a 46 pt gain row (pan knob + gain readout), the 22 pt Sends row, and
-// the insert list taking what is left under the 20 pt name bar. Lengths are reference points
-// times `u` (our design units are 85 % of the reference's, see zoom.rs).
+// the insert list taking what is left under the 20 pt name bar. Lengths are points
+// times `u` (our design units are 85 % of a point at 100 % zoom, see zoom.rs).
 // Every value comes from Rust (Studio.strips / strip-meters / master-*); every edit goes out
 // through the same Studio callbacks as the track headers.
 import { Tokens } from "tokens.slint";

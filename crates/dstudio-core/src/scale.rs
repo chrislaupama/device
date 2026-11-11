@@ -1,6 +1,5 @@
 //! Per-clip scale view of the piano roll: the root and scale type the editor shows, the
-//! footer's Scale highlight and the scale-only rows. It changes no notes. Values follow the
-//! reference's piano-roll scale view (finding W2-15 in reference/findings/clip-editors.md).
+//! footer's Scale highlight and the scale-only rows. It changes no notes.
 
 use crate::model::ProjectKey;
 use serde::{Deserialize, Serialize};

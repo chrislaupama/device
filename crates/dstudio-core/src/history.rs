@@ -142,8 +142,8 @@ impl Document {
     }
 
     /// Remember the bottom panel height for a panel kind (splitter drag). Saved with the
-    /// project but not an undo step, like the reference's panel layout.
-    /// Track row height scale (1.0 = default). Like the reference, a view change: saved with
+    /// project but not an undo step.
+    /// Track row height scale (1.0 = default). A view change: saved with
     /// the project, never an undo step.
     pub fn set_track_height(&mut self, track: TrackId, height: f32) -> Result<(), EditError> {
         let (lo, hi) = crate::Track::HEIGHT_RANGE;
@@ -232,7 +232,7 @@ impl Document {
     }
 }
 
-/// An edit label as the reference app shows it in Undo / Redo: sentence case ("Track Volume Change" →
+/// An edit label as shown in Undo / Redo: sentence case ("Track Volume Change" →
 /// "Track volume change"). Words written in capitals (MIDI, EQ, LFO) keep them, also inside
 /// hyphenated words ("MIDI-to-Audio" → "MIDI-to-audio").
 pub fn sentence_case(label: &str) -> String {

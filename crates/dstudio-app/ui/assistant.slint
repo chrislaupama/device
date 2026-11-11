@@ -1,11 +1,8 @@
 // Assistant panel (right-docked, 252.5 pt) and the Point overlay.
-// Values are the reference's docked chat (dist: app-shell, agentic-timeline, agentic-queue,
-// composer-card, context-chips, rheo-mode-picker, fx-choice-track, chat-send-button,
-// voice-mic-button, surface-close-button; reference/research-findings.md "Assistant panel"),
-// re-implemented here. Our units are 0.85 of the reference's CSS px (zoom.rs scales them back
+// Docked chat.
+// Our units are 0.85 of a CSS px at 100 % zoom (zoom.rs scales them back
 // to 100 %), so every length below is CSS px x 0.85. Saturated colours are the Display P3
-// values the reference renders (sRGB #1253ff shows as #2752f5, #d0ff41 as #d9fe65).
-// Our name, icon, copy and the Point glyph are original ("Assistant", four-point star).
+// values (sRGB #1253ff shows as #2752f5, #d0ff41 as #d9fe65).
 // The transcript, mode, notice and context chip come from Rust; the composer text is
 // transient input (Studio.chat-draft) sent through Studio.chat-send.
 import { Tokens } from "tokens.slint";
@@ -13,7 +10,7 @@ import { Panel, Icon, Icons, Raised } from "widgets.slint";
 import { Studio, ChatEntry, HighlightRect } from "studio.slint";
 
 global Chat {
-    // Ink (white at an alpha) and greys of the reference's dark theme.
+    // Ink (white at an alpha) and greys of the dark theme.
     out property <color> menu-text: #ffffff;
     out property <color> text: #81838a;          // --flow-text / gray-40
     out property <color> gray-30: #a6a8ad;
@@ -25,7 +22,7 @@ global Chat {
     out property <color> accent: #2752f5;
     out property <color> accent-hover: #608df7;
     out property <color> point: #d9fe65;         // Point mode lime
-    out property <color> on-point: #1c2601;      // dark text the reference picks on lime
+    out property <color> on-point: #1c2601;      // dark text on lime
     out property <color> alarm: #e57666;
     out property <color> step-done: #77db89;
     // Type: 12 px / 500, line 18 (x 0.85).
@@ -34,7 +31,7 @@ global Chat {
     out property <length> ls: -0.204px;
 }
 
-// Point glyph: a pointer arrow (ORIGINAL drawing, 16 box).
+// Point glyph: a pointer arrow (16 box).
 global ChatIcons {
     out property <string> pointer: "M3.2 2.6L13.2 7.1L8.9 8.5L7.4 12.9Z";
 }
@@ -71,7 +68,7 @@ component Spinner inherits Rectangle {
     }
 }
 
-// Text with a band of light sweeping across it every 2 s (the reference's shimmer).
+// Text with a band of light sweeping across it every 2 s (shimmer).
 component Shimmer inherits Rectangle {
     in property <string> text;
     in property <color> base;

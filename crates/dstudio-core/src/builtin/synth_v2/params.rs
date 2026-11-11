@@ -1,6 +1,5 @@
 // Parameter table of the synth-v2 instrument: ids, names, ranges, defaults,
-// units and choice lists in engine (index) order. The values are facts from
-// the device spec (handoffs/device-specs/synth-v2.md). Never reorder or
+// units and choice lists in engine (index) order. Never reorder or
 // remove a parameter: the engine and saved projects address them by this
 // order / id. The engine mirrors the ids in engine/src/devices/synth_v2_params.hpp.
 

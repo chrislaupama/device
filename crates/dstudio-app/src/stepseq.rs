@@ -1,12 +1,11 @@
 //! Step sequencer view of a pattern clip (bottom panel, Clip tab, "Sequencer").
 //!
 //! Rows are Drum Rack pads (notes 36..51, Pad 1 at the top) or, on other
-//! instrument tracks, pitches (DStudio's extension; the reference app only sequences Drum
-//! Rack clips). Every gesture previews on a local copy of the pattern and
+//! instrument tracks, pitches. Every gesture previews on a local copy of the pattern and
 //! commits ONE `SetStepPattern` on release, as the piano roll does with notes.
 //!
 //! Geometry is editor-local (the editor sits at bottom panel (255, 27), like the
-//! piano roll), measured from `z100-clip-pattern-sequencer-*.png`.
+//! piano roll).
 
 use crate::Studio;
 use crate::controller::Controller;
@@ -19,12 +18,12 @@ use dstudio_core::{ClipId, Command, PPQ};
 pub const COL_X0: f32 = 136.5;
 pub const COL_PITCH: f32 = 25.5;
 const COL_GAP: f32 = 2.5;
-/// Paging: the reference fits 16 or 32 step columns of at least 24 px after
-/// 182 px of row labels; in editor units (1 unit = 1.173 px there) that is
+/// Paging: a page fits 16 or 32 step columns of at least 24 px after
+/// 182 px of row labels (100%-zoom px); in editor units (1 unit = 1.173 px) that is
 /// 20.5 and 155. Steps past the pattern end on the last page stay dim.
 const PAGE_MIN_PITCH: f32 = 20.5;
 const PAGE_LABELS_W: f32 = 155.0;
-/// Length of the hit flash on the playing step (reference: 230 ms).
+/// Length of the hit flash on the playing step (230 ms).
 const FLASH: std::time::Duration = std::time::Duration::from_millis(230);
 /// First row top and row pitch.
 pub const ROW_Y0: f32 = 55.0;
@@ -64,7 +63,7 @@ pub struct SeqState {
     pub pattern: bool,
     /// Steps page shown (0-based; clamped to the pattern's pages when drawn).
     pub page: u16,
-    /// Follow playhead switched off (the reference has it on by default).
+    /// Follow playhead switched off (it is on by default).
     pub follow_off: bool,
     /// Step the playhead is on, and when it got there (the hit flash).
     play: Option<(u16, std::time::Instant)>,

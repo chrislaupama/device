@@ -2,7 +2,7 @@
 // tabs), step numbers, pad / pitch rows with M / S, the cell grid and the Sequence footer.
 // Rows, cells and numbers come from src/stepseq.rs (visible rows only, editor-local
 // geometry); pointer gestures go back to Rust, which previews and commits one
-// SetStepPattern per gesture. Measured from z100-clip-pattern-sequencer-*.png.
+// SetStepPattern per gesture.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons } from "widgets.slint";
 import { Studio } from "studio.slint";
@@ -81,7 +81,7 @@ export component StepSequencer inherits Rectangle {
     property <length> col-x0: 136.5px;
     property <length> grid-h: root.height - root.row-y0 - 54.5px;
 
-    // ---- tooltips (reference: shown after 1 s of hover, at once while another tip is up
+    // ---- tooltips (shown after 1 s of hover, at once while another tip is up
     // or within 0.5 s of one, hidden on press until the pointer leaves) ----
     property <duration> tip-gone: -1s;
     property <string> tip-pressed;
@@ -185,7 +185,7 @@ export component StepSequencer inherits Rectangle {
             x: c.x; y: c.y - root.row-y0; width: c.w; height: root.cell-h;
             border-radius: 3px; clip: true;
             opacity: c.dim ? 0.45 : 1;
-            // Value lanes (reference): empty steps as dark as past the end; Velocity and Offset
+            // Value lanes: empty steps as dark as past the end; Velocity and Offset
             // cells on a lighter base, Velocity filled from the bottom (value / 127).
             background: c.state == 0 ? #212225 : c.state == 1 ? (c.lane == 0 ? #28292c : #212225) : (c.lane == 1 || c.lane == 2 ? #28292c : #353639);
             if c.state == 2 && c.lane == 1: Rectangle { x: 0; y: parent.height * (1 - c.bar); width: parent.width; height: parent.height * c.bar; background: #424345; }

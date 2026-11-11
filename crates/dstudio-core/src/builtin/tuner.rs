@@ -1,6 +1,5 @@
-//! Tuner (reference: the reference app's built-in "Tuner"). Parameter ids, choices,
-//! defaults and the panel arrangement are taken from the reference as facts.
-//! The reference ships no factory presets for it, and neither do we.
+//! Tuner: parameter ids, choices, defaults and the panel arrangement. It
+//! ships no factory presets.
 
 use super::*;
 use crate::device::PluginKind;

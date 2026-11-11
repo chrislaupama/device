@@ -141,7 +141,7 @@ TEST_CASE(decode_rejects_unknown_and_broken_files) {
 TEST_CASE(asset_load_file_reads_compressed_formats) {
     EngineHandle e(48000, 64);
     TempFile f("decode_tone.mp3"); // the content decides, not the extension
-    std::FILE* out = testutil::fopen_utf8(f.path.c_str(), "wb");
+    std::FILE* out = fopen_utf8(f.path.c_str(), "wb");
     REQUIRE(out != nullptr);
     std::fwrite(fixtures::kToneOgg, 1, sizeof fixtures::kToneOgg, out);
     std::fclose(out);

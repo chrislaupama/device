@@ -1,7 +1,7 @@
 // Device Studio main window.
 //
-// Geometry follows reference/ui-inventory.md (window-relative points at 1440x820).
-// Panels are positioned absolutely at the measured coordinates; right-hand
+// Geometry is in window-relative points at 1440x820.
+// Panels are positioned absolutely; right-hand
 // elements are anchored to the right edge so the window stays resizable.
 // The timeline lanes, ruler background, grid, loop bar, clips, waveforms and the
 // playhead are a wgpu texture (`Studio.timeline-image`) rendered by src/gpu.
@@ -10,7 +10,7 @@
 // The UI holds no authoritative state: every value comes from Rust (Studio
 // global), every edit goes out through a Studio callback that becomes a
 // dstudio_core::Command or an engine transport call.
-// Inter 4.1 (SIL OFL 1.1, ui/fonts/Inter-OFL-LICENSE.txt): the reference UI's typeface.
+// Inter 4.1 (SIL OFL 1.1, ui/fonts/Inter-OFL-LICENSE.txt): the UI typeface.
 import "fonts/Inter-Regular.ttf";
 import "fonts/Inter-Medium.ttf";
 import "fonts/Inter-SemiBold.ttf";
@@ -52,7 +52,7 @@ component Header inherits Rectangle {
     Pill { x: root.width - 220px; y: 9.45px; width: 82px; height: 22.1px; text: "Report a bug"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.report-bug(); } }
     Pill { x: root.width - 131px; y: 9.45px; width: 118px; height: 22.1px; text: "Share your feedback"; weight: 600; text-color: #f2f2f2; font-size: 10.2px; letter-spacing: -0.41px; clicked => { Studio.feedback(); } }
 
-    // Logo: ORIGINAL sine-wave mark + "Beta" badge.
+    // Logo: sine-wave mark + "Beta" badge.
     Icon { x: 13px; y: 44px; width: 15px; height: 16px; d: Icons.logo; ink: #ffffff; stroke-width: 2.6px; }
     Rectangle {
         x: 31px; y: 46px; width: 26px; height: 12.5px;
@@ -69,21 +69,21 @@ component Header inherits Rectangle {
     }
 
     // Transport block (buttons, pill, master volume). Coordinates are for a 1440-unit-wide
-    // window; the reference keeps the block centred, so it shifts by half the width change
-    // (AX at 85 % and 100 % zoom: pill centre = window centre + 16.5 units in both).
+    // window; the block stays centred, so it shifts by half the width change
+    // (pill centre = window centre + 16.5 units at every zoom).
     Rectangle {
         x: root.transport-x; y: 0; width: 1440px; height: root.height;
         // Transport buttons
         IconButton { x: 368px; y: 38px; width: 28px; height: 28px; icon: Icons.rewind; filled: true; icon-size: 21.5px; ink: #63656c; tooltip: "Rewind to start (Enter)"; clicked => { Studio.stop-return(); } }
         IconButton { x: 396px; y: 38px; width: 28px; height: 28px; icon: Studio.playing ? Icons.pause : Icons.play; filled: true; icon-size: 21.5px;
             ink: Studio.playing ? Tokens.text-primary : #63656c; tooltip: "Play (Space)"; clicked => { Studio.play-toggle(); } }
-        // Record (R): start/stop recording armed audio tracks. Dim (measured) when nothing is armed,
+        // Record (R): start/stop recording armed audio tracks. Dim when nothing is armed,
         // icon grey when ready, recording red while recording.
         IconButton { x: 423px; y: 38px; width: 28px; height: 28px; icon: Icons.record; filled: true; icon-size: 23px;
             ink: Studio.recording ? Tokens.record-red : Studio.record-ready ? #63656c : #303136;
             tooltip: "Record (R)"; active: false; clicked => { Studio.record(); } }
 
-        // Transport capsule 464.5..1008.5 x 34.85..68.85 (40 px high in the reference CSS)
+        // Transport capsule 464.5..1008.5 x 34.85..68.85 (40 CSS px high)
         // Inset well: 2 px dark top lip, short inner shadow, light bottom lip.
         Inset {
             x: 464.5px; y: 34.85px; width: 544px; height: 34px;
@@ -129,7 +129,7 @@ component Header inherits Rectangle {
     }
 
     // Right-side panel toggles. Assistant and mixer are real; the rest are PLACEHOLDERS.
-    // Glyph centres at y 51.9 (61 pt at 100 %), like the reference; inactive ink #767678.
+    // Glyph centres at y 51.9 (61 pt at 100 %); inactive ink #767678.
     IconButton { x: root.width - 147px; y: 39px; width: 25px; height: 25px; icon: Icons.assistant; filled: true; icon-size: 15px;
         ink: Studio.assistant-open ? #e5e5e8 : #767678; tooltip: "Toggle assistant panel (⇧⌘A)"; clicked => { Studio.toggle-assistant(); } }
     IconButton { x: root.width - 119px; y: 39px; width: 25px; height: 25px; icon: Icons.mixer;
@@ -141,7 +141,7 @@ component Header inherits Rectangle {
         ink: Studio.settings-open ? #e5e5e8 : #767678; clicked => { Studio.toggle-settings(); } }
 }
 
-// Browser › Files (src/files.rs lays the rows out). reference px × 0.85: tabs like Devices', a 24 px
+// Browser › Files (src/files.rs lays the rows out). CSS px × 0.85: tabs like Devices', a 24 px
 // count row (10 px weight 500 #81838a) with the sort button, 24 px rows 2 px apart indented 8 px
 // per level, 11 px weight 600 names at 72 % white (selected: white on a 7 % white fill), 11 px
 // #63656d details, 11 px #63656d group labels and notes.
@@ -232,10 +232,10 @@ component FilesPane inherits Rectangle {
                 clicked => { Studio.files-click(i, self.mouse-x < parent.inset + 11px); }
                 double-clicked => { Studio.files-activate(i); }
                 pointer-event(e) => {
-                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.files-drag(i, 0, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
-                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.files-drag(i, 2, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.files-drag(i, 0, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.files-drag(i, 2, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
                 }
-                moved => { Studio.files-drag(i, 1, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+                moved => { Studio.files-drag(i, 1, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
             }
         }
     }
@@ -244,7 +244,7 @@ component FilesPane inherits Rectangle {
 
 // ------------------------------------------------------------------ browser
 // Sections Devices and Files are real (src/devices.rs, src/files.rs); Search and Library have no
-// content (PLACEHOLDER: no catalog). The preview bar plays the file last clicked in Files
+// content (PLACEHOLDER: no sample catalog). The preview bar plays the file last clicked in Files
 // (Link: PLACEHOLDER, it ties catalog loops to the arrangement).
 // Devices › Chains is PLACEHOLDER data. Back / Forward step through visited sections and tabs.
 component Browser inherits Panel {
@@ -334,15 +334,15 @@ component Browser inherits Panel {
                 clicked => { Studio.tree-click(i); }
                 double-clicked => { Studio.tree-activate(i); }
                 pointer-event(e) => {
-                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.tree-drag(i, 0, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
-                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.tree-drag(i, 2, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.tree-drag(i, 0, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.tree-drag(i, 2, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
                 }
-                moved => { Studio.tree-drag(i, 1, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+                moved => { Studio.tree-drag(i, 1, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
             }
         }
     }
     if Studio.browser-section == 3: FilesPane { x: 0; y: 59px; width: root.width; height: root.height - 59px - 33px; }
-    // Preview bar (the reference app px × 0.85): sound icon, previous / play-pause / next, volume with the
+    // Preview bar (CSS px × 0.85): sound icon, previous / play-pause / next, volume with the
     // preview's stereo meter (#abfcb6 bars) under the handle, Solo (#f5950a on #1a1a1a), Link.
     // A 1.7 px progress line sits on its top edge while a file is loaded: 6 % white, #1253ff fill.
     Rectangle {
@@ -408,9 +408,9 @@ component AddTrackButton inherits Rectangle {
 }
 
 // Header minimap: clip bars per track, the visible-window outline with a scrim outside it,
-// window grips on hover, and the playhead. 20 reference px high, 5 px radius.
+// window grips on hover, and the playhead. 20 CSS px high, 5 px radius.
 component Minimap inherits Rectangle {
-    // Window in px: at least 6 reference px wide, kept inside the strip.
+    // Window in px: at least 6 CSS px wide, kept inside the strip.
     property <length> o: Studio.minimap-win-x * root.width;
     property <length> s: (Studio.minimap-win-x + Studio.minimap-win-w) * root.width;
     property <length> m: 5.1px;
@@ -435,13 +435,13 @@ component Minimap inherits Rectangle {
         mouse-cursor: Studio.pointer-hidden ? MouseCursor.none : (abs(self.mouse-x - root.wl) <= 4.25px || abs(self.mouse-x - root.wr) <= 4.25px) ? MouseCursor.ew-resize : MouseCursor.pointer;
         pointer-event(e) => {
             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
-                Studio.minimap-pointer(0, self.mouse-x, self.mouse-y, root.width, root.absolute-position.x, root.absolute-position.y);
+                Studio.minimap-pointer(0, self.mouse-x, self.mouse-y, root.width, root.absolute-position.x, (root.absolute-position.y - Studio.menu-dy));
             }
             if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) {
-                Studio.minimap-pointer(2, self.mouse-x, self.mouse-y, root.width, root.absolute-position.x, root.absolute-position.y);
+                Studio.minimap-pointer(2, self.mouse-x, self.mouse-y, root.width, root.absolute-position.x, (root.absolute-position.y - Studio.menu-dy));
             }
         }
-        moved => { if (self.pressed) { Studio.minimap-pointer(1, self.mouse-x, self.mouse-y, root.width, root.absolute-position.x, root.absolute-position.y); } }
+        moved => { if (self.pressed) { Studio.minimap-pointer(1, self.mouse-x, self.mouse-y, root.width, root.absolute-position.x, (root.absolute-position.y - Studio.menu-dy)); } }
         double-clicked => { Studio.minimap-double(); }
         scroll-event(e) => {
             Studio.minimap-scroll(e.delta-x / 1px, e.delta-y / 1px, self.mouse-x, root.width, e.modifiers.control || e.modifiers.alt);
@@ -450,8 +450,8 @@ component Minimap inherits Rectangle {
     }
 }
 
-// Devices minimap (src/devminimap.rs, findings S68-S70): the track's devices in miniature at the right of the
-// Clip / Devices strip, with the part the panel shows outlined and the rest in a scrim. 20 reference px of
+// Devices minimap (src/devminimap.rs): the track's devices in miniature at the right of the
+// Clip / Devices strip, with the part the panel shows outlined and the rest in a scrim. 20 CSS px of
 // strip minus padding, 5 px radius; the window outline brightens while dragging.
 component DevMinimap inherits Rectangle {
     background: #1a1b1e;
@@ -484,13 +484,13 @@ component DevMinimap inherits Rectangle {
         mouse-cursor: Studio.pointer-hidden ? MouseCursor.none : MouseCursor.default;
         pointer-event(e) => {
             if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
-                Studio.devmm-pointer(0, self.mouse-x, self.mouse-y, root.absolute-position.x, root.absolute-position.y);
+                Studio.devmm-pointer(0, self.mouse-x, self.mouse-y, root.absolute-position.x, (root.absolute-position.y - Studio.menu-dy));
             }
             if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) {
-                Studio.devmm-pointer(2, self.mouse-x, self.mouse-y, root.absolute-position.x, root.absolute-position.y);
+                Studio.devmm-pointer(2, self.mouse-x, self.mouse-y, root.absolute-position.x, (root.absolute-position.y - Studio.menu-dy));
             }
         }
-        moved => { if (self.pressed) { Studio.devmm-pointer(1, self.mouse-x, self.mouse-y, root.absolute-position.x, root.absolute-position.y); } }
+        moved => { if (self.pressed) { Studio.devmm-pointer(1, self.mouse-x, self.mouse-y, root.absolute-position.x, (root.absolute-position.y - Studio.menu-dy)); } }
         scroll-event(e) => { Studio.devmm-scroll(e.delta-x / 1px, e.delta-y / 1px); accept }
     }
 }
@@ -504,15 +504,15 @@ component Timeline inherits Panel {
     out property <length> tracks-y: track-area.y;
 
     // ---- header row (y 0..27) ----
-    // The reference app hides the zoom sliders once the header can no longer give the minimap its 140 px minimum
-    // and the docked chat is already at its minimum width (research-findings S16, S43; AppWindow decides).
+    // The zoom sliders hide once the header can no longer give the minimap its 140 px minimum
+    // and the docked chat is already at its minimum width (AppWindow decides).
     in property <bool> zoom-hidden;
     Text { x: 6.8px; y: 0; height: 27.2px; text: "Timeline"; color: Tokens.text-bright; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; vertical-alignment: center; }
     // Returns: PLACEHOLDER (no return tracks yet). Master pill: shows the master row (static on).
-    // Header-row x positions/widths below are the reference's AX boxes at 100 % zoom (ax-main-100.tsv).
+    // Header-row x positions/widths below are the values at 100 % zoom.
     Pill { x: 60.35px; y: 5px; width: 59.5px; height: 18px; text: "Returns"; icon: Icons.returns; font-size: 8.75px; text-color: #a0a1a5; }
     Pill { x: 124.1px; y: 5px; width: 59.5px; height: 18px; text: "Master"; icon: Icons.master; active: true; font-size: 8.75px; }
-    // Minimap: fills the space up to the right group (src/minimap.rs, research-findings S40-S42).
+    // Minimap: fills the space up to the right group (src/minimap.rs).
     Minimap { x: 200.6px; y: 5.1px; width: max(0px, rgroup.x - 10.2px - self.x); height: 17px; }
     rgroup := HorizontalLayout {
         x: root.width - self.width - 10.2px; y: 0; width: self.preferred-width; height: 27.2px;
@@ -562,7 +562,7 @@ component Timeline inherits Panel {
             Text { x: 0; y: 7px; width: 28.9px; height: 14px; text: Studio.snap-text; color: Studio.snap-text == "Off" ? #8e8f93 : Tokens.text-bright; font-size: 9px; font-weight: 600; letter-spacing: -0.36px; vertical-alignment: center; horizontal-alignment: right; }
             Icon { x: 32.3px; y: 8px; width: 11.9px; height: 11px; d: Icons.chevron-down; ink: Studio.snap-menu-open ? #ffffff : #c9c9cc; }
             TouchArea { x: 0; width: 30px; clicked => { Studio.snap-toggle(); } }
-            TouchArea { x: 30px; width: 14.2px; clicked => { Studio.snap-menu-toggle(parent.absolute-position.x + parent.width, parent.absolute-position.y + parent.height); } }
+            TouchArea { x: 30px; width: 14.2px; clicked => { Studio.snap-menu-toggle(parent.absolute-position.x + parent.width, (parent.absolute-position.y - Studio.menu-dy) + parent.height); } }
         }
     }
     Rectangle { x: 0; y: 27px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
@@ -600,7 +600,7 @@ component Timeline inherits Panel {
                     Studio.lane-pointer(2, self.mouse-x, self.mouse-y, e.modifiers.shift, e.modifiers.control, e.modifiers.alt);
                 }
                 if (e.button == PointerEventButton.right && e.kind == PointerEventKind.down) {
-                    Studio.lane-context(self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                    Studio.lane-context(self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y);
                 }
             }
             moved => { Studio.lane-pointer(1, self.mouse-x, self.mouse-y, false, false, false); }
@@ -632,9 +632,9 @@ component Timeline inherits Panel {
                 y: t.row-h + 0.5px - 5.1px; height: 5.1px;
                 mouse-cursor: row-resize;
                 pointer-event(e) => {
-                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.track-resize(t.id, 0, self.absolute-position.y + self.mouse-y); }
-                    if (e.kind == PointerEventKind.move && self.pressed) { Studio.track-resize(t.id, 1, self.absolute-position.y + self.mouse-y); }
-                    if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.track-resize(t.id, 2, self.absolute-position.y + self.mouse-y); }
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.track-resize(t.id, 0, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+                    if (e.kind == PointerEventKind.move && self.pressed) { Studio.track-resize(t.id, 1, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+                    if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.track-resize(t.id, 2, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
                 }
             }
         }
@@ -673,8 +673,8 @@ component Timeline inherits Panel {
 
 // ------------------------------------------------------------------ bottom panel
 component Inspector inherits Rectangle {
-    // Readouts are the track colour pulled toward grey (the reference: #c670f7 track -> #a66bca text,
-    // #72b6d7 -> #77a6bd, #8092eb -> #7b87c3; this mix reproduces all three within a few levels).
+    // Readouts are the track colour pulled toward grey (#c670f7 track -> #a66bca text,
+    // #72b6d7 -> #77a6bd, #8092eb -> #7b87c3; this mix gives all three within a few levels).
     property <color> value-color: Studio.sel-color.mix(#7d7e80, 0.62);
     // inspector header
     // Colour tab flush with the panel edge: 4 x 19 pt at y 6.5 pt (100 % zoom).
@@ -692,7 +692,7 @@ component Inspector inherits Rectangle {
         Text { x: Studio.sel-instrument ? 29.5px : 21px; width: 134px - self.x - 4px; text: Studio.sel-instrument ? Studio.sel-inst-text : Studio.sel-input-text; color: Tokens.text-bright; font-size: 9.5px; font-weight: 600; vertical-alignment: center; overflow: elide; }
         Icon { x: 134px; width: 10px; height: 10px; d: Icons.chevron-down; ink: #a0a0a3; }
         accessible-role: combobox; accessible-label: Studio.sel-instrument ? "Inst" : "In"; accessible-value: Studio.sel-instrument ? Studio.sel-inst-text : Studio.sel-input-text;
-        TouchArea { clicked => { if (Studio.sel-instrument) { Studio.open-inst-menu(parent.absolute-position.x + 1px, parent.absolute-position.y + parent.height + 3px); } else if (Studio.has-selection) { Studio.open-input-menu(); } } }
+        TouchArea { clicked => { if (Studio.sel-instrument) { Studio.open-inst-menu(parent.absolute-position.x + 1px, (parent.absolute-position.y - Studio.menu-dy) + parent.height + 3px); } else if (Studio.has-selection) { Studio.open-input-menu(); } } }
     }
     Raised {
         x: 10px; y: 63px; width: 149px; height: 18px; border-radius: 9px;
@@ -832,7 +832,7 @@ component BottomPanel inherits Panel {
                 Icon { y: (265px - 12px) / 2; width: 12px; height: 12px; d: Icons.plus; ink: #c5c5c8; stroke-width: 1.4px; }
                 Text { text: "Add effect"; color: #c5c5c8; font-size: 10px; font-weight: 600; vertical-alignment: center; }
             }
-            empty-ta := TouchArea { enabled: f.empty; clicked => { Studio.chain-add-effect(f.head, self.absolute-position.x + 20px, self.absolute-position.y + 120px); } }
+            empty-ta := TouchArea { enabled: f.empty; clicked => { Studio.chain-add-effect(f.head, self.absolute-position.x + 20px, (self.absolute-position.y - Studio.menu-dy) + 120px); } }
         }
         for card in Studio.device-cards: Rectangle {
             x: card.x - 255px; y: 34px - 27px; width: card.width; height: 265px;
@@ -961,10 +961,10 @@ export component AppWindow inherits Window {
     out property <length> lanes-height: timeline.lanes-height;
     // Panel geometry (mirrored in src/highlight.rs `Layout`).
     property <length> bottom-h: Studio.bottom-h;
-    // Top row y 78.2 / browser width 252.45 / timeline x 262.65: the reference's 92 pt, 297 pt and
-    // 309 pt at its default (100 %) zoom, in our 85 % units (AX dump, reference/data/ax-main-100.tsv).
+    // Top row y 78.2 / browser width 252.45 / timeline x 262.65: 92 pt, 297 pt and
+    // 309 pt at the default (100 %) zoom, in our 85 % units.
     property <length> top-h: root.height - 88.4px - self.bottom-h;
-    // Docked assistant (findings S43): the saved width, narrowed first to keep the timeline header
+    // Docked assistant: the saved width, narrowed first to keep the timeline header
     // usable (down to 252.45 = 297 px); only then do the zoom sliders hide. 711.5 is the timeline
     // width the header needs with its sliders; mirrored in src/splitters.rs.
     property <length> timeline-x: Studio.sounds-visible ? 262.65px : 5px;
@@ -979,6 +979,14 @@ export component AppWindow inherits Window {
     property <length> settings-y: 5.5px;
     property <length> settings-w: min(816px, root.width);
     // Where the panels are, in window units: the self-test aims its clicks from these.
+    // The content's top in window coordinates: the in-window menu bar's height (see Studio.menu-dy).
+    content-origin := Rectangle { x: 0; y: 0; width: 0; height: 0; }
+    property <length> menu-dy: content-origin.absolute-position.y;
+    changed menu-dy => { Studio.menu-dy = self.menu-dy; }
+    init => { Studio.menu-dy = self.menu-dy; }
+    // Content height (below the in-window menu bar on Linux; the whole window on macOS and
+    // Windows, whose menu bars are native). The self-test adds the difference to its pointer events.
+    out property <length> content-height: root.height;
     out property <LayoutAnchors> anchors: {
         transport-x: header.transport-x,
         timeline-x: timeline.x, timeline-y: timeline.y, timeline-w: timeline.width,
@@ -1032,8 +1040,8 @@ export component AppWindow inherits Window {
             x: root.chat-x; y: root.top-y; width: root.chat-w; height: root.top-h;
             focus-main => { fs.focus(); }
         }
-        // Width splitter between timeline and assistant: 13 px hit strip over the 6 px gap
-        // (reference), col-resize cursor, double-click restores the default width.
+        // Width splitter between timeline and assistant: 13 px hit strip over the 6 px gap,
+        // col-resize cursor, double-click restores the default width.
         if Studio.assistant-open: TouchArea {
             x: root.width - 5px - root.chat-w - 7.55px; y: 78.2px; width: 11.05px; height: root.top-h;
             mouse-cursor: col-resize;
@@ -1048,14 +1056,14 @@ export component AppWindow inherits Window {
         if !Studio.mixer-open: BottomPanel { x: 5px; y: root.bottom-y; width: root.width - 10px; height: root.bottom-h; }
         if Studio.mixer-open: MixerPanel { x: 5px; y: root.bottom-y; width: root.width - 10px; height: root.bottom-h; }
         // Timeline / bottom-panel splitter: an invisible 14 px strip across the gap, 8 px of it
-        // above the panel's top edge (the reference's resize handle).
+        // above the panel's top edge (the resize handle).
         TouchArea {
             x: 5px; y: root.height - 5px - root.bottom-h - 6.8px; width: root.width - 10px; height: 11.9px;
             mouse-cursor: row-resize;
             pointer-event(e) => {
-                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.bottom-resize(0, self.absolute-position.y + self.mouse-y); }
-                if (e.kind == PointerEventKind.move && self.pressed) { Studio.bottom-resize(1, self.absolute-position.y + self.mouse-y); }
-                if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.bottom-resize(2, self.absolute-position.y + self.mouse-y); }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.bottom-resize(0, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+                if (e.kind == PointerEventKind.move && self.pressed) { Studio.bottom-resize(1, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
+                if ((e.button == PointerEventButton.left && e.kind == PointerEventKind.up) || e.kind == PointerEventKind.cancel) { Studio.bottom-resize(2, (self.absolute-position.y - Studio.menu-dy) + self.mouse-y); }
             }
         }
         HighlightOverlay { x: 0; y: 0; width: root.width; height: root.height; }
@@ -1135,7 +1143,7 @@ export component AppWindow inherits Window {
                 picked(i) => { Studio.input-menu-pick(i); }
             }
         }
-        // Browser › Files sort menu (click outside dismisses): the reference app's select menu (#212227, 8 px
+        // Browser › Files sort menu (click outside dismisses): a select menu (#212227, 8 px
         // radius, 4 px padding, 11 px semibold rows padded 4 / 12 px, the current one white on a
         // 7 % tint), as wide as its longest label, right-aligned under the sort button.
         if Studio.files-sort-open && Studio.sounds-visible && Studio.browser-section == 3: sm := Rectangle {
@@ -1206,7 +1214,7 @@ export component AppWindow inherits Window {
             background: Studio.dnd-ok ? Tokens.accent : #3a3b40;
             ghost := Text { text: Studio.dnd-label; color: #ffffff; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
         }
-        // Automation parameter picker (61-automation-param-menu.png: 188 pt wide, search field, 21 pt rows).
+        // Automation parameter picker (188 pt wide, search field, 21 pt rows).
         if Studio.picker-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.picker-dismiss(); fs.focus(); } } }
@@ -1247,14 +1255,14 @@ export component AppWindow inherits Window {
                 }
             }
         }
-        // Settings window (in-app modal panel at the reference window rect; outside click closes).
+        // Settings window (in-app modal panel at the settings window rect; outside click closes).
         if Studio.settings-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { clicked => { Studio.close-settings(); fs.focus(); } }
             SettingsPanel { x: root.settings-x; y: root.settings-y; width: root.settings-w; height: root.height - 5.5px + 12px; }
         }
-        // Export dialog (centred) and the unsaved-changes prompt (over the timeline, as in the
-        // reference); both are modal: clicks outside them are swallowed.
+        // Export dialog (centred) and the unsaved-changes prompt (over the timeline);
+        // both are modal: clicks outside them are swallowed.
         if Studio.export-open: Rectangle {
             x: 0; y: 0; width: root.width; height: root.height;
             TouchArea { }
@@ -1265,7 +1273,7 @@ export component AppWindow inherits Window {
             TouchArea { }
             UnsavedPrompt { x: max(0px, min(438px, parent.width - self.width)); y: max(0px, min(295px, parent.height - self.height)); }
         }
-        // Clip render in progress (the reference app's export progress: 6 px bar, 6 % white track, #1253ff fill).
+        // Clip render in progress (the export progress look: 6 px bar, 6 % white track, #1253ff fill).
         if Studio.render-busy: Rectangle {
             x: root.width - self.width - 14px; y: root.height - 60px; height: 24px; width: 292px; border-radius: 12px; background: #2a2b30ee;
             Text { x: 12px; width: 150px; height: parent.height; text: Studio.render-label; color: #e5e5e8; font-size: 8.75px; vertical-alignment: center; overflow: elide; }

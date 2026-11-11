@@ -1,6 +1,6 @@
 //! Splitters: the timeline / bottom-panel splitter, per-track height handles and the docked
-//! assistant's width splitter. All preview while dragging and commit on release. Like the
-//! reference they are view changes, never undo steps: the first two are saved with the project,
+//! assistant's width splitter. All preview while dragging and commit on release.
+//! They are view changes, never undo steps: the first two are saved with the project,
 //! the chat width with the app preferences.
 
 use crate::controller::{BottomTab, Controller};
@@ -17,7 +17,7 @@ const MIN_TOP_H: f32 = 150.0;
 /// Window chrome above and below the two rows (app.slint `top-h`).
 const CHROME_H: f32 = 88.4;
 
-/// Docked assistant width (reference 297 px default and minimum, 600 px maximum; design units).
+/// Docked assistant width (297 px default and minimum, 600 px maximum at 100% zoom; design units).
 pub const CHAT_MIN_W: f32 = 252.45;
 pub const CHAT_DEFAULT_W: f32 = CHAT_MIN_W;
 pub const CHAT_MAX_W: f32 = 510.0;
@@ -25,7 +25,7 @@ pub const CHAT_MAX_W: f32 = 510.0;
 pub const CHAT_GAP: f32 = 5.0;
 const WINDOW_MARGIN: f32 = 5.0;
 /// Timeline panel width below which the header can no longer give its minimap the 140 px
-/// minimum while the zoom sliders are shown (the header's measured content, design units).
+/// minimum while the zoom sliders are shown (the width of the header's content, design units).
 const TIMELINE_ZOOM_W: f32 = 711.5;
 /// Pointer offset into the splitter strip that a drag keeps (3 px).
 const CHAT_GRAB: f32 = 2.55;
@@ -98,7 +98,7 @@ impl Controller {
         if let Some(d) = self.bottom_drag {
             return d.h;
         }
-        // the reference app's clip editor and Devices tab share one height (the tab row at 454 pt in a
+        // The clip editor and Devices tab share one height (the tab row at 454 pt in a
         // 820 pt window); only the mixer is taller.
         let default = if self.mixer_open { MIXER_BOTTOM_H } else { DEFAULT_BOTTOM_H };
         let saved = self.project().bottom_panel_heights.get(self.bottom_kind()).copied().unwrap_or(default);

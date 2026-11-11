@@ -10,8 +10,7 @@
 //!
 //! Coordinates are texture-local logical points. The texture sits at panel
 //! (255, 54.5) of the bottom panel, i.e. window (260, 563.5) in the 820 pt window
-//! with the default 306 pt panel (layout from `34-midi-clip-selected-pianoroll.png`; the
-//! panel height from the z100 clip editor captures, where the Clip tab row sits at 454 pt
+//! with the default 306 pt panel (at 100% zoom the Clip tab row sits at 454 pt
 //! like the Devices tab's).
 
 use crate::controller::{BottomTab, Controller};
@@ -29,10 +28,10 @@ pub const GRID_X: f32 = 51.0;
 pub const BAR_Y: (f32, f32) = (14.5, 26.5);
 pub const BAND_Y: f32 = 27.0;
 pub const GRID_Y: f32 = 54.5;
-/// One semitone row (12 rows = 176.5 pt in the reference).
+/// One semitone row (12 rows = 176.5 pt).
 pub const ROW_H: f32 = 176.5 / 12.0;
 /// Space left and right of the clip when it is fitted to the view, as a fraction of
-/// the clip length (the reference app shows 1.06 clip lengths, measured in both clip editors).
+/// the clip length (the view shows 1.06 clip lengths in both clip editors).
 pub const FIT_PAD: f64 = 0.03;
 /// Texture origin inside the bottom panel.
 pub const PANEL_ORIGIN: (f32, f32) = (255.0, 54.5);
@@ -40,12 +39,12 @@ pub const PANEL_ORIGIN: (f32, f32) = (255.0, 54.5);
 #[cfg(test)]
 pub const CLIP_PANEL_H: f32 = crate::highlight::DEFAULT_BOTTOM_H;
 pub const FOOTER_H: f32 = 54.5;
-/// C4 row top at y 106.5 (window 670 with the default panel) in the reference.
+/// C4 row top at y 106.5 (window 670 with the default panel).
 pub const DEFAULT_SCROLL: f32 = GRID_Y + 67.0 * ROW_H - 106.5;
 const DOUBLE_CLICK: Duration = Duration::from_millis(350);
-/// Velocity of a key preview: 0.8 of full scale, as in the reference.
+/// Velocity of a key preview: 0.8 of full scale.
 pub const KEY_VELOCITY: u8 = 102;
-/// One zoom command step on the toolbar sliders' 0..1 range (the reference app's clip-editor zoom command).
+/// One zoom command step on the toolbar sliders' 0..1 range (the clip-editor zoom command).
 pub const ZOOM_STEP: f32 = 0.1;
 
 #[derive(Debug, Clone, Copy)]
@@ -116,7 +115,7 @@ impl Rows {
 }
 
 impl PrView {
-    /// Horizontal zoom fits the clip with `FIT_PAD` on both sides (reference behaviour).
+    /// Horizontal zoom fits the clip with `FIT_PAD` on both sides.
     pub fn fit(size: (f32, f32), clip_beats: f64, scroll: f32) -> Self {
         Self::fit_from(GRID_X, size, clip_beats, scroll)
     }
@@ -162,15 +161,15 @@ impl PrView {
     }
 }
 
-/// Points per beat at horizontal slider position `z`: from the fitted zoom (0) to one reference
+/// Points per beat at horizontal slider position `z`: from the fitted zoom (0) to one 100%-zoom
 /// px per tick (1), on a log scale.
 pub fn zoom_ppb(fit: f64, z: f32) -> f64 {
     let max = PPQ as f64 * REF;
     if fit >= max { fit } else { fit * (max / fit).powf(z.clamp(0.0, 1.0) as f64) }
 }
 
-/// Row height range of the vertical slider: at least 3 reference px (16 in the scale view) and
-/// enough to fill the view with the rows shown, at most 32 reference px.
+/// Row height range of the vertical slider: at least 3 px at 100% zoom (16 in the scale view) and
+/// enough to fill the view with the rows shown, at most 32 px at 100% zoom.
 pub fn row_h_range(v: &PrView) -> (f32, f32) {
     let r = REF as f32;
     let fill = (v.h - GRID_Y).max(0.0) / v.rows.len().max(1) as f32;
@@ -182,7 +181,7 @@ pub fn is_black(pitch: i32) -> bool {
     matches!(pitch.rem_euclid(12), 1 | 3 | 6 | 8 | 10)
 }
 
-/// "bars.beats.sixteenths" position (1-based bars/beats), as in the reference footer ("1.1.0").
+/// "bars.beats.sixteenths" position (1-based bars/beats), as the footer shows it ("1.1.0").
 pub fn fmt_pos(t: Ticks, tpb: Ticks) -> String {
     let t = t.max(0);
     format!("{}.{}.{}", t / tpb + 1, (t % tpb) / PPQ + 1, (t % PPQ) / (PPQ / 4))
@@ -283,7 +282,7 @@ pub struct PrState {
     /// The rows the view last showed: when they change (Scale rows on or off, a new scale,
     /// undo or redo) the pitch in the middle of the view stays in place.
     pub rows: Rows,
-    /// Toolbar zoom sliders: horizontal 0 (fit the clip) .. 1 (one reference px per tick), with
+    /// Toolbar zoom sliders: horizontal 0 (fit the clip) .. 1 (one 100%-zoom px per tick), with
     /// the beat at the grid's left edge, and the row height the vertical slider set.
     pub hzoom: f32,
     pub hstart: f64,
@@ -369,8 +368,8 @@ fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
 const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
 const BLACK: [f32; 3] = [0.0, 0.0, 0.0];
 
-/// The piano roll's finest grid step in beats (S78): the grid value, doubled (or tripled when the
-/// beat is not a multiple of twice the step) until its lines are 16 reference px apart. `None`
+/// The piano roll's finest grid step in beats: the grid value, doubled (or tripled when the
+/// beat is not a multiple of twice the step) until its lines are 16 px (at 100% zoom) apart. `None`
 /// when that reaches a beat, then only beat and bar lines remain.
 pub fn sub_step(grid_beats: f64, beat_len: f64, ppb_ref: f64) -> Option<f64> {
     if !(grid_beats > 0.0) {
@@ -384,8 +383,8 @@ pub fn sub_step(grid_beats: f64, beat_len: f64, ppb_ref: f64) -> Option<f64> {
 }
 
 /// Vertical grid lines of the editors in lane band y0..y1, from x_from on. The piano roll draws
-/// sub-beat lines at its grid value, beat lines once a beat is 8 reference px wide, and bar lines;
-/// the audio clip editor draws the timeline's step with bar, beat and sub weights (S78).
+/// sub-beat lines at its grid value, beat lines once a beat is 8 px (at 100% zoom) wide, and bar lines;
+/// the audio clip editor draws the timeline's step with bar, beat and sub weights.
 fn vlines(out: &mut Vec<RectInst>, sc: &PrScene, px: &Px, y0: f32, y1: f32, x_from: f32) {
     let v = &sc.view;
     let ppb_ref = v.ppb / REF;
@@ -478,7 +477,7 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
 
     // ---- waveform (audio clip editor): track colour halfway to white, 84 % of each
     // channel's lane. Stereo splits the lane in two with a gap of 4 % (at least
-    // 2 px), a faint centre line in each and a rule between them, as the reference app does.
+    // 2 px), a faint centre line in each and a rule between them.
     if let Some((slots, segs)) = &sc.wave {
         let stereo = slots.len() == 2;
         let all = h - GRID_Y;
@@ -583,8 +582,8 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
     if rx < w {
         o.push(px.rect(rx, 0.0, w - rx, 13.5, rgba(rgb(0x2c2d30), 1.0)));
         o.push(px.rect(rx, 13.5, w - rx, 0.5, rgba(rgb(0x3d3e41), 1.0)));
-        // Ruler ticks (S77): a full-height tick every `tick_bars` bars, and, while a beat is 16
-        // reference px wide, a weak tick on every other beat of every bar, 2 px in from top and bottom.
+        // Ruler ticks: a full-height tick every `tick_bars` bars, and, while a beat is 16
+        // px (at 100% zoom) wide, a weak tick on every other beat of every bar, 2 px in from top and bottom.
         let st = &sc.steps;
         let bar = sc.beats_per_bar;
         let beat_ticks = sc.beat_len * v.ppb / REF >= 16.0;
@@ -717,7 +716,7 @@ impl Controller {
     }
 
     /// Preview `note` (pitch, velocity) through the clip's track instrument, releasing the one
-    /// sounding before; `None` releases it. One note at a time, as in the reference (W2-20).
+    /// sounding before; `None` releases it. One note at a time.
     pub fn pr_preview(&mut self, note: Option<(u8, u8)>) {
         let want = note.zip(self.pr_device()).map(|((pitch, vel), d)| (d, pitch, vel));
         if self.pr.preview == want.map(|(d, pitch, _)| (d, pitch)) {
@@ -753,7 +752,7 @@ impl Controller {
             self.pr.scroll = DEFAULT_SCROLL;
             (self.pr.hzoom, self.pr.vzoom) = (0.0, None);
             self.pr.seq = crate::stepseq::SeqState::opened(self.pr_clip().and_then(|c| c.pattern.as_ref()));
-            // A clip with notes opens centred on its pitch range (empty clips: C4 as in the reference).
+            // A clip with notes opens centred on its pitch range (empty clips: C4).
             if let Some(c) = self.pr_clip()
                 && !c.notes.is_empty()
             {
@@ -793,7 +792,7 @@ impl Controller {
         midi::grid_ticks(self.pr.grid)
     }
 
-    /// The step note edits snap to: the toolbar's snap size (shared with the timeline, S76) at
+    /// The step note edits snap to: the toolbar's snap size (shared with the timeline) at
     /// the editor's zoom. Also the length of a drawn note and the shortest edit while snap is off.
     pub(crate) fn pr_snap_ticks(&self, v: &PrView) -> Ticks {
         let bar = self.project().ticks_per_bar() as f64 / PPQ as f64;
@@ -846,7 +845,7 @@ impl Controller {
     }
 
     /// A zoom slider moved to `z` (0..1). Vertical (`axis` 0) keeps the row in the middle of the
-    /// view in place; horizontal keeps the grid's left edge, as in the reference.
+    /// view in place; horizontal keeps the grid's left edge.
     pub fn pr_zoom(&mut self, axis: i32, z: f32) {
         let z = z.clamp(0.0, 1.0);
         let v = self.pr_view();
@@ -888,7 +887,7 @@ impl Controller {
         4.0 / self.project().transport.time_signature.denominator as f64
     }
 
-    /// Ruler and grid steps for the editor's zoom (the reference app's rules, as the arrangement's).
+    /// Ruler and grid steps for the editor's zoom (the same rules as the arrangement's).
     pub(crate) fn pr_steps(&self) -> RulerSteps {
         let p = self.project();
         RulerSteps::new(self.pr_view().ppb, p.ticks_per_bar() as f64 / PPQ as f64, self.pr_beat_len(), None)
@@ -1243,9 +1242,9 @@ impl Controller {
         self.ui_dirty = true;
     }
 
-    /// A wheel or trackpad scroll over the grid at (`x`, `y`) (view coordinates), with the reference app's
+    /// A wheel or trackpad scroll over the grid at (`x`, `y`) (view coordinates), with these
     /// gesture rules: Ctrl (a trackpad pinch arrives this way) zooms time by `max(0.1, 1 - d * 0.02)`
-    /// (`d` = the browser's wheel delta, the opposite sign of Slint's); Alt + Shift zooms time and
+    /// (`d` = the wheel delta with the opposite sign of Slint's); Alt + Shift zooms time and
     /// Alt alone zooms the pitch rows (or time when the scroll is mostly sideways), both by
     /// `1 + d * 0.001`; anything else pans. Zoom keeps the point under the pointer in place.
     pub fn pr_wheel(&mut self, dx: f32, dy: f32, x: f32, y: f32, shift: bool, alt: bool, ctrl: bool) {
@@ -1270,7 +1269,7 @@ impl Controller {
     }
 
     /// Multiply the horizontal (`fx`) and vertical (`fy`) zoom, keeping the beat and the pitch row
-    /// under (`x`, `y`) in place. Horizontal stays between the fit and one reference px per tick,
+    /// under (`x`, `y`) in place. Horizontal stays between the fit and one 100%-zoom px per tick,
     /// rows between the slider's limits: the same range the toolbar sliders cover.
     pub fn pr_zoom_at(&mut self, fx: f64, fy: f64, x: f32, y: f32) {
         let v = self.pr_view();
@@ -1294,7 +1293,7 @@ impl Controller {
         self.ui_dirty = true;
     }
 
-    /// the reference app's clip-editor zoom command: one step of 0.1 on the slider's 0..1 range, in or out,
+    /// The clip-editor zoom command: one step of 0.1 on the slider's 0..1 range, in or out,
     /// on one axis (0 vertical, 1 horizontal), clamped at both ends. Like the sliders, vertical
     /// keeps the middle row in place and horizontal keeps the grid's left edge.
     pub fn pr_zoom_step(&mut self, zoom_in: bool, axis: i32) {

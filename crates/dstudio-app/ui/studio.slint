@@ -961,6 +961,10 @@ export global Studio {
     callback auto-show-extra(int, int);         // track id, extra row index
     callback auto-open-picker(int, length, length); // track id (-1 master), window x, y of the pill's bottom-left
     in property <bool> picker-open;
+    // Height of the in-window menu bar (Linux; 0 on macOS and Windows, whose menu bars are native).
+    // Absolute positions include it but the overlays and the controller's layout are measured
+    // from the content's top, so every absolute y the UI hands out has it subtracted.
+    in-out property <length> menu-dy;
     in property <length> picker-x;
     in property <length> picker-y;
     in property <length> picker-h;

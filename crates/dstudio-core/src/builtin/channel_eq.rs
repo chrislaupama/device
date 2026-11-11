@@ -1,8 +1,7 @@
-//! Channel EQ (reference: the reference app's built-in "Channel EQ"): eight bands
-//! (high pass, low shelf, four bells, high shelf, low pass by default; every
-//! band can take any type), shared high- and low-pass slopes and an output
-//! gain. Parameter ids, ranges, defaults, tapers and the panel arrangement
-//! are taken from the reference as facts; factory presets are our own.
+//! Channel EQ: eight bands (high pass, low shelf, four bells, high shelf, low
+//! pass by default; every band can take any type), shared high- and low-pass
+//! slopes and an output gain. Defines the parameter ids, ranges, defaults,
+//! tapers, the panel arrangement and the factory presets.
 
 use super::eq::{EqBand, EqView, NodeDoubleClick, Shape};
 use super::*;
