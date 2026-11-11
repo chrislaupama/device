@@ -2,11 +2,7 @@
 
 <div align="center">
 
-<h1>Device Studio</h1>
-
-<h3>Built for real time.</h3>
-
-<p>A desktop digital audio workstation with a real-time C++ engine and a GPU-drawn Rust interface, for macOS, Windows and Linux.</p>
+<img alt="Device Studio. Built for real time. An open-source DAW with a C++ engine and a GPU-drawn interface, for macOS, Windows and Linux, hosting AU, VST3 and CLAP, with 44 built-in devices." src="docs/assets/art/hero.png" width="100%">
 
 <p>
   <a href="https://github.com/chrislaupama/sainestudio/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/chrislaupama/sainestudio/actions/workflows/ci.yml/badge.svg?branch=main"></a>
@@ -24,10 +20,6 @@
   <a href="docs/devices.md"><b>Devices</b></a> ·
   <a href="PROGRESS.md"><b>Progress</b></a>
 </p>
-
-<br>
-
-<img alt="Device Studio with automation lanes over an audio track, an instrument track and the master, and the Synth open below" src="docs/assets/screenshot.png" width="900">
 
 </div>
 
@@ -68,26 +60,18 @@ wgpu.
 - **Assistant.** An optional side panel that can explain the app (Teach) or make edits for you (Assist), each turn as
   one undo step. It uses your own Anthropic API key.
 
-<table>
-  <tr>
-    <td width="50%"><a href="docs/assets/screenshot-timeline.png"><img alt="The timeline with two imported audio clips and their waveforms on separate tracks" src="docs/assets/screenshot-timeline.png"></a></td>
-    <td width="50%"><a href="docs/assets/screenshot-synth.png"><img alt="The Synth on an instrument track, showing a triangle and an FM oscillator with their waveform displays" src="docs/assets/screenshot-synth.png"></a></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Timeline</sub></td>
-    <td align="center"><sub>Synth</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><a href="docs/assets/screenshot-character-mod.png"><img alt="Character Mod in a track's device chain, with its delay sweep display and rate, depth, width, voice and mix knobs" src="docs/assets/screenshot-character-mod.png"></a></td>
-    <td width="50%"><a href="docs/assets/screenshot-drum-rack.png"><img alt="The Drum Rack's sixteen pads next to the sampler for the selected pad" src="docs/assets/screenshot-drum-rack.png"></a></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Character Mod</sub></td>
-    <td align="center"><sub>Drum Rack</sub></td>
-  </tr>
-</table>
+### A closer look
 
-<sub>Screenshots are rendered by the app itself (<code>device-studio --screenshot</code>) on Linux with a software GPU.</sub>
+<p align="center"><img alt="Timeline: arrange, record and automate. Automation lanes for track volume, pan and a synth's cutoff over an audio track, an instrument track and the master." src="docs/assets/art/feature-timeline.png" width="100%"></p>
+
+<p align="center"><img alt="Instruments: four instruments, built in. The Synth's two oscillators with their waveform displays." src="docs/assets/art/feature-instruments.png" width="100%"></p>
+
+<p align="center"><img alt="Effects: from compression to restoration. Pitch Corrector, Tuner and Spectrum side by side in a track's device chain." src="docs/assets/art/feature-effects.png" width="100%"></p>
+
+<p align="center"><img alt="Modulation: make anything move. An LFO in sync mode driving a Compressor parameter." src="docs/assets/art/feature-modulation.png" width="100%"></p>
+
+<sub>The app's views are rendered by the app itself (<code>device-studio --screenshot</code>) on Linux with a software GPU, then
+framed by <code>tools/art/render.mjs</code>. More screenshots are in <a href="docs/assets/">docs/assets</a>.</sub>
 
 ### Built-in devices
 
@@ -118,6 +102,11 @@ does not include the audio, so back up the media too. The format is versioned, b
 
 ## Under the hood
 
+<p align="center"><img alt="The Rust app sends validated commands to the Rust core, which hands the C++23 engine an immutable snapshot over a C ABI. 128 audio tracks render a 256-frame block in about 12 microseconds, 0.2% of the 5.3 ms deadline." src="docs/assets/art/architecture.png" width="100%"></p>
+
+<details>
+<summary>The same layers as text</summary>
+
 ```
  Rust app (Slint shell + wgpu surfaces)      crates/dstudio-app
         │  validated commands       ▲ change notifications
@@ -128,6 +117,8 @@ does not include the audio, so back up the media too. The format is versioned, b
  C++23 real-time engine                      engine/
    Core Audio · WASAPI · PipeWire     AU · VST3 · CLAP hosting
 ```
+
+</details>
 
 - **The UI holds no state of its own.** It renders from the document and the engine's readouts, and every change goes
   through a command, which is what makes undo, saving and the assistant all work the same way.
@@ -262,6 +253,11 @@ finishes something it describes, the same pull request updates it:
 - **Get Device Studio** and **Build from source** when platform support, requirements or build steps change, along
   with [docs/building.md](docs/building.md).
 - **Under the hood** when the benchmark numbers in [engine/README.md](engine/README.md) change noticeably.
+- **Artwork** in `docs/assets/art/` (the banner, the close-ups, the architecture panel and the social preview) when
+  the screenshots, the device count or the benchmark numbers it shows change. The sources are the HTML pages in
+  [docs/art/](docs/art/); edit one and run `node tools/art/render.mjs` (it needs Playwright: `npm install --no-save
+  playwright && npx playwright install chromium`). The social preview is uploaded by hand in the repository's Settings,
+  General, Social preview.
 - **Screenshots** in `docs/assets/` when the part of the interface they show changes visibly. Render them with the
   app itself, e.g. `device-studio --no-audio --state review-automation --screenshot docs/assets/screenshot.png
   --exit-after-frames 5`; the states used are listed in each image's pull request.

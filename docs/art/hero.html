@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Device Studio hero</title>
+<link rel="stylesheet" href="art.css">
+<style>
+  .hero { width: 1280px; height: 1046px; }
+  .hero .head { position: absolute; left: 0; right: 0; top: 96px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 22px; }
+  .hero .wordmark b { font-size: 76px; }
+  .hero h2 { margin: 0; max-width: 860px; line-height: 1.35; font-size: 30px; font-weight: 500; color: var(--text-2); letter-spacing: -0.01em; }
+  .hero h2 em { font-style: normal; color: var(--text); }
+  .hero .chips { justify-content: center; margin-top: 8px; }
+  .hero .window { position: absolute; left: 80px; width: 1120px; top: 380px; }
+</style>
+</head>
+<body>
+<div class="art hero">
+  <div class="bars"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+  <div class="ruler"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span><span>11</span><span>12</span><span>13</span><span>14</span><span>15</span><span>16</span></div>
+  <div class="playhead" style="left: 1159px"></div>
+  <div class="head">
+    <div class="wordmark"><img class="mark" src="mark.svg" width="84" height="84" alt=""><b>Device Studio</b></div>
+    <h2><em>Built for real time.</em> An open-source DAW with a C++ engine and a GPU-drawn interface.</h2>
+    <div class="chips">
+      <span class="chip"><i style="background: var(--audio)"></i>macOS · Windows · Linux</span>
+      <span class="chip"><i style="background: var(--instrument)"></i>AU · VST3 · CLAP</span>
+      <span class="chip"><i style="background: var(--automation)"></i>44 built-in devices</span>
+      <span class="chip"><i style="background: var(--accent)"></i>AGPL-3.0</span>
+    </div>
+  </div>
+  <div class="window"><img src="shots/automation.png" alt=""></div>
+</div>
+</body>
+</html>
