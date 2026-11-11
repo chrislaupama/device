@@ -173,8 +173,11 @@ struct TrackNode {
     // output or through its sends; main_on: its output is live; send_live:
     // its sends are live. A return reads bus `bus` (RenderContext::bus_l/r);
     // out_bus: the bus the output plays into (-1 = master). Sends:
-    // RenderGraph::sends[send_begin, send_begin + send_count).
+    // RenderGraph::sends[send_begin, send_begin + send_count). `plain`: no
+    // sends, not a return and output on the master (the render loop then
+    // skips the routing work).
     bool is_return = false;
+    bool plain = true;
     bool main_on = false;
     bool send_live = false;
     int32_t bus = -1;
@@ -227,9 +230,6 @@ struct PdcPlan {
                           std::size_t t) const noexcept {
         return 2 * track_count + fx_count + 1 + send_count + t;
     }
-    // Arrival of each track's input relative to the timeline (returns: the
-    // latest of their sources' chain latencies; 0 for other tracks).
-    std::vector<uint32_t> track_input;
 };
 
 // Number of buckets in the se_meters_peek sliding window (each bucket covers

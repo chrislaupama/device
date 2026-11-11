@@ -1675,15 +1675,16 @@ void Engine::plan_pdc(RenderGraph& g) const {
     };
     // lat_i: every insert (bypassed ones too) + the instrument plugin.
     p.track_latency.assign(track_count, 0);
-    std::vector<uint64_t> lat(track_count, 0);
     for (std::size_t t = 0; t < track_count; ++t) {
         TrackNode& node = g.tracks[t];
         node.pdc_delay = node.pdc_src_delay = node.out_delay = 0;
         node.pdc_pre = false;
-        lat[t] = node.has_instrument_plugin ? lat_of(node.instrument_plugin) : 0;
-        for (uint32_t i = 0; i < node.fx_count; ++i) lat[t] += lat_of(g.fx[node.fx_begin + i].inst);
-        p.track_latency[t] = static_cast<uint32_t>(std::min<uint64_t>(lat[t], UINT32_MAX));
+        uint64_t lat = node.has_instrument_plugin ? lat_of(node.instrument_plugin) : 0;
+        for (uint32_t i = 0; i < node.fx_count; ++i) lat += lat_of(g.fx[node.fx_begin + i].inst);
+        p.track_latency[t] = static_cast<uint32_t>(std::min<uint64_t>(lat, UINT32_MAX));
     }
+    // A track's chain latency (capped to 32 bits, far beyond any real chain).
+    const auto lat = [&](std::size_t t) -> uint64_t { return p.track_latency[t]; };
     // Routing (spec 002): a return receives at in_r, the latest chain latency
     // of the tracks feeding it, and reaches the master at in_r + lat_r. The
     // master's L is the latest arrival. Muted tracks count, so mute and solo
@@ -1691,10 +1692,10 @@ void Engine::plan_pdc(RenderGraph& g) const {
     std::vector<uint64_t> bus_in(g.bus_count, 0);
     for (std::size_t t = 0; t < track_count; ++t) {
         const TrackNode& node = g.tracks[t];
-        if (node.out_bus >= 0) bus_in[static_cast<std::size_t>(node.out_bus)] = std::max(bus_in[static_cast<std::size_t>(node.out_bus)], lat[t]);
+        if (node.out_bus >= 0) bus_in[static_cast<std::size_t>(node.out_bus)] = std::max(bus_in[static_cast<std::size_t>(node.out_bus)], lat(t));
         for (uint32_t s = node.send_begin; s < node.send_begin + node.send_count; ++s) {
             const auto b = static_cast<std::size_t>(g.sends[s].bus);
-            bus_in[b] = std::max(bus_in[b], lat[t]);
+            bus_in[b] = std::max(bus_in[b], lat(t));
         }
     }
     const auto input_of = [&](const TrackNode& node) -> uint64_t {
@@ -1702,10 +1703,7 @@ void Engine::plan_pdc(RenderGraph& g) const {
     };
     uint64_t total = 0;
     for (std::size_t t = 0; t < track_count; ++t)
-        if (g.tracks[t].out_bus < 0) total = std::max(total, input_of(g.tracks[t]) + lat[t]);
-    p.track_input.assign(track_count, 0);
-    for (std::size_t t = 0; t < track_count; ++t)
-        p.track_input[t] = static_cast<uint32_t>(std::min<uint64_t>(input_of(g.tracks[t]), UINT32_MAX));
+        if (g.tracks[t].out_bus < 0) total = std::max(total, input_of(g.tracks[t]) + lat(t));
     for (FxSlot& slot : g.fx) slot.pdc_bypass_delay = slot.auto_delay = 0;
     for (SendNode& send : g.sends) send.edge_delay = 0;
     for (TrackNode& node : g.tracks) node.auto_delay = 0;
@@ -1731,7 +1729,7 @@ void Engine::plan_pdc(RenderGraph& g) const {
         // Aligned for the earliest destination after the chain; later
         // destinations get an edge delay after the fader (or the tap).
         const uint64_t in = input_of(node);
-        const uint64_t at = std::min<uint64_t>(in + lat[t], p.total); // when the chain's output is ready
+        const uint64_t at = std::min<uint64_t>(in + lat(t), p.total); // when the chain's output is ready
         uint64_t first = arrival(node.out_bus);
         for (uint32_t s = node.send_begin; s < node.send_begin + node.send_count; ++s)
             first = std::min(first, arrival(g.sends[s].bus));

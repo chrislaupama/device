@@ -328,6 +328,12 @@ int32_t apply_routing(RenderGraph& g, const se_session_desc_v9& desc9, std::stri
         err = "session has send_count > 0 but sends == NULL";
         return SE_ERR_INVALID_ARG;
     }
+    if (desc9.route_count == 0 && desc9.send_count == 0) {
+        // No returns, outputs or sends: every track plays into the master when audible
+        // (the same result as below, without the lookups).
+        for (TrackNode& node : g.tracks) node.main_on = node.send_live = node.audible;
+        return SE_OK;
+    }
     const std::size_t n = g.tracks.size();
     std::unordered_map<uint64_t, uint32_t> index;
     for (std::size_t t = 0; t < n; ++t) index.emplace(g.tracks[t].track_id, static_cast<uint32_t>(t));
@@ -440,6 +446,7 @@ int32_t apply_routing(RenderGraph& g, const se_session_desc_v9& desc9, std::stri
             node.main_on = node.out_bus >= 0 ? node.send_live : on && ((!solo_track && !solo_return) || td.solo != 0);
         }
         node.audible = node.main_on || (node.send_live && node.send_count > 0);
+        node.plain = node.send_count == 0 && node.out_bus < 0 && node.bus < 0;
     }
     return SE_OK;
 }
