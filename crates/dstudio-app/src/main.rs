@@ -100,6 +100,10 @@ struct Args {
     /// Extra panels for the `reference-*` states.
     open_mixer: bool,
     open_assistant: bool,
+    /// review-master-mute: the master starts muted.
+    master_muted: bool,
+    /// review-panel-collapsed: the bottom panel starts shut to its tab row.
+    panel_collapsed: bool,
     /// reference-assistant / review-assistant-<name>: canned transcript (assistant_panel::assistant_demo).
     assistant_demo: Option<String>,
     /// 1 = reference-midi-clip, 2 = reference-pianoroll.
@@ -242,6 +246,15 @@ fn parse_args() -> Result<Args, String> {
                 "reference-mixer" => {
                     a.reference_default = true;
                     a.open_mixer = true;
+                }
+                "review-master-mute" => {
+                    a.reference_default = true;
+                    a.open_mixer = true;
+                    a.master_muted = true;
+                }
+                "review-panel-collapsed" => {
+                    a.reference_default = true;
+                    a.panel_collapsed = true;
                 }
                 "reference-assistant" => {
                     a.reference_default = true;
@@ -955,6 +968,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             pointer::simulate(true);
         }
         c.mixer_open = args.open_mixer;
+        if args.master_muted {
+            c.toggle_master_mute();
+        }
+        if args.panel_collapsed {
+            c.toggle_bottom_collapse();
+        }
         c.assistant_open = args.open_assistant;
         if let Some(px) = args.assistant_width {
             c.settings.prefs.assistant_width = px * zoom::DESIGN_LEVEL;
