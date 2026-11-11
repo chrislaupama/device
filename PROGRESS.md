@@ -311,6 +311,23 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Not yet: the engine ignores the routing (returns publish as empty tracks) and the app has no UI for it. Next: engine
   (spec 002 T4-T8), then the UI (T9).
 
+### 2026-11-11: transport bar tempo, time signature and key
+
+- The transport bar's BPM, TAP, Key and Sig fields were display-only; they now edit the project
+  (`src/transport_fields.rs`, `ui/transport.slint`). Tempo: drag right or up (1 BPM per point), double-click to type
+  (two decimals kept, shown when not whole), or tap (the average of up to eight taps; a pause over 2 s or a sudden
+  change of pace starts over). A drag or a tap series is one "Tempo Change" undo step whatever its length. Sig opens a
+  menu of twelve common signatures; Key opens a picker (Major / Minor, twelve roots, No key) that sets
+  `Command::SetProjectKey`, which the composer, Shape and key-following devices already read.
+- A change of pace while tapping starts a new undo step. Keyboard: in the open Sig menu Up/Down and Enter or Space;
+  in the open key picker the arrows move over the roots, Enter or Space picks, M switches Major / Minor, Delete or
+  Backspace is No key (not while Settings or a dialog is open). Both openers and every choice have accessible default
+  actions. Opening or replacing the project drops a tempo gesture in progress.
+- Shift+T taps the tempo (`transport.tap_tempo`). The tempo field's accessible default action opens the typed editor
+  and its increment / decrement step one BPM. A typed tempo takes an optional "bpm" suffix and refuses other text;
+  typing or dragging the tempo ends a tap series.
+- Self-test section `transport_fields_steps`; review states `review-transport-sig` and `review-transport-key`.
+
 ### 2026-11-11: return tracks and sends, part 2: engine (spec 002)
 
 - `se_session_publish_v9` (v8 + `se_track_route`, `se_send_desc`, `SE_MAX_RETURNS` 16); `Engine::publish` in Rust

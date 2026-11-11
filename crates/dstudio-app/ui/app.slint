@@ -32,11 +32,13 @@ import { ExportModal, UnsavedPrompt, UpdatesModal, UndoHistoryModal } from "dial
 import { PluginCard, AddDeviceCard, DevMenuList } from "devices.slint";
 import { BuiltinCard, FoldedStrip } from "device_panel.slint";
 import { TrackHeaderRow, MasterHeaderRow, AutoPill, TrackName } from "track_header.slint";
+import { KeyPicker } from "transport.slint";
 
 export { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, SectionLabel, ClipLabel, TreeRow, FileRow, FileGuide, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow }
 
 // ------------------------------------------------------------------ header
 component Header inherits Rectangle {
+    property <bool> bpm-editing;
     // Left edge of the 1440-unit transport block (it stays centred in the window).
     out property <length> transport-x: (root.width - 1440px) / 2;
     // Root-relative coordinates (header panel sits at 5,5).
@@ -101,21 +103,76 @@ component Header inherits Rectangle {
         Label { x: 624px; y: 45px; text: Studio.time-text; color: #ffffff; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
         Rectangle { x: 689px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
         Label { x: 703px; y: 45px; text: "BPM"; color: #565656; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
-        Label { x: 733px; y: 45px; text: Studio.bpm-text; color: #ffffff; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
-        // TAP: PLACEHOLDER (tap tempo not implemented)
+        // Tempo (src/transport_fields.rs): drag right or up (1 BPM per point), double-click to type.
+        Label { x: 733px; y: 45px; text: Studio.bpm-text; color: bpm-ta.has-hover || bpm-ta.pressed ? Tokens.text-bright : #ffffff; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
+        bpm-ta := TouchArea {
+            x: 729px; y: 41px; width: 31px; height: 22px;
+            mouse-cursor: MouseCursor.ns-resize;
+            accessible-role: spinbox; accessible-label: "Tempo"; accessible-value: Studio.bpm-text;
+            accessible-description: "Double-click or use the default action to type a tempo";
+            accessible-action-default => { root.bpm-editing = true; }
+            accessible-action-increment => { Studio.tempo-step(1); }
+            accessible-action-decrement => { Studio.tempo-step(-1); }
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.tempo-drag(0, 0, 0); }
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.tempo-drag(2, 0, 0); }
+            }
+            moved => { Studio.tempo-drag(1, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
+            double-clicked => { root.bpm-editing = true; }
+        }
+        // The editor reaches left over the BPM label so six characters (998.99) fit before TAP.
+        if root.bpm-editing: Rectangle {
+            x: 712px; y: 43px; width: 48px; height: 18px; border-radius: 3.4px;
+            background: #3a3b40; border-width: 0.85px; border-color: #ffffff59;
+            TextInput {
+                accessible-label: "Tempo (BPM)";
+                x: 3px; width: parent.width - 6px; height: parent.height;
+                text: Studio.bpm-text; color: #ffffff; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px;
+                vertical-alignment: center; single-line: true; selection-background-color: #ffffff47;
+                init => { self.focus(); self.select-all(); }
+                accepted => { root.bpm-editing = false; Studio.tempo-text(self.text); }
+                key-pressed(e) => {
+                    if (e.text == Key.Escape) { root.bpm-editing = false; return accept; }
+                    reject
+                }
+                changed has-focus => { if (!self.has-focus && root.bpm-editing) { root.bpm-editing = false; Studio.tempo-text(self.text); } }
+            }
+        }
+        // TAP: two or more taps set the tempo to their average.
         Rectangle {
-            x: 762px; y: 44px; width: 23px; height: 15px; border-radius: 3px; background: #34353a;
+            x: 762px; y: 44px; width: 23px; height: 15px; border-radius: 3px;
+            background: tap-ta.pressed ? Tokens.accent : tap-ta.has-hover ? #404146 : #34353a;
+            accessible-role: button; accessible-label: "Tap tempo"; accessible-description: "Shift+T";
+            accessible-action-default => { Studio.tap-tempo(); }
             Text { text: "TAP"; color: #e5e5e8; font-size: 7.75px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+            tap-ta := TouchArea {
+                pointer-event(e) => { if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.tap-tempo(); } }
+            }
         }
         Rectangle { x: 798px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
         Label { x: 812px; y: 45px; text: "Key"; color: #565656; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
-        // Key selector: PLACEHOLDER (no key/scale in the model yet)
-        Rectangle { x: 846px; y: 51.5px; width: 13px; height: 1.2px; background: #7a7b7e; }
-        Icon { x: 873px; y: 45px; width: 14px; height: 14px; d: Icons.chevron-down; ink: #7a7b7e; }
+        // Key: the readout ("C", "F#m") or a dash when the project has no key; opens the key picker.
+        if Studio.key-text == "": Rectangle { x: 846px; y: 51.5px; width: 13px; height: 1.2px; background: #7a7b7e; }
+        if Studio.key-text != "": Label { x: 846px; y: 45px; text: Studio.key-text; color: #ffffff; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
+        Icon { x: 873px; y: 45px; width: 14px; height: 14px; d: Icons.chevron-down; ink: Studio.key-menu-open || key-ta.has-hover ? #ffffff : #7a7b7e; }
+        key-ta := TouchArea {
+            x: 808px; y: 41px; width: 84px; height: 22px;
+            accessible-role: combobox; accessible-label: "Key"; accessible-value: Studio.key-text == "" ? "None" : Studio.key-text;
+            accessible-expanded: Studio.key-menu-open;
+            accessible-action-default => { Studio.key-menu-toggle(); }
+            clicked => { Studio.key-menu-toggle(); }
+        }
         Rectangle { x: 901.5px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
         Label { x: 916px; y: 45px; text: "Sig"; color: #565656; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
         Label { x: 936.5px; y: 45px; text: Studio.sig-text; color: #ffffff; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px; }
-        Icon { x: 957px; y: 45px; width: 13px; height: 13px; d: Icons.chevron-down; ink: #a0a0a3; }
+        Icon { x: 957px; y: 45px; width: 13px; height: 13px; d: Icons.chevron-down; ink: Studio.sig-menu-open || sig-ta.has-hover ? #ffffff : #a0a0a3; }
+        sig-ta := TouchArea {
+            x: 912px; y: 41px; width: 62px; height: 22px;
+            accessible-role: combobox; accessible-label: "Time signature"; accessible-value: Studio.sig-text;
+            accessible-expanded: Studio.sig-menu-open;
+            accessible-action-default => { Studio.sig-menu-toggle(); }
+            clicked => { Studio.sig-menu-toggle(); }
+        }
         IconButton { x: 981px; y: 41px; width: 22px; height: 22px; icon: Icons.metronome; filled: true; ink: #63656c; tooltip: "Metronome"; active: Studio.metronome-on; clicked => { Studio.toggle-metronome(); } }
 
         // Master volume (header), real: SetMasterGain
@@ -1025,7 +1082,7 @@ export component AppWindow inherits Window {
         key-pressed(e) => {
             if (e.text == Key.Escape) { self.focus(); }
             if (Studio.typing-key(e.text, true, e.repeat, e.modifiers.control || e.modifiers.shift || e.modifiers.alt || e.modifiers.meta)) { return accept; }
-            if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) { return accept; }
+            if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta, e.repeat)) { return accept; }
             reject
         }
         key-released(e) => {
@@ -1139,6 +1196,22 @@ export component AppWindow inherits Window {
                 Rectangle { x: 3px; y: Studio.snap-menu-rule1; width: parent.width - 6px; height: 0.5px; background: #ffffff1c; }
                 Rectangle { x: 3px; y: Studio.snap-menu-rule2; width: parent.width - 6px; height: 0.5px; background: #ffffff1c; }
             }
+        }
+        // Transport bar Sig menu and key picker (src/transport_fields.rs), below their fields
+        // (header coordinates: the fields' TouchAreas end at y 63).
+        if Studio.sig-menu-open || Studio.key-menu-open: Rectangle {
+            x: 0; y: 0; width: root.width; height: root.height;
+            TouchArea { pointer-event(e) => { if (e.kind == PointerEventKind.down) { Studio.transport-menus-dismiss(); } } }
+            if Studio.sig-menu-open: ChoiceList {
+                x: header.transport-x + 912px; y: 66.4px;
+                width: Studio.sig-menu-w; height: Studio.sig-menu-h;
+                items: Studio.sig-menu-items;
+                active: Studio.sig-menu-active;
+                font-size: 9.35px; text-x: 10.2px; check-x: 17px;
+                picked(i) => { Studio.sig-menu-pick(i); }
+                Rectangle { x: 3px; y: Studio.sig-menu-rule; width: parent.width - 6px; height: 0.5px; background: #ffffff1c; }
+            }
+            if Studio.key-menu-open: KeyPicker { x: header.transport-x + 808px; y: 66.4px; }
         }
         // Inspector "In" selector (audio tracks): below the In field (bottom panel y + 59, x 5 + 11).
         if Studio.input-menu-open: Rectangle {

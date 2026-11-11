@@ -6775,6 +6775,201 @@ fn snap_steps() -> Vec<Step> {
     ]
 }
 
+/// The transport bar's project fields: tempo drag (one undo step), typed tempo, tap tempo (one
+/// undo step per series), the Sig menu and the key picker. Puts 120 BPM, 4/4 and no key back.
+fn transport_fields_steps() -> Vec<Step> {
+    use Step::*;
+    let bpm = |c: &Controller| c.project().transport.bpm;
+    vec![
+        Check("transport: starts at 120 BPM, 4/4, no key", Box::new(move |c, a| {
+            let s = a.global::<Studio>();
+            let t = &c.project().transport;
+            (bpm(c) == 120.0 && (t.time_signature.numerator, t.time_signature.denominator) == (4, 4) && t.key.is_none() && s.get_bpm_text() == "120" && s.get_key_text() == "")
+                .then_some(())
+                .ok_or(format!("bpm {} sig {}/{} key {:?}", bpm(c), t.time_signature.numerator, t.time_signature.denominator, t.key))
+        })),
+        Do("transport: drag the tempo 25 points (right and up), pausing past the merge window", Box::new(|a| {
+            let s = a.global::<Studio>();
+            s.invoke_tempo_drag(0, 0.0, 0.0);
+            s.invoke_tempo_drag(1, 10.0, 0.0);
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            s.invoke_tempo_drag(1, 20.0, -5.0);
+            s.invoke_tempo_drag(2, 20.0, -5.0);
+        })),
+        Check("transport: 145 BPM, readout follows", Box::new(move |c, a| {
+            let t = a.global::<Studio>().get_bpm_text();
+            (bpm(c) == 145.0 && t == "145" && c.doc.undo_label() == Some("Tempo Change")).then_some(()).ok_or(format!("bpm {} text {t}", bpm(c)))
+        })),
+        DoC("transport: one undo takes the whole drag back", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check("transport: 120 BPM again", Box::new(move |c, _| (bpm(c) == 120.0).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        Do("transport: type 97.5", Box::new(|a| a.global::<Studio>().invoke_tempo_text("97.5".into()))),
+        Check("transport: 97.5 BPM shown with its decimal", Box::new(move |c, a| {
+            let t = a.global::<Studio>().get_bpm_text();
+            (bpm(c) == 97.5 && t == "97.5").then_some(()).ok_or(format!("bpm {} text {t}", bpm(c)))
+        })),
+        DoC("transport: tap four times half a second apart", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            for t in [500.0, 500.5, 501.0, 501.5] {
+                c.tap_tempo_at(t);
+            }
+        })),
+        Check("transport: taps set 120 BPM", Box::new(move |c, _| (bpm(c) == 120.0).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: one undo takes the tap series back", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check("transport: 97.5 BPM again", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: start a fresh tap series", Box::new(|_, ctl| ctl.borrow_mut().tf.taps.clear())),
+        Do("transport: press Shift+T, then hold it (two auto-repeats)", Box::new(|a| {
+            let w = a.window();
+            dispatch(w, WindowEvent::KeyPressed { text: Key::Shift.into() });
+            dispatch(w, WindowEvent::KeyPressed { text: "T".into() });
+            dispatch(w, WindowEvent::KeyPressRepeated { text: "T".into() });
+            dispatch(w, WindowEvent::KeyPressRepeated { text: "T".into() });
+            dispatch(w, WindowEvent::KeyReleased { text: "T".into() });
+            dispatch(w, WindowEvent::KeyReleased { text: Key::Shift.into() });
+        })),
+        Check("transport: the held key counted as one tap, the tempo is unchanged", Box::new(move |c, _| {
+            (c.tf.taps.len() == 1 && bpm(c) == 97.5).then_some(()).ok_or(format!("taps {} bpm {}", c.tf.taps.len(), bpm(c)))
+        })),
+        DoC("transport: end that series", Box::new(|_, ctl| ctl.borrow_mut().tf.taps.clear())),
+        DoC("transport: tap at 120 BPM, then twice as fast", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            for t in [600.0, 600.5, 601.0, 601.25] {
+                c.tap_tempo_at(t);
+            }
+        })),
+        Check("transport: the faster taps set 240 BPM", Box::new(move |c, _| (bpm(c) == 240.0).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: undo once", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check("transport: the change of pace was its own step: 120 BPM", Box::new(move |c, _| (bpm(c) == 120.0).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: undo again", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check("transport: 97.5 BPM before the taps", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        Do("transport: drag the tempo 3 points right from 97.5", Box::new(|a| {
+            let s = a.global::<Studio>();
+            s.invoke_tempo_drag(0, 0.0, 0.0);
+            s.invoke_tempo_drag(1, 3.0, 0.0);
+            s.invoke_tempo_drag(2, 3.0, 0.0);
+        })),
+        Check("transport: the drag keeps the half beat: 100.5 BPM", Box::new(move |c, _| (bpm(c) == 100.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: undo the drag", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check("transport: 97.5 BPM after the drag's undo", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        Do("transport: open the Sig menu", Box::new(|a| a.global::<Studio>().invoke_sig_menu_toggle())),
+        Check("transport: the Sig menu lists twelve signatures, 4/4 checked", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            let rows = s.get_sig_menu_items();
+            let checked: Vec<String> = (0..rows.row_count()).filter_map(|i| rows.row_data(i)).filter(|r| r.checked).map(|r| r.label.to_string()).collect();
+            (s.get_sig_menu_open() && rows.row_count() == 12 && checked == ["4/4"]).then_some(()).ok_or(format!("open {} rows {} checked {checked:?}", s.get_sig_menu_open(), rows.row_count()))
+        })),
+        Do("transport: pick 6/8", Box::new(|a| a.global::<Studio>().invoke_sig_menu_pick(8))),
+        Check("transport: 6/8, menu closed, bars are three beats", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (s.get_sig_text() == "6/8" && !s.get_sig_menu_open() && c.project().ticks_per_bar() == 3 * dstudio_core::PPQ)
+                .then_some(())
+                .ok_or(format!("sig {} open {}", s.get_sig_text(), s.get_sig_menu_open()))
+        })),
+        Do("transport: open the key picker, choose Minor, then A", Box::new(|a| {
+            let s = a.global::<Studio>();
+            s.invoke_key_menu_toggle();
+            s.invoke_key_mode(true);
+            s.invoke_key_pick(9);
+        })),
+        Check("transport: A minor, readout Am, picker still open", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let k = c.project().transport.key;
+            (k == Some(dstudio_core::model::ProjectKey { root: 9, minor: true }) && s.get_key_text() == "Am" && s.get_key_menu_open() && s.get_key_root() == 9)
+                .then_some(())
+                .ok_or(format!("key {k:?} text {} open {}", s.get_key_text(), s.get_key_menu_open()))
+        })),
+        Do("transport: switch to Major", Box::new(|a| a.global::<Studio>().invoke_key_mode(false))),
+        Check("transport: A major", Box::new(|c, a| {
+            let k = c.project().transport.key;
+            (k == Some(dstudio_core::model::ProjectKey { root: 9, minor: false }) && a.global::<Studio>().get_key_text() == "A").then_some(()).ok_or(format!("key {k:?}"))
+        })),
+        Do("transport: No key", Box::new(|a| a.global::<Studio>().invoke_key_clear())),
+        Check("transport: no key, dash shown, picker closed", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.project().transport.key.is_none() && s.get_key_text() == "" && !s.get_key_menu_open()).then_some(()).ok_or(format!("key {:?}", c.project().transport.key))
+        })),
+        Do("transport: open the Sig menu, Down, Enter", Box::new(|a| {
+            a.global::<Studio>().invoke_sig_menu_toggle();
+            key(a, Key::DownArrow, false, false);
+        })),
+        Check("transport: the highlight moved from 6/8 to 7/8", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_sig_menu_open() && s.get_sig_menu_active() == 9).then_some(()).ok_or(format!("open {} active {}", s.get_sig_menu_open(), s.get_sig_menu_active()))
+        })),
+        Do("transport: Enter picks it", Box::new(|a| key(a, Key::Return, false, false))),
+        Check("transport: 7/8 from the keyboard, menu closed", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_sig_text() == "7/8" && !s.get_sig_menu_open()).then_some(()).ok_or(format!("sig {} open {}", s.get_sig_text(), s.get_sig_menu_open()))
+        })),
+        Do("transport: key picker from the keyboard: Right, Right, Down, Enter, M", Box::new(|a| {
+            a.global::<Studio>().invoke_key_menu_toggle();
+            key(a, Key::RightArrow, false, false);
+            key(a, Key::RightArrow, false, false);
+            key(a, Key::DownArrow, false, false);
+            key(a, Key::Return, false, false);
+            key(a, "m", false, false);
+        })),
+        Check("transport: F# minor, picker open", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let k = c.project().transport.key;
+            (k == Some(dstudio_core::model::ProjectKey { root: 6, minor: true }) && s.get_key_text() == "F#m" && s.get_key_menu_open())
+                .then_some(())
+                .ok_or(format!("key {k:?} open {}", s.get_key_menu_open()))
+        })),
+        Do("transport: Backspace is No key", Box::new(|a| key(a, Key::Backspace, false, false))),
+        Check("transport: no key after Backspace, picker closed", Box::new(|c, a| {
+            (c.project().transport.key.is_none() && !a.global::<Studio>().get_key_menu_open()).then_some(()).ok_or(format!("key {:?}", c.project().transport.key))
+        })),
+        Do("transport: type 120slow", Box::new(|a| a.global::<Studio>().invoke_tempo_text("120slow".into()))),
+        Check("transport: text after the number is refused, still 97.5", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: three taps at 120, type 97.5, one more tap", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            for t in [700.0, 700.5, 701.0] {
+                c.tap_tempo_at(t);
+            }
+            c.tempo_text("97.5");
+            c.tap_tempo_at(701.5);
+        })),
+        Check("transport: typing ended the tap series: still 97.5", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: type 97.5 again (ends the series)", Box::new(|_, ctl| ctl.borrow_mut().tempo_text("97.5"))),
+        // The key press is checked for routing only; the second tap gets a timestamp half a
+        // second after it, so the tempo does not depend on how fast the runner is.
+        Do("transport: Shift+T", Box::new(|a| key(a, "T", false, true))),
+        Check("transport: Shift+T started a tap series, the tempo is unchanged", Box::new(move |c, _| {
+            (c.tf.taps.len() == 1 && bpm(c) == 97.5).then_some(()).ok_or(format!("taps {} bpm {}", c.tf.taps.len(), bpm(c)))
+        })),
+        DoC("transport: a second tap half a second after the key press", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = c.tf.taps.first().copied().unwrap_or(0.0) + 0.5;
+            c.tap_tempo_at(t);
+        })),
+        Check("transport: the two taps set 120 BPM", Box::new(move |c, _| (bpm(c) == 120.0).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: back to 97.5, then Settings open with the Sig menu", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.tempo_text("97.5");
+            c.sig_menu_toggle();
+            c.toggle_settings();
+        })),
+        Do("transport: Down and Enter behind Settings", Box::new(|a| {
+            key(a, Key::DownArrow, false, false);
+            key(a, Key::Return, false, false);
+        })),
+        Check("transport: the signature did not change behind Settings", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_sig_text() == "7/8").then_some(()).ok_or(format!("sig {}", s.get_sig_text()))
+        })),
+        DoC("transport: close Settings and the menu", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.toggle_settings();
+            c.transport_menus_dismiss();
+        })),
+        DoC("transport: back to 120 BPM and 4/4", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.execute(dstudio_core::Command::SetTempo { bpm: 120.0 });
+            c.execute(dstudio_core::Command::SetTimeSignature { numerator: 4, denominator: 4 });
+        })),
+    ]
+}
+
 /// Track rename: double-click the selected track's name in the inspector, type, Enter. An
 /// empty name and Escape leave the name alone; undo restores it.
 fn track_rename_steps() -> Vec<Step> {
@@ -8070,6 +8265,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(clip_render_plugin_steps());
     all.extend(ruler_zoom_steps());
     all.extend(snap_steps());
+    all.extend(transport_fields_steps());
     all.extend(track_rename_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());

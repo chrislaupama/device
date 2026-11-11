@@ -65,6 +65,7 @@ mod selftest;
 mod settings;
 mod shape_rack;
 mod snap;
+mod transport_fields;
 mod stepseq;
 mod sections;
 mod splitters;
@@ -175,6 +176,9 @@ struct Args {
     devices_minimap_review: bool,
     /// review-snap-menu: the timeline's snap menu open, with 1/8 chosen.
     snap_menu_review: bool,
+    /// review-transport-sig / review-transport-key: tempo 97.5, 6/8 and A minor set, with the
+    /// transport bar's Sig menu (1) or key picker (2) open.
+    transport_review: u8,
     /// review-track-rename: track 1 renamed "Lead vox", the inspector's name field open.
     track_rename_review: bool,
     /// reference-<built-in device id>: that device alone in an audio track's chain (an instrument on an instrument track).
@@ -475,6 +479,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.snap_menu_review = true;
                 }
+                st @ ("review-transport-sig" | "review-transport-key") => {
+                    a.reference_default = true;
+                    a.transport_review = if st.ends_with("sig") { 1 } else { 2 };
+                }
                 "reference-lfo" => {
                     a.reference_default = true;
                     a.modulation_state = 1;
@@ -503,7 +511,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -680,6 +688,8 @@ pub fn app_keymap() -> Keymap {
             k.bindings.push(Binding { action: action.into(), chords: vec![Chord::parse(chord).expect("valid chord")], when: Condition::TrackSelected });
         }
     }
+    // Tap tempo from the keyboard (the transport bar's TAP).
+    k.bindings.push(Binding { action: "transport.tap_tempo".into(), chords: vec![Chord::parse("shift+t").expect("valid chord")], when: Condition::Always });
     // Musical typing: the tooltip reads "K / ⇧K"; the core preset has only K.
     k.bindings.push(Binding { action: "view.musical_typing".into(), chords: vec![Chord::parse("shift+k").expect("valid chord")], when: Condition::Always });
     // Piano roll (↑/↓ transpose, Delete, B/E, the toolbar's R = Reverse
@@ -731,6 +741,12 @@ type Ctl = Rc<RefCell<Controller>>;
 
 /// Run a keymap action. File dialogs run with the controller NOT borrowed,
 /// since the modal loop keeps rendering (and the renderer borrows it).
+/// Whether a held key's auto-repeat runs `action` again (all actions except tap tempo, where
+/// each repeat would count as a tap).
+fn repeats(action: &str) -> bool {
+    action != "transport.tap_tempo"
+}
+
 fn run_action(ctl: &Ctl, action: &str) -> bool {
     match action {
         "transport.play_pause" => ctl.borrow_mut().play_toggle(),
@@ -775,12 +791,13 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "midi.reverse" => ctl.borrow_mut().pr_action("reverse"),
         "view.musical_typing" => ctl.borrow_mut().typing_toggle(),
+        "transport.tap_tempo" => ctl.borrow_mut().tap_tempo(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
             if c.devmm_cancel() || c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
                 return true;
             }
-            let popup_open = c.settings.open || c.settings.menu.is_some() || c.menu.open || c.rec.input_menu.is_some() || c.synth.menu.is_some() || c.devices.menu.is_some() || c.auto.picker.is_some() || c.rename.is_some() || c.rename_section.is_some() || c.pr.menu >= 0;
+            let popup_open = c.settings.open || c.settings.menu.is_some() || c.menu.open || c.rec.input_menu.is_some() || c.synth.menu.is_some() || c.devices.menu.is_some() || c.auto.picker.is_some() || c.rename.is_some() || c.rename_section.is_some() || c.pr.menu >= 0 || c.tf.sig_menu || c.tf.key_menu;
             if !popup_open && c.cancel_clip_render() {
                 return true;
             }
@@ -794,6 +811,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.synth_menu_dismiss();
             c.devmenu_dismiss();
             c.auto_picker_close();
+            c.transport_menus_dismiss();
             c.rename = None;
             c.rename_section = None;
             c.pr.menu = -1;
@@ -1469,6 +1487,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(20.0);
     }
+    if args.transport_review > 0 {
+        // REVIEW STATE: the transport bar's project fields set, one of their popups open.
+        let mut c = ctl.borrow_mut();
+        c.tempo_text("97.5");
+        c.sig_menu_toggle();
+        c.sig_menu_pick(8);
+        c.key_menu_toggle();
+        c.key_mode(true);
+        c.key_pick(9);
+        if args.transport_review == 1 {
+            c.sig_menu_toggle();
+        }
+    }
     if args.track_rename_review {
         let mut c = ctl.borrow_mut();
         let id = c.project().tracks[0].id;
@@ -1876,6 +1907,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.snap.menu = None;
         c.ui_dirty = true;
     });
+    on!(on_tempo_drag, |c, phase: i32, dx: f32, dy: f32| c.tempo_drag(phase, dx, dy));
+    on!(on_tempo_text, |c, t: slint::SharedString| c.tempo_text(t.as_str()));
+    on!(on_tap_tempo, |c| c.tap_tempo());
+    on!(on_tempo_step, |c, delta: i32| c.tempo_step(delta));
+    on!(on_sig_menu_toggle, |c| c.sig_menu_toggle());
+    on!(on_sig_menu_pick, |c, i: i32| c.sig_menu_pick(i.max(0) as usize));
+    on!(on_key_menu_toggle, |c| c.key_menu_toggle());
+    on!(on_key_pick, |c, i: i32| c.key_pick(i.clamp(0, 11) as u8));
+    on!(on_key_mode, |c, minor: bool| c.key_mode(minor));
+    on!(on_key_clear, |c| c.key_clear());
+    on!(on_transport_menus_dismiss, |c| {
+        c.transport_menus_dismiss();
+    });
     on!(on_minimap_pointer, |c, kind: i32, x: f32, y: f32, w: f32, ox: f32, oy: f32| c.minimap_pointer(kind, x, y, w, ox, oy));
     on!(on_devmm_pointer, |c, kind: i32, x: f32, y: f32, ox: f32, oy: f32| c.devmm_pointer(kind, x, y, ox, oy));
     on!(on_devmm_scroll, |c, dx: f32, dy: f32| c.devmm_wheel(dx, dy));
@@ -2185,7 +2229,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aw = app.as_weak();
         let keymap = app_keymap();
         let zm = zoom.clone();
-        studio.on_key(move |text, primary, shift, alt, ctrl| {
+        studio.on_key(move |text, primary, shift, alt, ctrl, repeat| {
             let Some(key) = key_name(text.as_str()) else { return false };
             let chord = Chord { key, primary, shift, alt, ctrl };
             // View › Zoom In (⌘= / ⌘+), Zoom Out (⌘-), Reset Zoom (⌘0).
@@ -2212,6 +2256,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     return true;
                 }
             }
+            // The open Sig menu or key picker takes arrows, Enter, Space (and M, Delete in the picker).
+            // (Not behind a modal: Settings and the dialogs keep their keys.)
+            if !primary && !alt && !ctrl {
+                let used = ctl.try_borrow_mut().is_ok_and(|mut c| {
+                    let modal = c.settings.open || c.export.open || c.unsaved_open || c.updates_open || c.undo_history_open;
+                    !modal && c.transport_menu_key(&chord.key)
+                });
+                if used {
+                    if let Some(a) = aw.upgrade()
+                        && let Ok(mut c) = ctl.try_borrow_mut()
+                    {
+                        c.update_ui(&a);
+                    }
+                    return true;
+                }
+            }
             let cx = {
                 let c = ctl.borrow();
                 Context {
@@ -2227,6 +2287,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
             let Some(action) = keymap.resolve(&chord, &cx).map(str::to_owned) else { return false };
+            // A held key repeats: tap tempo counts only real presses.
+            if repeat && !repeats(&action) {
+                return true;
+            }
             // Settings is modal: only Escape and ⌘, reach the app while it is open.
             if ctl.borrow().settings.open && action != "view.escape" && action != "app.settings" {
                 return true;
@@ -2849,5 +2913,12 @@ mod tests {
         assert_eq!(k.chords_for("track.rename").len(), 1);
         assert_eq!(k.chords_for("transport.record").len(), 1);
         assert_eq!(k.chords_for("app.settings").len(), 1);
+    }
+
+    #[test]
+    fn a_held_key_repeats_every_action_but_tap_tempo() {
+        assert!(!super::repeats("transport.tap_tempo"));
+        assert!(super::repeats("edit.undo"));
+        assert!(super::repeats("timeline.zoom_in"));
     }
 }
