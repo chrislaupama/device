@@ -56,6 +56,9 @@ KEEP = [
 SELF = "tools/rename/remove_saine.py"
 
 WORDS = [
+    # The GitHub repository and its checkout folder are now called device.
+    ("chrislaupama/sainestudio", "chrislaupama/device"),
+    ("cd sainestudio", "cd device"),
     ("com.saine.studio", "com.devicestudio.app"),
     ("saineproj", "dsproj"),
     ("SAINE STUDIO", "DEVICE STUDIO"),
