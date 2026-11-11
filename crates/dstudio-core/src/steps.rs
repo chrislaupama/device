@@ -1,6 +1,5 @@
-//! Step patterns: the grid behind the step sequencer (reference: the reference app's
-//! step sequencer on Drum Rack clips; behaviour read from its shipped UI and
-//! re-implemented, see reference/research-findings.md, "Step sequencer").
+//! Step patterns: the grid behind the step sequencer on Drum Rack clips
+//! (and, by pitch, on instrument tracks).
 //!
 //! A pattern clip is an ordinary MIDI clip whose notes are baked from a
 //! [StepPattern]. The pattern is what the step editor shows and edits; the
@@ -18,7 +17,7 @@ use crate::midi::Note;
 use crate::model::{Ticks, PPQ};
 use serde::{Deserialize, Serialize};
 
-/// Step rate (the reference's "Rate"), in the order of its menu.
+/// Step rate ("Rate"), in the order of its menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum StepRate {
     #[serde(rename = "1/1")]
@@ -94,12 +93,12 @@ impl StepRate {
     }
 }
 
-/// The reference's "Length" choices (steps).
+/// The "Length" choices (steps).
 pub const STEP_COUNTS: [u16; 8] = [8, 12, 16, 24, 32, 36, 48, 64];
 /// Longest Length choice and the longest pattern Double makes.
 pub const MAX_STEPS: u16 = 64;
 /// Longest pattern: a clip longer than MAX_STEPS converts with its own step
-/// count (the reference keeps it and pages through it in the editor).
+/// count (the editor keeps it and pages through it).
 pub const STEP_LIMIT: u16 = 4096;
 /// Default for a new pattern clip: 16 steps of 1/16 (one bar of 4/4).
 pub const DEFAULT_STEPS: u16 = 16;
@@ -188,8 +187,8 @@ impl StepCell {
     }
 }
 
-/// What the rows are: one per Drum Rack pad (notes 36..=51, the reference),
-/// or one per pitch (DStudio's extension for instrument tracks).
+/// What the rows are: one per Drum Rack pad (notes 36..=51),
+/// or one per pitch (for instrument tracks).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum StepRows {
     #[default]

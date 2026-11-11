@@ -1,7 +1,7 @@
 //! Musical typing: the computer keyboard played as a piano while the piano roll has the focus
 //! (K, Shift+K or the header button turn it on). Notes go through the clip's track instrument
 //! like a key preview (`Controller::pr_preview`), several at once, and light their keys on the
-//! piano roll's keyboard. Layout, octave and velocity rules follow the reference app's standard mode;
+//! piano roll's keyboard. Layout, octave and velocity rules follow the standard mode;
 //! the floating panel and its chord, strum and follow modes are not built.
 
 use crate::controller::Controller;

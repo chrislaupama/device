@@ -1,5 +1,5 @@
 // Echo: a physical multi-head echo modelled on three machines (tape loop,
-// magnetic drum, cartridge), driven by the reference's machine constants
+// magnetic drum, cartridge), driven by per-machine constants
 // (head positions in mm, tape speeds in mm/s, oscillation onsets).
 // Parameters in the order of dstudio_core::builtin::echo.
 //

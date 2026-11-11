@@ -30,14 +30,14 @@ use std::time::{Duration, Instant};
 
 // ------------------------------------------------------------------ geometry (window / bottom-panel points)
 
-/// Plugin card width (ORIGINAL; the reference has no third-party plugin card).
+/// Plugin card width.
 pub const CARD_W: f32 = 220.0;
-/// Gap between cards: the Synth card ends at 1040 and "Add device" starts at 1056 (reference 32).
+/// Gap between cards: the Synth card ends at 1040 and "Add device" starts at 1056.
 pub const CARD_GAP: f32 = 16.0;
 /// First card, bottom-panel relative (Synth card at window 268.5).
 pub const CHAIN_X0: f32 = 263.5;
 pub const SYNTH_W: f32 = 776.5;
-/// "Add device" alone (audio track, no devices): reference 01 at window 270.
+/// "Add device" alone (audio track, no devices): at window 270.
 pub const ADD_X_ALONE: f32 = 265.0;
 pub const ADD_W: f32 = 182.5;
 /// Bottom panel x (window) and its device area start (after the inspector).

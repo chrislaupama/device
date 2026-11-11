@@ -1,6 +1,5 @@
-//! Pitch Corrector (reference: the reference app's built-in "Pitch Corrector").
-//! Parameter ids, ranges, defaults, units and the panel arrangement are
-//! taken from the reference as facts; the factory presets are our own.
+//! Pitch Corrector: parameter ids, ranges, defaults, units, the panel
+//! arrangement and the factory presets.
 
 use super::*;
 use crate::device::PluginKind;

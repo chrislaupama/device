@@ -1,6 +1,6 @@
 // Synth (synth-v2): the built-in polyphonic subtractive instrument.
 // Parameters in the order of dstudio_core::builtin::synth_v2 (checked by a
-// Rust test); the DSP is our own design.
+// Rust test).
 //
 // Per voice: two oscillators (Sine, Triangle, Saw, Square, Sync, FM; each
 // with a Shape control) stacked up to 8 times for unison, a sub oscillator,

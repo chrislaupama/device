@@ -1,6 +1,5 @@
-//! De-Clipper (reference: the reference app's built-in "De-Clipper"). Parameter ids,
-//! ranges, defaults and the panel arrangement are taken from the reference as
-//! facts; factory preset names and values are our own.
+//! De-Clipper: parameter ids, ranges, defaults, the panel arrangement and the
+//! factory presets.
 
 use super::*;
 use crate::device::PluginKind;

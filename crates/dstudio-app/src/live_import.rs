@@ -1,5 +1,5 @@
 //! Ableton Live set reader for File › Import Ableton Live Set…: [parse] reads the gzipped XML
-//! Live saves (Live 11 and 12; structure in reference/findings/project-import.md) and [build]
+//! Live saves (Live 11 and 12) and [build]
 //! turns it into a DStudio project. Arrangement clips come in; looped clips repeat their loop
 //! the way Live plays them. What DStudio can't hold yet is counted in [Report].
 use crate::live_set::{child, number, path, value};

@@ -130,7 +130,7 @@ ctest, builds and tests the Rust workspace and runs the app's
 
 The app (`crates/dstudio-app`) builds on all three. The hosted jobs run it
 without a GPU or audio device: on Linux under Xvfb with Mesa lavapipe (software Vulkan;
-`SLINT_WGPU_CPU=1`), a reference-state screenshot and the full `--self-test
+`SLINT_WGPU_CPU=1`), a `--state reference-default` screenshot and the full `--self-test
 --no-audio` (125 checks pass; the 21 checks of the Audio Unit devices section
 are reported as skipped off macOS), as a required step; on Windows with WARP
 (DX12 software adapter) the same, as an informational step: the screenshot

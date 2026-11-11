@@ -29,9 +29,9 @@ use std::time::{Duration, Instant};
 // ------------------------------------------------------------------ value mappings
 
 /// Track/header volume slider position (0..1) for a linear gain. 0 dB sits at
-/// 0.85 of the travel (measured handle position in the reference), +6 dB at 1.
+/// 0.85 of the travel, +6 dB at 1.
 /// Track-header and header volume sliders: (dB, fraction of travel), piecewise linear between
-/// the points, as in the reference (reference/research-findings.md, "Track headers").
+/// the points.
 const SLIDER_SCALE: [(f32, f32); 6] = [(-60.0, 0.0), (-48.0, 0.045), (-36.0, 0.11), (-24.0, 0.22), (-12.0, 0.4), (6.0, 1.0)];
 pub fn slider_from_gain(g: f32) -> f32 {
     if g <= 0.0 {
@@ -64,8 +64,8 @@ pub fn header_meter(g: f32) -> f32 {
 }
 
 /// Fader/meter taper of the mixer strips and the track inspector: (dB, fraction of travel from
-/// the top). Piecewise linear in dB between the reference's breakpoints (reference/
-/// research-findings.md, "Channel strip fader"): +6 dB at the top, 0 dB at 20 %, -12 dB at
+/// the top). Piecewise linear in dB between the breakpoints:
+/// +6 dB at the top, 0 dB at 20 %, -12 dB at
 /// 60 %, then -24 / -36 / -48 dB at 78 / 89 / 95.5 %, and -60 dB (shown as −∞) at the bottom.
 const FADER_SCALE: [(f32, f32); 6] = [(6.0, 0.0), (-12.0, 0.6), (-24.0, 0.78), (-36.0, 0.89), (-48.0, 0.955), (-60.0, 1.0)];
 pub fn fader_from_db(db: f32) -> f32 {
@@ -125,10 +125,10 @@ pub(crate) fn fmt_pan(p: f32) -> String {
     }
 }
 
-/// The reference's 13 track colours as shown on screen: its palette after the track tint
+/// The 13 track colours as shown on screen: the palette after the track tint
 /// (saturation ×1.64 about Rec. 709 luma, then 10 % toward white) in display-P3 values
-/// (reference/research-findings.md, "Track colours"). Rotated so that index 0 and 1 are the
-/// blue and purple of older projects; the order is the reference's cycle.
+///. Rotated so that index 0 and 1 are the
+/// blue and purple of older projects; the order is the colour cycle.
 const TRACK_PALETTE: [u32; 13] =
     [0x72b5d7, 0x8092eb, 0x9b88f6, 0xc770f7, 0xec5c9f, 0xde7e36, 0x56b5ab, 0xec6e45, 0xe3aa4b, 0xc3cc47, 0xa9de4d, 0x78ea8e, 0x67c9c0];
 
@@ -137,8 +137,7 @@ pub fn track_color(c: ColorIndex) -> [f32; 3] {
 }
 
 /// Colour for a new track: the first palette entry after the last track's colour that no track
-/// uses yet, else the least-used one (the reference's rule). The first track is pink, as in the
-/// reference's new projects.
+/// uses yet, else the least-used one. The first track is pink.
 pub fn next_track_color(p: &Project) -> ColorIndex {
     let n = TRACK_PALETTE.len();
     let Some(last) = p.tracks.last() else { return ColorIndex::FIRST };
@@ -147,8 +146,8 @@ pub fn next_track_color(p: &Project) -> ColorIndex {
     (1..=n).map(|k| (start + k) % n).find(|&c| used(c) == 0).map_or_else(|| ColorIndex((0..n).min_by_key(|&c| used(c)).unwrap_or(0) as u8), |c| ColorIndex(c as u8))
 }
 
-/// Card accent for reference renders (`--card-accent RRGGBB`): the reference captures of the
-/// effect cards were taken on the Master track, whose colour is white.
+/// Card accent override for renders (`--card-accent RRGGBB`), e.g. white for effect cards
+/// shown on the Master track.
 pub static CARD_ACCENT: std::sync::OnceLock<[f32; 3]> = std::sync::OnceLock::new();
 
 /// Accent of a device card on a track of colour `c`.
@@ -156,8 +155,7 @@ pub fn card_color(c: ColorIndex) -> slint::Color {
     slint_color(CARD_ACCENT.get().copied().unwrap_or_else(|| track_color(c)))
 }
 
-/// Record-armed / recording red (ORIGINAL choice; the reference's armed state was not
-/// captured, see ui-inventory.md §11). Mirrors `Tokens.record-red` (#e5484d).
+/// Record-armed / recording red. Mirrors `Tokens.record-red` (#e5484d).
 pub const RECORD_RED: [f32; 3] = [0xe5 as f32 / 255.0, 0x48 as f32 / 255.0, 0x4d as f32 / 255.0];
 
 pub(crate) fn slint_color(c: [f32; 3]) -> slint::Color {
@@ -228,7 +226,7 @@ enum Drag {
     MidiRight { clip: ClipId, orig: (Ticks, Ticks), cur: (Ticks, Ticks) },
 }
 
-/// Bottom panel tab (reference: "Clip" / "Devices").
+/// Bottom panel tab ("Clip" / "Devices").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BottomTab {
     Devices,
@@ -242,7 +240,7 @@ pub enum ClipboardItem {
     Midi { track: TrackId, clip: MidiClip },
 }
 
-/// Clip context menu entries (reference `35-clip-context-menu.png`).
+/// Clip context menu entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
     Cut,
@@ -1694,7 +1692,7 @@ impl Controller {
             s.set_sel_meter_l(fl);
             s.set_sel_meter_r(fr);
         }
-        // Peak hold readout (since selection change), like the reference "−∞" button.
+        // Peak hold readout (since selection change), shown on the "−∞" button.
         self.sel_peak_hold = self.sel_peak_hold.max(ml.max(mr));
         let peak_text = fmt_db(gain_to_db(self.sel_peak_hold));
         if s.get_sel_peak_text().as_str() != peak_text {
@@ -1897,7 +1895,7 @@ impl Controller {
 
     fn update_labels(&mut self) {
         let v = self.view.clone();
-        // Section names: 6 reference px in, hidden under 10 px of room (sections.rs).
+        // Section names: 6 px (at 100% zoom) in, hidden under 10 px of room (sections.rs).
         let w = self.lanes_size.0;
         let section_labels: Vec<crate::SectionLabel> = self
             .section_vis

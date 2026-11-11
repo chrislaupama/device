@@ -1,6 +1,6 @@
 //! Modulation sources and chains: the LFO device, chain (rack) heads with
 //! eight macros, and the links that let them move other parameters
-//! (handoffs/device-specs/lfo.md, chain-head.md, _system.md section 7).
+//! (builtin::lfo, builtin::rack).
 //!
 //! * A source device owns its links (`Device::links`). An LFO adds a
 //!   bipolar offset to each target's normalized value; a macro sets the
@@ -26,7 +26,7 @@ pub const LFO_ID: &str = "lfo";
 pub const RACK_ID: &str = "device-rack";
 /// Sources (LFO or macro) one parameter accepts.
 pub const MAX_SOURCES: usize = 3;
-/// Amount of a link created from a knob's Modulators menu (reference constant).
+/// Amount of a link created from a knob's Modulators menu.
 pub const DEFAULT_AMOUNT: f32 = 0.25;
 
 fn is_builtin(d: &Device, id: &str) -> bool {

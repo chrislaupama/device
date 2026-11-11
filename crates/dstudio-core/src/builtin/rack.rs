@@ -1,5 +1,5 @@
 //! Chain (device rack) head: groups the effects that follow it and carries
-//! eight macros (handoffs/device-specs/chain-head.md).
+//! eight macros.
 //!
 //! It passes audio through. Its power switch bypasses every member; each
 //! macro moves the member parameters in its `Device::links` (slot = macro
@@ -12,7 +12,7 @@ use crate::device::PluginKind;
 /// Number of macros on a chain head.
 pub const MACROS: usize = 8;
 
-/// Default macro colours, cycled (reference values).
+/// Default macro colours, cycled.
 pub const MACRO_COLORS: [u32; 4] = [0xFFEF7A, 0x439B94, 0x64B5F6, 0xBA68C8];
 
 const fn m(id: &'static str, name: &'static str) -> ParamDef {

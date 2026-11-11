@@ -1,13 +1,13 @@
-//! Shaper (reference: the reference app's built-in "Shaper"): seven tempo-synced curve
+//! Shaper: seven tempo-synced curve
 //! lanes (Volume, Time, Width, Pan, Filter, Crush, Pitch), each a drawn shape
 //! of 2 to 16 points that modulates one effect once per cycle. A lane can work
 //! on the whole signal or only below / above a split frequency. The cycles
 //! follow the transport (Trigger = Sync) or restart when the input, or a
 //! sidechain, crosses a threshold (Trigger = Audio).
 //!
-//! Parameter ids, ranges, defaults, tapers and the panel arrangement are taken
-//! from the reference as facts. The factory presets and the Shape menu's
-//! library are our own (names and points).
+//! This file defines the parameter ids, ranges, defaults, tapers, the panel
+//! arrangement, the factory presets and the Shape menu's library (names and
+//! points).
 //!
 //! Point storage per lane: `<lane>_points` points are in use; point n has
 //! `<lane>_p<n>_x` (0..1, non-decreasing, first 0, last 1), `<lane>_p<n>_y`
@@ -17,7 +17,7 @@
 use super::*;
 use crate::device::PluginKind;
 
-/// Cycle lengths, slowest first (plain value = index; reference value table LFO_DIVISION).
+/// Cycle lengths, slowest first (plain value = index).
 pub const DIVISIONS: &[&str] = &[
     "8/1", "4/1", "2/1", "1/1", "1/2.", "1/2", "1/2T", "1/4.", "1/4", "1/4T", "1/8.", "1/8", "1/8T", "1/16.", "1/16", "1/16T", "1/32", "1/64.", "1/64", "1/64T",
 ];
@@ -236,8 +236,8 @@ pub struct Point {
     pub tension: f32,
 }
 
-/// Shape of the segment from a to b at t in 0..1 (exponential bend, the
-/// reference curve law): k = 12 tension, signed so positive tension bows the
+/// Shape of the segment from a to b at t in 0..1 (exponential bend):
+/// k = 12 tension, signed so positive tension bows the
 /// segment towards its end value (fast start).
 pub fn segment(a: Point, b: Point, t: f32) -> f32 {
     let k = a.tension * 12.0 * if b.y >= a.y { 1.0 } else { -1.0 };
@@ -328,7 +328,7 @@ const fn sh(name: &'static str, points: &'static [(f32, f32, f32)]) -> Shape {
     Shape { name, points }
 }
 
-/// Shape library per lane (our own); the first entry of each lane is the lane's default shape.
+/// Shape library per lane; the first entry of each lane is the lane's default shape.
 pub static SHAPES: [&[Shape]; 7] = [
     &[
         sh("Sidechain", &[(0.0, 0.0, 0.55), (0.5, 1.0, 0.0), (1.0, 1.0, 0.0)]),

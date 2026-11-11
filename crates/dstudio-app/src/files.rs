@@ -5,7 +5,7 @@
 //! added (kept in the preferences) and the audio files (WAV, AIFF, FLAC, Ogg, MP3) and subfolders
 //! inside them. Clicking an audio file plays it in the browser's preview bar (the engine's preview
 //! voice, `Audition`). Rows are laid
-//! out here, in design units, so the UI only draws them (research-findings: findings/files.md).
+//! out here, in design units, so the UI only draws them.
 
 use crate::controller::{Controller, ImportTarget, JobResult, gain_from_slider, header_meter, slider_from_gain, sync_model};
 use dstudio_engine::AssetInfo;
@@ -24,7 +24,7 @@ pub const TAB_FOLDERS: usize = 1;
 /// Panel-relative y of the rule under the tabs (no count row) and under the count row.
 pub const LIST_Y: f32 = 81.0;
 pub const LIST_Y_META: f32 = 96.0;
-/// Row metrics (the reference app px × 0.85): 24 px rows 2 px apart, 20 px group labels, 4 px list padding.
+/// Row metrics (100%-zoom px × 0.85): 24 px rows 2 px apart, 20 px group labels, 4 px list padding.
 pub const ROW_H: f32 = 20.4;
 pub const GAP: f32 = 1.7;
 pub const LABEL_H: f32 = 17.0;
@@ -772,7 +772,7 @@ impl Controller {
         }
     }
 
-    /// Preview volume slider (header-slider taper, linear gain 0..2 like the reference).
+    /// Preview volume slider (header-slider taper, linear gain 0..2).
     pub fn audition_volume(&mut self, pos: f32) {
         let gain = gain_from_slider(pos).clamp(0.0, 2.0);
         self.settings.prefs.preview_volume = Some(gain);

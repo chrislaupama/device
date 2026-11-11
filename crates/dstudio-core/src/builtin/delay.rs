@@ -1,6 +1,5 @@
-//! Delay (reference: the reference app's built-in "Delay"). Parameter ids, ranges,
-//! defaults, tapers, display formats and the panel arrangement are taken from
-//! the reference as facts; factory preset names and values are our own.
+//! Delay: parameter ids, ranges, defaults, tapers, display formats, the panel
+//! arrangement and the factory presets.
 
 use super::*;
 use crate::device::PluginKind;

@@ -5,8 +5,8 @@
 //! start / end / fade / loop flags, slices and playheads, the pick rows, a
 //! tab bar with a picture canvas (envelopes, filter curve, glide, LFO, slice
 //! pads) and the dial row. The Drum Rack adds the 4x4 pad grid and shows the
-//! selected pad's sampler as a sub-card. Geometry is measured from the
-//! reference captures at 100% (pt) and drawn at [Z].
+//! selected pad's sampler as a sub-card. Geometry is in pt at 100%
+//! and drawn at [Z].
 //!
 //! Gestures follow the generic panel: a drag sends live values to the engine
 //! and commits one command on release (one undo step); picture handles that
@@ -155,7 +155,7 @@ pub fn is_sampler(def: &DeviceDef) -> bool {
     matches!(def.id, "sampler-steam" | "pad-sampler" | "drum-rack")
 }
 
-/// "x.xx s" (reference seconds format).
+/// "x.xx s" (seconds format).
 fn fmt_secs(v: f32) -> String {
     format!("{v:.2} s")
 }
@@ -678,7 +678,7 @@ impl Controller {
                 let g = n("glide");
                 let x1 = 8.0 + g * (w - 16.0);
                 let (y0, y1) = (h * 0.78, h * 0.22);
-                // An S-curve (cubic, both controls at the horizontal middle), as the reference app draws it.
+                // An S-curve (cubic, both controls at the horizontal middle).
                 let mx = 8.0 + (x1 - 8.0) * 0.5;
                 handles.push(PanelHandle { x: x1, y: y1, active: g > 0.0 });
                 let line = format!("M0 {y0:.1} L8 {y0:.1} C{mx:.1} {y0:.1} {mx:.1} {y1:.1} {x1:.1} {y1:.1} L{w:.1} {y1:.1}");

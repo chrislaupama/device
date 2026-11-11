@@ -79,14 +79,38 @@ thread_local! {
     static AUDIO_LOOP_HISTORY: Cell<usize> = const { Cell::new(0) };
 }
 
+/// Height of the in-window menu bar (Linux draws the MenuBar inside the window above the content;
+/// macOS and Windows use native ones, so 0). Layout anchors are in content coordinates and
+/// pointer events in window coordinates, so every pointer event is moved down by this much.
+fn menu_bar_h() -> f32 {
+    APP.with(|a| {
+        let a = a.borrow().as_ref().and_then(|w| w.upgrade()).expect("self-test window");
+        let full = a.window().size().to_logical(a.window().scale_factor()).height;
+        (full - a.get_content_height()).max(0.0)
+    })
+}
+/// Sends an event to the window, moving pointer positions from content to window coordinates.
+fn dispatch(w: &slint::Window, e: WindowEvent) {
+    let dy = menu_bar_h();
+    let at = |p: LogicalPosition| LogicalPosition::new(p.x, p.y + dy);
+    let e = match e {
+        WindowEvent::PointerPressed { position, button } => WindowEvent::PointerPressed { position: at(position), button },
+        WindowEvent::PointerReleased { position, button } => WindowEvent::PointerReleased { position: at(position), button },
+        WindowEvent::PointerMoved { position } => WindowEvent::PointerMoved { position: at(position) },
+        WindowEvent::PointerScrolled { position, delta_x, delta_y } => WindowEvent::PointerScrolled { position: at(position), delta_x, delta_y },
+        e => e,
+    };
+    w.dispatch_event(e);
+}
+
 fn press(app: &AppWindow, x: f32, y: f32) {
     let w = app.window();
     let p = LogicalPosition::new(x, y);
-    w.dispatch_event(WindowEvent::PointerMoved { position: p });
-    w.dispatch_event(WindowEvent::PointerPressed { position: p, button: PointerEventButton::Left });
+    dispatch(w, WindowEvent::PointerMoved { position: p });
+    dispatch(w, WindowEvent::PointerPressed { position: p, button: PointerEventButton::Left });
 }
 fn release(app: &AppWindow, x: f32, y: f32) {
-    app.window().dispatch_event(WindowEvent::PointerReleased { position: LogicalPosition::new(x, y), button: PointerEventButton::Left });
+    dispatch(app.window(), WindowEvent::PointerReleased { position: LogicalPosition::new(x, y), button: PointerEventButton::Left });
 }
 fn click(app: &AppWindow, x: f32, y: f32) {
     press(app, x, y);
@@ -96,25 +120,25 @@ fn drag(app: &AppWindow, x0: f32, y0: f32, x1: f32, y1: f32) {
     press(app, x0, y0);
     for i in 1..=12 {
         let t = i as f32 / 12.0;
-        app.window().dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t) });
+        dispatch(app.window(), WindowEvent::PointerMoved { position: LogicalPosition::new(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t) });
     }
     release(app, x1, y1);
 }
 fn key(app: &AppWindow, text: impl Into<SharedString> + Clone, primary: bool, shift: bool) {
     let w = app.window();
     if primary {
-        w.dispatch_event(WindowEvent::KeyPressed { text: Key::Control.into() });
+        dispatch(w, WindowEvent::KeyPressed { text: Key::Control.into() });
     }
     if shift {
-        w.dispatch_event(WindowEvent::KeyPressed { text: Key::Shift.into() });
+        dispatch(w, WindowEvent::KeyPressed { text: Key::Shift.into() });
     }
-    w.dispatch_event(WindowEvent::KeyPressed { text: text.clone().into() });
-    w.dispatch_event(WindowEvent::KeyReleased { text: text.into() });
+    dispatch(w, WindowEvent::KeyPressed { text: text.clone().into() });
+    dispatch(w, WindowEvent::KeyReleased { text: text.into() });
     if shift {
-        w.dispatch_event(WindowEvent::KeyReleased { text: Key::Shift.into() });
+        dispatch(w, WindowEvent::KeyReleased { text: Key::Shift.into() });
     }
     if primary {
-        w.dispatch_event(WindowEvent::KeyReleased { text: Key::Control.into() });
+        dispatch(w, WindowEvent::KeyReleased { text: Key::Control.into() });
     }
 }
 
@@ -122,8 +146,8 @@ fn type_text(app: &AppWindow, s: &str) {
     let w = app.window();
     for ch in s.chars() {
         let t: SharedString = ch.to_string().into();
-        w.dispatch_event(WindowEvent::KeyPressed { text: t.clone() });
-        w.dispatch_event(WindowEvent::KeyReleased { text: t });
+        dispatch(w, WindowEvent::KeyPressed { text: t.clone() });
+        dispatch(w, WindowEvent::KeyReleased { text: t });
     }
 }
 
@@ -142,12 +166,13 @@ thread_local! {
 fn geo() -> crate::LayoutAnchors {
     APP.with(|a| a.borrow().as_ref().and_then(|w| w.upgrade()).map(|a| a.get_anchors())).expect("self-test window")
 }
-/// Window size in window units.
+/// Size of the content area in window units (the window less any in-window menu bar), the space
+/// the layout anchors are measured in.
 fn win() -> (f32, f32) {
     APP.with(|a| {
         let a = a.borrow().as_ref().and_then(|w| w.upgrade()).expect("self-test window");
         let s = a.window().size().to_logical(a.window().scale_factor());
-        (s.width, s.height)
+        (s.width, a.get_content_height().min(s.height))
     })
 }
 /// Lanes origin (ruler top-left) and the top of track 0's row.
@@ -282,8 +307,8 @@ fn midi_steps() -> Vec<Step> {
         Do("Enter (playhead to 0)", Box::new(|a| key(a, Key::Return, false, false))),
         DoC("wheel back to the start of the timeline", Box::new(|a, _| {
             let w = a.window();
-            w.dispatch_event(WindowEvent::PointerMoved { position: lanes_point() });
-            w.dispatch_event(WindowEvent::PointerScrolled { position: lanes_point(), delta_x: 4000.0, delta_y: 0.0 });
+            dispatch(w, WindowEvent::PointerMoved { position: lanes_point() });
+            dispatch(w, WindowEvent::PointerScrolled { position: lanes_point(), delta_x: 4000.0, delta_y: 0.0 });
         })),
         DoC("click the Instrument track header", Box::new(|a, ctl| {
             let sy = ctl.borrow().view.scroll_y as f32;
@@ -371,7 +396,7 @@ fn midi_steps() -> Vec<Step> {
             n.iter().any(|n| n.pitch == 59 && n.start == 1920 && n.length == 960).then_some(()).ok_or(format!("{n:?}"))
         })),
         DoC("snap 1/32, draw an off-grid note at beat 3.375, snap back to 1/16", Box::new(|a, ctl| {
-            // Notes snap to the toolbar's snap size (W2-19); the footer Grid is the Quantize grid.
+            // Notes snap to the toolbar's snap size; the footer Grid is the Quantize grid.
             ctl.borrow_mut().snap.grid = Some(crate::timeline::GridSize::ThirtySecond);
             let (x, y) = pr_xy(ctl, 3.375 + 0.03, 52);
             click(a, x, y);
@@ -430,7 +455,7 @@ fn midi_steps() -> Vec<Step> {
         })),
         DoC("preview: slide up to A3 with the button held", Box::new(|a, ctl| {
             let (_, y) = pr_xy(ctl, 0.0, 57);
-            a.window().dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(pr_origin().0 + 20.0, y) });
+            dispatch(a.window(), WindowEvent::PointerMoved { position: LogicalPosition::new(pr_origin().0 + 20.0, y) });
         })),
         Check("preview: A3 replaced G3 (still one note held)", Box::new(|c, _| {
             let held = c.engine.preview().notes;
@@ -475,8 +500,8 @@ fn midi_steps() -> Vec<Step> {
         DoC("zoom: trackpad scroll 100 pt to the right", Box::new(|a, _| {
             let w = a.window();
             let p = LogicalPosition::new(pr_origin().0 + 400.0, pr_origin().1 + 60.0);
-            w.dispatch_event(WindowEvent::PointerMoved { position: p });
-            w.dispatch_event(WindowEvent::PointerScrolled { position: p, delta_x: -100.0, delta_y: 0.0 });
+            dispatch(w, WindowEvent::PointerMoved { position: p });
+            dispatch(w, WindowEvent::PointerScrolled { position: p, delta_x: -100.0, delta_y: 0.0 });
         })),
         Check("zoom: the zoomed piano roll panned 100 pt later in the clip", Box::new(move |c, _| {
             let v = c.pr_view();
@@ -582,12 +607,12 @@ fn midi_steps() -> Vec<Step> {
                 (pr_origin().0 + v.gx + (v.w - v.gx) / 2.0, pr_origin().1 + v.h / 2.0)
             };
             let w = a.window();
-            w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x, y) });
-            w.dispatch_event(WindowEvent::KeyPressed { text: Key::Alt.into() });
-            w.dispatch_event(WindowEvent::KeyPressed { text: Key::Shift.into() });
-            w.dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(x, y), delta_x: 0.0, delta_y: -300.0 });
-            w.dispatch_event(WindowEvent::KeyReleased { text: Key::Shift.into() });
-            w.dispatch_event(WindowEvent::KeyReleased { text: Key::Alt.into() });
+            dispatch(w, WindowEvent::PointerMoved { position: LogicalPosition::new(x, y) });
+            dispatch(w, WindowEvent::KeyPressed { text: Key::Alt.into() });
+            dispatch(w, WindowEvent::KeyPressed { text: Key::Shift.into() });
+            dispatch(w, WindowEvent::PointerScrolled { position: LogicalPosition::new(x, y), delta_x: 0.0, delta_y: -300.0 });
+            dispatch(w, WindowEvent::KeyReleased { text: Key::Shift.into() });
+            dispatch(w, WindowEvent::KeyReleased { text: Key::Alt.into() });
         })),
         Check("Alt+Shift+wheel zoomed time by 1 + 300 * 0.001, the beat under the pointer stayed, rows unchanged", Box::new(move |c, _| {
             let (ppb, at, row_h, _) = *wz2.borrow();
@@ -605,10 +630,10 @@ fn midi_steps() -> Vec<Step> {
                 (pr_origin().0 + v.gx + 200.0, pr_origin().1 + crate::pianoroll::GRID_Y + mid)
             };
             let w = a.window();
-            w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x, y) });
-            w.dispatch_event(WindowEvent::KeyPressed { text: Key::Alt.into() });
-            w.dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(x, y), delta_x: 0.0, delta_y: -200.0 });
-            w.dispatch_event(WindowEvent::KeyReleased { text: Key::Alt.into() });
+            dispatch(w, WindowEvent::PointerMoved { position: LogicalPosition::new(x, y) });
+            dispatch(w, WindowEvent::KeyPressed { text: Key::Alt.into() });
+            dispatch(w, WindowEvent::PointerScrolled { position: LogicalPosition::new(x, y), delta_x: 0.0, delta_y: -200.0 });
+            dispatch(w, WindowEvent::KeyReleased { text: Key::Alt.into() });
         })),
         Check("Alt+wheel grew the rows by 1 + 200 * 0.001, the pitch row under the pointer stayed, time unchanged", Box::new(move |c, _| {
             let (ppb, row_at, row_h, _) = *wz4.borrow();
@@ -625,10 +650,10 @@ fn midi_steps() -> Vec<Step> {
                 (pr_origin().0 + v.gx + 200.0, pr_origin().1 + v.h / 2.0)
             };
             let w = a.window();
-            w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x, y) });
-            w.dispatch_event(WindowEvent::KeyPressed { text: Key::Control.into() });
-            w.dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(x, y), delta_x: 0.0, delta_y: -1000.0 });
-            w.dispatch_event(WindowEvent::KeyReleased { text: Key::Control.into() });
+            dispatch(w, WindowEvent::PointerMoved { position: LogicalPosition::new(x, y) });
+            dispatch(w, WindowEvent::KeyPressed { text: Key::Control.into() });
+            dispatch(w, WindowEvent::PointerScrolled { position: LogicalPosition::new(x, y), delta_x: 0.0, delta_y: -1000.0 });
+            dispatch(w, WindowEvent::KeyReleased { text: Key::Control.into() });
         })),
         Check("one big pinch out is capped at x0.1 and the zoom stops at the fit", Box::new(move |c, _| {
             let (ppb, ..) = *wz6.borrow();
@@ -678,9 +703,9 @@ fn midi_steps() -> Vec<Step> {
         Check("K turned musical typing on, the header button shows it", Box::new(|c, a| (c.typing.active && a.global::<Studio>().get_typing_on()).then_some(()).ok_or("typing off".into()))),
         Do("hold A and D (no release yet), then an auto-repeat of A", Box::new(|a| {
             let w = a.window();
-            w.dispatch_event(WindowEvent::KeyPressed { text: "a".into() });
-            w.dispatch_event(WindowEvent::KeyPressed { text: "d".into() });
-            w.dispatch_event(WindowEvent::KeyPressRepeated { text: "a".into() });
+            dispatch(w, WindowEvent::KeyPressed { text: "a".into() });
+            dispatch(w, WindowEvent::KeyPressed { text: "d".into() });
+            dispatch(w, WindowEvent::KeyPressRepeated { text: "a".into() });
         })),
         Check("two notes sound (C3 = 48 and E3 = 52, one preview each), both keys lit, the repeat did not sound again, no edit", Box::new(move |c, _| {
             let held = c.engine.preview().notes;
@@ -694,10 +719,10 @@ fn midi_steps() -> Vec<Step> {
         })),
         Do("release A, press X (octave up) and A again", Box::new(|a| {
             let w = a.window();
-            w.dispatch_event(WindowEvent::KeyReleased { text: "a".into() });
-            w.dispatch_event(WindowEvent::KeyPressed { text: "x".into() });
-            w.dispatch_event(WindowEvent::KeyReleased { text: "x".into() });
-            w.dispatch_event(WindowEvent::KeyPressed { text: "a".into() });
+            dispatch(w, WindowEvent::KeyReleased { text: "a".into() });
+            dispatch(w, WindowEvent::KeyPressed { text: "x".into() });
+            dispatch(w, WindowEvent::KeyReleased { text: "x".into() });
+            dispatch(w, WindowEvent::KeyPressed { text: "a".into() });
         })),
         Check("C4 (60) and E3 (52) sound: the release let go of C3, X moved the octave up", Box::new(|c, _| {
             let held = c.engine.preview().notes;
@@ -706,10 +731,10 @@ fn midi_steps() -> Vec<Step> {
         Do("release A and D, press C then V", Box::new(|a| {
             let w = a.window();
             for k in ["a", "d"] {
-                w.dispatch_event(WindowEvent::KeyReleased { text: k.into() });
+                dispatch(w, WindowEvent::KeyReleased { text: k.into() });
             }
-            w.dispatch_event(WindowEvent::KeyPressed { text: "c".into() });
-            w.dispatch_event(WindowEvent::KeyReleased { text: "c".into() });
+            dispatch(w, WindowEvent::KeyPressed { text: "c".into() });
+            dispatch(w, WindowEvent::KeyReleased { text: "c".into() });
         })),
         Check("nothing sounds, C played softer by 10/127 (default 0.7)", Box::new(|c, _| {
             let held = c.engine.preview().notes;
@@ -718,10 +743,10 @@ fn midi_steps() -> Vec<Step> {
         Do("V (loud), Z (octave down), then K: a note, not the toggle", Box::new(|a| {
             let w = a.window();
             for k in ["v", "z"] {
-                w.dispatch_event(WindowEvent::KeyPressed { text: k.into() });
-                w.dispatch_event(WindowEvent::KeyReleased { text: k.into() });
+                dispatch(w, WindowEvent::KeyPressed { text: k.into() });
+                dispatch(w, WindowEvent::KeyReleased { text: k.into() });
             }
-            w.dispatch_event(WindowEvent::KeyPressed { text: "k".into() });
+            dispatch(w, WindowEvent::KeyPressed { text: "k".into() });
         })),
         Check("velocity back to 0.7, octave 3, typing still on and K sounds C4 (60) while held", Box::new(|c, _| {
             let ok = c.typing.active && c.typing.octave == 3 && (c.typing.velocity - 0.7).abs() < 1e-4 && c.typing.lit() == 1u128 << 60 && c.engine.preview().notes == 1;
@@ -729,10 +754,10 @@ fn midi_steps() -> Vec<Step> {
         })),
         DoC("typing: release K, click the header button (off), press A", Box::new(|a, _| {
             let w = a.window();
-            w.dispatch_event(WindowEvent::KeyReleased { text: "k".into() });
+            dispatch(w, WindowEvent::KeyReleased { text: "k".into() });
             click(a, win().0 - 63.0 + 12.5, 51.5);
-            w.dispatch_event(WindowEvent::KeyPressed { text: "a".into() });
-            w.dispatch_event(WindowEvent::KeyReleased { text: "a".into() });
+            dispatch(w, WindowEvent::KeyPressed { text: "a".into() });
+            dispatch(w, WindowEvent::KeyReleased { text: "a".into() });
         })),
         Check("typing off: the header button is off and A sounds nothing", Box::new(move |c, a| {
             let ok = !c.typing.active && !a.global::<Studio>().get_typing_on() && c.engine.preview().notes == 0 && c.typing.lit() == 0;
@@ -914,9 +939,9 @@ fn midi_steps() -> Vec<Step> {
             let (x, y) = lane_xy(ctl, 2.0, 1);
             let w = a.window();
             let p = LogicalPosition::new(x, y);
-            w.dispatch_event(WindowEvent::PointerMoved { position: p });
-            w.dispatch_event(WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
-            w.dispatch_event(WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
+            dispatch(w, WindowEvent::PointerMoved { position: p });
+            dispatch(w, WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
+            dispatch(w, WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
         })),
         Check("context menu open with Cut/Copy/Duplicate enabled and Split disabled", Box::new(|c, a| {
             let s = a.global::<Studio>();
@@ -1354,7 +1379,7 @@ fn steps() -> Vec<Step> {
         bottom_y()
     }
     // Mixer strip fader travel (ui/channel_strip.slint): the 200 pt canvas sits 234 pt above the
-    // strip bottom; its handle travels 168 pt starting 18 pt down (reference points * 0.85).
+    // strip bottom; its handle travels 168 pt starting 18 pt down (100%-zoom points * 0.85).
     const MIXER_TRAVEL_TOP: f32 = 390.0 - (234.0 - 18.0) * 0.85;
     const MIXER_TRAVEL: f32 = 168.0 * 0.85;
     let bx = |b: f64| lane_x() + (b * crate::timeline::DEFAULT_PX_PER_BEAT) as f32;
@@ -2110,15 +2135,15 @@ fn steps() -> Vec<Step> {
         Check("(audio) paused", Box::new(|c, _| (!c.engine.transport().playing).then_some(()).ok_or("still playing".into()))),
         Do("wheel: scroll timeline right", Box::new(|a| {
             let w = a.window();
-            w.dispatch_event(WindowEvent::PointerMoved { position: lanes_point() });
-            w.dispatch_event(WindowEvent::PointerScrolled { position: lanes_point(), delta_x: -51.0, delta_y: 0.0 });
+            dispatch(w, WindowEvent::PointerMoved { position: lanes_point() });
+            dispatch(w, WindowEvent::PointerScrolled { position: lanes_point(), delta_x: -51.0, delta_y: 0.0 });
         })),
         Check("view scrolled by ~4 beats", Box::new(|c, _| ((c.view.start_beats - 4.0).abs() < 0.2).then_some(()).ok_or(format!("start {}", c.view.start_beats)))),
         Do("Cmd + wheel: zoom in around x=900", Box::new(|a| {
             let w = a.window();
-            w.dispatch_event(WindowEvent::KeyPressed { text: Key::Control.into() });
-            w.dispatch_event(WindowEvent::PointerScrolled { position: lanes_point(), delta_x: 0.0, delta_y: 50.0 });
-            w.dispatch_event(WindowEvent::KeyReleased { text: Key::Control.into() });
+            dispatch(w, WindowEvent::KeyPressed { text: Key::Control.into() });
+            dispatch(w, WindowEvent::PointerScrolled { position: lanes_point(), delta_x: 0.0, delta_y: 50.0 });
+            dispatch(w, WindowEvent::KeyReleased { text: Key::Control.into() });
         })),
         Check("zoom changed px/beat, beat under the cursor kept", Box::new(|c, _| {
             let ppb = c.view.px_per_beat;
@@ -2280,7 +2305,7 @@ fn in_row0() -> (f32, f32) {
 fn record_btn() -> (f32, f32) {
     (geo().transport_x + 423.0 + 14.0, 38.0 + 14.0)
 }
-/// Settings panel origin (the reference app's 960 x 820 pt window at x 255, y 6.5, in 85 % units) and width.
+/// Settings panel origin (a 960 x 820 pt window at x 255, y 6.5, in 85 % units) and width.
 fn set_x() -> f32 {
     geo().settings_x
 }
@@ -2671,8 +2696,8 @@ fn click_track_header(a: &AppWindow, ctl: &Ctl, i: usize) {
     let bottom = lane_y0() + lanes_h - 30.5;
     if y < track0_y() || y + 74.0 > bottom {
         let target = i as f32 * PITCH;
-        a.window().dispatch_event(WindowEvent::PointerMoved { position: headers_point() });
-        a.window().dispatch_event(WindowEvent::PointerScrolled { position: headers_point(), delta_x: 0.0, delta_y: sy - target });
+        dispatch(a.window(), WindowEvent::PointerMoved { position: headers_point() });
+        dispatch(a.window(), WindowEvent::PointerScrolled { position: headers_point(), delta_x: 0.0, delta_y: sy - target });
         if let Ok(mut c) = ctl.try_borrow_mut() {
             c.update_ui(a);
         }
@@ -2741,8 +2766,8 @@ fn devmenu_row(a: &AppWindow, i: usize) -> (f32, f32) {
     let scroll = (row - h / 2.0).clamp(0.0, (s.get_devmenu_content_h() - h).max(0.0));
     if scroll > 0.0 {
         let p = LogicalPosition::new(x + w / 2.0, y + h / 2.0);
-        a.window().dispatch_event(WindowEvent::PointerMoved { position: p });
-        a.window().dispatch_event(WindowEvent::PointerScrolled { position: p, delta_x: 0.0, delta_y: -scroll });
+        dispatch(a.window(), WindowEvent::PointerMoved { position: p });
+        dispatch(a.window(), WindowEvent::PointerScrolled { position: p, delta_x: 0.0, delta_y: -scroll });
     }
     (x + 40.0, y + row - scroll)
 }
@@ -3148,9 +3173,9 @@ fn pill_xy(c: &Controller, i: usize) -> ((f32, f32), (f32, f32)) {
 }
 
 fn with_shift(a: &AppWindow, f: impl FnOnce()) {
-    a.window().dispatch_event(WindowEvent::KeyPressed { text: Key::Shift.into() });
+    dispatch(a.window(), WindowEvent::KeyPressed { text: Key::Shift.into() });
     f();
-    a.window().dispatch_event(WindowEvent::KeyReleased { text: Key::Shift.into() });
+    dispatch(a.window(), WindowEvent::KeyReleased { text: Key::Shift.into() });
 }
 
 /// Advance the transport by `secs`: offline render (no device), else wall-clock time.
@@ -3439,7 +3464,7 @@ fn automation_steps() -> Vec<Step> {
             press(a, x0 + 50.0, y);
             for k in 1..=4 {
                 advance(ctl, 0.15);
-                a.window().dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x0 + 50.0 - 9.0 * k as f32, y) });
+                dispatch(a.window(), WindowEvent::PointerMoved { position: LogicalPosition::new(x0 + 50.0 - 9.0 * k as f32, y) });
             }
             advance(ctl, 0.1);
             release(a, x0 + 14.0, y);
@@ -4330,7 +4355,7 @@ fn value_of(c: &Controller, device: &str, param: &str) -> Option<f32> {
     Some(def.value(d, def.param(param)?))
 }
 
-/// A pointer event on a custom view at a card-relative reference point (pt at 100%).
+/// A pointer event on a custom view at a card-relative point (pt at 100%).
 fn field_event(a: &AppWindow, ctl: &Ctl, device: &str, kind: i32, x: f32, y: f32) {
     let Some(id) = device_of(&ctl.borrow(), device).map(|d| d.id.0 as i32) else { return };
     let z = crate::device_panel::Z;
@@ -4346,7 +4371,7 @@ fn focus_trance_gate(a: &AppWindow) {
     }
 }
 
-/// Trance Gate ring: reference point in the middle of step i of 16.
+/// Trance Gate ring: card point (pt at 100%) in the middle of step i of 16.
 fn ring_xy(i: usize) -> (f32, f32) {
     let a = std::f32::consts::TAU * (i as f32 + 0.5) / 16.0;
     let r = 0.8 * 83.0;
@@ -6109,7 +6134,7 @@ fn general_settings_steps() -> Vec<Step> {
             c.open_settings();
             c.settings_page(0);
         })),
-        Check("general: the reference app's defaults (Return to start; third-party windows and on top on)", Box::new(|c, a| {
+        Check("general: defaults (Return to start; third-party windows and on top on)", Box::new(|c, a| {
             let s = a.global::<Studio>();
             let on: Vec<bool> = s.get_general_on().iter().collect();
             (s.get_settings_page() == 0 && on == [false, true, false, true] && !s.get_general_stop_in_place() && c.settings.prefs.general == crate::prefs::GeneralPrefs::default())
@@ -6242,9 +6267,9 @@ fn section_steps() -> Vec<Step> {
     fn right_click(a: &AppWindow, x: f32, y: f32) {
         let w = a.window();
         let p = LogicalPosition::new(x, y);
-        w.dispatch_event(WindowEvent::PointerMoved { position: p });
-        w.dispatch_event(WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
-        w.dispatch_event(WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
+        dispatch(w, WindowEvent::PointerMoved { position: p });
+        dispatch(w, WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
+        dispatch(w, WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
     }
     fn menu_row(a: &AppWindow, label: &str) -> Option<(f32, f32)> {
         let s = a.global::<Studio>();
@@ -6378,7 +6403,7 @@ fn minimap_steps() -> Vec<Step> {
         a.global::<Studio>().get_minimap_width()
     }
     fn scroll(a: &AppWindow, x: f32, dx: f32, dy: f32) {
-        a.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(strip_x() + x, strip_y()), delta_x: dx, delta_y: dy });
+        dispatch(a.window(), WindowEvent::PointerScrolled { position: LogicalPosition::new(strip_x() + x, strip_y()), delta_x: dx, delta_y: dy });
     }
     vec![
         DoC("minimap: view at beat 200", Box::new(move |_, ctl| {
@@ -6435,9 +6460,9 @@ fn minimap_steps() -> Vec<Step> {
         Check("the view moved back", Box::new(|c, _| (c.view.start_beats < 99.5 && c.view.start_beats > 0.0).then_some(()).ok_or(format!("start {}", c.view.start_beats)))),
         DoC("Ctrl + wheel zooms", Box::new(|a, ctl| {
             ctl.borrow_mut().view.px_per_beat = crate::timeline::DEFAULT_PX_PER_BEAT;
-            a.window().dispatch_event(WindowEvent::KeyPressed { text: Key::Control.into() });
+            dispatch(a.window(), WindowEvent::KeyPressed { text: Key::Control.into() });
             scroll(a, 20.0, 0.0, 40.0);
-            a.window().dispatch_event(WindowEvent::KeyReleased { text: Key::Control.into() });
+            dispatch(a.window(), WindowEvent::KeyReleased { text: Key::Control.into() });
         })),
         Check("zoomed in", Box::new(|c, _| (c.view.px_per_beat > crate::timeline::DEFAULT_PX_PER_BEAT * 1.05).then_some(()).ok_or(format!("ppb {}", c.view.px_per_beat)))),
         DoC("double-click fits the arrangement", Box::new(|a, _| double_click(a, strip_x() + 30.0, strip_y()))),
@@ -6571,7 +6596,7 @@ fn devminimap_steps() -> Vec<Step> {
             let w = a.window();
             press(a, x0, strip_y());
             for i in 1..=6 {
-                w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x0 + 50.0 * i as f32 / 6.0, strip_y()) });
+                dispatch(w, WindowEvent::PointerMoved { position: LogicalPosition::new(x0 + 50.0 * i as f32 / 6.0, strip_y()) });
             }
             if let Ok(mut c) = ctl.try_borrow_mut() {
                 c.update_ui(a);
@@ -6588,7 +6613,7 @@ fn devminimap_steps() -> Vec<Step> {
         })),
         DoC("devices minimap: the held button keeps moving after Esc, then is released", Box::new(|a, _| {
             let w = a.window();
-            w.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(strip_x() + 150.0, strip_y()) });
+            dispatch(w, WindowEvent::PointerMoved { position: LogicalPosition::new(strip_x() + 150.0, strip_y()) });
             release(a, strip_x() + 150.0, strip_y());
         })),
         Check("nothing scrolled after Esc", Box::new(move |c, _| approx(c.devices.chain_scroll, before.get(), 0.01).then_some(()).ok_or(format!("scroll {}", c.devices.chain_scroll)))),
@@ -6598,7 +6623,7 @@ fn devminimap_steps() -> Vec<Step> {
                 c.devices.chain_scroll = 0.0;
                 c.update_ui(a);
             }
-            a.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(strip_x() + 80.0, strip_y()), delta_x: 0.0, delta_y: -20.0 });
+            dispatch(a.window(), WindowEvent::PointerScrolled { position: LogicalPosition::new(strip_x() + 80.0, strip_y()), delta_x: 0.0, delta_y: -20.0 });
         })),
         Check("the wheel scrolled the chain forward by the same strip distance", Box::new(|c, _| {
             let want = 20.0 / wait_chain(c)?.ratio(dm::WIDTH);
@@ -6650,7 +6675,7 @@ fn devminimap_steps() -> Vec<Step> {
     ]
 }
 
-/// Snap readout and menu in the timeline toolbar (src/snap.rs, S76): Auto, a fixed size, Off.
+/// Snap readout and menu in the timeline toolbar (src/snap.rs): Auto, a fixed size, Off.
 fn snap_steps() -> Vec<Step> {
     use Step::*;
     vec![
@@ -6690,7 +6715,7 @@ fn snap_steps() -> Vec<Step> {
     ]
 }
 
-/// The timeline ruler's bar labels at several zooms: the reference app's rule (S65) is a label every
+/// The timeline ruler's bar labels at several zooms: the rule is a label every
 /// power-of-two bars once the bars are 50 px apart, starting at bar 1.
 fn ruler_zoom_steps() -> Vec<Step> {
     use Step::*;
@@ -6745,9 +6770,9 @@ fn clip_menu_steps() -> Vec<Step> {
     fn right_click(a: &AppWindow, x: f32, y: f32) {
         let w = a.window();
         let p = LogicalPosition::new(x, y);
-        w.dispatch_event(WindowEvent::PointerMoved { position: p });
-        w.dispatch_event(WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
-        w.dispatch_event(WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
+        dispatch(w, WindowEvent::PointerMoved { position: p });
+        dispatch(w, WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
+        dispatch(w, WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
     }
     fn menu_entry(a: &AppWindow, label: &str) -> Option<(f32, f32, bool)> {
         let s = a.global::<Studio>();
@@ -6887,9 +6912,9 @@ fn clip_render_steps() -> Vec<Step> {
     fn right_click(a: &AppWindow, x: f32, y: f32) {
         let w = a.window();
         let p = LogicalPosition::new(x, y);
-        w.dispatch_event(WindowEvent::PointerMoved { position: p });
-        w.dispatch_event(WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
-        w.dispatch_event(WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
+        dispatch(w, WindowEvent::PointerMoved { position: p });
+        dispatch(w, WindowEvent::PointerPressed { position: p, button: PointerEventButton::Right });
+        dispatch(w, WindowEvent::PointerReleased { position: p, button: PointerEventButton::Right });
     }
     fn entry(items: &slint::ModelRc<crate::MenuItem>, label: &str) -> Option<crate::MenuItem> {
         (0..items.row_count()).filter_map(|i| items.row_data(i)).find(|m| m.label == label)
@@ -7002,7 +7027,7 @@ fn clip_render_steps() -> Vec<Step> {
             (t.clips.len() == 2 && s.first != 0 && s.second != 0 && c.project().midi_clip(ClipId(s.midi_clip)).is_some()).then_some(()).ok_or(format!("{} clips", t.clips.len()))
         })),
         DoC("clip render: right-click the first audio clip", Box::new(move |a, ctl| {
-            let (x, y) = clip_xy(&ctl.borrow(), ClipId(s5.borrow().first));
+            let (x, y) = clip_in_view(a, ctl, ClipId(s5.borrow().first));
             right_click(a, x, y);
         })),
         Check("clip render: Consolidate, Bounce and Export are enabled, Ask is not; Bounce has a submenu", Box::new(|_, a| {
@@ -7276,6 +7301,7 @@ fn clip_render_plugin_steps() -> Vec<Step> {
                 g.0 = Some(now);
             });
             s.timer = Some(timer);
+            c.clip_render.ui_stall_ms = 0.0; // a running maximum: measure this bounce only
             c.bounce_clip(ClipId(s.clip));
             eprintln!("clip-render plugin: render in flight: {}", c.clip_render.busy());
         })),
@@ -7288,7 +7314,16 @@ fn clip_render_plugin_steps() -> Vec<Step> {
             let t = p.tracks.get(i + 1).ok_or("no track below")?;
             let ok = t.name.ends_with("(Bounce)") && t.clips.len() == 1 && c.doc.undo_label() == Some("Bounce to New Track") && !c.clip_render.busy();
             eprintln!("clip-render plugin: render {:.1} ms; longest UI-thread piece {:.1} ms; longest gap between event-loop turns {gap:.1} ms (4 ms timer)", c.clip_render.last_ms, c.clip_render.ui_stall_ms);
-            (ok && gap < 400.0).then_some(()).ok_or(format!("{} {:?} {:?}; gap {gap:.1} ms; status {:?}", t.name, t.clips.len(), c.doc.undo_label(), c.status_message()))
+            // The render's own pieces on the UI thread must stay short. The gap between
+            // event-loop turns also counts drawing frames, which on a software renderer
+            // (SLINT_WGPU_CPU: CI's lavapipe / WARP) alone can take 400-900 ms, so there the gap
+            // limit is 3 s: still catches a UI that stops responding, not a slow frame.
+            let software = std::env::var_os("SLINT_WGPU_CPU").is_some();
+            let gap_limit = if software { 3000.0 } else { 400.0 };
+            let stall = c.clip_render.ui_stall_ms;
+            (ok && stall < 50.0 && gap < gap_limit)
+                .then_some(())
+                .ok_or(format!("{} {:?} {:?}; UI piece {stall:.1} ms; gap {gap:.1} ms; status {:?}", t.name, t.clips.len(), c.doc.undo_label(), c.status_message()))
         })),
         Check("clip render plugin: the file has the live gain 0.5 (peak 0.2), not the saved 0.25 (0.1) nor the dry level (0.4)", Box::new(|_, _| {
             let f = files();
@@ -7531,7 +7566,7 @@ fn pattern_library_steps() -> Vec<Step> {
         })),
         Do("patterns: scroll the Shape rack to its last row; Arp ›", Box::new(|a| {
             let x = bottom_x() + 10.5 + 72.0 + 120.0;
-            a.window().dispatch_event(WindowEvent::PointerScrolled { position: LogicalPosition::new(x, bottom_y() + 200.0), delta_x: 0.0, delta_y: -1000.0 });
+            dispatch(a.window(), WindowEvent::PointerScrolled { position: LogicalPosition::new(x, bottom_y() + 200.0), delta_x: 0.0, delta_y: -1000.0 });
             click(a, x, bottom_end() - 8.0 - 17.5 + 7.5);
         })),
         Check("patterns: Arp 1/8 plays and the Pattern and Octaves rows join (one undo step 'Shape Change')", Box::new(move |c, a| {
@@ -7564,7 +7599,7 @@ fn pattern_library_steps() -> Vec<Step> {
 pub fn start(app: &AppWindow, ctl: Ctl) {
     APP.with(|a| *a.borrow_mut() = Some(app.as_weak()));
     let mut all = steps();
-    // Auto snap follows the ruler step (S76: two beats at the default zoom); the sections below that
+    // Auto snap follows the ruler step (two beats at the default zoom); the sections below that
     // drag clips to beats pin the grid to a beat (1/4), and snap_steps puts Auto back.
     all.insert(0, Step::DoC("snap: pin the grid to a beat for the drag sections", Box::new(|_, ctl| ctl.borrow_mut().snap.grid = Some(crate::timeline::GridSize::Quarter))));
     all.extend(synth_steps());
@@ -7601,6 +7636,26 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(general_settings_steps());
     all.extend(add_search_steps());
     all.extend(live_import_steps());
+    // The checks aim at a 1440×820 pt window. A window opened larger than the screen is shrunk to
+    // fit when it is shown (macOS; GitHub's Mac runners have a 1024×768 display), so ask again
+    // once it is on screen, and say what we got.
+    all.insert(0, Step::Do("window: ask for 1440×820 pt again now that it is shown", Box::new(|a| {
+        let s = a.window().size().to_logical(a.window().scale_factor());
+        eprintln!("self-test: window {}×{} pt at scale {}", s.width, s.height, a.window().scale_factor());
+        if s.width < 1440.0 || s.height < 820.0 {
+            a.window().set_size(slint::LogicalSize::new(s.width.max(1440.0), s.height.max(820.0)));
+        }
+    })));
+    // The width is what the click targets need (a narrower window squeezes the bottom panels); a
+    // shorter window only scrolls the lanes, which the steps handle. GitHub's Mac gives 1440×677.
+    // The resize is asynchronous (a window-manager round trip on X11): give it about a second.
+    for i in 1..=8 {
+        all.insert(i, Step::Do("window: wait for the resize", Box::new(|_| {})));
+    }
+    all.insert(9, Step::Check("window: at least 1440 pt wide and 600 pt tall, the room the click targets assume", Box::new(|_, a| {
+        let s = a.window().size().to_logical(a.window().scale_factor());
+        (s.width >= 1440.0 && s.height >= 600.0).then_some(()).ok_or(format!("window {}×{} pt: the screen is too small for the self-test", s.width, s.height))
+    })));
     let steps = Rc::new(all);
     let idx = Rc::new(std::cell::Cell::new(0usize));
     let fails = Rc::new(std::cell::Cell::new(0usize));

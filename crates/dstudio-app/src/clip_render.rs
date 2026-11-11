@@ -1,5 +1,4 @@
 //! Clip context menu renders: Consolidate (⌘J), Bounce › Bounce to new track (⌘B) and Export audio.
-//! Values and behaviour: reference/findings/clip-menu.md (S71–S74, S76).
 //!
 //! All three render one track over the range of one clip or one group of clips, in the Stems
 //! render's modes (`dstudio_core::render_plan`). The render runs on a worker thread that owns a
@@ -437,8 +436,8 @@ impl Controller {
     // ---------------------------------------------------------------- Bounce to new track (⌘B)
 
     /// Renders clip `id` through its track's devices (neutral fader and pan) to a new audio clip
-    /// on a new track below, which takes the track's fader and pan; the source clip is disabled
-    /// (the reference app mutes the originals the same way). A MIDI clip becomes audio. One undo step.
+    /// on a new track below, which takes the track's fader and pan; the source clip is disabled.
+    /// A MIDI clip becomes audio. One undo step.
     pub fn bounce_clip(&mut self, id: ClipId) {
         if self.clip_render.busy() {
             return self.set_status("Still rendering. One moment.", 3);

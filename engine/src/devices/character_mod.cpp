@@ -1,6 +1,6 @@
 // Character Mod: eleven modulation circuits behind one set of controls.
 // Parameters in the order of dstudio_core::builtin::character_mod (checked by
-// a Rust test). The circuit constants are our own designs; the panel's
+// a Rust test). The panel's
 // Sweep view (crates/dstudio-app/src/device_fields.rs) draws the same
 // delay / frequency / gain ranges, so keep the two in step.
 //

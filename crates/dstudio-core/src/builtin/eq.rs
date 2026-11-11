@@ -272,7 +272,7 @@ pub fn auto_gain_db(sections: &[Section], fs: f64) -> f64 {
 
 /// Character EQ banks: hardware-inspired voicings. Each bank has its own
 /// frequency detents (the band frequency snaps to them in the panel) and a
-/// voicing of the band shapes. The lists and voicings are our own.
+/// voicing of the band shapes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Bank {
     pub name: &'static str,

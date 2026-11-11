@@ -1,4 +1,4 @@
-// Sampler (reference: the reference app's built-in "Sampler", sampler-steam). Plays one
+// Sampler (sampler-steam). Plays one
 // sample over the keyboard: Classic (sustain loop, amp envelope), One Shot
 // (the whole region per note) or Slice (one slice per key from the slice
 // start key). Multimode filter with its own envelope, one LFO, glide, pitch

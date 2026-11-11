@@ -1,13 +1,13 @@
 //! Card views of built-in devices whose body is a `View::Custom`: today the
-//! Multiband Compressor's band field (handoffs/device-specs/multiband-compressor.md
-//! sections 2-4). The field shows the three bands between the crossovers on a
+//! Multiband Compressor's band field.
+//! The field shows the three bands between the crossovers on a
 //! log frequency axis (20 Hz..20 kHz) against a 0..−80 dB ladder: each band's
 //! live level and gain change, its threshold (dashed) and floor (dotted)
 //! lines as drag handles, and the crossover lines as horizontal handles. A
 //! band selector in the picker row (also set by clicking a band) picks which
 //! band the dial row edits.
 //!
-//! Geometry is the reference's 100%-zoom card measurements, scaled by [Z].
+//! Geometry is the 100%-zoom card measurements, scaled by [Z].
 
 use crate::controller::Controller;
 use crate::device_panel::{VIEW_SELECT, Z};
@@ -23,7 +23,7 @@ const MULTIBAND: &str = "multiband";
 const FIELD_X: f32 = 8.0;
 const FIELD_Y: f32 = 63.0;
 const FIELD_H: f32 = 146.5;
-/// Gap between the field and the slider column (reference capture).
+/// Gap between the field and the slider column.
 const FIELD_GAP: f32 = 24.0;
 const LADDER_W: f32 = 28.0;
 const TOP_DB: f32 = 0.0;
@@ -308,7 +308,7 @@ mod tests {
     fn field_axes_follow_the_reference_capture() {
         let def = dstudio_core::builtin::find("multiband-compressor").unwrap();
         let g = Geo::new(def);
-        // Field spans card x 8..449 (reference: crossover lines at 122 and 316 pt).
+        // Field spans card x 8..449 (crossover lines at 122 and 316 pt).
         assert!((g.w / Z - 441.0).abs() < 0.01);
         assert!((FIELD_X + g.x_of(120.0) / Z - 122.0).abs() < 1.5);
         assert!((FIELD_X + g.x_of(2500.0) / Z - 316.0).abs() < 1.5);

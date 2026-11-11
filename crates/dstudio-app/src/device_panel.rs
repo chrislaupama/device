@@ -1,10 +1,9 @@
 //! Built-in device panels: the generic card generated from a device
 //! definition (dstudio_core::builtin::DeviceDef) and its gestures.
 //!
-//! Layout follows the reference fx card template (handoffs/device-specs/_system.md
-//! section 6): header, picker row, view row (a visualiser plus the slider column)
-//! and the dial row of knob clusters. All lengths below are the reference's
-//! 100%-zoom measurements; [Z] scales them to the 85% our UI is built at.
+//! Layout follows the fx card template: header, picker row, view row (a visualiser plus the slider column)
+//! and the dial row of knob clusters. All lengths below are
+//! 100%-zoom measurements; [Z] scales them to the 85% the UI is built at.
 //!
 //! Gestures: a knob, slider, pill or strip-line drag sends live values to the
 //! engine (se_builtin_set_param, no model change) and commits ONE
@@ -42,7 +41,7 @@ use slint::{ModelRc, SharedString, VecModel};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
-/// Reference card lengths are at 100% zoom; ours are drawn at 85%.
+/// Card lengths are at 100% zoom; they are drawn at 85%.
 pub const Z: f32 = 0.85;
 /// Card padding, slider column width and the gap between view and sliders.
 pub(crate) const PAD: f32 = 8.0;
@@ -67,7 +66,7 @@ const GAIN_SCOPE: &str = "gain-scope";
 /// Picker index of a card's view selector (not a parameter, e.g. the
 /// multiband band tabs): \`panel_choice\` with it changes the view state.
 pub(crate) const VIEW_SELECT: i32 = -3;
-/// Detent snap distance of a drag, in the 0..1 range (reference: 4 / 160).
+/// Detent snap distance of a drag, in the 0..1 range (4 / 160).
 const DETENT_SNAP: f32 = 0.025;
 /// Plot area inside a field's well: tick gutter on the left, top and bottom insets.
 const FIELD_GUTTER: f32 = 24.0;
@@ -75,7 +74,7 @@ const FIELD_TOP: f32 = 4.0;
 const FIELD_BOTTOM: f32 = 6.0;
 /// Pointer travel before a press becomes a drag (px).
 const DRAG_SLOP: f32 = 3.0;
-/// Resonance given when DJ mode is entered with none (our value; the reference value is unpublished).
+/// Resonance given when DJ mode is entered with none.
 const DJ_RESONANCE: f32 = 0.2;
 const MINUS: char = '\u{2212}';
 
@@ -231,8 +230,8 @@ pub(crate) fn reuse_card_models(old: &DeviceCard, new: &mut DeviceCard) {
     keep(&old.canvas.grips, &mut new.canvas.grips);
 }
 
-/// x of each visible dial-row cell (card relative, unscaled). The reference
-/// spaces knobs evenly: the gap follows from the card width and the cell
+/// x of each visible dial-row cell (card relative, unscaled). Knobs
+/// are spaced evenly: the gap follows from the card width and the cell
 /// count of the widest state, and the visible cells are centred (so a mode
 /// with fewer knobs keeps the same spacing).
 fn dial_xs(def: &DeviceDef, visible: &[&'static str]) -> Vec<(&'static str, f32)> {
@@ -270,7 +269,7 @@ pub(crate) fn view_right(def: &DeviceDef) -> f32 {
     if n == 0 { width - PAD } else { width - PAD - SLIDER_W - (n - 1) as f32 * (SLIDER_W + VIEW_GAP) - VIEW_GAP }
 }
 
-/// Plot area of a field w pt wide (px at our zoom): width and height.
+/// Plot area of a field w pt wide (px at the 85% design zoom): width and height.
 fn field_plot_size(f: &Field, w: f32) -> (f32, f32) {
     let well_y = if f.caption.is_empty() { 0.0 } else { CAPTION_H };
     ((w - FIELD_GUTTER) * Z, (VIEW_BOTTOM - VIEW_Y - well_y - FIELD_TOP - FIELD_BOTTOM) * Z)
@@ -278,7 +277,7 @@ fn field_plot_size(f: &Field, w: f32) -> (f32, f32) {
 
 /// x of each shown dial-row cell (card relative, unscaled). Hidden dials drop out and
 /// empty clusters disappear; cells pack cluster by cluster, or spread evenly across
-/// the card with Layout::spread_dials. Field cards (the reference motion / response
+/// the card with Layout::spread_dials. Field cards (the motion / response
 /// family) centre the dial row and space its knobs evenly across the row's width.
 fn knob_xs(def: &DeviceDef, d: &Device) -> Vec<(&'static str, f32)> {
     let clusters: Vec<Vec<Vec<&'static str>>> = def
@@ -339,7 +338,7 @@ pub(crate) fn polyline(pts: &[(f32, f32)]) -> String {
     out
 }
 
-/// A smooth curve as the reference app draws meter traces and field curves: from the first point,
+/// A smooth curve for meter traces and field curves: from the first point,
 /// each inner point is the control of a quadratic to the midpoint after it, then a line
 /// to the last point. `join` continues an open path with a line to the first point
 /// instead of a move.
@@ -446,7 +445,7 @@ fn law_face(law: &dyn Fn(f32) -> f32, at: f32, knee: (f32, f32)) -> (String, Str
 }
 
 /// A brick wall's face: 24 dB below the ceiling up to just above it (at least 0 dB), so
-/// the curve runs up the diagonal and flattens near the top (Inference from the captures).
+/// the curve runs up the diagonal and flattens near the top.
 fn wall_face(law: &dyn Fn(f32) -> f32, ceiling: f32, knee: (f32, f32)) -> (String, String, String) {
     law_face_in(law, ceiling - 24.0, (ceiling + 1.0).max(0.0), knee)
 }
@@ -571,7 +570,7 @@ impl Controller {
         def.value(d, p)
     }
 
-    /// Track colour of the card (reference fallback teal).
+    /// Track colour of the card (fallback teal).
     pub(crate) fn card_accent(&self, d: &Device) -> slint::Color {
         let track = self.project().find_device(d.id).map(|(ti, _)| &self.project().tracks[ti]);
         track.map_or(slint::Color::from_rgb_u8(0x43, 0x9b, 0x94), |t| card_color(t.color))
@@ -644,7 +643,7 @@ impl Controller {
                     enabled: true,
                     ..Default::default()
                 }),
-                // Latches align right (reference: margin-left auto) unless the row places its own gap;
+                // Latches align right unless the row places its own gap;
                 // the label carries the state.
                 (Control::Toggle(_), Some(p)) => {
                     if !def.layout.picker.contains(&Control::Gap) && !picks.iter().any(|q: &PanelPick| q.kind == 4) {
@@ -655,8 +654,8 @@ impl Controller {
                         Some((off, on_text)) => (off.to_string(), on_text.to_string()),
                         None => (format!("{} Off", p.label), format!("{} On", p.label)),
                     };
-                    // As wide as its wider state label + 16.76, rounded up (the reference app's latch rule; it stacks both labels).
-                    // Reverb's Dry latch has a fixed 54 pt basis in the reference app.
+                    // As wide as its wider state label + 16.76, rounded up.
+                    // Reverb's Dry latch has a fixed 54 pt basis.
                     let width = if def.id == "reverb" { 54.0 } else { (value_width(&off_text).max(value_width(&on_text)) + 16.76).ceil() } * Z;
                     let label = if on { on_text } else { off_text };
                     picks.push(PanelPick { kind: 5, param: idx(p.id), label: s(label), selected: on as i32, enabled: true, width, ..Default::default() });
@@ -688,7 +687,7 @@ impl Controller {
                         None => "None".to_string(),
                         Some(t) => self.project().track(t).map_or_else(|| "Removed".to_string(), |t| t.name.clone()),
                     };
-                    // The reference app sizes the pill per card, not by the track names: at most 140, less
+                    // The pill is sized per card, not by the track names: at most 140, less
                     // where the row leaves less room. Other cards: the longest option + 30.
                     let w = match def.id {
                         "character-compressor" | "glue-compressor" => 140.0,
@@ -741,7 +740,7 @@ impl Controller {
         if !picks.iter().any(|p| p.kind == 4) {
             picks.push(PanelPick { kind: 4, ..Default::default() });
         }
-        // Captions take the reference app's measured width (rounded up), not the rendered text's.
+        // Captions take the table-measured width (rounded up), not the rendered text's.
         for p in &mut picks {
             p.label_w = name_width(&p.label).ceil() * Z;
         }
@@ -1697,7 +1696,7 @@ mod tests {
         let def = dstudio_core::builtin::find("compressor").unwrap();
         let ids: Vec<&'static str> = def.layout.clusters.iter().flat_map(|c| c.iter()).filter_map(|c| c.param()).collect();
         let xs: Vec<f32> = dial_xs(def, &ids).iter().map(|(_, x)| *x).collect();
-        // Even spacing (reference capture: knob centres 74 pt apart): gap (521 - 16 - 7 x 62) / 6.
+        // Even spacing (knob centres 74 pt apart): gap (521 - 16 - 7 x 62) / 6.
         let step = KNOB_CELL + 71.0 / 6.0;
         for (i, x) in xs.iter().enumerate() {
             assert!((x - (PAD + i as f32 * step)).abs() < 1e-3, "knob {i} at {x}");
@@ -1745,7 +1744,7 @@ mod tests {
             v.dedup();
             v
         };
-        // Reference captures: tremolo knob centres 115 .. 342 pt, character mod 66 .. 376 pt.
+        // Tremolo knob centres 115 .. 342 pt, character mod 66 .. 376 pt.
         assert_eq!(xs("tremolo"), [84.0, 159.67, 235.33, 311.0]);
         assert_eq!(xs("character-mod"), [35.0, 112.5, 190.0, 267.5, 345.0]);
         assert_eq!(xs("ring-mod"), [9.0, 86.5, 164.0, 241.5, 319.0]);

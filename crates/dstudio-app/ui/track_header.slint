@@ -1,8 +1,7 @@
 // Track header column: track rows, the master row and their controls.
 //
-// Values follow the reference at its default (100 %) zoom, converted to our design units
-// (1 unit = 1/0.85 pt, see src/zoom.rs): a reference px p is p × 0.85 here. Findings and the
-// derivation are in reference/research-findings.md, "Track headers".
+// Values are for the default (100 %) zoom, converted to our design units
+// (1 unit = 1/0.85 pt, see src/zoom.rs): a CSS px p is p × 0.85 here.
 import { Tokens } from "tokens.slint";
 import { Icon, Icons, Inset } from "widgets.slint";
 import { Studio, TrackRow, TrackLevel } from "studio.slint";
@@ -35,7 +34,7 @@ export component TrackButton inherits Rectangle {
     }
 }
 
-// Pan knob (the reference's smallest knob size): a 22 px cell, 16 px body lifted by a soft
+// Pan knob (the smallest knob size): a 22 px cell, 16 px body lifted by a soft
 // shadow, a faint 270° groove (r 10, 2 px), a bipolar value arc from 12 o'clock in the track
 // colour, a short centre detent in the track colour while centred, and a white pointer.
 export component TrackPan inherits Rectangle {
@@ -109,7 +108,7 @@ export component TrackPan inherits Rectangle {
 
 // Volume: an 8 px rail (recessed, rim lit from below) with the track's stereo meter as two
 // 2 px lines and a 4 px-radius handle (85 % white, white on hover). Travel leaves 7 px at
-// each end. Acts like the reference: press jumps, drag follows, double-click or Alt resets.
+// each end. Press jumps, drag follows, double-click or Alt resets.
 export component TrackVolume inherits Rectangle {
     in property <float> pos;              // 0 .. 1
     in property <float> level-l;          // meter 0 .. 1
@@ -180,7 +179,7 @@ export component AutoPill inherits Rectangle {
         y: 0.32px; width: root.width; height: root.height - 0.32px; border-radius: root.border-radius;
         background: root.hot ? #2f3035 : #292a2f;
     }
-    ta := TouchArea { clicked => { root.open(self.absolute-position.x, self.absolute-position.y + root.height); } }
+    ta := TouchArea { clicked => { root.open(self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + root.height); } }
     power-ta := TouchArea {
         x: 0.85px; width: 15.3px;
         accessible-role: checkbox; accessible-label: root.state == 1 ? "Bypass automation" : "Enable automation"; accessible-checked: root.state == 1;
@@ -272,7 +271,7 @@ export component TrackHeaderRow inherits Rectangle {
     in property <TrackLevel> level;
     in property <bool> automation;        // automation lanes shown (88 px rows: full chrome)
     in property <length> row-h: Tokens.track-h;
-    // Layout by row height, like the reference: full (48 px and up) shows the automation row
+    // Layout by row height: full (48 px and up) shows the automation row
     // when lanes are shown, compact drops it, minimal (under 28 px) keeps only the name row.
     property <bool> full: root.row-h >= 40.8px;
     property <bool> minimal: root.row-h < 23.8px;

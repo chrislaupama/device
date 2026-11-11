@@ -1,7 +1,6 @@
 //! Graph views of the restoration devices (De-Clipper, De-Esser, De-Hummer,
 //! De-Noiser): the `View::Custom` bodies their definitions name. Axes, drawing
-//! laws and gestures follow the device specs (handoffs/device-specs/<device>.md,
-//! sections 2 and 3); the curves are the responses the engine kernels implement.
+//! laws and gestures follow the device specs; the curves are the responses the engine kernels implement.
 //!
 //! Slint (ui/device_panel.slint, DeviceCanvas with pointer = true) only draws what is built here and
 //! forwards pointer events (Studio.panel-graph); hit-testing and the mapping
@@ -32,14 +31,14 @@ const MINUS: char = '\u{2212}';
 pub const BANDS: usize = 48;
 const BAND_LO_HZ: f32 = 20.0;
 const BAND_HI_HZ: f32 = 20000.0;
-/// Spectrum display scale and ballistics (reference shared analyser).
+/// Spectrum display scale and ballistics (the shared analyser).
 const SPEC_FLOOR_DB: f32 = -90.0;
 const SPEC_SCALE_DB: f32 = 72.0;
 const RISE_MS: f32 = 45.0;
 const FALL_MS: f32 = 130.0;
 const DECAY_DB_PER_S: f32 = 42.0;
 const STALE: Duration = Duration::from_millis(100);
-/// Responses are drawn at the reference's drawing rate.
+/// Responses are drawn at a fixed drawing rate.
 const DRAW_RATE: f64 = 48000.0;
 /// Caption zone above the well (pt).
 const CAPTION: f32 = 19.0;
@@ -174,7 +173,7 @@ impl Geo {
 }
 
 /// Graph rectangle on the card (pt, card relative): below the picker row when
-/// there is one (the reference view row), else where the picker row would be.
+/// there is one (the view row), else where the picker row would be.
 fn placement(def: &DeviceDef) -> (f32, f32, f32, f32) {
     let y = if def.layout.picker.is_empty() { 38.5 } else { 63.0 };
     (8.0, y, def.layout.width() - 16.0, 216.5 - y)
@@ -344,8 +343,7 @@ pub(crate) fn deesser_db(f0: f32, q: f32, reduction: f32, listen: bool, mix: f32
 }
 
 /// The edges of the De-Esser band, where the band-pass is 3 dB down, in Hz: with
-/// a = sin(w0) / (2Q), the edges sit at acos(cos(w0) / sqrt(1 + a²)) -+ atan(a), as
-/// The reference app draws them (reference/research-findings.md, row 38).
+/// a = sin(w0) / (2Q), the edges sit at acos(cos(w0) / sqrt(1 + a²)) -+ atan(a).
 pub(crate) fn deesser_edges(f0: f32, q: f32) -> (f32, f32) {
     let w0 = 2.0 * PI * f0 as f64 / DRAW_RATE;
     let a = w0.sin() / (2.0 * q.max(1e-4) as f64);

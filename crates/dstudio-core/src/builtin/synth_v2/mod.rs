@@ -1,11 +1,10 @@
-//! The built-in instrument "Synth" (reference id synth-v2): a polyphonic
+//! The built-in instrument "Synth" (id synth-v2): a polyphonic
 //! subtractive synthesizer with two oscillators, sub and noise sources, a
 //! multimode filter, two envelopes, two LFOs, a 32-slot modulation matrix,
 //! 8 macros with 16 mappings, unison and four effect slots.
 //!
-//! Parameters, ranges, defaults and the panel pages follow the device spec
-//! (handoffs/device-specs/synth-v2.md); the DSP is our own design
-//! (engine/src/devices/synth_v2.cpp). Factory presets are our own sounds.
+//! This module defines the parameters, ranges, defaults, the panel pages and
+//! the factory presets; the DSP is in engine/src/devices/synth_v2.cpp.
 //!
 //! Modulation (shared by the engine and the panel):
 //! * a route is [source, target, amount -1..1, on]; its offset is

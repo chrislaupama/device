@@ -1,7 +1,6 @@
 //! DStudio's pattern library: the parts the clip sidebar's **Create** button makes.
 //!
-//! The reference app asks an online composer and catalogue services for
-//! these. DStudio calls no service: every progression, rhythm and groove below was
+//! DStudio calls no online service for these: every progression, rhythm and groove below was
 //! written for DStudio, and the sets are generated from them deterministically
 //! (the same part, genre, key and set number always give the same six patterns).
 //!
@@ -18,7 +17,7 @@ use crate::steps::{StepLane, StepPattern, StepRate, StepRows};
 use crate::{PPQ, Ticks};
 use serde::{Deserialize, Serialize};
 
-/// What the Type field picks (reference order).
+/// What the Type field picks, in menu order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PartType {
     #[default]
@@ -51,8 +50,8 @@ impl PartType {
     }
 }
 
-/// Genre field entries; 0 is Any (the library's neutral feel), then the reference's
-/// 21 genres in its (alphabetical) order. Saved clips store the index, so new
+/// Genre field entries; 0 is Any (the library's neutral feel), then the
+/// 21 genres in alphabetical order. Saved clips store the index, so new
 /// entries only ever go at the end.
 pub const GENRES: [&str; 22] = [
     "Any",
