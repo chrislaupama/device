@@ -17,7 +17,8 @@ name: Performance
 # Both write their table to the run's summary page and upload it as an artifact.
 # A regression that is worth it (more work for a new feature, say) is accepted by adding the
 # `perf-regression-accepted` label to the pull request: the check passes and the report still
-# lists it. On pushes to main each commit is compared with the one before it.
+# lists it. A benchmark that cannot be measured with the change fails even with the label.
+# On pushes to main each commit is compared with the one before it.
 #
 # Locally: python3 tools/perf/bench_gate.py all --base origin/main
 

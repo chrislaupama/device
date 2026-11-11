@@ -164,7 +164,9 @@ with [`tools/perf/bench_gate.py`](../tools/perf/bench_gate.py):
 
 The comparison tables are on each run's summary page. A regression that is
 worth it is accepted with the `perf-regression-accepted` label on the pull
-request: the check passes and the report still lists it. New benchmarks and new
+request: the check passes and the report still lists it. A benchmark that
+cannot be measured with the change (it crashes, or Callgrind records nothing)
+fails the check even with the label. New benchmarks and new
 rows are picked up without changes to the script, as long as they print tables
 (a row is a line ending in numbers, under a header naming the columns).
 

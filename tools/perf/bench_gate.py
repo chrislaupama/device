@@ -35,7 +35,8 @@ Subcommands:
   compare  compare two result files, write a Markdown report, set the exit code
   all      build base (a git worktree) and head (this checkout), run, compare
 
-Exit codes: 0 = no regression (or --accept), 1 = regression, 2 = setup error.
+Exit codes: 0 = no regression (or --accept), 1 = regression, 2 = setup error or a benchmark
+that could not be measured with the change (--accept does not cover that).
 """
 from __future__ import annotations
 
@@ -406,20 +407,24 @@ def pct(base: float, head: float) -> float:
     return (head - base) / base * 100.0 if base else 0.0
 
 
-def compare_instructions(base: dict, head: dict, limit: float) -> tuple[list[dict], list[str]]:
-    rows, notes = [], []
+def compare_instructions(base: dict, head: dict, limit: float) -> tuple[list[dict], list[str], list[str]]:
+    """Returns (rows, notes, errors). An error is a head benchmark that could not be measured:
+    it fails the check whatever the accept label says, so a broken runner never passes."""
+    rows, notes, errors = [], [], []
     for name in sorted(set(base) | set(head)):
         b, h = base.get(name), head.get(name)
+        if h is not None and "error" in h:
+            errors.append(f"`{name}` could not be measured: {h['error']}")
+            continue
         if b is None or h is None:
             notes.append(f"`{name}` is {'new' if b is None else 'gone'} in this change")
             continue
-        if "error" in b or "error" in h:
-            notes.append(f"`{name}` failed: base {b.get('error', 'ok')}, head {h.get('error', 'ok')}")
-            # A head that cannot be measured fails the gate even when the base failed too,
-            # so a broken runner never passes with nothing compared.
-            if "error" in h:
-                rows.append({"bench": name, "key": "(run)", "section": "", "label": "benchmark failed",
-                             "base": 0, "head": 0, "pct": float("inf"), "fail": True})
+        if "error" in b:
+            # Nothing to compare against. This fails like a regression, so the gate never
+            # passes unmeasured; a change that repairs the benchmark takes the accept label.
+            notes.append(f"`{name}` failed at the base: {b['error']}")
+            rows.append({"bench": name, "key": "(run)", "section": "", "label": "base run failed, nothing to compare",
+                         "base": 0, "head": h["total"], "pct": float("inf"), "fail": True})
             continue
         for side, r in (("base", b), ("head", h)):
             if r.get("note"):
@@ -439,7 +444,7 @@ def compare_instructions(base: dict, head: dict, limit: float) -> tuple[list[dic
             section, label = h["labels"][k]
             rows.append({"bench": name, "key": k, "section": section, "label": label, "base": bv, "head": hv,
                          "pct": p, "fail": p > limit and max(bv, hv) >= MIN_GATED_INSTRUCTIONS})
-    return rows, notes
+    return rows, notes, errors
 
 
 def compare_time(base: dict, head: dict, limit: float) -> tuple[list[dict], list[str]]:
@@ -471,7 +476,7 @@ def fmt_count(n: float) -> str:
 
 
 def markdown(kind: str, rows: list[dict], notes: list[str], limit: float, title: str, labels: tuple[str, str],
-             accept: bool) -> str:
+             accept: bool, errors: list[str] | None = None) -> str:
     fails = [r for r in rows if r["fail"]]
     gains = [r for r in rows if r["pct"] < -limit and (kind != "instructions" or max(r["base"], r["head"]) >= MIN_GATED_INSTRUCTIONS)]
     out = [f"### {title}", ""]
@@ -489,6 +494,11 @@ def markdown(kind: str, rows: list[dict], notes: list[str], limit: float, title:
         out.append("No row over the limit.")
     if gains:
         out.append(f"{len(gains)} row(s) improved by more than {limit:g} %.")
+    if errors:
+        out.append("")
+        out.append(f"**{len(errors)} benchmark(s) could not be measured; the check fails (the accept label does not cover this):**")
+        out.append("")
+        out += [f"- {e}" for e in errors]
     out.append("")
 
     def cell(text: str, limit: int = 70) -> str:
@@ -548,25 +558,29 @@ def cmd_run(a) -> int:
     return 0
 
 
-def report(mode: str, base: dict, head: dict, a, labels: tuple[str, str]) -> tuple[str, bool]:
+def report(mode: str, base: dict, head: dict, a, labels: tuple[str, str]) -> tuple[str, bool, bool]:
+    """Returns (markdown, a row over the limit, a head benchmark that could not be measured)."""
+    errors: list[str] = []
     if mode == "instructions":
-        rows, notes = compare_instructions(base, head, a.limit)
+        rows, notes, errors = compare_instructions(base, head, a.limit)
         md = markdown("instructions", rows, notes, a.limit, "CPU instructions per benchmark row (Callgrind)",
-                      labels, a.accept)
+                      labels, a.accept, errors)
     else:
         rows, notes = compare_time(base, head, a.time_limit)
         md = markdown("time", rows, notes, a.time_limit,
                       f"Wall time per benchmark row, fastest of each side ({platform.system()})", labels, a.accept)
-    return md, any(r["fail"] for r in rows)
+    return md, any(r["fail"] for r in rows), bool(errors)
 
 
 def cmd_compare(a) -> int:
     base = json.loads(Path(a.base).read_text())
     head = json.loads(Path(a.head).read_text())
-    md, failed = report(a.mode, base, head, a, (a.base_label, a.head_label))
+    md, failed, broken = report(a.mode, base, head, a, (a.base_label, a.head_label))
     print(md)
     if a.markdown:
         Path(a.markdown).write_text(md)
+    if broken:
+        return 2
     return 1 if failed and a.mode == "instructions" and not a.accept else 0
 
 
@@ -597,14 +611,14 @@ def cmd_all(a) -> int:
     if "instructions" in modes and not shutil.which("valgrind"):
         log("bench_gate: valgrind not found; instruction counts need Linux + valgrind")
         return 2
-    failed = False
+    failed = broken = False
     reports = []
     for mode in modes:
         res = run_sides(sides, mode, a.rounds, work, set(a.only) if a.only else None)
         if mode == "time":
             # Re-time the rows over the limit with more rounds; the fastest of
             # all rounds decides.
-            rows, _ = compare_time(res["base"], res["head"], a.time_limit)
+            rows, *_ = compare_time(res["base"], res["head"], a.time_limit)
             suspects = sorted({r["bench"] for r in rows if r["fail"]})
             if suspects and a.confirm_rounds:
                 log(f"re-timing {len(suspects)} benchmark(s) over the time limit: {', '.join(suspects)}")
@@ -618,9 +632,10 @@ def cmd_all(a) -> int:
                                 acc["rows"][k]["value"] = min(acc["rows"][k]["value"], row["value"])
         for side, r in res.items():
             (work / f"{mode}-{side}.json").write_text(json.dumps(r, indent=2))
-        md, f = report(mode, res["base"], res["head"], a, labels)
+        md, f, b = report(mode, res["base"], res["head"], a, labels)
         reports.append(md)
         failed |= f and mode == "instructions"
+        broken |= b
     text = "\n".join(reports)
     (work / "report.md").write_text(text)
     print(text)
@@ -628,6 +643,8 @@ def cmd_all(a) -> int:
     if summary:
         with open(summary, "a") as f:
             f.write(text + "\n")
+    if broken:
+        return 2  # the accept label never covers a benchmark that could not be measured
     return 1 if failed and not a.accept else 0
 
 
