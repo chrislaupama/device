@@ -7,6 +7,7 @@
 #include "render_graph.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace dstudio {
@@ -46,11 +47,14 @@ public:
     float* sc_r(uint32_t tap) noexcept { return sc_.data() + (2 * std::size_t{tap} + 1) * max_block_; }
     // Return track buses (SE_MAX_RETURNS stereo buffers) and whether each
     // received anything in the current block; a stereo scratch for sends.
-    float* bus_l(uint32_t bus) noexcept { return bus_.data() + (2 * std::size_t{bus}) * max_block_; }
-    float* bus_r(uint32_t bus) noexcept { return bus_.data() + (2 * std::size_t{bus} + 1) * max_block_; }
+    // Left uninitialised (a bus is cleared by its first writer in a block,
+    // the send scratch is written before it is read), so an engine without
+    // returns never touches them.
+    float* bus_l(uint32_t bus) noexcept { return bus_.get() + (2 * std::size_t{bus}) * max_block_; }
+    float* bus_r(uint32_t bus) noexcept { return bus_.get() + (2 * std::size_t{bus} + 1) * max_block_; }
     bool& bus_used(uint32_t bus) noexcept { return bus_used_[bus]; }
-    float* send_l() noexcept { return send_l_.data(); }
-    float* send_r() noexcept { return send_r_.data(); }
+    float* send_l() noexcept { return send_.get(); }
+    float* send_r() noexcept { return send_.get() + max_block_; }
 
 private:
     uint32_t max_block_;
@@ -58,9 +62,9 @@ private:
     std::vector<float> gain_l_, gain_r_, auto_a_, auto_b_;
     std::vector<ParamEvent> param_events_;
     std::vector<float> sc_;
-    std::vector<float> bus_;
+    std::unique_ptr<float[]> bus_;
     bool bus_used_[SE_MAX_RETURNS] = {};
-    std::vector<float> send_l_, send_r_;
+    std::unique_ptr<float[]> send_;
     uint32_t mod_points_;
     std::vector<float> mod_;
     std::vector<BuiltinMod> mod_binds_;
