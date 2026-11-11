@@ -17,7 +17,7 @@ node tools/art/render.mjs hero         # one page
 | `social-preview.html` | `social-preview.png` (1280×640) | Settings › General › Social preview, uploaded by hand |
 
 `art.css` holds the shared look: colours from the app's `crates/dstudio-app/ui/tokens.slint` and the app's
-bundled Inter font. `mark.svg` is the mark used on the artwork.
+bundled Inter font. `mark.svg` is the mark: one cycle of a sine wave on the app's blue.
 
 ## The app views
 
