@@ -1,7 +1,7 @@
 // Device chain (bottom panel, Devices tab): plugin cards, the "Add device" card and the
-// device popup list (src/devices.rs). Card styling follows the Synth card header measured
-// from 32-real-dblclick-instrument-lane.png (power toggle at 9,8.25, name at 37.5, header
-// line at 26.5). Plugin cards show the controls the user adds (plugin-card spec); the header
+// device popup list (src/devices.rs). Card styling follows the Synth card header
+// (power toggle at 9,8.25, name at 37.5, header
+// line at 26.5). Plugin cards show the controls the user adds ; the header
 // is shared with the built-in cards (device_panel.slint CardHeader).
 import { Tokens } from "tokens.slint";
 import { Icon, Icons, Field } from "widgets.slint";
@@ -19,7 +19,7 @@ global CardStyle {
     out property <length> width: 220px;
 }
 
-// Plugin card (third-party plugin, handoffs/device-specs/plugin-card.md): the generic header
+// Plugin card (third-party plugin): the generic header
 // (power, name = effect picker, device window, fold, remove), then only the controls the user
 // added with "+ Add" plus any the plugin's macros, LFOs or automation move; nine per page.
 component PluginFace inherits Rectangle {
@@ -53,7 +53,7 @@ component PluginFace inherits Rectangle {
                 Icon { y: 4px; width: 10px; height: 10px; d: Icons.plus; ink: #e5e5e8; stroke-width: 1.4px; }
                 Text { text: "Add"; color: #e5e5e8; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
             }
-            add-ta := TouchArea { clicked => { Studio.card-add-menu(root.card.id, self.absolute-position.x, self.absolute-position.y + self.height + 2px); } }
+            add-ta := TouchArea { clicked => { Studio.card-add-menu(root.card.id, self.absolute-position.x, (self.absolute-position.y - Studio.menu-dy) + self.height + 2px); } }
         }
         if root.card.pages > 1: HorizontalLayout {
             x: root.width - 80px; y: root.height - 27px; width: 70px; height: 18px; spacing: 2px; alignment: end;
@@ -87,8 +87,8 @@ export component PluginCard inherits Rectangle {
     if !root.card.folded: PluginFace { card: root.card; }
 }
 
-// "Add device" card (reference 32: 182.5 x 264, rows 22 pt from y 56.5). The reference's rows are
-// Audio Units / VST3 / Chains; ours are Built-in / Audio Units / VST3 / CLAP / Chains.
+// "Add device" card (182.5 x 264, rows 22 pt from y 56.5).
+// Rows are Built-in / Audio Units / VST3 / CLAP / Chains.
 export component AddDeviceCard inherits Rectangle {
     width: 182.5px;
     height: 264px;
@@ -119,7 +119,7 @@ export component AddDeviceCard inherits Rectangle {
             Rectangle { x: 4px; width: parent.width - 8px; border-radius: 4px; background: row-ta.has-hover ? #2a2b30 : transparent; }
             Text { x: 11.5px; text: name; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; }
             Icon { x: parent.width - 18px; width: 10px; height: 10px; d: Icons.chevron-right; ink: #a0a0a3; }
-            row-ta := TouchArea { clicked => { Studio.add-category(i, root.absolute-position.x + root.width - 4px, parent.absolute-position.y + parent.y); } }
+            row-ta := TouchArea { clicked => { Studio.add-category(i, root.absolute-position.x + root.width - 4px, (parent.absolute-position.y - Studio.menu-dy) + parent.y); } }
         }
     }
     if Studio.add-search != "": Rectangle {

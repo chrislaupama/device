@@ -1,7 +1,7 @@
-//! Text widths for laying out the device-card picker row the way the reference app does.
+//! Text widths for laying out the device-card picker row.
 //!
-//! The reference app sizes picker controls from fixed advance tables instead of measuring
-//! the rendered text (reference/research-findings.md, row 34): Inter at 10 px,
+//! Picker controls are sized from fixed advance tables instead of measuring
+//! the rendered text: Inter at 10 px,
 //! the caption face (500) with +0.2 px tracking per character and the value face
 //! (600) with -0.4 px. Choice segments use tabular digits. A character missing
 //! from a table measures as "M".

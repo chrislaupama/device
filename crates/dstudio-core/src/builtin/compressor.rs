@@ -1,6 +1,5 @@
-//! Compressor (reference: the reference app's built-in "Compressor"). Parameter ids,
-//! ranges, defaults, tapers and the panel arrangement are taken from the
-//! reference as facts; names of the factory presets and their values are our own.
+//! Compressor: parameter ids, ranges, defaults, tapers, the panel arrangement
+//! and the factory presets.
 
 use super::*;
 use crate::device::PluginKind;

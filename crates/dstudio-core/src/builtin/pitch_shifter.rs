@@ -1,6 +1,5 @@
-//! Pitch Shifter (reference: the reference app's built-in "Pitch Shifter"). Parameter
-//! ids, ranges, defaults and the panel arrangement are taken from the
-//! reference as facts; factory preset names and values are our own.
+//! Pitch Shifter: parameter ids, ranges, defaults, the panel arrangement and
+//! the factory presets.
 
 use super::*;
 use crate::device::PluginKind;

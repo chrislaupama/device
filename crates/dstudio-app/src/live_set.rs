@@ -2,7 +2,7 @@
 //! and later open (schema 5 / 11.0), with every element Live saves for an audio track, a
 //! MIDI track, the main and pre-hear tracks and the set itself, in Live's order, so the
 //! file reads like one Live wrote. Element names and defaults were learned from sets saved
-//! by Live (structure only; reference/findings/project-export.md).
+//! by Live (structure only).
 //!
 //! [validate] parses a written document back and checks it against that structure: the
 //! required elements of every track kind and clip, unique ids below NextPointeeId, one clip

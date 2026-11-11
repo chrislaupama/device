@@ -1,6 +1,5 @@
-//! Reverb (reference: the reference app's built-in "Reverb"). Parameter ids, ranges,
-//! defaults, tapers, display formats and the mode-dependent dial row are
-//! taken from the reference as facts; factory preset names and values are our own.
+//! Reverb: parameter ids, ranges, defaults, tapers, display formats, the
+//! mode-dependent dial row and the factory presets.
 
 use super::*;
 use crate::device::PluginKind;
@@ -104,7 +103,7 @@ pub static REVERB: DeviceDef = DeviceDef {
             ("shimmer", "mode2", &[SHIMMER]),
             ("diffusion", "mode2", &[HAZE]),
         ],
-        // Widest of the mode layouts: [1,2,3,1] / [3,2,1,1] = 543 (the reference rule).
+        // Widest of the mode layouts: [1,2,3,1] / [3,2,1,1] = 543 (the card sizing rule).
         fixed_width: 543.0,
         views: &["Tail", "EQ"],
         spread_dials: true,

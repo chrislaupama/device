@@ -1,6 +1,5 @@
-//! Limiter (reference: the reference app's built-in "Limiter"). Parameter ids,
-//! ranges, defaults, tapers and the panel arrangement are taken from the
-//! reference as facts; the factory preset names and values are our own.
+//! Limiter: parameter ids, ranges, defaults, tapers, the panel arrangement
+//! and the factory presets.
 
 use super::*;
 use crate::device::PluginKind;

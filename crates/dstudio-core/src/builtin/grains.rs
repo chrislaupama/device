@@ -1,6 +1,5 @@
-//! Grains (reference: the reference app's built-in "Grains"): a live granular effect.
-//! Parameter ids, ranges, defaults, tapers and the panel arrangement are
-//! taken from the reference as facts; factory preset names and values are our own.
+//! Grains: a live granular effect. Defines the parameter ids, ranges,
+//! defaults, tapers, the panel arrangement and the factory presets.
 
 use super::*;
 use crate::device::PluginKind;

@@ -1,7 +1,6 @@
 //! Smart Quantize: snap notes to the grid they already imply (1/8, 1/16, 1/16T or
 //! 1/32) without picking a grid first, and drop the small artifacts a transcription
-//! leaves (quiet blips and ghost overtones). Behaviour and values follow the
-//! reference's piano-roll Smart Quantize (findings in reference/findings/clip-editors.md).
+//! leaves (quiet blips and ghost overtones).
 
 use crate::midi::Note;
 use crate::model::{PPQ, Ticks};

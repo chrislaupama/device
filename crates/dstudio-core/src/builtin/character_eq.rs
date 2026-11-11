@@ -1,18 +1,16 @@
-//! Character EQ (reference: the reference app's built-in "Character EQ"): twelve bands
-//! with seven shapes (including Dual Low), per-band slope, proportional Q,
-//! overshoot, drive and dynamics, hardware-style banks, low-end warmth, a
-//! valve stage, a resonance tamer and auto gain. The card shows the band
-//! editor, the bank picker and the output; the rest is reached through
-//! presets, automation and the parameter list (as in the reference).
-//! Parameter ids, ranges, defaults, tapers and the panel arrangement are
-//! taken from the reference as facts; banks' voicings and the factory
-//! presets are our own.
+//! Character EQ: twelve bands with seven shapes (including Dual Low),
+//! per-band slope, proportional Q, overshoot, drive and dynamics,
+//! hardware-style banks, low-end warmth, a valve stage, a resonance tamer and
+//! auto gain. The card shows the band editor, the bank picker and the output;
+//! the rest is reached through presets, automation and the parameter list.
+//! Defines the parameter ids, ranges, defaults, tapers, the panel
+//! arrangement, the banks' voicings and the factory presets.
 
 use super::eq::{EqBand, EqView, NodeDoubleClick, Shape};
 use super::*;
 use crate::device::PluginKind;
 
-/// Default band Q (the spec's 0.7071, kept as typed rather than 1/sqrt(2)).
+/// Default band Q (0.7071, kept as typed rather than 1/sqrt(2)).
 #[allow(clippy::approx_constant)]
 const BUTTERWORTH_Q: f32 = 0.7071;
 const OFF_ON: &[&str] = &["Off", "On"];

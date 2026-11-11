@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
         const std::vector<uint8_t> bytes = make(kind, frames);
         const auto path = std::filesystem::temp_directory_path() / (std::string("dstudio_decode_bench_") + kind + ".wav");
         const std::string p8 = dstudio::os::path_to_utf8(path);
-        if (std::FILE* f = std::fopen(p8.c_str(), "wb")) {
+        if (std::FILE* f = dstudio::os::fopen_utf8(p8.c_str(), "wb")) {
             std::fwrite(bytes.data(), 1, bytes.size(), f);
             std::fclose(f);
         }

@@ -75,7 +75,7 @@ pub struct Preferences {
     pub general: GeneralPrefs,
 }
 
-/// Settings › General, with the reference app's defaults.
+/// Settings › General, with its defaults.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GeneralPrefs {
@@ -199,7 +199,7 @@ mod tests {
         std::fs::write(&path, r#"{"audio":{"buffer_size":512},"future":1}"#).unwrap();
         let loaded = load(&path).unwrap().unwrap();
         assert_eq!(loaded.audio.buffer_size, 512);
-        assert_eq!(loaded.general, GeneralPrefs::default(), "files without General get the reference app's defaults");
+        assert_eq!(loaded.general, GeneralPrefs::default(), "files without General get the defaults");
         assert!(loaded.general.show_plugin_windows && loaded.general.plugin_windows_on_top);
         let _ = std::fs::remove_dir_all(dir);
     }

@@ -215,7 +215,7 @@ cargo run --release -p dstudio-app -- --self-test --no-audio     # drive the app
 | `crates/dstudio-engine` | Safe Rust wrapper over the engine, end-to-end tests |
 | `crates/dstudio-app` | Desktop app (binary `device-studio`) |
 | `docs/` | Architecture, ADRs, built-in devices, build guide |
-| `reference/`, `tools/` | Research notes and inspection tooling |
+| `tools/` | macOS app bundle script and the rename helper |
 | `ui-spike/` | The Slint and wgpu interop spike behind ADR 0001 |
 
 The app was called Saine Studio until November 2026. Internal names use `dstudio` (`dstudio-*` crates, the `dstudio::`

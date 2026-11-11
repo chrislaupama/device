@@ -1,4 +1,4 @@
-// Export dialog and the unsaved-changes prompt (src/dialogs.rs). Geometry from the reference app's
+// Export dialog and the unsaved-changes prompt (src/dialogs.rs). Geometry of the
 // export and unsaved-changes modals at 100 % zoom, in our 85 % units (520 x 400.5 pt export
 // window centred in the main window; 440 x 149 pt prompt at x 515, y 347 over the timeline).
 import { Tokens } from "tokens.slint";
@@ -54,8 +54,8 @@ component RowLabel inherits Text {
 // Live set (Open in + Effects rows in place of Range + Format; Effects is always Render, Convert
 // is a PLACEHOLDER). MP3 and the other sample rate are PLACEHOLDERS (status line), the range is
 // always the full project. Stems adds
-// the Tracks row above Range (one form row, 30.6px, like the reference app's 24 pt rows 12 pt apart); the
-// window keeps its height, as in the reference app (z100-modal-export-audio-stems-selected).
+// the Tracks row above Range (one form row, 30.6px: 24 pt rows 12 pt apart); the
+// window keeps its height.
 export component ExportModal inherits Rectangle {
     property <length> dy: Studio.export-recipe == 1 ? 30.6px : 0px;
     width: 442px; height: 340.4px;
@@ -175,8 +175,8 @@ export component UnsavedPrompt inherits Rectangle {
     PillButton { x: root.width - 20.4px - 51.4px; y: 79px; width: 51.4px; height: 27.2px; text: "Save"; primary: true; clicked => { Studio.unsaved-save(); } }
 }
 
-// Options › Check for Updates…. the reference app's modal (400 pt wide, 24 pt corners, 20 pt padding, 16 pt
-// title, 12 pt body, 32 pt pill buttons) checks its update server; DStudio has none yet, so the
+// Options › Check for Updates…. A modal (400 pt wide, 24 pt corners, 20 pt padding, 16 pt
+// title, 12 pt body, 32 pt pill buttons); DStudio has no update server yet, so the
 // dialog reports the running version with an OK button.
 export component UpdatesModal inherits Rectangle {
     width: 340px; height: 132.6px;
@@ -212,7 +212,7 @@ component HistoryButton inherits Rectangle {
     ta := TouchArea { enabled: root.enabled; clicked => { root.clicked(); } }
 }
 
-// Edit › Undo History…. the reference app's modal: 640 pt wide, 20/20/16 pt padding, 14 pt between head,
+// Edit › Undo History…. A modal: 640 pt wide, 20/20/16 pt padding, 14 pt between head,
 // table and buttons; 28 pt rows (Number 56 pt right-aligned, Action, Date 108 pt, Time 92 pt,
 // 12 pt gaps, 10 pt side padding), the list at most 60 % of the window tall. A click on a row
 // undoes or redoes up to it; Undo and Redo step once.

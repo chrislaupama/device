@@ -184,7 +184,7 @@ impl AutomationTarget {
         }
     }
 
-    /// Category and parameter label, like the reference pill ("Track", "Volume").
+    /// Category and parameter label, as on the lane pill ("Track", "Volume").
     pub fn labels(&self) -> (String, String) {
         match self {
             AutomationTarget::Volume => ("Track".into(), "Volume".into()),

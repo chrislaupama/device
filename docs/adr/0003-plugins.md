@@ -3,8 +3,8 @@
 Status: accepted (2026-11-08). Implemented in the engine (see "Implementation notes").
 
 ## Context
-The reference's "Add device" lists its built-ins, Audio Units, VST3 and Chains. We host AU (macOS), VST3
-and CLAP (CLAP is our addition). The development Mac has Apple's built-in AUs plus third-party commercial plugins (AU, VST3
+"Add device" lists the built-ins, Audio Units, VST3, CLAP and Chains. We host AU (macOS), VST3
+and CLAP. The development Mac has Apple's built-in AUs plus third-party commercial plugins (AU, VST3
 and CLAP) installed; the automated tests only rely on Apple's AUs and our own test plugins.
 
 ## Licensing

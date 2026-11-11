@@ -1,14 +1,14 @@
-//! LFO: a per-track modulation source (handoffs/device-specs/lfo.md).
+//! LFO: a per-track modulation source.
 //!
 //! It passes audio through and moves the parameters in its `Device::links`
-//! (crate::modulation). Parameters, ranges, defaults and the tempo-division
-//! list follow the spec; the panel is the custom "lfo" view (wave picture,
+//! (crate::modulation). This file defines the parameters, ranges, defaults and
+//! the tempo-division list; the panel is the custom "lfo" view (wave picture,
 //! Depth fader, Shape menu, Free/Sync latch, Rate and Phase dials, targets).
 
 use super::{DeviceDef, Format, Layout, ParamDef, Taper, View, DIVISIONS, DIVISION_QUARTER, LINEAR};
 use crate::device::PluginKind;
 
-/// Wave shapes, in the reference order.
+/// Wave shapes, in menu order.
 pub const SHAPES: &[&str] = &["Sine", "Triangle", "Saw Up", "Saw Down", "Square", "Random", "Smooth Random"];
 
 const PARAMS: &[ParamDef] = &[

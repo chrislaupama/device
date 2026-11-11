@@ -1,5 +1,5 @@
 //! MIDI clips, notes and the pure note transforms behind the piano-roll
-//! toolbar (reference: Quantize · Humanize · Reverse · Legato · Double, plus
+//! toolbar (Quantize · Humanize · Reverse · Legato · Double, plus
 //! transpose shortcuts). Transforms never mutate the project; the editor
 //! wraps their result in `Command::SetMidiNotes`, so every edit is one
 //! validated, invertible undo step.
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 pub struct Note {
     /// Stable within its clip (selection survives edits/undo).
     pub id: u32,
-    /// MIDI note number 0..=127 (60 = C4, matching the reference's "C4" label).
+    /// MIDI note number 0..=127 (60 = C4, matching the piano roll's "C4" label).
     pub pitch: u8,
     pub start: Ticks,
     pub length: Ticks,
@@ -113,12 +113,12 @@ impl ClipLoop {
 }
 
 impl MidiClip {
-    /// Reference default: "Insert empty MIDI clip" creates a 1-bar clip named "MIDI".
+    /// Default: "Insert empty MIDI clip" creates a 1-bar clip named "MIDI".
     pub fn empty(start: Ticks, length: Ticks) -> Self {
         MidiClip { id: ClipId(0), name: "MIDI".into(), start, length, notes: Vec::new(), pattern: None, disabled: false, composer: None, scale: None, clip_loop: Some(ClipLoop::whole(length)) }
     }
 
-    /// Reference default for a Drum Rack track: an empty one-bar "Pattern"
+    /// Default for a Drum Rack track: an empty one-bar "Pattern"
     /// clip of 16 steps at 1/16.
     pub fn empty_pattern(start: Ticks, rows: StepRows) -> Self {
         let pattern = StepPattern::new(rows);
@@ -185,7 +185,7 @@ pub fn grid_ticks(denominator: u32) -> Ticks {
 }
 
 /// Move note starts toward the nearest grid line by `amount` (0..=1, the
-/// reference's "Amount 100%"). Lengths are kept; start stays >= 0.
+/// toolbar's "Amount 100%"). Lengths are kept; start stays >= 0.
 pub fn quantize(notes: &[Note], grid: Ticks, amount: f64) -> Vec<Note> {
     let amount = amount.clamp(0.0, 1.0);
     let grid = grid.max(1);
@@ -212,7 +212,7 @@ pub fn transpose(notes: &[Note], semitones: i32) -> Option<Vec<Note>> {
 
 /// Deterministic humanize: offsets start by up to ±`timing` ticks and velocity
 /// by up to ±`velocity` using a seeded xorshift, so results are reproducible
-/// (tests, undo/redo, AI replays). `amount` scales both (reference "Amount 50%").
+/// (tests, undo/redo, AI replays). `amount` scales both (the toolbar's "Amount 50%").
 pub fn humanize(notes: &[Note], amount: f64, seed: u64) -> Vec<Note> {
     let mut s = seed | 1;
     let mut rnd = move || {
@@ -234,8 +234,8 @@ pub fn humanize(notes: &[Note], amount: f64, seed: u64) -> Vec<Note> {
         .collect()
 }
 
-/// Mirror notes in time about the middle of their own extent (earliest start to latest end), as
-/// the reference app's Reverse does: lengths and pitches stay, the first note's start swaps with the last
+/// Mirror notes in time about the middle of their own extent (earliest start to latest end):
+/// lengths and pitches stay, the first note's start swaps with the last
 /// note's end, and the extent itself does not move.
 pub fn reverse(notes: &[Note]) -> Vec<Note> {
     let Some(lo) = notes.iter().map(|n| n.start).min() else { return Vec::new() };
@@ -269,7 +269,7 @@ pub fn double(notes: &[Note], clip_length: Ticks) -> (Vec<Note>, Ticks) {
     (out, clip_length * 2)
 }
 
-/// MIDI note name with the reference's octave convention (60 = C4).
+/// MIDI note name with the octave convention 60 = C4.
 pub fn note_name(pitch: u8) -> String {
     const NAMES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
     format!("{}{}", NAMES[(pitch % 12) as usize], pitch as i32 / 12 - 1)

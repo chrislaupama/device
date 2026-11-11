@@ -1,4 +1,4 @@
-// LFO (handoffs/device-specs/lfo.md): a modulation source. Audio passes
+// LFO: a modulation source. Audio passes
 // through; modulate() gives the wave position (0..1) and Depth for the
 // engine to apply to the LFO's routes (se_mod_route).
 //
