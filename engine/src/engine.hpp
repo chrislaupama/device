@@ -389,6 +389,7 @@ private:
     std::unique_ptr<MidiInputHub> midi_ = std::make_unique<MidiInputHub>();
     std::array<MidiEvent, MidiInputHub::kMaxBlockEvents> rt_midi_{}; // RT-owned
     bool rt_midi_wrapped_ = false; // RT-owned: a loop wrap happened since capture started
+    uint32_t rt_capture_pass_ = 0; // RT-owned: the capture pass rt_midi_wrapped_ belongs to
 
     // -- plugins (instances shared by every graph that references them)
     PluginHost plugins_;

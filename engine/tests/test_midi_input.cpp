@@ -328,18 +328,23 @@ TEST_CASE(midi_input_queue_overflow_releases_the_ports_keys) {
     HubRig r(0);
     REQUIRE(r.hub->inject(0x90, 60, 100));
     REQUIRE(r.drain().size() == 1);
-    // A burst fills the queue; whatever was dropped (maybe the note-off) is lost.
-    for (std::size_t i = 0; i <= dstudio::MidiInputHub::kQueueSize; ++i) r.hub->inject(0xB0, 1, 0);
+    // Key 61 goes down, then a burst fills the queue and its note-off is lost.
+    REQUIRE(r.hub->inject(0x90, 61, 100));
+    for (std::size_t i = 1; i < dstudio::MidiInputHub::kQueueSize; ++i) REQUIRE(r.hub->inject(0xB0, 1, 0));
+    CHECK(!r.hub->inject(0x80, 61, 0));
     CHECK(!r.hub->inject(0x80, 60, 0));
-    const auto ev = r.drain();
-    REQUIRE(!ev.empty());
-    CHECK(is(ev[0], 0x80, 60)); // released before the queued messages
-    // Only once: the flag is cleared.
-    for (int i = 0; i < 8; ++i) r.drain();
+    std::vector<dstudio::MidiEvent> all;
+    for (int i = 0; i < 8; ++i)
+        for (const auto& e : r.drain()) all.push_back(e);
+    REQUIRE(all.size() == dstudio::MidiInputHub::kQueueSize + 2);
+    CHECK(is(all.front(), 0x90, 61)); // what was queued is delivered first...
+    CHECK(is(all[all.size() - 2], 0x80, 60)); // ...then every key the port holds is released
+    CHECK(is(all.back(), 0x80, 61));
+    // Only once: the next note plays normally.
     REQUIRE(r.hub->inject(0x90, 62, 100));
-    const auto ev2 = r.drain();
-    REQUIRE(ev2.size() == 1);
-    CHECK(is(ev2[0], 0x90, 62));
+    const auto ev = r.drain();
+    REQUIRE(ev.size() == 1);
+    CHECK(is(ev[0], 0x90, 62));
 }
 
 TEST_CASE(midi_input_reuses_a_closed_ports_slot_while_nothing_renders) {

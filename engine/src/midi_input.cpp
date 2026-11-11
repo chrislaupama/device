@@ -154,6 +154,7 @@ bool MidiInputHub::inject(uint8_t status, uint8_t data1, uint8_t data2) noexcept
 }
 
 void MidiInputHub::capture_enable(bool on) noexcept {
+    std::lock_guard lock(capture_mutex_);
     const uint32_t pass = capture_state_.load(std::memory_order_relaxed) >> 1;
     if (!on) {
         capture_state_.store(pass << 1, std::memory_order_release);
@@ -163,7 +164,6 @@ void MidiInputHub::capture_enable(bool on) noexcept {
     Captured c;
     while (capture_->pop(c)) {
     }
-    capture_restart_.store(true, std::memory_order_release);
     // A new pass number: an event the audio thread captured for the previous
     // pass but pushes only now is skipped by capture_read(). 0 means "off".
     uint32_t next = (pass + 1) & 0x7FFFFFFFu;
@@ -172,6 +172,7 @@ void MidiInputHub::capture_enable(bool on) noexcept {
 }
 
 std::size_t MidiInputHub::capture_read(se_midi_captured* out, std::size_t capacity) noexcept {
+    std::lock_guard lock(capture_mutex_);
     std::size_t n = 0;
     if (!capture_) return 0;
     const uint32_t pass = capture_state_.load(std::memory_order_acquire) >> 1;
@@ -243,6 +244,7 @@ void MidiInputHub::reclaim_closing() noexcept {
         }
         release_all(s, nullptr, n, 0); // all owed: sent by the next drain
         s.overflowed.store(false, std::memory_order_relaxed);
+        s.recovering = false;
         s.state.store(kFree, std::memory_order_release);
     }
 }
@@ -267,10 +269,11 @@ uint32_t MidiInputHub::drain(MidiEvent* out, uint32_t cap) noexcept {
         Slot& s = *slots_[static_cast<uint32_t>(std::countr_zero(mask))].load(std::memory_order_acquire);
         const uint8_t state = s.state.load(std::memory_order_acquire);
         if (state == kFree) continue;
-        // A dropped message may have been a note-off: let go of everything
-        // this port holds rather than leave a note hanging.
+        // A dropped message may have been a note-off: once what was queued
+        // (note-ons included) is delivered, let go of everything this port
+        // holds rather than leave a note hanging.
         if (s.overflowed.load(std::memory_order_relaxed) && s.overflowed.exchange(false, std::memory_order_acq_rel))
-            release_all(s, out, n, cap);
+            s.recovering = true;
         Msg m;
         while (n < cap && s.queue.pop(m)) {
             const uint8_t kind = m.status & 0xF0;
@@ -294,6 +297,10 @@ uint32_t MidiInputHub::drain(MidiEvent* out, uint32_t cap) noexcept {
                 e.data2 = m.data2;
             }
             out[n++] = e;
+        }
+        if (s.recovering && s.queue.empty()) {
+            release_all(s, out, n, cap);
+            s.recovering = false;
         }
         if (state == kClosing && s.queue.empty()) {
             // Release what the port still held (owed when out is full), then free the slot.

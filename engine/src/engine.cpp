@@ -967,7 +967,12 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
 
     // MIDI input: drained once per callback, delivered in its first segment.
     MidiInputHub& midi = *midi_;
-    if (midi.take_capture_restart()) rt_midi_wrapped_ = false;
+    // The capture pass, sampled once: a new pass starts with no loop wrap seen.
+    const uint32_t pass_now = midi.capture_pass();
+    if (pass_now != rt_capture_pass_) {
+        rt_capture_pass_ = pass_now;
+        rt_midi_wrapped_ = false;
+    }
     const uint32_t midi_count = midi.drain(rt_midi_.data(), MidiInputHub::kMaxBlockEvents);
 
     // 2. Acquire the published graph (see reclaim_locked()).
@@ -978,7 +983,7 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
     // Recording: what was played is captured at the position the performer
     // heard, i.e. output latency (device; none offline) plus delay
     // compensation earlier, folded back into the loop after a wrap.
-    const uint32_t capture_pass = midi_count > 0 && rt_playing_ ? midi.capture_pass() : 0;
+    const uint32_t capture_pass = midi_count > 0 && rt_playing_ ? pass_now : 0;
     if (capture_pass != 0) {
         const int64_t lat = (rt_owner_.load(std::memory_order_relaxed) == kOwnerOffline
                                  ? 0

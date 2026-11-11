@@ -19,7 +19,7 @@
 // Several ports can hold the same key: the hub counts holders per key and
 // passes a note-off on only when the last one lets go. A slot whose queue
 // overflowed may have lost a note-off, so the next drain releases every key
-// that slot holds.
+// that slot holds once everything queued before the loss has been delivered.
 //
 // Nothing here allocates, locks or blocks on the RT side. See
 // specs/002-midi-input-and-recording/plan.md.
@@ -80,7 +80,8 @@ public:
     bool inject(uint8_t status, uint8_t data1, uint8_t data2) noexcept;
     void set_focus(uint64_t track_id) noexcept { focus_.store(track_id, std::memory_order_relaxed); }
     // Capture ring: enabling starts a new pass (events captured for an
-    // earlier pass are never read); reading pops (one consumer).
+    // earlier pass are never read); reading pops. Both are serialised, so
+    // any thread may call them.
     void capture_enable(bool on) noexcept;
     std::size_t capture_read(se_midi_captured* out, std::size_t capacity) noexcept;
     void stats(se_midi_stats* out) const noexcept;
@@ -104,9 +105,6 @@ public:
     // (capture_pass() read before the events were captured). Dropped and
     // counted when the ring is full.
     void capture(const MidiEvent& e, int64_t frame, uint32_t pass) noexcept;
-    // True once per capture_enable(true): the RT side resets its per-pass
-    // state (loop folding) when it sees it.
-    bool take_capture_restart() noexcept { return capture_restart_.exchange(false, std::memory_order_acq_rel); }
 
 private:
     enum SlotState : uint8_t { kFree = 0, kOpen = 1, kClosing = 2 };
@@ -117,6 +115,7 @@ private:
         SpscQueue<Msg, kQueueSize> queue;
         std::atomic<uint8_t> state{kFree};
         std::atomic<bool> overflowed{false}; // a message was dropped since the last drain
+        bool recovering = false;             // RT-owned: overflowed; release its keys once the queue is empty
         std::atomic<uint64_t> received{0};
         std::atomic<uint64_t> dropped{0};
         std::array<bool, 128> held{}; // RT-owned
@@ -157,7 +156,7 @@ private:
 
     // bit 0: capturing; bits 1..: the pass number (bumped by capture_enable(true)).
     std::atomic<uint32_t> capture_state_{0};
-    std::atomic<bool> capture_restart_{false};
+    std::mutex capture_mutex_; // capture_enable / capture_read (any thread; the ring has one consumer)
     std::atomic<uint64_t> capture_dropped_{0};
     std::atomic<uint64_t> delivered_{0};
     // Allocated by the first capture_enable(true), published by capture_state_.
