@@ -421,3 +421,29 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   into a return still renders. Return tracks are renamed like any track (double-click the name).
 - Review states `review-returns` and `review-returns-strip`; self-test section `returns_steps`.
 
+### 2026-11-11: export at 44.1 or 48 kHz
+
+- The Export dialog's 44.1 kHz / 48 kHz switch now sets the rate of the Mixdown and Stems files; before, it showed a
+  placeholder and every file had the engine's rate. The default is the rate nearest the engine's (48 kHz at 47 kHz
+  and up). The size estimate follows the picked rate. Project exports stay at the engine rate, which the Live set
+  records.
+- `src/resample.rs`: a polyphase Kaiser-windowed sinc converter (128 taps, about 85 dB stopband, cutoff at 93 % of the
+  lower Nyquist frequency) for rate pairs whose ratio reduces to at most 2048 output steps (44.1 / 48 kHz and their
+  multiples). The render happens at the engine rate and is converted once per file.
+- Tests: `resample::tests` (pitch and level both ways, 18 kHz passes, 23 kHz stopped going to 44.1 kHz, channels
+  stay apart, odd ratios refused) and `the_export_rate_follows_the_engine_until_one_is_picked`. The self-test exports
+  the mix again at the other rate and checks its rate, length in seconds and level against the first file. Review
+  state `review-export-44k`.
+
+### 2026-11-11: export the loop region
+
+- The Export dialog's Range pill is now a menu: Full project (bar 1 to the end of the last clip, plus the 2 s tail, as
+  before) or Loop region. The loop region renders from its start for exactly its length, with no tail, so the file
+  loops seamlessly; it can be exported whether or not looping is on. The bars readout ("Bars 3–4") and the size
+  estimate follow the range, and Stems use it too. A project without a loop region falls back to the full project.
+- Escape or a click outside closes the menu without closing the dialog.
+- Tests: `the_range_text_counts_the_bars_the_loop_touches` and
+  `the_loop_range_renders_the_loop_exactly_and_falls_back_without_one`. The self-test sets a loop over bars 2-3, picks
+  Loop region in the menu, checks the readout and estimate, exports it and checks the file's length and sound. Review
+  state `review-export-range`.
+

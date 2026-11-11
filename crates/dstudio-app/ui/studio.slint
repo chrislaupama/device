@@ -850,7 +850,7 @@ export global Studio {
     // ---- export dialog and unsaved-changes prompt (src/dialogs.rs, ui/dialogs.slint) ----
     in property <bool> export-open;
     in property <bool> export-bits24: true;
-    in property <bool> export-rate48: true;      // the engine rate (the render rate)
+    in property <bool> export-rate48: true;      // the file's rate: 48 kHz (true) or 44.1 kHz
     in property <string> export-recipe-text: "WAV 24-bit";
     in property <string> export-bars-text: "Bars 1–1";
     in property <string> export-name: "Untitled.wav";
@@ -864,13 +864,20 @@ export global Studio {
     in property <bool> export-tracks-menu-open;
     in property <length> export-tracks-menu-h;
     in property <[ChoiceItem]> export-tracks-items;
+    in property <string> export-range-label: "Full project";
+    in property <bool> export-range-menu-open;
+    in property <length> export-range-menu-h;
+    in property <[ChoiceItem]> export-range-items;
     callback export-pick-recipe(int);
     callback export-toggle-tracks();
     callback export-pick-tracks(int);
+    callback export-toggle-range();
+    callback export-pick-range(int);             // 0 full project, 1 loop region
     callback export-close();
     callback export-run();
     callback export-choose-dir();
     callback export-bits(bool);                 // true = 24-bit
+    callback export-rate(bool);                 // true = 48 kHz, false = 44.1 kHz
     callback export-name-edited(string);
     in property <bool> unsaved-open;
     // Settings › General (src/settings.rs general_toggle): Always load last session, Auto-show

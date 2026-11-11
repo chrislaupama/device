@@ -62,6 +62,9 @@ wgpu.
   can be switched off.
 - **Automation.** Draw volume, pan, built-in device and plugin parameters as lanes with points, curves or freehand, or
   record your moves with touch-write.
+- **Export.** Mix down the arrangement, or export each track as its own stem, as 16- or 24-bit WAV at 44.1 or 48 kHz
+  (converted from the engine's rate), over the whole project or just the loop region (an exact-length file that loops
+  seamlessly), or export the project as an Ableton Live set.
 - **Undo for everything.** Every edit is a validated, invertible command, so undo and redo cover the whole project.
 - **Assistant.** An optional side panel that can explain the app (Teach) or make edits for you (Assist), each turn as
   one undo step. It uses your own Anthropic API key.
@@ -152,7 +155,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Mixer | ✅ | |
 | Automation | ✅ | |
 | Delay compensation | ✅ | |
-| Export | 🚧 | The engine renders to WAV; export from the app isn't wired up yet |
+| Export | 🚧 | MP3 |
 | Assistant | 🚧 | Tested only with a fixture provider, not yet against the live API |
 | Windows and Linux audio | 🚧 | Linux streams run in CI on a headless PipeWire server; neither has run on a physical sound card; no ASIO |
 | Releases and branding | 🚧 | Packages are built (unsigned); code signing, original icons, a first tagged release |
@@ -231,10 +234,12 @@ interface end to end, from importing audio to checking that notes drawn in the p
 Pull requests with visual changes include before and after screenshots, and anything that could affect performance
 comes with benchmark results.
 
-Three GitHub Actions workflows check every change: **CI** builds and tests the engine, the workspace and the app on
+Four GitHub Actions workflows check every change: **CI** builds and tests the engine, the workspace and the app on
 macOS, Windows and Linux; **Performance** builds the benchmarks at the base commit and with the change and fails a
 pull request when any benchmark row needs more than 1 % more CPU instructions (timings on all three systems are
-reported too); **Release** builds the installable packages and drafts a GitHub release for a `vX.Y.Z` tag. See
+reported too); **Security** reviews new dependencies and checks `Cargo.lock` against the RustSec advisories every
+week; **Release** builds the installable packages, attests their build provenance and drafts a GitHub release for a
+`vX.Y.Z` tag. See
 [Continuous integration](docs/building.md#continuous-integration) for the details and how to run the performance
 comparison locally.
 

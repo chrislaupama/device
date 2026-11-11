@@ -65,17 +65,21 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0 # the base commit is built from a worktree
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust toolchain (stable)
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
       - name: Install build tools and Valgrind
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache valgrind \
             libpipewire-0.3-dev libasound2-dev libx11-dev
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/ccache
@@ -86,7 +90,7 @@ jobs:
           restore-keys: perf-instructions-
       - name: Compare with the base
         run: python3 tools/perf/bench_gate.py all --base "$BASE_REF" --mode instructions --work build/perf --deps .perf-deps
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: perf-instructions
@@ -111,11 +115,15 @@ jobs:
     # Setup (tools, caches) plus the 75-minute comparison, with room left for the warning step.
     timeout-minutes: 110
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust toolchain (stable)
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
       - name: Install build tools (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -134,7 +142,7 @@ jobs:
           cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
             if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
           }
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/ccache
@@ -180,7 +188,7 @@ jobs:
           msg="The timing comparison did not finish on ${{ matrix.name }} (a build or benchmark failed, or the runner timed out). This is a warning only; see the step log."
           echo "::warning title=Timing run failed on ${{ matrix.name }}::$msg"
           echo "**Timing run failed on ${{ matrix.name }}**: $msg" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: perf-time-${{ matrix.name }}

@@ -151,16 +151,51 @@ issue in wgpu-core's debug-only lock tracing).
 ## Continuous integration
 
 CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs on every push
-to main and every pull request, including pull requests from forks. It has one
-job per system, all on GitHub-hosted runners (`macos-latest`, `windows-latest`,
-`ubuntu-latest`). Each job:
+to main, every pull request (including pull requests from forks), nightly on
+main and on demand (Actions › CI › Run workflow). All jobs run on GitHub-hosted
+runners (`macos-latest`, `windows-latest`, `ubuntu-latest`). Each system has two
+jobs that run side by side:
 
-1. configures and builds the engine with warnings as errors, and runs ctest;
-2. builds and tests the Rust workspace (`--locked`);
-3. builds the app in release mode and runs `device-studio --self-test
-   --no-audio`, which must report every check passed (Linux under Xvfb with
-   Mesa lavapipe; Windows under WARP, informational for now);
-4. uploads the screenshots and self-test logs as an artifact.
+- **tests (system)** configures and builds the engine with warnings as errors
+  and runs ctest, then builds and tests the Rust workspace (`cargo test
+  --workspace --locked`, debug).
+- **app (system)** builds the app in release mode and runs its smoke tests.
+  `device-studio --self-test` must report every check passed
+  (`tools/ci/self-test.sh`). macOS runs `--self-test --no-audio` (no
+  screenshot); Linux takes a reference-state screenshot and runs `--no-audio`
+  and `--self-test-audio`, all three side by side under Xvfb with Mesa
+  lavapipe; Windows takes the screenshot under WARP on every run, and runs the
+  full self-test (about 30 minutes under WARP) on pushes to main, the nightly
+  run, manual runs, and pull requests labelled `windows-self-test` whose
+  changes reach the app. The screenshots and self-test logs are uploaded as an
+  artifact.
+
+A **lint** job checks the workflows (actionlint, which also runs shellcheck on
+their scripts), the scripts in `tools/`, the change detection below and the
+agent skills, in under a minute.
+
+The required checks are **build-test (macOS)**, **build-test (Windows)** and
+**build-test (Linux)**. Each passes only when lint and every tests and app job
+passed, so a failure on one system turns all three red; the failing job is
+named in the check list.
+
+Pull requests run only what their changes can reach
+([`tools/ci/changes.sh`](../tools/ci/changes.sh), tested by
+`tools/ci/test-changes.sh`): documentation alone builds nothing; Rust or UI
+changes skip the standalone engine build; engine tests or benchmarks alone skip
+the Rust tests and the app; packaging, benchmark tooling and the Security
+workflow have their own workflows. Anything the script does not know (`Cargo.toml`, `Cargo.lock`, the
+CI workflow, `tools/ci/`, a new folder) runs everything, and so do pushes to
+main and the nightly run. A job with nothing to do still runs and passes, so
+the required checks always report.
+
+Caches: the cargo registry and target dir (one per system and job, so debug and
+release are restored separately), the ccache store and the engine's SDK
+downloads are restored on every run and saved only by main and the nightly run,
+so a pull request never writes a cache another run uses. Every C/C++ compile goes through ccache. Before
+building, [`tools/ci/prepare-target.sh`](../tools/ci/prepare-target.sh) makes
+every source newer than the restored build (so nothing restored is reused for
+changed code) and reconfigures the engine's CMake tree from scratch.
 
 The hosted runners have no audio device and no GPU. On macOS and Windows the
 engine's device tests skip there. The Linux job starts a headless PipeWire
@@ -175,8 +210,31 @@ ignored by default and gated on an environment variable:
 DSTUDIO_TEST_REAL_INPUT=1 cargo test -p dstudio-engine --test real_loopback -- --ignored --nocapture --test-threads=1
 ```
 
-The workflow never uses a self-hosted runner, has no secrets and gives its
-token read-only access, so running it on a stranger's pull request is safe.
+The workflow never uses a self-hosted runner, has no secrets, gives its token
+read-only access and pins every action to a commit, so running it on a
+stranger's pull request is safe.
+
+### Supply-chain checks
+
+[`.github/workflows/security.yml`](../.github/workflows/security.yml) runs on
+pull requests that change `Cargo.lock`, a `Cargo.toml` or a workflow, on
+pushes to main that change `Cargo.lock`, and every Monday:
+
+- **Dependency review** (pull requests): fails when the change adds a
+  dependency or action with a known vulnerability of moderate severity or
+  worse, from GitHub's advisory database.
+- **RustSec advisories**: `cargo audit` checks every crate in `Cargo.lock`
+  against the RustSec database and fails on a vulnerability (unmaintained or
+  yanked crates are warnings). The weekly run catches advisories published
+  after a dependency was added.
+
+Every action in every workflow is pinned to a commit hash; Dependabot moves the
+hashes in one grouped pull request a week. Cargo crates and the engine's C++
+SDKs are updated by hand. For Cargo crates, Dependabot opens security-fix pull
+requests once "Dependabot security updates" is on in the repository settings
+(Settings › Code security). Dependabot does not see the SDKs that
+`engine/CMakeLists.txt` fetches, so their advisories are checked by hand when
+they are updated.
 
 ### Performance checks
 
@@ -228,10 +286,13 @@ installable packages:
 | Windows x64 | `DeviceStudio-<version>-windows-x64-setup.exe` (installer) and a portable `.zip` |
 | Linux x86_64, aarch64 | `DeviceStudio-<version>-linux-<arch>.tar.gz` (run `install.sh`) |
 
-Each package carries the plugin scanner next to the app, where the app looks
+The macOS app's two architectures build side by side on separate runners and
+are joined with `lipo` in a third job. Each package carries the plugin scanner next to the app, where the app looks
 for it first, and is smoke-tested on its runner (installed, then started to
 render a screenshot). Pushing a tag `vX.Y.Z` builds them from `main` and
-creates a **draft** GitHub release with generated notes; the tag must match the
+creates a **draft** GitHub release with generated notes, a `SHA256SUMS.txt` and
+a signed build provenance attestation for every package (check a download with
+`gh attestation verify <file> --repo chrislaupama/device`); the tag must match the
 `version` in the root `Cargo.toml`. A manual run (Actions › Release › Run
 workflow) or a pull request that changes the packaging builds the packages as
 run artifacts without releasing anything.

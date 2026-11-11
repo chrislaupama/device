@@ -428,6 +428,7 @@ pub struct Controller {
     pub settings: crate::settings::SettingsState,
     pub(crate) input_menu_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) export_tracks_model: Rc<VecModel<ChoiceItem>>,
+    pub(crate) export_range_model: Rc<VecModel<ChoiceItem>>,
     pub(crate) settings_menu_model: Rc<VecModel<ChoiceItem>>,
     // ---- plugin devices (src/devices.rs) ----
     pub devices: crate::devices::DevicesUi,
@@ -560,6 +561,7 @@ impl Controller {
             settings: Default::default(),
             input_menu_model: Rc::new(VecModel::default()),
             export_tracks_model: Rc::new(VecModel::default()),
+            export_range_model: Rc::new(VecModel::default()),
             settings_menu_model: Rc::new(VecModel::default()),
             devices: Default::default(),
             tree_model: Rc::new(VecModel::default()),
@@ -619,6 +621,7 @@ impl Controller {
         s.set_strip_sends(ModelRc::from(self.routing.strip_sends_model.clone()));
         s.set_sel_sends(ModelRc::from(self.routing.sel_sends_model.clone()));
         s.set_export_tracks_items(ModelRc::from(self.export_tracks_model.clone()));
+        s.set_export_range_items(ModelRc::from(self.export_range_model.clone()));
         s.set_undo_history_rows(ModelRc::from(self.undo_history_model.clone()));
         s.set_settings_menu_items(ModelRc::from(self.settings_menu_model.clone()));
         s.set_tree(ModelRc::from(self.tree_model.clone()));

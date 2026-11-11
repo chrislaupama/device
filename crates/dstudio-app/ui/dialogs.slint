@@ -52,8 +52,9 @@ component RowLabel inherits Text {
 
 // Export (File › Export…, ⇧⌘E). Mixdown and Stems render to WAV, Project writes an Ableton
 // Live set (Open in + Effects rows in place of Range + Format; Effects is always Render, Convert
-// is a PLACEHOLDER). MP3 and the other sample rate are PLACEHOLDERS (status line), the range is
-// always the full project. Stems adds
+// is a PLACEHOLDER). MP3 is a PLACEHOLDER (status line); 44.1 / 48 kHz sets the file's rate
+// (converted from the engine's). Range is the full project (plus a tail) or the loop region
+// (exactly, so the file loops). Stems adds
 // the Tracks row above Range (one form row, 30.6px: 24 pt rows 12 pt apart); the
 // window keeps its height.
 export component ExportModal inherits Rectangle {
@@ -109,17 +110,22 @@ export component ExportModal inherits Rectangle {
     }
     if Studio.export-recipe != 2: RowLabel { x: 17px; y: 105.4px + root.dy; text: "Range"; }
     if Studio.export-recipe != 2: Rectangle {
-        x: 71.4px; y: 105.4px + root.dy; width: 81.6px; height: 20.4px; border-radius: 10.2px; background: DialogTokens.pill;
-        Text { x: 11.9px; text: "Full project"; color: DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
+        x: 71.4px; y: 105.4px + root.dy; width: range-text.preferred-width + 11.9px + 22.1px; height: 20.4px; border-radius: 10.2px;
+        background: range-ta.has-hover || Studio.export-range-menu-open ? #2e2f34 : DialogTokens.pill;
+        accessible-role: combobox; accessible-label: "Range"; accessible-value: Studio.export-range-label;
+        accessible-action-default => { Studio.export-toggle-range(); }
+        range-text := Text { x: 11.9px; text: Studio.export-range-label; color: DialogTokens.pill-text; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
         Icon { x: parent.width - 18.7px; y: 6.2px; width: 8px; height: 8px; d: Icons.chevron-down; ink: DialogTokens.label; stroke-width: 1.4px; }
+        range-ta := TouchArea { clicked => { Studio.export-toggle-range(); } }
+        // The bars the range covers, beside the picker.
+        Text { x: parent.width + 8.5px; height: 20.4px; text: Studio.export-bars-text; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
     }
-    if Studio.export-recipe != 2: Text { x: 71.4px + 81.6px + 8.5px; y: 105.4px + root.dy; height: 20.4px; text: Studio.export-bars-text; color: DialogTokens.label; font-size: 10.2px; font-weight: 600; letter-spacing: -0.4px; vertical-alignment: center; }
     if Studio.export-recipe != 2: RowLabel { x: 17px; y: 136px + root.dy; text: "Format"; }
     if Studio.export-recipe != 2: Segments { x: 71.4px; y: 136.85px + root.dy; width: 85.9px; a: "WAV"; b: "MP3"; a-w: 40px; index: 0; picked(i) => { if (i == 1) { Studio.chat-placeholder("MP3 export"); } } }
     if Studio.export-recipe != 2: Segments { x: 71.4px + 91.8px; y: 136.85px + root.dy; width: 97.3px; a: "16-bit"; b: "24-bit"; a-w: 48.4px; index: Studio.export-bits24 ? 1 : 0; picked(i) => { Studio.export-bits(i == 1); } }
     if Studio.export-recipe != 2: Segments {
         x: 71.4px + 197.7px; y: 136.85px + root.dy; width: 117.3px; a: "44.1 kHz"; b: "48 kHz"; a-w: 56.3px; index: Studio.export-rate48 ? 1 : 0;
-        picked(i) => { if ((i == 1) != Studio.export-rate48) { Studio.chat-placeholder("Export at another sample rate"); } }
+        picked(i) => { Studio.export-rate(i == 1); }
     }
     Rectangle { x: 17px; y: 170px + root.dy; width: root.width - 34px; height: 0.45px; background: DialogTokens.rule; }
     RowLabel { x: 17px; y: 184.2px + root.dy; text: Studio.export-name-label; }
@@ -152,6 +158,15 @@ export component ExportModal inherits Rectangle {
             x: 71.4px; y: 105.4px + 20.4px + 3.4px; width: 170px; height: Studio.export-tracks-menu-h;
             items: Studio.export-tracks-items;
             picked(i) => { Studio.export-pick-tracks(i); }
+        }
+    }
+    // Range menu (click outside closes it): Full project, Loop region (dimmed when there is none).
+    if Studio.export-range-menu-open: Rectangle {
+        TouchArea { clicked => { Studio.export-toggle-range(); } }
+        ChoiceList {
+            x: 71.4px; y: 105.4px + root.dy + 20.4px + 3.4px; width: 130px; height: Studio.export-range-menu-h;
+            items: Studio.export-range-items;
+            picked(i) => { Studio.export-pick-range(i); }
         }
     }
 }
