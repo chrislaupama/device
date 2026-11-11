@@ -371,12 +371,28 @@ impl Project {
     }
 
     /// Repairs routing a hand-edited or damaged file could hold: return tracks move after the
-    /// ordinary tracks (keeping their order, at most [MAX_RETURNS]) and lose any sends or output;
-    /// sends and outputs that don't name a return track and duplicate sends are dropped, levels
-    /// are clamped. Valid projects are unchanged.
+    /// ordinary tracks (keeping their order) and lose any sends, output, input, arm or monitor.
+    /// A return holding clips or an instrument, or beyond the first [MAX_RETURNS], loads as an
+    /// ordinary track instead, so nothing in the file is lost. Sends and outputs that don't name a
+    /// return track and duplicate sends are dropped, levels are clamped. Valid projects are unchanged.
     pub fn sanitize_routing(&mut self) {
-        let (mut ordinary, returns): (Vec<Track>, Vec<Track>) = std::mem::take(&mut self.tracks).into_iter().partition(|t| !t.is_return());
-        let returns: Vec<Track> = returns.into_iter().take(MAX_RETURNS).collect();
+        let (mut ordinary, mut returns): (Vec<Track>, Vec<Track>) = std::mem::take(&mut self.tracks).into_iter().partition(|t| !t.is_return());
+        // A return can't hold clips or an instrument, and there are at most MAX_RETURNS. Rather than
+        // drop content from a damaged file, such returns load as ordinary tracks at the end of the list.
+        let mut kept = Vec::new();
+        for mut r in returns.drain(..) {
+            let has_content = !r.clips.is_empty() || !r.midi_clips.is_empty() || r.instrument_plugin.is_some();
+            if has_content || kept.len() == MAX_RETURNS {
+                r.kind = if r.midi_clips.is_empty() && r.instrument_plugin.is_none() { TrackKind::Audio } else { TrackKind::Instrument };
+                ordinary.push(r);
+            } else {
+                r.input = None;
+                r.arm = false;
+                r.monitor = false;
+                kept.push(r);
+            }
+        }
+        let returns = kept;
         let return_ids: Vec<TrackId> = returns.iter().map(|t| t.id).collect();
         for t in &mut ordinary {
             let mut seen = Vec::new();

@@ -51,7 +51,8 @@ most one send per return.
   and pan.
 - A muted track sends nothing. With solo: soloing ordinary tracks keeps the returns playing (you
   hear the soloed track with its reverb, not the other tracks' reverb); soloing a return plays only
-  the soloed returns, still fed by every unmuted track's sends.
+  the soloed returns, still fed by every unmuted track's sends (only the soloed ones', when
+  ordinary tracks are soloed too).
 - A return track has no sends of its own.
 
 **Out.** The channel strip's Out selector lists Master and every return track. Routing a track's
@@ -87,9 +88,10 @@ this load with no returns, no sends and every Out on Master.
 - R8. The engine renders sends (pre- or post-fader, at their level) and outputs into the return
   tracks, the returns through their own chain, volume, pan and meters, into the master, in the
   live mix and in exports.
-- R9. Mute and solo follow Behaviour: muted tracks send nothing; soloing ordinary tracks keeps
-  returns audible; soloing a return plays only soloed returns, fed by every unmuted, un-soloed-out
-  track's sends.
+- R9. Mute and solo follow Behaviour: muted tracks send nothing. Soloing ordinary tracks keeps
+  returns audible, fed only by the soloed tracks. Soloing a return plays only the soloed returns
+  (no ordinary track is heard directly unless it is soloed too); they are fed by every unmuted
+  ordinary track, or, when ordinary tracks are soloed as well, by the unmuted soloed ones only.
 - R10. With delay compensation on, a track's direct signal and its signal through any return
   arrive at the master aligned, including when the return's chain has latency; the latency report
   includes the returns. With it off, nothing is delayed (as today).

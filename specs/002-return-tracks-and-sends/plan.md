@@ -23,8 +23,10 @@ of every bus". For each track `t`, `lat_t` is its chain latency as today. A retu
 returns. Each track is delayed after its chain by `d_t = min(dest_in) - lat_t` over its
 destinations (`L` for the master, `in_r` for a return), so it is aligned for its earliest
 destination; each edge whose destination receives later gets its own delay line of
-`dest_in - lat_t - d_t`. A return is delayed by `L - in_r - lat_r`. Without latent plugins on
-returns every edge delay is 0 and no extra line exists, so the common case costs nothing. Edge
+`dest_in - lat_t - d_t`. A return is delayed by `L - in_r - lat_r`. An edge delay is non-zero only when
+a track's destinations receive at different times, for example when a latent track feeds the master
+but not a return that another track sends to; with no plugin latency anywhere every delay is 0 and
+no extra line runs, so the common case costs nothing. Edge
 delays run after the fader, so fader and send-tap timing for automation is unchanged; a monitored
 input skips only the track delay `d_t`, as today, not the edge delays (documented).
 
@@ -38,6 +40,10 @@ input skips only the track delay `d_t`, as today, not the edge delays (documente
     and validates returns (empty, no input or instrument, at most `MAX_RETURNS` = 16).
     `RemoveTrack` of a return also removes the sends to it and resets outputs to it; its inverse is
     a `Batch` that restores the track, then the sends and outputs.
+  - Loading repairs routing a damaged or hand-edited file could hold (`Project::sanitize_routing`):
+    a return with clips, MIDI clips or an instrument, or beyond the first 16, loads as an ordinary
+    track so no content is lost; input, arm and monitor on a return are cleared; bad sends and
+    outputs are dropped. Every loaded track then passes `AddTrack` validation, so undoing its removal works.
   - New commands: `SetSends { track, sends }` (whole list; labels by what changed is the caller's
     `Batch` label: Add Send, Remove Send, Send Pre-Fader; coalesce key `sends:{track}` so a level
     drag is one step, label Send Level Change) and `SetTrackOutput { track, output }` (Output
