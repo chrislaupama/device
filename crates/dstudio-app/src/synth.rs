@@ -67,6 +67,8 @@ pub mod disp {
 pub const DISP_W: f32 = 245.0;
 pub const WIDE_W: f32 = 295.5;
 pub const DISP_H: f32 = 128.0;
+/// Left gutter of the filter envelope picture that holds its frequency labels.
+const FILTER_MOD_GUTTER: f32 = 26.0;
 pub const FX_CURVE_W: f32 = 136.0;
 pub const FX_GAP: f32 = 4.0;
 pub const FX_WAVE_W: f32 = 418.0;
@@ -760,11 +762,16 @@ fn fmt_secs(t: f32) -> String {
 
 /// Time axis labels (at most 5 ticks); returns the tick grid lines.
 fn time_ticks(slot: usize, span: f32, w: f32, labels: &mut Vec<SynthLabel>, h: f32) -> String {
+    time_ticks_between(slot, span, 8.0, w - 8.0, labels, h)
+}
+
+/// Time ticks for a picture whose time axis runs from x0 (t = 0) to x1 (t = span).
+fn time_ticks_between(slot: usize, span: f32, x0: f32, x1: f32, labels: &mut Vec<SynthLabel>, h: f32) -> String {
     let step = [0.005f32, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0].into_iter().find(|s| span / s <= 5.0).unwrap_or(50.0);
     let mut grid = String::new();
     let mut t = 0.0;
     while t < span * 0.96 {
-        let x = 8.0 + t / span * (w - 16.0);
+        let x = x0 + t / span * (x1 - x0);
         labels.push(label(slot, x, h - 14.0, fmt_secs(t), 0));
         if t > 0.0 {
             grid.push_str(&format!("M{x:.2} 0 L{x:.2} {:.2} ", h - 16.0));
@@ -865,7 +872,9 @@ fn filter_mod_display(v: &[f32], labels: &mut Vec<SynthLabel>) -> SynthDisplay {
     // A 6.6 octave window around the cutoff (inside 20 Hz .. 20 kHz).
     let hi = (fc.max(20.0).log2() + 3.2).clamp(4.33 + 6.6, 14.3);
     let lo = hi - 6.6;
-    let (x0, x1) = (4.0, WIDE_W - 4.0);
+    // The curve starts right of the frequency labels' gutter, so a fast attack, its dot and
+    // the "+N oct" readout never sit on top of "10k" / "5k".
+    let (x0, x1) = (FILTER_MOD_GUTTER, WIDE_W - 8.0);
     let (top, bot) = (8.0, DISP_H - 22.0);
     let x = |t: f32| x0 + t / span * (x1 - x0);
     let y = |hz: f32| bot - ((hz.max(1.0).log2() - lo) / (hi - lo)).clamp(-0.02, 1.02) * (bot - top);
@@ -890,7 +899,12 @@ fn filter_mod_display(v: &[f32], labels: &mut Vec<SynthLabel>) -> SynthDisplay {
     let sl = disp::FILTER_MOD;
     let mut hgrid = String::new();
     for (hz, t) in [(10_000.0, "10k"), (5_000.0, "5k"), (2_000.0, "2k"), (1_000.0, "1k")] {
-        labels.push(label(sl, 6.0, y(hz) - 7.0, t, 0));
+        // Only frequencies inside the window: outside it they would all clamp onto its edge.
+        let ly = y(hz) - 7.0;
+        if ly < 0.0 || ly + 13.0 > bot {
+            continue;
+        }
+        labels.push(label(sl, 6.0, ly, t, 0));
         hgrid.push_str(&format!("M0 {:.2} L{WIDE_W} {:.2} ", y(hz), y(hz)));
     }
     let mut reach = label(sl, peak.0 + 8.0, (peak.1 - 14.0).max(0.0), format!("{}{:.1} oct", if amt < 0.0 { "−" } else { "+" }, (amt * 7.0).abs()), 0);
@@ -898,7 +912,7 @@ fn filter_mod_display(v: &[f32], labels: &mut Vec<SynthLabel>) -> SynthDisplay {
     labels.push(reach);
     labels.push(label(sl, x(span * 0.5), y(fc * 2f32.powf(kt * 2.0 + amt * s * 7.0)) - 15.0, "C6", 0));
     labels.push(label(sl, x(span * 0.5), y(fc * 2f32.powf(-kt * 2.0 + amt * s * 7.0)) + 2.0, "C2", 0));
-    dsp.grid = format!("{hgrid}{}", time_ticks(sl, span, WIDE_W, labels, DISP_H)).into();
+    dsp.grid = format!("{hgrid}{}", time_ticks_between(sl, span, x0, x1, labels, DISP_H)).into();
     dsp
 }
 
@@ -2670,6 +2684,56 @@ mod tests {
                 }
                 assert!(labels.iter().all(|l| l.x.is_finite() && l.y.is_finite()));
             }
+        }
+    }
+
+    /// Filter envelope picture settings that used to crowd its labels: fast and slow attacks,
+    /// low and high cutoffs, positive and negative envelope amounts.
+    fn filter_mod_cases() -> Vec<Vec<f32>> {
+        let mut out = Vec::new();
+        for cutoff in [20.0, 150.0, 1000.0, 6000.0, 20_000.0] {
+            for amt in [-1.0, 0.25, 1.0] {
+                for attack in [pdef(ix("env2_attack")).min, 0.3] {
+                    let mut v = defaults();
+                    v[ix("cutoff")] = cutoff;
+                    v[ix("filter_env")] = amt;
+                    v[ix("env2_attack")] = attack;
+                    out.push(v);
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn filter_envelope_frequency_labels_stay_clear() {
+        // 7.75 pt text: about 4.7 pt per character, 13 pt high.
+        let bx = |l: &SynthLabel| (l.x, l.y, l.x + l.text.chars().count() as f32 * 4.7, l.y + 13.0);
+        for v in filter_mod_cases() {
+            let mut labels = Vec::new();
+            filter_mod_display(&v, &mut labels);
+            let hz: Vec<_> = labels.iter().filter(|l| l.text.ends_with('k')).collect();
+            assert!(!hz.is_empty(), "cutoff {}: no frequency labels", v[ix("cutoff")]);
+            for h in &hz {
+                let (hx0, hy0, hx1, hy1) = bx(h);
+                assert!(hx1 <= FILTER_MOD_GUTTER && hy0 >= 0.0, "{} sits outside the gutter at {hx0} {hy0}", h.text);
+                for o in labels.iter().filter(|o| o.text != h.text) {
+                    let (ox0, oy0, ox1, oy1) = bx(o);
+                    let overlap = hx0 < ox1 && ox0 < hx1 && hy0 < oy1 && oy0 < hy1;
+                    assert!(!overlap, "cutoff {} amount {}: {} overlaps {}", v[ix("cutoff")], v[ix("filter_env")], h.text, o.text);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn filter_envelope_time_axis_matches_the_curve() {
+        for v in filter_mod_cases() {
+            let mut labels = Vec::new();
+            let d = filter_mod_display(&v, &mut labels);
+            let first_x: f32 = d.line.trim_start_matches('M').split(' ').next().unwrap().parse().unwrap();
+            let zero = labels.iter().find(|l| l.text == "0").expect("a 0 s tick");
+            assert!((zero.x - first_x).abs() < 0.01, "0 s tick at {} but the curve starts at {first_x}", zero.x);
         }
     }
 
