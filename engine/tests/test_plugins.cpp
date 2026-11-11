@@ -1180,6 +1180,19 @@ TEST_CASE(plugin_editor_window_x11_open_resize_close) {
     CHECK(dstudio::run_loop::timer_count() == 0u);
     CHECK(dstudio::run_loop::fd_count() == 0u);
 }
+
+TEST_CASE(clap_init_failure_drops_the_plugins_run_loop_entries) {
+    // The plugin registers a timer in init() and then fails it: the failed
+    // load must not leave a timer that calls into the freed instance.
+    EngineHandle e(48000, 256);
+    const std::string gui_path = kPluginDir + "/DStudioTestGui.clap";
+    Session5 s;
+    s.audio(1, {}, {clap(21, gui_path, "studio.dstudio.test.gui.init-fails")});
+    REQUIRE(s.publish(e) == SE_OK);
+    CHECK_EQ(error_count(e), std::size_t{1});
+    CHECK(dstudio::run_loop::timer_count() == 0u);
+    se_plugin_idle(e); // nothing left to call
+}
 #else
 TEST_CASE(plugin_editor_window_x11_open_resize_close) {
     SKIP("X11 editor host test (Linux with libX11 only)");

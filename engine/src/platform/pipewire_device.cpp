@@ -713,6 +713,16 @@ private:
         pw_thread_loop_signal(s->owner->loop_, false);
     }
 
+    // Data thread: the driver cycle being processed, for the input ring
+    // (frame_ring.hpp). Both streams share a driver (node.group), so they see
+    // the same cycle time (pw_time.now) in one cycle; their `ticks` differ by
+    // the stream delays. 0 if unknown.
+    static uint64_t cycle_of(pw_stream* stream) noexcept {
+        pw_time t{};
+        if (pw_stream_get_time_n(stream, &t, sizeof t) != 0 || t.now <= 0) return 0;
+        return static_cast<uint64_t>(t.now);
+    }
+
     // Data thread: copies the captured frames (or silence for an empty
     // chunk) into the ring that on_playback drains.
     static void on_capture(void* data) {
@@ -731,7 +741,7 @@ private:
             if (frames > 0)
                 self->ring_.write(silent ? nullptr
                                          : reinterpret_cast<const float*>(static_cast<const uint8_t*>(d.data) + offset),
-                                  frames);
+                                  frames, cycle_of(s->stream));
         }
         pw_stream_queue_buffer(s->stream, b);
     }
@@ -759,12 +769,13 @@ private:
         // it stays aligned with the output.
         auto* dst = static_cast<float*>(d.data);
         const bool input = self->input_live_.load(std::memory_order_acquire);
+        const uint64_t cycle = input ? cycle_of(s->stream) : 0;
         for (uint32_t done = 0; done < frames;) {
             const uint32_t n = std::min(frames - done, kMaxCycleFrames);
             const float* in_ptrs[kMaxDeviceInputChannels];
             uint32_t n_in = 0;
             if (input) {
-                self->ring_.read(self->in_ptrs_, self->in_channels_, n, frames - done - n);
+                self->ring_.read(self->in_ptrs_, self->in_channels_, n, frames - done - n, cycle);
                 for (uint32_t c = 0; c < self->in_channels_; ++c) in_ptrs[c] = self->in_ptrs_[c];
                 n_in = self->in_channels_;
             }

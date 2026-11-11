@@ -182,17 +182,23 @@ namespace {
 // One device cycle of a same-clock duplex pair: the capture side writes a
 // cycle (unless it misses it), the render side reads one (unless it misses
 // it). Returns the first value read, or -1 when nothing was read.
+// With `tagged`, both sides pass the driver cycle, as the PipeWire backend
+// does.
 struct SameClock {
     FrameRing ring;
     Planar out{2, 64};
     uint64_t written = 0;
+    uint64_t now = 0; // driver cycle
+    bool tagged = true;
     void cycle(bool capture = true, bool render = true, bool capture_first = true) {
-        if (capture && capture_first) put();
-        if (render) ring.read(out.ptrs.data(), 2, 64);
-        if (capture && !capture_first) put();
+        ++now;
+        const uint64_t tag = tagged ? now : 0;
+        if (capture && capture_first) put(tag);
+        if (render) ring.read(out.ptrs.data(), 2, 64, 0, tag);
+        if (capture && !capture_first) put(tag);
     }
-    void put() {
-        ring.write(frames_from(written, 64).data(), 64);
+    void put(uint64_t tag) {
+        ring.write(frames_from(written, 64).data(), 64, tag);
         written += 64;
     }
     // The input frame index the reader is at, minus the writer's: the
@@ -241,6 +247,25 @@ TEST_CASE(frame_ring_resync_ignores_the_streams_changing_order) {
     CHECK_EQ(s.ring.dropped(), uint64_t{0});
     CHECK_EQ(s.ring.inserted(), uint64_t{0});
     CHECK_EQ(s.ring.underruns(), uint64_t{0});
+}
+
+TEST_CASE(frame_ring_resync_ignores_a_lasting_change_of_stream_order) {
+    // Capture first for a few windows, then render first for good (and
+    // back): the fill read after rendering drops by a cycle, but no cycle
+    // was lost, so the input path's latency must not change.
+    for (const bool start_capture_first : {true, false}) {
+        SameClock s;
+        s.ring.reset(2, 4096, 128, 1024, 32);
+        for (uint32_t k = 0; k < 4 * FrameRing::kResyncWindow; ++k) s.cycle(true, true, start_capture_first);
+        const int64_t lag = s.lag();
+        for (uint32_t k = 0; k < 4 * FrameRing::kResyncWindow; ++k) s.cycle(true, true, !start_capture_first);
+        CHECK_EQ(s.lag(), lag);
+        for (uint32_t k = 0; k < 4 * FrameRing::kResyncWindow; ++k) s.cycle(true, true, start_capture_first);
+        CHECK_EQ(s.lag(), lag);
+        CHECK_EQ(s.ring.dropped(), uint64_t{0});
+        CHECK_EQ(s.ring.inserted(), uint64_t{0});
+        CHECK_EQ(s.ring.underruns(), uint64_t{0});
+    }
 }
 
 TEST_CASE(frame_ring_resync_off_keeps_the_old_policy) {

@@ -98,10 +98,16 @@ the engine itself needs only `pkg-config` and `libpipewire-0.3-dev`.
   also serves JACK clients; a native JACK backend is possible future work.
 * Without a running PipeWire server the engine lists no devices and starting
   audio fails; device tests skip. Run the app with `--no-audio` in that case.
-* No sound card (a container, a headless box)? `eval "$(tools/ci/headless-pipewire.sh)"`
-  starts PipeWire with a null sink and a loopback source, as CI does. Then
-  `DSTUDIO_TEST_LOOPBACK_INPUT=dstudio-loop-source ctest --test-dir engine/build`
-  also runs the duplex loopback test, and the app runs with audio.
+* No sound card (a container, a headless box)? Install the server, then start
+  it from the repository root with a null sink and a loopback source, as CI
+  does. The loopback test then runs against the preset's build (`engine/build`),
+  and the app runs with audio:
+
+  ```sh
+  sudo apt-get install -y pipewire pipewire-bin wireplumber dbus
+  eval "$(tools/ci/headless-pipewire.sh)"
+  DSTUDIO_TEST_LOOPBACK_INPUT=dstudio-loop-source ctest --test-dir engine/build
+  ```
 * Input and output streams share one `node.group`, so PipeWire drives them from
   one clock (resampling the other device when they are different hardware), and
   recordings stay sample-aligned. After a glitch that shifts the input by a

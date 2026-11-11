@@ -268,7 +268,16 @@ impl Renderer {
         while self.in_flight.len() > MAX_FRAMES_IN_FLIGHT {
             let Some(idx) = self.in_flight.pop_front() else { break };
             let t0 = std::time::Instant::now();
-            let _ = self.device.poll(wgpu::PollType::Wait { submission_index: Some(idx), timeout: Some(std::time::Duration::from_secs(2)) });
+            // A timed-out wait means the frame is still running, so keep
+            // waiting: moving on would let unfinished frames pile up again,
+            // the very thing this cap prevents. Give up only on a GPU that
+            // has made no progress for half a minute (hung or lost).
+            for _ in 0..15 {
+                match self.device.poll(wgpu::PollType::Wait { submission_index: Some(idx.clone()), timeout: Some(std::time::Duration::from_secs(2)) }) {
+                    Err(wgpu::PollError::Timeout) => continue,
+                    _ => break,
+                }
+            }
             let waited = t0.elapsed();
             if waited >= std::time::Duration::from_micros(500) {
                 self.throttled.0 += 1;

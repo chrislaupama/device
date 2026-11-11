@@ -115,7 +115,7 @@ POSIX signal or Windows NTSTATUS exception code).
 | Audio backend | Core Audio (AUHAL; private aggregate for duplex) | WASAPI shared mode, event-driven, float32 (`wasapi_device.cpp`) | PipeWire streams (`pipewire_device.cpp`) |
 | Duplex input | aggregate device, HAL drift compensation | separate capture client → `FrameRing` | capture stream → `FrameRing` |
 | Plugin formats | AU, VST3, CLAP | VST3, CLAP | VST3, CLAP |
-| Plugin editors | NSWindow (AU/VST3/CLAP) | top-level HWND hosting the plugin child window (VST3 `kPlatformTypeHWND`, CLAP `win32`) | not implemented: `SE_ERR_UNSUPPORTED_FORMAT` |
+| Plugin editors | NSWindow (AU/VST3/CLAP) | top-level HWND hosting the plugin child window (VST3 `kPlatformTypeHWND`, CLAP `win32`) | X11 top-level window hosting the plugin window (VST3 `kPlatformTypeX11EmbedWindowID`, CLAP `x11`), XWayland on Wayland; see [Plugins on Windows and Linux](#plugins-on-windows-and-linux) |
 | Scanner children | `posix_spawn` | `CreateProcessW` (no WER dialogs in the child) | `posix_spawn` |
 | Test plugins | `.clap`/`.vst3` bundles | `.clap` DLL, `.vst3/Contents/x86_64-win/*.vst3`, + `DStudioTestGui.clap` | `.clap` .so, `.vst3/Contents/x86_64-linux/*.so` |
 | Built with warnings as errors | yes (clang, `-Werror`), every CI run | yes (`/W4 /WX`), every CI run | yes (GCC, `-Werror`), every CI run |
@@ -223,7 +223,10 @@ running jackd without PipeWire.
   shift every later recording by a quantum. The ring re-syncs: it watches the
   end-of-cycle fill over windows of 32 cycles and skips or inserts the
   difference once a whole window is off by more than half a quantum
-  (`FrameRing` re-sync, `frame_ring.hpp`). `dstudio_frame_ring_bench` measures
+  (`FrameRing` re-sync, `frame_ring.hpp`). Both streams tag their ring
+  access with the cycle's time (`pw_time.now`), so the fill is measured as
+  if capture had already run: the two streams swapping order, even for good,
+  is not mistaken for a lost cycle. `dstudio_frame_ring_bench` measures
   the ring: ~0.2 µs per 256-frame stereo cycle with or without re-sync.
 * **Sources.** `Audio/Source` and `Audio/Source/Virtual` nodes (filter chains
   such as noise suppression, loopbacks) are listed as inputs.
@@ -293,7 +296,7 @@ running jackd without PipeWire.
 | `src/delay_line.hpp` | Delay line for plugin delay compensation (memcpy ring, lazy flush) |
 | `src/automation.hpp` | Automation: lane evaluation (the core contract), ramp fill, timeline history (PDC alignment), synth parameter map |
 | `src/plugins/param_bus.hpp` | Lock-free MPMC queue of plugin editor parameter changes |
-| `src/platform/` | `AudioDevice` interface + backends (Core Audio real; WASAPI/ASIO, PipeWire/JACK stubs) |
+| `src/platform/` | `AudioDevice` interface + backends (Core Audio, WASAPI, PipeWire), `FrameRing`, Linux plugin run loop and X11 editor windows |
 | `tests/` | Self-contained harness (`test_harness.hpp`), tests, allocation-tracking `operator new` |
 | `bench/bench_render.cpp` | Offline render benchmark |
 | `bench/bench_scan_cache.cpp` | Plugin-cache parse benchmark (`dstudio_scan_cache_bench`) |

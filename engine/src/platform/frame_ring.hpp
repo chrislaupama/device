@@ -34,6 +34,14 @@
 // of silence are inserted (inserted()). A single odd cycle never triggers a
 // correction, because it moves only one end of a window's range.
 //
+// The fill read at the end of a render cycle depends on the streams' order:
+// a cycle behind if the capture side has not written this cycle yet. A
+// lasting change of order would then look like a lost or gained cycle, so a
+// backend that knows the driver cycle passes it to write() and read() (a
+// non-zero id that both sides see the same in one cycle, PipeWire's clock
+// position). The reader then measures the fill as if the capture side had
+// already run: an order change leaves it unchanged, a missed cycle does not.
+//
 // Single producer, single consumer, lock-free; read()/write() never
 // allocate (RT safe). reset() allocates and must not race with them.
 #pragma once
@@ -88,7 +96,9 @@ public:
     // Producer. `interleaved` == nullptr writes silence (e.g. WASAPI's
     // AUDCLNT_BUFFERFLAGS_SILENT). Frames that do not fit are dropped
     // (counted in overflows()). Returns the frames written.
-    uint32_t write(const float* interleaved, uint32_t frames) noexcept {
+    // `cycle` (optional, non-zero): the driver cycle this write belongs to
+    // (see the file comment).
+    uint32_t write(const float* interleaved, uint32_t frames, uint64_t cycle = 0) noexcept {
         const uint64_t w = write_pos_.load(std::memory_order_relaxed);
         const uint64_t r = read_pos_.load(std::memory_order_acquire);
         const uint32_t space = capacity_ - static_cast<uint32_t>(w - r);
@@ -106,6 +116,7 @@ public:
             done += run;
         }
         write_pos_.store(w + n, std::memory_order_release);
+        if (cycle != 0) write_cycle_.store(cycle, std::memory_order_release);
         return n;
     }
 
@@ -114,8 +125,12 @@ public:
     // frames that came from the input (the rest are zeros). A device cycle
     // read in several chunks passes `cycle_remaining`, the frames it will
     // still read this cycle after this chunk: those count towards priming
-    // and are not treated as excess by the drift policy.
-    uint32_t read(float* const* dst, uint32_t channels, uint32_t frames, uint32_t cycle_remaining = 0) noexcept {
+    // and are not treated as excess by the drift policy. `cycle` (optional,
+    // non-zero): the driver cycle being rendered (see the file comment).
+    uint32_t read(float* const* dst, uint32_t channels, uint32_t frames, uint32_t cycle_remaining = 0,
+                  uint64_t cycle = 0) noexcept {
+        const uint32_t cycle_frames = cycle_frames_ + frames; // read this cycle, this chunk included
+        cycle_frames_ = cycle_remaining == 0 ? 0 : cycle_frames;
         const uint32_t ch = std::min(channels, channels_);
         uint64_t r = read_pos_.load(std::memory_order_relaxed);
         const uint64_t w = write_pos_.load(std::memory_order_acquire);
@@ -154,7 +169,11 @@ public:
             r += excess;
             avail -= excess;
         }
-        if (primed_ && cycle_remaining == 0 && tolerance_ > 0) r += resync(avail);
+        if (primed_ && cycle_remaining == 0 && tolerance_ > 0) {
+            // Measured as if the capture side had already run this cycle.
+            const bool written = cycle == 0 || write_cycle_.load(std::memory_order_acquire) >= cycle;
+            r += resync(avail + (written ? 0 : cycle_frames), avail);
+        }
         read_pos_.store(r, std::memory_order_release);
         return n;
     }
@@ -180,9 +199,9 @@ private:
     }
 
     // One end-of-cycle fill level for the re-sync windows (see the file
-    // comment). Returns the frames to skip now (an excess); a deficit is
-    // queued as silence for the next reads.
-    uint32_t resync(uint32_t level) noexcept {
+    // comment); `avail` is what can be skipped now. Returns the frames to skip
+    // now (an excess); a deficit is queued as silence for the next reads.
+    uint32_t resync(uint32_t level, uint32_t avail) noexcept {
         if (win_count_ == 0) win_lo_ = win_hi_ = level;
         win_lo_ = std::min(win_lo_, level);
         win_hi_ = std::max(win_hi_, level);
@@ -195,7 +214,7 @@ private:
             return 0;
         }
         if (win_lo_ > ref_lo_ + tolerance_) {
-            const uint32_t excess = std::min(win_lo_ - ref_lo_, level);
+            const uint32_t excess = std::min(win_lo_ - ref_lo_, avail);
             dropped_.fetch_add(excess, std::memory_order_relaxed);
             return excess;
         }
@@ -225,6 +244,8 @@ private:
     bool has_ref_ = false;
     uint32_t insert_pending_ = 0;
     uint32_t win_count_ = 0, win_lo_ = 0, win_hi_ = 0, ref_lo_ = 0, ref_hi_ = 0;
+    uint32_t cycle_frames_ = 0;                // frames read so far this cycle
+    std::atomic<uint64_t> write_cycle_{0};     // last cycle the writer tagged
     std::atomic<uint64_t> underruns_{0}, dropped_{0}, overflows_{0}, inserted_{0};
 };
 

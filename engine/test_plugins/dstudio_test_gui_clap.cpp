@@ -41,6 +41,9 @@ constexpr const char* kApi = CLAP_WINDOW_API_X11;
 namespace {
 
 constexpr const char* kId = "studio.dstudio.test.gui";
+// Not listed by the factory: an instance that registers a host timer in
+// init() and then fails it (the host must drop the timer).
+constexpr const char* kInitFailsId = "studio.dstudio.test.gui.init-fails";
 const char* const kFeatures[] = {CLAP_PLUGIN_FEATURE_AUDIO_EFFECT, CLAP_PLUGIN_FEATURE_UTILITY, nullptr};
 const clap_plugin_descriptor_t kDescriptor = {
     CLAP_VERSION_INIT, kId, "DStudio Test GUI", "DStudio", "", "", "", "1.0.0", "Pass-through with an embedded editor",
@@ -50,6 +53,7 @@ const clap_plugin_descriptor_t kDescriptor = {
 struct Plugin {
     clap_plugin_t clap{};
     const clap_host_t* host = nullptr;
+    bool init_fails = false;
 #if defined(_WIN32)
     HWND child = nullptr;
 #else
@@ -254,8 +258,17 @@ const clap_plugin_gui_t kGui = {gui_is_api_supported, gui_get_preferred_api, gui
                                 gui_suggest_title,    gui_show,              gui_hide};
 
 // ---- lifecycle
-// Nothing to initialise.
-bool init(const clap_plugin_t*) { return true; }
+// Nothing to initialise, except for the kInitFailsId instance (see there).
+bool init(const clap_plugin_t* p) {
+    Plugin* s = self(p);
+    if (!s->init_fails) return true;
+#if !defined(_WIN32)
+    // Left registered on purpose (not s->timer, which destroy() unregisters).
+    clap_id leaked = CLAP_INVALID_ID;
+    if (const auto* t = host_timers(s)) t->register_timer(s->host, 10, &leaked);
+#endif
+    return false;
+}
 // Destroys the GUI and frees the instance.
 void destroy(const clap_plugin_t* p) {
     gui_destroy(p);
@@ -314,10 +327,12 @@ void on_main_thread(const clap_plugin_t*) {}
 
 // Creates an instance for kId; nullptr for any other id.
 const clap_plugin_t* create(const clap_plugin_factory_t*, const clap_host_t* host, const char* id) {
-    if (std::strcmp(id, kId) != 0) return nullptr;
+    const bool init_fails = std::strcmp(id, kInitFailsId) == 0;
+    if (std::strcmp(id, kId) != 0 && !init_fails) return nullptr;
     auto* s = new (std::nothrow) Plugin();
     if (s == nullptr) return nullptr;
     s->host = host;
+    s->init_fails = init_fails;
     s->clap.desc = &kDescriptor;
     s->clap.plugin_data = s;
     s->clap.init = init;

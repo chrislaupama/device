@@ -345,8 +345,9 @@ public:
     Steinberg::tresult PLUGIN_API registerEventHandler(Steinberg::Linux::IEventHandler* handler,
                                                        Steinberg::Linux::FileDescriptor fd) override {
         if (handler == nullptr || fd < 0) return Steinberg::kInvalidArgument;
-        // One handler may watch several fds; the run loop keys on (handler, fd).
-        if (!run_loop::add_fd(handler, fd, run_loop::kRead, [handler](int f, uint32_t) { handler->onFDIsSet(f); }))
+        // Registered under this frame: plugins share one handler between
+        // their views, and closing one view must not stop another's watch.
+        if (!run_loop::add_fd(this, fd, run_loop::kRead, [handler](int f, uint32_t) { handler->onFDIsSet(f); }))
             return Steinberg::kResultFalse;
         handler->addRef();
         fds_.push_back({handler, fd});
@@ -360,7 +361,7 @@ public:
                 ++it;
                 continue;
             }
-            run_loop::remove_fd(handler, it->second);
+            run_loop::remove_fd(this, it->second);
             handler->release();
             it = fds_.erase(it);
             found = true;
@@ -399,7 +400,7 @@ public:
     void detach() {
         owner_ = nullptr;
         for (auto& [h, fd] : fds_) {
-            run_loop::remove_fd(h, fd);
+            run_loop::remove_fd(this, fd);
             h->release();
         }
         fds_.clear();
@@ -543,7 +544,11 @@ public:
             return false;
         }
         show();
-        gui_->show(plugin_);
+        if (!gui_->show(plugin_)) {
+            err = "clap.gui show failed";
+            close();
+            return false;
+        }
         return true;
     }
 

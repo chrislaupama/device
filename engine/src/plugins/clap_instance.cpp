@@ -88,6 +88,9 @@ public:
             err = "CLAP plugin init failed";
             plugin_->destroy(plugin_);
             plugin_ = nullptr;
+#if defined(__linux__)
+            run_loop::remove_all(this); // fds and timers registered during init
+#endif
             return false;
         }
         const auto ext = [&](const char* id) { return plugin_->get_extension(plugin_, id); };
@@ -352,6 +355,11 @@ public:
     }
 
     void on_main_thread() noexcept override {
+        // GUI requests made off the main thread (clap.gui allows any thread).
+        if (const uint64_t r = pending_resize_.exchange(0, std::memory_order_acq_rel); r != 0 && editor_host_ != nullptr)
+            editor_host_->request_resize(static_cast<uint32_t>(r >> 32), static_cast<uint32_t>(r));
+        if (pending_closed_.exchange(false, std::memory_order_acq_rel) && editor_host_ != nullptr)
+            editor_host_->plugin_closed();
         if (plugin_ != nullptr && callback_requested_.exchange(false)) plugin_->on_main_thread(plugin_);
     }
 
@@ -491,12 +499,24 @@ private:
             [](const clap_host*) {},
             [](const clap_host* host, uint32_t w, uint32_t hgt) {
                 auto* self = self_of(host);
+                if (std::this_thread::get_id() != self->main_thread_) {
+                    // Any thread may ask; the editor is main-thread only, so
+                    // the size is applied from on_main_thread().
+                    self->pending_resize_.store((uint64_t{w} << 32) | hgt, std::memory_order_release);
+                    self->wake_main_thread();
+                    return true;
+                }
                 return self->editor_host_ != nullptr && self->editor_host_->request_resize(w, hgt);
             },
             [](const clap_host*) { return false; },
             [](const clap_host*) { return false; },
             [](const clap_host* host, bool) {
                 auto* self = self_of(host);
+                if (std::this_thread::get_id() != self->main_thread_) {
+                    self->pending_closed_.store(true, std::memory_order_release); // see request_resize
+                    self->wake_main_thread();
+                    return;
+                }
                 if (self->editor_host_ != nullptr) self->editor_host_->plugin_closed();
             }};
         const std::string_view s(id);
@@ -555,12 +575,18 @@ private:
     static void host_request_callback(const clap_host* h) {
         auto* self = self_of(h);
         self->callback_requested_.store(true);
+        self->wake_main_thread();
+    }
+
+    // Makes on_main_thread() run soon. Every platform runs it from
+    // se_plugin_idle; macOS also queues it on the main dispatch queue.
+    void wake_main_thread() {
 #if defined(__APPLE__)
         // Run on the main queue (the app's run loop); the instance may be
         // gone by then, hence the weak reference.
         std::weak_ptr<ClapInstance> weak;
         try {
-            weak = self->weak_from_this();
+            weak = weak_from_this();
         } catch (...) {
         }
         if (weak.expired()) return; // during init: picked up by se_plugin_idle
@@ -601,6 +627,8 @@ private:
     std::thread::id main_thread_;
     std::atomic<bool> callback_requested_{false};
     ClapEditorHost* editor_host_ = nullptr; // main thread
+    std::atomic<uint64_t> pending_resize_{0}; // (w << 32) | h asked off the main thread, 0 = none
+    std::atomic<bool> pending_closed_{false}; // gui closed reported off the main thread
 #if defined(__linux__)
     // The plugin's timer and fd callbacks (looked up on first use).
     const clap_plugin_timer_support_t* timer_ext_ = nullptr;
