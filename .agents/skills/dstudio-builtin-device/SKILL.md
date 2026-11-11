@@ -22,7 +22,7 @@ name in snake case (`auto_filter`), which is what file names use.
 | DSP kernel | `engine/src/devices/<module>.cpp`, registered in `kBuiltinRegistry` (`engine/src/devices/builtin.cpp`), added to `engine/CMakeLists.txt` | a `BuiltinProcessor` plus a `BuiltinDescriptor` |
 | Standard card | derived by `crates/dstudio-app/src/device_panel.rs`, drawn by `crates/dstudio-app/ui/device_panel.slint` | nothing to write unless the layout needs a new control kind |
 | Custom view | `View::Custom("<name>")`: `device_views.rs` (`custom_body`), `device_canvas.rs`, `panel_graph.rs`, `device_editors.rs` in `crates/dstudio-app/src/` | only when the standard card can't express it |
-| Engine test | `engine/tests/devices/test_<module>.cpp` with `DeviceRig` / `DeviceSession` from `device_harness.hpp` | behaviour, not just "it runs" |
+| Engine test | `engine/tests/devices/test_<module>.cpp` with `DeviceRig` / `DeviceSession` from `device_harness.hpp`, added to the `dstudio_engine_tests` source list in `engine/CMakeLists.txt` | behaviour, not just "it runs"; the source list is explicit, so a file left out of it never runs |
 | Benchmark row | `engine/bench/bench_devices.cpp` (`dstudio_device_bench`) | numbers go in the pull request |
 
 ## Rules that bite
@@ -55,7 +55,7 @@ name in snake case (`auto_filter`), which is what file names use.
    factory presets.
 2. Kernel and descriptor, registered, in CMake.
 3. Custom view only if needed.
-4. Tests: an engine test for the device's behaviour (a tone in, the expected change out; parameter
+4. Tests: an engine test for the device's behaviour, listed in the `dstudio_engine_tests` target (a tone in, the expected change out; parameter
    extremes; latency if any), plus core tests for any new display format or parsing.
 5. Benchmark row in `bench_devices.cpp`; run `dstudio_device_bench` before and after.
 6. Review state: `--state reference-<id>` shows any built-in device at its defaults. Render it with
