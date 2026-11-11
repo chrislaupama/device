@@ -123,3 +123,15 @@ Details in engine/README.md "Plugin delay compensation".
   `acoustic_loopback_latency_with_pdc` exists but was not run: it opens the microphone); third-party plugins
   that change latency at runtime; the clip-delay path for instrument plugins *with* latency (no latent test
   instrument; the code path is shared with the tested lines).
+
+## Note: buses (return tracks, 2026-11-11)
+Spec 002 adds return tracks: ordinary tracks feed returns through sends or their output, and returns play into the
+master. Alignment generalises from "every track at the master" to "every input of every bus": a return `r` receives
+at `in_r = max lat_s` over the tracks that feed it and reaches the master at `in_r + lat_r`; `L` is the latest
+master arrival. A track's main line delays it to its earliest destination, and each later destination gets its own
+edge line (per send, per routed output) for the difference, after the fader, so automation timing at the fader is
+unchanged. A monitored input skips only the main line, as before, not the edge lines. An edge delay is non-zero
+only when a track's destinations receive at different times; with no plugin latency anywhere every delay is 0 and
+no edge line runs, so such sessions render exactly as before. Edge
+lines carry across republishes keyed by (track id, destination id). Details: engine/README.md "Return tracks and
+sends".

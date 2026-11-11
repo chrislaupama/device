@@ -83,10 +83,13 @@ struct Result {
 // plugins: 0 = none (se_session_publish), 1 = CLAP gain + VST3 gain per
 // track, 2 = two CLAP gains per track (se_session_publish_v5), 3 = one
 // DStudioTestLatency (N = `latency`) on track 1 only, delay compensation
-// `pdc` on/off.
+// `pdc` on/off. routing (se_session_publish_v9, plugins 0): 1 = two return
+// tracks, every track sending to both (one post-, one pre-fader); 2 = the
+// same with a DStudioTestLatency (N = `latency`) on the first return, so every
+// track's output also runs through an edge delay line.
 Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std::vector<std::string>& files,
            bool features, int plugins = 0, uint32_t latency = 0, bool pdc = true, bool automation = false,
-           float preview_rate = 0.0f, const std::string& preview_file = {}) {
+           float preview_rate = 0.0f, const std::string& preview_file = {}, int routing = 0) {
     se_config cfg{SE_ABI_VERSION, kRate, kBlock, 2};
     se_engine* e = se_engine_create(&cfg);
     if (!e) {
@@ -202,14 +205,61 @@ Result run(uint32_t tracks, uint32_t clips_per_track, uint32_t blocks, const std
         }
     }
     se_session_desc_v6 sd6{t6.data(), tracks, 0.5f, nullptr, 0, 0};
-    const int32_t published = automation    ? se_session_publish_v6(e, &sd6)
+    // Routing: the plain tracks plus two returns, each track sending to both.
+    std::vector<se_track_desc_v6> r6;
+    std::vector<se_track_route> routes;
+    std::vector<se_send_desc> sends;
+    std::vector<se_device_desc> return_fx;
+    se_session_desc_v9 sd9{};
+    if (routing != 0) {
+        for (uint32_t t = 0; t < tracks; ++t) {
+            se_track_desc_v6 d{};
+            d.track_id = tds[t].track_id;
+            d.gain = tds[t].gain;
+            d.pan = tds[t].pan;
+            d.clips = tds[t].clips;
+            d.clip_count = tds[t].clip_count;
+            r6.push_back(d);
+            sends.push_back({d.track_id, 9001, 0.3f, 0, {}});
+            sends.push_back({d.track_id, 9002, 0.2f, 1, {}});
+        }
+        if (routing == 2) {
+            se_device_desc d{};
+            d.device_id = 1000;
+            d.format = SE_PLUGIN_CLAP;
+            d.plugin_id = "studio.dstudio.test.latency";
+            d.path = clap_latency.c_str();
+            d.state = latency_state;
+            d.state_len = 4;
+            d.enabled = 1;
+            return_fx.push_back(d);
+        }
+        for (uint64_t id : {9001ull, 9002ull}) {
+            se_track_desc_v6 d{};
+            d.track_id = id;
+            d.gain = 0.7f;
+            if (id == 9001 && !return_fx.empty()) {
+                d.devices = return_fx.data();
+                d.device_count = 1;
+            }
+            r6.push_back(d);
+            routes.push_back({id, 0, 1, {}});
+        }
+        sd9.v8.v7.v6 = se_session_desc_v6{r6.data(), static_cast<uint32_t>(r6.size()), 0.5f, nullptr, 0, 0};
+        sd9.routes = routes.data();
+        sd9.route_count = static_cast<uint32_t>(routes.size());
+        sd9.sends = sends.data();
+        sd9.send_count = static_cast<uint32_t>(sends.size());
+    }
+    const int32_t published = routing != 0  ? se_session_publish_v9(e, &sd9)
+                              : automation    ? se_session_publish_v6(e, &sd6)
                               : plugins == 0 ? se_session_publish(e, &sd)
                                              : se_session_publish_v5(e, &sd5);
     if (published != SE_OK) {
         std::fprintf(stderr, "publish failed: %s\n", se_last_error());
         std::exit(1);
     }
-    if (plugins != 0) {
+    if (plugins != 0 || routing == 2) {
         size_t errors = 0;
         se_plugin_load_errors(e, nullptr, 0, &errors);
         if (errors != 0) {
@@ -689,6 +739,16 @@ int main(int argc, char** argv) {
         const Result r = run(32, clips_per_track, blocks, files, features, 1, 0, true, automation);
         std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", automation ? "32 x 4 lanes" : "none (same session)",
                     r.us_per_block_avg, r.us_per_block_p99, r.us_per_block_max, r.rt_ratio);
+    }
+    std::printf("\nReturns: 32 audio tracks x %u clips, each sending to 2 return tracks (one post-, one pre-fader)\n",
+                clips_per_track);
+    std::printf("%22s %14s %14s %14s %16s\n", "routing", "avg us/block", "p99 us/block", "max us/block",
+                "realtime ratio");
+    for (const int routing : {0, 1, 2}) {
+        const Result r = run(32, clips_per_track, blocks, files, features, 0, 1024, true, false, 0.0f, {}, routing);
+        const char* name = routing == 0 ? "none (same tracks)" : routing == 1 ? "2 returns, 64 sends" : "+ 1024-frame return";
+        std::printf("%22s %14.2f %14.2f %14.2f %15.1fx\n", name, r.us_per_block_avg, r.us_per_block_p99,
+                    r.us_per_block_max, r.rt_ratio);
     }
     std::printf("\nBrowser preview voice: 32 audio tracks x %u clips, plus one stereo preview sounding in every block\n",
                 clips_per_track);

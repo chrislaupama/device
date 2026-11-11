@@ -10,11 +10,11 @@ Tick a task only when its verification passed.
 - [x] T2. Core commands: `AddTrack`/`RemoveTrack` rules, `SetSends`, `SetTrackOutput`, refusals on
   returns, labels and coalescing — verify: `cargo test -p dstudio-core --test returns`
 - [x] T3. Core snapshot fields and persistence round trip — verify: `cargo test -p dstudio-core`
-- [ ] T4. Engine graph, ABI v9, validation and order — verify: `ctest -R routing`
-- [ ] T5. Engine rendering: buses, sends, outputs, mute/solo — verify: `ctest -R routing`
-- [ ] T6. Engine delay compensation across buses — verify: `ctest -R "routing|pdc"`
-- [ ] T7. Rust wrapper `publish` on v9, layout tests, e2e test — verify: `cargo test -p dstudio-engine`
-- [ ] T8. Benchmark "Returns" table — verify: `dstudio_render_bench` numbers in the PR
+- [x] T4. Engine graph, ABI v9, validation and order — verify: `ctest -R routing`
+- [x] T5. Engine rendering: buses, sends, outputs, mute/solo — verify: `ctest -R routing`
+- [x] T6. Engine delay compensation across buses — verify: `ctest -R "routing|pdc"`
+- [x] T7. Rust wrapper `publish` on v9, layout tests, e2e test — verify: `cargo test -p dstudio-engine`
+- [x] T8. Benchmark "Returns" table — verify: `dstudio_render_bench` numbers in the PR
 - [ ] T9. App: Returns pill and rows, return strips, Sends section, Sends tab, Out menu, Add
   track entries — verify: self-test, review states
 - [ ] T10. Docs: README, PROGRESS.md, engine/README.md, ADR 0004 note — verify: read them against
