@@ -104,6 +104,11 @@ the engine itself needs only `pkg-config` and `libpipewire-0.3-dev`.
   with `-DDSTUDIO_ENGINE_PIPEWIRE=OFF`, or set `DSTUDIO_ENGINE_PIPEWIRE=OFF` in the
   environment for a cargo build.
 
+* MIDI input uses the ALSA sequencer (`libasound2-dev`, already in the package
+  list above). Without a sequencer (no `/dev/snd/seq`, as in most containers)
+  the MIDI input list is empty. To build without ALSA: `-DDSTUDIO_ENGINE_ALSA_MIDI=OFF`,
+  or `DSTUDIO_ENGINE_ALSA_MIDI=OFF` in the environment for a cargo build.
+
 Plugin editor windows are not implemented on Linux yet; opening one reports
 that it is unsupported.
 

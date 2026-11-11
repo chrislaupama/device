@@ -39,6 +39,7 @@ Status: milestone 1 (functional audio vertical slice). Decisions marked **ADR** 
 | UI / main | `Document`, UI state, event loop | block on audio, touch engine memory |
 | Workers | file decode (`se_asset_load_file`), peak computation, project I/O | mutate `Document` (send results back to main) |
 | Audio callback (engine) | current render graph pointer, transport position | allocate, lock, block, do I/O, log, call Rust |
+| MIDI input (engine backends) | nothing: each open port pushes its messages into its own lock-free queue | block, call Rust |
 
 Hand-off mechanisms:
 1. **Session snapshots.** After every `Document` revision change, the main thread builds a
@@ -49,6 +50,9 @@ Hand-off mechanisms:
    sample-accurate to the block boundary.
 3. **Readouts** (transport position, meters, callback stats) are atomics written by the callback and
    polled by the UI each frame.
+4. **MIDI input** crosses from the platform's MIDI thread to the callback through one SPSC queue per
+   port; the callback routes it to instrument tracks and, while recording, writes what it delivered
+   into a capture ring the main thread drains (`engine/README.md` › MIDI input).
 
 The audio callback never sees `Project`, tempo or ticks. All musical-time maths happens in
 `dstudio_core::snapshot`.
@@ -112,13 +116,15 @@ Status per platform, what CI covers and what is untested on real hardware:
     jackd-only systems (PipeWire already serves JACK clients).
   - Real-time thread priority: Core Audio's IO thread; MMCSS "Pro Audio" on the WASAPI thread;
     PipeWire's data thread (RTKit / rt module).
+- MIDI input: Core MIDI (macOS), the multimedia `midiIn*` API (Windows), the ALSA sequencer
+  (Linux), behind one `MidiBackend` interface.
 - Plugins: AU (macOS only), VST3 and CLAP everywhere; libraries loaded with CFBundle /
   `LoadLibraryExW` / `dlopen`, standard per-OS folders, VST3 class ids stored in the canonical
   text form on every OS. Editors: NSWindow (macOS), a top-level HWND hosting the plugin's child
   window (Windows); Linux X11 embedding is not implemented yet (`SE_ERR_UNSUPPORTED_FORMAT`;
   Wayland would go through XWayland for most plugins).
 - App: Slint (winit backend) + wgpu 30 build on all three; Linux needs the X11/Wayland,
-  xkbcommon, fontconfig, udev and PipeWire development packages (see the CI workflow).
+  xkbcommon, fontconfig, udev, PipeWire and ALSA development packages (see the CI workflow).
 - CI (`.github/workflows/ci.yml`): one job per OS, all on GitHub-hosted runners
   (`macos-latest`, `windows-latest`, `ubuntu-latest`; no audio device, so device tests skip).
   Real-hardware audio tests are run by hand on a Mac. Each job builds the
