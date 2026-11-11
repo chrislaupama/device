@@ -263,6 +263,13 @@ def bench_args(name: str, mode: str) -> list[str]:
     return []
 
 
+def private_temp(directory: str) -> dict:
+    """Environment whose temp directory is `directory`: the benchmarks write
+    their test files under fixed names in the temp directory, so two runs at
+    once (base and head) must not share it."""
+    return dict(os.environ, TMPDIR=directory, TMP=directory, TEMP=directory)
+
+
 def run_instructions(name: str, exe: str, work: Path) -> dict:
     """One Callgrind run; returns {"rows": {key: instructions}, "total": n, "note": str}."""
     cg_dir = work / "cg" / name.replace("/", "_")
@@ -274,7 +281,7 @@ def run_instructions(name: str, exe: str, work: Path) -> dict:
     cmd += [exe, *bench_args(name, "instructions")]
     log("$ " + " ".join(cmd))
     with tempfile.TemporaryDirectory() as cwd:
-        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, errors="replace")
+        r = subprocess.run(cmd, cwd=cwd, env=private_temp(cwd), capture_output=True, text=True, errors="replace")
     (cg_dir / "stdout.txt").write_text(r.stdout)
     (cg_dir / "stderr.txt").write_text(r.stderr)
     if r.returncode != 0:
@@ -332,7 +339,8 @@ def run_instructions(name: str, exe: str, work: Path) -> dict:
 
 def run_native(name: str, exe: str) -> dict:
     with tempfile.TemporaryDirectory() as cwd:
-        r = subprocess.run([exe, *bench_args(name, "time")], cwd=cwd, capture_output=True, text=True, errors="replace")
+        r = subprocess.run([exe, *bench_args(name, "time")], cwd=cwd, env=private_temp(cwd), capture_output=True,
+                           text=True, errors="replace")
     if r.returncode != 0:
         return {"error": f"exit status {r.returncode}", "stdout": r.stdout, "stderr": r.stderr[-2000:]}
     rows = {}
@@ -474,6 +482,10 @@ def markdown(kind: str, rows: list[dict], notes: list[str], limit: float, title:
         out.append(f"{len(gains)} row(s) improved by more than {limit:g} %.")
     out.append("")
 
+    def cell(text: str, limit: int = 70) -> str:
+        text = text.strip().strip("|").strip()
+        return (text[:limit] + "…" if len(text) > limit else text).replace("|", "\\|")
+
     def table(sel: list[dict], heading: str) -> None:
         if not sel:
             return
@@ -482,13 +494,13 @@ def markdown(kind: str, rows: list[dict], notes: list[str], limit: float, title:
             out.append("| benchmark | table | row | base | head | change |")
             out.append("|---|---|---|---:|---:|---:|")
             for r in sel:
-                out.append(f"| {r['bench']} | {r['section'][:70]} | {r['label']} | {fmt_count(r['base'])} | "
+                out.append(f"| {r['bench']} | {cell(r['section'])} | {cell(r['label'])} | {fmt_count(r['base'])} | "
                            f"{fmt_count(r['head'])} | {r['pct']:+.2f} % |")
         else:
             out.append("| benchmark | table | row | column | base | head | change | rounds |")
             out.append("|---|---|---|---|---:|---:|---:|---:|")
             for r in sel:
-                out.append(f"| {r['bench']} | {r['section'][:70]} | {r['label']} | {r['column']} | {r['base']:g} | "
+                out.append(f"| {r['bench']} | {cell(r['section'])} | {cell(r['label'])} | {cell(r['column'])} | {r['base']:g} | "
                            f"{r['head']:g} | {r['pct']:+.1f} % | {r['rounds']} |")
         out.append("")
 

@@ -18,8 +18,10 @@ class ScopedFlushDenormals {
 public:
     ScopedFlushDenormals() noexcept {
 #if defined(__aarch64__)
-        saved_ = __builtin_arm_rsr64("fpcr");
-        __builtin_arm_wsr64("fpcr", saved_ | (uint64_t{1} << 24)); // FZ
+        // Inline asm rather than __builtin_arm_rsr64/wsr64, which GCC lacks.
+        asm volatile("mrs %0, fpcr" : "=r"(saved_));
+        const uint64_t fz = saved_ | (uint64_t{1} << 24); // FZ
+        asm volatile("msr fpcr, %0" : : "r"(fz));
 #elif defined(__SSE__) || defined(_M_X64)
         saved_ = _mm_getcsr();
         _mm_setcsr(static_cast<unsigned>(saved_) | 0x8040u); // FTZ | DAZ
@@ -27,7 +29,7 @@ public:
     }
     ~ScopedFlushDenormals() {
 #if defined(__aarch64__)
-        __builtin_arm_wsr64("fpcr", saved_);
+        asm volatile("msr fpcr, %0" : : "r"(saved_));
 #elif defined(__SSE__) || defined(_M_X64)
         _mm_setcsr(static_cast<unsigned>(saved_));
 #endif
