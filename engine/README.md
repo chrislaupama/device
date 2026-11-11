@@ -118,8 +118,8 @@ POSIX signal or Windows NTSTATUS exception code).
 | Plugin editors | NSWindow (AU/VST3/CLAP) | top-level HWND hosting the plugin child window (VST3 `kPlatformTypeHWND`, CLAP `win32`) | X11 top-level window hosting the plugin window (VST3 `kPlatformTypeX11EmbedWindowID`, CLAP `x11`), XWayland on Wayland; see [Plugins on Windows and Linux](#plugins-on-windows-and-linux) |
 | Scanner children | `posix_spawn` | `CreateProcessW` (no WER dialogs in the child) | `posix_spawn` |
 | Test plugins | `.clap`/`.vst3` bundles | `.clap` DLL, `.vst3/Contents/x86_64-win/*.vst3`, + `DStudioTestGui.clap` | `.clap` .so, `.vst3/Contents/x86_64-linux/*.so` |
-| Built with warnings as errors | yes (clang, `-Werror`), every CI run | yes (`/W4 /WX`), every CI run | yes (GCC, `-Werror`), every CI run |
-| ctest | all tests, every CI run; device tests skip on the hosted runner (no audio device), run by hand on a Mac | all tests, every CI run; AU tests and device tests skip (no audio endpoint) | all tests, every CI run, against a headless PipeWire server (null sink + loopback); AU tests skip |
+| Built with warnings as errors | yes (clang, `-Werror`) in CI | yes (`/W4 /WX`) in CI | yes (GCC, `-Werror`) in CI |
+| ctest | all tests in CI; device tests skip on the hosted runner (no audio device), run by hand on a Mac | all tests in CI; AU tests and device tests skip (no audio endpoint) | all tests in CI, against a headless PipeWire server (null sink + loopback); AU tests skip |
 | Tested on real audio hardware | yes (Core Audio output + duplex, see below) | **no** | **no** (real PipeWire streams in CI, no sound card) |
 
 **CI** (`.github/workflows/ci.yml`) runs on GitHub-hosted runners
