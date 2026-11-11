@@ -360,16 +360,27 @@ fn arm_monitor_input_commands() {
     d.execute(Command::SetTrackInput { track: audio, input: Some(input) }, Origin::User).unwrap();
     d.execute(Command::SetTrackArm { track: audio, arm: true }, Origin::User).unwrap();
     d.execute(Command::SetTrackMonitor { track: audio, monitor: true }, Origin::User).unwrap();
-    assert!(d.execute(Command::SetTrackArm { track: inst, arm: true }, Origin::User).is_err());
+    // Instrument tracks arm and monitor for MIDI input, but take no audio input.
+    d.execute(Command::SetTrackArm { track: inst, arm: true }, Origin::User).unwrap();
+    assert_eq!(d.undo_label(), Some("Arm Track"));
+    d.execute(Command::SetTrackMonitor { track: inst, monitor: true }, Origin::User).unwrap();
     assert!(d.execute(Command::SetTrackInput { track: inst, input: Some(input) }, Origin::User).is_err());
     let (snap, _) = snapshot::build(d.project(), 48_000.0, &HashMap::new());
     assert!(snap.tracks[0].arm && snap.tracks[0].monitor && snap.tracks[0].input == Some(input));
+    assert!(snap.tracks[1].arm && snap.tracks[1].monitor && snap.tracks[1].input.is_none());
     assert_eq!(d.undo_label(), Some("Input Monitoring Change"));
-    d.undo().unwrap();
-    d.undo().unwrap();
-    d.undo().unwrap();
+    for _ in 0..5 {
+        d.undo().unwrap();
+    }
     let t = d.project().track(audio).unwrap();
     assert!(!t.arm && !t.monitor && t.input.is_none());
+    let t = d.project().track(inst).unwrap();
+    assert!(!t.arm && !t.monitor);
+    d.redo().unwrap();
+    d.redo().unwrap();
+    d.redo().unwrap();
+    d.redo().unwrap();
+    assert!(d.project().track(inst).unwrap().arm);
 }
 
 #[test]

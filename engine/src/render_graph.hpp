@@ -32,6 +32,8 @@
 
 namespace dstudio {
 
+struct TrackMidi; // midi_input.hpp
+
 class PluginInstance;
 class DelayLine;
 
@@ -257,6 +259,14 @@ struct RenderGraph {
     // with the last such graph, i.e. only on non-RT threads.
     std::vector<std::shared_ptr<Synth>> synth_refs;
     std::vector<Synth*> synths; // raw pointers for the RT path (same order)
+    // Live MIDI input state per instrument track, parallel to `tracks` (null
+    // elsewhere), carried across republishes by track_id like synth_refs
+    // (Engine::install_graph). See midi_input.hpp.
+    std::vector<std::shared_ptr<TrackMidi>> midi_refs;
+    std::vector<TrackMidi*> midi_tracks;
+    // True when some instrument track is armed or monitoring: MIDI input goes
+    // to those tracks only (else to the focus track).
+    bool midi_explicit = false;
     std::unique_ptr<TrackMeter[]> meters; // one per track, same order
     std::size_t meter_count = 0;
     // Delay compensation: the plan, and the live delay lines it needs (same

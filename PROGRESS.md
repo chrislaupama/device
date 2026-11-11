@@ -296,3 +296,17 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Code: `pianoroll.rs` (`VEL_H`, `vel_y`/`vel_at`, `PrDrag::Velocity`, `pr_vel_pointer`, `paint_velocity`, the
   `vel_lane` draw). Review state `review-pr-velocity`; self-test section "velocity"; unit test
   `velocity_lane_maps_and_paints`.
+
+### 2026-11-11: MIDI input, engine side (spec 003)
+
+- Spec `specs/003-midi-input-and-recording/` (spec, plan, tasks). This first part is the engine and the C ABI; the
+  app side (R/I on instrument tracks, Settings › MIDI inputs, recorded MIDI clips) follows.
+- Engine: MIDI input backends (Core MIDI, Windows `midiIn*`, ALSA sequencer, stub) behind `MidiBackend`;
+  `MidiInputHub` (per-port SPSC queues, normalisation, held-note release on close); routing in `render_block` to
+  armed/monitoring instrument tracks, else the focus track; `LiveSynth` plays the built-in Synth live; capture ring
+  with latency compensation and loop folding. `se_midi_*` in the header, `Engine::midi_inputs` and friends in Rust.
+- Core: `SetTrackArm` / `SetTrackMonitor` accept instrument tracks.
+- Tests: `engine/tests/test_midi_input.cpp`, `crates/dstudio-engine/tests/midi_input.rs`; bench: "MIDI input"
+  table in `dstudio_engine_bench`.
+- Not verified on hardware yet: Core MIDI with a real keyboard (Mac mini), WinMM (CI build only).
+
