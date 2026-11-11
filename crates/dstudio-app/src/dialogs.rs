@@ -5,6 +5,7 @@
 //! render.
 use crate::Studio;
 use crate::controller::{Controller, sync_model};
+use crate::resample::Resampler;
 use crate::wavgen;
 use crate::ChoiceItem;
 use dstudio_core::{Project, Ticks, TrackId};
@@ -50,6 +51,9 @@ pub struct ExportUi {
     pub stems: StemsPick,
     pub tracks_menu: bool,
     pub bits24: bool,
+    /// The file's sample rate as picked in the dialog (44.1 or 48 kHz); None until then, which
+    /// means the one nearest the engine's.
+    pub rate: Option<u32>,
     /// The Name field: "<name>.wav" when one file is written, the stems folder base otherwise.
     pub name: String,
     pub dir: PathBuf,
@@ -68,6 +72,7 @@ impl Default for ExportUi {
             stems: StemsPick::AllTracks,
             tracks_menu: false,
             bits24: true,
+            rate: None,
             name: "Untitled.wav".into(),
             dir: home.join("Music").join("DStudio Exports"),
             auto_name: "Untitled".into(),
@@ -202,6 +207,25 @@ impl Controller {
         (secs * self.engine.sample_rate()).round() as u64
     }
 
+    /// The sample rate Mixdown and Stems write: the one picked in the dialog, else 48 kHz when
+    /// the engine runs at 47 kHz or more and 44.1 kHz otherwise. Project renders stay at the
+    /// engine rate.
+    pub fn export_rate(&self) -> u32 {
+        self.export.rate.unwrap_or(if self.engine.sample_rate() >= 47_000.0 { 48_000 } else { 44_100 })
+    }
+
+    /// Frames in each Mixdown or Stems file, at `export_rate`.
+    pub fn export_out_frames(&self) -> u64 {
+        let rate = self.engine.sample_rate().round() as u32;
+        let frames = self.export_frames() as usize;
+        Resampler::new(rate, self.export_rate()).map_or(frames, |r| r.out_frames(frames)) as u64
+    }
+
+    pub fn export_set_rate(&mut self, rate48: bool) {
+        self.export.rate = Some(if rate48 { 48_000 } else { 44_100 });
+        self.ui_dirty = true;
+    }
+
     fn export_stem_tracks(&self) -> Vec<TrackId> {
         stem_tracks(self.project(), self.export.stems, self.selected_track)
     }
@@ -312,7 +336,7 @@ impl Controller {
         let base = self.export.base_name();
         let base = if base.is_empty() { "Untitled".to_string() } else { base };
         let result = match self.export.recipe {
-            Recipe::Mixdown => self.export_plan(&self.export.dir.clone(), &[(None, base)]),
+            Recipe::Mixdown => self.export_plan(&self.export.dir.clone(), &[(None, base)], self.export_rate()),
             Recipe::Stems => {
                 let tracks = self.export_stem_tracks();
                 if tracks.is_empty() {
@@ -326,9 +350,9 @@ impl Controller {
                         .enumerate()
                         .map(|(i, id)| (Some(*id), stem_file_name(i, p.track(*id).map_or("", |t| t.name.as_str())).trim_end_matches(".wav").to_string()))
                         .collect();
-                    free_folder(&self.export.dir, &format!("{base} Stems")).and_then(|dir| self.export_plan(&dir, &names))
+                    free_folder(&self.export.dir, &format!("{base} Stems")).and_then(|dir| self.export_plan(&dir, &names, self.export_rate()))
                 } else {
-                    self.export_plan(&self.export.dir.clone(), &[(Some(tracks[0]), base)])
+                    self.export_plan(&self.export.dir.clone(), &[(Some(tracks[0]), base)], self.export_rate())
                 }
             }
             Recipe::Project => self.export_project(&base),
@@ -381,7 +405,9 @@ impl Controller {
             Ok(())
         } else {
             let files: Vec<(Option<TrackId>, String)> = rendered.iter().map(|(id, f)| (Some(*id), f.trim_end_matches(".wav").to_string())).collect();
-            self.export_plan(&folder.join(RENDERS), &files)?.1
+            // The set records the renders' length and rate as the engine made them.
+            let rate = self.engine.sample_rate().round() as u32;
+            self.export_plan(&folder.join(RENDERS), &files, rate)?.1
         };
         let p = self.project();
         let rate = self.engine.sample_rate();
@@ -477,11 +503,14 @@ impl Controller {
     }
 
     /// Opens every destination file first (never an existing one), then renders and writes each
-    /// pass. Returns the written files and the device restart result, which does not undo them.
-    fn export_plan(&mut self, dir: &Path, files: &[(Option<TrackId>, String)]) -> Result<(Vec<PathBuf>, Result<(), String>), String> {
+    /// pass at `rate` Hz. Returns the written files and the device restart result, which does not
+    /// undo them.
+    fn export_plan(&mut self, dir: &Path, files: &[(Option<TrackId>, String)], rate: u32) -> Result<(Vec<PathBuf>, Result<(), String>), String> {
         let frames = self.export_frames() as usize;
+        let engine_rate = self.engine.sample_rate().round() as u32;
+        let resampler = Resampler::new(engine_rate, rate).ok_or_else(|| format!("can't convert {engine_rate} Hz to {rate} Hz"))?;
         // WAV sizes are 32-bit: refuse before rendering rather than after.
-        if frames as u64 * 2 * if self.export.bits24 { 3 } else { 2 } > (u32::MAX - 36) as u64 {
+        if resampler.out_frames(frames) as u64 * 2 * if self.export.bits24 { 3 } else { 2 } > (u32::MAX - 36) as u64 {
             return Err("too long for a WAV file (4 GB limit)".into());
         }
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -498,7 +527,7 @@ impl Controller {
             }
         }
         let paths: Vec<PathBuf> = passes.iter().map(|p| p.path.clone()).collect();
-        let (written, restarted) = self.render_passes(passes, frames);
+        let (written, restarted) = self.render_passes(passes, frames, rate, &resampler);
         match (written, restarted) {
             (Ok(()), restarted) => Ok((paths, restarted)),
             (Err(e), restarted) => {
@@ -513,10 +542,10 @@ impl Controller {
         }
     }
 
-    /// Plays the arrangement once per pass (no loop, no click) and writes it as stereo PCM.
-    /// The audio device is paused for the renders; transport, mutes and the device are
-    /// restored afterwards.
-    fn render_passes(&mut self, passes: Vec<Pass>, frames: usize) -> (Result<(), String>, Result<(), String>) {
+    /// Plays the arrangement once per pass (no loop, no click) and writes it as stereo PCM at
+    /// `out_rate` Hz, converted by `resampler` when the engine runs at another rate. The audio
+    /// device is paused for the renders; transport, mutes and the device are restored afterwards.
+    fn render_passes(&mut self, passes: Vec<Pass>, frames: usize, out_rate: u32, resampler: &Resampler) -> (Result<(), String>, Result<(), String>) {
         let rate = self.engine.sample_rate();
         let bits = if self.export.bits24 { 24 } else { 16 };
         let restore = self.project().ticks_to_frames(self.playhead_ticks(), rate);
@@ -552,7 +581,8 @@ impl Controller {
                     e.render_offline(chunk).map_err(|e| e.to_string())?;
                 }
                 e.stop().map_err(|e| e.to_string())?;
-                wavgen::encode_wav_pcm(pass.file, rate.round() as u32, 2, bits, &out).map_err(|e| e.to_string())?;
+                let converted = resampler.process(&out, 2);
+                wavgen::encode_wav_pcm(pass.file, out_rate, 2, bits, &converted).map_err(|e| e.to_string())?;
             }
             Ok::<(), String>(())
         })();
@@ -663,7 +693,12 @@ impl Controller {
             return;
         }
         let bits = if self.export.bits24 { 24 } else { 16 };
-        let rate = self.engine.sample_rate();
+        // Project renders stay at the engine rate; Mixdown and Stems use the picked one.
+        let (frames, rate) = if self.export.recipe == Recipe::Project {
+            (self.export_frames(), self.engine.sample_rate())
+        } else {
+            (self.export_out_frames(), self.export_rate() as f64)
+        };
         let p = self.project();
         let stems = self.export.recipe == Recipe::Stems;
         let files = if stems { self.export_stem_tracks().len() } else { stem_tracks(p, StemsPick::AllTracks, None).len() };
@@ -673,7 +708,7 @@ impl Controller {
             Recipe::Project => 2,
         });
         s.set_export_bits24(self.export.bits24);
-        s.set_export_rate48(rate >= 47_000.0);
+        s.set_export_rate48(self.export_rate() == 48_000);
         s.set_export_recipe_text(format!("WAV {bits}-bit").into());
         let plural = if files == 1 { "file" } else { "files" };
         s.set_export_stems_text(format!("{files} WAV {plural}").into());
@@ -682,7 +717,7 @@ impl Controller {
         s.set_export_name(self.export.name.clone().into());
         s.set_export_name_label(if self.export.writes_folder() { "Folder" } else { "Name" }.into());
         s.set_export_dir(self.export.dir.display().to_string().into());
-        s.set_export_estimate(estimate_text(self.export_frames(), rate, bits, if stems { files } else { 1 }).into());
+        s.set_export_estimate(estimate_text(frames, rate, bits, if stems { files } else { 1 }).into());
         let tracks_label = match self.export.stems {
             StemsPick::AllTracks => "All individual tracks".to_string(),
             StemsPick::Selected => "Selected tracks only".to_string(),
@@ -720,6 +755,21 @@ mod tests {
         // 6 bars at 120 BPM + tail, 44.1 kHz, 24-bit → "3.7 MB • 0:14".
         assert_eq!(estimate_text(14 * 44_100, 44_100.0, 24, 1), "3.7 MB • 0:14");
         assert_eq!(estimate_text(14 * 44_100, 44_100.0, 24, 2), "7.4 MB • 0:14");
+    }
+
+    #[test]
+    fn the_export_rate_follows_the_engine_until_one_is_picked() {
+        let engine = std::sync::Arc::new(dstudio_engine::Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        let engine_rate = c.engine.sample_rate();
+        assert_eq!(c.export_rate(), if engine_rate >= 47_000.0 { 48_000 } else { 44_100 });
+        c.export_set_rate(false);
+        assert_eq!(c.export_rate(), 44_100);
+        let frames = c.export_frames() as usize;
+        let expect = (frames * 44_100).div_ceil(engine_rate.round() as usize);
+        assert_eq!(c.export_out_frames() as usize, expect, "{frames} frames at {engine_rate} Hz");
+        c.export_set_rate(true);
+        assert_eq!(c.export_rate(), 48_000);
     }
 
     #[test]

@@ -1437,14 +1437,47 @@ fn steps() -> Vec<Step> {
             // Export window centred in the window: 442 x 340.4, Export button 52.2 x 22.1.
             click(a, (win().0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (win().1 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
         })),
-        Check("mix.wav written: stereo 24-bit at the engine rate, the full length, not silent; dialog closed", Box::new(|c, a| {
+        Check("mix.wav written: stereo 24-bit at the dialog's rate, the full length, not silent; dialog closed", Box::new(|c, a| {
             let path = c.export.dir.join("mix.wav");
             let (rate, ch, s) = crate::wavgen::read_wav(&path)?;
             let peak = s.iter().fold(0f32, |m, v| m.max(v.abs()));
             let frames = s.len() / 2;
-            (rate as f64 == c.engine.sample_rate() && ch == 2 && frames as u64 == c.export_frames() && peak > 0.01 && !a.global::<Studio>().get_export_open())
+            (rate == c.export_rate() && ch == 2 && frames as u64 == c.export_out_frames() && peak > 0.01 && !a.global::<Studio>().get_export_open())
                 .then_some(())
-                .ok_or(format!("rate {rate} ch {ch} frames {frames} vs {} peak {peak}", c.export_frames()))
+                .ok_or(format!("rate {rate} ch {ch} frames {frames} vs {} peak {peak}", c.export_out_frames()))
+        })),
+        Do("⇧⌘E for an export at the other sample rate", Box::new(|a| key(a, "E", true, true))),
+        DoC("click the other rate (44.1 kHz when the engine runs at 48)", Box::new(|a, ctl| {
+            let to48 = ctl.borrow().export_rate() != 48_000;
+            // Rate segments: 71.4 + 197.7 from the window's left, 136.85 from its top, 56.3 wide each.
+            let x = 71.4 + 197.7 + 1.7 + if to48 { 56.3 + 28.8 } else { 28.15 };
+            click(a, (win().0 - 442.0) / 2.0 + x, (win().1 - 340.4) / 2.0 + 136.85 + 9.35);
+        })),
+        Check("the other rate is picked; the size estimate follows it", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let other = if c.engine.sample_rate() >= 47_000.0 { 44_100 } else { 48_000 };
+            let est = crate::dialogs::estimate_text(c.export_out_frames(), other as f64, if c.export.bits24 { 24 } else { 16 }, 1);
+            (c.export_rate() == other && s.get_export_rate48() == (other == 48_000) && s.get_export_estimate() == est.as_str())
+                .then_some(())
+                .ok_or(format!("rate {} est {} vs {est}", c.export_rate(), s.get_export_estimate()))
+        })),
+        DoC("export it as mix-other: click Export", Box::new(|a, ctl| {
+            ctl.borrow_mut().export.name = "mix-other".into();
+            click(a, (win().0 - 442.0) / 2.0 + 442.0 - 17.0 - 26.1, (win().1 - 340.4) / 2.0 + 340.4 - 57.8 + 16.15 + 11.05);
+        })),
+        Check("mix-other.wav is at the other rate, as long in seconds as mix.wav and as loud", Box::new(|c, _| {
+            let (rate, ch, s) = crate::wavgen::read_wav(&c.export.dir.join("mix-other.wav"))?;
+            let (mix_rate, _, mix) = crate::wavgen::read_wav(&c.export.dir.join("mix.wav"))?;
+            let rms = |v: &[f32]| (v.iter().map(|x| x * x).sum::<f32>() / v.len().max(1) as f32).sqrt();
+            let secs = |n: usize, r: u32| n as f64 / 2.0 / r as f64;
+            let (a, b) = (rms(&s), rms(&mix));
+            let ok = rate == c.export_rate() && rate != mix_rate && ch == 2 && (s.len() / 2) as u64 == c.export_out_frames()
+                && (secs(s.len(), rate) - secs(mix.len(), mix_rate)).abs() < 1e-3 && b > 0.0 && (a / b - 1.0).abs() < 0.02;
+            ok.then_some(()).ok_or(format!("rate {rate} vs {mix_rate} frames {} rms {a} vs {b}", s.len() / 2))
+        })),
+        DoC("back to the default rate for the next exports", Box::new(|_, ctl| {
+            let _ = std::fs::remove_file(ctl.borrow().export.dir.join("mix-other.wav"));
+            ctl.borrow_mut().export.rate = None;
         })),
         Do("⇧⌘E again", Box::new(|a| key(a, "E", true, true))),
         Check("export dialog open again", Box::new(|_c, a| a.global::<Studio>().get_export_open().then_some(()).ok_or("not open".into()))),
