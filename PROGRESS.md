@@ -321,3 +321,12 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Still unwired: `tool.scissors` (T) and the range actions (`range.duplicate`, `clip.split_at_range`): there is no
   scissors tool or range selection yet.
 - Self-test section "shortcuts" (real key presses); unit test `reversing_mirrors_notes_in_the_clip`.
+
+### 2026-11-11: master mute and bottom panel collapse
+
+- `Project::master_mute` (saved only when on) and `Command::SetMasterMute` ("Master Mute Change"). The snapshot sends a
+  muted master as gain 0 with no master volume lane, so automation cannot bring it back; the fader keeps its value.
+  The mixer's master M toggles it, and the timeline's master row dims and reads "Master (muted)".
+- The collapse button in the bottom panel header (Clip/Devices and the mixer) shuts the panel to its tab row and reopens
+  it at the height it had (`Controller::toggle_bottom_collapse`, src/splitters.rs). Like the splitter it is a view
+  change saved with the project, not an undo step; a panel shut by dragging reopens at its default height.

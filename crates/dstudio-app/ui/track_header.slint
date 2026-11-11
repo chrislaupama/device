@@ -365,16 +365,19 @@ export component MasterHeaderRow inherits Rectangle {
     in property <TrackLevel> level;
     in property <bool> vol-auto;
     in property <int> auto-state;
+    /// Master muted from the mixer: the colour tab and name dim so a silent mix is visible here too.
+    in property <bool> muted;
     property <length> top-c: root.automation ? 20.4px : 15.3px;
     property <length> bottom-y: root.automation ? 14.45px : 9.35px;
     Rectangle {
         x: 0; y: 6.8px; width: 5.1px; height: root.height - 13.6px;
         border-top-right-radius: 3.4px; border-bottom-right-radius: 3.4px;
         background: Tokens.track-master;
+        opacity: root.muted ? 0.35 : 1;
     }
     Icon { x: 15.3px; y: root.top-c - 6.8px; width: 13.6px; height: 13.6px; d: Icons.master; ink: Tokens.text-tertiary; }
     Text {
-        x: 35.84px; y: root.top-c - 6.8px; height: 13.6px; text: "Master"; color: #ffffff;
+        x: 35.84px; y: root.top-c - 6.8px; height: 13.6px; text: root.muted ? "Master (muted)" : "Master"; color: root.muted ? Tokens.text-tertiary : #ffffff;
         font-size: 9.35px; font-weight: 700; letter-spacing: -0.374px; vertical-alignment: center;
     }
     ChannelControls {
