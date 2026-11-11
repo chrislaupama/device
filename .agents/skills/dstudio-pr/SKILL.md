@@ -30,6 +30,13 @@ cargo run --release -p dstudio-app -- --self-test --no-audio
 | fixes a bug | how to reproduce it, the cause, and the test that now guards it (`bug-fix`) |
 | none of these (docs, CI, a refactor with no runtime effect) | a sentence saying so |
 
+Screenshots for the description never go on the pull request's own branch, so they never land on
+`main`. Commit them to the `pr-screenshots` branch (an orphan branch holding only images, one folder
+per change, never merged; create it with `git switch --orphan pr-screenshots` if it doesn't exist),
+push it, and link each image by that commit's hash:
+`https://raw.githubusercontent.com/chrislaupama/device/<commit>/<folder>/<file>.png`. A hash link
+keeps working after branches are deleted; a branch-name link does not.
+
 ## 4. Docs
 
 Tick the template's Docs checklist honestly: README.md (features, devices and their count, status,
