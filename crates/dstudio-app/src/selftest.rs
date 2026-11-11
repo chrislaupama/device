@@ -7595,6 +7595,108 @@ fn pattern_library_steps() -> Vec<Step> {
     ]
 }
 
+/// Timeline shortcuts: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip (MIDI notes
+/// mirrored, audio played backwards), ⌘L loops the selected clip or section, ⌘D duplicates the
+/// selected section. Real key presses through the keymap.
+fn shortcut_steps() -> Vec<Step> {
+    use Step::*;
+    let tracks = Rc::new(Cell::new(0usize));
+    let (t0, t1) = (tracks.clone(), tracks.clone());
+    let clip: Rc<Cell<Option<dstudio_core::ClipId>>> = Rc::new(Cell::new(None));
+    let (c0, c1, c2) = (clip.clone(), clip.clone(), clip.clone());
+    let audio: Rc<Cell<Option<(dstudio_core::ClipId, bool)>>> = Rc::new(Cell::new(None));
+    let (a0, a1, a2) = (audio.clone(), audio.clone(), audio.clone());
+    let sections = Rc::new(Cell::new(0usize));
+    let (s0, s1) = (sections.clone(), sections.clone());
+    let unfocus = |c: &mut Controller| {
+        c.pr.focused = false;
+        c.mixer_open = false;
+    };
+    vec![
+        DoC("shortcuts: count the tracks, focus the timeline", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            unfocus(&mut c);
+            c.select_clip(None);
+            c.selected_section = None;
+            t0.set(c.project().tracks.len());
+        })),
+        Do("shortcuts: Cmd+Shift+T", Box::new(|a| key(a, "T", true, true))),
+        Check("shortcuts: a new Instrument track, selected, one undo step", Box::new(move |c, _| {
+            let p = c.project();
+            let t = p.tracks.iter().rev().find(|t| t.kind == TrackKind::Instrument).ok_or("no instrument track")?;
+            let ok = p.tracks.len() == t1.get() + 1 && t.name == "Instrument" && c.selected_track == Some(t.id) && c.doc.undo_label() == Some("Add Instrument Track");
+            ok.then_some(()).ok_or(format!("tracks {} -> {} name {} selected {:?} last {:?}", t1.get(), p.tracks.len(), t.name, c.selected_track, c.doc.undo_label()))
+        })),
+        DoC("shortcuts: a one-bar MIDI clip on it at beat 96 with notes at 0 and 1 beat, selected", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.seek_beats(96.0);
+            let id = c.insert_midi_clip();
+            if let Some(id) = id {
+                let n = |i: u32, start: i64| dstudio_core::Note { id: i, pitch: 60, start, length: PPQ / 2, velocity: 100 };
+                c.execute(dstudio_core::Command::SetMidiNotes { clip: id, notes: vec![n(1, 0), n(2, PPQ)] });
+            }
+            c.select_clip(id);
+            unfocus(&mut c);
+            c0.set(id);
+        })),
+        Do("shortcuts: Cmd+R", Box::new(|a| key(a, "r", true, false))),
+        Check("shortcuts: the notes are mirrored in the bar, one Reverse Clip step", Box::new(move |c, _| {
+            let m = c1.get().and_then(|id| c.project().midi_clip(id)).ok_or("no clip")?;
+            let got: Vec<(u32, i64)> = m.notes.iter().map(|n| (n.id, n.start)).collect();
+            let want = vec![(1, 4 * PPQ - PPQ / 2), (2, 3 * PPQ - PPQ / 2)];
+            (got == want && c.doc.undo_label() == Some("Reverse Clip")).then_some(()).ok_or(format!("notes {got:?} want {want:?} last {:?}", c.doc.undo_label()))
+        })),
+        Do("shortcuts: Cmd+L", Box::new(|a| key(a, "l", true, false))),
+        Check("shortcuts: the loop is the clip's bar, on", Box::new(move |c, _| {
+            let m = c2.get().and_then(|id| c.project().midi_clip(id)).ok_or("no clip")?;
+            let tr = &c.project().transport;
+            (tr.loop_enabled && tr.loop_start == m.start && tr.loop_end == m.end()).then_some(()).ok_or(format!("loop {} {}..{} clip {}..{}", tr.loop_enabled, tr.loop_start, tr.loop_end, m.start, m.end()))
+        })),
+        DoC("shortcuts: select an audio clip", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let found = c.project().tracks.iter().flat_map(|t| t.clips.iter()).next().map(|cl| (cl.id, cl.warp.reverse));
+            if let Some((id, _)) = found {
+                if let Some(t) = c.clip_track(id) {
+                    c.select_track(t);
+                }
+                c.select_clip(Some(id));
+            }
+            unfocus(&mut c);
+            a0.set(found);
+        })),
+        Do("shortcuts: Cmd+R on it", Box::new(|a| key(a, "r", true, false))),
+        Check("shortcuts: the audio clip plays backwards", Box::new(move |c, _| {
+            let Some((id, was)) = a1.get() else { return Ok(()) };
+            let now = c.project().clip(id).map(|cl| cl.warp.reverse);
+            (now == Some(!was) && c.doc.undo_label() == Some("Reverse Clip")).then_some(()).ok_or(format!("reverse {now:?} (was {was}) last {:?}", c.doc.undo_label()))
+        })),
+        DoC("shortcuts: undo the audio reverse", Box::new(move |_, ctl| {
+            if a2.get().is_some() {
+                ctl.borrow_mut().undo();
+            }
+        })),
+        DoC("shortcuts: add a section and select it", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.select_clip(None);
+            c.insert_section(None);
+            unfocus(&mut c);
+            s0.set(c.project().sections.len());
+        })),
+        Do("shortcuts: Cmd+D, then Cmd+L", Box::new(|a| {
+            key(a, "d", true, false);
+            key(a, "l", true, false);
+        })),
+        Check("shortcuts: the section was duplicated and the loop is the copy", Box::new(move |c, _| {
+            let p = c.project();
+            let i = c.selected_section.and_then(|s| p.section_index(s)).ok_or("no section selected")?;
+            let (start, end) = (p.section_start(i), p.section_start(i) + p.sections[i].length);
+            let tr = &p.transport;
+            let ok = p.sections.len() == s1.get() + 1 && tr.loop_enabled && (tr.loop_start, tr.loop_end) == (start, end);
+            ok.then_some(()).ok_or(format!("sections {} -> {} loop {}..{} section {start}..{end}", s1.get(), p.sections.len(), tr.loop_start, tr.loop_end))
+        })),
+    ]
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     APP.with(|a| *a.borrow_mut() = Some(app.as_weak()));
@@ -7636,6 +7738,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(general_settings_steps());
     all.extend(add_search_steps());
     all.extend(live_import_steps());
+    all.extend(shortcut_steps());
     // The checks aim at a 1440×820 pt window. A window opened larger than the screen is shrunk to
     // fit when it is shown (macOS; GitHub's Mac runners have a 1024×768 display), so ask again
     // once it is on screen, and say what we got.

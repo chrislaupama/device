@@ -776,6 +776,17 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
             c.pr.menu = -1;
             c.ui_dirty = true;
         }
+        "clip.reverse" => ctl.borrow_mut().reverse_clip(),
+        "transport.loop_selection" => ctl.borrow_mut().loop_selection(),
+        "track.add_instrument" => {
+            ctl.borrow_mut().add_instrument_track();
+        }
+        "section.duplicate" => {
+            let mut c = ctl.borrow_mut();
+            if let Some(s) = c.selected_section {
+                c.duplicate_section(s);
+            }
+        }
         a if a.starts_with("clip.") || a == "assistant.ask" => ctl.borrow_mut().set_status(format!("{a}: not implemented yet"), 3),
         "track.add_audio" => {
             ctl.borrow_mut().add_audio_track();
@@ -2129,6 +2140,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     clips_selected: c.selected_clip.is_some() as usize,
                     midi_clip_selected: c.pr_visible(),
                     midi_editor_focused: c.pr_visible() && c.pr.focused,
+                    section_selected: c.selected_section.is_some(),
                     ..Default::default()
                 }
             };

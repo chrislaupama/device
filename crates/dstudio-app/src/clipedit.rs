@@ -149,6 +149,27 @@ impl Controller {
         None
     }
 
+    /// ⌘R: reverse the selected clip. An audio clip plays backwards (pressing again plays it
+    /// forwards); a MIDI clip's notes are mirrored in the clip, so the first note ends where the
+    /// clip ends. A step pattern is left alone (its steps are reversed in the step editor).
+    pub fn reverse_clip(&mut self) {
+        let Some(id) = self.selected_clip else { return };
+        let p = self.project();
+        if let Some(m) = p.midi_clip(id) {
+            if m.pattern.is_some() {
+                self.set_status("Reverse: convert the pattern to MIDI first", 3);
+                return;
+            }
+            let notes = reversed_in_clip(&m.notes, m.length);
+            if notes != m.notes {
+                self.execute(Command::Batch { label: "Reverse Clip".into(), commands: vec![Command::SetMidiNotes { clip: id, notes }] });
+            }
+        } else if let Some(c) = p.clip(id) {
+            let warp = dstudio_core::ClipWarp { reverse: !c.warp.reverse, ..c.warp.clone() };
+            self.set_clip_warp(id, warp, "Reverse Clip");
+        }
+    }
+
     /// ⌘D: copy of the selected clip right after itself (MIDI or audio). Selects the copy.
     pub fn duplicate_clip(&mut self) {
         let Some(id) = self.selected_clip else { return };
@@ -776,3 +797,23 @@ impl Controller {
     }
 }
 
+/// Notes mirrored in a clip of `length` ticks: a note that ended at the clip end starts at 0.
+/// Notes past the clip end mirror to before 0 and are clamped there.
+pub fn reversed_in_clip(notes: &[midi::Note], length: Ticks) -> Vec<midi::Note> {
+    notes.iter().map(|n| midi::Note { start: (length - n.start - n.length).max(0), ..*n }).collect()
+}
+
+#[cfg(test)]
+mod reverse_tests {
+    use super::*;
+
+    #[test]
+    fn reversing_mirrors_notes_in_the_clip() {
+        let n = |id, start, length| midi::Note { id, pitch: 60, start, length, velocity: 100 };
+        let notes = vec![n(1, 0, 240), n(2, 960, 480), n(3, 3600, 240)];
+        let r = reversed_in_clip(&notes, 3840);
+        assert_eq!(r.iter().map(|n| (n.id, n.start, n.length)).collect::<Vec<_>>(), [(1, 3600, 240), (2, 2400, 480), (3, 0, 240)]);
+        assert_eq!(reversed_in_clip(&r, 3840), notes, "twice is the original");
+        assert_eq!(reversed_in_clip(&[n(4, 3800, 240)], 3840)[0].start, 0, "a note past the end is clamped to 0");
+    }
+}

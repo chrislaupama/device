@@ -929,6 +929,42 @@ impl Controller {
         None
     }
 
+    /// ⇧⌘T: a new instrument track at the end of the ordinary tracks, selected.
+    pub fn add_instrument_track(&mut self) -> Option<TrackId> {
+        let track = Track::new(TrackId(0), TrackKind::Instrument, "Instrument", next_track_color(self.project()));
+        if self.execute(Command::AddTrack { index: None, track }) {
+            let id = self.project().tracks.iter().rev().find(|t| t.kind == TrackKind::Instrument).map(|t| t.id);
+            if let Some(id) = id {
+                self.select_track(id);
+            }
+            return id;
+        }
+        None
+    }
+
+    /// ⌘L with a clip or a section selected: loop exactly that span and turn the loop on.
+    pub fn loop_selection(&mut self) {
+        let p = self.project();
+        let span = if let Some(i) = self.selected_section.and_then(|s| p.section_index(s)) {
+            let start = p.section_start(i);
+            Some((start, start + p.sections[i].length))
+        } else if let Some(id) = self.selected_clip {
+            p.midi_clip(id).map(|m| (m.start, m.end())).or_else(|| p.clip(id).map(|c| (c.start, c.start + p.clip_length_ticks(c))))
+        } else {
+            None
+        };
+        let Some((start, end)) = span.filter(|(s, e)| e > s) else {
+            self.toggle_loop();
+            return;
+        };
+        let tr = &p.transport;
+        if tr.loop_enabled && tr.loop_start == start && tr.loop_end == end {
+            return;
+        }
+        self.doc.seal_coalescing();
+        self.execute(Command::SetLoop { enabled: true, start, end });
+    }
+
     pub fn delete_selection(&mut self) {
         if let Some(s) = self.selected_section.filter(|s| self.project().section_index(*s).is_some()) {
             self.delete_section(s);
