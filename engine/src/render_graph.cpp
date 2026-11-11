@@ -227,6 +227,9 @@ void plan_sidechains(RenderGraph& g) {
     const std::size_t n = g.tracks.size();
     g.order.resize(n);
     for (std::size_t t = 0; t < n; ++t) g.order[t] = static_cast<uint32_t>(t);
+    // No sidechains and no returns: no edges, the track order stands.
+    if (g.bus_count == 0 && std::none_of(g.fx.begin(), g.fx.end(), [](const FxSlot& f) { return f.sc_source != 0; }))
+        return;
     std::unordered_map<uint64_t, uint32_t> index;
     for (std::size_t t = 0; t < n; ++t) index.emplace(g.tracks[t].track_id, static_cast<uint32_t>(t));
     // Edges source -> reader (track indices).

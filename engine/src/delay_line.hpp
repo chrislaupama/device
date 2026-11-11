@@ -52,7 +52,13 @@ public:
         w_ += n;
         if (!silent_input) signal_end_ = w_;
     }
-    void process_mono(float* x, uint32_t n, uint32_t d, uint64_t gen) noexcept { process(x, nullptr, n, d, gen); }
+    void process_mono(float* x, uint32_t n, uint32_t d, uint64_t gen) noexcept {
+        sync(gen);
+        write(0, x, n);
+        read(0, x, n, d);
+        w_ += n;
+        signal_end_ = w_;
+    }
 
     // True when the next output of a `d`-frame delay fed with silence is
     // silent (nothing written since the last flush is still pending).
