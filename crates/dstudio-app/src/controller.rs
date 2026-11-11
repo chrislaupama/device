@@ -818,7 +818,20 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    /// Undo and redo wait while a MIDI pass records: they could change which
+    /// instrument tracks are armed, and the pass records on the ones armed at its start.
+    fn history_locked(&mut self) -> bool {
+        if self.midi_in.pass.is_some() {
+            self.set_status("Stop recording to undo or redo", 4);
+            return true;
+        }
+        false
+    }
+
     pub fn undo(&mut self) {
+        if self.history_locked() {
+            return;
+        }
         self.synth.drop_gesture();
         self.auto.sel = None;
         match self.doc.undo() {
@@ -829,6 +842,9 @@ impl Controller {
     }
 
     pub fn redo(&mut self) {
+        if self.history_locked() {
+            return;
+        }
         self.synth.drop_gesture();
         self.auto.sel = None;
         match self.doc.redo() {

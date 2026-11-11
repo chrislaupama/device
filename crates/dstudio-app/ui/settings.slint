@@ -73,7 +73,20 @@ component Switch inherits Rectangle {
     accessible-role: checkbox; accessible-label: root.label; accessible-checked: root.on; accessible-enabled: root.enabled;
     accessible-action-default => { if (root.enabled) { root.toggled(); } }
     Rectangle { x: root.on ? parent.width - self.width - 1px : 1px; y: 1px; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; }
+    // Keyboard: Tab reaches the switch, Space or Return flips it; other keys go on to the app.
+    // Below the TouchArea so clicks still reach it.
+    keys := FocusScope {
+        enabled: root.enabled;
+        key-pressed(e) => {
+            if (e.text == " " || e.text == Key.Return) { root.toggled(); return accept; }
+            reject
+        }
+    }
     TouchArea { enabled: root.enabled; clicked => { root.toggled(); } }
+    if keys.has-focus: Rectangle {
+        x: -2px; y: -2px; width: root.width + 4px; height: root.height + 4px; border-radius: (root.height + 4px) / 2;
+        border-width: 1px; border-color: #7f9cff;
+    }
 }
 
 // Setting row label with an info badge after it.
@@ -164,7 +177,7 @@ component MidiPage inherits Rectangle {
     RowLabel { x: 20.5px; y: 71.5px; text: "Default instrument"; heading: true; }
     Dropdown { x: 20.5px; y: 90px; width: root.width - 20.5px - 20.5px; text: "Synth"; field: -1; }
     Rectangle { x: 20.5px; y: 136px; width: root.width - 41px; height: 0.75px; background: #2c2d30; }
-    FieldLabel { x: 20.5px; y: 150px; text: "MIDI inputs"; }
+    FieldLabel { x: 20.5px; y: 150px; text: "MIDI inputs" + (Studio.midi-inputs.length * root.row-h > root.list-h ? " (" + Studio.midi-inputs.length + ", scroll for more)" : ""); }
     Flickable {
         x: 20.5px; y: root.list-y; width: root.width - 41px; height: root.list-h;
         content-height: Studio.midi-inputs.length * root.row-h;

@@ -40,6 +40,9 @@ pub struct MidiPass {
     pub start: i64,
     pub last_pos: i64,
     pub wrapped: bool,
+    /// The loop range (frames) when the pass first wrapped: kept for the rest of the
+    /// pass, so turning the loop off after a wrap still folds notes held across it.
+    pub wrap_loop: Option<(i64, i64)>,
     pub events: Vec<CapturedEvent>,
     /// The instrument tracks armed when the pass started: the ones it records on.
     pub tracks: Vec<TrackId>,
@@ -104,6 +107,7 @@ impl Controller {
         self.midi_in.last_scan = Some(now);
         let Ok(list) = self.engine.midi_inputs() else { return };
         let mut rows = Vec::with_capacity(list.len());
+        let closed: Vec<String> = list.iter().filter(|p| !p.open).map(|p| p.id.clone()).collect();
         for p in list {
             let old = self.midi_in.ports.iter().find(|r| r.id == p.id);
             let mut lit_until = old.and_then(|r| r.lit_until).filter(|t| *t > now);
@@ -119,11 +123,17 @@ impl Controller {
             }
         }
         let want = wanted_ports(&self.midi_in.ports, &self.settings.prefs.midi.disabled_inputs);
+        // A port that was missing when its set was opened (the engine skips unknown ids)
+        // reads as closed once it is back: open the set again, at most every RETRY.
+        let stale = self.midi_in.opened.as_ref() == Some(&want) && want.iter().any(|id| closed.contains(id));
+        if stale {
+            self.midi_in.opened = None;
+        }
         if should_open(self.midi_in.opened.as_deref(), self.midi_in.retry_at.as_ref(), &want, now) {
             match self.engine.open_midi_inputs(&want) {
                 Ok(()) => {
                     self.midi_in.last_error = None;
-                    self.midi_in.retry_at = None;
+                    self.midi_in.retry_at = stale.then(|| (want.clone(), now + RETRY));
                     self.midi_in.opened = Some(want);
                 }
                 Err(e) => {
@@ -175,7 +185,7 @@ impl Controller {
         self.engine.set_midi_capture(true);
         let start = self.audible_frames();
         let tracks = self.armed_midi();
-        self.midi_in.pass = Some(MidiPass { start, last_pos: start, wrapped: false, events: Vec::new(), tracks });
+        self.midi_in.pass = Some(MidiPass { start, last_pos: start, wrapped: false, wrap_loop: None, events: Vec::new(), tracks });
     }
 
     /// Drain the capture ring and notice loop wraps (the playhead jumping back).
@@ -184,22 +194,29 @@ impl Controller {
             return;
         }
         let pos = self.audible_frames();
-        let looping = self.project().transport.loop_enabled;
+        let current = self.loop_frames();
+        let looping = current.is_some();
         let got = self.engine.read_midi_capture();
         let Some(pass) = self.midi_in.pass.as_mut() else { return };
         absorb(pass, got.into_iter().map(|n| CapturedEvent { frame: n.frame, on: n.on, pitch: n.pitch, velocity: n.velocity }), looping);
         if looping && pos < pass.last_pos {
             pass.wrapped = true;
         }
+        if pass.wrapped && pass.wrap_loop.is_none() {
+            pass.wrap_loop = current;
+        }
         pass.last_pos = pos;
+    }
+
+    /// The loop range in frames while the loop is on.
+    fn loop_frames(&self) -> Option<(i64, i64)> {
+        let p = self.project();
+        p.transport.loop_enabled.then(|| (p.ticks_to_frames(p.transport.loop_start, self.rate), p.ticks_to_frames(p.transport.loop_end, self.rate)))
     }
 
     /// The pass's frame range so far (or at stop), as `midi_record` takes it.
     pub(crate) fn midi_pass_bounds(&self, pass: &MidiPass, stop: i64) -> Pass {
-        let p = self.project();
-        let looped = p.transport.loop_enabled && (pass.wrapped || stop < pass.start);
-        let wrapped_loop = looped.then(|| (p.ticks_to_frames(p.transport.loop_start, self.rate), p.ticks_to_frames(p.transport.loop_end, self.rate)));
-        Pass { start: pass.start, stop, wrapped_loop }
+        pass_bounds(pass, stop, self.loop_frames())
     }
 
     /// End the MIDI side of the pass: one `AddMidiClip` per armed instrument track that
@@ -220,6 +237,14 @@ impl Controller {
         let rows: Vec<MidiInputRow> = self.midi_rows().into_iter().map(|(name, on, lit)| MidiInputRow { name: name.into(), on, lit }).collect();
         crate::controller::sync_model(&self.midi_inputs_model, rows);
     }
+}
+
+/// The pass's range at `stop`. A pass that wrapped keeps the loop range it wrapped
+/// in (even if the loop was turned off since); otherwise the current loop counts when
+/// the playhead is already back before the start.
+fn pass_bounds(pass: &MidiPass, stop: i64, current_loop: Option<(i64, i64)>) -> Pass {
+    let wrapped_loop = pass.wrap_loop.or_else(|| current_loop.filter(|_| pass.wrapped || stop < pass.start));
+    Pass { start: pass.start, stop, wrapped_loop }
 }
 
 /// Whether to ask the engine to open `want`: it differs from what is open, and it
@@ -260,6 +285,17 @@ mod tests {
         assert!(!should_open(None, Some(&failed), &want, now), "waits after a failure");
         assert!(should_open(None, Some(&failed), &want, now + RETRY), "then tries again");
         assert!(should_open(None, Some(&failed), &["pads".to_string()], now), "a different set is tried at once");
+    }
+    #[test]
+    fn a_wrapped_pass_keeps_its_loop_after_the_loop_is_turned_off() {
+        let l = Some((1000, 5000));
+        let mut p = MidiPass { start: 1000, ..Default::default() };
+        assert_eq!(pass_bounds(&p, 3000, l).wrapped_loop, None, "not wrapped yet");
+        assert_eq!(pass_bounds(&p, 1500, None).wrapped_loop, None, "no loop");
+        assert_eq!(pass_bounds(&p, 500, l).wrapped_loop, l, "playhead back before the start: wrapped");
+        p.wrapped = true;
+        p.wrap_loop = l;
+        assert_eq!(pass_bounds(&p, 6000, None).wrapped_loop, l, "loop turned off after the wrap");
     }
     #[test]
     fn absorb_detects_wrap() {

@@ -2767,7 +2767,7 @@ fn midi_recording_steps() -> Vec<Step> {
                 .then_some(())
                 .ok_or(format!("{notes} notes, start {} len {}", v.start_beats, v.len_beats))
         })),
-        DoC("midi rec: try to disarm the Instrument track while recording", Box::new(|_, ctl| {
+        DoC("midi rec: try to disarm the Instrument track (R, then undo of its arm) while recording", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
             if !offline(&c) || !c.rec.recording {
                 return;
@@ -2775,6 +2775,7 @@ fn midi_recording_steps() -> Vec<Step> {
             if let Some(t) = c.project().tracks.iter().find(|t| t.kind == TrackKind::Instrument).map(|t| t.id) {
                 c.toggle_arm(t);
             }
+            c.undo();
         })),
         Check("midi rec: the Instrument track stays armed until the pass stops", Box::new(|c, _| {
             if !offline(c) || !c.rec.recording {
