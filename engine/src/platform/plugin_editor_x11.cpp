@@ -35,15 +35,97 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
+#include <dlfcn.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #pragma GCC diagnostic ignored "-Wold-style-cast" // Xlib macros (DefaultRootWindow, ...)
 
 namespace dstudio {
 namespace {
+
+// libX11 is loaded with dlopen when the first editor window opens, not
+// linked: linking it made every process that uses the engine load libX11,
+// libxcb and their dependencies at start-up (benchmarks, the headless tests,
+// a Wayland-only system without libX11). The Xlib calls below go through
+// these pointers; the macros after the struct keep the call sites plain Xlib.
+#define DSTUDIO_XLIB_FUNCTIONS(F) \
+    F(XAllocSizeHints) \
+    F(XChangeProperty) \
+    F(XCreateWindow) \
+    F(XDestroyWindow) \
+    F(XFlush) \
+    F(XFree) \
+    F(XGetErrorText) \
+    F(XInternAtom) \
+    F(XMapRaised) \
+    F(XNextEvent) \
+    F(XOpenDisplay) \
+    F(XPending) \
+    F(XResizeWindow) \
+    F(XSendEvent) \
+    F(XSetClassHint) \
+    F(XSetErrorHandler) \
+    F(XSetWMNormalHints) \
+    F(XSetWMProtocols) \
+    F(XStoreName) \
+    F(XSync)
+
+struct XlibFunctions {
+#define DSTUDIO_XLIB_MEMBER(name) decltype(&::name) name = nullptr;
+    DSTUDIO_XLIB_FUNCTIONS(DSTUDIO_XLIB_MEMBER)
+#undef DSTUDIO_XLIB_MEMBER
+};
+
+XlibFunctions g_xlib;
+
+// Loads libX11 once; false (with err set) when it isn't installed.
+bool load_xlib(std::string& err) {
+    static bool loaded = false;
+    if (loaded) return true;
+    void* lib = dlopen("libX11.so.6", RTLD_NOW | RTLD_LOCAL);
+    if (lib == nullptr) {
+        err = "plugin editor windows need libX11 (libX11.so.6 was not found)";
+        return false;
+    }
+    XlibFunctions f;
+#define DSTUDIO_XLIB_LOAD(name) \
+    f.name = reinterpret_cast<decltype(f.name)>(dlsym(lib, #name)); \
+    if (f.name == nullptr) { \
+        err = "libX11 has no " #name; \
+        return false; \
+    }
+    DSTUDIO_XLIB_FUNCTIONS(DSTUDIO_XLIB_LOAD)
+#undef DSTUDIO_XLIB_LOAD
+    g_xlib = f;
+    loaded = true; // the library stays loaded for the rest of the process
+    return true;
+}
+
+#define XAllocSizeHints g_xlib.XAllocSizeHints
+#define XChangeProperty g_xlib.XChangeProperty
+#define XCreateWindow g_xlib.XCreateWindow
+#define XDestroyWindow g_xlib.XDestroyWindow
+#define XFlush g_xlib.XFlush
+#define XFree g_xlib.XFree
+#define XGetErrorText g_xlib.XGetErrorText
+#define XInternAtom g_xlib.XInternAtom
+#define XMapRaised g_xlib.XMapRaised
+#define XNextEvent g_xlib.XNextEvent
+#define XOpenDisplay g_xlib.XOpenDisplay
+#define XPending g_xlib.XPending
+#define XResizeWindow g_xlib.XResizeWindow
+#define XSendEvent g_xlib.XSendEvent
+#define XSetClassHint g_xlib.XSetClassHint
+#define XSetErrorHandler g_xlib.XSetErrorHandler
+#define XSetWMNormalHints g_xlib.XSetWMNormalHints
+#define XSetWMProtocols g_xlib.XSetWMProtocols
+#define XStoreName g_xlib.XStoreName
+#define XSync g_xlib.XSync
 
 constexpr const char* kWindowClass = "DeviceStudioPluginEditor";
 
@@ -78,6 +160,7 @@ int on_x_error(Display* d, XErrorEvent* e) {
 Display* display(std::string& err) {
     XHost& h = xhost();
     if (h.dpy != nullptr) return h.dpy;
+    if (!load_xlib(err)) return nullptr;
     h.dpy = XOpenDisplay(nullptr);
     if (h.dpy == nullptr) {
         err = "cannot open the X11 display for the plugin editor (DISPLAY is not set; on Wayland, plugin editors need "

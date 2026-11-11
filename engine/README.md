@@ -273,7 +273,8 @@ running jackd without PipeWire.
   Xvfb in the Linux CI job. Dragonfly Room (CLAP and VST3) and an LSP CLAP
   were checked by hand with `plugin_editor_check_linux`. Configure with
   `-DDSTUDIO_ENGINE_X11=OFF` (or `DSTUDIO_ENGINE_X11=OFF` for cargo) to build
-  without libX11; opening an editor then returns `SE_ERR_UNSUPPORTED_FORMAT`.
+  without the libX11 headers (libX11 itself is loaded with `dlopen` when the
+  first editor opens, never linked); opening an editor then returns `SE_ERR_UNSUPPORTED_FORMAT`.
 
 ## Layout
 

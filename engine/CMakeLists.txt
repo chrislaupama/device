@@ -280,7 +280,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   if(DSTUDIO_ENGINE_X11)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
-    target_link_libraries(dstudio_engine PUBLIC PkgConfig::X11)
+    # Headers only: plugin_editor_x11.cpp loads libX11 with dlopen when the
+    # first editor opens, so processes that never open one don't load it.
+    target_include_directories(dstudio_engine PRIVATE
+      $<TARGET_PROPERTY:PkgConfig::X11,INTERFACE_INCLUDE_DIRECTORIES>)
     target_compile_definitions(dstudio_engine PRIVATE DSTUDIO_HAVE_X11=1)
   endif()
 endif()

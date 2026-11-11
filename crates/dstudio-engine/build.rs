@@ -10,7 +10,8 @@
 
 /// Configures and builds the engine with CMake, then emits the link lines for
 /// the target OS: system frameworks on macOS, libpipewire (unless
-/// `DSTUDIO_ENGINE_PIPEWIRE` is off), libX11 (unless `DSTUDIO_ENGINE_X11` is off), libstdc++ and libdl on Linux, and the COM,
+/// `DSTUDIO_ENGINE_PIPEWIRE` is off), libstdc++ and libdl on Linux (the engine
+/// loads libX11 itself when a plugin editor opens), and the COM,
 /// shell, MMCSS and user32 libraries on Windows.
 fn main() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -93,9 +94,6 @@ fn main() {
                     }
                 }
                 println!("cargo:rustc-link-lib=pipewire-0.3");
-            }
-            if x11 {
-                println!("cargo:rustc-link-lib=X11");
             }
             println!("cargo:rustc-link-lib=stdc++");
             println!("cargo:rustc-link-lib=dl");

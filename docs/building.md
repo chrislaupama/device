@@ -115,8 +115,10 @@ the engine itself needs only `pkg-config` and `libpipewire-0.3-dev`.
   with `-DDSTUDIO_ENGINE_PIPEWIRE=OFF`, or set `DSTUDIO_ENGINE_PIPEWIRE=OFF` in the
   environment for a cargo build.
 
-Plugin editor windows on Linux use X11 (libX11, from `libx11-dev`), which
-Wayland desktops provide through XWayland. To build without it, configure
+Plugin editor windows on Linux use X11, which Wayland desktops provide
+through XWayland. The build needs the libX11 headers (`libx11-dev`); the
+engine loads libX11 itself when the first plugin window opens, so it is not
+linked and a system without it only loses plugin windows. To build without it, configure
 CMake with `-DDSTUDIO_ENGINE_X11=OFF` or set `DSTUDIO_ENGINE_X11=OFF` for a cargo
 build; opening a plugin window then reports that it is unsupported. The
 editor test (`plugin_editor_window_x11_open_resize_close`) needs a display:
