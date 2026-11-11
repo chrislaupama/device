@@ -1,9 +1,25 @@
-# Keeps the actions used by CI up to date. Cargo and the C++ SDKs are pinned on
-# purpose (see crates/dstudio-app/Cargo.toml and engine/CMakeLists.txt), so they
-# are updated by hand.
+# Keeps the GitHub Actions used by the workflows current. They are pinned to commit hashes;
+# Dependabot opens one grouped pull request a week that moves the hashes (and the version
+# comments next to them).
+#
+# Cargo dependencies and the C++ SDKs are pinned on purpose (see crates/dstudio-app/Cargo.toml
+# and engine/CMakeLists.txt), so version updates stay off (open-pull-requests-limit: 0) and
+# they are updated by hand. For Cargo, security fixes still arrive as pull requests once
+# "Dependabot security updates" is on in the repository settings, and the Security workflow
+# checks Cargo.lock against the RustSec advisory database every week. Dependabot cannot see
+# the C++ SDKs that engine/CMakeLists.txt fetches, so nothing watches those automatically:
+# check their release notes and advisories by hand when updating them.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: monthly
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0

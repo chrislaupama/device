@@ -183,8 +183,8 @@ Pull requests run only what their changes can reach
 ([`tools/ci/changes.sh`](../tools/ci/changes.sh), tested by
 `tools/ci/test-changes.sh`): documentation alone builds nothing; Rust or UI
 changes skip the standalone engine build; engine tests or benchmarks alone skip
-the Rust tests and the app; packaging and benchmark tooling have their own
-workflows. Anything the script does not know (`Cargo.toml`, `Cargo.lock`, the
+the Rust tests and the app; packaging, benchmark tooling and the Security
+workflow have their own workflows. Anything the script does not know (`Cargo.toml`, `Cargo.lock`, the
 CI workflow, `tools/ci/`, a new folder) runs everything, and so do pushes to
 main and the nightly run. A job with nothing to do still runs and passes, so
 the required checks always report.
@@ -213,6 +213,28 @@ DSTUDIO_TEST_REAL_INPUT=1 cargo test -p dstudio-engine --test real_loopback -- -
 The workflow never uses a self-hosted runner, has no secrets, gives its token
 read-only access and pins every action to a commit, so running it on a
 stranger's pull request is safe.
+
+### Supply-chain checks
+
+[`.github/workflows/security.yml`](../.github/workflows/security.yml) runs on
+pull requests that change `Cargo.lock`, a `Cargo.toml` or a workflow, on
+pushes to main that change `Cargo.lock`, and every Monday:
+
+- **Dependency review** (pull requests): fails when the change adds a
+  dependency or action with a known vulnerability of moderate severity or
+  worse, from GitHub's advisory database.
+- **RustSec advisories**: `cargo audit` checks every crate in `Cargo.lock`
+  against the RustSec database and fails on a vulnerability (unmaintained or
+  yanked crates are warnings). The weekly run catches advisories published
+  after a dependency was added.
+
+Every action in every workflow is pinned to a commit hash; Dependabot moves the
+hashes in one grouped pull request a week. Cargo crates and the engine's C++
+SDKs are updated by hand. For Cargo crates, Dependabot opens security-fix pull
+requests once "Dependabot security updates" is on in the repository settings
+(Settings › Code security). Dependabot does not see the SDKs that
+`engine/CMakeLists.txt` fetches, so their advisories are checked by hand when
+they are updated.
 
 ### Performance checks
 
@@ -264,10 +286,13 @@ installable packages:
 | Windows x64 | `DeviceStudio-<version>-windows-x64-setup.exe` (installer) and a portable `.zip` |
 | Linux x86_64, aarch64 | `DeviceStudio-<version>-linux-<arch>.tar.gz` (run `install.sh`) |
 
-Each package carries the plugin scanner next to the app, where the app looks
+The macOS app's two architectures build side by side on separate runners and
+are joined with `lipo` in a third job. Each package carries the plugin scanner next to the app, where the app looks
 for it first, and is smoke-tested on its runner (installed, then started to
 render a screenshot). Pushing a tag `vX.Y.Z` builds them from `main` and
-creates a **draft** GitHub release with generated notes; the tag must match the
+creates a **draft** GitHub release with generated notes, a `SHA256SUMS.txt` and
+a signed build provenance attestation for every package (check a download with
+`gh attestation verify <file> --repo chrislaupama/device`); the tag must match the
 `version` in the root `Cargo.toml`. A manual run (Actions › Release › Run
 workflow) or a pull request that changes the packaging builds the packages as
 run artifacts without releasing anything.
