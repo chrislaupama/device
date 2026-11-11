@@ -130,7 +130,8 @@ master. Alignment generalises from "every track at the master" to "every input o
 at `in_r = max lat_s` over the tracks that feed it and reaches the master at `in_r + lat_r`; `L` is the latest
 master arrival. A track's main line delays it to its earliest destination, and each later destination gets its own
 edge line (per send, per routed output) for the difference, after the fader, so automation timing at the fader is
-unchanged. A monitored input skips only the main line, as before, not the edge lines. With no latency on returns
-every edge delay is 0 and no edge line exists, so sessions without latent returns render exactly as before. Edge
+unchanged. A monitored input skips only the main line, as before, not the edge lines. An edge delay is non-zero
+only when a track's destinations receive at different times; with no plugin latency anywhere every delay is 0 and
+no edge line runs, so such sessions render exactly as before. Edge
 lines carry across republishes keyed by (track id, destination id). Details: engine/README.md "Return tracks and
 sends".

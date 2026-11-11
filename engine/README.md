@@ -1305,7 +1305,9 @@ only the soloed returns, still fed by every live track.
 of every bus. With `lat_t` the chain latency of track `t`, a return `r` receives at `in_r = max lat_s` over its
 feeders and reaches the master at `in_r + lat_r`. `L` is the latest master arrival. Each track is delayed by its
 main line to its earliest destination; every later destination gets an edge line for the difference (one per
-send, one per routed output). Without latency on returns, every edge delay is 0 and no edge line exists. Edge
+send, one per routed output). An edge delay is non-zero only when a track's destinations receive at different
+times (for example a latent track that feeds the master but not a return other tracks send to); with no plugin
+latency anywhere every delay is 0 and no edge line runs. Edge
 lines carry across republishes keyed by (track id, destination id). Sidechains reading a return are not
 compensated (as for every sidechain).
 
