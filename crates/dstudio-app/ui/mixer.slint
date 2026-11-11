@@ -89,7 +89,7 @@ component Strip inherits Rectangle {
         Text { x: 2 * root.u; y: 5 * root.u; height: 14 * root.u; text: "Sends"; color: sends-ta.has-hover ? #ffffffb3 : #ffffff66; font-size: 10 * root.u; font-weight: 600; letter-spacing: -0.2 * root.u; vertical-alignment: center; }
         Icon { x: 35.5 * root.u; y: 7.5 * root.u; width: 9 * root.u; height: 9 * root.u; d: Studio.sends-open ? Icons.chevron-down : Icons.chevron-up; ink: sends-ta.has-hover ? #ffffffb3 : #ffffff66; stroke-width: 1.4px; }
         sends-ta := TouchArea {
-            width: 50 * root.u; clicked => { Studio.toggle-sends-open(); }
+            x: 0; width: 50 * root.u; clicked => { Studio.toggle-sends-open(); }
             accessible-role: button; accessible-label: Studio.sends-open ? "Collapse sends" : "Expand sends";
         }
         Rectangle {

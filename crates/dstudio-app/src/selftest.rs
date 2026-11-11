@@ -2397,6 +2397,9 @@ fn returns_steps() -> Vec<Step> {
             (c.returns_shown() && s.get_pinned_h() > 0.0 && pinned == 1).then_some(()).ok_or(format!("shown {} pinned h {} rows {pinned}", c.returns_shown(), s.get_pinned_h()))
         })),
         Do("returns: open the mixer (Cmd+Shift+X)", Box::new(|a| key(a, "X", true, true))),
+        Check("returns: mixer open, Sends collapsed", Box::new(|c, a| {
+            (c.mixer_open && a.global::<Studio>().get_mixer_open() && !c.routing.sends_open).then_some(()).ok_or(format!("mixer {} sends {}", c.mixer_open, c.routing.sends_open))
+        })),
         Do("returns: click 'Sends' on the first strip", Box::new(|a| click(a, bottom_x() + 8.0 * 0.85 + 14.0, bottom_end() - 302.0 * 0.85 + 11.0 * 0.85))),
         Check("returns: every strip's Sends section expanded, the return strip has none", Box::new(|c, a| {
             let s = a.global::<Studio>();
