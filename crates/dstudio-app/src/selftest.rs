@@ -2712,7 +2712,36 @@ fn midi_recording_steps() -> Vec<Step> {
         let mut out = vec![0f32; 2 * frames];
         c.engine.render_offline(&mut out).map_err(|e| e.to_string())
     }
+    let peak = Rc::new(Cell::new(-1f32));
+    let (pk1, pk2) = (peak.clone(), peak.clone());
     vec![
+        DoC("midi play: select the Instrument track (not armed or monitoring) and play a key", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            if !offline(&c) {
+                return;
+            }
+            let Some((t, quiet)) = inst(&c).map(|t| (t.id, !t.arm && !t.monitor)) else { return };
+            if !quiet {
+                return;
+            }
+            c.select_track(t);
+            c.midi_tick();
+            let _ = c.engine.midi_inject(0x90, 60, 110);
+            let mut out = vec![0f32; 2 * 8192];
+            let ok = c.engine.render_offline(&mut out).is_ok();
+            let _ = c.engine.midi_inject(0x80, 60, 0);
+            let _ = render(&c, 512);
+            if ok {
+                pk1.set(out.iter().fold(0f32, |m, v| m.max(v.abs())));
+            }
+        })),
+        Check("midi play: a selected track that is not armed or monitoring does not play the keyboard", Box::new(move |c, _| {
+            if !offline(c) || pk2.get() < 0.0 {
+                return Ok(());
+            }
+            // Silence, up to tails of earlier steps (a played note peaks far above -60 dBFS).
+            (pk2.get() < 1e-3).then_some(()).ok_or(format!("peak {}", pk2.get()))
+        })),
         DoC("midi rec: disarm audio track 1, arm the Instrument track, select it, playhead at beat 4", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
             let audio = c.project().tracks[0].id;

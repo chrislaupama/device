@@ -20,13 +20,9 @@ of seconds). Settings › MIDI lists the inputs under "MIDI inputs", each with a
 off and a small activity light that blinks when it sends something. Turning an input off is an app
 preference, like the audio device, not part of the project.
 
-**Playing.** What the keyboard plays goes to instrument tracks:
-
-1. every instrument track that is armed (R) or monitoring (I), or, when none is,
-2. the selected instrument track.
-
-So selecting an instrument track and playing just works. Arming or monitoring tracks overrides the
-selection, which lets you play several instruments at once. Notes go to whatever instrument the
+**Playing.** What the keyboard plays goes to every instrument track that is armed (R) or
+monitoring (I), and only to those (decided in Q1): selecting a track does not make it play. Arm or
+monitor several tracks to play several instruments at once. Notes go to whatever instrument the
 track has: the built-in Synth, a built-in instrument such as Sampler or Drum Rack, or an instrument
 plugin. Playing works while the transport is stopped. The keyboard's sustain pedal, mod wheel,
 pitch bend and aftertouch go to instruments that accept them (plugins and built-in instruments);
@@ -65,8 +61,7 @@ pass. A track that received no notes gets no clip.
 - R2. Input events reach instruments at the start of the next audio block. The audio thread never
   allocates, locks or blocks for MIDI: events cross from the MIDI thread through preallocated
   lock-free queues; a full queue drops events and counts them.
-- R3. Routing follows the Behaviour rules above (armed or monitoring instrument tracks, else the
-  selected instrument track), and works for the built-in Synth, built-in instruments and
+- R3. Routing follows the Behaviour rules above (armed or monitoring instrument tracks only), and works for the built-in Synth, built-in instruments and
   instrument plugins, while stopped and while playing.
 - R4. Held notes are released when routing changes, when an input is closed and when the engine
   stops. No stuck notes.
@@ -115,6 +110,6 @@ pass. A track that received no notes gets no clip.
 
 ## Open questions
 
-- Q1. Should the selected instrument track hear the keyboard when no track is armed or monitoring
-  (the default above), or only armed and monitoring tracks? Recommended: yes, it is how people
-  expect a keyboard to work.
+- Q1. Should the selected instrument track hear the keyboard when no track is armed or monitoring?
+  Decided Nov 11: no, only armed and monitoring tracks play. The engine keeps its focus-track
+  routing (`se_midi_set_focus`), but the app never sets a focus track.

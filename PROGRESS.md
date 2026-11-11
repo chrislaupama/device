@@ -304,8 +304,8 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 
 - Core: `midi_record` turns a pass's captured note events into one `AddMidiClip` per armed instrument track (clip
   from the start bar to the bar after the last note or stop; looped passes cover the loop and overdub).
-- App (`midi_in.rs`, `recording.rs`): R and I work on instrument tracks; the selected instrument track is the
-  engine's focus track; record starts MIDI capture (MIDI-only passes start the transport themselves) and stop adds
+- App (`midi_in.rs`, `recording.rs`): R and I work on instrument tracks, and only armed or monitoring instrument
+  tracks play the keyboard (selecting a track does not); record starts MIDI capture (MIDI-only passes start the transport themselves) and stop adds
   the clips to the pass's single "Record" undo step, after any audio takes; the live "Recording" clip draws the
   notes as they are played. Settings › MIDI lists the inputs (activity light, on/off switch, preference
   `midi.disabled_inputs`); ports are rescanned every 2 s (every 100 ms while that page shows). Self-test and

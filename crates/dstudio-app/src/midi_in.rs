@@ -1,17 +1,17 @@
-//! MIDI input in the app (spec 003): which ports are open (Settings › MIDI),
-//! which instrument track plays the keyboard when none is armed or monitoring
-//! (the selected one), and the MIDI side of a recording pass.
+//! MIDI input in the app (spec 003): which ports are open (Settings › MIDI)
+//! and the MIDI side of a recording pass.
 //!
 //! Playing happens entirely in the engine (routing on the audio thread from
-//! the snapshot's arm / monitor flags plus the focus track set here). The app
-//! only opens ports, keeps the focus up to date and, while recording, drains
+//! the snapshot's arm / monitor flags: only armed or monitoring instrument
+//! tracks hear the keyboard; the app sets no focus track). The app only opens
+//! ports and, while recording, drains
 //! the engine's capture ring and turns it into clips with
 //! `dstudio_core::midi_record` when the pass stops.
 
 use crate::controller::Controller;
 use crate::MidiInputRow;
 use dstudio_core::midi_record::{self, CapturedEvent, Pass};
-use dstudio_core::{Command, TrackId, TrackKind};
+use dstudio_core::{Command, TrackId};
 use std::time::{Duration, Instant};
 
 /// How often the port list is rescanned (new keyboards show up within this).
@@ -60,8 +60,6 @@ pub struct MidiInState {
     /// After a failed open: no new attempt before this (unless the wanted set changes).
     retry_at: Option<(Vec<String>, Instant)>,
     last_scan: Option<Instant>,
-    /// Focus last sent to the engine (None = never sent).
-    focus: Option<Option<u64>>,
     pub pass: Option<MidiPass>,
     /// SCREENSHOT-ONLY: a fixed port list; the engine is never asked to list or open ports.
     pub fake_ports: bool,
@@ -83,14 +81,8 @@ pub fn wanted_ports(ports: &[PortRow], disabled: &[String]) -> Vec<String> {
 }
 
 impl Controller {
-    /// Called every UI tick: focus, port rescans and the recording pass.
+    /// Called every UI tick: port rescans and the recording pass.
     pub fn midi_tick(&mut self) {
-        // The selected instrument track plays the keyboard while no track is armed or monitoring.
-        let focus = self.selected_track.and_then(|t| self.project().track(t)).filter(|t| t.kind == TrackKind::Instrument).map(|t| t.id.0);
-        if self.midi_in.focus != Some(focus) {
-            self.engine.set_midi_focus(focus);
-            self.midi_in.focus = Some(focus);
-        }
         self.midi_scan(false);
         self.midi_poll_pass();
     }

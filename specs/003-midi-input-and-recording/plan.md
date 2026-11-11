@@ -59,8 +59,8 @@ Alternatives considered:
   New `midi_record` module: pure function from captured events (frames) plus pass info (start,
   stop, loop) to MIDI clips per track, unit tested. No schema change.
 - **App** (`crates/dstudio-app`): R and I on instrument tracks; record start/stop drive MIDI
-  capture alongside audio, one "Record" batch; live "Recording" clip with notes; focus = selected
-  instrument track; Settings › MIDI "MIDI inputs" list with switches and activity lights, and the
+  capture alongside audio, one "Record" batch; live "Recording" clip with notes; no focus track
+  (only armed or monitoring tracks play, Q1); Settings › MIDI "MIDI inputs" list with switches and activity lights, and the
   `midi.disabled` preference; inputs rescanned every two seconds; self-test steps with injected
   MIDI; a `--state` review state for the MIDI page.
 - **Docs**: README (features, status), PROGRESS.md, `docs/architecture.md` (MIDI input thread),
