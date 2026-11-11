@@ -6763,6 +6763,171 @@ fn snap_steps() -> Vec<Step> {
     ]
 }
 
+/// Track rename: double-click the selected track's name in the inspector, type, Enter. An
+/// empty name and Escape leave the name alone; undo restores it.
+fn track_rename_steps() -> Vec<Step> {
+    use Step::*;
+    let name0 = |c: &Controller| c.project().tracks.first().map(|t| t.name.clone()).unwrap_or_default();
+    let name_xy = || (bottom_x() + 60.0, bottom_y() + 14.25);
+    let original: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+    let (o0, o1, o2, o3) = (original.clone(), original.clone(), original.clone(), original.clone());
+    let e0 = Rc::new(std::cell::Cell::new(0));
+    let e1 = e0.clone();
+    let rev0 = Rc::new(std::cell::Cell::new(0u64));
+    let rev1 = rev0.clone();
+    vec![
+        DoC("rename: select track 1, Devices tab, mixer closed", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            *o0.borrow_mut() = c.project().tracks[0].name.clone();
+            if c.mixer_open {
+                c.toggle_mixer();
+            }
+            c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            let id = c.project().tracks[0].id;
+            c.select_track(id);
+        })),
+        Do("rename: double-click the name in the inspector", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+        })),
+        Do("rename: type a new name and press Enter", Box::new(|a| {
+            type_text(a, "Lead vox");
+            key(a, Key::Return, false, false);
+        })),
+        Check("rename: track 1 is Lead vox, one undo step, shown in the inspector", Box::new(move |c, a| {
+            let n = name0(c);
+            (n == "Lead vox" && c.doc.undo_label() == Some("Rename Track") && a.global::<Studio>().get_sel_name() == "Lead vox").then_some(()).ok_or(format!("name {n:?} undo {:?}", c.doc.undo_label()))
+        })),
+        Do("rename: double-click, clear the name, Enter", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+        })),
+        Do("rename: an empty name", Box::new(|a| {
+            key(a, Key::Backspace, false, false);
+            key(a, Key::Return, false, false);
+        })),
+        Check("rename: an empty name keeps Lead vox", Box::new(move |c, _| (name0(c) == "Lead vox").then_some(()).ok_or(format!("name {:?}", name0(c))))),
+        Do("rename: double-click, type, Escape", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+        })),
+        Do("rename: Escape cancels", Box::new(|a| {
+            type_text(a, "Nope");
+            key(a, Key::Escape, false, false);
+        })),
+        Check("rename: still Lead vox", Box::new(move |c, _| (name0(c) == "Lead vox").then_some(()).ok_or(format!("name {:?}", name0(c))))),
+        Do("rename: rename through the callback with spaces around", Box::new(|a| {
+            let s = a.global::<Studio>();
+            s.invoke_track_rename(s.get_sel_id(), "  Bass  ".into(), s.get_doc_epoch());
+        })),
+        Check("rename: trimmed to Bass", Box::new(move |c, _| (name0(c) == "Bass").then_some(()).ok_or(format!("name {:?}", name0(c))))),
+        Do("rename: double-click, type Drums, then press in the lanes", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+            type_text(a, "Drums");
+            let p = lanes_point();
+            click(a, p.x, p.y);
+        })),
+        Do("rename: let the focus move", Box::new(|_| {})),
+        Check("rename: the press in the lanes committed Drums", Box::new(move |c, _| (name0(c) == "Drums").then_some(()).ok_or(format!("name {:?}", name0(c))))),
+        DoC("rename: select track 1 again", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            let id = c.project().tracks[0].id;
+            c.select_track(id);
+        })),
+        Do("rename: double-click, type Keys, then select track 2", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+            type_text(a, "Keys");
+        })),
+        DoC("rename: select track 2 while the field is open", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let id = c.project().tracks[1].id;
+            c.select_track(id);
+        })),
+        Do("rename: let the field see the new selection", Box::new(|_| {})),
+        Check("rename: Keys went to track 1, track 2 kept its name", Box::new(move |c, _| {
+            let t = &c.project().tracks;
+            (t[0].name == "Keys" && t[1].name != "Keys").then_some(()).ok_or(format!("names {:?} / {:?}", t[0].name, t[1].name))
+        })),
+        DoC("rename: select track 1, Devices tab", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            let id = c.project().tracks[0].id;
+            c.select_track(id);
+        })),
+        Do("rename: double-click, type Pads, then click the Clip tab", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+            type_text(a, "Pads");
+            click(a, bottom_x() + 261.0 + 8.0, bottom_y() + 14.0);
+        })),
+        Check("rename: switching tabs committed Pads", Box::new(move |c, _| {
+            (name0(c) == "Pads" && c.bottom_tab == crate::controller::BottomTab::Clip && c.rename_draft.is_none()).then_some(()).ok_or(format!("name {:?} tab {:?}", name0(c), c.bottom_tab))
+        })),
+        DoC("rename: track 1 selected, no clip", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let id = c.project().tracks[0].id;
+            c.select_track(id);
+            c.selected_clip = None;
+            c.ui_dirty = true;
+        })),
+        Do("rename: ⌘R (track.rename)", Box::new(|a| key(a, "r", true, false))),
+        Do("rename: type Strings and press Enter", Box::new(|a| {
+            type_text(a, "Strings");
+            key(a, Key::Return, false, false);
+        })),
+        Check("rename: the keyboard opened the header field and Strings was committed", Box::new(move |c, _| {
+            (name0(c) == "Strings" && c.doc.undo_label() == Some("Rename Track")).then_some(()).ok_or(format!("name {:?} undo {:?}", name0(c), c.doc.undo_label()))
+        })),
+        DoC("rename: undo six times", Box::new(|_, ctl| {
+            for _ in 0..6 {
+                ctl.borrow_mut().undo();
+            }
+        })),
+        Check("rename: the original name is back", Box::new(move |c, _| (name0(c) == *o1.borrow()).then_some(()).ok_or(format!("name {:?} want {:?}", name0(c), o1.borrow())))),
+        Do("rename: a field opened before the project was replaced types and commits", Box::new(|a| {
+            let s = a.global::<Studio>();
+            let stale = s.get_doc_epoch() - 1;
+            s.invoke_track_rename_draft(s.get_sel_id(), "Stale".into(), stale);
+            s.invoke_track_rename(s.get_sel_id(), "Stale".into(), stale);
+        })),
+        Check("rename: the stale field renamed nothing and left no draft", Box::new(move |c, _| {
+            (name0(c) == *o2.borrow() && c.rename_draft.is_none()).then_some(()).ok_or(format!("name {:?} draft {:?}", name0(c), c.rename_draft))
+        })),
+        DoC("rename: track 1 selected, Devices tab (again)", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            let id = c.project().tracks[0].id;
+            c.select_track(id);
+            rev0.set(c.doc.revision());
+        })),
+        Do("rename: double-click the name and type nothing", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+        })),
+        Check("rename: the open field holds a draft of the current name", Box::new(move |c, _| {
+            let want = (c.project().tracks[0].id, name0(c));
+            (c.rename_draft.as_ref() == Some(&want)).then_some(()).ok_or(format!("draft {:?}", c.rename_draft))
+        })),
+        Do("rename: click the Clip tab with the untouched field open", Box::new(|a| click(a, bottom_x() + 261.0 + 8.0, bottom_y() + 14.0))),
+        Do("rename: ⌘R right after", Box::new(move |a| {
+            e0.set(a.global::<Studio>().get_rename_open_epoch());
+            key(a, "r", true, false);
+        })),
+        Check("rename: the shortcuts had the keyboard back (⌘R reached the app), no rename step", Box::new(move |c, a| {
+            let e = a.global::<Studio>().get_rename_open_epoch();
+            let rev = c.doc.revision();
+            (e == e1.get() + 1 && name0(c) == *o3.borrow() && c.rename_draft.is_some() && rev == rev1.get())
+                .then_some(())
+                .ok_or(format!("epoch {e} (was {}) name {:?} draft {:?} revision {rev} (was {})", e1.get(), name0(c), c.rename_draft, rev1.get()))
+        })),
+        Do("rename: Escape closes the header field", Box::new(|a| key(a, Key::Escape, false, false))),
+        Check("rename: closed without a draft", Box::new(|c, _| c.rename_draft.is_none().then_some(()).ok_or(format!("draft {:?}", c.rename_draft)))),
+    ]
+}
+
 /// The timeline ruler's bar labels at several zooms: the rule is a label every
 /// power-of-two bars once the bars are 50 px apart, starting at bar 1.
 fn ruler_zoom_steps() -> Vec<Step> {
@@ -7788,6 +7953,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(clip_render_plugin_steps());
     all.extend(ruler_zoom_steps());
     all.extend(snap_steps());
+    all.extend(track_rename_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());
     all.extend(add_search_steps());
