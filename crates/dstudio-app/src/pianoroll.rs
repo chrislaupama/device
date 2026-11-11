@@ -46,6 +46,28 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(350);
 pub const KEY_VELOCITY: u8 = 102;
 /// One zoom command step on the toolbar sliders' 0..1 range (the clip-editor zoom command).
 pub const ZOOM_STEP: f32 = 0.1;
+/// Velocity lane (toolbar toggle): its height under the note grid, and the insets of its value
+/// range (velocity 127 at the top inset, 0 at the bottom one).
+pub const VEL_H: f32 = 68.0;
+const VEL_TOP: f32 = 8.0;
+const VEL_BOTTOM: f32 = 4.0;
+/// A press this close to a note's stem grabs that note.
+const VEL_GRAB: f32 = 4.0;
+
+/// Top of the velocity lane in texture coordinates (the grid ends here).
+pub fn vel_lane_y(v: &PrView) -> f32 {
+    v.h
+}
+/// Lane y of velocity `vel`.
+pub fn vel_y(v: &PrView, vel: u8) -> f32 {
+    let (top, bottom) = (v.h + VEL_TOP, v.h + VEL_H - VEL_BOTTOM);
+    bottom - (bottom - top) * vel as f32 / 127.0
+}
+/// Velocity at lane y (1..=127: a note can't be silenced from the lane).
+pub fn vel_at(v: &PrView, y: f32) -> u8 {
+    let (top, bottom) = (v.h + VEL_TOP, v.h + VEL_H - VEL_BOTTOM);
+    ((bottom - y) / (bottom - top) * 127.0).round().clamp(1.0, 127.0) as u8
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct PrView {
@@ -207,6 +229,10 @@ pub enum PrDrag {
     Loop { edge: Option<bool>, orig: ClipLoop, anchor: Ticks, cur: ClipLoop },
     /// A key held on the keyboard: the preview follows the pointer from key to key.
     Keys,
+    /// Velocity lane. `grab`: the notes in `ids` move together by the pointer's vertical
+    /// travel from their velocities at the press. Otherwise the pointer paints: each note in
+    /// `ids` whose stem it crosses takes the velocity under it. `last_x` is the previous pointer x.
+    Velocity { grab: bool, ids: Vec<u32>, y0: f32, last_x: f32, preview: Vec<Note> },
 }
 
 /// Footer value fields (drag vertically; Grid cycles on click).
@@ -289,6 +315,8 @@ pub struct PrState {
     pub vzoom: Option<f32>,
     /// The note previewed through the track's instrument: (device, pitch).
     pub preview: Option<(u64, u8)>,
+    /// The velocity lane shows under the note grid (toolbar toggle).
+    pub vel_lane: bool,
     /// Note-offs the engine rejected while its live queue was full, sent again once it drains.
     pub preview_offs: Vec<(u64, u8)>,
 }
@@ -320,6 +348,7 @@ impl Default for PrState {
             hstart: 0.0,
             vzoom: None,
             preview: None,
+            vel_lane: false,
             preview_offs: Vec::new(),
         }
     }
@@ -357,6 +386,8 @@ pub struct PrScene<'a> {
     pub clip_loop: Option<(f64, f64, bool)>,
     /// Keyboard keys drawn as pressed (bit = pitch): the previewed note and the typed ones.
     pub lit: u128,
+    /// The velocity lane shows under the grid (from `view.h` to `view.h + VEL_H`).
+    pub vel_lane: bool,
 }
 
 fn rgba(c: [f32; 3], a: f32) -> [f32; 4] {
@@ -655,10 +686,15 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
             o.push(px.rect(x - ww / 2.0, BAND_Y + 1.5 + r as f32, ww, 1.0, rgba(marker, 1.0)));
         }
     }
+    // ---- velocity lane: a stem and a cap per note, under the grid ----
+    if sc.vel_lane {
+        vel_lane(o, sc, &px);
+    }
     // ---- playhead ----
     let phx = v.x_of(sc.playhead);
     if phx >= gx && phx <= w {
-        o.push(px.rect(phx - 0.5, 14.0, 1.0, h - 14.0, rgba(rgb(0x8a8a8b), 1.0)));
+        let bottom = if sc.vel_lane { h + VEL_H } else { h };
+        o.push(px.rect(phx - 0.5, 14.0, 1.0, bottom - 14.0, rgba(rgb(0x8a8a8b), 1.0)));
     }
     // ---- marquee ----
     if let Some((x0, y0, x1, y1)) = sc.marquee {
@@ -672,7 +708,51 @@ pub fn build(dl: &mut DrawList, sc: &PrScene) {
     }
 }
 
+/// The velocity lane (`build`): grid lines, value guides, then one stem per note from the lane
+/// floor to its velocity, capped with a bar as wide as the note (at most 6 pt). Selected notes
+/// are drawn last and lighter; notes outside the clip range are dimmed as in the grid.
+fn vel_lane(o: &mut Vec<RectInst>, sc: &PrScene, px: &Px) {
+    let v = &sc.view;
+    let (w, gx, y0) = (v.w, v.gx, vel_lane_y(v));
+    o.push(px.rect(0.0, y0, w, VEL_H, rgba(rgb(0x141518), 1.0)));
+    let mut tmp = Vec::new();
+    vlines(&mut tmp, sc, px, y0 + 1.0, y0 + VEL_H, gx);
+    o.extend(tmp);
+    for vel in [32u8, 64, 96, 127] {
+        o.push(px.rect(gx, vel_y(v, vel) - 0.25, w - gx, 0.5, rgba(WHITE, if vel == 127 { 0.08 } else { 0.04 })));
+    }
+    o.push(px.rect(0.0, y0, w, 1.0, rgba(rgb(0x2c2d30), 1.0)));
+    o.push(px.rect(gx - 1.0, y0 + 1.0, 1.0, VEL_H - 1.0, rgba(rgb(0x333333), 1.0)));
+    let floor = y0 + VEL_H - VEL_BOTTOM;
+    for pass in [false, true] {
+        for n in sc.notes.iter().filter(|n| sc.selected.contains(&n.id) == pass) {
+            let (x, _, nw, _) = v.note_rect(n);
+            if x < gx - 1.0 || x > w {
+                continue;
+            }
+            let beat = n.start as f64 / PPQ as f64;
+            let a = if beat < sc.range.1 && beat >= sc.range.0 { 1.0 } else { 0.4 };
+            let c = if pass { mix(sc.color, WHITE, 0.55) } else { sc.color };
+            let top = vel_y(v, n.velocity);
+            o.push(px.rect(x, top, 1.0, floor - top, rgba(c, a * 0.85)));
+            o.push(px.rounded(x - 0.5, top - 1.25, nw.clamp(3.0, 6.0) + 0.5, 2.5, 1.0, rgba(c, a)));
+        }
+    }
+}
+
 // ------------------------------------------------------------------ controller side
+
+/// Velocity lane paint: the notes in `ids` whose stems lie between x `a` and `b` (either order,
+/// with the grab reach around a single point) take `vel`.
+fn paint_velocity(notes: &mut [Note], ids: &[u32], v: &PrView, a: f32, b: f32, vel: u8) {
+    let (lo, hi) = (a.min(b) - VEL_GRAB, a.max(b) + VEL_GRAB);
+    for n in notes.iter_mut().filter(|n| ids.contains(&n.id)) {
+        let x = v.x_of(n.start as f64 / PPQ as f64);
+        if x >= lo && x <= hi {
+            n.velocity = vel;
+        }
+    }
+}
 
 /// Renumber `extra` notes so their ids don't collide with `existing`.
 fn renumber(existing: &[Note], extra: &mut [Note]) {
@@ -810,7 +890,11 @@ impl Controller {
             return self.pr_zoomed(PrView::fit_from(0.0, self.pr.size, len as f64 / PPQ as f64, 0.0));
         }
         let len = self.pr_clip().map(|c| c.length).unwrap_or(self.project().ticks_per_bar());
-        let mut v = PrView::fit(self.pr.size, len as f64 / PPQ as f64, self.pr.scroll);
+        let mut size = self.pr.size;
+        if self.pr.vel_lane {
+            size.1 = (size.1 - VEL_H).max(GRID_Y + 2.0 * ROW_H);
+        }
+        let mut v = PrView::fit(size, len as f64 / PPQ as f64, self.pr.scroll);
         if let Some((_, key)) = self.pr_scale().filter(|(s, _)| s.highlight && s.fold) {
             let notes = self.pr_clip().map(|c| c.notes.iter().map(|n| n.pitch).collect::<Vec<_>>()).unwrap_or_default();
             v.rows = Rows::only(&scale::fold_rows(key, notes));
@@ -865,7 +949,7 @@ impl Controller {
     /// Notes as displayed (gesture preview while dragging).
     pub fn pr_notes(&self) -> Vec<Note> {
         match (&self.pr.drag, &self.pr.value_drag) {
-            (Some(PrDrag::Notes { preview, .. } | PrDrag::Draw { preview, .. }), _) => preview.clone(),
+            (Some(PrDrag::Notes { preview, .. } | PrDrag::Draw { preview, .. } | PrDrag::Velocity { preview, .. }), _) => preview.clone(),
             (_, Some(ValueDrag { preview: Some(p), .. })) => p.clone(),
             _ => self.pr_clip().map(|c| c.notes.clone()).unwrap_or_default(),
         }
@@ -918,6 +1002,7 @@ impl Controller {
                 curves: Vec::new(),
                 clip_loop: self.pr_loop_preview().map(|l| (l.start as f64 / PPQ as f64, l.end as f64 / PPQ as f64, l.on)),
                 lit: 0,
+                vel_lane: false,
             });
         }
         let clip = self.pr_clip()?;
@@ -949,6 +1034,7 @@ impl Controller {
             curves,
             clip_loop: self.pr_loop_preview().map(|l| (l.start as f64 / PPQ as f64, l.end as f64 / PPQ as f64, l.on)),
             lit: self.pr.preview.map_or(0, |(_, pitch)| 1u128 << pitch) | self.typing.lit(),
+            vel_lane: self.pr.vel_lane,
         })
     }
 
@@ -1071,6 +1157,11 @@ impl Controller {
     pub fn pr_pointer(&mut self, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool) {
         if self.ac_clip().is_some() {
             self.ac_pointer(kind, x, y, shift, alt, command);
+            return;
+        }
+        let in_lane = self.pr.vel_lane && y >= vel_lane_y(&self.pr_view());
+        if (kind == 0 && in_lane) || matches!(self.pr.drag, Some(PrDrag::Velocity { .. })) {
+            self.pr_vel_pointer(kind, x, y, shift);
             return;
         }
         if self.shape_drawing() && self.pr.drag.is_none() && (kind != 0 || (x >= GRID_X && y >= GRID_Y)) {
@@ -1211,6 +1302,7 @@ impl Controller {
                         self.pr.drag = Some(PrDrag::ClipStart { start });
                     }
                     PrDrag::Loop { .. } => self.pr_loop_move(raw),
+                    PrDrag::Velocity { .. } => {}
                 }
             }
             _ => match self.pr.drag.take().inspect(|_| self.pr_preview(None)) {
@@ -1230,6 +1322,73 @@ impl Controller {
                 }
                 _ => {}
             },
+        }
+    }
+
+    /// Pointer in the velocity lane (kind 0 down, 1 move, 2 up). A press on a note's stem
+    /// grabs it (with the rest of the selection when it is selected; Shift adds it to the
+    /// selection) and the drag moves their velocities together. A press elsewhere paints:
+    /// the notes whose stems the pointer crosses take the velocity under it (only the
+    /// selected notes while there is a selection). One "Note Velocity" undo step on release.
+    fn pr_vel_pointer(&mut self, kind: i32, x: f32, y: f32, shift: bool) {
+        let Some(clip) = self.pr_clip().cloned() else { return };
+        let v = self.pr_view();
+        self.ui_dirty = true;
+        match kind {
+            0 => {
+                self.pr.focused = true;
+                self.menu_close();
+                if x < GRID_X {
+                    return;
+                }
+                let stem = |n: &Note| v.x_of(n.start as f64 / PPQ as f64);
+                // The nearest stem within reach; a selected note wins a tie.
+                let hit = clip
+                    .notes
+                    .iter()
+                    .filter(|n| (stem(n) - x).abs() <= VEL_GRAB)
+                    .min_by(|a, b| {
+                        let key = |n: &Note| ((stem(n) - x).abs(), !self.pr.selected.contains(&n.id));
+                        key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .copied();
+                let (grab, ids): (bool, Vec<u32>) = match hit {
+                    Some(n) => {
+                        if shift {
+                            self.pr.selected.insert(n.id);
+                        } else if !self.pr.selected.contains(&n.id) {
+                            self.pr.selected = [n.id].into();
+                        }
+                        (true, self.pr.selected.iter().copied().collect())
+                    }
+                    None if self.pr.selected.is_empty() => (false, clip.notes.iter().map(|n| n.id).collect()),
+                    None => (false, self.pr.selected.iter().copied().collect()),
+                };
+                let mut preview = clip.notes.clone();
+                if !grab {
+                    paint_velocity(&mut preview, &ids, &v, x, x, vel_at(&v, y));
+                }
+                self.pr.drag = Some(PrDrag::Velocity { grab, ids, y0: y, last_x: x, preview });
+            }
+            1 => {
+                let Some(PrDrag::Velocity { grab, ids, y0, last_x, mut preview }) = self.pr.drag.take() else { return };
+                if grab {
+                    let dv = ((y0 - y) / (VEL_H - VEL_TOP - VEL_BOTTOM) * 127.0).round() as i32;
+                    for (p, n) in preview.iter_mut().zip(&clip.notes) {
+                        if ids.contains(&n.id) {
+                            p.velocity = (n.velocity as i32 + dv).clamp(1, 127) as u8;
+                        }
+                    }
+                } else {
+                    paint_velocity(&mut preview, &ids, &v, last_x, x, vel_at(&v, y));
+                }
+                self.pr.drag = Some(PrDrag::Velocity { grab, ids, y0, last_x: x, preview });
+            }
+            _ => {
+                if let Some(PrDrag::Velocity { preview, .. }) = self.pr.drag.take() {
+                    self.commit_notes(clip.id, preview, Some("Note Velocity"));
+                }
+            }
         }
     }
 
@@ -1333,7 +1492,7 @@ impl Controller {
             return self.pr_set_scale(|s, _| s.fold = s.highlight && !s.fold);
         }
         if action == "velocity_lane" {
-            self.set_status("Velocity lane: not implemented yet", 3);
+            self.pr.vel_lane = !self.pr.vel_lane;
             return;
         }
         if self.pr_clip().is_none() {
@@ -1626,6 +1785,27 @@ mod tests {
         assert!((v.y_of(60) - 106.5).abs() < 1e-3);
         assert_eq!(v.pitch_at(106.6), 60);
         assert_eq!(v.pitch_at(106.4), 61);
+    }
+
+    #[test]
+    fn velocity_lane_maps_and_paints() {
+        let v = PrView::fit((1174.5, 281.0 - VEL_H), 4.0, DEFAULT_SCROLL);
+        assert!((vel_y(&v, 127) - (v.h + VEL_TOP)).abs() < 1e-3);
+        assert!((vel_y(&v, 0) - (v.h + VEL_H - VEL_BOTTOM)).abs() < 1e-3);
+        for vel in [1u8, 40, 64, 100, 127] {
+            assert_eq!(vel_at(&v, vel_y(&v, vel)), vel);
+        }
+        assert_eq!(vel_at(&v, v.h + VEL_H), 1, "the floor can't silence a note");
+        assert_eq!(vel_at(&v, v.h), 127);
+        let note = |id: u32, beat: i64| Note { id, pitch: 60, start: beat * PPQ, length: 240, velocity: 100 };
+        let mut notes = vec![note(1, 0), note(2, 1), note(3, 2), note(4, 3)];
+        // A sweep from beat 1.5 to 3 sets notes 3 and 4; note 4 is not in `ids`, so only 3 changes.
+        paint_velocity(&mut notes, &[1, 2, 3], &v, v.x_of(1.5), v.x_of(3.0), 40);
+        let got: Vec<u8> = notes.iter().map(|n| n.velocity).collect();
+        assert_eq!(got, [100, 100, 40, 100]);
+        // A single point reaches a stem within the grab distance.
+        paint_velocity(&mut notes, &[1, 2, 3, 4], &v, v.x_of(1.0) + VEL_GRAB - 0.5, v.x_of(1.0) + VEL_GRAB - 0.5, 7);
+        assert_eq!(notes[1].velocity, 7);
     }
 
     #[test]

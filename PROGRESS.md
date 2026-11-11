@@ -275,3 +275,13 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - `AGENTS.md` is the entry point for coding agents; codebase skills live in `.agents/skills/` (commands, C ABI and
   audio thread, built-in devices, UI, benchmarks, pull requests, plus the spec phases and bug fixing).
   `python3 tools/agents/check_skills.py` fails when a skill names a file that no longer exists.
+
+### 2026-11-11: piano roll velocity lane
+
+- The velocity button in the piano-roll toolbar opens a 68-unit lane under the note grid (the grid gives up that
+  height). Each note has a stem from the lane floor to its velocity (1 to 127). Dragging a stem moves the velocity
+  of that note, or of the whole selection when the note is selected; a press on empty lane paints the stems the
+  pointer sweeps across (the selection only, when there is one). Each gesture is one "Note Velocity" undo step.
+- Code: `pianoroll.rs` (`VEL_H`, `vel_y`/`vel_at`, `PrDrag::Velocity`, `pr_vel_pointer`, `paint_velocity`, the
+  `vel_lane` draw). Review state `review-pr-velocity`; self-test section "velocity"; unit test
+  `velocity_lane_maps_and_paints`.

@@ -297,6 +297,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.midi_state = 13;
                 }
+                "review-pr-velocity" => {
+                    a.reference_default = true;
+                    a.midi_state = 14;
+                }
                 "review-clip-loop" => {
                     a.reference_default = true;
                     a.midi_state = 8;
@@ -480,7 +484,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -994,7 +998,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.select_clip(clip);
             c.seek_beats(22.0); // 00:11.000
         }
-        if let (5..=7 | 10..=13, Some(id)) = (args.midi_state, clip) {
+        if let (5..=7 | 10..=14, Some(id)) = (args.midi_state, clip) {
             // REVIEW STATE: an E minor line with one out-of-scale note (F4), the clip's scale set
             // to E Minor with the footer Scale on; 6 adds scale rows, 7 opens the Scale type menu.
             let line = [(64u8, 0i64), (67, 1), (71, 2), (69, 3), (67, 4), (65, 5), (66, 6), (64, 7), (59, 8), (62, 10), (64, 12), (71, 14)];
@@ -1028,6 +1032,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if args.midi_state == 13 {
                 // REVIEW STATE: the line mirrored by Reverse (nothing selected, so every note).
                 c.pr_action("reverse");
+            }
+            if args.midi_state == 14 {
+                // REVIEW STATE: the velocity lane open under the line, accents on the beats,
+                // two notes selected.
+                let vels = [118u8, 64, 88, 52, 110, 60, 84, 46, 122, 72, 100, 90];
+                let notes = c.pr_clip().map(|m| m.notes.iter().zip(vels).map(|(n, v)| dstudio_core::midi::Note { velocity: v, ..*n }).collect()).unwrap_or_default();
+                c.execute(dstudio_core::Command::SetMidiNotes { clip: id, notes });
+                c.pr.selected = [5, 6].into();
+                c.pr_action("velocity_lane");
             }
 
         }
