@@ -453,6 +453,8 @@ def compare_time(base: dict, head: dict, limit: float) -> tuple[list[dict], list
         b, h = base.get(name), head.get(name)
         if b is None or h is None:
             notes.append(f"`{name}` is {'new' if b is None else 'gone'} in this change")
+            if h is not None and "error" in h:
+                notes.append(f"`{name}` failed: base absent, head {h['error']}")
             continue
         if "error" in b or "error" in h:
             notes.append(f"`{name}` failed: base {b.get('error', 'ok')}, head {h.get('error', 'ok')}")
@@ -626,6 +628,8 @@ def cmd_all(a) -> int:
                 for side in res:
                     for name, r in more[side].items():
                         acc = res[side].setdefault(name, {})
+                        if "error" in r:  # a crash while re-timing must still reach the report
+                            acc.setdefault("error", r["error"])
                         for k, row in r.get("rows", {}).items():
                             if k in acc.get("rows", {}):
                                 acc["rows"][k]["rounds"] += row["rounds"]
