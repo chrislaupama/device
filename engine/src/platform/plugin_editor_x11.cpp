@@ -332,6 +332,40 @@ void pump_events() {
 
 class Vst3Editor;
 
+// Fd watches of VST3 views, counted per (handler, fd). Plugins often share
+// one handler between their views: the fd is registered once, under the
+// handler, so it is reported once per readiness however many views asked
+// for it, and closing one view leaves the others' watch in place.
+struct FdWatch {
+    Steinberg::Linux::IEventHandler* handler;
+    int fd;
+    int views;
+};
+std::vector<FdWatch> g_fd_watches; // main thread only
+
+bool watch_fd(Steinberg::Linux::IEventHandler* handler, int fd) {
+    for (FdWatch& w : g_fd_watches)
+        if (w.handler == handler && w.fd == fd) {
+            ++w.views;
+            return true;
+        }
+    if (!run_loop::add_fd(handler, fd, run_loop::kRead, [handler](int f, uint32_t) { handler->onFDIsSet(f); }))
+        return false;
+    g_fd_watches.push_back({handler, fd, 1});
+    return true;
+}
+
+void unwatch_fd(Steinberg::Linux::IEventHandler* handler, int fd) {
+    for (auto it = g_fd_watches.begin(); it != g_fd_watches.end(); ++it)
+        if (it->handler == handler && it->fd == fd) {
+            if (--it->views == 0) {
+                run_loop::remove_fd(handler, fd);
+                g_fd_watches.erase(it);
+            }
+            return;
+        }
+}
+
 // IPlugFrame + Linux::IRunLoop given to a VST3 view: resize requests go to
 // the editor, fds and timers to the plugin run loop.
 class PlugFrame final
@@ -345,10 +379,9 @@ public:
     Steinberg::tresult PLUGIN_API registerEventHandler(Steinberg::Linux::IEventHandler* handler,
                                                        Steinberg::Linux::FileDescriptor fd) override {
         if (handler == nullptr || fd < 0) return Steinberg::kInvalidArgument;
-        // Registered under this frame: plugins share one handler between
-        // their views, and closing one view must not stop another's watch.
-        if (!run_loop::add_fd(this, fd, run_loop::kRead, [handler](int f, uint32_t) { handler->onFDIsSet(f); }))
-            return Steinberg::kResultFalse;
+        if (std::find(fds_.begin(), fds_.end(), std::pair{handler, static_cast<int>(fd)}) != fds_.end())
+            return Steinberg::kResultOk; // already watched for this view
+        if (!watch_fd(handler, fd)) return Steinberg::kResultFalse;
         handler->addRef();
         fds_.push_back({handler, fd});
         return Steinberg::kResultOk;
@@ -361,7 +394,7 @@ public:
                 ++it;
                 continue;
             }
-            run_loop::remove_fd(this, it->second);
+            unwatch_fd(handler, it->second);
             handler->release();
             it = fds_.erase(it);
             found = true;
@@ -400,7 +433,7 @@ public:
     void detach() {
         owner_ = nullptr;
         for (auto& [h, fd] : fds_) {
-            run_loop::remove_fd(this, fd);
+            unwatch_fd(h, fd);
             h->release();
         }
         fds_.clear();

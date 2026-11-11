@@ -315,7 +315,12 @@ public:
         }
         std::weak_ptr<ClapInstance> weak = weak_from_this();
         return create_clap_editor(plugin_, gui_, title, [weak](ClapEditorHost* h) {
-            if (auto self = weak.lock()) self->editor_host_ = h;
+            if (auto self = weak.lock()) {
+                // Requests queued for an earlier window must not reach this one.
+                self->pending_resize_.store(0, std::memory_order_relaxed);
+                self->pending_closed_.store(false, std::memory_order_relaxed);
+                self->editor_host_ = h;
+            }
         }, err);
     }
 
@@ -506,6 +511,7 @@ private:
                     self->wake_main_thread();
                     return true;
                 }
+                self->pending_resize_.store(0, std::memory_order_relaxed); // superseded by this size
                 return self->editor_host_ != nullptr && self->editor_host_->request_resize(w, hgt);
             },
             [](const clap_host*) { return false; },
@@ -579,9 +585,11 @@ private:
     }
 
     // Makes on_main_thread() run soon. Every platform runs it from
-    // se_plugin_idle; macOS also queues it on the main dispatch queue.
+    // se_plugin_idle; macOS also queues it on the main dispatch queue, except
+    // from the audio thread, where queuing would allocate.
     void wake_main_thread() {
 #if defined(__APPLE__)
+        if (t_clap_audio_thread) return; // no allocation in process(): se_plugin_idle picks it up
         // Run on the main queue (the app's run loop); the instance may be
         // gone by then, hence the weak reference.
         std::weak_ptr<ClapInstance> weak;

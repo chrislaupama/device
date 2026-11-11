@@ -264,8 +264,11 @@ bool init(const clap_plugin_t* p) {
     if (!s->init_fails) return true;
 #if !defined(_WIN32)
     // Left registered on purpose (not s->timer, which destroy() unregisters).
+    // Fails only once the timer is in: if the host refused it, the load
+    // succeeds and the test (which expects a load error) notices.
     clap_id leaked = CLAP_INVALID_ID;
-    if (const auto* t = host_timers(s)) t->register_timer(s->host, 10, &leaked);
+    const auto* t = host_timers(s);
+    if (t == nullptr || !t->register_timer(s->host, 10, &leaked)) return true;
 #endif
     return false;
 }

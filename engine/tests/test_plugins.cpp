@@ -1189,7 +1189,12 @@ TEST_CASE(clap_init_failure_drops_the_plugins_run_loop_entries) {
     Session5 s;
     s.audio(1, {}, {clap(21, gui_path, "studio.dstudio.test.gui.init-fails")});
     REQUIRE(s.publish(e) == SE_OK);
-    CHECK_EQ(error_count(e), std::size_t{1});
+    // The fixture only fails init() once its timer is registered.
+    se_plugin_message msg{};
+    std::size_t n = 0;
+    REQUIRE(se_plugin_load_errors(e, &msg, 1, &n) == SE_OK);
+    REQUIRE(n == 1);
+    CHECK(std::strstr(msg.message, "init failed") != nullptr);
     CHECK(dstudio::run_loop::timer_count() == 0u);
     se_plugin_idle(e); // nothing left to call
 }
