@@ -7642,8 +7642,9 @@ fn shortcut_steps() -> Vec<Step> {
         Do("shortcuts: Cmd+R", Box::new(|a| key(a, "r", true, false))),
         Check("shortcuts: the notes are mirrored in the bar, one Reverse Clip step", Box::new(move |c, _| {
             let m = c1.get().and_then(|id| c.project().midi_clip(id)).ok_or("no clip")?;
+            // Notes are kept in start order: the mirrored second note comes first.
             let got: Vec<(u32, i64)> = m.notes.iter().map(|n| (n.id, n.start)).collect();
-            let want = vec![(1, 4 * PPQ - PPQ / 2), (2, 3 * PPQ - PPQ / 2)];
+            let want = vec![(2, 3 * PPQ - PPQ / 2), (1, 4 * PPQ - PPQ / 2)];
             (got == want && c.doc.undo_label() == Some("Reverse Clip")).then_some(()).ok_or(format!("notes {got:?} want {want:?} last {:?}", c.doc.undo_label()))
         })),
         Do("shortcuts: Cmd+L", Box::new(|a| key(a, "l", true, false))),
