@@ -6,7 +6,7 @@
 //! popup = `SetTrackInput` (audio tracks), and a finished recording pass = ONE
 //! `Batch` "Record": `AddAsset` + `AddClip` per audio take (with one armed
 //! track that is exactly one take), then one `AddMidiClip` per armed
-//! instrument track that received notes (`midi_in.rs`, spec 002). Device I/O
+//! instrument track that received notes (`midi_in.rs`, spec 003). Device I/O
 //! goes through the engine's recording API; every engine error is shown as a
 //! status message.
 //!

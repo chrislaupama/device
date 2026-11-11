@@ -463,6 +463,9 @@ impl Controller {
         let snap = SessionSnapshot {
             tracks: vec![TrackSnapshot {
                 track_id: TONE_TRACK_ID,
+                is_return: false,
+                output: None,
+                sends: Vec::new(),
                 gain: 1.0,
                 pan: 0.0,
                 mute: false,

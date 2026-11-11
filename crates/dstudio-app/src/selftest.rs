@@ -2694,7 +2694,7 @@ fn recording_steps() -> Vec<Step> {
     v
 }
 
-/// MIDI recording (spec 002): arm the Instrument track, play injected notes during a
+/// MIDI recording (spec 003): arm the Instrument track, play injected notes during a
 /// pass, stop: one "Record" step adds a MIDI clip with those notes; undo removes it.
 /// Offline only (injected MIDI is rendered with `render_offline`).
 fn midi_recording_steps() -> Vec<Step> {

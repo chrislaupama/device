@@ -1730,6 +1730,9 @@ mod tests {
             let snap = SessionSnapshot {
                 tracks: vec![dstudio_core::snapshot::TrackSnapshot {
                     track_id: 1,
+                    is_return: false,
+                    output: None,
+                    sends: Vec::new(),
                     gain: 1.0,
                     pan: 0.0,
                     mute: false,
@@ -1756,6 +1759,9 @@ mod tests {
         let snap = SessionSnapshot {
             tracks: vec![dstudio_core::snapshot::TrackSnapshot {
                 track_id: 1,
+                is_return: false,
+                output: None,
+                sends: Vec::new(),
                 gain: 1.0,
                 pan: 0.0,
                 mute: false,

@@ -22,7 +22,7 @@
 // that slot holds once everything queued before the loss has been delivered.
 //
 // Nothing here allocates, locks or blocks on the RT side. See
-// specs/002-midi-input-and-recording/plan.md.
+// specs/003-midi-input-and-recording/plan.md.
 #pragma once
 
 #include "platform/midi_backend.hpp"

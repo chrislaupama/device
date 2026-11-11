@@ -1,5 +1,5 @@
 //! MIDI recording: turn the note events captured during one recording pass
-//! into MIDI clips (spec 002, "Recording").
+//! into MIDI clips (spec 003, "Recording").
 //!
 //! The engine reports what it delivered to armed instrument tracks while the
 //! transport played, as note-on / note-off events at timeline frames (output

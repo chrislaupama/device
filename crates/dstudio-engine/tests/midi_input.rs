@@ -1,4 +1,4 @@
-//! End-to-end MIDI input (specs/002-midi-input-and-recording): an armed
+//! End-to-end MIDI input (specs/003-midi-input-and-recording): an armed
 //! instrument track (document command → snapshot → publish) plays injected
 //! MIDI, and the capture ring reports where the notes were heard.
 

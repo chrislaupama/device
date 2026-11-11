@@ -47,6 +47,31 @@ pub struct Section {
 pub enum TrackKind {
     Audio,
     Instrument,
+    /// A return track: no clips or input; it plays what other tracks send to it
+    /// ([Track::sends], [Track::output]). Return tracks come after every other track.
+    Return,
+}
+
+/// One send of a track into a return track (spec 002).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct TrackSend {
+    /// The return track it feeds.
+    pub target: TrackId,
+    /// Linear gain, 0 ..= [TrackSend::MAX_LEVEL]. 1.0 = 0 dB.
+    pub level: f32,
+    /// Tap the track after its insert chain, before volume and pan (else after them).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pre_fader: bool,
+}
+
+impl TrackSend {
+    /// +6 dB.
+    pub const MAX_LEVEL: f32 = 1.995_262_3;
+
+    /// A new send: 0 dB, post-fader.
+    pub fn new(target: TrackId) -> Self {
+        TrackSend { target, level: 1.0, pre_fader: false }
+    }
 }
 
 /// Track colour: an index into the
@@ -114,6 +139,13 @@ pub struct Track {
     /// Row height as a multiple of the default 88 px row ([Track::HEIGHT_RANGE]).
     #[serde(default = "unit_height", skip_serializing_if = "is_unit_height")]
     pub height: f32,
+    /// Sends into return tracks, at most one per return (none on return tracks).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sends: Vec<TrackSend>,
+    /// Where the track's output goes: a return track, or the master (None). Return tracks
+    /// always go to the master.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<TrackId>,
 }
 
 fn unit_height() -> f32 {
@@ -273,11 +305,23 @@ impl Default for Project {
 
 impl Track {
     pub fn new(id: TrackId, kind: TrackKind, name: &str, color: ColorIndex) -> Self {
-        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, arm: false, monitor: false, input: None, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default(), devices: Vec::new(), instrument_plugin: None, automation: Vec::new(), height: 1.0 }
+        Track { id, kind, name: name.into(), color, gain: 1.0, pan: 0.0, mute: false, solo: false, arm: false, monitor: false, input: None, clips: Vec::new(), midi_clips: Vec::new(), synth: SynthParams::default(), devices: Vec::new(), instrument_plugin: None, automation: Vec::new(), height: 1.0, sends: Vec::new(), output: None }
     }
 
     /// Row height scale limits (the per-track height scale).
     pub const HEIGHT_RANGE: (f32, f32) = (0.25, 6.0);
+
+    pub fn is_return(&self) -> bool {
+        self.kind == TrackKind::Return
+    }
+}
+
+/// Most return tracks a project can have (the engine's SE_MAX_RETURNS).
+pub const MAX_RETURNS: usize = 16;
+
+/// The letter of the return track at `index` among the returns: A, B, ... P.
+pub fn return_letter(index: usize) -> char {
+    (b'A' + (index % 26) as u8) as char
 }
 
 impl Project {
@@ -309,6 +353,72 @@ impl Project {
     /// Start of section `i` (the sum of the lengths before it).
     pub fn section_start(&self, i: usize) -> Ticks {
         self.sections[..i.min(self.sections.len())].iter().map(|s| s.length).sum()
+    }
+
+    /// Number of ordinary (audio and instrument) tracks; the return tracks follow them.
+    pub fn ordinary_track_count(&self) -> usize {
+        self.tracks.iter().take_while(|t| !t.is_return()).count()
+    }
+
+    /// The return tracks, in order.
+    pub fn returns(&self) -> impl Iterator<Item = &Track> {
+        self.tracks.iter().filter(|t| t.is_return())
+    }
+
+    /// Position of a return track among the returns (its letter, [return_letter]).
+    pub fn return_index(&self, id: TrackId) -> Option<usize> {
+        self.returns().position(|t| t.id == id)
+    }
+
+    /// Repairs routing a hand-edited or damaged file could hold: return tracks move after the
+    /// ordinary tracks (keeping their order) and lose any sends, output, input, arm or monitor.
+    /// A return holding clips or an instrument, or beyond the first [MAX_RETURNS], loads as an
+    /// ordinary track instead, so nothing in the file is lost. Sends and outputs that don't name a
+    /// return track and duplicate sends are dropped, levels are clamped. Valid projects are unchanged.
+    pub fn sanitize_routing(&mut self) {
+        let (mut ordinary, mut returns): (Vec<Track>, Vec<Track>) = std::mem::take(&mut self.tracks).into_iter().partition(|t| !t.is_return());
+        // A return can't hold clips or an instrument, and there are at most MAX_RETURNS. Rather than
+        // drop content from a damaged file, such returns load as ordinary tracks at the end of the list.
+        let mut kept = Vec::new();
+        for mut r in returns.drain(..) {
+            let has_content = !r.clips.is_empty() || !r.midi_clips.is_empty() || r.instrument_plugin.is_some();
+            if has_content || kept.len() == MAX_RETURNS {
+                r.kind = if r.midi_clips.is_empty() && r.instrument_plugin.is_none() { TrackKind::Audio } else { TrackKind::Instrument };
+                ordinary.push(r);
+            } else {
+                r.input = None;
+                r.arm = false;
+                r.monitor = false;
+                kept.push(r);
+            }
+        }
+        let returns = kept;
+        let return_ids: Vec<TrackId> = returns.iter().map(|t| t.id).collect();
+        for t in &mut ordinary {
+            let mut seen = Vec::new();
+            t.sends.retain(|s| {
+                let ok = return_ids.contains(&s.target) && !seen.contains(&s.target);
+                seen.push(s.target);
+                ok
+            });
+            for s in &mut t.sends {
+                s.level = if s.level.is_finite() { s.level.clamp(0.0, TrackSend::MAX_LEVEL) } else { 0.0 };
+            }
+            if t.output.is_some_and(|o| !return_ids.contains(&o)) {
+                t.output = None;
+            }
+        }
+        self.tracks = ordinary;
+        for mut r in returns {
+            r.sends.clear();
+            r.output = None;
+            self.tracks.push(r);
+        }
+    }
+
+    /// Name for a new return track: "Return A", "Return B", ..., the first letter no return is named after.
+    pub fn next_return_name(&self) -> String {
+        (0..26).map(|i| format!("Return {}", return_letter(i))).find(|n| !self.returns().any(|t| &t.name == n)).unwrap_or_else(|| "Return".into())
     }
 
     pub fn track_index(&self, id: TrackId) -> Option<usize> {

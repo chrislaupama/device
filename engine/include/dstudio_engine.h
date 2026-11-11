@@ -1339,7 +1339,7 @@ typedef struct se_preview_info {
 } se_preview_info; /* 40 bytes, align 8 */
 int32_t se_preview_get(se_engine* engine, se_preview_info* out);
 
-/* ---- MIDI input (specs/002-midi-input-and-recording) ----------------------
+/* ---- MIDI input (specs/003-midi-input-and-recording) ----------------------
  * The engine reads MIDI input ports (Core MIDI on macOS, the Windows
  * multimedia MIDI API, the ALSA sequencer on Linux; none elsewhere) and
  * plays what arrives on instrument tracks, from the next audio block:

@@ -276,7 +276,31 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   audio thread, built-in devices, UI, benchmarks, pull requests, plus the spec phases and bug fixing).
   `python3 tools/agents/check_skills.py` fails when a skill names a file that no longer exists.
 
-### 2026-11-11: MIDI recording, app side (spec 002)
+### 2026-11-11: return tracks and sends, part 1: core (spec 002)
+
+- Spec `specs/002-return-tracks-and-sends/` (spec, plan, tasks). Return tracks are `TrackKind::Return` in
+  `Project::tracks`, always after the ordinary tracks (at most 16); `Track::sends` (`TrackSend`: return, level 0..+6 dB,
+  pre/post fader) and `Track::output` (a return, or the master). Commands `SetSends` (level drags coalesce per track)
+  and `SetTrackOutput`; removing a return removes the sends to it and resets outputs to it in one undo step. Clips,
+  input, arm, monitor and instrument plugins are refused on returns. Old projects load unchanged; damaged routing is
+  repaired on load. The snapshot carries the routing; single-track renders stay dry.
+- Not yet: the engine ignores the routing (returns publish as empty tracks) and the app has no UI for it. Next: engine
+  (spec 002 T4-T8), then the UI (T9).
+
+### 2026-11-11: MIDI input, engine side (spec 003)
+
+- Spec `specs/003-midi-input-and-recording/` (spec, plan, tasks). This first part is the engine and the C ABI; the
+  app side (R/I on instrument tracks, Settings › MIDI inputs, recorded MIDI clips) follows.
+- Engine: MIDI input backends (Core MIDI, Windows `midiIn*`, ALSA sequencer, stub) behind `MidiBackend`;
+  `MidiInputHub` (per-port SPSC queues, normalisation, held-note release on close); routing in `render_block` to
+  armed/monitoring instrument tracks, else the focus track; `LiveSynth` plays the built-in Synth live; capture ring
+  with latency compensation and loop folding. `se_midi_*` in the header, `Engine::midi_inputs` and friends in Rust.
+- Core: `SetTrackArm` / `SetTrackMonitor` accept instrument tracks.
+- Tests: `engine/tests/test_midi_input.cpp`, `crates/dstudio-engine/tests/midi_input.rs`; bench: "MIDI input"
+  table in `dstudio_engine_bench`.
+- Not verified on hardware yet: Core MIDI with a real keyboard (Mac mini), WinMM (CI build only).
+
+### 2026-11-11: MIDI recording, app side (spec 003)
 
 - Core: `midi_record` turns a pass's captured note events into one `AddMidiClip` per armed instrument track (clip
   from the start bar to the bar after the last note or stop; looped passes cover the loop and overdub).
@@ -288,16 +312,3 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   screenshot runs never open real ports.
 - Review states: `--state review-midi-recording`, `--state review-settings-midi` (fake input list).
 - Self-test: instrument R/I steps and a recorded MIDI pass (inject, live clip, stop, clip and notes, undo).
-
-### 2026-11-11: MIDI input, engine side (spec 002)
-
-- Spec `specs/002-midi-input-and-recording/` (spec, plan, tasks). This first part is the engine and the C ABI; the
-  app side (R/I on instrument tracks, Settings › MIDI inputs, recorded MIDI clips) follows.
-- Engine: MIDI input backends (Core MIDI, Windows `midiIn*`, ALSA sequencer, stub) behind `MidiBackend`;
-  `MidiInputHub` (per-port SPSC queues, normalisation, held-note release on close); routing in `render_block` to
-  armed/monitoring instrument tracks, else the focus track; `LiveSynth` plays the built-in Synth live; capture ring
-  with latency compensation and loop folding. `se_midi_*` in the header, `Engine::midi_inputs` and friends in Rust.
-- Core: `SetTrackArm` / `SetTrackMonitor` accept instrument tracks.
-- Tests: `engine/tests/test_midi_input.cpp`, `crates/dstudio-engine/tests/midi_input.rs`; bench: "MIDI input"
-  table in `dstudio_engine_bench`.
-- Not verified on hardware yet: Core MIDI with a real keyboard (Mac mini), WinMM (CI build only).

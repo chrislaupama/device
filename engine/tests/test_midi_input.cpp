@@ -1,4 +1,4 @@
-// MIDI input (specs/002-midi-input-and-recording): routing to instrument
+// MIDI input (specs/003-midi-input-and-recording): routing to instrument
 // tracks, held-note release, closing ports, capture positions, queue limits
 // and RT safety. Input is injected (se_midi_inject) or comes from a fake
 // backend; no MIDI hardware is needed.

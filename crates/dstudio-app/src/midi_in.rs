@@ -1,4 +1,4 @@
-//! MIDI input in the app (spec 002): which ports are open (Settings › MIDI),
+//! MIDI input in the app (spec 003): which ports are open (Settings › MIDI),
 //! which instrument track plays the keyboard when none is armed or monitoring
 //! (the selected one), and the MIDI side of a recording pass.
 //!
