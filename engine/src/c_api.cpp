@@ -1046,6 +1046,13 @@ int32_t se_midi_capture_read(se_engine* engine, se_midi_captured* out, size_t ca
     return SE_OK;
 }
 
+int32_t se_midi_capture_wrapped(se_engine* engine, uint8_t* out_wrapped) {
+    SE_REQUIRE_ENGINE(engine);
+    if (out_wrapped == nullptr) return fail(SE_ERR_INVALID_ARG, "out_wrapped is NULL");
+    *out_wrapped = engine->impl->midi().capture_wrapped() ? 1 : 0;
+    return SE_OK;
+}
+
 int32_t se_midi_stats_get(se_engine* engine, se_midi_stats* out) {
     SE_REQUIRE_ENGINE(engine);
     if (out == nullptr) return fail(SE_ERR_INVALID_ARG, "out is NULL");

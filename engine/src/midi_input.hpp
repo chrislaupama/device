@@ -105,6 +105,14 @@ public:
     // (capture_pass() read before the events were captured). Dropped and
     // counted when the ring is full.
     void capture(const MidiEvent& e, int64_t frame, uint32_t pass) noexcept;
+    // The transport wrapped at the loop end during `pass` (RT, at the wrap).
+    void capture_note_wrap(uint32_t pass) noexcept { capture_wrapped_.store(pass, std::memory_order_release); }
+    // Whether the latest pass (running or stopped) saw a loop wrap: a real
+    // wrap, never a seek. Any thread.
+    bool capture_wrapped() const noexcept {
+        const uint32_t pass = capture_state_.load(std::memory_order_acquire) >> 1;
+        return pass != 0 && capture_wrapped_.load(std::memory_order_acquire) == pass;
+    }
 
 private:
     enum SlotState : uint8_t { kFree = 0, kOpen = 1, kClosing = 2 };
@@ -158,6 +166,7 @@ private:
     std::atomic<uint32_t> capture_state_{0};
     std::mutex capture_mutex_; // capture_enable / capture_read (any thread; the ring has one consumer)
     std::atomic<uint64_t> capture_dropped_{0};
+    std::atomic<uint32_t> capture_wrapped_{0}; // the pass number that last saw a loop wrap
     std::atomic<uint64_t> delivered_{0};
     // Allocated by the first capture_enable(true), published by capture_state_.
     std::unique_ptr<SpscQueue<Captured, kCaptureSize>> capture_;

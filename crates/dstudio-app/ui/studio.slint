@@ -329,6 +329,8 @@ export struct SynthMapRow { heading: bool, slot: int, y: length, label: string, 
 
 // Checkable popup row ("In" selector, Settings dropdowns). hint: a grey wrapped note row.
 export struct ChoiceItem { label: string, checked: bool, hint: bool, y: length, h: length }
+// Settings › MIDI › MIDI inputs row: on = its switch, lit = activity light.
+export struct MidiInputRow { name: string, on: bool, lit: bool }
 // Edit › Undo History row; state 0 applied, 1 current, 2 undone.
 export struct UndoHistoryRow { number: int, label: string, date: string, time: string, state: int }
 
@@ -868,6 +870,8 @@ export global Studio {
     in property <string> settings-note;
     in property <bool> set-pdc-on: true;
     in property <string> set-latency-text;
+    in property <[MidiInputRow]> midi-inputs;
+    callback settings-midi-toggle(int);
     in property <bool> settings-menu-open;
     in property <int> settings-menu-field;      // 0 output, 1 input, 2 sample rate, 3 buffer size
     in property <[ChoiceItem]> settings-menu-items;

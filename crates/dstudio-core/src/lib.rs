@@ -18,6 +18,7 @@ pub mod instrument;
 pub mod keymap;
 pub mod library;
 pub mod midi;
+pub mod midi_record;
 pub mod model;
 pub mod modulation;
 pub mod persist;

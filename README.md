@@ -49,6 +49,8 @@ wgpu.
   notes lets you drag one note's velocity, or sweep across several to paint them.
 - **Recording.** Arm tracks, pick inputs, monitor, and record takes that land where you played them: latency
   compensation is measured with an acoustic loopback test, not guessed.
+- **MIDI input.** Plug in a MIDI keyboard, arm (R) or monitor (I) instrument tracks to play them, and record
+  what you play into MIDI clips, looped passes included. Core MIDI, Windows MIDI and the ALSA sequencer.
 - **Mixer.** Faders, pan, mute, solo, stereo meters with peak hold, and a master strip with its own mute.
 - **Instruments.** A subtractive/FM synth, a sampler, a drum rack and a pad sampler, all built in.
 - **Effects.** 20 built-in effects, from compression and saturation to modulation and audio restoration.

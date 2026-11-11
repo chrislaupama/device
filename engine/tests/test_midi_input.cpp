@@ -286,6 +286,35 @@ TEST_CASE(midi_capture_records_note_positions_while_playing) {
     CHECK(n == 0);
 }
 
+TEST_CASE(midi_capture_reports_loop_wraps_but_not_seeks) {
+    Rig rig;
+    rig.add(1, 0.0f).d.arm = 1;
+    rig.publish();
+    uint8_t wrapped = 9;
+    REQUIRE(se_midi_capture_wrapped(rig.e, &wrapped) == SE_OK);
+    CHECK(wrapped == 0); // never captured
+    CHECK(se_midi_capture_wrapped(rig.e, nullptr) == SE_ERR_INVALID_ARG);
+    REQUIRE(se_midi_capture_enable(rig.e, 1) == SE_OK);
+    REQUIRE(se_transport_seek(rig.e, 20 * kBlock) == SE_OK);
+    REQUIRE(se_transport_play(rig.e) == SE_OK);
+    render(rig.e, 2 * kBlock, kBlock);
+    REQUIRE(se_transport_seek(rig.e, 2 * kBlock) == SE_OK); // back: a seek
+    render(rig.e, 2 * kBlock, kBlock);
+    REQUIRE(se_midi_capture_wrapped(rig.e, &wrapped) == SE_OK);
+    CHECK(wrapped == 0);
+    REQUIRE(se_transport_set_loop(rig.e, 1, 4 * kBlock, 8 * kBlock) == SE_OK);
+    render(rig.e, 6 * kBlock, kBlock); // 4 blocks in: wraps at 8 * kBlock
+    REQUIRE(se_midi_capture_wrapped(rig.e, &wrapped) == SE_OK);
+    CHECK(wrapped == 1);
+    // Still readable after the pass stops; a new pass starts unwrapped.
+    REQUIRE(se_midi_capture_enable(rig.e, 0) == SE_OK);
+    REQUIRE(se_midi_capture_wrapped(rig.e, &wrapped) == SE_OK);
+    CHECK(wrapped == 1);
+    REQUIRE(se_midi_capture_enable(rig.e, 1) == SE_OK);
+    REQUIRE(se_midi_capture_wrapped(rig.e, &wrapped) == SE_OK);
+    CHECK(wrapped == 0);
+}
+
 namespace {
 // Hub over a fake backend with `ports` ports "fake:0".."fake:N-1".
 struct HubRig {

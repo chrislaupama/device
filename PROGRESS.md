@@ -382,6 +382,19 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   table in `dstudio_engine_bench`.
 - Not verified on hardware yet: Core MIDI with a real keyboard (Mac mini), WinMM (CI build only).
 
+### 2026-11-11: MIDI recording, app side (spec 003)
+
+- Core: `midi_record` turns a pass's captured note events into one `AddMidiClip` per armed instrument track (clip
+  from the start bar to the bar after the last note or stop; looped passes cover the loop and overdub).
+- App (`midi_in.rs`, `recording.rs`): R and I work on instrument tracks, and only armed or monitoring instrument
+  tracks play the keyboard (selecting a track does not); record starts MIDI capture (MIDI-only passes start the
+  transport themselves) and stop adds the clips to the pass's single "Record" undo step, after any audio takes; the
+  live "Recording" clip draws the notes as they are played. Settings › MIDI lists the inputs (activity light, on/off switch, preference
+  `midi.disabled_inputs`); ports are rescanned every 2 s (every 100 ms while that page shows). Self-test and
+  screenshot runs never open real ports.
+- Review states: `--state review-midi-recording`, `--state review-settings-midi` (fake input list).
+- Self-test: instrument R/I steps and a recorded MIDI pass (inject, live clip, stop, clip and notes, undo).
+
 ### 2026-11-11: timeline shortcuts
 
 - Default keymap actions that resolved but did nothing are wired: ⇧⌘T `track.add_instrument` (new Instrument track,

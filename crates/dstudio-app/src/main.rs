@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! device-studio [--open <dir>] [--import <wav>...] [--save-to <dir>] [--no-audio]
-//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-clip-menu|review-clip-menu|reference-settings-audio|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-device-chain|review-settings-plugins]
+//!              [--demo] [--state reference-default|reference-mixer|reference-assistant|reference-midi-clip|reference-pianoroll|reference-synth|reference-input-menu|reference-clip-menu|review-clip-menu|reference-settings-audio|reference-devices-effects|reference-automation|review-automation|review-automation-picker|review-recording|review-midi-recording|review-settings-midi|review-device-chain|review-settings-plugins]
 //!              [--synth-page <0..8>  (with --state reference-synth: category page to show)]
 //!              [--assistant-fixture <turns.json>  (TEST provider: canned replies, no network)]
 //!              [--plugin-fixture <plugins.json>  (TEST seam: fixed plugin catalogue instead of scanning)]
@@ -51,6 +51,7 @@ mod gpu;
 mod highlight;
 mod live_import;
 mod live_set;
+mod midi_in;
 mod minimap;
 mod mixer;
 mod panel_fields;
@@ -146,6 +147,11 @@ struct Args {
     /// review-recording: a take in progress (injected input, offline engine) for reviewing
     /// the live recording clip.
     recording_review: bool,
+    /// review-midi-recording: the Instrument track armed and a MIDI pass in progress
+    /// (injected notes, offline engine).
+    midi_recording_review: bool,
+    /// review-settings-midi: Settings › MIDI with a SCREENSHOT-ONLY fake input list.
+    settings_midi_review: bool,
     /// reference-automation: Instrument track 1 (MIDI clip at bar 6), Audio track 2 selected,
     /// playhead at bar 6, automation lanes shown (Track Volume at +0.0).
     automation_state: bool,
@@ -519,9 +525,18 @@ fn parse_args() -> Result<Args, String> {
                     a.recording_review = true;
                     a.audio = false;
                 }
+                "review-midi-recording" => {
+                    a.reference_default = true;
+                    a.midi_recording_review = true;
+                    a.audio = false;
+                }
+                "review-settings-midi" => {
+                    a.reference_default = true;
+                    a.settings_midi_review = true;
+                }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-midi-recording, review-settings-midi, review-device-chain, review-devices-minimap, review-snap-menu, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1673,6 +1688,45 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    if args.midi_recording_review {
+        // Offline engine + injected MIDI: the Instrument track armed and selected, recording
+        // from bar 2 with a short phrase played so far (two beats rendered after the last note).
+        let mut c = ctl.borrow_mut();
+        c.rec.policy = recording::InputPolicy::InjectedOnly;
+        if let Some(t) = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).map(|t| t.id) {
+            c.select_track(t);
+            c.execute(dstudio_core::Command::SetTrackArm { track: t, arm: true });
+        }
+        c.seek_beats(4.0);
+        c.midi_tick();
+        c.start_recording();
+        if c.rec.recording {
+            let beat = 24_000usize;
+            let mut out = vec![0f32; 2 * beat / 2];
+            for (pitch, vel) in [(60u8, 100u8), (64, 90), (67, 96), (72, 110), (67, 80), (64, 92)] {
+                let _ = c.engine.midi_inject(0x90, pitch, vel);
+                let _ = c.engine.render_offline(&mut out);
+                let _ = c.engine.midi_inject(0x80, pitch, 0);
+            }
+            let _ = c.engine.midi_inject(0x90, 60, 100);
+            for _ in 0..3 {
+                let _ = c.engine.render_offline(&mut out);
+            }
+            c.midi_tick();
+        }
+    }
+    if args.settings_midi_review {
+        // SCREENSHOT-ONLY fake MIDI inputs (midi_in::screenshot_fake_ports), never opened:
+        // "USB Keyboard" on and sending (light lit), "Pad Controller" switched off.
+        let mut c = ctl.borrow_mut();
+        c.midi_in.fake_ports = true;
+        let mut ports = midi_in::screenshot_fake_ports();
+        ports[0].lit_until = Some(Instant::now() + Duration::from_secs(3600));
+        c.midi_in.ports = ports;
+        c.settings.prefs.midi.disabled_inputs = vec!["fake:pads".into()];
+        c.open_settings();
+        c.settings_page(midi_in::MIDI_PAGE);
+    }
     // Push view models once before the first frame, so conditional panels are built
     // for the initial state (setting them from inside the first BeforeRendering is
     // too late for that frame's item tree).
@@ -1826,6 +1880,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_settings_menu_dismiss, |c| c.settings_menu_dismiss());
     on!(on_settings_toggle_mute, |c| c.settings_toggle_mute());
     on!(on_settings_toggle_pdc, |c| c.settings_toggle_pdc());
+    on!(on_settings_midi_toggle, |c, i: i32| c.midi_toggle_input(i.max(0) as usize));
     on!(on_settings_test, |c| c.settings_test());
     on!(on_add_track, |c| c.add_audio_track());
     on!(on_select_track, |c, id: i32| c.select_track(TrackId(id as u64)));
@@ -2510,6 +2565,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         poll_timer.start(slint::TimerMode::Repeated, Duration::from_millis(30), move || {
             let Ok(mut c) = ctl.try_borrow_mut() else { return };
             c.poll_test_tone();
+            c.midi_tick();
             c.device_poll();
             c.auto_poll();
             if !c.pr.preview_offs.is_empty() {
