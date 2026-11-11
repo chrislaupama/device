@@ -416,3 +416,15 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   stay apart, odd ratios refused) and `the_export_rate_follows_the_engine_until_one_is_picked`. The self-test exports
   the mix again at the other rate and checks its rate, length in seconds and level against the first file. Review
   state `review-export-44k`.
+
+### 2026-11-11: export the loop region
+
+- The Export dialog's Range pill is now a menu: Full project (bar 1 to the end of the last clip, plus the 2 s tail, as
+  before) or Loop region. The loop region renders from its start for exactly its length, with no tail, so the file
+  loops seamlessly; it can be exported whether or not looping is on. The bars readout ("Bars 3–4") and the size
+  estimate follow the range, and Stems use it too. A project without a loop region falls back to the full project.
+- Escape or a click outside closes the menu without closing the dialog.
+- Tests: `the_range_text_counts_the_bars_the_loop_touches` and
+  `the_loop_range_renders_the_loop_exactly_and_falls_back_without_one`. The self-test sets a loop over bars 2-3, picks
+  Loop region in the menu, checks the readout and estimate, exports it and checks the file's length and sound. Review
+  state `review-export-range`.
