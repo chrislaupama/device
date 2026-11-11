@@ -267,7 +267,7 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   `studio.dstudio.test.*` ids). Not `device`: it already names the effects/instruments concept.
   `tools/rename/remove_saine.py` does the rename and is idempotent; branches started before it run it,
   then merge main. `--check` lists anything left. The only `saine` strings kept are the legacy
-  project/settings names above and links to the GitHub repo (still `sainestudio`).
+  project/settings names above and the history notes; the GitHub repo is now `chrislaupama/device`.
 
 ### 2026-11-10: Linux audio runs in CI; Linux plugin windows; Windows CI GPU memory
 

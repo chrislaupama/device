@@ -1,4 +1,4 @@
-name: ci
+name: CI
 on:
   push:
     branches: [main]
@@ -54,7 +54,7 @@ jobs:
       CCACHE_NOHASHDIR: "true"
       CCACHE_MAXSIZE: 1G
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 2 # the merge commit and its base, for the docs-only check
@@ -148,7 +148,7 @@ jobs:
           echo "deps:   $deps"
       - name: Cache SDK downloads
         if: runner.environment == 'github-hosted' && steps.changes.outputs.skip != 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: .deps
           key: deps-${{ runner.os }}-${{ hashFiles('engine/CMakeLists.txt') }}
@@ -160,7 +160,7 @@ jobs:
       - name: Restore cargo registry and target
         if: runner.environment == 'github-hosted' && steps.changes.outputs.skip != 'true'
         id: cargo-cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.cargo/registry/index
@@ -174,7 +174,7 @@ jobs:
       - name: Restore ccache
         if: runner.environment == 'github-hosted' && steps.changes.outputs.skip != 'true'
         id: ccache-cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: .ccache
           key: ccache-${{ runner.os }}-${{ github.sha }}
@@ -269,7 +269,7 @@ jobs:
       # Saved before the smoke tests, so a hung self-test cannot lose them.
       - name: Save cargo registry and target
         if: github.event_name == 'push' && runner.environment == 'github-hosted' && steps.changes.outputs.skip != 'true' && !cancelled()
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: |
             ~/.cargo/registry/index
@@ -279,7 +279,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
       - name: Save ccache
         if: github.event_name == 'push' && runner.environment == 'github-hosted' && steps.changes.outputs.skip != 'true' && !cancelled()
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: .ccache
           key: ${{ steps.ccache-cache.outputs.cache-primary-key }}

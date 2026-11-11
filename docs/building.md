@@ -182,7 +182,10 @@ with [`tools/perf/bench_gate.py`](../tools/perf/bench_gate.py):
   natively, base and head interleaved for three rounds, fastest round per
   row. A row more than **15 %** slower is re-timed and reported as a warning:
   hosted runners are too noisy for a timing gate, but this catches what
-  instruction counts cannot (cache misses, denormals, platform code).
+  instruction counts cannot (cache misses, denormals, platform code). If the
+  comparison itself fails or times out (a flaky runner, or a benchmark that
+  will not run on one OS) that is a warning too. A failed setup step, such as
+  installing the build tools, still fails the job.
 
 The comparison tables are on each run's summary page. A regression that is
 worth it is accepted with the `perf-regression-accepted` label on the pull

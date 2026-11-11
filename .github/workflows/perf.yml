@@ -10,7 +10,8 @@ name: Performance
 #     base fails the check. This is the gate.
 #   Time (Linux, macOS, Windows): the benchmarks natively, base and head interleaved over
 #     three rounds, fastest round per row. Hosted runners are shared machines, so a row more
-#     than 15 % slower (re-timed with more rounds first) is reported as a warning only. It
+#     than 15 % slower (re-timed with more rounds first) is reported as a warning only, and so
+#     is a comparison that fails or times out (a flaky runner does not turn these jobs red). It
 #     catches what instruction counts cannot see: cache misses, denormals, thread hand-offs,
 #     platform-specific code.
 #
@@ -64,7 +65,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0 # the base commit is built from a worktree
@@ -74,7 +75,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache valgrind \
             libpipewire-0.3-dev libasound2-dev libx11-dev
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cache/ccache
@@ -107,9 +108,10 @@ jobs:
           - { name: macOS, os: macos-15 }
           - { name: Windows, os: windows-2025 }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    # Setup (tools, caches) plus the 75-minute comparison, with room left for the warning step.
+    timeout-minutes: 110
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -132,7 +134,7 @@ jobs:
           cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
             if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
           }
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cache/ccache
@@ -142,12 +144,22 @@ jobs:
             ~/.cargo/registry/cache
           key: perf-time-${{ runner.os }}-${{ github.sha }}
           restore-keys: perf-time-${{ runner.os }}-
+      # A failed or timed-out comparison does not fail the job: a slow shared runner or a benchmark
+      # that cannot run on one OS is reported as a warning below. The step timeout leaves time in
+      # the job for that warning. Setup steps above (installing tools) can still fail the job. The Callgrind job above still fails
+      # on a benchmark it cannot measure, and the CI build-test jobs catch build breaks.
       - name: Compare with the base
+        id: compare
         if: runner.os != 'Windows'
+        continue-on-error: true
+        timeout-minutes: 75
         run: python3 tools/perf/bench_gate.py all --base "$BASE_REF" --mode time --work build/perf --deps .perf-deps
       # PowerShell, not bash: Git's bash puts its own link.exe ahead of MSVC's on PATH.
       - name: Compare with the base (Windows)
+        id: compare_windows
         if: runner.os == 'Windows'
+        continue-on-error: true
+        timeout-minutes: 75
         shell: pwsh
         run: python tools/perf/bench_gate.py all --base "$env:BASE_REF" --mode time --work build/perf --deps .perf-deps
       - name: Warn about slower rows
@@ -157,6 +169,17 @@ jobs:
           if grep -q "row(s) over the limit" build/perf/report.md 2>/dev/null; then
             echo "::warning title=Benchmarks slower on ${{ matrix.name }}::$(grep 'row(s) over the limit' build/perf/report.md | head -1) See the run summary."
           fi
+          # A benchmark that crashed on one side is only a note in the time report.
+          if grep -q '` failed: base ' build/perf/report.md 2>/dev/null; then
+            echo "::warning title=Benchmark failed on ${{ matrix.name }}::$(grep '` failed: base ' build/perf/report.md | head -1 | tr -d '`') See the run summary."
+          fi
+      - name: Warn if the timing run failed
+        if: ${{ !cancelled() && (steps.compare.outcome == 'failure' || steps.compare_windows.outcome == 'failure') }}
+        shell: bash
+        run: |
+          msg="The timing comparison did not finish on ${{ matrix.name }} (a build or benchmark failed, or the runner timed out). This is a warning only; see the step log."
+          echo "::warning title=Timing run failed on ${{ matrix.name }}::$msg"
+          echo "**Timing run failed on ${{ matrix.name }}**: $msg" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
