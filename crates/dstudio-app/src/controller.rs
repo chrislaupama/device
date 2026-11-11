@@ -306,6 +306,9 @@ pub struct Controller {
     pub(crate) track_resize: Option<crate::splitters::TrackResize>,
     /// Timeline / bottom-panel splitter drag (src/splitters.rs).
     pub(crate) bottom_drag: Option<crate::splitters::BottomDrag>,
+    /// Saved height (None = default) each bottom panel kind had before its collapse button shut
+    /// it, restored when the button reopens it.
+    pub(crate) bottom_restore: std::collections::HashMap<&'static str, Option<f32>>,
     /// Docked-assistant width drag (src/splitters.rs).
     pub(crate) chat_drag: Option<crate::splitters::ChatDrag>,
     status: Option<(String, Instant, Duration)>,
@@ -368,6 +371,16 @@ pub struct Controller {
     /// Rename popup open for this clip.
     pub rename: Option<ClipId>,
     pub rename_section: Option<dstudio_core::SectionId>,
+    /// Counts presses on the lanes and the clip editors; the UI moves the keyboard focus back to
+    /// the shortcuts on each, so an open name field commits (Studio.press-epoch).
+    pub press_epoch: i32,
+    /// Text typed in an open track name field (Studio.track-rename-draft), committed when the
+    /// panel holding the field changes before the field commits itself.
+    pub rename_draft: Option<(TrackId, String)>,
+    /// Bottom panel state the last push showed (tab, mixer, a track selected).
+    rename_panel: Option<(BottomTab, bool, bool)>,
+    /// Keyboard rename requests (Studio.rename-open-epoch).
+    rename_open_epoch: i32,
     pub selected_section: Option<dstudio_core::SectionId>,
     pub(crate) section_drag: Option<crate::sections::SectionDrag>,
     pub(crate) section_vis: Vec<crate::sections::SectionVis>,
@@ -457,6 +470,7 @@ impl Controller {
             drag: None,
             track_resize: None,
             bottom_drag: None,
+            bottom_restore: Default::default(),
             chat_drag: None,
             status: None,
             project_dir: None,
@@ -502,6 +516,10 @@ impl Controller {
             clipboard: None,
             rename: None,
             rename_section: None,
+            press_epoch: 0,
+            rename_draft: None,
+            rename_panel: None,
+            rename_open_epoch: 0,
             selected_section: None,
             section_drag: None,
             section_vis: Vec::new(),
@@ -761,6 +779,8 @@ impl Controller {
             let p = self.doc.project();
             let ls = snapshot::LaneSnapshot { target: lane.target.clone(), points: lane.points.iter().map(|q| (p.ticks_to_frames(q.time, self.rate), q.value, q.curve)).collect() };
             let lanes = match key {
+                // A muted master stays silent: no volume lane, not even one being drawn.
+                None if p.master_mute => None,
                 None => Some(&mut snap.master_automation),
                 Some(t) => snap.tracks.iter_mut().find(|ts| ts.track_id == t.0).map(|ts| &mut ts.automation),
             };
@@ -956,6 +976,58 @@ impl Controller {
         }
     }
 
+    /// Rename a track (double-click its name). Surrounding spaces are dropped; an empty or
+    /// unchanged name leaves the track as it was (an untouched field keeps a loaded name's own
+    /// spaces too).
+    pub fn rename_track(&mut self, id: TrackId, name: &str) {
+        self.rename_draft = None;
+        let raw = name;
+        let name = name.trim();
+        if name.is_empty() || self.project().track(id).is_none_or(|t| t.name == raw || t.name == name) {
+            self.ui_dirty = true;
+            return;
+        }
+        self.execute(Command::RenameTrack { track: id, name: name.to_string() });
+    }
+
+    /// Keyboard rename (track.rename): open the selected track's name field in its header row,
+    /// scrolled into view.
+    pub fn open_rename_field(&mut self) {
+        let Some(id) = self.selected_track else { return };
+        if self.project().track(id).is_none() {
+            return;
+        }
+        self.reveal_track(id);
+        self.rename_open_epoch += 1;
+        self.ui_dirty = true;
+    }
+
+    /// Scroll the timeline vertically so track `id`'s row (or, for a row taller than the lanes,
+    /// its middle) is in view.
+    fn reveal_track(&mut self, id: TrackId) {
+        let Some(i) = self.project().track_index(id) else { return };
+        let (top, h) = (self.view.track_offset(i), self.view.pitch(i));
+        let visible = self.lanes_size.1 - timeline::RULER_H - self.view.master_h;
+        let y = self.view.scroll_y as f32;
+        if h > visible {
+            // Taller than the lanes: the header's controls (the name field with them) sit around
+            // the row's middle, so centre that.
+            self.view.scroll_y = (top + h / 2.0 - visible / 2.0).max(0.0) as f64;
+        } else if top < y {
+            self.view.scroll_y = top as f64;
+        } else if top + h > y + visible {
+            self.view.scroll_y = (top + h - visible).max(0.0) as f64;
+        }
+        self.view.clamp_scroll(self.project().tracks.len(), self.lanes_size.1);
+    }
+
+    /// Commit a name typed in a field that is about to disappear with its panel; true when there was one.
+    fn commit_rename_draft(&mut self) -> bool {
+        let Some((id, name)) = self.rename_draft.take() else { return false };
+        self.rename_track(id, &name);
+        true
+    }
+
     pub fn toggle_solo(&mut self, id: TrackId) {
         if let Some(t) = self.project().track(id) {
             let solo = !t.solo;
@@ -991,6 +1063,12 @@ impl Controller {
         if (self.project().master_gain - gain).abs() > 1e-7 {
             self.execute(Command::SetMasterGain { gain });
         }
+    }
+
+    /// The master strip's M: silences the whole mix (the fader keeps its value). Undoable.
+    pub fn toggle_master_mute(&mut self) {
+        let mute = !self.project().master_mute;
+        self.execute(Command::SetMasterMute { mute });
     }
 
     // ---------------------------------------------------------------- mixer
@@ -1170,6 +1248,8 @@ impl Controller {
         self.doc_epoch += 1;
         self.auto.reset_project_state();
         self.tf.reset_project_gestures();
+        self.rename_draft = None;
+        self.bottom_restore.clear();
         self.doc = Document::new(project);
         self.devices.modu.bases_pending = true;
         self.selected_track = self.project().tracks.first().map(|t| t.id);
@@ -1215,6 +1295,8 @@ impl Controller {
         self.doc_epoch += 1;
         self.auto.reset_project_state();
         self.tf.reset_project_gestures();
+        self.rename_draft = None;
+        self.bottom_restore.clear();
         self.doc = Document::new(loaded.project);
         self.devices.modu.bases_pending = true;
         self.project_dir = Some(dir.to_path_buf());
@@ -1779,6 +1861,10 @@ impl Controller {
         self.update_devmm(app);
         self.push_snap(&s);
         self.push_transport_fields(&s);
+        s.set_press_epoch(self.press_epoch);
+        s.set_doc_epoch(self.doc_epoch as i32);
+        s.set_rename_open_id(self.selected_track.map_or(-1, |t| t.0 as i32));
+        s.set_rename_open_epoch(self.rename_open_epoch);
         crate::pointer::apply(app, self.ptr.take());
         s.set_section_add_x(self.section_add_x());
         self.update_auto_labels();
@@ -1793,6 +1879,14 @@ impl Controller {
     }
 
     fn push_models(&mut self, app: &AppWindow) {
+        // The bottom panel's name field goes away with the panel (tab switch, mixer, selection
+        // cleared) without seeing its focus loss: commit what it held first.
+        let panel = (self.bottom_tab, self.mixer_open, self.selected_track.is_some());
+        if self.rename_panel.is_some_and(|p| p != panel) && self.commit_rename_draft() {
+            // The field held the keyboard focus: give it back to the shortcuts.
+            self.press_epoch += 1;
+        }
+        self.rename_panel = Some(panel);
         self.rebuild_vis();
         let s = app.global::<Studio>();
         self.auto_sync_view();
@@ -1859,6 +1953,7 @@ impl Controller {
             self.strip_meters_model.set_vec(vec![StripMeter { l: 1.0, r: 1.0, peak: "−∞".into() }; p.tracks.len()]);
         }
         s.set_master_fader(fader_from_db(gain_to_db(p.master_gain)));
+        s.set_master_mute(p.master_mute);
         // ---- assistant ----
         s.set_assistant_open(self.assistant_open);
         s.set_assistant_pref_w(match self.chat_drag {
@@ -1894,6 +1989,7 @@ impl Controller {
         self.push_files(&s);
         self.push_automation(&s);
         s.set_bottom_h(self.bottom_h());
+        s.set_bottom_collapsed(self.bottom_collapsed());
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };
         s.set_status_text(status.into());
         self.ruler_key.0 = i64::MIN; // force label refresh
@@ -2051,6 +2147,53 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let starts: Vec<Vec<Ticks>> = c.project().tracks.iter().map(|t| t.clips.iter().map(|k| k.start).collect()).collect();
         assert_eq!(starts, vec![vec![0], vec![], vec![10 * PPQ]]);
+    }
+    /// A loaded name with its own surrounding spaces: committing the field untouched keeps it and
+    /// adds no undo step; a real edit is trimmed.
+    #[test]
+    fn an_untouched_rename_keeps_a_loaded_name() {
+        let engine = Arc::new(Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut p = Project::default();
+        p.tracks[0].name = "  Bass  ".into();
+        let mut c = Controller::new(engine, p);
+        let (id, rev) = (c.project().tracks[0].id, c.doc.revision());
+        c.rename_track(id, "  Bass  ");
+        assert_eq!((c.project().tracks[0].name.as_str(), c.doc.revision()), ("  Bass  ", rev));
+        c.rename_track(id, "  Sub bass ");
+        assert_eq!(c.project().tracks[0].name, "Sub bass");
+        assert_ne!(c.doc.revision(), rev);
+    }
+    /// A splitter drag forgets only its own panel's collapse-button height: the mixer, shut by
+    /// the button at a custom height, still reopens there after the Devices panel is dragged.
+    #[test]
+    fn a_drag_keeps_another_panels_restore_height() {
+        let engine = Arc::new(Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        c.bottom_restore.insert("mixer", Some(400.0));
+        c.bottom_restore.insert("devices", None);
+        c.mixer_open = false;
+        c.bottom_tab = BottomTab::Devices;
+        c.bottom_resize(0, 500.0);
+        c.bottom_resize(1, 400.0);
+        c.bottom_resize(2, 400.0);
+        assert_eq!(c.bottom_restore.get("mixer"), Some(&Some(400.0)));
+        assert!(!c.bottom_restore.contains_key("devices"));
+    }
+    /// A master volume lane being drawn must not bring a muted master back.
+    #[test]
+    fn a_muted_master_ignores_a_lane_being_drawn() {
+        let engine = Arc::new(Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        let lane = dstudio_core::AutomationLane {
+            target: dstudio_core::AutomationTarget::Volume,
+            enabled: true,
+            points: vec![dstudio_core::AutoPoint { time: 0, value: 1.0, curve: 0.0 }],
+        };
+        c.auto.pending = Some((None, lane));
+        assert_eq!(c.current_snapshot().master_automation.len(), 1, "unmuted: the drawn lane plays");
+        c.execute(Command::SetMasterMute { mute: true });
+        let snap = c.current_snapshot();
+        assert!(snap.master_automation.is_empty() && snap.master_gain == 0.0);
     }
     #[test]
     fn pan_text() {

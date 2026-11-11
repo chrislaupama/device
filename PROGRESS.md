@@ -304,6 +304,24 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   typing or dragging the tempo ends a tap series.
 - Self-test section `transport_fields_steps`; review states `review-transport-sig` and `review-transport-key`.
 
+### 2026-11-11: track rename
+
+- Double-click a track's name in its header, in the Devices tab's inspector or in the Clip tab's title to rename it
+  (`TrackName` in `ui/track_header.slint`, `Controller::rename_track`): Enter or clicking away commits, Escape
+  cancels, surrounding spaces are dropped and an empty name keeps the old one. `Command::RenameTrack` already existed.
+- The field commits to the track it opened on, also when the selection moves first, and a press in the lanes or a
+  clip editor commits it (`Controller::press_epoch` moves the focus back to the shortcuts). The name's accessible
+  default action opens the field, and ⌘R (`track.rename`, a track selected and no clip) opens the selected track's
+  header field, scrolled into view (a row taller than the lanes is centred).
+- The open field mirrors its text to `Controller::rename_draft`; when the bottom panel holding it goes away (tab
+  switch, mixer, selection cleared) `push_models` commits the draft, since the field never sees its focus loss, and
+  gives the keyboard back to the shortcuts. A field records its draft as soon as it opens, so an untouched one counts.
+- Rename and draft calls carry the `doc_epoch` the field opened in (`Studio.doc-epoch`): when another project
+  replaces the open one (Open, Live Set import) the field closes and a late commit from it renames nothing.
+- Undo of a rename is `Command::RestoreTrackName`, which puts the old name back exactly (an imported name over the
+  128-character limit included). It is never deserialized, so the assistant cannot send one.
+- Self-test section `track_rename_steps` drives the inspector name with real double-clicks and keys.
+
 ### 2026-11-11: piano roll velocity lane
 
 - The velocity button in the piano-roll toolbar opens a 68-unit lane under the note grid (the grid gives up that
@@ -327,3 +345,12 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   table in `dstudio_engine_bench`.
 - Not verified on hardware yet: Core MIDI with a real keyboard (Mac mini), WinMM (CI build only).
 
+
+### 2026-11-11: master mute and bottom panel collapse
+
+- `Project::master_mute` (saved only when on) and `Command::SetMasterMute` ("Master Mute Change"). The snapshot sends a
+  muted master as gain 0 with no master volume lane, so automation cannot bring it back; the fader keeps its value.
+  The mixer's master M toggles it, and the timeline's master row dims and reads "Master (muted)".
+- The collapse button in the bottom panel header (Clip/Devices and the mixer) shuts the panel to its tab row and reopens
+  it at the height it had (`Controller::toggle_bottom_collapse`, src/splitters.rs). Like the splitter it is a view
+  change saved with the project, not an undo step; a panel shut by dragging reopens at its default height.

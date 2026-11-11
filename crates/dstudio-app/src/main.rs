@@ -101,6 +101,10 @@ struct Args {
     /// Extra panels for the `reference-*` states.
     open_mixer: bool,
     open_assistant: bool,
+    /// review-master-mute: the master starts muted.
+    master_muted: bool,
+    /// review-panel-collapsed: the bottom panel starts shut to its tab row.
+    panel_collapsed: bool,
     /// reference-assistant / review-assistant-<name>: canned transcript (assistant_panel::assistant_demo).
     assistant_demo: Option<String>,
     /// 1 = reference-midi-clip, 2 = reference-pianoroll.
@@ -175,6 +179,8 @@ struct Args {
     /// review-transport-sig / review-transport-key: tempo 97.5, 6/8 and A minor set, with the
     /// transport bar's Sig menu (1) or key picker (2) open.
     transport_review: u8,
+    /// review-track-rename: track 1 renamed "Lead vox", the inspector's name field open.
+    track_rename_review: bool,
     /// reference-<built-in device id>: that device alone in an audio track's chain (an instrument on an instrument track).
     device_state: Option<&'static str>,
     /// Files loaded as if dropped on the window (after the state is set up).
@@ -246,6 +252,15 @@ fn parse_args() -> Result<Args, String> {
                 "reference-mixer" => {
                     a.reference_default = true;
                     a.open_mixer = true;
+                }
+                "review-master-mute" => {
+                    a.reference_default = true;
+                    a.open_mixer = true;
+                    a.master_muted = true;
+                }
+                "review-panel-collapsed" => {
+                    a.reference_default = true;
+                    a.panel_collapsed = true;
                 }
                 "reference-assistant" => {
                     a.reference_default = true;
@@ -456,6 +471,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.devices_minimap_review = true;
                 }
+                "review-track-rename" => {
+                    a.reference_default = true;
+                    a.track_rename_review = true;
+                }
                 "review-snap-menu" => {
                     a.reference_default = true;
                     a.snap_menu_review = true;
@@ -492,7 +511,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-transport-sig, review-transport-key, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-transport-sig, review-transport-key, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, review-pr-velocity, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -664,7 +683,7 @@ pub fn app_keymap() -> Keymap {
     }
     // Arm / input monitoring on the selected track (the core preset has no bindings for them).
     // Added only if the core lacks them.
-    for (action, chord) in [("track.arm", "shift+r"), ("track.monitor", "shift+i")] {
+    for (action, chord) in [("track.arm", "shift+r"), ("track.monitor", "shift+i"), ("track.rename", "primary+r")] {
         if k.chords_for(action).is_empty() {
             k.bindings.push(Binding { action: action.into(), chords: vec![Chord::parse(chord).expect("valid chord")], when: Condition::TrackSelected });
         }
@@ -802,6 +821,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "track.add_audio" => {
             ctl.borrow_mut().add_audio_track();
         }
+        "track.rename" => ctl.borrow_mut().open_rename_field(),
         "track.mute" => {
             let mut c = ctl.borrow_mut();
             if let Some(t) = c.selected_track {
@@ -977,6 +997,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             pointer::simulate(true);
         }
         c.mixer_open = args.open_mixer;
+        if args.master_muted {
+            c.toggle_master_mute();
+        }
+        if args.panel_collapsed {
+            c.toggle_bottom_collapse();
+        }
         c.assistant_open = args.open_assistant;
         if let Some(px) = args.assistant_width {
             c.settings.prefs.assistant_width = px * zoom::DESIGN_LEVEL;
@@ -1463,6 +1489,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.sig_menu_toggle();
         }
     }
+    if args.track_rename_review {
+        let mut c = ctl.borrow_mut();
+        let id = c.project().tracks[0].id;
+        c.select_track(id);
+        c.rename_track(id, "Lead vox");
+        app.global::<Studio>().set_review_rename(true);
+    }
     if args.snap_menu_review {
         let mut c = ctl.borrow_mut();
         c.snap.pick(5);
@@ -1776,6 +1809,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_track_solo, |c, id: i32| c.toggle_solo(TrackId(id as u64)));
     on!(on_track_volume, |c, id: i32, p: f32| c.set_track_gain(TrackId(id as u64), gain_from_slider(p)));
     on!(on_track_pan, |c, id: i32, p: f32| c.set_track_pan(TrackId(id as u64), p));
+    // A field opened in a project that has since been replaced renames nothing.
+    on!(on_track_rename, |c, id: i32, t: slint::SharedString, epoch: i32| {
+        if epoch == c.doc_epoch as i32 {
+            c.rename_track(TrackId(id as u64), t.as_str());
+        }
+    });
+    {
+        // Typing in a name field only records the draft: no model push per keystroke.
+        let ctl2 = ctl.clone();
+        studio.on_track_rename_draft(move |id, t, epoch| {
+            if let Ok(mut c) = ctl2.try_borrow_mut() {
+                if epoch == c.doc_epoch as i32 {
+                    c.rename_draft = Some((TrackId(id as u64), t.to_string()));
+                }
+            }
+        });
+        let ctl2 = ctl.clone();
+        studio.on_track_rename_cancel(move || {
+            if let Ok(mut c) = ctl2.try_borrow_mut() {
+                c.rename_draft = None;
+            }
+        });
+    }
     on!(on_track_pan_text, |c, id: i32, t: slint::SharedString| {
         if let Some(p) = controller::parse_pan_text(&t) {
             c.set_track_pan(TrackId(id as u64), p);
@@ -1811,6 +1867,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_toggle_assistant, |c| c.toggle_assistant());
     on!(on_mixer_fader, |c, id: i32, f: f32| c.set_mixer_fader(TrackId(id as u64), f));
     on!(on_master_fader_moved, |c, f: f32| c.set_master_fader(f));
+    on!(on_master_mute_toggle, |c| c.toggle_master_mute());
+    on!(on_bottom_collapse_toggle, |c| c.toggle_bottom_collapse());
     on!(on_reset_peaks, |c| c.reset_peaks());
     on!(on_chat_send, |c, text: slint::SharedString| {
         c.assistant_send(text.as_str());
@@ -1826,6 +1884,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     on!(on_lane_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, cmd: bool, alt: bool| {
         if kind == 0 {
+            c.press_epoch = c.press_epoch.wrapping_add(1);
             c.snap.bypass = cmd;
         }
         c.pointer_mods(kind, x, y, shift, alt)
@@ -1878,7 +1937,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let tab = if c.bottom_tab == BottomTab::Clip { BottomTab::Devices } else { BottomTab::Clip };
         c.set_bottom_tab(tab)
     });
-    on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool| c.pr_pointer(kind, x, y, shift, alt, command));
+    on!(on_pr_pointer, |c, kind: i32, x: f32, y: f32, shift: bool, alt: bool, command: bool| {
+        if kind == 0 {
+            c.press_epoch = c.press_epoch.wrapping_add(1);
+        }
+        c.pr_pointer(kind, x, y, shift, alt, command)
+    });
     on!(on_pr_scroll, |c, dx: f32, dy: f32, x: f32, y: f32, shift: bool, alt: bool, ctrl: bool| c.pr_wheel(dx, dy, x, y, shift, alt, ctrl));
     on!(on_pr_pinch, |c, scale: f32, x: f32, y: f32| c.pr_zoom_at(scale as f64, 1.0, x, y));
     on!(on_typing_release, |c| c.typing_release_all());
@@ -1913,7 +1977,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_seq_tab, |c, piano: bool| c.seq_tab(piano));
     on!(on_seq_lane_pick, |c, i: i32| c.seq_lane(i));
     on!(on_seq_action, |c, a: slint::SharedString| c.seq_action(a.as_str()));
-    on!(on_seq_pointer, |c, kind: i32, x: f32, y: f32| c.seq_pointer(kind, x, y));
+    on!(on_seq_pointer, |c, kind: i32, x: f32, y: f32| {
+        if kind == 0 {
+            c.press_epoch = c.press_epoch.wrapping_add(1);
+        }
+        c.seq_pointer(kind, x, y)
+    });
     on!(on_seq_scroll, |c, dy: f32| c.seq_scroll(dy));
     on!(on_seq_swing, |c, phase: i32, dy: f32| c.seq_swing(phase, dy));
     on!(on_seq_page_pick, |c, i: i32| c.seq_page(i));
@@ -2808,6 +2877,7 @@ mod tests {
         assert_eq!(k.chords_for("view.toggle_assistant").len(), 1);
         assert_eq!(k.chords_for("track.arm").len(), 1);
         assert_eq!(k.chords_for("track.monitor").len(), 1);
+        assert_eq!(k.chords_for("track.rename").len(), 1);
         assert_eq!(k.chords_for("transport.record").len(), 1);
         assert_eq!(k.chords_for("app.settings").len(), 1);
     }

@@ -269,7 +269,7 @@ fn describe(cmd: &Command, before: &Project, after: &Project) -> String {
     match cmd {
         Command::AddTrack { track, .. } => format!("Added {} track, {}.", match track.kind { TrackKind::Audio => "an audio", TrackKind::Instrument => "an instrument", TrackKind::Return => "a return" }, track.name),
         Command::RemoveTrack { track } => format!("Deleted {}.", track_name(before, *track)),
-        Command::RenameTrack { track, name } => format!("Renamed {} to {}.", track_name(before, *track), name),
+        Command::RenameTrack { track, name } | Command::RestoreTrackName { track, name } => format!("Renamed {} to {}.", track_name(before, *track), name),
         Command::SetTrackGain { track, gain } => format!("Set {} volume to {:.1} dB.", track_name(after, *track), gain_to_db(*gain)),
         Command::SetTrackPan { track, pan } => {
             let side = if pan.abs() < 0.005 { "centre".to_string() } else { format!("{:.0}% {}", pan.abs() * 100.0, if *pan < 0.0 { "left" } else { "right" }) };
@@ -278,6 +278,7 @@ fn describe(cmd: &Command, before: &Project, after: &Project) -> String {
         Command::SetTrackMute { track, mute } => format!("{} {}.", if *mute { "Muted" } else { "Unmuted" }, track_name(after, *track)),
         Command::SetTrackSolo { track, solo } => format!("{} {}.", if *solo { "Soloed" } else { "Unsoloed" }, track_name(after, *track)),
         Command::SetMasterGain { gain } => format!("Set master volume to {:.1} dB.", gain_to_db(*gain)),
+        Command::SetMasterMute { mute } => format!("{} the master.", if *mute { "Muted" } else { "Unmuted" }),
         Command::SetTempo { bpm } => format!("Changed tempo to {bpm} BPM."),
         Command::SetTimeSignature { numerator, denominator } => format!("Changed time signature to {numerator}/{denominator}."),
         Command::MoveClip { clip, track, start } => format!(

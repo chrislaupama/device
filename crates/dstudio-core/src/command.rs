@@ -70,7 +70,12 @@ pub enum Command {
     /// Insert a track. If `track.id` is 0 a fresh id is allocated.
     AddTrack { index: Option<usize>, track: Track },
     RemoveTrack { track: TrackId },
+    /// A new name, trimmed, 1..=128 characters.
     RenameTrack { track: TrackId, name: String },
+    /// The undo of `RenameTrack`: puts the previous name back exactly as it was, even one a
+    /// rename would refuse (an imported name over 128 characters). Not accepted from outside.
+    #[serde(skip_deserializing)]
+    RestoreTrackName { track: TrackId, name: String },
     /// Insert a section at `index` (end when `None`). If `section.id` is 0 a fresh id is allocated.
     InsertSection { index: Option<usize>, section: Section },
     RemoveSection { section: SectionId },
@@ -84,6 +89,7 @@ pub enum Command {
     SetTrackMute { track: TrackId, mute: bool },
     SetTrackSolo { track: TrackId, solo: bool },
     SetMasterGain { gain: f32 },
+    SetMasterMute { mute: bool },
     /// Register an imported media asset (id 0 → allocate).
     AddAsset { asset: Asset },
     RemoveAsset { asset: AssetId },
@@ -203,7 +209,7 @@ impl Command {
         match self {
             Command::AddTrack { track, .. } => format!("Add {} Track", kind_name(track.kind)),
             Command::RemoveTrack { .. } => "Delete Track".into(),
-            Command::RenameTrack { .. } => "Rename Track".into(),
+            Command::RenameTrack { .. } | Command::RestoreTrackName { .. } => "Rename Track".into(),
             Command::InsertSection { .. } => "Add Section".into(),
             Command::RemoveSection { .. } => "Delete Section".into(),
             Command::RenameSection { .. } => "Rename Section".into(),
@@ -214,6 +220,7 @@ impl Command {
             Command::SetTrackMute { .. } => "Mute Change".into(),
             Command::SetTrackSolo { .. } => "Solo Change".into(),
             Command::SetMasterGain { .. } => "Master Volume Change".into(),
+            Command::SetMasterMute { .. } => "Master Mute Change".into(),
             Command::AddAsset { .. } => "Import Audio".into(),
             Command::RemoveAsset { .. } => "Remove Audio".into(),
             Command::AddClip { .. } => "Add Clip".into(),
@@ -418,6 +425,11 @@ impl Command {
                 }
                 let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
                 let old = std::mem::replace(&mut t.name, name);
+                Ok(Command::RestoreTrackName { track, name: old })
+            }
+            Command::RestoreTrackName { track, name } => {
+                let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
+                let old = std::mem::replace(&mut t.name, name);
                 Ok(Command::RenameTrack { track, name: old })
             }
             Command::SetTrackGain { track, gain } => {
@@ -446,6 +458,10 @@ impl Command {
                 validate_gain("master_gain", gain)?;
                 let old = std::mem::replace(&mut p.master_gain, gain);
                 Ok(Command::SetMasterGain { gain: old })
+            }
+            Command::SetMasterMute { mute } => {
+                let old = std::mem::replace(&mut p.master_mute, mute);
+                Ok(Command::SetMasterMute { mute: old })
             }
             Command::AddAsset { mut asset } => {
                 if asset.id.0 == 0 {
