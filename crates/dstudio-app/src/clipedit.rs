@@ -800,8 +800,9 @@ impl Controller {
 /// Notes mirrored in a clip of `length` ticks: a note that ended at the clip end starts at 0.
 /// With the clip's loop on, the part before the loop, the loop itself and the part after it
 /// (which never plays) are each mirrored in place, so every note that played still plays and
-/// the loop repeats its own material backwards. Notes outside the clip mirror across the whole
-/// clip and are clamped to 0.
+/// the loop repeats its own material backwards. A note that runs past the end of its part is
+/// cut there first, so it keeps its place inside the part and reversing twice gives back what
+/// played. Notes that start outside the clip never play and stay where they are.
 pub fn reversed_in_clip(notes: &[midi::Note], length: Ticks, clip_loop: Option<&midi::ClipLoop>) -> Vec<midi::Note> {
     let regions: Vec<(Ticks, Ticks)> = match clip_loop {
         Some(l) if l.on => {
@@ -813,8 +814,9 @@ pub fn reversed_in_clip(notes: &[midi::Note], length: Ticks, clip_loop: Option<&
     notes
         .iter()
         .map(|n| {
-            let (a, b) = regions.iter().copied().find(|r| n.start >= r.0 && n.start < r.1).unwrap_or((0, length));
-            midi::Note { start: (a + b - n.start - n.length).max(a), ..*n }
+            let Some((a, b)) = regions.iter().copied().find(|r| n.start >= r.0 && n.start < r.1) else { return *n };
+            let length = n.length.min(b - n.start);
+            midi::Note { start: a + b - n.start - length, length, ..*n }
         })
         .collect()
 }
@@ -830,7 +832,9 @@ mod reverse_tests {
         let r = reversed_in_clip(&notes, 3840, None);
         assert_eq!(r.iter().map(|n| (n.id, n.start, n.length)).collect::<Vec<_>>(), [(1, 3600, 240), (2, 2400, 480), (3, 0, 240)]);
         assert_eq!(reversed_in_clip(&r, 3840, None), notes, "twice is the original");
-        assert_eq!(reversed_in_clip(&[n(4, 3800, 240)], 3840, None)[0].start, 0, "a note past the end is clamped to 0");
+        let past = reversed_in_clip(&[n(4, 3800, 240)], 3840, None);
+        assert_eq!((past[0].start, past[0].length), (0, 40), "a note over the clip end is cut at it, then mirrored");
+        assert_eq!(reversed_in_clip(&[n(5, 3840, 240), n(6, -10, 20)], 3840, None), [n(5, 3840, 240), n(6, -10, 20)], "notes outside the clip stay put");
         let whole = midi::ClipLoop::whole(3840);
         assert_eq!(reversed_in_clip(&notes, 3840, Some(&whole)), r, "a loop over the whole clip changes nothing");
     }
@@ -847,5 +851,18 @@ mod reverse_tests {
         assert_eq!(l.unroll(&r, 7680).len(), l.unroll(&notes, 7680).len());
         assert!(r.iter().all(|n| n.start < l.end), "nothing moved past the loop end");
         assert_eq!(reversed_in_clip(&r, 7680, Some(&l)), notes, "twice is the original");
+    }
+
+    /// A note that crosses the loop end is cut at it (playback cuts it there too), so the
+    /// reversed note stays in the loop and a second reversal puts it back where it played.
+    #[test]
+    fn reversing_cuts_a_note_at_its_loop_end() {
+        let n = |id, start, length| midi::Note { id, pitch: 60, start, length, velocity: 100 };
+        let l = midi::ClipLoop { on: true, start: 960, end: 1920, span: 0 };
+        let r = reversed_in_clip(&[n(1, 1800, 240)], 7680, Some(&l));
+        assert_eq!((r[0].start, r[0].length), (960, 120));
+        let back = reversed_in_clip(&r, 7680, Some(&l));
+        assert_eq!((back[0].start, back[0].length), (1800, 120));
+        assert_eq!(l.unroll(&back, 7680), l.unroll(&[n(1, 1800, 240)], 7680), "it plays as it did");
     }
 }
