@@ -41,7 +41,9 @@ wgpu.
 ## Features
 
 - **Timeline.** Import audio, move and trim clips, loop a range, and play against a metronome. Waveforms, clips and the
-  playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips.
+  playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips. Shortcuts cover the common
+  moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected clip or section, ⌘D
+  duplicates the selected clip or section.
 - **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them. A velocity lane under the
   notes lets you drag one note's velocity, or sweep across several to paint them.
 - **Recording.** Arm tracks, pick inputs, monitor, and record takes that land where you played them: latency

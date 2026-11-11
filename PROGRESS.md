@@ -353,6 +353,17 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   table in `dstudio_engine_bench`.
 - Not verified on hardware yet: Core MIDI with a real keyboard (Mac mini), WinMM (CI build only).
 
+### 2026-11-11: timeline shortcuts
+
+- Default keymap actions that resolved but did nothing are wired: ⇧⌘T `track.add_instrument` (new Instrument track,
+  selected), ⌘R `clip.reverse` (MIDI notes mirrored in the clip as one "Reverse Clip" step; with the clip's loop on,
+  the part before the loop and the loop itself are each mirrored in place, so every note that played still plays; audio clips toggle
+  `ClipWarp::reverse`; step patterns are left alone with a status message), ⌘L `transport.loop_selection` (loop exactly
+  the selected clip or section, turned on; with nothing selected ⌘L still toggles the loop), ⌘D `section.duplicate`.
+  The key context now reports `section_selected`, so the section bindings resolve at all.
+- Still unwired: `tool.scissors` (T) and the range actions (`range.duplicate`, `clip.split_at_range`): there is no
+  scissors tool or range selection yet.
+- Self-test section "shortcuts" (real key presses); unit test `reversing_mirrors_notes_in_the_clip`.
 
 ### 2026-11-11: master mute and bottom panel collapse
 
