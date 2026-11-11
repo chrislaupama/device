@@ -52,7 +52,7 @@ pub const SIG_MENU_W: f32 = 74.8;
 
 pub struct State {
     /// Tap times (seconds since `epoch`) of the current series.
-    taps: Vec<f64>,
+    pub(crate) taps: Vec<f64>,
     epoch: Instant,
     /// Tempo drag: the tempo at the press, and whether the pointer has moved past the dead zone.
     drag: Option<(f64, bool)>,

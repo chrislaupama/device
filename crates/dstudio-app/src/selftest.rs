@@ -6756,6 +6756,20 @@ fn transport_fields_steps() -> Vec<Step> {
         Check("transport: taps set 120 BPM", Box::new(move |c, _| (bpm(c) == 120.0).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
         DoC("transport: one undo takes the tap series back", Box::new(|_, ctl| ctl.borrow_mut().undo())),
         Check("transport: 97.5 BPM again", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: start a fresh tap series", Box::new(|_, ctl| ctl.borrow_mut().tf.taps.clear())),
+        Do("transport: press Shift+T, then hold it (two auto-repeats)", Box::new(|a| {
+            let w = a.window();
+            dispatch(w, WindowEvent::KeyPressed { text: Key::Shift.into() });
+            dispatch(w, WindowEvent::KeyPressed { text: "T".into() });
+            dispatch(w, WindowEvent::KeyPressRepeated { text: "T".into() });
+            dispatch(w, WindowEvent::KeyPressRepeated { text: "T".into() });
+            dispatch(w, WindowEvent::KeyReleased { text: "T".into() });
+            dispatch(w, WindowEvent::KeyReleased { text: Key::Shift.into() });
+        })),
+        Check("transport: the held key counted as one tap, the tempo is unchanged", Box::new(move |c, _| {
+            (c.tf.taps.len() == 1 && bpm(c) == 97.5).then_some(()).ok_or(format!("taps {} bpm {}", c.tf.taps.len(), bpm(c)))
+        })),
+        DoC("transport: end that series", Box::new(|_, ctl| ctl.borrow_mut().tf.taps.clear())),
         DoC("transport: tap at 120 BPM, then twice as fast", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
             for t in [600.0, 600.5, 601.0, 601.25] {
