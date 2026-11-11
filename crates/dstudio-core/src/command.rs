@@ -84,6 +84,7 @@ pub enum Command {
     SetTrackMute { track: TrackId, mute: bool },
     SetTrackSolo { track: TrackId, solo: bool },
     SetMasterGain { gain: f32 },
+    SetMasterMute { mute: bool },
     /// Register an imported media asset (id 0 → allocate).
     AddAsset { asset: Asset },
     RemoveAsset { asset: AssetId },
@@ -214,6 +215,7 @@ impl Command {
             Command::SetTrackMute { .. } => "Mute Change".into(),
             Command::SetTrackSolo { .. } => "Solo Change".into(),
             Command::SetMasterGain { .. } => "Master Volume Change".into(),
+            Command::SetMasterMute { .. } => "Master Mute Change".into(),
             Command::AddAsset { .. } => "Import Audio".into(),
             Command::RemoveAsset { .. } => "Remove Audio".into(),
             Command::AddClip { .. } => "Add Clip".into(),
@@ -446,6 +448,10 @@ impl Command {
                 validate_gain("master_gain", gain)?;
                 let old = std::mem::replace(&mut p.master_gain, gain);
                 Ok(Command::SetMasterGain { gain: old })
+            }
+            Command::SetMasterMute { mute } => {
+                let old = std::mem::replace(&mut p.master_mute, mute);
+                Ok(Command::SetMasterMute { mute: old })
             }
             Command::AddAsset { mut asset } => {
                 if asset.id.0 == 0 {

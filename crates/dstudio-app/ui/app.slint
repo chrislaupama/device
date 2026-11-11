@@ -698,7 +698,7 @@ component Timeline inherits Panel {
         edit-done => { root.focus-main(); }
         x: 0; y: root.height - Studio.master-h; width: Tokens.lane-x - 0.5px; height: Studio.master-h;
         automation: Studio.auto-shown; volume-pos: Studio.master-pos; vol-auto: Studio.master-vol-auto;
-        level: Studio.master-level; auto-state: Studio.master-auto-state;
+        level: Studio.master-level; auto-state: Studio.master-auto-state; muted: Studio.master-mute;
     }
 }
 
@@ -882,7 +882,8 @@ component BottomPanel inherits Panel {
     if Studio.bottom-tab == 1 && !Studio.pr-visible && !Studio.ac-visible: ClipEmpty { x: 255px; y: 27px; width: root.width - 255px; height: root.height - 27px; }
     if Studio.bottom-tab == 0 && Studio.devmm-visible: DevMinimap { x: root.width - 252.45px; y: 3.4px; width: 192.95px; height: 20.4px; }
     IconButton { x: root.width - 53px; y: 3px; width: 21px; height: 21px; icon: Icons.panel-bottom; ink: #6b6c70; icon-size: 14px; }
-    IconButton { x: root.width - 29px; y: 3px; width: 21px; height: 21px; icon: Icons.download; ink: #6b6c70; icon-size: 14px; }
+    IconButton { x: root.width - 29px; y: 3px; width: 21px; height: 21px; icon: Studio.bottom-collapsed ? Icons.upload : Icons.download; ink: #6b6c70; icon-size: 14px;
+        tooltip: Studio.bottom-collapsed ? "Expand the bottom panel" : "Collapse the bottom panel"; clicked => { Studio.bottom-collapse-toggle(); } }
     // Device chain (Devices tab): built-in Synth card (instrument tracks without an instrument
     // plugin; src/synth.rs), plugin cards (src/devices.rs), then "Add device". Positions come
     // from Rust (bottom-panel relative, scroll included); the area clips at the inspector edge.

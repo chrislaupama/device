@@ -2277,6 +2277,29 @@ fn steps() -> Vec<Step> {
             let f = a.global::<Studio>().get_master_fader();
             ((db + 24.0).abs() < 0.3 && (f - 0.78).abs() < 0.01).then_some(()).ok_or(format!("{db} dB, fader {f}"))
         })),
+        Do("click M on the master strip", Box::new(|a| click(a, win().0 - 5.0 - 108.0 * 0.85 + 25.0 * 0.85, bottom_end() - 17.0 * 0.85))),
+        Check("master muted (SetMasterMute), fader untouched, header row says so", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let db = dstudio_core::gain_to_db(c.project().master_gain);
+            (c.project().master_mute && s.get_master_mute() && c.doc.undo_label() == Some("Master Mute Change") && (db + 24.0).abs() < 0.3)
+                .then_some(())
+                .ok_or(format!("mute {} ui {} undo {:?} {db} dB", c.project().master_mute, s.get_master_mute(), c.doc.undo_label()))
+        })),
+        Do("Cmd+Z", Box::new(|a| key(a, "z", true, false))),
+        Check("undo unmuted the master", Box::new(|c, a| {
+            (!c.project().master_mute && !a.global::<Studio>().get_master_mute()).then_some(()).ok_or("still muted".into())
+        })),
+        Do("click the mixer's collapse button", Box::new(|a| click(a, win().0 - 5.0 - 29.0 + 10.5, mixer_y() + 3.0 + 10.5))),
+        Check("mixer shut to its tab row; the button now expands", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            (c.mixer_open && c.bottom_collapsed() && s.get_bottom_collapsed() && (c.bottom_h() - crate::splitters::BOTTOM_COLLAPSED_H).abs() < 0.01)
+                .then_some(())
+                .ok_or(format!("h {} ui {}", c.bottom_h(), s.get_bottom_collapsed()))
+        })),
+        Do("click the expand button", Box::new(|a| click(a, win().0 - 5.0 - 29.0 + 10.5, mixer_y() + 3.0 + 10.5))),
+        Check("mixer back at its 390 pt height", Box::new(|c, a| {
+            ((c.bottom_h() - crate::highlight::MIXER_BOTTOM_H).abs() < 0.5 && !a.global::<Studio>().get_bottom_collapsed()).then_some(()).ok_or(format!("h {}", c.bottom_h()))
+        })),
         Do("click '+ Add track' in the mixer", Box::new(|a| click(a, bottom_x() + 3.0 * 108.0 * 0.85 + 46.0, mixer_y() + 210.0))),
         DoC("pick 'Audio track' in the Add track menu", Box::new(|a, ctl| {
             let (x, y) = route_row(ctl, 0);
@@ -5871,7 +5894,7 @@ fn splitter_steps() -> Vec<Step> {
         win().1 - 5.0 - c.bottom_h() - 1.0
     }
     let base_h = Rc::new(Cell::new(0f32));
-    let (b1, b2) = (base_h.clone(), base_h.clone());
+    let (b1, b2, b3, b4) = (base_h.clone(), base_h.clone(), base_h.clone(), base_h.clone());
     let undo_n = Rc::new(Cell::new(0usize));
     let (u1, u2) = (undo_n.clone(), undo_n.clone());
     vec![
@@ -5909,12 +5932,37 @@ fn splitter_steps() -> Vec<Step> {
             let ok = approx(h, b2.get() + 100.0, 0.5) && saved == Some(h) && approx(a.global::<Studio>().get_bottom_h(), h, 0.01);
             ok.then_some(()).ok_or(format!("h {h} base {} saved {saved:?}", b2.get()))
         })),
+        Do("click the panel's collapse button", Box::new(|a| click(a, win().0 - 5.0 - 29.0 + 10.5, bottom_y() + 3.0 + 10.5))),
+        Check("panel shut to its tab row (saved), the taller height remembered", Box::new(|c, a| {
+            let saved = c.project().bottom_panel_heights.values().copied().next();
+            (c.bottom_collapsed() && a.global::<Studio>().get_bottom_collapsed() && saved == Some(crate::splitters::BOTTOM_COLLAPSED_H))
+                .then_some(())
+                .ok_or(format!("h {} saved {saved:?}", c.bottom_h()))
+        })),
+        Do("click it again", Box::new(|a| click(a, win().0 - 5.0 - 29.0 + 10.5, bottom_y() + 3.0 + 10.5))),
+        Check("panel reopened at the height it had (100 pt above the default)", Box::new(move |c, a| {
+            let h = c.bottom_h();
+            (approx(h, b3.get() + 100.0, 0.5) && !a.global::<Studio>().get_bottom_collapsed()).then_some(()).ok_or(format!("h {h} base {}", b3.get()))
+        })),
+        Do("collapse it with the button again", Box::new(|a| click(a, win().0 - 5.0 - 29.0 + 10.5, bottom_y() + 3.0 + 10.5))),
+        DoC("drag the splitter up 200 pt from the tab row", Box::new(|a, ctl| {
+            let y = splitter_y(&ctl.borrow());
+            drag(a, lane_x() + 246.35, y, lane_x() + 246.35, y - 200.0);
+        })),
+        Check("the drag opened the panel and dropped the height the button kept", Box::new(|c, _| {
+            (!c.bottom_collapsed() && c.bottom_restore.is_empty()).then_some(()).ok_or(format!("h {} restore {:?}", c.bottom_h(), c.bottom_restore))
+        })),
         DoC("drag the splitter to the bottom edge", Box::new(|a, ctl| {
             let y = splitter_y(&ctl.borrow());
             drag(a, lane_x() + 246.35, y, lane_x() + 246.35, win().1 - 5.0);
         })),
         Check("bottom panel collapses to its tab row", Box::new(|c, _| {
             approx(c.bottom_h(), crate::splitters::BOTTOM_COLLAPSED_H, 0.01).then_some(()).ok_or(format!("h {}", c.bottom_h()))
+        })),
+        Do("click the expand button after a drag shut the panel", Box::new(|a| click(a, win().0 - 5.0 - 29.0 + 10.5, bottom_y() + 3.0 + 10.5))),
+        Check("the panel opens at its default height", Box::new(move |c, _| {
+            let h = c.bottom_h();
+            (approx(h, b4.get(), 0.5) && c.project().bottom_panel_heights.is_empty()).then_some(()).ok_or(format!("h {h} default {}", b4.get()))
         })),
         DoC("restore the default panel height", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
@@ -7764,6 +7812,114 @@ fn pattern_library_steps() -> Vec<Step> {
     ]
 }
 
+/// Piano-roll velocity lane: the toolbar toggle opens it under the grid; dragging a stem moves
+/// the note's velocity, a sweep across empty lane paints the stems it passes; each gesture is one
+/// undo step.
+fn velocity_lane_steps() -> Vec<Step> {
+    use crate::pianoroll::VEL_H;
+    use Step::*;
+    let hist = Rc::new(Cell::new(0usize));
+    let (h1, h2, h3) = (hist.clone(), hist.clone(), hist.clone());
+    let clip: Rc<Cell<Option<dstudio_core::ClipId>>> = Rc::new(Cell::new(None));
+    let (c0, c1, c2, c3, c4, c5) = (clip.clone(), clip.clone(), clip.clone(), clip.clone(), clip.clone(), clip.clone());
+    let vels = |c: &Controller, id: Option<dstudio_core::ClipId>| -> Vec<u8> {
+        id.and_then(|id| c.project().midi_clip(id)).map(|m| m.notes.iter().map(|n| n.velocity).collect()).unwrap_or_default()
+    };
+    // Centre of the toolbar's velocity button (ui/pianoroll.slint: 280 from the panel's right edge).
+    fn vel_button(ctl: &Ctl) -> (f32, f32) {
+        (pr_origin().0 + ctl.borrow().pr.size.0 + 0.5 - 270.0, bottom_y() + 41.0)
+    }
+    // Window point on note `beat`'s stem at velocity `vel`.
+    fn stem(ctl: &Ctl, beat: f64, vel: u8) -> (f32, f32) {
+        let v = ctl.borrow().pr_view();
+        (pr_origin().0 + v.x_of(beat), pr_origin().1 + crate::pianoroll::vel_y(&v, vel))
+    }
+    vec![
+        DoC("velocity: a new instrument track with a MIDI clip of four quarter notes at velocity 100, open in the piano roll", Box::new(move |_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.mixer_open = false;
+            // A track of its own: the first instrument track has a Drum Rack by now (step patterns).
+            let color = crate::controller::next_track_color(c.project());
+            let track = dstudio_core::Track::new(dstudio_core::TrackId(0), TrackKind::Instrument, "Keys", color);
+            c.execute(dstudio_core::Command::AddTrack { index: None, track });
+            let inst = c.project().tracks.last().map(|t| t.id);
+            if let Some(t) = inst {
+                c.select_track(t);
+            }
+            c.seek_beats(64.0);
+            let id = c.insert_midi_clip();
+            if let Some(id) = id {
+                let notes = (0..4).map(|i| dstudio_core::Note { id: i as u32 + 1, pitch: 60 + 2 * i as u8, start: i * PPQ, length: PPQ / 2, velocity: 100 }).collect();
+                c.execute(dstudio_core::Command::SetMidiNotes { clip: id, notes });
+            }
+            c.select_clip(id);
+            c.bottom_tab = BottomTab::Clip;
+            c.pr_sync_clip();
+            c.pr.selected.clear();
+            c.pr.vel_lane = false;
+            c.ui_dirty = true;
+            c0.set(id);
+        })),
+        Check("velocity: the piano roll shows the clip, lane closed", Box::new(move |c, a| {
+            let open = c.pr_clip().map(|m| m.id) == c1.get() && c1.get().is_some();
+            (open && !c.pr.vel_lane && !a.global::<Studio>().get_pr_vel_lane()).then_some(()).ok_or(format!("pr clip {:?} lane {}", c.pr_clip().map(|m| m.id), c.pr.vel_lane))
+        })),
+        DoC("velocity: click the toolbar's velocity button", Box::new(|a, ctl| {
+            let (x, y) = vel_button(ctl);
+            click(a, x, y);
+        })),
+        Check("velocity: the lane is open and the grid gave it its height", Box::new(move |c, a| {
+            h1.set(c.doc.history_labels().len());
+            let v = c.pr_view();
+            let ok = c.pr.vel_lane && a.global::<Studio>().get_pr_vel_lane() && v.lane == VEL_H && (v.h + v.lane - c.pr.size.1).abs() < 1.0;
+            ok.then_some(()).ok_or(format!("lane {} grid h {} texture h {}", c.pr.vel_lane, v.h, c.pr.size.1))
+        })),
+        DoC("velocity: drag note 2's stem up by 20", Box::new(|a, ctl| {
+            let (x, y) = stem(ctl, 1.0, 100);
+            let dy = 20.0 / 127.0 * (ctl.borrow().pr_view().lane - 12.0);
+            drag(a, x, y, x, y - dy);
+        })),
+        Check("velocity: note 2 at 120, the rest at 100, note 2 selected, one Note Velocity step", Box::new(move |c, _| {
+            let got = vels(c, c2.get());
+            let n = c.doc.history_labels().len();
+            let (was, last) = (h2.get(), c.doc.undo_label());
+            h2.set(n);
+            let ok = got == [100, 120, 100, 100] && c.pr.selected.len() == 1 && c.pr.selected.contains(&2) && n == was + 1 && last == Some("Note Velocity");
+            ok.then_some(()).ok_or(format!("vels {got:?} sel {:?} history {was} -> {n} last {last:?}", c.pr.selected))
+        })),
+        DoC("velocity: clear the selection, sweep the lane at 40 from beat 1.5 past beat 3", Box::new(|a, ctl| {
+            ctl.borrow_mut().pr.selected.clear();
+            let (x0, y) = stem(ctl, 1.5, 40);
+            let (x1, _) = stem(ctl, 3.0, 40);
+            drag(a, x0, y, x1 + 2.0, y);
+        })),
+        Check("velocity: notes 3 and 4 at 40, notes 1 and 2 kept, one more step", Box::new(move |c, _| {
+            let got = vels(c, c3.get());
+            let n = c.doc.history_labels().len();
+            let ok = got == [100, 120, 40, 40] && n == h3.get() + 1 && c.doc.undo_label() == Some("Note Velocity");
+            ok.then_some(()).ok_or(format!("vels {got:?} history {n} (was {})", h3.get()))
+        })),
+        DoC("velocity: undo twice", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.undo();
+            c.undo();
+        })),
+        Check("velocity: all four back at 100", Box::new(move |c, _| {
+            let got = vels(c, c4.get());
+            (got == [100, 100, 100, 100]).then_some(()).ok_or(format!("vels {got:?}"))
+        })),
+        DoC("velocity: click the toolbar button again", Box::new(|a, ctl| {
+            let (x, y) = vel_button(ctl);
+            click(a, x, y);
+        })),
+        Check("velocity: the lane is closed and the grid has its height back", Box::new(move |c, a| {
+            let v = c.pr_view();
+            let ok = !c.pr.vel_lane && !a.global::<Studio>().get_pr_vel_lane() && (v.h - c.pr.size.1).abs() < 1.0 && c5.get().is_some();
+            ok.then_some(()).ok_or(format!("lane {} grid h {} texture h {}", c.pr.vel_lane, v.h, c.pr.size.1))
+        })),
+    ]
+}
+
 /// Run the scripted steps, one per timer tick. Prints a summary and quits.
 pub fn start(app: &AppWindow, ctl: Ctl) {
     APP.with(|a| *a.borrow_mut() = Some(app.as_weak()));
@@ -7806,6 +7962,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(add_search_steps());
     all.extend(live_import_steps());
     all.extend(returns_steps());
+    all.extend(velocity_lane_steps());
     // The checks aim at a 1440×820 pt window. A window opened larger than the screen is shrunk to
     // fit when it is shown (macOS; GitHub's Mac runners have a 1024×768 display), so ask again
     // once it is on screen, and say what we got.

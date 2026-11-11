@@ -239,7 +239,9 @@ pub fn build_full(
             },
         })
         .collect();
-    let master_automation = lanes(project, &project.master_automation, engine_rate);
+    // A muted master is silent: no gain, and no volume lane to bring it back.
+    let master_automation = if project.master_mute { Vec::new() } else { lanes(project, &project.master_automation, engine_rate) };
+    let master_gain = if project.master_mute { 0.0 } else { project.master_gain };
     let device_assets = project
         .tracks
         .iter()
@@ -247,7 +249,7 @@ pub fn build_full(
         .flat_map(|d| d.samples.iter())
         .filter_map(|s| Some((s.asset, *engine_assets.get(&s.asset)?)))
         .collect();
-    (SessionSnapshot { tracks, master_gain: project.master_gain, master_automation, device_assets }, skipped)
+    (SessionSnapshot { tracks, master_gain, master_automation, device_assets }, skipped)
 }
 
 /// A clip playing the engine's reversed copy (`frames` long, engine rate) of

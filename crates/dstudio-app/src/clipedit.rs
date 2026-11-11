@@ -649,6 +649,7 @@ impl Controller {
         let pr = self.pr_clip().cloned();
         s.set_pr_visible(pr.is_some());
         s.set_pr_pen(self.pr.pen);
+        s.set_pr_vel_lane(self.pr.vel_lane);
         s.set_typing_on(self.typing.active);
         let (vz, hz) = self.pr_zoom_values();
         s.set_pr_vzoom(vz);
