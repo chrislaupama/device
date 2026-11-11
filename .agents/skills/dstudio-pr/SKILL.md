@@ -34,8 +34,10 @@ Screenshots for the description never go on the pull request's own branch, so th
 `main`. Commit them to the `pr-screenshots` branch (an orphan branch holding only images, one folder
 per change, never merged; create it with `git switch --orphan pr-screenshots` if it doesn't exist),
 push it, and link each image by that commit's hash:
-`https://raw.githubusercontent.com/chrislaupama/device/<commit>/<folder>/<file>.png`. A hash link
-keeps working after branches are deleted; a branch-name link does not.
+`https://raw.githubusercontent.com/chrislaupama/device/<commit>/<folder>/<file>.png`. Only add
+commits on top of `pr-screenshots`: never delete, rebase or force-push it, because its history is
+what keeps the hash links working. A hash link survives the pull request's own branch being
+deleted; a link by branch name does not.
 
 ## 4. Docs
 
