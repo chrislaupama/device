@@ -149,6 +149,8 @@ impl Controller {
             _ => {
                 if let Some(d) = self.bottom_drag.take() {
                     let kind = self.bottom_kind();
+                    // A drag sets the height by hand: forget what the collapse button kept.
+                    self.bottom_restore.remove(kind);
                     self.doc.set_bottom_panel_height(kind, Some(d.h));
                     self.ui_dirty = true;
                 }

@@ -5775,6 +5775,14 @@ fn splitter_steps() -> Vec<Step> {
             let h = c.bottom_h();
             (approx(h, b3.get() + 100.0, 0.5) && !a.global::<Studio>().get_bottom_collapsed()).then_some(()).ok_or(format!("h {h} base {}", b3.get()))
         })),
+        Do("collapse it with the button again", Box::new(|a| click(a, win().0 - 5.0 - 29.0 + 10.5, bottom_y() + 3.0 + 10.5))),
+        DoC("drag the splitter up 200 pt from the tab row", Box::new(|a, ctl| {
+            let y = splitter_y(&ctl.borrow());
+            drag(a, lane_x() + 246.35, y, lane_x() + 246.35, y - 200.0);
+        })),
+        Check("the drag opened the panel and dropped the height the button kept", Box::new(|c, _| {
+            (!c.bottom_collapsed() && c.bottom_restore.is_empty()).then_some(()).ok_or(format!("h {} restore {:?}", c.bottom_h(), c.bottom_restore))
+        })),
         DoC("drag the splitter to the bottom edge", Box::new(|a, ctl| {
             let y = splitter_y(&ctl.borrow());
             drag(a, lane_x() + 246.35, y, lane_x() + 246.35, win().1 - 5.0);

@@ -761,6 +761,8 @@ impl Controller {
             let p = self.doc.project();
             let ls = snapshot::LaneSnapshot { target: lane.target.clone(), points: lane.points.iter().map(|q| (p.ticks_to_frames(q.time, self.rate), q.value, q.curve)).collect() };
             let lanes = match key {
+                // A muted master stays silent: no volume lane, not even one being drawn.
+                None if p.master_mute => None,
                 None => Some(&mut snap.master_automation),
                 Some(t) => snap.tracks.iter_mut().find(|ts| ts.track_id == t.0).map(|ts| &mut ts.automation),
             };
@@ -2059,6 +2061,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let starts: Vec<Vec<Ticks>> = c.project().tracks.iter().map(|t| t.clips.iter().map(|k| k.start).collect()).collect();
         assert_eq!(starts, vec![vec![0], vec![], vec![10 * PPQ]]);
+    }
+    /// A master volume lane being drawn must not bring a muted master back.
+    #[test]
+    fn a_muted_master_ignores_a_lane_being_drawn() {
+        let engine = Arc::new(Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        let lane = dstudio_core::AutomationLane {
+            target: dstudio_core::AutomationTarget::Volume,
+            enabled: true,
+            points: vec![dstudio_core::AutoPoint { time: 0, value: 1.0, curve: 0.0 }],
+        };
+        c.auto.pending = Some((None, lane));
+        assert_eq!(c.current_snapshot().master_automation.len(), 1, "unmuted: the drawn lane plays");
+        c.execute(Command::SetMasterMute { mute: true });
+        let snap = c.current_snapshot();
+        assert!(snap.master_automation.is_empty() && snap.master_gain == 0.0);
     }
     #[test]
     fn pan_text() {
