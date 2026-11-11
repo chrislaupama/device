@@ -345,7 +345,9 @@ fn damaged_routing_is_repaired_on_load() {
         TrackSend::new(TrackId(999)),
     ];
     p.tracks[2].output = Some(p.tracks[1].id);
-    p.sanitize_routing();
+    let dir = tempfile::tempdir().unwrap();
+    persist::save(&p, dir.path()).unwrap();
+    let p = persist::load(dir.path()).unwrap().project;
     assert_eq!(
         p.tracks.iter().map(|t| t.kind).collect::<Vec<_>>(),
         [TrackKind::Audio, TrackKind::Instrument, TrackKind::Return]
