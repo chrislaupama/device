@@ -31,7 +31,7 @@ import { SettingsPanel, ChoiceList } from "settings.slint";
 import { ExportModal, UnsavedPrompt, UpdatesModal, UndoHistoryModal } from "dialogs.slint";
 import { PluginCard, AddDeviceCard, DevMenuList } from "devices.slint";
 import { BuiltinCard, FoldedStrip } from "device_panel.slint";
-import { TrackHeaderRow, MasterHeaderRow, AutoPill } from "track_header.slint";
+import { TrackHeaderRow, MasterHeaderRow, AutoPill, TrackName } from "track_header.slint";
 
 export { Studio, TrackRow, TrackLevel, AutoLabel, AutoExtra, RulerLabel, SectionLabel, ClipLabel, TreeRow, FileRow, FileGuide, MixerStrip, StripMeter, ChatEntry, HighlightRect, YLabel, MenuItem, SynthParam, SynthDisplay, SynthLabel, SynthArc, SynthKnobItem, SynthFaderItem, SynthPillItem, SynthTextItem, SynthSegItem, SynthScopeItem, SynthLatchItem, SynthRouteRow, SynthMapRow, ChoiceItem, DeviceCard, PluginRow }
 
@@ -673,6 +673,7 @@ component Timeline inherits Panel {
 
 // ------------------------------------------------------------------ bottom panel
 component Inspector inherits Rectangle {
+    callback focus-main();
     // Readouts are the track colour pulled toward grey (#c670f7 track -> #a66bca text,
     // #72b6d7 -> #77a6bd, #8092eb -> #7b87c3; this mix gives all three within a few levels).
     property <color> value-color: Studio.sel-color.mix(#7d7e80, 0.62);
@@ -681,7 +682,8 @@ component Inspector inherits Rectangle {
     Rectangle { x: 0px; y: 5.5px; width: 3.4px; height: 16.15px; border-radius: 1.7px; background: Studio.sel-color; }
     Text { visible: Studio.has-selection; x: 10.5px; y: 7px; height: 13px; text: Studio.sel-number; color: Tokens.text-bright; font-size: 9px; font-weight: 700; vertical-alignment: center; }
     Icon { visible: Studio.has-selection; x: 21px; y: 8px; width: 11px; height: 11px; d: Studio.sel-instrument ? Icons.keys : Icons.wave; ink: #a8a8ab; stroke-width: 1.1px; }
-    Label { x: 37px; y: 7px; text: Studio.has-selection ? Studio.sel-name : "No track selected"; color: Tokens.text-bright; font-size: 10px; }
+    if !Studio.has-selection: Label { x: 37px; y: 7px; text: "No track selected"; color: Tokens.text-bright; font-size: 10px; }
+    if Studio.has-selection: TrackName { x: 37px; y: 7px; width: 120px; height: 14.5px; track-id: Studio.sel-id; text: Studio.sel-name; text-color: Tokens.text-bright; font-size: 10px; font-weight: 600; letter-spacing: 0; review-edit: Studio.review-rename; edit-done => { root.focus-main(); } }
 
     // In: audio tracks open the input selector (SetTrackInput; popup drawn by AppWindow). Instrument
     // tracks open the instrument selector (built-in Synth or an instrument plugin: SetInstrumentPlugin).
@@ -771,7 +773,8 @@ component Inspector inherits Rectangle {
 }
 
 component BottomPanel inherits Panel {
-    if Studio.bottom-tab == 0: Inspector { x: 0; y: 0; width: 254.5px; height: root.height; }
+    callback focus-main();
+    if Studio.bottom-tab == 0: Inspector { x: 0; y: 0; width: 254.5px; height: root.height; focus-main => { root.focus-main(); } }
     if Studio.bottom-tab == 1: ClipSidebar { x: 0; y: 0; width: 254.5px; height: root.height; }
     Rectangle { x: 254.5px; y: 0; width: 0.5px; height: root.height; background: Tokens.line-separator; }
     Rectangle { x: 0; y: 26.5px; width: root.width; height: 0.5px; background: Tokens.line-separator; }
@@ -1053,7 +1056,7 @@ export component AppWindow inherits Window {
             double-clicked => { Studio.chat-resize-reset(); }
         }
         // Bottom panel: inspector + devices, or the mixer (taller; the row above shrinks).
-        if !Studio.mixer-open: BottomPanel { x: 5px; y: root.bottom-y; width: root.width - 10px; height: root.bottom-h; }
+        if !Studio.mixer-open: BottomPanel { x: 5px; y: root.bottom-y; width: root.width - 10px; height: root.bottom-h; focus-main => { fs.focus(); } }
         if Studio.mixer-open: MixerPanel { x: 5px; y: root.bottom-y; width: root.width - 10px; height: root.bottom-h; }
         // Timeline / bottom-panel splitter: an invisible 14 px strip across the gap, 8 px of it
         // above the panel's top edge (the resize handle).

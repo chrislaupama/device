@@ -275,3 +275,10 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - `AGENTS.md` is the entry point for coding agents; codebase skills live in `.agents/skills/` (commands, C ABI and
   audio thread, built-in devices, UI, benchmarks, pull requests, plus the spec phases and bug fixing).
   `python3 tools/agents/check_skills.py` fails when a skill names a file that no longer exists.
+
+### 2026-11-11: track rename
+
+- Double-click a track's name in its header, in the Devices tab's inspector or in the Clip tab's title to rename it
+  (`TrackName` in `ui/track_header.slint`, `Controller::rename_track`): Enter or clicking away commits, Escape
+  cancels, surrounding spaces are dropped and an empty name keeps the old one. `Command::RenameTrack` already existed.
+- Self-test section `track_rename_steps` drives the inspector name with real double-clicks and keys.

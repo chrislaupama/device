@@ -6,6 +6,53 @@ import { Tokens } from "tokens.slint";
 import { Icon, Icons, Inset } from "widgets.slint";
 import { Studio, TrackRow, TrackLevel } from "studio.slint";
 
+// A track's name that renames on double-click (Studio.track-rename): Enter or focus loss
+// commits, Escape cancels, an empty name keeps the old one. A single click passes through as
+// `clicked`.
+export component TrackName inherits Rectangle {
+    in property <int> track-id;
+    in property <string> text;
+    in property <color> text-color: Tokens.text-primary;
+    in property <length> font-size: 9.35px;
+    in property <int> font-weight: 700;
+    in property <length> letter-spacing: -0.374px;
+    in property <bool> enabled: true;
+    /// Review state only: start with the field open.
+    in property <bool> review-edit;
+    callback clicked();
+    callback edit-done();
+    property <bool> editing: root.review-edit;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.text;
+    if !root.editing: Text {
+        width: root.width; height: root.height;
+        text: root.text; color: root.text-color; font-size: root.font-size; font-weight: root.font-weight; letter-spacing: root.letter-spacing;
+        vertical-alignment: center; overflow: elide;
+    }
+    if !root.editing: TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+        double-clicked => { root.editing = true; }
+    }
+    if root.editing: Rectangle {
+        x: -2.55px; width: min(root.width + 5.1px, 136px); height: root.height + 3.4px; y: -1.7px;
+        border-radius: 2.55px; background: #ffffff1a; border-width: 0.85px; border-color: #ffffff59;
+        TextInput {
+            x: 2.55px; width: parent.width - 5.1px; height: parent.height;
+            text: root.text; color: #ffffff; font-size: root.font-size; font-weight: root.font-weight; letter-spacing: root.letter-spacing;
+            vertical-alignment: center; single-line: true; selection-background-color: #ffffff47;
+            accessible-label: "Track name";
+            init => { self.focus(); self.select-all(); }
+            accepted => { root.editing = false; Studio.track-rename(root.track-id, self.text); root.edit-done(); }
+            key-pressed(e) => {
+                if (e.text == Key.Escape) { root.editing = false; root.edit-done(); return accept; }
+                reject
+            }
+            changed has-focus => { if (!self.has-focus && root.editing) { root.editing = false; Studio.track-rename(root.track-id, self.text); } }
+        }
+    }
+}
+
 // M / S / R / I: 12 px squares, white 9 % fill and 60 % letter at rest, 15 % fill and a white
 // letter on hover, solid state colour when on. Acts on press.
 export component TrackButton inherits Rectangle {
@@ -303,10 +350,11 @@ export component TrackHeaderRow inherits Rectangle {
         d: root.t.instrument ? Icons.track-instrument : Icons.track-audio;
         filled: root.t.instrument; stroke-width: 1.1px; ink: Tokens.text-tertiary;
     }
-    Text {
+    TrackName {
         x: 43.35px; y: root.top-y; width: root.width - self.x - 6.8px; height: 13.6px;
-        text: root.t.name; color: Tokens.text-primary; font-size: 9.35px; font-weight: 700; letter-spacing: -0.374px;
-        vertical-alignment: center; overflow: elide;
+        track-id: root.t.id; text: root.t.name;
+        clicked => { Studio.select-track(root.t.id); }
+        edit-done => { root.edit-done(); }
     }
     if !root.minimal: TrackButton {
         x: 28.05px; y: root.bottom-y + 1.7px; text: "M"; label: root.t.mute ? "Unmute track" : "Mute track";

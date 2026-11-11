@@ -952,6 +952,17 @@ impl Controller {
         }
     }
 
+    /// Rename a track (double-click its name). Surrounding spaces are dropped; an empty or
+    /// unchanged name leaves the track as it was.
+    pub fn rename_track(&mut self, id: TrackId, name: &str) {
+        let name = name.trim();
+        if name.is_empty() || self.project().track(id).is_none_or(|t| t.name == name) {
+            self.ui_dirty = true;
+            return;
+        }
+        self.execute(Command::RenameTrack { track: id, name: name.to_string() });
+    }
+
     pub fn toggle_solo(&mut self, id: TrackId) {
         if let Some(t) = self.project().track(id) {
             let solo = !t.solo;

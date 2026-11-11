@@ -7,6 +7,7 @@
 import { Tokens } from "tokens.slint";
 import { Icon, Icons, Label } from "widgets.slint";
 import { Studio, MenuItem } from "studio.slint";
+import { TrackName } from "track_header.slint";
 
 // Track title row at the top of the left column ("2 ‖ Instrument").
 // A toolbar zoom slider: pressing the track jumps to that point and dragging follows (0..1).
@@ -30,7 +31,8 @@ export component TrackTitle inherits Rectangle {
     Rectangle { x: 0.5px; y: 15px; width: 3px; height: 15px; border-radius: 1.5px; background: Studio.sel-color; }
     Text { visible: Studio.has-selection; x: 10.5px; y: 7px; height: 13px; text: Studio.sel-number; color: Tokens.text-bright; font-size: 9px; font-weight: 700; vertical-alignment: center; }
     Icon { visible: Studio.has-selection; x: 21px; y: 8px; width: 11px; height: 11px; d: Studio.sel-instrument ? Icons.keys : Icons.wave; ink: #a8a8ab; stroke-width: 1.1px; }
-    Label { x: 37px; y: 7px; text: Studio.has-selection ? Studio.sel-name : "No track selected"; color: Tokens.text-bright; font-size: 10px; }
+    if !Studio.has-selection: Label { x: 37px; y: 7px; text: "No track selected"; color: Tokens.text-bright; font-size: 10px; }
+    if Studio.has-selection: TrackName { x: 37px; y: 7px; width: 120px; height: 14.5px; track-id: Studio.sel-id; text: Studio.sel-name; text-color: Tokens.text-bright; font-size: 10px; font-weight: 600; letter-spacing: 0; }
 }
 
 // One Shape rack row (src/composer.rs SHAPE_ROWS): label, then a slider, stepper or

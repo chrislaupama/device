@@ -171,6 +171,8 @@ struct Args {
     devices_minimap_review: bool,
     /// review-snap-menu: the timeline's snap menu open, with 1/8 chosen.
     snap_menu_review: bool,
+    /// review-track-rename: track 1 renamed "Lead vox", the inspector's name field open.
+    track_rename_review: bool,
     /// reference-<built-in device id>: that device alone in an audio track's chain (an instrument on an instrument track).
     device_state: Option<&'static str>,
     /// Files loaded as if dropped on the window (after the state is set up).
@@ -448,6 +450,10 @@ fn parse_args() -> Result<Args, String> {
                     a.reference_default = true;
                     a.devices_minimap_review = true;
                 }
+                "review-track-rename" => {
+                    a.reference_default = true;
+                    a.track_rename_review = true;
+                }
                 "review-snap-menu" => {
                     a.reference_default = true;
                     a.snap_menu_review = true;
@@ -480,7 +486,7 @@ fn parse_args() -> Result<Args, String> {
                 }
                 s => {
                     return Err(format!(
-                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
+                        "unknown state {s} (supported: reference-default, reference-mixer, reference-assistant, reference-midi-clip, reference-pianoroll, reference-synth, reference-input-menu, reference-settings-audio, reference-devices-effects, reference-automation, reference-live, review-automation, review-automation-picker, review-recording, review-device-chain, review-devices-minimap, review-snap-menu, review-track-rename, review-audio-loop-drag, review-pr-zoom, review-pr-typing, review-pr-reverse, reference-<built-in device id> e.g. reference-compressor, reference-lfo, reference-chain, review-settings-plugins, review-analyzers, review-assistant-<empty|turn|point|draft|steps|error|busy|highlight|narrow>)"
                     ));
                 }
             },
@@ -1419,6 +1425,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         c.set_bottom_tab(BottomTab::Devices);
         c.seek_beats(20.0);
     }
+    if args.track_rename_review {
+        let mut c = ctl.borrow_mut();
+        let id = c.project().tracks[0].id;
+        c.select_track(id);
+        c.rename_track(id, "Lead vox");
+        app.global::<Studio>().set_review_rename(true);
+    }
     if args.snap_menu_review {
         let mut c = ctl.borrow_mut();
         c.snap.pick(5);
@@ -1732,6 +1745,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_track_solo, |c, id: i32| c.toggle_solo(TrackId(id as u64)));
     on!(on_track_volume, |c, id: i32, p: f32| c.set_track_gain(TrackId(id as u64), gain_from_slider(p)));
     on!(on_track_pan, |c, id: i32, p: f32| c.set_track_pan(TrackId(id as u64), p));
+    on!(on_track_rename, |c, id: i32, t: slint::SharedString| c.rename_track(TrackId(id as u64), t.as_str()));
     on!(on_track_pan_text, |c, id: i32, t: slint::SharedString| {
         if let Some(p) = controller::parse_pan_text(&t) {
             c.set_track_pan(TrackId(id as u64), p);

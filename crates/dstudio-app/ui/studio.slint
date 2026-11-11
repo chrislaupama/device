@@ -472,6 +472,8 @@ export global Studio {
     callback track-volume(int, float);
     callback track-pan(int, float);
     callback track-pan-text(int, string);       // inline pan entry in the track header
+    callback track-rename(int, string);         // track id, typed name (double-click a track name)
+    in property <bool> review-rename;           // review-track-rename: the inspector name field starts open
     callback gesture-end();
     // ---- splitters (src/splitters.rs): phase 0 press, 1 move, 2 release; window y ----
     in property <length> bottom-h: 306px;

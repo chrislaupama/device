@@ -6715,6 +6715,65 @@ fn snap_steps() -> Vec<Step> {
     ]
 }
 
+/// Track rename: double-click the selected track's name in the inspector, type, Enter. An
+/// empty name and Escape leave the name alone; undo restores it.
+fn track_rename_steps() -> Vec<Step> {
+    use Step::*;
+    let name0 = |c: &Controller| c.project().tracks.first().map(|t| t.name.clone()).unwrap_or_default();
+    let name_xy = || (bottom_x() + 60.0, bottom_y() + 14.25);
+    vec![
+        DoC("rename: select track 1, Devices tab, mixer closed", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            if c.mixer_open {
+                c.toggle_mixer();
+            }
+            c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            let id = c.project().tracks[0].id;
+            c.select_track(id);
+        })),
+        Do("rename: double-click the name in the inspector", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+        })),
+        Do("rename: type a new name and press Enter", Box::new(|a| {
+            type_text(a, "Lead vox");
+            key(a, Key::Return, false, false);
+        })),
+        Check("rename: track 1 is Lead vox, one undo step, shown in the inspector", Box::new(move |c, a| {
+            let n = name0(c);
+            (n == "Lead vox" && c.doc.undo_label() == Some("Rename Track") && a.global::<Studio>().get_sel_name() == "Lead vox").then_some(()).ok_or(format!("name {n:?} undo {:?}", c.doc.undo_label()))
+        })),
+        Do("rename: double-click, clear the name, Enter", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+        })),
+        Do("rename: an empty name", Box::new(|a| {
+            key(a, Key::Backspace, false, false);
+            key(a, Key::Return, false, false);
+        })),
+        Check("rename: an empty name keeps Lead vox", Box::new(move |c, _| (name0(c) == "Lead vox").then_some(()).ok_or(format!("name {:?}", name0(c))))),
+        Do("rename: double-click, type, Escape", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+        })),
+        Do("rename: Escape cancels", Box::new(|a| {
+            type_text(a, "Nope");
+            key(a, Key::Escape, false, false);
+        })),
+        Check("rename: still Lead vox", Box::new(move |c, _| (name0(c) == "Lead vox").then_some(()).ok_or(format!("name {:?}", name0(c))))),
+        Do("rename: rename through the callback with spaces around", Box::new(|a| {
+            let s = a.global::<Studio>();
+            s.invoke_track_rename(s.get_sel_id(), "  Bass  ".into());
+        })),
+        Check("rename: trimmed to Bass", Box::new(move |c, _| (name0(c) == "Bass").then_some(()).ok_or(format!("name {:?}", name0(c))))),
+        DoC("rename: undo twice", Box::new(|_, ctl| {
+            ctl.borrow_mut().undo();
+            ctl.borrow_mut().undo();
+        })),
+        Check("rename: the original name is back", Box::new(move |c, _| (name0(c) != "Bass" && name0(c) != "Lead vox").then_some(()).ok_or(format!("name {:?}", name0(c))))),
+    ]
+}
+
 /// The timeline ruler's bar labels at several zooms: the rule is a label every
 /// power-of-two bars once the bars are 50 px apart, starting at bar 1.
 fn ruler_zoom_steps() -> Vec<Step> {
@@ -7632,6 +7691,7 @@ pub fn start(app: &AppWindow, ctl: Ctl) {
     all.extend(clip_render_plugin_steps());
     all.extend(ruler_zoom_steps());
     all.extend(snap_steps());
+    all.extend(track_rename_steps());
     all.extend(menu_bar_steps());
     all.extend(general_settings_steps());
     all.extend(add_search_steps());
