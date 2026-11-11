@@ -108,7 +108,8 @@ jobs:
           - { name: macOS, os: macos-15 }
           - { name: Windows, os: windows-2025 }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    # Setup (tools, caches) plus the 75-minute comparison, with room left for the warning step.
+    timeout-minutes: 110
     steps:
       - uses: actions/checkout@v7
         with:
