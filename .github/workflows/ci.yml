@@ -39,25 +39,71 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       CARGO_TERM_COLOR: always
+      # Speed: CI builds start from a restored target dir, never edit-compile
+      # loops, so incremental data is dead weight (bigger cache, slower
+      # builds). Line tables keep file:line in test backtraces.
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      # Every C/C++ compile (the standalone engine build and the two the
+      # engine build script runs, dev and release) goes through ccache, so an
+      # unchanged engine file is compiled once and then served from the cache.
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_MAXSIZE: 1G
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+          fetch-depth: 2 # the merge commit and its base, for the docs-only check
+      # A pull request that changes only documentation skips the build and
+      # tests: every later step checks steps.changes.outputs.skip. The jobs
+      # still run (and pass), so the required build-test checks report.
+      - name: Changed files
+        id: changes
+        shell: bash
+        run: |
+          skip=false
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            files=$(git diff --name-only HEAD^1 HEAD)
+            echo "$files"
+            # Anything outside these patterns needs the full run.
+            if [ -n "$files" ] && ! echo "$files" | grep -qvE '\.md$|^docs/|^specs/|^\.agents/|^LICENSE|^\.github/ISSUE_TEMPLATE/|^\.github/dependabot\.yml$'; then
+              skip=true
+              echo "Only documentation changed: skipping the build and tests."
+            fi
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.changes.outputs.skip != 'true'
 
       - name: Install build tools and system packages (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.changes.outputs.skip != 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build pkg-config \
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache \
+            xvfb mesa-vulkan-drivers \
             libpipewire-0.3-dev libasound2-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libx11-xcb-dev \
             libxcursor-dev libxrandr-dev libxi-dev libfontconfig1-dev libfreetype-dev libudev-dev
-      - name: Install Ninja (macOS)
-        if: runner.os == 'macOS'
-        run: brew install ninja
+      - name: Install Ninja and ccache (macOS)
+        if: runner.os == 'macOS' && steps.changes.outputs.skip != 'true'
+        run: brew install ninja ccache
+      - name: Install ccache (Windows)
+        if: runner.os == 'Windows' && steps.changes.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $v = '4.12.1'
+          $zip = Join-Path $env:RUNNER_TEMP 'ccache.zip'
+          Invoke-WebRequest "https://github.com/ccache/ccache/releases/download/v$v/ccache-$v-windows-x86_64.zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
+          if ($hash -ne '98AEA520D66905B8BA7A8E648A4CC0CA941D5E119D441F1E879A4A9045BF18F6') { throw "ccache zip checksum mismatch: $hash" }
+          Expand-Archive $zip -DestinationPath $env:RUNNER_TEMP
+          Join-Path $env:RUNNER_TEMP "ccache-$v-windows-x86_64" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
       - name: MSVC developer environment (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && steps.changes.outputs.skip != 'true'
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -67,10 +113,12 @@ jobs:
             if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
           }
       - name: Tool versions
+        if: steps.changes.outputs.skip != 'true'
         shell: bash
         run: |
           cmake --version | head -1
           ninja --version
+          ccache --version | head -1
           rustc --version
           if [ "$RUNNER_OS" = "Windows" ]; then cl 2>&1 | head -1; else c++ --version | head -1; fi
 
@@ -81,6 +129,7 @@ jobs:
       # GitHub-hosted runners start empty, so they use the workspace and
       # actions/cache instead.
       - name: Build directories
+        if: steps.changes.outputs.skip != 'true'
         shell: bash
         run: |
           if [ "$RUNNER_ENVIRONMENT" = "github-hosted" ]; then
@@ -97,28 +146,45 @@ jobs:
           echo "target: $target"
           echo "deps:   $deps"
       - name: Cache SDK downloads
-        if: runner.environment == 'github-hosted'
+        if: runner.environment == 'github-hosted' && steps.changes.outputs.skip != 'true'
         uses: actions/cache@v5
         with:
           path: .deps
           key: deps-${{ runner.os }}-${{ hashFiles('engine/CMakeLists.txt') }}
-      - name: Cache cargo registry and target
-        if: runner.environment == 'github-hosted'
-        uses: actions/cache@v5
+      # The cargo target dir (about 2 GB a system) and the ccache store are
+      # restored on every run but saved only by pushes to main (the save steps
+      # after the release build), under a new key each time. Pull requests then
+      # always start from main's latest build, and their own saves no longer
+      # fill the repository's 10 GB cache and evict main's.
+      - name: Restore cargo registry and target
+        if: runner.environment == 'github-hosted' && steps.changes.outputs.skip != 'true'
+        id: cargo-cache
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-${{ hashFiles('engine/**', 'crates/**/build.rs') }}
+          key: cargo-v2-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
-            cargo-${{ runner.os }}-
+            cargo-v2-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
+            cargo-v2-${{ runner.os }}-
+      - name: Restore ccache
+        if: runner.environment == 'github-hosted' && steps.changes.outputs.skip != 'true'
+        id: ccache-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-${{ runner.os }}-
+      - name: Reset ccache statistics
+        if: steps.changes.outputs.skip != 'true'
+        run: ccache --zero-stats
       # Only restored caches (hosted runners) can hold a CMakeCache.txt made
       # in another checkout; the per-runner dirs always build in place.
       - name: Drop CMake caches restored from another runner's checkout
-        if: runner.os != 'Windows' && runner.environment == 'github-hosted'
+        if: runner.os != 'Windows' && runner.environment == 'github-hosted' && steps.changes.outputs.skip != 'true'
         shell: bash
         run: |
           target=$(cd "$CARGO_TARGET_DIR" && pwd -P)
@@ -144,24 +210,27 @@ jobs:
       # forces build.rs (and so CMake) to run on every run. The shared
       # FetchContent tree in $CARGO_TARGET_DIR/dstudio-third-party is kept.
       - name: Force the engine build script to rerun
+        if: steps.changes.outputs.skip != 'true'
         run: |
           cargo clean -p dstudio-engine --locked
           cargo clean -p dstudio-engine --release --locked
 
       - name: Engine — configure
+        if: steps.changes.outputs.skip != 'true'
         run: cmake -S engine -B engine/build-ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDSTUDIO_ENGINE_WERROR=ON "-DFETCHCONTENT_BASE_DIR=${{ env.DSTUDIO_DEPS_DIR }}"
       - name: Engine — build
+        if: steps.changes.outputs.skip != 'true'
         run: cmake --build engine/build-ci -- -k 0
       - name: Engine — test
+        if: steps.changes.outputs.skip != 'true'
         run: ctest --test-dir engine/build-ci --output-on-failure -j 4
 
       # The Rust steps run even when the engine tests failed (both results
-      # are reported; the job still fails).
-      - name: Rust workspace — build
-        if: ${{ !cancelled() }}
-        run: cargo build --workspace --locked
+      # are reported; the job still fails). cargo test compiles every crate
+      # of the workspace, so there is no separate debug `cargo build`: it
+      # compiled the app a second time for nothing (2 to 4.5 minutes a job).
       - name: Rust workspace — test
-        if: ${{ !cancelled() }}
+        if: steps.changes.outputs.skip != 'true' && !cancelled()
         run: cargo test --workspace --locked --no-fail-fast
 
       # App smoke tests without a GPU or audio device: a reference-state
@@ -171,10 +240,30 @@ jobs:
       # (skipped checks are not counted in N). Release build: the build users
       # run.
       - name: App — release build (smoke tests)
-        if: ${{ !cancelled() }}
+        if: steps.changes.outputs.skip != 'true' && !cancelled()
         run: cargo build --release -p dstudio-app --locked
+      - name: ccache statistics
+        if: steps.changes.outputs.skip != 'true' && !cancelled()
+        run: ccache --show-stats
+      # Saved before the smoke tests, so a hung self-test cannot lose them.
+      - name: Save cargo registry and target
+        if: github.event_name == 'push' && runner.environment == 'github-hosted' && steps.changes.outputs.skip != 'true' && !cancelled()
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+      - name: Save ccache
+        if: github.event_name == 'push' && runner.environment == 'github-hosted' && steps.changes.outputs.skip != 'true' && !cancelled()
+        uses: actions/cache/save@v5
+        with:
+          path: .ccache
+          key: ${{ steps.ccache-cache.outputs.cache-primary-key }}
       - name: App — self-test (macOS)
-        if: runner.os == 'macOS' && !cancelled()
+        if: runner.os == 'macOS' && steps.changes.outputs.skip != 'true' && !cancelled()
         env:
           RUST_BACKTRACE: "1"
         run: |
@@ -187,13 +276,12 @@ jobs:
           [ "$(echo "$line" | sed -E 's#self-test: ([0-9]+) / ([0-9]+).*#\1#')" = "$(echo "$line" | sed -E 's#self-test: ([0-9]+) / ([0-9]+).*#\2#')" ]
           if [ "$status" -ne 0 ]; then tail -30 selftest-macos-stderr.txt; exit "$status"; fi
       - name: App — screenshot and self-test (Linux, Xvfb + lavapipe)
-        if: runner.os == 'Linux' && !cancelled()
+        if: runner.os == 'Linux' && steps.changes.outputs.skip != 'true' && !cancelled()
         env:
           WGPU_BACKEND: vulkan
           SLINT_WGPU_CPU: "1" # Slint refuses CPU adapters (lavapipe) unless allowed
           RUST_BACKTRACE: "1"
         run: |
-          sudo apt-get install -y --no-install-recommends xvfb mesa-vulkan-drivers
           xvfb-run -a -s "-screen 0 1600x1000x24" "$CARGO_TARGET_DIR/release/device-studio" --state reference-default --screenshot app-linux.png
           test -s app-linux.png
           status=0
@@ -204,14 +292,12 @@ jobs:
           echo "$line"
           [ "$(echo "$line" | sed -E 's#self-test: ([0-9]+) / ([0-9]+).*#\1#')" = "$(echo "$line" | sed -E 's#self-test: ([0-9]+) / ([0-9]+).*#\2#')" ]
           if [ "$status" -ne 0 ]; then tail -30 selftest-linux-stderr.txt; exit "$status"; fi
-      # Still informational on Windows (continue-on-error): see the exit code
-      # it prints.
-      - name: App — screenshot and self-test (Windows, WARP)
-        if: runner.os == 'Windows' && !cancelled()
+      # Windows smoke tests are informational (continue-on-error): see the
+      # exit codes they print.
+      - name: App — screenshot (Windows, WARP)
+        if: runner.os == 'Windows' && steps.changes.outputs.skip != 'true' && !cancelled()
         continue-on-error: true
-        # A hang here (the self-test normally takes ~15 min under WARP) must
-        # not take the whole job down with it.
-        timeout-minutes: 30
+        timeout-minutes: 5
         shell: pwsh
         env:
           WGPU_BACKEND: dx12
@@ -223,6 +309,25 @@ jobs:
           Get-Content shot-windows-stderr.txt
           "screenshot run exit code: 0x{0:X8}" -f $p.ExitCode
           if (-not (Test-Path app-windows.png)) { throw "no screenshot" }
+      # The full self-test under WARP runs until the 30-minute timeout on
+      # every run at the moment (frames back up on the software renderer), so
+      # it held every pull request's Windows check for half an hour without a
+      # result. It runs on pushes to main, and on a pull request only when the
+      # pull request has the `windows-self-test` label (add the label, then
+      # push).
+      - name: App — self-test (Windows, WARP)
+        if: >-
+          runner.os == 'Windows' && steps.changes.outputs.skip != 'true' && !cancelled() &&
+          (github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'windows-self-test'))
+        continue-on-error: true
+        timeout-minutes: 30
+        shell: pwsh
+        env:
+          WGPU_BACKEND: dx12
+          SLINT_WGPU_CPU: "1"
+          RUST_BACKTRACE: "1"
+        run: |
+          $exe = Join-Path $env:CARGO_TARGET_DIR "release\device-studio.exe"
           $p = Start-Process -FilePath $exe -ArgumentList '--self-test','--no-audio' -NoNewWindow -Wait -PassThru -RedirectStandardOutput selftest-windows.txt -RedirectStandardError selftest-windows-stderr.txt
           "self-test exit code: 0x{0:X8}" -f $p.ExitCode
           Select-String -Path selftest-windows.txt -Pattern '^(FAIL|SKIP)' | ForEach-Object { $_.Line }
@@ -231,7 +336,7 @@ jobs:
           $line.Value
           if ($line.Groups[1].Value -ne $line.Groups[2].Value) { throw "self-test failures" }
       - name: Upload app screenshots and self-test logs
-        if: ${{ !cancelled() }}
+        if: steps.changes.outputs.skip != 'true' && !cancelled()
         uses: actions/upload-artifact@v7
         with:
           name: app-${{ runner.os }}
