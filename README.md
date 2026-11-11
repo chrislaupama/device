@@ -268,9 +268,10 @@ finishes something it describes, the same pull request updates it:
 
 ## Contributing
 
-Bug reports, testing on Windows and Linux audio hardware, and small pull requests are all welcome. Read
-[CONTRIBUTING.md](CONTRIBUTING.md) first, and follow the [Code of Conduct](CODE_OF_CONDUCT.md). Please report security
-problems privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
+Device Studio is not accepting outside contributions yet: issues, pull requests and comments are limited to the
+maintainer for now. You are welcome to read, build and fork the code. [CONTRIBUTING.md](CONTRIBUTING.md) describes how
+contributions will work once they open. Security problems can be reported privately at any time as described in
+[SECURITY.md](SECURITY.md).
 
 ## License
 
