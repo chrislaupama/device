@@ -300,3 +300,12 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   table in `dstudio_engine_bench`.
 - Not verified on hardware yet: Core MIDI with a real keyboard (Mac mini), WinMM (CI build only).
 
+
+### 2026-11-11: master mute and bottom panel collapse
+
+- `Project::master_mute` (saved only when on) and `Command::SetMasterMute` ("Master Mute Change"). The snapshot sends a
+  muted master as gain 0 with no master volume lane, so automation cannot bring it back; the fader keeps its value.
+  The mixer's master M toggles it, and the timeline's master row dims and reads "Master (muted)".
+- The collapse button in the bottom panel header (Clip/Devices and the mixer) shuts the panel to its tab row and reopens
+  it at the height it had (`Controller::toggle_bottom_collapse`, src/splitters.rs). Like the splitter it is a view
+  change saved with the project, not an undo step; a panel shut by dragging reopens at its default height.

@@ -306,6 +306,9 @@ pub struct Controller {
     pub(crate) track_resize: Option<crate::splitters::TrackResize>,
     /// Timeline / bottom-panel splitter drag (src/splitters.rs).
     pub(crate) bottom_drag: Option<crate::splitters::BottomDrag>,
+    /// Saved height (None = default) each bottom panel kind had before its collapse button shut
+    /// it, restored when the button reopens it.
+    pub(crate) bottom_restore: std::collections::HashMap<&'static str, Option<f32>>,
     /// Docked-assistant width drag (src/splitters.rs).
     pub(crate) chat_drag: Option<crate::splitters::ChatDrag>,
     status: Option<(String, Instant, Duration)>,
@@ -455,6 +458,7 @@ impl Controller {
             drag: None,
             track_resize: None,
             bottom_drag: None,
+            bottom_restore: Default::default(),
             chat_drag: None,
             status: None,
             project_dir: None,
@@ -989,6 +993,12 @@ impl Controller {
         }
     }
 
+    /// The master strip's M: silences the whole mix (the fader keeps its value). Undoable.
+    pub fn toggle_master_mute(&mut self) {
+        let mute = !self.project().master_mute;
+        self.execute(Command::SetMasterMute { mute });
+    }
+
     // ---------------------------------------------------------------- mixer
 
     pub fn toggle_mixer(&mut self) {
@@ -1165,6 +1175,7 @@ impl Controller {
         self.tempos.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
+        self.bottom_restore.clear();
         self.doc = Document::new(project);
         self.devices.modu.bases_pending = true;
         self.selected_track = self.project().tracks.first().map(|t| t.id);
@@ -1209,6 +1220,7 @@ impl Controller {
         self.tempos.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
+        self.bottom_restore.clear();
         self.doc = Document::new(loaded.project);
         self.devices.modu.bases_pending = true;
         self.project_dir = Some(dir.to_path_buf());
@@ -1853,6 +1865,7 @@ impl Controller {
             self.strip_meters_model.set_vec(vec![StripMeter { l: 1.0, r: 1.0, peak: "−∞".into() }; p.tracks.len()]);
         }
         s.set_master_fader(fader_from_db(gain_to_db(p.master_gain)));
+        s.set_master_mute(p.master_mute);
         // ---- assistant ----
         s.set_assistant_open(self.assistant_open);
         s.set_assistant_pref_w(match self.chat_drag {
@@ -1888,6 +1901,7 @@ impl Controller {
         self.push_files(&s);
         self.push_automation(&s);
         s.set_bottom_h(self.bottom_h());
+        s.set_bottom_collapsed(self.bottom_collapsed());
         let status = if self.show_status { self.status.as_ref().map(|s| s.0.clone()).unwrap_or_default() } else { String::new() };
         s.set_status_text(status.into());
         self.ruler_key.0 = i64::MIN; // force label refresh

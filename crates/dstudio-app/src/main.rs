@@ -1767,6 +1767,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_toggle_assistant, |c| c.toggle_assistant());
     on!(on_mixer_fader, |c, id: i32, f: f32| c.set_mixer_fader(TrackId(id as u64), f));
     on!(on_master_fader_moved, |c, f: f32| c.set_master_fader(f));
+    on!(on_master_mute_toggle, |c| c.toggle_master_mute());
+    on!(on_bottom_collapse_toggle, |c| c.toggle_bottom_collapse());
     on!(on_reset_peaks, |c| c.reset_peaks());
     on!(on_chat_send, |c, text: slint::SharedString| {
         c.assistant_send(text.as_str());

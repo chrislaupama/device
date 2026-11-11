@@ -475,6 +475,8 @@ export global Studio {
     callback gesture-end();
     // ---- splitters (src/splitters.rs): phase 0 press, 1 move, 2 release; window y ----
     in property <length> bottom-h: 306px;
+    in property <bool> bottom-collapsed;
+    callback bottom-collapse-toggle();
     callback bottom-resize(int, length);
     callback track-resize(int, int, length);                // track id, phase, window y
     callback master-volume(float);
@@ -517,6 +519,8 @@ export global Studio {
     in property <float> master-meter-r: 1;
     in property <string> master-peak-text: "−∞";
     in property <string> master-gain-text: "0.0";
+    in property <bool> master-mute;
+    callback master-mute-toggle();
     callback mixer-fader(int, float);      // track id, fader fraction
     callback master-fader-moved(float);
     callback reset-peaks();
