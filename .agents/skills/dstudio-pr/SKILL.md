@@ -10,8 +10,7 @@ A pull request is reviewed by reading its description, so the description carrie
 ## 1. Scope
 
 One change per pull request, on a branch from the latest `main`. Spec-driven work includes its
-`specs/<NNN>-<slug>/` folder, with the spec marked Done (`spec-verify`). A branch started before the
-Device Studio rename runs `python3 tools/rename/remove_saine.py` before merging `main`.
+`specs/<NNN>-<slug>/` folder, with the spec marked Done (`spec-verify`).
 
 ## 2. The local gate
 
