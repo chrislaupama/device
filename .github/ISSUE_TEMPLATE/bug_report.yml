@@ -43,5 +43,4 @@ body:
     id: logs
     attributes:
       label: Logs, screenshots or a project
-      description: Terminal output, a crash log, a screenshot, or a small project that shows the problem.
-      render: text
+      description: Terminal output, a crash log, a screenshot, or a small project that shows the problem. You can drag files in here.

@@ -134,7 +134,13 @@ job per system, all on GitHub-hosted runners (`macos-latest`, `windows-latest`,
 
 The hosted runners have no audio device and no GPU, so the engine's device
 tests skip there. Tests against real audio hardware (Core Audio duplex, the
-acoustic loopback test) are run by hand on a Mac.
+acoustic loopback test) are run by hand on a Mac. The loopback test plays
+clicks through the speakers and records them with the microphone, so it is
+ignored by default and gated on an environment variable:
+
+```sh
+DSTUDIO_TEST_REAL_INPUT=1 cargo test -p dstudio-engine --test real_loopback -- --ignored --nocapture
+```
 
 The workflow never uses a self-hosted runner, has no secrets and gives its
 token read-only access, so running it on a stranger's pull request is safe.

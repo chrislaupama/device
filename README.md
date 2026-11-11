@@ -256,10 +256,12 @@ problems privately as described in [SECURITY.md](SECURITY.md), not in a public i
 
 Device Studio is free software: you can redistribute it and/or modify it under the terms of the
 [GNU Affero General Public License](LICENSE), version 3 or (at your option) any later version. It comes with no
-warranty. In short, you may use, study, change and share it, and if you distribute a modified version, or let people
-use one over a network, you must make its source available under the same licence.
+warranty. In short, you may use, study, change and share it. If you distribute it, modified or not (including as a
+binary), you must offer its complete source under the same licence; if you modify it and let people use it over a
+network, you must offer them the modified source too.
 
-Third-party code keeps its own license: the VST3 SDK, CLAP headers and Signalsmith libraries (MIT), dr_libs and
-stb_vorbis (public domain or MIT) are fetched at build time, Slint is used under its GPL-3.0 licence (compatible with
-the AGPL), and the bundled Inter font is under the SIL Open Font License. See
-[engine/third_party_licenses.md](engine/third_party_licenses.md).
+Third-party code keeps its own license. The engine's dependencies, the VST3 SDK, CLAP headers and Signalsmith libraries
+(MIT), dr_libs and stb_vorbis (public domain or MIT), are fetched at build time and listed in
+[engine/third_party_licenses.md](engine/third_party_licenses.md). The app uses Slint under its
+[GPL-3.0 licence](https://github.com/slint-ui/slint/blob/master/LICENSE.md) (compatible with the AGPL), and the bundled
+Inter font is under the SIL Open Font License.

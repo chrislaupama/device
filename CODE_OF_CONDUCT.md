@@ -61,8 +61,10 @@ representative at an online or offline event.
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the project maintainer privately through GitHub's private reporting
 (the repository's **Security** tab › **Report a vulnerability**, marked as a
-conduct report), or by using GitHub's **Report content** option on the comment,
-issue or pull request concerned. All complaints will be reviewed and
+conduct report), or with GitHub's **Report content** option on the comment,
+issue or pull request concerned, choosing **Report to repository admins**.
+(Report content's other choice, "Report abuse to GitHub Support", goes to
+GitHub, not to the maintainer.) All complaints will be reviewed and
 investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the
