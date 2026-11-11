@@ -18,11 +18,13 @@ name: Release
 #   - Actions > Release > Run workflow, from any branch;
 #   - pull requests that change the packaging (this file, tools/release/, the bundle script).
 #
-# Signing: the macOS app is signed and notarised when these repository secrets exist:
-# MACOS_CERTIFICATE (base64 .p12 of a Developer ID Application certificate),
-# MACOS_CERTIFICATE_PASSWORD, MACOS_SIGN_IDENTITY, APPLE_ID, APPLE_TEAM_ID and
-# APPLE_APP_PASSWORD (an app-specific password). Without them it is signed ad hoc. The
-# Windows packages are not signed yet.
+# Signing: the macOS app is signed with a Developer ID and notarised only for release tags,
+# in the `macos-sign` job, which runs in the protected `release` environment. Its secrets are
+# environment secrets of `release` (not repository secrets): MACOS_CERTIFICATE (base64 .p12 of
+# a Developer ID Application certificate), MACOS_CERTIFICATE_PASSWORD, MACOS_SIGN_IDENTITY,
+# and for notarisation an App Store Connect API key: APPLE_API_KEY (base64 .p8),
+# APPLE_API_KEY_ID and APPLE_API_ISSUER. Without them the release is signed ad hoc. Pull
+# requests and manual runs never reach them. The Windows packages are not signed yet.
 
 on:
   push:
@@ -82,8 +84,6 @@ jobs:
     name: Package macOS (universal)
     needs: version
     runs-on: macos-15
-    env:
-      HAS_SIGNING_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE != '' }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -109,12 +109,59 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: '13.0'
           CMAKE_OSX_ARCHITECTURES: x86_64
         run: cargo build --release --locked -p dstudio-app --target x86_64-apple-darwin
-      - name: Import the signing certificate
+      - name: Bundle the universal app
+        run: |
+          bash tools/release/package-macos.sh build/macos
+          ditto -c -k --keepParent "build/macos/Device Studio.app" build/macos/DeviceStudio-app.zip
+      # The unsigned app goes to the signing job (tags only); every other run makes an
+      # ad hoc signed .dmg here, with no secrets in reach.
+      - uses: actions/upload-artifact@v7
+        if: github.ref_type == 'tag'
+        with:
+          name: macos-app
+          path: build/macos/DeviceStudio-app.zip
+          if-no-files-found: error
+          retention-days: 1
+      - name: Package .dmg (ad hoc signed)
+        if: github.ref_type != 'tag'
+        run: bash tools/release/make-dmg.sh "build/macos/Device Studio.app" "${{ needs.version.outputs.version }}" dist
+      - name: Smoke test (the packaged app starts and renders)
+        if: github.ref_type != 'tag'
+        run: bash tools/release/smoke-macos.sh dist/*.dmg
+      - uses: actions/upload-artifact@v7
+        if: github.ref_type != 'tag'
+        with:
+          name: package-macos
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  # Signing and notarisation run only here: for a release tag, in the `release` environment,
+  # whose secrets no other job, pull request or manual run can read. Protect that
+  # environment (Settings > Environments > release): required reviewer, and deployments
+  # from tags matching v* only. Then a signing run waits for an approval in the Actions tab.
+  macos-sign:
+    name: Sign and notarise macOS
+    needs: [version, macos]
+    if: github.ref_type == 'tag'
+    runs-on: macos-15
+    environment: release
+    env:
+      HAS_SIGNING_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE != '' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-app
+          path: build/macos
+      - name: Unpack the app
+        run: ditto -x -k build/macos/DeviceStudio-app.zip build/macos
+      - name: Import the signing certificate and the notary key
         id: cert
+        if: env.HAS_SIGNING_CERTIFICATE == 'true'
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-        if: env.HAS_SIGNING_CERTIFICATE == 'true'
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
           set -euo pipefail
           keychain="$RUNNER_TEMP/signing.keychain-db"
@@ -127,22 +174,23 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
           rm "$RUNNER_TEMP/cert.p12"
-      - name: Package .dmg
+          if [ -n "$APPLE_API_KEY" ]; then
+            echo "$APPLE_API_KEY" | base64 --decode > "$RUNNER_TEMP/notary-key.p8"
+            echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/notary-key.p8" >> "$GITHUB_ENV"
+          fi
+      - name: Sign, notarise and package .dmg
         env:
           MACOS_SIGN_IDENTITY: ${{ steps.cert.outcome == 'success' && secrets.MACOS_SIGN_IDENTITY || '' }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-        run: bash tools/release/package-macos.sh "${{ needs.version.outputs.version }}" dist
-      - name: Smoke test (the packaged app starts and renders)
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: bash tools/release/make-dmg.sh "build/macos/Device Studio.app" "${{ needs.version.outputs.version }}" dist
+      - name: Remove the signing keychain and key
+        if: always()
         run: |
-          set -euo pipefail
-          mnt=$(hdiutil attach -nobrowse -readonly dist/*.dmg | sed -n 's#.*\(/Volumes/.*\)#\1#p' | tail -1)
-          app="$mnt/Device Studio.app/Contents/MacOS"
-          test -x "$app/dstudio_plugin_scanner"
-          "$app/device-studio" --state reference-default --screenshot "$RUNNER_TEMP/macos.png"
-          test -s "$RUNNER_TEMP/macos.png"
-          hdiutil detach "$mnt"
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/notary-key.p8"
+      - name: Smoke test (the packaged app starts and renders)
+        run: bash tools/release/smoke-macos.sh dist/*.dmg
       - uses: actions/upload-artifact@v7
         with:
           name: package-macos
@@ -261,7 +309,7 @@ jobs:
 
   release:
     name: Draft release
-    needs: [version, macos, windows, linux]
+    needs: [version, macos-sign, windows, linux]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:

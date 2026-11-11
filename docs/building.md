@@ -193,9 +193,15 @@ creates a **draft** GitHub release with generated notes; the tag must match the
 workflow) or a pull request that changes the packaging builds the packages as
 run artifacts without releasing anything.
 
-The macOS app is signed and notarised when the repository has the secrets
-listed at the top of the workflow (a Developer ID certificate and an Apple ID
-app password); without them it is signed ad hoc and macOS asks the user to
-allow it on first launch. The Windows packages are not signed yet, so
-SmartScreen warns on first run. The packaging scripts are in
+Only release tags are signed with a Developer ID and notarised, in a separate
+`macos-sign` job that runs in the protected `release` environment; its secrets
+(listed at the top of the workflow) are environment secrets, which pull
+requests, manual runs and every other job cannot read. Notarisation uses an
+App Store Connect API key, not an Apple ID password. Before adding the secrets,
+protect the environment (Settings › Environments › `release`: a required
+reviewer, deployments from `v*` tags only) and restrict who can create `v*`
+tags with a tag ruleset: a signing run then waits for the maintainer's
+approval. Builds without the secrets are signed ad hoc, and macOS asks the
+user to allow them on first launch. The Windows packages are not signed yet,
+so SmartScreen warns on first run. The packaging scripts are in
 [`tools/release/`](../tools/release/).
