@@ -718,6 +718,12 @@ type Ctl = Rc<RefCell<Controller>>;
 
 /// Run a keymap action. File dialogs run with the controller NOT borrowed,
 /// since the modal loop keeps rendering (and the renderer borrows it).
+/// Whether a held key's auto-repeat runs `action` again (all actions except tap tempo, where
+/// each repeat would count as a tap).
+fn repeats(action: &str) -> bool {
+    action != "transport.tap_tempo"
+}
+
 fn run_action(ctl: &Ctl, action: &str) -> bool {
     match action {
         "transport.play_pause" => ctl.borrow_mut().play_toggle(),
@@ -2130,7 +2136,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aw = app.as_weak();
         let keymap = app_keymap();
         let zm = zoom.clone();
-        studio.on_key(move |text, primary, shift, alt, ctrl| {
+        studio.on_key(move |text, primary, shift, alt, ctrl, repeat| {
             let Some(key) = key_name(text.as_str()) else { return false };
             let chord = Chord { key, primary, shift, alt, ctrl };
             // View › Zoom In (⌘= / ⌘+), Zoom Out (⌘-), Reset Zoom (⌘0).
@@ -2187,6 +2193,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
             let Some(action) = keymap.resolve(&chord, &cx).map(str::to_owned) else { return false };
+            // A held key repeats: tap tempo counts only real presses.
+            if repeat && !repeats(&action) {
+                return true;
+            }
             // Settings is modal: only Escape and ⌘, reach the app while it is open.
             if ctl.borrow().settings.open && action != "view.escape" && action != "app.settings" {
                 return true;
@@ -2787,5 +2797,12 @@ mod tests {
         assert_eq!(k.chords_for("track.monitor").len(), 1);
         assert_eq!(k.chords_for("transport.record").len(), 1);
         assert_eq!(k.chords_for("app.settings").len(), 1);
+    }
+
+    #[test]
+    fn a_held_key_repeats_every_action_but_tap_tempo() {
+        assert!(!super::repeats("transport.tap_tempo"));
+        assert!(super::repeats("edit.undo"));
+        assert!(super::repeats("timeline.zoom_in"));
     }
 }

@@ -95,7 +95,7 @@ component ParamKeys inherits FocusScope {
         if (e.text == Key.UpArrow || e.text == Key.RightArrow) { Studio.panel-step(root.device, root.param, 1, e.modifiers.shift); return accept; }
         if (e.text == Key.DownArrow || e.text == Key.LeftArrow) { Studio.panel-step(root.device, root.param, -1, e.modifiers.shift); return accept; }
         if (e.text == Key.Return || e.text == " ") { root.edit(); return accept; }
-        if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) { return accept; }
+        if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta, e.repeat)) { return accept; }
         reject
     }
 }
@@ -429,7 +429,7 @@ component DeviceCanvas inherits Rectangle {
     keys := FocusScope {
         key-pressed(e) => {
             if (root.f.pointer && Studio.panel-graph-key(root.device, e.text, e.modifiers.shift, e.modifiers.alt)) { return accept; }
-            if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) { return accept; }
+            if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta, e.repeat)) { return accept; }
             reject
         }
     }

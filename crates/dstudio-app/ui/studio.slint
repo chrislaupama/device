@@ -505,7 +505,7 @@ export global Studio {
     callback lane-pointer(int, length, length, bool, bool, bool); // kind 0=down 1=move 2=up, x, y, shift, cmd, alt
     callback lane-hover(length, length);
     callback lane-scroll(float, float, length, bool);      // dx, dy, x, zoom
-    callback key(string, bool, bool, bool, bool) -> bool;   // text, primary (Cmd on macOS), shift, alt, ctrl
+    callback key(string, bool, bool, bool, bool, bool) -> bool;   // text, primary (Cmd on macOS), shift, alt, ctrl, auto-repeat
     // ---- app menu bar (AppWindow MenuBar) ----
     // Items with a shortcut replay that key (text, primary, shift) into the window, so they act
     // exactly like the keystroke; the others call menu-action with an id.

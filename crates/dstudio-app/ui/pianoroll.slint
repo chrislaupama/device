@@ -276,7 +276,7 @@ component FooterKeys inherits FocusScope {
             if (e.text == Key.Home) { root.step(-1000); return accept; }
             if (e.text == Key.End) { root.step(1000); return accept; }
         }
-        if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta)) { return accept; }
+        if (Studio.key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt, e.modifiers.meta, e.repeat)) { return accept; }
         reject
     }
     if root.has-focus: Rectangle { x: -2px; y: -2px; width: root.width + 4px; height: root.height + 4px; border-width: 2px; border-color: #ffffff38; border-radius: 3px; }
