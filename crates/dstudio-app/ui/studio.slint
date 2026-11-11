@@ -355,6 +355,8 @@ export global Studio {
     in property <bool> key-minor;                  // the key picker's Major / Minor
     in property <bool> key-menu-open;
     in property <bool> sig-menu-open;
+    in property <int> sig-menu-active: -1;  // keyboard highlight row in the Sig menu
+    in property <int> key-active: -1;       // keyboard highlight root in the key picker
     in property <[ChoiceItem]> sig-menu-items;
     in property <length> sig-menu-h: 100px;
     in property <length> sig-menu-w: 74.8px;

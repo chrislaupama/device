@@ -116,10 +116,12 @@ component Header inherits Rectangle {
             moved => { Studio.tempo-drag(1, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y); }
             double-clicked => { root.bpm-editing = true; }
         }
+        // The editor reaches left over the BPM label so six characters (998.99) fit before TAP.
         if root.bpm-editing: Rectangle {
-            x: 729px; y: 43px; width: 31px; height: 18px; border-radius: 3.4px;
-            background: #ffffff1a; border-width: 0.85px; border-color: #ffffff59;
+            x: 712px; y: 43px; width: 48px; height: 18px; border-radius: 3.4px;
+            background: #3a3b40; border-width: 0.85px; border-color: #ffffff59;
             TextInput {
+                accessible-label: "Tempo (BPM)";
                 x: 3px; width: parent.width - 6px; height: parent.height;
                 text: Studio.bpm-text; color: #ffffff; font-size: 10.2px; font-weight: 700; letter-spacing: -0.41px;
                 vertical-alignment: center; single-line: true; selection-background-color: #ffffff47;
@@ -151,6 +153,8 @@ component Header inherits Rectangle {
         key-ta := TouchArea {
             x: 808px; y: 41px; width: 84px; height: 22px;
             accessible-role: combobox; accessible-label: "Key"; accessible-value: Studio.key-text == "" ? "None" : Studio.key-text;
+            accessible-expanded: Studio.key-menu-open;
+            accessible-action-default => { Studio.key-menu-toggle(); }
             clicked => { Studio.key-menu-toggle(); }
         }
         Rectangle { x: 901.5px; y: 43px; width: 1px; height: 18px; background: Tokens.separator-dim; }
@@ -160,6 +164,8 @@ component Header inherits Rectangle {
         sig-ta := TouchArea {
             x: 912px; y: 41px; width: 62px; height: 22px;
             accessible-role: combobox; accessible-label: "Time signature"; accessible-value: Studio.sig-text;
+            accessible-expanded: Studio.sig-menu-open;
+            accessible-action-default => { Studio.sig-menu-toggle(); }
             clicked => { Studio.sig-menu-toggle(); }
         }
         IconButton { x: 981px; y: 41px; width: 22px; height: 22px; icon: Icons.metronome; filled: true; ink: #63656c; tooltip: "Metronome"; active: Studio.metronome-on; clicked => { Studio.toggle-metronome(); } }
@@ -1187,6 +1193,7 @@ export component AppWindow inherits Window {
                 x: header.transport-x + 912px; y: 66.4px;
                 width: Studio.sig-menu-w; height: Studio.sig-menu-h;
                 items: Studio.sig-menu-items;
+                active: Studio.sig-menu-active;
                 font-size: 9.35px; text-x: 10.2px; check-x: 17px;
                 picked(i) => { Studio.sig-menu-pick(i); }
                 Rectangle { x: 3px; y: Studio.sig-menu-rule; width: parent.width - 6px; height: 0.5px; background: #ffffff1c; }

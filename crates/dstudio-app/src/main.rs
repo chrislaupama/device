@@ -2153,6 +2153,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     return true;
                 }
             }
+            // The open Sig menu or key picker takes arrows, Enter, Space (and M, Delete in the picker).
+            if !primary && !alt && !ctrl {
+                let used = ctl.try_borrow_mut().is_ok_and(|mut c| c.transport_menu_key(&chord.key));
+                if used {
+                    if let Some(a) = aw.upgrade()
+                        && let Ok(mut c) = ctl.try_borrow_mut()
+                    {
+                        c.update_ui(&a);
+                    }
+                    return true;
+                }
+            }
             let cx = {
                 let c = ctl.borrow();
                 Context {

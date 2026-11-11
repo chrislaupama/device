@@ -1169,6 +1169,7 @@ impl Controller {
         self.tempos.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
+        self.tf.reset_project_gestures();
         self.doc = Document::new(project);
         self.devices.modu.bases_pending = true;
         self.selected_track = self.project().tracks.first().map(|t| t.id);
@@ -1213,6 +1214,7 @@ impl Controller {
         self.tempos.clear();
         self.doc_epoch += 1;
         self.auto.reset_project_state();
+        self.tf.reset_project_gestures();
         self.doc = Document::new(loaded.project);
         self.devices.modu.bases_pending = true;
         self.project_dir = Some(dir.to_path_buf());

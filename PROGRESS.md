@@ -284,4 +284,8 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   change of pace starts over). A drag or a tap series is one "Tempo Change" undo step whatever its length. Sig opens a
   menu of twelve common signatures; Key opens a picker (Major / Minor, twelve roots, No key) that sets
   `Command::SetProjectKey`, which the composer, Shape and key-following devices already read.
+- A change of pace while tapping starts a new undo step. Keyboard: in the open Sig menu Up/Down and Enter or Space;
+  in the open key picker the arrows move over the roots, Enter or Space picks, M switches Major / Minor, Delete or
+  Backspace is No key. Both openers and every choice have accessible default actions. Opening or replacing the
+  project drops a tempo gesture in progress.
 - Self-test section `transport_fields_steps`; review states `review-transport-sig` and `review-transport-key`.

@@ -64,6 +64,9 @@ pub struct State {
     pub key_menu: bool,
     /// The picker's Major / Minor choice when the project has no key yet.
     pub key_minor: bool,
+    /// Keyboard highlight in the open Sig menu (row) and key picker (root), -1 for none.
+    pub sig_active: i32,
+    pub key_active: i32,
     pub sig_model: Rc<VecModel<ChoiceItem>>,
 }
 
@@ -77,8 +80,18 @@ impl State {
             sig_menu: false,
             key_menu: false,
             key_minor: false,
+            sig_active: -1,
+            key_active: -1,
             sig_model: Rc::new(VecModel::default()),
         }
+    }
+
+    /// Forget the tempo gesture in progress (a new project or an opened one): its revision
+    /// belongs to the old document.
+    pub fn reset_project_gestures(&mut self) {
+        self.taps.clear();
+        self.drag = None;
+        self.merge_rev = None;
     }
 }
 
@@ -201,7 +214,7 @@ impl Controller {
     pub fn tempo_drag(&mut self, phase: i32, dx: f32, dy: f32) {
         match phase {
             0 => {
-                self.tf.drag = Some((self.project().transport.bpm.round(), false));
+                self.tf.drag = Some((self.project().transport.bpm, false));
                 self.tf.merge_rev = None;
             }
             1 => {
@@ -213,7 +226,8 @@ impl Controller {
                     return;
                 }
                 self.tf.drag = Some((start, true));
-                self.tempo_gesture_set((start + acc.round() as f64).clamp(MIN_BPM, MAX_BPM));
+                let bpm = ((start + acc.round() as f64) * 100.0).round() / 100.0;
+                self.tempo_gesture_set(bpm.clamp(MIN_BPM, MAX_BPM));
             }
             _ => {
                 self.tf.drag = None;
@@ -249,11 +263,15 @@ impl Controller {
     }
 
     pub(crate) fn tap_tempo_at(&mut self, t: f64) {
-        let fresh = self.tf.taps.last().is_none_or(|&l| t - l > TAP_RESET_SECS);
-        if fresh {
+        let before = self.tf.taps.len();
+        let bpm = tap(&mut self.tf.taps, t);
+        // A new series (after a pause, or a change of pace that restarted it from the last tap)
+        // is a new undo step.
+        let after = self.tf.taps.len();
+        if after == 1 || (after == 2 && before >= 2) {
             self.tf.merge_rev = None;
         }
-        if let Some(bpm) = tap(&mut self.tf.taps, t) {
+        if let Some(bpm) = bpm {
             self.tempo_gesture_set(bpm);
         }
         self.ui_dirty = true;
@@ -262,6 +280,8 @@ impl Controller {
     pub fn sig_menu_toggle(&mut self) {
         self.tf.sig_menu = !self.tf.sig_menu;
         self.tf.key_menu = false;
+        let (rows, _, _) = sig_rows(self.current_sig());
+        self.tf.sig_active = rows.iter().position(|r| r.checked).map_or(0, |i| i as i32);
         self.ui_dirty = true;
     }
 
@@ -291,10 +311,49 @@ impl Controller {
     pub fn key_menu_toggle(&mut self) {
         self.tf.key_menu = !self.tf.key_menu;
         self.tf.sig_menu = false;
-        if let Some(k) = self.project().transport.key {
+        let key = self.project().transport.key;
+        if let Some(k) = key {
             self.tf.key_minor = k.minor;
         }
+        self.tf.key_active = key.map_or(0, |k| k.root as i32);
         self.ui_dirty = true;
+    }
+
+    /// Keys while the Sig menu or the key picker is open: arrows move the highlight, Enter or
+    /// Space picks it; in the picker M switches Major / Minor and Delete or Backspace is No key.
+    /// True when the key was used.
+    pub fn transport_menu_key(&mut self, key: &str) -> bool {
+        if self.tf.sig_menu {
+            let n = sig_rows(self.current_sig()).0.len() as i32;
+            match key {
+                "Up" => self.tf.sig_active = (self.tf.sig_active - 1).max(0),
+                "Down" => self.tf.sig_active = (self.tf.sig_active + 1).min(n - 1),
+                "Enter" | "Space" => self.sig_menu_pick(self.tf.sig_active.max(0) as usize),
+                _ => return false,
+            }
+            self.ui_dirty = true;
+            return true;
+        }
+        if self.tf.key_menu {
+            let a = self.tf.key_active.max(0);
+            match key {
+                "Left" => self.tf.key_active = (a - 1).max(0),
+                "Right" => self.tf.key_active = (a + 1).min(11),
+                "Up" if a >= 4 => self.tf.key_active = a - 4,
+                "Down" if a < 8 => self.tf.key_active = a + 4,
+                "Up" | "Down" => {}
+                "Enter" | "Space" => self.key_pick(a as u8),
+                "M" => {
+                    let minor = self.project().transport.key.map_or(self.tf.key_minor, |k| k.minor);
+                    self.key_mode(!minor);
+                }
+                "Delete" | "Backspace" => self.key_clear(),
+                _ => return false,
+            }
+            self.ui_dirty = true;
+            return true;
+        }
+        false
     }
 
     /// Key picker: a root (0 = C .. 11 = B) in the picker's mode. Leaves the picker open.
@@ -352,6 +411,8 @@ impl Controller {
         s.set_key_root(key.map_or(-1, |k| k.root as i32));
         s.set_key_minor(key.map_or(self.tf.key_minor, |k| k.minor));
         s.set_key_menu_open(self.tf.key_menu);
+        s.set_key_active(if self.tf.key_menu { self.tf.key_active } else { -1 });
+        s.set_sig_menu_active(if self.tf.sig_menu { self.tf.sig_active } else { -1 });
         if self.tf.sig_menu {
             let (rows, h, rule) = sig_rows(cur);
             sync_model(&self.tf.sig_model, rows);
@@ -366,6 +427,17 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_change_of_pace_restarts_the_series_from_the_last_tap() {
+        let mut taps = Vec::new();
+        for t in [0.0, 0.5, 1.0] {
+            tap(&mut taps, t);
+        }
+        assert_eq!(taps.len(), 3);
+        assert_eq!(tap(&mut taps, 1.25), Some(240.0));
+        assert_eq!(taps, [1.0, 1.25], "the series restarts from the previous tap");
+    }
 
     #[test]
     fn tempo_readout_and_typing() {

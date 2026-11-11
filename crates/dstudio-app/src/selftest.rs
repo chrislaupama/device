@@ -6756,6 +6756,58 @@ fn transport_fields_steps() -> Vec<Step> {
         Check("transport: taps set 120 BPM", Box::new(move |c, _| (bpm(c) == 120.0).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
         DoC("transport: one undo takes the tap series back", Box::new(|_, ctl| ctl.borrow_mut().undo())),
         Check("transport: 97.5 BPM again", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: tap at 120 BPM, then twice as fast", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            for t in [600.0, 600.5, 601.0, 601.25] {
+                c.tap_tempo_at(t);
+            }
+        })),
+        Check("transport: the faster taps set 240 BPM", Box::new(move |c, _| (bpm(c) == 240.0).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: undo once", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check("transport: the change of pace was its own step: 120 BPM", Box::new(move |c, _| (bpm(c) == 120.0).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: undo again", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check("transport: 97.5 BPM before the taps", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        Do("transport: drag the tempo 3 points right from 97.5", Box::new(|a| {
+            let s = a.global::<Studio>();
+            s.invoke_tempo_drag(0, 0.0, 0.0);
+            s.invoke_tempo_drag(1, 3.0, 0.0);
+            s.invoke_tempo_drag(2, 3.0, 0.0);
+        })),
+        Check("transport: the drag keeps the half beat: 100.5 BPM", Box::new(move |c, _| (bpm(c) == 100.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: undo the drag", Box::new(|_, ctl| ctl.borrow_mut().undo())),
+        Check("transport: 97.5 BPM after the drag's undo", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        Do("transport: open the Sig menu, Down, Enter", Box::new(|a| {
+            a.global::<Studio>().invoke_sig_menu_toggle();
+            key(a, Key::DownArrow, false, false);
+        })),
+        Check("transport: the highlight moved from 4/4 to 5/4", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_sig_menu_open() && s.get_sig_menu_active() == 3).then_some(()).ok_or(format!("open {} active {}", s.get_sig_menu_open(), s.get_sig_menu_active()))
+        })),
+        Do("transport: Enter picks it", Box::new(|a| key(a, Key::Return, false, false))),
+        Check("transport: 5/4 from the keyboard, menu closed", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_sig_text() == "5/4" && !s.get_sig_menu_open()).then_some(()).ok_or(format!("sig {} open {}", s.get_sig_text(), s.get_sig_menu_open()))
+        })),
+        Do("transport: key picker from the keyboard: Right, Right, Down, Enter, M", Box::new(|a| {
+            a.global::<Studio>().invoke_key_menu_toggle();
+            key(a, Key::RightArrow, false, false);
+            key(a, Key::RightArrow, false, false);
+            key(a, Key::DownArrow, false, false);
+            key(a, Key::Return, false, false);
+            key(a, "m", false, false);
+        })),
+        Check("transport: F# minor, picker open", Box::new(|c, a| {
+            let s = a.global::<Studio>();
+            let k = c.project().transport.key;
+            (k == Some(dstudio_core::model::ProjectKey { root: 6, minor: true }) && s.get_key_text() == "F#m" && s.get_key_menu_open())
+                .then_some(())
+                .ok_or(format!("key {k:?} open {}", s.get_key_menu_open()))
+        })),
+        Do("transport: Backspace is No key", Box::new(|a| key(a, Key::Backspace, false, false))),
+        Check("transport: no key after Backspace, picker closed", Box::new(|c, a| {
+            (c.project().transport.key.is_none() && !a.global::<Studio>().get_key_menu_open()).then_some(()).ok_or(format!("key {:?}", c.project().transport.key))
+        })),
         Do("transport: open the Sig menu", Box::new(|a| a.global::<Studio>().invoke_sig_menu_toggle())),
         Check("transport: the Sig menu lists twelve signatures, 4/4 checked", Box::new(|_, a| {
             let s = a.global::<Studio>();
