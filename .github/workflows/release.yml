@@ -23,8 +23,9 @@ name: Release
 # environment secrets of `release` (not repository secrets): MACOS_CERTIFICATE (base64 .p12 of
 # a Developer ID Application certificate), MACOS_CERTIFICATE_PASSWORD, MACOS_SIGN_IDENTITY,
 # and for notarisation an App Store Connect API key: APPLE_API_KEY (base64 .p8),
-# APPLE_API_KEY_ID and APPLE_API_ISSUER. Without them the release is signed ad hoc. Pull
-# requests and manual runs never reach them. The Windows packages are not signed yet.
+# APPLE_API_KEY_ID and APPLE_API_ISSUER. Without them a tagged release fails, unless the
+# repository variable ALLOW_UNSIGNED_MACOS is true (then it is signed ad hoc). Pull requests
+# and manual runs, even from a tag, never reach them. The Windows packages are not signed yet.
 
 on:
   push:
@@ -45,6 +46,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # A release is a pushed v* tag. A manual run started from a tag is a test build like any other.
+  IS_RELEASE: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
 
 jobs:
   version:
@@ -55,6 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          persist-credentials: false
           fetch-depth: 0 # the tag's ancestry is checked against main
       - id: v
         name: Version from Cargo.toml (and the tag)
@@ -62,7 +66,7 @@ jobs:
           set -euo pipefail
           version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
           [ -n "$version" ] || { echo "::error::no [workspace.package] version in Cargo.toml"; exit 1; }
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
+          if [ "$IS_RELEASE" = true ]; then
             tag_version="${GITHUB_REF_NAME#v}"
             if [ "$tag_version" != "$version" ]; then
               echo "::error::tag $GITHUB_REF_NAME does not match the Cargo.toml version $version"
@@ -86,6 +90,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
@@ -116,20 +122,20 @@ jobs:
       # The unsigned app goes to the signing job (tags only); every other run makes an
       # ad hoc signed .dmg here, with no secrets in reach.
       - uses: actions/upload-artifact@v7
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         with:
           name: macos-app
           path: build/macos/DeviceStudio-app.zip
           if-no-files-found: error
           retention-days: 1
       - name: Package .dmg (ad hoc signed)
-        if: github.ref_type != 'tag'
+        if: env.IS_RELEASE != 'true'
         run: bash tools/release/make-dmg.sh "build/macos/Device Studio.app" "${{ needs.version.outputs.version }}" dist
       - name: Smoke test (the packaged app starts and renders)
-        if: github.ref_type != 'tag'
+        if: env.IS_RELEASE != 'true'
         run: bash tools/release/smoke-macos.sh dist/*.dmg
       - uses: actions/upload-artifact@v7
-        if: github.ref_type != 'tag'
+        if: env.IS_RELEASE != 'true'
         with:
           name: package-macos
           path: dist/*.dmg
@@ -142,13 +148,15 @@ jobs:
   macos-sign:
     name: Sign and notarise macOS
     needs: [version, macos]
-    if: github.ref_type == 'tag'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: macos-15
     environment: release
     env:
       HAS_SIGNING_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE != '' }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
           name: macos-app
@@ -183,6 +191,9 @@ jobs:
           MACOS_SIGN_IDENTITY: ${{ steps.cert.outcome == 'success' && secrets.MACOS_SIGN_IDENTITY || '' }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          # A tagged release must be signed and notarised. Set the repository variable
+          # ALLOW_UNSIGNED_MACOS to true to publish an ad hoc signed .dmg instead.
+          REQUIRE_SIGNING: ${{ vars.ALLOW_UNSIGNED_MACOS != 'true' && '1' || '' }}
         run: bash tools/release/make-dmg.sh "build/macos/Device Studio.app" "${{ needs.version.outputs.version }}" dist
       - name: Remove the signing keychain and key
         if: always()
@@ -203,6 +214,8 @@ jobs:
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - name: MSVC developer environment
         shell: pwsh
@@ -268,6 +281,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - name: Install build packages
         run: |
@@ -310,7 +325,7 @@ jobs:
   release:
     name: Draft release
     needs: [version, macos-sign, windows, linux]
-    if: github.ref_type == 'tag'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the release and upload the packages
@@ -322,7 +337,10 @@ jobs:
           merge-multiple: true
       - name: Checksums
         working-directory: dist
-        run: sha256sum * | tee SHA256SUMS.txt
+        run: |
+          sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS.txt"
+          mv "$RUNNER_TEMP/SHA256SUMS.txt" SHA256SUMS.txt
+          cat SHA256SUMS.txt
       - name: Create the draft release
         env:
           GH_TOKEN: ${{ github.token }}

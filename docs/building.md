@@ -144,7 +144,8 @@ compiled on those systems.
 ### Performance checks
 
 [`.github/workflows/perf.yml`](../.github/workflows/perf.yml) runs on pull
-requests that touch `engine/`, `crates/dstudio-core/` or `Cargo.lock`, and on
+requests that touch `engine/`, `crates/dstudio-core/`, `Cargo.lock`,
+`tools/perf/` or the workflow itself, and on
 pushes to `main`. It builds every engine benchmark (`engine/bench/`) and the
 core's Rust benchmarks (`crates/dstudio-core/benches/`) twice on the same
 runner, at the base commit and with the change, and compares them row by row
@@ -201,7 +202,9 @@ App Store Connect API key, not an Apple ID password. Before adding the secrets,
 protect the environment (Settings › Environments › `release`: a required
 reviewer, deployments from `v*` tags only) and restrict who can create `v*`
 tags with a tag ruleset: a signing run then waits for the maintainer's
-approval. Builds without the secrets are signed ad hoc, and macOS asks the
-user to allow them on first launch. The Windows packages are not signed yet,
+approval. A tagged release without the secrets fails rather than ship
+unsigned, unless the repository variable `ALLOW_UNSIGNED_MACOS` is `true`.
+Every other build is signed ad hoc, and macOS asks the user to allow it on
+first launch. The Windows packages are not signed yet,
 so SmartScreen warns on first run. The packaging scripts are in
 [`tools/release/`](../tools/release/).

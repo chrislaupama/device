@@ -11,10 +11,18 @@
 # stapled. Without an identity everything is signed ad hoc: the app runs, but Gatekeeper asks
 # the user to allow it the first time (right-click > Open, or System Settings > Privacy &
 # Security).
+#
+# REQUIRE_SIGNING=1 (set by the release workflow for tagged releases) makes a missing identity
+# or notary key an error, so a release cannot quietly ship ad hoc signed.
 set -euo pipefail
 app="${1:?usage: make-dmg.sh <app> <version> <out dir>}"
 version="${2:?usage: make-dmg.sh <app> <version> <out dir>}"
 out="${3:?usage: make-dmg.sh <app> <version> <out dir>}"
+if [ "${REQUIRE_SIGNING:-}" = 1 ]; then
+  for v in MACOS_SIGN_IDENTITY APPLE_API_KEY_PATH APPLE_API_KEY_ID APPLE_API_ISSUER; do
+    [ -n "${!v:-}" ] || { echo "REQUIRE_SIGNING=1 but $v is not set" >&2; exit 1; }
+  done
+fi
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

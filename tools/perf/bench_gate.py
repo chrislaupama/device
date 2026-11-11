@@ -301,6 +301,8 @@ def run_instructions(name: str, exe: str, work: Path) -> dict:
     dumps.sort()
     counts = [n for _, n in dumps]
     total = sum(counts)
+    if total == 0:
+        return {"error": "Callgrind wrote no instruction counts"}
     all_records = parse_table_text(r.stdout)
     # One dump before every print call, plus one at exit. The benchmarks print
     # one non-empty line per call (a Markdown table's header and separator
@@ -413,7 +415,9 @@ def compare_instructions(base: dict, head: dict, limit: float) -> tuple[list[dic
             continue
         if "error" in b or "error" in h:
             notes.append(f"`{name}` failed: base {b.get('error', 'ok')}, head {h.get('error', 'ok')}")
-            if "error" in h and "error" not in b:
+            # A head that cannot be measured fails the gate even when the base failed too,
+            # so a broken runner never passes with nothing compared.
+            if "error" in h:
                 rows.append({"bench": name, "key": "(run)", "section": "", "label": "benchmark failed",
                              "base": 0, "head": 0, "pct": float("inf"), "fail": True})
             continue
@@ -474,7 +478,12 @@ def markdown(kind: str, rows: list[dict], notes: list[str], limit: float, title:
     out.append(f"Base `{labels[0]}`, head `{labels[1]}`. {len(rows)} rows compared; limit +{limit:g} %.")
     out.append("")
     if fails:
-        verdict = "accepted (label `perf-regression-accepted`)" if accept else "**regression**"
+        if kind == "time":
+            verdict = "slower, a warning only (timings on shared runners do not fail the check)"
+        elif accept:
+            verdict = "accepted (label `perf-regression-accepted`)"
+        else:
+            verdict = "**regression**"
         out.append(f"{len(fails)} row(s) over the limit: {verdict}.")
     else:
         out.append("No row over the limit.")
