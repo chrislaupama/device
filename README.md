@@ -44,7 +44,8 @@ wgpu.
   playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips. Shortcuts cover the common
   moves: ⇧⌘T adds an instrument track, ⌘R reverses the selected clip, ⌘L loops the selected clip or section, ⌘D
   duplicates the selected clip or section.
-- **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them.
+- **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them. A velocity lane under the
+  notes lets you drag one note's velocity, or sweep across several to paint them.
 - **Recording.** Arm tracks, pick inputs, monitor, and record takes that land where you played them: latency
   compensation is measured with an acoustic loopback test, not guessed.
 - **Mixer.** Faders, pan, mute, solo, stereo meters with peak hold, and a master strip.
@@ -140,7 +141,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Area | Status | Still missing |
 |---|:---:|---|
 | Timeline and audio clips | ✅ | Clip loop, track rename and resize |
-| Piano roll and MIDI | 🚧 | Velocity lane, note audition |
+| Piano roll and MIDI | 🚧 | Note audition |
 | Built-in instruments | ✅ | |
 | Built-in effects | ✅ | More devices are planned |
 | Plugin hosting | 🚧 | Plugin editor windows on Linux |
