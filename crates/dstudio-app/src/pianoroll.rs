@@ -844,7 +844,8 @@ impl Controller {
             self.pr.scroll = DEFAULT_SCROLL;
             (self.pr.hzoom, self.pr.vzoom) = (0.0, None);
             self.pr.seq = crate::stepseq::SeqState::opened(self.pr_clip().and_then(|c| c.pattern.as_ref()));
-            // A clip with notes opens centred on its pitch range (empty clips: C4).
+            // A clip with notes opens centred on its pitch range in the grid above the velocity
+            // lane (empty clips: C4).
             if let Some(c) = self.pr_clip()
                 && !c.notes.is_empty()
             {
@@ -852,7 +853,7 @@ impl Controller {
                 let hi = c.notes.iter().map(|n| n.pitch).max().unwrap_or(60) as i32;
                 self.pr.scroll = 0.0;
                 let v = self.pr_view();
-                self.pr.scroll = (v.y_of(lo) + v.y_of(hi)) / 2.0 - GRID_Y + v.row_h / 2.0 - (self.pr.size.1 - GRID_Y) / 2.0;
+                self.pr.scroll = (v.y_of(lo) + v.y_of(hi)) / 2.0 - GRID_Y + v.row_h / 2.0 - (v.h - GRID_Y) / 2.0;
             }
             self.pr.rows = self.pr_view().rows;
         } else {
@@ -1778,6 +1779,28 @@ mod tests {
     }
 
     use super::*;
+
+    /// With the velocity lane open, a clip opens centred in the grid above it.
+    #[test]
+    fn a_clip_opens_centred_above_the_velocity_lane() {
+        use dstudio_core::{Command, MidiClip, Note, Project};
+        let engine = std::sync::Arc::new(dstudio_engine::Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        let track = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).unwrap().id;
+        let notes = vec![Note { id: 1, pitch: 60, start: 0, length: PPQ, velocity: 100 }, Note { id: 2, pitch: 64, start: PPQ, length: PPQ, velocity: 100 }];
+        c.execute(Command::AddMidiClip { track, clip: MidiClip { id: dstudio_core::ClipId(900), notes, ..MidiClip::empty(0, 4 * PPQ) } });
+        c.pr.size = (1000.0, 420.0);
+        c.pr.vel_lane = true;
+        c.set_bottom_tab(BottomTab::Clip);
+        c.select_clip(Some(dstudio_core::ClipId(900)));
+        c.pr.clip = None;
+        c.pr_sync_clip();
+        let v = c.pr_view();
+        assert!(v.lane > 0.0 && v.h < c.pr.size.1, "the lane takes height from the grid");
+        let middle = (v.y_of(60) + v.y_of(64)) / 2.0 + v.row_h / 2.0;
+        let grid_middle = GRID_Y + (v.h - GRID_Y) / 2.0;
+        assert!((middle - grid_middle).abs() < 0.5, "notes centred at {middle}, grid middle {grid_middle}");
+    }
 
     #[test]
     fn sub_lines_double_until_16_reference_px_apart_and_stop_at_the_beat() {
