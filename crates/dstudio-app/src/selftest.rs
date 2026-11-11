@@ -6871,15 +6871,18 @@ fn transport_fields_steps() -> Vec<Step> {
         })),
         Check("transport: typing ended the tap series: still 97.5", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
         DoC("transport: type 97.5 again (ends the series)", Box::new(|_, ctl| ctl.borrow_mut().tempo_text("97.5"))),
-        Do("transport: Shift+T twice, half a second apart", Box::new(|a| {
-            key(a, "T", false, true);
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            key(a, "T", false, true);
+        // The key press is checked for routing only; the second tap gets a timestamp half a
+        // second after it, so the tempo does not depend on how fast the runner is.
+        Do("transport: Shift+T", Box::new(|a| key(a, "T", false, true))),
+        Check("transport: Shift+T started a tap series, the tempo is unchanged", Box::new(move |c, _| {
+            (c.tf.taps.len() == 1 && bpm(c) == 97.5).then_some(()).ok_or(format!("taps {} bpm {}", c.tf.taps.len(), bpm(c)))
         })),
-        // At least half a second between the taps (a slow runner adds to it): 120 BPM or slower.
-        Check("transport: Shift+T taps the tempo (two taps, 120 BPM or slower)", Box::new(move |c, _| {
-            (c.tf.taps.len() == 2 && bpm(c) != 97.5 && (40.0..=121.0).contains(&bpm(c))).then_some(()).ok_or(format!("taps {} bpm {}", c.tf.taps.len(), bpm(c)))
+        DoC("transport: a second tap half a second after the key press", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = c.tf.taps.first().copied().unwrap_or(0.0) + 0.5;
+            c.tap_tempo_at(t);
         })),
+        Check("transport: the two taps set 120 BPM", Box::new(move |c, _| (bpm(c) == 120.0).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
         DoC("transport: back to 97.5, then Settings open with the Sig menu", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
             c.tempo_text("97.5");
