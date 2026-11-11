@@ -16,9 +16,12 @@
 //     with the source's channel count. Its process callback writes into a
 //     FrameRing (frame_ring.hpp) that the playback callback drains by
 //     exactly its cycle length (engine contract: equal input/output
-//     length). The ring absorbs scheduling order and clock drift. If the
-//     input cannot be opened the device runs output-only and
-//     status().input_error says why.
+//     length). Both streams are in one node.group, so PipeWire drives them
+//     from the same clock: the ring only absorbs their order within a cycle,
+//     and it re-syncs when a glitch (one stream missing a cycle) would
+//     otherwise shift every later recording by a quantum. If the input
+//     cannot be opened the device runs output-only and status().input_error
+//     says why.
 // Both streams use PW_STREAM_FLAG_RT_PROCESS: callbacks run on PipeWire's
 // data thread (real-time when RTKit / the rt module allows it). stop()
 // destroys the streams and the context, which joins that thread, so no
@@ -269,8 +272,10 @@ private:
             const char* cls = spa_dict_lookup(props, PW_KEY_MEDIA_CLASS);
             const char* name = spa_dict_lookup(props, PW_KEY_NODE_NAME);
             if (cls == nullptr || name == nullptr) return;
+            // Virtual sources too: filter chains (noise suppression, echo
+            // cancel) and loopbacks are inputs people record from.
             const bool sink = std::strcmp(cls, "Audio/Sink") == 0;
-            const bool source = std::strcmp(cls, "Audio/Source") == 0;
+            const bool source = std::strcmp(cls, "Audio/Source") == 0 || std::strcmp(cls, "Audio/Source/Virtual") == 0;
             if (!sink && !source) return;
             PwNode n;
             n.id = id;
@@ -449,7 +454,10 @@ public:
                 in_ptrs_[c] = in_planar_.data() + static_cast<std::size_t>(c) * kMaxCycleFrames;
             const uint32_t quantum = requested_quantum();
             ring_target_ = 2 * quantum;
-            ring_.reset(in_channels_, 8 * kMaxCycleFrames, ring_target_, 4 * quantum);
+            // Both streams share one driver (node.group below), so the fill
+            // cannot drift: re-sync after any glitch that shifts it by more
+            // than half a quantum (frame_ring.hpp).
+            ring_.reset(in_channels_, 8 * kMaxCycleFrames, ring_target_, 4 * quantum, quantum / 2);
             make_stream(false, in_node != nullptr ? in_node->name : std::string(), in_channels_, input_error);
             in_name_ = in_node != nullptr ? in_node->description : std::string("default input");
         }
@@ -591,6 +599,10 @@ private:
                                                  PW_KEY_APP_NAME, "Device Studio", PW_KEY_NODE_LATENCY, latency.c_str(),
                                                  nullptr);
         if (!target.empty()) pw_properties_set(props, PW_KEY_TARGET_OBJECT, target.c_str());
+        // One group for both streams: PipeWire runs them from the same driver
+        // (resampling the other device if input and output are different
+        // hardware), so the input ring sees one clock and never drifts.
+        pw_properties_setf(props, PW_KEY_NODE_GROUP, "device-studio-%p", static_cast<const void*>(this));
         if (config_.device_rate > 0.0)
             pw_properties_set(props, PW_KEY_NODE_RATE,
                               ("1/" + std::to_string(static_cast<long>(std::lround(config_.device_rate)))).c_str());
@@ -701,6 +713,16 @@ private:
         pw_thread_loop_signal(s->owner->loop_, false);
     }
 
+    // Data thread: the driver cycle being processed, for the input ring
+    // (frame_ring.hpp). Both streams share a driver (node.group), so they see
+    // the same cycle time (pw_time.now) in one cycle; their `ticks` differ by
+    // the stream delays. 0 if unknown.
+    static uint64_t cycle_of(pw_stream* stream) noexcept {
+        pw_time t{};
+        if (pw_stream_get_time_n(stream, &t, sizeof t) != 0 || t.now <= 0) return 0;
+        return static_cast<uint64_t>(t.now);
+    }
+
     // Data thread: copies the captured frames (or silence for an empty
     // chunk) into the ring that on_playback drains.
     static void on_capture(void* data) {
@@ -719,7 +741,7 @@ private:
             if (frames > 0)
                 self->ring_.write(silent ? nullptr
                                          : reinterpret_cast<const float*>(static_cast<const uint8_t*>(d.data) + offset),
-                                  frames);
+                                  frames, cycle_of(s->stream));
         }
         pw_stream_queue_buffer(s->stream, b);
     }
@@ -747,12 +769,13 @@ private:
         // it stays aligned with the output.
         auto* dst = static_cast<float*>(d.data);
         const bool input = self->input_live_.load(std::memory_order_acquire);
+        const uint64_t cycle = input ? cycle_of(s->stream) : 0;
         for (uint32_t done = 0; done < frames;) {
             const uint32_t n = std::min(frames - done, kMaxCycleFrames);
             const float* in_ptrs[kMaxDeviceInputChannels];
             uint32_t n_in = 0;
             if (input) {
-                self->ring_.read(self->in_ptrs_, self->in_channels_, n, frames - done - n);
+                self->ring_.read(self->in_ptrs_, self->in_channels_, n, frames - done - n, cycle);
                 for (uint32_t c = 0; c < self->in_channels_; ++c) in_ptrs[c] = self->in_ptrs_[c];
                 n_in = self->in_channels_;
             }

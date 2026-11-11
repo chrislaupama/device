@@ -953,6 +953,42 @@ impl Controller {
         None
     }
 
+    /// ⇧⌘T: a new instrument track at the end of the ordinary tracks, selected.
+    pub fn add_instrument_track(&mut self) -> Option<TrackId> {
+        let track = Track::new(TrackId(0), TrackKind::Instrument, "Instrument", next_track_color(self.project()));
+        if self.execute(Command::AddTrack { index: None, track }) {
+            let id = self.project().tracks.iter().rev().find(|t| t.kind == TrackKind::Instrument).map(|t| t.id);
+            if let Some(id) = id {
+                self.select_track(id);
+            }
+            return id;
+        }
+        None
+    }
+
+    /// ⌘L with a clip or a section selected: loop exactly that span and turn the loop on.
+    pub fn loop_selection(&mut self) {
+        let p = self.project();
+        let span = if let Some(i) = self.selected_section.and_then(|s| p.section_index(s)) {
+            let start = p.section_start(i);
+            Some((start, start + p.sections[i].length))
+        } else if let Some(id) = self.selected_clip {
+            p.midi_clip(id).map(|m| (m.start, m.end())).or_else(|| p.clip(id).map(|c| (c.start, c.start + p.clip_length_ticks(c))))
+        } else {
+            None
+        };
+        let Some((start, end)) = span.filter(|(s, e)| e > s) else {
+            self.toggle_loop();
+            return;
+        };
+        let tr = &p.transport;
+        if tr.loop_enabled && tr.loop_start == start && tr.loop_end == end {
+            return;
+        }
+        self.doc.seal_coalescing();
+        self.execute(Command::SetLoop { enabled: true, start, end });
+    }
+
     pub fn delete_selection(&mut self) {
         if let Some(s) = self.selected_section.filter(|s| self.project().section_index(*s).is_some()) {
             self.delete_section(s);
@@ -2178,6 +2214,30 @@ mod tests {
         c.bottom_resize(2, 400.0);
         assert_eq!(c.bottom_restore.get("mixer"), Some(&Some(400.0)));
         assert!(!c.bottom_restore.contains_key("devices"));
+    }
+    /// Two quick reverses of one audio clip are two undo steps: one Undo leaves it reversed.
+    #[test]
+    fn each_reverse_is_its_own_undo_step() {
+        let engine = Arc::new(Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        let (asset, clip, track) = (AssetId(9001), ClipId(9002), TrackId(9003));
+        c.execute(Command::Batch {
+            label: "Fixture".into(),
+            commands: vec![
+                Command::AddAsset { asset: Asset { id: asset, relative_path: None, absolute_path: "fixture.wav".into(), sample_rate: 48_000.0, channels: 2, frames: 48_000 } },
+                Command::AddTrack { index: None, track: Track::new(track, TrackKind::Audio, "Audio", next_track_color(c.project())) },
+                Command::AddClip {
+                    track,
+                    clip: Clip { id: clip, asset, name: "Loop".into(), start: 0, source_offset: 0, source_length: 48_000, gain: 1.0, warp: Default::default(), disabled: false, clip_loop: None },
+                },
+            ],
+        });
+        c.select_clip(Some(clip));
+        c.reverse_clip();
+        c.reverse_clip();
+        assert!(!c.project().clip(clip).unwrap().warp.reverse, "reversed twice");
+        c.undo();
+        assert!(c.project().clip(clip).unwrap().warp.reverse, "one Undo goes back to after the first reverse");
     }
     /// A master volume lane being drawn must not bring a muted master back.
     #[test]
