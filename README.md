@@ -140,7 +140,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 
 | Area | Status | Still missing |
 |---|:---:|---|
-| Timeline and audio clips | ✅ | Clip loop, track rename and resize |
+| Timeline and audio clips | ✅ | |
 | Piano roll and MIDI | 🚧 | Note audition |
 | Built-in instruments | ✅ | |
 | Built-in effects | ✅ | More devices are planned |

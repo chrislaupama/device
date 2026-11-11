@@ -70,7 +70,12 @@ pub enum Command {
     /// Insert a track. If `track.id` is 0 a fresh id is allocated.
     AddTrack { index: Option<usize>, track: Track },
     RemoveTrack { track: TrackId },
+    /// A new name, trimmed, 1..=128 characters.
     RenameTrack { track: TrackId, name: String },
+    /// The undo of `RenameTrack`: puts the previous name back exactly as it was, even one a
+    /// rename would refuse (an imported name over 128 characters). Not accepted from outside.
+    #[serde(skip_deserializing)]
+    RestoreTrackName { track: TrackId, name: String },
     /// Insert a section at `index` (end when `None`). If `section.id` is 0 a fresh id is allocated.
     InsertSection { index: Option<usize>, section: Section },
     RemoveSection { section: SectionId },
@@ -204,7 +209,7 @@ impl Command {
         match self {
             Command::AddTrack { track, .. } => format!("Add {} Track", kind_name(track.kind)),
             Command::RemoveTrack { .. } => "Delete Track".into(),
-            Command::RenameTrack { .. } => "Rename Track".into(),
+            Command::RenameTrack { .. } | Command::RestoreTrackName { .. } => "Rename Track".into(),
             Command::InsertSection { .. } => "Add Section".into(),
             Command::RemoveSection { .. } => "Delete Section".into(),
             Command::RenameSection { .. } => "Rename Section".into(),
@@ -418,6 +423,11 @@ impl Command {
                 if name.is_empty() || name.chars().count() > 128 {
                     return Err(invalid("name", "must be 1..=128 characters"));
                 }
+                let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
+                let old = std::mem::replace(&mut t.name, name);
+                Ok(Command::RestoreTrackName { track, name: old })
+            }
+            Command::RestoreTrackName { track, name } => {
                 let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
                 let old = std::mem::replace(&mut t.name, name);
                 Ok(Command::RenameTrack { track, name: old })
