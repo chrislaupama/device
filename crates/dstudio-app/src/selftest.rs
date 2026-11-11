@@ -5651,7 +5651,11 @@ fn step_sequencer_steps() -> Vec<Step> {
         Check("seq: Follow playhead turned to page 3; the ring is on its 5th column", Box::new(|c, a| {
             let s = a.global::<Studio>();
             let step = c.seq_play_step();
-            (step == Some(68) && s.get_seq_page() == 2 && s.get_seq_play_col() == 4).then_some(()).ok_or(format!("step {step:?} page {} col {}", s.get_seq_page(), s.get_seq_play_col()))
+            // With a device running the playhead keeps moving between the two steps, so it may
+            // already be further on: anywhere on page 3, with the ring on the step it shows.
+            let last = if c.engine.device_running() { 95 } else { 68 };
+            let ok = step.is_some_and(|k| (68..=last).contains(&k) && s.get_seq_play_col() == k as i32 - 64) && s.get_seq_page() == 2;
+            ok.then_some(()).ok_or(format!("step {step:?} page {} col {}", s.get_seq_page(), s.get_seq_play_col()))
         })),
         DoC("seq: stop; click page tab 1, then Follow playhead", Box::new(|a, ctl| {
             let _ = ctl.borrow().engine.stop();
@@ -6874,14 +6878,14 @@ fn clip_menu_steps() -> Vec<Step> {
             let v = audio_clips(c);
             (v.len() == 2 && !v[0].3 && !v[1].3).then_some(()).ok_or(format!("{v:?}"))
         })),
-        DoC("right-click the MIDI clip and choose Split (playhead beat 8 → beat 6 is outside, so move it first)", Box::new(move |a, ctl| {
-            let mid = {
-                let mut c = ctl.borrow_mut();
-                let t = c.project().tracks[1].id;
-                c.select_track(t);
-                c.seek_beats(6.0);
-                ClipId(i4.get().2)
-            };
+        DoC("move the playhead to beat 6 (beat 8 is outside the MIDI clip); a running device applies it at its next block", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let t = c.project().tracks[1].id;
+            c.select_track(t);
+            c.seek_beats(6.0);
+        })),
+        DoC("right-click the MIDI clip and choose Split", Box::new(move |a, ctl| {
+            let mid = ClipId(i4.get().2);
             let (x, y) = clip_xy(&ctl.borrow(), mid);
             right_click(a, x, y);
             click_entry(a, "Split");
@@ -7135,7 +7139,9 @@ fn clip_render_steps() -> Vec<Step> {
             let p = peak(&s, 0, s.len() / 2);
             eprintln!("clip-render: export render {:.1} ms", c.clip_render.last_ms);
             let same = c.doc.undo_label().map(str::to_string) == s14.borrow().undo_before_export;
-            (rate == 48_000 && ch == 2 && p > 0.02 && (96_000..=192_000).contains(&(s.len() / 2)) && same && !c.clip_render.busy()).then_some(()).ok_or(format!("rate {rate} ch {ch} frames {} peak {p} same {same}", s.len() / 2))
+            // A stem goes through the master fader: the --self-test-audio run keeps it at -40 dB.
+            let floor = 0.02 * c.project().master_gain.min(1.0);
+            (rate == 48_000 && ch == 2 && p > floor && (96_000..=192_000).contains(&(s.len() / 2)) && same && !c.clip_render.busy()).then_some(()).ok_or(format!("rate {rate} ch {ch} frames {} peak {p} (floor {floor}) same {same}", s.len() / 2))
         })),
         DoC("clip render: select the audio track; Consolidate its first clip and Cancel at once", Box::new(move |_, ctl| {
             let mut c = ctl.borrow_mut();
