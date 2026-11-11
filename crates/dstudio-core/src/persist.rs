@@ -77,6 +77,8 @@ pub fn save(project: &Project, dir: &Path) -> Result<(), PersistError> {
     Ok(())
 }
 
+/// Loads the project folder at `dir`: reads its envelope, rejects anything that is not the current
+/// format or is newer than this build, migrates older schemas, and returns the project with any missing media files.
 pub fn load(dir: &Path) -> Result<Loaded, PersistError> {
     let path = dir.join(PROJECT_FILE);
     let bytes = fs::read(&path).map_err(io(&path))?;
