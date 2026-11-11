@@ -800,21 +800,27 @@ impl Controller {
 /// Notes mirrored in a clip of `length` ticks: a note that ended at the clip end starts at 0.
 /// With the clip's loop on, the part before the loop, the loop itself and the part after it
 /// (which never plays) are each mirrored in place, so every note that played still plays and
-/// the loop repeats its own material backwards. A note that runs past the end of its part is
-/// cut there first, so it keeps its place inside the part and reversing twice gives back what
-/// played. Notes that start outside the clip never play and stay where they are.
+/// the loop repeats its own material backwards. A note that runs past the end of its part, where
+/// playback cuts it (the loop end, or the clip end), is cut there first, so it stays inside the
+/// part and reversing twice gives back what played. A note before the loop that plays on into
+/// it has no mirror image that sounds the same, so it stays where it is, as do notes that start
+/// outside the clip (they never play).
 pub fn reversed_in_clip(notes: &[midi::Note], length: Ticks, clip_loop: Option<&midi::ClipLoop>) -> Vec<midi::Note> {
-    let regions: Vec<(Ticks, Ticks)> = match clip_loop {
+    // Each part with the point where playback cuts its notes.
+    let regions: Vec<(Ticks, Ticks, Ticks)> = match clip_loop {
         Some(l) if l.on => {
             let (s, e) = (l.start.clamp(0, length), l.end.clamp(0, length));
-            [(0, s), (s, e), (e, length)].into_iter().filter(|r| r.1 > r.0).collect()
+            [(0, s, e), (s, e, e), (e, length, length)].into_iter().filter(|r| r.1 > r.0).collect()
         }
-        _ => vec![(0, length)],
+        _ => vec![(0, length, length)],
     };
     notes
         .iter()
         .map(|n| {
-            let Some((a, b)) = regions.iter().copied().find(|r| n.start >= r.0 && n.start < r.1) else { return *n };
+            let Some((a, b, cut)) = regions.iter().copied().find(|r| n.start >= r.0 && n.start < r.1) else { return *n };
+            if n.start + n.length > b && cut > b {
+                return *n;
+            }
             let length = n.length.min(b - n.start);
             midi::Note { start: a + b - n.start - length, length, ..*n }
         })
@@ -864,5 +870,17 @@ mod reverse_tests {
         let back = reversed_in_clip(&r, 7680, Some(&l));
         assert_eq!((back[0].start, back[0].length), (1800, 120));
         assert_eq!(l.unroll(&back, 7680), l.unroll(&[n(1, 1800, 240)], 7680), "it plays as it did");
+    }
+
+    /// A note before the loop that plays on into it stays put; the rest of its part still mirrors.
+    #[test]
+    fn reversing_keeps_a_note_over_the_loop_start() {
+        let n = |id, start, length| midi::Note { id, pitch: 60, start, length, velocity: 100 };
+        let l = midi::ClipLoop { on: true, start: 960, end: 1920, span: 0 };
+        let notes = vec![n(1, 900, 240), n(2, 0, 120)];
+        let r = reversed_in_clip(&notes, 7680, Some(&l));
+        assert_eq!(r, [n(1, 900, 240), n(2, 840, 120)]);
+        assert_eq!(reversed_in_clip(&r, 7680, Some(&l)), notes, "twice is the original");
+        assert_eq!(l.unroll(&r, 7680).iter().find(|(m, _)| m.id == 1), l.unroll(&notes, 7680).iter().find(|(m, _)| m.id == 1), "it plays as it did");
     }
 }
