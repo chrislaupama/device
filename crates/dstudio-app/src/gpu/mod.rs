@@ -1,6 +1,6 @@
 //! wgpu renderer for the timeline surface (the only module that touches wgpu).
 //!
-//! Pattern from ADR 0001 / `ui-spike`: we render into our own offscreen
+//! Pattern from ADR 0001: we render into our own offscreen
 //! `Rgba8Unorm` texture on the same `Device`/`Queue` Slint renders with, from
 //! the `BeforeRendering` notifier, and hand the texture to Slint once per
 //! resize via `slint::Image::try_from(wgpu::Texture)`.

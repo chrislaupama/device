@@ -19,7 +19,6 @@ Development › Keeping this README up to date.
 | `crates/dstudio-core` | Model, commands, undo/redo, persistence, snapshots | App architecture |
 | `crates/dstudio-engine` | Safe Rust FFI wrapper + end-to-end tests | App architecture |
 | `crates/dstudio-app` | Desktop app (Slint shell + wgpu surfaces) | UI engineering |
-| `ui-spike/` | Slint ↔ wgpu interop spike (standalone workspace) | UI engineering |
 | `docs/` | Architecture spec, ADRs | Lead |
 
 ## How to build and test

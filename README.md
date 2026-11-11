@@ -214,7 +214,6 @@ cargo run --release -p dstudio-app -- --self-test --no-audio     # drive the app
 | `specs/` | Specs for non-trivial work, their templates and the project's principles |
 | `.agents/skills/`, `AGENTS.md` | Skills and a guide for coding agents working on this codebase |
 | `tools/` | Release packaging and the macOS app bundle script, the CI and benchmark helpers, the artwork renderer and the skills checker |
-| `ui-spike/` | The Slint and wgpu interop spike behind ADR 0001 |
 
 Internal names use `dstudio` (`dstudio-*` crates, the `dstudio::` namespace, `DSTUDIO_*` build options and
 environment variables), never `device`, which already names effects and instruments throughout the code.
