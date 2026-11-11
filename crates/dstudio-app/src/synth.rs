@@ -898,12 +898,11 @@ fn filter_mod_display(v: &[f32], labels: &mut Vec<SynthLabel>) -> SynthDisplay {
     dsp.dots = circles(&[peak], 3.0).into();
     let sl = disp::FILTER_MOD;
     let mut hgrid = String::new();
-    for (hz, t) in [(10_000.0, "10k"), (5_000.0, "5k"), (2_000.0, "2k"), (1_000.0, "1k")] {
-        // Only frequencies inside the window: outside it they would all clamp onto its edge.
+    // The four highest reference frequencies inside the window (outside it they would all
+    // clamp onto its edge), so low cutoffs get 1k .. 100 instead of a lone 1k.
+    let refs = [(10_000.0, "10k"), (5_000.0, "5k"), (2_000.0, "2k"), (1_000.0, "1k"), (500.0, "500"), (200.0, "200"), (100.0, "100"), (50.0, "50")];
+    for (hz, t) in refs.into_iter().filter(|&(hz, _)| y(hz) - 7.0 >= 0.0 && y(hz) + 6.0 <= bot).take(4) {
         let ly = y(hz) - 7.0;
-        if ly < 0.0 || ly + 13.0 > bot {
-            continue;
-        }
         labels.push(label(sl, 6.0, ly, t, 0));
         hgrid.push_str(&format!("M0 {:.2} L{WIDE_W} {:.2} ", y(hz), y(hz)));
     }
@@ -2712,8 +2711,8 @@ mod tests {
         for v in filter_mod_cases() {
             let mut labels = Vec::new();
             filter_mod_display(&v, &mut labels);
-            let hz: Vec<_> = labels.iter().filter(|l| l.text.ends_with('k')).collect();
-            assert!(!hz.is_empty(), "cutoff {}: no frequency labels", v[ix("cutoff")]);
+            let hz: Vec<_> = labels.iter().filter(|l| l.x < FILTER_MOD_GUTTER).collect();
+            assert!(hz.len() >= 3, "cutoff {}: only {} frequency labels", v[ix("cutoff")], hz.len());
             for h in &hz {
                 let (hx0, hy0, hx1, hy1) = bx(h);
                 assert!(hx1 <= FILTER_MOD_GUTTER && hy0 >= 0.0, "{} sits outside the gutter at {hx0} {hy0}", h.text);
