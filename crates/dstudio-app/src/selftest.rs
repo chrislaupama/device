@@ -6876,7 +6876,10 @@ fn transport_fields_steps() -> Vec<Step> {
             std::thread::sleep(std::time::Duration::from_millis(500));
             key(a, "T", false, true);
         })),
-        Check("transport: Shift+T taps the tempo (about 120)", Box::new(move |c, _| ((100.0..=140.0).contains(&bpm(c))).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        // At least half a second between the taps (a slow runner adds to it): 120 BPM or slower.
+        Check("transport: Shift+T taps the tempo (two taps, 120 BPM or slower)", Box::new(move |c, _| {
+            (c.tf.taps.len() == 2 && bpm(c) != 97.5 && (40.0..=121.0).contains(&bpm(c))).then_some(()).ok_or(format!("taps {} bpm {}", c.tf.taps.len(), bpm(c)))
+        })),
         DoC("transport: back to 97.5, then Settings open with the Sig menu", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
             c.tempo_text("97.5");
