@@ -83,6 +83,9 @@ impl Rig {
         dev.id = DeviceId(DEV);
         let track = TrackSnapshot {
             track_id: 1,
+            is_return: false,
+            output: None,
+            sends: Vec::new(),
             gain: 1.0,
             pan: 0.0,
             mute: false,
@@ -262,6 +265,9 @@ fn drum_rig(notes: Vec<NoteSnapshot>) -> (Engine, SessionSnapshot, tempfile::Tem
     dev.samples.push(DeviceSample { slot: 0, asset: AssetId(5), name: "dc".into(), slices: vec![] });
     let track = TrackSnapshot {
         track_id: 1,
+        is_return: false,
+        output: None,
+        sends: Vec::new(),
         gain: 1.0,
         pan: 0.0,
         mute: false,

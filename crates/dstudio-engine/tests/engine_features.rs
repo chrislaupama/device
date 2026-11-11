@@ -46,6 +46,9 @@ fn publish_ramp(e: &Engine, dir: &Path, frames: u32) -> Vec<f32> {
     let snap = SessionSnapshot {
         tracks: vec![TrackSnapshot {
             track_id: 1,
+            is_return: false,
+            output: None,
+            sends: Vec::new(),
             gain: 1.0,
             pan: -1.0,
             mute: false,
@@ -192,6 +195,9 @@ fn export_excludes_loop_and_metronome() {
     let snap = SessionSnapshot {
         tracks: vec![TrackSnapshot {
             track_id: 1,
+            is_return: false,
+            output: None,
+            sends: Vec::new(),
             gain: 1.0,
             pan: -1.0,
             mute: false,

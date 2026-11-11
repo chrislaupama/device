@@ -64,6 +64,7 @@ pub fn consolidate_group(p: &Project, id: ClipId) -> Option<ClipSpan> {
     let ids: Vec<ClipId> = match span.kind {
         TrackKind::Audio => t.clips.iter().map(|c| c.id).collect(),
         TrackKind::Instrument => t.midi_clips.iter().map(|c| c.id).collect(),
+        TrackKind::Return => Vec::new(),
     };
     let all: Vec<(ClipId, Ticks, Ticks)> = ids.into_iter().filter_map(|c| one(p, c).map(|(_, _, s, e)| (c, s, e))).collect();
     let mut joined = vec![id];
@@ -106,6 +107,9 @@ pub fn render_project(p: &Project, span: &ClipSpan, mode: RenderMode) -> Project
         t.mute = false;
         t.arm = false;
         t.monitor = false;
+        // Renders of one track are dry: straight to the master, nothing into return tracks.
+        t.sends.clear();
+        t.output = None;
         t.clips.retain(|c| span.clips.contains(&c.id));
         t.midi_clips.retain(|c| span.clips.contains(&c.id));
         match mode {
