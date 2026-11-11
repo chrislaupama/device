@@ -967,11 +967,13 @@ impl Controller {
     }
 
     /// Rename a track (double-click its name). Surrounding spaces are dropped; an empty or
-    /// unchanged name leaves the track as it was.
+    /// unchanged name leaves the track as it was (an untouched field keeps a loaded name's own
+    /// spaces too).
     pub fn rename_track(&mut self, id: TrackId, name: &str) {
         self.rename_draft = None;
+        let raw = name;
         let name = name.trim();
-        if name.is_empty() || self.project().track(id).is_none_or(|t| t.name == name) {
+        if name.is_empty() || self.project().track(id).is_none_or(|t| t.name == raw || t.name == name) {
             self.ui_dirty = true;
             return;
         }
@@ -2123,6 +2125,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let starts: Vec<Vec<Ticks>> = c.project().tracks.iter().map(|t| t.clips.iter().map(|k| k.start).collect()).collect();
         assert_eq!(starts, vec![vec![0], vec![], vec![10 * PPQ]]);
+    }
+    /// A loaded name with its own surrounding spaces: committing the field untouched keeps it and
+    /// adds no undo step; a real edit is trimmed.
+    #[test]
+    fn an_untouched_rename_keeps_a_loaded_name() {
+        let engine = Arc::new(Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut p = Project::default();
+        p.tracks[0].name = "  Bass  ".into();
+        let mut c = Controller::new(engine, p);
+        let (id, rev) = (c.project().tracks[0].id, c.doc.revision());
+        c.rename_track(id, "  Bass  ");
+        assert_eq!((c.project().tracks[0].name.as_str(), c.doc.revision()), ("  Bass  ", rev));
+        c.rename_track(id, "  Sub bass ");
+        assert_eq!(c.project().tracks[0].name, "Sub bass");
+        assert_ne!(c.doc.revision(), rev);
     }
     #[test]
     fn pan_text() {
