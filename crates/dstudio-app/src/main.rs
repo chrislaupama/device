@@ -658,7 +658,7 @@ pub fn app_keymap() -> Keymap {
     }
     // Arm / input monitoring on the selected track (the core preset has no bindings for them).
     // Added only if the core lacks them.
-    for (action, chord) in [("track.arm", "shift+r"), ("track.monitor", "shift+i")] {
+    for (action, chord) in [("track.arm", "shift+r"), ("track.monitor", "shift+i"), ("track.rename", "primary+r")] {
         if k.chords_for(action).is_empty() {
             k.bindings.push(Binding { action: action.into(), chords: vec![Chord::parse(chord).expect("valid chord")], when: Condition::TrackSelected });
         }
@@ -786,6 +786,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "track.add_audio" => {
             ctl.borrow_mut().add_audio_track();
         }
+        "track.rename" => ctl.borrow_mut().open_rename_field(),
         "track.mute" => {
             let mut c = ctl.borrow_mut();
             if let Some(t) = c.selected_track {
@@ -1746,6 +1747,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_track_volume, |c, id: i32, p: f32| c.set_track_gain(TrackId(id as u64), gain_from_slider(p)));
     on!(on_track_pan, |c, id: i32, p: f32| c.set_track_pan(TrackId(id as u64), p));
     on!(on_track_rename, |c, id: i32, t: slint::SharedString| c.rename_track(TrackId(id as u64), t.as_str()));
+    {
+        // Typing in a name field only records the draft: no model push per keystroke.
+        let ctl2 = ctl.clone();
+        studio.on_track_rename_draft(move |id, t| {
+            if let Ok(mut c) = ctl2.try_borrow_mut() {
+                c.rename_draft = Some((TrackId(id as u64), t.to_string()));
+            }
+        });
+        let ctl2 = ctl.clone();
+        studio.on_track_rename_cancel(move || {
+            if let Ok(mut c) = ctl2.try_borrow_mut() {
+                c.rename_draft = None;
+            }
+        });
+    }
     on!(on_track_pan_text, |c, id: i32, t: slint::SharedString| {
         if let Some(p) = controller::parse_pan_text(&t) {
             c.set_track_pan(TrackId(id as u64), p);
@@ -2756,6 +2772,7 @@ mod tests {
         assert_eq!(k.chords_for("view.toggle_assistant").len(), 1);
         assert_eq!(k.chords_for("track.arm").len(), 1);
         assert_eq!(k.chords_for("track.monitor").len(), 1);
+        assert_eq!(k.chords_for("track.rename").len(), 1);
         assert_eq!(k.chords_for("transport.record").len(), 1);
         assert_eq!(k.chords_for("app.settings").len(), 1);
     }

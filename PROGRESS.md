@@ -294,7 +294,10 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   cancels, surrounding spaces are dropped and an empty name keeps the old one. `Command::RenameTrack` already existed.
 - The field commits to the track it opened on, also when the selection moves first, and a press in the lanes or a
   clip editor commits it (`Controller::press_epoch` moves the focus back to the shortcuts). The name's accessible
-  default action opens the field.
+  default action opens the field, and ⌘R (`track.rename`, a track selected and no clip) opens the selected track's
+  header field, scrolled into view.
+- The open field mirrors its text to `Controller::rename_draft`; when the bottom panel holding it goes away (tab
+  switch, mixer, selection cleared) `push_models` commits the draft, since the field never sees its focus loss.
 - Undo of a rename is `Command::RestoreTrackName`, which puts the old name back exactly (an imported name over the
   128-character limit included). It is never deserialized, so the assistant cannot send one.
 - Self-test section `track_rename_steps` drives the inspector name with real double-clicks and keys.

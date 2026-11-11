@@ -9,7 +9,9 @@ import { Studio, TrackRow, TrackLevel } from "studio.slint";
 // A track's name that renames on double-click (Studio.track-rename): Enter, focus loss or the
 // field switching to another track commits, Escape cancels, an empty name keeps the old one. The
 // rename goes to the track the field opened on. A single click passes through as `clicked`.
-// Keyboard and assistive technology: the name's default action opens the field.
+// Keyboard: track.rename (⌘R with a track selected) opens the header row's field; assistive
+// technology: the name's default action opens the field. The typed text is mirrored to Rust
+// (track-rename-draft) so it is committed even when the panel holding the field goes away.
 export component TrackName inherits Rectangle {
     in property <int> track-id;
     in property <string> text;
@@ -20,6 +22,10 @@ export component TrackName inherits Rectangle {
     in property <bool> enabled: true;
     /// Review state only: start with the field open.
     in property <bool> review-edit;
+    /// Opens on the keyboard rename request (Studio.rename-open-epoch) for this track.
+    in property <bool> keyboard-target;
+    property <int> open-epoch: root.keyboard-target ? Studio.rename-open-epoch : 0;
+    changed open-epoch => { if (root.enabled && Studio.rename-open-id == root.track-id && !root.editing) { root.edit-id = root.track-id; root.editing = true; } }
     callback clicked();
     callback edit-done();
     property <bool> editing: root.review-edit;
@@ -51,10 +57,10 @@ export component TrackName inherits Rectangle {
             vertical-alignment: center; single-line: true; selection-background-color: #ffffff47;
             accessible-label: "Track name";
             init => { root.draft-text = self.text; self.focus(); self.select-all(); }
-            edited => { root.draft-text = self.text; }
+            edited => { root.draft-text = self.text; Studio.track-rename-draft(root.edit-id, self.text); }
             accepted => { root.editing = false; Studio.track-rename(root.edit-id, self.text); root.edit-done(); }
             key-pressed(e) => {
-                if (e.text == Key.Escape) { root.editing = false; root.edit-done(); return accept; }
+                if (e.text == Key.Escape) { root.editing = false; Studio.track-rename-cancel(); root.edit-done(); return accept; }
                 reject
             }
             changed has-focus => { if (!self.has-focus && root.editing) { root.editing = false; Studio.track-rename(root.edit-id, self.text); } }
@@ -361,7 +367,7 @@ export component TrackHeaderRow inherits Rectangle {
     }
     TrackName {
         x: 43.35px; y: root.top-y; width: root.width - self.x - 6.8px; height: 13.6px;
-        track-id: root.t.id; text: root.t.name;
+        track-id: root.t.id; text: root.t.name; keyboard-target: true;
         clicked => { Studio.select-track(root.t.id); }
         edit-done => { root.edit-done(); }
     }

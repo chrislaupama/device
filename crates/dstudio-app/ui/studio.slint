@@ -473,8 +473,14 @@ export global Studio {
     callback track-pan(int, float);
     callback track-pan-text(int, string);       // inline pan entry in the track header
     callback track-rename(int, string);         // track id, typed name (double-click a track name)
-    in property <bool> review-rename;
-    in property <int> press-epoch;   // bumps on each press in the lanes and clip editors (src/controller.rs)           // review-track-rename: the inspector name field starts open
+    callback track-rename-draft(int, string);   // the open field's text, so it survives the field's removal
+    callback track-rename-cancel();             // Escape in the field
+    in property <bool> review-rename;           // review-track-rename: the inspector name field starts open
+    in property <int> press-epoch;              // bumps on each press in the lanes and clip editors (src/controller.rs)
+    // Keyboard rename (track.rename): the header row of track `rename-open-id` opens its field
+    // each time `rename-open-epoch` changes.
+    in property <int> rename-open-epoch;
+    in property <int> rename-open-id: -1;
     callback gesture-end();
     // ---- splitters (src/splitters.rs): phase 0 press, 1 move, 2 release; window y ----
     in property <length> bottom-h: 306px;

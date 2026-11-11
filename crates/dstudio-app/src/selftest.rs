@@ -6799,8 +6799,38 @@ fn track_rename_steps() -> Vec<Step> {
             let t = &c.project().tracks;
             (t[0].name == "Keys" && t[1].name != "Keys").then_some(()).ok_or(format!("names {:?} / {:?}", t[0].name, t[1].name))
         })),
-        DoC("rename: undo four times", Box::new(|_, ctl| {
-            for _ in 0..4 {
+        DoC("rename: select track 1, Devices tab", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.set_bottom_tab(crate::controller::BottomTab::Devices);
+            let id = c.project().tracks[0].id;
+            c.select_track(id);
+        })),
+        Do("rename: double-click, type Pads, then click the Clip tab", Box::new(move |a| {
+            let (x, y) = name_xy();
+            double_click(a, x, y);
+            type_text(a, "Pads");
+            click(a, bottom_x() + 261.0 + 8.0, bottom_y() + 14.0);
+        })),
+        Check("rename: switching tabs committed Pads", Box::new(move |c, _| {
+            (name0(c) == "Pads" && c.bottom_tab == crate::controller::BottomTab::Clip && c.rename_draft.is_none()).then_some(()).ok_or(format!("name {:?} tab {:?}", name0(c), c.bottom_tab))
+        })),
+        DoC("rename: track 1 selected, no clip", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            let id = c.project().tracks[0].id;
+            c.select_track(id);
+            c.selected_clip = None;
+            c.ui_dirty = true;
+        })),
+        Do("rename: ⌘R (track.rename)", Box::new(|a| key(a, "r", true, false))),
+        Do("rename: type Strings and press Enter", Box::new(|a| {
+            type_text(a, "Strings");
+            key(a, Key::Return, false, false);
+        })),
+        Check("rename: the keyboard opened the header field and Strings was committed", Box::new(move |c, _| {
+            (name0(c) == "Strings" && c.doc.undo_label() == Some("Rename Track")).then_some(()).ok_or(format!("name {:?} undo {:?}", name0(c), c.doc.undo_label()))
+        })),
+        DoC("rename: undo six times", Box::new(|_, ctl| {
+            for _ in 0..6 {
                 ctl.borrow_mut().undo();
             }
         })),
