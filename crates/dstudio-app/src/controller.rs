@@ -2062,6 +2062,22 @@ mod tests {
         let starts: Vec<Vec<Ticks>> = c.project().tracks.iter().map(|t| t.clips.iter().map(|k| k.start).collect()).collect();
         assert_eq!(starts, vec![vec![0], vec![], vec![10 * PPQ]]);
     }
+    /// A splitter drag forgets only its own panel's collapse-button height: the mixer, shut by
+    /// the button at a custom height, still reopens there after the Devices panel is dragged.
+    #[test]
+    fn a_drag_keeps_another_panels_restore_height() {
+        let engine = Arc::new(Engine::new(dstudio_engine::Config::default()).unwrap());
+        let mut c = Controller::new(engine, Project::default());
+        c.bottom_restore.insert("mixer", Some(400.0));
+        c.bottom_restore.insert("devices", None);
+        c.mixer_open = false;
+        c.bottom_tab = BottomTab::Devices;
+        c.bottom_resize(0, 500.0);
+        c.bottom_resize(1, 400.0);
+        c.bottom_resize(2, 400.0);
+        assert_eq!(c.bottom_restore.get("mixer"), Some(&Some(400.0)));
+        assert!(!c.bottom_restore.contains_key("devices"));
+    }
     /// A master volume lane being drawn must not bring a muted master back.
     #[test]
     fn a_muted_master_ignores_a_lane_being_drawn() {
