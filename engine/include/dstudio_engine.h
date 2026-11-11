@@ -1339,6 +1339,65 @@ typedef struct se_preview_info {
 } se_preview_info; /* 40 bytes, align 8 */
 int32_t se_preview_get(se_engine* engine, se_preview_info* out);
 
+/* ---- return tracks, sends and output routing (ABI v1 addition) ----------
+ * See engine/README.md ("Return tracks and sends") and specs/002.
+ *
+ * se_session_publish_v9 is se_session_publish_v8 plus routing. A track
+ * listed in `routes` (by track_id, once) with is_return != 0 is a return
+ * track: its source is the sum of what other tracks send or route to it
+ * (its "bus"); then its insert chain, volume, pan, meters and automation
+ * work like any track's, and it plays into the master. output_track_id names
+ * the return a track plays into instead of the master (0 = master). A send
+ * copies a track's signal into a return at `gain` (linear): pre_fader != 0
+ * taps after the insert chain, before volume and pan; otherwise after them
+ * (the same signal the track's output carries). Tracks not listed play into
+ * the master and are not returns.
+ *
+ * Mute and solo: a muted track plays and sends nothing. With ordinary
+ * tracks soloed, only they play and send, and the returns keep playing
+ * (solo-safe). With returns soloed, only they play, still fed by every
+ * unmuted track that is not soloed out by an ordinary solo. A track routed
+ * into a return follows the rule for sends.
+ *
+ * Delay compensation (se_pdc_*): a return receives its inputs aligned at the
+ * latest of their chains' latencies and adds its own; every input of the
+ * master and of each return arrives aligned. The latency report lists
+ * return tracks like other tracks (their own chain latency).
+ *
+ * Validation (else SE_ERR_INVALID_ARG): arrays non-NULL when counted; route
+ * and send track ids known; a track routed at most once; at most
+ * SE_MAX_RETURNS returns; a return has no clips, notes, instrument, input,
+ * arm or monitoring, no output other than the master and no sends; an output
+ * or send target is a return track other than the track itself; a track sends
+ * to a return at most once; gain finite in 0..4. */
+#define SE_MAX_RETURNS 16
+
+typedef struct se_track_route {
+    uint64_t track_id;
+    uint64_t output_track_id; /* a return track, 0 = master */
+    uint8_t is_return;
+    uint8_t _pad[7];
+} se_track_route; /* 24 bytes, align 8 */
+
+typedef struct se_send_desc {
+    uint64_t track_id;        /* the sending track */
+    uint64_t return_track_id; /* the return it feeds */
+    float gain;               /* linear, 0..4 */
+    uint8_t pre_fader;
+    uint8_t _pad[3];
+} se_send_desc; /* 24 bytes, align 8 */
+
+typedef struct se_session_desc_v9 {
+    se_session_desc_v8 v8;
+    const se_track_route* routes;
+    uint32_t route_count;
+    uint32_t send_count;
+    const se_send_desc* sends;
+} se_session_desc_v9; /* 88 bytes, align 8 */
+
+/* MAIN THREAD (like se_session_publish_v5). */
+int32_t se_session_publish_v9(se_engine* engine, const se_session_desc_v9* session);
+
 #ifdef __cplusplus
 }
 #endif

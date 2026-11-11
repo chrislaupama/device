@@ -221,6 +221,8 @@ uint32_t add_lane(RenderGraph& g, const se_auto_lane_desc& d) {
 // order in which every source comes before the tracks that read it.
 // Sources that would form a cycle, are unknown, or exceed the tap count are
 // dropped (their readers get silence).
+// Routing edges (a track into the return it sends or plays to) are fixed;
+// only sidechain edges are cut.
 void plan_sidechains(RenderGraph& g) {
     const std::size_t n = g.tracks.size();
     g.order.resize(n);
@@ -231,6 +233,21 @@ void plan_sidechains(RenderGraph& g) {
     std::vector<std::vector<uint32_t>> readers(n);
     std::vector<uint32_t> indegree(n, 0);
     bool any = false;
+    std::vector<uint32_t> bus_track(g.bus_count, 0);
+    for (std::size_t t = 0; t < n; ++t)
+        if (g.tracks[t].bus >= 0) bus_track[static_cast<std::size_t>(g.tracks[t].bus)] = static_cast<uint32_t>(t);
+    const auto route = [&](std::size_t from, int32_t bus) {
+        const uint32_t to = bus_track[static_cast<std::size_t>(bus)];
+        if (std::find(readers[from].begin(), readers[from].end(), to) != readers[from].end()) return;
+        readers[from].push_back(to);
+        ++indegree[to];
+        any = true;
+    };
+    for (std::size_t t = 0; t < n; ++t) {
+        const TrackNode& node = g.tracks[t];
+        if (node.out_bus >= 0) route(t, node.out_bus);
+        for (uint32_t s = node.send_begin; s < node.send_begin + node.send_count; ++s) route(t, g.sends[s].bus);
+    }
     for (std::size_t t = 0; t < n; ++t) {
         const TrackNode& node = g.tracks[t];
         for (uint32_t i = 0; i < node.fx_count; ++i) {
@@ -261,8 +278,11 @@ void plan_sidechains(RenderGraph& g) {
             break;
         }
         if (progressed) continue;
-        // Cycle: take the lowest remaining track and cut its sidechains.
-        for (uint32_t t = 0; t < n; ++t) {
+        // Cycle: take the lowest remaining track that reads a sidechain from
+        // a remaining track and cut those sidechains (a cycle always has
+        // one: routing alone is acyclic).
+        bool cut = false;
+        for (uint32_t t = 0; t < n && !cut; ++t) {
             if (done[t]) continue;
             const TrackNode& node = g.tracks[t];
             for (uint32_t i = 0; i < node.fx_count; ++i) {
@@ -273,11 +293,12 @@ void plan_sidechains(RenderGraph& g) {
                     auto& rs = readers[s];
                     if (auto at = std::find(rs.begin(), rs.end(), t); at != rs.end()) rs.erase(at);
                     slot.sc_source = 0;
+                    --indegree[t];
+                    cut = true;
                 }
             }
-            indegree[t] = 0;
-            break;
         }
+        if (!cut) break; // unreachable with acyclic routing; keeps the loop finite
     }
     g.order = std::move(order);
     // Taps: one per distinct source track, in order of first use.
@@ -291,6 +312,136 @@ void plan_sidechains(RenderGraph& g) {
             slot.sc_tap = src.sc_tap;
         }
     }
+}
+
+// Routing (se_session_publish_v9): validates the routes and sends, marks
+// the returns and their buses, the outputs and sends, and collapses mute and
+// solo into audible / main_on / send_live (see dstudio_engine.h). Without
+// routes this gives every track main_on = audible, as before.
+int32_t apply_routing(RenderGraph& g, const se_session_desc_v9& desc9, std::string& err) {
+    const se_session_desc_v6& desc = desc9.v8.v7.v6;
+    if (desc9.route_count > 0 && desc9.routes == nullptr) {
+        err = "session has route_count > 0 but routes == NULL";
+        return SE_ERR_INVALID_ARG;
+    }
+    if (desc9.send_count > 0 && desc9.sends == nullptr) {
+        err = "session has send_count > 0 but sends == NULL";
+        return SE_ERR_INVALID_ARG;
+    }
+    const std::size_t n = g.tracks.size();
+    std::unordered_map<uint64_t, uint32_t> index;
+    for (std::size_t t = 0; t < n; ++t) index.emplace(g.tracks[t].track_id, static_cast<uint32_t>(t));
+    const auto find = [&](uint64_t id) -> int64_t {
+        auto it = index.find(id);
+        return it == index.end() ? -1 : static_cast<int64_t>(it->second);
+    };
+    std::vector<uint64_t> output(n, 0);
+    std::vector<bool> routed(n, false);
+    for (uint32_t i = 0; i < desc9.route_count; ++i) {
+        const se_track_route& r = desc9.routes[i];
+        const int64_t t = find(r.track_id);
+        if (t < 0) {
+            err = "route names unknown track " + std::to_string(r.track_id);
+            return SE_ERR_INVALID_ARG;
+        }
+        if (routed[static_cast<std::size_t>(t)]) {
+            err = "track " + std::to_string(r.track_id) + " is routed more than once";
+            return SE_ERR_INVALID_ARG;
+        }
+        routed[static_cast<std::size_t>(t)] = true;
+        g.tracks[static_cast<std::size_t>(t)].is_return = r.is_return != 0;
+        output[static_cast<std::size_t>(t)] = r.output_track_id;
+    }
+    // Buses, in track order.
+    for (std::size_t t = 0; t < n; ++t) {
+        TrackNode& node = g.tracks[t];
+        if (!node.is_return) continue;
+        const se_track_desc_v6& td = desc.tracks[t];
+        const std::string who = "return track " + std::to_string(node.track_id);
+        if (g.bus_count >= SE_MAX_RETURNS) {
+            err = "more than " + std::to_string(SE_MAX_RETURNS) + " return tracks";
+            return SE_ERR_INVALID_ARG;
+        }
+        if (td.clip_count > 0 || td.note_count > 0 || td.instrument != 0 || td.input_mode != SE_INPUT_NONE ||
+            td.arm != 0 || td.monitor != 0) {
+            err = who + " has clips, notes, an instrument or input";
+            return SE_ERR_INVALID_ARG;
+        }
+        if (output[t] != 0) {
+            err = who + " must play into the master";
+            return SE_ERR_INVALID_ARG;
+        }
+        node.bus = static_cast<int32_t>(g.bus_count++);
+    }
+    const auto bus_of = [&](uint64_t id, uint64_t from) -> int32_t {
+        const int64_t t = id == from ? -1 : find(id);
+        return t < 0 ? -1 : g.tracks[static_cast<std::size_t>(t)].bus;
+    };
+    for (std::size_t t = 0; t < n; ++t) {
+        if (output[t] == 0) continue;
+        TrackNode& node = g.tracks[t];
+        node.out_bus = bus_of(output[t], node.track_id);
+        if (node.out_bus < 0) {
+            err = "track " + std::to_string(node.track_id) + " plays into " + std::to_string(output[t]) + ", not a return track";
+            return SE_ERR_INVALID_ARG;
+        }
+    }
+    // Sends, grouped per track in description order.
+    std::vector<std::vector<SendNode>> per_track(n);
+    for (uint32_t i = 0; i < desc9.send_count; ++i) {
+        const se_send_desc& s = desc9.sends[i];
+        const int64_t t = find(s.track_id);
+        if (t < 0) {
+            err = "send from unknown track " + std::to_string(s.track_id);
+            return SE_ERR_INVALID_ARG;
+        }
+        auto& list = per_track[static_cast<std::size_t>(t)];
+        const std::string who = "send from track " + std::to_string(s.track_id) + " to " + std::to_string(s.return_track_id);
+        const int32_t bus = bus_of(s.return_track_id, s.track_id);
+        if (g.tracks[static_cast<std::size_t>(t)].is_return || bus < 0) {
+            err = who + ": sends go from an ordinary track to a return track";
+            return SE_ERR_INVALID_ARG;
+        }
+        if (!std::isfinite(s.gain) || s.gain < 0.0f || s.gain > 4.0f) {
+            err = who + ": gain must be finite in 0..4";
+            return SE_ERR_INVALID_ARG;
+        }
+        for (const SendNode& o : list)
+            if (o.bus == bus) {
+                err = who + ": the track already sends there";
+                return SE_ERR_INVALID_ARG;
+            }
+        SendNode node;
+        node.return_id = s.return_track_id;
+        node.bus = bus;
+        node.gain = s.gain;
+        node.pre_fader = s.pre_fader != 0;
+        list.push_back(node);
+    }
+    for (std::size_t t = 0; t < n; ++t) {
+        TrackNode& node = g.tracks[t];
+        node.send_begin = static_cast<uint32_t>(g.sends.size());
+        node.send_count = static_cast<uint32_t>(per_track[t].size());
+        g.sends.insert(g.sends.end(), per_track[t].begin(), per_track[t].end());
+    }
+    // Mute and solo.
+    bool solo_track = false, solo_return = false;
+    for (std::size_t t = 0; t < n; ++t)
+        (g.tracks[t].is_return ? solo_return : solo_track) |= desc.tracks[t].solo != 0;
+    for (std::size_t t = 0; t < n; ++t) {
+        TrackNode& node = g.tracks[t];
+        const se_track_desc_v6& td = desc.tracks[t];
+        const bool on = td.mute == 0;
+        if (node.is_return) {
+            node.main_on = on && (!solo_return || td.solo != 0);
+            node.send_live = false;
+        } else {
+            node.send_live = on && (!solo_track || td.solo != 0);
+            node.main_on = node.out_bus >= 0 ? node.send_live : on && ((!solo_track && !solo_return) || td.solo != 0);
+        }
+        node.audible = node.main_on || (node.send_live && node.send_count > 0);
+    }
+    return SE_OK;
 }
 
 } // namespace
@@ -309,8 +460,16 @@ int32_t build_render_graph(const se_session_desc_v7& desc, const AssetLookup& lo
     return build_render_graph(d8, lookup, out, err);
 }
 
-int32_t build_render_graph(const se_session_desc_v8& desc8, const AssetLookup& lookup,
+int32_t build_render_graph(const se_session_desc_v8& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err) {
+    se_session_desc_v9 d9{};
+    d9.v8 = desc;
+    return build_render_graph(d9, lookup, out, err);
+}
+
+int32_t build_render_graph(const se_session_desc_v9& desc9, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err) {
+    const se_session_desc_v8& desc8 = desc9.v8;
     const se_session_desc_v7& desc7 = desc8.v7;
     const se_session_desc_v6& desc = desc7.v6;
     if (desc.track_count > 0 && desc.tracks == nullptr) {
@@ -725,6 +884,7 @@ int32_t build_render_graph(const se_session_desc_v8& desc8, const AssetLookup& l
 
     g->synth_refs.resize(g->tracks.size());
     g->synths.assign(g->tracks.size(), nullptr);
+    if (const int32_t rc = apply_routing(*g, desc9, err); rc != SE_OK) return rc;
     plan_sidechains(*g);
 
     g->meter_count = g->tracks.size();
@@ -743,6 +903,8 @@ std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g) {
     c->clips = g.clips;
     c->notes = g.notes;
     c->fx = g.fx;
+    c->sends = g.sends;
+    c->bus_count = g.bus_count;
     c->order = g.order;
     c->sc_taps = g.sc_taps;
     c->has_plugins = g.has_plugins;

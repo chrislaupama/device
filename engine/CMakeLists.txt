@@ -419,6 +419,7 @@ if(DSTUDIO_ENGINE_BUILD_TESTS)
     tests/test_plugins.cpp
     tests/test_plugin_scan.cpp
     tests/test_pdc.cpp
+    tests/test_routing.cpp
     tests/test_automation.cpp
     tests/test_frame_ring.cpp
     tests/test_warp.cpp

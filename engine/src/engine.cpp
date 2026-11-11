@@ -455,6 +455,13 @@ int32_t Engine::publish(const se_session_desc_v7& desc, std::string& err) {
 }
 
 int32_t Engine::publish(const se_session_desc_v8& desc8, std::string& err) {
+    se_session_desc_v9 d9{};
+    d9.v8 = desc8;
+    return publish(d9, err);
+}
+
+int32_t Engine::publish(const se_session_desc_v9& desc9, std::string& err) {
+    const se_session_desc_v8& desc8 = desc9.v8;
     const se_session_desc_v6& desc = desc8.v7.v6;
     std::unique_ptr<RenderGraph> built;
     const AssetLookup lookup = [this](uint64_t id) -> AssetRef {
@@ -462,7 +469,7 @@ int32_t Engine::publish(const se_session_desc_v8& desc8, std::string& err) {
         auto it = assets_.find(id);
         return it == assets_.end() ? nullptr : it->second;
     };
-    const int32_t rc = build_render_graph(desc8, lookup, built, err);
+    const int32_t rc = build_render_graph(desc9, lookup, built, err);
     if (rc != SE_OK) return rc;
     built->sample_rate = sample_rate_;
     warp_renderer_.resolve(*built);
@@ -627,13 +634,23 @@ uint64_t Engine::install_graph(std::unique_ptr<RenderGraph> built) {
     next->line_refs.clear();
     next->lines.clear();
     if (!next->pdc.need.empty()) {
-        using Key = std::pair<int, uint64_t>; // kind (0 main, 1 source, 2 bypass, 3 metronome), id
+        // kind (0 main, 1 source, 2 bypass, 3 metronome, 4 send, 5 output edge), ids
+        using Key = std::tuple<int, uint64_t, uint64_t>;
         const auto key_of = [](const RenderGraph& g, std::size_t i) -> Key {
             const std::size_t t = g.tracks.size();
-            if (i < t) return {0, g.tracks[i].track_id};
-            if (i < 2 * t) return {1, g.tracks[i - t].track_id};
-            if (i < 2 * t + g.fx.size()) return {2, g.fx[i - 2 * t].device_id};
-            return {3, 0};
+            const std::size_t f = g.fx.size();
+            if (i < t) return {0, g.tracks[i].track_id, 0};
+            if (i < 2 * t) return {1, g.tracks[i - t].track_id, 0};
+            if (i < 2 * t + f) return {2, g.fx[i - 2 * t].device_id, 0};
+            if (i == 2 * t + f) return {3, 0, 0};
+            const std::size_t s = i - (2 * t + f + 1);
+            if (s < g.sends.size()) {
+                // the sending track: the send's position in its track's range
+                std::size_t from = 0;
+                while (from + 1 < t && g.tracks[from].send_begin + g.tracks[from].send_count <= s) ++from;
+                return {4, g.tracks[from].track_id, g.sends[s].return_id};
+            }
+            return {5, g.tracks[s - g.sends.size()].track_id, 0};
         };
         std::map<Key, std::shared_ptr<DelayLine>> previous_lines;
         if (current_)
@@ -1658,17 +1675,39 @@ void Engine::plan_pdc(RenderGraph& g) const {
     };
     // lat_i: every insert (bypassed ones too) + the instrument plugin.
     p.track_latency.assign(track_count, 0);
-    uint64_t total = 0;
+    std::vector<uint64_t> lat(track_count, 0);
     for (std::size_t t = 0; t < track_count; ++t) {
         TrackNode& node = g.tracks[t];
-        node.pdc_delay = node.pdc_src_delay = 0;
+        node.pdc_delay = node.pdc_src_delay = node.out_delay = 0;
         node.pdc_pre = false;
-        uint64_t lat = node.has_instrument_plugin ? lat_of(node.instrument_plugin) : 0;
-        for (uint32_t i = 0; i < node.fx_count; ++i) lat += lat_of(g.fx[node.fx_begin + i].inst);
-        p.track_latency[t] = static_cast<uint32_t>(std::min<uint64_t>(lat, UINT32_MAX));
-        total = std::max(total, lat);
+        lat[t] = node.has_instrument_plugin ? lat_of(node.instrument_plugin) : 0;
+        for (uint32_t i = 0; i < node.fx_count; ++i) lat[t] += lat_of(g.fx[node.fx_begin + i].inst);
+        p.track_latency[t] = static_cast<uint32_t>(std::min<uint64_t>(lat[t], UINT32_MAX));
     }
+    // Routing (spec 002): a return receives at in_r, the latest chain latency
+    // of the tracks feeding it, and reaches the master at in_r + lat_r. The
+    // master's L is the latest arrival. Muted tracks count, so mute and solo
+    // never shift timing.
+    std::vector<uint64_t> bus_in(g.bus_count, 0);
+    for (std::size_t t = 0; t < track_count; ++t) {
+        const TrackNode& node = g.tracks[t];
+        if (node.out_bus >= 0) bus_in[static_cast<std::size_t>(node.out_bus)] = std::max(bus_in[static_cast<std::size_t>(node.out_bus)], lat[t]);
+        for (uint32_t s = node.send_begin; s < node.send_begin + node.send_count; ++s) {
+            const auto b = static_cast<std::size_t>(g.sends[s].bus);
+            bus_in[b] = std::max(bus_in[b], lat[t]);
+        }
+    }
+    const auto input_of = [&](const TrackNode& node) -> uint64_t {
+        return node.bus >= 0 ? bus_in[static_cast<std::size_t>(node.bus)] : 0;
+    };
+    uint64_t total = 0;
+    for (std::size_t t = 0; t < track_count; ++t)
+        if (g.tracks[t].out_bus < 0) total = std::max(total, input_of(g.tracks[t]) + lat[t]);
+    p.track_input.assign(track_count, 0);
+    for (std::size_t t = 0; t < track_count; ++t)
+        p.track_input[t] = static_cast<uint32_t>(std::min<uint64_t>(input_of(g.tracks[t]), UINT32_MAX));
     for (FxSlot& slot : g.fx) slot.pdc_bypass_delay = slot.auto_delay = 0;
+    for (SendNode& send : g.sends) send.edge_delay = 0;
     for (TrackNode& node : g.tracks) node.auto_delay = 0;
     p.uncapped = static_cast<uint32_t>(std::min<uint64_t>(total, UINT32_MAX));
     if (!p.enabled || total == 0) {
@@ -1681,10 +1720,30 @@ void Engine::plan_pdc(RenderGraph& g) const {
         return static_cast<uint32_t>(std::min<uint64_t>(v, kPdcMaxDelay));
     };
     p.total = cap(total);
-    p.need.assign(p.metro_index(track_count, fx_count) + 1, 0);
+    const std::size_t send_count = g.sends.size();
+    p.need.assign(p.out_index(track_count, fx_count, send_count, track_count), 0);
+    // When a destination is reached: L for the master, in_r for a return.
+    const auto arrival = [&](int32_t bus) -> uint64_t {
+        return bus < 0 ? p.total : std::min<uint64_t>(bus_in[static_cast<std::size_t>(bus)], p.total);
+    };
     for (std::size_t t = 0; t < track_count; ++t) {
         TrackNode& node = g.tracks[t];
-        node.pdc_delay = p.total - std::min(p.track_latency[t], p.total);
+        // Aligned for the earliest destination after the chain; later
+        // destinations get an edge delay after the fader (or the tap).
+        const uint64_t in = input_of(node);
+        const uint64_t at = std::min<uint64_t>(in + lat[t], p.total); // when the chain's output is ready
+        uint64_t first = arrival(node.out_bus);
+        for (uint32_t s = node.send_begin; s < node.send_begin + node.send_count; ++s)
+            first = std::min(first, arrival(g.sends[s].bus));
+        first = std::max(first, at);
+        node.pdc_delay = cap(first - at);
+        node.out_delay = cap(arrival(node.out_bus) - std::min(arrival(node.out_bus), first));
+        p.need[p.out_index(track_count, fx_count, send_count, t)] = node.out_delay;
+        for (uint32_t s = node.send_begin; s < node.send_begin + node.send_count; ++s) {
+            SendNode& send = g.sends[s];
+            send.edge_delay = cap(arrival(send.bus) - std::min(arrival(send.bus), first));
+            p.need[p.send_index(track_count, fx_count, s)] = send.edge_delay;
+        }
         node.pdc_pre = node.monitor && node.input_mode != SE_INPUT_NONE;
         p.need[t] = node.pdc_delay;
         const uint64_t li = node.has_instrument_plugin ? lat_of(node.instrument_plugin) : 0;
@@ -1704,13 +1763,13 @@ void Engine::plan_pdc(RenderGraph& g) const {
         // instrument plugin's latency plus every earlier slot's (bypassed
         // ones are delayed by the same amount), plus the track delay when it
         // runs before the chain (monitoring); the fader sees lat_i + delay.
-        uint64_t before = (node.pdc_pre ? node.pdc_delay : 0) + li;
+        uint64_t before = (node.pdc_pre ? node.pdc_delay : 0) + li + in;
         for (uint32_t i = 0; i < node.fx_count; ++i) {
             FxSlot& slot = g.fx[node.fx_begin + i];
             slot.auto_delay = cap(before);
             before += lat_of(slot.inst);
         }
-        node.auto_delay = cap(static_cast<uint64_t>(std::min(p.track_latency[t], p.total)) + node.pdc_delay);
+        node.auto_delay = cap(at + node.pdc_delay);
     }
     p.need[p.metro_index(track_count, fx_count)] = p.total;
     g.pdc = std::move(p);

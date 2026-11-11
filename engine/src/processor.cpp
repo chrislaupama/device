@@ -22,7 +22,8 @@ RenderContext::RenderContext(uint32_t max_block)
     : max_block_(max_block), track_l_(max_block), track_r_(max_block), master_l_(max_block), master_r_(max_block),
       synth_(max_block), zeros_(max_block, 0.0f), plugin_l_(max_block), plugin_r_(max_block), gain_l_(max_block),
       gain_r_(max_block), auto_a_(max_block), auto_b_(max_block), param_events_(PluginInstance::kMaxParamEvents),
-      sc_(std::size_t{2} * SE_BUILTIN_MAX_SIDECHAINS * max_block, 0.0f), mod_points_(max_block / SE_MOD_GRID_FRAMES + 2),
+      sc_(std::size_t{2} * SE_BUILTIN_MAX_SIDECHAINS * max_block, 0.0f),
+      bus_(std::size_t{2} * SE_MAX_RETURNS * max_block, 0.0f), send_l_(max_block), send_r_(max_block), mod_points_(max_block / SE_MOD_GRID_FRAMES + 2),
       mod_(std::size_t{2} * kMaxModTargets * mod_points_, 0.0f), mod_binds_(kMaxModTargets) {}
 
 void kernel_add_scaled(float* __restrict dst, const float* __restrict src, float gain, uint32_t n) noexcept {
@@ -305,9 +306,45 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         std::memset(ctx.sc_l(k), 0, sizeof(float) * frames);
         std::memset(ctx.sc_r(k), 0, sizeof(float) * frames);
     }
+    // Return buses: cleared by their first writer in this block.
+    for (uint32_t k = 0; k < graph->bus_count; ++k) ctx.bus_used(k) = false;
+    const auto bus_dst = [&](int32_t bus, float*& dl, float*& dr) {
+        const auto b = static_cast<uint32_t>(bus);
+        dl = ctx.bus_l(b);
+        dr = ctx.bus_r(b);
+        if (!ctx.bus_used(b)) {
+            std::memset(dl, 0, sizeof(float) * frames);
+            std::memset(dr, 0, sizeof(float) * frames);
+            ctx.bus_used(b) = true;
+        }
+    };
+    const std::size_t send_total = graph->sends.size();
     for (std::size_t k = 0; k < track_count; ++k) {
         const std::size_t t = ordered ? graph->order[k] : k;
         const TrackNode& track = graph->tracks[t];
+        // Routing: what the bus of a return received, and the edge delay
+        // lines of this track's sends and output (null when not needed).
+        const bool bus_in = track.bus >= 0 && ctx.bus_used(static_cast<uint32_t>(track.bus));
+        const auto send_line = [&](uint32_t s) -> DelayLine* {
+            return lines != nullptr && graph->sends[s].edge_delay != 0
+                       ? lines[graph->pdc.send_index(track_count, graph->fx.size(), s)]
+                       : nullptr;
+        };
+        DelayLine* const out_line =
+            lines != nullptr && track.out_delay != 0
+                ? lines[graph->pdc.out_index(track_count, graph->fx.size(), send_total, t)]
+                : nullptr;
+        const auto discard_edges = [&] {
+            if (out_line != nullptr) out_line->discard(frames, gen);
+            for (uint32_t s = track.send_begin; s < track.send_begin + track.send_count; ++s)
+                if (DelayLine* l = send_line(s)) l->discard(frames, gen);
+        };
+        bool edge_pending = false;
+        if (lines != nullptr && track.audible) {
+            edge_pending = out_line != nullptr && !out_line->idle(track.out_delay, gen);
+            for (uint32_t s = track.send_begin; s < track.send_begin + track.send_count && !edge_pending; ++s)
+                if (DelayLine* l = send_line(s)) edge_pending = !l->idle(graph->sends[s].edge_delay, gen);
+        }
         Synth* const synth = track.instrument && !track.has_instrument_plugin && inst.synths != nullptr
                                  ? inst.synths[t]
                                  : nullptr;
@@ -329,9 +366,11 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             pending = (main_line != nullptr && !main_line->idle(track.pdc_delay, gen)) ||
                       (src_line != nullptr && !src_line->idle(track.pdc_src_delay, gen));
         }
-        if (synth == nullptr && !routed && !track_plugins && (!track.audible || !playing) && !pending) {
+        if (synth == nullptr && !routed && !track_plugins && !bus_in && (!track.audible || !playing) && !pending &&
+            !edge_pending) {
             if (main_line != nullptr) main_line->discard(frames, gen);
             if (src_line != nullptr) src_line->discard(frames, gen);
+            discard_edges();
             continue;
         }
         // Modulation sources run first: their outputs drive this block's targets.
@@ -358,6 +397,13 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                 line->discard(frames, gen);
             }
         };
+
+        // A return track's source: its bus.
+        if (bus_in && track.audible) {
+            std::memcpy(tl, ctx.bus_l(static_cast<uint32_t>(track.bus)), sizeof(float) * frames);
+            std::memcpy(tr, ctx.bus_r(static_cast<uint32_t>(track.bus)), sizeof(float) * frames);
+            any = true;
+        }
 
         const ClipNode* clip = graph->clips.data() + track.clip_begin;
         const ClipNode* const clip_end = track.audible && playing ? clip + track.clip_count : clip;
@@ -525,12 +571,88 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             }
         }
         if (main_line != nullptr && !track.pdc_pre) delay_track(main_line, track.pdc_delay);
-        if (!any || !track.audible) continue;
+        if (!any && edge_pending) { // an edge line still has a tail to give
+            std::memset(tl, 0, sizeof(float) * frames);
+            std::memset(tr, 0, sizeof(float) * frames);
+            any = true;
+        }
+        if (!any || !track.audible) {
+            discard_edges();
+            continue;
+        }
+
+        // The track's signal into (dl, dr): post-fader (volume and pan,
+        // static or automated) or pre-fader, times `s`, through `line`.
+        const bool automated = track.vol_lane >= 0 || track.pan_lane >= 0;
+        float* const gl = ctx.gain_l();
+        float* const gr = ctx.gain_r();
+        const auto mix = [&](float* dl, float* dr, bool post, float s, DelayLine* line, uint32_t d) {
+            if (line == nullptr) {
+                if (!post) {
+                    kernel_add_scaled2(dl, dr, tl, tr, s, s, frames);
+                } else if (!automated) {
+                    kernel_add_scaled2(dl, dr, tl, tr, track.gain_l * s, track.gain_r * s, frames);
+                } else if (s == 1.0f) {
+                    kernel_add_mul2(dl, dr, tl, tr, gl, gr, frames);
+                } else {
+                    for (uint32_t i = 0; i < frames; ++i) {
+                        dl[i] += tl[i] * gl[i] * s;
+                        dr[i] += tr[i] * gr[i] * s;
+                    }
+                }
+                return;
+            }
+            float* const xl = ctx.send_l();
+            float* const xr = ctx.send_r();
+            if (post && automated) {
+                for (uint32_t i = 0; i < frames; ++i) {
+                    xl[i] = tl[i] * gl[i] * s;
+                    xr[i] = tr[i] * gr[i] * s;
+                }
+            } else {
+                const float a = post ? track.gain_l * s : s;
+                const float b = post ? track.gain_r * s : s;
+                for (uint32_t i = 0; i < frames; ++i) {
+                    xl[i] = tl[i] * a;
+                    xr[i] = tr[i] * b;
+                }
+            }
+            line->process(xl, xr, frames, d, gen);
+            kernel_add_scaled(dl, xl, 1.0f, frames);
+            kernel_add_scaled(dr, xr, 1.0f, frames);
+        };
+        const auto run_sends = [&](bool pre) {
+            for (uint32_t s = track.send_begin; s < track.send_begin + track.send_count; ++s) {
+                const SendNode& send = graph->sends[s];
+                if (send.pre_fader != pre) continue;
+                DelayLine* const line = send_line(s);
+                if (!track.send_live) {
+                    if (line != nullptr) line->discard(frames, gen);
+                    continue;
+                }
+                float* dl = nullptr;
+                float* dr = nullptr;
+                bus_dst(send.bus, dl, dr);
+                mix(dl, dr, !pre, send.gain, line, send.edge_delay);
+            }
+        };
+        if (track.send_count > 0) run_sends(true);
+        // The output: into the master, or a return's bus.
+        const auto play_output = [&] {
+            if (!track.main_on) {
+                if (out_line != nullptr) out_line->discard(frames, gen);
+                return;
+            }
+            float* dl = ml;
+            float* dr = mr;
+            if (track.out_bus >= 0) bus_dst(track.out_bus, dl, dr);
+            mix(dl, dr, true, 1.0f, out_line, track.out_delay);
+        };
 
         float meter_gl = std::fabs(track.gain_l);
         float meter_gr = std::fabs(track.gain_r);
-        if (track.vol_lane < 0 && track.pan_lane < 0) {
-            kernel_add_scaled2(ml, mr, tl, tr, track.gain_l, track.gain_r, frames);
+        if (!automated) {
+            play_output();
             if (track.sc_tap >= 0) {
                 const auto k2 = static_cast<uint32_t>(track.sc_tap);
                 kernel_add_scaled2(ctx.sc_l(k2), ctx.sc_r(k2), tl, tr, track.gain_l, track.gain_r, frames);
@@ -538,8 +660,6 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
         } else {
             // Automated fader: the lanes replace the static gain / pan.
             const uint32_t d = lines != nullptr ? track.auto_delay : 0;
-            float* const gl = ctx.gain_l();
-            float* const gr = ctx.gain_r();
             if (track.vol_lane >= 0) {
                 fill_lane(graph->lanes[track.vol_lane], d, auto_db_to_gain, gl);
             } else {
@@ -563,7 +683,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
                     gl[i] *= pl;
                 }
             }
-            kernel_add_mul2(ml, mr, tl, tr, gl, gr, frames);
+            play_output();
             if (track.sc_tap >= 0) {
                 const auto k2 = static_cast<uint32_t>(track.sc_tap);
                 kernel_add_mul2(ctx.sc_l(k2), ctx.sc_r(k2), tl, tr, gl, gr, frames);
@@ -571,6 +691,7 @@ BlockPeaks render_block(const RenderGraph* graph, int64_t position, bool playing
             meter_gl = kernel_peak(gl, frames);
             meter_gr = kernel_peak(gr, frames);
         }
+        if (track.send_count > 0) run_sends(false);
         if (update_meters) {
             TrackMeter& m = graph->meters[t];
             const float pl = kernel_peak(tl, frames) * meter_gl;

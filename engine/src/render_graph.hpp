@@ -13,8 +13,9 @@
 // other until the master sum, so a worker pool can render disjoint track
 // ranges into per-worker scratch buffers and the RT thread then sums them.
 // The graph is already a flat, read-only array, which is what a lock-free
-// work-stealing scheduler wants. Buses/sends will turn this into a DAG with a
-// precomputed topological order; this milestone only has track -> master.
+// work-stealing scheduler wants. Return tracks and sends (se_session_publish_v9)
+// make it a DAG: `order` is a topological order (sources before the returns
+// and sidechain readers that depend on them).
 #pragma once
 
 #include "asset.hpp"
@@ -168,12 +169,36 @@ struct TrackNode {
     bool pdc_pre = false;       // monitoring input: delay only the playback source, before the chain
     // Sidechain tap fed with this track's post-fader output (-1 = none).
     int32_t sc_tap = -1;
+    // Routing (se_session_publish_v9). `audible`: the track is heard on its
+    // output or through its sends; main_on: its output is live; send_live:
+    // its sends are live. A return reads bus `bus` (RenderContext::bus_l/r);
+    // out_bus: the bus the output plays into (-1 = master). Sends:
+    // RenderGraph::sends[send_begin, send_begin + send_count).
+    bool is_return = false;
+    bool main_on = false;
+    bool send_live = false;
+    int32_t bus = -1;
+    int32_t out_bus = -1;
+    uint32_t send_begin = 0;
+    uint32_t send_count = 0;
+    // Delay compensation: extra delay on the output edge (after the fader)
+    // when its destination receives later than the track's earliest one.
+    uint32_t out_delay = 0;
     // Modulation: source slots (RenderGraph::mod_sources, fx indices) and
     // the instrument plugin's modulated parameters (RenderGraph::mod_targets).
     uint32_t msrc_begin = 0;
     uint32_t msrc_count = 0;
     uint32_t imod_begin = 0;
     uint32_t imod_count = 0;
+};
+
+// One send of a track into a return's bus (se_send_desc).
+struct SendNode {
+    uint64_t return_id = 0;
+    int32_t bus = 0;
+    float gain = 1.0f;
+    bool pre_fader = false;
+    uint32_t edge_delay = 0; // delay compensation after the tap (see TrackNode::out_delay)
 };
 
 // Plugin delay compensation plan of a graph (docs/adr/0004). Computed on the
@@ -186,14 +211,25 @@ struct PdcPlan {
     uint32_t uncapped = 0;     // L before clamping
     std::vector<uint32_t> track_latency; // lat_i per track (reported even when disabled)
     // Delay line layout (RenderGraph::lines): [main per track][source per
-    // track][bypass per fx slot][metronome]. need[i] = frames line i must
-    // delay (0 = no line). Empty when no delay is needed.
+    // track][bypass per fx slot][metronome][edge per send][output edge per
+    // track]. need[i] = frames line i must delay (0 = no line). Empty when
+    // no delay is needed.
     std::vector<uint32_t> need;
     std::size_t src_index(std::size_t track_count, std::size_t t) const noexcept { return track_count + t; }
     std::size_t slot_index(std::size_t track_count, std::size_t f) const noexcept { return 2 * track_count + f; }
     std::size_t metro_index(std::size_t track_count, std::size_t fx_count) const noexcept {
         return 2 * track_count + fx_count;
     }
+    std::size_t send_index(std::size_t track_count, std::size_t fx_count, std::size_t s) const noexcept {
+        return 2 * track_count + fx_count + 1 + s;
+    }
+    std::size_t out_index(std::size_t track_count, std::size_t fx_count, std::size_t send_count,
+                          std::size_t t) const noexcept {
+        return 2 * track_count + fx_count + 1 + send_count + t;
+    }
+    // Arrival of each track's input relative to the timeline (returns: the
+    // latest of their sources' chain latencies; 0 for other tracks).
+    std::vector<uint32_t> track_input;
 };
 
 // Number of buckets in the se_meters_peek sliding window (each bucket covers
@@ -219,6 +255,8 @@ struct RenderGraph {
     std::vector<ClipNode> clips;
     std::vector<NoteEvent> notes;
     std::vector<FxSlot> fx; // insert chains, track after track
+    std::vector<SendNode> sends; // per track, contiguous (TrackNode::send_begin)
+    uint32_t bus_count = 0;      // return tracks (buses in use, <= SE_MAX_RETURNS)
     // Track processing order (sidechain sources first; identity without
     // sidechains) and the number of sidechain taps in use.
     std::vector<uint32_t> order;
@@ -295,12 +333,14 @@ std::unique_ptr<RenderGraph> clone_render_graph(const RenderGraph& g);
 // balance control to stereo sources (left gain on the left channel).
 void constant_power_pan(float pan, float& left, float& right) noexcept;
 
-// Validates and copies the description. Returns an se_result code. The v1..v5
+// Validates and copies the description. Returns an se_result code. The v1..v8
 // entry points convert to v6 (v1..v5: no automation lanes) (v1: no instrument, no notes; v1/v2: default
 // synth parameters; v1..v3: no arm/monitor/input; v1..v4: no devices).
 // Synth states are not assigned here (see RenderGraph::synth_refs); `synths`
 // is sized and null. Plugin slots are created with null instances (the
 // engine resolves them in the same track/device order).
+int32_t build_render_graph(const se_session_desc_v9& desc, const AssetLookup& lookup,
+                           std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v8& desc, const AssetLookup& lookup,
                            std::unique_ptr<RenderGraph>& out, std::string& err);
 int32_t build_render_graph(const se_session_desc_v7& desc, const AssetLookup& lookup,
