@@ -106,15 +106,15 @@ pub fn fmt_bpm(bpm: f64) -> String {
     }
 }
 
-/// A typed tempo: a number within the allowed range, kept to two decimals.
+/// A typed tempo: a number within the allowed range, kept to two decimals. A "bpm" suffix is
+/// allowed; any other text is not.
 pub fn parse_bpm(text: &str) -> Option<f64> {
-    let v: f64 = text
-        .trim()
-        .trim_end_matches(|c: char| c.is_ascii_alphabetic() || c.is_whitespace())
-        .trim()
-        .replace(',', ".")
-        .parse()
-        .ok()?;
+    let t = text.trim();
+    let t = match t.len().checked_sub(3) {
+        Some(i) if t.is_char_boundary(i) && t[i..].eq_ignore_ascii_case("bpm") => t[..i].trim_end(),
+        _ => t,
+    };
+    let v: f64 = t.replace(',', ".").parse().ok()?;
     if !v.is_finite() {
         return None;
     }
@@ -216,6 +216,7 @@ impl Controller {
             0 => {
                 self.tf.drag = Some((self.project().transport.bpm, false));
                 self.tf.merge_rev = None;
+                self.tf.taps.clear();
             }
             1 => {
                 let Some((start, moved)) = self.tf.drag else {
@@ -237,11 +238,19 @@ impl Controller {
         self.ui_dirty = true;
     }
 
+    /// One BPM up or down (the tempo field's accessible increment and decrement), its own undo
+    /// step.
+    pub fn tempo_step(&mut self, delta: i32) {
+        let bpm = (self.project().transport.bpm + delta as f64).clamp(MIN_BPM, MAX_BPM);
+        self.tempo_text(&bpm.to_string());
+    }
+
     /// The typed tempo (double-click on the readout).
     pub fn tempo_text(&mut self, text: &str) {
         match parse_bpm(text) {
             Some(bpm) => {
                 self.tf.merge_rev = None;
+                self.tf.taps.clear();
                 if (self.project().transport.bpm - bpm).abs() > 1e-9 {
                     self.doc.seal_coalescing();
                     self.execute(Command::SetTempo { bpm });
@@ -449,6 +458,9 @@ mod tests {
         assert_eq!(parse_bpm("1500"), Some(MAX_BPM));
         assert_eq!(parse_bpm("5"), Some(MIN_BPM));
         assert_eq!(parse_bpm("fast"), None);
+        assert_eq!(parse_bpm("120slow"), None);
+        assert_eq!(parse_bpm("120 BPM"), Some(120.0));
+        assert_eq!(parse_bpm("bpm"), None);
         assert_eq!(parse_bpm("NaN"), None);
     }
 

@@ -665,6 +665,8 @@ pub fn app_keymap() -> Keymap {
             k.bindings.push(Binding { action: action.into(), chords: vec![Chord::parse(chord).expect("valid chord")], when: Condition::TrackSelected });
         }
     }
+    // Tap tempo from the keyboard (the transport bar's TAP).
+    k.bindings.push(Binding { action: "transport.tap_tempo".into(), chords: vec![Chord::parse("shift+t").expect("valid chord")], when: Condition::Always });
     // Musical typing: the tooltip reads "K / ⇧K"; the core preset has only K.
     k.bindings.push(Binding { action: "view.musical_typing".into(), chords: vec![Chord::parse("shift+k").expect("valid chord")], when: Condition::Always });
     // Piano roll (↑/↓ transpose, Delete, B/E, the toolbar's R = Reverse
@@ -760,6 +762,7 @@ fn run_action(ctl: &Ctl, action: &str) -> bool {
         "midi.select_all" => ctl.borrow_mut().pr_select_all(),
         "midi.reverse" => ctl.borrow_mut().pr_action("reverse"),
         "view.musical_typing" => ctl.borrow_mut().typing_toggle(),
+        "transport.tap_tempo" => ctl.borrow_mut().tap_tempo(),
         "view.escape" => {
             let mut c = ctl.borrow_mut();
             if c.devmm_cancel() || c.editor_cancel() || c.panel_cancel_drag() || c.panel_cancel_field() || c.panel_cancel_canvas() || c.mod_disarm() || (c.synth.menu.is_none() && c.synth_cancel()) {
@@ -1818,6 +1821,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_tempo_drag, |c, phase: i32, dx: f32, dy: f32| c.tempo_drag(phase, dx, dy));
     on!(on_tempo_text, |c, t: slint::SharedString| c.tempo_text(t.as_str()));
     on!(on_tap_tempo, |c| c.tap_tempo());
+    on!(on_tempo_step, |c, delta: i32| c.tempo_step(delta));
     on!(on_sig_menu_toggle, |c| c.sig_menu_toggle());
     on!(on_sig_menu_pick, |c, i: i32| c.sig_menu_pick(i.max(0) as usize));
     on!(on_key_menu_toggle, |c| c.key_menu_toggle());
@@ -2154,8 +2158,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             // The open Sig menu or key picker takes arrows, Enter, Space (and M, Delete in the picker).
+            // (Not behind a modal: Settings and the dialogs keep their keys.)
             if !primary && !alt && !ctrl {
-                let used = ctl.try_borrow_mut().is_ok_and(|mut c| c.transport_menu_key(&chord.key));
+                let used = ctl.try_borrow_mut().is_ok_and(|mut c| {
+                    let modal = c.settings.open || c.export.open || c.unsaved_open || c.updates_open || c.undo_history_open;
+                    !modal && c.transport_menu_key(&chord.key)
+                });
                 if used {
                     if let Some(a) = aw.upgrade()
                         && let Ok(mut c) = ctl.try_borrow_mut()

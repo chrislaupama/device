@@ -297,6 +297,9 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   `Command::SetProjectKey`, which the composer, Shape and key-following devices already read.
 - A change of pace while tapping starts a new undo step. Keyboard: in the open Sig menu Up/Down and Enter or Space;
   in the open key picker the arrows move over the roots, Enter or Space picks, M switches Major / Minor, Delete or
-  Backspace is No key. Both openers and every choice have accessible default actions. Opening or replacing the
-  project drops a tempo gesture in progress.
+  Backspace is No key (not while Settings or a dialog is open). Both openers and every choice have accessible default
+  actions. Opening or replacing the project drops a tempo gesture in progress.
+- Shift+T taps the tempo (`transport.tap_tempo`). The tempo field's accessible default action opens the typed editor
+  and its increment / decrement step one BPM. A typed tempo takes an optional "bpm" suffix and refuses other text;
+  typing or dragging the tempo ends a tap series.
 - Self-test section `transport_fields_steps`; review states `review-transport-sig` and `review-transport-key`.

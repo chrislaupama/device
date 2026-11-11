@@ -109,6 +109,10 @@ component Header inherits Rectangle {
             x: 729px; y: 41px; width: 31px; height: 22px;
             mouse-cursor: MouseCursor.ns-resize;
             accessible-role: spinbox; accessible-label: "Tempo"; accessible-value: Studio.bpm-text;
+            accessible-description: "Double-click or use the default action to type a tempo";
+            accessible-action-default => { root.bpm-editing = true; }
+            accessible-action-increment => { Studio.tempo-step(1); }
+            accessible-action-decrement => { Studio.tempo-step(-1); }
             pointer-event(e) => {
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.tempo-drag(0, 0, 0); }
                 if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) { Studio.tempo-drag(2, 0, 0); }
@@ -138,7 +142,8 @@ component Header inherits Rectangle {
         Rectangle {
             x: 762px; y: 44px; width: 23px; height: 15px; border-radius: 3px;
             background: tap-ta.pressed ? Tokens.accent : tap-ta.has-hover ? #404146 : #34353a;
-            accessible-role: button; accessible-label: "Tap tempo";
+            accessible-role: button; accessible-label: "Tap tempo"; accessible-description: "Shift+T";
+            accessible-action-default => { Studio.tap-tempo(); }
             Text { text: "TAP"; color: #e5e5e8; font-size: 7.75px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
             tap-ta := TouchArea {
                 pointer-event(e) => { if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) { Studio.tap-tempo(); } }

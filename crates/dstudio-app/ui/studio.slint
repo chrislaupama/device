@@ -363,6 +363,7 @@ export global Studio {
     in property <length> sig-menu-rule;
     callback tempo-drag(int, length, length);      // phase 0 press, 1 move, 2 release; offset from the press
     callback tempo-text(string);                   // typed tempo (double-click the readout)
+    callback tempo-step(int);                     // the tempo field's accessible increment (+1) / decrement (-1)
     callback tap-tempo();
     callback sig-menu-toggle();
     callback sig-menu-pick(int);

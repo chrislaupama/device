@@ -6845,6 +6845,43 @@ fn transport_fields_steps() -> Vec<Step> {
         Check("transport: no key after Backspace, picker closed", Box::new(|c, a| {
             (c.project().transport.key.is_none() && !a.global::<Studio>().get_key_menu_open()).then_some(()).ok_or(format!("key {:?}", c.project().transport.key))
         })),
+        Do("transport: type 120slow", Box::new(|a| a.global::<Studio>().invoke_tempo_text("120slow".into()))),
+        Check("transport: text after the number is refused, still 97.5", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: three taps at 120, type 97.5, one more tap", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            for t in [700.0, 700.5, 701.0] {
+                c.tap_tempo_at(t);
+            }
+            c.tempo_text("97.5");
+            c.tap_tempo_at(701.5);
+        })),
+        Check("transport: typing ended the tap series: still 97.5", Box::new(move |c, _| (bpm(c) == 97.5).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: type 97.5 again (ends the series)", Box::new(|_, ctl| ctl.borrow_mut().tempo_text("97.5"))),
+        Do("transport: Shift+T twice, half a second apart", Box::new(|a| {
+            key(a, "T", false, true);
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            key(a, "T", false, true);
+        })),
+        Check("transport: Shift+T taps the tempo (about 120)", Box::new(move |c, _| ((100.0..=140.0).contains(&bpm(c))).then_some(()).ok_or(format!("bpm {}", bpm(c))))),
+        DoC("transport: back to 97.5, then Settings open with the Sig menu", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.tempo_text("97.5");
+            c.sig_menu_toggle();
+            c.toggle_settings();
+        })),
+        Do("transport: Down and Enter behind Settings", Box::new(|a| {
+            key(a, Key::DownArrow, false, false);
+            key(a, Key::Return, false, false);
+        })),
+        Check("transport: the signature did not change behind Settings", Box::new(|_, a| {
+            let s = a.global::<Studio>();
+            (s.get_sig_text() == "7/8").then_some(()).ok_or(format!("sig {}", s.get_sig_text()))
+        })),
+        DoC("transport: close Settings and the menu", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            c.toggle_settings();
+            c.transport_menus_dismiss();
+        })),
         DoC("transport: back to 120 BPM and 4/4", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
             c.execute(dstudio_core::Command::SetTempo { bpm: 120.0 });
