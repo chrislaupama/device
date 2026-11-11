@@ -852,6 +852,9 @@ impl Controller {
                 let lo = c.notes.iter().map(|n| n.pitch).min().unwrap_or(60) as i32;
                 let hi = c.notes.iter().map(|n| n.pitch).max().unwrap_or(60) as i32;
                 self.pr.scroll = 0.0;
+                // The panel may have changed height while the editor was hidden (the size is
+                // otherwise only refreshed when it renders): centre in the height it opens at.
+                self.pr.size.1 = self.pr_panel_h();
                 let v = self.pr_view();
                 self.pr.scroll = (v.y_of(lo) + v.y_of(hi)) / 2.0 - GRID_Y + v.row_h / 2.0 - (v.h - GRID_Y) / 2.0;
             }
@@ -891,6 +894,12 @@ impl Controller {
         let bar = self.project().ticks_per_bar() as f64 / PPQ as f64;
         let beats = crate::timeline::note_snap_beats(v.ppb / REF, bar, self.snap.grid);
         ((beats * PPQ as f64).round() as Ticks).max(1)
+    }
+
+    /// Height of the clip editor's texture (grid, plus the velocity lane when open) in the
+    /// bottom panel as it is laid out now.
+    pub fn pr_panel_h(&self) -> f32 {
+        (self.bottom_h() - PANEL_ORIGIN.1 - FOOTER_H).max(1.0)
     }
 
     pub fn pr_view(&self) -> PrView {
@@ -1789,13 +1798,14 @@ mod tests {
         let track = c.project().tracks.iter().find(|t| t.kind == dstudio_core::TrackKind::Instrument).unwrap().id;
         let notes = vec![Note { id: 1, pitch: 60, start: 0, length: PPQ, velocity: 100 }, Note { id: 2, pitch: 64, start: PPQ, length: PPQ, velocity: 100 }];
         c.execute(Command::AddMidiClip { track, clip: MidiClip { id: dstudio_core::ClipId(900), notes, ..MidiClip::empty(0, 4 * PPQ) } });
-        c.pr.size = (1000.0, 420.0);
+        c.pr.size = (1000.0, 900.0); // stale: the panel is shorter now
         c.pr.vel_lane = true;
         c.set_bottom_tab(BottomTab::Clip);
         c.select_clip(Some(dstudio_core::ClipId(900)));
         c.pr.clip = None;
         c.pr_sync_clip();
         let v = c.pr_view();
+        assert_eq!(c.pr.size.1, c.pr_panel_h(), "centred in the panel's current height");
         assert!(v.lane > 0.0 && v.h < c.pr.size.1, "the lane takes height from the grid");
         let middle = (v.y_of(60) + v.y_of(64)) / 2.0 + v.row_h / 2.0;
         let grid_middle = GRID_Y + (v.h - GRID_Y) / 2.0;
