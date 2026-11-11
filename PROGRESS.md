@@ -287,6 +287,16 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Not yet: the engine ignores the routing (returns publish as empty tracks) and the app has no UI for it. Next: engine
   (spec 002 T4-T8), then the UI (T9).
 
+### 2026-11-11: piano roll velocity lane
+
+- The velocity button in the piano-roll toolbar opens a 68-unit lane under the note grid (the grid gives up that
+  height). Each note has a stem from the lane floor to its velocity (1 to 127). Dragging a stem moves the velocity
+  of that note, or of the whole selection when the note is selected; a press on empty lane paints the stems the
+  pointer sweeps across (the selection only, when there is one). Each gesture is one "Note Velocity" undo step.
+- Code: `pianoroll.rs` (`VEL_H`, `vel_y`/`vel_at`, `PrDrag::Velocity`, `pr_vel_pointer`, `paint_velocity`, the
+  `vel_lane` draw). Review state `review-pr-velocity`; self-test section "velocity"; unit test
+  `velocity_lane_maps_and_paints`.
+
 ### 2026-11-11: MIDI input, engine side (spec 003)
 
 - Spec `specs/003-midi-input-and-recording/` (spec, plan, tasks). This first part is the engine and the C ABI; the
@@ -305,10 +315,19 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Core: `midi_record` turns a pass's captured note events into one `AddMidiClip` per armed instrument track (clip
   from the start bar to the bar after the last note or stop; looped passes cover the loop and overdub).
 - App (`midi_in.rs`, `recording.rs`): R and I work on instrument tracks, and only armed or monitoring instrument
-  tracks play the keyboard (selecting a track does not); record starts MIDI capture (MIDI-only passes start the transport themselves) and stop adds
-  the clips to the pass's single "Record" undo step, after any audio takes; the live "Recording" clip draws the
-  notes as they are played. Settings › MIDI lists the inputs (activity light, on/off switch, preference
+  tracks play the keyboard (selecting a track does not); record starts MIDI capture (MIDI-only passes start the
+  transport themselves) and stop adds the clips to the pass's single "Record" undo step, after any audio takes; the
+  live "Recording" clip draws the notes as they are played. Settings › MIDI lists the inputs (activity light, on/off switch, preference
   `midi.disabled_inputs`); ports are rescanned every 2 s (every 100 ms while that page shows). Self-test and
   screenshot runs never open real ports.
 - Review states: `--state review-midi-recording`, `--state review-settings-midi` (fake input list).
 - Self-test: instrument R/I steps and a recorded MIDI pass (inject, live clip, stop, clip and notes, undo).
+
+### 2026-11-11: master mute and bottom panel collapse
+
+- `Project::master_mute` (saved only when on) and `Command::SetMasterMute` ("Master Mute Change"). The snapshot sends a
+  muted master as gain 0 with no master volume lane, so automation cannot bring it back; the fader keeps its value.
+  The mixer's master M toggles it, and the timeline's master row dims and reads "Master (muted)".
+- The collapse button in the bottom panel header (Clip/Devices and the mixer) shuts the panel to its tab row and reopens
+  it at the height it had (`Controller::toggle_bottom_collapse`, src/splitters.rs). Like the splitter it is a view
+  change saved with the project, not an undo step; a panel shut by dragging reopens at its default height.

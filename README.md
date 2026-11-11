@@ -42,12 +42,13 @@ wgpu.
 
 - **Timeline.** Import audio, move and trim clips, loop a range, and play against a metronome. Waveforms, clips and the
   playhead are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips.
-- **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them.
+- **Piano roll.** Draw, move and resize notes, then quantize, transpose or humanize them. A velocity lane under the
+  notes lets you drag one note's velocity, or sweep across several to paint them.
 - **Recording.** Arm tracks, pick inputs, monitor, and record takes that land where you played them: latency
   compensation is measured with an acoustic loopback test, not guessed.
 - **MIDI input.** Plug in a MIDI keyboard, arm (R) or monitor (I) instrument tracks to play them, and record
   what you play into MIDI clips, looped passes included. Core MIDI, Windows MIDI and the ALSA sequencer.
-- **Mixer.** Faders, pan, mute, solo, stereo meters with peak hold, and a master strip.
+- **Mixer.** Faders, pan, mute, solo, stereo meters with peak hold, and a master strip with its own mute.
 - **Instruments.** A subtractive/FM synth, a sampler, a drum rack and a pad sampler, all built in.
 - **Effects.** 20 built-in effects, from compression and saturation to modulation and audio restoration.
 - **Modulation and chains.** An LFO that moves any device parameter, and Chains that group effects under eight
@@ -140,7 +141,7 @@ decisions behind rendering, recording, plugins, delay compensation and automatio
 | Area | Status | Still missing |
 |---|:---:|---|
 | Timeline and audio clips | ✅ | Clip loop, track rename and resize |
-| Piano roll and MIDI | 🚧 | Velocity lane, note audition |
+| Piano roll and MIDI | 🚧 | Note audition |
 | Built-in instruments | ✅ | |
 | Built-in effects | ✅ | More devices are planned |
 | Plugin hosting | 🚧 | Plugin editor windows on Linux |
