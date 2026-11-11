@@ -410,6 +410,8 @@ impl Controller {
                 }
                 (None, dstudio_core::TrackKind::Audio) => SetContent::Audio(Vec::new()),
                 (None, dstudio_core::TrackKind::Instrument) => SetContent::Midi(Vec::new()),
+                // Return tracks have no material of their own (track renders are dry).
+                (None, dstudio_core::TrackKind::Return) => continue,
             };
             if t.mute {
                 off.push(t.name.clone());
