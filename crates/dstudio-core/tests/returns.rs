@@ -408,3 +408,59 @@ fn snapshot_carries_routing_and_track_renders_are_dry() {
     let rp = render_plan::render_project(d.project(), &span, render_plan::RenderMode::Stem);
     assert!(rp.track(audio).unwrap().sends.is_empty() && rp.track(audio).unwrap().output.is_none());
 }
+
+#[test]
+fn a_saved_return_holding_clips_loads_as_an_ordinary_track_and_can_be_removed_and_restored() {
+    let mut p = Project::default();
+    let rid = TrackId(p.alloc_id());
+    let mut r = Track::new(rid, TrackKind::Return, "Return A", ColorIndex(9));
+    r.midi_clips.push(MidiClip::empty(0, PPQ));
+    r.arm = true;
+    p.tracks.push(r);
+    let empty = TrackId(p.alloc_id());
+    let mut e = Track::new(empty, TrackKind::Return, "Return B", ColorIndex(9));
+    e.arm = true;
+    e.monitor = true;
+    e.input = Some(InputSource { channel: 0, stereo: false });
+    p.tracks.push(e);
+    p.tracks[0].sends = vec![TrackSend::new(rid), TrackSend::new(empty)];
+    let dir = tempfile::tempdir().unwrap();
+    persist::save(&p, dir.path()).unwrap();
+    let p = persist::load(dir.path()).unwrap().project;
+    // The return with MIDI keeps its clip as an instrument track; sends into it are gone.
+    let t = &p.tracks[p.track_index(rid).unwrap()];
+    assert_eq!(t.kind, TrackKind::Instrument);
+    assert_eq!(t.midi_clips.len(), 1);
+    assert_eq!(p.tracks[0].sends, vec![TrackSend::new(empty)]);
+    // The empty return stays a return without input, arm or monitor, after the ordinary tracks.
+    let last = p.tracks.last().unwrap();
+    assert!(last.id == empty && last.is_return() && !last.arm && !last.monitor && last.input.is_none());
+    // Every track can be removed and the undo puts it back exactly.
+    let mut d = Document::new(p);
+    for id in [rid, empty] {
+        let before = d.project().clone();
+        d.execute(Command::RemoveTrack { track: id }, Origin::User).unwrap();
+        d.undo().unwrap();
+        assert_eq!(d.project(), &before);
+    }
+}
+
+#[test]
+fn returns_beyond_the_cap_load_as_audio_tracks() {
+    let mut p = Project::default();
+    let ids: Vec<TrackId> = (0..MAX_RETURNS + 2)
+        .map(|i| {
+            let id = TrackId(p.alloc_id());
+            p.tracks.push(Track::new(id, TrackKind::Return, &format!("R{i}"), ColorIndex(9)));
+            id
+        })
+        .collect();
+    p.sanitize_routing();
+    assert_eq!(p.returns().count(), MAX_RETURNS);
+    assert_eq!(p.returns().map(|t| t.id).collect::<Vec<_>>(), ids[..MAX_RETURNS]);
+    for id in &ids[MAX_RETURNS..] {
+        let t = &p.tracks[p.track_index(*id).unwrap()];
+        assert_eq!(t.kind, TrackKind::Audio);
+    }
+    assert!(p.tracks.iter().skip_while(|t| !t.is_return()).all(|t| t.is_return()));
+}
