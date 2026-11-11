@@ -37,13 +37,16 @@ component SendLine inherits Rectangle {
     level-ta := TouchArea {
         x: root.track-x - 4 * root.u; width: root.track-w + 8 * root.u;
         pointer-event(e) => {
-            if (e.kind == PointerEventKind.up) { Studio.send-gesture-end(); }
+            if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) { Studio.send-gesture-end(); }
         }
         moved => { if (self.pressed) { Studio.send-pos(root.r.track, root.r.target, max(0, min(1, (self.mouse-x - 4 * root.u) / root.track-w))); } }
         clicked => { Studio.send-pos(root.r.track, root.r.target, max(0, min(1, (self.mouse-x - 4 * root.u) / root.track-w))); Studio.send-gesture-end(); }
         double-clicked => { Studio.send-reset(root.r.track, root.r.target); }
     }
     accessible-role: slider; accessible-label: "Send to " + root.r.name; accessible-value: root.r.db-text;
+    // Assistive technology steps the level by 2 % of the slider, one undo step each.
+    accessible-action-increment => { Studio.send-pos(root.r.track, root.r.target, min(1, root.r.pos + 0.02)); Studio.send-gesture-end(); }
+    accessible-action-decrement => { Studio.send-pos(root.r.track, root.r.target, max(0, root.r.pos - 0.02)); Studio.send-gesture-end(); }
 }
 
 // One channel strip. `master` switches to the master layout (white name bar, no sends,
@@ -118,7 +121,11 @@ component Strip inherits Rectangle {
                 sends-box.scroll-raw = max(0px, min(sends-box.max-scroll, sends-box.scroll - e.delta-y));
                 accept
             }
-            for r in Studio.strip-sends: SendLine { visible: r.track == root.s.id; x: 0; y: r.row * 20 * root.u - sends-box.scroll; width: parent.width; r: r; }
+            // Only this strip's rows (a contiguous range of strip-sends), not every strip's.
+            for k in root.s.send-count: SendLine {
+                r: Studio.strip-sends[root.s.send-first + k];
+                x: 0; y: self.r.row * 20 * root.u - sends-box.scroll; width: parent.width;
+            }
         }
         if sends-box.max-scroll > 0: Rectangle {
             x: parent.width - 2px; y: sends-box.scroll / sends-box.content-h * parent.height; width: 2px;

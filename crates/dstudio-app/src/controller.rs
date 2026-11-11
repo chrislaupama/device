@@ -1977,11 +1977,21 @@ impl Controller {
         // ---- mixer strips ----
         s.set_mixer_open(self.mixer_open);
         let first_return = p.ordinary_track_count();
+        // Each strip's range in the strip-sends model (push_routing: ordinary tracks in order,
+        // one row per send to an existing return).
+        let mut send_first = 0;
         let strips: Vec<MixerStrip> = p
             .tracks
             .iter()
             .enumerate()
-            .map(|(i, t)| MixerStrip {
+            .map(|(i, t)| {
+                let n = if t.is_return() { 0 } else { t.sends.iter().filter(|x| p.track(x.target).is_some_and(|r| r.is_return())).count() as i32 };
+                send_first += n;
+                (i, t, send_first - n, n)
+            })
+            .map(|(i, t, first, n)| MixerStrip {
+                send_first: first,
+                send_count: n,
                 id: t.id.0 as i32,
                 name: t.name.clone().into(),
                 instrument: t.kind == TrackKind::Instrument,

@@ -2378,10 +2378,15 @@ fn returns_steps() -> Vec<Step> {
             let ok = p.tracks.len() == n1.get() + 1 && r.is_return() && r.name == "Return A" && s.len() == 1 && s[0].target == r.id && s[0].level == 1.0 && !s[0].pre_fader && c.doc.undo_label() == Some("Add Send");
             ok.then_some(()).ok_or(format!("{} tracks, last {:?} {:?}, sends {s:?}, undo {:?}", p.tracks.len(), r.kind, r.name, c.doc.undo_label()))
         })),
-        DoC("returns: drag the send knob down 40 pt", Box::new(move |a, ctl| {
-            lv.set(ctl.borrow().doc.history_labels().iter().filter(|l| l.as_str() == "Send Level Change").count());
+        DoC("returns: drag the send knob down 40 pt (coalescing window 0: only the held gesture merges the moves)", Box::new(move |a, ctl| {
+            {
+                let mut c = ctl.borrow_mut();
+                lv.set(c.doc.history_labels().iter().filter(|l| l.as_str() == "Send Level Change").count());
+                c.doc.coalesce_window = std::time::Duration::ZERO;
+            }
             let (x, y) = (bottom_x() + 101.0, row_y(0.0) + 21.0);
             drag(a, x, y, x, y + 40.0);
+            ctl.borrow_mut().doc.coalesce_window = std::time::Duration::from_millis(750);
         })),
         Check("returns: send level below 0 dB, one 'Send Level Change' step for the drag", Box::new(move |c, _| {
             let lvl = c.project().tracks[0].sends.first().map_or(1.0, |s| s.level);

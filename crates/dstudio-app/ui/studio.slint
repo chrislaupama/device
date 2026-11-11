@@ -286,6 +286,8 @@ export struct MixerStrip {
     pan-text: string,
     fader: float,   // 0 (top, +6 dB) .. 1 (bottom, -inf)
     gain-text: string, // gain readout: "0.0", "+1.5", "−12.0", "−∞" at or below -60 dB
+    send-first: int,   // this strip's rows in Studio.strip-sends: send-first .. send-first + send-count
+    send-count: int,
 }
 export struct StripMeter { l: float, r: float, peak: string }   // 0 (top) .. 1 (silent)
 // One send (src/routing.rs): sender track id, its row among the sender's sends, the return

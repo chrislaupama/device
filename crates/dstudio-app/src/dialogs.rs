@@ -486,6 +486,10 @@ impl Controller {
             let _ = writeln!(notes, "\nMuted in DStudio, so turned off in the set: {}.", off.join(", "));
         }
         let _ = writeln!(notes, "\nNot carried over: automation and device settings. Track colours are not matched to Live's palette.");
+        let returns: Vec<&str> = p.returns().map(|r| r.name.as_str()).collect();
+        if !returns.is_empty() {
+            let _ = writeln!(notes, "Return tracks ({}) and sends are not carried over either: every track is rendered dry, without its sends and as if its Out went to the master.", returns.join(", "));
+        }
         std::fs::write(folder.join("DStudio Export Notes.txt"), notes).map_err(|e| e.to_string())?;
         Ok((vec![als], restart))
     }

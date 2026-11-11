@@ -849,6 +849,8 @@ component Inspector inherits Rectangle {
                 released => { Studio.send-gesture-end(); }
                 reset => { Studio.send-reset(r.track, r.target); }
                 accessible-role: slider; accessible-label: "Send to " + r.name; accessible-value: r.db-text;
+                accessible-action-increment => { Studio.send-pos(r.track, r.target, min(1, r.pos + 0.02)); Studio.send-gesture-end(); }
+                accessible-action-decrement => { Studio.send-pos(r.track, r.target, max(0, r.pos - 0.02)); Studio.send-gesture-end(); }
             }
             Text { x: 124px; y: 6px; width: 20px; height: 12px; text: "Pre"; color: Tokens.text-tertiary; font-size: 8.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
             Switch { x: 124px; y: 21px; on: r.pre; toggled => { Studio.send-toggle-pre(r.track, r.target); } }
