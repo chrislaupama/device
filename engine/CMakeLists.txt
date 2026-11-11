@@ -146,6 +146,7 @@ add_library(dstudio_engine STATIC
   src/engine.cpp
   src/processor.cpp
   src/recorder.cpp
+  src/midi_input.cpp
   src/render_graph.cpp
   src/resampler.cpp
   src/synth.cpp
@@ -215,6 +216,10 @@ add_library(dstudio_engine STATIC
   src/platform/coreaudio_device.cpp
   src/platform/pipewire_device.cpp
   src/platform/wasapi_device.cpp
+  src/platform/midi_backend_stub.cpp
+  src/platform/alsa_midi_input.cpp
+  src/platform/coremidi_input.cpp
+  src/platform/winmm_midi_input.cpp
   src/platform/os.cpp
 )
 if(WIN32)
@@ -255,12 +260,13 @@ endif()
 if(APPLE)
   target_link_libraries(dstudio_engine PUBLIC
     "-framework AudioToolbox" "-framework AudioUnit" "-framework CoreAudio" "-framework CoreFoundation"
-    "-framework CoreAudioKit" "-framework AppKit" "-framework Foundation" "-framework Accelerate")
+    "-framework CoreAudioKit" "-framework AppKit" "-framework Foundation" "-framework Accelerate"
+    "-framework CoreMIDI")
 endif()
 if(WIN32)
   # ole32: COM (WASAPI, MMDevice); shell32: CommandLineToArgvW; avrt: MMCSS;
-  # user32: plugin editor windows.
-  target_link_libraries(dstudio_engine PUBLIC ole32 shell32 avrt user32)
+  # user32: plugin editor windows; winmm: MIDI input.
+  target_link_libraries(dstudio_engine PUBLIC ole32 shell32 avrt user32 winmm)
 elseif(NOT APPLE)
   target_link_libraries(dstudio_engine PUBLIC ${CMAKE_DL_LIBS})
 endif()
@@ -285,6 +291,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_include_directories(dstudio_engine PRIVATE
       $<TARGET_PROPERTY:PkgConfig::X11,INTERFACE_INCLUDE_DIRECTORIES>)
     target_compile_definitions(dstudio_engine PRIVATE DSTUDIO_HAVE_X11=1)
+  endif()
+  # MIDI input (src/platform/alsa_midi_input.cpp). OFF builds an engine
+  # without MIDI ports (se_midi_inject still works). Only the headers are
+  # needed: libasound is loaded with dlopen when MIDI is first used.
+  option(DSTUDIO_ENGINE_ALSA_MIDI "Build ALSA sequencer MIDI input (needs libasound2 development files)" ON)
+  if(DSTUDIO_ENGINE_ALSA_MIDI)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(ALSA REQUIRED alsa)
+    target_include_directories(dstudio_engine SYSTEM PRIVATE ${ALSA_INCLUDE_DIRS})
+    target_link_libraries(dstudio_engine PUBLIC ${CMAKE_DL_LIBS})
+    target_compile_definitions(dstudio_engine PRIVATE DSTUDIO_HAVE_ALSA=1)
   endif()
 endif()
 find_package(Threads REQUIRED)
@@ -434,6 +451,7 @@ if(DSTUDIO_ENGINE_BUILD_TESTS)
     tests/test_rt_safety.cpp
     tests/test_features.cpp
     tests/test_midi.cpp
+    tests/test_midi_input.cpp
     tests/test_synth.cpp
     tests/test_recording.cpp
     tests/test_plugins.cpp

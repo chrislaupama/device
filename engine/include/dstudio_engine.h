@@ -1339,6 +1339,73 @@ typedef struct se_preview_info {
 } se_preview_info; /* 40 bytes, align 8 */
 int32_t se_preview_get(se_engine* engine, se_preview_info* out);
 
+/* ---- MIDI input (specs/003-midi-input-and-recording) ----------------------
+ * The engine reads MIDI input ports (Core MIDI on macOS, the Windows
+ * multimedia MIDI API, the ALSA sequencer on Linux; none elsewhere) and
+ * plays what arrives on instrument tracks, from the next audio block:
+ *  - every instrument track whose `arm` or `monitor` is set, or, when no
+ *    instrument track has either,
+ *  - the instrument track set with se_midi_set_focus (the selected track).
+ * Messages are folded onto channel 1. Notes go to the track's instrument
+ * (the built-in synth, a built-in instrument or an instrument plugin);
+ * controllers, pitch bend and aftertouch go to instruments that take raw
+ * MIDI. A track that stops receiving (routing change, port closed) gets
+ * note-offs for the keys it still holds. Up to 256 messages are delivered
+ * per audio callback; each port queues up to 1024 more (then drops and
+ * counts them).
+ * Nothing is opened until se_midi_inputs_open names ports; the MIDI system
+ * itself is first touched by se_midi_inputs_list / se_midi_inputs_open. */
+typedef struct se_midi_input_info {
+    char id[SE_DEVICE_STRING_MAX];   /* stable id, UTF-8 (what se_midi_inputs_open takes) */
+    char name[SE_DEVICE_STRING_MAX]; /* display name, UTF-8 (truncated) */
+    uint64_t events;                 /* messages received since it was opened (activity) */
+    uint8_t open;                    /* 1 while open */
+    uint8_t _pad[7];
+} se_midi_input_info; /* 528 bytes, align 8 */
+
+/* Lists the MIDI input ports present now (rescans). Writes up to `capacity`;
+ * *out_count receives the total (which may exceed capacity). No MIDI system
+ * -> SE_OK with 0 ports. MAIN THREAD. */
+int32_t se_midi_inputs_list(se_engine* engine, se_midi_input_info* out, size_t capacity, size_t* out_count);
+/* Opens exactly the ports in `ids` that exist and closes every other open
+ * port (count 0 closes all). Ids that are not present are ignored. At most
+ * 16 ports are open at once. A port that fails to open -> SE_ERR_DEVICE
+ * (se_last_error names it; the others are still opened). MAIN THREAD. */
+int32_t se_midi_inputs_open(se_engine* engine, const char* const* ids, size_t count);
+/* Delivers one channel message (status 0x80..0xEF) as if a port had sent it
+ * (tests, on-screen keyboards). Not a channel message -> SE_ERR_INVALID_ARG;
+ * queue full -> SE_ERR_STATE. MAIN THREAD. */
+int32_t se_midi_inject(se_engine* engine, uint8_t status, uint8_t data1, uint8_t data2);
+/* The instrument track that plays MIDI input while no instrument track is
+ * armed or monitoring (the selected track); 0 = none. Any thread. */
+int32_t se_midi_set_focus(se_engine* engine, uint64_t track_id);
+
+/* Capture (MIDI recording). While enabled and the transport plays, every
+ * note-on and note-off delivered to instruments is written to a ring of
+ * 4096 events with the timeline frame it was heard at: the block position
+ * minus the output latency and delay compensation, folded back into the
+ * loop after a loop wrap. Enabling empties the ring. The app reads it with
+ * se_midi_capture_read (one reader). MAIN THREAD. */
+typedef struct se_midi_captured {
+    int64_t frame;   /* timeline frame (engine rate); may be < 0 near the start */
+    uint8_t status;  /* 0x90 note-on or 0x80 note-off (channel 1) */
+    uint8_t data1;   /* pitch */
+    uint8_t data2;   /* velocity (note-off: release velocity) */
+    uint8_t _pad[5];
+} se_midi_captured; /* 16 bytes, align 8 */
+int32_t se_midi_capture_enable(se_engine* engine, uint8_t enabled);
+/* Pops up to `capacity` captured events in order; *out_count receives how
+ * many were written. MAIN THREAD. */
+int32_t se_midi_capture_read(se_engine* engine, se_midi_captured* out, size_t capacity, size_t* out_count);
+
+typedef struct se_midi_stats {
+    uint64_t received;        /* messages received from ports and se_midi_inject */
+    uint64_t delivered;       /* messages handed to the audio thread's routing */
+    uint64_t dropped;         /* messages lost to a full port queue */
+    uint64_t capture_dropped; /* captured events lost to a full capture ring */
+} se_midi_stats; /* 32 bytes, align 8 */
+int32_t se_midi_stats_get(se_engine* engine, se_midi_stats* out);
+
 #ifdef __cplusplus
 }
 #endif

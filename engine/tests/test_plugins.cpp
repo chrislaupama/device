@@ -503,6 +503,31 @@ TEST_CASE(preview_note_plays_through_a_plugin_instrument_with_transport_stopped)
     CHECK_EQ(preview_notes(e), 0);
 }
 
+// MIDI input (spec 003) reaches an instrument plugin through the plugin's own
+// event path: the focus track's CLAP instrument plays the note and stops on
+// the note-off, with the transport stopped.
+TEST_CASE(midi_input_plays_a_plugin_instrument) {
+    EngineHandle e(48000, 256);
+    const se_device_desc sine_plug = clap(30, kClapSine, "studio.dstudio.test.sine");
+    Session5 s;
+    s.instrument(1, {}, &sine_plug, {});
+    REQUIRE(s.publish(e) == SE_OK);
+    REQUIRE(se_midi_set_focus(e, 1) == SE_OK);
+    REQUIRE(se_midi_inject(e, 0x90, 69, 127) == SE_OK);
+    const auto l = left(stopped_render(e, 4800));
+    CHECK(peak(l) > 0.1f);
+    int crossings = 0;
+    for (std::size_t i = 1; i < l.size(); ++i) crossings += l[i - 1] < 0.0f && l[i] >= 0.0f;
+    CHECK(crossings >= 43 && crossings <= 45); // A4 over 0.1 s
+    REQUIRE(se_midi_inject(e, 0x80, 69, 0) == SE_OK);
+    stopped_render(e, 512);
+    CHECK(peak(stopped_render(e, 512)) == 0.0f);
+    // Another track in focus: the plugin hears nothing.
+    REQUIRE(se_midi_set_focus(e, 0) == SE_OK);
+    REQUIRE(se_midi_inject(e, 0x90, 69, 127) == SE_OK);
+    CHECK(peak(stopped_render(e, 1024)) == 0.0f);
+}
+
 TEST_CASE(plugin_instrument_dls_onset) {
     if (!kHaveAu) SKIP(kNoAu);
     EngineHandle e(48000, 256);

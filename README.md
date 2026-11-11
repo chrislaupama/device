@@ -2,11 +2,7 @@
 
 <div align="center">
 
-<h1>Device Studio</h1>
-
-<h3>Built for real time.</h3>
-
-<p>A desktop digital audio workstation with a real-time C++ engine and a GPU-drawn Rust interface, for macOS, Windows and Linux.</p>
+<h1><img alt="Device Studio. Built for real time. An open-source DAW with a C++ engine and a GPU-drawn interface, for macOS, Windows and Linux, hosting AU, VST3 and CLAP, with 44 built-in devices." src="docs/assets/art/hero.png" width="100%"></h1>
 
 <p>
   <a href="https://github.com/chrislaupama/device/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/chrislaupama/device/actions/workflows/ci.yml/badge.svg?branch=main"></a>
@@ -24,10 +20,6 @@
   <a href="docs/devices.md"><b>Devices</b></a> ·
   <a href="PROGRESS.md"><b>Progress</b></a>
 </p>
-
-<br>
-
-<img alt="Device Studio with automation lanes over an audio track, an instrument track and the master, and the Synth open below" src="docs/assets/screenshot.png" width="900">
 
 </div>
 
@@ -68,26 +60,18 @@ wgpu.
 - **Assistant.** An optional side panel that can explain the app (Teach) or make edits for you (Assist), each turn as
   one undo step. It uses your own Anthropic API key.
 
-<table>
-  <tr>
-    <td width="50%"><a href="docs/assets/screenshot-timeline.png"><img alt="The timeline with two imported audio clips and their waveforms on separate tracks" src="docs/assets/screenshot-timeline.png"></a></td>
-    <td width="50%"><a href="docs/assets/screenshot-synth.png"><img alt="The Synth on an instrument track, showing a triangle and an FM oscillator with their waveform displays" src="docs/assets/screenshot-synth.png"></a></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Timeline</sub></td>
-    <td align="center"><sub>Synth</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><a href="docs/assets/screenshot-character-mod.png"><img alt="Character Mod in a track's device chain, with its delay sweep display and rate, depth, width, voice and mix knobs" src="docs/assets/screenshot-character-mod.png"></a></td>
-    <td width="50%"><a href="docs/assets/screenshot-drum-rack.png"><img alt="The Drum Rack's sixteen pads next to the sampler for the selected pad" src="docs/assets/screenshot-drum-rack.png"></a></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Character Mod</sub></td>
-    <td align="center"><sub>Drum Rack</sub></td>
-  </tr>
-</table>
+### A closer look
 
-<sub>Screenshots are rendered by the app itself (<code>device-studio --screenshot</code>) on Linux with a software GPU.</sub>
+<p align="center"><img alt="Timeline: arrange, record and automate. Clips, waveforms and automation lanes are drawn on the GPU, so the timeline stays at 60 fps with thousands of clips. Shown: automation lanes for track volume, pan and a synth's cutoff over an audio track, an instrument track and the master." src="docs/assets/art/feature-timeline.png" width="100%"></p>
+
+<p align="center"><img alt="Instruments: four instruments, built in. A synth, a sampler, a drum rack and a pad sampler, each one declarative definition that automation, presets, undo and saving all derive from. Shown: the Synth's two oscillators with their waveform displays." src="docs/assets/art/feature-instruments.png" width="100%"></p>
+
+<p align="center"><img alt="Effects: from compression to restoration. Dynamics, EQ, saturation, modulation, delay, reverb, pitch and repair tools, plus your own AU, VST3 and CLAP plugins. Shown: Pitch Corrector, Tuner and Spectrum side by side in a track's device chain." src="docs/assets/art/feature-effects.png" width="100%"></p>
+
+<p align="center"><img alt="Modulation: make anything move. An LFO that drives any device parameter, Chains that put a group of effects under eight macros, and automation for the rest. Shown: an LFO in sync mode driving a Compressor parameter." src="docs/assets/art/feature-modulation.png" width="100%"></p>
+
+<sub>The app's views are rendered by the app itself (<code>device-studio --screenshot</code>) on Linux with a software GPU, then
+framed by <code>tools/art/render.mjs</code>. More screenshots are in <a href="docs/assets/">docs/assets</a>.</sub>
 
 ### Built-in devices
 
@@ -110,13 +94,18 @@ behind it. [docs/devices.md](docs/devices.md) explains how they work and how to 
 ### Project files
 
 A project is a `Name.dsproj/` folder holding a versioned JSON document, so it diffs cleanly and is easy to keep in
-version control. Projects saved before the rename to Device Studio (`Name.saineproj/`) still open. Plugin state is saved inside it. Audio files stay where they are: the project references each one by a
+version control. Plugin state is saved inside it. Audio files stay where they are: the project references each one by a
 path relative to the project (when both are on the same drive) and by its absolute path. To move a project, move its
 media with it and keep the same layout around the project folder, or leave the media at its original absolute path
 (always the case for media on another Windows drive). A backup of the project folder alone
 does not include the audio, so back up the media too. The format is versioned, but it isn't frozen until the first release.
 
 ## Under the hood
+
+<p align="center"><img alt="The Rust app sends validated commands to the Rust core, which hands the C++23 engine an immutable snapshot over a C ABI. 128 audio tracks render a 256-frame block in about 12 microseconds, 0.2% of the 5.3 ms deadline." src="docs/assets/art/architecture.png" width="100%"></p>
+
+<details>
+<summary>The same layers as text</summary>
 
 ```
  Rust app (Slint shell + wgpu surfaces)      crates/dstudio-app
@@ -128,6 +117,8 @@ does not include the audio, so back up the media too. The format is versioned, b
  C++23 real-time engine                      engine/
    Core Audio · WASAPI · PipeWire     AU · VST3 · CLAP hosting
 ```
+
+</details>
 
 - **The UI holds no state of its own.** It renders from the document and the engine's readouts, and every change goes
   through a command, which is what makes undo, saving and the assistant all work the same way.
@@ -219,13 +210,11 @@ cargo run --release -p dstudio-app -- --self-test --no-audio     # drive the app
 | `docs/` | Architecture, ADRs, built-in devices, build guide |
 | `specs/` | Specs for non-trivial work, their templates and the project's principles |
 | `.agents/skills/`, `AGENTS.md` | Skills and a guide for coding agents working on this codebase |
-| `tools/` | macOS app bundle script, the rename helper and the skills checker |
+| `tools/` | macOS app bundle script, the artwork renderer and the skills checker |
 | `ui-spike/` | The Slint and wgpu interop spike behind ADR 0001 |
 
-The app was called Saine Studio until November 2026. Internal names use `dstudio` (`dstudio-*` crates, the `dstudio::`
-namespace, `DSTUDIO_*` build options and environment variables), never `device`, which already names effects and
-instruments throughout the code. A branch started before the rename can run `python3 tools/rename/remove_saine.py`
-before merging main.
+Internal names use `dstudio` (`dstudio-*` crates, the `dstudio::` namespace, `DSTUDIO_*` build options and
+environment variables), never `device`, which already names effects and instruments throughout the code.
 
 ```sh
 cargo test --workspace                     # core, FFI and end-to-end tests
@@ -263,6 +252,11 @@ finishes something it describes, the same pull request updates it:
 - **Get Device Studio** and **Build from source** when platform support, requirements or build steps change, along
   with [docs/building.md](docs/building.md).
 - **Under the hood** when the benchmark numbers in [engine/README.md](engine/README.md) change noticeably.
+- **Artwork** in `docs/assets/art/` (the banner, the close-ups, the architecture panel and the social preview) when
+  the screenshots, the device count or the benchmark numbers it shows change. The sources are the HTML pages in
+  [docs/art/](docs/art/); edit one and run `node tools/art/render.mjs` (it needs Playwright: `npm install --no-save
+  playwright && npx playwright install chromium`). The social preview is uploaded by hand in the repository's Settings,
+  General, Social preview.
 - **Screenshots** in `docs/assets/` when the part of the interface they show changes visibly. Render them with the
   app itself, e.g. `device-studio --no-audio --state review-automation --screenshot docs/assets/screenshot.png
   --exit-after-frames 5`; the states used are listed in each image's pull request.

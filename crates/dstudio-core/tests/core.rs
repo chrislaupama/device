@@ -203,31 +203,10 @@ fn save_and_reopen_project() {
 #[test]
 fn load_rejects_newer_schema_and_foreign_files() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("project.json"), r#"{"format":"saine-project","schema_version":99,"saved_with":"x","project":{}}"#).unwrap();
+    std::fs::write(dir.path().join("project.json"), r#"{"format":"device-studio-project","schema_version":99,"saved_with":"x","project":{}}"#).unwrap();
     assert!(matches!(persist::load(dir.path()), Err(persist::PersistError::TooNew { .. })));
     std::fs::write(dir.path().join("project.json"), r#"{"format":"other","schema_version":1,"saved_with":"x","project":{}}"#).unwrap();
     assert!(matches!(persist::load(dir.path()), Err(persist::PersistError::WrongFormat(_))));
-}
-
-#[test]
-fn load_opens_projects_saved_before_the_rename() {
-    let (mut d, track, _) = doc_with_asset();
-    let device = dstudio_core::builtin::find("compressor").unwrap().instantiate();
-    d.execute(Command::AddDevice { track, index: None, device }, Origin::User).unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let old = dir.path().join("Song.saineproj");
-    persist::save(d.project(), &old).unwrap();
-    let json = std::fs::read_to_string(old.join("project.json")).unwrap();
-    assert!(json.contains(&format!("\"format\": \"{}\"", persist::FORMAT)));
-    let legacy = json.replace(persist::FORMAT, persist::LEGACY_FORMATS[0]).replace(dstudio_core::builtin::VENDOR, "Saine Studio");
-    assert!(legacy.contains("\"vendor\": \"Saine Studio\""));
-    std::fs::write(old.join("project.json"), legacy).unwrap();
-    let loaded = persist::load(&old).unwrap();
-    // Built-in devices get the current vendor name; nothing else changes.
-    assert_eq!(loaded.project.tracks, d.project().tracks);
-    // Saving again writes the current format tag.
-    persist::save(&loaded.project, &old).unwrap();
-    assert!(std::fs::read_to_string(old.join("project.json")).unwrap().contains(persist::FORMAT));
 }
 
 #[test]
@@ -381,16 +360,27 @@ fn arm_monitor_input_commands() {
     d.execute(Command::SetTrackInput { track: audio, input: Some(input) }, Origin::User).unwrap();
     d.execute(Command::SetTrackArm { track: audio, arm: true }, Origin::User).unwrap();
     d.execute(Command::SetTrackMonitor { track: audio, monitor: true }, Origin::User).unwrap();
-    assert!(d.execute(Command::SetTrackArm { track: inst, arm: true }, Origin::User).is_err());
+    // Instrument tracks arm and monitor for MIDI input, but take no audio input.
+    d.execute(Command::SetTrackArm { track: inst, arm: true }, Origin::User).unwrap();
+    assert_eq!(d.undo_label(), Some("Arm Track"));
+    d.execute(Command::SetTrackMonitor { track: inst, monitor: true }, Origin::User).unwrap();
     assert!(d.execute(Command::SetTrackInput { track: inst, input: Some(input) }, Origin::User).is_err());
     let (snap, _) = snapshot::build(d.project(), 48_000.0, &HashMap::new());
     assert!(snap.tracks[0].arm && snap.tracks[0].monitor && snap.tracks[0].input == Some(input));
+    assert!(snap.tracks[1].arm && snap.tracks[1].monitor && snap.tracks[1].input.is_none());
     assert_eq!(d.undo_label(), Some("Input Monitoring Change"));
-    d.undo().unwrap();
-    d.undo().unwrap();
-    d.undo().unwrap();
+    for _ in 0..5 {
+        d.undo().unwrap();
+    }
     let t = d.project().track(audio).unwrap();
     assert!(!t.arm && !t.monitor && t.input.is_none());
+    let t = d.project().track(inst).unwrap();
+    assert!(!t.arm && !t.monitor);
+    d.redo().unwrap();
+    d.redo().unwrap();
+    d.redo().unwrap();
+    d.redo().unwrap();
+    assert!(d.project().track(inst).unwrap().arm);
 }
 
 #[test]

@@ -88,8 +88,10 @@ cmake --preset default && cmake --build --preset default && ctest --preset defau
 CMake must be 3.25 or newer. Ubuntu 24.04 and Debian 13 ship one; on Ubuntu 22.04 (CMake 3.22) install a newer one
 first, for example `pip install --user cmake` or Kitware's APT repository (apt.kitware.com), and check `cmake --version`.
 
-The X11, Wayland, xkbcommon, fontconfig and udev packages are for the app;
-the engine itself needs only `pkg-config` and `libpipewire-0.3-dev`.
+The Wayland, xkbcommon, fontconfig and udev packages are for the app;
+the engine itself needs only `pkg-config`, `libpipewire-0.3-dev`, the `libasound2-dev` headers
+(for MIDI input; leave them out with `-DDSTUDIO_ENGINE_ALSA_MIDI=OFF`) and the `libx11-dev`
+headers (for plugin windows; leave them out with `-DDSTUDIO_ENGINE_X11=OFF`).
 
 #### PipeWire notes
 
@@ -120,6 +122,11 @@ the engine itself needs only `pkg-config` and `libpipewire-0.3-dev`.
 * To build without PipeWire (an engine with no device I/O): configure CMake
   with `-DDSTUDIO_ENGINE_PIPEWIRE=OFF`, or set `DSTUDIO_ENGINE_PIPEWIRE=OFF` in the
   environment for a cargo build.
+* MIDI input uses the ALSA sequencer (`libasound2-dev`, already in the package
+  list above, for the headers; the library is loaded at run time, so a system
+  without libasound runs with no MIDI inputs). Without a sequencer (no `/dev/snd/seq`, as in most containers)
+  the MIDI input list is empty. To build without ALSA: `-DDSTUDIO_ENGINE_ALSA_MIDI=OFF`,
+  or `DSTUDIO_ENGINE_ALSA_MIDI=OFF` in the environment for a cargo build.
 
 Plugin editor windows on Linux use X11, which Wayland desktops provide
 through XWayland. The build needs the libX11 headers (`libx11-dev`); the

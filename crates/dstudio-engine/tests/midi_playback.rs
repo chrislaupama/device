@@ -139,6 +139,9 @@ fn audio_tracks_ignore_notes_and_v2_keeps_audio_working() {
     let snap = snapshot::SessionSnapshot {
         tracks: vec![snapshot::TrackSnapshot {
             track_id: 1,
+            is_return: false,
+            output: None,
+            sends: Vec::new(),
             gain: 1.0,
             pan: 0.0,
             mute: false,

@@ -79,7 +79,7 @@ pub struct TrackSnapshot {
     pub notes: Vec<NoteSnapshot>,
     /// Enabled, non-empty automation lanes.
     pub automation: Vec<LaneSnapshot>,
-    /// Recording/monitoring state (audio tracks).
+    /// Recording/monitoring state (audio tracks: their input; instrument tracks: MIDI input).
     pub arm: bool,
     pub monitor: bool,
     pub input: Option<crate::model::InputSource>,
@@ -89,6 +89,21 @@ pub struct TrackSnapshot {
     pub instrument_plugin: Option<crate::device::Device>,
     /// Built-in instrument parameters (instrument tracks only).
     pub synth: Option<crate::instrument::SynthParams>,
+    /// A return track: its source is what other tracks send to it (spec 002).
+    pub is_return: bool,
+    /// Where the track plays into: a return track's id, or the master (None).
+    pub output: Option<u64>,
+    /// Sends into return tracks.
+    pub sends: Vec<SendSnapshot>,
+}
+
+/// One send of a track into a return track.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SendSnapshot {
+    pub target: u64,
+    /// Linear gain.
+    pub gain: f32,
+    pub pre_fader: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -202,6 +217,9 @@ pub fn build_full(
             arm: t.arm,
             monitor: t.monitor,
             input: t.input,
+            is_return: t.is_return(),
+            output: t.output.map(|o| o.0),
+            sends: t.sends.iter().map(|s| SendSnapshot { target: s.target.0, gain: s.level, pre_fader: s.pre_fader }).collect(),
             notes: {
                 let mut v: Vec<NoteSnapshot> = t
                     .midi_clips

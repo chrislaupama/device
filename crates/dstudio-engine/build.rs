@@ -10,9 +10,9 @@
 
 /// Configures and builds the engine with CMake, then emits the link lines for
 /// the target OS: system frameworks on macOS, libpipewire (unless
-/// `DSTUDIO_ENGINE_PIPEWIRE` is off), libstdc++ and libdl on Linux (the engine
-/// loads libX11 itself when a plugin editor opens), and the COM,
-/// shell, MMCSS and user32 libraries on Windows.
+/// `DSTUDIO_ENGINE_PIPEWIRE` is off), libstdc++ and libdl on Linux (libasound,
+/// for MIDI input, and libX11, when a plugin editor opens, are loaded at run
+/// time), and the COM, shell, MMCSS, user32 and winmm libraries on Windows.
 fn main() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let engine = manifest.join("../../engine");
@@ -22,6 +22,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=FETCHCONTENT_SOURCE_DIR_DSTUDIO_CLAP");
     println!("cargo:rerun-if-env-changed=FETCHCONTENT_SOURCE_DIR_DSTUDIO_VST3SDK");
     println!("cargo:rerun-if-env-changed=DSTUDIO_ENGINE_PIPEWIRE");
+    println!("cargo:rerun-if-env-changed=DSTUDIO_ENGINE_ALSA_MIDI");
     // Linux audio backend: ON unless DSTUDIO_ENGINE_PIPEWIRE=OFF (then the
     // engine renders offline only and libpipewire is not linked).
     // Falsy as CMake reads it: OFF/0/FALSE/NO/N/IGNORE/NOTFOUND/"" or *-NOTFOUND.
@@ -38,6 +39,8 @@ fn main() {
     // opening a plugin editor reports that the build has no X11).
     println!("cargo:rerun-if-env-changed=DSTUDIO_ENGINE_X11");
     let x11 = cmake_on("DSTUDIO_ENGINE_X11");
+    // Linux MIDI input (ALSA sequencer): ON unless DSTUDIO_ENGINE_ALSA_MIDI=OFF.
+    let alsa_midi = cmake_on("DSTUDIO_ENGINE_ALSA_MIDI");
     let profile = if std::env::var("PROFILE").as_deref() == Ok("release") { "Release" } else { "RelWithDebInfo" };
     let third_party = match std::env::var_os("CARGO_TARGET_DIR") {
         Some(dir) if std::path::Path::new(&dir).is_absolute() => std::path::PathBuf::from(dir),
@@ -55,6 +58,7 @@ fn main() {
         .define("FETCHCONTENT_BASE_DIR", third_party.to_string_lossy().as_ref())
         .define("DSTUDIO_ENGINE_PIPEWIRE", if pipewire { "ON" } else { "OFF" })
         .define("DSTUDIO_ENGINE_X11", if x11 { "ON" } else { "OFF" })
+        .define("DSTUDIO_ENGINE_ALSA_MIDI", if alsa_midi { "ON" } else { "OFF" })
         .build_target("dstudio_engine_rust");
     for var in ["FETCHCONTENT_SOURCE_DIR_DSTUDIO_CLAP", "FETCHCONTENT_SOURCE_DIR_DSTUDIO_VST3SDK"] {
         if let Ok(v) = std::env::var(var) {
@@ -74,7 +78,7 @@ fn main() {
         "macos" => {
             println!("cargo:rustc-link-lib=c++");
             println!("cargo:rustc-link-lib=objc");
-            for fw in ["CoreAudio", "AudioToolbox", "AudioUnit", "CoreAudioKit", "CoreFoundation", "Foundation", "AppKit", "Accelerate"] {
+            for fw in ["CoreAudio", "AudioToolbox", "AudioUnit", "CoreAudioKit", "CoreFoundation", "Foundation", "AppKit", "Accelerate", "CoreMIDI"] {
                 println!("cargo:rustc-link-lib=framework={fw}");
             }
         }
@@ -99,8 +103,8 @@ fn main() {
             println!("cargo:rustc-link-lib=dl");
         }
         "windows" => {
-            // COM (WASAPI / MMDevice), CommandLineToArgvW, MMCSS.
-            for lib in ["ole32", "shell32", "avrt", "user32"] {
+            // COM (WASAPI / MMDevice), CommandLineToArgvW, MMCSS, MIDI input.
+            for lib in ["ole32", "shell32", "avrt", "user32", "winmm"] {
                 println!("cargo:rustc-link-lib={lib}");
             }
         }

@@ -35,6 +35,9 @@ pub fn import_track(src: &Project, track: TrackId, next_id: &mut u64) -> Option<
         id
     };
     t.id = TrackId(fresh(t.id.0));
+    // Routing names tracks of the other project: the copy plays into the master.
+    t.sends.clear();
+    t.output = None;
     for c in &mut t.clips {
         c.id = ClipId(fresh(c.id.0));
         c.asset = asset(c.asset, &mut fresh);

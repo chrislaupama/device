@@ -187,6 +187,11 @@ pub enum Command {
     /// Create, replace (points, enabled) or delete (`lane: None`) the lane for
     /// `target` on a track, or on the master when `track` is None.
     SetAutomationLane { track: Option<TrackId>, target: AutomationTarget, lane: Option<AutomationLane> },
+    /// Replace a track's sends into return tracks (spec 002). The app wraps adds and removals in
+    /// a labelled `Batch` ("Add Send", "Remove Send"); level drags coalesce per track.
+    SetSends { track: TrackId, sends: Vec<TrackSend> },
+    /// Route a track's output to a return track, or to the master (`None`).
+    SetTrackOutput { track: TrackId, output: Option<TrackId> },
     /// Several commands applied atomically (all or nothing).
     Batch { label: String, commands: Vec<Command> },
 }
@@ -265,6 +270,8 @@ impl Command {
             Command::SetDeviceView { folded, .. } => (if *folded { "Fold Device" } else { "Unfold Device" }).into(),
             Command::SetCardParams { .. } => "Device Controls Change".into(),
             Command::ReplaceDevice { with, .. } => format!("Swap to {}", with.plugin.name),
+            Command::SetSends { .. } => "Send Level Change".into(),
+            Command::SetTrackOutput { .. } => "Output Change".into(),
             Command::Batch { label, .. } => label.clone(),
         }
     }
@@ -275,6 +282,7 @@ impl Command {
         match self {
             Command::SetTrackGain { track, .. } => Some(format!("gain:{}", track.0)),
             Command::SetTrackPan { track, .. } => Some(format!("pan:{}", track.0)),
+            Command::SetSends { track, .. } => Some(format!("sends:{}", track.0)),
             Command::SetMasterGain { .. } => Some("master_gain".into()),
             Command::SetClipGain { clip, .. } => Some(format!("clipgain:{}", clip.0)),
             Command::SetClipWarp { clip, label, .. } => Some(format!("clipwarp:{}:{label}", clip.0)),
@@ -299,10 +307,24 @@ impl Command {
                 for c in &track.clips {
                     validate_clip(p, c)?;
                 }
-                let idx = index.unwrap_or(p.tracks.len());
-                if idx > p.tracks.len() {
-                    return Err(invalid("index", format!("{idx} > {}", p.tracks.len())));
+                // Ordinary tracks come first, then the returns.
+                let ordinary = p.ordinary_track_count();
+                let (lo, hi) = if track.is_return() {
+                    if !track.clips.is_empty() || !track.midi_clips.is_empty() || track.instrument_plugin.is_some() || track.arm || track.monitor || track.input.is_some() {
+                        return Err(invalid("track", "a return track has no clips, instrument or input"));
+                    }
+                    if p.returns().count() >= MAX_RETURNS {
+                        return Err(invalid("track", format!("at most {MAX_RETURNS} return tracks")));
+                    }
+                    (ordinary, p.tracks.len())
+                } else {
+                    (0, ordinary)
+                };
+                let idx = index.unwrap_or(hi);
+                if idx < lo || idx > hi {
+                    return Err(invalid("index", format!("{idx} is outside {lo}..={hi}")));
                 }
+                validate_routing(p, track.id, track.kind, &track.sends, track.output)?;
                 if track.id.0 == 0 {
                     track.id = TrackId(p.alloc_id());
                 }
@@ -316,8 +338,23 @@ impl Command {
             }
             Command::RemoveTrack { track } => {
                 let idx = p.track_index(track).ok_or(EditError::TrackNotFound(track))?;
+                // Sends to a removed return go with it, outputs routed to it fall back to the master.
+                let mut restore = Vec::new();
+                for t in p.tracks.iter_mut().filter(|t| t.id != track) {
+                    if t.sends.iter().any(|s| s.target == track) {
+                        restore.push(Command::SetSends { track: t.id, sends: t.sends.clone() });
+                        t.sends.retain(|s| s.target != track);
+                    }
+                    if t.output == Some(track) {
+                        restore.push(Command::SetTrackOutput { track: t.id, output: t.output.take() });
+                    }
+                }
                 let t = p.tracks.remove(idx);
-                Ok(Command::AddTrack { index: Some(idx), track: t })
+                let add = Command::AddTrack { index: Some(idx), track: t };
+                if restore.is_empty() {
+                    return Ok(add);
+                }
+                Ok(Command::Batch { label: "Delete Track".into(), commands: std::iter::once(add).chain(restore).collect() })
             }
             Command::InsertSection { index, mut section } => {
                 let name = section.name.trim().to_string();
@@ -437,8 +474,10 @@ impl Command {
                 Ok(Command::AddAsset { asset: a })
             }
             Command::AddClip { track, mut clip } => {
-                if p.track(track).is_none() {
-                    return Err(EditError::TrackNotFound(track));
+                match p.track(track) {
+                    None => return Err(EditError::TrackNotFound(track)),
+                    Some(t) if t.is_return() => return Err(invalid("track", "return tracks take no clips")),
+                    Some(_) => {}
                 }
                 if clip.id.0 == 0 {
                     clip.id = ClipId(p.alloc_id());
@@ -701,16 +740,18 @@ impl Command {
             }
             Command::SetTrackArm { track, arm } => {
                 let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
-                if arm && t.kind != TrackKind::Audio {
-                    return Err(invalid("track", "only audio tracks record audio (MIDI recording is not implemented)"));
+                // Audio tracks record their input; instrument tracks record MIDI; returns record nothing.
+                if arm && t.kind == TrackKind::Return {
+                    return Err(invalid("track", "return tracks cannot be armed"));
                 }
                 let old = std::mem::replace(&mut t.arm, arm);
                 Ok(Command::SetTrackArm { track, arm: old })
             }
             Command::SetTrackMonitor { track, monitor } => {
                 let t = p.track_mut(track).ok_or(EditError::TrackNotFound(track))?;
-                if monitor && t.kind != TrackKind::Audio {
-                    return Err(invalid("track", "input monitoring is for audio tracks"));
+                // Audio tracks hear their input; instrument tracks hear MIDI input; returns have no input.
+                if monitor && t.kind == TrackKind::Return {
+                    return Err(invalid("track", "return tracks have no input to monitor"));
                 }
                 let old = std::mem::replace(&mut t.monitor, monitor);
                 Ok(Command::SetTrackMonitor { track, monitor: old })
@@ -1047,6 +1088,18 @@ impl Command {
                 };
                 Ok(Command::SetAutomationLane { track, target, lane: old })
             }
+            Command::SetSends { track, sends } => {
+                let t = p.track(track).ok_or(EditError::TrackNotFound(track))?;
+                validate_routing(p, track, t.kind, &sends, t.output)?;
+                let old = std::mem::replace(&mut p.track_mut(track).expect("checked").sends, sends);
+                Ok(Command::SetSends { track, sends: old })
+            }
+            Command::SetTrackOutput { track, output } => {
+                let t = p.track(track).ok_or(EditError::TrackNotFound(track))?;
+                validate_routing(p, track, t.kind, &[], output)?;
+                let old = std::mem::replace(&mut p.track_mut(track).expect("checked").output, output);
+                Ok(Command::SetTrackOutput { track, output: old })
+            }
             Command::Batch { label, commands } => {
                 let mut inverses = Vec::with_capacity(commands.len());
                 for cmd in commands {
@@ -1135,7 +1188,35 @@ fn kind_name(k: TrackKind) -> &'static str {
     match k {
         TrackKind::Audio => "Audio",
         TrackKind::Instrument => "Instrument",
+        TrackKind::Return => "Return",
     }
+}
+
+/// Sends and output of track `id` (of `kind`; id 0 = a track not added yet): sends only from
+/// ordinary tracks, each into a different return track at 0 ..= +6 dB; the output is the master
+/// or, for ordinary tracks, a return track.
+fn validate_routing(p: &Project, id: TrackId, kind: TrackKind, sends: &[TrackSend], output: Option<TrackId>) -> Result<(), EditError> {
+    let is_return_track = |t: TrackId| t != id && p.track(t).is_some_and(|t| t.is_return());
+    if kind == TrackKind::Return && (!sends.is_empty() || output.is_some()) {
+        return Err(invalid("track", "a return track has no sends and plays into the master"));
+    }
+    for (i, s) in sends.iter().enumerate() {
+        if !is_return_track(s.target) {
+            return Err(invalid("sends", format!("{} is not a return track", s.target.0)));
+        }
+        if !(0.0..=TrackSend::MAX_LEVEL).contains(&s.level) {
+            return Err(invalid("sends", format!("level {} is outside 0..={}", s.level, TrackSend::MAX_LEVEL)));
+        }
+        if sends[..i].iter().any(|o| o.target == s.target) {
+            return Err(invalid("sends", format!("two sends into {}", s.target.0)));
+        }
+    }
+    if let Some(o) = output
+        && !is_return_track(o)
+    {
+        return Err(invalid("output", format!("{} is not a return track", o.0)));
+    }
+    Ok(())
 }
 
 fn validate_gain(field: &'static str, g: f32) -> Result<(), EditError> {

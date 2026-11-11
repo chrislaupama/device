@@ -1,0 +1,68 @@
+/* Shared look for the README and social artwork. Colours come from the app's own
+   tokens (crates/dstudio-app/ui/tokens.slint); the font is the app's bundled Inter. */
+
+@font-face { font-family: "Inter"; font-weight: 400; src: url("../../crates/dstudio-app/ui/fonts/Inter-Regular.ttf"); }
+@font-face { font-family: "Inter"; font-weight: 500; src: url("../../crates/dstudio-app/ui/fonts/Inter-Medium.ttf"); }
+@font-face { font-family: "Inter"; font-weight: 600; src: url("../../crates/dstudio-app/ui/fonts/Inter-SemiBold.ttf"); }
+@font-face { font-family: "Inter"; font-weight: 700; src: url("../../crates/dstudio-app/ui/fonts/Inter-Bold.ttf"); }
+
+:root {
+  --ground: #0b0c0e;
+  --panel: #141518;
+  --raised: #1c1d21;
+  --line: #26272b;
+  --grid: #17181b;
+  --text: #ecedf0;
+  --text-2: #a3a4a8;
+  --text-3: #6e6f74;
+  --accent: #2752f5;
+  --accent-text: #8ea6ff;
+  --audio: #ec5c9f;
+  --instrument: #de7e36;
+  --automation: #e4c64a;
+  --value: #77a6bd;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: transparent; }
+body { font-family: "Inter", system-ui, sans-serif; color: var(--text); -webkit-font-smoothing: antialiased; }
+
+/* Every artwork is one fixed-size .art element; render.mjs screenshots it. */
+.art { position: relative; overflow: hidden; background: var(--ground); border-radius: 20px; }
+.art.square { border-radius: 0; }
+
+/* The timeline ruler that runs along the top of each piece. */
+.ruler { position: absolute; left: 0; right: 0; top: 0; height: 34px; border-bottom: 1px solid var(--line);
+  display: flex; background: var(--panel); }
+.ruler span { flex: 1; border-left: 1px solid var(--line); font-size: 12px; font-weight: 500; color: var(--text-3);
+  padding: 9px 0 0 8px; font-variant-numeric: tabular-nums; }
+.bars { position: absolute; left: 0; right: 0; top: 34px; bottom: 0; display: flex; pointer-events: none; }
+.bars span { flex: 1; border-left: 1px solid var(--grid); }
+.playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); }
+.playhead::before { content: ""; position: absolute; top: 22px; left: -6px; width: 14px; height: 12px;
+  background: var(--accent); clip-path: polygon(0 0, 100% 0, 50% 100%); }
+
+.mark { display: block; flex: none; }
+.wordmark { display: flex; align-items: center; gap: 18px; }
+.wordmark b { font-weight: 700; letter-spacing: -0.035em; }
+
+.chips { display: flex; gap: 10px; flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 16px; border-radius: 18px;
+  background: var(--raised); border: 1px solid #2f3035; font-size: 15px; font-weight: 500; color: var(--text-2); }
+.chip i { width: 8px; height: 8px; border-radius: 4px; display: block; }
+
+.window { border-radius: 14px; overflow: hidden; border: 1px solid #34353a; background: var(--panel);
+  box-shadow: 0 40px 80px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.6); }
+.window img { display: block; width: 100%; }
+
+.crop { position: relative; overflow: hidden; border-radius: 12px; border: 1px solid #34353a; background: var(--panel); }
+.crop img { position: absolute; display: block; }
+
+.eyebrow { font-size: 15px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+
+/* Feature panels: a heading over a close-up of one part of the app. */
+.feature { width: 1200px; }
+.feature .text { position: absolute; left: 64px; top: 58px; right: 64px; display: flex; flex-direction: column; gap: 12px; }
+.feature h3 { margin: 0; font-size: 46px; line-height: 1.1; font-weight: 700; letter-spacing: -0.028em; }
+.feature p { margin: 0; max-width: 920px; font-size: 22px; line-height: 1.45; color: var(--text-2); }
+.feature .crop { position: absolute; left: 64px; right: 64px; top: 266px; height: 392px; }

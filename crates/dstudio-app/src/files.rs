@@ -171,13 +171,7 @@ impl Default for FilesUi {
         let projects_dir = std::env::var_os("DSTUDIO_PROJECTS_DIR")
             .map(PathBuf::from)
             .or_else(|| {
-                std::env::var_os("HOME").map(|h| {
-                    let docs = PathBuf::from(h).join("Documents");
-                    let dir = docs.join("Device Studio");
-                    // Projects saved before the rename stay in the old folder until the user moves them.
-                    let legacy = docs.join("Saine Studio");
-                    if !dir.exists() && legacy.is_dir() { legacy } else { dir }
-                })
+                std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Documents").join("Device Studio"))
             });
         FilesUi {
             nav: Nav::new(Loc { section: SECTION_DEVICES, tab: 0 }),
@@ -236,12 +230,12 @@ pub fn list_folder(dir: &Path) -> Result<Vec<(String, bool)>, String> {
     Ok(out)
 }
 
-/// `.dsproj` folders (and `.saineproj` ones saved before the rename) in `dir` with their modification times.
+/// `.dsproj` folders in `dir` with their modification times.
 pub fn scan_projects(dir: &Path) -> Vec<(PathBuf, SystemTime)> {
     let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
     rd.filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.is_dir() && p.extension().is_some_and(|e| e == persist::EXTENSION || e == persist::LEGACY_EXTENSION))
+        .filter(|p| p.is_dir() && p.extension().is_some_and(|e| e == persist::EXTENSION))
         .map(|p| {
             let t = std::fs::metadata(p.join(persist::PROJECT_FILE)).or_else(|_| std::fs::metadata(&p)).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
             (p, t)

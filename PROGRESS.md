@@ -257,17 +257,15 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Window title, binary (`device-studio`), built-in device vendor, preferences folder
   (`Device Studio` / `device-studio`), recording temp folder, CLAP host name, Core Audio aggregate and
   PipeWire stream names, assistant prompt and README/docs now say Device Studio.
-- Projects save as `Name.dsproj/` with format `device-studio-project`; `.saineproj` / `saine-project`
-  projects still open (built-in device vendor is updated on load). The old `Saine Studio` support folder
-  is moved to the new location on first launch (`prefs::migrate_legacy_support_dir`). The Files browser
-  lists old `.saineproj` / `saine-project` folders too, and uses `~/Documents/Saine Studio` until `~/Documents/Device Studio`
-  exists. The macOS bundle id is `com.devicestudio.app` (microphone permission is asked again once).
-- Internal names renamed too: `saine` -> `dstudio` (`dstudio-*` crates, `dstudio::` namespace,
-  `dstudio_engine.h`, `DSTUDIO_*` CMake options and env vars, `DStudioTest*` test plugins,
-  `studio.dstudio.test.*` ids). Not `device`: it already names the effects/instruments concept.
-  `tools/rename/remove_saine.py` does the rename and is idempotent; branches started before it run it,
-  then merge main. `--check` lists anything left. The only `saine` strings kept are the legacy
-  project/settings names above and the history notes; the GitHub repo is now `chrislaupama/device`.
+- Projects save as `Name.dsproj/` with format `device-studio-project`, by default in `~/Documents/Device Studio`.
+  (Opening projects from before the rename and moving the old support and projects folders over were supported
+  at first, then removed on 2026-11-11: open old projects in an earlier build and use Save As with a `.dsproj`
+  name, and move any projects kept in the old projects folder into `~/Documents/Device Studio` or point
+  `DSTUDIO_PROJECTS_DIR` at it.)
+  The macOS bundle id is `com.devicestudio.app` (microphone permission is asked again once).
+- Internal names use `dstudio` (`dstudio-*` crates, `dstudio::` namespace, `dstudio_engine.h`,
+  `DSTUDIO_*` CMake options and env vars, `DStudioTest*` test plugins, `studio.dstudio.test.*` ids).
+  Not `device`: it already names the effects/instruments concept. The GitHub repo is `chrislaupama/device`.
 
 ### 2026-11-10: Linux audio runs in CI; Linux plugin windows; Windows CI GPU memory
 
@@ -302,3 +300,28 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - `AGENTS.md` is the entry point for coding agents; codebase skills live in `.agents/skills/` (commands, C ABI and
   audio thread, built-in devices, UI, benchmarks, pull requests, plus the spec phases and bug fixing).
   `python3 tools/agents/check_skills.py` fails when a skill names a file that no longer exists.
+
+### 2026-11-11: return tracks and sends, part 1: core (spec 002)
+
+- Spec `specs/002-return-tracks-and-sends/` (spec, plan, tasks). Return tracks are `TrackKind::Return` in
+  `Project::tracks`, always after the ordinary tracks (at most 16); `Track::sends` (`TrackSend`: return, level 0..+6 dB,
+  pre/post fader) and `Track::output` (a return, or the master). Commands `SetSends` (level drags coalesce per track)
+  and `SetTrackOutput`; removing a return removes the sends to it and resets outputs to it in one undo step. Clips,
+  input, arm, monitor and instrument plugins are refused on returns. Old projects load unchanged; damaged routing is
+  repaired on load. The snapshot carries the routing; single-track renders stay dry.
+- Not yet: the engine ignores the routing (returns publish as empty tracks) and the app has no UI for it. Next: engine
+  (spec 002 T4-T8), then the UI (T9).
+
+### 2026-11-11: MIDI input, engine side (spec 003)
+
+- Spec `specs/003-midi-input-and-recording/` (spec, plan, tasks). This first part is the engine and the C ABI; the
+  app side (R/I on instrument tracks, Settings › MIDI inputs, recorded MIDI clips) follows.
+- Engine: MIDI input backends (Core MIDI, Windows `midiIn*`, ALSA sequencer, stub) behind `MidiBackend`;
+  `MidiInputHub` (per-port SPSC queues, normalisation, held-note release on close); routing in `render_block` to
+  armed/monitoring instrument tracks, else the focus track; `LiveSynth` plays the built-in Synth live; capture ring
+  with latency compensation and loop folding. `se_midi_*` in the header, `Engine::midi_inputs` and friends in Rust.
+- Core: `SetTrackArm` / `SetTrackMonitor` accept instrument tracks.
+- Tests: `engine/tests/test_midi_input.cpp`, `crates/dstudio-engine/tests/midi_input.rs`; bench: "MIDI input"
+  table in `dstudio_engine_bench`.
+- Not verified on hardware yet: Core MIDI with a real keyboard (Mac mini), WinMM (CI build only).
+
