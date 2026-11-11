@@ -504,9 +504,9 @@ export component SynthDevice inherits Rectangle {
         animate width { duration: 120ms; easing: ease-out; }
         rail-ta := TouchArea { }
         Text { x: 0; y: 5.5px; width: parent.width; height: 14px; text: "Mod"; color: #9f9fa2; font-size: 8.25px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-        // Divider under the "Mod" label, centred in the gap between the label (ends at 19.5)
-        // and the first source row's highlight (starts at 28.5).
-        Rectangle { x: 8px; y: 23.75px; width: parent.width - 16px; height: 0.5px; background: #424347; }
+        // Full-width divider under the "Mod" label, centred in the gap between the label
+        // (ends at 19.5) and the first source row's highlight (starts at 28.5).
+        Rectangle { x: 0; y: 23.75px; width: parent.width; height: 0.5px; background: #424347; }
         for g[i] in 9: Rectangle {
             x: 0; y: 27.5px + i * 22px; width: rail.width; height: 22px;
             property <bool> lit: Studio.synth-lit == i + 1;
