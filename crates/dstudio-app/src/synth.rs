@@ -927,10 +927,12 @@ fn filter_mod_display(v: &[f32], labels: &mut Vec<SynthLabel>) -> SynthDisplay {
     labels.extend(freq);
     labels.push(reach);
     // Note names beside the C6 / C2 curves, kept inside the plot and above the time axis
-    // when a curve runs off the top or bottom.
-    let note_y = |ly: f32| ly.clamp(0.0, DISP_H - 14.0 - 13.0);
-    labels.push(label(sl, x(span * 0.5), note_y(y(level(84.0, 1.0, span * 0.5)) - 11.5), "C6", 0));
-    labels.push(label(sl, x(span * 0.5), note_y(y(level(36.0, 1.0, span * 0.5)) - 1.0), "C2", 0));
+    // when a curve runs off the top or bottom, with C2 at least a line below C6.
+    let max_y = DISP_H - 14.0 - 13.0;
+    let c6 = (y(level(84.0, 1.0, span * 0.5)) - 11.5).clamp(0.0, max_y - 13.0);
+    let c2 = (y(level(36.0, 1.0, span * 0.5)) - 1.0).clamp(c6 + 13.0, max_y);
+    labels.push(label(sl, x(span * 0.5), c6, "C6", 0));
+    labels.push(label(sl, x(span * 0.5), c2, "C2", 0));
     dsp.grid = format!("{hgrid}{}", time_ticks_between(sl, span, x0, x1, labels, DISP_H, fmt_secs_plain)).into();
     dsp
 }
@@ -2781,13 +2783,22 @@ mod tests {
 
     #[test]
     fn filter_envelope_note_labels_stay_in_the_plot() {
-        for v in filter_mod_cases() {
+        let mut cases = filter_mod_cases();
+        // Flat curves at the very top: both labels would clamp onto the same spot.
+        let mut flat = defaults();
+        flat[ix("cutoff")] = 20_000.0;
+        flat[ix("filter_env")] = 0.0;
+        flat[ix("key_track")] = 0.0;
+        cases.push(flat);
+        for v in cases {
             let mut labels = Vec::new();
             filter_mod_display(&v, &mut labels);
-            for n in labels.iter().filter(|l| l.text == "C6" || l.text == "C2") {
-                let ok = n.y >= 0.0 && n.y + 13.0 <= DISP_H - 14.0;
-                assert!(ok, "cutoff {} amount {} key track {}: {} at y {}", v[ix("cutoff")], v[ix("filter_env")], v[ix("key_track")], n.text, n.y);
+            let case = format!("cutoff {} amount {} key track {}", v[ix("cutoff")], v[ix("filter_env")], v[ix("key_track")]);
+            let at = |t: &str| labels.iter().find(|l| l.text == t).unwrap().y;
+            for n in ["C6", "C2"] {
+                assert!(at(n) >= 0.0 && at(n) + 13.0 <= DISP_H - 14.0, "{case}: {n} at y {}", at(n));
             }
+            assert!(at("C2") >= at("C6") + 13.0, "{case}: C2 at {} overlaps C6 at {}", at("C2"), at("C6"));
         }
     }
 
