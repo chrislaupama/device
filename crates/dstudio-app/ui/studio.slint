@@ -312,7 +312,7 @@ export struct ShapeRow { label: string, value: string, kind: int, norm: float, b
 export struct SynthParam { norm: float, text: string, bipolar: bool, auto: bool }
 // A picture: SVG paths (viewbox = element size in points) of the curve, its filled area,
 // secondary curves, handles and grid lines; dim = the part is silent.
-export struct SynthDisplay { line: string, fill: string, ghost: string, dots: string, grid: string, dim: bool }
+export struct SynthDisplay { line: string, fill: string, ghost: string, dots: string, grid: string, marks: string, dim: bool }
 // Axis / value text drawn inside picture slot; align 0 left, 1 centre, 2 right of x.
 export struct SynthLabel { slot: int, x: length, y: length, text: string, align: int, accent: bool }
 // Page elements (card coordinates; knobs, latches: centre of the dial; faders: centre x, groove top).
