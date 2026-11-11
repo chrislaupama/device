@@ -926,8 +926,11 @@ fn filter_mod_display(v: &[f32], labels: &mut Vec<SynthLabel>) -> SynthDisplay {
     reach.accent = true;
     labels.extend(freq);
     labels.push(reach);
-    labels.push(label(sl, x(span * 0.5), y(level(84.0, 1.0, span * 0.5)) - 11.5, "C6", 0));
-    labels.push(label(sl, x(span * 0.5), y(level(36.0, 1.0, span * 0.5)) - 1.0, "C2", 0));
+    // Note names beside the C6 / C2 curves, kept inside the plot and above the time axis
+    // when a curve runs off the top or bottom.
+    let note_y = |ly: f32| ly.clamp(0.0, DISP_H - 14.0 - 13.0);
+    labels.push(label(sl, x(span * 0.5), note_y(y(level(84.0, 1.0, span * 0.5)) - 11.5), "C6", 0));
+    labels.push(label(sl, x(span * 0.5), note_y(y(level(36.0, 1.0, span * 0.5)) - 1.0), "C2", 0));
     dsp.grid = format!("{hgrid}{}", time_ticks_between(sl, span, x0, x1, labels, DISP_H, fmt_secs_plain)).into();
     dsp
 }
@@ -2741,11 +2744,14 @@ mod tests {
         for cutoff in [20.0, 150.0, 1000.0, 6000.0, 20_000.0] {
             for amt in [-1.0, 0.25, 1.0] {
                 for attack in [pdef(ix("env2_attack")).min, 0.3] {
-                    let mut v = defaults();
-                    v[ix("cutoff")] = cutoff;
-                    v[ix("filter_env")] = amt;
-                    v[ix("env2_attack")] = attack;
-                    out.push(v);
+                    for kt in [0.0, defaults()[ix("key_track")]] {
+                        let mut v = defaults();
+                        v[ix("cutoff")] = cutoff;
+                        v[ix("filter_env")] = amt;
+                        v[ix("env2_attack")] = attack;
+                        v[ix("key_track")] = kt;
+                        out.push(v);
+                    }
                 }
             }
         }
@@ -2769,6 +2775,18 @@ mod tests {
                     let overlap = hx0 < ox1 && ox0 < hx1 && hy0 < oy1 && oy0 < hy1;
                     assert!(!overlap, "cutoff {} amount {}: {} overlaps {}", v[ix("cutoff")], v[ix("filter_env")], h.text, o.text);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn filter_envelope_note_labels_stay_in_the_plot() {
+        for v in filter_mod_cases() {
+            let mut labels = Vec::new();
+            filter_mod_display(&v, &mut labels);
+            for n in labels.iter().filter(|l| l.text == "C6" || l.text == "C2") {
+                let ok = n.y >= 0.0 && n.y + 13.0 <= DISP_H - 14.0;
+                assert!(ok, "cutoff {} amount {} key track {}: {} at y {}", v[ix("cutoff")], v[ix("filter_env")], v[ix("key_track")], n.text, n.y);
             }
         }
     }
