@@ -4,3 +4,6 @@ build/
 /engine/build*/
 /out/
 __pycache__/
+
+# Local workspace tool config (Paradev); not part of the project.
+.paradev/

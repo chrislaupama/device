@@ -8,14 +8,21 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# macOS runs on the self-hosted runner (one Apple silicon Mac mini, so real
-# hardware with a real audio device). Windows and Linux run on GitHub-hosted
-# runners (windows-latest, ubuntu-latest): no audio endpoint and no GPU there,
-# so the engine's device tests skip and the app smoke tests use a software
-# renderer. Platform-specific steps are gated on runner.os.
+# Every job runs on a GitHub-hosted runner (free for public repositories):
+# macos-latest (Apple silicon), windows-latest and ubuntu-latest. There is no
+# audio endpoint and no GPU on them, so the engine's device tests skip and the
+# app smoke tests use a software renderer. Platform-specific steps are gated on
+# runner.os.
+#
+# The repository is public, so pull requests from forks run this workflow too.
+# It never uses a self-hosted runner (that would run a stranger's code on our
+# machine), uses no secrets, and its token can only read the repository.
 #
 # Every action used here runs on Node 24 (checkout@v5, cache@v5) or is a
 # composite/shell step (rust-toolchain, the MSVC environment step below).
+permissions:
+  contents: read
+
 jobs:
   build-test:
     name: build-test (${{ matrix.name }})
@@ -49,6 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          persist-credentials: false
           fetch-depth: 2 # the merge commit and its base, for the docs-only check
       # A pull request that changes only documentation skips the build and
       # tests: every later step checks steps.changes.outputs.skip. The jobs
