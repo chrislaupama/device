@@ -1216,7 +1216,10 @@ Summary: per track `lat_i` = Σ insert latencies (**bypassed inserts
 included**) + instrument plugin latency; `L = max lat_i` over all tracks
 (**muted / soloed-out included**); each track is delayed by `L − lat_i`, so
 the whole mix (and the metronome) is `L` late. On by default
-(`se_pdc_set_enabled` / Rust `set_delay_compensation`).
+(`se_pdc_set_enabled` / Rust `set_delay_compensation`). This formula and the
+diagram below describe sessions without routing; with return tracks a return
+also adds its own chain to the latency of what feeds it, see
+[Return tracks and sends](#return-tracks-and-sends).
 
 ```
 per track (render_block), PDC lines only where the plan needs them:
