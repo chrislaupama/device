@@ -266,6 +266,13 @@ component Scope inherits Rectangle {
         fill: Studio.synth-card.accent.transparentize(Studio.synth-displays[root.slot].dim ? 95% : 85%);
         stroke: transparent;
     }
+    // Grey dotted guides (for example the cutoff in the filter envelope picture).
+    Path {
+        width: root.width; height: root.height;
+        viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;
+        commands: Studio.synth-displays[root.slot].marks;
+        stroke: #ffffff38; stroke-width: 1px; fill: transparent;
+    }
     Path {
         width: root.width; height: root.height;
         viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width / 1px; viewbox-height: root.height / 1px;

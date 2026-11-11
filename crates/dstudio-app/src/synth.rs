@@ -67,8 +67,6 @@ pub mod disp {
 pub const DISP_W: f32 = 245.0;
 pub const WIDE_W: f32 = 295.5;
 pub const DISP_H: f32 = 128.0;
-/// Left gutter of the filter envelope picture that holds its frequency labels.
-const FILTER_MOD_GUTTER: f32 = 26.0;
 pub const FX_CURVE_W: f32 = 136.0;
 pub const FX_GAP: f32 = 4.0;
 pub const FX_WAVE_W: f32 = 418.0;
@@ -458,7 +456,7 @@ fn display(points: &[(f32, f32)], base_y: f32) -> SynthDisplay {
     }
     let mut f = path(&fill);
     f.push_str(" Z");
-    SynthDisplay { line: path(points).into(), fill: f.into(), ghost: "M0 0".into(), dots: "M0 0".into(), grid: "M0 0".into(), dim: false }
+    SynthDisplay { line: path(points).into(), fill: f.into(), ghost: "M0 0".into(), dots: "M0 0".into(), grid: "M0 0".into(), marks: "M0 0".into(), dim: false }
 }
 
 fn label(slot: usize, x: f32, y: f32, text: impl Into<String>, align: i32) -> SynthLabel {
@@ -748,6 +746,17 @@ fn env_span(total: f32) -> f32 {
     500.0
 }
 
+/// Seconds only ("0", "0.5 s", "1 s"), for the filter envelope picture.
+fn fmt_secs_plain(t: f32) -> String {
+    if t == 0.0 {
+        "0".into()
+    } else if t.fract().abs() < 1e-3 {
+        format!("{t:.0} s")
+    } else {
+        format!("{t:.1} s")
+    }
+}
+
 fn fmt_secs(t: f32) -> String {
     if t == 0.0 {
         "0".into()
@@ -762,17 +771,17 @@ fn fmt_secs(t: f32) -> String {
 
 /// Time axis labels (at most 5 ticks); returns the tick grid lines.
 fn time_ticks(slot: usize, span: f32, w: f32, labels: &mut Vec<SynthLabel>, h: f32) -> String {
-    time_ticks_between(slot, span, 8.0, w - 8.0, labels, h)
+    time_ticks_between(slot, span, 8.0, w - 8.0, labels, h, fmt_secs)
 }
 
 /// Time ticks for a picture whose time axis runs from x0 (t = 0) to x1 (t = span).
-fn time_ticks_between(slot: usize, span: f32, x0: f32, x1: f32, labels: &mut Vec<SynthLabel>, h: f32) -> String {
+fn time_ticks_between(slot: usize, span: f32, x0: f32, x1: f32, labels: &mut Vec<SynthLabel>, h: f32, fmt: fn(f32) -> String) -> String {
     let step = [0.005f32, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0].into_iter().find(|s| span / s <= 5.0).unwrap_or(50.0);
     let mut grid = String::new();
     let mut t = 0.0;
     while t < span * 0.96 {
         let x = x0 + t / span * (x1 - x0);
-        labels.push(label(slot, x, h - 14.0, fmt_secs(t), 0));
+        labels.push(label(slot, x, h - 14.0, fmt(t), 0));
         if t > 0.0 {
             grid.push_str(&format!("M{x:.2} 0 L{x:.2} {:.2} ", h - 16.0));
         }
@@ -869,50 +878,89 @@ fn filter_mod_display(v: &[f32], labels: &mut Vec<SynthLabel>) -> SynthDisplay {
     let (amt, kt, vel, fc) = (g("filter_env"), g("key_track"), g("filter_velocity"), g("cutoff"));
     let span = 2.0;
     let off = span * 0.6;
-    // A 6.6 octave window around the cutoff (inside 20 Hz .. 20 kHz).
-    let hi = (fc.max(20.0).log2() + 3.2).clamp(4.33 + 6.6, 14.3);
-    let lo = hi - 6.6;
-    // The curve starts right of the frequency labels' gutter, so a fast attack, its dot and
-    // the "+N oct" readout never sit on top of "10k" / "5k".
-    let (x0, x1) = (FILTER_MOD_GUTTER, WIDE_W - 8.0);
-    let (top, bot) = (8.0, DISP_H - 22.0);
+    // A 5.15 octave window, 2.85 octaves above and 2.3 below the cutoff (inside 20 Hz .. 20 kHz).
+    let hi = (fc.max(20.0).log2() + 2.85).clamp(20f32.log2() + 5.15, 20_000f32.log2());
+    let lo = hi - 5.15;
+    let (x0, x1) = (6.0, WIDE_W - 3.0);
+    let (top, bot) = (0.0, DISP_H - 16.0);
     let x = |t: f32| x0 + t / span * (x1 - x0);
     let y = |hz: f32| bot - ((hz.max(1.0).log2() - lo) / (hi - lo)).clamp(-0.02, 1.02) * (bot - top);
-    let curve = |note: f32, velocity: f32| -> Vec<(f32, f32)> {
+    let level = |note: f32, velocity: f32, t: f32| {
         let vs = 1.0 - vel * (1.0 - velocity);
-        (0..=200)
-            .map(|i| span * i as f32 / 200.0)
-            .map(|t| (x(t), y(fc * 2f32.powf(kt * (note - 60.0) / 12.0 + amt * vs * adsr(a, d, s, r, off, t) * 7.0))))
-            .collect()
+        fc * 2f32.powf(kt * (note - 60.0) / 12.0 + amt * vs * adsr(a, d, s, r, off, t) * 7.0)
     };
+    let curve = |note: f32, velocity: f32| -> Vec<(f32, f32)> { (0..=200).map(|i| span * i as f32 / 200.0).map(|t| (x(t), y(level(note, velocity, t)))).collect() };
     let mut dsp = display(&curve(60.0, 1.0), bot);
-    let mut ghost = path(&curve(36.0, 1.0));
-    ghost.push(' ');
-    ghost.push_str(&path(&curve(84.0, 1.0)));
-    if vel > 0.0 {
+    // Shaded band from the cutoff to the envelope's peak, across the whole picture.
+    let (cut_y, peak_y) = (y(fc), y(fc * 2f32.powf(amt * 7.0)));
+    dsp.fill = format!("M{x0:.2} {peak_y:.2} L{x1:.2} {peak_y:.2} L{x1:.2} {cut_y:.2} L{x0:.2} {cut_y:.2} Z").into();
+    // C2 and C6 dashed, C3 and C5 solid, so the key tracking spread reads at a glance.
+    let mut ghost = [36.0, 84.0].map(|n| dashed(&curve(n, 1.0), 3.0, 2.5)).join(" ");
+    for n in [48.0, 72.0] {
         ghost.push(' ');
-        ghost.push_str(&path(&curve(60.0, 0.0)));
+        ghost.push_str(&path(&curve(n, 1.0)));
     }
     dsp.ghost = ghost.into();
-    let peak = (x(a), y(fc * 2f32.powf(amt * 7.0)));
+    dsp.marks = dashed(&[(x0, cut_y), (x1, cut_y)], 1.5, 1.5).into();
+    let peak = (x(a), peak_y);
     dsp.dots = circles(&[peak], 3.0).into();
     let sl = disp::FILTER_MOD;
     let mut hgrid = String::new();
-    // The four highest reference frequencies inside the window (outside it they would all
-    // clamp onto its edge), so low cutoffs get 1k .. 100 instead of a lone 1k.
-    let refs = [(10_000.0, "10k"), (5_000.0, "5k"), (2_000.0, "2k"), (1_000.0, "1k"), (500.0, "500"), (200.0, "200"), (100.0, "100"), (50.0, "50")];
-    for (hz, t) in refs.into_iter().filter(|&(hz, _)| y(hz) - 7.0 >= 0.0 && y(hz) + 6.0 <= bot).take(4) {
-        let ly = y(hz) - 7.0;
-        labels.push(label(sl, 6.0, ly, t, 0));
+    // The four highest reference frequencies inside the window, each label sitting just
+    // above its grid line; low cutoffs get 1k .. 100 instead of a lone 1k.
+    let mut freq = Vec::new();
+    for &(hz, t) in FILTER_MOD_FREQS.iter().filter(|&&(hz, _)| y(hz) - 12.0 >= 0.0 && y(hz) <= bot - 4.0).take(4) {
+        freq.push(label(sl, 9.5, y(hz) - 12.0, t, 0));
         hgrid.push_str(&format!("M0 {:.2} L{WIDE_W} {:.2} ", y(hz), y(hz)));
     }
-    let mut reach = label(sl, peak.0 + 8.0, (peak.1 - 14.0).max(0.0), format!("{}{:.1} oct", if amt < 0.0 { "−" } else { "+" }, (amt * 7.0).abs()), 0);
+    // The "+N oct" readout sits up and right of the peak dot, moved right past any frequency
+    // label it would cover.
+    let text = format!("{}{:.1} oct", if amt < 0.0 { "−" } else { "+" }, (amt * 7.0).abs());
+    let (mut rx, ry) = (peak.0 + 8.0, (peak.1 - 14.0).max(0.0));
+    for f in &freq {
+        if ry < f.y + 13.0 && f.y < ry + 13.0 && rx < f.x + label_w(&f.text) {
+            rx = f.x + label_w(&f.text) + 3.0;
+        }
+    }
+    let mut reach = label(sl, rx, ry, text, 0);
     reach.accent = true;
+    labels.extend(freq);
     labels.push(reach);
-    labels.push(label(sl, x(span * 0.5), y(fc * 2f32.powf(kt * 2.0 + amt * s * 7.0)) - 15.0, "C6", 0));
-    labels.push(label(sl, x(span * 0.5), y(fc * 2f32.powf(-kt * 2.0 + amt * s * 7.0)) + 2.0, "C2", 0));
-    dsp.grid = format!("{hgrid}{}", time_ticks_between(sl, span, x0, x1, labels, DISP_H)).into();
+    labels.push(label(sl, x(span * 0.5), y(level(84.0, 1.0, span * 0.5)) - 11.5, "C6", 0));
+    labels.push(label(sl, x(span * 0.5), y(level(36.0, 1.0, span * 0.5)) - 1.0, "C2", 0));
+    dsp.grid = format!("{hgrid}{}", time_ticks_between(sl, span, x0, x1, labels, DISP_H, fmt_secs_plain)).into();
     dsp
+}
+
+/// Reference frequencies of the filter envelope picture, highest first.
+const FILTER_MOD_FREQS: [(f32, &str); 8] = [(10_000.0, "10k"), (5_000.0, "5k"), (2_000.0, "2k"), (1_000.0, "1k"), (500.0, "500"), (200.0, "200"), (100.0, "100"), (50.0, "50")];
+
+/// Rough width of a picture label (7.75 pt text, about 4.7 pt per character).
+fn label_w(text: &str) -> f32 {
+    text.chars().count() as f32 * 4.7
+}
+
+/// A polyline as dashes: `on` points drawn, `off` points skipped, measured along the line.
+fn dashed(points: &[(f32, f32)], on: f32, off: f32) -> String {
+    let mut s = String::new();
+    let mut pos = 0.0f32;
+    for w in points.windows(2) {
+        let ((ax, ay), (bx, by)) = (w[0], w[1]);
+        let len = (bx - ax).hypot(by - ay);
+        let mut t = 0.0;
+        while t < len {
+            let phase = pos % (on + off);
+            let step = if phase < on { on - phase } else { on + off - phase }.min(len - t).max(1e-3);
+            if phase < on {
+                let p = |u: f32| (ax + (bx - ax) * u / len, ay + (by - ay) * u / len);
+                let ((px, py), (qx, qy)) = (p(t), p(t + step));
+                s.push_str(&format!("M{px:.2} {py:.2} L{qx:.2} {qy:.2} "));
+            }
+            t += step;
+            pos += step;
+        }
+    }
+    if s.is_empty() { "M0 0".into() } else { s }
 }
 
 fn glide_display(v: &[f32], labels: &mut Vec<SynthLabel>) -> SynthDisplay {
@@ -959,7 +1007,7 @@ fn unison_display(v: &[f32], labels: &mut Vec<SynthLabel>) -> SynthDisplay {
         stems.push_str(&format!("M{px:.2} {cy:.2} L{px:.2} {py:.2} "));
         dots.push((px, py));
     }
-    let d = SynthDisplay { line: stems.into(), fill: "M0 0".into(), ghost: "M0 0".into(), dots: circles(&dots, 3.0).into(), grid: format!("M8 {cy:.2} L{:.2} {cy:.2} M{cx:.2} 6 L{cx:.2} {:.2}", WIDE_W - 8.0, DISP_H - 6.0).into(), dim: false };
+    let d = SynthDisplay { line: stems.into(), fill: "M0 0".into(), ghost: "M0 0".into(), dots: circles(&dots, 3.0).into(), grid: format!("M8 {cy:.2} L{:.2} {cy:.2} M{cx:.2} 6 L{cx:.2} {:.2}", WIDE_W - 8.0, DISP_H - 6.0).into(), marks: "M0 0".into(), dim: false };
     let s = disp::UNISON;
     labels.push(label(s, 10.0, cy - 16.0, "Flat", 0));
     labels.push(label(s, WIDE_W - 10.0, cy - 16.0, "Sharp", 2));
@@ -1208,7 +1256,7 @@ fn fx_wave(v: &[f32], s: usize, ty: usize, w: f32, bpm: f32, labels: &mut Vec<Sy
                     k += 1.0;
                 }
             }
-            let mut d = SynthDisplay { line: taps.into(), fill: "M0 0".into(), ghost: format!("M8 {mid:.2} L{:.2} {mid:.2}", w - 8.0).into(), dots: circles(&dots, 2.5).into(), grid: "M0 0".into(), dim: false };
+            let mut d = SynthDisplay { line: taps.into(), fill: "M0 0".into(), ghost: format!("M8 {mid:.2} L{:.2} {mid:.2}", w - 8.0).into(), dots: circles(&dots, 2.5).into(), grid: "M0 0".into(), marks: "M0 0".into(), dim: false };
             d.grid = time_ticks(slot, span, w, labels, h).into();
             labels.push(label(slot, w - 10.0, 6.0, "L", 2));
             labels.push(label(slot, w - 10.0, h - 30.0, "R", 2));
@@ -1271,7 +1319,7 @@ fn fx_has_curve(ty: usize) -> bool {
 /// The pictures (and their labels) of one page; the other slots stay empty.
 pub fn displays(v: &[f32], bpm: f32, page_ix: usize, fx_slot: usize) -> (Vec<SynthDisplay>, Vec<SynthLabel>) {
     let mut labels = Vec::new();
-    let empty = || SynthDisplay { line: "M0 0".into(), fill: "M0 0".into(), ghost: "M0 0".into(), dots: "M0 0".into(), grid: "M0 0".into(), dim: false };
+    let empty = || SynthDisplay { line: "M0 0".into(), fill: "M0 0".into(), ghost: "M0 0".into(), dots: "M0 0".into(), grid: "M0 0".into(), marks: "M0 0".into(), dim: false };
     let mut d: Vec<SynthDisplay> = (0..disp::COUNT).map(|_| empty()).collect();
     match page_ix {
         page::OSC => {
@@ -2706,16 +2754,16 @@ mod tests {
 
     #[test]
     fn filter_envelope_frequency_labels_stay_clear() {
-        // 7.75 pt text: about 4.7 pt per character, 13 pt high.
-        let bx = |l: &SynthLabel| (l.x, l.y, l.x + l.text.chars().count() as f32 * 4.7, l.y + 13.0);
+        let bx = |l: &SynthLabel| (l.x, l.y, l.x + label_w(&l.text), l.y + 13.0);
+        let is_freq = |l: &SynthLabel| FILTER_MOD_FREQS.iter().any(|&(_, t)| t == l.text.as_str());
         for v in filter_mod_cases() {
             let mut labels = Vec::new();
             filter_mod_display(&v, &mut labels);
-            let hz: Vec<_> = labels.iter().filter(|l| l.x < FILTER_MOD_GUTTER).collect();
+            let hz: Vec<_> = labels.iter().filter(|l| is_freq(l)).collect();
             assert!(hz.len() >= 3, "cutoff {}: only {} frequency labels", v[ix("cutoff")], hz.len());
             for h in &hz {
                 let (hx0, hy0, hx1, hy1) = bx(h);
-                assert!(hx1 <= FILTER_MOD_GUTTER && hy0 >= 0.0, "{} sits outside the gutter at {hx0} {hy0}", h.text);
+                assert!(hy0 >= 0.0 && hy1 <= DISP_H - 14.0, "{} sits outside the plot at {hx0} {hy0}", h.text);
                 for o in labels.iter().filter(|o| o.text != h.text) {
                     let (ox0, oy0, ox1, oy1) = bx(o);
                     let overlap = hx0 < ox1 && ox0 < hx1 && hy0 < oy1 && oy0 < hy1;
@@ -2723,6 +2771,42 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Top and bottom y of a path's points.
+    fn y_range(d: &str) -> (f32, f32) {
+        let nums: Vec<f32> = d.split(|c: char| c.is_ascii_alphabetic() || c == ' ').filter_map(|n| n.parse().ok()).collect();
+        nums.chunks(2).map(|p| p[1]).fold((f32::MAX, f32::MIN), |(a, b), y| (a.min(y), b.max(y)))
+    }
+
+    #[test]
+    fn filter_envelope_band_runs_from_cutoff_to_peak() {
+        for v in filter_mod_cases() {
+            let mut labels = Vec::new();
+            let d = filter_mod_display(&v, &mut labels);
+            let (band_top, band_bot) = y_range(&d.fill);
+            let (cut, _) = y_range(&d.marks);
+            // The dot's path starts at its left edge, level with its centre.
+            let peak: f32 = d.dots.trim_start_matches('M').split(' ').nth(1).unwrap().parse().unwrap();
+            let (hi, lo) = (cut.min(peak), cut.max(peak));
+            assert!((band_top - hi).abs() < 0.05 && (band_bot - lo).abs() < 0.05, "band {band_top}..{band_bot}, cutoff {cut}, peak {peak}");
+        }
+    }
+
+    #[test]
+    fn filter_envelope_outer_notes_are_dashed() {
+        let d = filter_mod_display(&defaults(), &mut Vec::new());
+        // Two solid 201-point curves plus many short dashes.
+        assert!(d.ghost.matches('M').count() > 40, "expected dashed C2 / C6 curves");
+        assert_eq!(dashed(&[(0.0, 0.0), (11.0, 0.0)], 3.0, 2.5), "M0.00 0.00 L3.00 0.00 M5.50 0.00 L8.50 0.00 ");
+    }
+
+    #[test]
+    fn filter_envelope_time_axis_reads_in_seconds() {
+        let mut labels = Vec::new();
+        filter_mod_display(&defaults(), &mut labels);
+        let ticks: Vec<_> = labels.iter().filter(|l| l.y > DISP_H - 20.0).map(|l| l.text.to_string()).collect();
+        assert_eq!(ticks, ["0", "0.5 s", "1 s", "1.5 s"]);
     }
 
     #[test]
