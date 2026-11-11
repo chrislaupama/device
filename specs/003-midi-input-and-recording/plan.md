@@ -52,7 +52,8 @@ Alternatives considered:
     after a wrap.
 - **C ABI** (`engine/include/dstudio_engine.h`, `crates/dstudio-engine`): `se_midi_input_info`,
   `se_midi_inputs_list`, `se_midi_inputs_open`, `se_midi_inject`, `se_midi_set_focus`,
-  `se_midi_capture_enable`, `se_midi_capture_read` (`se_midi_captured`), `se_midi_stats_get`.
+  `se_midi_capture_enable`, `se_midi_capture_read` (`se_midi_captured`), `se_midi_capture_wrapped`
+  (a real loop wrap, never a seek), `se_midi_stats_get`.
   Additive; `SE_ABI_VERSION` stays 1. Rust mirror, layout tests and safe wrappers.
 - **Core** (`crates/dstudio-core`): `SetTrackArm` / `SetTrackMonitor` accept instrument tracks.
   New `midi_record` module: pure function from captured events (frames) plus pass info (start,

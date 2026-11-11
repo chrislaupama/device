@@ -38,7 +38,7 @@ pub struct PortRow {
 #[derive(Debug, Clone, Default)]
 pub struct MidiPass {
     pub start: i64,
-    pub last_pos: i64,
+    /// The engine reported a loop wrap during the pass (a seek back never counts).
     pub wrapped: bool,
     /// The loop range (frames) when the pass first wrapped: kept for the rest of the
     /// pass, so turning the loop off after a wrap still folds notes held across it.
@@ -190,32 +190,22 @@ impl Controller {
         let start = self.audible_frames();
         let tracks = self.armed_midi();
         let last_loop = self.loop_frames();
-        self.midi_in.pass = Some(MidiPass { start, last_pos: start, wrapped: false, wrap_loop: None, last_loop, events: Vec::new(), tracks });
+        self.midi_in.pass = Some(MidiPass { start, wrapped: false, wrap_loop: None, last_loop, events: Vec::new(), tracks });
     }
 
-    /// Drain the capture ring and notice loop wraps (the playhead jumping back).
+    /// Drain the capture ring and notice loop wraps (the engine reports real wraps, so
+    /// a seek back while recording is never read as one).
     fn midi_poll_pass(&mut self) {
         if self.midi_in.pass.is_none() {
             return;
         }
-        let pos = self.audible_frames();
         let now_loop = self.loop_frames();
         let got = self.engine.read_midi_capture();
+        // Read after the events: a wrap before any of them is already reported.
+        let wrapped = self.engine.midi_capture_wrapped();
         let Some(pass) = self.midi_in.pass.as_mut() else { return };
-        // The loop in force now, or the last one this pass played in.
-        if now_loop.is_some() {
-            pass.last_loop = now_loop;
-        }
-        let current = pass.last_loop;
-        let looping = current.is_some();
-        absorb(pass, got.into_iter().map(|n| CapturedEvent { frame: n.frame, on: n.on, pitch: n.pitch, velocity: n.velocity }), looping);
-        if looping && pos < pass.last_pos {
-            pass.wrapped = true;
-        }
-        if pass.wrapped && pass.wrap_loop.is_none() {
-            pass.wrap_loop = current;
-        }
-        pass.last_pos = pos;
+        let events = got.into_iter().map(|n| CapturedEvent { frame: n.frame, on: n.on, pitch: n.pitch, velocity: n.velocity });
+        poll_update(pass, events, now_loop, wrapped);
     }
 
     /// The loop range in frames while the loop is on.
@@ -250,10 +240,10 @@ impl Controller {
 }
 
 /// The pass's range at `stop`. A pass that wrapped keeps the loop range it wrapped
-/// in (even if the loop was turned off since); otherwise the current loop counts when
-/// the playhead is already back before the start.
+/// in (even if the loop was turned off since); one that never wrapped has none, also
+/// when a seek moved the playhead back before its start.
 fn pass_bounds(pass: &MidiPass, stop: i64, current_loop: Option<(i64, i64)>) -> Pass {
-    let wrapped_loop = pass.wrap_loop.or_else(|| current_loop.filter(|_| pass.wrapped || stop < pass.start));
+    let wrapped_loop = if pass.wrapped { pass.wrap_loop.or(current_loop) } else { None };
     Pass { start: pass.start, stop, wrapped_loop }
 }
 
@@ -264,14 +254,17 @@ fn should_open(opened: Option<&[String]>, retry_at: Option<&(Vec<String>, Instan
     opened != Some(want) && !waiting
 }
 
-/// Append captured events; a frame earlier than the previous one in a looping pass
-/// means playback wrapped.
-fn absorb(pass: &mut MidiPass, events: impl Iterator<Item = CapturedEvent>, looping: bool) {
-    for e in events {
-        if looping && pass.events.last().is_some_and(|l| e.frame < l.frame) {
-            pass.wrapped = true;
-        }
-        pass.events.push(e);
+/// One poll of a pass: append the captured events, remember the loop in force (kept
+/// after the loop is turned off, for a wrap the engine reports a poll late) and take
+/// the first wrap the engine reported with that loop.
+fn poll_update(pass: &mut MidiPass, events: impl Iterator<Item = CapturedEvent>, now_loop: Option<(i64, i64)>, engine_wrapped: bool) {
+    if now_loop.is_some() {
+        pass.last_loop = now_loop;
+    }
+    pass.events.extend(events);
+    if engine_wrapped && !pass.wrapped {
+        pass.wrapped = true;
+        pass.wrap_loop = pass.last_loop;
     }
 }
 
@@ -302,36 +295,43 @@ mod tests {
         let mut p = MidiPass { start: 1000, ..Default::default() };
         assert_eq!(pass_bounds(&p, 3000, l).wrapped_loop, None, "not wrapped yet");
         assert_eq!(pass_bounds(&p, 1500, None).wrapped_loop, None, "no loop");
-        assert_eq!(pass_bounds(&p, 500, l).wrapped_loop, l, "playhead back before the start: wrapped");
-        p.wrapped = true;
-        p.wrap_loop = l;
+        poll_update(&mut p, std::iter::empty(), l, true);
+        assert_eq!(pass_bounds(&p, 1200, l).wrapped_loop, l, "wrapped");
         assert_eq!(pass_bounds(&p, 6000, None).wrapped_loop, l, "loop turned off after the wrap");
     }
     #[test]
     fn a_wrap_just_before_the_loop_is_turned_off_still_counts() {
-        // Events of the poll after the loop was turned off: the playhead had wrapped.
         let ev = |frame, on| CapturedEvent { frame, on, pitch: 60, velocity: if on { 100 } else { 0 } };
-        let mut p = MidiPass { start: 1000, last_loop: Some((1000, 5000)), ..Default::default() };
-        absorb(&mut p, [ev(4800, true)].into_iter(), true);
-        let current = None.or(p.last_loop);
-        absorb(&mut p, [ev(1200, false)].into_iter(), current.is_some());
+        let mut p = MidiPass { start: 1000, ..Default::default() };
+        poll_update(&mut p, [ev(4800, true)].into_iter(), Some((1000, 5000)), false);
+        // The loop is off by the next poll, which brings the wrap and the note-off after it.
+        poll_update(&mut p, [ev(1200, false)].into_iter(), None, true);
         assert!(p.wrapped);
+        assert_eq!(p.wrap_loop, Some((1000, 5000)));
         // Notes held across that wrap end at the loop end.
-        let b = pass_bounds(&p, 1300, current);
+        let b = pass_bounds(&p, 1300, None);
         let notes = midi_record::pair_notes(&p.events, &b);
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].end, 5000);
     }
     #[test]
-    fn absorb_detects_wrap() {
-        let ev = |frame| CapturedEvent { frame, on: true, pitch: 60, velocity: 100 };
-        let mut p = MidiPass::default();
-        absorb(&mut p, [ev(10), ev(20)].into_iter(), true);
+    fn a_seek_back_is_not_a_wrap() {
+        let ev = |frame, on| CapturedEvent { frame, on, pitch: 60, velocity: if on { 100 } else { 0 } };
+        let l = Some((1000, 5000));
+        // The loop was on, then turned off; the user seeks back while recording.
+        let mut p = MidiPass { start: 2000, ..Default::default() };
+        poll_update(&mut p, [ev(4000, true)].into_iter(), l, false);
+        poll_update(&mut p, [ev(1500, false), ev(1600, true), ev(1700, false)].into_iter(), None, false);
         assert!(!p.wrapped);
-        absorb(&mut p, [ev(5)].into_iter(), false);
-        assert!(!p.wrapped, "no loop: a seek, not a wrap");
-        absorb(&mut p, [ev(1)].into_iter(), true);
-        assert!(p.wrapped);
-        assert_eq!(p.events.len(), 4);
+        let b = pass_bounds(&p, 1800, p.last_loop);
+        assert_eq!(b.wrapped_loop, None, "the clip does not grow to the old loop");
+        // The note held across the seek is dropped, not stretched to the old loop end.
+        let notes = midi_record::pair_notes(&p.events, &b);
+        assert_eq!(notes.len(), 1);
+        assert_eq!((notes[0].start, notes[0].end), (1600, 1700));
+        // A seek back with the loop still on is no wrap either.
+        let mut q = MidiPass { start: 2000, ..Default::default() };
+        poll_update(&mut q, [ev(4000, true), ev(1500, false)].into_iter(), l, false);
+        assert_eq!(pass_bounds(&q, 1500, l).wrapped_loop, None);
     }
 }

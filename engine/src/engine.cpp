@@ -1076,6 +1076,7 @@ void Engine::process(uint32_t frames, const RtInput& input, int64_t rec_latency,
                 rt_position_ = rt_loop_start_;
                 if (rec != nullptr) rec->on_loop_wrap(rt_loop_start_); // takes continue linearly
                 rt_midi_wrapped_ = true;
+                if (rt_capture_pass_ != 0) midi.capture_note_wrap(rt_capture_pass_);
                 ++rt_synth_gen_; // sounding notes fade; notes at loop start retrigger
             }
         }

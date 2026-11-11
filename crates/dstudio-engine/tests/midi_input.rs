@@ -54,6 +54,28 @@ fn armed_instrument_track_plays_and_captures_midi_input() {
 }
 
 #[test]
+fn capture_reports_a_loop_wrap_but_not_a_seek_back() {
+    let engine = Engine::new(Config { sample_rate: RATE, max_block_size: 512 }).unwrap();
+    let doc = Document::new(Project::default());
+    publish(&engine, &doc);
+    assert!(!engine.midi_capture_wrapped());
+    engine.set_midi_capture(true);
+    engine.seek(8192).unwrap();
+    engine.play().unwrap();
+    peak(&engine, 1024);
+    engine.seek(0).unwrap();
+    peak(&engine, 1024);
+    assert!(!engine.midi_capture_wrapped(), "a seek back is not a wrap");
+    engine.set_loop(true, 1024, 2048).unwrap();
+    peak(&engine, 2048);
+    assert!(engine.midi_capture_wrapped());
+    engine.set_midi_capture(false);
+    assert!(engine.midi_capture_wrapped(), "still answers after the pass");
+    engine.set_midi_capture(true);
+    assert!(!engine.midi_capture_wrapped(), "a new pass starts unwrapped");
+}
+
+#[test]
 fn focus_track_plays_until_another_track_is_armed() {
     let engine = Engine::new(Config { sample_rate: RATE, max_block_size: 512 }).unwrap();
     let mut doc = Document::new(Project::default());

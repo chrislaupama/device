@@ -873,6 +873,7 @@ unsafe extern "C" {
     pub fn se_midi_set_focus(engine: *mut se_engine, track_id: u64) -> i32;
     pub fn se_midi_capture_enable(engine: *mut se_engine, enabled: u8) -> i32;
     pub fn se_midi_capture_read(engine: *mut se_engine, out: *mut se_midi_captured, capacity: usize, out_count: *mut usize) -> i32;
+    pub fn se_midi_capture_wrapped(engine: *mut se_engine, out_wrapped: *mut u8) -> i32;
     pub fn se_midi_stats_get(engine: *mut se_engine, out: *mut se_midi_stats) -> i32;
 }
 

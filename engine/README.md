@@ -626,6 +626,8 @@ for recording.
   heard at: block position minus output latency and delay compensation
   (offline renders: no latency), folded back into the loop after a loop wrap
   (`midi_capture_frame`). The app turns them into MIDI clips.
+  `se_midi_capture_wrapped` says whether the transport wrapped at the loop end
+  during the latest pass, so the app never reads a seek back as a wrap.
 * Tests: `tests/test_midi_input.cpp` (fake backend and injection, no hardware);
   bench: the "MIDI input" table of `dstudio_engine_bench`.
 
