@@ -1,8 +1,9 @@
 # Pull request media
 
 Screenshots, recordings and other media that explain a pull request live on the `pr-screenshots` branch, not on the
-pull request's own branch. That keeps them out of `main` and out of every clone's history, while the links in the
-pull request keep working after its branch is deleted.
+pull request's own branch. That keeps them out of `main` and out of the history of every branch that merges into it,
+while the links in the pull request keep working after its branch is deleted. A full clone still fetches the branch;
+`git clone --single-branch` leaves it out.
 
 Contributors without push access to this repository drag their images into the pull request description instead;
 GitHub hosts them. Everything below is for the maintainer and the agents working on the repository.
@@ -55,7 +56,7 @@ refuses files over 100 MB, and every file stays in the branch's history for good
 From a checkout of this repository:
 
 ```sh
-git fetch origin pr-screenshots
+git fetch origin pr-screenshots:refs/remotes/origin/pr-screenshots
 git worktree add ../pr-media origin/pr-screenshots   # a separate folder on the branch
 cd ../pr-media
 mkdir -p return-tracks
@@ -67,10 +68,11 @@ git rev-parse HEAD                                   # the commit to link
 ```
 
 If the push is refused because someone else pushed first, put your commit on top of theirs and push again:
-`git fetch origin pr-screenshots && git rebase origin/pr-screenshots && git push origin HEAD:pr-screenshots`.
+`git fetch origin pr-screenshots:refs/remotes/origin/pr-screenshots && git rebase origin/pr-screenshots && git push origin HEAD:pr-screenshots`.
 Rebasing your own commit that was never pushed is fine; never force-push.
 
-Remove the folder afterwards with `git worktree remove ../pr-media`.
+Afterwards, go back to your checkout and remove the folder: `cd -` (or `cd` to the checkout), then
+`git worktree remove ../pr-media`.
 
 ## Linking
 
