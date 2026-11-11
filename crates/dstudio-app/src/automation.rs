@@ -39,6 +39,8 @@ const PAD_T: f32 = 0.12;
 const PAD_B: f32 = 0.006;
 /// Hit radius (points) for handles and the line.
 const HIT: f32 = 5.0;
+/// Shortest pinned (return) automation row kept when the master row cuts it (room for its label).
+const MIN_PINNED_ROW_H: f32 = 16.0;
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// Freehand drawing and write passes drop points within this fraction of the value range of the
 /// line through their kept neighbours.
@@ -556,17 +558,29 @@ impl Controller {
         }
         let v = &self.view;
         let mut rows = Vec::new();
+        let h = self.lanes_size.1;
+        // Pinned return rows end at the master row: in a short timeline the band is capped
+        // (auto_sync_view), so a row is cut at the master's top, and one with too little left is
+        // dropped, to keep its drawing and hit area off the master lane.
+        let master_top = h - v.master_h;
         for (i, t) in self.project().tracks.iter().take(self.lane_tracks()).enumerate() {
             let key = Some(t.id);
             let top = v.track_top(i);
-            rows.push(Row { key, target: self.auto_target(key), y0: top, h: v.pitch(i) - 0.5, master: false, extra: false, pinned: v.is_pinned(i) });
+            let pinned = v.is_pinned(i);
+            let mut rh = v.pitch(i) - 0.5;
+            if pinned {
+                rh = rh.min(master_top - top - 0.5);
+                if rh < MIN_PINNED_ROW_H {
+                    continue;
+                }
+            }
+            rows.push(Row { key, target: self.auto_target(key), y0: top, h: rh, master: false, extra: false, pinned });
             if self.auto.expanded.contains(&t.id) && !v.is_pinned(i) {
                 for (k, target) in self.extra_targets(t.id).into_iter().enumerate() {
                     rows.push(Row { key, target, y0: top + v.pitch(i) + k as f32 * EXTRA_PITCH, h: EXTRA_H, master: false, extra: true, pinned: false });
                 }
             }
         }
-        let h = self.lanes_size.1;
         rows.push(Row { key: None, target: AutomationTarget::Volume, y0: h - v.master_h + 1.0, h: v.master_h - 1.0, master: true, extra: false, pinned: false });
         rows
     }

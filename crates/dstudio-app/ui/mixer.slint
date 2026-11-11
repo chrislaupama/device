@@ -103,10 +103,27 @@ component Strip inherits Rectangle {
         Rectangle { y: parent.height - 1 * root.u; height: 1 * root.u; background: #ffffff14; }
     }
     // Expanded Sends section: one row per send, stacked upward from the Sends row (every strip
-    // reserves room for the track with the most sends, so the rows line up across strips).
-    if Studio.sends-open && !root.master && !root.s.is-return: Rectangle {
-        x: 8 * root.u; y: root.sends-y - (Studio.strip-sends-max * 20 + 4) * root.u; width: 92 * root.u; height: (Studio.strip-sends-max * 20 + 4) * root.u;
-        for r in Studio.strip-sends: SendLine { visible: r.track == root.s.id; x: 0; y: r.row * 20 * root.u; width: parent.width; r: r; }
+    // reserves room for the track with the most sends, so the rows line up across strips). It
+    // takes at most the room under the insert pill; more rows scroll with the wheel.
+    if Studio.sends-open && !root.master && !root.s.is-return: sends-box := Rectangle {
+        property <length> content-h: (Studio.strip-sends-max * 20 + 4) * root.u;
+        property <length> max-scroll: max(0px, self.content-h - self.height);
+        property <length> scroll: min(self.scroll-raw, self.max-scroll);
+        property <length> scroll-raw: 0px;
+        x: 8 * root.u; y: root.sends-y - self.height; width: 92 * root.u; height: min(self.content-h, max(0px, root.sends-y - 52 * root.u));
+        clip: true;
+        TouchArea {
+            scroll-event(e) => {
+                if (sends-box.max-scroll <= 0) { return reject; }
+                sends-box.scroll-raw = max(0px, min(sends-box.max-scroll, sends-box.scroll - e.delta-y));
+                accept
+            }
+            for r in Studio.strip-sends: SendLine { visible: r.track == root.s.id; x: 0; y: r.row * 20 * root.u - sends-box.scroll; width: parent.width; r: r; }
+        }
+        if sends-box.max-scroll > 0: Rectangle {
+            x: parent.width - 2px; y: sends-box.scroll / sends-box.content-h * parent.height; width: 2px;
+            height: parent.height * parent.height / sends-box.content-h; border-radius: 1px; background: #ffffff33;
+        }
     }
     // Return strips: a "Return" caption where the Sends row sits on track strips.
     if root.s.is-return: Text {

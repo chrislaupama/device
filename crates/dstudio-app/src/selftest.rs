@@ -2470,10 +2470,60 @@ fn returns_steps() -> Vec<Step> {
             let r = c.project().returns().next().map(|t| t.id);
             (r.is_some() && t.sends.len() == 1 && t.sends[0].target == r.unwrap() && t.output == r).then_some(()).ok_or(format!("return {r:?} sends {:?} out {:?}", t.sends, t.output))
         })),
-        DoC("returns: clean up (delete the return, back to the Input tab)", Box::new(|a, ctl| {
+        DoC("returns: five more returns, each sent to from track 1 (six sends)", Box::new(|_, ctl| {
             let mut c = ctl.borrow_mut();
-            let r = c.project().returns().next().map(|t| t.id);
-            if let Some(r) = r {
+            let t = c.project().tracks[0].id;
+            for _ in 0..5 {
+                c.new_return_with_send(t);
+            }
+            c.select_track(t);
+            c.ui_dirty = true;
+        })),
+        Check("returns: six sends, more than the Sends tab shows at once", Box::new(|c, a| {
+            let n = a.global::<Studio>().get_sel_sends().row_count();
+            (c.project().tracks[0].sends.len() == 6 && n == 6).then_some(()).ok_or(format!("sends {} rows {n}", c.project().tracks[0].sends.len()))
+        })),
+        Do("returns: scroll the Sends tab down", Box::new(move |a| {
+            dispatch(a.window(), WindowEvent::PointerScrolled { position: LogicalPosition::new(bottom_x() + 40.0, row_y(1.0)), delta_x: 0.0, delta_y: -400.0 });
+        })),
+        // Scrolled to the end: the last row sits at the bottom of the list.
+        Do("returns: click the last send's remove button", Box::new(move |a| click(a, bottom_x() + 157.0, bottom_y() + 324.0 * u - 4.0 - 21.0))),
+        Check("returns: the sixth send (to the newest return) was removed", Box::new(|c, _| {
+            let last = c.project().returns().last().map(|t| t.id);
+            let s = &c.project().tracks[0].sends;
+            (s.len() == 5 && last.is_some() && s.iter().all(|x| Some(x.target) != last) && c.doc.undo_label() == Some("Remove Send"))
+                .then_some(())
+                .ok_or(format!("sends {:?} last {last:?} undo {:?}", s.iter().map(|x| x.target).collect::<Vec<_>>(), c.doc.undo_label()))
+        })),
+        DoC("returns: rename Return A from its name field", Box::new(|a, ctl| {
+            let r = ctl.borrow().project().returns().next().map(|t| t.id.0 as i32).unwrap_or(-1);
+            let s = a.global::<Studio>();
+            s.invoke_track_rename(r, "Plate".into(), s.get_doc_epoch());
+        })),
+        Check("returns: the return is renamed ('Rename Track'), the Out menu label follows", Box::new(|c, _| {
+            let name = c.project().returns().next().map(|t| t.name.clone()).unwrap_or_default();
+            (name == "Plate" && c.doc.undo_label() == Some("Rename Track")).then_some(()).ok_or(format!("name {name} undo {:?}", c.doc.undo_label()))
+        })),
+        DoC("returns: show automation with every return pinned", Box::new(|_, ctl| {
+            let mut c = ctl.borrow_mut();
+            if !c.auto.shown {
+                c.auto_toggle_shown();
+            }
+        })),
+        Check("returns: pinned automation rows stay above the master row", Box::new(|c, _| {
+            let master_top = c.lanes_size.1 - c.view.master_h;
+            let rows = c.auto_rows();
+            let bad: Vec<_> = rows.iter().filter(|r| r.pinned && r.y0 + r.h > master_top).map(|r| (r.y0, r.h)).collect();
+            let master = rows.iter().filter(|r| r.master).count();
+            (bad.is_empty() && master == 1 && c.view.pinned_h > 0.0).then_some(()).ok_or(format!("overlapping {bad:?} master top {master_top} pinned h {}", c.view.pinned_h))
+        })),
+        DoC("returns: clean up (hide automation, delete the returns, back to the Input tab)", Box::new(|a, ctl| {
+            let mut c = ctl.borrow_mut();
+            if c.auto.shown {
+                c.auto_toggle_shown();
+            }
+            let rs: Vec<_> = c.project().returns().map(|t| t.id).collect();
+            for r in rs {
                 c.execute(dstudio_core::Command::RemoveTrack { track: r });
             }
             a.global::<Studio>().set_strip_tab(0);

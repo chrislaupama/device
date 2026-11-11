@@ -163,7 +163,8 @@ impl Controller {
     }
 
     /// Set a send's level (linear gain, clamped to −∞..+6 dB). Successive calls in one drag
-    /// coalesce into one "Send Level Change"; `send_gesture_end` closes the drag.
+    /// coalesce into one "Send Level Change" however long the knob is held still;
+    /// `send_gesture_end` closes the drag.
     pub fn set_send_level(&mut self, track: TrackId, target: TrackId, gain: f32) -> bool {
         let Some(t) = self.project().track(track) else { return false };
         let gain = gain.clamp(0.0, TrackSend::MAX_LEVEL);
@@ -173,7 +174,12 @@ impl Controller {
             return false;
         }
         s.level = gain;
-        self.execute(Command::SetSends { track, sends })
+        // One drag is one undo step, pauses while the knob is held included.
+        let ok = self.execute(Command::SetSends { track, sends });
+        if ok {
+            self.doc.hold_coalescing();
+        }
+        ok
     }
 
     /// Send level from a slider / knob position (the track volume slider's taper).

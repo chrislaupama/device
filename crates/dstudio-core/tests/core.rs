@@ -104,6 +104,31 @@ fn clip_move_trim_undo() {
 }
 
 #[test]
+fn held_gesture_coalesces_across_long_pauses() {
+    let (mut d, track, _) = doc_with_asset();
+    let t0 = Instant::now();
+    d.execute_at(Command::SetTrackGain { track, gain: 0.8 }, t0).unwrap();
+    d.hold_coalescing();
+    // The knob is held still for 5 s, then moved again: still the same step.
+    d.execute_at(Command::SetTrackGain { track, gain: 0.6 }, t0 + Duration::from_secs(5)).unwrap();
+    d.execute_at(Command::SetTrackGain { track, gain: 0.4 }, t0 + Duration::from_secs(10)).unwrap();
+    d.seal_coalescing();
+    // Released: the next drag is a new step, even right away.
+    d.execute_at(Command::SetTrackGain { track, gain: 0.2 }, t0 + Duration::from_secs(10)).unwrap();
+    d.undo().unwrap();
+    assert_eq!(d.project().track(track).unwrap().gain, 0.4);
+    d.undo().unwrap();
+    assert_eq!(d.project().track(track).unwrap().gain, 1.0, "one step for the whole held drag");
+    // Another entry ends the hold.
+    d.execute_at(Command::SetTrackGain { track, gain: 0.7 }, t0).unwrap();
+    d.hold_coalescing();
+    d.execute_at(Command::SetTrackPan { track, pan: 0.5 }, t0 + Duration::from_secs(1)).unwrap();
+    d.execute_at(Command::SetTrackPan { track, pan: -0.5 }, t0 + Duration::from_secs(5)).unwrap();
+    d.undo().unwrap();
+    assert_eq!(d.project().track(track).unwrap().pan, 0.5);
+}
+
+#[test]
 fn fader_drag_coalesces_into_one_undo_step() {
     let (mut d, track, _) = doc_with_asset();
     let t0 = Instant::now();

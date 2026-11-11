@@ -1632,10 +1632,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let b = c.new_return_with_send(audio);
             if let (Some(a), Some(b)) = (a, b) {
                 c.set_send_level(audio, a, dstudio_core::db_to_gain(-6.0));
+                c.send_gesture_end();
                 c.set_send_level(audio, b, dstudio_core::db_to_gain(-12.0));
+                c.send_gesture_end();
                 c.toggle_send_pre(audio, b);
                 c.add_send(inst, a);
                 c.set_send_level(inst, a, dstudio_core::db_to_gain(-3.5));
+                c.send_gesture_end();
                 c.set_track_gain(b, dstudio_core::db_to_gain(-4.0));
             }
             c.select_track(audio);

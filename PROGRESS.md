@@ -398,5 +398,10 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
 - Mixer: return strips after the track strips with a divider; the Sends chevron expands every strip's Sends section
   (one slider per send). Channel strip: the Sends tab (knob, Pre switch, remove), Out lists Master and the returns,
   In reads "Return" on a return track. `Studio.strip-tab` makes the strip tab reachable from review states.
+- Send lists scroll with the wheel when they outgrow their room (the Sends tab, and the mixer's Sends section, which
+  takes at most the room under the insert pill). A held send knob is one undo step however long it pauses
+  (`Document::hold_coalescing`, sealed on release). Pinned return automation rows stop at the master row.
+- Stems are dry: a stem pass clears every track's sends and output (`dialogs::stem_snapshot`), so a track routed
+  into a return still renders. Return tracks are renamed like any track (double-click the name).
 - Review states `review-returns` and `review-returns-strip`; self-test section `returns_steps`.
 

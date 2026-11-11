@@ -398,8 +398,9 @@ component Browser inherits Panel {
 component TrackRowItem inherits Rectangle {
     in property <TrackRow> t;
     in property <TrackLevel> level;
+    in property <bool> rename-target: true;
     callback edit-done();
-    TrackHeaderRow { x: 0; y: 0; width: parent.width; height: root.t.row-h; row-h: root.t.row-h; t: root.t; automation: Studio.auto-shown; level: root.level; edit-done => { root.edit-done(); } }
+    TrackHeaderRow { x: 0; y: 0; width: parent.width; height: root.t.row-h; row-h: root.t.row-h; t: root.t; automation: Studio.auto-shown; level: root.level; rename-target: root.rename-target; edit-done => { root.edit-done(); } }
     Rectangle { y: root.t.row-h; height: Tokens.track-pitch - Tokens.track-h; background: root.t.selected ? #353639 : Tokens.line-separator; }
     // Height handle: 6 px at the row's bottom edge.
     TouchArea {
@@ -650,7 +651,7 @@ component Timeline inherits Panel {
             scroll-event(e) => { Studio.lane-scroll(0, e.delta-y / 1px, 0, false); accept }
         }
         for t[i] in Studio.tracks: TrackRowItem {
-            visible: !t.pinned;
+            visible: !t.pinned; rename-target: !t.pinned;
             x: 0; y: t.y - Studio.scroll-y; width: parent.width; height: t.h;
             t: t; level: Studio.track-levels[i];
             edit-done => { root.focus-main(); }
@@ -682,7 +683,7 @@ component Timeline inherits Panel {
         clip: true;
         background: Tokens.bg-panel;
         for t[i] in Studio.tracks: TrackRowItem {
-            visible: t.pinned;
+            visible: t.pinned; rename-target: t.pinned;
             x: 0; y: t.y; width: parent.width; height: t.h;
             t: t; level: Studio.track-levels[i];
             edit-done => { root.focus-main(); }
@@ -760,17 +761,27 @@ component Inspector inherits Rectangle {
     }
     // Sends tab: one row per send (return colour and name, level knob with its dB readout, Pre
     // switch, remove). Double-clicking the knob resets to 0 dB.
-    if root.tab == 1: Rectangle {
+    if root.tab == 1: sends-list := Rectangle {
         x: 0; y: 128 * StripMetrics.u; width: 170px; height: 324 * StripMetrics.u - self.y - 4px;
         clip: true;
+        // More sends than fit scroll with the wheel.
+        property <length> max-scroll: max(0px, Studio.sel-sends.length * 42px - self.height);
+        property <length> scroll: min(self.scroll-raw, self.max-scroll);
+        property <length> scroll-raw: 0px;
         if !Studio.sel-can-send: Text {
             x: 10px; y: 10px; width: 150px; text: Studio.has-selection ? "Return tracks have no sends." : ""; color: #63656d; font-size: 9.5px; font-weight: 600; wrap: word-wrap;
         }
         if Studio.sel-can-send && Studio.sel-sends.length == 0: Text {
             x: 10px; y: 10px; width: 150px; text: "No sends. Use + to send this track to a return track."; color: #63656d; font-size: 9.5px; font-weight: 600; wrap: word-wrap;
         }
+        TouchArea {
+            scroll-event(e) => {
+                if (sends-list.max-scroll <= 0) { return reject; }
+                sends-list.scroll-raw = max(0px, min(sends-list.max-scroll, sends-list.scroll - e.delta-y));
+                accept
+            }
         for r[k] in Studio.sel-sends: Rectangle {
-            x: 0; y: k * 42px; width: parent.width; height: 42px;
+            x: 0; y: k * 42px - sends-list.scroll; width: parent.width; height: 42px;
             Rectangle { x: 10px; y: 9px; width: 3.4px; height: 24px; border-radius: 1.7px; background: r.color; }
             Text { x: 18px; y: 6px; width: 64px; height: 13px; text: r.name; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; vertical-alignment: center; overflow: elide; }
             Text { x: 18px; y: 21px; width: 64px; height: 13px; text: r.db-text; color: r.color.mix(#7d7e80, 0.62); font-size: 9px; font-weight: 600; vertical-alignment: center; }
@@ -790,6 +801,11 @@ component Inspector inherits Rectangle {
                 rm-ta := TouchArea { clicked => { Studio.send-remove(r.track, r.target); } accessible-role: button; accessible-label: "Remove send to " + r.name; }
             }
             Rectangle { x: 10px; y: 41.5px; width: 150px; height: 0.5px; background: #ffffff0d; }
+        }
+        }
+        if sends-list.max-scroll > 0: Rectangle {
+            x: parent.width - 3px; y: sends-list.scroll / (Studio.sel-sends.length * 42px) * parent.height; width: 2px;
+            height: parent.height * parent.height / (Studio.sel-sends.length * 42px); border-radius: 1px; background: #ffffff33;
         }
     }
     Rectangle { x: 10px; y: 128 * StripMetrics.u - 0.5px; width: 150px; height: 0.5px; background: #ffffff14; }

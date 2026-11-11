@@ -354,6 +354,7 @@ impl View {
         if y < top {
             return None;
         }
+        let pinned = self.pinned_from < n;
         let n = n.min(self.pinned_from);
         for i in 0..n {
             let h = self.track_span(i);
@@ -361,6 +362,11 @@ impl View {
                 return Some(i);
             }
             top += h;
+        }
+        // Empty space under the ordinary tracks: with pinned rows below it, no index past them is
+        // an ordinary track, and a synthesized one would land on a pinned row.
+        if pinned {
+            return None;
         }
         Some(n + ((y - top) / TRACK_PITCH).floor() as usize)
     }
@@ -1074,6 +1080,17 @@ mod tests {
         assert_eq!(&label_nums(DEFAULT_PX_PER_BEAT)[..4], ["1", "2", "3", "4"]);
         assert_eq!(&label_nums(DEFAULT_PX_PER_BEAT / 4.0)[..4], ["1", "5", "9", "13"]);
         assert_eq!(&label_nums(DEFAULT_PX_PER_BEAT * 8.0)[..3], ["1", "2", "3"]);
+    }
+
+    #[test]
+    fn empty_space_above_pinned_rows_hits_no_track() {
+        // One ordinary track and one pinned return: the space between them is no track.
+        let v = View { pitches: vec![TRACK_PITCH; 2], pinned_from: 1, pinned_h: TRACK_PITCH, height: 600.0, ..View::default() };
+        assert_eq!(v.track_at(RULER_H + 1.0), Some(0));
+        assert_eq!(v.track_at(RULER_H + 2.0 * TRACK_PITCH + 10.0), None);
+        assert_eq!(v.track_at(v.pinned_top() - 1.0), None);
+        assert_eq!(v.track_at(v.pinned_top() + 1.0), Some(1));
+        assert_eq!(hit_test(&v, (900.0, 600.0), 2, &[], 10.0, 120.0), Hit::Empty);
     }
 
     #[test]

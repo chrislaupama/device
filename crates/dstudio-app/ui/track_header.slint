@@ -338,6 +338,9 @@ export component TrackHeaderRow inherits Rectangle {
     in property <TrackRow> t;
     in property <TrackLevel> level;
     in property <bool> automation;        // automation lanes shown (88 px rows: full chrome)
+    /// This copy of the row opens its name field on the keyboard rename request (each track has
+    /// a row in the scrolling list and one in the pinned band; only the shown one may).
+    in property <bool> rename-target: true;
     in property <length> row-h: Tokens.track-h;
     // Layout by row height: full (48 px and up) shows the automation row
     // when lanes are shown, compact drops it, minimal (under 28 px) keeps only the name row.
@@ -373,7 +376,7 @@ export component TrackHeaderRow inherits Rectangle {
     }
     TrackName {
         x: 43.35px; y: root.top-y; width: root.width - self.x - 6.8px; height: 13.6px;
-        track-id: root.t.id; text: root.t.name; keyboard-target: true;
+        track-id: root.t.id; text: root.t.name; keyboard-target: root.rename-target;
         clicked => { Studio.select-track(root.t.id); }
         edit-done => { root.edit-done(); }
     }
@@ -408,7 +411,8 @@ export component TrackHeaderRow inherits Rectangle {
         released => { Studio.gesture-end(); }
     }
     // Automation row: fold button in the gutter, then the pill (16 px in from the content box).
-    if root.show-auto: Rectangle {
+    // Return rows automate volume and pan through the pill but have no expanded lanes to fold.
+    if root.show-auto && !root.t.is-return: Rectangle {
         x: 23.8px; y: 50.15px + root.centre-shift; width: 13.6px; height: 13.6px;
         accessible-role: button;
         accessible-label: (root.t.auto-expanded ? "Collapse " : "Show ") + root.t.auto-count + (root.t.auto-count == 1 ? " automated lane" : " automated lanes");
