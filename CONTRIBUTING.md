@@ -59,7 +59,7 @@ clang, MSVC and GCC, so please build on more than one compiler if you can, or ch
 
 ## Code style
 
-- Rust: `cargo fmt` and `cargo clippy --workspace`.
+- Rust: `cargo fmt --all` (settings in `rustfmt.toml`) and `cargo clippy --workspace --all-targets -- -D warnings`. CI checks both.
 - C++: C++23, follow the style of the surrounding code, no exceptions or allocation on the audio thread.
 - Internal names use `dstudio` (crates, namespaces, `DSTUDIO_*` options). Do not use bare `device` as an identifier
   prefix: it already names effects and instruments throughout the code.

@@ -24,7 +24,7 @@ through a `Command` with a working undo; old projects still load; ABI layout tes
 ## 3. The full local gate
 
 ```sh
-cargo fmt --all --check && cargo clippy --workspace
+cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cd engine && cmake --preset default && cmake --build --preset default && ctest --preset default
 cargo run --release -p dstudio-app -- --self-test --no-audio

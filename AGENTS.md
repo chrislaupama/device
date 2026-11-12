@@ -56,7 +56,7 @@ path a skill names still exists, so skills don't silently rot as the code moves.
 ## Before any pull request
 
 ```sh
-cargo fmt --all && cargo clippy --workspace
+cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cd engine && cmake --preset default && cmake --build --preset default && ctest --preset default
 cargo run --release -p dstudio-app -- --self-test --no-audio
