@@ -894,6 +894,7 @@ component Inspector inherits Rectangle {
             value-changed(v) => { if (Studio.has-selection) { Studio.track-trim(Studio.sel-id, v); } }
             released => { Studio.strip-gesture-end(); }
             reset => { if (Studio.has-selection) { Studio.track-trim(Studio.sel-id, 0); Studio.strip-gesture-end(); } }
+            context(x, y) => { if (Studio.has-selection) { Studio.strip-menu(Studio.sel-id, 3, x, y - Studio.menu-dy); } }
             accessible-role: slider; accessible-label: "Trim"; accessible-value: Studio.sel-trim-text;
             accessible-action-increment => { if (Studio.has-selection) { Studio.track-trim(Studio.sel-id, min(24, Studio.sel-trim + 0.5)); Studio.strip-gesture-end(); } }
             accessible-action-decrement => { if (Studio.has-selection) { Studio.track-trim(Studio.sel-id, max(-24, Studio.sel-trim - 0.5)); Studio.strip-gesture-end(); } }
@@ -907,6 +908,7 @@ component Inspector inherits Rectangle {
             value-changed(v) => { if (Studio.has-selection) { Studio.track-width(Studio.sel-id, v); } }
             released => { Studio.strip-gesture-end(); }
             reset => { if (Studio.has-selection) { Studio.track-width(Studio.sel-id, 1); Studio.strip-gesture-end(); } }
+            context(x, y) => { if (Studio.has-selection) { Studio.strip-menu(Studio.sel-id, 4, x, y - Studio.menu-dy); } }
             accessible-role: slider; accessible-label: "Width"; accessible-value: Studio.sel-width-text;
             accessible-action-increment => { if (Studio.has-selection) { Studio.track-width(Studio.sel-id, min(2, Studio.sel-width + 0.05)); Studio.strip-gesture-end(); } }
             accessible-action-decrement => { if (Studio.has-selection) { Studio.track-width(Studio.sel-id, max(0, Studio.sel-width - 0.05)); Studio.strip-gesture-end(); } }
@@ -919,12 +921,14 @@ component Inspector inherits Rectangle {
             value-changed(v) => { if (Studio.has-selection) { Studio.track-pan(Studio.sel-id, v); } }
             released => { Studio.gesture-end(); }
             reset => { if (Studio.has-selection) { Studio.track-pan(Studio.sel-id, 0); Studio.gesture-end(); } }
+            context(x, y) => { if (Studio.has-selection) { Studio.strip-menu(Studio.sel-id, 1, x, y - Studio.menu-dy); } }
         }
         Text { x: 10px; y: 228px; width: 74px; height: 13px; text: Studio.sel-pan-text; color: root.value-color; font-size: 9px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
         Text { x: 10px; y: 243px; width: 74px; height: 13px; text: "Pan"; color: Tokens.text-primary; font-size: 9.5px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
         Switch {
             x: 112.5px; y: 205px; on: Studio.sel-mono;
             toggled => { if (Studio.has-selection) { Studio.track-mono(Studio.sel-id); } }
+            context(x, y) => { if (Studio.has-selection) { Studio.strip-menu(Studio.sel-id, 5, x, y - Studio.menu-dy); } }
             accessible-role: checkbox; accessible-label: "Mono"; accessible-checked: Studio.sel-mono;
             accessible-action-default => { if (Studio.has-selection) { Studio.track-mono(Studio.sel-id); } }
         }
@@ -943,6 +947,7 @@ component Inspector inherits Rectangle {
             if (i == 2) { Studio.track-arm(Studio.sel-id); }
             if (i == 3) { Studio.track-monitor(Studio.sel-id); }
         }
+        context(x, y) => { if (i == 0 && Studio.has-selection) { Studio.strip-menu(Studio.sel-id, 2, x, y - Studio.menu-dy); } }
     }
 
     // Meter column (92 pt at x 196): gain readout, fader canvas, peak box (6 pt gaps).
@@ -956,6 +961,7 @@ component Inspector inherits Rectangle {
         moved(f) => { Studio.sel-fader-moved(f); }
         released => { Studio.gesture-end(); }
         reset => { Studio.sel-fader-moved(0.2); Studio.gesture-end(); }
+        context(x, y) => { if (Studio.has-selection) { Studio.strip-menu(Studio.sel-id, 0, x, y - Studio.menu-dy); } }
     }
     StripReadout {
         x: 218 * StripMetrics.u; y: 324.5 * StripMetrics.u; width: 70 * StripMetrics.u; height: 20 * StripMetrics.u;

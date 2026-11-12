@@ -58,7 +58,10 @@ pub fn import_track(src: &Project, track: TrackId, next_id: &mut u64) -> Option<
         d.sidechain = None;
     }
     for lane in &mut t.automation {
-        if let AutomationTarget::Plugin { device, .. } | AutomationTarget::Builtin { device, .. } = &mut lane.target {
+        if let AutomationTarget::Plugin { device, .. }
+        | AutomationTarget::Builtin { device, .. }
+        | AutomationTarget::DeviceOn { device, .. } = &mut lane.target
+        {
             *device = DeviceId(fresh(device.0));
         }
     }

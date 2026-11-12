@@ -164,9 +164,10 @@ struct Args {
     /// reference-live (100 % zoom): the default project
     /// with the assistant panel open and the automation lanes shown.
     live_state: bool,
-    /// review-automation / review-automation-picker: lanes with points (active, disabled, curved,
-    /// an expanded extra lane, master) for review; the second also opens the picker with the
-    /// Synth submenu.
+    /// review-automation / review-automation-picker / review-automation-menu: lanes with points
+    /// (active, disabled, curved, an expanded extra lane, master) for review; the second also
+    /// opens the picker with the Synth submenu; the third shows the Synth's Cutoff lane with a
+    /// hovered point's readout and opens the Cutoff knob's right-click menu.
     automation_review: u8,
     /// review-track-heights / review-bottom-collapsed: the demo tracks at 0.25x, 0.5x and 2x
     /// height; the second instead collapses the bottom panel to its tab row.
@@ -495,6 +496,10 @@ fn parse_args() -> Result<Args, String> {
                 "review-automation-picker" => {
                     a.reference_default = true;
                     a.automation_review = 2;
+                }
+                "review-automation-menu" => {
+                    a.reference_default = true;
+                    a.automation_review = 3;
                 }
                 "reference-devices-effects" => {
                     a.reference_default = true;
@@ -1730,6 +1735,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             c.auto_open_picker(Some(inst), 262.0 + 42.0, y);
             c.auto_picker_pick(1);
         }
+        if args.automation_review == 3
+            && let Some(dev) = c.synth_device()
+        {
+            let def = &dstudio_core::builtin::synth_v2::SYNTH_V2;
+            let target = AutomationTarget::Builtin { device: dev, device_type: def.id.into(), param: "cutoff".into() };
+            let points = vec![pt(0, 300.0, 0.0), pt(12, 4000.0, 0.0), pt(20, 900.0, 0.0)];
+            c.auto_commit(Some(inst), AutomationLane { target: target.clone(), enabled: true, points });
+            c.auto.targets.insert(Some(inst), target.clone());
+            c.auto.hover = Some((Some(inst), target, 1));
+            // Audio's lanes folded so the Instrument row (and its lane in Hz) is in view.
+            c.auto.expanded.remove(&audio);
+            if let Some(i) = def.index_of("cutoff") {
+                c.synth_knob_menu(i, 560.0, 640.0);
+            }
+        }
     }
     // The dropdown opens once its editor is on screen (the audio clip state imports first).
     let clip_menu_timer = slint::Timer::default();
@@ -2383,6 +2403,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     on!(on_synth_pill, |c, action: i32, arg: i32, x: f32, y: f32, w: f32| c.synth_pill(action, arg.max(0) as usize, x, y, w));
     on!(on_synth_remove, |c, kind: i32, slot: i32| c.synth_remove(kind, slot.max(0) as usize));
     on!(on_synth_knob_menu, |c, id: i32, x: f32, y: f32| c.synth_knob_menu(id.max(0) as usize, x, y));
+    on!(on_strip_menu, |c, track: i32, kind: i32, x: f32, y: f32| c.strip_menu(track, kind, x, y));
+    on!(on_synth_pill_menu, |c, action: i32, arg: i32, x: f32, y: f32| c.synth_pill_menu(action, arg.max(0) as usize, x, y));
     on!(on_synth_rail, |c, src: i32, phase: i32, x: f32, y: f32| c.synth_rail(src.max(0) as usize, phase, x, y));
     on!(on_synth_scope_drag, |c, slot: i32, phase: i32, x: f32, y: f32| c.synth_scope_drag(slot.max(0) as usize, phase, x, y));
     on!(on_synth_macro_select, |c, m: i32| c.synth_macro_select(m.max(0) as usize));
@@ -2733,6 +2755,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 drop(c);
                 // Studio global is reachable through any component handle; avoid holding a strong ref.
                 LANE_CURSOR.with(|lc| lc.set(cur));
+            }
+            if let Ok(mut c) = ctl.try_borrow_mut() {
+                c.auto_hover(x, y);
             }
         });
     }

@@ -51,7 +51,13 @@ inline uint64_t now_ns() noexcept {
 
 // Single-writer "raise to max" for a float atomic that a reader may reset
 // with exchange(0). Lock-free; the CAS only retries if the reader raced us.
-inline void atomic_store_max(std::atomic<float>& a, float v) noexcept {
+// Always inlined: it sits in the per-track meter path of render_block().
+#if defined(_MSC_VER)
+__forceinline
+#else
+[[gnu::always_inline]] inline
+#endif
+void atomic_store_max(std::atomic<float>& a, float v) noexcept {
     float cur = a.load(std::memory_order_relaxed);
     while (v > cur && !a.compare_exchange_weak(cur, v, std::memory_order_relaxed)) {
     }

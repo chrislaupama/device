@@ -537,3 +537,22 @@ see `.github/workflows/ci.yml`). Platform status: `engine/README.md` › Platfor
   `returns_pill_and_out_menu`, and the self-test's returns section rewritten for the new flow.
 - Not yet: sends from one return track into another (needs engine routing and solo rules), and return rows in the
   timeline without a pan knob.
+
+### 2026-11-12: automate any device control, mute and device on/off
+
+- Every device control's right-click menu starts with "Automate <parameter>": built-in device knobs, buttons, choice
+  switches and menus, plugin cards, and every Synth control (knobs, faders, pills, switches, mod matrix). A device's
+  power switch offers "Automate On"; the channel's volume, pan and M (track header, inspector, mixer) and the
+  inspector's trim, width and mono offer "Automate <name>". Choosing one shows the lanes with that parameter.
+- New lane targets: Track › Mute, Trim, Width, Mono and <device> › On (listed last under each device in the lane
+  picker). Mute, Mono and On are stepped: a value holds until the next point. Built-in choice parameters are stepped
+  too. The M button, the inspector's trim, width and mono, and power switches follow an active lane; clicking a switch
+  while armed and playing writes one step at the playhead. Bounce to new track now carries the strip's trim, width and
+  mono (and their lanes) over to the new track, since the render is taken before them.
+- Lane labels read in the parameter's own units, taken from the device's own text (Hz, dB, ms, ct, choice names,
+  On/Off, the Synth's legacy parameters in Hz, ct, dB, ms and %), and a hovered or dragged point shows its value.
+- Engine: `se_auto_lane_desc.flags` (was padding) with `SE_AUTO_FLAG_STEPPED`; `SE_AUTO_MUTE` (per-sample gain before
+  the fader, replaces the static mute), `SE_AUTO_DEVICE_ON` (per block, replaces `enabled`, with a bypass delay line
+  so switching keeps delay compensation) and `SE_AUTO_TRIM/WIDTH/MONO` (per sample, replace the strip settings).
+  Tests: four engine tests in `test_automation.cpp`, core `switch_lanes_*`, app `automation::tests` (units, picker,
+  right-click menus, switches and strip controls following lanes).

@@ -1349,6 +1349,11 @@ impl Command {
                             {
                                 return Err(invalid("target", "plugin automation must target a device on the same track"));
                             }
+                            AutomationTarget::DeviceOn { device, .. }
+                                if !p.tracks[ti].devices.iter().chain(p.tracks[ti].instrument_plugin.iter()).any(|d| d.id == *device) =>
+                            {
+                                return Err(invalid("target", "device automation must target a device on the same track"));
+                            }
                             AutomationTarget::Builtin { device, device_type, param } => {
                                 let d = p.tracks[ti]
                                     .devices

@@ -235,6 +235,44 @@ fn builtin_automation_targets_use_plain_values() {
 }
 
 #[test]
+fn switch_lanes_validate_their_device_and_reach_the_snapshot() {
+    let mut d = Document::new(Project::default());
+    let (a, i) = (d.project().tracks[0].id, d.project().tracks[1].id);
+    let id = add_comp(&mut d, a);
+    let on = AutomationTarget::DeviceOn { device: id, name: "Compressor".into() };
+    let mut lane = AutomationLane::new(on.clone());
+    lane.points = vec![AutoPoint { time: 0, value: 1.0, curve: 0.0 }, AutoPoint { time: 960, value: 0.0, curve: 0.0 }];
+    assert!(
+        d.execute(Command::SetAutomationLane { track: Some(i), target: on.clone(), lane: Some(lane.clone()) }, Origin::User).is_err(),
+        "the device is on another track"
+    );
+    d.execute(Command::SetAutomationLane { track: Some(a), target: on.clone(), lane: Some(lane.clone()) }, Origin::User).unwrap();
+    let mut mute = AutomationLane::new(AutomationTarget::Mute);
+    mute.points = vec![AutoPoint { time: 480, value: 1.0, curve: 0.0 }];
+    d.execute(Command::SetAutomationLane { track: Some(a), target: AutomationTarget::Mute, lane: Some(mute) }, Origin::User).unwrap();
+    assert!(
+        d.execute(
+            Command::SetAutomationLane {
+                track: None,
+                target: AutomationTarget::Mute,
+                lane: Some(AutomationLane::new(AutomationTarget::Mute))
+            },
+            Origin::User
+        )
+        .is_err(),
+        "the master only has volume automation"
+    );
+    let (snap, _) = snapshot::build(d.project(), 48_000.0, &HashMap::new());
+    let targets: Vec<_> = snap.tracks[0].automation.iter().map(|l| l.target.clone()).collect();
+    assert_eq!(targets, vec![on, AutomationTarget::Mute]);
+    // Saved and loaded unchanged.
+    let dir = tempfile::tempdir().unwrap();
+    persist::save(d.project(), dir.path()).unwrap();
+    let l = persist::load(dir.path()).unwrap();
+    assert_eq!(l.project.track(a).unwrap().automation, d.project().track(a).unwrap().automation);
+}
+
+#[test]
 fn builtin_commands_round_trip_as_json() {
     let cmd = Command::SetDeviceParam { device: DeviceId(7), param: "ratio".into(), value: 3.0 };
     let json = serde_json::to_string(&cmd).unwrap();
